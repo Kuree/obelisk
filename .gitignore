@@ -1,0 +1,14 @@
+# Build output
+/build/
+*.o
+*.bc
+
+# Editor / tooling
+/compile_commands.json
+.cache/
+.vscode/
+.idea/
+
+# The CIRCT SDK is large (4 GB) and lives outside the repo; never commit it.
+/circt-*/
+*.tar.gz

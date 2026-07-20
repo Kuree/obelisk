@@ -3,11 +3,15 @@
 > An ahead-of-time SystemVerilog simulator targeting IEEE 1800 conformance
 > and real UVM, built on the CIRCT/Moore frontend.
 
-Status: **foundation working.** `obelisk-translate` compiles SystemVerilog to
-Moore IR in-process. The next work is exact 4-state behavioral lowering plus a
-generated event scheduler, with proof-gated static fast paths. This document is
-the source of truth for *why* things are the way they are so we can continue
-across sessions.
+Status: **frontend and semantic-IR foundation working.**
+`obelisk-translate` compiles SystemVerilog to Moore IR in-process. The
+`obelisk` dialect and `obelisk-opt` now provide the typed semantic boundary
+between Moore and LLVM, including exact 4-state values, storage/nets,
+processes/regions, objects/containers, synchronization, randomization,
+assertions, VPI, and system effects. The next work is Moore → Obelisk lowering,
+then Obelisk → LLVM plus the generated scheduler and runtime archive. This
+document is the source of truth for *why* things are the way they are so we can
+continue across sessions.
 
 ---
 
@@ -63,6 +67,12 @@ region-correct generated scheduling, dynamic objects, suspendable behavioral
 code, and DPI/VPI integration. The contribution is the exact behavioral path
 and the proof boundary between it and the static fast path, not merely
 "Moore-to-LLVM."
+
+These semantics are represented in a dedicated **Obelisk dialect** before LLVM
+lowering. Moore remains the resolved source-language IR; Obelisk IR is the
+lowering contract; LLVM is the ABI and machine-code IR. Keeping those stages
+separate prevents source-AST concerns from leaking into the runtime and
+prevents early LLVM conversion from erasing scheduler or X/Z meaning.
 
 Prior art that validates the approach: **Verilator's `--timing` mode** uses
 C++20 coroutines for `#delay`/event-controls. obelisk does it at the LLVM-IR
@@ -151,6 +161,13 @@ the user originally wanted to use it, but real-UVM→CIRCT overrides that.)
 
 This eliminated a multi-hour from-source LLVM+CIRCT build. obelisk builds against
 the SDK via `find_package(CIRCT CONFIG)` in ~seconds.
+
+The checkout at `/home/keyi/workspace/repos/circt` is from February 2023 and is
+**not** an implementation reference or build input. Installed headers,
+TableGen sources, libraries, and CMake exports under the selected SDK are the
+compatibility contract. An SDK update is performed by changing
+`OBELISK_CIRCT_DIR` and rebuilding the lit suite; Obelisk does not mix a source
+checkout with a different prebuilt SDK.
 
 ---
 
@@ -600,16 +617,20 @@ SystemVerilog + UVM
       ▼
   moore dialect IR                         ── DONE: obelisk-translate emits this
       │
-      ├─ proven static 2-state subset → CIRCT core/Arc where semantics match
+      │  MooreToObelisk: elaborated language semantics → explicit effects
+      ▼
+  obelisk dialect IR                       ── DONE: types/ops/parser/verifiers
       │
-      └─ exact obelisk path (NEW)
-           l<N>                 → value + X/Z mask operations
-           dynamic procedure   → llvm.coro.* coroutine
-           wait_event/#delay   → suspend + generated region scheduler
-           nonblocking_assign  → ordered NBA update
-           class ops           → heap object + vtable (internal C layout)
-           system tasks        → generated SV adapter → runtime/host primitive
-           DPI/VPI             → standard C ABI (+ foreign-stack bridge)
+      ├─ proven static 2-state islands → CIRCT core/Arc where semantics match
+      │
+      └─ exact path
+           !obelisk.logic<W>    → value + X/Z planes
+           obelisk.process      → llvm.coro.* or proven fused schedule
+           suspend.*            → generated region scheduler
+           nba.enqueue          → ordered NBA update
+           object/class ops     → heap object + vtable (internal C layout)
+           random/constraint    → deterministic PRNG + packaged solver
+           system/DPI/VPI       → semantic adapter + C ABI/runtime entry point
       ▼
   LLVM dialect / LLVM IR
       │  LLVM opt + codegen
@@ -632,13 +653,22 @@ SystemVerilog + UVM
 - **`obelisk-translate`**: SystemVerilog → Moore IR, in-process (links
   `CIRCTImportVerilog` + `libsvlang`), with source-located diagnostics and
   post-import `verify()`. Reproduces `circt-verilog --ir-moore` output.
+- **`obelisk` semantic dialect**: TableGen types, enums, 91 operations,
+  declarative assembly formats, ODS structural constraints, and focused custom
+  width/slice verifiers. It explicitly represents all 17 IEEE event regions.
+- **`obelisk-opt`**: parses, verifies, round-trips, and hosts future
+  Moore → Obelisk and Obelisk → LLVM passes alongside CIRCT/MLIR dialects.
+- Project-local LLVM `lit` suite: canonical assembly round-trip, negative
+  verifier diagnostics, and SystemVerilog → Moore importer smoke test.
 
 This foundation has been demonstrated on small RTL. Import of the pinned stock
 UVM package is **not yet validated** and is the M0.5 gate; the frontend is not
 called UVM-complete until that passes.
 
-**Not started (the actual project)**
-- Coroutine lowering pass (Moore behavioral ops → `llvm.coro.*`).
+**Not started (the executable simulator)**
+- Moore → Obelisk semantic lowering.
+- Obelisk process lowering (`obelisk.process` → `llvm.coro.*` or a proven
+  static schedule).
 - Event scheduler (stratified queue + delta cycles), authored per §5.4.
 - 4-state value runtime representation + arithmetic.
 - Class/vtable heap runtime; fork/join; mailbox/event/semaphore; TLM.
@@ -656,11 +686,13 @@ called UVM-complete until that passes.
    digest, publish an importer/IR feature matrix, and upstream or locally
    implement every blocker. Keep this as a CI gate so a CIRCT SDK update cannot
    silently regress the target.
-1. **M1 — exact one-process core.** Implement value+X/Z-mask operations; lower a
-   single `initial`/`always` with `wait_event`/`#delay` to a coroutine; build and
-   link the first target-specific `libobelisk_rt.a`; generate the scheduler; and
-   implement `$display` through an SV-format adapter backed by libc. Goal:
-   simulate a free-running counter including X initialization and edge cases.
+1. **M1 — exact one-process core.** Lower Moore value/process/storage operations
+   to the existing Obelisk semantic IR; lower Obelisk value+X/Z-plane
+   operations and a single `initial`/`always` with `suspend.event`/
+   `suspend.delay` to LLVM; build and link the first target-specific
+   `libobelisk_rt.a`; generate the scheduler; and implement `$display` through
+   an SV-format adapter backed by libc. Goal: simulate a free-running counter
+   including X initialization and edge cases.
 2. **M2 — clocked design + TB.** NBA region + delta cycles correct; blocking vs
    nonblocking; posedge/negedge; multiple processes. Goal: counter + testbench
    with `@`, `#`, `<=` matching a reference simulator.
@@ -692,13 +724,16 @@ a passing conformance/UVM-semantic test.
 obelisk/
 ├── CMakeLists.txt                 # find CIRCT SDK; C++17; static
 ├── DESIGN.md                      # this file
+├── include/obelisk/Dialect/Sim/   # semantic types/ops/enums + asm contract
+├── lib/Dialect/Sim/               # dialect registration + custom verifiers
 ├── tools/
-│   └── obelisk-translate/         # SV -> Moore IR  (M0, done)
+│   ├── obelisk-translate/         # SV -> Moore IR
+│   └── obelisk-opt/               # semantic IR parser/pass host
+├── test/                          # LLVM lit semantic/import tests
 ├── build/                         # cmake/ninja out-of-source (gitignored)
 │
 │   # planned:
-├── include/obelisk/               # obelisk passes/dialect headers
-├── lib/Lower/                     # Moore -> LLVM(coro) lowering passes
+├── lib/Conversion/                # Moore -> Obelisk -> LLVM passes
 ├── runtime/                       # support sources + internal ABI description
 │   └── ...                        # built once per target as libobelisk_rt.a
 ├── sdk/include/                   # installed svdpi.h/vpi_user.h extension API
@@ -725,11 +760,17 @@ committed). Override via `-DOBELISK_CIRCT_DIR=...`.
 # Prereqs: the CIRCT static SDK extracted at /home/keyi/workspace/circt-1.153.1
 cd /home/keyi/workspace/obelisk
 cmake -G Ninja -S . -B build
-ninja -C build obelisk-translate
+ninja -C build obelisk-translate obelisk-opt
 
 # Try it
 ./build/tools/obelisk-translate/obelisk-translate path/to/design.sv
 # -> Moore dialect IR on stdout
+
+./build/tools/obelisk-opt/obelisk-opt path/to/semantic.mlir
+# -> verified canonical Obelisk assembly
+
+# Regression suite (lit from PATH, then env/bin/lit fallback; not CTest)
+ninja -C build check-obelisk
 ```
 
 To re-fetch the SDK:
