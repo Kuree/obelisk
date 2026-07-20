@@ -5,6 +5,8 @@
 
 #include "obelisk/Dialect/Sim/ObeliskDialect.h"
 
+#include "circt/Dialect/HW/HWTypes.h"
+
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Types.h"
 

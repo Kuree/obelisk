@@ -8,10 +8,13 @@ Status: **frontend and semantic-IR foundation working.**
 `obelisk` dialect and `obelisk-opt` now provide the typed semantic boundary
 between Moore and LLVM, including exact 4-state values, storage/nets,
 processes/regions, objects/containers, synchronization, randomization,
-assertions, VPI, and system effects. The next work is Moore → Obelisk lowering,
-then Obelisk → LLVM plus the generated scheduler and runtime archive. This
-document is the source of truth for *why* things are the way they are so we can
-continue across sessions.
+assertions, VPI, and system effects. The initial exhaustive Moore → Obelisk
+conversion is working in `obelisk-opt`: specialized patterns lower exact
+four-state and common core operations, while a typed semantic inventory
+preserves every remaining operation for later refinement. The next work is
+specializing those semantic operations, then Obelisk → LLVM plus the generated
+scheduler and runtime archive. This document is the source of truth for *why*
+things are the way they are so we can continue across sessions.
 
 ---
 
@@ -89,7 +92,8 @@ DPI, strings + dynamic containers (queue/assoc/dynamic arrays), `fork/join*`,
 time-consuming tasks, mailboxes/events/semaphores. CIRCT's `ImportVerilog`
 provides a broad slang-backed surface rather than only synthesizable RTL:
 
-- Moore dialect: **233 ops** (`MooreOps.td`, ~4,100 lines).
+- Moore dialect: **238 ops** in the pinned CIRCT SDK (`MooreOps.td`, ~4,100
+  lines).
 - Importer: ~10,000 lines handling ~30 expr kinds, 22 stmt kinds, 22 type
   kinds, 55 structure cases.
 - The dialect/importer model much of the UVM-enabling surface:

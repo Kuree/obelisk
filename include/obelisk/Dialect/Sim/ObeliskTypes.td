@@ -24,6 +24,11 @@ def Logic1Type : ConfinedType<LogicType, [
   CPred<"::llvm::cast<::obelisk::ir::LogicType>($_self).getWidth() == 1">
 ], "one-bit exact four-state logic", "::obelisk::ir::LogicType">;
 
+def VoidType : ObeliskType<"Void"> {
+  let mnemonic = "void";
+  let summary = "source-level SystemVerilog void";
+}
+
 // Simulation time is unsigned and independent of host time_t.  The eventual
 // runtime ABI uses a fixed-width representation selected by the lowering.
 def TimeType : ObeliskType<"Time"> {
@@ -58,6 +63,21 @@ def EventType : ObeliskType<"Event"> {
   let summary = "named event handle";
 }
 
+// Keep the declared class in the type until object layout and virtual dispatch
+// have been resolved.  Erasing this to a raw pointer during Moore conversion
+// would make inherited field and method references ambiguous.
+def ClassHandleType : ObeliskType<"ClassHandle"> {
+  let mnemonic = "class_handle";
+  let summary = "nullable statically typed SystemVerilog class handle";
+  let parameters = (ins "::mlir::SymbolRefAttr":$className);
+  let assemblyFormat = "`<` $className `>`";
+}
+
+def NullType : ObeliskType<"Null"> {
+  let mnemonic = "null";
+  let summary = "polymorphic SystemVerilog null handle literal";
+}
+
 def ObjectType : ObeliskType<"Object"> {
   let mnemonic = "object";
   let summary = "nullable dynamically-dispatched class object handle";
@@ -75,6 +95,77 @@ def DynArrayType : ObeliskType<"DynArray"> {
   let assemblyFormat = "`<` $elementType `>`";
 }
 
+// Preserve packedness until ABI/layout lowering. Collapsing both forms to
+// hw.array would make an unpacked array indistinguishable from a packed vector
+// aggregate.
+def PackedArrayType : ObeliskType<"PackedArray"> {
+  let mnemonic = "packed_array";
+  let summary = "fixed-size packed SystemVerilog array";
+  let parameters = (ins
+    "::mlir::Type":$elementType,
+    "unsigned":$size
+  );
+  let assemblyFormat = "`<` $size `x` $elementType `>`";
+  let genVerifyDecl = 1;
+}
+
+def UnpackedArrayType : ObeliskType<"UnpackedArray"> {
+  let mnemonic = "unpacked_array";
+  let summary = "fixed-size unpacked SystemVerilog array";
+  let parameters = (ins
+    "::mlir::Type":$elementType,
+    "unsigned":$size
+  );
+  let assemblyFormat = "`<` $size `x` $elementType `>`";
+}
+
+// HW struct/union types provide the typed, named field inventory. The Obelisk
+// wrapper retains the source packedness that HW alone cannot represent for
+// SystemVerilog aggregates.
+def PackedStructType : ObeliskType<"PackedStruct"> {
+  let mnemonic = "packed_struct";
+  let summary = "packed SystemVerilog struct";
+  let parameters = (ins "::mlir::Type":$fields);
+  let assemblyFormat = "`<` $fields `>`";
+  let genVerifyDecl = 1;
+}
+
+def UnpackedStructType : ObeliskType<"UnpackedStruct"> {
+  let mnemonic = "unpacked_struct";
+  let summary = "unpacked SystemVerilog struct";
+  let parameters = (ins "::mlir::Type":$fields);
+  let assemblyFormat = "`<` $fields `>`";
+  let genVerifyDecl = 1;
+}
+
+def PackedUnionType : ObeliskType<"PackedUnion"> {
+  let mnemonic = "packed_union";
+  let summary = "packed SystemVerilog union";
+  let parameters = (ins "::mlir::Type":$fields);
+  let assemblyFormat = "`<` $fields `>`";
+  let genVerifyDecl = 1;
+}
+
+def UnpackedUnionType : ObeliskType<"UnpackedUnion"> {
+  let mnemonic = "unpacked_union";
+  let summary = "unpacked SystemVerilog union";
+  let parameters = (ins "::mlir::Type":$fields);
+  let assemblyFormat = "`<` $fields `>`";
+  let genVerifyDecl = 1;
+}
+
+// An open array is a borrowed DPI view.  It neither owns storage nor has the
+// resize/value semantics of a dynamic array, so it must remain a distinct type.
+def OpenArrayType : ObeliskType<"OpenArray"> {
+  let mnemonic = "open_array";
+  let summary = "borrowed packed or unpacked open-array view";
+  let parameters = (ins
+    "::mlir::Type":$elementType,
+    "bool":$isPacked
+  );
+  let assemblyFormat = "`<` $elementType `,` $isPacked `>`";
+}
+
 def AssocArrayType : ObeliskType<"AssocArray"> {
   let mnemonic = "assoc";
   let summary = "associative array with reference semantics";
@@ -83,6 +174,11 @@ def AssocArrayType : ObeliskType<"AssocArray"> {
     "::mlir::Type":$elementType
   );
   let assemblyFormat = "`<` $keyType `,` $elementType `>`";
+}
+
+def ScanStateType : ObeliskType<"ScanState"> {
+  let mnemonic = "scan_state";
+  let summary = "state of an active fscanf or sscanf conversion";
 }
 
 def MailboxType : ObeliskType<"Mailbox"> {

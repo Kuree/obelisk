@@ -6,6 +6,7 @@
 include "obelisk/Dialect/Sim/ObeliskDialect.td"
 include "obelisk/Dialect/Sim/ObeliskEnums.td"
 include "obelisk/Dialect/Sim/ObeliskTypes.td"
+include "mlir/IR/RegionKindInterface.td"
 include "mlir/IR/SymbolInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 
@@ -107,10 +108,11 @@ def LogicCompareOp
   let summary = "logical, case, wildcard, or relational comparison";
   let arguments =
       (ins LogicCompareKind:$kind, LogicType:$lhs, LogicType:$rhs);
-  let results = (outs Logic1Type:$result);
+  let results = (outs AnyType:$result);
   let assemblyFormat = [{
     $kind $lhs `,` $rhs attr-dict `:` functional-type(operands, results)
   }];
+  let hasVerifier = 1;
 }
 
 def LogicReduceOp : ObeliskOp<"logic.reduce", [Pure]> {
@@ -142,6 +144,61 @@ def LogicExtractOp : ObeliskOp<"logic.extract", [Pure]> {
     qualified(type($result))
   }];
   let hasVerifier = 1;
+}
+
+def LogicDynExtractOp : ObeliskOp<"logic.dyn_extract", [Pure]> {
+  let summary = "dynamic packed part-select with SystemVerilog bounds behavior";
+  let arguments = (ins LogicType:$input, AnyType:$lowBit);
+  let results = (outs LogicType:$result);
+  let assemblyFormat = [{
+    $input `from` $lowBit attr-dict `:` functional-type(operands, results)
+  }];
+}
+
+def LogicShiftOp : ObeliskOp<"logic.shift", [Pure]> {
+  let summary = "four-state shift with independently typed shift amount";
+  let arguments = (ins
+    LogicBinaryKind:$kind,
+    LogicType:$input,
+    AnyType:$amount
+  );
+  let results = (outs LogicType:$result);
+  let assemblyFormat = [{
+    $kind $input `by` $amount attr-dict `:`
+    functional-type(operands, results)
+  }];
+  let hasVerifier = 1;
+}
+
+def LogicBoolCastOp : ObeliskOp<"logic.bool_cast", [Pure]> {
+  let summary = "SystemVerilog truth conversion preserving unknown";
+  let arguments = (ins LogicType:$input);
+  let results = (outs Logic1Type:$result);
+  let assemblyFormat = [{
+    $input attr-dict `:` qualified(type($input)) `->`
+    qualified(type($result))
+  }];
+}
+
+def LogicReplicateOp : ObeliskOp<"logic.replicate", [Pure]> {
+  let summary = "packed replication preserving X and Z";
+  let arguments = (ins LogicType:$input);
+  let results = (outs LogicType:$result);
+  let assemblyFormat = [{
+    $input attr-dict `:` qualified(type($input)) `->`
+    qualified(type($result))
+  }];
+  let hasVerifier = 1;
+}
+
+def LogicResizeOp : ObeliskOp<"logic.resize", [Pure]> {
+  let summary = "truncate, zero-extend, or sign-extend four-state logic";
+  let arguments = (ins LogicType:$input, BoolAttr:$isSigned);
+  let results = (outs LogicType:$result);
+  let assemblyFormat = [{
+    $input `signed` `=` $isSigned attr-dict `:` qualified(type($input)) `->`
+    qualified(type($result))
+  }];
 }
 
 def LogicInsertOp
@@ -199,6 +256,252 @@ def LogicToBitsOp : ObeliskOp<"logic.to_bits", [Pure]> {
   let results = (outs AnyInteger:$result);
   let assemblyFormat = [{
     $input attr-dict `:` qualified(type($input)) `->` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
+def RefExtractOp : ObeliskOp<"ref.extract", [Pure]> {
+  let summary = "reference to a constant subelement or part-select";
+  let arguments = (ins RefType:$input, I32Attr:$lowBit);
+  let results = (outs RefType:$result);
+  let assemblyFormat = [{
+    $input `from` $lowBit attr-dict `:` qualified(type($input)) `->`
+    qualified(type($result))
+  }];
+  let hasVerifier = 1;
+}
+
+def RefDynExtractOp : ObeliskOp<"ref.dyn_extract", [Pure]> {
+  let summary = "reference to a dynamically selected subelement";
+  let arguments = (ins RefType:$input, AnyType:$lowBit);
+  let results = (outs RefType:$result);
+  let assemblyFormat = [{
+    $input `from` $lowBit attr-dict `:`
+    functional-type(operands, results)
+  }];
+  let hasVerifier = 1;
+}
+
+def RefConcatOp : ObeliskOp<"ref.concat", [Pure]> {
+  let summary = "composite lvalue reference formed by concatenation";
+  let arguments = (ins Variadic<RefType>:$inputs);
+  let results = (outs RefType:$result);
+  let assemblyFormat = [{
+    $inputs attr-dict `:` functional-type($inputs, $result)
+  }];
+  let hasVerifier = 1;
+}
+
+def NetExtractOp : ObeliskOp<"net.extract", [Pure]> {
+  let summary = "net handle to a constant subelement or part-select";
+  let arguments = (ins NetType:$input, I32Attr:$lowBit);
+  let results = (outs NetType:$result);
+  let assemblyFormat = [{
+    $input `from` $lowBit attr-dict `:` qualified(type($input)) `->`
+    qualified(type($result))
+  }];
+  let hasVerifier = 1;
+}
+
+def NetDynExtractOp : ObeliskOp<"net.dyn_extract", [Pure]> {
+  let summary = "net handle to a dynamically selected subelement";
+  let arguments = (ins NetType:$input, AnyType:$lowBit);
+  let results = (outs NetType:$result);
+  let assemblyFormat = [{
+    $input `from` $lowBit attr-dict `:`
+    functional-type(operands, results)
+  }];
+  let hasVerifier = 1;
+}
+
+def NetConcatOp : ObeliskOp<"net.concat", [Pure]> {
+  let summary = "composite net lvalue formed by concatenation";
+  let arguments = (ins Variadic<NetType>:$inputs);
+  let results = (outs NetType:$result);
+  let assemblyFormat = [{
+    $inputs attr-dict `:` functional-type($inputs, $result)
+  }];
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// Exhaustive high-level semantic families
+//===----------------------------------------------------------------------===//
+
+// These operations are the lossless landing zone for Moore constructs which
+// have not yet reached a more specialized Obelisk/Core operation. `opcode` is
+// a generated enum covering the complete Moore operation set. Operands,
+// results, attributes, block arguments, and nested regions are independently
+// type converted. The split into value/effect/CFG-region/graph-region/
+// terminator forms preserves optimization and structural contracts.
+def SemanticValueOp : ObeliskOp<"semantic.value", [Pure]> {
+  let summary = "pure high-level SystemVerilog semantic operation";
+  let arguments = (ins
+    SemanticKind:$opcode,
+    OptionalAttr<DictionaryAttr>:$source_attrs,
+    Variadic<AnyType>:$inputs
+  );
+  let results = (outs Variadic<AnyType>:$outputs);
+  let assemblyFormat = [{
+    $opcode `(` $inputs `)` attr-dict `:`
+    functional-type($inputs, $outputs)
+  }];
+  let hasVerifier = 1;
+}
+
+def SemanticEffectOp : ObeliskOp<"semantic.effect"> {
+  let summary = "effectful high-level SystemVerilog semantic operation";
+  let arguments = (ins
+    SemanticKind:$opcode,
+    OptionalAttr<DictionaryAttr>:$source_attrs,
+    Variadic<AnyType>:$inputs
+  );
+  let results = (outs Variadic<AnyType>:$outputs);
+  let assemblyFormat = [{
+    $opcode `(` $inputs `)` attr-dict `:`
+    functional-type($inputs, $outputs)
+  }];
+  let hasVerifier = 1;
+}
+
+def SemanticRegionOp : ObeliskOp<"semantic.region", [NoTerminator]> {
+  let summary = "high-level SystemVerilog operation containing regions";
+  let arguments = (ins
+    SemanticKind:$opcode,
+    OptionalAttr<DictionaryAttr>:$source_attrs,
+    Variadic<AnyType>:$inputs
+  );
+  let results = (outs Variadic<AnyType>:$outputs);
+  let regions = (region VariadicRegion<AnyRegion>:$regions);
+  let assemblyFormat = [{
+    $opcode `(` $inputs `)` attr-dict `:`
+    functional-type($inputs, $outputs) $regions
+  }];
+  let hasVerifier = 1;
+}
+
+def SemanticIsolatedRegionOp
+    : ObeliskOp<"semantic.isolated_region",
+        [IsolatedFromAbove, NoTerminator, SingleBlock]> {
+  let summary =
+      "isolated high-level SystemVerilog operation containing a region";
+  let arguments = (ins
+    SemanticKind:$opcode,
+    OptionalAttr<DictionaryAttr>:$source_attrs,
+    Variadic<AnyType>:$inputs
+  );
+  let results = (outs Variadic<AnyType>:$outputs);
+  let regions = (region AnyRegion:$body);
+  let assemblyFormat = [{
+    $opcode `(` $inputs `)` attr-dict `:`
+    functional-type($inputs, $outputs) $body
+  }];
+  let hasVerifier = 1;
+}
+
+def SemanticSymbolOp : ObeliskOp<"semantic.symbol", [Symbol, NoTerminator]> {
+  let summary = "symbol-defining high-level SystemVerilog operation";
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    SemanticKind:$opcode,
+    OptionalAttr<DictionaryAttr>:$source_attrs,
+    Variadic<AnyType>:$inputs
+  );
+  let results = (outs Variadic<AnyType>:$outputs);
+  let assemblyFormat = [{
+    $sym_name $opcode `(` $inputs `)` attr-dict `:`
+    functional-type($inputs, $outputs)
+  }];
+  let hasVerifier = 1;
+}
+
+def SemanticIsolatedSymbolOp
+    : ObeliskOp<"semantic.isolated_symbol",
+        [IsolatedFromAbove, Symbol, NoTerminator]> {
+  let summary = "isolated symbol-defining SystemVerilog operation";
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    SemanticKind:$opcode,
+    OptionalAttr<DictionaryAttr>:$source_attrs,
+    Variadic<AnyType>:$inputs
+  );
+  let results = (outs Variadic<AnyType>:$outputs);
+  let regions = (region AnyRegion:$body);
+  let assemblyFormat = [{
+    $sym_name $opcode `(` $inputs `)` attr-dict `:`
+    functional-type($inputs, $outputs) $body
+  }];
+  let hasVerifier = 1;
+}
+
+def SemanticSymbolTableOp
+    : ObeliskOp<"semantic.symbol_table",
+        [IsolatedFromAbove, Symbol, SymbolTable, NoTerminator, SingleBlock]> {
+  let summary = "symbol-defining SystemVerilog scope";
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    SemanticKind:$opcode,
+    OptionalAttr<DictionaryAttr>:$source_attrs,
+    Variadic<AnyType>:$inputs
+  );
+  let results = (outs Variadic<AnyType>:$outputs);
+  let regions = (region AnyRegion:$body);
+  let assemblyFormat = [{
+    $sym_name $opcode `(` $inputs `)` attr-dict `:`
+    functional-type($inputs, $outputs) $body
+  }];
+  let hasVerifier = 1;
+}
+
+def SemanticGraphOp
+    : ObeliskOp<"semantic.graph",
+        [RegionKindInterface, HasOnlyGraphRegion, NoTerminator]> {
+  let summary = "high-level SystemVerilog operation containing graph regions";
+  let arguments = (ins
+    SemanticKind:$opcode,
+    OptionalAttr<DictionaryAttr>:$source_attrs,
+    Variadic<AnyType>:$inputs
+  );
+  let results = (outs Variadic<AnyType>:$outputs);
+  let regions = (region VariadicRegion<MinSizedRegion<1>>:$regions);
+  let assemblyFormat = [{
+    $opcode `(` $inputs `)` attr-dict `:`
+    functional-type($inputs, $outputs) $regions
+  }];
+  let hasVerifier = 1;
+}
+
+def SemanticGraphSymbolOp
+    : ObeliskOp<"semantic.graph_symbol",
+        [RegionKindInterface, HasOnlyGraphRegion, IsolatedFromAbove, Symbol,
+         NoTerminator, SingleBlock]> {
+  let summary =
+      "symbol-defining high-level SystemVerilog operation with graph regions";
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    SemanticKind:$opcode,
+    OptionalAttr<DictionaryAttr>:$source_attrs,
+    Variadic<AnyType>:$inputs
+  );
+  let results = (outs Variadic<AnyType>:$outputs);
+  let regions = (region AnyRegion:$body);
+  let assemblyFormat = [{
+    $sym_name $opcode `(` $inputs `)` attr-dict `:`
+    functional-type($inputs, $outputs) $body
+  }];
+  let hasVerifier = 1;
+}
+
+def SemanticTerminatorOp : ObeliskOp<"semantic.terminator", [Terminator]> {
+  let summary = "terminating high-level SystemVerilog semantic operation";
+  let arguments = (ins
+    SemanticKind:$opcode,
+    OptionalAttr<DictionaryAttr>:$source_attrs,
+    Variadic<AnyType>:$inputs
+  );
+  let assemblyFormat = [{
+    $opcode `(` $inputs `)` attr-dict
+    (`:` type($inputs)^)?
   }];
   let hasVerifier = 1;
 }

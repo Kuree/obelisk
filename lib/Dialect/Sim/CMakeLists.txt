@@ -8,6 +8,7 @@ add_mlir_library(ObeliskIR
   ObeliskTypesIncGen
 
   LINK_LIBS PUBLIC
+  CIRCTHW
   MLIRBytecodeOpInterface
   MLIRIR
   MLIRSideEffectInterfaces

@@ -12,12 +12,20 @@
 #include "mlir/IR/DialectImplementation.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/OpImplementation.h"
+#include "mlir/IR/RegionKindInterface.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
 #include "llvm/ADT/TypeSwitch.h"
 
 #include "obelisk/Dialect/Sim/ObeliskEnums.h.inc"
+
+namespace obelisk::ir {
+
+/// Return the structural operation family encoded in a semantic opcode.
+SemanticFamily getSemanticFamily(SemanticKind kind);
+
+} // namespace obelisk::ir
 
 #define GET_OP_CLASSES
 #include "obelisk/Dialect/Sim/ObeliskOps.h.inc"

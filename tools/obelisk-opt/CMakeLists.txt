@@ -10,6 +10,7 @@ target_link_libraries(obelisk-opt
   PRIVATE
     ${dialect_libs}
     ObeliskIR
+    ObeliskMooreToObelisk
     MLIROptLib
     MLIRRegisterAllDialects
 )

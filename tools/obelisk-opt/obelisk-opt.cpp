@@ -2,6 +2,7 @@
 
 #include "circt/InitAllDialects.h"
 
+#include "obelisk/Conversion/MooreToObelisk.h"
 #include "obelisk/Dialect/Sim/ObeliskDialect.h"
 
 #include "mlir/IR/DialectRegistry.h"
@@ -9,6 +10,8 @@
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
 
 int main(int argc, char **argv) {
+  obelisk::registerObeliskConversionPasses();
+
   mlir::DialectRegistry registry;
   mlir::registerAllDialects(registry);
   circt::registerAllDialects(registry);
