@@ -37,6 +37,13 @@ find_package(LLVM  REQUIRED CONFIG)
 message(STATUS "Using CIRCT ${CIRCT_PACKAGE_VERSION} / LLVM ${LLVM_PACKAGE_VERSION}")
 message(STATUS "  CIRCT_DIR = ${CIRCT_DIR}")
 
+# The release SDK exports TableGen CMake support but does not initialize the
+# standalone LLVM generator path for external projects.
+if(NOT LLVM_TABLEGEN_EXE)
+  set(LLVM_TABLEGEN_EXE "${OBELISK_CIRCT_DIR}/bin/llvm-tblgen"
+      CACHE FILEPATH "Matching LLVM TableGen executable")
+endif()
+
 list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}" "${LLVM_CMAKE_DIR}" "${CIRCT_CMAKE_DIR}")
 
 include(TableGen)

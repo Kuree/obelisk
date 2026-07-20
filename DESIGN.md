@@ -4,12 +4,13 @@
 > and real UVM, built on the CIRCT/Moore frontend.
 
 Status: **frontend and semantic-IR foundation working.**
-`obelisk-translate` compiles SystemVerilog to Moore IR in-process. The
-`obelisk` dialect and `obelisk-opt` now provide the typed semantic boundary
-between Moore and LLVM, including exact 4-state values, storage/nets,
-processes/regions, objects/containers, synchronization, randomization,
-assertions, VPI, and system effects. The initial exhaustive Moore → Obelisk
-conversion is working in `obelisk-opt`: specialized patterns lower exact
+The `obelisk` compiler driver owns SystemVerilog compilation units, frontend
+options, and output actions. `obelisk-translate` remains the representation
+translator and `obelisk-opt` the pass driver. The `obelisk` dialect provides
+the typed semantic boundary between Moore and LLVM, including exact 4-state
+values, storage/nets, processes/regions, objects/containers, synchronization,
+randomization, assertions, VPI, and system effects. The initial exhaustive
+Moore → Obelisk conversion is working: specialized patterns lower exact
 four-state and common core operations, while a typed semantic inventory
 preserves every remaining operation for later refinement. The next work is
 specializing those semantic operations, then Obelisk → LLVM plus the generated
@@ -617,7 +618,7 @@ boundaries or remains serial.
 
 ```
 SystemVerilog + UVM
-      │  slang  (in CIRCT's libCIRCTImportVerilog, linked into obelisk-translate)
+      │  obelisk driver + slang (CIRCT libCIRCTImportVerilog)
       ▼
   moore dialect IR                         ── DONE: obelisk-translate emits this
       │
@@ -657,20 +658,27 @@ SystemVerilog + UVM
 - **`obelisk-translate`**: SystemVerilog → Moore IR, in-process (links
   `CIRCTImportVerilog` + `libsvlang`), with source-located diagnostics and
   post-import `verify()`. Reproduces `circt-verilog --ir-moore` output.
+- **`obelisk` driver**: TableGen/LLVM `OptTable` command line, multiple primary
+  sources, command files, include/system paths, defines/undefines, module
+  libraries, top/parameter selection, explicit IEEE 1800-2017/2023 selection,
+  and Moore or Obelisk MLIR emission.
 - **`obelisk` semantic dialect**: TableGen types, enums, 91 operations,
   declarative assembly formats, ODS structural constraints, and focused custom
   width/slice verifiers. It explicitly represents all 17 IEEE event regions.
-- **`obelisk-opt`**: parses, verifies, round-trips, and hosts future
-  Moore → Obelisk and Obelisk → LLVM passes alongside CIRCT/MLIR dialects.
+- **Moore → Obelisk**: exhaustive typed conversion for all 238 operations in
+  the pinned SDK, with specialized exact-value/storage patterns and verified
+  semantic landing operations for the remaining constructs.
+- **`obelisk-opt`**: parses, verifies, round-trips, and hosts the
+  Moore → Obelisk pass alongside CIRCT/MLIR dialects.
 - Project-local LLVM `lit` suite: canonical assembly round-trip, negative
-  verifier diagnostics, and SystemVerilog → Moore importer smoke test.
+  verifier diagnostics, driver coverage, and SystemVerilog → Moore/Obelisk
+  import tests.
 
 This foundation has been demonstrated on small RTL. Import of the pinned stock
 UVM package is **not yet validated** and is the M0.5 gate; the frontend is not
 called UVM-complete until that passes.
 
 **Not started (the executable simulator)**
-- Moore → Obelisk semantic lowering.
 - Obelisk process lowering (`obelisk.process` → `llvm.coro.*` or a proven
   static schedule).
 - Event scheduler (stratified queue + delta cycles), authored per §5.4.
@@ -728,16 +736,19 @@ a passing conformance/UVM-semantic test.
 obelisk/
 ├── CMakeLists.txt                 # find CIRCT SDK; C++17; static
 ├── DESIGN.md                      # this file
+├── include/obelisk/Frontend/      # shared SystemVerilog import API
 ├── include/obelisk/Dialect/Sim/   # semantic types/ops/enums + asm contract
+├── lib/Frontend/                  # shared verified frontend implementation
 ├── lib/Dialect/Sim/               # dialect registration + custom verifiers
+├── lib/Conversion/                # Moore -> Obelisk; later Obelisk -> LLVM
 ├── tools/
+│   ├── driver/                    # user-facing `obelisk` compiler driver
 │   ├── obelisk-translate/         # SV -> Moore IR
 │   └── obelisk-opt/               # semantic IR parser/pass host
 ├── test/                          # LLVM lit semantic/import tests
 ├── build/                         # cmake/ninja out-of-source (gitignored)
 │
 │   # planned:
-├── lib/Conversion/                # Moore -> Obelisk -> LLVM passes
 ├── runtime/                       # support sources + internal ABI description
 │   └── ...                        # built once per target as libobelisk_rt.a
 ├── sdk/include/                   # installed svdpi.h/vpi_user.h extension API
@@ -764,9 +775,13 @@ committed). Override via `-DOBELISK_CIRCT_DIR=...`.
 # Prereqs: the CIRCT static SDK extracted at /home/keyi/workspace/circt-1.153.1
 cd /home/keyi/workspace/obelisk
 cmake -G Ninja -S . -B build
-ninja -C build obelisk-translate obelisk-opt
+ninja -C build obelisk obelisk-translate obelisk-opt
 
-# Try it
+# User-facing compiler driver
+./build/tools/driver/obelisk -emit-obelisk \
+  -I path/to/includes -DNAME=value path/to/design.sv
+
+# Representation/pass tools for compiler development
 ./build/tools/obelisk-translate/obelisk-translate path/to/design.sv
 # -> Moore dialect IR on stdout
 

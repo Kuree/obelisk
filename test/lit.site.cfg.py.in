@@ -1,6 +1,7 @@
 @LIT_SITE_CFG_IN_HEADER@
 
 config.obelisk_obj_root = "@PROJECT_BINARY_DIR@"
+config.obelisk_driver_dir = "@PROJECT_BINARY_DIR@/tools/driver"
 config.obelisk_opt_dir = "@PROJECT_BINARY_DIR@/tools/obelisk-opt"
 config.obelisk_translate_dir = "@PROJECT_BINARY_DIR@/tools/obelisk-translate"
 config.circt_tools_dir = "@OBELISK_CIRCT_DIR@/bin"

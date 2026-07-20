@@ -24,6 +24,7 @@ configure_lit_site_cfg(
 add_lit_testsuite(check-obelisk "Running the Obelisk regression tests"
   ${CMAKE_CURRENT_BINARY_DIR}
   DEPENDS
+  obelisk
   obelisk-opt
   obelisk-translate
 )

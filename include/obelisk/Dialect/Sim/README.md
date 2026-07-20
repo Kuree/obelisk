@@ -5,7 +5,13 @@ Moore resolves SystemVerilog source constructs; this dialect preserves their
 runtime meaning; later passes choose layouts, runtime calls, coroutines, and
 machine code.
 
-The current conversion is an optimizer pass:
+The user-facing compiler driver imports and converts a complete compilation:
+
+```sh
+obelisk -emit-obelisk -I path/to/includes -DNAME=value input.sv
+```
+
+For compiler development, the same stages remain independently composable:
 
 ```sh
 obelisk-translate input.sv |

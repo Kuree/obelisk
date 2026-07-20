@@ -12,26 +12,22 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "circt/Conversion/ImportVerilog.h"
 #include "circt/InitAllDialects.h"
 
 #include "obelisk/Dialect/Sim/ObeliskDialect.h"
+#include "obelisk/Frontend/Frontend.h"
 
-#include "mlir/IR/AsmState.h"
-#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
-#include "mlir/IR/OwningOpRef.h"
-#include "mlir/IR/Verifier.h"
 #include "mlir/Support/Timing.h"
 
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/InitLLVM.h"
-#include "llvm/Support/MemoryBuffer.h"
-#include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/ToolOutputFile.h"
 #include "llvm/Support/WithColor.h"
 #include "llvm/Support/raw_ostream.h"
+
+#include <vector>
 
 using namespace llvm;
 using namespace mlir;
@@ -81,19 +77,6 @@ int main(int argc, char **argv) {
   MLIRContext context(registry);
   context.loadAllAvailableDialects();
 
-  // Slurp the input into an llvm::SourceMgr, wired to an MLIR diagnostic
-  // handler so slang/import errors surface with source locations.
-  auto fileOrErr = MemoryBuffer::getFileOrSTDIN(inputFilename);
-  if (std::error_code ec = fileOrErr.getError()) {
-    WithColor::error(errs(), "obelisk-translate")
-        << "could not open '" << inputFilename << "': " << ec.message() << "\n";
-    return 1;
-  }
-
-  auto sourceMgr = std::make_shared<SourceMgr>();
-  sourceMgr->AddNewSourceBuffer(std::move(*fileOrErr), SMLoc());
-  SourceMgrDiagnosticHandler diagHandler(*sourceMgr, &context);
-
   // Open the output before doing work so we fail fast on a bad path.
   std::error_code ec;
   ToolOutputFile output(outputFilename, ec, sys::fs::OF_None);
@@ -108,26 +91,20 @@ int main(int argc, char **argv) {
   DefaultTimingManager tm;
   TimingScope ts = tm.getRootScope();
 
-  OwningOpRef<ModuleOp> module(ModuleOp::create(UnknownLoc::get(&context)));
-
   circt::ImportVerilogOptions options;
   options.mode = circt::ImportVerilogOptions::Mode::Full;
 
-  if (failed(circt::importVerilog(*sourceMgr, &context, ts, module.get(),
-                                  &options)))
+  std::vector<std::string> inputs{inputFilename};
+  auto module = obelisk::frontend::importSystemVerilog(
+      inputs, context, ts, options, verifyDiagnostics);
+  if (failed(module))
     return 1;
-
-  if (verifyDiagnostics && failed(verify(*module))) {
-    WithColor::error(errs(), "obelisk-translate")
-        << "imported IR failed verification\n";
-    return 1;
-  }
 
   // Emit. Only Moore IR for now; this switch is where the coroutine-lowered
   // stages will plug in.
   switch (emitKind) {
   case EmitKind::Moore:
-    module->print(output.os());
+    (*module)->print(output.os());
     output.os() << "\n";
     break;
   }

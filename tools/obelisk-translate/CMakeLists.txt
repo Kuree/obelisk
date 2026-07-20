@@ -17,7 +17,7 @@ target_link_libraries(obelisk-translate
   PRIVATE
     ${dialect_libs}
     ${conversion_libs}
-    CIRCTImportVerilog
+    ObeliskFrontend
     ObeliskIR
     MLIRIR
     MLIRParser
