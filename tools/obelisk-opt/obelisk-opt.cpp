@@ -1,21 +1,28 @@
 //===- obelisk-opt.cpp - Obelisk IR parser and optimizer driver ----------===//
 
+#include "obelisk/Conversion/ObeliskToSimulation.h"
 #include "obelisk/Conversion/SlangToObelisk.h"
-#include "obelisk/Dialect/Sim/ObeliskDialect.h"
+#include "obelisk/Dialect/Obelisk/ObeliskDialect.h"
+#include "obelisk/Dialect/Simulation/SimulationDialect.h"
 #include "obelisk/Dialect/Slang/SlangDialect.h"
 
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/InitAllDialects.h"
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
+#include "mlir/Transforms/Passes.h"
 
 int main(int argc, char **argv) {
+  // The core transforms are part of the lowering pipeline, so tests need to
+  // be able to run them directly on obelisk_sim IR.
+  mlir::registerTransformsPasses();
   obelisk::registerObeliskConversionPasses();
+  obelisk::registerObeliskToSimulationPipeline();
 
   mlir::DialectRegistry registry;
   mlir::registerAllDialects(registry);
-  registry.insert<obelisk::slangir::SlangDialect,
-                  obelisk::ir::ObeliskDialect>();
+  registry.insert<obelisk::slangir::SlangDialect, obelisk::ir::ObeliskDialect,
+                  obelisk::sim::ObeliskSimulationDialect>();
 
-  return mlir::asMainReturnCode(mlir::MlirOptMain(
-      argc, argv, "Obelisk simulation IR optimizer\n", registry));
+  return mlir::asMainReturnCode(
+      mlir::MlirOptMain(argc, argv, "Obelisk IR optimizer\n", registry));
 }

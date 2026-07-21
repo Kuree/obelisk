@@ -38,6 +38,7 @@ endmodule
 
 // HELP: OVERVIEW: Obelisk ahead-of-time SystemVerilog compiler
 // HELP: -emit-obelisk
+// HELP: -emit-sim
 // HELP: -emit-slang
 // HELP: -I <dir>
 // HELP: --std=<1800-2017|1800-2023>

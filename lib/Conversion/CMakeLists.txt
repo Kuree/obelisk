@@ -1,1 +1,2 @@
 add_subdirectory(SlangToObelisk)
+add_subdirectory(ObeliskToSimulation)

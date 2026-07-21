@@ -1,6 +1,6 @@
-//===- ObeliskDialect.cpp - Obelisk simulation dialect -------------------===//
+//===- ObeliskDialect.cpp - Obelisk semantic dialect ---------------------===//
 
-#include "obelisk/Dialect/Sim/ObeliskOps.h"
+#include "obelisk/Dialect/Obelisk/ObeliskOps.h"
 
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/TypeUtilities.h"
@@ -12,17 +12,17 @@
 
 using namespace mlir;
 
-#include "obelisk/Dialect/Sim/ObeliskDialect.cpp.inc"
-#include "obelisk/Dialect/Sim/ObeliskEnums.cpp.inc"
+#include "obelisk/Dialect/Obelisk/ObeliskDialect.cpp.inc"
+#include "obelisk/Dialect/Obelisk/ObeliskEnums.cpp.inc"
 
 #define GET_TYPEDEF_CLASSES
-#include "obelisk/Dialect/Sim/ObeliskTypes.cpp.inc"
+#include "obelisk/Dialect/Obelisk/ObeliskTypes.cpp.inc"
 
 #define GET_OP_CLASSES
-#include "obelisk/Dialect/Sim/ObeliskOps.cpp.inc"
+#include "obelisk/Dialect/Obelisk/ObeliskOps.cpp.inc"
 
 #define GET_OP_CLASSES
-#include "obelisk/Dialect/Sim/ObeliskASTOps.cpp.inc"
+#include "obelisk/Dialect/Obelisk/ObeliskASTOps.cpp.inc"
 
 namespace obelisk::ir {
 
@@ -55,17 +55,17 @@ verifySourceRange(llvm::function_ref<InFlightDiagnostic()> emitError,
 void ObeliskDialect::initialize() {
   addTypes<
 #define GET_TYPEDEF_LIST
-#include "obelisk/Dialect/Sim/ObeliskTypes.cpp.inc"
+#include "obelisk/Dialect/Obelisk/ObeliskTypes.cpp.inc"
       >();
 
   addOperations<
 #define GET_OP_LIST
-#include "obelisk/Dialect/Sim/ObeliskOps.cpp.inc"
+#include "obelisk/Dialect/Obelisk/ObeliskOps.cpp.inc"
       >();
 
   addOperations<
 #define GET_OP_LIST
-#include "obelisk/Dialect/Sim/ObeliskASTOps.cpp.inc"
+#include "obelisk/Dialect/Obelisk/ObeliskASTOps.cpp.inc"
       >();
 }
 

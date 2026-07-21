@@ -16,6 +16,16 @@ def SlangAssignmentKind : I32EnumAttr<"AssignmentKind",
   let cppNamespace = "::obelisk::slangir";
 }
 
+def SlangRange_Simple      : I32EnumAttrCase<"Simple",      0, "simple">;
+def SlangRange_IndexedUp   : I32EnumAttrCase<"IndexedUp",   1, "indexed_up">;
+def SlangRange_IndexedDown : I32EnumAttrCase<"IndexedDown", 2, "indexed_down">;
+def SlangRangeSelectionKind : I32EnumAttr<"RangeSelectionKind",
+    "SystemVerilog packed range selection kind", [
+  SlangRange_Simple, SlangRange_IndexedUp, SlangRange_IndexedDown
+]> {
+  let cppNamespace = "::obelisk::slangir";
+}
+
 def SlangDirection_In    : I32EnumAttrCase<"In",    0, "in">;
 def SlangDirection_Out   : I32EnumAttrCase<"Out",   1, "out">;
 def SlangDirection_InOut : I32EnumAttrCase<"InOut", 2, "inout">;

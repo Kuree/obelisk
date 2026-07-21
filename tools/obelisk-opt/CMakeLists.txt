@@ -7,9 +7,12 @@ llvm_update_compile_flags(obelisk-opt)
 target_link_libraries(obelisk-opt
   PRIVATE
     ObeliskIR
+    ObeliskSimulationIR
     ObeliskSlangIR
     ObeliskSlangToObelisk
+    ObeliskToSimulation
     MLIROptLib
+    MLIRTransforms
     MLIRRegisterAllDialects
 )
 

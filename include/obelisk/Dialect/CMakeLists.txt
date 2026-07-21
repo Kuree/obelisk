@@ -1,2 +1,3 @@
 add_subdirectory(Slang)
-add_subdirectory(Sim)
+add_subdirectory(Obelisk)
+add_subdirectory(Simulation)

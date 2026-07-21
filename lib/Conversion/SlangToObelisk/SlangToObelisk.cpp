@@ -2,7 +2,7 @@
 
 #include "obelisk/Conversion/SlangToObelisk.h"
 
-#include "obelisk/Dialect/Sim/ObeliskOps.h"
+#include "obelisk/Dialect/Obelisk/ObeliskOps.h"
 #include "obelisk/Dialect/Slang/SlangOps.h"
 
 #include "mlir/IR/AttrTypeSubElements.h"
@@ -36,6 +36,12 @@ static_assert(haveSameEncoding(slangir::AssignmentKind::Blocking,
                                ir::SVAssignmentKind::Blocking) &&
               haveSameEncoding(slangir::AssignmentKind::Nonblocking,
                                ir::SVAssignmentKind::Nonblocking));
+static_assert(haveSameEncoding(slangir::RangeSelectionKind::Simple,
+                               ir::SVRangeSelectionKind::Simple) &&
+              haveSameEncoding(slangir::RangeSelectionKind::IndexedUp,
+                               ir::SVRangeSelectionKind::IndexedUp) &&
+              haveSameEncoding(slangir::RangeSelectionKind::IndexedDown,
+                               ir::SVRangeSelectionKind::IndexedDown));
 static_assert(haveSameEncoding(slangir::ArgumentDirection::In,
                                ir::SVArgumentDirection::In) &&
               haveSameEncoding(slangir::ArgumentDirection::Out,

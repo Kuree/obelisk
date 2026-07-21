@@ -33,8 +33,10 @@ target_link_libraries(obelisk
   PRIVATE
   ObeliskFrontend
   ObeliskIR
+  ObeliskSimulationIR
   ObeliskSlangIR
   ObeliskSlangToObelisk
+  ObeliskToSimulation
   MLIRIR
   MLIRPass
   MLIRSupport

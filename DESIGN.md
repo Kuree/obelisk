@@ -142,6 +142,362 @@ This high-level completeness is separate from runtime lowering. Conversion to
 Obelisk means the SystemVerilog meaning is represented in the target dialect;
 it does not claim that every construct has already been lowered to LLVM.
 
+## Executable simulation and parallelization
+
+> **Status.** Implemented today: the `obelisk_sim` dialect itself, the flattened
+> descriptor inventory, isolated code units with explicit captures, and the
+> serial/parallel/serial lowering from elaborated semantic IR. Everything from
+> "Interprocedural optimization and effect summaries" onward — summaries,
+> fragmentation, partitioning, the bytecode tier, VPI capability levels, and
+> solver-guided placement — is the intended direction, not present behaviour.
+
+The `obelisk_sim` dialect is the target-independent executable boundary between
+semantic SystemVerilog and the runtime. A design is flattened into deterministic
+numeric descriptors for hierarchy, storage, nets, and drivers. Executable code
+is isolated into function-like SSA CFGs with explicit captures, direct calls and
+spawns, memory effects, and suspension continuations. Source hierarchy remains
+available for diagnostics and as a placement hint, but it does not determine
+the unit of optimization or parallel execution.
+
+Parallelization treats the design as a concurrent program rather than as a
+netlist. Process fragments are the units of work, mutable design objects are
+owned resources, and the task and communication graph is derived from compiler
+analyses over the executable IR. Module proximity alone does not imply runtime
+communication, and processes in separate modules can have strong affinity
+through shared state.
+
+### Minimize materialized state first
+
+The primary optimization objective is to eliminate memory storage and traffic,
+especially mutable state that survives suspension or is shared between logical
+processes. Placement only improves the state that remains. Every value should
+be classified as one of:
+
+1. an ephemeral process-local value retained in SSA;
+2. a process-local value that is live across suspension and therefore occupies
+   a continuation-frame slot;
+3. design state that is local to one runtime partition; or
+4. genuinely shared or externally observable state requiring an owned runtime
+   resource.
+
+The compiler moves values toward the first category with capture pruning,
+escape analysis, memory promotion, scalar replacement, interprocedural constant
+propagation, inlining, specialization, and continuation-frame optimization.
+Cheap values may be recomputed after resumption instead of being stored.
+Continuation slots with disjoint live ranges may share storage, and hot frame
+fields should be separated from cold diagnostic or exceptional state. Proven
+two-state values use ordinary integers instead of materializing the unknown
+plane of a four-state value.
+
+SystemVerilog observability constrains storage elimination. An update may be
+visible through change or edge sensitivity, net resolution, force and release,
+VPI or DPI, tracing, assertions, coverage, nonblocking-assignment ordering, or
+shared object and synchronization operations. Dead-store and forwarding
+analyses must therefore use descriptor-specific observability and mod/ref
+information rather than ordinary load-use analysis alone.
+
+The optimization priorities are, in order:
+
+1. minimize shared mutable bytes;
+2. minimize dynamic loads, stores, and continuation-frame traffic;
+3. minimize cross-partition accesses to the remaining state;
+4. balance runnable work; and
+5. limit code growth and instruction-cache pressure.
+
+### Logical processes and executable fragments
+
+SystemVerilog requires a single logical identity and sequential program order
+for a process, but not one indivisible host-thread invocation. IEEE 1800 permits
+a partially evaluated procedural event to be suspended and returned to the same
+event region, even without an explicit source time control. Obelisk may
+therefore outline a large process CFG into smaller executable fragments and may
+resume successive fragments on different workers.
+
+Only one fragment of a logical process may run at a time. Fragment execution
+must preserve program order, automatic variables, call state, hierarchical RNG
+state, process handles, kill and join behavior, and DPI context. Implicit yields
+remain in the same time slot and event region. Explicit delays, event waits,
+joins, and other blocking constructs retain their mandated scheduling behavior.
+Effects from parallel host workers must be linearizable to an event ordering
+allowed by SystemVerilog, including the required ordering of NBA updates from a
+single process.
+
+`obelisk_sim.func` remains the logical code-unit container. Runtime lowering may
+outline its entry and continuation regions into fragments that receive a
+process-frame handle, captured resource handles, and live SSA values. A
+fragment completes with an action such as continue, suspend for a delay,
+suspend on an event or change, or terminate. Existing suspension successors and
+continuation operands provide the basis for this representation. A future
+same-region `obelisk_sim.yield` can make optional preemption boundaries
+explicit.
+
+Fragmentation creates scheduling flexibility but does not make two fragments
+of the same process concurrent. A single dominant sequential process still
+limits available parallelism. The compiler should estimate both total work and
+the longest serialized span and diagnose when the requested worker count cannot
+be kept useful without additional independent processes or proven-independent
+pure computation.
+
+### Interprocedural optimization and effect summaries
+
+The communication graph is an analysis result, not a primary IR. Entry capture
+metadata seeds handle provenance with a descriptor kind and ID. Provenance is
+propagated through reference extraction, block arguments, CFG edges, calls, and
+spawns. Local allocations remain process-local unless they escape. Driver
+effects are folded into the net descriptor that the driver resolves.
+
+Each function and fragment receives a context-sensitive summary such as:
+
+```text
+reads storage #4
+writes storage #9
+drives net #12
+watches net #18
+enqueues NBA to storage #21
+```
+
+Resource-class memory effects are correctness categories and must not become
+universal graph edges. Treating the scheduler, all storage, or all nets as one
+shared resource would falsely connect almost every process. Direct zero-time
+functions execute in their caller and contribute a parametric summary with
+formal handles substituted by the caller's actual descriptors.
+
+Whole-program optimization precedes placement. It includes class-hierarchy
+analysis and devirtualization, IPSCCP, escape analysis, aggregate and object
+scalar replacement, unused-capture removal, hot-path inlining, cold outlining,
+descriptor- and caller-specific cloning, and coroutine-frame simplification.
+Inlining does not by itself remove cross-thread synchronization because a
+zero-time call already executes on its caller's worker. It is profitable when
+it exposes descriptor constants, refines aliases, removes state, or enables a
+local-resource fast path.
+
+### Derived partitioning problem
+
+The derived graph is a weighted actor/resource hypergraph:
+
+- process fragments are actor vertices;
+- storage and resolved nets are owned resource vertices;
+- reads, writes, drives, NBA enqueues, and subscriptions are weighted
+  actor-resource edges; and
+- continuation migration, spawn, wakeup, await, and join relationships are
+  weighted actor-actor edges.
+
+Static operation costs provide an initial model. Profile-guided optimization
+should replace them with fragment activation time, resource-access counts, net
+resolutions, NBA traffic, wakeups, and continuation migrations. Initialization,
+steady-state event regions, and finalization are separate load scenarios so
+that one-time work cannot hide an idle steady-state worker.
+
+Placement assigns fragments and resource owners to abstract runtime partitions.
+The runtime separately maps those partitions to worker threads and CPU cores.
+A fragment's placement is a preferred affinity, while a resource's owner is the
+partition that serializes its mutation, resolution, and wakeup fanout. Local
+accesses lower to the cheapest valid path; remote accesses use an owner queue or
+another synchronized transport. Controlled work stealing may override fragment
+affinity when measured idle time justifies the additional remote traffic.
+
+### Dual AOT and bytecode execution
+
+Native compilation is normally fastest for hot logic and stable process paths,
+but it is not automatically the best representation for every fragment. Large,
+cold, or highly dynamic UVM paths can cost more in compilation time, native code
+size, and instruction-cache pressure than they recover in execution time. Their
+execution may already be dominated by dynamic dispatch, containers, constraint
+solving, synchronization, DPI, or VPI rather than by instruction dispatch.
+
+Obelisk therefore uses one executable semantic boundary with two code forms
+rather than dividing the language into compiled and interpreted subsets. A
+process may move between them at fragment boundaries while retaining the same
+logical process identity, frame, scheduler state, RNG stream, and resource
+handles:
+
+1. native AOT fragments implement hot, stable control and data paths;
+2. compact bytecode fragments implement cold or code-size-expensive dynamic
+   behavior.
+
+Both forms invoke the same runtime intrinsics for containers, synchronization,
+constraint solving, DPI, VPI, and other operations whose complexity belongs in
+the runtime rather than duplicated generated code.
+
+Complex dynamic behavior does not imply interpretation by default. Dynamic
+arrays, queues, associative arrays, mailboxes, semaphores, and randomization can
+remain native fragments that invoke common runtime primitives. Virtual dispatch
+first uses class-hierarchy analysis, devirtualization, specialization, and
+polymorphic inline caches; the interpreter is the fallback when residual
+dynamic behavior is cold, megamorphic, or would cause excessive cloning.
+
+Code-form selection is profile- and workload-sensitive. A short interactive run
+may favor bytecode because time to first event includes compilation. A long
+regression or repeatedly executed RTL kernel favors AOT code. Profile feedback
+promotes hot interpreted fragments in a later AOT build. Obelisk deliberately
+does not include a JIT tier: the runtime contains no native-code compiler, code
+cache, deoptimization metadata, executable-memory manager, or assumption
+invalidation protocol.
+
+The interpreter and native lowering share resource ownership, event queues, and
+runtime intrinsics. This avoids a second scheduling implementation and makes
+mixed-tier execution observationally equivalent. The bytecode interpreter also
+provides a useful differential reference for native lowering, but it is not a
+separate or less complete semantic path.
+
+Each runtime fragment descriptor selects either a native entry pointer or an
+immutable bytecode range. Both consume the same process frame and return the
+same continue, suspend, or terminate action. The scheduler dispatches that
+descriptor without knowing the fragment's code form. Keeping tier transitions
+at fragment boundaries avoids native stack reconstruction and makes process
+kill, migration, tracing, and checkpointing uniform.
+
+Execution tier may eventually be another solver decision:
+
+```text
+native[fragment]  choose native code or bytecode
+```
+
+Its cost trades measured interpreter overhead against compilation latency,
+duplicated code size, instruction-cache pressure, and specialization benefits.
+Code-form selection should initially use a deterministic profile-guided
+heuristic; it belongs in the joint solver only after its measured cost model is
+reliable. Offline profiles and the next AOT build provide promotion without
+changing the runtime architecture.
+
+### VPI observability and storage optimization
+
+Bytecode contains the dynamic simulator-side implementation of VPI traversal,
+callback glue, system tasks, and force or release orchestration, but it does not
+remove VPI's semantic effect on native code. Unrestricted writable VPI is an
+optimization fence for every VPI-visible object because a plugin may discover
+that object by hierarchy, read or write its current value, write X or Z, force
+or release it, or register a value-change callback.
+
+Full VPI therefore prevents elimination of a visible object's logical identity,
+coalescing of observable updates, assumptions that external readers, writers,
+or force state do not exist, and two-state narrowing when an external write may
+introduce unknown values. Native and bytecode execution must route observable
+updates through the same owner, scheduling, and callback semantics.
+
+Logical identity does not always require permanently materialized physical
+storage. A descriptor may remain discoverable while its value is held in SSA
+between scheduler and VPI observation points. The compiler may still promote
+non-visible locals and temporaries, eliminate redundant accesses within a
+fragment, minimize and color continuation-frame slots, pack physical state,
+partition its ownership, and use a direct fast path when no dynamic callback or
+force mode is active. High-volume facilities such as waveform collection use
+batched native runtime intrinsics configured through VPI rather than one
+bytecode dispatch per transition.
+
+Obelisk distinguishes compilation capabilities so users pay only for VPI
+semantics they require:
+
+```text
+VPI off
+  maximize state elimination, two-state proofs, and specialization
+
+VPI read
+  retain descriptors and coherent observation points, but permit no external
+  mutation, force or release, or value-change callback registration
+
+VPI full
+  preserve all standard-visible declared objects and their update semantics;
+  assume external mutation, callbacks, and force or release are possible
+```
+
+An optional plugin capability manifest may restrict the visible hierarchy and
+requested operations further, for example:
+
+```text
+reads:     top.cpu.*
+callbacks: top.cpu.clock, top.cpu.reset
+writes:    none
+force:     none
+```
+
+Without such a manifest, a full-VPI build conservatively retains every declared
+object that the standard permits a plugin to discover. VPI handles contain a
+stable descriptor kind, ID, and generation rather than a native storage
+address, so physical layout and partition ownership remain independent of the
+external ABI.
+
+Descriptor-specific analysis tracks an observability lattice:
+
+```text
+invisible             eliminate or promote freely
+read at safe points   keep in SSA between required materializations
+change observed       preserve every required update and notification
+externally writable   retain a canonical owner-visible value
+forceable             retain the full override and resolution path
+```
+
+Dynamic changes to callback, trace, or force state take effect at scheduler safe
+points. A native fragment may test a compact descriptor slow-path flag and use
+an inline local access when no external behavior is active; otherwise it calls
+the common observable-access intrinsic. This preserves a small fast path
+without claiming that enabling full VPI is free.
+
+### Solver-guided IPO and placement
+
+An Obelisk-owned solver interface may use Z3 directly to select among legal
+compiler-generated choices. Z3 types do not cross that interface, and the
+executable IR does not depend on MLIR's SMT dialect. A deterministic heuristic
+provides an initial solution and a fallback when the solver is disabled or
+times out.
+
+The finite optimization model may contain:
+
+```text
+worker[fragment]       home partition of a fragment
+owner[resource]        owner partition of mutable state
+inline[callsite]       whether to inline a legal callsite
+clone[function, part]  whether to create a specialized partition-local clone
+cut[boundary]          whether to retain an optional fragment boundary
+merge[boundary]        whether to merge adjacent same-process fragments
+```
+
+Hard constraints preserve legal transformations, process ordering, mandatory
+suspension boundaries, resource ownership, worker-count limits, per-scenario
+load bounds, and code-size budgets. Different placements for successive
+fragments require a retained boundary. Driver state is owned with its resolved
+net. Atomic, external, or otherwise unsupported operations may be pinned until
+a distributed implementation is available.
+
+The cost model includes remote resource traffic, resource fanout across
+partitions, continuation migration, scheduler dispatch, call overhead, code
+duplication, instruction-cache pressure, and load imbalance. The solver first
+finds the best achievable maximum worker load. It then permits a small bounded
+load slack and minimizes synchronization cost within that balanced solution
+space. A minimum useful load or actor count prevents nominal workers that have
+no meaningful work; if the constraints are infeasible, the effective worker
+count is reduced.
+
+For a fixed candidate set and integer cost model, optimality can be established
+with bounded satisfiability checks. Starting from a feasible heuristic upper
+bound, the compiler asks whether a lower synchronization cost is satisfiable
+and tightens the bound until the best cost is satisfiable and the next lower
+bound is unsatisfiable. A timeout or `unknown` result is reported as a best
+feasible solution, never as an optimum. Every model is independently checked
+against the IR and its objective is recomputed before annotations are accepted.
+
+Inlining, fragmentation, and placement affect one another, so optimization is
+iterative rather than a single monolithic formula. The compiler builds precise
+summaries, generates a bounded set of profitable transformation candidates,
+solves placement and IPO choices, applies them, recomputes the graph and costs,
+and performs one or more refinement rounds until the measured objective stops
+improving. Large designs use compiler-guided coarsening and heuristic global
+partitioning, reserving exact SMT refinement for hot components and ambiguous
+IPO choices.
+
+The intended lowering sequence is:
+
+```text
+semantic lowering
+  -> interprocedural analysis and state minimization
+  -> devirtualization, specialization, and initial IPO
+  -> process fragmentation and frame minimization
+  -> profile annotation and task coarsening
+  -> solver-guided IPO and abstract placement
+  -> partition-specific cloning and local/remote lowering
+  -> canonicalization, machine lowering, and runtime integration
+```
+
 ## Driver and tools
 
 `obelisk` owns its frontend option model and maps it explicitly onto

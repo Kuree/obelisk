@@ -8,8 +8,10 @@
 
 #include "Options.h"
 
+#include "obelisk/Conversion/ObeliskToSimulation.h"
 #include "obelisk/Conversion/SlangToObelisk.h"
-#include "obelisk/Dialect/Sim/ObeliskDialect.h"
+#include "obelisk/Dialect/Obelisk/ObeliskDialect.h"
+#include "obelisk/Dialect/Simulation/SimulationDialect.h"
 #include "obelisk/Dialect/Slang/SlangDialect.h"
 #include "obelisk/Frontend/Frontend.h"
 
@@ -131,8 +133,8 @@ static int executeCompilation(const InputArgList &args) {
     return 1;
 
   DialectRegistry registry;
-  registry
-      .insert<obelisk::slangir::SlangDialect, obelisk::ir::ObeliskDialect>();
+  registry.insert<obelisk::slangir::SlangDialect, obelisk::ir::ObeliskDialect,
+                  obelisk::sim::ObeliskSimulationDialect>();
   MLIRContext context(registry);
   context.loadAllAvailableDialects();
 
@@ -142,11 +144,15 @@ static int executeCompilation(const InputArgList &args) {
     return 1;
   OwningOpRef<ModuleOp> module = std::move(*importedModule);
 
-  const Arg *action = args.getLastArg(OPT_emit_slang, OPT_emit_obelisk);
+  const Arg *action =
+      args.getLastArg(OPT_emit_slang, OPT_emit_obelisk, OPT_emit_sim);
   bool emitSlang = action && action->getOption().matches(OPT_emit_slang);
+  bool emitSim = action && action->getOption().matches(OPT_emit_sim);
   if (!emitSlang) {
     PassManager passManager(&context);
     passManager.addPass(obelisk::createConvertSlangToObeliskPass());
+    if (emitSim)
+      obelisk::buildObeliskToSimulationPipeline(passManager);
     if (failed(passManager.run(*module)))
       return 1;
   }

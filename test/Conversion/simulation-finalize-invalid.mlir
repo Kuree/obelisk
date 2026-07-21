@@ -1,0 +1,24 @@
+// RUN: not obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-finalize)' 2>&1 | FileCheck %s
+
+module {
+  func.func @unexpected() {
+    return
+  }
+  obelisk_sim.design @illegal_reference {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {bad_metadata = @semantic_path, entry_kind = 1 : i32} {
+      %zero = arith.constant 0 : i8
+      %illegal = builtin.unrealized_conversion_cast %zero : i8 to i16
+      %float = arith.constant 0.0 : f32
+      obelisk_sim.return
+    ^unreachable(%bad_argument: f32):
+      obelisk_sim.return
+    }
+  }
+}
+
+// CHECK-DAG: error: operation from dialect 'func' survived obelisk_sim finalization
+// CHECK-DAG: error: operation from dialect 'builtin' survived obelisk_sim finalization
+// CHECK-DAG: error: disallowed symbol reference @semantic_path
+// CHECK-DAG: error: result contains a forbidden semantic type 'f32'
+// CHECK-DAG: error: region block argument contains a forbidden semantic type 'f32'

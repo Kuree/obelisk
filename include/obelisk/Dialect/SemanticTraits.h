@@ -17,6 +17,24 @@
 
 namespace mlir::OpTrait {
 
+/// Marks an elaborated SystemVerilog AST node: an attribute-and-region tree
+/// node imported from the frontend. Both semantic dialects also own lowered
+/// value operations, so dialect membership alone does not identify the AST.
+template <typename ConcreteType>
+class SemanticASTNode : public TraitBase<ConcreteType, SemanticASTNode> {};
+
+/// Marks a declarative semantic node family: constraints, assertion and
+/// sequence expressions, coverage bins and covergroups, randsequence
+/// productions, and class members. These describe properties to be solved,
+/// checked, or sampled rather than a procedural statement and expression tree,
+/// so a consumer that only executes procedural code must reject them
+/// explicitly instead of silently ignoring them. The trait rides on the
+/// generated category base classes, so nodes added by a later slang release
+/// inherit it without updating any consumer.
+template <typename ConcreteType>
+class SemanticDeclarativeNode
+    : public TraitBase<ConcreteType, SemanticDeclarativeNode> {};
+
 /// Marks an upstream error-recovery sentinel that is inventoried for exhaustive
 /// dispatch coverage but can never be persisted as valid semantic IR.
 template <typename ConcreteType>
@@ -31,8 +49,9 @@ public:
 
 /// Verifies the complete semantic reference graph once at its root. Importer
 /// IDs make leaf names globally unique, while accepting a suffix permits normal
-/// relative SymbolRefAttr spelling in hand-written tests. This avoids rebuilding
-/// symbol tables or walking the full UVM hierarchy for every individual use.
+/// relative SymbolRefAttr spelling in hand-written tests. This avoids
+/// rebuilding symbol tables or walking the full UVM hierarchy for every
+/// individual use.
 template <typename ConcreteType>
 class VerifySemanticReferenceGraph
     : public TraitBase<ConcreteType, VerifySemanticReferenceGraph> {
@@ -145,12 +164,11 @@ class VerifyRepetitionMetadata
 public:
   static LogicalResult verifyTrait(Operation *op) {
     ConcreteType concrete = cast<ConcreteType>(op);
-    return verifySequenceRange(
-        op, "repetition", concrete.getHasRepetition(),
-        concrete.getRepetitionIsUnbounded(),
-        concrete.getRepetitionMin().has_value(),
-        concrete.getRepetitionMax().has_value(),
-        concrete.getRepetitionKind().has_value());
+    return verifySequenceRange(op, "repetition", concrete.getHasRepetition(),
+                               concrete.getRepetitionIsUnbounded(),
+                               concrete.getRepetitionMin().has_value(),
+                               concrete.getRepetitionMax().has_value(),
+                               concrete.getRepetitionKind().has_value());
   }
 };
 
@@ -161,11 +179,10 @@ class VerifySequenceRangeMetadata
 public:
   static LogicalResult verifyTrait(Operation *op) {
     ConcreteType concrete = cast<ConcreteType>(op);
-    return verifySequenceRange(op, "range", concrete.getHasRange(),
-                               concrete.getRangeIsUnbounded(),
-                               concrete.getRangeMin().has_value(),
-                               concrete.getRangeMax().has_value(),
-                               /*hasRequiredMetadata=*/true);
+    return verifySequenceRange(
+        op, "range", concrete.getHasRange(), concrete.getRangeIsUnbounded(),
+        concrete.getRangeMin().has_value(), concrete.getRangeMax().has_value(),
+        /*hasRequiredMetadata=*/true);
   }
 };
 

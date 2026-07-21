@@ -21,6 +21,8 @@ def emit_slang : Flag<["-"], "emit-slang">, Group<Action_Group>,
   HelpText<"Emit elaborated Slang dialect MLIR after SystemVerilog import">;
 def emit_obelisk : Flag<["-"], "emit-obelisk">, Group<Action_Group>,
   HelpText<"Emit Obelisk dialect MLIR (default)">;
+def emit_sim : Flag<["-"], "emit-sim">, Group<Action_Group>,
+  HelpText<"Emit executable obelisk_sim SSA MLIR">;
 
 def o : JoinedOrSeparate<["-"], "o">, Group<Output_Group>,
   MetaVarName<"<file>">,

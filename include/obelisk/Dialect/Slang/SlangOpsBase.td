@@ -9,6 +9,9 @@ include "obelisk/Dialect/Slang/SlangTypes.td"
 include "mlir/IR/OpBase.td"
 include "mlir/IR/SymbolInterfaces.td"
 
+def SlangSemanticASTNode : NativeOpTrait<"SemanticASTNode">;
+def SlangSemanticDeclarativeNode
+    : NativeOpTrait<"SemanticDeclarativeNode">;
 def RejectInvalidSemanticNode : NativeOpTrait<"RejectInvalidSemanticNode">;
 def SlangVerifySemanticReferenceGraph
     : NativeOpTrait<"VerifySemanticReferenceGraph">;
@@ -23,7 +26,8 @@ def SlangVerifySequenceRangeMetadata
 class SlangASTNodeOp<string mnemonic, list<Trait> traits = [],
                      dag semanticArgs = (ins)>
     : Op<SlangDialect, mnemonic,
-         !listconcat([NoTerminator, SingleBlock], traits)> {
+         !listconcat([NoTerminator, SingleBlock, SlangSemanticASTNode],
+                     traits)> {
   let summary = "Concrete elaborated slang semantic AST node";
   let arguments = !con((ins
     I64Attr:$node_id,
@@ -58,8 +62,10 @@ class SlangSymbolASTNodeOp<string mnemonic, list<Trait> traits = [],
 // optimization passes over each scope in parallel. Cross-scope references are
 // symbolic (SymbolRefAttr), so they legitimately cross the isolation boundary
 // through the symbol mechanism rather than through captured SSA values.
-class SlangSymbolTableASTNodeOp<string mnemonic, dag symbolArgs = (ins)>
-    : SlangSymbolASTNodeOp<mnemonic, [SymbolTable, IsolatedFromAbove],
+class SlangSymbolTableASTNodeOp<string mnemonic, dag symbolArgs = (ins),
+                                 list<Trait> traits = []>
+    : SlangSymbolASTNodeOp<mnemonic,
+        !listconcat([SymbolTable, IsolatedFromAbove], traits),
         symbolArgs>;
 
 class SlangRootASTNodeOp<string mnemonic>
@@ -148,7 +154,7 @@ class SlangMethodPrototypeASTNodeOp<string mnemonic>
         I64Attr:$extern_implementation_count,
         SymbolRefArrayAttr:$extern_implementation_symbols,
         StrArrayAttr:$extern_implementation_paths
-      )>;
+      ), [SlangSemanticDeclarativeNode]>;
 
 class SlangVariableSymbolASTNodeOp<string mnemonic,
                                    dag variableArgs = (ins)>
@@ -216,7 +222,7 @@ class SlangConstraintBlockASTNodeOp<string mnemonic>
         DefaultValuedAttr<I64Attr, "0">:$out_of_block_index,
         OptionalAttr<SymbolRefAttr>:$this_variable_symbol,
         OptionalAttr<StrAttr>:$this_variable_path
-      )>;
+      ), [SlangSemanticDeclarativeNode]>;
 
 class SlangGenericClassDefASTNodeOp<string mnemonic>
     : SlangSymbolTableASTNodeOp<mnemonic, (ins
@@ -224,7 +230,7 @@ class SlangGenericClassDefASTNodeOp<string mnemonic>
         I64Attr:$specialization_count,
         OptionalAttr<SymbolRefAttr>:$first_forward_declaration_symbol,
         OptionalAttr<StrAttr>:$first_forward_declaration_path
-      )>;
+      ), [SlangSemanticDeclarativeNode]>;
 
 class SlangInstanceASTNodeOp<string mnemonic>
     : SlangSymbolTableASTNodeOp<mnemonic, (ins
@@ -245,8 +251,10 @@ class SlangTypeASTNodeOp<string mnemonic, list<Trait> traits = [],
           TypeAttr:$semantic_type
         ), typeArgs)>;
 
-class SlangScopeTypeASTNodeOp<string mnemonic, dag typeArgs = (ins)>
-    : SlangTypeASTNodeOp<mnemonic, [SymbolTable, IsolatedFromAbove], typeArgs>;
+class SlangScopeTypeASTNodeOp<string mnemonic, dag typeArgs = (ins),
+                               list<Trait> traits = []>
+    : SlangTypeASTNodeOp<mnemonic,
+        !listconcat([SymbolTable, IsolatedFromAbove], traits), typeArgs>;
 
 class SlangNetTypeASTNodeOp<string mnemonic>
     : SlangTypeASTNodeOp<mnemonic, [], (ins
@@ -277,14 +285,15 @@ class SlangClassTypeASTNodeOp<string mnemonic>
         BoolAttr:$has_base_constructor_call,
         I64Attr:$bitstream_width,
         BoolAttr:$has_cycles
-      )>;
+      ), [SlangSemanticDeclarativeNode]>;
 
 class SlangCovergroupTypeASTNodeOp<string mnemonic>
     : SlangScopeTypeASTNodeOp<mnemonic,
-        (ins OptionalAttr<TypeAttr>:$base_group)>;
+        (ins OptionalAttr<TypeAttr>:$base_group),
+        [SlangSemanticDeclarativeNode]>;
 
 class SlangCoverageBinASTNodeOp<string mnemonic>
-    : SlangSymbolASTNodeOp<mnemonic, [], (ins
+    : SlangSymbolASTNodeOp<mnemonic, [SlangSemanticDeclarativeNode], (ins
         SlangCoverageBinKind:$bins_kind,
         BoolAttr:$is_array,
         BoolAttr:$is_wildcard,
@@ -342,7 +351,17 @@ class SlangAssignmentExpressionASTNodeOp<string mnemonic>
         OptionalAttr<SlangBinaryOperator>:$operator_kind
       )>;
 
+class SlangRangeSelectExpressionASTNodeOp<string mnemonic>
+    : SlangExpressionASTNodeOp<mnemonic,
+        (ins SlangRangeSelectionKind:$selection_kind)>;
+
 class SlangStatementASTNodeOp<string mnemonic> : SlangASTNodeOp<mnemonic>;
+
+class SlangVariableDeclarationStatementASTNodeOp<string mnemonic>
+    : SlangASTNodeOp<mnemonic, [], (ins
+        SymbolRefAttr:$referenced_symbol,
+        StrAttr:$referenced_path
+      )>;
 
 class SlangConditionalStatementASTNodeOp<string mnemonic>
     : SlangASTNodeOp<mnemonic, [], (ins
@@ -356,11 +375,12 @@ class SlangCaseStatementASTNodeOp<string mnemonic>
         SlangCaseCondition:$condition_kind,
         SlangUniquePriorityCheck:$check_kind,
         I64Attr:$item_count,
+        DenseI64ArrayAttr:$item_label_counts,
         BoolAttr:$has_default
       )>;
 
 class SlangImmediateAssertionStatementASTNodeOp<string mnemonic>
-    : SlangASTNodeOp<mnemonic, [], (ins
+    : SlangASTNodeOp<mnemonic, [SlangSemanticDeclarativeNode], (ins
         SlangAssertionKind:$assertion_kind,
         BoolAttr:$is_deferred,
         BoolAttr:$is_final,
@@ -369,7 +389,7 @@ class SlangImmediateAssertionStatementASTNodeOp<string mnemonic>
       )>;
 
 class SlangConcurrentAssertionStatementASTNodeOp<string mnemonic>
-    : SlangASTNodeOp<mnemonic, [], (ins
+    : SlangASTNodeOp<mnemonic, [SlangSemanticDeclarativeNode], (ins
         SlangAssertionKind:$assertion_kind,
         BoolAttr:$has_pass_action,
         BoolAttr:$has_fail_action
@@ -393,32 +413,34 @@ class SlangEventListTimingASTNodeOp<string mnemonic>
 
 class SlangBlockEventListTimingASTNodeOp<string mnemonic>
     : SlangASTNodeOp<mnemonic, [], (ins ArrayAttr:$event_is_begin)>;
-class SlangConstraintASTNodeOp<string mnemonic> : SlangASTNodeOp<mnemonic>;
+class SlangConstraintASTNodeOp<string mnemonic>
+    : SlangASTNodeOp<mnemonic, [SlangSemanticDeclarativeNode]>;
 
 class SlangConstraintListASTNodeOp<string mnemonic>
-    : SlangASTNodeOp<mnemonic, [], (ins I64Attr:$item_count)>;
+    : SlangASTNodeOp<mnemonic, [SlangSemanticDeclarativeNode], (ins I64Attr:$item_count)>;
 
 class SlangExpressionConstraintASTNodeOp<string mnemonic>
-    : SlangASTNodeOp<mnemonic, [], (ins BoolAttr:$is_soft)>;
+    : SlangASTNodeOp<mnemonic, [SlangSemanticDeclarativeNode], (ins BoolAttr:$is_soft)>;
 
 class SlangConditionalConstraintASTNodeOp<string mnemonic>
-    : SlangASTNodeOp<mnemonic, [], (ins BoolAttr:$has_else)>;
+    : SlangASTNodeOp<mnemonic, [SlangSemanticDeclarativeNode], (ins BoolAttr:$has_else)>;
 
 class SlangCountedConstraintASTNodeOp<string mnemonic>
-    : SlangASTNodeOp<mnemonic, [], (ins I64Attr:$item_count)>;
+    : SlangASTNodeOp<mnemonic, [SlangSemanticDeclarativeNode], (ins I64Attr:$item_count)>;
 
 class SlangSolveBeforeConstraintASTNodeOp<string mnemonic>
-    : SlangASTNodeOp<mnemonic, [], (ins
+    : SlangASTNodeOp<mnemonic, [SlangSemanticDeclarativeNode], (ins
         I64Attr:$solve_count,
         I64Attr:$after_count
       )>;
 
 class SlangForeachConstraintASTNodeOp<string mnemonic>
-    : SlangASTNodeOp<mnemonic, [], (ins DictArrayAttr:$loop_dimensions)>;
+    : SlangASTNodeOp<mnemonic, [SlangSemanticDeclarativeNode], (ins DictArrayAttr:$loop_dimensions)>;
 
 class SlangAssertionASTNodeOp<string mnemonic, dag assertionArgs = (ins),
                               list<Trait> traits = []>
-    : SlangASTNodeOp<mnemonic, traits, !con(
+    : SlangASTNodeOp<mnemonic,
+        !listconcat([SlangSemanticDeclarativeNode], traits), !con(
         (ins OptionalAttr<TypeAttr>:$semantic_type), assertionArgs)>;
 
 class SlangSimpleAssertionASTNodeOp<string mnemonic>
@@ -489,7 +511,9 @@ class SlangReferencePatternASTNodeOp<string mnemonic>
         StrAttr:$referenced_path
       )>;
 
-class SlangBinsASTNodeOp<string mnemonic> : SlangASTNodeOp<mnemonic>;
-class SlangRandSeqASTNodeOp<string mnemonic> : SlangASTNodeOp<mnemonic>;
+class SlangBinsASTNodeOp<string mnemonic>
+    : SlangASTNodeOp<mnemonic, [SlangSemanticDeclarativeNode]>;
+class SlangRandSeqASTNodeOp<string mnemonic>
+    : SlangASTNodeOp<mnemonic, [SlangSemanticDeclarativeNode]>;
 
 #endif // OBELISK_DIALECT_SLANG_SLANGOPSBASE_TD

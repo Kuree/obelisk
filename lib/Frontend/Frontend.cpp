@@ -17,6 +17,7 @@
 #include "slang/ast/ASTVisitor.h"
 #include "slang/ast/expressions/Operator.h"
 #include "slang/driver/Driver.h"
+#include "slang/numeric/Time.h"
 #include "slang/syntax/AllSyntax.h"
 #include "slang/util/VersionInfo.h"
 
@@ -63,6 +64,31 @@ std::string formatReal(double value) {
 
 template <typename Value> std::string formatConstant(const Value &value) {
   return value.toString(slang::SVInt::MAX_BITS, /*exactUnknowns=*/true);
+}
+
+uint64_t getFemtoseconds(slang::TimeScaleValue value) {
+  uint64_t unit = 1;
+  switch (value.unit) {
+  case slang::TimeUnit::Seconds:
+    unit = 1'000'000'000'000'000ULL;
+    break;
+  case slang::TimeUnit::Milliseconds:
+    unit = 1'000'000'000'000ULL;
+    break;
+  case slang::TimeUnit::Microseconds:
+    unit = 1'000'000'000ULL;
+    break;
+  case slang::TimeUnit::Nanoseconds:
+    unit = 1'000'000ULL;
+    break;
+  case slang::TimeUnit::Picoseconds:
+    unit = 1'000ULL;
+    break;
+  case slang::TimeUnit::Femtoseconds:
+    unit = 1;
+    break;
+  }
+  return unit * static_cast<uint64_t>(value.magnitude);
 }
 
 slangir::ArgumentDirection
@@ -243,6 +269,13 @@ slangir::EdgeKind convertEnum(slang::ast::EdgeKind edge) {
     return slangir::EdgeKind::BothEdges;
   }
   llvm_unreachable("unknown slang edge kind");
+}
+
+slangir::RangeSelectionKind convertEnum(slang::ast::RangeSelectionKind kind) {
+  static_assert(static_cast<int>(slang::ast::RangeSelectionKind::Simple) == 0 &&
+                static_cast<int>(slang::ast::RangeSelectionKind::IndexedDown) ==
+                    2);
+  return static_cast<slangir::RangeSelectionKind>(static_cast<int>(kind));
 }
 
 slangir::VariableLifetime convertEnum(slang::ast::VariableLifetime lifetime) {
@@ -916,6 +949,18 @@ private:
 #define SET_OP_ATTR(Name, Value)                                               \
   attrs.set(Op::get##Name##AttrName(operationName), (Value))
 
+    if constexpr (std::same_as<T, slang::ast::ProceduralBlockSymbol> ||
+                  std::same_as<T, slang::ast::ContinuousAssignSymbol> ||
+                  std::same_as<T, slang::ast::SubroutineSymbol>) {
+      slang::TimeScale scale;
+      if (const slang::ast::Scope *scope = node.getParentScope())
+        scale = scope->getTimeScale().value_or(slang::TimeScale{});
+      attrs.set("time_unit_fs",
+                builder.getI64IntegerAttr(getFemtoseconds(scale.base)));
+      attrs.set("time_precision_fs",
+                builder.getI64IntegerAttr(getFemtoseconds(scale.precision)));
+    }
+
     if constexpr (std::derived_from<T, slang::ast::VariableSymbol>) {
       SET_OP_ATTR(Lifetime,
                   slangir::VariableLifetimeAttr::get(
@@ -976,6 +1021,8 @@ private:
       setReferencedSymbol<Op>(attrs, node.member);
     } else if constexpr (std::same_as<T, slang::ast::VariablePattern>) {
       setReferencedSymbol<Op>(attrs, node.variable);
+    } else if constexpr (std::same_as<T, slang::ast::VariableDeclStatement>) {
+      setReferencedSymbol<Op>(attrs, node.symbol);
     } else if constexpr (std::same_as<T, slang::ast::CallExpression>) {
       SET_OP_ATTR(CalleeName, builder.getStringAttr(node.getSubroutineName()));
       SET_OP_ATTR(IsSystemCall, builder.getBoolAttr(node.isSystemCall()));
@@ -1051,6 +1098,10 @@ private:
                                       node.isNonBlocking()
                                           ? slangir::AssignmentKind::Nonblocking
                                           : slangir::AssignmentKind::Blocking));
+    } else if constexpr (std::same_as<T, slang::ast::RangeSelectExpression>) {
+      SET_OP_ATTR(SelectionKind, slangir::RangeSelectionKindAttr::get(
+                                     builder.getContext(),
+                                     convertEnum(node.getSelectionKind())));
     }
 
     if constexpr (std::same_as<T, slang::ast::PortSymbol> ||
@@ -1337,6 +1388,12 @@ private:
                   slangir::UniquePriorityCheckAttr::get(
                       builder.getContext(), convertEnum(node.check)));
       SET_OP_ATTR(ItemCount, builder.getI64IntegerAttr(node.items.size()));
+      SmallVector<int64_t> itemLabelCounts;
+      itemLabelCounts.reserve(node.items.size());
+      for (const auto &item : node.items)
+        itemLabelCounts.push_back(item.expressions.size());
+      SET_OP_ATTR(ItemLabelCounts,
+                  builder.getDenseI64ArrayAttr(itemLabelCounts));
       SET_OP_ATTR(HasDefault, builder.getBoolAttr(node.defaultCase != nullptr));
     } else if constexpr (std::same_as<
                              T, slang::ast::ImmediateAssertionStatement>) {
