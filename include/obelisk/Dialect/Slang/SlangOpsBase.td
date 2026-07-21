@@ -52,12 +52,19 @@ class SlangSymbolASTNodeOp<string mnemonic, list<Trait> traits = [],
           OptionalAttr<TypeAttr>:$semantic_type
         ), symbolArgs)>;
 
+// Every semantic scope is a symbol table and is isolated from above. The AST is
+// a pure attribute-and-region tree with no SSA values, so isolation is always
+// satisfied; declaring it lets MLIR verify and schedule analysis and
+// optimization passes over each scope in parallel. Cross-scope references are
+// symbolic (SymbolRefAttr), so they legitimately cross the isolation boundary
+// through the symbol mechanism rather than through captured SSA values.
 class SlangSymbolTableASTNodeOp<string mnemonic, dag symbolArgs = (ins)>
-    : SlangSymbolASTNodeOp<mnemonic, [SymbolTable], symbolArgs>;
+    : SlangSymbolASTNodeOp<mnemonic, [SymbolTable, IsolatedFromAbove],
+        symbolArgs>;
 
 class SlangRootASTNodeOp<string mnemonic>
     : SlangSymbolASTNodeOp<mnemonic,
-        [SymbolTable, SlangVerifySemanticReferenceGraph]>;
+        [SymbolTable, IsolatedFromAbove, SlangVerifySemanticReferenceGraph]>;
 
 class SlangConstantSymbolASTNodeOp<string mnemonic>
     : SlangSymbolASTNodeOp<mnemonic, [], (ins StrAttr:$constant_value)>;
@@ -239,7 +246,7 @@ class SlangTypeASTNodeOp<string mnemonic, list<Trait> traits = [],
         ), typeArgs)>;
 
 class SlangScopeTypeASTNodeOp<string mnemonic, dag typeArgs = (ins)>
-    : SlangTypeASTNodeOp<mnemonic, [SymbolTable], typeArgs>;
+    : SlangTypeASTNodeOp<mnemonic, [SymbolTable, IsolatedFromAbove], typeArgs>;
 
 class SlangNetTypeASTNodeOp<string mnemonic>
     : SlangTypeASTNodeOp<mnemonic, [], (ins

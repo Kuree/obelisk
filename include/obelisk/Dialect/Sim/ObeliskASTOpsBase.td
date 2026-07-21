@@ -50,12 +50,20 @@ class ObeliskSymbolASTNodeOp<string mnemonic, list<Trait> traits = [],
           OptionalAttr<TypeAttr>:$semantic_type
         ), symbolArgs)>;
 
+// Every semantic scope is a symbol table and is isolated from above. The AST is
+// a pure attribute-and-region tree with no SSA values, so isolation is always
+// satisfied; declaring it lets MLIR verify and schedule analysis and
+// optimization passes over each scope in parallel. Cross-scope references are
+// symbolic (SymbolRefAttr), so they legitimately cross the isolation boundary
+// through the symbol mechanism rather than through captured SSA values.
 class ObeliskSymbolTableASTNodeOp<string mnemonic, dag symbolArgs = (ins)>
-    : ObeliskSymbolASTNodeOp<mnemonic, [SymbolTable], symbolArgs>;
+    : ObeliskSymbolASTNodeOp<mnemonic, [SymbolTable, IsolatedFromAbove],
+        symbolArgs>;
 
 class ObeliskRootASTNodeOp<string mnemonic>
     : ObeliskSymbolASTNodeOp<mnemonic,
-        [SymbolTable, ObeliskVerifySemanticReferenceGraph]>;
+        [SymbolTable, IsolatedFromAbove,
+         ObeliskVerifySemanticReferenceGraph]>;
 
 class ObeliskConstantSymbolASTNodeOp<string mnemonic>
     : ObeliskSymbolASTNodeOp<mnemonic, [], (ins StrAttr:$constant_value)>;
@@ -236,7 +244,8 @@ class ObeliskTypeASTNodeOp<string mnemonic, list<Trait> traits = [],
         ), typeArgs)>;
 
 class ObeliskScopeTypeASTNodeOp<string mnemonic, dag typeArgs = (ins)>
-    : ObeliskTypeASTNodeOp<mnemonic, [SymbolTable], typeArgs>;
+    : ObeliskTypeASTNodeOp<mnemonic, [SymbolTable, IsolatedFromAbove],
+        typeArgs>;
 
 class ObeliskNetTypeASTNodeOp<string mnemonic>
     : ObeliskTypeASTNodeOp<mnemonic, [], (ins
