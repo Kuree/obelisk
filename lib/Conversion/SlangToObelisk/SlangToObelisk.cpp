@@ -392,8 +392,12 @@ public:
 #include "obelisk/Dialect/Slang/SlangASTNodes.def"
 #undef SLANG_AST_NODE
 
-    if (failed(
-            applyFullConversion(getOperation(), target, std::move(patterns))))
+    // Patterns fail only before mutating IR, so rollback is never needed.
+    // Disabling it drops the driver's undo bookkeeping.
+    ConversionConfig config;
+    config.allowPatternRollback = false;
+    if (failed(applyFullConversion(getOperation(), target, std::move(patterns),
+                                   config)))
       signalPassFailure();
   }
 };
