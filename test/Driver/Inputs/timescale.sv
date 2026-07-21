@@ -1,3 +1,6 @@
 module default_timescale;
-  initial #1;
+  initial begin
+    #1;
+    #1.234567890123456ns;
+  end
 endmodule

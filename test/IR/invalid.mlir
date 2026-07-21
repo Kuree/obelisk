@@ -9,6 +9,100 @@ module {
 // -----
 
 module {
+  obelisk.sv.symbol.variable attributes {
+    node_id = 0 : i64, sym_name = "bad_enum",
+    // expected-error @+1 {{enum base must be an integral type}}
+    semantic_type = !obelisk.enum<"bad_enum", !obelisk.string>
+  } {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{requires attribute 'constant_value'}}
+  obelisk.sv.expression.integer_literal attributes {
+    node_id = 0 : i64,
+    semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>
+  } {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{requires attribute 'operator_kind'}}
+  obelisk.sv.expression.binary_op attributes {
+    node_id = 0 : i64,
+    semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>
+  } {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{represents an invalid semantic sentinel}}
+  obelisk.sv.pattern.invalid attributes {node_id = 0 : i64} {
+  }
+}
+
+// -----
+
+module {
+  obelisk.sv.symbol.variable attributes {
+    node_id = 0 : i64, sym_name = "bad_error",
+    // expected-error @+1 {{error recovery type cannot appear in valid Obelisk IR}}
+    semantic_type = !obelisk.error<true>
+  } {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{attribute 'subroutine_kind' failed to satisfy constraint}}
+  obelisk.sv.symbol.subroutine attributes {
+    node_id = 0 : i64, sym_name = "bad_subroutine", subroutine_kind = 2 : i32
+  } {
+  }
+}
+
+// -----
+
+module {
+  obelisk.sv.symbol.variable attributes {
+    node_id = 0 : i64, sym_name = "bad_range",
+    // expected-error @+1 {{source range files must not be empty}}
+    semantic_type = !obelisk.source_range<"", 10, 2, "source.sv", 9, 1, "">
+  } {
+  }
+}
+
+// -----
+
+module {
+  obelisk.sv.symbol.variable attributes {
+    node_id = 0 : i64, sym_name = "bad_index",
+    // expected-error @+1 {{wildcard associative index must use !obelisk.untyped}}
+    semantic_type = !obelisk.assoc<!obelisk.string, !obelisk.real, true>
+  } {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{expects region #0 to have 0 or 1 blocks}}
+  obelisk.sv.statement.block attributes {node_id = 0 : i64} {
+  ^first:
+  ^second:
+  }
+}
+
+// -----
+
+module {
   // expected-error @+1 {{unknown attribute width must match result width 8}}
   %bad = obelisk.logic.constant 0 : i8, 0 : i4 : !obelisk.logic<8>
 }
@@ -39,17 +133,17 @@ module {
 
 module {
   // expected-error @+2 {{failed to parse RefType parameter 'elementType'}}
-  // expected-error @+1 {{struct fields must use !hw.struct, got 'i32'}}
-  %bad = obelisk.var.alloc : !obelisk.ref<!obelisk.packed_struct<i32>>
+  // expected-error @+1 {{packed struct must contain at least one field}}
+  %bad = obelisk.var.alloc : !obelisk.ref<!obelisk.packed_struct<{}>>
 }
 
 // -----
 
 module {
   // expected-error @+3 {{failed to parse RefType parameter 'elementType'}}
-  // expected-error @+2 {{packed aggregate contains an unpacked field}}
+  // expected-error @+2 {{packed aggregate field "text" has unpacked type}}
   %bad = obelisk.var.alloc
-      : !obelisk.ref<!obelisk.packed_struct<!hw.struct<text: !sim.dstring>>>
+      : !obelisk.ref<!obelisk.packed_struct<{text = !obelisk.string}>>
 }
 
 // -----
@@ -80,27 +174,4 @@ module {
   %bad = obelisk.ref.concat %input, %input
       : (!obelisk.ref<!obelisk.logic<4>>, !obelisk.ref<!obelisk.logic<4>>)
         -> !obelisk.ref<!obelisk.logic<4>>
-}
-
-// -----
-
-module {
-  // expected-error @+1 {{opcode assign belongs to the effect family, not value}}
-  obelisk.semantic.value assign() : () -> ()
-}
-
-// -----
-
-module {
-  // expected-error @+1 {{opcode add requires 2 operands, got 0}}
-  %bad = obelisk.semantic.value add() : () -> i32
-}
-
-// -----
-
-module {
-  // expected-error @+1 {{opcode procedure requires source_attrs.kind}}
-  obelisk.semantic.region procedure() : () -> () {
-    obelisk.semantic.terminator return()
-  }
 }

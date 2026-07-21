@@ -1,5 +1,5 @@
 # Build output
-/build/
+/build*/
 *.o
 *.bc
 
@@ -9,6 +9,6 @@
 .vscode/
 .idea/
 
-# The CIRCT SDK is large (4 GB) and lives outside the repo; never commit it.
-/circt-*/
+# Prebuilt compiler SDKs and downloaded source archives live outside the repo.
+/llvm-mlir-*/
 *.tar.gz

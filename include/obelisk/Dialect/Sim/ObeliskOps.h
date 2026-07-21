@@ -3,6 +3,7 @@
 #ifndef OBELISK_DIALECT_SIM_OBELISKOPS_H
 #define OBELISK_DIALECT_SIM_OBELISKOPS_H
 
+#include "obelisk/Dialect/SemanticTraits.h"
 #include "obelisk/Dialect/Sim/ObeliskDialect.h"
 #include "obelisk/Dialect/Sim/ObeliskTypes.h"
 
@@ -16,18 +17,10 @@
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
-#include "llvm/ADT/TypeSwitch.h"
-
-#include "obelisk/Dialect/Sim/ObeliskEnums.h.inc"
-
-namespace obelisk::ir {
-
-/// Return the structural operation family encoded in a semantic opcode.
-SemanticFamily getSemanticFamily(SemanticKind kind);
-
-} // namespace obelisk::ir
-
 #define GET_OP_CLASSES
 #include "obelisk/Dialect/Sim/ObeliskOps.h.inc"
+
+#define GET_OP_CLASSES
+#include "obelisk/Dialect/Sim/ObeliskASTOps.h.inc"
 
 #endif // OBELISK_DIALECT_SIM_OBELISKOPS_H

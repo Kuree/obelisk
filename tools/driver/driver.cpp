@@ -2,23 +2,21 @@
 //
 // This executable owns compilation policy: source files, command files,
 // include paths, macros, libraries, language revision, and the selected output
-// action. Representation-only tools such as obelisk-translate remain separate.
+// action.
 //
 //===----------------------------------------------------------------------===//
 
 #include "Options.h"
 
-#include "obelisk/Conversion/MooreToObelisk.h"
+#include "obelisk/Conversion/SlangToObelisk.h"
 #include "obelisk/Dialect/Sim/ObeliskDialect.h"
+#include "obelisk/Dialect/Slang/SlangDialect.h"
 #include "obelisk/Frontend/Frontend.h"
-
-#include "circt/InitAllDialects.h"
 
 #include "mlir/IR/AsmState.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Pass/PassManager.h"
-#include "mlir/Support/Timing.h"
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
@@ -36,6 +34,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace llvm;
@@ -65,10 +64,9 @@ static bool parseUnsignedOption(const ArgList &args, OptSpecifier option,
   return true;
 }
 
-static circt::ImportVerilogOptions
+static obelisk::frontend::FrontendOptions
 buildFrontendOptions(const InputArgList &args, bool &valid) {
-  circt::ImportVerilogOptions options;
-  options.mode = circt::ImportVerilogOptions::Mode::Full;
+  obelisk::frontend::FrontendOptions options;
   options.includeDirs = args.getAllArgValues(OPT_I);
   options.includeSystemDirs = args.getAllArgValues(OPT_isystem);
   options.defines = args.getAllArgValues(OPT_D);
@@ -83,14 +81,10 @@ buildFrontendOptions(const InputArgList &args, bool &valid) {
   options.suppressWarningsPaths =
       args.getAllArgValues(OPT_suppress_warnings_EQ);
 
-  if (args.hasArg(OPT_single_unit))
-    options.singleUnit = true;
-  if (args.hasArg(OPT_libraries_inherit_macros))
-    options.librariesInheritMacros = true;
-  if (args.hasArg(OPT_allow_use_before_declare))
-    options.allowUseBeforeDeclare = true;
-  if (args.hasArg(OPT_ignore_unknown_modules))
-    options.ignoreUnknownModules = true;
+  options.singleUnit = args.hasArg(OPT_single_unit);
+  options.librariesInheritMacros = args.hasArg(OPT_libraries_inherit_macros);
+  options.allowUseBeforeDeclare = args.hasArg(OPT_allow_use_before_declare);
+  options.ignoreUnknownModules = args.hasArg(OPT_ignore_unknown_modules);
   if (const Arg *arg = args.getLastArg(OPT_timescale_EQ))
     options.timeScale = arg->getValue();
 
@@ -105,8 +99,10 @@ buildFrontendOptions(const InputArgList &args, bool &valid) {
                     "'; expected 1800-2017 or 1800-2023");
     valid = false;
   }
-  options.slangArgs.emplace_back("--std");
-  options.slangArgs.emplace_back(standard);
+  options.languageVersion =
+      standard == "1800-2017"
+          ? obelisk::frontend::LanguageVersion::IEEE1800_2017
+          : obelisk::frontend::LanguageVersion::IEEE1800_2023;
   for (std::string argument : args.getAllArgValues(OPT_Xslang))
     options.slangArgs.push_back(std::move(argument));
   return options;
@@ -121,7 +117,7 @@ static int executeCompilation(const InputArgList &args) {
       inputs.emplace_back(value);
 
   bool valid = true;
-  circt::ImportVerilogOptions frontendOptions =
+  obelisk::frontend::FrontendOptions frontendOptions =
       buildFrontendOptions(args, valid);
   if (inputs.empty() && frontendOptions.commandFiles.empty()) {
     emitDriverError("no input files");
@@ -135,24 +131,23 @@ static int executeCompilation(const InputArgList &args) {
     return 1;
 
   DialectRegistry registry;
-  circt::registerAllDialects(registry);
-  registry.insert<obelisk::ir::ObeliskDialect>();
+  registry
+      .insert<obelisk::slangir::SlangDialect, obelisk::ir::ObeliskDialect>();
   MLIRContext context(registry);
   context.loadAllAvailableDialects();
 
-  DefaultTimingManager timingManager;
-  TimingScope timingScope = timingManager.getRootScope();
-  auto module = obelisk::frontend::importSystemVerilog(
-      inputs, context, timingScope, frontendOptions);
-  if (failed(module))
+  auto importedModule =
+      obelisk::frontend::importSystemVerilog(inputs, context, frontendOptions);
+  if (failed(importedModule))
     return 1;
+  OwningOpRef<ModuleOp> module = std::move(*importedModule);
 
-  const Arg *action = args.getLastArg(OPT_emit_moore, OPT_emit_obelisk);
-  bool emitMoore = action && action->getOption().matches(OPT_emit_moore);
-  if (!emitMoore) {
+  const Arg *action = args.getLastArg(OPT_emit_slang, OPT_emit_obelisk);
+  bool emitSlang = action && action->getOption().matches(OPT_emit_slang);
+  if (!emitSlang) {
     PassManager passManager(&context);
-    passManager.addPass(obelisk::createConvertMooreToObeliskPass());
-    if (failed(passManager.run(**module)))
+    passManager.addPass(obelisk::createConvertSlangToObeliskPass());
+    if (failed(passManager.run(*module)))
       return 1;
   }
 
@@ -168,7 +163,7 @@ static int executeCompilation(const InputArgList &args) {
   OpPrintingFlags printingFlags;
   if (args.hasArg(OPT_mlir_print_debuginfo))
     printingFlags.enableDebugInfo();
-  (*module)->print(output.os(), printingFlags);
+  module->print(output.os(), printingFlags);
   output.os() << '\n';
   output.keep();
   return 0;
@@ -199,7 +194,7 @@ int main(int argc, char **argv) {
   }
   if (args.hasArg(OPT_version)) {
     outs() << "obelisk version " << OBELISK_VERSION_STRING << '\n'
-           << circt::getSlangVersion() << '\n';
+           << obelisk::frontend::getSlangVersion() << '\n';
     return 0;
   }
 

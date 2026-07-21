@@ -2,9 +2,9 @@
 // purpose is to keep UVM-shaped frontend constructs in the driver test suite
 // without importing the external UVM source tree.
 //
-// RUN: obelisk -emit-moore --single-unit -I%S/Inputs/mock_uvm \
+// RUN: obelisk -emit-slang --single-unit -I%S/Inputs/mock_uvm \
 // RUN:   %S/Inputs/mock_uvm/uvm_pkg.sv %s \
-// RUN:   | FileCheck %s --check-prefix=MOORE
+// RUN:   | FileCheck %s --check-prefix=SLANG
 // RUN: obelisk --single-unit -I%S/Inputs/mock_uvm \
 // RUN:   %S/Inputs/mock_uvm/uvm_pkg.sv %s | obelisk-opt \
 // RUN:   | FileCheck %s --check-prefix=OBELISK
@@ -39,20 +39,20 @@ module uvm_smoke;
   end
 endmodule
 
-// MOORE: moore.class.classdecl @"uvm_pkg::uvm_object"
-// MOORE: moore.class.classdecl @"uvm_pkg::uvm_phase"
-// MOORE: moore.class.classdecl @"uvm_pkg::uvm_component"
-// MOORE: moore.class.classdecl @"uvm_pkg::uvm_test"
-// MOORE: moore.class.classdecl @smoke_test
-// MOORE: moore.coroutine private @"smoke_test::run_phase"
-// MOORE: moore.call_coroutine @"uvm_pkg::uvm_phase::raise_objection"
-// MOORE: moore.module @uvm_smoke
+// SLANG: slang.type.class_type attributes {{.*}}hierarchical_name = "uvm_pkg::uvm_object"
+// SLANG: slang.type.class_type attributes {{.*}}hierarchical_name = "uvm_pkg::uvm_phase"
+// SLANG: slang.type.class_type attributes {{.*}}hierarchical_name = "uvm_pkg::uvm_component"
+// SLANG: slang.type.class_type attributes {{.*}}hierarchical_name = "uvm_pkg::uvm_test"
+// SLANG: slang.type.class_type attributes {{.*}}hierarchical_name = "smoke_test"
+// SLANG: slang.symbol.subroutine attributes {{.*}}hierarchical_name = "smoke_test::run_phase"
+// SLANG: slang.timing.delay
+// SLANG: slang.symbol.instance attributes {{.*}}hierarchical_name = "uvm_smoke"
 
-// OBELISK: obelisk.semantic.symbol_table @"uvm_pkg::uvm_object" class.classdecl
-// OBELISK: obelisk.semantic.symbol_table @"uvm_pkg::uvm_phase" class.classdecl
-// OBELISK: obelisk.semantic.symbol_table @smoke_test class.classdecl
-// OBELISK: obelisk.semantic.isolated_symbol @"smoke_test::run_phase" coroutine
-// OBELISK: obelisk.semantic.effect call_coroutine
-// OBELISK: obelisk.semantic.graph_symbol @uvm_smoke module
-// OBELISK: !obelisk.class_handle<@smoke_test>
-// OBELISK: !sim.dstring
+// OBELISK: obelisk.sv.type.class_type attributes {{.*}}hierarchical_name = "uvm_pkg::uvm_object"
+// OBELISK: obelisk.sv.type.class_type attributes {{.*}}hierarchical_name = "uvm_pkg::uvm_phase"
+// OBELISK: obelisk.sv.type.class_type attributes {{.*}}hierarchical_name = "smoke_test"
+// OBELISK: obelisk.sv.symbol.subroutine attributes {{.*}}hierarchical_name = "smoke_test::run_phase"
+// OBELISK: obelisk.sv.timing.delay
+// OBELISK: obelisk.sv.symbol.instance attributes {{.*}}hierarchical_name = "uvm_smoke"
+// OBELISK: !obelisk.class_handle<@{{.*}}smoke_test>
+// OBELISK-NOT: slang.

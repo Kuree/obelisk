@@ -1,0 +1,241 @@
+# Generate the repetitive ODS declarations for the exhaustive slang semantic
+# inventory. The generated files still contain one named concrete `def` per AST
+# kind; generation keeps the source and target dialect lists in lockstep.
+
+function(obelisk_generate_slang_ast_ops dialect output)
+  file(READ
+    "${PROJECT_SOURCE_DIR}/include/obelisk/Dialect/Slang/SlangASTNodes.def"
+    inventory)
+  string(REGEX MATCHALL
+    "SLANG_AST_NODE\\([^,]+, [^,]+, [^)]+\\)"
+    entries "${inventory}")
+
+  if(dialect STREQUAL "slang")
+    set(text
+      "include \"obelisk/Dialect/Slang/SlangOpsBase.td\"\n\n")
+    set(base "SlangASTNodeOp")
+    set(prefix "")
+    set(namespace_prefix "")
+  elseif(dialect STREQUAL "obelisk")
+    set(text
+      "include \"obelisk/Dialect/Sim/ObeliskASTOpsBase.td\"\n\n")
+    set(base "ObeliskASTNodeOp")
+    set(prefix "SV")
+    set(namespace_prefix "sv.")
+  else()
+    message(FATAL_ERROR "unknown AST operation dialect: ${dialect}")
+  endif()
+
+  set(count 0)
+  foreach(entry IN LISTS entries)
+    if(NOT entry MATCHES
+       "^SLANG_AST_NODE\\(([^,]+), ([^,]+), ([^)]+)\\)$")
+      continue()
+    endif()
+    set(category "${CMAKE_MATCH_1}")
+    set(kind "${CMAKE_MATCH_2}")
+    set(cpp_type "${CMAKE_MATCH_3}")
+    if(category STREQUAL "Category")
+      continue()
+    endif()
+
+    string(REGEX REPLACE "([A-Z]+)([A-Z][a-z])" "\\1_\\2"
+      category_name "${category}")
+    string(REGEX REPLACE "([a-z0-9])([A-Z])" "\\1_\\2"
+      category_name "${category_name}")
+    string(TOLOWER "${category_name}" category_name)
+
+    string(REGEX REPLACE "([A-Z]+)([A-Z][a-z])" "\\1_\\2"
+      kind_name "${kind}")
+    string(REGEX REPLACE "([a-z0-9])([A-Z])" "\\1_\\2"
+      kind_name "${kind_name}")
+    string(TOLOWER "${kind_name}" kind_name)
+
+    # These are the concrete slang AST nodes that own a semantic Scope, plus
+    # the three containment symbols whose visitor descent owns another symbol.
+    # Keeping this list explicit makes changes to hierarchy ownership visible
+    # in review instead of turning every symbol into an MLIR symbol table.
+    set(scope_symbols
+      AnonymousProgramSymbol CheckerInstanceBodySymbol CheckerInstanceSymbol
+      CheckerSymbol ClockingBlockSymbol CompilationUnitSymbol ConfigBlockSymbol
+      ConstraintBlockSymbol CoverCrossBodySymbol CoverCrossSymbol
+      CovergroupBodySymbol CoverpointSymbol GenerateBlockArraySymbol
+      GenerateBlockSymbol GenericClassDefSymbol InstanceArraySymbol
+      InstanceBodySymbol InstanceSymbol LetDeclSymbol MethodPrototypeSymbol
+      ModportSymbol PackageSymbol PrimitiveSymbol PropertySymbol
+      RandSeqProductionSymbol RootSymbol SequenceSymbol SpecifyBlockSymbol
+      StatementBlockSymbol SubroutineSymbol)
+    set(scope_types
+      ClassType CovergroupType EnumType PackedStructType PackedUnionType
+      UnpackedStructType UnpackedUnionType)
+    set(constant_symbols ParameterSymbol EnumValueSymbol SpecparamSymbol)
+    set(directed_symbols PortSymbol MultiPortSymbol)
+    set(variable_symbols
+      VariableSymbol IteratorSymbol PatternVarSymbol ClockVarSymbol
+      LocalAssertionVarSymbol)
+    set(constant_expressions
+      IntegerLiteral RealLiteral StringLiteral UnbasedUnsizedIntegerLiteral)
+    set(reference_expressions
+      NamedValueExpression HierarchicalValueExpression
+      ArbitrarySymbolExpression MemberAccessExpression)
+    set(reference_patterns VariablePattern TaggedPattern)
+
+    if(dialect STREQUAL "slang")
+      set(ir_prefix "Slang")
+    else()
+      set(ir_prefix "Obelisk")
+    endif()
+
+    set(op_base "${base}")
+    if(cpp_type STREQUAL "RootSymbol")
+      set(op_base "${ir_prefix}RootASTNodeOp")
+    elseif(kind STREQUAL "Invalid" OR cpp_type STREQUAL "ErrorType")
+      set(op_base "${ir_prefix}InvalidASTNodeOp")
+    elseif(cpp_type STREQUAL "ClassType")
+      set(op_base "${ir_prefix}ClassTypeASTNodeOp")
+    elseif(cpp_type STREQUAL "CovergroupType")
+      set(op_base "${ir_prefix}CovergroupTypeASTNodeOp")
+    elseif(cpp_type STREQUAL "NetType")
+      set(op_base "${ir_prefix}NetTypeASTNodeOp")
+    elseif(cpp_type STREQUAL "CoverageBinSymbol")
+      set(op_base "${ir_prefix}CoverageBinASTNodeOp")
+    elseif(cpp_type STREQUAL "ClassPropertySymbol")
+      set(op_base "${ir_prefix}ClassPropertyASTNodeOp")
+    elseif(cpp_type STREQUAL "FormalArgumentSymbol")
+      set(op_base "${ir_prefix}FormalArgumentASTNodeOp")
+    elseif(cpp_type STREQUAL "IteratorSymbol")
+      set(op_base "${ir_prefix}IteratorASTNodeOp")
+    elseif(cpp_type STREQUAL "ClockVarSymbol")
+      set(op_base "${ir_prefix}ClockVarASTNodeOp")
+    elseif(cpp_type STREQUAL "LocalAssertionVarSymbol")
+      set(op_base "${ir_prefix}LocalAssertionVarASTNodeOp")
+    elseif(cpp_type STREQUAL "FieldSymbol")
+      set(op_base "${ir_prefix}FieldASTNodeOp")
+    elseif(cpp_type IN_LIST variable_symbols)
+      set(op_base "${ir_prefix}VariableSymbolASTNodeOp")
+    elseif(cpp_type STREQUAL "MethodPrototypeSymbol")
+      set(op_base "${ir_prefix}MethodPrototypeASTNodeOp")
+    elseif(cpp_type STREQUAL "ConstraintBlockSymbol")
+      set(op_base "${ir_prefix}ConstraintBlockASTNodeOp")
+    elseif(cpp_type STREQUAL "GenericClassDefSymbol")
+      set(op_base "${ir_prefix}GenericClassDefASTNodeOp")
+    elseif(cpp_type STREQUAL "ConditionalStatement")
+      set(op_base "${ir_prefix}ConditionalStatementASTNodeOp")
+    elseif(cpp_type STREQUAL "CaseStatement")
+      set(op_base "${ir_prefix}CaseStatementASTNodeOp")
+    elseif(cpp_type STREQUAL "ImmediateAssertionStatement")
+      set(op_base "${ir_prefix}ImmediateAssertionStatementASTNodeOp")
+    elseif(cpp_type STREQUAL "ConcurrentAssertionStatement")
+      set(op_base "${ir_prefix}ConcurrentAssertionStatementASTNodeOp")
+    elseif(cpp_type STREQUAL "ProceduralAssignStatement")
+      set(op_base "${ir_prefix}ProceduralAssignStatementASTNodeOp")
+    elseif(cpp_type STREQUAL "Delay3Control")
+      set(op_base "${ir_prefix}Delay3TimingASTNodeOp")
+    elseif(cpp_type STREQUAL "SignalEventControl")
+      set(op_base "${ir_prefix}SignalEventTimingASTNodeOp")
+    elseif(cpp_type STREQUAL "EventListControl")
+      set(op_base "${ir_prefix}EventListTimingASTNodeOp")
+    elseif(cpp_type STREQUAL "BlockEventListControl")
+      set(op_base "${ir_prefix}BlockEventListTimingASTNodeOp")
+    elseif(cpp_type STREQUAL "ConstraintList")
+      set(op_base "${ir_prefix}ConstraintListASTNodeOp")
+    elseif(cpp_type STREQUAL "ExpressionConstraint")
+      set(op_base "${ir_prefix}ExpressionConstraintASTNodeOp")
+    elseif(cpp_type STREQUAL "ConditionalConstraint")
+      set(op_base "${ir_prefix}ConditionalConstraintASTNodeOp")
+    elseif(cpp_type STREQUAL "UniquenessConstraint")
+      set(op_base "${ir_prefix}CountedConstraintASTNodeOp")
+    elseif(cpp_type STREQUAL "SolveBeforeConstraint")
+      set(op_base "${ir_prefix}SolveBeforeConstraintASTNodeOp")
+    elseif(cpp_type STREQUAL "ForeachConstraint")
+      set(op_base "${ir_prefix}ForeachConstraintASTNodeOp")
+    elseif(cpp_type STREQUAL "SimpleAssertionExpr")
+      set(op_base "${ir_prefix}SimpleAssertionASTNodeOp")
+    elseif(cpp_type STREQUAL "SequenceConcatExpr")
+      set(op_base "${ir_prefix}SequenceConcatAssertionASTNodeOp")
+    elseif(cpp_type STREQUAL "SequenceWithMatchExpr")
+      set(op_base "${ir_prefix}SequenceWithMatchAssertionASTNodeOp")
+    elseif(cpp_type STREQUAL "UnaryAssertionExpr")
+      set(op_base "${ir_prefix}UnaryAssertionASTNodeOp")
+    elseif(cpp_type STREQUAL "BinaryAssertionExpr")
+      set(op_base "${ir_prefix}BinaryAssertionASTNodeOp")
+    elseif(cpp_type STREQUAL "FirstMatchAssertionExpr")
+      set(op_base "${ir_prefix}MatchItemsAssertionASTNodeOp")
+    elseif(cpp_type STREQUAL "StrongWeakAssertionExpr")
+      set(op_base "${ir_prefix}StrongWeakAssertionASTNodeOp")
+    elseif(cpp_type STREQUAL "AbortAssertionExpr")
+      set(op_base "${ir_prefix}AbortAssertionASTNodeOp")
+    elseif(cpp_type STREQUAL "ConditionalAssertionExpr")
+      set(op_base "${ir_prefix}ConditionalAssertionASTNodeOp")
+    elseif(cpp_type STREQUAL "CaseAssertionExpr")
+      set(op_base "${ir_prefix}CaseAssertionASTNodeOp")
+    elseif(cpp_type IN_LIST constant_symbols)
+      set(op_base "${ir_prefix}ConstantSymbolASTNodeOp")
+    elseif(cpp_type IN_LIST directed_symbols)
+      set(op_base "${ir_prefix}DirectedSymbolASTNodeOp")
+    elseif(cpp_type STREQUAL "DefinitionSymbol")
+      set(op_base "${ir_prefix}DefinitionASTNodeOp")
+    elseif(cpp_type STREQUAL "ProceduralBlockSymbol")
+      set(op_base "${ir_prefix}ProceduralBlockASTNodeOp")
+    elseif(cpp_type STREQUAL "StatementBlockSymbol")
+      set(op_base "${ir_prefix}StatementBlockASTNodeOp")
+    elseif(cpp_type STREQUAL "SubroutineSymbol")
+      set(op_base "${ir_prefix}SubroutineASTNodeOp")
+    elseif(cpp_type STREQUAL "InstanceSymbol")
+      set(op_base "${ir_prefix}InstanceASTNodeOp")
+    elseif(cpp_type STREQUAL "TimeLiteral")
+      set(op_base "${ir_prefix}TimeLiteralASTNodeOp")
+    elseif(cpp_type IN_LIST constant_expressions)
+      set(op_base "${ir_prefix}ConstantExpressionASTNodeOp")
+    elseif(cpp_type IN_LIST reference_expressions)
+      set(op_base "${ir_prefix}ReferenceExpressionASTNodeOp")
+    elseif(cpp_type STREQUAL "CallExpression")
+      set(op_base "${ir_prefix}CallExpressionASTNodeOp")
+    elseif(cpp_type STREQUAL "UnaryExpression")
+      set(op_base "${ir_prefix}UnaryExpressionASTNodeOp")
+    elseif(cpp_type STREQUAL "BinaryExpression")
+      set(op_base "${ir_prefix}BinaryExpressionASTNodeOp")
+    elseif(cpp_type STREQUAL "AssignmentExpression")
+      set(op_base "${ir_prefix}AssignmentExpressionASTNodeOp")
+    elseif(cpp_type IN_LIST reference_patterns)
+      set(op_base "${ir_prefix}ReferencePatternASTNodeOp")
+    elseif(category STREQUAL "Symbol" AND cpp_type IN_LIST scope_symbols)
+      set(op_base "${ir_prefix}SymbolTableASTNodeOp")
+    elseif(category STREQUAL "Symbol")
+      set(op_base "${ir_prefix}SymbolASTNodeOp")
+    elseif(category STREQUAL "Type" AND cpp_type IN_LIST scope_types)
+      set(op_base "${ir_prefix}ScopeTypeASTNodeOp")
+    elseif(category STREQUAL "Type")
+      set(op_base "${ir_prefix}TypeASTNodeOp")
+    elseif(category STREQUAL "Expression")
+      set(op_base "${ir_prefix}ExpressionASTNodeOp")
+    elseif(category STREQUAL "Statement")
+      set(op_base "${ir_prefix}StatementASTNodeOp")
+    elseif(category STREQUAL "Timing")
+      set(op_base "${ir_prefix}TimingASTNodeOp")
+    elseif(category STREQUAL "Constraint")
+      set(op_base "${ir_prefix}ConstraintASTNodeOp")
+    elseif(category STREQUAL "Assertion")
+      set(op_base "${ir_prefix}AssertionASTNodeOp")
+    elseif(category STREQUAL "Pattern")
+      set(op_base "${ir_prefix}PatternASTNodeOp")
+    elseif(category STREQUAL "Bins")
+      set(op_base "${ir_prefix}BinsASTNodeOp")
+    elseif(category STREQUAL "RandSeq")
+      set(op_base "${ir_prefix}RandSeqASTNodeOp")
+    endif()
+
+    string(APPEND text
+      "def ${prefix}${cpp_type}Op : ${op_base}<\"${namespace_prefix}"
+      "${category_name}.${kind_name}\">;\n")
+    math(EXPR count "${count} + 1")
+  endforeach()
+
+  if(NOT count EQUAL 220)
+    message(FATAL_ERROR
+      "cannot generate AST operations: expected 220 entries, got ${count}")
+  endif()
+  # Keep no-op CMake reconfigures from invalidating all generated operation
+  # headers and recompiling the large slang-facing translation unit.
+  file(CONFIGURE OUTPUT "${output}" CONTENT "${text}" @ONLY)
+endfunction()

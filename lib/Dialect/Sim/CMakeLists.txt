@@ -3,12 +3,12 @@ add_mlir_library(ObeliskIR
 
   DEPENDS
   ObeliskDialectIncGen
+  ObeliskASTOpsIncGen
   ObeliskEnumsIncGen
   ObeliskOpsIncGen
   ObeliskTypesIncGen
 
   LINK_LIBS PUBLIC
-  CIRCTHW
   MLIRBytecodeOpInterface
   MLIRIR
   MLIRSideEffectInterfaces

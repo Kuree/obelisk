@@ -2,10 +2,11 @@
 
 config.obelisk_obj_root = "@PROJECT_BINARY_DIR@"
 config.obelisk_driver_dir = "@PROJECT_BINARY_DIR@/tools/driver"
+config.obelisk_filecheck_dir = "@PROJECT_BINARY_DIR@/tools/filecheck"
 config.obelisk_opt_dir = "@PROJECT_BINARY_DIR@/tools/obelisk-opt"
-config.obelisk_translate_dir = "@PROJECT_BINARY_DIR@/tools/obelisk-translate"
-config.circt_tools_dir = "@OBELISK_CIRCT_DIR@/bin"
-config.llvm_tools_dir = "@OBELISK_CIRCT_DIR@/bin"
+config.llvm_tools_dir = "@OBELISK_LLVM_TOOLS_DIR@"
+config.real_uvm_dir = r"@OBELISK_REAL_UVM_DIR@"
+config.enable_real_uvm_tests = "@OBELISK_ENABLE_REAL_UVM_TESTS@" == "ON"
 
 import lit.llvm
 lit.llvm.initialize(lit_config, config)

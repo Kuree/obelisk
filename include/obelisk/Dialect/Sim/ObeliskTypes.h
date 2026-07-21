@@ -5,10 +5,12 @@
 
 #include "obelisk/Dialect/Sim/ObeliskDialect.h"
 
-#include "circt/Dialect/HW/HWTypes.h"
-
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Types.h"
+
+#include "llvm/ADT/TypeSwitch.h"
+
+#include "obelisk/Dialect/Sim/ObeliskEnums.h.inc"
 
 #define GET_TYPEDEF_CLASSES
 #include "obelisk/Dialect/Sim/ObeliskTypes.h.inc"

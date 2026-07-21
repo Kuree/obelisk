@@ -1,15 +1,14 @@
-add_mlir_library(ObeliskMooreToObelisk
-  MooreToObelisk.cpp
+add_mlir_library(ObeliskSlangToObelisk
+  SlangToObelisk.cpp
 
   DEPENDS
   ObeliskConversionPassIncGen
+  ObeliskASTOpsIncGen
+  SlangOpsIncGen
 
   LINK_LIBS PUBLIC
-  CIRCTHW
-  CIRCTMoore
-  CIRCTSim
   ObeliskIR
-  MLIRArithDialect
+  ObeliskSlangIR
   MLIRIR
   MLIRPass
   MLIRTransformUtils

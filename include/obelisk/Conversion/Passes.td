@@ -5,18 +5,16 @@
 
 include "mlir/Pass/PassBase.td"
 
-def ConvertMooreToObeliskPass
-    : Pass<"convert-moore-to-obelisk", "mlir::ModuleOp"> {
-  let summary = "Convert Moore IR to exact Obelisk semantic IR";
+def ConvertSlangToObeliskPass
+    : Pass<"convert-slang-to-obelisk", "mlir::ModuleOp"> {
+  let summary = "Convert elaborated Slang IR to exact Obelisk semantic IR";
   let description = [{
-    Exhaustively converts CIRCT Moore operations, types, and attributes to the
-    verifier-backed Obelisk semantic dialect and lower-level target dialects.
+    Exhaustively converts every concrete Slang operation and type to its
+    verifier-backed Obelisk counterpart. Slang entities are illegal after this
+    pass and conversion fails if any source semantics remain.
   }];
   let dependentDialects = [
-    "obelisk::ir::ObeliskDialect",
-    "mlir::arith::ArithDialect",
-    "circt::hw::HWDialect",
-    "circt::sim::SimDialect"
+    "obelisk::ir::ObeliskDialect"
   ];
 }
 

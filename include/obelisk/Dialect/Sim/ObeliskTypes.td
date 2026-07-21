@@ -4,10 +4,174 @@
 #define OBELISK_DIALECT_SIM_OBELISKTYPES_TD
 
 include "obelisk/Dialect/Sim/ObeliskDialect.td"
+include "obelisk/Dialect/Sim/ObeliskEnums.td"
 include "mlir/IR/AttrTypeBase.td"
 include "mlir/IR/OpBase.td"
 
 class ObeliskType<string name> : TypeDef<ObeliskDialect, name> {}
+
+// Source-semantic integral data keeps the declared direction and signedness in
+// addition to width and four-state domain. LogicType remains the normalized
+// runtime representation used by lower-level operations.
+def IntegralType : ObeliskType<"Integral"> {
+  let mnemonic = "integral";
+  let summary = "range-preserving elaborated integral type";
+  let parameters = (ins
+    "unsigned":$width,
+    "bool":$isSigned,
+    "bool":$isFourState,
+    "int64_t":$left,
+    "int64_t":$right,
+    EnumParameter<ObeliskSVIntegralFlavor>:$flavor
+  );
+  let assemblyFormat =
+      "`<` $width `,` $isSigned `,` $isFourState `,` $left `:` $right `,` $flavor `>`";
+  let genVerifyDecl = 1;
+}
+
+def StringType : ObeliskType<"String"> {
+  let mnemonic = "string";
+  let summary = "source-semantic SystemVerilog string";
+}
+
+def RealType : ObeliskType<"Real"> {
+  let mnemonic = "real";
+  let summary = "source-semantic SystemVerilog real";
+}
+
+def RealtimeType : ObeliskType<"Realtime"> {
+  let mnemonic = "realtime";
+  let summary = "source-semantic SystemVerilog realtime";
+}
+
+def ShortRealType : ObeliskType<"ShortReal"> {
+  let mnemonic = "shortreal";
+  let summary = "source-semantic SystemVerilog shortreal";
+}
+
+def EnumType : ObeliskType<"Enum"> {
+  let mnemonic = "enum";
+  let parameters = (ins
+    "::mlir::StringAttr":$name,
+    "::mlir::Type":$baseType
+  );
+  let assemblyFormat = "`<` $name `,` $baseType `>`";
+  let genVerifyDecl = 1;
+}
+
+def RangedPackedArrayType : ObeliskType<"RangedPackedArray"> {
+  let mnemonic = "ranged_packed_array";
+  let parameters = (ins
+    "::mlir::Type":$elementType,
+    "int64_t":$left,
+    "int64_t":$right
+  );
+  let assemblyFormat = "`<` $left `:` $right `x` $elementType `>`";
+  let genVerifyDecl = 1;
+}
+
+def RangedUnpackedArrayType : ObeliskType<"RangedUnpackedArray"> {
+  let mnemonic = "ranged_unpacked_array";
+  let parameters = (ins
+    "::mlir::Type":$elementType,
+    "int64_t":$left,
+    "int64_t":$right
+  );
+  let assemblyFormat = "`<` $left `:` $right `x` $elementType `>`";
+}
+
+def QueueType : ObeliskType<"Queue"> {
+  let mnemonic = "queue";
+  let parameters = (ins "::mlir::Type":$elementType, "uint32_t":$bound);
+  let assemblyFormat = "`<` $elementType `,` $bound `>`";
+}
+
+def SourceAggregateType : ObeliskType<"SourceAggregate"> {
+  let mnemonic = "source_aggregate";
+  let parameters = (ins
+    "::mlir::StringAttr":$name,
+    "bool":$isPacked,
+    "bool":$isUnion,
+    "bool":$isTagged,
+    "bool":$isSigned,
+    "bool":$isFourState,
+    "bool":$isSoft,
+    "uint64_t":$bitWidth,
+    "uint64_t":$selectableWidth,
+    "uint64_t":$bitstreamWidth,
+    "uint32_t":$tagBits
+  );
+  let assemblyFormat =
+      "`<` $name `,` $isPacked `,` $isUnion `,` $isTagged `,` $isSigned `,` $isFourState `,` $isSoft `,` $bitWidth `,` $selectableWidth `,` $bitstreamWidth `,` $tagBits `>`";
+  let genVerifyDecl = 1;
+}
+
+def CovergroupHandleType : ObeliskType<"CovergroupHandle"> {
+  let mnemonic = "covergroup_handle";
+  let parameters = (ins "::mlir::SymbolRefAttr":$covergroupName);
+  let assemblyFormat = "`<` $covergroupName `>`";
+}
+
+def VirtualInterfaceType : ObeliskType<"VirtualInterface"> {
+  let mnemonic = "virtual_interface";
+  let parameters = (ins
+    "::mlir::SymbolRefAttr":$interfaceName,
+    "::mlir::StringAttr":$modport
+  );
+  let assemblyFormat = "`<` $interfaceName `,` $modport `>`";
+}
+
+def SubroutineType : ObeliskType<"Subroutine"> {
+  let mnemonic = "subroutine";
+  let parameters = (ins "::mlir::Type":$signature, "bool":$isTask);
+  let assemblyFormat = "`<` $signature `,` $isTask `>`";
+  let genVerifyDecl = 1;
+}
+
+def SourceRangeType : ObeliskType<"SourceRange"> {
+  let mnemonic = "source_range";
+  let parameters = (ins
+    "::mlir::StringAttr":$startFile,
+    "uint32_t":$startLine,
+    "uint32_t":$startColumn,
+    "::mlir::StringAttr":$endFile,
+    "uint32_t":$endLine,
+    "uint32_t":$endColumn,
+    "::mlir::StringAttr":$macroName
+  );
+  let assemblyFormat = [{
+    `<` $startFile `,` $startLine `,` $startColumn `,`
+    $endFile `,` $endLine `,` $endColumn `,` $macroName `>`
+  }];
+  let genVerifyDecl = 1;
+}
+
+def UnboundedType : ObeliskType<"Unbounded"> {
+  let mnemonic = "unbounded";
+}
+
+def UntypedType : ObeliskType<"Untyped"> {
+  let mnemonic = "untyped";
+}
+
+def TypeReferenceType : ObeliskType<"TypeReference"> {
+  let mnemonic = "type_reference";
+}
+
+def SequenceType : ObeliskType<"Sequence"> {
+  let mnemonic = "sequence";
+}
+
+def PropertyType : ObeliskType<"Property"> {
+  let mnemonic = "property";
+}
+
+def ErrorType : ObeliskType<"Error"> {
+  let mnemonic = "error";
+  let parameters = (ins "bool":$invalid);
+  let assemblyFormat = "`<` $invalid `>`";
+  let genVerifyDecl = 1;
+}
 
 // Exact four-state packed data.  The canonical lowering is two W-bit planes:
 // `unknown=0` selects ordinary 0/1 from `value`; `unknown=1` selects X/Z from
@@ -64,7 +228,7 @@ def EventType : ObeliskType<"Event"> {
 }
 
 // Keep the declared class in the type until object layout and virtual dispatch
-// have been resolved.  Erasing this to a raw pointer during Moore conversion
+// have been resolved. Erasing this to a raw pointer during frontend conversion
 // would make inherited field and method references ambiguous.
 def ClassHandleType : ObeliskType<"ClassHandle"> {
   let mnemonic = "class_handle";
@@ -119,13 +283,13 @@ def UnpackedArrayType : ObeliskType<"UnpackedArray"> {
   let assemblyFormat = "`<` $size `x` $elementType `>`";
 }
 
-// HW struct/union types provide the typed, named field inventory. The Obelisk
-// wrapper retains the source packedness that HW alone cannot represent for
-// SystemVerilog aggregates.
+// A DictionaryAttr maps each source field name to a TypeAttr. Keeping the field
+// inventory in Obelisk avoids depending on a hardware-specific dialect and
+// preserves source packedness and union semantics explicitly.
 def PackedStructType : ObeliskType<"PackedStruct"> {
   let mnemonic = "packed_struct";
   let summary = "packed SystemVerilog struct";
-  let parameters = (ins "::mlir::Type":$fields);
+  let parameters = (ins "::mlir::DictionaryAttr":$fields);
   let assemblyFormat = "`<` $fields `>`";
   let genVerifyDecl = 1;
 }
@@ -133,7 +297,7 @@ def PackedStructType : ObeliskType<"PackedStruct"> {
 def UnpackedStructType : ObeliskType<"UnpackedStruct"> {
   let mnemonic = "unpacked_struct";
   let summary = "unpacked SystemVerilog struct";
-  let parameters = (ins "::mlir::Type":$fields);
+  let parameters = (ins "::mlir::DictionaryAttr":$fields);
   let assemblyFormat = "`<` $fields `>`";
   let genVerifyDecl = 1;
 }
@@ -141,7 +305,7 @@ def UnpackedStructType : ObeliskType<"UnpackedStruct"> {
 def PackedUnionType : ObeliskType<"PackedUnion"> {
   let mnemonic = "packed_union";
   let summary = "packed SystemVerilog union";
-  let parameters = (ins "::mlir::Type":$fields);
+  let parameters = (ins "::mlir::DictionaryAttr":$fields);
   let assemblyFormat = "`<` $fields `>`";
   let genVerifyDecl = 1;
 }
@@ -149,7 +313,7 @@ def PackedUnionType : ObeliskType<"PackedUnion"> {
 def UnpackedUnionType : ObeliskType<"UnpackedUnion"> {
   let mnemonic = "unpacked_union";
   let summary = "unpacked SystemVerilog union";
-  let parameters = (ins "::mlir::Type":$fields);
+  let parameters = (ins "::mlir::DictionaryAttr":$fields);
   let assemblyFormat = "`<` $fields `>`";
   let genVerifyDecl = 1;
 }
@@ -171,9 +335,11 @@ def AssocArrayType : ObeliskType<"AssocArray"> {
   let summary = "associative array with reference semantics";
   let parameters = (ins
     "::mlir::Type":$keyType,
-    "::mlir::Type":$elementType
+    "::mlir::Type":$elementType,
+    "bool":$wildcardIndex
   );
-  let assemblyFormat = "`<` $keyType `,` $elementType `>`";
+  let assemblyFormat = "`<` $keyType `,` $elementType `,` $wildcardIndex `>`";
+  let genVerifyDecl = 1;
 }
 
 def ScanStateType : ObeliskType<"ScanState"> {

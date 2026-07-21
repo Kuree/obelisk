@@ -1,6 +1,7 @@
 # -*- Python -*-
 
 import os
+import sys
 
 import lit.formats
 from lit.llvm import llvm_config
@@ -20,15 +21,20 @@ config.excludes = [
 ]
 
 llvm_config.with_system_environment(["HOME", "TMP", "TEMP"])
-llvm_config.use_default_substitutions()
+config.substitutions.append(("%python", '"{}"'.format(sys.executable)))
+llvm_config.add_err_msg_substitutions()
 
 tool_dirs = [
     config.obelisk_driver_dir,
+    config.obelisk_filecheck_dir,
     config.obelisk_opt_dir,
-    config.obelisk_translate_dir,
-    config.circt_tools_dir,
+    config.llvm_tools_dir,
 ]
 llvm_config.add_tool_substitutions(
-    ["obelisk", "obelisk-opt", "obelisk-translate", "FileCheck", "not"],
+    ["obelisk", "obelisk-opt", "FileCheck", "not"],
     tool_dirs,
 )
+
+if config.enable_real_uvm_tests:
+    config.available_features.add("real-uvm")
+    config.substitutions.append(("%uvm", config.real_uvm_dir))

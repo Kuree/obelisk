@@ -8,6 +8,7 @@
 #include "llvm/ADT/ArrayRef.h"
 
 #include <limits>
+#include <optional>
 
 using namespace mlir;
 
@@ -20,7 +21,36 @@ using namespace mlir;
 #define GET_OP_CLASSES
 #include "obelisk/Dialect/Sim/ObeliskOps.cpp.inc"
 
+#define GET_OP_CLASSES
+#include "obelisk/Dialect/Sim/ObeliskASTOps.cpp.inc"
+
 namespace obelisk::ir {
+
+namespace {
+
+std::optional<uint64_t> getInclusiveRangeWidth(int64_t left, int64_t right) {
+  uint64_t distance =
+      left >= right
+          ? static_cast<uint64_t>(left) - static_cast<uint64_t>(right)
+          : static_cast<uint64_t>(right) - static_cast<uint64_t>(left);
+  if (distance == std::numeric_limits<uint64_t>::max())
+    return std::nullopt;
+  return distance + 1;
+}
+
+LogicalResult
+verifySourceRange(llvm::function_ref<InFlightDiagnostic()> emitError,
+                  StringAttr startFile, uint32_t startLine,
+                  uint32_t startColumn, StringAttr endFile, uint32_t endLine,
+                  uint32_t endColumn) {
+  if (startFile.getValue().empty() || endFile.getValue().empty())
+    return emitError() << "source range files must not be empty";
+  if (startLine == 0 || startColumn == 0 || endLine == 0 || endColumn == 0)
+    return emitError() << "source range lines and columns are one-based";
+  return success();
+}
+
+} // namespace
 
 void ObeliskDialect::initialize() {
   addTypes<
@@ -32,6 +62,31 @@ void ObeliskDialect::initialize() {
 #define GET_OP_LIST
 #include "obelisk/Dialect/Sim/ObeliskOps.cpp.inc"
       >();
+
+  addOperations<
+#define GET_OP_LIST
+#include "obelisk/Dialect/Sim/ObeliskASTOps.cpp.inc"
+      >();
+}
+
+LogicalResult
+IntegralType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                     unsigned width, bool, bool, int64_t left, int64_t right,
+                     SVIntegralFlavor) {
+  if (width == 0)
+    return emitError() << "integral width must be greater than zero";
+  std::optional<uint64_t> rangeWidth = getInclusiveRangeWidth(left, right);
+  if (!rangeWidth)
+    return emitError() << "declared range width exceeds uint64_t";
+  if (*rangeWidth != width)
+    return emitError() << "declared range width " << *rangeWidth
+                       << " does not match integral width " << width;
+  return success();
+}
+
+LogicalResult
+ErrorType::verify(llvm::function_ref<InFlightDiagnostic()> emitError, bool) {
+  return emitError() << "error recovery type cannot appear in valid Obelisk IR";
 }
 
 LogicalResult
@@ -43,6 +98,77 @@ LogicType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
 }
 
 static FailureOr<uint64_t> getPackedBitWidth(Type type);
+static bool isPackedType(Type type);
+
+LogicalResult RangedPackedArrayType::verify(
+    llvm::function_ref<InFlightDiagnostic()> emitError, Type elementType,
+    int64_t left, int64_t right) {
+  if (!getInclusiveRangeWidth(left, right))
+    return emitError() << "packed array range width exceeds uint64_t";
+  if (!isPackedType(elementType))
+    return emitError() << "packed array element must be packed, got "
+                       << elementType;
+  return success();
+}
+
+LogicalResult
+EnumType::verify(llvm::function_ref<InFlightDiagnostic()> emitError, StringAttr,
+                 Type baseType) {
+  if (!isPackedType(baseType))
+    return emitError() << "enum base must be an integral type, got "
+                       << baseType;
+  return success();
+}
+
+LogicalResult SourceAggregateType::verify(
+    llvm::function_ref<InFlightDiagnostic()> emitError, StringAttr,
+    bool isPacked, bool isUnion, bool isTagged, bool isSigned, bool isFourState,
+    bool isSoft, uint64_t bitWidth, uint64_t selectableWidth,
+    uint64_t bitstreamWidth, uint32_t tagBits) {
+  if (isTagged && !isUnion)
+    return emitError() << "only a union can be tagged";
+  if (isSoft && (!isPacked || !isUnion))
+    return emitError() << "only a packed union can be soft";
+  if (!isTagged && tagBits != 0)
+    return emitError() << "only a tagged union can reserve tag bits";
+  if (isPacked && (bitWidth != selectableWidth || bitWidth != bitstreamWidth))
+    return emitError() << "packed aggregate widths must agree";
+  if (!isPacked && (bitWidth != 0 || isSigned || isFourState || isSoft))
+    return emitError() << "unpacked aggregate has packed-only metadata";
+  return success();
+}
+
+LogicalResult
+AssocArrayType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                       Type keyType, Type, bool wildcardIndex) {
+  if (wildcardIndex != isa<UntypedType>(keyType))
+    return emitError()
+           << "wildcard associative index must use !obelisk.untyped and "
+              "typed indices must not";
+  return success();
+}
+
+LogicalResult
+SubroutineType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                       Type signatureType, bool isTask) {
+  auto signature = dyn_cast<FunctionType>(signatureType);
+  if (!signature)
+    return emitError() << "subroutine signature must be a function type";
+  if (isTask && signature.getNumResults() != 0)
+    return emitError() << "task signature must not have a result";
+  if (!isTask && signature.getNumResults() != 1)
+    return emitError() << "function signature must have exactly one result";
+  return success();
+}
+
+LogicalResult
+SourceRangeType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                        StringAttr startFile, uint32_t startLine,
+                        uint32_t startColumn, StringAttr endFile,
+                        uint32_t endLine, uint32_t endColumn, StringAttr) {
+  return verifySourceRange(emitError, startFile, startLine, startColumn,
+                           endFile, endLine, endColumn);
+}
 
 LogicalResult
 PackedArrayType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
@@ -60,49 +186,56 @@ PackedArrayType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
 
 static LogicalResult
 verifyAggregateFields(llvm::function_ref<InFlightDiagnostic()> emitError,
-                      Type fields, bool expectUnion, bool requirePacked) {
-  if (expectUnion && !isa<circt::hw::UnionType>(fields))
-    return emitError() << "union fields must use !hw.union, got " << fields;
-  if (!expectUnion && !isa<circt::hw::StructType>(fields))
-    return emitError() << "struct fields must use !hw.struct, got " << fields;
-  if (requirePacked && failed(getPackedBitWidth(fields)))
-    return emitError() << "packed aggregate contains an unpacked field in "
-                       << fields;
+                      DictionaryAttr fields, bool requirePacked) {
+  for (NamedAttribute field : fields) {
+    auto type = dyn_cast<TypeAttr>(field.getValue());
+    if (!type)
+      return emitError() << "aggregate field " << field.getName()
+                         << " must contain a type attribute";
+    if (requirePacked && failed(getPackedBitWidth(type.getValue())))
+      return emitError() << "packed aggregate field " << field.getName()
+                         << " has unpacked type " << type.getValue();
+  }
   return success();
 }
 
 LogicalResult
 PackedStructType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
-                         Type fields) {
-  if (failed(verifyAggregateFields(emitError, fields, false, true)))
+                         DictionaryAttr fields) {
+  if (failed(verifyAggregateFields(emitError, fields, true)))
     return failure();
-  if (cast<circt::hw::StructType>(fields).getElements().empty())
+  if (fields.empty())
     return emitError() << "packed struct must contain at least one field";
   return success();
 }
 
 LogicalResult
 UnpackedStructType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
-                           Type fields) {
-  return verifyAggregateFields(emitError, fields, false, false);
+                           DictionaryAttr fields) {
+  return verifyAggregateFields(emitError, fields, false);
 }
 
 LogicalResult
 PackedUnionType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
-                        Type fields) {
-  if (failed(verifyAggregateFields(emitError, fields, true, true)))
+                        DictionaryAttr fields) {
+  if (failed(verifyAggregateFields(emitError, fields, true)))
     return failure();
-  auto elements = cast<circt::hw::UnionType>(fields).getElements();
-  if (elements.empty())
+  if (fields.empty())
     return emitError() << "packed union must contain at least one field";
-  FailureOr<uint64_t> expectedWidth = getPackedBitWidth(elements.front().type);
-  assert(succeeded(expectedWidth));
-  for (auto field : elements.drop_front()) {
-    FailureOr<uint64_t> width = getPackedBitWidth(field.type);
-    assert(succeeded(width));
+  auto firstType = cast<TypeAttr>(fields.begin()->getValue()).getValue();
+  FailureOr<uint64_t> expectedWidth = getPackedBitWidth(firstType);
+  if (failed(expectedWidth))
+    return emitError() << "packed union field " << fields.begin()->getName()
+                       << " has an unrepresentable bit width";
+  for (NamedAttribute field : llvm::drop_begin(fields)) {
+    auto fieldType = cast<TypeAttr>(field.getValue()).getValue();
+    FailureOr<uint64_t> width = getPackedBitWidth(fieldType);
+    if (failed(width))
+      return emitError() << "packed union field " << field.getName()
+                         << " has an unrepresentable bit width";
     if (*width != *expectedWidth)
       return emitError() << "packed union fields must have equal widths; field "
-                         << field.name << " has width " << *width
+                         << field.getName() << " has width " << *width
                          << " but expected " << *expectedWidth;
   }
   return success();
@@ -110,17 +243,31 @@ PackedUnionType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
 
 LogicalResult
 UnpackedUnionType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
-                          Type fields) {
-  return verifyAggregateFields(emitError, fields, true, false);
+                          DictionaryAttr fields) {
+  return verifyAggregateFields(emitError, fields, false);
 }
 
 static FailureOr<uint64_t> getPackedBitWidth(Type type) {
+  if (auto integral = dyn_cast<IntegralType>(type))
+    return integral.getWidth();
   if (auto integer = dyn_cast<IntegerType>(type))
     return integer.getWidth();
   if (auto logic = dyn_cast<LogicType>(type))
     return logic.getWidth();
   if (isa<TimeType>(type))
     return uint64_t{64};
+  if (auto enumeration = dyn_cast<EnumType>(type))
+    return getPackedBitWidth(enumeration.getBaseType());
+  if (auto array = dyn_cast<RangedPackedArrayType>(type)) {
+    std::optional<uint64_t> size =
+        getInclusiveRangeWidth(array.getLeft(), array.getRight());
+    FailureOr<uint64_t> elementWidth =
+        getPackedBitWidth(array.getElementType());
+    if (!size || failed(elementWidth) ||
+        *elementWidth > std::numeric_limits<uint64_t>::max() / *size)
+      return failure();
+    return *elementWidth * *size;
+  }
   if (auto array = dyn_cast<PackedArrayType>(type)) {
     if (array.getSize() == 0)
       return failure();
@@ -131,25 +278,11 @@ static FailureOr<uint64_t> getPackedBitWidth(Type type) {
       return failure();
     return *elementWidth * array.getSize();
   }
-  if (auto array = dyn_cast<circt::hw::ArrayType>(type)) {
-    if (array.getNumElements() == 0)
-      return uint64_t{0};
-    FailureOr<uint64_t> elementWidth =
-        getPackedBitWidth(array.getElementType());
-    if (failed(elementWidth) ||
-        *elementWidth >
-            std::numeric_limits<uint64_t>::max() / array.getNumElements())
-      return failure();
-    return *elementWidth * array.getNumElements();
-  }
-  if (auto packed = dyn_cast<PackedStructType>(type))
-    return getPackedBitWidth(packed.getFields());
-  if (auto packed = dyn_cast<PackedUnionType>(type))
-    return getPackedBitWidth(packed.getFields());
-  if (auto structure = dyn_cast<circt::hw::StructType>(type)) {
+  if (auto structure = dyn_cast<PackedStructType>(type)) {
     uint64_t width = 0;
-    for (auto field : structure.getElements()) {
-      FailureOr<uint64_t> fieldWidth = getPackedBitWidth(field.type);
+    for (NamedAttribute field : structure.getFields()) {
+      Type fieldType = cast<TypeAttr>(field.getValue()).getValue();
+      FailureOr<uint64_t> fieldWidth = getPackedBitWidth(fieldType);
       if (failed(fieldWidth) ||
           *fieldWidth > std::numeric_limits<uint64_t>::max() - width)
         return failure();
@@ -157,10 +290,11 @@ static FailureOr<uint64_t> getPackedBitWidth(Type type) {
     }
     return width;
   }
-  if (auto unionType = dyn_cast<circt::hw::UnionType>(type)) {
+  if (auto unionType = dyn_cast<PackedUnionType>(type)) {
     uint64_t width = 0;
-    for (auto field : unionType.getElements()) {
-      FailureOr<uint64_t> fieldWidth = getPackedBitWidth(field.type);
+    for (NamedAttribute field : unionType.getFields()) {
+      Type fieldType = cast<TypeAttr>(field.getValue()).getValue();
+      FailureOr<uint64_t> fieldWidth = getPackedBitWidth(fieldType);
       if (failed(fieldWidth))
         return failure();
       width = std::max(width, *fieldWidth);
@@ -168,6 +302,19 @@ static FailureOr<uint64_t> getPackedBitWidth(Type type) {
     return width;
   }
   return failure();
+}
+
+static bool isPackedType(Type type) {
+  if (isa<IntegralType, IntegerType, LogicType, TimeType, EnumType,
+          PackedStructType, PackedUnionType>(type))
+    return true;
+  if (auto array = dyn_cast<PackedArrayType>(type))
+    return isPackedType(array.getElementType());
+  if (auto array = dyn_cast<RangedPackedArrayType>(type))
+    return isPackedType(array.getElementType());
+  if (auto aggregate = dyn_cast<SourceAggregateType>(type))
+    return aggregate.getIsPacked();
+  return false;
 }
 
 static LogicalResult requireSameType(Operation *op, Type lhs, Type rhs,
@@ -267,151 +414,6 @@ LogicalResult NetConcatOp::verify() {
                       getResult().getType().getElementType());
 }
 
-SemanticFamily getSemanticFamily(SemanticKind kind) {
-  unsigned encoded = static_cast<uint32_t>(kind);
-  auto family = symbolizeSemanticFamily((encoded >> 24) & 0xf);
-  assert(family && "invalid encoded SemanticKind family");
-  return *family;
-}
-
-static std::optional<unsigned> decodeSemanticArity(SemanticKind kind,
-                                                   unsigned shift) {
-  unsigned encoded = static_cast<uint32_t>(kind);
-  unsigned arity = (encoded >> shift) & 0xf;
-  if (arity == 0xf)
-    return std::nullopt;
-  return arity;
-}
-
-template <typename EnumAttr>
-static LogicalResult
-verifySemanticEnumAttr(Operation *op, DictionaryAttr sourceAttrs,
-                       StringRef name, bool optional = false) {
-  Attribute attr = sourceAttrs ? sourceAttrs.get(name) : Attribute();
-  if (!attr)
-    return optional ? success()
-                    : op->emitOpError()
-                          << "opcode "
-                          << stringifySemanticKind(
-                                 cast<SemanticKindAttr>(op->getAttr("opcode"))
-                                     .getValue())
-                          << " requires source_attrs." << name;
-  if (!isa<EnumAttr>(attr))
-    return op->emitOpError()
-           << "source_attrs." << name
-           << " is not a valid target enum value, got " << attr;
-  return success();
-}
-
-static LogicalResult verifySemanticMetadata(Operation *op, SemanticKind kind) {
-  auto sourceAttrs = op->getAttrOfType<DictionaryAttr>("source_attrs");
-  switch (kind) {
-  case SemanticKind::Procedure:
-    return verifySemanticEnumAttr<ProcessKindAttr>(op, sourceAttrs, "kind");
-  case SemanticKind::ForkJoin:
-    return verifySemanticEnumAttr<JoinKindAttr>(op, sourceAttrs, "kind");
-  case SemanticKind::Net:
-    return verifySemanticEnumAttr<NetKindAttr>(op, sourceAttrs, "kind");
-  case SemanticKind::DetectEvent:
-    return verifySemanticEnumAttr<EdgeKindAttr>(op, sourceAttrs, "edge");
-  case SemanticKind::Assert:
-  case SemanticKind::Assume:
-  case SemanticKind::Cover:
-    return verifySemanticEnumAttr<DeferAssertAttr>(op, sourceAttrs, "defer");
-  case SemanticKind::SeverityBI:
-    return verifySemanticEnumAttr<SeverityAttr>(op, sourceAttrs, "severity");
-  case SemanticKind::FOpenBI:
-    return verifySemanticEnumAttr<FileOpenModeAttr>(op, sourceAttrs, "mode",
-                                                    true);
-  case SemanticKind::FormatInt:
-    if (failed(verifySemanticEnumAttr<IntegerFormatAttr>(op, sourceAttrs,
-                                                         "format")) ||
-        failed(verifySemanticEnumAttr<IntegerAlignmentAttr>(op, sourceAttrs,
-                                                            "alignment")) ||
-        failed(verifySemanticEnumAttr<IntegerPaddingAttr>(op, sourceAttrs,
-                                                          "padding")))
-      return failure();
-    return success();
-  case SemanticKind::FormatReal:
-    if (failed(verifySemanticEnumAttr<RealFormatAttr>(op, sourceAttrs,
-                                                      "format")) ||
-        failed(verifySemanticEnumAttr<IntegerAlignmentAttr>(op, sourceAttrs,
-                                                            "alignment")))
-      return failure();
-    return success();
-  case SemanticKind::UArrayCmp:
-  case SemanticKind::QueueCmp:
-    return verifySemanticEnumAttr<ArrayCmpPredicateAttr>(op, sourceAttrs,
-                                                         "predicate");
-  case SemanticKind::StringCmp:
-    return verifySemanticEnumAttr<StringCmpPredicateAttr>(op, sourceAttrs,
-                                                          "predicate");
-  case SemanticKind::DPIFunc: {
-    auto directions =
-        sourceAttrs
-            ? dyn_cast_or_null<ArrayAttr>(sourceAttrs.get("dpi_arg_dirs"))
-            : ArrayAttr();
-    if (!directions)
-      return op->emitOpError(
-          "opcode func.dpi requires source_attrs.dpi_arg_dirs");
-    for (Attribute direction : directions)
-      if (!isa<DPIArgDirectionAttr>(direction))
-        return op->emitOpError()
-               << "source_attrs.dpi_arg_dirs contains invalid direction "
-               << direction;
-    return success();
-  }
-  default:
-    return success();
-  }
-}
-
-static LogicalResult verifySemanticOp(Operation *op, SemanticKind kind,
-                                      SemanticFamily expectedFamily) {
-  SemanticFamily actualFamily = getSemanticFamily(kind);
-  if (actualFamily != expectedFamily)
-    return op->emitOpError()
-           << "opcode " << stringifySemanticKind(kind) << " belongs to the "
-           << stringifySemanticFamily(actualFamily) << " family, not "
-           << stringifySemanticFamily(expectedFamily);
-
-  auto verifyArity = [&](std::optional<unsigned> expected, unsigned actual,
-                         StringRef name) -> LogicalResult {
-    if (expected && *expected != actual)
-      return op->emitOpError()
-             << "opcode " << stringifySemanticKind(kind) << " requires "
-             << *expected << ' ' << name << (*expected == 1 ? "" : "s")
-             << ", got " << actual;
-    return success();
-  };
-  if (failed(verifyArity(decodeSemanticArity(kind, 20), op->getNumOperands(),
-                         "operand")) ||
-      failed(verifyArity(decodeSemanticArity(kind, 16), op->getNumResults(),
-                         "result")) ||
-      failed(verifyArity(decodeSemanticArity(kind, 12), op->getNumRegions(),
-                         "region")))
-    return failure();
-  return verifySemanticMetadata(op, kind);
-}
-
-#define DEFINE_SEMANTIC_VERIFIER(Op, Family)                                   \
-  LogicalResult Op::verify() {                                                 \
-    return verifySemanticOp(*this, getOpcode(), SemanticFamily::Family);       \
-  }
-
-DEFINE_SEMANTIC_VERIFIER(SemanticValueOp, Value)
-DEFINE_SEMANTIC_VERIFIER(SemanticEffectOp, Effect)
-DEFINE_SEMANTIC_VERIFIER(SemanticRegionOp, Region)
-DEFINE_SEMANTIC_VERIFIER(SemanticIsolatedRegionOp, IsolatedRegion)
-DEFINE_SEMANTIC_VERIFIER(SemanticSymbolOp, Symbol)
-DEFINE_SEMANTIC_VERIFIER(SemanticIsolatedSymbolOp, IsolatedSymbol)
-DEFINE_SEMANTIC_VERIFIER(SemanticSymbolTableOp, SymbolTable)
-DEFINE_SEMANTIC_VERIFIER(SemanticGraphOp, Graph)
-DEFINE_SEMANTIC_VERIFIER(SemanticGraphSymbolOp, GraphSymbol)
-DEFINE_SEMANTIC_VERIFIER(SemanticTerminatorOp, Terminator)
-
-#undef DEFINE_SEMANTIC_VERIFIER
-
 LogicalResult LogicConstantOp::verify() {
   auto type = cast<LogicType>(getResult().getType());
   if (getValueAttr().getValue().getBitWidth() != type.getWidth())
@@ -427,8 +429,12 @@ LogicalResult LogicConcatOp::verify() {
   if (getInputs().empty())
     return emitOpError("requires at least one input");
   uint64_t totalWidth = 0;
-  for (Value input : getInputs())
-    totalWidth += cast<LogicType>(input.getType()).getWidth();
+  for (Value input : getInputs()) {
+    uint64_t inputWidth = cast<LogicType>(input.getType()).getWidth();
+    if (inputWidth > std::numeric_limits<uint64_t>::max() - totalWidth)
+      return emitOpError("concatenated bit width overflows uint64_t");
+    totalWidth += inputWidth;
+  }
   auto resultWidth = cast<LogicType>(getResult().getType()).getWidth();
   if (totalWidth != resultWidth)
     return emitOpError() << "input widths sum to " << totalWidth

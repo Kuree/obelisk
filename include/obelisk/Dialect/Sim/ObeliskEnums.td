@@ -4,7 +4,6 @@
 #define OBELISK_DIALECT_SIM_OBELISKENUMS_TD
 
 include "mlir/IR/EnumAttr.td"
-include "obelisk/Dialect/Sim/ObeliskSemanticKinds.td"
 
 // IEEE 1800-2023 event regions, in scheduling order.  We keep every region
 // distinct even when an optimization later proves that adjacent queues may be
@@ -277,6 +276,146 @@ def IntegerPadding : I32EnumAttr<"IntegerPadding",
   let cppNamespace = "::obelisk::ir";
 }
 
+// Complete source-level operator inventories. These are intentionally distinct
+// from the normalized Logic* enums above, which are only valid after semantic
+// typing and lvalue side effects have been lowered.
+def ObeliskSVUnary_Plus          : I32EnumAttrCase<"Plus",          0, "plus">;
+def ObeliskSVUnary_Minus         : I32EnumAttrCase<"Minus",         1, "minus">;
+def ObeliskSVUnary_BitwiseNot    : I32EnumAttrCase<"BitwiseNot",    2, "bitwise_not">;
+def ObeliskSVUnary_BitwiseAnd    : I32EnumAttrCase<"BitwiseAnd",    3, "bitwise_and">;
+def ObeliskSVUnary_BitwiseOr     : I32EnumAttrCase<"BitwiseOr",     4, "bitwise_or">;
+def ObeliskSVUnary_BitwiseXor    : I32EnumAttrCase<"BitwiseXor",    5, "bitwise_xor">;
+def ObeliskSVUnary_BitwiseNand   : I32EnumAttrCase<"BitwiseNand",   6, "bitwise_nand">;
+def ObeliskSVUnary_BitwiseNor    : I32EnumAttrCase<"BitwiseNor",    7, "bitwise_nor">;
+def ObeliskSVUnary_BitwiseXnor   : I32EnumAttrCase<"BitwiseXnor",   8, "bitwise_xnor">;
+def ObeliskSVUnary_LogicalNot    : I32EnumAttrCase<"LogicalNot",    9, "logical_not">;
+def ObeliskSVUnary_Preincrement  : I32EnumAttrCase<"Preincrement", 10, "preincrement">;
+def ObeliskSVUnary_Predecrement  : I32EnumAttrCase<"Predecrement", 11, "predecrement">;
+def ObeliskSVUnary_Postincrement : I32EnumAttrCase<"Postincrement", 12, "postincrement">;
+def ObeliskSVUnary_Postdecrement : I32EnumAttrCase<"Postdecrement", 13, "postdecrement">;
+def ObeliskSVUnaryOperator : I32EnumAttr<"SVUnaryOperator",
+    "complete source-level SystemVerilog unary operator", [
+  ObeliskSVUnary_Plus, ObeliskSVUnary_Minus, ObeliskSVUnary_BitwiseNot,
+  ObeliskSVUnary_BitwiseAnd, ObeliskSVUnary_BitwiseOr,
+  ObeliskSVUnary_BitwiseXor, ObeliskSVUnary_BitwiseNand,
+  ObeliskSVUnary_BitwiseNor, ObeliskSVUnary_BitwiseXnor,
+  ObeliskSVUnary_LogicalNot, ObeliskSVUnary_Preincrement,
+  ObeliskSVUnary_Predecrement, ObeliskSVUnary_Postincrement,
+  ObeliskSVUnary_Postdecrement
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
+def ObeliskSVBinary_Add                : I32EnumAttrCase<"Add",                 0, "add">;
+def ObeliskSVBinary_Subtract           : I32EnumAttrCase<"Subtract",            1, "subtract">;
+def ObeliskSVBinary_Multiply           : I32EnumAttrCase<"Multiply",            2, "multiply">;
+def ObeliskSVBinary_Divide             : I32EnumAttrCase<"Divide",              3, "divide">;
+def ObeliskSVBinary_Mod                : I32EnumAttrCase<"Mod",                 4, "mod">;
+def ObeliskSVBinary_BinaryAnd          : I32EnumAttrCase<"BinaryAnd",           5, "binary_and">;
+def ObeliskSVBinary_BinaryOr           : I32EnumAttrCase<"BinaryOr",            6, "binary_or">;
+def ObeliskSVBinary_BinaryXor          : I32EnumAttrCase<"BinaryXor",           7, "binary_xor">;
+def ObeliskSVBinary_BinaryXnor         : I32EnumAttrCase<"BinaryXnor",          8, "binary_xnor">;
+def ObeliskSVBinary_Equality           : I32EnumAttrCase<"Equality",            9, "equality">;
+def ObeliskSVBinary_Inequality         : I32EnumAttrCase<"Inequality",         10, "inequality">;
+def ObeliskSVBinary_CaseEquality       : I32EnumAttrCase<"CaseEquality",       11, "case_equality">;
+def ObeliskSVBinary_CaseInequality     : I32EnumAttrCase<"CaseInequality",     12, "case_inequality">;
+def ObeliskSVBinary_GreaterThanEqual   : I32EnumAttrCase<"GreaterThanEqual",   13, "greater_than_equal">;
+def ObeliskSVBinary_GreaterThan        : I32EnumAttrCase<"GreaterThan",        14, "greater_than">;
+def ObeliskSVBinary_LessThanEqual      : I32EnumAttrCase<"LessThanEqual",      15, "less_than_equal">;
+def ObeliskSVBinary_LessThan           : I32EnumAttrCase<"LessThan",           16, "less_than">;
+def ObeliskSVBinary_WildcardEquality   : I32EnumAttrCase<"WildcardEquality",   17, "wildcard_equality">;
+def ObeliskSVBinary_WildcardInequality : I32EnumAttrCase<"WildcardInequality", 18, "wildcard_inequality">;
+def ObeliskSVBinary_LogicalAnd         : I32EnumAttrCase<"LogicalAnd",         19, "logical_and">;
+def ObeliskSVBinary_LogicalOr          : I32EnumAttrCase<"LogicalOr",          20, "logical_or">;
+def ObeliskSVBinary_LogicalImplication : I32EnumAttrCase<"LogicalImplication", 21, "logical_implication">;
+def ObeliskSVBinary_LogicalEquivalence : I32EnumAttrCase<"LogicalEquivalence", 22, "logical_equivalence">;
+def ObeliskSVBinary_LogicalShiftLeft   : I32EnumAttrCase<"LogicalShiftLeft",   23, "logical_shift_left">;
+def ObeliskSVBinary_LogicalShiftRight  : I32EnumAttrCase<"LogicalShiftRight",  24, "logical_shift_right">;
+def ObeliskSVBinary_ArithmeticShiftLeft
+    : I32EnumAttrCase<"ArithmeticShiftLeft", 25, "arithmetic_shift_left">;
+def ObeliskSVBinary_ArithmeticShiftRight
+    : I32EnumAttrCase<"ArithmeticShiftRight", 26, "arithmetic_shift_right">;
+def ObeliskSVBinary_Power : I32EnumAttrCase<"Power", 27, "power">;
+def ObeliskSVBinaryOperator : I32EnumAttr<"SVBinaryOperator",
+    "complete source-level SystemVerilog binary operator", [
+  ObeliskSVBinary_Add, ObeliskSVBinary_Subtract, ObeliskSVBinary_Multiply,
+  ObeliskSVBinary_Divide, ObeliskSVBinary_Mod, ObeliskSVBinary_BinaryAnd,
+  ObeliskSVBinary_BinaryOr, ObeliskSVBinary_BinaryXor,
+  ObeliskSVBinary_BinaryXnor, ObeliskSVBinary_Equality,
+  ObeliskSVBinary_Inequality, ObeliskSVBinary_CaseEquality,
+  ObeliskSVBinary_CaseInequality, ObeliskSVBinary_GreaterThanEqual,
+  ObeliskSVBinary_GreaterThan, ObeliskSVBinary_LessThanEqual,
+  ObeliskSVBinary_LessThan, ObeliskSVBinary_WildcardEquality,
+  ObeliskSVBinary_WildcardInequality, ObeliskSVBinary_LogicalAnd,
+  ObeliskSVBinary_LogicalOr, ObeliskSVBinary_LogicalImplication,
+  ObeliskSVBinary_LogicalEquivalence, ObeliskSVBinary_LogicalShiftLeft,
+  ObeliskSVBinary_LogicalShiftRight, ObeliskSVBinary_ArithmeticShiftLeft,
+  ObeliskSVBinary_ArithmeticShiftRight, ObeliskSVBinary_Power
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
+def ObeliskSVCheck_None     : I32EnumAttrCase<"None",     0, "none">;
+def ObeliskSVCheck_Unique   : I32EnumAttrCase<"Unique",   1, "unique">;
+def ObeliskSVCheck_Unique0  : I32EnumAttrCase<"Unique0",  2, "unique0">;
+def ObeliskSVCheck_Priority : I32EnumAttrCase<"Priority", 3, "priority">;
+def ObeliskSVUniquePriorityCheck : I32EnumAttr<"SVUniquePriorityCheck",
+    "unique or priority runtime check", [
+  ObeliskSVCheck_None, ObeliskSVCheck_Unique, ObeliskSVCheck_Unique0,
+  ObeliskSVCheck_Priority
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
+def ObeliskSVCase_Normal : I32EnumAttrCase<"Normal", 0, "normal">;
+def ObeliskSVCase_WildcardXOrZ
+    : I32EnumAttrCase<"WildcardXOrZ", 1, "wildcard_x_or_z">;
+def ObeliskSVCase_WildcardJustZ
+    : I32EnumAttrCase<"WildcardJustZ", 2, "wildcard_just_z">;
+def ObeliskSVCase_Inside : I32EnumAttrCase<"Inside", 3, "inside">;
+def ObeliskSVCaseCondition : I32EnumAttr<"SVCaseCondition",
+    "SystemVerilog case matching mode", [
+  ObeliskSVCase_Normal, ObeliskSVCase_WildcardXOrZ,
+  ObeliskSVCase_WildcardJustZ, ObeliskSVCase_Inside
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
+def ObeliskSVAssertion_Assert
+    : I32EnumAttrCase<"Assert", 0, "assert">;
+def ObeliskSVAssertion_Assume
+    : I32EnumAttrCase<"Assume", 1, "assume">;
+def ObeliskSVAssertion_CoverProperty
+    : I32EnumAttrCase<"CoverProperty", 2, "cover_property">;
+def ObeliskSVAssertion_CoverSequence
+    : I32EnumAttrCase<"CoverSequence", 3, "cover_sequence">;
+def ObeliskSVAssertion_Restrict
+    : I32EnumAttrCase<"Restrict", 4, "restrict">;
+def ObeliskSVAssertion_Expect
+    : I32EnumAttrCase<"Expect", 5, "expect">;
+def ObeliskSVAssertionKind : I32EnumAttr<"SVAssertionKind",
+    "immediate or concurrent assertion directive kind", [
+  ObeliskSVAssertion_Assert, ObeliskSVAssertion_Assume,
+  ObeliskSVAssertion_CoverProperty, ObeliskSVAssertion_CoverSequence,
+  ObeliskSVAssertion_Restrict, ObeliskSVAssertion_Expect
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
+def ObeliskSVCoverageBin_Bins
+    : I32EnumAttrCase<"Bins", 0, "bins">;
+def ObeliskSVCoverageBin_IllegalBins
+    : I32EnumAttrCase<"IllegalBins", 1, "illegal_bins">;
+def ObeliskSVCoverageBin_IgnoreBins
+    : I32EnumAttrCase<"IgnoreBins", 2, "ignore_bins">;
+def ObeliskSVCoverageBinKind : I32EnumAttr<"SVCoverageBinKind",
+    "coverage bin classification", [
+  ObeliskSVCoverageBin_Bins, ObeliskSVCoverageBin_IllegalBins,
+  ObeliskSVCoverageBin_IgnoreBins
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
 def ObeliskReal_Float       : I32EnumAttrCase<"Float",       0, "float">;
 def ObeliskReal_Exponential : I32EnumAttrCase<"Exponential", 1, "exponential">;
 def ObeliskReal_General     : I32EnumAttrCase<"General",     2, "general">;
@@ -305,6 +444,274 @@ def ObeliskArrayCmp_Ne : I32EnumAttrCase<"Ne", 1, "ne">;
 def ArrayCmpPredicate : I32EnumAttr<"ArrayCmpPredicate",
     "unpacked array comparison predicate", [
   ObeliskArrayCmp_Eq, ObeliskArrayCmp_Ne
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
+// Source-semantic enum attributes used by the concrete obelisk.sv operation
+// family. Their numeric encodings intentionally match the Slang dialect enums
+// so dialect conversion can preserve the underlying builtin IntegerAttr.
+def ObeliskSVAssignment_Blocking
+    : I32EnumAttrCase<"Blocking", 0, "blocking">;
+def ObeliskSVAssignment_Nonblocking
+    : I32EnumAttrCase<"Nonblocking", 1, "nonblocking">;
+def ObeliskSVAssignmentKind : I32EnumAttr<"SVAssignmentKind",
+    "SystemVerilog assignment scheduling kind", [
+  ObeliskSVAssignment_Blocking, ObeliskSVAssignment_Nonblocking
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
+def ObeliskSVDirection_In
+    : I32EnumAttrCase<"In", 0, "in">;
+def ObeliskSVDirection_Out
+    : I32EnumAttrCase<"Out", 1, "out">;
+def ObeliskSVDirection_InOut
+    : I32EnumAttrCase<"InOut", 2, "inout">;
+def ObeliskSVDirection_Ref
+    : I32EnumAttrCase<"Ref", 3, "ref">;
+def ObeliskSVArgumentDirection : I32EnumAttr<"SVArgumentDirection",
+    "SystemVerilog port or argument direction", [
+  ObeliskSVDirection_In, ObeliskSVDirection_Out,
+  ObeliskSVDirection_InOut, ObeliskSVDirection_Ref
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
+def ObeliskSVDefinition_Module
+    : I32EnumAttrCase<"Module", 0, "module">;
+def ObeliskSVDefinition_Interface
+    : I32EnumAttrCase<"Interface", 1, "interface">;
+def ObeliskSVDefinition_Program
+    : I32EnumAttrCase<"Program", 2, "program">;
+def ObeliskSVDefinitionKind : I32EnumAttr<"SVDefinitionKind",
+    "SystemVerilog design-unit definition kind", [
+  ObeliskSVDefinition_Module, ObeliskSVDefinition_Interface,
+  ObeliskSVDefinition_Program
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
+def ObeliskSVProcedure_Initial
+    : I32EnumAttrCase<"Initial", 0, "initial">;
+def ObeliskSVProcedure_Final
+    : I32EnumAttrCase<"Final", 1, "final">;
+def ObeliskSVProcedure_Always
+    : I32EnumAttrCase<"Always", 2, "always">;
+def ObeliskSVProcedure_AlwaysComb
+    : I32EnumAttrCase<"AlwaysComb", 3, "always_comb">;
+def ObeliskSVProcedure_AlwaysLatch
+    : I32EnumAttrCase<"AlwaysLatch", 4, "always_latch">;
+def ObeliskSVProcedure_AlwaysFF
+    : I32EnumAttrCase<"AlwaysFF", 5, "always_ff">;
+def ObeliskSVProceduralBlockKind : I32EnumAttr<"SVProceduralBlockKind",
+    "SystemVerilog procedural block kind", [
+  ObeliskSVProcedure_Initial, ObeliskSVProcedure_Final,
+  ObeliskSVProcedure_Always, ObeliskSVProcedure_AlwaysComb,
+  ObeliskSVProcedure_AlwaysLatch, ObeliskSVProcedure_AlwaysFF
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
+def ObeliskSVBlock_Sequential
+    : I32EnumAttrCase<"Sequential", 0, "sequential">;
+def ObeliskSVBlock_JoinAll
+    : I32EnumAttrCase<"JoinAll", 1, "join_all">;
+def ObeliskSVBlock_JoinAny
+    : I32EnumAttrCase<"JoinAny", 2, "join_any">;
+def ObeliskSVBlock_JoinNone
+    : I32EnumAttrCase<"JoinNone", 3, "join_none">;
+def ObeliskSVStatementBlockKind : I32EnumAttr<"SVStatementBlockKind",
+    "SystemVerilog sequential or parallel statement block kind", [
+  ObeliskSVBlock_Sequential, ObeliskSVBlock_JoinAll,
+  ObeliskSVBlock_JoinAny, ObeliskSVBlock_JoinNone
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
+def ObeliskSVSubroutine_Function
+    : I32EnumAttrCase<"Function", 0, "function">;
+def ObeliskSVSubroutine_Task
+    : I32EnumAttrCase<"Task", 1, "task">;
+def ObeliskSVSubroutineKind : I32EnumAttr<"SVSubroutineKind",
+    "SystemVerilog function or task kind", [
+  ObeliskSVSubroutine_Function, ObeliskSVSubroutine_Task
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
+def ObeliskSVLifetime_Automatic
+    : I32EnumAttrCase<"Automatic", 0, "automatic">;
+def ObeliskSVLifetime_Static
+    : I32EnumAttrCase<"Static", 1, "static">;
+def ObeliskSVVariableLifetime : I32EnumAttr<"SVVariableLifetime",
+    "SystemVerilog variable storage lifetime", [
+  ObeliskSVLifetime_Automatic, ObeliskSVLifetime_Static
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
+def ObeliskSVVisibility_Public
+    : I32EnumAttrCase<"Public", 0, "public">;
+def ObeliskSVVisibility_Protected
+    : I32EnumAttrCase<"Protected", 1, "protected">;
+def ObeliskSVVisibility_Local
+    : I32EnumAttrCase<"Local", 2, "local">;
+def ObeliskSVVisibility : I32EnumAttr<"SVVisibility",
+    "SystemVerilog class member visibility", [
+  ObeliskSVVisibility_Public, ObeliskSVVisibility_Protected,
+  ObeliskSVVisibility_Local
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
+def ObeliskSVRand_None  : I32EnumAttrCase<"None",  0, "none">;
+def ObeliskSVRand_Rand  : I32EnumAttrCase<"Rand",  1, "rand">;
+def ObeliskSVRand_RandC : I32EnumAttrCase<"RandC", 2, "randc">;
+def ObeliskSVRandMode : I32EnumAttr<"SVRandMode",
+    "SystemVerilog randomization mode", [
+  ObeliskSVRand_None, ObeliskSVRand_Rand, ObeliskSVRand_RandC
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
+def ObeliskSVIntegral_Generic
+    : I32EnumAttrCase<"Generic", 0, "generic">;
+def ObeliskSVIntegral_Bit : I32EnumAttrCase<"Bit", 1, "bit">;
+def ObeliskSVIntegral_Logic : I32EnumAttrCase<"Logic", 2, "logic">;
+def ObeliskSVIntegral_Reg : I32EnumAttrCase<"Reg", 3, "reg">;
+def ObeliskSVIntegral_ShortInt
+    : I32EnumAttrCase<"ShortInt", 4, "shortint">;
+def ObeliskSVIntegral_Int : I32EnumAttrCase<"Int", 5, "int">;
+def ObeliskSVIntegral_LongInt
+    : I32EnumAttrCase<"LongInt", 6, "longint">;
+def ObeliskSVIntegral_Byte : I32EnumAttrCase<"Byte", 7, "byte">;
+def ObeliskSVIntegral_Integer
+    : I32EnumAttrCase<"Integer", 8, "integer">;
+def ObeliskSVIntegralFlavor : I32EnumAttr<"SVIntegralFlavor",
+    "declared SystemVerilog integral spelling", [
+  ObeliskSVIntegral_Generic, ObeliskSVIntegral_Bit,
+  ObeliskSVIntegral_Logic, ObeliskSVIntegral_Reg,
+  ObeliskSVIntegral_ShortInt, ObeliskSVIntegral_Int,
+  ObeliskSVIntegral_LongInt, ObeliskSVIntegral_Byte,
+  ObeliskSVIntegral_Integer
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
+def ObeliskSVNet_Unknown : I32EnumAttrCase<"Unknown", 0, "unknown">;
+def ObeliskSVNet_Wire : I32EnumAttrCase<"Wire", 1, "wire">;
+def ObeliskSVNet_WAnd : I32EnumAttrCase<"WAnd", 2, "wand">;
+def ObeliskSVNet_WOr : I32EnumAttrCase<"WOr", 3, "wor">;
+def ObeliskSVNet_Tri : I32EnumAttrCase<"Tri", 4, "tri">;
+def ObeliskSVNet_TriAnd : I32EnumAttrCase<"TriAnd", 5, "triand">;
+def ObeliskSVNet_TriOr : I32EnumAttrCase<"TriOr", 6, "trior">;
+def ObeliskSVNet_Tri0 : I32EnumAttrCase<"Tri0", 7, "tri0">;
+def ObeliskSVNet_Tri1 : I32EnumAttrCase<"Tri1", 8, "tri1">;
+def ObeliskSVNet_TriReg : I32EnumAttrCase<"TriReg", 9, "trireg">;
+def ObeliskSVNet_Supply0 : I32EnumAttrCase<"Supply0", 10, "supply0">;
+def ObeliskSVNet_Supply1 : I32EnumAttrCase<"Supply1", 11, "supply1">;
+def ObeliskSVNet_UWire : I32EnumAttrCase<"UWire", 12, "uwire">;
+def ObeliskSVNet_Interconnect
+    : I32EnumAttrCase<"Interconnect", 13, "interconnect">;
+def ObeliskSVNet_UserDefined
+    : I32EnumAttrCase<"UserDefined", 14, "user_defined">;
+def ObeliskSVNetKind : I32EnumAttr<"SVNetKind",
+    "SystemVerilog net resolution kind", [
+  ObeliskSVNet_Unknown, ObeliskSVNet_Wire, ObeliskSVNet_WAnd,
+  ObeliskSVNet_WOr, ObeliskSVNet_Tri, ObeliskSVNet_TriAnd,
+  ObeliskSVNet_TriOr, ObeliskSVNet_Tri0, ObeliskSVNet_Tri1,
+  ObeliskSVNet_TriReg, ObeliskSVNet_Supply0, ObeliskSVNet_Supply1,
+  ObeliskSVNet_UWire, ObeliskSVNet_Interconnect,
+  ObeliskSVNet_UserDefined
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
+def ObeliskSVAssertUnary_Not : I32EnumAttrCase<"Not", 0, "not">;
+def ObeliskSVAssertUnary_NextTime : I32EnumAttrCase<"NextTime", 1, "nexttime">;
+def ObeliskSVAssertUnary_SNextTime : I32EnumAttrCase<"SNextTime", 2, "s_nexttime">;
+def ObeliskSVAssertUnary_Always : I32EnumAttrCase<"Always", 3, "always">;
+def ObeliskSVAssertUnary_SAlways : I32EnumAttrCase<"SAlways", 4, "s_always">;
+def ObeliskSVAssertUnary_Eventually : I32EnumAttrCase<"Eventually", 5, "eventually">;
+def ObeliskSVAssertUnary_SEventually
+    : I32EnumAttrCase<"SEventually", 6, "s_eventually">;
+def ObeliskSVAssertionUnaryOperator : I32EnumAttr<"SVAssertionUnaryOperator",
+    "SystemVerilog unary sequence or property operator", [
+  ObeliskSVAssertUnary_Not, ObeliskSVAssertUnary_NextTime,
+  ObeliskSVAssertUnary_SNextTime, ObeliskSVAssertUnary_Always,
+  ObeliskSVAssertUnary_SAlways, ObeliskSVAssertUnary_Eventually,
+  ObeliskSVAssertUnary_SEventually
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
+def ObeliskSVAssertBinary_And : I32EnumAttrCase<"And", 0, "and">;
+def ObeliskSVAssertBinary_Or : I32EnumAttrCase<"Or", 1, "or">;
+def ObeliskSVAssertBinary_Intersect : I32EnumAttrCase<"Intersect", 2, "intersect">;
+def ObeliskSVAssertBinary_Throughout : I32EnumAttrCase<"Throughout", 3, "throughout">;
+def ObeliskSVAssertBinary_Within : I32EnumAttrCase<"Within", 4, "within">;
+def ObeliskSVAssertBinary_Iff : I32EnumAttrCase<"Iff", 5, "iff">;
+def ObeliskSVAssertBinary_Until : I32EnumAttrCase<"Until", 6, "until">;
+def ObeliskSVAssertBinary_SUntil : I32EnumAttrCase<"SUntil", 7, "s_until">;
+def ObeliskSVAssertBinary_UntilWith : I32EnumAttrCase<"UntilWith", 8, "until_with">;
+def ObeliskSVAssertBinary_SUntilWith : I32EnumAttrCase<"SUntilWith", 9, "s_until_with">;
+def ObeliskSVAssertBinary_Implies : I32EnumAttrCase<"Implies", 10, "implies">;
+def ObeliskSVAssertBinary_OverlappedImplication
+    : I32EnumAttrCase<"OverlappedImplication", 11, "overlapped_implication">;
+def ObeliskSVAssertBinary_NonOverlappedImplication
+    : I32EnumAttrCase<"NonOverlappedImplication", 12,
+                      "nonoverlapped_implication">;
+def ObeliskSVAssertBinary_OverlappedFollowedBy
+    : I32EnumAttrCase<"OverlappedFollowedBy", 13, "overlapped_followed_by">;
+def ObeliskSVAssertBinary_NonOverlappedFollowedBy
+    : I32EnumAttrCase<"NonOverlappedFollowedBy", 14,
+                      "nonoverlapped_followed_by">;
+def ObeliskSVAssertionBinaryOperator : I32EnumAttr<"SVAssertionBinaryOperator",
+    "SystemVerilog binary sequence or property operator", [
+  ObeliskSVAssertBinary_And, ObeliskSVAssertBinary_Or,
+  ObeliskSVAssertBinary_Intersect, ObeliskSVAssertBinary_Throughout,
+  ObeliskSVAssertBinary_Within, ObeliskSVAssertBinary_Iff,
+  ObeliskSVAssertBinary_Until, ObeliskSVAssertBinary_SUntil,
+  ObeliskSVAssertBinary_UntilWith, ObeliskSVAssertBinary_SUntilWith,
+  ObeliskSVAssertBinary_Implies,
+  ObeliskSVAssertBinary_OverlappedImplication,
+  ObeliskSVAssertBinary_NonOverlappedImplication,
+  ObeliskSVAssertBinary_OverlappedFollowedBy,
+  ObeliskSVAssertBinary_NonOverlappedFollowedBy
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
+def ObeliskSVRepetition_Consecutive
+    : I32EnumAttrCase<"Consecutive", 0, "consecutive">;
+def ObeliskSVRepetition_Nonconsecutive
+    : I32EnumAttrCase<"Nonconsecutive", 1, "nonconsecutive">;
+def ObeliskSVRepetition_GoTo
+    : I32EnumAttrCase<"GoTo", 2, "goto">;
+def ObeliskSVSequenceRepetitionKind
+    : I32EnumAttr<"SVSequenceRepetitionKind",
+                  "SystemVerilog sequence repetition kind", [
+  ObeliskSVRepetition_Consecutive, ObeliskSVRepetition_Nonconsecutive,
+  ObeliskSVRepetition_GoTo
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
+def ObeliskSVStrength_Strong : I32EnumAttrCase<"Strong", 0, "strong">;
+def ObeliskSVStrength_Weak : I32EnumAttrCase<"Weak", 1, "weak">;
+def ObeliskSVAssertionStrength : I32EnumAttr<"SVAssertionStrength",
+    "strong or weak property qualification", [
+  ObeliskSVStrength_Strong, ObeliskSVStrength_Weak
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
+def ObeliskSVAbort_Accept : I32EnumAttrCase<"Accept", 0, "accept">;
+def ObeliskSVAbort_Reject : I32EnumAttrCase<"Reject", 1, "reject">;
+def ObeliskSVAssertionAbortAction : I32EnumAttr<"SVAssertionAbortAction",
+    "accept or reject property abort action", [
+  ObeliskSVAbort_Accept, ObeliskSVAbort_Reject
 ]> {
   let cppNamespace = "::obelisk::ir";
 }

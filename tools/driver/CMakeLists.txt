@@ -7,9 +7,6 @@ set(LLVM_LINK_COMPONENTS
   Support
 )
 
-get_property(dialect_libs GLOBAL PROPERTY CIRCT_DIALECT_LIBS)
-get_property(conversion_libs GLOBAL PROPERTY CIRCT_CONVERSION_LIBS)
-
 add_llvm_executable(obelisk
   driver.cpp
   Options.cpp
@@ -34,11 +31,10 @@ llvm_update_compile_flags(obelisk)
 
 target_link_libraries(obelisk
   PRIVATE
-  ${dialect_libs}
-  ${conversion_libs}
   ObeliskFrontend
   ObeliskIR
-  ObeliskMooreToObelisk
+  ObeliskSlangIR
+  ObeliskSlangToObelisk
   MLIRIR
   MLIRPass
   MLIRSupport

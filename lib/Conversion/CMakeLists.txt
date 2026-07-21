@@ -1,1 +1,1 @@
-add_subdirectory(MooreToObelisk)
+add_subdirectory(SlangToObelisk)

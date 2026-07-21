@@ -17,8 +17,8 @@ def help_hidden : Flag<["--"], "help-hidden">,
 def version : Flag<["--"], "version">,
   HelpText<"Display the Obelisk and frontend versions">;
 
-def emit_moore : Flag<["-"], "emit-moore">, Group<Action_Group>,
-  HelpText<"Emit Moore dialect MLIR after SystemVerilog import">;
+def emit_slang : Flag<["-"], "emit-slang">, Group<Action_Group>,
+  HelpText<"Emit elaborated Slang dialect MLIR after SystemVerilog import">;
 def emit_obelisk : Flag<["-"], "emit-obelisk">, Group<Action_Group>,
   HelpText<"Emit Obelisk dialect MLIR (default)">;
 

@@ -1,6 +1,6 @@
 //===- ObeliskDialect.td - Obelisk simulation dialect -----*- tablegen -*-===//
 //
-// Obelisk's semantic IR sits between CIRCT Moore and the LLVM dialect.  It
+// Obelisk's semantic IR sits between elaborated Slang IR and LLVM dialects. It
 // preserves the SystemVerilog concepts which cannot be represented faithfully
 // as ordinary two-state SSA dataflow: four-state values, scheduler regions,
 // mutable variables and nets, processes, objects, randomization, and runtime
@@ -19,9 +19,9 @@ def ObeliskDialect : Dialect {
 
   let summary = "Exact SystemVerilog simulation semantics";
   let description = [{
-    The Obelisk dialect is the stable semantic boundary between CIRCT's Moore
-    frontend dialect and target-specific lowering.  Operations in this dialect
-    retain IEEE 1800 event scheduling and four-state behavior while making
+    The Obelisk dialect is the complete semantic landing boundary for the
+    elaborated Slang frontend and target-specific lowering. Operations retain
+    IEEE 1800 event scheduling and four-state behavior while making
     ownership, side effects, suspension, and runtime dependencies explicit.
 
     The dialect is intentionally not an AST.  Elaboration and source-language
@@ -33,6 +33,8 @@ def ObeliskDialect : Dialect {
   // dialect has no standalone `#obelisk.*` attributes to parse.
   let useDefaultAttributePrinterParser = 0;
   let useDefaultTypePrinterParser = 1;
+  // Preserve standard SymbolTable interoperability across textual round trips.
+  let usePropertiesForAttributes = 0;
 }
 
 #endif // OBELISK_DIALECT_SIM_OBELISKDIALECT_TD
