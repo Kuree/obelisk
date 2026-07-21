@@ -22,11 +22,94 @@ _Static_assert(offsetof(obelisk_rt_buffer_v1, data) == 0,
                "buffer data offset changed");
 _Static_assert(offsetof(obelisk_rt_format_env_v1, scope) == 0,
                "environment scope offset changed");
+_Static_assert(sizeof(obelisk_rt_handle_v1) == 16, "stable handle ABI changed");
+_Static_assert(offsetof(obelisk_rt_handle_v1, kind) == 0,
+               "stable handle kind offset changed");
+_Static_assert(offsetof(obelisk_rt_handle_v1, generation) == 4,
+               "stable handle generation offset changed");
+_Static_assert(offsetof(obelisk_rt_handle_v1, id) == 8,
+               "stable handle ID offset changed");
+_Static_assert(sizeof(obelisk_rt_fragment_action_v1) == 32,
+               "fragment action size changed");
+_Static_assert(offsetof(obelisk_rt_fragment_action_v1, kind) == 0,
+               "fragment action kind offset changed");
+_Static_assert(offsetof(obelisk_rt_fragment_action_v1, suspend_kind) == 4,
+               "fragment suspend kind offset changed");
+_Static_assert(offsetof(obelisk_rt_fragment_action_v1, continuation) == 8,
+               "fragment continuation offset changed");
+_Static_assert(offsetof(obelisk_rt_fragment_action_v1, flags) == 12,
+               "fragment action flags offset changed");
+_Static_assert(offsetof(obelisk_rt_fragment_action_v1, payload) == 16,
+               "fragment action ABI changed");
+_Static_assert(offsetof(obelisk_rt_fragment_action_v1, auxiliary) == 24,
+               "fragment auxiliary offset changed");
+_Static_assert(sizeof(obelisk_rt_bytecode_entry_v1) == 8,
+               "bytecode entry size changed");
+_Static_assert(offsetof(obelisk_rt_bytecode_entry_v1, continuation) == 0,
+               "bytecode continuation offset changed");
+_Static_assert(offsetof(obelisk_rt_bytecode_entry_v1, instruction) == 4,
+               "bytecode instruction offset changed");
+_Static_assert(sizeof(obelisk_rt_bytecode_v1) == 48,
+               "bytecode descriptor size changed");
+_Static_assert(offsetof(obelisk_rt_bytecode_v1, code) == 0,
+               "bytecode code offset changed");
+_Static_assert(offsetof(obelisk_rt_bytecode_v1, code_size) == sizeof(void *),
+               "bytecode size offset changed");
+_Static_assert(offsetof(obelisk_rt_bytecode_v1, entries) ==
+                   sizeof(void *) + sizeof(uint64_t),
+               "bytecode entries offset changed");
+_Static_assert(offsetof(obelisk_rt_bytecode_v1, entry_count) == 24,
+               "bytecode entry count offset changed");
+_Static_assert(offsetof(obelisk_rt_bytecode_v1, register_count) == 28,
+               "bytecode register count offset changed");
+_Static_assert(offsetof(obelisk_rt_bytecode_v1, register_offset) == 32,
+               "bytecode register offset changed");
+_Static_assert(offsetof(obelisk_rt_bytecode_v1, validation) == 40,
+               "bytecode validation offset changed");
+_Static_assert(sizeof(obelisk_rt_bytecode_validation_v1) == 8,
+               "bytecode validation record size changed");
+_Static_assert(offsetof(obelisk_rt_bytecode_validation_v1, state) == 0,
+               "bytecode validation state offset changed");
+_Static_assert(offsetof(obelisk_rt_bytecode_validation_v1, reserved) == 4,
+               "bytecode validation reserved offset changed");
+_Static_assert(sizeof(obelisk_rt_fragment_descriptor_v1) == 72,
+               "fragment descriptor size changed");
+_Static_assert(offsetof(obelisk_rt_fragment_descriptor_v1, handle) == 0,
+               "fragment handle offset changed");
+_Static_assert(offsetof(obelisk_rt_fragment_descriptor_v1, code_kind) == 16,
+               "fragment code kind offset changed");
+_Static_assert(offsetof(obelisk_rt_fragment_descriptor_v1, flags) == 20,
+               "fragment flags offset changed");
+_Static_assert(offsetof(obelisk_rt_fragment_descriptor_v1, code) == 24,
+               "fragment code offset changed");
+_Static_assert(OBELISK_RT_BYTECODE_INSTRUCTION_SIZE == 16u,
+               "bytecode instruction size changed");
+
+static obelisk_rt_status
+c_native_fragment(obelisk_rt_context *context, void *frame, uint64_t frame_size,
+                  uint32_t continuation,
+                  obelisk_rt_fragment_action_v1 *out_action) {
+  uint64_t *counter = (uint64_t *)frame;
+  (void)context;
+  if (frame_size != sizeof(*counter))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ++*counter;
+  *out_action = (obelisk_rt_fragment_action_v1){OBELISK_RT_FRAGMENT_CONTINUE,
+                                                OBELISK_RT_SUSPEND_NONE,
+                                                continuation + 1,
+                                                OBELISK_RT_FRAGMENT_FLAGS_NONE,
+                                                0,
+                                                0};
+  return OBELISK_RT_OK;
+}
 
 int obelisk_runtime_c_api_smoke(void) {
   obelisk_rt_context *context = NULL;
   obelisk_rt_buffer_v1 output = {NULL, 0};
   obelisk_rt_arg_v1 empty_string = {OBELISK_RT_ARG_STRING, 0, 0, NULL, NULL};
+  obelisk_rt_fragment_descriptor_v1 fragment = {0};
+  obelisk_rt_fragment_action_v1 action = {0};
+  uint64_t frame = 41;
 
   if (OBELISK_RT_ABI_VERSION != 1u)
     return 1;
@@ -45,6 +128,17 @@ int obelisk_runtime_c_api_smoke(void) {
   if (strcmp(obelisk_rt_v1_status_string(OBELISK_RT_OK), "ok") != 0) {
     obelisk_rt_v1_context_destroy(context);
     return 5;
+  }
+  fragment.handle =
+      (obelisk_rt_handle_v1){OBELISK_RT_DESCRIPTOR_FRAGMENT, 0, 9};
+  fragment.code_kind = OBELISK_RT_FRAGMENT_NATIVE;
+  fragment.code.native_entry = c_native_fragment;
+  if (obelisk_rt_v1_fragment_execute(&fragment, context, &frame, sizeof(frame),
+                                     17, &action) != OBELISK_RT_OK ||
+      frame != 42 || action.kind != OBELISK_RT_FRAGMENT_CONTINUE ||
+      action.continuation != 18) {
+    obelisk_rt_v1_context_destroy(context);
+    return 6;
   }
 
   obelisk_rt_v1_buffer_release(&output);

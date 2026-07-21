@@ -24,11 +24,162 @@ typedef int32_t obelisk_rt_status;
 #define OBELISK_RT_OUT_OF_RESOURCES INT32_C(6)
 #define OBELISK_RT_FORMAT_ERROR INT32_C(7)
 #define OBELISK_RT_ARGUMENT_MISMATCH INT32_C(8)
+#define OBELISK_RT_INVALID_BYTECODE INT32_C(9)
 
 typedef struct obelisk_rt_buffer_v1 {
   uint8_t *data;
   uint64_t size;
 } obelisk_rt_buffer_v1;
+
+// Stable simulator handles never contain native addresses. Generation is
+// incremented when a dynamic descriptor slot is reused; static descriptors use
+// generation zero.
+typedef uint32_t obelisk_rt_descriptor_kind;
+enum {
+  OBELISK_RT_DESCRIPTOR_INVALID = 0,
+  OBELISK_RT_DESCRIPTOR_SCOPE = 1,
+  OBELISK_RT_DESCRIPTOR_STORAGE = 2,
+  OBELISK_RT_DESCRIPTOR_NET = 3,
+  OBELISK_RT_DESCRIPTOR_DRIVER = 4,
+  OBELISK_RT_DESCRIPTOR_EVENT = 5,
+  OBELISK_RT_DESCRIPTOR_PROCESS = 6,
+  OBELISK_RT_DESCRIPTOR_FRAGMENT = 7
+};
+
+typedef struct obelisk_rt_handle_v1 {
+  obelisk_rt_descriptor_kind kind;
+  uint32_t generation;
+  uint64_t id;
+} obelisk_rt_handle_v1;
+
+// Every code form returns through this action ABI. A continuation identifies
+// the next fixed fragment state. Suspend payloads are interpreted according to
+// suspend_kind (for example, a deadline or stable event descriptor ID).
+typedef uint32_t obelisk_rt_fragment_action_kind;
+enum {
+  OBELISK_RT_FRAGMENT_CONTINUE = 0,
+  OBELISK_RT_FRAGMENT_SUSPEND = 1,
+  OBELISK_RT_FRAGMENT_TERMINATE = 2
+};
+
+typedef uint32_t obelisk_rt_suspend_kind;
+enum {
+  OBELISK_RT_SUSPEND_NONE = 0,
+  OBELISK_RT_SUSPEND_DELAY = 1,
+  OBELISK_RT_SUSPEND_CHANGE = 2,
+  OBELISK_RT_SUSPEND_EDGE = 3,
+  OBELISK_RT_SUSPEND_EVENT = 4,
+  OBELISK_RT_SUSPEND_AWAIT = 5,
+  OBELISK_RT_SUSPEND_JOIN = 6,
+  OBELISK_RT_SUSPEND_FRONTIER = 7
+};
+
+typedef struct obelisk_rt_fragment_action_v1 {
+  obelisk_rt_fragment_action_kind kind;
+  obelisk_rt_suspend_kind suspend_kind;
+  uint32_t continuation;
+  uint32_t flags;
+  uint64_t payload;
+  uint64_t auxiliary;
+} obelisk_rt_fragment_action_v1;
+
+// No action or descriptor flags are defined in ABI v1. Callers and native
+// fragments must initialize flags to this value.
+#define OBELISK_RT_FRAGMENT_FLAGS_NONE UINT32_C(0)
+
+typedef obelisk_rt_status (*obelisk_rt_native_fragment_v1)(
+    obelisk_rt_context *context, void *frame, uint64_t frame_size,
+    uint32_t continuation, obelisk_rt_fragment_action_v1 *out_action);
+
+// Bytecode instructions are exactly 16 bytes and little endian:
+//   opcode:u8, type:u8, dst:u16, src0:u16, src1:u16, immediate:u64.
+// Branch immediates are absolute instruction indices. Frame offsets are byte
+// offsets and are checked against frame_size before every access. Stable
+// scheduler continuation IDs are mapped to entry instructions by the immutable
+// descriptor table below; they are never interpreted directly as bytecode PCs.
+#define OBELISK_RT_BYTECODE_INSTRUCTION_SIZE 16u
+// Typed registers live in the process frame rather than being allocated on
+// each resume. register_offset marks the end of ordinary frame data and the
+// start of register_count fixed-size scratch slots.
+#define OBELISK_RT_BYTECODE_REGISTER_SIZE 16u
+
+typedef uint8_t obelisk_rt_bytecode_type;
+enum {
+  OBELISK_RT_BC_TYPE_NONE = 0,
+  OBELISK_RT_BC_TYPE_U64 = 1,
+  OBELISK_RT_BC_TYPE_I64 = 2,
+  OBELISK_RT_BC_TYPE_BOOL = 3
+};
+
+typedef uint8_t obelisk_rt_bytecode_opcode;
+enum {
+  OBELISK_RT_BC_NOP = 0,
+  OBELISK_RT_BC_CONST = 1,
+  OBELISK_RT_BC_MOVE = 2,
+  OBELISK_RT_BC_ADD = 3,
+  OBELISK_RT_BC_SUB = 4,
+  OBELISK_RT_BC_MUL = 5,
+  OBELISK_RT_BC_AND = 6,
+  OBELISK_RT_BC_OR = 7,
+  OBELISK_RT_BC_XOR = 8,
+  OBELISK_RT_BC_NOT = 9,
+  OBELISK_RT_BC_EQ = 10,
+  OBELISK_RT_BC_ULT = 11,
+  OBELISK_RT_BC_SLT = 12,
+  OBELISK_RT_BC_LOAD_FRAME = 13,
+  OBELISK_RT_BC_STORE_FRAME = 14,
+  OBELISK_RT_BC_JUMP = 15,
+  OBELISK_RT_BC_BRANCH_ZERO = 16,
+  OBELISK_RT_BC_CONTINUE = 17,
+  OBELISK_RT_BC_SUSPEND = 18,
+  OBELISK_RT_BC_TERMINATE = 19
+};
+
+typedef struct obelisk_rt_bytecode_v1 {
+  const uint8_t *code;
+  uint64_t code_size;
+  const struct obelisk_rt_bytecode_entry_v1 *entries;
+  uint32_t entry_count;
+  uint32_t register_count;
+  uint64_t register_offset;
+  // Generated immutable descriptors may point at a dedicated zero-initialized
+  // validation record. The runtime validates the full entry table once and
+  // then uses logarithmic continuation lookup. Null requests a full defensive
+  // validation on every dispatch.
+  struct obelisk_rt_bytecode_validation_v1 *validation;
+} obelisk_rt_bytecode_v1;
+
+typedef struct obelisk_rt_bytecode_entry_v1 {
+  uint32_t continuation;
+  uint32_t instruction;
+} obelisk_rt_bytecode_entry_v1;
+
+typedef struct obelisk_rt_bytecode_validation_v1 {
+  // Runtime-owned state. Initialize the whole record to zero and never mutate
+  // it or the associated bytecode descriptor after first dispatch.
+  uint32_t state;
+  uint32_t reserved;
+} obelisk_rt_bytecode_validation_v1;
+
+typedef uint32_t obelisk_rt_fragment_code_kind;
+enum { OBELISK_RT_FRAGMENT_NATIVE = 0, OBELISK_RT_FRAGMENT_BYTECODE = 1 };
+
+typedef struct obelisk_rt_fragment_descriptor_v1 {
+  obelisk_rt_handle_v1 handle;
+  obelisk_rt_fragment_code_kind code_kind;
+  uint32_t flags;
+  union {
+    obelisk_rt_native_fragment_v1 native_entry;
+    obelisk_rt_bytecode_v1 bytecode;
+  } code;
+} obelisk_rt_fragment_descriptor_v1;
+
+// Dispatch one immutable fragment descriptor. Native and bytecode fragments
+// have identical context/frame/continuation inputs and action results.
+obelisk_rt_status obelisk_rt_v1_fragment_execute(
+    const obelisk_rt_fragment_descriptor_v1 *descriptor,
+    obelisk_rt_context *context, void *frame, uint64_t frame_size,
+    uint32_t continuation, obelisk_rt_fragment_action_v1 *out_action);
 
 typedef uint32_t obelisk_rt_arg_kind;
 enum {

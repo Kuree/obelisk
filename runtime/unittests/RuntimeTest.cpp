@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <new>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -85,6 +86,56 @@ obelisk_rt_arg_v1 realArg(const double &value) {
 
 obelisk_rt_arg_v1 timeArg(const uint64_t &value) {
   return {OBELISK_RT_ARG_TIME, 0, 64, &value, nullptr};
+}
+
+void appendInstruction(std::vector<uint8_t> &code, uint8_t opcode,
+                       uint8_t type = OBELISK_RT_BC_TYPE_NONE,
+                       uint16_t destination = 0, uint16_t source0 = 0,
+                       uint16_t source1 = 0, uint64_t immediate = 0) {
+  size_t offset = code.size();
+  code.resize(offset + OBELISK_RT_BYTECODE_INSTRUCTION_SIZE, 0);
+  code[offset] = opcode;
+  code[offset + 1] = type;
+  auto write16 = [&](size_t byte, uint16_t value) {
+    code[offset + byte] = static_cast<uint8_t>(value);
+    code[offset + byte + 1] = static_cast<uint8_t>(value >> 8);
+  };
+  write16(2, destination);
+  write16(4, source0);
+  write16(6, source1);
+  for (unsigned byte = 0; byte != 8; ++byte)
+    code[offset + 8 + byte] = static_cast<uint8_t>(immediate >> (byte * 8));
+}
+
+obelisk_rt_fragment_descriptor_v1
+bytecodeDescriptor(const std::vector<uint8_t> &code, uint32_t registers) {
+  static constexpr obelisk_rt_bytecode_entry_v1 defaultEntry{0, 0};
+  obelisk_rt_fragment_descriptor_v1 descriptor{};
+  descriptor.handle = {OBELISK_RT_DESCRIPTOR_FRAGMENT, 0, 7};
+  descriptor.code_kind = OBELISK_RT_FRAGMENT_BYTECODE;
+  descriptor.code.bytecode = {code.data(), code.size(), &defaultEntry, 1,
+                              registers,   0,           nullptr};
+  return descriptor;
+}
+
+obelisk_rt_status
+executeBytecode(const obelisk_rt_fragment_descriptor_v1 &input, void *frame,
+                uint64_t frameSize, uint32_t continuation,
+                obelisk_rt_fragment_action_v1 *action) {
+  obelisk_rt_fragment_descriptor_v1 descriptor = input;
+  descriptor.code.bytecode.register_offset = frameSize;
+  uint64_t scratchSize =
+      static_cast<uint64_t>(descriptor.code.bytecode.register_count) *
+      OBELISK_RT_BYTECODE_REGISTER_SIZE;
+  std::vector<uint8_t> storage(frameSize + scratchSize);
+  if (frameSize != 0)
+    std::memcpy(storage.data(), frame, frameSize);
+  obelisk_rt_status status = obelisk_rt_v1_fragment_execute(
+      &descriptor, nullptr, storage.empty() ? nullptr : storage.data(),
+      storage.size(), continuation, action);
+  if (frameSize != 0)
+    std::memcpy(frame, storage.data(), frameSize);
+  return status;
 }
 
 std::string readHostFile(const std::filesystem::path &path) {
@@ -178,6 +229,7 @@ TEST(RuntimeABI, ReportsEveryStatusAndReleasesBuffersIdempotently) {
       {OBELISK_RT_OUT_OF_RESOURCES, "out of resources"},
       {OBELISK_RT_FORMAT_ERROR, "format error"},
       {OBELISK_RT_ARGUMENT_MISMATCH, "format argument mismatch"},
+      {OBELISK_RT_INVALID_BYTECODE, "invalid bytecode"},
   };
   for (const auto &[status, message] : statuses)
     EXPECT_STREQ(obelisk_rt_v1_status_string(status), message);
@@ -880,6 +932,311 @@ TEST_F(RuntimeTest, SerializesConcurrentWholeMessageWrites) {
   for (int count : counts)
     EXPECT_EQ(count, writesPerThread);
   EXPECT_EQ(obelisk_rt_v1_file_close(context, descriptor), OBELISK_RT_OK);
+}
+
+TEST(RuntimeFragmentTest, ExecutesTypedBytecodeThroughSharedABI) {
+  std::vector<uint8_t> code;
+  appendInstruction(code, OBELISK_RT_BC_CONST, OBELISK_RT_BC_TYPE_U64, 0, 0, 0,
+                    19);
+  appendInstruction(code, OBELISK_RT_BC_CONST, OBELISK_RT_BC_TYPE_U64, 1, 0, 0,
+                    23);
+  appendInstruction(code, OBELISK_RT_BC_ADD, OBELISK_RT_BC_TYPE_U64, 2, 0, 1);
+  appendInstruction(code, OBELISK_RT_BC_STORE_FRAME, OBELISK_RT_BC_TYPE_U64, 0,
+                    2, 0, 8);
+  appendInstruction(code, OBELISK_RT_BC_CONST, OBELISK_RT_BC_TYPE_U64, 3, 0, 0,
+                    1234);
+  appendInstruction(code, OBELISK_RT_BC_SUSPEND, OBELISK_RT_BC_TYPE_NONE, 0,
+                    OBELISK_RT_SUSPEND_DELAY, 3, 0x89abcdefu);
+  auto descriptor = bytecodeDescriptor(code, 4);
+  std::array<uint64_t, 2> frame{};
+  obelisk_rt_fragment_action_v1 action{};
+
+  EXPECT_EQ(
+      executeBytecode(descriptor, frame.data(), sizeof(frame), 0, &action),
+      OBELISK_RT_OK);
+  EXPECT_EQ(frame[1], 42u);
+  EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_SUSPEND);
+  EXPECT_EQ(action.suspend_kind, OBELISK_RT_SUSPEND_DELAY);
+  EXPECT_EQ(action.continuation, 0x89abcdefu);
+  EXPECT_EQ(action.payload, 1234u);
+}
+
+TEST(RuntimeFragmentTest, ExecutesArithmeticComparisonAndControlOpcodes) {
+  std::vector<uint8_t> code;
+  appendInstruction(code, OBELISK_RT_BC_CONST, OBELISK_RT_BC_TYPE_U64, 0, 0, 0,
+                    7);
+  appendInstruction(code, OBELISK_RT_BC_MOVE, OBELISK_RT_BC_TYPE_U64, 1, 0);
+  appendInstruction(code, OBELISK_RT_BC_CONST, OBELISK_RT_BC_TYPE_U64, 2, 0, 0,
+                    3);
+  appendInstruction(code, OBELISK_RT_BC_SUB, OBELISK_RT_BC_TYPE_U64, 3, 1, 2);
+  appendInstruction(code, OBELISK_RT_BC_MUL, OBELISK_RT_BC_TYPE_U64, 4, 3, 2);
+  appendInstruction(code, OBELISK_RT_BC_AND, OBELISK_RT_BC_TYPE_U64, 5, 4, 1);
+  appendInstruction(code, OBELISK_RT_BC_OR, OBELISK_RT_BC_TYPE_U64, 6, 5, 2);
+  appendInstruction(code, OBELISK_RT_BC_XOR, OBELISK_RT_BC_TYPE_U64, 7, 6, 2);
+  appendInstruction(code, OBELISK_RT_BC_NOT, OBELISK_RT_BC_TYPE_U64, 8, 7);
+  appendInstruction(code, OBELISK_RT_BC_EQ, OBELISK_RT_BC_TYPE_U64, 9, 7, 3);
+  appendInstruction(code, OBELISK_RT_BC_ULT, OBELISK_RT_BC_TYPE_U64, 10, 2, 0);
+  appendInstruction(code, OBELISK_RT_BC_CONST, OBELISK_RT_BC_TYPE_I64, 11, 0, 0,
+                    UINT64_MAX);
+  appendInstruction(code, OBELISK_RT_BC_CONST, OBELISK_RT_BC_TYPE_I64, 12, 0, 0,
+                    0);
+  appendInstruction(code, OBELISK_RT_BC_SLT, OBELISK_RT_BC_TYPE_I64, 13, 11,
+                    12);
+  appendInstruction(code, OBELISK_RT_BC_CONST, OBELISK_RT_BC_TYPE_BOOL, 14, 0,
+                    0, 0);
+  appendInstruction(code, OBELISK_RT_BC_BRANCH_ZERO, OBELISK_RT_BC_TYPE_BOOL, 0,
+                    14, 0, 17);
+  appendInstruction(code, OBELISK_RT_BC_TERMINATE);
+  appendInstruction(code, OBELISK_RT_BC_JUMP, OBELISK_RT_BC_TYPE_NONE, 0, 0, 0,
+                    19);
+  appendInstruction(code, OBELISK_RT_BC_TERMINATE);
+  appendInstruction(code, OBELISK_RT_BC_NOP);
+  appendInstruction(code, OBELISK_RT_BC_STORE_FRAME, OBELISK_RT_BC_TYPE_U64, 0,
+                    3, 0, 0);
+  appendInstruction(code, OBELISK_RT_BC_STORE_FRAME, OBELISK_RT_BC_TYPE_U64, 0,
+                    8, 0, 8);
+  appendInstruction(code, OBELISK_RT_BC_STORE_FRAME, OBELISK_RT_BC_TYPE_BOOL, 0,
+                    9, 0, 16);
+  appendInstruction(code, OBELISK_RT_BC_STORE_FRAME, OBELISK_RT_BC_TYPE_BOOL, 0,
+                    10, 0, 24);
+  appendInstruction(code, OBELISK_RT_BC_STORE_FRAME, OBELISK_RT_BC_TYPE_BOOL, 0,
+                    13, 0, 32);
+  appendInstruction(code, OBELISK_RT_BC_TERMINATE, OBELISK_RT_BC_TYPE_NONE, 0,
+                    0, 0, 99);
+  auto descriptor = bytecodeDescriptor(code, 15);
+  std::array<uint64_t, 5> frame{};
+  obelisk_rt_fragment_action_v1 action{};
+
+  ASSERT_EQ(
+      executeBytecode(descriptor, frame.data(), sizeof(frame), 0, &action),
+      OBELISK_RT_OK);
+  EXPECT_EQ(frame[0], 4u);
+  EXPECT_EQ(frame[1], ~uint64_t{4});
+  EXPECT_EQ(frame[2], 1u);
+  EXPECT_EQ(frame[3], 1u);
+  EXPECT_EQ(frame[4], 1u);
+  EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
+  EXPECT_EQ(action.payload, 99u);
+}
+
+TEST(RuntimeFragmentTest, ContinuationSelectsBytecodeEntryInstruction) {
+  std::vector<uint8_t> code;
+  appendInstruction(code, OBELISK_RT_BC_TERMINATE, OBELISK_RT_BC_TYPE_NONE, 0,
+                    0, 0, 1);
+  appendInstruction(code, OBELISK_RT_BC_CONTINUE, OBELISK_RT_BC_TYPE_NONE, 0, 0,
+                    0, 17);
+  auto descriptor = bytecodeDescriptor(code, 0);
+  constexpr obelisk_rt_bytecode_entry_v1 entries[] = {{3, 0}, {11, 1}};
+  descriptor.code.bytecode.entries = entries;
+  descriptor.code.bytecode.entry_count = std::size(entries);
+  obelisk_rt_bytecode_validation_v1 validation{};
+  descriptor.code.bytecode.validation = &validation;
+  obelisk_rt_fragment_action_v1 action{};
+  ASSERT_EQ(executeBytecode(descriptor, nullptr, 0, 11, &action),
+            OBELISK_RT_OK);
+  EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_CONTINUE);
+  EXPECT_EQ(action.continuation, 17u);
+  EXPECT_NE(validation.state, 0u);
+}
+
+TEST(RuntimeFragmentTest, RejectsMalformedBytecodeAndFrameAccess) {
+  auto rejects = [](const std::vector<uint8_t> &code, uint32_t registers) {
+    auto descriptor = bytecodeDescriptor(code, registers);
+    obelisk_rt_fragment_action_v1 action{};
+    return executeBytecode(descriptor, nullptr, 0, 0, &action);
+  };
+  std::vector<uint8_t> empty;
+  EXPECT_EQ(rejects(empty, 0), OBELISK_RT_INVALID_BYTECODE);
+  std::vector<uint8_t> truncated(3, 0);
+  auto malformed = bytecodeDescriptor(truncated, 1);
+  obelisk_rt_fragment_action_v1 action{};
+  EXPECT_EQ(executeBytecode(malformed, nullptr, 0, 0, &action),
+            OBELISK_RT_INVALID_BYTECODE);
+
+  std::vector<uint8_t> code;
+  appendInstruction(code, OBELISK_RT_BC_LOAD_FRAME, OBELISK_RT_BC_TYPE_U64, 0,
+                    0, 0, 8);
+  appendInstruction(code, OBELISK_RT_BC_TERMINATE);
+  auto badFrame = bytecodeDescriptor(code, 1);
+  uint64_t frame = 0;
+  EXPECT_EQ(executeBytecode(badFrame, &frame, sizeof(frame), 0, &action),
+            OBELISK_RT_INVALID_BYTECODE);
+
+  std::vector<uint8_t> invalidBool;
+  appendInstruction(invalidBool, OBELISK_RT_BC_CONST, OBELISK_RT_BC_TYPE_BOOL,
+                    0, 0, 0, 2);
+  appendInstruction(invalidBool, OBELISK_RT_BC_TERMINATE);
+  auto badBool = bytecodeDescriptor(invalidBool, 1);
+  EXPECT_EQ(executeBytecode(badBool, nullptr, 0, 0, &action),
+            OBELISK_RT_INVALID_BYTECODE);
+  EXPECT_STREQ(obelisk_rt_v1_status_string(OBELISK_RT_INVALID_BYTECODE),
+               "invalid bytecode");
+
+  std::vector<uint8_t> noneStore;
+  appendInstruction(noneStore, OBELISK_RT_BC_STORE_FRAME,
+                    OBELISK_RT_BC_TYPE_NONE, 0, 0);
+  auto badStore = bytecodeDescriptor(noneStore, 1);
+  EXPECT_EQ(executeBytecode(badStore, &frame, sizeof(frame), 0, &action),
+            OBELISK_RT_INVALID_BYTECODE);
+
+  std::vector<uint8_t> noneBranch;
+  appendInstruction(noneBranch, OBELISK_RT_BC_BRANCH_ZERO,
+                    OBELISK_RT_BC_TYPE_NONE, 0, 0, 0, 0);
+  auto badBranch = bytecodeDescriptor(noneBranch, 1);
+  EXPECT_EQ(executeBytecode(badBranch, nullptr, 0, 0, &action),
+            OBELISK_RT_INVALID_BYTECODE);
+
+  std::vector<uint8_t> invalidOpcode;
+  appendInstruction(invalidOpcode, 0xff);
+  EXPECT_EQ(rejects(invalidOpcode, 0), OBELISK_RT_INVALID_BYTECODE);
+  std::vector<uint8_t> invalidType;
+  appendInstruction(invalidType, OBELISK_RT_BC_CONST, 0xff, 0);
+  EXPECT_EQ(rejects(invalidType, 1), OBELISK_RT_INVALID_BYTECODE);
+  std::vector<uint8_t> uninitializedMove;
+  appendInstruction(uninitializedMove, OBELISK_RT_BC_MOVE,
+                    OBELISK_RT_BC_TYPE_U64, 0, 0);
+  EXPECT_EQ(rejects(uninitializedMove, 1), OBELISK_RT_INVALID_BYTECODE);
+  std::vector<uint8_t> invalidJump;
+  appendInstruction(invalidJump, OBELISK_RT_BC_JUMP, OBELISK_RT_BC_TYPE_NONE, 0,
+                    0, 0, 1);
+  EXPECT_EQ(rejects(invalidJump, 0), OBELISK_RT_INVALID_BYTECODE);
+  std::vector<uint8_t> unterminated;
+  appendInstruction(unterminated, OBELISK_RT_BC_NOP);
+  EXPECT_EQ(rejects(unterminated, 0), OBELISK_RT_INVALID_BYTECODE);
+
+  std::vector<uint8_t> terminate;
+  appendInstruction(terminate, OBELISK_RT_BC_TERMINATE);
+  auto badEntries = bytecodeDescriptor(terminate, 0);
+  constexpr obelisk_rt_bytecode_entry_v1 duplicateEntries[] = {{0, 0}, {0, 0}};
+  badEntries.code.bytecode.entries = duplicateEntries;
+  badEntries.code.bytecode.entry_count = std::size(duplicateEntries);
+  EXPECT_EQ(executeBytecode(badEntries, nullptr, 0, 0, &action),
+            OBELISK_RT_INVALID_BYTECODE);
+  constexpr obelisk_rt_bytecode_entry_v1 outOfRangeEntry{0, 1};
+  badEntries.code.bytecode.entries = &outOfRangeEntry;
+  badEntries.code.bytecode.entry_count = 1;
+  EXPECT_EQ(executeBytecode(badEntries, nullptr, 0, 0, &action),
+            OBELISK_RT_INVALID_BYTECODE);
+  auto missingEntry = bytecodeDescriptor(terminate, 0);
+  EXPECT_EQ(executeBytecode(missingEntry, nullptr, 0, 7, &action),
+            OBELISK_RT_INVALID_BYTECODE);
+
+  std::vector<uint8_t> fourInstructions;
+  for (unsigned index = 0; index != 4; ++index)
+    appendInstruction(fourInstructions, OBELISK_RT_BC_TERMINATE);
+  auto unsorted = bytecodeDescriptor(fourInstructions, 0);
+  constexpr obelisk_rt_bytecode_entry_v1 unsortedEntries[] = {
+      {0, 0}, {100, 1}, {50, 2}, {200, 3}};
+  unsorted.code.bytecode.entries = unsortedEntries;
+  unsorted.code.bytecode.entry_count = std::size(unsortedEntries);
+  EXPECT_EQ(executeBytecode(unsorted, nullptr, 0, 0, &action),
+            OBELISK_RT_INVALID_BYTECODE);
+
+  auto remoteBadInstruction = bytecodeDescriptor(terminate, 0);
+  constexpr obelisk_rt_bytecode_entry_v1 remoteBadEntries[] = {{0, 0}, {1, 1}};
+  remoteBadInstruction.code.bytecode.entries = remoteBadEntries;
+  remoteBadInstruction.code.bytecode.entry_count = std::size(remoteBadEntries);
+  EXPECT_EQ(executeBytecode(remoteBadInstruction, nullptr, 0, 0, &action),
+            OBELISK_RT_INVALID_BYTECODE);
+}
+
+obelisk_rt_status nativeFragment(obelisk_rt_context *, void *frame,
+                                 uint64_t frameSize, uint32_t continuation,
+                                 obelisk_rt_fragment_action_v1 *action) {
+  if (!frame || frameSize != sizeof(uint64_t))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ++*static_cast<uint64_t *>(frame);
+  *action = {OBELISK_RT_FRAGMENT_CONTINUE,
+             OBELISK_RT_SUSPEND_NONE,
+             continuation + 1,
+             0,
+             0,
+             0};
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status invalidNativeAction(obelisk_rt_context *, void *, uint64_t,
+                                      uint32_t,
+                                      obelisk_rt_fragment_action_v1 *action) {
+  *action = {OBELISK_RT_FRAGMENT_CONTINUE, OBELISK_RT_SUSPEND_NONE, 1, 0, 1, 0};
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status throwingNativeFragment(obelisk_rt_context *, void *, uint64_t,
+                                         uint32_t,
+                                         obelisk_rt_fragment_action_v1 *) {
+  throw std::bad_alloc();
+}
+
+TEST(RuntimeFragmentTest, ValidatesNativeDescriptorsAndActions) {
+  obelisk_rt_fragment_descriptor_v1 descriptor{};
+  descriptor.handle = {OBELISK_RT_DESCRIPTOR_FRAGMENT, 0, 3};
+  descriptor.code_kind = OBELISK_RT_FRAGMENT_NATIVE;
+  descriptor.code.native_entry = invalidNativeAction;
+  obelisk_rt_fragment_action_v1 action{};
+  EXPECT_EQ(obelisk_rt_v1_fragment_execute(&descriptor, nullptr, nullptr, 0, 0,
+                                           &action),
+            OBELISK_RT_INVALID_ARGUMENT);
+
+  descriptor.code.native_entry = throwingNativeFragment;
+  EXPECT_EQ(obelisk_rt_v1_fragment_execute(&descriptor, nullptr, nullptr, 0, 0,
+                                           &action),
+            OBELISK_RT_OUT_OF_MEMORY);
+
+  descriptor.flags = 1;
+  EXPECT_EQ(obelisk_rt_v1_fragment_execute(&descriptor, nullptr, nullptr, 0, 0,
+                                           &action),
+            OBELISK_RT_INVALID_ARGUMENT);
+  descriptor.flags = 0;
+  descriptor.code.native_entry = nullptr;
+  EXPECT_EQ(obelisk_rt_v1_fragment_execute(&descriptor, nullptr, nullptr, 0, 0,
+                                           &action),
+            OBELISK_RT_INVALID_ARGUMENT);
+  descriptor.handle.kind = OBELISK_RT_DESCRIPTOR_PROCESS;
+  EXPECT_EQ(obelisk_rt_v1_fragment_execute(&descriptor, nullptr, nullptr, 0, 0,
+                                           &action),
+            OBELISK_RT_INVALID_ARGUMENT);
+}
+
+TEST(RuntimeFragmentTest, NativeAndBytecodeUseOneDispatchContract) {
+  obelisk_rt_fragment_descriptor_v1 native{};
+  native.handle = {OBELISK_RT_DESCRIPTOR_FRAGMENT, 0, 3};
+  native.code_kind = OBELISK_RT_FRAGMENT_NATIVE;
+  native.code.native_entry = nativeFragment;
+  uint64_t nativeFrame = 4;
+  obelisk_rt_fragment_action_v1 nativeAction{};
+  EXPECT_EQ(obelisk_rt_v1_fragment_execute(&native, nullptr, &nativeFrame,
+                                           sizeof(nativeFrame), 11,
+                                           &nativeAction),
+            OBELISK_RT_OK);
+  EXPECT_EQ(nativeFrame, 5u);
+
+  std::vector<uint8_t> code;
+  appendInstruction(code, OBELISK_RT_BC_LOAD_FRAME, OBELISK_RT_BC_TYPE_U64, 0,
+                    0, 0, 0);
+  appendInstruction(code, OBELISK_RT_BC_CONST, OBELISK_RT_BC_TYPE_U64, 1, 0, 0,
+                    1);
+  appendInstruction(code, OBELISK_RT_BC_ADD, OBELISK_RT_BC_TYPE_U64, 2, 0, 1);
+  appendInstruction(code, OBELISK_RT_BC_STORE_FRAME, OBELISK_RT_BC_TYPE_U64, 0,
+                    2, 0, 0);
+  appendInstruction(code, OBELISK_RT_BC_CONTINUE, OBELISK_RT_BC_TYPE_NONE, 0, 0,
+                    0, 12);
+  auto bytecode = bytecodeDescriptor(code, 3);
+  constexpr obelisk_rt_bytecode_entry_v1 entry{11, 0};
+  bytecode.code.bytecode.entries = &entry;
+  bytecode.code.bytecode.entry_count = 1;
+  uint64_t bytecodeFrame = 4;
+  obelisk_rt_fragment_action_v1 bytecodeAction{};
+  EXPECT_EQ(executeBytecode(bytecode, &bytecodeFrame, sizeof(bytecodeFrame), 11,
+                            &bytecodeAction),
+            OBELISK_RT_OK);
+  EXPECT_EQ(bytecodeFrame, nativeFrame);
+  EXPECT_EQ(bytecodeAction.kind, nativeAction.kind);
+  EXPECT_EQ(bytecodeAction.suspend_kind, nativeAction.suspend_kind);
+  EXPECT_EQ(bytecodeAction.continuation, nativeAction.continuation);
+  EXPECT_EQ(bytecodeAction.flags, nativeAction.flags);
+  EXPECT_EQ(bytecodeAction.payload, nativeAction.payload);
+  EXPECT_EQ(bytecodeAction.auxiliary, nativeAction.auxiliary);
 }
 
 } // namespace

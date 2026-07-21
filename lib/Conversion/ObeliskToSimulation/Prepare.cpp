@@ -37,6 +37,13 @@ namespace {
 
 using namespace obelisk::simlowering;
 
+static std::optional<uint64_t> getUnsigned64(IntegerAttr attribute) {
+  if (!attribute || attribute.getValue().isNegative() ||
+      attribute.getValue().getActiveBits() > 64)
+    return std::nullopt;
+  return attribute.getValue().getZExtValue();
+}
+
 /// Node kinds whose semantics are declarative but that derive from a shared
 /// generic base, so they cannot carry the SemanticDeclarativeNode trait.
 static bool isDeclarativeLeafNode(Operation *op) {
@@ -227,8 +234,19 @@ void ObeliskSimPreparePass::runOnOperation() {
       invalid = true;
       continue;
     }
-    uint64_t unitFs = timeUnit ? timeUnit.getUInt() : 1'000'000;
-    uint64_t precisionFs = timePrecision ? timePrecision.getUInt() : 1'000'000;
+    std::optional<uint64_t> unitFsValue =
+        timeUnit ? getUnsigned64(timeUnit) : std::optional<uint64_t>(1'000'000);
+    std::optional<uint64_t> precisionFsValue =
+        timePrecision ? getUnsigned64(timePrecision)
+                      : std::optional<uint64_t>(1'000'000);
+    if (!unitFsValue || !precisionFsValue) {
+      emitError(getSemanticLocation(unit))
+          << "elaborated time scale does not fit an unsigned 64-bit value";
+      invalid = true;
+      continue;
+    }
+    uint64_t unitFs = *unitFsValue;
+    uint64_t precisionFs = *precisionFsValue;
     if (unitFs == 0 || precisionFs == 0 || unitFs < precisionFs ||
         unitFs % precisionFs != 0) {
       emitError(getSemanticLocation(unit))
@@ -256,7 +274,8 @@ void ObeliskSimPreparePass::runOnOperation() {
   moduleBuilder.setInsertionPointToEnd(module.getBody());
   auto design = sim::SimDesignOp::create(
       moduleBuilder, module.getLoc(), "design",
-      moduleBuilder.getI64IntegerAttr(designPrecisionFs));
+      moduleBuilder.getI64IntegerAttr(designPrecisionFs),
+      sim::ComputeGraphAttr{});
   design.getBody().push_back(new Block());
   OpBuilder builder(context);
   builder.setInsertionPointToStart(&design.getBody().front());
@@ -385,12 +404,14 @@ void ObeliskSimPreparePass::runOnOperation() {
               ? sim::Lifetime::Static
               : sim::Lifetime::Design;
       sim::SimStorageDeclOp::create(builder, getSemanticLocation(op), id,
-                                    scopeId, *type, lifetime, hierarchy, debug);
+                                    scopeId, *type, lifetime, hierarchy, debug,
+                                    sim::ComputeObservabilityKindAttr{});
     } else {
       uint64_t id = nextNetId++;
       descriptors[path] = {DescriptorInfo::Kind::Net, id, scopeId, *type};
       sim::SimNetDeclOp::create(builder, getSemanticLocation(op), id, scopeId,
-                                *type, sim::Lifetime::Design, hierarchy, debug);
+                                *type, sim::Lifetime::Design, hierarchy, debug,
+                                sim::ComputeObservabilityKindAttr{});
     }
   };
   // Materialize canonical objects first so alias resolution is independent of
@@ -747,7 +768,7 @@ void ObeliskSimPreparePass::runOnOperation() {
           }
           SmallVector<NamedAttribute> attrs(dictionary.begin(),
                                             dictionary.end());
-          uint64_t old = argument.getUInt();
+          uint64_t old = argument.getValue().getZExtValue();
           for (NamedAttribute &attr : attrs)
             if (attr.getName() == "argument")
               attr.setValue(builder.getI64IntegerAttr(old + offset));
@@ -791,8 +812,16 @@ void ObeliskSimPreparePass::runOnOperation() {
     NamedAttribute bindingAttr =
         builder.getNamedAttr(bindingsAttrName, builder.getArrayAttr(bindings));
     uint64_t timeUnitFs = 1'000'000;
-    if (auto attr = unit.source->getAttrOfType<IntegerAttr>("time_unit_fs"))
-      timeUnitFs = attr.getUInt();
+    if (auto attr = unit.source->getAttrOfType<IntegerAttr>("time_unit_fs")) {
+      std::optional<uint64_t> value = getUnsigned64(attr);
+      if (!value) {
+        emitError(getSemanticLocation(unit.source))
+            << "code unit time scale does not fit an unsigned 64-bit value";
+        invalid = true;
+        continue;
+      }
+      timeUnitFs = *value;
+    }
     if (timeUnitFs < designPrecisionFs || timeUnitFs % designPrecisionFs != 0) {
       emitError(getSemanticLocation(unit.source))
           << "code unit time scale is incompatible with design precision";
@@ -908,7 +937,7 @@ void ObeliskSimPreparePass::runOnOperation() {
         invalid = true;
         break;
       }
-      uint64_t id = descriptor.getUInt();
+      uint64_t id = descriptor.getValue().getZExtValue();
       Type type = unit.function.getArgumentTypes()[index];
       Location loc = unit.function.getLoc();
       switch (kind.getValue()) {

@@ -120,6 +120,8 @@ extern "C" const char *obelisk_rt_v1_status_string(obelisk_rt_status status) {
     return "format error";
   case OBELISK_RT_ARGUMENT_MISMATCH:
     return "format argument mismatch";
+  case OBELISK_RT_INVALID_BYTECODE:
+    return "invalid bytecode";
   default:
     return "unknown runtime status";
   }

@@ -27,7 +27,7 @@ def ObeliskSimulationDialect : Dialect {
     reads fill invalid positions with X or zero according to the result domain
     and writes ignore invalid positions.
   }];
-  let useDefaultAttributePrinterParser = 0;
+  let useDefaultAttributePrinterParser = 1;
   let useDefaultTypePrinterParser = 1;
   let usePropertiesForAttributes = 0;
   let hasConstantMaterializer = 1;

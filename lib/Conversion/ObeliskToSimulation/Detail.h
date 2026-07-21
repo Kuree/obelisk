@@ -18,6 +18,8 @@
 #include "mlir/Support/LLVM.h"
 
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 
 #include <optional>
 
@@ -92,6 +94,44 @@ captureMetadata(::mlir::OpBuilder &builder, sim::CaptureKind kind,
 
 /// True for the terminators that end a fragment and resume a continuation.
 bool isSuspensionTerminator(::mlir::Operation *op);
+
+/// Shared suspension/action metadata access. Keeping the operation family in
+/// one place prevents graph construction and verification from drifting when
+/// a new suspension form is introduced.
+sim::ComputeActionKind getFragmentActionKind(::mlir::Operation *terminator);
+sim::ContinuationSiteAttr getContinuationSite(::mlir::Operation *operation);
+void setContinuationSite(::mlir::Operation *operation,
+                         sim::ContinuationSiteAttr site);
+
+/// Blocks that control can return to later in the process lifetime, including
+/// across suspension boundaries. Computed once per function in linear time.
+using ReexecutingBlockSet = ::llvm::DenseSet<::mlir::Block *>;
+ReexecutingBlockSet getReexecutingBlocks(sim::SimFuncOp function);
+
+/// Whether a time value is transitively carried from compile-time constants,
+/// including through continuation block arguments added by frame threading.
+bool isConstantTimeValue(::mlir::Value value);
+
+/// Concrete descriptor provenance recomputed from executable SSA/CFG.
+struct DescriptorProvenance {
+  sim::ComputeResourceKind resource = sim::ComputeResourceKind::Unknown;
+  std::optional<uint64_t> descriptor;
+  std::optional<unsigned> formal;
+  uint64_t low = 0;
+  uint64_t width = 0;
+  uint64_t rootWidth = 0;
+  bool dynamic = false;
+};
+using DescriptorProvenanceMap =
+    ::llvm::DenseMap<::mlir::Value, DescriptorProvenance>;
+
+/// Recompute whole-program effects and four-state knownness from executable IR
+/// and compare them with a derived compute graph. Optionally returns the same
+/// provenance facts so later verifier checks do not duplicate SSA reasoning.
+::mlir::LogicalResult
+verifyRecomputedComputeAnalysis(sim::SimDesignOp design,
+                                sim::ComputeGraphAttr graph,
+                                DescriptorProvenanceMap *provenance = nullptr);
 
 } // namespace obelisk::simlowering
 

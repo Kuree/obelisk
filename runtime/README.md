@@ -4,10 +4,36 @@
 simulators. It is a standalone C++17 archive with a versioned C ABI; LLVM,
 MLIR, slang, and GoogleTest are not runtime dependencies.
 
-The implementation is separated into context/buffer ownership, scalar
-formatting/display, and libc-backed file I/O translation units. This keeps the
-public ABI independent from the compiler while allowing each runtime area to
-evolve independently.
+The implementation is separated into context/buffer ownership, fragment and
+bytecode dispatch, scalar formatting/display, and libc-backed file I/O
+translation units. This keeps the public ABI independent from the compiler
+while allowing each runtime area to evolve independently.
+
+## Fragment ABI and bytecode
+
+A stable descriptor handle is a kind, numeric ID, and generation; it never
+contains a native address. Every process fragment consumes the same context,
+frame, frame size, and continuation ID and produces one of three actions:
+continue, suspend, or terminate. A fragment descriptor selects either a native
+entry point or an immutable bytecode range without changing that contract.
+
+The compact register bytecode uses fixed 16-byte little-endian instructions.
+Each immutable program carries a sorted table from stable 32-bit continuation
+IDs to local instruction indices, so bytecode layout never changes scheduler
+identity and continuations are never truncated to bytecode program counters.
+Entry lookup is logarithmic. Typed register scratch is assigned a fixed range
+inside each process frame and cleared on entry, avoiding interpreter heap
+allocation on every resume.
+It currently provides typed 64-bit integer and boolean constants, moves,
+arithmetic, bitwise operations, comparisons, bounded frame loads/stores,
+branches, and fragment actions. The interpreter validates instruction size,
+register types and indices, branch destinations, frame ranges, and terminal
+actions. Malformed programs return `OBELISK_RT_INVALID_BYTECODE`; they do not
+read or write outside the supplied process frame.
+
+This bytecode is the cold-fragment execution substrate, not a second scheduler.
+Generated schedules and native fragments use the same action ABI and stable
+handles, while dynamic runtime services remain ordinary versioned C calls.
 
 ## Four-state values
 

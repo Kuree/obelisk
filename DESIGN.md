@@ -144,12 +144,17 @@ it does not claim that every construct has already been lowered to LLVM.
 
 ## Executable simulation and parallelization
 
-> **Status.** Implemented today: the `obelisk_sim` dialect itself, the flattened
-> descriptor inventory, isolated code units with explicit captures, and the
-> serial/parallel/serial lowering from elaborated semantic IR. Everything from
-> "Interprocedural optimization and effect summaries" onward — summaries,
-> fragmentation, partitioning, the bytecode tier, VPI capability levels, and
-> solver-guided placement — is the intended direction, not present behaviour.
+> **Status.** Implemented today: the `obelisk_sim` dialect, flattened descriptor
+> inventory, isolated code units with explicit captures, descriptor-provenance
+> and bit-range effect summaries, four-state knownness facts, fixed
+> continuation/timing sites and typed NBA staging policies, deterministic late
+> fragment graphs and
+> SCC region plans, VPI observability annotations, and the shared
+> native/bytecode runtime fragment ABI with its checked typed interpreter. The
+> driver can emit simulation IR or schedule diagnostics and controls MLIR
+> threads and generated lane count. LLVM dialect lowering, object/executable
+> emission, generated region-driver machine code, the dynamic frontier, broad
+> UVM runtime services, and parallel lane launching remain future milestones.
 
 The `obelisk_sim` dialect is the target-independent executable boundary between
 semantic SystemVerilog and the runtime. A design is flattened into deterministic
@@ -179,12 +184,14 @@ domain; a partially out-of-range write or drive updates only valid positions.
 These rules belong to the dynamic selection operations themselves and must not
 be approximated with potentially poison-producing builtin shifts.
 
-Parallelization treats the design as a concurrent program rather than as a
-netlist. Process fragments are the units of work, mutable design objects are
-owned resources, and the task and communication graph is derived from compiler
-analyses over the executable IR. Module proximity alone does not imply runtime
-communication, and processes in separate modules can have strong affinity
-through shared state.
+Parallelization treats the design as a concurrent SSA/CFG program rather than
+as a netlist. Whole-program optimization runs on that program first. Only then
+does the compiler derive a typed compute graph whose actor nodes are maximal
+optimized fragments and whose descriptor-range memory, control, sensitivity,
+event-region, and required process-order edges express scheduling constraints.
+The graph is disposable analysis metadata, never the primary IR. Module
+proximity alone does not imply communication, and processes in separate
+modules can have strong affinity through shared state.
 
 ### Minimize materialized state first
 
@@ -291,30 +298,47 @@ zero-time call already executes on its caller's worker. It is profitable when
 it exposes descriptor constants, refines aliases, removes state, or enables a
 local-resource fast path.
 
-### Derived partitioning problem
+### Derived compute graph and generated schedules
 
-The derived graph is a weighted actor/resource hypergraph:
+The current planner materializes the typed graph, exact ranges, fixed site IDs,
+and event-region SCC plans described below. Direct region code, commit code,
+the dynamic frontier, coarsening, and worker lanes are target-backend behavior
+and remain to be lowered. In that completed backend, the derived graph is a
+typed actor/resource graph:
 
-- process fragments are actor vertices;
-- storage and resolved nets are owned resource vertices;
-- reads, writes, drives, NBA enqueues, and subscriptions are weighted
-  actor-resource edges; and
-- continuation migration, spawn, wakeup, await, and join relationships are
-  weighted actor-actor edges.
+- optimized process fragments are actor nodes;
+- storage, resolved-net, event, and process descriptors identify resources;
+- reads, writes, drives, NBA staging, and subscriptions carry exact bit ranges;
+- dynamic selections conservatively widen to the complete statically known
+  base range; and
+- CFG continuation, spawn, sensitivity, event-region, and required source-order
+  relationships are actor edges.
 
-Static operation costs provide an initial model. Profile-guided optimization
-should replace them with fragment activation time, resource-access counts, net
-resolutions, NBA traffic, wakeups, and continuation migrations. Initialization,
-steady-state event regions, and finalization are separate load scenarios so
-that one-time work cannot hide an idle steady-state worker.
+Static operation costs and activation estimates will seed graph coarsening.
+Acyclic event-region components will lower to direct topological calls. Cyclic
+zero-time components will lower to convergence loops that compare only
+descriptor ranges on a feedback cut. Active, NBA, observed, reactive, and
+postponed plans are already explicit even when a supported design has no nodes
+in one of those regions.
 
-Placement assigns fragments and resource owners to abstract runtime partitions.
-The runtime separately maps those partitions to worker threads and CPU cores.
-A fragment's placement is a preferred affinity, while a resource's owner is the
-partition that serializes its mutation, resolution, and wakeup fanout. Local
-accesses lower to the cheapest valid path; remote accesses use an owner queue or
-another synchronized transport. Controlled work stealing may override fragment
-affinity when measured idle time justifies the additional remote traffic.
+Every NBA site already receives an explicit staging policy. Proven single-shot
+sites use fixed slots. Repeated immediate assignments to a concrete root use a
+generated value/unknown/mask accumulator plus change and edge masks, preserving
+final-update and activation semantics without queue allocation. Finite journals
+remain available when a multiplicity bound is proven; repeated delayed,
+externally introduced, or dynamically rooted work uses the frontier. Native
+lowering will turn those records into ordered commit code. Dynamic destinations
+carry direct descriptor, index, and mask fields. Likewise, constant delays will
+use generated calendar paths and bounded variable delays will use fixed
+deadline slots. Only semantically unbounded or externally introduced behavior
+enters the generic runtime frontier.
+
+After coarsening, the compiler will assign macro tasks to persistent worker
+lanes and emit their epoch and barrier dependencies. Closed-world RTL will have
+no runtime graph follower, per-task queue, owner queue, or work stealing. The
+runtime will only create and join persistent workers; generated lane functions
+will own the normal RTL schedule. Complex dynamic testbench services and
+externally introduced events may still use the generic frontier.
 
 ### Dual AOT and bytecode execution
 
@@ -325,19 +349,19 @@ size, and instruction-cache pressure than they recover in execution time. Their
 execution may already be dominated by dynamic dispatch, containers, constraint
 solving, synchronization, DPI, or VPI rather than by instruction dispatch.
 
-Obelisk therefore uses one executable semantic boundary with two code forms
-rather than dividing the language into compiled and interpreted subsets. A
-process may move between them at fragment boundaries while retaining the same
-logical process identity, frame, scheduler state, RNG stream, and resource
-handles:
+The completed backend will therefore use one executable semantic boundary with
+two code forms rather than dividing the language into compiled and interpreted
+subsets. A process may move between them at fragment boundaries while retaining
+the same logical process identity, frame, scheduler state, RNG stream, and
+resource handles:
 
 1. native AOT fragments implement hot, stable control and data paths;
 2. compact bytecode fragments implement cold or code-size-expensive dynamic
    behavior.
 
-Both forms invoke the same runtime intrinsics for containers, synchronization,
-constraint solving, DPI, VPI, and other operations whose complexity belongs in
-the runtime rather than duplicated generated code.
+Both forms will invoke the same runtime intrinsics for containers,
+synchronization, constraint solving, DPI, VPI, and other operations whose
+complexity belongs in the runtime rather than duplicated generated code.
 
 Complex dynamic behavior does not imply interpretation by default. Dynamic
 arrays, queues, associative arrays, mailboxes, semaphores, and randomization can
@@ -354,18 +378,20 @@ does not include a JIT tier: the runtime contains no native-code compiler, code
 cache, deoptimization metadata, executable-memory manager, or assumption
 invalidation protocol.
 
-The interpreter and native lowering share resource ownership, event queues, and
-runtime intrinsics. This avoids a second scheduling implementation and makes
-mixed-tier execution observationally equivalent. The bytecode interpreter also
-provides a useful differential reference for native lowering, but it is not a
-separate or less complete semantic path.
+The interpreter and native lowering will share generated scheduling safe
+points, the dynamic frontier, and runtime intrinsics. This avoids a second
+scheduling implementation and makes mixed-tier execution observationally
+equivalent. The bytecode interpreter also provides a useful differential
+reference for native lowering, but it is not a separate or less complete
+semantic path.
 
 Each runtime fragment descriptor selects either a native entry pointer or an
 immutable bytecode range. Both consume the same process frame and return the
-same continue, suspend, or terminate action. The scheduler dispatches that
-descriptor without knowing the fragment's code form. Keeping tier transitions
-at fragment boundaries avoids native stack reconstruction and makes process
-kill, migration, tracing, and checkpointing uniform.
+same continue, suspend, or terminate action. Generated drivers or the dynamic
+frontier dispatch that descriptor without knowing the fragment's code form.
+Keeping tier transitions at fragment boundaries avoids native stack
+reconstruction and makes process kill, migration, tracing, and checkpointing
+uniform.
 
 Execution tier may eventually be another solver decision:
 
@@ -382,12 +408,13 @@ changing the runtime architecture.
 
 ### VPI observability and storage optimization
 
-Bytecode contains the dynamic simulator-side implementation of VPI traversal,
-callback glue, system tasks, and force or release orchestration, but it does not
-remove VPI's semantic effect on native code. Unrestricted writable VPI is an
-optimization fence for every VPI-visible object because a plugin may discover
-that object by hierarchy, read or write its current value, write X or Z, force
-or release it, or register a value-change callback.
+The completed bytecode tier will contain the dynamic simulator-side
+implementation of VPI traversal, callback glue, system tasks, and force or
+release orchestration, but it will not remove VPI's semantic effect on native
+code. Unrestricted writable VPI is an optimization fence for every VPI-visible
+object because a plugin may discover that object by hierarchy, read or write
+its current value, write X or Z, force or release it, or register a value-change
+callback.
 
 Full VPI therefore prevents elimination of a visible object's logical identity,
 coalescing of observable updates, assumptions that external readers, writers,
@@ -453,7 +480,7 @@ an inline local access when no external behavior is active; otherwise it calls
 the common observable-access intrinsic. This preserves a small fast path
 without claiming that enabling full VPI is free.
 
-### Solver-guided IPO and placement
+### Compiler-guided IPO, coarsening, and placement
 
 An Obelisk-owned solver interface may use Z3 directly to select among legal
 compiler-generated choices. Z3 types do not cross that interface, and the
@@ -464,8 +491,8 @@ times out.
 The finite optimization model may contain:
 
 ```text
-worker[fragment]       home partition of a fragment
-owner[resource]        owner partition of mutable state
+lane[macro-task]       persistent generated worker lane
+layout[resource]       lane-local or explicitly synchronized state layout
 inline[callsite]       whether to inline a legal callsite
 clone[function, part]  whether to create a specialized partition-local clone
 cut[boundary]          whether to retain an optional fragment boundary
@@ -473,14 +500,14 @@ merge[boundary]        whether to merge adjacent same-process fragments
 ```
 
 Hard constraints preserve legal transformations, process ordering, mandatory
-suspension boundaries, resource ownership, worker-count limits, per-scenario
-load bounds, and code-size budgets. Different placements for successive
-fragments require a retained boundary. Driver state is owned with its resolved
-net. Atomic, external, or otherwise unsupported operations may be pinned until
-a distributed implementation is available.
+suspension boundaries, descriptor coherence, worker-count limits, per-scenario
+load bounds, and code-size budgets. Different lane placements for successive
+fragments require a retained boundary. Driver state is laid out with its
+resolved net. Atomic, external, or otherwise unsupported operations may be
+pinned to one lane until a generated parallel implementation is available.
 
-The cost model includes remote resource traffic, resource fanout across
-partitions, continuation migration, scheduler dispatch, call overhead, code
+The cost model includes cross-lane resource traffic, resource fanout, epoch and
+barrier synchronization, continuation migration, call overhead, code
 duplication, instruction-cache pressure, and load imbalance. The solver first
 finds the best achievable maximum worker load. It then permits a small bounded
 load slack and minimizes synchronization cost within that balanced solution
@@ -509,13 +536,13 @@ The intended lowering sequence is:
 
 ```text
 semantic lowering
-  -> interprocedural analysis and state minimization
-  -> devirtualization, specialization, and initial IPO
-  -> process fragmentation and frame minimization
-  -> profile annotation and task coarsening
-  -> solver-guided IPO and abstract placement
-  -> partition-specific cloning and local/remote lowering
-  -> canonicalization, machine lowering, and runtime integration
+  -> devirtualization, specialization, IPSCCP, SROA, and state minimization
+  -> descriptor-range summaries, observability, and knownness
+  -> static process extraction and late fragment graph derivation
+  -> suspension-frame construction and fixed timing/NBA sites
+  -> event-region SCC scheduling and macro-task coarsening
+  -> fixed-lane assignment and generated epoch/barrier dependencies
+  -> LLVM dialect lowering, object emission, and static-runtime linking
 ```
 
 ## Driver and tools
@@ -531,6 +558,10 @@ obelisk -emit-obelisk design.sv
 
 # Stop at the elaborated source boundary.
 obelisk -emit-slang design.sv
+
+# Inspect executable SSA or the derived generated schedule.
+obelisk -emit-sim --vpi=off design.sv
+obelisk -emit-schedule --threads=8 --vpi=read design.sv
 
 # Inspect or convert persisted source IR.
 obelisk -emit-slang design.sv | obelisk-opt

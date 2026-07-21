@@ -3,10 +3,14 @@
 #include "Detail.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Interfaces/ControlFlowInterfaces.h"
 
+#include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringExtras.h"
 
 #include <cctype>
+#include <functional>
 #include <limits>
 #include <string>
 
@@ -270,10 +274,140 @@ DictionaryAttr captureMetadata(OpBuilder &builder, sim::CaptureKind kind,
 }
 
 bool isSuspensionTerminator(Operation *op) {
-  return isa<sim::SimSuspendDelayOp, sim::SimSuspendChangeOp,
-             sim::SimSuspendEdgeOp, sim::SimSuspendAnyOp,
-             sim::SimSuspendEventOp, sim::SimSuspendAwaitOp,
-             sim::SimSuspendJoinOp>(op);
+  return getFragmentActionKind(op) != sim::ComputeActionKind::Continue &&
+         !isa<sim::SimReturnOp>(op);
+}
+
+sim::ComputeActionKind getFragmentActionKind(Operation *terminator) {
+  return llvm::TypeSwitch<Operation *, sim::ComputeActionKind>(terminator)
+      .Case<sim::SimSuspendDelayOp>(
+          [](auto) { return sim::ComputeActionKind::SuspendDelay; })
+      .Case<sim::SimSuspendChangeOp>(
+          [](auto) { return sim::ComputeActionKind::SuspendChange; })
+      .Case<sim::SimSuspendEdgeOp>(
+          [](auto) { return sim::ComputeActionKind::SuspendEdge; })
+      .Case<sim::SimSuspendAnyOp>(
+          [](auto) { return sim::ComputeActionKind::SuspendAny; })
+      .Case<sim::SimSuspendEventOp>(
+          [](auto) { return sim::ComputeActionKind::SuspendEvent; })
+      .Case<sim::SimSuspendAwaitOp>(
+          [](auto) { return sim::ComputeActionKind::SuspendAwait; })
+      .Case<sim::SimSuspendJoinOp>(
+          [](auto) { return sim::ComputeActionKind::SuspendJoin; })
+      .Case<sim::SimReturnOp>(
+          [](auto) { return sim::ComputeActionKind::Terminate; })
+      .Default([](Operation *) { return sim::ComputeActionKind::Continue; });
+}
+
+sim::ContinuationSiteAttr getContinuationSite(Operation *operation) {
+  sim::ContinuationSiteAttr site;
+  llvm::TypeSwitch<Operation *>(operation)
+      .Case<sim::SimSuspendDelayOp, sim::SimSuspendChangeOp,
+            sim::SimSuspendEdgeOp, sim::SimSuspendAnyOp, sim::SimSuspendEventOp,
+            sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp>(
+          [&](auto op) { site = op.getSiteAttr(); });
+  return site;
+}
+
+void setContinuationSite(Operation *operation, sim::ContinuationSiteAttr site) {
+  llvm::TypeSwitch<Operation *>(operation)
+      .Case<sim::SimSuspendDelayOp, sim::SimSuspendChangeOp,
+            sim::SimSuspendEdgeOp, sim::SimSuspendAnyOp, sim::SimSuspendEventOp,
+            sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp>(
+          [&](auto op) { op.setSiteAttr(site); });
+}
+
+ReexecutingBlockSet getReexecutingBlocks(sim::SimFuncOp function) {
+  ReexecutingBlockSet reexecuting;
+  DenseMap<Block *, unsigned> indices, lowlinks;
+  SmallVector<Block *> stack;
+  llvm::SmallPtrSet<Block *, 16> onStack;
+  unsigned nextIndex = 0;
+
+  std::function<void(Block *)> visit = [&](Block *block) {
+    unsigned index = nextIndex++;
+    indices.try_emplace(block, index);
+    lowlinks.try_emplace(block, index);
+    stack.push_back(block);
+    onStack.insert(block);
+    for (Block *successor : block->getTerminator()->getSuccessors()) {
+      auto successorIndex = indices.find(successor);
+      if (successorIndex == indices.end()) {
+        visit(successor);
+        lowlinks[block] = std::min(lowlinks[block], lowlinks[successor]);
+      } else if (onStack.contains(successor)) {
+        lowlinks[block] = std::min(lowlinks[block], successorIndex->second);
+      }
+    }
+    if (lowlinks[block] != index)
+      return;
+    SmallVector<Block *> component;
+    while (true) {
+      Block *member = stack.pop_back_val();
+      onStack.erase(member);
+      component.push_back(member);
+      if (member == block)
+        break;
+    }
+    bool cyclic =
+        component.size() > 1 ||
+        llvm::is_contained(block->getTerminator()->getSuccessors(), block);
+    if (cyclic)
+      reexecuting.insert(component.begin(), component.end());
+  };
+
+  for (Block &block : function.getBody())
+    if (!indices.contains(&block))
+      visit(&block);
+  return reexecuting;
+}
+
+bool isConstantTimeValue(Value value) {
+  SmallVector<Value> worklist{value};
+  DenseSet<Value> visited;
+  std::optional<APInt> constantValue;
+  while (!worklist.empty()) {
+    Value current = worklist.pop_back_val();
+    if (!visited.insert(current).second)
+      continue;
+    if (auto constant = current.getDefiningOp<sim::SimTimeConstantOp>()) {
+      APInt value = constant.getValueAttr().getValue();
+      if (constantValue && *constantValue != value)
+        return false;
+      constantValue = value;
+      continue;
+    }
+    auto argument = dyn_cast<BlockArgument>(current);
+    if (!argument)
+      return false;
+    Block *block = argument.getOwner();
+    if (block->isEntryBlock() || block->hasNoPredecessors())
+      return false;
+    bool sawIncoming = false;
+    for (Block *predecessor : block->getPredecessors()) {
+      auto branch = dyn_cast<BranchOpInterface>(predecessor->getTerminator());
+      if (!branch)
+        return false;
+      for (unsigned successor = 0;
+           successor != predecessor->getTerminator()->getNumSuccessors();
+           ++successor) {
+        if (predecessor->getTerminator()->getSuccessor(successor) != block)
+          continue;
+        auto forwarded =
+            branch.getSuccessorOperands(successor).getForwardedOperands();
+        if (argument.getArgNumber() >= forwarded.size())
+          return false;
+        Value incoming = forwarded[argument.getArgNumber()];
+        if (incoming != current) {
+          worklist.push_back(incoming);
+          sawIncoming = true;
+        }
+      }
+    }
+    if (!sawIncoming && worklist.empty() && !constantValue)
+      return false;
+  }
+  return constantValue.has_value();
 }
 
 } // namespace obelisk::simlowering

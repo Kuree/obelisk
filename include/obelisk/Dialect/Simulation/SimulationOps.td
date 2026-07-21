@@ -5,6 +5,7 @@
 
 include "obelisk/Dialect/Simulation/SimulationDialect.td"
 include "obelisk/Dialect/Simulation/SimulationEnums.td"
+include "obelisk/Dialect/Simulation/SimulationAttrs.td"
 include "obelisk/Dialect/Simulation/SimulationTypes.td"
 include "mlir/IR/SymbolInterfaces.td"
 include "mlir/Interfaces/CallInterfaces.td"
@@ -61,7 +62,8 @@ def SimDesignOp : SimOp<"design", [
     `obelisk_sim.time` tick for every nested code unit.
   }];
   let arguments = (ins SymbolNameAttr:$sym_name,
-                       OptionalAttr<I64Attr>:$time_precision_fs);
+                       OptionalAttr<I64Attr>:$time_precision_fs,
+                       OptionalAttr<SimComputeGraphAttr>:$compute_graph);
   let regions = (region AnyRegion : $body);
   let assemblyFormat = "$sym_name attr-dict-with-keyword $body";
   // A region verifier runs after the nested descriptor and code-unit
@@ -85,7 +87,8 @@ def SimStorageDeclOp : SimOp<"storage.decl", [MemoryEffects<[MemWrite<SimInvento
   let arguments = (ins I64Attr:$id, I64Attr:$scope_id, TypeAttr:$type,
                        SimLifetime:$lifetime,
                        OptionalAttr<StrAttr>:$hierarchical_name,
-                       OptionalAttr<StrAttr>:$debug_name);
+                       OptionalAttr<StrAttr>:$debug_name,
+                       OptionalAttr<SimComputeObservabilityKind>:$observability);
   let assemblyFormat = [{$id `in` $scope_id `:` $type $lifetime
     (`hierarchy` $hierarchical_name^)? (`debug` $debug_name^)? attr-dict}];
   let hasVerifier = 1;
@@ -96,7 +99,8 @@ def SimNetDeclOp : SimOp<"net.decl", [MemoryEffects<[MemWrite<SimInventoryResour
   let arguments = (ins I64Attr:$id, I64Attr:$scope_id, TypeAttr:$type,
                        SimLifetime:$lifetime,
                        OptionalAttr<StrAttr>:$hierarchical_name,
-                       OptionalAttr<StrAttr>:$debug_name);
+                       OptionalAttr<StrAttr>:$debug_name,
+                       OptionalAttr<SimComputeObservabilityKind>:$observability);
   let assemblyFormat = [{$id `in` $scope_id `:` $type $lifetime
     (`hierarchy` $hierarchical_name^)? (`debug` $debug_name^)? attr-dict}];
   let hasVerifier = 1;
@@ -128,7 +132,9 @@ def SimFuncOp : SimOp<"func", [
                        SimEntryKind:$entry_kind,
                        OptionalAttr<StrAttr>:$sym_visibility,
                        OptionalAttr<DictArrayAttr>:$arg_attrs,
-                       OptionalAttr<DictArrayAttr>:$res_attrs);
+                       OptionalAttr<DictArrayAttr>:$res_attrs,
+                       OptionalAttr<ArrayAttr>:$effect_summary,
+                       OptionalAttr<SimFragmentABIAttr>:$fragment_abi);
   let regions = (region AnyRegion:$body);
   let builders = [OpBuilder<(ins "::llvm::StringRef":$name,
       "::mlir::FunctionType":$type,
@@ -349,7 +355,8 @@ def SimNBAEnqueueOp : SimOp<"nba.enqueue", [
     SimRefElementMatches<"destination", "value">
   ]> {
   let arguments = (ins AnyType:$value, SimRefType:$destination,
-                       Optional<SimTimeType>:$delay);
+                       Optional<SimTimeType>:$delay,
+                       OptionalAttr<SimNBASiteAttr>:$site);
   let assemblyFormat = [{$value `to` $destination (`after` $delay^)? attr-dict
     `:` functional-type(operands, results)}];
 }
@@ -572,7 +579,8 @@ def SimTimeAddOp
 def SimEventTriggerOp
     : SimOp<"event.trigger",
             [MemoryEffects<[MemWrite<SimSchedulerResource>]>]> {
-  let arguments = (ins SimEventType : $event, BoolAttr : $nonblocking);
+  let arguments = (ins SimEventType : $event, BoolAttr : $nonblocking,
+                       OptionalAttr<SimEventSiteAttr>:$site);
   let assemblyFormat = "$event `nonblocking` `=` $nonblocking attr-dict";
 }
 
@@ -587,13 +595,14 @@ class SimSuspendOp<string mnemonic, dag extraArgs = (ins),
                   ]>
                 ],
                 extraTraits)> {
-  let arguments = !con(extraArgs, (ins Variadic<AnyType>:$continuation_operands));
+  let arguments = !con(extraArgs, (ins Variadic<AnyType>:$continuation_operands,
+                                      OptionalAttr<SimContinuationSiteAttr>:$site));
   let successors = (successor AnySuccessor : $continuation);
   let hasVerifier = 1;
 }
 
-def SimSuspendDelayOp : SimSuspendOp<"suspend.delay", (ins SimTimeType
-                                                       : $delay)> {
+def SimSuspendDelayOp : SimSuspendOp<"suspend.delay", (ins SimTimeType:$delay,
+    OptionalAttr<SimTimingSiteAttr>:$timing)> {
   let assemblyFormat = [{$delay `to` $continuation
     (`(` $continuation_operands^ `:` type($continuation_operands) `)`)? attr-dict}];
 }
@@ -621,7 +630,8 @@ def SimSuspendAnyOp : SimOp<"suspend.any", [
   // are successor operands. Keeping one variadic group avoids a redundant
   // segment-size attribute in the persistent IR.
   let arguments = (ins Variadic<AnyType>:$values,
-                       DenseI32ArrayAttr:$edges);
+                       DenseI32ArrayAttr:$edges,
+                       OptionalAttr<SimContinuationSiteAttr>:$site);
   let successors = (successor AnySuccessor:$continuation);
   let assemblyFormat = [{$values `edges` $edges `to` $continuation
    attr-dict `:` type($values)}];
@@ -660,7 +670,8 @@ def SimSuspendJoinOp : SimOp<"suspend.join", [
   // out of the persistent IR while still allowing the suspension-threading
   // pass to append live values.
   let arguments = (ins SimJoinKind:$kind, Variadic<AnyType>:$values,
-                       I64Attr:$process_count);
+                       I64Attr:$process_count,
+                       OptionalAttr<SimContinuationSiteAttr>:$site);
   let successors = (successor AnySuccessor:$continuation);
   let assemblyFormat = [{$kind $values `processes` $process_count `to`
     $continuation attr-dict `:` type($values)}];

@@ -1,9 +1,11 @@
 add_mlir_library(ObeliskToSimulation
+  BuildComputeGraph.cpp
   Finalize.cpp
   LowerUnit.cpp
   Prepare.cpp
   SemanticUtils.cpp
   ThreadSuspension.cpp
+  VerifyComputeGraph.cpp
 
   DEPENDS
   ObeliskConversionPassIncGen

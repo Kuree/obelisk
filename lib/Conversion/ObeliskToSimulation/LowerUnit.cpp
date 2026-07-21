@@ -130,7 +130,8 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
     auto dictionary = cast<DictionaryAttr>(attr);
     StringRef path = dictionary.getAs<StringAttr>("path").getValue();
     if (auto argument = dictionary.getAs<IntegerAttr>("argument")) {
-      Value value = function.getBody().front().getArgument(argument.getUInt());
+      Value value = function.getBody().front().getArgument(
+          argument.getValue().getZExtValue());
       if (dictionary.contains("formal_local")) {
         Value local = sim::SimRefAllocOp::create(
             builder, function.getLoc(),
@@ -802,7 +803,7 @@ UnitLowering::lowerAssignment(semantic::SVAssignmentExpressionOp op) {
   if (isa<sim::RefType>((*destination).getType())) {
     if (nonblocking)
       sim::SimNBAEnqueueOp::create(builder, location, *value, *destination,
-                                   Value{});
+                                   Value{}, sim::NBASiteAttr{});
     else
       sim::SimRefStoreOp::create(builder, location, *value, *destination);
   } else {
@@ -1448,8 +1449,8 @@ LogicalResult UnitLowering::lowerTiming(Operation *control,
         emitError(location) << "delay must be a known nonnegative constant";
         return failure();
       }
-      APInt scaled =
-          parsed->value.zextOrTrunc(128) * APInt(128, scaleAttr.getUInt());
+      APInt scaled = parsed->value.zextOrTrunc(128) *
+                     APInt(128, scaleAttr.getValue().getZExtValue());
       if (scaled.ugt(APInt(128, static_cast<uint64_t>(
                                     std::numeric_limits<int64_t>::max())))) {
         emitError(location) << "scaled delay exceeds the simulation time range";
@@ -1466,8 +1467,9 @@ LogicalResult UnitLowering::lowerTiming(Operation *control,
           builder, location, sim::TimeType::get(function.getContext()), *amount,
           scaleAttr, builder.getBoolAttr(isSignedNode(children.front())));
     }
-    sim::SimSuspendDelayOp::create(builder, location, delay, ValueRange{},
-                                   continuation);
+    sim::SimSuspendDelayOp::create(builder, location, delay,
+                                   sim::TimingSiteAttr{}, ValueRange{},
+                                   sim::ContinuationSiteAttr{}, continuation);
   } else if (isa<semantic::SVSignalEventControlOp,
                  semantic::SVEventListControlOp>(control)) {
     SmallVector<Operation *> events =
@@ -1508,15 +1510,17 @@ LogicalResult UnitLowering::lowerTiming(Operation *control,
     if (watched.size() == 1) {
       auto edge = static_cast<sim::EdgeKind>(edges.front());
       if (edge == sim::EdgeKind::Change)
-        sim::SimSuspendChangeOp::create(builder, location, watched.front(),
-                                        ValueRange{}, continuation);
+        sim::SimSuspendChangeOp::create(
+            builder, location, watched.front(), ValueRange{},
+            sim::ContinuationSiteAttr{}, continuation);
       else
         sim::SimSuspendEdgeOp::create(builder, location, edge, watched.front(),
-                                      ValueRange{}, continuation);
+                                      ValueRange{}, sim::ContinuationSiteAttr{},
+                                      continuation);
     } else {
       sim::SimSuspendAnyOp::create(builder, location, watched,
                                    builder.getDenseI32ArrayAttr(edges),
-                                   continuation);
+                                   sim::ContinuationSiteAttr{}, continuation);
     }
   } else {
     unsupported(control) << " (timing control)";
@@ -1890,14 +1894,15 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   if (sensitivity.size() == 1) {
     sim::SimSuspendChangeOp::create(builder, function.getLoc(),
                                     sensitivity.front(), ValueRange{},
-                                    loopHeader);
+                                    sim::ContinuationSiteAttr{}, loopHeader);
     return success();
   }
   SmallVector<int32_t> edges(sensitivity.size(),
                              static_cast<int32_t>(sim::EdgeKind::Change));
   sim::SimSuspendAnyOp::create(builder, function.getLoc(),
                                sensitivity.getArrayRef(),
-                               builder.getDenseI32ArrayAttr(edges), loopHeader);
+                               builder.getDenseI32ArrayAttr(edges),
+                               sim::ContinuationSiteAttr{}, loopHeader);
   return success();
 }
 

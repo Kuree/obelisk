@@ -23,6 +23,8 @@ def emit_obelisk : Flag<["-"], "emit-obelisk">, Group<Action_Group>,
   HelpText<"Emit Obelisk dialect MLIR (default)">;
 def emit_sim : Flag<["-"], "emit-sim">, Group<Action_Group>,
   HelpText<"Emit executable obelisk_sim SSA MLIR">;
+def emit_schedule : Flag<["-"], "emit-schedule">, Group<Action_Group>,
+  HelpText<"Emit deterministic compute-graph and event-region diagnostics">;
 
 def o : JoinedOrSeparate<["-"], "o">, Group<Output_Group>,
   MetaVarName<"<file>">,
@@ -30,6 +32,16 @@ def o : JoinedOrSeparate<["-"], "o">, Group<Output_Group>,
 def mlir_print_debuginfo : Flag<["--"], "mlir-print-debuginfo">,
   Group<Output_Group>,
   HelpText<"Include source locations in emitted MLIR">;
+
+def threads_EQ : Joined<["--"], "threads=">, Group<Compilation_Group>,
+  MetaVarName<"<count>">,
+  HelpText<"Set generated simulator worker-lane count">;
+def compile_threads_EQ : Joined<["--"], "compile-threads=">,
+  Group<Compilation_Group>, MetaVarName<"<count>">,
+  HelpText<"Set compiler thread-pool size">;
+def vpi_EQ : Joined<["--"], "vpi=">, Group<Compilation_Group>,
+  MetaVarName<"<off|read|full>">, Values<"off,read,full">,
+  HelpText<"Select VPI observability and mutation capability">;
 
 def I : JoinedOrSeparate<["-"], "I">, Group<Preprocessor_Group>,
   MetaVarName<"<dir>">,

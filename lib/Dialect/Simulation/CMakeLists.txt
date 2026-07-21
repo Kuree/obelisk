@@ -4,6 +4,7 @@ add_mlir_library(ObeliskSimulationIR
   DEPENDS
   ObeliskSimulationDialectIncGen
   ObeliskSimulationEnumsIncGen
+  ObeliskSimulationAttrsIncGen
   ObeliskSimulationOpsIncGen
   ObeliskSimulationTypesIncGen
 

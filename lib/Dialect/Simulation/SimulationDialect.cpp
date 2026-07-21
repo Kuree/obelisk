@@ -20,6 +20,9 @@ using namespace mlir;
 #include "obelisk/Dialect/Simulation/SimulationDialect.cpp.inc"
 #include "obelisk/Dialect/Simulation/SimulationEnums.cpp.inc"
 
+#define GET_ATTRDEF_CLASSES
+#include "obelisk/Dialect/Simulation/SimulationAttrs.cpp.inc"
+
 #define GET_TYPEDEF_CLASSES
 #include "obelisk/Dialect/Simulation/SimulationTypes.cpp.inc"
 
@@ -29,6 +32,10 @@ using namespace mlir;
 namespace obelisk::sim {
 
 void ObeliskSimulationDialect::initialize() {
+  addAttributes<
+#define GET_ATTRDEF_LIST
+#include "obelisk/Dialect/Simulation/SimulationAttrs.cpp.inc"
+      >();
   addTypes<
 #define GET_TYPEDEF_LIST
 #include "obelisk/Dialect/Simulation/SimulationTypes.cpp.inc"
@@ -73,6 +80,198 @@ Operation *ObeliskSimulationDialect::materializeConstant(OpBuilder &builder,
     return arith::ConstantOp::create(builder, location, integer, attr);
   }
   return nullptr;
+}
+
+static LogicalResult
+verifyEffectArray(llvm::function_ref<InFlightDiagnostic()> emitError,
+                  ArrayAttr effects, StringRef owner) {
+  if (!effects)
+    return emitError() << owner << " requires an effect array";
+  if (llvm::any_of(effects, [](Attribute attr) {
+        return !isa<ComputeEffectAttr>(attr);
+      }))
+    return emitError() << owner << " contains a non-effect attribute";
+  return success();
+}
+
+LogicalResult ComputeEffectAttr::verify(
+    llvm::function_ref<InFlightDiagnostic()> emitError,
+    ComputeEffectKind effect, ComputeResourceKind resource,
+    ComputeTargetKind target, uint64_t descriptor, uint32_t formal,
+    uint64_t low, uint64_t width, bool dynamic, bool deferred,
+    ComputeTriggerKind trigger) {
+  if (target != ComputeTargetKind::Descriptor && descriptor != 0)
+    return emitError() << "non-descriptor effect has a descriptor value";
+  if (target != ComputeTargetKind::Formal && formal != 0)
+    return emitError() << "non-formal effect has a formal index";
+  if (resource == ComputeResourceKind::Unknown &&
+      target != ComputeTargetKind::Unknown)
+    return emitError() << "unknown effect has a concrete target";
+  if (resource == ComputeResourceKind::Local &&
+      target != ComputeTargetKind::Local)
+    return emitError() << "local effect has a non-local target";
+  if (resource != ComputeResourceKind::Unknown &&
+      resource != ComputeResourceKind::Local &&
+      target != ComputeTargetKind::Descriptor &&
+      target != ComputeTargetKind::Formal)
+    return emitError() << "concrete effect has no descriptor or formal target";
+  if (resource == ComputeResourceKind::Unknown &&
+      (low != 0 || width != 0 || dynamic))
+    return emitError() << "unknown effect must not claim a concrete range";
+  if (resource != ComputeResourceKind::Unknown && width == 0)
+    return emitError() << "concrete effect has zero width";
+  bool watches = effect == ComputeEffectKind::Watch;
+  if (watches != (trigger != ComputeTriggerKind::None))
+    return emitError() << "watch effects require exactly one trigger kind";
+  if (deferred && effect != ComputeEffectKind::NBA &&
+      effect != ComputeEffectKind::Trigger)
+    return emitError() << "only NBA and trigger effects may be deferred";
+  return success();
+}
+
+LogicalResult ComputeFragmentAttr::verify(
+    llvm::function_ref<InFlightDiagnostic()> emitError, uint32_t id,
+    FlatSymbolRefAttr function, uint32_t block, ComputeRegionKind region,
+    ComputeActionKind action, ComputeTierKind tier, uint64_t cost,
+    uint32_t lane, bool twoState, ArrayAttr effects) {
+  if (!function)
+    return emitError() << "fragment requires a function symbol";
+  return verifyEffectArray(emitError, effects, "fragment");
+}
+
+LogicalResult ComputeNBACommitAttr::verify(
+    llvm::function_ref<InFlightDiagnostic()> emitError, uint32_t id,
+    DenseI64ArrayAttr slots, DenseI64ArrayAttr accumulatorSites,
+    DenseI64ArrayAttr staticJournalSites, DenseI64ArrayAttr frontierSites,
+    ComputeEffectAttr effect) {
+  if (!slots || !accumulatorSites || !staticJournalSites || !frontierSites ||
+      !effect || effect.getEffect() != ComputeEffectKind::Write)
+    return emitError()
+           << "NBA commit requires staging inventories and one write effect";
+  if (slots.empty() && accumulatorSites.empty() && staticJournalSites.empty() &&
+      frontierSites.empty())
+    return emitError() << "NBA commit requires at least one site";
+  llvm::SmallDenseSet<int64_t> sites;
+  for (DenseI64ArrayAttr inventory :
+       {slots, accumulatorSites, staticJournalSites, frontierSites})
+    for (int64_t site : inventory.asArrayRef())
+      if (site < 0 || !sites.insert(site).second)
+        return emitError() << "NBA commit has an invalid or duplicate site";
+  return success();
+}
+
+LogicalResult ComputeEventCommitAttr::verify(
+    llvm::function_ref<InFlightDiagnostic()> emitError, uint32_t id,
+    DenseI64ArrayAttr sites, ComputeEffectAttr effect) {
+  if (!sites || !effect || effect.getEffect() != ComputeEffectKind::Trigger ||
+      !effect.getDeferred())
+    return emitError()
+           << "event commit requires sites and one deferred trigger effect";
+  if (sites.empty())
+    return emitError() << "event commit requires at least one site";
+  llvm::SmallDenseSet<int64_t> unique;
+  for (int64_t site : sites.asArrayRef())
+    if (site < 0 || !unique.insert(site).second)
+      return emitError() << "event commit has an invalid or duplicate site";
+  return success();
+}
+
+LogicalResult
+ComputeEdgeAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                        uint32_t source, uint32_t target, ComputeEdgeKind kind,
+                        ComputeEffectAttr resource) {
+  bool needsResource = kind == ComputeEdgeKind::Sensitivity ||
+                       kind == ComputeEdgeKind::NBAStage ||
+                       kind == ComputeEdgeKind::NBAActivate ||
+                       kind == ComputeEdgeKind::Conflict ||
+                       kind == ComputeEdgeKind::DeferredStage ||
+                       kind == ComputeEdgeKind::DeferredActivate;
+  if (needsResource && !resource)
+    return emitError() << "edge kind requires a resource effect";
+  if ((kind == ComputeEdgeKind::ProcessOrder ||
+       kind == ComputeEdgeKind::Resume || kind == ComputeEdgeKind::Spawn) &&
+      resource)
+    return emitError() << "control-only edge cannot carry a resource";
+  return success();
+}
+
+LogicalResult
+ComputeGroupAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                         DenseI64ArrayAttr fragments,
+                         ComputeScheduleKind schedule, ArrayAttr feedback) {
+  if (!fragments || fragments.empty() || !feedback)
+    return emitError() << "schedule group must contain fragments and feedback";
+  llvm::SmallDenseSet<int64_t> members;
+  for (int64_t fragment : fragments.asArrayRef())
+    if (fragment < 0 || !members.insert(fragment).second)
+      return emitError() << "schedule group has an invalid or duplicate member";
+  if (failed(verifyEffectArray(emitError, feedback, "schedule feedback")))
+    return failure();
+  if (schedule != ComputeScheduleKind::Convergence && !feedback.empty())
+    return emitError() << "only convergence groups may carry feedback";
+  return success();
+}
+
+LogicalResult
+ComputeRegionAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                          ComputeRegionKind kind, ArrayAttr groups) {
+  if (!groups || llvm::any_of(groups, [](Attribute attr) {
+        return !isa<ComputeGroupAttr>(attr);
+      }))
+    return emitError() << "event region contains a non-group attribute";
+  return success();
+}
+
+LogicalResult
+ComputeGraphAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                         uint32_t version, ComputeVPIMode vpi, uint32_t workers,
+                         ArrayAttr nodes, ArrayAttr edges, ArrayAttr regions) {
+  if (version != 1)
+    return emitError() << "unsupported compute-graph version";
+  if (workers == 0 || workers > 65535)
+    return emitError() << "worker count is outside the lane ID range";
+  if (!nodes || llvm::any_of(nodes, [](Attribute attr) {
+        return !isa<ComputeFragmentAttr, ComputeNBACommitAttr,
+                    ComputeEventCommitAttr>(attr);
+      }))
+    return emitError() << "compute graph contains a non-node attribute";
+  if (!edges || llvm::any_of(edges, [](Attribute attr) {
+        return !isa<ComputeEdgeAttr>(attr);
+      }))
+    return emitError() << "compute graph contains a non-edge attribute";
+  if (!regions || regions.size() != 5)
+    return emitError() << "compute graph requires all five event regions";
+  static constexpr ComputeRegionKind expectedRegions[] = {
+      ComputeRegionKind::Active, ComputeRegionKind::NBA,
+      ComputeRegionKind::Observed, ComputeRegionKind::Reactive,
+      ComputeRegionKind::Postponed};
+  for (auto [attribute, expected] : llvm::zip(regions, expectedRegions)) {
+    auto region = dyn_cast<ComputeRegionAttr>(attribute);
+    if (!region || region.getKind() != expected)
+      return emitError() << "compute graph event regions are out of order";
+  }
+  return success();
+}
+
+LogicalResult
+FragmentABIAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                        uint32_t version, DenseI64ArrayAttr fragments) {
+  if (version != 1 || !fragments)
+    return emitError() << "invalid fragment ABI version or inventory";
+  llvm::SmallDenseSet<int64_t> ids;
+  for (int64_t id : fragments.asArrayRef())
+    if (id < 0 || !ids.insert(id).second)
+      return emitError() << "fragment ABI has an invalid or duplicate ID";
+  return success();
+}
+
+LogicalResult
+NBASiteAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                    uint64_t id, uint32_t commit, ComputeNBAStorageKind storage,
+                    TimingSiteAttr timing) {
+  if (timing && timing.getKind() != ComputeTimingKind::DelayedNBA)
+    return emitError() << "NBA timing site must have delayed_nba kind";
+  return success();
 }
 
 std::optional<unsigned> getPackedWidth(Type type) {
@@ -317,23 +516,26 @@ LogicalResult SimDesignOp::verifyRegions() {
         return failure(); // Already diagnosed by the function verifier.
       auto descriptor = function.getArgAttrOfType<IntegerAttr>(
           index, "obelisk_sim.descriptor_id");
+      std::optional<uint64_t> descriptorId;
+      if (descriptor && !descriptor.getValue().isNegative() &&
+          descriptor.getValue().getBitWidth() <= 64)
+        descriptorId = descriptor.getValue().getZExtValue();
       Type argument = function.getArgumentTypes()[index];
       Type expected;
       switch (*kind) {
       case CaptureKind::Storage:
-        if (descriptor && storageTypes.count(descriptor.getUInt()))
-          expected = RefType::get(getContext(),
-                                  storageTypes.lookup(descriptor.getUInt()));
+        if (descriptorId && storageTypes.count(*descriptorId))
+          expected =
+              RefType::get(getContext(), storageTypes.lookup(*descriptorId));
         break;
       case CaptureKind::Net:
-        if (descriptor && netTypes.count(descriptor.getUInt()))
-          expected =
-              NetType::get(getContext(), netTypes.lookup(descriptor.getUInt()));
+        if (descriptorId && netTypes.count(*descriptorId))
+          expected = NetType::get(getContext(), netTypes.lookup(*descriptorId));
         break;
       case CaptureKind::Driver:
-        if (descriptor && driverTypes.count(descriptor.getUInt()))
-          expected = DriverType::get(getContext(),
-                                     driverTypes.lookup(descriptor.getUInt()));
+        if (descriptorId && driverTypes.count(*descriptorId))
+          expected =
+              DriverType::get(getContext(), driverTypes.lookup(*descriptorId));
         break;
       case CaptureKind::Event:
         if (isa<EventType>(argument))
@@ -424,7 +626,8 @@ LogicalResult SimFuncOp::verify() {
     WalkResult blocking = getBody().walk([&](Operation *op) {
       if (isa<SimSuspendDelayOp, SimSuspendChangeOp, SimSuspendEdgeOp,
               SimSuspendAnyOp, SimSuspendEventOp, SimSuspendAwaitOp,
-              SimSuspendJoinOp>(op)) {
+              SimSuspendJoinOp, SimNBAEnqueueOp, SimEventTriggerOp, SimSpawnOp>(
+              op)) {
         op->emitOpError("is not permitted in a zero-time function entry");
         return WalkResult::interrupt();
       }
@@ -463,6 +666,9 @@ LogicalResult SimFuncOp::verify() {
     if (descriptor && descriptor.getValue().isNegative())
       return emitOpError() << "argument #" << index
                            << " has a negative descriptor ID";
+    if (descriptor && descriptor.getValue().getBitWidth() > 64)
+      return emitOpError() << "argument #" << index
+                           << " has a descriptor ID wider than 64 bits";
   }
   return success();
 }

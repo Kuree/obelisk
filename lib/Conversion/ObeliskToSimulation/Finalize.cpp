@@ -9,8 +9,11 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/PassManager.h"
+#include "mlir/Pass/PassOptions.h"
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Transforms/Passes.h"
+
+#include <string>
 
 using namespace mlir;
 
@@ -22,6 +25,16 @@ namespace obelisk {
 namespace {
 
 using namespace obelisk::simlowering;
+
+struct ObeliskToSimulationPipelineOptions
+    : PassPipelineOptions<ObeliskToSimulationPipelineOptions> {
+  Option<unsigned> workers{*this, "workers",
+                           llvm::cl::desc("number of generated worker lanes"),
+                           llvm::cl::init(1)};
+  Option<std::string> vpi{
+      *this, "vpi", llvm::cl::desc("VPI visibility mode: off, read, or full"),
+      llvm::cl::init("off")};
+};
 
 /// The executable boundary is defined by the operations that may remain, not
 /// merely by their dialect. In particular, BuiltinDialect also owns temporary
@@ -107,8 +120,14 @@ void ObeliskSimFinalizePass::runOnOperation() {
         }
       });
       named.getValue().walk([&](SymbolRefAttr reference) {
-        bool allowed = (isa<sim::SimCallOp, sim::SimSpawnOp>(op) &&
-                        named.getName() == "callee");
+        bool callTarget =
+            isa<sim::SimCallOp, sim::SimSpawnOp>(op) &&
+            named.getName() == sim::SimCallOp::getCalleeAttrName(op->getName());
+        bool graphReference =
+            isa<sim::SimDesignOp>(op) &&
+            named.getName() ==
+                sim::SimDesignOp::getComputeGraphAttrName(op->getName());
+        bool allowed = callTarget || graphReference;
         if (!allowed) {
           op->emitError() << "disallowed symbol reference " << reference;
           invalid = true;
@@ -134,24 +153,47 @@ void ObeliskSimFinalizePass::runOnOperation() {
 
 } // namespace
 
-void buildObeliskToSimulationPipeline(OpPassManager &manager) {
+void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
+                                      StringRef vpiMode) {
   manager.addPass(createObeliskSimPreparePass());
   OpPassManager &designManager = manager.nest<sim::SimDesignOp>();
-  OpPassManager &functionManager = designManager.nest<sim::SimFuncOp>();
-  functionManager.addPass(createObeliskSimLowerUnitPass());
-  functionManager.addPass(createCanonicalizerPass());
-  functionManager.addPass(createCSEPass());
-  functionManager.addPass(createMem2Reg());
-  functionManager.addPass(createObeliskSimThreadSuspensionPass());
-  functionManager.addPass(createCanonicalizerPass());
+  {
+    OpPassManager &functionManager = designManager.nest<sim::SimFuncOp>();
+    functionManager.addPass(createObeliskSimLowerUnitPass());
+    functionManager.addPass(createCanonicalizerPass());
+    functionManager.addPass(createCSEPass());
+    functionManager.addPass(createMem2Reg());
+  }
+  // Whole-program summaries and static fragment extraction deliberately run
+  // before continuation-frame state is made explicit. This lets promotion and
+  // canonicalization erase unnecessary process state first.
+  ObeliskSimBuildComputeGraphPassOptions graphOptions;
+  graphOptions.workers = workers;
+  graphOptions.vpi = vpiMode.str();
+  designManager.addPass(
+      createObeliskSimBuildComputeGraphPass(std::move(graphOptions)));
+  designManager.addPass(createObeliskSimVerifyComputeGraphPass());
+  {
+    OpPassManager &functionManager = designManager.nest<sim::SimFuncOp>();
+    functionManager.addPass(createObeliskSimThreadSuspensionPass());
+  }
+  designManager.addPass(createObeliskSimVerifyComputeGraphPass());
   manager.addPass(createObeliskSimFinalizePass());
 }
 
+void buildObeliskToSimulationPipeline(OpPassManager &manager) {
+  buildObeliskToSimulationPipeline(manager, 1, "off");
+}
+
 void registerObeliskToSimulationPipeline() {
-  PassPipelineRegistration<>(
+  PassPipelineRegistration<ObeliskToSimulationPipelineOptions>(
       "lower-obelisk-to-sim",
       "Lower elaborated obelisk.sv semantic IR to isolated obelisk_sim SSA",
-      buildObeliskToSimulationPipeline);
+      [](OpPassManager &manager,
+         const ObeliskToSimulationPipelineOptions &options) {
+        buildObeliskToSimulationPipeline(manager, options.workers.getValue(),
+                                         options.vpi.getValue());
+      });
 }
 
 } // namespace obelisk

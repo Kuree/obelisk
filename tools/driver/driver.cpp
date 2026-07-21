@@ -12,6 +12,7 @@
 #include "obelisk/Conversion/SlangToObelisk.h"
 #include "obelisk/Dialect/Obelisk/ObeliskDialect.h"
 #include "obelisk/Dialect/Simulation/SimulationDialect.h"
+#include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Dialect/Slang/SlangDialect.h"
 #include "obelisk/Frontend/Frontend.h"
 
@@ -28,12 +29,15 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/StringSaver.h"
+#include "llvm/Support/ThreadPool.h"
+#include "llvm/Support/Threading.h"
 #include "llvm/Support/ToolOutputFile.h"
 #include "llvm/Support/WithColor.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -132,10 +136,51 @@ static int executeCompilation(const InputArgList &args) {
   if (!valid)
     return 1;
 
+  std::optional<uint32_t> requestedWorkers;
+  valid &=
+      parseUnsignedOption(args, OPT_threads_EQ, "--threads", requestedWorkers);
+  if (requestedWorkers && *requestedWorkers == 0) {
+    emitDriverError("--threads must be greater than zero");
+    valid = false;
+  }
+  if (requestedWorkers && *requestedWorkers > 65535) {
+    emitDriverError("--threads exceeds the generated lane ID limit (65535)");
+    valid = false;
+  }
+  std::optional<uint32_t> compilerThreads;
+  valid &= parseUnsignedOption(args, OPT_compile_threads_EQ,
+                               "--compile-threads", compilerThreads);
+  if (compilerThreads && *compilerThreads == 0) {
+    emitDriverError("--compile-threads must be greater than zero");
+    valid = false;
+  }
+  StringRef vpiMode = args.getLastArgValue(OPT_vpi_EQ, "off");
+  if (vpiMode != "off" && vpiMode != "read" && vpiMode != "full") {
+    emitDriverError(Twine("unsupported VPI mode '") + vpiMode +
+                    "'; expected off, read, or full");
+    valid = false;
+  }
+  if (!valid)
+    return 1;
+
   DialectRegistry registry;
   registry.insert<obelisk::slangir::SlangDialect, obelisk::ir::ObeliskDialect,
                   obelisk::sim::ObeliskSimulationDialect>();
-  MLIRContext context(registry);
+  // One explicitly sized pool is shared by all MLIR parallel pass adaptors.
+  // Its lifetime encloses the context as required by MLIRContext.
+  std::unique_ptr<llvm::DefaultThreadPool> compilerPool;
+  MLIRContext context(registry, compilerThreads
+                                    ? MLIRContext::Threading::DISABLED
+                                    : MLIRContext::Threading::ENABLED);
+  if (compilerThreads) {
+    if (*compilerThreads > 1) {
+      llvm::ThreadPoolStrategy strategy =
+          llvm::hardware_concurrency(*compilerThreads);
+      strategy.Limit = true;
+      compilerPool = std::make_unique<llvm::DefaultThreadPool>(strategy);
+      context.setThreadPool(*compilerPool);
+    }
+  }
   context.loadAllAvailableDialects();
 
   auto importedModule =
@@ -144,15 +189,17 @@ static int executeCompilation(const InputArgList &args) {
     return 1;
   OwningOpRef<ModuleOp> module = std::move(*importedModule);
 
-  const Arg *action =
-      args.getLastArg(OPT_emit_slang, OPT_emit_obelisk, OPT_emit_sim);
+  const Arg *action = args.getLastArg(OPT_emit_slang, OPT_emit_obelisk,
+                                      OPT_emit_sim, OPT_emit_schedule);
   bool emitSlang = action && action->getOption().matches(OPT_emit_slang);
   bool emitSim = action && action->getOption().matches(OPT_emit_sim);
+  bool emitSchedule = action && action->getOption().matches(OPT_emit_schedule);
   if (!emitSlang) {
     PassManager passManager(&context);
     passManager.addPass(obelisk::createConvertSlangToObeliskPass());
-    if (emitSim)
-      obelisk::buildObeliskToSimulationPipeline(passManager);
+    if (emitSim || emitSchedule)
+      obelisk::buildObeliskToSimulationPipeline(
+          passManager, requestedWorkers.value_or(1), vpiMode);
     if (failed(passManager.run(*module)))
       return 1;
   }
@@ -166,11 +213,25 @@ static int executeCompilation(const InputArgList &args) {
     return 1;
   }
 
-  OpPrintingFlags printingFlags;
-  if (args.hasArg(OPT_mlir_print_debuginfo))
-    printingFlags.enableDebugInfo();
-  module->print(output.os(), printingFlags);
-  output.os() << '\n';
+  if (emitSchedule) {
+    for (obelisk::sim::SimDesignOp design :
+         module->getBody()->getOps<obelisk::sim::SimDesignOp>()) {
+      output.os() << "schedule @" << design.getSymName() << ' ';
+      Attribute graph = design.getComputeGraphAttr();
+      if (!graph) {
+        emitDriverError("simulation lowering produced no compute graph");
+        return 1;
+      }
+      graph.print(output.os());
+      output.os() << '\n';
+    }
+  } else {
+    OpPrintingFlags printingFlags;
+    if (args.hasArg(OPT_mlir_print_debuginfo))
+      printingFlags.enableDebugInfo();
+    module->print(output.os(), printingFlags);
+    output.os() << '\n';
+  }
   output.keep();
   return 0;
 }

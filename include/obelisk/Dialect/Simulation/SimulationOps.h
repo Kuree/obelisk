@@ -3,6 +3,7 @@
 #ifndef OBELISK_DIALECT_SIMULATION_SIMULATIONOPS_H
 #define OBELISK_DIALECT_SIMULATION_SIMULATIONOPS_H
 
+#include "obelisk/Dialect/Simulation/SimulationAttrs.h"
 #include "obelisk/Dialect/Simulation/SimulationDialect.h"
 #include "obelisk/Dialect/Simulation/SimulationTypes.h"
 

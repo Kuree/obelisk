@@ -3,6 +3,13 @@ mlir_tablegen(SimulationEnums.h.inc -gen-enum-decls)
 mlir_tablegen(SimulationEnums.cpp.inc -gen-enum-defs)
 add_public_tablegen_target(ObeliskSimulationEnumsIncGen)
 
+set(LLVM_TARGET_DEFINITIONS SimulationAttrs.td)
+mlir_tablegen(SimulationAttrs.h.inc -gen-attrdef-decls
+              -attrdefs-dialect=obelisk_sim)
+mlir_tablegen(SimulationAttrs.cpp.inc -gen-attrdef-defs
+              -attrdefs-dialect=obelisk_sim)
+add_public_tablegen_target(ObeliskSimulationAttrsIncGen)
+
 set(LLVM_TARGET_DEFINITIONS SimulationTypes.td)
 mlir_tablegen(SimulationTypes.h.inc -gen-typedef-decls
               -typedefs-dialect=obelisk_sim)

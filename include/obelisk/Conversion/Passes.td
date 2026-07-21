@@ -47,6 +47,39 @@ def ObeliskSimThreadSuspensionPass
   ];
 }
 
+def ObeliskSimBuildComputeGraphPass
+    : Pass<"obelisk-sim-build-compute-graph", "obelisk::sim::SimDesignOp"> {
+  let summary = "Derive descriptor-range summaries and a deterministic schedule";
+  let description = [{
+    Propagates stable descriptor provenance through SSA and CFG edges, computes
+    interprocedural bit-range mod/ref summaries, assigns fixed continuation,
+    timing, and NBA sites, and derives the late fragment compute graph. The
+    graph is diagnostic compiler metadata, not the primary simulation IR.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect",
+    "mlir::arith::ArithDialect",
+    "mlir::cf::ControlFlowDialect"
+  ];
+  let options = [
+    Option<"workers", "workers", "uint32_t", "1",
+           "Number of generated static worker lanes">,
+    Option<"vpi", "vpi", "std::string", "\"off\"",
+           "VPI observability mode: off, read, or full">
+  ];
+}
+
+def ObeliskSimVerifyComputeGraphPass
+    : Pass<"obelisk-sim-verify-compute-graph", "obelisk::sim::SimDesignOp"> {
+  let summary = "Verify fragment ABI, range summaries, and region schedules";
+  let description = [{
+    Checks the persistent late-analysis metadata independently of the builder:
+    dense node IDs, valid descriptor-range effects and edges, complete event
+    regions, unique region membership, fixed site targets, and fragment ABI
+    records. This pass is also usable on reloaded simulation IR.
+  }];
+}
+
 def ObeliskSimFinalizePass
     : Pass<"obelisk-sim-finalize", "mlir::ModuleOp"> {
   let summary = "Remove semantic IR and verify the executable simulation boundary";
