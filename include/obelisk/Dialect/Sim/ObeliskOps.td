@@ -573,7 +573,7 @@ def EventTriggerOp : ObeliskOp<"event.trigger"> {
 // Classes, dynamic dispatch, and ownership
 //===----------------------------------------------------------------------===//
 
-def ClassOp : ObeliskOp<"class", [Symbol, IsolatedFromAbove]> {
+def ClassOp : ObeliskOp<"class", [Symbol, SymbolTable, IsolatedFromAbove]> {
   let summary = "elaborated class descriptor";
   let arguments = (ins
     SymbolNameAttr:$sym_name,

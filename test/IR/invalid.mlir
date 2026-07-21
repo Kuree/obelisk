@@ -175,3 +175,142 @@ module {
       : (!obelisk.ref<!obelisk.logic<4>>, !obelisk.ref<!obelisk.logic<4>>)
         -> !obelisk.ref<!obelisk.logic<4>>
 }
+
+// -----
+
+module {
+  %a = obelisk.logic.constant 0 : i4, 0 : i4 : !obelisk.logic<4>
+  // expected-error @+1 {{input widths sum to 8 but result width is 4}}
+  %bad = obelisk.logic.concat %a, %a
+      : (!obelisk.logic<4>, !obelisk.logic<4>) -> !obelisk.logic<4>
+}
+
+// -----
+
+module {
+  %a = obelisk.logic.constant 0 : i8, 0 : i8 : !obelisk.logic<8>
+  // expected-error @+1 {{kind must be shift_left, shift_right, or ashift_right}}
+  %bad = obelisk.logic.shift add %a by %a
+      : (!obelisk.logic<8>, !obelisk.logic<8>) -> !obelisk.logic<8>
+}
+
+// -----
+
+module {
+  %a = obelisk.logic.constant 0 : i3, 0 : i3 : !obelisk.logic<3>
+  // expected-error @+1 {{result width 8 is not a multiple of input width 3}}
+  %bad = obelisk.logic.replicate %a : !obelisk.logic<3> -> !obelisk.logic<8>
+}
+
+// -----
+
+module {
+  %a = obelisk.logic.constant 0 : i8, 0 : i8 : !obelisk.logic<8>
+  %r = obelisk.logic.constant 0 : i4, 0 : i4 : !obelisk.logic<4>
+  // expected-error @+1 {{replacement at bit 6 exceeds input width 8}}
+  %bad = obelisk.logic.insert %r into %a at 6
+      : (!obelisk.logic<8>, !obelisk.logic<4>) -> !obelisk.logic<8>
+}
+
+// -----
+
+module {
+  %i = arith.constant 0 : i8
+  // expected-error @+1 {{input width 8 does not match result width 4}}
+  %bad = obelisk.logic.from_bits %i : i8 -> !obelisk.logic<4>
+}
+
+// -----
+
+module {
+  %a = obelisk.logic.constant 0 : i8, 0 : i8 : !obelisk.logic<8>
+  // expected-error @+1 {{input width 8 does not match result width 4}}
+  %bad = obelisk.logic.to_bits %a : !obelisk.logic<8> -> i4
+}
+
+// -----
+
+module {
+  %n = obelisk.net.alloc wire : !obelisk.net<!obelisk.logic<8>>
+  // expected-error @+1 {{part-select [10:3] exceeds input width 8}}
+  %bad = obelisk.net.extract %n from 3
+      : !obelisk.net<!obelisk.logic<8>> -> !obelisk.net<!obelisk.logic<8>>
+}
+
+// -----
+
+module {
+  %n = obelisk.net.alloc wire : !obelisk.net<!obelisk.logic<4>>
+  // expected-error @+1 {{input widths sum to 8 but result width is 4}}
+  %bad = obelisk.net.concat %n, %n
+      : (!obelisk.net<!obelisk.logic<4>>, !obelisk.net<!obelisk.logic<4>>)
+        -> !obelisk.net<!obelisk.logic<4>>
+}
+
+// -----
+
+module {
+  %n = obelisk.net.alloc wire : !obelisk.net<!obelisk.logic<8>>
+  %index = arith.constant 0.0 : f32
+  // expected-error @+1 {{dynamic index must be a two- or four-state integer}}
+  %bad = obelisk.net.dyn_extract %n from %index
+      : (!obelisk.net<!obelisk.logic<8>>, f32)
+        -> !obelisk.net<!obelisk.logic<1>>
+}
+
+// -----
+
+module {
+  obelisk.sv.symbol.variable attributes {
+    node_id = 0 : i64, sym_name = "bad_task",
+    // expected-error @+1 {{task signature must not have a result}}
+    semantic_type = !obelisk.subroutine<() -> !obelisk.string, true>
+  } {
+  }
+}
+
+// -----
+
+module {
+  obelisk.sv.symbol.variable attributes {
+    node_id = 0 : i64, sym_name = "bad_function",
+    // expected-error @+1 {{function signature must have exactly one result}}
+    semantic_type = !obelisk.subroutine<() -> (), false>
+  } {
+  }
+}
+
+// -----
+
+module {
+  obelisk.sv.symbol.variable attributes {
+    node_id = 0 : i64, sym_name = "bad_integral_range",
+    // expected-error @+1 {{declared range width 4 does not match integral width 8}}
+    semantic_type = !obelisk.integral<8, false, true, 3 : 0, generic>
+  } {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{only a packed union can be soft}}
+  obelisk.sv.symbol.variable attributes {node_id = 0 : i64, sym_name = "bad_soft", semantic_type = !obelisk.source_aggregate<"rec", false, false, false, false, false, true, 0, 0, 0, 0>} {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+2 {{failed to parse RefType parameter 'elementType'}}
+  // expected-error @+1 {{packed union fields must have equal widths}}
+  %bad = obelisk.var.alloc : !obelisk.ref<!obelisk.packed_union<{a = !obelisk.logic<4>, b = !obelisk.logic<8>}>>
+}
+
+// -----
+
+module {
+  // expected-error @+2 {{failed to parse RefType parameter 'elementType'}}
+  // expected-error @+1 {{packed array element must be packed}}
+  %bad = obelisk.var.alloc : !obelisk.ref<!obelisk.ranged_packed_array<3 : 0 x !obelisk.string>>
+}
