@@ -98,6 +98,82 @@ module {
 // -----
 
 module {
+  obelisk_sim.design @bad_dynamic_index {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32} {
+      %value = obelisk_sim.logic.constant 0 : i8, 0 : i8 : !obelisk_sim.logic<8>
+      %index = obelisk_sim.time.constant 1
+      // expected-error @+1 {{index must be a signless builtin integer or four-state logic}}
+      %bad = obelisk_sim.logic.dyn_extract %value from %index : (!obelisk_sim.logic<8>, !obelisk_sim.time) -> !obelisk_sim.logic<1>
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @bad_signed_dynamic_index {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32} {
+      obelisk_sim.return
+    ^invalid(%index: si32):
+      %value = obelisk_sim.logic.constant 0 : i8, 0 : i8 : !obelisk_sim.logic<8>
+      // expected-error @+1 {{builtin integer index must be signless}}
+      %bad = obelisk_sim.logic.dyn_extract %value from %index : (!obelisk_sim.logic<8>, si32) -> !obelisk_sim.logic<1>
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @bad_conversion_domain {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32} {
+      %value = obelisk_sim.logic.constant 0 : i8, 0 : i8 : !obelisk_sim.logic<8>
+      // expected-error @+1 {{result must be a signless builtin integer}}
+      %bad = obelisk_sim.logic.to_bits %value : !obelisk_sim.logic<8> -> si8
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @bad_dynamic_width {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32} {
+      %value = arith.constant 0 : i4
+      %index = arith.constant 0 : i32
+      // expected-error @+1 {{result width exceeds input width}}
+      %bad = obelisk_sim.bits.dyn_extract %value from %index : (i4, i32) -> i8
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @bad_dynamic_domain {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32} {
+      %value = obelisk_sim.logic.constant 0 : i8, 0 : i8 : !obelisk_sim.logic<8>
+      %ref = obelisk_sim.ref.alloc %value : !obelisk_sim.logic<8> -> !obelisk_sim.ref<!obelisk_sim.logic<8>>
+      %index = arith.constant 0 : i32
+      // expected-error @+1 {{input and result element types must use the same state domain}}
+      %bad = obelisk_sim.ref.dyn_extract %ref from %index : (!obelisk_sim.ref<!obelisk_sim.logic<8>>, i32) -> !obelisk_sim.ref<i4>
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.design @bad_logical_not_width {
     obelisk_sim.scope.decl 0
     obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32} {

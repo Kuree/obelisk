@@ -2,6 +2,7 @@
 
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/SymbolTable.h"
@@ -63,6 +64,14 @@ Operation *ObeliskSimulationDialect::materializeConstant(OpBuilder &builder,
       return nullptr;
     return SimTimeConstantOp::create(builder, location, type, ticks);
   }
+  // Integer-valued folders in this dialect materialize ordinary builtin
+  // constants rather than introducing another simulation-specific constant.
+  if (auto integer = dyn_cast<IntegerType>(type)) {
+    auto attr = dyn_cast<IntegerAttr>(value);
+    if (!integer.isSignless() || !attr || attr.getType() != integer)
+      return nullptr;
+    return arith::ConstantOp::create(builder, location, integer, attr);
+  }
   return nullptr;
 }
 
@@ -76,6 +85,26 @@ std::optional<unsigned> getPackedWidth(Type type) {
 
 static bool isNormalizedValueType(Type type) {
   return isa<IntegerType, LogicType>(type);
+}
+
+static LogicalResult verifyNormalizedIndex(Operation *op, Type type) {
+  if (isa<LogicType>(type))
+    return success();
+  auto integer = dyn_cast<IntegerType>(type);
+  if (!integer)
+    return op->emitOpError(
+        "index must be a signless builtin integer or four-state logic");
+  if (!integer.isSignless())
+    return op->emitOpError("builtin integer index must be signless");
+  return success();
+}
+
+static LogicalResult verifyMatchingStateDomain(Operation *op, Type input,
+                                               Type result) {
+  if (isa<LogicType>(input) != isa<LogicType>(result))
+    return op->emitOpError(
+        "input and result element types must use the same state domain");
+  return success();
 }
 
 static LogicalResult
@@ -568,8 +597,12 @@ SimRefStoreOp::removeBlockingUses(const MemorySlot &,
 }
 
 LogicalResult SimRefExtractOp::verify() {
-  auto input = getPackedWidth(getInput().getType().getElementType());
-  auto result = getPackedWidth(getResult().getType().getElementType());
+  Type inputType = getInput().getType().getElementType();
+  Type resultType = getResult().getType().getElementType();
+  if (failed(verifyMatchingStateDomain(*this, inputType, resultType)))
+    return failure();
+  auto input = getPackedWidth(inputType);
+  auto result = getPackedWidth(resultType);
   if (!input || !result || getLowBitAttr().getValue().isNegative() ||
       getLowBitAttr().getValue().getZExtValue() + *result > *input)
     return emitOpError("constant selection is outside the input element width");
@@ -577,16 +610,25 @@ LogicalResult SimRefExtractOp::verify() {
 }
 
 LogicalResult SimRefDynExtractOp::verify() {
-  auto input = getPackedWidth(getInput().getType().getElementType());
-  auto result = getPackedWidth(getResult().getType().getElementType());
+  Type inputType = getInput().getType().getElementType();
+  Type resultType = getResult().getType().getElementType();
+  if (failed(verifyNormalizedIndex(*this, getLowBit().getType())) ||
+      failed(verifyMatchingStateDomain(*this, inputType, resultType)))
+    return failure();
+  auto input = getPackedWidth(inputType);
+  auto result = getPackedWidth(resultType);
   if (!input || !result || *result > *input)
     return emitOpError("result element width exceeds input element width");
   return success();
 }
 
 LogicalResult SimDriverExtractOp::verify() {
-  auto input = getPackedWidth(getInput().getType().getElementType());
-  auto result = getPackedWidth(getResult().getType().getElementType());
+  Type inputType = getInput().getType().getElementType();
+  Type resultType = getResult().getType().getElementType();
+  if (failed(verifyMatchingStateDomain(*this, inputType, resultType)))
+    return failure();
+  auto input = getPackedWidth(inputType);
+  auto result = getPackedWidth(resultType);
   if (!input || !result || getLowBitAttr().getValue().isNegative() ||
       getLowBitAttr().getValue().getZExtValue() + *result > *input)
     return emitOpError("constant selection is outside the input element width");
@@ -594,8 +636,13 @@ LogicalResult SimDriverExtractOp::verify() {
 }
 
 LogicalResult SimDriverDynExtractOp::verify() {
-  auto input = getPackedWidth(getInput().getType().getElementType());
-  auto result = getPackedWidth(getResult().getType().getElementType());
+  Type inputType = getInput().getType().getElementType();
+  Type resultType = getResult().getType().getElementType();
+  if (failed(verifyNormalizedIndex(*this, getLowBit().getType())) ||
+      failed(verifyMatchingStateDomain(*this, inputType, resultType)))
+    return failure();
+  auto input = getPackedWidth(inputType);
+  auto result = getPackedWidth(resultType);
   if (!input || !result || *result > *input)
     return emitOpError("result element width exceeds input element width");
   return success();
@@ -613,22 +660,46 @@ OpFoldResult SimLogicConstantOp::fold(FoldAdaptor adaptor) {
 }
 
 LogicalResult SimLogicFromBitsOp::verify() {
+  if (!getInput().getType().isSignless())
+    return emitOpError("input must be a signless builtin integer");
   if (getInput().getType().getWidth() != getResult().getType().getWidth())
     return emitOpError("input and result widths must match");
   return success();
 }
 LogicalResult SimLogicToBitsOp::verify() {
+  if (!getResult().getType().isSignless())
+    return emitOpError("result must be a signless builtin integer");
   if (getInput().getType().getWidth() != getResult().getType().getWidth())
     return emitOpError("input and result widths must match");
   return success();
 }
 
-OpFoldResult SimLogicToBitsOp::fold(FoldAdaptor) {
+OpFoldResult SimLogicToBitsOp::fold(FoldAdaptor adaptor) {
   // to_bits(from_bits(x)) is x. The reverse is not an identity, because
   // from_bits discards the unknown plane it cannot represent.
   if (auto fromBits = getInput().getDefiningOp<SimLogicFromBitsOp>())
     return fromBits.getInput();
-  return {};
+  auto planes = dyn_cast_or_null<ArrayAttr>(adaptor.getInput());
+  if (!planes || planes.size() != 2)
+    return {};
+  auto value = dyn_cast<IntegerAttr>(planes[0]);
+  auto unknown = dyn_cast<IntegerAttr>(planes[1]);
+  if (!value || !unknown)
+    return {};
+  APInt converted = value.getValue() & ~unknown.getValue();
+  return IntegerAttr::get(getResult().getType(), converted);
+}
+
+OpFoldResult SimLogicIsTrueOp::fold(FoldAdaptor adaptor) {
+  auto planes = dyn_cast_or_null<ArrayAttr>(adaptor.getInput());
+  if (!planes || planes.size() != 2)
+    return {};
+  auto value = dyn_cast<IntegerAttr>(planes[0]);
+  auto unknown = dyn_cast<IntegerAttr>(planes[1]);
+  if (!value || !unknown)
+    return {};
+  bool isTrue = !(value.getValue() & ~unknown.getValue()).isZero();
+  return IntegerAttr::get(getResult().getType(), isTrue ? 1 : 0);
 }
 
 OpFoldResult SimLogicResizeOp::fold(FoldAdaptor) {
@@ -692,6 +763,17 @@ LogicalResult SimLogicExtractOp::verify() {
   return success();
 }
 LogicalResult SimLogicDynExtractOp::verify() {
+  if (failed(verifyNormalizedIndex(*this, getLowBit().getType())))
+    return failure();
+  if (getResult().getType().getWidth() > getInput().getType().getWidth())
+    return emitOpError("result width exceeds input width");
+  return success();
+}
+LogicalResult SimBitsDynExtractOp::verify() {
+  if (!getInput().getType().isSignless() || !getResult().getType().isSignless())
+    return emitOpError("input and result must be signless builtin integers");
+  if (failed(verifyNormalizedIndex(*this, getLowBit().getType())))
+    return failure();
   if (getResult().getType().getWidth() > getInput().getType().getWidth())
     return emitOpError("result width exceeds input width");
   return success();

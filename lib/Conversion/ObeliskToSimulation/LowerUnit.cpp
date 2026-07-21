@@ -253,21 +253,20 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
 }
 
 FailureOr<Value> UnitLowering::truthValue(Value value, Location location) {
-  Value bits = value;
-  if (auto logic = dyn_cast<sim::LogicType>(value.getType())) {
-    auto integer = IntegerType::get(value.getContext(), logic.getWidth());
-    bits = sim::SimLogicToBitsOp::create(builder, location, integer, value);
-  }
-  auto integer = dyn_cast<IntegerType>(bits.getType());
+  if (isa<sim::LogicType>(value.getType()))
+    return sim::SimLogicIsTrueOp::create(builder, location, builder.getI1Type(),
+                                         value)
+        .getResult();
+  auto integer = dyn_cast<IntegerType>(value.getType());
   if (!integer) {
     emitError(location) << "condition is not a packed value: "
-                        << bits.getType();
+                        << value.getType();
     return failure();
   }
   Value zero = arith::ConstantOp::create(builder, location, integer,
                                          builder.getIntegerAttr(integer, 0));
   return arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
-                               bits, zero)
+                               value, zero)
       .getResult();
 }
 
@@ -557,25 +556,96 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
       element
           ? semantic::SVRangeSelectionKind::Simple
           : cast<semantic::SVRangeSelectExpressionOp>(op).getSelectionKind();
-  auto sourceOffset = [&](int64_t index) -> uint64_t {
-    return descending ? static_cast<uint64_t>(index - sourceRight)
-                      : static_cast<uint64_t>(sourceRight - index);
+
+  Type sourceValueType = (*input).getType();
+  if (auto reference = dyn_cast<sim::RefType>(sourceValueType))
+    sourceValueType = reference.getElementType();
+  else if (auto driver = dyn_cast<sim::DriverType>(sourceValueType))
+    sourceValueType = driver.getElementType();
+  std::optional<unsigned> sourceWidth = sim::getPackedWidth(sourceValueType);
+  if (!sourceWidth) {
+    unsupported(op) << " (selection input type)";
+    return failure();
+  }
+
+  // Selection offsets are signless bitvectors in the target IR, so normalize
+  // source indices in a type wide enough that signed values, declared bounds,
+  // and indexed-part adjustments cannot wrap back into the valid source
+  // range. Two extra bits cover an unsigned index plus any signed 64-bit
+  // boundary. Logic resizing retains the unknown plane.
+  auto getIndexArithmeticType = [&](Type type) -> FailureOr<Type> {
+    std::optional<unsigned> width = sim::getPackedWidth(type);
+    if (!width || *width > std::numeric_limits<unsigned>::max() - 2) {
+      emitError(location) << "selection index is too wide to normalize";
+      return failure();
+    }
+    unsigned arithmeticWidth = std::max(*width, 64u) + 2;
+    if (isa<sim::LogicType>(type))
+      return sim::LogicType::get(function.getContext(), arithmeticWidth);
+    if (isa<IntegerType>(type))
+      return IntegerType::get(function.getContext(), arithmeticWidth);
+    emitError(location) << "selection index is not a packed value: " << type;
+    return failure();
+  };
+  auto createKnownIndex = [&](Type type, const APInt &value) -> Value {
+    unsigned width = *sim::getPackedWidth(type);
+    APInt resized = value.sextOrTrunc(width);
+    auto planeType = IntegerType::get(function.getContext(), width);
+    if (isa<IntegerType>(type))
+      return arith::ConstantOp::create(
+          builder, location, type, builder.getIntegerAttr(planeType, resized));
+    return sim::SimLogicConstantOp::create(
+        builder, location, type, builder.getIntegerAttr(planeType, resized),
+        builder.getIntegerAttr(planeType, 0));
+  };
+  auto widenIndex = [&](Value value, Operation *source) -> FailureOr<Value> {
+    FailureOr<Type> arithmeticType = getIndexArithmeticType(value.getType());
+    if (failed(arithmeticType))
+      return failure();
+    return convert(value, *arithmeticType, isSignedNode(source), location);
+  };
+  auto subtract = [&](Value lhs, Value rhs) -> Value {
+    if (isa<IntegerType>(lhs.getType()))
+      return arith::SubIOp::create(builder, location, lhs, rhs);
+    return sim::SimLogicBinaryOp::create(builder, location, lhs.getType(),
+                                         sim::BinaryKind::Sub, lhs, rhs);
   };
 
-  bool constant = isIntegerLiteral(children[1]);
+  // Known source bounds and literals are 64-bit, and 66 signed bits hold the
+  // exact difference of any unsigned 64-bit index and signed 64-bit boundary.
+  constexpr unsigned constantOffsetWidth = 66;
+  auto sourceOffset = [&](const APInt &index) -> APInt {
+    APInt boundary(constantOffsetWidth, static_cast<uint64_t>(sourceRight),
+                   true);
+    return descending ? index - boundary : boundary - index;
+  };
+  auto extendLiteral = [&](const ParsedConstant &literal, Operation *source,
+                           Type sourceType) -> APInt {
+    APInt value = literal.value;
+    if (std::optional<unsigned> sourceWidth = sim::getPackedWidth(sourceType);
+        sourceWidth && *sourceWidth < value.getBitWidth())
+      value = value.trunc(*sourceWidth);
+    return isSignedNode(source) ? value.sextOrTrunc(constantOffsetWidth)
+                                : value.zextOrTrunc(constantOffsetWidth);
+  };
+
+  bool literalIndex = isIntegerLiteral(children[1]);
+  bool constant = false;
   uint64_t lowBit = 0;
   Value dynamicLow;
-  if (constant) {
+  if (literalIndex) {
+    FailureOr<Type> firstIndexType = getNormalizedSemanticType(children[1]);
+    if (failed(firstIndexType))
+      return failure();
     FailureOr<ParsedConstant> first =
         parseSVInteger(*getConstantSpelling(children[1]), 64, location);
     if (failed(first))
       return failure();
-    if (!first->unknown.isZero()) {
-      emitError(location) << "selection bound must be a known value";
-      return failure();
-    }
-    lowBit = sourceOffset(first->value.getSExtValue());
-    if (!element) {
+    std::optional<APInt> knownLow;
+    if (first->unknown.isZero())
+      knownLow =
+          sourceOffset(extendLiteral(*first, children[1], *firstIndexType));
+    if (knownLow && !element) {
       if (!isIntegerLiteral(children[2])) {
         unsupported(op) << " (mixed constant and dynamic selection bounds)";
         return failure();
@@ -584,36 +654,61 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
           parseSVInteger(*getConstantSpelling(children[2]), 64, location);
       if (failed(second))
         return failure();
-      if (!second->unknown.isZero()) {
-        emitError(location) << "selection bound must be a known value";
-        return failure();
+      if (second->unknown.isZero()) {
+        FailureOr<Type> secondIndexType =
+            getNormalizedSemanticType(children[2]);
+        if (failed(secondIndexType))
+          return failure();
+        APInt secondLow =
+            sourceOffset(extendLiteral(*second, children[2], *secondIndexType));
+        if (secondLow.slt(*knownLow))
+          knownLow = secondLow;
+      } else {
+        knownLow.reset();
       }
-      lowBit = std::min(lowBit, sourceOffset(second->value.getSExtValue()));
     }
-  } else {
-    if (selectionKind == semantic::SVRangeSelectionKind::Simple) {
+    bool inRange =
+        knownLow && !knownLow->isNegative() && *resultWidth <= *sourceWidth &&
+        knownLow->ule(
+            APInt(constantOffsetWidth,
+                  static_cast<uint64_t>(*sourceWidth - *resultWidth)));
+    if (inRange) {
+      constant = true;
+      lowBit = knownLow->getZExtValue();
+    } else if (knownLow) {
+      // A statically out-of-range selection still uses the dynamic operation:
+      // its contract preserves valid positions and supplies the appropriate
+      // X/zero fallback for invalid positions.
+      FailureOr<Type> arithmeticType = getIndexArithmeticType(*firstIndexType);
+      if (failed(arithmeticType))
+        return failure();
+      dynamicLow = createKnownIndex(*arithmeticType, *knownLow);
+    }
+  }
+  if (!constant && !dynamicLow) {
+    // Element selects use the same dynamic operation as indexed part-selects.
+    // Only a simple part-select with dynamic bounds remains unsupported.
+    if (!element && selectionKind == semantic::SVRangeSelectionKind::Simple) {
       unsupported(op) << " (dynamic simple range selection)";
       return failure();
     }
     FailureOr<Value> index = lowerExpression(children[1]);
     if (failed(index))
       return failure();
-    dynamicLow = *index;
-    if (auto logic = dyn_cast<sim::LogicType>(dynamicLow.getType()))
-      dynamicLow = sim::SimLogicToBitsOp::create(
-          builder, location,
-          IntegerType::get(function.getContext(), logic.getWidth()),
-          dynamicLow);
-    auto indexType = cast<IntegerType>(dynamicLow.getType());
+    FailureOr<Value> widened = widenIndex(*index, children[1]);
+    if (failed(widened))
+      return failure();
+    dynamicLow = *widened;
+    unsigned arithmeticWidth = *sim::getPackedWidth(dynamicLow.getType());
+    auto createKnownOffset = [&](int64_t value) -> Value {
+      return createKnownIndex(
+          dynamicLow.getType(),
+          APInt(arithmeticWidth, static_cast<uint64_t>(value), true));
+    };
     if (sourceRight != 0 || !descending) {
-      Value boundary = arith::ConstantOp::create(
-          builder, location, indexType,
-          builder.getIntegerAttr(indexType, sourceRight));
-      dynamicLow = descending
-                       ? Value(arith::SubIOp::create(builder, location,
-                                                     dynamicLow, boundary))
-                       : Value(arith::SubIOp::create(builder, location,
-                                                     boundary, dynamicLow));
+      Value boundary = createKnownOffset(sourceRight);
+      dynamicLow = descending ? subtract(dynamicLow, boundary)
+                              : subtract(boundary, dynamicLow);
     }
     bool baseNamesHighBit =
         (descending &&
@@ -621,11 +716,8 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
         (!descending &&
          selectionKind == semantic::SVRangeSelectionKind::IndexedUp);
     if (baseNamesHighBit && *resultWidth > 1) {
-      Value adjustment = arith::ConstantOp::create(
-          builder, location, indexType,
-          builder.getIntegerAttr(indexType, *resultWidth - 1));
-      dynamicLow =
-          arith::SubIOp::create(builder, location, dynamicLow, adjustment);
+      Value adjustment = createKnownOffset(*resultWidth - 1);
+      dynamicLow = subtract(dynamicLow, adjustment);
     }
   }
 
@@ -662,19 +754,16 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
   }
   auto selected = cast<IntegerType>(*resultType);
   auto inputInteger = cast<IntegerType>((*input).getType());
-  Value amount;
-  if (constant)
-    amount =
-        arith::ConstantOp::create(builder, location, inputInteger,
-                                  builder.getIntegerAttr(inputInteger, lowBit));
-  else {
-    FailureOr<Value> converted =
-        convert(dynamicLow, inputInteger, false, location);
-    if (failed(converted))
-      return failure();
-    amount = *converted;
-  }
+  if (!constant)
+    return sim::SimBitsDynExtractOp::create(builder, location, selected, *input,
+                                            dynamicLow)
+        .getResult();
+  Value amount =
+      arith::ConstantOp::create(builder, location, inputInteger,
+                                builder.getIntegerAttr(inputInteger, lowBit));
   Value shifted = arith::ShRUIOp::create(builder, location, *input, amount);
+  if (selected == inputInteger)
+    return shifted;
   return arith::TruncIOp::create(builder, location, selected, shifted)
       .getResult();
 }

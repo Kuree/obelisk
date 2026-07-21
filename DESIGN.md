@@ -159,6 +159,26 @@ spawns, memory effects, and suspension continuations. Source hierarchy remains
 available for diagnostics and as a placement hint, but it does not determine
 the unit of optimization or parallel execution.
 
+### Packed-value semantic contract
+
+Builtin integers in `obelisk_sim` are exact two-state values; `logic` values
+retain separate value and unknown planes. Lowering must keep values in the
+four-state domain until SystemVerilog explicitly requires truth evaluation or a
+two-state conversion. `logic.is_true` is the control-flow boundary: it is true
+when any bit is a known one, while zero and values containing only X/Z bits are
+false. `logic.to_bits` is the conversion boundary and maps every X/Z bit to
+zero.
+
+Dynamic packed selections accept either signless builtin-integer or `logic`
+indices. Declared-range normalization uses arithmetic in the index's original
+state domain, so an unknown index remains unknown. Logic reads with an unknown
+index produce X, two-state reads produce zero, and writes or drives with an
+unknown index have no effect. A partially out-of-range read preserves valid
+positions and fills invalid positions with X or zero according to the result
+domain; a partially out-of-range write or drive updates only valid positions.
+These rules belong to the dynamic selection operations themselves and must not
+be approximated with potentially poison-producing builtin shifts.
+
 Parallelization treats the design as a concurrent program rather than as a
 netlist. Process fragments are the units of work, mutable design objects are
 owned resources, and the task and communication graph is derived from compiler

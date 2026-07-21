@@ -293,7 +293,15 @@ def SimRefExtractOp : SimOp<"ref.extract", [Pure]> {
 }
 
 def SimRefDynExtractOp : SimOp<"ref.dyn_extract", [Pure]> {
-  let arguments = (ins SimRefType:$input, AnyInteger:$low_bit);
+  let summary = "dynamically select a packed storage slice";
+  let description = [{
+    The low-bit index may be a signless builtin integer or four-state logic.
+    An unknown index denotes no storage, so stores through the result have no
+    effect and loads produce X or zero according to the element domain.
+    Out-of-range bits likewise ignore writes and use the domain fallback on
+    loads, while in-range bits retain their normal storage effects.
+  }];
+  let arguments = (ins SimRefType:$input, AnyType:$low_bit);
   let results = (outs SimRefType:$result);
   let assemblyFormat = "$input `from` $low_bit attr-dict `:` functional-type(operands, results)";
   let hasVerifier = 1;
@@ -324,7 +332,13 @@ def SimDriverExtractOp : SimOp<"driver.extract", [Pure]> {
 }
 
 def SimDriverDynExtractOp : SimOp<"driver.dyn_extract", [Pure]> {
-  let arguments = (ins SimDriverType:$input, AnyInteger:$low_bit);
+  let summary = "dynamically select a packed driver slice";
+  let description = [{
+    The low-bit index may be a signless builtin integer or four-state logic.
+    An unknown index suppresses the drive. Out-of-range bits are ignored while
+    in-range bits retain their normal net-driving effects.
+  }];
+  let arguments = (ins SimDriverType:$input, AnyType:$low_bit);
   let results = (outs SimDriverType:$result);
   let assemblyFormat = "$input `from` $low_bit attr-dict `:` functional-type(operands, results)";
   let hasVerifier = 1;
@@ -365,11 +379,28 @@ def SimLogicFromBitsOp : SimOp<"logic.from_bits", [Pure]> {
 }
 
 def SimLogicToBitsOp : SimOp<"logic.to_bits", [Pure]> {
-  let summary = "reinterpret the value plane of a four-state value as bits";
+  let summary = "convert four-state logic to two-state bits";
+  let description = [{
+    Performs the SystemVerilog four-state-to-two-state conversion. Every known
+    bit is preserved and every X or Z bit becomes zero.
+  }];
   let arguments = (ins SimLogicType:$input);
   let results = (outs AnyInteger:$result);
   let assemblyFormat = "$input attr-dict `:` qualified(type($input)) `->` type($result)";
   let hasVerifier = 1;
+  let hasFolder = 1;
+}
+
+def SimLogicIsTrueOp : SimOp<"logic.is_true", [Pure]> {
+  let summary = "evaluate four-state logic as a control-flow predicate";
+  let description = [{
+    Returns true exactly when at least one input bit is a known one. Zero and
+    values containing only X and Z bits are false, matching SystemVerilog
+    conditional-statement truth evaluation.
+  }];
+  let arguments = (ins SimLogicType:$input);
+  let results = (outs I1:$result);
+  let assemblyFormat = "$input attr-dict `:` qualified(type($input))";
   let hasFolder = 1;
 }
 
@@ -467,8 +498,29 @@ def SimLogicExtractOp : SimOp<"logic.extract", [Pure]> {
 }
 
 def SimLogicDynExtractOp : SimOp<"logic.dyn_extract", [Pure]> {
-  let arguments = (ins SimLogicType : $input, AnyInteger : $low_bit);
+  let summary = "dynamically select a four-state packed slice";
+  let description = [{
+    The low-bit index may be a signless builtin integer or four-state logic.
+    An unknown index produces all X. For a partially out-of-range selection,
+    in-range bits are preserved and out-of-range bits are X.
+  }];
+  let arguments = (ins SimLogicType : $input, AnyType : $low_bit);
   let results = (outs SimLogicType : $result);
+  let assemblyFormat =
+      "$input `from` $low_bit attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+def SimBitsDynExtractOp : SimOp<"bits.dyn_extract", [Pure]> {
+  let summary = "dynamically select a two-state packed slice";
+  let description = [{
+    The low-bit index may be a signless builtin integer or four-state logic.
+    An unknown index produces zero. For a partially out-of-range selection,
+    in-range bits are preserved and out-of-range bits are zero. This operation
+    defines bounds behavior without relying on poison-producing integer shifts.
+  }];
+  let arguments = (ins AnyInteger:$input, AnyType:$low_bit);
+  let results = (outs AnyInteger:$result);
   let assemblyFormat =
       "$input `from` $low_bit attr-dict `:` functional-type(operands, results)";
   let hasVerifier = 1;

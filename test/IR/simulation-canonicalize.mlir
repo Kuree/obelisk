@@ -50,5 +50,48 @@ module {
       obelisk_sim.ref.store %b to %ref : !obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>
       obelisk_sim.return
     }
+
+    // Four-state to two-state conversion clears every unknown position,
+    // including Z positions whose value-plane bit is one.
+    // CHECK-LABEL: obelisk_sim.func @to_bits_matrix
+    // CHECK-DAG: %[[ZERO:.*]] = arith.constant 0 : i4
+    // CHECK-DAG: %[[ONE:.*]] = arith.constant 1 : i4
+    // CHECK-DAG: %[[FIVE:.*]] = arith.constant 5 : i4
+    // CHECK: obelisk_sim.return %[[ZERO]], %[[ONE]], %[[ZERO]], %[[ZERO]], %[[FIVE]]
+    obelisk_sim.func @to_bits_matrix(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> (i4, i4, i4, i4, i4) attributes {entry_kind = 8 : i32} {
+      %zero = obelisk_sim.logic.constant 0 : i4, 0 : i4 : !obelisk_sim.logic<4>
+      %one = obelisk_sim.logic.constant 1 : i4, 0 : i4 : !obelisk_sim.logic<4>
+      %x = obelisk_sim.logic.constant 0 : i4, 15 : i4 : !obelisk_sim.logic<4>
+      %z = obelisk_sim.logic.constant 15 : i4, 15 : i4 : !obelisk_sim.logic<4>
+      %mixed = obelisk_sim.logic.constant 13 : i4, 10 : i4 : !obelisk_sim.logic<4>
+      %zero_bits = obelisk_sim.logic.to_bits %zero : !obelisk_sim.logic<4> -> i4
+      %one_bits = obelisk_sim.logic.to_bits %one : !obelisk_sim.logic<4> -> i4
+      %x_bits = obelisk_sim.logic.to_bits %x : !obelisk_sim.logic<4> -> i4
+      %z_bits = obelisk_sim.logic.to_bits %z : !obelisk_sim.logic<4> -> i4
+      %mixed_bits = obelisk_sim.logic.to_bits %mixed : !obelisk_sim.logic<4> -> i4
+      obelisk_sim.return %zero_bits, %one_bits, %x_bits, %z_bits, %mixed_bits : i4, i4, i4, i4, i4
+    }
+
+    // Truth is true for any known one, but not for zero, X-only, Z-only, or
+    // mixtures whose only one-valued positions are unknown.
+    // CHECK-LABEL: obelisk_sim.func @truth_matrix
+    // CHECK-DAG: %[[FALSE:.*]] = arith.constant false
+    // CHECK-DAG: %[[TRUE:.*]] = arith.constant true
+    // CHECK: obelisk_sim.return %[[FALSE]], %[[TRUE]], %[[FALSE]], %[[FALSE]], %[[TRUE]], %[[FALSE]]
+    obelisk_sim.func @truth_matrix(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> (i1, i1, i1, i1, i1, i1) attributes {entry_kind = 8 : i32} {
+      %zero = obelisk_sim.logic.constant 0 : i4, 0 : i4 : !obelisk_sim.logic<4>
+      %one = obelisk_sim.logic.constant 1 : i4, 0 : i4 : !obelisk_sim.logic<4>
+      %x = obelisk_sim.logic.constant 0 : i4, 15 : i4 : !obelisk_sim.logic<4>
+      %z = obelisk_sim.logic.constant 15 : i4, 15 : i4 : !obelisk_sim.logic<4>
+      %mixed_true = obelisk_sim.logic.constant 13 : i4, 10 : i4 : !obelisk_sim.logic<4>
+      %mixed_false = obelisk_sim.logic.constant 10 : i4, 10 : i4 : !obelisk_sim.logic<4>
+      %zero_truth = obelisk_sim.logic.is_true %zero : !obelisk_sim.logic<4>
+      %one_truth = obelisk_sim.logic.is_true %one : !obelisk_sim.logic<4>
+      %x_truth = obelisk_sim.logic.is_true %x : !obelisk_sim.logic<4>
+      %z_truth = obelisk_sim.logic.is_true %z : !obelisk_sim.logic<4>
+      %mixed_true_truth = obelisk_sim.logic.is_true %mixed_true : !obelisk_sim.logic<4>
+      %mixed_false_truth = obelisk_sim.logic.is_true %mixed_false : !obelisk_sim.logic<4>
+      obelisk_sim.return %zero_truth, %one_truth, %x_truth, %z_truth, %mixed_true_truth, %mixed_false_truth : i1, i1, i1, i1, i1, i1
+    }
   }
 }
