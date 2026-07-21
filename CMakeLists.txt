@@ -5,6 +5,8 @@ project(obelisk
   DESCRIPTION "An AOT SystemVerilog simulator targeting IEEE 1800 conformance and real UVM"
   LANGUAGES C CXX)
 
+option(OBELISK_INCLUDE_TESTS "Build the Obelisk test suites" ON)
+
 #===------------------------------------------------------------------------===
 # Toolchain: a CMake-managed prebuilt LLVM + MLIR release SDK.
 #
@@ -210,10 +212,30 @@ include_directories(${MLIR_INCLUDE_DIRS})
 include_directories(${PROJECT_SOURCE_DIR}/include)
 include_directories(${PROJECT_BINARY_DIR}/include)
 
+if(OBELISK_INCLUDE_TESTS)
+  find_program(OBELISK_LIT_EXECUTABLE NAMES llvm-lit lit)
+  if(NOT OBELISK_LIT_EXECUTABLE)
+    set(_obelisk_lit_fallback "${PROJECT_SOURCE_DIR}/env/bin/lit")
+    if(EXISTS "${_obelisk_lit_fallback}")
+      set(OBELISK_LIT_EXECUTABLE "${_obelisk_lit_fallback}")
+    else()
+      message(FATAL_ERROR
+        "LLVM lit was not found on PATH and the fallback does not exist at "
+        "${_obelisk_lit_fallback}")
+    endif()
+  endif()
+  set(LLVM_EXTERNAL_LIT "${OBELISK_LIT_EXECUTABLE}"
+      CACHE FILEPATH "LLVM lit runner used by Obelisk tests" FORCE)
+  message(STATUS "Using lit: ${LLVM_EXTERNAL_LIT}")
+endif()
+
+add_subdirectory(runtime)
 add_subdirectory(include)
 add_subdirectory(lib)
 add_subdirectory(tools)
 
-add_subdirectory(test)
+if(OBELISK_INCLUDE_TESTS)
+  add_subdirectory(test)
+endif()
 
 message(STATUS "obelisk configured against prebuilt LLVM + MLIR")

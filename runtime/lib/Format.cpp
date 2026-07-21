@@ -1,0 +1,732 @@
+//===- Format.cpp - Obelisk runtime formatting and display ----------------===//
+
+#include "RuntimeInternal.h"
+
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <cstdio>
+#include <limits>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+namespace {
+
+struct FormatOptions {
+  std::optional<uint32_t> width;
+  std::optional<uint32_t> precision;
+  bool left = false;
+  bool zero = false;
+};
+
+struct LogicView {
+  uint64_t width = 0;
+  bool isSigned = false;
+  const uint64_t *value = nullptr;
+  const uint64_t *unknown = nullptr;
+};
+
+uint64_t wordCount(uint64_t width) { return (width + 63) / 64; }
+
+uint64_t lowMask(unsigned bits) {
+  if (bits == 0 || bits == 64)
+    return std::numeric_limits<uint64_t>::max();
+  return (uint64_t{1} << bits) - 1;
+}
+
+uint64_t finalWordMask(uint64_t width) {
+  return lowMask(static_cast<unsigned>(width % 64));
+}
+
+bool getLogicView(const obelisk_rt_arg_v1 &argument, LogicView &view) {
+  if (argument.kind == OBELISK_RT_ARG_LOGIC) {
+    if (argument.size == 0 ||
+        argument.size > std::numeric_limits<uint32_t>::max() || !argument.data)
+      return false;
+    view = {argument.size, (argument.flags & OBELISK_RT_ARG_SIGNED) != 0,
+            static_cast<const uint64_t *>(argument.data), argument.unknown};
+    return true;
+  }
+  if (argument.kind == OBELISK_RT_ARG_TIME) {
+    if (!argument.data)
+      return false;
+    view = {64, false, static_cast<const uint64_t *>(argument.data), nullptr};
+    return true;
+  }
+  return false;
+}
+
+bool valueBit(const LogicView &view, uint64_t bit) {
+  return ((view.value[bit / 64] >> (bit % 64)) & 1) != 0;
+}
+
+bool unknownBit(const LogicView &view, uint64_t bit) {
+  return view.unknown && ((view.unknown[bit / 64] >> (bit % 64)) & 1) != 0;
+}
+
+char logicSymbol(const LogicView &view, uint64_t bit) {
+  if (!unknownBit(view, bit))
+    return valueBit(view, bit) ? '1' : '0';
+  return valueBit(view, bit) ? 'z' : 'x';
+}
+
+void applyPadding(std::string &output, std::string field, uint32_t width,
+                  bool left, char padding) {
+  if (field.size() >= width) {
+    output += field;
+    return;
+  }
+  std::string pad(width - field.size(), padding);
+  if (left)
+    output += field + pad;
+  else
+    output += pad + field;
+}
+
+char groupDigit(const LogicView &view, uint64_t lowBit, unsigned groupBits) {
+  static constexpr char digits[] = "0123456789abcdef";
+  unsigned validBits =
+      static_cast<unsigned>(std::min<uint64_t>(groupBits, view.width - lowBit));
+  unsigned value = 0;
+  unsigned unknown = 0;
+  for (unsigned index = 0; index < validBits; ++index) {
+    uint64_t bit = lowBit + index;
+    if (valueBit(view, bit))
+      value |= 1u << index;
+    if (unknownBit(view, bit))
+      unknown |= 1u << index;
+  }
+  if (!unknown)
+    return digits[value];
+  unsigned mask = (1u << validBits) - 1;
+  if (unknown == mask && value == 0)
+    return 'x';
+  if (unknown == mask && value == mask)
+    return 'z';
+  if ((unknown & ~value) != 0)
+    return 'X';
+  return 'Z';
+}
+
+std::string baseDigits(const LogicView &view, unsigned groupBits) {
+  uint64_t groups = (view.width + groupBits - 1) / groupBits;
+  std::string result;
+  if (groups <= std::numeric_limits<size_t>::max())
+    result.reserve(static_cast<size_t>(groups));
+  for (uint64_t group = groups; group > 0; --group)
+    result.push_back(groupDigit(view, (group - 1) * groupBits, groupBits));
+
+  size_t leading = 0;
+  while (leading + 1 < result.size() && result[leading] == '0')
+    ++leading;
+  bool stripped = leading != 0;
+  result.erase(0, leading);
+  if (stripped && !result.empty() &&
+      (result.front() == 'x' || result.front() == 'z'))
+    result.insert(result.begin(), '0');
+  return result;
+}
+
+std::vector<uint64_t> magnitudeWords(const LogicView &view, bool &negative) {
+  uint64_t words = wordCount(view.width);
+  std::vector<uint64_t> result(view.value, view.value + words);
+  result.back() &= finalWordMask(view.width);
+  negative = view.isSigned && valueBit(view, view.width - 1);
+  if (!negative)
+    return result;
+
+  for (uint64_t &word : result)
+    word = ~word;
+  result.back() &= finalWordMask(view.width);
+  uint64_t carry = 1;
+  for (uint64_t &word : result) {
+    uint64_t old = word;
+    word += carry;
+    carry = carry && word < old;
+    if (!carry)
+      break;
+  }
+  result.back() &= finalWordMask(view.width);
+  return result;
+}
+
+bool wordsAreZero(const std::vector<uint64_t> &words) {
+  return std::all_of(words.begin(), words.end(),
+                     [](uint64_t word) { return word == 0; });
+}
+
+unsigned divideWordsBy10(std::vector<uint64_t> &words) {
+  unsigned remainder = 0;
+  for (size_t index = words.size(); index > 0; --index) {
+#if defined(__SIZEOF_INT128__)
+    __uint128_t dividend =
+        (static_cast<__uint128_t>(remainder) << 64) | words[index - 1];
+    words[index - 1] = static_cast<uint64_t>(dividend / 10);
+    remainder = static_cast<unsigned>(dividend % 10);
+#else
+    uint64_t quotient = 0;
+    for (int bit = 63; bit >= 0; --bit) {
+      remainder = remainder * 2 + ((words[index - 1] >> bit) & 1);
+      if (remainder >= 10) {
+        remainder -= 10;
+        quotient |= uint64_t{1} << bit;
+      }
+    }
+    words[index - 1] = quotient;
+#endif
+  }
+  return remainder;
+}
+
+std::string knownDecimal(const LogicView &view) {
+  bool negative = false;
+  std::vector<uint64_t> words = magnitudeWords(view, negative);
+  if (wordsAreZero(words))
+    return "0";
+  std::string result;
+  while (!wordsAreZero(words))
+    result.push_back(static_cast<char>('0' + divideWordsBy10(words)));
+  if (negative)
+    result.push_back('-');
+  std::reverse(result.begin(), result.end());
+  return result;
+}
+
+std::optional<char> decimalUnknown(const LogicView &view) {
+  if (!view.unknown)
+    return std::nullopt;
+  bool anyUnknown = false;
+  bool anyX = false;
+  bool allUnknown = true;
+  bool allUnknownValuesZero = true;
+  bool allUnknownValuesOne = true;
+  for (uint64_t bit = 0; bit < view.width; ++bit) {
+    bool unknown = unknownBit(view, bit);
+    bool value = valueBit(view, bit);
+    anyUnknown |= unknown;
+    allUnknown &= unknown;
+    if (unknown) {
+      anyX |= !value;
+      allUnknownValuesZero &= !value;
+      allUnknownValuesOne &= value;
+    } else {
+      allUnknownValuesZero = false;
+      allUnknownValuesOne = false;
+    }
+  }
+  if (!anyUnknown)
+    return std::nullopt;
+  if (allUnknown && allUnknownValuesZero)
+    return 'x';
+  if (allUnknown && allUnknownValuesOne)
+    return 'z';
+  return anyX ? 'X' : 'Z';
+}
+
+uint32_t defaultDecimalWidth(const LogicView &view) {
+  double digits =
+      std::ceil(static_cast<double>(view.width) * 0.30102999566398119521);
+  uint64_t width = static_cast<uint64_t>(digits) + (view.isSigned ? 1 : 0);
+  return static_cast<uint32_t>(
+      std::min<uint64_t>(width, std::numeric_limits<uint32_t>::max()));
+}
+
+obelisk_rt_status formatInteger(std::string &output, const LogicView &view,
+                                char specifier, const FormatOptions &options) {
+  char spec =
+      static_cast<char>(std::tolower(static_cast<unsigned char>(specifier)));
+  if (spec == 'd') {
+    std::string field;
+    if (std::optional<char> unknown = decimalUnknown(view))
+      field.push_back(*unknown);
+    else
+      field = knownDecimal(view);
+    uint32_t width = options.width.value_or(defaultDecimalWidth(view));
+    applyPadding(output, std::move(field), width, options.left, ' ');
+    return OBELISK_RT_OK;
+  }
+
+  unsigned groupBits = spec == 'b' ? 1 : spec == 'o' ? 3 : 4;
+  std::string field = baseDigits(view, groupBits);
+  uint64_t defaultWidth64 = (view.width + groupBits - 1) / groupBits;
+  uint32_t width =
+      options.width.value_or(static_cast<uint32_t>(std::min<uint64_t>(
+          defaultWidth64, std::numeric_limits<uint32_t>::max())));
+  applyPadding(output, std::move(field), width, options.left, '0');
+  return OBELISK_RT_OK;
+}
+
+std::string logicToString(const LogicView &view) {
+  std::string result;
+  uint64_t bytes = (view.width + 7) / 8;
+  result.reserve(static_cast<size_t>(
+      std::min<uint64_t>(bytes, std::numeric_limits<size_t>::max())));
+  unsigned leadingBits = static_cast<unsigned>(view.width % 8);
+  for (uint64_t byteIndex = bytes; byteIndex > 0; --byteIndex) {
+    unsigned bits = byteIndex == bytes && leadingBits ? leadingBits : 8;
+    uint64_t low = (byteIndex - 1) * 8;
+    uint8_t character = 0;
+    for (unsigned bit = 0; bit < bits; ++bit) {
+      uint64_t sourceBit = low + bit;
+      if (!unknownBit(view, sourceBit) && valueBit(view, sourceBit))
+        character |= static_cast<uint8_t>(1u << bit);
+    }
+    if (character != 0)
+      result.push_back(static_cast<char>(character));
+  }
+  return result;
+}
+
+obelisk_rt_status formatStringValue(std::string &output, std::string field,
+                                    const FormatOptions &options) {
+  uint32_t width = options.width.value_or(0);
+  applyPadding(output, std::move(field), width, options.left, ' ');
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status formatFloat(std::string &output, double value, char specifier,
+                              const FormatOptions &options) {
+  std::string format = "%";
+  if (options.left)
+    format.push_back('-');
+  if (options.zero)
+    format.push_back('0');
+  if (options.width)
+    format += std::to_string(*options.width);
+  if (options.precision) {
+    format.push_back('.');
+    format += std::to_string(*options.precision);
+  }
+  format.push_back(specifier);
+  int required = std::snprintf(nullptr, 0, format.c_str(), value);
+  if (required < 0)
+    return OBELISK_RT_FORMAT_ERROR;
+  size_t offset = output.size();
+  output.resize(offset + static_cast<size_t>(required) + 1);
+  int written =
+      std::snprintf(output.data() + offset, static_cast<size_t>(required) + 1,
+                    format.c_str(), value);
+  if (written != required)
+    return OBELISK_RT_FORMAT_ERROR;
+  output.pop_back();
+  return OBELISK_RT_OK;
+}
+
+double logicToDouble(const LogicView &view) {
+  bool negative = false;
+  std::vector<uint64_t> words = magnitudeWords(view, negative);
+  long double value = 0;
+  for (size_t index = words.size(); index > 0; --index)
+    value = std::ldexp(value, 64) + words[index - 1];
+  return static_cast<double>(negative ? -value : value);
+}
+
+obelisk_rt_status appendRaw(std::string &output, const LogicView &view,
+                            bool fourState) {
+  uint64_t chunks = (view.width + 31) / 32;
+  if (chunks > std::numeric_limits<size_t>::max() / (fourState ? 8 : 4))
+    return OBELISK_RT_OUT_OF_MEMORY;
+  for (uint64_t chunk = 0; chunk < chunks; ++chunk) {
+    uint32_t value = 0;
+    uint32_t unknown = 0;
+    for (unsigned bit = 0; bit < 32; ++bit) {
+      uint64_t sourceBit = chunk * 32 + bit;
+      if (sourceBit >= view.width)
+        break;
+      if (valueBit(view, sourceBit))
+        value |= uint32_t{1} << bit;
+      if (unknownBit(view, sourceBit))
+        unknown |= uint32_t{1} << bit;
+    }
+    uint32_t aval = fourState ? value ^ unknown : value & ~unknown;
+    output.append(reinterpret_cast<const char *>(&aval), sizeof(aval));
+    if (fourState)
+      output.append(reinterpret_cast<const char *>(&unknown), sizeof(unknown));
+  }
+  return OBELISK_RT_OK;
+}
+
+std::string scalarPattern(const obelisk_rt_arg_v1 &argument) {
+  LogicView view;
+  if (getLogicView(argument, view)) {
+    std::string result = std::to_string(view.width);
+    result.push_back('\'');
+    if (view.isSigned)
+      result.push_back('s');
+    result.push_back('b');
+    for (uint64_t bit = view.width; bit > 0; --bit)
+      result.push_back(logicSymbol(view, bit - 1));
+    return result;
+  }
+  if (argument.kind == OBELISK_RT_ARG_STRING &&
+      validBytes(argument.data, argument.size) &&
+      argument.size <= std::numeric_limits<size_t>::max())
+    return std::string(argument.data ? static_cast<const char *>(argument.data)
+                                     : "",
+                       static_cast<size_t>(argument.size));
+  if (argument.kind == OBELISK_RT_ARG_REAL && argument.data) {
+    char buffer[64];
+    int length = std::snprintf(buffer, sizeof(buffer), "%g",
+                               *static_cast<const double *>(argument.data));
+    if (length > 0 && static_cast<size_t>(length) < sizeof(buffer))
+      return std::string(buffer, static_cast<size_t>(length));
+  }
+  return {};
+}
+
+obelisk_rt_status formatArgument(std::string &output,
+                                 const obelisk_rt_arg_v1 &argument,
+                                 char specifier, const FormatOptions &options,
+                                 const obelisk_rt_format_env_v1 *environment) {
+  char spec =
+      static_cast<char>(std::tolower(static_cast<unsigned char>(specifier)));
+  LogicView view;
+  switch (spec) {
+  case 'b':
+  case 'o':
+  case 'd':
+  case 'h':
+  case 'x':
+    if (!getLogicView(argument, view))
+      return OBELISK_RT_ARGUMENT_MISMATCH;
+    return formatInteger(output, view, spec, options);
+  case 'c': {
+    if (!getLogicView(argument, view))
+      return OBELISK_RT_ARGUMENT_MISMATCH;
+    uint8_t character = 0;
+    for (unsigned bit = 0; bit < 8 && bit < view.width; ++bit)
+      if (!unknownBit(view, bit) && valueBit(view, bit))
+        character |= static_cast<uint8_t>(1u << bit);
+    output.push_back(static_cast<char>(character));
+    return OBELISK_RT_OK;
+  }
+  case 's':
+    if (argument.kind == OBELISK_RT_ARG_STRING) {
+      if (!validBytes(argument.data, argument.size) ||
+          argument.size > std::numeric_limits<size_t>::max())
+        return OBELISK_RT_INVALID_ARGUMENT;
+      return formatStringValue(
+          output,
+          std::string(argument.data ? static_cast<const char *>(argument.data)
+                                    : "",
+                      static_cast<size_t>(argument.size)),
+          options);
+    }
+    if (!getLogicView(argument, view))
+      return OBELISK_RT_ARGUMENT_MISMATCH;
+    return formatStringValue(output, logicToString(view), options);
+  case 'e':
+  case 'f':
+  case 'g': {
+    double value;
+    if (argument.kind == OBELISK_RT_ARG_REAL && argument.data)
+      value = *static_cast<const double *>(argument.data);
+    else if (getLogicView(argument, view) && !decimalUnknown(view))
+      value = logicToDouble(view);
+    else
+      return OBELISK_RT_ARGUMENT_MISMATCH;
+    return formatFloat(output, value, specifier, options);
+  }
+  case 't': {
+    if (!getLogicView(argument, view))
+      return OBELISK_RT_ARGUMENT_MISMATCH;
+    FormatOptions timeOptions = options;
+    if (!timeOptions.width)
+      timeOptions.width =
+          environment && environment->time_width ? environment->time_width : 20;
+    obelisk_rt_status status = formatInteger(output, view, 'd', timeOptions);
+    if (status != OBELISK_RT_OK)
+      return status;
+    if (environment &&
+        validBytes(environment->time_suffix, environment->time_suffix_size) &&
+        environment->time_suffix_size <= std::numeric_limits<size_t>::max())
+      output.append(environment->time_suffix,
+                    static_cast<size_t>(environment->time_suffix_size));
+    else if (environment && environment->time_suffix_size != 0)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    return OBELISK_RT_OK;
+  }
+  case 'u':
+  case 'z':
+    if (!getLogicView(argument, view))
+      return OBELISK_RT_ARGUMENT_MISMATCH;
+    return appendRaw(output, view, spec == 'z');
+  case 'p': {
+    std::string value = scalarPattern(argument);
+    if (value.empty() && argument.kind != OBELISK_RT_ARG_STRING)
+      return OBELISK_RT_ARGUMENT_MISMATCH;
+    return formatStringValue(output, std::move(value), options);
+  }
+  default:
+    return OBELISK_RT_FORMAT_ERROR;
+  }
+}
+
+bool parseUnsigned(std::string_view format, size_t &position,
+                   uint32_t &result) {
+  uint64_t value = 0;
+  size_t start = position;
+  while (position < format.size() && format[position] >= '0' &&
+         format[position] <= '9') {
+    value = value * 10 + static_cast<unsigned>(format[position] - '0');
+    if (value > std::numeric_limits<uint32_t>::max())
+      return false;
+    ++position;
+  }
+  if (position == start)
+    return false;
+  result = static_cast<uint32_t>(value);
+  return true;
+}
+
+obelisk_rt_status formatSequence(std::string &output, std::string_view format,
+                                 const obelisk_rt_arg_v1 *arguments,
+                                 uint64_t argumentCount,
+                                 uint64_t &argumentIndex,
+                                 const obelisk_rt_format_env_v1 *environment,
+                                 std::string &error) {
+  for (size_t position = 0; position < format.size();) {
+    if (format[position] != '%') {
+      output.push_back(format[position++]);
+      continue;
+    }
+    size_t formatOffset = position++;
+    if (position < format.size() && format[position] == '%') {
+      output.push_back('%');
+      ++position;
+      continue;
+    }
+
+    FormatOptions options;
+    while (position < format.size()) {
+      if (format[position] == '-' && !options.left) {
+        options.left = true;
+        ++position;
+      } else if (format[position] == '0' && !options.zero) {
+        options.zero = true;
+        ++position;
+      } else {
+        break;
+      }
+    }
+
+    if (position < format.size() && format[position] >= '0' &&
+        format[position] <= '9') {
+      uint32_t width;
+      if (!parseUnsigned(format, position, width)) {
+        error = "format width is too large";
+        return OBELISK_RT_FORMAT_ERROR;
+      }
+      options.width = width;
+    }
+    if (position < format.size() && format[position] == '.') {
+      ++position;
+      uint32_t precision = 0;
+      if (position < format.size() && format[position] >= '0' &&
+          format[position] <= '9') {
+        if (!parseUnsigned(format, position, precision)) {
+          error = "format precision is too large";
+          return OBELISK_RT_FORMAT_ERROR;
+        }
+      }
+      options.precision = precision;
+    }
+    if (position == format.size()) {
+      error =
+          "missing format specifier at byte " + std::to_string(formatOffset);
+      return OBELISK_RT_FORMAT_ERROR;
+    }
+
+    char specifier = format[position++];
+    char spec =
+        static_cast<char>(std::tolower(static_cast<unsigned char>(specifier)));
+    bool integer =
+        spec == 'b' || spec == 'o' || spec == 'd' || spec == 'h' || spec == 'x';
+    bool floating = spec == 'e' || spec == 'f' || spec == 'g';
+    bool widthAllowed = integer || floating || spec == 's' || spec == 't';
+    bool nonConsuming = spec == 'm' || spec == 'l';
+    bool recognized = widthAllowed || nonConsuming || spec == 'c' ||
+                      spec == 'u' || spec == 'z' || spec == 'p';
+    if (!recognized) {
+      error =
+          "unknown format specifier at byte " + std::to_string(formatOffset);
+      return OBELISK_RT_FORMAT_ERROR;
+    }
+    if ((options.width || options.left) && !widthAllowed && spec != 'p') {
+      error = "field width is not allowed for this format specifier";
+      return OBELISK_RT_FORMAT_ERROR;
+    }
+    if (options.precision && !floating) {
+      error = "precision is only allowed for floating-point formats";
+      return OBELISK_RT_FORMAT_ERROR;
+    }
+    if ((integer || spec == 't') && options.zero) {
+      if (!options.width)
+        options.width = 0;
+      options.zero = false;
+    }
+
+    if (nonConsuming) {
+      const char *data = nullptr;
+      uint64_t size = 0;
+      if (environment) {
+        if (spec == 'm') {
+          data = environment->scope;
+          size = environment->scope_size;
+        } else {
+          data = environment->location;
+          size = environment->location_size;
+        }
+      }
+      if (!validBytes(data, size) ||
+          size > std::numeric_limits<size_t>::max()) {
+        error = "invalid formatting environment";
+        return OBELISK_RT_INVALID_ARGUMENT;
+      }
+      if (data)
+        output.append(data, static_cast<size_t>(size));
+      continue;
+    }
+
+    if (argumentIndex >= argumentCount) {
+      error = "not enough arguments for format string";
+      return OBELISK_RT_ARGUMENT_MISMATCH;
+    }
+    obelisk_rt_status status = formatArgument(
+        output, arguments[argumentIndex++], specifier, options, environment);
+    if (status != OBELISK_RT_OK) {
+      error = status == OBELISK_RT_ARGUMENT_MISMATCH
+                  ? "argument type does not match format specifier"
+                  : "failed to format argument";
+      return status;
+    }
+  }
+  return OBELISK_RT_OK;
+}
+
+char defaultSpecifier(const obelisk_rt_arg_v1 &argument,
+                      obelisk_rt_radix radix) {
+  switch (argument.kind) {
+  case OBELISK_RT_ARG_LOGIC:
+  case OBELISK_RT_ARG_TIME:
+    return radix == OBELISK_RT_RADIX_BINARY  ? 'b'
+           : radix == OBELISK_RT_RADIX_OCTAL ? 'o'
+           : radix == OBELISK_RT_RADIX_HEX   ? 'h'
+                                             : 'd';
+  case OBELISK_RT_ARG_STRING:
+    return 's';
+  case OBELISK_RT_ARG_REAL:
+    return 'f';
+  default:
+    return 0;
+  }
+}
+
+obelisk_rt_status buildDisplay(std::string &output, obelisk_rt_radix radix,
+                               const obelisk_rt_arg_v1 *items,
+                               uint64_t itemCount,
+                               const obelisk_rt_format_env_v1 *environment,
+                               std::string &error) {
+  if (radix != OBELISK_RT_RADIX_BINARY && radix != OBELISK_RT_RADIX_OCTAL &&
+      radix != OBELISK_RT_RADIX_DECIMAL && radix != OBELISK_RT_RADIX_HEX) {
+    error = "invalid default display radix";
+    return OBELISK_RT_INVALID_ARGUMENT;
+  }
+  uint64_t index = 0;
+  while (index < itemCount) {
+    const obelisk_rt_arg_v1 &item = items[index++];
+    if (item.kind == OBELISK_RT_ARG_EMPTY) {
+      output.push_back(' ');
+      continue;
+    }
+    if ((item.flags & OBELISK_RT_ARG_FORMAT_STRING) != 0) {
+      if (item.kind != OBELISK_RT_ARG_STRING ||
+          !validBytes(item.data, item.size) ||
+          item.size > std::numeric_limits<size_t>::max()) {
+        error = "format-string display item is not a valid string";
+        return OBELISK_RT_INVALID_ARGUMENT;
+      }
+      obelisk_rt_status status = formatSequence(
+          output,
+          std::string_view(item.data ? static_cast<const char *>(item.data)
+                                     : "",
+                           static_cast<size_t>(item.size)),
+          items, itemCount, index, environment, error);
+      if (status != OBELISK_RT_OK)
+        return status;
+      continue;
+    }
+    char specifier = defaultSpecifier(item, radix);
+    if (!specifier) {
+      error = "display item has no default scalar format";
+      return OBELISK_RT_ARGUMENT_MISMATCH;
+    }
+    obelisk_rt_status status =
+        formatArgument(output, item, specifier, {}, environment);
+    if (status != OBELISK_RT_OK) {
+      error = "failed to format display item";
+      return status;
+    }
+  }
+  return OBELISK_RT_OK;
+}
+
+} // namespace
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_format(obelisk_rt_context *context, const char *format,
+                     uint64_t formatSize, const obelisk_rt_arg_v1 *arguments,
+                     uint64_t argumentCount,
+                     const obelisk_rt_format_env_v1 *environment,
+                     obelisk_rt_buffer_v1 *outBuffer) {
+  if (!context || !outBuffer || !validBytes(format, formatSize) ||
+      (argumentCount != 0 && !arguments) ||
+      formatSize > std::numeric_limits<size_t>::max())
+    return OBELISK_RT_INVALID_ARGUMENT;
+  outBuffer->data = nullptr;
+  outBuffer->size = 0;
+  return guarded(context, [&] {
+    std::string output;
+    std::string error;
+    uint64_t index = 0;
+    obelisk_rt_status status = formatSequence(
+        output, std::string_view(format ? format : "", formatSize), arguments,
+        argumentCount, index, environment, error);
+    if (status == OBELISK_RT_OK && index != argumentCount) {
+      status = OBELISK_RT_ARGUMENT_MISMATCH;
+      error = "too many arguments for format string";
+    }
+    if (status != OBELISK_RT_OK) {
+      setLastError(context, std::move(error));
+      return status;
+    }
+    return makeBuffer(output, outBuffer);
+  });
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_display(obelisk_rt_context *context, uint32_t descriptor,
+                      uint32_t appendNewline, obelisk_rt_radix defaultRadix,
+                      const obelisk_rt_arg_v1 *items, uint64_t itemCount,
+                      const obelisk_rt_format_env_v1 *environment) {
+  if (!context || (itemCount != 0 && !items))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  return guarded(context, [&] {
+    std::string output;
+    std::string error;
+    obelisk_rt_status status = buildDisplay(output, defaultRadix, items,
+                                            itemCount, environment, error);
+    if (status != OBELISK_RT_OK) {
+      setLastError(context, std::move(error));
+      return status;
+    }
+    if (appendNewline)
+      output.push_back('\n');
+    std::lock_guard<std::mutex> lock(context->mutex);
+    return writeUnlocked(context, descriptor, output.data(), output.size(),
+                         nullptr);
+  });
+}

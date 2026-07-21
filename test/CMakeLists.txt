@@ -1,19 +1,3 @@
-find_program(OBELISK_LIT_EXECUTABLE NAMES llvm-lit lit)
-if(NOT OBELISK_LIT_EXECUTABLE)
-  set(_obelisk_lit_fallback "${PROJECT_SOURCE_DIR}/env/bin/lit")
-  if(EXISTS "${_obelisk_lit_fallback}")
-    set(OBELISK_LIT_EXECUTABLE "${_obelisk_lit_fallback}")
-  else()
-    message(FATAL_ERROR
-      "LLVM lit was not found on PATH and the fallback does not exist at "
-      "${_obelisk_lit_fallback}")
-  endif()
-endif()
-
-set(LLVM_EXTERNAL_LIT "${OBELISK_LIT_EXECUTABLE}"
-    CACHE FILEPATH "LLVM lit runner used by Obelisk tests" FORCE)
-message(STATUS "Using lit: ${LLVM_EXTERNAL_LIT}")
-
 option(OBELISK_ENABLE_REAL_UVM_TESTS
   "Fetch and run the opt-in Accellera UVM 2020.3.1 regression" OFF)
 set(OBELISK_REAL_UVM_DIR "")
@@ -48,3 +32,4 @@ add_lit_testsuite(check-obelisk "Running the Obelisk regression tests"
   obelisk-opt
 )
 set_target_properties(check-obelisk PROPERTIES FOLDER "Tests")
+add_dependencies(check-obelisk check-obelisk-runtime-units)
