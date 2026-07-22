@@ -13,7 +13,10 @@ Obelisk MLIR dialect (`obelisk.sv.*`, `!obelisk.*`)
     │  supported simulation lowering
     ▼
 Simulation MLIR (`obelisk_sim.*`, `arith.*`, `cf.*`)
-    │  planned native and bytecode lowering
+    │  planned state layout and native lowering
+    ▼
+Native MLIR (`func.*`, `ptr.*`, `arith.*`, `cf.*`, optional `vector.*`)
+    │  full conversion
     ▼
 LLVM dialect → LLVM IR/object → standalone simulator
 ```
@@ -183,6 +186,44 @@ positions and fills invalid positions with X or zero according to the result
 domain; a partially out-of-range write or drive updates only valid positions.
 These rules belong to the dynamic selection operations themselves and must not
 be approximated with potentially poison-producing builtin shifts.
+
+### Native dialect and memory lowering
+
+`arith` and `cf` are already part of the executable simulation boundary. The
+serial native backend will lower `obelisk_sim.func` and direct calls to the
+`func` dialect while retaining `arith` and `cf` for scalar computation and CFG
+control. Structured loops may temporarily use `scf` when that enables standard
+transformations, and fixed-width hot data may use `vector` before LLVM
+conversion.
+
+The `async` dialect is not part of this lowering. Its dynamic task/token model
+would duplicate the generated scheduler and encourage a runtime dependency
+graph on the closed-world RTL path. Later parallel lowering may use structured
+parallel operations as temporary compiler IR, but it must finish by outlining
+the statically assigned persistent lane functions and their explicit epoch and
+barrier protocol.
+
+Stable storage, net, driver, event, process, and class handles remain typed
+`obelisk_sim` values until provenance, observability, escape, ownership, and
+state-layout decisions are complete. Lowering them to pointers earlier would
+discard information needed by those analyses. After layout, compiler-owned
+state accesses use the MLIR `ptr` dialect with explicit offsets, access types,
+alignment, and memory effects. The terminal conversion maps those operations
+to opaque LLVM-dialect pointers and loads, stores, and GEPs, and attaches proven
+alias and invariant metadata there. Target sizes and alignment come from the
+selected data layout, never from the host compiler's `sizeof`.
+
+The MemRef dialect is not used. Materialized simulator state uses the `ptr`
+dialect after layout, while dynamic services use typed runtime handles and
+calls.
+
+The native fragment ABI therefore lowers to pointer-valued context and frame
+arguments, a fixed-width continuation ID, and the uniform action result. Once
+all Obelisk-specific operations have been eliminated, the standard `func`,
+`arith`, `cf`, `ptr`, optional `vector`, and any temporary `scf` operations are
+fully converted to the LLVM dialect. Translation then produces LLVM IR for
+object emission and static-runtime linking; it does not generate C or C++
+source.
 
 Parallelization treats the design as a concurrent SSA/CFG program rather than
 as a netlist. Whole-program optimization must run on that program first. The
@@ -449,6 +490,69 @@ heuristic; it belongs in the joint solver only after its measured cost model is
 reliable. Offline profiles and the next AOT build provide promotion without
 changing the runtime architecture.
 
+### Classes, virtual dispatch, and garbage collection
+
+SystemVerilog class semantics remain explicit above the physical pointer layer.
+Typed class handles, allocation, field access, inheritance, casts, constructors,
+method calls, and virtual dispatch must survive in `obelisk_sim` until
+class-hierarchy analysis, devirtualization, escape analysis, and object layout
+have run. The `ptr` dialect can express the resulting addresses and memory
+accesses, but it is not the class model.
+
+Monomorphic virtual calls become direct `func.call` operations. A small proven
+receiver set becomes a class-ID test with direct calls, allowing ordinary
+inlining and specialization. Only residual megamorphic dispatch uses a runtime
+class descriptor and method table. A heap object begins with a class-descriptor
+pointer followed by its laid-out instance fields. Method-table entries identify
+stable method or fragment descriptors, so the same virtual call can select a
+native entry or immutable bytecode without changing object identity. Residual
+pointer-valued indirect calls are formed at the LLVM-dialect boundary with the
+uniform method ABI.
+
+SystemVerilog requires automatic memory management for class instances. IEEE
+1800-2023 additionally defines strong, weak, and unreachable states and the
+built-in `weak_reference` class. The compiler may scalar-replace nonescaping
+objects, allocate objects with proven bounded lifetimes and no weak-reference
+observability in a frame or arena, and use specialized ownership for proven
+acyclic regions. General escaping object graphs must use the managed runtime
+heap because they may contain cycles. `chandle` values remain opaque foreign
+pointers and are not roots in the class heap.
+
+The initial general collector will be a precise, non-moving mark-and-sweep
+collector in `obelisk_rt`. Collection occurs only at generated scheduler safe
+points, with worker lanes stopped at a known epoch. Roots include static class
+handles, process and continuation frames, live call state, typed bytecode
+registers, runtime containers and mailboxes, pending NBAs to non-static object
+members, registered external pins, and callback state. Object-layout descriptors
+enumerate strong fields. Weak references do not keep their referents alive and
+transition to the unreachable state during the same stop-the-world collection
+that determines their referents are no longer strongly reachable.
+
+LLVM's GC facilities provide native stack-root reporting, not the collector.
+Native class references use a dedicated managed pointer address space. Functions
+that may reach an allocation or GC poll carry an Obelisk GC strategy, and
+GC-capable calls become `gc.statepoint` sites after translation to LLVM IR. The
+LLVM statepoint rewrite records transient live native references in object-file
+stack maps. Persistent process-frame, global, heap, and runtime-container roots
+remain described explicitly by Obelisk, while the bytecode interpreter scans its
+typed registers directly.
+
+The non-moving collector needs root locations but no `gc.relocate` results.
+Statepoint relocation may be enabled later if a moving or compacting collector
+justifies its pointer-update and foreign-interface costs. The legacy `gcroot`
+shadow-stack mechanism is not used: its per-call maintenance and threading model
+conflict with persistent worker lanes. Closed-world RTL functions that cannot
+reach managed allocation or a GC poll carry no GC strategy, safepoint, barrier,
+or root-map overhead.
+
+LLVM statepoints and their stack-map format remain version-coupled interfaces.
+Obelisk's pinned LLVM toolchain makes that coupling explicit. GC lowering is
+isolated behind an Obelisk adapter and verified after MLIR-to-LLVM translation,
+after optimization and LTO, and in the final linked executable. The runtime owns
+heap allocation, tracing, weak-reference processing, reclamation, stack walking,
+and worker coordination; LLVM never becomes a second runtime scheduler or heap
+implementation.
+
 ### VPI observability and storage optimization
 
 The completed bytecode tier will contain the dynamic simulator-side
@@ -602,6 +706,8 @@ The implementation roadmap is:
   derivation.~~
 - Add class-hierarchy analysis, devirtualization, specialization, IPSCCP, escape
   analysis, SROA, load forwarding, DSE, and state-layout optimization.
+- Define class-handle, object-layout, direct and polymorphic dispatch, and
+  automatic-memory-management semantics in `obelisk_sim`.
 - ~~Derive descriptor provenance, interprocedural descriptor-range effects,
   VPI-profile observability annotations, and four-state knownness facts.~~
 - ~~Extract block-level static fragments, assign a uniform fragment ABI and
@@ -609,6 +715,9 @@ The implementation roadmap is:
 - ~~Thread suspension-live SSA state only after graph derivation.~~
 - Materialize optimized continuation frames, timing slots, NBA storage and
   ordered commit code, and the genuinely unbounded dynamic frontier.
+- Lower serial native fragments and generated schedule drivers through `func`,
+  `arith`, `cf`, and `ptr`, with `scf` and `vector` used only when profitable
+  as temporary compiler IR.
 - ~~Build and independently verify deterministic dependency, SCC, feedback-cut,
   five-bucket region, and preliminary cost-balanced lane metadata.~~
 - Complete IEEE event-region lowering for the supported language, coarsen the
@@ -618,8 +727,11 @@ The implementation roadmap is:
 - ~~Implement the static runtime's shared native/bytecode fragment ABI and
   checked typed-register interpreter.~~
 - Add compiler bytecode encoding and AOT tier selection.
-- Lower through the MLIR LLVM dialect, translate to LLVM IR, emit objects, and
-  link the generated simulator with `obelisk_rt.a`.
+- Implement the precise non-moving class heap, weak-reference processing,
+  explicit persistent-root maps, worker safe points, and LLVM statepoint
+  integration for transient native roots.
+- Fully convert the native path to the MLIR LLVM dialect, translate to LLVM IR,
+  emit objects, and link the generated simulator with `obelisk_rt.a`.
 
 ## Driver and tools
 
@@ -692,6 +804,14 @@ env/bin/lit -sv build/test
 A successful source-to-target regression round-trips emitted Slang assembly,
 runs the complete conversion, verifies the result, and checks that no Slang
 entity survives.
+
+The class and GC gate must cover cyclic object graphs, strong and weak
+references, roots held by process frames, bytecode registers, containers,
+callbacks, and pending operations, and collection at every generated safe
+point. Native and bytecode executions must agree under forced collection. The
+native tests must also validate stack maps after optimization and LTO and prove
+that closed-world RTL unable to reach class allocation contains no GC polls or
+root-tracking instrumentation.
 
 Compiler-generated native/bytecode differential design execution, Verilator
 comparison, exact full-region golden traces, simulation determinism across
