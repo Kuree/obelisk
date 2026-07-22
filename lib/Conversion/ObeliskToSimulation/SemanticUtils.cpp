@@ -6,11 +6,9 @@
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 
 #include "llvm/ADT/DenseSet.h"
-#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringExtras.h"
 
 #include <cctype>
-#include <functional>
 #include <limits>
 #include <string>
 
@@ -318,51 +316,32 @@ void setContinuationSite(Operation *operation, sim::ContinuationSiteAttr site) {
 }
 
 ReexecutingBlockSet getReexecutingBlocks(sim::SimFuncOp function) {
-  ReexecutingBlockSet reexecuting;
-  DenseMap<Block *, unsigned> indices, lowlinks;
-  SmallVector<Block *> stack;
-  llvm::SmallPtrSet<Block *, 16> onStack;
-  unsigned nextIndex = 0;
+  SmallVector<Block *> blocks;
+  DenseMap<Block *, SmallVector<Block *>> successors;
+  for (Block &block : function.getBody()) {
+    blocks.push_back(&block);
+    successors.try_emplace(&block, block.getTerminator()->getSuccessors());
+  }
 
-  std::function<void(Block *)> visit = [&](Block *block) {
-    unsigned index = nextIndex++;
-    indices.try_emplace(block, index);
-    lowlinks.try_emplace(block, index);
-    stack.push_back(block);
-    onStack.insert(block);
-    for (Block *successor : block->getTerminator()->getSuccessors()) {
-      auto successorIndex = indices.find(successor);
-      if (successorIndex == indices.end()) {
-        visit(successor);
-        lowlinks[block] = std::min(lowlinks[block], lowlinks[successor]);
-      } else if (onStack.contains(successor)) {
-        lowlinks[block] = std::min(lowlinks[block], successorIndex->second);
-      }
-    }
-    if (lowlinks[block] != index)
-      return;
-    SmallVector<Block *> component;
-    while (true) {
-      Block *member = stack.pop_back_val();
-      onStack.erase(member);
-      component.push_back(member);
-      if (member == block)
-        break;
-    }
-    bool cyclic =
-        component.size() > 1 ||
-        llvm::is_contained(block->getTerminator()->getSuccessors(), block);
+  ReexecutingBlockSet reexecuting;
+  for (ArrayRef<Block *> component :
+       computeStronglyConnectedComponents<Block *>(blocks, successors)) {
+    // A single-block component only re-executes when it branches to itself.
+    bool cyclic = component.size() > 1 ||
+                  llvm::is_contained(successors.lookup(component.front()),
+                                     component.front());
     if (cyclic)
       reexecuting.insert(component.begin(), component.end());
-  };
-
-  for (Block &block : function.getBody())
-    if (!indices.contains(&block))
-      visit(&block);
+  }
   return reexecuting;
 }
 
 bool isConstantTimeValue(Value value) {
+  // A value is a compiled-calendar delay when every definition reaching it is
+  // the same constant. Carrying an argument around a loop preserves, rather
+  // than creates, that proof, so a self-reference contributes no definition.
+  // Whether the proof holds must depend only on the definitions reached, never
+  // on the order the worklist happens to visit them.
   SmallVector<Value> worklist{value};
   DenseSet<Value> visited;
   std::optional<APInt> constantValue;
@@ -383,7 +362,6 @@ bool isConstantTimeValue(Value value) {
     Block *block = argument.getOwner();
     if (block->isEntryBlock() || block->hasNoPredecessors())
       return false;
-    bool sawIncoming = false;
     for (Block *predecessor : block->getPredecessors()) {
       auto branch = dyn_cast<BranchOpInterface>(predecessor->getTerminator());
       if (!branch)
@@ -398,15 +376,12 @@ bool isConstantTimeValue(Value value) {
         if (argument.getArgNumber() >= forwarded.size())
           return false;
         Value incoming = forwarded[argument.getArgNumber()];
-        if (incoming != current) {
+        if (incoming != current)
           worklist.push_back(incoming);
-          sawIncoming = true;
-        }
       }
     }
-    if (!sawIncoming && worklist.empty() && !constantValue)
-      return false;
   }
+  // An argument defined only by itself reaches no constant at all.
   return constantValue.has_value();
 }
 

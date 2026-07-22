@@ -122,6 +122,8 @@ extern "C" const char *obelisk_rt_v1_status_string(obelisk_rt_status status) {
     return "format argument mismatch";
   case OBELISK_RT_INVALID_BYTECODE:
     return "invalid bytecode";
+  case OBELISK_RT_STEP_LIMIT:
+    return "fragment step limit exceeded";
   default:
     return "unknown runtime status";
   }

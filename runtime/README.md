@@ -31,6 +31,13 @@ register types and indices, branch destinations, frame ranges, and terminal
 actions. Malformed programs return `OBELISK_RT_INVALID_BYTECODE`; they do not
 read or write outside the supplied process frame.
 
+A backward branch is well-formed, so validation cannot reject a fragment that
+never terminates — `while (1)` is legal SystemVerilog. Differential and fuzzing
+harnesses can use `obelisk_rt_v1_bytecode_execute_bounded`, which reports
+`OBELISK_RT_STEP_LIMIT` after a caller-supplied instruction limit. The ordinary
+production dispatch remains unbounded and the frozen v1 descriptor layout is
+unchanged.
+
 This bytecode is the cold-fragment execution substrate, not a second scheduler.
 Generated schedules and native fragments use the same action ABI and stable
 handles, while dynamic runtime services remain ordinary versioned C calls.

@@ -25,6 +25,7 @@ typedef int32_t obelisk_rt_status;
 #define OBELISK_RT_FORMAT_ERROR INT32_C(7)
 #define OBELISK_RT_ARGUMENT_MISMATCH INT32_C(8)
 #define OBELISK_RT_INVALID_BYTECODE INT32_C(9)
+#define OBELISK_RT_STEP_LIMIT INT32_C(10)
 
 typedef struct obelisk_rt_buffer_v1 {
   uint8_t *data;
@@ -180,6 +181,15 @@ obelisk_rt_status obelisk_rt_v1_fragment_execute(
     const obelisk_rt_fragment_descriptor_v1 *descriptor,
     obelisk_rt_context *context, void *frame, uint64_t frame_size,
     uint32_t continuation, obelisk_rt_fragment_action_v1 *out_action);
+
+// Test and differential-execution entry point for bytecode fragments. The
+// immutable v1 descriptor stays ABI-compatible; a nonzero instruction_limit
+// bounds this invocation and reports OBELISK_RT_STEP_LIMIT when exhausted.
+obelisk_rt_status obelisk_rt_v1_bytecode_execute_bounded(
+    const obelisk_rt_fragment_descriptor_v1 *descriptor,
+    obelisk_rt_context *context, void *frame, uint64_t frame_size,
+    uint32_t continuation, uint64_t instruction_limit,
+    obelisk_rt_fragment_action_v1 *out_action);
 
 typedef uint32_t obelisk_rt_arg_kind;
 enum {

@@ -31,6 +31,15 @@ def SimComputeEffectAttr : SimAttr<"ComputeEffect", "effect"> {
   let genVerifyDecl = 1;
 }
 
+// Effect arrays appear both inside compute-graph attributes and directly on
+// `obelisk_sim.func`. Constraining the element type declaratively means a
+// malformed summary is rejected by the op verifier with a real diagnostic,
+// rather than only by whichever pass happens to walk it.
+def SimComputeEffectArrayAttr
+    : TypedArrayAttrBase<SimComputeEffectAttr, "compute effect array"> {
+  let constBuilderCall = "$_builder.getArrayAttr($0)";
+}
+
 def SimComputeFragmentAttr : SimAttr<"ComputeFragment", "fragment"> {
   let parameters = (ins
     "uint32_t":$id,
@@ -53,7 +62,6 @@ def SimComputeNBACommitAttr : SimAttr<"ComputeNBACommit", "nba_commit"> {
     "uint32_t":$id,
     "::mlir::DenseI64ArrayAttr":$slots,
     "::mlir::DenseI64ArrayAttr":$accumulatorSites,
-    "::mlir::DenseI64ArrayAttr":$staticJournalSites,
     "::mlir::DenseI64ArrayAttr":$frontierSites,
     SimComputeEffectAttr:$effect
   );

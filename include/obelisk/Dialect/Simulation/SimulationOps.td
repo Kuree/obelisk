@@ -133,7 +133,7 @@ def SimFuncOp : SimOp<"func", [
                        OptionalAttr<StrAttr>:$sym_visibility,
                        OptionalAttr<DictArrayAttr>:$arg_attrs,
                        OptionalAttr<DictArrayAttr>:$res_attrs,
-                       OptionalAttr<ArrayAttr>:$effect_summary,
+                       OptionalAttr<SimComputeEffectArrayAttr>:$effect_summary,
                        OptionalAttr<SimFragmentABIAttr>:$fragment_abi);
   let regions = (region AnyRegion:$body);
   let builders = [OpBuilder<(ins "::llvm::StringRef":$name,

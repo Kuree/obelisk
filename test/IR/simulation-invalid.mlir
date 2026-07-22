@@ -12,15 +12,30 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @nba_function {
+  // Only time-controlled statements are illegal in a SystemVerilog function.
+  obelisk_sim.design @delay_function {
     obelisk_sim.scope.decl 0
     obelisk_sim.func @bad(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %dst: !obelisk_sim.ref<i8> {obelisk_sim.capture_kind = 1 : i32})
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {entry_kind = 8 : i32} {
-      %zero = arith.constant 0 : i8
+      %delay = obelisk_sim.time.constant 1
       // expected-error @+1 {{is not permitted in a zero-time function entry}}
-      obelisk_sim.nba.enqueue %zero to %dst : (i8, !obelisk_sim.ref<i8>) -> ()
+      obelisk_sim.suspend.delay %delay to ^done
+    ^done:
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @bad_summary {
+    obelisk_sim.scope.decl 0
+    // expected-error @below {{attribute 'effect_summary' failed to satisfy constraint: compute effect array}}
+    obelisk_sim.func @process(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {entry_kind = 1 : i32, effect_summary = [0 : i32]} {
       obelisk_sim.return
     }
   }

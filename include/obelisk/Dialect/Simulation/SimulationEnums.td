@@ -326,18 +326,18 @@ def SimComputeTimingKind
   let cppNamespace = "::obelisk::sim";
 }
 
+// A finite static journal is a further policy the design anticipates, but it
+// needs a proven multiplicity bound that no analysis produces yet. It is left
+// out rather than declared and never selected.
 def SimComputeNBAStorageFixedSlot
     : I32EnumAttrCase<"FixedSlot", 0, "fixed_slot">;
 def SimComputeNBAStorageRootAccumulator
     : I32EnumAttrCase<"RootAccumulator", 1, "root_accumulator">;
-def SimComputeNBAStorageStaticJournal
-    : I32EnumAttrCase<"StaticJournal", 2, "static_journal">;
 def SimComputeNBAStorageDynamicFrontier
-    : I32EnumAttrCase<"DynamicFrontier", 3, "dynamic_frontier">;
+    : I32EnumAttrCase<"DynamicFrontier", 2, "dynamic_frontier">;
 def SimComputeNBAStorageKind
     : I32EnumAttr<"ComputeNBAStorageKind", "generated NBA staging policy", [
         SimComputeNBAStorageFixedSlot, SimComputeNBAStorageRootAccumulator,
-        SimComputeNBAStorageStaticJournal,
         SimComputeNBAStorageDynamicFrontier
       ]> {
   let cppNamespace = "::obelisk::sim";

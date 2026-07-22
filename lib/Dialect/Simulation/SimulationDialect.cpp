@@ -142,18 +142,15 @@ LogicalResult ComputeFragmentAttr::verify(
 LogicalResult ComputeNBACommitAttr::verify(
     llvm::function_ref<InFlightDiagnostic()> emitError, uint32_t id,
     DenseI64ArrayAttr slots, DenseI64ArrayAttr accumulatorSites,
-    DenseI64ArrayAttr staticJournalSites, DenseI64ArrayAttr frontierSites,
-    ComputeEffectAttr effect) {
-  if (!slots || !accumulatorSites || !staticJournalSites || !frontierSites ||
-      !effect || effect.getEffect() != ComputeEffectKind::Write)
+    DenseI64ArrayAttr frontierSites, ComputeEffectAttr effect) {
+  if (!slots || !accumulatorSites || !frontierSites || !effect ||
+      effect.getEffect() != ComputeEffectKind::Write)
     return emitError()
            << "NBA commit requires staging inventories and one write effect";
-  if (slots.empty() && accumulatorSites.empty() && staticJournalSites.empty() &&
-      frontierSites.empty())
+  if (slots.empty() && accumulatorSites.empty() && frontierSites.empty())
     return emitError() << "NBA commit requires at least one site";
   llvm::SmallDenseSet<int64_t> sites;
-  for (DenseI64ArrayAttr inventory :
-       {slots, accumulatorSites, staticJournalSites, frontierSites})
+  for (DenseI64ArrayAttr inventory : {slots, accumulatorSites, frontierSites})
     for (int64_t site : inventory.asArrayRef())
       if (site < 0 || !sites.insert(site).second)
         return emitError() << "NBA commit has an invalid or duplicate site";
@@ -623,11 +620,14 @@ LogicalResult SimFuncOp::verify() {
   if (getEntryKind() == EntryKind::RootInitializer && type.getNumInputs() != 1)
     return emitOpError("root initializer accepts only the context argument");
   if (getEntryKind() == EntryKind::Function) {
+    // Only the time-controlled statements are illegal in a SystemVerilog
+    // function. Nonblocking assignment, nonblocking event trigger, and
+    // `fork ... join_none` are all legal there and consume no simulation
+    // time, so they stay representable and are handled by the schedule.
     WalkResult blocking = getBody().walk([&](Operation *op) {
       if (isa<SimSuspendDelayOp, SimSuspendChangeOp, SimSuspendEdgeOp,
               SimSuspendAnyOp, SimSuspendEventOp, SimSuspendAwaitOp,
-              SimSuspendJoinOp, SimNBAEnqueueOp, SimEventTriggerOp, SimSpawnOp>(
-              op)) {
+              SimSuspendJoinOp>(op)) {
         op->emitOpError("is not permitted in a zero-time function entry");
         return WalkResult::interrupt();
       }

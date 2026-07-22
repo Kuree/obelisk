@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstring>
 #include <new>
+#include <thread>
 
 namespace {
 
@@ -99,15 +100,19 @@ bool ensureEntryTableValidated(const obelisk_rt_bytecode_v1 &program,
                      __ATOMIC_RELEASE);
     return valid;
   }
-  do {
+  // Another worker is validating the same immutable table. Yield rather than
+  // spin: validation is bounded but the validating thread may be descheduled.
+  while (state == Validating) {
+    std::this_thread::yield();
     state = __atomic_load_n(&program.validation->state, __ATOMIC_ACQUIRE);
-  } while (state == Validating);
+  }
   return state == Valid;
 }
 
 obelisk_rt_status executeBytecode(const obelisk_rt_bytecode_v1 &program,
                                   void *frame, uint64_t frameSize,
                                   uint32_t continuation,
+                                  uint64_t instructionLimit,
                                   obelisk_rt_fragment_action_v1 *action) {
   if ((program.code_size != 0 && !program.code) || program.code_size == 0 ||
       program.code_size % OBELISK_RT_BYTECODE_INSTRUCTION_SIZE != 0 ||
@@ -147,7 +152,10 @@ obelisk_rt_status executeBytecode(const obelisk_rt_bytecode_v1 &program,
   RegisterFile registers(registerData, program.register_count);
 
   uint64_t pc = program.entries[low].instruction;
+  uint64_t steps = 0;
   while (pc < instructionCount) {
+    if (instructionLimit != 0 && ++steps > instructionLimit)
+      return OBELISK_RT_STEP_LIMIT;
     const uint8_t *instruction =
         program.code + pc * OBELISK_RT_BYTECODE_INSTRUCTION_SIZE;
     const auto opcode = static_cast<obelisk_rt_bytecode_opcode>(instruction[0]);
@@ -338,12 +346,11 @@ bool validAction(const obelisk_rt_fragment_action_v1 &action) {
   }
 }
 
-} // namespace
-
-extern "C" obelisk_rt_status obelisk_rt_v1_fragment_execute(
-    const obelisk_rt_fragment_descriptor_v1 *descriptor,
-    obelisk_rt_context *context, void *frame, uint64_t frameSize,
-    uint32_t continuation, obelisk_rt_fragment_action_v1 *outAction) {
+obelisk_rt_status
+executeFragment(const obelisk_rt_fragment_descriptor_v1 *descriptor,
+                obelisk_rt_context *context, void *frame, uint64_t frameSize,
+                uint32_t continuation, uint64_t instructionLimit,
+                bool bytecodeOnly, obelisk_rt_fragment_action_v1 *outAction) {
   if (!descriptor || !outAction ||
       descriptor->handle.kind != OBELISK_RT_DESCRIPTOR_FRAGMENT ||
       (frameSize != 0 && !frame))
@@ -354,7 +361,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_fragment_execute(
     return OBELISK_RT_INVALID_ARGUMENT;
   obelisk_rt_status status;
   if (descriptor->code_kind == OBELISK_RT_FRAGMENT_NATIVE) {
-    if (!descriptor->code.native_entry)
+    if (bytecodeOnly || !descriptor->code.native_entry)
       return OBELISK_RT_INVALID_ARGUMENT;
     try {
       status = descriptor->code.native_entry(context, frame, frameSize,
@@ -366,11 +373,32 @@ extern "C" obelisk_rt_status obelisk_rt_v1_fragment_execute(
     }
   } else if (descriptor->code_kind == OBELISK_RT_FRAGMENT_BYTECODE) {
     status = executeBytecode(descriptor->code.bytecode, frame, frameSize,
-                             continuation, outAction);
+                             continuation, instructionLimit, outAction);
   } else {
     return OBELISK_RT_INVALID_ARGUMENT;
   }
   if (status != OBELISK_RT_OK)
     return status;
   return validAction(*outAction) ? OBELISK_RT_OK : OBELISK_RT_INVALID_ARGUMENT;
+}
+
+} // namespace
+
+extern "C" obelisk_rt_status obelisk_rt_v1_fragment_execute(
+    const obelisk_rt_fragment_descriptor_v1 *descriptor,
+    obelisk_rt_context *context, void *frame, uint64_t frameSize,
+    uint32_t continuation, obelisk_rt_fragment_action_v1 *outAction) {
+  return executeFragment(descriptor, context, frame, frameSize, continuation, 0,
+                         false, outAction);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_bytecode_execute_bounded(
+    const obelisk_rt_fragment_descriptor_v1 *descriptor,
+    obelisk_rt_context *context, void *frame, uint64_t frameSize,
+    uint32_t continuation, uint64_t instructionLimit,
+    obelisk_rt_fragment_action_v1 *outAction) {
+  if (instructionLimit == 0)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  return executeFragment(descriptor, context, frame, frameSize, continuation,
+                         instructionLimit, true, outAction);
 }

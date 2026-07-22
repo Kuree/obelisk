@@ -8,7 +8,7 @@ module {
   // CHECK-SAME: #obelisk_sim.fragment<
   // CHECK-SAME: function = @unknown_div{{.*}}twoState = false
   // CHECK-SAME: #obelisk_sim.nba_commit<id = [[COMMIT:[0-9]+]], slots = [0, 1, 2]
-  // CHECK-SAME: accumulatorSites = [3, 4], staticJournalSites = [], frontierSites = [5]
+  // CHECK-SAME: accumulatorSites = [3, 4], frontierSites = [5]
   // CHECK-SAME: #obelisk_sim.event_commit<
   // CHECK-SAME: sites = [0, 1]
   // CHECK-SAME: kind = conflict

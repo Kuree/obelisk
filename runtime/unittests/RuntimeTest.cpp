@@ -121,7 +121,8 @@ bytecodeDescriptor(const std::vector<uint8_t> &code, uint32_t registers) {
 obelisk_rt_status
 executeBytecode(const obelisk_rt_fragment_descriptor_v1 &input, void *frame,
                 uint64_t frameSize, uint32_t continuation,
-                obelisk_rt_fragment_action_v1 *action) {
+                obelisk_rt_fragment_action_v1 *action,
+                uint64_t instructionLimit = 0) {
   obelisk_rt_fragment_descriptor_v1 descriptor = input;
   descriptor.code.bytecode.register_offset = frameSize;
   uint64_t scratchSize =
@@ -130,9 +131,16 @@ executeBytecode(const obelisk_rt_fragment_descriptor_v1 &input, void *frame,
   std::vector<uint8_t> storage(frameSize + scratchSize);
   if (frameSize != 0)
     std::memcpy(storage.data(), frame, frameSize);
-  obelisk_rt_status status = obelisk_rt_v1_fragment_execute(
-      &descriptor, nullptr, storage.empty() ? nullptr : storage.data(),
-      storage.size(), continuation, action);
+  obelisk_rt_status status =
+      instructionLimit == 0
+          ? obelisk_rt_v1_fragment_execute(&descriptor, nullptr,
+                                           storage.empty() ? nullptr
+                                                           : storage.data(),
+                                           storage.size(), continuation, action)
+          : obelisk_rt_v1_bytecode_execute_bounded(
+                &descriptor, nullptr,
+                storage.empty() ? nullptr : storage.data(), storage.size(),
+                continuation, instructionLimit, action);
   if (frameSize != 0)
     std::memcpy(frame, storage.data(), frameSize);
   return status;
@@ -230,6 +238,7 @@ TEST(RuntimeABI, ReportsEveryStatusAndReleasesBuffersIdempotently) {
       {OBELISK_RT_FORMAT_ERROR, "format error"},
       {OBELISK_RT_ARGUMENT_MISMATCH, "format argument mismatch"},
       {OBELISK_RT_INVALID_BYTECODE, "invalid bytecode"},
+      {OBELISK_RT_STEP_LIMIT, "fragment step limit exceeded"},
   };
   for (const auto &[status, message] : statuses)
     EXPECT_STREQ(obelisk_rt_v1_status_string(status), message);
@@ -1017,6 +1026,25 @@ TEST(RuntimeFragmentTest, ExecutesArithmeticComparisonAndControlOpcodes) {
   EXPECT_EQ(frame[4], 1u);
   EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
   EXPECT_EQ(action.payload, 99u);
+}
+
+TEST(RuntimeFragmentTest, BoundsRunawayBytecodeOnlyWhenAskedTo) {
+  // A backward jump to itself is well-formed bytecode, so validation cannot
+  // reject it. Only an explicit budget turns it into a reported failure.
+  std::vector<uint8_t> code;
+  appendInstruction(code, OBELISK_RT_BC_JUMP, OBELISK_RT_BC_TYPE_NONE, 0, 0, 0,
+                    0);
+  auto descriptor = bytecodeDescriptor(code, 0);
+  obelisk_rt_fragment_action_v1 action{};
+  EXPECT_EQ(executeBytecode(descriptor, nullptr, 0, 0, &action, 1000),
+            OBELISK_RT_STEP_LIMIT);
+
+  // A terminating fragment is unaffected by a budget it never reaches.
+  std::vector<uint8_t> terminating;
+  appendInstruction(terminating, OBELISK_RT_BC_TERMINATE);
+  auto bounded = bytecodeDescriptor(terminating, 0);
+  EXPECT_EQ(executeBytecode(bounded, nullptr, 0, 0, &action, 1), OBELISK_RT_OK);
+  EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
 }
 
 TEST(RuntimeFragmentTest, ContinuationSelectsBytecodeEntryInstruction) {

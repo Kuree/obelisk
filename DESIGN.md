@@ -324,9 +324,13 @@ in one of those regions.
 Every NBA site already receives an explicit staging policy. Proven single-shot
 sites use fixed slots. Repeated immediate assignments to a concrete root use a
 generated value/unknown/mask accumulator plus change and edge masks, preserving
-final-update and activation semantics without queue allocation. Finite journals
-remain available when a multiplicity bound is proven; repeated delayed,
-externally introduced, or dynamically rooted work uses the frontier. Native
+final-update and activation semantics without queue allocation. Repeated
+delayed, externally introduced, or dynamically rooted work uses the frontier.
+Unrestricted writable VPI also prevents repeated sites from using the root
+accumulator because it may rewrite a root between staging and commit; proven
+single-shot sites remain fixed slots. A finite journal is worth adding
+once an analysis can prove a multiplicity bound; until then it is deliberately
+absent rather than declared and never selected. Native
 lowering will turn those records into ordered commit code. Dynamic destinations
 carry direct descriptor, index, and mask fields. Likewise, constant delays will
 use generated calendar paths and bounded variable delays will use fixed
