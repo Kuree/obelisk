@@ -22,6 +22,12 @@ _Static_assert(offsetof(obelisk_rt_buffer_v1, data) == 0,
                "buffer data offset changed");
 _Static_assert(offsetof(obelisk_rt_format_env_v1, scope) == 0,
                "environment scope offset changed");
+_Static_assert(sizeof(obelisk_rt_format_env_v1) == 64,
+               "format environment size changed");
+_Static_assert(offsetof(obelisk_rt_format_env_v1, library_cell) == 16,
+               "environment library.cell offset changed");
+_Static_assert(offsetof(obelisk_rt_format_env_v1, time_multiplier) == 56,
+               "environment time multiplier offset changed");
 _Static_assert(sizeof(obelisk_rt_handle_v1) == 16, "stable handle ABI changed");
 _Static_assert(offsetof(obelisk_rt_handle_v1, kind) == 0,
                "stable handle kind offset changed");

@@ -731,3 +731,93 @@ module {
     }
   }
 }
+
+// -----
+
+module {
+  obelisk_sim.design @bad_display_radix {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32} {
+      %fd = arith.constant 1 : i32
+      %value = arith.constant 0 : i8
+      // expected-error @+1 {{default radix must be 2, 8, 10, or 16}}
+      obelisk_sim.display %ctx to %fd(%value) newline = true radix = 3 flags = [0] : i8
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @bad_display_flags {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32} {
+      %fd = arith.constant 1 : i32
+      %value = arith.constant 0 : i8
+      // expected-error @+1 {{requires one flag entry per display item}}
+      obelisk_sim.display %ctx to %fd(%value) newline = false radix = 10 flags = [] : i8
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @unknown_display_flag {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32} {
+      %fd = arith.constant 1 : i32
+      %value = arith.constant 0 : i8
+      // expected-error @+1 {{display item flags contain an unknown bit}}
+      obelisk_sim.display %ctx to %fd(%value) newline = false radix = 10 flags = [4] : i8
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @signed_literal_display {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32} {
+      %fd = arith.constant 1 : i32
+      %text = obelisk_sim.bytes.constant "text"
+      // expected-error @+1 {{literal byte items cannot be signed}}
+      obelisk_sim.display %ctx to %fd(%text) newline = false radix = 10 flags = [1] : !obelisk_sim.bytes
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @unsupported_display_item {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32} {
+      %fd = arith.constant 1 : i32
+      %value = arith.constant 0.0 : f32
+      // expected-error @+1 {{items must be literal bytes or packed integers}}
+      obelisk_sim.display %ctx to %fd(%value) newline = false radix = 10 flags = [0] : f32
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @bad_display_time_multiplier {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32} {
+      %fd = arith.constant 1 : i32
+      %value = arith.constant 0 : i8
+      // expected-error @+1 {{time multiplier must be positive}}
+      obelisk_sim.display %ctx to %fd(%value) newline = false radix = 10 flags = [0] {time_multiplier = 0 : i64} : i8
+      obelisk_sim.return
+    }
+  }
+}

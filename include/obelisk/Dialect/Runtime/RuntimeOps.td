@@ -16,6 +16,99 @@ class RTOp<string mnemonic, list<Trait> traits = []>
   let assemblyFormat = "operands attr-dict `:` functional-type(operands, results)";
 }
 
+// Compiler materializers. These operations make all target-layout-sensitive
+// records and storage explicit before the LLVM boundary.
+def RTBytesConstantOp : RTOp<"bytes.constant", [Pure, ConstantLike]> {
+  let arguments = (ins StrAttr:$value);
+  let results = (outs RTByteSpanType:$result);
+  let assemblyFormat = "$value attr-dict";
+  let hasFolder = 1;
+}
+
+def RTScratchOp : RTOp<"bytes.scratch", [MemoryEffects<[MemAlloc]>]> {
+  let arguments = (ins I64Attr:$size);
+  let results = (outs RTMutableByteSpanType:$result);
+  let assemblyFormat = "$size attr-dict";
+  let hasVerifier = 1;
+}
+
+def RTBytesSizeOp : RTOp<"bytes.size", [Pure]> {
+  let arguments = (ins AnyType:$bytes);
+  let results = (outs I64:$size);
+  let hasVerifier = 1;
+}
+
+def RTPackedFromBytesOp : RTOp<"bytes.to_packed", [MemoryEffects<[MemRead]>]> {
+  let arguments = (ins AnyType:$bytes, I64:$count,
+                       BoolAttr:$high_alignment);
+  let results = (outs AnyInteger:$result);
+  let hasVerifier = 1;
+}
+
+def RTArgumentEmptyOp : RTOp<"argument.empty", [Pure]> {
+  let results = (outs RTArgumentType:$result);
+  let hasVerifier = 1;
+}
+
+def RTArgumentPackedOp : RTOp<"argument.packed", [MemoryEffects<[MemAlloc]>]> {
+  let arguments = (ins AnyInteger:$value, Optional<AnyInteger>:$unknown,
+                       BoolAttr:$is_signed);
+  let results = (outs RTArgumentType:$result);
+  let hasVerifier = 1;
+}
+
+def RTArgumentBytesOp : RTOp<"argument.bytes", [Pure]> {
+  let arguments = (ins RTByteSpanType:$value,
+                       BoolAttr:$is_format_string);
+  let results = (outs RTArgumentType:$result);
+  let hasVerifier = 1;
+}
+
+def RTArgumentArrayOp : RTOp<"argument.array", [MemoryEffects<[MemAlloc]>]> {
+  let arguments = (ins Variadic<RTArgumentType>:$arguments);
+  let results = (outs RTArgumentArrayType:$result);
+  let hasVerifier = 1;
+}
+
+def RTFormatEnvironmentOp : RTOp<"format.environment", [
+  MemoryEffects<[MemAlloc]>
+]> {
+  let arguments = (ins DefaultValuedAttr<StrAttr, "\"\"">:$scope,
+                       DefaultValuedAttr<StrAttr, "\"\"">:$library_cell,
+                       DefaultValuedAttr<I32Attr, "0">:$time_width,
+                       DefaultValuedAttr<StrAttr, "\"\"">:$time_suffix,
+                       DefaultValuedAttr<I64Attr, "1">:$time_multiplier);
+  let results = (outs RTFormatEnvironmentType:$result);
+  let assemblyFormat = "attr-dict";
+  let hasVerifier = 1;
+}
+
+def RTFileDescriptorFromBitsOp : RTOp<"file_descriptor.from_bits", [Pure]> {
+  let arguments = (ins I32:$value);
+  let results = (outs RTFileDescriptorType:$result);
+}
+
+def RTFileDescriptorToBitsOp : RTOp<"file_descriptor.to_bits", [Pure]> {
+  let arguments = (ins RTFileDescriptorType:$value);
+  let results = (outs I32:$result);
+}
+
+def RTStatusIsOp : RTOp<"status.is", [Pure]> {
+  let arguments = (ins RTStatusType:$status, I32Attr:$value);
+  let results = (outs I1:$result);
+  let assemblyFormat = "$status `,` $value attr-dict";
+}
+
+def RTStatusFromBitsOp : RTOp<"status.from_bits", [Pure]> {
+  let arguments = (ins I32:$value);
+  let results = (outs RTStatusType:$result);
+}
+
+def RTStatusToBitsOp : RTOp<"status.to_bits", [Pure]> {
+  let arguments = (ins RTStatusType:$value);
+  let results = (outs I32:$result);
+}
+
 // Context, errors, and owned buffers.
 def RTContextCreateOp : RTOp<"context.create", [
   MemoryEffects<[MemAlloc<RTRuntimeResource>]>
@@ -144,7 +237,8 @@ def RTFileGetlineOp : RTOp<"file.getline", [
                  MemRead<RTIOResource>, MemWrite<RTIOResource>,
                  MemAlloc<RTRuntimeResource>, MemAlloc]>
 ]> {
-  let arguments = (ins RTContextType:$context, RTFileDescriptorType:$descriptor);
+  let arguments = (ins RTContextType:$context, RTFileDescriptorType:$descriptor,
+                       I64:$max_bytes);
   let results = (outs RTStatusType:$status, RTBufferType:$line);
   let hasVerifier = 1;
 }
@@ -172,7 +266,7 @@ def RTFileSeekOp : RTOp<"file.seek", [
                  MemWrite<RTIOResource>]>
 ]> {
   let arguments = (ins RTContextType:$context, RTFileDescriptorType:$descriptor,
-                       I64:$offset, RTSeekOrigin:$origin);
+                       I64:$offset, I32:$origin);
   let results = (outs RTStatusType:$status);
 }
 

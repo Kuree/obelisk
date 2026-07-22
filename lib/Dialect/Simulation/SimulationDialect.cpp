@@ -55,6 +55,11 @@ Operation *ObeliskSimulationDialect::materializeConstant(OpBuilder &builder,
                                                          Attribute value,
                                                          Type type,
                                                          Location location) {
+  if (isa<BytesType>(type)) {
+    auto bytes = dyn_cast<StringAttr>(value);
+    return bytes ? SimBytesConstantOp::create(builder, location, type, bytes)
+                 : nullptr;
+  }
   // A four-state constant needs two planes, so it folds to and materializes
   // from a two-element array of same-width integers.
   if (auto logic = dyn_cast<LogicType>(type)) {
@@ -86,6 +91,8 @@ Operation *ObeliskSimulationDialect::materializeConstant(OpBuilder &builder,
   }
   return nullptr;
 }
+
+OpFoldResult SimBytesConstantOp::fold(FoldAdaptor) { return getValueAttr(); }
 
 static LogicalResult
 verifyEffectArray(llvm::function_ref<InFlightDiagnostic()> emitError,
@@ -3390,6 +3397,51 @@ MutableOperandRange SimSuspendJoinOp::getContinuationOperandsMutable() {
           ? 0
           : std::min<uint64_t>(getProcessCount(), getNumOperands());
   return MutableOperandRange(getOperation(), count, getNumOperands() - count);
+}
+
+LogicalResult SimDisplayOp::verify() {
+  int64_t radix = getDefaultRadix();
+  if (radix != 2 && radix != 8 && radix != 10 && radix != 16)
+    return emitOpError("default radix must be 2, 8, 10, or 16");
+  if (IntegerAttr multiplier = getTimeMultiplierAttr())
+    if (!multiplier.getValue().isStrictlyPositive())
+      return emitOpError("time multiplier must be positive");
+  unsigned itemIndex = 0;
+  for (int32_t flags : getItemFlags()) {
+    if ((flags & 2) != 0) {
+      if (flags != 2)
+        return emitOpError("omitted display items cannot carry other flags");
+      continue;
+    }
+    if (itemIndex == getItems().size())
+      return emitOpError("item flags require more display operands");
+    Value item = getItems()[itemIndex++];
+    if (!isa<BytesType, IntegerType, LogicType>(item.getType()))
+      return emitOpError("items must be literal bytes or packed integers");
+    if ((flags & ~3) != 0)
+      return emitOpError("display item flags contain an unknown bit");
+    if (isa<BytesType>(item.getType()) && flags != 0)
+      return emitOpError("literal byte items cannot be signed");
+  }
+  if (itemIndex != getItems().size())
+    return emitOpError("requires one flag entry per display item");
+  return success();
+}
+
+static LogicalResult verifyPackedFileResult(Operation *operation, Type type) {
+  auto integer = dyn_cast<IntegerType>(type);
+  if (!integer || integer.getWidth() == 0)
+    return operation->emitOpError(
+        "packed data result must be a nonzero-width integer");
+  return success();
+}
+
+LogicalResult SimFileGetlineOp::verify() {
+  return verifyPackedFileResult(*this, getData().getType());
+}
+
+LogicalResult SimFileReadPackedOp::verify() {
+  return verifyPackedFileResult(*this, getData().getType());
 }
 
 } // namespace obelisk::sim

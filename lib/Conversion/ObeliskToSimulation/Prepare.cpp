@@ -831,10 +831,14 @@ void ObeliskSimPreparePass::runOnOperation() {
     NamedAttribute delayScaleAttr = builder.getNamedAttr(
         delayScaleAttrName,
         builder.getI64IntegerAttr(timeUnitFs / designPrecisionFs));
+    SmallVector<NamedAttribute> functionAttrs{bindingAttr, delayScaleAttr};
+    StringRef hierarchy = getHierarchyName(unit.source);
+    if (!hierarchy.empty())
+      functionAttrs.push_back(builder.getNamedAttr(
+          "obelisk_sim.hierarchical_name", builder.getStringAttr(hierarchy)));
     unit.function = sim::SimFuncOp::create(
         builder, getSemanticLocation(unit.source), unit.symbol, type,
-        unit.entryKind, ArrayRef<NamedAttribute>{bindingAttr, delayScaleAttr},
-        argAttrs);
+        unit.entryKind, functionAttrs, argAttrs);
     SymbolTable::setSymbolVisibility(unit.function,
                                      SymbolTable::Visibility::Private);
 

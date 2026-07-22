@@ -6,6 +6,7 @@
 #include "obelisk/Dialect/Simulation/SimulationAttrs.h"
 #include "obelisk/Dialect/Simulation/SimulationDialect.h"
 #include "obelisk/Dialect/Simulation/SimulationTypes.h"
+#include "obelisk/Dialect/Runtime/RuntimeTypes.h"
 
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/Interfaces/CallInterfaces.h"

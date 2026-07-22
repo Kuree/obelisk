@@ -15,7 +15,7 @@
 // CHECK-DAG: llvm.func @obelisk_rt_v1_file_read(!llvm.ptr, i32, !llvm.ptr, i64, !llvm.ptr) -> i32
 // CHECK-DAG: llvm.func @obelisk_rt_v1_file_getc(!llvm.ptr, i32, !llvm.ptr) -> i32
 // CHECK-DAG: llvm.func @obelisk_rt_v1_file_ungetc(!llvm.ptr, i32, i8) -> i32
-// CHECK-DAG: llvm.func @obelisk_rt_v1_file_getline(!llvm.ptr, i32, !llvm.ptr) -> i32
+// CHECK-DAG: llvm.func @obelisk_rt_v1_file_getline(!llvm.ptr, i32, i64, !llvm.ptr) -> i32
 // CHECK-DAG: llvm.func @obelisk_rt_v1_file_eof(!llvm.ptr, i32, !llvm.ptr) -> i32
 // CHECK-DAG: llvm.func @obelisk_rt_v1_file_error(!llvm.ptr, i32, !llvm.ptr, !llvm.ptr) -> i32
 // CHECK-DAG: llvm.func @obelisk_rt_v1_file_seek(!llvm.ptr, i32, i64, i32) -> i32
@@ -50,7 +50,6 @@
 // CHECK: llvm.mlir.constant(16 : i32) : i32
 // CHECK: llvm.call @obelisk_rt_v1_display
 // CHECK: llvm.call @obelisk_rt_v1_file_getc
-// CHECK: llvm.mlir.constant(0 : i32) : i32
 // CHECK: llvm.call @obelisk_rt_v1_file_seek
 // CHECK: llvm.call @obelisk_rt_v1_fragment_execute
 // CHECK: llvm.load {{.*}} {alignment = 8 : i64} : !llvm.ptr -> !llvm.struct<(i32, i32, i32, i32, i64, i64)>

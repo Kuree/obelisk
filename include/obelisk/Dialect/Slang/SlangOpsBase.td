@@ -330,6 +330,7 @@ class SlangCallExpressionASTNodeOp<string mnemonic>
         OptionalAttr<StrAttr>:$referenced_path,
         OptionalAttr<SymbolRefAttr>:$system_scope_symbol,
         OptionalAttr<StrAttr>:$system_scope_path,
+        OptionalAttr<StrAttr>:$system_library_cell,
         OptionalAttr<SymbolRefAttr>:$iterator_variable_symbol,
         OptionalAttr<StrAttr>:$iterator_variable_path,
         BoolAttr:$has_iterator_expression,

@@ -134,6 +134,22 @@ module attributes {
 
 // -----
 
+module attributes {
+  llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8"
+} {
+  func.func @parallel_materializer(%lower: index, %upper: index, %step: index) {
+    scf.parallel (%index) = (%lower) to (%upper) step (%step) {
+      // expected-error @+2 {{cannot lower a stack-backed runtime materializer nested in a concurrent region with function-entry storage}}
+      // expected-error @+1 {{failed to legalize operation 'obelisk_rt.bytes.scratch'}}
+      %scratch = obelisk_rt.bytes.scratch 4
+      scf.reduce
+    }
+    return
+  }
+}
+
+// -----
+
 // expected-error @+1 {{llvm.target_triple is inconsistent with the supported 64-bit little-endian runtime ABI}}
 module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",

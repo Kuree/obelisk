@@ -26,7 +26,9 @@ struct FileEntry {
 struct obelisk_rt_context {
   std::mutex mutex;
   std::array<FileEntry, 31> mcd;
-  std::vector<FileEntry> files{1}; // Index zero is never issued.
+  // 0x80000000, 0x80000001, and 0x80000002 are the IEEE predefined stdin,
+  // stdout, and stderr descriptors. Dynamic descriptors begin at index 3.
+  std::vector<FileEntry> files;
   std::vector<uint32_t> freeFiles;
   std::vector<uint32_t> freeMCDs;
   std::unordered_map<std::thread::id, std::string> lastErrors;

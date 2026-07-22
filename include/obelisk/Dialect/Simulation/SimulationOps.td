@@ -7,6 +7,7 @@ include "obelisk/Dialect/Simulation/SimulationDialect.td"
 include "obelisk/Dialect/Simulation/SimulationEnums.td"
 include "obelisk/Dialect/Simulation/SimulationAttrs.td"
 include "obelisk/Dialect/Simulation/SimulationTypes.td"
+include "obelisk/Dialect/Runtime/RuntimeTypes.td"
 include "mlir/IR/SymbolInterfaces.td"
 include "mlir/Interfaces/CallInterfaces.td"
 include "mlir/Interfaces/ControlFlowInterfaces.td"
@@ -200,6 +201,125 @@ def SimCallOp : SimOp<"call", [
   }];
   let hasVerifier = 1;
 }
+
+//===----------------------------------------------------------------------===//
+// Formatting and file I/O
+//===----------------------------------------------------------------------===//
+
+def SimBytesConstantOp : SimOp<"bytes.constant", [Pure, ConstantLike]> {
+  let summary = "immutable literal bytes preserved from source";
+  let arguments = (ins StrAttr:$value);
+  let results = (outs SimBytesType:$result);
+  let assemblyFormat = "$value attr-dict";
+  let hasFolder = 1;
+}
+
+def SimContextRuntimeOp : SimOp<"context.runtime", [Pure]> {
+  let summary = "project a simulation context to its runtime context";
+  // The native converter may already have changed the physical context type
+  // when this projection is introduced in the same conversion transaction.
+  let arguments = (ins AnyType:$context);
+  let results = (outs RTContextType:$result);
+  let assemblyFormat = "$context attr-dict `:` type($context)";
+}
+
+def SimStatusCheckOp : SimOp<"status.check", [
+  MemoryEffects<[MemWrite<SimProcessResource>]>
+]> {
+  let summary = "propagate an unexpected runtime failure from a fragment";
+  let description = [{
+    Native fragment lowering consumes this operation and routes a non-OK
+    status through the fragment ABI. Expected SystemVerilog sentinel results
+    are selected before this hook and do not use it.
+  }];
+  let arguments = (ins RTStatusType:$status);
+  let assemblyFormat = "$status attr-dict";
+}
+
+def SimDisplayOp : SimOp<"display", [
+  MemoryEffects<[MemWrite<SimIOResource>]>
+]> {
+  let summary = "formatted display or write to a SystemVerilog descriptor";
+  let description = [{
+    `item_flags` describes the logical argument sequence. Bit 0 marks a
+    nonempty packed operand signed; bit 1 represents an omitted argument and
+    consumes no entry from `items`. `scope` and `library_cell` carry the
+    elaborated call-site information used by `%m` and `%l`. `time_multiplier`
+    converts a numeric `%t` argument from the invoking scope's time unit to the
+    design precision used by the runtime clock.
+  }];
+  let arguments = (ins SimContextType:$context, I32:$descriptor,
+                       Variadic<AnyType>:$items, BoolAttr:$append_newline,
+                       I32Attr:$default_radix,
+                       DenseI32ArrayAttr:$item_flags,
+                       OptionalAttr<StrAttr>:$scope,
+                       OptionalAttr<StrAttr>:$library_cell,
+                       OptionalAttr<I64Attr>:$time_multiplier);
+  let assemblyFormat = [{$context `to` $descriptor `(` $items `)`
+    `newline` `=` $append_newline `radix` `=` $default_radix
+    `flags` `=` $item_flags attr-dict
+    `:` type($items)}];
+  let hasVerifier = 1;
+}
+
+class SimFileOp<string mnemonic, dag fileArgs, dag fileResults,
+                list<MemoryEffect> effects = [
+                  MemRead<SimIOResource>, MemWrite<SimIOResource>
+                ]>
+    : SimOp<mnemonic, [MemoryEffects<effects>]> {
+  let arguments = fileArgs;
+  let results = fileResults;
+}
+
+def SimFileOpenMCDOp : SimFileOp<"file.open_mcd",
+    (ins SimContextType:$context, SimBytesType:$path),
+    (outs I32:$descriptor)>;
+
+def SimFileOpenOp : SimFileOp<"file.open",
+    (ins SimContextType:$context, SimBytesType:$path, SimBytesType:$mode),
+    (outs I32:$descriptor)>;
+
+def SimFileCloseOp : SimFileOp<"file.close",
+    (ins SimContextType:$context, I32:$descriptor), (outs)>;
+
+def SimFileFlushOp : SimFileOp<"file.flush",
+    (ins SimContextType:$context, I32:$descriptor), (outs)>;
+
+def SimFileGetcOp : SimFileOp<"file.getc",
+    (ins SimContextType:$context, I32:$descriptor), (outs I32:$result)>;
+
+def SimFileUngetcOp : SimFileOp<"file.ungetc",
+    (ins SimContextType:$context, I32:$byte, I32:$descriptor),
+    (outs I32:$result)>;
+
+def SimFileGetlineOp : SimFileOp<"file.getline",
+    (ins SimContextType:$context, I32:$descriptor),
+    (outs AnyInteger:$data, I32:$count)> {
+  let summary = "read one bounded line for assignment to a packed value";
+  let hasVerifier = 1;
+}
+
+def SimFileReadPackedOp : SimFileOp<"file.read_packed",
+    (ins SimContextType:$context, I32:$descriptor),
+    (outs AnyInteger:$data, I32:$count)> {
+  let summary = "read bytes into an integral variable in big-endian order";
+  let hasVerifier = 1;
+}
+
+def SimFileEofOp : SimFileOp<"file.eof",
+    (ins SimContextType:$context, I32:$descriptor), (outs I32:$result),
+    [MemRead<SimIOResource>]>;
+
+def SimFileSeekOp : SimFileOp<"file.seek",
+    (ins SimContextType:$context, I32:$descriptor, I64:$offset, I32:$origin),
+    (outs I32:$result)>;
+
+def SimFileTellOp : SimFileOp<"file.tell",
+    (ins SimContextType:$context, I32:$descriptor), (outs I64:$result),
+    [MemRead<SimIOResource>]>;
+
+def SimFileRewindOp : SimFileOp<"file.rewind",
+    (ins SimContextType:$context, I32:$descriptor), (outs I32:$result)>;
 
 def SimSpawnOp : SimOp<"spawn", [
     CallOpInterface, DeclareOpInterfaceMethods<SymbolUserOpInterface>,

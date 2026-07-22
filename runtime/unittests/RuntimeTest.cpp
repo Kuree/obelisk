@@ -289,7 +289,7 @@ TEST(RuntimeABI, RejectsNullPublicArguments) {
             OBELISK_RT_INVALID_ARGUMENT);
   EXPECT_EQ(obelisk_rt_v1_file_ungetc(nullptr, 0, 0),
             OBELISK_RT_INVALID_ARGUMENT);
-  EXPECT_EQ(obelisk_rt_v1_file_getline(nullptr, 0, nullptr),
+  EXPECT_EQ(obelisk_rt_v1_file_getline(nullptr, 0, 0, nullptr),
             OBELISK_RT_INVALID_ARGUMENT);
   EXPECT_EQ(obelisk_rt_v1_file_eof(nullptr, 0, nullptr),
             OBELISK_RT_INVALID_ARGUMENT);
@@ -367,11 +367,11 @@ TEST_F(RuntimeTest, FormatsStringsRealsTimeAndEnvironment) {
   uint64_t time = 10;
   std::string text = "ok";
   std::string scope = "top.worker";
-  std::string location = "work.top";
+  std::string libraryCell = "work.top";
   std::string suffix = "ns";
   obelisk_rt_format_env_v1 environment{
-      scope.data(),  scope.size(), location.data(), location.size(), 20, 0,
-      suffix.data(), suffix.size()};
+      scope.data(),  scope.size(), libraryCell.data(), libraryCell.size(), 20, 0,
+      suffix.data(), suffix.size(), 100};
 
   auto [status, output] =
       format("[%4h][%-4h][%0h][%4s][%-4s] %.2f %m %l %0t%%",
@@ -380,7 +380,13 @@ TEST_F(RuntimeTest, FormatsStringsRealsTimeAndEnvironment) {
              &environment);
   EXPECT_EQ(status, OBELISK_RT_OK);
   EXPECT_EQ(output,
-            "[000a][a000][a][  ok][ok  ] 3.25 top.worker work.top 10ns%");
+            "[000a][a000][a][  ok][ok  ] 3.25 top.worker work.top 1000ns%");
+
+  uint64_t largestTime = std::numeric_limits<uint64_t>::max();
+  auto [largeStatus, largeOutput] =
+      format("%0t", {timeArg(largestTime)}, &environment);
+  EXPECT_EQ(largeStatus, OBELISK_RT_OK);
+  EXPECT_EQ(largeOutput, "1844674407370955161500ns");
 }
 
 TEST_F(RuntimeTest, FormatsRemainingScalarFormsAndEmptyStrings) {
@@ -614,20 +620,55 @@ TEST_F(RuntimeTest, ReadsBytesLinesAndReportsEOF) {
   EXPECT_EQ(byte, 'a');
 
   RuntimeBuffer firstLine;
-  ASSERT_EQ(obelisk_rt_v1_file_getline(context, descriptor, firstLine.out()),
+  ASSERT_EQ(obelisk_rt_v1_file_getline(context, descriptor, 64,
+                                       firstLine.out()),
             OBELISK_RT_OK);
   EXPECT_EQ(firstLine.str(), std::string("\0b\n", 3));
   RuntimeBuffer secondLine;
-  ASSERT_EQ(obelisk_rt_v1_file_getline(context, descriptor, secondLine.out()),
+  ASSERT_EQ(obelisk_rt_v1_file_getline(context, descriptor, 64,
+                                       secondLine.out()),
             OBELISK_RT_OK);
   EXPECT_EQ(secondLine.str(), "last");
   RuntimeBuffer eofLine;
-  EXPECT_EQ(obelisk_rt_v1_file_getline(context, descriptor, eofLine.out()),
+  EXPECT_EQ(obelisk_rt_v1_file_getline(context, descriptor, 64, eofLine.out()),
             OBELISK_RT_EOF);
   uint32_t isEOF = 0;
   ASSERT_EQ(obelisk_rt_v1_file_eof(context, descriptor, &isEOF), OBELISK_RT_OK);
   EXPECT_EQ(isEOF, 1u);
   EXPECT_EQ(obelisk_rt_v1_file_close(context, descriptor), OBELISK_RT_OK);
+}
+
+TEST_F(RuntimeTest, BoundsPackedLineReadsWithoutDiscardingRemainingBytes) {
+  TempDirectory temporary;
+  uint32_t descriptor = open(temporary.file("bounded-line.txt"), "w+");
+  uint64_t written = 0;
+  ASSERT_EQ(obelisk_rt_v1_file_write(context, descriptor, "abcdef\n", 7,
+                                     &written),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_file_rewind(context, descriptor), OBELISK_RT_OK);
+
+  RuntimeBuffer prefix;
+  ASSERT_EQ(obelisk_rt_v1_file_getline(context, descriptor, 3, prefix.out()),
+            OBELISK_RT_OK);
+  EXPECT_EQ(prefix.str(), "abc");
+
+  RuntimeBuffer remainder;
+  ASSERT_EQ(
+      obelisk_rt_v1_file_getline(context, descriptor, 64, remainder.out()),
+      OBELISK_RT_OK);
+  EXPECT_EQ(remainder.str(), "def\n");
+  EXPECT_EQ(obelisk_rt_v1_file_close(context, descriptor), OBELISK_RT_OK);
+}
+
+TEST_F(RuntimeTest, ReservesPredefinedFileDescriptorValues) {
+  TempDirectory temporary;
+  uint32_t descriptor = open(temporary.file("descriptor.txt"), "w");
+  EXPECT_EQ(descriptor, 0x80000003u);
+  EXPECT_EQ(obelisk_rt_v1_file_close(context, descriptor), OBELISK_RT_OK);
+
+  uint32_t reused = open(temporary.file("descriptor-reused.txt"), "w");
+  EXPECT_EQ(reused, 0x80000003u);
+  EXPECT_EQ(obelisk_rt_v1_file_close(context, reused), OBELISK_RT_OK);
 }
 
 TEST_F(RuntimeTest, FlushesAllStreamsAndReportsByteEOF) {
@@ -689,7 +730,8 @@ TEST_F(RuntimeTest, RejectsInvalidFileArgumentsAndOpenFailures) {
             OBELISK_RT_INVALID_HANDLE);
   EXPECT_EQ(obelisk_rt_v1_file_ungetc(context, invalidDescriptor, 'x'),
             OBELISK_RT_INVALID_HANDLE);
-  EXPECT_EQ(obelisk_rt_v1_file_getline(context, invalidDescriptor, line.out()),
+  EXPECT_EQ(obelisk_rt_v1_file_getline(context, invalidDescriptor, 64,
+                                       line.out()),
             OBELISK_RT_INVALID_HANDLE);
   EXPECT_EQ(obelisk_rt_v1_file_eof(context, invalidDescriptor, &eof),
             OBELISK_RT_INVALID_HANDLE);
@@ -1305,20 +1347,27 @@ TEST_F(RuntimeTest, BytecodeServicesFormatWriteAndReleaseOwnedBuffers) {
   TempDirectory temporary;
   uint32_t descriptorValue = open(temporary.file("service.txt"), "w+");
 
-  std::vector<uint8_t> constants(16, 0);
-  constants[0] = '%';
-  constants[1] = '0';
-  constants[2] = 'd';
-  constants[8] = 42;
+  std::vector<uint8_t> constants(64, 0);
+  constexpr std::string_view formatText = "%m %l %0t";
+  constexpr std::string_view scopeText = "top.worker";
+  constexpr std::string_view libraryCellText = "work.top";
+  constexpr std::string_view suffixText = "ns";
+  std::copy(formatText.begin(), formatText.end(), constants.begin());
+  uint64_t time = 42;
+  std::memcpy(constants.data() + 16, &time, sizeof(time));
+  std::copy(scopeText.begin(), scopeText.end(), constants.begin() + 24);
+  std::copy(libraryCellText.begin(), libraryCellText.end(),
+            constants.begin() + 40);
+  std::copy(suffixText.begin(), suffixText.end(), constants.begin() + 48);
 
   const obelisk_rt_bytecode_operand_v1 operands[] = {
       // format(format, arguments, environment, out buffer)
       {OBELISK_RT_BC_OPERAND_CONSTANT, OBELISK_RT_BC_OPERAND_INPUT,
-       OBELISK_RT_BC_VALUE_BYTES, 0, 0, 0, 3, 0},
+       OBELISK_RT_BC_VALUE_BYTES, 0, 0, 0, formatText.size(), 0},
       {OBELISK_RT_BC_OPERAND_IMMEDIATE, OBELISK_RT_BC_OPERAND_INPUT,
        OBELISK_RT_BC_VALUE_ARGUMENT_ARRAY, 0, 0, 8, 1, 0},
       {OBELISK_RT_BC_OPERAND_IMMEDIATE, OBELISK_RT_BC_OPERAND_INPUT,
-       OBELISK_RT_BC_VALUE_FORMAT_ENVIRONMENT, 0, 0, 0, 0, 0},
+       OBELISK_RT_BC_VALUE_FORMAT_ENVIRONMENT, 0, 0, 9, 5, 0},
       {OBELISK_RT_BC_OPERAND_REGISTER, OBELISK_RT_BC_OPERAND_OUTPUT,
        OBELISK_RT_BC_VALUE_BUFFER, 0, 0, 1, 0, 0},
       // file_write(descriptor, resource bytes, out written)
@@ -1331,10 +1380,19 @@ TEST_F(RuntimeTest, BytecodeServicesFormatWriteAndReleaseOwnedBuffers) {
       // buffer_release(resource)
       {OBELISK_RT_BC_OPERAND_RESOURCE, OBELISK_RT_BC_OPERAND_INPUT,
        OBELISK_RT_BC_VALUE_BUFFER, 0, 0, 1, 0, 0},
-      // One known 32-bit logic formatting argument.
+      // One time formatting argument followed by the environment's children.
       {OBELISK_RT_BC_OPERAND_CONSTANT, OBELISK_RT_BC_OPERAND_INPUT,
-       OBELISK_RT_BC_VALUE_ARGUMENT_LOGIC, OBELISK_RT_ARG_SIGNED, 0, 8, 32,
-       UINT64_MAX},
+       OBELISK_RT_BC_VALUE_ARGUMENT_TIME, 0, 0, 16, 8, 0},
+      {OBELISK_RT_BC_OPERAND_CONSTANT, OBELISK_RT_BC_OPERAND_INPUT,
+       OBELISK_RT_BC_VALUE_BYTES, 0, 0, 24, scopeText.size(), 0},
+      {OBELISK_RT_BC_OPERAND_CONSTANT, OBELISK_RT_BC_OPERAND_INPUT,
+       OBELISK_RT_BC_VALUE_BYTES, 0, 0, 40, libraryCellText.size(), 0},
+      {OBELISK_RT_BC_OPERAND_IMMEDIATE, OBELISK_RT_BC_OPERAND_INPUT,
+       OBELISK_RT_BC_VALUE_U32, 0, 0, 0, 0, 0},
+      {OBELISK_RT_BC_OPERAND_CONSTANT, OBELISK_RT_BC_OPERAND_INPUT,
+       OBELISK_RT_BC_VALUE_BYTES, 0, 0, 48, suffixText.size(), 0},
+      {OBELISK_RT_BC_OPERAND_IMMEDIATE, OBELISK_RT_BC_OPERAND_INPUT,
+       OBELISK_RT_BC_VALUE_U64, 0, 0, 100, 0, 0},
   };
   const obelisk_rt_bytecode_service_site_v1 sites[] = {
       {OBELISK_RT_BC_SERVICE_FORMAT, 0, 4, 0, 0},
@@ -1376,16 +1434,16 @@ TEST_F(RuntimeTest, BytecodeServicesFormatWriteAndReleaseOwnedBuffers) {
   ASSERT_EQ(executeBytecode(descriptor, &frame, sizeof(frame), 0, &action, 0,
                             context),
             OBELISK_RT_OK);
-  EXPECT_EQ(frame.written, 2u);
+  EXPECT_EQ(frame.written, 26u);
   EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
   ASSERT_EQ(obelisk_rt_v1_file_flush(context, descriptorValue), OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_file_rewind(context, descriptorValue), OBELISK_RT_OK);
-  char output[8]{};
+  char output[64]{};
   uint64_t read = 0;
   ASSERT_EQ(obelisk_rt_v1_file_read(context, descriptorValue, output,
                                     sizeof(output), &read),
             OBELISK_RT_OK);
-  EXPECT_EQ(std::string(output, read), "42");
+  EXPECT_EQ(std::string(output, read), "top.worker work.top 4200ns");
   EXPECT_EQ(obelisk_rt_v1_file_close(context, descriptorValue), OBELISK_RT_OK);
 }
 
@@ -1446,6 +1504,7 @@ TEST_F(RuntimeTest, BytecodeServicesExerciseEveryFileAndDisplayCall) {
     uint64_t written = 0;
     uint64_t mcdWritten = 0;
     int64_t firstTell = 0;
+    int64_t boundedTell = 0;
     int64_t finalTell = 0;
     uint64_t read = 0;
     uint8_t byte = 0;
@@ -1546,7 +1605,18 @@ TEST_F(RuntimeTest, BytecodeServicesExerciseEveryFileAndDisplayCall) {
         outputFrame(OBELISK_RT_BC_VALUE_I64, offsetof(Frame, firstTell),
                     sizeof(frame.firstTell))});
   call(OBELISK_RT_BC_SERVICE_FILE_REWIND, {descriptor()});
-  call(OBELISK_RT_BC_SERVICE_FILE_GETLINE, {descriptor(), outputBuffer(1)});
+  call(OBELISK_RT_BC_SERVICE_FILE_GETLINE,
+       {descriptor(), immediate(OBELISK_RT_BC_VALUE_U64, 3),
+        outputBuffer(1)});
+  call(OBELISK_RT_BC_SERVICE_BUFFER_RELEASE, {inputBuffer(1)});
+  call(OBELISK_RT_BC_SERVICE_FILE_TELL,
+       {descriptor(),
+        outputFrame(OBELISK_RT_BC_VALUE_I64, offsetof(Frame, boundedTell),
+                    sizeof(frame.boundedTell))});
+  call(OBELISK_RT_BC_SERVICE_FILE_REWIND, {descriptor()});
+  call(OBELISK_RT_BC_SERVICE_FILE_GETLINE,
+       {descriptor(), immediate(OBELISK_RT_BC_VALUE_U64, 64),
+        outputBuffer(1)});
   call(OBELISK_RT_BC_SERVICE_BUFFER_RELEASE, {inputBuffer(1)});
   call(OBELISK_RT_BC_SERVICE_FILE_GETC,
        {descriptor(), outputFrame(OBELISK_RT_BC_VALUE_U8, offsetof(Frame, byte),
@@ -1605,6 +1675,7 @@ TEST_F(RuntimeTest, BytecodeServicesExerciseEveryFileAndDisplayCall) {
   EXPECT_EQ(frame.written, writtenText.size);
   EXPECT_EQ(frame.mcdWritten, mcdText.size);
   EXPECT_EQ(frame.firstTell, 9);
+  EXPECT_EQ(frame.boundedTell, 3);
   EXPECT_EQ(frame.finalTell, 1);
   EXPECT_EQ(frame.byte, 'a');
   EXPECT_EQ(frame.read, 4u);
@@ -1706,6 +1777,8 @@ TEST_F(RuntimeTest, BytecodeResourcesRejectLeaksAndDoubleRelease) {
   const obelisk_rt_bytecode_operand_v1 operands[] = {
       {OBELISK_RT_BC_OPERAND_IMMEDIATE, OBELISK_RT_BC_OPERAND_INPUT,
        OBELISK_RT_BC_VALUE_U32, 0, 0, descriptorValue, 0, 0},
+      {OBELISK_RT_BC_OPERAND_IMMEDIATE, OBELISK_RT_BC_OPERAND_INPUT,
+       OBELISK_RT_BC_VALUE_U64, 0, 0, 5, 0, 0},
       {OBELISK_RT_BC_OPERAND_REGISTER, OBELISK_RT_BC_OPERAND_OUTPUT,
        OBELISK_RT_BC_VALUE_BUFFER, 0, 0, 1, 0, 0},
       {OBELISK_RT_BC_OPERAND_RESOURCE, OBELISK_RT_BC_OPERAND_INPUT,
@@ -1716,9 +1789,9 @@ TEST_F(RuntimeTest, BytecodeResourcesRejectLeaksAndDoubleRelease) {
        OBELISK_RT_BC_VALUE_U32, 0, 0, 1, 0, 0},
   };
   const obelisk_rt_bytecode_service_site_v1 sites[] = {
-      {OBELISK_RT_BC_SERVICE_FILE_GETLINE, 0, 2, 0, 0},
-      {OBELISK_RT_BC_SERVICE_BUFFER_RELEASE, 2, 1, 0, 0},
-      {OBELISK_RT_BC_SERVICE_FILE_EOF, 3, 2, 0, 0},
+      {OBELISK_RT_BC_SERVICE_FILE_GETLINE, 0, 3, 0, 0},
+      {OBELISK_RT_BC_SERVICE_BUFFER_RELEASE, 3, 1, 0, 0},
+      {OBELISK_RT_BC_SERVICE_FILE_EOF, 4, 2, 0, 0},
   };
 
   std::vector<uint8_t> leakCode;

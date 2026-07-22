@@ -28,6 +28,16 @@ def SimContextType : SimType<"Context"> {
   let summary = "opaque simulator and design context";
 }
 
+def SimBytesType : SimType<"Bytes"> {
+  let mnemonic = "bytes";
+  let summary = "immutable literal byte sequence";
+  let description = [{
+    This type is intentionally limited to compile-time byte strings. Dynamic
+    SystemVerilog strings remain in the semantic dialect until their ownership
+    and mutation model is implemented.
+  }];
+}
+
 def SimTimeType : SimType<"Time"> {
   let mnemonic = "time";
   let summary = "target-independent scaled simulation time";

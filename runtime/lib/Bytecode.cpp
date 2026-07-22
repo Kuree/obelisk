@@ -218,7 +218,7 @@ bool validServiceOperand(const obelisk_rt_bytecode_operand_v1 &operand,
       return false;
     if (operand.size == 0)
       return operand.value == 0;
-    if (operand.size != 4 ||
+    if (operand.size != 5 ||
         !validRange(operand.value, operand.size, program.operand_count))
       return false;
     const auto *children = program.operands + operand.value;
@@ -229,6 +229,8 @@ bool validServiceOperand(const obelisk_rt_bytecode_operand_v1 &operand,
            validServiceOperand(children[2], program, OBELISK_RT_BC_VALUE_U32,
                                OBELISK_RT_BC_OPERAND_INPUT) &&
            validServiceOperand(children[3], program, OBELISK_RT_BC_VALUE_BYTES,
+                               OBELISK_RT_BC_OPERAND_INPUT) &&
+           validServiceOperand(children[4], program, OBELISK_RT_BC_VALUE_U64,
                                OBELISK_RT_BC_OPERAND_INPUT);
   }
   default:
@@ -311,7 +313,9 @@ bool validateServiceSite(const obelisk_rt_bytecode_service_site_v1 &site,
     valid = matches({OBELISK_RT_BC_VALUE_U32, OBELISK_RT_BC_VALUE_U8});
     break;
   case OBELISK_RT_BC_SERVICE_FILE_GETLINE:
-    valid = matches({OBELISK_RT_BC_VALUE_U32, OBELISK_RT_BC_VALUE_BUFFER}, 1);
+    valid = matches({OBELISK_RT_BC_VALUE_U32, OBELISK_RT_BC_VALUE_U64,
+                     OBELISK_RT_BC_VALUE_BUFFER},
+                    1);
     break;
   case OBELISK_RT_BC_SERVICE_FILE_EOF:
     valid = matches({OBELISK_RT_BC_VALUE_U32, OBELISK_RT_BC_VALUE_U32}, 1);
@@ -1024,21 +1028,25 @@ buildEnvironment(const obelisk_rt_bytecode_operand_v1 &operand,
   const auto *children = program.operands + operand.value;
   auto scope =
       readBytesOperand(children[0], program, frame, registers, resources);
-  auto location =
+  auto libraryCell =
       readBytesOperand(children[1], program, frame, registers, resources);
   auto timeWidth = readScalarOperand(children[2], program, frame, registers);
   auto suffix =
       readBytesOperand(children[3], program, frame, registers, resources);
-  if (!scope || !location || !timeWidth || !suffix || *timeWidth > UINT32_MAX)
+  auto timeMultiplier =
+      readScalarOperand(children[4], program, frame, registers);
+  if (!scope || !libraryCell || !timeWidth || !suffix || !timeMultiplier ||
+      *timeWidth > UINT32_MAX || *timeMultiplier == 0)
     return std::nullopt;
   storage.environment = {reinterpret_cast<const char *>(scope->data),
                          scope->size,
-                         reinterpret_cast<const char *>(location->data),
-                         location->size,
+                         reinterpret_cast<const char *>(libraryCell->data),
+                         libraryCell->size,
                          static_cast<uint32_t>(*timeWidth),
                          0,
                          reinterpret_cast<const char *>(suffix->data),
-                         suffix->size};
+                         suffix->size,
+                         *timeMultiplier};
   storage.present = true;
   return storage;
 }
@@ -1216,13 +1224,13 @@ invokeService(const obelisk_rt_bytecode_service_site_v1 &site,
                                      static_cast<uint8_t>(*byte));
   }
   case OBELISK_RT_BC_SERVICE_FILE_GETLINE: {
-    auto descriptor = scalar(0);
-    if (!descriptor || *descriptor > UINT32_MAX)
+    auto descriptor = scalar(0), maxBytes = scalar(1);
+    if (!descriptor || !maxBytes || *descriptor > UINT32_MAX)
       return std::nullopt;
     obelisk_rt_buffer_v1 output{};
     status = obelisk_rt_v1_file_getline(
-        context, static_cast<uint32_t>(*descriptor), &output);
-    if (!writeBufferOperand(operand[1], output, registers, resources)) {
+        context, static_cast<uint32_t>(*descriptor), *maxBytes, &output);
+    if (!writeBufferOperand(operand[2], output, registers, resources)) {
       obelisk_rt_v1_buffer_release(&output);
       return std::nullopt;
     }

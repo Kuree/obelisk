@@ -87,10 +87,10 @@ two's-complement data; the signed flag affects interpretation and formatting,
 not storage.
 
 The formatter supports scalar binary, octal, decimal, hexadecimal, character,
-string, real, time, scope/location, raw two-state and raw four-state, and
-pattern formats. Arbitrary-width decimal conversion is performed directly on
-the word array, without truncating through a host integer. Aggregate `%p` and
-strength-aware `%v` remain future work.
+string, real, scaled time, hierarchical scope/library-cell, raw two-state and
+raw four-state, and pattern formats. Arbitrary-width decimal conversion is
+performed directly on the word array, without truncating through a host
+integer. Aggregate `%p` and strength-aware `%v` remain future work.
 
 ## Files and descriptors
 

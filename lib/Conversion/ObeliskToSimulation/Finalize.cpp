@@ -49,8 +49,8 @@ static bool isExecutableType(Type type) {
   if (auto integer = dyn_cast<IntegerType>(type))
     return integer.isSignless();
   return isa<FunctionType>(type) ||
-         isa<sim::ContextType, sim::LogicType, sim::TimeType, sim::RefType,
-             sim::NetType, sim::DriverType, sim::EventType,
+         isa<sim::ContextType, sim::BytesType, sim::LogicType, sim::TimeType,
+             sim::RefType, sim::NetType, sim::DriverType, sim::EventType,
              sim::ProcessType>(type) ||
          sim::isAggregateType(type);
 }

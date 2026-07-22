@@ -87,15 +87,16 @@ ABI_OFFSET(obelisk_rt_arg_v1, size, 8);
 ABI_OFFSET(obelisk_rt_arg_v1, data, 16);
 ABI_OFFSET(obelisk_rt_arg_v1, unknown, 24);
 
-ABI_SIZE_ALIGN(obelisk_rt_format_env_v1, 56, 8);
+ABI_SIZE_ALIGN(obelisk_rt_format_env_v1, 64, 8);
 ABI_OFFSET(obelisk_rt_format_env_v1, scope, 0);
 ABI_OFFSET(obelisk_rt_format_env_v1, scope_size, 8);
-ABI_OFFSET(obelisk_rt_format_env_v1, location, 16);
-ABI_OFFSET(obelisk_rt_format_env_v1, location_size, 24);
+ABI_OFFSET(obelisk_rt_format_env_v1, library_cell, 16);
+ABI_OFFSET(obelisk_rt_format_env_v1, library_cell_size, 24);
 ABI_OFFSET(obelisk_rt_format_env_v1, time_width, 32);
 ABI_OFFSET(obelisk_rt_format_env_v1, reserved, 36);
 ABI_OFFSET(obelisk_rt_format_env_v1, time_suffix, 40);
 ABI_OFFSET(obelisk_rt_format_env_v1, time_suffix_size, 48);
+ABI_OFFSET(obelisk_rt_format_env_v1, time_multiplier, 56);
 
 ABI_SIZE_ALIGN(obelisk_rt_fragment_descriptor_v1, 120, 8);
 ABI_OFFSET(obelisk_rt_fragment_descriptor_v1, handle, 0);
@@ -275,7 +276,7 @@ ABI_FUNCTION(obelisk_rt_v1_file_getc,
 ABI_FUNCTION(obelisk_rt_v1_file_ungetc,
              obelisk_rt_status (*)(obelisk_rt_context *, uint32_t, uint8_t));
 ABI_FUNCTION(obelisk_rt_v1_file_getline,
-             obelisk_rt_status (*)(obelisk_rt_context *, uint32_t,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint32_t, uint64_t,
                                    obelisk_rt_buffer_v1 *));
 ABI_FUNCTION(obelisk_rt_v1_file_eof,
              obelisk_rt_status (*)(obelisk_rt_context *, uint32_t, uint32_t *));

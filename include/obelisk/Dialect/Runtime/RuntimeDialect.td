@@ -18,6 +18,7 @@ def ObeliskRuntimeDialect : Dialect {
   let useDefaultAttributePrinterParser = 0;
   let useDefaultTypePrinterParser = 1;
   let usePropertiesForAttributes = 0;
+  let hasConstantMaterializer = 1;
 }
 
 #endif // OBELISK_DIALECT_RUNTIME_RUNTIMEDIALECT_TD

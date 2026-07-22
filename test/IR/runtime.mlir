@@ -48,6 +48,28 @@ func.func @loop_alloca(%ctx: !obelisk_rt.context, %fd: !obelisk_rt.fd,
   return
 }
 
+func.func @materializer_roundtrip(%status: !obelisk_rt.status) -> i1 {
+  %empty = obelisk_rt.argument.empty : () -> !obelisk_rt.arg
+  %arguments = obelisk_rt.argument.array %empty :
+      (!obelisk_rt.arg) -> !obelisk_rt.args
+  %bits = obelisk_rt.status.to_bits %status : (!obelisk_rt.status) -> i32
+  %roundtrip = obelisk_rt.status.from_bits %bits :
+      (i32) -> !obelisk_rt.status
+  %same = obelisk_rt.status.is %roundtrip, 0
+  return %same : i1
+}
+
+func.func @cross_block_pure_arguments(%bytes: !obelisk_rt.bytes) {
+  %empty = obelisk_rt.argument.empty : () -> !obelisk_rt.arg
+  %string = obelisk_rt.argument.bytes %bytes {is_format_string = true} :
+      (!obelisk_rt.bytes) -> !obelisk_rt.arg
+  cf.br ^consumer
+^consumer:
+  %arguments = obelisk_rt.argument.array %empty, %string :
+      (!obelisk_rt.arg, !obelisk_rt.arg) -> !obelisk_rt.args
+  return
+}
+
 // CHECK-LABEL: func.func @runtime_calls
 func.func @runtime_calls(
     %ctx: !obelisk_rt.context, %input_status: !obelisk_rt.status,
@@ -97,8 +119,8 @@ func.func @runtime_calls(
       (!obelisk_rt.context, !obelisk_rt.fd) -> (!obelisk_rt.status, i8)
   %ungetc_status = obelisk_rt.file.ungetc %ctx, %fd, %byte :
       (!obelisk_rt.context, !obelisk_rt.fd, i8) -> !obelisk_rt.status
-  %line_status, %line = obelisk_rt.file.getline %ctx, %fd :
-      (!obelisk_rt.context, !obelisk_rt.fd) ->
+  %line_status, %line = obelisk_rt.file.getline %ctx, %fd, %limit :
+      (!obelisk_rt.context, !obelisk_rt.fd, i64) ->
       (!obelisk_rt.status, !obelisk_rt.buffer)
   obelisk_rt.buffer.release %line : (!obelisk_rt.buffer) -> ()
   %eof_status, %is_eof = obelisk_rt.file.eof %ctx, %fd :
@@ -108,9 +130,8 @@ func.func @runtime_calls(
       (!obelisk_rt.context, !obelisk_rt.fd) ->
       (!obelisk_rt.status, i32, !obelisk_rt.buffer)
   obelisk_rt.buffer.release %message : (!obelisk_rt.buffer) -> ()
-  %seek_status = obelisk_rt.file.seek %ctx, %fd, %offset
-      {origin = 0 : i32} :
-      (!obelisk_rt.context, !obelisk_rt.fd, i64) -> !obelisk_rt.status
+  %seek_status = obelisk_rt.file.seek %ctx, %fd, %offset, %continuation :
+      (!obelisk_rt.context, !obelisk_rt.fd, i64, i32) -> !obelisk_rt.status
   %tell_status, %position = obelisk_rt.file.tell %ctx, %fd :
       (!obelisk_rt.context, !obelisk_rt.fd) -> (!obelisk_rt.status, i64)
   %rewind_status = obelisk_rt.file.rewind %ctx, %fd :

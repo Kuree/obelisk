@@ -22,6 +22,19 @@ using namespace mlir;
 
 namespace obelisk::runtime {
 
+Operation *ObeliskRuntimeDialect::materializeConstant(OpBuilder &builder,
+                                                       Attribute value,
+                                                       Type type,
+                                                       Location location) {
+  if (!isa<ByteSpanType>(type))
+    return nullptr;
+  auto bytes = dyn_cast<StringAttr>(value);
+  return bytes ? RTBytesConstantOp::create(builder, location, type, bytes)
+               : nullptr;
+}
+
+OpFoldResult RTBytesConstantOp::fold(FoldAdaptor) { return getValueAttr(); }
+
 llvm::StringRef getRuntimeSymbol(RuntimeCall call) {
   switch (call) {
 #define OBELISK_RUNTIME_CALL(Name, Op, Symbol, Signature)                      \
@@ -223,13 +236,34 @@ void ObeliskRuntimeDialect::initialize() {
 }
 
 static LogicalResult verifyOwnedBuffer(Operation *producer, Value buffer) {
-  if (!buffer.hasOneUse())
+  unsigned releases = 0;
+  unsigned sizes = 0;
+  unsigned packedReads = 0;
+  Operation *release = nullptr;
+  for (Operation *consumer : buffer.getUsers()) {
+    if (isa<RTBufferReleaseOp>(consumer)) {
+      ++releases;
+      release = consumer;
+    } else if (isa<RTBytesSizeOp>(consumer))
+      ++sizes;
+    else if (isa<RTPackedFromBytesOp>(consumer))
+      ++packedReads;
+    else
+      return producer->emitOpError()
+             << "owned buffer has an unsupported consumer "
+             << consumer->getName();
+    if (consumer->getBlock() != producer->getBlock())
+      return producer->emitOpError()
+             << "owned buffer consumers must remain in the producer's block";
+  }
+  if (releases != 1 || sizes > 1 || packedReads > 1)
     return producer->emitOpError()
-           << "owned buffer must have exactly one consuming use";
-  Operation *consumer = *buffer.getUsers().begin();
-  if (!isa<RTBufferReleaseOp>(consumer))
-    return producer->emitOpError()
-           << "owned buffer must be consumed by obelisk_rt.buffer.release";
+           << "owned buffer requires one release and at most one size and one "
+              "packed read";
+  for (Operation *consumer : buffer.getUsers())
+    if (consumer != release && !consumer->isBeforeInBlock(release))
+      return producer->emitOpError()
+             << "owned buffer size and packed reads must precede its release";
   return success();
 }
 
@@ -243,9 +277,82 @@ LogicalResult RTBufferReleaseOp::verify() {
   if (producer->getBlock() != getOperation()->getBlock())
     return emitOpError()
            << "must consume its owned buffer in the producer's block";
-  if (!getBuffer().hasOneUse())
-    return emitOpError() << "must be the owned buffer's only consuming use";
+  return verifyOwnedBuffer(producer, getBuffer());
+}
+
+static bool isByteContainer(Type type) {
+  return isa<ByteSpanType, MutableByteSpanType, BufferType>(type);
+}
+
+template <typename... AllowedConsumers>
+static LogicalResult verifyConsumers(Operation *producer, Value value,
+                                     StringRef description) {
+  for (Operation *consumer : value.getUsers()) {
+    if (!isa<AllowedConsumers...>(consumer))
+      return producer->emitOpError()
+             << description << " has an unsupported consumer "
+             << consumer->getName();
+  }
   return success();
+}
+
+template <typename... AllowedConsumers>
+static LogicalResult verifyLocalConsumers(Operation *producer, Value value,
+                                          StringRef description) {
+  for (Operation *consumer : value.getUsers())
+    if (consumer->getBlock() != producer->getBlock())
+      return producer->emitOpError()
+             << description << " consumers must remain in the producer's block";
+  return verifyConsumers<AllowedConsumers...>(producer, value, description);
+}
+
+LogicalResult RTScratchOp::verify() {
+  if (getSizeAttr().getValue().isNegative())
+    return emitOpError("scratch byte count must be nonnegative");
+  return verifyLocalConsumers<RTFileReadOp, RTPackedFromBytesOp>(
+      *this, getResult(), "stack-backed scratch span");
+}
+
+LogicalResult RTBytesSizeOp::verify() {
+  if (!isByteContainer(getBytes().getType()))
+    return emitOpError("requires a byte span, mutable byte span, or buffer");
+  return success();
+}
+
+LogicalResult RTPackedFromBytesOp::verify() {
+  if (!isByteContainer(getBytes().getType()))
+    return emitOpError("requires a byte span, mutable byte span, or buffer");
+  return success();
+}
+
+LogicalResult RTArgumentEmptyOp::verify() {
+  return verifyConsumers<RTArgumentArrayOp>(
+      *this, getResult(), "format argument");
+}
+
+LogicalResult RTArgumentPackedOp::verify() {
+  if (Value unknown = getUnknown())
+    if (unknown.getType() != getValue().getType())
+      return emitOpError("unknown plane must match the value plane type");
+  return verifyLocalConsumers<RTArgumentArrayOp>(
+      *this, getResult(), "stack-backed packed format argument");
+}
+
+LogicalResult RTArgumentBytesOp::verify() {
+  return verifyConsumers<RTArgumentArrayOp>(
+      *this, getResult(), "format argument");
+}
+
+LogicalResult RTArgumentArrayOp::verify() {
+  return verifyLocalConsumers<RTFormatOp, RTDisplayOp>(
+      *this, getResult(), "stack-backed format argument array");
+}
+
+LogicalResult RTFormatEnvironmentOp::verify() {
+  if (!getTimeMultiplierAttr().getValue().isStrictlyPositive())
+    return emitOpError("time multiplier must be positive");
+  return verifyLocalConsumers<RTFormatOp, RTDisplayOp>(
+      *this, getResult(), "stack-backed format environment");
 }
 
 LogicalResult RTLastErrorOp::verify() {

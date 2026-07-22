@@ -42,6 +42,36 @@ SimulationToStandardTypeConverter::SimulationToStandardTypeConverter() {
       });
 }
 
+static LogicalResult convertPackedAggregateType(
+    Type type, SmallVectorImpl<Type> &results) {
+  Type scalar = sim::getPackedScalarType(type);
+  if (auto logic = dyn_cast_or_null<sim::LogicType>(scalar)) {
+    Type plane = IntegerType::get(type.getContext(), logic.getWidth());
+    results.append({plane, plane});
+    return success();
+  }
+  if (auto integer = dyn_cast_or_null<IntegerType>(scalar)) {
+    results.push_back(integer);
+    return success();
+  }
+  return failure();
+}
+
+void addSimulationPackedAggregateTypeConversions(TypeConverter &converter) {
+  converter.addConversion(
+      [](sim::PackedArrayType type, SmallVectorImpl<Type> &results) {
+        return convertPackedAggregateType(type, results);
+      });
+  converter.addConversion(
+      [](sim::PackedStructType type, SmallVectorImpl<Type> &results) {
+        return convertPackedAggregateType(type, results);
+      });
+  converter.addConversion(
+      [](sim::PackedUnionType type, SmallVectorImpl<Type> &results) {
+        return convertPackedAggregateType(type, results);
+      });
+}
+
 namespace {
 
 struct LogicValue {
@@ -151,6 +181,21 @@ static void replaceInteger(Operation *op, Value result,
                            ConversionPatternRewriter &rewriter) {
   rewriter.replaceOp(op, result);
 }
+
+template <typename Op>
+class PackedAggregateViewConversion final : public OpConversionPattern<Op> {
+public:
+  using OpConversionPattern<Op>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(Op op,
+                  typename OpConversionPattern<Op>::OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    SmallVector<ValueRange> replacements{adaptor.getInput()};
+    rewriter.replaceOpWithMultiple(op, replacements);
+    return success();
+  }
+};
 
 static LogicValue canonicalUnknown(OpBuilder &builder, Location loc,
                                    IntegerType type) {
@@ -1326,6 +1371,13 @@ public:
 };
 
 } // namespace
+
+void populateSimulationPackedAggregateViewPatterns(
+    const TypeConverter &converter, RewritePatternSet &patterns) {
+  patterns.add<PackedAggregateViewConversion<sim::SimPackedFlattenOp>,
+               PackedAggregateViewConversion<sim::SimPackedUnflattenOp>>(
+      converter, patterns.getContext());
+}
 
 void populateSimulationToStandardPatterns(const TypeConverter &converter,
                                           RewritePatternSet &patterns) {

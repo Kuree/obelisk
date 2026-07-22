@@ -20,6 +20,16 @@ public:
   SimulationToStandardTypeConverter();
 };
 
+/// Extend a composing converter so packed aggregate values use the same
+/// scalar value/unknown planes as `sim.packed.flatten` exposes.
+void addSimulationPackedAggregateTypeConversions(
+    mlir::TypeConverter &converter);
+
+/// Add identity view conversions for packed flatten/unflatten after their
+/// aggregate and scalar types have both been converted to scalar planes.
+void populateSimulationPackedAggregateViewPatterns(
+    const mlir::TypeConverter &converter, mlir::RewritePatternSet &patterns);
+
 /// Adds conversions for the pure obelisk_sim packed-value operations and the
 /// standard func/cf boundaries through which their 1:N values may flow.
 /// `converter` must map every `sim::LogicType<W>` to exactly two `iW` values.

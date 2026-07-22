@@ -251,6 +251,8 @@ enum {
 
 // value is an immediate, register index, byte offset, or first child operand
 // according to kind/value_kind. size is a byte/bit count or child count.
+// A nonempty FORMAT_ENVIRONMENT has five children: scope bytes, library.cell
+// bytes, U32 time width, suffix bytes, and a nonzero U64 time multiplier.
 // auxiliary is used only by ARGUMENT_LOGIC: UINT64_MAX means a known value;
 // otherwise it is the checked byte offset of the unknown plane in the same
 // frame or constant pool as the value plane. flags use OBELISK_RT_ARG_* for
@@ -343,12 +345,13 @@ enum {
 typedef struct obelisk_rt_format_env_v1 {
   const char *scope;
   uint64_t scope_size;
-  const char *location;
-  uint64_t location_size;
+  const char *library_cell;
+  uint64_t library_cell_size;
   uint32_t time_width;
   uint32_t reserved;
   const char *time_suffix;
   uint64_t time_suffix_size;
+  uint64_t time_multiplier;
 } obelisk_rt_format_env_v1;
 
 typedef uint32_t obelisk_rt_seek_origin;
@@ -418,6 +421,7 @@ obelisk_rt_status obelisk_rt_v1_file_ungetc(obelisk_rt_context *context,
                                             uint32_t descriptor, uint8_t byte);
 obelisk_rt_status obelisk_rt_v1_file_getline(obelisk_rt_context *context,
                                              uint32_t descriptor,
+                                             uint64_t max_bytes,
                                              obelisk_rt_buffer_v1 *out_line);
 obelisk_rt_status obelisk_rt_v1_file_eof(obelisk_rt_context *context,
                                          uint32_t descriptor,

@@ -9,6 +9,7 @@ add_mlir_library(ObeliskSimulationIR
   ObeliskSimulationTypesIncGen
 
   LINK_LIBS PUBLIC
+  ObeliskRuntimeIR
   MLIRCallInterfaces
   MLIRArithDialect
   MLIRControlFlowInterfaces

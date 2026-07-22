@@ -181,9 +181,42 @@ unsigned divideWordsBy10(std::vector<uint64_t> &words) {
   return remainder;
 }
 
-std::string knownDecimal(const LogicView &view) {
+uint64_t multiplyHigh(uint64_t left, uint64_t right) {
+#if defined(__SIZEOF_INT128__)
+  return static_cast<uint64_t>((static_cast<__uint128_t>(left) * right) >> 64);
+#else
+  uint64_t leftLow = static_cast<uint32_t>(left);
+  uint64_t leftHigh = left >> 32;
+  uint64_t rightLow = static_cast<uint32_t>(right);
+  uint64_t rightHigh = right >> 32;
+  uint64_t lowProduct = leftLow * rightLow;
+  uint64_t crossLow = leftLow * rightHigh;
+  uint64_t crossHigh = leftHigh * rightLow;
+  uint64_t middle = (lowProduct >> 32) + static_cast<uint32_t>(crossLow) +
+                    static_cast<uint32_t>(crossHigh);
+  return leftHigh * rightHigh + (crossLow >> 32) + (crossHigh >> 32) +
+         (middle >> 32);
+#endif
+}
+
+void multiplyWords(std::vector<uint64_t> &words, uint64_t multiplier) {
+  uint64_t carry = 0;
+  for (uint64_t &word : words) {
+    uint64_t high = multiplyHigh(word, multiplier);
+    uint64_t low = word * multiplier;
+    uint64_t scaled = low + carry;
+    high += scaled < low;
+    word = scaled;
+    carry = high;
+  }
+  if (carry)
+    words.push_back(carry);
+}
+
+std::string knownDecimal(const LogicView &view, uint64_t multiplier = 1) {
   bool negative = false;
   std::vector<uint64_t> words = magnitudeWords(view, negative);
+  multiplyWords(words, multiplier);
   if (wordsAreZero(words))
     return "0";
   std::string result;
@@ -234,20 +267,25 @@ uint32_t defaultDecimalWidth(const LogicView &view) {
       std::min<uint64_t>(width, std::numeric_limits<uint32_t>::max()));
 }
 
+obelisk_rt_status formatDecimal(std::string &output, const LogicView &view,
+                                const FormatOptions &options,
+                                uint64_t multiplier = 1) {
+  std::string field;
+  if (std::optional<char> unknown = decimalUnknown(view))
+    field.push_back(*unknown);
+  else
+    field = knownDecimal(view, multiplier);
+  uint32_t width = options.width.value_or(defaultDecimalWidth(view));
+  applyPadding(output, std::move(field), width, options.left, ' ');
+  return OBELISK_RT_OK;
+}
+
 obelisk_rt_status formatInteger(std::string &output, const LogicView &view,
                                 char specifier, const FormatOptions &options) {
   char spec =
       static_cast<char>(std::tolower(static_cast<unsigned char>(specifier)));
-  if (spec == 'd') {
-    std::string field;
-    if (std::optional<char> unknown = decimalUnknown(view))
-      field.push_back(*unknown);
-    else
-      field = knownDecimal(view);
-    uint32_t width = options.width.value_or(defaultDecimalWidth(view));
-    applyPadding(output, std::move(field), width, options.left, ' ');
-    return OBELISK_RT_OK;
-  }
+  if (spec == 'd')
+    return formatDecimal(output, view, options);
 
   unsigned groupBits = spec == 'b' ? 1 : spec == 'o' ? 3 : 4;
   std::string field = baseDigits(view, groupBits);
@@ -437,7 +475,11 @@ obelisk_rt_status formatArgument(std::string &output,
     if (!timeOptions.width)
       timeOptions.width =
           environment && environment->time_width ? environment->time_width : 20;
-    obelisk_rt_status status = formatInteger(output, view, 'd', timeOptions);
+    uint64_t multiplier = environment && environment->time_multiplier
+                              ? environment->time_multiplier
+                              : 1;
+    obelisk_rt_status status =
+        formatDecimal(output, view, timeOptions, multiplier);
     if (status != OBELISK_RT_OK)
       return status;
     if (environment &&
@@ -577,8 +619,8 @@ obelisk_rt_status formatSequence(std::string &output, std::string_view format,
           data = environment->scope;
           size = environment->scope_size;
         } else {
-          data = environment->location;
-          size = environment->location_size;
+          data = environment->library_cell;
+          size = environment->library_cell_size;
         }
       }
       if (!validBytes(data, size) ||

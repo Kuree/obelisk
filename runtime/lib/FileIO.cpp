@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -41,8 +42,7 @@ FileEntry *getFileUnlocked(obelisk_rt_context *context, uint32_t descriptor) {
   if ((descriptor & kFDTag) == 0)
     return nullptr;
   uint32_t index = descriptor & kFDIndexMask;
-  if (index == 0 || index >= context->files.size() ||
-      !context->files[index].stream)
+  if (index >= context->files.size() || !context->files[index].stream)
     return nullptr;
   return &context->files[index];
 }
@@ -179,7 +179,8 @@ obelisk_rt_v1_file_open(obelisk_rt_context *context, const char *path,
       return OBELISK_RT_INVALID_ARGUMENT;
     }
     errno = 0;
-    FILE *stream = std::fopen(pathString->c_str(), normalized.c_str());
+    std::unique_ptr<FILE, decltype(&std::fclose)> stream(
+        std::fopen(pathString->c_str(), normalized.c_str()), &std::fclose);
     if (!stream) {
       int error = errno ? errno : EIO;
       setLastError(context, "fopen failed: " + hostErrorMessage(error));
@@ -192,16 +193,16 @@ obelisk_rt_v1_file_open(obelisk_rt_context *context, const char *path,
     if (!context->freeFiles.empty()) {
       index = context->freeFiles.back();
       context->freeFiles.pop_back();
-      context->files[index] = {stream, 0, writable};
+      context->files[index] = {stream.get(), 0, writable};
     } else {
       if (context->files.size() > kFDIndexMask) {
-        std::fclose(stream);
         setLastErrorUnlocked(context, "file descriptor table is full");
         return OBELISK_RT_OUT_OF_RESOURCES;
       }
       index = static_cast<uint32_t>(context->files.size());
-      context->files.push_back({stream, 0, writable});
+      context->files.push_back({stream.get(), 0, writable});
     }
+    stream.release();
     *outDescriptor = kFDTag | index;
     return OBELISK_RT_OK;
   });
@@ -215,6 +216,11 @@ obelisk_rt_v1_file_close(obelisk_rt_context *context, uint32_t descriptor) {
     std::lock_guard<std::mutex> lock(context->mutex);
     if (descriptor & kFDTag) {
       uint32_t index = descriptor & kFDIndexMask;
+      if (index < 3) {
+        setLastErrorUnlocked(context,
+                             "predefined file descriptors cannot be closed");
+        return OBELISK_RT_INVALID_HANDLE;
+      }
       FileEntry *entry = getFileUnlocked(context, descriptor);
       if (!entry) {
         setLastErrorUnlocked(context,
@@ -265,7 +271,9 @@ obelisk_rt_v1_file_flush(obelisk_rt_context *context, uint32_t descriptor) {
       for (uint32_t bit = 1; bit < context->mcd.size(); ++bit)
         if (context->mcd[bit].stream && context->mcd[bit].writable)
           outputs.push_back(&context->mcd[bit]);
-      for (size_t index = 1; index < context->files.size(); ++index)
+      // stdout is already represented by MCD bit zero. Include stderr and all
+      // dynamically opened writable descriptors without flushing stdout twice.
+      for (size_t index = 2; index < context->files.size(); ++index)
         if (context->files[index].stream && context->files[index].writable)
           outputs.push_back(&context->files[index]);
     } else if (!getOutputsUnlocked(context, descriptor, outputs)) {
@@ -374,6 +382,7 @@ obelisk_rt_v1_file_ungetc(obelisk_rt_context *context, uint32_t descriptor,
 
 extern "C" obelisk_rt_status
 obelisk_rt_v1_file_getline(obelisk_rt_context *context, uint32_t descriptor,
+                           uint64_t maxBytes,
                            obelisk_rt_buffer_v1 *outLine) {
   if (!context || !outLine)
     return OBELISK_RT_INVALID_ARGUMENT;
@@ -388,7 +397,7 @@ obelisk_rt_v1_file_getline(obelisk_rt_context *context, uint32_t descriptor,
       return status;
     std::string line;
     errno = 0;
-    while (true) {
+    while (line.size() < maxBytes) {
       int character = std::fgetc(entry->stream);
       if (character == EOF)
         break;

@@ -1087,6 +1087,17 @@ private:
         setSymbolReference(attrs, scope,
                            Op::getSystemScopeSymbolAttrName(operationName),
                            Op::getSystemScopePathAttrName(operationName));
+        std::string libraryCell;
+        if (const auto *library = scope.getSourceLibrary()) {
+          libraryCell += library->name;
+          libraryCell.push_back('.');
+        }
+        if (const auto *definition = scope.getDeclaringDefinition())
+          libraryCell += definition->name;
+        else
+          libraryCell += "$unit";
+        attrs.set(Op::getSystemLibraryCellAttrName(operationName),
+                  builder.getStringAttr(libraryCell));
         if (const auto *iterator =
                 std::get_if<slang::ast::CallExpression::IteratorCallInfo>(
                     &system->extraInfo)) {

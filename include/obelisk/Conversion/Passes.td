@@ -121,6 +121,24 @@ def ConvertObeliskSimValuesToStandardPass
   ];
 }
 
+def ConvertObeliskSimToRuntimePass
+    : Pass<"convert-obelisk-sim-to-runtime", "mlir::ModuleOp"> {
+  let summary = "Lower precise simulation display and file I/O to runtime calls";
+  let description = [{
+    Lowers literal bytes, display/write, and the supported packed file service
+    subset to typed obelisk_rt calls and target-independent materializers. It
+    also lowers four-state packed arguments to value/unknown planes, while
+    leaving context projection and fragment status propagation as explicit
+    hooks for native fragment lowering.
+  }];
+  let dependentDialects = [
+    "obelisk::runtime::ObeliskRuntimeDialect",
+    "obelisk::sim::ObeliskSimulationDialect",
+    "mlir::arith::ArithDialect",
+    "mlir::func::FuncDialect"
+  ];
+}
+
 def ConvertObeliskRuntimeToLLVMPass
     : Pass<"convert-obelisk-runtime-to-llvm", "mlir::ModuleOp"> {
   let summary = "Lower typed Obelisk runtime calls to the in-tree LLVM C ABI";
