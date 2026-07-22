@@ -251,6 +251,12 @@ TEST(RuntimeABI, ReportsEveryStatusAndReleasesBuffersIdempotently) {
       {OBELISK_RT_ARGUMENT_MISMATCH, "format argument mismatch"},
       {OBELISK_RT_INVALID_BYTECODE, "invalid bytecode"},
       {OBELISK_RT_STEP_LIMIT, "fragment step limit exceeded"},
+      {OBELISK_RT_LAYOUT_MISMATCH, "process frame layout mismatch"},
+      {OBELISK_RT_INVALID_CONTINUATION, "invalid process continuation"},
+      {OBELISK_RT_TIER_UNAVAILABLE, "requested process tier unavailable"},
+      {OBELISK_RT_INVALID_LIFECYCLE,
+       "invalid process lifecycle transition"},
+      {OBELISK_RT_INVALID_FRAME, "invalid process frame record"},
   };
   for (const auto &[status, message] : statuses)
     EXPECT_STREQ(obelisk_rt_v1_status_string(status), message);

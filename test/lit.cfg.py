@@ -33,7 +33,7 @@ tool_dirs = [
 ]
 llvm_config.add_tool_substitutions(
     ["obelisk", "obelisk-opt", "obelisk-sim-standard-api-test", "FileCheck",
-     "mlir-opt", "mlir-runner", "not"],
+     "mlir-opt", "mlir-runner", "mlir-translate", "not", "opt"],
     tool_dirs,
 )
 

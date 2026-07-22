@@ -1,7 +1,8 @@
 //===- Bytecode.cpp - Shared native/bytecode fragment dispatch -----------===//
 
-#include "obelisk/Runtime/Runtime.h"
+#include "RuntimeInternal.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <deque>
@@ -1623,6 +1624,36 @@ executeFragment(const obelisk_rt_fragment_descriptor_v1 *descriptor,
 }
 
 } // namespace
+
+obelisk_rt_status
+obelisk_rt_validate_bytecode_program(const obelisk_rt_bytecode_v1 &program,
+                                     uint32_t continuation) noexcept {
+  try {
+    if (!program.code || program.code_size == 0 ||
+        program.code_size % OBELISK_RT_BYTECODE_INSTRUCTION_SIZE != 0 ||
+        program.register_count > static_cast<uint32_t>(UINT16_MAX) + 1u ||
+        program.entry_count == 0 || !program.entries)
+      return OBELISK_RT_INVALID_BYTECODE;
+    const uint64_t instructionCount =
+        program.code_size / OBELISK_RT_BYTECODE_INSTRUCTION_SIZE;
+    if (!ensureEntryTableValidated(program, instructionCount))
+      return OBELISK_RT_INVALID_BYTECODE;
+    auto *begin = program.entries;
+    auto *end = begin + program.entry_count;
+    auto *entry = std::lower_bound(
+        begin, end, continuation,
+        [](const obelisk_rt_bytecode_entry_v1 &candidate, uint32_t id) {
+          return candidate.continuation < id;
+        });
+    return entry != end && entry->continuation == continuation
+               ? OBELISK_RT_OK
+               : OBELISK_RT_TIER_UNAVAILABLE;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_INVALID_BYTECODE;
+  }
+}
 
 extern "C" obelisk_rt_status obelisk_rt_v1_fragment_execute(
     const obelisk_rt_fragment_descriptor_v1 *descriptor,

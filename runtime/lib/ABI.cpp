@@ -104,6 +104,60 @@ ABI_OFFSET(obelisk_rt_fragment_descriptor_v1, code_kind, 16);
 ABI_OFFSET(obelisk_rt_fragment_descriptor_v1, flags, 20);
 ABI_OFFSET(obelisk_rt_fragment_descriptor_v1, code, 24);
 
+ABI_SIZE_ALIGN(obelisk_rt_frame_field_v1, 32, 8);
+ABI_OFFSET(obelisk_rt_frame_field_v1, kind, 0);
+ABI_OFFSET(obelisk_rt_frame_field_v1, flags, 4);
+ABI_OFFSET(obelisk_rt_frame_field_v1, offset, 8);
+ABI_OFFSET(obelisk_rt_frame_field_v1, size, 16);
+ABI_OFFSET(obelisk_rt_frame_field_v1, alignment, 24);
+ABI_OFFSET(obelisk_rt_frame_field_v1, reserved, 28);
+ABI_SIZE_ALIGN(obelisk_rt_frame_layout_v1, 56, 8);
+ABI_OFFSET(obelisk_rt_frame_layout_v1, version, 0);
+ABI_OFFSET(obelisk_rt_frame_layout_v1, flags, 4);
+ABI_OFFSET(obelisk_rt_frame_layout_v1, frame_size, 8);
+ABI_OFFSET(obelisk_rt_frame_layout_v1, frame_alignment, 16);
+ABI_OFFSET(obelisk_rt_frame_layout_v1, fields, 24);
+ABI_OFFSET(obelisk_rt_frame_layout_v1, field_count, 32);
+ABI_OFFSET(obelisk_rt_frame_layout_v1, continuation_count, 36);
+ABI_OFFSET(obelisk_rt_frame_layout_v1, continuations, 40);
+ABI_OFFSET(obelisk_rt_frame_layout_v1, checksum, 48);
+ABI_SIZE_ALIGN(obelisk_rt_wait_record_v1, 32, 8);
+ABI_OFFSET(obelisk_rt_wait_record_v1, version, 0);
+ABI_OFFSET(obelisk_rt_wait_record_v1, kind, 4);
+ABI_OFFSET(obelisk_rt_wait_record_v1, flags, 8);
+ABI_OFFSET(obelisk_rt_wait_record_v1, count, 12);
+ABI_OFFSET(obelisk_rt_wait_record_v1, payload, 16);
+ABI_OFFSET(obelisk_rt_wait_record_v1, auxiliary, 24);
+ABI_SIZE_ALIGN(obelisk_rt_wait_entry_v1, 16, 8);
+ABI_OFFSET(obelisk_rt_wait_entry_v1, stable_id, 0);
+ABI_OFFSET(obelisk_rt_wait_entry_v1, edge, 8);
+ABI_OFFSET(obelisk_rt_wait_entry_v1, reserved, 12);
+ABI_SIZE_ALIGN(obelisk_rt_process_descriptor_v1, 72, 8);
+ABI_OFFSET(obelisk_rt_process_descriptor_v1, handle, 0);
+ABI_OFFSET(obelisk_rt_process_descriptor_v1, abi_generation, 16);
+ABI_OFFSET(obelisk_rt_process_descriptor_v1, flags, 20);
+ABI_OFFSET(obelisk_rt_process_descriptor_v1, available_tiers, 24);
+ABI_OFFSET(obelisk_rt_process_descriptor_v1, reserved, 28);
+ABI_OFFSET(obelisk_rt_process_descriptor_v1, frame_layout, 32);
+ABI_OFFSET(obelisk_rt_process_descriptor_v1, native_requirements, 40);
+ABI_OFFSET(obelisk_rt_process_descriptor_v1, native_execute, 48);
+ABI_OFFSET(obelisk_rt_process_descriptor_v1, native_destroy, 56);
+ABI_OFFSET(obelisk_rt_process_descriptor_v1, bytecode, 64);
+ABI_SIZE_ALIGN(obelisk_rt_process_instance_v1, 88, 8);
+ABI_OFFSET(obelisk_rt_process_instance_v1, descriptor, 0);
+ABI_OFFSET(obelisk_rt_process_instance_v1, allocation, 8);
+ABI_OFFSET(obelisk_rt_process_instance_v1, frame, 16);
+ABI_OFFSET(obelisk_rt_process_instance_v1, frame_size, 24);
+ABI_OFFSET(obelisk_rt_process_instance_v1, scratch_offset, 32);
+ABI_OFFSET(obelisk_rt_process_instance_v1, scratch_size, 40);
+ABI_OFFSET(obelisk_rt_process_instance_v1, native_handle, 48);
+ABI_OFFSET(obelisk_rt_process_instance_v1, continuation, 56);
+ABI_OFFSET(obelisk_rt_process_instance_v1, tier, 60);
+ABI_OFFSET(obelisk_rt_process_instance_v1, lifecycle, 64);
+ABI_OFFSET(obelisk_rt_process_instance_v1, status, 68);
+ABI_OFFSET(obelisk_rt_process_instance_v1, context, 72);
+ABI_OFFSET(obelisk_rt_process_instance_v1, action, 80);
+
 #undef ABI_OFFSET
 #undef ABI_SIZE_ALIGN
 
@@ -121,6 +175,11 @@ static_assert(OBELISK_RT_FORMAT_ERROR == 7);
 static_assert(OBELISK_RT_ARGUMENT_MISMATCH == 8);
 static_assert(OBELISK_RT_INVALID_BYTECODE == 9);
 static_assert(OBELISK_RT_STEP_LIMIT == 10);
+static_assert(OBELISK_RT_LAYOUT_MISMATCH == 11);
+static_assert(OBELISK_RT_INVALID_CONTINUATION == 12);
+static_assert(OBELISK_RT_TIER_UNAVAILABLE == 13);
+static_assert(OBELISK_RT_INVALID_LIFECYCLE == 14);
+static_assert(OBELISK_RT_INVALID_FRAME == 15);
 static_assert(OBELISK_RT_DESCRIPTOR_INVALID == 0);
 static_assert(OBELISK_RT_DESCRIPTOR_SCOPE == 1);
 static_assert(OBELISK_RT_DESCRIPTOR_STORAGE == 2);
@@ -140,6 +199,29 @@ static_assert(OBELISK_RT_SUSPEND_EVENT == 4);
 static_assert(OBELISK_RT_SUSPEND_AWAIT == 5);
 static_assert(OBELISK_RT_SUSPEND_JOIN == 6);
 static_assert(OBELISK_RT_SUSPEND_FRONTIER == 7);
+static_assert(OBELISK_RT_ACTION_FRAME_WAIT_RECORD == 1);
+static_assert(OBELISK_RT_FRAME_LAYOUT_VERSION == 1);
+static_assert(OBELISK_RT_FRAME_CAPTURE == 1);
+static_assert(OBELISK_RT_FRAME_CONTINUATION == 2);
+static_assert(OBELISK_RT_FRAME_LIVE == 3);
+static_assert(OBELISK_RT_FRAME_WAIT == 4);
+static_assert(OBELISK_RT_FRAME_FIELD_FLAGS_NONE == 0);
+static_assert(OBELISK_RT_FRAME_FOUR_STATE_VALUE == 1);
+static_assert(OBELISK_RT_FRAME_FOUR_STATE_UNKNOWN == 2);
+static_assert(OBELISK_RT_WAIT_RECORD_VERSION == 1);
+static_assert(OBELISK_RT_WAIT_EDGE_CHANGE == 0);
+static_assert(OBELISK_RT_WAIT_EDGE_POSEDGE == 1);
+static_assert(OBELISK_RT_WAIT_EDGE_NEGEDGE == 2);
+static_assert(OBELISK_RT_WAIT_EDGE_BOTH == 3);
+static_assert(OBELISK_RT_WAIT_EDGE_NONE == UINT32_MAX);
+static_assert(OBELISK_RT_TIER_NATIVE == 1);
+static_assert(OBELISK_RT_TIER_BYTECODE == 2);
+static_assert(OBELISK_RT_TIER_MASK_NATIVE == 1);
+static_assert(OBELISK_RT_TIER_MASK_BYTECODE == 2);
+static_assert(OBELISK_RT_PROCESS_READY == 0);
+static_assert(OBELISK_RT_PROCESS_EXECUTING == 1);
+static_assert(OBELISK_RT_PROCESS_SUSPENDED == 2);
+static_assert(OBELISK_RT_PROCESS_TERMINATED == 3);
 static_assert(OBELISK_RT_FRAGMENT_NATIVE == 0);
 static_assert(OBELISK_RT_FRAGMENT_BYTECODE == 1);
 static_assert(OBELISK_RT_BC_TYPE_NONE == 0);
@@ -299,5 +381,18 @@ ABI_FUNCTION(obelisk_rt_v1_bytecode_execute_bounded,
                                    obelisk_rt_context *, void *, uint64_t,
                                    uint32_t, uint64_t,
                                    obelisk_rt_fragment_action_v1 *));
+ABI_FUNCTION(obelisk_rt_v1_process_instance_create,
+             obelisk_rt_status (*)(const obelisk_rt_process_descriptor_v1 *,
+                                   obelisk_rt_process_instance_v1 **));
+ABI_FUNCTION(obelisk_rt_v1_process_instance_frame,
+             obelisk_rt_status (*)(obelisk_rt_process_instance_v1 *, void **,
+                                   uint64_t *));
+ABI_FUNCTION(obelisk_rt_v1_process_instance_execute,
+             obelisk_rt_status (*)(obelisk_rt_process_instance_v1 *,
+                                   obelisk_rt_context *,
+                                   obelisk_rt_execution_tier,
+                                   obelisk_rt_fragment_action_v1 *));
+ABI_FUNCTION(obelisk_rt_v1_process_instance_destroy,
+             obelisk_rt_status (*)(obelisk_rt_process_instance_v1 *));
 
 #undef ABI_FUNCTION

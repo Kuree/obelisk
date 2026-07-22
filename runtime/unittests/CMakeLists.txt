@@ -32,6 +32,18 @@ set_target_properties(ObeliskRuntimeTests PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
 )
 
+add_executable(ObeliskProcessRuntimeTests
+  ProcessTest.cpp
+)
+target_link_libraries(ObeliskProcessRuntimeTests PRIVATE
+  obelisk_rt
+  GTest::gtest_main
+)
+target_compile_features(ObeliskProcessRuntimeTests PRIVATE cxx_std_17)
+set_target_properties(ObeliskProcessRuntimeTests PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+)
+
 configure_lit_site_cfg(
   ${CMAKE_CURRENT_SOURCE_DIR}/lit.site.cfg.py.in
   ${CMAKE_CURRENT_BINARY_DIR}/lit.site.cfg.py
@@ -43,6 +55,7 @@ add_lit_testsuite(check-obelisk-runtime-units
   "Running the Obelisk runtime unit tests"
   ${CMAKE_CURRENT_BINARY_DIR}
   DEPENDS
+  ObeliskProcessRuntimeTests
   ObeliskRuntimeTests
 )
 set_target_properties(check-obelisk-runtime-units PROPERTIES FOLDER "Tests")

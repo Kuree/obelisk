@@ -119,6 +119,7 @@ FailureOr<ABIAlignments> validateTargetABI(ModuleOp module,
       failed(checkStruct("stable handle", {i32, i32, i64}, {0, 4, 8}, 16, 8)) ||
       failed(checkStruct("fragment action", {i32, i32, i32, i32, i64, i64},
                          {0, 4, 8, 12, 16, 24}, 32, 8)) ||
+      failed(checkStruct("wait entry", {i64, i32, i32}, {0, 8, 12}, 16, 8)) ||
       failed(checkStruct("format environment", formatEnvironment->elements(),
                          {0, 8, 16, 24, 32, 36, 40, 48, 56}, 64, 8)) ||
       failed(checkStruct("bytecode entry", {i32, i32}, {0, 4}, 8, 4)) ||
@@ -134,7 +135,21 @@ FailureOr<ABIAlignments> validateTargetABI(ModuleOp module,
                          {0, 8, 16, 24, 28, 32, 40, 48, 56, 64, 72, 76, 80, 88},
                          96, 8)) ||
       failed(checkStruct("fragment descriptor", {handle, i32, i32, bytecode},
-                         {0, 16, 20, 24}, 120, 8)))
+                         {0, 16, 20, 24}, 120, 8)) ||
+      failed(checkStruct("process frame field", {i32, i32, i64, i64, i32, i32},
+                         {0, 4, 8, 16, 24, 28}, 32, 8)) ||
+      failed(checkStruct("process frame layout",
+                         {i32, i32, i64, i64, pointer, i32, i32, pointer, i64},
+                         {0, 4, 8, 16, 24, 32, 36, 40, 48}, 56, 8)) ||
+      failed(checkStruct("process descriptor",
+                         {handle, i32, i32, i32, i32, pointer, pointer, pointer,
+                          pointer, pointer},
+                         {0, 16, 20, 24, 28, 32, 40, 48, 56, 64}, 72, 8)) ||
+      failed(checkStruct("process instance",
+                         {pointer, pointer, pointer, i64, i64, i64, pointer,
+                          i32, i32, i32, i32, pointer, pointer},
+                         {0, 8, 16, 24, 32, 40, 48, 56, 60, 64, 68, 72, 80}, 88,
+                         8)))
     return failure();
 
   return ABIAlignments{
@@ -232,7 +247,8 @@ bool containsRuntimeType(Type type) {
 std::optional<Type> convertRuntimeType(Type type, const ABITypes &abi) {
   using namespace obelisk::runtime;
   if (isa<ContextType, CStringType, FormatEnvironmentType,
-          FragmentDescriptorType, BytecodeProgramType>(type))
+          FragmentDescriptorType, ProcessDescriptorType, ProcessInstanceType,
+          BytecodeProgramType>(type))
     return abi.pointer;
   if (isa<StatusType, FileDescriptorType>(type))
     return abi.i32;
@@ -419,6 +435,18 @@ LLVM::LLVMFunctionType getFunctionType(runtime::RuntimeCall call,
   case runtime::RuntimeSignature::BytecodeBounded:
     arguments = {abi.pointer, abi.pointer, abi.pointer, abi.i64,
                  abi.i32,     abi.i64,     abi.pointer};
+    break;
+  case runtime::RuntimeSignature::ProcessCreate:
+    arguments = {abi.pointer, abi.pointer};
+    break;
+  case runtime::RuntimeSignature::ProcessFrame:
+    arguments = {abi.pointer, abi.pointer, abi.pointer};
+    break;
+  case runtime::RuntimeSignature::ProcessExecute:
+    arguments = {abi.pointer, abi.pointer, abi.i32, abi.pointer};
+    break;
+  case runtime::RuntimeSignature::ProcessDestroy:
+    arguments = {abi.pointer};
     break;
   }
   return LLVM::LLVMFunctionType::get(result, arguments, false);
@@ -1069,6 +1097,34 @@ public:
       return replaceStatusAndLoad(arguments, output, abi.action,
                                   abi.alignments.action);
     }
+    case runtime::RuntimeCall::ProcessInstanceCreate: {
+      Value output = allocate(abi.pointer, abi.alignments.pointer);
+      return replaceStatusAndLoad({operands[0], output}, output, abi.pointer,
+                                  abi.alignments.pointer);
+    }
+    case runtime::RuntimeCall::ProcessInstanceFrame: {
+      Value data = allocate(abi.pointer, abi.alignments.pointer);
+      Value size = allocate(abi.i64, abi.alignments.i64);
+      Value status = callStatus({operands[0], data, size});
+      Value result = LLVM::ZeroOp::create(rewriter, location, abi.span);
+      result = LLVM::InsertValueOp::create(
+          rewriter, location, result,
+          load(abi.pointer, data, abi.alignments.pointer),
+          ArrayRef<int64_t>{0});
+      result = LLVM::InsertValueOp::create(
+          rewriter, location, result, load(abi.i64, size, abi.alignments.i64),
+          ArrayRef<int64_t>{1});
+      rewriter.replaceOp(operation, ValueRange{status, result});
+      return success();
+    }
+    case runtime::RuntimeCall::ProcessInstanceExecute: {
+      Value output = allocate(abi.action, abi.alignments.action);
+      return replaceStatusAndLoad(
+          {operands[0], operands[1], operands[2], output}, output, abi.action,
+          abi.alignments.action);
+    }
+    case runtime::RuntimeCall::ProcessInstanceDestroy:
+      return replaceStatus(operands);
     }
     llvm_unreachable("all runtime calls are handled");
   }

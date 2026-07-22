@@ -37,6 +37,10 @@ def RTHandleType : RTType<"Handle", "handle">;
 def RTFragmentActionType : RTType<"FragmentAction", "action">;
 def RTFragmentDescriptorType
     : RTReferenceType<"FragmentDescriptor", "fragment">;
+def RTProcessDescriptorType
+    : RTReferenceType<"ProcessDescriptor", "process_descriptor">;
+def RTProcessInstanceType
+    : RTReferenceType<"ProcessInstance", "process_instance">;
 def RTBytecodeProgramType : RTReferenceType<"BytecodeProgram", "bytecode">;
 def RTBytecodeEntryType : RTType<"BytecodeEntry", "bytecode_entry">;
 def RTBytecodeValidationType

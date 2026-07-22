@@ -30,6 +30,11 @@ typedef int32_t obelisk_rt_status;
 #define OBELISK_RT_ARGUMENT_MISMATCH INT32_C(8)
 #define OBELISK_RT_INVALID_BYTECODE INT32_C(9)
 #define OBELISK_RT_STEP_LIMIT INT32_C(10)
+#define OBELISK_RT_LAYOUT_MISMATCH INT32_C(11)
+#define OBELISK_RT_INVALID_CONTINUATION INT32_C(12)
+#define OBELISK_RT_TIER_UNAVAILABLE INT32_C(13)
+#define OBELISK_RT_INVALID_LIFECYCLE INT32_C(14)
+#define OBELISK_RT_INVALID_FRAME INT32_C(15)
 
 typedef struct obelisk_rt_buffer_v1 {
   uint8_t *data;
@@ -88,9 +93,10 @@ typedef struct obelisk_rt_fragment_action_v1 {
   uint64_t auxiliary;
 } obelisk_rt_fragment_action_v1;
 
-// No action or descriptor flags are defined in ABI v1. Callers and native
-// fragments must initialize flags to this value.
+// Legacy fragments use no action flags. Process actions use FRAME_WAIT_RECORD
+// to identify payload/auxiliary as a checked frame-relative offset and size.
 #define OBELISK_RT_FRAGMENT_FLAGS_NONE UINT32_C(0)
+#define OBELISK_RT_ACTION_FRAME_WAIT_RECORD (UINT32_C(1) << 0)
 
 typedef obelisk_rt_status (*obelisk_rt_native_fragment_v1)(
     obelisk_rt_context *context, void *frame, uint64_t frame_size,
@@ -277,6 +283,147 @@ typedef struct obelisk_rt_bytecode_service_site_v1 {
   uint16_t flags;
   uint32_t reserved;
 } obelisk_rt_bytecode_service_site_v1;
+
+// Canonical process frames are shared by every executable tier. Layout fields
+// are sorted by offset and describe all compiler-owned ranges, including both
+// adjacent planes of a four-state value and scheduler wait records. Native
+// addresses are forbidden in the canonical frame.
+#define OBELISK_RT_FRAME_LAYOUT_VERSION 1u
+
+typedef uint32_t obelisk_rt_frame_field_kind;
+enum {
+  OBELISK_RT_FRAME_CAPTURE = 1,
+  OBELISK_RT_FRAME_CONTINUATION = 2,
+  OBELISK_RT_FRAME_LIVE = 3,
+  OBELISK_RT_FRAME_WAIT = 4
+};
+
+typedef uint32_t obelisk_rt_frame_field_flags;
+enum {
+  OBELISK_RT_FRAME_FIELD_FLAGS_NONE = 0,
+  OBELISK_RT_FRAME_FOUR_STATE_VALUE = 1u << 0,
+  OBELISK_RT_FRAME_FOUR_STATE_UNKNOWN = 1u << 1
+};
+
+typedef struct obelisk_rt_frame_field_v1 {
+  obelisk_rt_frame_field_kind kind;
+  obelisk_rt_frame_field_flags flags;
+  uint64_t offset;
+  uint64_t size;
+  uint32_t alignment;
+  uint32_t reserved;
+} obelisk_rt_frame_field_v1;
+
+typedef struct obelisk_rt_frame_layout_v1 {
+  uint32_t version;
+  uint32_t flags;
+  uint64_t frame_size;
+  uint64_t frame_alignment;
+  const obelisk_rt_frame_field_v1 *fields;
+  uint32_t field_count;
+  uint32_t continuation_count;
+  const uint32_t *continuations;
+  uint64_t checksum;
+} obelisk_rt_frame_layout_v1;
+
+// A wait record is stored entirely inside the canonical frame. The action
+// payload is its frame-relative offset and action auxiliary is its byte size.
+// One entry follows the header for every watched stable handle. Signal waits
+// preserve a requested edge per entry; other wait families use EDGE_NONE.
+#define OBELISK_RT_WAIT_RECORD_VERSION 1u
+typedef uint32_t obelisk_rt_wait_edge_kind;
+enum {
+  OBELISK_RT_WAIT_EDGE_CHANGE = 0,
+  OBELISK_RT_WAIT_EDGE_POSEDGE = 1,
+  OBELISK_RT_WAIT_EDGE_NEGEDGE = 2,
+  OBELISK_RT_WAIT_EDGE_BOTH = 3,
+  OBELISK_RT_WAIT_EDGE_NONE = UINT32_MAX
+};
+
+typedef struct obelisk_rt_wait_record_v1 {
+  uint32_t version;
+  obelisk_rt_suspend_kind kind;
+  uint32_t flags;
+  uint32_t count;
+  uint64_t payload;
+  uint64_t auxiliary;
+} obelisk_rt_wait_record_v1;
+
+typedef struct obelisk_rt_wait_entry_v1 {
+  uint64_t stable_id;
+  obelisk_rt_wait_edge_kind edge;
+  uint32_t reserved;
+} obelisk_rt_wait_entry_v1;
+
+typedef struct obelisk_rt_process_instance_v1 obelisk_rt_process_instance_v1;
+
+typedef obelisk_rt_status (*obelisk_rt_native_requirements_v1)(
+    uint64_t *out_size, uint64_t *out_alignment);
+typedef obelisk_rt_status (*obelisk_rt_native_process_execute_v1)(
+    obelisk_rt_process_instance_v1 *instance);
+typedef void (*obelisk_rt_native_process_destroy_v1)(
+    obelisk_rt_process_instance_v1 *instance);
+
+typedef uint32_t obelisk_rt_execution_tier;
+enum { OBELISK_RT_TIER_NATIVE = 1, OBELISK_RT_TIER_BYTECODE = 2 };
+#define OBELISK_RT_TIER_MASK_NATIVE (UINT32_C(1) << 0)
+#define OBELISK_RT_TIER_MASK_BYTECODE (UINT32_C(1) << 1)
+
+typedef uint32_t obelisk_rt_process_lifecycle;
+enum {
+  OBELISK_RT_PROCESS_READY = 0,
+  OBELISK_RT_PROCESS_EXECUTING = 1,
+  OBELISK_RT_PROCESS_SUSPENDED = 2,
+  OBELISK_RT_PROCESS_TERMINATED = 3
+};
+
+typedef struct obelisk_rt_process_descriptor_v1 {
+  obelisk_rt_handle_v1 handle;
+  uint32_t abi_generation;
+  uint32_t flags;
+  uint32_t available_tiers;
+  uint32_t reserved;
+  const obelisk_rt_frame_layout_v1 *frame_layout;
+  obelisk_rt_native_requirements_v1 native_requirements;
+  obelisk_rt_native_process_execute_v1 native_execute;
+  obelisk_rt_native_process_destroy_v1 native_destroy;
+  const obelisk_rt_bytecode_v1 *bytecode;
+} obelisk_rt_process_descriptor_v1;
+
+// The runtime owns this record and its allocation. Generated native hooks may
+// read the fixed fields in order to refresh transient pointers before every
+// resume; other clients must treat the contents as read-only.
+struct obelisk_rt_process_instance_v1 {
+  const obelisk_rt_process_descriptor_v1 *descriptor;
+  void *allocation;
+  void *frame;
+  uint64_t frame_size;
+  uint64_t scratch_offset;
+  uint64_t scratch_size;
+  void *native_handle;
+  uint32_t continuation;
+  obelisk_rt_execution_tier tier;
+  obelisk_rt_process_lifecycle lifecycle;
+  obelisk_rt_status status;
+  obelisk_rt_context *context;
+  obelisk_rt_fragment_action_v1 *action;
+};
+
+// Create exactly one allocation containing [canonical frame][padding][shared
+// scratch tail]. The tail is the maximum of native coroutine storage and
+// bytecode registers and is reused without copying when tiers change.
+obelisk_rt_status obelisk_rt_v1_process_instance_create(
+    const obelisk_rt_process_descriptor_v1 *descriptor,
+    obelisk_rt_process_instance_v1 **out_instance);
+obelisk_rt_status
+obelisk_rt_v1_process_instance_frame(obelisk_rt_process_instance_v1 *instance,
+                                     void **out_frame, uint64_t *out_size);
+obelisk_rt_status obelisk_rt_v1_process_instance_execute(
+    obelisk_rt_process_instance_v1 *instance, obelisk_rt_context *context,
+    obelisk_rt_execution_tier requested_tier,
+    obelisk_rt_fragment_action_v1 *out_action);
+obelisk_rt_status obelisk_rt_v1_process_instance_destroy(
+    obelisk_rt_process_instance_v1 *instance);
 
 typedef uint32_t obelisk_rt_fragment_code_kind;
 enum { OBELISK_RT_FRAGMENT_NATIVE = 0, OBELISK_RT_FRAGMENT_BYTECODE = 1 };

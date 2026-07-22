@@ -40,6 +40,51 @@ set_target_properties(obelisk-sim-standard-api-test PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
 )
 
+set(_generated_process_dir "${CMAKE_CURRENT_BINARY_DIR}/GeneratedProcess")
+set(_generated_process_mlir "${_generated_process_dir}/process.mlir")
+set(_generated_process_raw_llvm "${_generated_process_dir}/process.raw.ll")
+set(_generated_process_llvm "${_generated_process_dir}/process.ll")
+set(_generated_process_object "${_generated_process_dir}/process.o")
+file(MAKE_DIRECTORY "${_generated_process_dir}")
+add_custom_command(
+  OUTPUT "${_generated_process_object}"
+  COMMAND $<TARGET_FILE:obelisk-opt>
+          "${CMAKE_CURRENT_SOURCE_DIR}/Inputs/generated-process-coroutine.mlir"
+          --convert-obelisk-sim-processes-to-llvm-coroutines
+          -o "${_generated_process_mlir}"
+  COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/mlir-translate" --mlir-to-llvmir
+          "${_generated_process_mlir}" -o "${_generated_process_raw_llvm}"
+  COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/opt"
+          "-passes=verify,coro-early,sroa,instcombine,simplifycfg,coro-split<reuse-storage>,coro-elide,coro-cleanup,sroa,instcombine,simplifycfg,dce,strip-dead-prototypes,verify"
+          -S "${_generated_process_raw_llvm}" -o "${_generated_process_llvm}"
+  COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/llc" -filetype=obj
+          -relocation-model=pic "${_generated_process_llvm}"
+          -o "${_generated_process_object}"
+  DEPENDS
+  obelisk-opt
+  "${CMAKE_CURRENT_SOURCE_DIR}/Inputs/generated-process-coroutine.mlir"
+  VERBATIM
+)
+set_source_files_properties("${_generated_process_object}" PROPERTIES
+  EXTERNAL_OBJECT TRUE
+  GENERATED TRUE
+)
+add_executable(ObeliskGeneratedProcessRuntimeTests
+  "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedProcessTest.cpp"
+  "${_generated_process_object}"
+)
+target_link_libraries(ObeliskGeneratedProcessRuntimeTests PRIVATE
+  obelisk_rt
+  GTest::gtest_main
+)
+target_compile_features(ObeliskGeneratedProcessRuntimeTests PRIVATE cxx_std_17)
+set_target_properties(ObeliskGeneratedProcessRuntimeTests PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/runtime/unittests"
+)
+add_dependencies(check-obelisk-runtime-units
+  ObeliskGeneratedProcessRuntimeTests
+)
+
 add_lit_testsuite(check-obelisk "Running the Obelisk regression tests"
   ${CMAKE_CURRENT_BINARY_DIR}
   DEPENDS

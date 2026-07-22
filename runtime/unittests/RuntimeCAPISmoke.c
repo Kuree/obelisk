@@ -49,6 +49,46 @@ _Static_assert(offsetof(obelisk_rt_fragment_action_v1, payload) == 16,
                "fragment action ABI changed");
 _Static_assert(offsetof(obelisk_rt_fragment_action_v1, auxiliary) == 24,
                "fragment auxiliary offset changed");
+_Static_assert(sizeof(obelisk_rt_frame_field_v1) == 32,
+               "process frame field size changed");
+_Static_assert(sizeof(obelisk_rt_frame_layout_v1) == 56,
+               "process frame layout size changed");
+_Static_assert(offsetof(obelisk_rt_frame_layout_v1, fields) == 24,
+               "process frame fields offset changed");
+_Static_assert(offsetof(obelisk_rt_frame_layout_v1, continuations) == 40,
+               "process frame continuations offset changed");
+_Static_assert(offsetof(obelisk_rt_frame_layout_v1, checksum) == 48,
+               "process frame checksum offset changed");
+_Static_assert(sizeof(obelisk_rt_wait_record_v1) == 32,
+               "process wait record size changed");
+_Static_assert(sizeof(obelisk_rt_wait_entry_v1) == 16,
+               "process wait entry size changed");
+_Static_assert(offsetof(obelisk_rt_wait_entry_v1, edge) == 8,
+               "process wait entry edge offset changed");
+_Static_assert(sizeof(obelisk_rt_process_descriptor_v1) == 72,
+               "process descriptor size changed");
+_Static_assert(offsetof(obelisk_rt_process_descriptor_v1, frame_layout) == 32,
+               "process frame layout pointer offset changed");
+_Static_assert(offsetof(obelisk_rt_process_descriptor_v1, bytecode) == 64,
+               "process bytecode pointer offset changed");
+_Static_assert(sizeof(obelisk_rt_process_instance_v1) == 88,
+               "process instance size changed");
+_Static_assert(offsetof(obelisk_rt_process_instance_v1, allocation) == 8,
+               "process allocation offset changed");
+_Static_assert(offsetof(obelisk_rt_process_instance_v1, frame) == 16,
+               "process instance frame offset changed");
+_Static_assert(offsetof(obelisk_rt_process_instance_v1, scratch_offset) == 32,
+               "process scratch offset changed");
+_Static_assert(offsetof(obelisk_rt_process_instance_v1, native_handle) == 48,
+               "process native handle offset changed");
+_Static_assert(offsetof(obelisk_rt_process_instance_v1, continuation) == 56,
+               "process continuation offset changed");
+_Static_assert(offsetof(obelisk_rt_process_instance_v1, status) == 68,
+               "process status offset changed");
+_Static_assert(offsetof(obelisk_rt_process_instance_v1, context) == 72,
+               "process transient context offset changed");
+_Static_assert(offsetof(obelisk_rt_process_instance_v1, action) == 80,
+               "process transient action offset changed");
 _Static_assert(sizeof(obelisk_rt_bytecode_entry_v1) == 8,
                "bytecode entry size changed");
 _Static_assert(offsetof(obelisk_rt_bytecode_entry_v1, continuation) == 0,

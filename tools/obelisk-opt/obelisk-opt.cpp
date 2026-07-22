@@ -2,6 +2,7 @@
 
 #include "obelisk/Conversion/ObeliskToSimulation.h"
 #include "obelisk/Conversion/RuntimeToLLVM.h"
+#include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
 #include "obelisk/Conversion/SlangToObelisk.h"
 #include "obelisk/Dialect/Obelisk/ObeliskDialect.h"
 #include "obelisk/Dialect/Runtime/RuntimeDialect.h"

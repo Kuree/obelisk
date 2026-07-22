@@ -310,4 +310,39 @@ def RTBytecodeExecuteBoundedOp : RTOp<"bytecode.execute_bounded", [
   let results = (outs RTStatusType:$status, RTFragmentActionType:$action);
 }
 
+// Runtime-owned suspendable process instances. Creation performs the sole
+// lifetime allocation; frame returns only the canonical prefix, while execute
+// selects an available native or bytecode tier without moving that prefix.
+def RTProcessInstanceCreateOp : RTOp<"process.instance.create", [
+  MemoryEffects<[MemRead, MemAlloc<RTRuntimeResource>, MemAlloc]>
+]> {
+  let arguments = (ins RTProcessDescriptorType:$descriptor);
+  let results = (outs RTStatusType:$status, RTProcessInstanceType:$instance);
+}
+
+def RTProcessInstanceFrameOp : RTOp<"process.instance.frame", [
+  MemoryEffects<[MemRead<RTRuntimeResource>]>
+]> {
+  let arguments = (ins RTProcessInstanceType:$instance);
+  let results = (outs RTStatusType:$status, RTMutableByteSpanType:$frame);
+}
+
+def RTProcessInstanceExecuteOp : RTOp<"process.instance.execute", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>,
+                 MemRead<RTIOResource>, MemWrite<RTIOResource>, MemRead,
+                 MemWrite]>
+]> {
+  let arguments = (ins RTProcessInstanceType:$instance,
+                       RTContextType:$context, I32:$requested_tier);
+  let results = (outs RTStatusType:$status, RTFragmentActionType:$action);
+}
+
+def RTProcessInstanceDestroyOp : RTOp<"process.instance.destroy", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>,
+                 MemFree<RTRuntimeResource>, MemFree]>
+]> {
+  let arguments = (ins RTProcessInstanceType:$instance);
+  let results = (outs RTStatusType:$status);
+}
+
 #endif // OBELISK_DIALECT_RUNTIME_RUNTIMEOPS_TD

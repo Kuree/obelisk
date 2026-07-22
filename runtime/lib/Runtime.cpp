@@ -124,6 +124,16 @@ extern "C" const char *obelisk_rt_v1_status_string(obelisk_rt_status status) {
     return "invalid bytecode";
   case OBELISK_RT_STEP_LIMIT:
     return "fragment step limit exceeded";
+  case OBELISK_RT_LAYOUT_MISMATCH:
+    return "process frame layout mismatch";
+  case OBELISK_RT_INVALID_CONTINUATION:
+    return "invalid process continuation";
+  case OBELISK_RT_TIER_UNAVAILABLE:
+    return "requested process tier unavailable";
+  case OBELISK_RT_INVALID_LIFECYCLE:
+    return "invalid process lifecycle transition";
+  case OBELISK_RT_INVALID_FRAME:
+    return "invalid process frame record";
   default:
     return "unknown runtime status";
   }

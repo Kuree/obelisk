@@ -152,4 +152,23 @@ def ConvertObeliskRuntimeToLLVMPass
   ];
 }
 
+def ConvertObeliskSimProcessesToLLVMCoroutinesPass
+    : Pass<"convert-obelisk-sim-processes-to-llvm-coroutines",
+           "mlir::ModuleOp"> {
+  let summary = "Lower simulation processes to switched-resume LLVM coroutines";
+  let description = [{
+    Builds a deterministic target-layout canonical process frame, lowers only
+    semantic suspension terminators to switched-resume LLVM coroutine points,
+    and fully converts packed values, typed runtime operations, functions,
+    arithmetic, and control flow without unrealized conversion casts.
+  }];
+  let dependentDialects = [
+    "obelisk::runtime::ObeliskRuntimeDialect",
+    "mlir::arith::ArithDialect",
+    "mlir::cf::ControlFlowDialect",
+    "mlir::func::FuncDialect",
+    "mlir::LLVM::LLVMDialect"
+  ];
+}
+
 #endif // OBELISK_CONVERSION_PASSES_TD

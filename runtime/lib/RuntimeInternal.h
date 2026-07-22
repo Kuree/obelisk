@@ -62,4 +62,11 @@ obelisk_rt_status writeUnlocked(obelisk_rt_context *context,
                                 uint32_t descriptor, const void *data,
                                 uint64_t size, uint64_t *outWritten);
 
+// Fully validate immutable bytecode metadata without executing or mutating a
+// process frame. Missing continuations are tier-unavailable; malformed
+// programs are invalid bytecode.
+obelisk_rt_status
+obelisk_rt_validate_bytecode_program(const obelisk_rt_bytecode_v1 &program,
+                                     uint32_t continuation) noexcept;
+
 #endif // OBELISK_RUNTIME_LIB_RUNTIMEINTERNAL_H

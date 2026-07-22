@@ -40,3 +40,11 @@ OBELISK_RUNTIME_CALL(FragmentExecute, RTFragmentExecuteOp,
                      obelisk_rt_v1_fragment_execute, FragmentExecute)
 OBELISK_RUNTIME_CALL(BytecodeExecuteBounded, RTBytecodeExecuteBoundedOp,
                      obelisk_rt_v1_bytecode_execute_bounded, BytecodeBounded)
+OBELISK_RUNTIME_CALL(ProcessInstanceCreate, RTProcessInstanceCreateOp,
+                     obelisk_rt_v1_process_instance_create, ProcessCreate)
+OBELISK_RUNTIME_CALL(ProcessInstanceFrame, RTProcessInstanceFrameOp,
+                     obelisk_rt_v1_process_instance_frame, ProcessFrame)
+OBELISK_RUNTIME_CALL(ProcessInstanceExecute, RTProcessInstanceExecuteOp,
+                     obelisk_rt_v1_process_instance_execute, ProcessExecute)
+OBELISK_RUNTIME_CALL(ProcessInstanceDestroy, RTProcessInstanceDestroyOp,
+                     obelisk_rt_v1_process_instance_destroy, ProcessDestroy)

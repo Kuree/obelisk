@@ -21,10 +21,11 @@ target_link_libraries(obelisk-opt
     ObeliskRuntimeIR
     ObeliskRuntimeToLLVM
     ObeliskSimulationIR
-    ObeliskSimulationToStandard
+    ObeliskSimulationToLLVMCoroutine
     ObeliskSimulationToRuntime
     ObeliskSlangIR
     ObeliskSlangToObelisk
+    ObeliskSimulationToStandard
     ObeliskToSimulation
     MLIROptLib
     MLIRTransforms

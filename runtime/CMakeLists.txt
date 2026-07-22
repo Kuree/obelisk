@@ -5,6 +5,7 @@ add_library(obelisk_rt STATIC
   lib/Bytecode.cpp
   lib/FileIO.cpp
   lib/Format.cpp
+  lib/Process.cpp
   lib/Runtime.cpp
 )
 

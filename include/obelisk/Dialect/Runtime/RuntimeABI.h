@@ -40,6 +40,10 @@ enum class RuntimeSignature {
   FileI64Out,
   FragmentExecute,
   BytecodeBounded,
+  ProcessCreate,
+  ProcessFrame,
+  ProcessExecute,
+  ProcessDestroy,
 };
 
 /// Return the exact current in-tree C ABI symbol for a runtime call.
