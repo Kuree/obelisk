@@ -1,4 +1,4 @@
-# Obelisk frontend design
+# Obelisk compiler design
 
 Obelisk compiles SystemVerilog through a semantic, elaborated boundary:
 
@@ -10,9 +10,12 @@ Slang MLIR dialect (`slang.*`, `!slang.*`)
     │  exhaustive typed conversion
     ▼
 Obelisk MLIR dialect (`obelisk.sv.*`, `!obelisk.*`)
-    │  simulation and runtime lowering
+    │  supported simulation lowering
     ▼
-LLVM / executable simulator
+Simulation MLIR (`obelisk_sim.*`, `arith.*`, `cf.*`)
+    │  planned native and bytecode lowering
+    ▼
+LLVM dialect → LLVM IR/object → standalone simulator
 ```
 
 The frontend walks slang's semantic AST directly. It does not serialize the
@@ -64,11 +67,11 @@ prebuilt `LLVMFileCheck` and `LLVMSupport` libraries. The archive SHA-256 is
 checked before extraction, and all LLVM and MLIR libraries come from the same
 distribution.
 
-The current latest slang release is v11.0. CMake downloads its checksummed
-source archive and builds the library as part of Obelisk. A command-line slang
-binary is not sufficient because the importer uses the C++ semantic AST API.
-Official release binaries are therefore useful as standalone compilers, but
-not as an Obelisk SDK dependency.
+Obelisk pins slang v11.0. CMake downloads its checksummed source archive and
+builds the library as part of Obelisk. A command-line slang binary is not
+sufficient because the importer uses the C++ semantic AST API. Official release
+binaries are therefore useful as standalone compilers, but not as an Obelisk
+SDK dependency.
 
 For reproducible or offline builds, extract the exact v11.0 source archive and
 configure with:
@@ -144,24 +147,21 @@ it does not claim that every construct has already been lowered to LLVM.
 
 ## Executable simulation and parallelization
 
-> **Status.** Implemented today: the `obelisk_sim` dialect, flattened descriptor
-> inventory, isolated code units with explicit captures, descriptor-provenance
-> and bit-range effect summaries, four-state knownness facts, fixed
-> continuation/timing sites and typed NBA staging policies, deterministic late
-> fragment graphs and
-> SCC region plans, VPI observability annotations, and the shared
-> native/bytecode runtime fragment ABI with its checked typed interpreter. The
-> driver can emit simulation IR or schedule diagnostics and controls MLIR
-> threads and generated lane count. LLVM dialect lowering, object/executable
-> emission, generated region-driver machine code, the dynamic frontier, broad
-> UVM runtime services, and parallel lane launching remain future milestones.
+> **Status notation.** In the roadmap below, strike-through means the feature is
+> implemented and covered at its stated boundary. It does not imply that a
+> later consumer, such as native code generation, is also complete.
+
+The current compiler reaches verified `obelisk_sim` SSA plus the standard MLIR
+`arith` and `cf` dialects for the supported simulation subset. It also derives
+schedule metadata and can print it deterministically. There is no lowering to
+the MLIR LLVM dialect, LLVM IR, an object file, or a standalone executable yet.
 
 The `obelisk_sim` dialect is the target-independent executable boundary between
 semantic SystemVerilog and the runtime. A design is flattened into deterministic
 numeric descriptors for hierarchy, storage, nets, and drivers. Executable code
 is isolated into function-like SSA CFGs with explicit captures, direct calls and
 spawns, memory effects, and suspension continuations. Source hierarchy remains
-available for diagnostics and as a placement hint, but it does not determine
+available for diagnostics and future placement hints, but it does not determine
 the unit of optimization or parallel execution.
 
 ### Packed-value semantic contract
@@ -185,13 +185,14 @@ These rules belong to the dynamic selection operations themselves and must not
 be approximated with potentially poison-producing builtin shifts.
 
 Parallelization treats the design as a concurrent SSA/CFG program rather than
-as a netlist. Whole-program optimization runs on that program first. Only then
-does the compiler derive a typed compute graph whose actor nodes are maximal
-optimized fragments and whose descriptor-range memory, control, sensitivity,
-event-region, and required process-order edges express scheduling constraints.
-The graph is disposable analysis metadata, never the primary IR. Module
-proximity alone does not imply communication, and processes in separate
-modules can have strong affinity through shared state.
+as a netlist. Whole-program optimization must run on that program first. The
+current planner derives block-level fragments after canonicalization, CSE, and
+memory promotion; future outlining and coarsening will form maximal optimized
+fragments. Descriptor-range effects and control, sensitivity, event-region, and
+required process-order edges then express scheduling constraints. The graph is
+disposable analysis metadata, never the primary IR. Module proximity alone does
+not imply communication, and processes in separate modules can have strong
+affinity through shared state.
 
 ### Minimize materialized state first
 
@@ -207,14 +208,15 @@ be classified as one of:
 4. genuinely shared or externally observable state requiring an owned runtime
    resource.
 
-The compiler moves values toward the first category with capture pruning,
-escape analysis, memory promotion, scalar replacement, interprocedural constant
-propagation, inlining, specialization, and continuation-frame optimization.
-Cheap values may be recomputed after resumption instead of being stored.
-Continuation slots with disjoint live ranges may share storage, and hot frame
-fields should be separated from cold diagnostic or exceptional state. Proven
-two-state values use ordinary integers instead of materializing the unknown
-plane of a four-state value.
+The current pipeline moves values toward the first category with
+canonicalization, CSE, and memory promotion. The completed optimization pipeline
+will add capture pruning, escape analysis, scalar replacement, interprocedural
+constant propagation, inlining, specialization, and continuation-frame
+optimization. Cheap values may then be recomputed after resumption instead of
+being stored. Continuation slots with disjoint live ranges may share storage,
+and hot frame fields should be separated from cold diagnostic or exceptional
+state. Proven two-state regions will be eligible for ordinary integer storage
+instead of a materialized unknown plane.
 
 SystemVerilog observability constrains storage elimination. An update may be
 visible through change or edge sensitivity, net resolution, force and release,
@@ -267,13 +269,19 @@ pure computation.
 
 ### Interprocedural optimization and effect summaries
 
-The communication graph is an analysis result, not a primary IR. Entry capture
+The compute graph is an analysis result, not a primary IR. Entry capture
 metadata seeds handle provenance with a descriptor kind and ID. Provenance is
-propagated through reference extraction, block arguments, CFG edges, calls, and
-spawns. Local allocations remain process-local unless they escape. Driver
-effects are folded into the net descriptor that the driver resolves.
+propagated through reference extraction and CFG block arguments. Direct-call
+summaries substitute formal handles with caller descriptors when safe; staged
+NBA and deferred-event effects with formal roots conservatively use an unknown
+target until specialization resolves them. Spawn targets contribute
+control edges but do not manufacture descriptor provenance. The supported
+subset classifies local allocations as local; general escape and capture
+analysis is still required before broad call and spawn lowering. Driver effects
+are folded into the net descriptor that the driver resolves.
 
-Each function and fragment receives a context-sensitive summary such as:
+Each function receives an interprocedural parametric summary, and each fragment
+receives the effects applicable to its CFG block, such as:
 
 ```text
 reads storage #4
@@ -287,12 +295,17 @@ Resource-class memory effects are correctness categories and must not become
 universal graph edges. Treating the scheduler, all storage, or all nets as one
 shared resource would falsely connect almost every process. Direct zero-time
 functions execute in their caller and contribute a parametric summary with
-formal handles substituted by the caller's actual descriptors.
+ordinary formal-handle effects substituted by the caller's actual descriptors.
+Deferred effects retain a conservative unknown root when call-site substitution
+would otherwise give one shared callee site several incompatible identities.
 
-Whole-program optimization precedes placement. It includes class-hierarchy
-analysis and devirtualization, IPSCCP, escape analysis, aggregate and object
-scalar replacement, unused-capture removal, hot-path inlining, cold outlining,
-descriptor- and caller-specific cloning, and coroutine-frame simplification.
+Whole-program optimization precedes placement. The current pipeline runs
+canonicalization, CSE, and memory promotion before graph derivation, then
+threads suspension-live SSA values through continuation block arguments. The
+broader pipeline will add class-hierarchy analysis and devirtualization, IPSCCP,
+escape analysis, aggregate and object scalar replacement, unused-capture
+removal, hot-path inlining, cold outlining, descriptor- and caller-specific
+cloning, and concrete continuation-frame simplification.
 Inlining does not by itself remove cross-thread synchronization because a
 zero-time call already executes on its caller's worker. It is profitable when
 it exposes descriptor constants, refines aliases, removes state, or enables a
@@ -300,42 +313,54 @@ local-resource fast path.
 
 ### Derived compute graph and generated schedules
 
-The current planner materializes the typed graph, exact ranges, fixed site IDs,
-and event-region SCC plans described below. Direct region code, commit code,
-the dynamic frontier, coarsening, and worker lanes are target-backend behavior
-and remain to be lowered. In that completed backend, the derived graph is a
-typed actor/resource graph:
+The current planner materializes the typed graph, proven exact ranges,
+conservatively widened dynamic ranges, fixed site IDs, and event-region SCC
+plans described below. Direct region code, commit code, the dynamic frontier,
+coarsening, and worker lanes are target-backend behavior and remain to be
+lowered. The graph is a typed fragment-dependency graph, not an actor/resource
+graph with descriptors as nodes:
 
-- optimized process fragments are actor nodes;
-- storage, resolved-net, event, and process descriptors identify resources;
-- reads, writes, drives, NBA staging, and subscriptions carry exact bit ranges;
+- current process CFG blocks are fragment nodes, and future outlining and
+  coarsening may replace them with maximal optimized fragments;
+- generated NBA and event commit records are additional schedule nodes;
+- storage, resolved-net, event, and process descriptors qualify effects and
+  edges rather than becoming graph nodes;
+- reads, writes, drives, NBA staging, and subscriptions carry proven or
+  conservatively widened bit ranges;
 - dynamic selections conservatively widen to the complete statically known
   base range; and
 - CFG continuation, spawn, sensitivity, event-region, and required source-order
-  relationships are actor edges.
+  relationships are dependency edges.
 
 Static operation costs and activation estimates will seed graph coarsening.
 Acyclic event-region components will lower to direct topological calls. Cyclic
 zero-time components will lower to convergence loops that compare only
 descriptor ranges on a feedback cut. Active, NBA, observed, reactive, and
-postponed plans are already explicit even when a supported design has no nodes
-in one of those regions.
+postponed planning buckets are already explicit even when a supported design
+has no nodes in one of them. These five buckets are the current backend
+abstraction, not a claim that all IEEE 1800 event regions are executable. Broad
+language support must preserve every semantic region explicitly or prove that
+folding it into one of these buckets is equivalent.
 
-Every NBA site already receives an explicit staging policy. Proven single-shot
-sites use fixed slots. Repeated immediate assignments to a concrete root use a
-generated value/unknown/mask accumulator plus change and edge masks, preserving
-final-update and activation semantics without queue allocation. Repeated
-delayed, externally introduced, or dynamically rooted work uses the frontier.
-Unrestricted writable VPI also prevents repeated sites from using the root
-accumulator because it may rewrite a root between staging and commit; proven
-single-shot sites remain fixed slots. A finite journal is worth adding
-once an analysis can prove a multiplicity bound; until then it is deliberately
-absent rather than declared and never selected. Native
-lowering will turn those records into ordered commit code. Dynamic destinations
-carry direct descriptor, index, and mask fields. Likewise, constant delays will
-use generated calendar paths and bounded variable delays will use fixed
-deadline slots. Only semantically unbounded or externally introduced behavior
-enters the generic runtime frontier.
+Every NBA site already receives an explicit staging-policy annotation; the
+annotation does not allocate its storage. Proven single-shot sites select fixed
+slots. Repeated immediate assignments to a concrete root select a future
+value/unknown/mask accumulator with change and edge masks. Repeated delayed,
+externally introduced, or dynamically rooted work selects the future dynamic
+frontier. Unrestricted writable VPI also prevents repeated sites from selecting
+the root accumulator because it may rewrite a root between staging and commit;
+proven single-shot sites may still select fixed slots. A finite journal is worth
+adding once an analysis can prove a multiplicity bound; until then it is
+deliberately absent rather than declared and never selected. Native lowering
+will materialize the selected storage and ordered commit code. Dynamic
+destinations will carry direct descriptor, index, and mask fields.
+
+Timing sites likewise carry compiled policy metadata today. Constant delays
+select calendar sites, nonconstant delays select deadline slots, and
+delayed NBAs select delayed-NBA timing sites. The native backend must still
+generate those calendar paths and slots. Only semantically unbounded or
+externally introduced behavior will execute through the generic runtime
+frontier.
 
 After coarsening, the compiler will assign macro tasks to persistent worker
 lanes and emit their epoch and barrier dependencies. Closed-world RTL will have
@@ -345,6 +370,11 @@ will own the normal RTL schedule. Complex dynamic testbench services and
 externally introduced events may still use the generic frontier.
 
 ### Dual AOT and bytecode execution
+
+The static runtime already implements the versioned fragment descriptor/action
+ABI and a checked typed-register bytecode interpreter, including native and
+bytecode dispatch through the same entry point. The compiler does not yet encode
+`obelisk_sim` fragments as bytecode, select tiers, or emit native fragments.
 
 Native compilation is normally fastest for hot logic and stable process paths,
 but it is not automatically the best representation for every fragment. Large,
@@ -370,8 +400,8 @@ complexity belongs in the runtime rather than duplicated generated code.
 Complex dynamic behavior does not imply interpretation by default. Dynamic
 arrays, queues, associative arrays, mailboxes, semaphores, and randomization can
 remain native fragments that invoke common runtime primitives. Virtual dispatch
-first uses class-hierarchy analysis, devirtualization, specialization, and
-polymorphic inline caches; the interpreter is the fallback when residual
+will first use class-hierarchy analysis, devirtualization, specialization, and
+polymorphic inline caches; the interpreter will be the fallback when residual
 dynamic behavior is cold, megamorphic, or would cause excessive cloning.
 
 Code-form selection is profile- and workload-sensitive. A short interactive run
@@ -436,8 +466,9 @@ force mode is active. High-volume facilities such as waveform collection use
 batched native runtime intrinsics configured through VPI rather than one
 bytecode dispatch per transition.
 
-Obelisk distinguishes compilation capabilities so users pay only for VPI
-semantics they require:
+Obelisk distinguishes compiler capability profiles so users pay only for VPI
+semantics they require. These are Obelisk build profiles, not access modes
+defined by the VPI standard:
 
 ```text
 VPI off
@@ -452,6 +483,9 @@ VPI full
   assume external mutation, callbacks, and force or release are possible
 ```
 
+Today these modes affect observability and NBA-policy metadata only; VPI
+traversal, mutation, callbacks, force, and release are not executable yet.
+
 An optional plugin capability manifest may restrict the visible hierarchy and
 requested operations further, for example:
 
@@ -462,29 +496,37 @@ writes:    none
 force:     none
 ```
 
-Without such a manifest, a full-VPI build conservatively retains every declared
-object that the standard permits a plugin to discover. VPI handles contain a
-stable descriptor kind, ID, and generation rather than a native storage
-address, so physical layout and partition ownership remain independent of the
-external ABI.
+Without such a manifest, the future full-VPI lowering must conservatively retain
+every declared object that the standard permits a plugin to discover. The
+runtime handle ABI already contains a stable descriptor kind, ID, and generation
+rather than a native storage address; VPI lowering will reuse that identity so
+physical layout and partition ownership remain independent of the external ABI.
 
-Descriptor-specific analysis tracks an observability lattice:
+The current compiler records three compilation-level observability states:
 
 ```text
 invisible             eliminate or promote freely
 read at safe points   keep in SSA between required materializations
-change observed       preserve every required update and notification
 externally writable   retain a canonical owner-visible value
-forceable             retain the full override and resolution path
 ```
 
-Dynamic changes to callback, trace, or force state take effect at scheduler safe
-points. A native fragment may test a compact descriptor slow-path flag and use
-an inline local access when no external behavior is active; otherwise it calls
-the common observable-access intrinsic. This preserves a small fast path
-without claiming that enabling full VPI is free.
+Per-descriptor `change observed` and `forceable` states are useful future
+refinements, but they are not part of the current `obelisk_sim` observability
+enum. The three current VPI profiles assign one level uniformly to storage and
+net descriptors; until finer analysis exists, full mode maps them to
+`externally_writable`.
+
+Dynamic changes to callback, trace, or force state will take effect at scheduler
+safe points. A native fragment may test a compact descriptor slow-path flag and
+use an inline local access when no external behavior is active; otherwise it
+will call the common observable-access intrinsic. This preserves a small fast
+path without claiming that enabling full VPI is free.
 
 ### Compiler-guided IPO, coarsening, and placement
+
+No solver-backed IPO, graph coarsening, or topology-aware placement is
+implemented yet. The current lane annotation is a deterministic greedy balance
+of per-fragment static operation costs.
 
 An Obelisk-owned solver interface may use Z3 directly to select among legal
 compiler-generated choices. Z3 types do not cross that interface, and the
@@ -536,18 +578,37 @@ improving. Large designs use compiler-guided coarsening and heuristic global
 partitioning, reserving exact SMT refinement for hot components and ambiguous
 IPO choices.
 
-The intended lowering sequence is:
+The implementation roadmap is:
 
-```text
-semantic lowering
-  -> devirtualization, specialization, IPSCCP, SROA, and state minimization
-  -> descriptor-range summaries, observability, and knownness
-  -> static process extraction and late fragment graph derivation
-  -> suspension-frame construction and fixed timing/NBA sites
-  -> event-region SCC scheduling and macro-task coarsening
-  -> fixed-lane assignment and generated epoch/barrier dependencies
-  -> LLVM dialect lowering, object emission, and static-runtime linking
-```
+- ~~Pin the LLVM/MLIR and slang toolchains and implement exhaustive Slang and
+  Obelisk semantic boundaries.~~
+- ~~Lower the currently supported simulation subset to isolated `obelisk_sim`
+  SSA using `arith` and `cf`.~~
+- Extend executable lowering across the broad UVM gate: dynamic processes and
+  timing, classes, containers, synchronization, randomization, DPI, assertions,
+  coverage, and VPI.
+- ~~Run canonicalization, CSE, and memory promotion before late graph
+  derivation.~~
+- Add class-hierarchy analysis, devirtualization, specialization, IPSCCP, escape
+  analysis, SROA, load forwarding, DSE, and state-layout optimization.
+- ~~Derive descriptor provenance, interprocedural descriptor-range effects,
+  VPI-profile observability annotations, and four-state knownness facts.~~
+- ~~Extract block-level static fragments, assign stable fragment ABI and
+  continuation IDs, and annotate timing and NBA staging policies.~~
+- ~~Thread suspension-live SSA state only after graph derivation.~~
+- Materialize optimized continuation frames, timing slots, NBA storage and
+  ordered commit code, and the genuinely unbounded dynamic frontier.
+- ~~Build and independently verify deterministic dependency, SCC, feedback-cut,
+  five-bucket region, and preliminary cost-balanced lane metadata.~~
+- Complete IEEE event-region lowering for the supported language, coarsen the
+  graph into macro tasks, and generate direct acyclic and convergence drivers.
+- Represent parallel regions in MLIR and lower them to fixed persistent lane
+  functions with generated epoch and barrier dependencies.
+- ~~Implement the static runtime's shared native/bytecode fragment ABI and
+  checked typed-register interpreter.~~
+- Add compiler bytecode encoding and AOT tier selection.
+- Lower through the MLIR LLVM dialect, translate to LLVM IR, emit objects, and
+  link the generated simulator with `obelisk_rt.a`.
 
 ## Driver and tools
 
@@ -563,7 +624,7 @@ obelisk -emit-obelisk design.sv
 # Stop at the elaborated source boundary.
 obelisk -emit-slang design.sv
 
-# Inspect executable SSA or the derived generated schedule.
+# Inspect executable SSA or derived schedule metadata.
 obelisk -emit-sim --vpi=off design.sv
 obelisk -emit-schedule --threads=8 --vpi=read design.sv
 
@@ -579,35 +640,49 @@ command files, library paths/extensions/files, single compilation units,
 library macro inheritance, selected tops, parameter overrides, language
 revision, timescale, warning control, and direct advanced slang arguments.
 
-`obelisk-opt` registers the Slang and Obelisk dialects and the conversion pass.
-There is no separate source-import translation executable.
+`obelisk-opt` registers the standard MLIR dialects, all three Obelisk dialects,
+the semantic conversion pass, and the simulation-lowering pipeline. There is no
+separate source-import translation executable.
 
 ## Verification and testing
 
-All persistent syntax uses custom assembly. Declarative constraints express
-fixed type and region relationships, with native verifiers for invariants such
-as integral widths/ranges and aggregate consistency.
+All persistent syntax owned by the three Obelisk dialects uses custom assembly.
+Declarative constraints express fixed type and region relationships, with
+native verifiers for invariants such as integral widths/ranges and aggregate
+consistency.
 
-The lit suite covers:
+The test suites cover:
 
-- source and target custom-assembly round trips;
-- verifier rejection for invalid source and target types and operations;
+- Slang, Obelisk, and simulation custom-assembly round trips;
+- verifier rejection for invalid owned-dialect types and operations;
 - the exact AST and conversion inventories;
 - frontend flag behavior and output-action precedence;
 - fast compilation of the checked-in mock-UVM fixture;
-- opt-in compilation of unmodified Accellera UVM under IEEE 1800-2017 and
-  IEEE 1800-2023.
+- opt-in semantic compilation of unmodified Accellera UVM under IEEE 1800-2017
+  and IEEE 1800-2023;
+- supported semantic-to-simulation lowering and four-state lowering contracts;
+- compute-graph construction, independent structural validation and
+  re-derivation, suspension threading, fixed-site policies, and deterministic
+  output with one or several compiler threads; and
+- the runtime C ABI, native/bytecode dispatch equivalence, malformed-bytecode
+  rejection, four-state formatting, and file I/O.
 
-Run lit directly; CTest is intentionally not part of the test flow:
+Run the aggregate Ninja target; CTest is intentionally not part of the test
+flow:
 
 ```sh
 ninja -C build
-lit -sv build/test
+ninja -C build check-obelisk
 
-# If lit is not on PATH:
+# Run only the compiler lit suite when iterating on compiler code:
 env/bin/lit -sv build/test
 ```
 
 A successful source-to-target regression round-trips emitted Slang assembly,
 runs the complete conversion, verifies the result, and checks that no Slang
 entity survives.
+
+Compiler-generated native/bytecode differential design execution, Verilator
+comparison, exact full-region golden traces, simulation determinism across
+worker counts, sanitizer and race suites, and the performance gates apply once
+executable emission exists; they are not current test coverage.
