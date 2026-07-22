@@ -5,6 +5,7 @@
 // RUN: obelisk-opt %t.semantic.mlir '--lower-obelisk-to-sim=workers=2 vpi=read' | FileCheck %s --check-prefix=OPTIONS
 // RUN: FileCheck %s --check-prefix=SIM < %t.threaded.mlir
 // RUN: FileCheck %s --check-prefix=FINAL < %t.threaded.mlir
+// RUN: FileCheck %s --check-prefix=SCCP --implicit-check-not=123456789 < %t.threaded.mlir
 // RUN: obelisk -emit-sim %s | FileCheck %s --check-prefix=DRIVER
 // RUN: obelisk -emit-sim %s | FileCheck %s --check-prefix=COPYBACK
 
@@ -122,6 +123,23 @@ module sim_expression_and_arguments;
   end
 endmodule
 
+// Exercise the whole-program optimization stage in the production pipeline.
+// The unused function must disappear with its private symbol, while the live
+// function's argument and result fold across the call.
+module sim_sccp_pipeline;
+  bit folded_sink;
+
+  function automatic bit fold_identity(input bit value);
+    fold_identity = value;
+  endfunction
+
+  function automatic int unsigned unused_function(input bit value);
+    unused_function = 123456789;
+  endfunction
+
+  initial folded_sink = fold_identity(1);
+endmodule
+
 // SIM: obelisk_sim.design @design attributes {{.*}}time_precision_fs = 1000 : i64
 // SIM-DAG: obelisk_sim.scope.decl 0
 // SIM-DAG: obelisk_sim.storage.decl
@@ -129,7 +147,7 @@ endmodule
 // SIM-DAG: obelisk_sim.driver.decl
 // SIM-DAG: obelisk_sim.func @__obelisk_root
 // SIM-DAG: obelisk_sim.spawn
-// SIM-DAG: obelisk_sim.func @unit_
+// SIM-DAG: obelisk_sim.func private @unit_
 // SIM-DAG: obelisk_sim.call @unit_
 // SIM-DAG: obelisk_sim.ref.extract
 // SIM-DAG: obelisk_sim.logic.replicate
@@ -158,6 +176,16 @@ endmodule
 // FINAL-NOT: obelisk_sim.delay_scale
 // FINAL-NOT: time_unit_fs
 // FINAL-NOT: obelisk_sim.ref.alloc
+// FINAL-NOT: obelisk_sim.func @unit_
+
+// SCCP: obelisk_sim.func private @[[IDENTITY:unit_[0-9]+]]({{.*}}%arg1: i1
+// SCCP-SAME: -> i1
+// SCCP: %[[IDENTITY_RESULT:.*]] = arith.constant true
+// SCCP: obelisk_sim.return %[[IDENTITY_RESULT]] : i1
+// SCCP: obelisk_sim.func private @[[CALLER:unit_[0-9]+]]({{.*}}!obelisk_sim.ref<i1>
+// SCCP: %[[FOLDED:.*]] = arith.constant true
+// SCCP: obelisk_sim.call @[[IDENTITY]]
+// SCCP: obelisk_sim.ref.store %[[FOLDED]]
 
 // DRIVER: obelisk_sim.design @design
 // DRIVER: obelisk_sim.func @__obelisk_root

@@ -164,6 +164,18 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
     functionManager.addPass(createCSEPass());
     functionManager.addPass(createMem2Reg());
   }
+  // Graph metadata does not participate in symbol liveness. Complete all
+  // symbol pruning before graph construction so its nested references can
+  // never become stale.
+  designManager.addPass(createSymbolDCEPass());
+  designManager.addPass(createObeliskSimSCCPPass());
+  {
+    OpPassManager &functionManager = designManager.nest<sim::SimFuncOp>();
+    functionManager.addPass(createCanonicalizerPass());
+    functionManager.addPass(createCSEPass());
+  }
+  designManager.addPass(createSymbolDCEPass());
+
   // Whole-program summaries and static fragment extraction deliberately run
   // before continuation-frame state is made explicit. This lets promotion and
   // canonicalization erase unnecessary process state first.

@@ -835,6 +835,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         builder, getSemanticLocation(unit.source), unit.symbol, type,
         unit.entryKind, ArrayRef<NamedAttribute>{bindingAttr, delayScaleAttr},
         argAttrs);
+    SymbolTable::setSymbolVisibility(unit.function,
+                                     SymbolTable::Visibility::Private);
 
     OpBuilder bodyBuilder =
         OpBuilder::atBlockEnd(&unit.function.getBody().front());

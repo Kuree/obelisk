@@ -47,6 +47,22 @@ def ObeliskSimThreadSuspensionPass
   ];
 }
 
+def ObeliskSimSCCPPass
+    : Pass<"obelisk-sim-sccp", "obelisk::sim::SimDesignOp"> {
+  let summary = "Propagate constants across simulation code-unit boundaries";
+  let description = [{
+    Runs MLIR sparse conditional constant propagation independently within
+    isolated simulation code units and deterministically exchanges constants
+    across direct calls, process spawns, and returns until reaching a fixed
+    point.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect",
+    "mlir::arith::ArithDialect",
+    "mlir::cf::ControlFlowDialect"
+  ];
+}
+
 def ObeliskSimBuildComputeGraphPass
     : Pass<"obelisk-sim-build-compute-graph", "obelisk::sim::SimDesignOp"> {
   let summary = "Derive descriptor-range summaries and a deterministic schedule";

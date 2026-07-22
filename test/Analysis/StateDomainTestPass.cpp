@@ -3,6 +3,7 @@
 #include "StateDomainTestPasses.h"
 
 #include "obelisk/Analysis/StateDomainAnalysis.h"
+#include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
@@ -98,12 +99,37 @@ private:
   }
 };
 
+/// Remove a marked declaration after input verification so SCCP's conservative
+/// unresolved-call path can be exercised without accepting malformed test IR.
+class EraseMarkedSimulationFunctionTestPass
+    : public PassWrapper<EraseMarkedSimulationFunctionTestPass,
+                         OperationPass<obelisk::sim::SimDesignOp>> {
+public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(
+      EraseMarkedSimulationFunctionTestPass)
+
+  StringRef getArgument() const final {
+    return "test-obelisk-erase-marked-sim-function";
+  }
+  StringRef getDescription() const final {
+    return "erase marked simulation functions for unresolved-call tests";
+  }
+
+  void runOnOperation() final {
+    for (obelisk::sim::SimFuncOp function : llvm::make_early_inc_range(
+             getOperation().getBody().getOps<obelisk::sim::SimFuncOp>()))
+      if (function->hasAttr("test.erase_before_sccp"))
+        function.erase();
+  }
+};
+
 } // namespace
 
 namespace obelisk {
 
 void registerStateDomainTestPasses() {
   PassRegistration<StateDomainTestPass>();
+  PassRegistration<EraseMarkedSimulationFunctionTestPass>();
 }
 
 } // namespace obelisk

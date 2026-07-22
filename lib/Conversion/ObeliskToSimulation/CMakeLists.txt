@@ -4,6 +4,7 @@ add_mlir_library(ObeliskToSimulation
   Finalize.cpp
   LowerUnit.cpp
   Prepare.cpp
+  SCCP.cpp
   SemanticUtils.cpp
   ThreadSuspension.cpp
   VerifyComputeGraph.cpp
