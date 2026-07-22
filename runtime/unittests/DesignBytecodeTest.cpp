@@ -585,6 +585,61 @@ std::vector<uint8_t> makeAutomaticFrameLoadBytecode() {
   return bytes;
 }
 
+std::vector<uint8_t> makeStaticHandleRoundTripBytecode() {
+  constexpr size_t functionOffset = 192;
+  constexpr size_t layoutOffset = functionOffset + 96;
+  constexpr size_t codeOffset = layoutOffset + 10 * 40;
+  std::vector<uint8_t> bytes = makeVPIBytecode();
+  put64(bytes, functionOffset + 24, 8);
+  instruction(bytes, codeOffset, 0, OBELISK_RT_DB_LOAD_FRAME,
+              OBELISK_RT_DESCRIPTOR_STORAGE, 8, 0, 0, 0, 65, 0);
+  instruction(bytes, codeOffset, 1, OBELISK_RT_DB_HANDLE_ID, 0, 2, 8);
+  instruction(bytes, codeOffset, 2, OBELISK_RT_DB_HANDLE_OFFSET, 0, 8, 8,
+              UINT32_MAX, 0, 4, 3);
+  instruction(bytes, codeOffset, 3, OBELISK_RT_DB_LOAD_STATE, 0, 9, 8);
+  instruction(bytes, codeOffset, 4, OBELISK_RT_DB_STORE_STATE, 0, 0, 8, 9);
+  instruction(bytes, codeOffset, 5, OBELISK_RT_DB_STORE_FRAME,
+              OBELISK_RT_DESCRIPTOR_STORAGE, 0, 8, 0, 0, 65, 0);
+  instruction(bytes, codeOffset, 6, OBELISK_RT_DB_STORE_FRAME, 0, 0, 2, 0, 0,
+              8, 8);
+  instruction(bytes, codeOffset, 7, OBELISK_RT_DB_TERMINATE);
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
+std::vector<uint8_t> makeStaticNBABytecode() {
+  constexpr size_t functionOffset = 192;
+  constexpr size_t layoutOffset = functionOffset + 96;
+  constexpr size_t codeOffset = layoutOffset + 10 * 40;
+  constexpr size_t operandOffset = codeOffset + 11 * 32;
+  constexpr size_t constantOffset = operandOffset + 13 * 8;
+  constexpr size_t continuationOffset = constantOffset + 32;
+  constexpr size_t intrinsicOffset = continuationOffset + 16;
+  constexpr size_t siteOffset = intrinsicOffset + 5 * 16;
+  std::vector<uint8_t> bytes = makeVPIBytecode();
+  put64(bytes, functionOffset + 24, 4);
+  instruction(bytes, codeOffset, 0, OBELISK_RT_DB_LOAD_FRAME,
+              OBELISK_RT_DESCRIPTOR_STORAGE, 8, 0, 0, 0, 65, 0);
+  instruction(bytes, codeOffset, 1, OBELISK_RT_DB_CONSTANT, 0, 6);
+  instruction(bytes, codeOffset, 2, OBELISK_RT_DB_INTRINSIC, 0, 0, 0, 0, 0,
+              0, 3);
+  instruction(bytes, codeOffset, 3, OBELISK_RT_DB_TERMINATE);
+  size_t intrinsic = intrinsicOffset + 3 * 16;
+  put32(bytes, intrinsic, OBELISK_RT_INTRINSIC_V1_NBA);
+  put32(bytes, intrinsic + 4, 2);
+  put32(bytes, intrinsic + 8, 0);
+  put32(bytes, intrinsic + 12, 0);
+  size_t site = siteOffset + 3 * 16;
+  put32(bytes, site, 3);
+  put32(bytes, site + 4, 8);
+  put32(bytes, site + 8, 2);
+  put32(bytes, site + 12, 0);
+  put32(bytes, operandOffset + 8 * 8 + 4, 6);
+  put32(bytes, operandOffset + 9 * 8 + 4, 8);
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
 std::vector<uint8_t> makeAutomaticSpawnBytecode() {
   constexpr size_t functionOffset = 192;
   constexpr size_t layoutOffset = functionOffset + 2 * 96;
@@ -1286,6 +1341,167 @@ TEST(DesignBytecode,
   };
   run(-66);
   run(65);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(DesignBytecode, NativeStaticHandlesRemainBoundedAcrossBytecodeFrames) {
+  Fixture fixture;
+  fixture.bytecode = makeAutomaticFrameLoadBytecode();
+  fixture.execution.bytecode = fixture.bytecode.data();
+  fixture.execution.bytecode_size = fixture.bytecode.size();
+  fixture.execution.checksum = imageChecksum(fixture.bytecode);
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&fixture.execution,
+                                                     &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 65),
+            OBELISK_RT_OK);
+  uint64_t root = obelisk_rt_v1_native_state_static_handle(1);
+  ASSERT_NE(root, UINT64_MAX);
+  std::array<uint8_t, 9> globalValue{}, globalUnknown{}, zeros{}, ones{};
+  ones.fill(0xff);
+  ones.back() = 1;
+  uint8_t changed = 0;
+  ASSERT_EQ(obelisk_rt_v1_native_state_store_plane(
+                context, globalValue.data(), 65, root, 65, 0, ones.data(),
+                &changed),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_store_plane(
+                context, globalUnknown.data(), 65, root, 65, 1, zeros.data(),
+                &changed),
+            OBELISK_RT_OK);
+
+  auto run = [&](int64_t offset, uint64_t expectedValue0,
+                 uint64_t expectedValue1, uint64_t expectedUnknown0,
+                 uint64_t expectedUnknown1) {
+    uint64_t selected = obelisk_rt_v1_native_handle_offset(root, offset);
+    ASSERT_NE(selected, UINT64_MAX);
+    obelisk_rt_process_instance_v1 *instance = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_process_instance_create(&fixture.descriptor,
+                                                     &instance),
+              OBELISK_RT_OK);
+    void *frame = nullptr;
+    uint64_t frameSize = 0;
+    ASSERT_EQ(obelisk_rt_v1_process_instance_frame(instance, &frame,
+                                                    &frameSize),
+              OBELISK_RT_OK);
+    ASSERT_EQ(frameSize, 32u);
+    std::memcpy(frame, &selected, sizeof(selected));
+    obelisk_rt_fragment_action_v1 action{};
+    ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
+                  instance, context, OBELISK_RT_TIER_BYTECODE, &action),
+              OBELISK_RT_OK);
+    EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
+    const auto *planes = static_cast<const uint64_t *>(frame);
+    EXPECT_EQ(planes[0], expectedValue0);
+    EXPECT_EQ(planes[1], expectedValue1);
+    EXPECT_EQ(planes[2], expectedUnknown0);
+    EXPECT_EQ(planes[3], expectedUnknown1);
+    EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance),
+              OBELISK_RT_OK);
+  };
+  run(-3, UINT64_MAX - 7, 1, 7, 0);
+  run(65, 0, 0, UINT64_MAX, 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(DesignBytecode, StaticHandleOffsetIDStoreAndFrameRoundTrip) {
+  Fixture fixture;
+  fixture.bytecode = makeStaticHandleRoundTripBytecode();
+  fixture.execution.bytecode = fixture.bytecode.data();
+  fixture.execution.bytecode_size = fixture.bytecode.size();
+  fixture.execution.checksum = imageChecksum(fixture.bytecode);
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&fixture.execution,
+                                                     &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 65),
+            OBELISK_RT_OK);
+  uint64_t root = obelisk_rt_v1_native_state_static_handle(1);
+  ASSERT_NE(root, UINT64_MAX);
+  std::array<uint8_t, 9> initial{{0xf0, 0xde, 0xbc, 0x9a, 0x78,
+                                  0x56, 0x34, 0x12, 0x01}};
+  std::array<uint8_t, 9> unknown{};
+  uint8_t changed = 0;
+  ASSERT_EQ(obelisk_rt_v1_native_state_store_plane(
+                context, initial.data(), 65, root, 65, 0, initial.data(),
+                &changed),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_store_plane(
+                context, unknown.data(), 65, root, 65, 1, unknown.data(),
+                &changed),
+            OBELISK_RT_OK);
+
+  obelisk_rt_process_instance_v1 *instance = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_process_instance_create(&fixture.descriptor,
+                                                   &instance),
+            OBELISK_RT_OK);
+  void *frame = nullptr;
+  uint64_t frameSize = 0;
+  ASSERT_EQ(obelisk_rt_v1_process_instance_frame(instance, &frame, &frameSize),
+            OBELISK_RT_OK);
+  ASSERT_EQ(frameSize, 32u);
+  std::memcpy(frame, &root, sizeof(root));
+  obelisk_rt_fragment_action_v1 action{};
+  ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
+                instance, context, OBELISK_RT_TIER_BYTECODE, &action),
+            OBELISK_RT_OK);
+  uint64_t selected = 0;
+  uint64_t identity = 0;
+  std::memcpy(&selected, frame, sizeof(selected));
+  std::memcpy(&identity, static_cast<uint8_t *>(frame) + 8,
+              sizeof(identity));
+  EXPECT_EQ(selected, obelisk_rt_v1_native_handle_offset(root, 3));
+  EXPECT_EQ(identity, root);
+  std::array<uint8_t, 9> loaded{};
+  ASSERT_EQ(obelisk_rt_v1_native_state_load_plane(
+                context, initial.data(), 65, root, 65, 0, 0, loaded.data()),
+            OBELISK_RT_OK);
+  EXPECT_EQ(loaded, initial);
+  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(DesignBytecode, StaticHandleNBARemainsBoundedAndApplies) {
+  Fixture fixture;
+  fixture.bytecode = makeStaticNBABytecode();
+  fixture.execution.bytecode = fixture.bytecode.data();
+  fixture.execution.bytecode_size = fixture.bytecode.size();
+  fixture.execution.checksum = imageChecksum(fixture.bytecode);
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&fixture.execution,
+                                                     &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 65),
+            OBELISK_RT_OK);
+  uint64_t root = obelisk_rt_v1_native_state_static_handle(1);
+  obelisk_rt_process_instance_v1 *instance = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_process_instance_create(&fixture.descriptor,
+                                                   &instance),
+            OBELISK_RT_OK);
+  void *frame = nullptr;
+  uint64_t frameSize = 0;
+  ASSERT_EQ(obelisk_rt_v1_process_instance_frame(instance, &frame, &frameSize),
+            OBELISK_RT_OK);
+  std::memcpy(frame, &root, sizeof(root));
+  obelisk_rt_fragment_action_v1 action{};
+  ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
+                instance, context, OBELISK_RT_TIER_BYTECODE, &action),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  std::array<uint8_t, 9> dummy{}, value{}, unknown{};
+  ASSERT_EQ(obelisk_rt_v1_native_state_load_plane(
+                context, dummy.data(), 65, root, 65, 0, 0, value.data()),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_load_plane(
+                context, dummy.data(), 65, root, 65, 1, 0, unknown.data()),
+            OBELISK_RT_OK);
+  EXPECT_EQ(value[0], 0xf0);
+  EXPECT_EQ(value[7], 0x12);
+  EXPECT_EQ(value[8], 1u);
+  EXPECT_EQ(unknown[0], 0x30);
+  EXPECT_EQ(unknown[8], 0u);
+  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
   obelisk_rt_v1_context_destroy(context);
 }
 

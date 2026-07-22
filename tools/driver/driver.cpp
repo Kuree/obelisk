@@ -7,16 +7,19 @@
 //===----------------------------------------------------------------------===//
 
 #include "Options.h"
+#include "NativeBackend.h"
 
 #include "obelisk/Conversion/ObeliskToSimulation.h"
 #include "obelisk/Conversion/SlangToObelisk.h"
 #include "obelisk/Dialect/Obelisk/ObeliskDialect.h"
+#include "obelisk/Dialect/Runtime/RuntimeDialect.h"
 #include "obelisk/Dialect/Simulation/SimulationDialect.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Dialect/Slang/SlangDialect.h"
 #include "obelisk/Frontend/Frontend.h"
 
 #include "mlir/IR/AsmState.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Pass/PassManager.h"
@@ -49,6 +52,8 @@ using namespace mlir;
 using namespace obelisk::driver::options;
 
 namespace {
+
+static std::string driverExecutablePath;
 
 static void emitDriverError(const Twine &message) {
   WithColor::error(errs(), "obelisk") << message << '\n';
@@ -163,9 +168,31 @@ static int executeCompilation(const InputArgList &args) {
   if (!valid)
     return 1;
 
+  const Arg *action = args.getLastArg(OPT_emit_slang, OPT_emit_obelisk,
+                                      OPT_emit_sim, OPT_emit_schedule, OPT_c,
+                                      OPT_emit_llvm);
+  bool emitSlang = action && action->getOption().matches(OPT_emit_slang);
+  bool emitSim = action && action->getOption().matches(OPT_emit_sim);
+  bool emitSchedule = action && action->getOption().matches(OPT_emit_schedule);
+  bool emitObject = action && action->getOption().matches(OPT_c);
+  bool emitLLVM = action && action->getOption().matches(OPT_emit_llvm);
+  bool native = !action || emitObject || emitLLVM;
+  if (native && requestedWorkers.value_or(1) != 1) {
+    emitDriverError("native executable generation currently requires --threads=1");
+    valid = false;
+  }
+  if (native && vpiMode != "off") {
+    emitDriverError("native executable generation currently requires --vpi=off");
+    valid = false;
+  }
+  if (!valid)
+    return 1;
+
   DialectRegistry registry;
   registry.insert<obelisk::slangir::SlangDialect, obelisk::ir::ObeliskDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+                  obelisk::runtime::ObeliskRuntimeDialect,
+                  obelisk::sim::ObeliskSimulationDialect,
+                  mlir::LLVM::LLVMDialect>();
   // One explicitly sized pool is shared by all MLIR parallel pass adaptors.
   // Its lifetime encloses the context as required by MLIRContext.
   std::unique_ptr<llvm::DefaultThreadPool> compilerPool;
@@ -189,19 +216,33 @@ static int executeCompilation(const InputArgList &args) {
     return 1;
   OwningOpRef<ModuleOp> module = std::move(*importedModule);
 
-  const Arg *action = args.getLastArg(OPT_emit_slang, OPT_emit_obelisk,
-                                      OPT_emit_sim, OPT_emit_schedule);
-  bool emitSlang = action && action->getOption().matches(OPT_emit_slang);
-  bool emitSim = action && action->getOption().matches(OPT_emit_sim);
-  bool emitSchedule = action && action->getOption().matches(OPT_emit_schedule);
   if (!emitSlang) {
     PassManager passManager(&context);
     passManager.addPass(obelisk::createConvertSlangToObeliskPass());
-    if (emitSim || emitSchedule)
+    if (emitSim || emitSchedule || native)
       obelisk::buildObeliskToSimulationPipeline(
           passManager, requestedWorkers.value_or(1), vpiMode);
     if (failed(passManager.run(*module)))
       return 1;
+  }
+
+  if (native) {
+    obelisk::driver::NativeOutputOptions nativeOptions;
+    nativeOptions.kind = emitObject
+                             ? obelisk::driver::NativeOutputKind::Object
+                         : emitLLVM
+                             ? obelisk::driver::NativeOutputKind::LLVMIR
+                             : obelisk::driver::NativeOutputKind::Executable;
+    nativeOptions.outputPath =
+        args.getLastArgValue(OPT_o,
+                             emitObject ? "a.o" : emitLLVM ? "-" : "a.out")
+            .str();
+    nativeOptions.explicitSysroot =
+        args.getLastArgValue(OPT_sysroot_EQ).str();
+    nativeOptions.executablePath = driverExecutablePath;
+    return succeeded(obelisk::driver::emitNativeOutput(*module, nativeOptions))
+               ? 0
+               : 1;
   }
 
   std::string outputFilename = args.getLastArgValue(OPT_o, "-").str();
@@ -240,6 +281,8 @@ static int executeCompilation(const InputArgList &args) {
 
 int main(int argc, char **argv) {
   InitLLVM initLLVM(argc, argv);
+  driverExecutablePath =
+      sys::fs::getMainExecutable(argv[0], reinterpret_cast<void *>(&main));
   const OptTable &optionTable = obelisk::driver::getDriverOptTable();
 
   BumpPtrAllocator allocator;

@@ -2,6 +2,8 @@
 
 #include "obelisk/Runtime/Runtime.h"
 
+#include "../lib/RuntimeInternal.h"
+
 #include "gtest/gtest.h"
 
 #include <algorithm>
@@ -14,6 +16,12 @@ extern "C" const obelisk_rt_process_descriptor_v1
     generatedDescriptor asm("execution_process.__obelisk_process_descriptor");
 extern "C" const obelisk_rt_process_descriptor_v1
     failingDescriptor asm("failing_process.__obelisk_process_descriptor");
+extern "C" const obelisk_rt_process_descriptor_v1 orchestrationDescriptor
+    asm("orchestration_process.__obelisk_process_descriptor");
+extern "C" const obelisk_rt_process_descriptor_v1 automaticDescriptor
+    asm("automatic_process.__obelisk_process_descriptor");
+extern "C" const obelisk_rt_process_descriptor_v1 automaticLoopDescriptor
+    asm("automatic_loop_process.__obelisk_process_descriptor");
 
 namespace {
 
@@ -188,6 +196,66 @@ TEST(GeneratedProcess, EmittedDesignBytecodeMatchesNativeLifecycle) {
   EXPECT_EQ(bytecode->lifecycle, OBELISK_RT_PROCESS_TERMINATED);
   EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(native), OBELISK_RT_OK);
   EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(bytecode), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(GeneratedProcess, SchedulerRunsEventSpawnJoinAndAwait) {
+  ASSERT_NE(orchestrationDescriptor.execution, nullptr);
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(
+                orchestrationDescriptor.execution, &context),
+            OBELISK_RT_OK);
+  obelisk_rt_process_instance_v1 *instance = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_process_instance_create(&orchestrationDescriptor,
+                                                   &instance),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, instance, 0), OBELISK_RT_OK);
+  testing::internal::CaptureStdout();
+  EXPECT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_INVALID_HANDLE);
+  EXPECT_EQ(testing::internal::GetCapturedStdout(),
+            "join-short\njoin-long\njoined\nawait-child\nawaited\n");
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(GeneratedProcess, DynamicAutomaticSurvivesCallSpawnAndDelayedNBA) {
+  ASSERT_NE(automaticDescriptor.execution, nullptr);
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(
+                automaticDescriptor.execution, &context),
+            OBELISK_RT_OK);
+  obelisk_rt_process_instance_v1 *instance = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_process_instance_create(&automaticDescriptor,
+                                                   &instance),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, instance, 0), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(GeneratedProcess, CrossBlockAutomaticLoopReleasesEveryIteration) {
+  ASSERT_NE(automaticLoopDescriptor.execution, nullptr);
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(
+                automaticLoopDescriptor.execution, &context),
+            OBELISK_RT_OK);
+  obelisk_rt_process_instance_v1 *instance = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_process_instance_create(&automaticLoopDescriptor,
+                                                   &instance),
+            OBELISK_RT_OK);
+  obelisk_rt_fragment_action_v1 action{};
+  ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
+                instance, context, OBELISK_RT_TIER_NATIVE, &action),
+            OBELISK_RT_OK);
+  ASSERT_EQ(action.kind, OBELISK_RT_FRAGMENT_SUSPEND);
+  {
+    std::lock_guard<std::mutex> lock(context->mutex);
+    EXPECT_TRUE(context->nativeAutomaticStates.empty());
+  }
+  ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
+                instance, context, OBELISK_RT_TIER_NATIVE, &action),
+            OBELISK_RT_OK);
+  EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
+  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
   obelisk_rt_v1_context_destroy(context);
 }
 

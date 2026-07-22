@@ -37,11 +37,14 @@ endmodule
 // OBELISK-NOT: slang.
 
 // HELP: OVERVIEW: Obelisk ahead-of-time SystemVerilog compiler
-// HELP: -emit-obelisk
-// HELP: -emit-sim
-// HELP: -emit-slang
-// HELP: -I <dir>
-// HELP: --std=<1800-2017|1800-2023>
+// HELP-DAG: -emit-obelisk
+// HELP-DAG: -emit-sim
+// HELP-DAG: -emit-slang
+// HELP-DAG: -emit-llvm
+// HELP-DAG: -c
+// HELP-DAG: --sysroot=<dir>
+// HELP-DAG: -I <dir>
+// HELP-DAG: --std=<1800-2017|1800-2023>
 
 // VERSION: obelisk version
 // VERSION: slang version

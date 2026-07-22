@@ -22,6 +22,20 @@ config.excludes = [
 
 llvm_config.with_system_environment(["HOME", "TMP", "TEMP"])
 config.substitutions.append(("%python", '"{}"'.format(sys.executable)))
+config.substitutions.append(("%obelisk", config.obelisk_driver_executable))
+config.substitutions.append(
+    ("%native_support", config.obelisk_native_support_dir)
+)
+config.substitutions.append(
+    ("%target_package_cache", config.obelisk_target_package_cache)
+)
+config.substitutions.append(("%target_sysroot", config.obelisk_target_sysroot))
+config.substitutions.append(
+    ("%target_provision_script", config.obelisk_target_provision_script)
+)
+config.substitutions.append(("%source_root", config.obelisk_source_root))
+config.substitutions.append(("%llvm_dist", config.obelisk_llvm_dist))
+config.substitutions.append(("%cmake", config.cmake_executable))
 llvm_config.add_err_msg_substitutions()
 
 tool_dirs = [
@@ -33,7 +47,8 @@ tool_dirs = [
 ]
 llvm_config.add_tool_substitutions(
     ["obelisk", "obelisk-opt", "obelisk-sim-standard-api-test", "FileCheck",
-     "mlir-opt", "mlir-runner", "mlir-translate", "not", "opt"],
+     "llvm-readelf", "llvm-strings", "mlir-opt", "mlir-runner",
+     "mlir-translate", "not", "opt"],
     tool_dirs,
 )
 

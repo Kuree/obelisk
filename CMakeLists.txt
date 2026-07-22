@@ -119,10 +119,13 @@ set(LLVM_DIR "${OBELISK_LLVM_DIST_DIR}/lib/cmake/llvm")
 
 find_package(LLVM REQUIRED CONFIG)
 find_package(MLIR REQUIRED CONFIG)
+set(LLD_DIR "${OBELISK_LLVM_DIST_DIR}/lib/cmake/lld")
+find_package(LLD REQUIRED CONFIG)
 
 message(STATUS "Using prebuilt LLVM ${LLVM_PACKAGE_VERSION} + MLIR")
 message(STATUS "  LLVM package = ${LLVM_DIR}")
 message(STATUS "  MLIR package = ${MLIR_DIR}")
+message(STATUS "  LLD package = ${LLD_DIR}")
 
 if(NOT EXISTS "${OBELISK_LLVM_DIST_DIR}/bin/llvm-tblgen" OR
    NOT EXISTS "${OBELISK_LLVM_DIST_DIR}/bin/mlir-tblgen")
@@ -145,6 +148,14 @@ include(TableGen)
 include(AddLLVM)
 include(AddMLIR)
 include(HandleLLVMOptions)
+
+if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND
+   CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+  include("${PROJECT_SOURCE_DIR}/cmake/TargetNativeSupport.cmake")
+else()
+  message(FATAL_ERROR
+    "native executable generation currently requires an x86-64 Linux host")
+endif()
 
 #===------------------------------------------------------------------------===
 # Upstream slang semantic-AST frontend.

@@ -11,6 +11,7 @@ add_mlir_library(ObeliskSimulationToLLVMCoroutine
   ObeliskSimulationIR
   ObeliskSimulationToRuntime
   ObeliskSimulationToStandard
+  MLIRAnalysis
   MLIRArithDialect
   MLIRArithToLLVM
   MLIRControlFlowDialect
@@ -22,4 +23,8 @@ add_mlir_library(ObeliskSimulationToLLVMCoroutine
   MLIRLLVMDialect
   MLIRPass
   MLIRTransforms
+)
+
+target_include_directories(ObeliskSimulationToLLVMCoroutine PRIVATE
+  "${PROJECT_SOURCE_DIR}/runtime/include"
 )

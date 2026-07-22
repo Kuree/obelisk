@@ -3,6 +3,16 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | mlir-translate --mlir-to-llvmir | opt -S -passes='verify,coro-early,coro-split<reuse-storage>,verify' | FileCheck %s --check-prefix=FRAME
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | mlir-translate --mlir-to-llvmir | opt -S -passes='verify,coro-early,sroa,instcombine,simplifycfg,coro-split<reuse-storage>,coro-elide,coro-cleanup,sroa,instcombine,simplifycfg,dce,strip-dead-prototypes,verify' | FileCheck %s --check-prefix=SPLIT
 
+!choice = !obelisk_sim.unpacked_union<fields = [
+  #obelisk_sim.field<name = "byte", type = i8, ordinal = 0, packedOffset = 0>,
+  #obelisk_sim.field<name = "word", type = i16, ordinal = 1, packedOffset = 0>
+], isTagged = false>
+!record = !obelisk_sim.unpacked_struct<[
+  #obelisk_sim.field<name = "byte", type = i8, ordinal = 0, packedOffset = 0>,
+  #obelisk_sim.field<name = "word", type = i16, ordinal = 1, packedOffset = 0>
+]>
+!handle_words = !obelisk_sim.unpacked_array<0 : 0 x !obelisk_sim.logic<8>>
+
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
@@ -118,6 +128,99 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %capture: i64 {obelisk_sim.capture_kind = 2 : i32})
         attributes {entry_kind = 1 : i32} {
+      %local = obelisk_sim.ref.alloc %capture : i64 -> !obelisk_sim.ref<i64>
+      %loaded = obelisk_sim.ref.load %local : !obelisk_sim.ref<i64> -> i64
+      obelisk_sim.return
+    }
+
+    obelisk_sim.func @consume_ref(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %ref: !obelisk_sim.ref<i64> {obelisk_sim.capture_kind = 1 : i32})
+        attributes {entry_kind = 8 : i32} {
+      %value = obelisk_sim.ref.load %ref : !obelisk_sim.ref<i64> -> i64
+      obelisk_sim.return
+    }
+
+    obelisk_sim.func @capture_ref(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %ref: !obelisk_sim.ref<i64> {obelisk_sim.capture_kind = 1 : i32})
+        attributes {entry_kind = 1 : i32} {
+      %value = obelisk_sim.ref.load %ref : !obelisk_sim.ref<i64> -> i64
+      obelisk_sim.return
+    }
+
+    obelisk_sim.func @consume_ref_with_status(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %ref: !obelisk_sim.ref<i64> {obelisk_sim.capture_kind = 1 : i32},
+        %descriptor: i32 {obelisk_sim.capture_kind = 2 : i32})
+        attributes {entry_kind = 8 : i32} {
+      %value = obelisk_sim.ref.load %ref : !obelisk_sim.ref<i64> -> i64
+      obelisk_sim.file.flush %ctx, %descriptor :
+          (!obelisk_sim.context, i32) -> ()
+      obelisk_sim.return
+    }
+
+    obelisk_sim.func @ref_lifetime(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %capture: i64 {obelisk_sim.capture_kind = 2 : i32})
+        attributes {entry_kind = 1 : i32} {
+      cf.br ^allocate
+    ^allocate:
+      %local = obelisk_sim.ref.alloc %capture : i64 -> !obelisk_sim.ref<i64>
+      obelisk_sim.call @consume_ref(%ctx, %local) :
+          (!obelisk_sim.context, !obelisk_sim.ref<i64>) -> ()
+      %child = obelisk_sim.spawn @capture_ref(%ctx, %local) :
+          !obelisk_sim.context, !obelisk_sim.ref<i64> -> !obelisk_sim.process
+      obelisk_sim.return
+    }
+
+    obelisk_sim.func @cfg_ref_lifetime(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %capture: i64 {obelisk_sim.capture_kind = 2 : i32},
+        %repeat: i1 {obelisk_sim.capture_kind = 2 : i32})
+        attributes {entry_kind = 8 : i32} {
+      cf.br ^allocate
+    ^allocate:
+      %local = obelisk_sim.ref.alloc %capture : i64 -> !obelisk_sim.ref<i64>
+      cf.br ^use(%local : !obelisk_sim.ref<i64>)
+    ^use(%reference: !obelisk_sim.ref<i64>):
+      %value = obelisk_sim.ref.load %reference : !obelisk_sim.ref<i64> -> i64
+      cf.cond_br %repeat, ^allocate, ^done
+    ^done:
+      obelisk_sim.return
+    }
+
+    obelisk_sim.func @branched_ref_lifetime(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %capture: i64 {obelisk_sim.capture_kind = 2 : i32},
+        %use_reference: i1 {obelisk_sim.capture_kind = 2 : i32})
+        attributes {entry_kind = 8 : i32} {
+      %local = obelisk_sim.ref.alloc %capture : i64 -> !obelisk_sim.ref<i64>
+      cf.cond_br %use_reference, ^use(%local : !obelisk_sim.ref<i64>), ^done
+    ^use(%reference: !obelisk_sim.ref<i64>):
+      %value = obelisk_sim.ref.load %reference : !obelisk_sim.ref<i64> -> i64
+      obelisk_sim.return
+    ^done:
+      obelisk_sim.return
+    }
+
+    obelisk_sim.func @wide_handle_indices(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %ref: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 1 : i32},
+        %array_ref: !obelisk_sim.ref<!handle_words> {obelisk_sim.capture_kind = 1 : i32},
+        %driver: !obelisk_sim.driver<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 1 : i32},
+        %array_driver: !obelisk_sim.driver<!handle_words> {obelisk_sim.capture_kind = 1 : i32})
+        attributes {entry_kind = 8 : i32} {
+      %wide = arith.constant 18446744073709551616 : i129
+      %wide_unknown = obelisk_sim.logic.constant 0 : i129, 1 : i129 : !obelisk_sim.logic<129>
+      %ref_known = obelisk_sim.ref.dyn_extract %ref from %wide : (!obelisk_sim.ref<!obelisk_sim.logic<8>>, i129) -> !obelisk_sim.ref<!obelisk_sim.logic<4>>
+      %ref_unknown = obelisk_sim.ref.dyn_extract %ref from %wide_unknown : (!obelisk_sim.ref<!obelisk_sim.logic<8>>, !obelisk_sim.logic<129>) -> !obelisk_sim.ref<!obelisk_sim.logic<4>>
+      %driver_known = obelisk_sim.driver.dyn_extract %driver from %wide : (!obelisk_sim.driver<!obelisk_sim.logic<8>>, i129) -> !obelisk_sim.driver<!obelisk_sim.logic<4>>
+      %driver_unknown = obelisk_sim.driver.dyn_extract %driver from %wide_unknown : (!obelisk_sim.driver<!obelisk_sim.logic<8>>, !obelisk_sim.logic<129>) -> !obelisk_sim.driver<!obelisk_sim.logic<4>>
+      %ref_element_known = obelisk_sim.ref.array_element %array_ref[%wide] : (!obelisk_sim.ref<!handle_words>, i129) -> !obelisk_sim.ref<!obelisk_sim.logic<8>>
+      %ref_element_unknown = obelisk_sim.ref.array_element %array_ref[%wide_unknown] : (!obelisk_sim.ref<!handle_words>, !obelisk_sim.logic<129>) -> !obelisk_sim.ref<!obelisk_sim.logic<8>>
+      %driver_element_known = obelisk_sim.driver.array_element %array_driver[%wide] : (!obelisk_sim.driver<!handle_words>, i129) -> !obelisk_sim.driver<!obelisk_sim.logic<8>>
+      %driver_element_unknown = obelisk_sim.driver.array_element %array_driver[%wide_unknown] : (!obelisk_sim.driver<!handle_words>, !obelisk_sim.logic<129>) -> !obelisk_sim.driver<!obelisk_sim.logic<8>>
       obelisk_sim.return
     }
 
@@ -126,6 +229,24 @@ module attributes {
         %value: i64 {obelisk_sim.capture_kind = 2 : i32}) -> i64
         attributes {entry_kind = 8 : i32} {
       obelisk_sim.return %value : i64
+    }
+
+    obelisk_sim.func @union_extract(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %value: i16 {obelisk_sim.capture_kind = 2 : i32}) -> i8
+        attributes {entry_kind = 8 : i32} {
+      %union = obelisk_sim.union.construct %value as 1 : (i16) -> !choice
+      %byte = obelisk_sim.union.extract %union[0] : (!choice) -> i8
+      obelisk_sim.return %byte : i8
+    }
+
+    obelisk_sim.func @aggregate_insert(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %input: !record {obelisk_sim.capture_kind = 2 : i32},
+        %replacement: i8 {obelisk_sim.capture_kind = 2 : i32}) -> !record
+        attributes {entry_kind = 8 : i32} {
+      %updated = obelisk_sim.aggregate.insert %replacement into %input[0] : (!record, i8) -> !record
+      obelisk_sim.return %updated : !record
     }
 
   }
@@ -173,12 +294,41 @@ module attributes {
 // CHECK-SAME: obelisk.frame.size = 48 : i64
 // CHECK-LABEL: llvm.func @plain_process
 // CHECK-SAME: obelisk.native_scratch_size = 0 : i64
+// CHECK: llvm.call @obelisk_rt_v1_native_state_alloc
 // CHECK-NOT: llvm.intr.coro.
 // CHECK-LABEL: llvm.func @plain_process.__obelisk_native_requirements
 // CHECK-LABEL: llvm.func @plain_process.__obelisk_native_execute
 // CHECK-LABEL: llvm.func @plain_process.__obelisk_native_destroy
+// CHECK-LABEL: llvm.func @consume_ref
+// CHECK: llvm.call @obelisk_rt_v1_native_state_release
+// CHECK-LABEL: llvm.func @capture_ref(
+// CHECK: llvm.call @obelisk_rt_v1_native_state_release
+// CHECK-LABEL: llvm.func @consume_ref_with_status(
+// CHECK-COUNT-2: llvm.call @obelisk_rt_v1_native_state_release
+// CHECK-LABEL: llvm.func @ref_lifetime
+// CHECK: llvm.call @obelisk_rt_v1_native_state_alloc
+// CHECK: llvm.call @obelisk_rt_v1_native_state_retain
+// CHECK: llvm.call @consume_ref
+// CHECK: llvm.call @obelisk_rt_v1_native_state_retain
+// CHECK: llvm.call @obelisk_rt_v1_native_state_release
+// CHECK-LABEL: llvm.func @cfg_ref_lifetime
+// CHECK: llvm.call @obelisk_rt_v1_native_state_alloc
+// CHECK: llvm.call @obelisk_rt_v1_native_state_release
+// CHECK-NEXT: llvm.call @obelisk_rt_v1_scheduler_fail
+// CHECK-NEXT: llvm.cond_br
+// CHECK-LABEL: llvm.func @branched_ref_lifetime
+// CHECK: llvm.call @obelisk_rt_v1_native_state_alloc
+// CHECK-COUNT-2: llvm.call @obelisk_rt_v1_native_state_release
+// CHECK-LABEL: llvm.func @wide_handle_indices
+// Every wide index needs a signed-i64 round-trip check. The four-state cases
+// above additionally exercise the unknown-plane guard (constant-folded here).
+// CHECK-COUNT-8: llvm.icmp "eq"
 // CHECK-LABEL: llvm.func @ordinary
 // CHECK-SAME: obelisk.native_scratch_size = 0 : i64
+// CHECK-LABEL: llvm.func @union_extract
+// CHECK: llvm.trunc
+// CHECK-LABEL: llvm.func @aggregate_insert
+// CHECK: llvm.and
 // CHECK-NOT: unrealized_conversion_cast
 // CHECK-NOT: obelisk_sim.
 // CHECK-NOT: arith.

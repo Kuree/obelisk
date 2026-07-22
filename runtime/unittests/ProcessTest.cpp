@@ -177,6 +177,583 @@ struct Fixture {
   }
 };
 
+uint32_t schedulerWaitKind;
+uint32_t schedulerWaitEdge;
+uint64_t schedulerWaitHandle;
+uint32_t schedulerWaitWidth;
+uint64_t schedulerWaitOffset;
+unsigned schedulerResumeCount;
+std::vector<uint64_t> schedulerOrder;
+
+obelisk_rt_status schedulerRequirements(uint64_t *size, uint64_t *alignment) {
+  if (!size || !alignment)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *size = 0;
+  *alignment = 1;
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status schedulerExecute(obelisk_rt_process_instance_v1 *instance) {
+  if (!instance || !instance->action)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  instance->native_handle = instance;
+  if (instance->descriptor->handle.id >= 100) {
+    schedulerOrder.push_back(instance->descriptor->handle.id);
+    *instance->action = {OBELISK_RT_FRAGMENT_TERMINATE,
+                         OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
+    return OBELISK_RT_OK;
+  }
+  if (instance->continuation != 0) {
+    schedulerOrder.push_back(instance->descriptor->handle.id);
+    ++schedulerResumeCount;
+    *instance->action = {OBELISK_RT_FRAGMENT_TERMINATE,
+                         OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
+    return OBELISK_RT_OK;
+  }
+  auto *wait = reinterpret_cast<obelisk_rt_wait_record_v1 *>(
+      static_cast<uint8_t *>(instance->frame) + schedulerWaitOffset);
+  auto *entry = reinterpret_cast<obelisk_rt_wait_entry_v1 *>(wait + 1);
+  uint32_t version = schedulerWaitKind == OBELISK_RT_SUSPEND_CHANGE ||
+                             schedulerWaitKind == OBELISK_RT_SUSPEND_EDGE
+                         ? OBELISK_RT_WAIT_RECORD_SIGNAL_WIDTH_VERSION
+                         : OBELISK_RT_WAIT_RECORD_VERSION;
+  if (schedulerWaitKind == OBELISK_RT_SUSPEND_DELAY) {
+    *wait = {version, schedulerWaitKind, 0, 0, 17, 0};
+  } else {
+    *wait = {version, schedulerWaitKind, 0, 1, 0, 0};
+    *entry = {schedulerWaitHandle, schedulerWaitEdge,
+              version == OBELISK_RT_WAIT_RECORD_SIGNAL_WIDTH_VERSION
+                  ? schedulerWaitWidth
+                  : 0};
+  }
+  *instance->action = {OBELISK_RT_FRAGMENT_SUSPEND,
+                       schedulerWaitKind,
+                       1,
+                       OBELISK_RT_ACTION_FRAME_WAIT_RECORD,
+                       schedulerWaitOffset,
+                       48};
+  return OBELISK_RT_OK;
+}
+
+void schedulerDestroy(obelisk_rt_process_instance_v1 *instance) {
+  instance->native_handle = nullptr;
+}
+
+uint64_t processAutomaticHandle;
+uint64_t retainedAutomaticHandle;
+uint64_t nbaAutomaticHandle;
+uint8_t nbaDummyPlane;
+
+obelisk_rt_status
+automaticStateExecute(obelisk_rt_process_instance_v1 *instance) {
+  if (!instance || !instance->context || !instance->action)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  instance->native_handle = instance;
+  uint8_t initial = 0x5a;
+  obelisk_rt_status status = obelisk_rt_v1_native_state_alloc(
+      instance->context, 8, &initial, nullptr, &processAutomaticHandle);
+  if (status != OBELISK_RT_OK)
+    return status;
+  *instance->action = {OBELISK_RT_FRAGMENT_TERMINATE,
+                       OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status
+retainedAutomaticStateExecute(obelisk_rt_process_instance_v1 *instance) {
+  if (!instance || !instance->context || !instance->action)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  instance->native_handle = instance;
+  uint8_t initial = 0xa5;
+  obelisk_rt_status status = obelisk_rt_v1_native_state_alloc(
+      instance->context, 8, &initial, nullptr, &retainedAutomaticHandle);
+  if (status != OBELISK_RT_OK)
+    return status;
+  status = obelisk_rt_v1_native_state_retain(instance->context,
+                                              retainedAutomaticHandle);
+  if (status != OBELISK_RT_OK)
+    return status;
+  status = obelisk_rt_v1_native_state_release(instance->context,
+                                               retainedAutomaticHandle, 1);
+  if (status != OBELISK_RT_OK)
+    return status;
+  *instance->action = {OBELISK_RT_FRAGMENT_TERMINATE,
+                       OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status
+automaticNBAExecute(obelisk_rt_process_instance_v1 *instance) {
+  if (!instance || !instance->context || !instance->action)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  instance->native_handle = instance;
+  uint8_t initial = 0;
+  obelisk_rt_status status = obelisk_rt_v1_native_state_alloc(
+      instance->context, 8, &initial, nullptr, &nbaAutomaticHandle);
+  if (status != OBELISK_RT_OK)
+    return status;
+  uint8_t replacement = 0xa5;
+  status = obelisk_rt_v1_scheduler_nba(
+      instance->context, &nbaDummyPlane, nullptr, 8, nbaAutomaticHandle, 8,
+      3, &replacement, nullptr);
+  if (status != OBELISK_RT_OK)
+    return status;
+  status = obelisk_rt_v1_native_state_release(instance->context,
+                                               nbaAutomaticHandle, 1);
+  if (status != OBELISK_RT_OK)
+    return status;
+  *instance->action = {OBELISK_RT_FRAGMENT_TERMINATE,
+                       OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
+  return OBELISK_RT_OK;
+}
+
+struct SchedulerFixture {
+  std::array<obelisk_rt_frame_field_v1, 2> fields{{
+      {OBELISK_RT_FRAME_WAIT, OBELISK_RT_FRAME_FIELD_FLAGS_NONE, 0, 48, 8, 0},
+      {OBELISK_RT_FRAME_WAIT, OBELISK_RT_FRAME_FIELD_FLAGS_NONE, 48, 48, 8,
+       0},
+  }};
+  std::array<uint32_t, 2> continuations{{0, 1}};
+  obelisk_rt_frame_layout_v1 layout{};
+  obelisk_rt_process_descriptor_v1 descriptor{};
+
+  explicit SchedulerFixture(uint64_t id) {
+    schedulerWaitOffset = 0;
+    layout = {OBELISK_RT_FRAME_LAYOUT_VERSION,
+              0,
+              96,
+              8,
+              fields.data(),
+              static_cast<uint32_t>(fields.size()),
+              static_cast<uint32_t>(continuations.size()),
+              continuations.data(),
+              0};
+    layout.checksum = checksum(layout);
+    descriptor = {{OBELISK_RT_DESCRIPTOR_PROCESS, 0, id},
+                  OBELISK_RT_ABI_GENERATION,
+                  0,
+                  OBELISK_RT_TIER_MASK_NATIVE,
+                  0,
+                  &layout,
+                  schedulerRequirements,
+                  schedulerExecute,
+                  schedulerDestroy,
+                  nullptr};
+  }
+};
+
+obelisk_rt_process_instance_v1 *makeSchedulerInstance(SchedulerFixture &fixture) {
+  obelisk_rt_process_instance_v1 *instance = nullptr;
+  EXPECT_EQ(obelisk_rt_v1_process_instance_create(&fixture.descriptor,
+                                                   &instance),
+            OBELISK_RT_OK);
+  return instance;
+}
+
+TEST(Scheduler, SignalWaitsAreSelectiveAndEdgeAware) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  SchedulerFixture fixture(1);
+  schedulerWaitKind = OBELISK_RT_SUSPEND_EDGE;
+  schedulerWaitEdge = OBELISK_RT_WAIT_EDGE_POSEDGE;
+  schedulerWaitHandle = 16;
+  schedulerWaitWidth = 8;
+  schedulerResumeCount = 0;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add(
+                context, makeSchedulerInstance(fixture), 0),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+
+  obelisk_rt_v1_scheduler_signal(context, 80, 1, OBELISK_RT_SIGNAL_POSEDGE);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(schedulerResumeCount, 0u);
+  obelisk_rt_v1_scheduler_signal(context, 18, 1, OBELISK_RT_SIGNAL_CHANGE);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(schedulerResumeCount, 0u);
+  obelisk_rt_v1_scheduler_signal(context, 18, 1,
+                                 OBELISK_RT_SIGNAL_CHANGE |
+                                     OBELISK_RT_SIGNAL_POSEDGE);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(schedulerResumeCount, 1u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, ImmediateAndDeferredEventsWakeOnlyTheirWaiters) {
+  for (uint32_t nonblocking : {0u, 1u}) {
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+    SchedulerFixture fixture(2 + nonblocking);
+    schedulerWaitKind = OBELISK_RT_SUSPEND_EVENT;
+    schedulerWaitEdge = OBELISK_RT_WAIT_EDGE_NONE;
+    schedulerWaitHandle = 42;
+    schedulerWaitWidth = 0;
+    schedulerResumeCount = 0;
+    ASSERT_EQ(obelisk_rt_v1_scheduler_add(
+                  context, makeSchedulerInstance(fixture), 0),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+    obelisk_rt_v1_scheduler_event(context, 41, nonblocking);
+    EXPECT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+    EXPECT_EQ(schedulerResumeCount, 0u);
+    obelisk_rt_v1_scheduler_event(context, 42, nonblocking);
+    EXPECT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+    EXPECT_EQ(schedulerResumeCount, 1u);
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
+TEST(Scheduler, WaitActionPayloadSelectsTheExactFrameField) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  SchedulerFixture fixture(5);
+  schedulerWaitKind = OBELISK_RT_SUSPEND_EVENT;
+  schedulerWaitEdge = OBELISK_RT_WAIT_EDGE_NONE;
+  schedulerWaitHandle = 73;
+  schedulerWaitWidth = 0;
+  schedulerWaitOffset = 48;
+  schedulerResumeCount = 0;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add(
+                context, makeSchedulerInstance(fixture), 0),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  obelisk_rt_v1_scheduler_event(context, 73, 0);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(schedulerResumeCount, 1u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, ComputeGraphRanksOrderRunnableProcesses) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  SchedulerFixture later(100);
+  SchedulerFixture earlier(200);
+  schedulerOrder.clear();
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add_ranked(
+                context, makeSchedulerInstance(later), 0, 9),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add_ranked(
+                context, makeSchedulerInstance(earlier), 0, 1),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(schedulerOrder, (std::vector<uint64_t>{200, 100}));
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, PlannedContinuationRanksApplyAfterResume) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  SchedulerFixture later(10);
+  SchedulerFixture earlier(20);
+  schedulerWaitKind = OBELISK_RT_SUSPEND_DELAY;
+  schedulerWaitEdge = OBELISK_RT_WAIT_EDGE_NONE;
+  schedulerWaitHandle = 0;
+  schedulerWaitWidth = 0;
+  schedulerResumeCount = 0;
+  schedulerOrder.clear();
+  const uint32_t continuation = 1;
+  const uint32_t laterRank = 9;
+  const uint32_t earlierRank = 1;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add_planned(
+                context, makeSchedulerInstance(later), 0, 0, &continuation,
+                &laterRank, 1),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add_planned(
+                context, makeSchedulerInstance(earlier), 0, 0, &continuation,
+                &earlierRank, 1),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(schedulerOrder, (std::vector<uint64_t>{20, 10}));
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, AwaitUsesStableNonAddressProcessTokens) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  SchedulerFixture completed(100);
+  obelisk_rt_process_instance_v1 *oldInstance =
+      makeSchedulerInstance(completed);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, oldInstance, 0),
+            OBELISK_RT_OK);
+  uint64_t oldToken =
+      obelisk_rt_v1_scheduler_process_token(context, oldInstance);
+  ASSERT_NE(oldToken, 0u);
+  EXPECT_NE(oldToken,
+            static_cast<uint64_t>(reinterpret_cast<uintptr_t>(oldInstance)));
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+
+  obelisk_rt_process_instance_v1 *child = makeSchedulerInstance(completed);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add_ranked(context, child, 0, 1),
+            OBELISK_RT_OK);
+  uint64_t childToken = obelisk_rt_v1_scheduler_process_token(context, child);
+  ASSERT_NE(childToken, 0u);
+  EXPECT_NE(childToken, oldToken);
+  EXPECT_NE(childToken,
+            static_cast<uint64_t>(reinterpret_cast<uintptr_t>(child)));
+
+  SchedulerFixture waiter(4);
+  schedulerWaitKind = OBELISK_RT_SUSPEND_AWAIT;
+  schedulerWaitEdge = OBELISK_RT_WAIT_EDGE_NONE;
+  schedulerWaitHandle = childToken;
+  schedulerWaitWidth = 0;
+  schedulerResumeCount = 0;
+  schedulerOrder.clear();
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add_ranked(
+                context, makeSchedulerInstance(waiter), 0, 0),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(schedulerResumeCount, 1u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, DelayedNBAsAdvanceTimeAndPreserveQueueOrder) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  uint8_t plane = 0;
+  uint8_t first = 0x35;
+  uint8_t second = 0xa6;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_nba(context, &plane, nullptr, 8, 0, 8, 5,
+                                        &first, nullptr),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_nba(context, &plane, nullptr, 8, 0, 8, 5,
+                                        &second, nullptr),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(plane, second);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, MaximumRepresentableDueTimeIsNotDropped) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  uint8_t plane = 0;
+  uint8_t value = 0xa5;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_nba(context, &plane, nullptr, 8, 0, 8,
+                                        UINT64_MAX, &value, nullptr),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(plane, value);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, AutomaticStateAllocationsAreIsolatedAndBoundsChecked) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  uint8_t global = 0x5a;
+  uint8_t firstInitial = 0x11;
+  uint8_t secondInitial = 0x22;
+  uint64_t first = UINT64_MAX;
+  uint64_t second = UINT64_MAX;
+  ASSERT_EQ(obelisk_rt_v1_native_state_alloc(
+                context, 8, &firstInitial, nullptr, &first),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_alloc(
+                context, 8, &secondInitial, nullptr, &second),
+            OBELISK_RT_OK);
+  ASSERT_NE(first, second);
+  uint8_t replacement = 0xfe;
+  uint8_t changed = 0;
+  ASSERT_EQ(obelisk_rt_v1_native_state_store_plane(
+                context, &global, 8, first, 8, 0, &replacement, &changed),
+            OBELISK_RT_OK);
+  EXPECT_EQ(changed, 1u);
+  uint8_t loaded = 0;
+  ASSERT_EQ(obelisk_rt_v1_native_state_load_plane(
+                context, &global, 8, second, 8, 0, 0, &loaded),
+            OBELISK_RT_OK);
+  EXPECT_EQ(loaded, secondInitial);
+  loaded = 0;
+  uint64_t tail = obelisk_rt_v1_native_handle_offset(first, 6);
+  ASSERT_EQ(obelisk_rt_v1_native_state_load_plane(
+                context, &global, 8, tail, 4, 0, 1, &loaded),
+            OBELISK_RT_OK);
+  EXPECT_EQ(loaded & 0xfu, 0xfu);
+  EXPECT_EQ(global, 0x5a);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, AutomaticStateIsReleasedWithItsOwningProcess) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  SchedulerFixture fixture(8);
+  fixture.descriptor.native_execute = automaticStateExecute;
+  processAutomaticHandle = UINT64_MAX;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add(
+                context, makeSchedulerInstance(fixture), 0),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  ASSERT_NE(processAutomaticHandle, UINT64_MAX);
+  uint8_t global = 0;
+  uint8_t loaded = 0;
+  EXPECT_EQ(obelisk_rt_v1_native_state_load_plane(
+                context, &global, 8, processAutomaticHandle, 8, 0, 0,
+                &loaded),
+            OBELISK_RT_INVALID_HANDLE);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, DirectExecutionOwnsAndReleasesAutomaticState) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  SchedulerFixture fixture(9);
+  fixture.descriptor.native_execute = automaticStateExecute;
+  processAutomaticHandle = UINT64_MAX;
+  obelisk_rt_process_instance_v1 *instance = makeSchedulerInstance(fixture);
+  ASSERT_NE(instance, nullptr);
+  obelisk_rt_fragment_action_v1 action{};
+  ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
+                instance, context, OBELISK_RT_TIER_NATIVE, &action),
+            OBELISK_RT_OK);
+  EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
+  ASSERT_NE(processAutomaticHandle, UINT64_MAX);
+  uint8_t global = 0;
+  uint8_t loaded = 0;
+  EXPECT_EQ(obelisk_rt_v1_native_state_load_plane(
+                context, &global, 8, processAutomaticHandle, 8, 0, 0,
+                &loaded),
+            OBELISK_RT_INVALID_HANDLE);
+  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, RetainedAutomaticStateSurvivesItsOwningProcess) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  SchedulerFixture fixture(10);
+  fixture.descriptor.native_execute = retainedAutomaticStateExecute;
+  retainedAutomaticHandle = UINT64_MAX;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add(
+                context, makeSchedulerInstance(fixture), 0),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  ASSERT_NE(retainedAutomaticHandle, UINT64_MAX);
+
+  uint8_t global = 0;
+  uint8_t loaded = 0;
+  ASSERT_EQ(obelisk_rt_v1_native_state_load_plane(
+                context, &global, 8, retainedAutomaticHandle, 8, 0, 0,
+                &loaded),
+            OBELISK_RT_OK);
+  EXPECT_EQ(loaded, 0xa5);
+
+  ASSERT_EQ(obelisk_rt_v1_native_state_release(
+                context, retainedAutomaticHandle, 0),
+            OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_native_state_load_plane(
+                context, &global, 8, retainedAutomaticHandle, 8, 0, 0,
+                &loaded),
+            OBELISK_RT_INVALID_HANDLE);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, DelayedNBARetainsItsAutomaticDestination) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  SchedulerFixture fixture(11);
+  fixture.descriptor.native_execute = automaticNBAExecute;
+  nbaAutomaticHandle = UINT64_MAX;
+  nbaDummyPlane = 0;
+  obelisk_rt_process_instance_v1 *instance = makeSchedulerInstance(fixture);
+  ASSERT_NE(instance, nullptr);
+  obelisk_rt_fragment_action_v1 action{};
+  ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
+                instance, context, OBELISK_RT_TIER_NATIVE, &action),
+            OBELISK_RT_OK);
+  ASSERT_NE(nbaAutomaticHandle, UINT64_MAX);
+
+  uint8_t loaded = 0;
+  ASSERT_EQ(obelisk_rt_v1_native_state_load_plane(
+                context, &nbaDummyPlane, 8, nbaAutomaticHandle, 8, 0, 0,
+                &loaded),
+            OBELISK_RT_OK);
+  EXPECT_EQ(loaded, 0u);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_native_state_load_plane(
+                context, &nbaDummyPlane, 8, nbaAutomaticHandle, 8, 0, 0,
+                &loaded),
+            OBELISK_RT_INVALID_HANDLE);
+  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+
+TEST(Scheduler, PartialOutOfBoundsHandlesPreserveInRangeBits) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 2, 4),
+            OBELISK_RT_OK);
+  uint64_t base = obelisk_rt_v1_native_state_static_handle(1);
+  ASSERT_NE(base, UINT64_MAX);
+  uint64_t lower = obelisk_rt_v1_native_handle_offset(base, -1);
+  uint64_t upper = obelisk_rt_v1_native_handle_offset(base, 3);
+  ASSERT_NE(lower, UINT64_MAX);
+  ASSERT_NE(upper, UINT64_MAX);
+  uint8_t plane = 0xc3;
+  uint8_t lowerReplacement = 0x2;
+  uint8_t upperReplacement = 0x1;
+  uint8_t changed = 0;
+  ASSERT_EQ(obelisk_rt_v1_native_state_store_plane(
+                context, &plane, 8, lower, 2, 0, &lowerReplacement, &changed),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_store_plane(
+                context, &plane, 8, upper, 2, 0, &upperReplacement, &changed),
+            OBELISK_RT_OK);
+  EXPECT_EQ(plane, 0xe7);
+  EXPECT_EQ(changed, 1u);
+  uint8_t loaded = 0;
+  ASSERT_EQ(obelisk_rt_v1_native_state_load_plane(
+                context, &plane, 8, lower, 2, 0, 0, &loaded),
+            OBELISK_RT_OK);
+  EXPECT_EQ(loaded & 0x3, 0x2);
+
+  plane = 0xc3;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_nba(
+                context, &plane, nullptr, 8, lower, 2, 0,
+                &lowerReplacement, nullptr),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_nba(
+                context, &plane, nullptr, 8, upper, 2, 0,
+                &upperReplacement, nullptr),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(plane, 0xe7);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, OutOfBoundsTransitionsDoNotWakeAdjacentStaticObjects) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 4),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 2, 4, 4),
+            OBELISK_RT_OK);
+  SchedulerFixture fixture(9);
+  schedulerWaitKind = OBELISK_RT_SUSPEND_CHANGE;
+  schedulerWaitEdge = OBELISK_RT_WAIT_EDGE_CHANGE;
+  schedulerWaitHandle = obelisk_rt_v1_native_state_static_handle(2);
+  schedulerWaitWidth = 4;
+  schedulerResumeCount = 0;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add(
+                context, makeSchedulerInstance(fixture), 0),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+
+  uint64_t upper = obelisk_rt_v1_native_handle_offset(
+      obelisk_rt_v1_native_state_static_handle(1), 3);
+  uint8_t oldValue = 0;
+  uint8_t newValue = 2;
+  obelisk_rt_v1_scheduler_signal_transition(
+      context, upper, 2, &oldValue, nullptr, &newValue, nullptr);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(schedulerResumeCount, 0u);
+
+  obelisk_rt_v1_scheduler_signal(
+      context, obelisk_rt_v1_native_state_static_handle(2), 1,
+      OBELISK_RT_SIGNAL_CHANGE);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(schedulerResumeCount, 1u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 void initializeWait(void *frame) {
   auto *wait = reinterpret_cast<obelisk_rt_wait_record_v1 *>(
       static_cast<uint8_t *>(frame) + 8);
@@ -225,8 +802,8 @@ TEST(ProcessInstance, NativeBytecodeNativeUsesStableCanonicalFrame) {
   EXPECT_EQ(frameSize, 40u);
 
   obelisk_rt_fragment_action_v1 action{};
-  auto *context = obelisk_rt_v1_context_create(OBELISK_RT_V1_ABI_VERSION);
-  ASSERT_NE(context, nullptr);
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
                 instance, context, OBELISK_RT_TIER_NATIVE, &action),
             OBELISK_RT_OK);

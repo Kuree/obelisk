@@ -20,11 +20,15 @@ def version : Flag<["--"], "version">,
 def emit_slang : Flag<["-"], "emit-slang">, Group<Action_Group>,
   HelpText<"Emit elaborated Slang dialect MLIR after SystemVerilog import">;
 def emit_obelisk : Flag<["-"], "emit-obelisk">, Group<Action_Group>,
-  HelpText<"Emit Obelisk dialect MLIR (default)">;
+  HelpText<"Emit Obelisk dialect MLIR">;
 def emit_sim : Flag<["-"], "emit-sim">, Group<Action_Group>,
   HelpText<"Emit executable obelisk_sim SSA MLIR">;
 def emit_schedule : Flag<["-"], "emit-schedule">, Group<Action_Group>,
   HelpText<"Emit deterministic compute-graph and event-region diagnostics">;
+def c : Flag<["-"], "c">, Group<Action_Group>,
+  HelpText<"Emit a native x86-64 ELF object">;
+def emit_llvm : Flag<["-"], "emit-llvm">, Group<Action_Group>,
+  HelpText<"Emit textual LLVM IR for the native target">;
 
 def o : JoinedOrSeparate<["-"], "o">, Group<Output_Group>,
   MetaVarName<"<file>">,
@@ -32,6 +36,9 @@ def o : JoinedOrSeparate<["-"], "o">, Group<Output_Group>,
 def mlir_print_debuginfo : Flag<["--"], "mlir-print-debuginfo">,
   Group<Output_Group>,
   HelpText<"Include source locations in emitted MLIR">;
+def sysroot_EQ : Joined<["--"], "sysroot=">, Group<Output_Group>,
+  MetaVarName<"<dir>">,
+  HelpText<"Use <dir> for glibc native-link inputs">;
 
 def threads_EQ : Joined<["--"], "threads=">, Group<Compilation_Group>,
   MetaVarName<"<count>">,

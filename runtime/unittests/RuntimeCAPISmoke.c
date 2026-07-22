@@ -1,6 +1,7 @@
 //===- RuntimeCAPISmoke.c - Compile and exercise the runtime C ABI --------===//
 
 #include "obelisk/Runtime/Runtime.h"
+#include "obelisk/Runtime/StableHandle.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -216,9 +217,19 @@ int obelisk_runtime_c_api_smoke(void) {
   obelisk_rt_fragment_descriptor_v1 fragment = {0};
   obelisk_rt_fragment_action_v1 action = {0};
   uint64_t frame = 41;
+  obelisk_rt_stable_handle_v1 decoded = {0};
+  uint64_t stable = obelisk_rt_stable_handle_encode(
+      OBELISK_RT_STABLE_HANDLE_STATIC, 7, -3);
 
   if (OBELISK_RT_ABI_GENERATION != 1u)
     return 1;
+  if (!obelisk_rt_stable_handle_decode(stable, &decoded) ||
+      decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC || decoded.id != 7 ||
+      decoded.offset != -3 ||
+      obelisk_rt_stable_handle_offset(stable, 5) == UINT64_MAX ||
+      !obelisk_rt_stable_handle_same_object(
+          stable, obelisk_rt_stable_handle_offset(stable, 5)))
+    return 20;
   if (obelisk_rt_v1_context_create(&context) != OBELISK_RT_OK || !context)
     return 2;
   if (obelisk_rt_v1_format(context, "%s", 2, &empty_string, 1, NULL, &output) !=

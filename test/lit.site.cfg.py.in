@@ -2,9 +2,17 @@
 
 config.obelisk_obj_root = "@PROJECT_BINARY_DIR@"
 config.obelisk_driver_dir = "@PROJECT_BINARY_DIR@/tools/driver"
+config.obelisk_driver_executable = "@PROJECT_BINARY_DIR@/tools/driver/obelisk"
 config.obelisk_filecheck_dir = "@PROJECT_BINARY_DIR@/tools/filecheck"
 config.obelisk_opt_dir = "@PROJECT_BINARY_DIR@/tools/obelisk-opt"
 config.llvm_tools_dir = "@OBELISK_LLVM_TOOLS_DIR@"
+config.obelisk_native_support_dir = r"@OBELISK_NATIVE_SUPPORT_DIR@"
+config.obelisk_target_package_cache = r"@OBELISK_TARGET_PACKAGE_CACHE@"
+config.obelisk_target_sysroot = r"@OBELISK_TARGET_SYSROOT@"
+config.obelisk_target_provision_script = r"@PROJECT_SOURCE_DIR@/cmake/ProvisionTargetSysroot.cmake"
+config.obelisk_source_root = r"@PROJECT_SOURCE_DIR@"
+config.obelisk_llvm_dist = r"@OBELISK_LLVM_DIST_DIR@"
+config.cmake_executable = r"@CMAKE_COMMAND@"
 config.real_uvm_dir = r"@OBELISK_REAL_UVM_DIR@"
 config.enable_real_uvm_tests = "@OBELISK_ENABLE_REAL_UVM_TESTS@" == "ON"
 

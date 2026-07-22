@@ -56,7 +56,7 @@ function(obelisk_add_generated_process_object output_var directory input_file)
     COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/mlir-translate" --mlir-to-llvmir
             "${generated_mlir}" -o "${generated_raw_llvm}"
     COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/opt"
-            "-passes=verify,coro-early,sroa,instcombine,simplifycfg,coro-split<reuse-storage>,coro-elide,coro-cleanup,sroa,instcombine,simplifycfg,dce,strip-dead-prototypes,verify"
+            "-passes=default<O3>"
             -S "${generated_raw_llvm}" -o "${generated_llvm}"
     COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/llc" -filetype=obj
             -relocation-model=pic "${generated_llvm}"

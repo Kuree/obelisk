@@ -5,7 +5,7 @@
 // RUN: obelisk -emit-slang --single-unit -I%S/Inputs/mock_uvm \
 // RUN:   %S/Inputs/mock_uvm/uvm_pkg.sv %s \
 // RUN:   | FileCheck %s --check-prefix=SLANG
-// RUN: obelisk --single-unit -I%S/Inputs/mock_uvm \
+// RUN: obelisk -emit-obelisk --single-unit -I%S/Inputs/mock_uvm \
 // RUN:   %S/Inputs/mock_uvm/uvm_pkg.sv %s | obelisk-opt \
 // RUN:   | FileCheck %s --check-prefix=OBELISK
 //
@@ -14,10 +14,10 @@
 // UVM-shaped hierarchy and produce exactly the same IR as a single-threaded
 // run; a difference or failure would mean a scope leaks state across its
 // isolation boundary.
-// RUN: obelisk --single-unit -I%S/Inputs/mock_uvm \
+// RUN: obelisk -emit-obelisk --single-unit -I%S/Inputs/mock_uvm \
 // RUN:   %S/Inputs/mock_uvm/uvm_pkg.sv %s \
 // RUN:   | obelisk-opt --mlir-disable-threading > %t.single
-// RUN: obelisk --single-unit -I%S/Inputs/mock_uvm \
+// RUN: obelisk -emit-obelisk --single-unit -I%S/Inputs/mock_uvm \
 // RUN:   %S/Inputs/mock_uvm/uvm_pkg.sv %s | obelisk-opt > %t.threaded
 // RUN: diff %t.single %t.threaded
 
