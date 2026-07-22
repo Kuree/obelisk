@@ -13,6 +13,7 @@ add_mlir_library(ObeliskSimulationIR
   MLIRArithDialect
   MLIRControlFlowInterfaces
   MLIRFunctionInterfaces
+  MLIRInferTypeOpInterface
   MLIRIR
   MLIRMemorySlotInterfaces
   MLIRSideEffectInterfaces

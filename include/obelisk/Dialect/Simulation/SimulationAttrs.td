@@ -14,6 +14,18 @@ class SimAttr<string name, string attrMnemonic>
   let mnemonic = attrMnemonic;
 }
 
+def SimFieldAttr : SimAttr<"Field", "field"> {
+  let summary = "ordered aggregate field metadata";
+  let parameters = (ins
+    "::mlir::StringAttr":$name,
+    "::mlir::Type":$type,
+    "uint32_t":$ordinal,
+    "uint64_t":$packedOffset
+  );
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
 def SimComputeEffectAttr : SimAttr<"ComputeEffect", "effect"> {
   let parameters = (ins
     EnumParameter<SimComputeEffectKind>:$effect,

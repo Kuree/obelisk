@@ -17,8 +17,9 @@ module case_shapes;
   end
 endmodule
 
-// CHECK-LABEL: obelisk_sim.func @unit_0
-// CHECK: %[[SEL:.*]] = obelisk_sim.ref.load %arg1
+// CHECK-LABEL: obelisk_sim.func {{.*}}@unit_0
+// CHECK: %[[SEL_AGG:.*]] = obelisk_sim.ref.load %arg1
+// CHECK: %[[SEL:.*]] = obelisk_sim.packed.flatten %[[SEL_AGG]]
 
 // First item: one label, matching 2'd0, storing 8'h10.
 // Constant labels and values may be folded and carried as continuation block

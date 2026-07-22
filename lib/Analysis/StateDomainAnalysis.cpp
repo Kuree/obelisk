@@ -34,7 +34,16 @@ constexpr StateDomainFact mayFourState(StateDomainReason reason) {
   return {StateDomain::MayFourState, reason};
 }
 
-bool isLogic(Type type) { return isa<sim::LogicType>(type); }
+bool isLogic(Type type) {
+  if (isa<sim::LogicType>(type))
+    return true;
+  if (!sim::isAggregateType(type))
+    return false;
+  for (unsigned index = 0; index < sim::getAggregateNumElements(type); ++index)
+    if (isLogic(sim::getAggregateElementType(type, index)))
+      return true;
+  return false;
+}
 
 /// Join facts arriving along alternative control-flow or invocation edges.
 /// Bottom means that an edge has not contributed information yet, so it is the

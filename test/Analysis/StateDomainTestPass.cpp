@@ -12,6 +12,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <functional>
 #include <optional>
 
 using namespace mlir;
@@ -19,7 +20,18 @@ using namespace mlir;
 namespace {
 
 bool shouldPrint(Value value) {
-  if (isa<obelisk::sim::LogicType>(value.getType()))
+  std::function<bool(Type)> containsLogic = [&](Type type) {
+    if (isa<obelisk::sim::LogicType>(type))
+      return true;
+    if (!obelisk::sim::isAggregateType(type))
+      return false;
+    for (unsigned index = 0;
+         index < obelisk::sim::getAggregateNumElements(type); ++index)
+      if (containsLogic(obelisk::sim::getAggregateElementType(type, index)))
+        return true;
+    return false;
+  };
+  if (containsLogic(value.getType()))
     return true;
   auto result = dyn_cast<OpResult>(value);
   return result && isa<obelisk::sim::SimLogicCompareOp>(result.getOwner());

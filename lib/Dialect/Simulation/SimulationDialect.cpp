@@ -13,7 +13,9 @@
 
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/TypeSwitch.h"
+#include "llvm/ADT/bit.h"
 
 #include <algorithm>
 #include <limits>
@@ -276,14 +278,237 @@ NBASiteAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
 
 std::optional<unsigned> getPackedWidth(Type type) {
   if (auto integer = dyn_cast<IntegerType>(type))
-    return integer.getWidth();
+    return integer.isSignless() ? std::optional<unsigned>(integer.getWidth())
+                                : std::nullopt;
   if (auto logic = dyn_cast<LogicType>(type))
     return logic.getWidth();
+  auto checkedProduct = [](uint64_t lhs,
+                           uint64_t rhs) -> std::optional<unsigned> {
+    if (lhs && rhs > std::numeric_limits<unsigned>::max() / lhs)
+      return std::nullopt;
+    uint64_t result = lhs * rhs;
+    if (result == 0 || result > std::numeric_limits<unsigned>::max())
+      return std::nullopt;
+    return static_cast<unsigned>(result);
+  };
+  if (auto array = dyn_cast<PackedArrayType>(type)) {
+    std::optional<unsigned> element = getPackedWidth(array.getElementType());
+    std::optional<unsigned> count =
+        getArrayElementOrdinal(array, array.getRight());
+    if (!element || !count)
+      return std::nullopt;
+    return checkedProduct(static_cast<uint64_t>(*count) + 1, *element);
+  }
+  auto aggregateWidth = [&](ArrayAttr fields) -> std::optional<unsigned> {
+    uint64_t width = 0;
+    for (Attribute attribute : fields) {
+      auto field = dyn_cast<FieldAttr>(attribute);
+      std::optional<unsigned> fieldWidth =
+          field ? getPackedWidth(field.getType()) : std::nullopt;
+      if (!fieldWidth || field.getPackedOffset() >
+                             std::numeric_limits<unsigned>::max() - *fieldWidth)
+        return std::nullopt;
+      width = std::max<uint64_t>(width, field.getPackedOffset() +
+                                            static_cast<uint64_t>(*fieldWidth));
+    }
+    if (width == 0 || width > std::numeric_limits<unsigned>::max())
+      return std::nullopt;
+    return static_cast<unsigned>(width);
+  };
+  if (auto structure = dyn_cast<PackedStructType>(type))
+    return aggregateWidth(structure.getFields());
+  if (auto unionType = dyn_cast<PackedUnionType>(type)) {
+    std::optional<unsigned> payload = aggregateWidth(unionType.getFields());
+    if (!payload || unionType.getTagBits() >
+                        std::numeric_limits<unsigned>::max() - *payload)
+      return std::nullopt;
+    return *payload + unionType.getTagBits();
+  }
   return std::nullopt;
 }
 
+static bool containsFourStateLeaf(Type type) {
+  if (isa<LogicType>(type))
+    return true;
+  if (!isAggregateType(type))
+    return false;
+  for (unsigned index = 0, end = getAggregateNumElements(type); index < end;
+       ++index)
+    if (containsFourStateLeaf(getAggregateElementType(type, index)))
+      return true;
+  return false;
+}
+
+Type getPackedScalarType(Type type) {
+  std::optional<unsigned> width = getPackedWidth(type);
+  if (!width)
+    return {};
+  if (!isAggregateType(type))
+    return type;
+  if (containsFourStateLeaf(type))
+    return LogicType::get(type.getContext(), *width);
+  return IntegerType::get(type.getContext(), *width);
+}
+
+bool isAggregateType(Type type) {
+  return isa<PackedArrayType, UnpackedArrayType, PackedStructType,
+             UnpackedStructType, PackedUnionType, UnpackedUnionType>(type);
+}
+
+static ArrayAttr getAggregateFields(Type type) {
+  return llvm::TypeSwitch<Type, ArrayAttr>(type)
+      .Case<PackedStructType, UnpackedStructType, PackedUnionType,
+            UnpackedUnionType>(
+          [](auto aggregate) { return aggregate.getFields(); })
+      .Default([](Type) { return ArrayAttr{}; });
+}
+
+unsigned getAggregateNumElements(Type type) {
+  if (auto array = dyn_cast<PackedArrayType>(type)) {
+    std::optional<unsigned> last =
+        getArrayElementOrdinal(array, array.getRight());
+    return last ? *last + 1 : 0;
+  }
+  if (auto array = dyn_cast<UnpackedArrayType>(type)) {
+    std::optional<unsigned> last =
+        getArrayElementOrdinal(array, array.getRight());
+    return last ? *last + 1 : 0;
+  }
+  return getAggregateFields(type).size();
+}
+
+Type getAggregateElementType(Type type, unsigned index) {
+  if (auto array = dyn_cast<PackedArrayType>(type))
+    return index < getAggregateNumElements(type) ? array.getElementType()
+                                                 : Type{};
+  if (auto array = dyn_cast<UnpackedArrayType>(type))
+    return index < getAggregateNumElements(type) ? array.getElementType()
+                                                 : Type{};
+  ArrayAttr fields = getAggregateFields(type);
+  if (index >= fields.size())
+    return {};
+  auto field = dyn_cast<FieldAttr>(fields[index]);
+  return field ? field.getType() : Type{};
+}
+
+std::optional<unsigned> getArrayElementOrdinal(Type type, int64_t sourceIndex) {
+  int64_t left;
+  int64_t right;
+  if (auto array = dyn_cast<PackedArrayType>(type)) {
+    left = array.getLeft();
+    right = array.getRight();
+  } else if (auto array = dyn_cast<UnpackedArrayType>(type)) {
+    left = array.getLeft();
+    right = array.getRight();
+  } else {
+    return std::nullopt;
+  }
+  uint64_t ordinal;
+  if (left >= right) {
+    if (sourceIndex > left || sourceIndex < right)
+      return std::nullopt;
+    ordinal = static_cast<uint64_t>(left) - static_cast<uint64_t>(sourceIndex);
+  } else {
+    if (sourceIndex < left || sourceIndex > right)
+      return std::nullopt;
+    ordinal = static_cast<uint64_t>(sourceIndex) - static_cast<uint64_t>(left);
+  }
+  if (ordinal > std::numeric_limits<unsigned>::max())
+    return std::nullopt;
+  return static_cast<unsigned>(ordinal);
+}
+
+std::optional<uint64_t> getProvenanceSpan(Type type) {
+  if (auto reference = dyn_cast<RefType>(type))
+    return getProvenanceSpan(reference.getElementType());
+  if (auto net = dyn_cast<NetType>(type))
+    return getProvenanceSpan(net.getElementType());
+  if (auto driver = dyn_cast<DriverType>(type))
+    return getProvenanceSpan(driver.getElementType());
+  if (isa<EventType>(type))
+    return uint64_t{1};
+  if (std::optional<unsigned> packed = getPackedWidth(type))
+    return *packed;
+  if (isa<TimeType>(type))
+    return uint64_t{64};
+  auto checkedAdd = [](uint64_t &total, uint64_t amount) {
+    if (amount > std::numeric_limits<uint64_t>::max() - total)
+      return false;
+    total += amount;
+    return true;
+  };
+  if (isa<UnpackedArrayType>(type)) {
+    uint64_t count = getAggregateNumElements(type);
+    std::optional<uint64_t> element =
+        getProvenanceSpan(getAggregateElementType(type, 0));
+    if (!element ||
+        (count && *element > std::numeric_limits<uint64_t>::max() / count))
+      return std::nullopt;
+    return count * *element;
+  }
+  if (isa<UnpackedStructType>(type)) {
+    uint64_t total = 0;
+    for (unsigned index = 0; index < getAggregateNumElements(type); ++index) {
+      std::optional<uint64_t> child =
+          getProvenanceSpan(getAggregateElementType(type, index));
+      if (!child || !checkedAdd(total, *child))
+        return std::nullopt;
+    }
+    return total;
+  }
+  if (isa<UnpackedUnionType>(type)) {
+    uint64_t maximum = 0;
+    for (unsigned index = 0; index < getAggregateNumElements(type); ++index) {
+      std::optional<uint64_t> child =
+          getProvenanceSpan(getAggregateElementType(type, index));
+      if (!child)
+        return std::nullopt;
+      maximum = std::max(maximum, *child);
+    }
+    return maximum;
+  }
+  return std::nullopt;
+}
+
+std::optional<std::pair<uint64_t, uint64_t>>
+getAggregateProvenanceSubelement(Type type, unsigned index) {
+  Type element = getAggregateElementType(type, index);
+  std::optional<uint64_t> span = getProvenanceSpan(element);
+  if (!element || !span)
+    return std::nullopt;
+  uint64_t offset = 0;
+  if (isa<PackedStructType, PackedUnionType>(type)) {
+    auto field = cast<FieldAttr>(getAggregateFields(type)[index]);
+    offset = field.getPackedOffset();
+  } else if (isa<PackedArrayType>(type)) {
+    uint64_t count = getAggregateNumElements(type);
+    if (*span &&
+        count - index - 1 > std::numeric_limits<uint64_t>::max() / *span)
+      return std::nullopt;
+    offset = (count - index - 1) * *span;
+  } else if (isa<UnpackedArrayType>(type)) {
+    if (*span && index > std::numeric_limits<uint64_t>::max() / *span)
+      return std::nullopt;
+    offset = index * *span;
+  } else if (isa<UnpackedStructType>(type)) {
+    for (unsigned previous = 0; previous < index; ++previous) {
+      std::optional<uint64_t> previousSpan =
+          getProvenanceSpan(getAggregateElementType(type, previous));
+      if (!previousSpan ||
+          *previousSpan > std::numeric_limits<uint64_t>::max() - offset)
+        return std::nullopt;
+      offset += *previousSpan;
+    }
+  } else if (!isa<UnpackedUnionType>(type)) {
+    return std::nullopt;
+  }
+  return std::pair<uint64_t, uint64_t>{offset, *span};
+}
+
 static bool isNormalizedValueType(Type type) {
-  return isa<IntegerType, LogicType>(type);
+  if (auto integer = dyn_cast<IntegerType>(type))
+    return integer.isSignless();
+  return isa<LogicType>(type) || isAggregateType(type);
 }
 
 static LogicalResult verifyNormalizedIndex(Operation *op, Type type) {
@@ -300,7 +525,10 @@ static LogicalResult verifyNormalizedIndex(Operation *op, Type type) {
 
 static LogicalResult verifyMatchingStateDomain(Operation *op, Type input,
                                                Type result) {
-  if (isa<LogicType>(input) != isa<LogicType>(result))
+  Type inputScalar = getPackedScalarType(input);
+  Type resultScalar = getPackedScalarType(result);
+  if (!inputScalar || !resultScalar ||
+      isa<LogicType>(inputScalar) != isa<LogicType>(resultScalar))
     return op->emitOpError(
         "input and result element types must use the same state domain");
   return success();
@@ -309,15 +537,222 @@ static LogicalResult verifyMatchingStateDomain(Operation *op, Type input,
 static LogicalResult
 verifyElementType(llvm::function_ref<InFlightDiagnostic()> emitError,
                   Type elementType) {
-  if (!isNormalizedValueType(elementType))
-    return emitError() << "element type must be a signless builtin integer or "
-                          "!obelisk_sim.logic, got "
-                       << elementType;
   if (auto integer = dyn_cast<IntegerType>(elementType);
       integer && !integer.isSignless())
     return emitError() << "builtin integer element types must be signless";
+  if (!isNormalizedValueType(elementType))
+    return emitError() << "element type must be a normalized scalar or fixed "
+                          "aggregate, got "
+                       << elementType;
   return success();
 }
+
+LogicalResult
+FieldAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                  StringAttr name, Type type, uint32_t, uint64_t) {
+  if (!name || name.getValue().empty())
+    return emitError() << "aggregate field name must not be empty";
+  if (!type)
+    return emitError() << "aggregate field type must not be null";
+  return success();
+}
+
+static std::optional<uint64_t> getInclusiveRangeWidth(int64_t left,
+                                                      int64_t right) {
+  uint64_t distance =
+      left >= right
+          ? static_cast<uint64_t>(left) - static_cast<uint64_t>(right)
+          : static_cast<uint64_t>(right) - static_cast<uint64_t>(left);
+  if (distance == std::numeric_limits<uint64_t>::max())
+    return std::nullopt;
+  return distance + 1;
+}
+
+static LogicalResult
+verifyArrayType(llvm::function_ref<InFlightDiagnostic()> emitError,
+                Type elementType, int64_t left, int64_t right, bool packed) {
+  std::optional<uint64_t> width = getInclusiveRangeWidth(left, right);
+  if (!width || *width > std::numeric_limits<unsigned>::max())
+    return emitError() << "fixed array range is too large";
+  if (failed(verifyElementType(emitError, elementType)))
+    return failure();
+  if (packed) {
+    std::optional<unsigned> elementWidth = getPackedWidth(elementType);
+    if (!elementWidth)
+      return emitError() << "packed array element must be packed, got "
+                         << elementType;
+    if (*width > std::numeric_limits<unsigned>::max() / *elementWidth)
+      return emitError() << "packed array width exceeds the supported limit";
+  }
+  return success();
+}
+
+LogicalResult
+PackedArrayType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                        Type elementType, int64_t left, int64_t right) {
+  return verifyArrayType(emitError, elementType, left, right, true);
+}
+
+LogicalResult
+UnpackedArrayType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                          Type elementType, int64_t left, int64_t right) {
+  return verifyArrayType(emitError, elementType, left, right, false);
+}
+
+static LogicalResult
+verifyRecordType(llvm::function_ref<InFlightDiagnostic()> emitError,
+                 ArrayAttr fields, bool packed, bool isUnion, bool isTagged,
+                 uint32_t tagBits) {
+  if (!fields || fields.empty())
+    return emitError() << "aggregate requires at least one field";
+  if (!packed && tagBits != 0)
+    return emitError() << "unpacked union cannot reserve packed tag bits";
+  if (!isTagged && tagBits != 0)
+    return emitError() << "only a tagged union can reserve tag bits";
+  llvm::SmallDenseSet<StringRef, 8> names;
+  SmallVector<std::pair<uint64_t, uint64_t>> intervals;
+  for (auto [ordinal, attribute] : llvm::enumerate(fields)) {
+    auto field = dyn_cast<FieldAttr>(attribute);
+    if (!field)
+      return emitError() << "aggregate fields must use #obelisk_sim.field";
+    if (field.getOrdinal() != ordinal)
+      return emitError()
+             << "aggregate field ordinals must be dense and ordered";
+    if (!names.insert(field.getName().getValue()).second)
+      return emitError() << "aggregate field names must be unique";
+    if (failed(verifyElementType(emitError, field.getType())))
+      return failure();
+    if (!packed) {
+      if (field.getPackedOffset() != 0)
+        return emitError() << "unpacked aggregate field has a packed offset";
+      continue;
+    }
+    std::optional<unsigned> width = getPackedWidth(field.getType());
+    if (!width)
+      return emitError() << "packed aggregate field must be packed, got "
+                         << field.getType();
+    if (field.getPackedOffset() > std::numeric_limits<uint64_t>::max() - *width)
+      return emitError() << "packed aggregate field range overflows uint64_t";
+    if (field.getPackedOffset() + *width > std::numeric_limits<unsigned>::max())
+      return emitError()
+             << "packed aggregate width exceeds the supported limit";
+    intervals.push_back(
+        {field.getPackedOffset(), field.getPackedOffset() + *width});
+  }
+  if (packed && !isUnion) {
+    llvm::sort(intervals);
+    if (intervals.front().first != 0)
+      return emitError() << "packed struct fields must cover bit zero";
+    for (auto [previous, current] :
+         llvm::zip(intervals, llvm::drop_begin(intervals)))
+      if (previous.second > current.first)
+        return emitError() << "packed struct fields overlap";
+      else if (previous.second < current.first)
+        return emitError() << "packed struct fields must be contiguous";
+  }
+  if (packed && isUnion) {
+    for (auto interval : intervals)
+      if (interval.first != 0)
+        return emitError() << "packed union fields must start at bit zero";
+    if (!isTagged) {
+      uint64_t width = intervals.front().second;
+      for (auto interval : llvm::drop_begin(intervals))
+        if (interval.second != width)
+          return emitError()
+                 << "untagged packed union fields must have equal widths";
+    }
+    uint32_t expectedTagBits = static_cast<uint32_t>(
+        llvm::bit_width(static_cast<uint64_t>(fields.size() - 1)));
+    if (isTagged && tagBits != expectedTagBits)
+      return emitError() << "packed tagged union requires " << expectedTagBits
+                         << " tag bits";
+    uint64_t payloadWidth = 0;
+    for (auto interval : intervals)
+      payloadWidth = std::max(payloadWidth, interval.second);
+    if (tagBits > std::numeric_limits<unsigned>::max() - payloadWidth)
+      return emitError()
+             << "packed tagged union width exceeds the supported limit";
+  }
+  return success();
+}
+
+LogicalResult
+PackedStructType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                         ArrayAttr fields) {
+  return verifyRecordType(emitError, fields, true, false, false, 0);
+}
+
+LogicalResult
+UnpackedStructType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                           ArrayAttr fields) {
+  return verifyRecordType(emitError, fields, false, false, false, 0);
+}
+
+LogicalResult
+PackedUnionType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                        ArrayAttr fields, bool isTagged, uint32_t tagBits) {
+  return verifyRecordType(emitError, fields, true, true, isTagged, tagBits);
+}
+
+LogicalResult
+UnpackedUnionType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                          ArrayAttr fields, bool isTagged, uint32_t tagBits) {
+  return verifyRecordType(emitError, fields, false, true, isTagged, tagBits);
+}
+
+static IntegerAttr getSubelementIndexAttr(MLIRContext *context,
+                                          unsigned index) {
+  return IntegerAttr::get(IntegerType::get(context, 32), index);
+}
+
+static std::optional<DenseMap<Attribute, Type>>
+getSubelementIndexMap(Type type, bool limitArray) {
+  unsigned count = getAggregateNumElements(type);
+  if (limitArray && count > 64)
+    return std::nullopt;
+  DenseMap<Attribute, Type> elements;
+  for (unsigned index = 0; index < count; ++index)
+    elements.insert({getSubelementIndexAttr(type.getContext(), index),
+                     getAggregateElementType(type, index)});
+  return elements;
+}
+
+static Type getTypeAtSubelementIndex(Type type, Attribute index) {
+  auto integer = dyn_cast<IntegerAttr>(index);
+  if (!integer || !integer.getType().isInteger(32) ||
+      integer.getValue().isNegative() ||
+      integer.getValue().getActiveBits() > 32)
+    return {};
+  return getAggregateElementType(type, static_cast<unsigned>(integer.getInt()));
+}
+
+#define OBELISK_DEFINE_ARRAY_DESTRUCTURABLE(TypeName)                          \
+  std::optional<DenseMap<Attribute, Type>> TypeName::getSubelementIndexMap()   \
+      const {                                                                  \
+    return ::obelisk::sim::getSubelementIndexMap(*this, true);                 \
+  }                                                                            \
+  Type TypeName::getTypeAtIndex(Attribute index) const {                       \
+    return getTypeAtSubelementIndex(*this, index);                             \
+  }
+
+#define OBELISK_DEFINE_RECORD_DESTRUCTURABLE(TypeName)                         \
+  std::optional<DenseMap<Attribute, Type>> TypeName::getSubelementIndexMap()   \
+      const {                                                                  \
+    return ::obelisk::sim::getSubelementIndexMap(*this, false);                \
+  }                                                                            \
+  Type TypeName::getTypeAtIndex(Attribute index) const {                       \
+    return getTypeAtSubelementIndex(*this, index);                             \
+  }
+
+OBELISK_DEFINE_ARRAY_DESTRUCTURABLE(PackedArrayType)
+OBELISK_DEFINE_ARRAY_DESTRUCTURABLE(UnpackedArrayType)
+OBELISK_DEFINE_RECORD_DESTRUCTURABLE(PackedStructType)
+OBELISK_DEFINE_RECORD_DESTRUCTURABLE(UnpackedStructType)
+OBELISK_DEFINE_RECORD_DESTRUCTURABLE(PackedUnionType)
+OBELISK_DEFINE_RECORD_DESTRUCTURABLE(UnpackedUnionType)
+
+#undef OBELISK_DEFINE_ARRAY_DESTRUCTURABLE
+#undef OBELISK_DEFINE_RECORD_DESTRUCTURABLE
 
 LogicalResult
 LogicType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
@@ -604,14 +1039,17 @@ LogicalResult SimFuncOp::verify() {
     return emitOpError("first argument must be !obelisk_sim.context");
   for (Type input : type.getInputs()) {
     if (!isa<ContextType, RefType, NetType, DriverType, EventType, ProcessType,
-             IntegerType, LogicType, TimeType>(input))
+             IntegerType, LogicType, TimeType>(input) &&
+        !isAggregateType(input))
       return emitOpError() << "contains non-normalized argument type " << input;
     if (auto integer = dyn_cast<IntegerType>(input);
         integer && !integer.isSignless())
       return emitOpError("builtin integer arguments must be signless");
   }
   for (Type result : type.getResults()) {
-    if (!isa<IntegerType, LogicType, TimeType, EventType, ProcessType>(result))
+    if (!isa<IntegerType, LogicType, TimeType, EventType, ProcessType>(
+            result) &&
+        !isAggregateType(result))
       return emitOpError() << "contains non-normalized result type " << result;
     if (auto integer = dyn_cast<IntegerType>(result);
         integer && !integer.isSignless())
@@ -734,6 +1172,163 @@ LogicalResult SimContextEventOp::verify() {
   return verifyNonnegative(*this, getIdAttr(), "event ID");
 }
 
+static bool isUnionAggregate(Type type) {
+  return isa<PackedUnionType, UnpackedUnionType>(type);
+}
+
+static bool isStructOrArrayAggregate(Type type) {
+  return isAggregateType(type) && !isUnionAggregate(type);
+}
+
+LogicalResult SimPackedFlattenOp::verify() {
+  if (!isAggregateType(getInput().getType()) ||
+      !getPackedScalarType(getInput().getType()))
+    return emitOpError("input must be a packed aggregate");
+  if (getResult().getType() != getPackedScalarType(getInput().getType()))
+    return emitOpError(
+        "result must be the aggregate's width- and state-matched scalar");
+  return success();
+}
+
+LogicalResult SimPackedUnflattenOp::verify() {
+  if (!isAggregateType(getResult().getType()) ||
+      !getPackedScalarType(getResult().getType()))
+    return emitOpError("result must be a packed aggregate");
+  if (getInput().getType() != getPackedScalarType(getResult().getType()))
+    return emitOpError(
+        "input must be the aggregate's width- and state-matched scalar");
+  return success();
+}
+
+static LogicalResult verifyAggregateIndex(Operation *operation, Type aggregate,
+                                          IntegerAttr index, Type result,
+                                          bool requireUnion) {
+  if (!isAggregateType(aggregate) ||
+      requireUnion != isUnionAggregate(aggregate))
+    return operation->emitOpError()
+           << (requireUnion ? "input must be a union"
+                            : "input must be a struct or fixed array");
+  if (index.getValue().isNegative() || index.getValue().getActiveBits() > 32)
+    return operation->emitOpError("aggregate index must be nonnegative");
+  uint64_t ordinal = index.getValue().getZExtValue();
+  Type expected = ordinal <= std::numeric_limits<unsigned>::max()
+                      ? getAggregateElementType(aggregate, ordinal)
+                      : Type{};
+  if (!expected)
+    return operation->emitOpError("aggregate index is out of range");
+  if (result != expected)
+    return operation->emitOpError()
+           << "result type must match aggregate element type " << expected;
+  return success();
+}
+
+LogicalResult SimAggregateDefaultOp::verify() {
+  if (!isAggregateType(getResult().getType()))
+    return emitOpError("result must be a fixed aggregate type");
+  return success();
+}
+
+LogicalResult SimAggregateConstructOp::verify() {
+  Type type = getResult().getType();
+  if (!isStructOrArrayAggregate(type))
+    return emitOpError("result must be a struct or fixed array");
+  if (getElements().size() != getAggregateNumElements(type))
+    return emitOpError("requires one operand per aggregate element");
+  for (auto [index, element] : llvm::enumerate(getElements()))
+    if (element.getType() != getAggregateElementType(type, index))
+      return emitOpError() << "operand #" << index
+                           << " does not match its aggregate element type";
+  return success();
+}
+
+LogicalResult SimAggregateExtractOp::verify() {
+  return verifyAggregateIndex(*this, getInput().getType(), getIndexAttr(),
+                              getResult().getType(), false);
+}
+
+LogicalResult SimAggregateInsertOp::verify() {
+  if (getInput().getType() != getResult().getType())
+    return emitOpError("input and result aggregate types must match");
+  return verifyAggregateIndex(*this, getInput().getType(), getIndexAttr(),
+                              getReplacement().getType(), false);
+}
+
+LogicalResult SimArrayDynExtractOp::verify() {
+  Type type = getInput().getType();
+  if (!isa<PackedArrayType, UnpackedArrayType>(type))
+    return emitOpError("input must be a fixed array");
+  if (failed(verifyNormalizedIndex(*this, getIndex().getType())))
+    return failure();
+  if (getResult().getType() != getAggregateElementType(type, 0))
+    return emitOpError("result must match the array element type");
+  return success();
+}
+
+LogicalResult SimUnionConstructOp::verify() {
+  return verifyAggregateIndex(*this, getResult().getType(), getIndexAttr(),
+                              getValue().getType(), true);
+}
+
+LogicalResult SimUnionExtractOp::verify() {
+  return verifyAggregateIndex(*this, getInput().getType(), getIndexAttr(),
+                              getResult().getType(), true);
+}
+
+static LogicalResult verifySubelementPath(Operation *operation, Type input,
+                                          ArrayRef<int64_t> indices,
+                                          Type result) {
+  if (indices.empty())
+    return operation->emitOpError("subelement path must not be empty");
+  Type current = input;
+  for (int64_t index : indices) {
+    if (index < 0 ||
+        static_cast<uint64_t>(index) > std::numeric_limits<unsigned>::max())
+      return operation->emitOpError("subelement index must be nonnegative");
+    current = getAggregateElementType(current, static_cast<unsigned>(index));
+    if (!current)
+      return operation->emitOpError("subelement path is out of range");
+  }
+  if (current != result)
+    return operation->emitOpError()
+           << "result element type must match selected subelement " << current;
+  return success();
+}
+
+LogicalResult SimRefSubelementOp::verify() {
+  return verifySubelementPath(*this, getInput().getType().getElementType(),
+                              getIndices(),
+                              getResult().getType().getElementType());
+}
+
+LogicalResult SimDriverSubelementOp::verify() {
+  return verifySubelementPath(*this, getInput().getType().getElementType(),
+                              getIndices(),
+                              getResult().getType().getElementType());
+}
+
+static LogicalResult verifyArrayElementView(Operation *operation, Type input,
+                                            Type index, Type result) {
+  if (!isa<PackedArrayType, UnpackedArrayType>(input))
+    return operation->emitOpError("input element must be a fixed array");
+  if (failed(verifyNormalizedIndex(operation, index)))
+    return failure();
+  if (result != getAggregateElementType(input, 0))
+    return operation->emitOpError("result must match the array element type");
+  return success();
+}
+
+LogicalResult SimRefArrayElementOp::verify() {
+  return verifyArrayElementView(*this, getInput().getType().getElementType(),
+                                getIndex().getType(),
+                                getResult().getType().getElementType());
+}
+
+LogicalResult SimDriverArrayElementOp::verify() {
+  return verifyArrayElementView(*this, getInput().getType().getElementType(),
+                                getIndex().getType(),
+                                getResult().getType().getElementType());
+}
+
 LogicalResult SimRefAllocOp::verify() {
   if (getInitialValue().getType() != getResult().getType().getElementType())
     return emitOpError("initial value must match allocated element type");
@@ -742,6 +1337,114 @@ LogicalResult SimRefAllocOp::verify() {
 
 SmallVector<MemorySlot> SimRefAllocOp::getPromotableSlots() {
   return {{getResult(), getResult().getType().getElementType()}};
+}
+
+static std::optional<unsigned> getUnionSelectedInitializer(Value value) {
+  if (auto construct = value.getDefiningOp<SimUnionConstructOp>())
+    return static_cast<unsigned>(construct.getIndex());
+  if (auto defaultValue = value.getDefiningOp<SimAggregateDefaultOp>()) {
+    Type type = defaultValue.getResult().getType();
+    if (auto packed = dyn_cast<PackedUnionType>(type);
+        packed && packed.getIsTagged() && !containsFourStateLeaf(type))
+      return 0;
+    if (auto unpacked = dyn_cast<UnpackedUnionType>(type);
+        unpacked && !unpacked.getIsTagged())
+      return 0;
+  }
+  return std::nullopt;
+}
+
+SmallVector<DestructurableMemorySlot> SimRefAllocOp::getDestructurableSlots() {
+  Type elementType = getResult().getType().getElementType();
+  auto destructurable = dyn_cast<DestructurableTypeInterface>(elementType);
+  if (!destructurable)
+    return {};
+  std::optional<DenseMap<Attribute, Type>> elements =
+      destructurable.getSubelementIndexMap();
+  if (!elements || elements->empty())
+    return {};
+
+  // A union can only lose its shared backing when every view and its
+  // initializer agree on one active field. Whole accesses and mixed views
+  // deliberately retain the allocation.
+  if (isUnionAggregate(elementType)) {
+    std::optional<unsigned> selected =
+        getUnionSelectedInitializer(getInitialValue());
+    if (!selected)
+      return {};
+    for (OpOperand &use : getResult().getUses()) {
+      auto view = dyn_cast<SimRefSubelementOp>(use.getOwner());
+      if (!view || use.get() != view.getInput() || view.getIndices().empty() ||
+          static_cast<unsigned>(view.getIndices()[0]) != *selected)
+        return {};
+    }
+  }
+  return {DestructurableMemorySlot{{getResult(), elementType}, *elements}};
+}
+
+static Value materializeDefaultValue(OpBuilder &builder, Location location,
+                                     Type type) {
+  if (isAggregateType(type))
+    return SimAggregateDefaultOp::create(builder, location, type);
+  if (auto integer = dyn_cast<IntegerType>(type))
+    return arith::ConstantOp::create(builder, location, integer,
+                                     builder.getIntegerAttr(integer, 0));
+  if (auto logic = dyn_cast<LogicType>(type)) {
+    auto plane = IntegerType::get(type.getContext(), logic.getWidth());
+    return SimLogicConstantOp::create(
+        builder, location, logic,
+        builder.getIntegerAttr(plane, APInt::getZero(logic.getWidth())),
+        builder.getIntegerAttr(plane, APInt::getAllOnes(logic.getWidth())));
+  }
+  if (isa<TimeType>(type))
+    return SimTimeConstantOp::create(builder, location, type,
+                                     builder.getI64IntegerAttr(0));
+  return {};
+}
+
+DenseMap<Attribute, MemorySlot> SimRefAllocOp::destructure(
+    const DestructurableMemorySlot &slot,
+    const llvm::SmallPtrSetImpl<Attribute> &usedIndices, OpBuilder &builder,
+    SmallVectorImpl<DestructurableAllocationOpInterface> &newAllocators) {
+  assert(slot.ptr == getResult());
+  builder.setInsertionPointAfter(*this);
+  SmallVector<Attribute> sorted(usedIndices.begin(), usedIndices.end());
+  llvm::sort(sorted, [](Attribute lhs, Attribute rhs) {
+    return cast<IntegerAttr>(lhs).getInt() < cast<IntegerAttr>(rhs).getInt();
+  });
+
+  DenseMap<Attribute, MemorySlot> subslots;
+  for (Attribute attribute : sorted) {
+    unsigned index = cast<IntegerAttr>(attribute).getInt();
+    Type type = slot.subelementTypes.lookup(attribute);
+    Value initial;
+    if (auto construct =
+            getInitialValue().getDefiningOp<SimAggregateConstructOp>())
+      initial = construct.getElements()[index];
+    else if (auto construct =
+                 getInitialValue().getDefiningOp<SimUnionConstructOp>();
+             construct && construct.getIndex() == index)
+      initial = construct.getValue();
+    else if (isUnionAggregate(slot.elemType))
+      initial = SimUnionExtractOp::create(builder, getLoc(), type,
+                                          getInitialValue(), index);
+    else
+      initial = SimAggregateExtractOp::create(builder, getLoc(), type,
+                                              getInitialValue(), index);
+    auto allocation = SimRefAllocOp::create(
+        builder, getLoc(), RefType::get(getContext(), type), initial);
+    newAllocators.push_back(allocation);
+    subslots.try_emplace(attribute, MemorySlot{allocation.getResult(), type});
+  }
+  return subslots;
+}
+
+std::optional<DestructurableAllocationOpInterface>
+SimRefAllocOp::handleDestructuringComplete(const DestructurableMemorySlot &slot,
+                                           OpBuilder &) {
+  assert(slot.ptr == getResult());
+  getOperation()->erase();
+  return std::nullopt;
 }
 
 Value SimRefAllocOp::getDefaultValue(const MemorySlot &, OpBuilder &) {
@@ -803,6 +1506,180 @@ SimRefStoreOp::removeBlockingUses(const MemorySlot &,
                                   const llvm::SmallPtrSetImpl<OpOperand *> &,
                                   OpBuilder &, Value, const DataLayout &) {
   return DeletionKind::Delete;
+}
+
+static SmallVector<Attribute>
+getSortedSubslotIndices(const DestructurableMemorySlot &slot) {
+  SmallVector<Attribute> indices;
+  indices.reserve(slot.subelementTypes.size());
+  for (auto [index, type] : slot.subelementTypes)
+    indices.push_back(index);
+  llvm::sort(indices, [](Attribute lhs, Attribute rhs) {
+    return cast<IntegerAttr>(lhs).getInt() < cast<IntegerAttr>(rhs).getInt();
+  });
+  return indices;
+}
+
+bool SimRefLoadOp::canRewire(const DestructurableMemorySlot &slot,
+                             llvm::SmallPtrSetImpl<Attribute> &usedIndices,
+                             SmallVectorImpl<MemorySlot> &,
+                             const DataLayout &) {
+  if (getReference() != slot.ptr || getResult().getType() != slot.elemType ||
+      isUnionAggregate(slot.elemType))
+    return false;
+  if (isa<PackedArrayType, UnpackedArrayType>(slot.elemType) &&
+      llvm::any_of(getResult().getUsers(), [](Operation *user) {
+        return isa<SimArrayDynExtractOp>(user);
+      }))
+    return false;
+  for (Attribute index : getSortedSubslotIndices(slot))
+    usedIndices.insert(index);
+  return true;
+}
+
+DeletionKind SimRefLoadOp::rewire(const DestructurableMemorySlot &slot,
+                                  DenseMap<Attribute, MemorySlot> &subslots,
+                                  OpBuilder &builder, const DataLayout &) {
+  SmallVector<Value> elements;
+  for (Attribute index : getSortedSubslotIndices(slot)) {
+    MemorySlot subslot = subslots.at(index);
+    elements.push_back(
+        SimRefLoadOp::create(builder, getLoc(), subslot.elemType, subslot.ptr));
+  }
+  Value reconstructed = SimAggregateConstructOp::create(
+      builder, getLoc(), slot.elemType, elements);
+  getResult().replaceAllUsesWith(reconstructed);
+  return DeletionKind::Delete;
+}
+
+LogicalResult SimRefLoadOp::ensureOnlySafeAccesses(
+    const MemorySlot &slot, SmallVectorImpl<MemorySlot> &, const DataLayout &) {
+  return success(getReference() != slot.ptr ||
+                 getResult().getType() == slot.elemType);
+}
+
+bool SimRefStoreOp::canRewire(const DestructurableMemorySlot &slot,
+                              llvm::SmallPtrSetImpl<Attribute> &usedIndices,
+                              SmallVectorImpl<MemorySlot> &,
+                              const DataLayout &) {
+  if (getReference() != slot.ptr || getValue() == slot.ptr ||
+      getValue().getType() != slot.elemType || isUnionAggregate(slot.elemType))
+    return false;
+  for (Attribute index : getSortedSubslotIndices(slot))
+    usedIndices.insert(index);
+  return true;
+}
+
+DeletionKind SimRefStoreOp::rewire(const DestructurableMemorySlot &slot,
+                                   DenseMap<Attribute, MemorySlot> &subslots,
+                                   OpBuilder &builder, const DataLayout &) {
+  for (Attribute attribute : getSortedSubslotIndices(slot)) {
+    unsigned index = cast<IntegerAttr>(attribute).getInt();
+    MemorySlot subslot = subslots.at(attribute);
+    Value element = SimAggregateExtractOp::create(
+        builder, getLoc(), subslot.elemType, getValue(), index);
+    SimRefStoreOp::create(builder, getLoc(), element, subslot.ptr);
+  }
+  return DeletionKind::Delete;
+}
+
+LogicalResult SimRefStoreOp::ensureOnlySafeAccesses(
+    const MemorySlot &slot, SmallVectorImpl<MemorySlot> &, const DataLayout &) {
+  return success(getReference() != slot.ptr ||
+                 getValue().getType() == slot.elemType);
+}
+
+static Attribute getFirstSubelementIndex(DenseI64ArrayAttr indices,
+                                         MLIRContext *context) {
+  if (!indices || indices.empty() || indices[0] < 0 ||
+      static_cast<uint64_t>(indices[0]) > std::numeric_limits<uint32_t>::max())
+    return {};
+  return getSubelementIndexAttr(context, static_cast<unsigned>(indices[0]));
+}
+
+bool SimRefSubelementOp::canRewire(
+    const DestructurableMemorySlot &slot,
+    llvm::SmallPtrSetImpl<Attribute> &usedIndices,
+    SmallVectorImpl<MemorySlot> &mustBeSafelyUsed, const DataLayout &) {
+  if (getInput() != slot.ptr)
+    return false;
+  Attribute index = getFirstSubelementIndex(getIndicesAttr(), getContext());
+  if (!index || !slot.subelementTypes.contains(index))
+    return false;
+  usedIndices.insert(index);
+  mustBeSafelyUsed.push_back(
+      {getResult(), getResult().getType().getElementType()});
+  return true;
+}
+
+DeletionKind
+SimRefSubelementOp::rewire(const DestructurableMemorySlot &,
+                           DenseMap<Attribute, MemorySlot> &subslots,
+                           OpBuilder &builder, const DataLayout &) {
+  Attribute index = getFirstSubelementIndex(getIndicesAttr(), getContext());
+  MemorySlot subslot = subslots.at(index);
+  Value replacement = subslot.ptr;
+  ArrayRef<int64_t> path = getIndices();
+  if (path.size() > 1) {
+    auto remaining = builder.getDenseI64ArrayAttr(path.drop_front());
+    replacement = SimRefSubelementOp::create(
+        builder, getLoc(), getResult().getType(), subslot.ptr, remaining);
+  }
+  getResult().replaceAllUsesWith(replacement);
+  return DeletionKind::Delete;
+}
+
+LogicalResult SimRefSubelementOp::ensureOnlySafeAccesses(
+    const MemorySlot &slot, SmallVectorImpl<MemorySlot> &mustBeSafelyUsed,
+    const DataLayout &) {
+  if (getInput() != slot.ptr)
+    return success();
+  Type result = getResult().getType().getElementType();
+  if (failed(verifySubelementPath(getOperation(), slot.elemType, getIndices(),
+                                  result)))
+    return failure();
+  mustBeSafelyUsed.push_back({getResult(), result});
+  return success();
+}
+
+LogicalResult SimRefExtractOp::ensureOnlySafeAccesses(
+    const MemorySlot &slot, SmallVectorImpl<MemorySlot> &mustBeSafelyUsed,
+    const DataLayout &) {
+  if (getInput() != slot.ptr)
+    return success();
+  std::optional<unsigned> input = getPackedWidth(slot.elemType);
+  Type resultType = getResult().getType().getElementType();
+  std::optional<unsigned> result = getPackedWidth(resultType);
+  if (!input || !result || getLowBit() > *input ||
+      *result > *input - getLowBit())
+    return failure();
+  mustBeSafelyUsed.push_back({getResult(), resultType});
+  return success();
+}
+
+LogicalResult SimRefDynExtractOp::ensureOnlySafeAccesses(
+    const MemorySlot &slot, SmallVectorImpl<MemorySlot> &mustBeSafelyUsed,
+    const DataLayout &) {
+  if (getInput() != slot.ptr)
+    return success();
+  Type resultType = getResult().getType().getElementType();
+  if (!getPackedWidth(slot.elemType) || !getPackedWidth(resultType))
+    return failure();
+  mustBeSafelyUsed.push_back({getResult(), resultType});
+  return success();
+}
+
+LogicalResult SimRefArrayElementOp::ensureOnlySafeAccesses(
+    const MemorySlot &slot, SmallVectorImpl<MemorySlot> &mustBeSafelyUsed,
+    const DataLayout &) {
+  if (getInput() != slot.ptr)
+    return success();
+  Type resultType = getResult().getType().getElementType();
+  if (!isa<PackedArrayType, UnpackedArrayType>(slot.elemType) ||
+      getAggregateElementType(slot.elemType, 0) != resultType)
+    return failure();
+  mustBeSafelyUsed.push_back({getResult(), resultType});
+  return success();
 }
 
 LogicalResult SimRefExtractOp::verify() {
@@ -1945,8 +2822,7 @@ struct RemoveOverwrittenInsert final : OpRewritePattern<SimLogicInsertOp> {
     uint64_t nestedHigh =
         nestedLow + nested.getReplacement().getType().getWidth();
     uint64_t outerLow = op.getLowBit();
-    uint64_t outerHigh =
-        outerLow + op.getReplacement().getType().getWidth();
+    uint64_t outerHigh = outerLow + op.getReplacement().getType().getWidth();
     if (outerLow > nestedLow || outerHigh < nestedHigh)
       return failure();
     auto replacement = SimLogicInsertOp::create(
@@ -1957,7 +2833,323 @@ struct RemoveOverwrittenInsert final : OpRewritePattern<SimLogicInsertOp> {
   }
 };
 
+static std::optional<int64_t> getConstantSourceIndex(Value value,
+                                                     bool &unknown) {
+  unknown = false;
+  std::optional<ConstantIndex> constant = getConstantIndex(value);
+  if (!constant)
+    return std::nullopt;
+  if (!constant->value) {
+    unknown = true;
+    return std::nullopt;
+  }
+  if (!constant->value->isSignedIntN(64))
+    return std::nullopt;
+  return constant->value->getSExtValue();
+}
+
+struct SimplifyAggregateExtract final
+    : OpRewritePattern<SimAggregateExtractOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimAggregateExtractOp op,
+                                PatternRewriter &rewriter) const override {
+    unsigned index = op.getIndex();
+    if (auto construct =
+            op.getInput().getDefiningOp<SimAggregateConstructOp>()) {
+      rewriter.replaceOp(op, construct.getElements()[index]);
+      return success();
+    }
+    if (op.getInput().getDefiningOp<SimAggregateDefaultOp>()) {
+      Value value = materializeDefaultValue(rewriter, op.getLoc(),
+                                            op.getResult().getType());
+      if (!value)
+        return failure();
+      rewriter.replaceOp(op, value);
+      return success();
+    }
+    if (auto insert = op.getInput().getDefiningOp<SimAggregateInsertOp>()) {
+      if (insert.getIndex() == index) {
+        rewriter.replaceOp(op, insert.getReplacement());
+        return success();
+      }
+      auto replacement = SimAggregateExtractOp::create(
+          rewriter, op.getLoc(), op.getResult().getType(), insert.getInput(),
+          op.getIndexAttr());
+      rewriter.replaceOp(op, replacement.getResult());
+      return success();
+    }
+    if (auto load = op.getInput().getDefiningOp<SimRefLoadOp>()) {
+      Value replacement;
+      {
+        OpBuilder::InsertionGuard guard(rewriter);
+        rewriter.setInsertionPoint(load);
+        Type refType = RefType::get(op.getContext(), op.getResult().getType());
+        auto view = SimRefSubelementOp::create(
+            rewriter, op.getLoc(), refType, load.getReference(),
+            rewriter.getDenseI64ArrayAttr({static_cast<int64_t>(index)}));
+        replacement = SimRefLoadOp::create(
+            rewriter, op.getLoc(), op.getResult().getType(), view.getResult());
+      }
+      rewriter.replaceOp(op, replacement);
+      return success();
+    }
+    return failure();
+  }
+};
+
+struct SimplifyPackedFlatten final : OpRewritePattern<SimPackedFlattenOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimPackedFlattenOp op,
+                                PatternRewriter &rewriter) const override {
+    auto inverse = op.getInput().getDefiningOp<SimPackedUnflattenOp>();
+    if (!inverse || inverse.getInput().getType() != op.getResult().getType())
+      return failure();
+    rewriter.replaceOp(op, inverse.getInput());
+    return success();
+  }
+};
+
+struct SimplifyPackedUnflatten final : OpRewritePattern<SimPackedUnflattenOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimPackedUnflattenOp op,
+                                PatternRewriter &rewriter) const override {
+    auto inverse = op.getInput().getDefiningOp<SimPackedFlattenOp>();
+    if (!inverse || inverse.getInput().getType() != op.getResult().getType())
+      return failure();
+    rewriter.replaceOp(op, inverse.getInput());
+    return success();
+  }
+};
+
+struct SimplifyUnionExtract final : OpRewritePattern<SimUnionExtractOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimUnionExtractOp op,
+                                PatternRewriter &rewriter) const override {
+    unsigned index = op.getIndex();
+    if (auto construct = op.getInput().getDefiningOp<SimUnionConstructOp>();
+        construct && construct.getIndex() == index) {
+      rewriter.replaceOp(op, construct.getValue());
+      return success();
+    }
+    if (op.getInput().getDefiningOp<SimAggregateDefaultOp>()) {
+      Type unionType = op.getInput().getType();
+      if (auto packed = dyn_cast<PackedUnionType>(unionType)) {
+        if (packed.getIsTagged() &&
+            (containsFourStateLeaf(unionType) || index != 0))
+          return failure();
+      } else if (auto unpacked = dyn_cast<UnpackedUnionType>(unionType)) {
+        if (unpacked.getIsTagged() || index != 0)
+          return failure();
+      }
+      Value value = materializeDefaultValue(rewriter, op.getLoc(),
+                                            op.getResult().getType());
+      if (!value)
+        return failure();
+      rewriter.replaceOp(op, value);
+      return success();
+    }
+    if (auto load = op.getInput().getDefiningOp<SimRefLoadOp>()) {
+      Value replacement;
+      {
+        OpBuilder::InsertionGuard guard(rewriter);
+        rewriter.setInsertionPoint(load);
+        Type refType = RefType::get(op.getContext(), op.getResult().getType());
+        auto view = SimRefSubelementOp::create(
+            rewriter, op.getLoc(), refType, load.getReference(),
+            rewriter.getDenseI64ArrayAttr({static_cast<int64_t>(index)}));
+        replacement = SimRefLoadOp::create(
+            rewriter, op.getLoc(), op.getResult().getType(), view.getResult());
+      }
+      rewriter.replaceOp(op, replacement);
+      return success();
+    }
+    return failure();
+  }
+};
+
+struct SimplifyAggregateConstruct final
+    : OpRewritePattern<SimAggregateConstructOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimAggregateConstructOp op,
+                                PatternRewriter &rewriter) const override {
+    Value source;
+    for (auto [index, element] : llvm::enumerate(op.getElements())) {
+      auto extract = element.getDefiningOp<SimAggregateExtractOp>();
+      if (!extract || extract.getIndex() != index ||
+          (source && source != extract.getInput()))
+        return failure();
+      source = extract.getInput();
+    }
+    if (!source || source.getType() != op.getResult().getType())
+      return failure();
+    rewriter.replaceOp(op, source);
+    return success();
+  }
+};
+
+struct SimplifyAggregateInsert final : OpRewritePattern<SimAggregateInsertOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimAggregateInsertOp op,
+                                PatternRewriter &rewriter) const override {
+    if (auto extract =
+            op.getReplacement().getDefiningOp<SimAggregateExtractOp>();
+        extract && extract.getInput() == op.getInput() &&
+        extract.getIndex() == op.getIndex()) {
+      rewriter.replaceOp(op, op.getInput());
+      return success();
+    }
+    auto nested = op.getInput().getDefiningOp<SimAggregateInsertOp>();
+    if (!nested || nested.getIndex() != op.getIndex())
+      return failure();
+    auto replacement = SimAggregateInsertOp::create(
+        rewriter, op.getLoc(), op.getResult().getType(), nested.getInput(),
+        op.getReplacement(), op.getIndexAttr());
+    rewriter.replaceOp(op, replacement.getResult());
+    return success();
+  }
+};
+
+struct ConstantArrayExtract final : OpRewritePattern<SimArrayDynExtractOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimArrayDynExtractOp op,
+                                PatternRewriter &rewriter) const override {
+    bool unknown;
+    std::optional<int64_t> sourceIndex =
+        getConstantSourceIndex(op.getIndex(), unknown);
+    if (!sourceIndex && !unknown)
+      return failure();
+    std::optional<unsigned> ordinal =
+        sourceIndex
+            ? getArrayElementOrdinal(op.getInput().getType(), *sourceIndex)
+            : std::nullopt;
+    if (!ordinal) {
+      Value value = materializeDefaultValue(rewriter, op.getLoc(),
+                                            op.getResult().getType());
+      if (!value)
+        return failure();
+      rewriter.replaceOp(op, value);
+      return success();
+    }
+    auto replacement = SimAggregateExtractOp::create(
+        rewriter, op.getLoc(), op.getResult().getType(), op.getInput(),
+        rewriter.getI64IntegerAttr(*ordinal));
+    rewriter.replaceOp(op, replacement.getResult());
+    return success();
+  }
+};
+
+template <typename DynamicOp, typename StaticOp>
+struct ConstantArrayView final : OpRewritePattern<DynamicOp> {
+  using OpRewritePattern<DynamicOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(DynamicOp op,
+                                PatternRewriter &rewriter) const override {
+    bool unknown;
+    std::optional<int64_t> sourceIndex =
+        getConstantSourceIndex(op.getIndex(), unknown);
+    if (!sourceIndex)
+      return failure();
+    Type arrayType = op.getInput().getType().getElementType();
+    std::optional<unsigned> ordinal =
+        getArrayElementOrdinal(arrayType, *sourceIndex);
+    if (!ordinal)
+      return failure();
+    auto replacement = StaticOp::create(
+        rewriter, op.getLoc(), op.getResult().getType(), op.getInput(),
+        rewriter.getDenseI64ArrayAttr({static_cast<int64_t>(*ordinal)}));
+    rewriter.replaceOp(op, replacement.getResult());
+    return success();
+  }
+};
+
+template <typename ViewOp>
+struct FlattenSubelementPath final : OpRewritePattern<ViewOp> {
+  using OpRewritePattern<ViewOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(ViewOp op,
+                                PatternRewriter &rewriter) const override {
+    auto nested = op.getInput().template getDefiningOp<ViewOp>();
+    if (!nested)
+      return failure();
+    SmallVector<int64_t> indices(nested.getIndices());
+    llvm::append_range(indices, op.getIndices());
+    auto replacement = ViewOp::create(
+        rewriter, op.getLoc(), op.getResult().getType(), nested.getInput(),
+        rewriter.getDenseI64ArrayAttr(indices));
+    rewriter.replaceOp(op, replacement.getResult());
+    return success();
+  }
+};
+
 } // namespace
+
+void SimPackedFlattenOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                                     MLIRContext *context) {
+  results.add<SimplifyPackedFlatten>(context);
+}
+
+void SimPackedUnflattenOp::getCanonicalizationPatterns(
+    RewritePatternSet &results, MLIRContext *context) {
+  results.add<SimplifyPackedUnflatten>(context);
+}
+
+void SimAggregateConstructOp::getCanonicalizationPatterns(
+    RewritePatternSet &results, MLIRContext *context) {
+  results.add<SimplifyAggregateConstruct>(context);
+}
+
+void SimAggregateExtractOp::getCanonicalizationPatterns(
+    RewritePatternSet &results, MLIRContext *context) {
+  results.add<SimplifyAggregateExtract>(context);
+}
+
+void SimAggregateInsertOp::getCanonicalizationPatterns(
+    RewritePatternSet &results, MLIRContext *context) {
+  results.add<SimplifyAggregateInsert>(context);
+}
+
+void SimArrayDynExtractOp::getCanonicalizationPatterns(
+    RewritePatternSet &results, MLIRContext *context) {
+  results.add<ConstantArrayExtract>(context);
+}
+
+void SimUnionConstructOp::getCanonicalizationPatterns(RewritePatternSet &,
+                                                      MLIRContext *) {}
+
+void SimUnionExtractOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                                    MLIRContext *context) {
+  results.add<SimplifyUnionExtract>(context);
+}
+
+void SimRefSubelementOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                                     MLIRContext *context) {
+  results.add<FlattenSubelementPath<SimRefSubelementOp>>(context);
+}
+
+void SimRefArrayElementOp::getCanonicalizationPatterns(
+    RewritePatternSet &results, MLIRContext *context) {
+  results.add<ConstantArrayView<SimRefArrayElementOp, SimRefSubelementOp>>(
+      context);
+}
+
+void SimDriverSubelementOp::getCanonicalizationPatterns(
+    RewritePatternSet &results, MLIRContext *context) {
+  results.add<FlattenSubelementPath<SimDriverSubelementOp>>(context);
+}
+
+void SimDriverArrayElementOp::getCanonicalizationPatterns(
+    RewritePatternSet &results, MLIRContext *context) {
+  results
+      .add<ConstantArrayView<SimDriverArrayElementOp, SimDriverSubelementOp>>(
+          context);
+}
 
 void SimLogicBinaryOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                    MLIRContext *context) {
@@ -2032,7 +3224,7 @@ LogicalResult SimTimeConstantOp::verify() {
 }
 
 LogicalResult SimTimeScaleOp::verify() {
-  if (!isNormalizedValueType(getInput().getType()))
+  if (!isa<IntegerType, LogicType>(getInput().getType()))
     return emitOpError(
         "input must be a signless builtin integer or four-state logic");
   if (auto integer = dyn_cast<IntegerType>(getInput().getType());

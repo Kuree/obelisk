@@ -4,6 +4,8 @@
 
 #include "mlir/IR/Diagnostics.h"
 
+#include "llvm/ADT/SmallSet.h"
+
 #include <limits>
 #include <optional>
 
@@ -118,12 +120,11 @@ AssociativeArrayType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
   return success();
 }
 
-LogicalResult
-AggregateType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
-                      StringAttr, bool isPacked, bool isUnion, bool isTagged,
-                      bool isSigned, bool isFourState, bool isSoft,
-                      uint64_t bitWidth, uint64_t selectableWidth,
-                      uint64_t bitstreamWidth, uint32_t tagBits) {
+LogicalResult AggregateType::verify(
+    llvm::function_ref<InFlightDiagnostic()> emitError, StringAttr,
+    bool isPacked, bool isUnion, bool isTagged, bool isSigned, bool isFourState,
+    bool isSoft, uint64_t bitWidth, uint64_t selectableWidth,
+    uint64_t bitstreamWidth, uint32_t tagBits, ArrayAttr fields) {
   if (isTagged && !isUnion)
     return emitError() << "only a union can be tagged";
   if (isSoft && (!isPacked || !isUnion))
@@ -134,6 +135,27 @@ AggregateType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
     return emitError() << "packed aggregate widths must agree";
   if (!isPacked && (bitWidth != 0 || isSigned || isFourState || isSoft))
     return emitError() << "unpacked aggregate has packed-only metadata";
+  llvm::SmallDenseSet<StringRef> names;
+  for (auto [ordinal, attribute] : llvm::enumerate(fields)) {
+    auto field = dyn_cast<DictionaryAttr>(attribute);
+    auto name = field ? field.getAs<StringAttr>("name") : StringAttr{};
+    auto type = field ? field.getAs<TypeAttr>("type") : TypeAttr{};
+    auto index = field ? field.getAs<IntegerAttr>("ordinal") : IntegerAttr{};
+    auto offset =
+        field ? field.getAs<IntegerAttr>("packed_offset") : IntegerAttr{};
+    if (!name || name.getValue().empty() || !type || !index || !offset)
+      return emitError() << "aggregate fields require name, type, ordinal, and "
+                            "packed_offset metadata";
+    if (index.getValue().isNegative() ||
+        index.getValue().getZExtValue() != ordinal)
+      return emitError()
+             << "aggregate field ordinals must be dense and ordered";
+    if (offset.getValue().isNegative() ||
+        (!isPacked && !offset.getValue().isZero()))
+      return emitError() << "aggregate field has invalid packed offset";
+    if (!names.insert(name.getValue()).second)
+      return emitError() << "aggregate field names must be unique";
+  }
   return success();
 }
 

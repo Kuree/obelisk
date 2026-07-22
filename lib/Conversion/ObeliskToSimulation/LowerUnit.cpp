@@ -52,7 +52,8 @@ static bool isIntegerLiteral(Operation *op) {
 static bool isAddressableExpression(Operation *op) {
   if (isa<semantic::SVNamedValueExpressionOp>(op))
     return true;
-  if (!isa<semantic::SVElementSelectExpressionOp,
+  if (!isa<semantic::SVMemberAccessExpressionOp,
+           semantic::SVElementSelectExpressionOp,
            semantic::SVRangeSelectExpressionOp>(op))
     return false;
   SmallVector<Operation *> children = getChildren(op);
@@ -72,6 +73,10 @@ private:
   FailureOr<Value> lowerLiteral(Operation *op);
   FailureOr<Value> lowerConcatenation(Operation *op);
   FailureOr<Value> lowerReplication(Operation *op);
+  FailureOr<Value> lowerMember(semantic::SVMemberAccessExpressionOp op,
+                               bool lvalue);
+  FailureOr<Value> lowerTaggedUnion(semantic::SVTaggedUnionExpressionOp op);
+  FailureOr<Value> lowerAssignmentPattern(Operation *op);
   FailureOr<Value> lowerSelection(Operation *op, bool lvalue);
   FailureOr<Value> lowerAssignment(semantic::SVAssignmentExpressionOp op);
   FailureOr<Value> lowerUnary(semantic::SVUnaryExpressionOp op);
@@ -90,6 +95,7 @@ private:
 
   FailureOr<Value> convert(Value value, Type targetType, bool sourceSigned,
                            Location location);
+  FailureOr<Value> toPackedScalar(Value value, Location location);
   FailureOr<Value> truthValue(Value value, Location location);
   FailureOr<Value> toLogic(Value value, Location location);
   LogicalResult emitFunctionReturn(Location location,
@@ -199,6 +205,32 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
                                        bool sourceSigned, Location location) {
   if (value.getType() == targetType)
     return value;
+  if (sim::isAggregateType(value.getType())) {
+    Type scalarType = sim::getPackedScalarType(value.getType());
+    if (!scalarType) {
+      emitError(location) << "cannot convert unpacked aggregate "
+                          << value.getType() << " to " << targetType;
+      return failure();
+    }
+    Value flattened =
+        sim::SimPackedFlattenOp::create(builder, location, scalarType, value);
+    return convert(flattened, targetType, sourceSigned, location);
+  }
+  if (sim::isAggregateType(targetType)) {
+    Type scalarType = sim::getPackedScalarType(targetType);
+    if (!scalarType) {
+      emitError(location) << "cannot convert " << value.getType()
+                          << " to unpacked aggregate " << targetType;
+      return failure();
+    }
+    FailureOr<Value> converted =
+        convert(value, scalarType, sourceSigned, location);
+    if (failed(converted))
+      return failure();
+    return sim::SimPackedUnflattenOp::create(builder, location, targetType,
+                                             *converted)
+        .getResult();
+  }
   if (auto sourceInt = dyn_cast<IntegerType>(value.getType())) {
     if (auto targetInt = dyn_cast<IntegerType>(targetType)) {
       if (sourceInt.getWidth() > targetInt.getWidth())
@@ -253,7 +285,23 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
   return failure();
 }
 
+FailureOr<Value> UnitLowering::toPackedScalar(Value value, Location location) {
+  Type scalarType = sim::getPackedScalarType(value.getType());
+  if (!scalarType) {
+    emitError(location) << "operand is not a packed value: " << value.getType();
+    return failure();
+  }
+  if (scalarType == value.getType())
+    return value;
+  return sim::SimPackedFlattenOp::create(builder, location, scalarType, value)
+      .getResult();
+}
+
 FailureOr<Value> UnitLowering::truthValue(Value value, Location location) {
+  FailureOr<Value> scalar = toPackedScalar(value, location);
+  if (failed(scalar))
+    return failure();
+  value = *scalar;
   if (isa<sim::LogicType>(value.getType()))
     return sim::SimLogicIsTrueOp::create(builder, location, builder.getI1Type(),
                                          value)
@@ -272,6 +320,10 @@ FailureOr<Value> UnitLowering::truthValue(Value value, Location location) {
 }
 
 FailureOr<Value> UnitLowering::toLogic(Value value, Location location) {
+  FailureOr<Value> scalar = toPackedScalar(value, location);
+  if (failed(scalar))
+    return failure();
+  value = *scalar;
   if (isa<sim::LogicType>(value.getType()))
     return value;
   auto integer = dyn_cast<IntegerType>(value.getType());
@@ -400,7 +452,8 @@ FailureOr<Value> UnitLowering::lowerLiteral(Operation *op) {
   FailureOr<Type> type = getNormalizedSemanticType(op);
   if (failed(type))
     return failure();
-  std::optional<unsigned> width = sim::getPackedWidth(*type);
+  Type scalarType = sim::getPackedScalarType(*type);
+  std::optional<unsigned> width = sim::getPackedWidth(scalarType);
   std::optional<StringRef> spelling = getConstantSpelling(op);
   if (!width || !spelling) {
     unsupported(op) << " (integer literal representation)";
@@ -410,17 +463,19 @@ FailureOr<Value> UnitLowering::lowerLiteral(Operation *op) {
       parseSVInteger(*spelling, *width, location);
   if (failed(parsed))
     return failure();
-  if (auto integer = dyn_cast<IntegerType>(*type))
-    return arith::ConstantOp::create(
-               builder, location, integer,
-               builder.getIntegerAttr(integer, parsed->value))
-        .getResult();
-  auto planeType = IntegerType::get(op->getContext(), *width);
-  return sim::SimLogicConstantOp::create(
-             builder, location, *type,
-             builder.getIntegerAttr(planeType, parsed->value),
-             builder.getIntegerAttr(planeType, parsed->unknown))
-      .getResult();
+  Value value;
+  if (auto integer = dyn_cast<IntegerType>(scalarType))
+    value = arith::ConstantOp::create(
+        builder, location, integer,
+        builder.getIntegerAttr(integer, parsed->value));
+  else {
+    auto planeType = IntegerType::get(op->getContext(), *width);
+    value = sim::SimLogicConstantOp::create(
+        builder, location, scalarType,
+        builder.getIntegerAttr(planeType, parsed->value),
+        builder.getIntegerAttr(planeType, parsed->unknown));
+  }
+  return convert(value, *type, isSignedNode(op), location);
 }
 
 FailureOr<Value> UnitLowering::lowerConcatenation(Operation *op) {
@@ -433,14 +488,22 @@ FailureOr<Value> UnitLowering::lowerConcatenation(Operation *op) {
   FailureOr<Type> resultType = getNormalizedSemanticType(op);
   if (failed(resultType))
     return failure();
+  Type scalarResultType = sim::getPackedScalarType(*resultType);
+  if (!scalarResultType) {
+    unsupported(op) << " (unpacked concatenation result)";
+    return failure();
+  }
   SmallVector<Value> inputs;
   for (Operation *child : children) {
     FailureOr<Value> input = lowerExpression(child);
     if (failed(input))
       return failure();
-    inputs.push_back(*input);
+    FailureOr<Value> scalar = toPackedScalar(*input, location);
+    if (failed(scalar))
+      return failure();
+    inputs.push_back(*scalar);
   }
-  if (auto resultLogic = dyn_cast<sim::LogicType>(*resultType)) {
+  if (auto resultLogic = dyn_cast<sim::LogicType>(scalarResultType)) {
     SmallVector<Value> logicInputs;
     for (Value input : inputs) {
       FailureOr<Value> logic = toLogic(input, location);
@@ -448,11 +511,11 @@ FailureOr<Value> UnitLowering::lowerConcatenation(Operation *op) {
         return failure();
       logicInputs.push_back(*logic);
     }
-    return sim::SimLogicConcatOp::create(builder, location, resultLogic,
-                                         logicInputs)
-        .getResult();
+    Value result = sim::SimLogicConcatOp::create(builder, location, resultLogic,
+                                                 logicInputs);
+    return convert(result, *resultType, false, location);
   }
-  auto resultInteger = cast<IntegerType>(*resultType);
+  auto resultInteger = cast<IntegerType>(scalarResultType);
   Value combined =
       arith::ConstantOp::create(builder, location, resultInteger,
                                 builder.getIntegerAttr(resultInteger, 0));
@@ -472,7 +535,7 @@ FailureOr<Value> UnitLowering::lowerConcatenation(Operation *op) {
     }
     combined = arith::OrIOp::create(builder, location, combined, shifted);
   }
-  return combined;
+  return convert(combined, *resultType, false, location);
 }
 
 FailureOr<Value> UnitLowering::lowerReplication(Operation *op) {
@@ -492,21 +555,29 @@ FailureOr<Value> UnitLowering::lowerReplication(Operation *op) {
   FailureOr<Type> resultType = getNormalizedSemanticType(op);
   if (failed(count) || failed(input) || failed(resultType))
     return failure();
+  FailureOr<Value> scalarInput = toPackedScalar(*input, location);
+  Type scalarResultType = sim::getPackedScalarType(*resultType);
+  if (failed(scalarInput) || !scalarResultType) {
+    if (succeeded(scalarInput))
+      unsupported(op) << " (unpacked replication result)";
+    return failure();
+  }
+  input = *scalarInput;
   if (!count->unknown.isZero() || count->value.isZero()) {
     emitError(location) << "replication count must be a known positive value";
     return failure();
   }
   uint64_t repetitions = count->value.getZExtValue();
-  if (auto resultLogic = dyn_cast<sim::LogicType>(*resultType)) {
+  if (auto resultLogic = dyn_cast<sim::LogicType>(scalarResultType)) {
     FailureOr<Value> logicInput = toLogic(*input, location);
     if (failed(logicInput))
       return failure();
-    return sim::SimLogicReplicateOp::create(
-               builder, location, resultLogic, *logicInput,
-               builder.getI64IntegerAttr(repetitions))
-        .getResult();
+    Value result = sim::SimLogicReplicateOp::create(
+        builder, location, resultLogic, *logicInput,
+        builder.getI64IntegerAttr(repetitions));
+    return convert(result, *resultType, false, location);
   }
-  auto resultInteger = cast<IntegerType>(*resultType);
+  auto resultInteger = cast<IntegerType>(scalarResultType);
   auto inputInteger = cast<IntegerType>((*input).getType());
   Value combined =
       arith::ConstantOp::create(builder, location, resultInteger,
@@ -525,7 +596,162 @@ FailureOr<Value> UnitLowering::lowerReplication(Operation *op) {
     }
     combined = arith::OrIOp::create(builder, location, combined, piece);
   }
-  return combined;
+  return convert(combined, *resultType, false, location);
+}
+
+FailureOr<Value>
+UnitLowering::lowerMember(semantic::SVMemberAccessExpressionOp op,
+                          bool lvalue) {
+  Location location = getSemanticLocation(op);
+  SmallVector<Operation *> children = getChildren(op);
+  if (children.size() != 1) {
+    unsupported(op) << " (member access arity)";
+    return failure();
+  }
+  auto ordinalAttr = op->getAttrOfType<IntegerAttr>("field_ordinal");
+  if (!ordinalAttr || ordinalAttr.getValue().isNegative() ||
+      ordinalAttr.getValue().getActiveBits() > 32) {
+    emitError(location) << "member access has no valid declaration ordinal";
+    return failure();
+  }
+  unsigned ordinal = ordinalAttr.getValue().getZExtValue();
+  FailureOr<Type> resultType = getNormalizedSemanticType(op);
+  FailureOr<Value> input = lowerExpression(children.front(), lvalue);
+  if (failed(resultType) || failed(input))
+    return failure();
+  Type inputValueType = (*input).getType();
+  if (auto reference = dyn_cast<sim::RefType>(inputValueType)) {
+    if (sim::getAggregateElementType(reference.getElementType(), ordinal) !=
+        *resultType) {
+      emitError(location) << "member ordinal does not match the aggregate type";
+      return failure();
+    }
+    Type selected = sim::RefType::get(function.getContext(), *resultType);
+    return sim::SimRefSubelementOp::create(
+               builder, location, selected, *input,
+               builder.getDenseI64ArrayAttr({static_cast<int64_t>(ordinal)}))
+        .getResult();
+  }
+  if (auto driver = dyn_cast<sim::DriverType>(inputValueType)) {
+    if (sim::getAggregateElementType(driver.getElementType(), ordinal) !=
+        *resultType) {
+      emitError(location) << "member ordinal does not match the aggregate type";
+      return failure();
+    }
+    Type selected = sim::DriverType::get(function.getContext(), *resultType);
+    return sim::SimDriverSubelementOp::create(
+               builder, location, selected, *input,
+               builder.getDenseI64ArrayAttr({static_cast<int64_t>(ordinal)}))
+        .getResult();
+  }
+  if (sim::getAggregateElementType(inputValueType, ordinal) != *resultType) {
+    emitError(location) << "member access input is not a matching aggregate";
+    return failure();
+  }
+  if (isa<sim::PackedUnionType, sim::UnpackedUnionType>(inputValueType))
+    return sim::SimUnionExtractOp::create(builder, location, *resultType,
+                                          *input, ordinal)
+        .getResult();
+  return sim::SimAggregateExtractOp::create(builder, location, *resultType,
+                                            *input, ordinal)
+      .getResult();
+}
+
+FailureOr<Value>
+UnitLowering::lowerTaggedUnion(semantic::SVTaggedUnionExpressionOp op) {
+  Location location = getSemanticLocation(op);
+  FailureOr<Type> resultType = getNormalizedSemanticType(op);
+  if (failed(resultType))
+    return failure();
+  bool tagged = false;
+  if (auto packed = dyn_cast<sim::PackedUnionType>(*resultType))
+    tagged = packed.getIsTagged();
+  else if (auto unpacked = dyn_cast<sim::UnpackedUnionType>(*resultType))
+    tagged = unpacked.getIsTagged();
+  else {
+    unsupported(op) << " (result is not a union)";
+    return failure();
+  }
+  if (!tagged) {
+    emitError(location) << "tagged union expression has an untagged result";
+    return failure();
+  }
+
+  auto ordinalAttr = op->getAttrOfType<IntegerAttr>("field_ordinal");
+  if (!ordinalAttr || ordinalAttr.getValue().isNegative() ||
+      ordinalAttr.getValue().getActiveBits() > 32) {
+    emitError(location)
+        << "tagged union expression has no valid declaration ordinal";
+    return failure();
+  }
+  unsigned ordinal = ordinalAttr.getValue().getZExtValue();
+  Type fieldType = sim::getAggregateElementType(*resultType, ordinal);
+  if (!fieldType) {
+    emitError(location) << "tagged union member ordinal is out of range";
+    return failure();
+  }
+
+  SmallVector<Operation *> children = getChildren(op);
+  if (children.size() != 1) {
+    unsupported(op) << " (void tagged-union members are not normalized)";
+    return failure();
+  }
+  FailureOr<Value> value = lowerExpression(children.front());
+  if (failed(value))
+    return failure();
+  FailureOr<Value> converted =
+      convert(*value, fieldType, isSignedNode(children.front()), location);
+  if (failed(converted))
+    return failure();
+  return sim::SimUnionConstructOp::create(builder, location, *resultType,
+                                          *converted, ordinal)
+      .getResult();
+}
+
+FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
+  Location location = getSemanticLocation(op);
+  FailureOr<Type> resultType = getNormalizedSemanticType(op);
+  if (failed(resultType) || !sim::isAggregateType(*resultType)) {
+    unsupported(op) << " (non-aggregate assignment pattern)";
+    return failure();
+  }
+  SmallVector<Operation *> children = getChildren(op);
+  if (isa<sim::PackedUnionType, sim::UnpackedUnionType>(*resultType)) {
+    if (children.size() != 1) {
+      unsupported(op) << " (union assignment pattern arity)";
+      return failure();
+    }
+    FailureOr<Value> value = lowerExpression(children.front());
+    Type fieldType = sim::getAggregateElementType(*resultType, 0);
+    if (failed(value))
+      return failure();
+    FailureOr<Value> converted =
+        convert(*value, fieldType, isSignedNode(children.front()), location);
+    if (failed(converted))
+      return failure();
+    return sim::SimUnionConstructOp::create(builder, location, *resultType,
+                                            *converted, 0)
+        .getResult();
+  }
+  if (children.size() != sim::getAggregateNumElements(*resultType)) {
+    unsupported(op) << " (assignment pattern element inventory)";
+    return failure();
+  }
+  SmallVector<Value> elements;
+  for (auto [index, child] : llvm::enumerate(children)) {
+    FailureOr<Value> value = lowerExpression(child);
+    if (failed(value))
+      return failure();
+    FailureOr<Value> converted =
+        convert(*value, sim::getAggregateElementType(*resultType, index),
+                isSignedNode(child), location);
+    if (failed(converted))
+      return failure();
+    elements.push_back(*converted);
+  }
+  return sim::SimAggregateConstructOp::create(builder, location, *resultType,
+                                              elements)
+      .getResult();
 }
 
 FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
@@ -540,7 +766,100 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
   FailureOr<Value> input = lowerExpression(children.front(), lvalue);
   if (failed(resultType) || failed(input))
     return failure();
-  std::optional<unsigned> resultWidth = sim::getPackedWidth(*resultType);
+
+  Type sourceValueType = (*input).getType();
+  if (auto reference = dyn_cast<sim::RefType>(sourceValueType))
+    sourceValueType = reference.getElementType();
+  else if (auto driver = dyn_cast<sim::DriverType>(sourceValueType))
+    sourceValueType = driver.getElementType();
+
+  // Fixed packed and unpacked arrays remain first-class aggregates. Their
+  // dynamic operation consumes a source index, while static views use a
+  // declaration-order ordinal.
+  if (element &&
+      isa<sim::PackedArrayType, sim::UnpackedArrayType>(sourceValueType)) {
+    std::optional<unsigned> ordinal;
+    if (isIntegerLiteral(children[1])) {
+      FailureOr<Type> indexType = getNormalizedSemanticType(children[1]);
+      std::optional<unsigned> indexWidth =
+          succeeded(indexType) ? sim::getPackedWidth(*indexType) : std::nullopt;
+      if (failed(indexType) || !indexWidth)
+        return failure();
+      FailureOr<ParsedConstant> parsed = parseSVInteger(
+          *getConstantSpelling(children[1]), *indexWidth, location);
+      if (failed(parsed))
+        return failure();
+      if (parsed->unknown.isZero()) {
+        APInt index = isSignedNode(children[1]) ? parsed->value.sextOrTrunc(65)
+                                                : parsed->value.zextOrTrunc(65);
+        if (index.isSignedIntN(64))
+          ordinal = sim::getArrayElementOrdinal(sourceValueType,
+                                                index.getSExtValue());
+      }
+    }
+    if (ordinal) {
+      if (auto reference = dyn_cast<sim::RefType>((*input).getType()))
+        return sim::SimRefSubelementOp::create(
+                   builder, location,
+                   sim::RefType::get(function.getContext(), *resultType),
+                   *input,
+                   builder.getDenseI64ArrayAttr(
+                       {static_cast<int64_t>(*ordinal)}))
+            .getResult();
+      if (auto driver = dyn_cast<sim::DriverType>((*input).getType()))
+        return sim::SimDriverSubelementOp::create(
+                   builder, location,
+                   sim::DriverType::get(function.getContext(), *resultType),
+                   *input,
+                   builder.getDenseI64ArrayAttr(
+                       {static_cast<int64_t>(*ordinal)}))
+            .getResult();
+      return sim::SimAggregateExtractOp::create(builder, location, *resultType,
+                                                *input, *ordinal)
+          .getResult();
+    }
+
+    FailureOr<Value> index = lowerExpression(children[1]);
+    if (failed(index))
+      return failure();
+    FailureOr<Value> scalarIndex = toPackedScalar(*index, location);
+    if (failed(scalarIndex))
+      return failure();
+    index = *scalarIndex;
+    std::optional<unsigned> indexWidth =
+        sim::getPackedWidth((*index).getType());
+    if (!indexWidth || *indexWidth > std::numeric_limits<unsigned>::max() - 1) {
+      emitError(location) << "array index is too wide to normalize";
+      return failure();
+    }
+    unsigned widenedWidth = std::max(*indexWidth, 64u) + 1;
+    Type widenedType =
+        isa<sim::LogicType>((*index).getType())
+            ? Type(sim::LogicType::get(function.getContext(), widenedWidth))
+            : Type(IntegerType::get(function.getContext(), widenedWidth));
+    FailureOr<Value> widened =
+        convert(*index, widenedType, isSignedNode(children[1]), location);
+    if (failed(widened))
+      return failure();
+    if (isa<sim::RefType>((*input).getType()))
+      return sim::SimRefArrayElementOp::create(
+                 builder, location,
+                 sim::RefType::get(function.getContext(), *resultType), *input,
+                 *widened)
+          .getResult();
+    if (isa<sim::DriverType>((*input).getType()))
+      return sim::SimDriverArrayElementOp::create(
+                 builder, location,
+                 sim::DriverType::get(function.getContext(), *resultType),
+                 *input, *widened)
+          .getResult();
+    return sim::SimArrayDynExtractOp::create(builder, location, *resultType,
+                                             *input, *widened)
+        .getResult();
+  }
+
+  Type scalarResultType = sim::getPackedScalarType(*resultType);
+  std::optional<unsigned> resultWidth = sim::getPackedWidth(scalarResultType);
   if (!resultWidth) {
     unsupported(op) << " (selection result type)";
     return failure();
@@ -558,11 +877,6 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
           ? semantic::SVRangeSelectionKind::Simple
           : cast<semantic::SVRangeSelectExpressionOp>(op).getSelectionKind();
 
-  Type sourceValueType = (*input).getType();
-  if (auto reference = dyn_cast<sim::RefType>(sourceValueType))
-    sourceValueType = reference.getElementType();
-  else if (auto driver = dyn_cast<sim::DriverType>(sourceValueType))
-    sourceValueType = driver.getElementType();
   std::optional<unsigned> sourceWidth = sim::getPackedWidth(sourceValueType);
   if (!sourceWidth) {
     unsupported(op) << " (selection input type)";
@@ -575,15 +889,16 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
   // range. Two extra bits cover an unsigned index plus any signed 64-bit
   // boundary. Logic resizing retains the unknown plane.
   auto getIndexArithmeticType = [&](Type type) -> FailureOr<Type> {
-    std::optional<unsigned> width = sim::getPackedWidth(type);
+    Type scalarType = sim::getPackedScalarType(type);
+    std::optional<unsigned> width = sim::getPackedWidth(scalarType);
     if (!width || *width > std::numeric_limits<unsigned>::max() - 2) {
       emitError(location) << "selection index is too wide to normalize";
       return failure();
     }
     unsigned arithmeticWidth = std::max(*width, 64u) + 2;
-    if (isa<sim::LogicType>(type))
+    if (isa<sim::LogicType>(scalarType))
       return sim::LogicType::get(function.getContext(), arithmeticWidth);
-    if (isa<IntegerType>(type))
+    if (isa<IntegerType>(scalarType))
       return IntegerType::get(function.getContext(), arithmeticWidth);
     emitError(location) << "selection index is not a packed value: " << type;
     return failure();
@@ -600,10 +915,14 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
         builder.getIntegerAttr(planeType, 0));
   };
   auto widenIndex = [&](Value value, Operation *source) -> FailureOr<Value> {
-    FailureOr<Type> arithmeticType = getIndexArithmeticType(value.getType());
+    FailureOr<Value> scalar = toPackedScalar(value, location);
+    if (failed(scalar))
+      return failure();
+    FailureOr<Type> arithmeticType =
+        getIndexArithmeticType((*scalar).getType());
     if (failed(arithmeticType))
       return failure();
-    return convert(value, *arithmeticType, isSignedNode(source), location);
+    return convert(*scalar, *arithmeticType, isSignedNode(source), location);
   };
   auto subtract = [&](Value lhs, Value rhs) -> Value {
     if (isa<IntegerType>(lhs.getType()))
@@ -743,30 +1062,38 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
                                               *input, dynamicLow)
         .getResult();
   }
+  FailureOr<Value> scalarInput = toPackedScalar(*input, location);
+  if (failed(scalarInput))
+    return failure();
+  input = *scalarInput;
   if (isa<sim::LogicType>((*input).getType())) {
-    auto selected = cast<sim::LogicType>(*resultType);
+    auto selected = cast<sim::LogicType>(scalarResultType);
+    Value value;
     if (constant)
-      return sim::SimLogicExtractOp::create(builder, location, selected, *input,
-                                            builder.getI64IntegerAttr(lowBit))
-          .getResult();
-    return sim::SimLogicDynExtractOp::create(builder, location, selected,
-                                             *input, dynamicLow)
-        .getResult();
+      value =
+          sim::SimLogicExtractOp::create(builder, location, selected, *input,
+                                         builder.getI64IntegerAttr(lowBit));
+    else
+      value = sim::SimLogicDynExtractOp::create(builder, location, selected,
+                                                *input, dynamicLow);
+    return convert(value, *resultType, false, location);
   }
-  auto selected = cast<IntegerType>(*resultType);
+  auto selected = cast<IntegerType>(scalarResultType);
   auto inputInteger = cast<IntegerType>((*input).getType());
-  if (!constant)
-    return sim::SimBitsDynExtractOp::create(builder, location, selected, *input,
-                                            dynamicLow)
-        .getResult();
+  if (!constant) {
+    Value value = sim::SimBitsDynExtractOp::create(builder, location, selected,
+                                                   *input, dynamicLow);
+    return convert(value, *resultType, false, location);
+  }
   Value amount =
       arith::ConstantOp::create(builder, location, inputInteger,
                                 builder.getIntegerAttr(inputInteger, lowBit));
   Value shifted = arith::ShRUIOp::create(builder, location, *input, amount);
-  if (selected == inputInteger)
-    return shifted;
-  return arith::TruncIOp::create(builder, location, selected, shifted)
-      .getResult();
+  Value value = selected == inputInteger
+                    ? shifted
+                    : Value(arith::TruncIOp::create(builder, location, selected,
+                                                    shifted));
+  return convert(value, *resultType, false, location);
 }
 
 FailureOr<Value>
@@ -844,37 +1171,50 @@ FailureOr<Value> UnitLowering::lowerUnary(semantic::SVUnaryExpressionOp op) {
     auto reference = cast<sim::RefType>((*destination).getType());
     Value oldValue = sim::SimRefLoadOp::create(
         builder, location, reference.getElementType(), *destination);
+    FailureOr<Value> oldScalar = toPackedScalar(oldValue, location);
+    if (failed(oldScalar))
+      return failure();
     Value one;
-    Value newValue;
-    if (auto logic = dyn_cast<sim::LogicType>(oldValue.getType())) {
+    Value newScalar;
+    if (auto logic = dyn_cast<sim::LogicType>((*oldScalar).getType())) {
       auto planeType =
           IntegerType::get(function.getContext(), logic.getWidth());
       one = sim::SimLogicConstantOp::create(
           builder, location, logic, builder.getIntegerAttr(planeType, 1),
           builder.getIntegerAttr(planeType, 0));
-      newValue = sim::SimLogicBinaryOp::create(builder, location, logic,
-                                               increment ? sim::BinaryKind::Add
-                                                         : sim::BinaryKind::Sub,
-                                               oldValue, one);
+      newScalar = sim::SimLogicBinaryOp::create(
+          builder, location, logic,
+          increment ? sim::BinaryKind::Add : sim::BinaryKind::Sub, *oldScalar,
+          one);
     } else {
-      auto integer = cast<IntegerType>(oldValue.getType());
+      auto integer = cast<IntegerType>((*oldScalar).getType());
       one = arith::ConstantOp::create(builder, location, integer,
                                       builder.getIntegerAttr(integer, 1));
-      newValue =
+      newScalar =
           increment
-              ? Value(arith::AddIOp::create(builder, location, oldValue, one))
-              : Value(arith::SubIOp::create(builder, location, oldValue, one));
+              ? Value(arith::AddIOp::create(builder, location, *oldScalar, one))
+              : Value(
+                    arith::SubIOp::create(builder, location, *oldScalar, one));
     }
-    sim::SimRefStoreOp::create(builder, location, newValue, *destination);
+    FailureOr<Value> newValue =
+        convert(newScalar, reference.getElementType(),
+                isSignedNode(children.front()), location);
+    if (failed(newValue))
+      return failure();
+    sim::SimRefStoreOp::create(builder, location, *newValue, *destination);
     bool post = kind == semantic::SVUnaryOperator::Postincrement ||
                 kind == semantic::SVUnaryOperator::Postdecrement;
-    return convert(post ? oldValue : newValue, *resultType,
+    return convert(post ? oldValue : *newValue, *resultType,
                    isSignedNode(children.front()), location);
   }
 
   FailureOr<Value> input = lowerExpression(children.front());
   if (failed(input))
     return failure();
+  FailureOr<Value> scalarInput = toPackedScalar(*input, location);
+  if (failed(scalarInput))
+    return failure();
+  input = *scalarInput;
   bool reduction = kind >= semantic::SVUnaryOperator::BitwiseAnd &&
                    kind <= semantic::SVUnaryOperator::BitwiseXnor;
   if (reduction) {
@@ -969,8 +1309,10 @@ FailureOr<Value> UnitLowering::lowerUnary(semantic::SVUnaryExpressionOp op) {
       return failure();
     }
     Type unaryResult = normalized == sim::UnaryKind::LogicalNot
-                           ? *resultType
+                           ? sim::getPackedScalarType(*resultType)
                            : (*input).getType();
+    if (!unaryResult)
+      return failure();
     Value value = sim::SimLogicUnaryOp::create(builder, location, unaryResult,
                                                normalized, *input)
                       .getResult();
@@ -1027,6 +1369,13 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
   FailureOr<Type> resultType = getNormalizedSemanticType(op);
   if (failed(lhs) || failed(rhs) || failed(resultType))
     return failure();
+  FailureOr<Value> scalarLhs = toPackedScalar(*lhs, location);
+  FailureOr<Value> scalarRhs = toPackedScalar(*rhs, location);
+  Type scalarResultType = sim::getPackedScalarType(*resultType);
+  if (failed(scalarLhs) || failed(scalarRhs) || !scalarResultType)
+    return failure();
+  lhs = *scalarLhs;
+  rhs = *scalarRhs;
   Binary kind = op.getOperatorKind();
   bool signedOp = isSignedNode(children.front());
 
@@ -1090,10 +1439,11 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
     default:
       break;
     }
-    if (compare)
-      return sim::SimLogicCompareOp::create(builder, location, *resultType,
-                                            *compare, *lhs, *rhs)
-          .getResult();
+    if (compare) {
+      Value compared = sim::SimLogicCompareOp::create(
+          builder, location, scalarResultType, *compare, *lhs, *rhs);
+      return convert(compared, *resultType, false, location);
+    }
 
     std::optional<sim::ShiftKind> shift;
     switch (kind) {
@@ -1149,9 +1499,9 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
       unsupported(op) << " (four-state binary operator)";
       return failure();
     }
-    return sim::SimLogicBinaryOp::create(builder, location, *resultType, binary,
-                                         *lhs, *rhs)
-        .getResult();
+    Value value = sim::SimLogicBinaryOp::create(
+        builder, location, (*lhs).getType(), binary, *lhs, *rhs);
+    return convert(value, *resultType, signedOp, location);
   }
 
   std::optional<arith::CmpIPredicate> predicate;
@@ -1396,6 +1746,12 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
     return lowerConcatenation(op);
   if (isa<semantic::SVReplicationExpressionOp>(op))
     return lowerReplication(op);
+  if (auto member = dyn_cast<semantic::SVMemberAccessExpressionOp>(op))
+    return lowerMember(member, lvalue);
+  if (auto tagged = dyn_cast<semantic::SVTaggedUnionExpressionOp>(op))
+    return lowerTaggedUnion(tagged);
+  if (isa<semantic::SVSimpleAssignmentPatternExpressionOp>(op))
+    return lowerAssignmentPattern(op);
   if (isa<semantic::SVRangeSelectExpressionOp,
           semantic::SVElementSelectExpressionOp>(op))
     return lowerSelection(op, lvalue);
@@ -1463,9 +1819,13 @@ LogicalResult UnitLowering::lowerTiming(Operation *control,
       FailureOr<Value> amount = lowerExpression(children.front());
       if (failed(amount))
         return failure();
+      FailureOr<Value> scalarAmount = toPackedScalar(*amount, location);
+      if (failed(scalarAmount))
+        return failure();
       delay = sim::SimTimeScaleOp::create(
-          builder, location, sim::TimeType::get(function.getContext()), *amount,
-          scaleAttr, builder.getBoolAttr(isSignedNode(children.front())));
+          builder, location, sim::TimeType::get(function.getContext()),
+          *scalarAmount, scaleAttr,
+          builder.getBoolAttr(isSignedNode(children.front())));
     }
     sim::SimSuspendDelayOp::create(builder, location, delay,
                                    sim::TimingSiteAttr{}, ValueRange{},
@@ -1602,6 +1962,9 @@ LogicalResult UnitLowering::lowerCase(semantic::SVCaseStatementOp op) {
   FailureOr<Value> selector = lowerExpression(children.front());
   if (failed(selector))
     return failure();
+  FailureOr<Value> scalarSelector = toPackedScalar(*selector, location);
+  if (failed(scalarSelector))
+    return failure();
   Block *mergeBlock = addBlock();
   size_t nextLabel = 0;
   for (size_t item = 0; item < itemCount; ++item) {
@@ -1618,17 +1981,21 @@ LogicalResult UnitLowering::lowerCase(semantic::SVCaseStatementOp op) {
           convert(*candidate, (*selector).getType(), false, labelLocation);
       if (failed(normalized))
         return failure();
+      FailureOr<Value> scalarCandidate =
+          toPackedScalar(*normalized, labelLocation);
+      if (failed(scalarCandidate))
+        return failure();
       // A `case` label matches X and Z bits exactly, which is the four-state
       // case-equality predicate rather than ordinary equality.
       Value equal;
-      if (isa<sim::LogicType>((*selector).getType()))
+      if (isa<sim::LogicType>((*scalarSelector).getType()))
         equal = sim::SimLogicCompareOp::create(
             builder, labelLocation, builder.getI1Type(),
-            sim::CompareKind::CaseEq, *selector, *normalized);
+            sim::CompareKind::CaseEq, *scalarSelector, *scalarCandidate);
       else
         equal = arith::CmpIOp::create(builder, labelLocation,
-                                      arith::CmpIPredicate::eq, *selector,
-                                      *normalized);
+                                      arith::CmpIPredicate::eq, *scalarSelector,
+                                      *scalarCandidate);
       matched = matched ? Value(arith::OrIOp::create(builder, labelLocation,
                                                      matched, equal))
                         : equal;

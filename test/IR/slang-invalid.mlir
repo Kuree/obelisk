@@ -120,7 +120,62 @@ module {
   slang.symbol.variable attributes {
     node_id = 0 : i64, sym_name = "bad_aggregate",
     // expected-error @+1 {{only a union can be tagged}}
-    semantic_type = !slang.aggregate<"record_t", false, false, true, false, false, false, 0, 0, 0, 0>
+    semantic_type = !slang.aggregate<"record_t", false, false, true, false, false, false, 0, 0, 0, 0, []>
+  } {
+  }
+}
+
+// -----
+
+module {
+  slang.symbol.variable attributes {
+    node_id = 0 : i64, sym_name = "missing_field_metadata",
+    // expected-error @+1 {{aggregate fields require name, type, ordinal, and packed_offset metadata}}
+    semantic_type = !slang.aggregate<"record_t", false, false, false, false, false, false, 0, 0, 0, 0, [{name = "a"}]>
+  } {
+  }
+}
+
+// -----
+
+module {
+  slang.symbol.variable attributes {
+    node_id = 0 : i64, sym_name = "bad_field_ordinal",
+    // expected-error @+1 {{aggregate field ordinals must be dense and ordered}}
+    semantic_type = !slang.aggregate<"record_t", false, false, false, false, false, false, 0, 0, 0, 0, [{name = "a", ordinal = 1 : i32, packed_offset = 0 : i64, type = !slang.integral<8, false, false, 7 : 0, bit>}]>
+  } {
+  }
+}
+
+// -----
+
+module {
+  slang.symbol.variable attributes {
+    node_id = 0 : i64, sym_name = "duplicate_field_name",
+    // expected-error @+1 {{aggregate field names must be unique}}
+    semantic_type = !slang.aggregate<"record_t", false, false, false, false, false, false, 0, 0, 0, 0, [{name = "a", ordinal = 0 : i32, packed_offset = 0 : i64, type = !slang.integral<8, false, false, 7 : 0, bit>}, {name = "a", ordinal = 1 : i32, packed_offset = 0 : i64, type = !slang.integral<8, false, false, 7 : 0, bit>}]>
+  } {
+  }
+}
+
+// -----
+
+module {
+  slang.symbol.variable attributes {
+    node_id = 0 : i64, sym_name = "negative_field_offset",
+    // expected-error @+1 {{aggregate field has invalid packed offset}}
+    semantic_type = !slang.aggregate<"record_t", true, false, false, false, false, false, 8, 8, 8, 0, [{name = "a", ordinal = 0 : i32, packed_offset = -1 : i64, type = !slang.integral<8, false, false, 7 : 0, bit>}]>
+  } {
+  }
+}
+
+// -----
+
+module {
+  slang.symbol.variable attributes {
+    node_id = 0 : i64, sym_name = "unpacked_field_offset",
+    // expected-error @+1 {{aggregate field has invalid packed offset}}
+    semantic_type = !slang.aggregate<"record_t", false, false, false, false, false, false, 0, 0, 0, 0, [{name = "a", ordinal = 0 : i32, packed_offset = 1 : i64, type = !slang.integral<8, false, false, 7 : 0, bit>}]>
   } {
   }
 }

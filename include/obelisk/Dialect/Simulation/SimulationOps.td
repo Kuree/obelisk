@@ -11,6 +11,7 @@ include "mlir/IR/SymbolInterfaces.td"
 include "mlir/Interfaces/CallInterfaces.td"
 include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/Interfaces/FunctionInterfaces.td"
+include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/MemorySlotInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/Interfaces/ViewLikeInterface.td"
@@ -262,8 +263,101 @@ def SimContextEventOp : SimOp<"context.event", [Pure]> {
   let hasVerifier = 1;
 }
 
+//===----------------------------------------------------------------------===//
+// First-class fixed aggregate values
+//===----------------------------------------------------------------------===//
+
+def SimPackedFlattenOp : SimOp<"packed.flatten", [Pure]> {
+  let summary = "view a packed aggregate as its scalar bit representation";
+  let arguments = (ins AnyType:$input);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$input attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimPackedUnflattenOp : SimOp<"packed.unflatten", [Pure]> {
+  let summary = "form a packed aggregate from its scalar bit representation";
+  let arguments = (ins AnyType:$input);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$input attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimAggregateDefaultOp : SimOp<"aggregate.default", [Pure]> {
+  let summary = "SystemVerilog default value of a fixed aggregate";
+  let description = [{
+    Struct and array elements default recursively. Union defaults retain their
+    language-level active-member or tag state; in particular, an unpacked
+    tagged union has no active member and a four-state packed tag is unknown.
+  }];
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "attr-dict `:` type($result)";
+  let hasVerifier = 1;
+}
+
+def SimAggregateConstructOp : SimOp<"aggregate.construct", [Pure]> {
+  let summary = "construct a fixed struct or array in declaration order";
+  let arguments = (ins Variadic<AnyType>:$elements);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$elements attr-dict `:` functional-type($elements, $result)";
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimAggregateExtractOp : SimOp<"aggregate.extract", [Pure]> {
+  let summary = "extract one static struct or array subelement";
+  let arguments = (ins AnyType:$input, I64Attr:$index);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$input `[` $index `]` attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimAggregateInsertOp : SimOp<"aggregate.insert", [Pure]> {
+  let summary = "replace one static struct or array subelement";
+  let arguments = (ins AnyType:$input, AnyType:$replacement, I64Attr:$index);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$replacement `into` $input `[` $index `]` attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimArrayDynExtractOp : SimOp<"array.extract_dynamic", [Pure]> {
+  let summary = "extract from a fixed array using a declared-range index";
+  let description = [{
+    The index is interpreted in the array's preserved source range. Unknown or
+    out-of-range indices produce the element type's recursive default.
+  }];
+  let arguments = (ins AnyType:$input, AnyType:$index);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$input `[` $index `]` attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimUnionConstructOp : SimOp<"union.construct", [Pure]> {
+  let summary = "construct a union with one selected field";
+  let arguments = (ins AnyType:$value, I64Attr:$index);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$value `as` $index attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimUnionExtractOp : SimOp<"union.extract", [Pure]> {
+  let summary = "extract one statically selected union field";
+  let arguments = (ins AnyType:$input, I64Attr:$index);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$input `[` $index `]` attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
 def SimRefAllocOp : SimOp<"ref.alloc", [
-    DeclareOpInterfaceMethods<PromotableAllocationOpInterface>
+    DeclareOpInterfaceMethods<PromotableAllocationOpInterface>,
+    DeclareOpInterfaceMethods<DestructurableAllocationOpInterface>
   ]> {
   let summary = "promotable automatic local allocation";
   let arguments = (ins AnyType:$initial_value);
@@ -274,6 +368,8 @@ def SimRefAllocOp : SimOp<"ref.alloc", [
 
 def SimRefLoadOp : SimOp<"ref.load", [
     DeclareOpInterfaceMethods<PromotableMemOpInterface>,
+    DeclareOpInterfaceMethods<DestructurableAccessorOpInterface>,
+    DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>,
     SimRefElementMatches<"reference", "result">
   ]> {
   let arguments = (ins Arg<SimRefType, "", [MemRead<SimStorageResource>]>:$reference);
@@ -283,6 +379,8 @@ def SimRefLoadOp : SimOp<"ref.load", [
 
 def SimRefStoreOp : SimOp<"ref.store", [
     DeclareOpInterfaceMethods<PromotableMemOpInterface>,
+    DeclareOpInterfaceMethods<DestructurableAccessorOpInterface>,
+    DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>,
     SimRefElementMatches<"reference", "value">
   ]> {
   let arguments = (ins AnyType:$value,
@@ -290,7 +388,10 @@ def SimRefStoreOp : SimOp<"ref.store", [
   let assemblyFormat = "$value `to` $reference attr-dict `:` type($value) `,` qualified(type($reference))";
 }
 
-def SimRefExtractOp : SimOp<"ref.extract", [Pure, ViewLikeOpInterface]> {
+def SimRefExtractOp : SimOp<"ref.extract", [
+    Pure, ViewLikeOpInterface,
+    DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>
+  ]> {
   let arguments = (ins SimRefType:$input, I64Attr:$low_bit);
   let results = (outs SimRefType:$result);
   let assemblyFormat = "$input `from` $low_bit attr-dict `:` qualified(type($input)) `->` qualified(type($result))";
@@ -301,7 +402,10 @@ def SimRefExtractOp : SimOp<"ref.extract", [Pure, ViewLikeOpInterface]> {
   let hasCanonicalizer = 1;
 }
 
-def SimRefDynExtractOp : SimOp<"ref.dyn_extract", [Pure, ViewLikeOpInterface]> {
+def SimRefDynExtractOp : SimOp<"ref.dyn_extract", [
+    Pure, ViewLikeOpInterface,
+    DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>
+  ]> {
   let summary = "dynamically select a packed storage slice";
   let description = [{
     The low-bit index may be a signless builtin integer or four-state logic.
@@ -313,6 +417,41 @@ def SimRefDynExtractOp : SimOp<"ref.dyn_extract", [Pure, ViewLikeOpInterface]> {
   let arguments = (ins SimRefType:$input, AnyType:$low_bit);
   let results = (outs SimRefType:$result);
   let assemblyFormat = "$input `from` $low_bit attr-dict `:` functional-type(operands, results)";
+  let extraClassDeclaration = [{
+    ::mlir::Value getViewSource() { return getInput(); }
+  }];
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimRefSubelementOp : SimOp<"ref.subelement", [
+    Pure, ViewLikeOpInterface,
+    DeclareOpInterfaceMethods<DestructurableAccessorOpInterface>,
+    DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>
+  ]> {
+  let summary = "static declaration-order view into aggregate storage";
+  let arguments = (ins SimRefType:$input, DenseI64ArrayAttr:$indices);
+  let results = (outs SimRefType:$result);
+  let assemblyFormat = "$input `[` $indices `]` attr-dict `:` qualified(type($input)) `->` qualified(type($result))";
+  let extraClassDeclaration = [{
+    ::mlir::Value getViewSource() { return getInput(); }
+  }];
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimRefArrayElementOp : SimOp<"ref.array_element", [
+    Pure, ViewLikeOpInterface,
+    DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>
+  ]> {
+  let summary = "dynamic declared-range view into fixed array storage";
+  let description = [{
+    An unknown or out-of-range source index denotes no storage. Loads through
+    the result return the recursive element default and stores have no effect.
+  }];
+  let arguments = (ins SimRefType:$input, AnyType:$index);
+  let results = (outs SimRefType:$result);
+  let assemblyFormat = "$input `[` $index `]` attr-dict `:` functional-type(operands, results)";
   let extraClassDeclaration = [{
     ::mlir::Value getViewSource() { return getInput(); }
   }];
@@ -337,15 +476,18 @@ def SimDriverDriveOp : SimOp<"driver.drive", [
   let assemblyFormat = "$driver `=` $value attr-dict `:` qualified(type($driver)) `,` type($value)";
 }
 
-def SimDriverExtractOp : SimOp<"driver.extract", [Pure]> {
+def SimDriverExtractOp : SimOp<"driver.extract", [Pure, ViewLikeOpInterface]> {
   let arguments = (ins SimDriverType:$input, I64Attr:$low_bit);
   let results = (outs SimDriverType:$result);
   let assemblyFormat = "$input `from` $low_bit attr-dict `:` qualified(type($input)) `->` qualified(type($result))";
+  let extraClassDeclaration = [{
+    ::mlir::Value getViewSource() { return getInput(); }
+  }];
   let hasVerifier = 1;
   let hasCanonicalizer = 1;
 }
 
-def SimDriverDynExtractOp : SimOp<"driver.dyn_extract", [Pure]> {
+def SimDriverDynExtractOp : SimOp<"driver.dyn_extract", [Pure, ViewLikeOpInterface]> {
   let summary = "dynamically select a packed driver slice";
   let description = [{
     The low-bit index may be a signless builtin integer or four-state logic.
@@ -355,6 +497,33 @@ def SimDriverDynExtractOp : SimOp<"driver.dyn_extract", [Pure]> {
   let arguments = (ins SimDriverType:$input, AnyType:$low_bit);
   let results = (outs SimDriverType:$result);
   let assemblyFormat = "$input `from` $low_bit attr-dict `:` functional-type(operands, results)";
+  let extraClassDeclaration = [{
+    ::mlir::Value getViewSource() { return getInput(); }
+  }];
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimDriverSubelementOp : SimOp<"driver.subelement", [Pure, ViewLikeOpInterface]> {
+  let summary = "static declaration-order view into an aggregate driver";
+  let arguments = (ins SimDriverType:$input, DenseI64ArrayAttr:$indices);
+  let results = (outs SimDriverType:$result);
+  let assemblyFormat = "$input `[` $indices `]` attr-dict `:` qualified(type($input)) `->` qualified(type($result))";
+  let extraClassDeclaration = [{
+    ::mlir::Value getViewSource() { return getInput(); }
+  }];
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimDriverArrayElementOp : SimOp<"driver.array_element", [Pure, ViewLikeOpInterface]> {
+  let summary = "dynamic declared-range view into a fixed-array driver";
+  let arguments = (ins SimDriverType:$input, AnyType:$index);
+  let results = (outs SimDriverType:$result);
+  let assemblyFormat = "$input `[` $index `]` attr-dict `:` functional-type(operands, results)";
+  let extraClassDeclaration = [{
+    ::mlir::Value getViewSource() { return getInput(); }
+  }];
   let hasVerifier = 1;
   let hasCanonicalizer = 1;
 }

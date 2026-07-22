@@ -6,8 +6,10 @@
 include "obelisk/Dialect/Simulation/SimulationDialect.td"
 include "mlir/IR/AttrTypeBase.td"
 include "mlir/IR/OpBase.td"
+include "mlir/Interfaces/MemorySlotInterfaces.td"
 
-class SimType<string name> : TypeDef<ObeliskSimulationDialect, name> {}
+class SimType<string name, list<Trait> traits = []>
+    : TypeDef<ObeliskSimulationDialect, name, traits> {}
 
 def SimLogicType : SimType<"Logic"> {
   let mnemonic = "logic";
@@ -29,6 +31,73 @@ def SimContextType : SimType<"Context"> {
 def SimTimeType : SimType<"Time"> {
   let mnemonic = "time";
   let summary = "target-independent scaled simulation time";
+}
+
+class SimFixedArrayType<string name, string typeMnemonic>
+    : SimType<name, [
+        DeclareTypeInterfaceMethods<DestructurableTypeInterface>
+      ]> {
+  let mnemonic = typeMnemonic;
+  let parameters = (ins
+    "::mlir::Type":$elementType,
+    "int64_t":$left,
+    "int64_t":$right
+  );
+  let assemblyFormat = "`<` $left `:` $right `x` $elementType `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimPackedArrayType
+    : SimFixedArrayType<"PackedArray", "packed_array"> {
+  let summary = "fixed-size packed array with its declared source range";
+}
+
+def SimUnpackedArrayType
+    : SimFixedArrayType<"UnpackedArray", "unpacked_array"> {
+  let summary = "fixed-size unpacked array with its declared source range";
+}
+
+class SimRecordType<string name, string typeMnemonic>
+    : SimType<name, [
+        DeclareTypeInterfaceMethods<DestructurableTypeInterface>
+      ]> {
+  let mnemonic = typeMnemonic;
+  let parameters = (ins "::mlir::ArrayAttr":$fields);
+  let assemblyFormat = "`<` $fields `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimPackedStructType
+    : SimRecordType<"PackedStruct", "packed_struct"> {
+  let summary = "ordered fixed packed struct";
+}
+
+def SimUnpackedStructType
+    : SimRecordType<"UnpackedStruct", "unpacked_struct"> {
+  let summary = "ordered fixed unpacked struct";
+}
+
+class SimUnionType<string name, string typeMnemonic>
+    : SimType<name, [
+        DeclareTypeInterfaceMethods<DestructurableTypeInterface>
+      ]> {
+  let mnemonic = typeMnemonic;
+  let parameters = (ins
+    "::mlir::ArrayAttr":$fields,
+    "bool":$isTagged,
+    DefaultValuedParameter<"uint32_t", "0">:$tagBits
+  );
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimPackedUnionType : SimUnionType<"PackedUnion", "packed_union"> {
+  let summary = "ordered fixed packed union";
+}
+
+def SimUnpackedUnionType
+    : SimUnionType<"UnpackedUnion", "unpacked_union"> {
+  let summary = "ordered fixed unpacked union";
 }
 
 def SimRefType : SimType<"Ref"> {

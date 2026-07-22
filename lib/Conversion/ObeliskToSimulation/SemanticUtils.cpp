@@ -89,7 +89,75 @@ bool isSignedSemanticType(Type type) {
     return isSignedSemanticType(array.getElementType());
   if (auto enumeration = dyn_cast<semantic::EnumType>(type))
     return isSignedSemanticType(enumeration.getBaseType());
+  if (auto aggregate = dyn_cast<semantic::SourceAggregateType>(type))
+    return aggregate.getIsPacked() && aggregate.getIsSigned();
   return false;
+}
+
+static FailureOr<Type> normalizeType(Type type, Location location);
+
+static FailureOr<ArrayAttr> normalizeSourceFields(ArrayAttr fields,
+                                                  Location location) {
+  SmallVector<Attribute> normalized;
+  normalized.reserve(fields.size());
+  for (Attribute attribute : fields) {
+    auto field = dyn_cast<DictionaryAttr>(attribute);
+    auto name = field ? field.getAs<StringAttr>("name") : StringAttr{};
+    auto typeAttr = field ? field.getAs<TypeAttr>("type") : TypeAttr{};
+    auto ordinal = field ? field.getAs<IntegerAttr>("ordinal") : IntegerAttr{};
+    auto offset =
+        field ? field.getAs<IntegerAttr>("packed_offset") : IntegerAttr{};
+    if (!name || !typeAttr || !ordinal || !offset ||
+        ordinal.getValue().isNegative() || offset.getValue().isNegative()) {
+      emitError(location) << "malformed source aggregate field inventory";
+      return failure();
+    }
+    FailureOr<Type> fieldType = normalizeType(typeAttr.getValue(), location);
+    if (failed(fieldType))
+      return failure();
+    normalized.push_back(sim::FieldAttr::get(
+        fields.getContext(), name, *fieldType,
+        static_cast<uint32_t>(ordinal.getValue().getZExtValue()),
+        offset.getValue().getZExtValue()));
+  }
+  return ArrayAttr::get(fields.getContext(), normalized);
+}
+
+static FailureOr<ArrayAttr> normalizeDictionaryFields(DictionaryAttr fields,
+                                                      bool packed, bool isUnion,
+                                                      Location location) {
+  SmallVector<Type> types;
+  SmallVector<StringAttr> names;
+  for (NamedAttribute field : fields) {
+    auto typeAttr = dyn_cast<TypeAttr>(field.getValue());
+    if (!typeAttr) {
+      emitError(location) << "aggregate field dictionary contains a non-type";
+      return failure();
+    }
+    FailureOr<Type> type = normalizeType(typeAttr.getValue(), location);
+    if (failed(type))
+      return failure();
+    names.push_back(field.getName());
+    types.push_back(*type);
+  }
+  SmallVector<uint64_t> offsets(types.size(), 0);
+  if (packed && !isUnion) {
+    uint64_t offset = 0;
+    for (size_t index = types.size(); index != 0; --index) {
+      std::optional<unsigned> width = sim::getPackedWidth(types[index - 1]);
+      if (!width || *width > std::numeric_limits<uint64_t>::max() - offset) {
+        emitError(location) << "packed aggregate field width overflows";
+        return failure();
+      }
+      offsets[index - 1] = offset;
+      offset += *width;
+    }
+  }
+  SmallVector<Attribute> normalized;
+  for (auto [index, type] : llvm::enumerate(types))
+    normalized.push_back(sim::FieldAttr::get(fields.getContext(), names[index],
+                                             type, index, offsets[index]));
+  return ArrayAttr::get(fields.getContext(), normalized);
 }
 
 static FailureOr<Type> normalizeType(Type type, Location location) {
@@ -101,6 +169,88 @@ static FailureOr<Type> normalizeType(Type type, Location location) {
       return failure();
     }
     return type;
+  }
+  if (auto array = dyn_cast<semantic::RangedPackedArrayType>(type)) {
+    FailureOr<Type> element = normalizeType(array.getElementType(), location);
+    if (failed(element))
+      return failure();
+    return sim::PackedArrayType::get(context, *element, array.getLeft(),
+                                     array.getRight());
+  }
+  if (auto array = dyn_cast<semantic::RangedUnpackedArrayType>(type)) {
+    FailureOr<Type> element = normalizeType(array.getElementType(), location);
+    if (failed(element))
+      return failure();
+    return sim::UnpackedArrayType::get(context, *element, array.getLeft(),
+                                       array.getRight());
+  }
+  if (auto array = dyn_cast<semantic::PackedArrayType>(type)) {
+    if (array.getSize() == 0 ||
+        array.getSize() >
+            static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+      emitError(location) << "fixed array size is outside the supported range";
+      return failure();
+    }
+    FailureOr<Type> element = normalizeType(array.getElementType(), location);
+    if (failed(element))
+      return failure();
+    return sim::PackedArrayType::get(context, *element, array.getSize() - 1, 0);
+  }
+  if (auto array = dyn_cast<semantic::UnpackedArrayType>(type)) {
+    if (array.getSize() == 0 ||
+        array.getSize() >
+            static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+      emitError(location) << "fixed array size is outside the supported range";
+      return failure();
+    }
+    FailureOr<Type> element = normalizeType(array.getElementType(), location);
+    if (failed(element))
+      return failure();
+    return sim::UnpackedArrayType::get(context, *element, array.getSize() - 1,
+                                       0);
+  }
+  if (auto aggregate = dyn_cast<semantic::SourceAggregateType>(type)) {
+    FailureOr<ArrayAttr> fields =
+        normalizeSourceFields(aggregate.getFields(), location);
+    if (failed(fields))
+      return failure();
+    if (aggregate.getIsPacked() && aggregate.getIsUnion())
+      return sim::PackedUnionType::get(
+          context, *fields, aggregate.getIsTagged(), aggregate.getTagBits());
+    if (aggregate.getIsPacked())
+      return sim::PackedStructType::get(context, *fields);
+    if (aggregate.getIsUnion())
+      return sim::UnpackedUnionType::get(context, *fields,
+                                         aggregate.getIsTagged(), 0);
+    return sim::UnpackedStructType::get(context, *fields);
+  }
+  if (auto structure = dyn_cast<semantic::PackedStructType>(type)) {
+    FailureOr<ArrayAttr> fields =
+        normalizeDictionaryFields(structure.getFields(), true, false, location);
+    return failed(fields)
+               ? FailureOr<Type>(failure())
+               : FailureOr<Type>(sim::PackedStructType::get(context, *fields));
+  }
+  if (auto structure = dyn_cast<semantic::UnpackedStructType>(type)) {
+    FailureOr<ArrayAttr> fields = normalizeDictionaryFields(
+        structure.getFields(), false, false, location);
+    return failed(fields) ? FailureOr<Type>(failure())
+                          : FailureOr<Type>(
+                                sim::UnpackedStructType::get(context, *fields));
+  }
+  if (auto unionType = dyn_cast<semantic::PackedUnionType>(type)) {
+    FailureOr<ArrayAttr> fields =
+        normalizeDictionaryFields(unionType.getFields(), true, true, location);
+    return failed(fields) ? FailureOr<Type>(failure())
+                          : FailureOr<Type>(sim::PackedUnionType::get(
+                                context, *fields, false, 0));
+  }
+  if (auto unionType = dyn_cast<semantic::UnpackedUnionType>(type)) {
+    FailureOr<ArrayAttr> fields =
+        normalizeDictionaryFields(unionType.getFields(), false, true, location);
+    return failed(fields) ? FailureOr<Type>(failure())
+                          : FailureOr<Type>(sim::UnpackedUnionType::get(
+                                context, *fields, false, 0));
   }
   if (auto width = getSemanticPackedWidth(type)) {
     if (*width == 0 || *width > std::numeric_limits<unsigned>::max()) {
@@ -115,7 +265,8 @@ static FailureOr<Type> normalizeType(Type type, Location location) {
     return sim::TimeType::get(context);
   if (isa<sim::LogicType, sim::TimeType, sim::ContextType, sim::RefType,
           sim::NetType, sim::DriverType, sim::EventType, sim::ProcessType>(
-          type))
+          type) ||
+      sim::isAggregateType(type))
     return type;
 
   emitError(location) << "unsupported semantic type in the first simulation "
@@ -246,6 +397,8 @@ FailureOr<ParsedConstant> parseSVInteger(StringRef spelling, unsigned width,
 }
 
 Value createDefaultValue(OpBuilder &builder, Location location, Type type) {
+  if (sim::isAggregateType(type))
+    return sim::SimAggregateDefaultOp::create(builder, location, type);
   if (auto logic = dyn_cast<sim::LogicType>(type)) {
     auto planeType = IntegerType::get(type.getContext(), logic.getWidth());
     return sim::SimLogicConstantOp::create(

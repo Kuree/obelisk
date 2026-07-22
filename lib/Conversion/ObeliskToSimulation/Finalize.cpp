@@ -50,8 +50,9 @@ static bool isExecutableType(Type type) {
     return integer.isSignless();
   return isa<FunctionType>(type) ||
          isa<sim::ContextType, sim::LogicType, sim::TimeType, sim::RefType,
-             sim::NetType, sim::DriverType, sim::EventType, sim::ProcessType>(
-             type);
+             sim::NetType, sim::DriverType, sim::EventType,
+             sim::ProcessType>(type) ||
+         sim::isAggregateType(type);
 }
 
 static bool containsForbiddenType(Type type) {
@@ -162,7 +163,12 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
     functionManager.addPass(createObeliskSimLowerUnitPass());
     functionManager.addPass(createCanonicalizerPass());
     functionManager.addPass(createCSEPass());
+    functionManager.addPass(createSROA());
+    functionManager.addPass(createCanonicalizerPass());
+    functionManager.addPass(createCSEPass());
     functionManager.addPass(createMem2Reg());
+    functionManager.addPass(createCanonicalizerPass());
+    functionManager.addPass(createCSEPass());
   }
   // Graph metadata does not participate in symbol liveness. Complete all
   // symbol pruning before graph construction so its nested references can
@@ -177,8 +183,7 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
   designManager.addPass(createSymbolDCEPass());
 
   // Whole-program summaries and static fragment extraction deliberately run
-  // before continuation-frame state is made explicit. This lets promotion and
-  // canonicalization erase unnecessary process state first.
+  // before continuation-frame state is made explicit.
   ObeliskSimBuildComputeGraphPassOptions graphOptions;
   graphOptions.workers = workers;
   graphOptions.vpi = vpiMode.str();

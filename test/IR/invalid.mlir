@@ -295,7 +295,23 @@ module {
 
 module {
   // expected-error @+1 {{only a packed union can be soft}}
-  obelisk.sv.symbol.variable attributes {node_id = 0 : i64, sym_name = "bad_soft", semantic_type = !obelisk.source_aggregate<"rec", false, false, false, false, false, true, 0, 0, 0, 0>} {
+  obelisk.sv.symbol.variable attributes {node_id = 0 : i64, sym_name = "bad_soft", semantic_type = !obelisk.source_aggregate<"rec", false, false, false, false, false, true, 0, 0, 0, 0, []>} {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{aggregate field ordinals must be dense and ordered}}
+  obelisk.sv.symbol.variable attributes {node_id = 0 : i64, sym_name = "bad_field_ordinal", semantic_type = !obelisk.source_aggregate<"rec", false, false, false, false, false, false, 0, 0, 0, 0, [{name = "a", ordinal = 1 : i32, packed_offset = 0 : i64, type = !obelisk.integral<8, false, false, 7 : 0, bit>}]>} {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{aggregate field has invalid packed offset}}
+  obelisk.sv.symbol.variable attributes {node_id = 0 : i64, sym_name = "bad_field_offset", semantic_type = !obelisk.source_aggregate<"rec", false, false, false, false, false, false, 0, 0, 0, 0, [{name = "a", ordinal = 0 : i32, packed_offset = 1 : i64, type = !obelisk.integral<8, false, false, 7 : 0, bit>}]>} {
   }
 }
 

@@ -168,10 +168,11 @@ def SlangAggregateType : SlangType<"Aggregate"> {
     "uint64_t":$bitWidth,
     "uint64_t":$selectableWidth,
     "uint64_t":$bitstreamWidth,
-    "uint32_t":$tagBits
+    "uint32_t":$tagBits,
+    "::mlir::ArrayAttr":$fields
   );
   let assemblyFormat =
-      "`<` $name `,` $isPacked `,` $isUnion `,` $isTagged `,` $isSigned `,` $isFourState `,` $isSoft `,` $bitWidth `,` $selectableWidth `,` $bitstreamWidth `,` $tagBits `>`";
+      "`<` $name `,` $isPacked `,` $isUnion `,` $isTagged `,` $isSigned `,` $isFourState `,` $isSoft `,` $bitWidth `,` $selectableWidth `,` $bitstreamWidth `,` $tagBits `,` $fields `>`";
   let genVerifyDecl = 1;
 }
 

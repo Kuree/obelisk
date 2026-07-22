@@ -16,6 +16,7 @@
 
 #include "slang/ast/ASTVisitor.h"
 #include "slang/ast/expressions/Operator.h"
+#include "slang/ast/symbols/VariableSymbols.h"
 #include "slang/driver/Driver.h"
 #include "slang/numeric/Time.h"
 #include "slang/syntax/AllSyntax.h"
@@ -518,10 +519,39 @@ public:
       std::string name = type.getHierarchicalPath();
       if (name.empty())
         name = type.toString();
+
+      const slang::ast::Scope *aggregateScope = nullptr;
+      if (type.kind == SK::PackedStructType)
+        aggregateScope = &type.as<slang::ast::PackedStructType>();
+      else if (type.kind == SK::UnpackedStructType)
+        aggregateScope = &type.as<slang::ast::UnpackedStructType>();
+      else if (type.kind == SK::PackedUnionType)
+        aggregateScope = &type.as<slang::ast::PackedUnionType>();
+      else
+        aggregateScope = &type.as<slang::ast::UnpackedUnionType>();
+      SmallVector<Attribute> fields;
+      for (const slang::ast::FieldSymbol &field :
+           aggregateScope->membersOfType<slang::ast::FieldSymbol>()) {
+        fields.push_back(DictionaryAttr::get(
+            context,
+            {
+                NamedAttribute(StringAttr::get(context, "name"),
+                               StringAttr::get(context, field.name)),
+                NamedAttribute(StringAttr::get(context, "type"),
+                               TypeAttr::get(convert(field.getType()))),
+                NamedAttribute(StringAttr::get(context, "ordinal"),
+                               IntegerAttr::get(IntegerType::get(context, 32),
+                                                field.fieldIndex)),
+                NamedAttribute(
+                    StringAttr::get(context, "packed_offset"),
+                    IntegerAttr::get(IntegerType::get(context, 64),
+                                     isPacked ? field.bitOffset : 0)),
+            }));
+      }
       result = slangir::AggregateType::get(
           context, StringAttr::get(context, name), isPacked, isUnion, isTagged,
           isSigned, isFourState, isSoft, bitWidth, selectableWidth,
-          bitstreamWidth, tagBits);
+          bitstreamWidth, tagBits, ArrayAttr::get(context, fields));
       break;
     }
     case SK::ClassType: {
@@ -1019,6 +1049,13 @@ private:
     } else if constexpr (std::same_as<T, slang::ast::MemberAccessExpression> ||
                          std::same_as<T, slang::ast::TaggedPattern>) {
       setReferencedSymbol<Op>(attrs, node.member);
+      const auto &field = node.member.template as<slang::ast::FieldSymbol>();
+      attrs.set("field_ordinal", builder.getI64IntegerAttr(field.fieldIndex));
+      attrs.set("packed_offset", builder.getI64IntegerAttr(field.bitOffset));
+    } else if constexpr (std::same_as<T, slang::ast::TaggedUnionExpression>) {
+      const auto &field = node.member.template as<slang::ast::FieldSymbol>();
+      attrs.set("field_ordinal", builder.getI64IntegerAttr(field.fieldIndex));
+      attrs.set("packed_offset", builder.getI64IntegerAttr(field.bitOffset));
     } else if constexpr (std::same_as<T, slang::ast::VariablePattern>) {
       setReferencedSymbol<Op>(attrs, node.variable);
     } else if constexpr (std::same_as<T, slang::ast::VariableDeclStatement>) {

@@ -20,14 +20,11 @@ module simulation_narrow_index;
   end
 endmodule
 
-// CHECK-DAG: %[[EIGHT_LOGIC:.*]] = obelisk_sim.logic.constant 8 : i66, 0 : i66 : !obelisk_sim.logic<66>
 // CHECK-DAG: %[[THREE_LOGIC:.*]] = obelisk_sim.logic.constant 3 : i66, 0 : i66 : !obelisk_sim.logic<66>
-// CHECK-DAG: %[[EIGHT_BITS:.*]] = arith.constant 8 : i66
 
 // CHECK: %[[UNSIGNED_RAW:.*]] = obelisk_sim.ref.load {{.*}} -> !obelisk_sim.logic<1>
-// CHECK: %[[UNSIGNED:.*]] = obelisk_sim.logic.resize %[[UNSIGNED_RAW]] signed = false : !obelisk_sim.logic<1> -> !obelisk_sim.logic<66>
-// CHECK: %[[DECLARED_LOW:.*]] = obelisk_sim.logic.binary sub %[[UNSIGNED]], %[[EIGHT_LOGIC]] : !obelisk_sim.logic<66>
-// CHECK: obelisk_sim.logic.dyn_extract {{.*}} from %[[DECLARED_LOW]]
+// CHECK: %[[UNSIGNED:.*]] = obelisk_sim.logic.resize %[[UNSIGNED_RAW]] signed = false : !obelisk_sim.logic<1> -> !obelisk_sim.logic<65>
+// CHECK: obelisk_sim.array.extract_dynamic {{.*}}[%[[UNSIGNED]]]
 
 // CHECK: %[[PART_RAW:.*]] = obelisk_sim.ref.load {{.*}} -> !obelisk_sim.logic<1>
 // CHECK: %[[PART_INDEX:.*]] = obelisk_sim.logic.resize %[[PART_RAW]] signed = false : !obelisk_sim.logic<1> -> !obelisk_sim.logic<66>
@@ -35,10 +32,9 @@ endmodule
 // CHECK: obelisk_sim.logic.dyn_extract {{.*}} from %[[PART_LOW]]
 
 // CHECK: %[[SIGNED_RAW:.*]] = obelisk_sim.ref.load {{.*}} -> !obelisk_sim.logic<1>
-// CHECK: %[[SIGNED:.*]] = obelisk_sim.logic.resize %[[SIGNED_RAW]] signed = true : !obelisk_sim.logic<1> -> !obelisk_sim.logic<66>
-// CHECK: obelisk_sim.logic.dyn_extract {{.*}} from %[[SIGNED]]
+// CHECK: %[[SIGNED:.*]] = obelisk_sim.logic.resize %[[SIGNED_RAW]] signed = true : !obelisk_sim.logic<1> -> !obelisk_sim.logic<65>
+// CHECK: obelisk_sim.array.extract_dynamic {{.*}}[%[[SIGNED]]]
 
 // CHECK: %[[BIT_RAW:.*]] = obelisk_sim.ref.load {{.*}} -> i1
-// CHECK: %[[BIT_INDEX:.*]] = arith.extui %[[BIT_RAW]] : i1 to i66
-// CHECK: %[[BIT_LOW:.*]] = arith.subi %[[BIT_INDEX]], %[[EIGHT_BITS]] : i66
-// CHECK: obelisk_sim.logic.dyn_extract {{.*}} from %[[BIT_LOW]]
+// CHECK: %[[BIT_INDEX:.*]] = arith.extui %[[BIT_RAW]] : i1 to i65
+// CHECK: obelisk_sim.array.extract_dynamic {{.*}}[%[[BIT_INDEX]]]

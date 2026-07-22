@@ -269,7 +269,7 @@ public:
           context, value.getName(), value.getIsPacked(), value.getIsUnion(),
           value.getIsTagged(), value.getIsSigned(), value.getIsFourState(),
           value.getIsSoft(), value.getBitWidth(), value.getSelectableWidth(),
-          value.getBitstreamWidth(), value.getTagBits());
+          value.getBitstreamWidth(), value.getTagBits(), value.getFields());
     if (auto value = dyn_cast<slangir::ClassHandleType>(type))
       return ir::ClassHandleType::get(context, value.getClassName());
     if (auto value = dyn_cast<slangir::CovergroupHandleType>(type))

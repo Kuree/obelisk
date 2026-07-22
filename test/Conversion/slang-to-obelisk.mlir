@@ -143,7 +143,7 @@ module {
     slang.symbol.variable attributes {
       lifetime = 0 : i32, node_id = 24 : i64, rand_mode = 0 : i32,
       sym_name = "record",
-      semantic_type = !slang.aggregate<"record_t", true, false, false, false, true, false, 16, 16, 16, 0>
+      semantic_type = !slang.aggregate<"record_t", true, false, false, false, true, false, 16, 16, 16, 0, [{name = "high", ordinal = 0 : i32, packed_offset = 8 : i64, type = !slang.packed_array<7 : 0 x !slang.integral<1, false, true, 0 : 0, logic>>}, {name = "low", ordinal = 1 : i32, packed_offset = 0 : i64, type = !slang.integral<8, false, false, 7 : 0, bit>}]>
     } {
     }
 
@@ -251,7 +251,7 @@ module {
 // CHECK: !obelisk.open_array<!obelisk.integral<8, false, true, 7 : 0, generic>, true>
 // CHECK: !obelisk.queue<!obelisk.integral<8, false, true, 7 : 0, generic>, 0>
 // CHECK: !obelisk.assoc<!obelisk.string, !obelisk.real, false>
-// CHECK: !obelisk.source_aggregate<"record_t", true, false, false, false, true, false, 16, 16, 16, 0>
+// CHECK: !obelisk.source_aggregate<"record_t", true, false, false, false, true, false, 16, 16, 16, 0, [{name = "high", ordinal = 0 : i32, packed_offset = 8 : i64, type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>}, {name = "low", ordinal = 1 : i32, packed_offset = 0 : i64, type = !obelisk.integral<8, false, false, 7 : 0, bit>}]>
 
 // CHECK: !obelisk.virtual_interface<@bus, "master">
 // CHECK: obelisk.sv.type.covergroup_type

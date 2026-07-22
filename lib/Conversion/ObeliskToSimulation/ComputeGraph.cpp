@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <optional>
 #include <queue>
@@ -40,19 +41,7 @@ namespace {
 //===----------------------------------------------------------------------===//
 
 std::optional<uint64_t> getPackedValueWidth(Type type) {
-  if (auto integer = dyn_cast<IntegerType>(type))
-    return integer.getWidth();
-  if (auto logic = dyn_cast<sim::LogicType>(type))
-    return logic.getWidth();
-  if (auto reference = dyn_cast<sim::RefType>(type))
-    return getPackedValueWidth(reference.getElementType());
-  if (auto net = dyn_cast<sim::NetType>(type))
-    return getPackedValueWidth(net.getElementType());
-  if (auto driver = dyn_cast<sim::DriverType>(type))
-    return getPackedValueWidth(driver.getElementType());
-  if (isa<sim::EventType>(type))
-    return 1;
-  return std::nullopt;
+  return sim::getProvenanceSpan(type);
 }
 
 sim::ComputeResourceKind getHandleResourceKind(Type type) {
@@ -465,6 +454,42 @@ void propagateValueFacts(FunctionInfo &info,
                   : widenDynamic(found->second),
               changed);
         };
+        auto forwardSubelement = [&](Value input, Value result,
+                                     ArrayRef<int64_t> indices) {
+          auto found = info.provenance.find(input);
+          if (found == info.provenance.end())
+            return;
+          Type current = input.getType();
+          if (auto reference = dyn_cast<sim::RefType>(current))
+            current = reference.getElementType();
+          else if (auto driver = dyn_cast<sim::DriverType>(current))
+            current = driver.getElementType();
+          uint64_t offset = 0;
+          for (int64_t index : indices) {
+            if (index < 0 || static_cast<uint64_t>(index) >
+                                 std::numeric_limits<unsigned>::max()) {
+              setIfChanged(info.provenance, result, widenDynamic(found->second),
+                           changed);
+              return;
+            }
+            auto child = sim::getAggregateProvenanceSubelement(
+                current, static_cast<unsigned>(index));
+            if (!child ||
+                child->first > std::numeric_limits<uint64_t>::max() - offset) {
+              setIfChanged(info.provenance, result, widenDynamic(found->second),
+                           changed);
+              return;
+            }
+            offset += child->first;
+            current = sim::getAggregateElementType(
+                current, static_cast<unsigned>(index));
+          }
+          std::optional<uint64_t> width = sim::getProvenanceSpan(current);
+          setIfChanged(info.provenance, result,
+                       width ? narrowProvenance(found->second, offset, *width)
+                             : widenDynamic(found->second),
+                       changed);
+        };
         llvm::TypeSwitch<Operation *>(&operation)
             .Case<sim::SimContextStorageOp>([&](auto op) {
               declare(op.getResult(), sim::ComputeResourceKind::Storage,
@@ -494,8 +519,19 @@ void propagateValueFacts(FunctionInfo &info,
             .Case<sim::SimRefExtractOp, sim::SimDriverExtractOp>([&](auto op) {
               forward(op.getInput(), op.getResult(), op.getLowBit());
             })
+            .Case<sim::SimRefSubelementOp, sim::SimDriverSubelementOp>(
+                [&](auto op) {
+                  forwardSubelement(op.getInput(), op.getResult(),
+                                    op.getIndices());
+                })
             .Case<sim::SimRefDynExtractOp, sim::SimDriverDynExtractOp>(
                 [&](auto op) {
+                  forward(op.getInput(), op.getResult(), std::nullopt);
+                })
+            .Case<sim::SimRefArrayElementOp, sim::SimDriverArrayElementOp>(
+                [&](auto op) {
+                  // A dynamic source index may select any element or no
+                  // element; conservatively retain the containing array span.
                   forward(op.getInput(), op.getResult(), std::nullopt);
                 })
             .Default([&](Operation *op) {
@@ -773,10 +809,23 @@ collectFragmentEffects(const ProgramAnalysis &analysis,
 /// A fragment is two-state when no four-state value it produces or consumes can
 /// hold X or Z. Continuation operands are excluded: they are the frame the
 /// *next* fragment receives, and that fragment proves them itself.
-bool fragmentIsTwoState(const StateDomainAnalysis &stateDomains,
-                        Block &block) {
+bool fragmentIsTwoState(const StateDomainAnalysis &stateDomains, Block &block) {
+  auto containsFourStateLeaf = [&](Type type) {
+    std::function<bool(Type)> visit = [&](Type nested) {
+      if (isa<sim::LogicType>(nested))
+        return true;
+      if (!sim::isAggregateType(nested))
+        return false;
+      for (unsigned index = 0; index < sim::getAggregateNumElements(nested);
+           ++index)
+        if (visit(sim::getAggregateElementType(nested, index)))
+          return true;
+      return false;
+    };
+    return visit(type);
+  };
   for (BlockArgument argument : block.getArguments())
-    if (isa<sim::LogicType>(argument.getType()) &&
+    if (containsFourStateLeaf(argument.getType()) &&
         !stateDomains.isTwoState(argument))
       return false;
   // Only the suspension terminator gets to pass an unproven value along: it
@@ -796,11 +845,11 @@ bool fragmentIsTwoState(const StateDomainAnalysis &stateDomains,
     }
     for (Value operand : operation.getOperands())
       if (!forwarded.contains(operand) &&
-          isa<sim::LogicType>(operand.getType()) &&
+          containsFourStateLeaf(operand.getType()) &&
           !stateDomains.isTwoState(operand))
         return false;
     for (Value result : operation.getResults())
-      if (isa<sim::LogicType>(result.getType()) &&
+      if (containsFourStateLeaf(result.getType()) &&
           !stateDomains.isTwoState(result))
         return false;
   }

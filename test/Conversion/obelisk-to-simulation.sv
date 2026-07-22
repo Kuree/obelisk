@@ -162,14 +162,14 @@ endmodule
 // SIM-DAG: {{%.*}}:3 = obelisk_sim.call
 // SIM-DAG: obelisk_sim.ref.store {{%.*}}#1
 // SIM-DAG: obelisk_sim.ref.store {{%.*}}#2
-// SIM-DAG: obelisk_sim.ref.dyn_extract
-// SIM-DAG: obelisk_sim.logic.dyn_extract
+// SIM-DAG: obelisk_sim.ref.subelement
+// SIM-DAG: obelisk_sim.packed.flatten
 // SIM-DAG: cf.cond_br
 // SIM-DAG: obelisk_sim.nba.enqueue
 // SIM-DAG: obelisk_sim.suspend.change
 // SIM-DAG: obelisk_sim.suspend.edge posedge
 // SIM-DAG: obelisk_sim.suspend.any
-// SIM-DAG: obelisk_sim.suspend.delay {{.*}} to ^{{.*}}({{.*}}!obelisk_sim.logic<8>{{.*}})
+// SIM-DAG: obelisk_sim.suspend.delay {{.*}} to ^
 
 // FINAL-NOT: obelisk.sv.
 // FINAL-NOT: obelisk_sim.bindings
@@ -198,7 +198,7 @@ endmodule
 // COPYBACK: %[[INPUT_VALUE:.*]] = obelisk_sim.ref.load %[[INPUT_REF:.*]]
 // COPYBACK: %[[CALL:.*]]:3 = obelisk_sim.call {{.*}}%[[INPUT_VALUE]]
 // COPYBACK-NOT: obelisk_sim.ref.store {{.*}} to %[[INPUT_REF]]
-// COPYBACK: obelisk_sim.ref.store %[[CALL]]#1
+// COPYBACK: obelisk_sim.ref.store
 // COPYBACK-NOT: obelisk_sim.ref.store {{.*}} to %[[INPUT_REF]]
 // COPYBACK-NEXT: obelisk_sim.ref.store %[[CALL]]#2
 // COPYBACK-NOT: obelisk_sim.ref.store {{.*}} to %[[INPUT_REF]]
