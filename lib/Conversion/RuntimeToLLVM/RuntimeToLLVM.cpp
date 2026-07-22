@@ -141,10 +141,17 @@ FailureOr<ABIAlignments> validateTargetABI(ModuleOp module,
       failed(checkStruct("process frame layout",
                          {i32, i32, i64, i64, pointer, i32, i32, pointer, i64},
                          {0, 4, 8, 16, 24, 32, 36, 40, 48}, 56, 8)) ||
+      failed(checkStruct("execution descriptor",
+                         {i32, i32, i32, i32, pointer, i64, pointer, i64, i64,
+                          i64},
+                         {0, 4, 8, 12, 16, 24, 32, 40, 48, 56}, 64, 8)) ||
+      failed(checkStruct("design bytecode entry", {pointer, i32, i32},
+                         {0, 8, 12}, 16, 8)) ||
       failed(checkStruct("process descriptor",
                          {handle, i32, i32, i32, i32, pointer, pointer, pointer,
-                          pointer, pointer},
-                         {0, 16, 20, 24, 28, 32, 40, 48, 56, 64}, 72, 8)) ||
+                          pointer, pointer, pointer, pointer},
+                         {0, 16, 20, 24, 28, 32, 40, 48, 56, 64, 72, 80}, 88,
+                         8)) ||
       failed(checkStruct("process instance",
                          {pointer, pointer, pointer, i64, i64, i64, pointer,
                           i32, i32, i32, i32, pointer, pointer},
@@ -1296,6 +1303,8 @@ public:
       return signalPassFailure();
     }
     if (failed(validateRuntimeToLLVMPreconditions(module, *parsed)))
+      return signalPassFailure();
+    if (failed(materializeEmbeddedSimulationDesign(module)))
       return signalPassFailure();
 
     ABITypes abi(&getContext(), getABIAlignments(*parsed), *parsed);

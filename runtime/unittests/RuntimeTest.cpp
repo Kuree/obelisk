@@ -257,6 +257,8 @@ TEST(RuntimeABI, ReportsEveryStatusAndReleasesBuffersIdempotently) {
       {OBELISK_RT_INVALID_LIFECYCLE,
        "invalid process lifecycle transition"},
       {OBELISK_RT_INVALID_FRAME, "invalid process frame record"},
+      {OBELISK_RT_INVALID_DESIGN, "invalid design metadata"},
+      {OBELISK_RT_PERMISSION_DENIED, "permission denied"},
   };
   for (const auto &[status, message] : statuses)
     EXPECT_STREQ(obelisk_rt_v1_status_string(status), message);
@@ -272,6 +274,10 @@ TEST(RuntimeABI, ReportsEveryStatusAndReleasesBuffersIdempotently) {
 
 TEST(RuntimeABI, RejectsNullPublicArguments) {
   EXPECT_EQ(obelisk_rt_v1_context_create(nullptr), OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(obelisk_rt_v1_import_id(nullptr, 0), 0u);
+  EXPECT_EQ(obelisk_rt_v1_import_id(nullptr, 1), 0u);
+  EXPECT_EQ(obelisk_rt_v1_context_register_import(nullptr, 1, nullptr, nullptr),
+            OBELISK_RT_INVALID_ARGUMENT);
   obelisk_rt_v1_context_destroy(nullptr);
   EXPECT_EQ(obelisk_rt_v1_last_error(nullptr, nullptr),
             OBELISK_RT_INVALID_ARGUMENT);

@@ -139,6 +139,32 @@ def ConvertObeliskSimToRuntimePass
   ];
 }
 
+def EncodeObeliskSimToBytecodePass
+    : Pass<"encode-obelisk-sim-to-bytecode", "mlir::ModuleOp"> {
+  let summary = "Strictly encode the normalized executable simulation boundary";
+  let description = [{
+    Builds one deterministic, pointer-free design bytecode image while leaving
+    source obelisk_sim.func operations intact for native lowering. Every
+    defined function must use the encoder's closed normalized legality set:
+    integer arith constants, arithmetic, bitwise, shifts, comparisons, select,
+    extensions/truncation/index casts; cf branches and switches; and the
+    explicitly implemented obelisk_sim value, aggregate, reference, state,
+    scheduling, suspension, call, formatting, and file operations. Any other
+    executable operation is rejected at that operation instead of being
+    silently omitted. Optional VPI reflection is emitted as a separate
+    DWARF-like database image.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect",
+    "mlir::arith::ArithDialect",
+    "mlir::cf::ControlFlowDialect"
+  ];
+  let options = [
+    Option<"vpi", "vpi", "std::string", "\"auto\"",
+           "Reflection profile: auto, off, read, or full">
+  ];
+}
+
 def ConvertObeliskRuntimeToLLVMPass
     : Pass<"convert-obelisk-runtime-to-llvm", "mlir::ModuleOp"> {
   let summary = "Lower typed Obelisk runtime calls to the in-tree LLVM C ABI";

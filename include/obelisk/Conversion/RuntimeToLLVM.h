@@ -18,6 +18,11 @@ class DataLayout;
 
 namespace obelisk {
 
+/// Materialize the always-present execution descriptor and any encoded
+/// simulation bytecode/design database attributes as immutable LLVM globals.
+/// The operation is idempotent so composing lowerings may call it safely.
+mlir::LogicalResult materializeEmbeddedSimulationDesign(mlir::ModuleOp module);
+
 /// Validate the exact runtime ABI target contract and linear ownership of
 /// runtime-owned buffers before composing runtime lowering patterns.
 mlir::LogicalResult

@@ -3,6 +3,8 @@ find_package(Threads REQUIRED)
 add_library(obelisk_rt STATIC
   lib/ABI.cpp
   lib/Bytecode.cpp
+  lib/DesignBytecode.cpp
+  lib/DesignDatabase.cpp
   lib/FileIO.cpp
   lib/Format.cpp
   lib/Process.cpp

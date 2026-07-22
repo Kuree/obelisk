@@ -14,6 +14,7 @@
 #include <string_view>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -21,6 +22,97 @@ struct FileEntry {
   FILE *stream = nullptr;
   int lastError = 0;
   bool writable = false;
+};
+
+struct ScheduledProcess {
+  obelisk_rt_process_instance_v1 *instance = nullptr;
+  uint64_t token = 0;
+  uint64_t observedEpoch = 0;
+  uint64_t observedSignalSequence = 0;
+  uint64_t wakeTime = 0;
+  uint64_t waitOffset = 0;
+  uint64_t waitSize = 0;
+  std::vector<uint64_t> waitGenerations;
+  std::vector<std::pair<uint32_t, uint32_t>> continuationRanks;
+  uint32_t suspendKind = OBELISK_RT_SUSPEND_NONE;
+  uint32_t phase = 0;
+  uint32_t scheduleRank = UINT32_MAX;
+  bool started = false;
+};
+
+struct ScheduledSignalEvent {
+  uint64_t sequence = 0;
+  uint64_t bitOffset = 0;
+  uint64_t bitWidth = 0;
+  uint32_t edges = 0;
+};
+
+struct NativeAutomaticState {
+  uint64_t bitWidth = 0;
+  obelisk_rt_process_instance_v1 *owner = nullptr;
+  uint64_t designOwner = 0;
+  uint64_t referenceCount = 1;
+  std::vector<uint8_t> value;
+  std::vector<uint8_t> unknown;
+};
+
+struct NativeStaticState {
+  uint64_t bitOffset = 0;
+  uint64_t bitWidth = 0;
+};
+
+struct ScheduledNBA {
+  uint64_t sequence = 0;
+  uint64_t dueTime = 0;
+  uint32_t retainedAutomaticID = 0;
+  uint8_t *valuePlane = nullptr;
+  uint8_t *unknownPlane = nullptr;
+  uint64_t planeBitCount = 0;
+  uint64_t bitOffset = 0;
+  uint64_t bitWidth = 0;
+  std::vector<uint8_t> value;
+  std::vector<uint8_t> unknown;
+};
+
+struct ScheduledDesignNBA {
+  uint64_t sequence = 0;
+  uint64_t dueTime = 0;
+  uint32_t handleKind = 0;
+  int64_t begin = 0;
+  int64_t start = 0;
+  int64_t end = 0;
+  uint64_t bitWidth = 0;
+  std::vector<uint64_t> value;
+  std::vector<uint64_t> unknown;
+};
+
+struct ScheduledDesignEvent {
+  uint64_t sequence = 0;
+  uint64_t stableID = 0;
+};
+
+struct ScheduledDesignTask {
+  uint64_t id = 0;
+  uint64_t parent = 0;
+  uint32_t function = 0;
+  uint32_t continuation = 0;
+  std::vector<uint8_t> frame;
+  uint64_t scratchOffset = 0;
+  uint64_t scratchSize = 0;
+  uint64_t observedEpoch = 0;
+  uint64_t observedSignalSequence = 0;
+  uint64_t wakeTime = 0;
+  uint64_t waitOffset = 0;
+  uint64_t waitSize = 0;
+  std::vector<uint64_t> waitGenerations;
+  uint32_t suspendKind = OBELISK_RT_SUSPEND_NONE;
+  bool started = false;
+  bool terminated = false;
+};
+
+struct ImportBinding {
+  obelisk_rt_import_callback_v1 callback = nullptr;
+  void *userData = nullptr;
 };
 
 struct obelisk_rt_context {
@@ -32,6 +124,36 @@ struct obelisk_rt_context {
   std::vector<uint32_t> freeFiles;
   std::vector<uint32_t> freeMCDs;
   std::unordered_map<std::thread::id, std::string> lastErrors;
+  std::vector<ScheduledProcess> scheduledProcesses;
+  std::vector<ScheduledSignalEvent> scheduledSignalEvents;
+  std::vector<ScheduledNBA> scheduledNBAs;
+  std::vector<ScheduledDesignNBA> scheduledDesignNBAs;
+  std::vector<ScheduledDesignEvent> scheduledDesignEvents;
+  std::vector<ScheduledDesignTask> scheduledDesignTasks;
+  uint64_t nextSchedulerSequence = 1;
+  uint64_t nextNativeProcessToken = 1;
+  uint32_t nextNativeAutomaticID = 1;
+  uint64_t nextDesignTaskID = 1;
+  uint64_t activeDesignTaskID = 0;
+  obelisk_rt_process_instance_v1 *activeNativeProcess = nullptr;
+  bool designTaskExecuting = false;
+  std::unordered_set<uint64_t> terminatedDesignTasks;
+  std::unordered_set<uint64_t> terminatedNativeProcesses;
+  std::unordered_map<uint32_t, NativeStaticState> nativeStaticStates;
+  std::unordered_map<uint32_t, NativeAutomaticState> nativeAutomaticStates;
+  std::unordered_map<uint64_t, uint64_t> eventGenerations;
+  std::unordered_map<uint32_t, ImportBinding> imports;
+  size_t schedulerCursor = 0;
+  uint64_t schedulerEpoch = 1;
+  uint64_t schedulerTime = 0;
+  bool schedulerRunningFinals = false;
+  obelisk_rt_status schedulerStatus = OBELISK_RT_OK;
+  const obelisk_rt_execution_descriptor_v1 *execution = nullptr;
+  // Live simulation state is owned by the context.  The planes use the same
+  // little-endian limb representation as bytecode values and are never stored
+  // in the immutable reflection image.
+  std::vector<uint64_t> stateValue;
+  std::vector<uint64_t> stateUnknown;
 
   obelisk_rt_context();
 };
@@ -68,5 +190,27 @@ obelisk_rt_status writeUnlocked(obelisk_rt_context *context,
 obelisk_rt_status
 obelisk_rt_validate_bytecode_program(const obelisk_rt_bytecode_v1 &program,
                                      uint32_t continuation) noexcept;
+
+// Design-wide bytecode helpers shared by process construction/dispatch.  They
+// perform full image validation before returning layout information.
+obelisk_rt_status obelisk_rt_validate_design_bytecode(
+    const obelisk_rt_design_bytecode_entry_v1 &entry,
+    uint64_t *outScratchSize, uint64_t *outScratchAlignment) noexcept;
+obelisk_rt_status obelisk_rt_execute_design_bytecode(
+    const obelisk_rt_design_bytecode_entry_v1 &entry,
+    obelisk_rt_context *context, void *frame, uint64_t frameSize,
+    uint64_t scratchOffset, uint64_t scratchSize, uint32_t continuation,
+    uint64_t instructionLimit,
+    obelisk_rt_fragment_action_v1 *outAction) noexcept;
+obelisk_rt_status
+obelisk_rt_initialize_design_state(obelisk_rt_context *context) noexcept;
+obelisk_rt_status obelisk_rt_resolve_design_drivers(
+    obelisk_rt_context *context, uint64_t begin, uint64_t end) noexcept;
+obelisk_rt_status obelisk_rt_run_one_design_task(
+    obelisk_rt_context *context, bool *outProgress) noexcept;
+
+bool obelisk_rt_checked_design_record(
+    const obelisk_rt_execution_descriptor_v1 *execution, uint64_t offset,
+    const uint8_t *&record, uint32_t &kind) noexcept;
 
 #endif // OBELISK_RUNTIME_LIB_RUNTIMEINTERNAL_H

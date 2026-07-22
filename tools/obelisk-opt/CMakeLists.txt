@@ -22,6 +22,7 @@ target_link_libraries(obelisk-opt
     ObeliskRuntimeToLLVM
     ObeliskSimulationIR
     ObeliskSimulationToLLVMCoroutine
+    ObeliskSimulationToBytecode
     ObeliskSimulationToRuntime
     ObeliskSlangIR
     ObeliskSlangToObelisk

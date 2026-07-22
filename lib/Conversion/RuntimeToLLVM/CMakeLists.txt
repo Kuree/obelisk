@@ -1,4 +1,5 @@
 add_mlir_library(ObeliskRuntimeToLLVM
+  EmbeddedDesign.cpp
   RuntimeToLLVM.cpp
 
   DEPENDS

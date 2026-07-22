@@ -40,34 +40,48 @@ set_target_properties(obelisk-sim-standard-api-test PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
 )
 
-set(_generated_process_dir "${CMAKE_CURRENT_BINARY_DIR}/GeneratedProcess")
-set(_generated_process_mlir "${_generated_process_dir}/process.mlir")
-set(_generated_process_raw_llvm "${_generated_process_dir}/process.raw.ll")
-set(_generated_process_llvm "${_generated_process_dir}/process.ll")
-set(_generated_process_object "${_generated_process_dir}/process.o")
-file(MAKE_DIRECTORY "${_generated_process_dir}")
-add_custom_command(
-  OUTPUT "${_generated_process_object}"
-  COMMAND $<TARGET_FILE:obelisk-opt>
-          "${CMAKE_CURRENT_SOURCE_DIR}/Inputs/generated-process-coroutine.mlir"
-          --convert-obelisk-sim-processes-to-llvm-coroutines
-          -o "${_generated_process_mlir}"
-  COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/mlir-translate" --mlir-to-llvmir
-          "${_generated_process_mlir}" -o "${_generated_process_raw_llvm}"
-  COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/opt"
-          "-passes=verify,coro-early,sroa,instcombine,simplifycfg,coro-split<reuse-storage>,coro-elide,coro-cleanup,sroa,instcombine,simplifycfg,dce,strip-dead-prototypes,verify"
-          -S "${_generated_process_raw_llvm}" -o "${_generated_process_llvm}"
-  COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/llc" -filetype=obj
-          -relocation-model=pic "${_generated_process_llvm}"
-          -o "${_generated_process_object}"
-  DEPENDS
-  obelisk-opt
-  "${CMAKE_CURRENT_SOURCE_DIR}/Inputs/generated-process-coroutine.mlir"
-  VERBATIM
+function(obelisk_add_generated_process_object output_var directory input_file)
+  set(generated_dir "${CMAKE_CURRENT_BINARY_DIR}/${directory}")
+  set(generated_mlir "${generated_dir}/process.mlir")
+  set(generated_raw_llvm "${generated_dir}/process.raw.ll")
+  set(generated_llvm "${generated_dir}/process.ll")
+  set(generated_object "${generated_dir}/process.o")
+  file(MAKE_DIRECTORY "${generated_dir}")
+  add_custom_command(
+    OUTPUT "${generated_object}"
+    COMMAND $<TARGET_FILE:obelisk-opt>
+            "${CMAKE_CURRENT_SOURCE_DIR}/${input_file}"
+            "--pass-pipeline=builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension)),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)"
+            -o "${generated_mlir}"
+    COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/mlir-translate" --mlir-to-llvmir
+            "${generated_mlir}" -o "${generated_raw_llvm}"
+    COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/opt"
+            "-passes=verify,coro-early,sroa,instcombine,simplifycfg,coro-split<reuse-storage>,coro-elide,coro-cleanup,sroa,instcombine,simplifycfg,dce,strip-dead-prototypes,verify"
+            -S "${generated_raw_llvm}" -o "${generated_llvm}"
+    COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/llc" -filetype=obj
+            -relocation-model=pic "${generated_llvm}"
+            -o "${generated_object}"
+    DEPENDS
+    obelisk-opt
+    "${CMAKE_CURRENT_SOURCE_DIR}/${input_file}"
+    VERBATIM
+  )
+  set_source_files_properties("${generated_object}" PROPERTIES
+    EXTERNAL_OBJECT TRUE
+    GENERATED TRUE
+  )
+  set(${output_var} "${generated_object}" PARENT_SCOPE)
+endfunction()
+
+obelisk_add_generated_process_object(
+  _generated_process_object
+  GeneratedProcess
+  Inputs/generated-process-coroutine.mlir
 )
-set_source_files_properties("${_generated_process_object}" PROPERTIES
-  EXTERNAL_OBJECT TRUE
-  GENERATED TRUE
+obelisk_add_generated_process_object(
+  _generated_arithmetic_object
+  GeneratedArithmetic
+  Inputs/generated-bytecode-arithmetic.mlir
 )
 add_executable(ObeliskGeneratedProcessRuntimeTests
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedProcessTest.cpp"
@@ -81,7 +95,22 @@ target_compile_features(ObeliskGeneratedProcessRuntimeTests PRIVATE cxx_std_17)
 set_target_properties(ObeliskGeneratedProcessRuntimeTests PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/runtime/unittests"
 )
+add_executable(ObeliskGeneratedArithmeticRuntimeTests
+  "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedArithmeticTest.cpp"
+  "${_generated_arithmetic_object}"
+)
+target_link_libraries(ObeliskGeneratedArithmeticRuntimeTests PRIVATE
+  obelisk_rt
+  GTest::gtest_main
+)
+target_compile_features(ObeliskGeneratedArithmeticRuntimeTests PRIVATE
+  cxx_std_17
+)
+set_target_properties(ObeliskGeneratedArithmeticRuntimeTests PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/runtime/unittests"
+)
 add_dependencies(check-obelisk-runtime-units
+  ObeliskGeneratedArithmeticRuntimeTests
   ObeliskGeneratedProcessRuntimeTests
 )
 

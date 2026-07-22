@@ -225,7 +225,8 @@ TEST(ProcessInstance, NativeBytecodeNativeUsesStableCanonicalFrame) {
   EXPECT_EQ(frameSize, 40u);
 
   obelisk_rt_fragment_action_v1 action{};
-  auto *context = reinterpret_cast<obelisk_rt_context *>(uintptr_t{0x1234});
+  auto *context = obelisk_rt_v1_context_create(OBELISK_RT_V1_ABI_VERSION);
+  ASSERT_NE(context, nullptr);
   ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
                 instance, context, OBELISK_RT_TIER_NATIVE, &action),
             OBELISK_RT_OK);
@@ -256,6 +257,7 @@ TEST(ProcessInstance, NativeBytecodeNativeUsesStableCanonicalFrame) {
             OBELISK_RT_INVALID_LIFECYCLE);
   EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
   EXPECT_EQ(nativeDestroyCount, 2);
+  obelisk_rt_v1_context_destroy(context);
 }
 
 TEST(ProcessInstance, BytecodeFirstCanReconstructNativeAtContinuation) {

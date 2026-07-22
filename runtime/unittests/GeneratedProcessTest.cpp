@@ -98,6 +98,7 @@ struct DualTierDescriptor {
     descriptor.available_tiers =
         OBELISK_RT_TIER_MASK_NATIVE | OBELISK_RT_TIER_MASK_BYTECODE;
     descriptor.bytecode = &bytecode;
+    descriptor.design_bytecode = nullptr;
   }
 };
 
@@ -147,6 +148,47 @@ TEST(GeneratedProcess, NativeResumeTerminateAndSuspendedDestroy) {
             OBELISK_RT_OK);
   EXPECT_EQ(instance->lifecycle, OBELISK_RT_PROCESS_SUSPENDED);
   EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
+}
+
+TEST(GeneratedProcess, EmittedDesignBytecodeMatchesNativeLifecycle) {
+  ASSERT_EQ(generatedDescriptor.available_tiers,
+            OBELISK_RT_TIER_MASK_NATIVE | OBELISK_RT_TIER_MASK_BYTECODE);
+  ASSERT_NE(generatedDescriptor.execution, nullptr);
+  ASSERT_NE(generatedDescriptor.design_bytecode, nullptr);
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(
+                generatedDescriptor.execution, &context),
+            OBELISK_RT_OK);
+  obelisk_rt_process_instance_v1 *native = nullptr;
+  obelisk_rt_process_instance_v1 *bytecode = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_process_instance_create(&generatedDescriptor,
+                                                   &native),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_process_instance_create(&generatedDescriptor,
+                                                   &bytecode),
+            OBELISK_RT_OK);
+
+  for (unsigned step = 0; step != 3; ++step) {
+    obelisk_rt_fragment_action_v1 nativeAction{}, bytecodeAction{};
+    ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
+                  native, context, OBELISK_RT_TIER_NATIVE, &nativeAction),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
+                  bytecode, context, OBELISK_RT_TIER_BYTECODE,
+                  &bytecodeAction),
+              OBELISK_RT_OK);
+    EXPECT_EQ(bytecodeAction.kind, nativeAction.kind);
+    EXPECT_EQ(bytecodeAction.suspend_kind, nativeAction.suspend_kind);
+    EXPECT_EQ(bytecodeAction.continuation, nativeAction.continuation);
+    EXPECT_EQ(bytecodeAction.flags, nativeAction.flags);
+    EXPECT_EQ(bytecodeAction.payload, nativeAction.payload);
+    EXPECT_EQ(bytecodeAction.auxiliary, nativeAction.auxiliary);
+  }
+  EXPECT_EQ(native->lifecycle, OBELISK_RT_PROCESS_TERMINATED);
+  EXPECT_EQ(bytecode->lifecycle, OBELISK_RT_PROCESS_TERMINATED);
+  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(native), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(bytecode), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
 }
 
 TEST(GeneratedProcess, NativeBytecodeNativeReusesFrameAndScratch) {

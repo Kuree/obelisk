@@ -1,0 +1,284 @@
+//===- EmbeddedDesign.cpp - Materialize embedded simulation design --------===//
+
+#include "obelisk/Conversion/RuntimeToLLVM.h"
+
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/SymbolTable.h"
+
+#include "llvm/ADT/SmallVector.h"
+
+#include <cstdint>
+#include <cstring>
+
+using namespace mlir;
+
+namespace obelisk {
+namespace {
+
+constexpr StringLiteral kMaterializedAttr = "obelisk.execution.materialized";
+constexpr StringLiteral kBytecodeAttr = "obelisk.bytecode.image";
+constexpr StringLiteral kDatabaseAttr = "obelisk.design.database";
+constexpr StringLiteral kFlagsAttr = "obelisk.execution.flags";
+constexpr StringLiteral kStateBitsAttr = "obelisk.execution.state_bits";
+constexpr StringLiteral kFunctionAttr = "obelisk.bytecode.function";
+constexpr StringLiteral kExecutionName = "__obelisk_execution_descriptor_v1";
+constexpr StringLiteral kBytecodeName = "__obelisk_bytecode_image_v1";
+constexpr StringLiteral kDatabaseName = "__obelisk_design_database_v1";
+
+Value integerConstant(OpBuilder &builder, Location location, Type type,
+                      uint64_t value) {
+  return LLVM::ConstantOp::create(builder, location, type,
+                                  builder.getIntegerAttr(type, value));
+}
+
+Value insertValue(OpBuilder &builder, Location location, Value aggregate,
+                  Value element, int64_t index) {
+  return LLVM::InsertValueOp::create(builder, location, aggregate, element,
+                                     ArrayRef<int64_t>{index});
+}
+
+LLVM::GlobalOp makeByteGlobal(ModuleOp module, StringRef name,
+                              DenseI8ArrayAttr bytes, StringRef section) {
+  OpBuilder builder(module.getContext());
+  builder.setInsertionPointToStart(module.getBody());
+  Type array = LLVM::LLVMArrayType::get(builder.getI8Type(), bytes.size());
+  ArrayRef<int8_t> data = bytes.asArrayRef();
+  StringRef contents(reinterpret_cast<const char *>(data.data()), data.size());
+  auto global = LLVM::GlobalOp::create(
+      builder, module.getLoc(), array, true, LLVM::Linkage::External, name,
+      builder.getStringAttr(contents), 8);
+  global->setAttr("section", builder.getStringAttr(section));
+  return global;
+}
+
+template <typename Initializer>
+LLVM::GlobalOp makeAggregateGlobal(ModuleOp module, Type type, StringRef name,
+                                   LLVM::Linkage linkage, StringRef section,
+                                   Initializer &&initializer) {
+  OpBuilder builder(module.getContext());
+  builder.setInsertionPointToStart(module.getBody());
+  auto global = LLVM::GlobalOp::create(builder, module.getLoc(), type, true,
+                                       linkage, name, Attribute{}, 8);
+  if (!section.empty())
+    global->setAttr("section", builder.getStringAttr(section));
+  Block *block = new Block;
+  global.getInitializerRegion().push_back(block);
+  builder.setInsertionPointToStart(block);
+  LLVM::ReturnOp::create(builder, module.getLoc(), initializer(builder));
+  return global;
+}
+
+uint64_t read64(ArrayRef<int8_t> bytes, size_t offset) {
+  uint64_t result = 0;
+  if (offset > bytes.size() || bytes.size() - offset < sizeof(result))
+    return 0;
+  for (unsigned index = 0; index != sizeof(result); ++index)
+    result |= uint64_t{static_cast<uint8_t>(bytes[offset + index])}
+              << (index * 8);
+  return result;
+}
+
+LogicalResult checkMagic(ModuleOp module, DenseI8ArrayAttr bytes,
+                         StringRef magic, StringRef description) {
+  ArrayRef<int8_t> data = bytes.asArrayRef();
+  if (data.size() < magic.size() ||
+      std::memcmp(data.data(), magic.data(), magic.size()) != 0)
+    return module.emitError() << description << " has an invalid magic";
+  return success();
+}
+
+LogicalResult appendRetentionEntry(ModuleOp module, LLVM::GlobalOp global,
+                                   Type pointer, StringRef symbol) {
+  auto array = dyn_cast<LLVM::LLVMArrayType>(global.getGlobalType());
+  Block *initializer = global.getInitializerBlock();
+  auto returnOp = initializer ? dyn_cast<LLVM::ReturnOp>(initializer->getTerminator())
+                              : LLVM::ReturnOp{};
+  if (!array || array.getElementType() != pointer || !returnOp ||
+      returnOp->getNumOperands() != 1 ||
+      returnOp->getOperand(0).getType() != array ||
+      array.getNumElements() == UINT64_MAX)
+    return module.emitError()
+           << "cannot append design database to malformed retention global '"
+           << global.getSymName() << "'";
+  OpBuilder builder(returnOp);
+  Type expanded = LLVM::LLVMArrayType::get(pointer, array.getNumElements() + 1);
+  Value value = LLVM::ZeroOp::create(builder, module.getLoc(), expanded);
+  for (uint64_t index = 0; index != array.getNumElements(); ++index) {
+    Value element = LLVM::ExtractValueOp::create(
+        builder, module.getLoc(), pointer, returnOp->getOperand(0),
+        ArrayRef<int64_t>{static_cast<int64_t>(index)});
+    value = insertValue(builder, module.getLoc(), value, element,
+                        static_cast<int64_t>(index));
+  }
+  value = insertValue(
+      builder, module.getLoc(), value,
+      LLVM::AddressOfOp::create(builder, module.getLoc(), pointer, symbol),
+      static_cast<int64_t>(array.getNumElements()));
+  returnOp->setOperand(0, value);
+  global.setGlobalType(expanded);
+  return success();
+}
+
+} // namespace
+
+LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
+  if (module->hasAttr(kMaterializedAttr))
+    return success();
+  if (module.lookupSymbol(kExecutionName))
+    return module.emitError()
+           << "symbol collision for reserved execution descriptor '"
+           << kExecutionName << "'";
+
+  auto bytecode = module->getAttrOfType<DenseI8ArrayAttr>(kBytecodeAttr);
+  auto database = module->getAttrOfType<DenseI8ArrayAttr>(kDatabaseAttr);
+  if (bytecode && failed(checkMagic(module, bytecode, StringRef("OBBCDS1\0", 8),
+                                    "embedded bytecode")))
+    return failure();
+  if (database &&
+      failed(checkMagic(module, database, StringRef("OBDSGN1\0", 8),
+                        "embedded design database")))
+    return failure();
+
+  if (bytecode && module.lookupSymbol(kBytecodeName))
+    return module.emitError()
+           << "symbol collision for reserved bytecode image '" << kBytecodeName
+           << "'";
+  if (database && module.lookupSymbol(kDatabaseName))
+    return module.emitError()
+           << "symbol collision for reserved design database '"
+           << kDatabaseName << "'";
+
+  if (bytecode)
+    makeByteGlobal(module, kBytecodeName, bytecode, ".obelisk.bytecode");
+  if (database)
+    makeByteGlobal(module, kDatabaseName, database, ".obelisk.design");
+
+  MLIRContext *context = module.getContext();
+  Type pointer = LLVM::LLVMPointerType::get(context);
+  Type i32 = IntegerType::get(context, 32);
+  Type i64 = IntegerType::get(context, 64);
+  auto executionType = LLVM::LLVMStructType::getLiteral(
+      context, {i32, i32, i32, i32, pointer, i64, pointer, i64, i64, i64});
+  uint32_t flags = 0;
+  uint64_t stateBits = 0;
+  if (auto attr = module->getAttrOfType<IntegerAttr>(kFlagsAttr))
+    flags = static_cast<uint32_t>(attr.getValue().getZExtValue());
+  if (auto attr = module->getAttrOfType<IntegerAttr>(kStateBitsAttr))
+    stateBits = attr.getValue().getZExtValue();
+  uint64_t checksum = bytecode ? read64(bytecode.asArrayRef(), 32) : 0;
+
+  makeAggregateGlobal(
+      module, executionType, kExecutionName, LLVM::Linkage::External,
+      ".obelisk.execution", [&](OpBuilder &builder) {
+        Value value = LLVM::ZeroOp::create(builder, module.getLoc(),
+                                           executionType);
+        value = insertValue(builder, module.getLoc(), value,
+                            integerConstant(builder, module.getLoc(), i32, 1),
+                            0);
+        value = insertValue(builder, module.getLoc(), value,
+                            integerConstant(builder, module.getLoc(), i32, 1),
+                            1);
+        value = insertValue(
+            builder, module.getLoc(), value,
+            integerConstant(builder, module.getLoc(), i32, flags), 2);
+        if (bytecode)
+          value = insertValue(
+              builder, module.getLoc(), value,
+              LLVM::AddressOfOp::create(builder, module.getLoc(), pointer,
+                                        kBytecodeName),
+              4);
+        value = insertValue(
+            builder, module.getLoc(), value,
+            integerConstant(builder, module.getLoc(), i64,
+                            bytecode ? bytecode.size() : 0),
+            5);
+        if (database)
+          value = insertValue(
+              builder, module.getLoc(), value,
+              LLVM::AddressOfOp::create(builder, module.getLoc(), pointer,
+                                        kDatabaseName),
+              6);
+        value = insertValue(
+            builder, module.getLoc(), value,
+            integerConstant(builder, module.getLoc(), i64,
+                            database ? database.size() : 0),
+            7);
+        value = insertValue(
+            builder, module.getLoc(), value,
+            integerConstant(builder, module.getLoc(), i64, stateBits), 8);
+        return insertValue(
+            builder, module.getLoc(), value,
+            integerConstant(builder, module.getLoc(), i64, checksum), 9);
+      });
+
+  auto entryType =
+      LLVM::LLVMStructType::getLiteral(context, {pointer, i32, i32});
+  SmallVector<std::pair<std::string, uint32_t>> entries;
+  module.walk([&](Operation *operation) {
+    auto index = operation->getAttrOfType<IntegerAttr>(kFunctionAttr);
+    auto symbol = operation->getAttrOfType<StringAttr>(
+        SymbolTable::getSymbolAttrName());
+    if (index && symbol)
+      entries.emplace_back(symbol.getValue().str(),
+                           static_cast<uint32_t>(
+                               index.getValue().getZExtValue()));
+  });
+  llvm::sort(entries);
+  for (auto [index, entry] : llvm::enumerate(entries)) {
+    if (index != 0 && entries[index - 1].first == entry.first)
+      return module.emitError()
+             << "duplicate bytecode symbol '" << entry.first << "'";
+    std::string name = entry.first + ".__obelisk_bytecode_entry";
+    if (module.lookupSymbol(name))
+      return module.emitError()
+             << "symbol collision for bytecode entry '" << name << "'";
+    makeAggregateGlobal(
+        module, entryType, name, LLVM::Linkage::Internal, "",
+        [&](OpBuilder &builder) {
+          Value value = LLVM::ZeroOp::create(builder, module.getLoc(),
+                                             entryType);
+          value = insertValue(
+              builder, module.getLoc(), value,
+              LLVM::AddressOfOp::create(builder, module.getLoc(), pointer,
+                                        kExecutionName),
+              0);
+          return insertValue(
+              builder, module.getLoc(), value,
+              integerConstant(builder, module.getLoc(), i32, entry.second), 1);
+        });
+  }
+
+  // A direct descriptor reference normally retains the database. The explicit
+  // llvm.used anchor also preserves reflection-only designs under section GC.
+  if (database) {
+    Operation *existing = module.lookupSymbol("llvm.used");
+    if (!existing)
+      existing = module.lookupSymbol("llvm.compiler.used");
+    if (existing) {
+      auto global = dyn_cast<LLVM::GlobalOp>(existing);
+      if (!global || failed(appendRetentionEntry(module, global, pointer,
+                                                 kDatabaseName)))
+        return failure();
+    } else {
+      Type usedType = LLVM::LLVMArrayType::get(pointer, 1);
+      makeAggregateGlobal(
+          module, usedType, "llvm.used", LLVM::Linkage::Appending,
+          "llvm.metadata", [&](OpBuilder &builder) {
+            Value value =
+                LLVM::ZeroOp::create(builder, module.getLoc(), usedType);
+            return insertValue(
+                builder, module.getLoc(), value,
+                LLVM::AddressOfOp::create(builder, module.getLoc(), pointer,
+                                          kDatabaseName),
+                0);
+          });
+    }
+  }
+
+  module->setAttr(kMaterializedAttr, UnitAttr::get(context));
+  return success();
+}
+
+} // namespace obelisk

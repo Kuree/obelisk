@@ -65,13 +65,24 @@ _Static_assert(sizeof(obelisk_rt_wait_entry_v1) == 16,
                "process wait entry size changed");
 _Static_assert(offsetof(obelisk_rt_wait_entry_v1, edge) == 8,
                "process wait entry edge offset changed");
-_Static_assert(sizeof(obelisk_rt_process_descriptor_v1) == 72,
+_Static_assert(sizeof(obelisk_rt_process_descriptor_v1) == 88,
                "process descriptor size changed");
 _Static_assert(offsetof(obelisk_rt_process_descriptor_v1, frame_layout) == 32,
                "process frame layout pointer offset changed");
 _Static_assert(offsetof(obelisk_rt_process_descriptor_v1, bytecode) == 64,
                "process bytecode pointer offset changed");
-_Static_assert(sizeof(obelisk_rt_process_instance_v1) == 88,
+_Static_assert(offsetof(obelisk_rt_process_descriptor_v1, execution) == 72,
+               "process execution descriptor offset changed");
+_Static_assert(offsetof(obelisk_rt_process_descriptor_v1, design_bytecode) ==
+                   80,
+               "process design bytecode offset changed");
+_Static_assert(sizeof(obelisk_rt_execution_descriptor_v1) == 64,
+               "execution descriptor size changed");
+_Static_assert(sizeof(obelisk_rt_design_bytecode_entry_v1) == 16,
+               "design bytecode entry size changed");
+_Static_assert(sizeof(obelisk_rt_design_info_v1) == 56,
+               "design info size changed");
+_Static_assert(sizeof(obelisk_rt_process_instance_v1) == 96,
                "process instance size changed");
 _Static_assert(offsetof(obelisk_rt_process_instance_v1, allocation) == 8,
                "process allocation offset changed");
@@ -89,6 +100,9 @@ _Static_assert(offsetof(obelisk_rt_process_instance_v1, context) == 72,
                "process transient context offset changed");
 _Static_assert(offsetof(obelisk_rt_process_instance_v1, action) == 80,
                "process transient action offset changed");
+_Static_assert(offsetof(obelisk_rt_process_instance_v1, ownership_context) ==
+                   88,
+               "process ownership context offset changed");
 _Static_assert(sizeof(obelisk_rt_bytecode_entry_v1) == 8,
                "bytecode entry size changed");
 _Static_assert(offsetof(obelisk_rt_bytecode_entry_v1, continuation) == 0,
