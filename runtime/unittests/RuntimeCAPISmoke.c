@@ -49,7 +49,7 @@ _Static_assert(offsetof(obelisk_rt_bytecode_entry_v1, continuation) == 0,
                "bytecode continuation offset changed");
 _Static_assert(offsetof(obelisk_rt_bytecode_entry_v1, instruction) == 4,
                "bytecode instruction offset changed");
-_Static_assert(sizeof(obelisk_rt_bytecode_v1) == 48,
+_Static_assert(sizeof(obelisk_rt_bytecode_v1) == 96,
                "bytecode descriptor size changed");
 _Static_assert(offsetof(obelisk_rt_bytecode_v1, code) == 0,
                "bytecode code offset changed");
@@ -66,13 +66,59 @@ _Static_assert(offsetof(obelisk_rt_bytecode_v1, register_offset) == 32,
                "bytecode register offset changed");
 _Static_assert(offsetof(obelisk_rt_bytecode_v1, validation) == 40,
                "bytecode validation offset changed");
+_Static_assert(offsetof(obelisk_rt_bytecode_v1, constants) == 48,
+               "bytecode constants offset changed");
+_Static_assert(offsetof(obelisk_rt_bytecode_v1, constant_size) == 56,
+               "bytecode constant size offset changed");
+_Static_assert(offsetof(obelisk_rt_bytecode_v1, service_sites) == 64,
+               "bytecode service sites offset changed");
+_Static_assert(offsetof(obelisk_rt_bytecode_v1, service_site_count) == 72,
+               "bytecode service count offset changed");
+_Static_assert(offsetof(obelisk_rt_bytecode_v1, reserved) == 76,
+               "bytecode reserved offset changed");
+_Static_assert(offsetof(obelisk_rt_bytecode_v1, operands) == 80,
+               "bytecode operands offset changed");
+_Static_assert(offsetof(obelisk_rt_bytecode_v1, operand_count) == 88,
+               "bytecode operand count offset changed");
 _Static_assert(sizeof(obelisk_rt_bytecode_validation_v1) == 8,
                "bytecode validation record size changed");
 _Static_assert(offsetof(obelisk_rt_bytecode_validation_v1, state) == 0,
                "bytecode validation state offset changed");
 _Static_assert(offsetof(obelisk_rt_bytecode_validation_v1, reserved) == 4,
                "bytecode validation reserved offset changed");
-_Static_assert(sizeof(obelisk_rt_fragment_descriptor_v1) == 72,
+_Static_assert(sizeof(obelisk_rt_bytecode_operand_v1) == 32,
+               "bytecode operand size changed");
+_Static_assert(offsetof(obelisk_rt_bytecode_operand_v1, kind) == 0,
+               "bytecode operand kind offset changed");
+_Static_assert(offsetof(obelisk_rt_bytecode_operand_v1, direction) == 1,
+               "bytecode operand direction offset changed");
+_Static_assert(offsetof(obelisk_rt_bytecode_operand_v1, value_kind) == 2,
+               "bytecode operand value kind offset changed");
+_Static_assert(offsetof(obelisk_rt_bytecode_operand_v1, flags) == 3,
+               "bytecode operand flags offset changed");
+_Static_assert(offsetof(obelisk_rt_bytecode_operand_v1, reserved) == 4,
+               "bytecode operand reserved offset changed");
+_Static_assert(offsetof(obelisk_rt_bytecode_operand_v1, value) == 8,
+               "bytecode operand value offset changed");
+_Static_assert(offsetof(obelisk_rt_bytecode_operand_v1, size) == 16,
+               "bytecode operand size offset changed");
+_Static_assert(offsetof(obelisk_rt_bytecode_operand_v1, auxiliary) == 24,
+               "bytecode operand auxiliary offset changed");
+_Static_assert(sizeof(obelisk_rt_bytecode_service_site_v1) == 16,
+               "bytecode service site size changed");
+_Static_assert(offsetof(obelisk_rt_bytecode_service_site_v1, service) == 0,
+               "bytecode service offset changed");
+_Static_assert(offsetof(obelisk_rt_bytecode_service_site_v1, first_operand) ==
+                   4,
+               "bytecode first operand offset changed");
+_Static_assert(offsetof(obelisk_rt_bytecode_service_site_v1, operand_count) ==
+                   8,
+               "bytecode operand count offset changed");
+_Static_assert(offsetof(obelisk_rt_bytecode_service_site_v1, flags) == 10,
+               "bytecode service flags offset changed");
+_Static_assert(offsetof(obelisk_rt_bytecode_service_site_v1, reserved) == 12,
+               "bytecode service reserved offset changed");
+_Static_assert(sizeof(obelisk_rt_fragment_descriptor_v1) == 120,
                "fragment descriptor size changed");
 _Static_assert(offsetof(obelisk_rt_fragment_descriptor_v1, handle) == 0,
                "fragment handle offset changed");
@@ -111,7 +157,7 @@ int obelisk_runtime_c_api_smoke(void) {
   obelisk_rt_fragment_action_v1 action = {0};
   uint64_t frame = 41;
 
-  if (OBELISK_RT_ABI_VERSION != 1u)
+  if (OBELISK_RT_ABI_GENERATION != 1u)
     return 1;
   if (obelisk_rt_v1_context_create(&context) != OBELISK_RT_OK || !context)
     return 2;

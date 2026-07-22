@@ -1,8 +1,10 @@
 //===- obelisk-opt.cpp - Obelisk IR parser and optimizer driver ----------===//
 
 #include "obelisk/Conversion/ObeliskToSimulation.h"
+#include "obelisk/Conversion/RuntimeToLLVM.h"
 #include "obelisk/Conversion/SlangToObelisk.h"
 #include "obelisk/Dialect/Obelisk/ObeliskDialect.h"
+#include "obelisk/Dialect/Runtime/RuntimeDialect.h"
 #include "obelisk/Dialect/Simulation/SimulationDialect.h"
 #include "obelisk/Dialect/Slang/SlangDialect.h"
 
@@ -21,6 +23,7 @@ int main(int argc, char **argv) {
   mlir::DialectRegistry registry;
   mlir::registerAllDialects(registry);
   registry.insert<obelisk::slangir::SlangDialect, obelisk::ir::ObeliskDialect,
+                  obelisk::runtime::ObeliskRuntimeDialect,
                   obelisk::sim::ObeliskSimulationDialect>();
 
   return mlir::asMainReturnCode(

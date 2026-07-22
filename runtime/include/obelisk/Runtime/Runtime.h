@@ -10,7 +10,11 @@
 extern "C" {
 #endif
 
-#define OBELISK_RT_ABI_VERSION 1u
+// Names ending in _v1 and this generation number identify the current in-tree
+// schema. They are not a backward-compatibility promise: generated code,
+// bytecode, and libobelisk_rt must come from the same Obelisk source revision.
+// Any compiler update requires regenerating and relinking the simulator.
+#define OBELISK_RT_ABI_GENERATION 1u
 
 typedef struct obelisk_rt_context obelisk_rt_context;
 
@@ -109,7 +113,11 @@ enum {
   OBELISK_RT_BC_TYPE_NONE = 0,
   OBELISK_RT_BC_TYPE_U64 = 1,
   OBELISK_RT_BC_TYPE_I64 = 2,
-  OBELISK_RT_BC_TYPE_BOOL = 3
+  OBELISK_RT_BC_TYPE_BOOL = 3,
+  OBELISK_RT_BC_TYPE_STATUS = 4,
+  // Resource values are interpreter-local IDs produced only by validated
+  // service calls; they are never native addresses.
+  OBELISK_RT_BC_TYPE_RESOURCE = 5
 };
 
 typedef uint8_t obelisk_rt_bytecode_opcode;
@@ -133,7 +141,12 @@ enum {
   OBELISK_RT_BC_BRANCH_ZERO = 16,
   OBELISK_RT_BC_CONTINUE = 17,
   OBELISK_RT_BC_SUSPEND = 18,
-  OBELISK_RT_BC_TERMINATE = 19
+  OBELISK_RT_BC_TERMINATE = 19,
+  // CALL_SERVICE's immediate is a service-site index and its destination is a
+  // STATUS register. FAIL returns the nonzero status held in source0 through
+  // the fragment ABI.
+  OBELISK_RT_BC_CALL_SERVICE = 20,
+  OBELISK_RT_BC_FAIL = 21
 };
 
 typedef struct obelisk_rt_bytecode_v1 {
@@ -143,11 +156,17 @@ typedef struct obelisk_rt_bytecode_v1 {
   uint32_t entry_count;
   uint32_t register_count;
   uint64_t register_offset;
-  // Generated immutable descriptors may point at a dedicated zero-initialized
-  // validation record. The runtime validates the full entry table once and
-  // then uses logarithmic continuation lookup. Null requests a full defensive
-  // validation on every dispatch.
+  // Generated immutable descriptors may point at a dedicated writable
+  // validation record. The runtime always validates caller-controlled tables;
+  // this record only reports the most recent result. Null omits that report.
   struct obelisk_rt_bytecode_validation_v1 *validation;
+  const uint8_t *constants;
+  uint64_t constant_size;
+  const struct obelisk_rt_bytecode_service_site_v1 *service_sites;
+  uint32_t service_site_count;
+  uint32_t reserved;
+  const struct obelisk_rt_bytecode_operand_v1 *operands;
+  uint64_t operand_count;
 } obelisk_rt_bytecode_v1;
 
 typedef struct obelisk_rt_bytecode_entry_v1 {
@@ -156,11 +175,106 @@ typedef struct obelisk_rt_bytecode_entry_v1 {
 } obelisk_rt_bytecode_entry_v1;
 
 typedef struct obelisk_rt_bytecode_validation_v1 {
-  // Runtime-owned state. Initialize the whole record to zero and never mutate
-  // it or the associated bytecode descriptor after first dispatch.
+  // Runtime-written observation. Incoming state is never trusted. Initialize
+  // the whole record to zero; reserved must remain zero and the associated
+  // immutable descriptor must not be mutated during dispatch.
   uint32_t state;
   uint32_t reserved;
 } obelisk_rt_bytecode_validation_v1;
+
+enum {
+  OBELISK_RT_BC_VALIDATION_UNVALIDATED = 0,
+  OBELISK_RT_BC_VALIDATION_VALID = 2,
+  OBELISK_RT_BC_VALIDATION_INVALID = 3
+};
+
+// Service-aware bytecode adds a constant pool plus immutable, fully validated
+// metadata to the v1 program. No service operand contains a native address.
+// All offsets and ranges are checked before a service is invoked.
+typedef uint8_t obelisk_rt_bytecode_operand_kind;
+enum {
+  OBELISK_RT_BC_OPERAND_IMMEDIATE = 0,
+  OBELISK_RT_BC_OPERAND_REGISTER = 1,
+  OBELISK_RT_BC_OPERAND_FRAME = 2,
+  OBELISK_RT_BC_OPERAND_CONSTANT = 3,
+  OBELISK_RT_BC_OPERAND_RESOURCE = 4
+};
+
+typedef uint8_t obelisk_rt_bytecode_operand_direction;
+enum {
+  OBELISK_RT_BC_OPERAND_INPUT = 0,
+  OBELISK_RT_BC_OPERAND_OUTPUT = 1,
+  OBELISK_RT_BC_OPERAND_INOUT = 2
+};
+
+typedef uint8_t obelisk_rt_bytecode_value_kind;
+enum {
+  OBELISK_RT_BC_VALUE_NONE = 0,
+  OBELISK_RT_BC_VALUE_U8 = 1,
+  OBELISK_RT_BC_VALUE_U32 = 2,
+  OBELISK_RT_BC_VALUE_I32 = 3,
+  OBELISK_RT_BC_VALUE_U64 = 4,
+  OBELISK_RT_BC_VALUE_I64 = 5,
+  OBELISK_RT_BC_VALUE_BYTES = 6,
+  OBELISK_RT_BC_VALUE_MUTABLE_BYTES = 7,
+  OBELISK_RT_BC_VALUE_ARGUMENT_ARRAY = 8,
+  OBELISK_RT_BC_VALUE_FORMAT_ENVIRONMENT = 9,
+  OBELISK_RT_BC_VALUE_BUFFER = 10,
+  // The following kinds are valid only as children of ARGUMENT_ARRAY.
+  OBELISK_RT_BC_VALUE_ARGUMENT_EMPTY = 11,
+  OBELISK_RT_BC_VALUE_ARGUMENT_LOGIC = 12,
+  OBELISK_RT_BC_VALUE_ARGUMENT_STRING = 13,
+  OBELISK_RT_BC_VALUE_ARGUMENT_REAL = 14,
+  OBELISK_RT_BC_VALUE_ARGUMENT_TIME = 15
+};
+
+typedef uint32_t obelisk_rt_bytecode_service;
+enum {
+  OBELISK_RT_BC_SERVICE_FORMAT = 1,
+  OBELISK_RT_BC_SERVICE_DISPLAY = 2,
+  OBELISK_RT_BC_SERVICE_BUFFER_RELEASE = 3,
+  OBELISK_RT_BC_SERVICE_FILE_OPEN_MCD = 10,
+  OBELISK_RT_BC_SERVICE_FILE_OPEN = 11,
+  OBELISK_RT_BC_SERVICE_FILE_CLOSE = 12,
+  OBELISK_RT_BC_SERVICE_FILE_FLUSH = 13,
+  OBELISK_RT_BC_SERVICE_FILE_WRITE = 14,
+  OBELISK_RT_BC_SERVICE_FILE_READ = 15,
+  OBELISK_RT_BC_SERVICE_FILE_GETC = 16,
+  OBELISK_RT_BC_SERVICE_FILE_UNGETC = 17,
+  OBELISK_RT_BC_SERVICE_FILE_GETLINE = 18,
+  OBELISK_RT_BC_SERVICE_FILE_EOF = 19,
+  OBELISK_RT_BC_SERVICE_FILE_ERROR = 20,
+  OBELISK_RT_BC_SERVICE_FILE_SEEK = 21,
+  OBELISK_RT_BC_SERVICE_FILE_TELL = 22,
+  OBELISK_RT_BC_SERVICE_FILE_REWIND = 23
+};
+
+// value is an immediate, register index, byte offset, or first child operand
+// according to kind/value_kind. size is a byte/bit count or child count.
+// auxiliary is used only by ARGUMENT_LOGIC: UINT64_MAX means a known value;
+// otherwise it is the checked byte offset of the unknown plane in the same
+// frame or constant pool as the value plane. flags use OBELISK_RT_ARG_* for
+// argument children and must otherwise be zero. MUTABLE_BYTES is INOUT. A
+// writable frame range in one service site must not overlap any other operand's
+// frame range in that site.
+typedef struct obelisk_rt_bytecode_operand_v1 {
+  obelisk_rt_bytecode_operand_kind kind;
+  obelisk_rt_bytecode_operand_direction direction;
+  obelisk_rt_bytecode_value_kind value_kind;
+  uint8_t flags;
+  uint32_t reserved;
+  uint64_t value;
+  uint64_t size;
+  uint64_t auxiliary;
+} obelisk_rt_bytecode_operand_v1;
+
+typedef struct obelisk_rt_bytecode_service_site_v1 {
+  obelisk_rt_bytecode_service service;
+  uint32_t first_operand;
+  uint16_t operand_count;
+  uint16_t flags;
+  uint32_t reserved;
+} obelisk_rt_bytecode_service_site_v1;
 
 typedef uint32_t obelisk_rt_fragment_code_kind;
 enum { OBELISK_RT_FRAGMENT_NATIVE = 0, OBELISK_RT_FRAGMENT_BYTECODE = 1 };
@@ -182,9 +296,9 @@ obelisk_rt_status obelisk_rt_v1_fragment_execute(
     obelisk_rt_context *context, void *frame, uint64_t frame_size,
     uint32_t continuation, obelisk_rt_fragment_action_v1 *out_action);
 
-// Test and differential-execution entry point for bytecode fragments. The
-// immutable v1 descriptor stays ABI-compatible; a nonzero instruction_limit
-// bounds this invocation and reports OBELISK_RT_STEP_LIMIT when exhausted.
+// Test and differential-execution entry point for bytecode fragments. A
+// nonzero instruction_limit bounds this invocation and reports
+// OBELISK_RT_STEP_LIMIT when exhausted.
 obelisk_rt_status obelisk_rt_v1_bytecode_execute_bounded(
     const obelisk_rt_fragment_descriptor_v1 *descriptor,
     obelisk_rt_context *context, void *frame, uint64_t frame_size,

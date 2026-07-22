@@ -107,6 +107,17 @@ void appendInstruction(std::vector<uint8_t> &code, uint8_t opcode,
     code[offset + 8 + byte] = static_cast<uint8_t>(immediate >> (byte * 8));
 }
 
+void appendCheckedService(std::vector<uint8_t> &code, uint64_t site,
+                          uint16_t statusRegister = 0) {
+  uint64_t first = code.size() / OBELISK_RT_BYTECODE_INSTRUCTION_SIZE;
+  appendInstruction(code, OBELISK_RT_BC_CALL_SERVICE, OBELISK_RT_BC_TYPE_STATUS,
+                    statusRegister, 0, 0, site);
+  appendInstruction(code, OBELISK_RT_BC_BRANCH_ZERO, OBELISK_RT_BC_TYPE_STATUS,
+                    0, statusRegister, 0, first + 3);
+  appendInstruction(code, OBELISK_RT_BC_FAIL, OBELISK_RT_BC_TYPE_STATUS, 0,
+                    statusRegister);
+}
+
 obelisk_rt_fragment_descriptor_v1
 bytecodeDescriptor(const std::vector<uint8_t> &code, uint32_t registers) {
   static constexpr obelisk_rt_bytecode_entry_v1 defaultEntry{0, 0};
@@ -122,7 +133,8 @@ obelisk_rt_status
 executeBytecode(const obelisk_rt_fragment_descriptor_v1 &input, void *frame,
                 uint64_t frameSize, uint32_t continuation,
                 obelisk_rt_fragment_action_v1 *action,
-                uint64_t instructionLimit = 0) {
+                uint64_t instructionLimit = 0,
+                obelisk_rt_context *context = nullptr) {
   obelisk_rt_fragment_descriptor_v1 descriptor = input;
   descriptor.code.bytecode.register_offset = frameSize;
   uint64_t scratchSize =
@@ -133,12 +145,12 @@ executeBytecode(const obelisk_rt_fragment_descriptor_v1 &input, void *frame,
     std::memcpy(storage.data(), frame, frameSize);
   obelisk_rt_status status =
       instructionLimit == 0
-          ? obelisk_rt_v1_fragment_execute(&descriptor, nullptr,
+          ? obelisk_rt_v1_fragment_execute(&descriptor, context,
                                            storage.empty() ? nullptr
                                                            : storage.data(),
                                            storage.size(), continuation, action)
           : obelisk_rt_v1_bytecode_execute_bounded(
-                &descriptor, nullptr,
+                &descriptor, context,
                 storage.empty() ? nullptr : storage.data(), storage.size(),
                 continuation, instructionLimit, action);
   if (frameSize != 0)
@@ -217,7 +229,7 @@ TEST(RuntimeABI, StableScalarLayout) {
   EXPECT_EQ(offsetof(obelisk_rt_arg_v1, kind), 0u);
   EXPECT_EQ(offsetof(obelisk_rt_arg_v1, flags), 4u);
   EXPECT_EQ(offsetof(obelisk_rt_arg_v1, size), 8u);
-  EXPECT_EQ(OBELISK_RT_ABI_VERSION, 1u);
+  EXPECT_EQ(OBELISK_RT_ABI_GENERATION, 1u);
   EXPECT_STREQ(obelisk_rt_v1_status_string(OBELISK_RT_FORMAT_ERROR),
                "format error");
 }
@@ -1067,6 +1079,28 @@ TEST(RuntimeFragmentTest, ContinuationSelectsBytecodeEntryInstruction) {
   EXPECT_NE(validation.state, 0u);
 }
 
+TEST(RuntimeFragmentTest, ValidationRecordSupportsConcurrentDispatch) {
+  std::vector<uint8_t> code;
+  appendInstruction(code, OBELISK_RT_BC_TERMINATE);
+  auto descriptor = bytecodeDescriptor(code, 0);
+  obelisk_rt_bytecode_validation_v1 validation{};
+  descriptor.code.bytecode.validation = &validation;
+  std::atomic<unsigned> failures{0};
+  std::vector<std::thread> threads;
+  for (unsigned index = 0; index != 16; ++index)
+    threads.emplace_back([&] {
+      obelisk_rt_fragment_action_v1 action{};
+      if (executeBytecode(descriptor, nullptr, 0, 0, &action) !=
+              OBELISK_RT_OK ||
+          action.kind != OBELISK_RT_FRAGMENT_TERMINATE)
+        ++failures;
+    });
+  for (std::thread &thread : threads)
+    thread.join();
+  EXPECT_EQ(failures.load(), 0u);
+  EXPECT_EQ(validation.state, OBELISK_RT_BC_VALIDATION_VALID);
+}
+
 TEST(RuntimeFragmentTest, RejectsMalformedBytecodeAndFrameAccess) {
   auto rejects = [](const std::vector<uint8_t> &code, uint32_t registers) {
     auto descriptor = bytecodeDescriptor(code, registers);
@@ -1265,6 +1299,706 @@ TEST(RuntimeFragmentTest, NativeAndBytecodeUseOneDispatchContract) {
   EXPECT_EQ(bytecodeAction.flags, nativeAction.flags);
   EXPECT_EQ(bytecodeAction.payload, nativeAction.payload);
   EXPECT_EQ(bytecodeAction.auxiliary, nativeAction.auxiliary);
+}
+
+TEST_F(RuntimeTest, BytecodeServicesFormatWriteAndReleaseOwnedBuffers) {
+  TempDirectory temporary;
+  uint32_t descriptorValue = open(temporary.file("service.txt"), "w+");
+
+  std::vector<uint8_t> constants(16, 0);
+  constants[0] = '%';
+  constants[1] = '0';
+  constants[2] = 'd';
+  constants[8] = 42;
+
+  const obelisk_rt_bytecode_operand_v1 operands[] = {
+      // format(format, arguments, environment, out buffer)
+      {OBELISK_RT_BC_OPERAND_CONSTANT, OBELISK_RT_BC_OPERAND_INPUT,
+       OBELISK_RT_BC_VALUE_BYTES, 0, 0, 0, 3, 0},
+      {OBELISK_RT_BC_OPERAND_IMMEDIATE, OBELISK_RT_BC_OPERAND_INPUT,
+       OBELISK_RT_BC_VALUE_ARGUMENT_ARRAY, 0, 0, 8, 1, 0},
+      {OBELISK_RT_BC_OPERAND_IMMEDIATE, OBELISK_RT_BC_OPERAND_INPUT,
+       OBELISK_RT_BC_VALUE_FORMAT_ENVIRONMENT, 0, 0, 0, 0, 0},
+      {OBELISK_RT_BC_OPERAND_REGISTER, OBELISK_RT_BC_OPERAND_OUTPUT,
+       OBELISK_RT_BC_VALUE_BUFFER, 0, 0, 1, 0, 0},
+      // file_write(descriptor, resource bytes, out written)
+      {OBELISK_RT_BC_OPERAND_FRAME, OBELISK_RT_BC_OPERAND_INPUT,
+       OBELISK_RT_BC_VALUE_U32, 0, 0, 0, 4, 0},
+      {OBELISK_RT_BC_OPERAND_RESOURCE, OBELISK_RT_BC_OPERAND_INPUT,
+       OBELISK_RT_BC_VALUE_BYTES, 0, 0, 1, 0, 0},
+      {OBELISK_RT_BC_OPERAND_FRAME, OBELISK_RT_BC_OPERAND_OUTPUT,
+       OBELISK_RT_BC_VALUE_U64, 0, 0, 8, 8, 0},
+      // buffer_release(resource)
+      {OBELISK_RT_BC_OPERAND_RESOURCE, OBELISK_RT_BC_OPERAND_INPUT,
+       OBELISK_RT_BC_VALUE_BUFFER, 0, 0, 1, 0, 0},
+      // One known 32-bit logic formatting argument.
+      {OBELISK_RT_BC_OPERAND_CONSTANT, OBELISK_RT_BC_OPERAND_INPUT,
+       OBELISK_RT_BC_VALUE_ARGUMENT_LOGIC, OBELISK_RT_ARG_SIGNED, 0, 8, 32,
+       UINT64_MAX},
+  };
+  const obelisk_rt_bytecode_service_site_v1 sites[] = {
+      {OBELISK_RT_BC_SERVICE_FORMAT, 0, 4, 0, 0},
+      {OBELISK_RT_BC_SERVICE_FILE_WRITE, 4, 3, 0, 0},
+      {OBELISK_RT_BC_SERVICE_BUFFER_RELEASE, 7, 1, 0, 0},
+  };
+
+  std::vector<uint8_t> code;
+  appendInstruction(code, OBELISK_RT_BC_CALL_SERVICE, OBELISK_RT_BC_TYPE_STATUS,
+                    0, 0, 0, 0);
+  appendInstruction(code, OBELISK_RT_BC_BRANCH_ZERO, OBELISK_RT_BC_TYPE_STATUS,
+                    0, 0, 0, 3);
+  appendInstruction(code, OBELISK_RT_BC_FAIL, OBELISK_RT_BC_TYPE_STATUS, 0, 0);
+  appendInstruction(code, OBELISK_RT_BC_CALL_SERVICE, OBELISK_RT_BC_TYPE_STATUS,
+                    0, 0, 0, 1);
+  appendInstruction(code, OBELISK_RT_BC_BRANCH_ZERO, OBELISK_RT_BC_TYPE_STATUS,
+                    0, 0, 0, 6);
+  appendInstruction(code, OBELISK_RT_BC_FAIL, OBELISK_RT_BC_TYPE_STATUS, 0, 0);
+  appendInstruction(code, OBELISK_RT_BC_CALL_SERVICE, OBELISK_RT_BC_TYPE_STATUS,
+                    0, 0, 0, 2);
+  appendInstruction(code, OBELISK_RT_BC_BRANCH_ZERO, OBELISK_RT_BC_TYPE_STATUS,
+                    0, 0, 0, 9);
+  appendInstruction(code, OBELISK_RT_BC_FAIL, OBELISK_RT_BC_TYPE_STATUS, 0, 0);
+  appendInstruction(code, OBELISK_RT_BC_TERMINATE);
+
+  auto descriptor = bytecodeDescriptor(code, 2);
+  descriptor.code.bytecode.constants = constants.data();
+  descriptor.code.bytecode.constant_size = constants.size();
+  descriptor.code.bytecode.service_sites = sites;
+  descriptor.code.bytecode.service_site_count = std::size(sites);
+  descriptor.code.bytecode.operands = operands;
+  descriptor.code.bytecode.operand_count = std::size(operands);
+  struct Frame {
+    uint32_t descriptor;
+    uint32_t padding;
+    uint64_t written;
+  } frame{descriptorValue, 0, 0};
+  obelisk_rt_fragment_action_v1 action{};
+  ASSERT_EQ(executeBytecode(descriptor, &frame, sizeof(frame), 0, &action, 0,
+                            context),
+            OBELISK_RT_OK);
+  EXPECT_EQ(frame.written, 2u);
+  EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
+  ASSERT_EQ(obelisk_rt_v1_file_flush(context, descriptorValue), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_file_rewind(context, descriptorValue), OBELISK_RT_OK);
+  char output[8]{};
+  uint64_t read = 0;
+  ASSERT_EQ(obelisk_rt_v1_file_read(context, descriptorValue, output,
+                                    sizeof(output), &read),
+            OBELISK_RT_OK);
+  EXPECT_EQ(std::string(output, read), "42");
+  EXPECT_EQ(obelisk_rt_v1_file_close(context, descriptorValue), OBELISK_RT_OK);
+}
+
+TEST_F(RuntimeTest, BytecodeServicesAcceptEmptyConstantPoolSlices) {
+  const obelisk_rt_bytecode_operand_v1 operands[] = {
+      {OBELISK_RT_BC_OPERAND_CONSTANT, OBELISK_RT_BC_OPERAND_INPUT,
+       OBELISK_RT_BC_VALUE_BYTES, 0, 0, 0, 0, 0},
+      {OBELISK_RT_BC_OPERAND_IMMEDIATE, OBELISK_RT_BC_OPERAND_INPUT,
+       OBELISK_RT_BC_VALUE_ARGUMENT_ARRAY, 0, 0, 0, 0, 0},
+      {OBELISK_RT_BC_OPERAND_IMMEDIATE, OBELISK_RT_BC_OPERAND_INPUT,
+       OBELISK_RT_BC_VALUE_FORMAT_ENVIRONMENT, 0, 0, 0, 0, 0},
+      {OBELISK_RT_BC_OPERAND_REGISTER, OBELISK_RT_BC_OPERAND_OUTPUT,
+       OBELISK_RT_BC_VALUE_BUFFER, 0, 0, 1, 0, 0},
+      {OBELISK_RT_BC_OPERAND_RESOURCE, OBELISK_RT_BC_OPERAND_INPUT,
+       OBELISK_RT_BC_VALUE_BUFFER, 0, 0, 1, 0, 0},
+  };
+  const obelisk_rt_bytecode_service_site_v1 sites[] = {
+      {OBELISK_RT_BC_SERVICE_FORMAT, 0, 4, 0, 0},
+      {OBELISK_RT_BC_SERVICE_BUFFER_RELEASE, 4, 1, 0, 0},
+  };
+  std::vector<uint8_t> code;
+  appendCheckedService(code, 0);
+  appendCheckedService(code, 1);
+  appendInstruction(code, OBELISK_RT_BC_TERMINATE);
+  auto descriptor = bytecodeDescriptor(code, 2);
+  descriptor.code.bytecode.service_sites = sites;
+  descriptor.code.bytecode.service_site_count = std::size(sites);
+  descriptor.code.bytecode.operands = operands;
+  descriptor.code.bytecode.operand_count = std::size(operands);
+  obelisk_rt_fragment_action_v1 action{};
+  EXPECT_EQ(executeBytecode(descriptor, nullptr, 0, 0, &action, 0, context),
+            OBELISK_RT_OK);
+  EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
+}
+
+TEST_F(RuntimeTest, BytecodeServicesExerciseEveryFileAndDisplayCall) {
+  TempDirectory temporary;
+  std::vector<uint8_t> constants;
+  struct ConstantSpan {
+    uint64_t offset;
+    uint64_t size;
+  };
+  auto addConstant = [&](std::string_view value) {
+    ConstantSpan span{constants.size(), value.size()};
+    constants.insert(constants.end(), value.begin(), value.end());
+    return span;
+  };
+  ConstantSpan path = addConstant(temporary.file("services.bin").string());
+  ConstantSpan mcdPath = addConstant(temporary.file("services.mcd").string());
+  ConstantSpan mode = addConstant("w+");
+  ConstantSpan displayText = addConstant("head");
+  ConstantSpan writtenText = addConstant("abc\n");
+  ConstantSpan mcdText = addConstant("mcd");
+
+  struct Frame {
+    uint32_t descriptor = 0;
+    uint32_t mcd = 0;
+    uint64_t written = 0;
+    uint64_t mcdWritten = 0;
+    int64_t firstTell = 0;
+    int64_t finalTell = 0;
+    uint64_t read = 0;
+    uint8_t byte = 0;
+    uint8_t padding[3]{};
+    uint32_t eof = 0;
+    int32_t error = 0;
+    std::array<uint8_t, 16> data{};
+  } frame;
+
+  auto operand = [](obelisk_rt_bytecode_operand_kind kind,
+                    obelisk_rt_bytecode_operand_direction direction,
+                    obelisk_rt_bytecode_value_kind valueKind, uint64_t value,
+                    uint64_t size = 0, uint64_t auxiliary = 0,
+                    uint8_t flags = 0) {
+    return obelisk_rt_bytecode_operand_v1{kind,  direction, valueKind, flags, 0,
+                                          value, size,      auxiliary};
+  };
+  auto constantBytes = [&](ConstantSpan span) {
+    return operand(OBELISK_RT_BC_OPERAND_CONSTANT, OBELISK_RT_BC_OPERAND_INPUT,
+                   OBELISK_RT_BC_VALUE_BYTES, span.offset, span.size);
+  };
+  auto inputFrame = [&](obelisk_rt_bytecode_value_kind kind, uint64_t offset,
+                        uint64_t size) {
+    return operand(OBELISK_RT_BC_OPERAND_FRAME, OBELISK_RT_BC_OPERAND_INPUT,
+                   kind, offset, size);
+  };
+  auto outputFrame = [&](obelisk_rt_bytecode_value_kind kind, uint64_t offset,
+                         uint64_t size) {
+    return operand(OBELISK_RT_BC_OPERAND_FRAME, OBELISK_RT_BC_OPERAND_OUTPUT,
+                   kind, offset, size);
+  };
+  auto immediate = [&](obelisk_rt_bytecode_value_kind kind, uint64_t value) {
+    return operand(OBELISK_RT_BC_OPERAND_IMMEDIATE, OBELISK_RT_BC_OPERAND_INPUT,
+                   kind, value);
+  };
+  auto outputBuffer = [&](uint16_t reg) {
+    return operand(OBELISK_RT_BC_OPERAND_REGISTER, OBELISK_RT_BC_OPERAND_OUTPUT,
+                   OBELISK_RT_BC_VALUE_BUFFER, reg);
+  };
+  auto inputBuffer = [&](uint16_t reg) {
+    return operand(OBELISK_RT_BC_OPERAND_RESOURCE, OBELISK_RT_BC_OPERAND_INPUT,
+                   OBELISK_RT_BC_VALUE_BUFFER, reg);
+  };
+
+  std::vector<obelisk_rt_bytecode_operand_v1> operands;
+  std::vector<obelisk_rt_bytecode_service_site_v1> sites;
+  std::vector<uint8_t> code;
+  auto call =
+      [&](obelisk_rt_bytecode_service service,
+          std::initializer_list<obelisk_rt_bytecode_operand_v1> siteOperands) {
+        ASSERT_LE(operands.size(), UINT32_MAX);
+        ASSERT_LE(siteOperands.size(), UINT16_MAX);
+        uint32_t first = static_cast<uint32_t>(operands.size());
+        operands.insert(operands.end(), siteOperands.begin(),
+                        siteOperands.end());
+        sites.push_back(
+            {service, first, static_cast<uint16_t>(siteOperands.size()), 0, 0});
+        appendCheckedService(code, sites.size() - 1);
+      };
+
+  constexpr uint64_t descriptorOffset = offsetof(Frame, descriptor);
+  constexpr uint64_t mcdOffset = offsetof(Frame, mcd);
+  auto descriptor = [&] {
+    return inputFrame(OBELISK_RT_BC_VALUE_U32, descriptorOffset,
+                      sizeof(frame.descriptor));
+  };
+  auto mcd = [&] {
+    return inputFrame(OBELISK_RT_BC_VALUE_U32, mcdOffset, sizeof(frame.mcd));
+  };
+  auto noEnvironment = [&] {
+    return operand(OBELISK_RT_BC_OPERAND_IMMEDIATE, OBELISK_RT_BC_OPERAND_INPUT,
+                   OBELISK_RT_BC_VALUE_FORMAT_ENVIRONMENT, 0, 0);
+  };
+
+  call(OBELISK_RT_BC_SERVICE_FILE_OPEN,
+       {constantBytes(path), constantBytes(mode),
+        outputFrame(OBELISK_RT_BC_VALUE_U32, descriptorOffset,
+                    sizeof(frame.descriptor))});
+
+  uint64_t displayArgument = operands.size();
+  operands.push_back(operand(OBELISK_RT_BC_OPERAND_CONSTANT,
+                             OBELISK_RT_BC_OPERAND_INPUT,
+                             OBELISK_RT_BC_VALUE_ARGUMENT_STRING,
+                             displayText.offset, displayText.size));
+  call(OBELISK_RT_BC_SERVICE_DISPLAY,
+       {descriptor(), immediate(OBELISK_RT_BC_VALUE_U32, 1),
+        immediate(OBELISK_RT_BC_VALUE_U32, OBELISK_RT_RADIX_DECIMAL),
+        operand(OBELISK_RT_BC_OPERAND_IMMEDIATE, OBELISK_RT_BC_OPERAND_INPUT,
+                OBELISK_RT_BC_VALUE_ARGUMENT_ARRAY, displayArgument, 1),
+        noEnvironment()});
+  call(OBELISK_RT_BC_SERVICE_FILE_WRITE,
+       {descriptor(), constantBytes(writtenText),
+        outputFrame(OBELISK_RT_BC_VALUE_U64, offsetof(Frame, written),
+                    sizeof(frame.written))});
+  call(OBELISK_RT_BC_SERVICE_FILE_FLUSH, {descriptor()});
+  call(OBELISK_RT_BC_SERVICE_FILE_TELL,
+       {descriptor(),
+        outputFrame(OBELISK_RT_BC_VALUE_I64, offsetof(Frame, firstTell),
+                    sizeof(frame.firstTell))});
+  call(OBELISK_RT_BC_SERVICE_FILE_REWIND, {descriptor()});
+  call(OBELISK_RT_BC_SERVICE_FILE_GETLINE, {descriptor(), outputBuffer(1)});
+  call(OBELISK_RT_BC_SERVICE_BUFFER_RELEASE, {inputBuffer(1)});
+  call(OBELISK_RT_BC_SERVICE_FILE_GETC,
+       {descriptor(), outputFrame(OBELISK_RT_BC_VALUE_U8, offsetof(Frame, byte),
+                                  sizeof(frame.byte))});
+  call(OBELISK_RT_BC_SERVICE_FILE_UNGETC,
+       {descriptor(), immediate(OBELISK_RT_BC_VALUE_U8, 'a')});
+  call(OBELISK_RT_BC_SERVICE_FILE_READ,
+       {descriptor(),
+        operand(OBELISK_RT_BC_OPERAND_FRAME, OBELISK_RT_BC_OPERAND_INOUT,
+                OBELISK_RT_BC_VALUE_MUTABLE_BYTES, offsetof(Frame, data),
+                frame.data.size()),
+        outputFrame(OBELISK_RT_BC_VALUE_U64, offsetof(Frame, read),
+                    sizeof(frame.read))});
+  call(OBELISK_RT_BC_SERVICE_FILE_EOF,
+       {descriptor(), outputFrame(OBELISK_RT_BC_VALUE_U32, offsetof(Frame, eof),
+                                  sizeof(frame.eof))});
+  call(OBELISK_RT_BC_SERVICE_FILE_ERROR,
+       {descriptor(),
+        outputFrame(OBELISK_RT_BC_VALUE_I32, offsetof(Frame, error),
+                    sizeof(frame.error)),
+        outputBuffer(1)});
+  call(OBELISK_RT_BC_SERVICE_BUFFER_RELEASE, {inputBuffer(1)});
+  call(OBELISK_RT_BC_SERVICE_FILE_SEEK,
+       {descriptor(), immediate(OBELISK_RT_BC_VALUE_I64, 1),
+        immediate(OBELISK_RT_BC_VALUE_U32, OBELISK_RT_SEEK_SET)});
+  call(OBELISK_RT_BC_SERVICE_FILE_TELL,
+       {descriptor(),
+        outputFrame(OBELISK_RT_BC_VALUE_I64, offsetof(Frame, finalTell),
+                    sizeof(frame.finalTell))});
+  call(OBELISK_RT_BC_SERVICE_FILE_REWIND, {descriptor()});
+  call(OBELISK_RT_BC_SERVICE_FILE_CLOSE, {descriptor()});
+
+  call(OBELISK_RT_BC_SERVICE_FILE_OPEN_MCD,
+       {constantBytes(mcdPath),
+        outputFrame(OBELISK_RT_BC_VALUE_U32, mcdOffset, sizeof(frame.mcd))});
+  call(OBELISK_RT_BC_SERVICE_FILE_WRITE,
+       {mcd(), constantBytes(mcdText),
+        outputFrame(OBELISK_RT_BC_VALUE_U64, offsetof(Frame, mcdWritten),
+                    sizeof(frame.mcdWritten))});
+  call(OBELISK_RT_BC_SERVICE_FILE_FLUSH, {mcd()});
+  call(OBELISK_RT_BC_SERVICE_FILE_CLOSE, {mcd()});
+  appendInstruction(code, OBELISK_RT_BC_TERMINATE);
+
+  auto program = bytecodeDescriptor(code, 2);
+  program.code.bytecode.constants = constants.data();
+  program.code.bytecode.constant_size = constants.size();
+  program.code.bytecode.service_sites = sites.data();
+  program.code.bytecode.service_site_count = sites.size();
+  program.code.bytecode.operands = operands.data();
+  program.code.bytecode.operand_count = operands.size();
+  obelisk_rt_fragment_action_v1 action{};
+  ASSERT_EQ(
+      executeBytecode(program, &frame, sizeof(frame), 0, &action, 0, context),
+      OBELISK_RT_OK);
+  EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
+  EXPECT_EQ(frame.written, writtenText.size);
+  EXPECT_EQ(frame.mcdWritten, mcdText.size);
+  EXPECT_EQ(frame.firstTell, 9);
+  EXPECT_EQ(frame.finalTell, 1);
+  EXPECT_EQ(frame.byte, 'a');
+  EXPECT_EQ(frame.read, 4u);
+  EXPECT_EQ(std::string(reinterpret_cast<const char *>(frame.data.data()),
+                        frame.read),
+            "abc\n");
+  EXPECT_EQ(frame.eof, 1u);
+  EXPECT_EQ(frame.error, 0);
+  EXPECT_EQ(readHostFile(temporary.file("services.bin")), "head\nabc\n");
+  EXPECT_EQ(readHostFile(temporary.file("services.mcd")), "mcd");
+}
+
+TEST(RuntimeFragmentTest, RejectsMalformedServiceMetadataAndResources) {
+  std::vector<uint8_t> code;
+  appendInstruction(code, OBELISK_RT_BC_CALL_SERVICE, OBELISK_RT_BC_TYPE_STATUS,
+                    0, 0, 0, 0);
+  appendInstruction(code, OBELISK_RT_BC_TERMINATE);
+  auto descriptor = bytecodeDescriptor(code, 1);
+  obelisk_rt_fragment_action_v1 action{};
+
+  obelisk_rt_bytecode_service_site_v1 badSite{999, 0, 0, 0, 0};
+  descriptor.code.bytecode.service_sites = &badSite;
+  descriptor.code.bytecode.service_site_count = 1;
+  EXPECT_EQ(executeBytecode(descriptor, nullptr, 0, 0, &action),
+            OBELISK_RT_INVALID_BYTECODE);
+
+  obelisk_rt_bytecode_operand_v1 forged{OBELISK_RT_BC_OPERAND_RESOURCE,
+                                        OBELISK_RT_BC_OPERAND_INPUT,
+                                        OBELISK_RT_BC_VALUE_BUFFER,
+                                        0,
+                                        0,
+                                        0,
+                                        0,
+                                        0};
+  obelisk_rt_bytecode_service_site_v1 release{
+      OBELISK_RT_BC_SERVICE_BUFFER_RELEASE, 0, 1, 0, 0};
+  descriptor.code.bytecode.service_sites = &release;
+  descriptor.code.bytecode.operands = &forged;
+  descriptor.code.bytecode.operand_count = 1;
+  EXPECT_EQ(executeBytecode(descriptor, nullptr, 0, 0, &action),
+            OBELISK_RT_INVALID_BYTECODE);
+
+  // A caller-provided validation record is an observation of validation, not
+  // authority to bypass it.
+  obelisk_rt_bytecode_validation_v1 forgedValidation{2, 0};
+  descriptor.code.bytecode.validation = &forgedValidation;
+  descriptor.code.bytecode.service_sites = &badSite;
+  descriptor.code.bytecode.operands = nullptr;
+  descriptor.code.bytecode.operand_count = 0;
+  EXPECT_EQ(executeBytecode(descriptor, nullptr, 0, 0, &action),
+            OBELISK_RT_INVALID_BYTECODE);
+  EXPECT_EQ(forgedValidation.state, 3u);
+  descriptor.code.bytecode.validation = nullptr;
+
+  // CALL_SERVICE must not store its status over one of the service results.
+  const obelisk_rt_bytecode_operand_v1 eofOperands[] = {
+      {OBELISK_RT_BC_OPERAND_IMMEDIATE, OBELISK_RT_BC_OPERAND_INPUT,
+       OBELISK_RT_BC_VALUE_U32, 0, 0, 0, 0, 0},
+      {OBELISK_RT_BC_OPERAND_REGISTER, OBELISK_RT_BC_OPERAND_OUTPUT,
+       OBELISK_RT_BC_VALUE_U32, 0, 0, 0, 0, 0},
+  };
+  const obelisk_rt_bytecode_service_site_v1 eofSite{
+      OBELISK_RT_BC_SERVICE_FILE_EOF, 0, 2, 0, 0};
+  descriptor.code.bytecode.service_sites = &eofSite;
+  descriptor.code.bytecode.operands = eofOperands;
+  descriptor.code.bytecode.operand_count = std::size(eofOperands);
+  EXPECT_EQ(executeBytecode(descriptor, nullptr, 0, 0, &action),
+            OBELISK_RT_INVALID_BYTECODE);
+
+  // Multi-result services also require distinct result registers.
+  const obelisk_rt_bytecode_operand_v1 errorOperands[] = {
+      {OBELISK_RT_BC_OPERAND_IMMEDIATE, OBELISK_RT_BC_OPERAND_INPUT,
+       OBELISK_RT_BC_VALUE_U32, 0, 0, 0, 0, 0},
+      {OBELISK_RT_BC_OPERAND_REGISTER, OBELISK_RT_BC_OPERAND_OUTPUT,
+       OBELISK_RT_BC_VALUE_I32, 0, 0, 1, 0, 0},
+      {OBELISK_RT_BC_OPERAND_REGISTER, OBELISK_RT_BC_OPERAND_OUTPUT,
+       OBELISK_RT_BC_VALUE_BUFFER, 0, 0, 1, 0, 0},
+  };
+  const obelisk_rt_bytecode_service_site_v1 errorSite{
+      OBELISK_RT_BC_SERVICE_FILE_ERROR, 0, 3, 0, 0};
+  descriptor = bytecodeDescriptor(code, 2);
+  descriptor.code.bytecode.service_sites = &errorSite;
+  descriptor.code.bytecode.service_site_count = 1;
+  descriptor.code.bytecode.operands = errorOperands;
+  descriptor.code.bytecode.operand_count = std::size(errorOperands);
+  EXPECT_EQ(executeBytecode(descriptor, nullptr, 0, 0, &action),
+            OBELISK_RT_INVALID_BYTECODE);
+}
+
+TEST_F(RuntimeTest, BytecodeResourcesRejectLeaksAndDoubleRelease) {
+  TempDirectory temporary;
+  uint32_t descriptorValue = open(temporary.file("line.txt"), "w+");
+  uint64_t written = 0;
+  ASSERT_EQ(
+      obelisk_rt_v1_file_write(context, descriptorValue, "line\n", 5, &written),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_file_rewind(context, descriptorValue), OBELISK_RT_OK);
+
+  const obelisk_rt_bytecode_operand_v1 operands[] = {
+      {OBELISK_RT_BC_OPERAND_IMMEDIATE, OBELISK_RT_BC_OPERAND_INPUT,
+       OBELISK_RT_BC_VALUE_U32, 0, 0, descriptorValue, 0, 0},
+      {OBELISK_RT_BC_OPERAND_REGISTER, OBELISK_RT_BC_OPERAND_OUTPUT,
+       OBELISK_RT_BC_VALUE_BUFFER, 0, 0, 1, 0, 0},
+      {OBELISK_RT_BC_OPERAND_RESOURCE, OBELISK_RT_BC_OPERAND_INPUT,
+       OBELISK_RT_BC_VALUE_BUFFER, 0, 0, 1, 0, 0},
+      {OBELISK_RT_BC_OPERAND_IMMEDIATE, OBELISK_RT_BC_OPERAND_INPUT,
+       OBELISK_RT_BC_VALUE_U32, 0, 0, descriptorValue, 0, 0},
+      {OBELISK_RT_BC_OPERAND_REGISTER, OBELISK_RT_BC_OPERAND_OUTPUT,
+       OBELISK_RT_BC_VALUE_U32, 0, 0, 1, 0, 0},
+  };
+  const obelisk_rt_bytecode_service_site_v1 sites[] = {
+      {OBELISK_RT_BC_SERVICE_FILE_GETLINE, 0, 2, 0, 0},
+      {OBELISK_RT_BC_SERVICE_BUFFER_RELEASE, 2, 1, 0, 0},
+      {OBELISK_RT_BC_SERVICE_FILE_EOF, 3, 2, 0, 0},
+  };
+
+  std::vector<uint8_t> leakCode;
+  appendCheckedService(leakCode, 0);
+  appendInstruction(leakCode, OBELISK_RT_BC_TERMINATE);
+  auto leak = bytecodeDescriptor(leakCode, 2);
+  leak.code.bytecode.service_sites = sites;
+  leak.code.bytecode.service_site_count = std::size(sites);
+  leak.code.bytecode.operands = operands;
+  leak.code.bytecode.operand_count = std::size(operands);
+  obelisk_rt_fragment_action_v1 action{};
+  EXPECT_EQ(executeBytecode(leak, nullptr, 0, 0, &action, 0, context),
+            OBELISK_RT_INVALID_BYTECODE);
+
+  ASSERT_EQ(obelisk_rt_v1_file_rewind(context, descriptorValue), OBELISK_RT_OK);
+  std::vector<uint8_t> overwriteResourceCode;
+  appendCheckedService(overwriteResourceCode, 0);
+  appendCheckedService(overwriteResourceCode, 2);
+  appendInstruction(overwriteResourceCode, OBELISK_RT_BC_TERMINATE);
+  auto overwriteResource = bytecodeDescriptor(overwriteResourceCode, 2);
+  overwriteResource.code.bytecode.service_sites = sites;
+  overwriteResource.code.bytecode.service_site_count = std::size(sites);
+  overwriteResource.code.bytecode.operands = operands;
+  overwriteResource.code.bytecode.operand_count = std::size(operands);
+  EXPECT_EQ(
+      executeBytecode(overwriteResource, nullptr, 0, 0, &action, 0, context),
+      OBELISK_RT_INVALID_BYTECODE);
+
+  ASSERT_EQ(obelisk_rt_v1_file_rewind(context, descriptorValue), OBELISK_RT_OK);
+  std::vector<uint8_t> doubleReleaseCode;
+  appendCheckedService(doubleReleaseCode, 0);
+  appendCheckedService(doubleReleaseCode, 1);
+  appendCheckedService(doubleReleaseCode, 1);
+  appendInstruction(doubleReleaseCode, OBELISK_RT_BC_TERMINATE);
+  auto doubleRelease = bytecodeDescriptor(doubleReleaseCode, 2);
+  doubleRelease.code.bytecode.service_sites = sites;
+  doubleRelease.code.bytecode.service_site_count = std::size(sites);
+  doubleRelease.code.bytecode.operands = operands;
+  doubleRelease.code.bytecode.operand_count = std::size(operands);
+  EXPECT_EQ(executeBytecode(doubleRelease, nullptr, 0, 0, &action, 0, context),
+            OBELISK_RT_INVALID_BYTECODE);
+  EXPECT_EQ(obelisk_rt_v1_file_close(context, descriptorValue), OBELISK_RT_OK);
+}
+
+TEST(RuntimeFragmentTest, ValidatesEveryServiceOperandBoundary) {
+  std::vector<uint8_t> code;
+  appendCheckedService(code, 0);
+  appendInstruction(code, OBELISK_RT_BC_TERMINATE);
+  obelisk_rt_fragment_action_v1 action{};
+
+  auto check = [&](const obelisk_rt_bytecode_service_site_v1 &site,
+                   const obelisk_rt_bytecode_operand_v1 *operands,
+                   uint64_t operandCount, uint32_t registers = 1,
+                   void *frame = nullptr, uint64_t frameSize = 0) {
+    auto descriptor = bytecodeDescriptor(code, registers);
+    descriptor.code.bytecode.service_sites = &site;
+    descriptor.code.bytecode.service_site_count = 1;
+    descriptor.code.bytecode.operands = operands;
+    descriptor.code.bytecode.operand_count = operandCount;
+    return executeBytecode(descriptor, frame, frameSize, 0, &action);
+  };
+
+  obelisk_rt_bytecode_service_site_v1 noArity{OBELISK_RT_BC_SERVICE_FILE_CLOSE,
+                                              0, 0, 0, 0};
+  EXPECT_EQ(check(noArity, nullptr, 0), OBELISK_RT_INVALID_BYTECODE);
+
+  obelisk_rt_bytecode_operand_v1 wrongType{OBELISK_RT_BC_OPERAND_IMMEDIATE,
+                                           OBELISK_RT_BC_OPERAND_INPUT,
+                                           OBELISK_RT_BC_VALUE_I64,
+                                           0,
+                                           0,
+                                           0,
+                                           0,
+                                           0};
+  obelisk_rt_bytecode_service_site_v1 close{OBELISK_RT_BC_SERVICE_FILE_CLOSE, 0,
+                                            1, 0, 0};
+  EXPECT_EQ(check(close, &wrongType, 1), OBELISK_RT_INVALID_BYTECODE);
+
+  obelisk_rt_bytecode_operand_v1 badFrame{OBELISK_RT_BC_OPERAND_FRAME,
+                                          OBELISK_RT_BC_OPERAND_INPUT,
+                                          OBELISK_RT_BC_VALUE_U32,
+                                          0,
+                                          0,
+                                          8,
+                                          4,
+                                          0};
+  uint32_t frame = 0;
+  EXPECT_EQ(check(close, &badFrame, 1, 1, &frame, sizeof(frame)),
+            OBELISK_RT_INVALID_BYTECODE);
+
+  obelisk_rt_bytecode_operand_v1 badRegister{OBELISK_RT_BC_OPERAND_REGISTER,
+                                             OBELISK_RT_BC_OPERAND_INPUT,
+                                             OBELISK_RT_BC_VALUE_U32,
+                                             0,
+                                             0,
+                                             1,
+                                             0,
+                                             0};
+  EXPECT_EQ(check(close, &badRegister, 1), OBELISK_RT_INVALID_BYTECODE);
+
+  obelisk_rt_bytecode_operand_v1 badConstant{OBELISK_RT_BC_OPERAND_CONSTANT,
+                                             OBELISK_RT_BC_OPERAND_INPUT,
+                                             OBELISK_RT_BC_VALUE_BYTES,
+                                             0,
+                                             0,
+                                             1,
+                                             8,
+                                             0};
+  obelisk_rt_bytecode_operand_v1 output{OBELISK_RT_BC_OPERAND_REGISTER,
+                                        OBELISK_RT_BC_OPERAND_OUTPUT,
+                                        OBELISK_RT_BC_VALUE_U32,
+                                        0,
+                                        0,
+                                        0,
+                                        0,
+                                        0};
+  const obelisk_rt_bytecode_operand_v1 openOperands[] = {badConstant, output};
+  obelisk_rt_bytecode_service_site_v1 openSite{
+      OBELISK_RT_BC_SERVICE_FILE_OPEN_MCD, 0, 2, 0, 0};
+  auto descriptor = bytecodeDescriptor(code, 1);
+  const uint8_t constant = 0;
+  descriptor.code.bytecode.constants = &constant;
+  descriptor.code.bytecode.constant_size = 1;
+  descriptor.code.bytecode.service_sites = &openSite;
+  descriptor.code.bytecode.service_site_count = 1;
+  descriptor.code.bytecode.operands = openOperands;
+  descriptor.code.bytecode.operand_count = std::size(openOperands);
+  EXPECT_EQ(executeBytecode(descriptor, nullptr, 0, 0, &action),
+            OBELISK_RT_INVALID_BYTECODE);
+
+  const obelisk_rt_bytecode_operand_v1 overlappingReadOperands[] = {
+      {OBELISK_RT_BC_OPERAND_IMMEDIATE, OBELISK_RT_BC_OPERAND_INPUT,
+       OBELISK_RT_BC_VALUE_U32, 0, 0, 0, 0, 0},
+      {OBELISK_RT_BC_OPERAND_FRAME, OBELISK_RT_BC_OPERAND_INOUT,
+       OBELISK_RT_BC_VALUE_MUTABLE_BYTES, 0, 0, 0, 8, 0},
+      {OBELISK_RT_BC_OPERAND_FRAME, OBELISK_RT_BC_OPERAND_OUTPUT,
+       OBELISK_RT_BC_VALUE_U64, 0, 0, 4, 8, 0},
+  };
+  const obelisk_rt_bytecode_service_site_v1 overlappingReadSite{
+      OBELISK_RT_BC_SERVICE_FILE_READ, 0, 3, 0, 0};
+  std::array<uint8_t, 16> overlappingFrame{};
+  EXPECT_EQ(check(overlappingReadSite, overlappingReadOperands,
+                  std::size(overlappingReadOperands), 1,
+                  overlappingFrame.data(), overlappingFrame.size()),
+            OBELISK_RT_INVALID_BYTECODE);
+
+  const obelisk_rt_bytecode_operand_v1 overlappingWriteOperands[] = {
+      {OBELISK_RT_BC_OPERAND_IMMEDIATE, OBELISK_RT_BC_OPERAND_INPUT,
+       OBELISK_RT_BC_VALUE_U32, 0, 0, 0, 0, 0},
+      {OBELISK_RT_BC_OPERAND_FRAME, OBELISK_RT_BC_OPERAND_INPUT,
+       OBELISK_RT_BC_VALUE_BYTES, 0, 0, 0, 8, 0},
+      {OBELISK_RT_BC_OPERAND_FRAME, OBELISK_RT_BC_OPERAND_OUTPUT,
+       OBELISK_RT_BC_VALUE_U64, 0, 0, 0, 8, 0},
+  };
+  const obelisk_rt_bytecode_service_site_v1 overlappingWriteSite{
+      OBELISK_RT_BC_SERVICE_FILE_WRITE, 0, 3, 0, 0};
+  EXPECT_EQ(check(overlappingWriteSite, overlappingWriteOperands,
+                  std::size(overlappingWriteOperands), 1,
+                  overlappingFrame.data(), overlappingFrame.size()),
+            OBELISK_RT_INVALID_BYTECODE);
+}
+
+TEST_F(RuntimeTest, BytecodeFailureOutputsMatchNativeZeroInitialization) {
+  const obelisk_rt_bytecode_operand_v1 operands[] = {
+      {OBELISK_RT_BC_OPERAND_IMMEDIATE, OBELISK_RT_BC_OPERAND_INPUT,
+       OBELISK_RT_BC_VALUE_U32, 0, 0, 0, 0, 0},
+      {OBELISK_RT_BC_OPERAND_FRAME, OBELISK_RT_BC_OPERAND_OUTPUT,
+       OBELISK_RT_BC_VALUE_U32, 0, 0, 0, 4, 0},
+  };
+  const obelisk_rt_bytecode_service_site_v1 site{OBELISK_RT_BC_SERVICE_FILE_EOF,
+                                                 0, 2, 0, 0};
+  std::vector<uint8_t> code;
+  appendCheckedService(code, 0);
+  appendInstruction(code, OBELISK_RT_BC_TERMINATE);
+  auto descriptor = bytecodeDescriptor(code, 1);
+  descriptor.code.bytecode.service_sites = &site;
+  descriptor.code.bytecode.service_site_count = 1;
+  descriptor.code.bytecode.operands = operands;
+  descriptor.code.bytecode.operand_count = std::size(operands);
+  uint32_t eof = UINT32_C(0xdeadbeef);
+  obelisk_rt_fragment_action_v1 action{};
+  EXPECT_EQ(
+      executeBytecode(descriptor, &eof, sizeof(eof), 0, &action, 0, context),
+      OBELISK_RT_INVALID_HANDLE);
+  EXPECT_EQ(eof, 0u);
+}
+
+TEST(RuntimeFragmentTest, FailedBufferServiceStillProducesReleasableResource) {
+  const obelisk_rt_bytecode_operand_v1 operands[] = {
+      {OBELISK_RT_BC_OPERAND_CONSTANT, OBELISK_RT_BC_OPERAND_INPUT,
+       OBELISK_RT_BC_VALUE_BYTES, 0, 0, 0, 0, 0},
+      {OBELISK_RT_BC_OPERAND_IMMEDIATE, OBELISK_RT_BC_OPERAND_INPUT,
+       OBELISK_RT_BC_VALUE_ARGUMENT_ARRAY, 0, 0, 0, 0, 0},
+      {OBELISK_RT_BC_OPERAND_IMMEDIATE, OBELISK_RT_BC_OPERAND_INPUT,
+       OBELISK_RT_BC_VALUE_FORMAT_ENVIRONMENT, 0, 0, 0, 0, 0},
+      {OBELISK_RT_BC_OPERAND_REGISTER, OBELISK_RT_BC_OPERAND_OUTPUT,
+       OBELISK_RT_BC_VALUE_BUFFER, 0, 0, 1, 0, 0},
+      {OBELISK_RT_BC_OPERAND_RESOURCE, OBELISK_RT_BC_OPERAND_INPUT,
+       OBELISK_RT_BC_VALUE_BUFFER, 0, 0, 1, 0, 0},
+  };
+  const obelisk_rt_bytecode_service_site_v1 sites[] = {
+      {OBELISK_RT_BC_SERVICE_FORMAT, 0, 4, 0, 0},
+      {OBELISK_RT_BC_SERVICE_BUFFER_RELEASE, 4, 1, 0, 0},
+  };
+  std::vector<uint8_t> code;
+  appendInstruction(code, OBELISK_RT_BC_CALL_SERVICE, OBELISK_RT_BC_TYPE_STATUS,
+                    0, 0, 0, 0);
+  appendInstruction(code, OBELISK_RT_BC_CALL_SERVICE, OBELISK_RT_BC_TYPE_STATUS,
+                    2, 0, 0, 1);
+  appendInstruction(code, OBELISK_RT_BC_FAIL, OBELISK_RT_BC_TYPE_STATUS, 0, 0);
+  auto descriptor = bytecodeDescriptor(code, 3);
+  descriptor.code.bytecode.service_sites = sites;
+  descriptor.code.bytecode.service_site_count = std::size(sites);
+  descriptor.code.bytecode.operands = operands;
+  descriptor.code.bytecode.operand_count = std::size(operands);
+  obelisk_rt_fragment_action_v1 action{};
+  EXPECT_EQ(executeBytecode(descriptor, nullptr, 0, 0, &action),
+            OBELISK_RT_INVALID_ARGUMENT);
+}
+
+TEST_F(RuntimeTest, MalformedInstructionCannotRunEarlierFileService) {
+  TempDirectory temporary;
+  std::string path = temporary.file("must-not-exist.txt").string();
+  std::vector<uint8_t> constants(path.begin(), path.end());
+  uint64_t modeOffset = constants.size();
+  constants.push_back('w');
+  const obelisk_rt_bytecode_operand_v1 operands[] = {
+      {OBELISK_RT_BC_OPERAND_CONSTANT, OBELISK_RT_BC_OPERAND_INPUT,
+       OBELISK_RT_BC_VALUE_BYTES, 0, 0, 0, path.size(), 0},
+      {OBELISK_RT_BC_OPERAND_CONSTANT, OBELISK_RT_BC_OPERAND_INPUT,
+       OBELISK_RT_BC_VALUE_BYTES, 0, 0, modeOffset, 1, 0},
+      {OBELISK_RT_BC_OPERAND_FRAME, OBELISK_RT_BC_OPERAND_OUTPUT,
+       OBELISK_RT_BC_VALUE_U32, 0, 0, 0, 4, 0},
+  };
+  const obelisk_rt_bytecode_service_site_v1 site{
+      OBELISK_RT_BC_SERVICE_FILE_OPEN, 0, 3, 0, 0};
+  std::vector<uint8_t> code;
+  appendInstruction(code, OBELISK_RT_BC_CALL_SERVICE, OBELISK_RT_BC_TYPE_STATUS,
+                    0, 0, 0, 0);
+  appendInstruction(code, 255);
+  obelisk_rt_bytecode_validation_v1 validation{};
+  auto descriptor = bytecodeDescriptor(code, 1);
+  descriptor.code.bytecode.validation = &validation;
+  descriptor.code.bytecode.constants = constants.data();
+  descriptor.code.bytecode.constant_size = constants.size();
+  descriptor.code.bytecode.service_sites = &site;
+  descriptor.code.bytecode.service_site_count = 1;
+  descriptor.code.bytecode.operands = operands;
+  descriptor.code.bytecode.operand_count = std::size(operands);
+  uint32_t opened = 0;
+  obelisk_rt_fragment_action_v1 action{};
+  EXPECT_EQ(executeBytecode(descriptor, &opened, sizeof(opened), 0, &action, 0,
+                            context),
+            OBELISK_RT_INVALID_BYTECODE);
+  EXPECT_EQ(validation.state, OBELISK_RT_BC_VALIDATION_INVALID);
+  EXPECT_FALSE(std::filesystem::exists(path));
+}
+
+TEST(RuntimeFragmentTest, BytecodeServiceStatusPropagatesMissingContext) {
+  const obelisk_rt_bytecode_operand_v1 operand{OBELISK_RT_BC_OPERAND_IMMEDIATE,
+                                               OBELISK_RT_BC_OPERAND_INPUT,
+                                               OBELISK_RT_BC_VALUE_U32,
+                                               0,
+                                               0,
+                                               0,
+                                               0,
+                                               0};
+  const obelisk_rt_bytecode_service_site_v1 site{
+      OBELISK_RT_BC_SERVICE_FILE_FLUSH, 0, 1, 0, 0};
+  std::vector<uint8_t> code;
+  appendCheckedService(code, 0);
+  appendInstruction(code, OBELISK_RT_BC_TERMINATE);
+  auto descriptor = bytecodeDescriptor(code, 1);
+  descriptor.code.bytecode.service_sites = &site;
+  descriptor.code.bytecode.service_site_count = 1;
+  descriptor.code.bytecode.operands = &operand;
+  descriptor.code.bytecode.operand_count = 1;
+  obelisk_rt_fragment_action_v1 action{};
+  EXPECT_EQ(executeBytecode(descriptor, nullptr, 0, 0, &action),
+            OBELISK_RT_INVALID_ARGUMENT);
 }
 
 } // namespace

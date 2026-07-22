@@ -1,13 +1,27 @@
 # Obelisk native runtime
 
 `libobelisk_rt.a` contains target-native support code shared by generated
-simulators. It is a standalone C++17 archive with a versioned C ABI; LLVM,
-MLIR, slang, and GoogleTest are not runtime dependencies.
+simulators. It is a standalone C++17 archive with a lockstep C ABI; LLVM, MLIR,
+slang, and GoogleTest are not runtime dependencies.
 
 The implementation is separated into context/buffer ownership, fragment and
 bytecode dispatch, scalar formatting/display, and libc-backed file I/O
-translation units. This keeps the public ABI independent from the compiler
-while allowing each runtime area to evolve independently.
+translation units. The typed compiler boundary and runtime implementation evolve
+together while each runtime area remains independently testable.
+
+## Compiler/runtime compatibility
+
+The runtime ABI is an internal contract between components built from the same
+Obelisk source revision, not a backward-compatible SDK. Updating the compiler
+requires regenerating all native objects, bytecode, descriptors, and generated
+drivers, then relinking them with the runtime from that same build. Loading or
+linking artifacts produced by another Obelisk revision is unsupported.
+
+The `_v1` names and `OBELISK_RT_ABI_GENERATION` identify the current schema
+namespace; they do not establish a compatibility window or require a new
+namespace whenever the schema changes. Layouts, enum values, and entry points
+may change in place. Compile-time ABI assertions and compiler data-layout tests
+detect disagreement inside one build rather than preserving old artifacts.
 
 ## Fragment ABI and bytecode
 
@@ -31,16 +45,28 @@ register types and indices, branch destinations, frame ranges, and terminal
 actions. Malformed programs return `OBELISK_RT_INVALID_BYTECODE`; they do not
 read or write outside the supplied process frame.
 
+Validation covers the entire instruction encoding plus reachable control-flow
+register/resource types before the first instruction executes. A malformed
+instruction after a service call therefore cannot create a file or produce
+display output before being rejected. Service scalar out-parameters are
+zero-initialized and committed for every returned status, matching native ABI
+lowering. Buffer-producing services likewise always define an interpreter-local
+resource (including an empty buffer on failure); resources must be released on
+every successful fragment-exit path and are automatically released on errors.
+Mutable byte operands are explicit INOUT frame ranges, and a writable range in
+one service site may not overlap any other operand's frame range.
+
 A backward branch is well-formed, so validation cannot reject a fragment that
 never terminates — `while (1)` is legal SystemVerilog. Differential and fuzzing
 harnesses can use `obelisk_rt_v1_bytecode_execute_bounded`, which reports
 `OBELISK_RT_STEP_LIMIT` after a caller-supplied instruction limit. The ordinary
-production dispatch remains unbounded and the frozen v1 descriptor layout is
-unchanged.
+production dispatch remains unbounded. Bytecode v1 now also carries validated
+constant-pool and service-site metadata for format, display, and file calls.
 
 This bytecode is the cold-fragment execution substrate, not a second scheduler.
 Generated schedules and native fragments use the same action ABI and stable
-handles, while dynamic runtime services remain ordinary versioned C calls.
+handles, while dynamic runtime services remain ordinary calls through the same
+lockstep C boundary.
 
 ## Four-state values
 

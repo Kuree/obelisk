@@ -105,4 +105,17 @@ def ConvertObeliskSimValuesToStandardPass
   ];
 }
 
+def ConvertObeliskRuntimeToLLVMPass
+    : Pass<"convert-obelisk-runtime-to-llvm", "mlir::ModuleOp"> {
+  let summary = "Lower typed Obelisk runtime calls to the in-tree LLVM C ABI";
+  let description = [{
+    Validates the selected 64-bit little-endian target layout and linear runtime
+    buffer ownership, converts runtime and function/CFG boundary types, and
+    materializes exact external C declarations plus ABI out-parameter storage.
+  }];
+  let dependentDialects = [
+    "mlir::LLVM::LLVMDialect"
+  ];
+}
+
 #endif // OBELISK_CONVERSION_PASSES_TD

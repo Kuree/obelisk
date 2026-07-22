@@ -7,6 +7,8 @@ llvm_update_compile_flags(obelisk-opt)
 target_link_libraries(obelisk-opt
   PRIVATE
     ObeliskIR
+    ObeliskRuntimeIR
+    ObeliskRuntimeToLLVM
     ObeliskSimulationIR
     ObeliskSimulationToStandard
     ObeliskSlangIR

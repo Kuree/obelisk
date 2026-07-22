@@ -1,0 +1,42 @@
+// RuntimeCall enum name, operation class, in-tree C ABI symbol, signature key.
+OBELISK_RUNTIME_CALL(ContextCreate, RTContextCreateOp,
+                     obelisk_rt_v1_context_create, ContextCreate)
+OBELISK_RUNTIME_CALL(ContextDestroy, RTContextDestroyOp,
+                     obelisk_rt_v1_context_destroy, ContextDestroy)
+OBELISK_RUNTIME_CALL(StatusString, RTStatusStringOp,
+                     obelisk_rt_v1_status_string, StatusString)
+OBELISK_RUNTIME_CALL(BufferRelease, RTBufferReleaseOp,
+                     obelisk_rt_v1_buffer_release, BufferRelease)
+OBELISK_RUNTIME_CALL(LastError, RTLastErrorOp, obelisk_rt_v1_last_error,
+                     LastError)
+OBELISK_RUNTIME_CALL(Format, RTFormatOp, obelisk_rt_v1_format, Format)
+OBELISK_RUNTIME_CALL(Display, RTDisplayOp, obelisk_rt_v1_display, Display)
+OBELISK_RUNTIME_CALL(FileOpenMCD, RTFileOpenMCDOp,
+                     obelisk_rt_v1_file_open_mcd, FileOpenMCD)
+OBELISK_RUNTIME_CALL(FileOpen, RTFileOpenOp, obelisk_rt_v1_file_open, FileOpen)
+OBELISK_RUNTIME_CALL(FileClose, RTFileCloseOp, obelisk_rt_v1_file_close,
+                     FileDescriptorStatus)
+OBELISK_RUNTIME_CALL(FileFlush, RTFileFlushOp, obelisk_rt_v1_file_flush,
+                     FileDescriptorStatus)
+OBELISK_RUNTIME_CALL(FileWrite, RTFileWriteOp, obelisk_rt_v1_file_write,
+                     FileBytesCount)
+OBELISK_RUNTIME_CALL(FileRead, RTFileReadOp, obelisk_rt_v1_file_read,
+                     FileBytesCount)
+OBELISK_RUNTIME_CALL(FileGetc, RTFileGetcOp, obelisk_rt_v1_file_getc,
+                     FileByteOut)
+OBELISK_RUNTIME_CALL(FileUngetc, RTFileUngetcOp, obelisk_rt_v1_file_ungetc,
+                     FileUngetc)
+OBELISK_RUNTIME_CALL(FileGetline, RTFileGetlineOp,
+                     obelisk_rt_v1_file_getline, FileBufferOut)
+OBELISK_RUNTIME_CALL(FileEof, RTFileEofOp, obelisk_rt_v1_file_eof, FileU32Out)
+OBELISK_RUNTIME_CALL(FileError, RTFileErrorOp, obelisk_rt_v1_file_error,
+                     FileError)
+OBELISK_RUNTIME_CALL(FileSeek, RTFileSeekOp, obelisk_rt_v1_file_seek, FileSeek)
+OBELISK_RUNTIME_CALL(FileTell, RTFileTellOp, obelisk_rt_v1_file_tell,
+                     FileI64Out)
+OBELISK_RUNTIME_CALL(FileRewind, RTFileRewindOp, obelisk_rt_v1_file_rewind,
+                     FileDescriptorStatus)
+OBELISK_RUNTIME_CALL(FragmentExecute, RTFragmentExecuteOp,
+                     obelisk_rt_v1_fragment_execute, FragmentExecute)
+OBELISK_RUNTIME_CALL(BytecodeExecuteBounded, RTBytecodeExecuteBoundedOp,
+                     obelisk_rt_v1_bytecode_execute_bounded, BytecodeBounded)
