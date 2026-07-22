@@ -23,6 +23,23 @@ configure_lit_site_cfg(
   ${CMAKE_CURRENT_SOURCE_DIR}/lit.cfg.py
 )
 
+add_llvm_executable(obelisk-sim-standard-api-test EXCLUDE_FROM_ALL
+  SimulationToStandardAPITest.cpp
+)
+llvm_update_compile_flags(obelisk-sim-standard-api-test)
+target_link_libraries(obelisk-sim-standard-api-test PRIVATE
+  ObeliskSimulationIR
+  ObeliskSimulationToStandard
+  MLIRArithDialect
+  MLIRFuncDialect
+  MLIRIR
+  MLIRParser
+  MLIRTransforms
+)
+set_target_properties(obelisk-sim-standard-api-test PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+
 add_lit_testsuite(check-obelisk "Running the Obelisk regression tests"
   ${CMAKE_CURRENT_BINARY_DIR}
   DEPENDS
@@ -30,6 +47,7 @@ add_lit_testsuite(check-obelisk "Running the Obelisk regression tests"
   obelisk-filecheck
   obelisk-not
   obelisk-opt
+  obelisk-sim-standard-api-test
 )
 set_target_properties(check-obelisk PROPERTIES FOLDER "Tests")
 add_dependencies(check-obelisk check-obelisk-runtime-units)

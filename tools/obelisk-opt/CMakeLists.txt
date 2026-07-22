@@ -8,6 +8,7 @@ target_link_libraries(obelisk-opt
   PRIVATE
     ObeliskIR
     ObeliskSimulationIR
+    ObeliskSimulationToStandard
     ObeliskSlangIR
     ObeliskSlangToObelisk
     ObeliskToSimulation

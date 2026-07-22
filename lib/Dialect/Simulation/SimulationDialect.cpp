@@ -14,6 +14,7 @@
 #include "llvm/ADT/TypeSwitch.h"
 
 #include <algorithm>
+#include <limits>
 
 using namespace mlir;
 
@@ -954,8 +955,13 @@ LogicalResult SimLogicConcatOp::verify() {
 LogicalResult SimLogicReplicateOp::verify() {
   if (getCount() <= 0)
     return emitOpError("replication count must be positive");
-  uint64_t expected =
-      static_cast<uint64_t>(getCount()) * getInput().getType().getWidth();
+  uint64_t count = static_cast<uint64_t>(getCount());
+  uint64_t inputWidth = getInput().getType().getWidth();
+  if (count > std::numeric_limits<uint64_t>::max() / inputWidth)
+    return emitOpError("replication width overflows uint64_t");
+  uint64_t expected = count * inputWidth;
+  if (expected > std::numeric_limits<unsigned>::max())
+    return emitOpError("replication width exceeds the supported type width");
   if (expected != getResult().getType().getWidth())
     return emitOpError("result width must equal input width times count");
   return success();

@@ -25,13 +25,15 @@ config.substitutions.append(("%python", '"{}"'.format(sys.executable)))
 llvm_config.add_err_msg_substitutions()
 
 tool_dirs = [
+    config.test_exec_root,
     config.obelisk_driver_dir,
     config.obelisk_filecheck_dir,
     config.obelisk_opt_dir,
     config.llvm_tools_dir,
 ]
 llvm_config.add_tool_substitutions(
-    ["obelisk", "obelisk-opt", "FileCheck", "not"],
+    ["obelisk", "obelisk-opt", "obelisk-sim-standard-api-test", "FileCheck",
+     "mlir-opt", "mlir-runner", "not"],
     tool_dirs,
 )
 

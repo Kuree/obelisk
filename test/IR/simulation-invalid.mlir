@@ -632,6 +632,20 @@ module {
 // -----
 
 module {
+  obelisk_sim.design @replicate_width_overflow {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32} {
+      %value = obelisk_sim.logic.constant 0 : i4, 0 : i4 : !obelisk_sim.logic<4>
+      // expected-error @+1 {{replication width overflows uint64_t}}
+      %bad = obelisk_sim.logic.replicate %value times 4611686018427387905 : !obelisk_sim.logic<4> -> !obelisk_sim.logic<4>
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.design @insert_range {
     obelisk_sim.scope.decl 0
     obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32} {

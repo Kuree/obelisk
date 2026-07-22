@@ -88,4 +88,21 @@ def ObeliskSimFinalizePass
   ];
 }
 
+def ConvertObeliskSimValuesToStandardPass
+    : Pass<"convert-obelisk-sim-values-to-standard", "mlir::ModuleOp"> {
+  let summary = "Lower pure four-state packed values to standard integer IR";
+  let description = [{
+    Converts each !obelisk_sim.logic<W> value to an iW value plane and an iW
+    unknown plane, lowers the complete pure packed-value operation family, and
+    converts standard function and control-flow boundaries. Runtime resources,
+    scheduling, time, and obelisk_sim code-unit structure are left untouched.
+  }];
+  let dependentDialects = [
+    "mlir::arith::ArithDialect",
+    "mlir::cf::ControlFlowDialect",
+    "mlir::func::FuncDialect",
+    "mlir::scf::SCFDialect"
+  ];
+}
+
 #endif // OBELISK_CONVERSION_PASSES_TD
