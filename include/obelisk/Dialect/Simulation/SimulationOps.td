@@ -821,9 +821,12 @@ def SimLogicExtractOp : SimOp<"logic.extract", [Pure]> {
 def SimLogicDynExtractOp : SimOp<"logic.dyn_extract", [Pure]> {
   let summary = "dynamically select a four-state packed slice";
   let description = [{
-    The low-bit index may be a signless builtin integer or four-state logic.
-    An unknown index produces all X. For a partially out-of-range selection,
-    in-range bits are preserved and out-of-range bits are X.
+    The low-bit index may be a signless builtin integer or four-state logic and
+    its bit pattern is interpreted as a signed two's-complement value. Producers
+    must therefore zero-extend unsigned source indices before normalization so
+    that a positive index cannot be mistaken for a negative one. An unknown
+    index produces all X. For a partially out-of-range selection, in-range bits
+    are preserved and out-of-range bits are X.
   }];
   let arguments = (ins SimLogicType : $input, AnyType : $low_bit);
   let results = (outs SimLogicType : $result);
@@ -837,10 +840,13 @@ def SimLogicDynExtractOp : SimOp<"logic.dyn_extract", [Pure]> {
 def SimBitsDynExtractOp : SimOp<"bits.dyn_extract", [Pure]> {
   let summary = "dynamically select a two-state packed slice";
   let description = [{
-    The low-bit index may be a signless builtin integer or four-state logic.
-    An unknown index produces zero. For a partially out-of-range selection,
-    in-range bits are preserved and out-of-range bits are zero. This operation
-    defines bounds behavior without relying on poison-producing integer shifts.
+    The low-bit index may be a signless builtin integer or four-state logic and
+    its bit pattern is interpreted as a signed two's-complement value. Producers
+    must therefore zero-extend unsigned source indices before normalization so
+    that a positive index cannot be mistaken for a negative one. An unknown
+    index produces zero. For a partially out-of-range selection, in-range bits
+    are preserved and out-of-range bits are zero. This operation defines bounds
+    behavior without relying on poison-producing integer shifts.
   }];
   let arguments = (ins AnyInteger:$input, AnyType:$low_bit);
   let results = (outs AnyInteger:$result);
