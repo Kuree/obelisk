@@ -2029,16 +2029,12 @@ OpFoldResult SimLogicBinaryOp::fold(FoldAdaptor adaptor) {
     return planes && planes->unknown.isZero() && planes->value.isAllOnes();
   };
   unsigned width = getResult().getType().getWidth();
-  if (getKind() == BinaryKind::And &&
-      (isKnownZero(lhs) || isKnownZero(rhs)))
-    return getLogicAttribute(
-        getContext(),
-        {APInt::getZero(width), APInt::getZero(width)});
-  if (getKind() == BinaryKind::Or &&
-      (isKnownOnes(lhs) || isKnownOnes(rhs)))
-    return getLogicAttribute(
-        getContext(),
-        {APInt::getAllOnes(width), APInt::getZero(width)});
+  if (getKind() == BinaryKind::And && (isKnownZero(lhs) || isKnownZero(rhs)))
+    return getLogicAttribute(getContext(),
+                             {APInt::getZero(width), APInt::getZero(width)});
+  if (getKind() == BinaryKind::Or && (isKnownOnes(lhs) || isKnownOnes(rhs)))
+    return getLogicAttribute(getContext(),
+                             {APInt::getAllOnes(width), APInt::getZero(width)});
   if (!lhs || !rhs)
     return {};
 
@@ -2604,8 +2600,7 @@ struct FlattenConcat final : OpRewritePattern<SimLogicConcatOp> {
   }
 };
 
-struct ReplicateRepeatedConcatInput final
-    : OpRewritePattern<SimLogicConcatOp> {
+struct ReplicateRepeatedConcatInput final : OpRewritePattern<SimLogicConcatOp> {
   using OpRewritePattern::OpRewritePattern;
 
   LogicalResult matchAndRewrite(SimLogicConcatOp op,
@@ -2613,9 +2608,8 @@ struct ReplicateRepeatedConcatInput final
     if (op.getInputs().size() < 2)
       return failure();
     Value input = op.getInputs().front();
-    if (!llvm::all_of(op.getInputs(), [input](Value value) {
-          return value == input;
-        }))
+    if (!llvm::all_of(op.getInputs(),
+                      [input](Value value) { return value == input; }))
       return failure();
     auto replacement = SimLogicReplicateOp::create(
         rewriter, op.getLoc(), op.getResult().getType(), input,
@@ -2625,8 +2619,7 @@ struct ReplicateRepeatedConcatInput final
   }
 };
 
-struct MergeAdjacentConcatExtracts final
-    : OpRewritePattern<SimLogicConcatOp> {
+struct MergeAdjacentConcatExtracts final : OpRewritePattern<SimLogicConcatOp> {
   using OpRewritePattern::OpRewritePattern;
 
   LogicalResult matchAndRewrite(SimLogicConcatOp op,
@@ -2639,8 +2632,8 @@ struct MergeAdjacentConcatExtracts final
                       ? SimLogicExtractOp{}
                       : inputs.back().getDefiningOp<SimLogicExtractOp>();
       if (!left || !right || left.getInput() != right.getInput() ||
-          left.getLowBit() != right.getLowBit() +
-                                  right.getResult().getType().getWidth()) {
+          left.getLowBit() !=
+              right.getLowBit() + right.getResult().getType().getWidth()) {
         inputs.push_back(input);
         continue;
       }
@@ -2658,7 +2651,7 @@ struct MergeAdjacentConcatExtracts final
     if (inputs.size() == 1) {
       for (NamedAttribute attribute : op->getDiscardableAttrDictionary())
         inputs.front().getDefiningOp()->setAttr(attribute.getName(),
-                                               attribute.getValue());
+                                                attribute.getValue());
       rewriter.replaceOp(op, inputs.front());
       return success();
     }
@@ -2726,8 +2719,7 @@ struct SimplifyStaticExtract final : OpRewritePattern<ExtractOp> {
   }
 };
 
-struct SimplifyLogicExtractSource final
-    : OpRewritePattern<SimLogicExtractOp> {
+struct SimplifyLogicExtractSource final : OpRewritePattern<SimLogicExtractOp> {
   using OpRewritePattern::OpRewritePattern;
 
   LogicalResult matchAndRewrite(SimLogicExtractOp op,
@@ -2758,8 +2750,7 @@ struct SimplifyLogicExtractSource final
       return success();
     }
 
-    if (auto replicate =
-            op.getInput().getDefiningOp<SimLogicReplicateOp>()) {
+    if (auto replicate = op.getInput().getDefiningOp<SimLogicReplicateOp>()) {
       uint64_t inputWidth = replicate.getInput().getType().getWidth();
       if (low / inputWidth == (high - 1) / inputWidth) {
         auto replacement = SimLogicExtractOp::create(
