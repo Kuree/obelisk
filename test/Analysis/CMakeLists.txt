@@ -1,0 +1,15 @@
+add_mlir_library(ObeliskStateDomainTestPasses
+  StateDomainTestPass.cpp
+
+  EXCLUDE_FROM_LIBMLIR
+  DISABLE_INSTALL
+
+  DEPENDS
+  ObeliskSimulationOpsIncGen
+
+  LINK_LIBS PUBLIC
+  ObeliskSimulationAnalysis
+  ObeliskSimulationIR
+  MLIRIR
+  MLIRPass
+)

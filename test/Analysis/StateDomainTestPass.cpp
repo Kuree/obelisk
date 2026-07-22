@@ -1,0 +1,109 @@
+//===- StateDomainTestPass.cpp - Print whole-value state facts -----------===//
+
+#include "StateDomainTestPasses.h"
+
+#include "obelisk/Analysis/StateDomainAnalysis.h"
+
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/Pass/Pass.h"
+
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/raw_ostream.h"
+
+#include <optional>
+
+using namespace mlir;
+
+namespace {
+
+bool shouldPrint(Value value) {
+  if (isa<obelisk::sim::LogicType>(value.getType()))
+    return true;
+  auto result = dyn_cast<OpResult>(value);
+  return result && isa<obelisk::sim::SimLogicCompareOp>(result.getOwner());
+}
+
+class StateDomainTestPass
+    : public PassWrapper<StateDomainTestPass, OperationPass<ModuleOp>> {
+public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(StateDomainTestPass)
+
+  StringRef getArgument() const final {
+    return "test-obelisk-sim-state-domain";
+  }
+  StringRef getDescription() const final {
+    return "print read-only Obelisk simulation state-domain facts";
+  }
+
+  void runOnOperation() final {
+    SmallVector<obelisk::sim::SimDesignOp> designs(
+        getOperation().getOps<obelisk::sim::SimDesignOp>());
+    llvm::sort(designs, [](auto lhs, auto rhs) {
+      return lhs.getSymName() < rhs.getSymName();
+    });
+    for (obelisk::sim::SimDesignOp design : designs) {
+      FailureOr<obelisk::StateDomainAnalysis> analysis =
+          obelisk::StateDomainAnalysis::compute(design);
+      if (failed(analysis)) {
+        signalPassFailure();
+        return;
+      }
+      printDesign(design, *analysis);
+    }
+    markAllAnalysesPreserved();
+  }
+
+private:
+  static void printDesign(obelisk::sim::SimDesignOp design,
+                          const obelisk::StateDomainAnalysis &analysis) {
+    llvm::errs() << "state-domain @" << design.getSymName() << "\n";
+    SmallVector<obelisk::sim::SimFuncOp> functions(
+        design.getBody().front().getOps<obelisk::sim::SimFuncOp>());
+    llvm::sort(functions, [](auto lhs, auto rhs) {
+      return lhs.getSymName() < rhs.getSymName();
+    });
+    for (obelisk::sim::SimFuncOp function : functions) {
+      llvm::errs() << "func @" << function.getSymName() << "\n";
+      SmallVector<Block *> blocks;
+      function.walk<WalkOrder::PreOrder>(
+          [&](Block *block) { blocks.push_back(block); });
+      for (auto [blockIndex, block] : llvm::enumerate(blocks)) {
+        for (BlockArgument argument : block->getArguments()) {
+          if (shouldPrint(argument))
+            printFact(analysis, blockIndex, std::nullopt,
+                      argument.getArgNumber(), argument);
+        }
+        for (auto [opIndex, operation] : llvm::enumerate(*block))
+          for (auto [resultIndex, result] :
+               llvm::enumerate(operation.getResults()))
+            if (shouldPrint(result))
+              printFact(analysis, blockIndex, opIndex, resultIndex, result);
+      }
+    }
+  }
+
+  static void printFact(const obelisk::StateDomainAnalysis &analysis,
+                        unsigned block, std::optional<unsigned> operation,
+                        unsigned valueIndex, Value value) {
+    obelisk::StateDomainFact fact = analysis.get(value);
+    llvm::errs() << "  bb" << block;
+    if (operation)
+      llvm::errs() << ".op" << *operation << ".result";
+    else
+      llvm::errs() << ".arg";
+    llvm::errs() << valueIndex << ": "
+                 << obelisk::stringifyStateDomain(fact.domain) << " ("
+                 << obelisk::stringifyStateDomainReason(fact.reason) << ")\n";
+  }
+};
+
+} // namespace
+
+namespace obelisk {
+
+void registerStateDomainTestPasses() {
+  PassRegistration<StateDomainTestPass>();
+}
+
+} // namespace obelisk

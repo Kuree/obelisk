@@ -14,6 +14,7 @@ add_mlir_library(ObeliskToSimulation
 
   LINK_LIBS PUBLIC
   ObeliskIR
+  ObeliskSimulationAnalysis
   ObeliskSimulationIR
   MLIRAnalysis
   MLIRArithDialect

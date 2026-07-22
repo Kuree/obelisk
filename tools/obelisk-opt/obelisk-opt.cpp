@@ -13,12 +13,19 @@
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
 #include "mlir/Transforms/Passes.h"
 
+#ifdef OBELISK_INCLUDE_TESTS
+#include "StateDomainTestPasses.h"
+#endif
+
 int main(int argc, char **argv) {
   // The core transforms are part of the lowering pipeline, so tests need to
   // be able to run them directly on obelisk_sim IR.
   mlir::registerTransformsPasses();
   obelisk::registerObeliskConversionPasses();
   obelisk::registerObeliskToSimulationPipeline();
+#ifdef OBELISK_INCLUDE_TESTS
+  obelisk::registerStateDomainTestPasses();
+#endif
 
   mlir::DialectRegistry registry;
   mlir::registerAllDialects(registry);

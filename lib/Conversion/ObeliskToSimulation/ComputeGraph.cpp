@@ -9,6 +9,7 @@
 
 #include "ComputeGraph.h"
 
+#include "obelisk/Analysis/StateDomainAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
@@ -307,7 +308,7 @@ private:
 };
 
 //===----------------------------------------------------------------------===//
-// Whole-program SSA facts
+// Descriptor SSA facts
 //===----------------------------------------------------------------------===//
 
 struct FunctionInfo {
@@ -318,7 +319,6 @@ struct FunctionInfo {
 
   sim::SimFuncOp function;
   DenseMap<Value, DescriptorProvenance> provenance;
-  DenseMap<Value, bool> known;
   SmallVector<ComputeEffect> baseEffects;
   SmallVector<ComputeEffect> summary;
   SmallVector<sim::SimCallOp> calls;
@@ -340,54 +340,6 @@ void setIfChanged(DenseMap<Value, DescriptorProvenance> &map, Value value,
     found->second = joined;
     changed = true;
   }
-}
-
-bool allLogicOperandsKnown(Operation *op, const DenseMap<Value, bool> &known) {
-  return llvm::all_of(op->getOperands(), [&](Value operand) {
-    return !isa<sim::LogicType>(operand.getType()) || known.lookup(operand);
-  });
-}
-
-bool isKnownNonzeroLogic(Value value) {
-  auto constant = value.getDefiningOp<sim::SimLogicConstantOp>();
-  return constant && constant.getUnknown().isZero() &&
-         !constant.getValue().isZero();
-}
-
-bool isKnownLogicResult(Operation *op, const DenseMap<Value, bool> &known) {
-  if (auto constant = dyn_cast<sim::SimLogicConstantOp>(op))
-    return constant.getUnknown().isZero();
-  if (isa<sim::SimLogicFromBitsOp>(op))
-    return true;
-  if (auto binary = dyn_cast<sim::SimLogicBinaryOp>(op)) {
-    if (!allLogicOperandsKnown(op, known))
-      return false;
-    switch (binary.getKind()) {
-    case sim::BinaryKind::UDiv:
-    case sim::BinaryKind::SDiv:
-    case sim::BinaryKind::UMod:
-    case sim::BinaryKind::SMod:
-      return isKnownNonzeroLogic(binary.getRhs());
-    default:
-      return true;
-    }
-  }
-  if (auto compare = dyn_cast<sim::SimLogicCompareOp>(op)) {
-    if (compare.getKind() == sim::CompareKind::CaseEq ||
-        compare.getKind() == sim::CompareKind::CaseNe)
-      return true;
-    return allLogicOperandsKnown(op, known);
-  }
-  if (isa<sim::SimLogicDynExtractOp, sim::SimRefLoadOp, sim::SimNetReadOp,
-          sim::SimCallOp>(op))
-    return false;
-  if (isa<sim::SimLogicResizeOp, sim::SimLogicUnaryOp, sim::SimLogicReductionOp,
-          sim::SimLogicLogicalOp, sim::SimLogicShiftOp, sim::SimLogicConcatOp,
-          sim::SimLogicReplicateOp, sim::SimLogicExtractOp,
-          sim::SimLogicInsertOp>(op))
-    return allLogicOperandsKnown(op, known);
-  // New logic-producing operations must opt in with a sound transfer rule.
-  return false;
 }
 
 /// Forwarded operands reaching `block` argument `index` from each predecessor.
@@ -449,8 +401,6 @@ void propagateValueFacts(FunctionInfo &info,
       }
       info.provenance[argument] = provenance;
     }
-    if (isa<sim::LogicType>(argument.getType()))
-      info.known[argument] = false;
   }
 
   // Provenance ranges form a finite lattice bounded by each root descriptor.
@@ -559,56 +509,6 @@ void propagateValueFacts(FunctionInfo &info,
                   setIfChanged(info.provenance, result, DescriptorProvenance{},
                                changed);
             });
-      }
-    }
-    if (!changed)
-      break;
-  }
-
-  // Knownness is a separate monotone proof: facts start unproven and only
-  // become known after every relevant predecessor and operand is known.
-  while (true) {
-    bool changed = false;
-    for (Block &block : function.getBody()) {
-      if (&block != &entry) {
-        for (BlockArgument argument : block.getArguments()) {
-          if (!isa<sim::LogicType>(argument.getType()) ||
-              info.known.lookup(argument))
-            continue;
-          bool sawIncoming = false;
-          bool allIncomingKnown = true;
-          forEachIncoming(
-              block, [&](Operation *terminator, OperandRange forwarded) {
-                if (!terminator) {
-                  allIncomingKnown = false;
-                  return;
-                }
-                sawIncoming = true;
-                if (argument.getArgNumber() >= forwarded.size()) {
-                  allIncomingKnown = false;
-                  return;
-                }
-                Value incoming = forwarded[argument.getArgNumber()];
-                // Carrying an argument around a suspension loop preserves,
-                // rather than creates, a previously established proof.
-                if (incoming != argument && !info.known.lookup(incoming))
-                  allIncomingKnown = false;
-              });
-          if (sawIncoming && allIncomingKnown) {
-            info.known[argument] = true;
-            changed = true;
-          }
-        }
-      }
-      for (Operation &operation : block) {
-        if (!isKnownLogicResult(&operation, info.known))
-          continue;
-        for (Value result : operation.getResults())
-          if (isa<sim::LogicType>(result.getType()) &&
-              !info.known.lookup(result)) {
-            info.known[result] = true;
-            changed = true;
-          }
       }
     }
     if (!changed)
@@ -873,9 +773,11 @@ collectFragmentEffects(const ProgramAnalysis &analysis,
 /// A fragment is two-state when no four-state value it produces or consumes can
 /// hold X or Z. Continuation operands are excluded: they are the frame the
 /// *next* fragment receives, and that fragment proves them itself.
-bool fragmentIsTwoState(const FunctionInfo &info, Block &block) {
+bool fragmentIsTwoState(const StateDomainAnalysis &stateDomains,
+                        Block &block) {
   for (BlockArgument argument : block.getArguments())
-    if (isa<sim::LogicType>(argument.getType()) && !info.known.lookup(argument))
+    if (isa<sim::LogicType>(argument.getType()) &&
+        !stateDomains.isTwoState(argument))
       return false;
   // Only the suspension terminator gets to pass an unproven value along: it
   // merely forwards the frame, and the resuming fragment proves it there. Any
@@ -894,10 +796,12 @@ bool fragmentIsTwoState(const FunctionInfo &info, Block &block) {
     }
     for (Value operand : operation.getOperands())
       if (!forwarded.contains(operand) &&
-          isa<sim::LogicType>(operand.getType()) && !info.known.lookup(operand))
+          isa<sim::LogicType>(operand.getType()) &&
+          !stateDomains.isTwoState(operand))
         return false;
     for (Value result : operation.getResults())
-      if (isa<sim::LogicType>(result.getType()) && !info.known.lookup(result))
+      if (isa<sim::LogicType>(result.getType()) &&
+          !stateDomains.isTwoState(result))
         return false;
   }
   return true;
@@ -1146,9 +1050,11 @@ void assignLanes(MutableArrayRef<Fragment> fragments, uint32_t workers) {
 
 class ComputeGraphBuilder {
 public:
-  ComputeGraphBuilder(sim::SimDesignOp design, ComputeGraphOptions options)
+  ComputeGraphBuilder(sim::SimDesignOp design, ComputeGraphOptions options,
+                      const StateDomainAnalysis &stateDomains)
       : design(design), options(options), builder(design.getContext()),
-        analysis(analyzeProgram(design)), multiplicity(analysis) {}
+        analysis(analyzeProgram(design)), multiplicity(analysis),
+        stateDomains(stateDomains) {}
 
   FailureOr<ComputeGraphResult> derive();
 
@@ -1178,6 +1084,7 @@ private:
   Builder builder;
   ProgramAnalysis analysis;
   SpawnMultiplicity multiplicity;
+  const StateDomainAnalysis &stateDomains;
 
   SmallVector<Fragment> fragments;
   DenseMap<Block *, uint32_t> fragmentForBlock;
@@ -1223,7 +1130,7 @@ LogicalResult ComputeGraphBuilder::buildFragments() {
       fragmentForBlock[&block] = id;
       fragments.push_back({id, info.getFunction(), &block, ordinal++,
                            collectFragmentEffects(analysis, info, block), cost,
-                           fragmentIsTwoState(info, block)});
+                           fragmentIsTwoState(stateDomains, block)});
     }
   }
   assignLanes(fragments, options.workers);
@@ -1805,7 +1712,11 @@ sim::ComputeObservabilityKind getObservability(sim::ComputeVPIMode mode) {
 
 FailureOr<ComputeGraphResult> deriveComputeGraph(sim::SimDesignOp design,
                                                  ComputeGraphOptions options) {
-  return ComputeGraphBuilder(design, options).derive();
+  FailureOr<StateDomainAnalysis> stateDomains =
+      StateDomainAnalysis::compute(design);
+  if (failed(stateDomains))
+    return failure();
+  return ComputeGraphBuilder(design, options, *stateDomains).derive();
 }
 
 } // namespace obelisk::simlowering

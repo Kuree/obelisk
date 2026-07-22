@@ -26,6 +26,16 @@ module {
     // CHECK-SAME: twoState = true
     // CHECK: function = @forwards_only, block = 2
     // CHECK-SAME: twoState = false
+    // Direct call results and spawned value captures now use the whole-design
+    // state-domain solution rather than being rejected by a local heuristic.
+    // CHECK: function = @interproc_caller, block = 0
+    // CHECK-SAME: twoState = true
+    // CHECK: function = @interproc_unknown_caller, block = 0
+    // CHECK-SAME: twoState = false
+    // CHECK: function = @spawn_root, block = 0
+    // CHECK-SAME: twoState = true
+    // CHECK: function = @spawned_known, block = 0
+    // CHECK-SAME: twoState = true
     obelisk_sim.func @forwards_only(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %s: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64})
@@ -51,6 +61,56 @@ module {
       obelisk_sim.ref.store %loaded to %s : !obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>
       obelisk_sim.suspend.delay %delay to ^done(%loaded : !obelisk_sim.logic<8>)
     ^done(%carried: !obelisk_sim.logic<8>):
+      obelisk_sim.return
+    }
+
+    obelisk_sim.func @known_callee(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        -> !obelisk_sim.logic<8> attributes {entry_kind = 8 : i32} {
+      %bits = arith.constant 23 : i8
+      %known = obelisk_sim.logic.from_bits %bits : i8 -> !obelisk_sim.logic<8>
+      obelisk_sim.return %known : !obelisk_sim.logic<8>
+    }
+
+    obelisk_sim.func @interproc_caller(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {entry_kind = 1 : i32} {
+      %known = obelisk_sim.call @known_callee(%ctx) : (!obelisk_sim.context) -> !obelisk_sim.logic<8>
+      %local = obelisk_sim.ref.alloc %known : !obelisk_sim.logic<8> -> !obelisk_sim.ref<!obelisk_sim.logic<8>>
+      obelisk_sim.ref.store %known to %local : !obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>
+      obelisk_sim.return
+    }
+
+    obelisk_sim.func @unknown_callee(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        -> !obelisk_sim.logic<8> attributes {entry_kind = 8 : i32} {
+      %unknown = obelisk_sim.logic.constant 0 : i8, -1 : i8 : !obelisk_sim.logic<8>
+      obelisk_sim.return %unknown : !obelisk_sim.logic<8>
+    }
+
+    obelisk_sim.func @interproc_unknown_caller(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {entry_kind = 1 : i32} {
+      %unknown = obelisk_sim.call @unknown_callee(%ctx) : (!obelisk_sim.context) -> !obelisk_sim.logic<8>
+      %local = obelisk_sim.ref.alloc %unknown : !obelisk_sim.logic<8> -> !obelisk_sim.ref<!obelisk_sim.logic<8>>
+      obelisk_sim.ref.store %unknown to %local : !obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>
+      obelisk_sim.return
+    }
+
+    obelisk_sim.func @spawn_root(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {entry_kind = 0 : i32} {
+      %bits = arith.constant 42 : i8
+      %known = obelisk_sim.logic.from_bits %bits : i8 -> !obelisk_sim.logic<8>
+      %process = obelisk_sim.spawn @spawned_known(%ctx, %known) : !obelisk_sim.context, !obelisk_sim.logic<8> -> !obelisk_sim.process
+      obelisk_sim.return
+    }
+
+    obelisk_sim.func @spawned_known(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %known: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 2 : i32})
+        attributes {entry_kind = 1 : i32} {
+      %inverted = obelisk_sim.logic.unary bit_not %known : (!obelisk_sim.logic<8>) -> !obelisk_sim.logic<8>
       obelisk_sim.return
     }
   }
