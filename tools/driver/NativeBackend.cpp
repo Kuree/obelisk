@@ -131,7 +131,34 @@ FailureOr<std::string> resolveTargetPath(StringRef rootText,
   return current.string();
 }
 
-std::unique_ptr<TargetMachine> createTargetMachine(std::string &error) {
+CodeGenOptLevel getCodeGenOptLevel(uint32_t level) {
+  switch (level) {
+  case 0:
+    return CodeGenOptLevel::None;
+  case 1:
+    return CodeGenOptLevel::Less;
+  case 2:
+    return CodeGenOptLevel::Default;
+  default:
+    return CodeGenOptLevel::Aggressive;
+  }
+}
+
+OptimizationLevel getLLVMOptLevel(uint32_t level) {
+  switch (level) {
+  case 0:
+    return OptimizationLevel::O0;
+  case 1:
+    return OptimizationLevel::O1;
+  case 2:
+    return OptimizationLevel::O2;
+  default:
+    return OptimizationLevel::O3;
+  }
+}
+
+std::unique_ptr<TargetMachine> createTargetMachine(std::string &error,
+                                                   uint32_t optLevel) {
   static bool initialized = false;
   if (!initialized) {
     LLVMInitializeX86TargetInfo();
@@ -147,7 +174,7 @@ std::unique_ptr<TargetMachine> createTargetMachine(std::string &error) {
   TargetOptions targetOptions;
   return std::unique_ptr<TargetMachine>(target->createTargetMachine(
       triple, "x86-64", "", targetOptions, Reloc::PIC_, CodeModel::Small,
-      CodeGenOptLevel::Aggressive));
+      getCodeGenOptLevel(optLevel)));
 }
 
 LogicalResult addMinimalMain(ModuleOp module) {
@@ -183,7 +210,8 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine) {
 }
 
 LogicalResult optimizeLLVMModule(llvm::Module &module,
-                                 TargetMachine &targetMachine) {
+                                 TargetMachine &targetMachine,
+                                 uint32_t optLevel) {
   if (verifyModule(module, &errs())) {
     errs() << "obelisk: error: invalid LLVM IR before native optimization\n";
     return failure();
@@ -199,8 +227,10 @@ LogicalResult optimizeLLVMModule(llvm::Module &module,
   builder.registerLoopAnalyses(loopAnalyses);
   builder.crossRegisterProxies(loopAnalyses, functionAnalyses, cgsccAnalyses,
                                moduleAnalyses);
+  OptimizationLevel level = getLLVMOptLevel(optLevel);
   ModulePassManager passes =
-      builder.buildPerModuleDefaultPipeline(OptimizationLevel::O3);
+      optLevel == 0 ? builder.buildO0DefaultPipeline(level)
+                    : builder.buildPerModuleDefaultPipeline(level);
   passes.run(module, moduleAnalyses);
   if (verifyModule(module, &errs())) {
     errs() << "obelisk: error: invalid LLVM IR after native optimization\n";
@@ -449,7 +479,7 @@ LogicalResult emitNativeOutput(ModuleOp module,
                                const NativeOutputOptions &options) {
   std::string targetError;
   std::unique_ptr<TargetMachine> targetMachine =
-      createTargetMachine(targetError);
+      createTargetMachine(targetError, options.optLevel);
   if (!targetMachine) {
     errs() << "obelisk: error: could not create generic x86-64 target: "
            << targetError << '\n';
@@ -469,7 +499,8 @@ LogicalResult emitNativeOutput(ModuleOp module,
   }
   llvmModule->setTargetTriple(Triple(kTargetTriple));
   llvmModule->setDataLayout(targetMachine->createDataLayout());
-  if (failed(optimizeLLVMModule(*llvmModule, *targetMachine)))
+  if (failed(optimizeLLVMModule(*llvmModule, *targetMachine,
+                                options.optLevel)))
     return failure();
 
   if (options.kind == NativeOutputKind::LLVMIR) {

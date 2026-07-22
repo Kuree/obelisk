@@ -1,4 +1,4 @@
-// RUN: obelisk -emit-sim %s | FileCheck %s
+// RUN: obelisk -O0 -emit-sim %s | FileCheck %s
 
 module simulation_aggregates;
   typedef struct packed {

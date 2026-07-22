@@ -844,6 +844,74 @@ std::vector<uint8_t> makeDatabase(bool writable = true) {
   return bytes;
 }
 
+std::vector<uint8_t> makeCodeUnitDatabase() {
+  constexpr uint64_t scopeOffset = 128;
+  constexpr uint64_t processOffset = 192;
+  constexpr uint64_t functionOffset = 288;
+  constexpr uint64_t stringOffset = 384;
+  constexpr uint64_t stringSize = 20;
+  constexpr uint64_t indexOffset = 408;
+  std::vector<uint8_t> bytes(indexOffset + 72, 0);
+  std::memcpy(bytes.data(), "OBDSGN1\0", 8);
+  put32(bytes, 8, OBELISK_RT_DESIGN_VERSION);
+  put32(bytes, 12, OBELISK_RT_ABI_GENERATION);
+  put32(bytes, 16, OBELISK_RT_DESIGN_PROFILE_READ);
+  put32(bytes, 20, 128);
+  put64(bytes, 24, bytes.size());
+  put64(bytes, 40, scopeOffset);
+  put64(bytes, 48, scopeOffset);
+  put64(bytes, 56, 1);
+  put64(bytes, 64, processOffset);
+  put64(bytes, 72, 2);
+  put64(bytes, 80, stringOffset);
+  put64(bytes, 88, 0);
+  put64(bytes, 96, stringOffset);
+  put64(bytes, 104, stringSize);
+  put64(bytes, 112, indexOffset);
+  put64(bytes, 120, 3);
+
+  put32(bytes, scopeOffset, OBELISK_RT_DESIGN_RECORD_SCOPE);
+  put32(bytes, scopeOffset + 4, OBELISK_RT_DESIGN_CAP_ITERATE);
+  put64(bytes, scopeOffset + 8, 1);
+  put64(bytes, scopeOffset + 24, processOffset);
+  put64(bytes, scopeOffset + 40, stringOffset);
+
+  put32(bytes, processOffset, OBELISK_RT_DESIGN_RECORD_PROCESS);
+  put64(bytes, processOffset + 8, 71);
+  put64(bytes, processOffset + 16, scopeOffset);
+  put64(bytes, processOffset + 24, functionOffset);
+  put64(bytes, processOffset + 40, stringOffset + 4);
+
+  put32(bytes, functionOffset, OBELISK_RT_DESIGN_RECORD_FUNCTION);
+  put64(bytes, functionOffset + 8, 72);
+  put64(bytes, functionOffset + 16, scopeOffset);
+  put64(bytes, functionOffset + 40, stringOffset + 13);
+
+  std::memcpy(bytes.data() + stringOffset, "top\0top.proc\0top.fn\0",
+              stringSize);
+  struct Entry {
+    uint64_t hash;
+    uint64_t name;
+    uint64_t record;
+  };
+  std::array<Entry, 3> index{{
+      {nameHash("top"), stringOffset, scopeOffset},
+      {nameHash("top.proc"), stringOffset + 4, processOffset},
+      {nameHash("top.fn"), stringOffset + 13, functionOffset},
+  }};
+  std::sort(index.begin(), index.end(), [](const Entry &left,
+                                           const Entry &right) {
+    return std::tie(left.hash, left.name) < std::tie(right.hash, right.name);
+  });
+  for (size_t entry = 0; entry != index.size(); ++entry) {
+    put64(bytes, indexOffset + entry * 24, index[entry].hash);
+    put64(bytes, indexOffset + entry * 24 + 8, index[entry].name);
+    put64(bytes, indexOffset + entry * 24 + 16, index[entry].record);
+  }
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
 std::vector<uint8_t> makeAggregateDatabase() {
   constexpr uint64_t scopeOffset = 128;
   constexpr uint64_t objectOffset = 192;
@@ -1764,6 +1832,64 @@ TEST(DesignDatabase, TraversesLooksUpAndAccessesLiveState) {
   EXPECT_EQ(readValue, value);
   EXPECT_EQ(readUnknown, unknown);
   obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(DesignDatabase, TraversesStableProcessAndFunctionRecords) {
+  Fixture fixture;
+  fixture.database = makeCodeUnitDatabase();
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
+                            OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                            OBELISK_RT_EXECUTION_VPI_READ;
+  ASSERT_EQ(obelisk_rt_v1_design_validate(&fixture.execution), OBELISK_RT_OK);
+
+  obelisk_rt_design_cursor_v1 root{}, process{}, function{};
+  ASSERT_EQ(obelisk_rt_v1_design_root(&fixture.execution, &root),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_design_child(&fixture.execution, root, &process),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_design_sibling(&fixture.execution, process,
+                                          &function),
+            OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_design_sibling(&fixture.execution, function,
+                                          &root),
+            OBELISK_RT_EOF);
+
+  obelisk_rt_design_info_v1 info{};
+  ASSERT_EQ(obelisk_rt_v1_design_info(&fixture.execution, process, &info),
+            OBELISK_RT_OK);
+  EXPECT_EQ(info.kind, OBELISK_RT_DESIGN_RECORD_PROCESS);
+  EXPECT_EQ(info.handle.kind, OBELISK_RT_DESCRIPTOR_PROCESS);
+  EXPECT_EQ(info.handle.id, 71u);
+  EXPECT_EQ(info.type_offset, 0u);
+  ASSERT_EQ(obelisk_rt_v1_design_info(&fixture.execution, function, &info),
+            OBELISK_RT_OK);
+  EXPECT_EQ(info.kind, OBELISK_RT_DESIGN_RECORD_FUNCTION);
+  EXPECT_EQ(info.handle.kind, OBELISK_RT_DESCRIPTOR_FUNCTION);
+  EXPECT_EQ(info.handle.id, 72u);
+
+  constexpr std::string_view functionName = "top.fn";
+  obelisk_rt_design_cursor_v1 found{};
+  ASSERT_EQ(obelisk_rt_v1_design_lookup(
+                &fixture.execution,
+                reinterpret_cast<const uint8_t *>(functionName.data()),
+                functionName.size(), &found),
+            OBELISK_RT_OK);
+  EXPECT_EQ(found.offset, function.offset);
+
+  // Version 3 code-unit records must remain pointer-free and state-free.
+  std::vector<uint8_t> malformed = fixture.database;
+  put64(malformed, 288 + 48, 384);
+  put64(malformed, 32, imageChecksum(malformed));
+  fixture.execution.design_database = malformed.data();
+  EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
+            OBELISK_RT_INVALID_DESIGN);
+  put64(malformed, 288 + 48, 0);
+  put32(malformed, 8, 2);
+  put64(malformed, 32, imageChecksum(malformed));
+  EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
+            OBELISK_RT_INVALID_DESIGN);
 }
 
 TEST(DesignDatabase, TraversesRecursiveAggregateTypesAndRejectsCycles) {

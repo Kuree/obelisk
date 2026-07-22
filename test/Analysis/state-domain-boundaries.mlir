@@ -5,19 +5,32 @@
 
 module {
   obelisk_sim.design @boundaries {
+    obelisk_sim.code_unit.decl 9000001 in 0 function hierarchy "test.boundaries.callee.9000001"
+    obelisk_sim.code_unit.decl 9000002 in 0 initial hierarchy "test.boundaries.caller.9000002"
+    obelisk_sim.code_unit.decl 9000003 in 0 initial hierarchy "test.boundaries.external_caller.9000003"
+    obelisk_sim.code_unit.decl 9000004 in 0 initial hierarchy "test.boundaries.joiner.9000004"
+    obelisk_sim.code_unit.decl 9000005 in 0 function hierarchy "test.boundaries.loop.9000005"
+    obelisk_sim.code_unit.decl 9000006 in 0 initial hierarchy "test.boundaries.mixed_continuation.9000006"
+    obelisk_sim.code_unit.decl 9000007 in 0 initial hierarchy "test.boundaries.nested_caller.9000007"
+    obelisk_sim.code_unit.decl 9000008 in 0 function hierarchy "test.boundaries.nested_target.9000008"
+    obelisk_sim.code_unit.decl 9000009 in 0 function hierarchy "test.boundaries.recursive_a.9000009"
+    obelisk_sim.code_unit.decl 9000010 in 0 function hierarchy "test.boundaries.recursive_b.9000010"
+    obelisk_sim.code_unit.decl 9000011 in 0 function hierarchy "test.boundaries.unbound.9000011"
+    obelisk_sim.code_unit.decl 9000012 in 0 initial hierarchy "test.boundaries.unknown_worker.9000012"
+    obelisk_sim.code_unit.decl 9000013 in 0 initial hierarchy "test.boundaries.worker.9000013"
     obelisk_sim.scope.decl 0
 
     obelisk_sim.func @callee(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %value: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 1 : i32})
-        -> !obelisk_sim.logic<8> attributes {entry_kind = 8 : i32} {
+        -> !obelisk_sim.logic<8> attributes {entry_kind = 8 : i32, code_unit_id = 9000001 : i64} {
       %resized = obelisk_sim.logic.resize %value signed = false : !obelisk_sim.logic<8> -> !obelisk_sim.logic<8>
       obelisk_sim.return %resized : !obelisk_sim.logic<8>
     }
 
     obelisk_sim.func @caller(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
       %bits = arith.constant 5 : i8
       %known = obelisk_sim.logic.from_bits %bits : i8 -> !obelisk_sim.logic<8>
       %called = obelisk_sim.call @callee(%ctx, %known) : (!obelisk_sim.context, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<8>
@@ -28,7 +41,7 @@ module {
 
     obelisk_sim.func @external_caller(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000003 : i64} {
       %bits = arith.constant 1 : i8
       %known = obelisk_sim.logic.from_bits %bits : i8 -> !obelisk_sim.logic<8>
       %external = obelisk_sim.call @external_fn(%ctx, %known) : (!obelisk_sim.context, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<8>
@@ -42,7 +55,7 @@ module {
 
     obelisk_sim.func @joiner(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000004 : i64} {
       %condition = arith.constant true
       %known = obelisk_sim.logic.constant 3 : i8, 0 : i8 : !obelisk_sim.logic<8>
       %unknown = obelisk_sim.logic.constant 0 : i8, -1 : i8 : !obelisk_sim.logic<8>
@@ -55,7 +68,7 @@ module {
     obelisk_sim.func @loop(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %value: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 1 : i32})
-        -> !obelisk_sim.logic<8> attributes {entry_kind = 8 : i32} {
+        -> !obelisk_sim.logic<8> attributes {entry_kind = 8 : i32, code_unit_id = 9000005 : i64} {
       cf.br ^header(%value : !obelisk_sim.logic<8>)
     ^header(%current: !obelisk_sim.logic<8>):
       %next = obelisk_sim.logic.unary bit_not %current : (!obelisk_sim.logic<8>) -> !obelisk_sim.logic<8>
@@ -67,7 +80,7 @@ module {
 
     obelisk_sim.func @mixed_continuation(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000006 : i64} {
       %condition = arith.constant true
       %known = obelisk_sim.logic.constant 6 : i8, 0 : i8 : !obelisk_sim.logic<8>
       cf.cond_br %condition, ^suspend, ^ordinary
@@ -82,7 +95,7 @@ module {
 
     obelisk_sim.func @nested_caller(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000007 : i64} {
       %bits = arith.constant 4 : i8
       %known = obelisk_sim.logic.from_bits %bits : i8 -> !obelisk_sim.logic<8>
       %direct = obelisk_sim.call @nested_target(%ctx, %known) : (!obelisk_sim.context, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<8>
@@ -97,7 +110,7 @@ module {
     obelisk_sim.func @nested_target(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %value: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 1 : i32})
-        -> !obelisk_sim.logic<8> attributes {entry_kind = 8 : i32} {
+        -> !obelisk_sim.logic<8> attributes {entry_kind = 8 : i32, code_unit_id = 9000008 : i64} {
       %resized = obelisk_sim.logic.resize %value signed = false : !obelisk_sim.logic<8> -> !obelisk_sim.logic<8>
       obelisk_sim.return %resized : !obelisk_sim.logic<8>
     }
@@ -105,7 +118,7 @@ module {
     obelisk_sim.func @recursive_a(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %value: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 1 : i32})
-        -> !obelisk_sim.logic<8> attributes {entry_kind = 8 : i32} {
+        -> !obelisk_sim.logic<8> attributes {entry_kind = 8 : i32, code_unit_id = 9000009 : i64} {
       %from_b = obelisk_sim.call @recursive_b(%ctx, %value) : (!obelisk_sim.context, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<8>
       %zero = obelisk_sim.logic.constant 0 : i8, 0 : i8 : !obelisk_sim.logic<8>
       %known = obelisk_sim.logic.binary and %from_b, %zero : !obelisk_sim.logic<8>
@@ -115,7 +128,7 @@ module {
     obelisk_sim.func @recursive_b(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %value: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 1 : i32})
-        -> !obelisk_sim.logic<8> attributes {entry_kind = 8 : i32} {
+        -> !obelisk_sim.logic<8> attributes {entry_kind = 8 : i32, code_unit_id = 9000010 : i64} {
       %from_a = obelisk_sim.call @recursive_a(%ctx, %value) : (!obelisk_sim.context, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<8>
       obelisk_sim.return %from_a : !obelisk_sim.logic<8>
     }
@@ -134,21 +147,21 @@ module {
     obelisk_sim.func @unbound(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %value: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 1 : i32})
-        -> !obelisk_sim.logic<8> attributes {entry_kind = 8 : i32} {
+        -> !obelisk_sim.logic<8> attributes {entry_kind = 8 : i32, code_unit_id = 9000011 : i64} {
       obelisk_sim.return %value : !obelisk_sim.logic<8>
     }
 
     obelisk_sim.func @unknown_worker(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %value: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 2 : i32})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000012 : i64} {
       obelisk_sim.return
     }
 
     obelisk_sim.func @worker(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %value: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 2 : i32})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000013 : i64} {
       %delay = obelisk_sim.time.constant 1
       obelisk_sim.suspend.delay %delay to ^resume(%value : !obelisk_sim.logic<8>)
     ^resume(%continued: !obelisk_sim.logic<8>):

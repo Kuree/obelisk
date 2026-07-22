@@ -33,11 +33,12 @@ module {
         #obelisk_sim.region<kind = reactive, groups = []>,
         #obelisk_sim.region<kind = postponed, groups = []>]>
   } {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.stale_cost.process.9000001"
     obelisk_sim.scope.decl 0
     obelisk_sim.func @process(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, effect_summary = [],
-      fragment_abi = #obelisk_sim.fragment_abi<version = 1, fragments = [0]>} {
+      fragment_abi = #obelisk_sim.fragment_abi<version = 1, fragments = [0]>, code_unit_id = 9000001 : i64} {
       obelisk_sim.return
     }
   }
@@ -66,11 +67,12 @@ module {
         #obelisk_sim.region<kind = postponed, groups = [
           #obelisk_sim.group<fragments = [0], schedule = acyclic, feedback = []>]>]>
   } {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.wrong_region.process.9000001"
     obelisk_sim.scope.decl 0
     obelisk_sim.func @process(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, effect_summary = [],
-      fragment_abi = #obelisk_sim.fragment_abi<version = 1, fragments = [0]>} {
+      fragment_abi = #obelisk_sim.fragment_abi<version = 1, fragments = [0]>, code_unit_id = 9000001 : i64} {
       obelisk_sim.return
     }
   }
@@ -113,6 +115,7 @@ module {
         #obelisk_sim.region<kind = reactive, groups = []>,
         #obelisk_sim.region<kind = postponed, groups = []>]>
   } {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.stale_summary.process.9000001"
     obelisk_sim.scope.decl 0
     // expected-error @below {{effect summary does not match the executable CFG}}
     // expected-error @below {{fragment ABI does not match its CFG blocks}}
@@ -122,7 +125,7 @@ module {
       effect_summary = [#obelisk_sim.effect<effect = read, resource = unknown,
         target = unknown, descriptor = 0, formal = 0, low = 0, width = 0,
         dynamic = false, deferred = false, trigger = none>],
-      fragment_abi = #obelisk_sim.fragment_abi<version = 1, fragments = []>} {
+      fragment_abi = #obelisk_sim.fragment_abi<version = 1, fragments = []>, code_unit_id = 9000001 : i64} {
       obelisk_sim.return
     }
   }
@@ -161,6 +164,7 @@ module {
         #obelisk_sim.region<kind = reactive, groups = []>,
         #obelisk_sim.region<kind = postponed, groups = []>]>
   } {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.stale_sites.process.9000001"
     obelisk_sim.scope.decl 0
     obelisk_sim.storage.decl 0 in 0 : i8 design {observability = 0 : i32}
     obelisk_sim.func @process(
@@ -170,7 +174,7 @@ module {
       effect_summary = [#obelisk_sim.effect<effect = nba, resource = storage,
         target = descriptor, descriptor = 0, formal = 0, low = 0, width = 8,
         dynamic = false, deferred = false, trigger = none>],
-      fragment_abi = #obelisk_sim.fragment_abi<version = 1, fragments = [0]>} {
+      fragment_abi = #obelisk_sim.fragment_abi<version = 1, fragments = [0]>, code_unit_id = 9000001 : i64} {
       %zero = arith.constant 0 : i8
       // A single-shot site proven at compile time cannot claim the frontier.
       // expected-error @below {{has a stale NBA site}}
@@ -206,11 +210,12 @@ module {
         #obelisk_sim.region<kind = reactive, groups = []>,
         #obelisk_sim.region<kind = postponed, groups = []>]>
   } {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.missing_continuation.process.9000001"
     obelisk_sim.scope.decl 0
     obelisk_sim.func @process(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, effect_summary = [],
-      fragment_abi = #obelisk_sim.fragment_abi<version = 1, fragments = [0, 1]>} {
+      fragment_abi = #obelisk_sim.fragment_abi<version = 1, fragments = [0, 1]>, code_unit_id = 9000001 : i64} {
       %delay = obelisk_sim.time.constant 5
       // expected-error @below {{is missing its continuation site}}
       // expected-error @below {{is missing its timing site}}

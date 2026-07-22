@@ -197,8 +197,9 @@ bool getRecord(const Database &database, uint64_t offset,
     return kind == OBELISK_RT_DESIGN_RECORD_SCOPE;
   if (isTypeOffset(database, offset))
     return kind == OBELISK_RT_DESIGN_RECORD_TYPE;
-  return kind >= OBELISK_RT_DESIGN_RECORD_STORAGE &&
-         kind <= OBELISK_RT_DESIGN_RECORD_PROCESS;
+  return (kind >= OBELISK_RT_DESIGN_RECORD_STORAGE &&
+          kind <= OBELISK_RT_DESIGN_RECORD_PROCESS) ||
+         kind == OBELISK_RT_DESIGN_RECORD_FUNCTION;
 }
 
 bool getString(const Database &database, uint64_t offset,
@@ -247,7 +248,7 @@ bool validateDatabaseImpl(const Database &database) {
   if (database.scopeCount == 0 || !isScopeOffset(database, database.root))
     return false;
   std::array<std::unordered_set<uint64_t>,
-             OBELISK_RT_DESIGN_RECORD_PROCESS + 1>
+             OBELISK_RT_DESIGN_RECORD_FUNCTION + 1>
       stableIDs;
   std::unordered_set<uint64_t> reached;
   std::vector<uint64_t> pending{database.root};
@@ -302,7 +303,8 @@ bool validateDatabaseImpl(const Database &database) {
       if (!isScopeOffset(database, read64(record + 16)) ||
           !validSource(database, read64(record + 32), read64(record + 88)))
         return false;
-      if (kind == OBELISK_RT_DESIGN_RECORD_PROCESS) {
+      if (kind == OBELISK_RT_DESIGN_RECORD_PROCESS ||
+          kind == OBELISK_RT_DESIGN_RECORD_FUNCTION) {
         if (caps != 0 || typeOffset != 0 || read64(record + 56) != 0 ||
             read64(record + 64) != 0 || read64(record + 72) != 0 ||
             read64(record + 80) != 0)
@@ -535,6 +537,7 @@ bool validateDatabaseImpl(const Database &database) {
         database.data + database.objects + index * kObjectSize;
     uint32_t kind = read32(record);
     if (kind != OBELISK_RT_DESIGN_RECORD_PROCESS &&
+        kind != OBELISK_RT_DESIGN_RECORD_FUNCTION &&
         !visitType(read64(record + 48)))
       return false;
   }
@@ -602,6 +605,8 @@ uint32_t descriptorKind(uint32_t recordKind) {
     return OBELISK_RT_DESCRIPTOR_DRIVER;
   case OBELISK_RT_DESIGN_RECORD_PROCESS:
     return OBELISK_RT_DESCRIPTOR_PROCESS;
+  case OBELISK_RT_DESIGN_RECORD_FUNCTION:
+    return OBELISK_RT_DESCRIPTOR_FUNCTION;
   default:
     return OBELISK_RT_DESCRIPTOR_INVALID;
   }

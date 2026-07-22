@@ -1,13 +1,13 @@
 // RUN: obelisk -emit-obelisk %s > %t.semantic.mlir
-// RUN: obelisk-opt %t.semantic.mlir --lower-obelisk-to-sim > %t.threaded.mlir
-// RUN: obelisk-opt %t.semantic.mlir --lower-obelisk-to-sim --mlir-disable-threading > %t.single.mlir
+// RUN: obelisk-opt %t.semantic.mlir '--lower-obelisk-to-sim=opt-level=0' > %t.threaded.mlir
+// RUN: obelisk-opt %t.semantic.mlir '--lower-obelisk-to-sim=opt-level=0' --mlir-disable-threading > %t.single.mlir
 // RUN: diff -u %t.single.mlir %t.threaded.mlir
 // RUN: obelisk-opt %t.semantic.mlir '--lower-obelisk-to-sim=workers=2 vpi=read' | FileCheck %s --check-prefix=OPTIONS
 // RUN: FileCheck %s --check-prefix=SIM < %t.threaded.mlir
 // RUN: FileCheck %s --check-prefix=FINAL < %t.threaded.mlir
 // RUN: FileCheck %s --check-prefix=SCCP --implicit-check-not=123456789 < %t.threaded.mlir
-// RUN: obelisk -emit-sim %s | FileCheck %s --check-prefix=DRIVER
-// RUN: obelisk -emit-sim %s | FileCheck %s --check-prefix=COPYBACK
+// RUN: obelisk -O0 -emit-sim %s | FileCheck %s --check-prefix=DRIVER
+// RUN: obelisk -O0 -emit-sim %s | FileCheck %s --check-prefix=COPYBACK
 
 `timescale 1ns/1ps
 // OPTIONS: #obelisk_sim.graph<version = 1, vpi = read, workers = 2

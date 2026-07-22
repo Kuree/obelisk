@@ -4,11 +4,15 @@ module {
   obelisk_sim.design @roundtrip attributes {time_precision_fs = 1000 : i64} {
     obelisk_sim.scope.decl 0 hierarchy "top" debug "top"
     obelisk_sim.scope.decl 1 parent 0 hierarchy "top.child"
+    obelisk_sim.code_unit.decl 10 in 0 root_initializer hierarchy "__obelisk_root" debug "root initializer"
+    obelisk_sim.code_unit.decl 11 in 0 function hierarchy "top.callee" debug "callee"
+    obelisk_sim.code_unit.decl 12 in 1 initial hierarchy "top.child.initial"
+    obelisk_sim.code_unit.decl 13 in 1 initial hierarchy "top.child.process"
     obelisk_sim.storage.decl 0 in 1 : !obelisk_sim.logic<8> design hierarchy "top.child.state"
     obelisk_sim.net.decl 0 in 1 : !obelisk_sim.logic<8> design hierarchy "top.child.wire"
     obelisk_sim.driver.decl 0 in 1 drives 0 : !obelisk_sim.logic<8> design
 
-    obelisk_sim.func @root(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 0 : i32} {
+    obelisk_sim.func @root(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {code_unit_id = 10 : i64, entry_kind = 0 : i32} {
       %ref = obelisk_sim.context.storage %ctx[0] : !obelisk_sim.ref<!obelisk_sim.logic<8>>
       %net = obelisk_sim.context.net %ctx[0] : !obelisk_sim.net<!obelisk_sim.logic<8>>
       %driver = obelisk_sim.context.driver %ctx[0] : !obelisk_sim.driver<!obelisk_sim.logic<8>>
@@ -16,15 +20,15 @@ module {
       obelisk_sim.return
     }
 
-    obelisk_sim.func @callee(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %value: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 1 : i32}) -> !obelisk_sim.logic<8> attributes {entry_kind = 8 : i32} {
+    obelisk_sim.func @callee(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %value: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 1 : i32}) -> !obelisk_sim.logic<8> attributes {code_unit_id = 11 : i64, entry_kind = 8 : i32} {
       obelisk_sim.return %value : !obelisk_sim.logic<8>
     }
 
-    obelisk_sim.func @child(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32} {
+    obelisk_sim.func @child(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {code_unit_id = 12 : i64, entry_kind = 1 : i32} {
       obelisk_sim.return
     }
 
-    obelisk_sim.func @process(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %ref: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}, %net: !obelisk_sim.net<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 4 : i32, obelisk_sim.descriptor_id = 0 : i64}, %driver: !obelisk_sim.driver<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 0 : i64}) attributes {entry_kind = 1 : i32} {
+    obelisk_sim.func @process(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %ref: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}, %net: !obelisk_sim.net<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 4 : i32, obelisk_sim.descriptor_id = 0 : i64}, %driver: !obelisk_sim.driver<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 0 : i64}) attributes {code_unit_id = 13 : i64, entry_kind = 1 : i32} {
       %bits = arith.constant 5 : i8
       %index = arith.constant 1 : i32
       %logic_index = obelisk_sim.logic.constant 1 : i32, 0 : i32 : !obelisk_sim.logic<32>
@@ -88,6 +92,8 @@ module {
 }
 
 // CHECK: obelisk_sim.design @roundtrip attributes {time_precision_fs = 1000 : i64}
+// CHECK: obelisk_sim.code_unit.decl 10 in 0 root_initializer hierarchy "__obelisk_root"
+// CHECK: obelisk_sim.code_unit.decl 11 in 0 function hierarchy "top.callee"
 // CHECK: obelisk_sim.storage.decl 0 in 1 : !obelisk_sim.logic<8>
 // CHECK: obelisk_sim.net.decl 0 in 1 : !obelisk_sim.logic<8>
 // CHECK: obelisk_sim.driver.decl 0 in 1 drives 0

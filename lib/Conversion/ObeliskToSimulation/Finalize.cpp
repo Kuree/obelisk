@@ -34,6 +34,9 @@ struct ObeliskToSimulationPipelineOptions
   Option<std::string> vpi{
       *this, "vpi", llvm::cl::desc("VPI visibility mode: off, read, or full"),
       llvm::cl::init("off")};
+  Option<unsigned> optLevel{
+      *this, "opt-level", llvm::cl::desc("optimization level from 0 to 3"),
+      llvm::cl::init(3)};
 };
 
 /// The executable boundary is defined by the operations that may remain, not
@@ -155,7 +158,7 @@ void ObeliskSimFinalizePass::runOnOperation() {
 } // namespace
 
 void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
-                                      StringRef vpiMode) {
+                                      StringRef vpiMode, uint32_t optLevel) {
   manager.addPass(createObeliskSimPreparePass());
   OpPassManager &designManager = manager.nest<sim::SimDesignOp>();
   {
@@ -164,8 +167,6 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
     functionManager.addPass(createCanonicalizerPass());
     functionManager.addPass(createCSEPass());
     functionManager.addPass(createSROA());
-    functionManager.addPass(createCanonicalizerPass());
-    functionManager.addPass(createCSEPass());
     functionManager.addPass(createMem2Reg());
     functionManager.addPass(createCanonicalizerPass());
     functionManager.addPass(createCSEPass());
@@ -174,6 +175,23 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
   // symbol pruning before graph construction so its nested references can
   // never become stale.
   designManager.addPass(createSymbolDCEPass());
+  designManager.addPass(createObeliskSimSCCPPass());
+  {
+    OpPassManager &functionManager = designManager.nest<sim::SimFuncOp>();
+    functionManager.addPass(createCanonicalizerPass());
+    functionManager.addPass(createCSEPass());
+  }
+
+  ObeliskSimInlinePassOptions inlineOptions;
+  inlineOptions.optLevel = optLevel;
+  designManager.addPass(createObeliskSimInlinePass(std::move(inlineOptions)));
+  {
+    OpPassManager &functionManager = designManager.nest<sim::SimFuncOp>();
+    functionManager.addPass(createSROA());
+    functionManager.addPass(createMem2Reg());
+    functionManager.addPass(createCanonicalizerPass());
+    functionManager.addPass(createCSEPass());
+  }
   designManager.addPass(createObeliskSimSCCPPass());
   {
     OpPassManager &functionManager = designManager.nest<sim::SimFuncOp>();
@@ -199,7 +217,12 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
 }
 
 void buildObeliskToSimulationPipeline(OpPassManager &manager) {
-  buildObeliskToSimulationPipeline(manager, 1, "off");
+  buildObeliskToSimulationPipeline(manager, 1, "off", 3);
+}
+
+void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
+                                      StringRef vpiMode) {
+  buildObeliskToSimulationPipeline(manager, workers, vpiMode, 3);
 }
 
 void registerObeliskToSimulationPipeline() {
@@ -209,7 +232,8 @@ void registerObeliskToSimulationPipeline() {
       [](OpPassManager &manager,
          const ObeliskToSimulationPipelineOptions &options) {
         buildObeliskToSimulationPipeline(manager, options.workers.getValue(),
-                                         options.vpi.getValue());
+                                         options.vpi.getValue(),
+                                         options.optLevel.getValue());
       });
 }
 

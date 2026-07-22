@@ -5,6 +5,7 @@
 
 module {
   obelisk_sim.design @logic_rules {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.logic_rules.rules.9000001"
     obelisk_sim.scope.decl 0
     obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<8> design
 
@@ -12,7 +13,7 @@ module {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %net: !obelisk_sim.net<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 4 : i32, obelisk_sim.descriptor_id = 0 : i64},
         %dynamic_bits: i8 {obelisk_sim.capture_kind = 2 : i32})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %bits = arith.constant 3 : i8
       %index = arith.constant 2 : i8
       %outside = arith.constant 7 : i8

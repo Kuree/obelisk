@@ -9,6 +9,7 @@
 #ifndef OBELISK_LIB_CONVERSION_OBELISKTOSIMULATION_DETAIL_H
 #define OBELISK_LIB_CONVERSION_OBELISKTOSIMULATION_DETAIL_H
 
+#include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Dialect/Obelisk/ObeliskOps.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
@@ -186,26 +187,8 @@ ReexecutingBlockSet getReexecutingBlocks(sim::SimFuncOp function);
 /// including through continuation block arguments added by frame threading.
 bool isConstantTimeValue(::mlir::Value value);
 
-/// Concrete descriptor provenance recomputed from executable SSA/CFG. A value
-/// only has provenance when the analysis proved one, so absence from a
-/// `DescriptorProvenanceMap` and a fully unknown fact are distinct states.
-struct DescriptorProvenance {
-  sim::ComputeResourceKind resource = sim::ComputeResourceKind::Unknown;
-  std::optional<uint64_t> descriptor;
-  std::optional<unsigned> formal;
-  uint64_t low = 0;
-  uint64_t width = 0;
-  uint64_t rootWidth = 0;
-  bool dynamic = false;
-
-  bool operator==(const DescriptorProvenance &other) const {
-    return resource == other.resource && descriptor == other.descriptor &&
-           formal == other.formal && low == other.low && width == other.width &&
-           rootWidth == other.rootWidth && dynamic == other.dynamic;
-  }
-};
-using DescriptorProvenanceMap =
-    ::llvm::DenseMap<::mlir::Value, DescriptorProvenance>;
+using DescriptorProvenance = ::obelisk::analysis::DescriptorProvenance;
+using DescriptorProvenanceMap = ::obelisk::analysis::DescriptorProvenanceMap;
 
 } // namespace obelisk::simlowering
 

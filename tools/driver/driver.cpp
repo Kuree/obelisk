@@ -165,6 +165,16 @@ static int executeCompilation(const InputArgList &args) {
                     "'; expected off, read, or full");
     valid = false;
   }
+  uint32_t optLevel = 3;
+  if (const Arg *optimization =
+          args.getLastArg(OPT_O0, OPT_O1, OPT_O2, OPT_O3)) {
+    if (optimization->getOption().matches(OPT_O0))
+      optLevel = 0;
+    else if (optimization->getOption().matches(OPT_O1))
+      optLevel = 1;
+    else if (optimization->getOption().matches(OPT_O2))
+      optLevel = 2;
+  }
   if (!valid)
     return 1;
 
@@ -221,7 +231,7 @@ static int executeCompilation(const InputArgList &args) {
     passManager.addPass(obelisk::createConvertSlangToObeliskPass());
     if (emitSim || emitSchedule || native)
       obelisk::buildObeliskToSimulationPipeline(
-          passManager, requestedWorkers.value_or(1), vpiMode);
+          passManager, requestedWorkers.value_or(1), vpiMode, optLevel);
     if (failed(passManager.run(*module)))
       return 1;
   }
@@ -240,6 +250,7 @@ static int executeCompilation(const InputArgList &args) {
     nativeOptions.explicitSysroot =
         args.getLastArgValue(OPT_sysroot_EQ).str();
     nativeOptions.executablePath = driverExecutablePath;
+    nativeOptions.optLevel = optLevel;
     return succeeded(obelisk::driver::emitNativeOutput(*module, nativeOptions))
                ? 0
                : 1;

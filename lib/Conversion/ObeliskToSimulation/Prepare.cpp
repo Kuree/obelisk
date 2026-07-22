@@ -44,6 +44,18 @@ static std::optional<uint64_t> getUnsigned64(IntegerAttr attribute) {
   return attribute.getValue().getZExtValue();
 }
 
+/// FNV-1a over the elaborated hierarchical name. Keep the sign bit clear so
+/// the stable unsigned identity has one canonical nonnegative i64 encoding.
+static uint64_t getStableCodeUnitID(StringRef hierarchy) {
+  uint64_t hash = UINT64_C(14695981039346656037);
+  for (unsigned char byte : hierarchy.bytes()) {
+    hash ^= byte;
+    hash *= UINT64_C(1099511628211);
+  }
+  hash &= static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
+  return hash == 0 ? 1 : hash;
+}
+
 /// Node kinds whose semantics are declarative but that derive from a shared
 /// generic base, so they cannot carry the SemanticDeclarativeNode trait.
 static bool isDeclarativeLeafNode(Operation *op) {
@@ -71,6 +83,7 @@ struct UnitInfo {
   uint64_t id;
   sim::EntryKind entryKind;
   std::string symbol;
+  std::string hierarchy;
   sim::SimFuncOp function;
 };
 
@@ -95,6 +108,16 @@ static FailureOr<sim::EntryKind> getEntryKind(Operation *op) {
   }
   emitError(getSemanticLocation(op)) << "unknown procedural block kind";
   return failure();
+}
+
+static std::string getCodeUnitHierarchy(Operation *op) {
+  StringRef lexical = getHierarchyName(op);
+  if (isa<semantic::SVSubroutineSymbolOp>(op))
+    return lexical.str();
+  auto nodeID = op->getAttrOfType<IntegerAttr>("node_id");
+  return (lexical + ".$code_unit_" +
+          Twine(nodeID.getValue().getZExtValue()))
+      .str();
 }
 
 /// Automatic locals live in the owning unit's binding table instead of the
@@ -493,6 +516,7 @@ void ObeliskSimPreparePass::runOnOperation() {
   units.reserve(sourceUnits.size());
   llvm::StringMap<std::string> directCallees;
   llvm::StringMap<Operation *> directCalleeSources;
+  llvm::DenseMap<uint64_t, Operation *> codeUnitIDs;
   for (auto [index, source] : llvm::enumerate(sourceUnits)) {
     FailureOr<sim::EntryKind> entryKind = getEntryKind(source);
     if (failed(entryKind)) {
@@ -523,9 +547,27 @@ void ObeliskSimPreparePass::runOnOperation() {
       }
     }
     std::string symbol = llvm::formatv("unit_{0}", index).str();
-    units.push_back(
-        {source, static_cast<uint64_t>(index), *entryKind, symbol, {}});
     StringRef hierarchy = getHierarchyName(source);
+    if (hierarchy.empty()) {
+      emitError(getSemanticLocation(source))
+          << "code unit has no elaborated hierarchical name";
+      invalid = true;
+      continue;
+    }
+    std::string codeUnitHierarchy = getCodeUnitHierarchy(source);
+    uint64_t id = getStableCodeUnitID(codeUnitHierarchy);
+    auto [collision, inserted] = codeUnitIDs.try_emplace(id, source);
+    if (!inserted) {
+      emitError(getSemanticLocation(source))
+          << "stable code-unit ID collision for '" << codeUnitHierarchy
+          << "'";
+      emitRemark(getSemanticLocation(collision->second))
+          << "colliding code unit is here";
+      invalid = true;
+      continue;
+    }
+    units.push_back(
+        {source, id, *entryKind, symbol, std::move(codeUnitHierarchy), {}});
     if (!hierarchy.empty()) {
       directCallees[hierarchy] = symbol;
       directCalleeSources[hierarchy] = source;
@@ -533,6 +575,24 @@ void ObeliskSimPreparePass::runOnOperation() {
   }
   if (invalid)
     return abort();
+
+  uint64_t rootCodeUnitID = getStableCodeUnitID("__obelisk_root");
+  if (auto collision = codeUnitIDs.find(rootCodeUnitID);
+      collision != codeUnitIDs.end()) {
+    emitError(getSemanticLocation(collision->second))
+        << "stable code-unit ID collides with the root initializer";
+    return abort();
+  }
+  sim::SimCodeUnitDeclOp::create(
+      builder, module.getLoc(), rootCodeUnitID, uint64_t{0},
+      sim::EntryKind::RootInitializer, builder.getStringAttr("__obelisk_root"),
+      builder.getStringAttr("root initializer"));
+  for (UnitInfo &unit : units)
+    sim::SimCodeUnitDeclOp::create(
+        builder, getSemanticLocation(unit.source), unit.id,
+        getScopeId(unit.source), unit.entryKind,
+        builder.getStringAttr(unit.hierarchy),
+        builder.getStringAttr(getDebugName(unit.source)));
 
   llvm::DenseMap<Operation *,
                  SmallVector<std::pair<std::string, DescriptorInfo>>>
@@ -638,10 +698,12 @@ void ObeliskSimPreparePass::runOnOperation() {
       captureMetadata(builder, sim::CaptureKind::Context)};
   auto rootType =
       FunctionType::get(context, {sim::ContextType::get(context)}, {});
+  SmallVector<NamedAttribute> rootAttrs{builder.getNamedAttr(
+      "code_unit_id", builder.getI64IntegerAttr(rootCodeUnitID))};
   auto rootInitializer =
       sim::SimFuncOp::create(builder, module.getLoc(), "__obelisk_root",
                              rootType, sim::EntryKind::RootInitializer,
-                             ArrayRef<NamedAttribute>{}, rootArgAttrs);
+                             rootAttrs, rootArgAttrs);
 
   for (UnitInfo &unit : units) {
     auto captures = unitCaptures.lookup(unit.source);
@@ -831,7 +893,10 @@ void ObeliskSimPreparePass::runOnOperation() {
     NamedAttribute delayScaleAttr = builder.getNamedAttr(
         delayScaleAttrName,
         builder.getI64IntegerAttr(timeUnitFs / designPrecisionFs));
-    SmallVector<NamedAttribute> functionAttrs{bindingAttr, delayScaleAttr};
+    SmallVector<NamedAttribute> functionAttrs{
+        bindingAttr, delayScaleAttr,
+        builder.getNamedAttr("code_unit_id",
+                             builder.getI64IntegerAttr(unit.id))};
     StringRef hierarchy = getHierarchyName(unit.source);
     if (!hierarchy.empty())
       functionAttrs.push_back(builder.getNamedAttr(

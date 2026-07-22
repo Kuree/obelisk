@@ -10,6 +10,9 @@
 
 module {
   obelisk_sim.design @units {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.units.unit_0.9000001"
+    obelisk_sim.code_unit.decl 9000002 in 0 always_comb hierarchy "test.units.unit_1.9000002"
+    obelisk_sim.code_unit.decl 9000003 in 0 initial hierarchy "test.units.unit_2.9000003"
     obelisk_sim.scope.decl 0
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<8> design hierarchy "top.a"
     obelisk_sim.storage.decl 1 in 0 : !obelisk_sim.logic<8> design hierarchy "top.b"
@@ -33,7 +36,7 @@ module {
         %b: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64})
         attributes {entry_kind = 1 : i32, obelisk_sim.delay_scale = 1 : i64,
                     obelisk_sim.bindings = [{argument = 1 : i64, path = "top.a"},
-                                            {argument = 2 : i64, path = "top.b"}]} {
+                                            {argument = 2 : i64, path = "top.b"}], code_unit_id = 9000001 : i64} {
       obelisk.sv.statement.list attributes {node_id = 1 : i64} {
         obelisk.sv.statement.expression_statement attributes {node_id = 2 : i64} {
           obelisk.sv.expression.assignment attributes {node_id = 3 : i64, assignment_kind = 0 : i32, semantic_type = !logic8} {
@@ -75,7 +78,7 @@ module {
         %b: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64})
         attributes {entry_kind = 4 : i32, obelisk_sim.delay_scale = 1 : i64,
                     obelisk_sim.bindings = [{argument = 1 : i64, path = "top.a"},
-                                            {argument = 2 : i64, path = "top.b"}]} {
+                                            {argument = 2 : i64, path = "top.b"}], code_unit_id = 9000002 : i64} {
       obelisk.sv.statement.expression_statement attributes {node_id = 20 : i64} {
         obelisk.sv.expression.assignment attributes {node_id = 21 : i64, assignment_kind = 0 : i32, semantic_type = !logic8} {
           obelisk.sv.expression.named_value attributes {node_id = 22 : i64, referenced_path = "top.b", referenced_symbol = @b, semantic_type = !logic8} {
@@ -99,7 +102,7 @@ module {
         %selected: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 2 : i64})
         attributes {entry_kind = 1 : i32, obelisk_sim.delay_scale = 1 : i64,
                     obelisk_sim.bindings = [{argument = 1 : i64, path = "top.a"},
-                                            {argument = 2 : i64, path = "top.selected"}]} {
+                                            {argument = 2 : i64, path = "top.selected"}], code_unit_id = 9000003 : i64} {
       obelisk.sv.statement.expression_statement attributes {node_id = 30 : i64} {
         obelisk.sv.expression.assignment attributes {node_id = 31 : i64, assignment_kind = 0 : i32, semantic_type = !logic1} {
           obelisk.sv.expression.named_value attributes {node_id = 32 : i64, referenced_path = "top.selected", referenced_symbol = @selected, semantic_type = !logic1} {

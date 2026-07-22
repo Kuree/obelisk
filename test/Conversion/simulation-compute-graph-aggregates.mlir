@@ -17,6 +17,14 @@
 
 module {
   obelisk_sim.design @aggregate_provenance {
+    obelisk_sim.code_unit.decl 9000001 in 0 function hierarchy "test.aggregate_provenance.packed_payload.9000001"
+    obelisk_sim.code_unit.decl 9000002 in 0 function hierarchy "test.aggregate_provenance.unpacked_valid.9000002"
+    obelisk_sim.code_unit.decl 9000003 in 0 function hierarchy "test.aggregate_provenance.descending_first.9000003"
+    obelisk_sim.code_unit.decl 9000004 in 0 function hierarchy "test.aggregate_provenance.descending_second.9000004"
+    obelisk_sim.code_unit.decl 9000005 in 0 function hierarchy "test.aggregate_provenance.ascending_last.9000005"
+    obelisk_sim.code_unit.decl 9000006 in 0 function hierarchy "test.aggregate_provenance.dynamic_array.9000006"
+    obelisk_sim.code_unit.decl 9000007 in 0 function hierarchy "test.aggregate_provenance.union_byte.9000007"
+    obelisk_sim.code_unit.decl 9000008 in 0 function hierarchy "test.aggregate_provenance.union_integer.9000008"
     obelisk_sim.scope.decl 0
     obelisk_sim.storage.decl 0 in 0 : !packed_record design
     obelisk_sim.storage.decl 1 in 0 : !unpacked_record design
@@ -30,7 +38,7 @@ module {
     obelisk_sim.func @packed_payload(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %record: !obelisk_sim.ref<!packed_record> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}) -> !obelisk_sim.packed_array<3 : 0 x i1>
-        attributes {entry_kind = 8 : i32} {
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000001 : i64} {
       %field = obelisk_sim.ref.subelement %record[[0]] : !obelisk_sim.ref<!packed_record> -> !obelisk_sim.ref<!obelisk_sim.packed_array<3 : 0 x i1>>
       %value = obelisk_sim.ref.load %field : !obelisk_sim.ref<!obelisk_sim.packed_array<3 : 0 x i1>> -> !obelisk_sim.packed_array<3 : 0 x i1>
       obelisk_sim.return %value : !obelisk_sim.packed_array<3 : 0 x i1>
@@ -42,7 +50,7 @@ module {
     obelisk_sim.func @unpacked_valid(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %record: !obelisk_sim.ref<!unpacked_record> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64}) -> i1
-        attributes {entry_kind = 8 : i32} {
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000002 : i64} {
       %field = obelisk_sim.ref.subelement %record[[1]] : !obelisk_sim.ref<!unpacked_record> -> !obelisk_sim.ref<i1>
       %value = obelisk_sim.ref.load %field : !obelisk_sim.ref<i1> -> i1
       obelisk_sim.return %value : i1
@@ -54,7 +62,7 @@ module {
     obelisk_sim.func @descending_first(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %array: !obelisk_sim.ref<!descending> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 2 : i64}) -> i8
-        attributes {entry_kind = 8 : i32} {
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000003 : i64} {
       %field = obelisk_sim.ref.subelement %array[[0]] : !obelisk_sim.ref<!descending> -> !obelisk_sim.ref<i8>
       %value = obelisk_sim.ref.load %field : !obelisk_sim.ref<i8> -> i8
       obelisk_sim.return %value : i8
@@ -65,7 +73,7 @@ module {
     obelisk_sim.func @descending_second(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %array: !obelisk_sim.ref<!descending> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 2 : i64}) -> i8
-        attributes {entry_kind = 8 : i32} {
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000004 : i64} {
       %field = obelisk_sim.ref.subelement %array[[1]] : !obelisk_sim.ref<!descending> -> !obelisk_sim.ref<i8>
       %value = obelisk_sim.ref.load %field : !obelisk_sim.ref<i8> -> i8
       obelisk_sim.return %value : i8
@@ -76,7 +84,7 @@ module {
     obelisk_sim.func @ascending_last(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %array: !obelisk_sim.ref<!ascending> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 3 : i64}) -> i8
-        attributes {entry_kind = 8 : i32} {
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000005 : i64} {
       %field = obelisk_sim.ref.subelement %array[[2]] : !obelisk_sim.ref<!ascending> -> !obelisk_sim.ref<i8>
       %value = obelisk_sim.ref.load %field : !obelisk_sim.ref<i8> -> i8
       obelisk_sim.return %value : i8
@@ -89,7 +97,7 @@ module {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %array: !obelisk_sim.ref<!descending> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 2 : i64},
         %index: i64 {obelisk_sim.capture_kind = 2 : i32}) -> i8
-        attributes {entry_kind = 8 : i32} {
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000006 : i64} {
       %field = obelisk_sim.ref.array_element %array[%index] : (!obelisk_sim.ref<!descending>, i64) -> !obelisk_sim.ref<i8>
       %value = obelisk_sim.ref.load %field : !obelisk_sim.ref<i8> -> i8
       obelisk_sim.return %value : i8
@@ -101,7 +109,7 @@ module {
     obelisk_sim.func @union_byte(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %choice: !obelisk_sim.ref<!choice> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 4 : i64}) -> i8
-        attributes {entry_kind = 8 : i32} {
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000007 : i64} {
       %field = obelisk_sim.ref.subelement %choice[[0]] : !obelisk_sim.ref<!choice> -> !obelisk_sim.ref<i8>
       %value = obelisk_sim.ref.load %field : !obelisk_sim.ref<i8> -> i8
       obelisk_sim.return %value : i8
@@ -112,7 +120,7 @@ module {
     obelisk_sim.func @union_integer(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %choice: !obelisk_sim.ref<!choice> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 4 : i64}) -> i32
-        attributes {entry_kind = 8 : i32} {
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000008 : i64} {
       %field = obelisk_sim.ref.subelement %choice[[1]] : !obelisk_sim.ref<!choice> -> !obelisk_sim.ref<i32>
       %value = obelisk_sim.ref.load %field : !obelisk_sim.ref<i32> -> i32
       obelisk_sim.return %value : i32

@@ -18,6 +18,7 @@
 
 module {
   obelisk_sim.design @aggregates {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.aggregates.roundtrip.9000001"
     obelisk_sim.scope.decl 0
     obelisk_sim.storage.decl 0 in 0 : !record design
     obelisk_sim.net.decl 0 in 0 : !words design
@@ -34,7 +35,7 @@ module {
         %record_ref: !obelisk_sim.ref<!record> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64},
         %driver: !obelisk_sim.driver<!words> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 0 : i64},
         %index: i32 {obelisk_sim.capture_kind = 2 : i32})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %zero = arith.constant 0 : i8
       %one = arith.constant 1 : i8
       %true = arith.constant true

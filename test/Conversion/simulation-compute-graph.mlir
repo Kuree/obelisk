@@ -22,6 +22,17 @@ module {
   // CHECK-SAME: #obelisk_sim.region<kind = reactive
   // CHECK-SAME: #obelisk_sim.region<kind = postponed
   obelisk_sim.design @graph {
+    obelisk_sim.code_unit.decl 9000001 in 0 function hierarchy "test.graph.read_nibble.9000001"
+    obelisk_sim.code_unit.decl 9000002 in 0 initial hierarchy "test.graph.process.9000002"
+    obelisk_sim.code_unit.decl 9000003 in 0 initial hierarchy "test.graph.unbounded_nba.9000003"
+    obelisk_sim.code_unit.decl 9000004 in 0 initial hierarchy "test.graph.unknown_div.9000004"
+    obelisk_sim.code_unit.decl 9000005 in 0 function hierarchy "test.graph.recursive.9000005"
+    obelisk_sim.code_unit.decl 9000006 in 0 initial hierarchy "test.graph.caller_a.9000006"
+    obelisk_sim.code_unit.decl 9000007 in 0 initial hierarchy "test.graph.caller_b.9000007"
+    obelisk_sim.code_unit.decl 9000008 in 0 initial hierarchy "test.graph.event_threaded.9000008"
+    obelisk_sim.code_unit.decl 9000009 in 0 initial hierarchy "test.graph.backward_cfg.9000009"
+    obelisk_sim.code_unit.decl 9000010 in 0 always_ff hierarchy "test.graph.z_clocked_nba.9000010"
+    obelisk_sim.code_unit.decl 9000011 in 0 initial hierarchy "test.graph.z_repeated_delayed_nba.9000011"
     obelisk_sim.scope.decl 0
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<16> design
     obelisk_sim.storage.decl 1 in 0 : !obelisk_sim.logic<8> design
@@ -32,7 +43,7 @@ module {
     obelisk_sim.func @read_nibble(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %formal: !obelisk_sim.ref<!obelisk_sim.logic<16>> {obelisk_sim.capture_kind = 1 : i32})
-        -> !obelisk_sim.logic<4> attributes {entry_kind = 8 : i32} {
+        -> !obelisk_sim.logic<4> attributes {entry_kind = 8 : i32, code_unit_id = 9000001 : i64} {
       %slice = obelisk_sim.ref.extract %formal from 4 : !obelisk_sim.ref<!obelisk_sim.logic<16>> -> !obelisk_sim.ref<!obelisk_sim.logic<4>>
       %value = obelisk_sim.ref.load %slice : !obelisk_sim.ref<!obelisk_sim.logic<4>> -> !obelisk_sim.logic<4>
       obelisk_sim.return %value : !obelisk_sim.logic<4>
@@ -54,7 +65,7 @@ module {
         %wide: !obelisk_sim.ref<!obelisk_sim.logic<16>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64},
         %result: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64},
         %index: i8 {obelisk_sim.capture_kind = 2 : i32})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
       %value = obelisk_sim.call @read_nibble(%ctx, %wide) : (!obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<16>>) -> !obelisk_sim.logic<4>
       %dynamic = obelisk_sim.ref.dyn_extract %wide from %index : (!obelisk_sim.ref<!obelisk_sim.logic<16>>, i8) -> !obelisk_sim.ref<!obelisk_sim.logic<4>>
       obelisk_sim.ref.store %value to %dynamic : !obelisk_sim.logic<4>, !obelisk_sim.ref<!obelisk_sim.logic<4>>
@@ -97,7 +108,7 @@ module {
     obelisk_sim.func @unbounded_nba(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %result: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000003 : i64} {
       %value = obelisk_sim.logic.constant 1 : i8, 0 : i8 : !obelisk_sim.logic<8>
       cf.br ^loop
     ^loop:
@@ -110,7 +121,7 @@ module {
     // Division by a known zero is not proof of a two-state result.
     obelisk_sim.func @unknown_div(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000004 : i64} {
       %one = obelisk_sim.logic.constant 1 : i8, 0 : i8 : !obelisk_sim.logic<8>
       %zero = obelisk_sim.logic.constant 0 : i8, 0 : i8 : !obelisk_sim.logic<8>
       %quotient = obelisk_sim.logic.binary udiv %one, %zero : !obelisk_sim.logic<8>
@@ -121,19 +132,19 @@ module {
     // process callers therefore require an explicit conflict edge.
     obelisk_sim.func @recursive(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
-        attributes {entry_kind = 8 : i32} {
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000005 : i64} {
       obelisk_sim.call @recursive(%ctx) : (!obelisk_sim.context) -> ()
       obelisk_sim.return
     }
     obelisk_sim.func @caller_a(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000006 : i64} {
       obelisk_sim.call @recursive(%ctx) : (!obelisk_sim.context) -> ()
       obelisk_sim.return
     }
     obelisk_sim.func @caller_b(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000007 : i64} {
       obelisk_sim.call @recursive(%ctx) : (!obelisk_sim.context) -> ()
       obelisk_sim.return
     }
@@ -143,7 +154,7 @@ module {
     // the same concrete event provenance as its defining context.event op.
     obelisk_sim.func @event_threaded(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000008 : i64} {
       %event = obelisk_sim.context.event %ctx[0] : !obelisk_sim.event
       %delay = obelisk_sim.time.constant 1
       obelisk_sim.suspend.delay %delay to ^resume
@@ -158,7 +169,7 @@ module {
     obelisk_sim.func @backward_cfg(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %result: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000009 : i64} {
       %value = obelisk_sim.logic.constant 1 : i8, 0 : i8 : !obelisk_sim.logic<8>
       cf.br ^high
     ^low:
@@ -176,7 +187,7 @@ module {
     obelisk_sim.func @z_clocked_nba(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %result: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64})
-        attributes {entry_kind = 5 : i32} {
+        attributes {entry_kind = 5 : i32, code_unit_id = 9000010 : i64} {
       %value = obelisk_sim.logic.constant 1 : i8, 0 : i8 : !obelisk_sim.logic<8>
       cf.br ^clock
     ^clock:
@@ -192,7 +203,7 @@ module {
     obelisk_sim.func @z_repeated_delayed_nba(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %result: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000011 : i64} {
       %value = obelisk_sim.logic.constant 1 : i8, 0 : i8 : !obelisk_sim.logic<8>
       %delay = obelisk_sim.time.constant 100
       %tick = obelisk_sim.time.constant 1

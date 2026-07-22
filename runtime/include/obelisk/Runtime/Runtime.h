@@ -55,7 +55,8 @@ enum {
   OBELISK_RT_DESCRIPTOR_DRIVER = 4,
   OBELISK_RT_DESCRIPTOR_EVENT = 5,
   OBELISK_RT_DESCRIPTOR_PROCESS = 6,
-  OBELISK_RT_DESCRIPTOR_FRAGMENT = 7
+  OBELISK_RT_DESCRIPTOR_FRAGMENT = 7,
+  OBELISK_RT_DESCRIPTOR_FUNCTION = 8
 };
 
 typedef struct obelisk_rt_handle_v1 {
@@ -95,8 +96,8 @@ typedef struct obelisk_rt_design_bytecode_entry_v1 {
   uint32_t reserved;
 } obelisk_rt_design_bytecode_entry_v1;
 
-#define OBELISK_RT_DESIGN_BYTECODE_VERSION 1u
-#define OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE 192u
+#define OBELISK_RT_DESIGN_BYTECODE_VERSION 2u
+#define OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE 208u
 #define OBELISK_RT_DESIGN_BYTECODE_INSTRUCTION_SIZE 32u
 
 typedef uint8_t obelisk_rt_design_register_kind;
@@ -257,7 +258,7 @@ typedef obelisk_rt_status (*obelisk_rt_import_callback_v1)(
 
 // The design database is a DWARF-like byte image. All cursors and links are
 // section-relative offsets, never native pointers.
-#define OBELISK_RT_DESIGN_VERSION 2u
+#define OBELISK_RT_DESIGN_VERSION 3u
 #define OBELISK_RT_DESIGN_PROFILE_READ (UINT32_C(1) << 0)
 #define OBELISK_RT_DESIGN_PROFILE_WRITE (UINT32_C(1) << 1)
 
@@ -269,7 +270,8 @@ enum {
   OBELISK_RT_DESIGN_RECORD_NET = 3,
   OBELISK_RT_DESIGN_RECORD_DRIVER = 4,
   OBELISK_RT_DESIGN_RECORD_PROCESS = 5,
-  OBELISK_RT_DESIGN_RECORD_TYPE = 6
+  OBELISK_RT_DESIGN_RECORD_TYPE = 6,
+  OBELISK_RT_DESIGN_RECORD_FUNCTION = 7
 };
 
 typedef uint32_t obelisk_rt_design_capability;

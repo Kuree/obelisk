@@ -7,10 +7,11 @@
 
 module {
   obelisk_sim.design @aggregate_domain {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.aggregate_domain.rules.9000001"
     obelisk_sim.scope.decl 0
     obelisk_sim.func @rules(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %bits = arith.constant 1 : i8
       %known = obelisk_sim.logic.from_bits %bits : i8 -> !obelisk_sim.logic<8>
       %record = obelisk_sim.aggregate.construct %known, %bits : (!obelisk_sim.logic<8>, i8) -> !record

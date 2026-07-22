@@ -7,6 +7,13 @@ module {
   // fragment proves those values itself. That exemption belongs to the
   // terminator alone.
   obelisk_sim.design @two_state {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.two_state.forwards_only.9000001"
+    obelisk_sim.code_unit.decl 9000002 in 0 initial hierarchy "test.two_state.also_consumes.9000002"
+    obelisk_sim.code_unit.decl 9000003 in 0 function hierarchy "test.two_state.known_callee.9000003"
+    obelisk_sim.code_unit.decl 9000004 in 0 initial hierarchy "test.two_state.interproc_caller.9000004"
+    obelisk_sim.code_unit.decl 9000005 in 0 function hierarchy "test.two_state.unknown_callee.9000005"
+    obelisk_sim.code_unit.decl 9000006 in 0 initial hierarchy "test.two_state.interproc_unknown_caller.9000006"
+    obelisk_sim.code_unit.decl 9000007 in 0 initial hierarchy "test.two_state.spawned_known.9000007"
     obelisk_sim.scope.decl 0
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<8> design
 
@@ -39,7 +46,7 @@ module {
     obelisk_sim.func @forwards_only(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %s: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %loaded = obelisk_sim.ref.load %s : !obelisk_sim.ref<!obelisk_sim.logic<8>> -> !obelisk_sim.logic<8>
       %delay = obelisk_sim.time.constant 1
       obelisk_sim.suspend.delay %delay to ^mid
@@ -53,7 +60,7 @@ module {
     obelisk_sim.func @also_consumes(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %s: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
       %loaded = obelisk_sim.ref.load %s : !obelisk_sim.ref<!obelisk_sim.logic<8>> -> !obelisk_sim.logic<8>
       %delay = obelisk_sim.time.constant 1
       obelisk_sim.suspend.delay %delay to ^next
@@ -66,7 +73,7 @@ module {
 
     obelisk_sim.func @known_callee(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
-        -> !obelisk_sim.logic<8> attributes {entry_kind = 8 : i32} {
+        -> !obelisk_sim.logic<8> attributes {entry_kind = 8 : i32, code_unit_id = 9000003 : i64} {
       %bits = arith.constant 23 : i8
       %known = obelisk_sim.logic.from_bits %bits : i8 -> !obelisk_sim.logic<8>
       obelisk_sim.return %known : !obelisk_sim.logic<8>
@@ -74,7 +81,7 @@ module {
 
     obelisk_sim.func @interproc_caller(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000004 : i64} {
       %known = obelisk_sim.call @known_callee(%ctx) : (!obelisk_sim.context) -> !obelisk_sim.logic<8>
       %local = obelisk_sim.ref.alloc %known : !obelisk_sim.logic<8> -> !obelisk_sim.ref<!obelisk_sim.logic<8>>
       obelisk_sim.ref.store %known to %local : !obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>
@@ -83,14 +90,14 @@ module {
 
     obelisk_sim.func @unknown_callee(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
-        -> !obelisk_sim.logic<8> attributes {entry_kind = 8 : i32} {
+        -> !obelisk_sim.logic<8> attributes {entry_kind = 8 : i32, code_unit_id = 9000005 : i64} {
       %unknown = obelisk_sim.logic.constant 0 : i8, -1 : i8 : !obelisk_sim.logic<8>
       obelisk_sim.return %unknown : !obelisk_sim.logic<8>
     }
 
     obelisk_sim.func @interproc_unknown_caller(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000006 : i64} {
       %unknown = obelisk_sim.call @unknown_callee(%ctx) : (!obelisk_sim.context) -> !obelisk_sim.logic<8>
       %local = obelisk_sim.ref.alloc %unknown : !obelisk_sim.logic<8> -> !obelisk_sim.ref<!obelisk_sim.logic<8>>
       obelisk_sim.ref.store %unknown to %local : !obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>
@@ -109,7 +116,7 @@ module {
     obelisk_sim.func @spawned_known(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %known: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 2 : i32})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000007 : i64} {
       %inverted = obelisk_sim.logic.unary bit_not %known : (!obelisk_sim.logic<8>) -> !obelisk_sim.logic<8>
       obelisk_sim.return
     }

@@ -85,6 +85,24 @@ def SimScopeDeclOp : SimOp<"scope.decl", [MemoryEffects<[MemWrite<SimInventoryRe
   let hasVerifier = 1;
 }
 
+def SimCodeUnitDeclOp : SimOp<"code_unit.decl", [
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable process or zero-time function inventory record";
+  let description = [{
+    Retains the elaborated identity and lexical hierarchy of a code unit even
+    when IPO erases its executable `obelisk_sim.func`. The ID is stable across
+    compilation modes and is also the runtime process handle ID.
+  }];
+  let arguments = (ins I64Attr:$id, I64Attr:$scope_id,
+                       SimEntryKind:$code_unit_kind,
+                       StrAttr:$hierarchical_name,
+                       OptionalAttr<StrAttr>:$debug_name);
+  let assemblyFormat = [{$id `in` $scope_id $code_unit_kind
+    `hierarchy` $hierarchical_name (`debug` $debug_name^)? attr-dict}];
+  let hasVerifier = 1;
+}
+
 def SimStorageDeclOp : SimOp<"storage.decl", [MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
   let summary = "immutable mutable-storage descriptor";
   let arguments = (ins I64Attr:$id, I64Attr:$scope_id, TypeAttr:$type,
@@ -136,6 +154,7 @@ def SimFuncOp : SimOp<"func", [
                        OptionalAttr<StrAttr>:$sym_visibility,
                        OptionalAttr<DictArrayAttr>:$arg_attrs,
                        OptionalAttr<DictArrayAttr>:$res_attrs,
+                       OptionalAttr<I64Attr>:$code_unit_id,
                        OptionalAttr<SimComputeEffectArrayAttr>:$effect_summary,
                        OptionalAttr<SimFragmentABIAttr>:$fragment_abi);
   let regions = (region AnyRegion:$body);

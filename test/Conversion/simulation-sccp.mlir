@@ -6,6 +6,27 @@
 
 module {
   obelisk_sim.design @sccp {
+    obelisk_sim.code_unit.decl 9000001 in 0 function hierarchy "test.sccp.add1.9000001"
+    obelisk_sim.code_unit.decl 9000002 in 0 function hierarchy "test.sccp.constant_caller.9000002"
+    obelisk_sim.code_unit.decl 9000003 in 0 function hierarchy "test.sccp.identity.9000003"
+    obelisk_sim.code_unit.decl 9000004 in 0 function hierarchy "test.sccp.conflicting_calls.9000004"
+    obelisk_sim.code_unit.decl 9000005 in 0 function hierarchy "test.sccp.recursive.9000005"
+    obelisk_sim.code_unit.decl 9000006 in 0 function hierarchy "test.sccp.recursive_caller.9000006"
+    obelisk_sim.code_unit.decl 9000007 in 0 initial hierarchy "test.sccp.leaf.9000007"
+    obelisk_sim.code_unit.decl 9000008 in 0 initial hierarchy "test.sccp.handle_sink.9000008"
+    obelisk_sim.code_unit.decl 9000009 in 0 initial hierarchy "test.sccp.spawn_target.9000009"
+    obelisk_sim.code_unit.decl 9000010 in 0 initial hierarchy "test.sccp.continuation.9000010"
+    obelisk_sim.code_unit.decl 9000011 in 0 function hierarchy "test.sccp.cfg_join.9000011"
+    obelisk_sim.code_unit.decl 9000012 in 0 function hierarchy "test.sccp.outer_with_nested.9000012"
+    obelisk_sim.code_unit.decl 9000013 in 0 function hierarchy "test.sccp.nested_code_unit.9000013"
+    obelisk_sim.code_unit.decl 9000014 in 0 function hierarchy "test.sccp.nested_isolation_caller.9000014"
+    obelisk_sim.code_unit.decl 9000015 in 0 function hierarchy "test.sccp.public_identity.9000015"
+    obelisk_sim.code_unit.decl 9000016 in 0 function hierarchy "test.sccp.nested_identity.9000016"
+    obelisk_sim.code_unit.decl 9000017 in 0 function hierarchy "test.sccp.public_boundary_caller.9000017"
+    obelisk_sim.code_unit.decl 9000018 in 0 function hierarchy "test.sccp.external_caller.9000018"
+    obelisk_sim.code_unit.decl 9000019 in 0 function hierarchy "test.sccp.address_taken.9000019"
+    obelisk_sim.code_unit.decl 9000020 in 0 function hierarchy "test.sccp.address_taken_caller.9000020"
+    obelisk_sim.code_unit.decl 9000021 in 0 function hierarchy "test.sccp.unresolved_caller.9000021"
     obelisk_sim.scope.decl 0 {callback = @address_taken}
 
     // Exact call arguments and results cross both sides of the boundary.
@@ -15,7 +36,7 @@ module {
     obelisk_sim.func private @add1(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %value: i32 {obelisk_sim.capture_kind = 1 : i32}) -> i32
-        attributes {entry_kind = 8 : i32} {
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000001 : i64} {
       %one = arith.constant 1 : i32
       %sum = arith.addi %value, %one : i32
       obelisk_sim.return %sum : i32
@@ -27,7 +48,7 @@ module {
     // CHECK: obelisk_sim.return %[[CALL_ANSWER]] : i32
     obelisk_sim.func @constant_caller(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> i32
-        attributes {entry_kind = 8 : i32} {
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000002 : i64} {
       %input = arith.constant 41 : i32
       %result = obelisk_sim.call @add1(%ctx, %input) : (!obelisk_sim.context, i32) -> i32
       obelisk_sim.return %result : i32
@@ -40,7 +61,7 @@ module {
     obelisk_sim.func private @identity(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %value: i32 {obelisk_sim.capture_kind = 1 : i32}) -> i32
-        attributes {entry_kind = 8 : i32} {
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000003 : i64} {
       obelisk_sim.return %value : i32
     }
 
@@ -50,7 +71,7 @@ module {
     // CHECK: obelisk_sim.return %[[FIRST]] : i32
     obelisk_sim.func @conflicting_calls(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> i32
-        attributes {entry_kind = 8 : i32} {
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000004 : i64} {
       %one = arith.constant 1 : i32
       %two = arith.constant 2 : i32
       %first = obelisk_sim.call @identity(%ctx, %one) : (!obelisk_sim.context, i32) -> i32
@@ -63,7 +84,7 @@ module {
     obelisk_sim.func private @recursive(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %value: i32 {obelisk_sim.capture_kind = 1 : i32}) -> i32
-        attributes {entry_kind = 8 : i32} {
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000005 : i64} {
       %zero = arith.constant 0 : i32
       %is_zero = arith.cmpi eq, %value, %zero : i32
       cf.cond_br %is_zero, ^base, ^step
@@ -82,7 +103,7 @@ module {
     // CHECK: obelisk_sim.return %[[SEVEN]] : i32
     obelisk_sim.func @recursive_caller(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> i32
-        attributes {entry_kind = 8 : i32} {
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000006 : i64} {
       %zero = arith.constant 0 : i32
       %result = obelisk_sim.call @recursive(%ctx, %zero) : (!obelisk_sim.context, i32) -> i32
       obelisk_sim.return %result : i32
@@ -91,14 +112,14 @@ module {
     obelisk_sim.func private @leaf(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %value: i32 {obelisk_sim.capture_kind = 2 : i32})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000007 : i64} {
       obelisk_sim.return
     }
 
     obelisk_sim.func private @handle_sink(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %handle: !obelisk_sim.process {obelisk_sim.capture_kind = 2 : i32})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000008 : i64} {
       obelisk_sim.return
     }
 
@@ -111,7 +132,7 @@ module {
     obelisk_sim.func private @spawn_target(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %value: i32 {obelisk_sim.capture_kind = 2 : i32})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000009 : i64} {
       %one = arith.constant 1 : i32
       %next = arith.addi %value, %one : i32
       %handle = obelisk_sim.spawn @leaf(%ctx, %next) : !obelisk_sim.context, i32 -> !obelisk_sim.process
@@ -128,7 +149,7 @@ module {
     obelisk_sim.func private @continuation(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %value: i32 {obelisk_sim.capture_kind = 2 : i32})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000010 : i64} {
       %delay = obelisk_sim.time.constant 1
       obelisk_sim.suspend.delay %delay to ^resume(%value : i32)
     ^resume(%continued: i32):
@@ -144,7 +165,7 @@ module {
     obelisk_sim.func @cfg_join(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %condition: i1 {obelisk_sim.capture_kind = 1 : i32}) -> i32
-        attributes {entry_kind = 8 : i32} {
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000011 : i64} {
       cf.cond_br %condition, ^left, ^right
     ^left:
       %lhs = arith.constant 9 : i32
@@ -168,12 +189,12 @@ module {
     // CHECK: obelisk_sim.return %[[OUTER_ZERO]] : i32
     obelisk_sim.func private @outer_with_nested(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> i32
-        attributes {entry_kind = 8 : i32} {
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000012 : i64} {
       %zero = arith.constant 0 : i32
       builtin.module {
         obelisk_sim.func @nested_code_unit(
             %nested_ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> i32
-            attributes {entry_kind = 8 : i32} {
+            attributes {entry_kind = 8 : i32, code_unit_id = 9000013 : i64} {
           %one = arith.constant 1 : i32
           %two = arith.constant 2 : i32
           %sum = arith.addi %one, %two : i32
@@ -189,7 +210,7 @@ module {
     // CHECK: obelisk_sim.return %[[NESTED_OUTER_RESULT]] : i32
     obelisk_sim.func @nested_isolation_caller(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> i32
-        attributes {entry_kind = 8 : i32} {
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000014 : i64} {
       %result = obelisk_sim.call @outer_with_nested(%ctx) : (!obelisk_sim.context) -> i32
       obelisk_sim.return %result : i32
     }
@@ -201,7 +222,7 @@ module {
     obelisk_sim.func @public_identity(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %value: i32 {obelisk_sim.capture_kind = 1 : i32}) -> i32
-        attributes {entry_kind = 8 : i32} {
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000015 : i64} {
       obelisk_sim.return %value : i32
     }
 
@@ -210,7 +231,7 @@ module {
     obelisk_sim.func nested @nested_identity(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %value: i32 {obelisk_sim.capture_kind = 1 : i32}) -> i32
-        attributes {entry_kind = 8 : i32} {
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000016 : i64} {
       obelisk_sim.return %value : i32
     }
 
@@ -219,7 +240,7 @@ module {
     // CHECK: obelisk_sim.return %[[PUBLIC_RESULT]] : i32
     obelisk_sim.func @public_boundary_caller(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> i32
-        attributes {entry_kind = 8 : i32} {
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000017 : i64} {
       %five = arith.constant 5 : i32
       %public = obelisk_sim.call @public_identity(%ctx, %five) : (!obelisk_sim.context, i32) -> i32
       %nested = obelisk_sim.call @nested_identity(%ctx, %five) : (!obelisk_sim.context, i32) -> i32
@@ -237,7 +258,7 @@ module {
     // CHECK: obelisk_sim.return %[[EXTERNAL_RESULT]] : i32
     obelisk_sim.func @external_caller(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> i32
-        attributes {entry_kind = 8 : i32} {
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000018 : i64} {
       %five = arith.constant 5 : i32
       %result = obelisk_sim.call @external(%ctx, %five) : (!obelisk_sim.context, i32) -> i32
       obelisk_sim.return %result : i32
@@ -250,7 +271,7 @@ module {
     obelisk_sim.func private @address_taken(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %value: i32 {obelisk_sim.capture_kind = 1 : i32}) -> i32
-        attributes {entry_kind = 8 : i32} {
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000019 : i64} {
       obelisk_sim.return %value : i32
     }
 
@@ -259,7 +280,7 @@ module {
     // CHECK: obelisk_sim.return %[[ADDRESS_RESULT]] : i32
     obelisk_sim.func @address_taken_caller(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> i32
-        attributes {entry_kind = 8 : i32} {
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000020 : i64} {
       %five = arith.constant 5 : i32
       %result = obelisk_sim.call @address_taken(%ctx, %five) : (!obelisk_sim.context, i32) -> i32
       obelisk_sim.return %result : i32
@@ -280,7 +301,7 @@ module {
     // UNRESOLVED: sym_name = "unresolved_caller"
     obelisk_sim.func @unresolved_caller(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> i32
-        attributes {entry_kind = 8 : i32} {
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000021 : i64} {
       %eleven = arith.constant 11 : i32
       %result = obelisk_sim.call @unresolved_external(%ctx, %eleven) : (!obelisk_sim.context, i32) -> i32
       obelisk_sim.return %result : i32

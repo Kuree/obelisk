@@ -432,17 +432,33 @@ private:
       else
         functions.push_back(function);
     }
-    llvm::sort(functions, [](sim::SimFuncOp left, sim::SimFuncOp right) {
-      return left.getSymName() < right.getSymName();
+    auto getStableID = [](sim::SimFuncOp function) {
+      return function.getCodeUnitId().value_or(
+          stableHash(function.getSymName()) &
+          static_cast<uint64_t>(std::numeric_limits<int64_t>::max()));
+    };
+    llvm::sort(functions, [&](sim::SimFuncOp left, sim::SimFuncOp right) {
+      return std::make_tuple(getStableID(left), left.getSymName()) <
+             std::make_tuple(getStableID(right), right.getSymName());
     });
     if (functions.empty())
       return design.emitOpError("contains no executable functions");
     plans.reserve(functions.size());
+    DenseMap<uint64_t, sim::SimFuncOp> stableIDs;
     for (auto [index, function] : llvm::enumerate(functions)) {
       FunctionPlan &plan = plans.emplace_back();
       plan.function = function;
       plan.index = static_cast<uint32_t>(index);
-      plan.stableID = index + 1;
+      plan.stableID = getStableID(function);
+      if (plan.stableID == 0)
+        return function.emitOpError("executable code-unit ID must be nonzero");
+      auto [collision, inserted] = stableIDs.try_emplace(plan.stableID, function);
+      if (!inserted) {
+        function.emitOpError() << "duplicate executable code-unit ID "
+                               << plan.stableID;
+        collision->second.emitRemark("first function with this ID is here");
+        return failure();
+      }
       indices[function.getSymName()] = plan.index;
     }
     for (FunctionPlan &plan : plans) {
@@ -1978,7 +1994,6 @@ private:
     };
     SmallVector<sim::SimScopeDeclOp> scopes;
     SmallVector<Record> objects;
-    SmallVector<sim::SimFuncOp> processes;
     auto fallbackName = [](StringRef kind, uint64_t id) {
       return (kind + "." + Twine(id)).str();
     };
@@ -2012,11 +2027,12 @@ private:
                                .str(),
                            driver.getType(), state.drivers.lookup(driver.getId()),
                            sourceFor(driver)});
-      else if (auto function = dyn_cast<sim::SimFuncOp>(operation)) {
-        if (!function.isExternal() &&
-            function.getEntryKind() != sim::EntryKind::Function)
-          processes.push_back(function);
-      }
+      else if (auto codeUnit = dyn_cast<sim::SimCodeUnitDeclOp>(operation))
+        objects.push_back(
+            {codeUnit.getCodeUnitKind() == sim::EntryKind::Function ? 7u : 5u,
+             0, codeUnit.getId(), codeUnit.getScopeId(),
+             codeUnit.getHierarchicalName().str(), Type{}, 0,
+             sourceFor(codeUnit)});
     }
     if (scopes.empty())
       return {};
@@ -2043,14 +2059,6 @@ private:
     if (!root) {
       design.emitOpError("reflection database requires a root scope");
       return {};
-    }
-    for (sim::SimFuncOp function : processes) {
-      auto hierarchy =
-          function->getAttrOfType<StringAttr>("hierarchical_name");
-      std::string name = hierarchy ? hierarchy.getValue().str()
-                                   : function.getSymName().str();
-      objects.push_back({5, 0, stableHash(function.getSymName()), root.getId(),
-                         std::move(name), Type{}, 0, sourceFor(function)});
     }
     llvm::sort(objects, [](const Record &left, const Record &right) {
       return std::tie(left.scope, left.name, left.kind, left.id) <

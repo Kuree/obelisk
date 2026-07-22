@@ -49,6 +49,14 @@ def compile_threads_EQ : Joined<["--"], "compile-threads=">,
 def vpi_EQ : Joined<["--"], "vpi=">, Group<Compilation_Group>,
   MetaVarName<"<off|read|full>">, Values<"off,read,full">,
   HelpText<"Select VPI observability and mutation capability">;
+def O0 : Flag<["-"], "O0">, Group<Compilation_Group>,
+  HelpText<"Disable simulation and LLVM optimization">;
+def O1 : Flag<["-"], "O1">, Group<Compilation_Group>,
+  HelpText<"Enable conservative optimization">;
+def O2 : Flag<["-"], "O2">, Group<Compilation_Group>,
+  HelpText<"Enable balanced optimization">;
+def O3 : Flag<["-"], "O3">, Group<Compilation_Group>,
+  HelpText<"Enable aggressive optimization (default)">;
 
 def I : JoinedOrSeparate<["-"], "I">, Group<Preprocessor_Group>,
   MetaVarName<"<dir>">,

@@ -8,6 +8,7 @@
 
 #include "llvm/ADT/StringRef.h"
 
+#include <cstdint>
 #include <string>
 
 namespace mlir {
@@ -23,6 +24,7 @@ struct NativeOutputOptions {
   std::string outputPath;
   std::string explicitSysroot;
   std::string executablePath;
+  uint32_t optLevel = 3;
 };
 
 mlir::LogicalResult emitNativeOutput(mlir::ModuleOp module,

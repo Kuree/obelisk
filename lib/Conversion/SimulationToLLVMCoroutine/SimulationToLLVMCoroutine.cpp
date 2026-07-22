@@ -1371,6 +1371,7 @@ uint64_t stableProcessID(StringRef name) {
 
 LogicalResult
 makeProcessDescriptor(ModuleOp module, Location location, StringRef baseName,
+                      uint64_t stableID,
                       const SimulationProcessFrameAnalysis &analysis) {
   MLIRContext *context = module.getContext();
   Type pointer = LLVM::LLVMPointerType::get(context);
@@ -1482,7 +1483,7 @@ makeProcessDescriptor(ModuleOp module, Location location, StringRef baseName,
                              llvmConstant(builder, location, i32, 6), 0);
         handle = insertValue(
             builder, location, handle,
-            llvmConstant(builder, location, i64, stableProcessID(baseName)), 2);
+            llvmConstant(builder, location, i64, stableID), 2);
         Value descriptor =
             LLVM::ZeroOp::create(builder, location, descriptorType);
         descriptor = insertValue(builder, location, descriptor, handle, 0);
@@ -1755,6 +1756,9 @@ lowerPlainNativeProcess(sim::SimFuncOp function,
   Location location = function.getLoc();
   MLIRContext *context = function.getContext();
   std::string baseName = function.getSymName().str();
+  uint64_t stableID = function.getCodeUnitId().value_or(
+      stableProcessID(baseName) &
+      static_cast<uint64_t>(std::numeric_limits<int64_t>::max()));
   context->getOrLoadDialect<func::FuncDialect>();
   SmallVector<Type> inputTypes;
   for (BlockArgument argument : function.getBody().front().getArguments())
@@ -1827,7 +1831,7 @@ lowerPlainNativeProcess(sim::SimFuncOp function,
 
   if (failed(makePlainNativeWrappers(module, body, baseName, analysis)))
     return failure();
-  return makeProcessDescriptor(module, location, baseName, analysis);
+  return makeProcessDescriptor(module, location, baseName, stableID, analysis);
 }
 
 LogicalResult
@@ -1843,6 +1847,9 @@ lowerSuspendableProcess(sim::SimFuncOp function,
   Type i32 = builder.getI32Type();
   Type i64 = builder.getI64Type();
   std::string baseName = function.getSymName().str();
+  uint64_t stableID = function.getCodeUnitId().value_or(
+      stableProcessID(baseName) &
+      static_cast<uint64_t>(std::numeric_limits<int64_t>::max()));
   std::string rampName = baseName + ".__obelisk_coro_ramp";
   auto ramp = LLVM::LLVMFuncOp::create(
       builder, location, rampName,
@@ -2160,7 +2167,7 @@ lowerSuspendableProcess(sim::SimFuncOp function,
   }
   if (failed(makeNativeWrappers(module, ramp, baseName)))
     return failure();
-  return makeProcessDescriptor(module, location, baseName, analysis);
+  return makeProcessDescriptor(module, location, baseName, stableID, analysis);
 }
 
 LogicalResult lowerOrdinaryFunction(sim::SimFuncOp function) {
@@ -4258,7 +4265,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     for (Operation &operation : design.getBody().front())
       nested.push_back(&operation);
     for (Operation *operation : nested) {
-      if (isa<sim::SimScopeDeclOp, sim::SimStorageDeclOp, sim::SimNetDeclOp,
+      if (isa<sim::SimScopeDeclOp, sim::SimCodeUnitDeclOp,
+              sim::SimStorageDeclOp, sim::SimNetDeclOp,
               sim::SimDriverDeclOp>(operation)) {
         operation->erase();
         continue;

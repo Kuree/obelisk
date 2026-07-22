@@ -1862,9 +1862,17 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
       function.emitError("code unit has no frozen time scale");
       return failure();
     }
+    StringAttr lexicalScope = op.getSystemScopePathAttr();
+    if (!lexicalScope)
+      lexicalScope = function->getAttrOfType<StringAttr>(
+          "obelisk_sim.hierarchical_name");
+    if (!lexicalScope) {
+      op.emitError("display call has no elaborated lexical scope");
+      return failure();
+    }
     sim::SimDisplayOp::create(
         builder, location, context, descriptor, items, display->newline,
-        display->radix, flags, op.getSystemScopePathAttr(),
+        display->radix, flags, lexicalScope,
         op.getSystemLibraryCellAttr(), timeMultiplier);
     return dummyTaskResult();
   }

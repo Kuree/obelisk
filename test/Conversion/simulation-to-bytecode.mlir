@@ -1,4 +1,6 @@
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=ENCODE --implicit-check-not=obelisk.design.database
+// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=full' | FileCheck %s --check-prefix=DATABASE
+// RUN: obelisk-opt %s --mlir-print-debuginfo --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-inline{opt-level=3 caller-growth-percent=10000 caller-growth-constant=10000 design-growth-percent=10000 design-growth-constant=10000}),encode-obelisk-sim-to-bytecode{vpi=full})' | FileCheck %s --check-prefix=INLINED-DATABASE
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=full' --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=LOWER
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=full' --convert-obelisk-sim-processes-to-llvm-coroutines | mlir-translate --mlir-to-llvmir | opt -S -passes=verify | FileCheck %s --check-prefix=LLVM
 
@@ -26,14 +28,17 @@ module attributes {
   }
   obelisk_sim.design @bytecode {
     obelisk_sim.scope.decl 0 hierarchy "top"
+    obelisk_sim.code_unit.decl 70 in 0 function hierarchy "top.add" debug "add" loc("design.sv":7:3)
+    obelisk_sim.code_unit.decl 71 in 0 initial hierarchy "top.process" debug "process"
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<65> design
         hierarchy "top.value"
 
-    obelisk_sim.func @add(
+    obelisk_sim.func private @add(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %lhs: !obelisk_sim.logic<65> {obelisk_sim.capture_kind = 1 : i32},
         %rhs: !obelisk_sim.logic<65> {obelisk_sim.capture_kind = 1 : i32})
-        -> !obelisk_sim.logic<65> attributes {entry_kind = 8 : i32} {
+        -> !obelisk_sim.logic<65> attributes {code_unit_id = 70 : i64,
+                                              entry_kind = 8 : i32} {
       %sum = obelisk_sim.logic.binary add %lhs, %rhs
           : !obelisk_sim.logic<65>
       obelisk_sim.return %sum : !obelisk_sim.logic<65>
@@ -41,7 +46,11 @@ module attributes {
 
     obelisk_sim.func @process(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
-        attributes {entry_kind = 1 : i32} {
+        attributes {code_unit_id = 71 : i64, entry_kind = 1 : i32} {
+      %two = obelisk_sim.logic.constant 2 : i65, 0 : i65 : !obelisk_sim.logic<65>
+      %three = obelisk_sim.logic.constant 3 : i65, 0 : i65 : !obelisk_sim.logic<65>
+      %sum = obelisk_sim.call @add(%ctx, %two, %three)
+          : (!obelisk_sim.context, !obelisk_sim.logic<65>, !obelisk_sim.logic<65>) -> !obelisk_sim.logic<65>
       %delay = obelisk_sim.time.constant 1
       obelisk_sim.suspend.delay %delay to ^done
     ^done:
@@ -57,8 +66,20 @@ module attributes {
 // ENCODE: obelisk.bytecode.scratch_alignment = 8 : i64
 // ENCODE: obelisk.bytecode.function = 1 : i32
 
+// Version 3 is encoded little-endian after the eight-byte database magic.
+// DATABASE: obelisk.design.database = array<i8: 79, 66, 68, 83, 71, 78, 49, 0, 3, 0, 0, 0
+
+// The last executable copy of @add is erased, but version-3 reflection still
+// originates from its immutable record, including parent, name, and source.
+// INLINED-DATABASE: obelisk.design.database = array<i8: 79, 66, 68, 83, 71, 78, 49, 0, 3, 0, 0, 0
+// INLINED-DATABASE: obelisk_sim.code_unit.decl 70 in 0 function hierarchy "top.add" debug "add"
+// INLINED-DATABASE-SAME: loc(#loc[[ADD:[0-9]+]])
+// INLINED-DATABASE-NOT: obelisk_sim.func private @add
+// INLINED-DATABASE: #loc[[ADD]] = loc("design.sv":7:3)
+
 // LOWER: llvm.mlir.global external constant @process.__obelisk_process_descriptor
 // LOWER-SAME: !llvm.struct<(struct<(i32, i32, i64)>, i32, i32, i32, i32, ptr, ptr, ptr, ptr, ptr, ptr, ptr)>
+// LOWER: llvm.mlir.constant(71 : i64)
 // LOWER: llvm.mlir.addressof @__obelisk_execution_descriptor_v1
 // LOWER: llvm.mlir.addressof @process.__obelisk_bytecode_entry
 // LOWER: llvm.mlir.global internal constant @process.__obelisk_bytecode_entry

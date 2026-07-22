@@ -82,6 +82,8 @@ static_assert(static_cast<uint32_t>(DescriptorKind::Process) ==
               OBELISK_RT_DESCRIPTOR_PROCESS);
 static_assert(static_cast<uint32_t>(DescriptorKind::Fragment) ==
               OBELISK_RT_DESCRIPTOR_FRAGMENT);
+static_assert(static_cast<uint32_t>(DescriptorKind::Function) ==
+              OBELISK_RT_DESCRIPTOR_FUNCTION);
 
 static_assert(static_cast<uint32_t>(ActionKind::Continue) ==
               OBELISK_RT_FRAGMENT_CONTINUE);

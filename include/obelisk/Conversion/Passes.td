@@ -63,6 +63,41 @@ def ObeliskSimSCCPPass
   ];
 }
 
+def ObeliskSimInlinePass
+    : Pass<"obelisk-sim-inline", "obelisk::sim::SimDesignOp"> {
+  let summary = "Inline profitable zero-time simulation calls";
+  let description = [{
+    Uses MLIR's SCC inliner for CFG/SSA transformation while Obelisk owns
+    simulation legality, specialization profitability, hierarchy retention,
+    growth budgets, and deterministic optimization-level presets.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect",
+    "mlir::arith::ArithDialect",
+    "mlir::cf::ControlFlowDialect"
+  ];
+  let options = [
+    Option<"optLevel", "opt-level", "unsigned", "3",
+           "Optimization preset from 0 (disabled) through 3">,
+    Option<"tinyCost", "tiny-cost", "int64_t", "-1",
+           "Override the preset tiny-leaf weighted cost threshold">,
+    Option<"specializationCost", "specialization-cost", "int64_t", "-1",
+           "Override the specialization-candidate weighted cost threshold">,
+    Option<"callerGrowthPercent", "caller-growth-percent", "int64_t", "-1",
+           "Override caller growth percentage budget">,
+    Option<"callerGrowthConstant", "caller-growth-constant", "int64_t", "-1",
+           "Override caller fixed weighted-growth budget">,
+    Option<"designGrowthPercent", "design-growth-percent", "int64_t", "-1",
+           "Override design growth percentage budget">,
+    Option<"designGrowthConstant", "design-growth-constant", "int64_t", "-1",
+           "Override design fixed weighted-growth budget">,
+    Option<"maxIterations", "max-iterations", "int64_t", "-1",
+           "Override the maximum SCC inlining iterations">,
+    Option<"missedRemarks", "missed-remarks", "bool", "false",
+           "Emit a remark explaining every missed inline opportunity">
+  ];
+}
+
 def ObeliskSimBuildComputeGraphPass
     : Pass<"obelisk-sim-build-compute-graph", "obelisk::sim::SimDesignOp"> {
   let summary = "Derive descriptor-range summaries and a deterministic schedule";

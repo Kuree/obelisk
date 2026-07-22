@@ -40,49 +40,6 @@ namespace {
 // Descriptor provenance
 //===----------------------------------------------------------------------===//
 
-std::optional<uint64_t> getPackedValueWidth(Type type) {
-  return sim::getProvenanceSpan(type);
-}
-
-sim::ComputeResourceKind getHandleResourceKind(Type type) {
-  if (isa<sim::RefType>(type))
-    return sim::ComputeResourceKind::Storage;
-  if (isa<sim::NetType, sim::DriverType>(type))
-    return sim::ComputeResourceKind::Net;
-  if (isa<sim::EventType>(type))
-    return sim::ComputeResourceKind::Event;
-  return sim::ComputeResourceKind::Unknown;
-}
-
-DescriptorProvenance joinProvenance(DescriptorProvenance lhs,
-                                    const DescriptorProvenance &rhs) {
-  if (lhs.resource != rhs.resource || lhs.descriptor != rhs.descriptor ||
-      lhs.formal != rhs.formal)
-    return {};
-  uint64_t rootWidth = std::max(lhs.rootWidth, rhs.rootWidth);
-  auto checkedEnd = [&](uint64_t low, uint64_t width) {
-    return low <= rootWidth && width <= rootWidth - low
-               ? std::optional<uint64_t>(low + width)
-               : std::nullopt;
-  };
-  std::optional<uint64_t> lhsEnd = checkedEnd(lhs.low, lhs.width);
-  std::optional<uint64_t> rhsEnd = checkedEnd(rhs.low, rhs.width);
-  if (!lhsEnd || !rhsEnd) {
-    lhs.low = 0;
-    lhs.width = rootWidth;
-    lhs.rootWidth = rootWidth;
-    lhs.dynamic = true;
-    return lhs;
-  }
-  uint64_t low = std::min(lhs.low, rhs.low);
-  uint64_t end = std::max(*lhsEnd, *rhsEnd);
-  lhs.low = low;
-  lhs.width = end - low;
-  lhs.rootWidth = rootWidth;
-  lhs.dynamic |= rhs.dynamic;
-  return lhs;
-}
-
 DescriptorProvenance widenDynamic(DescriptorProvenance provenance) {
   if (provenance.resource != sim::ComputeResourceKind::Unknown)
     provenance.dynamic = true;
@@ -316,242 +273,6 @@ struct FunctionInfo {
   SmallVector<unsigned> spawns;
 };
 
-void setIfChanged(DenseMap<Value, DescriptorProvenance> &map, Value value,
-                  DescriptorProvenance provenance, bool &changed) {
-  auto found = map.find(value);
-  if (found == map.end()) {
-    map.try_emplace(value, provenance);
-    changed = true;
-    return;
-  }
-  DescriptorProvenance joined = joinProvenance(found->second, provenance);
-  if (!(joined == found->second)) {
-    found->second = joined;
-    changed = true;
-  }
-}
-
-/// Forwarded operands reaching `block` argument `index` from each predecessor.
-template <typename Callback>
-void forEachIncoming(Block &block, Callback &&callback) {
-  for (Block *predecessor : block.getPredecessors()) {
-    Operation *terminator = predecessor->getTerminator();
-    auto branch = dyn_cast<BranchOpInterface>(terminator);
-    if (!branch) {
-      callback(nullptr, OperandRange(nullptr, 0));
-      continue;
-    }
-    for (unsigned successor = 0; successor != terminator->getNumSuccessors();
-         ++successor) {
-      if (terminator->getSuccessor(successor) != &block)
-        continue;
-      callback(terminator,
-               branch.getSuccessorOperands(successor).getForwardedOperands());
-    }
-  }
-}
-
-void propagateValueFacts(FunctionInfo &info,
-                         const DenseMap<uint64_t, uint64_t> &driverNets) {
-  sim::SimFuncOp function = info.function;
-  Block &entry = function.getBody().front();
-  for (BlockArgument argument : entry.getArguments()) {
-    unsigned index = argument.getArgNumber();
-    auto capture = function.getArgAttrOfType<sim::CaptureKindAttr>(
-        index, captureKindAttrName);
-    auto descriptor =
-        function.getArgAttrOfType<IntegerAttr>(index, descriptorIdAttrName);
-    sim::ComputeResourceKind kind = getHandleResourceKind(argument.getType());
-    auto width = getPackedValueWidth(argument.getType());
-    if (kind != sim::ComputeResourceKind::Unknown && width) {
-      DescriptorProvenance provenance;
-      provenance.resource = kind;
-      provenance.width = *width;
-      provenance.rootWidth = *width;
-      if (capture && capture.getValue() == sim::CaptureKind::Formal) {
-        provenance.formal = index;
-      } else if (descriptor) {
-        if (!descriptor.getValue().isNegative() &&
-            descriptor.getValue().getBitWidth() <= 64)
-          provenance.descriptor = descriptor.getValue().getZExtValue();
-        else
-          provenance = {};
-        if (isa<sim::DriverType>(argument.getType())) {
-          auto net = provenance.descriptor
-                         ? driverNets.find(*provenance.descriptor)
-                         : driverNets.end();
-          if (net == driverNets.end()) {
-            provenance.resource = sim::ComputeResourceKind::Unknown;
-            provenance.descriptor.reset();
-          } else {
-            provenance.descriptor = net->second;
-          }
-        }
-      }
-      info.provenance[argument] = provenance;
-    }
-  }
-
-  // Provenance ranges form a finite lattice bounded by each root descriptor.
-  // Iterate to a real fixed point rather than publishing a heuristically
-  // truncated result.
-  while (true) {
-    bool changed = false;
-    for (Block &block : function.getBody()) {
-      if (&block != &entry) {
-        for (BlockArgument argument : block.getArguments()) {
-          if (getHandleResourceKind(argument.getType()) ==
-              sim::ComputeResourceKind::Unknown)
-            continue;
-          bool allIncomingReady = true;
-          bool hasIndependentIncoming = false;
-          std::optional<DescriptorProvenance> joined;
-          forEachIncoming(block, [&](Operation *terminator,
-                                     OperandRange forwarded) {
-            if (!terminator || argument.getArgNumber() >= forwarded.size()) {
-              allIncomingReady = false;
-              return;
-            }
-            Value incoming = forwarded[argument.getArgNumber()];
-            // A self-reference preserves a fact established by another edge;
-            // by itself it cannot manufacture provenance.
-            if (incoming == argument)
-              return;
-            hasIndependentIncoming = true;
-            auto provenance = info.provenance.find(incoming);
-            if (provenance == info.provenance.end()) {
-              allIncomingReady = false;
-              return;
-            }
-            joined = joined ? joinProvenance(*joined, provenance->second)
-                            : provenance->second;
-          });
-          if (allIncomingReady && hasIndependentIncoming)
-            setIfChanged(info.provenance, argument, *joined, changed);
-        }
-      }
-
-      for (Operation &operation : block) {
-        auto declare = [&](Value result, sim::ComputeResourceKind resource,
-                           std::optional<uint64_t> descriptor) {
-          uint64_t width = *getPackedValueWidth(result.getType());
-          DescriptorProvenance provenance;
-          provenance.resource = resource;
-          provenance.descriptor = descriptor;
-          provenance.width = width;
-          provenance.rootWidth = width;
-          setIfChanged(info.provenance, result, provenance, changed);
-        };
-        auto forward = [&](Value input, Value result,
-                           std::optional<uint64_t> low) {
-          auto found = info.provenance.find(input);
-          if (found == info.provenance.end())
-            return;
-          setIfChanged(
-              info.provenance, result,
-              low ? narrowProvenance(found->second, *low,
-                                     *getPackedValueWidth(result.getType()))
-                  : widenDynamic(found->second),
-              changed);
-        };
-        auto forwardSubelement = [&](Value input, Value result,
-                                     ArrayRef<int64_t> indices) {
-          auto found = info.provenance.find(input);
-          if (found == info.provenance.end())
-            return;
-          Type current = input.getType();
-          if (auto reference = dyn_cast<sim::RefType>(current))
-            current = reference.getElementType();
-          else if (auto driver = dyn_cast<sim::DriverType>(current))
-            current = driver.getElementType();
-          uint64_t offset = 0;
-          for (int64_t index : indices) {
-            if (index < 0 || static_cast<uint64_t>(index) >
-                                 std::numeric_limits<unsigned>::max()) {
-              setIfChanged(info.provenance, result, widenDynamic(found->second),
-                           changed);
-              return;
-            }
-            auto child = sim::getAggregateProvenanceSubelement(
-                current, static_cast<unsigned>(index));
-            if (!child ||
-                child->first > std::numeric_limits<uint64_t>::max() - offset) {
-              setIfChanged(info.provenance, result, widenDynamic(found->second),
-                           changed);
-              return;
-            }
-            offset += child->first;
-            current = sim::getAggregateElementType(
-                current, static_cast<unsigned>(index));
-          }
-          std::optional<uint64_t> width = sim::getProvenanceSpan(current);
-          setIfChanged(info.provenance, result,
-                       width ? narrowProvenance(found->second, offset, *width)
-                             : widenDynamic(found->second),
-                       changed);
-        };
-        llvm::TypeSwitch<Operation *>(&operation)
-            .Case<sim::SimContextStorageOp>([&](auto op) {
-              declare(op.getResult(), sim::ComputeResourceKind::Storage,
-                      op.getId());
-            })
-            .Case<sim::SimContextNetOp>([&](auto op) {
-              declare(op.getResult(), sim::ComputeResourceKind::Net,
-                      op.getId());
-            })
-            .Case<sim::SimContextDriverOp>([&](auto op) {
-              auto net = driverNets.find(op.getId());
-              if (net == driverNets.end())
-                declare(op.getResult(), sim::ComputeResourceKind::Unknown,
-                        std::nullopt);
-              else
-                declare(op.getResult(), sim::ComputeResourceKind::Net,
-                        net->second);
-            })
-            .Case<sim::SimContextEventOp>([&](auto op) {
-              declare(op.getResult(), sim::ComputeResourceKind::Event,
-                      op.getId());
-            })
-            .Case<sim::SimRefAllocOp>([&](auto op) {
-              declare(op.getResult(), sim::ComputeResourceKind::Local,
-                      std::nullopt);
-            })
-            .Case<sim::SimRefExtractOp, sim::SimDriverExtractOp>([&](auto op) {
-              forward(op.getInput(), op.getResult(), op.getLowBit());
-            })
-            .Case<sim::SimRefSubelementOp, sim::SimDriverSubelementOp>(
-                [&](auto op) {
-                  forwardSubelement(op.getInput(), op.getResult(),
-                                    op.getIndices());
-                })
-            .Case<sim::SimRefDynExtractOp, sim::SimDriverDynExtractOp>(
-                [&](auto op) {
-                  forward(op.getInput(), op.getResult(), std::nullopt);
-                })
-            .Case<sim::SimRefArrayElementOp, sim::SimDriverArrayElementOp>(
-                [&](auto op) {
-                  // A dynamic source index may select any element or no
-                  // element; conservatively retain the containing array span.
-                  forward(op.getInput(), op.getResult(), std::nullopt);
-                })
-            .Default([&](Operation *op) {
-              // Unsupported handle-producing operations, including function
-              // results whose provenance is not summarized yet, are explicitly
-              // unknown. A CFG join must not silently ignore that path and
-              // retain another predecessor's concrete handle.
-              for (Value result : op->getResults())
-                if (getHandleResourceKind(result.getType()) !=
-                    sim::ComputeResourceKind::Unknown)
-                  setIfChanged(info.provenance, result, DescriptorProvenance{},
-                               changed);
-            });
-      }
-    }
-    if (!changed)
-      break;
-  }
-}
-
 sim::ComputeTriggerKind getTriggerKind(sim::EdgeKind edge) {
   switch (edge) {
   case sim::EdgeKind::Change:
@@ -671,7 +392,6 @@ ComputeEffect substituteEffect(const ComputeEffect &effect, sim::SimCallOp call,
 }
 
 struct ProgramAnalysis {
-  DenseMap<uint64_t, uint64_t> driverNets;
   SmallVector<FunctionInfo, 0> functions;
   llvm::StringMap<unsigned> functionIndex;
   DenseMap<Operation *, unsigned> indexForFunction;
@@ -683,10 +403,6 @@ struct ProgramAnalysis {
 
 ProgramAnalysis analyzeProgram(sim::SimDesignOp design) {
   ProgramAnalysis analysis;
-  for (sim::SimDriverDeclOp driver :
-       design.getBody().front().getOps<sim::SimDriverDeclOp>())
-    analysis.driverNets[driver.getId()] = driver.getNetId();
-
   SmallVector<sim::SimFuncOp> functions(
       design.getBody().front().getOps<sim::SimFuncOp>());
   llvm::sort(functions, [](sim::SimFuncOp lhs, sim::SimFuncOp rhs) {
@@ -703,7 +419,8 @@ ProgramAnalysis analyzeProgram(sim::SimDesignOp design) {
       info.baseEffects = {{sim::ComputeEffectKind::Read},
                           {sim::ComputeEffectKind::Write}};
     } else {
-      propagateValueFacts(info, analysis.driverNets);
+      info.provenance =
+          ::obelisk::analysis::deriveDescriptorProvenance(function);
       info.baseEffects = collectDirectEffects(info);
     }
     info.summary = info.baseEffects;
@@ -854,17 +571,6 @@ bool fragmentIsTwoState(const StateDomainAnalysis &stateDomains, Block &block) {
         return false;
   }
   return true;
-}
-
-uint64_t getOperationCost(Operation &operation) {
-  if (isa<sim::SimRefLoadOp, sim::SimRefStoreOp, sim::SimNetReadOp,
-          sim::SimDriverDriveOp, sim::SimNBAEnqueueOp>(operation))
-    return 3;
-  if (isa<sim::SimCallOp>(operation))
-    return 5;
-  if (isSuspensionTerminator(&operation))
-    return 1;
-  return operation.hasTrait<OpTrait::IsTerminator>() ? 0 : 1;
 }
 
 //===----------------------------------------------------------------------===//
@@ -1175,7 +881,7 @@ LogicalResult ComputeGraphBuilder::buildFragments() {
       auto id = static_cast<uint32_t>(nextId++);
       uint64_t cost = 0;
       for (Operation &operation : block)
-        cost += getOperationCost(operation);
+        cost += ::obelisk::analysis::getSimulationOperationCost(operation);
       fragmentForBlock[&block] = id;
       fragments.push_back({id, info.getFunction(), &block, ordinal++,
                            collectFragmentEffects(analysis, info, block), cost,

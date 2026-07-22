@@ -13,10 +13,11 @@ def RTDescriptorDriver : I32EnumAttrCase<"Driver", 4, "driver">;
 def RTDescriptorEvent : I32EnumAttrCase<"Event", 5, "event">;
 def RTDescriptorProcess : I32EnumAttrCase<"Process", 6, "process">;
 def RTDescriptorFragment : I32EnumAttrCase<"Fragment", 7, "fragment">;
+def RTDescriptorFunction : I32EnumAttrCase<"Function", 8, "function">;
 def RTDescriptorKind : I32EnumAttr<"DescriptorKind", "runtime descriptor kind", [
   RTDescriptorInvalid, RTDescriptorScope, RTDescriptorStorage, RTDescriptorNet,
   RTDescriptorDriver, RTDescriptorEvent, RTDescriptorProcess,
-  RTDescriptorFragment
+  RTDescriptorFragment, RTDescriptorFunction
 ]> { let cppNamespace = "::obelisk::runtime"; }
 
 def RTActionContinue : I32EnumAttrCase<"Continue", 0, "continue">;

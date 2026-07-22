@@ -6,6 +6,8 @@ module {
   // and `->>` are legal inside one. They still need compiled sites even though
   // the function is not itself a schedulable actor.
   obelisk_sim.design @function_sites {
+    obelisk_sim.code_unit.decl 9000001 in 0 function hierarchy "test.function_sites.stage.9000001"
+    obelisk_sim.code_unit.decl 9000002 in 0 initial hierarchy "test.function_sites.process.9000002"
     obelisk_sim.scope.decl 0
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<8> design
 
@@ -15,7 +17,7 @@ module {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %destination: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 1 : i32},
         %event: !obelisk_sim.event {obelisk_sim.capture_kind = 1 : i32})
-        attributes {entry_kind = 8 : i32} {
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000001 : i64} {
       %value = obelisk_sim.logic.constant 1 : i8, 0 : i8 : !obelisk_sim.logic<8>
       // A function body may run any number of times, so its staging site can
       // never own a fixed slot.
@@ -36,7 +38,7 @@ module {
     obelisk_sim.func @process(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %storage: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
       %event = obelisk_sim.context.event %ctx[7] : !obelisk_sim.event
       obelisk_sim.call @stage(%ctx, %storage, %event) : (!obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<8>>, !obelisk_sim.event) -> ()
       obelisk_sim.return
@@ -47,11 +49,13 @@ module {
   // call result currently has unknown event provenance, so joining it with a
   // concrete event must remain unknown rather than selecting descriptor 0.
   obelisk_sim.design @provenance_join {
+    obelisk_sim.code_unit.decl 9000001 in 0 function hierarchy "test.provenance_join.other_event.9000001"
+    obelisk_sim.code_unit.decl 9000002 in 0 initial hierarchy "test.provenance_join.join_event.9000002"
     obelisk_sim.scope.decl 0
 
     obelisk_sim.func @other_event(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
-        -> !obelisk_sim.event attributes {entry_kind = 8 : i32} {
+        -> !obelisk_sim.event attributes {entry_kind = 8 : i32, code_unit_id = 9000001 : i64} {
       %event = obelisk_sim.context.event %ctx[1] : !obelisk_sim.event
       obelisk_sim.return %event : !obelisk_sim.event
     }
@@ -61,7 +65,7 @@ module {
     obelisk_sim.func @join_event(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %condition: i1 {obelisk_sim.capture_kind = 2 : i32})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
       %known = obelisk_sim.context.event %ctx[0] : !obelisk_sim.event
       %other = obelisk_sim.call @other_event(%ctx) : (!obelisk_sim.context) -> !obelisk_sim.event
       cf.cond_br %condition, ^join(%known : !obelisk_sim.event), ^join(%other : !obelisk_sim.event)

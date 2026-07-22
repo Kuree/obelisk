@@ -5,6 +5,7 @@ module attributes {
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
   obelisk_sim.design @imports {
+    obelisk_sim.code_unit.decl 9000001 in 0 function hierarchy "test.imports.caller.9000001"
     obelisk_sim.scope.decl 0 hierarchy "top"
 
     obelisk_sim.func private @external_logic(
@@ -15,7 +16,7 @@ module attributes {
     obelisk_sim.func @caller(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %value: !obelisk_sim.logic<129> {obelisk_sim.capture_kind = 1 : i32})
-        -> !obelisk_sim.logic<129> attributes {entry_kind = 8 : i32} {
+        -> !obelisk_sim.logic<129> attributes {entry_kind = 8 : i32, code_unit_id = 9000001 : i64} {
       %result = obelisk_sim.call @external_logic(%ctx, %value)
           : (!obelisk_sim.context, !obelisk_sim.logic<129>)
           -> !obelisk_sim.logic<129>

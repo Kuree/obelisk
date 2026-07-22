@@ -5,13 +5,16 @@ module attributes {
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
   obelisk_sim.design @native_io {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.native_io.plain_io.9000001"
+    obelisk_sim.code_unit.decl 9000002 in 0 initial hierarchy "test.native_io.suspend_io.9000002"
+    obelisk_sim.code_unit.decl 9000003 in 0 function hierarchy "test.native_io.aggregate_display.9000003"
     obelisk_sim.scope.decl 0
 
     obelisk_sim.func @plain_io(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %fd: i32 {obelisk_sim.capture_kind = 2 : i32})
         attributes {entry_kind = 1 : i32,
-                    obelisk_sim.hierarchical_name = "top.plain"} {
+                    obelisk_sim.hierarchical_name = "top.plain", code_unit_id = 9000001 : i64} {
       %format = obelisk_sim.bytes.constant "%m %l %0d"
       obelisk_sim.display %ctx to %fd(%format, %fd) newline = true radix = 10
           flags = [0, 2, 0]
@@ -30,7 +33,7 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %fd: i32 {obelisk_sim.capture_kind = 2 : i32})
         attributes {entry_kind = 1 : i32,
-                    obelisk_sim.hierarchical_name = "top.suspend"} {
+                    obelisk_sim.hierarchical_name = "top.suspend", code_unit_id = 9000002 : i64} {
       %format = obelisk_sim.bytes.constant "value=%0d"
       obelisk_sim.display %ctx to %fd(%format, %fd) newline = false radix = 10
           flags = [0, 0] : !obelisk_sim.bytes, i32
@@ -45,7 +48,7 @@ module attributes {
         %fd: i32 {obelisk_sim.capture_kind = 2 : i32},
         %value: !obelisk_sim.packed_array<79 : 0 x !obelisk_sim.logic<1>>
             {obelisk_sim.capture_kind = 2 : i32})
-        attributes {entry_kind = 8 : i32} {
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000003 : i64} {
       %format = obelisk_sim.bytes.constant "%0h"
       %flat = obelisk_sim.packed.flatten %value :
           (!obelisk_sim.packed_array<79 : 0 x !obelisk_sim.logic<1>>) ->

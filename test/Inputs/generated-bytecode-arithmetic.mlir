@@ -5,11 +5,12 @@ module attributes {
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
   obelisk_sim.design @generated_arithmetic {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.generated_arithmetic.arithmetic_process.9000001"
     obelisk_sim.scope.decl 0
 
     obelisk_sim.func @arithmetic_process(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %zero = arith.constant 0 : i64
       %one = arith.constant 1 : i64
       %three = arith.constant 3 : i64

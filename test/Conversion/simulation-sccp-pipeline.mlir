@@ -4,6 +4,7 @@
 
 module {
   obelisk_sim.design @pipeline {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.pipeline.dead_after_sccp.9000001"
     obelisk_sim.scope.decl 0
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<1> design
 
@@ -27,7 +28,7 @@ module {
     obelisk_sim.func private @dead_after_sccp(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %storage: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %value = obelisk_sim.logic.constant true, false : !obelisk_sim.logic<1>
       obelisk_sim.ref.store %value to %storage : !obelisk_sim.logic<1>, !obelisk_sim.ref<!obelisk_sim.logic<1>>
       obelisk_sim.return

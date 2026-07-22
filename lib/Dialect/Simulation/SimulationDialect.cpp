@@ -3,6 +3,7 @@
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Matchers.h"
@@ -10,10 +11,12 @@
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include "mlir/Interfaces/FunctionImplementation.h"
+#include "mlir/Transforms/InliningUtils.h"
 
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallSet.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/ADT/bit.h"
 
@@ -36,7 +39,217 @@ using namespace mlir;
 
 namespace obelisk::sim {
 
+namespace {
+
+bool hasLateInlineMetadata(SimDesignOp design) {
+  if (design.getComputeGraphAttr())
+    return true;
+  bool found = false;
+  design.walk([&](Operation *operation) {
+    if (auto function = dyn_cast<SimFuncOp>(operation))
+      found |= static_cast<bool>(function.getEffectSummaryAttr()) ||
+               static_cast<bool>(function.getFragmentAbiAttr());
+    for (NamedAttribute named : operation->getAttrs())
+      found |=
+          isa<ContinuationSiteAttr, TimingSiteAttr, NBASiteAttr, EventSiteAttr>(
+              named.getValue());
+  });
+  return found;
+}
+
+bool hasUnknownInlineMetadata(Operation *operation) {
+  for (NamedAttribute named : operation->getAttrs()) {
+    StringRef name = named.getName().strref();
+    if (!name.starts_with("obelisk_sim."))
+      continue;
+    if (name == "obelisk_sim.capture_kind" ||
+        name == "obelisk_sim.descriptor_id" || name == "obelisk_sim.bindings" ||
+        name == "obelisk_sim.delay_scale" ||
+        name == "obelisk_sim.hierarchical_name")
+      continue;
+    return true;
+  }
+  return false;
+}
+
+bool hasUnknownInlineBoundaryMetadata(ArrayAttr dictionaries) {
+  if (!dictionaries)
+    return false;
+  for (Attribute attribute : dictionaries) {
+    auto dictionary = dyn_cast<DictionaryAttr>(attribute);
+    if (!dictionary)
+      return true;
+    for (NamedAttribute named : dictionary) {
+      StringRef name = named.getName().strref();
+      if (name.starts_with("obelisk_sim.") &&
+          name != "obelisk_sim.capture_kind" &&
+          name != "obelisk_sim.descriptor_id")
+        return true;
+    }
+  }
+  return false;
+}
+
+template <typename Callback>
+void forEachDirectCall(SimFuncOp function, Callback &&callback) {
+  function.getBody().walk([&](Operation *operation) {
+    if (isa<SimFuncOp>(operation))
+      return WalkResult::skip();
+    if (auto call = dyn_cast<SimCallOp>(operation))
+      callback(call);
+    return WalkResult::advance();
+  });
+}
+
+bool reaches(SimFuncOp from, SimFuncOp target,
+             const llvm::StringMap<SimFuncOp> &functions) {
+  SmallVector<SimFuncOp> pending{from};
+  llvm::SmallPtrSet<Operation *, 16> visited;
+  while (!pending.empty()) {
+    SimFuncOp current = pending.pop_back_val();
+    if (!visited.insert(current.getOperation()).second)
+      continue;
+    if (current == target)
+      return true;
+    forEachDirectCall(current, [&](SimCallOp call) {
+      auto found = functions.find(call.getCallee());
+      if (found != functions.end())
+        pending.push_back(found->second);
+    });
+  }
+  return false;
+}
+
+bool isRecursive(SimFuncOp function, SimDesignOp design) {
+  llvm::StringMap<SimFuncOp> functions;
+  for (SimFuncOp candidate : design.getBody().front().getOps<SimFuncOp>())
+    functions[candidate.getSymName()] = candidate;
+  bool recursive = false;
+  forEachDirectCall(function, [&](SimCallOp call) {
+    auto found = functions.find(call.getCallee());
+    if (found != functions.end() && reaches(found->second, function, functions))
+      recursive = true;
+  });
+  return recursive;
+}
+
+bool isSuspension(Operation *operation) {
+  return isa<SimSuspendDelayOp, SimSuspendChangeOp, SimSuspendEdgeOp,
+             SimSuspendAnyOp, SimSuspendEventOp, SimSuspendAwaitOp,
+             SimSuspendJoinOp>(operation);
+}
+
+} // namespace
+
+InlineLegality getInlineLegality(SimCallOp call, SimFuncOp callee) {
+  SimFuncOp caller = call ? call->getParentOfType<SimFuncOp>() : SimFuncOp{};
+  auto design = caller ? caller->getParentOfType<SimDesignOp>() : SimDesignOp{};
+  if (!caller || !callee || !design || callee.isExternal() ||
+      callee->getParentOfType<SimDesignOp>() != design ||
+      callee.getEntryKind() != EntryKind::Function)
+    return InlineLegality::NotDefinedFunction;
+  if (hasLateInlineMetadata(design))
+    return InlineLegality::LateMetadata;
+  if (isRecursive(callee, design))
+    return InlineLegality::Recursive;
+  if (hasUnknownInlineMetadata(callee))
+    return InlineLegality::UnknownMetadata;
+
+  InlineLegality legality = InlineLegality::Legal;
+  callee.getBody().walk([&](Operation *operation) {
+    if (isa<SimFuncOp>(operation))
+      return WalkResult::skip();
+    if (legality != InlineLegality::Legal)
+      return WalkResult::interrupt();
+    if (isSuspension(operation))
+      legality = InlineLegality::Suspension;
+    else if (auto display = dyn_cast<SimDisplayOp>(operation);
+             display && !display.getScopeAttr())
+      legality = InlineLegality::UnfrozenDisplayScope;
+    else if (hasUnknownInlineMetadata(operation))
+      legality = InlineLegality::UnknownMetadata;
+    return legality == InlineLegality::Legal ? WalkResult::advance()
+                                             : WalkResult::interrupt();
+  });
+  if (legality != InlineLegality::Legal)
+    return legality;
+  if (hasUnknownInlineMetadata(call) ||
+      hasUnknownInlineBoundaryMetadata(call.getArgAttrsAttr()) ||
+      hasUnknownInlineBoundaryMetadata(call.getResAttrsAttr()) ||
+      hasUnknownInlineBoundaryMetadata(callee.getArgAttrsAttr()) ||
+      hasUnknownInlineBoundaryMetadata(callee.getResAttrsAttr()))
+    return InlineLegality::UnknownBoundaryMetadata;
+  return InlineLegality::Legal;
+}
+
+StringRef getInlineLegalityReason(InlineLegality legality) {
+  switch (legality) {
+  case InlineLegality::Legal:
+    return {};
+  case InlineLegality::NotDefinedFunction:
+    return "callee is not a defined zero-time function";
+  case InlineLegality::LateMetadata:
+    return "compute-graph or compiled-site metadata already exists";
+  case InlineLegality::Recursive:
+    return "call is in a recursive SCC";
+  case InlineLegality::UnknownMetadata:
+    return "callee contains unknown obelisk_sim metadata";
+  case InlineLegality::Suspension:
+    return "callee contains a suspension";
+  case InlineLegality::UnfrozenDisplayScope:
+    return "display has no frozen lexical scope";
+  case InlineLegality::UnknownBoundaryMetadata:
+    return "call boundary contains unknown obelisk_sim metadata";
+  }
+  llvm_unreachable("unknown simulation inline legality");
+}
+
+/// Enforce unconditional simulation legality for every MLIR inlining client
+/// and supply CFG/SSA rewriting mechanics. The Obelisk pass separately owns
+/// profitability, budgets, diagnostics, and statistics.
+struct ObeliskSimulationInlinerInterface final
+    : public DialectInlinerInterface {
+  using DialectInlinerInterface::DialectInlinerInterface;
+
+  bool isLegalToInline(Operation *call, Operation *callable, bool) const final {
+    auto callOp = dyn_cast<SimCallOp>(call);
+    auto function = dyn_cast<SimFuncOp>(callable);
+    return callOp && function &&
+           getInlineLegality(callOp, function) == InlineLegality::Legal;
+  }
+
+  bool isLegalToInline(Region *dest, Region *src, bool,
+                       IRMapping &) const final {
+    return isa<SimFuncOp>(dest->getParentOp()) &&
+           isa<SimFuncOp>(src->getParentOp());
+  }
+
+  bool isLegalToInline(Operation *, Region *dest, bool,
+                       IRMapping &) const final {
+    return isa<SimFuncOp>(dest->getParentOp());
+  }
+
+  void handleTerminator(Operation *op, Block *newDest) const final {
+    auto returnOp = dyn_cast<SimReturnOp>(op);
+    if (!returnOp)
+      return;
+    OpBuilder builder(op);
+    cf::BranchOp::create(builder, op->getLoc(), newDest,
+                         returnOp.getOperands());
+    op->erase();
+  }
+
+  void handleTerminator(Operation *op, ValueRange valuesToReplace) const final {
+    auto returnOp = cast<SimReturnOp>(op);
+    assert(returnOp.getNumOperands() == valuesToReplace.size());
+    for (auto [replacement, value] :
+         llvm::zip_equal(valuesToReplace, returnOp.getOperands()))
+      replacement.replaceAllUsesWith(value);
+  }
+};
+
 void ObeliskSimulationDialect::initialize() {
+  addInterfaces<ObeliskSimulationInlinerInterface>();
   addAttributes<
 #define GET_ATTRDEF_LIST
 #include "obelisk/Dialect/Simulation/SimulationAttrs.cpp.inc"
@@ -815,6 +1028,17 @@ LogicalResult SimScopeDeclOp::verify() {
   return success();
 }
 
+LogicalResult SimCodeUnitDeclOp::verify() {
+  if (failed(verifyNonnegative(*this, getIdAttr(), "code-unit ID")) ||
+      failed(verifyNonnegative(*this, getScopeIdAttr(), "scope ID")))
+    return failure();
+  if (getId() == 0)
+    return emitOpError("code-unit ID must be nonzero");
+  if (getHierarchicalName().empty())
+    return emitOpError("requires a nonempty hierarchical name");
+  return success();
+}
+
 LogicalResult SimStorageDeclOp::verify() {
   if (failed(verifyNonnegative(*this, getIdAttr(), "storage ID")) ||
       failed(verifyNonnegative(*this, getScopeIdAttr(), "scope ID")))
@@ -842,7 +1066,8 @@ LogicalResult SimDesignOp::verifyRegions() {
       precision &&
       (precision.getValue().isNegative() || precision.getValue().isZero()))
     return emitOpError("time precision must be a positive femtosecond value");
-  llvm::DenseSet<uint64_t> scopeIds, storageIds, netIds, driverIds;
+  llvm::DenseSet<uint64_t> scopeIds, codeUnitIds, storageIds, netIds, driverIds;
+  llvm::DenseMap<uint64_t, SimCodeUnitDeclOp> codeUnits;
   llvm::DenseMap<uint64_t, Type> storageTypes, netTypes, driverTypes;
   SmallVector<SimFuncOp> functions;
   bool sawRoot = false;
@@ -863,6 +1088,10 @@ LogicalResult SimDesignOp::verifyRegions() {
               "design must contain exactly one root scope");
         sawRoot = true;
       }
+    } else if (auto codeUnit = dyn_cast<SimCodeUnitDeclOp>(op)) {
+      if (failed(addId(codeUnit.getIdAttr(), codeUnitIds, "code-unit")))
+        return failure();
+      codeUnits[codeUnit.getId()] = codeUnit;
     } else if (auto storage = dyn_cast<SimStorageDeclOp>(op)) {
       if (failed(addId(storage.getIdAttr(), storageIds, "storage")))
         return failure();
@@ -901,6 +1130,9 @@ LogicalResult SimDesignOp::verifyRegions() {
       if (scope.getParentAttr() && *scope.getParent() >= scope.getId())
         return scope.emitOpError(
             "parent scope ID must precede the child scope ID");
+    } else if (auto codeUnit = dyn_cast<SimCodeUnitDeclOp>(op)) {
+      if (!scopeIds.count(codeUnit.getScopeId()))
+        return codeUnit.emitOpError("references an unknown scope ID");
     } else if (auto storage = dyn_cast<SimStorageDeclOp>(op)) {
       if (!scopeIds.count(storage.getScopeId()))
         return storage.emitOpError("references an unknown scope ID");
@@ -922,7 +1154,31 @@ LogicalResult SimDesignOp::verifyRegions() {
   // nested verifier must not reach into shared parent state. Callee symbols
   // instead use SymbolUserOpInterface, which the framework verifies against
   // this symbol table with a cached SymbolTableCollection.
+  llvm::DenseMap<uint64_t, SimFuncOp> executableCodeUnits;
   for (SimFuncOp function : functions) {
+    if (!function.isExternal() &&
+        function.getEntryKind() != EntryKind::RootInitializer &&
+        !function.getCodeUnitIdAttr())
+      return function.emitOpError(
+          "defined non-root function requires a code-unit ID");
+    if (auto id = function.getCodeUnitId()) {
+      auto declaration = codeUnits.find(*id);
+      if (declaration == codeUnits.end())
+        return function.emitOpError("references an unknown code-unit ID");
+      if (declaration->second.getCodeUnitKind() != function.getEntryKind())
+        return function.emitOpError(
+            "entry kind does not match its code-unit declaration");
+      if (!function.isExternal()) {
+        auto [first, inserted] = executableCodeUnits.try_emplace(*id, function);
+        if (!inserted) {
+          function.emitOpError()
+              << "code-unit ID " << *id
+              << " is referenced by multiple executable functions";
+          first->second.emitRemark("first executable function is here");
+          return failure();
+        }
+      }
+    }
     WalkResult result = function.walk([&](Operation *op) {
       auto verifyDescriptor = [&](uint64_t id, Type elementType,
                                   const llvm::DenseMap<uint64_t, Type> &table,
@@ -1042,6 +1298,9 @@ void SimFuncOp::print(OpAsmPrinter &printer) {
 
 LogicalResult SimFuncOp::verify() {
   FunctionType type = getFunctionType();
+  if (getCodeUnitIdAttr() &&
+      failed(verifyNonnegative(*this, getCodeUnitIdAttr(), "code-unit ID")))
+    return failure();
   if (type.getNumInputs() == 0 || !isa<ContextType>(type.getInput(0)))
     return emitOpError("first argument must be !obelisk_sim.context");
   for (Type input : type.getInputs()) {

@@ -2,8 +2,13 @@
 
 module {
   obelisk_sim.design @folding {
+    obelisk_sim.code_unit.decl 9000001 in 0 function hierarchy "test.folding.constants.9000001"
+    obelisk_sim.code_unit.decl 9000002 in 0 function hierarchy "test.folding.controlling_bitwise.9000002"
+    obelisk_sim.code_unit.decl 9000003 in 0 function hierarchy "test.folding.resize_chains.9000003"
+    obelisk_sim.code_unit.decl 9000004 in 0 function hierarchy "test.folding.operand_order.9000004"
+    obelisk_sim.code_unit.decl 9000005 in 0 function hierarchy "test.folding.structural.9000005"
     obelisk_sim.scope.decl 0
-    obelisk_sim.func @constants(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> (!obelisk_sim.logic<4>, i4, i1) attributes {entry_kind = 8 : i32} {
+    obelisk_sim.func @constants(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> (!obelisk_sim.logic<4>, i4, i1) attributes {entry_kind = 8 : i32, code_unit_id = 9000001 : i64} {
       %x = obelisk_sim.logic.constant 10 : i4, 4 : i4 : !obelisk_sim.logic<4>
       %y = obelisk_sim.logic.constant 3 : i4, 0 : i4 : !obelisk_sim.logic<4>
       %add = obelisk_sim.logic.binary add %x, %y : !obelisk_sim.logic<4>
@@ -12,7 +17,7 @@ module {
       obelisk_sim.return %add, %bits, %truth : !obelisk_sim.logic<4>, i4, i1
     }
 
-    obelisk_sim.func @controlling_bitwise(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %value: !obelisk_sim.logic<4> {obelisk_sim.capture_kind = 2 : i32}) -> (!obelisk_sim.logic<4>, !obelisk_sim.logic<4>, !obelisk_sim.logic<4>, !obelisk_sim.logic<4>) attributes {entry_kind = 8 : i32} {
+    obelisk_sim.func @controlling_bitwise(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %value: !obelisk_sim.logic<4> {obelisk_sim.capture_kind = 2 : i32}) -> (!obelisk_sim.logic<4>, !obelisk_sim.logic<4>, !obelisk_sim.logic<4>, !obelisk_sim.logic<4>) attributes {entry_kind = 8 : i32, code_unit_id = 9000002 : i64} {
       %zero = obelisk_sim.logic.constant 0 : i4, 0 : i4 : !obelisk_sim.logic<4>
       %ones = obelisk_sim.logic.constant -1 : i4, 0 : i4 : !obelisk_sim.logic<4>
       %and_zero = obelisk_sim.logic.binary and %value, %zero : !obelisk_sim.logic<4>
@@ -22,21 +27,21 @@ module {
       obelisk_sim.return %and_zero, %or_ones, %and_ones, %or_zero : !obelisk_sim.logic<4>, !obelisk_sim.logic<4>, !obelisk_sim.logic<4>, !obelisk_sim.logic<4>
     }
 
-    obelisk_sim.func @resize_chains(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %value: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 2 : i32}) -> (!obelisk_sim.logic<12>, !obelisk_sim.logic<32>) attributes {entry_kind = 8 : i32} {
+    obelisk_sim.func @resize_chains(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %value: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 2 : i32}) -> (!obelisk_sim.logic<12>, !obelisk_sim.logic<32>) attributes {entry_kind = 8 : i32, code_unit_id = 9000003 : i64} {
       %wide = obelisk_sim.logic.resize %value signed = true : !obelisk_sim.logic<8> -> !obelisk_sim.logic<16>
       %collapsed = obelisk_sim.logic.resize %wide signed = false : !obelisk_sim.logic<16> -> !obelisk_sim.logic<12>
       %preserved = obelisk_sim.logic.resize %wide signed = false : !obelisk_sim.logic<16> -> !obelisk_sim.logic<32>
       obelisk_sim.return %collapsed, %preserved : !obelisk_sim.logic<12>, !obelisk_sim.logic<32>
     }
 
-    obelisk_sim.func @operand_order(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %value: !obelisk_sim.logic<4> {obelisk_sim.capture_kind = 2 : i32}) -> (!obelisk_sim.logic<4>, !obelisk_sim.logic<1>) attributes {entry_kind = 8 : i32} {
+    obelisk_sim.func @operand_order(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %value: !obelisk_sim.logic<4> {obelisk_sim.capture_kind = 2 : i32}) -> (!obelisk_sim.logic<4>, !obelisk_sim.logic<1>) attributes {entry_kind = 8 : i32, code_unit_id = 9000004 : i64} {
       %one = obelisk_sim.logic.constant 1 : i4, 0 : i4 : !obelisk_sim.logic<4>
       %sum = obelisk_sim.logic.binary add %one, %value : !obelisk_sim.logic<4>
       %less = obelisk_sim.logic.compare ult %one, %value : (!obelisk_sim.logic<4>, !obelisk_sim.logic<4>) -> !obelisk_sim.logic<1>
       obelisk_sim.return %sum, %less : !obelisk_sim.logic<4>, !obelisk_sim.logic<1>
     }
 
-    obelisk_sim.func @structural(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %a: !obelisk_sim.logic<4> {obelisk_sim.capture_kind = 2 : i32}, %b: !obelisk_sim.logic<4> {obelisk_sim.capture_kind = 2 : i32}, %base: !obelisk_sim.logic<16> {obelisk_sim.capture_kind = 2 : i32}, %r4: !obelisk_sim.logic<4> {obelisk_sim.capture_kind = 2 : i32}, %r8: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 2 : i32}) -> (!obelisk_sim.logic<8>, !obelisk_sim.logic<4>, !obelisk_sim.logic<8>, !obelisk_sim.logic<4>, !obelisk_sim.logic<4>, !obelisk_sim.logic<2>, !obelisk_sim.logic<16>) attributes {entry_kind = 8 : i32} {
+    obelisk_sim.func @structural(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %a: !obelisk_sim.logic<4> {obelisk_sim.capture_kind = 2 : i32}, %b: !obelisk_sim.logic<4> {obelisk_sim.capture_kind = 2 : i32}, %base: !obelisk_sim.logic<16> {obelisk_sim.capture_kind = 2 : i32}, %r4: !obelisk_sim.logic<4> {obelisk_sim.capture_kind = 2 : i32}, %r8: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 2 : i32}) -> (!obelisk_sim.logic<8>, !obelisk_sim.logic<4>, !obelisk_sim.logic<8>, !obelisk_sim.logic<4>, !obelisk_sim.logic<4>, !obelisk_sim.logic<2>, !obelisk_sim.logic<16>) attributes {entry_kind = 8 : i32, code_unit_id = 9000005 : i64} {
       %repeated = obelisk_sim.logic.concat %a, %a : (!obelisk_sim.logic<4>, !obelisk_sim.logic<4>) -> !obelisk_sim.logic<8>
       %repeat_slice = obelisk_sim.logic.extract %repeated from 4 : !obelisk_sim.logic<8> -> !obelisk_sim.logic<4>
       %concat = obelisk_sim.logic.concat %a, %b : (!obelisk_sim.logic<4>, !obelisk_sim.logic<4>) -> !obelisk_sim.logic<8>

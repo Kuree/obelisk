@@ -18,6 +18,23 @@ module attributes {
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
   obelisk_sim.design @coroutines {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.coroutines.delay_process.9000001"
+    obelisk_sim.code_unit.decl 9000002 in 0 initial hierarchy "test.coroutines.all_waits.9000002"
+    obelisk_sim.code_unit.decl 9000003 in 0 always hierarchy "test.coroutines.loop_wait.9000003"
+    obelisk_sim.code_unit.decl 9000004 in 0 initial hierarchy "test.coroutines.reuse_continuation_slots.9000004"
+    obelisk_sim.code_unit.decl 9000005 in 0 initial hierarchy "test.coroutines.maximum_continuation_id.9000005"
+    obelisk_sim.code_unit.decl 9000006 in 0 initial hierarchy "test.coroutines.suspension_live_value.9000006"
+    obelisk_sim.code_unit.decl 9000007 in 0 initial hierarchy "test.coroutines.plain_process.9000007"
+    obelisk_sim.code_unit.decl 9000008 in 0 function hierarchy "test.coroutines.consume_ref.9000008"
+    obelisk_sim.code_unit.decl 9000009 in 0 initial hierarchy "test.coroutines.capture_ref.9000009"
+    obelisk_sim.code_unit.decl 9000010 in 0 function hierarchy "test.coroutines.consume_ref_with_status.9000010"
+    obelisk_sim.code_unit.decl 9000011 in 0 initial hierarchy "test.coroutines.ref_lifetime.9000011"
+    obelisk_sim.code_unit.decl 9000012 in 0 function hierarchy "test.coroutines.cfg_ref_lifetime.9000012"
+    obelisk_sim.code_unit.decl 9000013 in 0 function hierarchy "test.coroutines.branched_ref_lifetime.9000013"
+    obelisk_sim.code_unit.decl 9000014 in 0 function hierarchy "test.coroutines.wide_handle_indices.9000014"
+    obelisk_sim.code_unit.decl 9000015 in 0 function hierarchy "test.coroutines.ordinary.9000015"
+    obelisk_sim.code_unit.decl 9000016 in 0 function hierarchy "test.coroutines.union_extract.9000016"
+    obelisk_sim.code_unit.decl 9000017 in 0 function hierarchy "test.coroutines.aggregate_insert.9000017"
     obelisk_sim.scope.decl 0
 
     obelisk_sim.func @delay_process(
@@ -26,7 +43,7 @@ module attributes {
         %bit: !obelisk_sim.logic<1> {obelisk_sim.capture_kind = 2 : i32},
         %wide: !obelisk_sim.logic<65> {obelisk_sim.capture_kind = 2 : i32},
         %choose: i1 {obelisk_sim.capture_kind = 2 : i32})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %delay = obelisk_sim.time.constant 5
       cf.br ^dispatch(%capture, %bit, %wide : !obelisk_sim.logic<5>, !obelisk_sim.logic<1>, !obelisk_sim.logic<65>)
     ^dispatch(%value: !obelisk_sim.logic<5>, %value_bit: !obelisk_sim.logic<1>,
@@ -52,7 +69,7 @@ module attributes {
         %net: !obelisk_sim.net<i8> {obelisk_sim.capture_kind = 1 : i32},
         %event: !obelisk_sim.event {obelisk_sim.capture_kind = 1 : i32},
         %process: !obelisk_sim.process {obelisk_sim.capture_kind = 1 : i32})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
       obelisk_sim.suspend.change %ref to ^edge : !obelisk_sim.ref<i8>
     ^edge:
       obelisk_sim.suspend.edge posedge %net to ^any : !obelisk_sim.net<i8>
@@ -71,7 +88,7 @@ module attributes {
     obelisk_sim.func @loop_wait(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %ref: !obelisk_sim.ref<i8> {obelisk_sim.capture_kind = 1 : i32})
-        attributes {entry_kind = 3 : i32} {
+        attributes {entry_kind = 3 : i32, code_unit_id = 9000003 : i64} {
       cf.br ^header
     ^header:
       obelisk_sim.suspend.change %ref to ^header : !obelisk_sim.ref<i8>
@@ -82,7 +99,7 @@ module attributes {
         %left: i64 {obelisk_sim.capture_kind = 2 : i32},
         %right: i64 {obelisk_sim.capture_kind = 2 : i32},
         %choose: i1 {obelisk_sim.capture_kind = 2 : i32})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000004 : i64} {
       %delay = obelisk_sim.time.constant 1
       cf.cond_br %choose, ^wait_left, ^wait_right
     ^wait_left:
@@ -97,7 +114,7 @@ module attributes {
 
     obelisk_sim.func @maximum_continuation_id(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000005 : i64} {
       %delay = obelisk_sim.time.constant 1
       obelisk_sim.suspend.delay %delay to ^second
           {site = #obelisk_sim.continuation<id = 4294967295>}
@@ -110,7 +127,7 @@ module attributes {
     obelisk_sim.func @suspension_live_value(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %capture: i32 {obelisk_sim.capture_kind = 2 : i32})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000006 : i64} {
       %one = arith.constant 1 : i32
       %live = arith.addi %capture, %one : i32
       %delay = obelisk_sim.time.constant 1
@@ -127,7 +144,7 @@ module attributes {
     obelisk_sim.func @plain_process(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %capture: i64 {obelisk_sim.capture_kind = 2 : i32})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000007 : i64} {
       %local = obelisk_sim.ref.alloc %capture : i64 -> !obelisk_sim.ref<i64>
       %loaded = obelisk_sim.ref.load %local : !obelisk_sim.ref<i64> -> i64
       obelisk_sim.return
@@ -136,7 +153,7 @@ module attributes {
     obelisk_sim.func @consume_ref(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %ref: !obelisk_sim.ref<i64> {obelisk_sim.capture_kind = 1 : i32})
-        attributes {entry_kind = 8 : i32} {
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000008 : i64} {
       %value = obelisk_sim.ref.load %ref : !obelisk_sim.ref<i64> -> i64
       obelisk_sim.return
     }
@@ -144,7 +161,7 @@ module attributes {
     obelisk_sim.func @capture_ref(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %ref: !obelisk_sim.ref<i64> {obelisk_sim.capture_kind = 1 : i32})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000009 : i64} {
       %value = obelisk_sim.ref.load %ref : !obelisk_sim.ref<i64> -> i64
       obelisk_sim.return
     }
@@ -153,7 +170,7 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %ref: !obelisk_sim.ref<i64> {obelisk_sim.capture_kind = 1 : i32},
         %descriptor: i32 {obelisk_sim.capture_kind = 2 : i32})
-        attributes {entry_kind = 8 : i32} {
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000010 : i64} {
       %value = obelisk_sim.ref.load %ref : !obelisk_sim.ref<i64> -> i64
       obelisk_sim.file.flush %ctx, %descriptor :
           (!obelisk_sim.context, i32) -> ()
@@ -163,7 +180,7 @@ module attributes {
     obelisk_sim.func @ref_lifetime(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %capture: i64 {obelisk_sim.capture_kind = 2 : i32})
-        attributes {entry_kind = 1 : i32} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000011 : i64} {
       cf.br ^allocate
     ^allocate:
       %local = obelisk_sim.ref.alloc %capture : i64 -> !obelisk_sim.ref<i64>
@@ -178,7 +195,7 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %capture: i64 {obelisk_sim.capture_kind = 2 : i32},
         %repeat: i1 {obelisk_sim.capture_kind = 2 : i32})
-        attributes {entry_kind = 8 : i32} {
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000012 : i64} {
       cf.br ^allocate
     ^allocate:
       %local = obelisk_sim.ref.alloc %capture : i64 -> !obelisk_sim.ref<i64>
@@ -194,7 +211,7 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %capture: i64 {obelisk_sim.capture_kind = 2 : i32},
         %use_reference: i1 {obelisk_sim.capture_kind = 2 : i32})
-        attributes {entry_kind = 8 : i32} {
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000013 : i64} {
       %local = obelisk_sim.ref.alloc %capture : i64 -> !obelisk_sim.ref<i64>
       cf.cond_br %use_reference, ^use(%local : !obelisk_sim.ref<i64>), ^done
     ^use(%reference: !obelisk_sim.ref<i64>):
@@ -210,7 +227,7 @@ module attributes {
         %array_ref: !obelisk_sim.ref<!handle_words> {obelisk_sim.capture_kind = 1 : i32},
         %driver: !obelisk_sim.driver<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 1 : i32},
         %array_driver: !obelisk_sim.driver<!handle_words> {obelisk_sim.capture_kind = 1 : i32})
-        attributes {entry_kind = 8 : i32} {
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000014 : i64} {
       %wide = arith.constant 18446744073709551616 : i129
       %wide_unknown = obelisk_sim.logic.constant 0 : i129, 1 : i129 : !obelisk_sim.logic<129>
       %ref_known = obelisk_sim.ref.dyn_extract %ref from %wide : (!obelisk_sim.ref<!obelisk_sim.logic<8>>, i129) -> !obelisk_sim.ref<!obelisk_sim.logic<4>>
@@ -227,14 +244,14 @@ module attributes {
     obelisk_sim.func @ordinary(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %value: i64 {obelisk_sim.capture_kind = 2 : i32}) -> i64
-        attributes {entry_kind = 8 : i32} {
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000015 : i64} {
       obelisk_sim.return %value : i64
     }
 
     obelisk_sim.func @union_extract(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %value: i16 {obelisk_sim.capture_kind = 2 : i32}) -> i8
-        attributes {entry_kind = 8 : i32} {
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000016 : i64} {
       %union = obelisk_sim.union.construct %value as 1 : (i16) -> !choice
       %byte = obelisk_sim.union.extract %union[0] : (!choice) -> i8
       obelisk_sim.return %byte : i8
@@ -244,7 +261,7 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %input: !record {obelisk_sim.capture_kind = 2 : i32},
         %replacement: i8 {obelisk_sim.capture_kind = 2 : i32}) -> !record
-        attributes {entry_kind = 8 : i32} {
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000017 : i64} {
       %updated = obelisk_sim.aggregate.insert %replacement into %input[0] : (!record, i8) -> !record
       obelisk_sim.return %updated : !record
     }

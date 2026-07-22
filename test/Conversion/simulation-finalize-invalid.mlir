@@ -5,8 +5,9 @@ module {
     return
   }
   obelisk_sim.design @illegal_reference {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.illegal_reference.bad.9000001"
     obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {bad_metadata = @semantic_path, entry_kind = 1 : i32} {
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {bad_metadata = @semantic_path, entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %zero = arith.constant 0 : i8
       %illegal = builtin.unrealized_conversion_cast %zero : i8 to i16
       %float = arith.constant 0.0 : f32

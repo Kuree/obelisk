@@ -23,6 +23,13 @@ void buildObeliskToSimulationPipeline(mlir::OpPassManager &manager,
                                       uint32_t workers,
                                       llvm::StringRef vpiMode);
 
+/// Populate the lowering pipeline with explicit simulation and optimization
+/// configuration. `optLevel` is in the inclusive range 0 through 3.
+void buildObeliskToSimulationPipeline(mlir::OpPassManager &manager,
+                                      uint32_t workers,
+                                      llvm::StringRef vpiMode,
+                                      uint32_t optLevel);
+
 /// Register the aggregate serial/parallel/serial lowering pipeline.
 void registerObeliskToSimulationPipeline();
 
