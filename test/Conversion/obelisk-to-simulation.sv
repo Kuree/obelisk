@@ -132,7 +132,6 @@ endmodule
 // SIM-DAG: obelisk_sim.func @unit_
 // SIM-DAG: obelisk_sim.call @unit_
 // SIM-DAG: obelisk_sim.ref.extract
-// SIM-DAG: obelisk_sim.logic.concat
 // SIM-DAG: obelisk_sim.logic.replicate
 // SIM-DAG: obelisk_sim.logic.compare slt
 // SIM-DAG: obelisk_sim.time.constant 5000

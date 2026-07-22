@@ -21,12 +21,12 @@ endmodule
 // CHECK: %[[SEL:.*]] = obelisk_sim.ref.load %arg1
 
 // First item: one label, matching 2'd0, storing 8'h10.
-// CHECK: %[[L0:.*]] = obelisk_sim.logic.from_bits
-// CHECK: %[[EQ0:.*]] = obelisk_sim.logic.compare case_eq %[[SEL]], %[[L0]]
+// Constant labels and values may be folded and carried as continuation block
+// arguments.
+// CHECK: %[[EQ0:.*]] = obelisk_sim.logic.compare case_eq %[[SEL]], %{{.*}}
 // CHECK: cf.cond_br %[[EQ0]], ^[[ITEM0:.*]], ^[[NEXT0:.*]]
 // CHECK: ^[[ITEM0]]:
-// CHECK: %[[V0:.*]] = obelisk_sim.logic.from_bits
-// CHECK: obelisk_sim.ref.store %[[V0]] to %arg2
+// CHECK: obelisk_sim.ref.store %{{.*}} to %arg2
 
 // Second item: two labels combined with a disjunction, storing 8'h20.
 // CHECK: ^[[NEXT0]]:

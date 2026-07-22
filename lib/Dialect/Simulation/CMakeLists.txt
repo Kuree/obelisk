@@ -16,4 +16,5 @@ add_mlir_library(ObeliskSimulationIR
   MLIRIR
   MLIRMemorySlotInterfaces
   MLIRSideEffectInterfaces
+  MLIRViewLikeInterface
 )

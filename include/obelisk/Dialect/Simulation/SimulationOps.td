@@ -13,6 +13,7 @@ include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/Interfaces/FunctionInterfaces.td"
 include "mlir/Interfaces/MemorySlotInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
+include "mlir/Interfaces/ViewLikeInterface.td"
 
 def SimStorageResource : Resource<"::obelisk::sim::StorageResource">;
 def SimNetResource : Resource<"::obelisk::sim::NetResource">;
@@ -262,43 +263,45 @@ def SimContextEventOp : SimOp<"context.event", [Pure]> {
 }
 
 def SimRefAllocOp : SimOp<"ref.alloc", [
-    MemoryEffects<[MemAlloc<SimStorageResource>]>,
     DeclareOpInterfaceMethods<PromotableAllocationOpInterface>
   ]> {
   let summary = "promotable automatic local allocation";
   let arguments = (ins AnyType:$initial_value);
-  let results = (outs SimRefType:$result);
+  let results = (outs Res<SimRefType, "", [MemAlloc<SimStorageResource>]>:$result);
   let assemblyFormat = "$initial_value attr-dict `:` type($initial_value) `->` qualified(type($result))";
   let hasVerifier = 1;
 }
 
 def SimRefLoadOp : SimOp<"ref.load", [
-    MemoryEffects<[MemRead<SimStorageResource>]>,
     DeclareOpInterfaceMethods<PromotableMemOpInterface>,
     SimRefElementMatches<"reference", "result">
   ]> {
-  let arguments = (ins SimRefType:$reference);
+  let arguments = (ins Arg<SimRefType, "", [MemRead<SimStorageResource>]>:$reference);
   let results = (outs AnyType:$result);
   let assemblyFormat = "$reference attr-dict `:` qualified(type($reference)) `->` type($result)";
 }
 
 def SimRefStoreOp : SimOp<"ref.store", [
-    MemoryEffects<[MemWrite<SimStorageResource>]>,
     DeclareOpInterfaceMethods<PromotableMemOpInterface>,
     SimRefElementMatches<"reference", "value">
   ]> {
-  let arguments = (ins AnyType:$value, SimRefType:$reference);
+  let arguments = (ins AnyType:$value,
+                       Arg<SimRefType, "", [MemWrite<SimStorageResource>]>:$reference);
   let assemblyFormat = "$value `to` $reference attr-dict `:` type($value) `,` qualified(type($reference))";
 }
 
-def SimRefExtractOp : SimOp<"ref.extract", [Pure]> {
+def SimRefExtractOp : SimOp<"ref.extract", [Pure, ViewLikeOpInterface]> {
   let arguments = (ins SimRefType:$input, I64Attr:$low_bit);
   let results = (outs SimRefType:$result);
   let assemblyFormat = "$input `from` $low_bit attr-dict `:` qualified(type($input)) `->` qualified(type($result))";
+  let extraClassDeclaration = [{
+    ::mlir::Value getViewSource() { return getInput(); }
+  }];
   let hasVerifier = 1;
+  let hasCanonicalizer = 1;
 }
 
-def SimRefDynExtractOp : SimOp<"ref.dyn_extract", [Pure]> {
+def SimRefDynExtractOp : SimOp<"ref.dyn_extract", [Pure, ViewLikeOpInterface]> {
   let summary = "dynamically select a packed storage slice";
   let description = [{
     The low-bit index may be a signless builtin integer or four-state logic.
@@ -310,7 +313,11 @@ def SimRefDynExtractOp : SimOp<"ref.dyn_extract", [Pure]> {
   let arguments = (ins SimRefType:$input, AnyType:$low_bit);
   let results = (outs SimRefType:$result);
   let assemblyFormat = "$input `from` $low_bit attr-dict `:` functional-type(operands, results)";
+  let extraClassDeclaration = [{
+    ::mlir::Value getViewSource() { return getInput(); }
+  }];
   let hasVerifier = 1;
+  let hasCanonicalizer = 1;
 }
 
 def SimNetReadOp : SimOp<"net.read", [
@@ -335,6 +342,7 @@ def SimDriverExtractOp : SimOp<"driver.extract", [Pure]> {
   let results = (outs SimDriverType:$result);
   let assemblyFormat = "$input `from` $low_bit attr-dict `:` qualified(type($input)) `->` qualified(type($result))";
   let hasVerifier = 1;
+  let hasCanonicalizer = 1;
 }
 
 def SimDriverDynExtractOp : SimOp<"driver.dyn_extract", [Pure]> {
@@ -348,6 +356,7 @@ def SimDriverDynExtractOp : SimOp<"driver.dyn_extract", [Pure]> {
   let results = (outs SimDriverType:$result);
   let assemblyFormat = "$input `from` $low_bit attr-dict `:` functional-type(operands, results)";
   let hasVerifier = 1;
+  let hasCanonicalizer = 1;
 }
 
 def SimNBAEnqueueOp : SimOp<"nba.enqueue", [
@@ -383,6 +392,7 @@ def SimLogicFromBitsOp : SimOp<"logic.from_bits", [Pure]> {
   let results = (outs SimLogicType:$result);
   let assemblyFormat = "$input attr-dict `:` type($input) `->` qualified(type($result))";
   let hasVerifier = 1;
+  let hasFolder = 1;
 }
 
 def SimLogicToBitsOp : SimOp<"logic.to_bits", [Pure]> {
@@ -417,6 +427,7 @@ def SimLogicResizeOp : SimOp<"logic.resize", [Pure]> {
   let results = (outs SimLogicType:$result);
   let assemblyFormat = "$input `signed` `=` $is_signed attr-dict `:` qualified(type($input)) `->` qualified(type($result))";
   let hasFolder = 1;
+  let hasCanonicalizer = 1;
 }
 
 def SimLogicUnaryOp : SimOp<"logic.unary", [Pure]> {
@@ -425,6 +436,7 @@ def SimLogicUnaryOp : SimOp<"logic.unary", [Pure]> {
   let assemblyFormat =
       "$kind $input attr-dict `:` functional-type(operands, results)";
   let hasVerifier = 1;
+  let hasFolder = 1;
 }
 
 def SimLogicReductionOp : SimOp<"logic.reduction", [Pure]> {
@@ -433,18 +445,21 @@ def SimLogicReductionOp : SimOp<"logic.reduction", [Pure]> {
   let results = (outs SimLogic1Type:$result);
   let assemblyFormat = [{$kind $input attr-dict `:` qualified(type($input))
     `->` qualified(type($result))}];
+  let hasFolder = 1;
 }
 
-def SimLogicBinaryOp : SimOp<"logic.binary", [Pure,
-    AllTypesMatch<["lhs", "rhs", "result"]>]> {
+def SimLogicBinaryOp
+    : SimOp<"logic.binary", [Pure, SameOperandsAndResultType]> {
   let arguments = (ins SimBinaryKind:$kind, SimLogicType:$lhs,
                        SimLogicType:$rhs);
   let results = (outs SimLogicType : $result);
   let assemblyFormat =
       "$kind $lhs `,` $rhs attr-dict `:` qualified(type($result))";
+  let hasFolder = 1;
+  let hasCanonicalizer = 1;
 }
 
-def SimLogicLogicalOp : SimOp<"logic.logical", [Pure]> {
+def SimLogicLogicalOp : SimOp<"logic.logical", [Pure, Commutative]> {
   let summary = "four-state logical conjunction or disjunction";
   let arguments = (ins SimLogicalKind
                    : $kind, SimLogicType
@@ -453,6 +468,7 @@ def SimLogicLogicalOp : SimOp<"logic.logical", [Pure]> {
   let results = (outs SimLogic1Type : $result);
   let assemblyFormat =
       "$kind $lhs `,` $rhs attr-dict `:` functional-type(operands, results)";
+  let hasFolder = 1;
 }
 
 def SimLogicShiftOp
@@ -466,10 +482,11 @@ def SimLogicShiftOp
   let assemblyFormat = "$kind $input `by` $amount attr-dict `:` "
                        "functional-type(operands, results)";
   let hasVerifier = 1;
+  let hasFolder = 1;
 }
 
 def SimLogicCompareOp
-    : SimOp<"logic.compare", [Pure, AllTypesMatch<["lhs", "rhs"]>]> {
+    : SimOp<"logic.compare", [Pure, SameTypeOperands]> {
   let arguments = (ins SimCompareKind
                    : $kind, SimLogicType
                    : $lhs, SimLogicType
@@ -478,6 +495,8 @@ def SimLogicCompareOp
   let assemblyFormat =
       "$kind $lhs `,` $rhs attr-dict `:` functional-type(operands, results)";
   let hasVerifier = 1;
+  let hasFolder = 1;
+  let hasCanonicalizer = 1;
 }
 
 def SimLogicConcatOp : SimOp<"logic.concat", [Pure]> {
@@ -486,6 +505,8 @@ def SimLogicConcatOp : SimOp<"logic.concat", [Pure]> {
   let assemblyFormat =
       "$inputs attr-dict `:` functional-type($inputs, $result)";
   let hasVerifier = 1;
+  let hasFolder = 1;
+  let hasCanonicalizer = 1;
 }
 
 def SimLogicReplicateOp : SimOp<"logic.replicate", [Pure]> {
@@ -494,6 +515,8 @@ def SimLogicReplicateOp : SimOp<"logic.replicate", [Pure]> {
   let assemblyFormat = "$input `times` $count attr-dict `:` "
                        "qualified(type($input)) `->` qualified(type($result))";
   let hasVerifier = 1;
+  let hasFolder = 1;
+  let hasCanonicalizer = 1;
 }
 
 def SimLogicExtractOp : SimOp<"logic.extract", [Pure]> {
@@ -502,6 +525,8 @@ def SimLogicExtractOp : SimOp<"logic.extract", [Pure]> {
   let assemblyFormat = "$input `from` $low_bit attr-dict `:` "
                        "qualified(type($input)) `->` qualified(type($result))";
   let hasVerifier = 1;
+  let hasFolder = 1;
+  let hasCanonicalizer = 1;
 }
 
 def SimLogicDynExtractOp : SimOp<"logic.dyn_extract", [Pure]> {
@@ -516,6 +541,8 @@ def SimLogicDynExtractOp : SimOp<"logic.dyn_extract", [Pure]> {
   let assemblyFormat =
       "$input `from` $low_bit attr-dict `:` functional-type(operands, results)";
   let hasVerifier = 1;
+  let hasFolder = 1;
+  let hasCanonicalizer = 1;
 }
 
 def SimBitsDynExtractOp : SimOp<"bits.dyn_extract", [Pure]> {
@@ -531,6 +558,7 @@ def SimBitsDynExtractOp : SimOp<"bits.dyn_extract", [Pure]> {
   let assemblyFormat =
       "$input `from` $low_bit attr-dict `:` functional-type(operands, results)";
   let hasVerifier = 1;
+  let hasFolder = 1;
 }
 
 def SimLogicInsertOp
@@ -543,6 +571,8 @@ def SimLogicInsertOp
   let assemblyFormat = "$replacement `into` $input `at` $low_bit attr-dict `:` "
                        "functional-type(operands, results)";
   let hasVerifier = 1;
+  let hasFolder = 1;
+  let hasCanonicalizer = 1;
 }
 
 def SimTimeConstantOp : SimOp<"time.constant", [Pure, ConstantLike]> {
@@ -565,7 +595,7 @@ def SimTimeScaleOp : SimOp<"time.scale", [Pure]> {
 }
 
 def SimTimeAddOp
-    : SimOp<"time.add", [Pure, AllTypesMatch<["lhs", "rhs", "result"]>]> {
+    : SimOp<"time.add", [Pure, SameOperandsAndResultType, Commutative]> {
   let arguments = (ins SimTimeType : $lhs, SimTimeType : $rhs);
   let results = (outs SimTimeType : $result);
   let assemblyFormat = "$lhs `,` $rhs attr-dict";
