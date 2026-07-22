@@ -21,6 +21,10 @@ std::mutex hostErrorMutex;
 obelisk_rt_context::obelisk_rt_context() {
   mcd[0].stream = stdout;
   mcd[0].writable = true;
+  files.resize(3);
+  files[0] = {stdin, 0, false};
+  files[1] = {stdout, 0, true};
+  files[2] = {stderr, 0, true};
   for (uint32_t bit = 30; bit >= 1; --bit)
     freeMCDs.push_back(bit);
 }
@@ -90,7 +94,7 @@ extern "C" void obelisk_rt_v1_context_destroy(obelisk_rt_context *context) {
       if (context->mcd[bit].stream)
         std::fclose(context->mcd[bit].stream);
     }
-    for (size_t index = 1; index < context->files.size(); ++index) {
+    for (size_t index = 3; index < context->files.size(); ++index) {
       if (context->files[index].stream)
         std::fclose(context->files[index].stream);
     }
