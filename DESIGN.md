@@ -13,12 +13,12 @@ Obelisk MLIR dialect (`obelisk.sv.*`, `!obelisk.*`)
     │  supported simulation lowering
     ▼
 Simulation MLIR (`obelisk_sim.*`, `arith.*`, `cf.*`)
-    │  planned state layout and native lowering
+    │  design-wide bytecode encoding or serial native lowering
     ▼
-Native MLIR (`func.*`, `ptr.*`, `arith.*`, `cf.*`, optional `vector.*`)
-    │  full conversion
+LLVM dialect plus embedded design database
+    │  LLVM IR/object emission and hermetic static-runtime linking
     ▼
-LLVM dialect → LLVM IR/object → standalone simulator
+Standalone x86-64 Linux simulator
 ```
 
 The frontend walks slang's semantic AST directly. It does not serialize the
@@ -155,9 +155,13 @@ it does not claim that every construct has already been lowered to LLVM.
 > later consumer, such as native code generation, is also complete.
 
 The current compiler reaches verified `obelisk_sim` SSA plus the standard MLIR
-`arith` and `cf` dialects for the supported simulation subset. It also derives
-schedule metadata and can print it deterministically. There is no lowering to
-the MLIR LLVM dialect, LLVM IR, an object file, or a standalone executable yet.
+`arith` and `cf` dialects for the supported simulation subset. It derives and
+prints deterministic schedule metadata, can encode the complete supported
+design into checked runtime bytecode, and can fully lower the same boundary to
+the MLIR LLVM dialect. The driver translates that dialect to LLVM IR, emits an
+x86-64 ELF object, or links a standalone PIE simulator against the in-tree
+runtime and a pinned hermetic sysroot. Native execution is currently serial and
+requires `--threads=1` and `--vpi=off`.
 
 The `obelisk_sim` dialect is the target-independent executable boundary between
 semantic SystemVerilog and the runtime. A design is flattened into deterministic
@@ -190,11 +194,18 @@ be approximated with potentially poison-producing builtin shifts.
 ### Native dialect and memory lowering
 
 `arith` and `cf` are already part of the executable simulation boundary. The
-serial native backend will lower `obelisk_sim.func` and direct calls to the
-`func` dialect while retaining `arith` and `cf` for scalar computation and CFG
-control. Structured loops may temporarily use `scf` when that enables standard
-transformations, and fixed-width hot data may use `vector` before LLVM
-conversion.
+implemented serial reference backend builds deterministic target-layout
+process frames, lowers suspension points to switched-resume coroutines, fully
+converts simulation operations, runtime calls, functions, arithmetic, and
+control flow to the LLVM dialect, and emits LLVM IR or machine code without
+unrealized conversion casts.
+
+The optimized native backend will insert state-layout decisions before that
+terminal conversion. It will lower `obelisk_sim.func` and direct calls through
+the `func` dialect while retaining `arith` and `cf` for scalar computation and
+CFG control. Structured loops may temporarily use `scf` when that enables
+standard transformations, and fixed-width hot data may use `vector` before
+LLVM conversion.
 
 The `async` dialect is not part of this lowering. Its dynamic task/token model
 would duplicate the generated scheduler and encourage a runtime dependency
@@ -217,13 +228,14 @@ The MemRef dialect is not used. Materialized simulator state uses the `ptr`
 dialect after layout, while dynamic services use typed runtime handles and
 calls.
 
-The native fragment ABI therefore lowers to pointer-valued context and frame
-arguments, a fixed-width continuation ID, and the uniform action result. Once
-all Obelisk-specific operations have been eliminated, the standard `func`,
-`arith`, `cf`, `ptr`, optional `vector`, and any temporary `scf` operations are
-fully converted to the LLVM dialect. Translation then produces LLVM IR for
-object emission and static-runtime linking; it does not generate C or C++
-source.
+The native fragment ABI lowers to pointer-valued context and frame arguments,
+a fixed-width continuation ID, and the uniform action result. The current
+reference backend materializes that layout while converting directly to the
+LLVM dialect. The optimized path will instead expose compiler-owned state
+through `ptr` operations before the standard `func`, `arith`, `cf`, `ptr`,
+optional `vector`, and any temporary `scf` operations are fully converted.
+Translation then produces LLVM IR for object emission and static-runtime
+linking; it does not generate C or C++ source.
 
 Parallelization treats the design as a concurrent SSA/CFG program rather than
 as a netlist. Whole-program optimization must run on that program first. The
@@ -250,14 +262,16 @@ be classified as one of:
    resource.
 
 The current pipeline moves values toward the first category with
-canonicalization, CSE, and memory promotion. The completed optimization pipeline
-will add capture pruning, escape analysis, scalar replacement, interprocedural
-constant propagation, inlining, specialization, and continuation-frame
-optimization. Cheap values may then be recomputed after resumption instead of
-being stored. Continuation slots with disjoint live ranges may share storage,
-and hot frame fields should be separated from cold diagnostic or exceptional
-state. Proven two-state regions will be eligible for ordinary integer storage
-instead of a materialized unknown plane.
+canonicalization, CSE, SROA, memory promotion, interprocedural SCCP,
+simulation-aware inlining, dead capture and private boundary elimination, and
+constant rematerialization across suspension. State-domain analysis also lets
+the native and bytecode backends represent proven two-state logic with ordinary
+integers instead of materializing an unknown plane. The completed optimization
+pipeline will add class-aware escape analysis and scalar replacement,
+devirtualization, specialization, load forwarding, DSE, and concrete
+continuation-frame optimization. Continuation slots with disjoint live ranges
+may then share storage, and hot frame fields should be separated from cold
+diagnostic or exceptional state.
 
 SystemVerilog observability constrains storage elimination. An update may be
 visible through change or edge sensitivity, net resolution, force and release,
@@ -341,12 +355,13 @@ Deferred effects retain a conservative unknown root when call-site substitution
 would otherwise give one shared callee site several incompatible identities.
 
 Whole-program optimization precedes placement. The current pipeline runs
-canonicalization, CSE, and memory promotion before graph derivation, then
-threads suspension-live SSA values through continuation block arguments. The
-broader pipeline will add class-hierarchy analysis and devirtualization, IPSCCP,
-escape analysis, aggregate and object scalar replacement, unused-capture
-removal, hot-path inlining, cold outlining, descriptor- and caller-specific
-cloning, and concrete continuation-frame simplification.
+canonicalization, CSE, SROA, memory promotion, interprocedural SCCP,
+simulation-aware inlining, and dead capture and boundary elimination before
+graph derivation, then threads suspension-live SSA values through continuation
+block arguments. The broader pipeline will add class-hierarchy analysis and
+devirtualization, escape analysis, object scalar replacement, cold outlining,
+descriptor- and caller-specific cloning, and concrete continuation-frame
+simplification.
 Inlining does not by itself remove cross-thread synchronization because a
 zero-time call already executes on its caller's worker. It is profitable when
 it exposes descriptor constants, refines aliases, removes state, or enables a
@@ -412,10 +427,14 @@ externally introduced events may still use the generic frontier.
 
 ### Dual AOT and bytecode execution
 
-The static runtime already implements the lockstep fragment descriptor/action
-ABI and a checked typed-register bytecode interpreter, including native and
-bytecode dispatch through the same entry point. The compiler does not yet encode
-`obelisk_sim` fragments as bytecode, select tiers, or emit native fragments.
+The compiler and runtime implement the lockstep fragment descriptor/action ABI,
+native fragment emission, and a checked typed-register bytecode interpreter.
+The encoder builds one deterministic pointer-free bytecode and design-database
+image for the complete supported executable boundary. Native and bytecode
+fragments dispatch through the same scheduler entry point, use the same process
+frames and stable continuation IDs, and call the same runtime services. The
+driver currently selects native or bytecode execution for the complete design;
+per-fragment tier selection and mixed-tier scheduling remain future work.
 
 This ABI is a build-internal contract, not a backward-compatible distribution
 boundary. The compiler, generated native objects, generated bytecode and
@@ -433,19 +452,20 @@ size, and instruction-cache pressure than they recover in execution time. Their
 execution may already be dominated by dynamic dispatch, containers, constraint
 solving, synchronization, DPI, or VPI rather than by instruction dispatch.
 
-The completed backend will therefore use one executable semantic boundary with
-two code forms rather than dividing the language into compiled and interpreted
-subsets. A process may move between them at fragment boundaries while retaining
-the same logical process identity, frame, scheduler state, RNG stream, and
-resource handles:
+The backend therefore uses one executable semantic boundary with two code forms
+rather than dividing the language into compiled and interpreted subsets. The
+future per-fragment selector may move a process between them at fragment
+boundaries while retaining the same logical process identity, frame, scheduler
+state, RNG stream, and resource handles:
 
 1. native AOT fragments implement hot, stable control and data paths;
 2. compact bytecode fragments implement cold or code-size-expensive dynamic
    behavior.
 
-Both forms will invoke the same runtime intrinsics for containers,
-synchronization, constraint solving, DPI, VPI, and other operations whose
-complexity belongs in the runtime rather than duplicated generated code.
+Both forms invoke the same implemented runtime intrinsics for scheduling,
+formatting, file I/O, and DPI. Future containers, synchronization, constraint
+solving, and VPI likewise belong in shared runtime services rather than
+duplicated generated code.
 
 Complex dynamic behavior does not imply interpretation by default. Dynamic
 arrays, queues, associative arrays, mailboxes, semaphores, and randomization can
@@ -462,12 +482,12 @@ does not include a JIT tier: the runtime contains no native-code compiler, code
 cache, deoptimization metadata, executable-memory manager, or assumption
 invalidation protocol.
 
-The interpreter and native lowering will share generated scheduling safe
-points, the dynamic frontier, and runtime intrinsics. This avoids a second
-scheduling implementation and makes mixed-tier execution observationally
-equivalent. The bytecode interpreter also provides a useful differential
-reference for native lowering, but it is not a separate or less complete
-semantic path.
+The interpreter and native lowering share scheduler ordering, suspension
+actions, process frames, stable runtime handles, and implemented runtime
+intrinsics. This avoids a second scheduling implementation and already supports
+native/bytecode differential execution. Generated safe points, the optimized
+dynamic frontier, and future services must preserve the same rule as the
+boundary expands.
 
 Each runtime fragment descriptor selects either a native entry pointer or an
 immutable bytecode range. Both consume the same process frame and return the
@@ -553,6 +573,72 @@ heap allocation, tracing, weak-reference processing, reclamation, stack walking,
 and worker coordination; LLVM never becomes a second runtime scheduler or heap
 implementation.
 
+### Framework and library code
+
+Verification frameworks are ordinary SystemVerilog together with imported
+foreign calls and, for register backdoor access, VPI. The compiler therefore
+must not recognize any specific library, substitute an implementation for one,
+or tune a heuristic to one library's shapes. Libraries are locally patched,
+their versions drift, recognition transfers no benefit to the next methodology
+layer built above them, and a benchmark improved by recognition measures the
+recognition rather than the compiler.
+
+What makes framework code slow is general rather than particular. Such code is
+typically late-bound by construction and early-bound in practice: object
+creation is mediated by string-keyed registries, wiring is resolved by name
+lookup, and operations on data objects are dispatched through a generic
+mechanism, while the values driving all of it are established once and never
+change afterwards. The capabilities below recover that cost without naming a
+library.
+
+Parameterized base classes already make most data-path call sites monomorphic,
+because the parameter supplies the concrete type. Residual dynamism concentrates
+at object-creation boundaries and at explicitly typed base-class handles, which
+is where analysis effort belongs.
+
+A checked downcast is a type test the source already contains. Refining a
+handle's static type across a successful cast removes any need to insert a guard
+the program performs anyway, and converts subsequent dispatch on that handle
+into ordinary devirtualization.
+
+Generic field walking driven by a statically known field list is an interpreter
+over compile-time data. Devirtualizing the walk, inlining it, and constant
+folding its operation selector collapse it into straight-line field operations,
+which ordinary scalar optimization then reduces to structure copies and
+comparisons. This is the largest single effect available on framework code, and
+it requires no knowledge of the framework.
+
+Proving that a field is written only during construction makes accessors over it
+pure. That enables memoizing derived values such as hierarchical names, which
+framework code recomputes constantly, and permits constant folding through
+structures that are immutable once elaboration has finished.
+
+String representation is a whole-program decision rather than a container
+detail. Interned handles make equality, hashing, and associative-array keying
+constant time and collapse duplicate storage, and framework code manipulates a
+small set of heavily repeated strings. The choice must be made before the
+container and class layers consume it, because it cannot be retrofitted.
+
+Supported zero-time DPI-C functions and synchronous tasks already use one
+generated C thunk and validated runtime boundary in both execution tiers.
+Native compilation calls the thunk directly, while bytecode carries stable
+import, scope, source, and typed-register metadata and enters that same thunk.
+Ahead-of-time linking accepts target-compatible objects, archives, and shared
+libraries, and missing imports are link errors. Framework code frequently
+routes its hottest primitives, including pattern matching, through imports, so
+extending the direct ABI beyond the current scalar and fixed-packed subset
+remains disproportionately important.
+
+General optimization changes constant factors, not asymptotic complexity. Where
+a library's data structure is genuinely unsuited to its scale, no transformation
+repairs it; the correct response is to record the measurement rather than to
+substitute an implementation.
+
+Any speedup attributed to these capabilities should reproduce on class-heavy
+code that does not use the framework in question. A benchmark that improves for
+one library alone indicates specialization, including the accidental kind
+introduced by tuning a heuristic until it fits one library's shapes.
+
 ### VPI observability and storage optimization
 
 The completed bytecode tier will contain the dynamic simulator-side
@@ -637,6 +723,79 @@ use an inline local access when no external behavior is active; otherwise it
 will call the common observable-access intrinsic. This preserves a small fast
 path without claiming that enabling full VPI is free.
 
+### VPI invariants under optimization
+
+Every VPI hazard is one instance of a single problem: optimization is justified
+by a closed-world assumption, and VPI removes the closed world. The compiler
+normally knows every reader and writer of a piece of state. A plugin is a reader
+and writer that does not appear in the IR, whose existence is decided after
+compilation, and whose actions are not ordered by the design's own dependence
+graph. The invariants below follow from that, and hold independently of any
+particular backend, optimizer, or execution tier.
+
+Facts about contents are not theorems for any object an external agent may
+write. Two-state knownness is the sharpest case, but constant propagation
+through state, range facts, and any other content-derived property belong to
+the same class. The straightforward remedy is to exclude such objects from the
+analyses that produce those facts, so that an externally writable descriptor
+never contributes to a conclusion about its own contents. Exploiting the fact
+anyway requires a runtime guard and a fallback that honours the general case,
+which is a substantially larger mechanism and should not be assumed. A content
+fact used unconditionally is a latent wrong answer.
+
+Expressiveness of storage and expressiveness of code are separate obligations,
+and both are required. A representation that cannot hold what the external
+interface permits to be written loses the value on entry. A representation that
+can hold it but is consumed by code specialized to a narrower domain loses the
+value on use. Satisfying only one of the two produces the worst outcome, in
+which the plugin reads back exactly what it wrote while the design behaves as
+though the write never happened.
+
+Identity must survive; materialization need not. An externally discoverable
+object must retain a stable logical identity, but it does not follow that its
+value is permanently resident in a fixed location. It must be canonical only
+where an external agent can observe it, which leaves the intervening code free.
+
+A point where external code may run is a clobber for externally writable state.
+Any mechanism that carries such a value across that point, whether a register, a
+continuation frame, a memoized result, or a cached load, is invalid regardless
+of how the carrying is implemented. This is a property of the schedule, not of a
+code generator.
+
+External writes must enter through the same semantic path as internal ones. The
+meaning of a written value depends on the object's role rather than on the
+writer: placing a high-impedance value on a net participates in resolution
+instead of poisoning a bit. A VPI-specific mutation path will diverge from the
+design's own semantics wherever those semantics are more than a store.
+
+A property that constrains a decision must be computed before that decision.
+Observability derived as an output of the compilation pipeline cannot constrain
+passes that ran earlier within it, and cannot be consumed by the analyses whose
+conclusions it invalidates. Whether it is an input or an output is a structural
+choice, and only one of the two is usable.
+
+An invariant that holds by the absence of a transformation is not an invariant.
+Where the compiler must preserve something for VPI, that requirement has to be
+expressible as a predicate the transformations consult. An invariant maintained
+only because no pass currently violates it decays silently as the optimizer
+improves, and its failure is invisible to tests written against the optimizer
+that exists today.
+
+External access is foreign to the execution schedule. It must be admitted only
+where the schedule is quiescent, under the same discipline the collector
+requires, rather than by synchronizing individual accesses.
+
+Cost should follow declared capability rather than permitted capability. The
+standard allows a plugin to discover and mutate a great deal, while a given
+plugin declares that it will use very little. Pricing the conservative closure
+of what is permitted forfeits most of the available performance for capability
+that nobody requested.
+
+Prefer failures that are loud. Every hazard in this class fails by presenting a
+self-consistent view to the plugin while the design diverges, which is the
+hardest failure to attribute. A refusal at compile time, or a deoptimization at
+run time, is preferable to a silent coercion.
+
 ### Compiler-guided IPO, coarsening, and placement
 
 No solver-backed IPO, graph coarsening, or topology-aware placement is
@@ -699,13 +858,24 @@ The implementation roadmap is:
   Obelisk semantic boundaries.~~
 - ~~Lower the currently supported simulation subset to isolated `obelisk_sim`
   SSA using `arith` and `cf`.~~
-- Extend executable lowering across the broad UVM gate: dynamic processes and
-  timing, classes, containers, synchronization, randomization, DPI, assertions,
-  coverage, and VPI.
+- ~~Complete RTL port connection and aggregate conversion, native and bytecode
+  two-state specialization, and the first executable procedural-timing slice:
+  integral and literal-real delays, direct events and event lists, `@*`,
+  repeated controls, directly watchable `wait`, named events, intra-assignment
+  timing, and design-domain Active/Inactive ordering.~~
+- ~~Lower the supported zero-time DPI-C function and synchronous-task subset
+  through shared native and bytecode thunks, with generated headers and
+  hermetic object, archive, and shared-library linking.~~
+- Extend executable lowering across the remaining broad UVM gate: fork/join
+  processes, timed and recursive tasks, computed timing observers, complete
+  event regions, classes, containers, synchronization, randomization,
+  assertions, coverage, VPI, and the remaining DPI types and behaviors.
 - ~~Run canonicalization, CSE, and memory promotion before late graph
   derivation.~~
-- Add class-hierarchy analysis, devirtualization, specialization, IPSCCP, escape
-  analysis, SROA, load forwarding, DSE, and state-layout optimization.
+- ~~Add SROA, interprocedural SCCP, simulation-aware inlining, and dead capture
+  and private-boundary elimination before final graph derivation.~~
+- Add class-hierarchy analysis, devirtualization, specialization, escape
+  analysis, object SROA, load forwarding, DSE, and state-layout optimization.
 - Define class-handle, object-layout, direct and polymorphic dispatch, and
   automatic-memory-management semantics in `obelisk_sim`.
 - ~~Derive descriptor provenance, interprocedural descriptor-range effects,
@@ -714,11 +884,15 @@ The implementation roadmap is:
   continuation IDs, and annotate timing and NBA staging policies.~~
 - ~~Thread suspension-live SSA state before final graph derivation, with
   constant rematerialization excluded from persistent graph cost.~~
+- ~~Fully convert the supported serial simulation boundary to the MLIR LLVM
+  dialect with deterministic switched-resume process frames, translate it to
+  LLVM IR, emit x86-64 ELF objects, and hermetically link standalone PIE
+  simulators with `libobelisk_rt.a`.~~
 - Materialize optimized continuation frames, timing slots, NBA storage and
   ordered commit code, and the genuinely unbounded dynamic frontier.
-- Lower serial native fragments and generated schedule drivers through `func`,
-  `arith`, `cf`, and `ptr`, with `scf` and `vector` used only when profitable
-  as temporary compiler IR.
+- Replace the serial reference scheduler path with optimized native fragments
+  and generated schedule drivers through `func`, `arith`, `cf`, and `ptr`, with
+  `scf` and `vector` used only when profitable as temporary compiler IR.
 - ~~Build and independently verify deterministic dependency, SCC, feedback-cut,
   five-bucket region, and preliminary cost-balanced lane metadata.~~
 - Complete IEEE event-region lowering for the supported language, coarsen the
@@ -727,12 +901,13 @@ The implementation roadmap is:
   functions with generated epoch and barrier dependencies.
 - ~~Implement the static runtime's shared native/bytecode fragment ABI and
   checked typed-register interpreter.~~
-- Add compiler bytecode encoding and AOT tier selection.
+- ~~Encode the complete supported executable design into deterministic checked
+  bytecode and an embedded pointer-free design database.~~
+- Add per-fragment native/bytecode AOT tier selection, mixed-tier schedule
+  execution, and profile-guided promotion.
 - Implement the precise non-moving class heap, weak-reference processing,
   explicit persistent-root maps, worker safe points, and LLVM statepoint
   integration for transient native roots.
-- Fully convert the native path to the MLIR LLVM dialect, translate to LLVM IR,
-  emit objects, and link the generated simulator with `obelisk_rt.a`.
 
 ## Driver and tools
 
@@ -741,8 +916,17 @@ The implementation roadmap is:
 frontend API.
 
 ```sh
-# Default: parse, elaborate, import, and completely convert.
-obelisk design.sv
+# Default: build a serial native standalone simulator.
+obelisk design.sv -o simulator
+
+# Build the same supported design for required bytecode execution.
+obelisk --execution-tier=bytecode design.sv -o simulator-bytecode
+
+# Stop after LLVM IR or ELF object emission.
+obelisk -emit-llvm design.sv -o design.ll
+obelisk -c design.sv -o design.o
+
+# Inspect the semantic target boundary.
 obelisk -emit-obelisk design.sv
 
 # Stop at the elaborated source boundary.
@@ -751,6 +935,10 @@ obelisk -emit-slang design.sv
 # Inspect executable SSA or derived schedule metadata.
 obelisk -emit-sim --vpi=off design.sv
 obelisk -emit-schedule --threads=8 --vpi=read design.sv
+
+# Generate and link the supported DPI-C import boundary.
+obelisk --emit-dpi-header design.sv -o design_dpi.h
+obelisk --dpi-link=dpi.o design.sv -o simulator
 
 # Inspect or convert persisted source IR.
 obelisk -emit-slang design.sv | obelisk-opt
@@ -762,15 +950,19 @@ When multiple output-action flags are present, the last flag wins. The driver
 supports include paths, system include paths, macro definitions and removals,
 command files, library paths/extensions/files, single compilation units,
 library macro inheritance, selected tops, parameter overrides, language
-revision, timescale, warning control, and direct advanced slang arguments.
+revision, timescale, warning control, direct advanced slang arguments,
+optimization levels, native or bytecode execution, DPI link inputs, a pinned or
+user-supplied native sysroot, VPI capability profiles for inspection, and
+independent compiler and generated-worker counts. Native executable emission
+currently accepts only one worker and VPI off.
 
-`obelisk-opt` registers the standard MLIR dialects, all three Obelisk dialects,
-the semantic conversion pass, and the simulation-lowering pipeline. There is no
-separate source-import translation executable.
+`obelisk-opt` registers the standard MLIR dialects, all four Obelisk-owned
+dialects, the semantic conversion pass, and the simulation-lowering pipeline.
+There is no separate source-import translation executable.
 
 ## Verification and testing
 
-All persistent syntax owned by the three Obelisk dialects uses custom assembly.
+All persistent syntax owned by the four Obelisk dialects uses custom assembly.
 Declarative constraints express fixed type and region relationships, with
 native verifiers for invariants such as integral widths/ranges and aggregate
 consistency.
@@ -787,9 +979,15 @@ The test suites cover:
 - supported semantic-to-simulation lowering and four-state lowering contracts;
 - compute-graph construction, independent structural validation and
   re-derivation, suspension threading, fixed-site policies, and deterministic
-  output with one or several compiler threads; and
+  output with one or several compiler threads;
 - the lockstep runtime C ABI, native/bytecode dispatch equivalence,
-  malformed-bytecode rejection, four-state formatting, and file I/O.
+  malformed-bytecode rejection, four-state formatting, file I/O, shared DPI
+  calls, and scheduler ordering;
+- deterministic full-design bytecode encoding and native/bytecode differential
+  execution for the supported timing, event, I/O, DPI, and RTL connection
+  slices; and
+- LLVM IR, ELF object, and hermetically linked PIE emission for the pinned
+  x86-64 Linux target.
 
 Run the aggregate Ninja target; CTest is intentionally not part of the test
 flow:
@@ -814,7 +1012,7 @@ native tests must also validate stack maps after optimization and LTO and prove
 that closed-world RTL unable to reach class allocation contains no GC polls or
 root-tracking instrumentation.
 
-Compiler-generated native/bytecode differential design execution, Verilator
-comparison, exact full-region golden traces, simulation determinism across
-worker counts, sanitizer and race suites, and the performance gates apply once
-executable emission exists; they are not current test coverage.
+Broader native/bytecode differential coverage grows with each executable
+language slice. Verilator comparison, exact full-region golden traces,
+simulation determinism across generated worker counts, sanitizer and race
+suites, and performance gates remain future coverage.
