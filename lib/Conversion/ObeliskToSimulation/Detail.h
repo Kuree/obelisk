@@ -10,6 +10,7 @@
 #define OBELISK_LIB_CONVERSION_OBELISKTOSIMULATION_DETAIL_H
 
 #include "obelisk/Analysis/SimulationAnalysis.h"
+#include "obelisk/Conversion/ObeliskToSimulation.h"
 #include "obelisk/Dialect/Obelisk/ObeliskOps.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
@@ -139,6 +140,13 @@ bool isSignedSemanticType(::mlir::Type type);
 /// Normalized type of a semantic node's `semantic_type` attribute.
 ::mlir::FailureOr<::mlir::Type>
 getNormalizedSemanticType(::mlir::Operation *op);
+::mlir::FailureOr<::mlir::Type>
+normalizeSemanticType(::mlir::Type type, ::mlir::Location location);
+
+/// Classify a canonical source-semantic type for the initial DPI-C ABI.
+/// Diagnostics are issued at `location` for unsupported categories.
+::mlir::FailureOr<DPIABIKind>
+getDPIABIKind(::mlir::Type type, ::mlir::Location location);
 
 /// Elaborated hierarchical path of a semantic symbol, or its plain name.
 ::mlir::StringRef getHierarchyName(::mlir::Operation *op);

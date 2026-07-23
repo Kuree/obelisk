@@ -594,6 +594,22 @@ bool validIntrinsic(const Image &image, const Function &function,
            output(index)->kind != OBELISK_RT_DBREG_STATUS))
         return false;
     return true;
+  case OBELISK_RT_INTRINSIC_V1_DPI_IMPORT:
+    if (signature.flags != 0 || site.inputCount == 0 ||
+        site.outputCount == 0 || !bytes(input(0)) ||
+        !status(output(site.outputCount - 1)))
+      return false;
+    for (uint32_t index = 1; index != site.inputCount; ++index)
+      if (!input(index) ||
+          (input(index)->kind != OBELISK_RT_DBREG_BITS &&
+           input(index)->kind != OBELISK_RT_DBREG_LOGIC))
+        return false;
+    for (uint32_t index = 0; index + 1 != site.outputCount; ++index)
+      if (!output(index) ||
+          (output(index)->kind != OBELISK_RT_DBREG_BITS &&
+           output(index)->kind != OBELISK_RT_DBREG_LOGIC))
+        return false;
+    return true;
   case OBELISK_RT_INTRINSIC_V1_DISPLAY:
     if (site.inputCount < 2 || site.outputCount != 0 || !bytes(input(0)) ||
         !bits(input(1), 32))
@@ -2519,21 +2535,178 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     (void)begin;
     return OBELISK_RT_OK;
   }
-  case OBELISK_RT_INTRINSIC_V1_IMPORT: {
+  case OBELISK_RT_INTRINSIC_V1_IMPORT:
+  case OBELISK_RT_INTRINSIC_V1_DPI_IMPORT: {
     if (!context)
       return OBELISK_RT_INVALID_ARGUMENT;
-    ImportBinding binding;
-    {
-      std::lock_guard<std::mutex> lock(context->mutex);
-      auto found = context->imports.find(signature.flags);
-      if (found == context->imports.end())
-        return OBELISK_RT_TIER_UNAVAILABLE;
-      binding = found->second;
+    uint32_t firstInput = 0;
+    obelisk_rt_import_site_v1 importSite{
+        OBELISK_RT_IMPORT_SITE_VERSION,
+        0,
+        signature.flags,
+        0,
+        UINT64_MAX,
+        nullptr,
+        0,
+        0,
+        0,
+        0,
+    };
+    uint32_t dataOutputCount = site.outputCount;
+    std::vector<uint8_t> dpiInputFlags;
+    std::vector<uint8_t> dpiOutputFlags;
+    if (signature.id == OBELISK_RT_INTRINSIC_V1_DPI_IMPORT) {
+      auto metadata = bytes(0);
+      if (!metadata || metadata->size < 56 || site.outputCount == 0)
+        return OBELISK_RT_INVALID_BYTECODE;
+      importSite.version = read32(metadata->data);
+      importSite.flags = read32(metadata->data + 4);
+      importSite.import_id = read32(metadata->data + 8);
+      importSite.reserved = read32(metadata->data + 12);
+      importSite.scope_id = read64(metadata->data + 16);
+      importSite.source_line = read32(metadata->data + 24);
+      importSite.source_column = read32(metadata->data + 28);
+      importSite.source_file_size = read64(metadata->data + 32);
+      importSite.abi_signature = read64(metadata->data + 40);
+      uint32_t logicalInputs = read32(metadata->data + 48);
+      uint32_t logicalOutputs = read32(metadata->data + 52);
+      uint64_t entryCount =
+          uint64_t{logicalInputs} + uint64_t{logicalOutputs};
+      if (entryCount > (UINT64_MAX - 56) / 16)
+        return OBELISK_RT_INVALID_BYTECODE;
+      uint64_t sourceOffset = 56 + entryCount * 16;
+      if (sourceOffset > metadata->size ||
+          importSite.source_file_size != metadata->size - sourceOffset ||
+          uint64_t{site.inputCount} != uint64_t{logicalInputs} + 1 ||
+          uint64_t{site.outputCount} != uint64_t{logicalOutputs} + 1)
+        return OBELISK_RT_INVALID_BYTECODE;
+      importSite.source_file =
+          importSite.source_file_size
+              ? reinterpret_cast<const char *>(metadata->data + sourceOffset)
+              : nullptr;
+
+      struct ABIEntry {
+        uint32_t kind;
+        uint32_t direction;
+        uint32_t width;
+        uint32_t flags;
+      };
+      auto entry = [&](uint64_t index) {
+        const uint8_t *data = metadata->data + 56 + index * 16;
+        return ABIEntry{read32(data), read32(data + 4), read32(data + 8),
+                        read32(data + 12)};
+      };
+      auto validEntry = [](ABIEntry abi) {
+        if (abi.kind > 7 || abi.direction > 3 || abi.width == 0 ||
+            (abi.flags & ~uint32_t{3}) != 0)
+          return false;
+        bool fourState = (abi.flags & 1) != 0;
+        switch (abi.kind) {
+        case 0:
+          return abi.width == 1 && !fourState;
+        case 1:
+          return abi.width == 1 && fourState;
+        case 2:
+          return abi.width == 8 && !fourState;
+        case 3:
+          return abi.width == 16 && !fourState;
+        case 4:
+          return abi.width == 32 && !fourState;
+        case 5:
+          return abi.width == 64 && !fourState;
+        case 6:
+          return !fourState;
+        case 7:
+          return fourState;
+        }
+        return false;
+      };
+      auto sameValue = [](ABIEntry left, ABIEntry right) {
+        return left.kind == right.kind && left.width == right.width &&
+               left.flags == right.flags;
+      };
+      auto matchesLayout = [](ABIEntry abi, Layout layout) {
+        uint8_t expectedKind = (abi.flags & 1) != 0
+                                   ? OBELISK_RT_DBREG_LOGIC
+                                   : OBELISK_RT_DBREG_BITS;
+        return layout.kind == expectedKind && layout.width == abi.width;
+      };
+      uint64_t hash = UINT64_C(14695981039346656037);
+      auto appendHash = [&](uint64_t value, unsigned bytes) {
+        for (unsigned index = 0; index != bytes; ++index) {
+          hash ^= static_cast<uint8_t>(value >> (index * 8));
+          hash *= UINT64_C(1099511628211);
+        }
+      };
+      appendHash(logicalInputs, 8);
+      appendHash(logicalOutputs, 8);
+      for (uint64_t index = 0; index != entryCount; ++index) {
+        ABIEntry abi = entry(index);
+        if (!validEntry(abi))
+          return OBELISK_RT_INVALID_BYTECODE;
+        appendHash(abi.kind, 4);
+        appendHash(abi.direction, 4);
+        appendHash(abi.width, 4);
+        appendHash((abi.flags & 1) != 0, 1);
+        appendHash((abi.flags & 2) != 0, 1);
+      }
+      if (hash == 0)
+        hash = 1;
+      if (hash != importSite.abi_signature)
+        return OBELISK_RT_INVALID_BYTECODE;
+      for (uint32_t index = 0; index != logicalInputs; ++index) {
+        ABIEntry abi = entry(index);
+        if (abi.direction == 3 ||
+            !matchesLayout(
+                abi, layoutAt(image, frame.function,
+                              inputRegister(index + 1))))
+          return OBELISK_RT_INVALID_BYTECODE;
+        dpiInputFlags.push_back(
+            (abi.flags & 2) != 0 ? OBELISK_RT_DBREG_SIGNED : 0);
+      }
+      for (uint32_t index = 0; index != logicalOutputs; ++index) {
+        ABIEntry abi = entry(uint64_t{logicalInputs} + index);
+        if (!matchesLayout(
+                abi,
+                layoutAt(image, frame.function, outputRegister(index))))
+          return OBELISK_RT_INVALID_BYTECODE;
+        dpiOutputFlags.push_back(
+            (abi.flags & 2) != 0 ? OBELISK_RT_DBREG_SIGNED : 0);
+      }
+      Layout statusLayout =
+          layoutAt(image, frame.function, outputRegister(logicalOutputs));
+      if (statusLayout.kind != OBELISK_RT_DBREG_STATUS)
+        return OBELISK_RT_INVALID_BYTECODE;
+
+      uint64_t outputCursor = logicalInputs;
+      bool task = (importSite.flags & OBELISK_RT_IMPORT_TASK) != 0;
+      if (!task) {
+        if (outputCursor >= entryCount ||
+            entry(outputCursor).direction != 3)
+          return OBELISK_RT_INVALID_BYTECODE;
+        ++outputCursor;
+      }
+      for (uint32_t index = 0; index != logicalInputs; ++index) {
+        ABIEntry input = entry(index);
+        if (input.direction == 0)
+          continue;
+        if (outputCursor >= entryCount)
+          return OBELISK_RT_INVALID_BYTECODE;
+        ABIEntry output = entry(outputCursor++);
+        if (output.direction != 1 || !sameValue(input, output))
+          return OBELISK_RT_INVALID_BYTECODE;
+      }
+      if (outputCursor != entryCount)
+        return OBELISK_RT_INVALID_BYTECODE;
+
+      firstInput = 1;
+      dataOutputCount = logicalOutputs;
     }
+    uint32_t inputCount = site.inputCount - firstInput;
     std::vector<obelisk_rt_import_input_v1> inputs;
     std::vector<obelisk_rt_import_output_v1> outputs;
-    inputs.reserve(site.inputCount);
-    outputs.reserve(site.outputCount);
+    inputs.reserve(inputCount);
+    outputs.reserve(dataOutputCount);
     auto describe = [&](Layout layout, uint8_t *address) {
       uint64_t limbs = layout.kind == OBELISK_RT_DBREG_STATUS
                            ? 1
@@ -2549,36 +2722,38 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
               ? reinterpret_cast<uint64_t *>(address + limbs * 8)
               : nullptr};
     };
-    for (uint32_t index = 0; index != site.inputCount; ++index) {
-      Layout layout = layoutAt(image, frame.function, inputRegister(index));
+    for (uint32_t index = 0; index != inputCount; ++index) {
+      Layout layout =
+          layoutAt(image, frame.function, inputRegister(index + firstInput));
       auto [width, limbs, value, unknown] =
           describe(layout, frame.data + layout.offset);
-      inputs.push_back({layout.kind, layout.flags, 0, width, value, unknown,
-                        limbs});
+      uint8_t flags = signature.id == OBELISK_RT_INTRINSIC_V1_DPI_IMPORT
+                          ? dpiInputFlags[index]
+                          : layout.flags;
+      inputs.push_back(
+          {layout.kind, flags, 0, width, value, unknown, limbs});
     }
-    for (uint32_t index = 0; index != site.outputCount; ++index) {
+    for (uint32_t index = 0; index != dataOutputCount; ++index) {
       Layout layout = layoutAt(image, frame.function, outputRegister(index));
       uint8_t *address = frame.data + layout.offset;
-      std::memset(address, 0, layout.size);
       auto [width, limbs, value, unknown] = describe(layout, address);
-      outputs.push_back({layout.kind, layout.flags, 0, width, value, unknown,
-                         limbs});
+      uint8_t flags = signature.id == OBELISK_RT_INTRINSIC_V1_DPI_IMPORT
+                          ? dpiOutputFlags[index]
+                          : layout.flags;
+      outputs.push_back(
+          {layout.kind, flags, 0, width, value, unknown, limbs});
     }
-    obelisk_rt_status status = binding.callback(
-        context, signature.flags, inputs.data(), site.inputCount,
-        outputs.data(), site.outputCount, binding.userData);
-    if (status != OBELISK_RT_OK)
-      return status;
-    for (uint32_t index = 0; index != site.outputCount; ++index) {
-      Layout layout = layoutAt(image, frame.function, outputRegister(index));
-      if (layout.kind == OBELISK_RT_DBREG_STATUS) {
-        uint64_t encoded = read64(frame.data + layout.offset) & UINT32_MAX;
-        std::memcpy(frame.data + layout.offset, &encoded, sizeof(encoded));
-      } else {
-        Logic normalized = readLogic(frame.data, layout);
-        writeLogic(frame.data, layout, normalized);
-      }
-    }
+    obelisk_rt_status importStatus = obelisk_rt_v1_import_call(
+        context, &importSite, inputs.data(), inputCount, outputs.data(),
+        dataOutputCount);
+    if (signature.id != OBELISK_RT_INTRINSIC_V1_DPI_IMPORT)
+      return importStatus;
+    Layout statusLayout =
+        layoutAt(image, frame.function, outputRegister(dataOutputCount));
+    uint8_t *statusAddress = frame.data + statusLayout.offset;
+    std::memset(statusAddress, 0, statusLayout.size);
+    uint64_t statusBits = static_cast<uint32_t>(importStatus);
+    std::memcpy(statusAddress, &statusBits, sizeof(statusBits));
     return OBELISK_RT_OK;
   }
   case OBELISK_RT_INTRINSIC_V1_DISPLAY: {
@@ -3806,7 +3981,7 @@ obelisk_rt_status executeFunction(const Image &image, Frame &frame,
       std::memcpy(&value, frame.data + status.offset, sizeof(value));
       if (value == 0)
         break;
-      if (value > OBELISK_RT_PERMISSION_DENIED)
+      if (value > OBELISK_RT_DPI_DISABLE_UNSUPPORTED)
         return OBELISK_RT_INVALID_BYTECODE;
       return static_cast<obelisk_rt_status>(value);
     }

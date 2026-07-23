@@ -639,6 +639,19 @@ public:
 
   [[nodiscard]] bool succeeded() const { return !sawInvalidNode; }
 
+  void markDPIExport(const slang::ast::SubroutineSymbol &subroutine,
+                     StringRef cIdentifier) {
+    auto found = emittedSymbolOperations.find(&subroutine);
+    if (found == emittedSymbolOperations.end()) {
+      emitError(sourceLocation(subroutine.location))
+          << "resolved DPI export subroutine was not imported";
+      sawInvalidNode = true;
+      return;
+    }
+    found->second->setAttr("dpi_export_c_identifier",
+                           builder.getStringAttr(cIdentifier));
+  }
+
   LogicalResult finalizeReferences() {
     // ASTVisitor follows ownership edges, while elaborated expressions can
     // reference semantic dependencies outside those roots (for example an
@@ -1261,6 +1274,15 @@ private:
         SET_OP_ATTR(IsModportExport, builder.getUnitAttr());
       if (node.flags.has(MF::DPIImport))
         SET_OP_ATTR(IsDpiImport, builder.getUnitAttr());
+      if (node.flags.has(MF::DPIImport)) {
+        StringRef cIdentifier = node.name;
+        if (const auto *syntax = node.getSyntax()) {
+          const auto &dpi = syntax->template as<slang::syntax::DPIImportSyntax>();
+          if (!dpi.c_identifier.valueText().empty())
+            cIdentifier = dpi.c_identifier.valueText();
+        }
+        SET_OP_ATTR(DpiCIdentifier, builder.getStringAttr(cIdentifier));
+      }
       if (node.flags.has(MF::DPIContext))
         SET_OP_ATTR(IsDpiContext, builder.getUnitAttr());
       if (node.flags.has(MF::BuiltIn))
@@ -2094,6 +2116,11 @@ importSystemVerilog(ArrayRef<std::string> inputFilenames, MLIRContext &context,
         << "slang compilation contained an invalid semantic AST node";
     return failure();
   }
+  for (const slang::ast::Compilation::DPIExport &entry :
+       compilation->getDPIExports())
+    importer.markDPIExport(*entry.subroutine, entry.cIdentifier);
+  if (!importer.succeeded())
+    return failure();
 
   if (verifyIR && failed(verify(*module))) {
     emitError(UnknownLoc::get(&context))

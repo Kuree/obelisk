@@ -37,6 +37,7 @@ typedef int32_t obelisk_rt_status;
 #define OBELISK_RT_INVALID_FRAME INT32_C(15)
 #define OBELISK_RT_INVALID_DESIGN INT32_C(16)
 #define OBELISK_RT_PERMISSION_DENIED INT32_C(17)
+#define OBELISK_RT_DPI_DISABLE_UNSUPPORTED INT32_C(18)
 
 typedef struct obelisk_rt_buffer_v1 {
   uint8_t *data;
@@ -74,6 +75,22 @@ typedef struct obelisk_rt_handle_v1 {
 #define OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE (UINT32_C(1) << 1)
 #define OBELISK_RT_EXECUTION_VPI_READ (UINT32_C(1) << 2)
 #define OBELISK_RT_EXECUTION_VPI_WRITE (UINT32_C(1) << 3)
+#define OBELISK_RT_EXECUTION_REQUIRE_BYTECODE (UINT32_C(1) << 4)
+
+// DPI scope records are immutable execution metadata and remain available
+// independently of the optional VPI design database. IDs are dense from zero;
+// UINT64_MAX denotes the root's absent parent. Time unit and precision are
+// decimal exponents in seconds, as returned by svGetTimeUnit and
+// svGetTimePrecision.
+typedef struct obelisk_rt_dpi_scope_v1 {
+  uint64_t id;
+  uint64_t parent_id;
+  const char *name;
+  uint64_t name_size;
+  int32_t time_unit;
+  int32_t time_precision;
+  uint32_t reserved;
+} obelisk_rt_dpi_scope_v1;
 
 typedef struct obelisk_rt_execution_descriptor_v1 {
   uint32_t version;
@@ -86,6 +103,10 @@ typedef struct obelisk_rt_execution_descriptor_v1 {
   uint64_t design_database_size;
   uint64_t state_bit_count;
   uint64_t checksum;
+  const obelisk_rt_dpi_scope_v1 *dpi_scopes;
+  uint64_t dpi_scope_count;
+  int32_t dpi_time_precision;
+  uint32_t dpi_reserved;
 } obelisk_rt_execution_descriptor_v1;
 
 // One of these immutable records is attached to the canonical process
@@ -198,6 +219,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGER = UINT32_C(0x00010202),
   OBELISK_RT_INTRINSIC_V1_STATE_ALLOC = UINT32_C(0x00010203),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
+  OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_VPI_ROOT = UINT32_C(0x00011000),
   OBELISK_RT_INTRINSIC_V1_VPI_CHILD = UINT32_C(0x00011001),
   OBELISK_RT_INTRINSIC_V1_VPI_SIBLING = UINT32_C(0x00011002),
@@ -247,6 +269,28 @@ typedef obelisk_rt_status (*obelisk_rt_import_callback_v1)(
     const obelisk_rt_import_input_v1 *inputs, uint32_t input_count,
     obelisk_rt_import_output_v1 *outputs, uint32_t output_count,
     void *user_data);
+
+// A call site contains only stable metadata. Generated native code may point
+// source_file at an immutable string; bytecode materializes the same record
+// from its pointer-free string and call-site sections before entering the
+// runtime boundary.
+#define OBELISK_RT_IMPORT_SITE_VERSION 1u
+#define OBELISK_RT_IMPORT_PURE (UINT32_C(1) << 0)
+#define OBELISK_RT_IMPORT_CONTEXT (UINT32_C(1) << 1)
+#define OBELISK_RT_IMPORT_TASK (UINT32_C(1) << 2)
+
+typedef struct obelisk_rt_import_site_v1 {
+  uint32_t version;
+  uint32_t flags;
+  uint32_t import_id;
+  uint32_t reserved;
+  uint64_t scope_id;
+  const char *source_file;
+  uint64_t source_file_size;
+  uint32_t source_line;
+  uint32_t source_column;
+  uint64_t abi_signature;
+} obelisk_rt_import_site_v1;
 
 // VPI bytecode intrinsics use known two-state i64 section offsets as cursors
 // and a trailing `status` output. Traversal failures (including EOF) are
@@ -910,6 +954,16 @@ uint32_t obelisk_rt_v1_import_id(const uint8_t *symbol,
 obelisk_rt_status obelisk_rt_v1_context_register_import(
     obelisk_rt_context *context, uint32_t import_id,
     obelisk_rt_import_callback_v1 callback, void *user_data);
+// Generated simulators use the signature form so malformed bytecode cannot
+// dispatch a register layout to an incompatible native thunk. A zero
+// signature is reserved for the generic host-registration API above.
+obelisk_rt_status obelisk_rt_v1_context_register_import_signature(
+    obelisk_rt_context *context, uint32_t import_id, uint64_t abi_signature,
+    obelisk_rt_import_callback_v1 callback, void *user_data);
+obelisk_rt_status obelisk_rt_v1_import_call(
+    obelisk_rt_context *context, const obelisk_rt_import_site_v1 *site,
+    const obelisk_rt_import_input_v1 *inputs, uint32_t input_count,
+    obelisk_rt_import_output_v1 *outputs, uint32_t output_count);
 void obelisk_rt_v1_context_destroy(obelisk_rt_context *context);
 const char *obelisk_rt_v1_status_string(obelisk_rt_status status);
 void obelisk_rt_v1_buffer_release(obelisk_rt_buffer_v1 *buffer);

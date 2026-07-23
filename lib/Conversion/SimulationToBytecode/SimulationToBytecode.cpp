@@ -46,6 +46,8 @@ constexpr uint32_t kExecutionHasDatabase =
     OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE;
 constexpr uint32_t kExecutionVPIRead = OBELISK_RT_EXECUTION_VPI_READ;
 constexpr uint32_t kExecutionVPIWrite = OBELISK_RT_EXECUTION_VPI_WRITE;
+constexpr uint32_t kExecutionRequireBytecode =
+    OBELISK_RT_EXECUTION_REQUIRE_BYTECODE;
 constexpr uint32_t kDatabaseProfileRead = OBELISK_RT_DESIGN_PROFILE_READ;
 constexpr uint32_t kDatabaseProfileWrite = OBELISK_RT_DESIGN_PROFILE_WRITE;
 constexpr uint32_t kInvalidRegister = UINT32_MAX;
@@ -70,6 +72,8 @@ constexpr uint32_t kIntrinsicEventTrigger =
     OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGER;
 constexpr uint32_t kIntrinsicStateAlloc = OBELISK_RT_INTRINSIC_V1_STATE_ALLOC;
 constexpr uint32_t kIntrinsicImport = OBELISK_RT_INTRINSIC_V1_IMPORT;
+constexpr uint32_t kIntrinsicDPIImport =
+    OBELISK_RT_INTRINSIC_V1_DPI_IMPORT;
 
 enum RegisterKind : uint8_t {
   Invalid = OBELISK_RT_DBREG_INVALID,
@@ -539,6 +543,8 @@ public:
     }
     result.stateBitCount = state.bits;
     result.executionFlags = kExecutionHasBytecode;
+    if (options.requireBytecode)
+      result.executionFlags |= kExecutionRequireBytecode;
     if (profile != 0) {
       result.executionFlags |= kExecutionHasDatabase | kExecutionVPIRead;
       if (profile & kDatabaseProfileWrite)
@@ -608,7 +614,8 @@ private:
           for (Value result : operation.getResults())
             consider(result);
 
-          if (isa<BranchOpInterface, sim::SimCallOp, sim::SimSpawnOp,
+          if (isa<BranchOpInterface, sim::SimCallOp, sim::SimDPICallOp,
+                  sim::SimSpawnOp,
                   sim::SimReturnOp>(operation)) {
             for (Value operand : operation.getOperands())
               force(operand);
@@ -1293,6 +1300,8 @@ private:
                            op.getNonblocking() ? 1 : 0);
     if (auto call = dyn_cast<sim::SimCallOp>(operation))
       return encodeCall(plan, call);
+    if (auto call = dyn_cast<sim::SimDPICallOp>(operation))
+      return encodeDPICall(plan, call);
     if (auto returnOp = dyn_cast<sim::SimReturnOp>(operation))
       return encodeReturn(plan, returnOp);
     if (auto constant = dyn_cast<sim::SimLogicConstantOp>(operation)) {
@@ -1624,6 +1633,78 @@ private:
           static_cast<uint32_t>(inputs.second),
           static_cast<uint32_t>(firstOutputs), call.getNumResults()});
     return success();
+  }
+
+  LogicalResult encodeDPICall(FunctionPlan &plan, sim::SimDPICallOp call) {
+    uint32_t importID = call.getImportId();
+    auto inserted =
+        importSymbols.try_emplace(importID, call.getCIdentifier().str());
+    if (!inserted.second &&
+        inserted.first->second != call.getCIdentifier())
+      return call.emitOpError()
+             << "import ID collision between '" << inserted.first->second
+             << "' and '" << call.getCIdentifier() << "'";
+    SmallVector<uint8_t> metadata;
+    append32(metadata, OBELISK_RT_IMPORT_SITE_VERSION);
+    uint32_t flags = (call.getIsPure() ? OBELISK_RT_IMPORT_PURE : 0) |
+                     (call.getIsContext() ? OBELISK_RT_IMPORT_CONTEXT : 0) |
+                     (call.getIsTask() ? OBELISK_RT_IMPORT_TASK : 0);
+    append32(metadata, flags);
+    append32(metadata, importID);
+    append32(metadata, 0);
+    append64(metadata, call.getScopeId());
+    append32(metadata, call.getSourceLine());
+    append32(metadata, call.getSourceColumn());
+    append64(metadata, call.getSourceFile().size());
+    uint64_t logicalInputs = call.getArguments().size();
+    if (logicalInputs > call.getAbiSignature().size())
+      return call.emitOpError("DPI ABI signature has too few inputs");
+    uint64_t logicalOutputs =
+        call.getAbiSignature().size() - logicalInputs;
+    append64(metadata, sim::getDPISignatureHash(call.getAbiSignature(),
+                                                logicalInputs));
+    append32(metadata, static_cast<uint32_t>(logicalInputs));
+    append32(metadata, static_cast<uint32_t>(logicalOutputs));
+    for (Attribute attribute : call.getAbiSignature()) {
+      auto abi = cast<sim::DPIABIAttr>(attribute);
+      append32(metadata, static_cast<uint32_t>(abi.getKind()));
+      append32(metadata, static_cast<uint32_t>(abi.getDirection()));
+      append32(metadata, abi.getWidth());
+      append32(metadata, (abi.getFourState() ? 1u : 0u) |
+                             (abi.getIsSigned() ? 2u : 0u));
+    }
+    llvm::append_range(
+        metadata,
+        ArrayRef<uint8_t>(
+            reinterpret_cast<const uint8_t *>(call.getSourceFile().data()),
+            call.getSourceFile().size()));
+    SmallVector<uint32_t> inputs{emitBytesConstant(plan, metadata)};
+    for (Value operand : call.getArguments()) {
+      uint32_t input = reg(plan, operand);
+      if (input == kInvalidRegister ||
+          (plan.layouts[input].kind != Bits &&
+           plan.layouts[input].kind != Logic &&
+           plan.layouts[input].kind != Status))
+        return call.emitOpError(
+            "DPI imports require fixed packed integral inputs");
+      inputs.push_back(input);
+    }
+    SmallVector<uint32_t> outputs;
+    for (Value result : call.getResults()) {
+      uint32_t output = reg(plan, result);
+      if (output == kInvalidRegister ||
+          (plan.layouts[output].kind != Bits &&
+           plan.layouts[output].kind != Logic &&
+           plan.layouts[output].kind != Status))
+        return call.emitOpError(
+            "DPI imports require fixed packed integral results");
+      outputs.push_back(output);
+    }
+    if (outputs.size() != logicalOutputs + 1 ||
+        plan.layouts[outputs.back()].kind != Status)
+      return call.emitOpError(
+          "DPI import must return data results followed by runtime status");
+    return emitIntrinsicRegisters(plan, kIntrinsicDPIImport, inputs, outputs);
   }
 
   LogicalResult encodeReturn(FunctionPlan &plan, sim::SimReturnOp op) {
@@ -2742,6 +2823,7 @@ public:
     }
     SimulationBytecodeOptions options;
     options.vpi = vpi;
+    options.requireBytecode = requireBytecode;
     FailureOr<EncodedSimulationDesign> encoded =
         encodeSimulationDesign(designs.front(), options);
     if (failed(encoded))

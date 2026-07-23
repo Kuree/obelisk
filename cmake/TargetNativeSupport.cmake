@@ -146,7 +146,7 @@ file(GLOB_RECURSE _obelisk_target_runtime_headers CONFIGURE_DEPENDS
   "${_obelisk_runtime_source_dir}/include/*.h"
   "${_obelisk_runtime_source_dir}/lib/*.h")
 set(_obelisk_target_runtime_objects)
-foreach(source ABI Bytecode DesignBytecode DesignDatabase FileIO Format Process Runtime)
+foreach(source ABI Bytecode DesignBytecode DesignDatabase DPI FileIO Format Process Runtime)
   set(object "${_obelisk_target_runtime_dir}/${source}.o")
   list(APPEND _obelisk_target_runtime_objects "${object}")
   add_custom_command(

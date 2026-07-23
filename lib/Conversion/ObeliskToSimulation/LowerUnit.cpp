@@ -1822,15 +1822,33 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     Value destination;
     Type formalType;
     bool formalSigned;
+    uint32_t dpiCategory;
   };
   SmallVector<CopyOut> copyOuts;
+  SmallVector<Attribute> dpiOperandABI;
   for (auto [child, formalAttr] : llvm::zip_equal(children, formals)) {
     auto formal = cast<DictionaryAttr>(formalAttr);
     auto direction = static_cast<semantic::SVArgumentDirection>(
         formal.getAs<IntegerAttr>("direction").getInt());
     Type formalType = formal.getAs<TypeAttr>("type").getValue();
     bool formalSigned = formal.getAs<BoolAttr>("is_signed").getValue();
+    auto dpiCategoryAttr = formal.getAs<IntegerAttr>("dpi_category");
+    uint32_t dpiCategory =
+        dpiCategoryAttr ? static_cast<uint32_t>(dpiCategoryAttr.getInt()) : 0;
     bool isInput = direction == semantic::SVArgumentDirection::In;
+    if (op->hasAttr("obelisk.dpi.import_id")) {
+      std::optional<unsigned> width = sim::getPackedWidth(formalType);
+      if (!width) {
+        emitError(location)
+            << "DPI formal has no fixed packed integral width";
+        return failure();
+      }
+      dpiOperandABI.push_back(sim::DPIABIAttr::get(
+          builder.getContext(), static_cast<sim::DPIABIKind>(dpiCategory),
+          static_cast<sim::DPIArgumentDirection>(direction), *width,
+          isa<sim::LogicType>(sim::getPackedScalarType(formalType)),
+          formalSigned));
+    }
 
     Operation *actual = child;
     if (!isInput)
@@ -1896,7 +1914,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         sensitivity.insert(*destination);
     }
     operands.push_back(initial);
-    copyOuts.push_back({*destination, formalType, formalSigned});
+    copyOuts.push_back(
+        {*destination, formalType, formalSigned, dpiCategory});
   }
 
   if (auto captures = op->getAttrOfType<ArrayAttr>(calleeCapturesAttrName))
@@ -1913,26 +1932,106 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         sensitivity.insert(capture);
       operands.push_back(capture);
     }
-  FailureOr<Type> resultType = getNormalizedSemanticType(op);
-  if (failed(resultType))
-    return failure();
-  SmallVector<Type> callResultTypes{*resultType};
+  BoolAttr dpiTaskAttr =
+      op->getAttrOfType<BoolAttr>("obelisk.dpi.is_task");
+  bool dpiTask = dpiTaskAttr && dpiTaskAttr.getValue();
+  SmallVector<Type> callResultTypes;
+  if (!dpiTask) {
+    FailureOr<Type> resultType = getNormalizedSemanticType(op);
+    if (failed(resultType))
+      return failure();
+    callResultTypes.push_back(*resultType);
+  }
   for (const CopyOut &copyOut : copyOuts)
     callResultTypes.push_back(copyOut.formalType);
-  auto call = sim::SimCallOp::create(builder, location, callResultTypes, callee,
-                                     operands, ArrayAttr{}, ArrayAttr{});
+  ValueRange callResults;
+  if (auto importID =
+          op->getAttrOfType<IntegerAttr>("obelisk.dpi.import_id")) {
+    if (operands.empty())
+      return emitError(location) << "DPI call is missing its runtime context",
+             failure();
+    Value runtimeContext = operands.front();
+    operands.erase(operands.begin());
+    SmallVector<Attribute> signature(dpiOperandABI);
+    if (!dpiTask) {
+      Type resultType = callResultTypes.front();
+      std::optional<unsigned> width = sim::getPackedWidth(resultType);
+      if (!width)
+        return emitError(location)
+                   << "DPI function result has no fixed packed width",
+               failure();
+      auto semanticResult =
+          op->getAttrOfType<TypeAttr>("semantic_type");
+      if (!semanticResult)
+        return emitError(location)
+                   << "DPI function result has no semantic ABI type",
+               failure();
+      FailureOr<DPIABIKind> resultCategory =
+          getDPIABIKind(semanticResult.getValue(), location);
+      if (failed(resultCategory))
+        return failure();
+      signature.push_back(sim::DPIABIAttr::get(
+          builder.getContext(),
+          static_cast<sim::DPIABIKind>(*resultCategory),
+          sim::DPIArgumentDirection::Result, *width,
+          isa<sim::LogicType>(sim::getPackedScalarType(resultType)),
+          isSignedSemanticType(semanticResult.getValue())));
+    }
+    for (const CopyOut &copyOut : copyOuts) {
+      std::optional<unsigned> width =
+          sim::getPackedWidth(copyOut.formalType);
+      signature.push_back(sim::DPIABIAttr::get(
+          builder.getContext(),
+          static_cast<sim::DPIABIKind>(copyOut.dpiCategory),
+          sim::DPIArgumentDirection::Output, *width,
+          isa<sim::LogicType>(
+              sim::getPackedScalarType(copyOut.formalType)),
+          copyOut.formalSigned));
+    }
+    FileLineColLoc fileLocation = dyn_cast<FileLineColLoc>(location);
+    StringRef sourceFile =
+        fileLocation ? fileLocation.getFilename() : StringRef{};
+    uint32_t sourceLine = fileLocation ? fileLocation.getLine() : 0;
+    uint32_t sourceColumn = fileLocation ? fileLocation.getColumn() : 0;
+    SmallVector<Type> dpiResultTypes(callResultTypes);
+    dpiResultTypes.push_back(runtime::StatusType::get(builder.getContext()));
+    auto call = sim::SimDPICallOp::create(
+        builder, location, dpiResultTypes,
+        builder.getI32IntegerAttr(
+            static_cast<uint32_t>(importID.getValue().getZExtValue())),
+        op->getAttrOfType<StringAttr>("obelisk.dpi.c_identifier"),
+        op->getAttrOfType<IntegerAttr>("obelisk.dpi.scope_id"),
+        builder.getArrayAttr(signature),
+        op->getAttrOfType<BoolAttr>("obelisk.dpi.is_pure"),
+        op->getAttrOfType<BoolAttr>("obelisk.dpi.is_context"),
+        op->getAttrOfType<BoolAttr>("obelisk.dpi.is_task"),
+        builder.getStringAttr(sourceFile), builder.getI32IntegerAttr(sourceLine),
+        builder.getI32IntegerAttr(sourceColumn), runtimeContext, operands);
+    sim::SimStatusCheckOp::create(builder, location,
+                                  call.getResults().back());
+    callResults = call.getResults().drop_back();
+  } else {
+    auto call = sim::SimCallOp::create(builder, location, callResultTypes,
+                                       callee, operands, ArrayAttr{},
+                                       ArrayAttr{});
+    callResults = call.getResults();
+  }
   for (auto [index, copyOut] : llvm::enumerate(copyOuts)) {
     auto destinationType =
         cast<sim::RefType>(copyOut.destination.getType()).getElementType();
     FailureOr<Value> converted =
-        convert(call.getResult(index + 1), destinationType,
+        convert(callResults[index + (dpiTask ? 0 : 1)], destinationType,
                 copyOut.formalSigned, location);
     if (failed(converted))
       return failure();
     sim::SimRefStoreOp::create(builder, location, *converted,
                                copyOut.destination);
   }
-  return call.getResults().front();
+  if (!dpiTask)
+    return callResults.front();
+  return arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                   builder.getBoolAttr(false))
+      .getResult();
 }
 
 FailureOr<Value>
@@ -2821,6 +2920,10 @@ public:
   void runOnOperation() override {
     sim::SimFuncOp function = getOperation();
     if (function.getEntryKind() == sim::EntryKind::RootInitializer)
+      return;
+    // Imported DPI declarations deliberately have no executable body. Their
+    // call sites lower to obelisk_sim.dpi.call in the caller instead.
+    if (function.getBody().empty())
       return;
 
     Block &entry = function.getBody().front();

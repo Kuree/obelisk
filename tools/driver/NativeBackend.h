@@ -10,6 +10,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace mlir {
 class ModuleOp;
@@ -24,6 +25,8 @@ struct NativeOutputOptions {
   std::string outputPath;
   std::string explicitSysroot;
   std::string executablePath;
+  std::vector<std::string> dpiLinkInputs;
+  bool bytecode = false;
   uint32_t optLevel = 3;
 };
 

@@ -92,11 +92,19 @@ extern "C" uint32_t obelisk_rt_v1_import_id(const uint8_t *symbol,
 extern "C" obelisk_rt_status obelisk_rt_v1_context_register_import(
     obelisk_rt_context *context, uint32_t importID,
     obelisk_rt_import_callback_v1 callback, void *userData) {
+  return obelisk_rt_v1_context_register_import_signature(
+      context, importID, 0, callback, userData);
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_context_register_import_signature(
+    obelisk_rt_context *context, uint32_t importID, uint64_t abiSignature,
+    obelisk_rt_import_callback_v1 callback, void *userData) {
   if (!context || importID == 0 || !callback)
     return OBELISK_RT_INVALID_ARGUMENT;
   return guarded(context, [&] {
     std::lock_guard<std::mutex> lock(context->mutex);
-    context->imports[importID] = {callback, userData};
+    context->imports[importID] = {callback, userData, abiSignature};
     return OBELISK_RT_OK;
   });
 }
@@ -112,12 +120,16 @@ extern "C" obelisk_rt_status obelisk_rt_v1_context_create_for_design(
       constexpr uint32_t validFlags =
           OBELISK_RT_EXECUTION_HAS_BYTECODE |
           OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
-          OBELISK_RT_EXECUTION_VPI_READ | OBELISK_RT_EXECUTION_VPI_WRITE;
+          OBELISK_RT_EXECUTION_VPI_READ | OBELISK_RT_EXECUTION_VPI_WRITE |
+          OBELISK_RT_EXECUTION_REQUIRE_BYTECODE;
       if (execution->version != OBELISK_RT_EXECUTION_DESCRIPTOR_VERSION ||
           execution->abi_generation != OBELISK_RT_ABI_GENERATION ||
-          execution->reserved != 0 || (execution->flags & ~validFlags) != 0 ||
+          execution->reserved != 0 || execution->dpi_reserved != 0 ||
+          (execution->flags & ~validFlags) != 0 ||
           ((execution->flags & OBELISK_RT_EXECUTION_VPI_WRITE) != 0 &&
            (execution->flags & OBELISK_RT_EXECUTION_VPI_READ) == 0) ||
+          ((execution->flags & OBELISK_RT_EXECUTION_REQUIRE_BYTECODE) != 0 &&
+           (execution->flags & OBELISK_RT_EXECUTION_HAS_BYTECODE) == 0) ||
           ((execution->flags & OBELISK_RT_EXECUTION_HAS_BYTECODE) != 0
                ? (!execution->bytecode || execution->bytecode_size == 0 ||
                   execution->checksum == 0)
@@ -135,6 +147,14 @@ extern "C" obelisk_rt_status obelisk_rt_v1_context_create_for_design(
     }
     auto *context = new obelisk_rt_context();
     context->execution = execution;
+    if (execution) {
+      obelisk_rt_status status =
+          obelisk_rt_initialize_dpi_scopes(context, execution);
+      if (status != OBELISK_RT_OK) {
+        delete context;
+        return status;
+      }
+    }
     if (execution && execution->state_bit_count != 0) {
       if (execution->state_bit_count >
           std::numeric_limits<size_t>::max() - 63)
@@ -233,6 +253,8 @@ extern "C" const char *obelisk_rt_v1_status_string(obelisk_rt_status status) {
     return "invalid design metadata";
   case OBELISK_RT_PERMISSION_DENIED:
     return "permission denied";
+  case OBELISK_RT_DPI_DISABLE_UNSUPPORTED:
+    return "DPI task disable is unsupported";
   default:
     return "unknown runtime status";
   }

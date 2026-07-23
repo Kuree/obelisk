@@ -825,6 +825,16 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_planned(
     process.observedSignalSequence = context->nextSchedulerSequence;
     process.phase = phase;
     process.scheduleRank = initialRank;
+    if (context->execution &&
+        (context->execution->flags &
+         OBELISK_RT_EXECUTION_REQUIRE_BYTECODE) != 0) {
+      if ((instance->descriptor->available_tiers &
+           OBELISK_RT_TIER_MASK_BYTECODE) == 0) {
+        context->schedulerStatus = OBELISK_RT_TIER_UNAVAILABLE;
+        return OBELISK_RT_TIER_UNAVAILABLE;
+      }
+      instance->tier = OBELISK_RT_TIER_BYTECODE;
+    }
     process.continuationRanks.reserve(continuationCount);
     for (uint32_t index = 0; index != continuationCount; ++index)
       process.continuationRanks.emplace_back(continuations[index],

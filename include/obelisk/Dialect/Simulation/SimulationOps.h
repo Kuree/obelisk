@@ -60,6 +60,11 @@ enum class InlineLegality {
 InlineLegality getInlineLegality(SimCallOp call, SimFuncOp callee);
 ::llvm::StringRef getInlineLegalityReason(InlineLegality legality);
 
+/// Stable hash of a validated logical DPI ABI signature. This is shared by
+/// native thunk registration and pointer-free bytecode call-site metadata.
+uint64_t getDPISignatureHash(::mlir::ArrayAttr signature,
+                             uint64_t logicalInputs);
+
 } // namespace obelisk::sim
 
 #endif // OBELISK_DIALECT_SIMULATION_SIMULATIONOPS_H

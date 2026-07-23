@@ -148,6 +148,24 @@ def SimContinuationSiteAttr : SimAttr<"ContinuationSite", "continuation"> {
   let assemblyFormat = "`<` struct(params) `>`";
 }
 
+def SimDPIABIAttr : SimAttr<"DPIABI", "dpi_abi"> {
+  let summary = "one logical value in a DPI-C import signature";
+  let parameters = (ins
+    EnumParameter<SimDPIABIKind>:$kind,
+    EnumParameter<SimDPIArgumentDirection>:$direction,
+    "uint32_t":$width,
+    "bool":$fourState,
+    "bool":$isSigned
+  );
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimDPIABIArrayAttr
+    : TypedArrayAttrBase<SimDPIABIAttr, "DPI ABI signature"> {
+  let constBuilderCall = "$_builder.getArrayAttr($0)";
+}
+
 def SimTimingSiteAttr : SimAttr<"TimingSite", "timing_site"> {
   let parameters = (ins
     "uint64_t":$id,

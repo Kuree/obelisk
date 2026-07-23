@@ -17,6 +17,8 @@ namespace obelisk {
 struct SimulationBytecodeOptions {
   /// auto uses the design compute-graph profile; otherwise off/read/full.
   std::string vpi = "auto";
+  /// Require the runtime scheduler to execute all process entries as bytecode.
+  bool requireBytecode = false;
 };
 
 struct SimulationBytecodeFunction {

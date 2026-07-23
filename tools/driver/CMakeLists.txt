@@ -2,6 +2,11 @@ set(LLVM_TARGET_DEFINITIONS Options.td)
 tablegen(LLVM Options.inc -gen-opt-parser-defs)
 add_public_tablegen_target(ObeliskDriverOptions)
 
+set(OBELISK_RESOURCE_DIR "${CMAKE_BINARY_DIR}/lib/obelisk")
+file(MAKE_DIRECTORY "${OBELISK_RESOURCE_DIR}/include")
+configure_file("${PROJECT_SOURCE_DIR}/runtime/include/svdpi.h"
+               "${OBELISK_RESOURCE_DIR}/include/svdpi.h" COPYONLY)
+
 set(LLVM_LINK_COMPONENTS
   Analysis
   CodeGen
@@ -40,6 +45,7 @@ target_include_directories(obelisk
 target_compile_definitions(obelisk
   PRIVATE
   OBELISK_VERSION_STRING="${PROJECT_VERSION}"
+  OBELISK_RESOURCE_DIR="${OBELISK_RESOURCE_DIR}"
 )
 
 llvm_update_compile_flags(obelisk)
@@ -50,6 +56,7 @@ target_link_libraries(obelisk
   ObeliskIR
   ObeliskRuntimeIR
   ObeliskSimulationIR
+  ObeliskSimulationToBytecode
   ObeliskSimulationToLLVMCoroutine
   ObeliskSlangIR
   ObeliskSlangToObelisk

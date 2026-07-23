@@ -354,6 +354,69 @@ LogicalResult ComputeEffectAttr::verify(
   return success();
 }
 
+LogicalResult DPIABIAttr::verify(
+    llvm::function_ref<InFlightDiagnostic()> emitError, DPIABIKind kind,
+    DPIArgumentDirection, uint32_t width, bool fourState, bool) {
+  if (width == 0)
+    return emitError() << "DPI ABI width must be nonzero";
+  auto require = [&](uint32_t expectedWidth,
+                     bool expectedFourState) -> LogicalResult {
+    if (width != expectedWidth)
+      return emitError() << "DPI ABI category requires width "
+                         << expectedWidth;
+    if (fourState != expectedFourState)
+      return emitError() << "DPI ABI category has incompatible state kind";
+    return success();
+  };
+  switch (kind) {
+  case DPIABIKind::Bit:
+    return require(1, false);
+  case DPIABIKind::Logic:
+    return require(1, true);
+  case DPIABIKind::Byte:
+    return require(8, false);
+  case DPIABIKind::ShortInt:
+    return require(16, false);
+  case DPIABIKind::Int:
+    return require(32, false);
+  case DPIABIKind::LongInt:
+    return require(64, false);
+  case DPIABIKind::BitVector:
+    return fourState
+               ? emitError()
+                     << "bit-vector DPI ABI category must be two-state"
+               : success();
+  case DPIABIKind::LogicVector:
+    return !fourState
+               ? emitError()
+                     << "logic-vector DPI ABI category must be four-state"
+               : success();
+  }
+  llvm_unreachable("unknown DPI ABI category");
+}
+
+uint64_t getDPISignatureHash(ArrayAttr signature, uint64_t logicalInputs) {
+  auto append = [](uint64_t hash, uint64_t value, unsigned bytes) {
+    for (unsigned index = 0; index != bytes; ++index) {
+      hash ^= static_cast<uint8_t>(value >> (index * 8));
+      hash *= UINT64_C(1099511628211);
+    }
+    return hash;
+  };
+  uint64_t hash = UINT64_C(14695981039346656037);
+  hash = append(hash, logicalInputs, 8);
+  hash = append(hash, signature.size() - logicalInputs, 8);
+  for (Attribute attribute : signature) {
+    auto abi = cast<DPIABIAttr>(attribute);
+    hash = append(hash, static_cast<uint32_t>(abi.getKind()), 4);
+    hash = append(hash, static_cast<uint32_t>(abi.getDirection()), 4);
+    hash = append(hash, abi.getWidth(), 4);
+    hash = append(hash, abi.getFourState() ? 1 : 0, 1);
+    hash = append(hash, abi.getIsSigned() ? 1 : 0, 1);
+  }
+  return hash ? hash : 1;
+}
+
 LogicalResult ComputeFragmentAttr::verify(
     llvm::function_ref<InFlightDiagnostic()> emitError, uint32_t id,
     FlatSymbolRefAttr function, uint32_t block, ComputeRegionKind region,
@@ -1566,6 +1629,143 @@ LogicalResult SimCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       getResultTypes() != callee.getFunctionType().getResults())
     return emitOpError("operand and result types must match callee signature");
   return success();
+}
+
+void SimDPICallOp::getEffects(
+    SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
+  if (getIsPure())
+    return;
+  effects.emplace_back(MemoryEffects::Read::get(),
+                       ExternalResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(),
+                       ExternalResource::get());
+  effects.emplace_back(MemoryEffects::Read::get(),
+                       SchedulerResource::get());
+}
+
+LogicalResult SimDPICallOp::verify() {
+  if (!getOperation()->getParentOfType<SimFuncOp>())
+    return emitOpError("must be nested in obelisk_sim.func");
+  if (getImportId() == 0)
+    return emitOpError("import ID must be nonzero");
+  if (getCIdentifier().empty())
+    return emitOpError("C identifier must not be empty");
+  if (getIsPure() && (getIsContext() || getIsTask()))
+    return emitOpError("pure DPI imports cannot be context imports or tasks");
+  if (getNumResults() == 0 ||
+      !isa<runtime::StatusType>(getResults().back().getType()))
+    return emitOpError("must return a trailing runtime status");
+  auto physicalCount =
+      getOperation()->getAttrOfType<IntegerAttr>(
+          "obelisk.dpi.logical_operand_count");
+  uint64_t logicalInputs =
+      physicalCount ? physicalCount.getValue().getZExtValue()
+                    : getArguments().size();
+  if (logicalInputs > getAbiSignature().size())
+    return emitOpError("logical operand count exceeds the ABI signature");
+
+  SmallVector<DPIABIAttr> signature;
+  signature.reserve(getAbiSignature().size());
+  for (Attribute attr : getAbiSignature()) {
+    auto abi = dyn_cast<DPIABIAttr>(attr);
+    if (!abi)
+      return emitOpError("ABI signature entries must be DPI ABI attributes");
+    signature.push_back(abi);
+  }
+
+  uint64_t outputCursor = logicalInputs;
+  if (!getIsTask()) {
+    if (outputCursor >= signature.size() ||
+        signature[outputCursor].getDirection() !=
+            DPIArgumentDirection::Result)
+      return emitOpError(
+          "a DPI function signature must place its result first");
+    ++outputCursor;
+  }
+  for (uint64_t index = 0; index != logicalInputs; ++index) {
+    DPIABIAttr input = signature[index];
+    if (input.getDirection() == DPIArgumentDirection::Result)
+      return emitOpError("a DPI formal cannot have result direction");
+    if (input.getDirection() == DPIArgumentDirection::Input)
+      continue;
+    if (outputCursor >= signature.size())
+      return emitOpError("DPI signature is missing a formal copy-out");
+    DPIABIAttr output = signature[outputCursor++];
+    if (output.getDirection() != DPIArgumentDirection::Output ||
+        output.getKind() != input.getKind() ||
+        output.getWidth() != input.getWidth() ||
+        output.getFourState() != input.getFourState() ||
+        output.getIsSigned() != input.getIsSigned())
+      return emitOpError(
+          "DPI formal copy-out must match its input ABI entry");
+  }
+  if (outputCursor != signature.size())
+    return emitOpError("DPI signature has excess result entries");
+
+  auto verifyLogicalType = [&](Type type, DPIABIAttr abi) -> LogicalResult {
+    std::optional<unsigned> width = getPackedWidth(type);
+    bool fourState =
+        isa<LogicType>(getPackedScalarType(type));
+    if (!width || *width != abi.getWidth() ||
+        fourState != abi.getFourState())
+      return emitOpError(
+          "logical operand or result type disagrees with its DPI ABI entry");
+    return success();
+  };
+  if (!physicalCount) {
+    if (!isa<runtime::ContextType, ContextType>(
+            getRuntimeContext().getType()))
+      return emitOpError(
+          "runtime context must have simulation or runtime context type");
+    uint64_t logicalOutputs = signature.size() - logicalInputs;
+    if (getArguments().size() != logicalInputs ||
+        getNumResults() - 1 != logicalOutputs)
+      return emitOpError(
+          "ABI signature must describe every data operand and result");
+    for (auto [value, abi] :
+         llvm::zip_equal(getArguments(),
+                         ArrayRef<DPIABIAttr>(signature).take_front(
+                             logicalInputs)))
+      if (failed(verifyLogicalType(value.getType(), abi)))
+        return failure();
+    for (auto [value, abi] :
+         llvm::zip_equal(
+             getResults().drop_back(),
+             ArrayRef<DPIABIAttr>(signature).drop_front(logicalInputs)))
+      if (failed(verifyLogicalType(value.getType(), abi)))
+        return failure();
+    return success();
+  }
+
+  auto verifyPhysicalTypes = [&](TypeRange types,
+                                 ArrayRef<DPIABIAttr> entries,
+                                 StringRef role) -> LogicalResult {
+    size_t physical = 0;
+    for (DPIABIAttr abi : entries) {
+      unsigned planes = abi.getFourState() ? 2 : 1;
+      if (physical + planes > types.size())
+        return emitOpError() << "is missing a physical DPI " << role
+                             << " plane";
+      for (unsigned plane = 0; plane != planes; ++plane) {
+        auto integer = dyn_cast<IntegerType>(types[physical++]);
+        if (!integer || integer.getWidth() != abi.getWidth())
+          return emitOpError() << "has a malformed physical DPI " << role
+                               << " plane";
+      }
+    }
+    if (physical != types.size())
+      return emitOpError() << "has excess physical DPI " << role
+                           << " planes";
+    return success();
+  };
+  if (failed(verifyPhysicalTypes(
+          getArguments().getTypes(),
+          ArrayRef<DPIABIAttr>(signature).take_front(logicalInputs),
+          "input")))
+    return failure();
+  return verifyPhysicalTypes(
+      getResults().drop_back().getTypes(),
+      ArrayRef<DPIABIAttr>(signature).drop_front(logicalInputs), "result");
 }
 
 LogicalResult SimSpawnOp::verify() {

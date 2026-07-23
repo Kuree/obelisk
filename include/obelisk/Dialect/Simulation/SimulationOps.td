@@ -244,6 +244,42 @@ def SimCallOp : SimOp<"call", [
   let hasVerifier = 1;
 }
 
+def SimDPICallOp : SimOp<"dpi.call", [
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "shared zero-time DPI-C import boundary";
+  let description = [{
+    Carries stable call-site metadata and normalized value operands. Results
+    contain a function return first (when present), followed by output and
+    inout copy-outs. Imported task C status is not an SV result.
+  }];
+  let arguments = (ins
+    I32Attr:$import_id,
+    StrAttr:$c_identifier,
+    I64Attr:$scope_id,
+    SimDPIABIArrayAttr:$abi_signature,
+    BoolAttr:$is_pure,
+    BoolAttr:$is_context,
+    BoolAttr:$is_task,
+    StrAttr:$source_file,
+    I32Attr:$source_line,
+    I32Attr:$source_column,
+    AnyType:$runtime_context,
+    Variadic<AnyType>:$arguments
+  );
+  // Data results are followed by one internal runtime status. Keeping the
+  // status in this operation makes failure propagation explicit without
+  // exposing a task's C int status as a SystemVerilog value.
+  let results = (outs Variadic<AnyType>:$results);
+  let assemblyFormat = [{
+    $c_identifier `id` $import_id `scope` $scope_id
+    `context` $runtime_context `:` type($runtime_context)
+    `(` $arguments `)` attr-dict `:`
+    functional-type($arguments, $results)
+  }];
+  let hasVerifier = 1;
+}
+
 //===----------------------------------------------------------------------===//
 // Formatting and file I/O
 //===----------------------------------------------------------------------===//

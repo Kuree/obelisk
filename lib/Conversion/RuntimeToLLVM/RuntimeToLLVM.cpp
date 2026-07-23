@@ -143,8 +143,10 @@ FailureOr<ABIAlignments> validateTargetABI(ModuleOp module,
                          {0, 4, 8, 16, 24, 32, 36, 40, 48}, 56, 8)) ||
       failed(checkStruct("execution descriptor",
                          {i32, i32, i32, i32, pointer, i64, pointer, i64, i64,
-                          i64},
-                         {0, 4, 8, 12, 16, 24, 32, 40, 48, 56}, 64, 8)) ||
+                          i64, pointer, i64, i32, i32},
+                         {0, 4, 8, 12, 16, 24, 32, 40, 48, 56, 64, 72, 80,
+                          84},
+                         88, 8)) ||
       failed(checkStruct("design bytecode entry", {pointer, i32, i32},
                          {0, 8, 12}, 16, 8)) ||
       failed(checkStruct("process descriptor",

@@ -57,6 +57,16 @@ static uint64_t getStableCodeUnitID(StringRef hierarchy) {
   return hash == 0 ? 1 : hash;
 }
 
+static uint32_t getStableImportID(StringRef cIdentifier) {
+  uint64_t hash = UINT64_C(14695981039346656037);
+  for (unsigned char byte : cIdentifier.bytes()) {
+    hash ^= byte;
+    hash *= UINT64_C(1099511628211);
+  }
+  uint32_t result = static_cast<uint32_t>(hash ^ (hash >> 32));
+  return result == 0 ? 1 : result;
+}
+
 /// Node kinds whose semantics are declarative but that derive from a shared
 /// generic base, so they cannot carry the SemanticDeclarativeNode trait.
 static bool isDeclarativeLeafNode(Operation *op) {
@@ -371,12 +381,13 @@ void ObeliskSimPreparePass::runOnOperation() {
   };
 
   llvm::DenseMap<Operation *, uint64_t> scopeIds;
+  SmallVector<sim::SimScopeDeclOp> scopeDeclarations;
   uint64_t nextScopeId = 0;
   scopeIds[semanticRoot] = nextScopeId;
-  sim::SimScopeDeclOp::create(
+  scopeDeclarations.push_back(sim::SimScopeDeclOp::create(
       builder, getSemanticLocation(semanticRoot), nextScopeId++, IntegerAttr{},
       builder.getStringAttr(getHierarchyName(semanticRoot)),
-      builder.getStringAttr(getDebugName(semanticRoot)));
+      builder.getStringAttr(getDebugName(semanticRoot))));
   semanticRoot->walk<WalkOrder::PreOrder>(
       [&](semantic::SVInstanceBodySymbolOp body) {
         Operation *parent = body->getParentOp();
@@ -385,11 +396,11 @@ void ObeliskSimPreparePass::runOnOperation() {
         uint64_t parentId = parent ? scopeIds.lookup(parent) : 0;
         uint64_t id = nextScopeId++;
         scopeIds[body] = id;
-        sim::SimScopeDeclOp::create(
+        scopeDeclarations.push_back(sim::SimScopeDeclOp::create(
             builder, getSemanticLocation(body), id,
             builder.getI64IntegerAttr(parentId),
             builder.getStringAttr(getHierarchyName(body)),
-            builder.getStringAttr(getDebugName(body)));
+            builder.getStringAttr(getDebugName(body))));
       });
 
   auto getScopeId = [&](Operation *op) {
@@ -398,6 +409,51 @@ void ObeliskSimPreparePass::runOnOperation() {
         return found->second;
     return uint64_t{0};
   };
+  for (Operation *unit : sourceUnits) {
+    uint64_t scopeID = getScopeId(unit);
+    if (scopeID >= scopeDeclarations.size())
+      continue;
+    uint64_t unitFs = 1'000'000;
+    uint64_t precisionFs = 1'000'000;
+    if (auto attr = unit->getAttrOfType<IntegerAttr>("time_unit_fs"))
+      unitFs = attr.getValue().getZExtValue();
+    if (auto attr = unit->getAttrOfType<IntegerAttr>("time_precision_fs"))
+      precisionFs = attr.getValue().getZExtValue();
+    sim::SimScopeDeclOp declaration = scopeDeclarations[scopeID];
+    if (auto existing =
+            declaration->getAttrOfType<IntegerAttr>(
+                "dpi_unit_femtoseconds");
+        existing && existing.getValue().getZExtValue() != unitFs) {
+      emitError(getSemanticLocation(unit))
+          << "DPI declaration scope has inconsistent time units";
+      invalid = true;
+      continue;
+    }
+    if (auto existing = declaration->getAttrOfType<IntegerAttr>(
+            "dpi_precision_femtoseconds");
+        existing && existing.getValue().getZExtValue() != precisionFs) {
+      emitError(getSemanticLocation(unit))
+          << "DPI declaration scope has inconsistent time precisions";
+      invalid = true;
+      continue;
+    }
+    declaration->setAttr("dpi_unit_femtoseconds",
+                         builder.getI64IntegerAttr(unitFs));
+    declaration->setAttr("dpi_precision_femtoseconds",
+                         builder.getI64IntegerAttr(precisionFs));
+  }
+  for (sim::SimScopeDeclOp declaration : scopeDeclarations) {
+    if (!declaration->hasAttr("dpi_unit_femtoseconds"))
+      declaration->setAttr("dpi_unit_femtoseconds",
+                           builder.getI64IntegerAttr(1'000'000));
+    if (!declaration->hasAttr("dpi_precision_femtoseconds"))
+      declaration->setAttr("dpi_precision_femtoseconds",
+                           builder.getI64IntegerAttr(designPrecisionFs));
+  }
+  if (invalid) {
+    abort();
+    return;
+  }
 
   // `ref` is the only variable-port association that aliases storage. Every
   // value port is frozen below either as static net topology or as an explicit
@@ -1283,6 +1339,14 @@ void ObeliskSimPreparePass::runOnOperation() {
   llvm::StringMap<Operation *> directCalleeSources;
   llvm::DenseMap<uint64_t, Operation *> codeUnitIDs;
   for (auto [index, source] : llvm::enumerate(sourceUnits)) {
+    if (auto exported =
+            source->getAttrOfType<StringAttr>("dpi_export_c_identifier")) {
+      emitError(getSemanticLocation(source))
+          << "DPI export '" << exported.getValue()
+          << "' is not supported by simulation lowering";
+      invalid = true;
+      continue;
+    }
     FailureOr<sim::EntryKind> entryKind = getEntryKind(source);
     if (failed(entryKind)) {
       invalid = true;
@@ -1290,11 +1354,18 @@ void ObeliskSimPreparePass::runOnOperation() {
     }
     if (*entryKind == sim::EntryKind::Function) {
       auto subroutine = cast<semantic::SVSubroutineSymbolOp>(source);
-      if (subroutine.getSubroutineKind() !=
-              semantic::SVSubroutineKind::Function ||
-          subroutine.getIsDpiImport().value_or(false)) {
+      bool dpiImport = subroutine.getIsDpiImport().value_or(false);
+      if (!dpiImport &&
+          subroutine.getSubroutineKind() !=
+              semantic::SVSubroutineKind::Function) {
         emitError(getSemanticLocation(source))
             << "only static zero-time SystemVerilog functions are supported";
+        invalid = true;
+        continue;
+      }
+      if (dpiImport && !subroutine.getDpiCIdentifierAttr()) {
+        emitError(getSemanticLocation(source))
+            << "DPI import is missing its resolved C identifier";
         invalid = true;
         continue;
       }
@@ -1304,7 +1375,7 @@ void ObeliskSimPreparePass::runOnOperation() {
             isa<semantic::SVDelayControlOp, semantic::SVSignalEventControlOp,
                 semantic::SVEventListControlOp>(nested);
       });
-      if (hasTiming) {
+      if (!dpiImport && hasTiming) {
         emitError(getSemanticLocation(source))
             << "zero-time function contains a blocking timing control";
         invalid = true;
@@ -1354,14 +1425,17 @@ void ObeliskSimPreparePass::runOnOperation() {
       builder, module.getLoc(), rootCodeUnitID, uint64_t{0},
       sim::EntryKind::RootInitializer, builder.getStringAttr("__obelisk_root"),
       builder.getStringAttr("root initializer"), UnitAttr{});
-  for (UnitInfo &unit : units)
-    sim::SimCodeUnitDeclOp::create(
+  llvm::DenseMap<Operation *, sim::SimCodeUnitDeclOp> codeUnitDeclarations;
+  for (UnitInfo &unit : units) {
+    auto declaration = sim::SimCodeUnitDeclOp::create(
         builder, getSemanticLocation(unit.source), unit.id,
         getScopeId(unit.source), unit.entryKind,
         builder.getStringAttr(unit.hierarchy),
         builder.getStringAttr(getDebugName(unit.source)),
         isa<semantic::SVPortConnectionOp>(unit.source) ? builder.getUnitAttr()
                                                        : UnitAttr{});
+    codeUnitDeclarations[unit.source] = declaration;
+  }
 
   llvm::DenseMap<Operation *,
                  SmallVector<std::pair<std::string, DescriptorInfo>>>
@@ -1595,6 +1669,8 @@ void ObeliskSimPreparePass::runOnOperation() {
     // Output and inout formals use value arguments plus copy-out results; only
     // ref formals retain aliasing handles.
     if (unit.entryKind == sim::EntryKind::Function) {
+      auto subroutine = cast<semantic::SVSubroutineSymbolOp>(unit.source);
+      bool dpiImport = subroutine.getIsDpiImport().value_or(false);
       SmallVector<semantic::SVFormalArgumentSymbolOp> formals;
       for (Operation *child : getChildren(unit.source))
         if (auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(child))
@@ -1604,12 +1680,36 @@ void ObeliskSimPreparePass::runOnOperation() {
         SmallVector<DictionaryAttr> reorderedAttrs{argAttrs.front()};
         SmallVector<Attribute> formalBindings;
         for (semantic::SVFormalArgumentSymbolOp formal : formals) {
+          if (dpiImport) {
+            std::optional<Type> semanticType = formal.getSemanticType();
+            if (!semanticType ||
+                failed(getDPIABIKind(*semanticType,
+                                     getSemanticLocation(formal)))) {
+              invalid = true;
+              continue;
+            }
+          }
           FailureOr<Type> type = getNormalizedSemanticType(formal);
           if (failed(type)) {
             invalid = true;
             continue;
           }
+          if (dpiImport && !sim::getPackedWidth(*type)) {
+            emitError(getSemanticLocation(formal))
+                << "DPI import formal type is unsupported by the initial "
+                   "integral ABI";
+            invalid = true;
+            continue;
+          }
           semantic::SVArgumentDirection direction = formal.getDirection();
+          if (dpiImport &&
+              direction == semantic::SVArgumentDirection::Ref) {
+            emitError(getSemanticLocation(formal))
+                << "DPI ref formals are not supported; use input, output, or "
+                   "inout";
+            invalid = true;
+            continue;
+          }
           bool isRef = direction == semantic::SVArgumentDirection::Ref;
           Type argumentType =
               isRef ? Type(sim::RefType::get(context, *type)) : *type;
@@ -1669,27 +1769,73 @@ void ObeliskSimPreparePass::runOnOperation() {
     SmallVector<Type> results;
     if (unit.entryKind == sim::EntryKind::Function) {
       auto subroutine = cast<semantic::SVSubroutineSymbolOp>(unit.source);
-      std::optional<SymbolRefAttr> returnSymbol =
-          subroutine.getReturnVariableSymbol();
-      if (!returnSymbol) {
-        emitError(getSemanticLocation(unit.source))
-            << "function is missing its elaborated return variable";
-        invalid = true;
-        continue;
+      bool dpiImport = subroutine.getIsDpiImport().value_or(false);
+      if (subroutine.getSubroutineKind() ==
+          semantic::SVSubroutineKind::Function) {
+        std::optional<SymbolRefAttr> returnSymbol =
+            subroutine.getReturnVariableSymbol();
+        FailureOr<Type> resultType = failure();
+        Type semanticResultType;
+        if (returnSymbol) {
+          auto symbol =
+              semanticSymbols.find(returnSymbol->getLeafReference());
+          if (symbol == semanticSymbols.end()) {
+            emitError(getSemanticLocation(unit.source))
+                << "function return variable does not resolve";
+            invalid = true;
+            continue;
+          }
+          resultType = getNormalizedSemanticType(symbol->second);
+          if (auto attr =
+                  symbol->second->getAttrOfType<TypeAttr>("semantic_type"))
+            semanticResultType = attr.getValue();
+        } else if (dpiImport) {
+          auto semanticType =
+              unit.source->getAttrOfType<TypeAttr>("semantic_type");
+          auto subroutineType =
+              semanticType
+                  ? dyn_cast<semantic::SubroutineType>(
+                        semanticType.getValue())
+                  : semantic::SubroutineType{};
+          auto signature =
+              subroutineType
+                  ? dyn_cast<FunctionType>(subroutineType.getSignature())
+                  : FunctionType{};
+          if (!signature || signature.getNumResults() != 1) {
+            emitError(getSemanticLocation(unit.source))
+                << "DPI function has no resolved return signature";
+            invalid = true;
+            continue;
+          }
+          semanticResultType = signature.getResult(0);
+          resultType = normalizeSemanticType(
+              signature.getResult(0), getSemanticLocation(unit.source));
+        } else {
+          emitError(getSemanticLocation(unit.source))
+              << "function is missing its elaborated return variable";
+          invalid = true;
+          continue;
+        }
+        if (failed(resultType)) {
+          invalid = true;
+          continue;
+        }
+        if (dpiImport && !sim::getPackedWidth(*resultType)) {
+          emitError(getSemanticLocation(unit.source))
+              << "DPI import return type is unsupported by the initial "
+                 "integral ABI";
+          invalid = true;
+          continue;
+        }
+        if (dpiImport &&
+            (!semanticResultType ||
+             failed(getDPIABIKind(semanticResultType,
+                                  getSemanticLocation(unit.source))))) {
+          invalid = true;
+          continue;
+        }
+        results.push_back(*resultType);
       }
-      auto symbol = semanticSymbols.find(returnSymbol->getLeafReference());
-      if (symbol == semanticSymbols.end()) {
-        emitError(getSemanticLocation(unit.source))
-            << "function return variable does not resolve";
-        invalid = true;
-        continue;
-      }
-      FailureOr<Type> resultType = getNormalizedSemanticType(symbol->second);
-      if (failed(resultType)) {
-        invalid = true;
-        continue;
-      }
-      results.push_back(*resultType);
     }
     llvm::append_range(results, copyOutResultTypes);
     FunctionType type = FunctionType::get(context, inputs, results);
@@ -1719,6 +1865,128 @@ void ObeliskSimPreparePass::runOnOperation() {
         bindingAttr, delayScaleAttr,
         builder.getNamedAttr("code_unit_id",
                              builder.getI64IntegerAttr(unit.id))};
+    if (auto subroutine =
+            dyn_cast<semantic::SVSubroutineSymbolOp>(unit.source);
+        subroutine && subroutine.getIsDpiImport().value_or(false)) {
+      SmallVector<Attribute> dpiInputs;
+      SmallVector<Attribute> dpiCopyOuts;
+      auto makeABI = [&](Type type, sim::DPIArgumentDirection direction,
+                         Location location) -> FailureOr<sim::DPIABIAttr> {
+        FailureOr<DPIABIType> classified =
+            classifyDPIABIType(type, location);
+        if (failed(classified))
+          return failure();
+        return sim::DPIABIAttr::get(
+            context, static_cast<sim::DPIABIKind>(classified->kind),
+            direction, classified->width, classified->fourState,
+            classified->isSigned);
+      };
+      for (Operation *child : getChildren(unit.source)) {
+        auto formal =
+            dyn_cast<semantic::SVFormalArgumentSymbolOp>(child);
+        if (!formal)
+          continue;
+        std::optional<Type> semanticType = formal.getSemanticType();
+        if (!semanticType) {
+          formal.emitError("DPI formal has no semantic ABI type");
+          invalid = true;
+          continue;
+        }
+        sim::DPIArgumentDirection direction =
+            static_cast<sim::DPIArgumentDirection>(formal.getDirection());
+        FailureOr<sim::DPIABIAttr> input =
+            makeABI(*semanticType, direction, getSemanticLocation(formal));
+        if (failed(input)) {
+          invalid = true;
+          continue;
+        }
+        dpiInputs.push_back(*input);
+        if (direction != sim::DPIArgumentDirection::Input)
+          dpiCopyOuts.push_back(sim::DPIABIAttr::get(
+              context, input->getKind(), sim::DPIArgumentDirection::Output,
+              input->getWidth(), input->getFourState(),
+              input->getIsSigned()));
+      }
+      SmallVector<Attribute> dpiSignature(dpiInputs);
+      if (subroutine.getSubroutineKind() ==
+          semantic::SVSubroutineKind::Function) {
+        auto semanticType =
+            unit.source->getAttrOfType<TypeAttr>("semantic_type");
+        auto subroutineType =
+            semanticType
+                ? dyn_cast<semantic::SubroutineType>(
+                      semanticType.getValue())
+                : semantic::SubroutineType{};
+        auto sourceSignature =
+            subroutineType
+                ? dyn_cast<FunctionType>(subroutineType.getSignature())
+                : FunctionType{};
+        if (!sourceSignature || sourceSignature.getNumResults() != 1) {
+          emitError(getSemanticLocation(unit.source))
+              << "DPI function has no resolved result signature";
+          invalid = true;
+        } else {
+          FailureOr<sim::DPIABIAttr> result =
+              makeABI(sourceSignature.getResult(0),
+                      sim::DPIArgumentDirection::Result,
+                      getSemanticLocation(unit.source));
+          if (failed(result))
+            invalid = true;
+          else
+            dpiSignature.push_back(*result);
+        }
+      }
+      llvm::append_range(dpiSignature, dpiCopyOuts);
+      functionAttrs.push_back(
+          builder.getNamedAttr("obelisk_sim.dpi_import",
+                               builder.getUnitAttr()));
+      functionAttrs.push_back(builder.getNamedAttr(
+          "obelisk_sim.dpi_c_identifier",
+          subroutine.getDpiCIdentifierAttr()));
+      functionAttrs.push_back(builder.getNamedAttr(
+          "obelisk_sim.dpi_scope_id",
+          builder.getI64IntegerAttr(getScopeId(unit.source))));
+      functionAttrs.push_back(builder.getNamedAttr(
+          "obelisk_sim.dpi_import_id",
+          builder.getI32IntegerAttr(
+              getStableImportID(
+                  subroutine.getDpiCIdentifierAttr().getValue()))));
+      functionAttrs.push_back(builder.getNamedAttr(
+          "obelisk_sim.dpi_abi_signature",
+          builder.getArrayAttr(dpiSignature)));
+      functionAttrs.push_back(builder.getNamedAttr(
+          "obelisk_sim.dpi_logical_inputs",
+          builder.getI32IntegerAttr(dpiInputs.size())));
+      sim::SimCodeUnitDeclOp declaration =
+          codeUnitDeclarations.lookup(unit.source);
+      declaration->setAttr("obelisk_sim.dpi_import",
+                           builder.getUnitAttr());
+      declaration->setAttr("obelisk_sim.dpi_c_identifier",
+                           subroutine.getDpiCIdentifierAttr());
+      declaration->setAttr(
+          "obelisk_sim.dpi_import_id",
+          builder.getI32IntegerAttr(
+              getStableImportID(
+                  subroutine.getDpiCIdentifierAttr().getValue())));
+      declaration->setAttr("obelisk_sim.dpi_abi_signature",
+                           builder.getArrayAttr(dpiSignature));
+      declaration->setAttr("obelisk_sim.dpi_logical_inputs",
+                           builder.getI32IntegerAttr(dpiInputs.size()));
+      if (subroutine.getSubroutineKind() ==
+          semantic::SVSubroutineKind::Task)
+        declaration->setAttr("obelisk_sim.dpi_task",
+                             builder.getUnitAttr());
+      if (subroutine.getIsPure().value_or(false))
+        functionAttrs.push_back(builder.getNamedAttr(
+            "obelisk_sim.dpi_pure", builder.getUnitAttr()));
+      if (subroutine.getIsDpiContext().value_or(false))
+        functionAttrs.push_back(builder.getNamedAttr(
+            "obelisk_sim.dpi_context", builder.getUnitAttr()));
+      if (subroutine.getSubroutineKind() ==
+          semantic::SVSubroutineKind::Task)
+        functionAttrs.push_back(builder.getNamedAttr(
+            "obelisk_sim.dpi_task", builder.getUnitAttr()));
+    }
     if (isa<semantic::SVPortConnectionOp>(unit.source))
       functionAttrs.push_back(
           builder.getNamedAttr("internal", builder.getUnitAttr()));
@@ -1733,6 +2001,13 @@ void ObeliskSimPreparePass::runOnOperation() {
         unit.entryKind, functionAttrs, argAttrs);
     SymbolTable::setSymbolVisibility(unit.function,
                                      SymbolTable::Visibility::Private);
+
+    if (auto subroutine =
+            dyn_cast<semantic::SVSubroutineSymbolOp>(unit.source);
+        subroutine && subroutine.getIsDpiImport().value_or(false)) {
+      unit.function.getBody().getBlocks().clear();
+      continue;
+    }
 
     OpBuilder bodyBuilder =
         OpBuilder::atBlockEnd(&unit.function.getBody().front());
@@ -1758,6 +2033,29 @@ void ObeliskSimPreparePass::runOnOperation() {
                       FlatSymbolRefAttr::get(context, target->second));
         SmallVector<Attribute> capturePaths;
         Operation *targetSource = directCalleeSources[*path];
+        bool dpiTarget = false;
+        if (auto subroutine =
+                dyn_cast<semantic::SVSubroutineSymbolOp>(targetSource);
+            subroutine && subroutine.getIsDpiImport().value_or(false)) {
+          dpiTarget = true;
+          StringAttr cIdentifier = subroutine.getDpiCIdentifierAttr();
+          call->setAttr("obelisk.dpi.import_id",
+                        builder.getI32IntegerAttr(
+                            getStableImportID(cIdentifier.getValue())));
+          call->setAttr("obelisk.dpi.c_identifier", cIdentifier);
+          call->setAttr("obelisk.dpi.scope_id",
+                        builder.getI64IntegerAttr(getScopeId(targetSource)));
+          call->setAttr(
+              "obelisk.dpi.is_pure",
+              builder.getBoolAttr(subroutine.getIsPure().value_or(false)));
+          call->setAttr("obelisk.dpi.is_context",
+                        builder.getBoolAttr(
+                            subroutine.getIsDpiContext().value_or(false)));
+          call->setAttr(
+              "obelisk.dpi.is_task",
+              builder.getBoolAttr(subroutine.getSubroutineKind() ==
+                                  semantic::SVSubroutineKind::Task));
+        }
         for (auto &capture : unitCaptures[targetSource])
           capturePaths.push_back(builder.getStringAttr(capture.first));
         call->setAttr(calleeCapturesAttrName,
@@ -1776,7 +2074,7 @@ void ObeliskSimPreparePass::runOnOperation() {
             continue;
           }
           std::optional<Type> semanticType = formal.getSemanticType();
-          formals.push_back(builder.getDictionaryAttr({
+          SmallVector<NamedAttribute> formalAttrs{
               builder.getNamedAttr(
                   "direction", builder.getI64IntegerAttr(static_cast<int64_t>(
                                    formal.getDirection()))),
@@ -1785,7 +2083,19 @@ void ObeliskSimPreparePass::runOnOperation() {
                   "is_signed",
                   builder.getBoolAttr(semanticType &&
                                       isSignedSemanticType(*semanticType))),
-          }));
+          };
+          if (dpiTarget && semanticType) {
+            FailureOr<DPIABIKind> category =
+                getDPIABIKind(*semanticType, getSemanticLocation(formal));
+            if (failed(category)) {
+              invalid = true;
+              continue;
+            }
+            formalAttrs.push_back(builder.getNamedAttr(
+                "dpi_category",
+                builder.getI32IntegerAttr(static_cast<uint32_t>(*category))));
+          }
+          formals.push_back(builder.getDictionaryAttr(formalAttrs));
         }
         call->setAttr(calleeFormalsAttrName, builder.getArrayAttr(formals));
         return;

@@ -9,6 +9,7 @@
 #include <array>
 #include <cstdio>
 #include <mutex>
+#include <memory>
 #include <new>
 #include <string>
 #include <string_view>
@@ -113,6 +114,17 @@ struct ScheduledDesignTask {
 struct ImportBinding {
   obelisk_rt_import_callback_v1 callback = nullptr;
   void *userData = nullptr;
+  uint64_t abiSignature = 0;
+};
+
+struct DpiScopeHandle {
+  obelisk_rt_context *context = nullptr;
+  uint64_t id = 0;
+  uint64_t parentID = UINT64_MAX;
+  std::string name;
+  int32_t timeUnit = 0;
+  int32_t timePrecision = 0;
+  std::unordered_map<void *, void *> userData;
 };
 
 struct obelisk_rt_context {
@@ -143,6 +155,8 @@ struct obelisk_rt_context {
   std::unordered_map<uint32_t, NativeAutomaticState> nativeAutomaticStates;
   std::unordered_map<uint64_t, uint64_t> eventGenerations;
   std::unordered_map<uint32_t, ImportBinding> imports;
+  std::vector<std::unique_ptr<DpiScopeHandle>> dpiScopes;
+  std::unordered_map<std::string, DpiScopeHandle *> dpiScopesByName;
   size_t schedulerCursor = 0;
   uint64_t schedulerEpoch = 1;
   uint64_t schedulerTime = 0;
@@ -160,6 +174,12 @@ struct obelisk_rt_context {
 
 void setLastErrorUnlocked(obelisk_rt_context *context, std::string message);
 void setLastError(obelisk_rt_context *context, std::string message);
+
+DpiScopeHandle *obelisk_rt_find_dpi_scope(obelisk_rt_context *context,
+                                          uint64_t id);
+obelisk_rt_status obelisk_rt_initialize_dpi_scopes(
+    obelisk_rt_context *context,
+    const obelisk_rt_execution_descriptor_v1 *execution);
 
 template <typename Callable>
 obelisk_rt_status guarded(obelisk_rt_context *context,

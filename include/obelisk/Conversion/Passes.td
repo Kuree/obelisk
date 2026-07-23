@@ -236,7 +236,9 @@ def EncodeObeliskSimToBytecodePass
   ];
   let options = [
     Option<"vpi", "vpi", "std::string", "\"auto\"",
-           "Reflection profile: auto, off, read, or full">
+           "Reflection profile: auto, off, read, or full">,
+    Option<"requireBytecode", "require-bytecode", "bool", "false",
+           "Require scheduler execution through the embedded bytecode tier">
   ];
 }
 

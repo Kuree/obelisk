@@ -77,8 +77,16 @@ _Static_assert(offsetof(obelisk_rt_process_descriptor_v1, execution) == 72,
 _Static_assert(offsetof(obelisk_rt_process_descriptor_v1, design_bytecode) ==
                    80,
                "process design bytecode offset changed");
-_Static_assert(sizeof(obelisk_rt_execution_descriptor_v1) == 64,
+_Static_assert(sizeof(obelisk_rt_dpi_scope_v1) == 48,
+               "DPI scope descriptor size changed");
+_Static_assert(offsetof(obelisk_rt_dpi_scope_v1, name) == 16,
+               "DPI scope name offset changed");
+_Static_assert(sizeof(obelisk_rt_execution_descriptor_v1) == 88,
                "execution descriptor size changed");
+_Static_assert(offsetof(obelisk_rt_execution_descriptor_v1, dpi_scopes) == 64,
+               "execution DPI scope offset changed");
+_Static_assert(sizeof(obelisk_rt_import_site_v1) == 56,
+               "DPI import site size changed");
 _Static_assert(sizeof(obelisk_rt_design_bytecode_entry_v1) == 16,
                "design bytecode entry size changed");
 _Static_assert(sizeof(obelisk_rt_design_info_v1) == 56,

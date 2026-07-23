@@ -2,6 +2,8 @@
 
 #include "NativeBackend.h"
 
+#include "obelisk/Conversion/Passes.h"
+#include "obelisk/Conversion/SimulationToBytecode.h"
 #include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
 #include "obelisk/Dialect/Runtime/RuntimeDialect.h"
 
@@ -194,7 +196,8 @@ LogicalResult addMinimalMain(ModuleOp module) {
   return success();
 }
 
-LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine) {
+LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
+                          bool bytecode) {
   module->setAttr("llvm.target_triple",
                   StringAttr::get(module.getContext(), kTargetTriple));
   module->setAttr(
@@ -203,6 +206,12 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine) {
           module.getContext(),
           targetMachine.createDataLayout().getStringRepresentation()));
   mlir::PassManager manager(module.getContext());
+  if (bytecode) {
+    EncodeObeliskSimToBytecodePassOptions options;
+    options.vpi = "off";
+    options.requireBytecode = true;
+    manager.addPass(createEncodeObeliskSimToBytecodePass(options));
+  }
   manager.addPass(createConvertObeliskSimProcessesToLLVMCoroutinesPass());
   if (failed(manager.run(module)))
     return failure();
@@ -346,7 +355,8 @@ LogicalResult sanitizeBundledBuildPaths(StringRef path, StringRef supportRoot) {
 }
 
 LogicalResult linkExecutable(StringRef objectPath, StringRef outputPath,
-                             StringRef supportRoot, StringRef explicitSysroot) {
+                             StringRef supportRoot, StringRef explicitSysroot,
+                             ArrayRef<std::string> dpiLinkInputs) {
   SmallString<256> glibcRoot;
   if (explicitSysroot.empty()) {
     glibcRoot = supportRoot;
@@ -414,6 +424,8 @@ LogicalResult linkExecutable(StringRef objectPath, StringRef outputPath,
   owned.push_back("ld.lld");
   owned.push_back("--no-dependent-libraries");
   owned.push_back("-pie");
+  owned.push_back("--export-dynamic");
+  owned.push_back("--export-dynamic-symbol=sv*");
   owned.push_back("--eh-frame-hdr");
   owned.push_back("--hash-style=gnu");
   owned.push_back("--dynamic-linker=/lib64/ld-linux-x86-64.so.2");
@@ -424,6 +436,8 @@ LogicalResult linkExecutable(StringRef objectPath, StringRef outputPath,
   owned.push_back(glibcInputs[1]);
   owned.push_back(staticInputs[0]);
   owned.push_back(objectPath.str());
+  for (const std::string &input : dpiLinkInputs)
+    owned.push_back(input);
   owned.push_back("--start-group");
   for (size_t index = 1; index <= 5; ++index)
     owned.push_back(staticInputs[index]);
@@ -485,7 +499,7 @@ LogicalResult emitNativeOutput(ModuleOp module,
            << targetError << '\n';
     return failure();
   }
-  if (failed(lowerToLLVM(module, *targetMachine)))
+  if (failed(lowerToLLVM(module, *targetMachine, options.bytecode)))
     return failure();
 
   registerLLVMDialectTranslation(*module.getContext());
@@ -549,7 +563,8 @@ LogicalResult emitNativeOutput(ModuleOp module,
     return failure();
   }
   LogicalResult linked = linkExecutable(*objectTemporary, options.outputPath,
-                                        *support, options.explicitSysroot);
+                                        *support, options.explicitSysroot,
+                                        options.dpiLinkInputs);
   sys::fs::remove(*objectTemporary);
   return linked;
 }

@@ -233,6 +233,7 @@ expected_members = [
     "Bytecode.o",
     "DesignBytecode.o",
     "DesignDatabase.o",
+    "DPI.o",
     "FileIO.o",
     "Format.o",
     "Process.o",

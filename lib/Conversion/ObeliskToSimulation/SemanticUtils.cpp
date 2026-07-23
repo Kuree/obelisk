@@ -65,8 +65,45 @@ static std::optional<uint64_t> getSemanticPackedWidth(Type type) {
       return std::nullopt;
     return *element * count;
   }
+  if (auto array = dyn_cast<semantic::PackedArrayType>(type)) {
+    std::optional<uint64_t> element =
+        getSemanticPackedWidth(array.getElementType());
+    if (!element ||
+        (array.getSize() &&
+         *element > std::numeric_limits<uint64_t>::max() / array.getSize()))
+      return std::nullopt;
+    return *element * array.getSize();
+  }
   if (auto enumeration = dyn_cast<semantic::EnumType>(type))
     return getSemanticPackedWidth(enumeration.getBaseType());
+  if (auto aggregate = dyn_cast<semantic::SourceAggregateType>(type))
+    return aggregate.getIsPacked()
+               ? std::optional<uint64_t>(aggregate.getBitWidth())
+               : std::nullopt;
+  auto dictionaryWidth = [&](DictionaryAttr fields,
+                             bool isUnion) -> std::optional<uint64_t> {
+    uint64_t width = 0;
+    for (NamedAttribute field : fields) {
+      auto fieldType = dyn_cast<TypeAttr>(field.getValue());
+      std::optional<uint64_t> fieldWidth =
+          fieldType ? getSemanticPackedWidth(fieldType.getValue())
+                    : std::nullopt;
+      if (!fieldWidth)
+        return std::nullopt;
+      if (isUnion) {
+        width = std::max(width, *fieldWidth);
+      } else {
+        if (width > std::numeric_limits<uint64_t>::max() - *fieldWidth)
+          return std::nullopt;
+        width += *fieldWidth;
+      }
+    }
+    return width;
+  };
+  if (auto structure = dyn_cast<semantic::PackedStructType>(type))
+    return dictionaryWidth(structure.getFields(), false);
+  if (auto unionType = dyn_cast<semantic::PackedUnionType>(type))
+    return dictionaryWidth(unionType.getFields(), true);
   return std::nullopt;
 }
 
@@ -77,8 +114,22 @@ static bool isFourState(Type type) {
     return true;
   if (auto array = dyn_cast<semantic::RangedPackedArrayType>(type))
     return isFourState(array.getElementType());
+  if (auto array = dyn_cast<semantic::PackedArrayType>(type))
+    return isFourState(array.getElementType());
   if (auto enumeration = dyn_cast<semantic::EnumType>(type))
     return isFourState(enumeration.getBaseType());
+  if (auto aggregate = dyn_cast<semantic::SourceAggregateType>(type))
+    return aggregate.getIsPacked() && aggregate.getIsFourState();
+  auto dictionaryIsFourState = [&](DictionaryAttr fields) {
+    return llvm::any_of(fields, [&](NamedAttribute field) {
+      auto fieldType = dyn_cast<TypeAttr>(field.getValue());
+      return fieldType && isFourState(fieldType.getValue());
+    });
+  };
+  if (auto structure = dyn_cast<semantic::PackedStructType>(type))
+    return dictionaryIsFourState(structure.getFields());
+  if (auto unionType = dyn_cast<semantic::PackedUnionType>(type))
+    return dictionaryIsFourState(unionType.getFields());
   return false;
 }
 
@@ -284,6 +335,121 @@ FailureOr<Type> getNormalizedSemanticType(Operation *op) {
   }
   return normalizeType(typeAttr.getValue(), getSemanticLocation(op));
 }
+
+FailureOr<Type> normalizeSemanticType(Type type, Location location) {
+  return normalizeType(type, location);
+}
+
+FailureOr<DPIABIKind> getDPIABIKind(Type type, Location location) {
+  FailureOr<DPIABIType> classified = classifyDPIABIType(type, location);
+  if (failed(classified))
+    return failure();
+  return classified->kind;
+}
+
+} // namespace obelisk::simlowering
+
+namespace obelisk {
+
+FailureOr<DPIABIType> classifyDPIABIType(Type type, Location location) {
+  using namespace simlowering;
+  namespace semantic = ::obelisk::ir;
+  if (auto enumeration = dyn_cast<semantic::EnumType>(type))
+    return classifyDPIABIType(enumeration.getBaseType(), location);
+  auto integral = dyn_cast<semantic::IntegralType>(type);
+  if (integral) {
+    std::optional<DPIABIKind> kind;
+    switch (integral.getFlavor()) {
+    case semantic::SVIntegralFlavor::Bit:
+      kind = integral.getWidth() == 1 ? DPIABIKind::Bit
+                                      : DPIABIKind::BitVector;
+      break;
+    case semantic::SVIntegralFlavor::Logic:
+    case semantic::SVIntegralFlavor::Reg:
+      kind = integral.getWidth() == 1 ? DPIABIKind::Logic
+                                      : DPIABIKind::LogicVector;
+      break;
+    case semantic::SVIntegralFlavor::Byte:
+      kind = DPIABIKind::Byte;
+      break;
+    case semantic::SVIntegralFlavor::ShortInt:
+      kind = DPIABIKind::ShortInt;
+      break;
+    case semantic::SVIntegralFlavor::Int:
+      kind = DPIABIKind::Int;
+      break;
+    case semantic::SVIntegralFlavor::LongInt:
+      kind = DPIABIKind::LongInt;
+      break;
+    case semantic::SVIntegralFlavor::Generic:
+      kind = integral.getIsFourState() ? DPIABIKind::LogicVector
+                                       : DPIABIKind::BitVector;
+      break;
+    case semantic::SVIntegralFlavor::Integer:
+      emitError(location)
+          << "DPI type category '"
+          << semantic::stringifySVIntegralFlavor(integral.getFlavor())
+          << "' is not supported by the initial integral ABI";
+      return failure();
+    }
+    if (integral.getWidth() == 0 ||
+        integral.getWidth() > std::numeric_limits<uint32_t>::max()) {
+      emitError(location) << "DPI packed width is outside the supported range";
+      return failure();
+    }
+    if (!kind) {
+      emitError(location) << "unknown DPI integral type category";
+      return failure();
+    }
+    return DPIABIType{*kind, static_cast<uint32_t>(integral.getWidth()),
+                      integral.getIsFourState(), integral.getIsSigned()};
+  }
+
+  std::optional<uint64_t> width = getSemanticPackedWidth(type);
+  bool packedAggregate =
+      isa<semantic::RangedPackedArrayType, semantic::PackedArrayType,
+          semantic::PackedStructType, semantic::PackedUnionType>(type);
+  if (auto aggregate = dyn_cast<semantic::SourceAggregateType>(type))
+    packedAggregate = aggregate.getIsPacked();
+  if (!packedAggregate || !width || *width == 0 ||
+      *width > std::numeric_limits<uint32_t>::max()) {
+    emitError(location)
+        << "DPI imports support only scalar predefined integers, scalar "
+           "bit/logic, enums, and fixed packed integral values";
+    return failure();
+  }
+  bool fourState = isFourState(type);
+  return DPIABIType{
+      fourState ? DPIABIKind::LogicVector : DPIABIKind::BitVector,
+      static_cast<uint32_t>(*width), fourState,
+      simlowering::isSignedSemanticType(type)};
+}
+
+StringRef getDPICTypeSpelling(const DPIABIType &type) {
+  switch (type.kind) {
+  case DPIABIKind::Bit:
+    return "svBit";
+  case DPIABIKind::Logic:
+    return "svLogic";
+  case DPIABIKind::Byte:
+    return type.isSigned ? "int8_t" : "uint8_t";
+  case DPIABIKind::ShortInt:
+    return type.isSigned ? "int16_t" : "uint16_t";
+  case DPIABIKind::Int:
+    return type.isSigned ? "int32_t" : "uint32_t";
+  case DPIABIKind::LongInt:
+    return type.isSigned ? "int64_t" : "uint64_t";
+  case DPIABIKind::BitVector:
+    return "svBitVecVal";
+  case DPIABIKind::LogicVector:
+    return "svLogicVecVal";
+  }
+  llvm_unreachable("unknown DPI ABI kind");
+}
+
+} // namespace obelisk
+
+namespace obelisk::simlowering {
 
 StringRef getHierarchyName(Operation *op) {
   if (auto name = op->getAttrOfType<StringAttr>("hierarchical_name"))

@@ -12,6 +12,74 @@ module {
 // -----
 
 module {
+  obelisk_sim.design @dpi_missing_status {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "dpi_missing_status"
+    obelisk_sim.func @caller(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {entry_kind = 1 : i32, code_unit_id = 1 : i64} {
+      %value = arith.constant 1 : i32
+      // expected-error @+1 {{must return a trailing runtime status}}
+      %call = obelisk_sim.dpi.call "dpi_bad" id 1 scope 0 context %ctx : !obelisk_sim.context(%value) {abi_signature = [#obelisk_sim.dpi_abi<kind = int, direction = input, width = 32, fourState = false, isSigned = true>, #obelisk_sim.dpi_abi<kind = int, direction = result, width = 32, fourState = false, isSigned = true>], is_context = false, is_pure = false, is_task = false, source_column = 1 : i32, source_file = "bad.sv", source_line = 1 : i32} : (i32) -> i32
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @dpi_bad_copyout {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "dpi_bad_copyout"
+    obelisk_sim.func @caller(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {entry_kind = 1 : i32, code_unit_id = 1 : i64} {
+      %value = arith.constant 0 : i32
+      // expected-error @+1 {{DPI formal copy-out must match its input ABI entry}}
+      %call:2 = obelisk_sim.dpi.call "dpi_bad" id 1 scope 0 context %ctx : !obelisk_sim.context(%value) {abi_signature = [#obelisk_sim.dpi_abi<kind = int, direction = output, width = 32, fourState = false, isSigned = true>, #obelisk_sim.dpi_abi<kind = byte, direction = output, width = 8, fourState = false, isSigned = true>], is_context = false, is_pure = false, is_task = true, source_column = 1 : i32, source_file = "bad.sv", source_line = 1 : i32} : (i32) -> (i8, !obelisk_rt.status)
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @dpi_bad_result_order {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "dpi_bad_result_order"
+    obelisk_sim.func @caller(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {entry_kind = 1 : i32, code_unit_id = 1 : i64} {
+      %value = arith.constant 1 : i32
+      // expected-error @+1 {{a DPI function signature must place its result first}}
+      %call:2 = obelisk_sim.dpi.call "dpi_bad" id 1 scope 0 context %ctx : !obelisk_sim.context(%value) {abi_signature = [#obelisk_sim.dpi_abi<kind = int, direction = input, width = 32, fourState = false, isSigned = true>, #obelisk_sim.dpi_abi<kind = int, direction = output, width = 32, fourState = false, isSigned = true>], is_context = false, is_pure = false, is_task = false, source_column = 1 : i32, source_file = "bad.sv", source_line = 1 : i32} : (i32) -> (i32, !obelisk_rt.status)
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @dpi_bad_logical_width {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "dpi_bad_logical_width"
+    obelisk_sim.func @caller(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {entry_kind = 1 : i32, code_unit_id = 1 : i64} {
+      %value = arith.constant 1 : i16
+      // expected-error @+1 {{logical operand or result type disagrees with its DPI ABI entry}}
+      %call:2 = obelisk_sim.dpi.call "dpi_bad" id 1 scope 0 context %ctx : !obelisk_sim.context(%value) {abi_signature = [#obelisk_sim.dpi_abi<kind = int, direction = input, width = 32, fourState = false, isSigned = true>, #obelisk_sim.dpi_abi<kind = int, direction = result, width = 32, fourState = false, isSigned = true>], is_context = false, is_pure = false, is_task = false, source_column = 1 : i32, source_file = "bad.sv", source_line = 1 : i32} : (i16) -> (i32, !obelisk_rt.status)
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.design @unknown_connection_endpoint {
     obelisk_sim.scope.decl 0
     obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<4> design

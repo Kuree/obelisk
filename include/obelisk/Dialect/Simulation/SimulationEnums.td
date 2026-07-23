@@ -28,6 +28,35 @@ def SimEntryKind : I32EnumAttr<"EntryKind", "simulation code-unit kind", [
   let cppNamespace = "::obelisk::sim";
 }
 
+def SimDPIABIBit : I32EnumAttrCase<"Bit", 0, "bit">;
+def SimDPIABILogic : I32EnumAttrCase<"Logic", 1, "logic">;
+def SimDPIABIByte : I32EnumAttrCase<"Byte", 2, "byte">;
+def SimDPIABIShortInt : I32EnumAttrCase<"ShortInt", 3, "shortint">;
+def SimDPIABIInt : I32EnumAttrCase<"Int", 4, "int">;
+def SimDPIABILongInt : I32EnumAttrCase<"LongInt", 5, "longint">;
+def SimDPIABIBitVector : I32EnumAttrCase<"BitVector", 6, "bit_vector">;
+def SimDPIABILogicVector
+    : I32EnumAttrCase<"LogicVector", 7, "logic_vector">;
+def SimDPIABIKind
+    : I32EnumAttr<"DPIABIKind", "DPI-C integral ABI category", [
+        SimDPIABIBit, SimDPIABILogic, SimDPIABIByte, SimDPIABIShortInt,
+        SimDPIABIInt, SimDPIABILongInt, SimDPIABIBitVector,
+        SimDPIABILogicVector
+      ]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
+def SimDPIInput : I32EnumAttrCase<"Input", 0, "input">;
+def SimDPIOutput : I32EnumAttrCase<"Output", 1, "output">;
+def SimDPIInOut : I32EnumAttrCase<"InOut", 2, "inout">;
+def SimDPIResult : I32EnumAttrCase<"Result", 3, "result">;
+def SimDPIArgumentDirection
+    : I32EnumAttr<"DPIArgumentDirection", "DPI-C ABI value role", [
+        SimDPIInput, SimDPIOutput, SimDPIInOut, SimDPIResult
+      ]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
 def SimNetWire : I32EnumAttrCase<"Wire", 0, "wire">;
 def SimNetTri : I32EnumAttrCase<"Tri", 1, "tri">;
 def SimNetUWire : I32EnumAttrCase<"UWire", 2, "uwire">;

@@ -12,6 +12,7 @@
 #include "obelisk/Conversion/ObeliskToSimulation.h"
 #include "obelisk/Conversion/SlangToObelisk.h"
 #include "obelisk/Dialect/Obelisk/ObeliskDialect.h"
+#include "obelisk/Dialect/Obelisk/ObeliskOps.h"
 #include "obelisk/Dialect/Runtime/RuntimeDialect.h"
 #include "obelisk/Dialect/Simulation/SimulationDialect.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
@@ -25,6 +26,7 @@
 #include "mlir/Pass/PassManager.h"
 
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Option/Arg.h"
 #include "llvm/Option/ArgList.h"
@@ -73,6 +75,132 @@ static bool parseUnsignedOption(const ArgList &args, OptSpecifier option,
   }
   result = value;
   return true;
+}
+
+struct DPIHeaderType {
+  std::string spelling;
+  bool vector = false;
+};
+
+static FailureOr<DPIHeaderType> getDPIHeaderType(mlir::Type type,
+                                                 Location location) {
+  FailureOr<obelisk::DPIABIType> abi =
+      obelisk::classifyDPIABIType(type, location);
+  if (failed(abi))
+    return failure();
+  return DPIHeaderType{
+      obelisk::getDPICTypeSpelling(*abi).str(), abi->isVector()};
+}
+
+static LogicalResult writeDPIHeader(ModuleOp module, raw_ostream &output) {
+  llvm::StringMap<std::string> prototypes;
+  WalkResult walked = module.walk([&](obelisk::ir::SVSubroutineSymbolOp op) {
+    if (!op.getIsDpiImport().value_or(false))
+      return WalkResult::advance();
+    StringAttr cIdentifier = op.getDpiCIdentifierAttr();
+    if (!cIdentifier) {
+      op.emitError("DPI import has no resolved C identifier");
+      return WalkResult::interrupt();
+    }
+    SmallVector<std::string> arguments;
+    unsigned argumentIndex = 0;
+    for (Operation &child : op.getRegion().front()) {
+      auto formal =
+          dyn_cast<obelisk::ir::SVFormalArgumentSymbolOp>(child);
+      if (!formal)
+        continue;
+      std::optional<mlir::Type> semanticType = formal.getSemanticType();
+      if (!semanticType) {
+        formal.emitError("DPI formal has no semantic type");
+        return WalkResult::interrupt();
+      }
+      FailureOr<DPIHeaderType> type =
+          getDPIHeaderType(*semanticType, formal.getLoc());
+      if (failed(type))
+        return WalkResult::interrupt();
+      auto direction = formal.getDirection();
+      bool input = direction == obelisk::ir::SVArgumentDirection::In;
+      bool pointer = !input || type->vector;
+      std::string declaration;
+      if (input && type->vector)
+        declaration += "const ";
+      declaration += type->spelling;
+      declaration += pointer ? " *" : " ";
+      declaration += ("arg" + Twine(argumentIndex++)).str();
+      arguments.push_back(std::move(declaration));
+    }
+
+    bool task =
+        op.getSubroutineKind() == obelisk::ir::SVSubroutineKind::Task;
+    std::string returnType = task ? "int" : "";
+    if (!task) {
+      auto semanticType = op->getAttrOfType<TypeAttr>("semantic_type");
+      auto subroutine =
+          semanticType
+              ? dyn_cast<obelisk::ir::SubroutineType>(
+                    semanticType.getValue())
+              : obelisk::ir::SubroutineType{};
+      auto signature =
+          subroutine
+              ? dyn_cast<FunctionType>(subroutine.getSignature())
+              : FunctionType{};
+      if (!signature || signature.getNumResults() != 1) {
+        op.emitError("DPI function has no resolved result signature");
+        return WalkResult::interrupt();
+      }
+      FailureOr<DPIHeaderType> result =
+          getDPIHeaderType(signature.getResult(0), op.getLoc());
+      if (failed(result))
+        return WalkResult::interrupt();
+      if (result->vector) {
+        returnType = "void";
+        arguments.insert(arguments.begin(), result->spelling + " *result");
+      } else {
+        returnType = result->spelling;
+      }
+    }
+    std::string prototype =
+        returnType + " " + cIdentifier.getValue().str() + "(";
+    if (arguments.empty()) {
+      prototype += "void";
+    } else {
+      for (auto [index, argument] : llvm::enumerate(arguments)) {
+        if (index)
+          prototype += ", ";
+        prototype += argument;
+      }
+    }
+    prototype += ");";
+    auto inserted =
+        prototypes.try_emplace(cIdentifier.getValue(), prototype);
+    if (!inserted.second && inserted.first->second != prototype) {
+      op.emitError() << "C identifier '" << cIdentifier.getValue()
+                     << "' is imported with incompatible DPI signatures";
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  if (walked.wasInterrupted())
+    return failure();
+  output << "#ifndef OBELISK_GENERATED_DPI_H\n"
+            "#define OBELISK_GENERATED_DPI_H\n\n"
+            "#include <stdint.h>\n"
+            "#include <svdpi.h>\n\n"
+            "#ifdef __cplusplus\n"
+            "extern \"C\" {\n"
+            "#endif\n\n";
+  SmallVector<StringRef> names;
+  names.reserve(prototypes.size());
+  for (auto &entry : prototypes)
+    names.push_back(entry.getKey());
+  llvm::sort(names);
+  for (StringRef name : names)
+    output << prototypes.lookup(name) << '\n';
+  output << "\n#ifdef __cplusplus\n"
+            "}\n"
+            "#endif\n\n"
+            "#endif\n";
+  return success();
 }
 
 static obelisk::frontend::FrontendOptions
@@ -165,6 +293,13 @@ static int executeCompilation(const InputArgList &args) {
                     "'; expected off, read, or full");
     valid = false;
   }
+  StringRef executionTier =
+      args.getLastArgValue(OPT_execution_tier_EQ, "native");
+  if (executionTier != "native" && executionTier != "bytecode") {
+    emitDriverError(Twine("unsupported execution tier '") + executionTier +
+                    "'; expected native or bytecode");
+    valid = false;
+  }
   uint32_t optLevel = 3;
   if (const Arg *optimization =
           args.getLastArg(OPT_O0, OPT_O1, OPT_O2, OPT_O3)) {
@@ -180,12 +315,14 @@ static int executeCompilation(const InputArgList &args) {
 
   const Arg *action = args.getLastArg(OPT_emit_slang, OPT_emit_obelisk,
                                       OPT_emit_sim, OPT_emit_schedule, OPT_c,
-                                      OPT_emit_llvm);
+                                      OPT_emit_llvm, OPT_emit_dpi_header);
   bool emitSlang = action && action->getOption().matches(OPT_emit_slang);
   bool emitSim = action && action->getOption().matches(OPT_emit_sim);
   bool emitSchedule = action && action->getOption().matches(OPT_emit_schedule);
   bool emitObject = action && action->getOption().matches(OPT_c);
   bool emitLLVM = action && action->getOption().matches(OPT_emit_llvm);
+  bool emitDPIHeader =
+      action && action->getOption().matches(OPT_emit_dpi_header);
   bool native = !action || emitObject || emitLLVM;
   if (native && requestedWorkers.value_or(1) != 1) {
     emitDriverError("native executable generation currently requires --threads=1");
@@ -193,6 +330,19 @@ static int executeCompilation(const InputArgList &args) {
   }
   if (native && vpiMode != "off") {
     emitDriverError("native executable generation currently requires --vpi=off");
+    valid = false;
+  }
+  std::vector<std::string> dpiLinkInputs =
+      args.getAllArgValues(OPT_dpi_link_EQ);
+  if (!dpiLinkInputs.empty() &&
+      (!native || emitObject || emitLLVM)) {
+    emitDriverError(
+        "--dpi-link is only valid when linking a native executable");
+    valid = false;
+  }
+  if (!native && executionTier != "native") {
+    emitDriverError(
+        "--execution-tier is only valid for native executable generation");
     valid = false;
   }
   if (!valid)
@@ -250,6 +400,9 @@ static int executeCompilation(const InputArgList &args) {
     nativeOptions.explicitSysroot =
         args.getLastArgValue(OPT_sysroot_EQ).str();
     nativeOptions.executablePath = driverExecutablePath;
+    nativeOptions.dpiLinkInputs.assign(dpiLinkInputs.begin(),
+                                       dpiLinkInputs.end());
+    nativeOptions.bytecode = executionTier == "bytecode";
     nativeOptions.optLevel = optLevel;
     return succeeded(obelisk::driver::emitNativeOutput(*module, nativeOptions))
                ? 0
@@ -265,7 +418,10 @@ static int executeCompilation(const InputArgList &args) {
     return 1;
   }
 
-  if (emitSchedule) {
+  if (emitDPIHeader) {
+    if (failed(writeDPIHeader(*module, output.os())))
+      return 1;
+  } else if (emitSchedule) {
     for (obelisk::sim::SimDesignOp design :
          module->getBody()->getOps<obelisk::sim::SimDesignOp>()) {
       output.os() << "schedule @" << design.getSymName() << ' ';
@@ -316,6 +472,10 @@ int main(int argc, char **argv) {
   if (args.hasArg(OPT_version)) {
     outs() << "obelisk version " << OBELISK_VERSION_STRING << '\n'
            << obelisk::frontend::getSlangVersion() << '\n';
+    return 0;
+  }
+  if (args.hasArg(OPT_print_resource_dir)) {
+    outs() << OBELISK_RESOURCE_DIR << '\n';
     return 0;
   }
 

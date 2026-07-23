@@ -29,6 +29,10 @@ def c : Flag<["-"], "c">, Group<Action_Group>,
   HelpText<"Emit a native x86-64 ELF object">;
 def emit_llvm : Flag<["-"], "emit-llvm">, Group<Action_Group>,
   HelpText<"Emit textual LLVM IR for the native target">;
+def emit_dpi_header : Flag<["--"], "emit-dpi-header">, Group<Action_Group>,
+  HelpText<"Emit exact C prototypes for DPI imports">;
+def print_resource_dir : Flag<["--"], "print-resource-dir">, Group<Action_Group>,
+  HelpText<"Print the Obelisk resource directory and exit">;
 
 def o : JoinedOrSeparate<["-"], "o">, Group<Output_Group>,
   MetaVarName<"<file>">,
@@ -49,6 +53,13 @@ def compile_threads_EQ : Joined<["--"], "compile-threads=">,
 def vpi_EQ : Joined<["--"], "vpi=">, Group<Compilation_Group>,
   MetaVarName<"<off|read|full>">, Values<"off,read,full">,
   HelpText<"Select VPI observability and mutation capability">;
+def execution_tier_EQ : Joined<["--"], "execution-tier=">,
+  Group<Compilation_Group>, MetaVarName<"<native|bytecode>">,
+  Values<"native,bytecode">,
+  HelpText<"Select generated simulator execution tier (default: native)">;
+def dpi_link_EQ : Joined<["--"], "dpi-link=">, Group<Compilation_Group>,
+  MetaVarName<"<path>">,
+  HelpText<"Link a target-compatible DPI object, archive, or shared library">;
 def O0 : Flag<["-"], "O0">, Group<Compilation_Group>,
   HelpText<"Disable simulation and LLVM optimization">;
 def O1 : Flag<["-"], "O1">, Group<Compilation_Group>,

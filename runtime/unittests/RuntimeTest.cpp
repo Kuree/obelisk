@@ -1,6 +1,7 @@
 //===- RuntimeTest.cpp - Tests for the Obelisk native runtime -------------===//
 
 #include "obelisk/Runtime/Runtime.h"
+#include "svdpi.h"
 
 #include "gtest/gtest.h"
 
@@ -259,6 +260,8 @@ TEST(RuntimeABI, ReportsEveryStatusAndReleasesBuffersIdempotently) {
       {OBELISK_RT_INVALID_FRAME, "invalid process frame record"},
       {OBELISK_RT_INVALID_DESIGN, "invalid design metadata"},
       {OBELISK_RT_PERMISSION_DENIED, "permission denied"},
+      {OBELISK_RT_DPI_DISABLE_UNSUPPORTED,
+       "DPI task disable is unsupported"},
   };
   for (const auto &[status, message] : statuses)
     EXPECT_STREQ(obelisk_rt_v1_status_string(status), message);
@@ -270,6 +273,201 @@ TEST(RuntimeABI, ReportsEveryStatusAndReleasesBuffersIdempotently) {
   obelisk_rt_v1_buffer_release(&buffer);
   EXPECT_EQ(buffer.data, nullptr);
   EXPECT_EQ(buffer.size, 0u);
+}
+
+struct DpiObservation {
+  uint32_t calls = 0;
+  uint32_t nestedID = 0;
+  obelisk_rt_import_site_v1 nestedSite{};
+  bool invokeNested = false;
+  int userKey = 0;
+};
+
+obelisk_rt_status observeDpiCall(
+    obelisk_rt_context *context, uint32_t importID,
+    const obelisk_rt_import_input_v1 *inputs, uint32_t inputCount,
+    obelisk_rt_import_output_v1 *outputs, uint32_t outputCount,
+    void *userData) {
+  auto &observation = *static_cast<DpiObservation *>(userData);
+  ++observation.calls;
+  EXPECT_NE(importID, 0u);
+  EXPECT_EQ(inputCount, 1u);
+  EXPECT_EQ(outputCount, 1u);
+  EXPECT_EQ(inputs[0].bit_width, 65u);
+  EXPECT_EQ(outputs[0].value[0], 0u);
+  EXPECT_EQ(outputs[0].value[1], 0u);
+
+  svScope initial = svGetScope();
+  EXPECT_NE(initial, nullptr);
+  const char *expectedScope =
+      importID == observation.nestedID ? "top.child" : "top";
+  EXPECT_STREQ(svGetNameFromScope(initial), expectedScope);
+  EXPECT_EQ(svGetScopeFromName(expectedScope), initial);
+  int32_t unit = 0, precision = 0;
+  EXPECT_EQ(svGetTimeUnit(initial, &unit), 0);
+  EXPECT_EQ(svGetTimePrecision(initial, &precision), 0);
+  EXPECT_EQ(unit, -9);
+  EXPECT_EQ(precision, -12);
+  const char *file = nullptr;
+  int line = 0;
+  EXPECT_EQ(svGetCallerInfo(&file, &line), 1);
+  EXPECT_STREQ(file, "dpi_test.sv");
+  EXPECT_EQ(line, 41);
+  EXPECT_EQ(svPutUserData(initial, &observation.userKey, &observation), 0);
+  EXPECT_EQ(svGetUserData(initial, &observation.userKey), &observation);
+  svTimeVal time{};
+  EXPECT_EQ(svGetTime(initial, &time), 0);
+  EXPECT_EQ(time.type, sv_sim_time);
+  EXPECT_EQ(time.high, 0u);
+  EXPECT_EQ(time.low, 0u);
+
+  if (observation.invokeNested && importID != observation.nestedID) {
+    uint64_t nestedValue[2]{};
+    obelisk_rt_import_output_v1 nestedOutput{
+        OBELISK_RT_DBREG_BITS, 0, 0, 65, nestedValue, nullptr, 2};
+    EXPECT_EQ(obelisk_rt_v1_import_call(
+                  context, &observation.nestedSite, inputs, inputCount,
+                  &nestedOutput, 1),
+              OBELISK_RT_OK);
+    EXPECT_EQ(svGetScope(), initial);
+    EXPECT_STREQ(svGetNameFromScope(initial), "top");
+  }
+  outputs[0].value[0] = inputs[0].value[0] ^ UINT64_C(0xffff);
+  outputs[0].value[1] = UINT64_MAX;
+  return OBELISK_RT_OK;
+}
+
+TEST(RuntimeDPI, ValidatesDispatchContextAndNestedRestoration) {
+  static constexpr char topName[] = "top";
+  static constexpr char childName[] = "top.child";
+  const obelisk_rt_dpi_scope_v1 scopes[] = {
+      {0, UINT64_MAX, topName, sizeof(topName) - 1, -9, -12, 0},
+      {1, 0, childName, sizeof(childName) - 1, -9, -12, 0},
+  };
+  obelisk_rt_execution_descriptor_v1 execution{
+      OBELISK_RT_EXECUTION_DESCRIPTOR_VERSION,
+      OBELISK_RT_ABI_GENERATION,
+      0,
+      0,
+      nullptr,
+      0,
+      nullptr,
+      0,
+      0,
+      0,
+      scopes,
+      std::size(scopes),
+      -12,
+      0,
+  };
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  DpiObservation observation;
+  constexpr std::string_view outerName = "outer";
+  constexpr std::string_view innerName = "inner";
+  uint32_t outerID = obelisk_rt_v1_import_id(
+      reinterpret_cast<const uint8_t *>(outerName.data()), outerName.size());
+  observation.nestedID = obelisk_rt_v1_import_id(
+      reinterpret_cast<const uint8_t *>(innerName.data()), innerName.size());
+  static constexpr char caller[] = "dpi_test.sv";
+  observation.nestedSite = {OBELISK_RT_IMPORT_SITE_VERSION,
+                            OBELISK_RT_IMPORT_CONTEXT,
+                            observation.nestedID,
+                            0,
+                            1,
+                            caller,
+                            sizeof(caller) - 1,
+                            41,
+                            7};
+  observation.invokeNested = true;
+  ASSERT_EQ(obelisk_rt_v1_context_register_import(
+                context, outerID, observeDpiCall, &observation),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_context_register_import(
+                context, observation.nestedID, observeDpiCall, &observation),
+            OBELISK_RT_OK);
+
+  uint64_t inputValue[2]{UINT64_C(0x123456789abcdef0), 1};
+  uint64_t outputValue[2]{UINT64_MAX, UINT64_MAX};
+  obelisk_rt_import_input_v1 input{
+      OBELISK_RT_DBREG_BITS, 0, 0, 65, inputValue, nullptr, 2};
+  obelisk_rt_import_output_v1 output{
+      OBELISK_RT_DBREG_BITS, 0, 0, 65, outputValue, nullptr, 2};
+  obelisk_rt_import_site_v1 site{
+      OBELISK_RT_IMPORT_SITE_VERSION,
+      OBELISK_RT_IMPORT_CONTEXT,
+      outerID,
+      0,
+      0,
+      caller,
+      sizeof(caller) - 1,
+      41,
+      3,
+  };
+  EXPECT_EQ(obelisk_rt_v1_import_call(context, &site, &input, 1, &output, 1),
+            OBELISK_RT_OK);
+  EXPECT_EQ(observation.calls, 2u);
+  EXPECT_EQ(outputValue[0], inputValue[0] ^ UINT64_C(0xffff));
+  EXPECT_EQ(outputValue[1], 1u);
+  EXPECT_EQ(svGetScope(), nullptr);
+
+  site.reserved = 1;
+  EXPECT_EQ(obelisk_rt_v1_import_call(context, &site, &input, 1, &output, 1),
+            OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(observation.calls, 2u);
+  site.reserved = 0;
+  site.import_id ^= UINT32_C(0x40000000);
+  EXPECT_EQ(obelisk_rt_v1_import_call(context, &site, &input, 1, &output, 1),
+            OBELISK_RT_TIER_UNAVAILABLE);
+  EXPECT_EQ(observation.calls, 2u);
+  site.import_id = outerID;
+  observation.invokeNested = false;
+  ASSERT_EQ(obelisk_rt_v1_context_register_import_signature(
+                context, outerID, UINT64_C(0x1234), observeDpiCall,
+                &observation),
+            OBELISK_RT_OK);
+  site.abi_signature = UINT64_C(0x5678);
+  EXPECT_EQ(obelisk_rt_v1_import_call(context, &site, &input, 1, &output, 1),
+            OBELISK_RT_ARGUMENT_MISMATCH);
+  EXPECT_EQ(observation.calls, 2u);
+  site.abi_signature = UINT64_C(0x1234);
+  EXPECT_EQ(obelisk_rt_v1_import_call(context, &site, &input, 1, &output, 1),
+            OBELISK_RT_OK);
+  EXPECT_EQ(observation.calls, 3u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(RuntimeDPI, RejectsMalformedScopeMetadata) {
+  static constexpr char name[] = "top";
+  obelisk_rt_dpi_scope_v1 scope{
+      1, UINT64_MAX, name, sizeof(name) - 1, -9, -12, 0};
+  obelisk_rt_execution_descriptor_v1 execution{
+      OBELISK_RT_EXECUTION_DESCRIPTOR_VERSION,
+      OBELISK_RT_ABI_GENERATION,
+      0,
+      0,
+      nullptr,
+      0,
+      nullptr,
+      0,
+      0,
+      0,
+      &scope,
+      1,
+      -12,
+      0,
+  };
+  obelisk_rt_context *context = nullptr;
+  EXPECT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(context, nullptr);
+
+  scope.id = 0;
+  scope.time_precision = -15;
+  EXPECT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(context, nullptr);
 }
 
 TEST(RuntimeABI, RejectsNullPublicArguments) {
