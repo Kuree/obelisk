@@ -1107,6 +1107,34 @@ def SimEventEqualOp : SimOp<"event.equal", [Pure, SameTypeOperands]> {
   let assemblyFormat = "$lhs `,` $rhs attr-dict";
 }
 
+def SimObserverBindOp : SimOp<"observer.bind", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemRead<SimStorageResource>, MemRead<SimNetResource>,
+                   MemRead<SimSchedulerResource>]>
+  ]> {
+  let summary = "bind an outlined timing evaluator to captures and dependencies";
+  let description = [{
+    Captures match the evaluator arguments following its implicit context
+    argument. Dependencies are canonical storage, net, or named-event handles
+    whose publications cause the evaluator to run. The operation itself does
+    not evaluate the expression.
+  }];
+  let arguments = (ins FlatSymbolRefAttr:$evaluator,
+                       Variadic<AnyType>:$values,
+                       I32Attr:$capture_count);
+  let results = (outs SimObserverType:$result);
+  let assemblyFormat = [{
+    $evaluator `values` `(` $values `:` type($values) `)`
+    `captures` $capture_count
+    attr-dict `:` type($result)
+  }];
+  let extraClassDeclaration = [{
+    ::mlir::Operation::operand_range getCaptures();
+    ::mlir::Operation::operand_range getDependencies();
+  }];
+  let hasVerifier = 1;
+}
+
 class SimSuspendOp<string mnemonic, dag extraArgs = (ins),
                    list<Trait> extraTraits = []>
     : SimOp<mnemonic,
@@ -1196,6 +1224,40 @@ def SimSuspendAnyOp : SimOp<"suspend.any", [
 def SimSuspendEventOp : SimSuspendOp<"suspend.event", (ins SimEventType:$event)> {
   let assemblyFormat = [{$event `to` $continuation
     (`(` $continuation_operands^ `:` type($continuation_operands) `)`)? attr-dict}];
+}
+
+def SimSuspendObserveOp : SimOp<"suspend.observe", [
+    Terminator,
+    DeclareOpInterfaceMethods<BranchOpInterface>,
+    MemoryEffects<[MemWrite<SimSchedulerResource>,
+                   MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "suspend on source-ordered computed timing clauses";
+  let description = [{
+    Each primary observer has one encounter-time initial value and requested
+    edge. `condition_indices` has one entry per primary: -1 denotes no `iff`,
+    otherwise the entry indexes the condition observer list. Conditions are
+    evaluated only after their corresponding primary occurrence.
+  }];
+  let arguments = (ins Variadic<AnyType>:$values,
+                       I32Attr:$condition_count,
+                       DenseI32ArrayAttr:$edges,
+                       DenseI32ArrayAttr:$condition_indices,
+                       OptionalAttr<SimContinuationSiteAttr>:$site);
+  let successors = (successor AnySuccessor:$continuation);
+  let assemblyFormat = [{
+    $values `conditions` $condition_count `edges` $edges
+    `indices` $condition_indices `to` $continuation attr-dict
+    `:` type($values)
+  }];
+  let extraClassDeclaration = [{
+    ::mlir::Operation::operand_range getPrimaries();
+    ::mlir::Operation::operand_range getInitialValues();
+    ::mlir::Operation::operand_range getConditions();
+    ::mlir::Operation::operand_range getContinuationOperands();
+    ::mlir::MutableOperandRange getContinuationOperandsMutable();
+  }];
+  let hasVerifier = 1;
 }
 
 def SimSuspendForeverOp : SimSuspendOp<"suspend.forever"> {

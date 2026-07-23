@@ -144,13 +144,42 @@ struct DescriptorInfo {
 };
 
 struct UnitInfo {
+  enum class ObserverResult { None, Value, Truth, Event };
+
   Operation *source;
   uint64_t id;
   sim::EntryKind entryKind;
   std::string symbol;
   std::string hierarchy;
   sim::SimFuncOp function;
+  ObserverResult observerResult = ObserverResult::None;
 };
+
+static bool isAddressableTimingExpression(Operation *op) {
+  if (isa<semantic::SVNamedValueExpressionOp,
+          semantic::SVHierarchicalValueExpressionOp>(op))
+    return true;
+  if (isa<semantic::SVMemberAccessExpressionOp>(op)) {
+    SmallVector<Operation *> children = getChildren(op);
+    return !children.empty() &&
+           isAddressableTimingExpression(children.front());
+  }
+  if (!isa<semantic::SVElementSelectExpressionOp,
+           semantic::SVRangeSelectExpressionOp>(op))
+    return false;
+  SmallVector<Operation *> children = getChildren(op);
+  size_t expected =
+      isa<semantic::SVElementSelectExpressionOp>(op) ? 2u : 3u;
+  if (children.size() != expected ||
+      !isAddressableTimingExpression(children.front()))
+    return false;
+  return llvm::all_of(ArrayRef<Operation *>(children).drop_front(),
+                      [](Operation *index) {
+                        return isa<semantic::SVIntegerLiteralOp,
+                                   semantic::SVUnbasedUnsizedIntegerLiteralOp>(
+                            index);
+                      });
+}
 
 static FailureOr<sim::EntryKind> getEntryKind(Operation *op) {
   if (auto connection = dyn_cast<semantic::SVPortConnectionOp>(op)) {
@@ -1588,12 +1617,103 @@ void ObeliskSimPreparePass::runOnOperation() {
       invalid = true;
       continue;
     }
-    units.push_back(
-        {source, id, *entryKind, symbol, std::move(codeUnitHierarchy), {}});
+    units.push_back({source, id, *entryKind, symbol,
+                     std::move(codeUnitHierarchy), {},
+                     UnitInfo::ObserverResult::None});
     if (!hierarchy.empty() && !isa<semantic::SVPortConnectionOp>(source)) {
       directCallees[hierarchy] = symbol;
       directCalleeSources[hierarchy] = source;
     }
+  }
+  if (invalid)
+    return abort();
+
+  // Give every potentially computed timing expression a private evaluator
+  // identity while the complete semantic tree and collision set are still
+  // available. Direct controls retain their existing lowering and the unused
+  // evaluator is removed by symbol DCE.
+  struct ObserverCandidate {
+    Operation *expression;
+    UnitInfo::ObserverResult result;
+    std::string label;
+    uint64_t parentID;
+    std::string parentHierarchy;
+  };
+  SmallVector<ObserverCandidate> observerCandidates;
+  const size_t ordinaryUnitCount = units.size();
+  for (size_t unitIndex = 0; unitIndex != ordinaryUnitCount; ++unitIndex) {
+    UnitInfo &unit = units[unitIndex];
+    unit.source->walk<WalkOrder::PreOrder>([&](Operation *nested) {
+      if (auto wait = dyn_cast<semantic::SVWaitStatementOp>(nested)) {
+        SmallVector<Operation *> children = getChildren(wait);
+        if (children.size() == 2 &&
+            !isAddressableTimingExpression(children.front()))
+          observerCandidates.push_back(
+              {children.front(), UnitInfo::ObserverResult::Truth, "wait",
+               unit.id, unit.hierarchy});
+        return;
+      }
+      auto event = dyn_cast<semantic::SVSignalEventControlOp>(nested);
+      if (!event)
+        return;
+      SmallVector<Operation *> children = getChildren(event);
+      if (children.empty())
+        return;
+      UnitInfo::ObserverResult primaryResult =
+          UnitInfo::ObserverResult::Value;
+      FailureOr<Type> primaryType =
+          getNormalizedSemanticType(children.front());
+      if (succeeded(primaryType) && isa<sim::EventType>(*primaryType))
+        primaryResult = UnitInfo::ObserverResult::Event;
+      observerCandidates.push_back(
+          {children.front(), primaryResult, "primary", unit.id,
+           unit.hierarchy});
+      if (event.getHasIff() && children.size() == 2)
+        observerCandidates.push_back(
+            {children[1], UnitInfo::ObserverResult::Truth, "iff", unit.id,
+             unit.hierarchy});
+    });
+  }
+  llvm::DenseSet<Operation *> outlinedObservers;
+  for (ObserverCandidate &candidate : observerCandidates) {
+    if (!outlinedObservers.insert(candidate.expression).second)
+      continue;
+    auto nodeID = candidate.expression->getAttrOfType<IntegerAttr>("node_id");
+    if (!nodeID) {
+      candidate.expression->emitError(
+          "timing observer expression is missing node_id");
+      invalid = true;
+      continue;
+    }
+    uint64_t ordinal = nodeID.getValue().getZExtValue();
+    std::string hierarchy =
+        (Twine(candidate.parentHierarchy) + ".$observer." +
+         Twine(ordinal) + "." + candidate.label)
+            .str();
+    uint64_t id = getStableCodeUnitID(hierarchy);
+    auto [collision, inserted] =
+        codeUnitIDs.try_emplace(id, candidate.expression);
+    if (!inserted) {
+      emitError(getSemanticLocation(candidate.expression))
+          << "stable observer code-unit ID collision for '" << hierarchy
+          << "'";
+      emitRemark(getSemanticLocation(collision->second))
+          << "colliding code unit is here";
+      invalid = true;
+      continue;
+    }
+    std::string symbol =
+        llvm::formatv("observer_{0}_{1}", candidate.parentID, ordinal).str();
+    candidate.expression->setAttr(
+        "obelisk_sim.observer",
+        FlatSymbolRefAttr::get(context, symbol));
+    candidate.expression->setAttr(
+        "obelisk_sim.observer_result",
+        builder.getI32IntegerAttr(
+            static_cast<uint32_t>(candidate.result)));
+    units.push_back({candidate.expression, id, sim::EntryKind::Observer,
+                     std::move(symbol), std::move(hierarchy), {},
+                     candidate.result});
   }
   if (invalid)
     return abort();
@@ -1680,6 +1800,8 @@ void ObeliskSimPreparePass::runOnOperation() {
     bool automatic = false;
   };
   llvm::DenseMap<Operation *, SmallVector<LocalInfo>> unitLocals;
+  llvm::DenseMap<Operation *, SmallVector<LocalInfo>> observerLocalCaptures;
+  llvm::DenseMap<Operation *, llvm::StringSet<>> observerReadLocals;
   for (UnitInfo &unit : units) {
     llvm::StringSet<> seenPaths;
     llvm::StringSet<> seenLocals;
@@ -1714,7 +1836,9 @@ void ObeliskSimPreparePass::runOnOperation() {
         return;
       auto symbol = semanticSymbols.find(reference.getLeafReference());
       if (symbol == semanticSymbols.end() ||
-          !isa<semantic::SVVariableSymbolOp>(symbol->second))
+          (!isa<semantic::SVVariableSymbolOp>(symbol->second) &&
+           !(unit.entryKind == sim::EntryKind::Observer &&
+             isa<semantic::SVFormalArgumentSymbolOp>(symbol->second))))
         return;
       FailureOr<Type> type = getNormalizedSemanticType(symbol->second);
       if (failed(type)) {
@@ -1722,13 +1846,20 @@ void ObeliskSimPreparePass::runOnOperation() {
         return;
       }
       if (seenLocals.insert(path).second) {
-        unitLocals[unit.source].push_back(
+        auto &destination =
+            unit.entryKind == sim::EntryKind::Observer
+                ? observerLocalCaptures[unit.source]
+                : unitLocals[unit.source];
+        destination.push_back(
             {path.str(), *type, isAutomaticLocalSymbol(symbol->second)});
         symbol->second->walk<WalkOrder::PreOrder>(
             [&](Operation *initializerNode) {
               collectBinding(initializerNode);
             });
       }
+      if (unit.entryKind == sim::EntryKind::Observer &&
+          !isWriteOnlyReferenceUse(nested))
+        observerReadLocals[unit.source].insert(path);
     };
     unit.source->walk<WalkOrder::PreOrder>(
         [&](Operation *nested) { collectBinding(nested); });
@@ -1794,6 +1925,28 @@ void ObeliskSimPreparePass::runOnOperation() {
     llvm::sort(unitLocals[unit.source], [](const auto &lhs, const auto &rhs) {
       return lhs.path < rhs.path;
     });
+    llvm::sort(observerLocalCaptures[unit.source],
+               [](const auto &lhs, const auto &rhs) {
+                 return lhs.path < rhs.path;
+               });
+    if (unit.entryKind == sim::EntryKind::Observer) {
+      SmallVector<Attribute> captures;
+      SmallVector<Attribute> dependencies;
+      for (auto &capture : unitCaptures[unit.source]) {
+        captures.push_back(builder.getStringAttr(capture.first));
+        if (unitReadCaptures[unit.source].contains(capture.first))
+          dependencies.push_back(builder.getStringAttr(capture.first));
+      }
+      for (const LocalInfo &local : observerLocalCaptures[unit.source]) {
+        captures.push_back(builder.getStringAttr(local.path));
+        if (observerReadLocals[unit.source].contains(local.path))
+          dependencies.push_back(builder.getStringAttr(local.path));
+      }
+      unit.source->setAttr("obelisk_sim.observer_captures",
+                           builder.getArrayAttr(captures));
+      unit.source->setAttr("obelisk_sim.observer_dependencies",
+                           builder.getArrayAttr(dependencies));
+    }
   }
 
   // Create the root shell first. Its body is filled after all process shells
@@ -1818,6 +1971,7 @@ void ObeliskSimPreparePass::runOnOperation() {
   for (UnitInfo &unit : units) {
     auto captures = unitCaptures.lookup(unit.source);
     auto locals = unitLocals.lookup(unit.source);
+    auto observerLocals = observerLocalCaptures.lookup(unit.source);
     SmallVector<Type> copyOutResultTypes;
 
     // A continuous assignment may read its own target. Keep the ordinary net
@@ -1925,6 +2079,18 @@ void ObeliskSimPreparePass::runOnOperation() {
               builder.getNamedAttr("is_return", builder.getUnitAttr()));
         return attrs;
       }()));
+
+    for (const LocalInfo &local : observerLocals) {
+      unsigned argument = inputs.size();
+      inputs.push_back(sim::RefType::get(context, local.type));
+      argAttrs.push_back(
+          captureMetadata(builder, sim::CaptureKind::Value));
+      bindings.push_back(builder.getDictionaryAttr({
+          builder.getNamedAttr("path", builder.getStringAttr(local.path)),
+          builder.getNamedAttr("argument",
+                               builder.getI64IntegerAttr(argument)),
+      }));
+    }
 
     // Subroutine formals precede non-local captures in the public contract.
     // Function output and inout formals use copy-out results. Task copy-out
@@ -2119,6 +2285,27 @@ void ObeliskSimPreparePass::runOnOperation() {
         }
         results.push_back(*resultType);
       }
+    } else if (unit.entryKind == sim::EntryKind::Observer) {
+      Type resultType;
+      if (unit.observerResult == UnitInfo::ObserverResult::Truth ||
+          unit.observerResult == UnitInfo::ObserverResult::Event) {
+        resultType = builder.getI1Type();
+      } else {
+        FailureOr<Type> normalized =
+            getNormalizedSemanticType(unit.source);
+        if (failed(normalized)) {
+          invalid = true;
+          continue;
+        }
+        resultType = sim::getPackedScalarType(*normalized);
+        if (!resultType) {
+          emitError(getSemanticLocation(unit.source))
+              << "observer expression does not have a packed scalar result";
+          invalid = true;
+          continue;
+        }
+      }
+      results.push_back(resultType);
     }
     llvm::append_range(results, copyOutResultTypes);
     FunctionType type = FunctionType::get(context, inputs, results);
@@ -2164,6 +2351,28 @@ void ObeliskSimPreparePass::runOnOperation() {
         bindingAttr, delayScaleAttr, delayQuantumAttr,
         builder.getNamedAttr("code_unit_id",
                              builder.getI64IntegerAttr(unit.id))};
+    if (unit.entryKind == sim::EntryKind::Observer)
+      functionAttrs.push_back(builder.getNamedAttr(
+          "obelisk_sim.observer_result",
+          builder.getI32IntegerAttr(
+              static_cast<uint32_t>(unit.observerResult))));
+    if (unit.entryKind == sim::EntryKind::Observer) {
+      std::optional<unsigned> width =
+          results.empty() ? std::nullopt
+                          : sim::getPackedWidth(results.front());
+      if (!width) {
+        emitError(getSemanticLocation(unit.source))
+            << "observer result width is not fixed";
+        invalid = true;
+        continue;
+      }
+      functionAttrs.push_back(builder.getNamedAttr(
+          "obelisk_sim.observer_width",
+          builder.getI32IntegerAttr(*width)));
+      functionAttrs.push_back(builder.getNamedAttr(
+          "obelisk_sim.observer_four_state",
+          builder.getBoolAttr(isa<sim::LogicType>(results.front()))));
+    }
     if (auto subroutine =
             dyn_cast<semantic::SVSubroutineSymbolOp>(unit.source);
         subroutine && subroutine.getIsDpiImport().value_or(false)) {
@@ -2320,7 +2529,8 @@ void ObeliskSimPreparePass::runOnOperation() {
 
     OpBuilder bodyBuilder =
         OpBuilder::atBlockEnd(&unit.function.getBody().front());
-    if (isa<semantic::SVPortConnectionOp>(unit.source)) {
+    if (unit.entryKind == sim::EntryKind::Observer ||
+        isa<semantic::SVPortConnectionOp>(unit.source)) {
       bodyBuilder.clone(*unit.source);
     } else {
       for (Operation *child : getChildren(unit.source)) {
@@ -2437,7 +2647,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         declarationBuilder.clone(*initializer.front());
       }
     });
-    if (unit.entryKind != sim::EntryKind::Function) {
+    if (unit.entryKind != sim::EntryKind::Function &&
+        unit.entryKind != sim::EntryKind::Observer) {
       sim::SimReturnOp::create(bodyBuilder, getSemanticLocation(unit.source),
                                ValueRange{});
     } else {
@@ -2457,7 +2668,8 @@ void ObeliskSimPreparePass::runOnOperation() {
   Value simContext = rootInitializer.getBody().front().getArgument(0);
   for (UnitInfo &unit : units) {
     if (unit.entryKind == sim::EntryKind::Function ||
-        unit.entryKind == sim::EntryKind::Task)
+        unit.entryKind == sim::EntryKind::Task ||
+        unit.entryKind == sim::EntryKind::Observer)
       continue;
     SmallVector<Value> operands{simContext};
     for (unsigned index = 1; index < unit.function.getNumArguments(); ++index) {

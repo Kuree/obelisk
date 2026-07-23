@@ -15,7 +15,7 @@
 
 namespace {
 
-std::mutex hostErrorMutex;
+std::recursive_mutex hostErrorMutex;
 
 bool validActivationInventory(
     const obelisk_rt_execution_descriptor_v1 &execution) {
@@ -59,6 +59,42 @@ bool validActivationInventory(
   return true;
 }
 
+bool validObserverInventory(
+    const obelisk_rt_execution_descriptor_v1 &execution) {
+  if ((execution.observer_count == 0) != (execution.observers == nullptr))
+    return false;
+  uint64_t previousID = 0;
+  for (uint64_t index = 0; index != execution.observer_count; ++index) {
+    const obelisk_rt_observer_descriptor_v1 &observer =
+        execution.observers[index];
+    if (observer.code_unit_id == 0 ||
+        (index != 0 && observer.code_unit_id <= previousID) ||
+        observer.result_width == 0 ||
+        (observer.flags & ~OBELISK_RT_OBSERVER_FOUR_STATE) != 0 ||
+        observer.reserved != 0 ||
+        (observer.capture_count == 0) != (observer.capture_abi == nullptr))
+      return false;
+    previousID = observer.code_unit_id;
+    for (uint32_t capture = 0; capture != observer.capture_count; ++capture) {
+      const obelisk_rt_observer_capture_abi_v1 &abi =
+          observer.capture_abi[capture];
+      if (abi.kind < OBELISK_RT_OBSERVER_CAPTURE_STORAGE ||
+          abi.kind > OBELISK_RT_OBSERVER_CAPTURE_DRIVER ||
+          abi.width == 0 ||
+          (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_EVENT && abi.width != 1))
+        return false;
+    }
+    bool hasBytecode =
+        observer.bytecode_function != OBELISK_RT_OBSERVER_NO_BYTECODE;
+    if (hasBytecode &&
+        (execution.flags & OBELISK_RT_EXECUTION_HAS_BYTECODE) == 0)
+      return false;
+    if (!observer.native_evaluator && !hasBytecode)
+      return false;
+  }
+  return true;
+}
+
 } // namespace
 
 obelisk_rt_context::obelisk_rt_context() {
@@ -72,6 +108,70 @@ obelisk_rt_context::obelisk_rt_context() {
     freeMCDs.push_back(bit);
 }
 
+namespace {
+
+void destroyContextNow(obelisk_rt_context *context) noexcept {
+  std::vector<ScheduledProcess> processes;
+  try {
+    {
+      std::lock_guard<std::recursive_mutex> lock(context->mutex);
+      processes.swap(context->scheduledProcesses);
+    }
+    for (ScheduledProcess &scheduled : processes) {
+      if (scheduled.instance)
+        (void)obelisk_rt_v1_process_instance_destroy(scheduled.instance);
+      for (obelisk_rt_process_instance_v1 *caller : scheduled.callers)
+        (void)obelisk_rt_v1_process_instance_destroy(caller);
+    }
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    for (uint32_t bit = 1; bit < context->mcd.size(); ++bit) {
+      if (context->mcd[bit].stream)
+        std::fclose(context->mcd[bit].stream);
+    }
+    for (size_t index = 3; index < context->files.size(); ++index) {
+      if (context->files[index].stream)
+        std::fclose(context->files[index].stream);
+    }
+    std::fflush(stdout);
+  } catch (...) {
+  }
+  delete context;
+}
+
+} // namespace
+
+ContextTransaction::ContextTransaction(obelisk_rt_context *context)
+    : context(context) {
+  if (!context)
+    return;
+  transactionLock =
+      std::unique_lock<std::recursive_mutex>(context->transactionMutex);
+  std::lock_guard<std::recursive_mutex> lock(context->mutex);
+  if (context->transactionDepth++ == 0)
+    context->transactionOwner = std::this_thread::get_id();
+}
+
+ContextTransaction::~ContextTransaction() noexcept {
+  if (!context)
+    return;
+  bool destroy = false;
+  try {
+    {
+      std::lock_guard<std::recursive_mutex> lock(context->mutex);
+      if (context->transactionDepth != 0 &&
+          --context->transactionDepth == 0) {
+        context->transactionOwner = {};
+        destroy = context->destroyPending;
+      }
+    }
+    transactionLock.unlock();
+    if (destroy)
+      destroyContextNow(context);
+  } catch (...) {
+    // Transaction teardown must not replace the operation's status.
+  }
+}
+
 void setLastErrorUnlocked(obelisk_rt_context *context, std::string message) {
   context->lastErrors[std::this_thread::get_id()] = std::move(message);
 }
@@ -80,7 +180,7 @@ void setLastError(obelisk_rt_context *context, std::string message) {
   if (!context)
     return;
   try {
-    std::lock_guard<std::mutex> lock(context->mutex);
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
     setLastErrorUnlocked(context, std::move(message));
   } catch (...) {
   }
@@ -118,7 +218,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_control_enter(
     return OBELISK_RT_INVALID_ARGUMENT;
   *outActivation = 0;
   return guarded(context, [&] {
-    std::lock_guard<std::mutex> lock(context->mutex);
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
     if (context->activeLogicalProcessToken == 0 ||
         context->nextControlActivation == 0)
       return OBELISK_RT_INVALID_LIFECYCLE;
@@ -140,7 +240,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_control_leave(
   if (!context || activation == 0)
     return OBELISK_RT_INVALID_ARGUMENT;
   return guarded(context, [&] {
-    std::lock_guard<std::mutex> lock(context->mutex);
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
     if (context->activeLogicalProcessToken == 0 ||
         context->activeControls.empty() ||
         context->activeControls.back() != activation)
@@ -156,7 +256,7 @@ extern "C" uint32_t obelisk_rt_v1_static_once(
   if (!context || siteID == 0)
     return 0;
   try {
-    std::lock_guard<std::mutex> lock(context->mutex);
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
     return context->initializedStaticSites.insert(siteID).second ? 1u : 0u;
   } catch (...) {
     if (context)
@@ -187,7 +287,7 @@ bool validBytes(const void *data, uint64_t size) {
 }
 
 std::string hostErrorMessage(int error) {
-  std::lock_guard<std::mutex> lock(hostErrorMutex);
+  std::lock_guard<std::recursive_mutex> lock(hostErrorMutex);
   const char *message = std::strerror(error);
   return message ? message : "unknown host error";
 }
@@ -224,7 +324,7 @@ obelisk_rt_v1_context_register_import_signature(
   if (!context || importID == 0 || !callback)
     return OBELISK_RT_INVALID_ARGUMENT;
   return guarded(context, [&] {
-    std::lock_guard<std::mutex> lock(context->mutex);
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
     context->imports[importID] = {callback, userData, abiSignature};
     return OBELISK_RT_OK;
   });
@@ -257,6 +357,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_context_create_for_design(
                : (execution->bytecode || execution->bytecode_size != 0 ||
                   execution->checksum != 0)) ||
           !validActivationInventory(*execution) ||
+          !validObserverInventory(*execution) ||
           !obelisk_rt_validate_activation_bytecode_inventory(*execution))
         return OBELISK_RT_INVALID_DESIGN;
       if ((execution->flags & OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE) != 0) {
@@ -310,31 +411,18 @@ extern "C" obelisk_rt_status obelisk_rt_v1_context_create_for_design(
 extern "C" void obelisk_rt_v1_context_destroy(obelisk_rt_context *context) {
   if (!context)
     return;
-  std::vector<ScheduledProcess> processes;
-  try {
-    {
-      std::lock_guard<std::mutex> lock(context->mutex);
-      processes.swap(context->scheduledProcesses);
+  std::unique_lock<std::recursive_mutex> transaction(
+      context->transactionMutex);
+  {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    if (context->transactionDepth != 0 &&
+        context->transactionOwner == std::this_thread::get_id()) {
+      context->destroyPending = true;
+      return;
     }
-    for (ScheduledProcess &scheduled : processes) {
-      if (scheduled.instance)
-        (void)obelisk_rt_v1_process_instance_destroy(scheduled.instance);
-      for (obelisk_rt_process_instance_v1 *caller : scheduled.callers)
-        (void)obelisk_rt_v1_process_instance_destroy(caller);
-    }
-    std::lock_guard<std::mutex> lock(context->mutex);
-    for (uint32_t bit = 1; bit < context->mcd.size(); ++bit) {
-      if (context->mcd[bit].stream)
-        std::fclose(context->mcd[bit].stream);
-    }
-    for (size_t index = 3; index < context->files.size(); ++index) {
-      if (context->files[index].stream)
-        std::fclose(context->files[index].stream);
-    }
-    std::fflush(stdout);
-  } catch (...) {
   }
-  delete context;
+  transaction.unlock();
+  destroyContextNow(context);
 }
 
 extern "C" const char *obelisk_rt_v1_status_string(obelisk_rt_status status) {
@@ -396,7 +484,7 @@ obelisk_rt_v1_last_error(obelisk_rt_context *context,
   if (!context || !outMessage)
     return OBELISK_RT_INVALID_ARGUMENT;
   return guarded(context, [&] {
-    std::lock_guard<std::mutex> lock(context->mutex);
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
     auto error = context->lastErrors.find(std::this_thread::get_id());
     return makeBuffer(error == context->lastErrors.end() ? std::string_view{}
                                                          : error->second,

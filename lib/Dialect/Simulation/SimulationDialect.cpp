@@ -1061,6 +1061,18 @@ DriverType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
   return verifyElementType(emitError, elementType);
 }
 
+LogicalResult
+ObserverType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                     Type resultType) {
+  if (!isa<IntegerType, LogicType>(resultType))
+    return emitError() << "observer result must be a packed scalar";
+  if (auto integer = dyn_cast<IntegerType>(resultType);
+      integer && (!integer.isSignless() || integer.getWidth() == 0))
+    return emitError()
+           << "observer integer result must be nonempty and signless";
+  return success();
+}
+
 static LogicalResult verifyNonnegative(Operation *op, IntegerAttr attr,
                                        StringRef name) {
   if (attr.getValue().isNegative())
@@ -1558,11 +1570,20 @@ LogicalResult SimFuncOp::verify() {
       return emitOpError("builtin integer results must be signless");
   }
 
-  if (getEntryKind() != EntryKind::Function && !type.getResults().empty())
+  bool zeroTimeResultEntry = getEntryKind() == EntryKind::Function ||
+                             getEntryKind() == EntryKind::Observer;
+  if (!zeroTimeResultEntry && !type.getResults().empty())
     return emitOpError("process and root entries must not return values");
   if (getEntryKind() == EntryKind::RootInitializer && type.getNumInputs() != 1)
     return emitOpError("root initializer accepts only the context argument");
-  if (getEntryKind() == EntryKind::Function) {
+  if (getEntryKind() == EntryKind::Observer) {
+    if (type.getNumResults() != 1 ||
+        !isa<IntegerType, LogicType>(type.getResult(0)))
+      return emitOpError(
+          "observer entry must return one packed scalar result");
+  }
+  if (getEntryKind() == EntryKind::Function ||
+      getEntryKind() == EntryKind::Observer) {
     // Only the time-controlled statements are illegal in a SystemVerilog
     // function. Nonblocking assignment, nonblocking event trigger, and
     // `fork ... join_none` are all legal there and consume no simulation
@@ -1570,9 +1591,17 @@ LogicalResult SimFuncOp::verify() {
     WalkResult blocking = getBody().walk([&](Operation *op) {
       if (isa<SimSuspendDelayOp, SimSuspendChangeOp, SimSuspendEdgeOp,
               SimSuspendEdgeIffOp, SimSuspendLevelOp, SimSuspendAnyOp,
-              SimSuspendEventOp, SimSuspendForeverOp, SimSuspendAwaitOp,
-              SimSuspendJoinOp, SimSuspendChildrenOp>(op)) {
-        op->emitOpError("is not permitted in a zero-time function entry");
+              SimSuspendEventOp, SimSuspendObserveOp, SimSuspendForeverOp,
+              SimSuspendAwaitOp, SimSuspendJoinOp, SimSuspendChildrenOp>(op)) {
+        op->emitOpError(
+            getEntryKind() == EntryKind::Function
+                ? "is not permitted in a zero-time function entry"
+                : "is not permitted in a zero-time observer entry");
+        return WalkResult::interrupt();
+      }
+      if (getEntryKind() == EntryKind::Observer &&
+          isa<SimTaskCallOp>(op)) {
+        op->emitOpError("task calls are not permitted in an observer entry");
         return WalkResult::interrupt();
       }
       return WalkResult::advance();
@@ -1644,6 +1673,78 @@ LogicalResult SimCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (getOperandTypes() != callee.getFunctionType().getInputs() ||
       getResultTypes() != callee.getFunctionType().getResults())
     return emitOpError("operand and result types must match callee signature");
+  return success();
+}
+
+Operation::operand_range SimObserverBindOp::getCaptures() {
+  size_t count =
+      getCaptureCountAttr().getValue().isNegative()
+          ? 0
+          : std::min<uint64_t>(getCaptureCount(), getNumOperands());
+  return getValues().take_front(count);
+}
+
+Operation::operand_range SimObserverBindOp::getDependencies() {
+  size_t count =
+      getCaptureCountAttr().getValue().isNegative()
+          ? 0
+          : std::min<uint64_t>(getCaptureCount(), getNumOperands());
+  return getValues().drop_front(count);
+}
+
+LogicalResult SimObserverBindOp::verify() {
+  if (getCaptureCountAttr().getValue().isNegative() ||
+      static_cast<uint64_t>(getCaptureCount()) > getNumOperands())
+    return emitOpError("capture count exceeds the operand inventory");
+  for (Value capture : getCaptures()) {
+    Type type = capture.getType();
+    Type element;
+    if (auto reference = dyn_cast<RefType>(type))
+      element = reference.getElementType();
+    else if (auto net = dyn_cast<NetType>(type))
+      element = net.getElementType();
+    else if (auto driver = dyn_cast<DriverType>(type))
+      element = driver.getElementType();
+    else if (isa<EventType>(type))
+      continue;
+    else
+      return emitOpError(
+          "captures must use storage, net, driver, or named-event handles");
+    if (!getPackedWidth(element))
+      return emitOpError("captured handles must refer to packed values");
+  }
+  for (Value dependency : getDependencies())
+    if (!isa<RefType, NetType, EventType>(dependency.getType()))
+      return emitOpError(
+          "dependencies must be storage, net, or named-event handles");
+  if ((*this)->hasAttr("obelisk_sim.event_primary")) {
+    auto observer = cast<ObserverType>(getResult().getType());
+    auto integer = dyn_cast<IntegerType>(observer.getResultType());
+    if (!integer || integer.getWidth() != 1 ||
+        llvm::none_of(getDependencies(), [](Value dependency) {
+          return isa<EventType>(dependency.getType());
+        }))
+      return emitOpError(
+          "event-primary bindings must return i1 and depend on an event");
+  }
+  return success();
+}
+
+LogicalResult
+SimObserverBindOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  auto evaluator = symbolTable.lookupNearestSymbolFrom<SimFuncOp>(
+      getOperation(), getEvaluatorAttr());
+  if (!evaluator || evaluator.getEntryKind() != EntryKind::Observer)
+    return emitOpError("evaluator must name a sibling observer entry");
+  FunctionType type = evaluator.getFunctionType();
+  if (type.getNumInputs() == 0 || !isa<ContextType>(type.getInput(0)))
+    return emitOpError("observer evaluator is missing its context argument");
+  if (getCaptures().getTypes() != type.getInputs().drop_front())
+    return emitOpError(
+        "capture types must match evaluator arguments after context");
+  if (type.getNumResults() != 1 ||
+      type.getResult(0) != getResult().getType().getResultType())
+    return emitOpError("result type must match the evaluator result");
   return success();
 }
 
@@ -1846,6 +1947,7 @@ LogicalResult SimSpawnOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   auto callee = symbolTable.lookupNearestSymbolFrom<SimFuncOp>(getOperation(),
                                                                getCalleeAttr());
   if (!callee || callee.getEntryKind() == EntryKind::Function ||
+      callee.getEntryKind() == EntryKind::Observer ||
       callee.getEntryKind() == EntryKind::Task ||
       callee.getEntryKind() == EntryKind::RootInitializer)
     return emitOpError("callee must name a sibling process entry");
@@ -4010,6 +4112,9 @@ SuccessorOperands SimSuspendAnyOp::getSuccessorOperands(unsigned index) {
 SuccessorOperands SimSuspendEventOp::getSuccessorOperands(unsigned index) {
   return makeContinuationSuccessorOperands(*this, index);
 }
+SuccessorOperands SimSuspendObserveOp::getSuccessorOperands(unsigned index) {
+  return makeContinuationSuccessorOperands(*this, index);
+}
 SuccessorOperands SimSuspendForeverOp::getSuccessorOperands(unsigned index) {
   return makeContinuationSuccessorOperands(*this, index);
 }
@@ -4094,6 +4199,131 @@ MutableOperandRange SimSuspendAnyOp::getContinuationOperandsMutable() {
 LogicalResult SimSuspendEventOp::verify() {
   return verifyContinuation(*this, getContinuationOperands(),
                             getContinuation());
+}
+LogicalResult SimSuspendObserveOp::verify() {
+  if (getConditionCountAttr().getValue().isNegative())
+    return emitOpError("condition count must be nonnegative");
+  if (getPrimaries().empty())
+    return emitOpError("requires at least one primary observer");
+  if (getConditions().size() !=
+      static_cast<uint64_t>(getConditionCount()))
+    return emitOpError("condition count exceeds the operand inventory");
+  if (getPrimaries().size() != getInitialValues().size() ||
+      getPrimaries().size() != getEdges().size() ||
+      getPrimaries().size() != getConditionIndices().size())
+    return emitOpError(
+        "requires one initial value, edge, and condition index per primary");
+  for (Value primary : getPrimaries())
+    if (!isa<ObserverType>(primary.getType()))
+      return emitOpError("primary operands must be observer handles");
+  for (Value condition : getConditions())
+    if (!isa<ObserverType>(condition.getType()))
+      return emitOpError("condition operands must be observer handles");
+  SmallVector<bool> usedConditions(getConditions().size(), false);
+  for (auto [index, primary, initial, edge, conditionIndex] :
+       llvm::enumerate(getPrimaries(), getInitialValues(), getEdges(),
+                       getConditionIndices())) {
+    auto observer = cast<ObserverType>(primary.getType());
+    if (initial.getType() != observer.getResultType())
+      return emitOpError()
+             << "initial value #" << index
+             << " does not match its primary observer result";
+    if (edge < static_cast<int32_t>(EdgeKind::Change) ||
+        edge > static_cast<int32_t>(EdgeKind::Both))
+      return emitOpError("contains an invalid edge kind");
+    if (conditionIndex < -1 ||
+        (conditionIndex >= 0 &&
+         static_cast<uint64_t>(conditionIndex) >= getConditions().size()))
+      return emitOpError("contains an invalid condition observer index");
+    if (conditionIndex >= 0) {
+      if (usedConditions[conditionIndex])
+        return emitOpError(
+            "a condition observer may belong to only one primary clause");
+      usedConditions[conditionIndex] = true;
+      Type result =
+          cast<ObserverType>(getConditions()[conditionIndex].getType())
+              .getResultType();
+      auto integer = dyn_cast<IntegerType>(result);
+      if (!integer || integer.getWidth() != 1)
+        return emitOpError("condition observers must return i1");
+    }
+  }
+  if (llvm::is_contained(usedConditions, false))
+    return emitOpError("contains an unreferenced condition observer");
+  return verifyContinuation(*this, getContinuationOperands(),
+                            getContinuation());
+}
+
+Operation::operand_range SimSuspendObserveOp::getPrimaries() {
+  size_t count = std::min<size_t>(getEdges().size(), getNumOperands());
+  return getValues().take_front(count);
+}
+
+Operation::operand_range SimSuspendObserveOp::getInitialValues() {
+  size_t primaryCount =
+      std::min<size_t>(getEdges().size(), getNumOperands());
+  size_t remaining = getNumOperands() - primaryCount;
+  return getValues().slice(primaryCount,
+                           std::min(primaryCount, remaining));
+}
+
+Operation::operand_range SimSuspendObserveOp::getConditions() {
+  if (auto converted = (*this)->getAttrOfType<IntegerAttr>(
+          "obelisk.coro.condition_operand_begin")) {
+    size_t begin =
+        std::min<uint64_t>(converted.getValue().getZExtValue(),
+                           getNumOperands());
+    size_t count =
+        getConditionCountAttr().getValue().isNegative()
+            ? 0
+            : std::min<uint64_t>(getConditionCount(),
+                                 getNumOperands() - begin);
+    return getValues().slice(begin, count);
+  }
+  size_t primaryCount =
+      std::min<size_t>(getEdges().size(), getNumOperands());
+  size_t begin = std::min<size_t>(getNumOperands(), primaryCount * 2);
+  size_t count =
+      getConditionCountAttr().getValue().isNegative()
+          ? 0
+          : std::min<uint64_t>(getConditionCount(), getNumOperands() - begin);
+  return getValues().slice(begin, count);
+}
+
+Operation::operand_range SimSuspendObserveOp::getContinuationOperands() {
+  if (auto converted = (*this)->getAttrOfType<IntegerAttr>(
+          "obelisk.coro.continuation_operand_begin")) {
+    size_t begin =
+        std::min<uint64_t>(converted.getValue().getZExtValue(),
+                           getNumOperands());
+    return getValues().drop_front(begin);
+  }
+  size_t primaryCount =
+      std::min<size_t>(getEdges().size(), getNumOperands());
+  size_t begin = std::min<size_t>(getNumOperands(), primaryCount * 2);
+  if (!getConditionCountAttr().getValue().isNegative())
+    begin += std::min<uint64_t>(getConditionCount(),
+                                getNumOperands() - begin);
+  return getValues().drop_front(begin);
+}
+
+MutableOperandRange
+SimSuspendObserveOp::getContinuationOperandsMutable() {
+  if (auto converted = (*this)->getAttrOfType<IntegerAttr>(
+          "obelisk.coro.continuation_operand_begin")) {
+    size_t begin =
+        std::min<uint64_t>(converted.getValue().getZExtValue(),
+                           getNumOperands());
+    return MutableOperandRange(getOperation(), begin,
+                               getNumOperands() - begin);
+  }
+  size_t primaryCount =
+      std::min<size_t>(getEdges().size(), getNumOperands());
+  size_t begin = std::min<size_t>(getNumOperands(), primaryCount * 2);
+  if (!getConditionCountAttr().getValue().isNegative())
+    begin += std::min<uint64_t>(getConditionCount(),
+                                getNumOperands() - begin);
+  return MutableOperandRange(getOperation(), begin, getNumOperands() - begin);
 }
 LogicalResult SimSuspendForeverOp::verify() {
   return verifyContinuation(*this, getContinuationOperands(),

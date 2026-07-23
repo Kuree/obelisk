@@ -121,7 +121,8 @@ bool isSuspensionTerminator(Operation *op) {
              sim::SimSuspendLevelOp, sim::SimSuspendAnyOp,
              sim::SimSuspendEventOp, sim::SimSuspendForeverOp,
              sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp,
-             sim::SimSuspendChildrenOp, sim::SimTaskCallOp>(op);
+             sim::SimSuspendChildrenOp, sim::SimSuspendObserveOp,
+             sim::SimTaskCallOp>(op);
 }
 
 std::optional<APInt> getConstantInteger(Value value) {

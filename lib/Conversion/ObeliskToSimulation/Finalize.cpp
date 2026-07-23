@@ -55,7 +55,7 @@ static bool isExecutableType(Type type) {
          isa<runtime::StatusType>(type) ||
          isa<sim::ContextType, sim::BytesType, sim::LogicType, sim::TimeType,
              sim::RefType, sim::NetType, sim::DriverType, sim::EventType,
-             sim::ProcessType, sim::ControlType>(type) ||
+             sim::ProcessType, sim::ControlType, sim::ObserverType>(type) ||
          sim::isAggregateType(type);
 }
 
@@ -128,11 +128,15 @@ void ObeliskSimFinalizePass::runOnOperation() {
         bool callTarget =
             isa<sim::SimCallOp, sim::SimTaskCallOp, sim::SimSpawnOp>(op) &&
             named.getName() == sim::SimCallOp::getCalleeAttrName(op->getName());
+        bool observerTarget =
+            isa<sim::SimObserverBindOp>(op) &&
+            named.getName() ==
+                sim::SimObserverBindOp::getEvaluatorAttrName(op->getName());
         bool graphReference =
             isa<sim::SimDesignOp>(op) &&
             named.getName() ==
                 sim::SimDesignOp::getComputeGraphAttrName(op->getName());
-        bool allowed = callTarget || graphReference;
+        bool allowed = callTarget || observerTarget || graphReference;
         if (!allowed) {
           op->emitError() << "disallowed symbol reference " << reference;
           invalid = true;

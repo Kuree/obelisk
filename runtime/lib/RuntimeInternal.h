@@ -165,7 +165,15 @@ struct DpiScopeHandle {
 };
 
 struct obelisk_rt_context {
-  std::mutex mutex;
+  // Mutable state is guarded separately from logical execution. Evaluator
+  // callbacks release `mutex` while arbitrary user code runs, but retain the
+  // recursive transaction lock so another thread cannot interleave a state or
+  // scheduler mutation. Nested calls on the evaluator thread re-enter both.
+  std::recursive_mutex mutex;
+  std::recursive_mutex transactionMutex;
+  std::thread::id transactionOwner;
+  uint32_t transactionDepth = 0;
+  bool destroyPending = false;
   std::array<FileEntry, 31> mcd;
   // 0x80000000, 0x80000001, and 0x80000002 are the IEEE predefined stdin,
   // stdout, and stderr descriptors. Dynamic descriptors begin at index 3.
@@ -207,6 +215,7 @@ struct obelisk_rt_context {
   uint64_t schedulerTime = 0;
   bool schedulerRunningFinals = false;
   obelisk_rt_status schedulerStatus = OBELISK_RT_OK;
+  uint32_t observerDepth = 0;
   const obelisk_rt_execution_descriptor_v1 *execution = nullptr;
   // Live simulation state is owned by the context.  The planes use the same
   // little-endian limb representation as bytecode values and are never stored
@@ -215,6 +224,35 @@ struct obelisk_rt_context {
   std::vector<uint64_t> stateUnknown;
 
   obelisk_rt_context();
+};
+
+// Serialize a complete external mutation or scheduler fragment across any
+// recursively invoked observer callbacks. If a callback destroys its active
+// context, final cleanup is deferred until the outermost transaction returns.
+class ContextTransaction {
+public:
+  explicit ContextTransaction(obelisk_rt_context *context);
+  ContextTransaction(const ContextTransaction &) = delete;
+  ContextTransaction &operator=(const ContextTransaction &) = delete;
+  ~ContextTransaction() noexcept;
+
+private:
+  obelisk_rt_context *context = nullptr;
+  std::unique_lock<std::recursive_mutex> transactionLock;
+};
+
+class ContextCallbackUnlock {
+public:
+  explicit ContextCallbackUnlock(obelisk_rt_context *context)
+      : context(context) {
+    context->mutex.unlock();
+  }
+  ContextCallbackUnlock(const ContextCallbackUnlock &) = delete;
+  ContextCallbackUnlock &operator=(const ContextCallbackUnlock &) = delete;
+  ~ContextCallbackUnlock() { context->mutex.lock(); }
+
+private:
+  obelisk_rt_context *context;
 };
 
 void setLastErrorUnlocked(obelisk_rt_context *context, std::string message);
@@ -277,6 +315,11 @@ obelisk_rt_status obelisk_rt_execute_design_bytecode(
     uint64_t scratchOffset, uint64_t scratchSize, uint32_t continuation,
     uint64_t instructionLimit,
     obelisk_rt_fragment_action_v1 *outAction) noexcept;
+obelisk_rt_status obelisk_rt_execute_design_observer(
+    const obelisk_rt_execution_descriptor_v1 &execution,
+    obelisk_rt_context *context, uint32_t function,
+    const obelisk_rt_computed_capture_v1 *captures, uint32_t captureCount,
+    uint64_t *value, uint64_t *unknown, uint32_t limbCount) noexcept;
 obelisk_rt_status
 obelisk_rt_initialize_design_state(obelisk_rt_context *context) noexcept;
 obelisk_rt_status obelisk_rt_resolve_design_drivers(
@@ -295,6 +338,18 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
 bool obelisk_rt_append_signal_event_unlocked(
     obelisk_rt_context *context, uint64_t bitOffset, bool oldValue,
     bool oldUnknown, bool newValue, bool newUnknown);
+bool obelisk_rt_append_signal_event_unlocked(
+    obelisk_rt_context *context, uint64_t bitOffset, bool oldValue,
+    bool oldUnknown, bool newValue, bool newUnknown,
+    bool evaluateComputedObservers);
+bool obelisk_rt_notify_observer_event_unlocked(obelisk_rt_context *context,
+                                               uint64_t stableID);
+bool obelisk_rt_notify_observer_signal_unlocked(obelisk_rt_context *context,
+                                                uint64_t stableID,
+                                                uint64_t width);
+bool obelisk_rt_evaluate_design_observers_unlocked(
+    obelisk_rt_context *context, uint32_t dependencyKind,
+    uint64_t publishedHandle, uint64_t publishedWidth);
 void obelisk_rt_erase_automatic_signal_snapshots_unlocked(
     obelisk_rt_context *context, uint32_t automaticID);
 void obelisk_rt_invalidate_signal_snapshots_unlocked(

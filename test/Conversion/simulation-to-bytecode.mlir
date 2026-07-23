@@ -68,11 +68,11 @@ module attributes {
   }
 }
 
-// Design bytecode version 4 follows the eight-byte magic. It includes task
+// Design bytecode version 5 follows the eight-byte magic. It includes task
 // activation transfers in addition to
 // per-continuation schedule ranks, the canonical connectivity table, and
 // disjoint per-bit uwire driver ranges.
-// ENCODE: obelisk.bytecode.image = array<i8: 79, 66, 66, 67, 68, 83, 49, 0, 4, 0, 0, 0
+// ENCODE: obelisk.bytecode.image = array<i8: 79, 66, 66, 67, 68, 83, 49, 0, 5, 0, 0, 0, 3, 0, 0, 0
 // ENCODE: obelisk.execution.flags = 1 : i32
 // ENCODE: obelisk.execution.state_bits = 73 : i64
 // ENCODE: obelisk.bytecode.function = 0 : i32

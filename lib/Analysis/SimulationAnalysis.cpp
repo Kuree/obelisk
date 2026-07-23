@@ -153,7 +153,17 @@ DescriptorProvenanceMap deriveDescriptorProvenance(sim::SimFuncOp function) {
           provenance.width > provenance.rootWidth - provenance.low)
         continue;
     }
-    if (capture && capture.getValue() == sim::CaptureKind::Formal) {
+    // Observer handle captures are serialized as ordinary captured values in
+    // the execution ABI, but remain parametric from the compute graph's point
+    // of view: observer.bind supplies the concrete handle at each wait site.
+    // Preserve a formal provenance here so evaluator effects can be
+    // substituted into the waiting process without manufacturing a concrete
+    // resource that has neither a descriptor nor a formal target.
+    bool observerHandleCapture =
+        function.getEntryKind() == sim::EntryKind::Observer && index != 0 &&
+        capture && capture.getValue() == sim::CaptureKind::Value;
+    if (capture && (capture.getValue() == sim::CaptureKind::Formal ||
+                    observerHandleCapture)) {
       provenance.formal = index;
     } else if (descriptor) {
       if (!descriptor.getValue().isNegative() &&

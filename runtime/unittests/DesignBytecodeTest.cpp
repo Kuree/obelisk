@@ -159,6 +159,69 @@ std::vector<uint8_t> makeBytecode() {
   return bytes;
 }
 
+std::vector<uint8_t> makeObserverBytecode(uint8_t resultKind) {
+  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+  constexpr size_t layoutOffset = functionOffset + 96;
+  constexpr size_t codeOffset = layoutOffset + 2 * 40;
+  constexpr size_t operandOffset = codeOffset + 2 * 32;
+  constexpr size_t constantOffset = operandOffset + 8;
+  constexpr size_t continuationOffset = constantOffset + 32;
+  std::vector<uint8_t> bytes(continuationOffset + 24, 0);
+  std::memcpy(bytes.data(), "OBBCDS1\0", 8);
+  put32(bytes, 8, OBELISK_RT_DESIGN_BYTECODE_VERSION);
+  put32(bytes, 12, OBELISK_RT_ABI_GENERATION);
+  put32(bytes, 16, OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE);
+  put64(bytes, 24, bytes.size());
+  put64(bytes, 40, functionOffset);
+  put64(bytes, 48, 1);
+  put64(bytes, 56, layoutOffset);
+  put64(bytes, 64, 2);
+  put64(bytes, 72, codeOffset);
+  put64(bytes, 80, 2);
+  put64(bytes, 88, operandOffset);
+  put64(bytes, 96, 1);
+  put64(bytes, 104, constantOffset);
+  put64(bytes, 112, 32);
+  put64(bytes, 120, continuationOffset);
+  put64(bytes, 128, 1);
+  put64(bytes, 136, bytes.size());
+  put64(bytes, 152, bytes.size());
+  put64(bytes, 168, bytes.size());
+  put64(bytes, 184, bytes.size());
+
+  put64(bytes, functionOffset, 7);
+  put64(bytes, functionOffset + 16, 0);
+  put64(bytes, functionOffset + 24, 2);
+  put64(bytes, functionOffset + 32, 0);
+  put64(bytes, functionOffset + 40, 2);
+  put32(bytes, functionOffset + 48, 1);
+  put32(bytes, functionOffset + 52, 1);
+  put64(bytes, functionOffset + 56, 64);
+  put64(bytes, functionOffset + 64, 8);
+  put64(bytes, functionOffset + 72, 0);
+  put64(bytes, functionOffset + 80, 1);
+  put64(bytes, functionOffset + 88, 0);
+
+  bytes[layoutOffset] = OBELISK_RT_DBREG_HANDLE;
+  put32(bytes, layoutOffset + 4, 256);
+  put64(bytes, layoutOffset + 8, 0);
+  put64(bytes, layoutOffset + 16, 32);
+  bytes[layoutOffset + 40] = resultKind;
+  put32(bytes, layoutOffset + 44, 256);
+  put64(bytes, layoutOffset + 48, 32);
+  put64(bytes, layoutOffset + 56, 32);
+
+  instruction(bytes, codeOffset, 0, OBELISK_RT_DB_CONSTANT, 0, 1);
+  instruction(bytes, codeOffset, 1, OBELISK_RT_DB_RETURN, 0, 0, 0, 1);
+  put32(bytes, operandOffset, 1);
+  put32(bytes, operandOffset + 4, 1);
+  put32(bytes, continuationOffset, 0);
+  put32(bytes, continuationOffset + 4, 0);
+  put64(bytes, continuationOffset + 8, 0);
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
 std::vector<uint8_t> makeImportBytecode(uint32_t importID) {
   constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
@@ -1150,6 +1213,74 @@ struct Fixture {
   }
 };
 
+uint32_t designWriteObserverCalls = 0;
+
+obelisk_rt_status designWriteObserverEvaluator(
+    obelisk_rt_context *, const uint64_t *, uint32_t, uint64_t *value,
+    uint64_t *unknown, uint32_t limbs) {
+  if (!value || !unknown || limbs != 1)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ++designWriteObserverCalls;
+  value[0] = 1;
+  unknown[0] = 0;
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status designWriteWaitRequirements(uint64_t *size,
+                                              uint64_t *alignment) {
+  if (!size || !alignment)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *size = 0;
+  *alignment = 1;
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status
+designWriteWaitExecute(obelisk_rt_process_instance_v1 *instance) {
+  if (!instance || !instance->action)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *instance->action = {OBELISK_RT_FRAGMENT_SUSPEND,
+                       OBELISK_RT_SUSPEND_OBSERVER,
+                       1,
+                       OBELISK_RT_ACTION_FRAME_WAIT_RECORD,
+                       0,
+                       176};
+  return OBELISK_RT_OK;
+}
+
+void designWriteWaitDestroy(obelisk_rt_process_instance_v1 *) {}
+
+void populateDesignWriteWait(void *frame) {
+  std::memset(frame, 0, 176);
+  auto *wait = static_cast<obelisk_rt_computed_wait_record_v1 *>(frame);
+  *wait = {OBELISK_RT_COMPUTED_WAIT_RECORD_VERSION,
+           OBELISK_RT_SUSPEND_OBSERVER,
+           OBELISK_RT_COMPUTED_WAIT_INTERLEAVED,
+           1,
+           1,
+           0,
+           1,
+           1,
+           96,
+           128,
+           128,
+           144,
+           160,
+           0,
+           176,
+           0};
+  auto *binding = reinterpret_cast<obelisk_rt_computed_observer_v1 *>(
+      static_cast<uint8_t *>(frame) + wait->observers_offset);
+  *binding = {7, 0, 0, 0, 1, 160, 0};
+  auto *dependency = reinterpret_cast<obelisk_rt_computed_dependency_v1 *>(
+      static_cast<uint8_t *>(frame) + wait->dependencies_offset);
+  *dependency = {0, OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL, 65};
+  auto *clause = reinterpret_cast<obelisk_rt_computed_clause_v1 *>(
+      static_cast<uint8_t *>(frame) + wait->clauses_offset);
+  *clause = {0, OBELISK_RT_OBSERVER_CONDITION_NONE,
+             OBELISK_RT_WAIT_EDGE_CHANGE, 0};
+}
+
 TEST(DesignBytecode, RejectsMalformedActivationBytecodeInventory) {
   Fixture fixture;
   obelisk_rt_context *context = nullptr;
@@ -1167,6 +1298,103 @@ TEST(DesignBytecode, RejectsMalformedActivationBytecodeInventory) {
   activation.code_unit_id = 2;
   EXPECT_EQ(obelisk_rt_v1_context_create_for_design(&fixture.execution,
                                                      &context),
+            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(context, nullptr);
+}
+
+TEST(DesignBytecode, DesignWritePublishesToComputedObservers) {
+  Fixture fixture;
+  obelisk_rt_observer_descriptor_v1 observer{
+      7, nullptr, 0, 1, 0, OBELISK_RT_OBSERVER_NO_BYTECODE,
+      designWriteObserverEvaluator, 0};
+  fixture.execution.observers = &observer;
+  fixture.execution.observer_count = 1;
+
+  obelisk_rt_frame_field_v1 field{
+      OBELISK_RT_FRAME_WAIT, OBELISK_RT_FRAME_FIELD_FLAGS_NONE, 0, 176, 8, 0};
+  std::array<uint32_t, 2> continuations{{0, 1}};
+  obelisk_rt_frame_layout_v1 layout{
+      OBELISK_RT_FRAME_LAYOUT_VERSION, 0, 176, 8, &field, 1,
+      static_cast<uint32_t>(continuations.size()), continuations.data(), 0};
+  layout.checksum = frameChecksum(layout);
+  obelisk_rt_process_descriptor_v1 process{
+      {OBELISK_RT_DESCRIPTOR_PROCESS, 0, 83},
+      OBELISK_RT_ABI_GENERATION,
+      0,
+      OBELISK_RT_TIER_MASK_NATIVE,
+      0,
+      &layout,
+      designWriteWaitRequirements,
+      designWriteWaitExecute,
+      designWriteWaitDestroy,
+      nullptr,
+      &fixture.execution,
+      nullptr};
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&fixture.execution,
+                                                     &context),
+            OBELISK_RT_OK);
+  obelisk_rt_process_instance_v1 *instance = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_process_instance_create(&process, &instance),
+            OBELISK_RT_OK);
+  void *frame = nullptr;
+  uint64_t frameSize = 0;
+  ASSERT_EQ(obelisk_rt_v1_process_instance_frame(instance, &frame, &frameSize),
+            OBELISK_RT_OK);
+  ASSERT_EQ(frameSize, 176u);
+  populateDesignWriteWait(frame);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, instance, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+
+  static constexpr std::string_view name = "top.value";
+  obelisk_rt_design_cursor_v1 cursor{};
+  ASSERT_EQ(obelisk_rt_v1_design_lookup(
+                &fixture.execution,
+                reinterpret_cast<const uint8_t *>(name.data()), name.size(),
+                &cursor),
+            OBELISK_RT_OK);
+  std::array<uint64_t, 2> value{{1, 0}};
+  std::array<uint64_t, 2> unknown{};
+  designWriteObserverCalls = 0;
+  ASSERT_EQ(obelisk_rt_v1_design_write(context, cursor, value.data(),
+                                       unknown.data(), 65),
+            OBELISK_RT_OK);
+  EXPECT_EQ(designWriteObserverCalls, 1u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(DesignBytecode, RejectsNonPackedObserverResultLayout) {
+  auto create = [](std::vector<uint8_t> &bytecode,
+                   obelisk_rt_observer_descriptor_v1 &observer,
+                   obelisk_rt_execution_descriptor_v1 &execution,
+                   uint8_t resultKind, obelisk_rt_context **context) {
+    bytecode = makeObserverBytecode(resultKind);
+    observer = {7, nullptr, 0, 256, 0, 0, nullptr, 0};
+    execution = {};
+    execution.version = OBELISK_RT_EXECUTION_DESCRIPTOR_VERSION;
+    execution.abi_generation = OBELISK_RT_ABI_GENERATION;
+    execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE;
+    execution.bytecode = bytecode.data();
+    execution.bytecode_size = bytecode.size();
+    execution.checksum = imageChecksum(bytecode);
+    execution.observers = &observer;
+    execution.observer_count = 1;
+    return obelisk_rt_v1_context_create_for_design(&execution, context);
+  };
+
+  std::vector<uint8_t> bytecode;
+  obelisk_rt_observer_descriptor_v1 observer{};
+  obelisk_rt_execution_descriptor_v1 execution{};
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(create(bytecode, observer, execution, OBELISK_RT_DBREG_BITS,
+                   &context),
+            OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+
+  context = nullptr;
+  EXPECT_EQ(create(bytecode, observer, execution, OBELISK_RT_DBREG_HANDLE,
+                   &context),
             OBELISK_RT_INVALID_DESIGN);
   EXPECT_EQ(context, nullptr);
 }

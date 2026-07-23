@@ -113,10 +113,10 @@ namespace {
 
 obelisk_rt_status checkFileArguments(obelisk_rt_context *context,
                                      uint32_t descriptor, FileEntry *&entry,
-                                     std::unique_lock<std::mutex> &lock) {
+                                     std::unique_lock<std::recursive_mutex> &lock) {
   if (!context)
     return OBELISK_RT_INVALID_ARGUMENT;
-  lock = std::unique_lock<std::mutex>(context->mutex);
+  lock = std::unique_lock<std::recursive_mutex>(context->mutex);
   entry = getFileUnlocked(context, descriptor);
   if (!entry) {
     setLastErrorUnlocked(context, "invalid file descriptor");
@@ -139,7 +139,7 @@ obelisk_rt_v1_file_open_mcd(obelisk_rt_context *context, const char *path,
       setLastError(context, "file path is invalid or contains a NUL byte");
       return OBELISK_RT_INVALID_ARGUMENT;
     }
-    std::lock_guard<std::mutex> lock(context->mutex);
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
     if (context->freeMCDs.empty()) {
       setLastErrorUnlocked(context, "no multichannel descriptor bits remain");
       return OBELISK_RT_OUT_OF_RESOURCES;
@@ -188,7 +188,7 @@ obelisk_rt_v1_file_open(obelisk_rt_context *context, const char *path,
     }
     bool writable =
         normalized.front() != 'r' || normalized.find('+') != std::string::npos;
-    std::lock_guard<std::mutex> lock(context->mutex);
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
     uint32_t index;
     if (!context->freeFiles.empty()) {
       index = context->freeFiles.back();
@@ -213,7 +213,7 @@ obelisk_rt_v1_file_close(obelisk_rt_context *context, uint32_t descriptor) {
   if (!context || descriptor == 0)
     return OBELISK_RT_INVALID_ARGUMENT;
   return guarded(context, [&] {
-    std::lock_guard<std::mutex> lock(context->mutex);
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
     if (descriptor & kFDTag) {
       uint32_t index = descriptor & kFDIndexMask;
       if (index < 3) {
@@ -264,7 +264,7 @@ obelisk_rt_v1_file_flush(obelisk_rt_context *context, uint32_t descriptor) {
   if (!context)
     return OBELISK_RT_INVALID_ARGUMENT;
   return guarded(context, [&] {
-    std::lock_guard<std::mutex> lock(context->mutex);
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
     std::vector<FileEntry *> outputs;
     if (descriptor == 0) {
       outputs.push_back(&context->mcd[0]);
@@ -300,7 +300,7 @@ obelisk_rt_v1_file_write(obelisk_rt_context *context, uint32_t descriptor,
   if (outWritten)
     *outWritten = 0;
   return guarded(context, [&] {
-    std::lock_guard<std::mutex> lock(context->mutex);
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
     return writeUnlocked(context, descriptor, data, size, outWritten);
   });
 }
@@ -314,7 +314,7 @@ obelisk_rt_v1_file_read(obelisk_rt_context *context, uint32_t descriptor,
   *outRead = 0;
   return guarded(context, [&] {
     FileEntry *entry;
-    std::unique_lock<std::mutex> lock;
+    std::unique_lock<std::recursive_mutex> lock;
     obelisk_rt_status status =
         checkFileArguments(context, descriptor, entry, lock);
     if (status != OBELISK_RT_OK)
@@ -340,7 +340,7 @@ obelisk_rt_v1_file_getc(obelisk_rt_context *context, uint32_t descriptor,
     return OBELISK_RT_INVALID_ARGUMENT;
   return guarded(context, [&] {
     FileEntry *entry;
-    std::unique_lock<std::mutex> lock;
+    std::unique_lock<std::recursive_mutex> lock;
     obelisk_rt_status status =
         checkFileArguments(context, descriptor, entry, lock);
     if (status != OBELISK_RT_OK)
@@ -366,7 +366,7 @@ obelisk_rt_v1_file_ungetc(obelisk_rt_context *context, uint32_t descriptor,
     return OBELISK_RT_INVALID_ARGUMENT;
   return guarded(context, [&] {
     FileEntry *entry;
-    std::unique_lock<std::mutex> lock;
+    std::unique_lock<std::recursive_mutex> lock;
     obelisk_rt_status status =
         checkFileArguments(context, descriptor, entry, lock);
     if (status != OBELISK_RT_OK)
@@ -390,7 +390,7 @@ obelisk_rt_v1_file_getline(obelisk_rt_context *context, uint32_t descriptor,
   outLine->size = 0;
   return guarded(context, [&] {
     FileEntry *entry;
-    std::unique_lock<std::mutex> lock;
+    std::unique_lock<std::recursive_mutex> lock;
     obelisk_rt_status status =
         checkFileArguments(context, descriptor, entry, lock);
     if (status != OBELISK_RT_OK)
@@ -422,7 +422,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_file_eof(obelisk_rt_context *context,
     return OBELISK_RT_INVALID_ARGUMENT;
   return guarded(context, [&] {
     FileEntry *entry;
-    std::unique_lock<std::mutex> lock;
+    std::unique_lock<std::recursive_mutex> lock;
     obelisk_rt_status status =
         checkFileArguments(context, descriptor, entry, lock);
     if (status != OBELISK_RT_OK)
@@ -442,7 +442,7 @@ obelisk_rt_v1_file_error(obelisk_rt_context *context, uint32_t descriptor,
   outMessage->size = 0;
   return guarded(context, [&] {
     FileEntry *entry;
-    std::unique_lock<std::mutex> lock;
+    std::unique_lock<std::recursive_mutex> lock;
     obelisk_rt_status status =
         checkFileArguments(context, descriptor, entry, lock);
     if (status != OBELISK_RT_OK)
@@ -467,7 +467,7 @@ obelisk_rt_v1_file_seek(obelisk_rt_context *context, uint32_t descriptor,
     return OBELISK_RT_INVALID_ARGUMENT;
   return guarded(context, [&] {
     FileEntry *entry;
-    std::unique_lock<std::mutex> lock;
+    std::unique_lock<std::recursive_mutex> lock;
     obelisk_rt_status status =
         checkFileArguments(context, descriptor, entry, lock);
     if (status != OBELISK_RT_OK)
@@ -488,7 +488,7 @@ obelisk_rt_v1_file_tell(obelisk_rt_context *context, uint32_t descriptor,
     return OBELISK_RT_INVALID_ARGUMENT;
   return guarded(context, [&] {
     FileEntry *entry;
-    std::unique_lock<std::mutex> lock;
+    std::unique_lock<std::recursive_mutex> lock;
     obelisk_rt_status status =
         checkFileArguments(context, descriptor, entry, lock);
     if (status != OBELISK_RT_OK)

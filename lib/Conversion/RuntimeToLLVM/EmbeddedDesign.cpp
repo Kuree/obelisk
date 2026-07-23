@@ -1,6 +1,7 @@
 //===- EmbeddedDesign.cpp - Materialize embedded simulation design --------===//
 
 #include "obelisk/Conversion/RuntimeToLLVM.h"
+#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -30,7 +31,8 @@ constexpr StringLiteral kBytecodeName = "__obelisk_bytecode_image_v1";
 constexpr StringLiteral kDatabaseName = "__obelisk_design_database_v1";
 constexpr StringLiteral kDPIScopesName = "__obelisk_dpi_scopes_v1";
 constexpr StringLiteral kActivationsName = "__obelisk_activations_v1";
-constexpr uint32_t kRuntimeABIGeneration = 2;
+constexpr StringLiteral kObserversName = "__obelisk_observers_v1";
+constexpr uint32_t kRuntimeABIGeneration = 3;
 constexpr uint32_t kActivationHasNative = UINT32_C(1) << 0;
 constexpr uint32_t kActivationHasBytecode = UINT32_C(1) << 1;
 constexpr uint32_t kActivationNoBytecode = UINT32_MAX;
@@ -190,7 +192,8 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
   };
   SmallVector<ActivationInfo> activations;
   module.walk([&](sim::SimFuncOp function) {
-    if (function.getEntryKind() == sim::EntryKind::Function)
+    if (function.getEntryKind() == sim::EntryKind::Function ||
+        function.getEntryKind() == sim::EntryKind::Observer)
       return;
     std::optional<int64_t> codeUnitID = function.getCodeUnitId();
     if (!codeUnitID || *codeUnitID <= 0)
@@ -213,6 +216,99 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
       return module.emitError()
              << "duplicate activation code-unit ID "
              << activations[index].codeUnitID;
+
+  struct ObserverInfo {
+    uint64_t codeUnitID;
+    std::string symbol;
+    std::optional<uint32_t> bytecodeFunction;
+    uint32_t resultWidth;
+    bool fourState;
+    SmallVector<std::pair<uint32_t, uint32_t>> captures;
+    std::string capturesSymbol;
+  };
+  SmallVector<ObserverInfo> observers;
+  bool invalidObserver = false;
+  module.walk([&](sim::SimFuncOp function) {
+    if (function.getEntryKind() != sim::EntryKind::Observer)
+      return;
+    std::optional<int64_t> codeUnitID = function.getCodeUnitId();
+    if (!codeUnitID || *codeUnitID <= 0 ||
+        function.getFunctionType().getNumResults() != 1)
+      return;
+    std::optional<unsigned> width =
+        sim::getPackedWidth(function.getFunctionType().getResult(0));
+    if (!width)
+      return;
+    ObserverInfo info{
+        static_cast<uint64_t>(*codeUnitID),
+        function.getSymName().str(),
+        std::nullopt,
+        *width,
+        isa<sim::LogicType>(function.getFunctionType().getResult(0)),
+        {},
+        {}};
+    if (auto bytecodeFunction =
+            function->getAttrOfType<IntegerAttr>(kFunctionAttr))
+      info.bytecodeFunction = static_cast<uint32_t>(
+          bytecodeFunction.getValue().getZExtValue());
+    for (unsigned index = 1; index < function.getNumArguments(); ++index) {
+      Type type = function.getArgumentTypes()[index];
+      uint32_t kind = 0;
+      uint32_t captureWidth = 0;
+      if (isa<sim::RefType>(type))
+        kind = 1, captureWidth = sim::getPackedWidth(
+                                      cast<sim::RefType>(type).getElementType())
+                                      .value_or(0);
+      else if (isa<sim::NetType>(type))
+        kind = 2, captureWidth = sim::getPackedWidth(
+                                      cast<sim::NetType>(type).getElementType())
+                                      .value_or(0);
+      else if (isa<sim::EventType>(type))
+        kind = 3, captureWidth = 1;
+      else if (isa<sim::DriverType>(type))
+        kind = 4, captureWidth = sim::getPackedWidth(
+                                      cast<sim::DriverType>(type).getElementType())
+                                      .value_or(0);
+      if (kind == 0 || captureWidth == 0) {
+        function.emitError()
+            << "observer capture #" << index - 1
+            << " is not represented by the stable-handle ABI";
+        invalidObserver = true;
+        continue;
+      }
+      info.captures.push_back({kind, captureWidth});
+    }
+    info.capturesSymbol =
+        (Twine("__obelisk_observer_capture_") + Twine(info.codeUnitID)).str();
+    if (!invalidObserver)
+      observers.push_back(std::move(info));
+  });
+  if (invalidObserver)
+    return failure();
+  llvm::sort(observers, [](const ObserverInfo &lhs,
+                           const ObserverInfo &rhs) {
+    return lhs.codeUnitID < rhs.codeUnitID;
+  });
+  for (size_t index = 1; index < observers.size(); ++index)
+    if (observers[index - 1].codeUnitID == observers[index].codeUnitID)
+      return module.emitError()
+             << "duplicate observer code-unit ID "
+             << observers[index].codeUnitID;
+
+  // The immutable descriptor global is materialized before observer bodies are
+  // lowered.  Give every uniform native evaluator thunk an LLVM declaration
+  // now so address-of verification never depends on a later pass phase.
+  for (const ObserverInfo &observer : observers) {
+    std::string thunkName = observer.symbol + ".__obelisk_observer";
+    if (module.lookupSymbol<LLVM::LLVMFuncOp>(thunkName))
+      continue;
+    OpBuilder builder(context);
+    builder.setInsertionPointToStart(module.getBody());
+    LLVM::LLVMFuncOp::create(
+        builder, module.getLoc(), thunkName,
+        LLVM::LLVMFunctionType::get(
+            i32, {pointer, pointer, i32, pointer, pointer, i32}, false));
+  }
 
   Type activationType =
       LLVM::LLVMStructType::getLiteral(context, {i64, pointer, i32, i32});
@@ -252,6 +348,98 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
             record = insertValue(
                 builder, module.getLoc(), record,
                 integerConstant(builder, module.getLoc(), i32, flags), 3);
+            records = LLVM::InsertValueOp::create(
+                builder, module.getLoc(), records, record,
+                ArrayRef<int64_t>{static_cast<int64_t>(index)});
+          }
+          return records;
+        });
+  }
+
+  Type observerCaptureType =
+      LLVM::LLVMStructType::getLiteral(context, {i32, i32});
+  for (const ObserverInfo &observer : observers) {
+    if (observer.captures.empty())
+      continue;
+    Type capturesType = LLVM::LLVMArrayType::get(
+        observerCaptureType, observer.captures.size());
+    makeAggregateGlobal(
+        module, capturesType, observer.capturesSymbol,
+        LLVM::Linkage::Internal, ".obelisk.execution",
+        [&](OpBuilder &builder) {
+          Value values =
+              LLVM::ZeroOp::create(builder, module.getLoc(), capturesType);
+          for (auto [index, capture] :
+               llvm::enumerate(observer.captures)) {
+            Value value = LLVM::ZeroOp::create(
+                builder, module.getLoc(), observerCaptureType);
+            value = insertValue(
+                builder, module.getLoc(), value,
+                integerConstant(builder, module.getLoc(), i32, capture.first),
+                0);
+            value = insertValue(
+                builder, module.getLoc(), value,
+                integerConstant(builder, module.getLoc(), i32, capture.second),
+                1);
+            values = LLVM::InsertValueOp::create(
+                builder, module.getLoc(), values, value,
+                ArrayRef<int64_t>{static_cast<int64_t>(index)});
+          }
+          return values;
+        });
+  }
+  Type observerType = LLVM::LLVMStructType::getLiteral(
+      context, {i64, pointer, i32, i32, i32, i32, pointer, i64});
+  if (!observers.empty()) {
+    Type observersType =
+        LLVM::LLVMArrayType::get(observerType, observers.size());
+    makeAggregateGlobal(
+        module, observersType, kObserversName, LLVM::Linkage::Internal,
+        ".obelisk.execution", [&](OpBuilder &builder) {
+          Value records =
+              LLVM::ZeroOp::create(builder, module.getLoc(), observersType);
+          for (auto [index, observer] : llvm::enumerate(observers)) {
+            Value record =
+                LLVM::ZeroOp::create(builder, module.getLoc(), observerType);
+            record = insertValue(
+                builder, module.getLoc(), record,
+                integerConstant(builder, module.getLoc(), i64,
+                                observer.codeUnitID),
+                0);
+            if (!observer.captures.empty())
+              record = insertValue(
+                  builder, module.getLoc(), record,
+                  LLVM::AddressOfOp::create(
+                      builder, module.getLoc(), pointer,
+                      observer.capturesSymbol),
+                  1);
+            record = insertValue(
+                builder, module.getLoc(), record,
+                integerConstant(builder, module.getLoc(), i32,
+                                observer.captures.size()),
+                2);
+            record = insertValue(
+                builder, module.getLoc(), record,
+                integerConstant(builder, module.getLoc(), i32,
+                                observer.resultWidth),
+                3);
+            record = insertValue(
+                builder, module.getLoc(), record,
+                integerConstant(builder, module.getLoc(), i32,
+                                observer.fourState ? 1 : 0),
+                4);
+            record = insertValue(
+                builder, module.getLoc(), record,
+                integerConstant(
+                    builder, module.getLoc(), i32,
+                    observer.bytecodeFunction.value_or(UINT32_MAX)),
+                5);
+            record = insertValue(
+                builder, module.getLoc(), record,
+                LLVM::AddressOfOp::create(
+                    builder, module.getLoc(), pointer,
+                    observer.symbol + ".__obelisk_observer"),
+                6);
             records = LLVM::InsertValueOp::create(
                 builder, module.getLoc(), records, record,
                 ArrayRef<int64_t>{static_cast<int64_t>(index)});
@@ -383,7 +571,7 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
   }
   auto executionType = LLVM::LLVMStructType::getLiteral(
       context, {i32, i32, i32, i32, pointer, i64, pointer, i64, i64, i64,
-                pointer, i64, i32, i32, pointer, i64});
+                pointer, i64, i32, i32, pointer, i64, pointer, i64});
   uint32_t flags = 0;
   uint64_t stateBits = 0;
   if (auto attr = module->getAttrOfType<IntegerAttr>(kFlagsAttr))
@@ -398,7 +586,7 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
         Value value = LLVM::ZeroOp::create(builder, module.getLoc(),
                                            executionType);
         value = insertValue(builder, module.getLoc(), value,
-                            integerConstant(builder, module.getLoc(), i32, 1),
+                            integerConstant(builder, module.getLoc(), i32, 2),
                             0);
         value = insertValue(builder, module.getLoc(), value,
                             integerConstant(builder, module.getLoc(), i32,
@@ -462,6 +650,18 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
               integerConstant(builder, module.getLoc(), i64,
                               activations.size()),
               15);
+        }
+        if (!observers.empty()) {
+          value = insertValue(
+              builder, module.getLoc(), value,
+              LLVM::AddressOfOp::create(builder, module.getLoc(), pointer,
+                                        kObserversName),
+              16);
+          value = insertValue(
+              builder, module.getLoc(), value,
+              integerConstant(builder, module.getLoc(), i64,
+                              observers.size()),
+              17);
         }
         return value;
       });

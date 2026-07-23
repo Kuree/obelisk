@@ -112,6 +112,6 @@ endmodule
 // OBELISK-DAG: obelisk.sv.port.connection attributes {{.*}}formal_path = "port_connections_inventory.multiport.left"
 
 // A complete elaborated design, rather than a hand-authored Simulation
-// fixture, serializes through design bytecode version 4.
-// BYTECODE: obelisk.bytecode.image = array<i8: 79, 66, 66, 67, 68, 83, 49, 0, 4, 0, 0, 0
+// fixture, serializes through design bytecode version 5.
+// BYTECODE: obelisk.bytecode.image = array<i8: 79, 66, 66, 67, 68, 83, 49, 0, 5, 0, 0, 0, 3, 0, 0, 0
 // BYTECODE: obelisk.execution.state_bits = {{[1-9][0-9]*}} : i64

@@ -1,4 +1,4 @@
-// RUN: not obelisk -emit-sim %s 2>&1 | FileCheck %s
+// RUN: obelisk -emit-sim %s | FileCheck %s
 
 module unsupported_computed_event;
   logic lhs;
@@ -9,5 +9,8 @@ module unsupported_computed_event;
     result <= 1'b1;
 endmodule
 
-// CHECK: unsupported semantic node in the first simulation slice
-// CHECK-SAME: computed edge expression
+// CHECK: obelisk_sim.observer.bind
+// CHECK: obelisk_sim.suspend.observe
+// CHECK-SAME: conditions 0 edges [1] indices [-1]
+// CHECK: obelisk_sim.func private @observer_
+// CHECK: obelisk_sim.logic.binary and

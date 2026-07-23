@@ -767,7 +767,7 @@ obelisk_rt_v1_display(obelisk_rt_context *context, uint32_t descriptor,
     }
     if (appendNewline)
       output.push_back('\n');
-    std::lock_guard<std::mutex> lock(context->mutex);
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
     return writeUnlocked(context, descriptor, output.data(), output.size(),
                          nullptr);
   });

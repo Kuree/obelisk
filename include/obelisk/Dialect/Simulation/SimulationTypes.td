@@ -149,4 +149,12 @@ def SimControlType : SimType<"Control"> {
   let summary = "opaque dynamic named-control activation token";
 }
 
+def SimObserverType : SimType<"Observer"> {
+  let mnemonic = "observer";
+  let summary = "bound zero-time computed timing evaluator";
+  let parameters = (ins "::mlir::Type":$resultType);
+  let assemblyFormat = "`<` $resultType `>`";
+  let genVerifyDecl = 1;
+}
+
 #endif // OBELISK_DIALECT_SIMULATION_SIMULATIONTYPES_TD

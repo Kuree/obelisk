@@ -11,8 +11,70 @@ module {
     obelisk_sim.code_unit.decl 9000007 in 0 initial hierarchy "test.threading.constants.9000007"
     obelisk_sim.code_unit.decl 9000008 in 0 initial hierarchy "test.threading.merge.9000008"
     obelisk_sim.code_unit.decl 9000009 in 0 initial hierarchy "test.threading.duplicate_edges.9000009"
+    obelisk_sim.code_unit.decl 9000010 in 0 observer hierarchy "test.threading.observer.9000010"
+    obelisk_sim.code_unit.decl 9000011 in 0 initial hierarchy "test.threading.observer_lifetime.9000011"
+    obelisk_sim.code_unit.decl 9000012 in 0 initial hierarchy "test.threading.observer_nondominating_capture.9000012"
     obelisk_sim.scope.decl 0
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<8> design
+
+    obelisk_sim.func private @observer(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %ref: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 2 : i32}) -> i1 attributes {entry_kind = 14 : i32, code_unit_id = 9000010 : i64} {
+      %value = obelisk_sim.ref.load %ref : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
+      %truth = obelisk_sim.logic.is_true %value : !obelisk_sim.logic<1>
+      obelisk_sim.return %truth : i1
+    }
+
+    // Automatic observer captures stay private to the suspended edge. A
+    // bridge consumes the retained capture before entering a continuation
+    // that is also reachable without suspending.
+    // CHECK-LABEL: obelisk_sim.func @observer_lifetime
+    // CHECK: %[[LOCAL:.*]] = obelisk_sim.ref.alloc
+    // CHECK: %[[BOUND:.*]] = obelisk_sim.observer.bind @observer
+    // CHECK: cf.cond_br %{{.*}}, ^[[RESUME:.*]], ^[[WAIT:.*]]
+    // CHECK: ^[[WAIT]]:
+    // CHECK: obelisk_sim.suspend.observe %[[BOUND]], %{{.*}}, %[[LOCAL]] conditions 0 edges [0] indices [-1] to ^[[BRIDGE:bb[0-9]+]]
+    // CHECK: ^[[BRIDGE]](%{{.*}}: !obelisk_sim.ref<!obelisk_sim.logic<1>>):
+    // CHECK-NEXT: cf.br ^[[RESUME]]
+    // CHECK: ^[[RESUME]]:
+    obelisk_sim.func @observer_lifetime(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000011 : i64} {
+      %initial = obelisk_sim.logic.constant false, false : !obelisk_sim.logic<1>
+      %local = obelisk_sim.ref.alloc %initial : !obelisk_sim.logic<1> -> !obelisk_sim.ref<!obelisk_sim.logic<1>>
+      %bound = obelisk_sim.observer.bind @observer values(%local, %local : !obelisk_sim.ref<!obelisk_sim.logic<1>>, !obelisk_sim.ref<!obelisk_sim.logic<1>>) captures 1 : !obelisk_sim.observer<i1>
+      %false = arith.constant false
+      cf.cond_br %false, ^resume, ^wait
+    ^wait:
+      obelisk_sim.suspend.observe %bound, %false conditions 0 edges [0] indices [-1] to ^resume : !obelisk_sim.observer<i1>, i1
+    ^resume:
+      obelisk_sim.return
+    }
+
+    // A capture defined only on the suspended predecessor must never be added
+    // to another predecessor of the shared continuation. This is the
+    // non-dominating SSA shape that motivated the private bridge.
+    // CHECK-LABEL: obelisk_sim.func @observer_nondominating_capture
+    // CHECK: cf.cond_br %{{.*}}, ^[[WAIT:.*]], ^[[DIRECT:.*]]
+    // CHECK: ^[[WAIT]]:
+    // CHECK: %[[LOCAL:.*]] = obelisk_sim.ref.alloc
+    // CHECK: %[[BOUND:.*]] = obelisk_sim.observer.bind @observer
+    // CHECK: obelisk_sim.suspend.observe %[[BOUND]], %{{.*}}, %[[LOCAL]] conditions 0 edges [0] indices [-1] to ^[[BRIDGE:bb[0-9]+]]
+    // CHECK: ^[[DIRECT]]:
+    // CHECK-NEXT: cf.br ^[[RESUME:.*]]
+    // CHECK: ^[[BRIDGE]](%{{.*}}: !obelisk_sim.ref<!obelisk_sim.logic<1>>):
+    // CHECK-NEXT: cf.br ^[[RESUME]]
+    // CHECK: ^[[RESUME]]:
+    obelisk_sim.func @observer_nondominating_capture(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000012 : i64} {
+      %condition = arith.constant true
+      cf.cond_br %condition, ^wait, ^direct
+    ^wait:
+      %initial = obelisk_sim.logic.constant false, false : !obelisk_sim.logic<1>
+      %local = obelisk_sim.ref.alloc %initial : !obelisk_sim.logic<1> -> !obelisk_sim.ref<!obelisk_sim.logic<1>>
+      %bound = obelisk_sim.observer.bind @observer values(%local, %local : !obelisk_sim.ref<!obelisk_sim.logic<1>>, !obelisk_sim.ref<!obelisk_sim.logic<1>>) captures 1 : !obelisk_sim.observer<i1>
+      %false = arith.constant false
+      obelisk_sim.suspend.observe %bound, %false conditions 0 edges [0] indices [-1] to ^resume : !obelisk_sim.observer<i1>, i1
+    ^direct:
+      cf.br ^resume
+    ^resume:
+      obelisk_sim.return
+    }
 
     obelisk_sim.func @child(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       obelisk_sim.return

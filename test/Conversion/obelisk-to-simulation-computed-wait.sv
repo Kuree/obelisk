@@ -1,4 +1,4 @@
-// RUN: not obelisk -emit-sim %s 2>&1 | FileCheck %s
+// RUN: obelisk -emit-sim %s | FileCheck %s
 
 module simulation_computed_wait;
   logic left;
@@ -8,6 +8,11 @@ module simulation_computed_wait;
       left = 0;
 endmodule
 
-// CHECK: unsupported semantic node in the first simulation slice:
-// CHECK-SAME: obelisk.sv.statement.wait
-// CHECK-SAME: computed wait condition requires an observer
+// CHECK: obelisk_sim.code_unit.decl {{[0-9]+}} in 1 observer
+// CHECK: obelisk_sim.observer.bind @observer_{{[0-9]+}}_{{[0-9]+}}
+// CHECK-SAME: captures 2 : <i1>
+// CHECK: obelisk_sim.suspend.observe
+// CHECK-SAME: conditions 0 edges [0] indices [-1]
+// CHECK: obelisk_sim.func private @observer_
+// CHECK-SAME: -> i1
+// CHECK-SAME: entry_kind = 14

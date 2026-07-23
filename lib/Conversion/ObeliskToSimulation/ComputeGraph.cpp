@@ -13,11 +13,13 @@
 #include "obelisk/Analysis/StateDomainAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -270,6 +272,7 @@ struct FunctionInfo {
   SmallVector<ComputeEffect> summary;
   SmallVector<sim::SimCallOp> calls;
   SmallVector<sim::SimTaskCallOp> taskCalls;
+  SmallVector<sim::SimObserverBindOp> observerBindings;
   /// Functions this one starts as an independent process, directly or through
   /// a zero-time call. Indices into `ProgramAnalysis::functions`.
   SmallVector<unsigned> spawns;
@@ -355,6 +358,29 @@ SmallVector<ComputeEffect> collectDirectEffects(const FunctionInfo &info,
             appendEffect(info, sim::ComputeEffectKind::Watch, watched, effects,
                          getTriggerKind(static_cast<sim::EdgeKind>(edge)));
         })
+        .Case<sim::SimSuspendObserveOp>([&](auto op) {
+          for (Value observerValue : op.getPrimaries()) {
+            auto binding =
+                observerValue.getDefiningOp<sim::SimObserverBindOp>();
+            if (!binding)
+              continue;
+            for (Value dependency : binding.getDependencies())
+              appendEffect(info, sim::ComputeEffectKind::Watch, dependency,
+                           effects,
+                           isa<sim::EventType>(dependency.getType())
+                               ? sim::ComputeTriggerKind::Event
+                               : sim::ComputeTriggerKind::Change);
+          }
+          for (Value observerValue : op.getConditions()) {
+            auto binding =
+                observerValue.getDefiningOp<sim::SimObserverBindOp>();
+            if (!binding)
+              continue;
+            for (Value dependency : binding.getDependencies())
+              appendEffect(info, sim::ComputeEffectKind::Read, dependency,
+                           effects);
+          }
+        })
         .Case<sim::SimSuspendEventOp>([&](auto op) {
           appendEffect(info, sim::ComputeEffectKind::Watch, op.getEvent(),
                        effects, sim::ComputeTriggerKind::Event);
@@ -399,6 +425,34 @@ ComputeEffect substituteEffect(const ComputeEffect &effect, sim::SimCallOp call,
             effect.deferred};
   auto actual = caller.provenance.find(call.getOperand(index));
   if (actual == caller.provenance.end())
+    return {effect.kind, DescriptorProvenance{}, effect.trigger,
+            effect.deferred};
+  DescriptorProvenance target =
+      effect.target.dynamic || actual->second.dynamic
+          ? widenDynamic(actual->second)
+          : narrowProvenance(actual->second, effect.target.low,
+                             effect.target.width);
+  return {effect.kind, target, effect.trigger, effect.deferred};
+}
+
+/// Rewrite an observer evaluator effect into the waiting process's address
+/// space. Observer formal zero is the implicit context; serialized captures
+/// begin at formal one.
+ComputeEffect substituteObserverEffect(const ComputeEffect &effect,
+                                       sim::SimObserverBindOp binding,
+                                       const FunctionInfo &waiter) {
+  if (!effect.target.formal)
+    return effect;
+  if (effect.kind == sim::ComputeEffectKind::NBA ||
+      (effect.kind == sim::ComputeEffectKind::Trigger && effect.deferred))
+    return {effect.kind, DescriptorProvenance{}, effect.trigger,
+            effect.deferred};
+  unsigned formal = *effect.target.formal;
+  if (formal == 0 || formal - 1 >= binding.getCaptures().size())
+    return {effect.kind, DescriptorProvenance{}, effect.trigger,
+            effect.deferred};
+  auto actual = waiter.provenance.find(binding.getCaptures()[formal - 1]);
+  if (actual == waiter.provenance.end())
     return {effect.kind, DescriptorProvenance{}, effect.trigger,
             effect.deferred};
   DescriptorProvenance target =
@@ -488,6 +542,19 @@ ProgramAnalysis analyzeProgram(sim::SimDesignOp design) {
     function.walk([&](sim::SimCallOp call) { info.calls.push_back(call); });
     function.walk(
         [&](sim::SimTaskCallOp call) { info.taskCalls.push_back(call); });
+    function.walk([&](sim::SimSuspendObserveOp observe) {
+      llvm::SetVector<Operation *> bindings;
+      for (Value observer : observe.getPrimaries())
+        if (auto binding =
+                observer.getDefiningOp<sim::SimObserverBindOp>())
+          bindings.insert(binding);
+      for (Value observer : observe.getConditions())
+        if (auto binding =
+                observer.getDefiningOp<sim::SimObserverBindOp>())
+          bindings.insert(binding);
+      for (Operation *binding : bindings)
+        info.observerBindings.push_back(cast<sim::SimObserverBindOp>(binding));
+    });
   }
 
   SmallVector<SmallVector<unsigned>> callsFrom(analysis.functions.size());
@@ -548,6 +615,20 @@ ProgramAnalysis analyzeProgram(sim::SimDesignOp design) {
         llvm::append_range(nextSpawns,
                            analysis.functions[callee->second].spawns);
       }
+      for (sim::SimObserverBindOp binding : info.observerBindings) {
+        auto evaluator = analysis.functionIndex.find(binding.getEvaluator());
+        if (evaluator == analysis.functionIndex.end()) {
+          nextEffects.push_back({sim::ComputeEffectKind::Read});
+          nextEffects.push_back({sim::ComputeEffectKind::Write});
+          continue;
+        }
+        for (const ComputeEffect &effect :
+             analysis.functions[evaluator->second].summary)
+          nextEffects.push_back(
+              substituteObserverEffect(effect, binding, info));
+        llvm::append_range(nextSpawns,
+                           analysis.functions[evaluator->second].spawns);
+      }
       analysis.expandConnectivity(nextEffects);
       normalizeEffects(nextEffects);
       llvm::sort(nextSpawns);
@@ -582,6 +663,30 @@ collectFragmentEffects(const ProgramAnalysis &analysis,
     for (const ComputeEffect &effect :
          analysis.functions[callee->second].summary)
       effects.push_back(substituteEffect(effect, call, info));
+  }
+  for (sim::SimSuspendObserveOp observe :
+       block.getOps<sim::SimSuspendObserveOp>()) {
+    llvm::SetVector<Operation *> bindings;
+    for (Value observer : observe.getPrimaries())
+      if (auto binding =
+              observer.getDefiningOp<sim::SimObserverBindOp>())
+        bindings.insert(binding);
+    for (Value observer : observe.getConditions())
+      if (auto binding =
+              observer.getDefiningOp<sim::SimObserverBindOp>())
+        bindings.insert(binding);
+    for (Operation *operation : bindings) {
+      auto binding = cast<sim::SimObserverBindOp>(operation);
+      auto evaluator = analysis.functionIndex.find(binding.getEvaluator());
+      if (evaluator == analysis.functionIndex.end()) {
+        effects.push_back({sim::ComputeEffectKind::Read});
+        effects.push_back({sim::ComputeEffectKind::Write});
+        continue;
+      }
+      for (const ComputeEffect &effect :
+           analysis.functions[evaluator->second].summary)
+        effects.push_back(substituteObserverEffect(effect, binding, info));
+    }
   }
   analysis.expandConnectivity(effects);
   normalizeEffects(effects);
@@ -917,6 +1022,22 @@ private:
       nbaFrontierSites, eventSites;
 };
 
+bool isObserverCaptureBridge(Block *block) {
+  if (!block || block->getOperations().size() != 1)
+    return false;
+  Operation *terminator = block->getTerminator();
+  return isa<cf::BranchOp>(terminator) &&
+         terminator->hasAttr("obelisk_sim.observer_capture_bridge") &&
+         terminator->getNumSuccessors() == 1;
+}
+
+Block *skipObserverCaptureBridges(Block *block) {
+  llvm::SmallPtrSet<Block *, 4> visited;
+  while (isObserverCaptureBridge(block) && visited.insert(block).second)
+    block = block->getTerminator()->getSuccessor(0);
+  return block;
+}
+
 std::optional<uint32_t>
 ComputeGraphBuilder::findCommit(ArrayRef<DescriptorProvenance> roots,
                                 const DescriptorProvenance &root) const {
@@ -936,10 +1057,13 @@ LogicalResult ComputeGraphBuilder::buildFragments() {
   for (const FunctionInfo &info : analysis.functions) {
     // Zero-time functions execute in their caller and contribute a substituted
     // summary there; they are not independently schedulable actors.
-    if (info.getFunction().getEntryKind() == sim::EntryKind::Function)
+    if (info.getFunction().getEntryKind() == sim::EntryKind::Function ||
+        info.getFunction().getEntryKind() == sim::EntryKind::Observer)
       continue;
     uint32_t ordinal = 0;
     for (Block &block : info.getFunction().getBody()) {
+      if (isObserverCaptureBridge(&block))
+        continue;
       if (nextId > maxNodeId)
         return design.emitOpError(
             "compute graph exceeds the 32-bit fragment ABI");
@@ -998,6 +1122,9 @@ LogicalResult ComputeGraphBuilder::buildFragments() {
 }
 
 void ComputeGraphBuilder::buildControlEdges() {
+  auto fragmentID = [&](Block *block) {
+    return fragmentForBlock.lookup(skipObserverCaptureBridges(block));
+  };
   for (Fragment &fragment : fragments) {
     Operation *terminator = fragment.block->getTerminator();
     if (auto taskCall = dyn_cast<sim::SimTaskCallOp>(terminator)) {
@@ -1006,13 +1133,12 @@ void ComputeGraphBuilder::buildControlEdges() {
         sim::SimFuncOp target = analysis.functions[callee->second].function;
         if (!target.getBody().empty()) {
           addEdge(fragment.id,
-                  fragmentForBlock.lookup(&target.getBody().front()),
+                  fragmentID(&target.getBody().front()),
                   sim::ComputeEdgeKind::ProcessOrder);
-          uint32_t continuation =
-              fragmentForBlock.lookup(taskCall.getContinuation());
+          uint32_t continuation = fragmentID(taskCall.getContinuation());
           for (Block &block : target.getBody())
             if (isa<sim::SimReturnOp>(block.getTerminator()))
-              addEdge(fragmentForBlock.lookup(&block), continuation,
+              addEdge(fragmentID(&block), continuation,
                       sim::ComputeEdgeKind::ProcessOrder);
         }
       }
@@ -1022,7 +1148,7 @@ void ComputeGraphBuilder::buildControlEdges() {
               ? sim::ComputeEdgeKind::Resume
               : sim::ComputeEdgeKind::ProcessOrder;
       for (Block *successor : terminator->getSuccessors())
-        addEdge(fragment.id, fragmentForBlock.lookup(successor), controlKind);
+        addEdge(fragment.id, fragmentID(successor), controlKind);
     }
 
     // A spawn reached through a zero-time call still creates an actor, so the
@@ -1139,7 +1265,8 @@ LogicalResult ComputeGraphBuilder::buildSites(ComputeGraphResult &result) {
     auto walkResult =
         info.getFunction().walk([&](Operation *operation) -> WalkResult {
           if (isSuspensionTerminator(operation)) {
-            Block *continuation = operation->getSuccessor(0);
+            Block *continuation =
+                skipObserverCaptureBridges(operation->getSuccessor(0));
             auto found = fragmentForBlock.find(continuation);
             if (found == fragmentForBlock.end())
               return operation->emitOpError(

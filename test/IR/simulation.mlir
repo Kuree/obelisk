@@ -8,6 +8,7 @@ module {
     obelisk_sim.code_unit.decl 11 in 0 function hierarchy "top.callee" debug "callee"
     obelisk_sim.code_unit.decl 12 in 1 initial hierarchy "top.child.initial"
     obelisk_sim.code_unit.decl 13 in 1 initial hierarchy "top.child.process"
+    obelisk_sim.code_unit.decl 14 in 1 observer hierarchy "top.child.observer"
     obelisk_sim.storage.decl 0 in 1 : !obelisk_sim.logic<8> design hierarchy "top.child.state"
     obelisk_sim.net.decl 0 in 1 : !obelisk_sim.logic<8> design hierarchy "top.child.wire"
     obelisk_sim.driver.decl 0 in 1 drives 0 : !obelisk_sim.logic<8> design
@@ -26,6 +27,11 @@ module {
 
     obelisk_sim.func @child(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {code_unit_id = 12 : i64, entry_kind = 1 : i32} {
       obelisk_sim.return
+    }
+
+    obelisk_sim.func private @observer(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %ref: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}) -> !obelisk_sim.logic<8> attributes {code_unit_id = 14 : i64, entry_kind = 14 : i32} {
+      %value = obelisk_sim.ref.load %ref : !obelisk_sim.ref<!obelisk_sim.logic<8>> -> !obelisk_sim.logic<8>
+      obelisk_sim.return %value : !obelisk_sim.logic<8>
     }
 
     obelisk_sim.func @process(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %ref: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}, %net: !obelisk_sim.net<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 4 : i32, obelisk_sim.descriptor_id = 0 : i64}, %driver: !obelisk_sim.driver<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 0 : i64}) attributes {code_unit_id = 13 : i64, entry_kind = 1 : i32} {
@@ -73,6 +79,7 @@ module {
       obelisk_sim.event.trigger %event after %time nonblocking = true
       %event_triggered = obelisk_sim.event.triggered %event
       %event_equal = obelisk_sim.event.equal %event, %event
+      %observer = obelisk_sim.observer.bind @observer values(%ref, %ref : !obelisk_sim.ref<!obelisk_sim.logic<8>>, !obelisk_sim.ref<!obelisk_sim.logic<8>>) captures 1 : !obelisk_sim.observer<!obelisk_sim.logic<8>>
       %spawned = obelisk_sim.spawn @child(%ctx) : !obelisk_sim.context -> !obelisk_sim.process
       %called = obelisk_sim.call @callee(%ctx, %loaded) : (!obelisk_sim.context, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<8>
       obelisk_sim.suspend.delay %time to ^bb1(%called : !obelisk_sim.logic<8>)
@@ -87,7 +94,9 @@ module {
     ^bb3(%live3: !obelisk_sim.logic<8>):
       obelisk_sim.suspend.any %ref, %net, %live3 edges [0, 1] to ^bb_any : !obelisk_sim.ref<!obelisk_sim.logic<8>>, !obelisk_sim.net<!obelisk_sim.logic<8>>, !obelisk_sim.logic<8>
     ^bb_any(%live_any: !obelisk_sim.logic<8>):
-      obelisk_sim.suspend.event %event to ^bb4(%live_any : !obelisk_sim.logic<8>)
+      obelisk_sim.suspend.observe %observer, %live_any, %live_any conditions 0 edges [0] indices [-1] to ^bb_observe : !obelisk_sim.observer<!obelisk_sim.logic<8>>, !obelisk_sim.logic<8>, !obelisk_sim.logic<8>
+    ^bb_observe(%live_observe: !obelisk_sim.logic<8>):
+      obelisk_sim.suspend.event %event to ^bb4(%live_observe : !obelisk_sim.logic<8>)
     ^bb4(%live4: !obelisk_sim.logic<8>):
       obelisk_sim.suspend.await %spawned to ^bb5(%live4 : !obelisk_sim.logic<8>)
     ^bb5(%live5: !obelisk_sim.logic<8>):
@@ -124,12 +133,14 @@ module {
 // CHECK: obelisk_sim.event.trigger {{.*}} after
 // CHECK: obelisk_sim.event.triggered
 // CHECK: obelisk_sim.event.equal
+// CHECK: obelisk_sim.observer.bind
 // CHECK: obelisk_sim.suspend.delay
 // CHECK: obelisk_sim.suspend.change
 // CHECK: obelisk_sim.suspend.edge posedge
 // CHECK: obelisk_sim.suspend.edge_iff posedge
 // CHECK: obelisk_sim.suspend.level
 // CHECK: obelisk_sim.suspend.any
+// CHECK: obelisk_sim.suspend.observe
 // CHECK: obelisk_sim.suspend.event
 // CHECK: obelisk_sim.suspend.await
 // CHECK: obelisk_sim.suspend.join any

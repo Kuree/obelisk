@@ -5,6 +5,7 @@
 
 #include "gtest/gtest.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -130,6 +131,268 @@ bytecodeDescriptor(const std::vector<uint8_t> &code, uint32_t registers) {
   return descriptor;
 }
 
+enum class ObserverEvaluatorMode : uint32_t {
+  ConstantZero,
+  ConstantOne,
+  Fail,
+  ReadFromJoinedThread,
+  DestroyContext,
+  RecurseOnceAndLatch,
+  Recurse
+};
+
+std::atomic<ObserverEvaluatorMode> observerEvaluatorMode{
+    ObserverEvaluatorMode::ConstantZero};
+std::atomic<uint32_t> observerEvaluatorCalls{0};
+std::atomic<bool> observerJoinedReadCompleted{false};
+
+obelisk_rt_status observerEvaluator(
+    obelisk_rt_context *context, const uint64_t *, uint32_t, uint64_t *value,
+    uint64_t *unknown, uint32_t limbCount) {
+  if (!value || !unknown || limbCount == 0)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  std::fill(value, value + limbCount, 0);
+  std::fill(unknown, unknown + limbCount, 0);
+  uint32_t call = observerEvaluatorCalls.fetch_add(1) + 1;
+  switch (observerEvaluatorMode.load()) {
+  case ObserverEvaluatorMode::ConstantZero:
+    break;
+  case ObserverEvaluatorMode::ConstantOne:
+    value[0] = 1;
+    break;
+  case ObserverEvaluatorMode::Fail:
+    return OBELISK_RT_INVALID_ARGUMENT;
+  case ObserverEvaluatorMode::ReadFromJoinedThread: {
+    std::thread reader([&] {
+      (void)obelisk_rt_v1_scheduler_event_triggered(context, 99);
+      observerJoinedReadCompleted = true;
+    });
+    reader.join();
+    value[0] = 1;
+    break;
+  }
+  case ObserverEvaluatorMode::DestroyContext:
+    value[0] = 1;
+    obelisk_rt_v1_context_destroy(context);
+    break;
+  case ObserverEvaluatorMode::RecurseOnceAndLatch:
+    if (call == 1) {
+      const uint8_t one = 1;
+      const uint8_t zero = 0;
+      obelisk_rt_v1_scheduler_signal_transition(
+          context, obelisk_rt_v1_native_state_static_handle(1), 1, &one,
+          nullptr, &zero, nullptr);
+    }
+    value[0] = 1;
+    break;
+  case ObserverEvaluatorMode::Recurse:
+    if (call < 300) {
+      uint8_t oldValue = static_cast<uint8_t>(call & 1);
+      uint8_t newValue = static_cast<uint8_t>(oldValue ^ 1);
+      obelisk_rt_v1_scheduler_signal_transition(
+          context, obelisk_rt_v1_native_state_static_handle(1), 1, &oldValue,
+          nullptr, &newValue, nullptr);
+    }
+    value[0] = call & 1;
+    break;
+  }
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status observerWaitRequirements(uint64_t *size,
+                                           uint64_t *alignment) {
+  if (!size || !alignment)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *size = 0;
+  *alignment = 1;
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status
+observerWaitExecute(obelisk_rt_process_instance_v1 *instance) {
+  if (!instance || !instance->action)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *instance->action = {OBELISK_RT_FRAGMENT_SUSPEND,
+                       OBELISK_RT_SUSPEND_OBSERVER,
+                       1,
+                       OBELISK_RT_ACTION_FRAME_WAIT_RECORD,
+                       0,
+                       176};
+  return OBELISK_RT_OK;
+}
+
+void observerWaitDestroy(obelisk_rt_process_instance_v1 *) {}
+
+uint32_t observerSecondClauseCalls = 0;
+
+obelisk_rt_status observerSecondEvaluator(
+    obelisk_rt_context *, const uint64_t *, uint32_t, uint64_t *value,
+    uint64_t *unknown, uint32_t limbCount) {
+  if (!value || !unknown || limbCount != 1)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ++observerSecondClauseCalls;
+  value[0] = 1;
+  unknown[0] = 0;
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status
+observerTwoClauseExecute(obelisk_rt_process_instance_v1 *instance) {
+  if (!instance || !instance->action)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *instance->action = {OBELISK_RT_FRAGMENT_SUSPEND,
+                       OBELISK_RT_SUSPEND_OBSERVER,
+                       1,
+                       OBELISK_RT_ACTION_FRAME_WAIT_RECORD,
+                       0,
+                       256};
+  return OBELISK_RT_OK;
+}
+
+uint64_t observerWaitLayoutChecksum(
+    const obelisk_rt_frame_layout_v1 &layout) {
+  uint64_t hash = UINT64_C(14695981039346656037);
+  auto append = [&](const void *data, size_t size) {
+    const auto *bytes = static_cast<const uint8_t *>(data);
+    for (size_t index = 0; index != size; ++index) {
+      hash ^= bytes[index];
+      hash *= UINT64_C(1099511628211);
+    }
+  };
+  append(&layout.version, sizeof(layout.version));
+  append(&layout.flags, sizeof(layout.flags));
+  append(&layout.frame_size, sizeof(layout.frame_size));
+  append(&layout.frame_alignment, sizeof(layout.frame_alignment));
+  append(&layout.field_count, sizeof(layout.field_count));
+  append(&layout.continuation_count, sizeof(layout.continuation_count));
+  for (uint32_t index = 0; index != layout.field_count; ++index)
+    append(&layout.fields[index], sizeof(layout.fields[index]));
+  for (uint32_t index = 0; index != layout.continuation_count; ++index)
+    append(&layout.continuations[index], sizeof(layout.continuations[index]));
+  return hash;
+}
+
+struct ObserverWaitTestDescriptor {
+  obelisk_rt_observer_descriptor_v1 observer{
+      7, nullptr, 0, 1, 0, OBELISK_RT_OBSERVER_NO_BYTECODE,
+      observerEvaluator, 0};
+  obelisk_rt_execution_descriptor_v1 execution{};
+  obelisk_rt_frame_field_v1 field{
+      OBELISK_RT_FRAME_WAIT, OBELISK_RT_FRAME_FIELD_FLAGS_NONE, 0, 176, 8, 0};
+  std::array<uint32_t, 2> continuations{0, 1};
+  obelisk_rt_frame_layout_v1 layout{};
+  obelisk_rt_process_descriptor_v1 process{};
+
+  ObserverWaitTestDescriptor() {
+    execution.version = OBELISK_RT_EXECUTION_DESCRIPTOR_VERSION;
+    execution.abi_generation = OBELISK_RT_ABI_GENERATION;
+    execution.observers = &observer;
+    execution.observer_count = 1;
+    layout = {OBELISK_RT_FRAME_LAYOUT_VERSION,
+              0,
+              176,
+              8,
+              &field,
+              1,
+              static_cast<uint32_t>(continuations.size()),
+              continuations.data(),
+              0};
+    layout.checksum = observerWaitLayoutChecksum(layout);
+    process = {{OBELISK_RT_DESCRIPTOR_PROCESS, 0, 17},
+               OBELISK_RT_ABI_GENERATION,
+               0,
+               OBELISK_RT_TIER_MASK_NATIVE,
+               0,
+               &layout,
+               observerWaitRequirements,
+               observerWaitExecute,
+               observerWaitDestroy,
+               nullptr,
+               &execution,
+               nullptr};
+  }
+
+  static void populate(void *frame) {
+    std::memset(frame, 0, 176);
+    auto *wait = static_cast<obelisk_rt_computed_wait_record_v1 *>(frame);
+    *wait = {OBELISK_RT_COMPUTED_WAIT_RECORD_VERSION,
+             OBELISK_RT_SUSPEND_OBSERVER,
+             OBELISK_RT_COMPUTED_WAIT_INTERLEAVED,
+             1,
+             1,
+             0,
+             1,
+             1,
+             96,
+             128,
+             128,
+             144,
+             160,
+             0,
+             176,
+             0};
+    auto *binding = reinterpret_cast<obelisk_rt_computed_observer_v1 *>(
+        static_cast<uint8_t *>(frame) + wait->observers_offset);
+    *binding = {7, 0, 0, 0, 1, 160, 0};
+    auto *dependency = reinterpret_cast<obelisk_rt_computed_dependency_v1 *>(
+        static_cast<uint8_t *>(frame) + wait->dependencies_offset);
+    *dependency = {obelisk_rt_v1_native_state_static_handle(1),
+                   OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL, 1};
+    auto *clause = reinterpret_cast<obelisk_rt_computed_clause_v1 *>(
+        static_cast<uint8_t *>(frame) + wait->clauses_offset);
+    *clause = {0, OBELISK_RT_OBSERVER_CONDITION_NONE,
+               OBELISK_RT_WAIT_EDGE_CHANGE, 0};
+  }
+};
+
+obelisk_rt_status
+startObserverWait(ObserverWaitTestDescriptor &descriptor,
+                  obelisk_rt_context **outContext) {
+  if (!outContext)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outContext = nullptr;
+  obelisk_rt_context *context = nullptr;
+  obelisk_rt_status status = obelisk_rt_v1_context_create_for_design(
+      &descriptor.execution, &context);
+  if (status != OBELISK_RT_OK)
+    return status;
+  status = obelisk_rt_v1_native_state_register_static(context, 1, 0, 1);
+  if (status != OBELISK_RT_OK) {
+    obelisk_rt_v1_context_destroy(context);
+    return status;
+  }
+  obelisk_rt_process_instance_v1 *instance = nullptr;
+  status = obelisk_rt_v1_process_instance_create(&descriptor.process,
+                                                  &instance);
+  if (status != OBELISK_RT_OK) {
+    obelisk_rt_v1_context_destroy(context);
+    return status;
+  }
+  void *frame = nullptr;
+  uint64_t frameSize = 0;
+  status =
+      obelisk_rt_v1_process_instance_frame(instance, &frame, &frameSize);
+  if (status != OBELISK_RT_OK || frameSize != 176) {
+    (void)obelisk_rt_v1_process_instance_destroy(instance);
+    obelisk_rt_v1_context_destroy(context);
+    return status == OBELISK_RT_OK ? OBELISK_RT_INVALID_FRAME : status;
+  }
+  ObserverWaitTestDescriptor::populate(frame);
+  status = obelisk_rt_v1_scheduler_add(context, instance, 0);
+  if (status != OBELISK_RT_OK) {
+    (void)obelisk_rt_v1_process_instance_destroy(instance);
+    obelisk_rt_v1_context_destroy(context);
+    return status;
+  }
+  status = obelisk_rt_v1_scheduler_run(context);
+  if (status != OBELISK_RT_OK) {
+    obelisk_rt_v1_context_destroy(context);
+    return status;
+  }
+  *outContext = context;
+  return OBELISK_RT_OK;
+}
+
 obelisk_rt_status
 executeBytecode(const obelisk_rt_fragment_descriptor_v1 &input, void *frame,
                 uint64_t frameSize, uint32_t continuation,
@@ -234,9 +497,17 @@ TEST(RuntimeABI, StableScalarLayout) {
   EXPECT_EQ(offsetof(obelisk_rt_activation_descriptor_v1, native_entry), 8u);
   EXPECT_EQ(
       offsetof(obelisk_rt_activation_descriptor_v1, bytecode_function), 16u);
-  EXPECT_EQ(sizeof(obelisk_rt_execution_descriptor_v1), 104u);
+  EXPECT_EQ(sizeof(obelisk_rt_observer_capture_abi_v1), 8u);
+  EXPECT_EQ(sizeof(obelisk_rt_observer_descriptor_v1), 48u);
+  EXPECT_EQ(sizeof(obelisk_rt_execution_descriptor_v1), 120u);
   EXPECT_EQ(offsetof(obelisk_rt_execution_descriptor_v1, activations), 88u);
-  EXPECT_EQ(OBELISK_RT_ABI_GENERATION, 2u);
+  EXPECT_EQ(offsetof(obelisk_rt_execution_descriptor_v1, observers), 104u);
+  EXPECT_EQ(sizeof(obelisk_rt_computed_wait_record_v1), 96u);
+  EXPECT_EQ(sizeof(obelisk_rt_computed_observer_v1), 32u);
+  EXPECT_EQ(sizeof(obelisk_rt_computed_capture_v1), 32u);
+  EXPECT_EQ(sizeof(obelisk_rt_computed_dependency_v1), 16u);
+  EXPECT_EQ(sizeof(obelisk_rt_computed_clause_v1), 16u);
+  EXPECT_EQ(OBELISK_RT_ABI_GENERATION, 3u);
   EXPECT_STREQ(obelisk_rt_v1_status_string(OBELISK_RT_FORMAT_ERROR),
                "format error");
 }
@@ -271,6 +542,300 @@ TEST(RuntimeABI, RejectsMalformedActivationInventory) {
   EXPECT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
             OBELISK_RT_INVALID_DESIGN);
   EXPECT_EQ(context, nullptr);
+}
+
+TEST(RuntimeABI, ValidatesObserverInventoryAndDescriptorVersions) {
+  obelisk_rt_observer_capture_abi_v1 capture{
+      OBELISK_RT_OBSERVER_CAPTURE_STORAGE, 8};
+  obelisk_rt_observer_descriptor_v1 observer{
+      7, &capture, 1, 1, 0, OBELISK_RT_OBSERVER_NO_BYTECODE,
+      observerEvaluator, 0};
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_EXECUTION_DESCRIPTOR_VERSION;
+  execution.abi_generation = OBELISK_RT_ABI_GENERATION;
+  execution.observers = &observer;
+  execution.observer_count = 1;
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+
+  execution.version = OBELISK_RT_EXECUTION_DESCRIPTOR_VERSION - 1;
+  EXPECT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(context, nullptr);
+  execution.version = OBELISK_RT_EXECUTION_DESCRIPTOR_VERSION;
+  execution.abi_generation = OBELISK_RT_ABI_GENERATION - 1;
+  EXPECT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(context, nullptr);
+  execution.abi_generation = OBELISK_RT_ABI_GENERATION;
+
+  capture.kind = 0;
+  EXPECT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(context, nullptr);
+  capture.kind = OBELISK_RT_OBSERVER_CAPTURE_STORAGE;
+  observer.native_evaluator = nullptr;
+  EXPECT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(context, nullptr);
+}
+
+TEST(RuntimeABI, RejectsMalformedComputedWaitRecords) {
+  ObserverWaitTestDescriptor descriptor;
+  auto execute = [&](auto mutate, obelisk_rt_status expected) {
+    obelisk_rt_process_instance_v1 *instance = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_process_instance_create(&descriptor.process,
+                                                     &instance),
+              OBELISK_RT_OK);
+    void *frame = nullptr;
+    uint64_t frameSize = 0;
+    ASSERT_EQ(obelisk_rt_v1_process_instance_frame(instance, &frame,
+                                                    &frameSize),
+              OBELISK_RT_OK);
+    ASSERT_EQ(frameSize, 176u);
+    ObserverWaitTestDescriptor::populate(frame);
+    mutate(*static_cast<obelisk_rt_computed_wait_record_v1 *>(frame), frame);
+    obelisk_rt_fragment_action_v1 action{};
+    EXPECT_EQ(obelisk_rt_v1_process_instance_execute(
+                  instance, nullptr, OBELISK_RT_TIER_NATIVE, &action),
+              expected);
+    EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance),
+              OBELISK_RT_OK);
+  };
+
+  execute([](auto &, void *) {}, OBELISK_RT_OK);
+  execute(
+      [](auto &wait, void *) {
+        wait.version = OBELISK_RT_COMPUTED_WAIT_RECORD_VERSION + 1;
+      },
+      OBELISK_RT_INVALID_FRAME);
+  execute(
+      [](auto &wait, void *) { wait.observers_offset = UINT64_MAX; },
+      OBELISK_RT_INVALID_FRAME);
+  execute(
+      [](auto &wait, void *frame) {
+        auto *binding = reinterpret_cast<obelisk_rt_computed_observer_v1 *>(
+            static_cast<uint8_t *>(frame) + wait.observers_offset);
+        binding->code_unit_id = 8;
+      },
+      OBELISK_RT_INVALID_FRAME);
+  execute(
+      [](auto &wait, void *frame) {
+        auto *clause = reinterpret_cast<obelisk_rt_computed_clause_v1 *>(
+            static_cast<uint8_t *>(frame) + wait.clauses_offset);
+        clause->condition_observer = 0;
+      },
+      OBELISK_RT_INVALID_FRAME);
+  execute(
+      [](auto &wait, void *frame) {
+        auto *binding = reinterpret_cast<obelisk_rt_computed_observer_v1 *>(
+            static_cast<uint8_t *>(frame) + wait.observers_offset);
+        binding->previous_offset += sizeof(uint64_t);
+      },
+      OBELISK_RT_INVALID_FRAME);
+  execute(
+      [](auto &wait, void *frame) {
+        auto *dependency =
+            reinterpret_cast<obelisk_rt_computed_dependency_v1 *>(
+                static_cast<uint8_t *>(frame) + wait.dependencies_offset);
+        dependency->stable_id = UINT64_MAX;
+      },
+      OBELISK_RT_INVALID_FRAME);
+  execute(
+      [](auto &wait, void *frame) {
+        auto *dependency =
+            reinterpret_cast<obelisk_rt_computed_dependency_v1 *>(
+                static_cast<uint8_t *>(frame) + wait.dependencies_offset);
+        dependency->width = 0;
+      },
+      OBELISK_RT_INVALID_FRAME);
+  execute(
+      [](auto &wait, void *frame) {
+        auto *clause = reinterpret_cast<obelisk_rt_computed_clause_v1 *>(
+            static_cast<uint8_t *>(frame) + wait.clauses_offset);
+        clause->flags = UINT32_MAX;
+      },
+      OBELISK_RT_INVALID_FRAME);
+  execute(
+      [](auto &wait, void *) { wait.previous_limb_count = UINT32_MAX; },
+      OBELISK_RT_INVALID_FRAME);
+}
+
+TEST(RuntimeABI, ObserverEvaluatorRunsWithoutTheContextMutexHeld) {
+  ObserverWaitTestDescriptor descriptor;
+  observerEvaluatorMode = ObserverEvaluatorMode::ReadFromJoinedThread;
+  observerEvaluatorCalls = 0;
+  observerJoinedReadCompleted = false;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(startObserverWait(descriptor, &context), OBELISK_RT_OK);
+
+  const uint8_t zero = 0;
+  const uint8_t one = 1;
+  obelisk_rt_v1_scheduler_signal_transition(
+      context, obelisk_rt_v1_native_state_static_handle(1), 1, &zero, nullptr,
+      &one, nullptr);
+  EXPECT_TRUE(observerJoinedReadCompleted.load());
+  EXPECT_EQ(observerEvaluatorCalls.load(), 1u);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+  observerEvaluatorMode = ObserverEvaluatorMode::ConstantZero;
+}
+
+TEST(RuntimeABI, ObserverEvaluatorFailurePropagatesThroughScheduler) {
+  ObserverWaitTestDescriptor descriptor;
+  observerEvaluatorMode = ObserverEvaluatorMode::Fail;
+  observerEvaluatorCalls = 0;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(startObserverWait(descriptor, &context), OBELISK_RT_OK);
+
+  const uint8_t zero = 0;
+  const uint8_t one = 1;
+  obelisk_rt_v1_scheduler_signal_transition(
+      context, obelisk_rt_v1_native_state_static_handle(1), 1, &zero, nullptr,
+      &one, nullptr);
+  EXPECT_EQ(observerEvaluatorCalls.load(), 1u);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_run(context),
+            OBELISK_RT_INVALID_ARGUMENT);
+  obelisk_rt_v1_context_destroy(context);
+  observerEvaluatorMode = ObserverEvaluatorMode::ConstantZero;
+}
+
+TEST(RuntimeABI, ObserverEvaluatorDefersContextDestructionUntilReturn) {
+  ObserverWaitTestDescriptor descriptor;
+  observerEvaluatorMode = ObserverEvaluatorMode::DestroyContext;
+  observerEvaluatorCalls = 0;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(startObserverWait(descriptor, &context), OBELISK_RT_OK);
+
+  const uint8_t zero = 0;
+  const uint8_t one = 1;
+  // Destruction occurs from inside the callback. The transaction pins all
+  // state needed to restore the producer and release the waiting activation,
+  // then performs final cleanup as this publication returns.
+  obelisk_rt_v1_scheduler_signal_transition(
+      context, obelisk_rt_v1_native_state_static_handle(1), 1, &zero, nullptr,
+      &one, nullptr);
+  EXPECT_EQ(observerEvaluatorCalls.load(), 1u);
+  observerEvaluatorMode = ObserverEvaluatorMode::ConstantZero;
+}
+
+TEST(RuntimeABI, NestedObserverLatchStopsLaterSourceClauses) {
+  std::array<obelisk_rt_observer_descriptor_v1, 2> observers{{
+      {7, nullptr, 0, 1, 0, OBELISK_RT_OBSERVER_NO_BYTECODE,
+       observerEvaluator, 0},
+      {8, nullptr, 0, 1, 0, OBELISK_RT_OBSERVER_NO_BYTECODE,
+       observerSecondEvaluator, 0},
+  }};
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_EXECUTION_DESCRIPTOR_VERSION;
+  execution.abi_generation = OBELISK_RT_ABI_GENERATION;
+  execution.observers = observers.data();
+  execution.observer_count = observers.size();
+  obelisk_rt_frame_field_v1 field{
+      OBELISK_RT_FRAME_WAIT, OBELISK_RT_FRAME_FIELD_FLAGS_NONE, 0, 256, 8, 0};
+  std::array<uint32_t, 2> continuations{{0, 1}};
+  obelisk_rt_frame_layout_v1 layout{
+      OBELISK_RT_FRAME_LAYOUT_VERSION, 0, 256, 8, &field, 1,
+      static_cast<uint32_t>(continuations.size()), continuations.data(), 0};
+  layout.checksum = observerWaitLayoutChecksum(layout);
+  obelisk_rt_process_descriptor_v1 process{
+      {OBELISK_RT_DESCRIPTOR_PROCESS, 0, 18},
+      OBELISK_RT_ABI_GENERATION,
+      0,
+      OBELISK_RT_TIER_MASK_NATIVE,
+      0,
+      &layout,
+      observerWaitRequirements,
+      observerTwoClauseExecute,
+      observerWaitDestroy,
+      nullptr,
+      &execution,
+      nullptr};
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 1),
+            OBELISK_RT_OK);
+  obelisk_rt_process_instance_v1 *instance = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_process_instance_create(&process, &instance),
+            OBELISK_RT_OK);
+  void *frame = nullptr;
+  uint64_t frameSize = 0;
+  ASSERT_EQ(obelisk_rt_v1_process_instance_frame(instance, &frame, &frameSize),
+            OBELISK_RT_OK);
+  ASSERT_EQ(frameSize, 256u);
+  std::memset(frame, 0, frameSize);
+  auto *wait = static_cast<obelisk_rt_computed_wait_record_v1 *>(frame);
+  *wait = {OBELISK_RT_COMPUTED_WAIT_RECORD_VERSION,
+           OBELISK_RT_SUSPEND_OBSERVER,
+           OBELISK_RT_COMPUTED_WAIT_INTERLEAVED,
+           2,
+           2,
+           0,
+           2,
+           2,
+           96,
+           160,
+           160,
+           192,
+           224,
+           0,
+           256,
+           0};
+  auto *bindings = reinterpret_cast<obelisk_rt_computed_observer_v1 *>(
+      static_cast<uint8_t *>(frame) + wait->observers_offset);
+  bindings[0] = {7, 0, 0, 0, 1, 224, 0};
+  bindings[1] = {8, 0, 0, 1, 1, 240, 0};
+  auto *dependencies =
+      reinterpret_cast<obelisk_rt_computed_dependency_v1 *>(
+          static_cast<uint8_t *>(frame) + wait->dependencies_offset);
+  dependencies[0] = {obelisk_rt_v1_native_state_static_handle(1),
+                     OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL, 1};
+  dependencies[1] = dependencies[0];
+  auto *clauses = reinterpret_cast<obelisk_rt_computed_clause_v1 *>(
+      static_cast<uint8_t *>(frame) + wait->clauses_offset);
+  clauses[0] = {0, OBELISK_RT_OBSERVER_CONDITION_NONE,
+                OBELISK_RT_WAIT_EDGE_CHANGE, 0};
+  clauses[1] = {1, OBELISK_RT_OBSERVER_CONDITION_NONE,
+                OBELISK_RT_WAIT_EDGE_CHANGE, 0};
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, instance, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+
+  observerEvaluatorMode = ObserverEvaluatorMode::RecurseOnceAndLatch;
+  observerEvaluatorCalls = 0;
+  observerSecondClauseCalls = 0;
+  const uint8_t zero = 0;
+  const uint8_t one = 1;
+  obelisk_rt_v1_scheduler_signal_transition(
+      context, obelisk_rt_v1_native_state_static_handle(1), 1, &zero, nullptr,
+      &one, nullptr);
+  EXPECT_EQ(observerEvaluatorCalls.load(), 2u);
+  EXPECT_EQ(observerSecondClauseCalls, 0u);
+  obelisk_rt_v1_context_destroy(context);
+  observerEvaluatorMode = ObserverEvaluatorMode::ConstantZero;
+}
+
+TEST(RuntimeABI, RecursiveObserverEvaluationHasADeterministicDepthLimit) {
+  ObserverWaitTestDescriptor descriptor;
+  observerEvaluatorMode = ObserverEvaluatorMode::Recurse;
+  observerEvaluatorCalls = 0;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(startObserverWait(descriptor, &context), OBELISK_RT_OK);
+
+  const uint8_t zero = 0;
+  const uint8_t one = 1;
+  obelisk_rt_v1_scheduler_signal_transition(
+      context, obelisk_rt_v1_native_state_static_handle(1), 1, &zero, nullptr,
+      &one, nullptr);
+  EXPECT_EQ(observerEvaluatorCalls.load(), 256u);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_run(context),
+            OBELISK_RT_OUT_OF_RESOURCES);
+  obelisk_rt_v1_context_destroy(context);
+  observerEvaluatorMode = ObserverEvaluatorMode::ConstantZero;
 }
 
 TEST(RuntimeABI, ReportsEveryStatusAndReleasesBuffersIdempotently) {

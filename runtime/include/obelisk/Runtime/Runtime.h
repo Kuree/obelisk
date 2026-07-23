@@ -14,7 +14,7 @@ extern "C" {
 // schema. They are not a backward-compatibility promise: generated code,
 // bytecode, and libobelisk_rt must come from the same Obelisk source revision.
 // Any compiler update requires regenerating and relinking the simulator.
-#define OBELISK_RT_ABI_GENERATION 2u
+#define OBELISK_RT_ABI_GENERATION 3u
 
 typedef struct obelisk_rt_context obelisk_rt_context;
 
@@ -57,7 +57,8 @@ enum {
   OBELISK_RT_DESCRIPTOR_EVENT = 5,
   OBELISK_RT_DESCRIPTOR_PROCESS = 6,
   OBELISK_RT_DESCRIPTOR_FRAGMENT = 7,
-  OBELISK_RT_DESCRIPTOR_FUNCTION = 8
+  OBELISK_RT_DESCRIPTOR_FUNCTION = 8,
+  OBELISK_RT_DESCRIPTOR_OBSERVER = 9
 };
 
 typedef struct obelisk_rt_handle_v1 {
@@ -70,7 +71,7 @@ typedef struct obelisk_rt_handle_v1 {
 // reflection metadata.  Both payloads are immutable, pointer-free byte images;
 // the only native pointers are this linker-resolved pointer/size pair.  A
 // descriptor with a null reflection image is valid and is emitted for vpi=off.
-#define OBELISK_RT_EXECUTION_DESCRIPTOR_VERSION 1u
+#define OBELISK_RT_EXECUTION_DESCRIPTOR_VERSION 2u
 #define OBELISK_RT_EXECUTION_HAS_BYTECODE (UINT32_C(1) << 0)
 #define OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE (UINT32_C(1) << 1)
 #define OBELISK_RT_EXECUTION_VPI_READ (UINT32_C(1) << 2)
@@ -108,6 +109,38 @@ typedef struct obelisk_rt_activation_descriptor_v1 {
   uint32_t flags;
 } obelisk_rt_activation_descriptor_v1;
 
+typedef uint32_t obelisk_rt_observer_capture_kind;
+enum {
+  OBELISK_RT_OBSERVER_CAPTURE_STORAGE = 1,
+  OBELISK_RT_OBSERVER_CAPTURE_NET = 2,
+  OBELISK_RT_OBSERVER_CAPTURE_EVENT = 3,
+  OBELISK_RT_OBSERVER_CAPTURE_DRIVER = 4
+};
+
+typedef struct obelisk_rt_observer_capture_abi_v1 {
+  obelisk_rt_observer_capture_kind kind;
+  uint32_t width;
+} obelisk_rt_observer_capture_abi_v1;
+
+#define OBELISK_RT_OBSERVER_FOUR_STATE (UINT32_C(1) << 0)
+#define OBELISK_RT_OBSERVER_NO_BYTECODE UINT32_MAX
+
+typedef obelisk_rt_status (*obelisk_rt_native_observer_v1)(
+    obelisk_rt_context *context, const uint64_t *captures,
+    uint32_t capture_count, uint64_t *value, uint64_t *unknown,
+    uint32_t limb_count);
+
+typedef struct obelisk_rt_observer_descriptor_v1 {
+  uint64_t code_unit_id;
+  const obelisk_rt_observer_capture_abi_v1 *capture_abi;
+  uint32_t capture_count;
+  uint32_t result_width;
+  uint32_t flags;
+  uint32_t bytecode_function;
+  obelisk_rt_native_observer_v1 native_evaluator;
+  uint64_t reserved;
+} obelisk_rt_observer_descriptor_v1;
+
 typedef struct obelisk_rt_execution_descriptor_v1 {
   uint32_t version;
   uint32_t abi_generation;
@@ -125,6 +158,8 @@ typedef struct obelisk_rt_execution_descriptor_v1 {
   uint32_t dpi_reserved;
   const obelisk_rt_activation_descriptor_v1 *activations;
   uint64_t activation_count;
+  const obelisk_rt_observer_descriptor_v1 *observers;
+  uint64_t observer_count;
 } obelisk_rt_execution_descriptor_v1;
 
 // One of these immutable records is attached to the canonical process
@@ -135,7 +170,7 @@ typedef struct obelisk_rt_design_bytecode_entry_v1 {
   uint32_t reserved;
 } obelisk_rt_design_bytecode_entry_v1;
 
-#define OBELISK_RT_DESIGN_BYTECODE_VERSION 4u
+#define OBELISK_RT_DESIGN_BYTECODE_VERSION 5u
 #define OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE 208u
 #define OBELISK_RT_DESIGN_BYTECODE_INSTRUCTION_SIZE 32u
 
@@ -417,7 +452,8 @@ enum {
   OBELISK_RT_SUSPEND_JOIN = 6,
   OBELISK_RT_SUSPEND_FOREVER = 7,
   OBELISK_RT_SUSPEND_FRONTIER = 8,
-  OBELISK_RT_SUSPEND_CHILDREN = 9
+  OBELISK_RT_SUSPEND_CHILDREN = 9,
+  OBELISK_RT_SUSPEND_OBSERVER = 10
 };
 
 typedef struct obelisk_rt_fragment_action_v1 {
@@ -702,6 +738,67 @@ typedef struct obelisk_rt_wait_entry_v1 {
   uint32_t reserved;
 } obelisk_rt_wait_entry_v1;
 
+#define OBELISK_RT_COMPUTED_WAIT_RECORD_VERSION 1u
+#define OBELISK_RT_COMPUTED_WAIT_FLAGS_NONE 0u
+#define OBELISK_RT_COMPUTED_WAIT_INTERLEAVED (UINT32_C(1) << 0)
+#define OBELISK_RT_OBSERVER_CONDITION_NONE UINT32_MAX
+#define OBELISK_RT_COMPUTED_CLAUSE_EVENT_PRIMARY (UINT32_C(1) << 0)
+
+typedef struct obelisk_rt_computed_wait_record_v1 {
+  uint32_t version;
+  obelisk_rt_suspend_kind kind;
+  uint32_t flags;
+  uint32_t clause_count;
+  uint32_t observer_count;
+  uint32_t capture_count;
+  uint32_t dependency_count;
+  uint32_t previous_limb_count;
+  uint64_t observers_offset;
+  uint64_t captures_offset;
+  uint64_t dependencies_offset;
+  uint64_t clauses_offset;
+  uint64_t previous_value_offset;
+  uint64_t previous_unknown_offset;
+  uint64_t total_size;
+  uint64_t reserved;
+} obelisk_rt_computed_wait_record_v1;
+
+typedef struct obelisk_rt_computed_observer_v1 {
+  uint64_t code_unit_id;
+  uint32_t capture_begin;
+  uint32_t capture_count;
+  uint32_t dependency_begin;
+  uint32_t dependency_count;
+  uint32_t previous_offset;
+  uint32_t reserved;
+} obelisk_rt_computed_observer_v1;
+
+typedef struct obelisk_rt_computed_capture_v1 {
+  uint64_t stable_id;
+  uint64_t payload0;
+  uint64_t payload1;
+  uint64_t payload2;
+} obelisk_rt_computed_capture_v1;
+
+typedef uint32_t obelisk_rt_observer_dependency_kind;
+enum {
+  OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL = 1,
+  OBELISK_RT_OBSERVER_DEPENDENCY_EVENT = 2
+};
+
+typedef struct obelisk_rt_computed_dependency_v1 {
+  uint64_t stable_id;
+  obelisk_rt_observer_dependency_kind kind;
+  uint32_t width;
+} obelisk_rt_computed_dependency_v1;
+
+typedef struct obelisk_rt_computed_clause_v1 {
+  uint32_t primary_observer;
+  uint32_t condition_observer;
+  obelisk_rt_wait_edge_kind edge;
+  uint32_t flags;
+} obelisk_rt_computed_clause_v1;
+
 typedef struct obelisk_rt_process_instance_v1 obelisk_rt_process_instance_v1;
 
 typedef obelisk_rt_status (*obelisk_rt_native_requirements_v1)(
@@ -759,6 +856,11 @@ struct obelisk_rt_process_instance_v1 {
   // Persistent owner for automatic allocations; unlike context above this is
   // retained between fragments until termination or explicit destruction.
   obelisk_rt_context *ownership_context;
+  // Observer callbacks pin a suspended activation while executing its
+  // evaluator. Cancellation marks destruction pending and the final callback
+  // release performs the actual frame/automatic-state cleanup.
+  uint32_t observer_pin_count;
+  uint32_t observer_destroy_pending;
 };
 
 // Create exactly one allocation containing [canonical frame][padding][shared

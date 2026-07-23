@@ -137,6 +137,7 @@ private:
   FailureOr<Value> lowerDelayValue(Operation *control);
   LogicalResult lowerWait(semantic::SVWaitStatementOp op);
   LogicalResult lowerEventTrigger(semantic::SVEventTriggerStatementOp op);
+  FailureOr<Value> bindObserver(Operation *expression);
   void recordSensitivity(Value value);
 
   FailureOr<Value> convert(Value value, Type targetType, bool sourceSigned,
@@ -312,6 +313,11 @@ InFlightDiagnostic UnitLowering::unsupported(Operation *op) {
 }
 
 void UnitLowering::recordSensitivity(Value value) {
+  if (isa<sim::EventType>(value.getType())) {
+    if (observedDependencies)
+      observedDependencies->insert(value);
+    return;
+  }
   if (!isa<sim::RefType, sim::NetType>(value.getType()))
     return;
   if (observedDependencies)
@@ -319,6 +325,82 @@ void UnitLowering::recordSensitivity(Value value) {
   if (auto argument = dyn_cast<BlockArgument>(value);
       argument && argument.getOwner() == &function.getBody().front())
     sensitivity.insert(value);
+}
+
+FailureOr<Value> UnitLowering::bindObserver(Operation *expression) {
+  Location location = getSemanticLocation(expression);
+  auto evaluator =
+      expression->getAttrOfType<FlatSymbolRefAttr>("obelisk_sim.observer");
+  auto capturePaths =
+      expression->getAttrOfType<ArrayAttr>("obelisk_sim.observer_captures");
+  auto dependencyPaths =
+      expression->getAttrOfType<ArrayAttr>(
+          "obelisk_sim.observer_dependencies");
+  auto resultKind =
+      expression->getAttrOfType<IntegerAttr>("obelisk_sim.observer_result");
+  if (!evaluator || !capturePaths || !dependencyPaths || !resultKind) {
+    emitError(location) << "computed timing expression has no observer binding";
+    return failure();
+  }
+  SmallVector<Value> captures;
+  SmallVector<Value> dependencies;
+  auto resolve = [&](Attribute pathAttr) -> FailureOr<Value> {
+    auto path = dyn_cast<StringAttr>(pathAttr);
+    if (!path)
+      return emitError(location) << "observer path is not a string", failure();
+    Value value = values.lookup(path.getValue());
+    if (!value)
+      value = lvalues.lookup(path.getValue());
+    if (!value)
+      return emitError(location)
+                 << "observer capture has no frozen local binding: "
+                 << path.getValue(),
+             failure();
+    return value;
+  };
+  for (Attribute path : capturePaths) {
+    FailureOr<Value> value = resolve(path);
+    if (failed(value))
+      return failure();
+    captures.push_back(*value);
+  }
+  for (Attribute path : dependencyPaths) {
+    FailureOr<Value> value = resolve(path);
+    if (failed(value))
+      return failure();
+    if (!isa<sim::RefType, sim::NetType, sim::EventType>((*value).getType())) {
+      emitError(location)
+          << "observer dependency is not a watchable handle: "
+          << (*value).getType();
+      return failure();
+    }
+    dependencies.push_back(*value);
+  }
+  Type resultType;
+  uint64_t kind = resultKind.getValue().getZExtValue();
+  if (kind == 2 || kind == 3) {
+    resultType = builder.getI1Type();
+  } else {
+    FailureOr<Type> normalized = getNormalizedSemanticType(expression);
+    if (failed(normalized))
+      return failure();
+    resultType = sim::getPackedScalarType(*normalized);
+    if (!resultType) {
+      emitError(location)
+          << "observer expression does not have a packed scalar result";
+      return failure();
+    }
+  }
+  SmallVector<Value> operands(captures);
+  llvm::append_range(operands, dependencies);
+  auto binding = sim::SimObserverBindOp::create(
+      builder, location,
+      sim::ObserverType::get(function.getContext(), resultType), evaluator,
+      operands,
+      builder.getI32IntegerAttr(static_cast<uint32_t>(captures.size())));
+  if (kind == 3)
+    binding->setAttr("obelisk_sim.event_primary", builder.getUnitAttr());
+  return binding.getResult();
 }
 
 //===----------------------------------------------------------------------===//
@@ -2312,6 +2394,7 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
       emitError(location) << ".triggered operand is not an event handle";
       return failure();
     }
+    recordSensitivity(*event);
     Value triggered = sim::SimEventTriggeredOp::create(
         builder, location, builder.getI1Type(), *event);
     return convertResult(triggered);
@@ -2818,6 +2901,63 @@ UnitLowering::emitEventSuspend(Operation *control, Block *continuation,
       sim::SimSuspendEdgeOp::create(builder, location, edge, watched, operands,
                                     sim::ContinuationSiteAttr{}, successor);
   };
+  auto evaluateInitial = [&](Operation *expression) -> FailureOr<Value> {
+    FailureOr<Value> value = lowerExpression(expression);
+    if (failed(value))
+      return failure();
+    if (isa<sim::EventType>((*value).getType()))
+      return arith::ConstantOp::create(
+                 builder, location, builder.getI1Type(),
+                 builder.getBoolAttr(false))
+          .getResult();
+    return toPackedScalar(*value, getSemanticLocation(expression));
+  };
+  auto emitObserved =
+      [&](ArrayRef<semantic::SVSignalEventControlOp> events)
+      -> LogicalResult {
+    SmallVector<Value> primaries;
+    SmallVector<Value> initials;
+    SmallVector<Value> conditions;
+    SmallVector<int32_t> edges;
+    SmallVector<int32_t> conditionIndices;
+    for (semantic::SVSignalEventControlOp event : events) {
+      SmallVector<Operation *> children = getChildren(event);
+      size_t expected = event.getHasIff() ? 2 : 1;
+      if (children.size() != expected) {
+        unsupported(event) << " (event expression inventory)";
+        return failure();
+      }
+      FailureOr<Value> initial = evaluateInitial(children.front());
+      FailureOr<Value> primary = bindObserver(children.front());
+      if (failed(initial) || failed(primary))
+        return failure();
+      primaries.push_back(*primary);
+      initials.push_back(*initial);
+      auto edge = static_cast<int32_t>(event.getEdgeKind());
+      FailureOr<Type> primaryType =
+          getNormalizedSemanticType(children.front());
+      if (succeeded(primaryType) && isa<sim::EventType>(*primaryType))
+        edge = static_cast<int32_t>(sim::EdgeKind::Change);
+      edges.push_back(edge);
+      if (!event.getHasIff()) {
+        conditionIndices.push_back(-1);
+        continue;
+      }
+      FailureOr<Value> condition = bindObserver(children[1]);
+      if (failed(condition))
+        return failure();
+      conditionIndices.push_back(static_cast<int32_t>(conditions.size()));
+      conditions.push_back(*condition);
+    }
+    SmallVector<Value> values(primaries);
+    llvm::append_range(values, initials);
+    llvm::append_range(values, conditions);
+    llvm::append_range(values, continuationOperands);
+    sim::SimSuspendObserveOp::create(
+        builder, location, values, static_cast<uint32_t>(conditions.size()),
+        edges, conditionIndices, sim::ContinuationSiteAttr{}, continuation);
+    return success();
+  };
 
   if (auto event = dyn_cast<semantic::SVSignalEventControlOp>(control)) {
     SmallVector<Operation *> children = getChildren(event);
@@ -2826,14 +2966,16 @@ UnitLowering::emitEventSuspend(Operation *control, Block *continuation,
       unsupported(event) << " (event expression inventory)";
       return failure();
     }
-    if (!isAddressableExpression(children.front())) {
-      unsupported(event) << " (computed edge expression)";
-      return failure();
-    }
     FailureOr<Type> watchedType =
         getNormalizedSemanticType(children.front());
     if (failed(watchedType))
       return failure();
+    bool computed = !isAddressableExpression(children.front()) ||
+                    (event.getHasIff() &&
+                     (!isAddressableExpression(children[1]) ||
+                      isa<sim::EventType>(*watchedType)));
+    if (computed)
+      return emitObserved(ArrayRef<semantic::SVSignalEventControlOp>(event));
     FailureOr<Value> handle =
         lowerExpression(children.front(), !isa<sim::EventType>(*watchedType));
     if (failed(handle))
@@ -2844,10 +2986,6 @@ UnitLowering::emitEventSuspend(Operation *control, Block *continuation,
       return success();
     }
 
-    if (!isAddressableExpression(children[1])) {
-      unsupported(event) << " (computed iff condition)";
-      return failure();
-    }
     FailureOr<Value> condition = lowerExpression(children[1], true);
     if (failed(condition))
       return failure();
@@ -2867,8 +3005,8 @@ UnitLowering::emitEventSuspend(Operation *control, Block *continuation,
     unsupported(control) << " (event timing control)";
     return failure();
   }
-  SmallVector<Value> watched;
-  SmallVector<int32_t> edges;
+  SmallVector<semantic::SVSignalEventControlOp> events;
+  bool computed = false;
   for (Operation *eventOp : getChildren(list)) {
     auto event = dyn_cast<semantic::SVSignalEventControlOp>(eventOp);
     if (!event) {
@@ -2876,29 +3014,36 @@ UnitLowering::emitEventSuspend(Operation *control, Block *continuation,
       return failure();
     }
     SmallVector<Operation *> eventChildren = getChildren(event);
-    if (eventChildren.size() != 1) {
-      unsupported(event) << (event.getHasIff() ? " (event-list iff condition)"
-                                               : " (event expression inventory)");
+    size_t expected = event.getHasIff() ? 2 : 1;
+    if (eventChildren.size() != expected) {
+      unsupported(event) << " (event expression inventory)";
       return failure();
     }
-    if (!isAddressableExpression(eventChildren.front())) {
-      unsupported(event) << " (computed edge expression)";
-      return failure();
-    }
+    computed |= event.getHasIff() ||
+                !isAddressableExpression(eventChildren.front());
     FailureOr<Type> watchedType =
         getNormalizedSemanticType(eventChildren.front());
     if (failed(watchedType))
       return failure();
-    FailureOr<Value> handle = lowerExpression(
-        eventChildren.front(), !isa<sim::EventType>(*watchedType));
+    computed |= isa<sim::EventType>(*watchedType);
+    events.push_back(event);
+  }
+  if (events.empty()) {
+    unsupported(control) << " (empty event list)";
+    return failure();
+  }
+  if (computed)
+    return emitObserved(events);
+
+  SmallVector<Value> watched;
+  SmallVector<int32_t> edges;
+  for (semantic::SVSignalEventControlOp event : events) {
+    Operation *expression = getChildren(event).front();
+    FailureOr<Value> handle = lowerExpression(expression, true);
     if (failed(handle))
       return failure();
     watched.push_back(*handle);
     edges.push_back(static_cast<int32_t>(event.getEdgeKind()));
-  }
-  if (watched.empty()) {
-    unsupported(control) << " (empty event list)";
-    return failure();
   }
   if (watched.size() == 1) {
     emitDirect(watched.front(), static_cast<sim::EdgeKind>(edges.front()),
@@ -3111,8 +3256,22 @@ LogicalResult UnitLowering::lowerWait(semantic::SVWaitStatementOp op) {
   }
   if (dependencies.size() != 1 ||
       !isAddressableExpression(children[0])) {
-    unsupported(op) << " (computed wait condition requires an observer)";
-    return failure();
+    if (!children[0]->hasAttr("obelisk_sim.observer")) {
+      unsupported(op) << " (computed wait condition requires an observer)";
+      return failure();
+    }
+    cf::CondBranchOp::create(builder, location, *condition, bodyBlock,
+                             ValueRange{}, suspendBlock, ValueRange{});
+    setCurrent(suspendBlock);
+    FailureOr<Value> observer = bindObserver(children[0]);
+    if (failed(observer))
+      return failure();
+    SmallVector<Value> values{*observer, *condition};
+    sim::SimSuspendObserveOp::create(
+        builder, location, values, 0, ArrayRef<int32_t>{0},
+        ArrayRef<int32_t>{-1}, sim::ContinuationSiteAttr{}, bodyBlock);
+    setCurrent(bodyBlock);
+    return lowerStatement(children[1]);
   }
   FailureOr<Value> watched = lowerExpression(children[0], true);
   if (failed(watched))
@@ -3890,6 +4049,46 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
 LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   setCurrent(&function.getBody().front());
   sim::EntryKind entryKind = function.getEntryKind();
+  if (entryKind == sim::EntryKind::Observer) {
+    if (roots.size() != 1) {
+      function.emitError("observer entry requires one expression root");
+      return failure();
+    }
+    FailureOr<Value> result = lowerExpression(roots.front());
+    if (failed(result))
+      return failure();
+    auto resultKind =
+        function->getAttrOfType<IntegerAttr>("obelisk_sim.observer_result");
+    if (!resultKind) {
+      function.emitError("observer entry has no result-kind metadata");
+      return failure();
+    }
+    uint64_t kind = resultKind.getValue().getZExtValue();
+    if (kind == 3) {
+      if (!isa<sim::EventType>((*result).getType())) {
+        function.emitError("named-event observer did not produce an event");
+        return failure();
+      }
+      result = sim::SimEventTriggeredOp::create(
+                   builder, function.getLoc(), builder.getI1Type(), *result)
+                   .getResult();
+    } else if (kind == 2) {
+      result = truthValue(*result, function.getLoc());
+      if (failed(result))
+        return failure();
+    } else {
+      result = toPackedScalar(*result, function.getLoc());
+      if (failed(result))
+        return failure();
+    }
+    if (function.getFunctionType().getNumResults() != 1 ||
+        function.getFunctionType().getResult(0) != (*result).getType()) {
+      function.emitError("observer result does not match its signature");
+      return failure();
+    }
+    sim::SimReturnOp::create(builder, function.getLoc(), ValueRange{*result});
+    return success();
+  }
   bool loopsForever = entryKind == sim::EntryKind::Always ||
                       entryKind == sim::EntryKind::AlwaysComb ||
                       entryKind == sim::EntryKind::AlwaysFF ||

@@ -21,11 +21,12 @@ def SimEntryPortInitialize
     : I32EnumAttrCase<"PortInitialize", 11, "port_initialize">;
 def SimEntryTask : I32EnumAttrCase<"Task", 12, "task">;
 def SimEntryFork : I32EnumAttrCase<"Fork", 13, "fork">;
+def SimEntryObserver : I32EnumAttrCase<"Observer", 14, "observer">;
 def SimEntryKind : I32EnumAttr<"EntryKind", "simulation code-unit kind", [
   SimEntryRootInitializer, SimEntryInitial, SimEntryFinal, SimEntryAlways,
   SimEntryAlwaysComb, SimEntryAlwaysFF, SimEntryAlwaysLatch, SimEntryContinuous,
   SimEntryFunction, SimEntryPortInput, SimEntryPortOutput,
-  SimEntryPortInitialize, SimEntryTask, SimEntryFork
+  SimEntryPortInitialize, SimEntryTask, SimEntryFork, SimEntryObserver
 ]> {
   let cppNamespace = "::obelisk::sim";
 }
@@ -378,6 +379,8 @@ def SimComputeActionTaskCall
     : I32EnumAttrCase<"TaskCall", 9, "task_call">;
 def SimComputeActionSuspendChildren
     : I32EnumAttrCase<"SuspendChildren", 10, "suspend_children">;
+def SimComputeActionSuspendObserve
+    : I32EnumAttrCase<"SuspendObserve", 11, "suspend_observe">;
 def SimComputeActionKind
     : I32EnumAttr<"ComputeActionKind", "fragment terminal action", [
         SimComputeActionContinue, SimComputeActionSuspendDelay,
@@ -385,7 +388,7 @@ def SimComputeActionKind
         SimComputeActionSuspendAny, SimComputeActionSuspendEvent,
         SimComputeActionSuspendAwait, SimComputeActionSuspendJoin,
         SimComputeActionTerminate, SimComputeActionTaskCall,
-        SimComputeActionSuspendChildren
+        SimComputeActionSuspendChildren, SimComputeActionSuspendObserve
       ]> {
   let cppNamespace = "::obelisk::sim";
 }

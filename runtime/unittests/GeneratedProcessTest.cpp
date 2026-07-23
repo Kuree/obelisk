@@ -248,7 +248,7 @@ TEST(GeneratedProcess, CrossBlockAutomaticLoopReleasesEveryIteration) {
             OBELISK_RT_OK);
   ASSERT_EQ(action.kind, OBELISK_RT_FRAGMENT_SUSPEND);
   {
-    std::lock_guard<std::mutex> lock(context->mutex);
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
     EXPECT_TRUE(context->nativeAutomaticStates.empty());
   }
   ASSERT_EQ(obelisk_rt_v1_process_instance_execute(

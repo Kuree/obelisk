@@ -94,7 +94,26 @@ bool isSuspension(Operation *operation) {
              sim::SimSuspendLevelOp, sim::SimSuspendAnyOp,
              sim::SimSuspendEventOp, sim::SimSuspendForeverOp,
              sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp,
-             sim::SimSuspendChildrenOp, sim::SimTaskCallOp>(operation);
+             sim::SimSuspendChildrenOp, sim::SimSuspendObserveOp,
+             sim::SimTaskCallOp>(operation);
+}
+
+bool isObserverCaptureBridge(Block &block) {
+  if (block.getOperations().size() != 1)
+    return false;
+  auto branch = dyn_cast<cf::BranchOp>(block.getTerminator());
+  return branch &&
+         branch->hasAttr("obelisk_sim.observer_capture_bridge");
+}
+
+Block *lookupComputeGraphBlock(sim::SimFuncOp function, uint32_t ordinal) {
+  for (Block &block : function.getBody()) {
+    if (isObserverCaptureBridge(block))
+      continue;
+    if (ordinal-- == 0)
+      return &block;
+  }
+  return nullptr;
 }
 
 uint32_t suspensionKind(Operation *operation) {
@@ -110,6 +129,7 @@ uint32_t suspensionKind(Operation *operation) {
       .Case<sim::SimSuspendJoinOp>([](auto) { return 6; })
       .Case<sim::SimSuspendForeverOp>([](auto) { return 7; })
       .Case<sim::SimSuspendChildrenOp>([](auto) { return 9; })
+      .Case<sim::SimSuspendObserveOp>([](auto) { return 10; })
       .Default([](Operation *) { return 0; });
 }
 
@@ -126,6 +146,55 @@ uint32_t waitEntryCount(Operation *operation) {
         return static_cast<uint32_t>(op.getProcesses().size());
       })
       .Default([](Operation *) { return 0; });
+}
+
+FailureOr<uint64_t> computedWaitSize(sim::SimSuspendObserveOp operation) {
+  uint64_t primaryCount = operation.getEdges().size();
+  uint64_t conditionCount = operation.getConditionCount();
+  uint64_t observerCount = primaryCount + conditionCount;
+  uint64_t captureCount = 0;
+  uint64_t dependencyCount = 0;
+  uint64_t previousLimbs = 0;
+  SmallVector<Value> observers(operation.getPrimaries());
+  llvm::append_range(observers, operation.getConditions());
+  if (observers.size() != observerCount)
+    return failure();
+  for (auto [index, value] : llvm::enumerate(observers)) {
+    auto binding = value.getDefiningOp<sim::SimObserverBindOp>();
+    if (!binding)
+      return failure();
+    captureCount += binding.getCaptures().size();
+    dependencyCount += binding.getDependencies().size();
+    if (index < primaryCount) {
+      auto observerType = dyn_cast<sim::ObserverType>(value.getType());
+      std::optional<unsigned> width =
+          observerType
+              ? sim::getPackedWidth(observerType.getResultType())
+              : std::nullopt;
+      if (!width || *width == 0)
+        return failure();
+      previousLimbs += (*width + 63) / 64;
+    }
+  }
+  auto addProduct = [](uint64_t &size, uint64_t count,
+                       uint64_t stride) -> bool {
+    if (count > (std::numeric_limits<uint64_t>::max() - size) / stride)
+      return false;
+    size += count * stride;
+    return true;
+  };
+  uint64_t size = sizeof(obelisk_rt_computed_wait_record_v1);
+  if (!addProduct(size, observerCount,
+                  sizeof(obelisk_rt_computed_observer_v1)) ||
+      !addProduct(size, captureCount,
+                  sizeof(obelisk_rt_computed_capture_v1)) ||
+      !addProduct(size, dependencyCount,
+                  sizeof(obelisk_rt_computed_dependency_v1)) ||
+      !addProduct(size, primaryCount,
+                  sizeof(obelisk_rt_computed_clause_v1)) ||
+      !addProduct(size, previousLimbs, sizeof(uint64_t) * 2))
+    return failure();
+  return size;
 }
 
 struct StorageProperties {
@@ -391,6 +460,123 @@ public:
 };
 
 SmallVector<int32_t> suspensionWaitWidths(Operation *operation);
+
+class SimObserverBindTypeConversion final
+    : public OpConversionPattern<sim::SimObserverBindOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimObserverBindOp operation, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    SmallVector<Type> results;
+    if (failed(getTypeConverter()->convertType(operation.getResult().getType(),
+                                               results)) ||
+        results.size() != 1)
+      return rewriter.notifyMatchFailure(
+          operation, "observer token must convert to one physical value");
+    auto observerType = operation.getResult().getType().getResultType();
+    std::optional<unsigned> resultWidth = sim::getPackedWidth(observerType);
+    if (!resultWidth)
+      return operation.emitOpError("observer result must remain packed");
+    auto evaluator = SymbolTable::lookupNearestSymbolFrom<sim::SimFuncOp>(
+        operation, operation.getEvaluatorAttr());
+    if (!evaluator || !evaluator.getCodeUnitId())
+      return operation.emitOpError(
+          "observer evaluator is missing its stable code-unit ID");
+
+    SmallVector<int32_t> dependencyKinds;
+    SmallVector<int32_t> dependencyWidths;
+    for (Value dependency : operation.getDependencies()) {
+      if (isa<sim::EventType>(dependency.getType())) {
+        dependencyKinds.push_back(OBELISK_RT_OBSERVER_DEPENDENCY_EVENT);
+        dependencyWidths.push_back(1);
+        continue;
+      }
+      auto type = isa<sim::RefType>(dependency.getType())
+                      ? cast<sim::RefType>(dependency.getType()).getElementType()
+                      : cast<sim::NetType>(dependency.getType()).getElementType();
+      std::optional<unsigned> width = sim::getPackedWidth(type);
+      if (!width)
+        return operation.emitOpError(
+            "observer signal dependency must have a packed width");
+      dependencyKinds.push_back(OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL);
+      dependencyWidths.push_back(static_cast<int32_t>(*width));
+    }
+
+    OperationState state(operation.getLoc(), operation->getName());
+    state.addOperands(flatten(adaptor.getOperands()));
+    state.addTypes(results);
+    state.addAttributes(operation->getAttrs());
+    state.addAttribute(
+        "obelisk.coro.observer_id",
+        rewriter.getI64IntegerAttr(
+            static_cast<uint64_t>(*evaluator.getCodeUnitId())));
+    state.addAttribute("obelisk.coro.observer_width",
+                       rewriter.getI32IntegerAttr(*resultWidth));
+    state.addAttribute("obelisk.coro.observer_four_state",
+                       rewriter.getBoolAttr(isa<sim::LogicType>(observerType)));
+    state.addAttribute("obelisk.coro.dependency_kinds",
+                       rewriter.getDenseI32ArrayAttr(dependencyKinds));
+    state.addAttribute("obelisk.coro.dependency_widths",
+                       rewriter.getDenseI32ArrayAttr(dependencyWidths));
+    rewriter.replaceOp(operation, rewriter.create(state)->getResults());
+    return success();
+  }
+};
+
+class SimSuspendObserveTypeConversion final
+    : public OpConversionPattern<sim::SimSuspendObserveOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimSuspendObserveOp operation, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    size_t primaryCount = operation.getEdges().size();
+    size_t conditionCount = operation.getConditionCount();
+    if (operation.getNumOperands() < primaryCount * 2 + conditionCount)
+      return operation.emitOpError("has a truncated observer inventory");
+    ArrayRef<ValueRange> converted = adaptor.getOperands();
+    SmallVector<Value> operands;
+    SmallVector<int32_t> initialPlaneCounts;
+    for (size_t index = 0; index != primaryCount; ++index)
+      llvm::append_range(operands, converted[index]);
+    for (size_t index = 0; index != primaryCount; ++index) {
+      ValueRange planes = converted[primaryCount + index];
+      if (planes.empty() || planes.size() > 2)
+        return operation.emitOpError(
+            "observer initial value must lower to one or two planes");
+      initialPlaneCounts.push_back(static_cast<int32_t>(planes.size()));
+      llvm::append_range(operands, planes);
+    }
+    size_t conditionBegin = operands.size();
+    for (size_t index = 0; index != conditionCount; ++index) {
+      ValueRange token = converted[primaryCount * 2 + index];
+      if (token.size() != 1)
+        return operation.emitOpError(
+            "condition observer token must lower to one value");
+      llvm::append_range(operands, token);
+    }
+    size_t continuationBegin = operands.size();
+    for (size_t index = primaryCount * 2 + conditionCount;
+         index != converted.size(); ++index)
+      llvm::append_range(operands, converted[index]);
+
+    OperationState state(operation.getLoc(), operation->getName());
+    state.addOperands(operands);
+    state.addSuccessors(operation->getSuccessors());
+    state.addAttributes(operation->getAttrs());
+    state.addAttribute("obelisk.coro.initial_plane_counts",
+                       rewriter.getDenseI32ArrayAttr(initialPlaneCounts));
+    state.addAttribute("obelisk.coro.condition_operand_begin",
+                       rewriter.getI64IntegerAttr(conditionBegin));
+    state.addAttribute("obelisk.coro.continuation_operand_begin",
+                       rewriter.getI64IntegerAttr(continuationBegin));
+    rewriter.replaceOp(operation, rewriter.create(state));
+    return success();
+  }
+};
 
 template <typename Op>
 class SimSuspendTypeConversion final : public OpConversionPattern<Op> {
@@ -1518,83 +1704,282 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
   Value wait = byteGEP(builder, location, frame, waitOffset);
   Type i32 = builder.getI32Type();
   Type i64 = builder.getI64Type();
-  storeAt(builder, location, wait, 0, llvmConstant(builder, location, i32, 2),
-          4);
-  storeAt(builder, location, wait, 4,
-          llvmConstant(builder, location, i32, kind), 4);
-  uint32_t waitFlags = 0;
-  if (auto join = dyn_cast<sim::SimSuspendJoinOp>(operation))
-    waitFlags = static_cast<uint32_t>(join.getKind());
-  else if (isa<sim::SimSuspendLevelOp>(operation))
-    waitFlags = OBELISK_RT_WAIT_LEVEL_TRUE;
-  else if (isa<sim::SimSuspendEdgeIffOp>(operation))
-    waitFlags = OBELISK_RT_WAIT_EDGE_IFF;
-  storeAt(builder, location, wait, 8,
-          llvmConstant(builder, location, i32, waitFlags), 4);
-  storeAt(builder, location, wait, 12,
-          llvmConstant(builder, location, i32, count), 4);
-  Value payload = llvmConstant(builder, location, i64, 0);
-  if (auto delay = dyn_cast<sim::SimSuspendDelayOp>(operation))
-    payload = asI64(builder, location, delay.getDelay());
-  storeAt(builder, location, wait, 16, payload, 8);
-  storeAt(builder, location, wait, 24, llvmConstant(builder, location, i64, 0),
-          8);
+  llvm::SetVector<Operation *> observerBindings;
+  if (auto observe = dyn_cast<sim::SimSuspendObserveOp>(operation)) {
+    uint32_t primaryCount = observe.getEdges().size();
+    uint32_t conditionCount = observe.getConditionCount();
+    uint32_t observerCount = primaryCount + conditionCount;
+    auto planeCounts = operation->getAttrOfType<DenseI32ArrayAttr>(
+        "obelisk.coro.initial_plane_counts");
+    auto conditionBegin = operation->getAttrOfType<IntegerAttr>(
+        "obelisk.coro.condition_operand_begin");
+    if (!planeCounts || planeCounts.size() != primaryCount ||
+        !conditionBegin)
+      return operation->emitError(
+          "missing converted observer operand metadata");
+    SmallVector<sim::SimObserverBindOp> bindings;
+    bindings.reserve(observerCount);
+    for (uint32_t index = 0; index != primaryCount; ++index) {
+      auto binding =
+          operation->getOperand(index)
+              .getDefiningOp<sim::SimObserverBindOp>();
+      if (!binding)
+        return operation->emitError(
+            "primary observer token is not produced by observer.bind");
+      bindings.push_back(binding);
+    }
+    uint64_t conditionOperand = conditionBegin.getValue().getZExtValue();
+    for (uint32_t index = 0; index != conditionCount; ++index) {
+      if (conditionOperand + index >= operation->getNumOperands())
+        return operation->emitError("condition observer inventory is truncated");
+      auto binding =
+          operation->getOperand(conditionOperand + index)
+              .getDefiningOp<sim::SimObserverBindOp>();
+      if (!binding)
+        return operation->emitError(
+            "condition observer token is not produced by observer.bind");
+      bindings.push_back(binding);
+    }
+    uint32_t captureCount = 0;
+    uint32_t dependencyCount = 0;
+    uint32_t previousLimbs = 0;
+    SmallVector<uint32_t> widths;
+    SmallVector<bool> fourState;
+    for (auto [index, binding] : llvm::enumerate(bindings)) {
+      captureCount += binding.getCaptureCount();
+      dependencyCount += binding.getDependencies().size();
+      auto width = binding->getAttrOfType<IntegerAttr>(
+          "obelisk.coro.observer_width");
+      auto four = binding->getAttrOfType<BoolAttr>(
+          "obelisk.coro.observer_four_state");
+      if (!width || !four)
+        return binding.emitOpError("missing converted observer metadata");
+      widths.push_back(width.getValue().getZExtValue());
+      fourState.push_back(four.getValue());
+      if (index < primaryCount)
+        previousLimbs += (uint64_t{widths.back()} + 63) / 64;
+    }
+    uint64_t observersOffset = sizeof(obelisk_rt_computed_wait_record_v1);
+    uint64_t capturesOffset =
+        observersOffset +
+        uint64_t{observerCount} * sizeof(obelisk_rt_computed_observer_v1);
+    uint64_t dependenciesOffset =
+        capturesOffset +
+        uint64_t{captureCount} * sizeof(obelisk_rt_computed_capture_v1);
+    uint64_t clausesOffset =
+        dependenciesOffset +
+        uint64_t{dependencyCount} * sizeof(obelisk_rt_computed_dependency_v1);
+    uint64_t previousValueOffset =
+        clausesOffset +
+        uint64_t{primaryCount} * sizeof(obelisk_rt_computed_clause_v1);
+    uint64_t previousUnknownOffset = 0;
+    uint64_t totalSize =
+        previousValueOffset + uint64_t{previousLimbs} * sizeof(uint64_t) * 2;
+    if (totalSize > waitSize)
+      return operation->emitError(
+          "computed observer wait exceeds its canonical frame field");
 
-  SmallVector<Value> watched;
-  SmallVector<uint32_t> watchedEdges;
-  TypeSwitch<Operation *>(operation)
-      .Case<sim::SimSuspendChangeOp>([&](auto op) {
-        watched.push_back(op.getWatched());
-        watchedEdges.push_back(static_cast<uint32_t>(sim::EdgeKind::Change));
-      })
-      .Case<sim::SimSuspendLevelOp>([&](auto op) {
-        watched.push_back(op.getWatched());
-        watchedEdges.push_back(static_cast<uint32_t>(sim::EdgeKind::Change));
-      })
-      .Case<sim::SimSuspendEdgeOp>([&](auto op) {
-        watched.push_back(op.getWatched());
-        watchedEdges.push_back(static_cast<uint32_t>(op.getEdge()));
-      })
-      .Case<sim::SimSuspendEdgeIffOp>([&](auto op) {
-        watched.push_back(op.getWatched());
-        watchedEdges.push_back(static_cast<uint32_t>(op.getEdge()));
-        watched.push_back(op.getCondition());
-        watchedEdges.push_back(kWaitEdgeNone);
-      })
-      .Case<sim::SimSuspendAnyOp>([&](auto op) {
-        llvm::append_range(watched, op.getWatched());
-        for (int32_t edge : op.getEdges())
-          watchedEdges.push_back(static_cast<uint32_t>(edge));
-      })
-      .Case<sim::SimSuspendEventOp>([&](auto op) {
-        watched.push_back(op.getEvent());
-        watchedEdges.push_back(kWaitEdgeNone);
-      })
-      .Case<sim::SimSuspendAwaitOp>([&](auto op) {
-        watched.push_back(op.getProcess());
-        watchedEdges.push_back(kWaitEdgeNone);
-      })
-      .Case<sim::SimSuspendJoinOp>([&](auto op) {
-        llvm::append_range(watched, op.getProcesses());
-        watchedEdges.append(op.getProcesses().size(), kWaitEdgeNone);
-      });
-  if (watched.size() != watchedEdges.size())
-    return operation->emitError("wait handle and edge inventories disagree");
-  auto waitWidths =
-      operation->getAttrOfType<DenseI32ArrayAttr>("obelisk.coro.wait_widths");
-  if (!watched.empty() &&
-      (!waitWidths || static_cast<size_t>(waitWidths.size()) != watched.size()))
-    return operation->emitError("wait handle and width inventories disagree");
-  for (auto [index, value] : llvm::enumerate(watched)) {
-    uint64_t entryOffset = kWaitHeaderSize + index * kWaitEntrySize;
-    storeAt(builder, location, wait, entryOffset,
-            asI64(builder, location, value), 8);
-    storeAt(builder, location, wait, entryOffset + 8,
-            llvmConstant(builder, location, i32, watchedEdges[index]), 4);
-    storeAt(builder, location, wait, entryOffset + 12,
-            llvmConstant(builder, location, i32,
-                         static_cast<uint32_t>(waitWidths[index])),
-            4);
+    auto storeI32 = [&](uint64_t offset, uint32_t value) {
+      storeAt(builder, location, wait, offset,
+              llvmConstant(builder, location, i32, value), 4);
+    };
+    auto storeI64 = [&](uint64_t offset, uint64_t value) {
+      storeAt(builder, location, wait, offset,
+              llvmConstant(builder, location, i64, value), 8);
+    };
+    storeI32(0, OBELISK_RT_COMPUTED_WAIT_RECORD_VERSION);
+    storeI32(4, OBELISK_RT_SUSPEND_OBSERVER);
+    storeI32(8, OBELISK_RT_COMPUTED_WAIT_INTERLEAVED);
+    storeI32(12, primaryCount);
+    storeI32(16, observerCount);
+    storeI32(20, captureCount);
+    storeI32(24, dependencyCount);
+    storeI32(28, previousLimbs);
+    storeI64(32, observersOffset);
+    storeI64(40, capturesOffset);
+    storeI64(48, dependenciesOffset);
+    storeI64(56, clausesOffset);
+    storeI64(64, previousValueOffset);
+    storeI64(72, previousUnknownOffset);
+    storeI64(80, totalSize);
+    storeI64(88, 0);
+
+    uint32_t captureCursor = 0;
+    uint32_t dependencyCursor = 0;
+    uint32_t previousCursor = 0;
+    for (auto [index, binding] : llvm::enumerate(bindings)) {
+      auto observerID =
+          binding->getAttrOfType<IntegerAttr>("obelisk.coro.observer_id");
+      auto dependencyKinds = binding->getAttrOfType<DenseI32ArrayAttr>(
+          "obelisk.coro.dependency_kinds");
+      auto dependencyWidths = binding->getAttrOfType<DenseI32ArrayAttr>(
+          "obelisk.coro.dependency_widths");
+      if (!observerID || !dependencyKinds || !dependencyWidths ||
+          static_cast<size_t>(dependencyKinds.size()) !=
+              binding.getDependencies().size() ||
+          static_cast<size_t>(dependencyWidths.size()) !=
+              binding.getDependencies().size())
+        return binding.emitOpError(
+            "has malformed converted dependency metadata");
+      uint64_t entry =
+          observersOffset +
+          index * sizeof(obelisk_rt_computed_observer_v1);
+      storeI64(entry, observerID.getValue().getZExtValue());
+      storeI32(entry + 8, captureCursor);
+      storeI32(entry + 12, binding.getCaptureCount());
+      storeI32(entry + 16, dependencyCursor);
+      storeI32(entry + 20, binding.getDependencies().size());
+      storeI32(entry + 24,
+               index < primaryCount
+                   ? static_cast<uint32_t>(
+                         previousValueOffset +
+                         uint64_t{previousCursor} * sizeof(uint64_t) * 2)
+                   : UINT32_MAX);
+      storeI32(entry + 28, 0);
+      for (Value capture : binding.getCaptures()) {
+        uint64_t captureOffset =
+            capturesOffset +
+            uint64_t{captureCursor++} *
+                sizeof(obelisk_rt_computed_capture_v1);
+        storeAt(builder, location, wait, captureOffset,
+                asI64(builder, location, capture), 8);
+        storeI64(captureOffset + 8, 0);
+        storeI64(captureOffset + 16, 0);
+        storeI64(captureOffset + 24, 0);
+      }
+      for (auto [dependencyIndex, dependency] :
+           llvm::enumerate(binding.getDependencies())) {
+        uint64_t dependencyOffset =
+            dependenciesOffset +
+            uint64_t{dependencyCursor++} *
+                sizeof(obelisk_rt_computed_dependency_v1);
+        storeAt(builder, location, wait, dependencyOffset,
+                asI64(builder, location, dependency), 8);
+        storeI32(dependencyOffset + 8, dependencyKinds[dependencyIndex]);
+        storeI32(dependencyOffset + 12, dependencyWidths[dependencyIndex]);
+      }
+      if (index < primaryCount)
+        previousCursor += (uint64_t{widths[index]} + 63) / 64;
+      observerBindings.insert(binding);
+    }
+    for (uint32_t index = 0; index != primaryCount; ++index) {
+      uint64_t clause =
+          clausesOffset + uint64_t{index} *
+                              sizeof(obelisk_rt_computed_clause_v1);
+      int32_t conditionIndex = observe.getConditionIndices()[index];
+      storeI32(clause, index);
+      storeI32(clause + 4,
+               conditionIndex < 0
+                   ? OBELISK_RT_OBSERVER_CONDITION_NONE
+                   : primaryCount + static_cast<uint32_t>(conditionIndex));
+      storeI32(clause + 8, observe.getEdges()[index]);
+      storeI32(
+          clause + 12,
+          bindings[index]->hasAttr("obelisk_sim.event_primary")
+              ? OBELISK_RT_COMPUTED_CLAUSE_EVENT_PRIMARY
+              : 0);
+    }
+    for (uint32_t limb = 0; limb != previousLimbs * 2; ++limb)
+      storeI64(previousValueOffset + uint64_t{limb} * 8, 0);
+    uint64_t initialOperand = primaryCount;
+    previousCursor = 0;
+    for (uint32_t index = 0; index != primaryCount; ++index) {
+      uint32_t planes = planeCounts[index];
+      if (planes == 0 || planes > 2 ||
+          initialOperand + planes > operation->getNumOperands())
+        return operation->emitError(
+            "computed observer initial plane inventory is malformed");
+      storeAt(builder, location, wait,
+              previousValueOffset + uint64_t{previousCursor} * 16,
+              operation->getOperand(initialOperand), 1);
+      if (planes == 2)
+        storeAt(builder, location, wait,
+                previousValueOffset + uint64_t{previousCursor} * 16 +
+                    ((uint64_t{widths[index]} + 63) / 64) * 8,
+                operation->getOperand(initialOperand + 1), 1);
+      initialOperand += planes;
+      previousCursor += (uint64_t{widths[index]} + 63) / 64;
+    }
+  } else {
+    storeAt(builder, location, wait, 0,
+            llvmConstant(builder, location, i32, 2), 4);
+    storeAt(builder, location, wait, 4,
+            llvmConstant(builder, location, i32, kind), 4);
+    uint32_t waitFlags = 0;
+    if (auto join = dyn_cast<sim::SimSuspendJoinOp>(operation))
+      waitFlags = static_cast<uint32_t>(join.getKind());
+    else if (isa<sim::SimSuspendLevelOp>(operation))
+      waitFlags = OBELISK_RT_WAIT_LEVEL_TRUE;
+    else if (isa<sim::SimSuspendEdgeIffOp>(operation))
+      waitFlags = OBELISK_RT_WAIT_EDGE_IFF;
+    storeAt(builder, location, wait, 8,
+            llvmConstant(builder, location, i32, waitFlags), 4);
+    storeAt(builder, location, wait, 12,
+            llvmConstant(builder, location, i32, count), 4);
+    Value payload = llvmConstant(builder, location, i64, 0);
+    if (auto delay = dyn_cast<sim::SimSuspendDelayOp>(operation))
+      payload = asI64(builder, location, delay.getDelay());
+    storeAt(builder, location, wait, 16, payload, 8);
+    storeAt(builder, location, wait, 24,
+            llvmConstant(builder, location, i64, 0), 8);
+
+    SmallVector<Value> watched;
+    SmallVector<uint32_t> watchedEdges;
+    TypeSwitch<Operation *>(operation)
+        .Case<sim::SimSuspendChangeOp>([&](auto op) {
+          watched.push_back(op.getWatched());
+          watchedEdges.push_back(static_cast<uint32_t>(sim::EdgeKind::Change));
+        })
+        .Case<sim::SimSuspendLevelOp>([&](auto op) {
+          watched.push_back(op.getWatched());
+          watchedEdges.push_back(static_cast<uint32_t>(sim::EdgeKind::Change));
+        })
+        .Case<sim::SimSuspendEdgeOp>([&](auto op) {
+          watched.push_back(op.getWatched());
+          watchedEdges.push_back(static_cast<uint32_t>(op.getEdge()));
+        })
+        .Case<sim::SimSuspendEdgeIffOp>([&](auto op) {
+          watched.push_back(op.getWatched());
+          watchedEdges.push_back(static_cast<uint32_t>(op.getEdge()));
+          watched.push_back(op.getCondition());
+          watchedEdges.push_back(kWaitEdgeNone);
+        })
+        .Case<sim::SimSuspendAnyOp>([&](auto op) {
+          llvm::append_range(watched, op.getWatched());
+          for (int32_t edge : op.getEdges())
+            watchedEdges.push_back(static_cast<uint32_t>(edge));
+        })
+        .Case<sim::SimSuspendEventOp>([&](auto op) {
+          watched.push_back(op.getEvent());
+          watchedEdges.push_back(kWaitEdgeNone);
+        })
+        .Case<sim::SimSuspendAwaitOp>([&](auto op) {
+          watched.push_back(op.getProcess());
+          watchedEdges.push_back(kWaitEdgeNone);
+        })
+        .Case<sim::SimSuspendJoinOp>([&](auto op) {
+          llvm::append_range(watched, op.getProcesses());
+          watchedEdges.append(op.getProcesses().size(), kWaitEdgeNone);
+        });
+    if (watched.size() != watchedEdges.size())
+      return operation->emitError("wait handle and edge inventories disagree");
+    auto waitWidths =
+        operation->getAttrOfType<DenseI32ArrayAttr>("obelisk.coro.wait_widths");
+    if (!watched.empty() &&
+        (!waitWidths ||
+         static_cast<size_t>(waitWidths.size()) != watched.size()))
+      return operation->emitError("wait handle and width inventories disagree");
+    for (auto [index, value] : llvm::enumerate(watched)) {
+      uint64_t entryOffset = kWaitHeaderSize + index * kWaitEntrySize;
+      storeAt(builder, location, wait, entryOffset,
+              asI64(builder, location, value), 8);
+      storeAt(builder, location, wait, entryOffset + 8,
+              llvmConstant(builder, location, i32, watchedEdges[index]), 4);
+      storeAt(builder, location, wait, entryOffset + 12,
+              llvmConstant(builder, location, i32,
+                           static_cast<uint32_t>(waitWidths[index])),
+              4);
+    }
   }
 
   storeAt(builder, location, instance, kInstanceContinuationOffset,
@@ -1616,6 +2001,9 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
                          ValueRange{}, caseValues, destinations,
                          destinationOperands, ArrayRef<int32_t>{});
   builder.eraseOp(operation);
+  for (Operation *binding : observerBindings)
+    if (binding->use_empty())
+      builder.eraseOp(binding);
   return success();
 }
 
@@ -1961,7 +2349,8 @@ LogicalResult threadRuntimeStatuses(ModuleOp module) {
   Type statusType = runtime::StatusType::get(context);
   for (sim::SimFuncOp function : orderedFunctions) {
     if (!mayFail.contains(function.getOperation()) ||
-        function.getEntryKind() != sim::EntryKind::Function)
+        (function.getEntryKind() != sim::EntryKind::Function &&
+         function.getEntryKind() != sim::EntryKind::Observer))
       continue;
     statusReturning.insert(function.getOperation());
     SmallVector<Type> results(function.getResultTypes());
@@ -3343,6 +3732,118 @@ lowerSuspendableProcess(sim::SimFuncOp function,
   return makeProcessDescriptor(module, location, baseName, stableID, analysis);
 }
 
+LogicalResult makeNativeObserverThunk(ModuleOp module,
+                                      LLVM::LLVMFuncOp evaluator,
+                                      uint32_t resultWidth,
+                                      bool fourState) {
+  MLIRContext *context = module.getContext();
+  Location location = evaluator.getLoc();
+  Type pointer = LLVM::LLVMPointerType::get(context);
+  Type i32 = IntegerType::get(context, 32);
+  Type i64 = IntegerType::get(context, 64);
+  ArrayRef<Type> inputs = evaluator.getFunctionType().getParams();
+  if (inputs.empty() || inputs.front() != pointer ||
+      resultWidth == 0)
+    return evaluator.emitError("observer evaluator has an invalid native ABI");
+  uint32_t captureCount = inputs.size() - 1;
+  if (!llvm::all_of(inputs.drop_front(),
+                    [&](Type type) { return type == i64; }))
+    return evaluator.emitError(
+        "observer captures must lower to stable 64-bit handles");
+  unsigned expectedResults = fourState ? 2 : 1;
+  SmallVector<Type> results;
+  Type returnType = evaluator.getFunctionType().getReturnType();
+  if (auto aggregate = dyn_cast<LLVM::LLVMStructType>(returnType))
+    llvm::append_range(results, aggregate.getBody());
+  else if (!isa<LLVM::LLVMVoidType>(returnType))
+    results.push_back(returnType);
+  unsigned resultCount = results.size();
+  bool returnsStatus = resultCount == expectedResults + 1;
+  if (resultCount != expectedResults && !returnsStatus)
+    return evaluator.emitError(
+        "observer result plane count does not match its descriptor");
+  for (Type type :
+       ArrayRef<Type>(results).take_front(expectedResults)) {
+    auto integer = dyn_cast<IntegerType>(type);
+    if (!integer || integer.getWidth() != resultWidth)
+      return evaluator.emitError(
+          "observer result plane width does not match its descriptor");
+  }
+
+  OpBuilder builder(module.getContext());
+  std::string thunkName =
+      (evaluator.getSymName() + ".__obelisk_observer").str();
+  auto thunk = module.lookupSymbol<LLVM::LLVMFuncOp>(thunkName);
+  if (!thunk)
+    return evaluator.emitError(
+        "native observer thunk declaration was not materialized");
+  if (!thunk.getBody().empty())
+    return evaluator.emitError("native observer thunk is defined twice");
+  Block *entry = thunk.addEntryBlock(builder);
+  builder.setInsertionPointToStart(entry);
+  SmallVector<Value> arguments{entry->getArgument(0)};
+  Value captures = entry->getArgument(1);
+  for (uint32_t index = 0; index != captureCount; ++index)
+    arguments.push_back(LLVM::LoadOp::create(
+        builder, location, i64,
+        byteGEP(builder, location, captures, uint64_t{index} * 8), 8));
+  auto call = LLVM::CallOp::create(
+      builder, location, TypeRange{returnType},
+      SymbolRefAttr::get(context, evaluator.getSymName()), arguments);
+  auto resultAt = [&](unsigned index) -> Value {
+    if (resultCount == 1)
+      return call.getResult();
+    return LLVM::ExtractValueOp::create(
+        builder, location, results[index],
+        call.getResult(), ArrayRef<int64_t>{static_cast<int64_t>(index)});
+  };
+  uint32_t limbs = (resultWidth + 63) / 64;
+  Value zero = llvmConstant(builder, location, i64, 0);
+  for (uint32_t index = 0; index != limbs; ++index) {
+    LLVM::StoreOp::create(
+        builder, location, zero,
+        byteGEP(builder, location, entry->getArgument(3),
+                uint64_t{index} * 8),
+        8);
+    LLVM::StoreOp::create(
+        builder, location, zero,
+        byteGEP(builder, location, entry->getArgument(4),
+                uint64_t{index} * 8),
+        8);
+  }
+  LLVM::StoreOp::create(builder, location, resultAt(0),
+                        entry->getArgument(3), 1);
+  if (fourState)
+    LLVM::StoreOp::create(builder, location, resultAt(1),
+                          entry->getArgument(4), 1);
+  Value status = returnsStatus
+                     ? resultAt(expectedResults)
+                     : llvmConstant(builder, location, i32, 0);
+  LLVM::ReturnOp::create(builder, location, status);
+  return success();
+}
+
+LogicalResult materializeNativeObserverThunks(ModuleOp module) {
+  SmallVector<LLVM::LLVMFuncOp> evaluators;
+  module.walk([&](LLVM::LLVMFuncOp function) {
+    if (function->hasAttr("obelisk.observer_width"))
+      evaluators.push_back(function);
+  });
+  for (LLVM::LLVMFuncOp evaluator : evaluators) {
+    auto width =
+        evaluator->getAttrOfType<IntegerAttr>("obelisk.observer_width");
+    auto fourState =
+        evaluator->getAttrOfType<BoolAttr>("obelisk.observer_four_state");
+    if (!width || !fourState ||
+        failed(makeNativeObserverThunk(
+            module, evaluator,
+            static_cast<uint32_t>(width.getValue().getZExtValue()),
+            fourState.getValue())))
+      return failure();
+  }
+  return success();
+}
+
 LogicalResult lowerOrdinaryFunction(sim::SimFuncOp function) {
   Location location = function.getLoc();
   std::string symbolName = function.getSymName().str();
@@ -3354,6 +3855,11 @@ LogicalResult lowerOrdinaryFunction(sim::SimFuncOp function) {
   for (Type type : functionType.getResults())
     resultTypes.push_back(convertProcessType(type, function.getContext()));
   uint32_t entryKind = static_cast<uint32_t>(function.getEntryKind());
+  bool observer = function.getEntryKind() == sim::EntryKind::Observer;
+  auto observerWidth =
+      function->getAttrOfType<IntegerAttr>("obelisk_sim.observer_width");
+  auto observerFourState =
+      function->getAttrOfType<BoolAttr>("obelisk_sim.observer_four_state");
   function.getContext()->getOrLoadDialect<func::FuncDialect>();
   OpBuilder builder(function.getContext());
   builder.setInsertionPoint(function);
@@ -3404,6 +3910,17 @@ LogicalResult lowerOrdinaryFunction(sim::SimFuncOp function) {
           spawn.getOperands());
       rewriter.replaceOp(spawn, converted.getResults());
     }
+  }
+  if (observer) {
+    if (!observerWidth || !observerFourState)
+      return replacement.emitError(
+          "observer entry is missing native descriptor metadata");
+    replacement->setAttr(
+        "obelisk.observer_width",
+        builder.getI32IntegerAttr(
+            observerWidth.getValue().getZExtValue()));
+    replacement->setAttr("obelisk.observer_four_state",
+                         builder.getBoolAttr(observerFourState.getValue()));
   }
   return success();
 }
@@ -3783,7 +4300,8 @@ NativeScheduleRanks buildNativeScheduleRanks(ModuleOp module) {
   NativeScheduleRanks ranks;
   uint32_t fallback = 0;
   module.walk([&](sim::SimFuncOp function) {
-    if (function.getEntryKind() == sim::EntryKind::Function)
+    if (function.getEntryKind() == sim::EntryKind::Function ||
+        function.getEntryKind() == sim::EntryKind::Observer)
       return;
     ranks.entries[function.getOperation()] = fallback;
     for (Block &block : function.getBody())
@@ -3814,11 +4332,11 @@ NativeScheduleRanks buildNativeScheduleRanks(ModuleOp module) {
           continue;
         if (auto function = design.lookupSymbol<sim::SimFuncOp>(
                 fragment.getFunction().getValue())) {
-          if (fragment.getBlock() >= function.getBody().getBlocks().size())
+          Block *block =
+              lookupComputeGraphBlock(function, fragment.getBlock());
+          if (!block)
             continue;
-          auto block = function.getBody().begin();
-          std::advance(block, fragment.getBlock());
-          ranks.blocks[&*block] = rank;
+          ranks.blocks[block] = rank;
           if (fragment.getBlock() == 0)
             ranks.entries[function.getOperation()] = rank;
         }
@@ -4644,7 +5162,7 @@ LogicalResult insertAutomaticOwnerReleases(sim::SimFuncOp function) {
         if (liveness.getLiveIn(block).contains(reference))
           return true;
         if (auto argument = dyn_cast<BlockArgument>(reference);
-            argument && argument.getOwner() == block && !argument.use_empty())
+            argument && argument.getOwner() == block)
           return true;
       }
       return false;
@@ -5581,7 +6099,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     bool suspendable = false;
     function.walk(
         [&](Operation *operation) { suspendable |= isSuspension(operation); });
-    bool process = function.getEntryKind() != sim::EntryKind::Function;
+    bool process = function.getEntryKind() != sim::EntryKind::Function &&
+                   function.getEntryKind() != sim::EntryKind::Observer;
     if (failed(insertAutomaticOwnerReleases(function)))
       return WalkResult::interrupt();
     if (suspendable && failed(threadProcessStateThroughCFG(function)))
@@ -5685,13 +6204,20 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   addSimulationToRuntimeTypeConversions(packedConverter);
   packedConverter.addConversion([context](Type type) -> std::optional<Type> {
     if (isa<sim::RefType, sim::NetType, sim::DriverType, sim::EventType,
-            sim::ProcessType, sim::ControlType>(type))
+            sim::ProcessType, sim::ControlType, sim::ObserverType>(type))
       return IntegerType::get(context, 64);
     return std::nullopt;
   });
   ReferenceArgumentMap referenceArguments;
   WalkResult lifetimeInputs = module.walk([&](sim::SimFuncOp function) {
     if (function.getBody().empty())
+      return WalkResult::advance();
+    // Observer captures are borrowed from the persistent computed-wait
+    // record. Unlike an ordinary direct call, invoking an observer does not
+    // transfer one retained reference per argument, so its return must not
+    // consume captured automatic state. The waiting activation owns that
+    // state across suspension and releases it on resumption or cancellation.
+    if (function.getEntryKind() == sim::EntryKind::Observer)
       return WalkResult::advance();
     unsigned physical = 0;
     for (BlockArgument argument : function.getBody().front().getArguments()) {
@@ -5727,6 +6253,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   packedPatterns.add<SimTaskCallTypeConversion>(packedConverter, context);
   packedPatterns.add<SimDPICallTypeConversion>(packedConverter, context);
   packedPatterns.add<SimReturnTypeConversion,
+                     SimObserverBindTypeConversion,
+                     SimSuspendObserveTypeConversion,
                      AutomaticOwnerReleaseMarkerConversion,
                      PackedAggregateExtractConversion,
                      PackedAggregateInsertConversion,
@@ -5809,12 +6337,13 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   packedTarget.addDynamicallyLegalOp<
       sim::SimCallOp, sim::SimDPICallOp, sim::SimSpawnOp, sim::SimReturnOp,
       sim::SimTaskCallOp,
+      sim::SimObserverBindOp,
       sim::SimPackedFlattenOp, sim::SimPackedUnflattenOp,
       sim::SimSuspendDelayOp, sim::SimSuspendChangeOp, sim::SimSuspendEdgeOp,
       sim::SimSuspendEdgeIffOp, sim::SimSuspendLevelOp,
       sim::SimSuspendAnyOp, sim::SimSuspendEventOp, sim::SimSuspendForeverOp,
       sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp,
-      sim::SimSuspendChildrenOp>(
+      sim::SimSuspendChildrenOp, sim::SimSuspendObserveOp>(
       [&](Operation *operation) { return packedConverter.isLegal(operation); });
   packedTarget.addDynamicallyLegalDialect<
       sim::ObeliskSimulationDialect, arith::ArithDialect,
@@ -5917,7 +6446,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
 
   SmallVector<sim::SimFuncOp> ordinary;
   module.walk([&](sim::SimFuncOp function) {
-    if (function.getEntryKind() == sim::EntryKind::Function)
+    if (function.getEntryKind() == sim::EntryKind::Function ||
+        function.getEntryKind() == sim::EntryKind::Observer)
       ordinary.push_back(function);
   });
   for (sim::SimFuncOp function : ordinary)
@@ -6010,6 +6540,10 @@ public:
     target.markUnknownOpDynamicallyLegal(
         [](Operation *operation) { return isa<LLVM::LLVMFuncOp>(operation); });
     if (failed(applyFullConversion(module, target, std::move(patterns)))) {
+      signalPassFailure();
+      return;
+    }
+    if (failed(materializeNativeObserverThunks(module))) {
       signalPassFailure();
       return;
     }
@@ -6177,12 +6711,22 @@ SimulationProcessFrameAnalysis::create(sim::SimFuncOp function,
         return failure();
       }
     }
-    uint64_t entries = waitEntryCount(operation);
-    if (entries > (std::numeric_limits<uint64_t>::max() - kWaitHeaderSize) /
-                      kWaitEntrySize)
-      return operation->emitError("wait record size overflow");
-    maxWaitSize =
-        std::max(maxWaitSize, kWaitHeaderSize + entries * kWaitEntrySize);
+    uint64_t waitSize;
+    if (auto observe = dyn_cast<sim::SimSuspendObserveOp>(operation)) {
+      FailureOr<uint64_t> computed = computedWaitSize(observe);
+      if (failed(computed))
+        return operation->emitError(
+            "cannot size the computed observer wait record");
+      waitSize = *computed;
+    } else {
+      uint64_t entries = waitEntryCount(operation);
+      if (entries > (std::numeric_limits<uint64_t>::max() -
+                     kWaitHeaderSize) /
+                        kWaitEntrySize)
+        return operation->emitError("wait record size overflow");
+      waitSize = kWaitHeaderSize + entries * kWaitEntrySize;
+    }
+    maxWaitSize = std::max(maxWaitSize, waitSize);
   }
   uint64_t waitOffset = kNoOffset;
   if (!suspensionOps.empty()) {

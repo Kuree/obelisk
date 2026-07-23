@@ -33,9 +33,13 @@ module {
     obelisk_sim.code_unit.decl 9000009 in 0 initial hierarchy "test.graph.backward_cfg.9000009"
     obelisk_sim.code_unit.decl 9000010 in 0 always_ff hierarchy "test.graph.z_clocked_nba.9000010"
     obelisk_sim.code_unit.decl 9000011 in 0 initial hierarchy "test.graph.z_repeated_delayed_nba.9000011"
+    obelisk_sim.code_unit.decl 9000012 in 0 observer hierarchy "test.graph.observer_primary.9000012"
+    obelisk_sim.code_unit.decl 9000013 in 0 observer hierarchy "test.graph.observer_condition_effect.9000013"
+    obelisk_sim.code_unit.decl 9000014 in 0 initial hierarchy "test.graph.observer_effect_waiter.9000014"
     obelisk_sim.scope.decl 0
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<16> design
     obelisk_sim.storage.decl 1 in 0 : !obelisk_sim.logic<8> design
+    obelisk_sim.storage.decl 2 in 0 : !obelisk_sim.logic<1> design
 
     // Formal-handle summaries are parametric and retain the selected range.
     // CHECK-LABEL: obelisk_sim.func @read_nibble
@@ -100,6 +104,44 @@ module {
       %resume_target = obelisk_sim.ref.extract %result from 0 : !obelisk_sim.ref<!obelisk_sim.logic<8>> -> !obelisk_sim.ref<!obelisk_sim.logic<4>>
       obelisk_sim.ref.store %value to %resume_target : !obelisk_sim.logic<4>, !obelisk_sim.ref<!obelisk_sim.logic<4>>
       obelisk_sim.suspend.change %result to ^resume : !obelisk_sim.ref<!obelisk_sim.logic<8>>
+    }
+
+    obelisk_sim.func private @observer_primary(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        -> !obelisk_sim.logic<8> attributes {entry_kind = 14 : i32, code_unit_id = 9000012 : i64} {
+      %watched = obelisk_sim.context.storage %ctx[1] : !obelisk_sim.ref<!obelisk_sim.logic<8>>
+      %value = obelisk_sim.ref.load %watched : !obelisk_sim.ref<!obelisk_sim.logic<8>> -> !obelisk_sim.logic<8>
+      obelisk_sim.return %value : !obelisk_sim.logic<8>
+    }
+
+    obelisk_sim.func private @observer_condition_effect(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %target: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 2 : i32})
+        -> i1 attributes {entry_kind = 14 : i32, code_unit_id = 9000013 : i64} {
+      %one = obelisk_sim.logic.constant true, false : !obelisk_sim.logic<1>
+      obelisk_sim.ref.store %one to %target : !obelisk_sim.logic<1>, !obelisk_sim.ref<!obelisk_sim.logic<1>>
+      %true = arith.constant true
+      obelisk_sim.return %true : i1
+    }
+
+    // Observer evaluators execute as zero-time callees of the waiting
+    // fragment. Their transitive effects, including an impure iff evaluator,
+    // must therefore be substituted into the waiter's compute-graph summary.
+    // CHECK-LABEL: obelisk_sim.func @observer_effect_waiter
+    // CHECK-SAME: effect_summary = [
+    // CHECK-SAME: effect = write, resource = storage, target = descriptor, descriptor = 2
+    // CHECK-SAME: effect = watch, resource = storage, target = descriptor, descriptor = 1
+    obelisk_sim.func @observer_effect_waiter(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %watched: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64},
+        %target: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 2 : i64})
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000014 : i64} {
+      %primary = obelisk_sim.observer.bind @observer_primary values(%watched : !obelisk_sim.ref<!obelisk_sim.logic<8>>) captures 0 : !obelisk_sim.observer<!obelisk_sim.logic<8>>
+      %condition = obelisk_sim.observer.bind @observer_condition_effect values(%target : !obelisk_sim.ref<!obelisk_sim.logic<1>>) captures 1 : !obelisk_sim.observer<i1>
+      %initial = obelisk_sim.logic.constant 0 : i8, 0 : i8 : !obelisk_sim.logic<8>
+      obelisk_sim.suspend.observe %primary, %initial, %condition conditions 1 edges [0] indices [0] to ^resume : !obelisk_sim.observer<!obelisk_sim.logic<8>>, !obelisk_sim.logic<8>, !obelisk_sim.observer<i1>
+    ^resume:
+      obelisk_sim.return
     }
 
     // A repeated immediate site uses a generated root accumulator. It records

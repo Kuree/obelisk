@@ -875,6 +875,7 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
                                      uint64_t bitWidth, bool write) {
   if (!context || !value || bitWidth == 0 || !context->execution)
     return OBELISK_RT_INVALID_ARGUMENT;
+  ContextTransaction transaction(context);
   Database database;
   const uint8_t *record;
   uint32_t kind;
@@ -920,7 +921,7 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
     }
   }
   {
-    std::lock_guard<std::mutex> lock(context->mutex);
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
     for (uint64_t bit = 0; bit != width; ++bit) {
       uint64_t sourceLimb = bit / 64;
       uint64_t sourceMask = uint64_t{1} << (bit % 64);
@@ -963,6 +964,12 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
   if (write) {
     for (auto [absolute, edges] : transitions)
       obelisk_rt_v1_scheduler_signal(context, absolute, 1, edges);
+    if (!transitions.empty()) {
+      std::lock_guard<std::recursive_mutex> lock(context->mutex);
+      if (!obelisk_rt_notify_observer_signal_unlocked(context, stateOffset,
+                                                      width))
+        return context->schedulerStatus;
+    }
     if (kind == OBELISK_RT_DESIGN_RECORD_DRIVER)
       return obelisk_rt_resolve_design_drivers(context, stateOffset,
                                                 stateOffset + width);

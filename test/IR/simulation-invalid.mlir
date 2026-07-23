@@ -1360,3 +1360,179 @@ module {
     }
   }
 }
+
+// -----
+
+module {
+  obelisk_sim.design @observer_bad_result {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 9000001 in 0 observer hierarchy "test.observer_bad_result"
+    // expected-error @+1 {{observer entry must return one packed scalar result}}
+    obelisk_sim.func private @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> !obelisk_sim.time attributes {entry_kind = 14 : i32, code_unit_id = 9000001 : i64} {
+      %zero = obelisk_sim.time.constant 0
+      obelisk_sim.return %zero : !obelisk_sim.time
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @observer_suspends {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 9000001 in 0 observer hierarchy "test.observer_suspends"
+    obelisk_sim.func private @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> i1 attributes {entry_kind = 14 : i32, code_unit_id = 9000001 : i64} {
+      // expected-error @+1 {{is not permitted in a zero-time observer entry}}
+      obelisk_sim.suspend.forever to ^resume
+    ^resume:
+      %false = arith.constant false
+      obelisk_sim.return %false : i1
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @observer_calls_task {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 9000001 in 0 task hierarchy "test.observer_calls_task.callee"
+    obelisk_sim.code_unit.decl 9000002 in 0 observer hierarchy "test.observer_calls_task.bad"
+    obelisk_sim.func private @callee(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 12 : i32, code_unit_id = 9000001 : i64} {
+      obelisk_sim.return
+    }
+    obelisk_sim.func private @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> i1 attributes {entry_kind = 14 : i32, code_unit_id = 9000002 : i64} {
+      // expected-error @+1 {{task calls are not permitted in an observer entry}}
+      obelisk_sim.task.call @callee(%ctx) arguments 1 to ^resume : !obelisk_sim.context
+    ^resume:
+      %false = arith.constant false
+      obelisk_sim.return %false : i1
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @observer_bind_signature {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.storage.decl 0 in 0 : i16 design
+    obelisk_sim.code_unit.decl 9000001 in 0 observer hierarchy "test.observer_bind_signature.evaluator"
+    obelisk_sim.code_unit.decl 9000002 in 0 initial hierarchy "test.observer_bind_signature.bad"
+    obelisk_sim.func private @evaluator(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %ref: !obelisk_sim.ref<i8> {obelisk_sim.capture_kind = 2 : i32}) -> i1 attributes {entry_kind = 14 : i32, code_unit_id = 9000001 : i64} {
+      %false = arith.constant false
+      obelisk_sim.return %false : i1
+    }
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
+      %ref = obelisk_sim.context.storage %ctx[0] : !obelisk_sim.ref<i16>
+      // expected-error @+1 {{capture types must match evaluator arguments after context}}
+      %bound = obelisk_sim.observer.bind @evaluator values(%ref, %ref : !obelisk_sim.ref<i16>, !obelisk_sim.ref<i16>) captures 1 : !obelisk_sim.observer<i1>
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @observer_bind_dependency {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 9000001 in 0 observer hierarchy "test.observer_bind_dependency.evaluator"
+    obelisk_sim.code_unit.decl 9000002 in 0 initial hierarchy "test.observer_bind_dependency.bad"
+    obelisk_sim.func private @evaluator(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> i1 attributes {entry_kind = 14 : i32, code_unit_id = 9000001 : i64} {
+      %false = arith.constant false
+      obelisk_sim.return %false : i1
+    }
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
+      %value = arith.constant 0 : i8
+      // expected-error @+1 {{dependencies must be storage, net, or named-event handles}}
+      %bound = obelisk_sim.observer.bind @evaluator values(%value : i8) captures 0 : !obelisk_sim.observer<i1>
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @suspend_observe_primary_type {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.suspend_observe_primary_type.bad"
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %false = arith.constant false
+      // expected-error @+1 {{primary operands must be observer handles}}
+      obelisk_sim.suspend.observe %false, %false conditions 0 edges [0] indices [-1] to ^resume : i1, i1
+    ^resume:
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @suspend_observe_clauses {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.suspend_observe_clauses.bad"
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %false = arith.constant false
+      // expected-error @+1 {{requires one initial value, edge, and condition index per primary}}
+      obelisk_sim.suspend.observe %false conditions 0 edges [0, 1] indices [-1, -1] to ^resume : i1
+    ^resume:
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @observer_bind_capture_abi {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 9000001 in 0 observer hierarchy "test.observer_bind_capture_abi.evaluator"
+    obelisk_sim.code_unit.decl 9000002 in 0 initial hierarchy "test.observer_bind_capture_abi.bad"
+    obelisk_sim.func private @evaluator(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %scalar: i8 {obelisk_sim.capture_kind = 2 : i32}) -> i1
+        attributes {entry_kind = 14 : i32, code_unit_id = 9000001 : i64} {
+      %false = arith.constant false
+      obelisk_sim.return %false : i1
+    }
+    obelisk_sim.func @bad(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
+      %scalar = arith.constant 0 : i8
+      // expected-error @+1 {{captures must use storage, net, driver, or named-event handles}}
+      %bound = obelisk_sim.observer.bind @evaluator values(%scalar : i8) captures 1 : !obelisk_sim.observer<i1>
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @suspend_observe_truncated_condition {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<1> design
+    obelisk_sim.code_unit.decl 9000001 in 0 observer hierarchy "test.suspend_observe_truncated_condition.primary"
+    obelisk_sim.code_unit.decl 9000002 in 0 initial hierarchy "test.suspend_observe_truncated_condition.bad"
+    obelisk_sim.func private @primary(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> i1
+        attributes {entry_kind = 14 : i32, code_unit_id = 9000001 : i64} {
+      %false = arith.constant false
+      obelisk_sim.return %false : i1
+    }
+    obelisk_sim.func @bad(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
+      %dependency = obelisk_sim.context.storage %ctx[0] : !obelisk_sim.ref<!obelisk_sim.logic<1>>
+      %primary = obelisk_sim.observer.bind @primary values(%dependency : !obelisk_sim.ref<!obelisk_sim.logic<1>>) captures 0 : !obelisk_sim.observer<i1>
+      %false = arith.constant false
+      // expected-error @+1 {{condition count exceeds the operand inventory}}
+      obelisk_sim.suspend.observe %primary, %false conditions 1 edges [0] indices [0] to ^resume : !obelisk_sim.observer<i1>, i1
+    ^resume:
+      obelisk_sim.return
+    }
+  }
+}

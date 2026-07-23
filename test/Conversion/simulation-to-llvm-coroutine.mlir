@@ -35,6 +35,8 @@ module attributes {
     obelisk_sim.code_unit.decl 9000015 in 0 function hierarchy "test.coroutines.ordinary.9000015"
     obelisk_sim.code_unit.decl 9000016 in 0 function hierarchy "test.coroutines.union_extract.9000016"
     obelisk_sim.code_unit.decl 9000017 in 0 function hierarchy "test.coroutines.aggregate_insert.9000017"
+    obelisk_sim.code_unit.decl 9000018 in 0 observer hierarchy "test.coroutines.shared_observer.9000018"
+    obelisk_sim.code_unit.decl 9000019 in 0 initial hierarchy "test.coroutines.shared_observer_binding.9000019"
     obelisk_sim.scope.decl 0
 
     obelisk_sim.func @delay_process(
@@ -92,6 +94,28 @@ module attributes {
       cf.br ^header
     ^header:
       obelisk_sim.suspend.change %ref to ^header : !obelisk_sim.ref<i8>
+    }
+
+    obelisk_sim.func private @shared_observer(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> i1
+        attributes {entry_kind = 14 : i32, code_unit_id = 9000018 : i64,
+                    obelisk_sim.observer_width = 1 : i32,
+                    obelisk_sim.observer_four_state = false} {
+      %false = arith.constant false
+      obelisk_sim.return %false : i1
+    }
+
+    // One binding may be referenced by multiple source clauses. Lowering
+    // serializes each occurrence but owns and erases the defining op once.
+    obelisk_sim.func @shared_observer_binding(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %ref: !obelisk_sim.ref<i8> {obelisk_sim.capture_kind = 1 : i32})
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000019 : i64} {
+      %bound = obelisk_sim.observer.bind @shared_observer values(%ref : !obelisk_sim.ref<i8>) captures 0 : !obelisk_sim.observer<i1>
+      %false = arith.constant false
+      obelisk_sim.suspend.observe %bound, %bound, %false, %false conditions 0 edges [0, 0] indices [-1, -1] to ^resume : !obelisk_sim.observer<i1>, !obelisk_sim.observer<i1>, i1, i1
+    ^resume:
+      obelisk_sim.return
     }
 
     obelisk_sim.func @reuse_continuation_slots(
@@ -300,6 +324,8 @@ module attributes {
 // CHECK-DAG: llvm.store %{{[0-9]+}}, %[[ANY_EDGE_POSEDGE_ADDR]]
 // CHECK-DAG: llvm.getelementptr {{.*}}[60]
 // CHECK-LABEL: llvm.func @loop_wait.__obelisk_coro_ramp
+// CHECK-SAME: obelisk.frame.continuations = array<i32: 0, 1>
+// CHECK-LABEL: llvm.func @shared_observer_binding.__obelisk_coro_ramp
 // CHECK-SAME: obelisk.frame.continuations = array<i32: 0, 1>
 // CHECK-LABEL: llvm.func @reuse_continuation_slots.__obelisk_coro_ramp
 // CHECK-SAME: obelisk.frame.continuations = array<i32: 0, 1, 2>

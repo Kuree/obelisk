@@ -78,11 +78,68 @@ public:
     if (suspensions.empty())
       return;
 
-    // Threading only adds block arguments and successor operands, so the CFG
-    // is invariant and dominance is computed once. Liveness is not: threading
-    // a value across one suspension replaces its later uses with the new
-    // continuation argument, and that argument is what the next suspension in
-    // the chain has to forward.
+    // Observer callbacks retain captured automatic references while the
+    // process is suspended even when the controlled statement never reads
+    // them after resumption. Route only the suspension edge through a private
+    // bridge which owns those handles until resume. Appending them directly to
+    // a shared continuation would require fabricating non-dominating values
+    // on unrelated predecessors.
+    for (Operation *suspension : suspensions) {
+      auto observe = dyn_cast<sim::SimSuspendObserveOp>(suspension);
+      if (!observe)
+        continue;
+      Liveness liveness(function);
+      const auto &liveOut = liveness.getLiveOut(suspension->getBlock());
+      llvm::SetVector<Value> retained;
+      SmallVector<Value> observerValues(observe.getPrimaries());
+      llvm::append_range(observerValues, observe.getConditions());
+      for (Value observer : observerValues) {
+        auto binding = observer.getDefiningOp<sim::SimObserverBindOp>();
+        if (!binding)
+          continue;
+        for (Value capture : binding.getCaptures())
+          // A live capture is threaded through the ordinary continuation
+          // operands below, which both preserves its value and pins its
+          // automatic activation. The private bridge is only needed for
+          // captures whose sole remaining owner is the observer callback.
+          if (isa<sim::RefType>(capture.getType()) &&
+              !liveOut.contains(capture))
+            retained.insert(capture);
+      }
+      auto branch = cast<BranchOpInterface>(suspension);
+      SuccessorOperands successorOperands = branch.getSuccessorOperands(0);
+      SmallVector<Value> forwarded(
+          successorOperands.getForwardedOperands().begin(),
+          successorOperands.getForwardedOperands().end());
+      for (Value value : forwarded)
+        retained.remove(value);
+      if (retained.empty())
+        continue;
+
+      Block *continuation = suspension->getSuccessor(0);
+      auto *resume = new Block;
+      function.getBody().getBlocks().insert(Region::iterator(continuation),
+                                            resume);
+      for (Value value : forwarded)
+        resume->addArgument(value.getType(), suspension->getLoc());
+      for (Value value : retained)
+        resume->addArgument(value.getType(), suspension->getLoc());
+      successorOperands.getMutableForwardedOperands().append(
+          retained.getArrayRef());
+      suspension->setSuccessor(resume, 0);
+      OpBuilder builder(resume, resume->begin());
+      auto bridge = cf::BranchOp::create(
+          builder, suspension->getLoc(), continuation,
+          resume->getArguments().take_front(forwarded.size()));
+      bridge->setAttr("obelisk_sim.observer_capture_bridge",
+                      builder.getUnitAttr());
+    }
+
+    // Apart from graph-transparent observer-capture bridges, threading only
+    // adds block arguments and successor operands. Liveness is not invariant:
+    // threading a value across one suspension replaces its later uses with the
+    // new continuation argument, and that argument is what the next suspension
+    // in the chain has to forward.
     DominanceInfo dominance(function);
     Block &entry = function.getBody().front();
     DenseMap<Block *, DenseMap<Value, BlockArgument>> threadedValues;

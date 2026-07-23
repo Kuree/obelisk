@@ -813,6 +813,30 @@ TEST(ProcessInstance, InitializesOutputRecordsOnFailure) {
   EXPECT_EQ(action.auxiliary, 0u);
 }
 
+TEST(ProcessInstance, DefersDestroyWhileObserverPinsActivation) {
+  Fixture fixture;
+  nativeDestroyCount = 0;
+  obelisk_rt_process_instance_v1 *instance = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
+      OBELISK_RT_OK);
+  instance->native_handle = instance;
+  instance->observer_pin_count = 1;
+
+  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
+  EXPECT_EQ(instance->observer_destroy_pending, 1u);
+  EXPECT_EQ(nativeDestroyCount, 0);
+  void *frame = nullptr;
+  uint64_t frameSize = 0;
+  EXPECT_EQ(obelisk_rt_v1_process_instance_frame(instance, &frame, &frameSize),
+            OBELISK_RT_OK);
+  EXPECT_NE(frame, nullptr);
+
+  instance->observer_pin_count = 0;
+  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
+  EXPECT_EQ(nativeDestroyCount, 1);
+}
+
 TEST(ProcessInstance, NativeBytecodeNativeUsesStableCanonicalFrame) {
   Fixture fixture;
   nativeDestroyCount = 0;

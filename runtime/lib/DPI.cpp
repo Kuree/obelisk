@@ -188,10 +188,11 @@ extern "C" obelisk_rt_status obelisk_rt_v1_import_call(
     if (!validOutput(outputs[index]))
       return OBELISK_RT_INVALID_ARGUMENT;
 
+  ContextTransaction transaction(context);
   DpiScopeHandle *scope = nullptr;
   ImportBinding binding;
   {
-    std::lock_guard<std::mutex> lock(context->mutex);
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
     if (site->scope_id != UINT64_MAX) {
       scope = obelisk_rt_find_dpi_scope(context, site->scope_id);
       if (!scope)
@@ -269,7 +270,7 @@ extern "C" int svPutUserData(const svScope scope, void *userKey,
   DpiScopeHandle *handle = scopeFromOpaque(activeDpiCall, scope);
   if (!handle || !userKey || !userData)
     return -1;
-  std::lock_guard<std::mutex> lock(handle->context->mutex);
+  std::lock_guard<std::recursive_mutex> lock(handle->context->mutex);
   handle->userData[userKey] = userData;
   return 0;
 }
@@ -278,7 +279,7 @@ extern "C" void *svGetUserData(const svScope scope, void *userKey) {
   DpiScopeHandle *handle = scopeFromOpaque(activeDpiCall, scope);
   if (!handle || !userKey)
     return nullptr;
-  std::lock_guard<std::mutex> lock(handle->context->mutex);
+  std::lock_guard<std::recursive_mutex> lock(handle->context->mutex);
   auto found = handle->userData.find(userKey);
   return found == handle->userData.end() ? nullptr : found->second;
 }
@@ -322,7 +323,7 @@ extern "C" int svGetTime(const svScope scope, svTimeVal *time) {
     return -1;
   uint64_t ticks = 0;
   {
-    std::lock_guard<std::mutex> lock(activeDpiCall->context->mutex);
+    std::lock_guard<std::recursive_mutex> lock(activeDpiCall->context->mutex);
     ticks = activeDpiCall->context->schedulerTime;
   }
   uint64_t scaled = ticks / (precisionScale / unitScale);
