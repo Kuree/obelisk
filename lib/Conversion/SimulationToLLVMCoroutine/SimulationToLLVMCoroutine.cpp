@@ -90,28 +90,34 @@ uint64_t appendHash(uint64_t hash, uint64_t value, unsigned bytes) {
 
 bool isSuspension(Operation *operation) {
   return isa<sim::SimSuspendDelayOp, sim::SimSuspendChangeOp,
-             sim::SimSuspendEdgeOp, sim::SimSuspendAnyOp,
-             sim::SimSuspendEventOp, sim::SimSuspendAwaitOp,
-             sim::SimSuspendJoinOp>(operation);
+             sim::SimSuspendEdgeOp, sim::SimSuspendEdgeIffOp,
+             sim::SimSuspendLevelOp, sim::SimSuspendAnyOp,
+             sim::SimSuspendEventOp, sim::SimSuspendForeverOp,
+             sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp>(operation);
 }
 
 uint32_t suspensionKind(Operation *operation) {
   return TypeSwitch<Operation *, uint32_t>(operation)
       .Case<sim::SimSuspendDelayOp>([](auto) { return 1; })
       .Case<sim::SimSuspendChangeOp>([](auto) { return 2; })
+      .Case<sim::SimSuspendLevelOp>([](auto) { return 2; })
       .Case<sim::SimSuspendEdgeOp>([](auto) { return 3; })
+      .Case<sim::SimSuspendEdgeIffOp>([](auto) { return 3; })
       .Case<sim::SimSuspendAnyOp>([](auto) { return 3; })
       .Case<sim::SimSuspendEventOp>([](auto) { return 4; })
       .Case<sim::SimSuspendAwaitOp>([](auto) { return 5; })
       .Case<sim::SimSuspendJoinOp>([](auto) { return 6; })
+      .Case<sim::SimSuspendForeverOp>([](auto) { return 7; })
       .Default([](Operation *) { return 0; });
 }
 
 uint32_t waitEntryCount(Operation *operation) {
   return TypeSwitch<Operation *, uint32_t>(operation)
-      .Case<sim::SimSuspendChangeOp, sim::SimSuspendEdgeOp,
+      .Case<sim::SimSuspendChangeOp, sim::SimSuspendLevelOp,
+            sim::SimSuspendEdgeOp,
             sim::SimSuspendEventOp, sim::SimSuspendAwaitOp>(
           [](auto) { return 1; })
+      .Case<sim::SimSuspendEdgeIffOp>([](auto) { return 2; })
       .Case<sim::SimSuspendAnyOp>(
           [](auto op) { return static_cast<uint32_t>(op.getWatched().size()); })
       .Case<sim::SimSuspendJoinOp>([](auto op) {
@@ -515,22 +521,58 @@ public:
 
 SmallVector<int32_t> suspensionWaitWidths(Operation *operation) {
   SmallVector<Value> watched;
+  SmallVector<bool> scalarEdge;
   TypeSwitch<Operation *>(operation)
       .Case<sim::SimSuspendChangeOp>(
-          [&](auto op) { watched.push_back(op.getWatched()); })
+          [&](auto op) {
+            watched.push_back(op.getWatched());
+            scalarEdge.push_back(false);
+          })
+      .Case<sim::SimSuspendLevelOp>(
+          [&](auto op) {
+            watched.push_back(op.getWatched());
+            scalarEdge.push_back(false);
+          })
       .Case<sim::SimSuspendEdgeOp>(
-          [&](auto op) { watched.push_back(op.getWatched()); })
+          [&](auto op) {
+            watched.push_back(op.getWatched());
+            scalarEdge.push_back(true);
+          })
+      .Case<sim::SimSuspendEdgeIffOp>([&](auto op) {
+        watched.push_back(op.getWatched());
+        scalarEdge.push_back(true);
+        watched.push_back(op.getCondition());
+        scalarEdge.push_back(false);
+      })
       .Case<sim::SimSuspendAnyOp>(
-          [&](auto op) { llvm::append_range(watched, op.getWatched()); })
+          [&](auto op) {
+            llvm::append_range(watched, op.getWatched());
+            for (int32_t edge : op.getEdges())
+              scalarEdge.push_back(
+                  edge != static_cast<int32_t>(sim::EdgeKind::Change));
+          })
       .Case<sim::SimSuspendEventOp>(
-          [&](auto op) { watched.push_back(op.getEvent()); })
+          [&](auto op) {
+            watched.push_back(op.getEvent());
+            scalarEdge.push_back(false);
+          })
       .Case<sim::SimSuspendAwaitOp>(
-          [&](auto op) { watched.push_back(op.getProcess()); })
+          [&](auto op) {
+            watched.push_back(op.getProcess());
+            scalarEdge.push_back(false);
+          })
       .Case<sim::SimSuspendJoinOp>(
-          [&](auto op) { llvm::append_range(watched, op.getProcesses()); });
+          [&](auto op) {
+            llvm::append_range(watched, op.getProcesses());
+            scalarEdge.append(op.getProcesses().size(), false);
+          });
   SmallVector<int32_t> widths;
   widths.reserve(watched.size());
-  for (Value value : watched) {
+  for (auto [index, value] : llvm::enumerate(watched)) {
+    if (scalarEdge[index]) {
+      widths.push_back(1);
+      continue;
+    }
     Type type = value.getType();
     if (auto reference = dyn_cast<sim::RefType>(type))
       type = reference.getElementType();
@@ -1238,6 +1280,10 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
   uint32_t waitFlags = 0;
   if (auto join = dyn_cast<sim::SimSuspendJoinOp>(operation))
     waitFlags = static_cast<uint32_t>(join.getKind());
+  else if (isa<sim::SimSuspendLevelOp>(operation))
+    waitFlags = OBELISK_RT_WAIT_LEVEL_TRUE;
+  else if (isa<sim::SimSuspendEdgeIffOp>(operation))
+    waitFlags = OBELISK_RT_WAIT_EDGE_IFF;
   storeAt(builder, location, wait, 8,
           llvmConstant(builder, location, i32, waitFlags), 4);
   storeAt(builder, location, wait, 12,
@@ -1256,9 +1302,19 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
         watched.push_back(op.getWatched());
         watchedEdges.push_back(static_cast<uint32_t>(sim::EdgeKind::Change));
       })
+      .Case<sim::SimSuspendLevelOp>([&](auto op) {
+        watched.push_back(op.getWatched());
+        watchedEdges.push_back(static_cast<uint32_t>(sim::EdgeKind::Change));
+      })
       .Case<sim::SimSuspendEdgeOp>([&](auto op) {
         watched.push_back(op.getWatched());
         watchedEdges.push_back(static_cast<uint32_t>(op.getEdge()));
+      })
+      .Case<sim::SimSuspendEdgeIffOp>([&](auto op) {
+        watched.push_back(op.getWatched());
+        watchedEdges.push_back(static_cast<uint32_t>(op.getEdge()));
+        watched.push_back(op.getCondition());
+        watchedEdges.push_back(kWaitEdgeNone);
       })
       .Case<sim::SimSuspendAnyOp>([&](auto op) {
         llvm::append_range(watched, op.getWatched());
@@ -4661,6 +4717,37 @@ public:
   LogicalResult
   matchAndRewrite(sim::SimEventTriggerOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getEvent().size() != 1 || adaptor.getDelay().size() > 1)
+      return failure();
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Type i64 = rewriter.getI64Type();
+    Value address = LLVM::AddressOfOp::create(
+        rewriter, op.getLoc(), pointer, "__obelisk_current_context");
+    Value context =
+        LLVM::LoadOp::create(rewriter, op.getLoc(), pointer, address, 8);
+    Value delay = adaptor.getDelay().empty()
+                      ? llvmConstant(rewriter, op.getLoc(), i64, 0)
+                      : adaptor.getDelay().front();
+    LLVM::CallOp::create(
+        rewriter, op.getLoc(), TypeRange{},
+        SymbolRefAttr::get(rewriter.getContext(),
+                           "obelisk_rt_v1_scheduler_event_after"),
+        ValueRange{context, adaptor.getEvent().front(),
+                   llvmConstant(rewriter, op.getLoc(), rewriter.getI32Type(),
+                                op.getNonblocking() ? 1 : 0),
+                   delay});
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+class EventTriggeredConversion final
+    : public OpConversionPattern<sim::SimEventTriggeredOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimEventTriggeredOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
     if (adaptor.getEvent().size() != 1)
       return failure();
     Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
@@ -4668,14 +4755,31 @@ public:
         rewriter, op.getLoc(), pointer, "__obelisk_current_context");
     Value context =
         LLVM::LoadOp::create(rewriter, op.getLoc(), pointer, address, 8);
-    LLVM::CallOp::create(
-        rewriter, op.getLoc(), TypeRange{},
+    auto call = LLVM::CallOp::create(
+        rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
         SymbolRefAttr::get(rewriter.getContext(),
-                           "obelisk_rt_v1_scheduler_event"),
-        ValueRange{context, adaptor.getEvent().front(),
-                   llvmConstant(rewriter, op.getLoc(), rewriter.getI32Type(),
-                                op.getNonblocking() ? 1 : 0)});
-    rewriter.eraseOp(op);
+                           "obelisk_rt_v1_scheduler_event_triggered"),
+        ValueRange{context, adaptor.getEvent().front()});
+    Value result = LLVM::TruncOp::create(
+        rewriter, op.getLoc(), rewriter.getI1Type(), call.getResult());
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+};
+
+class EventEqualConversion final
+    : public OpConversionPattern<sim::SimEventEqualOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimEventEqualOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getLhs().size() != 1 || adaptor.getRhs().size() != 1)
+      return failure();
+    Value result = arith::CmpIOp::create(
+        rewriter, op.getLoc(), arith::CmpIPredicate::eq,
+        adaptor.getLhs().front(), adaptor.getRhs().front());
+    rewriter.replaceOp(op, result);
     return success();
   }
 };
@@ -5031,6 +5135,15 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
        IntegerType::get(context, 32)});
   getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_scheduler_event_after",
+      LLVM::LLVMVoidType::get(context),
+      {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
+       IntegerType::get(context, 32), IntegerType::get(context, 64)});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_scheduler_event_triggered",
+      IntegerType::get(context, 32),
+      {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64)});
+  getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_native_handle_offset", IntegerType::get(context, 64),
       {IntegerType::get(context, 64), IntegerType::get(context, 64)});
   getOrDeclareLLVMFunction(
@@ -5228,8 +5341,11 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                      SimSuspendTypeConversion<sim::SimSuspendDelayOp>,
                      SimSuspendTypeConversion<sim::SimSuspendChangeOp>,
                      SimSuspendTypeConversion<sim::SimSuspendEdgeOp>,
+                     SimSuspendTypeConversion<sim::SimSuspendEdgeIffOp>,
+                     SimSuspendTypeConversion<sim::SimSuspendLevelOp>,
                      SimSuspendTypeConversion<sim::SimSuspendAnyOp>,
                      SimSuspendTypeConversion<sim::SimSuspendEventOp>,
+                     SimSuspendTypeConversion<sim::SimSuspendForeverOp>,
                      SimSuspendTypeConversion<sim::SimSuspendAwaitOp>,
                      SimSuspendTypeConversion<sim::SimSuspendJoinOp>>(
       packedConverter, context);
@@ -5248,7 +5364,9 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                      SubelementHandleConversion<sim::SimDriverSubelementOp>,
                      ArrayElementHandleConversion<sim::SimRefArrayElementOp>,
                      ArrayElementHandleConversion<sim::SimDriverArrayElementOp>,
-                     EventTriggerConversion, SpawnTypeConversion>(
+                     EventTriggerConversion, EventTriggeredConversion,
+                     EventEqualConversion,
+                     SpawnTypeConversion>(
       packedConverter, context);
   packedPatterns.add<RefLoadConversion, RefStoreConversion, NetReadConversion>(
       packedConverter, context, stateLayout->bitCount);
@@ -5272,7 +5390,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       sim::SimDriverDriveOp, sim::SimDriverExtractOp,
       sim::SimDriverDynExtractOp, sim::SimDriverSubelementOp,
       sim::SimDriverArrayElementOp, sim::SimNBAEnqueueOp,
-      sim::SimEventTriggerOp, sim::SimBitsDynExtractOp>();
+      sim::SimEventTriggerOp, sim::SimEventTriggeredOp, sim::SimEventEqualOp,
+      sim::SimBitsDynExtractOp>();
   packedTarget
       .addIllegalOp<sim::SimAggregateDefaultOp, sim::SimAggregateConstructOp,
                     sim::SimAggregateExtractOp, sim::SimAggregateInsertOp,
@@ -5289,8 +5408,9 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       sim::SimCallOp, sim::SimDPICallOp, sim::SimSpawnOp, sim::SimReturnOp,
       sim::SimPackedFlattenOp, sim::SimPackedUnflattenOp,
       sim::SimSuspendDelayOp, sim::SimSuspendChangeOp, sim::SimSuspendEdgeOp,
-      sim::SimSuspendAnyOp, sim::SimSuspendEventOp, sim::SimSuspendAwaitOp,
-      sim::SimSuspendJoinOp>(
+      sim::SimSuspendEdgeIffOp, sim::SimSuspendLevelOp,
+      sim::SimSuspendAnyOp, sim::SimSuspendEventOp, sim::SimSuspendForeverOp,
+      sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp>(
       [&](Operation *operation) { return packedConverter.isLegal(operation); });
   packedTarget.addDynamicallyLegalDialect<
       sim::ObeliskSimulationDialect, arith::ArithDialect,

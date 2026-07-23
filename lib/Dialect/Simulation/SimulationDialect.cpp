@@ -65,6 +65,7 @@ bool hasUnknownInlineMetadata(Operation *operation) {
     if (name == "obelisk_sim.capture_kind" ||
         name == "obelisk_sim.descriptor_id" || name == "obelisk_sim.bindings" ||
         name == "obelisk_sim.delay_scale" ||
+        name == "obelisk_sim.delay_quantum" ||
         name == "obelisk_sim.hierarchical_name")
       continue;
     return true;
@@ -135,7 +136,8 @@ bool isRecursive(SimFuncOp function, SimDesignOp design) {
 
 bool isSuspension(Operation *operation) {
   return isa<SimSuspendDelayOp, SimSuspendChangeOp, SimSuspendEdgeOp,
-             SimSuspendAnyOp, SimSuspendEventOp, SimSuspendAwaitOp,
+             SimSuspendEdgeIffOp, SimSuspendLevelOp, SimSuspendAnyOp,
+             SimSuspendEventOp, SimSuspendForeverOp, SimSuspendAwaitOp,
              SimSuspendJoinOp>(operation);
 }
 
@@ -556,6 +558,15 @@ NBASiteAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
                     TimingSiteAttr timing) {
   if (timing && timing.getKind() != ComputeTimingKind::DelayedNBA)
     return emitError() << "NBA timing site must have delayed_nba kind";
+  return success();
+}
+
+LogicalResult
+EventSiteAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                      uint64_t id, uint32_t commit, TimingSiteAttr timing) {
+  if (timing && timing.getKind() != ComputeTimingKind::DelayedEvent)
+    return emitError()
+           << "deferred-event timing site must have delayed_event kind";
   return success();
 }
 
@@ -1522,6 +1533,14 @@ void SimFuncOp::print(OpAsmPrinter &printer) {
 
 LogicalResult SimFuncOp::verify() {
   FunctionType type = getFunctionType();
+  if (getDomain() == ExecutionDomain::Program &&
+      getHomeRegion() != EventRegion::Reactive)
+    return emitOpError(
+        "program-domain code units must have reactive home region");
+  if (getDomain() == ExecutionDomain::Design &&
+      getHomeRegion() != EventRegion::Active)
+    return emitOpError(
+        "design-domain code units must have active home region");
   if (getCodeUnitIdAttr() &&
       failed(verifyNonnegative(*this, getCodeUnitIdAttr(), "code-unit ID")))
     return failure();
@@ -1557,7 +1576,8 @@ LogicalResult SimFuncOp::verify() {
     // time, so they stay representable and are handled by the schedule.
     WalkResult blocking = getBody().walk([&](Operation *op) {
       if (isa<SimSuspendDelayOp, SimSuspendChangeOp, SimSuspendEdgeOp,
-              SimSuspendAnyOp, SimSuspendEventOp, SimSuspendAwaitOp,
+              SimSuspendEdgeIffOp, SimSuspendLevelOp, SimSuspendAnyOp,
+              SimSuspendEventOp, SimSuspendForeverOp, SimSuspendAwaitOp,
               SimSuspendJoinOp>(op)) {
         op->emitOpError("is not permitted in a zero-time function entry");
         return WalkResult::interrupt();
@@ -1615,7 +1635,10 @@ LogicalResult SimReturnOp::verify() {
 }
 
 LogicalResult SimCallOp::verify() {
-  if (!getOperation()->getParentOfType<SimFuncOp>())
+  Operation *parent = getOperation()->getParentOp();
+  if (!getOperation()->getParentOfType<SimFuncOp>() &&
+      (!parent || (parent->getName().getStringRef() != "func.func" &&
+                   parent->getName().getStringRef() != "llvm.func")))
     return emitOpError("must be nested in obelisk_sim.func");
   return success();
 }
@@ -3842,15 +3865,18 @@ LogicalResult SimTimeConstantOp::verify() {
 }
 
 LogicalResult SimTimeScaleOp::verify() {
-  if (!isa<IntegerType, LogicType>(getInput().getType()))
-    return emitOpError(
-        "input must be a signless builtin integer or four-state logic");
-  if (auto integer = dyn_cast<IntegerType>(getInput().getType());
-      integer && !integer.isSignless())
-    return emitOpError("builtin integer input must be signless");
+  if (!getInput().getType().isSignlessInteger(64))
+    return emitOpError("input must be a normalized signless i64");
   if (getScaleAttr().getValue().isNegative() ||
       getScaleAttr().getValue().isZero())
     return emitOpError("tick scale must be positive");
+  return success();
+}
+
+LogicalResult SimEventTriggerOp::verify() {
+  if (getDelay() && !getNonblocking())
+    return emitOpError(
+        "a delayed named-event trigger must be nonblocking");
   return success();
 }
 
@@ -3906,10 +3932,19 @@ SuccessorOperands SimSuspendChangeOp::getSuccessorOperands(unsigned index) {
 SuccessorOperands SimSuspendEdgeOp::getSuccessorOperands(unsigned index) {
   return makeContinuationSuccessorOperands(*this, index);
 }
+SuccessorOperands SimSuspendEdgeIffOp::getSuccessorOperands(unsigned index) {
+  return makeContinuationSuccessorOperands(*this, index);
+}
+SuccessorOperands SimSuspendLevelOp::getSuccessorOperands(unsigned index) {
+  return makeContinuationSuccessorOperands(*this, index);
+}
 SuccessorOperands SimSuspendAnyOp::getSuccessorOperands(unsigned index) {
   return makeContinuationSuccessorOperands(*this, index);
 }
 SuccessorOperands SimSuspendEventOp::getSuccessorOperands(unsigned index) {
+  return makeContinuationSuccessorOperands(*this, index);
+}
+SuccessorOperands SimSuspendForeverOp::getSuccessorOperands(unsigned index) {
   return makeContinuationSuccessorOperands(*this, index);
 }
 SuccessorOperands SimSuspendAwaitOp::getSuccessorOperands(unsigned index) {
@@ -3930,6 +3965,22 @@ LogicalResult SimSuspendChangeOp::verify() {
                             getContinuation());
 }
 LogicalResult SimSuspendEdgeOp::verify() {
+  if (!isa<RefType, NetType>(getWatched().getType()))
+    return emitOpError("watched value must be a ref or net handle");
+  return verifyContinuation(*this, getContinuationOperands(),
+                            getContinuation());
+}
+LogicalResult SimSuspendEdgeIffOp::verify() {
+  if (!isa<RefType, NetType>(getWatched().getType()))
+    return emitOpError("watched value must be a ref or net handle");
+  if (!isa<RefType, NetType>(getCondition().getType()))
+    return emitOpError("condition must be a ref or net handle");
+  if (getEdge() == EdgeKind::Change)
+    return emitOpError("primary event must request an edge");
+  return verifyContinuation(*this, getContinuationOperands(),
+                            getContinuation());
+}
+LogicalResult SimSuspendLevelOp::verify() {
   if (!isa<RefType, NetType>(getWatched().getType()))
     return emitOpError("watched value must be a ref or net handle");
   return verifyContinuation(*this, getContinuationOperands(),
@@ -3969,6 +4020,10 @@ MutableOperandRange SimSuspendAnyOp::getContinuationOperandsMutable() {
                              getNumOperands() - watchedCount);
 }
 LogicalResult SimSuspendEventOp::verify() {
+  return verifyContinuation(*this, getContinuationOperands(),
+                            getContinuation());
+}
+LogicalResult SimSuspendForeverOp::verify() {
   return verifyContinuation(*this, getContinuationOperands(),
                             getContinuation());
 }

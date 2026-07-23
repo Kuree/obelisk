@@ -8,6 +8,7 @@ module {
     obelisk_sim.code_unit.decl 9000004 in 0 initial hierarchy "test.threading.chained.9000004"
     obelisk_sim.code_unit.decl 9000005 in 0 initial hierarchy "test.threading.captures_are_not_threaded.9000005"
     obelisk_sim.code_unit.decl 9000006 in 0 always hierarchy "test.threading.loop.9000006"
+    obelisk_sim.code_unit.decl 9000007 in 0 initial hierarchy "test.threading.constants.9000007"
     obelisk_sim.scope.decl 0
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<8> design
 
@@ -91,6 +92,28 @@ module {
     ^header:
       obelisk_sim.ref.store %live to %ref : !obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>
       obelisk_sim.suspend.change %ref to ^header : !obelisk_sim.ref<!obelisk_sim.logic<8>>
+    }
+
+    // Constants are rematerialized in the continuation instead of consuming
+    // frame slots. This is required for byte strings, which deliberately have
+    // no pointer-bearing frame representation, and keeps scalar constants
+    // available on every resumed loop activation.
+    // CHECK-LABEL: obelisk_sim.func @constants
+    // CHECK: %[[MESSAGE:.*]] = obelisk_sim.bytes.constant "resumed"
+    // CHECK: %[[FD:.*]] = arith.constant 1 : i32
+    // CHECK: obelisk_sim.suspend.delay %{{.*}} to ^[[RESUME:.*]]{{$}}
+    // CHECK: ^[[RESUME]]:
+    // CHECK: %[[REMATERIALIZED:.*]] = obelisk_sim.bytes.constant "resumed"
+    // CHECK: %[[REMATERIALIZED_FD:.*]] = arith.constant {{.*}}1 : i32
+    // CHECK: obelisk_sim.display {{.*}} to %[[REMATERIALIZED_FD]](%[[REMATERIALIZED]])
+    obelisk_sim.func @constants(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000007 : i64} {
+      %message = obelisk_sim.bytes.constant "resumed"
+      %fd = arith.constant 1 : i32
+      %delay = obelisk_sim.time.constant 1
+      obelisk_sim.suspend.delay %delay to ^resume
+    ^resume:
+      obelisk_sim.display %ctx to %fd(%message) newline = true radix = 10 flags = [0] : !obelisk_sim.bytes
+      obelisk_sim.return
     }
   }
 }

@@ -394,6 +394,7 @@ class ObeliskBinaryExpressionASTNodeOp<string mnemonic>
 class ObeliskAssignmentExpressionASTNodeOp<string mnemonic>
     : ObeliskExpressionASTNodeOp<mnemonic, (ins
         ObeliskSVAssignmentKind:$assignment_kind,
+        DefaultValuedAttr<BoolAttr, "false">:$has_timing_control,
         OptionalAttr<ObeliskSVBinaryOperator>:$operator_kind
       )>;
 
@@ -403,10 +404,29 @@ class ObeliskRangeSelectExpressionASTNodeOp<string mnemonic>
 
 class ObeliskStatementASTNodeOp<string mnemonic> : ObeliskASTNodeOp<mnemonic>;
 
+class ObeliskBlockStatementASTNodeOp<string mnemonic>
+    : ObeliskASTNodeOp<mnemonic, [], (ins
+        DefaultValuedAttr<ObeliskSVStatementBlockKind,
+          "::obelisk::ir::SVStatementBlockKind::Sequential">:$block_kind
+      )>;
+
 class ObeliskVariableDeclarationStatementASTNodeOp<string mnemonic>
     : ObeliskASTNodeOp<mnemonic, [], (ins
         SymbolRefAttr:$referenced_symbol,
         StrAttr:$referenced_path
+      )>;
+
+class ObeliskWaitOrderStatementASTNodeOp<string mnemonic>
+    : ObeliskASTNodeOp<mnemonic, [], (ins
+        DefaultValuedAttr<I64Attr, "0">:$event_count,
+        DefaultValuedAttr<BoolAttr, "false">:$has_success_action,
+        DefaultValuedAttr<BoolAttr, "false">:$has_failure_action
+      )>;
+
+class ObeliskEventTriggerStatementASTNodeOp<string mnemonic>
+    : ObeliskASTNodeOp<mnemonic, [], (ins
+        DefaultValuedAttr<BoolAttr, "false">:$is_nonblocking,
+        DefaultValuedAttr<BoolAttr, "false">:$has_timing_control
       )>;
 
 class ObeliskConditionalStatementASTNodeOp<string mnemonic>

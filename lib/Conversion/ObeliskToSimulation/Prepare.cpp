@@ -38,6 +38,53 @@ namespace {
 
 using namespace obelisk::simlowering;
 
+static bool containsNestedOperation(Operation *root, Operation *nested) {
+  for (Operation *current = nested; current; current = current->getParentOp())
+    if (current == root)
+      return true;
+  return false;
+}
+
+/// Return true when `reference` contributes only the storage base of this
+/// lvalue. Selection indices remain reads even though they are nested beneath
+/// the assignment destination.
+static bool isStorageBaseUse(Operation *lvalue, Operation *reference) {
+  if (lvalue == reference)
+    return isa<semantic::SVNamedValueExpressionOp,
+               semantic::SVHierarchicalValueExpressionOp>(lvalue);
+  SmallVector<Operation *> children = getChildren(lvalue);
+  if (isa<semantic::SVMemberAccessExpressionOp,
+          semantic::SVElementSelectExpressionOp,
+          semantic::SVRangeSelectExpressionOp>(lvalue))
+    return !children.empty() &&
+           containsNestedOperation(children.front(), reference) &&
+           isStorageBaseUse(children.front(), reference);
+  if (isa<semantic::SVConcatenationExpressionOp>(lvalue))
+    return llvm::any_of(children, [&](Operation *child) {
+      return containsNestedOperation(child, reference) &&
+             isStorageBaseUse(child, reference);
+    });
+  return false;
+}
+
+static bool isWriteOnlyReferenceUse(Operation *reference) {
+  for (Operation *ancestor = reference->getParentOp(); ancestor;
+       ancestor = ancestor->getParentOp()) {
+    auto assignment =
+        dyn_cast<semantic::SVAssignmentExpressionOp>(ancestor);
+    if (!assignment)
+      continue;
+    if (assignment.getOperatorKind())
+      return false;
+    SmallVector<Operation *> children = getChildren(assignment);
+    size_t destinationIndex = assignment.getHasTimingControl() ? 1u : 0u;
+    return destinationIndex < children.size() &&
+           containsNestedOperation(children[destinationIndex], reference) &&
+           isStorageBaseUse(children[destinationIndex], reference);
+  }
+  return false;
+}
+
 static std::optional<uint64_t> getUnsigned64(IntegerAttr attribute) {
   if (!attribute || attribute.getValue().isNegative() ||
       attribute.getValue().getActiveBits() > 64)
@@ -83,7 +130,7 @@ static bool isDeclarativeLeafNode(Operation *op) {
 }
 
 struct DescriptorInfo {
-  enum class Kind { Storage, Net, Driver } kind;
+  enum class Kind { Storage, Net, Driver, Event } kind;
   uint64_t id;
   uint64_t scopeId;
   Type type;
@@ -139,6 +186,40 @@ static FailureOr<sim::EntryKind> getEntryKind(Operation *op) {
   }
   emitError(getSemanticLocation(op)) << "unknown procedural block kind";
   return failure();
+}
+
+static bool isProgramCodeUnit(Operation *op) {
+  if (op->getParentOfType<semantic::SVAnonymousProgramSymbolOp>())
+    return true;
+  auto instance = op->getParentOfType<semantic::SVInstanceSymbolOp>();
+  if (!instance)
+    return false;
+  auto reference =
+      instance->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+  if (!reference)
+    return false;
+  auto definition =
+      SymbolTable::lookupNearestSymbolFrom<semantic::SVDefinitionSymbolOp>(
+          instance, reference);
+  if (definition)
+    return definition.getDefinitionKind() ==
+           semantic::SVDefinitionKind::Program;
+
+  // Elaborated instance references use the frontend's stable symbol spelling,
+  // which may be flat even when parsed as a nested SymbolRefAttr. Resolve the
+  // source definition name as a deterministic fallback.
+  auto referencedPath =
+      instance->getAttrOfType<StringAttr>("referenced_path");
+  ModuleOp module = op->getParentOfType<ModuleOp>();
+  bool program = false;
+  if (referencedPath && module)
+    module.walk([&](semantic::SVDefinitionSymbolOp candidate) {
+      auto name = candidate->getAttrOfType<StringAttr>("name");
+      if (name && name == referencedPath)
+        program = candidate.getDefinitionKind() ==
+                  semantic::SVDefinitionKind::Program;
+    });
+  return program;
 }
 
 static std::string getCodeUnitHierarchy(Operation *op) {
@@ -655,6 +736,7 @@ void ObeliskSimPreparePass::runOnOperation() {
   llvm::StringMap<DescriptorInfo> descriptors;
   uint64_t nextStorageId = 0;
   uint64_t nextNetId = 0;
+  uint64_t nextEventId = 0;
   SmallVector<Operation *> designObjects;
   semanticRoot->walk<WalkOrder::PreOrder>([&](Operation *op) {
     if (isNestedInCodeUnit(op))
@@ -683,6 +765,19 @@ void ObeliskSimPreparePass::runOnOperation() {
     uint64_t scopeId = getScopeId(op);
     StringAttr hierarchy = builder.getStringAttr(path);
     StringAttr debug = builder.getStringAttr(getDebugName(op));
+    if (storage && isa<sim::EventType>(*type)) {
+      if (!getChildren(op).empty()) {
+        emitError(getSemanticLocation(op))
+            << "initialized event variables require event-cell lowering";
+        invalid = true;
+        return;
+      }
+      uint64_t id = nextEventId++;
+      descriptors[path] = {DescriptorInfo::Kind::Event, id, scopeId, *type,
+                           sim::NetResolutionKind::Wire};
+      descriptors[path].rootType = *type;
+      return;
+    }
     if (storage) {
       uint64_t id = nextStorageId++;
       descriptors[path] = {DescriptorInfo::Kind::Storage, id, scopeId, *type,
@@ -1440,6 +1535,7 @@ void ObeliskSimPreparePass::runOnOperation() {
   llvm::DenseMap<Operation *,
                  SmallVector<std::pair<std::string, DescriptorInfo>>>
       unitCaptures;
+  llvm::DenseMap<Operation *, llvm::StringSet<>> unitReadCaptures;
   llvm::DenseMap<Operation *, SmallVector<std::pair<std::string, Type>>>
       unitLocals;
   for (UnitInfo &unit : units) {
@@ -1467,6 +1563,9 @@ void ObeliskSimPreparePass::runOnOperation() {
       if (descriptor != descriptors.end()) {
         if (seenPaths.insert(path).second)
           unitCaptures[unit.source].push_back({path.str(), descriptor->second});
+        if (!isa<semantic::SVVariableDeclStatementOp>(nested) &&
+            !isWriteOnlyReferenceUse(nested))
+          unitReadCaptures[unit.source].insert(path);
         return;
       }
       if (!reference)
@@ -1535,6 +1634,10 @@ void ObeliskSimPreparePass::runOnOperation() {
             captures.push_back(capture);
             changed = true;
           }
+      for (Operation *target : callEdges[unit.source])
+        for (const auto &read : unitReadCaptures[target])
+          changed |=
+              unitReadCaptures[unit.source].insert(read.getKey()).second;
     }
   } while (changed);
   for (UnitInfo &unit : units) {
@@ -1558,6 +1661,12 @@ void ObeliskSimPreparePass::runOnOperation() {
       FunctionType::get(context, {sim::ContextType::get(context)}, {});
   SmallVector<NamedAttribute> rootAttrs{builder.getNamedAttr(
       "code_unit_id", builder.getI64IntegerAttr(rootCodeUnitID))};
+  rootAttrs.push_back(builder.getNamedAttr(
+      "home_region",
+      sim::EventRegionAttr::get(context, sim::EventRegion::Active)));
+  rootAttrs.push_back(builder.getNamedAttr(
+      "domain",
+      sim::ExecutionDomainAttr::get(context, sim::ExecutionDomain::Design)));
   auto rootInitializer =
       sim::SimFuncOp::create(builder, module.getLoc(), "__obelisk_root",
                              rootType, sim::EntryKind::RootInitializer,
@@ -1595,6 +1704,10 @@ void ObeliskSimPreparePass::runOnOperation() {
       case DescriptorInfo::Kind::Driver:
         captureKind = sim::CaptureKind::Driver;
         handleType = sim::DriverType::get(context, capture.second.type);
+        break;
+      case DescriptorInfo::Kind::Event:
+        captureKind = sim::CaptureKind::Event;
+        handleType = sim::EventType::get(context);
         break;
       }
       inputs.push_back(handleType);
@@ -1842,6 +1955,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     NamedAttribute bindingAttr =
         builder.getNamedAttr(bindingsAttrName, builder.getArrayAttr(bindings));
     uint64_t timeUnitFs = 1'000'000;
+    uint64_t timePrecisionFs = 1'000'000;
     if (auto attr = unit.source->getAttrOfType<IntegerAttr>("time_unit_fs")) {
       std::optional<uint64_t> value = getUnsigned64(attr);
       if (!value) {
@@ -1852,6 +1966,18 @@ void ObeliskSimPreparePass::runOnOperation() {
       }
       timeUnitFs = *value;
     }
+    if (auto attr =
+            unit.source->getAttrOfType<IntegerAttr>("time_precision_fs")) {
+      std::optional<uint64_t> value = getUnsigned64(attr);
+      if (!value) {
+        emitError(getSemanticLocation(unit.source))
+            << "code unit time precision does not fit an unsigned 64-bit "
+               "value";
+        invalid = true;
+        continue;
+      }
+      timePrecisionFs = *value;
+    }
     if (timeUnitFs < designPrecisionFs || timeUnitFs % designPrecisionFs != 0) {
       emitError(getSemanticLocation(unit.source))
           << "code unit time scale is incompatible with design precision";
@@ -1861,8 +1987,11 @@ void ObeliskSimPreparePass::runOnOperation() {
     NamedAttribute delayScaleAttr = builder.getNamedAttr(
         delayScaleAttrName,
         builder.getI64IntegerAttr(timeUnitFs / designPrecisionFs));
+    NamedAttribute delayQuantumAttr = builder.getNamedAttr(
+        delayQuantumAttrName,
+        builder.getI64IntegerAttr(timePrecisionFs / designPrecisionFs));
     SmallVector<NamedAttribute> functionAttrs{
-        bindingAttr, delayScaleAttr,
+        bindingAttr, delayScaleAttr, delayQuantumAttr,
         builder.getNamedAttr("code_unit_id",
                              builder.getI64IntegerAttr(unit.id))};
     if (auto subroutine =
@@ -1996,6 +2125,16 @@ void ObeliskSimPreparePass::runOnOperation() {
     if (!hierarchy.empty())
       functionAttrs.push_back(builder.getNamedAttr(
           "obelisk_sim.hierarchical_name", builder.getStringAttr(hierarchy)));
+    bool programDomain = isProgramCodeUnit(unit.source);
+    functionAttrs.push_back(builder.getNamedAttr(
+        "home_region",
+        sim::EventRegionAttr::get(
+            context, programDomain ? sim::EventRegion::Reactive
+                                   : sim::EventRegion::Active)));
+    functionAttrs.push_back(builder.getNamedAttr(
+        "domain", sim::ExecutionDomainAttr::get(
+                      context, programDomain ? sim::ExecutionDomain::Program
+                                             : sim::ExecutionDomain::Design)));
     unit.function = sim::SimFuncOp::create(
         builder, getSemanticLocation(unit.source), unit.symbol, type,
         unit.entryKind, functionAttrs, argAttrs);
@@ -2056,10 +2195,17 @@ void ObeliskSimPreparePass::runOnOperation() {
               builder.getBoolAttr(subroutine.getSubroutineKind() ==
                                   semantic::SVSubroutineKind::Task));
         }
-        for (auto &capture : unitCaptures[targetSource])
+        SmallVector<Attribute> readCapturePaths;
+        for (auto &capture : unitCaptures[targetSource]) {
           capturePaths.push_back(builder.getStringAttr(capture.first));
+          if (unitReadCaptures[targetSource].contains(capture.first))
+            readCapturePaths.push_back(
+                builder.getStringAttr(capture.first));
+        }
         call->setAttr(calleeCapturesAttrName,
                       builder.getArrayAttr(capturePaths));
+        call->setAttr(calleeReadCapturesAttrName,
+                      builder.getArrayAttr(readCapturePaths));
         // One dictionary per callee formal keeps the direction, normalized
         // type, and signedness of the frozen signature together.
         SmallVector<Attribute> formals;
@@ -2219,6 +2365,11 @@ void ObeliskSimPreparePass::runOnOperation() {
                 .getResult());
         break;
       case sim::CaptureKind::Event:
+        operands.push_back(
+            sim::SimContextEventOp::create(rootBuilder, loc, type, simContext,
+                                           rootBuilder.getI64IntegerAttr(id))
+                .getResult());
+        break;
       case sim::CaptureKind::Context:
       case sim::CaptureKind::Formal:
       case sim::CaptureKind::Value:

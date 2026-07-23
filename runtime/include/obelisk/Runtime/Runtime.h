@@ -117,7 +117,7 @@ typedef struct obelisk_rt_design_bytecode_entry_v1 {
   uint32_t reserved;
 } obelisk_rt_design_bytecode_entry_v1;
 
-#define OBELISK_RT_DESIGN_BYTECODE_VERSION 2u
+#define OBELISK_RT_DESIGN_BYTECODE_VERSION 3u
 #define OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE 208u
 #define OBELISK_RT_DESIGN_BYTECODE_INSTRUCTION_SIZE 32u
 
@@ -218,6 +218,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_NBA = UINT32_C(0x00010201),
   OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGER = UINT32_C(0x00010202),
   OBELISK_RT_INTRINSIC_V1_STATE_ALLOC = UINT32_C(0x00010203),
+  OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGERED = UINT32_C(0x00010204),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_VPI_ROOT = UINT32_C(0x00011000),
@@ -389,7 +390,8 @@ enum {
   OBELISK_RT_SUSPEND_EVENT = 4,
   OBELISK_RT_SUSPEND_AWAIT = 5,
   OBELISK_RT_SUSPEND_JOIN = 6,
-  OBELISK_RT_SUSPEND_FRONTIER = 7
+  OBELISK_RT_SUSPEND_FOREVER = 7,
+  OBELISK_RT_SUSPEND_FRONTIER = 8
 };
 
 typedef struct obelisk_rt_fragment_action_v1 {
@@ -640,6 +642,16 @@ typedef struct obelisk_rt_frame_layout_v1 {
 // preserve a requested edge per entry; other wait families use EDGE_NONE.
 #define OBELISK_RT_WAIT_RECORD_VERSION 1u
 #define OBELISK_RT_WAIT_RECORD_SIGNAL_WIDTH_VERSION 2u
+typedef uint32_t obelisk_rt_wait_flags;
+enum {
+  OBELISK_RT_WAIT_FLAGS_NONE = 0,
+  // A level wait has one CHANGE entry and latches an occurrence whenever the
+  // complete watched value is true immediately after an overlapping store.
+  OBELISK_RT_WAIT_LEVEL_TRUE = UINT32_C(1) << 0,
+  // An iff wait has one primary edge entry followed by an EDGE_NONE condition
+  // entry. The condition is sampled only when the primary event occurs.
+  OBELISK_RT_WAIT_EDGE_IFF = UINT32_C(1) << 1
+};
 typedef uint32_t obelisk_rt_wait_edge_kind;
 enum {
   OBELISK_RT_WAIT_EDGE_CHANGE = 0,
@@ -832,6 +844,15 @@ void obelisk_rt_v1_scheduler_signal_transition(
     const uint8_t *new_value, const uint8_t *new_unknown);
 void obelisk_rt_v1_scheduler_event(obelisk_rt_context *context,
                                    uint64_t stable_id, uint32_t nonblocking);
+// Trigger immediately, or enqueue a nonblocking named-event occurrence after
+// `delay` design-precision ticks. A nonzero delay with a blocking trigger is
+// invalid and records a scheduler failure.
+void obelisk_rt_v1_scheduler_event_after(obelisk_rt_context *context,
+                                         uint64_t stable_id,
+                                         uint32_t nonblocking,
+                                         uint64_t delay);
+uint32_t obelisk_rt_v1_scheduler_event_triggered(
+    obelisk_rt_context *context, uint64_t stable_id);
 void obelisk_rt_v1_scheduler_fail(obelisk_rt_context *context,
                                   obelisk_rt_status status);
 // Register one compiler-assigned static-state object. Static handles retain

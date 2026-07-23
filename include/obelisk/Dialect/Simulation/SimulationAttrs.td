@@ -186,8 +186,13 @@ def SimNBASiteAttr : SimAttr<"NBASite", "nba_site"> {
 }
 
 def SimEventSiteAttr : SimAttr<"EventSite", "event_site"> {
-  let parameters = (ins "uint64_t":$id, "uint32_t":$commit);
+  let parameters = (ins
+    "uint64_t":$id,
+    "uint32_t":$commit,
+    OptionalParameter<"::obelisk::sim::TimingSiteAttr">:$timing
+  );
   let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
 }
 
 #endif // OBELISK_DIALECT_SIMULATION_SIMULATIONATTRS_TD

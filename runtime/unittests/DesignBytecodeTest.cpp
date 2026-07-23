@@ -104,7 +104,7 @@ std::vector<uint8_t> makeBytecode() {
   constexpr size_t codeOffset = layoutOffset + 40;
   constexpr size_t constantOffset = codeOffset + 3 * 32;
   constexpr size_t continuationOffset = constantOffset + 32;
-  std::vector<uint8_t> bytes(continuationOffset + 16, 0);
+  std::vector<uint8_t> bytes(continuationOffset + 24, 0);
   std::memcpy(bytes.data(), "OBBCDS1\0", 8);
   put32(bytes, 8, OBELISK_RT_DESIGN_BYTECODE_VERSION);
   put32(bytes, 12, OBELISK_RT_ABI_GENERATION);
@@ -166,7 +166,7 @@ std::vector<uint8_t> makeImportBytecode(uint32_t importID) {
   constexpr size_t operandOffset = codeOffset + 4 * 32;
   constexpr size_t constantOffset = operandOffset + 2 * 8;
   constexpr size_t continuationOffset = constantOffset + 32;
-  constexpr size_t intrinsicOffset = continuationOffset + 16;
+  constexpr size_t intrinsicOffset = continuationOffset + 24;
   constexpr size_t siteOffset = intrinsicOffset + 16;
   std::vector<uint8_t> bytes(siteOffset + 16, 0);
   std::memcpy(bytes.data(), "OBBCDS1\0", 8);
@@ -271,7 +271,7 @@ std::vector<uint8_t> makeSchedulerBytecode() {
   constexpr size_t operandOffset = codeOffset + 7 * 32;
   constexpr size_t constantOffset = operandOffset + 4 * 8;
   constexpr size_t continuationOffset = constantOffset + 24;
-  constexpr size_t intrinsicOffset = continuationOffset + 16;
+  constexpr size_t intrinsicOffset = continuationOffset + 24;
   constexpr size_t siteOffset = intrinsicOffset + 2 * 16;
   constexpr size_t stateOffset = siteOffset + 2 * 16;
   std::vector<uint8_t> bytes(stateOffset, 0);
@@ -475,7 +475,7 @@ std::vector<uint8_t> makeVPIBytecode() {
   constexpr size_t operandOffset = codeOffset + 11 * 32;
   constexpr size_t constantOffset = operandOffset + 13 * 8;
   constexpr size_t continuationOffset = constantOffset + 32;
-  constexpr size_t intrinsicOffset = continuationOffset + 16;
+  constexpr size_t intrinsicOffset = continuationOffset + 24;
   constexpr size_t siteOffset = intrinsicOffset + 5 * 16;
   constexpr size_t stateOffset = siteOffset + 5 * 16;
   std::vector<uint8_t> bytes(stateOffset, 0);
@@ -614,7 +614,7 @@ std::vector<uint8_t> makePartialAutomaticBytecode(bool nba) {
   constexpr size_t operandOffset = codeOffset + 11 * 32;
   constexpr size_t constantOffset = operandOffset + 13 * 8;
   constexpr size_t continuationOffset = constantOffset + 32;
-  constexpr size_t intrinsicOffset = continuationOffset + 16;
+  constexpr size_t intrinsicOffset = continuationOffset + 24;
   constexpr size_t siteOffset = intrinsicOffset + 5 * 16;
   std::vector<uint8_t> bytes = makeVPIBytecode();
   // The 65-bit initial/replacement value is also read as signed i64 -3 for a
@@ -695,7 +695,7 @@ std::vector<uint8_t> makeStaticNBABytecode() {
   constexpr size_t operandOffset = codeOffset + 11 * 32;
   constexpr size_t constantOffset = operandOffset + 13 * 8;
   constexpr size_t continuationOffset = constantOffset + 32;
-  constexpr size_t intrinsicOffset = continuationOffset + 16;
+  constexpr size_t intrinsicOffset = continuationOffset + 24;
   constexpr size_t siteOffset = intrinsicOffset + 5 * 16;
   std::vector<uint8_t> bytes = makeVPIBytecode();
   put64(bytes, functionOffset + 24, 4);
@@ -721,14 +721,14 @@ std::vector<uint8_t> makeStaticNBABytecode() {
   return bytes;
 }
 
-std::vector<uint8_t> makeAutomaticSpawnBytecode() {
+std::vector<uint8_t> makeAutomaticSpawnBytecode(uint32_t childRank = 0) {
   constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 2 * 96;
   constexpr size_t codeOffset = layoutOffset + 5 * 40;
   constexpr size_t operandOffset = codeOffset + 8 * 32;
   constexpr size_t constantOffset = operandOffset + 4 * 8;
   constexpr size_t continuationOffset = constantOffset + 32;
-  constexpr size_t intrinsicOffset = continuationOffset + 2 * 16;
+  constexpr size_t intrinsicOffset = continuationOffset + 2 * 24;
   constexpr size_t siteOffset = intrinsicOffset + 2 * 16;
   constexpr size_t stateOffset = siteOffset + 2 * 16;
   std::vector<uint8_t> bytes(stateOffset + 2 * 32, 0);
@@ -757,12 +757,14 @@ std::vector<uint8_t> makeAutomaticSpawnBytecode() {
   put64(bytes, 176, 2);
   put64(bytes, 184, bytes.size());
 
-  auto function = [&](size_t index, uint64_t id, uint64_t firstInstruction,
+  auto function = [&](size_t index, uint64_t id, uint32_t scheduleRank,
+                      uint64_t firstInstruction,
                       uint64_t instructionCount, uint64_t firstLayout,
                       uint64_t layoutCount, uint64_t scratchSize,
                       uint64_t firstContinuation) {
     size_t record = functionOffset + index * 96;
     put64(bytes, record, id);
+    put64(bytes, record + 8, scheduleRank);
     put64(bytes, record + 16, firstInstruction);
     put64(bytes, record + 24, instructionCount);
     put64(bytes, record + 32, firstLayout);
@@ -775,8 +777,8 @@ std::vector<uint8_t> makeAutomaticSpawnBytecode() {
     // One eight-byte canonical capture plus the process flag.
     put64(bytes, record + 88, 17);
   };
-  function(0, 1, 0, 3, 0, 2, 64, 0);
-  function(1, 2, 3, 5, 2, 3, 96, 1);
+  function(0, 1, 0, 0, 3, 0, 2, 64, 0);
+  function(1, 2, childRank, 3, 5, 2, 3, 96, 1);
 
   auto layout = [&](size_t index, uint8_t kind, uint32_t width,
                     uint64_t offset, uint64_t size) {
@@ -815,10 +817,11 @@ std::vector<uint8_t> makeAutomaticSpawnBytecode() {
   put64(bytes, constantOffset + 16, UINT64_C(0x30));
   put64(bytes, constantOffset + 24, 0);
   for (size_t index = 0; index != 2; ++index) {
-    size_t continuation = continuationOffset + index * 16;
+    size_t continuation = continuationOffset + index * 24;
     put32(bytes, continuation, index);
     put32(bytes, continuation + 4, 0);
     put64(bytes, continuation + 8, index == 0 ? 0 : 3);
+    put32(bytes, continuation + 16, index == 0 ? 0 : childRank);
   }
   put32(bytes, intrinsicOffset, OBELISK_RT_INTRINSIC_V1_SPAWN);
   put32(bytes, intrinsicOffset + 4, 1);
@@ -1146,6 +1149,38 @@ struct Fixture {
                   &entry};
   }
 };
+
+uint64_t mixedTierObservedHandle = UINT64_MAX;
+uint8_t mixedTierObservedValue = UINT8_MAX;
+
+obelisk_rt_status mixedTierRequirements(uint64_t *size, uint64_t *alignment) {
+  if (!size || !alignment)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *size = 0;
+  *alignment = 1;
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status
+mixedTierExecute(obelisk_rt_process_instance_v1 *instance) {
+  if (!instance || !instance->context || !instance->action)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  std::array<uint8_t, 9> dummy{}, value{};
+  obelisk_rt_status status = obelisk_rt_v1_native_state_load_plane(
+      instance->context, dummy.data(), 65, mixedTierObservedHandle, 65, 0, 0,
+      value.data());
+  if (status != OBELISK_RT_OK)
+    return status;
+  mixedTierObservedValue = value[0];
+  instance->native_handle = instance;
+  *instance->action = {OBELISK_RT_FRAGMENT_TERMINATE,
+                       OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
+  return OBELISK_RT_OK;
+}
+
+void mixedTierDestroy(obelisk_rt_process_instance_v1 *instance) {
+  instance->native_handle = nullptr;
+}
 
 TEST(DesignBytecode, ExecutesArbitraryWidthLogicInSharedScratch) {
   Fixture fixture;
@@ -1812,6 +1847,106 @@ TEST(DesignBytecode, SpawnRetainsStableAutomaticHandlesAndReclaimsTaskState) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(DesignBytecode, MixedTierSchedulerUsesRegionRankAndInsertionKey) {
+  std::vector<uint8_t> bytecode = makeAutomaticSpawnBytecode(10);
+  obelisk_rt_execution_descriptor_v1 execution{
+      OBELISK_RT_EXECUTION_DESCRIPTOR_VERSION,
+      OBELISK_RT_ABI_GENERATION,
+      OBELISK_RT_EXECUTION_HAS_BYTECODE,
+      0,
+      bytecode.data(),
+      bytecode.size(),
+      nullptr,
+      0,
+      65,
+      imageChecksum(bytecode)};
+  std::array<uint32_t, 1> continuations{{0}};
+  obelisk_rt_frame_layout_v1 bytecodeLayout{
+      OBELISK_RT_FRAME_LAYOUT_VERSION, 0, 8, 8, nullptr, 0, 1,
+      continuations.data(), 0};
+  bytecodeLayout.checksum = frameChecksum(bytecodeLayout);
+  obelisk_rt_design_bytecode_entry_v1 entry{&execution, 0, 0};
+  obelisk_rt_process_descriptor_v1 bytecodeDescriptor{
+      {OBELISK_RT_DESCRIPTOR_PROCESS, 0, 81},
+      OBELISK_RT_ABI_GENERATION,
+      0,
+      OBELISK_RT_TIER_MASK_BYTECODE,
+      0,
+      &bytecodeLayout,
+      nullptr,
+      nullptr,
+      nullptr,
+      nullptr,
+      &execution,
+      &entry};
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  std::array<uint8_t, 9> initial{};
+  ASSERT_EQ(obelisk_rt_v1_native_state_alloc(
+                context, 65, initial.data(), initial.data(),
+                &mixedTierObservedHandle),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_retain(context,
+                                              mixedTierObservedHandle),
+            OBELISK_RT_OK);
+
+  // Execute the bytecode root directly. It enqueues a rank-10 bytecode child
+  // before the rank-5 native process is registered.
+  obelisk_rt_process_instance_v1 *root = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_process_instance_create(&bytecodeDescriptor, &root),
+            OBELISK_RT_OK);
+  void *frame = nullptr;
+  uint64_t frameSize = 0;
+  ASSERT_EQ(obelisk_rt_v1_process_instance_frame(root, &frame, &frameSize),
+            OBELISK_RT_OK);
+  ASSERT_EQ(frameSize, 8u);
+  std::memcpy(frame, &mixedTierObservedHandle,
+              sizeof(mixedTierObservedHandle));
+  obelisk_rt_fragment_action_v1 action{};
+  ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
+                root, context, OBELISK_RT_TIER_BYTECODE, &action),
+            OBELISK_RT_OK);
+  ASSERT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
+  ASSERT_EQ(obelisk_rt_v1_process_instance_destroy(root), OBELISK_RT_OK);
+
+  obelisk_rt_frame_layout_v1 nativeLayout{
+      OBELISK_RT_FRAME_LAYOUT_VERSION, 0, 0, 1, nullptr, 0, 1,
+      continuations.data(), 0};
+  nativeLayout.checksum = frameChecksum(nativeLayout);
+  obelisk_rt_process_descriptor_v1 nativeDescriptor{
+      {OBELISK_RT_DESCRIPTOR_PROCESS, 0, 82},
+      OBELISK_RT_ABI_GENERATION,
+      0,
+      OBELISK_RT_TIER_MASK_NATIVE,
+      0,
+      &nativeLayout,
+      mixedTierRequirements,
+      mixedTierExecute,
+      mixedTierDestroy};
+  obelisk_rt_process_instance_v1 *native = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_process_instance_create(&nativeDescriptor, &native),
+            OBELISK_RT_OK);
+  mixedTierObservedValue = UINT8_MAX;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add_ranked(context, native, 0, 5),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(mixedTierObservedValue, 0);
+
+  std::array<uint8_t, 9> dummy{}, value{};
+  ASSERT_EQ(obelisk_rt_v1_native_state_load_plane(
+                context, dummy.data(), 65, mixedTierObservedHandle, 65, 0, 0,
+                value.data()),
+            OBELISK_RT_OK);
+  EXPECT_EQ(value[0], 0xf0);
+  ASSERT_EQ(obelisk_rt_v1_native_state_release(
+                context, mixedTierObservedHandle, 0),
+            OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+  mixedTierObservedHandle = UINT64_MAX;
+}
+
 TEST(DesignBytecode, RejectsNonCanonicalTablesAndUncallableFunctions) {
   auto rejected = [](Fixture &fixture) {
     put64(fixture.bytecode, 32, imageChecksum(fixture.bytecode));
@@ -1843,6 +1978,16 @@ TEST(DesignBytecode, RejectsNonCanonicalTablesAndUncallableFunctions) {
   put16(reservedLayout.bytecode,
         OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE + 96 + 2, 1);
   rejected(reservedLayout);
+
+  Fixture oversizedScheduleRank;
+  put64(oversizedScheduleRank.bytecode,
+        OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE + 8, UINT64_C(1) << 32);
+  rejected(oversizedScheduleRank);
+
+  Fixture reservedContinuation;
+  size_t continuation = get64(reservedContinuation.bytecode, 120);
+  put32(reservedContinuation.bytecode, continuation + 20, 1);
+  rejected(reservedContinuation);
 
   auto connected = [](Fixture &fixture) {
     fixture.bytecode = makeConnectedDriverBytecode();

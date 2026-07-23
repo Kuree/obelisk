@@ -173,6 +173,10 @@ def SimFuncOp : SimOp<"func", [
   let arguments = (ins SymbolNameAttr:$sym_name,
                        TypeAttrOf<FunctionType>:$function_type,
                        SimEntryKind:$entry_kind,
+                       DefaultValuedAttr<SimEventRegion,
+                         "::obelisk::sim::EventRegion::Active">:$home_region,
+                       DefaultValuedAttr<SimExecutionDomain,
+                         "::obelisk::sim::ExecutionDomain::Design">:$domain,
                        OptionalAttr<StrAttr>:$sym_visibility,
                        OptionalAttr<DictArrayAttr>:$arg_attrs,
                        OptionalAttr<DictArrayAttr>:$res_attrs,
@@ -959,7 +963,13 @@ def SimTimeConstantOp : SimOp<"time.constant", [Pure, ConstantLike]> {
 
 def SimTimeScaleOp : SimOp<"time.scale", [Pure]> {
   let summary = "scale a dynamic packed delay into design-precision ticks";
-  let arguments = (ins AnyType:$input, I64Attr:$scale,
+  let description = [{
+    The input is normalized to an unsigned i64 before this operation. Frontend
+    lowering is responsible for mapping unknown and negative values to zero
+    and for proving that multiplication by the positive scale cannot overflow
+    the supported simulation-time range.
+  }];
+  let arguments = (ins I64:$input, I64Attr:$scale,
                        BoolAttr:$is_signed);
   let results = (outs SimTimeType:$result);
   let assemblyFormat = [{$input `by` $scale `signed` `=` $is_signed attr-dict
@@ -982,9 +992,28 @@ def SimTimeAddOp
 def SimEventTriggerOp
     : SimOp<"event.trigger",
             [MemoryEffects<[MemWrite<SimSchedulerResource>]>]> {
-  let arguments = (ins SimEventType : $event, BoolAttr : $nonblocking,
+  let arguments = (ins SimEventType : $event, Optional<SimTimeType>:$delay,
+                       BoolAttr : $nonblocking,
                        OptionalAttr<SimEventSiteAttr>:$site);
-  let assemblyFormat = "$event `nonblocking` `=` $nonblocking attr-dict";
+  let assemblyFormat = "$event (`after` $delay^)? `nonblocking` `=` "
+                       "$nonblocking attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimEventTriggeredOp
+    : SimOp<"event.triggered",
+            [MemoryEffects<[MemRead<SimSchedulerResource>]>]> {
+  let summary = "test whether an event occurred in the current time slot";
+  let arguments = (ins SimEventType:$event);
+  let results = (outs I1:$result);
+  let assemblyFormat = "$event attr-dict";
+}
+
+def SimEventEqualOp : SimOp<"event.equal", [Pure, SameTypeOperands]> {
+  let summary = "compare two event handles for synchronization-object identity";
+  let arguments = (ins SimEventType:$lhs, SimEventType:$rhs);
+  let results = (outs I1:$result);
+  let assemblyFormat = "$lhs `,` $rhs attr-dict";
 }
 
 class SimSuspendOp<string mnemonic, dag extraArgs = (ins),
@@ -1022,6 +1051,33 @@ def SimSuspendEdgeOp : SimSuspendOp<"suspend.edge", (ins
     attr-dict `:` type($watched)}];
 }
 
+def SimSuspendEdgeIffOp : SimSuspendOp<"suspend.edge_iff", (ins
+    SimEdgeKind:$edge, AnyType:$watched, AnyType:$condition)> {
+  let summary = "suspend until an edge whose level condition is true";
+  let description = [{
+    The condition is a directly addressable packed object. The scheduler
+    samples its complete four-state value when the primary edge occurs and
+    latches a successful occurrence for the waiting process. Changes to the
+    condition alone never resume the process.
+  }];
+  let assemblyFormat = [{$edge $watched `iff` $condition `to` $continuation
+    (`(` $continuation_operands^ `:` type($continuation_operands) `)`)?
+    attr-dict `:` type($watched) `,` type($condition)}];
+}
+
+def SimSuspendLevelOp : SimSuspendOp<"suspend.level", (ins AnyType:$watched)> {
+  let summary = "suspend until a directly watched packed value becomes true";
+  let description = [{
+    The scheduler evaluates the complete four-state value after every
+    overlapping store and latches the first true occurrence. This preserves a
+    transient true value even if a later store changes it again before the
+    waiting continuation executes.
+  }];
+  let assemblyFormat = [{$watched `to` $continuation
+    (`(` $continuation_operands^ `:` type($continuation_operands) `)`)?
+    attr-dict `:` type($watched)}];
+}
+
 def SimSuspendAnyOp : SimOp<"suspend.any", [
     Terminator,
     DeclareOpInterfaceMethods<BranchOpInterface>,
@@ -1049,6 +1105,13 @@ def SimSuspendAnyOp : SimOp<"suspend.any", [
 def SimSuspendEventOp : SimSuspendOp<"suspend.event", (ins SimEventType:$event)> {
   let assemblyFormat = [{$event `to` $continuation
     (`(` $continuation_operands^ `:` type($continuation_operands) `)`)? attr-dict}];
+}
+
+def SimSuspendForeverOp : SimSuspendOp<"suspend.forever"> {
+  let summary = "permanently suspend the current logical process";
+  let assemblyFormat = [{`to` $continuation
+    (`(` $continuation_operands^ `:` type($continuation_operands) `)`)?
+    attr-dict}];
 }
 
 def SimSuspendAwaitOp : SimSuspendOp<"suspend.await", (ins SimProcessType:$process)> {

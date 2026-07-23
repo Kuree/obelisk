@@ -53,6 +53,7 @@ static void addStatistic(Pass::Statistic *statistic, uint64_t amount = 1) {
 
 static bool isKnownOperationMetadata(StringRef name) {
   return name == bindingsAttrName || name == delayScaleAttrName ||
+         name == delayQuantumAttrName ||
          name == "obelisk_sim.capture_kind" ||
          name == "obelisk_sim.descriptor_id" ||
          name == "obelisk_sim.descriptor_root_type" ||

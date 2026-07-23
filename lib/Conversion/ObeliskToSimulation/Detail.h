@@ -110,9 +110,13 @@ inline constexpr ::mlir::StringLiteral bindingsAttrName =
     "obelisk_sim.bindings";
 inline constexpr ::mlir::StringLiteral delayScaleAttrName =
     "obelisk_sim.delay_scale";
+inline constexpr ::mlir::StringLiteral delayQuantumAttrName =
+    "obelisk_sim.delay_quantum";
 inline constexpr ::mlir::StringLiteral calleeAttrName = "obelisk_sim.callee";
 inline constexpr ::mlir::StringLiteral calleeCapturesAttrName =
     "obelisk_sim.callee_captures";
+inline constexpr ::mlir::StringLiteral calleeReadCapturesAttrName =
+    "obelisk_sim.callee_read_captures";
 inline constexpr ::mlir::StringLiteral calleeFormalsAttrName =
     "obelisk_sim.callee_formals";
 inline constexpr ::mlir::StringLiteral placeholderAttrName =

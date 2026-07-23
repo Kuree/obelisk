@@ -337,6 +337,18 @@ SmallVector<ComputeEffect> collectDirectEffects(const FunctionInfo &info,
           appendEffect(info, sim::ComputeEffectKind::Watch, op.getWatched(),
                        effects, getTriggerKind(op.getEdge()));
         })
+        .Case<sim::SimSuspendEdgeIffOp>([&](auto op) {
+          appendEffect(info, sim::ComputeEffectKind::Watch, op.getWatched(),
+                       effects, getTriggerKind(op.getEdge()));
+          appendEffect(info, sim::ComputeEffectKind::Read, op.getCondition(),
+                       effects);
+        })
+        .Case<sim::SimSuspendLevelOp>([&](auto op) {
+          appendEffect(info, sim::ComputeEffectKind::Watch, op.getWatched(),
+                       effects, sim::ComputeTriggerKind::Change);
+          appendEffect(info, sim::ComputeEffectKind::Read, op.getWatched(),
+                       effects);
+        })
         .Case<sim::SimSuspendAnyOp>([&](auto op) {
           for (auto [watched, edge] : llvm::zip(op.getWatched(), op.getEdges()))
             appendEffect(info, sim::ComputeEffectKind::Watch, watched, effects,
@@ -350,6 +362,10 @@ SmallVector<ComputeEffect> collectDirectEffects(const FunctionInfo &info,
           appendEffect(info, sim::ComputeEffectKind::Trigger, op.getEvent(),
                        effects, sim::ComputeTriggerKind::None,
                        op.getNonblocking());
+        })
+        .Case<sim::SimEventTriggeredOp>([&](auto op) {
+          appendEffect(info, sim::ComputeEffectKind::Read, op.getEvent(),
+                       effects);
         });
   };
   if (onlyBlock)
@@ -1157,8 +1173,15 @@ LogicalResult ComputeGraphBuilder::buildSites(ComputeGraphResult &result) {
                   "has no generated deferred-event commit node");
             uint64_t site = eventSite++;
             eventSites[*commit].push_back(site);
+            sim::TimingSiteAttr delayedTiming;
+            if (trigger.getDelay())
+              delayedTiming =
+                  sim::TimingSiteAttr::get(
+                      design.getContext(), timingSite++,
+                      sim::ComputeTimingKind::DelayedEvent);
             result.eventSites[operation] = sim::EventSiteAttr::get(
-                design.getContext(), site, eventCommitIds[*commit]);
+                design.getContext(), site, eventCommitIds[*commit],
+                delayedTiming);
           }
           return WalkResult::advance();
         });

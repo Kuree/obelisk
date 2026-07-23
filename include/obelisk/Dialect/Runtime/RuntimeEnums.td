@@ -34,10 +34,11 @@ def RTSuspendEdge : I32EnumAttrCase<"Edge", 3, "edge">;
 def RTSuspendEvent : I32EnumAttrCase<"Event", 4, "event">;
 def RTSuspendAwait : I32EnumAttrCase<"Await", 5, "await">;
 def RTSuspendJoin : I32EnumAttrCase<"Join", 6, "join">;
-def RTSuspendFrontier : I32EnumAttrCase<"Frontier", 7, "frontier">;
+def RTSuspendForever : I32EnumAttrCase<"Forever", 7, "forever">;
+def RTSuspendFrontier : I32EnumAttrCase<"Frontier", 8, "frontier">;
 def RTSuspensionKind : I32EnumAttr<"SuspensionKind", "fragment suspension kind", [
   RTSuspendNone, RTSuspendDelay, RTSuspendChange, RTSuspendEdge, RTSuspendEvent,
-  RTSuspendAwait, RTSuspendJoin, RTSuspendFrontier
+  RTSuspendAwait, RTSuspendJoin, RTSuspendForever, RTSuspendFrontier
 ]> { let cppNamespace = "::obelisk::runtime"; }
 
 def RTRadixBinary : I32EnumAttrCase<"Binary", 2, "binary">;

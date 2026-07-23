@@ -329,13 +329,18 @@ DescriptorProvenanceMap deriveDescriptorProvenance(sim::SimFuncOp function) {
 }
 
 uint64_t getSimulationOperationCost(Operation &operation) {
+  if (operation.hasAttr("obelisk_sim.rematerialized") &&
+      operation.hasTrait<OpTrait::ConstantLike>())
+    return 0;
   if (isa<sim::SimRefLoadOp, sim::SimRefStoreOp, sim::SimNetReadOp,
           sim::SimDriverDriveOp, sim::SimNBAEnqueueOp>(operation))
     return 3;
   if (isa<sim::SimCallOp>(operation))
     return 5;
   if (isa<sim::SimSuspendDelayOp, sim::SimSuspendChangeOp,
-          sim::SimSuspendEdgeOp, sim::SimSuspendAnyOp, sim::SimSuspendEventOp,
+          sim::SimSuspendEdgeOp, sim::SimSuspendEdgeIffOp,
+          sim::SimSuspendLevelOp, sim::SimSuspendAnyOp,
+          sim::SimSuspendEventOp, sim::SimSuspendForeverOp,
           sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp>(operation))
     return 1;
   return operation.hasTrait<OpTrait::IsTerminator>() ? 0 : 1;

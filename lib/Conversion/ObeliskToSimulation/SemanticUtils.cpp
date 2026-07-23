@@ -314,6 +314,8 @@ static FailureOr<Type> normalizeType(Type type, Location location) {
   }
   if (isa<semantic::TimeType>(type))
     return sim::TimeType::get(context);
+  if (isa<semantic::EventType>(type))
+    return sim::EventType::get(context);
   if (isa<sim::LogicType, sim::TimeType, sim::ContextType, sim::RefType,
           sim::NetType, sim::DriverType, sim::EventType, sim::ProcessType>(
           type) ||
@@ -603,10 +605,16 @@ sim::ComputeActionKind getFragmentActionKind(Operation *terminator) {
           [](auto) { return sim::ComputeActionKind::SuspendChange; })
       .Case<sim::SimSuspendEdgeOp>(
           [](auto) { return sim::ComputeActionKind::SuspendEdge; })
+      .Case<sim::SimSuspendEdgeIffOp>(
+          [](auto) { return sim::ComputeActionKind::SuspendEdge; })
+      .Case<sim::SimSuspendLevelOp>(
+          [](auto) { return sim::ComputeActionKind::SuspendChange; })
       .Case<sim::SimSuspendAnyOp>(
           [](auto) { return sim::ComputeActionKind::SuspendAny; })
       .Case<sim::SimSuspendEventOp>(
           [](auto) { return sim::ComputeActionKind::SuspendEvent; })
+      .Case<sim::SimSuspendForeverOp>(
+          [](auto) { return sim::ComputeActionKind::SuspendAny; })
       .Case<sim::SimSuspendAwaitOp>(
           [](auto) { return sim::ComputeActionKind::SuspendAwait; })
       .Case<sim::SimSuspendJoinOp>(
@@ -620,7 +628,9 @@ sim::ContinuationSiteAttr getContinuationSite(Operation *operation) {
   sim::ContinuationSiteAttr site;
   llvm::TypeSwitch<Operation *>(operation)
       .Case<sim::SimSuspendDelayOp, sim::SimSuspendChangeOp,
-            sim::SimSuspendEdgeOp, sim::SimSuspendAnyOp, sim::SimSuspendEventOp,
+            sim::SimSuspendEdgeOp, sim::SimSuspendEdgeIffOp,
+            sim::SimSuspendLevelOp, sim::SimSuspendAnyOp,
+            sim::SimSuspendEventOp, sim::SimSuspendForeverOp,
             sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp>(
           [&](auto op) { site = op.getSiteAttr(); });
   return site;
@@ -629,7 +639,9 @@ sim::ContinuationSiteAttr getContinuationSite(Operation *operation) {
 void setContinuationSite(Operation *operation, sim::ContinuationSiteAttr site) {
   llvm::TypeSwitch<Operation *>(operation)
       .Case<sim::SimSuspendDelayOp, sim::SimSuspendChangeOp,
-            sim::SimSuspendEdgeOp, sim::SimSuspendAnyOp, sim::SimSuspendEventOp,
+            sim::SimSuspendEdgeOp, sim::SimSuspendEdgeIffOp,
+            sim::SimSuspendLevelOp, sim::SimSuspendAnyOp,
+            sim::SimSuspendEventOp, sim::SimSuspendForeverOp,
             sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp>(
           [&](auto op) { op.setSiteAttr(site); });
 }

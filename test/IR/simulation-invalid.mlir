@@ -150,6 +150,19 @@ module {
 // -----
 
 module {
+  obelisk_sim.design @program_with_active_home {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "bad" debug "bad"
+    // expected-error @+1 {{program-domain code units must have reactive home region}}
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {code_unit_id = 1 : i64, domain = 1 : i32, entry_kind = 1 : i32, home_region = 2 : i32} {
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.design @out_of_range_driver {
     obelisk_sim.scope.decl 0
     obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<4> design
@@ -930,9 +943,60 @@ module {
     obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_time_scale.bad.9000001"
     obelisk_sim.scope.decl 0
     obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      %value = arith.constant 1 : i8
+      %value = arith.constant 1 : i64
       // expected-error @+1 {{tick scale must be positive}}
-      %bad = obelisk_sim.time.scale %value by 0 signed = false : i8
+      %bad = obelisk_sim.time.scale %value by 0 signed = false : i64
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @bad_edge_iff_condition {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_edge_iff_condition.bad.9000001"
+    obelisk_sim.scope.decl 0
+    obelisk_sim.storage.decl 0 in 0 : i8 design
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %ref = obelisk_sim.context.storage %ctx[0] : !obelisk_sim.ref<i8>
+      %value = arith.constant 1 : i8
+      // expected-error @+1 {{condition must be a ref or net handle}}
+      obelisk_sim.suspend.edge_iff posedge %ref iff %value to ^next : !obelisk_sim.ref<i8>, i8
+    ^next:
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @bad_edge_iff_primary {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_edge_iff_primary.bad.9000001"
+    obelisk_sim.scope.decl 0
+    obelisk_sim.storage.decl 0 in 0 : i8 design
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %ref = obelisk_sim.context.storage %ctx[0] : !obelisk_sim.ref<i8>
+      // expected-error @+1 {{primary event must request an edge}}
+      obelisk_sim.suspend.edge_iff change %ref iff %ref to ^next : !obelisk_sim.ref<i8>, !obelisk_sim.ref<i8>
+    ^next:
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @bad_level_handle {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_level_handle.bad.9000001"
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %value = arith.constant 1 : i8
+      // expected-error @+1 {{watched value must be a ref or net handle}}
+      obelisk_sim.suspend.level %value to ^next : i8
+    ^next:
       obelisk_sim.return
     }
   }

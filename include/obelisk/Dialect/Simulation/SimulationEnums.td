@@ -28,6 +28,66 @@ def SimEntryKind : I32EnumAttr<"EntryKind", "simulation code-unit kind", [
   let cppNamespace = "::obelisk::sim";
 }
 
+// IEEE 1800-2023 event regions in their normative scheduling order. These
+// remain distinct from ComputeRegionKind: the latter is a coarse graph
+// partition and is not an executable scheduler queue.
+def SimRegionPreponed
+    : I32EnumAttrCase<"Preponed", 0, "preponed">;
+def SimRegionPreActive
+    : I32EnumAttrCase<"PreActive", 1, "pre_active">;
+def SimRegionActive
+    : I32EnumAttrCase<"Active", 2, "active">;
+def SimRegionInactive
+    : I32EnumAttrCase<"Inactive", 3, "inactive">;
+def SimRegionPreNBA
+    : I32EnumAttrCase<"PreNBA", 4, "pre_nba">;
+def SimRegionNBA
+    : I32EnumAttrCase<"NBA", 5, "nba">;
+def SimRegionPostNBA
+    : I32EnumAttrCase<"PostNBA", 6, "post_nba">;
+def SimRegionPreObserved
+    : I32EnumAttrCase<"PreObserved", 7, "pre_observed">;
+def SimRegionObserved
+    : I32EnumAttrCase<"Observed", 8, "observed">;
+def SimRegionPostObserved
+    : I32EnumAttrCase<"PostObserved", 9, "post_observed">;
+def SimRegionReactive
+    : I32EnumAttrCase<"Reactive", 10, "reactive">;
+def SimRegionReInactive
+    : I32EnumAttrCase<"ReInactive", 11, "re_inactive">;
+def SimRegionPreReNBA
+    : I32EnumAttrCase<"PreReNBA", 12, "pre_re_nba">;
+def SimRegionReNBA
+    : I32EnumAttrCase<"ReNBA", 13, "re_nba">;
+def SimRegionPostReNBA
+    : I32EnumAttrCase<"PostReNBA", 14, "post_re_nba">;
+def SimRegionPrePostponed
+    : I32EnumAttrCase<"PrePostponed", 15, "pre_postponed">;
+def SimRegionPostponed
+    : I32EnumAttrCase<"Postponed", 16, "postponed">;
+def SimEventRegion
+    : I32EnumAttr<"EventRegion", "IEEE executable event-region queue", [
+        SimRegionPreponed, SimRegionPreActive, SimRegionActive,
+        SimRegionInactive, SimRegionPreNBA, SimRegionNBA, SimRegionPostNBA,
+        SimRegionPreObserved, SimRegionObserved, SimRegionPostObserved,
+        SimRegionReactive, SimRegionReInactive, SimRegionPreReNBA,
+        SimRegionReNBA, SimRegionPostReNBA, SimRegionPrePostponed,
+        SimRegionPostponed
+      ]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
+def SimDomainDesign
+    : I32EnumAttrCase<"Design", 0, "design">;
+def SimDomainProgram
+    : I32EnumAttrCase<"Program", 1, "program">;
+def SimExecutionDomain
+    : I32EnumAttr<"ExecutionDomain", "procedural scheduling domain", [
+        SimDomainDesign, SimDomainProgram
+      ]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
 def SimDPIABIBit : I32EnumAttrCase<"Bit", 0, "bit">;
 def SimDPIABILogic : I32EnumAttrCase<"Logic", 1, "logic">;
 def SimDPIABIByte : I32EnumAttrCase<"Byte", 2, "byte">;
@@ -362,10 +422,12 @@ def SimComputeTimingDeadlineSlot
     : I32EnumAttrCase<"DeadlineSlot", 1, "deadline_slot">;
 def SimComputeTimingDelayedNBA
     : I32EnumAttrCase<"DelayedNBA", 2, "delayed_nba">;
+def SimComputeTimingDelayedEvent
+    : I32EnumAttrCase<"DelayedEvent", 3, "delayed_event">;
 def SimComputeTimingKind
     : I32EnumAttr<"ComputeTimingKind", "compiled timing-site kind", [
         SimComputeTimingCalendar, SimComputeTimingDeadlineSlot,
-        SimComputeTimingDelayedNBA
+        SimComputeTimingDelayedNBA, SimComputeTimingDelayedEvent
       ]> {
   let cppNamespace = "::obelisk::sim";
 }

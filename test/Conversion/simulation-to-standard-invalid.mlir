@@ -13,18 +13,6 @@ module {
 
 // -----
 
-// Time and scheduler-facing operations are left for runtime conversion. Their
-// logic operands therefore cannot cross this standalone pass.
-module {
-  // CHECK: failed to legalize operation 'obelisk_sim.time.scale'
-  func.func @time_boundary(%arg: !obelisk_sim.logic<8>) {
-    %time = obelisk_sim.time.scale %arg by 1 signed = false : !obelisk_sim.logic<8>
-    return
-  }
-}
-
-// -----
-
 // Scheduler effects likewise require the future runtime conversion to join
 // the same transaction.
 module {

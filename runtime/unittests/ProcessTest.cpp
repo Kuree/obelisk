@@ -402,6 +402,38 @@ TEST(Scheduler, ImmediateAndDeferredEventsWakeOnlyTheirWaiters) {
   }
 }
 
+TEST(Scheduler, EventTriggeredSpansExactlyOneTimeSlot) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_event_triggered(context, 91), 0u);
+
+  obelisk_rt_v1_scheduler_event(context, 91, 0);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_event_triggered(context, 91), 1u);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_event_triggered(context, 92), 0u);
+
+  SchedulerFixture fixture(91);
+  schedulerWaitKind = OBELISK_RT_SUSPEND_DELAY;
+  schedulerResumeCount = 0;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add(
+                context, makeSchedulerInstance(fixture), 0),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(schedulerResumeCount, 1u);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_event_triggered(context, 91), 0u);
+
+  obelisk_rt_v1_scheduler_event(context, 91, 1);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_event_triggered(context, 91), 0u);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_event_triggered(context, 91), 1u);
+
+  obelisk_rt_v1_scheduler_event_after(context, 93, 1, 4);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_event_triggered(context, 93), 0u);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_event_triggered(context, 91), 0u);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_event_triggered(context, 93), 1u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, WaitActionPayloadSelectsTheExactFrameField) {
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);

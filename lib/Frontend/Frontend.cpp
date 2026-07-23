@@ -1219,6 +1219,23 @@ private:
                                       node.isNonBlocking()
                                           ? slangir::AssignmentKind::Nonblocking
                                           : slangir::AssignmentKind::Blocking));
+      SET_OP_ATTR(HasTimingControl,
+                  builder.getBoolAttr(node.timingControl != nullptr));
+    } else if constexpr (std::same_as<T, slang::ast::BlockStatement>) {
+      SET_OP_ATTR(BlockKind,
+                  slangir::StatementBlockKindAttr::get(
+                      builder.getContext(), convertEnum(node.blockKind)));
+    } else if constexpr (std::same_as<T, slang::ast::WaitOrderStatement>) {
+      SET_OP_ATTR(EventCount,
+                  builder.getI64IntegerAttr(node.events.size()));
+      SET_OP_ATTR(HasSuccessAction,
+                  builder.getBoolAttr(node.ifTrue != nullptr));
+      SET_OP_ATTR(HasFailureAction,
+                  builder.getBoolAttr(node.ifFalse != nullptr));
+    } else if constexpr (std::same_as<T, slang::ast::EventTriggerStatement>) {
+      SET_OP_ATTR(IsNonblocking, builder.getBoolAttr(node.isNonBlocking));
+      SET_OP_ATTR(HasTimingControl,
+                  builder.getBoolAttr(node.timing != nullptr));
     } else if constexpr (std::same_as<T, slang::ast::RangeSelectExpression>) {
       SET_OP_ATTR(SelectionKind, slangir::RangeSelectionKindAttr::get(
                                      builder.getContext(),

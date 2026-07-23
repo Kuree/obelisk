@@ -38,7 +38,12 @@ struct ScheduledProcess {
   uint32_t suspendKind = OBELISK_RT_SUSPEND_NONE;
   uint32_t phase = 0;
   uint32_t scheduleRank = UINT32_MAX;
+  uint64_t insertionSequence = 0;
+  // 0 is the process home/active queue; 1 is the corresponding inactive
+  // queue used only by a zero delay.
+  uint32_t queuedRegion = 0;
   bool started = false;
+  bool signalTriggered = false;
 };
 
 struct ScheduledSignalEvent {
@@ -46,6 +51,12 @@ struct ScheduledSignalEvent {
   uint64_t bitOffset = 0;
   uint64_t bitWidth = 0;
   uint32_t edges = 0;
+};
+
+struct SignalValueSnapshot {
+  uint64_t sequence = 0;
+  bool value = false;
+  bool unknown = false;
 };
 
 struct NativeAutomaticState {
@@ -89,6 +100,7 @@ struct ScheduledDesignNBA {
 
 struct ScheduledDesignEvent {
   uint64_t sequence = 0;
+  uint64_t dueTime = 0;
   uint64_t stableID = 0;
 };
 
@@ -107,8 +119,12 @@ struct ScheduledDesignTask {
   uint64_t waitSize = 0;
   std::vector<uint64_t> waitGenerations;
   uint32_t suspendKind = OBELISK_RT_SUSPEND_NONE;
+  uint32_t scheduleRank = UINT32_MAX;
+  uint32_t queuedRegion = 0;
+  uint64_t insertionSequence = 0;
   bool started = false;
   bool terminated = false;
+  bool signalTriggered = false;
 };
 
 struct ImportBinding {
@@ -138,6 +154,7 @@ struct obelisk_rt_context {
   std::unordered_map<std::thread::id, std::string> lastErrors;
   std::vector<ScheduledProcess> scheduledProcesses;
   std::vector<ScheduledSignalEvent> scheduledSignalEvents;
+  std::unordered_map<uint64_t, SignalValueSnapshot> signalValueSnapshots;
   std::vector<ScheduledNBA> scheduledNBAs;
   std::vector<ScheduledDesignNBA> scheduledDesignNBAs;
   std::vector<ScheduledDesignEvent> scheduledDesignEvents;
@@ -146,6 +163,7 @@ struct obelisk_rt_context {
   uint64_t nextNativeProcessToken = 1;
   uint32_t nextNativeAutomaticID = 1;
   uint64_t nextDesignTaskID = 1;
+  uint64_t nextProcessInsertionSequence = 1;
   uint64_t activeDesignTaskID = 0;
   obelisk_rt_process_instance_v1 *activeNativeProcess = nullptr;
   bool designTaskExecuting = false;
@@ -154,6 +172,7 @@ struct obelisk_rt_context {
   std::unordered_map<uint32_t, NativeStaticState> nativeStaticStates;
   std::unordered_map<uint32_t, NativeAutomaticState> nativeAutomaticStates;
   std::unordered_map<uint64_t, uint64_t> eventGenerations;
+  std::unordered_map<uint64_t, uint64_t> eventLastTriggeredTimes;
   std::unordered_map<uint32_t, ImportBinding> imports;
   std::vector<std::unique_ptr<DpiScopeHandle>> dpiScopes;
   std::unordered_map<std::string, DpiScopeHandle *> dpiScopesByName;
@@ -230,7 +249,20 @@ obelisk_rt_status obelisk_rt_design_net_is_connected(
     obelisk_rt_context *context, uint64_t begin, uint64_t end,
     bool *outConnected) noexcept;
 obelisk_rt_status obelisk_rt_run_one_design_task(
-    obelisk_rt_context *context, bool *outProgress) noexcept;
+    obelisk_rt_context *context, uint32_t maximumRegion,
+    uint32_t maximumRank, uint64_t maximumInsertionSequence,
+    bool *outProgress) noexcept;
+
+// Append one already-committed scalar transition while the context mutex is
+// held, and latch level/iff observers against the state at this exact
+// occurrence. Both native stores and design bytecode use this path.
+bool obelisk_rt_append_signal_event_unlocked(
+    obelisk_rt_context *context, uint64_t bitOffset, bool oldValue,
+    bool oldUnknown, bool newValue, bool newUnknown);
+void obelisk_rt_erase_automatic_signal_snapshots_unlocked(
+    obelisk_rt_context *context, uint32_t automaticID);
+void obelisk_rt_invalidate_signal_snapshots_unlocked(
+    obelisk_rt_context *context, uint64_t bitOffset, uint64_t bitWidth);
 
 bool obelisk_rt_checked_design_record(
     const obelisk_rt_execution_descriptor_v1 *execution, uint64_t offset,

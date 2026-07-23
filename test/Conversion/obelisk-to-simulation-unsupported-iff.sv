@@ -1,4 +1,4 @@
-// RUN: not obelisk -emit-sim %s 2>&1 | FileCheck %s
+// RUN: obelisk -emit-sim %s | FileCheck %s
 
 module unsupported_event_iff;
   logic clk;
@@ -8,5 +8,6 @@ module unsupported_event_iff;
     value = enable;
 endmodule
 
-// CHECK: unsupported semantic node in the first simulation slice
-// CHECK-SAME: event iff condition
+// CHECK: obelisk_sim.suspend.edge_iff posedge
+// CHECK: obelisk_sim.ref.store
+// CHECK-NOT: cf.cond_br

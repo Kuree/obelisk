@@ -70,6 +70,8 @@ constexpr uint32_t kIntrinsicSpawn = OBELISK_RT_INTRINSIC_V1_SPAWN;
 constexpr uint32_t kIntrinsicNBA = OBELISK_RT_INTRINSIC_V1_NBA;
 constexpr uint32_t kIntrinsicEventTrigger =
     OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGER;
+constexpr uint32_t kIntrinsicEventTriggered =
+    OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGERED;
 constexpr uint32_t kIntrinsicStateAlloc = OBELISK_RT_INTRINSIC_V1_STATE_ALLOC;
 constexpr uint32_t kIntrinsicImport = OBELISK_RT_INTRINSIC_V1_IMPORT;
 constexpr uint32_t kIntrinsicDPIImport =
@@ -157,6 +159,7 @@ struct Continuation {
   uint32_t function;
   uint32_t id;
   uint64_t instruction;
+  uint32_t scheduleRank;
 };
 
 struct IntrinsicSignature {
@@ -197,6 +200,8 @@ struct FunctionPlan {
   uint64_t scratchSize = 0;
   uint64_t scratchAlignment = 8;
   uint32_t twoStateLogicRegisters = 0;
+  uint32_t initialScheduleRank = UINT32_MAX;
+  DenseMap<Block *, uint32_t> blockScheduleRanks;
 };
 
 struct StateLayout {
@@ -527,7 +532,7 @@ public:
       return failure();
     state = *builtState;
     if (failed(planTwoStateRegisters()) || failed(planFunctions()) ||
-        failed(encodeFunctions()))
+        failed(planScheduleRanks()) || failed(encodeFunctions()))
       return failure();
     EncodedSimulationDesign result;
     result.bytecode = serializeBytecode();
@@ -804,6 +809,58 @@ private:
     return success();
   }
 
+  LogicalResult planScheduleRanks() {
+    uint32_t fallback = 0;
+    for (FunctionPlan &plan : plans) {
+      if (plan.function.getEntryKind() == sim::EntryKind::Function)
+        continue;
+      plan.initialScheduleRank = fallback;
+      for (Block &block : plan.function.getBody())
+        plan.blockScheduleRanks[&block] = fallback;
+      if (fallback != UINT32_MAX)
+        ++fallback;
+    }
+
+    sim::ComputeGraphAttr graph = design.getComputeGraphAttr();
+    if (!graph)
+      return success();
+    ArrayAttr nodes = graph.getNodes();
+    uint32_t rank = 0;
+    for (Attribute regionAttribute : graph.getRegions()) {
+      auto region = dyn_cast<sim::ComputeRegionAttr>(regionAttribute);
+      if (!region || (region.getKind() != sim::ComputeRegionKind::Active &&
+                      region.getKind() != sim::ComputeRegionKind::Postponed))
+        continue;
+      for (Attribute groupAttribute : region.getGroups()) {
+        auto group = dyn_cast<sim::ComputeGroupAttr>(groupAttribute);
+        if (!group)
+          continue;
+        for (int64_t member : group.getFragments().asArrayRef()) {
+          if (member < 0 || static_cast<uint64_t>(member) >= nodes.size())
+            continue;
+          auto fragment = dyn_cast<sim::ComputeFragmentAttr>(nodes[member]);
+          if (!fragment)
+            continue;
+          auto found = indices.find(fragment.getFunction().getValue());
+          if (found == indices.end())
+            continue;
+          FunctionPlan &plan = plans[found->second];
+          if (fragment.getBlock() >= plan.function.getBody().getBlocks().size())
+            return plan.function.emitOpError(
+                "compute-graph fragment block is out of range");
+          auto block = plan.function.getBody().begin();
+          std::advance(block, fragment.getBlock());
+          plan.blockScheduleRanks[&*block] = rank;
+          if (fragment.getBlock() == 0)
+            plan.initialScheduleRank = rank;
+        }
+        if (rank != UINT32_MAX)
+          ++rank;
+      }
+    }
+    return success();
+  }
+
   uint32_t reg(const FunctionPlan &plan, Value value) const {
     auto found = plan.registers.find(value);
     return found == plan.registers.end() ? kInvalidRegister : found->second;
@@ -1045,13 +1102,18 @@ private:
             "canonical frame transfer exceeds the bytecode ABI limit");
       uint64_t jump = emit({Jump});
       instructions[jump].immediate = plan.blockPCs.lookup(block);
-      plan.continuations.push_back({plan.index, id, entryPC});
+      auto rank = plan.blockScheduleRanks.find(block);
+      if (rank == plan.blockScheduleRanks.end())
+        return plan.function.emitOpError(
+            "continuation block has no schedule rank");
+      plan.continuations.push_back(
+          {plan.index, id, entryPC, rank->second});
       return success();
     };
     Block *entry = &plan.function.getBody().front();
     if (!plan.frame) {
       plan.continuations.push_back(
-          {plan.index, 0, plan.blockPCs.lookup(entry)});
+          {plan.index, 0, plan.blockPCs.lookup(entry), UINT32_MAX});
       return success();
     }
     if (failed(emitEntry(0, entry, plan.frame->getEntryCaptureLayout())))
@@ -1295,9 +1357,21 @@ private:
         inputs.push_back(op.getDelay());
       return emitIntrinsic(plan, kIntrinsicNBA, inputs, {});
     }
-    if (auto op = dyn_cast<sim::SimEventTriggerOp>(operation))
-      return emitIntrinsic(plan, kIntrinsicEventTrigger, {op.getEvent()}, {},
+    if (auto op = dyn_cast<sim::SimEventTriggerOp>(operation)) {
+      SmallVector<Value> inputs{op.getEvent()};
+      if (op.getDelay())
+        inputs.push_back(op.getDelay());
+      return emitIntrinsic(plan, kIntrinsicEventTrigger, inputs, {},
                            op.getNonblocking() ? 1 : 0);
+    }
+    if (auto op = dyn_cast<sim::SimEventTriggeredOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicEventTriggered, {op.getEvent()},
+                           {op.getResult()});
+    if (auto op = dyn_cast<sim::SimEventEqualOp>(operation)) {
+      emit({Compare, 0, reg(plan, op.getResult()), reg(plan, op.getLhs()),
+            reg(plan, op.getRhs())});
+      return success();
+    }
     if (auto call = dyn_cast<sim::SimCallOp>(operation))
       return encodeCall(plan, call);
     if (auto call = dyn_cast<sim::SimDPICallOp>(operation))
@@ -1538,11 +1612,28 @@ private:
                         suspend.getContinuationOperands(), 2, 0,
                         ArrayRef<uint32_t>(&edge, 1), {suspend.getWatched()});
     }
+    if (auto suspend = dyn_cast<sim::SimSuspendLevelOp>(operation)) {
+      uint32_t edge = 0;
+      return encodeWait(
+          plan, suspend.getOperation(), suspend.getContinuationOperands(), 2,
+          OBELISK_RT_WAIT_LEVEL_TRUE, ArrayRef<uint32_t>(&edge, 1),
+          {suspend.getWatched()});
+    }
     if (auto suspend = dyn_cast<sim::SimSuspendEdgeOp>(operation)) {
       uint32_t edge = static_cast<uint32_t>(suspend.getEdge());
       return encodeWait(plan, suspend.getOperation(),
                         suspend.getContinuationOperands(), 3, 0,
                         ArrayRef<uint32_t>(&edge, 1), {suspend.getWatched()});
+    }
+    if (auto suspend = dyn_cast<sim::SimSuspendEdgeIffOp>(operation)) {
+      SmallVector<uint32_t> edges{
+          static_cast<uint32_t>(suspend.getEdge()),
+          OBELISK_RT_WAIT_EDGE_NONE};
+      SmallVector<Value> watched{suspend.getWatched(),
+                                 suspend.getCondition()};
+      return encodeWait(
+          plan, suspend.getOperation(), suspend.getContinuationOperands(), 3,
+          OBELISK_RT_WAIT_EDGE_IFF, edges, watched);
     }
     if (auto suspend = dyn_cast<sim::SimSuspendAnyOp>(operation)) {
       SmallVector<uint32_t> edges;
@@ -1559,6 +1650,9 @@ private:
                         suspend.getContinuationOperands(), 4, 0,
                         ArrayRef<uint32_t>(&edge, 1), {suspend.getEvent()});
     }
+    if (auto suspend = dyn_cast<sim::SimSuspendForeverOp>(operation))
+      return encodeWait(plan, suspend.getOperation(),
+                        suspend.getContinuationOperands(), 7, 0, {}, {});
     if (auto suspend = dyn_cast<sim::SimSuspendAwaitOp>(operation)) {
       uint32_t edge = UINT32_MAX;
       return encodeWait(plan, suspend.getOperation(),
@@ -2137,6 +2231,9 @@ private:
         if (!width)
           return operation->emitOpError(
               "signal wait handle has no fixed-width element");
+        if (edge != static_cast<uint32_t>(sim::EdgeKind::Change) &&
+            edge != OBELISK_RT_WAIT_EDGE_NONE)
+          *width = 1;
         write32(bytes, 32 + index * 16 + 12, *width);
       }
     }
@@ -2206,7 +2303,7 @@ private:
     uint64_t continuationCursor = 0;
     for (FunctionPlan &plan : plans) {
       append64(output, plan.stableID);
-      append64(output, 0);
+      append64(output, plan.initialScheduleRank);
       append64(output, plan.firstInstruction);
       append64(output, plan.instructionCount);
       append64(output, layoutCursor);
@@ -2265,6 +2362,8 @@ private:
         append32(output, continuation.function);
         append32(output, continuation.id);
         append64(output, continuation.instruction);
+        append32(output, continuation.scheduleRank);
+        append32(output, 0);
       }
     alignTo(output, 8);
     uint64_t intrinsicOffset = output.size();

@@ -402,6 +402,7 @@ class SlangBinaryExpressionASTNodeOp<string mnemonic>
 class SlangAssignmentExpressionASTNodeOp<string mnemonic>
     : SlangExpressionASTNodeOp<mnemonic, (ins
         SlangAssignmentKind:$assignment_kind,
+        DefaultValuedAttr<BoolAttr, "false">:$has_timing_control,
         OptionalAttr<SlangBinaryOperator>:$operator_kind
       )>;
 
@@ -411,10 +412,29 @@ class SlangRangeSelectExpressionASTNodeOp<string mnemonic>
 
 class SlangStatementASTNodeOp<string mnemonic> : SlangASTNodeOp<mnemonic>;
 
+class SlangBlockStatementASTNodeOp<string mnemonic>
+    : SlangASTNodeOp<mnemonic, [], (ins
+        DefaultValuedAttr<SlangStatementBlockKind,
+          "::obelisk::slangir::StatementBlockKind::Sequential">:$block_kind
+      )>;
+
 class SlangVariableDeclarationStatementASTNodeOp<string mnemonic>
     : SlangASTNodeOp<mnemonic, [], (ins
         SymbolRefAttr:$referenced_symbol,
         StrAttr:$referenced_path
+      )>;
+
+class SlangWaitOrderStatementASTNodeOp<string mnemonic>
+    : SlangASTNodeOp<mnemonic, [], (ins
+        DefaultValuedAttr<I64Attr, "0">:$event_count,
+        DefaultValuedAttr<BoolAttr, "false">:$has_success_action,
+        DefaultValuedAttr<BoolAttr, "false">:$has_failure_action
+      )>;
+
+class SlangEventTriggerStatementASTNodeOp<string mnemonic>
+    : SlangASTNodeOp<mnemonic, [], (ins
+        DefaultValuedAttr<BoolAttr, "false">:$is_nonblocking,
+        DefaultValuedAttr<BoolAttr, "false">:$has_timing_control
       )>;
 
 class SlangConditionalStatementASTNodeOp<string mnemonic>

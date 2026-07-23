@@ -106,6 +106,8 @@ static_assert(static_cast<uint32_t>(SuspensionKind::Await) ==
               OBELISK_RT_SUSPEND_AWAIT);
 static_assert(static_cast<uint32_t>(SuspensionKind::Join) ==
               OBELISK_RT_SUSPEND_JOIN);
+static_assert(static_cast<uint32_t>(SuspensionKind::Forever) ==
+              OBELISK_RT_SUSPEND_FOREVER);
 static_assert(static_cast<uint32_t>(SuspensionKind::Frontier) ==
               OBELISK_RT_SUSPEND_FRONTIER);
 

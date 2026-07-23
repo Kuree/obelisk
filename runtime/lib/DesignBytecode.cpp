@@ -20,7 +20,7 @@ constexpr uint64_t kFunctionSize = 96;
 constexpr uint64_t kLayoutSize = 40;
 constexpr uint64_t kInstructionSize = OBELISK_RT_DESIGN_BYTECODE_INSTRUCTION_SIZE;
 constexpr uint64_t kOperandSize = 8;
-constexpr uint64_t kContinuationSize = 16;
+constexpr uint64_t kContinuationSize = 24;
 constexpr uint64_t kIntrinsicSize = 16;
 constexpr uint64_t kConnectivitySize = 32;
 constexpr uint32_t kInvalidRegister = UINT32_MAX;
@@ -156,7 +156,7 @@ struct Image {
 
 struct Function {
   uint64_t id = 0;
-  uint64_t name = 0;
+  uint64_t initialScheduleRank = UINT32_MAX;
   uint64_t firstInstruction = 0, instructionCount = 0;
   uint64_t firstLayout = 0, layoutCount = 0;
   uint32_t argumentCount = 0, resultCount = 0;
@@ -176,6 +176,14 @@ struct Instruction {
   uint32_t destination = 0, source0 = 0, source1 = 0, source2 = 0;
   uint32_t auxiliary = 0;
   uint64_t immediate = 0;
+};
+
+struct Continuation {
+  uint32_t function = 0;
+  uint32_t id = 0;
+  uint64_t instruction = 0;
+  uint32_t scheduleRank = UINT32_MAX;
+  uint32_t reserved = 0;
 };
 
 struct IntrinsicSignature {
@@ -289,6 +297,13 @@ Function functionAt(const Image &image, uint32_t index) {
           read32(data + 48), read32(data + 52), read64(data + 56),
           read64(data + 64), read64(data + 72), read64(data + 80),
           read64(data + 88)};
+}
+
+Continuation continuationAt(const Image &image, uint64_t index) {
+  const uint8_t *data =
+      image.data + image.continuations + index * kContinuationSize;
+  return {read32(data), read32(data + 4), read64(data + 8),
+          read32(data + 16), read32(data + 20)};
 }
 
 Layout layoutAt(const Image &image, const Function &function, uint32_t index) {
@@ -416,9 +431,11 @@ obelisk_rt_status releaseCapturedAutomaticStates(const Image &image,
   }
   for (auto state = context->nativeAutomaticStates.begin();
        state != context->nativeAutomaticStates.end();)
-    if (state->second.referenceCount == 0)
+    if (state->second.referenceCount == 0) {
+      obelisk_rt_erase_automatic_signal_snapshots_unlocked(context,
+                                                           state->first);
       state = context->nativeAutomaticStates.erase(state);
-    else
+    } else
       ++state;
   return OBELISK_RT_OK;
 }
@@ -432,9 +449,11 @@ void releaseDesignTaskOwnedStatesUnlocked(obelisk_rt_context *context,
       continue;
     }
     state->second.designOwner = 0;
-    if (state->second.referenceCount <= 1)
+    if (state->second.referenceCount <= 1) {
+      obelisk_rt_erase_automatic_signal_snapshots_unlocked(context,
+                                                           state->first);
       state = context->nativeAutomaticStates.erase(state);
-    else {
+    } else {
       --state->second.referenceCount;
       ++state;
     }
@@ -571,8 +590,14 @@ bool validIntrinsic(const Image &image, const Function &function,
            site.outputCount == 0 && numeric(input(0)) && handle(input(1)) &&
            (site.inputCount == 2 || bits(input(2), 64));
   case OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGER:
-    return signature.flags <= 1 && site.inputCount == 1 &&
-           site.outputCount == 0 && handle(input(0));
+    return signature.flags <= 1 &&
+           (site.inputCount == 1 || site.inputCount == 2) &&
+           site.outputCount == 0 && handle(input(0)) &&
+           (site.inputCount == 1 ||
+            (signature.flags == 1 && bits(input(1), 64)));
+  case OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGERED:
+    return signature.flags == 0 && site.inputCount == 1 &&
+           site.outputCount == 1 && handle(input(0)) && bits(output(0), 1);
   case OBELISK_RT_INTRINSIC_V1_STATE_ALLOC:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && numeric(input(0)) && handle(output(0));
@@ -718,13 +743,12 @@ bool validateInitialization(const Image &image, const Function &function) {
   if ((function.flags & 1) == 0)
     std::fill(seed.begin(), seed.begin() + function.argumentCount, 1);
   for (uint64_t index = 0; index != function.continuationCount; ++index) {
-    const uint8_t *entry = image.data + image.continuations +
-                           (function.firstContinuation + index) *
-                               kContinuationSize;
+    Continuation entry =
+        continuationAt(image, function.firstContinuation + index);
     State entryState = seed;
     if (index != 0 || (function.flags & 1) != 0)
       std::fill(entryState.begin(), entryState.end(), 0);
-    if (!merge(read64(entry + 8), entryState))
+    if (!merge(entry.instruction, entryState))
       return false;
   }
   auto defineMap = [&](State &state, uint64_t first, uint64_t mapCount) {
@@ -1179,7 +1203,7 @@ bool validateImage(const Image &image) {
   for (uint32_t functionIndex = 0; functionIndex != image.functionCount;
        ++functionIndex) {
     Function function = functionAt(image, functionIndex);
-    if (function.id == 0 || function.name != 0 ||
+    if (function.id == 0 || function.initialScheduleRank > UINT32_MAX ||
         (functionIndex != 0 && function.id <= previousID) ||
         function.firstInstruction > image.instructionCount ||
         function.instructionCount == 0 ||
@@ -1218,21 +1242,19 @@ bool validateImage(const Image &image) {
     }
     uint32_t previousContinuation = 0;
     for (uint64_t index = 0; index != function.continuationCount; ++index) {
-      const uint8_t *entry = image.data + image.continuations +
-                             (function.firstContinuation + index) * kContinuationSize;
-      uint32_t owner = read32(entry), continuation = read32(entry + 4);
-      uint64_t instruction = read64(entry + 8);
-      if (owner != functionIndex ||
-          (index == 0 ? continuation != 0
-                      : continuation <= previousContinuation) ||
-          instruction < function.firstInstruction ||
-          instruction >= function.firstInstruction + function.instructionCount)
+      Continuation entry =
+          continuationAt(image, function.firstContinuation + index);
+      if (entry.function != functionIndex || entry.reserved != 0 ||
+          (index == 0 ? entry.id != 0
+                      : entry.id <= previousContinuation) ||
+          entry.instruction < function.firstInstruction ||
+          entry.instruction >=
+              function.firstInstruction + function.instructionCount)
         return false;
-      previousContinuation = continuation;
+      previousContinuation = entry.id;
     }
     if ((function.flags & 1) == 0 &&
-        read64(image.data + image.continuations +
-               function.firstContinuation * kContinuationSize + 8) !=
+        continuationAt(image, function.firstContinuation).instruction !=
             function.firstInstruction)
       return false;
     uint64_t codeEnd = function.firstInstruction + function.instructionCount;
@@ -1240,10 +1262,7 @@ bool validateImage(const Image &image) {
       if (id > UINT32_MAX)
         return false;
       for (uint64_t index = 0; index != function.continuationCount; ++index) {
-        const uint8_t *entry =
-            image.data + image.continuations +
-            (function.firstContinuation + index) * kContinuationSize;
-        if (read32(entry + 4) == id)
+        if (continuationAt(image, function.firstContinuation + index).id == id)
           return true;
       }
       return false;
@@ -1973,36 +1992,11 @@ bool packBytes(const Image &image, Frame &frame, uint32_t reg,
   return true;
 }
 
-uint32_t transitionEdges(bool oldValue, bool oldUnknown, bool newValue,
-                         bool newUnknown) {
-  if (oldValue == newValue && oldUnknown == newUnknown)
-    return 0;
-  uint32_t result = OBELISK_RT_SIGNAL_CHANGE;
-  bool oldZero = !oldUnknown && !oldValue;
-  bool oldOne = !oldUnknown && oldValue;
-  bool newZero = !newUnknown && !newValue;
-  bool newOne = !newUnknown && newValue;
-  if ((oldZero && !newZero) || (oldUnknown && newOne))
-    result |= OBELISK_RT_SIGNAL_POSEDGE;
-  if ((oldOne && !newOne) || (oldUnknown && newZero))
-    result |= OBELISK_RT_SIGNAL_NEGEDGE;
-  return result;
-}
-
 bool appendSignalEvent(obelisk_rt_context *context, uint64_t bitOffset,
                        bool oldValue, bool oldUnknown, bool newValue,
                        bool newUnknown) {
-  uint32_t edges =
-      transitionEdges(oldValue, oldUnknown, newValue, newUnknown);
-  if (edges == 0)
-    return true;
-  if (context->nextSchedulerSequence == 0) {
-    context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
-    return false;
-  }
-  context->scheduledSignalEvents.push_back(
-      {context->nextSchedulerSequence++, bitOffset, 1, edges});
-  return true;
+  return obelisk_rt_append_signal_event_unlocked(
+      context, bitOffset, oldValue, oldUnknown, newValue, newUnknown);
 }
 
 bool rangesOverlap(uint64_t left, uint64_t leftWidth, uint64_t right,
@@ -2198,6 +2192,8 @@ bool resolveDrivenNets(const Image &image, obelisk_rt_context *context,
   }
   // Publish every logical alias first, then report transitions in stable bit
   // order so observers never see a partially updated component.
+  std::vector<uint64_t> signalHandles;
+  signalHandles.reserve(publications.size());
   for (const Publication &publication : publications) {
     uint64_t signalHandle = publication.destination;
     uint32_t chosenID = UINT32_MAX;
@@ -2210,7 +2206,12 @@ bool resolveDrivenNets(const Image &image, obelisk_rt_context *context,
             id, static_cast<int64_t>(publication.destination -
                                      state.bitOffset));
       }
-    if (!appendSignalEvent(context, signalHandle, publication.oldValue,
+    obelisk_rt_invalidate_signal_snapshots_unlocked(context, signalHandle, 1);
+    signalHandles.push_back(signalHandle);
+  }
+  for (size_t index = 0; index != publications.size(); ++index) {
+    const Publication &publication = publications[index];
+    if (!appendSignalEvent(context, signalHandles[index], publication.oldValue,
                            publication.oldUnknown, publication.value,
                            publication.unknown))
       return false;
@@ -2282,6 +2283,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     ScheduledDesignTask task;
     task.parent = context->activeDesignTaskID;
     task.function = signature.flags;
+    task.scheduleRank =
+        static_cast<uint32_t>(callee.initialScheduleRank);
     task.scratchOffset = scratchOffset;
     task.scratchSize = callee.scratchSize;
     task.frame.resize(static_cast<size_t>(scratchOffset + callee.scratchSize));
@@ -2321,7 +2324,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     {
       std::lock_guard<std::mutex> lock(context->mutex);
       if (context->nextDesignTaskID == 0 ||
-          context->nextDesignTaskID > uint64_t{INT64_MAX})
+          context->nextDesignTaskID > uint64_t{INT64_MAX} ||
+          context->nextProcessInsertionSequence == 0 ||
+          context->nextProcessInsertionSequence == UINT64_MAX)
         return OBELISK_RT_OUT_OF_RESOURCES;
       for (const auto &[automaticID, count] : retainedAutomaticStates) {
         auto found = context->nativeAutomaticStates.find(automaticID);
@@ -2332,6 +2337,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       }
       id = context->nextDesignTaskID++;
       task.id = id;
+      task.insertionSequence = context->nextProcessInsertionSequence++;
       task.observedEpoch = context->schedulerEpoch;
       task.observedSignalSequence = context->nextSchedulerSequence;
       for (const auto &[automaticID, count] : retainedAutomaticStates)
@@ -2485,20 +2491,46 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if (kind != OBELISK_RT_DESCRIPTOR_EVENT || start < 0)
       return OBELISK_RT_INVALID_HANDLE;
     uint64_t stableID = static_cast<uint64_t>(start);
+    uint64_t delay = 0;
+    if (site.inputCount == 2) {
+      std::optional<uint64_t> encodedDelay = scalar(1);
+      if (!encodedDelay)
+        return OBELISK_RT_INVALID_BYTECODE;
+      delay = *encodedDelay;
+    }
     std::lock_guard<std::mutex> lock(context->mutex);
     if (signature.flags != 0) {
       if (context->nextSchedulerSequence == 0)
         return OBELISK_RT_OUT_OF_RESOURCES;
+      uint64_t dueTime = delay > UINT64_MAX - context->schedulerTime
+                             ? UINT64_MAX
+                             : context->schedulerTime + delay;
       context->scheduledDesignEvents.push_back(
-          {context->nextSchedulerSequence++, stableID});
+          {context->nextSchedulerSequence++, dueTime, stableID});
       return OBELISK_RT_OK;
     }
     uint64_t &generation = context->eventGenerations[stableID];
     if (++generation == 0)
       generation = 1;
+    context->eventLastTriggeredTimes[stableID] = context->schedulerTime;
     if (++context->schedulerEpoch == 0)
       context->schedulerEpoch = 1;
     return OBELISK_RT_OK;
+  }
+  case OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGERED: {
+    if (!context)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    Layout event = layoutAt(image, frame.function, inputRegister(0));
+    uint32_t kind = 0;
+    int64_t start = -1;
+    const uint8_t *address = frame.data + event.offset;
+    std::memcpy(&kind, address, 4);
+    std::memcpy(&start, address + 16, 8);
+    if (kind != OBELISK_RT_DESCRIPTOR_EVENT || start < 0)
+      return OBELISK_RT_INVALID_HANDLE;
+    uint32_t triggered = obelisk_rt_v1_scheduler_event_triggered(
+        context, static_cast<uint64_t>(start));
+    return sentinel(0, triggered);
   }
   case OBELISK_RT_INTRINSIC_V1_STATE_ALLOC: {
     if (!context)
@@ -3804,6 +3836,18 @@ obelisk_rt_status executeFunction(const Image &image, Frame &frame,
                                      : plane[index / 8] &
                                            static_cast<uint8_t>(~mask);
         };
+        struct PendingTransition {
+          uint64_t handle;
+          bool oldValue;
+          bool oldUnknown;
+          bool newValue;
+          bool newUnknown;
+        };
+        std::vector<PendingTransition> transitions;
+        if (!local && instruction.opcode == OBELISK_RT_DB_STORE_STATE)
+          transitions.reserve(static_cast<size_t>(
+              std::min<uint64_t>(value.width,
+                                 std::numeric_limits<size_t>::max())));
         bool changed = false;
         for (uint64_t bitIndex = 0; bitIndex != value.width; ++bitIndex) {
           bool valid = bitIndex <= uint64_t{INT64_MAX} &&
@@ -3865,20 +3909,29 @@ obelisk_rt_status executeFunction(const Image &image, Frame &frame,
               setBit(local ? localValue.unknown : context->stateUnknown,
                      storageBit, newUnknown);
             }
-            if (!local &&
-                !appendSignalEvent(
-                    context,
-                    automatic
-                        ? (automaticBase & ~uint64_t{UINT32_MAX}) |
-                              static_cast<uint32_t>(absolute)
-                    : boundedStatic ? encodeStaticHandle(staticID,
-                                                         coordinate)
-                                    : absolute,
-                    oldValue, oldUnknown,
-                                   newValue, newUnknown))
-              return context->schedulerStatus;
+            if (!local)
+              transitions.push_back(
+                  {automatic
+                       ? (automaticBase & ~uint64_t{UINT32_MAX}) |
+                             static_cast<uint32_t>(absolute)
+                       : boundedStatic
+                             ? encodeStaticHandle(staticID, coordinate)
+                             : absolute,
+                   oldValue, oldUnknown, newValue, newUnknown});
           }
         }
+        // A blocking assignment publishes its complete packed value before
+        // any observer samples it. Append scalar transition records only
+        // after every destination bit has been committed.
+        for (const PendingTransition &transition : transitions)
+          obelisk_rt_invalidate_signal_snapshots_unlocked(
+              context, transition.handle, 1);
+        for (const PendingTransition &transition : transitions)
+          if (!appendSignalEvent(
+                  context, transition.handle, transition.oldValue,
+                  transition.oldUnknown, transition.newValue,
+                  transition.newUnknown))
+            return context->schedulerStatus;
         if (!local && !automatic &&
             instruction.opcode == OBELISK_RT_DB_STORE_STATE &&
             descriptorKind == OBELISK_RT_DESCRIPTOR_DRIVER && start >= 0 &&
@@ -4005,21 +4058,39 @@ std::optional<uint64_t> continuationPC(const Image &image,
   uint64_t low = 0, high = function.continuationCount;
   while (low != high) {
     uint64_t middle = low + (high - low) / 2;
-    const uint8_t *entry = image.data + image.continuations +
-                           (function.firstContinuation + middle) *
-                               kContinuationSize;
-    if (read32(entry + 4) < continuation)
+    if (continuationAt(image, function.firstContinuation + middle).id <
+        continuation)
       low = middle + 1;
     else
       high = middle;
   }
   if (low == function.continuationCount)
     return std::nullopt;
-  const uint8_t *entry = image.data + image.continuations +
-                         (function.firstContinuation + low) * kContinuationSize;
-  if (read32(entry + 4) != continuation)
+  Continuation entry =
+      continuationAt(image, function.firstContinuation + low);
+  if (entry.id != continuation)
     return std::nullopt;
-  return read64(entry + 8);
+  return entry.instruction;
+}
+
+std::optional<uint32_t> continuationScheduleRank(
+    const Image &image, const Function &function, uint32_t continuation) {
+  uint64_t low = 0, high = function.continuationCount;
+  while (low != high) {
+    uint64_t middle = low + (high - low) / 2;
+    if (continuationAt(image, function.firstContinuation + middle).id <
+        continuation)
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  if (low == function.continuationCount)
+    return std::nullopt;
+  Continuation entry =
+      continuationAt(image, function.firstContinuation + low);
+  if (entry.id != continuation)
+    return std::nullopt;
+  return entry.scheduleRank;
 }
 
 } // namespace
@@ -4186,6 +4257,10 @@ obelisk_rt_status obelisk_rt_execute_design_bytecode(
 }
 
 obelisk_rt_status obelisk_rt_run_one_design_task(obelisk_rt_context *context,
+                                                 uint32_t maximumRegion,
+                                                 uint32_t maximumRank,
+                                                 uint64_t
+                                                     maximumInsertionSequence,
                                                  bool *outProgress) noexcept {
   if (!context || !outProgress)
     return OBELISK_RT_INVALID_ARGUMENT;
@@ -4216,6 +4291,9 @@ obelisk_rt_status obelisk_rt_run_one_design_task(obelisk_rt_context *context,
       if (context->designTaskExecuting)
         return OBELISK_RT_OK;
       auto found = context->scheduledDesignTasks.end();
+      uint32_t selectedRegion = UINT32_MAX;
+      uint32_t selectedRank = UINT32_MAX;
+      uint64_t selectedInsertionSequence = UINT64_MAX;
       for (auto iterator = context->scheduledDesignTasks.begin();
            iterator != context->scheduledDesignTasks.end(); ++iterator) {
         bool awaited = false;
@@ -4233,7 +4311,11 @@ obelisk_rt_status obelisk_rt_run_one_design_task(obelisk_rt_context *context,
                   iterator->frame.data() + iterator->waitOffset);
           const auto *entries =
               reinterpret_cast<const obelisk_rt_wait_entry_v1 *>(wait + 1);
-          if (wait->version == OBELISK_RT_WAIT_RECORD_SIGNAL_WIDTH_VERSION)
+          if (wait->flags == OBELISK_RT_WAIT_LEVEL_TRUE ||
+              wait->flags == OBELISK_RT_WAIT_EDGE_IFF)
+            signalTriggered = iterator->signalTriggered;
+          else if (wait->version ==
+                   OBELISK_RT_WAIT_RECORD_SIGNAL_WIDTH_VERSION)
             for (uint32_t index = 0; index != wait->count; ++index)
               for (const ScheduledSignalEvent &event :
                    context->scheduledSignalEvents)
@@ -4291,13 +4373,25 @@ obelisk_rt_status obelisk_rt_run_one_design_task(obelisk_rt_context *context,
                      iterator->suspendKind != OBELISK_RT_SUSPEND_EVENT &&
                      iterator->suspendKind != OBELISK_RT_SUSPEND_AWAIT &&
                      iterator->suspendKind != OBELISK_RT_SUSPEND_JOIN &&
+                     iterator->suspendKind != OBELISK_RT_SUSPEND_FOREVER &&
                      iterator->observedEpoch != context->schedulerEpoch)));
-        if (runnable) {
+        auto key = std::tuple{iterator->queuedRegion, iterator->scheduleRank,
+                              iterator->insertionSequence};
+        auto selectedKey =
+            std::tuple{selectedRegion, selectedRank,
+                       selectedInsertionSequence};
+        if (runnable && key < selectedKey) {
           found = iterator;
-          break;
+          selectedRegion = iterator->queuedRegion;
+          selectedRank = iterator->scheduleRank;
+          selectedInsertionSequence = iterator->insertionSequence;
         }
       }
-      if (found == context->scheduledDesignTasks.end())
+      auto maximumKey =
+          std::tuple{maximumRegion, maximumRank, maximumInsertionSequence};
+      if (found == context->scheduledDesignTasks.end() ||
+          !(std::tuple{selectedRegion, selectedRank,
+                       selectedInsertionSequence} < maximumKey))
         return OBELISK_RT_OK;
       task = std::move(*found);
       context->scheduledDesignTasks.erase(found);
@@ -4313,6 +4407,16 @@ obelisk_rt_status obelisk_rt_run_one_design_task(obelisk_rt_context *context,
         task.scratchOffset, task.scratchSize, task.continuation, 0, &action);
     if (status != OBELISK_RT_OK)
       return abandonTask(status);
+    std::optional<uint32_t> nextScheduleRank;
+    if (action.kind != OBELISK_RT_FRAGMENT_TERMINATE) {
+      Image image;
+      if (!parseImage(entry, image) || !validateImage(image))
+        return abandonTask(OBELISK_RT_INVALID_BYTECODE);
+      nextScheduleRank = continuationScheduleRank(
+          image, functionAt(image, task.function), action.continuation);
+      if (!nextScheduleRank)
+        return abandonTask(OBELISK_RT_INVALID_CONTINUATION);
+    }
     obelisk_rt_status finalizeStatus = OBELISK_RT_OK;
     {
       std::lock_guard<std::mutex> lock(context->mutex);
@@ -4320,6 +4424,8 @@ obelisk_rt_status obelisk_rt_run_one_design_task(obelisk_rt_context *context,
       context->designTaskExecuting = false;
       task.started = true;
       task.continuation = action.continuation;
+      if (nextScheduleRank)
+        task.scheduleRank = *nextScheduleRank;
       task.observedEpoch = context->schedulerEpoch;
       task.observedSignalSequence = context->nextSchedulerSequence;
       switch (action.kind) {
@@ -4328,6 +4434,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(obelisk_rt_context *context,
         task.waitOffset = 0;
         task.waitSize = 0;
         task.waitGenerations.clear();
+        task.signalTriggered = false;
         break;
       case OBELISK_RT_FRAGMENT_SUSPEND: {
         if (action.payload > task.scratchOffset ||
@@ -4353,12 +4460,33 @@ obelisk_rt_status obelisk_rt_run_one_design_task(obelisk_rt_context *context,
         }
         const auto *waitEntries =
             reinterpret_cast<const obelisk_rt_wait_entry_v1 *>(wait + 1);
+        bool validFlags =
+            wait->flags == OBELISK_RT_WAIT_FLAGS_NONE ||
+            (action.suspend_kind == OBELISK_RT_SUSPEND_CHANGE &&
+             wait->flags == OBELISK_RT_WAIT_LEVEL_TRUE) ||
+            (action.suspend_kind == OBELISK_RT_SUSPEND_EDGE &&
+             wait->flags == OBELISK_RT_WAIT_EDGE_IFF);
+        if (!validFlags ||
+            (wait->flags == OBELISK_RT_WAIT_LEVEL_TRUE &&
+             wait->count != 1) ||
+            (wait->flags == OBELISK_RT_WAIT_EDGE_IFF &&
+             wait->count != 2) ||
+            (action.suspend_kind == OBELISK_RT_SUSPEND_FOREVER &&
+             wait->count != 0)) {
+          finalizeStatus = OBELISK_RT_INVALID_FRAME;
+          break;
+        }
         for (uint32_t index = 0; index != wait->count; ++index) {
           bool validEdge =
               waitEntries[index].edge >= OBELISK_RT_WAIT_EDGE_CHANGE &&
               waitEntries[index].edge <= OBELISK_RT_WAIT_EDGE_BOTH;
+          bool iffCondition =
+              wait->flags == OBELISK_RT_WAIT_EDGE_IFF && index == 1;
           if (signalWait
-                  ? (!validEdge || waitEntries[index].reserved == 0)
+                  ? ((!validEdge && !iffCondition) ||
+                     (iffCondition &&
+                      waitEntries[index].edge != OBELISK_RT_WAIT_EDGE_NONE) ||
+                     waitEntries[index].reserved == 0)
                   : (waitEntries[index].edge != OBELISK_RT_WAIT_EDGE_NONE ||
                      waitEntries[index].reserved != 0)) {
             finalizeStatus = OBELISK_RT_INVALID_FRAME;
@@ -4371,6 +4499,12 @@ obelisk_rt_status obelisk_rt_run_one_design_task(obelisk_rt_context *context,
         task.waitOffset = action.payload;
         task.waitSize = sizeof(obelisk_rt_wait_record_v1) + entries;
         task.waitGenerations.clear();
+        task.signalTriggered = false;
+        task.queuedRegion =
+            action.suspend_kind == OBELISK_RT_SUSPEND_DELAY &&
+                    wait->payload == 0
+                ? 1
+                : 0;
         if (action.suspend_kind == OBELISK_RT_SUSPEND_EVENT) {
           task.waitGenerations.reserve(wait->count);
           for (uint32_t index = 0; index != wait->count; ++index)
@@ -4389,6 +4523,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(obelisk_rt_context *context,
         task.waitOffset = 0;
         task.waitSize = 0;
         task.waitGenerations.clear();
+        task.signalTriggered = false;
         task.frame.clear();
         context->terminatedDesignTasks.insert(task.id);
         if (++context->schedulerEpoch == 0)

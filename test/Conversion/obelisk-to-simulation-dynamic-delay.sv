@@ -8,5 +8,10 @@ module simulation_dynamic_delay;
   end
 endmodule
 
-// CHECK: obelisk_sim.time.scale {{%.*}} by {{[0-9]+}} signed = true : i32
+// CHECK: arith.cmpi sge
+// CHECK: arith.select
+// CHECK: arith.extui {{%.*}} : i32 to i64
+// CHECK: arith.cmpi ule
+// CHECK: arith.select
+// CHECK: obelisk_sim.time.scale {{%.*}} by {{[0-9]+}} signed = false : i64
 // CHECK: obelisk_sim.suspend.delay

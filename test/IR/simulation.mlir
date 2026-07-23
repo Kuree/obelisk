@@ -64,18 +64,26 @@ module {
       %net_value = obelisk_sim.net.read %net : !obelisk_sim.net<!obelisk_sim.logic<8>> -> !obelisk_sim.logic<8>
       obelisk_sim.driver.drive %driver = %net_value : !obelisk_sim.driver<!obelisk_sim.logic<8>>, !obelisk_sim.logic<8>
       %time = obelisk_sim.time.constant 7
-      %scaled_time = obelisk_sim.time.scale %index by 4 signed = true : i32
+      %index64 = arith.extsi %index : i32 to i64
+      %scaled_time = obelisk_sim.time.scale %index64 by 4 signed = true : i64
       %sum = obelisk_sim.time.add %time, %time
       obelisk_sim.nba.enqueue %loaded to %ref after %sum : (!obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>, !obelisk_sim.time) -> ()
       %event = obelisk_sim.context.event %ctx[0] : !obelisk_sim.event
       obelisk_sim.event.trigger %event nonblocking = false
+      obelisk_sim.event.trigger %event after %time nonblocking = true
+      %event_triggered = obelisk_sim.event.triggered %event
+      %event_equal = obelisk_sim.event.equal %event, %event
       %spawned = obelisk_sim.spawn @child(%ctx) : !obelisk_sim.context -> !obelisk_sim.process
       %called = obelisk_sim.call @callee(%ctx, %loaded) : (!obelisk_sim.context, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<8>
       obelisk_sim.suspend.delay %time to ^bb1(%called : !obelisk_sim.logic<8>)
     ^bb1(%live1: !obelisk_sim.logic<8>):
       obelisk_sim.suspend.change %ref to ^bb2(%live1 : !obelisk_sim.logic<8>) : !obelisk_sim.ref<!obelisk_sim.logic<8>>
     ^bb2(%live2: !obelisk_sim.logic<8>):
-      obelisk_sim.suspend.edge posedge %net to ^bb3(%live2 : !obelisk_sim.logic<8>) : !obelisk_sim.net<!obelisk_sim.logic<8>>
+      obelisk_sim.suspend.edge posedge %net to ^bb_iff(%live2 : !obelisk_sim.logic<8>) : !obelisk_sim.net<!obelisk_sim.logic<8>>
+    ^bb_iff(%live_iff: !obelisk_sim.logic<8>):
+      obelisk_sim.suspend.edge_iff posedge %ref iff %net to ^bb_level(%live_iff : !obelisk_sim.logic<8>) : !obelisk_sim.ref<!obelisk_sim.logic<8>>, !obelisk_sim.net<!obelisk_sim.logic<8>>
+    ^bb_level(%live_level: !obelisk_sim.logic<8>):
+      obelisk_sim.suspend.level %ref to ^bb3(%live_level : !obelisk_sim.logic<8>) : !obelisk_sim.ref<!obelisk_sim.logic<8>>
     ^bb3(%live3: !obelisk_sim.logic<8>):
       obelisk_sim.suspend.any %ref, %net, %live3 edges [0, 1] to ^bb_any : !obelisk_sim.ref<!obelisk_sim.logic<8>>, !obelisk_sim.net<!obelisk_sim.logic<8>>, !obelisk_sim.logic<8>
     ^bb_any(%live_any: !obelisk_sim.logic<8>):
@@ -84,8 +92,10 @@ module {
       obelisk_sim.suspend.await %spawned to ^bb5(%live4 : !obelisk_sim.logic<8>)
     ^bb5(%live5: !obelisk_sim.logic<8>):
       %spawned2 = obelisk_sim.spawn @child(%ctx) : !obelisk_sim.context -> !obelisk_sim.process
-      obelisk_sim.suspend.join any %spawned, %spawned2, %live5 processes 2 to ^bb6 : !obelisk_sim.process, !obelisk_sim.process, !obelisk_sim.logic<8>
-    ^bb6(%live6: !obelisk_sim.logic<8>):
+      obelisk_sim.suspend.join any %spawned, %spawned2, %live5 processes 2 to ^bb_forever : !obelisk_sim.process, !obelisk_sim.process, !obelisk_sim.logic<8>
+    ^bb_forever(%live6: !obelisk_sim.logic<8>):
+      obelisk_sim.suspend.forever to ^bb6(%live6 : !obelisk_sim.logic<8>)
+    ^bb6(%live7: !obelisk_sim.logic<8>):
       obelisk_sim.return
     }
   }
@@ -111,10 +121,16 @@ module {
 // CHECK: obelisk_sim.driver.dyn_extract
 // CHECK: obelisk_sim.time.scale
 // CHECK: obelisk_sim.nba.enqueue
+// CHECK: obelisk_sim.event.trigger {{.*}} after
+// CHECK: obelisk_sim.event.triggered
+// CHECK: obelisk_sim.event.equal
 // CHECK: obelisk_sim.suspend.delay
 // CHECK: obelisk_sim.suspend.change
 // CHECK: obelisk_sim.suspend.edge posedge
+// CHECK: obelisk_sim.suspend.edge_iff posedge
+// CHECK: obelisk_sim.suspend.level
 // CHECK: obelisk_sim.suspend.any
 // CHECK: obelisk_sim.suspend.event
 // CHECK: obelisk_sim.suspend.await
 // CHECK: obelisk_sim.suspend.join any
+// CHECK: obelisk_sim.suspend.forever

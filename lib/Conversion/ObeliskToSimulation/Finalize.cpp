@@ -150,6 +150,7 @@ void ObeliskSimFinalizePass::runOnOperation() {
   module.walk([&](sim::SimFuncOp function) {
     function->removeAttr(bindingsAttrName);
     function->removeAttr(delayScaleAttrName);
+    function->removeAttr(delayQuantumAttrName);
   });
 
   if (invalid)
@@ -207,18 +208,20 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
   }
   designManager.addPass(createSymbolDCEPass());
 
-  // Whole-program summaries and static fragment extraction deliberately run
-  // before continuation-frame state is made explicit.
+  // Make continuation-frame state explicit before freezing whole-program
+  // summaries. Threading can rematerialize pointer-free constants in resume
+  // blocks, which is an executable CFG change and therefore must precede the
+  // persistent compute graph.
+  {
+    OpPassManager &functionManager = designManager.nest<sim::SimFuncOp>();
+    functionManager.addPass(createObeliskSimThreadSuspensionPass());
+  }
+
   ObeliskSimBuildComputeGraphPassOptions graphOptions;
   graphOptions.workers = workers;
   graphOptions.vpi = vpiMode.str();
   designManager.addPass(
       createObeliskSimBuildComputeGraphPass(std::move(graphOptions)));
-  designManager.addPass(createObeliskSimVerifyComputeGraphPass());
-  {
-    OpPassManager &functionManager = designManager.nest<sim::SimFuncOp>();
-    functionManager.addPass(createObeliskSimThreadSuspensionPass());
-  }
   designManager.addPass(createObeliskSimVerifyComputeGraphPass());
   manager.addPass(createObeliskSimFinalizePass());
 }

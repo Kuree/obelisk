@@ -68,9 +68,10 @@ module attributes {
   }
 }
 
-// Design bytecode version 2 follows the eight-byte magic, and includes the
-// canonical connectivity table plus disjoint per-bit uwire driver ranges.
-// ENCODE: obelisk.bytecode.image = array<i8: 79, 66, 66, 67, 68, 83, 49, 0, 2, 0, 0, 0
+// Design bytecode version 3 follows the eight-byte magic. It includes
+// per-continuation schedule ranks, the canonical connectivity table, and
+// disjoint per-bit uwire driver ranges.
+// ENCODE: obelisk.bytecode.image = array<i8: 79, 66, 66, 67, 68, 83, 49, 0, 3, 0, 0, 0
 // ENCODE: obelisk.execution.flags = 1 : i32
 // ENCODE: obelisk.execution.state_bits = 73 : i64
 // ENCODE: obelisk.bytecode.function = 0 : i32

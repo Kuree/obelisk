@@ -712,7 +712,8 @@ The implementation roadmap is:
   VPI-profile observability annotations, and four-state knownness facts.~~
 - ~~Extract block-level static fragments, assign a uniform fragment ABI and
   continuation IDs, and annotate timing and NBA staging policies.~~
-- ~~Thread suspension-live SSA state only after graph derivation.~~
+- ~~Thread suspension-live SSA state before final graph derivation, with
+  constant rematerialization excluded from persistent graph cost.~~
 - Materialize optimized continuation frames, timing slots, NBA storage and
   ordered commit code, and the genuinely unbounded dynamic frontier.
 - Lower serial native fragments and generated schedule drivers through `func`,
