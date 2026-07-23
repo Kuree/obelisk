@@ -127,13 +127,13 @@ DescriptorProvenanceMap deriveDescriptorProvenance(sim::SimFuncOp function) {
   for (BlockArgument argument : entry.getArguments()) {
     unsigned index = argument.getArgNumber();
     auto capture = function.getArgAttrOfType<sim::CaptureKindAttr>(
-        index, "obelisk_sim.capture_kind");
+        index, sim::metadata::captureKind);
     auto descriptor = function.getArgAttrOfType<IntegerAttr>(
-        index, "obelisk_sim.descriptor_id");
+        index, sim::metadata::descriptorId);
     auto descriptorLow = function.getArgAttrOfType<IntegerAttr>(
-        index, "obelisk_sim.descriptor_low");
+        index, sim::metadata::descriptorLow);
     auto descriptorRootType = function.getArgAttrOfType<TypeAttr>(
-        index, "obelisk_sim.descriptor_root_type");
+        index, sim::metadata::descriptorRootType);
     sim::ComputeResourceKind kind = getHandleResourceKind(argument.getType());
     auto width = getPackedValueWidth(argument.getType());
     if (kind == sim::ComputeResourceKind::Unknown || !width)

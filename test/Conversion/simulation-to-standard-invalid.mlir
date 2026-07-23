@@ -2,6 +2,10 @@
 // RUN:   --convert-obelisk-sim-values-to-standard %s -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --implicit-check-not=unrealized_conversion_cast
 
+// Keep this as a legalization-output check rather than verify-diagnostics:
+// besides identifying each surviving operation, it asserts that partially
+// converted unrealized casts never leak into any diagnostic dump.
+
 // A logic element nested under a resource handle is deliberately not assigned
 // a compiler-only representation.
 module {

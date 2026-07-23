@@ -75,13 +75,13 @@ static Value sentinel(ConversionPatternRewriter &rewriter, Location loc,
 static std::string displayScope(Operation *operation) {
   if (auto function = operation->getParentOfType<sim::SimFuncOp>()) {
     if (auto hierarchy = function->getAttrOfType<StringAttr>(
-            "obelisk_sim.hierarchical_name"))
+            sim::metadata::hierarchicalName))
       return hierarchy.getValue().str();
     return function.getSymName().str();
   }
   if (auto function = operation->getParentOfType<func::FuncOp>()) {
     if (auto hierarchy = function->getAttrOfType<StringAttr>(
-            "obelisk_sim.hierarchical_name"))
+            sim::metadata::hierarchicalName))
       return hierarchy.getValue().str();
     return function.getSymName().str();
   }

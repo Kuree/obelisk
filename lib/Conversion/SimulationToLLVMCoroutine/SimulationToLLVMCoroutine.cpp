@@ -3846,7 +3846,7 @@ std::optional<uint64_t> getStaticDriverID(Value value) {
     if (!function)
       return std::nullopt;
     auto descriptor = function.getArgAttrOfType<IntegerAttr>(
-        argument.getArgNumber(), "obelisk_sim.descriptor_id");
+        argument.getArgNumber(), sim::metadata::descriptorId);
     return descriptor ? std::optional<uint64_t>(descriptor.getInt())
                       : std::nullopt;
   }

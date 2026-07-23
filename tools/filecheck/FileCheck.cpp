@@ -1,4 +1,11 @@
 //===- FileCheck.cpp - Build-local LLVM FileCheck driver -----------------===//
+//
+// Standalone LLVM distributions may provide the LLVMFileCheck library without
+// installing the FileCheck executable. This intentionally small driver keeps
+// Obelisk's tests self-contained. It implements only the options used by this
+// suite and rejects unknown options so unsupported checks cannot pass silently.
+//
+//===----------------------------------------------------------------------===//
 
 #include "llvm/FileCheck/FileCheck.h"
 #include "llvm/ADT/SmallString.h"

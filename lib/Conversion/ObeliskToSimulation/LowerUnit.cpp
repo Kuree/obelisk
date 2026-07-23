@@ -2305,7 +2305,7 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     StringAttr lexicalScope = op.getSystemScopePathAttr();
     if (!lexicalScope)
       lexicalScope = function->getAttrOfType<StringAttr>(
-          "obelisk_sim.hierarchical_name");
+          sim::metadata::hierarchicalName);
     if (!lexicalScope) {
       op.emitError("display call has no elaborated lexical scope");
       return failure();

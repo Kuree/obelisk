@@ -51,23 +51,11 @@ static void addStatistic(Pass::Statistic *statistic, uint64_t amount = 1) {
     *statistic += amount;
 }
 
-static bool isKnownOperationMetadata(StringRef name) {
-  return name == bindingsAttrName || name == delayScaleAttrName ||
-         name == delayQuantumAttrName ||
-         name == "obelisk_sim.capture_kind" ||
-         name == "obelisk_sim.descriptor_id" ||
-         name == "obelisk_sim.descriptor_root_type" ||
-         name == "obelisk_sim.descriptor_low" ||
-         name == "obelisk_sim.descriptor_indices" ||
-         name == "obelisk_sim.descriptor_aggregate_type" ||
-         name == "obelisk_sim.descriptor_packed_low" ||
-         name == "obelisk_sim.hierarchical_name";
-}
-
 static bool hasUnknownOperationMetadata(Operation *operation) {
   for (NamedAttribute named : operation->getAttrs()) {
     StringRef name = named.getName().strref();
-    if (name.starts_with("obelisk_sim.") && !isKnownOperationMetadata(name))
+    if (name.starts_with("obelisk_sim.") &&
+        !sim::metadata::isKnownOperation(name))
       return true;
   }
   return false;

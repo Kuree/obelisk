@@ -20,7 +20,7 @@
 // RUN:   -I%S/Inputs/depth %S/Inputs/depth/main.sv 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=DEPTH-ERROR
 
-// RUN: cd %S && obelisk -emit-slang --filelist driver_flags.f -I%S \
+// RUN: (cd %S && obelisk -emit-slang --filelist driver_flags.f -I%S) \
 // RUN:   | FileCheck %s --check-prefix=FILELIST-ALIAS
 // RUN: obelisk -emit-slang -y %S/Inputs/library/search -Y .svlib \
 // RUN:   %S/Inputs/library/search/top.sv \
@@ -56,7 +56,7 @@
 // RUN: obelisk -emit-slang -Xslang --ignore-unknown-modules \
 // RUN:   %S/Inputs/macros.sv | FileCheck %s --check-prefix=XSLANG
 
-// RUN: cd %S/Inputs && obelisk -emit-slang -- -dash_input.sv \
+// RUN: (cd %S/Inputs && obelisk -emit-slang -- -dash_input.sv) \
 // RUN:   | FileCheck %s --check-prefix=DASH-DASH
 // RUN: obelisk -emit-slang - < %S/Inputs/macros.sv \
 // RUN:   | FileCheck %s --check-prefix=STDIN

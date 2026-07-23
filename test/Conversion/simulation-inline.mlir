@@ -29,6 +29,9 @@ module {
     obelisk_sim.code_unit.decl 27 in 1 function hierarchy "top.child.nested_middle"
     obelisk_sim.code_unit.decl 28 in 1 function hierarchy "top.child.nested_caller"
     obelisk_sim.code_unit.decl 29 in 1 function hierarchy "top.child.unknown_body"
+    obelisk_sim.code_unit.decl 30 in 1 function hierarchy "top.child.descriptor_target"
+    obelisk_sim.code_unit.decl 31 in 1 function hierarchy "top.child.descriptor_caller"
+    obelisk_sim.storage.decl 0 in 1 : !obelisk_sim.unpacked_array<0 : 3 x !obelisk_sim.logic<8>> design
 
     obelisk_sim.func private @single(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
@@ -110,6 +113,17 @@ module {
       %one = arith.constant 1 : i32
       %result = arith.addi %value, %one : i32
       obelisk_sim.return %result : i32
+    }
+
+    // Exercise every real view-descriptor field accepted on an inline
+    // boundary: aggregate element 2 followed by packed bits [5:2].
+    obelisk_sim.func private @descriptor_target(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %slice: !obelisk_sim.ref<!obelisk_sim.logic<4>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64, obelisk_sim.descriptor_root_type = !obelisk_sim.unpacked_array<0 : 3 x !obelisk_sim.logic<8>>, obelisk_sim.descriptor_low = 18 : i64, obelisk_sim.descriptor_indices = array<i64: 2>, obelisk_sim.descriptor_aggregate_type = !obelisk_sim.logic<8>, obelisk_sim.descriptor_packed_low = 2 : i64})
+        -> !obelisk_sim.logic<4>
+        attributes {code_unit_id = 30 : i64, entry_kind = 8 : i32} {
+      %value = obelisk_sim.ref.load %slice : !obelisk_sim.ref<!obelisk_sim.logic<4>> -> !obelisk_sim.logic<4>
+      obelisk_sim.return %value : !obelisk_sim.logic<4>
     }
 
     obelisk_sim.func private @nested_middle(
@@ -205,6 +219,16 @@ module {
       obelisk_sim.return %result : i32
     }
 
+    obelisk_sim.func @descriptor_caller(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %slice: !obelisk_sim.ref<!obelisk_sim.logic<4>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64, obelisk_sim.descriptor_root_type = !obelisk_sim.unpacked_array<0 : 3 x !obelisk_sim.logic<8>>, obelisk_sim.descriptor_low = 18 : i64, obelisk_sim.descriptor_indices = array<i64: 2>, obelisk_sim.descriptor_aggregate_type = !obelisk_sim.logic<8>, obelisk_sim.descriptor_packed_low = 2 : i64})
+        -> !obelisk_sim.logic<4>
+        attributes {code_unit_id = 31 : i64, entry_kind = 8 : i32} {
+      %result = obelisk_sim.call @descriptor_target(%ctx, %slice)
+          : (!obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<4>>) -> !obelisk_sim.logic<4>
+      obelisk_sim.return %result : !obelisk_sim.logic<4>
+    }
+
     obelisk_sim.func private @process(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 17 : i64, entry_kind = 1 : i32} {
@@ -226,6 +250,7 @@ module {
 // O0: obelisk_sim.call @multi
 // O0: obelisk_sim.call @void
 // O0: obelisk_sim.call @io
+// O0: obelisk_sim.call @descriptor_target
 
 // The executable function can disappear while its immutable inventory record
 // remains available to reflection.
@@ -235,6 +260,7 @@ module {
 // O3-NOT: obelisk_sim.func private @multi
 // O3-NOT: obelisk_sim.func private @void
 // O3-NOT: obelisk_sim.func private @io
+// O3-NOT: obelisk_sim.func private @descriptor_target
 
 // O3-LABEL: obelisk_sim.func private @recursive
 // O3: obelisk_sim.call @recursive
@@ -265,6 +291,9 @@ module {
 // O3: obelisk_sim.call @boundary_target
 // O3: obelisk_sim.call @unknown_body
 // O3-LABEL: obelisk_sim.func @nested_caller
+// O3-NOT: obelisk_sim.call
+// O3-LABEL: obelisk_sim.func @descriptor_caller
+// O3: obelisk_sim.ref.load
 // O3-NOT: obelisk_sim.call
 // O3-LABEL: obelisk_sim.func @root
 // O3: obelisk_sim.spawn @process

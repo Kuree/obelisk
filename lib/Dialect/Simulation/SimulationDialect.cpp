@@ -62,11 +62,7 @@ bool hasUnknownInlineMetadata(Operation *operation) {
     StringRef name = named.getName().strref();
     if (!name.starts_with("obelisk_sim."))
       continue;
-    if (name == "obelisk_sim.capture_kind" ||
-        name == "obelisk_sim.descriptor_id" || name == "obelisk_sim.bindings" ||
-        name == "obelisk_sim.delay_scale" ||
-        name == "obelisk_sim.delay_quantum" ||
-        name == "obelisk_sim.hierarchical_name")
+    if (metadata::isKnownOperation(name))
       continue;
     return true;
   }
@@ -83,8 +79,7 @@ bool hasUnknownInlineBoundaryMetadata(ArrayAttr dictionaries) {
     for (NamedAttribute named : dictionary) {
       StringRef name = named.getName().strref();
       if (name.starts_with("obelisk_sim.") &&
-          name != "obelisk_sim.capture_kind" &&
-          name != "obelisk_sim.descriptor_id")
+          !metadata::isKnownBoundary(name))
         return true;
     }
   }
@@ -134,18 +129,14 @@ bool isRecursive(SimFuncOp function, SimDesignOp design) {
   return recursive;
 }
 
-bool isSuspension(Operation *operation) {
-  return isa<SimSuspendDelayOp, SimSuspendChangeOp, SimSuspendEdgeOp,
-             SimSuspendEdgeIffOp, SimSuspendLevelOp, SimSuspendAnyOp,
-             SimSuspendEventOp, SimSuspendForeverOp, SimSuspendAwaitOp,
-             SimSuspendJoinOp>(operation);
-}
-
 } // namespace
 
 InlineLegality getInlineLegality(SimCallOp call, SimFuncOp callee) {
   SimFuncOp caller = call ? call->getParentOfType<SimFuncOp>() : SimFuncOp{};
   auto design = caller ? caller->getParentOfType<SimDesignOp>() : SimDesignOp{};
+  // SimFuncOp verification guarantees that Function entries are zero-time and
+  // contain no suspension operations, so legality does not duplicate that
+  // invariant with a second operation-family allowlist.
   if (!caller || !callee || !design || callee.isExternal() ||
       callee->getParentOfType<SimDesignOp>() != design ||
       callee.getEntryKind() != EntryKind::Function)
@@ -163,10 +154,8 @@ InlineLegality getInlineLegality(SimCallOp call, SimFuncOp callee) {
       return WalkResult::skip();
     if (legality != InlineLegality::Legal)
       return WalkResult::interrupt();
-    if (isSuspension(operation))
-      legality = InlineLegality::Suspension;
-    else if (auto display = dyn_cast<SimDisplayOp>(operation);
-             display && !display.getScopeAttr())
+    if (auto display = dyn_cast<SimDisplayOp>(operation);
+        display && !display.getScopeAttr())
       legality = InlineLegality::UnfrozenDisplayScope;
     else if (hasUnknownInlineMetadata(operation))
       legality = InlineLegality::UnknownMetadata;
@@ -196,8 +185,6 @@ StringRef getInlineLegalityReason(InlineLegality legality) {
     return "call is in a recursive SCC";
   case InlineLegality::UnknownMetadata:
     return "callee contains unknown obelisk_sim metadata";
-  case InlineLegality::Suspension:
-    return "callee contains a suspension";
   case InlineLegality::UnfrozenDisplayScope:
     return "display has no frozen lexical scope";
   case InlineLegality::UnknownBoundaryMetadata:
@@ -1085,7 +1072,7 @@ static std::optional<CaptureKind> getCaptureKind(DictionaryAttr attrs) {
   if (!attrs)
     return std::nullopt;
   auto value =
-      dyn_cast_or_null<CaptureKindAttr>(attrs.get("obelisk_sim.capture_kind"));
+      dyn_cast_or_null<CaptureKindAttr>(attrs.get(metadata::captureKind));
   if (!value)
     return std::nullopt;
   return value.getValue();
@@ -1357,7 +1344,7 @@ LogicalResult SimDesignOp::verifyRegions() {
       if (!kind)
         return failure(); // Already diagnosed by the function verifier.
       auto descriptor = function.getArgAttrOfType<IntegerAttr>(
-          index, "obelisk_sim.descriptor_id");
+          index, metadata::descriptorId);
       std::optional<uint64_t> descriptorId;
       if (descriptor && !descriptor.getValue().isNegative() &&
           descriptor.getValue().getBitWidth() <= 64)
@@ -1369,16 +1356,15 @@ LogicalResult SimDesignOp::verifyRegions() {
         if (descriptorId && storageTypes.count(*descriptorId)) {
           Type storageType = storageTypes.lookup(*descriptorId);
           auto rootType = function.getArgAttrOfType<TypeAttr>(
-              index, "obelisk_sim.descriptor_root_type");
+              index, metadata::descriptorRootType);
           auto low = function.getArgAttrOfType<IntegerAttr>(
-              index, "obelisk_sim.descriptor_low");
+              index, metadata::descriptorLow);
           if (!rootType) {
-            if (low || function.getArgAttr(
-                           index, "obelisk_sim.descriptor_indices") ||
-                function.getArgAttr(
-                    index, "obelisk_sim.descriptor_aggregate_type") ||
+            if (low ||
+                function.getArgAttr(index, metadata::descriptorIndices) ||
                 function.getArgAttr(index,
-                                    "obelisk_sim.descriptor_packed_low"))
+                                    metadata::descriptorAggregateType) ||
+                function.getArgAttr(index, metadata::descriptorPackedLow))
               break;
             expected = RefType::get(getContext(), storageType);
             break;
@@ -1396,7 +1382,7 @@ LogicalResult SimDesignOp::verifyRegions() {
           Type selected = storageType;
           uint64_t computedLow = 0;
           auto indices = function.getArgAttrOfType<DenseI64ArrayAttr>(
-              index, "obelisk_sim.descriptor_indices");
+              index, metadata::descriptorIndices);
           bool validView = true;
           if (indices) {
             for (int64_t rawIndex : indices.asArrayRef()) {
@@ -1419,13 +1405,13 @@ LogicalResult SimDesignOp::verifyRegions() {
             }
           }
           auto aggregateType = function.getArgAttrOfType<TypeAttr>(
-              index, "obelisk_sim.descriptor_aggregate_type");
+              index, metadata::descriptorAggregateType);
           if ((indices && !aggregateType) ||
               (aggregateType && aggregateType.getValue() != selected))
             validView = false;
 
           auto packedLow = function.getArgAttrOfType<IntegerAttr>(
-              index, "obelisk_sim.descriptor_packed_low");
+              index, metadata::descriptorPackedLow);
           Type viewElement = reference ? reference.getElementType() : Type{};
           if (validView && selected != viewElement) {
             std::optional<unsigned> selectedWidth = getPackedWidth(selected);
@@ -1607,7 +1593,7 @@ LogicalResult SimFuncOp::verify() {
         *kind == CaptureKind::Storage || *kind == CaptureKind::Net ||
         *kind == CaptureKind::Driver || *kind == CaptureKind::Event;
     auto descriptor =
-        dictionary.getAs<IntegerAttr>("obelisk_sim.descriptor_id");
+        dictionary.getAs<IntegerAttr>(metadata::descriptorId);
     if (needsDescriptor && !descriptor)
       return emitOpError() << "argument #" << index
                            << " requires obelisk_sim.descriptor_id metadata";

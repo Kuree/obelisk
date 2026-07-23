@@ -6,6 +6,7 @@
 #include "obelisk/Dialect/Runtime/RuntimeTypes.h"
 #include "obelisk/Dialect/Simulation/SimulationAttrs.h"
 #include "obelisk/Dialect/Simulation/SimulationDialect.h"
+#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationTypes.h"
 
 #include "mlir/IR/BuiltinTypes.h"
@@ -52,7 +53,6 @@ enum class InlineLegality {
   LateMetadata,
   Recursive,
   UnknownMetadata,
-  Suspension,
   UnfrozenDisplayScope,
   UnknownBoundaryMetadata,
 };

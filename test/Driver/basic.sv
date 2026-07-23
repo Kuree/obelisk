@@ -7,8 +7,8 @@
 // RUN:   | FileCheck %s --check-prefix=OBELISK
 // RUN: obelisk --help | FileCheck %s --check-prefix=HELP
 // RUN: obelisk --version | FileCheck %s --check-prefix=VERSION
-// RUN: cd %S && obelisk -emit-slang -f driver_flags.f -I%S \
-// RUN:   basic.sv | FileCheck %s --check-prefix=FILELIST
+// RUN: (cd %S && obelisk -emit-slang -f driver_flags.f -I%S \
+// RUN:   basic.sv) | FileCheck %s --check-prefix=FILELIST
 // RUN: not obelisk --std=invalid %s 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=BAD-STD
 // RUN: not obelisk 2>&1 | FileCheck %s --check-prefix=NO-INPUT

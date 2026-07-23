@@ -1719,23 +1719,23 @@ void ObeliskSimPreparePass::runOnOperation() {
           (capture.second.viewOffset != 0 ||
            capture.second.rootType != capture.second.type)) {
         metadataAttrs.push_back(builder.getNamedAttr(
-            "obelisk_sim.descriptor_root_type",
+            sim::metadata::descriptorRootType,
             TypeAttr::get(capture.second.rootType)));
         metadataAttrs.push_back(builder.getNamedAttr(
-            "obelisk_sim.descriptor_low",
+            sim::metadata::descriptorLow,
             builder.getI64IntegerAttr(capture.second.viewOffset)));
         if (!capture.second.viewIndices.empty())
           metadataAttrs.push_back(builder.getNamedAttr(
-              "obelisk_sim.descriptor_indices",
+              sim::metadata::descriptorIndices,
               builder.getDenseI64ArrayAttr(capture.second.viewIndices)));
         if (capture.second.aggregateViewType)
           metadataAttrs.push_back(builder.getNamedAttr(
-              "obelisk_sim.descriptor_aggregate_type",
+              sim::metadata::descriptorAggregateType,
               TypeAttr::get(capture.second.aggregateViewType)));
         if (capture.second.packedViewOffset != 0 ||
             capture.second.aggregateViewType != capture.second.type)
           metadataAttrs.push_back(builder.getNamedAttr(
-              "obelisk_sim.descriptor_packed_low",
+              sim::metadata::descriptorPackedLow,
               builder.getI64IntegerAttr(capture.second.packedViewOffset)));
       }
       argAttrs.push_back(builder.getDictionaryAttr(metadataAttrs));
@@ -2124,7 +2124,7 @@ void ObeliskSimPreparePass::runOnOperation() {
                               : getHierarchyName(unit.source);
     if (!hierarchy.empty())
       functionAttrs.push_back(builder.getNamedAttr(
-          "obelisk_sim.hierarchical_name", builder.getStringAttr(hierarchy)));
+          sim::metadata::hierarchicalName, builder.getStringAttr(hierarchy)));
     bool programDomain = isProgramCodeUnit(unit.source);
     functionAttrs.push_back(builder.getNamedAttr(
         "home_region",
@@ -2301,7 +2301,7 @@ void ObeliskSimPreparePass::runOnOperation() {
       switch (kind.getValue()) {
       case sim::CaptureKind::Storage: {
         auto rootTypeAttr =
-            attrs.getAs<TypeAttr>("obelisk_sim.descriptor_root_type");
+            attrs.getAs<TypeAttr>(sim::metadata::descriptorRootType);
         Type contextType =
             rootTypeAttr
                 ? Type(sim::RefType::get(context, rootTypeAttr.getValue()))
@@ -2311,7 +2311,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                             rootBuilder.getI64IntegerAttr(id))
                             .getResult();
         if (rootTypeAttr) {
-          auto low = attrs.getAs<IntegerAttr>("obelisk_sim.descriptor_low");
+          auto low =
+              attrs.getAs<IntegerAttr>(sim::metadata::descriptorLow);
           if (!low) {
             unit.function.emitError()
                 << "view capture is missing its descriptor offset";
@@ -2320,9 +2321,9 @@ void ObeliskSimPreparePass::runOnOperation() {
           }
           if (auto indices =
                   attrs.getAs<DenseI64ArrayAttr>(
-                      "obelisk_sim.descriptor_indices")) {
+                      sim::metadata::descriptorIndices)) {
             auto aggregateType = attrs.getAs<TypeAttr>(
-                "obelisk_sim.descriptor_aggregate_type");
+                sim::metadata::descriptorAggregateType);
             if (!aggregateType) {
               unit.function.emitError()
                   << "aggregate view capture is missing its result type";
@@ -2337,7 +2338,7 @@ void ObeliskSimPreparePass::runOnOperation() {
           }
           if (storage.getType() != type) {
             auto packedLow = attrs.getAs<IntegerAttr>(
-                "obelisk_sim.descriptor_packed_low");
+                sim::metadata::descriptorPackedLow);
             if (!packedLow) {
               unit.function.emitError()
                   << "packed view capture is missing its bit offset";

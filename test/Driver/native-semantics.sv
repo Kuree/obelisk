@@ -1,29 +1,68 @@
-// RUN: obelisk -DTEST_NBA %s -o %t.nba
-// RUN: %t.nba | FileCheck %s --check-prefix=NBA
-// RUN: obelisk -DTEST_TIMING %s -o %t.timing
-// RUN: %t.timing | FileCheck %s --check-prefix=TIMING
-// RUN: obelisk -DTEST_CHANGE %s -o %t.change
-// RUN: %t.change | FileCheck %s --check-prefix=CHANGE
-// RUN: obelisk -DTEST_NET %s -o %t.net
-// RUN: %t.net | FileCheck %s --check-prefix=NET
-// RUN: obelisk -DTEST_SELECTIVE %s -o %t.selective
-// RUN: %t.selective | FileCheck %s --check-prefix=SELECTIVE
-// RUN: obelisk -DTEST_EDGE %s -o %t.edge
-// RUN: %t.edge | FileCheck %s --check-prefix=EDGE
-// RUN: obelisk -DTEST_OOB %s -o %t.oob
-// RUN: %t.oob | FileCheck %s --check-prefix=OOB
-// RUN: obelisk -DTEST_PARTIAL_OOB %s -o %t.partial-oob
-// RUN: %t.partial-oob | FileCheck %s --check-prefix=PARTIAL-OOB
-// RUN: obelisk -DTEST_UNDRIVEN %s -o %t.undriven
-// RUN: %t.undriven | FileCheck %s --check-prefix=UNDRIVEN
-// RUN: obelisk -DTEST_NBA_ORDER %s -o %t.nba-order
-// RUN: %t.nba-order | FileCheck %s --check-prefix=NBA-ORDER
-// RUN: obelisk -DTEST_FOUR_STATE %s -o %t.four-state
-// RUN: %t.four-state | FileCheck %s --check-prefix=FOUR-STATE
-// RUN: obelisk -DTEST_CONVERGENCE %s -o %t.convergence
-// RUN: %t.convergence | FileCheck %s --check-prefix=CONVERGENCE
-// RUN: obelisk -DTEST_IO %s -o %t.io
-// RUN: %t.io | FileCheck %s --check-prefix=IO
+// RUN: obelisk -O0 -DTEST_NBA %s -o %t.nba.o0
+// RUN: obelisk -O3 -DTEST_NBA %s -o %t.nba.o3
+// RUN: %t.nba.o0 > %t.nba.o0.out && %t.nba.o3 > %t.nba.o3.out
+// RUN: diff -u %t.nba.o0.out %t.nba.o3.out
+// RUN: FileCheck %s --check-prefix=NBA < %t.nba.o3.out
+// RUN: obelisk -O0 -DTEST_TIMING %s -o %t.timing.o0
+// RUN: obelisk -O3 -DTEST_TIMING %s -o %t.timing.o3
+// RUN: %t.timing.o0 > %t.timing.o0.out && %t.timing.o3 > %t.timing.o3.out
+// RUN: diff -u %t.timing.o0.out %t.timing.o3.out
+// RUN: FileCheck %s --check-prefix=TIMING < %t.timing.o3.out
+// RUN: obelisk -O0 -DTEST_CHANGE %s -o %t.change.o0
+// RUN: obelisk -O3 -DTEST_CHANGE %s -o %t.change.o3
+// RUN: %t.change.o0 > %t.change.o0.out && %t.change.o3 > %t.change.o3.out
+// RUN: diff -u %t.change.o0.out %t.change.o3.out
+// RUN: FileCheck %s --check-prefix=CHANGE < %t.change.o3.out
+// RUN: obelisk -O0 -DTEST_NET %s -o %t.net.o0
+// RUN: obelisk -O3 -DTEST_NET %s -o %t.net.o3
+// RUN: %t.net.o0 > %t.net.o0.out && %t.net.o3 > %t.net.o3.out
+// RUN: diff -u %t.net.o0.out %t.net.o3.out
+// RUN: FileCheck %s --check-prefix=NET < %t.net.o3.out
+// RUN: obelisk -O0 -DTEST_SELECTIVE %s -o %t.selective.o0
+// RUN: obelisk -O3 -DTEST_SELECTIVE %s -o %t.selective.o3
+// RUN: %t.selective.o0 > %t.selective.o0.out && %t.selective.o3 > %t.selective.o3.out
+// RUN: diff -u %t.selective.o0.out %t.selective.o3.out
+// RUN: FileCheck %s --check-prefix=SELECTIVE < %t.selective.o3.out
+// RUN: obelisk -O0 -DTEST_EDGE %s -o %t.edge.o0
+// RUN: obelisk -O3 -DTEST_EDGE %s -o %t.edge.o3
+// RUN: %t.edge.o0 > %t.edge.o0.out && %t.edge.o3 > %t.edge.o3.out
+// RUN: diff -u %t.edge.o0.out %t.edge.o3.out
+// RUN: FileCheck %s --check-prefix=EDGE < %t.edge.o3.out
+// RUN: obelisk -O0 -DTEST_OOB %s -o %t.oob.o0
+// RUN: obelisk -O3 -DTEST_OOB %s -o %t.oob.o3
+// RUN: %t.oob.o0 > %t.oob.o0.out && %t.oob.o3 > %t.oob.o3.out
+// RUN: diff -u %t.oob.o0.out %t.oob.o3.out
+// RUN: FileCheck %s --check-prefix=OOB < %t.oob.o3.out
+// RUN: obelisk -O0 -DTEST_PARTIAL_OOB %s -o %t.partial-oob.o0
+// RUN: obelisk -O3 -DTEST_PARTIAL_OOB %s -o %t.partial-oob.o3
+// RUN: %t.partial-oob.o0 > %t.partial-oob.o0.out && %t.partial-oob.o3 > %t.partial-oob.o3.out
+// RUN: diff -u %t.partial-oob.o0.out %t.partial-oob.o3.out
+// RUN: FileCheck %s --check-prefix=PARTIAL-OOB < %t.partial-oob.o3.out
+// RUN: obelisk -O0 -DTEST_UNDRIVEN %s -o %t.undriven.o0
+// RUN: obelisk -O3 -DTEST_UNDRIVEN %s -o %t.undriven.o3
+// RUN: %t.undriven.o0 > %t.undriven.o0.out && %t.undriven.o3 > %t.undriven.o3.out
+// RUN: diff -u %t.undriven.o0.out %t.undriven.o3.out
+// RUN: FileCheck %s --check-prefix=UNDRIVEN < %t.undriven.o3.out
+// RUN: obelisk -O0 -DTEST_NBA_ORDER %s -o %t.nba-order.o0
+// RUN: obelisk -O3 -DTEST_NBA_ORDER %s -o %t.nba-order.o3
+// RUN: %t.nba-order.o0 > %t.nba-order.o0.out && %t.nba-order.o3 > %t.nba-order.o3.out
+// RUN: diff -u %t.nba-order.o0.out %t.nba-order.o3.out
+// RUN: FileCheck %s --check-prefix=NBA-ORDER < %t.nba-order.o3.out
+// RUN: obelisk -O0 -DTEST_FOUR_STATE %s -o %t.four-state.o0
+// RUN: obelisk -O3 -DTEST_FOUR_STATE %s -o %t.four-state.o3
+// RUN: %t.four-state.o0 > %t.four-state.o0.out && %t.four-state.o3 > %t.four-state.o3.out
+// RUN: diff -u %t.four-state.o0.out %t.four-state.o3.out
+// RUN: FileCheck %s --check-prefix=FOUR-STATE < %t.four-state.o3.out
+// RUN: obelisk -O0 -DTEST_CONVERGENCE %s -o %t.convergence.o0
+// RUN: obelisk -O3 -DTEST_CONVERGENCE %s -o %t.convergence.o3
+// RUN: %t.convergence.o0 > %t.convergence.o0.out && %t.convergence.o3 > %t.convergence.o3.out
+// RUN: diff -u %t.convergence.o0.out %t.convergence.o3.out
+// RUN: FileCheck %s --check-prefix=CONVERGENCE < %t.convergence.o3.out
+// RUN: obelisk -O0 -DTEST_IO %s -o %t.io.o0
+// RUN: obelisk -O3 -DTEST_IO %s -o %t.io.o3
+// RUN: %t.io.o0 | tee %t.io.o0.out | FileCheck %s --check-prefix=IO
+// RUN: %t.io.o3 | tee %t.io.o3.out | FileCheck %s --check-prefix=IO
+// RUN: diff -u %t.io.o0.out %t.io.o3.out
 
 `ifdef TEST_NBA
 module native_nba;
