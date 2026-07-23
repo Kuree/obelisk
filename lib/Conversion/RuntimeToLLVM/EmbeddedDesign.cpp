@@ -12,6 +12,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <optional>
 
 using namespace mlir;
 
@@ -28,6 +29,11 @@ constexpr StringLiteral kExecutionName = "__obelisk_execution_descriptor_v1";
 constexpr StringLiteral kBytecodeName = "__obelisk_bytecode_image_v1";
 constexpr StringLiteral kDatabaseName = "__obelisk_design_database_v1";
 constexpr StringLiteral kDPIScopesName = "__obelisk_dpi_scopes_v1";
+constexpr StringLiteral kActivationsName = "__obelisk_activations_v1";
+constexpr uint32_t kRuntimeABIGeneration = 2;
+constexpr uint32_t kActivationHasNative = UINT32_C(1) << 0;
+constexpr uint32_t kActivationHasBytecode = UINT32_C(1) << 1;
+constexpr uint32_t kActivationNoBytecode = UINT32_MAX;
 
 Value integerConstant(OpBuilder &builder, Location location, Type type,
                       uint64_t value) {
@@ -176,6 +182,84 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
   Type pointer = LLVM::LLVMPointerType::get(context);
   Type i32 = IntegerType::get(context, 32);
   Type i64 = IntegerType::get(context, 64);
+
+  struct ActivationInfo {
+    uint64_t codeUnitID;
+    std::string symbol;
+    std::optional<uint32_t> bytecodeFunction;
+  };
+  SmallVector<ActivationInfo> activations;
+  module.walk([&](sim::SimFuncOp function) {
+    if (function.getEntryKind() == sim::EntryKind::Function)
+      return;
+    std::optional<int64_t> codeUnitID = function.getCodeUnitId();
+    if (!codeUnitID || *codeUnitID <= 0)
+      return;
+    auto bytecodeFunction =
+        function->getAttrOfType<IntegerAttr>(kFunctionAttr);
+    activations.push_back(
+        {static_cast<uint64_t>(*codeUnitID), function.getSymName().str(),
+         bytecodeFunction
+             ? std::optional<uint32_t>(static_cast<uint32_t>(
+                   bytecodeFunction.getValue().getZExtValue()))
+             : std::nullopt});
+  });
+  llvm::sort(activations, [](const ActivationInfo &lhs,
+                             const ActivationInfo &rhs) {
+    return lhs.codeUnitID < rhs.codeUnitID;
+  });
+  for (size_t index = 1; index < activations.size(); ++index)
+    if (activations[index - 1].codeUnitID == activations[index].codeUnitID)
+      return module.emitError()
+             << "duplicate activation code-unit ID "
+             << activations[index].codeUnitID;
+
+  Type activationType =
+      LLVM::LLVMStructType::getLiteral(context, {i64, pointer, i32, i32});
+  if (!activations.empty()) {
+    Type activationArray =
+        LLVM::LLVMArrayType::get(activationType, activations.size());
+    makeAggregateGlobal(
+        module, activationArray, kActivationsName, LLVM::Linkage::Internal,
+        ".obelisk.execution", [&](OpBuilder &builder) {
+          Value records =
+              LLVM::ZeroOp::create(builder, module.getLoc(), activationArray);
+          for (auto [index, activation] : llvm::enumerate(activations)) {
+            Value record = LLVM::ZeroOp::create(
+                builder, module.getLoc(), activationType);
+            record = insertValue(
+                builder, module.getLoc(), record,
+                integerConstant(builder, module.getLoc(), i64,
+                                activation.codeUnitID),
+                0);
+            record = insertValue(
+                builder, module.getLoc(), record,
+                LLVM::AddressOfOp::create(
+                    builder, module.getLoc(), pointer,
+                    activation.symbol + ".__obelisk_process_descriptor"),
+                1);
+            uint32_t flags = kActivationHasNative;
+            uint32_t bytecodeFunction = kActivationNoBytecode;
+            if (activation.bytecodeFunction) {
+              flags |= kActivationHasBytecode;
+              bytecodeFunction = *activation.bytecodeFunction;
+            }
+            record = insertValue(
+                builder, module.getLoc(), record,
+                integerConstant(builder, module.getLoc(), i32,
+                                bytecodeFunction),
+                2);
+            record = insertValue(
+                builder, module.getLoc(), record,
+                integerConstant(builder, module.getLoc(), i32, flags), 3);
+            records = LLVM::InsertValueOp::create(
+                builder, module.getLoc(), records, record,
+                ArrayRef<int64_t>{static_cast<int64_t>(index)});
+          }
+          return records;
+        });
+  }
+
   SmallVector<sim::SimScopeDeclOp> scopes;
   module.walk([&](sim::SimScopeDeclOp scope) { scopes.push_back(scope); });
   llvm::sort(scopes, [](sim::SimScopeDeclOp lhs, sim::SimScopeDeclOp rhs) {
@@ -299,7 +383,7 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
   }
   auto executionType = LLVM::LLVMStructType::getLiteral(
       context, {i32, i32, i32, i32, pointer, i64, pointer, i64, i64, i64,
-                pointer, i64, i32, i32});
+                pointer, i64, i32, i32, pointer, i64});
   uint32_t flags = 0;
   uint64_t stateBits = 0;
   if (auto attr = module->getAttrOfType<IntegerAttr>(kFlagsAttr))
@@ -317,7 +401,8 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
                             integerConstant(builder, module.getLoc(), i32, 1),
                             0);
         value = insertValue(builder, module.getLoc(), value,
-                            integerConstant(builder, module.getLoc(), i32, 1),
+                            integerConstant(builder, module.getLoc(), i32,
+                                            kRuntimeABIGeneration),
                             1);
         value = insertValue(
             builder, module.getLoc(), value,
@@ -365,6 +450,18 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
               integerConstant(builder, module.getLoc(), i32,
                               static_cast<uint32_t>(dpiPrecision)),
               12);
+        }
+        if (!activations.empty()) {
+          value = insertValue(
+              builder, module.getLoc(), value,
+              LLVM::AddressOfOp::create(builder, module.getLoc(), pointer,
+                                        kActivationsName),
+              14);
+          value = insertValue(
+              builder, module.getLoc(), value,
+              integerConstant(builder, module.getLoc(), i64,
+                              activations.size()),
+              15);
         }
         return value;
       });

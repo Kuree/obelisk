@@ -407,7 +407,16 @@ class ObeliskStatementASTNodeOp<string mnemonic> : ObeliskASTNodeOp<mnemonic>;
 class ObeliskBlockStatementASTNodeOp<string mnemonic>
     : ObeliskASTNodeOp<mnemonic, [], (ins
         DefaultValuedAttr<ObeliskSVStatementBlockKind,
-          "::obelisk::ir::SVStatementBlockKind::Sequential">:$block_kind
+          "::obelisk::ir::SVStatementBlockKind::Sequential">:$block_kind,
+        OptionalAttr<SymbolRefAttr>:$block_symbol,
+        OptionalAttr<StrAttr>:$block_path
+      )>;
+
+class ObeliskDisableStatementASTNodeOp<string mnemonic>
+    : ObeliskASTNodeOp<mnemonic, [], (ins
+        OptionalAttr<SymbolRefAttr>:$target_symbol,
+        OptionalAttr<StrAttr>:$target_path,
+        DefaultValuedAttr<BoolAttr, "false">:$is_hierarchical
       )>;
 
 class ObeliskVariableDeclarationStatementASTNodeOp<string mnemonic>

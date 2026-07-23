@@ -269,6 +269,7 @@ struct FunctionInfo {
   SmallVector<ComputeEffect> baseEffects;
   SmallVector<ComputeEffect> summary;
   SmallVector<sim::SimCallOp> calls;
+  SmallVector<sim::SimTaskCallOp> taskCalls;
   /// Functions this one starts as an independent process, directly or through
   /// a zero-time call. Indices into `ProgramAnalysis::functions`.
   SmallVector<unsigned> spawns;
@@ -485,6 +486,8 @@ ProgramAnalysis analyzeProgram(sim::SimDesignOp design) {
     }
     info.summary = info.baseEffects;
     function.walk([&](sim::SimCallOp call) { info.calls.push_back(call); });
+    function.walk(
+        [&](sim::SimTaskCallOp call) { info.taskCalls.push_back(call); });
   }
 
   SmallVector<SmallVector<unsigned>> callsFrom(analysis.functions.size());
@@ -997,11 +1000,30 @@ LogicalResult ComputeGraphBuilder::buildFragments() {
 void ComputeGraphBuilder::buildControlEdges() {
   for (Fragment &fragment : fragments) {
     Operation *terminator = fragment.block->getTerminator();
-    sim::ComputeEdgeKind controlKind = isSuspensionTerminator(terminator)
-                                           ? sim::ComputeEdgeKind::Resume
-                                           : sim::ComputeEdgeKind::ProcessOrder;
-    for (Block *successor : terminator->getSuccessors())
-      addEdge(fragment.id, fragmentForBlock.lookup(successor), controlKind);
+    if (auto taskCall = dyn_cast<sim::SimTaskCallOp>(terminator)) {
+      auto callee = analysis.functionIndex.find(taskCall.getCallee());
+      if (callee != analysis.functionIndex.end()) {
+        sim::SimFuncOp target = analysis.functions[callee->second].function;
+        if (!target.getBody().empty()) {
+          addEdge(fragment.id,
+                  fragmentForBlock.lookup(&target.getBody().front()),
+                  sim::ComputeEdgeKind::ProcessOrder);
+          uint32_t continuation =
+              fragmentForBlock.lookup(taskCall.getContinuation());
+          for (Block &block : target.getBody())
+            if (isa<sim::SimReturnOp>(block.getTerminator()))
+              addEdge(fragmentForBlock.lookup(&block), continuation,
+                      sim::ComputeEdgeKind::ProcessOrder);
+        }
+      }
+    } else {
+      sim::ComputeEdgeKind controlKind =
+          isSuspensionTerminator(terminator)
+              ? sim::ComputeEdgeKind::Resume
+              : sim::ComputeEdgeKind::ProcessOrder;
+      for (Block *successor : terminator->getSuccessors())
+        addEdge(fragment.id, fragmentForBlock.lookup(successor), controlKind);
+    }
 
     // A spawn reached through a zero-time call still creates an actor, so the
     // edge is derived from the call graph rather than from this block alone.

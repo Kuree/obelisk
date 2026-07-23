@@ -14,7 +14,7 @@ extern "C" {
 // schema. They are not a backward-compatibility promise: generated code,
 // bytecode, and libobelisk_rt must come from the same Obelisk source revision.
 // Any compiler update requires regenerating and relinking the simulator.
-#define OBELISK_RT_ABI_GENERATION 1u
+#define OBELISK_RT_ABI_GENERATION 2u
 
 typedef struct obelisk_rt_context obelisk_rt_context;
 
@@ -92,6 +92,22 @@ typedef struct obelisk_rt_dpi_scope_v1 {
   uint32_t reserved;
 } obelisk_rt_dpi_scope_v1;
 
+struct obelisk_rt_process_descriptor_v1;
+
+#define OBELISK_RT_ACTIVATION_HAS_NATIVE (UINT32_C(1) << 0)
+#define OBELISK_RT_ACTIVATION_HAS_BYTECODE (UINT32_C(1) << 1)
+#define OBELISK_RT_ACTIVATION_NO_BYTECODE UINT32_MAX
+
+// Direct activation inventory. Records are sorted by stable code-unit ID and
+// identify both executable representations of a process, fork branch, or
+// task. This remains independent of optional VPI reflection metadata.
+typedef struct obelisk_rt_activation_descriptor_v1 {
+  uint64_t code_unit_id;
+  const struct obelisk_rt_process_descriptor_v1 *native_entry;
+  uint32_t bytecode_function;
+  uint32_t flags;
+} obelisk_rt_activation_descriptor_v1;
+
 typedef struct obelisk_rt_execution_descriptor_v1 {
   uint32_t version;
   uint32_t abi_generation;
@@ -107,6 +123,8 @@ typedef struct obelisk_rt_execution_descriptor_v1 {
   uint64_t dpi_scope_count;
   int32_t dpi_time_precision;
   uint32_t dpi_reserved;
+  const obelisk_rt_activation_descriptor_v1 *activations;
+  uint64_t activation_count;
 } obelisk_rt_execution_descriptor_v1;
 
 // One of these immutable records is attached to the canonical process
@@ -117,7 +135,7 @@ typedef struct obelisk_rt_design_bytecode_entry_v1 {
   uint32_t reserved;
 } obelisk_rt_design_bytecode_entry_v1;
 
-#define OBELISK_RT_DESIGN_BYTECODE_VERSION 3u
+#define OBELISK_RT_DESIGN_BYTECODE_VERSION 4u
 #define OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE 208u
 #define OBELISK_RT_DESIGN_BYTECODE_INSTRUCTION_SIZE 32u
 
@@ -175,7 +193,8 @@ enum {
   OBELISK_RT_DB_INTRINSIC = 36,
   OBELISK_RT_DB_FAIL = 37,
   OBELISK_RT_DB_MAKE_LOCAL_HANDLE = 38,
-  OBELISK_RT_DB_HANDLE_ID = 39
+  OBELISK_RT_DB_HANDLE_ID = 39,
+  OBELISK_RT_DB_TASK_CALL = 40
 };
 
 // COMPARE flags. Case equality compares both four-state planes and always
@@ -219,6 +238,11 @@ enum {
   OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGER = UINT32_C(0x00010202),
   OBELISK_RT_INTRINSIC_V1_STATE_ALLOC = UINT32_C(0x00010203),
   OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGERED = UINT32_C(0x00010204),
+  OBELISK_RT_INTRINSIC_V1_DISABLE_CHILDREN = UINT32_C(0x00010205),
+  OBELISK_RT_INTRINSIC_V1_CONTROL_ENTER = UINT32_C(0x00010206),
+  OBELISK_RT_INTRINSIC_V1_CONTROL_LEAVE = UINT32_C(0x00010207),
+  OBELISK_RT_INTRINSIC_V1_CONTROL_DISABLE = UINT32_C(0x00010208),
+  OBELISK_RT_INTRINSIC_V1_STATIC_ONCE = UINT32_C(0x00010209),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_VPI_ROOT = UINT32_C(0x00011000),
@@ -378,7 +402,8 @@ typedef uint32_t obelisk_rt_fragment_action_kind;
 enum {
   OBELISK_RT_FRAGMENT_CONTINUE = 0,
   OBELISK_RT_FRAGMENT_SUSPEND = 1,
-  OBELISK_RT_FRAGMENT_TERMINATE = 2
+  OBELISK_RT_FRAGMENT_TERMINATE = 2,
+  OBELISK_RT_FRAGMENT_TASK_CALL = 3
 };
 
 typedef uint32_t obelisk_rt_suspend_kind;
@@ -391,7 +416,8 @@ enum {
   OBELISK_RT_SUSPEND_AWAIT = 5,
   OBELISK_RT_SUSPEND_JOIN = 6,
   OBELISK_RT_SUSPEND_FOREVER = 7,
-  OBELISK_RT_SUSPEND_FRONTIER = 8
+  OBELISK_RT_SUSPEND_FRONTIER = 8,
+  OBELISK_RT_SUSPEND_CHILDREN = 9
 };
 
 typedef struct obelisk_rt_fragment_action_v1 {
@@ -821,6 +847,26 @@ obelisk_rt_status obelisk_rt_v1_scheduler_add_planned(
 // token is never a host address and is not reused within a context.
 uint64_t obelisk_rt_v1_scheduler_process_token(
     obelisk_rt_context *context, obelisk_rt_process_instance_v1 *instance);
+// Recursively terminate every live descendant of the currently executing
+// logical process. Task activations retain their caller's logical identity.
+obelisk_rt_status
+obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context);
+// Dynamic named-block activations are inherited by spawned logical
+// processes. A nonzero activation selects one lexical activation. With a zero
+// activation, all_activations selects either the innermost inherited lexical
+// activation or every live activation with the exact target ID.
+obelisk_rt_status obelisk_rt_v1_control_enter(
+    obelisk_rt_context *context, uint64_t target_id,
+    uint64_t *out_activation);
+obelisk_rt_status obelisk_rt_v1_control_leave(
+    obelisk_rt_context *context, uint64_t activation);
+obelisk_rt_status obelisk_rt_v1_control_disable(
+    obelisk_rt_context *context, uint64_t target_id, uint64_t activation,
+    uint32_t all_activations);
+// Return one exactly once for each nonzero site ID in a context and zero on
+// later claims. This guards descriptor-backed static local initialization.
+uint32_t obelisk_rt_v1_static_once(obelisk_rt_context *context,
+                                   uint64_t site_id);
 // Copy one nonblocking assignment into the current time slot. The scheduler
 // applies queued updates in call order after active work reaches quiescence.
 // A UINT64_MAX bit offset is an out-of-range dynamic selection and is ignored.

@@ -30,6 +30,26 @@ constexpr uint32_t kAutomaticHandleKind = UINT32_C(1) << 30;
 constexpr uint32_t kLocalHandleKind = UINT32_C(1) << 31;
 constexpr int64_t kInvalidHandleStart = INT64_MIN;
 
+size_t checkedSizeSum(size_t lhs, size_t rhs) {
+  if (rhs > std::numeric_limits<size_t>::max() - lhs)
+    throw std::bad_alloc();
+  return lhs + rhs;
+}
+
+struct PendingDesignActivation {
+  DesignActivation activation;
+  obelisk_rt_context *context = nullptr;
+  std::vector<std::pair<uint32_t, uint64_t>> retainedAutomaticStates;
+  bool ownsRetainedAutomaticStates = false;
+
+  ~PendingDesignActivation() noexcept;
+  void disarm() noexcept {
+    ownsRetainedAutomaticStates = false;
+    context = nullptr;
+    retainedAutomaticStates.clear();
+  }
+};
+
 bool decodeAutomaticHandle(uint64_t handle, uint32_t &id, int64_t &offset) {
   obelisk_rt_stable_handle_v1 decoded;
   if (!obelisk_rt_stable_handle_decode(handle, &decoded) ||
@@ -440,6 +460,32 @@ obelisk_rt_status releaseCapturedAutomaticStates(const Image &image,
   return OBELISK_RT_OK;
 }
 
+PendingDesignActivation::~PendingDesignActivation() noexcept {
+  if (!ownsRetainedAutomaticStates || !context)
+    return;
+  try {
+    std::lock_guard<std::mutex> lock(context->mutex);
+    for (const auto &[id, count] : retainedAutomaticStates) {
+      auto found = context->nativeAutomaticStates.find(id);
+      if (found == context->nativeAutomaticStates.end())
+        continue;
+      if (count <= found->second.referenceCount)
+        found->second.referenceCount -= count;
+    }
+    for (auto state = context->nativeAutomaticStates.begin();
+         state != context->nativeAutomaticStates.end();)
+      if (state->second.referenceCount == 0) {
+        obelisk_rt_erase_automatic_signal_snapshots_unlocked(context,
+                                                             state->first);
+        state = context->nativeAutomaticStates.erase(state);
+      } else {
+        ++state;
+      }
+  } catch (...) {
+    // Destructors on error paths must not obscure the scheduler failure.
+  }
+}
+
 void releaseDesignTaskOwnedStatesUnlocked(obelisk_rt_context *context,
                                           uint64_t taskID) {
   for (auto state = context->nativeAutomaticStates.begin();
@@ -532,6 +578,9 @@ bool validIntrinsic(const Image &image, const Function &function,
   if (signature.id != OBELISK_RT_INTRINSIC_V1_SPAWN &&
       signature.id != OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGER &&
       signature.id != OBELISK_RT_INTRINSIC_V1_IMPORT &&
+      signature.id != OBELISK_RT_INTRINSIC_V1_CONTROL_ENTER &&
+      signature.id != OBELISK_RT_INTRINSIC_V1_CONTROL_DISABLE &&
+      signature.id != OBELISK_RT_INTRINSIC_V1_STATIC_ONCE &&
       signature.flags != 0)
     return false;
   auto input = [&](uint32_t index) -> std::optional<Layout> {
@@ -601,6 +650,24 @@ bool validIntrinsic(const Image &image, const Function &function,
   case OBELISK_RT_INTRINSIC_V1_STATE_ALLOC:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && numeric(input(0)) && handle(output(0));
+  case OBELISK_RT_INTRINSIC_V1_DISABLE_CHILDREN:
+    return signature.flags == 0 && site.inputCount == 0 &&
+           site.outputCount == 0;
+  case OBELISK_RT_INTRINSIC_V1_CONTROL_ENTER:
+    return signature.flags != 0 && site.inputCount == 0 &&
+           site.outputCount == 1 && bits(output(0), 64);
+  case OBELISK_RT_INTRINSIC_V1_CONTROL_LEAVE:
+    return signature.flags == 0 && site.inputCount == 1 &&
+           site.outputCount == 0 && bits(input(0), 64);
+  case OBELISK_RT_INTRINSIC_V1_CONTROL_DISABLE:
+    return (signature.flags & ~(UINT32_C(1) << 31)) != 0 &&
+           site.inputCount <= 1 &&
+           site.outputCount == 0 &&
+           (site.inputCount == 0 || bits(input(0), 64)) &&
+           ((signature.flags >> 31) == 0 || site.inputCount == 0);
+  case OBELISK_RT_INTRINSIC_V1_STATIC_ONCE:
+    return signature.flags != 0 && site.inputCount == 0 &&
+           site.outputCount == 1 && bits(output(0), 1);
   case OBELISK_RT_INTRINSIC_V1_IMPORT:
     if (signature.flags == 0)
       return false;
@@ -837,6 +904,7 @@ bool validateInitialization(const Image &image, const Function &function) {
     case OBELISK_RT_DB_CONTINUE:
     case OBELISK_RT_DB_SUSPEND:
     case OBELISK_RT_DB_TERMINATE:
+    case OBELISK_RT_DB_TASK_CALL:
       fallthrough = false;
       break;
     default:
@@ -919,6 +987,7 @@ bool validateInitialization(const Image &image, const Function &function) {
                                     instruction.source1);
       break;
     case OBELISK_RT_DB_CALL:
+    case OBELISK_RT_DB_TASK_CALL:
       valid = mapSourcesInitialized(state, instruction.source1,
                                     instruction.source2);
       break;
@@ -1529,6 +1598,23 @@ bool validateImage(const Image &image) {
             return false;
         break;
       }
+      case OBELISK_RT_DB_TASK_CALL: {
+        if (instruction.flags || instruction.destination ||
+            instruction.source0 >= image.functionCount ||
+            instruction.auxiliary || (function.flags & 1) == 0 ||
+            !hasContinuation(instruction.immediate))
+          return false;
+        Function callee = functionAt(image, instruction.source0);
+        if ((callee.flags & 1) == 0 || callee.resultCount != 0 ||
+            instruction.source2 != callee.argumentCount ||
+            !validMap(image, function, callee, instruction.source1,
+                      instruction.source2))
+          return false;
+        for (uint32_t index = 0; index != callee.argumentCount; ++index)
+          if (operandAt(image, instruction.source1 + index).first != index)
+            return false;
+        break;
+      }
       case OBELISK_RT_DB_RETURN:
         if (instruction.flags || instruction.destination ||
             instruction.source2 || instruction.auxiliary ||
@@ -1552,7 +1638,7 @@ bool validateImage(const Image &image) {
         break;
       case OBELISK_RT_DB_SUSPEND:
         if (instruction.flags < OBELISK_RT_SUSPEND_DELAY ||
-            instruction.flags > OBELISK_RT_SUSPEND_FRONTIER ||
+            instruction.flags > OBELISK_RT_SUSPEND_CHILDREN ||
             instruction.destination || instruction.source1 ||
             instruction.source2 || instruction.auxiliary ||
             !numeric(instruction.source0) ||
@@ -2281,7 +2367,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
             std::numeric_limits<size_t>::max())
       return OBELISK_RT_OUT_OF_MEMORY;
     ScheduledDesignTask task;
-    task.parent = context->activeDesignTaskID;
+    task.parent = context->activeLogicalProcessToken;
     task.function = signature.flags;
     task.scheduleRank =
         static_cast<uint32_t>(callee.initialScheduleRank);
@@ -2337,6 +2423,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       }
       id = context->nextDesignTaskID++;
       task.id = id;
+      task.controls = context->activeControls;
       task.insertionSequence = context->nextProcessInsertionSequence++;
       task.observedEpoch = context->schedulerEpoch;
       task.observedSignalSequence = context->nextSchedulerSequence;
@@ -2345,6 +2432,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
             ->second.referenceCount += count;
       try {
         context->scheduledDesignTasks.push_back(std::move(task));
+        obelisk_rt_retain_controls_unlocked(
+            context, context->scheduledDesignTasks.back().controls);
       } catch (...) {
         for (const auto &[automaticID, count] : retainedAutomaticStates)
           context->nativeAutomaticStates.find(automaticID)
@@ -2567,6 +2656,45 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     (void)begin;
     return OBELISK_RT_OK;
   }
+  case OBELISK_RT_INTRINSIC_V1_DISABLE_CHILDREN:
+    if (!context)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    return obelisk_rt_v1_scheduler_disable_children(context);
+  case OBELISK_RT_INTRINSIC_V1_CONTROL_ENTER: {
+    if (!context)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    uint64_t activation = 0;
+    obelisk_rt_status status = obelisk_rt_v1_control_enter(
+        context, signature.flags, &activation);
+    return status == OBELISK_RT_OK ? sentinel(0, activation) : status;
+  }
+  case OBELISK_RT_INTRINSIC_V1_CONTROL_LEAVE: {
+    if (!context)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    std::optional<uint64_t> activation = scalar(0);
+    if (!activation)
+      return OBELISK_RT_INVALID_BYTECODE;
+    return obelisk_rt_v1_control_leave(context, *activation);
+  }
+  case OBELISK_RT_INTRINSIC_V1_CONTROL_DISABLE: {
+    if (!context)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    uint64_t activation = 0;
+    if (site.inputCount != 0) {
+      std::optional<uint64_t> value = scalar(0);
+      if (!value)
+        return OBELISK_RT_INVALID_BYTECODE;
+      activation = *value;
+    }
+    return obelisk_rt_v1_control_disable(
+        context, signature.flags & ~(UINT32_C(1) << 31), activation,
+        signature.flags >> 31);
+  }
+  case OBELISK_RT_INTRINSIC_V1_STATIC_ONCE:
+    if (!context)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    return sentinel(
+        0, obelisk_rt_v1_static_once(context, signature.flags));
   case OBELISK_RT_INTRINSIC_V1_IMPORT:
   case OBELISK_RT_INTRINSIC_V1_DPI_IMPORT: {
     if (!context)
@@ -4022,6 +4150,93 @@ obelisk_rt_status executeFunction(const Image &image, Frame &frame,
                  static_cast<uint32_t>(instruction.immediate), 0, payload, 0};
       return OBELISK_RT_OK;
     }
+    case OBELISK_RT_DB_TASK_CALL: {
+      if (!context)
+        return OBELISK_RT_INVALID_ARGUMENT;
+      Function callee = functionAt(image, instruction.source0);
+      uint64_t canonicalSize = callee.flags >> 1;
+      if (callee.scratchAlignment == 0 ||
+          canonicalSize > UINT64_MAX - (callee.scratchAlignment - 1))
+        return OBELISK_RT_INVALID_BYTECODE;
+      uint64_t scratchOffset =
+          (canonicalSize + callee.scratchAlignment - 1) &
+          ~(callee.scratchAlignment - 1);
+      if (scratchOffset > UINT64_MAX - callee.scratchSize ||
+          scratchOffset + callee.scratchSize >
+              std::numeric_limits<size_t>::max())
+        return OBELISK_RT_OUT_OF_MEMORY;
+      auto pending = std::make_unique<PendingDesignActivation>();
+      DesignActivation &activation = pending->activation;
+      activation.function = instruction.source0;
+      activation.scheduleRank =
+          static_cast<uint32_t>(callee.initialScheduleRank);
+      activation.scratchOffset = scratchOffset;
+      activation.scratchSize = callee.scratchSize;
+      activation.frame.resize(
+          static_cast<size_t>(scratchOffset + callee.scratchSize));
+      uint32_t copied = 0;
+      std::unordered_map<uint32_t, uint64_t> retainedAutomaticStates;
+      for (uint64_t index = 0; index != image.stateDescriptorCount; ++index) {
+        CaptureRecord capture = captureAt(image, index);
+        if (capture.function != instruction.source0)
+          continue;
+        ++copied;
+        if (capture.valueOffset == UINT64_MAX)
+          continue;
+        uint32_t sourceRegister =
+            operandAt(image, instruction.source1 + capture.argument).second;
+        Layout source = layoutAt(image, frame.function, sourceRegister);
+        if (source.kind == OBELISK_RT_DBREG_HANDLE) {
+          uint64_t stable = UINT64_MAX;
+          if (!encodeCanonicalHandle(frame.data + source.offset, stable))
+            return OBELISK_RT_INVALID_HANDLE;
+          std::memcpy(activation.frame.data() + capture.valueOffset, &stable,
+                      sizeof(stable));
+          uint32_t automaticID = 0;
+          int64_t automaticOffset = 0;
+          if (decodeAutomaticHandle(stable, automaticID, automaticOffset) &&
+              ++retainedAutomaticStates[automaticID] == 0)
+            return OBELISK_RT_OUT_OF_RESOURCES;
+          continue;
+        }
+        std::memcpy(activation.frame.data() + capture.valueOffset,
+                    frame.data + source.offset, capture.planeSize);
+        if (capture.unknownOffset != UINT64_MAX)
+          std::memcpy(activation.frame.data() + capture.unknownOffset,
+                      frame.data + source.offset + capture.planeSize,
+                      capture.planeSize);
+      }
+      if (copied != callee.argumentCount)
+        return OBELISK_RT_INVALID_BYTECODE;
+      pending->retainedAutomaticStates.reserve(
+          retainedAutomaticStates.size());
+      for (const auto &[automaticID, count] : retainedAutomaticStates)
+        pending->retainedAutomaticStates.emplace_back(automaticID, count);
+      {
+        std::lock_guard<std::mutex> lock(context->mutex);
+        for (const auto &[automaticID, count] :
+             pending->retainedAutomaticStates) {
+          auto found = context->nativeAutomaticStates.find(automaticID);
+          if (found == context->nativeAutomaticStates.end())
+            return OBELISK_RT_INVALID_HANDLE;
+          if (count > UINT64_MAX - found->second.referenceCount)
+            return OBELISK_RT_OUT_OF_RESOURCES;
+        }
+        for (const auto &[automaticID, count] :
+             pending->retainedAutomaticStates)
+          context->nativeAutomaticStates.find(automaticID)
+              ->second.referenceCount += count;
+      }
+      pending->context = context;
+      pending->ownsRetainedAutomaticStates = true;
+      *action = {
+          OBELISK_RT_FRAGMENT_TASK_CALL, OBELISK_RT_SUSPEND_NONE,
+          static_cast<uint32_t>(instruction.immediate), 0,
+          static_cast<uint64_t>(
+              reinterpret_cast<uintptr_t>(pending.release())),
+          0};
+      return OBELISK_RT_OK;
+    }
     case OBELISK_RT_DB_TERMINATE:
       *action = {OBELISK_RT_FRAGMENT_TERMINATE, OBELISK_RT_SUSPEND_NONE,
                  0, 0, instruction.immediate, 0};
@@ -4094,6 +4309,34 @@ std::optional<uint32_t> continuationScheduleRank(
 }
 
 } // namespace
+
+bool obelisk_rt_validate_activation_bytecode_inventory(
+    const obelisk_rt_execution_descriptor_v1 &execution) noexcept {
+  if ((execution.flags & OBELISK_RT_EXECUTION_HAS_BYTECODE) == 0)
+    return true;
+  try {
+    obelisk_rt_design_bytecode_entry_v1 entry{&execution, 0, 0};
+    Image image;
+    if (!parseImage(entry, image) || !validateImage(image))
+      return false;
+    for (uint64_t index = 0; index != execution.activation_count; ++index) {
+      const obelisk_rt_activation_descriptor_v1 &activation =
+          execution.activations[index];
+      if ((activation.flags & OBELISK_RT_ACTIVATION_HAS_BYTECODE) == 0)
+        continue;
+      if (activation.bytecode_function >= image.functionCount)
+        return false;
+      Function function =
+          functionAt(image, activation.bytecode_function);
+      if (function.id != activation.code_unit_id ||
+          (function.flags & 1) == 0 || function.resultCount != 0)
+        return false;
+    }
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
 
 obelisk_rt_status
 obelisk_rt_initialize_design_state(obelisk_rt_context *context) noexcept {
@@ -4256,6 +4499,422 @@ obelisk_rt_status obelisk_rt_execute_design_bytecode(
   }
 }
 
+extern "C" obelisk_rt_status
+obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context) {
+  if (!context)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  struct CancelledDesignTask {
+    uint64_t id;
+    uint32_t function;
+    uint64_t scratchOffset;
+    std::vector<uint8_t> frame;
+  };
+  try {
+    std::vector<uint64_t> descendants;
+    std::vector<obelisk_rt_process_instance_v1 *> nativeInstances;
+    std::vector<CancelledDesignTask> designTasks;
+    std::vector<uint64_t> insertedNativeTerminations;
+    std::vector<uint64_t> insertedDesignTerminations;
+    {
+      std::lock_guard<std::mutex> lock(context->mutex);
+      uint64_t root = context->activeLogicalProcessToken;
+      if (root == 0)
+        return OBELISK_RT_INVALID_LIFECYCLE;
+      descendants.reserve(checkedSizeSum(
+          checkedSizeSum(context->scheduledProcesses.size(),
+                         context->scheduledDesignTasks.size()),
+          1));
+      descendants.push_back(root);
+      auto contains = [&](uint64_t token) {
+        return std::find(descendants.begin(), descendants.end(), token) !=
+               descendants.end();
+      };
+      bool changed = true;
+      while (changed) {
+        changed = false;
+        for (const ScheduledProcess &process : context->scheduledProcesses) {
+          uint64_t token = (UINT64_C(1) << 63) | process.token;
+          if (process.instance && contains(process.parent) &&
+              !contains(token)) {
+            descendants.push_back(token);
+            changed = true;
+          }
+        }
+        for (const ScheduledDesignTask &task :
+             context->scheduledDesignTasks)
+          if (!task.terminated && contains(task.parent) &&
+              !contains(task.id)) {
+            descendants.push_back(task.id);
+            changed = true;
+          }
+      }
+
+      size_t nativeActivationCount = 0;
+      size_t designActivationCount = 0;
+      size_t nativeTaskCount = 0;
+      size_t designTaskCount = 0;
+      for (const ScheduledProcess &process : context->scheduledProcesses) {
+        uint64_t token = (UINT64_C(1) << 63) | process.token;
+        if (!process.instance || !contains(token) || token == root)
+          continue;
+        if (process.callers.size() ==
+            std::numeric_limits<size_t>::max())
+          throw std::bad_alloc();
+        size_t count = process.callers.size() + 1;
+        if (count > std::numeric_limits<size_t>::max() -
+                        nativeActivationCount)
+          throw std::bad_alloc();
+        nativeActivationCount += count;
+        ++nativeTaskCount;
+      }
+      for (const ScheduledDesignTask &task :
+           context->scheduledDesignTasks) {
+        if (task.terminated || !contains(task.id) || task.id == root)
+          continue;
+        if (task.callers.size() == std::numeric_limits<size_t>::max())
+          throw std::bad_alloc();
+        size_t count = task.callers.size() + 1;
+        if (count > std::numeric_limits<size_t>::max() -
+                        designActivationCount)
+          throw std::bad_alloc();
+        designActivationCount += count;
+        ++designTaskCount;
+      }
+      nativeInstances.reserve(nativeActivationCount);
+      designTasks.reserve(designActivationCount);
+      insertedNativeTerminations.reserve(nativeTaskCount);
+      insertedDesignTerminations.reserve(designTaskCount);
+      context->terminatedNativeProcesses.reserve(
+          checkedSizeSum(context->terminatedNativeProcesses.size(),
+                         nativeTaskCount));
+      context->terminatedDesignTasks.reserve(
+          checkedSizeSum(context->terminatedDesignTasks.size(),
+                         designTaskCount));
+      try {
+        for (const ScheduledProcess &process :
+             context->scheduledProcesses) {
+          uint64_t token = (UINT64_C(1) << 63) | process.token;
+          if (!process.instance || !contains(token) || token == root)
+            continue;
+          if (context->terminatedNativeProcesses.insert(process.token)
+                  .second)
+            insertedNativeTerminations.push_back(process.token);
+        }
+        for (const ScheduledDesignTask &task :
+             context->scheduledDesignTasks) {
+          if (task.terminated || !contains(task.id) || task.id == root)
+            continue;
+          if (context->terminatedDesignTasks.insert(task.id).second)
+            insertedDesignTerminations.push_back(task.id);
+        }
+      } catch (...) {
+        for (uint64_t token : insertedNativeTerminations)
+          context->terminatedNativeProcesses.erase(token);
+        for (uint64_t token : insertedDesignTerminations)
+          context->terminatedDesignTasks.erase(token);
+        throw;
+      }
+      for (ScheduledProcess &process : context->scheduledProcesses) {
+        uint64_t token = (UINT64_C(1) << 63) | process.token;
+        if (!process.instance || !contains(token) || token == root)
+          continue;
+        nativeInstances.push_back(process.instance);
+        nativeInstances.insert(nativeInstances.end(), process.callers.begin(),
+                               process.callers.end());
+        process.callers.clear();
+        process.instance = nullptr;
+        obelisk_rt_release_controls_unlocked(context, process.controls);
+        process.controls.clear();
+        process.signalTriggered = false;
+      }
+      for (ScheduledDesignTask &task : context->scheduledDesignTasks) {
+        if (task.terminated || !contains(task.id) || task.id == root)
+          continue;
+        designTasks.push_back(
+            {task.id, task.function, task.scratchOffset,
+             std::move(task.frame)});
+        for (DesignActivation &activation : task.callers)
+          designTasks.push_back(
+              {task.id, activation.function, activation.scratchOffset,
+               std::move(activation.frame)});
+        task.callers.clear();
+        obelisk_rt_release_controls_unlocked(context, task.controls);
+        task.controls.clear();
+        task.terminated = true;
+        task.waitOffset = 0;
+        task.waitSize = 0;
+        task.waitGenerations.clear();
+        task.signalTriggered = false;
+      }
+      if (!nativeInstances.empty() || !designTasks.empty())
+        if (++context->schedulerEpoch == 0)
+          context->schedulerEpoch = 1;
+    }
+
+    obelisk_rt_status result = OBELISK_RT_OK;
+    if (!designTasks.empty()) {
+      if (!context->execution)
+        result = OBELISK_RT_INVALID_LIFECYCLE;
+      else {
+        obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
+        Image image;
+        if (!parseImage(entry, image))
+          result = OBELISK_RT_INVALID_BYTECODE;
+        else
+          for (const CancelledDesignTask &task : designTasks) {
+            obelisk_rt_status status = releaseCapturedAutomaticStates(
+                image, task.function, context, task.frame.data(),
+                task.scratchOffset);
+            if (result == OBELISK_RT_OK && status != OBELISK_RT_OK)
+              result = status;
+          }
+      }
+      std::lock_guard<std::mutex> lock(context->mutex);
+      uint64_t last = 0;
+      for (const CancelledDesignTask &task : designTasks)
+        if (task.id != last) {
+          releaseDesignTaskOwnedStatesUnlocked(context, task.id);
+          last = task.id;
+        }
+    }
+    for (obelisk_rt_process_instance_v1 *instance : nativeInstances) {
+      obelisk_rt_status status =
+          obelisk_rt_v1_process_instance_destroy(instance);
+      if (result == OBELISK_RT_OK && status != OBELISK_RT_OK)
+        result = status;
+    }
+    return result;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_INVALID_ARGUMENT;
+  }
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_control_disable(
+    obelisk_rt_context *context, uint64_t targetID, uint64_t activation,
+    uint32_t allActivations) {
+  if (!context || targetID == 0 || allActivations > 1)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  struct CancelledDesignTask {
+    uint64_t id;
+    uint32_t function;
+    uint64_t scratchOffset;
+    std::vector<uint8_t> frame;
+  };
+  try {
+    std::vector<uint64_t> targets;
+    std::vector<obelisk_rt_process_instance_v1 *> nativeInstances;
+    std::vector<CancelledDesignTask> designTasks;
+    std::vector<uint64_t> insertedNativeTerminations;
+    std::vector<uint64_t> insertedDesignTerminations;
+    {
+      std::lock_guard<std::mutex> lock(context->mutex);
+      uint64_t current = context->activeLogicalProcessToken;
+      if (current == 0)
+        return OBELISK_RT_INVALID_LIFECYCLE;
+      if (activation != 0) {
+        auto found = context->controlActivations.find(activation);
+        if (found == context->controlActivations.end() ||
+            found->second.target != targetID ||
+            std::find(context->activeControls.begin(),
+                      context->activeControls.end(),
+                      activation) == context->activeControls.end())
+          return OBELISK_RT_INVALID_LIFECYCLE;
+        targets.push_back(activation);
+      } else if (allActivations != 0) {
+        // An activation-less disable is a resolved hierarchical target. It
+        // applies to every live activation of that exact elaborated identity.
+        targets.reserve(context->controlActivations.size());
+        for (const auto &[token, control] : context->controlActivations)
+          if (control.target == targetID && control.memberships != 0)
+            targets.push_back(token);
+      } else {
+        for (auto iterator = context->activeControls.rbegin();
+             iterator != context->activeControls.rend(); ++iterator) {
+          auto found = context->controlActivations.find(*iterator);
+          if (found != context->controlActivations.end() &&
+              found->second.target == targetID) {
+            targets.push_back(*iterator);
+            break;
+          }
+        }
+      }
+      if (targets.empty())
+        return OBELISK_RT_OK;
+      auto isTargetMember = [&](const std::vector<uint64_t> &controls) {
+        for (uint64_t token : targets)
+          if (std::find(controls.begin(), controls.end(), token) !=
+              controls.end())
+            return true;
+        return false;
+      };
+
+      // The disabling process follows its statically lowered exit edge. Drop
+      // the targeted activation and every dynamically nested activation from
+      // its inherited stack instead of terminating its logical identity.
+      size_t trim = context->activeControls.size();
+      for (size_t index = 0; index != context->activeControls.size(); ++index)
+        if (std::find(targets.begin(), targets.end(),
+                      context->activeControls[index]) != targets.end()) {
+          trim = index;
+          break;
+        }
+      size_t nativeActivationCount = 0;
+      size_t designActivationCount = 0;
+      size_t nativeTaskCount = 0;
+      size_t designTaskCount = 0;
+      for (const ScheduledProcess &process : context->scheduledProcesses) {
+        uint64_t token = (UINT64_C(1) << 63) | process.token;
+        if (!process.instance || token == current ||
+            !isTargetMember(process.controls))
+          continue;
+        if (process.callers.size() == std::numeric_limits<size_t>::max())
+          throw std::bad_alloc();
+        size_t count = process.callers.size() + 1;
+        if (count > std::numeric_limits<size_t>::max() -
+                        nativeActivationCount)
+          throw std::bad_alloc();
+        nativeActivationCount += count;
+        ++nativeTaskCount;
+      }
+      for (const ScheduledDesignTask &task :
+           context->scheduledDesignTasks) {
+        if (task.terminated || task.id == current ||
+            !isTargetMember(task.controls))
+          continue;
+        if (task.callers.size() == std::numeric_limits<size_t>::max())
+          throw std::bad_alloc();
+        size_t count = task.callers.size() + 1;
+        if (count > std::numeric_limits<size_t>::max() -
+                        designActivationCount)
+          throw std::bad_alloc();
+        designActivationCount += count;
+        ++designTaskCount;
+      }
+      nativeInstances.reserve(nativeActivationCount);
+      designTasks.reserve(designActivationCount);
+      insertedNativeTerminations.reserve(nativeTaskCount);
+      insertedDesignTerminations.reserve(designTaskCount);
+      context->terminatedNativeProcesses.reserve(
+          checkedSizeSum(context->terminatedNativeProcesses.size(),
+                         nativeTaskCount));
+      context->terminatedDesignTasks.reserve(
+          checkedSizeSum(context->terminatedDesignTasks.size(),
+                         designTaskCount));
+      try {
+        for (const ScheduledProcess &process :
+             context->scheduledProcesses) {
+          uint64_t token = (UINT64_C(1) << 63) | process.token;
+          if (!process.instance || token == current ||
+              !isTargetMember(process.controls))
+            continue;
+          if (context->terminatedNativeProcesses.insert(process.token)
+                  .second)
+            insertedNativeTerminations.push_back(process.token);
+        }
+        for (const ScheduledDesignTask &task :
+             context->scheduledDesignTasks) {
+          if (task.terminated || task.id == current ||
+              !isTargetMember(task.controls))
+            continue;
+          if (context->terminatedDesignTasks.insert(task.id).second)
+            insertedDesignTerminations.push_back(task.id);
+        }
+      } catch (...) {
+        for (uint64_t token : insertedNativeTerminations)
+          context->terminatedNativeProcesses.erase(token);
+        for (uint64_t token : insertedDesignTerminations)
+          context->terminatedDesignTasks.erase(token);
+        throw;
+      }
+
+      if (trim != context->activeControls.size()) {
+        for (size_t index = trim; index != context->activeControls.size();
+             ++index)
+          obelisk_rt_release_control_unlocked(
+              context, context->activeControls[index]);
+        context->activeControls.resize(trim);
+      }
+      for (ScheduledProcess &process : context->scheduledProcesses) {
+        uint64_t token = (UINT64_C(1) << 63) | process.token;
+        if (!process.instance || token == current ||
+            !isTargetMember(process.controls))
+          continue;
+        nativeInstances.push_back(process.instance);
+        nativeInstances.insert(nativeInstances.end(), process.callers.begin(),
+                               process.callers.end());
+        process.callers.clear();
+        process.instance = nullptr;
+        obelisk_rt_release_controls_unlocked(context, process.controls);
+        process.controls.clear();
+        process.signalTriggered = false;
+      }
+      for (ScheduledDesignTask &task : context->scheduledDesignTasks) {
+        if (task.terminated || task.id == current ||
+            !isTargetMember(task.controls))
+          continue;
+        designTasks.push_back(
+            {task.id, task.function, task.scratchOffset,
+             std::move(task.frame)});
+        for (DesignActivation &caller : task.callers)
+          designTasks.push_back(
+              {task.id, caller.function, caller.scratchOffset,
+               std::move(caller.frame)});
+        task.callers.clear();
+        obelisk_rt_release_controls_unlocked(context, task.controls);
+        task.controls.clear();
+        task.terminated = true;
+        task.waitOffset = 0;
+        task.waitSize = 0;
+        task.waitGenerations.clear();
+        task.signalTriggered = false;
+      }
+      if (!nativeInstances.empty() || !designTasks.empty())
+        if (++context->schedulerEpoch == 0)
+          context->schedulerEpoch = 1;
+    }
+
+    obelisk_rt_status result = OBELISK_RT_OK;
+    if (!designTasks.empty()) {
+      if (!context->execution)
+        result = OBELISK_RT_INVALID_LIFECYCLE;
+      else {
+        obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
+        Image image;
+        if (!parseImage(entry, image))
+          result = OBELISK_RT_INVALID_BYTECODE;
+        else
+          for (const CancelledDesignTask &task : designTasks) {
+            obelisk_rt_status status = releaseCapturedAutomaticStates(
+                image, task.function, context, task.frame.data(),
+                task.scratchOffset);
+            if (result == OBELISK_RT_OK && status != OBELISK_RT_OK)
+              result = status;
+          }
+      }
+      std::lock_guard<std::mutex> lock(context->mutex);
+      uint64_t last = 0;
+      for (const CancelledDesignTask &task : designTasks)
+        if (task.id != last) {
+          releaseDesignTaskOwnedStatesUnlocked(context, task.id);
+          last = task.id;
+        }
+    }
+    for (obelisk_rt_process_instance_v1 *instance : nativeInstances) {
+      obelisk_rt_status status =
+          obelisk_rt_v1_process_instance_destroy(instance);
+      if (result == OBELISK_RT_OK && status != OBELISK_RT_OK)
+        result = status;
+    }
+    return result;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_INVALID_ARGUMENT;
+  }
+}
+
 obelisk_rt_status obelisk_rt_run_one_design_task(obelisk_rt_context *context,
                                                  uint32_t maximumRegion,
                                                  uint32_t maximumRank,
@@ -4267,22 +4926,43 @@ obelisk_rt_status obelisk_rt_run_one_design_task(obelisk_rt_context *context,
   *outProgress = false;
   ScheduledDesignTask task;
   bool taskDequeued = false;
+  bool currentFrameReleased = false;
   auto abandonTask = [&](obelisk_rt_status failure) noexcept {
-    if (taskDequeued && !task.frame.empty() && context->execution) {
-      obelisk_rt_design_bytecode_entry_v1 entry{context->execution,
-                                                task.function, 0};
-      Image image;
-      if (parseImage(entry, image) && task.function < image.functionCount &&
-          task.scratchOffset <= task.frame.size())
-        (void)releaseCapturedAutomaticStates(image, task.function, context,
-                                             task.frame.data(),
-                                             task.scratchOffset);
+    try {
+      if (taskDequeued && context->execution) {
+        obelisk_rt_design_bytecode_entry_v1 entry{context->execution,
+                                                  task.function, 0};
+        Image image;
+        if (parseImage(entry, image)) {
+          if (!currentFrameReleased && !task.frame.empty() &&
+              task.function < image.functionCount &&
+              task.scratchOffset <= task.frame.size())
+            (void)releaseCapturedAutomaticStates(
+                image, task.function, context, task.frame.data(),
+                task.scratchOffset);
+          for (DesignActivation &activation : task.callers)
+            if (!activation.frame.empty() &&
+                activation.function < image.functionCount &&
+                activation.scratchOffset <= activation.frame.size())
+              (void)releaseCapturedAutomaticStates(
+                  image, activation.function, context,
+                  activation.frame.data(), activation.scratchOffset);
+        }
+      }
+    } catch (...) {
     }
-    std::lock_guard<std::mutex> lock(context->mutex);
-    if (taskDequeued)
-      releaseDesignTaskOwnedStatesUnlocked(context, task.id);
-    context->activeDesignTaskID = 0;
-    context->designTaskExecuting = false;
+    try {
+      std::lock_guard<std::mutex> lock(context->mutex);
+      if (taskDequeued) {
+        task.controls = std::move(context->activeControls);
+        obelisk_rt_release_controls_unlocked(context, task.controls);
+        releaseDesignTaskOwnedStatesUnlocked(context, task.id);
+      }
+      context->activeDesignTaskID = 0;
+      context->activeLogicalProcessToken = 0;
+      context->designTaskExecuting = false;
+    } catch (...) {
+    }
     return failure;
   };
   try {
@@ -4291,12 +4971,14 @@ obelisk_rt_status obelisk_rt_run_one_design_task(obelisk_rt_context *context,
       if (context->designTaskExecuting)
         return OBELISK_RT_OK;
       auto found = context->scheduledDesignTasks.end();
+      bool foundUrgent = false;
       uint32_t selectedRegion = UINT32_MAX;
       uint32_t selectedRank = UINT32_MAX;
       uint64_t selectedInsertionSequence = UINT64_MAX;
       for (auto iterator = context->scheduledDesignTasks.begin();
            iterator != context->scheduledDesignTasks.end(); ++iterator) {
         bool awaited = false;
+        bool childrenDone = false;
         bool eventTriggered = false;
         bool signalTriggered = false;
         if (iterator->started &&
@@ -4361,10 +5043,20 @@ obelisk_rt_status obelisk_rt_run_one_design_task(obelisk_rt_context *context,
                                entries[index].stable_id) != 0;
           }
         }
+        if (iterator->started &&
+            iterator->suspendKind == OBELISK_RT_SUSPEND_CHILDREN) {
+          childrenDone = true;
+          for (const ScheduledDesignTask &child :
+               context->scheduledDesignTasks)
+            childrenDone &=
+                child.terminated || child.parent != iterator->id;
+          for (const ScheduledProcess &child : context->scheduledProcesses)
+            childrenDone &= !child.instance || child.parent != iterator->id;
+        }
         bool runnable =
             !iterator->terminated &&
             (!iterator->started || awaited || eventTriggered ||
-             signalTriggered ||
+             signalTriggered || childrenDone ||
              iterator->suspendKind == OBELISK_RT_SUSPEND_NONE ||
              (iterator->suspendKind == OBELISK_RT_SUSPEND_DELAY
                   ? iterator->wakeTime <= context->schedulerTime
@@ -4374,12 +5066,21 @@ obelisk_rt_status obelisk_rt_run_one_design_task(obelisk_rt_context *context,
                      iterator->suspendKind != OBELISK_RT_SUSPEND_AWAIT &&
                      iterator->suspendKind != OBELISK_RT_SUSPEND_JOIN &&
                      iterator->suspendKind != OBELISK_RT_SUSPEND_FOREVER &&
+                     iterator->suspendKind != OBELISK_RT_SUSPEND_CHILDREN &&
                      iterator->observedEpoch != context->schedulerEpoch)));
         auto key = std::tuple{iterator->queuedRegion, iterator->scheduleRank,
                               iterator->insertionSequence};
         auto selectedKey =
             std::tuple{selectedRegion, selectedRank,
                        selectedInsertionSequence};
+        if (runnable && iterator->urgent) {
+          found = iterator;
+          foundUrgent = true;
+          selectedRegion = 0;
+          selectedRank = 0;
+          selectedInsertionSequence = 0;
+          break;
+        }
         if (runnable && key < selectedKey) {
           found = iterator;
           selectedRegion = iterator->queuedRegion;
@@ -4390,14 +5091,17 @@ obelisk_rt_status obelisk_rt_run_one_design_task(obelisk_rt_context *context,
       auto maximumKey =
           std::tuple{maximumRegion, maximumRank, maximumInsertionSequence};
       if (found == context->scheduledDesignTasks.end() ||
-          !(std::tuple{selectedRegion, selectedRank,
-                       selectedInsertionSequence} < maximumKey))
+          (!foundUrgent &&
+           !(std::tuple{selectedRegion, selectedRank,
+                        selectedInsertionSequence} < maximumKey)))
         return OBELISK_RT_OK;
       task = std::move(*found);
       context->scheduledDesignTasks.erase(found);
       taskDequeued = true;
       context->designTaskExecuting = true;
       context->activeDesignTaskID = task.id;
+      context->activeLogicalProcessToken = task.id;
+      context->activeControls = std::move(task.controls);
     }
     obelisk_rt_design_bytecode_entry_v1 entry{context->execution, task.function,
                                               0};
@@ -4407,6 +5111,13 @@ obelisk_rt_status obelisk_rt_run_one_design_task(obelisk_rt_context *context,
         task.scratchOffset, task.scratchSize, task.continuation, 0, &action);
     if (status != OBELISK_RT_OK)
       return abandonTask(status);
+    currentFrameReleased =
+        action.kind == OBELISK_RT_FRAGMENT_TERMINATE;
+    std::unique_ptr<PendingDesignActivation> pendingActivation;
+    if (action.kind == OBELISK_RT_FRAGMENT_TASK_CALL)
+      pendingActivation.reset(
+          reinterpret_cast<PendingDesignActivation *>(
+              static_cast<uintptr_t>(action.payload)));
     std::optional<uint32_t> nextScheduleRank;
     if (action.kind != OBELISK_RT_FRAGMENT_TERMINATE) {
       Image image;
@@ -4420,11 +5131,18 @@ obelisk_rt_status obelisk_rt_run_one_design_task(obelisk_rt_context *context,
     obelisk_rt_status finalizeStatus = OBELISK_RT_OK;
     {
       std::lock_guard<std::mutex> lock(context->mutex);
+      task.controls = std::move(context->activeControls);
       context->activeDesignTaskID = 0;
+      context->activeLogicalProcessToken = 0;
       context->designTaskExecuting = false;
       task.started = true;
       task.continuation = action.continuation;
-      if (nextScheduleRank)
+      // A direct task activation is the same logical process. Preserve its
+      // stable scheduler rank across the call stack; only a suspension in the
+      // root activation advances to a graph continuation rank.
+      if (nextScheduleRank &&
+          action.kind != OBELISK_RT_FRAGMENT_TASK_CALL &&
+          task.callers.empty())
         task.scheduleRank = *nextScheduleRank;
       task.observedEpoch = context->schedulerEpoch;
       task.observedSignalSequence = context->nextSchedulerSequence;
@@ -4435,6 +5153,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(obelisk_rt_context *context,
         task.waitSize = 0;
         task.waitGenerations.clear();
         task.signalTriggered = false;
+        task.urgent = false;
         break;
       case OBELISK_RT_FRAGMENT_SUSPEND: {
         if (action.payload > task.scratchOffset ||
@@ -4462,14 +5181,18 @@ obelisk_rt_status obelisk_rt_run_one_design_task(obelisk_rt_context *context,
             reinterpret_cast<const obelisk_rt_wait_entry_v1 *>(wait + 1);
         bool validFlags =
             wait->flags == OBELISK_RT_WAIT_FLAGS_NONE ||
+            (action.suspend_kind == OBELISK_RT_SUSPEND_JOIN &&
+             wait->flags <= 1) ||
             (action.suspend_kind == OBELISK_RT_SUSPEND_CHANGE &&
              wait->flags == OBELISK_RT_WAIT_LEVEL_TRUE) ||
             (action.suspend_kind == OBELISK_RT_SUSPEND_EDGE &&
              wait->flags == OBELISK_RT_WAIT_EDGE_IFF);
         if (!validFlags ||
-            (wait->flags == OBELISK_RT_WAIT_LEVEL_TRUE &&
+            (action.suspend_kind == OBELISK_RT_SUSPEND_CHANGE &&
+             wait->flags == OBELISK_RT_WAIT_LEVEL_TRUE &&
              wait->count != 1) ||
-            (wait->flags == OBELISK_RT_WAIT_EDGE_IFF &&
+            (action.suspend_kind == OBELISK_RT_SUSPEND_EDGE &&
+             wait->flags == OBELISK_RT_WAIT_EDGE_IFF &&
              wait->count != 2) ||
             (action.suspend_kind == OBELISK_RT_SUSPEND_FOREVER &&
              wait->count != 0)) {
@@ -4500,6 +5223,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(obelisk_rt_context *context,
         task.waitSize = sizeof(obelisk_rt_wait_record_v1) + entries;
         task.waitGenerations.clear();
         task.signalTriggered = false;
+        task.urgent = false;
         task.queuedRegion =
             action.suspend_kind == OBELISK_RT_SUSPEND_DELAY &&
                     wait->payload == 0
@@ -4517,17 +5241,64 @@ obelisk_rt_status obelisk_rt_run_one_design_task(obelisk_rt_context *context,
                               : context->schedulerTime + wait->payload;
         break;
       }
-      case OBELISK_RT_FRAGMENT_TERMINATE:
-        releaseDesignTaskOwnedStatesUnlocked(context, task.id);
-        task.terminated = true;
+      case OBELISK_RT_FRAGMENT_TASK_CALL: {
+        if (!pendingActivation) {
+          finalizeStatus = OBELISK_RT_INVALID_BYTECODE;
+          break;
+        }
+        task.callers.reserve(checkedSizeSum(task.callers.size(), 1));
+        task.callers.push_back(
+            {task.function, task.continuation, std::move(task.frame),
+             task.scratchOffset, task.scratchSize, task.scheduleRank});
+        DesignActivation activation =
+            std::move(pendingActivation->activation);
+        task.function = activation.function;
+        task.continuation = activation.continuation;
+        task.frame = std::move(activation.frame);
+        task.scratchOffset = activation.scratchOffset;
+        task.scratchSize = activation.scratchSize;
+        task.suspendKind = OBELISK_RT_SUSPEND_NONE;
         task.waitOffset = 0;
         task.waitSize = 0;
         task.waitGenerations.clear();
         task.signalTriggered = false;
-        task.frame.clear();
-        context->terminatedDesignTasks.insert(task.id);
-        if (++context->schedulerEpoch == 0)
-          context->schedulerEpoch = 1;
+        task.urgent = true;
+        pendingActivation->disarm();
+        currentFrameReleased = false;
+        break;
+      }
+      case OBELISK_RT_FRAGMENT_TERMINATE:
+        if (!task.callers.empty()) {
+          DesignActivation caller = std::move(task.callers.back());
+          task.callers.pop_back();
+          task.function = caller.function;
+          task.continuation = caller.continuation;
+          task.frame = std::move(caller.frame);
+          task.scratchOffset = caller.scratchOffset;
+          task.scratchSize = caller.scratchSize;
+          task.scheduleRank = caller.scheduleRank;
+          task.suspendKind = OBELISK_RT_SUSPEND_NONE;
+          task.waitOffset = 0;
+          task.waitSize = 0;
+          task.waitGenerations.clear();
+          task.signalTriggered = false;
+          task.urgent = true;
+          currentFrameReleased = false;
+        } else {
+          context->terminatedDesignTasks.insert(task.id);
+          releaseDesignTaskOwnedStatesUnlocked(context, task.id);
+          obelisk_rt_release_controls_unlocked(context, task.controls);
+          task.controls.clear();
+          task.terminated = true;
+          task.waitOffset = 0;
+          task.waitSize = 0;
+          task.waitGenerations.clear();
+          task.signalTriggered = false;
+          task.urgent = false;
+          task.frame.clear();
+          if (++context->schedulerEpoch == 0)
+            context->schedulerEpoch = 1;
+        }
         break;
       default:
         finalizeStatus = OBELISK_RT_INVALID_BYTECODE;

@@ -24,6 +24,7 @@
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/FormatVariadic.h"
 
+#include <functional>
 #include <limits>
 #include <map>
 
@@ -168,8 +169,12 @@ static FailureOr<sim::EntryKind> getEntryKind(Operation *op) {
   }
   if (isa<semantic::SVContinuousAssignSymbolOp>(op))
     return sim::EntryKind::Continuous;
-  if (isa<semantic::SVSubroutineSymbolOp>(op))
-    return sim::EntryKind::Function;
+  if (auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(op))
+    return !subroutine.getIsDpiImport().value_or(false) &&
+                   subroutine.getSubroutineKind() ==
+                       semantic::SVSubroutineKind::Task
+               ? sim::EntryKind::Task
+               : sim::EntryKind::Function;
   switch (cast<semantic::SVProceduralBlockSymbolOp>(op).getProcedureKind()) {
   case semantic::SVProceduralBlockKind::Initial:
     return sim::EntryKind::Initial;
@@ -260,10 +265,35 @@ static Operation *getPortActualLValue(semantic::SVPortConnectionOp connection) {
 /// design descriptor inventory. A variable is automatic when it is declared
 /// inside a statement block and not explicitly static.
 static bool isAutomaticLocalSymbol(Operation *op) {
-  if (auto variable = dyn_cast<semantic::SVVariableSymbolOp>(op))
-    if (variable.getLifetime() == semantic::SVVariableLifetime::Static)
-      return false;
-  return op->getParentOfType<semantic::SVStatementBlockSymbolOp>() != nullptr;
+  auto statementBlock =
+      op->getParentOfType<semantic::SVStatementBlockSymbolOp>();
+  auto variable = dyn_cast<semantic::SVVariableSymbolOp>(op);
+  if (!variable)
+    return statementBlock != nullptr;
+  if (variable.getLifetime() == semantic::SVVariableLifetime::Static)
+    return false;
+  // Zero-time function locals retain their established SSA treatment. Direct
+  // task locals, on the other hand, need activation-owned storage because the
+  // task may suspend after the declaration's lexical block has returned.
+  if (auto subroutine =
+          op->getParentOfType<semantic::SVSubroutineSymbolOp>();
+      subroutine &&
+      subroutine.getSubroutineKind() ==
+          semantic::SVSubroutineKind::Function)
+    return statementBlock != nullptr;
+  return variable.getLifetime() ==
+             semantic::SVVariableLifetime::Automatic ||
+         statementBlock != nullptr;
+}
+
+static bool isStaticFormal(Operation *op) {
+  auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(op);
+  if (!formal || formal.getDirection() == semantic::SVArgumentDirection::Ref)
+    return false;
+  auto subroutine = op->getParentOfType<semantic::SVSubroutineSymbolOp>();
+  return subroutine &&
+         subroutine.getDefaultLifetime() ==
+             semantic::SVVariableLifetime::Static;
 }
 
 static bool isNestedInCodeUnit(Operation *op) {
@@ -382,6 +412,54 @@ void ObeliskSimPreparePass::runOnOperation() {
     if (isCodeUnit(op))
       sourceUnits.push_back(op);
   });
+
+  // Assign compact, collision-free IDs from sorted elaborated paths. These
+  // IDs cross both native and bytecode ABIs, so unchecked truncated hashes
+  // are not acceptable.
+  llvm::StringSet<> controlPaths;
+  llvm::StringSet<> staticPaths;
+  semanticRoot->walk([&](Operation *op) {
+    if (auto block = dyn_cast<semantic::SVBlockStatementOp>(op)) {
+      if (auto path = block.getBlockPathAttr())
+        controlPaths.insert(path.getValue());
+    } else if (auto disable =
+                   dyn_cast<semantic::SVDisableStatementOp>(op)) {
+      if (auto path = disable.getTargetPathAttr())
+        controlPaths.insert(path.getValue());
+    } else if (auto declaration =
+                   dyn_cast<semantic::SVVariableDeclStatementOp>(op)) {
+      staticPaths.insert(declaration.getReferencedPath());
+    }
+  });
+  auto assignPathIDs = [&](llvm::StringSet<> &paths, StringRef attrName) {
+    SmallVector<StringRef> ordered;
+    ordered.reserve(paths.size());
+    for (const auto &path : paths)
+      ordered.push_back(path.getKey());
+    llvm::sort(ordered);
+    llvm::StringMap<uint64_t> ids;
+    for (auto [index, path] : llvm::enumerate(ordered))
+      ids[path] = index + 1;
+    semanticRoot->walk([&](Operation *op) {
+      StringAttr path;
+      if (attrName == "obelisk_sim.control_target_id") {
+        if (auto block = dyn_cast<semantic::SVBlockStatementOp>(op))
+          path = block.getBlockPathAttr();
+        else if (auto disable =
+                     dyn_cast<semantic::SVDisableStatementOp>(op))
+          path = disable.getTargetPathAttr();
+      } else if (auto declaration =
+                     dyn_cast<semantic::SVVariableDeclStatementOp>(op)) {
+        path = StringAttr::get(context, declaration.getReferencedPath());
+      }
+      if (path)
+        op->setAttr(attrName,
+                    IntegerAttr::get(IntegerType::get(context, 64),
+                                     ids.lookup(path.getValue())));
+    });
+  };
+  assignPathIDs(controlPaths, "obelisk_sim.control_target_id");
+  assignPathIDs(staticPaths, "obelisk_sim.static_site_id");
 
   uint64_t designPrecisionFs = std::numeric_limits<uint64_t>::max();
   for (Operation *unit : sourceUnits) {
@@ -739,15 +817,24 @@ void ObeliskSimPreparePass::runOnOperation() {
   uint64_t nextEventId = 0;
   SmallVector<Operation *> designObjects;
   semanticRoot->walk<WalkOrder::PreOrder>([&](Operation *op) {
-    if (isNestedInCodeUnit(op))
+    auto variable = dyn_cast<semantic::SVVariableSymbolOp>(op);
+    bool staticVariable =
+        variable &&
+        variable.getLifetime() == semantic::SVVariableLifetime::Static;
+    if (isNestedInCodeUnit(op) &&
+        !staticVariable &&
+        !isStaticFormal(op))
       return;
     bool storage =
-        isa<semantic::SVVariableSymbolOp>(op) && !isAutomaticLocalSymbol(op);
+        (isa<semantic::SVVariableSymbolOp>(op) &&
+         !isAutomaticLocalSymbol(op)) ||
+        isStaticFormal(op);
     if (storage || isa<semantic::SVNetSymbolOp>(op))
       designObjects.push_back(op);
   });
   auto emitDescriptor = [&](Operation *op) {
-    bool storage = isa<semantic::SVVariableSymbolOp>(op);
+    bool storage = isa<semantic::SVVariableSymbolOp,
+                       semantic::SVFormalArgumentSymbolOp>(op);
     StringRef path = getHierarchyName(op);
     if (path.empty()) {
       emitError(getSemanticLocation(op))
@@ -784,7 +871,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                            sim::NetResolutionKind::Wire};
       descriptors[path].rootType = *type;
       sim::Lifetime lifetime =
-          op->getParentOfType<semantic::SVStatementBlockSymbolOp>()
+          (op->getParentOfType<semantic::SVStatementBlockSymbolOp>() ||
+           isStaticFormal(op))
               ? sim::Lifetime::Static
               : sim::Lifetime::Design;
       sim::SimStorageDeclOp::create(builder, getSemanticLocation(op), id,
@@ -1447,10 +1535,11 @@ void ObeliskSimPreparePass::runOnOperation() {
       invalid = true;
       continue;
     }
-    if (*entryKind == sim::EntryKind::Function) {
+    if (*entryKind == sim::EntryKind::Function ||
+        *entryKind == sim::EntryKind::Task) {
       auto subroutine = cast<semantic::SVSubroutineSymbolOp>(source);
       bool dpiImport = subroutine.getIsDpiImport().value_or(false);
-      if (!dpiImport &&
+      if (*entryKind == sim::EntryKind::Function && !dpiImport &&
           subroutine.getSubroutineKind() !=
               semantic::SVSubroutineKind::Function) {
         emitError(getSemanticLocation(source))
@@ -1470,7 +1559,7 @@ void ObeliskSimPreparePass::runOnOperation() {
             isa<semantic::SVDelayControlOp, semantic::SVSignalEventControlOp,
                 semantic::SVEventListControlOp>(nested);
       });
-      if (!dpiImport && hasTiming) {
+      if (*entryKind == sim::EntryKind::Function && !dpiImport && hasTiming) {
         emitError(getSemanticLocation(source))
             << "zero-time function contains a blocking timing control";
         invalid = true;
@@ -1516,6 +1605,55 @@ void ObeliskSimPreparePass::runOnOperation() {
         << "stable code-unit ID collides with the root initializer";
     return abort();
   }
+  codeUnitIDs[rootCodeUnitID] = semanticRoot;
+
+  // Fork branches are private code units too. Assign their stable identities
+  // while the full semantic design is still available, and reject collisions
+  // before per-unit lowering can run concurrently.
+  std::function<void(Operation *, StringRef)> assignForkCodeUnits;
+  assignForkCodeUnits = [&](Operation *operation, StringRef parentHierarchy) {
+    if (auto fork = dyn_cast<semantic::SVBlockStatementOp>(operation);
+        fork && fork.getBlockKind() !=
+                    semantic::SVStatementBlockKind::Sequential) {
+      SmallVector<Operation *> branches = getChildren(fork);
+      if (branches.size() == 1 &&
+          isa<semantic::SVStatementListOp>(branches.front()))
+        branches = getChildren(branches.front());
+      while (!branches.empty() &&
+             isa<semantic::SVVariableDeclStatementOp>(branches.front()))
+        branches.erase(branches.begin());
+      auto nodeID = fork->getAttrOfType<IntegerAttr>("node_id");
+      for (auto [index, branch] : llvm::enumerate(branches)) {
+        std::string hierarchy =
+            (Twine(parentHierarchy) + ".$fork." +
+             Twine(nodeID.getValue().getZExtValue()) + "." + Twine(index))
+                .str();
+        uint64_t id = getStableCodeUnitID(hierarchy);
+        auto [collision, inserted] = codeUnitIDs.try_emplace(id, branch);
+        if (!inserted) {
+          emitError(getSemanticLocation(branch))
+              << "stable fork code-unit ID collision for '" << hierarchy
+              << "'";
+          emitRemark(getSemanticLocation(collision->second))
+              << "colliding code unit is here";
+          invalid = true;
+          continue;
+        }
+        branch->setAttr(
+            "obelisk_sim.fork_code_unit_id",
+            IntegerAttr::get(IntegerType::get(context, 64), id));
+        assignForkCodeUnits(branch, hierarchy);
+      }
+      return;
+    }
+    for (Operation *child : getChildren(operation))
+      assignForkCodeUnits(child, parentHierarchy);
+  };
+  for (UnitInfo &unit : units)
+    assignForkCodeUnits(unit.source, unit.hierarchy);
+  if (invalid)
+    return abort();
+
   sim::SimCodeUnitDeclOp::create(
       builder, module.getLoc(), rootCodeUnitID, uint64_t{0},
       sim::EntryKind::RootInitializer, builder.getStringAttr("__obelisk_root"),
@@ -1536,8 +1674,12 @@ void ObeliskSimPreparePass::runOnOperation() {
                  SmallVector<std::pair<std::string, DescriptorInfo>>>
       unitCaptures;
   llvm::DenseMap<Operation *, llvm::StringSet<>> unitReadCaptures;
-  llvm::DenseMap<Operation *, SmallVector<std::pair<std::string, Type>>>
-      unitLocals;
+  struct LocalInfo {
+    std::string path;
+    Type type;
+    bool automatic = false;
+  };
+  llvm::DenseMap<Operation *, SmallVector<LocalInfo>> unitLocals;
   for (UnitInfo &unit : units) {
     llvm::StringSet<> seenPaths;
     llvm::StringSet<> seenLocals;
@@ -1580,7 +1722,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         return;
       }
       if (seenLocals.insert(path).second) {
-        unitLocals[unit.source].push_back({path.str(), *type});
+        unitLocals[unit.source].push_back(
+            {path.str(), *type, isAutomaticLocalSymbol(symbol->second)});
         symbol->second->walk<WalkOrder::PreOrder>(
             [&](Operation *initializerNode) {
               collectBinding(initializerNode);
@@ -1649,7 +1792,7 @@ void ObeliskSimPreparePass::runOnOperation() {
       return lhs.first < rhs.first;
     });
     llvm::sort(unitLocals[unit.source], [](const auto &lhs, const auto &rhs) {
-      return lhs.first < rhs.first;
+      return lhs.path < rhs.path;
     });
   }
 
@@ -1764,26 +1907,34 @@ void ObeliskSimPreparePass::runOnOperation() {
       }
       bindings.push_back(builder.getDictionaryAttr(binding));
     }
-    for (auto &[path, type] : locals)
+    for (const LocalInfo &local : locals)
       bindings.push_back(builder.getDictionaryAttr([&] {
         SmallVector<NamedAttribute> attrs{
-            builder.getNamedAttr("path", builder.getStringAttr(path)),
-            builder.getNamedAttr("local_type", TypeAttr::get(type)),
+            builder.getNamedAttr("path",
+                                 builder.getStringAttr(local.path)),
+            builder.getNamedAttr("local_type", TypeAttr::get(local.type)),
         };
+        if (local.automatic)
+          attrs.push_back(
+              builder.getNamedAttr("automatic", builder.getUnitAttr()));
         if (auto subroutine =
                 dyn_cast<semantic::SVSubroutineSymbolOp>(unit.source);
-            subroutine && subroutine.getReturnVariablePath() == path)
+            subroutine &&
+            subroutine.getReturnVariablePath() == local.path)
           attrs.push_back(
               builder.getNamedAttr("is_return", builder.getUnitAttr()));
         return attrs;
       }()));
 
-    // Function formals precede non-local captures in the public contract.
-    // Output and inout formals use value arguments plus copy-out results; only
-    // ref formals retain aliasing handles.
-    if (unit.entryKind == sim::EntryKind::Function) {
+    // Subroutine formals precede non-local captures in the public contract.
+    // Function output and inout formals use copy-out results. Task copy-out
+    // destinations are hidden reference arguments retained by the activation.
+    // Only explicit ref formals otherwise preserve caller aliasing.
+    if (unit.entryKind == sim::EntryKind::Function ||
+        unit.entryKind == sim::EntryKind::Task) {
       auto subroutine = cast<semantic::SVSubroutineSymbolOp>(unit.source);
       bool dpiImport = subroutine.getIsDpiImport().value_or(false);
+      bool directTask = unit.entryKind == sim::EntryKind::Task;
       SmallVector<semantic::SVFormalArgumentSymbolOp> formals;
       for (Operation *child : getChildren(unit.source))
         if (auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(child))
@@ -1849,9 +2000,28 @@ void ObeliskSimPreparePass::runOnOperation() {
               direction == semantic::SVArgumentDirection::InOut) {
             formalBinding.push_back(
                 builder.getNamedAttr("copy_out", builder.getUnitAttr()));
-            copyOutResultTypes.push_back(*type);
+            if (!directTask)
+              copyOutResultTypes.push_back(*type);
           }
           formalBindings.push_back(builder.getDictionaryAttr(formalBinding));
+          if (directTask &&
+              (direction == semantic::SVArgumentDirection::Out ||
+               direction == semantic::SVArgumentDirection::InOut)) {
+            unsigned destinationArgument = reordered.size();
+            reordered.push_back(sim::RefType::get(context, *type));
+            reorderedAttrs.push_back(
+                captureMetadata(builder, sim::CaptureKind::Formal));
+            formalBindings.push_back(builder.getDictionaryAttr({
+                builder.getNamedAttr(
+                    "path",
+                    builder.getStringAttr(getHierarchyName(formal))),
+                builder.getNamedAttr(
+                    "argument",
+                    builder.getI64IntegerAttr(destinationArgument)),
+                builder.getNamedAttr("copy_out_destination",
+                                     builder.getUnitAttr()),
+            }));
+          }
         }
         unsigned offset = reordered.size() - 1;
         reordered.append(inputs.begin() + 1, inputs.end());
@@ -2155,7 +2325,8 @@ void ObeliskSimPreparePass::runOnOperation() {
     } else {
       for (Operation *child : getChildren(unit.source)) {
         if (isa<semantic::SVFormalArgumentSymbolOp,
-                semantic::SVVariableSymbolOp>(child))
+                semantic::SVVariableSymbolOp,
+                semantic::SVStatementBlockSymbolOp>(child))
           continue;
         bodyBuilder.clone(*child);
       }
@@ -2195,6 +2366,12 @@ void ObeliskSimPreparePass::runOnOperation() {
               builder.getBoolAttr(subroutine.getSubroutineKind() ==
                                   semantic::SVSubroutineKind::Task));
         }
+        if (auto subroutine =
+                dyn_cast<semantic::SVSubroutineSymbolOp>(targetSource);
+            subroutine && !subroutine.getIsDpiImport().value_or(false) &&
+            subroutine.getSubroutineKind() ==
+                semantic::SVSubroutineKind::Task)
+          call->setAttr("obelisk_sim.is_task", builder.getUnitAttr());
         SmallVector<Attribute> readCapturePaths;
         for (auto &capture : unitCaptures[targetSource]) {
           capturePaths.push_back(builder.getStringAttr(capture.first));
@@ -2279,7 +2456,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       OpBuilder::atBlockEnd(&rootInitializer.getBody().front());
   Value simContext = rootInitializer.getBody().front().getArgument(0);
   for (UnitInfo &unit : units) {
-    if (unit.entryKind == sim::EntryKind::Function)
+    if (unit.entryKind == sim::EntryKind::Function ||
+        unit.entryKind == sim::EntryKind::Task)
       continue;
     SmallVector<Value> operands{simContext};
     for (unsigned index = 1; index < unit.function.getNumArguments(); ++index) {

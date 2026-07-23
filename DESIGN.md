@@ -868,10 +868,14 @@ The implementation roadmap is:
 - ~~Lower the supported zero-time DPI-C function and synchronous-task subset
   through shared native and bytecode thunks, with generated headers and
   hermetic object, archive, and shared-library linking.~~
-- Extend executable lowering across the remaining broad UVM gate: fork/join
-  processes, timed and recursive tasks, computed timing observers, complete
-  event regions, classes, containers, synchronization, randomization,
-  assertions, coverage, VPI, and the remaining DPI types and behaviors.
+- ~~Complete procedural concurrency with `fork...join`, `join_any`,
+  `join_none`, `wait fork`, `disable fork`, and resolved named-block disable,
+  plus direct static and automatic suspendable tasks with recursion and
+  value/reference formals in both native and bytecode execution.~~
+- Extend executable lowering across the remaining broad UVM gate: computed
+  timing observers, complete event regions, classes, containers,
+  synchronization, randomization, assertions, coverage, VPI, and the
+  remaining DPI types and behaviors.
 - ~~Run canonicalization, CSE, and memory promotion before late graph
   derivation.~~
 - ~~Add SROA, interprocedural SCCP, simulation-aware inlining, and dead capture

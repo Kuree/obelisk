@@ -144,4 +144,9 @@ def SimProcessType : SimType<"Process"> {
   let summary = "opaque scheduler process handle";
 }
 
+def SimControlType : SimType<"Control"> {
+  let mnemonic = "control";
+  let summary = "opaque dynamic named-control activation token";
+}
+
 #endif // OBELISK_DIALECT_SIMULATION_SIMULATIONTYPES_TD

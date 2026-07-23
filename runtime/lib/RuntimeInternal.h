@@ -27,7 +27,10 @@ struct FileEntry {
 
 struct ScheduledProcess {
   obelisk_rt_process_instance_v1 *instance = nullptr;
+  std::vector<obelisk_rt_process_instance_v1 *> callers;
+  std::vector<uint64_t> controls;
   uint64_t token = 0;
+  uint64_t parent = 0;
   uint64_t observedEpoch = 0;
   uint64_t observedSignalSequence = 0;
   uint64_t wakeTime = 0;
@@ -43,6 +46,7 @@ struct ScheduledProcess {
   // queue used only by a zero delay.
   uint32_t queuedRegion = 0;
   bool started = false;
+  bool urgent = false;
   bool signalTriggered = false;
 };
 
@@ -104,11 +108,22 @@ struct ScheduledDesignEvent {
   uint64_t stableID = 0;
 };
 
+struct DesignActivation {
+  uint32_t function = 0;
+  uint32_t continuation = 0;
+  std::vector<uint8_t> frame;
+  uint64_t scratchOffset = 0;
+  uint64_t scratchSize = 0;
+  uint32_t scheduleRank = UINT32_MAX;
+};
+
 struct ScheduledDesignTask {
   uint64_t id = 0;
   uint64_t parent = 0;
   uint32_t function = 0;
   uint32_t continuation = 0;
+  std::vector<DesignActivation> callers;
+  std::vector<uint64_t> controls;
   std::vector<uint8_t> frame;
   uint64_t scratchOffset = 0;
   uint64_t scratchSize = 0;
@@ -123,6 +138,7 @@ struct ScheduledDesignTask {
   uint32_t queuedRegion = 0;
   uint64_t insertionSequence = 0;
   bool started = false;
+  bool urgent = false;
   bool terminated = false;
   bool signalTriggered = false;
 };
@@ -131,6 +147,11 @@ struct ImportBinding {
   obelisk_rt_import_callback_v1 callback = nullptr;
   void *userData = nullptr;
   uint64_t abiSignature = 0;
+};
+
+struct ControlActivation {
+  uint64_t target = 0;
+  uint64_t memberships = 0;
 };
 
 struct DpiScopeHandle {
@@ -165,10 +186,15 @@ struct obelisk_rt_context {
   uint64_t nextDesignTaskID = 1;
   uint64_t nextProcessInsertionSequence = 1;
   uint64_t activeDesignTaskID = 0;
+  uint64_t activeLogicalProcessToken = 0;
+  std::vector<uint64_t> activeControls;
   obelisk_rt_process_instance_v1 *activeNativeProcess = nullptr;
   bool designTaskExecuting = false;
   std::unordered_set<uint64_t> terminatedDesignTasks;
   std::unordered_set<uint64_t> terminatedNativeProcesses;
+  uint64_t nextControlActivation = 1;
+  std::unordered_map<uint64_t, ControlActivation> controlActivations;
+  std::unordered_set<uint64_t> initializedStaticSites;
   std::unordered_map<uint32_t, NativeStaticState> nativeStaticStates;
   std::unordered_map<uint32_t, NativeAutomaticState> nativeAutomaticStates;
   std::unordered_map<uint64_t, uint64_t> eventGenerations;
@@ -193,6 +219,16 @@ struct obelisk_rt_context {
 
 void setLastErrorUnlocked(obelisk_rt_context *context, std::string message);
 void setLastError(obelisk_rt_context *context, std::string message);
+
+void obelisk_rt_retain_controls_unlocked(obelisk_rt_context *context,
+                                         const std::vector<uint64_t> &controls);
+void obelisk_rt_release_control_unlocked(obelisk_rt_context *context,
+                                         uint64_t control);
+void obelisk_rt_release_controls_unlocked(
+    obelisk_rt_context *context, const std::vector<uint64_t> &controls);
+
+bool obelisk_rt_validate_activation_bytecode_inventory(
+    const obelisk_rt_execution_descriptor_v1 &execution) noexcept;
 
 DpiScopeHandle *obelisk_rt_find_dpi_scope(obelisk_rt_context *context,
                                           uint64_t id);

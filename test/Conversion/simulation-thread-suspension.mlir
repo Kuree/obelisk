@@ -9,6 +9,8 @@ module {
     obelisk_sim.code_unit.decl 9000005 in 0 initial hierarchy "test.threading.captures_are_not_threaded.9000005"
     obelisk_sim.code_unit.decl 9000006 in 0 always hierarchy "test.threading.loop.9000006"
     obelisk_sim.code_unit.decl 9000007 in 0 initial hierarchy "test.threading.constants.9000007"
+    obelisk_sim.code_unit.decl 9000008 in 0 initial hierarchy "test.threading.merge.9000008"
+    obelisk_sim.code_unit.decl 9000009 in 0 initial hierarchy "test.threading.duplicate_edges.9000009"
     obelisk_sim.scope.decl 0
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<8> design
 
@@ -113,6 +115,56 @@ module {
       obelisk_sim.suspend.delay %delay to ^resume
     ^resume:
       obelisk_sim.display %ctx to %fd(%message) newline = true radix = 10 flags = [0] : !obelisk_sim.bytes
+      obelisk_sim.return
+    }
+
+    // A value restored on one path must continue through a downstream merge.
+    // The unsuspended predecessor supplies the original value, while the
+    // resumed predecessor supplies the continuation argument.
+    // CHECK-LABEL: obelisk_sim.func @merge
+    // CHECK: %[[LIVE:.*]] = obelisk_sim.ref.load
+    // CHECK: cf.cond_br %{{.*}}, ^[[SUSPEND:bb[0-9]+]], ^[[DIRECT:bb[0-9]+]]
+    // CHECK: ^[[SUSPEND]]:
+    // CHECK: obelisk_sim.suspend.delay %{{.*}} to ^[[RESUME:bb[0-9]+]](%[[LIVE]] : !obelisk_sim.logic<8>)
+    // CHECK: ^[[RESUME]](%[[RESTORED:.*]]: !obelisk_sim.logic<8>):
+    // CHECK: cf.br ^[[MERGE:bb[0-9]+]](%[[RESTORED]] : !obelisk_sim.logic<8>)
+    // CHECK: ^[[DIRECT]]:
+    // CHECK: cf.br ^[[MERGE]](%[[LIVE]] : !obelisk_sim.logic<8>)
+    // CHECK: ^[[MERGE]](%[[MERGED:.*]]: !obelisk_sim.logic<8>):
+    // CHECK: obelisk_sim.ref.store %[[MERGED]]
+    obelisk_sim.func @merge(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %ref: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}) attributes {entry_kind = 1 : i32, code_unit_id = 9000008 : i64} {
+      %live = obelisk_sim.ref.load %ref : !obelisk_sim.ref<!obelisk_sim.logic<8>> -> !obelisk_sim.logic<8>
+      %condition = arith.constant true
+      cf.cond_br %condition, ^suspend, ^direct
+    ^suspend:
+      %delay = obelisk_sim.time.constant 1
+      obelisk_sim.suspend.delay %delay to ^resume
+    ^resume:
+      cf.br ^merge
+    ^direct:
+      cf.br ^merge
+    ^merge:
+      obelisk_sim.ref.store %live to %ref : !obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>
+      obelisk_sim.return
+    }
+
+    // A predecessor can have two CFG edges to the same merge. Each edge gets
+    // exactly one threaded operand even though getPredecessors() reports both.
+    // CHECK-LABEL: obelisk_sim.func @duplicate_edges
+    // CHECK: obelisk_sim.suspend.delay %{{.*}} to ^[[DISPATCH:bb[0-9]+]](%[[LIVE:.*]] : !obelisk_sim.logic<8>)
+    // CHECK: ^[[DISPATCH]](%[[RESTORED:.*]]: !obelisk_sim.logic<8>):
+    // CHECK: cf.cond_br %{{.*}}, ^[[MERGE:bb[0-9]+]](%[[RESTORED]] : !obelisk_sim.logic<8>), ^[[MERGE]](%[[RESTORED]] : !obelisk_sim.logic<8>)
+    // CHECK: ^[[MERGE]](%[[ARG:.*]]: !obelisk_sim.logic<8>):
+    // CHECK: obelisk_sim.ref.store %[[ARG]]
+    obelisk_sim.func @duplicate_edges(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %ref: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}) attributes {entry_kind = 1 : i32, code_unit_id = 9000009 : i64} {
+      %live = obelisk_sim.ref.load %ref : !obelisk_sim.ref<!obelisk_sim.logic<8>> -> !obelisk_sim.logic<8>
+      %delay = obelisk_sim.time.constant 1
+      obelisk_sim.suspend.delay %delay to ^dispatch
+    ^dispatch:
+      %condition = arith.constant true
+      cf.cond_br %condition, ^merge, ^merge
+    ^merge:
+      obelisk_sim.ref.store %live to %ref : !obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>
       obelisk_sim.return
     }
   }

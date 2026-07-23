@@ -73,6 +73,16 @@ constexpr uint32_t kIntrinsicEventTrigger =
 constexpr uint32_t kIntrinsicEventTriggered =
     OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGERED;
 constexpr uint32_t kIntrinsicStateAlloc = OBELISK_RT_INTRINSIC_V1_STATE_ALLOC;
+constexpr uint32_t kIntrinsicDisableChildren =
+    OBELISK_RT_INTRINSIC_V1_DISABLE_CHILDREN;
+constexpr uint32_t kIntrinsicControlEnter =
+    OBELISK_RT_INTRINSIC_V1_CONTROL_ENTER;
+constexpr uint32_t kIntrinsicControlLeave =
+    OBELISK_RT_INTRINSIC_V1_CONTROL_LEAVE;
+constexpr uint32_t kIntrinsicControlDisable =
+    OBELISK_RT_INTRINSIC_V1_CONTROL_DISABLE;
+constexpr uint32_t kIntrinsicStaticOnce =
+    OBELISK_RT_INTRINSIC_V1_STATIC_ONCE;
 constexpr uint32_t kIntrinsicImport = OBELISK_RT_INTRINSIC_V1_IMPORT;
 constexpr uint32_t kIntrinsicDPIImport =
     OBELISK_RT_INTRINSIC_V1_DPI_IMPORT;
@@ -128,6 +138,7 @@ enum Opcode : uint16_t {
   Fail = OBELISK_RT_DB_FAIL,
   MakeLocalHandle = OBELISK_RT_DB_MAKE_LOCAL_HANDLE,
   HandleID = OBELISK_RT_DB_HANDLE_ID,
+  TaskCall = OBELISK_RT_DB_TASK_CALL,
 };
 
 struct Layout {
@@ -327,6 +338,9 @@ FailureOr<Layout> getLayout(Type type) {
     layout.kind = Logic;
     layout.width = logic.getWidth();
   } else if (isa<sim::TimeType>(type)) {
+    layout.kind = Bits;
+    layout.width = 64;
+  } else if (isa<sim::ControlType>(type)) {
     layout.kind = Bits;
     layout.width = 64;
   } else if (isa<sim::RefType, sim::NetType, sim::DriverType, sim::EventType,
@@ -619,7 +633,8 @@ private:
           for (Value result : operation.getResults())
             consider(result);
 
-          if (isa<BranchOpInterface, sim::SimCallOp, sim::SimDPICallOp,
+          if (isa<BranchOpInterface, sim::SimCallOp, sim::SimTaskCallOp,
+                  sim::SimDPICallOp,
                   sim::SimSpawnOp,
                   sim::SimReturnOp>(operation)) {
             for (Value operand : operation.getOperands())
@@ -1374,6 +1389,8 @@ private:
     }
     if (auto call = dyn_cast<sim::SimCallOp>(operation))
       return encodeCall(plan, call);
+    if (auto call = dyn_cast<sim::SimTaskCallOp>(operation))
+      return encodeTaskCall(plan, call);
     if (auto call = dyn_cast<sim::SimDPICallOp>(operation))
       return encodeDPICall(plan, call);
     if (auto returnOp = dyn_cast<sim::SimReturnOp>(operation))
@@ -1551,6 +1568,37 @@ private:
       return emitIntrinsic(plan, kIntrinsicStateAlloc,
                            {op.getInitialValue()}, {op.getResult()});
     }
+    if (isa<sim::SimDisableChildrenOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicDisableChildren, {}, {});
+    if (auto op = dyn_cast<sim::SimControlEnterOp>(operation)) {
+      if (op.getTargetId() == 0 || op.getTargetId() > UINT32_MAX)
+        return op.emitOpError("control target ID does not fit bytecode");
+      return emitIntrinsic(plan, kIntrinsicControlEnter, {},
+                           {op.getControl()},
+                           static_cast<uint32_t>(op.getTargetId()));
+    }
+    if (auto op = dyn_cast<sim::SimControlLeaveOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicControlLeave,
+                           {op.getControl()}, {});
+    if (auto op = dyn_cast<sim::SimControlDisableOp>(operation)) {
+      if (op.getTargetId() == 0 || op.getTargetId() > INT32_MAX)
+        return op.emitOpError("control target ID does not fit bytecode");
+      SmallVector<Value> inputs;
+      if (op.getActivation())
+        inputs.push_back(op.getActivation());
+      uint32_t flags = static_cast<uint32_t>(op.getTargetId());
+      if (op.getHierarchical())
+        flags |= UINT32_C(1) << 31;
+      return emitIntrinsic(plan, kIntrinsicControlDisable, inputs, {},
+                           flags);
+    }
+    if (auto op = dyn_cast<sim::SimStaticOnceOp>(operation)) {
+      if (op.getId() == 0 || op.getId() > UINT32_MAX)
+        return op.emitOpError(
+            "static initialization ID does not fit bytecode");
+      return emitIntrinsic(plan, kIntrinsicStaticOnce, {}, {op.getFirst()},
+                           static_cast<uint32_t>(op.getId()));
+    }
     if (auto op = dyn_cast<sim::SimContextStorageOp>(operation))
       return encodeHandle(plan, op.getResult(), op.getId(), state.storage, 2);
     if (auto op = dyn_cast<sim::SimContextNetOp>(operation))
@@ -1667,6 +1715,9 @@ private:
                         static_cast<uint32_t>(suspend.getKind()), edges,
                         processes);
     }
+    if (auto suspend = dyn_cast<sim::SimSuspendChildrenOp>(operation))
+      return encodeWait(plan, suspend.getOperation(),
+                        suspend.getContinuationOperands(), 9, 0, {}, {});
     return operation->emitOpError()
            << "has no design-bytecode semantics (the normalized legality set "
               "is closed, so executable fallback is forbidden)";
@@ -1726,6 +1777,46 @@ private:
     emit({Call, 0, 0, callee.index, static_cast<uint32_t>(inputs.first),
           static_cast<uint32_t>(inputs.second),
           static_cast<uint32_t>(firstOutputs), call.getNumResults()});
+    return success();
+  }
+
+  LogicalResult encodeTaskCall(FunctionPlan &plan,
+                               sim::SimTaskCallOp call) {
+    if (!plan.frame)
+      return call.emitOpError("task call has no canonical caller frame");
+    const ProcessSuspension *suspension =
+        plan.frame->getSuspension(call.getOperation());
+    if (!suspension)
+      return call.emitOpError("task call is missing frame analysis");
+    ArrayRef<ProcessFrameValue> slots =
+        plan.frame->getContinuationLayout(suspension->continuationID);
+    if (slots.size() != call.getContinuationOperands().size())
+      return call.emitOpError("task continuation frame arity mismatch");
+    for (auto [value, slot] :
+         llvm::zip_equal(call.getContinuationOperands(), slots)) {
+      if (slot.storageSize > UINT32_MAX ||
+          (slot.isFourState() && slot.storageSize > UINT32_MAX / 2))
+        return call.emitOpError(
+            "canonical frame transfer exceeds the bytecode ABI limit");
+      uint64_t transferSize =
+          slot.storageSize * (slot.isFourState() ? 2 : 1);
+      emitFrameTransfer(plan, StoreFrame, value, slot.valueOffset,
+                        static_cast<uint32_t>(transferSize));
+    }
+    auto found = indices.find(call.getCallee());
+    if (found == indices.end())
+      return call.emitOpError("task target has no bytecode body");
+    FunctionPlan &callee = plans[found->second];
+    if (!callee.frame ||
+        callee.function.getEntryKind() != sim::EntryKind::Task)
+      return call.emitOpError("task target is not an activation entry");
+    Block &calleeEntry = callee.function.getBody().front();
+    auto inputs = addMap(callee, calleeEntry.getArguments(), plan,
+                         call.getArguments());
+    emit({TaskCall, 0, 0, callee.index,
+          static_cast<uint32_t>(inputs.first),
+          static_cast<uint32_t>(inputs.second), 0,
+          suspension->continuationID});
     return success();
   }
 

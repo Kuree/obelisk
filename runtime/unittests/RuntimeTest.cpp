@@ -230,13 +230,47 @@ TEST(RuntimeABI, StableScalarLayout) {
   EXPECT_EQ(offsetof(obelisk_rt_arg_v1, kind), 0u);
   EXPECT_EQ(offsetof(obelisk_rt_arg_v1, flags), 4u);
   EXPECT_EQ(offsetof(obelisk_rt_arg_v1, size), 8u);
-  EXPECT_EQ(OBELISK_RT_ABI_GENERATION, 1u);
+  EXPECT_EQ(sizeof(obelisk_rt_activation_descriptor_v1), 24u);
+  EXPECT_EQ(offsetof(obelisk_rt_activation_descriptor_v1, native_entry), 8u);
+  EXPECT_EQ(
+      offsetof(obelisk_rt_activation_descriptor_v1, bytecode_function), 16u);
+  EXPECT_EQ(sizeof(obelisk_rt_execution_descriptor_v1), 104u);
+  EXPECT_EQ(offsetof(obelisk_rt_execution_descriptor_v1, activations), 88u);
+  EXPECT_EQ(OBELISK_RT_ABI_GENERATION, 2u);
   EXPECT_STREQ(obelisk_rt_v1_status_string(OBELISK_RT_FORMAT_ERROR),
                "format error");
 }
 
 TEST(RuntimeABI, CConsumerCompilesLinksAndRuns) {
   EXPECT_EQ(obelisk_runtime_c_api_smoke(), 0);
+}
+
+TEST(RuntimeABI, RejectsMalformedActivationInventory) {
+  const obelisk_rt_activation_descriptor_v1 activation{
+      1, nullptr, OBELISK_RT_ACTIVATION_NO_BYTECODE,
+      OBELISK_RT_ACTIVATION_HAS_NATIVE};
+  const obelisk_rt_execution_descriptor_v1 execution{
+      OBELISK_RT_EXECUTION_DESCRIPTOR_VERSION,
+      OBELISK_RT_ABI_GENERATION,
+      0,
+      0,
+      nullptr,
+      0,
+      nullptr,
+      0,
+      0,
+      0,
+      nullptr,
+      0,
+      0,
+      0,
+      &activation,
+      1,
+  };
+  obelisk_rt_context *context = nullptr;
+  EXPECT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(context, nullptr);
 }
 
 TEST(RuntimeABI, ReportsEveryStatusAndReleasesBuffersIdempotently) {

@@ -18,6 +18,8 @@
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/SmallPtrSet.h"
 
 using namespace mlir;
 
@@ -83,6 +85,8 @@ public:
     // the chain has to forward.
     DominanceInfo dominance(function);
     Block &entry = function.getBody().front();
+    DenseMap<Block *, DenseMap<Value, BlockArgument>> threadedValues;
+    DenseMap<Value, Value> threadedRoots;
 
     for (Operation *suspension : suspensions) {
       Liveness liveness(function);
@@ -124,7 +128,10 @@ public:
         };
         SmallVector<IncomingEdge> incomingEdges;
         bool unavailable = false;
+        llvm::SmallPtrSet<Block *, 8> visitedPredecessors;
         for (Block *predecessor : continuation->getPredecessors()) {
+          if (!visitedPredecessors.insert(predecessor).second)
+            continue;
           Operation *terminator = predecessor->getTerminator();
           auto incoming = dyn_cast<BranchOpInterface>(terminator);
           if (!incoming || !dominance.dominates(value, terminator)) {
@@ -146,6 +153,11 @@ public:
 
         BlockArgument threaded =
             continuation->addArgument(value.getType(), suspension->getLoc());
+        Value root = threadedRoots.lookup(value);
+        if (!root)
+          root = value;
+        threadedValues[continuation].try_emplace(root, threaded);
+        threadedRoots.try_emplace(threaded, root);
         for (IncomingEdge &incoming : incomingEdges)
           incoming.branch.getSuccessorOperands(incoming.successorIndex)
               .append(incoming.value);
@@ -155,6 +167,115 @@ public:
         });
       }
     }
+
+    // A continuation argument can flow into a later merge block which is not
+    // dominated by that continuation. Make those downstream phi lanes
+    // explicit as well. This is required by both executable tiers: each
+    // bytecode dispatch starts with cleared scratch registers, while native
+    // coroutine lowering must not leave an SSA definition on only one side of
+    // a resume edge.
+    bool changed;
+    do {
+      changed = false;
+      for (Block &block : function.getBody()) {
+        if (&block == &entry)
+          continue;
+        llvm::SetVector<Value> externalRoots;
+        for (Operation &operation : block)
+          for (Value value : operation.getOperands()) {
+            if (value.getParentBlock() == &block)
+              continue;
+            if (auto argument = dyn_cast<BlockArgument>(value);
+                argument && argument.getOwner() == &entry)
+              continue;
+            Value root = threadedRoots.lookup(value);
+            if (!root)
+              root = value;
+            bool suspensionLive = threadedRoots.count(value) != 0;
+            for (Block *predecessor : block.getPredecessors())
+              suspensionLive |= threadedValues[predecessor].count(root) != 0;
+            if (suspensionLive)
+              externalRoots.insert(root);
+          }
+        for (Value root : externalRoots) {
+          auto &threaded = threadedValues[&block];
+          auto replaceExternalUses = [&](Value replacement) {
+            for (Operation &operation : block)
+              for (OpOperand &operand : operation.getOpOperands()) {
+                Value value = operand.get();
+                if (value.getParentBlock() == &block)
+                  continue;
+                Value operandRoot = threadedRoots.lookup(value);
+                if (!operandRoot)
+                  operandRoot = value;
+                if (operandRoot == root)
+                  operand.set(replacement);
+              }
+          };
+          auto existing = threaded.find(root);
+          if (existing != threaded.end()) {
+            replaceExternalUses(existing->second);
+            continue;
+          }
+
+          struct IncomingEdge {
+            BranchOpInterface branch;
+            unsigned successorIndex;
+            Value value;
+          };
+          SmallVector<IncomingEdge> incomingEdges;
+          bool unavailable = false;
+          llvm::SmallPtrSet<Block *, 8> visitedPredecessors;
+          for (Block *predecessor : block.getPredecessors()) {
+            if (!visitedPredecessors.insert(predecessor).second)
+              continue;
+            Operation *terminator = predecessor->getTerminator();
+            auto branch = dyn_cast<BranchOpInterface>(terminator);
+            if (!branch) {
+              terminator->emitError(
+                  "cannot thread suspension-live state through a non-branch "
+                  "terminator");
+              signalPassFailure();
+              return;
+            }
+            Value incoming = root;
+            if (auto found = threadedValues[predecessor].find(root);
+                found != threadedValues[predecessor].end())
+              incoming = found->second;
+            else if (!dominance.dominates(root, terminator)) {
+              unavailable = true;
+              break;
+            }
+            bool foundSuccessor = false;
+            for (auto [successorIndex, successor] :
+                 llvm::enumerate(predecessor->getSuccessors())) {
+              if (successor != &block)
+                continue;
+              incomingEdges.push_back(
+                  {branch, static_cast<unsigned>(successorIndex), incoming});
+              foundSuccessor = true;
+            }
+            if (!foundSuccessor) {
+              terminator->emitError("predecessor is missing its CFG successor");
+              signalPassFailure();
+              return;
+            }
+          }
+          if (unavailable || incomingEdges.empty())
+            continue;
+
+          BlockArgument argument =
+              block.addArgument(root.getType(), root.getLoc());
+          threaded.insert({root, argument});
+          threadedRoots.try_emplace(argument, root);
+          replaceExternalUses(argument);
+          for (IncomingEdge &incoming : incomingEdges)
+            incoming.branch.getSuccessorOperands(incoming.successorIndex)
+                .append(incoming.value);
+          changed = true;
+        }
+      }
+    } while (changed);
   }
 };
 

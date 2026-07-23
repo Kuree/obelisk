@@ -30,6 +30,7 @@ inline constexpr llvm::StringLiteral descriptorPackedLow =
     "obelisk_sim.descriptor_packed_low";
 inline constexpr llvm::StringLiteral hierarchicalName =
     "obelisk_sim.hierarchical_name";
+inline constexpr llvm::StringLiteral lowered = "obelisk_sim.lowered";
 
 inline bool isKnownBoundary(llvm::StringRef name) {
   return name == captureKind || name == descriptorId ||
@@ -40,7 +41,7 @@ inline bool isKnownBoundary(llvm::StringRef name) {
 
 inline bool isKnownOperation(llvm::StringRef name) {
   return isKnownBoundary(name) || name == bindings || name == delayScale ||
-         name == delayQuantum || name == hierarchicalName;
+         name == delayQuantum || name == hierarchicalName || name == lowered;
 }
 
 } // namespace obelisk::sim::metadata

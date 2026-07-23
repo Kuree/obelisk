@@ -109,6 +109,12 @@ struct FunctionObservation {
   SmallVector<SiteObservation> sites;
 };
 
+ValueRange getBoundaryOperands(Operation *operation) {
+  if (auto task = dyn_cast<sim::SimTaskCallOp>(operation))
+    return task.getArguments();
+  return operation->getOperands();
+}
+
 static bool isExecutable(DataFlowSolver &solver, Operation *operation) {
   const auto *state = solver.lookupState<Executable>(
       solver.getProgramPointBefore(operation->getBlock()));
@@ -172,8 +178,8 @@ static LogicalResult analyzeFunction(ArrayRef<FunctionInfo> functions,
     if (!isExecutable(solver, site.operation))
       continue;
     result.executable = true;
-    if (auto call = dyn_cast<sim::SimCallOp>(site.operation)) {
-      for (Value operand : call.getOperands())
+    if (isa<sim::SimCallOp, sim::SimTaskCallOp>(site.operation)) {
+      for (Value operand : getBoundaryOperands(site.operation))
         result.operands.push_back(getFact(solver, operand));
     } else if (auto spawn = dyn_cast<sim::SimSpawnOp>(site.operation)) {
       for (Value operand : spawn.getOperands())
@@ -318,6 +324,16 @@ void ObeliskSimSCCPPass::runOnOperation() {
           functions[*callee].callers.push_back(functionIndex);
         return WalkResult::advance();
       }
+      if (auto task = dyn_cast<sim::SimTaskCallOp>(operation)) {
+        auto found = symbolToFunction.find(task.getCallee());
+        std::optional<unsigned> callee;
+        if (found != symbolToFunction.end())
+          callee = found->second;
+        info.sites.push_back({operation, BoundarySiteKind::Call, callee});
+        if (callee)
+          functions[*callee].callers.push_back(functionIndex);
+        return WalkResult::advance();
+      }
       if (auto spawn = dyn_cast<sim::SimSpawnOp>(operation)) {
         auto found = symbolToFunction.find(spawn.getCallee());
         std::optional<unsigned> callee;
@@ -351,6 +367,9 @@ void ObeliskSimSCCPPass::runOnOperation() {
       SymbolRefAttr reference = use.getSymbolRef();
       if (auto call = dyn_cast<sim::SimCallOp>(user);
           call && call.getCalleeAttr() == reference)
+        continue;
+      if (auto task = dyn_cast<sim::SimTaskCallOp>(user);
+          task && task.getCalleeAttr() == reference)
         continue;
       if (auto spawn = dyn_cast<sim::SimSpawnOp>(user);
           spawn && spawn.getCalleeAttr() == reference)

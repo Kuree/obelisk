@@ -27,6 +27,8 @@ module {
     obelisk_sim.code_unit.decl 9000019 in 0 function hierarchy "test.sccp.address_taken.9000019"
     obelisk_sim.code_unit.decl 9000020 in 0 function hierarchy "test.sccp.address_taken_caller.9000020"
     obelisk_sim.code_unit.decl 9000021 in 0 function hierarchy "test.sccp.unresolved_caller.9000021"
+    obelisk_sim.code_unit.decl 9000022 in 0 task hierarchy "test.sccp.task_constant.9000022"
+    obelisk_sim.code_unit.decl 9000023 in 0 initial hierarchy "test.sccp.task_caller.9000023"
     obelisk_sim.scope.decl 0 {callback = @address_taken}
 
     // Exact call arguments and results cross both sides of the boundary.
@@ -52,6 +54,30 @@ module {
       %input = arith.constant 41 : i32
       %result = obelisk_sim.call @add1(%ctx, %input) : (!obelisk_sim.context, i32) -> i32
       obelisk_sim.return %result : i32
+    }
+
+    // Direct task boundaries participate in the same fixed point as function
+    // calls, while their continuation operands are not mistaken for formals.
+    // CHECK-LABEL: obelisk_sim.func private @task_constant
+    // CHECK: %[[TASK_ANSWER:.*]] = arith.constant 42 : i32
+    // CHECK: obelisk_sim.ref.alloc %[[TASK_ANSWER]]
+    obelisk_sim.func private @task_constant(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %value: i32 {obelisk_sim.capture_kind = 1 : i32})
+        attributes {entry_kind = 12 : i32, code_unit_id = 9000022 : i64} {
+      %one = arith.constant 1 : i32
+      %sum = arith.addi %value, %one : i32
+      %local = obelisk_sim.ref.alloc %sum : i32 -> !obelisk_sim.ref<i32>
+      obelisk_sim.return
+    }
+
+    obelisk_sim.func @task_caller(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000023 : i64} {
+      %input = arith.constant 41 : i32
+      obelisk_sim.task.call @task_constant(%ctx, %input) arguments 2 to ^done : !obelisk_sim.context, i32
+    ^done:
+      obelisk_sim.return
     }
 
     // Conflicting executable callsites make the shared function boundary

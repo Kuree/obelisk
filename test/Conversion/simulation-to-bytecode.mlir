@@ -68,10 +68,11 @@ module attributes {
   }
 }
 
-// Design bytecode version 3 follows the eight-byte magic. It includes
+// Design bytecode version 4 follows the eight-byte magic. It includes task
+// activation transfers in addition to
 // per-continuation schedule ranks, the canonical connectivity table, and
 // disjoint per-bit uwire driver ranges.
-// ENCODE: obelisk.bytecode.image = array<i8: 79, 66, 66, 67, 68, 83, 49, 0, 3, 0, 0, 0
+// ENCODE: obelisk.bytecode.image = array<i8: 79, 66, 66, 67, 68, 83, 49, 0, 4, 0, 0, 0
 // ENCODE: obelisk.execution.flags = 1 : i32
 // ENCODE: obelisk.execution.state_bits = 73 : i64
 // ENCODE: obelisk.bytecode.function = 0 : i32
@@ -97,6 +98,11 @@ module attributes {
 // LOWER: llvm.mlir.global internal constant @process.__obelisk_bytecode_entry
 // LOWER: llvm.mlir.global external constant @__obelisk_execution_descriptor_v1
 // LOWER-SAME: section = ".obelisk.execution"
+// LOWER: llvm.mlir.global internal constant @__obelisk_activations_v1
+// LOWER-SAME: section = ".obelisk.execution"
+// LOWER: llvm.mlir.constant(71 : i64)
+// LOWER: llvm.mlir.addressof @process.__obelisk_process_descriptor
+// LOWER: llvm.mlir.constant(3 : i32)
 // LOWER: llvm.mlir.global external constant @__obelisk_design_database_v1
 // LOWER-SAME: section = ".obelisk.design"
 // LOWER: llvm.mlir.global external constant @__obelisk_bytecode_image_v1
@@ -108,6 +114,8 @@ module attributes {
 // LOWER-SAME: !llvm.array<1 x ptr>
 
 // LLVM: @__obelisk_execution_descriptor_v1 = constant
+// LLVM-SAME: section ".obelisk.execution"
+// LLVM: @__obelisk_activations_v1 = internal constant
 // LLVM-SAME: section ".obelisk.execution"
 // LLVM: @__obelisk_design_database_v1 = constant
 // LLVM-SAME: section ".obelisk.design"

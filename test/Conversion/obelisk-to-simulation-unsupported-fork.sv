@@ -1,13 +1,27 @@
-// RUN: not obelisk -emit-sim %s 2>&1 | FileCheck %s
+// RUN: obelisk -emit-sim %s | FileCheck %s
 
-module unsupported_fork;
+module supported_fork;
   initial begin
     fork
-      #1;
-      #2;
+      begin #1; end
+      begin #2; end
     join_any
+    fork
+    join
+    fork
+      begin : named_branch
+      end
+    join_none
+    wait fork;
+    disable fork;
   end
 endmodule
 
-// CHECK: unsupported semantic node in the first simulation slice
-// CHECK-SAME: fork/join branch outlining and child-process synchronization
+// CHECK: obelisk_sim.code_unit.decl {{[0-9]+}} in {{[0-9]+}} fork hierarchy "supported_fork.{{.*}}.$fork.
+// CHECK: obelisk_sim.func private @{{.*}} attributes {{.*}}entry_kind = 13 : i32
+// CHECK: obelisk_sim.control.enter
+// CHECK: obelisk_sim.control.leave
+// CHECK: obelisk_sim.spawn @
+// CHECK: obelisk_sim.suspend.join any
+// CHECK: obelisk_sim.suspend.children
+// CHECK: obelisk_sim.children.disable

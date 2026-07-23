@@ -471,7 +471,7 @@ bool validateInstructionEncoding(const obelisk_rt_bytecode_v1 &program,
     case OBELISK_RT_BC_SUSPEND:
       if (type != OBELISK_RT_BC_TYPE_NONE || destination != 0 ||
           source0 < OBELISK_RT_SUSPEND_DELAY ||
-          source0 > OBELISK_RT_SUSPEND_FRONTIER || immediate > UINT32_MAX ||
+          source0 > OBELISK_RT_SUSPEND_CHILDREN || immediate > UINT32_MAX ||
           (source1 != UINT16_MAX && !validRegister(source1)))
         return false;
       break;
@@ -1501,7 +1501,7 @@ obelisk_rt_status executeBytecodeV1(const obelisk_rt_bytecode_v1 &program,
     case OBELISK_RT_BC_SUSPEND:
       if (type != OBELISK_RT_BC_TYPE_NONE ||
           source0 < OBELISK_RT_SUSPEND_DELAY ||
-          source0 > OBELISK_RT_SUSPEND_FRONTIER || immediate > UINT32_MAX ||
+          source0 > OBELISK_RT_SUSPEND_CHILDREN || immediate > UINT32_MAX ||
           (source1 != UINT16_MAX &&
            !validSource(source1, OBELISK_RT_BC_TYPE_U64, registers)))
         return OBELISK_RT_INVALID_BYTECODE;
@@ -1571,7 +1571,7 @@ bool validAction(const obelisk_rt_fragment_action_v1 &action) {
            action.payload == 0 && action.auxiliary == 0;
   case OBELISK_RT_FRAGMENT_SUSPEND:
     return action.suspend_kind >= OBELISK_RT_SUSPEND_DELAY &&
-           action.suspend_kind <= OBELISK_RT_SUSPEND_FRONTIER;
+           action.suspend_kind <= OBELISK_RT_SUSPEND_CHILDREN;
   case OBELISK_RT_FRAGMENT_TERMINATE:
     return action.suspend_kind == OBELISK_RT_SUSPEND_NONE &&
            action.continuation == 0 && action.auxiliary == 0;

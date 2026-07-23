@@ -120,7 +120,8 @@ bool isSuspensionTerminator(Operation *op) {
              sim::SimSuspendEdgeOp, sim::SimSuspendEdgeIffOp,
              sim::SimSuspendLevelOp, sim::SimSuspendAnyOp,
              sim::SimSuspendEventOp, sim::SimSuspendForeverOp,
-             sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp>(op);
+             sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp,
+             sim::SimSuspendChildrenOp, sim::SimTaskCallOp>(op);
 }
 
 std::optional<APInt> getConstantInteger(Value value) {
@@ -263,6 +264,12 @@ struct InvocationSummary {
   std::optional<unsigned> callee;
 };
 
+ValueRange getInvocationOperands(Operation *operation) {
+  if (auto task = dyn_cast<sim::SimTaskCallOp>(operation))
+    return task.getArguments();
+  return operation->getOperands();
+}
+
 struct IncomingSummary {
   Value value;
   StateDomainReason reason = StateDomainReason::CFGJoin;
@@ -303,7 +310,7 @@ FunctionSummary buildSummary(sim::SimFuncOp function) {
     }
     for (Operation &operation : *block) {
       summary.operations.push_back(&operation);
-      if (isa<sim::SimCallOp>(operation))
+      if (isa<sim::SimCallOp, sim::SimTaskCallOp>(operation))
         summary.invocations.push_back({&operation, false, std::nullopt});
       else if (isa<sim::SimSpawnOp>(operation))
         summary.invocations.push_back({&operation, true, std::nullopt});
@@ -593,6 +600,10 @@ StateDomainAnalysis::compute(sim::SimDesignOp design) {
       if (auto call = dyn_cast<sim::SimCallOp>(invocation.operation))
         callee = symbolTables.lookupNearestSymbolFrom<sim::SimFuncOp>(
             invocation.operation, call.getCalleeAttr());
+      else if (auto task =
+                   dyn_cast<sim::SimTaskCallOp>(invocation.operation))
+        callee = symbolTables.lookupNearestSymbolFrom<sim::SimFuncOp>(
+            invocation.operation, task.getCalleeAttr());
       else if (auto spawn = dyn_cast<sim::SimSpawnOp>(invocation.operation))
         callee = symbolTables.lookupNearestSymbolFrom<sim::SimFuncOp>(
             invocation.operation, spawn.getCalleeAttr());
@@ -635,7 +646,7 @@ StateDomainAnalysis::compute(sim::SimDesignOp design) {
       if (!invocation.callee)
         continue;
       for (auto [index, operand] :
-           llvm::enumerate(invocation.operation->getOperands()))
+           llvm::enumerate(getInvocationOperands(invocation.operation)))
         if (index < hasIncoming[*invocation.callee].size() &&
             isLogic(operand.getType()))
           hasIncoming[*invocation.callee][index] = true;
@@ -659,6 +670,8 @@ StateDomainAnalysis::compute(sim::SimDesignOp design) {
       bool direct = false;
       if (auto call = dyn_cast<sim::SimCallOp>(user))
         direct = call.getCalleeAttr() == reference;
+      else if (auto task = dyn_cast<sim::SimTaskCallOp>(user))
+        direct = task.getCalleeAttr() == reference;
       else if (auto spawn = dyn_cast<sim::SimSpawnOp>(user))
         direct = spawn.getCalleeAttr() == reference;
       if (direct && calleeIndex.contains(user) &&
@@ -724,7 +737,7 @@ StateDomainAnalysis::compute(sim::SimDesignOp design) {
                                      ? StateDomainReason::SpawnActual
                                      : StateDomainReason::CallActual;
       for (auto [index, operand] :
-           llvm::enumerate(invocation.operation->getOperands())) {
+           llvm::enumerate(getInvocationOperands(invocation.operation))) {
         if (index >= formalBoundaries[*invocation.callee].size() ||
             !isLogic(operand.getType()))
           continue;

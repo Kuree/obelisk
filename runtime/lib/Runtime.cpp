@@ -17,6 +17,48 @@ namespace {
 
 std::mutex hostErrorMutex;
 
+bool validActivationInventory(
+    const obelisk_rt_execution_descriptor_v1 &execution) {
+  if ((execution.activation_count == 0) != (execution.activations == nullptr))
+    return false;
+  constexpr uint32_t validFlags = OBELISK_RT_ACTIVATION_HAS_NATIVE |
+                                  OBELISK_RT_ACTIVATION_HAS_BYTECODE;
+  uint64_t previousID = 0;
+  for (uint64_t index = 0; index != execution.activation_count; ++index) {
+    const obelisk_rt_activation_descriptor_v1 &activation =
+        execution.activations[index];
+    if (activation.code_unit_id == 0 ||
+        (index != 0 && activation.code_unit_id <= previousID) ||
+        activation.flags == 0 || (activation.flags & ~validFlags) != 0)
+      return false;
+    previousID = activation.code_unit_id;
+    bool hasNative =
+        (activation.flags & OBELISK_RT_ACTIVATION_HAS_NATIVE) != 0;
+    if (hasNative != (activation.native_entry != nullptr))
+      return false;
+    if (hasNative &&
+        (activation.native_entry->handle.kind !=
+             OBELISK_RT_DESCRIPTOR_PROCESS ||
+         activation.native_entry->handle.id != activation.code_unit_id ||
+         activation.native_entry->abi_generation !=
+             OBELISK_RT_ABI_GENERATION ||
+         activation.native_entry->execution != &execution))
+      return false;
+    bool hasBytecode =
+        (activation.flags & OBELISK_RT_ACTIVATION_HAS_BYTECODE) != 0;
+    if (hasBytecode) {
+      if ((execution.flags & OBELISK_RT_EXECUTION_HAS_BYTECODE) == 0 ||
+          activation.bytecode_function ==
+              OBELISK_RT_ACTIVATION_NO_BYTECODE)
+        return false;
+    } else if (activation.bytecode_function !=
+               OBELISK_RT_ACTIVATION_NO_BYTECODE) {
+      return false;
+    }
+  }
+  return true;
+}
+
 } // namespace
 
 obelisk_rt_context::obelisk_rt_context() {
@@ -41,6 +83,85 @@ void setLastError(obelisk_rt_context *context, std::string message) {
     std::lock_guard<std::mutex> lock(context->mutex);
     setLastErrorUnlocked(context, std::move(message));
   } catch (...) {
+  }
+}
+
+void obelisk_rt_retain_controls_unlocked(
+    obelisk_rt_context *context, const std::vector<uint64_t> &controls) {
+  for (uint64_t token : controls)
+    if (auto found = context->controlActivations.find(token);
+        found != context->controlActivations.end())
+      ++found->second.memberships;
+}
+
+void obelisk_rt_release_controls_unlocked(
+    obelisk_rt_context *context, const std::vector<uint64_t> &controls) {
+  for (uint64_t token : controls)
+    obelisk_rt_release_control_unlocked(context, token);
+}
+
+void obelisk_rt_release_control_unlocked(obelisk_rt_context *context,
+                                         uint64_t token) {
+  auto found = context->controlActivations.find(token);
+  if (found == context->controlActivations.end())
+    return;
+  if (found->second.memberships != 0)
+    --found->second.memberships;
+  if (found->second.memberships == 0)
+    context->controlActivations.erase(found);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_control_enter(
+    obelisk_rt_context *context, uint64_t targetID,
+    uint64_t *outActivation) {
+  if (!context || targetID == 0 || !outActivation)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outActivation = 0;
+  return guarded(context, [&] {
+    std::lock_guard<std::mutex> lock(context->mutex);
+    if (context->activeLogicalProcessToken == 0 ||
+        context->nextControlActivation == 0)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    uint64_t token = context->nextControlActivation;
+    context->activeControls.reserve(context->activeControls.size() + 1);
+    auto [_, inserted] = context->controlActivations.emplace(
+        token, ControlActivation{targetID, 1});
+    if (!inserted)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    context->activeControls.push_back(token);
+    ++context->nextControlActivation;
+    *outActivation = token;
+    return OBELISK_RT_OK;
+  });
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_control_leave(
+    obelisk_rt_context *context, uint64_t activation) {
+  if (!context || activation == 0)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  return guarded(context, [&] {
+    std::lock_guard<std::mutex> lock(context->mutex);
+    if (context->activeLogicalProcessToken == 0 ||
+        context->activeControls.empty() ||
+        context->activeControls.back() != activation)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    context->activeControls.pop_back();
+    obelisk_rt_release_control_unlocked(context, activation);
+    return OBELISK_RT_OK;
+  });
+}
+
+extern "C" uint32_t obelisk_rt_v1_static_once(
+    obelisk_rt_context *context, uint64_t siteID) {
+  if (!context || siteID == 0)
+    return 0;
+  try {
+    std::lock_guard<std::mutex> lock(context->mutex);
+    return context->initializedStaticSites.insert(siteID).second ? 1u : 0u;
+  } catch (...) {
+    if (context)
+      context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
+    return 0;
   }
 }
 
@@ -134,7 +255,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_context_create_for_design(
                ? (!execution->bytecode || execution->bytecode_size == 0 ||
                   execution->checksum == 0)
                : (execution->bytecode || execution->bytecode_size != 0 ||
-                  execution->checksum != 0)))
+                  execution->checksum != 0)) ||
+          !validActivationInventory(*execution) ||
+          !obelisk_rt_validate_activation_bytecode_inventory(*execution))
         return OBELISK_RT_INVALID_DESIGN;
       if ((execution->flags & OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE) != 0) {
         obelisk_rt_status status = obelisk_rt_v1_design_validate(execution);
@@ -187,19 +310,18 @@ extern "C" obelisk_rt_status obelisk_rt_v1_context_create_for_design(
 extern "C" void obelisk_rt_v1_context_destroy(obelisk_rt_context *context) {
   if (!context)
     return;
-  std::vector<obelisk_rt_process_instance_v1 *> instances;
+  std::vector<ScheduledProcess> processes;
   try {
     {
       std::lock_guard<std::mutex> lock(context->mutex);
-      for (ScheduledProcess &scheduled : context->scheduledProcesses)
-        if (scheduled.instance) {
-          instances.push_back(scheduled.instance);
-          scheduled.instance = nullptr;
-        }
-      context->scheduledProcesses.clear();
+      processes.swap(context->scheduledProcesses);
     }
-    for (obelisk_rt_process_instance_v1 *instance : instances)
-      obelisk_rt_v1_process_instance_destroy(instance);
+    for (ScheduledProcess &scheduled : processes) {
+      if (scheduled.instance)
+        (void)obelisk_rt_v1_process_instance_destroy(scheduled.instance);
+      for (obelisk_rt_process_instance_v1 *caller : scheduled.callers)
+        (void)obelisk_rt_v1_process_instance_destroy(caller);
+    }
     std::lock_guard<std::mutex> lock(context->mutex);
     for (uint32_t bit = 1; bit < context->mcd.size(); ++bit) {
       if (context->mcd[bit].stream)

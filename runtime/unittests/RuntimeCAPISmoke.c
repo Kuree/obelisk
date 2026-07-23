@@ -81,10 +81,19 @@ _Static_assert(sizeof(obelisk_rt_dpi_scope_v1) == 48,
                "DPI scope descriptor size changed");
 _Static_assert(offsetof(obelisk_rt_dpi_scope_v1, name) == 16,
                "DPI scope name offset changed");
-_Static_assert(sizeof(obelisk_rt_execution_descriptor_v1) == 88,
+_Static_assert(sizeof(obelisk_rt_activation_descriptor_v1) == 24,
+               "activation descriptor size changed");
+_Static_assert(offsetof(obelisk_rt_activation_descriptor_v1, native_entry) == 8,
+               "activation native entry offset changed");
+_Static_assert(
+    offsetof(obelisk_rt_activation_descriptor_v1, bytecode_function) == 16,
+    "activation bytecode entry offset changed");
+_Static_assert(sizeof(obelisk_rt_execution_descriptor_v1) == 104,
                "execution descriptor size changed");
 _Static_assert(offsetof(obelisk_rt_execution_descriptor_v1, dpi_scopes) == 64,
                "execution DPI scope offset changed");
+_Static_assert(offsetof(obelisk_rt_execution_descriptor_v1, activations) == 88,
+               "execution activation table offset changed");
 _Static_assert(sizeof(obelisk_rt_import_site_v1) == 56,
                "DPI import site size changed");
 _Static_assert(sizeof(obelisk_rt_design_bytecode_entry_v1) == 16,
@@ -229,7 +238,7 @@ int obelisk_runtime_c_api_smoke(void) {
   uint64_t stable = obelisk_rt_stable_handle_encode(
       OBELISK_RT_STABLE_HANDLE_STATIC, 7, -3);
 
-  if (OBELISK_RT_ABI_GENERATION != 1u)
+  if (OBELISK_RT_ABI_GENERATION != 2u)
     return 1;
   if (!obelisk_rt_stable_handle_decode(stable, &decoded) ||
       decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC || decoded.id != 7 ||

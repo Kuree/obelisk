@@ -1225,6 +1225,21 @@ private:
       SET_OP_ATTR(BlockKind,
                   slangir::StatementBlockKindAttr::get(
                       builder.getContext(), convertEnum(node.blockKind)));
+      if (node.blockSymbol && !node.blockSymbol->name.empty())
+        setSymbolReference(
+            attrs, *node.blockSymbol,
+            Op::getBlockSymbolAttrName(operationName),
+            Op::getBlockPathAttrName(operationName));
+    } else if constexpr (std::same_as<T, slang::ast::DisableStatement>) {
+      if (const slang::ast::Symbol *target =
+              node.target.getSymbolReference())
+        setSymbolReference(
+            attrs, *target, Op::getTargetSymbolAttrName(operationName),
+            Op::getTargetPathAttrName(operationName));
+      const auto &target =
+          node.target.template as<slang::ast::ArbitrarySymbolExpression>();
+      SET_OP_ATTR(IsHierarchical,
+                  builder.getBoolAttr(target.hierRef.target != nullptr));
     } else if constexpr (std::same_as<T, slang::ast::WaitOrderStatement>) {
       SET_OP_ATTR(EventCount,
                   builder.getI64IntegerAttr(node.events.size()));

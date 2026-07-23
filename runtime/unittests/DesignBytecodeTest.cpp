@@ -1150,6 +1150,27 @@ struct Fixture {
   }
 };
 
+TEST(DesignBytecode, RejectsMalformedActivationBytecodeInventory) {
+  Fixture fixture;
+  obelisk_rt_context *context = nullptr;
+  obelisk_rt_activation_descriptor_v1 activation{
+      1, nullptr, 99, OBELISK_RT_ACTIVATION_HAS_BYTECODE};
+  fixture.execution.activations = &activation;
+  fixture.execution.activation_count = 1;
+
+  EXPECT_EQ(obelisk_rt_v1_context_create_for_design(&fixture.execution,
+                                                     &context),
+            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(context, nullptr);
+
+  activation.bytecode_function = 0;
+  activation.code_unit_id = 2;
+  EXPECT_EQ(obelisk_rt_v1_context_create_for_design(&fixture.execution,
+                                                     &context),
+            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(context, nullptr);
+}
+
 uint64_t mixedTierObservedHandle = UINT64_MAX;
 uint8_t mixedTierObservedValue = UINT8_MAX;
 
@@ -1957,7 +1978,7 @@ TEST(DesignBytecode, RejectsNonCanonicalTablesAndUncallableFunctions) {
     obelisk_rt_context *context = nullptr;
     EXPECT_EQ(obelisk_rt_v1_context_create_for_design(&fixture.execution,
                                                        &context),
-              OBELISK_RT_INVALID_BYTECODE);
+              OBELISK_RT_INVALID_DESIGN);
     EXPECT_EQ(context, nullptr);
   };
 

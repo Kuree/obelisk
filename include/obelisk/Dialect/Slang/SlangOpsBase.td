@@ -415,7 +415,16 @@ class SlangStatementASTNodeOp<string mnemonic> : SlangASTNodeOp<mnemonic>;
 class SlangBlockStatementASTNodeOp<string mnemonic>
     : SlangASTNodeOp<mnemonic, [], (ins
         DefaultValuedAttr<SlangStatementBlockKind,
-          "::obelisk::slangir::StatementBlockKind::Sequential">:$block_kind
+          "::obelisk::slangir::StatementBlockKind::Sequential">:$block_kind,
+        OptionalAttr<SymbolRefAttr>:$block_symbol,
+        OptionalAttr<StrAttr>:$block_path
+      )>;
+
+class SlangDisableStatementASTNodeOp<string mnemonic>
+    : SlangASTNodeOp<mnemonic, [], (ins
+        OptionalAttr<SymbolRefAttr>:$target_symbol,
+        OptionalAttr<StrAttr>:$target_path,
+        DefaultValuedAttr<BoolAttr, "false">:$is_hierarchical
       )>;
 
 class SlangVariableDeclarationStatementASTNodeOp<string mnemonic>

@@ -193,6 +193,23 @@ module {
 // -----
 
 module {
+  obelisk_sim.design @wait_children_function {
+    obelisk_sim.code_unit.decl 9000001 in 0 function hierarchy "test.wait_children_function.bad.9000001"
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @bad(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000001 : i64} {
+      // expected-error @+1 {{is not permitted in a zero-time function entry}}
+      obelisk_sim.suspend.children to ^done
+    ^done:
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.design @bad_summary {
     obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_summary.process.9000001"
     obelisk_sim.scope.decl 0
@@ -1017,6 +1034,151 @@ module {
       // expected-error @+1 {{process count exceeds the operand inventory}}
       obelisk_sim.suspend.join all %process processes 2 to ^next : !obelisk_sim.process
     ^next:
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @empty_join {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.empty_join.bad.9000001"
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %value = arith.constant 0 : i8
+      // expected-error @+1 {{requires at least one child process}}
+      obelisk_sim.suspend.join all %value processes 0 to ^next : i8
+    ^next(%continued: i8):
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @task_result {
+    obelisk_sim.code_unit.decl 9000001 in 0 task hierarchy "test.task_result.bad.9000001"
+    obelisk_sim.scope.decl 0
+    // expected-error @+1 {{process and root entries must not return values}}
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> i8 attributes {entry_kind = 12 : i32, code_unit_id = 9000001 : i64} {
+      %value = arith.constant 0 : i8
+      obelisk_sim.return %value : i8
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @task_call_non_task {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.task_call_non_task.callee.9000001"
+    obelisk_sim.code_unit.decl 9000002 in 0 initial hierarchy "test.task_call_non_task.caller.9000002"
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @callee(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      obelisk_sim.return
+    }
+    obelisk_sim.func @caller(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
+      // expected-error @+1 {{callee must name a sibling task entry}}
+      obelisk_sim.task.call @callee(%ctx) arguments 1 to ^done : !obelisk_sim.context
+    ^done:
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @task_call_signature {
+    obelisk_sim.code_unit.decl 9000001 in 0 task hierarchy "test.task_call_signature.callee.9000001"
+    obelisk_sim.code_unit.decl 9000002 in 0 initial hierarchy "test.task_call_signature.caller.9000002"
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @callee(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %value: i8 {obelisk_sim.capture_kind = 1 : i32}) attributes {entry_kind = 12 : i32, code_unit_id = 9000001 : i64} {
+      obelisk_sim.return
+    }
+    obelisk_sim.func @caller(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
+      // expected-error @+1 {{argument types must match the task signature}}
+      obelisk_sim.task.call @callee(%ctx) arguments 1 to ^done : !obelisk_sim.context
+    ^done:
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @task_call_function {
+    obelisk_sim.code_unit.decl 9000001 in 0 task hierarchy "test.task_call_function.callee.9000001"
+    obelisk_sim.code_unit.decl 9000002 in 0 function hierarchy "test.task_call_function.caller.9000002"
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @callee(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 12 : i32, code_unit_id = 9000001 : i64} {
+      obelisk_sim.return
+    }
+    obelisk_sim.func @caller(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 8 : i32, code_unit_id = 9000002 : i64} {
+      // expected-error @+1 {{is not permitted in a zero-time function entry}}
+      obelisk_sim.task.call @callee(%ctx) arguments 1 to ^done : !obelisk_sim.context
+    ^done:
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @negative_control_enter {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.negative_control_enter.bad.9000001"
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      // expected-error @+1 {{control target ID must be positive}}
+      %control = obelisk_sim.control.enter 0
+      obelisk_sim.control.leave %control
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @negative_control_disable {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.negative_control_disable.bad.9000001"
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      // expected-error @+1 {{control target ID must be positive}}
+      obelisk_sim.control.disable 0
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @hierarchical_activation_disable {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.hierarchical_activation_disable.bad.9000001"
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %control = obelisk_sim.control.enter 1
+      // expected-error @+1 {{hierarchical disable must not name one activation token}}
+      obelisk_sim.control.disable 1 activation %control {hierarchical = true}
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @negative_static_once {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.negative_static_once.bad.9000001"
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      // expected-error @+1 {{static initialization ID must be positive}}
+      %first = obelisk_sim.static.once 0
       obelisk_sim.return
     }
   }

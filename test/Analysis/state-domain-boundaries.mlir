@@ -21,6 +21,8 @@ module {
     obelisk_sim.code_unit.decl 9000014 in 0 function hierarchy "test.boundaries.public_known.9000014"
     obelisk_sim.code_unit.decl 9000015 in 0 function hierarchy "test.boundaries.nested_known.9000015"
     obelisk_sim.code_unit.decl 9000016 in 0 function hierarchy "test.boundaries.noncall_known.9000016"
+    obelisk_sim.code_unit.decl 9000017 in 0 task hierarchy "test.boundaries.task_sink.9000017"
+    obelisk_sim.code_unit.decl 9000018 in 0 initial hierarchy "test.boundaries.task_caller.9000018"
     obelisk_sim.scope.decl 0
 
     obelisk_sim.func private @callee(
@@ -164,6 +166,24 @@ module {
       obelisk_sim.return %from_a : !obelisk_sim.logic<8>
     }
 
+    obelisk_sim.func private @task_sink(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %value: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 1 : i32})
+        attributes {entry_kind = 12 : i32, code_unit_id = 9000017 : i64} {
+      %resized = obelisk_sim.logic.resize %value signed = false : !obelisk_sim.logic<8> -> !obelisk_sim.logic<8>
+      obelisk_sim.return
+    }
+
+    obelisk_sim.func @task_caller(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000018 : i64} {
+      %bits = arith.constant 12 : i8
+      %known = obelisk_sim.logic.from_bits %bits : i8 -> !obelisk_sim.logic<8>
+      obelisk_sim.task.call @task_sink(%ctx, %known, %known) arguments 2 to ^done : !obelisk_sim.context, !obelisk_sim.logic<8>, !obelisk_sim.logic<8>
+    ^done(%continued: !obelisk_sim.logic<8>):
+      obelisk_sim.return
+    }
+
     obelisk_sim.func @root(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32} {
@@ -258,6 +278,12 @@ module {
 // CHECK-LABEL: func @root
 // CHECK-NEXT:   bb0.op1.result0: two-state (logic-from-bits)
 // CHECK-NEXT:   bb0.op2.result0: may-four-state (unknown-constant)
+// CHECK-LABEL: func @task_caller
+// CHECK-NEXT:   bb0.op1.result0: two-state (logic-from-bits)
+// CHECK-NEXT:   bb1.arg0: two-state (continuation)
+// CHECK-LABEL: func @task_sink
+// CHECK-NEXT:   bb0.arg1: two-state (call-actual)
+// CHECK-NEXT:   bb0.op0.result0: two-state (logic-resize)
 // CHECK-LABEL: func @unbound
 // CHECK-NEXT:   bb0.arg1: may-four-state (function-entry)
 // CHECK-LABEL: func @unknown_worker

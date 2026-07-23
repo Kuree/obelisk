@@ -93,7 +93,8 @@ bool isSuspension(Operation *operation) {
              sim::SimSuspendEdgeOp, sim::SimSuspendEdgeIffOp,
              sim::SimSuspendLevelOp, sim::SimSuspendAnyOp,
              sim::SimSuspendEventOp, sim::SimSuspendForeverOp,
-             sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp>(operation);
+             sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp,
+             sim::SimSuspendChildrenOp, sim::SimTaskCallOp>(operation);
 }
 
 uint32_t suspensionKind(Operation *operation) {
@@ -108,6 +109,7 @@ uint32_t suspensionKind(Operation *operation) {
       .Case<sim::SimSuspendAwaitOp>([](auto) { return 5; })
       .Case<sim::SimSuspendJoinOp>([](auto) { return 6; })
       .Case<sim::SimSuspendForeverOp>([](auto) { return 7; })
+      .Case<sim::SimSuspendChildrenOp>([](auto) { return 9; })
       .Default([](Operation *) { return 0; });
 }
 
@@ -201,8 +203,12 @@ LogicalResult validateProcessABI(ModuleOp module,
                   8) &&
       checkStruct({i32, i32, i64, i64, pointer, i32, i32, pointer, i64},
                   {0, 4, 8, 16, 24, 32, 36, 40, 48}, 56, 8) &&
-      checkStruct({i32, i32, i32, i32, pointer, i64, pointer, i64, i64, i64},
-                  {0, 4, 8, 12, 16, 24, 32, 40, 48, 56}, 64, 8) &&
+      checkStruct({i64, pointer, i32, i32}, {0, 8, 16, 20}, 24, 8) &&
+      checkStruct({i32, i32, i32, i32, pointer, i64, pointer, i64, i64, i64,
+                   pointer, i64, i32, i32, pointer, i64},
+                  {0, 4, 8, 12, 16, 24, 32, 40, 48, 56, 64, 72, 80, 84, 88,
+                   96},
+                  104, 8) &&
       checkStruct({pointer, i32, i32}, {0, 8, 12}, 16, 8) &&
       checkStruct({handle, i32, i32, i32, i32, pointer, pointer, pointer,
                    pointer, pointer, pointer, pointer},
@@ -237,7 +243,7 @@ FailureOr<StorageProperties> storageProperties(Type type,
   } else if (isa<sim::TimeType>(type)) {
     llvmType = llvm::Type::getInt64Ty(context);
   } else if (isa<sim::RefType, sim::NetType, sim::DriverType, sim::EventType,
-                 sim::ProcessType>(type)) {
+                 sim::ProcessType, sim::ControlType>(type)) {
     // Simulation handles remain frame-relative stable IDs. They must never
     // become host pointers in the canonical frame shared with bytecode.
     llvmType = llvm::Type::getInt64Ty(context);
@@ -480,6 +486,214 @@ public:
 
 private:
   const DenseSet<Value> *twoStateValues;
+};
+
+class SimTaskCallTypeConversion final
+    : public OpConversionPattern<sim::SimTaskCallOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimTaskCallOp operation, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    uint64_t logicalArguments = operation.getArgumentCount();
+    if (logicalArguments > adaptor.getOperands().size())
+      return failure();
+    uint64_t physicalArguments = 0;
+    for (ValueRange values :
+         ArrayRef(adaptor.getOperands()).take_front(logicalArguments))
+      physicalArguments += values.size();
+    for (auto [operand, converted] :
+         llvm::zip_equal(operation.getOperands(), adaptor.getOperands()))
+      if (isa<sim::RefType>(operand.getType()) && converted.size() == 1)
+        emitNativeStateRetain(rewriter, operation.getLoc(), converted.front());
+    OperationState state(operation.getLoc(), operation->getName());
+    state.addOperands(flatten(adaptor.getOperands()));
+    state.addSuccessors(operation->getSuccessors());
+    state.addAttributes(operation->getAttrs());
+    state.attributes.set(
+        operation.getArgumentCountAttrName(),
+        rewriter.getI64IntegerAttr(physicalArguments));
+    rewriter.replaceOp(operation, rewriter.create(state));
+    return success();
+  }
+};
+
+class SimDisableChildrenConversion final
+    : public OpConversionPattern<sim::SimDisableChildrenOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimDisableChildrenOp operation,
+                  OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    (void)adaptor;
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Type i32 = rewriter.getI32Type();
+    Value contextAddress = LLVM::AddressOfOp::create(
+        rewriter, operation.getLoc(), pointer, "__obelisk_current_context");
+    Value context = LLVM::LoadOp::create(rewriter, operation.getLoc(), pointer,
+                                         contextAddress, 8);
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, operation.getLoc(), TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_scheduler_disable_children"),
+            ValueRange{context})
+            .getResult();
+    LLVM::CallOp::create(
+        rewriter, operation.getLoc(), TypeRange{},
+        SymbolRefAttr::get(rewriter.getContext(),
+                           "obelisk_rt_v1_scheduler_fail"),
+        ValueRange{context, status});
+    rewriter.eraseOp(operation);
+    return success();
+  }
+};
+
+Value llvmConstant(OpBuilder &builder, Location location, Type type,
+                   uint64_t value);
+
+static std::pair<Value, Type>
+loadCurrentRuntimeContext(ConversionPatternRewriter &rewriter,
+                          Location location) {
+  Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+  Value address = LLVM::AddressOfOp::create(
+      rewriter, location, pointer, "__obelisk_current_context");
+  return {LLVM::LoadOp::create(rewriter, location, pointer, address, 8),
+          pointer};
+}
+
+static void reportRuntimeControlStatus(ConversionPatternRewriter &rewriter,
+                                       Location location, Value context,
+                                       Value status) {
+  LLVM::CallOp::create(
+      rewriter, location, TypeRange{},
+      SymbolRefAttr::get(rewriter.getContext(),
+                         "obelisk_rt_v1_scheduler_fail"),
+      ValueRange{context, status});
+}
+
+class SimControlEnterConversion final
+    : public OpConversionPattern<sim::SimControlEnterOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimControlEnterOp operation, OneToNOpAdaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location location = operation.getLoc();
+    auto [context, pointer] = loadCurrentRuntimeContext(rewriter, location);
+    Type i32 = rewriter.getI32Type();
+    Type i64 = rewriter.getI64Type();
+    Value one = llvmConstant(rewriter, location, i64, 1);
+    Value out = LLVM::AllocaOp::create(rewriter, location, pointer, i64, one,
+                                      8);
+    LLVM::StoreOp::create(rewriter, location,
+                          llvmConstant(rewriter, location, i64, 0), out, 8);
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_control_enter"),
+            ValueRange{context,
+                       llvmConstant(rewriter, location, i64,
+                                    operation.getTargetId()),
+                       out})
+            .getResult();
+    reportRuntimeControlStatus(rewriter, location, context, status);
+    Value activation =
+        LLVM::LoadOp::create(rewriter, location, i64, out, 8);
+    rewriter.replaceOp(operation, activation);
+    return success();
+  }
+};
+
+class SimControlLeaveConversion final
+    : public OpConversionPattern<sim::SimControlLeaveOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimControlLeaveOp operation, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getControl().size() != 1)
+      return failure();
+    Location location = operation.getLoc();
+    auto [context, pointer] = loadCurrentRuntimeContext(rewriter, location);
+    (void)pointer;
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_control_leave"),
+            ValueRange{context, adaptor.getControl().front()})
+            .getResult();
+    reportRuntimeControlStatus(rewriter, location, context, status);
+    rewriter.eraseOp(operation);
+    return success();
+  }
+};
+
+class SimControlDisableConversion final
+    : public OpConversionPattern<sim::SimControlDisableOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimControlDisableOp operation, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location location = operation.getLoc();
+    auto [context, pointer] = loadCurrentRuntimeContext(rewriter, location);
+    (void)pointer;
+    Value activation =
+        adaptor.getActivation().empty()
+            ? llvmConstant(rewriter, location, rewriter.getI64Type(), 0)
+            : adaptor.getActivation().front();
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_control_disable"),
+            ValueRange{context,
+                       llvmConstant(rewriter, location, rewriter.getI64Type(),
+                                    operation.getTargetId()),
+                       activation,
+                       llvmConstant(rewriter, location, rewriter.getI32Type(),
+                                    operation.getHierarchical() ? 1 : 0)})
+            .getResult();
+    reportRuntimeControlStatus(rewriter, location, context, status);
+    rewriter.eraseOp(operation);
+    return success();
+  }
+};
+
+class SimStaticOnceConversion final
+    : public OpConversionPattern<sim::SimStaticOnceOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimStaticOnceOp operation, OneToNOpAdaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location location = operation.getLoc();
+    auto [context, pointer] = loadCurrentRuntimeContext(rewriter, location);
+    (void)pointer;
+    Value claimed =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_static_once"),
+            ValueRange{context,
+                       llvmConstant(rewriter, location, rewriter.getI64Type(),
+                                    operation.getId())})
+            .getResult();
+    Value first = arith::TruncIOp::create(
+        rewriter, location, rewriter.getI1Type(), claimed);
+    rewriter.replaceOp(operation, first);
+    return success();
+  }
 };
 
 class SimDPICallTypeConversion final
@@ -1043,7 +1257,7 @@ Type convertProcessType(Type type, MLIRContext *context) {
           runtime::ProcessDescriptorType, runtime::ProcessInstanceType>(type))
     return LLVM::LLVMPointerType::get(context);
   if (isa<sim::RefType, sim::NetType, sim::DriverType, sim::EventType,
-          sim::ProcessType>(type))
+          sim::ProcessType, sim::ControlType>(type))
     return IntegerType::get(context, 64);
   if (isa<sim::TimeType>(type))
     return IntegerType::get(context, 64);
@@ -1265,6 +1479,37 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
   if (physical != operands.size())
     return operation->emitError(
         "converted continuation arity disagrees with frame analysis");
+
+  if (auto task = dyn_cast<sim::SimTaskCallOp>(operation)) {
+    Type i32 = builder.getI32Type();
+    Type i64 = builder.getI64Type();
+    storeAt(builder, location, instance, kInstanceContinuationOffset,
+            llvmConstant(builder, location, i32, continuationID), 4);
+    std::string helper =
+        (task.getCallee() + ".__obelisk_activate").str();
+    Value activation =
+        LLVM::CallOp::create(builder, location, TypeRange{i64},
+                             SymbolRefAttr::get(builder.getContext(), helper),
+                             task.getArguments())
+            .getResult();
+    publishAction(builder, location, instance, 3, 0, continuationID, 0,
+                  activation, 0);
+    Value final = llvmConstant(builder, location, builder.getI1Type(), 0);
+    Value save = LLVM::CoroSaveOp::create(
+        builder, location, LLVM::LLVMTokenType::get(builder.getContext()),
+        handle);
+    Value state = LLVM::CoroSuspendOp::create(
+        builder, location, builder.getI8Type(), save, final);
+    SmallVector<Block *> destinations{blocks.shims.lookup(continuation),
+                                      blocks.cleanup};
+    SmallVector<ValueRange> destinationOperands(2);
+    SmallVector<APInt> caseValues{APInt(8, 0), APInt(8, 1)};
+    LLVM::SwitchOp::create(builder, location, state, blocks.suspendReturn,
+                           ValueRange{}, caseValues, destinations,
+                           destinationOperands, ArrayRef<int32_t>{});
+    builder.eraseOp(operation);
+    return success();
+  }
 
   uint64_t waitOffset = waitOffsetAttr.getInt();
   uint64_t waitSize = waitSizeAttr.getInt();
@@ -1634,7 +1879,9 @@ makeProcessDescriptor(ModuleOp module, Location location, StringRef baseName,
             LLVM::ZeroOp::create(builder, location, descriptorType);
         descriptor = insertValue(builder, location, descriptor, handle, 0);
         descriptor = insertValue(builder, location, descriptor,
-                                 llvmConstant(builder, location, i32, 1), 1);
+                                 llvmConstant(builder, location, i32,
+                                              OBELISK_RT_ABI_GENERATION),
+                                 1);
         descriptor = insertValue(
             builder, location, descriptor,
             llvmConstant(builder, location, i32, hasDesignBytecode ? 3 : 1), 3);
@@ -3130,7 +3377,7 @@ LogicalResult lowerOrdinaryFunction(sim::SimFuncOp function) {
   IRRewriter rewriter(replacement.getContext());
   SmallVector<Operation *> operations;
   replacement.walk([&](Operation *operation) {
-    if (isa<sim::SimReturnOp, sim::SimCallOp>(operation))
+    if (isa<sim::SimReturnOp, sim::SimCallOp, sim::SimSpawnOp>(operation))
       operations.push_back(operation);
   });
   for (Operation *operation : operations) {
@@ -3139,8 +3386,7 @@ LogicalResult lowerOrdinaryFunction(sim::SimFuncOp function) {
       func::ReturnOp::create(rewriter, returnOp.getLoc(),
                              returnOp.getOperands());
       rewriter.eraseOp(returnOp);
-    } else {
-      auto call = cast<sim::SimCallOp>(operation);
+    } else if (auto call = dyn_cast<sim::SimCallOp>(operation)) {
       SmallVector<Type> convertedResults;
       for (Type type : call.getResultTypes())
         convertedResults.push_back(
@@ -3149,6 +3395,14 @@ LogicalResult lowerOrdinaryFunction(sim::SimFuncOp function) {
           func::CallOp::create(rewriter, call.getLoc(), call.getCallee(),
                                convertedResults, call.getOperands());
       rewriter.replaceOp(call, converted.getResults());
+    } else {
+      auto spawn = cast<sim::SimSpawnOp>(operation);
+      auto converted = LLVM::CallOp::create(
+          rewriter, spawn.getLoc(), TypeRange{rewriter.getI64Type()},
+          SymbolRefAttr::get(rewriter.getContext(),
+                             (spawn.getCallee() + ".__obelisk_spawn").str()),
+          spawn.getOperands());
+      rewriter.replaceOp(spawn, converted.getResults());
     }
   }
   return success();
@@ -3228,6 +3482,49 @@ LogicalResult threadProcessStateThroughCFG(sim::SimFuncOp function) {
   }
 
   DenseMap<Block *, DenseMap<Value, BlockArgument>> threadedValues;
+  // Suspension lowering may already have made some values explicit successor
+  // operands. Record those lanes before finding external uses so a value does
+  // not acquire a second continuation argument when it is also live through a
+  // later ordinary CFG edge.
+  for (Block &block : llvm::drop_begin(function.getBody())) {
+    for (auto [argumentIndex, argument] :
+         llvm::enumerate(block.getArguments())) {
+      Value incomingValue;
+      bool commonIncoming = true;
+      bool sawIncoming = false;
+      for (Block &predecessor : function.getBody()) {
+        auto branch =
+            dyn_cast<BranchOpInterface>(predecessor.getTerminator());
+        if (!branch)
+          continue;
+        for (auto [successorIndex, successor] :
+             llvm::enumerate(predecessor.getSuccessors())) {
+          if (successor != &block)
+            continue;
+          SuccessorOperands operands =
+              branch.getSuccessorOperands(successorIndex);
+          if (argumentIndex >= operands.size() ||
+              operands.isOperandProduced(argumentIndex)) {
+            commonIncoming = false;
+            break;
+          }
+          Value value = operands[argumentIndex];
+          if (!sawIncoming) {
+            incomingValue = value;
+            sawIncoming = true;
+          } else if (incomingValue != value) {
+            commonIncoming = false;
+            break;
+          }
+        }
+        if (!commonIncoming)
+          break;
+      }
+      if (sawIncoming && commonIncoming)
+        threadedValues[&block].try_emplace(incomingValue, argument);
+    }
+  }
+
   bool changed;
   do {
     changed = false;
@@ -4784,6 +5081,94 @@ public:
   }
 };
 
+LogicalResult makeProcessActivationHelper(
+    ModuleOp module, sim::SimFuncOp function,
+    const SimulationProcessFrameAnalysis &analysis) {
+  if (function.getEntryKind() != sim::EntryKind::Task)
+    return success();
+  MLIRContext *context = module.getContext();
+  OpBuilder builder(context);
+  Location location = function.getLoc();
+  Type pointer = LLVM::LLVMPointerType::get(context);
+  Type i32 = builder.getI32Type();
+  Type i64 = builder.getI64Type();
+  SmallVector<Type> arguments;
+  for (BlockArgument argument : function.getBody().front().getArguments())
+    arguments.push_back(convertProcessType(argument.getType(), context));
+  std::string helperName =
+      (function.getSymName() + ".__obelisk_activate").str();
+  if (module.lookupSymbol(helperName))
+    return success();
+  builder.setInsertionPointAfter(function);
+  auto helper = LLVM::LLVMFuncOp::create(
+      builder, location, helperName,
+      LLVM::LLVMFunctionType::get(i64, arguments, false));
+  Block *entry = helper.addEntryBlock(builder);
+  Block *created = new Block;
+  Block *failed = new Block;
+  helper.getBody().push_back(created);
+  helper.getBody().push_back(failed);
+  builder.setInsertionPointToStart(entry);
+  Value one = llvmConstant(builder, location, i64, 1);
+  Value outInstance =
+      LLVM::AllocaOp::create(builder, location, pointer, pointer, one, 8);
+  LLVM::StoreOp::create(builder, location,
+                        LLVM::ZeroOp::create(builder, location, pointer),
+                        outInstance, 8);
+  Value descriptor = LLVM::AddressOfOp::create(
+      builder, location, pointer,
+      (function.getSymName() + ".__obelisk_process_descriptor").str());
+  Value status =
+      LLVM::CallOp::create(
+          builder, location, TypeRange{i32},
+          SymbolRefAttr::get(context,
+                             "obelisk_rt_v1_process_instance_create"),
+          ValueRange{descriptor, outInstance})
+          .getResult();
+  Value succeeded = arith::CmpIOp::create(
+      builder, location, arith::CmpIPredicate::eq, status,
+      llvmConstant(builder, location, i32, 0));
+  LLVM::CondBrOp::create(builder, location, succeeded, created, failed);
+
+  builder.setInsertionPointToStart(failed);
+  LLVM::CallOp::create(
+      builder, location, TypeRange{},
+      SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
+      ValueRange{entry->getArgument(0), status});
+  LLVM::ReturnOp::create(builder, location,
+                         llvmConstant(builder, location, i64, 0));
+
+  builder.setInsertionPointToStart(created);
+  Value instance =
+      LLVM::LoadOp::create(builder, location, pointer, outInstance, 8);
+  Value frame =
+      loadAt(builder, location, instance, kInstanceFrameOffset, pointer, 8);
+  size_t physicalArgument = 0;
+  for (const ProcessFrameValue &slot : analysis.getEntryCaptureLayout()) {
+    if (slot.valueOffset == kNoOffset) {
+      ++physicalArgument;
+      continue;
+    }
+    if (physicalArgument >= entry->getNumArguments())
+      return helper.emitError("activation capture layout has too few arguments");
+    storeAt(builder, location, frame, slot.valueOffset,
+            entry->getArgument(physicalArgument++), slot.alignment);
+    if (slot.isFourState()) {
+      if (physicalArgument >= entry->getNumArguments())
+        return helper.emitError(
+            "activation four-state capture is missing its unknown plane");
+      storeAt(builder, location, frame, slot.unknownOffset,
+              entry->getArgument(physicalArgument++), slot.alignment);
+    }
+  }
+  if (physicalArgument != entry->getNumArguments())
+    return helper.emitError("activation capture layout has excess arguments");
+  Value encoded =
+      LLVM::PtrToIntOp::create(builder, location, i64, instance);
+  LLVM::ReturnOp::create(builder, location, encoded);
+  return success();
+}
+
 LogicalResult
 makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
                        const SimulationProcessFrameAnalysis &analysis,
@@ -4946,6 +5331,16 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
                            {pointer, pointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_fail",
                            LLVM::LLVMVoidType::get(context), {pointer, i32});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_scheduler_disable_children", i32, {pointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_control_enter", i32,
+                           {pointer, i64, pointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_control_leave", i32,
+                           {pointer, i64});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_control_disable", i32,
+                           {pointer, i64, i64, i32});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_static_once", i32,
+                           {pointer, i64});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_process_instance_destroy",
                            i32, {pointer});
   return success();
@@ -5187,9 +5582,9 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     function.walk(
         [&](Operation *operation) { suspendable |= isSuspension(operation); });
     bool process = function.getEntryKind() != sim::EntryKind::Function;
-    if (suspendable && failed(threadProcessStateThroughCFG(function)))
-      return WalkResult::interrupt();
     if (failed(insertAutomaticOwnerReleases(function)))
+      return WalkResult::interrupt();
+    if (suspendable && failed(threadProcessStateThroughCFG(function)))
       return WalkResult::interrupt();
     if (!suspendable && !process)
       return WalkResult::advance();
@@ -5290,7 +5685,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   addSimulationToRuntimeTypeConversions(packedConverter);
   packedConverter.addConversion([context](Type type) -> std::optional<Type> {
     if (isa<sim::RefType, sim::NetType, sim::DriverType, sim::EventType,
-            sim::ProcessType>(type))
+            sim::ProcessType, sim::ControlType>(type))
       return IntegerType::get(context, 64);
     return std::nullopt;
   });
@@ -5329,6 +5724,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       packedConverter, context, nativeTwoStateValues);
   packedPatterns.add<SimCallTypeConversion>(packedConverter, context,
                                             nativeTwoStateValues);
+  packedPatterns.add<SimTaskCallTypeConversion>(packedConverter, context);
   packedPatterns.add<SimDPICallTypeConversion>(packedConverter, context);
   packedPatterns.add<SimReturnTypeConversion,
                      AutomaticOwnerReleaseMarkerConversion,
@@ -5347,7 +5743,11 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                      SimSuspendTypeConversion<sim::SimSuspendEventOp>,
                      SimSuspendTypeConversion<sim::SimSuspendForeverOp>,
                      SimSuspendTypeConversion<sim::SimSuspendAwaitOp>,
-                     SimSuspendTypeConversion<sim::SimSuspendJoinOp>>(
+                     SimSuspendTypeConversion<sim::SimSuspendJoinOp>,
+                     SimSuspendTypeConversion<sim::SimSuspendChildrenOp>,
+                     SimDisableChildrenConversion, SimControlEnterConversion,
+                     SimControlLeaveConversion, SimControlDisableConversion,
+                     SimStaticOnceConversion>(
       packedConverter, context);
   packedPatterns.add<ContextHandleConversion<sim::SimContextStorageOp>>(
       packedConverter, context, stateLayout->storage);
@@ -5391,7 +5791,9 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       sim::SimDriverDynExtractOp, sim::SimDriverSubelementOp,
       sim::SimDriverArrayElementOp, sim::SimNBAEnqueueOp,
       sim::SimEventTriggerOp, sim::SimEventTriggeredOp, sim::SimEventEqualOp,
-      sim::SimBitsDynExtractOp>();
+      sim::SimDisableChildrenOp, sim::SimControlEnterOp,
+      sim::SimControlLeaveOp, sim::SimControlDisableOp,
+      sim::SimStaticOnceOp, sim::SimBitsDynExtractOp>();
   packedTarget
       .addIllegalOp<sim::SimAggregateDefaultOp, sim::SimAggregateConstructOp,
                     sim::SimAggregateExtractOp, sim::SimAggregateInsertOp,
@@ -5406,11 +5808,13 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       });
   packedTarget.addDynamicallyLegalOp<
       sim::SimCallOp, sim::SimDPICallOp, sim::SimSpawnOp, sim::SimReturnOp,
+      sim::SimTaskCallOp,
       sim::SimPackedFlattenOp, sim::SimPackedUnflattenOp,
       sim::SimSuspendDelayOp, sim::SimSuspendChangeOp, sim::SimSuspendEdgeOp,
       sim::SimSuspendEdgeIffOp, sim::SimSuspendLevelOp,
       sim::SimSuspendAnyOp, sim::SimSuspendEventOp, sim::SimSuspendForeverOp,
-      sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp>(
+      sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp,
+      sim::SimSuspendChildrenOp>(
       [&](Operation *operation) { return packedConverter.isLegal(operation); });
   packedTarget.addDynamicallyLegalDialect<
       sim::ObeliskSimulationDialect, arith::ArithDialect,
@@ -5501,6 +5905,9 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                [](const auto &left, const auto &right) {
                  return left.first < right.first;
                });
+    if (failed(
+            makeProcessActivationHelper(module, function, *entry.second)))
+      return failure();
     if (failed(makeProcessSpawnHelper(module, function, *entry.second,
                                       schedule)))
       return failure();

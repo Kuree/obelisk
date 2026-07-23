@@ -121,6 +121,11 @@ private:
   LogicalResult lowerWhile(Operation *op);
   LogicalResult lowerFor(Operation *op);
   LogicalResult lowerRepeat(Operation *op);
+  LogicalResult lowerFork(semantic::SVBlockStatementOp op);
+  LogicalResult lowerBlock(semantic::SVBlockStatementOp op);
+  LogicalResult lowerDisable(semantic::SVDisableStatementOp op);
+  FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>>
+  outlineForkBranch(Operation *branch, uint64_t forkNode, unsigned branchIndex);
   LogicalResult
   lowerVariableDeclaration(semantic::SVVariableDeclStatementOp op);
   LogicalResult lowerTiming(Operation *control, Operation *statement);
@@ -145,6 +150,7 @@ private:
   Block *addBlock();
   void setCurrent(Block *block);
   void emitBranch(Block *destination);
+  void emitControlLeaves(size_t first, Location location);
   InFlightDiagnostic unsupported(Operation *op);
 
   /// Signedness of a semantic node's own type, used to pick the signed or
@@ -161,6 +167,8 @@ private:
   llvm::StringMap<Value> lvalues;
   llvm::DenseMap<uint64_t, Value> nodeLvalues;
   llvm::StringMap<Value> localDefaults;
+  llvm::StringSet<> automaticLocals;
+  llvm::StringMap<Value> copyOutDestinations;
   llvm::SetVector<Value> sensitivity;
   llvm::SetVector<Value> *observedDependencies = nullptr;
   Value expressionPlaceholder;
@@ -170,8 +178,18 @@ private:
     Block *breakTarget;
     Block *continueTarget;
     SmallVector<Value> continueOperands;
+    size_t controlDepth;
   };
   SmallVector<LoopTargets> loopTargets;
+  struct ControlScope {
+    std::string path;
+    uint64_t targetID;
+    Value activation;
+    Block *exit;
+  };
+  SmallVector<ControlScope> controlScopes;
+  llvm::StringMap<uint64_t> inheritedControlIDs;
+  uint64_t nextForkOrdinal = 0;
 };
 
 UnitLowering::UnitLowering(sim::SimFuncOp function)
@@ -179,6 +197,16 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
       current(&function.getBody().front()) {
   builder.setInsertionPointToStart(current);
   auto bindings = function->getAttrOfType<ArrayAttr>(bindingsAttrName);
+  if (auto inherited =
+          function->getAttrOfType<ArrayAttr>("inherited_controls"))
+    for (Attribute attribute : inherited) {
+      auto entry = dyn_cast<DictionaryAttr>(attribute);
+      auto path = entry ? entry.getAs<StringAttr>("path") : StringAttr{};
+      auto id = entry ? entry.getAs<IntegerAttr>("id") : IntegerAttr{};
+      if (path && id)
+        inheritedControlIDs[path.getValue()] =
+            id.getValue().getZExtValue();
+    }
   if (!bindings)
     return;
   for (Attribute attr : bindings) {
@@ -187,6 +215,10 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
     if (auto argument = dictionary.getAs<IntegerAttr>("argument")) {
       Value value = function.getBody().front().getArgument(
           argument.getValue().getZExtValue());
+      if (dictionary.contains("copy_out_destination")) {
+        copyOutDestinations[path] = value;
+        continue;
+      }
       if (dictionary.contains("formal_local")) {
         Value local = sim::SimRefAllocOp::create(
             builder, function.getLoc(),
@@ -203,6 +235,17 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
           nodeLvalues[node.getValue().getZExtValue()] = value;
         continue;
       }
+      if (function.getEntryKind() == sim::EntryKind::Task) {
+        Value local = values.lookup(path);
+        if (local && local != value && isa<sim::RefType>(local.getType()) &&
+            local.getType() == value.getType()) {
+          Value initial = sim::SimRefLoadOp::create(
+              builder, function.getLoc(),
+              cast<sim::RefType>(local.getType()).getElementType(), local);
+          sim::SimRefStoreOp::create(builder, function.getLoc(), initial,
+                                     value);
+        }
+      }
       values[path] = value;
       if (isa<sim::RefType, sim::NetType, sim::DriverType>(value.getType()))
         lvalues.try_emplace(path, value);
@@ -215,14 +258,28 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
     Value initial = createDefaultValue(builder, function.getLoc(), type);
     if (!initial)
       continue;
+    localDefaults[path] = initial;
+    bool isReturn = dictionary.contains("is_return");
+    if (isReturn)
+      returnPath = path.str();
+    if (dictionary.contains("automatic")) {
+      automaticLocals.insert(path);
+      // Compiler-generated function return variables have no declaration
+      // statement at which to allocate their activation-local storage.
+      if (isReturn) {
+        Value local = sim::SimRefAllocOp::create(
+            builder, function.getLoc(),
+            sim::RefType::get(function.getContext(), type), initial);
+        values[path] = local;
+        lvalues[path] = local;
+      }
+      continue;
+    }
     Value local = sim::SimRefAllocOp::create(
         builder, function.getLoc(),
         sim::RefType::get(function.getContext(), type), initial);
     values[path] = local;
     lvalues[path] = local;
-    localDefaults[path] = initial;
-    if (dictionary.contains("is_return"))
-      returnPath = path.str();
   }
 }
 
@@ -240,6 +297,12 @@ void UnitLowering::setCurrent(Block *block) {
 void UnitLowering::emitBranch(Block *destination) {
   if (current->empty() || !current->back().hasTrait<OpTrait::IsTerminator>())
     cf::BranchOp::create(builder, function.getLoc(), destination);
+}
+
+void UnitLowering::emitControlLeaves(size_t first, Location location) {
+  for (const ControlScope &scope :
+       llvm::reverse(ArrayRef(controlScopes).drop_front(first)))
+    sim::SimControlLeaveOp::create(builder, location, scope.activation);
 }
 
 InFlightDiagnostic UnitLowering::unsupported(Operation *op) {
@@ -401,6 +464,30 @@ FailureOr<Value> UnitLowering::toLogic(Value value, Location location) {
 
 LogicalResult UnitLowering::emitFunctionReturn(
     Location location, std::optional<Value> explicitResult, bool resultSigned) {
+  if (function.getEntryKind() == sim::EntryKind::Task) {
+    if (explicitResult) {
+      emitError(location) << "task return cannot carry a value";
+      return failure();
+    }
+    for (StringRef path : copyOutPaths) {
+      Value storage = lvalues.lookup(path);
+      Value destination = copyOutDestinations.lookup(path);
+      if (!storage || !destination ||
+          !isa<sim::RefType>(storage.getType()) ||
+          storage.getType() != destination.getType()) {
+        function.emitError()
+            << "task copy-out formal has inconsistent activation storage: "
+            << path;
+        return failure();
+      }
+      Value value = sim::SimRefLoadOp::create(
+          builder, location,
+          cast<sim::RefType>(storage.getType()).getElementType(), storage);
+      sim::SimRefStoreOp::create(builder, location, value, destination);
+    }
+    sim::SimReturnOp::create(builder, location, ValueRange{});
+    return success();
+  }
   if (function.getEntryKind() != sim::EntryKind::Function) {
     if (explicitResult) {
       emitError(location) << "non-function entry cannot return a value";
@@ -1924,6 +2011,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     unsupported(op) << " (indirect or system call)";
     return failure();
   }
+  bool directTask = op->hasAttr("obelisk_sim.is_task");
   SmallVector<Value> operands{function.getBody().front().getArgument(0)};
   auto formals = op->getAttrOfType<ArrayAttr>(calleeFormalsAttrName);
   if (!formals || formals.size() != children.size()) {
@@ -2025,6 +2113,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       recordSensitivity(*destination);
     }
     operands.push_back(initial);
+    if (directTask)
+      operands.push_back(*destination);
     copyOuts.push_back(
         {*destination, formalType, formalSigned, dpiCategory});
   }
@@ -2051,14 +2141,15 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       op->getAttrOfType<BoolAttr>("obelisk.dpi.is_task");
   bool dpiTask = dpiTaskAttr && dpiTaskAttr.getValue();
   SmallVector<Type> callResultTypes;
-  if (!dpiTask) {
+  if (!dpiTask && !directTask) {
     FailureOr<Type> resultType = getNormalizedSemanticType(op);
     if (failed(resultType))
       return failure();
     callResultTypes.push_back(*resultType);
   }
-  for (const CopyOut &copyOut : copyOuts)
-    callResultTypes.push_back(copyOut.formalType);
+  if (!directTask)
+    for (const CopyOut &copyOut : copyOuts)
+      callResultTypes.push_back(copyOut.formalType);
   ValueRange callResults;
   if (auto importID =
           op->getAttrOfType<IntegerAttr>("obelisk.dpi.import_id")) {
@@ -2125,13 +2216,21 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     sim::SimStatusCheckOp::create(builder, location,
                                   call.getResults().back());
     callResults = call.getResults().drop_back();
-  } else {
+  } else if (!directTask) {
     auto call = sim::SimCallOp::create(builder, location, callResultTypes,
                                        callee, operands, ArrayAttr{},
                                        ArrayAttr{});
     callResults = call.getResults();
+  } else {
+    Block *continuation = addBlock();
+    sim::SimTaskCallOp::create(
+        builder, location, callee, operands,
+        builder.getI64IntegerAttr(operands.size()),
+        sim::ContinuationSiteAttr{}, continuation);
+    setCurrent(continuation);
   }
-  for (auto [index, copyOut] : llvm::enumerate(copyOuts)) {
+  if (!directTask)
+    for (auto [index, copyOut] : llvm::enumerate(copyOuts)) {
     auto destinationType =
         cast<sim::RefType>(copyOut.destination.getType()).getElementType();
     FailureOr<Value> converted =
@@ -2141,8 +2240,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       return failure();
     sim::SimRefStoreOp::create(builder, location, *converted,
                                copyOut.destination);
-  }
-  if (!dpiTask)
+    }
+  if (!dpiTask && !directTask)
     return callResults.front();
   return arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                    builder.getBoolAttr(false))
@@ -3213,7 +3312,8 @@ LogicalResult UnitLowering::lowerWhile(Operation *op) {
     return failure();
   cf::CondBranchOp::create(builder, location, *condition, bodyBlock,
                            ValueRange{}, exitBlock, ValueRange{});
-  loopTargets.push_back({exitBlock, conditionBlock, {}});
+  loopTargets.push_back(
+      {exitBlock, conditionBlock, {}, controlScopes.size()});
   setCurrent(bodyBlock);
   if (failed(lowerStatement(children[1])))
     return failure();
@@ -3248,7 +3348,7 @@ LogicalResult UnitLowering::lowerFor(Operation *op) {
   cf::CondBranchOp::create(builder, location, *condition, bodyBlock,
                            ValueRange{}, exitBlock, ValueRange{});
 
-  loopTargets.push_back({exitBlock, stepBlock, {}});
+  loopTargets.push_back({exitBlock, stepBlock, {}, controlScopes.size()});
   setCurrent(bodyBlock);
   if (failed(lowerStatement(children[2])))
     return failure();
@@ -3299,7 +3399,8 @@ LogicalResult UnitLowering::lowerRepeat(Operation *op) {
   cf::CondBranchOp::create(builder, location, more, body, ValueRange{}, exit,
                            ValueRange{});
 
-  loopTargets.push_back({exit, step, {header->getArgument(0)}});
+  loopTargets.push_back(
+      {exit, step, {header->getArgument(0)}, controlScopes.size()});
   setCurrent(body);
   if (failed(lowerStatement(children[1])))
     return failure();
@@ -3323,17 +3424,71 @@ UnitLowering::lowerVariableDeclaration(semantic::SVVariableDeclStatementOp op) {
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
   StringRef path = op.getReferencedPath();
+  Value initial = localDefaults.lookup(path);
+  if (automaticLocals.contains(path)) {
+    if (!initial) {
+      emitError(location)
+          << "automatic variable declaration has no frozen binding type";
+      return failure();
+    }
+    if (!children.empty()) {
+      FailureOr<Value> lowered = lowerExpression(children.front());
+      if (failed(lowered))
+        return failure();
+      FailureOr<Value> converted =
+          convert(*lowered, initial.getType(), isSignedNode(children.front()),
+                  location);
+      if (failed(converted))
+        return failure();
+      initial = *converted;
+    }
+    Value destination = sim::SimRefAllocOp::create(
+        builder, location,
+        sim::RefType::get(function.getContext(), initial.getType()), initial);
+    values[path] = destination;
+    lvalues[path] = destination;
+    return success();
+  }
   Value destination = lvalues.lookup(path);
   if (!destination || !isa<sim::RefType>(destination.getType())) {
     emitError(location) << "variable declaration has no reference binding";
     return failure();
   }
-  Value initial = localDefaults.lookup(path);
-  if (!children.empty()) {
-    if (!localDefaults.count(path)) {
-      unsupported(op) << " (static local initializer)";
+  // Descriptor-backed static locals are initialized once by the root
+  // initialization phase. The first direct activation claims a stable site;
+  // later and concurrent activations skip the initializer.
+  if (!initial && children.empty())
+    return success();
+  if (!initial) {
+    auto siteIDAttr =
+        op->getAttrOfType<IntegerAttr>("obelisk_sim.static_site_id");
+    if (!siteIDAttr || !siteIDAttr.getValue().isStrictlyPositive()) {
+      emitError(location)
+          << "static declaration has no prepared initialization site ID";
       return failure();
     }
+    uint64_t siteID = siteIDAttr.getValue().getZExtValue();
+    Value first = sim::SimStaticOnceOp::create(
+        builder, location, builder.getI64IntegerAttr(siteID));
+    Block *initialize = addBlock();
+    Block *continuation = addBlock();
+    cf::CondBranchOp::create(builder, location, first, initialize,
+                             ValueRange{}, continuation, ValueRange{});
+    setCurrent(initialize);
+    FailureOr<Value> lowered = lowerExpression(children.front());
+    if (failed(lowered))
+      return failure();
+    FailureOr<Value> converted = convert(
+        *lowered, cast<sim::RefType>(destination.getType()).getElementType(),
+        isSignedNode(children.front()), location);
+    if (failed(converted))
+      return failure();
+    sim::SimRefStoreOp::create(builder, location, *converted, destination);
+    cf::BranchOp::create(builder, location, continuation);
+    setCurrent(continuation);
+    return success();
+  }
+  if (!children.empty()) {
     FailureOr<Value> lowered = lowerExpression(children.front());
     if (failed(lowered))
       return failure();
@@ -3346,6 +3501,280 @@ UnitLowering::lowerVariableDeclaration(semantic::SVVariableDeclStatementOp op) {
   }
   if (initial)
     sim::SimRefStoreOp::create(builder, location, initial, destination);
+  return success();
+}
+
+FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>>
+UnitLowering::outlineForkBranch(Operation *branch, uint64_t forkNode,
+                                unsigned branchIndex) {
+  auto design = function->getParentOfType<sim::SimDesignOp>();
+  if (!design)
+    return function.emitError("fork outlining requires a simulation design"),
+           failure();
+
+  Location location = getSemanticLocation(branch);
+  MLIRContext *context = function.getContext();
+  SmallVector<Type> inputs;
+  SmallVector<Value> captures;
+  SmallVector<DictionaryAttr> argumentAttrs;
+  SmallVector<Attribute> bindings;
+
+  Value processContext = function.getBody().front().getArgument(0);
+  inputs.push_back(processContext.getType());
+  captures.push_back(processContext);
+  argumentAttrs.push_back(
+      captureMetadata(builder, sim::CaptureKind::Context));
+
+  llvm::StringSet<> capturedPaths;
+  ArrayAttr parentBindings =
+      function->getAttrOfType<ArrayAttr>(bindingsAttrName);
+  if (parentBindings)
+    for (Attribute attribute : parentBindings) {
+      auto binding = dyn_cast<DictionaryAttr>(attribute);
+      auto pathAttr = binding ? binding.getAs<StringAttr>("path")
+                              : StringAttr{};
+      if (!pathAttr || !capturedPaths.insert(pathAttr.getValue()).second)
+        continue;
+      Value capture = values.lookup(pathAttr.getValue());
+      if (!capture)
+        capture = lvalues.lookup(pathAttr.getValue());
+      if (!capture)
+        continue;
+      unsigned argument = inputs.size();
+      inputs.push_back(capture.getType());
+      captures.push_back(capture);
+      argumentAttrs.push_back(
+          captureMetadata(builder, sim::CaptureKind::Formal));
+      bindings.push_back(builder.getDictionaryAttr({
+          builder.getNamedAttr("path", pathAttr),
+          builder.getNamedAttr("argument",
+                               builder.getI64IntegerAttr(argument)),
+      }));
+    }
+
+  uint64_t ordinal = nextForkOrdinal++;
+  std::string symbol =
+      (function.getSymName() + ".fork." + Twine(forkNode) + "." +
+       Twine(ordinal) + "." + Twine(branchIndex))
+          .str();
+  uint64_t parentID = function.getCodeUnitId().value_or(0);
+  uint64_t scopeID = 0;
+  std::string parentHierarchy = function.getSymName().str();
+  for (sim::SimCodeUnitDeclOp declaration :
+       design.getBody().front().getOps<sim::SimCodeUnitDeclOp>()) {
+    if (declaration.getId() != parentID)
+      continue;
+    scopeID = declaration.getScopeId();
+    parentHierarchy = declaration.getHierarchicalName().str();
+    break;
+  }
+  std::string hierarchy =
+      (Twine(parentHierarchy) + ".$fork." + Twine(forkNode) + "." +
+       Twine(branchIndex))
+          .str();
+  auto codeUnitIDAttr =
+      branch->getAttrOfType<IntegerAttr>("obelisk_sim.fork_code_unit_id");
+  if (!codeUnitIDAttr || !codeUnitIDAttr.getValue().isStrictlyPositive())
+    return emitError(location) << "fork branch has no prepared code-unit ID",
+           failure();
+  uint64_t codeUnitID = codeUnitIDAttr.getValue().getZExtValue();
+
+  OpBuilder outlineBuilder(function);
+  outlineBuilder.setInsertionPoint(function);
+  sim::SimCodeUnitDeclOp::create(
+      outlineBuilder, location, codeUnitID, scopeID, sim::EntryKind::Fork,
+      outlineBuilder.getStringAttr(hierarchy),
+      outlineBuilder.getStringAttr("fork branch"),
+      outlineBuilder.getUnitAttr());
+
+  SmallVector<NamedAttribute> attributes{
+      outlineBuilder.getNamedAttr(bindingsAttrName,
+                                  outlineBuilder.getArrayAttr(bindings)),
+      outlineBuilder.getNamedAttr("code_unit_id",
+                                  outlineBuilder.getI64IntegerAttr(codeUnitID)),
+      outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
+  };
+  SmallVector<Attribute> inheritedControls;
+  llvm::StringMap<uint64_t> inherited = inheritedControlIDs;
+  for (const ControlScope &scope : controlScopes)
+    inherited[scope.path] = scope.targetID;
+  SmallVector<StringRef> inheritedPaths;
+  inheritedPaths.reserve(inherited.size());
+  for (const auto &entry : inherited)
+    inheritedPaths.push_back(entry.getKey());
+  llvm::sort(inheritedPaths);
+  for (StringRef path : inheritedPaths)
+    inheritedControls.push_back(outlineBuilder.getDictionaryAttr({
+        outlineBuilder.getNamedAttr("path",
+                                    outlineBuilder.getStringAttr(path)),
+        outlineBuilder.getNamedAttr(
+            "id", outlineBuilder.getI64IntegerAttr(inherited.lookup(path))),
+    }));
+  if (!inheritedControls.empty())
+    attributes.push_back(outlineBuilder.getNamedAttr(
+        "inherited_controls",
+        outlineBuilder.getArrayAttr(inheritedControls)));
+  const StringRef inheritedAttributes[] = {
+      delayScaleAttrName, delayQuantumAttrName, "home_region", "domain"};
+  for (StringRef name : inheritedAttributes)
+    if (Attribute attribute = function->getAttr(name))
+      attributes.push_back(outlineBuilder.getNamedAttr(name, attribute));
+  attributes.push_back(outlineBuilder.getNamedAttr(
+      sim::metadata::hierarchicalName,
+      outlineBuilder.getStringAttr(hierarchy)));
+
+  auto outlined = sim::SimFuncOp::create(
+      outlineBuilder, location, symbol,
+      FunctionType::get(context, inputs, TypeRange{}), sim::EntryKind::Fork,
+      attributes, argumentAttrs);
+  SymbolTable::setSymbolVisibility(outlined,
+                                   SymbolTable::Visibility::Private);
+
+  OpBuilder bodyBuilder =
+      OpBuilder::atBlockEnd(&outlined.getBody().front());
+  Operation *root = bodyBuilder.clone(*branch);
+  UnitLowering nested(outlined);
+  if (failed(nested.lower({root}))) {
+    outlined.erase();
+    return failure();
+  }
+  root->erase();
+  outlined->setAttr(sim::metadata::lowered, builder.getUnitAttr());
+  return std::make_pair(outlined, std::move(captures));
+}
+
+LogicalResult UnitLowering::lowerFork(semantic::SVBlockStatementOp op) {
+  Location location = getSemanticLocation(op);
+  if (function.getEntryKind() == sim::EntryKind::Function &&
+      op.getBlockKind() != semantic::SVStatementBlockKind::JoinNone) {
+    emitError(location)
+        << "a fork in a zero-time function must use join_none";
+    return failure();
+  }
+  SmallVector<Operation *> contents = getChildren(op);
+  SmallVector<Operation *> branches;
+  if (contents.size() == 1 &&
+      isa<semantic::SVStatementListOp>(contents.front()))
+    branches = getChildren(contents.front());
+  else
+    branches = contents;
+
+  // Declarations in the fork block are initialized in lexical order before
+  // any child starts. Slang places them before the branch statements.
+  while (!branches.empty() &&
+         isa<semantic::SVVariableDeclStatementOp>(branches.front())) {
+    if (failed(lowerVariableDeclaration(
+            cast<semantic::SVVariableDeclStatementOp>(branches.front()))))
+      return failure();
+    branches.erase(branches.begin());
+  }
+
+  uint64_t forkNode =
+      op->getAttrOfType<IntegerAttr>("node_id")
+          ? op->getAttrOfType<IntegerAttr>("node_id").getValue().getZExtValue()
+          : nextForkOrdinal;
+  SmallVector<Value> processes;
+  for (auto [index, branch] : llvm::enumerate(branches)) {
+    FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> outlined =
+        outlineForkBranch(branch, forkNode, index);
+    if (failed(outlined))
+      return failure();
+    processes.push_back(
+        sim::SimSpawnOp::create(builder, location,
+                                outlined->first.getSymNameAttr(),
+                                outlined->second, ArrayAttr{}, ArrayAttr{})
+            .getProcess());
+  }
+
+  semantic::SVStatementBlockKind kind = op.getBlockKind();
+  if (kind == semantic::SVStatementBlockKind::JoinNone || processes.empty())
+    return success();
+  Block *continuation = addBlock();
+  sim::JoinKind joinKind =
+      kind == semantic::SVStatementBlockKind::JoinAny ? sim::JoinKind::Any
+                                                       : sim::JoinKind::All;
+  sim::SimSuspendJoinOp::create(builder, location, joinKind, processes,
+                                processes.size(),
+                                sim::ContinuationSiteAttr{}, continuation);
+  setCurrent(continuation);
+  return success();
+}
+
+LogicalResult UnitLowering::lowerBlock(semantic::SVBlockStatementOp op) {
+  auto path = op.getBlockPathAttr();
+  auto lowerContents = [&]() {
+    if (op.getBlockKind() == semantic::SVStatementBlockKind::Sequential)
+      return lowerSequence(getChildren(op));
+    return lowerFork(op);
+  };
+  if (!path)
+    return lowerContents();
+
+  Location location = getSemanticLocation(op);
+  auto targetIDAttr =
+      op->getAttrOfType<IntegerAttr>("obelisk_sim.control_target_id");
+  if (!targetIDAttr || !targetIDAttr.getValue().isStrictlyPositive()) {
+    emitError(location) << "named block has no prepared control ID";
+    return failure();
+  }
+  uint64_t targetID = targetIDAttr.getValue().getZExtValue();
+  Value activation = sim::SimControlEnterOp::create(
+      builder, location, builder.getI64IntegerAttr(targetID));
+  Block *exit = addBlock();
+  controlScopes.push_back(
+      {path.getValue().str(), targetID, activation, exit});
+  LogicalResult result = lowerContents();
+  controlScopes.pop_back();
+  if (failed(result))
+    return failure();
+  if (current->empty() || !current->back().hasTrait<OpTrait::IsTerminator>()) {
+    sim::SimControlLeaveOp::create(builder, location, activation);
+    cf::BranchOp::create(builder, location, exit);
+  }
+  setCurrent(exit);
+  return success();
+}
+
+LogicalResult UnitLowering::lowerDisable(semantic::SVDisableStatementOp op) {
+  Location location = getSemanticLocation(op);
+  auto path = op.getTargetPathAttr();
+  if (!path) {
+    unsupported(op) << " (unresolved disable target)";
+    return failure();
+  }
+  auto targetIDAttr =
+      op->getAttrOfType<IntegerAttr>("obelisk_sim.control_target_id");
+  if (!targetIDAttr || !targetIDAttr.getValue().isStrictlyPositive()) {
+    emitError(location) << "disable has no prepared control ID";
+    return failure();
+  }
+  uint64_t targetID = targetIDAttr.getValue().getZExtValue();
+  bool hierarchical = op.getIsHierarchical();
+  for (const ControlScope &scope : llvm::reverse(controlScopes)) {
+    if (scope.path == path.getValue()) {
+      sim::SimControlDisableOp::create(
+          builder, location, builder.getI64IntegerAttr(targetID),
+          hierarchical ? Value{} : scope.activation,
+          builder.getBoolAttr(hierarchical));
+      cf::BranchOp::create(builder, location, scope.exit);
+      setCurrent(addBlock());
+      return success();
+    }
+  }
+  if (inheritedControlIDs.contains(path.getValue())) {
+    sim::SimControlDisableOp::create(
+        builder, location, builder.getI64IntegerAttr(targetID), Value{},
+        builder.getBoolAttr(hierarchical));
+    sim::SimReturnOp::create(builder, location, ValueRange{});
+    setCurrent(addBlock());
+    return success();
+  }
+
+  // A resolved target outside the lexical activation stack is hierarchical:
+  // disable every live activation of that exact elaborated block identity.
+  sim::SimControlDisableOp::create(
+      builder, location, builder.getI64IntegerAttr(targetID), Value{},
+      builder.getBoolAttr(true));
   return success();
 }
 
@@ -3364,12 +3793,7 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
     return success(succeeded(lowerExpression(children.front())));
   }
   if (auto block = dyn_cast<semantic::SVBlockStatementOp>(op)) {
-    if (block.getBlockKind() != semantic::SVStatementBlockKind::Sequential) {
-      unsupported(op) << " (fork/join branch outlining and child-process "
-                         "synchronization)";
-      return failure();
-    }
-    return lowerSequence(children);
+    return lowerBlock(block);
   }
   if (isa<semantic::SVStatementListOp>(op))
     return lowerSequence(children);
@@ -3387,13 +3811,19 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
     return failure();
   }
   if (isa<semantic::SVWaitForkStatementOp>(op)) {
-    unsupported(op) << " (wait fork child-process synchronization)";
-    return failure();
+    Block *continuation = addBlock();
+    sim::SimSuspendChildrenOp::create(
+        builder, location, ValueRange{}, sim::ContinuationSiteAttr{},
+        continuation);
+    setCurrent(continuation);
+    return success();
   }
   if (isa<semantic::SVDisableForkStatementOp>(op)) {
-    unsupported(op) << " (disable fork descendant cancellation)";
-    return failure();
+    sim::SimDisableChildrenOp::create(builder, location);
+    return success();
   }
+  if (auto disable = dyn_cast<semantic::SVDisableStatementOp>(op))
+    return lowerDisable(disable);
   if (auto trigger = dyn_cast<semantic::SVEventTriggerStatementOp>(op))
     return lowerEventTrigger(trigger);
   if (auto conditional = dyn_cast<semantic::SVConditionalStatementOp>(op))
@@ -3411,6 +3841,7 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
       emitError(location) << "break is not nested in a loop";
       return failure();
     }
+    emitControlLeaves(loopTargets.back().controlDepth, location);
     cf::BranchOp::create(builder, location, loopTargets.back().breakTarget);
     setCurrent(addBlock());
     return success();
@@ -3420,6 +3851,7 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
       emitError(location) << "continue is not nested in a loop";
       return failure();
     }
+    emitControlLeaves(loopTargets.back().controlDepth, location);
     cf::BranchOp::create(builder, location, loopTargets.back().continueTarget,
                          loopTargets.back().continueOperands);
     setCurrent(addBlock());
@@ -3435,6 +3867,7 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
       result = *value;
       resultSigned = isSignedNode(children.front());
     }
+    emitControlLeaves(0, location);
     if (failed(emitFunctionReturn(location, result, resultSigned)))
       return failure();
     setCurrent(addBlock());
@@ -3502,7 +3935,8 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   }
 
   if (!loopsForever) {
-    if (entryKind == sim::EntryKind::Function)
+    if (entryKind == sim::EntryKind::Function ||
+        entryKind == sim::EntryKind::Task)
       return emitFunctionReturn(function.getLoc(), std::nullopt);
     sim::SimReturnOp::create(builder, function.getLoc(), ValueRange{});
     return success();
@@ -3548,6 +3982,8 @@ class ObeliskSimLowerUnitPass
 public:
   void runOnOperation() override {
     sim::SimFuncOp function = getOperation();
+    if (function->hasAttr(sim::metadata::lowered))
+      return;
     if (function.getEntryKind() == sim::EntryKind::RootInitializer)
       return;
     // Imported DPI declarations deliberately have no executable body. Their
@@ -3576,6 +4012,9 @@ public:
       source->erase();
     if (failed(result))
       signalPassFailure();
+    else
+      function->setAttr(sim::metadata::lowered,
+                        UnitAttr::get(function.getContext()));
   }
 };
 

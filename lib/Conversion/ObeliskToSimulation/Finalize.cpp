@@ -55,7 +55,7 @@ static bool isExecutableType(Type type) {
          isa<runtime::StatusType>(type) ||
          isa<sim::ContextType, sim::BytesType, sim::LogicType, sim::TimeType,
              sim::RefType, sim::NetType, sim::DriverType, sim::EventType,
-             sim::ProcessType>(type) ||
+             sim::ProcessType, sim::ControlType>(type) ||
          sim::isAggregateType(type);
 }
 
@@ -126,7 +126,7 @@ void ObeliskSimFinalizePass::runOnOperation() {
       });
       named.getValue().walk([&](SymbolRefAttr reference) {
         bool callTarget =
-            isa<sim::SimCallOp, sim::SimSpawnOp>(op) &&
+            isa<sim::SimCallOp, sim::SimTaskCallOp, sim::SimSpawnOp>(op) &&
             named.getName() == sim::SimCallOp::getCalleeAttrName(op->getName());
         bool graphReference =
             isa<sim::SimDesignOp>(op) &&
@@ -151,6 +151,7 @@ void ObeliskSimFinalizePass::runOnOperation() {
     function->removeAttr(bindingsAttrName);
     function->removeAttr(delayScaleAttrName);
     function->removeAttr(delayQuantumAttrName);
+    function->removeAttr(sim::metadata::lowered);
   });
 
   if (invalid)

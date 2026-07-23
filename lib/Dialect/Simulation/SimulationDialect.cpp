@@ -1068,6 +1068,13 @@ static LogicalResult verifyNonnegative(Operation *op, IntegerAttr attr,
   return success();
 }
 
+static LogicalResult verifyPositive(Operation *op, IntegerAttr attr,
+                                    StringRef name) {
+  if (!attr.getValue().isStrictlyPositive())
+    return op->emitOpError() << name << " must be positive";
+  return success();
+}
+
 static std::optional<CaptureKind> getCaptureKind(DictionaryAttr attrs) {
   if (!attrs)
     return std::nullopt;
@@ -1564,7 +1571,7 @@ LogicalResult SimFuncOp::verify() {
       if (isa<SimSuspendDelayOp, SimSuspendChangeOp, SimSuspendEdgeOp,
               SimSuspendEdgeIffOp, SimSuspendLevelOp, SimSuspendAnyOp,
               SimSuspendEventOp, SimSuspendForeverOp, SimSuspendAwaitOp,
-              SimSuspendJoinOp>(op)) {
+              SimSuspendJoinOp, SimSuspendChildrenOp>(op)) {
         op->emitOpError("is not permitted in a zero-time function entry");
         return WalkResult::interrupt();
       }
@@ -1637,6 +1644,58 @@ LogicalResult SimCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (getOperandTypes() != callee.getFunctionType().getInputs() ||
       getResultTypes() != callee.getFunctionType().getResults())
     return emitOpError("operand and result types must match callee signature");
+  return success();
+}
+
+static LogicalResult verifyContinuation(Operation *op,
+                                        ValueRange continuationOperands,
+                                        Block *continuation);
+
+Operation::operand_range SimTaskCallOp::getArguments() {
+  size_t count = getArgumentCountAttr().getValue().isNegative()
+                     ? 0
+                     : std::min<uint64_t>(getArgumentCount(), getNumOperands());
+  return getValues().take_front(count);
+}
+
+Operation::operand_range SimTaskCallOp::getContinuationOperands() {
+  size_t count = getArgumentCountAttr().getValue().isNegative()
+                     ? 0
+                     : std::min<uint64_t>(getArgumentCount(), getNumOperands());
+  return getValues().drop_front(count);
+}
+
+MutableOperandRange SimTaskCallOp::getContinuationOperandsMutable() {
+  unsigned count =
+      getArgumentCountAttr().getValue().isNegative()
+          ? 0
+          : std::min<uint64_t>(getArgumentCount(), getNumOperands());
+  return MutableOperandRange(getOperation(), count, getNumOperands() - count);
+}
+
+LogicalResult SimTaskCallOp::verify() {
+  auto function = getOperation()->getParentOfType<SimFuncOp>();
+  if (!function)
+    return emitOpError("must be nested in obelisk_sim.func");
+  if (function.getEntryKind() == EntryKind::Function)
+    return emitOpError("is not permitted in a zero-time function entry");
+  if (getArgumentCountAttr().getValue().isNegative() ||
+      static_cast<uint64_t>(getArgumentCount()) > getNumOperands())
+    return emitOpError("argument count exceeds the operand inventory");
+  return verifyContinuation(*this, getContinuationOperands(),
+                            getContinuation());
+}
+
+LogicalResult
+SimTaskCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  auto callee = symbolTable.lookupNearestSymbolFrom<SimFuncOp>(getOperation(),
+                                                               getCalleeAttr());
+  if (!callee || callee.getEntryKind() != EntryKind::Task)
+    return emitOpError("callee must name a sibling task entry");
+  if (getArguments().getTypes() != callee.getFunctionType().getInputs())
+    return emitOpError("argument types must match the task signature");
+  if (!callee.getFunctionType().getResults().empty())
+    return emitOpError("task entry must not return SSA results");
   return success();
 }
 
@@ -1787,12 +1846,33 @@ LogicalResult SimSpawnOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   auto callee = symbolTable.lookupNearestSymbolFrom<SimFuncOp>(getOperation(),
                                                                getCalleeAttr());
   if (!callee || callee.getEntryKind() == EntryKind::Function ||
+      callee.getEntryKind() == EntryKind::Task ||
       callee.getEntryKind() == EntryKind::RootInitializer)
     return emitOpError("callee must name a sibling process entry");
   if (getOperandTypes() != callee.getFunctionType().getInputs() ||
       !callee.getFunctionType().getResults().empty())
     return emitOpError("operands must match the void callee signature");
   return success();
+}
+
+LogicalResult SimControlEnterOp::verify() {
+  return verifyPositive(*this, getTargetIdAttr(), "control target ID");
+}
+
+LogicalResult SimControlDisableOp::verify() {
+  if (failed(verifyPositive(*this, getTargetIdAttr(), "control target ID")))
+    return failure();
+  if (getActivation() &&
+      getActivation().getType() != ControlType::get(getContext()))
+    return emitOpError("activation must be a control token");
+  if (getActivation() && getHierarchical())
+    return emitOpError(
+        "hierarchical disable must not name one activation token");
+  return success();
+}
+
+LogicalResult SimStaticOnceOp::verify() {
+  return verifyPositive(*this, getIdAttr(), "static initialization ID");
 }
 
 LogicalResult SimContextStorageOp::verify() {
@@ -3939,6 +4019,12 @@ SuccessorOperands SimSuspendAwaitOp::getSuccessorOperands(unsigned index) {
 SuccessorOperands SimSuspendJoinOp::getSuccessorOperands(unsigned index) {
   return makeContinuationSuccessorOperands(*this, index);
 }
+SuccessorOperands SimSuspendChildrenOp::getSuccessorOperands(unsigned index) {
+  return makeContinuationSuccessorOperands(*this, index);
+}
+SuccessorOperands SimTaskCallOp::getSuccessorOperands(unsigned index) {
+  return makeContinuationSuccessorOperands(*this, index);
+}
 
 LogicalResult SimSuspendDelayOp::verify() {
   return verifyContinuation(*this, getContinuationOperands(),
@@ -4025,6 +4111,16 @@ LogicalResult SimSuspendJoinOp::verify() {
   for (Value process : getProcesses())
     if (!isa<ProcessType>(process.getType()))
       return emitOpError("process prefix must contain only process handles");
+  return verifyContinuation(*this, getContinuationOperands(),
+                            getContinuation());
+}
+
+LogicalResult SimSuspendChildrenOp::verify() {
+  auto function = getOperation()->getParentOfType<SimFuncOp>();
+  if (!function)
+    return emitOpError("must be nested in obelisk_sim.func");
+  if (function.getEntryKind() == EntryKind::Function)
+    return emitOpError("is not permitted in a zero-time function entry");
   return verifyContinuation(*this, getContinuationOperands(),
                             getContinuation());
 }

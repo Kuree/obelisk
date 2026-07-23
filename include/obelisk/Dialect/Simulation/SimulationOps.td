@@ -248,6 +248,41 @@ def SimCallOp : SimOp<"call", [
   let hasVerifier = 1;
 }
 
+def SimTaskCallOp : SimOp<"task.call", [
+    Terminator, DeclareOpInterfaceMethods<BranchOpInterface>,
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[
+      MemRead<SimStorageResource>, MemWrite<SimStorageResource>,
+      MemRead<SimNetResource>, MemWrite<SimNetResource>,
+      MemRead<SimSchedulerResource>, MemWrite<SimSchedulerResource>,
+      MemRead<SimProcessResource>, MemWrite<SimProcessResource>,
+      MemRead<SimHeapResource>, MemWrite<SimHeapResource>,
+      MemRead<SimIOResource>, MemWrite<SimIOResource>,
+      MemRead<SimRNGResource>, MemWrite<SimRNGResource>,
+      MemRead<SimExternalResource>, MemWrite<SimExternalResource>
+    ]>
+  ]> {
+  let summary = "transfer the current logical process into a task activation";
+  let description = [{
+    The argument prefix initializes the callee activation. The remaining
+    operands are forwarded to the caller continuation after the task returns.
+    Output destinations are explicit reference arguments in the callee
+    signature, so a suspended task never retains native caller addresses.
+  }];
+  let arguments = (ins FlatSymbolRefAttr:$callee, Variadic<AnyType>:$values,
+                       I64Attr:$argument_count,
+                       OptionalAttr<SimContinuationSiteAttr>:$site);
+  let successors = (successor AnySuccessor:$continuation);
+  let assemblyFormat = [{$callee `(` $values `)` `arguments`
+    $argument_count `to` $continuation attr-dict `:` type($values)}];
+  let extraClassDeclaration = [{
+    ::mlir::Operation::operand_range getArguments();
+    ::mlir::Operation::operand_range getContinuationOperands();
+    ::mlir::MutableOperandRange getContinuationOperandsMutable();
+  }];
+  let hasVerifier = 1;
+}
+
 def SimDPICallOp : SimOp<"dpi.call", [
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
@@ -431,6 +466,62 @@ def SimSpawnOp : SimOp<"spawn", [
     }
   }];
   let hasVerifier = 1;
+}
+
+def SimControlEnterOp : SimOp<"control.enter", [
+    MemoryEffects<[MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "enter one dynamic activation of a resolved named block";
+  let arguments = (ins I64Attr:$target_id);
+  let results = (outs SimControlType:$control);
+  let assemblyFormat = "$target_id attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimControlLeaveOp : SimOp<"control.leave", [
+    MemoryEffects<[MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "leave a named block activation normally";
+  let arguments = (ins SimControlType:$control);
+  let assemblyFormat = "$control attr-dict";
+}
+
+def SimControlDisableOp : SimOp<"control.disable", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>,
+                   MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "disable resolved named block activations";
+  let description = [{
+    An activation operand targets one dynamically enclosing activation.
+    Without it, lexical mode resolves the innermost inherited activation while
+    hierarchical mode disables all live activations of the exact elaborated
+    target ID.
+  }];
+  let arguments = (ins I64Attr:$target_id,
+                       Optional<SimControlType>:$activation,
+                       DefaultValuedAttr<BoolAttr, "false">:$hierarchical);
+  let assemblyFormat = [{$target_id (`activation` $activation^)?
+    attr-dict}];
+  let hasVerifier = 1;
+}
+
+def SimStaticOnceOp : SimOp<"static.once", [
+    MemoryEffects<[MemRead<SimProcessResource>,
+                   MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "claim one context-wide static initialization site";
+  let arguments = (ins I64Attr:$id);
+  let results = (outs I1:$first);
+  let assemblyFormat = "$id attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimDisableChildrenOp : SimOp<"children.disable", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>,
+                   MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "recursively cancel all current direct-child subtrees";
+  let assemblyFormat = "attr-dict";
 }
 
 //===----------------------------------------------------------------------===//
@@ -1146,6 +1237,21 @@ def SimSuspendJoinOp : SimOp<"suspend.join", [
     ::mlir::Operation::operand_range getContinuationOperands();
     ::mlir::MutableOperandRange getContinuationOperandsMutable();
   }];
+  let hasVerifier = 1;
+}
+
+def SimSuspendChildrenOp : SimOp<"suspend.children", [
+    Terminator, DeclareOpInterfaceMethods<BranchOpInterface>,
+    MemoryEffects<[MemWrite<SimSchedulerResource>,
+                   MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "suspend until every current direct child has terminated";
+  let arguments = (ins Variadic<AnyType>:$continuation_operands,
+                       OptionalAttr<SimContinuationSiteAttr>:$site);
+  let successors = (successor AnySuccessor:$continuation);
+  let assemblyFormat = [{`to` $continuation
+    (`(` $continuation_operands^ `:` type($continuation_operands) `)`)?
+    attr-dict}];
   let hasVerifier = 1;
 }
 
