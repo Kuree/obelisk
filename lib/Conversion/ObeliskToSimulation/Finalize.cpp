@@ -198,6 +198,12 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
     functionManager.addPass(createCanonicalizerPass());
     functionManager.addPass(createCSEPass());
   }
+  if (optLevel > 0) {
+    designManager.addPass(createObeliskSimEliminateDeadCapturesPass());
+    OpPassManager &functionManager = designManager.nest<sim::SimFuncOp>();
+    functionManager.addPass(createCanonicalizerPass());
+    functionManager.addPass(createCSEPass());
+  }
   designManager.addPass(createSymbolDCEPass());
 
   // Whole-program summaries and static fragment extraction deliberately run

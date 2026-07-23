@@ -63,6 +63,25 @@ def ObeliskSimSCCPPass
   ];
 }
 
+def ObeliskSimEliminateDeadCapturesPass
+    : Pass<"obelisk-sim-eliminate-dead-captures",
+           "obelisk::sim::SimDesignOp"> {
+  let summary = "Remove unused private simulation entry arguments";
+  let description = [{
+    Solves argument liveness across direct call and spawn boundaries, then
+    removes dead private captures and formals from functions, processes, and
+    all of their invocation sites. Context arguments and externally observable
+    or otherwise opaque ABIs are retained conservatively.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect"
+  ];
+  let options = [
+    Option<"missedRemarks", "missed-remarks", "bool", "false",
+           "Emit developer remarks for conservatively pinned ABIs">
+  ];
+}
+
 def ObeliskSimInlinePass
     : Pass<"obelisk-sim-inline", "obelisk::sim::SimDesignOp"> {
   let summary = "Inline profitable zero-time simulation calls";
