@@ -113,7 +113,9 @@ module {
       obelisk_sim.return
     }
 
-    obelisk_sim.func @spawned_known(
+    // Private visibility makes the spawn edge the complete set of entry uses;
+    // a public process descriptor could be invoked with other capture values.
+    obelisk_sim.func private @spawned_known(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %known: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 2 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 9000007 : i64} {

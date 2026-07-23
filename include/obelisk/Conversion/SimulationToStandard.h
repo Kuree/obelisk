@@ -5,6 +5,8 @@
 
 #include "mlir/Transforms/DialectConversion.h"
 
+#include "llvm/ADT/DenseSet.h"
+
 namespace mlir {
 class RewritePatternSet;
 } // namespace mlir
@@ -40,6 +42,13 @@ void populateSimulationPackedAggregateViewPatterns(
 /// source location for provenance.
 void populateSimulationToStandardPatterns(const mlir::TypeConverter &converter,
                                           mlir::RewritePatternSet &patterns);
+
+/// As above, while allowing a composing whole-design conversion to replace
+/// the unknown plane of proven two-state operation results with zero. The
+/// operation set must remain alive throughout dialect conversion.
+void populateSimulationToStandardPatterns(
+    const mlir::TypeConverter &converter, mlir::RewritePatternSet &patterns,
+    const llvm::DenseSet<mlir::Operation *> &provenTwoStateOperations);
 
 } // namespace obelisk
 

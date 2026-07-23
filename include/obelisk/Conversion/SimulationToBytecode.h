@@ -24,6 +24,8 @@ struct SimulationBytecodeFunction {
   uint32_t index = 0;
   uint64_t scratchSize = 0;
   uint64_t scratchAlignment = 8;
+  /// Physical scratch registers whose proven-zero unknown plane was omitted.
+  uint32_t twoStateLogicRegisters = 0;
 };
 
 struct EncodedSimulationDesign {

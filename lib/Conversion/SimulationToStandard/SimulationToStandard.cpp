@@ -170,8 +170,15 @@ static LogicValue getLogic(ArrayRef<ValueRange> operands, unsigned index) {
   return {operands[index][0], operands[index][1]};
 }
 
-static void replaceLogic(Operation *op, LogicValue result,
-                         ConversionPatternRewriter &rewriter) {
+static void replaceLogicResult(Operation *op, LogicValue result,
+                               ConversionPatternRewriter &rewriter,
+                               bool provenTwoState) {
+  // Preserve the ordinary two-plane ABI while making a proven unknown plane
+  // a compile-time zero, so downstream LLVM optimization can erase X/Z
+  // propagation through the two-state island.
+  if (provenTwoState)
+    result.unknown =
+        zero(rewriter, op->getLoc(), integerType(result.value));
   SmallVector<SmallVector<Value>> replacements;
   replacements.push_back({result.value, result.unknown});
   rewriter.replaceOpWithMultiple(op, std::move(replacements));
@@ -604,6 +611,24 @@ template <typename Op>
 class LogicOpConversion : public OpConversionPattern<Op> {
 public:
   using OpConversionPattern<Op>::OpConversionPattern;
+
+  LogicOpConversion(
+      const TypeConverter &converter, MLIRContext *context,
+      const llvm::DenseSet<Operation *> *provenTwoStateOperations)
+      : OpConversionPattern<Op>(converter, context),
+        provenTwoStateOperations(provenTwoStateOperations) {}
+
+protected:
+  void replaceLogic(Op op, LogicValue result,
+                    ConversionPatternRewriter &rewriter) const {
+    replaceLogicResult(
+        op, result, rewriter,
+        provenTwoStateOperations &&
+            provenTwoStateOperations->contains(op.getOperation()));
+  }
+
+private:
+  const llvm::DenseSet<Operation *> *provenTwoStateOperations = nullptr;
 };
 
 class ConstantConversion final
@@ -1379,20 +1404,33 @@ void populateSimulationPackedAggregateViewPatterns(
       converter, patterns.getContext());
 }
 
-void populateSimulationToStandardPatterns(const TypeConverter &converter,
-                                          RewritePatternSet &patterns) {
+static void populateSimulationToStandardPatternsImpl(
+    const TypeConverter &converter, RewritePatternSet &patterns,
+    const llvm::DenseSet<Operation *> *provenTwoStateOperations) {
   patterns.add<ConstantConversion, FromBitsConversion, ToBitsConversion,
                IsTrueConversion, ResizeConversion, UnaryConversion,
                ReductionConversion, BinaryConversion, LogicalConversion,
                ShiftConversion, CompareConversion, ConcatConversion,
                ReplicateConversion, ExtractConversion, DynamicExtractConversion,
                BitsDynamicExtractConversion, InsertConversion>(
-      converter, patterns.getContext());
+      converter, patterns.getContext(), provenTwoStateOperations);
   patterns.add<BranchConversion, CondBranchConversion, SwitchConversion>(
       converter, patterns.getContext());
   patterns.add<FuncConversion, CallConversion, ReturnConversion>(
       converter, patterns.getContext());
   populateBranchOpInterfaceTypeConversionPattern(patterns, converter);
+}
+
+void populateSimulationToStandardPatterns(const TypeConverter &converter,
+                                          RewritePatternSet &patterns) {
+  populateSimulationToStandardPatternsImpl(converter, patterns, nullptr);
+}
+
+void populateSimulationToStandardPatterns(
+    const TypeConverter &converter, RewritePatternSet &patterns,
+    const llvm::DenseSet<Operation *> &provenTwoStateOperations) {
+  populateSimulationToStandardPatternsImpl(converter, patterns,
+                                           &provenTwoStateOperations);
 }
 
 } // namespace obelisk

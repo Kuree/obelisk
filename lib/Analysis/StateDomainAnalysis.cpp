@@ -45,6 +45,20 @@ bool isLogic(Type type) {
   return false;
 }
 
+/// Count all references to a symbol on one operation.  A direct invocation is
+/// only a closed-world use when its canonical callee attribute is the sole
+/// reference; an additional reference can represent an address-taken or other
+/// opaque use that the invocation index does not model.
+unsigned countSymbolReferences(Operation *operation, SymbolRefAttr reference) {
+  unsigned count = 0;
+  for (NamedAttribute named : operation->getAttrs())
+    named.getValue().walk([&](SymbolRefAttr candidate) {
+      if (candidate == reference)
+        ++count;
+    });
+  return count;
+}
+
 /// Join facts arriving along alternative control-flow or invocation edges.
 /// Bottom means that an edge has not contributed information yet, so it is the
 /// identity for this join.
@@ -626,10 +640,43 @@ StateDomainAnalysis::compute(sim::SimDesignOp design) {
           hasIncoming[*invocation.callee][index] = true;
     }
 
+  // A formal is closed-world only if the function is private and every symbol
+  // use is one of the direct calls or spawns indexed above.  Public / nested
+  // symbols and opaque uses can introduce values from outside the analyzed
+  // invocation graph.
+  SmallVector<char> hasNonCallUse(functions.size(), false);
+  for (auto [index, function] : llvm::enumerate(functions)) {
+    std::optional<SymbolTable::UseRange> uses =
+        SymbolTable::getSymbolUses(function, design);
+    if (!uses) {
+      hasNonCallUse[index] = true;
+      continue;
+    }
+    for (const SymbolTable::SymbolUse &use : *uses) {
+      Operation *user = use.getUser();
+      SymbolRefAttr reference = use.getSymbolRef();
+      bool direct = false;
+      if (auto call = dyn_cast<sim::SimCallOp>(user))
+        direct = call.getCalleeAttr() == reference;
+      else if (auto spawn = dyn_cast<sim::SimSpawnOp>(user))
+        direct = spawn.getCalleeAttr() == reference;
+      if (direct && calleeIndex.contains(user) &&
+          calleeIndex.lookup(user) == index &&
+          countSymbolReferences(user, reference) == 1)
+        continue;
+      hasNonCallUse[index] = true;
+      break;
+    }
+  }
+
   for (auto [function, boundaries] : llvm::enumerate(formalBoundaries))
     for (auto [index, type] :
          llvm::enumerate(functions[function].getFunctionType().getInputs()))
-      if (isLogic(type) && !hasIncoming[function][index])
+      if (isLogic(type) &&
+          (functions[function].isExternal() || hasNonCallUse[function] ||
+           SymbolTable::getSymbolVisibility(functions[function]) !=
+               SymbolTable::Visibility::Private ||
+           !hasIncoming[function][index]))
         boundaries[index] = mayFourState(StateDomainReason::FunctionEntry);
 
   SmallVector<LocalFacts> locals;

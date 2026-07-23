@@ -3,6 +3,7 @@
 #include "obelisk/Conversion/SimulationToBytecode.h"
 
 #include "obelisk/Analysis/NetConnectivityAnalysis.h"
+#include "obelisk/Analysis/StateDomainAnalysis.h"
 #include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
 #include "obelisk/Dialect/Runtime/RuntimeTypes.h"
 #include "obelisk/Runtime/Runtime.h"
@@ -12,6 +13,7 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/SymbolTable.h"
+#include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Pass/Pass.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -190,6 +192,7 @@ struct FunctionPlan {
   uint64_t instructionCount = 0;
   uint64_t scratchSize = 0;
   uint64_t scratchAlignment = 8;
+  uint32_t twoStateLogicRegisters = 0;
 };
 
 struct StateLayout {
@@ -519,7 +522,8 @@ public:
     if (failed(builtState))
       return failure();
     state = *builtState;
-    if (failed(planFunctions()) || failed(encodeFunctions()))
+    if (failed(planTwoStateRegisters()) || failed(planFunctions()) ||
+        failed(encodeFunctions()))
       return failure();
     EncodedSimulationDesign result;
     result.bytecode = serializeBytecode();
@@ -543,11 +547,139 @@ public:
     for (FunctionPlan &plan : plans)
       result.functions.push_back({plan.function.getSymName().str(), plan.index,
                                   plan.scratchSize,
-                                  plan.scratchAlignment});
+                                  plan.scratchAlignment,
+                                  plan.twoStateLogicRegisters});
     return result;
   }
 
 private:
+  /// Use the whole-design X/Z proof for local bytecode scratch values. Exact
+  /// ABI boundaries deliberately remain four-state: process frames, CFG maps,
+  /// calls, and returns all use representation-preserving copies. Within a
+  /// block, bytecode operations that require identical layouts form constraint
+  /// components; one unproven member keeps the entire component four-state.
+  LogicalResult planTwoStateRegisters() {
+    FailureOr<StateDomainAnalysis> analysis =
+        StateDomainAnalysis::compute(design);
+    if (failed(analysis))
+      return failure();
+
+    DenseSet<Value> candidates;
+    DenseSet<Value> forcedFourState;
+    DenseMap<Value, SmallVector<Value>> compatibleLayouts;
+    auto isLogic = [](Value value) {
+      return value && isa<sim::LogicType>(value.getType());
+    };
+    auto consider = [&](Value value) {
+      if (!isLogic(value))
+        return;
+      if (analysis->isTwoState(value))
+        candidates.insert(value);
+      else
+        forcedFourState.insert(value);
+    };
+    auto force = [&](Value value) {
+      if (isLogic(value))
+        forcedFourState.insert(value);
+    };
+    auto constrain = [&](Value lhs, Value rhs) {
+      if (!isLogic(lhs) || !isLogic(rhs))
+        return;
+      compatibleLayouts[lhs].push_back(rhs);
+      compatibleLayouts[rhs].push_back(lhs);
+    };
+    auto constrainResultTo = [&](Value result, ValueRange operands) {
+      for (Value operand : operands)
+        constrain(result, operand);
+    };
+
+    for (sim::SimFuncOp function :
+         design.getBody().front().getOps<sim::SimFuncOp>()) {
+      if (function.isExternal())
+        continue;
+      for (Block &block : function.getBody()) {
+        // Block arguments participate in parallel CFG or canonical-frame
+        // copies. Keep those stable and specialize computations after them.
+        for (BlockArgument argument : block.getArguments()) {
+          consider(argument);
+          force(argument);
+        }
+        for (Operation &operation : block) {
+          for (Value result : operation.getResults())
+            consider(result);
+
+          if (isa<BranchOpInterface, sim::SimCallOp, sim::SimSpawnOp,
+                  sim::SimReturnOp>(operation)) {
+            for (Value operand : operation.getOperands())
+              force(operand);
+            for (Value result : operation.getResults())
+              force(result);
+          }
+
+          // Automatic logic storage remains four-state for its full lifetime,
+          // even when its initializer is known.  Later stores through escaped
+          // references must retain X/Z rather than inheriting the initializer's
+          // compact one-plane register layout.
+          if (auto alloc = dyn_cast<sim::SimRefAllocOp>(operation))
+            force(alloc.getInitialValue());
+
+          if (auto op = dyn_cast<sim::SimLogicUnaryOp>(operation)) {
+            if (op.getKind() != sim::UnaryKind::LogicalNot)
+              constrain(op.getResult(), op.getInput());
+          } else if (auto op = dyn_cast<sim::SimLogicBinaryOp>(operation)) {
+            constrainResultTo(op.getResult(), op.getOperands());
+          } else if (auto op = dyn_cast<sim::SimLogicShiftOp>(operation)) {
+            constrain(op.getResult(), op.getInput());
+          } else if (auto op = dyn_cast<sim::SimLogicCompareOp>(operation)) {
+            constrain(op.getLhs(), op.getRhs());
+          } else if (auto op = dyn_cast<sim::SimLogicConcatOp>(operation)) {
+            constrainResultTo(op.getResult(), op.getInputs());
+          } else if (auto op =
+                         dyn_cast<sim::SimLogicReplicateOp>(operation)) {
+            constrain(op.getResult(), op.getInput());
+          } else if (auto op = dyn_cast<sim::SimLogicInsertOp>(operation)) {
+            constrain(op.getResult(), op.getInput());
+          } else if (auto op = dyn_cast<arith::SelectOp>(operation)) {
+            constrain(op.getResult(), op.getTrueValue());
+            constrain(op.getResult(), op.getFalseValue());
+          } else if (auto op =
+                         dyn_cast<sim::SimAggregateInsertOp>(operation)) {
+            constrain(op.getResult(), op.getInput());
+          }
+        }
+      }
+    }
+
+    // A bytecode instruction that requires representation-compatible
+    // registers makes its entire undirected component four-state when any
+    // member is unproven or fixed by an ABI boundary. Propagate from those
+    // roots once instead of repeatedly rescanning all constraints.
+    SmallVector<Value> worklist(forcedFourState.begin(),
+                                forcedFourState.end());
+    for (size_t index = 0; index != worklist.size(); ++index) {
+      Value value = worklist[index];
+      candidates.erase(value);
+      auto found = compatibleLayouts.find(value);
+      if (found == compatibleLayouts.end())
+        continue;
+      for (Value adjacent : found->second)
+        if (forcedFourState.insert(adjacent).second)
+          worklist.push_back(adjacent);
+    }
+    twoStateLogicRegisters = std::move(candidates);
+    return success();
+  }
+
+  FailureOr<Layout> getValueLayout(Value value) const {
+    FailureOr<Layout> layout = getLayout(value.getType());
+    if (failed(layout) || !isa<sim::LogicType>(value.getType()) ||
+        !twoStateLogicRegisters.contains(value))
+      return layout;
+    layout->kind = Bits;
+    layout->size = ((uint64_t{layout->width} + 63) / 64) * 8;
+    return layout;
+  }
+
   LogicalResult planFunctions() {
     SmallVector<sim::SimFuncOp> functions;
     for (sim::SimFuncOp function : design.getBody().getOps<sim::SimFuncOp>()) {
@@ -600,11 +732,19 @@ private:
           return failure();
         return allocateLayout(*layout);
       };
+      auto allocateValue = [&](Value value) -> FailureOr<uint32_t> {
+        FailureOr<Layout> layout = getValueLayout(value);
+        if (failed(layout))
+          return failure();
+        if (layout->kind == Bits && isa<sim::LogicType>(value.getType()))
+          ++plan.twoStateLogicRegisters;
+        return allocateLayout(*layout);
+      };
       Block &entry = plan.function.getBody().front();
       if (entry.getNumArguments() != type.getNumInputs())
         return plan.function.emitOpError("entry signature is inconsistent");
       for (BlockArgument argument : entry.getArguments()) {
-        FailureOr<uint32_t> reg = allocateType(argument.getType());
+        FailureOr<uint32_t> reg = allocateValue(argument);
         if (failed(reg))
           return argument.getOwner()->getParentOp()->emitError()
                  << "cannot encode argument type " << argument.getType();
@@ -620,7 +760,7 @@ private:
       for (Block &block : plan.function.getBody()) {
         if (&block != &entry)
           for (BlockArgument argument : block.getArguments()) {
-            FailureOr<uint32_t> reg = allocateType(argument.getType());
+            FailureOr<uint32_t> reg = allocateValue(argument);
             if (failed(reg))
               return plan.function.emitOpError()
                      << "cannot encode block argument type "
@@ -629,7 +769,7 @@ private:
           }
         for (Operation &operation : block)
           for (Value result : operation.getResults()) {
-            FailureOr<uint32_t> reg = allocateType(result.getType());
+            FailureOr<uint32_t> reg = allocateValue(result);
             if (failed(reg))
               return operation.emitOpError()
                      << "cannot encode result type " << result.getType();
@@ -666,6 +806,24 @@ private:
     FailureOr<Layout> layout = getLayout(type);
     if (failed(layout))
       return kInvalidRegister;
+    layout->offset = llvm::alignTo(plan.scratchSize, uint64_t{8});
+    plan.scratchSize = layout->offset + layout->size;
+    plan.layouts.push_back(*layout);
+    return plan.layouts.size() - 1;
+  }
+
+  uint32_t temporaryLike(FunctionPlan &plan, Type type, Value model) {
+    FailureOr<Layout> layout = getLayout(type);
+    uint32_t modelRegister = reg(plan, model);
+    if (failed(layout) || modelRegister == kInvalidRegister)
+      return kInvalidRegister;
+    if (isa<sim::LogicType>(type)) {
+      layout->kind = plan.layouts[modelRegister].kind;
+      layout->size = ((uint64_t{layout->width} + 63) / 64) *
+                     (layout->kind == Logic ? 16 : 8);
+      if (layout->kind == Bits)
+        ++plan.twoStateLogicRegisters;
+    }
     layout->offset = llvm::alignTo(plan.scratchSize, uint64_t{8});
     plan.scratchSize = layout->offset + layout->size;
     plan.layouts.push_back(*layout);
@@ -1187,7 +1345,8 @@ private:
         emit({Reduce, 7, reg(plan, op.getResult()), reg(plan, op.getInput())});
         break;
       case sim::UnaryKind::Negate: {
-        uint32_t zero = temporary(plan, op.getInput().getType());
+        uint32_t zero =
+            temporaryLike(plan, op.getInput().getType(), op.getResult());
         if (zero == kInvalidRegister)
           return failure();
         emit({Constant, 0, zero, 0, 0, 0, 0,
@@ -1208,8 +1367,8 @@ private:
       return encodeLogicBinary(plan, op);
     if (auto op = dyn_cast<sim::SimLogicLogicalOp>(operation)) {
       Type truthType = sim::LogicType::get(op.getContext(), 1);
-      uint32_t leftTruth = temporary(plan, truthType);
-      uint32_t rightTruth = temporary(plan, truthType);
+      uint32_t leftTruth = temporaryLike(plan, truthType, op.getResult());
+      uint32_t rightTruth = temporaryLike(plan, truthType, op.getResult());
       if (leftTruth == kInvalidRegister || rightTruth == kInvalidRegister)
         return failure();
       emit({Reduce, 8, leftTruth, reg(plan, op.getLhs())});
@@ -1532,8 +1691,9 @@ private:
       if (index + 1 == op.getInputs().size()) {
         destination = reg(plan, op.getResult());
       } else {
-        destination = temporary(plan,
-                                sim::LogicType::get(op.getContext(), accumulatedWidth));
+        destination = temporaryLike(
+            plan, sim::LogicType::get(op.getContext(), accumulatedWidth),
+            op.getResult());
         if (destination == kInvalidRegister)
           return failure();
       }
@@ -1562,8 +1722,10 @@ private:
         uint64_t width = uint64_t{inputWidth} * (copy + 1);
         if (width > std::numeric_limits<unsigned>::max())
           return op.emitOpError("replication width exceeds bytecode ABI");
-        destination = temporary(
-            plan, sim::LogicType::get(op.getContext(), static_cast<unsigned>(width)));
+        destination = temporaryLike(
+            plan,
+            sim::LogicType::get(op.getContext(), static_cast<unsigned>(width)),
+            op.getResult());
         if (destination == kInvalidRegister)
           return failure();
       }
@@ -2533,6 +2695,7 @@ private:
   SimulationBytecodeOptions options;
   const llvm::DataLayout &dataLayout;
   StateLayout state;
+  DenseSet<Value> twoStateLogicRegisters;
   SmallVector<FunctionPlan, 0> plans;
   llvm::StringMap<uint32_t> indices;
   llvm::StringMap<sim::SimFuncOp> externalFunctions;
@@ -2611,6 +2774,9 @@ public:
                       builder.getI64IntegerAttr(function.scratchSize));
       source->setAttr("obelisk.bytecode.scratch_alignment",
                       builder.getI64IntegerAttr(function.scratchAlignment));
+      source->setAttr(
+          "obelisk.bytecode.two_state_logic_registers",
+          builder.getI32IntegerAttr(function.twoStateLogicRegisters));
     }
   }
 };

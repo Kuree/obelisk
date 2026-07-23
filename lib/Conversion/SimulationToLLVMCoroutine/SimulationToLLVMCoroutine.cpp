@@ -3,6 +3,7 @@
 #include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
 
 #include "obelisk/Analysis/NetConnectivityAnalysis.h"
+#include "obelisk/Analysis/StateDomainAnalysis.h"
 #include "obelisk/Conversion/RuntimeToLLVM.h"
 #include "obelisk/Conversion/SimulationToRuntime.h"
 #include "obelisk/Conversion/SimulationToStandard.h"
@@ -59,6 +60,8 @@ constexpr uint64_t kWaitEntrySize = 16;
 constexpr uint32_t kWaitEdgeNone = std::numeric_limits<uint32_t>::max();
 constexpr StringLiteral kAutomaticOwnerReleaseMarker =
     "__obelisk_release_automatic_owner";
+constexpr StringLiteral kNativeTwoStateBlockUnknownsAttr =
+    "obelisk.native.two_state_block_unknowns";
 
 constexpr uint64_t kInstanceAllocationOffset = 8;
 constexpr uint64_t kInstanceFrameOffset = 16;
@@ -299,7 +302,11 @@ public:
 class SimFuncSignatureConversion final
     : public OpConversionPattern<sim::SimFuncOp> {
 public:
-  using OpConversionPattern::OpConversionPattern;
+  SimFuncSignatureConversion(const TypeConverter &converter,
+                             MLIRContext *context,
+                             const DenseSet<Value> &twoStateValues)
+      : OpConversionPattern(converter, context),
+        twoStateValues(&twoStateValues) {}
 
   LogicalResult
   matchAndRewrite(sim::SimFuncOp function, OneToNOpAdaptor,
@@ -307,6 +314,23 @@ public:
     FunctionType type = function.getFunctionType();
     TypeConverter::SignatureConversion entry(type.getNumInputs());
     SmallVector<Type> results;
+    SmallVector<SmallVector<int64_t>> zeroUnknownArguments;
+    zeroUnknownArguments.reserve(function.getBody().getBlocks().size());
+    for (Block &block : function.getBody()) {
+      SmallVector<int64_t> unknowns;
+      unsigned physical = 0;
+      for (BlockArgument argument : block.getArguments()) {
+        SmallVector<Type> converted;
+        if (failed(getTypeConverter()->convertType(argument.getType(),
+                                                   converted)))
+          return failure();
+        if (isa<sim::LogicType>(argument.getType()) &&
+            twoStateValues->contains(argument) && converted.size() == 2)
+          unknowns.push_back(static_cast<int64_t>(physical + 1));
+        physical += converted.size();
+      }
+      zeroUnknownArguments.push_back(std::move(unknowns));
+    }
     if (failed(getTypeConverter()->convertSignatureArgs(type.getInputs(),
                                                         entry)) ||
         failed(getTypeConverter()->convertTypes(type.getResults(), results)) ||
@@ -314,6 +338,10 @@ public:
          failed(rewriter.convertRegionTypes(&function.getBody(),
                                             *getTypeConverter(), &entry))))
       return failure();
+    SmallVector<Attribute> zeroUnknownAttr;
+    zeroUnknownAttr.reserve(zeroUnknownArguments.size());
+    for (ArrayRef<int64_t> indices : zeroUnknownArguments)
+      zeroUnknownAttr.push_back(rewriter.getDenseI64ArrayAttr(indices));
     SmallVector<Attribute> argAttrs(entry.getConvertedTypes().size(),
                                     rewriter.getDictionaryAttr({}));
     SmallVector<Attribute> resultAttrs(results.size(),
@@ -324,9 +352,14 @@ public:
       function.setArgAttrsAttr(rewriter.getArrayAttr(argAttrs));
       if (!resultAttrs.empty())
         function.setResAttrsAttr(rewriter.getArrayAttr(resultAttrs));
+      function->setAttr(kNativeTwoStateBlockUnknownsAttr,
+                        rewriter.getArrayAttr(zeroUnknownAttr));
     });
     return success();
   }
+
+private:
+  const DenseSet<Value> *twoStateValues;
 };
 
 class SimReturnTypeConversion final
@@ -392,7 +425,10 @@ void emitNativeStateRetain(OpBuilder &builder, Location location,
 
 class SimCallTypeConversion final : public OpConversionPattern<sim::SimCallOp> {
 public:
-  using OpConversionPattern::OpConversionPattern;
+  SimCallTypeConversion(const TypeConverter &converter, MLIRContext *context,
+                        const DenseSet<Value> &twoStateValues)
+      : OpConversionPattern(converter, context),
+        twoStateValues(&twoStateValues) {}
   LogicalResult
   matchAndRewrite(sim::SimCallOp operation, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
@@ -413,15 +449,30 @@ public:
     state.addTypes(results);
     state.addAttributes(operation->getAttrs());
     Operation *replacement = rewriter.create(state);
-    SmallVector<ValueRange> replacements;
+    SmallVector<SmallVector<Value>> replacements;
+    replacements.reserve(resultSizes.size());
     size_t offset = 0;
-    for (size_t size : resultSizes) {
-      replacements.push_back(replacement->getResults().slice(offset, size));
+    for (auto [index, size] : llvm::enumerate(resultSizes)) {
+      SmallVector<Value> values(
+          replacement->getResults().slice(offset, size));
+      if (size == 2 &&
+          twoStateValues->contains(operation.getResult(index))) {
+        auto type = dyn_cast<IntegerType>(values[1].getType());
+        if (!type)
+          return failure();
+        values[1] = arith::ConstantOp::create(
+            rewriter, operation.getLoc(), type,
+            rewriter.getIntegerAttr(type, APInt::getZero(type.getWidth())));
+      }
+      replacements.push_back(std::move(values));
       offset += size;
     }
-    rewriter.replaceOpWithMultiple(operation, replacements);
+    rewriter.replaceOpWithMultiple(operation, std::move(replacements));
     return success();
   }
+
+private:
+  const DenseSet<Value> *twoStateValues;
 };
 
 SmallVector<int32_t> suspensionWaitWidths(Operation *operation) {
@@ -4192,6 +4243,44 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   if (analyzed.wasInterrupted())
     return failure();
 
+  // Consume the whole-design X/Z proof in the AOT path after suspension
+  // threading has reached its final SSA shape. Signatures and canonical frames
+  // remain two-plane ABI objects, but proven block arguments, call results,
+  // and local producers expose a constant-zero unknown plane to LLVM.
+  DenseSet<Value> nativeTwoStateValues;
+  DenseSet<Operation *> nativeTwoStateOperations;
+  WalkResult stateDomainsComputed = module.walk([&](sim::SimDesignOp design) {
+    FailureOr<StateDomainAnalysis> stateDomains =
+        StateDomainAnalysis::compute(design);
+    if (failed(stateDomains))
+      return WalkResult::interrupt();
+    for (sim::SimFuncOp function :
+         design.getBody().front().getOps<sim::SimFuncOp>()) {
+      if (function.isExternal())
+        continue;
+      for (Block &block : function.getBody()) {
+        for (BlockArgument argument : block.getArguments())
+          if (isa<sim::LogicType>(argument.getType()) &&
+              stateDomains->isTwoState(argument))
+            nativeTwoStateValues.insert(argument);
+        for (Operation &operation : block)
+          for (Value result : operation.getResults())
+            if (isa<sim::LogicType>(result.getType()) &&
+                stateDomains->isTwoState(result))
+              nativeTwoStateValues.insert(result);
+      }
+    }
+    return WalkResult::advance();
+  });
+  if (stateDomainsComputed.wasInterrupted())
+    return failure();
+  for (Value value : nativeTwoStateValues) {
+    auto result = dyn_cast<OpResult>(value);
+    if (!result || result.getOwner()->getNumResults() != 1)
+      continue;
+    nativeTwoStateOperations.insert(result.getOwner());
+  }
+
   // Record the net driven by each operation before dialect conversion starts
   // rewriting function signatures and their block arguments.  Conversion
   // patterns should inspect stable operation metadata instead of chasing the
@@ -4252,13 +4341,22 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   });
   if (lifetimeInputs.wasInterrupted())
     return failure();
+  // This is transaction-local metadata produced only by the AOT signature
+  // pattern below. Never consume a same-named source attribute.
+  module.walk([](sim::SimFuncOp function) {
+    function->removeAttr(kNativeTwoStateBlockUnknownsAttr);
+  });
   RewritePatternSet packedPatterns(context);
-  populateSimulationToStandardPatterns(packedConverter, packedPatterns);
+  populateSimulationToStandardPatterns(packedConverter, packedPatterns,
+                                       nativeTwoStateOperations);
   populateSimulationPackedAggregateViewPatterns(packedConverter,
                                                 packedPatterns);
   populateSimulationToRuntimePatterns(packedConverter, packedPatterns);
-  packedPatterns.add<SimFuncSignatureConversion, SimReturnTypeConversion,
-                     SimCallTypeConversion,
+  packedPatterns.add<SimFuncSignatureConversion>(
+      packedConverter, context, nativeTwoStateValues);
+  packedPatterns.add<SimCallTypeConversion>(packedConverter, context,
+                                            nativeTwoStateValues);
+  packedPatterns.add<SimReturnTypeConversion,
                      AutomaticOwnerReleaseMarkerConversion,
                      PackedAggregateExtractConversion,
                      PackedAggregateInsertConversion,
@@ -4345,7 +4443,60 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   packedTarget.addDynamicallyLegalOp<ModuleOp>(hasNoLogic);
   packedTarget.markUnknownOpDynamicallyLegal(hasNoLogic);
   if (failed(applyFullConversion(module, packedTarget,
-                                 std::move(packedPatterns))) ||
+                                 std::move(packedPatterns))))
+    return failure();
+
+  // Region signature conversion records the physical unknown-plane block
+  // arguments that the whole-design proof made redundant. Replace them only
+  // after dialect conversion has finished remapping every original logic use;
+  // doing this inside the signature pattern would not update future one-to-N
+  // operand adaptors owned by the conversion driver.
+  WalkResult specializedBlockArguments =
+      module.walk([&](sim::SimFuncOp function) {
+        auto mappings = function->getAttrOfType<ArrayAttr>(
+            kNativeTwoStateBlockUnknownsAttr);
+        if (!mappings)
+          return WalkResult::advance();
+        if (mappings.size() != function.getBody().getBlocks().size()) {
+          function.emitOpError(
+              "has invalid native two-state block-argument metadata");
+          return WalkResult::interrupt();
+        }
+        OpBuilder builder(context);
+        for (auto [block, mapping] :
+             llvm::zip_equal(function.getBody(), mappings)) {
+          auto indices = dyn_cast<DenseI64ArrayAttr>(mapping);
+          if (!indices) {
+            function.emitOpError(
+                "has malformed native two-state block-argument metadata");
+            return WalkResult::interrupt();
+          }
+          builder.setInsertionPointToStart(&block);
+          for (int64_t index : indices.asArrayRef()) {
+            if (index < 0 || static_cast<uint64_t>(index) >=
+                                 block.getNumArguments()) {
+              function.emitOpError(
+                  "has out-of-range native two-state block argument");
+              return WalkResult::interrupt();
+            }
+            BlockArgument argument =
+                block.getArgument(static_cast<unsigned>(index));
+            auto type = dyn_cast<IntegerType>(argument.getType());
+            if (!type) {
+              function.emitOpError(
+                  "has non-integer native two-state unknown plane");
+              return WalkResult::interrupt();
+            }
+            Value zero = arith::ConstantOp::create(
+                builder, function.getLoc(), type,
+                builder.getIntegerAttr(type, APInt::getZero(type.getWidth())));
+            argument.replaceAllUsesWith(zero);
+          }
+        }
+        function->removeAttr(kNativeTwoStateBlockUnknownsAttr);
+        return WalkResult::advance();
+      });
+  if (specializedBlockArguments.wasInterrupted() ||
       failed(threadRuntimeStatuses(module)) ||
       failed(releaseNativeAutomaticState(module, referenceArguments)))
     return failure();

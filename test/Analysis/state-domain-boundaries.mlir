@@ -18,9 +18,12 @@ module {
     obelisk_sim.code_unit.decl 9000011 in 0 function hierarchy "test.boundaries.unbound.9000011"
     obelisk_sim.code_unit.decl 9000012 in 0 initial hierarchy "test.boundaries.unknown_worker.9000012"
     obelisk_sim.code_unit.decl 9000013 in 0 initial hierarchy "test.boundaries.worker.9000013"
+    obelisk_sim.code_unit.decl 9000014 in 0 function hierarchy "test.boundaries.public_known.9000014"
+    obelisk_sim.code_unit.decl 9000015 in 0 function hierarchy "test.boundaries.nested_known.9000015"
+    obelisk_sim.code_unit.decl 9000016 in 0 function hierarchy "test.boundaries.noncall_known.9000016"
     obelisk_sim.scope.decl 0
 
-    obelisk_sim.func @callee(
+    obelisk_sim.func private @callee(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %value: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 1 : i32})
         -> !obelisk_sim.logic<8> attributes {entry_kind = 8 : i32, code_unit_id = 9000001 : i64} {
@@ -30,13 +33,41 @@ module {
 
     obelisk_sim.func @caller(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
-        attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64,
+                    symbol_anchor = @noncall_known} {
       %bits = arith.constant 5 : i8
       %known = obelisk_sim.logic.from_bits %bits : i8 -> !obelisk_sim.logic<8>
       %called = obelisk_sim.call @callee(%ctx, %known) : (!obelisk_sim.context, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<8>
       %looped = obelisk_sim.call @loop(%ctx, %known) : (!obelisk_sim.context, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<8>
       %recursive = obelisk_sim.call @recursive_a(%ctx, %called) : (!obelisk_sim.context, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<8>
+      %public = obelisk_sim.call @public_known(%ctx, %known) : (!obelisk_sim.context, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<8>
+      %nested_visibility = obelisk_sim.call @nested_known(%ctx, %known) : (!obelisk_sim.context, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<8>
+      %noncall = obelisk_sim.call @noncall_known(%ctx, %known) : (!obelisk_sim.context, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<8>
       obelisk_sim.return
+    }
+
+    obelisk_sim.func @public_known(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %value: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 1 : i32})
+        -> !obelisk_sim.logic<8> attributes {entry_kind = 8 : i32, code_unit_id = 9000014 : i64} {
+      %resized = obelisk_sim.logic.resize %value signed = false : !obelisk_sim.logic<8> -> !obelisk_sim.logic<8>
+      obelisk_sim.return %resized : !obelisk_sim.logic<8>
+    }
+
+    obelisk_sim.func nested @nested_known(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %value: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 1 : i32})
+        -> !obelisk_sim.logic<8> attributes {entry_kind = 8 : i32, code_unit_id = 9000015 : i64} {
+      %resized = obelisk_sim.logic.resize %value signed = false : !obelisk_sim.logic<8> -> !obelisk_sim.logic<8>
+      obelisk_sim.return %resized : !obelisk_sim.logic<8>
+    }
+
+    obelisk_sim.func private @noncall_known(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %value: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 1 : i32})
+        -> !obelisk_sim.logic<8> attributes {entry_kind = 8 : i32, code_unit_id = 9000016 : i64} {
+      %resized = obelisk_sim.logic.resize %value signed = false : !obelisk_sim.logic<8> -> !obelisk_sim.logic<8>
+      obelisk_sim.return %resized : !obelisk_sim.logic<8>
     }
 
     obelisk_sim.func @external_caller(
@@ -65,7 +96,7 @@ module {
       obelisk_sim.return
     }
 
-    obelisk_sim.func @loop(
+    obelisk_sim.func private @loop(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %value: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 1 : i32})
         -> !obelisk_sim.logic<8> attributes {entry_kind = 8 : i32, code_unit_id = 9000005 : i64} {
@@ -107,7 +138,7 @@ module {
       obelisk_sim.return
     }
 
-    obelisk_sim.func @nested_target(
+    obelisk_sim.func private @nested_target(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %value: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 1 : i32})
         -> !obelisk_sim.logic<8> attributes {entry_kind = 8 : i32, code_unit_id = 9000008 : i64} {
@@ -115,7 +146,7 @@ module {
       obelisk_sim.return %resized : !obelisk_sim.logic<8>
     }
 
-    obelisk_sim.func @recursive_a(
+    obelisk_sim.func private @recursive_a(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %value: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 1 : i32})
         -> !obelisk_sim.logic<8> attributes {entry_kind = 8 : i32, code_unit_id = 9000009 : i64} {
@@ -125,7 +156,7 @@ module {
       obelisk_sim.return %known : !obelisk_sim.logic<8>
     }
 
-    obelisk_sim.func @recursive_b(
+    obelisk_sim.func private @recursive_b(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %value: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 1 : i32})
         -> !obelisk_sim.logic<8> attributes {entry_kind = 8 : i32, code_unit_id = 9000010 : i64} {
@@ -151,14 +182,14 @@ module {
       obelisk_sim.return %value : !obelisk_sim.logic<8>
     }
 
-    obelisk_sim.func @unknown_worker(
+    obelisk_sim.func private @unknown_worker(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %value: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 2 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 9000012 : i64} {
       obelisk_sim.return
     }
 
-    obelisk_sim.func @worker(
+    obelisk_sim.func private @worker(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %value: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 2 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 9000013 : i64} {
@@ -179,6 +210,9 @@ module {
 // CHECK-NEXT:   bb0.op2.result0: two-state (call-result)
 // CHECK-NEXT:   bb0.op3.result0: two-state (call-result)
 // CHECK-NEXT:   bb0.op4.result0: two-state (call-result)
+// CHECK-NEXT:   bb0.op5.result0: may-four-state (call-result)
+// CHECK-NEXT:   bb0.op6.result0: may-four-state (call-result)
+// CHECK-NEXT:   bb0.op7.result0: may-four-state (call-result)
 // CHECK-LABEL: func @external_caller
 // CHECK-NEXT:   bb0.op1.result0: two-state (logic-from-bits)
 // CHECK-NEXT:   bb0.op2.result0: may-four-state (external-declaration)
@@ -201,8 +235,17 @@ module {
 // CHECK-NEXT:   bb0.op3.result0: may-four-state (unsupported-producer)
 // CHECK-NEXT:   bb1.op0.result0: may-four-state (unknown-constant)
 // CHECK-NEXT:   bb1.op1.result0: may-four-state (call-result)
+// CHECK-LABEL: func @nested_known
+// CHECK-NEXT:   bb0.arg1: may-four-state (function-entry)
+// CHECK-NEXT:   bb0.op0.result0: may-four-state (logic-resize)
 // CHECK-LABEL: func @nested_target
 // CHECK-NEXT:   bb0.arg1: may-four-state (call-actual)
+// CHECK-NEXT:   bb0.op0.result0: may-four-state (logic-resize)
+// CHECK-LABEL: func @noncall_known
+// CHECK-NEXT:   bb0.arg1: may-four-state (function-entry)
+// CHECK-NEXT:   bb0.op0.result0: may-four-state (logic-resize)
+// CHECK-LABEL: func @public_known
+// CHECK-NEXT:   bb0.arg1: may-four-state (function-entry)
 // CHECK-NEXT:   bb0.op0.result0: may-four-state (logic-resize)
 // CHECK-LABEL: func @recursive_a
 // CHECK-NEXT:   bb0.arg1: two-state (call-actual)

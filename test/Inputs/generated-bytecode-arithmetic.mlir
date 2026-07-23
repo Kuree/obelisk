@@ -6,7 +6,20 @@ module attributes {
 } {
   obelisk_sim.design @generated_arithmetic {
     obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.generated_arithmetic.arithmetic_process.9000001"
+    obelisk_sim.code_unit.decl 9000002 in 0 function hierarchy "test.generated_arithmetic.store_x.9000002"
     obelisk_sim.scope.decl 0
+    obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<129> design
+
+    obelisk_sim.func private @store_x(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %ref: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 1 : i32})
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000002 : i64} {
+      %x = obelisk_sim.logic.constant 0 : i8, -1 : i8 :
+          !obelisk_sim.logic<8>
+      obelisk_sim.ref.store %x to %ref : !obelisk_sim.logic<8>,
+          !obelisk_sim.ref<!obelisk_sim.logic<8>>
+      obelisk_sim.return
+    }
 
     obelisk_sim.func @arithmetic_process(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
@@ -83,7 +96,63 @@ module attributes {
       %indices_ok = arith.andi %overflow_ok, %unknown_ok : i1
       %division_ok = arith.andi %unsigned_ok, %signed_ok : i1
       %arithmetic_ok = arith.andi %integer_widths_ok, %division_ok : i1
-      %is_expected = arith.andi %arithmetic_ok, %indices_ok : i1
+      // Keep a proven two-state logic island live through bytecode generation.
+      // The generated runtime test executes this process through both native
+      // and bytecode tiers, so one-plane register semantics are compared
+      // directly instead of only being checked in serialized IR.
+      %logic_zero = obelisk_sim.logic.constant 0 : i1, 0 : i1 :
+          !obelisk_sim.logic<1>
+      %logic_one = obelisk_sim.logic.unary bit_not %logic_zero :
+          (!obelisk_sim.logic<1>) -> !obelisk_sim.logic<1>
+      %logic_ok = obelisk_sim.logic.is_true %logic_one : !obelisk_sim.logic<1>
+      %logic65_lhs = obelisk_sim.logic.from_bits %lhs_i65 :
+          i65 -> !obelisk_sim.logic<65>
+      %logic65_zero = obelisk_sim.logic.constant 0 : i65, 0 : i65 :
+          !obelisk_sim.logic<65>
+      %logic65_sum = obelisk_sim.logic.binary add %logic65_lhs,
+          %logic65_zero : !obelisk_sim.logic<65>
+      %logic65_bits = obelisk_sim.logic.to_bits %logic65_sum :
+          !obelisk_sim.logic<65> -> i65
+      %logic65_ok = arith.cmpi eq, %logic65_bits, %lhs_i65 : i65
+      %logic129_lhs = obelisk_sim.logic.from_bits %lhs_i129 :
+          i129 -> !obelisk_sim.logic<129>
+      %logic129_not = obelisk_sim.logic.unary bit_not %logic129_lhs :
+          (!obelisk_sim.logic<129>) -> !obelisk_sim.logic<129>
+      %logic129_roundtrip = obelisk_sim.logic.unary bit_not %logic129_not :
+          (!obelisk_sim.logic<129>) -> !obelisk_sim.logic<129>
+      %logic129_bits = obelisk_sim.logic.to_bits %logic129_roundtrip :
+          !obelisk_sim.logic<129> -> i129
+      %logic129_ok = arith.cmpi eq, %logic129_bits, %lhs_i129 : i129
+      %wide_logic_ok = arith.andi %logic65_ok, %logic129_ok : i1
+      %all_logic_ok = arith.andi %logic_ok, %wide_logic_ok : i1
+      // A known initializer must not turn automatic logic storage into a
+      // permanently two-state allocation.  Escape the reference through a
+      // call, write X there, and make the process lifecycle depend on seeing
+      // that X after the call.
+      %automatic_initial = obelisk_sim.logic.constant 5 : i8, 0 : i8 :
+          !obelisk_sim.logic<8>
+      %automatic = obelisk_sim.ref.alloc %automatic_initial :
+          !obelisk_sim.logic<8> ->
+          !obelisk_sim.ref<!obelisk_sim.logic<8>>
+      obelisk_sim.call @store_x(%ctx, %automatic) :
+          (!obelisk_sim.context,
+           !obelisk_sim.ref<!obelisk_sim.logic<8>>) -> ()
+      %automatic_loaded = obelisk_sim.ref.load %automatic :
+          !obelisk_sim.ref<!obelisk_sim.logic<8>> ->
+          !obelisk_sim.logic<8>
+      %automatic_x = obelisk_sim.logic.constant 0 : i8, -1 : i8 :
+          !obelisk_sim.logic<8>
+      %automatic_ok = obelisk_sim.logic.compare case_eq %automatic_loaded,
+          %automatic_x : (!obelisk_sim.logic<8>,
+          !obelisk_sim.logic<8>) -> i1
+      %wide_storage = obelisk_sim.context.storage %ctx[0] :
+          !obelisk_sim.ref<!obelisk_sim.logic<129>>
+      obelisk_sim.ref.store %logic129_roundtrip to %wide_storage :
+          !obelisk_sim.logic<129>, !obelisk_sim.ref<!obelisk_sim.logic<129>>
+      %arithmetic_and_indices = arith.andi %arithmetic_ok, %indices_ok : i1
+      %logic_and_automatic_ok = arith.andi %all_logic_ok, %automatic_ok : i1
+      %is_expected = arith.andi %arithmetic_and_indices,
+          %logic_and_automatic_ok : i1
       cf.cond_br %is_expected, ^expected, ^unexpected
     ^expected:
       %delay = obelisk_sim.time.constant 7
