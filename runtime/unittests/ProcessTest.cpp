@@ -90,7 +90,7 @@ obelisk_rt_status nativeExecute(obelisk_rt_process_instance_v1 *instance) {
     auto *wait = reinterpret_cast<obelisk_rt_wait_record_v1 *>(
         static_cast<uint8_t *>(instance->frame) + 8);
     if (!emitExistingNativeWait)
-      *wait = {OBELISK_RT_WAIT_RECORD_VERSION,
+      *wait = {OBELISK_RT_VERSION,
                OBELISK_RT_SUSPEND_DELAY,
                0,
                0,
@@ -132,7 +132,7 @@ struct Fixture {
 
   Fixture() {
     nativeExecuteStatus = OBELISK_RT_OK;
-    layout = {OBELISK_RT_FRAME_LAYOUT_VERSION,
+    layout = {OBELISK_RT_VERSION,
               0,
               40,
               8,
@@ -165,7 +165,7 @@ struct Fixture {
                 nullptr,
                 0};
     descriptor = {{OBELISK_RT_DESCRIPTOR_PROCESS, 0, 9},
-                  OBELISK_RT_ABI_GENERATION,
+                  OBELISK_RT_VERSION,
                   0,
                   OBELISK_RT_TIER_MASK_NATIVE | OBELISK_RT_TIER_MASK_BYTECODE,
                   0,
@@ -213,16 +213,13 @@ obelisk_rt_status schedulerExecute(obelisk_rt_process_instance_v1 *instance) {
   auto *wait = reinterpret_cast<obelisk_rt_wait_record_v1 *>(
       static_cast<uint8_t *>(instance->frame) + schedulerWaitOffset);
   auto *entry = reinterpret_cast<obelisk_rt_wait_entry_v1 *>(wait + 1);
-  uint32_t version = schedulerWaitKind == OBELISK_RT_SUSPEND_CHANGE ||
-                             schedulerWaitKind == OBELISK_RT_SUSPEND_EDGE
-                         ? OBELISK_RT_WAIT_RECORD_SIGNAL_WIDTH_VERSION
-                         : OBELISK_RT_WAIT_RECORD_VERSION;
   if (schedulerWaitKind == OBELISK_RT_SUSPEND_DELAY) {
-    *wait = {version, schedulerWaitKind, 0, 0, 17, 0};
+    *wait = {OBELISK_RT_VERSION, schedulerWaitKind, 0, 0, 17, 0};
   } else {
-    *wait = {version, schedulerWaitKind, 0, 1, 0, 0};
+    *wait = {OBELISK_RT_VERSION, schedulerWaitKind, 0, 1, 0, 0};
     *entry = {schedulerWaitHandle, schedulerWaitEdge,
-              version == OBELISK_RT_WAIT_RECORD_SIGNAL_WIDTH_VERSION
+              schedulerWaitKind == OBELISK_RT_SUSPEND_CHANGE ||
+                      schedulerWaitKind == OBELISK_RT_SUSPEND_EDGE
                   ? schedulerWaitWidth
                   : 0};
   }
@@ -319,7 +316,7 @@ struct SchedulerFixture {
 
   explicit SchedulerFixture(uint64_t id) {
     schedulerWaitOffset = 0;
-    layout = {OBELISK_RT_FRAME_LAYOUT_VERSION,
+    layout = {OBELISK_RT_VERSION,
               0,
               96,
               8,
@@ -330,7 +327,7 @@ struct SchedulerFixture {
               0};
     layout.checksum = checksum(layout);
     descriptor = {{OBELISK_RT_DESCRIPTOR_PROCESS, 0, id},
-                  OBELISK_RT_ABI_GENERATION,
+                  OBELISK_RT_VERSION,
                   0,
                   OBELISK_RT_TIER_MASK_NATIVE,
                   0,
@@ -790,7 +787,7 @@ void initializeWait(void *frame) {
   auto *wait = reinterpret_cast<obelisk_rt_wait_record_v1 *>(
       static_cast<uint8_t *>(frame) + 8);
   *wait = {
-      OBELISK_RT_WAIT_RECORD_VERSION, OBELISK_RT_SUSPEND_DELAY, 0, 0, 17, 0};
+      OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_DELAY, 0, 0, 17, 0};
 }
 
 TEST(ProcessInstance, InitializesOutputRecordsOnFailure) {
@@ -1115,7 +1112,7 @@ TEST(ProcessInstance, RejectsMalformedWaitSemantics) {
                            uint32_t count, obelisk_rt_wait_edge_kind firstEdge,
                            uint32_t firstReserved = 0) {
     std::memset(wait, 0, 64);
-    *wait = {OBELISK_RT_WAIT_RECORD_VERSION, kind, flags, count, 0, 0};
+    *wait = {OBELISK_RT_VERSION, kind, flags, count, 0, 0};
     entries[0] = {17, firstEdge, firstReserved};
     entries[1] = {18, OBELISK_RT_WAIT_EDGE_POSEDGE, 0};
     EXPECT_EQ(obelisk_rt_v1_process_instance_execute(
@@ -1133,9 +1130,9 @@ TEST(ProcessInstance, RejectsMalformedWaitSemantics) {
   expectInvalid(OBELISK_RT_SUSPEND_FRONTIER, 0, 1, OBELISK_RT_WAIT_EDGE_CHANGE);
 
   std::memset(wait, 0, 64);
-  *wait = {OBELISK_RT_WAIT_RECORD_VERSION, OBELISK_RT_SUSPEND_EDGE, 0, 2, 0, 0};
-  entries[0] = {17, OBELISK_RT_WAIT_EDGE_CHANGE, 0};
-  entries[1] = {18, OBELISK_RT_WAIT_EDGE_POSEDGE, 0};
+  *wait = {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_EDGE, 0, 2, 0, 0};
+  entries[0] = {17, OBELISK_RT_WAIT_EDGE_CHANGE, 1};
+  entries[1] = {18, OBELISK_RT_WAIT_EDGE_POSEDGE, 1};
   EXPECT_EQ(obelisk_rt_v1_process_instance_execute(
                 instance, nullptr, OBELISK_RT_TIER_NATIVE, &action),
             OBELISK_RT_OK);

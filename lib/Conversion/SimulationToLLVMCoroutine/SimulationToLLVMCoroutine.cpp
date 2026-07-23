@@ -1787,7 +1787,7 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
       storeAt(builder, location, wait, offset,
               llvmConstant(builder, location, i64, value), 8);
     };
-    storeI32(0, OBELISK_RT_COMPUTED_WAIT_RECORD_VERSION);
+    storeI32(0, OBELISK_RT_VERSION);
     storeI32(4, OBELISK_RT_SUSPEND_OBSERVER);
     storeI32(8, OBELISK_RT_COMPUTED_WAIT_INTERLEAVED);
     storeI32(12, primaryCount);
@@ -1902,7 +1902,7 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
     }
   } else {
     storeAt(builder, location, wait, 0,
-            llvmConstant(builder, location, i32, 2), 4);
+            llvmConstant(builder, location, i32, OBELISK_RT_VERSION), 4);
     storeAt(builder, location, wait, 4,
             llvmConstant(builder, location, i32, kind), 4);
     uint32_t waitFlags = 0;
@@ -2268,7 +2268,7 @@ makeProcessDescriptor(ModuleOp module, Location location, StringRef baseName,
         descriptor = insertValue(builder, location, descriptor, handle, 0);
         descriptor = insertValue(builder, location, descriptor,
                                  llvmConstant(builder, location, i32,
-                                              OBELISK_RT_ABI_GENERATION),
+                                              OBELISK_RT_VERSION),
                                  1);
         descriptor = insertValue(
             builder, location, descriptor,

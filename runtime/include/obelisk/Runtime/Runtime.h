@@ -10,11 +10,11 @@
 extern "C" {
 #endif
 
-// Names ending in _v1 and this generation number identify the current in-tree
-// schema. They are not a backward-compatibility promise: generated code,
-// bytecode, and libobelisk_rt must come from the same Obelisk source revision.
-// Any compiler update requires regenerating and relinking the simulator.
-#define OBELISK_RT_ABI_GENERATION 3u
+// All in-tree runtime records and generated artifacts use this single
+// prototype schema version. Names ending in _v1 identify the same schema.
+// This is not a backward-compatibility promise: generated code, bytecode, and
+// libobelisk_rt must come from the same Obelisk source revision.
+#define OBELISK_RT_VERSION 1u
 
 typedef struct obelisk_rt_context obelisk_rt_context;
 
@@ -71,7 +71,6 @@ typedef struct obelisk_rt_handle_v1 {
 // reflection metadata.  Both payloads are immutable, pointer-free byte images;
 // the only native pointers are this linker-resolved pointer/size pair.  A
 // descriptor with a null reflection image is valid and is emitted for vpi=off.
-#define OBELISK_RT_EXECUTION_DESCRIPTOR_VERSION 2u
 #define OBELISK_RT_EXECUTION_HAS_BYTECODE (UINT32_C(1) << 0)
 #define OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE (UINT32_C(1) << 1)
 #define OBELISK_RT_EXECUTION_VPI_READ (UINT32_C(1) << 2)
@@ -143,9 +142,8 @@ typedef struct obelisk_rt_observer_descriptor_v1 {
 
 typedef struct obelisk_rt_execution_descriptor_v1 {
   uint32_t version;
-  uint32_t abi_generation;
   uint32_t flags;
-  uint32_t reserved;
+  uint64_t reserved;
   const uint8_t *bytecode;
   uint64_t bytecode_size;
   const uint8_t *design_database;
@@ -170,7 +168,6 @@ typedef struct obelisk_rt_design_bytecode_entry_v1 {
   uint32_t reserved;
 } obelisk_rt_design_bytecode_entry_v1;
 
-#define OBELISK_RT_DESIGN_BYTECODE_VERSION 5u
 #define OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE 208u
 #define OBELISK_RT_DESIGN_BYTECODE_INSTRUCTION_SIZE 32u
 
@@ -334,7 +331,6 @@ typedef obelisk_rt_status (*obelisk_rt_import_callback_v1)(
 // source_file at an immutable string; bytecode materializes the same record
 // from its pointer-free string and call-site sections before entering the
 // runtime boundary.
-#define OBELISK_RT_IMPORT_SITE_VERSION 1u
 #define OBELISK_RT_IMPORT_PURE (UINT32_C(1) << 0)
 #define OBELISK_RT_IMPORT_CONTEXT (UINT32_C(1) << 1)
 #define OBELISK_RT_IMPORT_TASK (UINT32_C(1) << 2)
@@ -362,7 +358,6 @@ typedef struct obelisk_rt_import_site_v1 {
 
 // The design database is a DWARF-like byte image. All cursors and links are
 // section-relative offsets, never native pointers.
-#define OBELISK_RT_DESIGN_VERSION 3u
 #define OBELISK_RT_DESIGN_PROFILE_READ (UINT32_C(1) << 0)
 #define OBELISK_RT_DESIGN_PROFILE_WRITE (UINT32_C(1) << 1)
 
@@ -660,8 +655,6 @@ typedef struct obelisk_rt_bytecode_service_site_v1 {
 // are sorted by offset and describe all compiler-owned ranges, including both
 // adjacent planes of a four-state value and scheduler wait records. Native
 // addresses are forbidden in the canonical frame.
-#define OBELISK_RT_FRAME_LAYOUT_VERSION 1u
-
 typedef uint32_t obelisk_rt_frame_field_kind;
 enum {
   OBELISK_RT_FRAME_CAPTURE = 1,
@@ -702,8 +695,6 @@ typedef struct obelisk_rt_frame_layout_v1 {
 // payload is its frame-relative offset and action auxiliary is its byte size.
 // One entry follows the header for every watched stable handle. Signal waits
 // preserve a requested edge per entry; other wait families use EDGE_NONE.
-#define OBELISK_RT_WAIT_RECORD_VERSION 1u
-#define OBELISK_RT_WAIT_RECORD_SIGNAL_WIDTH_VERSION 2u
 typedef uint32_t obelisk_rt_wait_flags;
 enum {
   OBELISK_RT_WAIT_FLAGS_NONE = 0,
@@ -738,7 +729,6 @@ typedef struct obelisk_rt_wait_entry_v1 {
   uint32_t reserved;
 } obelisk_rt_wait_entry_v1;
 
-#define OBELISK_RT_COMPUTED_WAIT_RECORD_VERSION 1u
 #define OBELISK_RT_COMPUTED_WAIT_FLAGS_NONE 0u
 #define OBELISK_RT_COMPUTED_WAIT_INTERLEAVED (UINT32_C(1) << 0)
 #define OBELISK_RT_OBSERVER_CONDITION_NONE UINT32_MAX
@@ -823,7 +813,7 @@ enum {
 
 typedef struct obelisk_rt_process_descriptor_v1 {
   obelisk_rt_handle_v1 handle;
-  uint32_t abi_generation;
+  uint32_t version;
   uint32_t flags;
   uint32_t available_tiers;
   uint32_t reserved;

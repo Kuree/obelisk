@@ -284,11 +284,10 @@ struct ObserverWaitTestDescriptor {
   obelisk_rt_process_descriptor_v1 process{};
 
   ObserverWaitTestDescriptor() {
-    execution.version = OBELISK_RT_EXECUTION_DESCRIPTOR_VERSION;
-    execution.abi_generation = OBELISK_RT_ABI_GENERATION;
+    execution.version = OBELISK_RT_VERSION;
     execution.observers = &observer;
     execution.observer_count = 1;
-    layout = {OBELISK_RT_FRAME_LAYOUT_VERSION,
+    layout = {OBELISK_RT_VERSION,
               0,
               176,
               8,
@@ -299,7 +298,7 @@ struct ObserverWaitTestDescriptor {
               0};
     layout.checksum = observerWaitLayoutChecksum(layout);
     process = {{OBELISK_RT_DESCRIPTOR_PROCESS, 0, 17},
-               OBELISK_RT_ABI_GENERATION,
+               OBELISK_RT_VERSION,
                0,
                OBELISK_RT_TIER_MASK_NATIVE,
                0,
@@ -315,7 +314,7 @@ struct ObserverWaitTestDescriptor {
   static void populate(void *frame) {
     std::memset(frame, 0, 176);
     auto *wait = static_cast<obelisk_rt_computed_wait_record_v1 *>(frame);
-    *wait = {OBELISK_RT_COMPUTED_WAIT_RECORD_VERSION,
+    *wait = {OBELISK_RT_VERSION,
              OBELISK_RT_SUSPEND_OBSERVER,
              OBELISK_RT_COMPUTED_WAIT_INTERLEAVED,
              1,
@@ -500,6 +499,9 @@ TEST(RuntimeABI, StableScalarLayout) {
   EXPECT_EQ(sizeof(obelisk_rt_observer_capture_abi_v1), 8u);
   EXPECT_EQ(sizeof(obelisk_rt_observer_descriptor_v1), 48u);
   EXPECT_EQ(sizeof(obelisk_rt_execution_descriptor_v1), 120u);
+  EXPECT_EQ(offsetof(obelisk_rt_execution_descriptor_v1, version), 0u);
+  EXPECT_EQ(offsetof(obelisk_rt_execution_descriptor_v1, flags), 4u);
+  EXPECT_EQ(offsetof(obelisk_rt_execution_descriptor_v1, reserved), 8u);
   EXPECT_EQ(offsetof(obelisk_rt_execution_descriptor_v1, activations), 88u);
   EXPECT_EQ(offsetof(obelisk_rt_execution_descriptor_v1, observers), 104u);
   EXPECT_EQ(sizeof(obelisk_rt_computed_wait_record_v1), 96u);
@@ -507,7 +509,7 @@ TEST(RuntimeABI, StableScalarLayout) {
   EXPECT_EQ(sizeof(obelisk_rt_computed_capture_v1), 32u);
   EXPECT_EQ(sizeof(obelisk_rt_computed_dependency_v1), 16u);
   EXPECT_EQ(sizeof(obelisk_rt_computed_clause_v1), 16u);
-  EXPECT_EQ(OBELISK_RT_ABI_GENERATION, 3u);
+  EXPECT_EQ(OBELISK_RT_VERSION, 1u);
   EXPECT_STREQ(obelisk_rt_v1_status_string(OBELISK_RT_FORMAT_ERROR),
                "format error");
 }
@@ -521,8 +523,7 @@ TEST(RuntimeABI, RejectsMalformedActivationInventory) {
       1, nullptr, OBELISK_RT_ACTIVATION_NO_BYTECODE,
       OBELISK_RT_ACTIVATION_HAS_NATIVE};
   const obelisk_rt_execution_descriptor_v1 execution{
-      OBELISK_RT_EXECUTION_DESCRIPTOR_VERSION,
-      OBELISK_RT_ABI_GENERATION,
+      OBELISK_RT_VERSION,
       0,
       0,
       nullptr,
@@ -544,15 +545,14 @@ TEST(RuntimeABI, RejectsMalformedActivationInventory) {
   EXPECT_EQ(context, nullptr);
 }
 
-TEST(RuntimeABI, ValidatesObserverInventoryAndDescriptorVersions) {
+TEST(RuntimeABI, ValidatesObserverInventoryAndDescriptorVersion) {
   obelisk_rt_observer_capture_abi_v1 capture{
       OBELISK_RT_OBSERVER_CAPTURE_STORAGE, 8};
   obelisk_rt_observer_descriptor_v1 observer{
       7, &capture, 1, 1, 0, OBELISK_RT_OBSERVER_NO_BYTECODE,
       observerEvaluator, 0};
   obelisk_rt_execution_descriptor_v1 execution{};
-  execution.version = OBELISK_RT_EXECUTION_DESCRIPTOR_VERSION;
-  execution.abi_generation = OBELISK_RT_ABI_GENERATION;
+  execution.version = OBELISK_RT_VERSION;
   execution.observers = &observer;
   execution.observer_count = 1;
 
@@ -561,16 +561,11 @@ TEST(RuntimeABI, ValidatesObserverInventoryAndDescriptorVersions) {
             OBELISK_RT_OK);
   obelisk_rt_v1_context_destroy(context);
 
-  execution.version = OBELISK_RT_EXECUTION_DESCRIPTOR_VERSION - 1;
+  execution.version = OBELISK_RT_VERSION - 1;
   EXPECT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
             OBELISK_RT_INVALID_DESIGN);
   EXPECT_EQ(context, nullptr);
-  execution.version = OBELISK_RT_EXECUTION_DESCRIPTOR_VERSION;
-  execution.abi_generation = OBELISK_RT_ABI_GENERATION - 1;
-  EXPECT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
-            OBELISK_RT_INVALID_DESIGN);
-  EXPECT_EQ(context, nullptr);
-  execution.abi_generation = OBELISK_RT_ABI_GENERATION;
+  execution.version = OBELISK_RT_VERSION;
 
   capture.kind = 0;
   EXPECT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
@@ -609,7 +604,7 @@ TEST(RuntimeABI, RejectsMalformedComputedWaitRecords) {
   execute([](auto &, void *) {}, OBELISK_RT_OK);
   execute(
       [](auto &wait, void *) {
-        wait.version = OBELISK_RT_COMPUTED_WAIT_RECORD_VERSION + 1;
+        wait.version = OBELISK_RT_VERSION + 1;
       },
       OBELISK_RT_INVALID_FRAME);
   execute(
@@ -730,20 +725,19 @@ TEST(RuntimeABI, NestedObserverLatchStopsLaterSourceClauses) {
        observerSecondEvaluator, 0},
   }};
   obelisk_rt_execution_descriptor_v1 execution{};
-  execution.version = OBELISK_RT_EXECUTION_DESCRIPTOR_VERSION;
-  execution.abi_generation = OBELISK_RT_ABI_GENERATION;
+  execution.version = OBELISK_RT_VERSION;
   execution.observers = observers.data();
   execution.observer_count = observers.size();
   obelisk_rt_frame_field_v1 field{
       OBELISK_RT_FRAME_WAIT, OBELISK_RT_FRAME_FIELD_FLAGS_NONE, 0, 256, 8, 0};
   std::array<uint32_t, 2> continuations{{0, 1}};
   obelisk_rt_frame_layout_v1 layout{
-      OBELISK_RT_FRAME_LAYOUT_VERSION, 0, 256, 8, &field, 1,
+      OBELISK_RT_VERSION, 0, 256, 8, &field, 1,
       static_cast<uint32_t>(continuations.size()), continuations.data(), 0};
   layout.checksum = observerWaitLayoutChecksum(layout);
   obelisk_rt_process_descriptor_v1 process{
       {OBELISK_RT_DESCRIPTOR_PROCESS, 0, 18},
-      OBELISK_RT_ABI_GENERATION,
+      OBELISK_RT_VERSION,
       0,
       OBELISK_RT_TIER_MASK_NATIVE,
       0,
@@ -770,7 +764,7 @@ TEST(RuntimeABI, NestedObserverLatchStopsLaterSourceClauses) {
   ASSERT_EQ(frameSize, 256u);
   std::memset(frame, 0, frameSize);
   auto *wait = static_cast<obelisk_rt_computed_wait_record_v1 *>(frame);
-  *wait = {OBELISK_RT_COMPUTED_WAIT_RECORD_VERSION,
+  *wait = {OBELISK_RT_VERSION,
            OBELISK_RT_SUSPEND_OBSERVER,
            OBELISK_RT_COMPUTED_WAIT_INTERLEAVED,
            2,
@@ -944,8 +938,7 @@ TEST(RuntimeDPI, ValidatesDispatchContextAndNestedRestoration) {
       {1, 0, childName, sizeof(childName) - 1, -9, -12, 0},
   };
   obelisk_rt_execution_descriptor_v1 execution{
-      OBELISK_RT_EXECUTION_DESCRIPTOR_VERSION,
-      OBELISK_RT_ABI_GENERATION,
+      OBELISK_RT_VERSION,
       0,
       0,
       nullptr,
@@ -970,7 +963,7 @@ TEST(RuntimeDPI, ValidatesDispatchContextAndNestedRestoration) {
   observation.nestedID = obelisk_rt_v1_import_id(
       reinterpret_cast<const uint8_t *>(innerName.data()), innerName.size());
   static constexpr char caller[] = "dpi_test.sv";
-  observation.nestedSite = {OBELISK_RT_IMPORT_SITE_VERSION,
+  observation.nestedSite = {OBELISK_RT_VERSION,
                             OBELISK_RT_IMPORT_CONTEXT,
                             observation.nestedID,
                             0,
@@ -994,7 +987,7 @@ TEST(RuntimeDPI, ValidatesDispatchContextAndNestedRestoration) {
   obelisk_rt_import_output_v1 output{
       OBELISK_RT_DBREG_BITS, 0, 0, 65, outputValue, nullptr, 2};
   obelisk_rt_import_site_v1 site{
-      OBELISK_RT_IMPORT_SITE_VERSION,
+      OBELISK_RT_VERSION,
       OBELISK_RT_IMPORT_CONTEXT,
       outerID,
       0,
@@ -1042,8 +1035,7 @@ TEST(RuntimeDPI, RejectsMalformedScopeMetadata) {
   obelisk_rt_dpi_scope_v1 scope{
       1, UINT64_MAX, name, sizeof(name) - 1, -9, -12, 0};
   obelisk_rt_execution_descriptor_v1 execution{
-      OBELISK_RT_EXECUTION_DESCRIPTOR_VERSION,
-      OBELISK_RT_ABI_GENERATION,
+      OBELISK_RT_VERSION,
       0,
       0,
       nullptr,

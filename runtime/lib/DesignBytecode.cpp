@@ -229,8 +229,7 @@ bool parseImage(const obelisk_rt_design_bytecode_entry_v1 &entry,
                 Image &image) {
   const auto *execution = entry.execution;
   if (!execution || entry.reserved != 0 ||
-      execution->version != OBELISK_RT_EXECUTION_DESCRIPTOR_VERSION ||
-      execution->abi_generation != OBELISK_RT_ABI_GENERATION ||
+      execution->version != OBELISK_RT_VERSION ||
       execution->reserved != 0 ||
       (execution->flags & OBELISK_RT_EXECUTION_HAS_BYTECODE) == 0 ||
       !execution->bytecode ||
@@ -238,8 +237,8 @@ bool parseImage(const obelisk_rt_design_bytecode_entry_v1 &entry,
     return false;
   const uint8_t *data = execution->bytecode;
   if (std::memcmp(data, kMagic, sizeof(kMagic)) != 0 ||
-      read32(data + 8) != OBELISK_RT_DESIGN_BYTECODE_VERSION ||
-      read32(data + 12) != OBELISK_RT_ABI_GENERATION ||
+      read32(data + 8) != OBELISK_RT_VERSION ||
+      read32(data + 12) != 0 ||
       read32(data + 16) != OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE ||
       read64(data + 24) != execution->bytecode_size ||
       read64(data + 32) == 0 ||
@@ -2183,7 +2182,7 @@ bool validateComputedWaitRecord(
     const obelisk_rt_execution_descriptor_v1 *execution,
     const obelisk_rt_computed_wait_record_v1 *wait, uint64_t available) {
   if (!execution || !wait || available < sizeof(*wait) ||
-      wait->version != OBELISK_RT_COMPUTED_WAIT_RECORD_VERSION ||
+      wait->version != OBELISK_RT_VERSION ||
       wait->kind != OBELISK_RT_SUSPEND_OBSERVER ||
       wait->flags != OBELISK_RT_COMPUTED_WAIT_INTERLEAVED ||
       wait->clause_count == 0 ||
@@ -2903,7 +2902,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       return OBELISK_RT_INVALID_ARGUMENT;
     uint32_t firstInput = 0;
     obelisk_rt_import_site_v1 importSite{
-        OBELISK_RT_IMPORT_SITE_VERSION,
+        OBELISK_RT_VERSION,
         0,
         signature.flags,
         0,
@@ -4753,7 +4752,7 @@ bool obelisk_rt_evaluate_design_observers_unlocked(
       return nullptr;
     auto *wait = reinterpret_cast<obelisk_rt_computed_wait_record_v1 *>(
         task.frame.data() + task.waitOffset);
-    return wait->version == OBELISK_RT_COMPUTED_WAIT_RECORD_VERSION &&
+    return wait->version == OBELISK_RT_VERSION &&
                    wait->kind == OBELISK_RT_SUSPEND_OBSERVER &&
                    wait->total_size <= task.waitSize
                ? wait
@@ -5654,8 +5653,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(obelisk_rt_context *context,
           if (wait->flags == OBELISK_RT_WAIT_LEVEL_TRUE ||
               wait->flags == OBELISK_RT_WAIT_EDGE_IFF)
             signalTriggered = iterator->signalTriggered;
-          else if (wait->version ==
-                   OBELISK_RT_WAIT_RECORD_SIGNAL_WIDTH_VERSION)
+          else if (wait->version == OBELISK_RT_VERSION)
             for (uint32_t index = 0; index != wait->count; ++index)
               for (const ScheduledSignalEvent &event :
                    context->scheduledSignalEvents)
@@ -5855,9 +5853,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(obelisk_rt_context *context,
             uint64_t{wait->count} * sizeof(obelisk_rt_wait_entry_v1);
         bool signalWait = action.suspend_kind == OBELISK_RT_SUSPEND_CHANGE ||
                           action.suspend_kind == OBELISK_RT_SUSPEND_EDGE;
-        if (wait->version != (signalWait
-                                  ? OBELISK_RT_WAIT_RECORD_SIGNAL_WIDTH_VERSION
-                                  : OBELISK_RT_WAIT_RECORD_VERSION) ||
+        if (wait->version != OBELISK_RT_VERSION ||
             wait->kind != action.suspend_kind ||
             entries > task.scratchOffset - action.payload -
                           sizeof(obelisk_rt_wait_record_v1)) {

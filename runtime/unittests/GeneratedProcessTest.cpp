@@ -58,7 +58,7 @@ void initializeDelayWait(void *frame) {
   auto *wait = reinterpret_cast<obelisk_rt_wait_record_v1 *>(
       static_cast<uint8_t *>(frame) + field->offset);
   *wait = {
-      OBELISK_RT_WAIT_RECORD_VERSION, OBELISK_RT_SUSPEND_DELAY, 0, 0, 3, 0};
+      OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_DELAY, 0, 0, 3, 0};
 }
 
 struct DualTierDescriptor {

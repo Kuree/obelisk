@@ -106,8 +106,8 @@ std::vector<uint8_t> makeBytecode() {
   constexpr size_t continuationOffset = constantOffset + 32;
   std::vector<uint8_t> bytes(continuationOffset + 24, 0);
   std::memcpy(bytes.data(), "OBBCDS1\0", 8);
-  put32(bytes, 8, OBELISK_RT_DESIGN_BYTECODE_VERSION);
-  put32(bytes, 12, OBELISK_RT_ABI_GENERATION);
+  put32(bytes, 8, OBELISK_RT_VERSION);
+  put32(bytes, 12, 0);
   put32(bytes, 16, OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE);
   put64(bytes, 24, bytes.size());
   put64(bytes, 40, functionOffset);
@@ -168,8 +168,8 @@ std::vector<uint8_t> makeObserverBytecode(uint8_t resultKind) {
   constexpr size_t continuationOffset = constantOffset + 32;
   std::vector<uint8_t> bytes(continuationOffset + 24, 0);
   std::memcpy(bytes.data(), "OBBCDS1\0", 8);
-  put32(bytes, 8, OBELISK_RT_DESIGN_BYTECODE_VERSION);
-  put32(bytes, 12, OBELISK_RT_ABI_GENERATION);
+  put32(bytes, 8, OBELISK_RT_VERSION);
+  put32(bytes, 12, 0);
   put32(bytes, 16, OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE);
   put64(bytes, 24, bytes.size());
   put64(bytes, 40, functionOffset);
@@ -233,8 +233,8 @@ std::vector<uint8_t> makeImportBytecode(uint32_t importID) {
   constexpr size_t siteOffset = intrinsicOffset + 16;
   std::vector<uint8_t> bytes(siteOffset + 16, 0);
   std::memcpy(bytes.data(), "OBBCDS1\0", 8);
-  put32(bytes, 8, OBELISK_RT_DESIGN_BYTECODE_VERSION);
-  put32(bytes, 12, OBELISK_RT_ABI_GENERATION);
+  put32(bytes, 8, OBELISK_RT_VERSION);
+  put32(bytes, 12, 0);
   put32(bytes, 16, OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE);
   put64(bytes, 24, bytes.size());
   put64(bytes, 40, functionOffset);
@@ -339,8 +339,8 @@ std::vector<uint8_t> makeSchedulerBytecode() {
   constexpr size_t stateOffset = siteOffset + 2 * 16;
   std::vector<uint8_t> bytes(stateOffset, 0);
   std::memcpy(bytes.data(), "OBBCDS1\0", 8);
-  put32(bytes, 8, OBELISK_RT_DESIGN_BYTECODE_VERSION);
-  put32(bytes, 12, OBELISK_RT_ABI_GENERATION);
+  put32(bytes, 8, OBELISK_RT_VERSION);
+  put32(bytes, 12, 0);
   put32(bytes, 16, OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE);
   put64(bytes, 24, bytes.size());
   put64(bytes, 40, functionOffset);
@@ -543,8 +543,8 @@ std::vector<uint8_t> makeVPIBytecode() {
   constexpr size_t stateOffset = siteOffset + 5 * 16;
   std::vector<uint8_t> bytes(stateOffset, 0);
   std::memcpy(bytes.data(), "OBBCDS1\0", 8);
-  put32(bytes, 8, OBELISK_RT_DESIGN_BYTECODE_VERSION);
-  put32(bytes, 12, OBELISK_RT_ABI_GENERATION);
+  put32(bytes, 8, OBELISK_RT_VERSION);
+  put32(bytes, 12, 0);
   put32(bytes, 16, OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE);
   put64(bytes, 24, bytes.size());
   put64(bytes, 40, functionOffset);
@@ -796,8 +796,8 @@ std::vector<uint8_t> makeAutomaticSpawnBytecode(uint32_t childRank = 0) {
   constexpr size_t stateOffset = siteOffset + 2 * 16;
   std::vector<uint8_t> bytes(stateOffset + 2 * 32, 0);
   std::memcpy(bytes.data(), "OBBCDS1\0", 8);
-  put32(bytes, 8, OBELISK_RT_DESIGN_BYTECODE_VERSION);
-  put32(bytes, 12, OBELISK_RT_ABI_GENERATION);
+  put32(bytes, 8, OBELISK_RT_VERSION);
+  put32(bytes, 12, 0);
   put32(bytes, 16, OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE);
   put64(bytes, 24, bytes.size());
   put64(bytes, 40, functionOffset);
@@ -922,8 +922,8 @@ std::vector<uint8_t> makeDatabase(bool writable = true) {
   constexpr uint64_t indexOffset = 392;
   std::vector<uint8_t> bytes(indexOffset + 48, 0);
   std::memcpy(bytes.data(), "OBDSGN1\0", 8);
-  put32(bytes, 8, OBELISK_RT_DESIGN_VERSION);
-  put32(bytes, 12, OBELISK_RT_ABI_GENERATION);
+  put32(bytes, 8, OBELISK_RT_VERSION);
+  put32(bytes, 12, 0);
   put32(bytes, 16, OBELISK_RT_DESIGN_PROFILE_READ |
                            (writable ? OBELISK_RT_DESIGN_PROFILE_WRITE : 0));
   put32(bytes, 20, 128);
@@ -1001,8 +1001,8 @@ std::vector<uint8_t> makeCodeUnitDatabase() {
   constexpr uint64_t indexOffset = 408;
   std::vector<uint8_t> bytes(indexOffset + 72, 0);
   std::memcpy(bytes.data(), "OBDSGN1\0", 8);
-  put32(bytes, 8, OBELISK_RT_DESIGN_VERSION);
-  put32(bytes, 12, OBELISK_RT_ABI_GENERATION);
+  put32(bytes, 8, OBELISK_RT_VERSION);
+  put32(bytes, 12, 0);
   put32(bytes, 16, OBELISK_RT_DESIGN_PROFILE_READ);
   put32(bytes, 20, 128);
   put64(bytes, 24, bytes.size());
@@ -1071,8 +1071,8 @@ std::vector<uint8_t> makeAggregateDatabase() {
   constexpr uint64_t indexOffset = 568;
   std::vector<uint8_t> bytes(indexOffset + 48, 0);
   std::memcpy(bytes.data(), "OBDSGN1\0", 8);
-  put32(bytes, 8, OBELISK_RT_DESIGN_VERSION);
-  put32(bytes, 12, OBELISK_RT_ABI_GENERATION);
+  put32(bytes, 8, OBELISK_RT_VERSION);
+  put32(bytes, 12, 0);
   put32(bytes, 16, OBELISK_RT_DESIGN_PROFILE_READ |
                            OBELISK_RT_DESIGN_PROFILE_WRITE);
   put32(bytes, 20, 128);
@@ -1174,8 +1174,7 @@ struct Fixture {
   obelisk_rt_process_descriptor_v1 descriptor{};
 
   Fixture() {
-    execution = {OBELISK_RT_EXECUTION_DESCRIPTOR_VERSION,
-                 OBELISK_RT_ABI_GENERATION,
+    execution = {OBELISK_RT_VERSION,
                  OBELISK_RT_EXECUTION_HAS_BYTECODE |
                      OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
                      OBELISK_RT_EXECUTION_VPI_READ |
@@ -1188,7 +1187,7 @@ struct Fixture {
                  65,
                  imageChecksum(bytecode)};
     entry = {&execution, 0, 0};
-    layout = {OBELISK_RT_FRAME_LAYOUT_VERSION,
+    layout = {OBELISK_RT_VERSION,
               0,
               32,
               8,
@@ -1199,7 +1198,7 @@ struct Fixture {
               0};
     layout.checksum = frameChecksum(layout);
     descriptor = {{OBELISK_RT_DESCRIPTOR_PROCESS, 0, 9},
-                  OBELISK_RT_ABI_GENERATION,
+                  OBELISK_RT_VERSION,
                   0,
                   OBELISK_RT_TIER_MASK_BYTECODE,
                   0,
@@ -1253,7 +1252,7 @@ void designWriteWaitDestroy(obelisk_rt_process_instance_v1 *) {}
 void populateDesignWriteWait(void *frame) {
   std::memset(frame, 0, 176);
   auto *wait = static_cast<obelisk_rt_computed_wait_record_v1 *>(frame);
-  *wait = {OBELISK_RT_COMPUTED_WAIT_RECORD_VERSION,
+  *wait = {OBELISK_RT_VERSION,
            OBELISK_RT_SUSPEND_OBSERVER,
            OBELISK_RT_COMPUTED_WAIT_INTERLEAVED,
            1,
@@ -1314,12 +1313,12 @@ TEST(DesignBytecode, DesignWritePublishesToComputedObservers) {
       OBELISK_RT_FRAME_WAIT, OBELISK_RT_FRAME_FIELD_FLAGS_NONE, 0, 176, 8, 0};
   std::array<uint32_t, 2> continuations{{0, 1}};
   obelisk_rt_frame_layout_v1 layout{
-      OBELISK_RT_FRAME_LAYOUT_VERSION, 0, 176, 8, &field, 1,
+      OBELISK_RT_VERSION, 0, 176, 8, &field, 1,
       static_cast<uint32_t>(continuations.size()), continuations.data(), 0};
   layout.checksum = frameChecksum(layout);
   obelisk_rt_process_descriptor_v1 process{
       {OBELISK_RT_DESCRIPTOR_PROCESS, 0, 83},
-      OBELISK_RT_ABI_GENERATION,
+      OBELISK_RT_VERSION,
       0,
       OBELISK_RT_TIER_MASK_NATIVE,
       0,
@@ -1372,8 +1371,7 @@ TEST(DesignBytecode, RejectsNonPackedObserverResultLayout) {
     bytecode = makeObserverBytecode(resultKind);
     observer = {7, nullptr, 0, 256, 0, 0, nullptr, 0};
     execution = {};
-    execution.version = OBELISK_RT_EXECUTION_DESCRIPTOR_VERSION;
-    execution.abi_generation = OBELISK_RT_ABI_GENERATION;
+    execution.version = OBELISK_RT_VERSION;
     execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE;
     execution.bytecode = bytecode.data();
     execution.bytecode_size = bytecode.size();
@@ -2006,8 +2004,7 @@ TEST(DesignBytecode, StaticHandleNBARemainsBoundedAndApplies) {
 TEST(DesignBytecode, SpawnRetainsStableAutomaticHandlesAndReclaimsTaskState) {
   std::vector<uint8_t> bytecode = makeAutomaticSpawnBytecode();
   obelisk_rt_execution_descriptor_v1 execution{
-      OBELISK_RT_EXECUTION_DESCRIPTOR_VERSION,
-      OBELISK_RT_ABI_GENERATION,
+      OBELISK_RT_VERSION,
       OBELISK_RT_EXECUTION_HAS_BYTECODE,
       0,
       bytecode.data(),
@@ -2019,12 +2016,12 @@ TEST(DesignBytecode, SpawnRetainsStableAutomaticHandlesAndReclaimsTaskState) {
   obelisk_rt_design_bytecode_entry_v1 entry{&execution, 0, 0};
   std::array<uint32_t, 1> continuations{{0}};
   obelisk_rt_frame_layout_v1 layout{
-      OBELISK_RT_FRAME_LAYOUT_VERSION, 0, 8, 8, nullptr, 0, 1,
+      OBELISK_RT_VERSION, 0, 8, 8, nullptr, 0, 1,
       continuations.data(), 0};
   layout.checksum = frameChecksum(layout);
   obelisk_rt_process_descriptor_v1 descriptor{
       {OBELISK_RT_DESCRIPTOR_PROCESS, 0, 71},
-      OBELISK_RT_ABI_GENERATION,
+      OBELISK_RT_VERSION,
       0,
       OBELISK_RT_TIER_MASK_BYTECODE,
       0,
@@ -2099,8 +2096,7 @@ TEST(DesignBytecode, SpawnRetainsStableAutomaticHandlesAndReclaimsTaskState) {
 TEST(DesignBytecode, MixedTierSchedulerUsesRegionRankAndInsertionKey) {
   std::vector<uint8_t> bytecode = makeAutomaticSpawnBytecode(10);
   obelisk_rt_execution_descriptor_v1 execution{
-      OBELISK_RT_EXECUTION_DESCRIPTOR_VERSION,
-      OBELISK_RT_ABI_GENERATION,
+      OBELISK_RT_VERSION,
       OBELISK_RT_EXECUTION_HAS_BYTECODE,
       0,
       bytecode.data(),
@@ -2111,13 +2107,13 @@ TEST(DesignBytecode, MixedTierSchedulerUsesRegionRankAndInsertionKey) {
       imageChecksum(bytecode)};
   std::array<uint32_t, 1> continuations{{0}};
   obelisk_rt_frame_layout_v1 bytecodeLayout{
-      OBELISK_RT_FRAME_LAYOUT_VERSION, 0, 8, 8, nullptr, 0, 1,
+      OBELISK_RT_VERSION, 0, 8, 8, nullptr, 0, 1,
       continuations.data(), 0};
   bytecodeLayout.checksum = frameChecksum(bytecodeLayout);
   obelisk_rt_design_bytecode_entry_v1 entry{&execution, 0, 0};
   obelisk_rt_process_descriptor_v1 bytecodeDescriptor{
       {OBELISK_RT_DESCRIPTOR_PROCESS, 0, 81},
-      OBELISK_RT_ABI_GENERATION,
+      OBELISK_RT_VERSION,
       0,
       OBELISK_RT_TIER_MASK_BYTECODE,
       0,
@@ -2161,12 +2157,12 @@ TEST(DesignBytecode, MixedTierSchedulerUsesRegionRankAndInsertionKey) {
   ASSERT_EQ(obelisk_rt_v1_process_instance_destroy(root), OBELISK_RT_OK);
 
   obelisk_rt_frame_layout_v1 nativeLayout{
-      OBELISK_RT_FRAME_LAYOUT_VERSION, 0, 0, 1, nullptr, 0, 1,
+      OBELISK_RT_VERSION, 0, 0, 1, nullptr, 0, 1,
       continuations.data(), 0};
   nativeLayout.checksum = frameChecksum(nativeLayout);
   obelisk_rt_process_descriptor_v1 nativeDescriptor{
       {OBELISK_RT_DESCRIPTOR_PROCESS, 0, 82},
-      OBELISK_RT_ABI_GENERATION,
+      OBELISK_RT_VERSION,
       0,
       OBELISK_RT_TIER_MASK_NATIVE,
       0,
@@ -2213,6 +2209,10 @@ TEST(DesignBytecode, RejectsNonCanonicalTablesAndUncallableFunctions) {
   Fixture reservedHeader;
   put32(reservedHeader.bytecode, 20, 1);
   rejected(reservedHeader);
+
+  Fixture redundantVersion;
+  put32(redundantVersion.bytecode, 12, 1);
+  rejected(redundantVersion);
 
   Fixture overlappingTable;
   put64(overlappingTable.bytecode, 56, 192);
@@ -2526,7 +2526,7 @@ TEST(DesignDatabase, TraversesStableProcessAndFunctionRecords) {
             OBELISK_RT_OK);
   EXPECT_EQ(found.offset, function.offset);
 
-  // Version 3 code-unit records must remain pointer-free and state-free.
+  // Version 1 code-unit records must remain pointer-free and state-free.
   std::vector<uint8_t> malformed = fixture.database;
   put64(malformed, 288 + 48, 384);
   put64(malformed, 32, imageChecksum(malformed));
@@ -2535,6 +2535,11 @@ TEST(DesignDatabase, TraversesStableProcessAndFunctionRecords) {
             OBELISK_RT_INVALID_DESIGN);
   put64(malformed, 288 + 48, 0);
   put32(malformed, 8, 2);
+  put64(malformed, 32, imageChecksum(malformed));
+  EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
+            OBELISK_RT_INVALID_DESIGN);
+  put32(malformed, 8, OBELISK_RT_VERSION);
+  put32(malformed, 12, 1);
   put64(malformed, 32, imageChecksum(malformed));
   EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
             OBELISK_RT_INVALID_DESIGN);

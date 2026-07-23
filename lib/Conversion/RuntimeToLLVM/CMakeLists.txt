@@ -15,3 +15,7 @@ add_mlir_library(ObeliskRuntimeToLLVM
   MLIRPass
   MLIRTransforms
 )
+
+target_include_directories(ObeliskRuntimeToLLVM PRIVATE
+  "${PROJECT_SOURCE_DIR}/runtime/include"
+)

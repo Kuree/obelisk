@@ -3,6 +3,7 @@
 #include "obelisk/Conversion/RuntimeToLLVM.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Runtime/Runtime.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -32,7 +33,6 @@ constexpr StringLiteral kDatabaseName = "__obelisk_design_database_v1";
 constexpr StringLiteral kDPIScopesName = "__obelisk_dpi_scopes_v1";
 constexpr StringLiteral kActivationsName = "__obelisk_activations_v1";
 constexpr StringLiteral kObserversName = "__obelisk_observers_v1";
-constexpr uint32_t kRuntimeABIGeneration = 3;
 constexpr uint32_t kActivationHasNative = UINT32_C(1) << 0;
 constexpr uint32_t kActivationHasBytecode = UINT32_C(1) << 1;
 constexpr uint32_t kActivationNoBytecode = UINT32_MAX;
@@ -570,8 +570,8 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
         });
   }
   auto executionType = LLVM::LLVMStructType::getLiteral(
-      context, {i32, i32, i32, i32, pointer, i64, pointer, i64, i64, i64,
-                pointer, i64, i32, i32, pointer, i64, pointer, i64});
+      context, {i32, i32, i64, pointer, i64, pointer, i64, i64, i64, pointer,
+                i64, i32, i32, pointer, i64, pointer, i64});
   uint32_t flags = 0;
   uint64_t stateBits = 0;
   if (auto attr = module->getAttrOfType<IntegerAttr>(kFlagsAttr))
@@ -586,82 +586,79 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
         Value value = LLVM::ZeroOp::create(builder, module.getLoc(),
                                            executionType);
         value = insertValue(builder, module.getLoc(), value,
-                            integerConstant(builder, module.getLoc(), i32, 2),
-                            0);
-        value = insertValue(builder, module.getLoc(), value,
                             integerConstant(builder, module.getLoc(), i32,
-                                            kRuntimeABIGeneration),
-                            1);
+                                            OBELISK_RT_VERSION),
+                            0);
         value = insertValue(
             builder, module.getLoc(), value,
-            integerConstant(builder, module.getLoc(), i32, flags), 2);
+            integerConstant(builder, module.getLoc(), i32, flags), 1);
         if (bytecode)
           value = insertValue(
               builder, module.getLoc(), value,
               LLVM::AddressOfOp::create(builder, module.getLoc(), pointer,
                                         kBytecodeName),
-              4);
+              3);
         value = insertValue(
             builder, module.getLoc(), value,
             integerConstant(builder, module.getLoc(), i64,
                             bytecode ? bytecode.size() : 0),
-            5);
+            4);
         if (database)
           value = insertValue(
               builder, module.getLoc(), value,
               LLVM::AddressOfOp::create(builder, module.getLoc(), pointer,
                                         kDatabaseName),
-              6);
+              5);
         value = insertValue(
             builder, module.getLoc(), value,
             integerConstant(builder, module.getLoc(), i64,
                             database ? database.size() : 0),
-            7);
+            6);
         value = insertValue(
             builder, module.getLoc(), value,
-            integerConstant(builder, module.getLoc(), i64, stateBits), 8);
+            integerConstant(builder, module.getLoc(), i64, stateBits), 7);
         value = insertValue(
             builder, module.getLoc(), value,
-            integerConstant(builder, module.getLoc(), i64, checksum), 9);
+            integerConstant(builder, module.getLoc(), i64, checksum), 8);
         if (!scopes.empty()) {
           value = insertValue(
               builder, module.getLoc(), value,
               LLVM::AddressOfOp::create(builder, module.getLoc(), pointer,
                                         kDPIScopesName),
-              10);
+              9);
           value = insertValue(
               builder, module.getLoc(), value,
               integerConstant(builder, module.getLoc(), i64, scopes.size()),
-              11);
+              10);
           value = insertValue(
               builder, module.getLoc(), value,
               integerConstant(builder, module.getLoc(), i32,
                               static_cast<uint32_t>(dpiPrecision)),
-              12);
+              11);
         }
         if (!activations.empty()) {
           value = insertValue(
               builder, module.getLoc(), value,
               LLVM::AddressOfOp::create(builder, module.getLoc(), pointer,
                                         kActivationsName),
-              14);
+              13);
           value = insertValue(
               builder, module.getLoc(), value,
               integerConstant(builder, module.getLoc(), i64,
                               activations.size()),
-              15);
+              14);
         }
         if (!observers.empty()) {
           value = insertValue(
               builder, module.getLoc(), value,
               LLVM::AddressOfOp::create(builder, module.getLoc(), pointer,
                                         kObserversName),
-              16);
+              15);
           value = insertValue(
               builder, module.getLoc(), value,
               integerConstant(builder, module.getLoc(), i64,
                               observers.size()),
-              17);
+              16);
         }
         return value;
       });

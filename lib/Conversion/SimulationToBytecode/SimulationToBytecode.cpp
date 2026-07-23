@@ -40,7 +40,6 @@ namespace obelisk {
 
 namespace {
 
-constexpr uint32_t kABIGeneration = OBELISK_RT_ABI_GENERATION;
 constexpr uint32_t kExecutionHasBytecode = OBELISK_RT_EXECUTION_HAS_BYTECODE;
 constexpr uint32_t kExecutionHasDatabase =
     OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE;
@@ -1854,7 +1853,7 @@ private:
              << "import ID collision between '" << inserted.first->second
              << "' and '" << call.getCIdentifier() << "'";
     SmallVector<uint8_t> metadata;
-    append32(metadata, OBELISK_RT_IMPORT_SITE_VERSION);
+    append32(metadata, OBELISK_RT_VERSION);
     uint32_t flags = (call.getIsPure() ? OBELISK_RT_IMPORT_PURE : 0) |
                      (call.getIsContext() ? OBELISK_RT_IMPORT_CONTEXT : 0) |
                      (call.getIsTask() ? OBELISK_RT_IMPORT_TASK : 0);
@@ -2366,7 +2365,7 @@ private:
           "computed wait exceeds its canonical frame field");
 
     SmallVector<uint8_t> bytes(suspension->waitSize, 0);
-    write32(bytes, 0, OBELISK_RT_COMPUTED_WAIT_RECORD_VERSION);
+    write32(bytes, 0, OBELISK_RT_VERSION);
     write32(bytes, 4, OBELISK_RT_SUSPEND_OBSERVER);
     write32(bytes, 8, OBELISK_RT_COMPUTED_WAIT_INTERLEAVED);
     write32(bytes, 12, primaryCount);
@@ -2557,7 +2556,7 @@ private:
     plan.layouts.push_back(record);
     SmallVector<uint8_t> bytes(suspension->waitSize, 0);
     bool signalWait = kind == 2 || kind == 3;
-    write32(bytes, 0, signalWait ? 2 : 1);
+    write32(bytes, 0, OBELISK_RT_VERSION);
     write32(bytes, 4, kind);
     write32(bytes, 8, flags);
     write32(bytes, 12, edges.size());
@@ -2638,8 +2637,8 @@ private:
     SmallVector<uint8_t> output(OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE, 0);
     static constexpr char magic[8] = {'O', 'B', 'B', 'C', 'D', 'S', '1', '\0'};
     std::copy(std::begin(magic), std::end(magic), output.begin());
-    write32(output, 8, OBELISK_RT_DESIGN_BYTECODE_VERSION);
-    write32(output, 12, kABIGeneration);
+    write32(output, 8, OBELISK_RT_VERSION);
+    write32(output, 12, 0);
     write32(output, 16, OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE);
 
     alignTo(output, 8);
@@ -3200,8 +3199,8 @@ private:
     }
     static constexpr char magic[8] = {'O', 'B', 'D', 'S', 'G', 'N', '1', '\0'};
     std::copy(std::begin(magic), std::end(magic), output.begin());
-    write32(output, 8, OBELISK_RT_DESIGN_VERSION);
-    write32(output, 12, kABIGeneration);
+    write32(output, 8, OBELISK_RT_VERSION);
+    write32(output, 12, 0);
     write32(output, 16, profile);
     write32(output, 20, 128);
     write64(output, 24, output.size());

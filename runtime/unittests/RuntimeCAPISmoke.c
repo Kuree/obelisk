@@ -97,6 +97,12 @@ _Static_assert(offsetof(obelisk_rt_observer_descriptor_v1,
                "observer native evaluator offset changed");
 _Static_assert(sizeof(obelisk_rt_execution_descriptor_v1) == 120,
                "execution descriptor size changed");
+_Static_assert(offsetof(obelisk_rt_execution_descriptor_v1, version) == 0,
+               "execution version offset changed");
+_Static_assert(offsetof(obelisk_rt_execution_descriptor_v1, flags) == 4,
+               "execution flags offset changed");
+_Static_assert(offsetof(obelisk_rt_execution_descriptor_v1, reserved) == 8,
+               "execution reserved offset changed");
 _Static_assert(offsetof(obelisk_rt_execution_descriptor_v1, dpi_scopes) == 64,
                "execution DPI scope offset changed");
 _Static_assert(offsetof(obelisk_rt_execution_descriptor_v1, activations) == 88,
@@ -263,7 +269,7 @@ int obelisk_runtime_c_api_smoke(void) {
   uint64_t stable = obelisk_rt_stable_handle_encode(
       OBELISK_RT_STABLE_HANDLE_STATIC, 7, -3);
 
-  if (OBELISK_RT_ABI_GENERATION != 3u)
+  if (OBELISK_RT_VERSION != 1u)
     return 1;
   if (!obelisk_rt_stable_handle_decode(stable, &decoded) ||
       decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC || decoded.id != 7 ||

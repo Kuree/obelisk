@@ -68,23 +68,24 @@ module attributes {
   }
 }
 
-// Design bytecode version 5 follows the eight-byte magic. It includes task
-// activation transfers in addition to
+// Unified runtime artifact version 1 follows the eight-byte magic. It includes
+// task activation transfers in addition to
 // per-continuation schedule ranks, the canonical connectivity table, and
 // disjoint per-bit uwire driver ranges.
-// ENCODE: obelisk.bytecode.image = array<i8: 79, 66, 66, 67, 68, 83, 49, 0, 5, 0, 0, 0, 3, 0, 0, 0
+// ENCODE: obelisk.bytecode.image = array<i8: 79, 66, 66, 67, 68, 83, 49, 0, 1, 0, 0, 0, 0, 0, 0, 0
 // ENCODE: obelisk.execution.flags = 1 : i32
 // ENCODE: obelisk.execution.state_bits = 73 : i64
 // ENCODE: obelisk.bytecode.function = 0 : i32
 // ENCODE: obelisk.bytecode.scratch_alignment = 8 : i64
 // ENCODE: obelisk.bytecode.function = 1 : i32
 
-// Version 3 is encoded little-endian after the eight-byte database magic.
-// DATABASE: obelisk.design.database = array<i8: 79, 66, 68, 83, 71, 78, 49, 0, 3, 0, 0, 0
+// Unified runtime artifact version 1 follows the database magic; the next word
+// is reserved.
+// DATABASE: obelisk.design.database = array<i8: 79, 66, 68, 83, 71, 78, 49, 0, 1, 0, 0, 0, 0, 0, 0, 0
 
-// The last executable copy of @add is erased, but version-3 reflection still
+// The last executable copy of @add is erased, but version-1 reflection still
 // originates from its immutable record, including parent, name, and source.
-// INLINED-DATABASE: obelisk.design.database = array<i8: 79, 66, 68, 83, 71, 78, 49, 0, 3, 0, 0, 0
+// INLINED-DATABASE: obelisk.design.database = array<i8: 79, 66, 68, 83, 71, 78, 49, 0, 1, 0, 0, 0, 0, 0, 0, 0
 // INLINED-DATABASE: obelisk_sim.code_unit.decl 70 in 0 function hierarchy "top.add" debug "add"
 // INLINED-DATABASE-SAME: loc(#loc[[ADD:[0-9]+]])
 // INLINED-DATABASE-NOT: obelisk_sim.func private @add

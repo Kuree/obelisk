@@ -443,9 +443,11 @@ descriptors, generated driver, and the selected `libobelisk_rt.a` native or
 revision. The bitcode archive is additionally coupled to the pinned LLVM
 toolchain. Every compiler update requires regenerating and relinking the
 complete simulator; stale objects and bytecode are unsupported.
-The `_v1` C names and ABI-generation constant name the current schema namespace
-but do not freeze its layout or require a v2 solely to preserve old artifacts.
-ABI assertions protect compiler/runtime agreement within one build.
+The `_v1` C names and single `OBELISK_RT_VERSION` constant name the current
+prototype schema. Native descriptors, bytecode, the design database, import
+sites, frame layouts, and wait records all carry version 1. The version does
+not freeze their layouts or require a v2 solely to preserve old artifacts; ABI
+assertions protect compiler/runtime agreement within one build.
 
 Native compilation is normally fastest for hot logic and stable process paths,
 but it is not automatically the best representation for every fragment. Large,

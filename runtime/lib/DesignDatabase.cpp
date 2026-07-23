@@ -90,8 +90,7 @@ struct Database {
 bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
                  Database &database) {
   if (!execution ||
-      execution->version != OBELISK_RT_EXECUTION_DESCRIPTOR_VERSION ||
-      execution->abi_generation != OBELISK_RT_ABI_GENERATION ||
+      execution->version != OBELISK_RT_VERSION ||
       execution->reserved != 0 ||
       (execution->flags & OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE) == 0 ||
       !execution->design_database ||
@@ -99,8 +98,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
     return false;
   const uint8_t *data = execution->design_database;
   if (std::memcmp(data, kMagic, sizeof(kMagic)) != 0 ||
-      read32(data + 8) != OBELISK_RT_DESIGN_VERSION ||
-      read32(data + 12) != OBELISK_RT_ABI_GENERATION ||
+      read32(data + 8) != OBELISK_RT_VERSION ||
+      read32(data + 12) != 0 ||
       read32(data + 20) != kHeaderSize ||
       read64(data + 24) != execution->design_database_size ||
       read64(data + 32) == 0 ||

@@ -40,8 +40,7 @@ bool validActivationInventory(
         (activation.native_entry->handle.kind !=
              OBELISK_RT_DESCRIPTOR_PROCESS ||
          activation.native_entry->handle.id != activation.code_unit_id ||
-         activation.native_entry->abi_generation !=
-             OBELISK_RT_ABI_GENERATION ||
+         activation.native_entry->version != OBELISK_RT_VERSION ||
          activation.native_entry->execution != &execution))
       return false;
     bool hasBytecode =
@@ -343,8 +342,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_context_create_for_design(
           OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
           OBELISK_RT_EXECUTION_VPI_READ | OBELISK_RT_EXECUTION_VPI_WRITE |
           OBELISK_RT_EXECUTION_REQUIRE_BYTECODE;
-      if (execution->version != OBELISK_RT_EXECUTION_DESCRIPTOR_VERSION ||
-          execution->abi_generation != OBELISK_RT_ABI_GENERATION ||
+      if (execution->version != OBELISK_RT_VERSION ||
           execution->reserved != 0 || execution->dpi_reserved != 0 ||
           (execution->flags & ~validFlags) != 0 ||
           ((execution->flags & OBELISK_RT_EXECUTION_VPI_WRITE) != 0 &&

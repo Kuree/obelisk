@@ -22,11 +22,13 @@ linking artifacts produced by another Obelisk revision is unsupported. The LTO
 archive is also coupled to the pinned LLVM 22.1.6 bitcode format and unified
 Full-LTO pipeline and is not a stable SDK library.
 
-The `_v1` names and `OBELISK_RT_ABI_GENERATION` identify the current schema
-namespace; they do not establish a compatibility window or require a new
-namespace whenever the schema changes. Layouts, enum values, and entry points
-may change in place. Compile-time ABI assertions and compiler data-layout tests
-detect disagreement inside one build rather than preserving old artifacts.
+The `_v1` names and the single `OBELISK_RT_VERSION` identify the current
+prototype schema. Native descriptors, bytecode, the design database, import
+sites, frame layouts, and wait records all carry version 1. They do not
+establish a compatibility window or require a new namespace whenever the
+schema changes. Layouts, enum values, and entry points may change in place.
+Compile-time ABI assertions and compiler data-layout tests detect disagreement
+inside one build rather than preserving old artifacts.
 
 ## Fragment ABI and bytecode
 

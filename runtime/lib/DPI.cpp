@@ -173,7 +173,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_import_call(
   constexpr uint32_t validFlags = OBELISK_RT_IMPORT_PURE |
                                   OBELISK_RT_IMPORT_CONTEXT |
                                   OBELISK_RT_IMPORT_TASK;
-  if (site->version != OBELISK_RT_IMPORT_SITE_VERSION ||
+  if (site->version != OBELISK_RT_VERSION ||
       site->import_id == 0 || site->reserved != 0 ||
       (site->flags & ~validFlags) != 0 ||
       ((site->flags & OBELISK_RT_IMPORT_PURE) != 0 &&

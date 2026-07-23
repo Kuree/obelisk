@@ -82,12 +82,12 @@ findWaitField(const obelisk_rt_frame_layout_v1 &layout, uint64_t offset) {
 obelisk_rt_status
 validateLayout(const obelisk_rt_process_descriptor_v1 &descriptor) {
   if (descriptor.handle.kind != OBELISK_RT_DESCRIPTOR_PROCESS ||
-      descriptor.abi_generation != OBELISK_RT_ABI_GENERATION ||
+      descriptor.version != OBELISK_RT_VERSION ||
       descriptor.flags != 0 || descriptor.reserved != 0 ||
       !descriptor.frame_layout)
     return OBELISK_RT_LAYOUT_MISMATCH;
   const obelisk_rt_frame_layout_v1 &layout = *descriptor.frame_layout;
-  if (layout.version != OBELISK_RT_FRAME_LAYOUT_VERSION || layout.flags != 0 ||
+  if (layout.version != OBELISK_RT_VERSION || layout.flags != 0 ||
       !isPowerOfTwo(layout.frame_alignment) ||
       layout.frame_alignment > UINT64_C(4096) ||
       layout.frame_size % layout.frame_alignment != 0 ||
@@ -251,7 +251,7 @@ validateComputedWait(obelisk_rt_process_instance_v1 &instance,
   const auto *wait =
       reinterpret_cast<const obelisk_rt_computed_wait_record_v1 *>(
           static_cast<const uint8_t *>(instance.frame) + action.payload);
-  if (wait->version != OBELISK_RT_COMPUTED_WAIT_RECORD_VERSION ||
+  if (wait->version != OBELISK_RT_VERSION ||
       wait->kind != OBELISK_RT_SUSPEND_OBSERVER ||
       wait->flags != OBELISK_RT_COMPUTED_WAIT_INTERLEAVED ||
       wait->clause_count == 0 ||
@@ -403,8 +403,7 @@ obelisk_rt_status validateWait(obelisk_rt_process_instance_v1 &instance,
               kWaitEntrySize ||
       (entriesSize = uint64_t{wait->count} * kWaitEntrySize,
        addOverflow(kWaitHeaderSize, entriesSize, required)) ||
-      (wait->version != OBELISK_RT_WAIT_RECORD_VERSION &&
-       wait->version != OBELISK_RT_WAIT_RECORD_SIGNAL_WIDTH_VERSION) ||
+      wait->version != OBELISK_RT_VERSION ||
       wait->kind != action.suspend_kind || required > action.auxiliary)
     return OBELISK_RT_INVALID_FRAME;
 
@@ -418,11 +417,7 @@ obelisk_rt_status validateWait(obelisk_rt_process_instance_v1 &instance,
                           obelisk_rt_wait_edge_kind exactEdge) {
     for (uint32_t index = 0; index != wait->count; ++index) {
       const obelisk_rt_wait_entry_v1 &entry = entries[index];
-      if (requireEdge
-              ? (wait->version == OBELISK_RT_WAIT_RECORD_SIGNAL_WIDTH_VERSION
-                     ? entry.reserved == 0
-                     : entry.reserved != 0)
-              : entry.reserved != 0)
+      if (requireEdge ? entry.reserved == 0 : entry.reserved != 0)
         return false;
       if (requireEdge ? (exactEdge == OBELISK_RT_WAIT_EDGE_NONE
                              ? !validEdge(entry.edge)
@@ -447,7 +442,6 @@ obelisk_rt_status validateWait(obelisk_rt_process_instance_v1 &instance,
     if (wait->flags == OBELISK_RT_WAIT_EDGE_IFF)
       valid = wait->count == 2 && wait->payload == 0 &&
               wait->auxiliary == 0 &&
-              wait->version == OBELISK_RT_WAIT_RECORD_SIGNAL_WIDTH_VERSION &&
               validEdge(entries[0].edge) && entries[0].reserved != 0 &&
               entries[1].edge == OBELISK_RT_WAIT_EDGE_NONE &&
               entries[1].reserved != 0;
@@ -716,10 +710,7 @@ bool nativeWaitReady(const obelisk_rt_context &context,
         wait->flags == OBELISK_RT_WAIT_EDGE_IFF)
       return process.signalTriggered;
     for (uint32_t index = 0; index != wait->count; ++index) {
-      uint64_t width =
-          wait->version == OBELISK_RT_WAIT_RECORD_SIGNAL_WIDTH_VERSION
-              ? entries[index].reserved
-              : 1;
+      uint64_t width = entries[index].reserved;
       for (const ScheduledSignalEvent &event : context.scheduledSignalEvents)
         if (event.sequence >= process.observedSignalSequence &&
             nativeRangesOverlap(entries[index].stable_id, width,
@@ -821,7 +812,7 @@ computedWait(ScheduledProcess &process) {
     return nullptr;
   auto *wait = reinterpret_cast<obelisk_rt_computed_wait_record_v1 *>(
       static_cast<uint8_t *>(process.instance->frame) + process.waitOffset);
-  return wait->version == OBELISK_RT_COMPUTED_WAIT_RECORD_VERSION &&
+  return wait->version == OBELISK_RT_VERSION &&
                  wait->kind == OBELISK_RT_SUSPEND_OBSERVER &&
                  wait->total_size <= process.waitSize
              ? wait
@@ -1207,8 +1198,7 @@ bool obelisk_rt_append_signal_event_unlocked(
   };
   auto consider = [&](const obelisk_rt_wait_record_v1 *wait,
                       uint32_t suspendKind, bool &latched) {
-    if (!wait || latched ||
-        wait->version != OBELISK_RT_WAIT_RECORD_SIGNAL_WIDTH_VERSION ||
+    if (!wait || latched || wait->version != OBELISK_RT_VERSION ||
         wait->kind != suspendKind)
       return;
     const obelisk_rt_wait_entry_v1 *entries = waitEntries(wait);
