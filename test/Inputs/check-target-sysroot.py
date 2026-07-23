@@ -198,11 +198,77 @@ build_graph(graph_build, "obelisk_native_support")
 graph_sysroot_stamps = sorted((graph_build / "target-sysroots").glob("*/.complete"))
 support_stamps = sorted(graph_build.glob("native-support-*.complete"))
 runtime_archive = graph_build / "target-runtime/libobelisk_rt.a"
+runtime_lto_archive = graph_build / "target-runtime/libobelisk_rt_lto.a"
+support = graph_build / "lib/obelisk/targets/x86_64-unknown-linux-gnu"
 if len(graph_sysroot_stamps) != 1 or len(support_stamps) != 1:
     raise SystemExit("first graph build did not create one content-addressed tree")
 first_sysroot = fingerprint(graph_sysroot_stamps[0])
 first_runtime = fingerprint(runtime_archive)
+first_runtime_lto = fingerprint(runtime_lto_archive)
 first_support = fingerprint(support_stamps[0])
+
+native_members = [
+    "ABI.o",
+    "Bytecode.o",
+    "DesignBytecode.o",
+    "DesignDatabase.o",
+    "DPI.o",
+    "FileIO.o",
+    "Format.o",
+    "Process.o",
+    "Runtime.o",
+]
+lto_members = [
+    pathlib.Path(member).with_suffix(".bc").name for member in native_members
+]
+archive_inspection = scratch / "archive-inspection"
+archive_inspection.mkdir()
+
+
+def inspect_archive(archive, expected_members, bitcode):
+    members = run_checked(
+        [llvm_dist / "bin/llvm-ar", "t", archive],
+        f"could not inspect target runtime archive {archive.name}",
+    ).stdout.decode().splitlines()
+    if members != expected_members:
+        raise SystemExit(
+            f"target runtime archive has unstable members: {archive}: {members}"
+        )
+    for member in members:
+        contents = run_checked(
+            [llvm_dist / "bin/llvm-ar", "p", archive, member],
+            f"could not extract {member} from {archive.name}",
+        ).stdout
+        if bitcode:
+            output = archive_inspection / f"{archive.name}-{member}.ll"
+            parser = [llvm_dist / "bin/llvm-dis", "-o", output, "-"]
+        else:
+            parser = [llvm_dist / "bin/llvm-readobj", "--file-headers", "-"]
+        parsed = subprocess.run(
+            [str(item) for item in parser],
+            input=contents,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        if parsed.returncode:
+            sys.stdout.buffer.write(parsed.stdout)
+            kind = "LLVM bitcode" if bitcode else "ELF"
+            raise SystemExit(f"{archive.name} member {member} is not {kind}")
+
+
+def verify_staged_archives():
+    for archive in (runtime_archive, runtime_lto_archive):
+        staged = support / archive.name
+        if not staged.is_file() or staged.read_bytes() != archive.read_bytes():
+            raise SystemExit(f"native support did not stage {archive.name}")
+    complete = (support / ".complete").read_text().splitlines()
+    if len(complete) != 3 or len(complete[2]) != 64:
+        raise SystemExit("native-support completion record has no content hash")
+
+
+inspect_archive(runtime_archive, native_members, bitcode=False)
+inspect_archive(runtime_lto_archive, lto_members, bitcode=True)
+verify_staged_archives()
 
 # An unchanged second build is a true graph no-op.
 build_graph(graph_build, "obelisk_native_support")
@@ -210,6 +276,8 @@ if fingerprint(graph_sysroot_stamps[0]) != first_sysroot:
     raise SystemExit("second graph build reprovisioned the target sysroot")
 if fingerprint(runtime_archive) != first_runtime:
     raise SystemExit("second graph build rebuilt the target runtime")
+if fingerprint(runtime_lto_archive) != first_runtime_lto:
+    raise SystemExit("second graph build rebuilt the Full-LTO target runtime")
 if fingerprint(support_stamps[0]) != first_support:
     raise SystemExit("second graph build restaged native support")
 
@@ -222,29 +290,38 @@ if fingerprint(graph_sysroot_stamps[0]) != first_sysroot:
     raise SystemExit("runtime-only change reprovisioned the target sysroot")
 if fingerprint(runtime_archive) == first_runtime:
     raise SystemExit("runtime-only change did not rebuild the runtime archive")
+if fingerprint(runtime_lto_archive) == first_runtime_lto:
+    raise SystemExit(
+        "runtime-only change did not rebuild the Full-LTO runtime archive"
+    )
 if fingerprint(support_stamps[0]) == first_support:
     raise SystemExit("runtime-only change did not restage native support")
-members = run_checked(
-    [llvm_dist / "bin/llvm-ar", "t", runtime_archive],
-    "could not inspect target runtime archive",
-).stdout.decode().splitlines()
-expected_members = [
-    "ABI.o",
-    "Bytecode.o",
-    "DesignBytecode.o",
-    "DesignDatabase.o",
-    "DPI.o",
-    "FileIO.o",
-    "Format.o",
-    "Process.o",
-    "Runtime.o",
-]
-if members != expected_members:
-    raise SystemExit(f"target runtime archive has unstable members: {members}")
+inspect_archive(runtime_archive, native_members, bitcode=False)
+inspect_archive(runtime_lto_archive, lto_members, bitcode=True)
+verify_staged_archives()
+
+# Public and internal runtime headers are also dependencies of both archive
+# forms and of the staged content-hash command.
+source_runtime = fingerprint(runtime_archive)
+source_runtime_lto = fingerprint(runtime_lto_archive)
+source_support = fingerprint(support_stamps[0])
+with (graph_runtime / "include/obelisk/Runtime/Runtime.h").open("a") as stream:
+    stream.write("\n// isolated build-graph header rebuild probe\n")
+build_graph(graph_build, "obelisk_native_support")
+if fingerprint(graph_sysroot_stamps[0]) != first_sysroot:
+    raise SystemExit("runtime-header change reprovisioned the target sysroot")
+if fingerprint(runtime_archive) == source_runtime:
+    raise SystemExit("runtime-header change did not rebuild the runtime archive")
+if fingerprint(runtime_lto_archive) == source_runtime_lto:
+    raise SystemExit(
+        "runtime-header change did not rebuild the Full-LTO runtime archive"
+    )
+if fingerprint(support_stamps[0]) == source_support:
+    raise SystemExit("runtime-header change did not restage native support")
+verify_staged_archives()
 
 # Missing declared byproducts cause the staging command to self-heal and
 # atomically move the public relative link to a complete version.
-support = graph_build / "lib/obelisk/targets/x86_64-unknown-linux-gnu"
 (support / "README.txt").unlink()
 build_graph(graph_build, "obelisk_native_support")
 if not (support / "README.txt").is_file():

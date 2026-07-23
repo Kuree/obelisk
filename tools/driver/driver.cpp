@@ -312,6 +312,8 @@ static int executeCompilation(const InputArgList &args) {
   }
   if (!valid)
     return 1;
+  uint32_t resolvedCompilerThreads = compilerThreads.value_or(
+      std::max(1u, llvm::hardware_concurrency().compute_thread_count()));
 
   const Arg *action = args.getLastArg(OPT_emit_slang, OPT_emit_obelisk,
                                       OPT_emit_sim, OPT_emit_schedule, OPT_c,
@@ -404,6 +406,7 @@ static int executeCompilation(const InputArgList &args) {
                                        dpiLinkInputs.end());
     nativeOptions.bytecode = executionTier == "bytecode";
     nativeOptions.optLevel = optLevel;
+    nativeOptions.compileThreads = resolvedCompilerThreads;
     return succeeded(obelisk::driver::emitNativeOutput(*module, nativeOptions))
                ? 0
                : 1;

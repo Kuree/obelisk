@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
-foreach(required STAMP DESTINATION SYSROOT RUNTIME_ARCHIVE LLVM_DIST SOURCE_DIR
-                 STAGE_KEY TARGET_TRIPLE)
+foreach(required STAMP DESTINATION SYSROOT RUNTIME_ARCHIVE RUNTIME_LTO_ARCHIVE
+                 LLVM_DIST SOURCE_DIR STAGE_KEY TARGET_TRIPLE)
   if(NOT DEFINED ${required} OR "${${required}}" STREQUAL "")
     message(FATAL_ERROR "StageNativeSupport.cmake: ${required} is required")
   endif()
@@ -61,6 +61,7 @@ endforeach()
 set(stage_material "stage=${STAGE_KEY};")
 foreach(path IN ITEMS
     "${RUNTIME_ARCHIVE}"
+    "${RUNTIME_LTO_ARCHIVE}"
     ${required_llvm_files}
     "${SOURCE_DIR}/cmake/StageNativeSupport.cmake"
     "${SOURCE_DIR}/docs/third-party/licenses/LGPL-2.1.txt"
@@ -129,7 +130,8 @@ foreach(path IN LISTS staged_glibc_entries)
   endif()
 endforeach()
 
-file(COPY "${RUNTIME_ARCHIVE}" DESTINATION "${stage}")
+file(COPY "${RUNTIME_ARCHIVE}" "${RUNTIME_LTO_ARCHIVE}"
+  DESTINATION "${stage}")
 file(COPY
   "${clang_runtime}/clang_rt.crtbegin.o"
   "${clang_runtime}/clang_rt.crtend.o"
@@ -176,6 +178,8 @@ file(WRITE "${stage}/BUILD_PATH_PREFIXES.txt" "${prefix_manifest}")
 
 file(WRITE "${stage}/README.txt"
   "Local Obelisk native-link support for ${TARGET_TRIPLE}.\n"
+  "libobelisk_rt.a contains native ELF objects for -O0 links.\n"
+  "libobelisk_rt_lto.a contains LLVM bitcode for -O1 through -O3 Full-LTO links.\n"
   "The glibc inputs are from Debian 10 and are not an Obelisk distribution.\n"
   "Generated executables dynamically depend on a target glibc compatible with 2.28.\n")
 set(complete_contents

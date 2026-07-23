@@ -9,7 +9,20 @@
 // RUN:   --implicit-check-not='target-sysroots' \
 // RUN:   --implicit-check-not='workspace/obelisk' \
 // RUN:   --implicit-check-not='/home/runner/'
-// RUN: %t.exe | FileCheck %s --check-prefix=OUTPUT
+// RUN: %t.exe > %t.exe.out
+// RUN: FileCheck %s --check-prefix=OUTPUT < %t.exe.out
+// RUN: obelisk -O0 --compile-threads=1 %s -o %t.o0.exe
+// RUN: %t.o0.exe > %t.o0.out
+// RUN: diff -u %t.exe.out %t.o0.out
+// RUN: obelisk -O1 --compile-threads=1 %s -o %t.o1.t1.exe
+// RUN: %t.o1.t1.exe > %t.o1.t1.out
+// RUN: diff -u %t.exe.out %t.o1.t1.out
+// RUN: obelisk -O1 --compile-threads=4 %s -o %t.o1.t4.exe
+// RUN: %t.o1.t4.exe > %t.o1.t4.out
+// RUN: diff -u %t.o1.t1.out %t.o1.t4.out
+// RUN: obelisk -O3 --compile-threads=4 %s -o %t.o3.t4.exe
+// RUN: %t.o3.t4.exe > %t.o3.t4.out
+// RUN: diff -u %t.exe.out %t.o3.t4.out
 // RUN: %native_support/glibc/lib/x86_64-linux-gnu/ld-2.28.so \
 // RUN:   --library-path %native_support/glibc/lib/x86_64-linux-gnu \
 // RUN:   %t.exe | FileCheck %s --check-prefix=OUTPUT

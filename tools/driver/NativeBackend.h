@@ -28,6 +28,7 @@ struct NativeOutputOptions {
   std::vector<std::string> dpiLinkInputs;
   bool bytecode = false;
   uint32_t optLevel = 3;
+  uint32_t compileThreads = 1;
 };
 
 mlir::LogicalResult emitNativeOutput(mlir::ModuleOp module,

@@ -139,18 +139,31 @@ if(OBELISK_TARGET_SYSROOT_ONLY)
   return()
 endif()
 
+foreach(tool clang++ llvm-ar llvm-ranlib)
+  if(NOT EXISTS "${OBELISK_LLVM_DIST_DIR}/bin/${tool}")
+    message(FATAL_ERROR
+      "The pinned LLVM distribution is missing target-runtime tool: "
+      "${OBELISK_LLVM_DIST_DIR}/bin/${tool}")
+  endif()
+endforeach()
+
 set(_obelisk_target_runtime_dir "${CMAKE_BINARY_DIR}/target-runtime")
 set(OBELISK_TARGET_RUNTIME_ARCHIVE
     "${_obelisk_target_runtime_dir}/libobelisk_rt.a")
+set(OBELISK_TARGET_RUNTIME_LTO_ARCHIVE
+    "${_obelisk_target_runtime_dir}/libobelisk_rt_lto.a")
 file(GLOB_RECURSE _obelisk_target_runtime_headers CONFIGURE_DEPENDS
   "${_obelisk_runtime_source_dir}/include/*.h"
   "${_obelisk_runtime_source_dir}/lib/*.h")
 set(_obelisk_target_runtime_objects)
+set(_obelisk_target_runtime_lto_objects)
 foreach(source ABI Bytecode DesignBytecode DesignDatabase DPI FileIO Format Process Runtime)
   set(object "${_obelisk_target_runtime_dir}/${source}.o")
+  set(lto_object "${_obelisk_target_runtime_dir}/${source}.bc")
   list(APPEND _obelisk_target_runtime_objects "${object}")
+  list(APPEND _obelisk_target_runtime_lto_objects "${lto_object}")
   add_custom_command(
-    OUTPUT "${object}"
+    OUTPUT "${object}" "${lto_object}"
     COMMAND "${CMAKE_COMMAND}" -E make_directory
             "${_obelisk_target_runtime_dir}"
     COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/clang++"
@@ -166,11 +179,24 @@ foreach(source ABI Bytecode DesignBytecode DesignDatabase DPI FileIO Format Proc
       -I "${_obelisk_runtime_source_dir}/include"
       -I "${_obelisk_runtime_source_dir}/lib"
       -c "${_obelisk_runtime_source_dir}/lib/${source}.cpp" -o "${object}"
+    COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/clang++"
+      --target=${OBELISK_TARGET_TRIPLE}
+      --sysroot=${OBELISK_TARGET_SYSROOT}
+      -std=c++17 -O3 -flto=full -funified-lto -fPIC -fvisibility=hidden
+      "-ffile-prefix-map=${_obelisk_runtime_source_dir}=/obelisk/runtime"
+      "-fmacro-prefix-map=${_obelisk_runtime_source_dir}=/obelisk/runtime"
+      -nostdinc++
+      -isystem "${OBELISK_LLVM_DIST_DIR}/include/${OBELISK_TARGET_TRIPLE}/c++/v1"
+      -isystem "${OBELISK_LLVM_DIST_DIR}/include/c++/v1"
+      -isystem "${OBELISK_LLVM_DIST_DIR}/lib/clang/22/include"
+      -I "${_obelisk_runtime_source_dir}/include"
+      -I "${_obelisk_runtime_source_dir}/lib"
+      -c "${_obelisk_runtime_source_dir}/lib/${source}.cpp" -o "${lto_object}"
     DEPENDS
       "${OBELISK_TARGET_SYSROOT_STAMP}"
       "${_obelisk_runtime_source_dir}/lib/${source}.cpp"
       ${_obelisk_target_runtime_headers}
-    COMMENT "Building target runtime ${source}.cpp"
+    COMMENT "Building native and Full-LTO target runtime ${source}.cpp"
     VERBATIM)
 endforeach()
 add_custom_command(
@@ -185,8 +211,22 @@ add_custom_command(
   DEPENDS ${_obelisk_target_runtime_objects}
   COMMENT "Archiving target libobelisk_rt.a with llvm-ar"
   VERBATIM)
+add_custom_command(
+  OUTPUT "${OBELISK_TARGET_RUNTIME_LTO_ARCHIVE}"
+  COMMAND "${CMAKE_COMMAND}" -E rm -f
+          "${OBELISK_TARGET_RUNTIME_LTO_ARCHIVE}"
+  COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/llvm-ar" rcs
+          "${OBELISK_TARGET_RUNTIME_LTO_ARCHIVE}"
+          ${_obelisk_target_runtime_lto_objects}
+  COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/llvm-ranlib"
+          "${OBELISK_TARGET_RUNTIME_LTO_ARCHIVE}"
+  DEPENDS ${_obelisk_target_runtime_lto_objects}
+  COMMENT "Archiving target libobelisk_rt_lto.a with llvm-ar"
+  VERBATIM)
 add_custom_target(obelisk_target_runtime
-  DEPENDS "${OBELISK_TARGET_RUNTIME_ARCHIVE}")
+  DEPENDS
+    "${OBELISK_TARGET_RUNTIME_ARCHIVE}"
+    "${OBELISK_TARGET_RUNTIME_LTO_ARCHIVE}")
 add_dependencies(obelisk_target_runtime obelisk_target_sysroot)
 
 set(OBELISK_NATIVE_SUPPORT_DIR
@@ -204,6 +244,7 @@ set(_obelisk_native_support_byproducts
   "${OBELISK_NATIVE_SUPPORT_DIR}/libc++abi.a"
   "${OBELISK_NATIVE_SUPPORT_DIR}/libunwind.a"
   "${OBELISK_NATIVE_SUPPORT_DIR}/libobelisk_rt.a"
+  "${OBELISK_NATIVE_SUPPORT_DIR}/libobelisk_rt_lto.a"
   "${OBELISK_NATIVE_SUPPORT_DIR}/glibc/usr/lib/x86_64-linux-gnu/Scrt1.o"
   "${OBELISK_NATIVE_SUPPORT_DIR}/glibc/usr/lib/x86_64-linux-gnu/crti.o"
   "${OBELISK_NATIVE_SUPPORT_DIR}/glibc/usr/lib/x86_64-linux-gnu/crtn.o"
@@ -245,6 +286,7 @@ add_custom_command(
     "-DDESTINATION=${OBELISK_NATIVE_SUPPORT_DIR}"
     "-DSYSROOT=${OBELISK_TARGET_SYSROOT}"
     "-DRUNTIME_ARCHIVE=${OBELISK_TARGET_RUNTIME_ARCHIVE}"
+    "-DRUNTIME_LTO_ARCHIVE=${OBELISK_TARGET_RUNTIME_LTO_ARCHIVE}"
     "-DLLVM_DIST=${OBELISK_LLVM_DIST_DIR}"
     "-DSOURCE_DIR=${_obelisk_source_dir}"
     "-DSTAGE_KEY=${OBELISK_TARGET_SYSROOT_KEY}-llvm-${OBELISK_LLVM_VERSION}"
@@ -253,6 +295,7 @@ add_custom_command(
   DEPENDS
     "${OBELISK_TARGET_SYSROOT_STAMP}"
     "${OBELISK_TARGET_RUNTIME_ARCHIVE}"
+    "${OBELISK_TARGET_RUNTIME_LTO_ARCHIVE}"
     "${_obelisk_source_dir}/cmake/StageNativeSupport.cmake"
     "${_obelisk_source_dir}/docs/third-party/licenses/LGPL-2.1.txt"
     "${_obelisk_source_dir}/docs/third-party/licenses/GPL-2.0.txt"

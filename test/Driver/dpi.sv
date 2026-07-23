@@ -3,8 +3,22 @@
 // RUN:   -I$(obelisk --print-resource-dir)/include -o %t.o
 // RUN: obelisk --dpi-link=%t.o %s -o %t.native
 // RUN: %t.native | FileCheck %s --check-prefix=OUTPUT
+// RUN: llvm-readelf --dyn-syms %t.native \
+// RUN:   | FileCheck %s --check-prefix=EXPORTS \
+// RUN:     --implicit-check-not=obelisk_rt_v1_
 // RUN: obelisk --execution-tier=bytecode --dpi-link=%t.o %s -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s --check-prefix=OUTPUT
+// RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC \
+// RUN:   -flto=full -funified-lto -c %S/Inputs/dpi_impl.c \
+// RUN:   -I$(obelisk --print-resource-dir)/include -o %t.bc
+// RUN: obelisk --dpi-link=%t.bc %s -o %t.bitcode
+// RUN: %t.bitcode | FileCheck %s --check-prefix=OUTPUT
+// RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC \
+// RUN:   -flto=full -c %S/Inputs/dpi_impl.c \
+// RUN:   -I$(obelisk --print-resource-dir)/include -o %t.incompatible.bc
+// RUN: not obelisk --dpi-link=%t.incompatible.bc %s \
+// RUN:   -o %t.incompatible 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=INCOMPATIBLE
 // RUN: %llvm_dist/bin/llvm-ar rcs %t.a %t.o
 // RUN: obelisk --dpi-link=%t.a %s -o %t.archive
 // RUN: %t.archive | FileCheck %s --check-prefix=OUTPUT
@@ -51,6 +65,9 @@ endmodule
 
 // OUTPUT: vector-ok
 // OUTPUT: 12 10 40 7 100000000
+// EXPORTS-DAG: svGetScope
+// EXPORTS-DAG: svGetNameFromScope
+// INCOMPATIBLE: ld.lld: error: unified LTO compilation must use compatible bitcode modules
 // MISSING-DAG: undefined symbol: dpi_add
 // MISSING-DAG: undefined symbol: dpi_scalars
 // MISSING-DAG: undefined symbol: dpi_update

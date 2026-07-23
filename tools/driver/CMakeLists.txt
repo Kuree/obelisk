@@ -9,6 +9,7 @@ configure_file("${PROJECT_SOURCE_DIR}/runtime/include/svdpi.h"
 
 set(LLVM_LINK_COMPONENTS
   Analysis
+  BitWriter
   CodeGen
   Core
   Coroutines

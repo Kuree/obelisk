@@ -49,7 +49,7 @@ def threads_EQ : Joined<["--"], "threads=">, Group<Compilation_Group>,
   HelpText<"Set generated simulator worker-lane count">;
 def compile_threads_EQ : Joined<["--"], "compile-threads=">,
   Group<Compilation_Group>, MetaVarName<"<count>">,
-  HelpText<"Set compiler thread-pool size">;
+  HelpText<"Set MLIR, LLD, and Full-LTO code-generation thread count">;
 def vpi_EQ : Joined<["--"], "vpi=">, Group<Compilation_Group>,
   MetaVarName<"<off|read|full>">, Values<"off,read,full">,
   HelpText<"Select VPI observability and mutation capability">;

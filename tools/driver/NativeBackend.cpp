@@ -19,6 +19,9 @@
 
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Analysis/ModuleSummaryAnalysis.h"
+#include "llvm/Analysis/ProfileSummaryInfo.h"
+#include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
@@ -274,6 +277,28 @@ LogicalResult writeObject(llvm::Module &module, TargetMachine &targetMachine,
   return success();
 }
 
+LogicalResult writeBitcode(llvm::Module &module, StringRef path) {
+  std::error_code error;
+  raw_fd_ostream output(path, error, sys::fs::OF_None);
+  if (error) {
+    errs() << "obelisk: error: could not create bitcode '" << path
+           << "': " << error.message() << '\n';
+    return failure();
+  }
+  ProfileSummaryInfo profileSummary(module);
+  ModuleSummaryIndex index =
+      buildModuleSummaryIndex(module, nullptr, &profileSummary);
+  WriteBitcodeToFile(module, output, false, &index, true);
+  output.flush();
+  if (output.has_error()) {
+    errs() << "obelisk: error: failed while writing bitcode '" << path
+           << "': " << output.error().message() << '\n';
+    output.clear_error();
+    return failure();
+  }
+  return success();
+}
+
 FailureOr<SmallString<256>> makeTemporaryBeside(StringRef output,
                                                 StringRef suffix) {
   SmallString<256> pattern(output);
@@ -354,9 +379,11 @@ LogicalResult sanitizeBundledBuildPaths(StringRef path, StringRef supportRoot) {
   return success();
 }
 
-LogicalResult linkExecutable(StringRef objectPath, StringRef outputPath,
+LogicalResult linkExecutable(StringRef modulePath, StringRef outputPath,
                              StringRef supportRoot, StringRef explicitSysroot,
-                             ArrayRef<std::string> dpiLinkInputs) {
+                             ArrayRef<std::string> dpiLinkInputs,
+                             uint32_t optLevel, uint32_t linkThreads) {
+  bool fullLTO = optLevel != 0;
   SmallString<256> glibcRoot;
   if (explicitSysroot.empty()) {
     glibcRoot = supportRoot;
@@ -403,9 +430,15 @@ LogicalResult linkExecutable(StringRef objectPath, StringRef outputPath,
     return path.str().str();
   };
   SmallVector<std::string> staticInputs;
-  for (StringRef name :
-       {"clang_rt.crtbegin.o", "libobelisk_rt.a", "libc++.a", "libc++abi.a",
-        "libunwind.a", "libclang_rt.builtins.a", "clang_rt.crtend.o"}) {
+  SmallVector<StringRef> staticInputNames{"clang_rt.crtbegin.o",
+                                          fullLTO ? "libobelisk_rt_lto.a"
+                                                  : "libobelisk_rt.a",
+                                          "libc++.a",
+                                          "libc++abi.a",
+                                          "libunwind.a",
+                                          "libclang_rt.builtins.a",
+                                          "clang_rt.crtend.o"};
+  for (StringRef name : staticInputNames) {
     FailureOr<std::string> path = supportInput(name);
     if (failed(path))
       return failure();
@@ -424,8 +457,15 @@ LogicalResult linkExecutable(StringRef objectPath, StringRef outputPath,
   owned.push_back("ld.lld");
   owned.push_back("--no-dependent-libraries");
   owned.push_back("-pie");
-  owned.push_back("--export-dynamic");
   owned.push_back("--export-dynamic-symbol=sv*");
+  owned.push_back((Twine("--threads=") + Twine(linkThreads)).str());
+  if (fullLTO) {
+    owned.push_back("--lto=full");
+    owned.push_back((Twine("--lto-O") + Twine(optLevel)).str());
+    owned.push_back((Twine("--lto-CGO") + Twine(optLevel)).str());
+    owned.push_back("--lto-whole-program-visibility");
+    owned.push_back((Twine("--lto-partitions=") + Twine(linkThreads)).str());
+  }
   owned.push_back("--eh-frame-hdr");
   owned.push_back("--hash-style=gnu");
   owned.push_back("--dynamic-linker=/lib64/ld-linux-x86-64.so.2");
@@ -435,7 +475,7 @@ LogicalResult linkExecutable(StringRef objectPath, StringRef outputPath,
   owned.push_back(glibcInputs[0]);
   owned.push_back(glibcInputs[1]);
   owned.push_back(staticInputs[0]);
-  owned.push_back(objectPath.str());
+  owned.push_back(modulePath.str());
   for (const std::string &input : dpiLinkInputs)
     owned.push_back(input);
   owned.push_back("--start-group");
@@ -516,6 +556,13 @@ LogicalResult emitNativeOutput(ModuleOp module,
   if (failed(optimizeLLVMModule(*llvmModule, *targetMachine,
                                 options.optLevel)))
     return failure();
+  if (options.kind == NativeOutputKind::Executable && options.optLevel != 0) {
+    // LLD's explicit --lto=full mode selects LLVM's unified LTO pipeline.
+    // Match Clang -flto=full -funified-lto bitcode so every module in the
+    // optimized link carries the required pipeline marker.
+    llvmModule->addModuleFlag(llvm::Module::Error, "EnableSplitLTOUnit", 1);
+    llvmModule->addModuleFlag(llvm::Module::Error, "UnifiedLTO", 1);
+  }
 
   if (options.kind == NativeOutputKind::LLVMIR) {
     std::error_code error;
@@ -536,19 +583,24 @@ LogicalResult emitNativeOutput(ModuleOp module,
     return success();
   }
 
-  FailureOr<SmallString<256>> objectTemporary =
-      makeTemporaryBeside(options.outputPath, ".o");
-  if (failed(objectTemporary)) {
-    errs() << "obelisk: error: could not create temporary object\n";
+  bool fullLTO =
+      options.kind == NativeOutputKind::Executable && options.optLevel != 0;
+  FailureOr<SmallString<256>> moduleTemporary =
+      makeTemporaryBeside(options.outputPath, fullLTO ? ".bc" : ".o");
+  if (failed(moduleTemporary)) {
+    errs() << "obelisk: error: could not create temporary native module\n";
     return failure();
   }
-  if (failed(writeObject(*llvmModule, *targetMachine, *objectTemporary))) {
-    sys::fs::remove(*objectTemporary);
+  LogicalResult wroteModule =
+      fullLTO ? writeBitcode(*llvmModule, *moduleTemporary)
+              : writeObject(*llvmModule, *targetMachine, *moduleTemporary);
+  if (failed(wroteModule)) {
+    sys::fs::remove(*moduleTemporary);
     return failure();
   }
   if (options.kind == NativeOutputKind::Object) {
-    if (failed(atomicallyReplace(*objectTemporary, options.outputPath))) {
-      sys::fs::remove(*objectTemporary);
+    if (failed(atomicallyReplace(*moduleTemporary, options.outputPath))) {
+      sys::fs::remove(*moduleTemporary);
       return failure();
     }
     return success();
@@ -559,13 +611,13 @@ LogicalResult emitNativeOutput(ModuleOp module,
   if (!support) {
     errs() << "obelisk: error: native support tree was not found relative to '"
            << options.executablePath << "'\n";
-    sys::fs::remove(*objectTemporary);
+    sys::fs::remove(*moduleTemporary);
     return failure();
   }
-  LogicalResult linked = linkExecutable(*objectTemporary, options.outputPath,
-                                        *support, options.explicitSysroot,
-                                        options.dpiLinkInputs);
-  sys::fs::remove(*objectTemporary);
+  LogicalResult linked = linkExecutable(
+      *moduleTemporary, options.outputPath, *support, options.explicitSysroot,
+      options.dpiLinkInputs, options.optLevel, options.compileThreads);
+  sys::fs::remove(*moduleTemporary);
   return linked;
 }
 
