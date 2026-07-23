@@ -315,6 +315,23 @@ def SlangNetKind : I32EnumAttr<"NetKind", "SystemVerilog net resolution kind", [
   let cppNamespace = "::obelisk::slangir";
 }
 
+def SlangPortConnOrdered : I32EnumAttrCase<"Ordered", 0, "ordered">;
+def SlangPortConnNamed : I32EnumAttrCase<"Named", 1, "named">;
+def SlangPortConnImplicit : I32EnumAttrCase<"Implicit", 2, "implicit">;
+def SlangPortConnWildcard : I32EnumAttrCase<"Wildcard", 3, "wildcard">;
+def SlangPortConnOmitted : I32EnumAttrCase<"Omitted", 4, "omitted">;
+def SlangPortConnExplicitOpen
+    : I32EnumAttrCase<"ExplicitOpen", 5, "explicit_open">;
+def SlangPortConnDefault : I32EnumAttrCase<"Default", 6, "default">;
+def SlangPortConnectionKind : I32EnumAttr<"PortConnectionKind",
+    "elaborated port association provenance", [
+  SlangPortConnOrdered, SlangPortConnNamed, SlangPortConnImplicit,
+  SlangPortConnWildcard, SlangPortConnOmitted, SlangPortConnExplicitOpen,
+  SlangPortConnDefault
+]> {
+  let cppNamespace = "::obelisk::slangir";
+}
+
 def SlangAssertUnary_Not        : I32EnumAttrCase<"Not",        0, "not">;
 def SlangAssertUnary_NextTime   : I32EnumAttrCase<"NextTime",   1, "nexttime">;
 def SlangAssertUnary_SNextTime  : I32EnumAttrCase<"SNextTime",  2, "s_nexttime">;

@@ -29,6 +29,13 @@ void put64(std::vector<uint8_t> &bytes, size_t offset, uint64_t value) {
     bytes[offset + index] = static_cast<uint8_t>(value >> (index * 8));
 }
 
+uint64_t get64(const std::vector<uint8_t> &bytes, size_t offset) {
+  uint64_t value = 0;
+  for (unsigned index = 0; index != 8; ++index)
+    value |= uint64_t{bytes[offset + index]} << (index * 8);
+  return value;
+}
+
 uint64_t imageChecksum(const std::vector<uint8_t> &bytes) {
   uint64_t hash = UINT64_C(14695981039346656037);
   for (size_t index = 0; index != bytes.size(); ++index) {
@@ -92,7 +99,7 @@ void instruction(std::vector<uint8_t> &bytes, size_t code, size_t index,
 }
 
 std::vector<uint8_t> makeBytecode() {
-  constexpr size_t functionOffset = 192;
+  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + 40;
   constexpr size_t constantOffset = codeOffset + 3 * 32;
@@ -118,6 +125,7 @@ std::vector<uint8_t> makeBytecode() {
   put64(bytes, 136, bytes.size());
   put64(bytes, 152, bytes.size());
   put64(bytes, 168, bytes.size());
+  put64(bytes, 184, bytes.size());
 
   put64(bytes, functionOffset, 1);
   put64(bytes, functionOffset + 16, 0);
@@ -152,7 +160,7 @@ std::vector<uint8_t> makeBytecode() {
 }
 
 std::vector<uint8_t> makeImportBytecode(uint32_t importID) {
-  constexpr size_t functionOffset = 192;
+  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + 2 * 40;
   constexpr size_t operandOffset = codeOffset + 4 * 32;
@@ -183,6 +191,7 @@ std::vector<uint8_t> makeImportBytecode(uint32_t importID) {
   put64(bytes, 152, siteOffset);
   put64(bytes, 160, 1);
   put64(bytes, 168, bytes.size());
+  put64(bytes, 184, bytes.size());
 
   put64(bytes, functionOffset, 1);
   put64(bytes, functionOffset + 16, 0);
@@ -256,7 +265,7 @@ obelisk_rt_status importedLogic(
 }
 
 std::vector<uint8_t> makeSchedulerBytecode() {
-  constexpr size_t functionOffset = 192;
+  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + 4 * 40;
   constexpr size_t operandOffset = codeOffset + 7 * 32;
@@ -289,6 +298,7 @@ std::vector<uint8_t> makeSchedulerBytecode() {
   put64(bytes, 160, 2);
   put64(bytes, 168, stateOffset);
   put64(bytes, 176, 0);
+  put64(bytes, 184, stateOffset);
 
   put64(bytes, functionOffset, 1);
   put64(bytes, functionOffset + 16, 0);
@@ -358,7 +368,7 @@ std::vector<uint8_t> makeSchedulerBytecode() {
 }
 
 std::vector<uint8_t> makeDriverBytecode() {
-  constexpr size_t functionOffset = 192;
+  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + 4 * 40;
   std::vector<uint8_t> bytes = makeSchedulerBytecode();
@@ -384,12 +394,82 @@ std::vector<uint8_t> makeDriverBytecode() {
   put64(bytes, stateOffset + 32 + 24, 65);
   put64(bytes, 24, bytes.size());
   put64(bytes, 176, 2);
+  put64(bytes, 184, bytes.size());
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
+std::vector<uint8_t> makeConnectedDriverBytecode() {
+  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+  constexpr size_t layoutOffset = functionOffset + 96;
+  constexpr size_t codeOffset = layoutOffset + 4 * 40;
+  std::vector<uint8_t> bytes = makeSchedulerBytecode();
+  size_t stateOffset = bytes.size();
+  size_t connectivityOffset = stateOffset + 3 * 32;
+  bytes.resize(connectivityOffset + 32, 0);
+
+  // The process drives net one. Net zero is a distinct logical descriptor in
+  // the same scalar connectivity components.
+  put32(bytes, codeOffset + 1 * 32 + 8, OBELISK_RT_DESCRIPTOR_DRIVER);
+  put32(bytes, codeOffset + 1 * 32 + 12, 130);
+  put64(bytes, codeOffset + 1 * 32 + 24, 130);
+  instruction(bytes, codeOffset, 3, OBELISK_RT_DB_STORE_STATE, 0, 0, 1, 0);
+
+  auto state = [&](size_t index, uint32_t kind, uint32_t flags,
+                   uint64_t valueOffset, uint64_t targetOffset) {
+    size_t record = stateOffset + index * 32;
+    put32(bytes, record, kind);
+    put32(bytes, record + 4, flags);
+    put64(bytes, record + 8, valueOffset);
+    put64(bytes, record + 16, targetOffset);
+    put64(bytes, record + 24, 65);
+  };
+  state(0, UINT32_MAX - 1, 1, 0, UINT64_MAX);
+  state(1, UINT32_MAX - 1, 1, 65, UINT64_MAX);
+  state(2, UINT32_MAX, 1, 130, 65);
+
+  put64(bytes, connectivityOffset, 0);
+  put64(bytes, connectivityOffset + 8, 65);
+  put64(bytes, connectivityOffset + 16, 65);
+  put64(bytes, 24, bytes.size());
+  put64(bytes, 176, 3);
+  put64(bytes, 184, connectivityOffset);
+  put64(bytes, 192, 1);
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
+std::vector<uint8_t> makePartialUWireDriverBytecode(bool overlap) {
+  std::vector<uint8_t> bytes = makeConnectedDriverBytecode();
+  size_t stateOffset = get64(bytes, 168);
+  size_t connectivityOffset = get64(bytes, 184);
+  bytes.insert(bytes.begin() + connectivityOffset, 32, 0);
+
+  // Both logical nets and both driver slices are unresolved. The first
+  // driver targets aliased component zero; the second either targets distinct
+  // component one or intentionally overlaps component zero.
+  put32(bytes, stateOffset + 4, 5);
+  put32(bytes, stateOffset + 32 + 4, 5);
+  put32(bytes, stateOffset + 64 + 4, 5);
+  put64(bytes, stateOffset + 64 + 24, 1);
+  put32(bytes, connectivityOffset, UINT32_MAX);
+  put32(bytes, connectivityOffset + 4, 5);
+  put64(bytes, connectivityOffset + 8, 131);
+  put64(bytes, connectivityOffset + 16, overlap ? 65 : 66);
+  put64(bytes, connectivityOffset + 24, 1);
+
+  size_t movedConnectivity = connectivityOffset + 32;
+  bytes[movedConnectivity + 24] = 2;
+  bytes[movedConnectivity + 25] = 2;
+  put64(bytes, 24, bytes.size());
+  put64(bytes, 176, 4);
+  put64(bytes, 184, movedConnectivity);
   put64(bytes, 32, imageChecksum(bytes));
   return bytes;
 }
 
 std::vector<uint8_t> makeVPIBytecode() {
-  constexpr size_t functionOffset = 192;
+  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + 10 * 40;
   constexpr size_t operandOffset = codeOffset + 11 * 32;
@@ -422,6 +502,7 @@ std::vector<uint8_t> makeVPIBytecode() {
   put64(bytes, 160, 5);
   put64(bytes, 168, stateOffset);
   put64(bytes, 176, 0);
+  put64(bytes, 184, stateOffset);
 
   put64(bytes, functionOffset, 1);
   put64(bytes, functionOffset + 16, 0);
@@ -527,7 +608,7 @@ std::vector<uint8_t> makeVPIBytecode() {
 }
 
 std::vector<uint8_t> makePartialAutomaticBytecode(bool nba) {
-  constexpr size_t functionOffset = 192;
+  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + 10 * 40;
   constexpr size_t operandOffset = codeOffset + 11 * 32;
@@ -571,7 +652,7 @@ std::vector<uint8_t> makePartialAutomaticBytecode(bool nba) {
 }
 
 std::vector<uint8_t> makeAutomaticFrameLoadBytecode() {
-  constexpr size_t functionOffset = 192;
+  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + 10 * 40;
   std::vector<uint8_t> bytes = makeVPIBytecode();
@@ -586,7 +667,7 @@ std::vector<uint8_t> makeAutomaticFrameLoadBytecode() {
 }
 
 std::vector<uint8_t> makeStaticHandleRoundTripBytecode() {
-  constexpr size_t functionOffset = 192;
+  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + 10 * 40;
   std::vector<uint8_t> bytes = makeVPIBytecode();
@@ -608,7 +689,7 @@ std::vector<uint8_t> makeStaticHandleRoundTripBytecode() {
 }
 
 std::vector<uint8_t> makeStaticNBABytecode() {
-  constexpr size_t functionOffset = 192;
+  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + 10 * 40;
   constexpr size_t operandOffset = codeOffset + 11 * 32;
@@ -641,7 +722,7 @@ std::vector<uint8_t> makeStaticNBABytecode() {
 }
 
 std::vector<uint8_t> makeAutomaticSpawnBytecode() {
-  constexpr size_t functionOffset = 192;
+  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 2 * 96;
   constexpr size_t codeOffset = layoutOffset + 5 * 40;
   constexpr size_t operandOffset = codeOffset + 8 * 32;
@@ -674,6 +755,7 @@ std::vector<uint8_t> makeAutomaticSpawnBytecode() {
   put64(bytes, 160, 2);
   put64(bytes, 168, stateOffset);
   put64(bytes, 176, 2);
+  put64(bytes, 184, bytes.size());
 
   auto function = [&](size_t index, uint64_t id, uint64_t firstInstruction,
                       uint64_t instructionCount, uint64_t firstLayout,
@@ -1250,6 +1332,70 @@ TEST(DesignBytecode, ResolvesFourStateDriversFromInitialHighImpedance) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(DesignBytecode, ResolvesDriversAcrossLogicalNetAliases) {
+  Fixture fixture;
+  fixture.bytecode = makeConnectedDriverBytecode();
+  fixture.database = makeDatabase();
+  put32(fixture.database, 192, OBELISK_RT_DESIGN_RECORD_NET);
+  put64(fixture.database, 32, imageChecksum(fixture.database));
+  fixture.execution.bytecode = fixture.bytecode.data();
+  fixture.execution.bytecode_size = fixture.bytecode.size();
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  fixture.execution.state_bit_count = 195;
+  fixture.execution.checksum = imageChecksum(fixture.bytecode);
+  fixture.entry = {&fixture.execution, 0, 0};
+  fixture.layout.frame_size = 0;
+  fixture.layout.checksum = frameChecksum(fixture.layout);
+  fixture.descriptor.frame_layout = &fixture.layout;
+  fixture.descriptor.execution = &fixture.execution;
+  fixture.descriptor.design_bytecode = &fixture.entry;
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&fixture.execution,
+                                                     &context),
+            OBELISK_RT_OK);
+  obelisk_rt_design_cursor_v1 alias{};
+  ASSERT_EQ(obelisk_rt_v1_design_lookup(
+                &fixture.execution,
+                reinterpret_cast<const uint8_t *>("top.value"), 9, &alias),
+            OBELISK_RT_OK);
+  obelisk_rt_process_instance_v1 *instance = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_process_instance_create(&fixture.descriptor,
+                                                   &instance),
+            OBELISK_RT_OK);
+  obelisk_rt_fragment_action_v1 action{};
+  ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
+                instance, context, OBELISK_RT_TIER_BYTECODE, &action),
+            OBELISK_RT_OK);
+  std::array<uint64_t, 2> value{}, unknown{};
+  ASSERT_EQ(obelisk_rt_v1_design_read(context, alias, value.data(),
+                                      unknown.data(), 65),
+            OBELISK_RT_OK);
+  EXPECT_EQ(value[0] & UINT64_C(0xff), UINT64_C(0xa5));
+  EXPECT_EQ(unknown[0] & UINT64_C(0xff), UINT64_C(0x04));
+  EXPECT_EQ(obelisk_rt_v1_design_write(context, alias, value.data(),
+                                       unknown.data(), 65),
+            OBELISK_RT_PERMISSION_DENIED);
+  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(DesignBytecode, AcceptsDisjointUWireDriverComponents) {
+  Fixture fixture;
+  fixture.bytecode = makePartialUWireDriverBytecode(false);
+  fixture.execution.bytecode = fixture.bytecode.data();
+  fixture.execution.bytecode_size = fixture.bytecode.size();
+  fixture.execution.state_bit_count = 195;
+  fixture.execution.checksum = imageChecksum(fixture.bytecode);
+  fixture.entry = {&fixture.execution, 0, 0};
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&fixture.execution,
+                                                     &context),
+            OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(DesignBytecode, VPIIntrinsicsTraverseAndAccessLiveState) {
   Fixture fixture;
   fixture.bytecode = makeVPIBytecode();
@@ -1669,7 +1815,10 @@ TEST(DesignBytecode, SpawnRetainsStableAutomaticHandlesAndReclaimsTaskState) {
 TEST(DesignBytecode, RejectsNonCanonicalTablesAndUncallableFunctions) {
   auto rejected = [](Fixture &fixture) {
     put64(fixture.bytecode, 32, imageChecksum(fixture.bytecode));
+    fixture.execution.bytecode = fixture.bytecode.data();
+    fixture.execution.bytecode_size = fixture.bytecode.size();
     fixture.execution.checksum = imageChecksum(fixture.bytecode);
+    fixture.entry.execution = &fixture.execution;
     obelisk_rt_context *context = nullptr;
     EXPECT_EQ(obelisk_rt_v1_context_create_for_design(&fixture.execution,
                                                        &context),
@@ -1686,12 +1835,117 @@ TEST(DesignBytecode, RejectsNonCanonicalTablesAndUncallableFunctions) {
   rejected(overlappingTable);
 
   Fixture noEntryContinuation;
-  put64(noEntryContinuation.bytecode, 192 + 80, 0);
+  put64(noEntryContinuation.bytecode,
+        OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE + 80, 0);
   rejected(noEntryContinuation);
 
   Fixture reservedLayout;
-  put16(reservedLayout.bytecode, 192 + 96 + 2, 1);
+  put16(reservedLayout.bytecode,
+        OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE + 96 + 2, 1);
   rejected(reservedLayout);
+
+  auto connected = [](Fixture &fixture) {
+    fixture.bytecode = makeConnectedDriverBytecode();
+    fixture.execution.bytecode = fixture.bytecode.data();
+    fixture.execution.bytecode_size = fixture.bytecode.size();
+    fixture.execution.state_bit_count = 195;
+    fixture.execution.checksum = imageChecksum(fixture.bytecode);
+    fixture.entry = {&fixture.execution, 0, 0};
+  };
+  Fixture misalignedConnectivity;
+  connected(misalignedConnectivity);
+  put64(misalignedConnectivity.bytecode, 184,
+        misalignedConnectivity.bytecode.size() - 31);
+  rejected(misalignedConnectivity);
+
+  Fixture unknownConnectivityNet;
+  connected(unknownConnectivityNet);
+  size_t connectivity = unknownConnectivityNet.bytecode.size() - 32;
+  put64(unknownConnectivityNet.bytecode, connectivity + 8, 195);
+  rejected(unknownConnectivityNet);
+
+  Fixture invalidOrientation;
+  connected(invalidOrientation);
+  connectivity = invalidOrientation.bytecode.size() - 32;
+  invalidOrientation.bytecode[connectivity + 26] = 2;
+  rejected(invalidOrientation);
+
+  Fixture incompatibleKinds;
+  connected(incompatibleKinds);
+  connectivity = incompatibleKinds.bytecode.size() - 32;
+  incompatibleKinds.bytecode[connectivity + 24] = 2;
+  rejected(incompatibleKinds);
+
+  Fixture incompatibleStateDomains;
+  connected(incompatibleStateDomains);
+  size_t state = get64(incompatibleStateDomains.bytecode, 168);
+  put32(incompatibleStateDomains.bytecode, state + 32 + 4, 0);
+  rejected(incompatibleStateDomains);
+
+  Fixture swappedConnectivityEndpoints;
+  connected(swappedConnectivityEndpoints);
+  connectivity = swappedConnectivityEndpoints.bytecode.size() - 32;
+  put64(swappedConnectivityEndpoints.bytecode, connectivity, 65);
+  put64(swappedConnectivityEndpoints.bytecode, connectivity + 8, 0);
+  rejected(swappedConnectivityEndpoints);
+
+  Fixture selfConnectivity;
+  connected(selfConnectivity);
+  connectivity = selfConnectivity.bytecode.size() - 32;
+  put64(selfConnectivity.bytecode, connectivity + 8, 0);
+  rejected(selfConnectivity);
+
+  Fixture overlappingScalarConnectivity;
+  connected(overlappingScalarConnectivity);
+  connectivity = overlappingScalarConnectivity.bytecode.size() - 32;
+  overlappingScalarConnectivity.bytecode.resize(
+      overlappingScalarConnectivity.bytecode.size() + 32, 0);
+  put64(overlappingScalarConnectivity.bytecode, connectivity + 16, 33);
+  put64(overlappingScalarConnectivity.bytecode, connectivity + 32, 32);
+  put64(overlappingScalarConnectivity.bytecode, connectivity + 40, 97);
+  put64(overlappingScalarConnectivity.bytecode, connectivity + 48, 33);
+  put64(overlappingScalarConnectivity.bytecode, 24,
+        overlappingScalarConnectivity.bytecode.size());
+  put64(overlappingScalarConnectivity.bytecode, 192, 2);
+  rejected(overlappingScalarConnectivity);
+
+  Fixture uncoalescedConnectivity;
+  connected(uncoalescedConnectivity);
+  connectivity = uncoalescedConnectivity.bytecode.size() - 32;
+  uncoalescedConnectivity.bytecode.resize(
+      uncoalescedConnectivity.bytecode.size() + 32, 0);
+  put64(uncoalescedConnectivity.bytecode, connectivity + 16, 32);
+  put64(uncoalescedConnectivity.bytecode, connectivity + 32, 32);
+  put64(uncoalescedConnectivity.bytecode, connectivity + 40, 97);
+  put64(uncoalescedConnectivity.bytecode, connectivity + 48, 33);
+  put64(uncoalescedConnectivity.bytecode, 24,
+        uncoalescedConnectivity.bytecode.size());
+  put64(uncoalescedConnectivity.bytecode, 192, 2);
+  rejected(uncoalescedConnectivity);
+
+  Fixture abusiveConnectivityCount;
+  connected(abusiveConnectivityCount);
+  put64(abusiveConnectivityCount.bytecode, 192, UINT64_MAX);
+  rejected(abusiveConnectivityCount);
+
+  Fixture truncatedConnectivity;
+  connected(truncatedConnectivity);
+  truncatedConnectivity.bytecode.pop_back();
+  put64(truncatedConnectivity.bytecode, 24,
+        truncatedConnectivity.bytecode.size());
+  rejected(truncatedConnectivity);
+
+  Fixture overlappingUWireDrivers;
+  overlappingUWireDrivers.bytecode = makePartialUWireDriverBytecode(true);
+  overlappingUWireDrivers.execution.bytecode =
+      overlappingUWireDrivers.bytecode.data();
+  overlappingUWireDrivers.execution.bytecode_size =
+      overlappingUWireDrivers.bytecode.size();
+  overlappingUWireDrivers.execution.state_bit_count = 195;
+  overlappingUWireDrivers.execution.checksum =
+      imageChecksum(overlappingUWireDrivers.bytecode);
+  overlappingUWireDrivers.entry = {&overlappingUWireDrivers.execution, 0, 0};
+  rejected(overlappingUWireDrivers);
 }
 
 TEST(DesignBytecode, NativeAndBytecodeShareCanonicalDesignState) {

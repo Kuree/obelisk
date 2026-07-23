@@ -898,6 +898,17 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
   bool fourState =
       ((read32(typeRecord + 4) >> 8) &
        OBELISK_RT_DESIGN_TYPE_FOUR_STATE) != 0;
+  if (write && kind == OBELISK_RT_DESIGN_RECORD_NET) {
+    bool connected = false;
+    obelisk_rt_status status = obelisk_rt_design_net_is_connected(
+        context, stateOffset, stateOffset + width, &connected);
+    if (status != OBELISK_RT_OK)
+      return status;
+    // A direct deposit or force cannot update one logical alias in isolation.
+    // Reject it until the public write API can express topology-wide writes.
+    if (connected)
+      return OBELISK_RT_PERMISSION_DENIED;
+  }
   std::vector<std::pair<uint64_t, uint32_t>> transitions;
   if (write) {
     try {

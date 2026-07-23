@@ -1053,11 +1053,42 @@ LogicalResult SimNetDeclOp::verify() {
   return verifyElementType([&] { return emitOpError(); }, getType());
 }
 
+LogicalResult SimNetConnectDeclOp::verify() {
+  if (failed(verifyNonnegative(*this, getIdAttr(), "connection ID")) ||
+      failed(verifyNonnegative(*this, getScopeIdAttr(), "scope ID")) ||
+      failed(verifyNonnegative(*this, getLhsNetIdAttr(), "left net ID")) ||
+      failed(verifyNonnegative(*this, getLhsOffsetAttr(), "left offset")) ||
+      failed(verifyNonnegative(*this, getRhsNetIdAttr(), "right net ID")) ||
+      failed(verifyNonnegative(*this, getRhsOffsetAttr(), "right offset")) ||
+      failed(verifyNonnegative(*this, getWidthAttr(), "width")))
+    return failure();
+  if (getWidth() == 0)
+    return emitOpError("width must be positive");
+  return success();
+}
+
 LogicalResult SimDriverDeclOp::verify() {
   if (failed(verifyNonnegative(*this, getIdAttr(), "driver ID")) ||
       failed(verifyNonnegative(*this, getScopeIdAttr(), "scope ID")) ||
       failed(verifyNonnegative(*this, getNetIdAttr(), "net ID")))
     return failure();
+  if (static_cast<bool>(getDrivenLowAttr()) !=
+      static_cast<bool>(getDrivenWidthAttr()))
+    return emitOpError(
+        "driven low and width must either both be present or both be absent");
+  if (getDrivenLowAttr()) {
+    if (failed(verifyNonnegative(*this, getDrivenLowAttr(), "driven low")) ||
+        failed(
+            verifyNonnegative(*this, getDrivenWidthAttr(), "driven width")))
+      return failure();
+    uint64_t low = getDrivenLowAttr().getValue().getZExtValue();
+    uint64_t width = getDrivenWidthAttr().getValue().getZExtValue();
+    std::optional<unsigned> typeWidth = getPackedWidth(getType());
+    if (width == 0)
+      return emitOpError("driven width must be positive");
+    if (!typeWidth || low > *typeWidth || width > *typeWidth - low)
+      return emitOpError("driven range exceeds the driver type");
+  }
   return verifyElementType([&] { return emitOpError(); }, getType());
 }
 
@@ -1066,9 +1097,11 @@ LogicalResult SimDesignOp::verifyRegions() {
       precision &&
       (precision.getValue().isNegative() || precision.getValue().isZero()))
     return emitOpError("time precision must be a positive femtosecond value");
-  llvm::DenseSet<uint64_t> scopeIds, codeUnitIds, storageIds, netIds, driverIds;
+  llvm::DenseSet<uint64_t> scopeIds, codeUnitIds, storageIds, netIds, driverIds,
+      connectionIds;
   llvm::DenseMap<uint64_t, SimCodeUnitDeclOp> codeUnits;
   llvm::DenseMap<uint64_t, Type> storageTypes, netTypes, driverTypes;
+  llvm::DenseMap<uint64_t, NetResolutionKind> netResolutions;
   SmallVector<SimFuncOp> functions;
   bool sawRoot = false;
   for (Operation &op : getBody().front()) {
@@ -1100,10 +1133,15 @@ LogicalResult SimDesignOp::verifyRegions() {
       if (failed(addId(net.getIdAttr(), netIds, "net")))
         return failure();
       netTypes[net.getId()] = net.getType();
+      netResolutions[net.getId()] = net.getResolutionKind();
     } else if (auto driver = dyn_cast<SimDriverDeclOp>(op)) {
       if (failed(addId(driver.getIdAttr(), driverIds, "driver")))
         return failure();
       driverTypes[driver.getId()] = driver.getType();
+    } else if (auto connection = dyn_cast<SimNetConnectDeclOp>(op)) {
+      if (failed(
+              addId(connection.getIdAttr(), connectionIds, "net connection")))
+        return failure();
     } else if (auto function = dyn_cast<SimFuncOp>(op)) {
       functions.push_back(function);
     }
@@ -1121,7 +1159,8 @@ LogicalResult SimDesignOp::verifyRegions() {
   if (failed(verifyDense(scopeIds, "scope")) ||
       failed(verifyDense(storageIds, "storage")) ||
       failed(verifyDense(netIds, "net")) ||
-      failed(verifyDense(driverIds, "driver")))
+      failed(verifyDense(driverIds, "driver")) ||
+      failed(verifyDense(connectionIds, "net connection")))
     return failure();
   for (Operation &op : getBody().front()) {
     if (auto scope = dyn_cast<SimScopeDeclOp>(op)) {
@@ -1145,6 +1184,37 @@ LogicalResult SimDesignOp::verifyRegions() {
           netType->second != driver.getType())
         return driver.emitOpError(
             "references an incompatible scope or net descriptor");
+    } else if (auto connection = dyn_cast<SimNetConnectDeclOp>(op)) {
+      auto lhs = netTypes.find(connection.getLhsNetId());
+      auto rhs = netTypes.find(connection.getRhsNetId());
+      if (!scopeIds.count(connection.getScopeId()) || lhs == netTypes.end() ||
+          rhs == netTypes.end())
+        return connection.emitOpError(
+            "references an unknown scope or net descriptor");
+      std::optional<unsigned> lhsWidth = getPackedWidth(lhs->second);
+      std::optional<unsigned> rhsWidth = getPackedWidth(rhs->second);
+      uint64_t width = connection.getWidth();
+      uint64_t lhsOffset = connection.getLhsOffset();
+      uint64_t rhsOffset = connection.getRhsOffset();
+      bool lhsValid =
+          lhsWidth && lhsOffset <= *lhsWidth && width <= *lhsWidth - lhsOffset;
+      bool rhsValid = rhsWidth && (connection.getRhsReversed()
+                                       ? width <= rhsOffset + 1
+                                       : rhsOffset <= *rhsWidth &&
+                                             width <= *rhsWidth - rhsOffset);
+      if (!lhsValid || !rhsValid)
+        return connection.emitOpError("contains an out-of-range bit run");
+      if (containsFourStateLeaf(lhs->second) !=
+          containsFourStateLeaf(rhs->second))
+        return connection.emitOpError(
+            "connects incompatible two-state and four-state nets");
+      bool lhsUWire = netResolutions.lookup(connection.getLhsNetId()) ==
+                      NetResolutionKind::UWire;
+      bool rhsUWire = netResolutions.lookup(connection.getRhsNetId()) ==
+                      NetResolutionKind::UWire;
+      if (lhsUWire != rhsUWire)
+        return connection.emitOpError(
+            "mixes uwire with resolved wire/tri topology");
     }
   }
 
@@ -1222,9 +1292,100 @@ LogicalResult SimDesignOp::verifyRegions() {
       Type expected;
       switch (*kind) {
       case CaptureKind::Storage:
-        if (descriptorId && storageTypes.count(*descriptorId))
-          expected =
-              RefType::get(getContext(), storageTypes.lookup(*descriptorId));
+        if (descriptorId && storageTypes.count(*descriptorId)) {
+          Type storageType = storageTypes.lookup(*descriptorId);
+          auto rootType = function.getArgAttrOfType<TypeAttr>(
+              index, "obelisk_sim.descriptor_root_type");
+          auto low = function.getArgAttrOfType<IntegerAttr>(
+              index, "obelisk_sim.descriptor_low");
+          if (!rootType) {
+            if (low || function.getArgAttr(
+                           index, "obelisk_sim.descriptor_indices") ||
+                function.getArgAttr(
+                    index, "obelisk_sim.descriptor_aggregate_type") ||
+                function.getArgAttr(index,
+                                    "obelisk_sim.descriptor_packed_low"))
+              break;
+            expected = RefType::get(getContext(), storageType);
+            break;
+          }
+          auto reference = dyn_cast<RefType>(argument);
+          std::optional<uint64_t> rootSpan = getProvenanceSpan(storageType);
+          std::optional<uint64_t> viewSpan =
+              reference ? getProvenanceSpan(reference.getElementType())
+                        : std::nullopt;
+          if (rootType.getValue() != storageType || !low ||
+              low.getValue().isNegative() ||
+              low.getValue().getActiveBits() > 64 || !rootSpan || !viewSpan)
+            break;
+
+          Type selected = storageType;
+          uint64_t computedLow = 0;
+          auto indices = function.getArgAttrOfType<DenseI64ArrayAttr>(
+              index, "obelisk_sim.descriptor_indices");
+          bool validView = true;
+          if (indices) {
+            for (int64_t rawIndex : indices.asArrayRef()) {
+              if (rawIndex < 0 ||
+                  static_cast<uint64_t>(rawIndex) >
+                      std::numeric_limits<unsigned>::max()) {
+                validView = false;
+                break;
+              }
+              auto subelement = getAggregateProvenanceSubelement(
+                  selected, static_cast<unsigned>(rawIndex));
+              if (!subelement ||
+                  subelement->first > UINT64_MAX - computedLow) {
+                validView = false;
+                break;
+              }
+              computedLow += subelement->first;
+              selected = getAggregateElementType(
+                  selected, static_cast<unsigned>(rawIndex));
+            }
+          }
+          auto aggregateType = function.getArgAttrOfType<TypeAttr>(
+              index, "obelisk_sim.descriptor_aggregate_type");
+          if ((indices && !aggregateType) ||
+              (aggregateType && aggregateType.getValue() != selected))
+            validView = false;
+
+          auto packedLow = function.getArgAttrOfType<IntegerAttr>(
+              index, "obelisk_sim.descriptor_packed_low");
+          Type viewElement = reference ? reference.getElementType() : Type{};
+          if (validView && selected != viewElement) {
+            std::optional<unsigned> selectedWidth = getPackedWidth(selected);
+            std::optional<unsigned> resultWidth = getPackedWidth(viewElement);
+            Type selectedScalar = getPackedScalarType(selected);
+            Type resultScalar = getPackedScalarType(viewElement);
+            if (!packedLow || packedLow.getValue().isNegative() ||
+                packedLow.getValue().getActiveBits() > 64 || !selectedWidth ||
+                !resultWidth || !selectedScalar || !resultScalar ||
+                isa<LogicType>(selectedScalar) !=
+                    isa<LogicType>(resultScalar)) {
+              validView = false;
+            } else {
+              uint64_t packed = packedLow.getValue().getZExtValue();
+              if (packed > *selectedWidth ||
+                  *resultWidth > *selectedWidth - packed ||
+                  packed > UINT64_MAX - computedLow)
+                validView = false;
+              else
+                computedLow += packed;
+            }
+          } else if (packedLow &&
+                     (packedLow.getValue().isNegative() ||
+                      packedLow.getValue().getActiveBits() > 64 ||
+                      packedLow.getValue().getZExtValue() != 0)) {
+            validView = false;
+          }
+
+          uint64_t encodedLow = low.getValue().getZExtValue();
+          if (validView && encodedLow == computedLow &&
+              encodedLow <= *rootSpan &&
+              *viewSpan <= *rootSpan - encodedLow)
+            expected = argument;
+        }
         break;
       case CaptureKind::Net:
         if (descriptorId && netTypes.count(*descriptorId))

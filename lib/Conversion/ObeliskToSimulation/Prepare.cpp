@@ -25,6 +25,7 @@
 #include "llvm/Support/FormatVariadic.h"
 
 #include <limits>
+#include <map>
 
 using namespace mlir;
 
@@ -76,6 +77,12 @@ struct DescriptorInfo {
   uint64_t id;
   uint64_t scopeId;
   Type type;
+  sim::NetResolutionKind netKind = sim::NetResolutionKind::Wire;
+  Type rootType;
+  uint64_t viewOffset = 0;
+  uint64_t packedViewOffset = 0;
+  SmallVector<int64_t> viewIndices;
+  Type aggregateViewType;
 };
 
 struct UnitInfo {
@@ -88,6 +95,20 @@ struct UnitInfo {
 };
 
 static FailureOr<sim::EntryKind> getEntryKind(Operation *op) {
+  if (auto connection = dyn_cast<semantic::SVPortConnectionOp>(op)) {
+    if (connection.getDirection() == semantic::SVArgumentDirection::Out)
+      return sim::EntryKind::PortOutput;
+    if (connection.getDirection() == semantic::SVArgumentDirection::In) {
+      if (connection.getProvenance() ==
+              semantic::SVPortConnectionKind::Default ||
+          connection.getActualIsConstant())
+        return sim::EntryKind::PortInitialize;
+      return sim::EntryKind::PortInput;
+    }
+    emitError(getSemanticLocation(op))
+        << "non-static inout and ref port connections cannot be spawned";
+    return failure();
+  }
   if (isa<semantic::SVContinuousAssignSymbolOp>(op))
     return sim::EntryKind::Continuous;
   if (isa<semantic::SVSubroutineSymbolOp>(op))
@@ -111,6 +132,12 @@ static FailureOr<sim::EntryKind> getEntryKind(Operation *op) {
 }
 
 static std::string getCodeUnitHierarchy(Operation *op) {
+  if (auto connection = dyn_cast<semantic::SVPortConnectionOp>(op)) {
+    Operation *instance = connection->getParentOp();
+    return (getHierarchyName(instance) + ".$port_connection_" +
+            Twine(connection.getFormalOrdinal()))
+        .str();
+  }
   StringRef lexical = getHierarchyName(op);
   if (isa<semantic::SVSubroutineSymbolOp>(op))
     return lexical.str();
@@ -118,6 +145,24 @@ static std::string getCodeUnitHierarchy(Operation *op) {
   return (lexical + ".$code_unit_" +
           Twine(nodeID.getValue().getZExtValue()))
       .str();
+}
+
+static Operation *getSingleRegionRoot(Region &region) {
+  if (region.empty() || region.front().empty())
+    return nullptr;
+  return &region.front().front();
+}
+
+static Operation *getPortActualLValue(semantic::SVPortConnectionOp connection) {
+  Operation *actual = getSingleRegionRoot(connection.getActual());
+  auto assignment = dyn_cast_or_null<semantic::SVAssignmentExpressionOp>(actual);
+  if (!assignment)
+    return actual;
+  SmallVector<Operation *> children = getChildren(assignment);
+  if (children.size() == 2 &&
+      isa<semantic::SVEmptyArgumentExpressionOp>(children[1]))
+    return children.front();
+  return actual;
 }
 
 /// Automatic locals live in the owning unit's binding table instead of the
@@ -249,6 +294,21 @@ void ObeliskSimPreparePass::runOnOperation() {
 
   uint64_t designPrecisionFs = std::numeric_limits<uint64_t>::max();
   for (Operation *unit : sourceUnits) {
+    if (auto assignment =
+            dyn_cast<semantic::SVContinuousAssignSymbolOp>(unit)) {
+      if (assignment.getUnsupportedStrength()) {
+        emitError(getSemanticLocation(unit))
+            << "continuous-assignment strengths are not supported: "
+            << *assignment.getUnsupportedStrength();
+        invalid = true;
+      }
+      if (assignment.getUnsupportedDelay()) {
+        emitError(getSemanticLocation(unit))
+            << "continuous-assignment delays are not supported: "
+            << *assignment.getUnsupportedDelay();
+        invalid = true;
+      }
+    }
     auto timeUnit = unit->getAttrOfType<IntegerAttr>("time_unit_fs");
     auto timePrecision = unit->getAttrOfType<IntegerAttr>("time_precision_fs");
     if (static_cast<bool>(timeUnit) != static_cast<bool>(timePrecision)) {
@@ -339,53 +399,201 @@ void ObeliskSimPreparePass::runOnOperation() {
     return uint64_t{0};
   };
 
-  // Resolve only identity port connections as aliases. Non-identity
-  // connections need executable connection logic; rejecting them here avoids
-  // silently collapsing an arbitrary expression to its first named operand.
-  llvm::StringMap<std::string> aliases;
-  semanticRoot->walk([&](semantic::SVInstanceSymbolOp instance) {
-    SmallVector<Operation *> connections;
-    Operation *instanceBody = nullptr;
-    for (Operation *child : getChildren(instance)) {
-      if (isa<semantic::SVInstanceBodySymbolOp>(child)) {
-        instanceBody = child;
-        continue;
-      }
-      connections.push_back(child);
+  // `ref` is the only variable-port association that aliases storage. Every
+  // value port is frozen below either as static net topology or as an explicit
+  // hidden connection unit.
+  struct StaticStorageView {
+    std::string path;
+    Type rootType;
+    Type viewType;
+    uint64_t offset = 0;
+    uint64_t packedOffset = 0;
+    SmallVector<int64_t> indices;
+    Type aggregateType;
+  };
+  std::function<FailureOr<StaticStorageView>(Operation *)> getStaticStorageView;
+  getStaticStorageView = [&](Operation *expression)
+      -> FailureOr<StaticStorageView> {
+    StringRef path;
+    if (auto named =
+            dyn_cast<semantic::SVNamedValueExpressionOp>(expression))
+      path = named.getReferencedPath();
+    else if (auto hierarchical =
+                 dyn_cast<semantic::SVHierarchicalValueExpressionOp>(
+                     expression))
+      path = hierarchical.getReferencedPath();
+    if (!path.empty()) {
+      FailureOr<Type> type = getNormalizedSemanticType(expression);
+      if (failed(type))
+        return failure();
+      return StaticStorageView{path.str(), *type, *type, 0, 0, {}, *type};
     }
-    if (!instanceBody)
+
+    SmallVector<Operation *> children = getChildren(expression);
+    if (children.empty())
+      return failure();
+    FailureOr<StaticStorageView> base = getStaticStorageView(children.front());
+    FailureOr<Type> resultType = getNormalizedSemanticType(expression);
+    if (failed(base) || failed(resultType))
+      return failure();
+
+    if (auto member =
+            dyn_cast<semantic::SVMemberAccessExpressionOp>(expression)) {
+      // A declaration-order subelement cannot be represented after a packed
+      // bit view. Keep the supported view grammar unambiguous instead of
+      // silently applying the member to the wrong aggregate.
+      if (base->packedOffset != 0)
+        return failure();
+      auto ordinal = member->getAttrOfType<IntegerAttr>("field_ordinal");
+      if (!ordinal || ordinal.getValue().isNegative())
+        return failure();
+      auto subelement = sim::getAggregateProvenanceSubelement(
+          base->viewType, ordinal.getValue().getZExtValue());
+      if (!subelement ||
+          subelement->first > UINT64_MAX - base->offset)
+        return failure();
+      base->offset += subelement->first;
+      base->indices.push_back(ordinal.getValue().getZExtValue());
+      base->viewType = *resultType;
+      base->aggregateType = *resultType;
+      return *base;
+    }
+
+    bool element = isa<semantic::SVElementSelectExpressionOp>(expression);
+    if (!element && !isa<semantic::SVRangeSelectExpressionOp>(expression))
+      return failure();
+    if (children.size() < 2)
+      return failure();
+    auto literal = dyn_cast<semantic::SVIntegerLiteralOp>(children[1]);
+    if (!literal)
+      return failure();
+    FailureOr<ParsedConstant> parsed = parseSVInteger(
+        literal.getConstantValue(), 64, getSemanticLocation(children[1]));
+    if (failed(parsed) || !parsed->unknown.isZero())
+      return failure();
+    int64_t first = parsed->value.getSExtValue();
+    auto semanticType =
+        children.front()->getAttrOfType<TypeAttr>("semantic_type");
+    if (!semanticType)
+      return failure();
+
+    if (auto unpacked = dyn_cast<semantic::RangedUnpackedArrayType>(
+            semanticType.getValue())) {
+      if (!element || base->packedOffset != 0)
+        return failure();
+      llvm::APInt left(65, static_cast<uint64_t>(unpacked.getLeft()), true);
+      llvm::APInt selected(65, static_cast<uint64_t>(first), true);
+      llvm::APInt ordinal = unpacked.getLeft() >= unpacked.getRight()
+                                ? left - selected
+                                : selected - left;
+      if (ordinal.isNegative() ||
+          ordinal.ugt(llvm::APInt(
+              65, std::numeric_limits<unsigned>::max())))
+        return failure();
+      auto subelement = sim::getAggregateProvenanceSubelement(
+          base->viewType, static_cast<unsigned>(ordinal.getZExtValue()));
+      if (!subelement ||
+          subelement->first > UINT64_MAX - base->offset)
+        return failure();
+      base->offset += subelement->first;
+      base->indices.push_back(
+          static_cast<unsigned>(ordinal.getZExtValue()));
+      base->viewType = *resultType;
+      base->aggregateType = *resultType;
+      return *base;
+    }
+
+    int64_t right;
+    bool descending;
+    if (auto integral =
+            dyn_cast<semantic::IntegralType>(semanticType.getValue())) {
+      right = integral.getRight();
+      descending = integral.getLeft() >= integral.getRight();
+    } else if (auto packed = dyn_cast<semantic::RangedPackedArrayType>(
+                   semanticType.getValue())) {
+      right = packed.getRight();
+      descending = packed.getLeft() >= packed.getRight();
+    } else {
+      return failure();
+    }
+    auto physical = [&](int64_t index) -> std::optional<uint64_t> {
+      llvm::APInt selected(65, static_cast<uint64_t>(index), true);
+      llvm::APInt boundary(65, static_cast<uint64_t>(right), true);
+      llvm::APInt offset =
+          descending ? selected - boundary : boundary - selected;
+      if (offset.isNegative() || offset.getActiveBits() > 64)
+        return std::nullopt;
+      return offset.getZExtValue();
+    };
+    std::optional<uint64_t> low = physical(first);
+    if (!low)
+      return failure();
+    if (!element) {
+      if (children.size() < 3)
+        return failure();
+      auto secondLiteral =
+          dyn_cast<semantic::SVIntegerLiteralOp>(children[2]);
+      if (!secondLiteral)
+        return failure();
+      FailureOr<ParsedConstant> second = parseSVInteger(
+          secondLiteral.getConstantValue(), 64,
+          getSemanticLocation(children[2]));
+      if (failed(second) || !second->unknown.isZero())
+        return failure();
+      std::optional<uint64_t> other =
+          physical(second->value.getSExtValue());
+      if (!other)
+        return failure();
+      low = std::min(*low, *other);
+    }
+    if (!low || *low > UINT64_MAX - base->offset)
+      return failure();
+    base->offset += *low;
+    if (*low > UINT64_MAX - base->packedOffset)
+      return failure();
+    base->packedOffset += *low;
+    base->viewType = *resultType;
+    return *base;
+  };
+
+  llvm::StringMap<std::string> aliases;
+  llvm::StringMap<StaticStorageView> refViews;
+  llvm::StringMap<std::string> interfaceAliases;
+  SmallVector<semantic::SVPortConnectionOp> portConnections;
+  semanticRoot->walk([&](semantic::SVPortConnectionOp connection) {
+    portConnections.push_back(connection);
+    if (connection.getDirection() != semantic::SVArgumentDirection::Ref)
       return;
-    SmallVector<Operation *> ports;
-    for (Operation *child : getChildren(instanceBody))
-      if (isa<semantic::SVPortSymbolOp>(child))
-        ports.push_back(child);
-    if (connections.size() != ports.size()) {
-      emitError(getSemanticLocation(instance))
-          << "port connection inventory does not match elaborated ports";
+    StringRef internal = connection.getInternalPath().value_or(StringRef{});
+    Operation *actual = getSingleRegionRoot(connection.getActual());
+    FailureOr<StaticStorageView> view =
+        actual ? getStaticStorageView(actual)
+               : FailureOr<StaticStorageView>(failure());
+    if (internal.empty() || !actual || failed(view)) {
+      emitError(getSemanticLocation(connection))
+          << "ref port requires a static variable, member, packed selection, "
+             "or fixed-array element association";
       invalid = true;
       return;
     }
-    for (auto [port, connection] : llvm::zip(ports, connections)) {
-      Operation *identity = connection;
-      if (isa<semantic::SVAssignmentExpressionOp>(connection)) {
-        SmallVector<Operation *> assignmentChildren = getChildren(connection);
-        if (assignmentChildren.size() == 2 &&
-            isa<semantic::SVEmptyArgumentExpressionOp>(assignmentChildren[1]))
-          identity = assignmentChildren.front();
-      }
-      auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(identity);
-      if (!named) {
-        emitError(getSemanticLocation(connection))
-            << "non-identity port connections are not supported by the first "
-               "simulation slice";
-        invalid = true;
-        continue;
-      }
-      StringRef portPath = getHierarchyName(port);
-      StringRef connected = named.getReferencedPath();
-      if (!portPath.empty() && !connected.empty() && portPath != connected)
-        aliases[portPath] = connected.str();
+    if (connection.getFormalType() !=
+        actual->getAttrOfType<TypeAttr>("semantic_type").getValue()) {
+      emitError(getSemanticLocation(connection))
+          << "ref port association has a mismatched or converted type";
+      invalid = true;
+      return;
     }
+    aliases[internal] = view->path;
+    refViews[internal] = *view;
+  });
+  semanticRoot->walk([&](semantic::SVModportPortSymbolOp port) {
+    Operation *modport = port->getParentOp();
+    Operation *interfaceBody = modport ? modport->getParentOp() : nullptr;
+    StringRef path = getHierarchyName(port);
+    StringRef base = getHierarchyName(interfaceBody);
+    StringRef name = getDebugName(port);
+    if (!path.empty() && !base.empty() && !name.empty())
+      interfaceAliases[path] = (base + Twine(".") + name).str();
   });
 
   llvm::StringMap<DescriptorInfo> descriptors;
@@ -421,7 +629,9 @@ void ObeliskSimPreparePass::runOnOperation() {
     StringAttr debug = builder.getStringAttr(getDebugName(op));
     if (storage) {
       uint64_t id = nextStorageId++;
-      descriptors[path] = {DescriptorInfo::Kind::Storage, id, scopeId, *type};
+      descriptors[path] = {DescriptorInfo::Kind::Storage, id, scopeId, *type,
+                           sim::NetResolutionKind::Wire};
+      descriptors[path].rootType = *type;
       sim::Lifetime lifetime =
           op->getParentOfType<semantic::SVStatementBlockSymbolOp>()
               ? sim::Lifetime::Static
@@ -430,11 +640,46 @@ void ObeliskSimPreparePass::runOnOperation() {
                                     scopeId, *type, lifetime, hierarchy, debug,
                                     sim::ComputeObservabilityKindAttr{});
     } else {
+      auto net = cast<semantic::SVNetSymbolOp>(op);
+      sim::NetResolutionKind resolution;
+      switch (net.getNetKind()) {
+      case semantic::SVNetKind::Wire:
+        resolution = sim::NetResolutionKind::Wire;
+        break;
+      case semantic::SVNetKind::Tri:
+        resolution = sim::NetResolutionKind::Tri;
+        break;
+      case semantic::SVNetKind::UWire:
+        resolution = sim::NetResolutionKind::UWire;
+        break;
+      default:
+        emitError(getSemanticLocation(op))
+            << "unsupported net resolution kind "
+            << semantic::stringifySVNetKind(net.getNetKind());
+        invalid = true;
+        return;
+      }
+      if (net.getUnsupportedStrength()) {
+        emitError(getSemanticLocation(op))
+            << "net strengths are not supported: "
+            << *net.getUnsupportedStrength();
+        invalid = true;
+        return;
+      }
+      if (net.getUnsupportedDelay()) {
+        emitError(getSemanticLocation(op))
+            << "net delays are not supported: " << *net.getUnsupportedDelay();
+        invalid = true;
+        return;
+      }
       uint64_t id = nextNetId++;
-      descriptors[path] = {DescriptorInfo::Kind::Net, id, scopeId, *type};
+      descriptors[path] = {DescriptorInfo::Kind::Net, id, scopeId, *type,
+                           resolution};
+      descriptors[path].rootType = *type;
       sim::SimNetDeclOp::create(builder, getSemanticLocation(op), id, scopeId,
                                 *type, sim::Lifetime::Design, hierarchy, debug,
-                                sim::ComputeObservabilityKindAttr{});
+                                sim::ComputeObservabilityKindAttr{}, resolution,
+                                UnitAttr{});
     }
   };
   // Materialize canonical objects first so alias resolution is independent of
@@ -449,6 +694,14 @@ void ObeliskSimPreparePass::runOnOperation() {
       continue;
     llvm::StringSet<> seen;
     StringRef canonical = alias->second;
+    uint64_t viewOffset = 0;
+    uint64_t packedViewOffset = 0;
+    SmallVector<const StaticStorageView *> viewChain;
+    if (auto view = refViews.find(path); view != refViews.end()) {
+      viewOffset = view->second.offset;
+      packedViewOffset = view->second.packedOffset;
+      viewChain.push_back(&view->second);
+    }
     bool cyclic = false;
     auto next = aliases.find(canonical);
     while (next != aliases.end()) {
@@ -457,6 +710,25 @@ void ObeliskSimPreparePass::runOnOperation() {
         invalid = true;
         cyclic = true;
         break;
+      }
+      if (auto view = refViews.find(canonical); view != refViews.end()) {
+        if (view->second.offset > UINT64_MAX - viewOffset) {
+          emitError(getSemanticLocation(op))
+              << "ref port view offset overflows for " << path;
+          invalid = true;
+          cyclic = true;
+          break;
+        }
+        viewOffset += view->second.offset;
+        if (view->second.packedOffset > UINT64_MAX - packedViewOffset) {
+          emitError(getSemanticLocation(op))
+              << "ref port packed view offset overflows for " << path;
+          invalid = true;
+          cyclic = true;
+          break;
+        }
+        packedViewOffset += view->second.packedOffset;
+        viewChain.push_back(&view->second);
       }
       canonical = next->second;
       next = aliases.find(canonical);
@@ -470,44 +742,537 @@ void ObeliskSimPreparePass::runOnOperation() {
       invalid = true;
       continue;
     }
+    if (refViews.count(path) &&
+        target->second.kind != DescriptorInfo::Kind::Storage) {
+      emitError(getSemanticLocation(op))
+          << "ref port cannot alias a net or driver";
+      invalid = true;
+      continue;
+    }
+    descriptors[path] = target->second;
+    if (auto view = refViews.find(path); view != refViews.end()) {
+      SmallVector<int64_t> viewIndices;
+      for (const StaticStorageView *component : llvm::reverse(viewChain))
+        viewIndices.append(component->indices);
+      Type aggregateViewType = target->second.rootType;
+      for (int64_t index : viewIndices) {
+        if (index < 0 || static_cast<uint64_t>(index) >
+                             std::numeric_limits<unsigned>::max()) {
+          aggregateViewType = {};
+          break;
+        }
+        aggregateViewType = sim::getAggregateElementType(
+            aggregateViewType, static_cast<unsigned>(index));
+        if (!aggregateViewType)
+          break;
+      }
+      if (!aggregateViewType) {
+        emitError(getSemanticLocation(op))
+            << "ref port has an invalid composed storage view for " << path;
+        invalid = true;
+        continue;
+      }
+      descriptors[path].type = view->second.viewType;
+      descriptors[path].rootType = target->second.rootType;
+      descriptors[path].viewOffset = viewOffset;
+      descriptors[path].packedViewOffset = packedViewOffset;
+      descriptors[path].viewIndices = std::move(viewIndices);
+      descriptors[path].aggregateViewType = aggregateViewType;
+    }
+  }
+  for (const auto &[path, targetPath] : interfaceAliases) {
+    auto target = descriptors.find(targetPath);
+    if (target == descriptors.end()) {
+      emitError(module.getLoc())
+          << "interface modport member has no flattened target: " << path;
+      invalid = true;
+      continue;
+    }
     descriptors[path] = target->second;
   }
   if (invalid)
     return abort();
 
-  // A continuous assignment owns one immutable driver descriptor. The first
-  // named value is the elaborated lvalue and must resolve to a net.
-  uint64_t nextDriverId = 0;
-  llvm::DenseMap<Operation *, DescriptorInfo> continuousDrivers;
-  llvm::DenseMap<Operation *, std::string> continuousTargets;
-  for (Operation *unit : sourceUnits) {
-    if (!isa<semantic::SVContinuousAssignSymbolOp>(unit))
+  struct NetRun {
+    DescriptorInfo descriptor;
+    uint64_t offset;
+    uint64_t width;
+    std::string path;
+    std::optional<uint64_t> nodeId;
+  };
+  std::function<bool(Operation *, SmallVectorImpl<NetRun> &)> flattenNetExpr;
+  flattenNetExpr = [&](Operation *expression,
+                       SmallVectorImpl<NetRun> &runs) -> bool {
+    if (!expression)
+      return false;
+    if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(expression)) {
+      auto descriptor = descriptors.find(named.getReferencedPath());
+      if (descriptor == descriptors.end() ||
+          descriptor->second.kind != DescriptorInfo::Kind::Net)
+        return false;
+      std::optional<unsigned> width = sim::getPackedWidth(descriptor->second.type);
+      if (!width)
+        return false;
+      std::optional<uint64_t> nodeId;
+      if (auto id = named->getAttrOfType<IntegerAttr>("node_id"))
+        nodeId = id.getValue().getZExtValue();
+      runs.push_back({descriptor->second, 0, *width,
+                      named.getReferencedPath().str(), nodeId});
+      return true;
+    }
+    if (auto hierarchical =
+            dyn_cast<semantic::SVHierarchicalValueExpressionOp>(expression)) {
+      auto descriptor = descriptors.find(hierarchical.getReferencedPath());
+      if (descriptor == descriptors.end() ||
+          descriptor->second.kind != DescriptorInfo::Kind::Net)
+        return false;
+      std::optional<unsigned> width =
+          sim::getPackedWidth(descriptor->second.type);
+      if (!width)
+        return false;
+      std::optional<uint64_t> nodeId;
+      if (auto id = hierarchical->getAttrOfType<IntegerAttr>("node_id"))
+        nodeId = id.getValue().getZExtValue();
+      runs.push_back({descriptor->second, 0, *width,
+                      hierarchical.getReferencedPath().str(), nodeId});
+      return true;
+    }
+    if (isa<semantic::SVConcatenationExpressionOp>(expression)) {
+      SmallVector<Operation *> children = getChildren(expression);
+      for (Operation *child : llvm::reverse(children))
+        if (!flattenNetExpr(child, runs))
+          return false;
+      return true;
+    }
+    if (auto member =
+            dyn_cast<semantic::SVMemberAccessExpressionOp>(expression)) {
+      SmallVector<Operation *> children = getChildren(expression);
+      if (children.empty())
+        return false;
+      SmallVector<NetRun> base;
+      if (!flattenNetExpr(children.front(), base) || base.size() != 1)
+        return false;
+      FailureOr<Type> sourceType =
+          getNormalizedSemanticType(children.front());
+      auto ordinal = member->getAttrOfType<IntegerAttr>("field_ordinal");
+      if (failed(sourceType) || !ordinal || ordinal.getValue().isNegative() ||
+          ordinal.getValue().getActiveBits() > 32)
+        return false;
+      auto subelement = sim::getAggregateProvenanceSubelement(
+          *sourceType, static_cast<unsigned>(ordinal.getInt()));
+      FailureOr<Type> resultType = getNormalizedSemanticType(expression);
+      std::optional<unsigned> resultWidth =
+          succeeded(resultType) ? sim::getPackedWidth(*resultType)
+                                : std::nullopt;
+      if (!subelement || !resultWidth || subelement->first > base.front().width ||
+          *resultWidth > base.front().width - subelement->first)
+        return false;
+      runs.push_back({base.front().descriptor,
+                      base.front().offset + subelement->first, *resultWidth,
+                      base.front().path, base.front().nodeId});
+      return true;
+    }
+    if (isa<semantic::SVElementSelectExpressionOp,
+            semantic::SVRangeSelectExpressionOp>(expression)) {
+      SmallVector<Operation *> children = getChildren(expression);
+      if (children.size() < 2)
+        return false;
+      SmallVector<NetRun> base;
+      if (!flattenNetExpr(children.front(), base) || base.size() != 1)
+        return false;
+      auto literalValue = [&](Operation *node) -> std::optional<int64_t> {
+        StringAttr spelling = node->getAttrOfType<StringAttr>("constant_value");
+        if (!spelling)
+          if (auto reference =
+                  node->getAttrOfType<SymbolRefAttr>("referenced_symbol"))
+            if (auto symbol =
+                    semanticSymbols.find(reference.getLeafReference());
+                symbol != semanticSymbols.end())
+              spelling = symbol->second->getAttrOfType<StringAttr>(
+                  "constant_value");
+        if (!spelling)
+          return std::nullopt;
+        FailureOr<ParsedConstant> value = parseSVInteger(
+            spelling.getValue(), 64, getSemanticLocation(node));
+        if (failed(value) || !value->unknown.isZero() ||
+            !value->value.isSignedIntN(64))
+          return std::nullopt;
+        return value->value.getSExtValue();
+      };
+      std::optional<int64_t> first = literalValue(children[1]);
+      if (!first)
+        return false;
+      FailureOr<Type> normalizedSource =
+          getNormalizedSemanticType(children.front());
+      FailureOr<Type> resultType = getNormalizedSemanticType(expression);
+      std::optional<unsigned> width =
+          succeeded(resultType) ? sim::getPackedWidth(*resultType)
+                                : std::nullopt;
+      if (failed(normalizedSource) || !width)
+        return false;
+
+      if (isa<semantic::SVElementSelectExpressionOp>(expression) &&
+          isa<sim::PackedArrayType>(*normalizedSource)) {
+        std::optional<unsigned> ordinal =
+            sim::getArrayElementOrdinal(*normalizedSource, *first);
+        if (!ordinal)
+          return false;
+        auto subelement = sim::getAggregateProvenanceSubelement(
+            *normalizedSource, *ordinal);
+        if (!subelement || subelement->first > base.front().width ||
+            *width > base.front().width - subelement->first)
+          return false;
+        runs.push_back({base.front().descriptor,
+                        base.front().offset + subelement->first, *width,
+                        base.front().path, base.front().nodeId});
+        return true;
+      }
+
+      auto sourceType = children.front()->getAttrOfType<TypeAttr>("semantic_type");
+      if (!sourceType)
+        return false;
+      std::optional<int64_t> right;
+      bool descending = true;
+      if (auto integral = dyn_cast<semantic::IntegralType>(sourceType.getValue())) {
+        right = integral.getRight();
+        descending = integral.getLeft() >= integral.getRight();
+      } else if (auto packed = dyn_cast<semantic::RangedPackedArrayType>(
+                     sourceType.getValue())) {
+        right = packed.getRight();
+        descending = packed.getLeft() >= packed.getRight();
+      }
+      if (!right)
+        return false;
+      uint64_t elementSpan = 1;
+      if (auto packed = dyn_cast<sim::PackedArrayType>(*normalizedSource)) {
+        std::optional<uint64_t> span =
+            sim::getProvenanceSpan(packed.getElementType());
+        if (!span || *span == 0)
+          return false;
+        elementSpan = *span;
+      }
+      auto physical = [&](int64_t index) -> std::optional<uint64_t> {
+        llvm::APInt selected(65, static_cast<uint64_t>(index), true);
+        llvm::APInt boundary(65, static_cast<uint64_t>(*right), true);
+        llvm::APInt offset =
+            descending ? selected - boundary : boundary - selected;
+        if (offset.isNegative() || offset.getActiveBits() > 64)
+          return std::nullopt;
+        uint64_t scalarOffset = offset.getZExtValue();
+        if (scalarOffset != 0 &&
+            elementSpan > UINT64_MAX / scalarOffset)
+          return std::nullopt;
+        return scalarOffset * elementSpan;
+      };
+      std::optional<uint64_t> low = physical(*first);
+      if (!low)
+        return false;
+      auto range = dyn_cast<semantic::SVRangeSelectExpressionOp>(expression);
+      if (range && range.getSelectionKind() ==
+                       semantic::SVRangeSelectionKind::Simple) {
+        std::optional<int64_t> second = literalValue(children[2]);
+        if (!second)
+          return false;
+        std::optional<uint64_t> other = physical(*second);
+        if (!other)
+          return false;
+        low = std::min(*low, *other);
+      } else if (range) {
+        bool baseNamesHighBit =
+            (descending &&
+             range.getSelectionKind() ==
+                 semantic::SVRangeSelectionKind::IndexedDown) ||
+            (!descending &&
+             range.getSelectionKind() ==
+                 semantic::SVRangeSelectionKind::IndexedUp);
+        if (baseNamesHighBit) {
+          if (*width < elementSpan || *low < *width - elementSpan)
+            return false;
+          *low -= *width - elementSpan;
+        }
+      }
+      if (!low || !width || *low > base.front().width ||
+          *width > base.front().width - *low)
+        return false;
+      runs.push_back({base.front().descriptor, base.front().offset + *low,
+                      *width, base.front().path, base.front().nodeId});
+      return true;
+    }
+    return false;
+  };
+
+  using StaticEdgeKey =
+      std::tuple<uint64_t, uint64_t, uint64_t, uint64_t>;
+  struct StaticEdgeMetadata {
+    uint64_t scopeId;
+    std::string provenance;
+    Location location;
+  };
+  std::map<StaticEdgeKey, StaticEdgeMetadata> staticEdges;
+  auto appendStaticConnections = [&](semantic::SVPortConnectionOp connection,
+                                     ArrayRef<NetRun> lhs,
+                                     ArrayRef<NetRun> rhs) {
+    size_t lhsIndex = 0, rhsIndex = 0;
+    uint64_t lhsConsumed = 0, rhsConsumed = 0;
+    while (lhsIndex != lhs.size() && rhsIndex != rhs.size()) {
+      const NetRun &left = lhs[lhsIndex];
+      const NetRun &right = rhs[rhsIndex];
+      uint64_t width =
+          std::min(left.width - lhsConsumed, right.width - rhsConsumed);
+      uint64_t leftOffset = left.offset + lhsConsumed;
+      uint64_t rightOffset = right.offset + rhsConsumed;
+      if ((left.descriptor.netKind == sim::NetResolutionKind::UWire) !=
+          (right.descriptor.netKind == sim::NetResolutionKind::UWire)) {
+        emitError(getSemanticLocation(connection))
+            << "connected component mixes uwire with resolved wire/tri nets";
+        invalid = true;
+        return;
+      }
+      for (uint64_t bit = 0; bit != width; ++bit) {
+        StaticEdgeKey edge{left.descriptor.id, leftOffset + bit,
+                           right.descriptor.id, rightOffset + bit};
+        StaticEdgeKey reverse{right.descriptor.id, rightOffset + bit,
+                              left.descriptor.id, leftOffset + bit};
+        if (reverse < edge)
+          edge = reverse;
+        if (std::get<0>(edge) == std::get<2>(edge) &&
+            std::get<1>(edge) == std::get<3>(edge))
+          continue;
+        StaticEdgeMetadata metadata{
+            getScopeId(connection),
+            semantic::stringifySVPortConnectionKind(
+                connection.getProvenance())
+                .str(),
+            getSemanticLocation(connection)};
+        auto [found, inserted] = staticEdges.try_emplace(edge, metadata);
+        if (!inserted &&
+            std::tie(metadata.scopeId, metadata.provenance) <
+                std::tie(found->second.scopeId, found->second.provenance))
+          found->second = std::move(metadata);
+      }
+      lhsConsumed += width;
+      rhsConsumed += width;
+      if (lhsConsumed == left.width) {
+        ++lhsIndex;
+        lhsConsumed = 0;
+      }
+      if (rhsConsumed == right.width) {
+        ++rhsIndex;
+        rhsConsumed = 0;
+      }
+    }
+    if (lhsIndex != lhs.size() || rhsIndex != rhs.size()) {
+      emitError(getSemanticLocation(connection))
+          << "static net connection has incompatible endpoint widths";
+      invalid = true;
+    }
+  };
+
+  // Classify every resolved connection exactly once. Pure net associations
+  // become topology; ref and interfaces are aliases; the remainder become
+  // hidden executable entries consumed by the ordinary per-unit lowering.
+  for (semantic::SVPortConnectionOp connection : portConnections) {
+    if (connection.getDirection() == semantic::SVArgumentDirection::Ref)
       continue;
-    StringRef targetPath;
-    unit->walk<WalkOrder::PreOrder>(
-        [&](semantic::SVNamedValueExpressionOp named) {
-          if (targetPath.empty())
-            targetPath = named.getReferencedPath();
-        });
-    auto target = descriptors.find(targetPath);
-    if (target == descriptors.end() ||
-        target->second.kind != DescriptorInfo::Kind::Net) {
-      emitError(getSemanticLocation(unit))
-          << "continuous assignment target is not a flattened net: "
-          << targetPath;
+    StringRef internalPath =
+        connection.getInternalPath().value_or(StringRef{});
+    auto internalDescriptor = descriptors.find(internalPath);
+    if (internalDescriptor == descriptors.end()) {
+      // Interface ports have no scalar state descriptor and their elaborated
+      // member references already name the connected interface instance.
+      if (connection.getInterfaceInstanceSymbol() ||
+          isa<semantic::UntypedType>(connection.getFormalType()))
+        continue;
+      emitError(getSemanticLocation(connection))
+          << "port internal endpoint has no flattened descriptor";
       invalid = true;
       continue;
     }
-    uint64_t id = nextDriverId++;
-    uint64_t scopeId = getScopeId(unit);
-    DescriptorInfo info{DescriptorInfo::Kind::Driver, id, scopeId,
-                        target->second.type};
-    continuousDrivers[unit] = info;
-    continuousTargets[unit] = targetPath.str();
-    sim::SimDriverDeclOp::create(
-        builder, getSemanticLocation(unit), id, scopeId, target->second.id,
-        target->second.type, sim::Lifetime::Design,
-        builder.getStringAttr(targetPath), builder.getStringAttr("continuous"));
+    Operation *actual = getPortActualLValue(connection);
+    if (!actual) {
+      // Open inputs retain their declaration default; open outputs and inouts
+      // intentionally perform no work.
+      continue;
+    }
+
+    SmallVector<NetRun> lhs, rhs;
+    Operation *internalExpression =
+        getSingleRegionRoot(connection.getInternal());
+    bool internalNet = false;
+    if (internalExpression) {
+      internalNet = flattenNetExpr(internalExpression, lhs);
+    } else if (internalDescriptor->second.kind == DescriptorInfo::Kind::Net) {
+      if (std::optional<unsigned> width =
+              sim::getPackedWidth(internalDescriptor->second.type)) {
+        lhs.push_back({internalDescriptor->second, 0, *width,
+                       internalPath.str(), std::nullopt});
+        internalNet = true;
+      }
+    }
+    bool actualNet = flattenNetExpr(actual, rhs);
+    if (internalNet && actualNet) {
+      appendStaticConnections(connection, lhs, rhs);
+      continue;
+    }
+    if (connection.getDirection() == semantic::SVArgumentDirection::InOut) {
+      emitError(getSemanticLocation(connection))
+          << "inout port requires a representation-compatible static net "
+             "connection";
+      invalid = true;
+      continue;
+    }
+    sourceUnits.push_back(connection);
+  }
+  if (invalid)
+    return abort();
+
+  // Canonical scalar equivalences above make overlap partitioning and
+  // duplicate elimination exact. Reassemble adjacent mappings into the
+  // deterministic interval representation consumed by both backends.
+  uint64_t nextConnectionId = 0;
+  for (auto edge = staticEdges.begin(); edge != staticEdges.end();) {
+    auto [lhsNet, lhsOffset, rhsNet, rhsOffset] = edge->first;
+    const StaticEdgeMetadata metadata = edge->second;
+    uint64_t width = 1;
+    int direction = 0;
+    auto next = std::next(edge);
+    while (next != staticEdges.end()) {
+      auto [nextLhsNet, nextLhsOffset, nextRhsNet, nextRhsOffset] =
+          next->first;
+      if (next->second.scopeId != metadata.scopeId ||
+          next->second.provenance != metadata.provenance ||
+          nextLhsNet != lhsNet || nextRhsNet != rhsNet ||
+          nextLhsOffset != lhsOffset + width)
+        break;
+      int candidateDirection = 0;
+      if (nextRhsOffset == rhsOffset + width)
+        candidateDirection = 1;
+      else if (rhsOffset >= width && nextRhsOffset == rhsOffset - width)
+        candidateDirection = -1;
+      if (candidateDirection == 0 ||
+          (direction != 0 && candidateDirection != direction))
+        break;
+      direction = candidateDirection;
+      ++width;
+      ++next;
+    }
+    sim::SimNetConnectDeclOp::create(
+        builder, metadata.location, nextConnectionId++, metadata.scopeId,
+        lhsNet, lhsOffset, rhsNet, rhsOffset, width, direction < 0,
+        builder.getStringAttr(metadata.provenance));
+    edge = next;
+  }
+
+  // Each syntactic net sink owns an immutable driver descriptor. Keeping
+  // repeated appearances distinct is observable for concatenation lvalues
+  // that short a bit to more than one RHS bit, while exact driven ranges let
+  // unresolved nets enforce their one-driver-per-component rule.
+  struct DriverInfo {
+    std::string path;
+    DescriptorInfo descriptor;
+    std::optional<uint64_t> nodeId;
+    uint64_t drivenLow;
+    uint64_t drivenWidth;
+  };
+  uint64_t nextDriverId = 0;
+  llvm::DenseMap<Operation *, SmallVector<DriverInfo>> continuousDrivers;
+  std::function<void(Operation *, SmallVectorImpl<NetRun> &)>
+      collectDriverRuns;
+  collectDriverRuns = [&](Operation *expression,
+                          SmallVectorImpl<NetRun> &runs) {
+    if (!expression)
+      return;
+    if (isa<semantic::SVConcatenationExpressionOp>(expression)) {
+      for (Operation *child : getChildren(expression))
+        collectDriverRuns(child, runs);
+      return;
+    }
+    SmallVector<NetRun> exact;
+    if (flattenNetExpr(expression, exact)) {
+      llvm::append_range(runs, exact);
+      return;
+    }
+    // A dynamic selection can retarget any bit of its base. Preserve a full
+    // conservative range so uwire validation never misses a possible clash.
+    for (Operation *child : getChildren(expression)) {
+      size_t before = runs.size();
+      collectDriverRuns(child, runs);
+      if (runs.size() != before)
+        return;
+    }
+  };
+  for (Operation *unit : sourceUnits) {
+    bool continuous = isa<semantic::SVContinuousAssignSymbolOp>(unit);
+    auto connection = dyn_cast<semantic::SVPortConnectionOp>(unit);
+    if (!continuous && !connection)
+      continue;
+    SmallVector<NetRun> sinks;
+    if (connection &&
+        connection.getDirection() == semantic::SVArgumentDirection::In) {
+      Operation *internal = getSingleRegionRoot(connection.getInternal());
+      if (internal) {
+        collectDriverRuns(internal, sinks);
+      } else {
+        StringRef path = connection.getInternalPath().value_or(StringRef{});
+        auto target = descriptors.find(path);
+        if (target == descriptors.end()) {
+          emitError(getSemanticLocation(unit))
+              << "connection target is not a flattened design object: "
+              << path;
+          invalid = true;
+          continue;
+        }
+        if (target->second.kind == DescriptorInfo::Kind::Net) {
+          std::optional<unsigned> width =
+              sim::getPackedWidth(target->second.type);
+          if (!width) {
+            emitError(getSemanticLocation(unit))
+                << "net connection target has no fixed packed width";
+            invalid = true;
+            continue;
+          }
+          sinks.push_back(
+              {target->second, 0, *width, path.str(), std::nullopt});
+        }
+      }
+    } else {
+      Operation *assignmentRoot = nullptr;
+      if (connection) {
+        assignmentRoot = getSingleRegionRoot(connection.getActual());
+      } else {
+        SmallVector<Operation *> roots = getChildren(unit);
+        if (!roots.empty())
+          assignmentRoot = roots.front();
+      }
+      auto assignment =
+          dyn_cast_or_null<semantic::SVAssignmentExpressionOp>(assignmentRoot);
+      SmallVector<Operation *> children =
+          assignment ? getChildren(assignment) : SmallVector<Operation *>{};
+      if (!assignment || children.size() != 2) {
+        emitError(getSemanticLocation(unit))
+            << "connection source has no resolved assignment lvalue";
+        invalid = true;
+        continue;
+      }
+      collectDriverRuns(children.front(), sinks);
+    }
+
+    for (const NetRun &sink : sinks) {
+      uint64_t id = nextDriverId++;
+      uint64_t scopeId = getScopeId(unit);
+      DescriptorInfo info{DescriptorInfo::Kind::Driver, id, scopeId,
+                          sink.descriptor.type, sink.descriptor.netKind};
+      info.rootType = sink.descriptor.type;
+      continuousDrivers[unit].push_back(
+          {sink.path, info, sink.nodeId, sink.offset, sink.width});
+      sim::SimDriverDeclOp::create(
+          builder, getSemanticLocation(unit), id, scopeId, sink.descriptor.id,
+          sink.descriptor.type, sim::Lifetime::Design,
+          builder.getStringAttr(sink.path),
+          builder.getStringAttr(connection ? "port connection" : "continuous"),
+          builder.getI64IntegerAttr(sink.offset),
+          builder.getI64IntegerAttr(sink.width));
+    }
   }
   if (invalid)
     return abort();
@@ -547,7 +1312,9 @@ void ObeliskSimPreparePass::runOnOperation() {
       }
     }
     std::string symbol = llvm::formatv("unit_{0}", index).str();
-    StringRef hierarchy = getHierarchyName(source);
+    StringRef hierarchy = isa<semantic::SVPortConnectionOp>(source)
+                              ? getHierarchyName(source->getParentOp())
+                              : getHierarchyName(source);
     if (hierarchy.empty()) {
       emitError(getSemanticLocation(source))
           << "code unit has no elaborated hierarchical name";
@@ -568,7 +1335,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     }
     units.push_back(
         {source, id, *entryKind, symbol, std::move(codeUnitHierarchy), {}});
-    if (!hierarchy.empty()) {
+    if (!hierarchy.empty() && !isa<semantic::SVPortConnectionOp>(source)) {
       directCallees[hierarchy] = symbol;
       directCalleeSources[hierarchy] = source;
     }
@@ -586,13 +1353,15 @@ void ObeliskSimPreparePass::runOnOperation() {
   sim::SimCodeUnitDeclOp::create(
       builder, module.getLoc(), rootCodeUnitID, uint64_t{0},
       sim::EntryKind::RootInitializer, builder.getStringAttr("__obelisk_root"),
-      builder.getStringAttr("root initializer"));
+      builder.getStringAttr("root initializer"), UnitAttr{});
   for (UnitInfo &unit : units)
     sim::SimCodeUnitDeclOp::create(
         builder, getSemanticLocation(unit.source), unit.id,
         getScopeId(unit.source), unit.entryKind,
         builder.getStringAttr(unit.hierarchy),
-        builder.getStringAttr(getDebugName(unit.source)));
+        builder.getStringAttr(getDebugName(unit.source)),
+        isa<semantic::SVPortConnectionOp>(unit.source) ? builder.getUnitAttr()
+                                                       : UnitAttr{});
 
   llvm::DenseMap<Operation *,
                  SmallVector<std::pair<std::string, DescriptorInfo>>>
@@ -608,6 +1377,11 @@ void ObeliskSimPreparePass::runOnOperation() {
       if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(nested)) {
         path = named.getReferencedPath();
         reference = named.getReferencedSymbol();
+      } else if (auto hierarchical =
+                     dyn_cast<semantic::SVHierarchicalValueExpressionOp>(
+                         nested)) {
+        path = hierarchical.getReferencedPath();
+        reference = hierarchical.getReferencedSymbol();
       } else if (auto declaration =
                      dyn_cast<semantic::SVVariableDeclStatementOp>(nested)) {
         path = declaration.getReferencedPath();
@@ -642,6 +1416,16 @@ void ObeliskSimPreparePass::runOnOperation() {
     };
     unit.source->walk<WalkOrder::PreOrder>(
         [&](Operation *nested) { collectBinding(nested); });
+    if (auto connection =
+            dyn_cast<semantic::SVPortConnectionOp>(unit.source)) {
+      StringRef internal = connection.getInternalPath().value_or(StringRef{});
+      if (!internal.empty())
+        if (auto descriptor = descriptors.find(internal);
+            descriptor != descriptors.end() &&
+            seenPaths.insert(internal).second)
+          unitCaptures[unit.source].push_back(
+              {internal.str(), descriptor->second});
+    }
   }
   if (invalid)
     return abort();
@@ -711,13 +1495,12 @@ void ObeliskSimPreparePass::runOnOperation() {
     SmallVector<Type> copyOutResultTypes;
 
     // A continuous assignment may read its own target. Keep the ordinary net
-    // binding for reads and add a role-specific driver binding for writes.
-    if (unit.entryKind == sim::EntryKind::Continuous &&
-        continuousDrivers.count(unit.source)) {
-      DescriptorInfo driver = continuousDrivers.lookup(unit.source);
-      StringRef target = continuousTargets.find(unit.source)->second;
-      captures.push_back({target.str(), driver});
-    }
+    // bindings for reads and add role-specific driver bindings for each
+    // syntactic net sink.
+    if (auto found = continuousDrivers.find(unit.source);
+        found != continuousDrivers.end())
+      for (const DriverInfo &driver : found->second)
+        captures.push_back({driver.path, driver.descriptor});
 
     SmallVector<Type> inputs{sim::ContextType::get(context)};
     SmallVector<DictionaryAttr> argAttrs{
@@ -741,18 +1524,57 @@ void ObeliskSimPreparePass::runOnOperation() {
         break;
       }
       inputs.push_back(handleType);
-      argAttrs.push_back(
-          captureMetadata(builder, captureKind, capture.second.id));
+      DictionaryAttr metadata =
+          captureMetadata(builder, captureKind, capture.second.id);
+      SmallVector<NamedAttribute> metadataAttrs(metadata.begin(),
+                                                metadata.end());
+      if (capture.second.rootType &&
+          (capture.second.viewOffset != 0 ||
+           capture.second.rootType != capture.second.type)) {
+        metadataAttrs.push_back(builder.getNamedAttr(
+            "obelisk_sim.descriptor_root_type",
+            TypeAttr::get(capture.second.rootType)));
+        metadataAttrs.push_back(builder.getNamedAttr(
+            "obelisk_sim.descriptor_low",
+            builder.getI64IntegerAttr(capture.second.viewOffset)));
+        if (!capture.second.viewIndices.empty())
+          metadataAttrs.push_back(builder.getNamedAttr(
+              "obelisk_sim.descriptor_indices",
+              builder.getDenseI64ArrayAttr(capture.second.viewIndices)));
+        if (capture.second.aggregateViewType)
+          metadataAttrs.push_back(builder.getNamedAttr(
+              "obelisk_sim.descriptor_aggregate_type",
+              TypeAttr::get(capture.second.aggregateViewType)));
+        if (capture.second.packedViewOffset != 0 ||
+            capture.second.aggregateViewType != capture.second.type)
+          metadataAttrs.push_back(builder.getNamedAttr(
+              "obelisk_sim.descriptor_packed_low",
+              builder.getI64IntegerAttr(capture.second.packedViewOffset)));
+      }
+      argAttrs.push_back(builder.getDictionaryAttr(metadataAttrs));
       SmallVector<NamedAttribute> binding{
           builder.getNamedAttr("path", builder.getStringAttr(capture.first)),
           builder.getNamedAttr("argument",
                                builder.getI64IntegerAttr(captureIndex + 1)),
       };
-      if (unit.entryKind == sim::EntryKind::Continuous &&
-          capture.second.kind == DescriptorInfo::Kind::Driver &&
-          capture.first == continuousTargets.lookup(unit.source))
+      const DriverInfo *plannedDriver = nullptr;
+      if (capture.second.kind == DescriptorInfo::Kind::Driver)
+        if (auto found = continuousDrivers.find(unit.source);
+            found != continuousDrivers.end())
+          if (auto planned = llvm::find_if(
+                  found->second, [&](const DriverInfo &driver) {
+                    return driver.descriptor.id == capture.second.id;
+                  });
+              planned != found->second.end())
+            plannedDriver = &*planned;
+      if (plannedDriver) {
         binding.push_back(
             builder.getNamedAttr("lvalue_only", builder.getUnitAttr()));
+        if (plannedDriver->nodeId)
+          binding.push_back(builder.getNamedAttr(
+              "lvalue_node_id",
+              builder.getI64IntegerAttr(*plannedDriver->nodeId)));
+      }
       bindings.push_back(builder.getDictionaryAttr(binding));
     }
     for (auto &[path, type] : locals)
@@ -897,7 +1719,12 @@ void ObeliskSimPreparePass::runOnOperation() {
         bindingAttr, delayScaleAttr,
         builder.getNamedAttr("code_unit_id",
                              builder.getI64IntegerAttr(unit.id))};
-    StringRef hierarchy = getHierarchyName(unit.source);
+    if (isa<semantic::SVPortConnectionOp>(unit.source))
+      functionAttrs.push_back(
+          builder.getNamedAttr("internal", builder.getUnitAttr()));
+    StringRef hierarchy = isa<semantic::SVPortConnectionOp>(unit.source)
+                              ? getHierarchyName(unit.source->getParentOp())
+                              : getHierarchyName(unit.source);
     if (!hierarchy.empty())
       functionAttrs.push_back(builder.getNamedAttr(
           "obelisk_sim.hierarchical_name", builder.getStringAttr(hierarchy)));
@@ -909,11 +1736,15 @@ void ObeliskSimPreparePass::runOnOperation() {
 
     OpBuilder bodyBuilder =
         OpBuilder::atBlockEnd(&unit.function.getBody().front());
-    for (Operation *child : getChildren(unit.source)) {
-      if (isa<semantic::SVFormalArgumentSymbolOp, semantic::SVVariableSymbolOp>(
-              child))
-        continue;
-      bodyBuilder.clone(*child);
+    if (isa<semantic::SVPortConnectionOp>(unit.source)) {
+      bodyBuilder.clone(*unit.source);
+    } else {
+      for (Operation *child : getChildren(unit.source)) {
+        if (isa<semantic::SVFormalArgumentSymbolOp,
+                semantic::SVVariableSymbolOp>(child))
+          continue;
+        bodyBuilder.clone(*child);
+      }
     }
     unit.function.walk([&](Operation *nested) {
       if (auto call = dyn_cast<semantic::SVCallExpressionOp>(nested)) {
@@ -1012,12 +1843,59 @@ void ObeliskSimPreparePass::runOnOperation() {
       Type type = unit.function.getArgumentTypes()[index];
       Location loc = unit.function.getLoc();
       switch (kind.getValue()) {
-      case sim::CaptureKind::Storage:
-        operands.push_back(
-            sim::SimContextStorageOp::create(rootBuilder, loc, type, simContext,
-                                             rootBuilder.getI64IntegerAttr(id))
-                .getResult());
+      case sim::CaptureKind::Storage: {
+        auto rootTypeAttr =
+            attrs.getAs<TypeAttr>("obelisk_sim.descriptor_root_type");
+        Type contextType =
+            rootTypeAttr
+                ? Type(sim::RefType::get(context, rootTypeAttr.getValue()))
+                : type;
+        Value storage = sim::SimContextStorageOp::create(
+                            rootBuilder, loc, contextType, simContext,
+                            rootBuilder.getI64IntegerAttr(id))
+                            .getResult();
+        if (rootTypeAttr) {
+          auto low = attrs.getAs<IntegerAttr>("obelisk_sim.descriptor_low");
+          if (!low) {
+            unit.function.emitError()
+                << "view capture is missing its descriptor offset";
+            invalid = true;
+            break;
+          }
+          if (auto indices =
+                  attrs.getAs<DenseI64ArrayAttr>(
+                      "obelisk_sim.descriptor_indices")) {
+            auto aggregateType = attrs.getAs<TypeAttr>(
+                "obelisk_sim.descriptor_aggregate_type");
+            if (!aggregateType) {
+              unit.function.emitError()
+                  << "aggregate view capture is missing its result type";
+              invalid = true;
+              break;
+            }
+            Type resultType =
+                sim::RefType::get(context, aggregateType.getValue());
+            storage = sim::SimRefSubelementOp::create(
+                          rootBuilder, loc, resultType, storage, indices)
+                          .getResult();
+          }
+          if (storage.getType() != type) {
+            auto packedLow = attrs.getAs<IntegerAttr>(
+                "obelisk_sim.descriptor_packed_low");
+            if (!packedLow) {
+              unit.function.emitError()
+                  << "packed view capture is missing its bit offset";
+              invalid = true;
+              break;
+            }
+            storage = sim::SimRefExtractOp::create(
+                          rootBuilder, loc, type, storage, packedLow)
+                          .getResult();
+          }
+        }
+        operands.push_back(storage);
         break;
+      }
       case sim::CaptureKind::Net:
         operands.push_back(
             sim::SimContextNetOp::create(rootBuilder, loc, type, simContext,

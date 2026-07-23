@@ -15,6 +15,7 @@
 #include "llvm/Support/ErrorHandling.h"
 
 #include "slang/ast/ASTVisitor.h"
+#include "slang/ast/EvalContext.h"
 #include "slang/ast/expressions/Operator.h"
 #include "slang/ast/symbols/VariableSymbols.h"
 #include "slang/driver/Driver.h"
@@ -1126,6 +1127,65 @@ private:
       SET_OP_ATTR(IsUninstantiated,
                   builder.getBoolAttr(node.body.flags.has(
                       slang::ast::InstanceFlags::Uninstantiated)));
+    } else if constexpr (std::same_as<T,
+                                      slang::ast::ContinuousAssignSymbol>) {
+      auto [strength0, strength1] = node.getDriveStrength();
+      if (strength0 || strength1) {
+        std::string spelling;
+        if (strength0)
+          spelling += slang::ast::toString(*strength0);
+        spelling += ',';
+        if (strength1)
+          spelling += slang::ast::toString(*strength1);
+        SET_OP_ATTR(UnsupportedStrength, builder.getStringAttr(spelling));
+      }
+      if (const slang::ast::TimingControl *delay = node.getDelay()) {
+        slang::SourceRange range = getSourceRange(*delay);
+        if (range.start().valid() && range.end().valid() &&
+            range.start().buffer() == range.end().buffer()) {
+          std::string_view buffer =
+              sourceManager.getSourceText(range.start().buffer());
+          size_t begin = range.start().offset();
+          size_t end = range.end().offset();
+          if (begin <= end && end < buffer.size())
+            SET_OP_ATTR(UnsupportedDelay,
+                        builder.getStringAttr(
+                            buffer.substr(begin, end - begin + 1)));
+        }
+      }
+    } else if constexpr (std::same_as<T, slang::ast::NetSymbol>) {
+      SET_OP_ATTR(NetKind,
+                  slangir::NetKindAttr::get(builder.getContext(),
+                                            convertEnum(node.netType.netKind)));
+      SET_OP_ATTR(IsImplicit, builder.getBoolAttr(node.isImplicit));
+      auto [strength0, strength1] = node.getDriveStrength();
+      if (std::optional<slang::ast::ChargeStrength> charge =
+              node.getChargeStrength()) {
+        SET_OP_ATTR(UnsupportedStrength,
+                    builder.getStringAttr(slang::ast::toString(*charge)));
+      } else if (strength0 || strength1) {
+        std::string spelling;
+        if (strength0)
+          spelling += slang::ast::toString(*strength0);
+        spelling += ',';
+        if (strength1)
+          spelling += slang::ast::toString(*strength1);
+        SET_OP_ATTR(UnsupportedStrength, builder.getStringAttr(spelling));
+      }
+      if (const slang::ast::TimingControl *delay = node.getDelay()) {
+        slang::SourceRange range = getSourceRange(*delay);
+        if (range.start().valid() && range.end().valid() &&
+            range.start().buffer() == range.end().buffer()) {
+          std::string_view buffer =
+              sourceManager.getSourceText(range.start().buffer());
+          size_t begin = range.start().offset();
+          size_t end = range.end().offset();
+          if (begin <= end && end < buffer.size())
+            SET_OP_ATTR(UnsupportedDelay,
+                        builder.getStringAttr(buffer.substr(
+                            begin, end - begin + 1)));
+        }
+      }
     }
 
     if constexpr (std::same_as<T, slang::ast::UnaryExpression>) {
@@ -1666,6 +1726,9 @@ private:
       this->visitDefault(node);
       if (const auto *baseConstructorCall = node.getBaseConstructorCall())
         baseConstructorCall->visit(*this);
+    } else if constexpr (std::same_as<T, slang::ast::InstanceSymbol>) {
+      importPortConnections(node);
+      node.body.visit(*this);
     } else if constexpr (std::same_as<T, slang::ast::ClockVarSymbol>) {
       this->visitDefault(node);
       if (node.inputSkew.delay)
@@ -1703,6 +1766,197 @@ private:
     }
     if constexpr (std::derived_from<Node, slang::ast::Symbol>)
       currentSymbolPath.pop_back();
+  }
+
+  slangir::PortConnectionKind getConnectionProvenance(
+      const slang::ast::InstanceSymbol &instance,
+      const slang::ast::PortConnection &connection,
+      const slang::ast::Symbol &externalPort, size_t resolvedOrdinal) {
+    using Kind = slangir::PortConnectionKind;
+    if (connection.isWildcard)
+      return Kind::Wildcard;
+    if (connection.isImplicit)
+      return Kind::Implicit;
+
+    const slang::syntax::SyntaxNode *syntax = instance.getSyntax();
+    if (!syntax || syntax->kind != slang::syntax::SyntaxKind::HierarchicalInstance)
+      return connection.getExpression() ? Kind::Ordered : Kind::Omitted;
+    const auto &connections =
+        syntax->as<slang::syntax::HierarchicalInstanceSyntax>().connections;
+    bool named = false;
+    for (const slang::syntax::PortConnectionSyntax *candidate : connections) {
+      if (candidate->kind == slang::syntax::SyntaxKind::NamedPortConnection ||
+          candidate->kind == slang::syntax::SyntaxKind::WildcardPortConnection) {
+        named = true;
+        break;
+      }
+    }
+
+    bool hasDefault = false;
+    if (externalPort.kind == slang::ast::SymbolKind::Port) {
+      const auto &port = externalPort.as<slang::ast::PortSymbol>();
+      hasDefault = port.direction == slang::ast::ArgumentDirection::In &&
+                   port.hasInitializer() &&
+                   connection.getExpression() == port.getInitializer();
+    }
+    if (!named) {
+      if (resolvedOrdinal >= connections.size())
+        return hasDefault ? Kind::Default : Kind::Omitted;
+      return connections[resolvedOrdinal]->kind ==
+                     slang::syntax::SyntaxKind::EmptyPortConnection
+                 ? Kind::ExplicitOpen
+                 : Kind::Ordered;
+    }
+
+    for (const slang::syntax::PortConnectionSyntax *candidate : connections) {
+      if (candidate->kind != slang::syntax::SyntaxKind::NamedPortConnection)
+        continue;
+      const auto &namedConnection =
+          candidate->as<slang::syntax::NamedPortConnectionSyntax>();
+      if (namedConnection.name.valueText() != externalPort.name)
+        continue;
+      if (!namedConnection.openParen)
+        return Kind::Implicit;
+      return namedConnection.expr ? Kind::Named : Kind::ExplicitOpen;
+    }
+    for (const slang::syntax::PortConnectionSyntax *candidate : connections)
+      if (candidate->kind ==
+              slang::syntax::SyntaxKind::WildcardPortConnection &&
+          connection.getExpression())
+        return Kind::Wildcard;
+    return hasDefault ? Kind::Default : Kind::Omitted;
+  }
+
+  void importPortConnections(const slang::ast::InstanceSymbol &instance) {
+    std::span<const slang::ast::PortConnection *const> connections =
+        instance.getPortConnections();
+    std::span<const slang::ast::Symbol *const> externalPorts =
+        instance.body.getPortList();
+
+    llvm::DenseMap<const slang::ast::PortSymbol *, const slang::ast::Symbol *>
+        leafToExternal;
+    llvm::DenseMap<const slang::ast::Symbol *, size_t> externalOrdinals;
+    for (auto [externalOrdinal, port] : llvm::enumerate(externalPorts)) {
+      externalOrdinals[port] = externalOrdinal;
+      if (port->kind == slang::ast::SymbolKind::Port)
+        leafToExternal[&port->as<slang::ast::PortSymbol>()] = port;
+      else if (port->kind == slang::ast::SymbolKind::MultiPort)
+        for (const slang::ast::PortSymbol *leaf :
+             port->as<slang::ast::MultiPortSymbol>().ports)
+          leafToExternal[leaf] = port;
+    }
+
+    for (auto [ordinal, connection] : llvm::enumerate(connections)) {
+      const slang::ast::Symbol &formal = connection->port;
+      const slang::ast::Symbol *external = &formal;
+      if (formal.kind == slang::ast::SymbolKind::Port)
+        if (auto found = leafToExternal.find(
+                &formal.as<slang::ast::PortSymbol>());
+            found != leafToExternal.end())
+          external = found->second;
+
+      slang::ast::ArgumentDirection direction =
+          slang::ast::ArgumentDirection::InOut;
+      Type formalType = slangir::UntypedType::get(builder.getContext());
+      bool isNet = false;
+      bool isAnsi = false;
+      const slang::ast::Expression *internal = nullptr;
+      if (formal.kind == slang::ast::SymbolKind::Port) {
+        const auto &port = formal.as<slang::ast::PortSymbol>();
+        direction = port.direction;
+        formalType = typeConverter.convert(port.getType());
+        isNet = port.isNetPort();
+        isAnsi = port.isAnsiPort;
+        internal = port.getInternalExpr();
+      }
+
+      NamedAttrList attrs;
+      attrs.set("node_id", builder.getI64IntegerAttr(nextNodeId++));
+      attrs.set("formal_path", builder.getStringAttr(getSymbolPath(formal)));
+      attrs.set("formal_ordinal", builder.getI64IntegerAttr(ordinal));
+      if (!formal.name.empty())
+        attrs.set("formal_name", builder.getStringAttr(formal.name));
+      attrs.set("direction",
+                slangir::ArgumentDirectionAttr::get(builder.getContext(),
+                                                     convertEnum(direction)));
+      attrs.set("formal_type", TypeAttr::get(formalType));
+      attrs.set("is_net", builder.getBoolAttr(isNet));
+      attrs.set("is_ansi", builder.getBoolAttr(isAnsi));
+      bool actualIsConstant = false;
+      if (const slang::ast::Expression *actual = connection->getExpression()) {
+        // Ask Slang's evaluator instead of inferring constness from the
+        // imported expression shape. In particular, a call can read design
+        // state through its callee even when the actual has no named-value
+        // node of its own.
+        slang::ast::EvalContext evalContext(instance);
+        actualIsConstant = static_cast<bool>(actual->eval(evalContext));
+      }
+      attrs.set("actual_is_constant",
+                builder.getBoolAttr(actualIsConstant));
+      attrs.set("provenance",
+                slangir::PortConnectionKindAttr::get(
+                    builder.getContext(), getConnectionProvenance(
+                                              instance, *connection, *external,
+                                              externalOrdinals.lookup(
+                                                  external))));
+
+      currentPendingReferences.clear();
+      setSymbolReference(attrs, formal, builder.getStringAttr("formal_symbol"),
+                         builder.getStringAttr("formal_path"));
+      if (formal.kind == slang::ast::SymbolKind::Port) {
+        const auto &port = formal.as<slang::ast::PortSymbol>();
+        if (port.internalSymbol)
+          setSymbolReference(attrs, *port.internalSymbol,
+                             builder.getStringAttr("internal_symbol"),
+                             builder.getStringAttr("internal_path"));
+      }
+      auto [interfaceInstance, modport] = connection->getIfaceConn();
+      // For an interface array Slang's convenience connection points at a
+      // synthetic element-shaped symbol. The resolved arbitrary-symbol
+      // expression retains the actual array instance and its full hierarchy.
+      if (const slang::ast::Expression *actual = connection->getExpression())
+        if (const auto *arbitrary =
+                actual->as_if<slang::ast::ArbitrarySymbolExpression>())
+          interfaceInstance = arbitrary->symbol;
+      if (interfaceInstance) {
+        setSymbolReference(attrs, *interfaceInstance,
+                           builder.getStringAttr("interface_instance_symbol"),
+                           builder.getStringAttr("interface_instance_path"));
+      }
+      if (modport)
+        attrs.set("selected_modport", builder.getStringAttr(modport->name));
+      if (formal.kind == slang::ast::SymbolKind::InterfacePort) {
+        const auto &port = formal.as<slang::ast::InterfacePortSymbol>();
+        if (auto shape = port.getDeclaredRange()) {
+          SmallVector<int64_t> bounds;
+          for (const slang::ConstantRange &range : *shape) {
+            bounds.push_back(range.left);
+            bounds.push_back(range.right);
+          }
+          attrs.set("interface_shape", builder.getDenseI64ArrayAttr(bounds));
+        }
+      }
+
+      Location location = sourceLocation(instance.location);
+      auto record = slangir::PortConnectionOp::create(
+          builder, location, TypeRange{}, ValueRange{}, attrs.getAttrs());
+      record.getInternal().emplaceBlock();
+      record.getActual().emplaceBlock();
+      for (const PendingReferenceSeed &pending : currentPendingReferences)
+        pendingReferences.push_back(
+            {record, pending.target, pending.attributeName});
+
+      if (internal) {
+        OpBuilder::InsertionGuard guard(builder);
+        builder.setInsertionPointToStart(&record.getInternal().front());
+        internal->visit(*this);
+      }
+      if (const slang::ast::Expression *actual = connection->getExpression()) {
+        OpBuilder::InsertionGuard guard(builder);
+        builder.setInsertionPointToStart(&record.getActual().front());
+        actual->visit(*this);
+      }
+    }
   }
 
   struct PendingReference {

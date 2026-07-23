@@ -6,6 +6,7 @@ add_mlir_library(ObeliskSimulationToLLVMCoroutine
   ObeliskSimulationOpsIncGen
 
   LINK_LIBS PUBLIC
+  ObeliskSimulationAnalysis
   ObeliskRuntimeIR
   ObeliskRuntimeToLLVM
   ObeliskSimulationIR

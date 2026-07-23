@@ -206,6 +206,9 @@ obelisk_rt_status
 obelisk_rt_initialize_design_state(obelisk_rt_context *context) noexcept;
 obelisk_rt_status obelisk_rt_resolve_design_drivers(
     obelisk_rt_context *context, uint64_t begin, uint64_t end) noexcept;
+obelisk_rt_status obelisk_rt_design_net_is_connected(
+    obelisk_rt_context *context, uint64_t begin, uint64_t end,
+    bool *outConnected) noexcept;
 obelisk_rt_status obelisk_rt_run_one_design_task(
     obelisk_rt_context *context, bool *outProgress) noexcept;
 

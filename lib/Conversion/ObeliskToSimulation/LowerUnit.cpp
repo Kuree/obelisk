@@ -47,10 +47,17 @@ static bool isIntegerLiteral(Operation *op) {
   return isa<semantic::SVIntegerLiteralOp>(op);
 }
 
+static Operation *getSingleRegionRoot(Region &region) {
+  if (region.empty() || region.front().empty())
+    return nullptr;
+  return &region.front().front();
+}
+
 /// True when an expression denotes storage rather than a computed value, so a
 /// suspension can watch it directly.
 static bool isAddressableExpression(Operation *op) {
-  if (isa<semantic::SVNamedValueExpressionOp>(op))
+  if (isa<semantic::SVNamedValueExpressionOp,
+          semantic::SVHierarchicalValueExpressionOp>(op))
     return true;
   if (!isa<semantic::SVMemberAccessExpressionOp,
            semantic::SVElementSelectExpressionOp,
@@ -70,6 +77,8 @@ private:
   FailureOr<Value> lowerExpression(Operation *op, bool lvalue = false);
   FailureOr<Value> lowerNamedValue(semantic::SVNamedValueExpressionOp op,
                                    bool lvalue);
+  FailureOr<Value> lowerReferencedValue(Operation *op, StringRef path,
+                                        bool lvalue);
   FailureOr<Value> lowerLiteral(Operation *op);
   FailureOr<Value> lowerConcatenation(Operation *op);
   FailureOr<Value> lowerReplication(Operation *op);
@@ -79,10 +88,14 @@ private:
   FailureOr<Value> lowerAssignmentPattern(Operation *op);
   FailureOr<Value> lowerSelection(Operation *op, bool lvalue);
   FailureOr<Value> lowerAssignment(semantic::SVAssignmentExpressionOp op);
+  LogicalResult writeLValue(Operation *destination, Value value,
+                            bool sourceSigned, bool nonblocking,
+                            Location location);
   FailureOr<Value> lowerUnary(semantic::SVUnaryExpressionOp op);
   FailureOr<Value> lowerBinary(semantic::SVBinaryExpressionOp op);
   FailureOr<Value> lowerCall(semantic::SVCallExpressionOp op);
   FailureOr<Value> lowerSystemCall(semantic::SVCallExpressionOp op);
+  LogicalResult lowerPortConnection(semantic::SVPortConnectionOp op);
 
   LogicalResult lowerStatement(Operation *op);
   LogicalResult lowerSequence(ArrayRef<Operation *> operations);
@@ -119,8 +132,10 @@ private:
   Block *current;
   llvm::StringMap<Value> values;
   llvm::StringMap<Value> lvalues;
+  llvm::DenseMap<uint64_t, Value> nodeLvalues;
   llvm::StringMap<Value> localDefaults;
   llvm::SetVector<Value> sensitivity;
+  Value expressionPlaceholder;
   std::string returnPath;
   SmallVector<std::string> copyOutPaths;
   SmallVector<std::pair<Block *, Block *>> loopTargets;
@@ -151,6 +166,8 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
       }
       if (dictionary.contains("lvalue_only")) {
         lvalues[path] = value;
+        if (auto node = dictionary.getAs<IntegerAttr>("lvalue_node_id"))
+          nodeLvalues[node.getValue().getZExtValue()] = value;
         continue;
       }
       values[path] = value;
@@ -410,9 +427,19 @@ LogicalResult UnitLowering::emitFunctionReturn(
 FailureOr<Value>
 UnitLowering::lowerNamedValue(semantic::SVNamedValueExpressionOp op,
                               bool lvalue) {
+  return lowerReferencedValue(op, op.getReferencedPath(), lvalue);
+}
+
+FailureOr<Value> UnitLowering::lowerReferencedValue(Operation *op,
+                                                    StringRef path,
+                                                    bool lvalue) {
   Location location = getSemanticLocation(op);
-  StringRef path = op.getReferencedPath();
-  Value value = lvalue ? lvalues.lookup(path) : values.lookup(path);
+  Value value;
+  if (lvalue)
+    if (auto node = op->getAttrOfType<IntegerAttr>("node_id"))
+      value = nodeLvalues.lookup(node.getValue().getZExtValue());
+  if (!value)
+    value = lvalue ? lvalues.lookup(path) : values.lookup(path);
   if (!value) {
     emitError(location) << "named value has no frozen unit-local binding: "
                         << path;
@@ -1097,6 +1124,98 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
   return convert(value, *resultType, false, location);
 }
 
+LogicalResult UnitLowering::writeLValue(Operation *destination, Value value,
+                                        bool sourceSigned, bool nonblocking,
+                                        Location location) {
+  if (isa<semantic::SVConcatenationExpressionOp>(destination)) {
+    SmallVector<Operation *> children = getChildren(destination);
+    FailureOr<Type> destinationType = getNormalizedSemanticType(destination);
+    if (children.empty() || failed(destinationType))
+      return failure();
+    FailureOr<Value> converted =
+        convert(value, *destinationType, sourceSigned, location);
+    if (failed(converted))
+      return failure();
+    FailureOr<Value> scalar = toPackedScalar(*converted, location);
+    if (failed(scalar))
+      return failure();
+    std::optional<unsigned> totalWidth = sim::getPackedWidth((*scalar).getType());
+    if (!totalWidth)
+      return failure();
+    uint64_t trailing = *totalWidth;
+    for (Operation *child : children) {
+      FailureOr<Type> childType = getNormalizedSemanticType(child);
+      std::optional<unsigned> childWidth =
+          succeeded(childType) ? sim::getPackedWidth(*childType) : std::nullopt;
+      if (!childWidth || *childWidth > trailing) {
+        emitError(location) << "concatenation lvalue width is inconsistent";
+        return failure();
+      }
+      trailing -= *childWidth;
+      Value part;
+      if (auto logic = dyn_cast<sim::LogicType>((*scalar).getType())) {
+        auto selected = sim::LogicType::get(function.getContext(), *childWidth);
+        part = sim::SimLogicExtractOp::create(
+            builder, location, selected, *scalar,
+            builder.getI64IntegerAttr(trailing));
+      } else {
+        auto integer = cast<IntegerType>((*scalar).getType());
+        Value amount = arith::ConstantOp::create(
+            builder, location, integer,
+            builder.getIntegerAttr(integer, trailing));
+        Value shifted =
+            arith::ShRUIOp::create(builder, location, *scalar, amount);
+        auto selected = IntegerType::get(function.getContext(), *childWidth);
+        part = selected == integer
+                   ? shifted
+                   : Value(arith::TruncIOp::create(builder, location, selected,
+                                                   shifted));
+      }
+      FailureOr<Value> childValue =
+          convert(part, *childType, false, location);
+      if (failed(childValue) ||
+          failed(writeLValue(child, *childValue, false, nonblocking, location)))
+        return failure();
+    }
+    if (trailing != 0) {
+      emitError(location) << "concatenation lvalue does not consume its value";
+      return failure();
+    }
+    return success();
+  }
+
+  FailureOr<Value> lowered = lowerExpression(destination, true);
+  if (failed(lowered))
+    return failure();
+  Type elementType;
+  if (auto ref = dyn_cast<sim::RefType>((*lowered).getType()))
+    elementType = ref.getElementType();
+  else if (auto driver = dyn_cast<sim::DriverType>((*lowered).getType()))
+    elementType = driver.getElementType();
+  else {
+    emitError(location) << "assignment destination is not a ref or driver";
+    return failure();
+  }
+  FailureOr<Value> converted =
+      convert(value, elementType, sourceSigned, location);
+  if (failed(converted))
+    return failure();
+  if (isa<sim::RefType>((*lowered).getType())) {
+    if (nonblocking)
+      sim::SimNBAEnqueueOp::create(builder, location, *converted, *lowered,
+                                   Value{}, sim::NBASiteAttr{});
+    else
+      sim::SimRefStoreOp::create(builder, location, *converted, *lowered);
+  } else {
+    if (nonblocking) {
+      emitError(location) << "nonblocking assignment cannot target a driver";
+      return failure();
+    }
+    sim::SimDriverDriveOp::create(builder, location, *lowered, *converted);
+  }
+  return success();
+}
+
 FailureOr<Value>
 UnitLowering::lowerAssignment(semantic::SVAssignmentExpressionOp op) {
   Location location = getSemanticLocation(op);
@@ -1109,39 +1228,129 @@ UnitLowering::lowerAssignment(semantic::SVAssignmentExpressionOp op) {
     unsupported(op) << " (assignment arity)";
     return failure();
   }
-  FailureOr<Value> destination = lowerExpression(children[0], true);
   FailureOr<Value> rhs = lowerExpression(children[1]);
-  if (failed(destination) || failed(rhs))
+  if (failed(rhs))
     return failure();
-  Type elementType;
-  if (auto ref = dyn_cast<sim::RefType>((*destination).getType()))
-    elementType = ref.getElementType();
-  else if (auto driver = dyn_cast<sim::DriverType>((*destination).getType()))
-    elementType = driver.getElementType();
-  else {
-    emitError(location) << "assignment destination is not a ref or driver";
+  FailureOr<Type> destinationType = getNormalizedSemanticType(children[0]);
+  if (failed(destinationType))
     return failure();
-  }
   FailureOr<Value> value =
-      convert(*rhs, elementType, isSignedNode(children[1]), location);
+      convert(*rhs, *destinationType, isSignedNode(children[1]), location);
   if (failed(value))
     return failure();
   bool nonblocking =
       op.getAssignmentKind() == semantic::SVAssignmentKind::Nonblocking;
-  if (isa<sim::RefType>((*destination).getType())) {
-    if (nonblocking)
-      sim::SimNBAEnqueueOp::create(builder, location, *value, *destination,
-                                   Value{}, sim::NBASiteAttr{});
-    else
-      sim::SimRefStoreOp::create(builder, location, *value, *destination);
-  } else {
-    if (nonblocking) {
-      emitError(location) << "nonblocking assignment cannot target a driver";
+  if (failed(writeLValue(children[0], *value, false, nonblocking, location)))
+    return failure();
+  return *value;
+}
+
+LogicalResult
+UnitLowering::lowerPortConnection(semantic::SVPortConnectionOp op) {
+  Location location = getSemanticLocation(op);
+  Operation *internal = getSingleRegionRoot(op.getInternal());
+  Operation *actual = getSingleRegionRoot(op.getActual());
+  if (!actual)
+    return success();
+
+  auto loadPath = [&](StringRef path) -> FailureOr<Value> {
+    Value handle = values.lookup(path);
+    if (!handle) {
+      emitError(location) << "port endpoint has no frozen binding: " << path;
       return failure();
     }
-    sim::SimDriverDriveOp::create(builder, location, *destination, *value);
+    if (auto argument = dyn_cast<BlockArgument>(handle);
+        argument && argument.getOwner() == &function.getBody().front())
+      sensitivity.insert(handle);
+    if (auto reference = dyn_cast<sim::RefType>(handle.getType()))
+      return sim::SimRefLoadOp::create(builder, location,
+                                       reference.getElementType(), handle)
+          .getResult();
+    if (auto net = dyn_cast<sim::NetType>(handle.getType()))
+      return sim::SimNetReadOp::create(builder, location, net.getElementType(),
+                                       handle)
+          .getResult();
+    return handle;
+  };
+  auto endpoint = [&](StringRef path, Operation *expression,
+                      bool lvalue) -> FailureOr<Value> {
+    if (expression)
+      return lowerExpression(expression, lvalue);
+    if (lvalue) {
+      Value value = lvalues.lookup(path);
+      if (!value) {
+        emitError(location) << "port endpoint has no lvalue binding: " << path;
+        return failure();
+      }
+      return value;
+    }
+    return loadPath(path);
+  };
+  auto write = [&](Value destination, Value source,
+                   bool sourceSigned) -> LogicalResult {
+    Type elementType;
+    if (auto reference = dyn_cast<sim::RefType>(destination.getType()))
+      elementType = reference.getElementType();
+    else if (auto driver = dyn_cast<sim::DriverType>(destination.getType()))
+      elementType = driver.getElementType();
+    else {
+      emitError(location)
+          << "port connection sink is not variable storage or a net driver";
+      return failure();
+    }
+    FailureOr<Value> converted =
+        convert(source, elementType, sourceSigned, location);
+    if (failed(converted))
+      return failure();
+    if (isa<sim::RefType>(destination.getType()))
+      sim::SimRefStoreOp::create(builder, location, *converted, destination);
+    else
+      sim::SimDriverDriveOp::create(builder, location, destination, *converted);
+    return success();
+  };
+
+  StringRef internalPath = op.getInternalPath().value_or(StringRef{});
+  if (op.getDirection() == semantic::SVArgumentDirection::In) {
+    FailureOr<Value> source = lowerExpression(actual);
+    if (failed(source))
+      return failure();
+    bool sourceSigned =
+        actual->getAttrOfType<TypeAttr>("semantic_type") &&
+        isSignedNode(actual);
+    // A non-ANSI formal can have an aggregate internal expression such as
+    // `{high, low}`. Use the same evaluate-once write plan as assignments so
+    // every leaf receives the correct slice of the converted actual.
+    if (internal)
+      return writeLValue(internal, *source, sourceSigned, false, location);
+    FailureOr<Value> destination = endpoint(internalPath, nullptr, true);
+    if (failed(destination))
+      return failure();
+    return write(*destination, *source,
+                 sourceSigned);
   }
-  return *value;
+  if (op.getDirection() != semantic::SVArgumentDirection::Out) {
+    emitError(location) << "non-static ref or inout port reached unit lowering";
+    return failure();
+  }
+
+  auto assignment = dyn_cast<semantic::SVAssignmentExpressionOp>(actual);
+  SmallVector<Operation *> children =
+      assignment ? getChildren(assignment) : SmallVector<Operation *>{};
+  if (!assignment || children.size() != 2) {
+    emitError(location) << "malformed resolved output port expression";
+    return failure();
+  }
+  FailureOr<Value> source = endpoint(internalPath, internal, false);
+  if (failed(source))
+    return failure();
+  Value previousPlaceholder = expressionPlaceholder;
+  expressionPlaceholder = *source;
+  FailureOr<Value> converted = lowerExpression(children[1]);
+  expressionPlaceholder = previousPlaceholder;
+  if (failed(converted))
+    return failure();
+  return writeLValue(children[0], *converted, isSignedNode(children[1]), false,
+                     location);
 }
 
 FailureOr<Value> UnitLowering::lowerUnary(semantic::SVUnaryExpressionOp op) {
@@ -2035,8 +2244,18 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
 }
 
 FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
+  if (isa<semantic::SVEmptyArgumentExpressionOp>(op)) {
+    if (expressionPlaceholder)
+      return expressionPlaceholder;
+    emitError(getSemanticLocation(op))
+        << "empty expression placeholder has no resolved value";
+    return failure();
+  }
   if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(op))
     return lowerNamedValue(named, lvalue);
+  if (auto hierarchical =
+          dyn_cast<semantic::SVHierarchicalValueExpressionOp>(op))
+    return lowerReferencedValue(op, hierarchical.getReferencedPath(), lvalue);
   if (isa<semantic::SVIntegerLiteralOp,
           semantic::SVUnbasedUnsizedIntegerLiteralOp>(op))
     return lowerLiteral(op);
@@ -2499,6 +2718,8 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
     return lowerVariableDeclaration(declaration);
   if (isa<semantic::SVFormalArgumentSymbolOp, semantic::SVVariableSymbolOp>(op))
     return success();
+  if (auto connection = dyn_cast<semantic::SVPortConnectionOp>(op))
+    return lowerPortConnection(connection);
 
   // An expression used directly as a statement, or an unrecognized node, for
   // which lowerExpression emits the same diagnostic.
@@ -2512,7 +2733,9 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
                       entryKind == sim::EntryKind::AlwaysComb ||
                       entryKind == sim::EntryKind::AlwaysFF ||
                       entryKind == sim::EntryKind::AlwaysLatch ||
-                      entryKind == sim::EntryKind::Continuous;
+                      entryKind == sim::EntryKind::Continuous ||
+                      entryKind == sim::EntryKind::PortInput ||
+                      entryKind == sim::EntryKind::PortOutput;
   Block *loopHeader = nullptr;
   if (loopsForever) {
     loopHeader = addBlock();
@@ -2561,11 +2784,19 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   // timed `always` block re-enters its own timing control instead.
   if (entryKind != sim::EntryKind::AlwaysComb &&
       entryKind != sim::EntryKind::AlwaysLatch &&
-      entryKind != sim::EntryKind::Continuous) {
+      entryKind != sim::EntryKind::Continuous &&
+      entryKind != sim::EntryKind::PortInput &&
+      entryKind != sim::EntryKind::PortOutput) {
     cf::BranchOp::create(builder, function.getLoc(), loopHeader);
     return success();
   }
   if (sensitivity.empty()) {
+    if (entryKind == sim::EntryKind::Continuous) {
+      // A constant continuous assignment is a design-lifetime driver with a
+      // one-shot initialization unit; it has no source transition to await.
+      sim::SimReturnOp::create(builder, function.getLoc(), ValueRange{});
+      return success();
+    }
     function.emitError("combinational process has no sensitivity capture");
     return failure();
   }

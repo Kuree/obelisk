@@ -15,11 +15,26 @@ def SimEntryAlwaysFF : I32EnumAttrCase<"AlwaysFF", 5, "always_ff">;
 def SimEntryAlwaysLatch : I32EnumAttrCase<"AlwaysLatch", 6, "always_latch">;
 def SimEntryContinuous : I32EnumAttrCase<"Continuous", 7, "continuous">;
 def SimEntryFunction : I32EnumAttrCase<"Function", 8, "function">;
+def SimEntryPortInput : I32EnumAttrCase<"PortInput", 9, "port_input">;
+def SimEntryPortOutput : I32EnumAttrCase<"PortOutput", 10, "port_output">;
+def SimEntryPortInitialize
+    : I32EnumAttrCase<"PortInitialize", 11, "port_initialize">;
 def SimEntryKind : I32EnumAttr<"EntryKind", "simulation code-unit kind", [
   SimEntryRootInitializer, SimEntryInitial, SimEntryFinal, SimEntryAlways,
   SimEntryAlwaysComb, SimEntryAlwaysFF, SimEntryAlwaysLatch, SimEntryContinuous,
-  SimEntryFunction
+  SimEntryFunction, SimEntryPortInput, SimEntryPortOutput,
+  SimEntryPortInitialize
 ]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
+def SimNetWire : I32EnumAttrCase<"Wire", 0, "wire">;
+def SimNetTri : I32EnumAttrCase<"Tri", 1, "tri">;
+def SimNetUWire : I32EnumAttrCase<"UWire", 2, "uwire">;
+def SimNetResolutionKind
+    : I32EnumAttr<"NetResolutionKind", "supported net resolution kind", [
+        SimNetWire, SimNetTri, SimNetUWire
+      ]> {
   let cppNamespace = "::obelisk::sim";
 }
 

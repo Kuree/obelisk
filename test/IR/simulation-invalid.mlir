@@ -12,6 +12,87 @@ module {
 // -----
 
 module {
+  obelisk_sim.design @unknown_connection_endpoint {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<4> design
+    // expected-error @+1 {{references an unknown scope or net descriptor}}
+    obelisk_sim.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @out_of_range_connection {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<4> design
+    obelisk_sim.net.decl 1 in 0 : !obelisk_sim.logic<4> design
+    // expected-error @+1 {{contains an out-of-range bit run}}
+    obelisk_sim.net.connect.decl 0 in 0 0[3] to 1[0] width 2 reversed = false
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @invalid_reversed_connection {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<4> design
+    obelisk_sim.net.decl 1 in 0 : !obelisk_sim.logic<4> design
+    // expected-error @+1 {{contains an out-of-range bit run}}
+    obelisk_sim.net.connect.decl 0 in 0 0[0] to 1[1] width 3 reversed = true
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @mixed_uwire_connection {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<1> design
+    obelisk_sim.net.decl 1 in 0 : !obelisk_sim.logic<1> design {resolution_kind = 2 : i32}
+    // expected-error @+1 {{mixes uwire with resolved wire/tri topology}}
+    obelisk_sim.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @mixed_state_domain_connection {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.net.decl 0 in 0 : i1 design
+    obelisk_sim.net.decl 1 in 0 : !obelisk_sim.logic<1> design
+    // expected-error @+1 {{connects incompatible two-state and four-state nets}}
+    obelisk_sim.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @partial_driver_metadata {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<4> design
+    // expected-error @+1 {{driven low and width must either both be present or both be absent}}
+    obelisk_sim.driver.decl 0 in 0 drives 0 : !obelisk_sim.logic<4> design {driven_low = 1 : i64}
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @out_of_range_driver {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<4> design
+    // expected-error @+1 {{driven range exceeds the driver type}}
+    obelisk_sim.driver.decl 0 in 0 drives 0 : !obelisk_sim.logic<4> design {driven_low = 3 : i64, driven_width = 2 : i64}
+  }
+}
+
+// -----
+
+module {
   // Only time-controlled statements are illegal in a SystemVerilog function.
   obelisk_sim.design @delay_function {
     obelisk_sim.code_unit.decl 9000001 in 0 function hierarchy "test.delay_function.bad.9000001"
@@ -294,6 +375,35 @@ module {
     obelisk_sim.storage.decl 0 in 0 : i8 design
     // expected-error @+1 {{argument #1 has an incompatible capture descriptor}}
     obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %capture: !obelisk_sim.ref<i16> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @capture_subelement_metadata_mismatch {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.capture_subelement_metadata_mismatch.bad.9000001"
+    obelisk_sim.scope.decl 0
+    obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.packed_array<1 : 0 x !obelisk_sim.logic<4>> design
+    // Ordinal zero is the high packed element at physical offset four.
+    // expected-error @+1 {{argument #1 has an incompatible capture descriptor}}
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %capture: !obelisk_sim.ref<!obelisk_sim.logic<4>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64, obelisk_sim.descriptor_root_type = !obelisk_sim.packed_array<1 : 0 x !obelisk_sim.logic<4>>, obelisk_sim.descriptor_low = 0 : i64, obelisk_sim.descriptor_indices = array<i64: 0>, obelisk_sim.descriptor_aggregate_type = !obelisk_sim.logic<4>}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @capture_packed_metadata_mismatch {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.capture_packed_metadata_mismatch.bad.9000001"
+    obelisk_sim.scope.decl 0
+    obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<8> design
+    // expected-error @+1 {{argument #1 has an incompatible capture descriptor}}
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %capture: !obelisk_sim.ref<!obelisk_sim.logic<2>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64, obelisk_sim.descriptor_root_type = !obelisk_sim.logic<8>, obelisk_sim.descriptor_low = 3 : i64, obelisk_sim.descriptor_aggregate_type = !obelisk_sim.logic<8>, obelisk_sim.descriptor_packed_low = 2 : i64}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       obelisk_sim.return
     }
   }

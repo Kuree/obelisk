@@ -32,6 +32,15 @@ module attributes {
     obelisk_sim.code_unit.decl 71 in 0 initial hierarchy "top.process" debug "process"
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<65> design
         hierarchy "top.value"
+    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<2> design
+        {resolution_kind = 2 : i32}
+    obelisk_sim.net.decl 1 in 0 : !obelisk_sim.logic<2> design
+        {resolution_kind = 2 : i32}
+    obelisk_sim.driver.decl 0 in 0 drives 0 : !obelisk_sim.logic<2> design
+        {driven_low = 0 : i64, driven_width = 1 : i64}
+    obelisk_sim.driver.decl 1 in 0 drives 0 : !obelisk_sim.logic<2> design
+        {driven_low = 1 : i64, driven_width = 1 : i64}
+    obelisk_sim.net.connect.decl 0 in 0 0[0] to 1[0] width 2 reversed = false
 
     obelisk_sim.func private @add(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
@@ -59,9 +68,11 @@ module attributes {
   }
 }
 
-// ENCODE: obelisk.bytecode.image = array<i8: 79, 66, 66, 67, 68, 83, 49, 0
+// Design bytecode version 2 follows the eight-byte magic, and includes the
+// canonical connectivity table plus disjoint per-bit uwire driver ranges.
+// ENCODE: obelisk.bytecode.image = array<i8: 79, 66, 66, 67, 68, 83, 49, 0, 2, 0, 0, 0
 // ENCODE: obelisk.execution.flags = 1 : i32
-// ENCODE: obelisk.execution.state_bits = 65 : i64
+// ENCODE: obelisk.execution.state_bits = 73 : i64
 // ENCODE: obelisk.bytecode.function = 0 : i32
 // ENCODE: obelisk.bytecode.scratch_alignment = 8 : i64
 // ENCODE: obelisk.bytecode.function = 1 : i32

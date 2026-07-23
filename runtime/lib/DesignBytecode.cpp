@@ -22,6 +22,7 @@ constexpr uint64_t kInstructionSize = OBELISK_RT_DESIGN_BYTECODE_INSTRUCTION_SIZ
 constexpr uint64_t kOperandSize = 8;
 constexpr uint64_t kContinuationSize = 16;
 constexpr uint64_t kIntrinsicSize = 16;
+constexpr uint64_t kConnectivitySize = 32;
 constexpr uint32_t kInvalidRegister = UINT32_MAX;
 constexpr uint32_t kNetStateDescriptor = UINT32_MAX - 1;
 constexpr uint32_t kDriverStateDescriptor = UINT32_MAX;
@@ -149,6 +150,7 @@ struct Image {
   uint64_t intrinsics = 0, intrinsicCount = 0;
   uint64_t sites = 0, siteCount = 0;
   uint64_t stateDescriptors = 0, stateDescriptorCount = 0;
+  uint64_t connectivity = 0, connectivityCount = 0;
   uint64_t stateBitCount = 0;
 };
 
@@ -189,6 +191,12 @@ struct CaptureRecord {
   uint64_t valueOffset = 0, unknownOffset = 0, planeSize = 0;
 };
 
+struct ConnectivityRecord {
+  uint64_t lhsOffset = 0, rhsOffset = 0, width = 0;
+  uint8_t lhsResolution = 0, rhsResolution = 0, flags = 0, reserved = 0;
+  uint32_t tailReserved = 0;
+};
+
 bool parseImage(const obelisk_rt_design_bytecode_entry_v1 &entry,
                 Image &image) {
   const auto *execution = entry.execution;
@@ -221,8 +229,9 @@ bool parseImage(const obelisk_rt_design_bytecode_entry_v1 &entry,
            read64(data + 136), read64(data + 144),
            read64(data + 152), read64(data + 160),
            read64(data + 168), read64(data + 176),
+           read64(data + 184), read64(data + 192),
            execution->state_bit_count};
-  if (read32(data + 20) != 0 || read64(data + 184) != 0 ||
+  if (read32(data + 20) != 0 || read64(data + 200) != 0 ||
       image.functionCount > UINT32_MAX ||
       entry.function >= image.functionCount ||
       !validRange(image.functions, image.functionCount, kFunctionSize,
@@ -238,7 +247,9 @@ bool parseImage(const obelisk_rt_design_bytecode_entry_v1 &entry,
                   image.size) ||
       !validRange(image.sites, image.siteCount, kIntrinsicSize, image.size) ||
       !validRange(image.stateDescriptors, image.stateDescriptorCount, 32,
-                  image.size))
+                  image.size) ||
+      !validRange(image.connectivity, image.connectivityCount,
+                  kConnectivitySize, image.size))
     return false;
   uint64_t cursor = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
   auto canonicalTable = [&](uint64_t offset, uint64_t count,
@@ -266,6 +277,8 @@ bool parseImage(const obelisk_rt_design_bytecode_entry_v1 &entry,
          canonicalTable(image.sites, image.siteCount, kIntrinsicSize) &&
          canonicalTable(image.stateDescriptors, image.stateDescriptorCount,
                         32) &&
+         canonicalTable(image.connectivity, image.connectivityCount,
+                        kConnectivitySize) &&
          cursor == image.size;
 }
 
@@ -308,6 +321,13 @@ CaptureRecord captureAt(const Image &image, uint64_t index) {
   const uint8_t *data = image.data + image.stateDescriptors + index * 32;
   return {read32(data), read32(data + 4), read64(data + 8),
           read64(data + 16), read64(data + 24)};
+}
+
+ConnectivityRecord connectivityAt(const Image &image, uint64_t index) {
+  const uint8_t *data =
+      image.data + image.connectivity + index * kConnectivitySize;
+  return {read64(data), read64(data + 8), read64(data + 16),
+          data[24], data[25], data[26], data[27], read32(data + 28)};
 }
 
 obelisk_rt_status releaseCapturedAutomaticStates(const Image &image,
@@ -945,37 +965,199 @@ bool validateImage(const Image &image) {
     }
   }
   uint64_t previousNetEnd = 0;
+  std::vector<CaptureRecord> netRecords;
   for (; captureIndex != image.stateDescriptorCount; ++captureIndex) {
     CaptureRecord net = captureAt(image, captureIndex);
     if (net.function != kNetStateDescriptor)
       break;
-    if (net.argument > 1 || net.planeSize == 0 ||
+    if ((net.argument & ~uint32_t{7}) != 0 ||
+        (net.argument >> 1) > 2 || net.planeSize == 0 ||
         net.valueOffset < previousNetEnd || net.unknownOffset != UINT64_MAX ||
         net.valueOffset > image.stateBitCount ||
         net.planeSize > image.stateBitCount - net.valueOffset)
       return false;
+    netRecords.push_back(net);
     previousNetEnd = net.valueOffset + net.planeSize;
   }
+  auto containingNet = [&](uint64_t bit, uint64_t width,
+                           bool reversed) -> const CaptureRecord * {
+    for (const CaptureRecord &net : netRecords) {
+      if (bit < net.valueOffset || bit >= net.valueOffset + net.planeSize)
+        continue;
+      if (reversed) {
+        if (width <= bit - net.valueOffset + 1)
+          return &net;
+      } else if (width <= net.valueOffset + net.planeSize - bit) {
+        return &net;
+      }
+      return nullptr;
+    }
+    return nullptr;
+  };
   uint64_t driverStart = captureIndex;
   uint64_t previousDriverEnd = 0;
+  std::vector<CaptureRecord> driverRecords;
   for (; captureIndex != image.stateDescriptorCount; ++captureIndex) {
     CaptureRecord driver = captureAt(image, captureIndex);
-    if (driver.function != kDriverStateDescriptor || driver.argument > 1 ||
+    const CaptureRecord *target =
+        containingNet(driver.unknownOffset, driver.planeSize, false);
+    if (driver.function != kDriverStateDescriptor ||
+        (driver.argument & ~uint32_t{7}) != 0 ||
+        (driver.argument & 1) == 0 || (driver.argument >> 1) > 2 ||
         driver.planeSize == 0 || driver.valueOffset < previousDriverEnd ||
         driver.valueOffset > image.stateBitCount ||
         driver.planeSize > image.stateBitCount - driver.valueOffset ||
         driver.unknownOffset > image.stateBitCount ||
-        driver.planeSize > image.stateBitCount - driver.unknownOffset)
+        driver.planeSize > image.stateBitCount - driver.unknownOffset ||
+        !target || (driver.argument >> 1) != (target->argument >> 1))
       return false;
     for (uint64_t previous = driverStart; previous != captureIndex;
          ++previous) {
       CaptureRecord other = captureAt(image, previous);
       if (other.unknownOffset == driver.unknownOffset &&
-          (other.argument != driver.argument ||
+          ((other.argument >> 1) != (driver.argument >> 1) ||
            other.planeSize != driver.planeSize))
         return false;
     }
+    driverRecords.push_back(driver);
     previousDriverEnd = driver.valueOffset + driver.planeSize;
+  }
+
+  std::tuple<uint64_t, uint64_t, uint64_t, uint8_t> previousConnection;
+  bool firstConnection = true;
+  uint64_t expandedConnections = 0;
+  struct ScalarConnection {
+    uint64_t lhs = 0, rhs = 0;
+    uint8_t lhsResolution = 0, rhsResolution = 0;
+    auto tie() const {
+      return std::tie(lhs, rhs, lhsResolution, rhsResolution);
+    }
+  };
+  std::vector<ConnectivityRecord> connectionRecords;
+  std::vector<ScalarConnection> scalarConnections;
+  std::unordered_map<uint64_t, uint64_t> connectivityParents;
+  auto findConnectivity = [&](uint64_t bit) {
+    connectivityParents.try_emplace(bit, bit);
+    uint64_t root = bit;
+    while (connectivityParents[root] != root)
+      root = connectivityParents[root];
+    while (connectivityParents[bit] != bit) {
+      uint64_t next = connectivityParents[bit];
+      connectivityParents[bit] = root;
+      bit = next;
+    }
+    return root;
+  };
+  for (uint64_t index = 0; index != image.connectivityCount; ++index) {
+    ConnectivityRecord connection = connectivityAt(image, index);
+    auto key = std::make_tuple(connection.lhsOffset, connection.rhsOffset,
+                               connection.width, connection.flags);
+    const CaptureRecord *lhs =
+        containingNet(connection.lhsOffset, connection.width, false);
+    const CaptureRecord *rhs = containingNet(connection.rhsOffset,
+                                               connection.width,
+                                               (connection.flags & 1) != 0);
+    if (connection.width == 0 || connection.flags > 1 ||
+        connection.reserved != 0 || connection.tailReserved != 0 ||
+        connection.lhsResolution > 2 || connection.rhsResolution > 2 ||
+        !lhs || !rhs || connection.lhsResolution != (lhs->argument >> 1) ||
+        connection.rhsResolution != (rhs->argument >> 1) ||
+        ((lhs->argument ^ rhs->argument) & 1) != 0 ||
+        ((connection.lhsResolution == 2) !=
+         (connection.rhsResolution == 2)) ||
+        (!firstConnection && key <= previousConnection) ||
+        connection.width > UINT64_MAX - expandedConnections)
+      return false;
+    previousConnection = key;
+    firstConnection = false;
+    connectionRecords.push_back(connection);
+    expandedConnections += connection.width;
+    // A corrupt image must not turn validation into an unbounded expansion.
+    if ((image.stateBitCount <= UINT64_MAX / 8 &&
+         expandedConnections > image.stateBitCount * 8) ||
+        expandedConnections > UINT32_MAX)
+      return false;
+    for (uint64_t bit = 0; bit != connection.width; ++bit) {
+      uint64_t lhsBit = connection.lhsOffset + bit;
+      uint64_t rhsBit = (connection.flags & 1)
+                            ? connection.rhsOffset - bit
+                            : connection.rhsOffset + bit;
+      if (lhsBit >= rhsBit)
+        return false;
+      scalarConnections.push_back({lhsBit, rhsBit, connection.lhsResolution,
+                                   connection.rhsResolution});
+      uint64_t lhsRoot = findConnectivity(lhsBit);
+      uint64_t rhsRoot = findConnectivity(rhsBit);
+      if (lhsRoot != rhsRoot)
+        connectivityParents[std::max(lhsRoot, rhsRoot)] =
+            std::min(lhsRoot, rhsRoot);
+    }
+  }
+  std::sort(scalarConnections.begin(), scalarConnections.end(),
+            [](const ScalarConnection &lhs, const ScalarConnection &rhs) {
+              return lhs.tie() < rhs.tie();
+            });
+  for (size_t index = 1; index < scalarConnections.size(); ++index)
+    if (scalarConnections[index - 1].lhs == scalarConnections[index].lhs &&
+        scalarConnections[index - 1].rhs == scalarConnections[index].rhs)
+      return false;
+
+  // The serialized table is the unique maximal interval encoding of its
+  // canonical scalar edges. Reject alternative spellings so malformed images
+  // cannot hide duplicates in overlaps, swapped endpoints, or split runs.
+  std::vector<ConnectivityRecord> canonicalRecords;
+  for (size_t scalar = 0; scalar != scalarConnections.size();) {
+    const ScalarConnection &first = scalarConnections[scalar];
+    uint64_t width = 1;
+    int direction = 0;
+    size_t next = scalar + 1;
+    while (next != scalarConnections.size()) {
+      const ScalarConnection &candidate = scalarConnections[next];
+      if (candidate.lhsResolution != first.lhsResolution ||
+          candidate.rhsResolution != first.rhsResolution ||
+          candidate.lhs != first.lhs + width)
+        break;
+      int candidateDirection = 0;
+      if (candidate.rhs == first.rhs + width)
+        candidateDirection = 1;
+      else if (first.rhs >= width && candidate.rhs == first.rhs - width)
+        candidateDirection = -1;
+      if (candidateDirection == 0 ||
+          (direction != 0 && direction != candidateDirection))
+        break;
+      direction = candidateDirection;
+      ++width;
+      ++next;
+    }
+    canonicalRecords.push_back(
+        {first.lhs, first.rhs, width, first.lhsResolution,
+         first.rhsResolution, static_cast<uint8_t>(direction < 0), 0, 0});
+    scalar = next;
+  }
+  if (canonicalRecords.size() != connectionRecords.size())
+    return false;
+  for (size_t index = 0; index != canonicalRecords.size(); ++index) {
+    const ConnectivityRecord &actual = connectionRecords[index];
+    const ConnectivityRecord &expected = canonicalRecords[index];
+    if (actual.lhsOffset != expected.lhsOffset ||
+        actual.rhsOffset != expected.rhsOffset ||
+        actual.width != expected.width ||
+        actual.lhsResolution != expected.lhsResolution ||
+        actual.rhsResolution != expected.rhsResolution ||
+        actual.flags != expected.flags)
+      return false;
+  }
+  // A uwire component has at most one design-lifetime driver for every
+  // connected scalar equivalence class, including aliases of its target.
+  std::unordered_map<uint64_t, uint32_t> uwireDrivers;
+  for (const CaptureRecord &driver : driverRecords) {
+    if ((driver.argument >> 1) != 2)
+      continue;
+    for (uint64_t bit = 0; bit != driver.planeSize; ++bit) {
+      uint64_t root = findConnectivity(driver.unknownOffset + bit);
+      if (++uwireDrivers[root] > 1)
+        return false;
+    }
   }
   uint64_t previousID = 0;
   for (uint32_t functionIndex = 0; functionIndex != image.functionCount;
@@ -1856,51 +2038,102 @@ bool resolveDrivenNets(const Image &image, obelisk_rt_context *context,
                        bool &changed) {
   if (!context || changedBegin < 0 || changedEnd < changedBegin)
     return false;
-  std::vector<uint64_t> nets;
+  std::vector<CaptureRecord> nets;
+  std::vector<CaptureRecord> drivers;
   for (uint64_t index = 0; index != image.stateDescriptorCount; ++index) {
-    CaptureRecord driver = captureAt(image, index);
-    if (driver.function != kDriverStateDescriptor)
-      continue;
-    uint64_t driverEnd = driver.valueOffset + driver.planeSize;
-    if (static_cast<uint64_t>(changedBegin) < driverEnd &&
-        static_cast<uint64_t>(changedEnd) > driver.valueOffset &&
-        std::find(nets.begin(), nets.end(), driver.unknownOffset) == nets.end())
-      nets.push_back(driver.unknownOffset);
+    CaptureRecord record = captureAt(image, index);
+    if (record.function == kNetStateDescriptor)
+      nets.push_back(record);
+    else if (record.function == kDriverStateDescriptor)
+      drivers.push_back(record);
   }
-  if (nets.empty())
-    return false;
-  for (uint64_t netOffset : nets) {
-    const CaptureRecord *representative = nullptr;
-    CaptureRecord representativeStorage;
-    for (uint64_t index = 0; index != image.stateDescriptorCount; ++index) {
-      CaptureRecord driver = captureAt(image, index);
-      if (driver.function == kDriverStateDescriptor &&
-          driver.unknownOffset == netOffset) {
-        representativeStorage = driver;
-        representative = &representativeStorage;
-        break;
-      }
+
+  std::unordered_map<uint64_t, uint64_t> parents;
+  auto findRoot = [&](uint64_t value) {
+    parents.try_emplace(value, value);
+    uint64_t root = value;
+    while (parents[root] != root)
+      root = parents[root];
+    while (parents[value] != value) {
+      uint64_t next = parents[value];
+      parents[value] = root;
+      value = next;
     }
-    if (!representative)
-      return false;
-    bool fourState = representative->argument != 0;
-    for (uint64_t bitIndex = 0; bitIndex != representative->planeSize;
-         ++bitIndex) {
-      bool resolvedValue = fourState;
-      bool resolvedUnknown = fourState;
-      for (uint64_t index = 0; index != image.stateDescriptorCount; ++index) {
-        CaptureRecord driver = captureAt(image, index);
-        if (driver.function != kDriverStateDescriptor ||
-            driver.unknownOffset != netOffset)
-          continue;
-        bool driverValue =
-            bit(context->stateValue, driver.valueOffset + bitIndex);
-        if (!fourState) {
-          resolvedValue = driverValue;
-          continue;
-        }
-        bool driverUnknown =
-            bit(context->stateUnknown, driver.valueOffset + bitIndex);
+    return root;
+  };
+  for (uint64_t index = 0; index != image.connectivityCount; ++index) {
+    ConnectivityRecord connection = connectivityAt(image, index);
+    for (uint64_t bitIndex = 0; bitIndex != connection.width; ++bitIndex) {
+      uint64_t lhs = connection.lhsOffset + bitIndex;
+      uint64_t rhs = (connection.flags & 1)
+                         ? connection.rhsOffset - bitIndex
+                         : connection.rhsOffset + bitIndex;
+      uint64_t lhsRoot = findRoot(lhs);
+      uint64_t rhsRoot = findRoot(rhs);
+      if (lhsRoot != rhsRoot)
+        parents[std::max(lhsRoot, rhsRoot)] = std::min(lhsRoot, rhsRoot);
+    }
+  }
+
+  std::vector<uint64_t> affectedRoots;
+  for (const CaptureRecord &driver : drivers) {
+    uint64_t driverEnd = driver.valueOffset + driver.planeSize;
+    uint64_t overlapBegin =
+        std::max<uint64_t>(static_cast<uint64_t>(changedBegin),
+                           driver.valueOffset);
+    uint64_t overlapEnd =
+        std::min<uint64_t>(static_cast<uint64_t>(changedEnd), driverEnd);
+    for (uint64_t driverBit = overlapBegin; driverBit < overlapEnd;
+         ++driverBit) {
+      uint64_t root =
+          findRoot(driver.unknownOffset + driverBit - driver.valueOffset);
+      if (std::find(affectedRoots.begin(), affectedRoots.end(), root) ==
+          affectedRoots.end())
+        affectedRoots.push_back(root);
+    }
+  }
+  if (affectedRoots.empty())
+    return false;
+  for (uint64_t &root : affectedRoots)
+    root = findRoot(root);
+  std::sort(affectedRoots.begin(), affectedRoots.end());
+  affectedRoots.erase(
+      std::unique(affectedRoots.begin(), affectedRoots.end()),
+      affectedRoots.end());
+
+  std::unordered_map<uint64_t, std::vector<uint64_t>> members;
+  for (const auto &[bitIndex, ignored] : parents)
+    members[findRoot(bitIndex)].push_back(bitIndex);
+  for (uint64_t root : affectedRoots)
+    members[root].push_back(root);
+  for (auto &[root, component] : members) {
+    std::sort(component.begin(), component.end());
+    component.erase(std::unique(component.begin(), component.end()),
+                    component.end());
+  }
+
+  std::unordered_map<uint64_t, std::vector<uint64_t>> driverBits;
+  for (const CaptureRecord &driver : drivers)
+    for (uint64_t bitIndex = 0; bitIndex != driver.planeSize; ++bitIndex)
+      driverBits[findRoot(driver.unknownOffset + bitIndex)].push_back(
+          driver.valueOffset + bitIndex);
+
+  struct Publication {
+    uint64_t destination;
+    bool oldValue;
+    bool oldUnknown;
+    bool value;
+    bool unknown;
+  };
+  std::vector<Publication> publications;
+  for (uint64_t root : affectedRoots) {
+    bool resolvedValue = true;
+    bool resolvedUnknown = true;
+    auto componentDrivers = driverBits.find(root);
+    if (componentDrivers != driverBits.end()) {
+      for (uint64_t driverBit : componentDrivers->second) {
+        bool driverValue = bit(context->stateValue, driverBit);
+        bool driverUnknown = bit(context->stateUnknown, driverBit);
         bool currentZ = resolvedUnknown && resolvedValue;
         bool driverZ = driverUnknown && driverValue;
         bool currentX = resolvedUnknown && !resolvedValue;
@@ -1914,24 +2147,57 @@ bool resolveDrivenNets(const Image &image, obelisk_rt_context *context,
         resolvedValue = currentZ ? driverValue : withoutCurrentZ;
         resolvedUnknown = currentZ ? driverUnknown : withoutCurrentZUnknown;
       }
-      uint64_t destination = netOffset + bitIndex;
-      bool oldValue = bit(context->stateValue, destination);
-      bool oldUnknown = bit(context->stateUnknown, destination);
-      changed |= oldValue != resolvedValue;
-      changed |= oldUnknown != resolvedUnknown;
-      setBit(context->stateValue, destination, resolvedValue);
-      setBit(context->stateUnknown, destination, resolvedUnknown);
-      uint64_t signalHandle = destination;
-      for (const auto &[id, state] : context->nativeStaticStates)
-        if (state.bitOffset == netOffset &&
-            state.bitWidth == representative->planeSize) {
-          signalHandle = encodeStaticHandle(id, static_cast<int64_t>(bitIndex));
+    }
+    for (uint64_t destination : members[root]) {
+      const CaptureRecord *net = nullptr;
+      for (const CaptureRecord &candidate : nets)
+        if (destination >= candidate.valueOffset &&
+            destination < candidate.valueOffset + candidate.planeSize) {
+          net = &candidate;
           break;
         }
-      if (!appendSignalEvent(context, signalHandle, oldValue, oldUnknown,
-                             resolvedValue, resolvedUnknown))
+      if (!net)
         return false;
+      bool publishUnknown = (net->argument & 1) != 0 && resolvedUnknown;
+      bool publishValue =
+          (net->argument & 1) != 0
+              ? resolvedValue
+              : (resolvedUnknown ? false : resolvedValue);
+      publications.push_back(
+          {destination, bit(context->stateValue, destination),
+           bit(context->stateUnknown, destination), publishValue,
+           publishUnknown});
     }
+  }
+  std::sort(publications.begin(), publications.end(),
+            [](const Publication &lhs, const Publication &rhs) {
+              return lhs.destination < rhs.destination;
+            });
+  for (const Publication &publication : publications) {
+    changed |= publication.oldValue != publication.value ||
+               publication.oldUnknown != publication.unknown;
+    setBit(context->stateValue, publication.destination, publication.value);
+    setBit(context->stateUnknown, publication.destination,
+           publication.unknown);
+  }
+  // Publish every logical alias first, then report transitions in stable bit
+  // order so observers never see a partially updated component.
+  for (const Publication &publication : publications) {
+    uint64_t signalHandle = publication.destination;
+    uint32_t chosenID = UINT32_MAX;
+    for (const auto &[id, state] : context->nativeStaticStates)
+      if (publication.destination >= state.bitOffset &&
+          publication.destination < state.bitOffset + state.bitWidth &&
+          id < chosenID) {
+        chosenID = id;
+        signalHandle = encodeStaticHandle(
+            id, static_cast<int64_t>(publication.destination -
+                                     state.bitOffset));
+      }
+    if (!appendSignalEvent(context, signalHandle, publication.oldValue,
+                           publication.oldUnknown, publication.value,
+                           publication.unknown))
+      return false;
   }
   return true;
 }
@@ -3600,12 +3866,18 @@ obelisk_rt_initialize_design_state(obelisk_rt_context *context) noexcept {
       return OBELISK_RT_INVALID_DESIGN;
     for (uint64_t index = 0; index != image.stateDescriptorCount; ++index) {
       CaptureRecord driver = captureAt(image, index);
-      if (driver.function == kNetStateDescriptor && driver.argument != 0) {
-        for (uint64_t bitIndex = 0; bitIndex != driver.planeSize; ++bitIndex)
-          setBit(context->stateValue, driver.valueOffset + bitIndex, true);
+      if (driver.function == kNetStateDescriptor) {
+        bool fourState = (driver.argument & 1) != 0;
+        for (uint64_t bitIndex = 0; bitIndex != driver.planeSize; ++bitIndex) {
+          setBit(context->stateValue, driver.valueOffset + bitIndex, fourState);
+          setBit(context->stateUnknown, driver.valueOffset + bitIndex,
+                 fourState);
+        }
       } else if (driver.function == kDriverStateDescriptor) {
-        for (uint64_t bitIndex = 0; bitIndex != driver.planeSize; ++bitIndex)
+        for (uint64_t bitIndex = 0; bitIndex != driver.planeSize; ++bitIndex) {
           setBit(context->stateValue, driver.valueOffset + bitIndex, true);
+          setBit(context->stateUnknown, driver.valueOffset + bitIndex, true);
+        }
       }
     }
     return OBELISK_RT_OK;
@@ -3634,6 +3906,39 @@ obelisk_rt_status obelisk_rt_resolve_design_drivers(
                  : context->schedulerStatus;
     if (changed && ++context->schedulerEpoch == 0)
       context->schedulerEpoch = 1;
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_INVALID_BYTECODE;
+  }
+}
+
+obelisk_rt_status obelisk_rt_design_net_is_connected(
+    obelisk_rt_context *context, uint64_t begin, uint64_t end,
+    bool *outConnected) noexcept {
+  if (!context || !context->execution || !outConnected || begin > end)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  try {
+    obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
+    Image image;
+    if (!parseImage(entry, image) || !validateImage(image))
+      return OBELISK_RT_INVALID_BYTECODE;
+    *outConnected = false;
+    auto overlaps = [&](uint64_t first, uint64_t width) {
+      return first < end && begin < first + width;
+    };
+    for (uint64_t index = 0; index != image.connectivityCount; ++index) {
+      ConnectivityRecord connection = connectivityAt(image, index);
+      uint64_t rhsFirst = (connection.flags & 1)
+                              ? connection.rhsOffset - connection.width + 1
+                              : connection.rhsOffset;
+      if (overlaps(connection.lhsOffset, connection.width) ||
+          overlaps(rhsFirst, connection.width)) {
+        *outConnected = true;
+        break;
+      }
+    }
     return OBELISK_RT_OK;
   } catch (const std::bad_alloc &) {
     return OBELISK_RT_OUT_OF_MEMORY;

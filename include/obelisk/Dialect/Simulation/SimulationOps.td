@@ -97,7 +97,8 @@ def SimCodeUnitDeclOp : SimOp<"code_unit.decl", [
   let arguments = (ins I64Attr:$id, I64Attr:$scope_id,
                        SimEntryKind:$code_unit_kind,
                        StrAttr:$hierarchical_name,
-                       OptionalAttr<StrAttr>:$debug_name);
+                       OptionalAttr<StrAttr>:$debug_name,
+                       OptionalAttr<UnitAttr>:$internal);
   let assemblyFormat = [{$id `in` $scope_id $code_unit_kind
     `hierarchy` $hierarchical_name (`debug` $debug_name^)? attr-dict}];
   let hasVerifier = 1;
@@ -121,9 +122,28 @@ def SimNetDeclOp : SimOp<"net.decl", [MemoryEffects<[MemWrite<SimInventoryResour
                        SimLifetime:$lifetime,
                        OptionalAttr<StrAttr>:$hierarchical_name,
                        OptionalAttr<StrAttr>:$debug_name,
-                       OptionalAttr<SimComputeObservabilityKind>:$observability);
+                       OptionalAttr<SimComputeObservabilityKind>:$observability,
+                       DefaultValuedAttr<SimNetResolutionKind,
+                         "::obelisk::sim::NetResolutionKind::Wire">:$resolution_kind,
+                       OptionalAttr<UnitAttr>:$internal);
   let assemblyFormat = [{$id `in` $scope_id `:` $type $lifetime
     (`hierarchy` $hierarchical_name^)? (`debug` $debug_name^)? attr-dict}];
+  let hasVerifier = 1;
+}
+
+def SimNetConnectDeclOp : SimOp<"net.connect.decl", [
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "canonical static bitwise net equivalence run";
+  let arguments = (ins I64Attr:$id, I64Attr:$scope_id,
+                       I64Attr:$lhs_net_id, I64Attr:$lhs_offset,
+                       I64Attr:$rhs_net_id, I64Attr:$rhs_offset,
+                       I64Attr:$width, BoolAttr:$rhs_reversed,
+                       OptionalAttr<StrAttr>:$provenance);
+  let assemblyFormat = [{$id `in` $scope_id $lhs_net_id `[` $lhs_offset `]`
+    `to` $rhs_net_id `[` $rhs_offset `]` `width` $width
+    `reversed` `=` $rhs_reversed
+    (`provenance` $provenance^)? attr-dict}];
   let hasVerifier = 1;
 }
 
@@ -132,7 +152,9 @@ def SimDriverDeclOp : SimOp<"driver.decl", [MemoryEffects<[MemWrite<SimInventory
   let arguments = (ins I64Attr:$id, I64Attr:$scope_id, I64Attr:$net_id,
                        TypeAttr:$type, SimLifetime:$lifetime,
                        OptionalAttr<StrAttr>:$hierarchical_name,
-                       OptionalAttr<StrAttr>:$debug_name);
+                       OptionalAttr<StrAttr>:$debug_name,
+                       OptionalAttr<I64Attr>:$driven_low,
+                       OptionalAttr<I64Attr>:$driven_width);
   let assemblyFormat = [{$id `in` $scope_id `drives` $net_id `:` $type
     $lifetime (`hierarchy` $hierarchical_name^)?
     (`debug` $debug_name^)? attr-dict}];
@@ -156,7 +178,8 @@ def SimFuncOp : SimOp<"func", [
                        OptionalAttr<DictArrayAttr>:$res_attrs,
                        OptionalAttr<I64Attr>:$code_unit_id,
                        OptionalAttr<SimComputeEffectArrayAttr>:$effect_summary,
-                       OptionalAttr<SimFragmentABIAttr>:$fragment_abi);
+                       OptionalAttr<SimFragmentABIAttr>:$fragment_abi,
+                       OptionalAttr<UnitAttr>:$internal);
   let regions = (region AnyRegion:$body);
   let builders = [OpBuilder<(ins "::llvm::StringRef":$name,
       "::mlir::FunctionType":$type,

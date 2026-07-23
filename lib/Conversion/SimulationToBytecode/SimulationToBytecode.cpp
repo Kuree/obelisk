@@ -2,6 +2,7 @@
 
 #include "obelisk/Conversion/SimulationToBytecode.h"
 
+#include "obelisk/Analysis/NetConnectivityAnalysis.h"
 #include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
 #include "obelisk/Dialect/Runtime/RuntimeTypes.h"
 #include "obelisk/Runtime/Runtime.h"
@@ -24,6 +25,7 @@
 #include <algorithm>
 #include <functional>
 #include <limits>
+#include <map>
 #include <optional>
 #include <string>
 
@@ -196,6 +198,7 @@ struct StateLayout {
     uint64_t offset;
     uint32_t width;
     bool fourState;
+    sim::NetResolutionKind resolution;
   };
   struct Driver {
     uint64_t id;
@@ -203,13 +206,25 @@ struct StateLayout {
     uint64_t offset;
     uint64_t netOffset;
     uint32_t width;
+    uint32_t drivenLow;
+    uint32_t drivenWidth;
     bool fourState;
+    sim::NetResolutionKind resolution;
+  };
+  struct Connection {
+    uint64_t lhsOffset;
+    uint64_t rhsOffset;
+    uint64_t width;
+    sim::NetResolutionKind lhsResolution;
+    sim::NetResolutionKind rhsResolution;
+    bool rhsReversed;
   };
   DenseMap<uint64_t, uint64_t> storage;
   DenseMap<uint64_t, uint64_t> nets;
   DenseMap<uint64_t, uint64_t> drivers;
   SmallVector<Net> netLayouts;
   SmallVector<Driver> driverLayouts;
+  SmallVector<Connection> connections;
   uint64_t bits = 0;
 };
 
@@ -359,7 +374,8 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
       result.netLayouts.push_back(
           {declaration.getId(), offset,
            *simulationWidth(declaration.getType()),
-           containsLogic(declaration.getType())});
+           containsLogic(declaration.getType()),
+           declaration.getResolutionKind()});
     } else if (auto declaration = dyn_cast<sim::SimDriverDeclOp>(operation)) {
       auto net = result.nets.find(declaration.getNetId());
       if (net == result.nets.end())
@@ -371,15 +387,123 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
                WalkResult::interrupt();
       uint32_t width =
           *simulationWidth(declaration.getType());
+      uint64_t drivenLow = declaration.getDrivenLowAttr()
+                               ? declaration.getDrivenLowAttr()
+                                     .getValue()
+                                     .getZExtValue()
+                               : 0;
+      uint64_t drivenWidth = declaration.getDrivenWidthAttr()
+                                 ? declaration.getDrivenWidthAttr()
+                                       .getValue()
+                                       .getZExtValue()
+                                 : width;
+      if (drivenLow > UINT32_MAX || drivenWidth > UINT32_MAX ||
+          drivenLow > width || drivenWidth > width - drivenLow)
+        return declaration.emitOpError("has an invalid driven range"),
+               WalkResult::interrupt();
       result.drivers[declaration.getId()] = offset;
-      result.driverLayouts.push_back(
-          {declaration.getId(), declaration.getNetId(), offset, net->second,
-           width, containsLogic(declaration.getType())});
+      auto netLayout = llvm::find_if(result.netLayouts, [&](const auto &layout) {
+        return layout.id == declaration.getNetId();
+      });
+      if (netLayout == result.netLayouts.end())
+        return declaration.emitOpError("driver references unknown net layout"),
+               WalkResult::interrupt();
+      result.driverLayouts.push_back({
+          declaration.getId(), declaration.getNetId(), offset, net->second,
+          width, static_cast<uint32_t>(drivenLow),
+          static_cast<uint32_t>(drivenWidth),
+          containsLogic(declaration.getType()), netLayout->resolution});
     }
     return WalkResult::advance();
   });
   if (walked.wasInterrupted())
     return failure();
+  using ScalarConnection =
+      std::pair<sim::NetResolutionKind, sim::NetResolutionKind>;
+  std::map<std::pair<uint64_t, uint64_t>, ScalarConnection> scalarConnections;
+  for (sim::SimNetConnectDeclOp connection :
+       design.getBody().getOps<sim::SimNetConnectDeclOp>()) {
+    auto lhs = llvm::find_if(result.netLayouts, [&](const auto &layout) {
+      return layout.id == connection.getLhsNetId();
+    });
+    auto rhs = llvm::find_if(result.netLayouts, [&](const auto &layout) {
+      return layout.id == connection.getRhsNetId();
+    });
+    if (lhs == result.netLayouts.end() || rhs == result.netLayouts.end())
+      return connection.emitOpError("references an unknown bytecode net"),
+             failure();
+    for (uint64_t bit = 0; bit != connection.getWidth(); ++bit) {
+      uint64_t lhsBit = lhs->offset + connection.getLhsOffset() + bit;
+      uint64_t rhsBit =
+          rhs->offset + (connection.getRhsReversed()
+                             ? connection.getRhsOffset() - bit
+                             : connection.getRhsOffset() + bit);
+      sim::NetResolutionKind lhsResolution = lhs->resolution;
+      sim::NetResolutionKind rhsResolution = rhs->resolution;
+      if (rhsBit < lhsBit) {
+        std::swap(lhsBit, rhsBit);
+        std::swap(lhsResolution, rhsResolution);
+      }
+      if (lhsBit == rhsBit)
+        continue;
+      auto [found, inserted] = scalarConnections.try_emplace(
+          std::pair{lhsBit, rhsBit},
+          ScalarConnection{lhsResolution, rhsResolution});
+      if (!inserted && found->second !=
+                           ScalarConnection{lhsResolution, rhsResolution})
+        return connection.emitOpError(
+                   "has inconsistent duplicate scalar connectivity"),
+               failure();
+    }
+  }
+  for (auto scalar = scalarConnections.begin();
+       scalar != scalarConnections.end();) {
+    auto [lhsOffset, rhsOffset] = scalar->first;
+    auto [lhsResolution, rhsResolution] = scalar->second;
+    uint64_t width = 1;
+    int direction = 0;
+    auto next = std::next(scalar);
+    while (next != scalarConnections.end()) {
+      if (next->second != scalar->second ||
+          next->first.first != lhsOffset + width)
+        break;
+      int candidateDirection = 0;
+      if (next->first.second == rhsOffset + width)
+        candidateDirection = 1;
+      else if (rhsOffset >= width &&
+               next->first.second == rhsOffset - width)
+        candidateDirection = -1;
+      if (candidateDirection == 0 ||
+          (direction != 0 && direction != candidateDirection))
+        break;
+      direction = candidateDirection;
+      ++width;
+      ++next;
+    }
+    result.connections.push_back({lhsOffset, rhsOffset, width, lhsResolution,
+                                  rhsResolution, direction < 0});
+    scalar = next;
+  }
+
+  analysis::NetConnectivityAnalysis connectivity(design);
+  DenseMap<std::pair<uint64_t, uint64_t>, uint64_t> uwireDrivers;
+  for (const StateLayout::Driver &driver : result.driverLayouts) {
+    if (driver.resolution != sim::NetResolutionKind::UWire)
+      continue;
+    for (uint64_t bit = driver.drivenLow;
+         bit != uint64_t{driver.drivenLow} + driver.drivenWidth; ++bit) {
+      ArrayRef<analysis::NetBit> component =
+          connectivity.getComponent({driver.netID, bit});
+      analysis::NetBit canonical =
+          component.empty() ? analysis::NetBit{driver.netID, bit}
+                            : component.front();
+      if (++uwireDrivers[{canonical.net, canonical.offset}] > 1)
+        return design.emitOpError()
+                   << "uwire connectivity component " << canonical.net << "["
+                   << canonical.offset << "] has more than one driver",
+               failure();
+    }
+  }
   result.bits = std::max<uint64_t>(result.bits, 8);
   return result;
 }
@@ -1928,17 +2052,34 @@ private:
     // reproduce the native initial Z state even when a net has no drivers.
     for (const StateLayout::Net &net : state.netLayouts) {
       append32(output, UINT32_MAX - 1);
-      append32(output, net.fourState ? 1 : 0);
+      append32(output, (net.fourState ? 1u : 0u) |
+                           (static_cast<uint32_t>(net.resolution) << 1));
       append64(output, net.offset);
       append64(output, UINT64_MAX);
       append64(output, net.width);
     }
     for (const StateLayout::Driver &driver : state.driverLayouts) {
       append32(output, UINT32_MAX);
-      append32(output, driver.fourState ? 1 : 0);
-      append64(output, driver.offset);
-      append64(output, driver.netOffset);
-      append64(output, driver.width);
+      // Driver planes remain four-state even when the logical destination is
+      // two-state, so Z release and contention are never inferred from a
+      // previously published net value.
+      append32(output,
+               1u | (static_cast<uint32_t>(driver.resolution) << 1));
+      append64(output, driver.offset + driver.drivenLow);
+      append64(output, driver.netOffset + driver.drivenLow);
+      append64(output, driver.drivenWidth);
+    }
+    alignTo(output, 8);
+    uint64_t connectivityOffset = output.size();
+    for (const StateLayout::Connection &connection : state.connections) {
+      append64(output, connection.lhsOffset);
+      append64(output, connection.rhsOffset);
+      append64(output, connection.width);
+      output.push_back(static_cast<uint8_t>(connection.lhsResolution));
+      output.push_back(static_cast<uint8_t>(connection.rhsResolution));
+      output.push_back(connection.rhsReversed ? 1 : 0);
+      output.push_back(0);
+      append32(output, 0);
     }
 
     write64(output, 24, output.size());
@@ -1962,7 +2103,9 @@ private:
     write64(output, 176,
             captureRecords.size() + state.netLayouts.size() +
                 state.driverLayouts.size());
-    write64(output, 184, 0);
+    write64(output, 184, connectivityOffset);
+    write64(output, 192, state.connections.size());
+    write64(output, 200, 0);
     write64(output, 32, checksum(output, 32));
     return output;
   }

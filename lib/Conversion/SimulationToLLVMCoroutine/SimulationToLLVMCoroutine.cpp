@@ -2,6 +2,7 @@
 
 #include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
 
+#include "obelisk/Analysis/NetConnectivityAnalysis.h"
 #include "obelisk/Conversion/RuntimeToLLVM.h"
 #include "obelisk/Conversion/SimulationToRuntime.h"
 #include "obelisk/Conversion/SimulationToStandard.h"
@@ -2385,6 +2386,7 @@ struct NativeStateLayout {
     uint64_t offset;
     unsigned width;
     bool fourState;
+    sim::NetResolutionKind resolution;
   };
   struct Driver {
     uint64_t id;
@@ -2392,6 +2394,8 @@ struct NativeStateLayout {
     uint32_t handleID;
     uint64_t offset;
     unsigned width;
+    unsigned drivenLow;
+    unsigned drivenWidth;
   };
   DenseMap<uint64_t, uint64_t> storage;
   DenseMap<uint64_t, uint64_t> nets;
@@ -2399,6 +2403,10 @@ struct NativeStateLayout {
   SmallVector<Bound> bounds;
   SmallVector<Net> netLayouts;
   SmallVector<Driver> driverLayouts;
+  DenseMap<std::pair<uint64_t, uint64_t>,
+           std::pair<uint64_t, uint64_t>> connectivityCanonical;
+  DenseMap<std::pair<uint64_t, uint64_t>,
+           SmallVector<::obelisk::analysis::NetBit>> connectivityComponents;
   uint64_t bitCount = 0;
 };
 
@@ -2439,7 +2447,8 @@ FailureOr<NativeStateLayout> buildNativeStateLayout(ModuleOp module) {
       layout.netLayouts.push_back({declaration.getId(), nextHandleID - 1,
                                    offset,
                                    *nativeStateWidth(declaration.getType()),
-                                   containsLogic(declaration.getType())});
+                                   containsLogic(declaration.getType()),
+                                   declaration.getResolutionKind()});
     } else if (auto declaration = dyn_cast<sim::SimDriverDeclOp>(operation)) {
       auto found = layout.nets.find(declaration.getNetId());
       if (found == layout.nets.end()) {
@@ -2453,15 +2462,79 @@ FailureOr<NativeStateLayout> buildNativeStateLayout(ModuleOp module) {
         declaration.emitError("native driver must have a fixed packed width");
         return WalkResult::interrupt();
       }
+      uint64_t drivenLow = declaration.getDrivenLowAttr()
+                               ? declaration.getDrivenLowAttr()
+                                     .getValue()
+                                     .getZExtValue()
+                               : 0;
+      uint64_t drivenWidth = declaration.getDrivenWidthAttr()
+                                 ? declaration.getDrivenWidthAttr()
+                                       .getValue()
+                                       .getZExtValue()
+                                 : *width;
+      if (drivenLow > *width || drivenWidth > *width - drivenLow) {
+        declaration.emitError("native driver has an invalid driven range");
+        return WalkResult::interrupt();
+      }
       layout.drivers[declaration.getId()] = handle;
       layout.driverLayouts.push_back(
           {declaration.getId(), declaration.getNetId(), nextHandleID - 1,
-           offset, *width});
+           offset, *width, static_cast<unsigned>(drivenLow),
+           static_cast<unsigned>(drivenWidth)});
     }
     return WalkResult::advance();
   });
   if (walked.wasInterrupted())
     return failure();
+  SmallVector<sim::SimDesignOp> designs;
+  module.walk([&](sim::SimDesignOp design) { designs.push_back(design); });
+  if (designs.size() > 1) {
+    module.emitError("native lowering requires at most one simulation design");
+    return failure();
+  }
+  if (!designs.empty()) {
+    ::obelisk::analysis::NetConnectivityAnalysis connectivity(designs.front());
+    for (const NativeStateLayout::Net &net : layout.netLayouts) {
+      for (uint64_t bit = 0; bit != net.width; ++bit) {
+        ArrayRef<::obelisk::analysis::NetBit> component =
+            connectivity.getComponent({net.id, bit});
+        if (component.size() <= 1)
+          continue;
+        std::pair<uint64_t, uint64_t> key{net.id, bit};
+        std::pair<uint64_t, uint64_t> canonical{component.front().net,
+                                                component.front().offset};
+        layout.connectivityCanonical[key] = canonical;
+        if (key == canonical)
+          llvm::append_range(layout.connectivityComponents[canonical],
+                             component);
+      }
+    }
+
+    DenseMap<std::pair<uint64_t, uint64_t>, uint64_t> uwireDrivers;
+    for (const NativeStateLayout::Driver &driver : layout.driverLayouts) {
+      auto target = llvm::find_if(layout.netLayouts, [&](const auto &net) {
+        return net.id == driver.netId;
+      });
+      if (target == layout.netLayouts.end() ||
+          target->resolution != sim::NetResolutionKind::UWire)
+        continue;
+      for (uint64_t bit = driver.drivenLow;
+           bit != uint64_t{driver.drivenLow} + driver.drivenWidth; ++bit) {
+        ArrayRef<::obelisk::analysis::NetBit> component =
+            connectivity.getComponent({driver.netId, bit});
+        ::obelisk::analysis::NetBit canonical =
+            component.empty()
+                ? ::obelisk::analysis::NetBit{driver.netId, bit}
+                : component.front();
+        if (++uwireDrivers[{canonical.net, canonical.offset}] > 1) {
+          module.emitError()
+              << "uwire connectivity component " << canonical.net << "["
+              << canonical.offset << "] has more than one driver";
+          return failure();
+        }
+      }
+    }
+  }
   if (layout.bitCount >= OBELISK_RT_STABLE_HANDLE_STATIC_TAG) {
     module.emitError("native static state exceeds the handle address space");
     return failure();
@@ -2867,108 +2940,172 @@ public:
     storeStatePlane(rewriter, op.getLoc(), adaptor.getDriver().front(),
                     adaptor.getValue().front(), "__obelisk_state_value",
                     layout.bitCount);
-    if (adaptor.getValue().size() == 2)
-      storeStatePlane(rewriter, op.getLoc(), adaptor.getDriver().front(),
-                      adaptor.getValue()[1], "__obelisk_state_unknown",
-                      layout.bitCount);
-    Value changed =
-        arith::ConstantOp::create(rewriter, op.getLoc(), rewriter.getI1Type(),
-                                  rewriter.getBoolAttr(false));
     IntegerType i1 = rewriter.getI1Type();
     auto boolean = [&](bool value) {
       return arith::ConstantOp::create(rewriter, op.getLoc(), i1,
                                        rewriter.getBoolAttr(value));
     };
+    if (adaptor.getValue().size() == 2) {
+      storeStatePlane(rewriter, op.getLoc(), adaptor.getDriver().front(),
+                      adaptor.getValue()[1], "__obelisk_state_unknown",
+                      layout.bitCount);
+    } else {
+      storeStatePlane(rewriter, op.getLoc(), adaptor.getDriver().front(),
+                      boolean(false), "__obelisk_state_unknown",
+                      layout.bitCount);
+    }
+    Value changed =
+        arith::ConstantOp::create(rewriter, op.getLoc(), rewriter.getI1Type(),
+                                  rewriter.getBoolAttr(false));
     std::optional<uint64_t> affectedNet;
     if (auto netID = op->getAttrOfType<IntegerAttr>("obelisk.native.net_id"))
       affectedNet = netID.getInt();
+    struct Publication {
+      Value handle;
+      Value oldValue;
+      Value oldUnknown;
+      Value value;
+      Value unknown;
+      bool fourState;
+    };
+    SmallVector<Publication> publications;
+    SmallVector<std::pair<uint64_t, uint64_t>> resolvedComponents;
     for (const NativeStateLayout::Net &net : layout.netLayouts) {
       if (affectedNet && net.id != *affectedNet)
         continue;
-      SmallVector<const NativeStateLayout::Driver *> netDrivers;
-      for (const NativeStateLayout::Driver &driver : layout.driverLayouts)
-        if (driver.netId == net.id)
-          netDrivers.push_back(&driver);
-      if (netDrivers.empty())
-        continue;
       for (unsigned bit = 0; bit < net.width; ++bit) {
-        Value resolvedValue = boolean(net.fourState);
-        Value resolvedUnknown = boolean(net.fourState);
-        for (const NativeStateLayout::Driver *driver : netDrivers) {
-          Value handle = arith::ConstantOp::create(
+        std::pair<uint64_t, uint64_t> logical{net.id, bit};
+        auto foundCanonical = layout.connectivityCanonical.find(logical);
+        std::pair<uint64_t, uint64_t> canonical =
+            foundCanonical == layout.connectivityCanonical.end()
+                ? logical
+                : foundCanonical->second;
+        auto foundComponent = layout.connectivityComponents.find(canonical);
+        SmallVector<::obelisk::analysis::NetBit> fallback;
+        ArrayRef<::obelisk::analysis::NetBit> component;
+        if (foundComponent == layout.connectivityComponents.end() ||
+            foundComponent->second.empty()) {
+          fallback.push_back({net.id, bit});
+          component = fallback;
+        } else {
+          component = foundComponent->second;
+        }
+        if (llvm::is_contained(resolvedComponents, canonical))
+          continue;
+        resolvedComponents.push_back(canonical);
+
+        Value resolvedValue = boolean(true);
+        Value resolvedUnknown = boolean(true);
+        for (const NativeStateLayout::Driver &driver : layout.driverLayouts) {
+          for (const ::obelisk::analysis::NetBit &member : component) {
+            if (member.net != driver.netId ||
+                member.offset < driver.drivenLow ||
+                member.offset - driver.drivenLow >= driver.drivenWidth ||
+                member.offset >= driver.width)
+              continue;
+            // Every bit is an independent driver contribution. A topology
+            // component may contain several bits from the same vector driver
+            // (for example, an inout concatenation that shorts them).
+            Value handle = arith::ConstantOp::create(
+                rewriter, op.getLoc(), rewriter.getI64Type(),
+                rewriter.getI64IntegerAttr(encodeNativeStaticHandle(
+                    driver.handleID, static_cast<int32_t>(member.offset))));
+            Value driverValue = loadStatePlane(
+                rewriter, op.getLoc(), handle, i1, "__obelisk_state_value",
+                false, layout.bitCount);
+            Value driverUnknown = loadStatePlane(
+                rewriter, op.getLoc(), handle, i1, "__obelisk_state_unknown",
+                true, layout.bitCount);
+            Value currentZ = arith::AndIOp::create(
+                rewriter, op.getLoc(), resolvedUnknown, resolvedValue);
+            Value driverZ = arith::AndIOp::create(
+                rewriter, op.getLoc(), driverUnknown, driverValue);
+            Value currentX = arith::AndIOp::create(
+                rewriter, op.getLoc(), resolvedUnknown,
+                arith::XOrIOp::create(rewriter, op.getLoc(), resolvedValue,
+                                      boolean(true)));
+            Value driverX = arith::AndIOp::create(
+                rewriter, op.getLoc(), driverUnknown,
+                arith::XOrIOp::create(rewriter, op.getLoc(), driverValue,
+                                      boolean(true)));
+            Value conflict = arith::OrIOp::create(
+                rewriter, op.getLoc(), currentX,
+                arith::OrIOp::create(
+                    rewriter, op.getLoc(), driverX,
+                    arith::CmpIOp::create(
+                        rewriter, op.getLoc(), arith::CmpIPredicate::ne,
+                        resolvedValue, driverValue)));
+            Value mergedValue = arith::SelectOp::create(
+                rewriter, op.getLoc(), conflict, boolean(false),
+                resolvedValue);
+            Value mergedUnknown = arith::SelectOp::create(
+                rewriter, op.getLoc(), conflict, boolean(true),
+                boolean(false));
+            Value withoutCurrentZ = arith::SelectOp::create(
+                rewriter, op.getLoc(), driverZ, resolvedValue, mergedValue);
+            Value withoutCurrentZUnknown = arith::SelectOp::create(
+                rewriter, op.getLoc(), driverZ, resolvedUnknown,
+                mergedUnknown);
+            resolvedValue = arith::SelectOp::create(
+                rewriter, op.getLoc(), currentZ, driverValue,
+                withoutCurrentZ);
+            resolvedUnknown = arith::SelectOp::create(
+                rewriter, op.getLoc(), currentZ, driverUnknown,
+                withoutCurrentZUnknown);
+          }
+        }
+        for (const ::obelisk::analysis::NetBit &member : component) {
+          auto memberNet = llvm::find_if(
+              layout.netLayouts,
+              [&](const auto &candidate) { return candidate.id == member.net; });
+          if (memberNet == layout.netLayouts.end() ||
+              member.offset >= memberNet->width)
+            return failure();
+          Value netHandle = arith::ConstantOp::create(
               rewriter, op.getLoc(), rewriter.getI64Type(),
               rewriter.getI64IntegerAttr(encodeNativeStaticHandle(
-                  driver->handleID, static_cast<int32_t>(bit))));
-          Value driverValue = loadStatePlane(rewriter, op.getLoc(), handle, i1,
-                                             "__obelisk_state_value", false,
-                                             layout.bitCount);
-          if (!net.fourState) {
-            resolvedValue = driverValue;
-            continue;
-          }
-          Value driverUnknown =
-              loadStatePlane(rewriter, op.getLoc(), handle, i1,
-                             "__obelisk_state_unknown", true,
-                             layout.bitCount);
-          Value currentZ = arith::AndIOp::create(
-              rewriter, op.getLoc(), resolvedUnknown, resolvedValue);
-          Value driverZ = arith::AndIOp::create(rewriter, op.getLoc(),
-                                                driverUnknown, driverValue);
-          Value currentX = arith::AndIOp::create(
-              rewriter, op.getLoc(), resolvedUnknown,
-              arith::XOrIOp::create(rewriter, op.getLoc(), resolvedValue,
-                                    boolean(true)));
-          Value driverX = arith::AndIOp::create(
-              rewriter, op.getLoc(), driverUnknown,
-              arith::XOrIOp::create(rewriter, op.getLoc(), driverValue,
-                                    boolean(true)));
-          Value conflict = arith::OrIOp::create(
-              rewriter, op.getLoc(), currentX,
-              arith::OrIOp::create(
-                  rewriter, op.getLoc(), driverX,
-                  arith::CmpIOp::create(rewriter, op.getLoc(),
-                                        arith::CmpIPredicate::ne, resolvedValue,
-                                        driverValue)));
-          Value mergedValue = arith::SelectOp::create(
-              rewriter, op.getLoc(), conflict, boolean(false), resolvedValue);
-          Value mergedUnknown = arith::SelectOp::create(
-              rewriter, op.getLoc(), conflict, boolean(true), boolean(false));
-          Value withoutCurrentZ = arith::SelectOp::create(
-              rewriter, op.getLoc(), driverZ, resolvedValue, mergedValue);
-          Value withoutCurrentZUnknown = arith::SelectOp::create(
-              rewriter, op.getLoc(), driverZ, resolvedUnknown, mergedUnknown);
-          resolvedValue = arith::SelectOp::create(
-              rewriter, op.getLoc(), currentZ, driverValue, withoutCurrentZ);
-          resolvedUnknown =
-              arith::SelectOp::create(rewriter, op.getLoc(), currentZ,
-                                      driverUnknown, withoutCurrentZUnknown);
-        }
-        Value netHandle = arith::ConstantOp::create(
-            rewriter, op.getLoc(), rewriter.getI64Type(),
-            rewriter.getI64IntegerAttr(encodeNativeStaticHandle(
-                net.handleID, static_cast<int32_t>(bit))));
-        Value oldResolvedValue = loadStatePlane(
-            rewriter, op.getLoc(), netHandle, i1, "__obelisk_state_value",
-            false, layout.bitCount);
-        Value oldResolvedUnknown;
-        if (net.fourState)
-          oldResolvedUnknown = loadStatePlane(
+                  memberNet->handleID,
+                  static_cast<int32_t>(member.offset))));
+          Value oldResolvedValue = loadStatePlane(
+              rewriter, op.getLoc(), netHandle, i1, "__obelisk_state_value",
+              false, layout.bitCount);
+          Value oldResolvedUnknown = loadStatePlane(
               rewriter, op.getLoc(), netHandle, i1,
               "__obelisk_state_unknown", true, layout.bitCount);
-        changed = arith::OrIOp::create(
-            rewriter, op.getLoc(), changed,
-            storeStatePlane(rewriter, op.getLoc(), netHandle, resolvedValue,
-                            "__obelisk_state_value", layout.bitCount));
-        if (net.fourState)
-          changed = arith::OrIOp::create(
-              rewriter, op.getLoc(), changed,
-              storeStatePlane(rewriter, op.getLoc(), netHandle, resolvedUnknown,
-                              "__obelisk_state_unknown", layout.bitCount));
-        notifySignal(rewriter, op.getLoc(), netHandle, 1, oldResolvedValue,
-                     oldResolvedUnknown, resolvedValue,
-                     net.fourState ? resolvedUnknown : Value{});
+          Value publishValue = resolvedValue;
+          Value publishUnknown = resolvedUnknown;
+          if (!memberNet->fourState) {
+            publishValue = arith::SelectOp::create(
+                rewriter, op.getLoc(), resolvedUnknown, boolean(false),
+                resolvedValue);
+            publishUnknown = boolean(false);
+          }
+          publications.push_back({netHandle, oldResolvedValue,
+                                  oldResolvedUnknown, publishValue,
+                                  publishUnknown, memberNet->fourState});
+        }
       }
     }
+    // Publish every component affected by this vector drive before emitting
+    // any transition notification. This matches bytecode atomic publication
+    // and prevents observers from seeing a partially updated topology.
+    for (const Publication &publication : publications) {
+      changed = arith::OrIOp::create(
+          rewriter, op.getLoc(), changed,
+          storeStatePlane(rewriter, op.getLoc(), publication.handle,
+                          publication.value, "__obelisk_state_value",
+                          layout.bitCount));
+      changed = arith::OrIOp::create(
+          rewriter, op.getLoc(), changed,
+          storeStatePlane(rewriter, op.getLoc(), publication.handle,
+                          publication.unknown, "__obelisk_state_unknown",
+                          layout.bitCount));
+    }
+    for (const Publication &publication : publications)
+      notifySignal(rewriter, op.getLoc(), publication.handle, 1,
+                   publication.oldValue, publication.oldUnknown,
+                   publication.value,
+                   publication.fourState ? publication.unknown : Value{});
     (void)changed;
     rewriter.eraseOp(op);
     return success();
@@ -4267,7 +4404,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     for (Operation *operation : nested) {
       if (isa<sim::SimScopeDeclOp, sim::SimCodeUnitDeclOp,
               sim::SimStorageDeclOp, sim::SimNetDeclOp,
-              sim::SimDriverDeclOp>(operation)) {
+              sim::SimDriverDeclOp, sim::SimNetConnectDeclOp>(operation)) {
         operation->erase();
         continue;
       }

@@ -130,6 +130,10 @@ DescriptorProvenanceMap deriveDescriptorProvenance(sim::SimFuncOp function) {
         index, "obelisk_sim.capture_kind");
     auto descriptor = function.getArgAttrOfType<IntegerAttr>(
         index, "obelisk_sim.descriptor_id");
+    auto descriptorLow = function.getArgAttrOfType<IntegerAttr>(
+        index, "obelisk_sim.descriptor_low");
+    auto descriptorRootType = function.getArgAttrOfType<TypeAttr>(
+        index, "obelisk_sim.descriptor_root_type");
     sim::ComputeResourceKind kind = getHandleResourceKind(argument.getType());
     auto width = getPackedValueWidth(argument.getType());
     if (kind == sim::ComputeResourceKind::Unknown || !width)
@@ -138,6 +142,17 @@ DescriptorProvenanceMap deriveDescriptorProvenance(sim::SimFuncOp function) {
     provenance.resource = kind;
     provenance.width = *width;
     provenance.rootWidth = *width;
+    if (descriptorRootType) {
+      std::optional<uint64_t> rootWidth =
+          sim::getProvenanceSpan(descriptorRootType.getValue());
+      if (!rootWidth || !descriptorLow || descriptorLow.getValue().isNegative())
+        continue;
+      provenance.rootWidth = *rootWidth;
+      provenance.low = descriptorLow.getValue().getZExtValue();
+      if (provenance.low > provenance.rootWidth ||
+          provenance.width > provenance.rootWidth - provenance.low)
+        continue;
+    }
     if (capture && capture.getValue() == sim::CaptureKind::Formal) {
       provenance.formal = index;
     } else if (descriptor) {

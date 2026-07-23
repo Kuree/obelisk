@@ -128,6 +128,10 @@ static_assert(haveSameEncoding(slangir::NetKind::Unknown,
                                ir::SVNetKind::Unknown) &&
               haveSameEncoding(slangir::NetKind::UserDefined,
                                ir::SVNetKind::UserDefined));
+static_assert(haveSameEncoding(slangir::PortConnectionKind::Ordered,
+                               ir::SVPortConnectionKind::Ordered) &&
+              haveSameEncoding(slangir::PortConnectionKind::Default,
+                               ir::SVPortConnectionKind::Default));
 static_assert(haveSameEncoding(slangir::AssertionUnaryOperator::Not,
                                ir::SVAssertionUnaryOperator::Not) &&
               haveSameEncoding(slangir::AssertionUnaryOperator::SEventually,
@@ -375,6 +379,39 @@ public:
   }
 };
 
+class PortConnectionConversion
+    : public OpConversionPattern<slangir::PortConnectionOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(slangir::PortConnectionOp op, OpAdaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    const auto &converter =
+        *static_cast<const SlangTypeConverter *>(getTypeConverter());
+    NamedAttrList attrs;
+    for (NamedAttribute attr : op->getAttrs()) {
+      FailureOr<Attribute> converted =
+          converter.convertAttribute(attr.getValue());
+      if (failed(converted))
+        return rewriter.notifyMatchFailure(op,
+                                           "attribute type conversion failed");
+      attrs.set(attr.getName(), *converted);
+    }
+
+    auto target = ir::SVPortConnectionOp::create(
+        rewriter, op.getLoc(), TypeRange{}, ValueRange{}, attrs.getAttrs());
+    if (!op.getInternal().empty())
+      rewriter.inlineRegionBefore(op.getInternal(), target.getInternal(),
+                                  target.getInternal().end());
+    if (!op.getActual().empty())
+      rewriter.inlineRegionBefore(op.getActual(), target.getActual(),
+                                  target.getActual().end());
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 class ConvertSlangToObeliskPass
     : public impl::ConvertSlangToObeliskPassBase<ConvertSlangToObeliskPass> {
 public:
@@ -391,6 +428,7 @@ public:
         [&](Operation *op) { return converter.isRecursivelyLegal(op); });
 
     RewritePatternSet patterns(&context);
+    patterns.add<PortConnectionConversion>(converter, &context);
 #define SLANG_AST_NODE(Category, Kind, CppType)                                \
   patterns.add<                                                                \
       ConcreteASTNodeConversion<slangir::CppType##Op, ir::SV##CppType##Op>>(   \

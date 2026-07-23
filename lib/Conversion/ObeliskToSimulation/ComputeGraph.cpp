@@ -9,6 +9,7 @@
 
 #include "ComputeGraph.h"
 
+#include "obelisk/Analysis/NetConnectivityAnalysis.h"
 #include "obelisk/Analysis/StateDomainAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
@@ -392,6 +393,9 @@ ComputeEffect substituteEffect(const ComputeEffect &effect, sim::SimCallOp call,
 }
 
 struct ProgramAnalysis {
+  explicit ProgramAnalysis(sim::SimDesignOp design) : connectivity(design) {}
+
+  ::obelisk::analysis::NetConnectivityAnalysis connectivity;
   SmallVector<FunctionInfo, 0> functions;
   llvm::StringMap<unsigned> functionIndex;
   DenseMap<Operation *, unsigned> indexForFunction;
@@ -399,10 +403,49 @@ struct ProgramAnalysis {
   const FunctionInfo &operator[](sim::SimFuncOp function) const {
     return functions[indexForFunction.lookup(function.getOperation())];
   }
+
+  void expandConnectivity(SmallVectorImpl<ComputeEffect> &effects) const {
+    SmallVector<ComputeEffect> expanded;
+    for (const ComputeEffect &effect : effects) {
+      if (effect.target.resource != sim::ComputeResourceKind::Net ||
+          !effect.target.descriptor || effect.target.width == 0) {
+        expanded.push_back(effect);
+        continue;
+      }
+      uint64_t begin = effect.target.dynamic ? 0 : effect.target.low;
+      uint64_t width =
+          effect.target.dynamic ? effect.target.rootWidth : effect.target.width;
+      bool found = false;
+      for (uint64_t bit = 0; bit != width; ++bit) {
+        ArrayRef<::obelisk::analysis::NetBit> component = connectivity.getComponent(
+            {*effect.target.descriptor, begin + bit});
+        for (::obelisk::analysis::NetBit member : component) {
+          std::optional<uint64_t> rootWidth =
+              connectivity.getNetWidth(member.net);
+          if (!rootWidth)
+            continue;
+          ComputeEffect alias = effect;
+          alias.target.descriptor = member.net;
+          alias.target.formal.reset();
+          alias.target.low = member.offset;
+          alias.target.width = 1;
+          alias.target.rootWidth = *rootWidth;
+          alias.target.dynamic = false;
+          expanded.push_back(alias);
+          found = true;
+        }
+      }
+      if (!found)
+        expanded.push_back(effect);
+    }
+    effects.assign(expanded.begin(), expanded.end());
+    normalizeEffects(effects);
+  }
 };
 
 ProgramAnalysis analyzeProgram(sim::SimDesignOp design) {
-  ProgramAnalysis analysis;
+  ProgramAnalysis analysis(design);
+
   SmallVector<sim::SimFuncOp> functions(
       design.getBody().front().getOps<sim::SimFuncOp>());
   llvm::sort(functions, [](sim::SimFuncOp lhs, sim::SimFuncOp rhs) {
@@ -422,6 +465,7 @@ ProgramAnalysis analyzeProgram(sim::SimDesignOp design) {
       info.provenance =
           ::obelisk::analysis::deriveDescriptorProvenance(function);
       info.baseEffects = collectDirectEffects(info);
+      analysis.expandConnectivity(info.baseEffects);
     }
     info.summary = info.baseEffects;
     function.walk([&](sim::SimCallOp call) { info.calls.push_back(call); });
@@ -485,6 +529,7 @@ ProgramAnalysis analyzeProgram(sim::SimDesignOp design) {
         llvm::append_range(nextSpawns,
                            analysis.functions[callee->second].spawns);
       }
+      analysis.expandConnectivity(nextEffects);
       normalizeEffects(nextEffects);
       llvm::sort(nextSpawns);
       nextSpawns.erase(std::unique(nextSpawns.begin(), nextSpawns.end()),
@@ -519,6 +564,7 @@ collectFragmentEffects(const ProgramAnalysis &analysis,
          analysis.functions[callee->second].summary)
       effects.push_back(substituteEffect(effect, call, info));
   }
+  analysis.expandConnectivity(effects);
   normalizeEffects(effects);
   return effects;
 }

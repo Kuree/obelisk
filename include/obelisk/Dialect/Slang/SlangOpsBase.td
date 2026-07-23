@@ -239,6 +239,55 @@ class SlangInstanceASTNodeOp<string mnemonic>
         OptionalAttr<BoolAttr>:$is_uninstantiated
       )>;
 
+def PortConnectionOp : Op<SlangDialect, "port.connection", [
+    NoTerminator, SlangSemanticASTNode
+  ]> {
+  let summary = "one resolved scalar elaborated port connection";
+  let description = [{
+    Records Slang's resolved formal association independently of source child
+    order. `internal` contains the instance-side endpoint expression and
+    `actual` contains the fully converted parent-side expression. Either
+    region can be empty for interface and open associations.
+  }];
+  let arguments = (ins
+    I64Attr:$node_id,
+    SymbolRefAttr:$formal_symbol,
+    StrAttr:$formal_path,
+    I64Attr:$formal_ordinal,
+    OptionalAttr<StrAttr>:$formal_name,
+    SlangArgumentDirection:$direction,
+    TypeAttr:$formal_type,
+    BoolAttr:$is_net,
+    BoolAttr:$is_ansi,
+    BoolAttr:$actual_is_constant,
+    SlangPortConnectionKind:$provenance,
+    OptionalAttr<SymbolRefAttr>:$internal_symbol,
+    OptionalAttr<StrAttr>:$internal_path,
+    OptionalAttr<SymbolRefAttr>:$interface_instance_symbol,
+    OptionalAttr<StrAttr>:$interface_instance_path,
+    OptionalAttr<DenseI64ArrayAttr>:$interface_shape,
+    OptionalAttr<StrAttr>:$selected_modport,
+    OptionalAttr<StrAttr>:$unsupported_strength,
+    OptionalAttr<StrAttr>:$unsupported_delay
+  );
+  let regions = (region AnyRegion:$internal, AnyRegion:$actual);
+  let assemblyFormat = "attr-dict-with-keyword $internal $actual";
+}
+
+class SlangContinuousAssignASTNodeOp<string mnemonic>
+    : SlangSymbolASTNodeOp<mnemonic, [], (ins
+        OptionalAttr<StrAttr>:$unsupported_strength,
+        OptionalAttr<StrAttr>:$unsupported_delay
+      )>;
+
+class SlangNetSymbolASTNodeOp<string mnemonic>
+    : SlangSymbolASTNodeOp<mnemonic, [], (ins
+        SlangNetKind:$net_kind,
+        BoolAttr:$is_implicit,
+        OptionalAttr<StrAttr>:$unsupported_strength,
+        OptionalAttr<StrAttr>:$unsupported_delay
+      )>;
+
 // slang data types are Symbols. Aggregate, class, and covergroup types are
 // additionally Scopes and therefore use the scope form.
 class SlangTypeASTNodeOp<string mnemonic, list<Trait> traits = [],

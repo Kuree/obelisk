@@ -642,6 +642,24 @@ def ObeliskSVNetKind : I32EnumAttr<"SVNetKind",
   let cppNamespace = "::obelisk::ir";
 }
 
+def ObeliskSVPortConnOrdered : I32EnumAttrCase<"Ordered", 0, "ordered">;
+def ObeliskSVPortConnNamed : I32EnumAttrCase<"Named", 1, "named">;
+def ObeliskSVPortConnImplicit : I32EnumAttrCase<"Implicit", 2, "implicit">;
+def ObeliskSVPortConnWildcard : I32EnumAttrCase<"Wildcard", 3, "wildcard">;
+def ObeliskSVPortConnOmitted : I32EnumAttrCase<"Omitted", 4, "omitted">;
+def ObeliskSVPortConnExplicitOpen
+    : I32EnumAttrCase<"ExplicitOpen", 5, "explicit_open">;
+def ObeliskSVPortConnDefault : I32EnumAttrCase<"Default", 6, "default">;
+def ObeliskSVPortConnectionKind : I32EnumAttr<"SVPortConnectionKind",
+    "elaborated port association provenance", [
+  ObeliskSVPortConnOrdered, ObeliskSVPortConnNamed,
+  ObeliskSVPortConnImplicit, ObeliskSVPortConnWildcard,
+  ObeliskSVPortConnOmitted, ObeliskSVPortConnExplicitOpen,
+  ObeliskSVPortConnDefault
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
 def ObeliskSVAssertUnary_Not : I32EnumAttrCase<"Not", 0, "not">;
 def ObeliskSVAssertUnary_NextTime : I32EnumAttrCase<"NextTime", 1, "nexttime">;
 def ObeliskSVAssertUnary_SNextTime : I32EnumAttrCase<"SNextTime", 2, "s_nexttime">;
