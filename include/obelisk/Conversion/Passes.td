@@ -82,6 +82,27 @@ def ObeliskSimEliminateDeadCapturesPass
   ];
 }
 
+def ObeliskSimEliminateDeadBoundariesPass
+    : Pass<"obelisk-sim-eliminate-dead-boundaries",
+           "obelisk::sim::SimDesignOp"> {
+  let summary = "Remove dead private simulation function boundaries and calls";
+  let description = [{
+    Solves whole-design demand across direct function arguments, results,
+    calls, returns, and process spawns. Dead private ABI positions are removed
+    in lockstep at every boundary, and calls to discardable zero-time
+    functions are erased when none of their results are demanded. Context
+    arguments and externally observable or otherwise opaque ABIs are retained
+    conservatively.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect"
+  ];
+  let options = [
+    Option<"missedRemarks", "missed-remarks", "bool", "false",
+           "Emit developer remarks for conservatively pinned ABIs">
+  ];
+}
+
 def ObeliskSimInlinePass
     : Pass<"obelisk-sim-inline", "obelisk::sim::SimDesignOp"> {
   let summary = "Inline profitable zero-time simulation calls";

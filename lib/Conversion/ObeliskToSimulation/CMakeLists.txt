@@ -1,6 +1,7 @@
 add_mlir_library(ObeliskToSimulation
   BuildComputeGraph.cpp
   ComputeGraph.cpp
+  EliminateDeadBoundaries.cpp
   EliminateDeadCaptures.cpp
   Finalize.cpp
   Inline.cpp

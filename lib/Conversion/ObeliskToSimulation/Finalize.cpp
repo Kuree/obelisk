@@ -199,7 +199,7 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
     functionManager.addPass(createCSEPass());
   }
   if (optLevel > 0) {
-    designManager.addPass(createObeliskSimEliminateDeadCapturesPass());
+    designManager.addPass(createObeliskSimEliminateDeadBoundariesPass());
     OpPassManager &functionManager = designManager.nest<sim::SimFuncOp>();
     functionManager.addPass(createCanonicalizerPass());
     functionManager.addPass(createCSEPass());
