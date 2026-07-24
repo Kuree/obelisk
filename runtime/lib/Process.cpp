@@ -2185,6 +2185,56 @@ extern "C" void obelisk_rt_v1_scheduler_notify(obelisk_rt_context *context) {
   }
 }
 
+extern "C" obelisk_rt_status
+obelisk_rt_v1_scheduler_finish(obelisk_rt_context *context,
+                               uint32_t verbosity) {
+  if (!context)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContextTransaction transaction(context);
+  try {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    context->schedulerFinishRequested = true;
+    context->schedulerFinishVerbosity = verbosity;
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_INVALID_ARGUMENT;
+  }
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_scheduler_fatal(obelisk_rt_context *context,
+                              uint32_t verbosity) {
+  if (!context)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContextTransaction transaction(context);
+  try {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    context->schedulerFinishRequested = true;
+    context->schedulerFinishVerbosity = verbosity;
+    context->schedulerFinishStatus = OBELISK_RT_FATAL;
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_INVALID_ARGUMENT;
+  }
+}
+
+extern "C" uint32_t
+obelisk_rt_v1_scheduler_termination_requested(obelisk_rt_context *context) {
+  if (!context)
+    return 0;
+  ContextTransaction transaction(context);
+  try {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    return context->schedulerFinishRequested ? 1u : 0u;
+  } catch (...) {
+    return 0;
+  }
+}
+
 obelisk_rt_status runScheduler(obelisk_rt_context *context) {
   if (!context)
     return OBELISK_RT_INVALID_ARGUMENT;
@@ -2195,6 +2245,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         return OBELISK_RT_OK;
       if (context->schedulerStatus != OBELISK_RT_OK)
         return context->schedulerStatus;
+      if (context->schedulerFinishRequested)
+        context->schedulerRunningFinals = true;
     }
     uint32_t nativeRegion = UINT32_MAX;
     uint32_t nativeRank = UINT32_MAX;
@@ -2608,7 +2660,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
             considerTime(candidate.wakeTime);
         for (const ScheduledDesignTask &candidate :
              context->scheduledDesignTasks)
-          if (!candidate.terminated && candidate.started &&
+          if (!candidate.terminated && candidate.phase == 0 &&
+              candidate.started &&
               candidate.suspendKind == OBELISK_RT_SUSPEND_DELAY)
             considerTime(candidate.wakeTime);
         for (const ScheduledDesignNBA &update : context->scheduledDesignNBAs)
@@ -2628,14 +2681,19 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         bool hasFinal = false;
         for (const ScheduledProcess &candidate : context->scheduledProcesses)
           hasFinal |= candidate.instance && candidate.phase == 1;
+        for (const ScheduledDesignTask &candidate :
+             context->scheduledDesignTasks)
+          hasFinal |= !candidate.terminated && candidate.phase == 1;
         if (hasFinal) {
           context->schedulerRunningFinals = true;
           continue;
         }
       }
     }
-    if (!selected)
-      return OBELISK_RT_OK;
+    if (!selected) {
+      std::lock_guard<std::recursive_mutex> lock(context->mutex);
+      return context->schedulerFinishStatus;
+    }
 
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
@@ -2657,6 +2715,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
                  : OBELISK_RT_TIER_BYTECODE;
     obelisk_rt_status status = obelisk_rt_v1_process_instance_execute(
         selected, context, tier, &action);
+    bool terminationRequested = false;
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
       if (selectedIndex < context->scheduledProcesses.size() &&
@@ -2666,8 +2725,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
       context->activeControls.clear();
       context->activeNativeProcess = nullptr;
       context->activeLogicalProcessToken = 0;
+      terminationRequested = context->schedulerFinishRequested;
     }
-    if (status != OBELISK_RT_OK)
+    if (!terminationRequested && status != OBELISK_RT_OK)
       return status;
     auto destroyPendingCallee =
         [](obelisk_rt_process_instance_v1 *instance) noexcept {
@@ -2677,7 +2737,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
     std::unique_ptr<obelisk_rt_process_instance_v1,
                     decltype(destroyPendingCallee)>
         pendingCallee(nullptr, destroyPendingCallee);
-    if (action.kind == OBELISK_RT_FRAGMENT_TASK_CALL) {
+    if (status == OBELISK_RT_OK &&
+        action.kind == OBELISK_RT_FRAGMENT_TASK_CALL) {
       auto *callee = reinterpret_cast<obelisk_rt_process_instance_v1 *>(
           static_cast<uintptr_t>(action.payload));
       if (!callee || callee == selected)
@@ -2690,7 +2751,11 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
            callee->ownership_context != context))
         return OBELISK_RT_INVALID_LIFECYCLE;
     }
+    if (terminationRequested)
+      action = {OBELISK_RT_FRAGMENT_TERMINATE, OBELISK_RT_SUSPEND_NONE,
+                0, 0, 0, 0};
     bool destroy = false;
+    std::vector<obelisk_rt_process_instance_v1 *> terminatedCallers;
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
       if (selectedIndex >= context->scheduledProcesses.size() ||
@@ -2698,7 +2763,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         return OBELISK_RT_INVALID_LIFECYCLE;
       ScheduledProcess &scheduled = context->scheduledProcesses[selectedIndex];
       if (action.kind == OBELISK_RT_FRAGMENT_TERMINATE) {
-        if (!scheduled.callers.empty()) {
+        if (!scheduled.callers.empty() &&
+            !context->schedulerFinishRequested) {
           scheduled.instance = scheduled.callers.back();
           scheduled.callers.pop_back();
           scheduled.suspendKind = OBELISK_RT_SUSPEND_NONE;
@@ -2711,6 +2777,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         } else {
           uint64_t token = scheduled.token;
           scheduled.instance = nullptr;
+          if (terminationRequested)
+            terminatedCallers.swap(scheduled.callers);
           obelisk_rt_release_controls_unlocked(context, scheduled.controls);
           scheduled.controls.clear();
           destroy = true;
@@ -2792,6 +2860,12 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
     }
     if (destroy) {
       status = obelisk_rt_v1_process_instance_destroy(selected);
+      if (status != OBELISK_RT_OK)
+        return status;
+    }
+    for (auto caller = terminatedCallers.rbegin();
+         caller != terminatedCallers.rend(); ++caller) {
+      status = obelisk_rt_v1_process_instance_destroy(*caller);
       if (status != OBELISK_RT_OK)
         return status;
     }

@@ -170,6 +170,42 @@ public:
 };
 
 template <typename Op, typename RuntimeOp>
+class TerminationConversion final : public SimIOConversion<Op> {
+public:
+  using SimIOConversion<Op>::SimIOConversion;
+
+  LogicalResult
+  matchAndRewrite(
+      Op op, typename SimIOConversion<Op>::OneToNOpAdaptor adaptor,
+      ConversionPatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    Value context = runtimeContext(rewriter, loc, adaptor.getContext().front());
+    Value status = RuntimeOp::create(
+        rewriter, loc, runtime::StatusType::get(rewriter.getContext()),
+        context, adaptor.getVerbosity().front());
+    sim::SimStatusCheckOp::create(rewriter, loc, status);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+class TerminationRequestedConversion final
+    : public SimIOConversion<sim::SimTerminationRequestedOp> {
+public:
+  using SimIOConversion::SimIOConversion;
+
+  LogicalResult
+  matchAndRewrite(sim::SimTerminationRequestedOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Value context =
+        runtimeContext(rewriter, op.getLoc(), adaptor.getContext().front());
+    rewriter.replaceOpWithNewOp<runtime::RTTerminationRequestedOp>(
+        op, rewriter.getI1Type(), context);
+    return success();
+  }
+};
+
+template <typename Op, typename RuntimeOp>
 class OpenConversion final : public SimIOConversion<Op> {
 public:
   using SimIOConversion<Op>::SimIOConversion;
@@ -428,11 +464,12 @@ public:
 
     ConversionTarget target(context);
     target.addIllegalOp<
-        sim::SimBytesConstantOp, sim::SimDisplayOp, sim::SimFileOpenMCDOp,
-        sim::SimFileOpenOp, sim::SimFileCloseOp, sim::SimFileFlushOp,
-        sim::SimFileGetcOp, sim::SimFileUngetcOp, sim::SimFileGetlineOp,
-        sim::SimFileReadPackedOp, sim::SimFileEofOp, sim::SimFileSeekOp,
-        sim::SimFileTellOp, sim::SimFileRewindOp>();
+        sim::SimBytesConstantOp, sim::SimFinishOp, sim::SimStopOp,
+        sim::SimFatalOp, sim::SimTerminationRequestedOp, sim::SimDisplayOp,
+        sim::SimFileOpenMCDOp, sim::SimFileOpenOp, sim::SimFileCloseOp,
+        sim::SimFileFlushOp, sim::SimFileGetcOp, sim::SimFileUngetcOp,
+        sim::SimFileGetlineOp, sim::SimFileReadPackedOp, sim::SimFileEofOp,
+        sim::SimFileSeekOp, sim::SimFileTellOp, sim::SimFileRewindOp>();
     target.addLegalDialect<runtime::ObeliskRuntimeDialect,
                            arith::ArithDialect>();
     target.addLegalOp<ModuleOp, sim::SimContextRuntimeOp,
@@ -458,6 +495,11 @@ void populateSimulationToRuntimePatterns(const TypeConverter &converter,
                UngetcConversion, GetlineConversion, ReadPackedConversion,
                EofConversion, SeekConversion, TellConversion>(converter,
                                                                context);
+  patterns.add<TerminationConversion<sim::SimFinishOp, runtime::RTFinishOp>,
+               TerminationConversion<sim::SimStopOp, runtime::RTFinishOp>,
+               TerminationConversion<sim::SimFatalOp, runtime::RTFatalOp>>(
+      converter, context);
+  patterns.add<TerminationRequestedConversion>(converter, context);
   patterns.add<OpenConversion<sim::SimFileOpenMCDOp,
                               runtime::RTFileOpenMCDOp>,
                OpenConversion<sim::SimFileOpenOp, runtime::RTFileOpenOp>,

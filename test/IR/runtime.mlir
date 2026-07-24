@@ -88,6 +88,14 @@ func.func @runtime_calls(
       (!obelisk_rt.context) -> (!obelisk_rt.status, !obelisk_rt.buffer)
   obelisk_rt.buffer.release %last_error : (!obelisk_rt.buffer) -> ()
 
+  %verbosity = arith.constant 1 : i32
+  %finish_status = obelisk_rt.finish %ctx, %verbosity :
+      (!obelisk_rt.context, i32) -> !obelisk_rt.status
+  %fatal_status = obelisk_rt.fatal %ctx, %verbosity :
+      (!obelisk_rt.context, i32) -> !obelisk_rt.status
+  %termination_requested = obelisk_rt.termination.requested %ctx :
+      (!obelisk_rt.context) -> i1
+
   // CHECK: obelisk_rt.format
   %format_status, %formatted = obelisk_rt.format %ctx, %bytes, %args, %env :
       (!obelisk_rt.context, !obelisk_rt.bytes, !obelisk_rt.args,

@@ -284,6 +284,7 @@ static_assert(OBELISK_RT_INVALID_FRAME == 15);
 static_assert(OBELISK_RT_INVALID_DESIGN == 16);
 static_assert(OBELISK_RT_PERMISSION_DENIED == 17);
 static_assert(OBELISK_RT_DPI_DISABLE_UNSUPPORTED == 18);
+static_assert(OBELISK_RT_FATAL == 19);
 static_assert(OBELISK_RT_DESCRIPTOR_INVALID == 0);
 static_assert(OBELISK_RT_DESCRIPTOR_SCOPE == 1);
 static_assert(OBELISK_RT_DESCRIPTOR_STORAGE == 2);
@@ -461,6 +462,12 @@ ABI_FUNCTION(obelisk_rt_v1_display,
              obelisk_rt_status (*)(obelisk_rt_context *, uint32_t, uint32_t,
                                    obelisk_rt_radix, const obelisk_rt_arg_v1 *,
                                    uint64_t, const obelisk_rt_format_env_v1 *));
+ABI_FUNCTION(obelisk_rt_v1_scheduler_finish,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint32_t));
+ABI_FUNCTION(obelisk_rt_v1_scheduler_fatal,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint32_t));
+ABI_FUNCTION(obelisk_rt_v1_scheduler_termination_requested,
+             uint32_t (*)(obelisk_rt_context *));
 ABI_FUNCTION(obelisk_rt_v1_file_open_mcd,
              obelisk_rt_status (*)(obelisk_rt_context *, const char *, uint64_t,
                                    uint32_t *));

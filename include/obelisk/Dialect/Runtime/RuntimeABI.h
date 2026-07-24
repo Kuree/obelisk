@@ -25,6 +25,8 @@ enum class RuntimeSignature {
   StatusString,
   BufferRelease,
   LastError,
+  Finish,
+  TerminationRequested,
   Format,
   Display,
   FileOpenMCD,

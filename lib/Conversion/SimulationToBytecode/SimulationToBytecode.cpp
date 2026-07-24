@@ -51,6 +51,10 @@ constexpr uint32_t kDatabaseProfileRead = OBELISK_RT_DESIGN_PROFILE_READ;
 constexpr uint32_t kDatabaseProfileWrite = OBELISK_RT_DESIGN_PROFILE_WRITE;
 constexpr uint32_t kInvalidRegister = UINT32_MAX;
 constexpr uint32_t kIntrinsicDisplay = OBELISK_RT_INTRINSIC_V1_DISPLAY;
+constexpr uint32_t kIntrinsicFinish = OBELISK_RT_INTRINSIC_V1_FINISH;
+constexpr uint32_t kIntrinsicFatal = OBELISK_RT_INTRINSIC_V1_FATAL;
+constexpr uint32_t kIntrinsicTerminationRequested =
+    OBELISK_RT_INTRINSIC_V1_TERMINATION_REQUESTED;
 constexpr uint32_t kIntrinsicFileOpenMCD =
     OBELISK_RT_INTRINSIC_V1_FILE_OPEN_MCD;
 constexpr uint32_t kIntrinsicFileOpen = OBELISK_RT_INTRINSIC_V1_FILE_OPEN;
@@ -840,6 +844,10 @@ private:
         if (failed(frame))
           return failure();
         plan.frame = std::move(*frame);
+        if (plan.frame->getFrameSize() >=
+            (OBELISK_RT_DESIGN_FUNCTION_FINAL >> 1))
+          return plan.function.emitOpError(
+              "process frame is too large for bytecode function flags");
         ArrayRef<ProcessFrameValue> captures =
             plan.frame->getEntryCaptureLayout();
         if (captures.size() != entry.getNumArguments())
@@ -1348,6 +1356,15 @@ private:
       emit({Fail, 0, 0, reg(plan, op.getStatus())});
       return success();
     }
+    if (auto op = dyn_cast<sim::SimFinishOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicFinish, {op.getVerbosity()}, {});
+    if (auto op = dyn_cast<sim::SimStopOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicFinish, {op.getVerbosity()}, {});
+    if (auto op = dyn_cast<sim::SimFatalOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicFatal, {op.getVerbosity()}, {});
+    if (auto op = dyn_cast<sim::SimTerminationRequestedOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicTerminationRequested, {},
+                           {op.getResult()});
     if (auto op = dyn_cast<sim::SimDisplayOp>(operation))
       return encodeDisplay(plan, op);
     if (auto op = dyn_cast<sim::SimFileOpenMCDOp>(operation))
@@ -2717,11 +2734,15 @@ private:
       append64(output, plan.scratchAlignment);
       append64(output, continuationCursor);
       append64(output, plan.continuations.size());
-      append64(output,
-               (plan.function.getEntryKind() == sim::EntryKind::Function ||
-                plan.function.getEntryKind() == sim::EntryKind::Observer)
-                   ? 0
-                   : (plan.frame->getFrameSize() << 1) | 1);
+      uint64_t functionFlags =
+          (plan.function.getEntryKind() == sim::EntryKind::Function ||
+           plan.function.getEntryKind() == sim::EntryKind::Observer)
+              ? 0
+              : (plan.frame->getFrameSize() << 1) |
+                    OBELISK_RT_DESIGN_FUNCTION_PROCESS;
+      if (plan.function.getEntryKind() == sim::EntryKind::Final)
+        functionFlags |= OBELISK_RT_DESIGN_FUNCTION_FINAL;
+      append64(output, functionFlags);
       layoutCursor += plan.layouts.size();
       continuationCursor += plan.continuations.size();
     }

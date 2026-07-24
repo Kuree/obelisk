@@ -143,6 +143,27 @@ def RTLastErrorOp : RTOp<"last_error", [
   let hasVerifier = 1;
 }
 
+def RTFinishOp : RTOp<"finish", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>]>
+]> {
+  let arguments = (ins RTContextType:$context, I32:$verbosity);
+  let results = (outs RTStatusType:$status);
+}
+
+def RTFatalOp : RTOp<"fatal", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>]>
+]> {
+  let arguments = (ins RTContextType:$context, I32:$verbosity);
+  let results = (outs RTStatusType:$status);
+}
+
+def RTTerminationRequestedOp : RTOp<"termination.requested", [
+  MemoryEffects<[MemRead<RTRuntimeResource>]>
+]> {
+  let arguments = (ins RTContextType:$context);
+  let results = (outs I1:$result);
+}
+
 // Formatting and display.
 def RTFormatOp : RTOp<"format", [
   MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>,

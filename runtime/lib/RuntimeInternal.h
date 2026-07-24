@@ -134,6 +134,7 @@ struct ScheduledDesignTask {
   uint64_t waitSize = 0;
   std::vector<uint64_t> waitGenerations;
   uint32_t suspendKind = OBELISK_RT_SUSPEND_NONE;
+  uint32_t phase = 0;
   uint32_t scheduleRank = UINT32_MAX;
   uint32_t queuedRegion = 0;
   uint64_t insertionSequence = 0;
@@ -194,6 +195,7 @@ struct obelisk_rt_context {
   uint64_t nextDesignTaskID = 1;
   uint64_t nextProcessInsertionSequence = 1;
   uint64_t activeDesignTaskID = 0;
+  uint32_t activeDesignTaskPhase = 0;
   uint64_t activeLogicalProcessToken = 0;
   std::vector<uint64_t> activeControls;
   obelisk_rt_process_instance_v1 *activeNativeProcess = nullptr;
@@ -214,6 +216,9 @@ struct obelisk_rt_context {
   uint64_t schedulerEpoch = 1;
   uint64_t schedulerTime = 0;
   bool schedulerRunningFinals = false;
+  bool schedulerFinishRequested = false;
+  uint32_t schedulerFinishVerbosity = 0;
+  obelisk_rt_status schedulerFinishStatus = OBELISK_RT_OK;
   obelisk_rt_status schedulerStatus = OBELISK_RT_OK;
   uint32_t observerDepth = 0;
   const obelisk_rt_execution_descriptor_v1 *execution = nullptr;

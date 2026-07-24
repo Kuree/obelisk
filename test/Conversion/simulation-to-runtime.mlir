@@ -38,6 +38,11 @@ module {
         (!obelisk_sim.context, i32) -> i64
     %rewind = obelisk_sim.file.rewind %ctx, %fd_bits :
         (!obelisk_sim.context, i32) -> i32
+    %verbosity = arith.constant 1 : i32
+    obelisk_sim.finish %ctx, %verbosity
+    obelisk_sim.stop %ctx, %verbosity
+    obelisk_sim.fatal %ctx, %verbosity
+    %termination_requested = obelisk_sim.termination.requested %ctx
     return %line, %line_count, %data, %read_count : i13, i32, i13, i32
   }
 
@@ -135,6 +140,13 @@ module {
 // CHECK: %[[REWIND_FAILURE:.*]] = arith.constant -1 : i32
 // CHECK: %[[REWIND_OK:.*]] = obelisk_rt.status.is %[[REWIND_STATUS]], 0
 // CHECK: arith.select %[[REWIND_OK]], %[[REWIND_SUCCESS]], %[[REWIND_FAILURE]] : i32
+// CHECK: %[[FINISH_STATUS:.*]] = obelisk_rt.finish
+// CHECK-NEXT: obelisk_sim.status.check %[[FINISH_STATUS]]
+// CHECK: %[[STOP_STATUS:.*]] = obelisk_rt.finish
+// CHECK-NEXT: obelisk_sim.status.check %[[STOP_STATUS]]
+// CHECK: %[[FATAL_STATUS:.*]] = obelisk_rt.fatal
+// CHECK-NEXT: obelisk_sim.status.check %[[FATAL_STATUS]]
+// CHECK: %[[TERMINATION_REQUESTED:.*]] = obelisk_rt.termination.requested
 
 // CHECK-LABEL: func.func @aggregate_io(
 // CHECK-SAME: %{{.*}}: i80, %{{.*}}: i80) -> (i80, i80)

@@ -5,6 +5,9 @@
 // CHECK-DAG: llvm.func @obelisk_rt_v1_status_string(i32) -> !llvm.ptr
 // CHECK-DAG: llvm.func @obelisk_rt_v1_buffer_release(!llvm.ptr)
 // CHECK-DAG: llvm.func @obelisk_rt_v1_last_error(!llvm.ptr, !llvm.ptr) -> i32
+// CHECK-DAG: llvm.func @obelisk_rt_v1_scheduler_finish(!llvm.ptr, i32) -> i32
+// CHECK-DAG: llvm.func @obelisk_rt_v1_scheduler_fatal(!llvm.ptr, i32) -> i32
+// CHECK-DAG: llvm.func @obelisk_rt_v1_scheduler_termination_requested(!llvm.ptr) -> i32
 // CHECK-DAG: llvm.func @obelisk_rt_v1_format(!llvm.ptr, !llvm.ptr, i64, !llvm.ptr, i64, !llvm.ptr, !llvm.ptr) -> i32
 // CHECK-DAG: llvm.func @obelisk_rt_v1_display(!llvm.ptr, i32, i32, i32, !llvm.ptr, i64, !llvm.ptr) -> i32
 // CHECK-DAG: llvm.func @obelisk_rt_v1_file_open_mcd(!llvm.ptr, !llvm.ptr, i64, !llvm.ptr) -> i32
@@ -46,6 +49,10 @@
 // CHECK-DAG: llvm.alloca {{.*}} x !llvm.struct<(i32, i32, i32, i32, i64, i64)> {alignment = 8 : i64}
 // CHECK: llvm.call @obelisk_rt_v1_context_create
 // CHECK: llvm.load {{.*}} {alignment = 8 : i64} : !llvm.ptr -> !llvm.ptr
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_finish
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_fatal
+// CHECK: %[[TERMINATION_REQUESTED_I32:.*]] = llvm.call @obelisk_rt_v1_scheduler_termination_requested
+// CHECK: llvm.trunc %[[TERMINATION_REQUESTED_I32]] : i32 to i1
 // CHECK: llvm.zext {{.*}} : i1 to i32
 // CHECK: llvm.mlir.constant(16 : i32) : i32
 // CHECK: llvm.call @obelisk_rt_v1_display

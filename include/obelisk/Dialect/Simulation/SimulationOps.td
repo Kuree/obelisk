@@ -353,6 +353,49 @@ def SimStatusCheckOp : SimOp<"status.check", [
   let assemblyFormat = "$status attr-dict";
 }
 
+def SimFinishOp : SimOp<"finish", [
+  MemoryEffects<[MemWrite<SimSchedulerResource>]>
+]> {
+  let summary = "request orderly design-wide simulation termination";
+  let description = [{
+    Records a design-wide finish request with the runtime scheduler. The
+    current activation must return after this operation; the scheduler skips
+    remaining ordinary work and enters the final-process phase.
+  }];
+  let arguments = (ins SimContextType:$context, I32:$verbosity);
+  let assemblyFormat = "$context `,` $verbosity attr-dict";
+}
+
+def SimStopOp : SimOp<"stop", [
+  MemoryEffects<[MemWrite<SimSchedulerResource>]>
+]> {
+  let summary = "request batch-mode simulation suspension";
+  let description = [{
+    Obelisk has no interactive debugger session, so executable batch targets
+    treat this request as an orderly successful finish after preserving the
+    distinct operation in Simulation IR.
+  }];
+  let arguments = (ins SimContextType:$context, I32:$verbosity);
+  let assemblyFormat = "$context `,` $verbosity attr-dict";
+}
+
+def SimFatalOp : SimOp<"fatal", [
+  MemoryEffects<[MemWrite<SimSchedulerResource>]>
+]> {
+  let summary = "request orderly unsuccessful simulation termination";
+  let arguments = (ins SimContextType:$context, I32:$verbosity);
+  let assemblyFormat = "$context `,` $verbosity attr-dict";
+}
+
+def SimTerminationRequestedOp : SimOp<"termination.requested", [
+  MemoryEffects<[MemRead<SimSchedulerResource>]>
+]> {
+  let summary = "test whether design-wide termination has been requested";
+  let arguments = (ins SimContextType:$context);
+  let results = (outs I1:$result);
+  let assemblyFormat = "$context attr-dict";
+}
+
 def SimDisplayOp : SimOp<"display", [
   MemoryEffects<[MemWrite<SimIOResource>]>
 ]> {

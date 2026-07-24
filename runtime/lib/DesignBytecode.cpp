@@ -372,7 +372,7 @@ obelisk_rt_status releaseCapturedAutomaticStates(const Image &image,
   if (!context || !canonicalFrame)
     return OBELISK_RT_OK;
   Function function = functionAt(image, functionIndex);
-  if ((function.flags & 1) == 0)
+  if ((function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0)
     return OBELISK_RT_OK;
   auto stableAt = [&](uint64_t index, uint64_t &stable,
                       bool &hasHandle) -> obelisk_rt_status {
@@ -624,7 +624,8 @@ bool validIntrinsic(const Image &image, const Function &function,
         !handle(output(0)))
       return false;
     Function callee = functionAt(image, signature.flags);
-    if ((callee.flags & 1) == 0 || site.inputCount != callee.argumentCount)
+    if ((callee.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
+        site.inputCount != callee.argumentCount)
       return false;
     for (uint32_t index = 0; index != site.inputCount; ++index)
       if (!input(index) ||
@@ -709,6 +710,13 @@ bool validIntrinsic(const Image &image, const Function &function,
       if (!bytes(input(index)) && !numeric(input(index)))
         return false;
     return true;
+  case OBELISK_RT_INTRINSIC_V1_FINISH:
+  case OBELISK_RT_INTRINSIC_V1_FATAL:
+    return signature.flags == 0 && site.inputCount == 1 &&
+           site.outputCount == 0 && bits(input(0), 32);
+  case OBELISK_RT_INTRINSIC_V1_TERMINATION_REQUESTED:
+    return signature.flags == 0 && site.inputCount == 0 &&
+           site.outputCount == 1 && bits(output(0), 1);
   case OBELISK_RT_INTRINSIC_V1_FILE_OPEN_MCD:
     return site.inputCount == 1 && site.outputCount == 1 && bytes(input(0)) &&
            bits(output(0), 32);
@@ -806,13 +814,14 @@ bool validateInitialization(const Image &image, const Function &function) {
     return true;
   };
   State seed(static_cast<size_t>(function.layoutCount));
-  if ((function.flags & 1) == 0)
+  if ((function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0)
     std::fill(seed.begin(), seed.begin() + function.argumentCount, 1);
   for (uint64_t index = 0; index != function.continuationCount; ++index) {
     Continuation entry =
         continuationAt(image, function.firstContinuation + index);
     State entryState = seed;
-    if (index != 0 || (function.flags & 1) != 0)
+    if (index != 0 ||
+        (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) != 0)
       std::fill(entryState.begin(), entryState.end(), 0);
     if (!merge(entry.instruction, entryState))
       return false;
@@ -1021,7 +1030,8 @@ bool validateImage(const Image &image) {
   for (uint32_t functionIndex = 0; functionIndex != image.functionCount;
        ++functionIndex) {
     Function function = functionAt(image, functionIndex);
-    bool process = (function.flags & 1) != 0;
+    bool process =
+        (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) != 0;
     if ((!process && function.flags != 0) ||
         (process && function.resultCount != 0) ||
         function.firstLayout > image.layoutCount ||
@@ -1034,11 +1044,13 @@ bool validateImage(const Image &image) {
   for (uint32_t functionIndex = 0; functionIndex != image.functionCount;
        ++functionIndex) {
     Function function = functionAt(image, functionIndex);
-    bool process = (function.flags & 1) != 0;
+    bool process =
+        (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) != 0;
     if ((!process && function.flags != 0) ||
         (process && function.resultCount != 0))
       return false;
-    uint64_t canonicalSize = function.flags >> 1;
+    uint64_t canonicalSize =
+        (function.flags & OBELISK_RT_DESIGN_FUNCTION_FRAME_SIZE_MASK) >> 1;
     if (!process)
       continue;
     for (uint32_t argument = 0; argument != function.argumentCount;
@@ -1283,7 +1295,8 @@ bool validateImage(const Image &image) {
         function.scratchAlignment == 0 || function.scratchAlignment > 4096 ||
         (function.scratchAlignment & (function.scratchAlignment - 1)) != 0 ||
         function.scratchSize % function.scratchAlignment != 0 ||
-        ((function.flags & 1) == 0 && function.flags != 0) ||
+        ((function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 &&
+         function.flags != 0) ||
         function.continuationCount == 0 ||
         function.firstContinuation > image.continuationCount ||
         function.continuationCount > image.continuationCount - function.firstContinuation)
@@ -1321,7 +1334,7 @@ bool validateImage(const Image &image) {
         return false;
       previousContinuation = entry.id;
     }
-    if ((function.flags & 1) == 0 &&
+    if ((function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 &&
         continuationAt(image, function.firstContinuation).instruction !=
             function.firstInstruction)
       return false;
@@ -1589,7 +1602,7 @@ bool validateImage(const Image &image) {
             instruction.source0 >= image.functionCount)
           return false;
         Function callee = functionAt(image, instruction.source0);
-        if ((callee.flags & 1) != 0 ||
+        if ((callee.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) != 0 ||
             instruction.source2 != callee.argumentCount ||
             instruction.immediate != callee.resultCount ||
             !validMap(image, function, callee, instruction.source1,
@@ -1609,11 +1622,13 @@ bool validateImage(const Image &image) {
       case OBELISK_RT_DB_TASK_CALL: {
         if (instruction.flags || instruction.destination ||
             instruction.source0 >= image.functionCount ||
-            instruction.auxiliary || (function.flags & 1) == 0 ||
+            instruction.auxiliary ||
+            (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
             !hasContinuation(instruction.immediate))
           return false;
         Function callee = functionAt(image, instruction.source0);
-        if ((callee.flags & 1) == 0 || callee.resultCount != 0 ||
+        if ((callee.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
+            callee.resultCount != 0 ||
             instruction.source2 != callee.argumentCount ||
             !validMap(image, function, callee, instruction.source1,
                       instruction.source2))
@@ -1626,7 +1641,8 @@ bool validateImage(const Image &image) {
       case OBELISK_RT_DB_RETURN:
         if (instruction.flags || instruction.destination ||
             instruction.source2 || instruction.auxiliary ||
-            instruction.immediate || (function.flags & 1) != 0 ||
+            instruction.immediate ||
+            (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) != 0 ||
             instruction.source1 != function.resultCount ||
             !validMap(image, function, function, instruction.source0,
                       instruction.source1))
@@ -1640,7 +1656,7 @@ bool validateImage(const Image &image) {
         if (instruction.flags || instruction.destination ||
             instruction.source0 || instruction.source1 ||
             instruction.source2 || instruction.auxiliary ||
-            (function.flags & 1) == 0 ||
+            (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
             !hasContinuation(instruction.immediate))
           return false;
         break;
@@ -1651,7 +1667,7 @@ bool validateImage(const Image &image) {
             instruction.source2 || instruction.auxiliary ||
             !numeric(instruction.source0) ||
             layoutAt(image, function, instruction.source0).width != 64 ||
-            (function.flags & 1) == 0 ||
+            (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
             !hasContinuation(instruction.immediate))
           return false;
         break;
@@ -1659,7 +1675,7 @@ bool validateImage(const Image &image) {
         if (instruction.flags || instruction.destination ||
             instruction.source0 || instruction.source1 ||
             instruction.source2 || instruction.auxiliary ||
-            (function.flags & 1) == 0)
+            (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0)
           return false;
         break;
       case OBELISK_RT_DB_FAIL:
@@ -2561,7 +2577,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if (!context)
       return OBELISK_RT_INVALID_ARGUMENT;
     Function callee = functionAt(image, signature.flags);
-    uint64_t canonicalSize = callee.flags >> 1;
+    uint64_t canonicalSize =
+        (callee.flags & OBELISK_RT_DESIGN_FUNCTION_FRAME_SIZE_MASK) >> 1;
     if (callee.scratchAlignment == 0 ||
         canonicalSize > UINT64_MAX - (callee.scratchAlignment - 1))
       return OBELISK_RT_INVALID_BYTECODE;
@@ -2629,6 +2646,17 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       }
       id = context->nextDesignTaskID++;
       task.id = id;
+      task.phase =
+          (callee.flags & OBELISK_RT_DESIGN_FUNCTION_FINAL) != 0 ? 1 : 0;
+      if (task.phase == 0 && context->activeDesignTaskID != 0)
+        task.phase = context->activeDesignTaskPhase;
+      if (task.phase == 0 && context->activeNativeProcess)
+        for (const ScheduledProcess &process :
+             context->scheduledProcesses)
+          if (process.instance == context->activeNativeProcess) {
+            task.phase = process.phase;
+            break;
+          }
       task.controls = context->activeControls;
       task.insertionSequence = context->nextProcessInsertionSequence++;
       task.observedEpoch = context->schedulerEpoch;
@@ -3193,6 +3221,20 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         static_cast<obelisk_rt_radix>(radix), arguments.data(),
         arguments.size(), &environment);
   }
+  case OBELISK_RT_INTRINSIC_V1_FINISH:
+  case OBELISK_RT_INTRINSIC_V1_FATAL: {
+    auto verbosity = scalar(0);
+    if (!verbosity || *verbosity > UINT32_MAX)
+      return OBELISK_RT_INVALID_BYTECODE;
+    return signature.id == OBELISK_RT_INTRINSIC_V1_FINISH
+               ? obelisk_rt_v1_scheduler_finish(
+                     context, static_cast<uint32_t>(*verbosity))
+               : obelisk_rt_v1_scheduler_fatal(
+                     context, static_cast<uint32_t>(*verbosity));
+  }
+  case OBELISK_RT_INTRINSIC_V1_TERMINATION_REQUESTED:
+    return sentinel(
+        0, obelisk_rt_v1_scheduler_termination_requested(context));
   case OBELISK_RT_INTRINSIC_V1_FILE_OPEN_MCD:
   case OBELISK_RT_INTRINSIC_V1_FILE_OPEN: {
     auto path = bytes(0);
@@ -4423,7 +4465,8 @@ obelisk_rt_status executeFunction(const Image &image, Frame &frame,
       if (!context)
         return OBELISK_RT_INVALID_ARGUMENT;
       Function callee = functionAt(image, instruction.source0);
-      uint64_t canonicalSize = callee.flags >> 1;
+      uint64_t canonicalSize =
+          (callee.flags & OBELISK_RT_DESIGN_FUNCTION_FRAME_SIZE_MASK) >> 1;
       if (callee.scratchAlignment == 0 ||
           canonicalSize > UINT64_MAX - (callee.scratchAlignment - 1))
         return OBELISK_RT_INVALID_BYTECODE;
@@ -4518,7 +4561,7 @@ obelisk_rt_status executeFunction(const Image &image, Frame &frame,
       std::memcpy(&value, frame.data + status.offset, sizeof(value));
       if (value == 0)
         break;
-      if (value > OBELISK_RT_DPI_DISABLE_UNSUPPORTED)
+      if (value > OBELISK_RT_FATAL)
         return OBELISK_RT_INVALID_BYTECODE;
       return static_cast<obelisk_rt_status>(value);
     }
@@ -4600,7 +4643,8 @@ bool obelisk_rt_validate_activation_bytecode_inventory(
       Function function =
           functionAt(image, activation.bytecode_function);
       if (function.id != activation.code_unit_id ||
-          (function.flags & 1) == 0 || function.resultCount != 0)
+          (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
+          function.resultCount != 0)
         return false;
     }
     for (uint64_t index = 0; index != execution.observer_count; ++index) {
@@ -4613,7 +4657,8 @@ bool obelisk_rt_validate_activation_bytecode_inventory(
       Function function =
           functionAt(image, observer.bytecode_function);
       if (function.id != observer.code_unit_id ||
-          (function.flags & 1) != 0 || function.resultCount != 1 ||
+          (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) != 0 ||
+          function.resultCount != 1 ||
           function.argumentCount != observer.capture_count + 1)
         return false;
       Layout result =
@@ -4665,7 +4710,8 @@ obelisk_rt_status obelisk_rt_execute_design_observer(
     Function function = functionAt(image, functionIndex);
     if (function.id != descriptor->code_unit_id ||
         function.argumentCount != captureCount + 1 ||
-        function.resultCount != 1 || (function.flags & 1) != 0)
+        function.resultCount != 1 ||
+        (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) != 0)
       return OBELISK_RT_INVALID_BYTECODE;
     Layout contextLayout = layoutAt(image, function, 0);
     Layout resultLayout =
@@ -5678,6 +5724,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(obelisk_rt_context *context,
         releaseDesignTaskOwnedStatesUnlocked(context, task.id);
       }
       context->activeDesignTaskID = 0;
+      context->activeDesignTaskPhase = 0;
       context->activeLogicalProcessToken = 0;
       context->designTaskExecuting = false;
     } catch (...) {
@@ -5696,6 +5743,9 @@ obelisk_rt_status obelisk_rt_run_one_design_task(obelisk_rt_context *context,
       uint64_t selectedInsertionSequence = UINT64_MAX;
       for (auto iterator = context->scheduledDesignTasks.begin();
            iterator != context->scheduledDesignTasks.end(); ++iterator) {
+        if (iterator->phase !=
+            (context->schedulerRunningFinals ? 1u : 0u))
+          continue;
         bool awaited = false;
         bool childrenDone = false;
         bool eventTriggered = false;
@@ -5821,6 +5871,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(obelisk_rt_context *context,
       taskDequeued = true;
       context->designTaskExecuting = true;
       context->activeDesignTaskID = task.id;
+      context->activeDesignTaskPhase = task.phase;
       context->activeLogicalProcessToken = task.id;
       context->activeControls = std::move(task.controls);
     }
@@ -5830,15 +5881,44 @@ obelisk_rt_status obelisk_rt_run_one_design_task(obelisk_rt_context *context,
     obelisk_rt_status status = obelisk_rt_execute_design_bytecode(
         entry, context, task.frame.data(), task.frame.size(),
         task.scratchOffset, task.scratchSize, task.continuation, 0, &action);
-    if (status != OBELISK_RT_OK)
-      return abandonTask(status);
     currentFrameReleased =
+        status == OBELISK_RT_OK &&
         action.kind == OBELISK_RT_FRAGMENT_TERMINATE;
     std::unique_ptr<PendingDesignActivation> pendingActivation;
-    if (action.kind == OBELISK_RT_FRAGMENT_TASK_CALL)
+    if (status == OBELISK_RT_OK &&
+        action.kind == OBELISK_RT_FRAGMENT_TASK_CALL)
       pendingActivation.reset(
           reinterpret_cast<PendingDesignActivation *>(
               static_cast<uintptr_t>(action.payload)));
+    bool terminationRequested =
+        obelisk_rt_v1_scheduler_termination_requested(context) != 0;
+    if (terminationRequested) {
+      Image image;
+      if (!parseImage(entry, image) || !validateImage(image))
+        return abandonTask(OBELISK_RT_INVALID_BYTECODE);
+      if (!currentFrameReleased) {
+        obelisk_rt_status releaseStatus = releaseCapturedAutomaticStates(
+            image, task.function, context, task.frame.data(),
+            task.scratchOffset);
+        currentFrameReleased = true;
+        if (releaseStatus != OBELISK_RT_OK)
+          return abandonTask(releaseStatus);
+      }
+      while (!task.callers.empty()) {
+        DesignActivation &activation = task.callers.back();
+        obelisk_rt_status releaseStatus = releaseCapturedAutomaticStates(
+            image, activation.function, context, activation.frame.data(),
+            activation.scratchOffset);
+        task.callers.pop_back();
+        if (releaseStatus != OBELISK_RT_OK)
+          return abandonTask(releaseStatus);
+      }
+      action = {OBELISK_RT_FRAGMENT_TERMINATE, OBELISK_RT_SUSPEND_NONE,
+                0, 0, 0, 0};
+      status = OBELISK_RT_OK;
+    }
+    if (status != OBELISK_RT_OK)
+      return abandonTask(status);
     std::optional<uint32_t> nextScheduleRank;
     if (action.kind != OBELISK_RT_FRAGMENT_TERMINATE) {
       Image image;
@@ -5854,6 +5934,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(obelisk_rt_context *context,
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
       task.controls = std::move(context->activeControls);
       context->activeDesignTaskID = 0;
+      context->activeDesignTaskPhase = 0;
       context->activeLogicalProcessToken = 0;
       context->designTaskExecuting = false;
       task.started = true;

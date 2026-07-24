@@ -403,6 +403,12 @@ LLVM::LLVMFunctionType getFunctionType(runtime::RuntimeCall call,
   case runtime::RuntimeSignature::LastError:
     arguments = {abi.pointer, abi.pointer};
     break;
+  case runtime::RuntimeSignature::Finish:
+    arguments = {abi.pointer, abi.i32};
+    break;
+  case runtime::RuntimeSignature::TerminationRequested:
+    arguments = {abi.pointer};
+    break;
   case runtime::RuntimeSignature::Format:
     arguments = {abi.pointer, abi.pointer, abi.i64,    abi.pointer,
                  abi.i64,     abi.pointer, abi.pointer};
@@ -1020,6 +1026,15 @@ public:
       Value output = allocate(abi.span, abi.alignments.span);
       return replaceStatusAndLoad({operands[0], output}, output, abi.span,
                                   abi.alignments.span);
+    }
+    case runtime::RuntimeCall::Finish:
+    case runtime::RuntimeCall::Fatal:
+      return replaceStatus(operands);
+    case runtime::RuntimeCall::TerminationRequested: {
+      Value requested = emitCall(operands).getResult();
+      rewriter.replaceOpWithNewOp<LLVM::TruncOp>(
+          operation, rewriter.getI1Type(), requested);
+      return success();
     }
     case runtime::RuntimeCall::Format: {
       auto [formatData, formatSize] = span(operands[1]);

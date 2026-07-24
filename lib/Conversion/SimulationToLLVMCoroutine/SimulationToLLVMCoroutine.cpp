@@ -471,6 +471,37 @@ public:
   }
 };
 
+class ArithSelectTypeConversion final
+    : public OpConversionPattern<arith::SelectOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(arith::SelectOp operation, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto operands = adaptor.getOperands();
+    if (operands.size() != 3 || operands[0].size() != 1 ||
+        operands[1].size() != operands[2].size())
+      return rewriter.notifyMatchFailure(
+          operation, "select operands have incompatible converted arity");
+
+    SmallVector<Value> results;
+    results.reserve(operands[1].size());
+    for (auto [trueValue, falseValue] :
+         llvm::zip_equal(operands[1], operands[2])) {
+      auto selected = arith::SelectOp::create(
+          rewriter, operation.getLoc(), operands[0].front(), trueValue,
+          falseValue);
+      selected->setAttrs(operation->getAttrs());
+      results.push_back(selected);
+    }
+    SmallVector<SmallVector<Value>> replacements;
+    replacements.push_back(std::move(results));
+    rewriter.replaceOpWithMultiple(operation, std::move(replacements));
+    return success();
+  }
+};
+
 SmallVector<int32_t> suspensionWaitWidths(Operation *operation);
 
 class SimObserverBindTypeConversion final
@@ -6336,7 +6367,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                                             nativeTwoStateValues);
   packedPatterns.add<SimTaskCallTypeConversion>(packedConverter, context);
   packedPatterns.add<SimDPICallTypeConversion>(packedConverter, context);
-  packedPatterns.add<SimReturnTypeConversion,
+  packedPatterns.add<ArithSelectTypeConversion, SimReturnTypeConversion,
                      SimObserverBindTypeConversion,
                      SimSuspendObserveTypeConversion,
                      AutomaticOwnerReleaseMarkerConversion,
@@ -6389,11 +6420,12 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   packedPatterns.add<RefAllocConversion>(packedConverter, context);
   ConversionTarget packedTarget(*context);
   packedTarget.addIllegalOp<
-      sim::SimBytesConstantOp, sim::SimDisplayOp, sim::SimFileOpenMCDOp,
-      sim::SimFileOpenOp, sim::SimFileCloseOp, sim::SimFileFlushOp,
-      sim::SimFileGetcOp, sim::SimFileUngetcOp, sim::SimFileGetlineOp,
-      sim::SimFileReadPackedOp, sim::SimFileEofOp, sim::SimFileSeekOp,
-      sim::SimFileTellOp, sim::SimFileRewindOp>();
+      sim::SimBytesConstantOp, sim::SimFinishOp, sim::SimStopOp,
+      sim::SimFatalOp, sim::SimTerminationRequestedOp, sim::SimDisplayOp,
+      sim::SimFileOpenMCDOp, sim::SimFileOpenOp, sim::SimFileCloseOp,
+      sim::SimFileFlushOp, sim::SimFileGetcOp, sim::SimFileUngetcOp,
+      sim::SimFileGetlineOp, sim::SimFileReadPackedOp, sim::SimFileEofOp,
+      sim::SimFileSeekOp, sim::SimFileTellOp, sim::SimFileRewindOp>();
   packedTarget.addIllegalOp<
       sim::SimContextStorageOp, sim::SimContextNetOp, sim::SimContextDriverOp,
       sim::SimContextEventOp, sim::SimRefAllocOp, sim::SimRefLoadOp,

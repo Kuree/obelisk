@@ -463,6 +463,8 @@ extern "C" const char *obelisk_rt_v1_status_string(obelisk_rt_status status) {
     return "permission denied";
   case OBELISK_RT_DPI_DISABLE_UNSUPPORTED:
     return "DPI task disable is unsupported";
+  case OBELISK_RT_FATAL:
+    return "fatal SystemVerilog diagnostic";
   default:
     return "unknown runtime status";
   }

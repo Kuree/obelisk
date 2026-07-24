@@ -855,6 +855,7 @@ TEST(RuntimeABI, ReportsEveryStatusAndReleasesBuffersIdempotently) {
       {OBELISK_RT_PERMISSION_DENIED, "permission denied"},
       {OBELISK_RT_DPI_DISABLE_UNSUPPORTED,
        "DPI task disable is unsupported"},
+      {OBELISK_RT_FATAL, "fatal SystemVerilog diagnostic"},
   };
   for (const auto &[status, message] : statuses)
     EXPECT_STREQ(obelisk_rt_v1_status_string(status), message);
@@ -866,6 +867,32 @@ TEST(RuntimeABI, ReportsEveryStatusAndReleasesBuffersIdempotently) {
   obelisk_rt_v1_buffer_release(&buffer);
   EXPECT_EQ(buffer.data, nullptr);
   EXPECT_EQ(buffer.size, 0u);
+}
+
+TEST(RuntimeABI, FinishAndFatalHaveDistinctSchedulerResults) {
+  EXPECT_EQ(obelisk_rt_v1_scheduler_finish(nullptr, 0),
+            OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_fatal(nullptr, 0),
+            OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_termination_requested(nullptr), 0u);
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  ASSERT_NE(context, nullptr);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_termination_requested(context), 0u);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_finish(context, 2), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_termination_requested(context), 1u);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+
+  context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  ASSERT_NE(context, nullptr);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_termination_requested(context), 0u);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_fatal(context, 0), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_termination_requested(context), 1u);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_FATAL);
+  obelisk_rt_v1_context_destroy(context);
 }
 
 struct DpiObservation {

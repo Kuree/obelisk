@@ -1275,6 +1275,36 @@ struct Fixture {
   }
 };
 
+TEST(DesignBytecode, FailInstructionAcceptsFatalStatus) {
+  Fixture fixture;
+  const size_t layoutOffset = get64(fixture.bytecode, 56);
+  const size_t codeOffset = get64(fixture.bytecode, 72);
+  const size_t constantOffset = get64(fixture.bytecode, 104);
+  fixture.bytecode[layoutOffset] = OBELISK_RT_DBREG_STATUS;
+  put32(fixture.bytecode, layoutOffset + 4, 64);
+  put64(fixture.bytecode, layoutOffset + 16, 8);
+  instruction(fixture.bytecode, codeOffset, 1, OBELISK_RT_DB_FAIL, 0, 0, 0);
+  put64(fixture.bytecode, constantOffset, OBELISK_RT_FATAL);
+  put64(fixture.bytecode, 32, imageChecksum(fixture.bytecode));
+  fixture.execution.checksum = imageChecksum(fixture.bytecode);
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&fixture.execution,
+                                                     &context),
+            OBELISK_RT_OK);
+  obelisk_rt_process_instance_v1 *instance = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_process_instance_create(&fixture.descriptor,
+                                                   &instance),
+            OBELISK_RT_OK);
+  obelisk_rt_fragment_action_v1 action{};
+  EXPECT_EQ(obelisk_rt_v1_process_instance_execute(
+                instance, context, OBELISK_RT_TIER_BYTECODE, &action),
+            OBELISK_RT_FATAL);
+  EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
+  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 uint32_t designWriteObserverCalls = 0;
 
 obelisk_rt_status designWriteObserverEvaluator(
@@ -2300,6 +2330,12 @@ TEST(DesignBytecode, RejectsNonCanonicalTablesAndUncallableFunctions) {
   size_t continuation = get64(reservedContinuation.bytecode, 120);
   put32(reservedContinuation.bytecode, continuation + 20, 1);
   rejected(reservedContinuation);
+
+  Fixture finalNonProcess;
+  put64(finalNonProcess.bytecode,
+        OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE + 88,
+        OBELISK_RT_DESIGN_FUNCTION_FINAL);
+  rejected(finalNonProcess);
 
   auto connected = [](Fixture &fixture) {
     fixture.bytecode = makeConnectedDriverBytecode();

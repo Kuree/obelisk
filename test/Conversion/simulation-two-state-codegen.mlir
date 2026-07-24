@@ -14,6 +14,7 @@ module attributes {
     obelisk_sim.code_unit.decl 80 in 0 function hierarchy "top.add_known"
     obelisk_sim.code_unit.decl 81 in 0 initial hierarchy "top.root"
     obelisk_sim.code_unit.decl 82 in 0 function hierarchy "top.public_truth"
+    obelisk_sim.code_unit.decl 83 in 0 function hierarchy "top.select_logic"
     obelisk_sim.scope.decl 0 hierarchy "top"
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<64> design
         hierarchy "top.result"
@@ -46,6 +47,21 @@ module attributes {
       %truth = obelisk_sim.logic.is_true %value :
           !obelisk_sim.logic<64>
       obelisk_sim.return %truth : i1
+    }
+
+    obelisk_sim.func private @select_logic(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %condition: i1 {obelisk_sim.capture_kind = 1 : i32},
+        %true_value: !obelisk_sim.logic<64>
+            {obelisk_sim.capture_kind = 1 : i32},
+        %false_value: !obelisk_sim.logic<64>
+            {obelisk_sim.capture_kind = 1 : i32})
+        -> !obelisk_sim.logic<64> attributes {
+          code_unit_id = 83 : i64, entry_kind = 8 : i32
+        } {
+      %selected = arith.select %condition, %true_value, %false_value :
+          !obelisk_sim.logic<64>
+      obelisk_sim.return %selected : !obelisk_sim.logic<64>
     }
 
     obelisk_sim.func @root(
@@ -102,6 +118,12 @@ module attributes {
 // AOT-O0: xor i64 %[[O0_PUBLIC_UNKNOWN]], -1
 // AOT-O0: and i64 %[[O0_PUBLIC_VALUE]],
 // AOT-O0: ret i1
+
+// Each physical plane of a one-to-many logic value is selected independently.
+// AOT-O0-LABEL: define { i64, i64 } @select_logic(
+// AOT-O0: select i1
+// AOT-O0: select i1
+// AOT-O0: ret { i64, i64 }
 
 // AOT-LABEL: define { i64, i64 } @add_known(
 // AOT-SAME: i64 %[[VALUE:[0-9]+]], i64 %[[UNKNOWN:[0-9]+]])

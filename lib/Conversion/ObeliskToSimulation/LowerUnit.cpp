@@ -2509,18 +2509,45 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         sim::ContinuationSiteAttr{}, continuation);
     setCurrent(continuation);
   }
-  if (!directTask)
-    for (auto [index, copyOut] : llvm::enumerate(copyOuts)) {
-    auto destinationType =
-        cast<sim::RefType>(copyOut.destination.getType()).getElementType();
-    FailureOr<Value> converted =
-        convert(callResults[index + (dpiTask ? 0 : 1)], destinationType,
-                copyOut.formalSigned, location);
-    if (failed(converted))
+  if (!directTask) {
+    Value requested = sim::SimTerminationRequestedOp::create(
+        builder, location, builder.getI1Type(),
+        function.getBody().front().getArgument(0));
+    Block *terminate = addBlock();
+    Block *resume = addBlock();
+    cf::CondBranchOp::create(builder, location, requested, terminate,
+                             ValueRange{}, resume, ValueRange{});
+    setCurrent(terminate);
+    if (function.getEntryKind() == sim::EntryKind::Observer) {
+      SmallVector<Value> results;
+      for (Type type : function.getFunctionType().getResults()) {
+        Value result = createDefaultValue(builder, location, type);
+        if (!result) {
+          function.emitError(
+              "cannot materialize a termination result for observer");
+          return failure();
+        }
+        results.push_back(result);
+      }
+      sim::SimReturnOp::create(builder, location, results);
+    } else if (failed(emitFunctionReturn(location, std::nullopt, false))) {
       return failure();
-    sim::SimRefStoreOp::create(builder, location, *converted,
-                               copyOut.destination);
     }
+    setCurrent(resume);
+  }
+  if (!directTask) {
+    for (auto [index, copyOut] : llvm::enumerate(copyOuts)) {
+      auto destinationType =
+          cast<sim::RefType>(copyOut.destination.getType()).getElementType();
+      FailureOr<Value> converted =
+          convert(callResults[index + (dpiTask ? 0 : 1)], destinationType,
+                  copyOut.formalSigned, location);
+      if (failed(converted))
+        return failure();
+      sim::SimRefStoreOp::create(builder, location, *converted,
+                                 copyOut.destination);
+    }
+  }
   if (!dpiTask && !directTask)
     return callResults.front();
   return arith::ConstantOp::create(builder, location, builder.getI1Type(),
@@ -2598,10 +2625,36 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     return convertResult(triggered);
   }
 
+  if (name == "$finish" || name == "$stop") {
+    if (children.size() > 1) {
+      emitError(location) << name << " accepts at most one verbosity argument";
+      return failure();
+    }
+    Value verbosity = constant(i32, 1);
+    if (!children.empty()) {
+      FailureOr<Value> lowered = lowerInteger(children.front(), i32);
+      if (failed(lowered))
+        return failure();
+      verbosity = *lowered;
+    }
+    if (name == "$finish")
+      sim::SimFinishOp::create(builder, location, context, verbosity);
+    else
+      sim::SimStopOp::create(builder, location, context, verbosity);
+    if (failed(emitFunctionReturn(location, std::nullopt, false)))
+      return failure();
+    setCurrent(addBlock());
+    return dummyTaskResult();
+  }
+
   struct DisplayKind {
     bool file = false;
     bool newline = false;
     int32_t radix = 10;
+    uint32_t descriptor = 1;
+    size_t skippedArguments = 0;
+    StringRef severity;
+    bool fatal = false;
   };
   std::optional<DisplayKind> display;
   if (name == "$display")
@@ -2636,13 +2689,35 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     display = DisplayKind{true, false, 8};
   else if (name == "$fwriteh")
     display = DisplayKind{true, false, 16};
+  else if (name == "$info")
+    display = DisplayKind{false, true, 10, 0x80000002u, 0, "INFO", false};
+  else if (name == "$warning")
+    display =
+        DisplayKind{false, true, 10, 0x80000002u, 0, "WARNING", false};
+  else if (name == "$error")
+    display = DisplayKind{false, true, 10, 0x80000002u, 0, "ERROR", false};
+  else if (name == "$fatal")
+    display = DisplayKind{false, true, 10, 0x80000002u,
+                          children.empty() ? 0u : 1u, "FATAL", true};
   if (display) {
-    size_t firstItem = display->file ? 1 : 0;
+    size_t firstItem =
+        display->file ? 1 : display->skippedArguments;
     if (children.size() < firstItem) {
       emitError(location) << name << " has too few arguments";
       return failure();
     }
-    Value descriptor = constant(i32, 1);
+    Value verbosity;
+    if (display->fatal) {
+      verbosity = constant(i32, 1);
+      if (!children.empty()) {
+        FailureOr<Value> lowered = lowerInteger(children.front(), i32);
+        if (failed(lowered))
+          return failure();
+        verbosity = *lowered;
+      }
+    }
+    Value descriptor =
+        constant(i32, static_cast<int32_t>(display->descriptor));
     if (display->file) {
       if (children.empty()) {
         emitError(location) << name << " requires a descriptor";
@@ -2655,6 +2730,30 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     }
     SmallVector<Value> items;
     SmallVector<int32_t> flags;
+    if (!display->severity.empty()) {
+      std::string file = "<unknown>";
+      unsigned line = 0;
+      if (auto source = location->findInstanceOf<FileLineColLoc>()) {
+        file = source.getFilename().str();
+        line = source.getLine();
+      }
+      std::string prefix =
+          (Twine(display->severity) + ": " + file + ":" + Twine(line) + ": ")
+              .str();
+      if (children.size() == firstItem)
+        prefix += name.str() + " called.";
+      std::string escaped;
+      escaped.reserve(prefix.size());
+      for (char character : prefix) {
+        escaped.push_back(character);
+        if (character == '%')
+          escaped.push_back('%');
+      }
+      items.push_back(
+          sim::SimBytesConstantOp::create(builder, location, escaped)
+              .getResult());
+      flags.push_back(0);
+    }
     for (Operation *child : ArrayRef(children).drop_front(firstItem)) {
       if (isa<semantic::SVEmptyArgumentExpressionOp>(child)) {
         flags.push_back(2);
@@ -2690,10 +2789,17 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
       op.emitError("display call has no elaborated lexical scope");
       return failure();
     }
+    if (display->fatal)
+      sim::SimFatalOp::create(builder, location, context, verbosity);
     sim::SimDisplayOp::create(
         builder, location, context, descriptor, items, display->newline,
         display->radix, flags, lexicalScope,
         op.getSystemLibraryCellAttr(), timeMultiplier);
+    if (display->fatal) {
+      if (failed(emitFunctionReturn(location, std::nullopt, false)))
+        return failure();
+      setCurrent(addBlock());
+    }
     return dummyTaskResult();
   }
 

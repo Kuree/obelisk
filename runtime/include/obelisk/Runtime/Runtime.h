@@ -38,6 +38,7 @@ typedef int32_t obelisk_rt_status;
 #define OBELISK_RT_INVALID_DESIGN INT32_C(16)
 #define OBELISK_RT_PERMISSION_DENIED INT32_C(17)
 #define OBELISK_RT_DPI_DISABLE_UNSUPPORTED INT32_C(18)
+#define OBELISK_RT_FATAL INT32_C(19)
 
 typedef struct obelisk_rt_buffer_v1 {
   uint8_t *data;
@@ -76,6 +77,13 @@ typedef struct obelisk_rt_handle_v1 {
 #define OBELISK_RT_EXECUTION_VPI_READ (UINT32_C(1) << 2)
 #define OBELISK_RT_EXECUTION_VPI_WRITE (UINT32_C(1) << 3)
 #define OBELISK_RT_EXECUTION_REQUIRE_BYTECODE (UINT32_C(1) << 4)
+
+// Serialized design-bytecode function flags. Process functions encode their
+// canonical frame size shifted left by one. The high bit records final-phase
+// scheduling without changing the current function-record layout.
+#define OBELISK_RT_DESIGN_FUNCTION_PROCESS UINT64_C(0x0000000000000001)
+#define OBELISK_RT_DESIGN_FUNCTION_FRAME_SIZE_MASK UINT64_C(0x7ffffffffffffffe)
+#define OBELISK_RT_DESIGN_FUNCTION_FINAL UINT64_C(0x8000000000000000)
 
 // DPI scope records are immutable execution metadata and remain available
 // independently of the optional VPI design database. IDs are dense from zero;
@@ -279,6 +287,9 @@ enum {
   OBELISK_RT_INTRINSIC_V1_CONTROL_LEAVE = UINT32_C(0x00010207),
   OBELISK_RT_INTRINSIC_V1_CONTROL_DISABLE = UINT32_C(0x00010208),
   OBELISK_RT_INTRINSIC_V1_STATIC_ONCE = UINT32_C(0x00010209),
+  OBELISK_RT_INTRINSIC_V1_FINISH = UINT32_C(0x0001020a),
+  OBELISK_RT_INTRINSIC_V1_FATAL = UINT32_C(0x0001020b),
+  OBELISK_RT_INTRINSIC_V1_TERMINATION_REQUESTED = UINT32_C(0x0001020c),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_VPI_ROOT = UINT32_C(0x00011000),
@@ -1021,6 +1032,16 @@ obelisk_rt_status obelisk_rt_v1_native_state_store_plane(
     uint64_t global_bit_count, uint64_t handle, uint64_t bit_width,
     uint32_t unknown_plane, const uint8_t *value, uint8_t *out_changed);
 void obelisk_rt_v1_scheduler_notify(obelisk_rt_context *context);
+// Request orderly design-wide termination. The scheduler stops selecting
+// ordinary processes and pending updates, then runs every final process.
+// `verbosity` is retained for SystemVerilog compatibility; diagnostic text is
+// implementation-defined and this runtime currently emits none.
+obelisk_rt_status obelisk_rt_v1_scheduler_finish(
+    obelisk_rt_context *context, uint32_t verbosity);
+obelisk_rt_status obelisk_rt_v1_scheduler_fatal(
+    obelisk_rt_context *context, uint32_t verbosity);
+uint32_t obelisk_rt_v1_scheduler_termination_requested(
+    obelisk_rt_context *context);
 obelisk_rt_status obelisk_rt_v1_scheduler_run(obelisk_rt_context *context);
 
 typedef uint32_t obelisk_rt_fragment_code_kind;
