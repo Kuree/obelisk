@@ -141,6 +141,13 @@ bool isCodeUnit(::mlir::Operation *op);
 /// Whether a packed semantic type is signed.
 bool isSignedSemanticType(::mlir::Type type);
 
+/// Fixed SystemVerilog bitstream width of a semantic type.
+///
+/// Unlike the packed-width query used for SSA normalization, this includes
+/// fixed unpacked arrays and aggregates, as required by `$bits`. Dynamic
+/// bitstreams have no type-only width and return std::nullopt.
+std::optional<uint64_t> getSemanticBitstreamWidth(::mlir::Type type);
+
 /// Normalized type of a semantic node's `semantic_type` attribute.
 ::mlir::FailureOr<::mlir::Type>
 getNormalizedSemanticType(::mlir::Operation *op);

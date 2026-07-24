@@ -750,6 +750,18 @@ bool validIntrinsic(const Image &image, const Function &function,
     return signature.flags <= 5 && site.inputCount == 2 &&
            site.outputCount == 1 && twoStateBits(input(0), 64) &&
            twoStateBits(input(1), 64) && twoStateBits(output(0), 1);
+  case OBELISK_RT_INTRINSIC_V1_COUNT_BITS:
+    if (signature.flags != 0 || site.inputCount < 2 || site.outputCount != 1 ||
+        !numeric(input(0)) || !twoStateBits(output(0), 32))
+      return false;
+    for (uint32_t index = 1; index != site.inputCount; ++index)
+      if (!bits(input(index), 1))
+        return false;
+    return true;
+  case OBELISK_RT_INTRINSIC_V1_CLOG2:
+    return signature.flags == 0 && site.inputCount == 1 &&
+           site.outputCount == 1 && numeric(input(0)) &&
+           twoStateBits(output(0), 32);
   case OBELISK_RT_INTRINSIC_V1_FILE_OPEN_MCD:
     return site.inputCount == 1 && site.outputCount == 1 && bytes(input(0)) &&
            bits(output(0), 32);
@@ -3463,6 +3475,72 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       return OBELISK_RT_INVALID_BYTECODE;
     }
     return sentinel(0, result ? 1 : 0);
+  }
+  case OBELISK_RT_INTRINSIC_V1_COUNT_BITS: {
+    Logic input = readLogic(frame.data,
+                            layoutAt(image, frame.function, inputRegister(0)));
+    bool selected[4] = {};
+    for (uint32_t index = 1; index != site.inputCount; ++index) {
+      Logic control = readLogic(
+          frame.data, layoutAt(image, frame.function, inputRegister(index)));
+      unsigned state = (bit(control.unknown, 0) ? 2u : 0u) |
+                       (bit(control.value, 0) ? 1u : 0u);
+      selected[state] = true;
+    }
+    uint32_t count = 0;
+    for (size_t index = 0; index != input.value.size(); ++index) {
+      uint64_t value = input.value[index];
+      uint64_t unknown = input.unknown[index];
+      uint64_t known = ~unknown;
+      uint64_t matches = 0;
+      if (selected[0])
+        matches |= ~value & known;
+      if (selected[1])
+        matches |= value & known;
+      if (selected[2])
+        matches |= ~value & unknown;
+      if (selected[3])
+        matches |= value & unknown;
+      if (index + 1 == input.value.size())
+        matches &= finalMask(input.width);
+      while (matches) {
+        matches &= matches - 1;
+        ++count;
+      }
+    }
+    return sentinel(0, count);
+  }
+  case OBELISK_RT_INTRINSIC_V1_CLOG2: {
+    Logic input = readLogic(frame.data,
+                            layoutAt(image, frame.function, inputRegister(0)));
+    std::vector<uint64_t> value(input.value.size());
+    bool nonzero = false;
+    for (size_t index = 0; index != value.size(); ++index) {
+      value[index] = input.value[index] & ~input.unknown[index];
+      nonzero |= value[index] != 0;
+    }
+    if (!nonzero)
+      return sentinel(0, 0);
+    for (size_t index = 0; index != value.size(); ++index) {
+      uint64_t previous = value[index];
+      --value[index];
+      if (previous != 0)
+        break;
+    }
+    uint32_t result = 0;
+    for (size_t index = value.size(); index != 0; --index) {
+      uint64_t limb = value[index - 1];
+      if (limb == 0)
+        continue;
+      unsigned activeBits = 0;
+      while (limb) {
+        ++activeBits;
+        limb >>= 1;
+      }
+      result = static_cast<uint32_t>((index - 1) * 64 + activeBits);
+      break;
+    }
+    return sentinel(0, result);
   }
   case OBELISK_RT_INTRINSIC_V1_FILE_OPEN_MCD:
   case OBELISK_RT_INTRINSIC_V1_FILE_OPEN: {

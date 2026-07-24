@@ -11,6 +11,8 @@
 // CHECK: func.func @identity(%[[V:.*]]: i5, %[[U:.*]]: i5) -> (i5, i5)
 // CHECK: return %[[V]], %[[U]] : i5, i5
 // CHECK: func.func @all_values(
+// CHECK: math.ctpop
+// CHECK: math.ctlz
 // CHECK: arith.divui
 // CHECK: arith.divsi
 // CHECK: arith.remui
@@ -51,6 +53,8 @@ module {
     %red_nand = obelisk_sim.logic.reduction nand %a : !obelisk_sim.logic<5> -> !obelisk_sim.logic<1>
     %red_nor = obelisk_sim.logic.reduction nor %a : !obelisk_sim.logic<5> -> !obelisk_sim.logic<1>
     %red_xnor = obelisk_sim.logic.reduction xnor %a : !obelisk_sim.logic<5> -> !obelisk_sim.logic<1>
+    %count = obelisk_sim.logic.count_bits %a matching %logical_not : (!obelisk_sim.logic<5>, !obelisk_sim.logic<1>) -> i32
+    %clog2 = obelisk_sim.logic.clog2 %a : !obelisk_sim.logic<5>
 
     %add = obelisk_sim.logic.binary add %a, %b : !obelisk_sim.logic<5>
     %sub = obelisk_sim.logic.binary sub %a, %b : !obelisk_sim.logic<5>

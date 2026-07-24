@@ -64,6 +64,8 @@ constexpr uint32_t kIntrinsicRealFromInteger =
 constexpr uint32_t kIntrinsicRealToInteger =
     OBELISK_RT_INTRINSIC_V1_REAL_TO_INTEGER;
 constexpr uint32_t kIntrinsicRealCompare = OBELISK_RT_INTRINSIC_V1_REAL_COMPARE;
+constexpr uint32_t kIntrinsicCountBits = OBELISK_RT_INTRINSIC_V1_COUNT_BITS;
+constexpr uint32_t kIntrinsicClog2 = OBELISK_RT_INTRINSIC_V1_CLOG2;
 constexpr uint32_t kIntrinsicFileOpenMCD =
     OBELISK_RT_INTRINSIC_V1_FILE_OPEN_MCD;
 constexpr uint32_t kIntrinsicFileOpen = OBELISK_RT_INTRINSIC_V1_FILE_OPEN;
@@ -1494,6 +1496,14 @@ private:
       return emitConstant(plan, constant.getResult(), constant.getValue(),
                           &unknown);
     }
+    if (auto op = dyn_cast<sim::SimLogicCountBitsOp>(operation)) {
+      SmallVector<Value> inputs{op.getInput()};
+      llvm::append_range(inputs, op.getControls());
+      return emitIntrinsic(plan, kIntrinsicCountBits, inputs, {op.getResult()});
+    }
+    if (auto op = dyn_cast<sim::SimLogicClog2Op>(operation))
+      return emitIntrinsic(plan, kIntrinsicClog2, {op.getInput()},
+                           {op.getResult()});
     if (auto constant = dyn_cast<sim::SimTimeConstantOp>(operation)) {
       APInt value(64, constant.getValue());
       return emitConstant(plan, constant.getResult(), value);

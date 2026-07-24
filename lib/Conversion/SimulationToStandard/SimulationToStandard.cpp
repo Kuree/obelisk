@@ -10,6 +10,7 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Func/Transforms/FuncConversions.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Transforms/DialectConversion.h"
@@ -692,6 +693,93 @@ public:
     ArrayRef<ValueRange> operands = adaptor.getOperands();
     replaceInteger(op,
                    getTruth(rewriter, op.getLoc(), getLogic(operands, 0)).value,
+                   rewriter);
+    return success();
+  }
+};
+
+class CountBitsConversion final
+    : public LogicOpConversion<sim::SimLogicCountBitsOp> {
+public:
+  using LogicOpConversion::LogicOpConversion;
+
+  LogicalResult
+  matchAndRewrite(sim::SimLogicCountBitsOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    ArrayRef<ValueRange> operands = adaptor.getOperands();
+    if (operands.empty() ||
+        (operands[0].size() != 1 && operands[0].size() != 2))
+      return rewriter.notifyMatchFailure(
+          op, "bitstream input did not convert to one or two planes");
+
+    Location loc = op.getLoc();
+    Value inputValue = operands[0][0];
+    if (!isa<IntegerType>(inputValue.getType()))
+      return rewriter.notifyMatchFailure(
+          op, "bitstream input did not convert to integer planes");
+    auto type = integerType(inputValue);
+    Value inputUnknown =
+        operands[0].size() == 2 ? operands[0][1] : zero(rewriter, loc, type);
+    Value known = bitNot(rewriter, loc, inputUnknown);
+    Value stateMasks[4] = {
+        arith::AndIOp::create(rewriter, loc, bitNot(rewriter, loc, inputValue),
+                              known),
+        arith::AndIOp::create(rewriter, loc, inputValue, known),
+        arith::AndIOp::create(rewriter, loc, bitNot(rewriter, loc, inputValue),
+                              inputUnknown),
+        arith::AndIOp::create(rewriter, loc, inputValue, inputUnknown)};
+
+    Value selected = zero(rewriter, loc, type);
+    for (size_t index = 1; index < operands.size(); ++index) {
+      if (operands[index].size() != 2)
+        return rewriter.notifyMatchFailure(
+            op, "state control did not convert to two planes");
+      Value controlValue = operands[index][0];
+      Value controlUnknown = operands[index][1];
+      Value knownControl = boolNot(rewriter, loc, controlUnknown);
+      Value zeroControl = boolNot(rewriter, loc, controlValue);
+      Value selectors[4] = {
+          boolAnd(rewriter, loc, knownControl, zeroControl),
+          boolAnd(rewriter, loc, knownControl, controlValue),
+          boolAnd(rewriter, loc, controlUnknown, zeroControl),
+          boolAnd(rewriter, loc, controlUnknown, controlValue)};
+      for (unsigned state = 0; state != 4; ++state) {
+        Value mask = select(rewriter, loc, selectors[state], stateMasks[state],
+                            zero(rewriter, loc, type));
+        selected = arith::OrIOp::create(rewriter, loc, selected, mask);
+      }
+    }
+    Value count =
+        math::CtPopOp::create(rewriter, loc, type, selected).getResult();
+    replaceInteger(op, resizeInteger(rewriter, loc, count, 32, false),
+                   rewriter);
+    return success();
+  }
+};
+
+class Clog2Conversion final : public LogicOpConversion<sim::SimLogicClog2Op> {
+public:
+  using LogicOpConversion::LogicOpConversion;
+
+  LogicalResult
+  matchAndRewrite(sim::SimLogicClog2Op op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    ArrayRef<ValueRange> operands = adaptor.getOperands();
+    LogicValue input = getLogic(operands, 0);
+    Location loc = op.getLoc();
+    auto type = integerType(input.value);
+    Value value = arith::AndIOp::create(rewriter, loc, input.value,
+                                        bitNot(rewriter, loc, input.unknown));
+    Value decremented = arith::SubIOp::create(
+        rewriter, loc, value, integerConstant(rewriter, loc, type, 1));
+    Value leading =
+        math::CountLeadingZerosOp::create(rewriter, loc, type, decremented)
+            .getResult();
+    Value width = integerConstant(rewriter, loc, type, type.getWidth());
+    Value nonzeroResult = arith::SubIOp::create(rewriter, loc, width, leading);
+    Value result = select(rewriter, loc, isZero(rewriter, loc, value),
+                          zero(rewriter, loc, type), nonzeroResult);
+    replaceInteger(op, resizeInteger(rewriter, loc, result, 32, false),
                    rewriter);
     return success();
   }
@@ -1433,12 +1521,12 @@ public:
     ConversionTarget target(context);
     target.addIllegalOp<
         sim::SimLogicConstantOp, sim::SimLogicFromBitsOp, sim::SimLogicToBitsOp,
-        sim::SimLogicIsTrueOp, sim::SimLogicResizeOp, sim::SimLogicUnaryOp,
-        sim::SimLogicReductionOp, sim::SimLogicBinaryOp, sim::SimLogicLogicalOp,
-        sim::SimLogicShiftOp, sim::SimLogicCompareOp, sim::SimLogicConcatOp,
-        sim::SimLogicReplicateOp, sim::SimLogicExtractOp,
-        sim::SimLogicDynExtractOp, sim::SimBitsDynExtractOp,
-        sim::SimLogicInsertOp>();
+        sim::SimLogicIsTrueOp, sim::SimLogicCountBitsOp, sim::SimLogicClog2Op,
+        sim::SimLogicResizeOp, sim::SimLogicUnaryOp, sim::SimLogicReductionOp,
+        sim::SimLogicBinaryOp, sim::SimLogicLogicalOp, sim::SimLogicShiftOp,
+        sim::SimLogicCompareOp, sim::SimLogicConcatOp, sim::SimLogicReplicateOp,
+        sim::SimLogicExtractOp, sim::SimLogicDynExtractOp,
+        sim::SimBitsDynExtractOp, sim::SimLogicInsertOp>();
     target.addDynamicallyLegalDialect<arith::ArithDialect, func::FuncDialect,
                                       cf::ControlFlowDialect, scf::SCFDialect,
                                       sim::ObeliskSimulationDialect>(
@@ -1465,10 +1553,11 @@ static void populateSimulationToStandardPatternsImpl(
     const TypeConverter &converter, RewritePatternSet &patterns,
     const llvm::DenseSet<Operation *> *provenTwoStateOperations) {
   patterns.add<ConstantConversion, FromBitsConversion, ToBitsConversion,
-               IsTrueConversion, ResizeConversion, UnaryConversion,
-               ReductionConversion, BinaryConversion, LogicalConversion,
-               ShiftConversion, CompareConversion, ConcatConversion,
-               ReplicateConversion, ExtractConversion, DynamicExtractConversion,
+               IsTrueConversion, CountBitsConversion, Clog2Conversion,
+               ResizeConversion, UnaryConversion, ReductionConversion,
+               BinaryConversion, LogicalConversion, ShiftConversion,
+               CompareConversion, ConcatConversion, ReplicateConversion,
+               ExtractConversion, DynamicExtractConversion,
                BitsDynamicExtractConversion, InsertConversion>(
       converter, patterns.getContext(), provenTwoStateOperations);
   patterns.add<BranchConversion, CondBranchConversion, SwitchConversion>(

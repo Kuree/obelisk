@@ -2840,6 +2840,144 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     return constant(builder.getI1Type(), 0);
   };
 
+  if (name == "$bits") {
+    if (children.size() != 1) {
+      emitError(location) << "$bits requires exactly one argument";
+      return failure();
+    }
+    auto semanticType =
+        children.front()->getAttrOfType<TypeAttr>("semantic_type");
+    if (!semanticType) {
+      emitError(getSemanticLocation(children.front()))
+          << "$bits argument has no elaborated semantic type";
+      return failure();
+    }
+    std::optional<uint64_t> width =
+        getSemanticBitstreamWidth(semanticType.getValue());
+    if (!width) {
+      emitError(getSemanticLocation(children.front()))
+          << "$bits of a dynamically sized bitstream is not yet executable";
+      return failure();
+    }
+    // `$bits` is an inquiry function: its operand is unevaluated. Preserve
+    // Slang/SystemVerilog's signed 32-bit result by retaining the low 32 bits
+    // even for an exceptionally large elaborated type.
+    Value result = arith::ConstantOp::create(
+        builder, location, i32, builder.getIntegerAttr(i32, APInt(32, *width)));
+    return convertResult(result);
+  }
+
+  if (name == "$signed" || name == "$unsigned") {
+    if (children.size() != 1) {
+      emitError(location) << name << " requires exactly one argument";
+      return failure();
+    }
+    FailureOr<Value> value = lowerExpression(children.front());
+    if (failed(value))
+      return failure();
+    // Signedness is source-semantic metadata on the call expression. The
+    // physical width and four-state domain are deliberately unchanged.
+    return convertResult(*value);
+  }
+
+  auto lowerBitstream = [&](Operation *child) -> FailureOr<Value> {
+    FailureOr<Value> value = lowerExpression(child);
+    if (failed(value))
+      return failure();
+    if (sim::getPackedScalarType((*value).getType()))
+      return toLogic(*value, getSemanticLocation(child));
+    if (sim::getProvenanceSpan((*value).getType()))
+      return *value;
+    emitError(getSemanticLocation(child))
+        << "operand is not a fixed bitstream value: " << (*value).getType();
+    return failure();
+  };
+  auto lowerStateControl = [&](Operation *child) -> FailureOr<Value> {
+    FailureOr<Value> control = lowerExpression(child);
+    if (failed(control))
+      return failure();
+    FailureOr<Value> logic = toLogic(*control, getSemanticLocation(child));
+    if (failed(logic))
+      return failure();
+    if (cast<sim::LogicType>((*logic).getType()).getWidth() == 1)
+      return *logic;
+    return sim::SimLogicExtractOp::create(
+               builder, getSemanticLocation(child),
+               sim::LogicType::get(function.getContext(), 1), *logic,
+               builder.getI64IntegerAttr(0))
+        .getResult();
+  };
+  auto stateConstant = [&](bool value, bool unknown) -> Value {
+    auto logic = sim::LogicType::get(function.getContext(), 1);
+    auto plane = builder.getI1Type();
+    return sim::SimLogicConstantOp::create(
+               builder, location, logic,
+               builder.getIntegerAttr(plane, value ? 1 : 0),
+               builder.getIntegerAttr(plane, unknown ? 1 : 0))
+        .getResult();
+  };
+
+  if (name == "$clog2") {
+    if (children.size() != 1) {
+      emitError(location) << "$clog2 requires exactly one argument";
+      return failure();
+    }
+    FailureOr<Value> input = lowerBitstream(children.front());
+    if (failed(input))
+      return failure();
+    if (!isa<sim::LogicType>((*input).getType())) {
+      emitError(getSemanticLocation(children.front()))
+          << "$clog2 requires an integral operand";
+      return failure();
+    }
+    Value result = sim::SimLogicClog2Op::create(builder, location, i32, *input);
+    return convertResult(result);
+  }
+
+  if (name == "$countbits" || name == "$countones" || name == "$onehot" ||
+      name == "$onehot0" || name == "$isunknown") {
+    if ((name == "$countbits" && children.size() < 2) ||
+        (name != "$countbits" && children.size() != 1)) {
+      emitError(location)
+          << name
+          << (name == "$countbits"
+                  ? " requires a bitstream and at least one control argument"
+                  : " requires exactly one argument");
+      return failure();
+    }
+    FailureOr<Value> input = lowerBitstream(children.front());
+    if (failed(input))
+      return failure();
+    SmallVector<Value> controls;
+    if (name == "$countbits") {
+      for (Operation *child : ArrayRef(children).drop_front()) {
+        FailureOr<Value> control = lowerStateControl(child);
+        if (failed(control))
+          return failure();
+        controls.push_back(*control);
+      }
+    } else if (name == "$isunknown") {
+      controls.push_back(stateConstant(false, true)); // X
+      controls.push_back(stateConstant(true, true));  // Z
+    } else {
+      controls.push_back(stateConstant(true, false));
+    }
+    Value count = sim::SimLogicCountBitsOp::create(builder, location, i32,
+                                                   *input, controls);
+    if (name == "$countbits" || name == "$countones")
+      return convertResult(count);
+
+    arith::CmpIPredicate predicate = name == "$onehot0"
+                                         ? arith::CmpIPredicate::ule
+                                         : arith::CmpIPredicate::eq;
+    int64_t limit = name == "$isunknown" ? 0 : 1;
+    if (name == "$isunknown")
+      predicate = arith::CmpIPredicate::ne;
+    Value result = arith::CmpIOp::create(builder, location, predicate, count,
+                                         constant(i32, limit));
+    return convertResult(result);
+  }
+
   if (name == "$time" || name == "$stime" || name == "$realtime") {
     if (!children.empty()) {
       emitError(location) << name << " accepts no arguments";

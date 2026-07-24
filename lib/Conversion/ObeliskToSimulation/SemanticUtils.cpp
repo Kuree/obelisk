@@ -46,6 +46,96 @@ SmallVector<Operation *> getChildren(Operation *op) {
   return children;
 }
 
+static std::optional<uint64_t> getRangeExtent(int64_t left, int64_t right) {
+  uint64_t lhs = static_cast<uint64_t>(left);
+  uint64_t rhs = static_cast<uint64_t>(right);
+  uint64_t distance = left >= right ? lhs - rhs : rhs - lhs;
+  if (distance == std::numeric_limits<uint64_t>::max())
+    return std::nullopt;
+  return distance + 1;
+}
+
+static std::optional<uint64_t>
+checkedArrayWidth(std::optional<uint64_t> elementWidth, uint64_t count) {
+  if (!elementWidth ||
+      (count && *elementWidth > std::numeric_limits<uint64_t>::max() / count))
+    return std::nullopt;
+  return *elementWidth * count;
+}
+
+std::optional<uint64_t> getSemanticBitstreamWidth(Type type) {
+  if (auto integral = dyn_cast<semantic::IntegralType>(type))
+    return integral.getWidth();
+  if (auto integer = dyn_cast<IntegerType>(type))
+    return integer.getWidth();
+  if (auto logic = dyn_cast<semantic::LogicType>(type))
+    return logic.getWidth();
+  if (isa<semantic::TimeType>(type))
+    return 64;
+  if (isa<semantic::RealType, semantic::RealtimeType>(type) || type.isF64())
+    return 64;
+  if (isa<semantic::ShortRealType>(type) || type.isF32())
+    return 32;
+  if (auto enumeration = dyn_cast<semantic::EnumType>(type))
+    return getSemanticBitstreamWidth(enumeration.getBaseType());
+
+  if (auto array = dyn_cast<semantic::RangedPackedArrayType>(type)) {
+    auto count = getRangeExtent(array.getLeft(), array.getRight());
+    return count
+               ? checkedArrayWidth(
+                     getSemanticBitstreamWidth(array.getElementType()), *count)
+               : std::nullopt;
+  }
+  if (auto array = dyn_cast<semantic::RangedUnpackedArrayType>(type)) {
+    auto count = getRangeExtent(array.getLeft(), array.getRight());
+    return count
+               ? checkedArrayWidth(
+                     getSemanticBitstreamWidth(array.getElementType()), *count)
+               : std::nullopt;
+  }
+  if (auto array = dyn_cast<semantic::PackedArrayType>(type))
+    return checkedArrayWidth(getSemanticBitstreamWidth(array.getElementType()),
+                             array.getSize());
+  if (auto array = dyn_cast<semantic::UnpackedArrayType>(type))
+    return checkedArrayWidth(getSemanticBitstreamWidth(array.getElementType()),
+                             array.getSize());
+
+  // The elaborator computes this from the full source field inventory,
+  // including tagged-union discriminants and unpacked aggregate members.
+  if (auto aggregate = dyn_cast<semantic::SourceAggregateType>(type))
+    return aggregate.getBitstreamWidth();
+
+  auto dictionaryWidth = [&](DictionaryAttr fields,
+                             bool isUnion) -> std::optional<uint64_t> {
+    uint64_t width = 0;
+    for (NamedAttribute field : fields) {
+      auto fieldType = dyn_cast<TypeAttr>(field.getValue());
+      std::optional<uint64_t> fieldWidth =
+          fieldType ? getSemanticBitstreamWidth(fieldType.getValue())
+                    : std::nullopt;
+      if (!fieldWidth)
+        return std::nullopt;
+      if (isUnion) {
+        width = std::max(width, *fieldWidth);
+      } else {
+        if (width > std::numeric_limits<uint64_t>::max() - *fieldWidth)
+          return std::nullopt;
+        width += *fieldWidth;
+      }
+    }
+    return width;
+  };
+  if (auto structure = dyn_cast<semantic::PackedStructType>(type))
+    return dictionaryWidth(structure.getFields(), false);
+  if (auto structure = dyn_cast<semantic::UnpackedStructType>(type))
+    return dictionaryWidth(structure.getFields(), false);
+  if (auto unionType = dyn_cast<semantic::PackedUnionType>(type))
+    return dictionaryWidth(unionType.getFields(), true);
+  if (auto unionType = dyn_cast<semantic::UnpackedUnionType>(type))
+    return dictionaryWidth(unionType.getFields(), true);
+  return std::nullopt;
+}
+
 static std::optional<uint64_t> getSemanticPackedWidth(Type type) {
   if (auto integral = dyn_cast<semantic::IntegralType>(type))
     return integral.getWidth();
@@ -54,26 +144,14 @@ static std::optional<uint64_t> getSemanticPackedWidth(Type type) {
   if (auto logic = dyn_cast<semantic::LogicType>(type))
     return logic.getWidth();
   if (auto array = dyn_cast<semantic::RangedPackedArrayType>(type)) {
-    uint64_t count = array.getLeft() >= array.getRight()
-                         ? static_cast<uint64_t>(array.getLeft()) -
-                               static_cast<uint64_t>(array.getRight()) + 1
-                         : static_cast<uint64_t>(array.getRight()) -
-                               static_cast<uint64_t>(array.getLeft()) + 1;
-    std::optional<uint64_t> element =
-        getSemanticPackedWidth(array.getElementType());
-    if (!element ||
-        (count && *element > std::numeric_limits<uint64_t>::max() / count))
-      return std::nullopt;
-    return *element * count;
+    auto count = getRangeExtent(array.getLeft(), array.getRight());
+    return count ? checkedArrayWidth(
+                       getSemanticPackedWidth(array.getElementType()), *count)
+                 : std::nullopt;
   }
   if (auto array = dyn_cast<semantic::PackedArrayType>(type)) {
-    std::optional<uint64_t> element =
-        getSemanticPackedWidth(array.getElementType());
-    if (!element ||
-        (array.getSize() &&
-         *element > std::numeric_limits<uint64_t>::max() / array.getSize()))
-      return std::nullopt;
-    return *element * array.getSize();
+    return checkedArrayWidth(getSemanticPackedWidth(array.getElementType()),
+                             array.getSize());
   }
   if (auto enumeration = dyn_cast<semantic::EnumType>(type))
     return getSemanticPackedWidth(enumeration.getBaseType());

@@ -192,6 +192,7 @@ def ConvertObeliskSimValuesToStandardPass
     "mlir::arith::ArithDialect",
     "mlir::cf::ControlFlowDialect",
     "mlir::func::FuncDialect",
+    "mlir::math::MathDialect",
     "mlir::scf::SCFDialect"
   ];
 }
@@ -270,7 +271,8 @@ def ConvertObeliskSimProcessesToLLVMCoroutinesPass
     "mlir::arith::ArithDialect",
     "mlir::cf::ControlFlowDialect",
     "mlir::func::FuncDialect",
-    "mlir::LLVM::LLVMDialect"
+    "mlir::LLVM::LLVMDialect",
+    "mlir::math::MathDialect"
   ];
 }
 

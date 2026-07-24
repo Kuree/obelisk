@@ -22,6 +22,8 @@ add_mlir_library(ObeliskSimulationToLLVMCoroutine
   MLIRIR
   MLIRLLVMCommonConversion
   MLIRLLVMDialect
+  MLIRMathDialect
+  MLIRMathToLLVM
   MLIRPass
   MLIRTransforms
 )

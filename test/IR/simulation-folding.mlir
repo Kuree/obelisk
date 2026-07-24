@@ -8,6 +8,7 @@ module {
     obelisk_sim.code_unit.decl 9000004 in 0 function hierarchy "test.folding.operand_order.9000004"
     obelisk_sim.code_unit.decl 9000005 in 0 function hierarchy "test.folding.structural.9000005"
     obelisk_sim.code_unit.decl 9000006 in 0 function hierarchy "test.folding.matching.9000006"
+    obelisk_sim.code_unit.decl 9000007 in 0 function hierarchy "test.folding.pure_inquiries.9000007"
     obelisk_sim.scope.decl 0
     obelisk_sim.func @constants(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> (!obelisk_sim.logic<4>, i4, i1) attributes {entry_kind = 8 : i32, code_unit_id = 9000001 : i64} {
       %x = obelisk_sim.logic.constant 10 : i4, 4 : i4 : !obelisk_sim.logic<4>
@@ -72,6 +73,19 @@ module {
       %casex = obelisk_sim.logic.compare casexz_eq %x, %zero : (!obelisk_sim.logic<1>, !obelisk_sim.logic<1>) -> i1
       obelisk_sim.return %wild_mask, %wild_unknown, %wild_ne, %casez_z, %casez_x, %casez_exact_x, %casex : !obelisk_sim.logic<1>, !obelisk_sim.logic<1>, !obelisk_sim.logic<1>, i1, i1, i1, i1
     }
+
+    obelisk_sim.func @pure_inquiries(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> (i32, i32, i32, i32) attributes {entry_kind = 8 : i32, code_unit_id = 9000007 : i64} {
+      %mixed = obelisk_sim.logic.constant 1477 : i12, 780 : i12 : !obelisk_sim.logic<12>
+      %zero = obelisk_sim.logic.constant 0 : i1, 0 : i1 : !obelisk_sim.logic<1>
+      %one = obelisk_sim.logic.constant 1 : i1, 0 : i1 : !obelisk_sim.logic<1>
+      %x = obelisk_sim.logic.constant 0 : i1, 1 : i1 : !obelisk_sim.logic<1>
+      %z = obelisk_sim.logic.constant 1 : i1, 1 : i1 : !obelisk_sim.logic<1>
+      %count_zero = obelisk_sim.logic.count_bits %mixed matching %zero : (!obelisk_sim.logic<12>, !obelisk_sim.logic<1>) -> i32
+      %count_all = obelisk_sim.logic.count_bits %mixed matching %zero, %one, %x, %z, %one : (!obelisk_sim.logic<12>, !obelisk_sim.logic<1>, !obelisk_sim.logic<1>, !obelisk_sim.logic<1>, !obelisk_sim.logic<1>, !obelisk_sim.logic<1>) -> i32
+      %clog2 = obelisk_sim.logic.clog2 %mixed : !obelisk_sim.logic<12>
+      %clog2_zero = obelisk_sim.logic.clog2 %zero : !obelisk_sim.logic<1>
+      obelisk_sim.return %count_zero, %count_all, %clog2, %clog2_zero : i32, i32, i32, i32
+    }
   }
 }
 
@@ -115,3 +129,12 @@ module {
 // CHECK: %[[MATCH_FALSE:.*]] = arith.constant false
 // CHECK-NOT: obelisk_sim.logic.compare
 // CHECK: obelisk_sim.return %[[MATCH_ONE]], %[[MATCH_X]], %[[MATCH_ONE]], %[[MATCH_TRUE]], %[[MATCH_FALSE]], %[[MATCH_TRUE]], %[[MATCH_TRUE]]
+
+// CHECK-LABEL: obelisk_sim.func @pure_inquiries
+// CHECK-DAG: %[[FOUR:.*]] = arith.constant 4 : i32
+// CHECK-DAG: %[[TWELVE:.*]] = arith.constant 12 : i32
+// CHECK-DAG: %[[ELEVEN:.*]] = arith.constant 11 : i32
+// CHECK-DAG: %[[ZERO:.*]] = arith.constant 0 : i32
+// CHECK-NOT: obelisk_sim.logic.count_bits
+// CHECK-NOT: obelisk_sim.logic.clog2
+// CHECK: obelisk_sim.return %[[FOUR]], %[[TWELVE]], %[[ELEVEN]], %[[ZERO]]

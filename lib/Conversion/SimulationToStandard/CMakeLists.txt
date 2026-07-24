@@ -12,6 +12,7 @@ add_mlir_library(ObeliskSimulationToStandard
   MLIRFuncDialect
   MLIRFuncTransforms
   MLIRIR
+  MLIRMathDialect
   MLIRPass
   MLIRSCFDialect
   MLIRTransforms

@@ -3083,6 +3083,60 @@ OpFoldResult SimLogicToBitsOp::fold(FoldAdaptor adaptor) {
   return IntegerAttr::get(getResult().getType(), converted);
 }
 
+LogicalResult SimLogicCountBitsOp::verify() {
+  if (getControls().empty())
+    return emitOpError("requires at least one state control");
+  std::optional<uint64_t> width;
+  if (auto packed = getPackedWidth(getInput().getType()))
+    width = *packed;
+  else
+    width = getProvenanceSpan(getInput().getType());
+  if (!width || *width == 0)
+    return emitOpError("input must be a nonempty fixed bitstream value");
+  return success();
+}
+
+OpFoldResult SimLogicCountBitsOp::fold(FoldAdaptor adaptor) {
+  auto input = getLogicPlanes(adaptor.getInput());
+  if (!input)
+    return {};
+
+  bool selected[4] = {};
+  for (Attribute attribute : adaptor.getControls()) {
+    auto control = getLogicPlanes(attribute);
+    if (!control)
+      return {};
+    unsigned state =
+        (control->unknown[0] ? 2u : 0u) | (control->value[0] ? 1u : 0u);
+    selected[state] = true;
+  }
+
+  APInt value = input->value;
+  APInt unknown = input->unknown;
+  APInt known = ~unknown;
+  APInt matches = APInt::getZero(value.getBitWidth());
+  if (selected[0])
+    matches |= ~value & known;
+  if (selected[1])
+    matches |= value & known;
+  if (selected[2])
+    matches |= ~value & unknown;
+  if (selected[3])
+    matches |= value & unknown;
+  return IntegerAttr::get(IntegerType::get(getContext(), 32),
+                          APInt(32, matches.popcount()));
+}
+
+OpFoldResult SimLogicClog2Op::fold(FoldAdaptor adaptor) {
+  auto input = getLogicPlanes(adaptor.getInput());
+  if (!input)
+    return {};
+  APInt value = input->value & ~input->unknown;
+  uint64_t result = value.isZero() ? 0 : (value - 1).getActiveBits();
+  return IntegerAttr::get(IntegerType::get(getContext(), 32),
+                          APInt(32, result));
+}
+
 OpFoldResult SimLogicIsTrueOp::fold(FoldAdaptor adaptor) {
   auto planes = dyn_cast_or_null<ArrayAttr>(adaptor.getInput());
   if (!planes || planes.size() != 2)

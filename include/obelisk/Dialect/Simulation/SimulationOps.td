@@ -940,6 +940,36 @@ def SimLogicIsTrueOp : SimOp<"logic.is_true", [Pure]> {
   let hasFolder = 1;
 }
 
+def SimLogicCountBitsOp : SimOp<"logic.count_bits", [Pure]> {
+  let summary = "count selected four-state symbols in a fixed bitstream";
+  let description = [{
+    Each one-bit control selects exactly one of 0, 1, X, or Z using the
+    dialect's value/unknown encoding. Duplicate controls select that state only
+    once. The result is the count modulo 2^32, matching SystemVerilog `int`.
+  }];
+  let arguments = (ins AnyType:$input,
+                       Variadic<SimLogic1Type>:$controls);
+  let results = (outs I32:$result);
+  let assemblyFormat =
+      "$input `matching` $controls attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+  let hasFolder = 1;
+}
+
+def SimLogicClog2Op : SimOp<"logic.clog2", [Pure]> {
+  let summary = "SystemVerilog ceiling base-two logarithm";
+  let description = [{
+    Converts X and Z bits to zero, then returns the minimum number of bits
+    needed to represent the input minus one. Zero and one return zero. Signed
+    inputs are intentionally interpreted by bit pattern, as required by
+    SystemVerilog `$clog2`.
+  }];
+  let arguments = (ins SimLogicType:$input);
+  let results = (outs I32:$result);
+  let assemblyFormat = "$input attr-dict `:` qualified(type($input))";
+  let hasFolder = 1;
+}
+
 def SimLogicResizeOp : SimOp<"logic.resize", [Pure]> {
   let summary = "widen or narrow a four-state value";
   let arguments = (ins SimLogicType:$input, BoolAttr:$is_signed);
