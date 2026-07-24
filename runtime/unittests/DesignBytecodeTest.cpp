@@ -2156,6 +2156,9 @@ TEST(DesignBytecode, SpawnRetainsStableAutomaticHandlesAndReclaimsTaskState) {
   ASSERT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
 
   ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_TRUE(context->scheduledDesignTasks.empty());
+  EXPECT_EQ(context->terminatedDesignTasks.rangeCount(), 1u);
+  EXPECT_EQ(context->designTaskFrames.size(), 1u);
   std::array<uint8_t, 9> value{}, unknown{};
   ASSERT_EQ(obelisk_rt_v1_native_state_load_plane(
                 context, dummy.data(), 65, automatic, 65, 0, 0,

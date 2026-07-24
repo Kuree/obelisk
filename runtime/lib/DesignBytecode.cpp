@@ -4,6 +4,7 @@
 #include "obelisk/Runtime/StableHandle.h"
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <cstring>
 #include <deque>
@@ -36,6 +37,26 @@ size_t checkedSizeSum(size_t lhs, size_t rhs) {
     throw std::bad_alloc();
   return lhs + rhs;
 }
+
+class ScopedReusableByteBuffer {
+public:
+  ScopedReusableByteBuffer(obelisk_rt_context *context, size_t size)
+      : pool(context ? &context->designTaskFrames : nullptr),
+        buffer(pool ? pool->acquire(size) : std::vector<uint8_t>(size)) {}
+  ScopedReusableByteBuffer(const ScopedReusableByteBuffer &) = delete;
+  ScopedReusableByteBuffer &
+  operator=(const ScopedReusableByteBuffer &) = delete;
+  ~ScopedReusableByteBuffer() {
+    if (pool)
+      pool->release(std::move(buffer));
+  }
+
+  uint8_t *data() { return buffer.data(); }
+
+private:
+  ReusableByteBufferPool *pool;
+  std::vector<uint8_t> buffer;
+};
 
 struct PendingDesignActivation {
   DesignActivation activation;
@@ -452,8 +473,7 @@ obelisk_rt_status releaseCapturedAutomaticStates(const Image &image,
   for (auto state = context->nativeAutomaticStates.begin();
        state != context->nativeAutomaticStates.end();)
     if (state->second.referenceCount == 0) {
-      obelisk_rt_erase_automatic_signal_snapshots_unlocked(context,
-                                                           state->first);
+      obelisk_rt_erase_automatic_bookkeeping_unlocked(context, state->first);
       state = context->nativeAutomaticStates.erase(state);
     } else
       ++state;
@@ -461,29 +481,32 @@ obelisk_rt_status releaseCapturedAutomaticStates(const Image &image,
 }
 
 PendingDesignActivation::~PendingDesignActivation() noexcept {
-  if (!ownsRetainedAutomaticStates || !context)
+  if (!context)
     return;
-  try {
-    std::lock_guard<std::recursive_mutex> lock(context->mutex);
-    for (const auto &[id, count] : retainedAutomaticStates) {
-      auto found = context->nativeAutomaticStates.find(id);
-      if (found == context->nativeAutomaticStates.end())
-        continue;
-      if (count <= found->second.referenceCount)
-        found->second.referenceCount -= count;
-    }
-    for (auto state = context->nativeAutomaticStates.begin();
-         state != context->nativeAutomaticStates.end();)
-      if (state->second.referenceCount == 0) {
-        obelisk_rt_erase_automatic_signal_snapshots_unlocked(context,
-                                                             state->first);
-        state = context->nativeAutomaticStates.erase(state);
-      } else {
-        ++state;
+  if (ownsRetainedAutomaticStates) {
+    try {
+      std::lock_guard<std::recursive_mutex> lock(context->mutex);
+      for (const auto &[id, count] : retainedAutomaticStates) {
+        auto found = context->nativeAutomaticStates.find(id);
+        if (found == context->nativeAutomaticStates.end())
+          continue;
+        if (count <= found->second.referenceCount)
+          found->second.referenceCount -= count;
       }
-  } catch (...) {
-    // Destructors on error paths must not obscure the scheduler failure.
+      for (auto state = context->nativeAutomaticStates.begin();
+           state != context->nativeAutomaticStates.end();)
+        if (state->second.referenceCount == 0) {
+          obelisk_rt_erase_automatic_bookkeeping_unlocked(context,
+                                                          state->first);
+          state = context->nativeAutomaticStates.erase(state);
+        } else {
+          ++state;
+        }
+    } catch (...) {
+      // Destructors on error paths must not obscure the scheduler failure.
+    }
   }
+  context->designTaskFrames.release(std::move(activation.frame));
 }
 
 void releaseDesignTaskOwnedStatesUnlocked(obelisk_rt_context *context,
@@ -496,8 +519,7 @@ void releaseDesignTaskOwnedStatesUnlocked(obelisk_rt_context *context,
     }
     state->second.designOwner = 0;
     if (state->second.referenceCount <= 1) {
-      obelisk_rt_erase_automatic_signal_snapshots_unlocked(context,
-                                                           state->first);
+      obelisk_rt_erase_automatic_bookkeeping_unlocked(context, state->first);
       state = context->nativeAutomaticStates.erase(state);
     } else {
       --state->second.referenceCount;
@@ -1816,6 +1838,11 @@ void mask(Logic &value) {
 
 int compareUnsigned(const std::vector<uint64_t> &left,
                     const std::vector<uint64_t> &right) {
+  // Callers always pass equal-width operands (enforced upstream by the
+  // SameOperandsAndResultType / SameTypeOperands op traits). Guard the
+  // invariant so a future IR regression trips here instead of reading past
+  // the shorter vector.
+  assert(left.size() == right.size() && "compareUnsigned width mismatch");
   for (size_t index = left.size(); index != 0; --index)
     if (left[index - 1] != right[index - 1])
       return left[index - 1] < right[index - 1] ? -1 : 1;
@@ -1932,6 +1959,7 @@ Logic doubleToInteger(double value, uint32_t width) {
 }
 
 Logic add(const Logic &left, const Logic &right, bool subtract) {
+  assert(left.value.size() == right.value.size() && "add width mismatch");
   if (anyUnknown(left) || anyUnknown(right))
     return allX(left.width, left.fourState);
   Logic rhs = subtract ? negate(right) : right;
@@ -1978,6 +2006,7 @@ static_assert(multiply64Portable(UINT64_C(1) << 63, UINT64_C(1) << 63).high ==
               (UINT64_C(1) << 62));
 
 Logic multiply(const Logic &left, const Logic &right) {
+  assert(left.value.size() == right.value.size() && "multiply width mismatch");
   if (anyUnknown(left) || anyUnknown(right))
     return allX(left.width, left.fourState);
   Logic result{left.width, left.fourState,
@@ -2010,6 +2039,8 @@ void setBit(std::vector<uint64_t> &value, uint64_t index, bool enabled) {
 
 std::pair<Logic, Logic> divide(const Logic &dividend, const Logic &divisor,
                                bool isSigned) {
+  assert(dividend.value.size() == divisor.value.size() &&
+         "divide width mismatch");
   if (anyUnknown(dividend) || anyUnknown(divisor) || isZero(divisor))
     return {allX(dividend.width, dividend.fourState),
             allX(dividend.width, dividend.fourState)};
@@ -2042,6 +2073,7 @@ std::pair<Logic, Logic> divide(const Logic &dividend, const Logic &divisor,
 }
 
 Logic bitwise(const Logic &left, const Logic &right, uint16_t opcode) {
+  assert(left.value.size() == right.value.size() && "bitwise width mismatch");
   Logic result{left.width, left.fourState,
                std::vector<uint64_t>(left.value.size()),
                std::vector<uint64_t>(left.value.size())};
@@ -2751,7 +2783,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         static_cast<uint32_t>(callee.initialScheduleRank);
     task.scratchOffset = scratchOffset;
     task.scratchSize = callee.scratchSize;
-    task.frame.resize(static_cast<size_t>(scratchOffset + callee.scratchSize));
+    task.frame = context->designTaskFrames.acquire(
+        static_cast<size_t>(scratchOffset + callee.scratchSize));
     uint32_t copied = 0;
     std::unordered_map<uint32_t, uint64_t> retainedAutomaticStates;
     for (uint64_t index = 0; index != image.stateDescriptorCount; ++index) {
@@ -2977,20 +3010,34 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       delay = *encodedDelay;
     }
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    uint32_t retainedAutomaticID = 0;
+    int64_t automaticOffset = 0;
+    if (decodeAutomaticHandle(stableID, retainedAutomaticID, automaticOffset)) {
+      auto found = context->nativeAutomaticStates.find(retainedAutomaticID);
+      if (found == context->nativeAutomaticStates.end())
+        return OBELISK_RT_INVALID_HANDLE;
+      if (signature.flags != 0 && found->second.referenceCount == UINT64_MAX)
+        return OBELISK_RT_OUT_OF_RESOURCES;
+    }
     if (signature.flags != 0) {
       if (context->nextSchedulerSequence == 0)
         return OBELISK_RT_OUT_OF_RESOURCES;
       uint64_t dueTime = delay > UINT64_MAX - context->schedulerTime
                              ? UINT64_MAX
                              : context->schedulerTime + delay;
-      context->scheduledDesignEvents.push_back(
-          {context->nextSchedulerSequence++, dueTime, stableID});
+      context->scheduledDesignEvents.push_back({context->nextSchedulerSequence,
+                                                dueTime, stableID,
+                                                retainedAutomaticID});
+      if (retainedAutomaticID != 0)
+        ++context->nativeAutomaticStates.find(retainedAutomaticID)
+              ->second.referenceCount;
+      ++context->nextSchedulerSequence;
       return OBELISK_RT_OK;
     }
-    uint64_t &generation = context->eventGenerations[stableID];
-    if (++generation == 0)
-      generation = 1;
-    context->eventLastTriggeredTimes[stableID] = context->schedulerTime;
+    EventState &eventState = context->events[stableID];
+    if (++eventState.generation == 0)
+      eventState.generation = 1;
+    eventState.lastTriggeredTime = context->schedulerTime;
     if (!obelisk_rt_notify_observer_event_unlocked(context, stableID))
       return context->schedulerStatus == OBELISK_RT_OK
                  ? OBELISK_RT_INVALID_DESIGN
@@ -4721,7 +4768,8 @@ obelisk_rt_status executeFunction(const Image &image, Frame &frame,
       Function calleeFunction = functionAt(image, instruction.source0);
       if (state.callDepth >= 1024)
         return OBELISK_RT_OUT_OF_RESOURCES;
-      std::vector<uint8_t> storage(static_cast<size_t>(calleeFunction.scratchSize));
+      ScopedReusableByteBuffer storage(
+          context, static_cast<size_t>(calleeFunction.scratchSize));
       Frame callee{calleeFunction, instruction.source0, storage.data(),
                    state.callDepth + 2};
       state.frames[callee.id] = &callee;
@@ -4785,13 +4833,14 @@ obelisk_rt_status executeFunction(const Image &image, Frame &frame,
               std::numeric_limits<size_t>::max())
         return OBELISK_RT_OUT_OF_MEMORY;
       auto pending = std::make_unique<PendingDesignActivation>();
+      pending->context = context;
       DesignActivation &activation = pending->activation;
       activation.function = instruction.source0;
       activation.scheduleRank =
           static_cast<uint32_t>(callee.initialScheduleRank);
       activation.scratchOffset = scratchOffset;
       activation.scratchSize = callee.scratchSize;
-      activation.frame.resize(
+      activation.frame = context->designTaskFrames.acquire(
           static_cast<size_t>(scratchOffset + callee.scratchSize));
       uint32_t copied = 0;
       std::unordered_map<uint32_t, uint64_t> retainedAutomaticStates;
@@ -4846,7 +4895,6 @@ obelisk_rt_status executeFunction(const Image &image, Frame &frame,
           context->nativeAutomaticStates.find(automaticID)
               ->second.referenceCount += count;
       }
-      pending->context = context;
       pending->ownsRetainedAutomaticStates = true;
       *action = {
           OBELISK_RT_FRAGMENT_TASK_CALL, OBELISK_RT_SUSPEND_NONE,
@@ -5035,7 +5083,8 @@ obelisk_rt_status obelisk_rt_execute_design_observer(
         (uint64_t{descriptor->result_width} + 63) / 64);
     if (outputLimbs < resultLimbs)
       return OBELISK_RT_ARGUMENT_MISMATCH;
-    std::vector<uint8_t> storage(static_cast<size_t>(function.scratchSize), 0);
+    ScopedReusableByteBuffer storage(context,
+                                     static_cast<size_t>(function.scratchSize));
     Frame frame{function, functionIndex, storage.data(), 1};
     {
       std::lock_guard<std::recursive_mutex> captureLock(context->mutex);
@@ -5635,12 +5684,10 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context) {
       designTasks.reserve(designActivationCount);
       insertedNativeTerminations.reserve(nativeTaskCount);
       insertedDesignTerminations.reserve(designTaskCount);
-      context->terminatedNativeProcesses.reserve(
-          checkedSizeSum(context->terminatedNativeProcesses.size(),
-                         nativeTaskCount));
-      context->terminatedDesignTasks.reserve(
-          checkedSizeSum(context->terminatedDesignTasks.size(),
-                         designTaskCount));
+      context->terminatedNativeProcesses.reserveRanges(checkedSizeSum(
+          context->terminatedNativeProcesses.rangeCount(), nativeTaskCount));
+      context->terminatedDesignTasks.reserveRanges(checkedSizeSum(
+          context->terminatedDesignTasks.rangeCount(), designTaskCount));
       try {
         for (const ScheduledProcess &process :
              context->scheduledProcesses) {
@@ -5674,6 +5721,8 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context) {
                                process.callers.end());
         process.callers.clear();
         process.instance = nullptr;
+        ++context->schedulerDeadProcessCount;
+        context->schedulerCompactionPending = true;
         obelisk_rt_release_controls_unlocked(context, process.controls);
         process.controls.clear();
         process.signalTriggered = false;
@@ -5692,6 +5741,8 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context) {
         obelisk_rt_release_controls_unlocked(context, task.controls);
         task.controls.clear();
         task.terminated = true;
+        ++context->schedulerDeadDesignTaskCount;
+        context->schedulerCompactionPending = true;
         task.waitOffset = 0;
         task.waitSize = 0;
         task.waitGenerations.clear();
@@ -5727,6 +5778,8 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context) {
           releaseDesignTaskOwnedStatesUnlocked(context, task.id);
           last = task.id;
         }
+      for (CancelledDesignTask &task : designTasks)
+        context->designTaskFrames.release(std::move(task.frame));
     }
     for (obelisk_rt_process_instance_v1 *instance : nativeInstances) {
       obelisk_rt_status status =
@@ -5855,12 +5908,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_control_disable(
       designTasks.reserve(designActivationCount);
       insertedNativeTerminations.reserve(nativeTaskCount);
       insertedDesignTerminations.reserve(designTaskCount);
-      context->terminatedNativeProcesses.reserve(
-          checkedSizeSum(context->terminatedNativeProcesses.size(),
-                         nativeTaskCount));
-      context->terminatedDesignTasks.reserve(
-          checkedSizeSum(context->terminatedDesignTasks.size(),
-                         designTaskCount));
+      context->terminatedNativeProcesses.reserveRanges(checkedSizeSum(
+          context->terminatedNativeProcesses.rangeCount(), nativeTaskCount));
+      context->terminatedDesignTasks.reserveRanges(checkedSizeSum(
+          context->terminatedDesignTasks.rangeCount(), designTaskCount));
       try {
         for (const ScheduledProcess &process :
              context->scheduledProcesses) {
@@ -5906,6 +5957,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_control_disable(
                                process.callers.end());
         process.callers.clear();
         process.instance = nullptr;
+        ++context->schedulerDeadProcessCount;
+        context->schedulerCompactionPending = true;
         if (token == current) {
           obelisk_rt_release_controls_unlocked(context,
                                                context->activeControls);
@@ -5937,6 +5990,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_control_disable(
         }
         task.controls.clear();
         task.terminated = true;
+        ++context->schedulerDeadDesignTaskCount;
+        context->schedulerCompactionPending = true;
         task.waitOffset = 0;
         task.waitSize = 0;
         task.waitGenerations.clear();
@@ -5972,6 +6027,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_control_disable(
           releaseDesignTaskOwnedStatesUnlocked(context, task.id);
           last = task.id;
         }
+      for (CancelledDesignTask &task : designTasks)
+        context->designTaskFrames.release(std::move(task.frame));
     }
     for (obelisk_rt_process_instance_v1 *instance : nativeInstances) {
       obelisk_rt_status status =
@@ -6035,6 +6092,11 @@ obelisk_rt_status obelisk_rt_run_one_design_task(obelisk_rt_context *context,
       context->activeLogicalProcessToken = 0;
       context->designTaskExecuting = false;
     } catch (...) {
+    }
+    if (taskDequeued) {
+      context->designTaskFrames.release(std::move(task.frame));
+      for (DesignActivation &activation : task.callers)
+        context->designTaskFrames.release(std::move(activation.frame));
     }
     return failure;
   };
@@ -6101,10 +6163,14 @@ obelisk_rt_status obelisk_rt_run_one_design_task(obelisk_rt_context *context,
                   reinterpret_cast<const uint8_t *>(wait) + sizeof(*wait));
           if (iterator->suspendKind == OBELISK_RT_SUSPEND_EVENT) {
             if (iterator->waitGenerations.size() == wait->count)
-              for (uint32_t index = 0; index != wait->count; ++index)
+              for (uint32_t index = 0; index != wait->count; ++index) {
+                auto event = context->events.find(entries[index].stable_id);
+                uint64_t generation = event == context->events.end()
+                                          ? 0
+                                          : event->second.generation;
                 eventTriggered |=
-                    context->eventGenerations[entries[index].stable_id] !=
-                    iterator->waitGenerations[index];
+                    generation != iterator->waitGenerations[index];
+              }
           } else if (iterator->suspendKind == OBELISK_RT_SUSPEND_AWAIT)
             awaited = wait->count == 1 && context->terminatedDesignTasks.count(
                                               entries[0].stable_id) != 0;
@@ -6366,9 +6432,11 @@ obelisk_rt_status obelisk_rt_run_one_design_task(obelisk_rt_context *context,
                 : 0;
         if (action.suspend_kind == OBELISK_RT_SUSPEND_EVENT) {
           task.waitGenerations.reserve(wait->count);
-          for (uint32_t index = 0; index != wait->count; ++index)
+          for (uint32_t index = 0; index != wait->count; ++index) {
+            auto event = context->events.find(waitEntries[index].stable_id);
             task.waitGenerations.push_back(
-                context->eventGenerations[waitEntries[index].stable_id]);
+                event == context->events.end() ? 0 : event->second.generation);
+          }
         }
         if (action.suspend_kind == OBELISK_RT_SUSPEND_DELAY)
           task.wakeTime = wait->payload > UINT64_MAX - context->schedulerTime
@@ -6406,6 +6474,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(obelisk_rt_context *context,
         if (!task.callers.empty()) {
           DesignActivation caller = std::move(task.callers.back());
           task.callers.pop_back();
+          context->designTaskFrames.release(std::move(task.frame));
           task.function = caller.function;
           task.continuation = caller.continuation;
           task.frame = std::move(caller.frame);
@@ -6430,7 +6499,6 @@ obelisk_rt_status obelisk_rt_run_one_design_task(obelisk_rt_context *context,
           task.waitGenerations.clear();
           task.signalTriggered = false;
           task.urgent = false;
-          task.frame.clear();
           if (++context->schedulerEpoch == 0)
             context->schedulerEpoch = 1;
         }
@@ -6440,7 +6508,10 @@ obelisk_rt_status obelisk_rt_run_one_design_task(obelisk_rt_context *context,
         break;
       }
       if (finalizeStatus == OBELISK_RT_OK) {
-        context->scheduledDesignTasks.push_back(std::move(task));
+        if (task.terminated)
+          context->designTaskFrames.release(std::move(task.frame));
+        else
+          context->scheduledDesignTasks.push_back(std::move(task));
         taskDequeued = false;
       }
     }

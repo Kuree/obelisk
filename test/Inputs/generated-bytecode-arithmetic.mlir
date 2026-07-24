@@ -124,7 +124,128 @@ module attributes {
           !obelisk_sim.logic<129> -> i129
       %logic129_ok = arith.cmpi eq, %logic129_bits, %lhs_i129 : i129
       %wide_logic_ok = arith.andi %logic65_ok, %logic129_ok : i1
-      %all_logic_ok = arith.andi %logic_ok, %wide_logic_ok : i1
+
+      // Exercise the bytecode-only four-state arithmetic paths that cannot be
+      // covered by the builtin-integer operations above.
+      %logic_x1 = obelisk_sim.logic.constant 0 : i1, 1 : i1 :
+          !obelisk_sim.logic<1>
+      %reduction_input = obelisk_sim.logic.constant 21 : i5, 2 : i5 :
+          !obelisk_sim.logic<5>
+      %reduce_and = obelisk_sim.logic.reduction and %reduction_input :
+          !obelisk_sim.logic<5> -> !obelisk_sim.logic<1>
+      %reduce_nand = obelisk_sim.logic.reduction nand %reduction_input :
+          !obelisk_sim.logic<5> -> !obelisk_sim.logic<1>
+      %reduce_or = obelisk_sim.logic.reduction or %reduction_input :
+          !obelisk_sim.logic<5> -> !obelisk_sim.logic<1>
+      %reduce_nor = obelisk_sim.logic.reduction nor %reduction_input :
+          !obelisk_sim.logic<5> -> !obelisk_sim.logic<1>
+      %reduce_xor = obelisk_sim.logic.reduction xor %reduction_input :
+          !obelisk_sim.logic<5> -> !obelisk_sim.logic<1>
+      %reduce_xnor = obelisk_sim.logic.reduction xnor %reduction_input :
+          !obelisk_sim.logic<5> -> !obelisk_sim.logic<1>
+      %reduce_and_ok = obelisk_sim.logic.compare case_eq %reduce_and,
+          %logic_zero : (!obelisk_sim.logic<1>,
+          !obelisk_sim.logic<1>) -> i1
+      %reduce_nand_ok = obelisk_sim.logic.compare case_eq %reduce_nand,
+          %logic_one : (!obelisk_sim.logic<1>,
+          !obelisk_sim.logic<1>) -> i1
+      %reduce_or_ok = obelisk_sim.logic.compare case_eq %reduce_or,
+          %logic_one : (!obelisk_sim.logic<1>,
+          !obelisk_sim.logic<1>) -> i1
+      %reduce_nor_ok = obelisk_sim.logic.compare case_eq %reduce_nor,
+          %logic_zero : (!obelisk_sim.logic<1>,
+          !obelisk_sim.logic<1>) -> i1
+      %reduce_xor_ok = obelisk_sim.logic.compare case_eq %reduce_xor,
+          %logic_x1 : (!obelisk_sim.logic<1>,
+          !obelisk_sim.logic<1>) -> i1
+      %reduce_xnor_ok = obelisk_sim.logic.compare case_eq %reduce_xnor,
+          %logic_x1 : (!obelisk_sim.logic<1>,
+          !obelisk_sim.logic<1>) -> i1
+      %reductions0_ok = arith.andi %reduce_and_ok, %reduce_nand_ok : i1
+      %reductions1_ok = arith.andi %reduce_or_ok, %reduce_nor_ok : i1
+      %reductions2_ok = arith.andi %reduce_xor_ok, %reduce_xnor_ok : i1
+      %reductions3_ok = arith.andi %reductions0_ok, %reductions1_ok : i1
+      %reductions_ok = arith.andi %reductions3_ok, %reductions2_ok : i1
+
+      %logic_minus_ten = obelisk_sim.logic.constant -10 : i5, 0 : i5 :
+          !obelisk_sim.logic<5>
+      %logic_shift_one = obelisk_sim.logic.constant 1 : i5, 0 : i5 :
+          !obelisk_sim.logic<5>
+      %logic_minus_five = obelisk_sim.logic.constant -5 : i5, 0 : i5 :
+          !obelisk_sim.logic<5>
+      %arithmetic_shift = obelisk_sim.logic.shift right_arith
+          %logic_minus_ten by %logic_shift_one :
+          (!obelisk_sim.logic<5>, !obelisk_sim.logic<5>) ->
+          !obelisk_sim.logic<5>
+      %arithmetic_shift_ok = obelisk_sim.logic.compare case_eq
+          %arithmetic_shift, %logic_minus_five :
+          (!obelisk_sim.logic<5>, !obelisk_sim.logic<5>) -> i1
+
+      %logic_ten = obelisk_sim.logic.constant 10 : i5, 0 : i5 :
+          !obelisk_sim.logic<5>
+      %logic_zero5 = obelisk_sim.logic.constant 0 : i5, 0 : i5 :
+          !obelisk_sim.logic<5>
+      %logic_all_x5 = obelisk_sim.logic.constant 0 : i5, -1 : i5 :
+          !obelisk_sim.logic<5>
+      %division_by_zero = obelisk_sim.logic.binary udiv %logic_ten,
+          %logic_zero5 : !obelisk_sim.logic<5>
+      %modulo_by_zero = obelisk_sim.logic.binary umod %logic_ten,
+          %logic_zero5 : !obelisk_sim.logic<5>
+      %division_by_zero_ok = obelisk_sim.logic.compare case_eq
+          %division_by_zero, %logic_all_x5 :
+          (!obelisk_sim.logic<5>, !obelisk_sim.logic<5>) -> i1
+      %modulo_by_zero_ok = obelisk_sim.logic.compare case_eq
+          %modulo_by_zero, %logic_all_x5 :
+          (!obelisk_sim.logic<5>, !obelisk_sim.logic<5>) -> i1
+      %zero_division_ok = arith.andi %division_by_zero_ok,
+          %modulo_by_zero_ok : i1
+
+      %logic_mixed5 = obelisk_sim.logic.constant 1 : i5, 2 : i5 :
+          !obelisk_sim.logic<5>
+      %unknown_sum = obelisk_sim.logic.binary add %logic_ten,
+          %logic_mixed5 : !obelisk_sim.logic<5>
+      %unknown_product = obelisk_sim.logic.binary mul %logic_ten,
+          %logic_mixed5 : !obelisk_sim.logic<5>
+      %unknown_quotient = obelisk_sim.logic.binary udiv %logic_ten,
+          %logic_mixed5 : !obelisk_sim.logic<5>
+      %unknown_sum_ok = obelisk_sim.logic.compare case_eq %unknown_sum,
+          %logic_all_x5 : (!obelisk_sim.logic<5>,
+          !obelisk_sim.logic<5>) -> i1
+      %unknown_product_ok = obelisk_sim.logic.compare case_eq %unknown_product,
+          %logic_all_x5 : (!obelisk_sim.logic<5>,
+          !obelisk_sim.logic<5>) -> i1
+      %unknown_quotient_ok = obelisk_sim.logic.compare case_eq
+          %unknown_quotient, %logic_all_x5 :
+          (!obelisk_sim.logic<5>, !obelisk_sim.logic<5>) -> i1
+      %unknown_arithmetic0_ok = arith.andi %unknown_sum_ok,
+          %unknown_product_ok : i1
+      %unknown_arithmetic_ok = arith.andi %unknown_arithmetic0_ok,
+          %unknown_quotient_ok : i1
+
+      %logic_min65 = obelisk_sim.logic.constant 18446744073709551616 : i65,
+          0 : i65 : !obelisk_sim.logic<65>
+      %logic_minus_one65 = obelisk_sim.logic.constant -1 : i65, 0 : i65 :
+          !obelisk_sim.logic<65>
+      %logic_overflow_div = obelisk_sim.logic.binary sdiv %logic_min65,
+          %logic_minus_one65 : !obelisk_sim.logic<65>
+      %logic_overflow_mod = obelisk_sim.logic.binary smod %logic_min65,
+          %logic_minus_one65 : !obelisk_sim.logic<65>
+      %logic_overflow_div_ok = obelisk_sim.logic.compare case_eq
+          %logic_overflow_div, %logic_min65 :
+          (!obelisk_sim.logic<65>, !obelisk_sim.logic<65>) -> i1
+      %logic_overflow_mod_ok = obelisk_sim.logic.compare case_eq
+          %logic_overflow_mod, %logic65_zero :
+          (!obelisk_sim.logic<65>, !obelisk_sim.logic<65>) -> i1
+      %logic_overflow_ok = arith.andi %logic_overflow_div_ok,
+          %logic_overflow_mod_ok : i1
+
+      %four_state0_ok = arith.andi %reductions_ok, %arithmetic_shift_ok : i1
+      %four_state1_ok = arith.andi %zero_division_ok,
+          %unknown_arithmetic_ok : i1
+      %four_state2_ok = arith.andi %four_state0_ok, %four_state1_ok : i1
+      %four_state_ok = arith.andi %four_state2_ok, %logic_overflow_ok : i1
+      %base_logic_ok = arith.andi %logic_ok, %wide_logic_ok : i1
+      %all_logic_ok = arith.andi %base_logic_ok, %four_state_ok : i1
       // A known initializer must not turn automatic logic storage into a
       // permanently two-state allocation.  Escape the reference through a
       // call, write X there, and make the process lifecycle depend on seeing

@@ -8,9 +8,14 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
+#include <thread>
+#include <utility>
+#include <vector>
 
 extern "C" const obelisk_rt_process_descriptor_v1
     generatedDescriptor asm("execution_process.__obelisk_process_descriptor");
@@ -25,7 +30,18 @@ extern "C" const obelisk_rt_process_descriptor_v1 automaticLoopDescriptor
 
 namespace {
 
-size_t alignedAllocationCount;
+std::atomic<size_t> alignedAllocationCount;
+uint64_t requestedNativeSize;
+uint64_t requestedNativeAlignment;
+
+obelisk_rt_status requestedNativeRequirements(uint64_t *size,
+                                              uint64_t *alignment) {
+  if (!size || !alignment)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *size = requestedNativeSize;
+  *alignment = requestedNativeAlignment;
+  return OBELISK_RT_OK;
+}
 
 void appendInstruction(std::array<uint8_t, 64> &code, size_t instruction,
                        uint8_t opcode, uint8_t type, uint16_t destination,
@@ -111,12 +127,13 @@ struct DualTierDescriptor {
 };
 
 TEST(GeneratedProcess, NativeResumeTerminateAndSuspendedDestroy) {
-  size_t before = alignedAllocationCount;
+  size_t before = alignedAllocationCount.load();
   obelisk_rt_process_instance_v1 *instance = nullptr;
   ASSERT_EQ(
       obelisk_rt_v1_process_instance_create(&generatedDescriptor, &instance),
       OBELISK_RT_OK);
-  ASSERT_EQ(alignedAllocationCount, before + 1);
+  ASSERT_LE(alignedAllocationCount.load(), before + 1);
+  size_t afterCreate = alignedAllocationCount.load();
   void *frame = nullptr;
   uint64_t frameSize = 0;
   ASSERT_EQ(obelisk_rt_v1_process_instance_frame(instance, &frame, &frameSize),
@@ -134,7 +151,7 @@ TEST(GeneratedProcess, NativeResumeTerminateAndSuspendedDestroy) {
             OBELISK_RT_OK);
   EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_SUSPEND);
   EXPECT_EQ(action.continuation, 2u);
-  EXPECT_EQ(alignedAllocationCount, before + 1);
+  EXPECT_EQ(alignedAllocationCount.load(), afterCreate);
 
   void *sameFrame = nullptr;
   ASSERT_EQ(
@@ -261,11 +278,12 @@ TEST(GeneratedProcess, CrossBlockAutomaticLoopReleasesEveryIteration) {
 
 TEST(GeneratedProcess, NativeBytecodeNativeReusesFrameAndScratch) {
   DualTierDescriptor dual;
-  size_t before = alignedAllocationCount;
+  size_t before = alignedAllocationCount.load();
   obelisk_rt_process_instance_v1 *instance = nullptr;
   ASSERT_EQ(obelisk_rt_v1_process_instance_create(&dual.descriptor, &instance),
             OBELISK_RT_OK);
-  ASSERT_EQ(alignedAllocationCount, before + 1);
+  ASSERT_LE(alignedAllocationCount.load(), before + 1);
+  size_t afterCreate = alignedAllocationCount.load();
   void *frame = instance->frame;
   void *scratch =
       static_cast<uint8_t *>(instance->allocation) + instance->scratch_offset;
@@ -288,16 +306,18 @@ TEST(GeneratedProcess, NativeBytecodeNativeReusesFrameAndScratch) {
   EXPECT_EQ(static_cast<uint8_t *>(instance->allocation) +
                 instance->scratch_offset,
             scratch);
-  EXPECT_EQ(alignedAllocationCount, before + 1);
+  EXPECT_EQ(alignedAllocationCount.load(), afterCreate);
   EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
 }
 
 TEST(GeneratedProcess, BytecodeFirstReconstructsNativeContinuation) {
   DualTierDescriptor dual;
-  size_t before = alignedAllocationCount;
+  size_t before = alignedAllocationCount.load();
   obelisk_rt_process_instance_v1 *instance = nullptr;
   ASSERT_EQ(obelisk_rt_v1_process_instance_create(&dual.descriptor, &instance),
             OBELISK_RT_OK);
+  ASSERT_LE(alignedAllocationCount.load(), before + 1);
+  size_t afterCreate = alignedAllocationCount.load();
   initializeDelayWait(instance->frame);
   obelisk_rt_fragment_action_v1 action{};
   ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
@@ -308,17 +328,18 @@ TEST(GeneratedProcess, BytecodeFirstReconstructsNativeContinuation) {
                 instance, nullptr, OBELISK_RT_TIER_NATIVE, &action),
             OBELISK_RT_OK);
   EXPECT_EQ(action.continuation, 2u);
-  EXPECT_EQ(alignedAllocationCount, before + 1);
+  EXPECT_EQ(alignedAllocationCount.load(), afterCreate);
   EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
 }
 
 TEST(GeneratedProcess, RuntimeFailureReconstructsInsteadOfResumingDoneHandle) {
-  size_t before = alignedAllocationCount;
+  size_t before = alignedAllocationCount.load();
   obelisk_rt_process_instance_v1 *instance = nullptr;
   ASSERT_EQ(
       obelisk_rt_v1_process_instance_create(&failingDescriptor, &instance),
       OBELISK_RT_OK);
-  ASSERT_EQ(alignedAllocationCount, before + 1);
+  ASSERT_LE(alignedAllocationCount.load(), before + 1);
+  size_t afterCreate = alignedAllocationCount.load();
   void *frame = instance->frame;
   obelisk_rt_fragment_action_v1 action{};
 
@@ -334,7 +355,7 @@ TEST(GeneratedProcess, RuntimeFailureReconstructsInsteadOfResumingDoneHandle) {
   EXPECT_EQ(instance->continuation, 1u);
   EXPECT_EQ(instance->lifecycle, OBELISK_RT_PROCESS_SUSPENDED);
   EXPECT_EQ(instance->frame, frame);
-  EXPECT_EQ(alignedAllocationCount, before + 1);
+  EXPECT_EQ(alignedAllocationCount.load(), afterCreate);
 
   EXPECT_EQ(obelisk_rt_v1_process_instance_execute(
                 instance, nullptr, OBELISK_RT_TIER_NATIVE, &action),
@@ -342,8 +363,157 @@ TEST(GeneratedProcess, RuntimeFailureReconstructsInsteadOfResumingDoneHandle) {
   EXPECT_EQ(instance->native_handle, nullptr);
   EXPECT_EQ(instance->continuation, 1u);
   EXPECT_EQ(instance->frame, frame);
-  EXPECT_EQ(alignedAllocationCount, before + 1);
+  EXPECT_EQ(alignedAllocationCount.load(), afterCreate);
   EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
+}
+
+TEST(GeneratedProcess, RecyclesSequentialProcessFrameAllocations) {
+  size_t before = alignedAllocationCount.load();
+  for (unsigned iteration = 0; iteration != 1000; ++iteration) {
+    obelisk_rt_process_instance_v1 *instance = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_process_instance_create(&generatedDescriptor, &instance),
+        OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
+  }
+  EXPECT_LE(alignedAllocationCount.load(), before + 1);
+}
+
+TEST(GeneratedProcess, RecyclesAcrossSizeAndAlignmentClasses) {
+  constexpr std::array<std::pair<uint64_t, uint64_t>, 6> classes{{
+      {0, 1},
+      {32, 16},
+      {200, 64},
+      {4096, 256},
+      {60000, 4096},
+      {500000, 4096},
+  }};
+  for (const auto &[size, alignment] : classes) {
+    obelisk_rt_process_descriptor_v1 descriptor = generatedDescriptor;
+    descriptor.native_requirements = requestedNativeRequirements;
+    requestedNativeSize = size;
+    requestedNativeAlignment = alignment;
+    size_t before = alignedAllocationCount.load();
+
+    obelisk_rt_process_instance_v1 *instance = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_process_instance_create(&descriptor, &instance),
+              OBELISK_RT_OK);
+    ASSERT_NE(instance, nullptr);
+    EXPECT_EQ(reinterpret_cast<uintptr_t>(instance) %
+                  std::max<uint64_t>(alignment, 16),
+              0u);
+    if (instance->scratch_size != 0)
+      std::memset(static_cast<uint8_t *>(instance->allocation) +
+                      instance->scratch_offset,
+                  0xa5, static_cast<size_t>(instance->scratch_size));
+    ASSERT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
+
+    ASSERT_EQ(obelisk_rt_v1_process_instance_create(&descriptor, &instance),
+              OBELISK_RT_OK);
+    const auto *scratch = static_cast<const uint8_t *>(instance->allocation) +
+                          instance->scratch_offset;
+    EXPECT_TRUE(std::all_of(
+        scratch, scratch + static_cast<size_t>(instance->scratch_size),
+        [](uint8_t value) { return value == 0; }));
+    ASSERT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
+    EXPECT_LE(alignedAllocationCount.load(), before + 1);
+  }
+}
+
+TEST(GeneratedProcess, OversizeProcessFramesBypassTheCache) {
+  obelisk_rt_process_descriptor_v1 descriptor = generatedDescriptor;
+  descriptor.native_requirements = requestedNativeRequirements;
+  requestedNativeSize = 2 * 1024 * 1024;
+  requestedNativeAlignment = 4096;
+  size_t before = alignedAllocationCount.load();
+  for (unsigned iteration = 0; iteration != 2; ++iteration) {
+    obelisk_rt_process_instance_v1 *instance = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_process_instance_create(&descriptor, &instance),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
+  }
+  EXPECT_EQ(alignedAllocationCount.load(), before + 2);
+}
+
+TEST(GeneratedProcess, DestroyUsesFixedAllocationMetadata) {
+  obelisk_rt_process_instance_v1 *instance = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_process_instance_create(&generatedDescriptor, &instance),
+      OBELISK_RT_OK);
+  instance->frame = nullptr;
+  instance->scratch_offset = UINT64_MAX;
+  instance->scratch_size = UINT64_MAX;
+  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
+}
+
+TEST(GeneratedProcess, ConcurrentProcessFrameChurnUsesThreadLocalCaches) {
+  constexpr unsigned workerCount = 8;
+  constexpr unsigned iterations = 1000;
+  size_t before = alignedAllocationCount.load();
+  std::atomic<unsigned> failures{0};
+  std::vector<std::thread> workers;
+  workers.reserve(workerCount);
+  for (unsigned worker = 0; worker != workerCount; ++worker)
+    workers.emplace_back([&] {
+      for (unsigned iteration = 0; iteration != iterations; ++iteration) {
+        obelisk_rt_process_instance_v1 *instance = nullptr;
+        if (obelisk_rt_v1_process_instance_create(&generatedDescriptor,
+                                                  &instance) != OBELISK_RT_OK ||
+            obelisk_rt_v1_process_instance_destroy(instance) != OBELISK_RT_OK)
+          ++failures;
+      }
+    });
+  for (std::thread &worker : workers)
+    worker.join();
+
+  EXPECT_EQ(failures.load(), 0u);
+  EXPECT_LE(alignedAllocationCount.load(), before + workerCount);
+}
+
+TEST(GeneratedProcess, ProcessFramesCanBeFreedByDifferentWorkers) {
+  constexpr unsigned instanceCount = 256;
+  constexpr unsigned workerCount = 8;
+  std::vector<obelisk_rt_process_instance_v1 *> instances;
+  instances.reserve(instanceCount);
+  for (unsigned index = 0; index != instanceCount; ++index) {
+    obelisk_rt_process_instance_v1 *instance = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_process_instance_create(&generatedDescriptor, &instance),
+        OBELISK_RT_OK);
+    instances.push_back(instance);
+  }
+
+  std::atomic<unsigned> next{0};
+  std::atomic<unsigned> failures{0};
+  std::vector<std::thread> workers;
+  workers.reserve(workerCount);
+  for (unsigned worker = 0; worker != workerCount; ++worker)
+    workers.emplace_back([&] {
+      for (;;) {
+        unsigned index = next.fetch_add(1);
+        if (index >= instances.size())
+          break;
+        if (obelisk_rt_v1_process_instance_destroy(instances[index]) !=
+            OBELISK_RT_OK)
+          ++failures;
+      }
+    });
+  for (std::thread &worker : workers)
+    worker.join();
+  EXPECT_EQ(failures.load(), 0u);
+
+  size_t beforeReuse = alignedAllocationCount.load();
+  instances.clear();
+  for (unsigned index = 0; index != 128; ++index) {
+    obelisk_rt_process_instance_v1 *instance = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_process_instance_create(&generatedDescriptor, &instance),
+        OBELISK_RT_OK);
+    instances.push_back(instance);
+  }
+  EXPECT_EQ(alignedAllocationCount.load(), beforeReuse);
+  for (obelisk_rt_process_instance_v1 *instance : instances)
+    ASSERT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
 }
 
 } // namespace

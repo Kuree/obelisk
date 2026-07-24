@@ -46,10 +46,19 @@ function(obelisk_add_generated_process_object output_var directory input_file)
   set(generated_raw_llvm "${generated_dir}/process.raw.ll")
   set(generated_llvm "${generated_dir}/process.ll")
   set(generated_object "${generated_dir}/process.o")
+  set(generated_opt_options)
+  if(LLVM_USE_SANITIZER MATCHES "(^|;)Thread($|;)")
+    # The official prebuilt LLVM/MLIR SDK is not TSAN-instrumented. Keep its
+    # internal verifier thread pool from crossing the instrumentation boundary
+    # while generating runtime test fixtures; the runtime tests themselves
+    # remain multithreaded.
+    list(APPEND generated_opt_options --mlir-disable-threading)
+  endif()
   file(MAKE_DIRECTORY "${generated_dir}")
   add_custom_command(
     OUTPUT "${generated_object}"
     COMMAND $<TARGET_FILE:obelisk-opt>
+            ${generated_opt_options}
             "${CMAKE_CURRENT_SOURCE_DIR}/${input_file}"
             "--pass-pipeline=builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension)),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)"
             -o "${generated_mlir}"

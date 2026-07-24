@@ -2,6 +2,8 @@
 
 #include "obelisk/Runtime/Runtime.h"
 
+#include "../lib/RuntimeInternal.h"
+
 #include "gtest/gtest.h"
 
 extern "C" const obelisk_rt_process_descriptor_v1
@@ -47,5 +49,28 @@ TEST(GeneratedArithmetic, MultiWidthBytecodeMatchesNativeExecution) {
 
   EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(native), OBELISK_RT_OK);
   EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(bytecode), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(GeneratedArithmetic, BytecodeDirectCallsRecycleScratchFrames) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(
+                arithmeticDescriptor.execution, &context),
+            OBELISK_RT_OK);
+  for (unsigned iteration = 0; iteration != 1000; ++iteration) {
+    obelisk_rt_process_instance_v1 *instance = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_process_instance_create(&arithmeticDescriptor, &instance),
+        OBELISK_RT_OK);
+    for (unsigned step = 0; step != 2; ++step) {
+      obelisk_rt_fragment_action_v1 action{};
+      ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
+                    instance, context, OBELISK_RT_TIER_BYTECODE, &action),
+                OBELISK_RT_OK);
+    }
+    ASSERT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
+  }
+
+  EXPECT_EQ(context->designTaskFrames.size(), 1u);
   obelisk_rt_v1_context_destroy(context);
 }

@@ -876,9 +876,11 @@ struct obelisk_rt_process_instance_v1 {
   uint32_t observer_destroy_pending;
 };
 
-// Create exactly one allocation containing [canonical frame][padding][shared
-// scratch tail]. The tail is the maximum of native coroutine storage and
-// bytecode registers and is reused without copying when tiers change.
+// Create exactly one allocation containing [instance][runtime-private
+// metadata][padding][canonical frame][padding][shared scratch tail]. The tail
+// is the maximum of native coroutine storage and bytecode registers and is
+// reused without copying when tiers change. Released allocations may be
+// recycled by the runtime's bounded process-frame pool.
 obelisk_rt_status obelisk_rt_v1_process_instance_create(
     const obelisk_rt_process_descriptor_v1 *descriptor,
     obelisk_rt_process_instance_v1 **out_instance);

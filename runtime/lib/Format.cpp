@@ -79,11 +79,17 @@ void applyPadding(std::string &output, std::string field, uint32_t width,
     output += field;
     return;
   }
-  std::string pad(width - field.size(), padding);
-  if (left)
-    output += field + pad;
-  else
-    output += pad + field;
+  // Append the pad and field directly into the output rather than building a
+  // separate pad string and a `pad + field` temporary. For pathological field
+  // widths this keeps peak memory to a single copy of the padded field.
+  size_t padCount = width - field.size();
+  if (left) {
+    output += field;
+    output.append(padCount, padding);
+  } else {
+    output.append(padCount, padding);
+    output += field;
+  }
 }
 
 char groupDigit(const LogicView &view, uint64_t lowBit, unsigned groupBits) {

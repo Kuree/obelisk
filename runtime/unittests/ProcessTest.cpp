@@ -2,11 +2,19 @@
 
 #include "obelisk/Runtime/Runtime.h"
 
+#include "../lib/RuntimeInternal.h"
+
 #include "gtest/gtest.h"
 
+#include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstring>
+#include <limits>
+#include <random>
+#include <thread>
+#include <unordered_set>
 #include <vector>
 
 namespace {
@@ -347,6 +355,93 @@ obelisk_rt_process_instance_v1 *makeSchedulerInstance(SchedulerFixture &fixture)
   return instance;
 }
 
+TEST(RuntimeInternals, ReusableByteBuffersAreSafeAcrossWorkers) {
+  ReusableByteBufferPool pool;
+  std::atomic<unsigned> failures{0};
+  std::vector<std::thread> workers;
+  for (unsigned worker = 0; worker != 8; ++worker)
+    workers.emplace_back([&, worker] {
+      size_t size = size_t{1} << (6 + worker);
+      for (unsigned iteration = 0; iteration != 1000; ++iteration) {
+        std::vector<uint8_t> buffer = pool.acquire(size);
+        if (buffer.size() != size ||
+            !std::all_of(buffer.begin(), buffer.end(),
+                         [](uint8_t value) { return value == 0; }))
+          ++failures;
+        std::fill(buffer.begin(), buffer.end(),
+                  static_cast<uint8_t>(worker + 1));
+        pool.release(std::move(buffer));
+      }
+    });
+  for (std::thread &worker : workers)
+    worker.join();
+
+  EXPECT_EQ(failures.load(), 0u);
+  EXPECT_LE(pool.size(), 64u);
+  EXPECT_LE(pool.byteSize(), 16u * 1024 * 1024);
+}
+
+TEST(RuntimeInternals, ReusableByteBuffersHonorAggregateBounds) {
+  {
+    ReusableByteBufferPool pool;
+    for (unsigned index = 0; index != 100; ++index)
+      pool.release(std::vector<uint8_t>(1));
+    EXPECT_EQ(pool.size(), 64u);
+    EXPECT_LE(pool.byteSize(), 16u * 1024 * 1024);
+  }
+  {
+    ReusableByteBufferPool pool;
+    for (unsigned index = 0; index != 20; ++index)
+      pool.release(std::vector<uint8_t>(1024 * 1024));
+    EXPECT_LE(pool.size(), 16u);
+    EXPECT_LE(pool.byteSize(), 16u * 1024 * 1024);
+  }
+}
+
+TEST(RuntimeInternals, TerminatedTokenRangesMergeAndSplitExactly) {
+  TerminatedTokenSet tokens;
+  EXPECT_TRUE(tokens.insert(0).second);
+  EXPECT_TRUE(tokens.insert(1).second);
+  EXPECT_EQ(tokens.rangeCount(), 1u);
+  EXPECT_EQ(tokens.erase(1), 1u);
+  EXPECT_TRUE(tokens.insert(UINT64_MAX).second);
+  EXPECT_TRUE(tokens.insert(UINT64_MAX - 1).second);
+  EXPECT_EQ(tokens.rangeCount(), 2u);
+  EXPECT_EQ(tokens.erase(UINT64_MAX - 1), 1u);
+  EXPECT_EQ(tokens.erase(0), 1u);
+  EXPECT_EQ(tokens.erase(UINT64_MAX), 1u);
+  EXPECT_TRUE(tokens.insert(1).second);
+  EXPECT_TRUE(tokens.insert(3).second);
+  EXPECT_EQ(tokens.rangeCount(), 2u);
+  EXPECT_TRUE(tokens.insert(2).second);
+  EXPECT_EQ(tokens.rangeCount(), 1u);
+  EXPECT_FALSE(tokens.insert(2).second);
+
+  EXPECT_EQ(tokens.erase(2), 1u);
+  EXPECT_EQ(tokens.rangeCount(), 2u);
+  EXPECT_EQ(tokens.count(1), 1u);
+  EXPECT_EQ(tokens.count(2), 0u);
+  EXPECT_EQ(tokens.count(3), 1u);
+  EXPECT_EQ(tokens.erase(2), 0u);
+  EXPECT_TRUE(tokens.insert(2).second);
+  EXPECT_EQ(tokens.rangeCount(), 1u);
+}
+
+TEST(RuntimeInternals, TerminatedTokenRangesMatchReferenceSet) {
+  TerminatedTokenSet tokens;
+  std::unordered_set<uint64_t> reference;
+  std::mt19937_64 random(0x4f42454c49534bULL);
+  for (unsigned iteration = 0; iteration != 10000; ++iteration) {
+    uint64_t token = random() % 257;
+    if ((random() & 1) != 0)
+      EXPECT_EQ(tokens.insert(token).second, reference.insert(token).second);
+    else
+      EXPECT_EQ(tokens.erase(token), reference.erase(token));
+    for (uint64_t probe = 0; probe != 257; ++probe)
+      ASSERT_EQ(tokens.count(probe), reference.count(probe));
+  }
+}
+
 TEST(Scheduler, SignalWaitsAreSelectiveAndEdgeAware) {
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
@@ -534,6 +629,61 @@ TEST(Scheduler, AwaitUsesStableNonAddressProcessTokens) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, CompletedProcessStorageStaysCompactAcrossChurn) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  SchedulerFixture completed(100);
+  constexpr uint64_t processCount = 1000;
+  for (uint64_t iteration = 0; iteration != processCount; ++iteration) {
+    ASSERT_EQ(obelisk_rt_v1_scheduler_add(context,
+                                          makeSchedulerInstance(completed), 0),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  }
+
+  {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    EXPECT_TRUE(context->scheduledProcesses.empty());
+    EXPECT_EQ(context->terminatedNativeProcesses.rangeCount(), 1u);
+    EXPECT_EQ(context->terminatedNativeProcesses.count(1), 1u);
+    EXPECT_EQ(context->terminatedNativeProcesses.count(processCount), 1u);
+  }
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, CompactionPreservesCursorAcrossInterleavedDeadSlots) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  SchedulerFixture first(101);
+  SchedulerFixture second(102);
+  SchedulerFixture third(103);
+  ASSERT_EQ(
+      obelisk_rt_v1_scheduler_add(context, makeSchedulerInstance(first), 0),
+      OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_scheduler_add(context, makeSchedulerInstance(second), 0),
+      OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_scheduler_add(context, makeSchedulerInstance(third), 0),
+      OBELISK_RT_OK);
+  context->scheduledProcesses.insert(context->scheduledProcesses.begin() + 1,
+                                     ScheduledProcess{});
+  context->scheduledProcesses.insert(context->scheduledProcesses.begin() + 3,
+                                     ScheduledProcess{});
+  for (ScheduledProcess &process : context->scheduledProcesses)
+    if (process.instance)
+      process.urgent = true;
+  context->schedulerCursor = 3;
+  context->schedulerDeadProcessCount = 2;
+  context->schedulerCompactionPending = true;
+  schedulerOrder.clear();
+
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(schedulerOrder, (std::vector<uint64_t>{103, 101, 102}));
+  EXPECT_TRUE(context->scheduledProcesses.empty());
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, DelayedNBAsAdvanceTimeAndPreserveQueueOrder) {
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
@@ -597,6 +747,76 @@ TEST(Scheduler, AutomaticStateAllocationsAreIsolatedAndBoundsChecked) {
             OBELISK_RT_OK);
   EXPECT_EQ(loaded & 0xfu, 0xfu);
   EXPECT_EQ(global, 0x5a);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, AutomaticEventBookkeepingFollowsObjectLifetime) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  uint8_t initial = 0;
+
+  uint64_t immediateObject = UINT64_MAX;
+  ASSERT_EQ(obelisk_rt_v1_native_state_alloc(context, 8, &initial, nullptr,
+                                             &immediateObject),
+            OBELISK_RT_OK);
+  uint64_t immediateEvent =
+      obelisk_rt_v1_native_handle_offset(immediateObject, 3);
+  ASSERT_NE(immediateEvent, UINT64_MAX);
+  obelisk_rt_v1_scheduler_event(context, immediateEvent, 0);
+  EXPECT_EQ(context->events.count(immediateEvent), 1u);
+  ASSERT_EQ(obelisk_rt_v1_native_state_release(context, immediateObject, 0),
+            OBELISK_RT_OK);
+  EXPECT_TRUE(context->events.empty());
+
+  uint64_t delayedObject = UINT64_MAX;
+  ASSERT_EQ(obelisk_rt_v1_native_state_alloc(context, 8, &initial, nullptr,
+                                             &delayedObject),
+            OBELISK_RT_OK);
+  uint64_t delayedEvent = obelisk_rt_v1_native_handle_offset(delayedObject, 5);
+  uint64_t secondDelayedEvent =
+      obelisk_rt_v1_native_handle_offset(delayedObject, 6);
+  ASSERT_NE(delayedEvent, UINT64_MAX);
+  ASSERT_NE(secondDelayedEvent, UINT64_MAX);
+  obelisk_rt_v1_scheduler_event_after(context, delayedEvent, 1, 7);
+  obelisk_rt_v1_scheduler_event_after(context, secondDelayedEvent, 1, 9);
+  ASSERT_EQ(context->scheduledDesignEvents.size(), 2u);
+  ASSERT_EQ(obelisk_rt_v1_native_state_release(context, delayedObject, 0),
+            OBELISK_RT_OK);
+  EXPECT_EQ(context->nativeAutomaticStates.size(), 1u);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_TRUE(context->scheduledDesignEvents.empty());
+  EXPECT_TRUE(context->nativeAutomaticStates.empty());
+  EXPECT_TRUE(context->events.empty());
+
+  uint64_t waitedObject = UINT64_MAX;
+  ASSERT_EQ(obelisk_rt_v1_native_state_alloc(context, 8, &initial, nullptr,
+                                             &waitedObject),
+            OBELISK_RT_OK);
+  uint64_t waitedEvent = obelisk_rt_v1_native_handle_offset(waitedObject, 7);
+  ASSERT_NE(waitedEvent, UINT64_MAX);
+  ASSERT_EQ(obelisk_rt_v1_native_state_retain(context, waitedObject),
+            OBELISK_RT_OK);
+  SchedulerFixture waiter(14);
+  schedulerWaitKind = OBELISK_RT_SUSPEND_EVENT;
+  schedulerWaitEdge = OBELISK_RT_WAIT_EDGE_NONE;
+  schedulerWaitHandle = waitedEvent;
+  schedulerWaitWidth = 0;
+  schedulerResumeCount = 0;
+  ASSERT_EQ(
+      obelisk_rt_v1_scheduler_add(context, makeSchedulerInstance(waiter), 0),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_TRUE(context->events.empty());
+  obelisk_rt_v1_scheduler_event_after(context, waitedEvent, 1, 1);
+  ASSERT_EQ(obelisk_rt_v1_native_state_release(context, waitedObject, 0),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(schedulerResumeCount, 1u);
+  EXPECT_EQ(context->events.count(waitedEvent), 1u);
+  ASSERT_EQ(obelisk_rt_v1_native_state_release(context, waitedObject, 0),
+            OBELISK_RT_OK);
+  EXPECT_TRUE(context->nativeAutomaticStates.empty());
+  EXPECT_TRUE(context->events.empty());
   obelisk_rt_v1_context_destroy(context);
 }
 

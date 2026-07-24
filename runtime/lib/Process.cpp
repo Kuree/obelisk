@@ -4,9 +4,11 @@
 #include "obelisk/Runtime/StableHandle.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <new>
 #include <optional>
 #include <tuple>
@@ -17,6 +19,174 @@ constexpr uint64_t kNativeLogicalProcessTag = UINT64_C(1) << 63;
 
 constexpr uint64_t kWaitHeaderSize = sizeof(obelisk_rt_wait_record_v1);
 constexpr uint64_t kWaitEntrySize = sizeof(obelisk_rt_wait_entry_v1);
+constexpr uint64_t kProcessAllocationMagic = UINT64_C(0x4f42454c4652414d);
+
+struct ProcessAllocationMetadata {
+  uint64_t magic;
+  size_t size;
+  size_t alignment;
+};
+
+struct ProcessFreeBlock {
+  ProcessFreeBlock *next;
+};
+
+constexpr size_t kProcessAllocationMetadataOffset =
+    (sizeof(obelisk_rt_process_instance_v1) +
+     alignof(ProcessAllocationMetadata) - 1) &
+    ~(alignof(ProcessAllocationMetadata) - 1);
+constexpr unsigned kMinProcessSizeShift = 7;
+constexpr unsigned kMaxProcessSizeShift = 20;
+constexpr unsigned kMinProcessAlignmentShift = 4;
+constexpr unsigned kMaxProcessAlignmentShift = 12;
+constexpr size_t kProcessSizeClassCount =
+    kMaxProcessSizeShift - kMinProcessSizeShift + 1;
+constexpr size_t kProcessAlignmentClassCount =
+    kMaxProcessAlignmentShift - kMinProcessAlignmentShift + 1;
+constexpr size_t kProcessAllocationBucketCount =
+    kProcessSizeClassCount * kProcessAlignmentClassCount;
+constexpr size_t kMaxThreadLocalProcessFrameBytes = 64 * 1024;
+
+struct ThreadProcessAllocationCache {
+  std::array<ProcessFreeBlock *, kProcessAllocationBucketCount> blocks{};
+
+  ~ThreadProcessAllocationCache() {
+    // Keep TLS teardown independent of every global runtime object. The
+    // process-wide pool is intentionally immortal, and local blocks only need
+    // their trivial node lifetime ended before returning storage to libc.
+    for (ProcessFreeBlock *allocation : blocks)
+      if (allocation) {
+        allocation->~ProcessFreeBlock();
+        std::free(allocation);
+      }
+  }
+};
+
+thread_local ThreadProcessAllocationCache threadProcessAllocationCache;
+
+// Persistent worker lanes normally recycle their hottest small frame class
+// without synchronization. Overflow and cross-lane reclamation use independent
+// size/alignment buckets, so unrelated frame classes never share one lock.
+class ProcessAllocationPool {
+public:
+  void *allocate(size_t size, size_t alignment) noexcept {
+    size_t classSize = 0;
+    std::optional<size_t> bucketIndex = classify(size, alignment, classSize);
+    if (!bucketIndex)
+      return std::aligned_alloc(alignment, size);
+
+    if (classSize <= kMaxThreadLocalProcessFrameBytes) {
+      ProcessFreeBlock *&local =
+          threadProcessAllocationCache.blocks[*bucketIndex];
+      if (local) {
+        ProcessFreeBlock *allocation = local;
+        local = nullptr;
+        allocation->~ProcessFreeBlock();
+        return allocation;
+      }
+    }
+
+    {
+      Bucket &bucket = buckets[*bucketIndex];
+      std::lock_guard<std::mutex> lock(bucket.mutex);
+      if (bucket.head) {
+        ProcessFreeBlock *allocation = bucket.head;
+        bucket.head = allocation->next;
+        --bucket.count;
+        cachedBytes.fetch_sub(classSize, std::memory_order_relaxed);
+        allocation->~ProcessFreeBlock();
+        return allocation;
+      }
+    }
+    return std::aligned_alloc(alignment, classSize);
+  }
+
+  void release(void *allocation, size_t size, size_t alignment) noexcept {
+    constexpr size_t maxBlocksPerClass = 256;
+    constexpr size_t maxCachedBytes = 32 * 1024 * 1024;
+    if (!allocation)
+      return;
+
+    size_t classSize = 0;
+    std::optional<size_t> bucketIndex = classify(size, alignment, classSize);
+    if (!bucketIndex) {
+      std::free(allocation);
+      return;
+    }
+
+    if (classSize <= kMaxThreadLocalProcessFrameBytes) {
+      ProcessFreeBlock *&local =
+          threadProcessAllocationCache.blocks[*bucketIndex];
+      if (!local) {
+        local = ::new (allocation) ProcessFreeBlock{nullptr};
+        return;
+      }
+    }
+
+    size_t cached = cachedBytes.load(std::memory_order_relaxed);
+    for (;;) {
+      if (classSize > maxCachedBytes - cached) {
+        std::free(allocation);
+        return;
+      }
+      if (cachedBytes.compare_exchange_weak(cached, cached + classSize,
+                                            std::memory_order_relaxed))
+        break;
+    }
+
+    Bucket &bucket = buckets[*bucketIndex];
+    {
+      std::lock_guard<std::mutex> lock(bucket.mutex);
+      if (bucket.count >= maxBlocksPerClass) {
+        cachedBytes.fetch_sub(classSize, std::memory_order_relaxed);
+        std::free(allocation);
+        return;
+      }
+      bucket.head = ::new (allocation) ProcessFreeBlock{bucket.head};
+      ++bucket.count;
+    }
+  }
+
+private:
+  struct alignas(64) Bucket {
+    std::mutex mutex;
+    ProcessFreeBlock *head = nullptr;
+    size_t count = 0;
+  };
+
+  static std::optional<size_t> classify(size_t size, size_t alignment,
+                                        size_t &classSize) {
+    unsigned sizeShift = kMinProcessSizeShift;
+    classSize = size_t{1} << sizeShift;
+    while (classSize < size && sizeShift < kMaxProcessSizeShift) {
+      ++sizeShift;
+      classSize <<= 1;
+    }
+    if (classSize < size ||
+        alignment < (size_t{1} << kMinProcessAlignmentShift) ||
+        alignment > (size_t{1} << kMaxProcessAlignmentShift) ||
+        (alignment & (alignment - 1)) != 0)
+      return std::nullopt;
+    unsigned alignmentShift = kMinProcessAlignmentShift;
+    while ((size_t{1} << alignmentShift) < alignment)
+      ++alignmentShift;
+    return (sizeShift - kMinProcessSizeShift) * kProcessAlignmentClassCount +
+           alignmentShift - kMinProcessAlignmentShift;
+  }
+
+  std::array<Bucket, kProcessAllocationBucketCount> buckets;
+  std::atomic<size_t> cachedBytes{0};
+};
+
+ProcessAllocationPool *processAllocationPool() noexcept {
+  // Process instances may exist without a simulation context, so the pool has
+  // process lifetime. Keep it intentionally immortal: this avoids static
+  // destructor ordering against worker TLS teardown while the bounded cache
+  // prevents unbounded retention.
+  static ProcessAllocationPool *const pool =
+      new (std::nothrow) ProcessAllocationPool;
+  return pool;
+}
 
 bool isPowerOfTwo(uint64_t value) {
   return value != 0 && (value & (value - 1)) == 0;
@@ -672,8 +842,7 @@ void releaseOwnedNativeStates(obelisk_rt_context *context,
     }
     state->second.owner = nullptr;
     if (state->second.referenceCount <= 1) {
-      obelisk_rt_erase_automatic_signal_snapshots_unlocked(context,
-                                                           state->first);
+      obelisk_rt_erase_automatic_bookkeeping_unlocked(context, state->first);
       state = context->nativeAutomaticStates.erase(state);
     } else {
       --state->second.referenceCount;
@@ -723,9 +892,9 @@ bool nativeWaitReady(const obelisk_rt_context &context,
     if (process.waitGenerations.size() != wait->count)
       return false;
     for (uint32_t index = 0; index != wait->count; ++index) {
-      auto found = context.eventGenerations.find(entries[index].stable_id);
+      auto found = context.events.find(entries[index].stable_id);
       uint64_t generation =
-          found == context.eventGenerations.end() ? 0 : found->second;
+          found == context.events.end() ? 0 : found->second.generation;
       if (generation != process.waitGenerations[index])
         return true;
     }
@@ -766,7 +935,7 @@ bool nativeWaitReady(const obelisk_rt_context &context,
 
 } // namespace
 
-void obelisk_rt_erase_automatic_signal_snapshots_unlocked(
+void obelisk_rt_erase_automatic_bookkeeping_unlocked(
     obelisk_rt_context *context, uint32_t automaticID) {
   if (!context)
     return;
@@ -780,6 +949,14 @@ void obelisk_rt_erase_automatic_signal_snapshots_unlocked(
     else
       ++snapshot;
   }
+
+  uint64_t first = obelisk_rt_stable_handle_encode(
+      OBELISK_RT_STABLE_HANDLE_AUTOMATIC, automaticID, 0);
+  if (first == UINT64_MAX)
+    return;
+  uint64_t last = first | UINT32_MAX;
+  context->events.erase(context->events.lower_bound(first),
+                        context->events.upper_bound(last));
 }
 
 void obelisk_rt_invalidate_signal_snapshots_unlocked(
@@ -1251,6 +1428,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_process_instance_create(
   if (status != OBELISK_RT_OK)
     return status;
 
+  uint64_t headerSize;
   uint64_t frameOffset;
   uint64_t tailSize;
   uint64_t totalSize;
@@ -1258,37 +1436,47 @@ extern "C" obelisk_rt_status obelisk_rt_v1_process_instance_create(
       std::max<uint64_t>({alignof(obelisk_rt_process_instance_v1),
                           descriptor->frame_layout->frame_alignment,
                           nativeAlignment, uint64_t{16}});
-  if (alignUp(sizeof(obelisk_rt_process_instance_v1),
-              descriptor->frame_layout->frame_alignment, frameOffset) ||
+  if (addOverflow(kProcessAllocationMetadataOffset,
+                  sizeof(ProcessAllocationMetadata), headerSize) ||
+      alignUp(headerSize, descriptor->frame_layout->frame_alignment,
+              frameOffset) ||
       addOverflow(scratchOffset, scratchSize, tailSize) ||
       addOverflow(frameOffset, tailSize, totalSize) ||
       alignUp(totalSize, allocationAlignment, totalSize) ||
       totalSize > std::numeric_limits<size_t>::max())
     return OBELISK_RT_OUT_OF_MEMORY;
 
-  void *allocation = std::aligned_alloc(
-      static_cast<size_t>(allocationAlignment), static_cast<size_t>(totalSize));
+  ProcessAllocationPool *pool = processAllocationPool();
+  void *allocation =
+      pool ? pool->allocate(static_cast<size_t>(totalSize),
+                            static_cast<size_t>(allocationAlignment))
+           : std::aligned_alloc(static_cast<size_t>(allocationAlignment),
+                                static_cast<size_t>(totalSize));
   if (!allocation)
     return OBELISK_RT_OUT_OF_MEMORY;
   std::memset(allocation, 0, static_cast<size_t>(totalSize));
-  auto *instance = static_cast<obelisk_rt_process_instance_v1 *>(allocation);
   void *frame = static_cast<uint8_t *>(allocation) + frameOffset;
-  *instance = {descriptor,
-               frame,
-               frame,
-               descriptor->frame_layout->frame_size,
-               scratchOffset,
-               scratchSize,
-               nullptr,
-               0,
-               0,
-               OBELISK_RT_PROCESS_READY,
-               OBELISK_RT_OK,
-               nullptr,
-               nullptr,
-               nullptr,
-               0,
-               0};
+  auto *instance = ::new (allocation)
+      obelisk_rt_process_instance_v1{descriptor,
+                                     frame,
+                                     frame,
+                                     descriptor->frame_layout->frame_size,
+                                     scratchOffset,
+                                     scratchSize,
+                                     nullptr,
+                                     0,
+                                     0,
+                                     OBELISK_RT_PROCESS_READY,
+                                     OBELISK_RT_OK,
+                                     nullptr,
+                                     nullptr,
+                                     nullptr,
+                                     0,
+                                     0};
+  ::new (static_cast<uint8_t *>(allocation) + kProcessAllocationMetadataOffset)
+      ProcessAllocationMetadata{kProcessAllocationMagic,
+                                static_cast<size_t>(totalSize),
+                                static_cast<size_t>(allocationAlignment)};
   *outInstance = instance;
   return OBELISK_RT_OK;
 }
@@ -1459,7 +1647,20 @@ extern "C" obelisk_rt_status obelisk_rt_v1_process_instance_destroy(
     if (instance->native_handle)
       return OBELISK_RT_INVALID_LIFECYCLE;
   }
-  std::free(instance);
+  auto *metadata = reinterpret_cast<ProcessAllocationMetadata *>(
+      reinterpret_cast<uint8_t *>(instance) + kProcessAllocationMetadataOffset);
+  if (metadata->magic != kProcessAllocationMagic)
+    return OBELISK_RT_INVALID_LIFECYCLE;
+  size_t allocationSize = metadata->size;
+  size_t allocationAlignment = metadata->alignment;
+  void *allocation = instance;
+  metadata->magic = 0;
+  std::destroy_at(metadata);
+  std::destroy_at(instance);
+  if (ProcessAllocationPool *pool = processAllocationPool())
+    pool->release(allocation, allocationSize, allocationAlignment);
+  else
+    std::free(allocation);
   return OBELISK_RT_OK;
 }
 
@@ -1775,6 +1976,19 @@ extern "C" void obelisk_rt_v1_scheduler_event_after(
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     if (context->schedulerStatus != OBELISK_RT_OK)
       return;
+    uint32_t retainedAutomaticID = 0;
+    int64_t automaticOffset = 0;
+    if (decodeNativeAutomatic(stableID, retainedAutomaticID, automaticOffset)) {
+      auto found = context->nativeAutomaticStates.find(retainedAutomaticID);
+      if (found == context->nativeAutomaticStates.end()) {
+        context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+        return;
+      }
+      if (nonblocking && found->second.referenceCount == UINT64_MAX) {
+        context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
+        return;
+      }
+    }
     if (nonblocking) {
       if (context->nextSchedulerSequence == 0) {
         context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
@@ -1783,14 +1997,19 @@ extern "C" void obelisk_rt_v1_scheduler_event_after(
       uint64_t dueTime = delay > UINT64_MAX - context->schedulerTime
                              ? UINT64_MAX
                              : context->schedulerTime + delay;
-      context->scheduledDesignEvents.push_back(
-          {context->nextSchedulerSequence++, dueTime, stableID});
+      context->scheduledDesignEvents.push_back({context->nextSchedulerSequence,
+                                                dueTime, stableID,
+                                                retainedAutomaticID});
+      if (retainedAutomaticID != 0)
+        ++context->nativeAutomaticStates.find(retainedAutomaticID)
+              ->second.referenceCount;
+      ++context->nextSchedulerSequence;
       return;
     }
-    uint64_t &generation = context->eventGenerations[stableID];
-    if (++generation == 0)
-      generation = 1;
-    context->eventLastTriggeredTimes[stableID] = context->schedulerTime;
+    EventState &event = context->events[stableID];
+    if (++event.generation == 0)
+      event.generation = 1;
+    event.lastTriggeredTime = context->schedulerTime;
     if (!obelisk_rt_notify_observer_event_unlocked(context, stableID))
       return;
     if (++context->schedulerEpoch == 0)
@@ -1810,9 +2029,9 @@ extern "C" uint32_t obelisk_rt_v1_scheduler_event_triggered(
     return 0;
   try {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
-    auto found = context->eventLastTriggeredTimes.find(stableID);
-    return found != context->eventLastTriggeredTimes.end() &&
-           found->second == context->schedulerTime;
+    auto found = context->events.find(stableID);
+    return found != context->events.end() && found->second.generation != 0 &&
+           found->second.lastTriggeredTime == context->schedulerTime;
   } catch (...) {
     return 0;
   }
@@ -1974,7 +2193,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_release(
       found->second.designOwner = 0;
     }
     if (--found->second.referenceCount == 0) {
-      obelisk_rt_erase_automatic_signal_snapshots_unlocked(context, id);
+      obelisk_rt_erase_automatic_bookkeeping_unlocked(context, id);
       context->nativeAutomaticStates.erase(found);
     }
     return OBELISK_RT_OK;
@@ -2257,6 +2476,54 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         return OBELISK_RT_OK;
       if (context->schedulerStatus != OBELISK_RT_OK)
         return context->schedulerStatus;
+      // No selected index survives across loop iterations. Reentrant scheduler
+      // calls during an evaluator do have an outer selected index, so defer
+      // compaction until both execution engines are quiescent.
+      if (context->schedulerCompactionPending &&
+          !context->activeNativeProcess && !context->designTaskExecuting) {
+        auto &processes = context->scheduledProcesses;
+        // Compact after roughly one quarter of the vector is dead. This keeps
+        // scheduler scans bounded without turning sequential process churn
+        // into one vector shift per termination.
+        size_t processCompactionThreshold = std::max<size_t>(
+            1, processes.size() / 4 + (processes.size() % 4 != 0));
+        bool compactProcesses =
+            context->schedulerDeadProcessCount == processes.size() ||
+            context->schedulerDeadProcessCount >= processCompactionThreshold;
+        if (compactProcesses && context->schedulerDeadProcessCount != 0) {
+          size_t cursor = processes.empty()
+                              ? 0
+                              : context->schedulerCursor % processes.size();
+          size_t adjustedCursor = static_cast<size_t>(
+              std::count_if(processes.begin(), processes.begin() + cursor,
+                            [](const ScheduledProcess &process) {
+                              return process.instance != nullptr;
+                            }));
+          processes.erase(std::remove_if(processes.begin(), processes.end(),
+                                         [](const ScheduledProcess &process) {
+                                           return !process.instance;
+                                         }),
+                          processes.end());
+          context->schedulerCursor =
+              processes.empty() ? 0 : adjustedCursor % processes.size();
+          context->schedulerDeadProcessCount = 0;
+        }
+
+        auto &tasks = context->scheduledDesignTasks;
+        if (context->schedulerDeadDesignTaskCount != 0) {
+          for (ScheduledDesignTask &task : tasks)
+            if (task.terminated)
+              context->designTaskFrames.release(std::move(task.frame));
+          tasks.erase(std::remove_if(tasks.begin(), tasks.end(),
+                                     [](const ScheduledDesignTask &task) {
+                                       return task.terminated;
+                                     }),
+                      tasks.end());
+          context->schedulerDeadDesignTaskCount = 0;
+        }
+        context->schedulerCompactionPending =
+            context->schedulerDeadProcessCount != 0;
+      }
       if (context->schedulerFinishRequested)
         context->schedulerRunningFinals = true;
     }
@@ -2626,7 +2893,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
                   found->second.referenceCount == 0)
                 return OBELISK_RT_INVALID_HANDLE;
               if (--found->second.referenceCount == 0) {
-                obelisk_rt_erase_automatic_signal_snapshots_unlocked(
+                obelisk_rt_erase_automatic_bookkeeping_unlocked(
                     context, retainedAutomaticID);
                 context->nativeAutomaticStates.erase(found);
               }
@@ -2636,15 +2903,29 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           } else if (sequence == eventSequence) {
             uint64_t stableID =
                 context->scheduledDesignEvents[eventIndex].stableID;
+            uint32_t retainedAutomaticID =
+                context->scheduledDesignEvents[eventIndex].retainedAutomaticID;
             context->scheduledDesignEvents.erase(
                 context->scheduledDesignEvents.begin() + eventIndex);
-            uint64_t &generation = context->eventGenerations[stableID];
-            if (++generation == 0)
-              generation = 1;
-            context->eventLastTriggeredTimes[stableID] =
-                context->schedulerTime;
-            if (!obelisk_rt_notify_observer_event_unlocked(context,
-                                                           stableID))
+            EventState &event = context->events[stableID];
+            if (++event.generation == 0)
+              event.generation = 1;
+            event.lastTriggeredTime = context->schedulerTime;
+            bool notified =
+                obelisk_rt_notify_observer_event_unlocked(context, stableID);
+            if (retainedAutomaticID != 0) {
+              auto found =
+                  context->nativeAutomaticStates.find(retainedAutomaticID);
+              if (found == context->nativeAutomaticStates.end() ||
+                  found->second.referenceCount == 0)
+                return OBELISK_RT_INVALID_HANDLE;
+              if (--found->second.referenceCount == 0) {
+                obelisk_rt_erase_automatic_bookkeeping_unlocked(
+                    context, retainedAutomaticID);
+                context->nativeAutomaticStates.erase(found);
+              }
+            }
+            if (!notified)
               return context->schedulerStatus;
             eventTriggered = true;
           } else {
@@ -2788,13 +3069,15 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           destroy = true;
         } else {
           uint64_t token = scheduled.token;
+          context->terminatedNativeProcesses.insert(token);
           scheduled.instance = nullptr;
+          ++context->schedulerDeadProcessCount;
+          context->schedulerCompactionPending = true;
           if (terminationRequested)
             terminatedCallers.swap(scheduled.callers);
           obelisk_rt_release_controls_unlocked(context, scheduled.controls);
           scheduled.controls.clear();
           destroy = true;
-          context->terminatedNativeProcesses.insert(token);
           scheduled.signalTriggered = false;
           scheduled.urgent = false;
           if (++context->schedulerEpoch == 0)
@@ -2834,9 +3117,11 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
             return OBELISK_RT_INVALID_FRAME;
           const obelisk_rt_wait_entry_v1 *entries = waitEntries(wait);
           scheduled.waitGenerations.reserve(wait->count);
-          for (uint32_t index = 0; index != wait->count; ++index)
+          for (uint32_t index = 0; index != wait->count; ++index) {
+            auto event = context->events.find(entries[index].stable_id);
             scheduled.waitGenerations.push_back(
-                context->eventGenerations[entries[index].stable_id]);
+                event == context->events.end() ? 0 : event->second.generation);
+          }
         }
         if (action.suspend_kind == OBELISK_RT_SUSPEND_DELAY) {
           scheduled.wakeTime =

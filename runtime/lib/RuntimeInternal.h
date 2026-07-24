@@ -6,10 +6,13 @@
 
 #include "obelisk/Runtime/Runtime.h"
 
+#include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdio>
-#include <mutex>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <new>
 #include <string>
 #include <string_view>
@@ -23,6 +26,194 @@ struct FileEntry {
   FILE *stream = nullptr;
   int lastError = 0;
   bool writable = false;
+};
+
+// Exact membership set optimized for monotonically allocated process tokens.
+// Completed tokens normally form long contiguous runs, so retaining their
+// await/join semantics costs one pair of endpoints per run rather than one
+// hash-table node per process.
+class TerminatedTokenSet {
+public:
+  struct InsertResult {
+    bool second;
+  };
+
+  InsertResult insert(uint64_t token) {
+    auto next = std::lower_bound(
+        ranges.begin(), ranges.end(), token,
+        [](const auto &range, uint64_t value) { return range.second < value; });
+    if (next != ranges.end() && next->first <= token)
+      return {false};
+
+    bool joinsPrevious = next != ranges.begin() &&
+                         (next - 1)->second != UINT64_MAX &&
+                         (next - 1)->second + 1 == token;
+    bool joinsNext =
+        next != ranges.end() && token != UINT64_MAX && next->first == token + 1;
+    if (joinsPrevious) {
+      auto previous = next - 1;
+      previous->second = token;
+      if (joinsNext) {
+        previous->second = next->second;
+        ranges.erase(next);
+      }
+      return {true};
+    }
+    if (joinsNext) {
+      next->first = token;
+      return {true};
+    }
+    ranges.insert(next, {token, token});
+    return {true};
+  }
+
+  size_t erase(uint64_t token) {
+    auto found = std::lower_bound(
+        ranges.begin(), ranges.end(), token,
+        [](const auto &range, uint64_t value) { return range.second < value; });
+    if (found == ranges.end() || found->first > token)
+      return 0;
+    if (found->first == token && found->second == token) {
+      ranges.erase(found);
+      return 1;
+    }
+    if (found->first == token) {
+      ++found->first;
+      return 1;
+    }
+    if (found->second == token) {
+      --found->second;
+      return 1;
+    }
+
+    size_t index = static_cast<size_t>(found - ranges.begin());
+    uint64_t upper = found->second;
+    ranges.insert(found + 1, {token + 1, upper});
+    ranges[index].second = token - 1;
+    return 1;
+  }
+
+  size_t count(uint64_t token) const {
+    auto found = std::lower_bound(
+        ranges.begin(), ranges.end(), token,
+        [](const auto &range, uint64_t value) { return range.second < value; });
+    return found != ranges.end() && found->first <= token ? 1 : 0;
+  }
+
+  // The callers reserve once before transactional batches. One new range per
+  // token is the worst case and also leaves enough room for rollback splits.
+  void reserveRanges(size_t rangeCount) { ranges.reserve(rangeCount); }
+  size_t rangeCount() const { return ranges.size(); }
+  bool empty() const { return ranges.empty(); }
+
+private:
+  std::vector<std::pair<uint64_t, uint64_t>> ranges;
+};
+
+// Small persistent design frames are recycled within a simulation context.
+// Independent size buckets avoid a single allocator lock when the dynamic
+// frontier is driven by multiple worker lanes. Atomic aggregate bounds ensure
+// that a transient concurrency spike cannot become a second memory leak.
+class ReusableByteBufferPool {
+public:
+  std::vector<uint8_t> acquire(size_t size) {
+    std::vector<uint8_t> result;
+    for (size_t index = bucketIndex(size); index != buckets.size(); ++index) {
+      Bucket &bucket = buckets[index];
+      std::lock_guard<std::mutex> lock(bucket.mutex);
+      auto best = bucket.buffers.end();
+      for (auto current = bucket.buffers.begin();
+           current != bucket.buffers.end(); ++current) {
+        if (current->capacity() < size)
+          continue;
+        if (best == bucket.buffers.end() ||
+            current->capacity() < best->capacity())
+          best = current;
+      }
+      if (best == bucket.buffers.end())
+        continue;
+
+      size_t capacity = best->capacity();
+      result = std::move(*best);
+      if (best != bucket.buffers.end() - 1)
+        *best = std::move(bucket.buffers.back());
+      bucket.buffers.pop_back();
+      cachedBytes.fetch_sub(capacity, std::memory_order_relaxed);
+      cachedBufferCount.fetch_sub(1, std::memory_order_relaxed);
+      break;
+    }
+    if (result.capacity() < size)
+      return std::vector<uint8_t>(size);
+    result.assign(size, 0);
+    return result;
+  }
+
+  void release(std::vector<uint8_t> buffer) noexcept {
+    size_t capacity = buffer.capacity();
+    if (capacity == 0 || capacity > kMaxBufferBytes)
+      return;
+    buffer.clear();
+
+    size_t count = cachedBufferCount.fetch_add(1, std::memory_order_relaxed);
+    if (count >= kMaxBuffers) {
+      cachedBufferCount.fetch_sub(1, std::memory_order_relaxed);
+      return;
+    }
+    size_t bytes = cachedBytes.load(std::memory_order_relaxed);
+    for (;;) {
+      if (capacity > kMaxCachedBytes - bytes) {
+        cachedBufferCount.fetch_sub(1, std::memory_order_relaxed);
+        return;
+      }
+      if (cachedBytes.compare_exchange_weak(bytes, bytes + capacity,
+                                            std::memory_order_relaxed))
+        break;
+    }
+
+    try {
+      Bucket &bucket = buckets[bucketIndex(capacity)];
+      std::lock_guard<std::mutex> lock(bucket.mutex);
+      bucket.buffers.push_back(std::move(buffer));
+    } catch (...) {
+      cachedBytes.fetch_sub(capacity, std::memory_order_relaxed);
+      cachedBufferCount.fetch_sub(1, std::memory_order_relaxed);
+      // Recycling is an optimization; the buffer is freed by its destructor.
+    }
+  }
+
+  size_t size() const {
+    return cachedBufferCount.load(std::memory_order_relaxed);
+  }
+  size_t byteSize() const {
+    return cachedBytes.load(std::memory_order_relaxed);
+  }
+
+private:
+  static constexpr unsigned kMinSizeShift = 6;
+  static constexpr unsigned kMaxSizeShift = 20;
+  static constexpr size_t kBucketCount = kMaxSizeShift - kMinSizeShift + 1;
+  static constexpr size_t kMaxBuffers = 64;
+  static constexpr size_t kMaxBufferBytes = size_t{1} << kMaxSizeShift;
+  static constexpr size_t kMaxCachedBytes = 16 * 1024 * 1024;
+
+  struct alignas(64) Bucket {
+    std::mutex mutex;
+    std::vector<std::vector<uint8_t>> buffers;
+  };
+
+  static size_t bucketIndex(size_t size) {
+    size_t classSize = size_t{1} << kMinSizeShift;
+    size_t index = 0;
+    while (classSize < size && index + 1 != kBucketCount) {
+      classSize <<= 1;
+      ++index;
+    }
+    return index;
+  }
+
+  std::array<Bucket, kBucketCount> buckets;
+  std::atomic<size_t> cachedBytes{0};
+  std::atomic<size_t> cachedBufferCount{0};
 };
 
 struct ScheduledProcess {
@@ -72,6 +263,11 @@ struct NativeAutomaticState {
   std::vector<uint8_t> unknown;
 };
 
+struct EventState {
+  uint64_t generation = 0;
+  uint64_t lastTriggeredTime = 0;
+};
+
 struct NativeStaticState {
   uint64_t bitOffset = 0;
   uint64_t bitWidth = 0;
@@ -106,6 +302,7 @@ struct ScheduledDesignEvent {
   uint64_t sequence = 0;
   uint64_t dueTime = 0;
   uint64_t stableID = 0;
+  uint32_t retainedAutomaticID = 0;
 };
 
 struct DesignActivation {
@@ -189,6 +386,7 @@ struct obelisk_rt_context {
   std::vector<ScheduledDesignNBA> scheduledDesignNBAs;
   std::vector<ScheduledDesignEvent> scheduledDesignEvents;
   std::vector<ScheduledDesignTask> scheduledDesignTasks;
+  ReusableByteBufferPool designTaskFrames;
   uint64_t nextSchedulerSequence = 1;
   uint64_t nextNativeProcessToken = 1;
   uint32_t nextNativeAutomaticID = 1;
@@ -200,15 +398,17 @@ struct obelisk_rt_context {
   std::vector<uint64_t> activeControls;
   obelisk_rt_process_instance_v1 *activeNativeProcess = nullptr;
   bool designTaskExecuting = false;
-  std::unordered_set<uint64_t> terminatedDesignTasks;
-  std::unordered_set<uint64_t> terminatedNativeProcesses;
+  bool schedulerCompactionPending = false;
+  size_t schedulerDeadProcessCount = 0;
+  size_t schedulerDeadDesignTaskCount = 0;
+  TerminatedTokenSet terminatedDesignTasks;
+  TerminatedTokenSet terminatedNativeProcesses;
   uint64_t nextControlActivation = 1;
   std::unordered_map<uint64_t, ControlActivation> controlActivations;
   std::unordered_set<uint64_t> initializedStaticSites;
   std::unordered_map<uint32_t, NativeStaticState> nativeStaticStates;
   std::unordered_map<uint32_t, NativeAutomaticState> nativeAutomaticStates;
-  std::unordered_map<uint64_t, uint64_t> eventGenerations;
-  std::unordered_map<uint64_t, uint64_t> eventLastTriggeredTimes;
+  std::map<uint64_t, EventState> events;
   std::unordered_map<uint32_t, ImportBinding> imports;
   std::vector<std::unique_ptr<DpiScopeHandle>> dpiScopes;
   std::unordered_map<std::string, DpiScopeHandle *> dpiScopesByName;
@@ -355,7 +555,7 @@ bool obelisk_rt_notify_observer_signal_unlocked(obelisk_rt_context *context,
 bool obelisk_rt_evaluate_design_observers_unlocked(
     obelisk_rt_context *context, uint32_t dependencyKind,
     uint64_t publishedHandle, uint64_t publishedWidth);
-void obelisk_rt_erase_automatic_signal_snapshots_unlocked(
+void obelisk_rt_erase_automatic_bookkeeping_unlocked(
     obelisk_rt_context *context, uint32_t automaticID);
 void obelisk_rt_invalidate_signal_snapshots_unlocked(
     obelisk_rt_context *context, uint64_t bitOffset, uint64_t bitWidth);

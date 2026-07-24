@@ -5,9 +5,10 @@
 
 #include "obelisk/Conversion/Passes.h"
 
+#include "mlir/Support/LogicalResult.h"
+
 namespace mlir {
 class LLVMTypeConverter;
-class LogicalResult;
 class ModuleOp;
 class RewritePatternSet;
 } // namespace mlir
