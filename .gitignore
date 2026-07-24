@@ -12,3 +12,7 @@
 # Prebuilt compiler SDKs and downloaded source archives live outside the repo.
 /llvm-mlir-*/
 *.tar.gz
+
+# Fetched external test-suite checkouts for the conformance benchmark.
+/benchmark/cache/
+__pycache__/

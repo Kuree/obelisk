@@ -1027,6 +1027,24 @@ that closed-world RTL unable to reach class allocation contains no GC polls or
 root-tracking instrumentation.
 
 Broader native/bytecode differential coverage grows with each executable
-language slice. Verilator comparison, exact full-region golden traces,
-simulation determinism across generated worker counts, sanitizer and race
-suites, and performance gates remain future coverage.
+language slice. Exact full-region golden traces, simulation determinism across
+generated worker counts, sanitizer and race suites, and performance gates remain
+future coverage.
+
+An external conformance benchmark under `benchmark/` measures Obelisk against
+third-party simulator regressions without patching them and without invoking any
+reference simulator. The harness owns its run loop: it compiles each test with
+Obelisk, runs the resulting native executable, and judges it three ways — a
+compile-error test must fail to compile, a gold-file test must match its checked-in
+output, and a self-checking test must print its success marker. It covers:
+
+- Verilator's `test_regress` portable `simulator`-scenario corpus, wrapping each
+  design in the same generated clock top-shell its harness would; and
+- Icarus's `ivtest` corpus, driven from ivtest's own test lists.
+
+Compile-failure diagnostics are bucketed into named language features to rank what
+to implement next, and each recorded run appends to a tracked history so the pass
+rate is watched over time. This is a measurement instrument, not a build gate;
+CTest and `check-obelisk` are unaffected. Run
+`python3 benchmark/run.py <suite> --suite-root <checkout>`; see
+`benchmark/README.md`.
