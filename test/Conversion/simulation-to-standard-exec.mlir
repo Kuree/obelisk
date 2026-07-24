@@ -115,6 +115,32 @@ module {
     %ok_unknown_eq = obelisk_sim.logic.compare case_eq %unknown_eq, %x1 : (!obelisk_sim.logic<1>, !obelisk_sim.logic<1>) -> i1
     %ok_case_xz = arith.cmpi eq, %case_xz, %false : i1
     %ok_case_ne_xz = arith.cmpi eq, %case_ne_xz, %true : i1
+    %wild_mask_x = obelisk_sim.logic.compare wild_eq %x1, %x1 : (!obelisk_sim.logic<1>, !obelisk_sim.logic<1>) -> !obelisk_sim.logic<1>
+    %wild_lhs_x = obelisk_sim.logic.compare wild_eq %x1, %zero1 : (!obelisk_sim.logic<1>, !obelisk_sim.logic<1>) -> !obelisk_sim.logic<1>
+    %wild_mismatch = obelisk_sim.logic.compare wild_eq %one1, %zero1 : (!obelisk_sim.logic<1>, !obelisk_sim.logic<1>) -> !obelisk_sim.logic<1>
+    %wild_ne_x = obelisk_sim.logic.compare wild_ne %x1, %zero1 : (!obelisk_sim.logic<1>, !obelisk_sim.logic<1>) -> !obelisk_sim.logic<1>
+    %casez_z0 = obelisk_sim.logic.compare casez_eq %z1, %zero1 : (!obelisk_sim.logic<1>, !obelisk_sim.logic<1>) -> i1
+    %casez_x0 = obelisk_sim.logic.compare casez_eq %x1, %zero1 : (!obelisk_sim.logic<1>, !obelisk_sim.logic<1>) -> i1
+    %casez_xx = obelisk_sim.logic.compare casez_eq %x1, %x1 : (!obelisk_sim.logic<1>, !obelisk_sim.logic<1>) -> i1
+    %casex_x0 = obelisk_sim.logic.compare casexz_eq %x1, %zero1 : (!obelisk_sim.logic<1>, !obelisk_sim.logic<1>) -> i1
+    %casex_z1 = obelisk_sim.logic.compare casexz_eq %z1, %one1 : (!obelisk_sim.logic<1>, !obelisk_sim.logic<1>) -> i1
+    %ok_wild_mask_x = obelisk_sim.logic.compare case_eq %wild_mask_x, %one1 : (!obelisk_sim.logic<1>, !obelisk_sim.logic<1>) -> i1
+    %ok_wild_lhs_x = obelisk_sim.logic.compare case_eq %wild_lhs_x, %x1 : (!obelisk_sim.logic<1>, !obelisk_sim.logic<1>) -> i1
+    %ok_wild_mismatch = obelisk_sim.logic.compare case_eq %wild_mismatch, %zero1 : (!obelisk_sim.logic<1>, !obelisk_sim.logic<1>) -> i1
+    %ok_wild_ne_x = obelisk_sim.logic.compare case_eq %wild_ne_x, %x1 : (!obelisk_sim.logic<1>, !obelisk_sim.logic<1>) -> i1
+    %ok_casez_z0 = arith.cmpi eq, %casez_z0, %true : i1
+    %ok_casez_x0 = arith.cmpi eq, %casez_x0, %false : i1
+    %ok_casez_xx = arith.cmpi eq, %casez_xx, %true : i1
+    %ok_casex_x0 = arith.cmpi eq, %casex_x0, %true : i1
+    %ok_casex_z1 = arith.cmpi eq, %casex_z1, %true : i1
+    %matching0 = arith.andi %ok_wild_mask_x, %ok_wild_lhs_x : i1
+    %matching1 = arith.andi %matching0, %ok_wild_mismatch : i1
+    %matching2 = arith.andi %matching1, %ok_wild_ne_x : i1
+    %matching3 = arith.andi %matching2, %ok_casez_z0 : i1
+    %matching4 = arith.andi %matching3, %ok_casez_x0 : i1
+    %matching5 = arith.andi %matching4, %ok_casez_xx : i1
+    %matching6 = arith.andi %matching5, %ok_casex_x0 : i1
+    %ok_matching = arith.andi %matching6, %ok_casex_z1 : i1
 
     // Copying operations preserve exact X/Z planes.
     %a2 = obelisk_sim.logic.constant 2 : i2, 1 : i2 : !obelisk_sim.logic<2>
@@ -182,15 +208,16 @@ module {
     %ok33 = arith.andi %ok32, %ok_unknown_eq : i1
     %ok34 = arith.andi %ok33, %ok_case_xz : i1
     %ok35 = arith.andi %ok34, %ok_case_ne_xz : i1
-    %ok36 = arith.andi %ok35, %ok_resize_u : i1
-    %ok37 = arith.andi %ok36, %ok_concat : i1
-    %ok38 = arith.andi %ok37, %ok_replicate : i1
-    %ok39 = arith.andi %ok38, %ok_extract : i1
-    %ok40 = arith.andi %ok39, %ok_insert : i1
-    %ok41 = arith.andi %ok40, %ok_shifted_left : i1
-    %ok42 = arith.andi %ok41, %ok_shifted : i1
-    %ok43 = arith.andi %ok42, %ok_shifted_arith : i1
-    return %ok43 : i1
+    %ok36 = arith.andi %ok35, %ok_matching : i1
+    %ok37 = arith.andi %ok36, %ok_resize_u : i1
+    %ok38 = arith.andi %ok37, %ok_concat : i1
+    %ok39 = arith.andi %ok38, %ok_replicate : i1
+    %ok40 = arith.andi %ok39, %ok_extract : i1
+    %ok41 = arith.andi %ok40, %ok_insert : i1
+    %ok42 = arith.andi %ok41, %ok_shifted_left : i1
+    %ok43 = arith.andi %ok42, %ok_shifted : i1
+    %ok44 = arith.andi %ok43, %ok_shifted_arith : i1
+    return %ok44 : i1
   }
 
   func.func @main() -> i32 attributes {llvm.emit_c_interface} {

@@ -175,9 +175,17 @@ module {
 
     // A cross-section of operation categories beyond declarations.
     slang.statement.conditional attributes {
-      check_kind = 0 : i32, condition_count = 0 : i64,
+      check_kind = 0 : i32, condition_count = 1 : i64,
+      condition_pattern_flags = array<i64: 0>,
       has_else = false, node_id = 29 : i64
     } {
+      slang.expression.integer_literal attributes {
+        constant_value = "1", node_id = 40 : i64,
+        semantic_type = !slang.integral<1, false, true, 0 : 0, logic>
+      } {
+      }
+      slang.statement.list attributes {node_id = 41 : i64} {
+      }
     }
     slang.expression.integer_literal attributes {
       constant_value = "42", node_id = 30 : i64,
@@ -259,8 +267,7 @@ module {
 // CHECK: !obelisk.subroutine<(!obelisk.string) -> !obelisk.shortreal, false>
 
 // CHECK: obelisk.sv.statement.conditional
-// CHECK: obelisk.sv.expression.integer_literal
-// CHECK-SAME: constant_value = "42"
+// CHECK: obelisk.sv.expression.integer_literal attributes {constant_value = "42"
 // CHECK: obelisk.sv.expression.binary_op
 // CHECK: obelisk.sv.expression.assignment
 // CHECK-SAME: assignment_kind = 1 : i32

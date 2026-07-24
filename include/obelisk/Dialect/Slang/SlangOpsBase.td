@@ -450,8 +450,11 @@ class SlangConditionalStatementASTNodeOp<string mnemonic>
     : SlangASTNodeOp<mnemonic, [], (ins
         SlangUniquePriorityCheck:$check_kind,
         I64Attr:$condition_count,
+        DenseI64ArrayAttr:$condition_pattern_flags,
         BoolAttr:$has_else
-      )>;
+      )> {
+  let hasVerifier = 1;
+}
 
 class SlangCaseStatementASTNodeOp<string mnemonic>
     : SlangASTNodeOp<mnemonic, [], (ins
@@ -460,7 +463,31 @@ class SlangCaseStatementASTNodeOp<string mnemonic>
         I64Attr:$item_count,
         DenseI64ArrayAttr:$item_label_counts,
         BoolAttr:$has_default
-      )>;
+      )> {
+  let hasVerifier = 1;
+}
+
+class SlangPatternCaseStatementASTNodeOp<string mnemonic>
+    : SlangASTNodeOp<mnemonic, [], (ins
+        SlangCaseCondition:$condition_kind,
+        SlangUniquePriorityCheck:$check_kind,
+        I64Attr:$item_count,
+        DenseI64ArrayAttr:$item_filter_flags,
+        BoolAttr:$has_default
+      )> {
+  let hasVerifier = 1;
+}
+
+class SlangInsideExpressionASTNodeOp<string mnemonic>
+    : SlangExpressionASTNodeOp<mnemonic, (ins I64Attr:$item_count)> {
+  let hasVerifier = 1;
+}
+
+class SlangValueRangeExpressionASTNodeOp<string mnemonic>
+    : SlangExpressionASTNodeOp<mnemonic,
+        (ins SlangValueRangeKind:$range_kind)> {
+  let hasVerifier = 1;
+}
 
 class SlangImmediateAssertionStatementASTNodeOp<string mnemonic>
     : SlangASTNodeOp<mnemonic, [SlangSemanticDeclarativeNode], (ins
@@ -586,13 +613,24 @@ class SlangCaseAssertionASTNodeOp<string mnemonic>
     BoolAttr:$has_default
   )>;
 
-class SlangPatternASTNodeOp<string mnemonic> : SlangASTNodeOp<mnemonic>;
+class SlangPatternASTNodeOp<string mnemonic, dag patternArgs = (ins)>
+    : SlangASTNodeOp<mnemonic, [], patternArgs>;
 
 class SlangReferencePatternASTNodeOp<string mnemonic>
     : SlangASTNodeOp<mnemonic, [], (ins
         SymbolRefAttr:$referenced_symbol,
-        StrAttr:$referenced_path
-      )>;
+        StrAttr:$referenced_path,
+        OptionalAttr<I64Attr>:$field_ordinal,
+        OptionalAttr<I64Attr>:$packed_offset
+      )> {
+  let hasVerifier = 1;
+}
+
+class SlangStructurePatternASTNodeOp<string mnemonic>
+    : SlangPatternASTNodeOp<mnemonic,
+        (ins DenseI64ArrayAttr:$field_ordinals)> {
+  let hasVerifier = 1;
+}
 
 class SlangBinsASTNodeOp<string mnemonic>
     : SlangASTNodeOp<mnemonic, [SlangSemanticDeclarativeNode]>;

@@ -1,6 +1,7 @@
 //===- DesignBytecodeTest.cpp - Design bytecode/reflection tests ----------===//
 
 #include "obelisk/Runtime/Runtime.h"
+#include "../lib/RuntimeInternal.h"
 
 #include "gtest/gtest.h"
 
@@ -152,6 +153,68 @@ std::vector<uint8_t> makeBytecode() {
   put64(bytes, constantOffset + 8, 1);
   put64(bytes, constantOffset + 16, UINT64_C(0x00000000000000f0));
   put64(bytes, constantOffset + 24, 1);
+  put32(bytes, continuationOffset, 0);
+  put32(bytes, continuationOffset + 4, 0);
+  put64(bytes, continuationOffset + 8, 0);
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
+std::vector<uint8_t> makeComparisonBytecode(uint8_t resultKind,
+                                            uint16_t comparisonKind) {
+  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+  constexpr size_t layoutOffset = functionOffset + 96;
+  constexpr size_t codeOffset = layoutOffset + 3 * 40;
+  constexpr size_t continuationOffset = codeOffset + 2 * 32;
+  std::vector<uint8_t> bytes(continuationOffset + 24, 0);
+  std::memcpy(bytes.data(), "OBBCDS1\0", 8);
+  put32(bytes, 8, OBELISK_RT_VERSION);
+  put32(bytes, 16, OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE);
+  put64(bytes, 24, bytes.size());
+  put64(bytes, 40, functionOffset);
+  put64(bytes, 48, 1);
+  put64(bytes, 56, layoutOffset);
+  put64(bytes, 64, 3);
+  put64(bytes, 72, codeOffset);
+  put64(bytes, 80, 2);
+  put64(bytes, 88, continuationOffset);
+  put64(bytes, 104, continuationOffset);
+  put64(bytes, 120, continuationOffset);
+  put64(bytes, 128, 1);
+  put64(bytes, 136, bytes.size());
+  put64(bytes, 152, bytes.size());
+  put64(bytes, 168, bytes.size());
+  put64(bytes, 184, bytes.size());
+
+  put64(bytes, functionOffset, 1);
+  put64(bytes, functionOffset + 16, 0);
+  put64(bytes, functionOffset + 24, 2);
+  put64(bytes, functionOffset + 32, 0);
+  put64(bytes, functionOffset + 40, 3);
+  put32(bytes, functionOffset + 48, 2);
+  put32(bytes, functionOffset + 52, 0);
+  uint64_t resultSize =
+      resultKind == OBELISK_RT_DBREG_LOGIC ? uint64_t{16} : uint64_t{8};
+  put64(bytes, functionOffset + 56, 32 + resultSize);
+  put64(bytes, functionOffset + 64, 8);
+  put64(bytes, functionOffset + 72, 0);
+  put64(bytes, functionOffset + 80, 1);
+
+  for (unsigned index = 0; index != 2; ++index) {
+    size_t layout = layoutOffset + index * 40;
+    bytes[layout] = OBELISK_RT_DBREG_LOGIC;
+    put32(bytes, layout + 4, 1);
+    put64(bytes, layout + 8, index * 16);
+    put64(bytes, layout + 16, 16);
+  }
+  bytes[layoutOffset + 80] = resultKind;
+  put32(bytes, layoutOffset + 84, 1);
+  put64(bytes, layoutOffset + 88, 32);
+  put64(bytes, layoutOffset + 96, resultSize);
+
+  instruction(bytes, codeOffset, 0, OBELISK_RT_DB_COMPARE, comparisonKind, 2,
+              0, 1);
+  instruction(bytes, codeOffset, 1, OBELISK_RT_DB_RETURN);
   put32(bytes, continuationOffset, 0);
   put32(bytes, continuationOffset + 4, 0);
   put64(bytes, continuationOffset + 8, 0);
@@ -2340,6 +2403,30 @@ TEST(DesignBytecode, RejectsNonCanonicalTablesAndUncallableFunctions) {
       imageChecksum(overlappingUWireDrivers.bytecode);
   overlappingUWireDrivers.entry = {&overlappingUWireDrivers.execution, 0, 0};
   rejected(overlappingUWireDrivers);
+}
+
+TEST(DesignBytecode, ValidatesComparisonResultDomains) {
+  auto validate = [](uint8_t resultKind, uint16_t comparisonKind) {
+    Fixture fixture;
+    fixture.bytecode =
+        makeComparisonBytecode(resultKind, comparisonKind);
+    fixture.execution.bytecode = fixture.bytecode.data();
+    fixture.execution.bytecode_size = fixture.bytecode.size();
+    fixture.execution.checksum = imageChecksum(fixture.bytecode);
+    uint64_t scratchSize = 0;
+    uint64_t scratchAlignment = 0;
+    return obelisk_rt_validate_design_bytecode(
+        fixture.entry, &scratchSize, &scratchAlignment);
+  };
+
+  EXPECT_EQ(validate(OBELISK_RT_DBREG_LOGIC, OBELISK_RT_DB_CMP_WILD_EQ),
+            OBELISK_RT_OK);
+  EXPECT_EQ(validate(OBELISK_RT_DBREG_BITS, OBELISK_RT_DB_CMP_WILD_EQ),
+            OBELISK_RT_OK);
+  EXPECT_EQ(validate(OBELISK_RT_DBREG_BITS, OBELISK_RT_DB_CMP_CASEZ_EQ),
+            OBELISK_RT_OK);
+  EXPECT_EQ(validate(OBELISK_RT_DBREG_LOGIC, OBELISK_RT_DB_CMP_CASEZ_EQ),
+            OBELISK_RT_INVALID_BYTECODE);
 }
 
 TEST(DesignBytecode, NativeAndBytecodeShareCanonicalDesignState) {

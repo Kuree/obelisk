@@ -222,6 +222,18 @@ std::optional<unsigned> nativeStateWidth(Type type) {
   return static_cast<unsigned>(*span);
 }
 
+std::optional<uint64_t> unionPayloadSpan(Type type) {
+  if (auto packed = dyn_cast<sim::PackedUnionType>(type)) {
+    std::optional<unsigned> width = sim::getPackedWidth(type);
+    if (!width || packed.getTagBits() > *width)
+      return std::nullopt;
+    return static_cast<uint64_t>(*width - packed.getTagBits());
+  }
+  if (isa<sim::UnpackedUnionType>(type))
+    return sim::getProvenanceSpan(type);
+  return std::nullopt;
+}
+
 LogicalResult convertNativeAggregateType(Type type,
                                          SmallVectorImpl<Type> &results) {
   std::optional<unsigned> width = nativeStateWidth(type);
@@ -1347,7 +1359,7 @@ public:
       return failure();
     Type unionType = op.getResult().getType();
     std::optional<unsigned> width = nativeStateWidth(unionType);
-    std::optional<uint64_t> payloadSpan = sim::getProvenanceSpan(unionType);
+    std::optional<uint64_t> payloadSpan = unionPayloadSpan(unionType);
     if (!width || !payloadSpan || *payloadSpan > *width)
       return failure();
     IntegerType plane = rewriter.getIntegerType(*width);
@@ -1434,6 +1446,78 @@ public:
     }
     SmallVector<ValueRange> replacements{ValueRange(results)};
     rewriter.replaceOpWithMultiple(op, replacements);
+    return success();
+  }
+};
+
+class UnionIsActiveConversion final
+    : public OpConversionPattern<sim::SimUnionIsActiveOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimUnionIsActiveOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Type unionType = op.getInput().getType();
+    std::optional<uint64_t> payloadSpan = unionPayloadSpan(unionType);
+    if (!payloadSpan || adaptor.getInput().empty())
+      return failure();
+    unsigned tagBits = 0;
+    uint64_t expected = 0;
+    if (auto packed = dyn_cast<sim::PackedUnionType>(unionType)) {
+      tagBits = packed.getTagBits();
+      expected = op.getIndex();
+    } else if (auto unpacked =
+                   dyn_cast<sim::UnpackedUnionType>(unionType)) {
+      tagBits = llvm::Log2_64_Ceil(
+          static_cast<uint64_t>(sim::getAggregateNumElements(unionType)) + 1);
+      expected = static_cast<uint64_t>(op.getIndex()) + 1;
+    }
+    if (tagBits == 0) {
+      Value active = arith::ConstantOp::create(
+          rewriter, op.getLoc(), rewriter.getI1Type(),
+          rewriter.getBoolAttr(true));
+      rewriter.replaceOp(op, active);
+      return success();
+    }
+    auto extractTag = [&](Value plane) -> FailureOr<Value> {
+      auto planeType = dyn_cast<IntegerType>(plane.getType());
+      if (!planeType || *payloadSpan + tagBits > planeType.getWidth())
+        return failure();
+      Value shifted = plane;
+      if (*payloadSpan != 0) {
+        Value amount = arith::ConstantOp::create(
+            rewriter, op.getLoc(), planeType,
+            rewriter.getIntegerAttr(planeType, *payloadSpan));
+        shifted =
+            arith::ShRUIOp::create(rewriter, op.getLoc(), plane, amount);
+      }
+      auto tagType = rewriter.getIntegerType(tagBits);
+      if (tagType != planeType)
+        shifted =
+            arith::TruncIOp::create(rewriter, op.getLoc(), tagType, shifted);
+      return shifted;
+    };
+    FailureOr<Value> tag = extractTag(adaptor.getInput().front());
+    if (failed(tag))
+      return failure();
+    auto tagType = cast<IntegerType>((*tag).getType());
+    Value expectedTag = arith::ConstantOp::create(
+        rewriter, op.getLoc(), tagType,
+        rewriter.getIntegerAttr(tagType, expected));
+    Value equal = arith::CmpIOp::create(
+        rewriter, op.getLoc(), arith::CmpIPredicate::eq, *tag, expectedTag);
+    if (adaptor.getInput().size() == 2) {
+      FailureOr<Value> unknownTag = extractTag(adaptor.getInput()[1]);
+      if (failed(unknownTag))
+        return failure();
+      Value zero = arith::ConstantOp::create(
+          rewriter, op.getLoc(), tagType,
+          rewriter.getIntegerAttr(tagType, 0));
+      Value known = arith::CmpIOp::create(
+          rewriter, op.getLoc(), arith::CmpIPredicate::eq, *unknownTag, zero);
+      equal = arith::AndIOp::create(rewriter, op.getLoc(), equal, known);
+    }
+    rewriter.replaceOp(op, equal);
     return success();
   }
 };
@@ -6261,7 +6345,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                      PackedAggregateConstructConversion,
                      AggregateDynamicExtractConversion,
                      AggregateDefaultConversion, UnionConstructConversion,
-                     UnionExtractConversion,
+                     UnionExtractConversion, UnionIsActiveConversion,
                      SimSuspendTypeConversion<sim::SimSuspendDelayOp>,
                      SimSuspendTypeConversion<sim::SimSuspendChangeOp>,
                      SimSuspendTypeConversion<sim::SimSuspendEdgeOp>,
@@ -6326,7 +6410,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       .addIllegalOp<sim::SimAggregateDefaultOp, sim::SimAggregateConstructOp,
                     sim::SimAggregateExtractOp, sim::SimAggregateInsertOp,
                     sim::SimArrayDynExtractOp, sim::SimUnionConstructOp,
-                    sim::SimUnionExtractOp>();
+                    sim::SimUnionExtractOp, sim::SimUnionIsActiveOp>();
   packedTarget.addLegalDialect<runtime::ObeliskRuntimeDialect>();
   packedTarget.addLegalOp<sim::SimContextRuntimeOp, sim::SimStatusCheckOp>();
   packedTarget.addDynamicallyLegalOp<sim::SimFuncOp>(

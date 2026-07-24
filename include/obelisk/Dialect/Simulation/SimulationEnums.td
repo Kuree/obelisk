@@ -244,10 +244,15 @@ def SimCmpSLT : I32EnumAttrCase<"SLT", 8, "slt">;
 def SimCmpSLE : I32EnumAttrCase<"SLE", 9, "sle">;
 def SimCmpSGT : I32EnumAttrCase<"SGT", 10, "sgt">;
 def SimCmpSGE : I32EnumAttrCase<"SGE", 11, "sge">;
+def SimCmpWildEq : I32EnumAttrCase<"WildEq", 12, "wild_eq">;
+def SimCmpWildNe : I32EnumAttrCase<"WildNe", 13, "wild_ne">;
+def SimCmpCaseZEq : I32EnumAttrCase<"CaseZEq", 14, "casez_eq">;
+def SimCmpCaseXZEq : I32EnumAttrCase<"CaseXZEq", 15, "casexz_eq">;
 def SimCompareKind
     : I32EnumAttr<"CompareKind", "normalized comparison operation", [
       SimCmpEq, SimCmpNe, SimCmpCaseEq, SimCmpCaseNe, SimCmpULT, SimCmpULE,
-      SimCmpUGT, SimCmpUGE, SimCmpSLT, SimCmpSLE, SimCmpSGT, SimCmpSGE
+      SimCmpUGT, SimCmpUGE, SimCmpSLT, SimCmpSLE, SimCmpSGT, SimCmpSGE,
+      SimCmpWildEq, SimCmpWildNe, SimCmpCaseZEq, SimCmpCaseXZEq
     ]> {
   let cppNamespace = "::obelisk::sim";
 }

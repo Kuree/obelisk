@@ -1015,6 +1015,8 @@ private:
       using VF = slang::ast::VariableFlags;
       if (node.flags.has(VF::Const))
         SET_OP_ATTR(IsConst, builder.getUnitAttr());
+      if constexpr (std::same_as<T, slang::ast::PatternVarSymbol>)
+        SET_OP_ATTR(IsConst, builder.getUnitAttr());
       if (node.flags.has(VF::CompilerGenerated))
         SET_OP_ATTR(IsCompilerGenerated, builder.getUnitAttr());
       if (node.flags.has(VF::ImmutableCoverageOption))
@@ -1541,6 +1543,12 @@ private:
                       builder.getContext(), convertEnum(node.check)));
       SET_OP_ATTR(ConditionCount,
                   builder.getI64IntegerAttr(node.conditions.size()));
+      SmallVector<int64_t> patternFlags;
+      patternFlags.reserve(node.conditions.size());
+      for (const auto &condition : node.conditions)
+        patternFlags.push_back(condition.pattern != nullptr);
+      SET_OP_ATTR(ConditionPatternFlags,
+                  builder.getDenseI64ArrayAttr(patternFlags));
       SET_OP_ATTR(HasElse, builder.getBoolAttr(node.ifFalse != nullptr));
     } else if constexpr (std::same_as<T, slang::ast::CaseStatement>) {
       SET_OP_ATTR(ConditionKind,
@@ -1557,6 +1565,39 @@ private:
       SET_OP_ATTR(ItemLabelCounts,
                   builder.getDenseI64ArrayAttr(itemLabelCounts));
       SET_OP_ATTR(HasDefault, builder.getBoolAttr(node.defaultCase != nullptr));
+    } else if constexpr (std::same_as<T,
+                                      slang::ast::PatternCaseStatement>) {
+      SET_OP_ATTR(ConditionKind,
+                  slangir::CaseConditionAttr::get(builder.getContext(),
+                                                  convertEnum(node.condition)));
+      SET_OP_ATTR(CheckKind,
+                  slangir::UniquePriorityCheckAttr::get(
+                      builder.getContext(), convertEnum(node.check)));
+      SET_OP_ATTR(ItemCount, builder.getI64IntegerAttr(node.items.size()));
+      SmallVector<int64_t> filterFlags;
+      filterFlags.reserve(node.items.size());
+      for (const auto &item : node.items)
+        filterFlags.push_back(item.filter != nullptr);
+      SET_OP_ATTR(ItemFilterFlags,
+                  builder.getDenseI64ArrayAttr(filterFlags));
+      SET_OP_ATTR(HasDefault, builder.getBoolAttr(node.defaultCase != nullptr));
+    } else if constexpr (std::same_as<T, slang::ast::InsideExpression>) {
+      SET_OP_ATTR(ItemCount,
+                  builder.getI64IntegerAttr(node.rangeList().size()));
+    } else if constexpr (std::same_as<T,
+                                      slang::ast::ValueRangeExpression>) {
+      SET_OP_ATTR(RangeKind,
+                  slangir::ValueRangeKindAttr::get(
+                      builder.getContext(),
+                      static_cast<slangir::ValueRangeKind>(
+                          static_cast<int>(node.rangeKind))));
+    } else if constexpr (std::same_as<T, slang::ast::StructurePattern>) {
+      SmallVector<int64_t> ordinals;
+      ordinals.reserve(node.patterns.size());
+      for (const auto &pattern : node.patterns)
+        ordinals.push_back(pattern.field->fieldIndex);
+      SET_OP_ATTR(FieldOrdinals,
+                  builder.getDenseI64ArrayAttr(ordinals));
     } else if constexpr (std::same_as<
                              T, slang::ast::ImmediateAssertionStatement>) {
       SET_OP_ATTR(AssertionKind,

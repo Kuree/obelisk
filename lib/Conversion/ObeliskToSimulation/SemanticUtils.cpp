@@ -148,7 +148,8 @@ bool isSignedSemanticType(Type type) {
 static FailureOr<Type> normalizeType(Type type, Location location);
 
 static FailureOr<ArrayAttr> normalizeSourceFields(ArrayAttr fields,
-                                                  Location location) {
+                                                  Location location,
+                                                  bool allowVoidFields) {
   SmallVector<Attribute> normalized;
   normalized.reserve(fields.size());
   for (Attribute attribute : fields) {
@@ -163,7 +164,10 @@ static FailureOr<ArrayAttr> normalizeSourceFields(ArrayAttr fields,
       emitError(location) << "malformed source aggregate field inventory";
       return failure();
     }
-    FailureOr<Type> fieldType = normalizeType(typeAttr.getValue(), location);
+    FailureOr<Type> fieldType =
+        allowVoidFields && isa<semantic::VoidType>(typeAttr.getValue())
+            ? FailureOr<Type>(IntegerType::get(fields.getContext(), 1))
+            : normalizeType(typeAttr.getValue(), location);
     if (failed(fieldType))
       return failure();
     normalized.push_back(sim::FieldAttr::get(
@@ -262,7 +266,9 @@ static FailureOr<Type> normalizeType(Type type, Location location) {
   }
   if (auto aggregate = dyn_cast<semantic::SourceAggregateType>(type)) {
     FailureOr<ArrayAttr> fields =
-        normalizeSourceFields(aggregate.getFields(), location);
+        normalizeSourceFields(aggregate.getFields(), location,
+                              aggregate.getIsUnion() &&
+                                  aggregate.getIsTagged());
     if (failed(fields))
       return failure();
     if (aggregate.getIsPacked() && aggregate.getIsUnion())

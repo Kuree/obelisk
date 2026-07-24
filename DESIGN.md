@@ -877,6 +877,10 @@ The implementation roadmap is:
 - ~~Complete occurrence-accurate computed timing observers for `wait`,
   computed edges and `iff`, mixed event lists, dynamic selections, and
   named-event reads in native and whole-design bytecode execution.~~
+- ~~Complete executable integral `case`, `casez`, `casex`, `inside`, and
+  structural matching for fixed structs and tagged unions, including
+  activation-local captures and runtime `unique`, `unique0`, and `priority`
+  checks in native and whole-design bytecode execution.~~
 - Extend executable lowering across the remaining broad UVM gate: complete
   event regions, classes, containers, synchronization, randomization,
   assertions, coverage, VPI, and the remaining DPI types and behaviors.

@@ -442,8 +442,11 @@ class ObeliskConditionalStatementASTNodeOp<string mnemonic>
     : ObeliskASTNodeOp<mnemonic, [], (ins
         ObeliskSVUniquePriorityCheck:$check_kind,
         I64Attr:$condition_count,
+        DenseI64ArrayAttr:$condition_pattern_flags,
         BoolAttr:$has_else
-      )>;
+      )> {
+  let hasVerifier = 1;
+}
 
 class ObeliskCaseStatementASTNodeOp<string mnemonic>
     : ObeliskASTNodeOp<mnemonic, [], (ins
@@ -452,7 +455,31 @@ class ObeliskCaseStatementASTNodeOp<string mnemonic>
         I64Attr:$item_count,
         DenseI64ArrayAttr:$item_label_counts,
         BoolAttr:$has_default
-      )>;
+      )> {
+  let hasVerifier = 1;
+}
+
+class ObeliskPatternCaseStatementASTNodeOp<string mnemonic>
+    : ObeliskASTNodeOp<mnemonic, [], (ins
+        ObeliskSVCaseCondition:$condition_kind,
+        ObeliskSVUniquePriorityCheck:$check_kind,
+        I64Attr:$item_count,
+        DenseI64ArrayAttr:$item_filter_flags,
+        BoolAttr:$has_default
+      )> {
+  let hasVerifier = 1;
+}
+
+class ObeliskInsideExpressionASTNodeOp<string mnemonic>
+    : ObeliskExpressionASTNodeOp<mnemonic, (ins I64Attr:$item_count)> {
+  let hasVerifier = 1;
+}
+
+class ObeliskValueRangeExpressionASTNodeOp<string mnemonic>
+    : ObeliskExpressionASTNodeOp<mnemonic,
+        (ins ObeliskSVValueRangeKind:$range_kind)> {
+  let hasVerifier = 1;
+}
 
 class ObeliskImmediateAssertionStatementASTNodeOp<string mnemonic>
     : ObeliskASTNodeOp<mnemonic, [ObeliskSemanticDeclarativeNode], (ins
@@ -578,13 +605,24 @@ class ObeliskCaseAssertionASTNodeOp<string mnemonic>
     BoolAttr:$has_default
   )>;
 
-class ObeliskPatternASTNodeOp<string mnemonic> : ObeliskASTNodeOp<mnemonic>;
+class ObeliskPatternASTNodeOp<string mnemonic, dag patternArgs = (ins)>
+    : ObeliskASTNodeOp<mnemonic, [], patternArgs>;
 
 class ObeliskReferencePatternASTNodeOp<string mnemonic>
     : ObeliskASTNodeOp<mnemonic, [], (ins
         SymbolRefAttr:$referenced_symbol,
-        StrAttr:$referenced_path
-      )>;
+        StrAttr:$referenced_path,
+        OptionalAttr<I64Attr>:$field_ordinal,
+        OptionalAttr<I64Attr>:$packed_offset
+      )> {
+  let hasVerifier = 1;
+}
+
+class ObeliskStructurePatternASTNodeOp<string mnemonic>
+    : ObeliskPatternASTNodeOp<mnemonic,
+        (ins DenseI64ArrayAttr:$field_ordinals)> {
+  let hasVerifier = 1;
+}
 
 class ObeliskBinsASTNodeOp<string mnemonic>
     : ObeliskASTNodeOp<mnemonic, [ObeliskSemanticDeclarativeNode]>;

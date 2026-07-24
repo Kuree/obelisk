@@ -381,6 +381,20 @@ def ObeliskSVCaseCondition : I32EnumAttr<"SVCaseCondition",
   let cppNamespace = "::obelisk::ir";
 }
 
+def ObeliskSVValueRange_Simple
+    : I32EnumAttrCase<"Simple", 0, "simple">;
+def ObeliskSVValueRange_AbsoluteTolerance
+    : I32EnumAttrCase<"AbsoluteTolerance", 1, "absolute_tolerance">;
+def ObeliskSVValueRange_RelativeTolerance
+    : I32EnumAttrCase<"RelativeTolerance", 2, "relative_tolerance">;
+def ObeliskSVValueRangeKind : I32EnumAttr<"SVValueRangeKind",
+    "kind of membership value range", [
+  ObeliskSVValueRange_Simple, ObeliskSVValueRange_AbsoluteTolerance,
+  ObeliskSVValueRange_RelativeTolerance
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
 def ObeliskSVAssertion_Assert
     : I32EnumAttrCase<"Assert", 0, "assert">;
 def ObeliskSVAssertion_Assume

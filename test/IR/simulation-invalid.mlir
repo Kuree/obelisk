@@ -926,6 +926,68 @@ module {
 // -----
 
 module {
+  obelisk_sim.design @wild_compare_result {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.wild_compare_result.bad.9000001"
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %value = obelisk_sim.logic.constant 0 : i8, 0 : i8 : !obelisk_sim.logic<8>
+      // expected-error @+1 {{four-state comparisons must produce !obelisk_sim.logic<1>}}
+      %bad = obelisk_sim.logic.compare wild_eq %value, %value : (!obelisk_sim.logic<8>, !obelisk_sim.logic<8>) -> i1
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @casez_compare_result {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.casez_compare_result.bad.9000001"
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %value = obelisk_sim.logic.constant 0 : i8, 0 : i8 : !obelisk_sim.logic<8>
+      // expected-error @+1 {{case comparisons must produce i1}}
+      %bad = obelisk_sim.logic.compare casez_eq %value, %value : (!obelisk_sim.logic<8>, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<1>
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @union_active_untagged {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.union_active_untagged.bad.9000001"
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %value = arith.constant 0 : i8
+      %union = obelisk_sim.union.construct %value as 0 : (i8) -> !obelisk_sim.unpacked_union<fields = [#obelisk_sim.field<name = "only", type = i8, ordinal = 0, packedOffset = 0>], isTagged = false>
+      // expected-error @+1 {{input union must be tagged}}
+      %bad = obelisk_sim.union.is_active %union[0] : !obelisk_sim.unpacked_union<fields = [#obelisk_sim.field<name = "only", type = i8, ordinal = 0, packedOffset = 0>], isTagged = false>
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @union_active_index {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.union_active_index.bad.9000001"
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %value = arith.constant 0 : i8
+      %union = obelisk_sim.union.construct %value as 0 : (i8) -> !obelisk_sim.packed_union<fields = [#obelisk_sim.field<name = "a", type = i8, ordinal = 0, packedOffset = 0>, #obelisk_sim.field<name = "b", type = i8, ordinal = 1, packedOffset = 0>], isTagged = true, tagBits = 1>
+      // expected-error @+1 {{tagged union member index is out of range}}
+      %bad = obelisk_sim.union.is_active %union[2] : !obelisk_sim.packed_union<fields = [#obelisk_sim.field<name = "a", type = i8, ordinal = 0, packedOffset = 0>, #obelisk_sim.field<name = "b", type = i8, ordinal = 1, packedOffset = 0>], isTagged = true, tagBits = 1>
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.design @negative_time {
     obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.negative_time.bad.9000001"
     obelisk_sim.scope.decl 0

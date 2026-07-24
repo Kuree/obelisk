@@ -229,9 +229,9 @@ enum {
   OBELISK_RT_DB_TASK_CALL = 40
 };
 
-// COMPARE flags. Case equality compares both four-state planes and always
-// returns a known result; the other predicates return X when either operand
-// has unknown bits.
+// COMPARE flags. Case comparisons return a known two-state result. Wildcard
+// equality masks unknown RHS bits but can return X for a relevant unknown LHS
+// bit; ordinary comparisons return X when an operand has unknown bits.
 typedef uint16_t obelisk_rt_design_compare_kind;
 enum {
   OBELISK_RT_DB_CMP_EQ = 0,
@@ -245,7 +245,11 @@ enum {
   OBELISK_RT_DB_CMP_SGT = 8,
   OBELISK_RT_DB_CMP_SGE = 9,
   OBELISK_RT_DB_CMP_CASE_EQ = 10,
-  OBELISK_RT_DB_CMP_CASE_NE = 11
+  OBELISK_RT_DB_CMP_CASE_NE = 11,
+  OBELISK_RT_DB_CMP_WILD_EQ = 12,
+  OBELISK_RT_DB_CMP_WILD_NE = 13,
+  OBELISK_RT_DB_CMP_CASEZ_EQ = 14,
+  OBELISK_RT_DB_CMP_CASEXZ_EQ = 15
 };
 
 typedef uint32_t obelisk_rt_intrinsic_id;

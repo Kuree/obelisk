@@ -181,4 +181,153 @@ SourceRangeType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
                            endFile, endLine, endColumn);
 }
 
+static uint64_t astBodySize(Operation *operation) {
+  if (operation->getNumRegions() != 1 || operation->getRegion(0).empty())
+    return 0;
+  return static_cast<uint64_t>(
+      std::distance(operation->getRegion(0).front().begin(),
+                    operation->getRegion(0).front().end()));
+}
+
+static LogicalResult verifyFlags(Operation *operation, ArrayRef<int64_t> flags,
+                                 uint64_t expected, StringRef name,
+                                 uint64_t &setCount) {
+  if (flags.size() != expected)
+    return operation->emitOpError()
+           << name << " must contain one entry per inventory item";
+  setCount = 0;
+  for (int64_t flag : flags) {
+    if (flag != 0 && flag != 1)
+      return operation->emitOpError()
+             << name << " entries must be zero or one";
+    setCount += flag;
+  }
+  return success();
+}
+
+static LogicalResult addInventory(Operation *operation, uint64_t amount,
+                                  uint64_t &total, StringRef name) {
+  if (amount > std::numeric_limits<uint64_t>::max() - total)
+    return operation->emitOpError() << name << " inventory overflows";
+  total += amount;
+  return success();
+}
+
+LogicalResult ConditionalStatementOp::verify() {
+  uint64_t patterns = 0;
+  if (failed(verifyFlags(*this, getConditionPatternFlags(),
+                         getConditionCount(), "condition_pattern_flags",
+                         patterns)))
+    return failure();
+  if (getConditionCount() == 0)
+    return emitOpError("must contain at least one condition");
+  uint64_t expected = getConditionCount();
+  if (failed(addInventory(*this, patterns, expected,
+                          "condition and statement")) ||
+      failed(addInventory(*this, 1, expected, "condition and statement")) ||
+      failed(addInventory(*this, getHasElse(), expected,
+                          "condition and statement")))
+    return failure();
+  if (astBodySize(*this) != expected)
+    return emitOpError("malformed condition and statement inventory");
+  return success();
+}
+
+LogicalResult CaseStatementOp::verify() {
+  if (getItemLabelCounts().size() != getItemCount())
+    return emitOpError(
+        "item_label_counts must contain one entry per case item");
+  uint64_t labels = 0;
+  for (int64_t count : getItemLabelCounts()) {
+    if (count <= 0)
+      return emitOpError("every case item must contain at least one label");
+    if (static_cast<uint64_t>(count) >
+        std::numeric_limits<uint64_t>::max() - labels)
+      return emitOpError("case item label inventory overflows");
+    labels += static_cast<uint64_t>(count);
+  }
+  uint64_t expected = 1;
+  if (failed(addInventory(*this, getItemCount(), expected, "case item")) ||
+      failed(addInventory(*this, getHasDefault(), expected, "case item")) ||
+      failed(addInventory(*this, labels, expected, "case item")))
+    return failure();
+  if (astBodySize(*this) != expected)
+    return emitOpError("malformed case item inventory");
+  return success();
+}
+
+LogicalResult PatternCaseStatementOp::verify() {
+  if (getConditionKind() == CaseCondition::Inside)
+    return emitOpError(
+        "pattern case cannot use the case-inside matching mode");
+  uint64_t filters = 0;
+  if (failed(verifyFlags(*this, getItemFilterFlags(), getItemCount(),
+                         "item_filter_flags", filters)))
+    return failure();
+  uint64_t expected = 1;
+  if (failed(addInventory(*this, getItemCount(), expected,
+                          "pattern case item")) ||
+      failed(addInventory(*this, getItemCount(), expected,
+                          "pattern case item")) ||
+      failed(addInventory(*this, filters, expected, "pattern case item")) ||
+      failed(addInventory(*this, getHasDefault(), expected,
+                          "pattern case item")))
+    return failure();
+  if (astBodySize(*this) != expected)
+    return emitOpError("malformed pattern case item inventory");
+  return success();
+}
+
+LogicalResult InsideExpressionOp::verify() {
+  if (getItemCount() == 0)
+    return emitOpError("inside set must contain at least one item");
+  uint64_t expected = 1;
+  if (failed(addInventory(*this, getItemCount(), expected, "inside item")))
+    return failure();
+  if (astBodySize(*this) != expected)
+    return emitOpError("malformed inside item inventory");
+  return success();
+}
+
+LogicalResult ValueRangeExpressionOp::verify() {
+  if (astBodySize(*this) != 2)
+    return emitOpError("value range must contain exactly two endpoints");
+  return success();
+}
+
+LogicalResult StructurePatternOp::verify() {
+  if (getFieldOrdinals().size() != astBodySize(*this))
+    return emitOpError("field_ordinals must contain one entry per pattern");
+  llvm::SmallDenseSet<int64_t> ordinals;
+  for (int64_t ordinal : getFieldOrdinals())
+    if (ordinal < 0 || !ordinals.insert(ordinal).second)
+      return emitOpError(
+          "structure pattern field ordinals must be nonnegative and unique");
+  return success();
+}
+
+LogicalResult VariablePatternOp::verify() {
+  if (getReferencedPath().empty())
+    return emitOpError("pattern variable must have a resolved binding path");
+  if (getFieldOrdinalAttr() || getPackedOffsetAttr())
+    return emitOpError("pattern variable cannot carry field metadata");
+  if (astBodySize(*this) != 0)
+    return emitOpError("pattern variable cannot contain nested patterns");
+  return success();
+}
+
+LogicalResult TaggedPatternOp::verify() {
+  if (getReferencedPath().empty())
+    return emitOpError("tagged pattern must have a resolved member path");
+  auto ordinal = getFieldOrdinalAttr();
+  auto offset = getPackedOffsetAttr();
+  if (!ordinal || ordinal.getValue().isNegative())
+    return emitOpError("tagged pattern must have a nonnegative field ordinal");
+  if (!offset || offset.getValue().isNegative())
+    return emitOpError("tagged pattern must have a nonnegative packed offset");
+  if (astBodySize(*this) > 1)
+    return emitOpError("tagged pattern can contain at most one nested pattern");
+  return success();
+}
+
 } // namespace obelisk::slangir

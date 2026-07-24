@@ -1088,6 +1088,63 @@ public:
       replaceInteger(op, equal, rewriter);
       return success();
     }
+    if (op.getKind() == sim::CompareKind::WildEq ||
+        op.getKind() == sim::CompareKind::WildNe ||
+        op.getKind() == sim::CompareKind::CaseZEq ||
+        op.getKind() == sim::CompareKind::CaseXZEq) {
+      Value wildcard;
+      if (op.getKind() == sim::CompareKind::WildEq ||
+          op.getKind() == sim::CompareKind::WildNe) {
+        wildcard = rhs.unknown;
+      } else if (op.getKind() == sim::CompareKind::CaseZEq) {
+        wildcard = arith::OrIOp::create(
+            rewriter, loc,
+            arith::AndIOp::create(rewriter, loc, lhs.unknown, lhs.value),
+            arith::AndIOp::create(rewriter, loc, rhs.unknown, rhs.value));
+      } else {
+        wildcard =
+            arith::OrIOp::create(rewriter, loc, lhs.unknown, rhs.unknown);
+      }
+      Value valueMismatch =
+          arith::XOrIOp::create(rewriter, loc, lhs.value, rhs.value);
+      Value mismatch;
+      Value relevantUnknown =
+          zero(rewriter, loc, integerType(lhs.unknown));
+      if (op.getKind() == sim::CompareKind::WildEq ||
+          op.getKind() == sim::CompareKind::WildNe) {
+        Value compared = bitNot(rewriter, loc, rhs.unknown);
+        mismatch = arith::AndIOp::create(
+            rewriter, loc,
+            arith::AndIOp::create(
+                rewriter, loc, valueMismatch,
+                bitNot(rewriter, loc, lhs.unknown)),
+            compared);
+        relevantUnknown =
+            arith::AndIOp::create(rewriter, loc, lhs.unknown, compared);
+      } else {
+        Value unknownMismatch =
+            arith::XOrIOp::create(rewriter, loc, lhs.unknown, rhs.unknown);
+        mismatch = arith::AndIOp::create(
+            rewriter, loc,
+            arith::OrIOp::create(rewriter, loc, valueMismatch,
+                                 unknownMismatch),
+            bitNot(rewriter, loc, wildcard));
+      }
+      Value equal = isZero(rewriter, loc, mismatch);
+      Value unknown = boolAnd(rewriter, loc, equal,
+                              isNonZero(rewriter, loc, relevantUnknown));
+      equal = boolAnd(rewriter, loc, equal,
+                      boolNot(rewriter, loc, unknown));
+      if (op.getKind() == sim::CompareKind::WildNe)
+        equal = select(rewriter, loc, unknown, equal,
+                       boolNot(rewriter, loc, equal));
+      if (op.getKind() == sim::CompareKind::CaseZEq ||
+          op.getKind() == sim::CompareKind::CaseXZEq)
+        replaceInteger(op, equal, rewriter);
+      else
+        replaceLogic(op, {equal, unknown}, rewriter);
+      return success();
+    }
 
     arith::CmpIPredicate predicate;
     switch (op.getKind()) {
@@ -1122,7 +1179,7 @@ public:
       predicate = arith::CmpIPredicate::sge;
       break;
     default:
-      llvm_unreachable("case comparisons handled above");
+      llvm_unreachable("deterministic comparisons handled above");
     }
     Value compared =
         arith::CmpIOp::create(rewriter, loc, predicate, lhs.value, rhs.value);

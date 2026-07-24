@@ -50,6 +50,162 @@ module {
 // -----
 
 module {
+  // expected-error @+1 {{condition_pattern_flags must contain one entry per inventory item}}
+  obelisk.sv.statement.conditional attributes {
+    check_kind = 0 : i32, condition_count = 1 : i64,
+    condition_pattern_flags = array<i64>, has_else = false, node_id = 0 : i64
+  } {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{every case item must contain at least one label}}
+  obelisk.sv.statement.case attributes {
+    check_kind = 0 : i32, condition_kind = 0 : i32, has_default = false,
+    item_count = 1 : i64, item_label_counts = array<i64: 0>,
+    node_id = 0 : i64
+  } {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{item_filter_flags entries must be zero or one}}
+  obelisk.sv.statement.pattern_case attributes {
+    check_kind = 0 : i32, condition_kind = 0 : i32, has_default = false,
+    item_count = 1 : i64, item_filter_flags = array<i64: 2>,
+    node_id = 0 : i64
+  } {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{pattern case cannot use the case-inside matching mode}}
+  obelisk.sv.statement.pattern_case attributes {
+    check_kind = 0 : i32, condition_kind = 3 : i32, has_default = false,
+    item_count = 0 : i64, item_filter_flags = array<i64>, node_id = 0 : i64
+  } {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{inside set must contain at least one item}}
+  obelisk.sv.expression.inside attributes {
+    item_count = 0 : i64, node_id = 0 : i64,
+    semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>
+  } {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{inside item inventory overflows}}
+  obelisk.sv.expression.inside attributes {
+    item_count = -1 : i64, node_id = 0 : i64,
+    semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>
+  } {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{value range must contain exactly two endpoints}}
+  obelisk.sv.expression.value_range attributes {
+    node_id = 0 : i64, range_kind = 0 : i32, semantic_type = !obelisk.void
+  } {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{structure pattern field ordinals must be nonnegative and unique}}
+  obelisk.sv.pattern.structure attributes {
+    field_ordinals = array<i64: 0, 0>, node_id = 0 : i64
+  } {
+    obelisk.sv.pattern.wildcard attributes {node_id = 1 : i64} {
+    }
+    obelisk.sv.pattern.wildcard attributes {node_id = 2 : i64} {
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk.sv.symbol.root attributes {node_id = 0 : i64, sym_name = "root"} {
+    // expected-error @+1 {{cannot resolve "referenced_symbol" @missing}}
+    obelisk.sv.pattern.variable attributes {
+      node_id = 1 : i64, referenced_path = "missing", referenced_symbol = @missing
+    } {
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk.sv.symbol.root attributes {node_id = 0 : i64, sym_name = "root"} {
+    obelisk.sv.symbol.variable attributes {
+      lifetime = 0 : i32, node_id = 1 : i64, rand_mode = 0 : i32,
+      semantic_type = !obelisk.integral<4, false, true, 3 : 0, logic>,
+      sym_name = "ordinary"
+    } {
+    }
+    // expected-error @+1 {{referenced pattern variable does not resolve to a pattern binding}}
+    obelisk.sv.pattern.variable attributes {
+      node_id = 2 : i64, referenced_path = "ordinary",
+      referenced_symbol = @ordinary
+    } {
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk.sv.symbol.root attributes {node_id = 0 : i64, sym_name = "root"} {
+    // expected-error @+1 {{cannot resolve "referenced_symbol" @missing}}
+    obelisk.sv.pattern.tagged attributes {
+      field_ordinal = 0 : i64, node_id = 1 : i64, packed_offset = 0 : i64,
+      referenced_path = "missing.member", referenced_symbol = @missing
+    } {
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk.sv.symbol.root attributes {node_id = 0 : i64, sym_name = "root"} {
+    obelisk.sv.symbol.field attributes {
+      bit_offset = 0 : i64, field_index = 1 : i64, lifetime = 0 : i32,
+      node_id = 1 : i64, rand_mode = 0 : i32,
+      semantic_type = !obelisk.integral<4, false, true, 3 : 0, logic>,
+      sym_name = "member"
+    } {
+    }
+    // expected-error @+1 {{tagged pattern field metadata does not match its referenced member}}
+    obelisk.sv.pattern.tagged attributes {
+      field_ordinal = 0 : i64, node_id = 2 : i64, packed_offset = 0 : i64,
+      referenced_path = "member", referenced_symbol = @member
+    } {
+    }
+  }
+}
+
+// -----
+
+module {
   obelisk.sv.symbol.variable attributes {
     node_id = 0 : i64, sym_name = "bad_error",
     // expected-error @+1 {{error recovery type cannot appear in valid Obelisk IR}}

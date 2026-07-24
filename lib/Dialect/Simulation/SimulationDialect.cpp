@@ -2092,6 +2092,33 @@ LogicalResult SimUnionExtractOp::verify() {
                               getResult().getType(), true);
 }
 
+LogicalResult SimUnionIsActiveOp::verify() {
+  Type type = getInput().getType();
+  bool tagged = false;
+  if (auto packed = dyn_cast<PackedUnionType>(type))
+    tagged = packed.getIsTagged();
+  else if (auto unpacked = dyn_cast<UnpackedUnionType>(type))
+    tagged = unpacked.getIsTagged();
+  else
+    return emitOpError("input must be a tagged union");
+  if (!tagged)
+    return emitOpError("input union must be tagged");
+  if (getIndexAttr().getValue().isNegative() ||
+      getIndex() >= getAggregateNumElements(type))
+    return emitOpError("tagged union member index is out of range");
+  return success();
+}
+
+OpFoldResult SimUnionIsActiveOp::fold(FoldAdaptor) {
+  if (auto packed = dyn_cast<PackedUnionType>(getInput().getType());
+      packed && packed.getTagBits() == 0)
+    return IntegerAttr::get(getResult().getType(), true);
+  if (auto construct = getInput().getDefiningOp<SimUnionConstructOp>())
+    return IntegerAttr::get(getResult().getType(),
+                            construct.getIndex() == getIndex());
+  return {};
+}
+
 static LogicalResult verifySubelementPath(Operation *operation, Type input,
                                           ArrayRef<int64_t> indices,
                                           Type result) {
@@ -2994,22 +3021,63 @@ OpFoldResult SimLogicShiftOp::fold(FoldAdaptor adaptor) {
 }
 
 OpFoldResult SimLogicCompareOp::fold(FoldAdaptor adaptor) {
-  bool caseComparison =
-      getKind() == CompareKind::CaseEq || getKind() == CompareKind::CaseNe;
-  if (caseComparison && getLhs() == getRhs()) {
-    bool equal = getKind() == CompareKind::CaseEq;
-    return IntegerAttr::get(getResult().getType(), equal);
+  bool integerResult =
+      getKind() == CompareKind::CaseEq || getKind() == CompareKind::CaseNe ||
+      getKind() == CompareKind::CaseZEq ||
+      getKind() == CompareKind::CaseXZEq;
+  bool deterministic = integerResult;
+  if (deterministic && getLhs() == getRhs()) {
+    bool equal =
+        getKind() != CompareKind::CaseNe && getKind() != CompareKind::WildNe;
+    if (integerResult)
+      return IntegerAttr::get(getResult().getType(), equal);
+    return getLogicAttribute(getContext(), getLogicBoolean(equal));
   }
 
   auto lhs = getLogicPlanes(adaptor.getLhs());
   auto rhs = getLogicPlanes(adaptor.getRhs());
   if (!lhs || !rhs)
     return {};
-  if (caseComparison) {
+  if (getKind() == CompareKind::CaseEq ||
+      getKind() == CompareKind::CaseNe) {
     bool equal = lhs->value == rhs->value && lhs->unknown == rhs->unknown;
     if (getKind() == CompareKind::CaseNe)
       equal = !equal;
     return IntegerAttr::get(getResult().getType(), equal);
+  }
+  if (getKind() == CompareKind::WildEq ||
+      getKind() == CompareKind::WildNe ||
+      getKind() == CompareKind::CaseZEq ||
+      getKind() == CompareKind::CaseXZEq) {
+    APInt wildcard = APInt::getZero(lhs->value.getBitWidth());
+    if (getKind() == CompareKind::WildEq ||
+        getKind() == CompareKind::WildNe)
+      wildcard = rhs->unknown;
+    else if (getKind() == CompareKind::CaseZEq)
+      wildcard = (lhs->unknown & lhs->value) |
+                 (rhs->unknown & rhs->value);
+    else
+      wildcard = lhs->unknown | rhs->unknown;
+    APInt mismatch;
+    APInt relevantUnknown = APInt::getZero(lhs->value.getBitWidth());
+    if (getKind() == CompareKind::WildEq ||
+        getKind() == CompareKind::WildNe) {
+      APInt compared = ~rhs->unknown;
+      mismatch =
+          (lhs->value ^ rhs->value) & ~lhs->unknown & compared;
+      relevantUnknown = lhs->unknown & compared;
+    } else {
+      mismatch =
+          ((lhs->value ^ rhs->value) | (lhs->unknown ^ rhs->unknown)) &
+          ~wildcard;
+    }
+    bool equal = mismatch.isZero() && relevantUnknown.isZero();
+    bool unknown = mismatch.isZero() && !relevantUnknown.isZero();
+    if (getKind() == CompareKind::WildNe && !unknown)
+      equal = !equal;
+    if (integerResult)
+      return IntegerAttr::get(getResult().getType(), equal);
+    return getLogicAttribute(getContext(), getLogicBoolean(equal, unknown));
   }
   if (!lhs->unknown.isZero() || !rhs->unknown.isZero())
     return getLogicAttribute(getContext(), getLogicBoolean(false, true));
@@ -3055,7 +3123,9 @@ OpFoldResult SimLogicCompareOp::fold(FoldAdaptor adaptor) {
 LogicalResult SimLogicCompareOp::verify() {
   Type result = getResult().getType();
   bool caseComparison =
-      getKind() == CompareKind::CaseEq || getKind() == CompareKind::CaseNe;
+      getKind() == CompareKind::CaseEq || getKind() == CompareKind::CaseNe ||
+      getKind() == CompareKind::CaseZEq ||
+      getKind() == CompareKind::CaseXZEq;
   if (caseComparison && !result.isSignlessInteger(1))
     return emitOpError("case comparisons must produce i1");
   if (!caseComparison && !isa<LogicType>(result))
@@ -3351,8 +3421,13 @@ struct NormalizeCompareConstant final : OpRewritePattern<SimLogicCompareOp> {
     case CompareKind::Ne:
     case CompareKind::CaseEq:
     case CompareKind::CaseNe:
+    case CompareKind::CaseZEq:
+    case CompareKind::CaseXZEq:
       kind = op.getKind();
       break;
+    case CompareKind::WildEq:
+    case CompareKind::WildNe:
+      return failure();
     case CompareKind::ULT:
       kind = CompareKind::UGT;
       break;

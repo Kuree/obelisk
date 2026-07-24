@@ -107,7 +107,7 @@ public:
         for (FlatSymbolRefAttr nested : reference.getNestedReferences())
           components.push_back(nested.getAttr());
 
-        bool resolved = false;
+        Operation *resolvedSymbol = nullptr;
         auto candidates = symbolsByLeaf.find(components.back());
         if (candidates != symbolsByLeaf.end()) {
           // Importer-assigned names include a globally unique traversal ID.
@@ -115,22 +115,74 @@ public:
           // their ownership nesting, so a unique leaf is authoritative. Keep
           // structural suffix matching for hand-written IR with duplicate
           // human-readable leaf names.
-          resolved = candidates->second.size() == 1;
-          if (!resolved) {
+          if (candidates->second.size() == 1) {
+            resolvedSymbol = candidates->second.front();
+          } else {
             for (Operation *candidate : candidates->second) {
               SmallVector<StringAttr, 8> path = getSymbolPath(candidate);
               if (path.size() >= components.size() &&
                   llvm::equal(ArrayRef(path).take_back(components.size()),
                               components)) {
-                resolved = true;
-                break;
+                if (resolvedSymbol) {
+                  resolvedSymbol = nullptr;
+                  break;
+                }
+                resolvedSymbol = candidate;
               }
             }
           }
         }
-        if (!resolved) {
+        if (!resolvedSymbol) {
           user->emitOpError()
               << "cannot resolve " << attributeName << ' ' << reference;
+          result = failure();
+          continue;
+        }
+
+        // Pattern references carry stronger invariants than a generic
+        // SymbolRefAttr. Check them here, where the semantic graph has already
+        // been indexed, instead of making every pattern verifier walk the
+        // enclosing module independently.
+        if (attributeName.getValue() != "referenced_symbol")
+          continue;
+        StringRef userName = user->getName().getStringRef();
+        StringRef symbolName = resolvedSymbol->getName().getStringRef();
+        if (userName == "slang.pattern.variable" ||
+            userName == "obelisk.sv.pattern.variable") {
+          StringRef expected =
+              userName.starts_with("slang.") ? "slang.symbol.pattern_var"
+                                              : "obelisk.sv.symbol.pattern_var";
+          if (symbolName != expected) {
+            user->emitOpError("referenced pattern variable does not resolve "
+                              "to a pattern binding");
+            result = failure();
+          }
+          continue;
+        }
+        if (userName != "slang.pattern.tagged" &&
+            userName != "obelisk.sv.pattern.tagged")
+          continue;
+
+        StringRef expected =
+            userName.starts_with("slang.") ? "slang.symbol.field"
+                                            : "obelisk.sv.symbol.field";
+        if (symbolName != expected) {
+          user->emitOpError("referenced tagged member does not resolve to an "
+                            "aggregate field");
+          result = failure();
+          continue;
+        }
+        auto ordinal = user->getAttrOfType<IntegerAttr>("field_ordinal");
+        auto offset = user->getAttrOfType<IntegerAttr>("packed_offset");
+        auto targetOrdinal =
+            resolvedSymbol->getAttrOfType<IntegerAttr>("field_index");
+        auto targetOffset =
+            resolvedSymbol->getAttrOfType<IntegerAttr>("bit_offset");
+        if (!ordinal || !offset || !targetOrdinal || !targetOffset ||
+            ordinal.getValue() != targetOrdinal.getValue() ||
+            offset.getValue() != targetOffset.getValue()) {
+          user->emitOpError("tagged pattern field metadata does not match its "
+                            "referenced member");
           result = failure();
         }
       }

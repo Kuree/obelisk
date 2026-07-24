@@ -1428,18 +1428,27 @@ bool validateImage(const Image &image) {
                         layoutAt(image, function, instruction.source0)))
           return false;
         break;
-      case OBELISK_RT_DB_COMPARE:
+      case OBELISK_RT_DB_COMPARE: {
+        bool deterministic =
+            instruction.flags == OBELISK_RT_DB_CMP_CASE_EQ ||
+            instruction.flags == OBELISK_RT_DB_CMP_CASE_NE ||
+            instruction.flags == OBELISK_RT_DB_CMP_CASEZ_EQ ||
+            instruction.flags == OBELISK_RT_DB_CMP_CASEXZ_EQ;
         if (instruction.source2 || instruction.auxiliary ||
             instruction.immediate || !reg(instruction.destination) ||
             !reg(instruction.source0) ||
             !reg(instruction.source1) ||
-            instruction.flags > OBELISK_RT_DB_CMP_CASE_NE ||
+            instruction.flags > OBELISK_RT_DB_CMP_CASEXZ_EQ ||
             !compatible(layoutAt(image, function, instruction.source0),
                         layoutAt(image, function, instruction.source1)) ||
             !numeric(instruction.destination) ||
-            layoutAt(image, function, instruction.destination).width != 1)
+            layoutAt(image, function, instruction.destination).width != 1 ||
+            (deterministic &&
+             layoutAt(image, function, instruction.destination).kind !=
+                 OBELISK_RT_DBREG_BITS))
           return false;
         break;
+      }
       case OBELISK_RT_DB_SELECT:
         if (instruction.flags || instruction.auxiliary ||
             instruction.immediate || !binary() ||
@@ -3589,11 +3598,18 @@ obelisk_rt_status executeFunction(const Image &image, Frame &frame,
       break;
     case OBELISK_RT_DB_COMPARE: {
       Logic left = read(instruction.source0), right = read(instruction.source1);
-      bool caseComparison = instruction.flags == OBELISK_RT_DB_CMP_CASE_EQ ||
-                            instruction.flags == OBELISK_RT_DB_CMP_CASE_NE;
+      bool deterministic =
+          instruction.flags == OBELISK_RT_DB_CMP_CASE_EQ ||
+          instruction.flags == OBELISK_RT_DB_CMP_CASE_NE ||
+          instruction.flags == OBELISK_RT_DB_CMP_CASEZ_EQ ||
+          instruction.flags == OBELISK_RT_DB_CMP_CASEXZ_EQ;
+      bool wildcardEquality =
+          instruction.flags == OBELISK_RT_DB_CMP_WILD_EQ ||
+          instruction.flags == OBELISK_RT_DB_CMP_WILD_NE;
       Logic result{1, layout(instruction.destination).kind == OBELISK_RT_DBREG_LOGIC,
                    {0}, {0}};
-      if (!caseComparison && (anyUnknown(left) || anyUnknown(right))) {
+      if (!deterministic && !wildcardEquality &&
+          (anyUnknown(left) || anyUnknown(right))) {
         result = allX(1, result.fourState);
       } else {
         int compared = compareUnsigned(left.value, right.value);
@@ -3621,6 +3637,54 @@ obelisk_rt_status executeFunction(const Image &image, Frame &frame,
         case OBELISK_RT_DB_CMP_CASE_NE: {
           value = left.value == right.value && left.unknown == right.unknown;
           if (instruction.flags == OBELISK_RT_DB_CMP_CASE_NE)
+            value = !value;
+          break;
+        }
+        case OBELISK_RT_DB_CMP_CASEZ_EQ:
+        case OBELISK_RT_DB_CMP_CASEXZ_EQ: {
+          bool equal = true;
+          for (uint32_t bitIndex = 0; bitIndex < left.width; ++bitIndex) {
+            bool leftUnknown = bit(left.unknown, bitIndex);
+            bool rightUnknown = bit(right.unknown, bitIndex);
+            bool leftValue = bit(left.value, bitIndex);
+            bool rightValue = bit(right.value, bitIndex);
+            bool wildcard = false;
+            if (instruction.flags == OBELISK_RT_DB_CMP_CASEZ_EQ)
+              wildcard = (leftUnknown && leftValue) ||
+                         (rightUnknown && rightValue);
+            else
+              wildcard = leftUnknown || rightUnknown;
+            if (!wildcard &&
+                (leftUnknown != rightUnknown || leftValue != rightValue)) {
+              equal = false;
+              break;
+            }
+          }
+          value = equal;
+          break;
+        }
+        case OBELISK_RT_DB_CMP_WILD_EQ:
+        case OBELISK_RT_DB_CMP_WILD_NE: {
+          bool knownMismatch = false;
+          bool relevantUnknown = false;
+          for (uint32_t bitIndex = 0; bitIndex < left.width; ++bitIndex) {
+            if (bit(right.unknown, bitIndex))
+              continue;
+            if (bit(left.unknown, bitIndex)) {
+              relevantUnknown = true;
+              continue;
+            }
+            if (bit(left.value, bitIndex) != bit(right.value, bitIndex)) {
+              knownMismatch = true;
+              break;
+            }
+          }
+          if (!knownMismatch && relevantUnknown) {
+            result = allX(1, result.fourState);
+            break;
+          }
+          value = !knownMismatch;
+          if (instruction.flags == OBELISK_RT_DB_CMP_WILD_NE)
             value = !value;
           break;
         }

@@ -218,7 +218,9 @@ transferOperation(Operation *op,
 
   if (auto compare = dyn_cast<sim::SimLogicCompareOp>(op)) {
     if (compare.getKind() == sim::CompareKind::CaseEq ||
-        compare.getKind() == sim::CompareKind::CaseNe)
+        compare.getKind() == sim::CompareKind::CaseNe ||
+        compare.getKind() == sim::CompareKind::CaseZEq ||
+        compare.getKind() == sim::CompareKind::CaseXZEq)
       return twoState(StateDomainReason::CaseComparison);
     return combineOperands(op, facts, StateDomainReason::LogicCompare);
   }

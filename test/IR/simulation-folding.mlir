@@ -7,6 +7,7 @@ module {
     obelisk_sim.code_unit.decl 9000003 in 0 function hierarchy "test.folding.resize_chains.9000003"
     obelisk_sim.code_unit.decl 9000004 in 0 function hierarchy "test.folding.operand_order.9000004"
     obelisk_sim.code_unit.decl 9000005 in 0 function hierarchy "test.folding.structural.9000005"
+    obelisk_sim.code_unit.decl 9000006 in 0 function hierarchy "test.folding.matching.9000006"
     obelisk_sim.scope.decl 0
     obelisk_sim.func @constants(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> (!obelisk_sim.logic<4>, i4, i1) attributes {entry_kind = 8 : i32, code_unit_id = 9000001 : i64} {
       %x = obelisk_sim.logic.constant 10 : i4, 4 : i4 : !obelisk_sim.logic<4>
@@ -56,6 +57,21 @@ module {
       %shadowed = obelisk_sim.logic.insert %r8 into %inner at 4 : (!obelisk_sim.logic<16>, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<16>
       obelisk_sim.return %repeated, %repeat_slice, %adjacent, %concat_low, %disjoint, %inside, %shadowed : !obelisk_sim.logic<8>, !obelisk_sim.logic<4>, !obelisk_sim.logic<8>, !obelisk_sim.logic<4>, !obelisk_sim.logic<4>, !obelisk_sim.logic<2>, !obelisk_sim.logic<16>
     }
+
+    obelisk_sim.func @matching_fold(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> (!obelisk_sim.logic<1>, !obelisk_sim.logic<1>, !obelisk_sim.logic<1>, i1, i1, i1, i1) attributes {entry_kind = 8 : i32, code_unit_id = 9000006 : i64} {
+      %zero = obelisk_sim.logic.constant 0 : i1, 0 : i1 : !obelisk_sim.logic<1>
+      %one = obelisk_sim.logic.constant 1 : i1, 0 : i1 : !obelisk_sim.logic<1>
+      %x = obelisk_sim.logic.constant 0 : i1, 1 : i1 : !obelisk_sim.logic<1>
+      %z = obelisk_sim.logic.constant 1 : i1, 1 : i1 : !obelisk_sim.logic<1>
+      %wild_mask = obelisk_sim.logic.compare wild_eq %x, %x : (!obelisk_sim.logic<1>, !obelisk_sim.logic<1>) -> !obelisk_sim.logic<1>
+      %wild_unknown = obelisk_sim.logic.compare wild_eq %x, %zero : (!obelisk_sim.logic<1>, !obelisk_sim.logic<1>) -> !obelisk_sim.logic<1>
+      %wild_ne = obelisk_sim.logic.compare wild_ne %one, %zero : (!obelisk_sim.logic<1>, !obelisk_sim.logic<1>) -> !obelisk_sim.logic<1>
+      %casez_z = obelisk_sim.logic.compare casez_eq %z, %zero : (!obelisk_sim.logic<1>, !obelisk_sim.logic<1>) -> i1
+      %casez_x = obelisk_sim.logic.compare casez_eq %x, %zero : (!obelisk_sim.logic<1>, !obelisk_sim.logic<1>) -> i1
+      %casez_exact_x = obelisk_sim.logic.compare casez_eq %x, %x : (!obelisk_sim.logic<1>, !obelisk_sim.logic<1>) -> i1
+      %casex = obelisk_sim.logic.compare casexz_eq %x, %zero : (!obelisk_sim.logic<1>, !obelisk_sim.logic<1>) -> i1
+      obelisk_sim.return %wild_mask, %wild_unknown, %wild_ne, %casez_z, %casez_x, %casez_exact_x, %casex : !obelisk_sim.logic<1>, !obelisk_sim.logic<1>, !obelisk_sim.logic<1>, i1, i1, i1, i1
+    }
   }
 }
 
@@ -91,3 +107,11 @@ module {
 // CHECK: %[[INSIDE:.*]] = obelisk_sim.logic.extract %arg5 from 2
 // CHECK: %[[SHADOWED:.*]] = obelisk_sim.logic.insert %arg5 into %arg3 at 4
 // CHECK: obelisk_sim.return %[[REPEATED]], %arg1, %[[ADJACENT]], %arg2, %[[DISJOINT]], %[[INSIDE]], %[[SHADOWED]]
+
+// CHECK-LABEL: obelisk_sim.func @matching_fold
+// CHECK: %[[MATCH_ONE:.*]] = obelisk_sim.logic.constant true, false : !obelisk_sim.logic<1>
+// CHECK: %[[MATCH_X:.*]] = obelisk_sim.logic.constant false, true : !obelisk_sim.logic<1>
+// CHECK: %[[MATCH_TRUE:.*]] = arith.constant true
+// CHECK: %[[MATCH_FALSE:.*]] = arith.constant false
+// CHECK-NOT: obelisk_sim.logic.compare
+// CHECK: obelisk_sim.return %[[MATCH_ONE]], %[[MATCH_X]], %[[MATCH_ONE]], %[[MATCH_TRUE]], %[[MATCH_FALSE]], %[[MATCH_TRUE]], %[[MATCH_TRUE]]

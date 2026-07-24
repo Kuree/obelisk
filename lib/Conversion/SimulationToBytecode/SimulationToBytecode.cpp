@@ -345,6 +345,18 @@ std::optional<uint32_t> simulationWidth(Type type) {
   return static_cast<uint32_t>(*span);
 }
 
+std::optional<uint64_t> unionPayloadSpan(Type type) {
+  if (auto packed = dyn_cast<sim::PackedUnionType>(type)) {
+    std::optional<unsigned> width = sim::getPackedWidth(type);
+    if (!width || packed.getTagBits() > *width)
+      return std::nullopt;
+    return static_cast<uint64_t>(*width - packed.getTagBits());
+  }
+  if (isa<sim::UnpackedUnionType>(type))
+    return sim::getProvenanceSpan(type);
+  return std::nullopt;
+}
+
 FailureOr<Layout> getLayout(Type type) {
   Layout layout;
   if (auto integer = dyn_cast<IntegerType>(type)) {
@@ -1579,6 +1591,8 @@ private:
             kInvalidRegister});
       return success();
     }
+    if (auto op = dyn_cast<sim::SimUnionIsActiveOp>(operation))
+      return encodeUnionIsActive(plan, op);
     if (auto op = dyn_cast<sim::SimRefAllocOp>(operation)) {
       std::optional<uint32_t> width =
           simulationWidth(op.getInitialValue().getType());
@@ -1955,7 +1969,15 @@ private:
 
   LogicalResult encodeLogicCompare(FunctionPlan &plan,
                                    sim::SimLogicCompareOp op) {
-    static constexpr uint16_t map[] = {0, 1, 10, 11, 2, 3, 4, 5, 6, 7, 8, 9};
+    static constexpr uint16_t map[] = {
+        OBELISK_RT_DB_CMP_EQ,       OBELISK_RT_DB_CMP_NE,
+        OBELISK_RT_DB_CMP_CASE_EQ,  OBELISK_RT_DB_CMP_CASE_NE,
+        OBELISK_RT_DB_CMP_ULT,      OBELISK_RT_DB_CMP_ULE,
+        OBELISK_RT_DB_CMP_UGT,      OBELISK_RT_DB_CMP_UGE,
+        OBELISK_RT_DB_CMP_SLT,      OBELISK_RT_DB_CMP_SLE,
+        OBELISK_RT_DB_CMP_SGT,      OBELISK_RT_DB_CMP_SGE,
+        OBELISK_RT_DB_CMP_WILD_EQ,  OBELISK_RT_DB_CMP_WILD_NE,
+        OBELISK_RT_DB_CMP_CASEZ_EQ, OBELISK_RT_DB_CMP_CASEXZ_EQ};
     unsigned kind = static_cast<unsigned>(op.getKind());
     if (kind >= std::size(map))
       return op.emitOpError("invalid comparison kind");
@@ -2135,7 +2157,7 @@ private:
   LogicalResult encodeUnionConstruct(FunctionPlan &plan,
                                      sim::SimUnionConstructOp op) {
     Type unionType = op.getResult().getType();
-    std::optional<uint64_t> payloadSpan = sim::getProvenanceSpan(unionType);
+    std::optional<uint64_t> payloadSpan = unionPayloadSpan(unionType);
     std::optional<uint32_t> width = simulationWidth(unionType);
     if (!payloadSpan || !width || *payloadSpan > *width)
       return op.emitOpError("union has no fixed packed representation");
@@ -2163,6 +2185,43 @@ private:
             addConstant(plan.layouts[tagRegister], encoded)});
       emit({Or, 0, destination, destination, tagRegister});
     }
+    return success();
+  }
+
+  LogicalResult encodeUnionIsActive(FunctionPlan &plan,
+                                    sim::SimUnionIsActiveOp op) {
+    Type unionType = op.getInput().getType();
+    std::optional<uint64_t> payloadSpan = unionPayloadSpan(unionType);
+    if (!payloadSpan)
+      return op.emitOpError("tagged union has no packed representation");
+    unsigned tagBits = 0;
+    uint64_t expected = 0;
+    if (auto packed = dyn_cast<sim::PackedUnionType>(unionType)) {
+      tagBits = packed.getTagBits();
+      expected = op.getIndex();
+    } else if (auto unpacked =
+                   dyn_cast<sim::UnpackedUnionType>(unionType)) {
+      tagBits = llvm::Log2_64_Ceil(
+          static_cast<uint64_t>(sim::getAggregateNumElements(unionType)) + 1);
+      expected = static_cast<uint64_t>(op.getIndex()) + 1;
+    }
+    if (tagBits == 0) {
+      uint32_t destination = reg(plan, op.getResult());
+      emit({Constant, 0, destination, 0, 0, 0, 0,
+            addConstant(plan.layouts[destination], APInt(1, 1))});
+      return success();
+    }
+    Type tagType = sim::LogicType::get(op.getContext(), tagBits);
+    uint32_t tag = temporaryLike(plan, tagType, op.getInput());
+    uint32_t expectedTag = temporaryLike(plan, tagType, op.getInput());
+    if (tag == kInvalidRegister || expectedTag == kInvalidRegister)
+      return failure();
+    emit({Extract, 0, tag, reg(plan, op.getInput()), kInvalidRegister, 0, 0,
+          *payloadSpan});
+    emit({Constant, 0, expectedTag, 0, 0, 0, 0,
+          addConstant(plan.layouts[expectedTag], APInt(tagBits, expected))});
+    emit({Compare, OBELISK_RT_DB_CMP_CASE_EQ, reg(plan, op.getResult()), tag,
+          expectedTag});
     return success();
   }
 

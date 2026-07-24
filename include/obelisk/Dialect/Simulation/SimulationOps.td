@@ -648,6 +648,19 @@ def SimUnionExtractOp : SimOp<"union.extract", [Pure]> {
   let hasCanonicalizer = 1;
 }
 
+def SimUnionIsActiveOp : SimOp<"union.is_active", [Pure]> {
+  let summary = "test the active member of a tagged union";
+  let description = [{
+    Returns false when the requested member is inactive or when the encoded
+    tag is unknown or invalid.
+  }];
+  let arguments = (ins AnyType:$input, I64Attr:$index);
+  let results = (outs I1:$result);
+  let assemblyFormat = "$input `[` $index `]` attr-dict `:` type($input)";
+  let hasVerifier = 1;
+  let hasFolder = 1;
+}
+
 def SimRefAllocOp : SimOp<"ref.alloc", [
     DeclareOpInterfaceMethods<PromotableAllocationOpInterface>,
     DeclareOpInterfaceMethods<DestructurableAllocationOpInterface>

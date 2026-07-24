@@ -29,16 +29,20 @@ endmodule
 // CHECK: ^[[ITEM0]]:
 // CHECK: obelisk_sim.ref.store %{{.*}} to %arg2
 
-// Second item: two labels combined with a disjunction, storing 8'h20.
+// Second item: two labels tested in source order with short-circuiting,
+// storing 8'h20 from either matching edge.
 // CHECK: ^[[NEXT0]]:
 // CHECK: %[[EQ1:.*]] = obelisk_sim.logic.compare case_eq %[[SEL]]
-// CHECK: %[[EQ2:.*]] = obelisk_sim.logic.compare case_eq %[[SEL]]
-// CHECK: %[[ANY:.*]] = arith.ori %[[EQ1]], %[[EQ2]]
-// CHECK: cf.cond_br %[[ANY]], ^[[ITEM1:.*]], ^[[NEXT1:.*]]
+// CHECK: cf.cond_br %[[EQ1]], ^[[ITEM1:.*]], ^[[LABEL1:.*]]
 // CHECK: ^[[ITEM1]]:
 // CHECK: obelisk_sim.ref.store
 
-// The default body is the unconditional fall-through, with no further compare.
-// CHECK: ^[[NEXT1]]:
+// The default body is laid out before the second-label continuation.
+// CHECK: ^[[NEXT1:bb[0-9]+]]:
 // CHECK-NOT: obelisk_sim.logic.compare
 // CHECK: obelisk_sim.ref.store
+
+// The second label branches back to the shared item body or to default.
+// CHECK: ^[[LABEL1]]:
+// CHECK: %[[EQ2:.*]] = obelisk_sim.logic.compare case_eq %[[SEL]]
+// CHECK: cf.cond_br %[[EQ2]], ^[[ITEM1]], ^[[NEXT1]]

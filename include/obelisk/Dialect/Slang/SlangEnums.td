@@ -198,6 +198,20 @@ def SlangCaseCondition : I32EnumAttr<"CaseCondition",
   let cppNamespace = "::obelisk::slangir";
 }
 
+def SlangValueRange_Simple
+    : I32EnumAttrCase<"Simple", 0, "simple">;
+def SlangValueRange_AbsoluteTolerance
+    : I32EnumAttrCase<"AbsoluteTolerance", 1, "absolute_tolerance">;
+def SlangValueRange_RelativeTolerance
+    : I32EnumAttrCase<"RelativeTolerance", 2, "relative_tolerance">;
+def SlangValueRangeKind : I32EnumAttr<"ValueRangeKind",
+    "kind of membership value range", [
+  SlangValueRange_Simple, SlangValueRange_AbsoluteTolerance,
+  SlangValueRange_RelativeTolerance
+]> {
+  let cppNamespace = "::obelisk::slangir";
+}
+
 def SlangAssertion_Assert        : I32EnumAttrCase<"Assert",        0, "assert">;
 def SlangAssertion_Assume        : I32EnumAttrCase<"Assume",        1, "assume">;
 def SlangAssertion_CoverProperty : I32EnumAttrCase<"CoverProperty", 2, "cover_property">;

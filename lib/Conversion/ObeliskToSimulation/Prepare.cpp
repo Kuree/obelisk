@@ -294,6 +294,8 @@ static Operation *getPortActualLValue(semantic::SVPortConnectionOp connection) {
 /// design descriptor inventory. A variable is automatic when it is declared
 /// inside a statement block and not explicitly static.
 static bool isAutomaticLocalSymbol(Operation *op) {
+  if (isa<semantic::SVPatternVarSymbolOp>(op))
+    return true;
   auto statementBlock =
       op->getParentOfType<semantic::SVStatementBlockSymbolOp>();
   auto variable = dyn_cast<semantic::SVVariableSymbolOp>(op);
@@ -1798,6 +1800,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     std::string path;
     Type type;
     bool automatic = false;
+    bool patternVariable = false;
   };
   llvm::DenseMap<Operation *, SmallVector<LocalInfo>> unitLocals;
   llvm::DenseMap<Operation *, SmallVector<LocalInfo>> observerLocalCaptures;
@@ -1837,6 +1840,7 @@ void ObeliskSimPreparePass::runOnOperation() {
       auto symbol = semanticSymbols.find(reference.getLeafReference());
       if (symbol == semanticSymbols.end() ||
           (!isa<semantic::SVVariableSymbolOp>(symbol->second) &&
+           !isa<semantic::SVPatternVarSymbolOp>(symbol->second) &&
            !(unit.entryKind == sim::EntryKind::Observer &&
              isa<semantic::SVFormalArgumentSymbolOp>(symbol->second))))
         return;
@@ -1851,7 +1855,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                 ? observerLocalCaptures[unit.source]
                 : unitLocals[unit.source];
         destination.push_back(
-            {path.str(), *type, isAutomaticLocalSymbol(symbol->second)});
+            {path.str(), *type, isAutomaticLocalSymbol(symbol->second),
+             isa<semantic::SVPatternVarSymbolOp>(symbol->second)});
         symbol->second->walk<WalkOrder::PreOrder>(
             [&](Operation *initializerNode) {
               collectBinding(initializerNode);
@@ -2071,6 +2076,9 @@ void ObeliskSimPreparePass::runOnOperation() {
         if (local.automatic)
           attrs.push_back(
               builder.getNamedAttr("automatic", builder.getUnitAttr()));
+        if (local.patternVariable)
+          attrs.push_back(builder.getNamedAttr("pattern_variable",
+                                                builder.getUnitAttr()));
         if (auto subroutine =
                 dyn_cast<semantic::SVSubroutineSymbolOp>(unit.source);
             subroutine &&
