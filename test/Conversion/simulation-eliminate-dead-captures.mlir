@@ -37,7 +37,7 @@ module {
     // CHECK-SAME: %arg2: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64, obelisk_sim.descriptor_low = 0 : i64, obelisk_sim.descriptor_root_type = !obelisk_sim.logic<8>})
     // CHECK-SAME: -> (i32 {test.result = "keep"})
     // CHECK-SAME: code_unit_id = 42 : i64
-    // CHECK-SAME: obelisk_sim.bindings = [{argument = 1 : i64, path = "live"}, {argument = 2 : i64, path = "live_storage"}, {local_type = i32, path = "local"}]
+    // CHECK-SAME: obelisk_sim.bindings = [#obelisk_sim.argument_binding<path = "live", argument = 1, kind = direct, copyOut = false>, #obelisk_sim.argument_binding<path = "live_storage", argument = 2, kind = direct, copyOut = false>, #obelisk_sim.local_binding<path = "local", type = i32, automatic = false, patternVariable = false, isReturn = false>]
     // CHECK-SAME: test.function = "keep"
     obelisk_sim.func private @target(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
@@ -51,14 +51,14 @@ module {
         -> (i32 {test.result = "keep"})
         attributes {entry_kind = 8 : i32, code_unit_id = 42 : i64,
                     obelisk_sim.bindings = [
-                      {argument = 1 : i64, path = "formal"},
-                      {argument = 2 : i64, path = "value"},
-                      {argument = 3 : i64, path = "storage"},
-                      {argument = 4 : i64, path = "net"},
-                      {argument = 5 : i64, path = "driver"},
-                      {argument = 6 : i64, path = "live"},
-                      {argument = 7 : i64, path = "live_storage"},
-                      {local_type = i32, path = "local"}],
+                      #obelisk_sim.argument_binding<path = "formal", argument = 1, kind = direct, copyOut = false>,
+                      #obelisk_sim.argument_binding<path = "value", argument = 2, kind = direct, copyOut = false>,
+                      #obelisk_sim.argument_binding<path = "storage", argument = 3, kind = direct, copyOut = false>,
+                      #obelisk_sim.argument_binding<path = "net", argument = 4, kind = direct, copyOut = false>,
+                      #obelisk_sim.argument_binding<path = "driver", argument = 5, kind = direct, copyOut = false>,
+                      #obelisk_sim.argument_binding<path = "live", argument = 6, kind = direct, copyOut = false>,
+                      #obelisk_sim.argument_binding<path = "live_storage", argument = 7, kind = direct, copyOut = false>,
+                      #obelisk_sim.local_binding<path = "local", type = i32, automatic = false, patternVariable = false, isReturn = false>],
                     test.function = "keep"} {
       %stored = obelisk_sim.logic.constant 1 : i8, 0 : i8
           : !obelisk_sim.logic<8>

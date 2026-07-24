@@ -257,6 +257,10 @@ Operation *ObeliskSimulationDialect::materializeConstant(OpBuilder &builder,
                                                          Attribute value,
                                                          Type type,
                                                          Location location) {
+  // FrozenConstantAttr is transient preparation metadata. Packed aggregates
+  // require a scalar constant followed by packed.unflatten, which is not a
+  // zero-operand constant-like operation and therefore cannot be returned from
+  // this dialect hook. Unit lowering materializes it explicitly instead.
   if (isa<BytesType>(type)) {
     auto bytes = dyn_cast<StringAttr>(value);
     return bytes ? SimBytesConstantOp::create(builder, location, type, bytes)
@@ -790,6 +794,134 @@ static bool isNormalizedValueType(Type type) {
   if (auto integer = dyn_cast<IntegerType>(type))
     return integer.isSignless();
   return type.isF64() || isa<LogicType>(type) || isAggregateType(type);
+}
+
+LogicalResult
+FrozenConstantAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                           Type type, Attribute value, bool) {
+  if (!type)
+    return emitError() << "frozen constant type must not be null";
+  if (!value)
+    return emitError() << "frozen constant payload must not be null";
+  if (type.isF64()) {
+    auto floating = dyn_cast<FloatAttr>(value);
+    if (!floating || !floating.getType().isF64())
+      return emitError()
+             << "f64 frozen constant requires an f64 floating payload";
+    return success();
+  }
+
+  Type scalar = getPackedScalarType(type);
+  if (!scalar)
+    return emitError()
+           << "frozen constant type must be f64 or a fixed packed value, got "
+           << type;
+  std::optional<unsigned> width = getPackedWidth(scalar);
+  auto planes = dyn_cast<ArrayAttr>(value);
+  if (!width || !planes || planes.size() != 2)
+    return emitError() << "packed frozen constant requires exactly two integer "
+                          "planes matching its scalar width";
+  auto valuePlane = dyn_cast<IntegerAttr>(planes[0]);
+  auto unknownPlane = dyn_cast<IntegerAttr>(planes[1]);
+  if (!valuePlane || !unknownPlane ||
+      valuePlane.getValue().getBitWidth() != *width ||
+      unknownPlane.getValue().getBitWidth() != *width ||
+      !valuePlane.getType().isSignlessInteger(*width) ||
+      !unknownPlane.getType().isSignlessInteger(*width))
+    return emitError() << "packed frozen constant planes must be signless i"
+                       << *width << " integer attributes";
+  if (isa<IntegerType>(scalar) && !unknownPlane.getValue().isZero())
+    return emitError()
+           << "two-state frozen constant must have a zero unknown plane";
+  return success();
+}
+
+LogicalResult
+ArgumentBindingAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                            StringAttr path, uint64_t, UnitArgumentKind kind,
+                            bool copyOut, IntegerAttr lvalueNode) {
+  if (!path || path.getValue().empty())
+    return emitError() << "argument binding path must not be empty";
+  if (copyOut && kind != UnitArgumentKind::FormalLocal)
+    return emitError()
+           << "copy-out is valid only for a formal-local argument binding";
+  if (lvalueNode && kind != UnitArgumentKind::LValueOnly)
+    return emitError()
+           << "lvalue node ID is valid only for an lvalue-only binding";
+  if (lvalueNode && (lvalueNode.getValue().isNegative() ||
+                     lvalueNode.getValue().getActiveBits() > 64))
+    return emitError() << "lvalue node ID must be an unsigned 64-bit value";
+  return success();
+}
+
+LogicalResult
+LocalBindingAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                         StringAttr path, Type type, bool automatic,
+                         bool patternVariable, bool) {
+  if (!path || path.getValue().empty())
+    return emitError() << "local binding path must not be empty";
+  if (!type || !isNormalizedValueType(type))
+    return emitError()
+           << "local binding type must be a normalized simulation value";
+  if (patternVariable && !automatic)
+    return emitError() << "pattern-variable binding must be automatic";
+  return success();
+}
+
+LogicalResult
+ConstantBindingAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                            StringAttr path, FrozenConstantAttr value) {
+  if (!path || path.getValue().empty())
+    return emitError() << "constant binding path must not be empty";
+  if (!value)
+    return emitError() << "constant binding value must not be null";
+  return success();
+}
+
+StringRef getUnitBindingPath(Attribute binding) {
+  if (auto argument = dyn_cast<ArgumentBindingAttr>(binding))
+    return argument.getPath().getValue();
+  if (auto local = dyn_cast<LocalBindingAttr>(binding))
+    return local.getPath().getValue();
+  if (auto constant = dyn_cast<ConstantBindingAttr>(binding))
+    return constant.getPath().getValue();
+  return {};
+}
+
+FailureOr<Value> materializeFrozenConstant(OpBuilder &builder,
+                                           Location location,
+                                           FrozenConstantAttr constant) {
+  if (!constant)
+    return failure();
+  Type type = constant.getType();
+  if (type.isF64()) {
+    auto value = dyn_cast<FloatAttr>(constant.getValue());
+    if (!value)
+      return failure();
+    return arith::ConstantOp::create(builder, location, type, value)
+        .getResult();
+  }
+
+  Type scalar = getPackedScalarType(type);
+  auto planes = dyn_cast<ArrayAttr>(constant.getValue());
+  if (!scalar || !planes || planes.size() != 2)
+    return failure();
+  auto valuePlane = dyn_cast<IntegerAttr>(planes[0]);
+  auto unknownPlane = dyn_cast<IntegerAttr>(planes[1]);
+  if (!valuePlane || !unknownPlane)
+    return failure();
+
+  Value value;
+  if (auto integer = dyn_cast<IntegerType>(scalar))
+    value = arith::ConstantOp::create(builder, location, integer, valuePlane);
+  else if (isa<LogicType>(scalar))
+    value = SimLogicConstantOp::create(builder, location, scalar, valuePlane,
+                                       unknownPlane);
+  else
+    return failure();
+  if (type != scalar)
+    value = SimPackedUnflattenOp::create(builder, location, type, value);
+  return value;
 }
 
 static LogicalResult verifyNormalizedIndex(Operation *op, Type type) {
@@ -1548,6 +1680,182 @@ void SimFuncOp::print(OpAsmPrinter &printer) {
       getArgAttrsAttrName(), getResAttrsAttrName());
 }
 
+LogicalResult verifyUnitBindings(SimFuncOp function) {
+  Attribute raw = function->getAttr(metadata::bindings);
+  if (!raw)
+    return success();
+  auto bindings = dyn_cast<ArrayAttr>(raw);
+  if (!bindings)
+    return function.emitOpError()
+           << "has malformed " << metadata::bindings << ": expected an array";
+
+  FunctionType type = function.getFunctionType();
+  enum class ProviderKind { Direct, FormalLocal, Local, Constant };
+  struct PathState {
+    std::optional<unsigned> provider;
+    std::optional<ProviderKind> providerKind;
+    bool formalCopiesOut = false;
+    std::optional<unsigned> taskStaticDirect;
+    std::optional<unsigned> lvalueOnly;
+    std::optional<unsigned> copyOutDestination;
+  };
+  llvm::StringMap<PathState> paths;
+  SmallVector<std::optional<unsigned>> argumentBindings(type.getNumInputs());
+  std::optional<unsigned> returnBinding;
+
+  auto claimProvider = [&](StringRef path, unsigned index,
+                           ProviderKind kind) -> LogicalResult {
+    PathState &state = paths[path];
+    if (state.provider) {
+      // A static task formal also has descriptor-backed storage. Preparation
+      // deliberately emits the activation-local formal first and the direct
+      // static-storage binding second; UnitLowering copies in between them.
+      if (function.getEntryKind() == EntryKind::Task &&
+          state.providerKind == ProviderKind::FormalLocal &&
+          kind == ProviderKind::Direct && !state.taskStaticDirect) {
+        state.taskStaticDirect = index;
+        return success();
+      }
+      return function.emitOpError()
+             << "has malformed " << metadata::bindings << " entries #"
+             << *state.provider << " and #" << index
+             << ": both provide the source value for path '" << path << "'";
+    }
+    state.provider = index;
+    state.providerKind = kind;
+    return success();
+  };
+
+  for (auto [index, binding] : llvm::enumerate(bindings)) {
+    if (auto local = dyn_cast<LocalBindingAttr>(binding)) {
+      if (failed(claimProvider(local.getPath().getValue(), index,
+                               ProviderKind::Local)))
+        return failure();
+      if (local.getIsReturn()) {
+        if (function.getEntryKind() != EntryKind::Function)
+          return function.emitOpError()
+                 << "has malformed " << metadata::bindings << " entry #"
+                 << index
+                 << ": only a function may have a return-local binding";
+        if (returnBinding)
+          return function.emitOpError()
+                 << "has malformed " << metadata::bindings << " entries #"
+                 << *returnBinding << " and #" << index
+                 << ": multiple local bindings are marked as the function "
+                    "return";
+        returnBinding = index;
+      }
+      continue;
+    }
+    if (auto constant = dyn_cast<ConstantBindingAttr>(binding)) {
+      if (failed(claimProvider(constant.getPath().getValue(), index,
+                               ProviderKind::Constant)))
+        return failure();
+      continue;
+    }
+    auto argument = dyn_cast<ArgumentBindingAttr>(binding);
+    if (!argument)
+      return function.emitOpError()
+             << "has malformed " << metadata::bindings << " entry #" << index
+             << ": expected an argument, local, or constant binding";
+    if (argument.getArgument() >= type.getNumInputs())
+      return function.emitOpError()
+             << "has malformed " << metadata::bindings << " entry #" << index
+             << ": argument index " << argument.getArgument()
+             << " is outside the function signature";
+    if (argument.getArgument() == 0)
+      return function.emitOpError()
+             << "has malformed " << metadata::bindings << " entry #" << index
+             << ": context argument cannot carry a source binding";
+
+    unsigned argumentIndex = argument.getArgument();
+    if (argumentBindings[argumentIndex])
+      return function.emitOpError()
+             << "has malformed " << metadata::bindings << " entries #"
+             << *argumentBindings[argumentIndex] << " and #" << index
+             << ": both bind function argument #" << argumentIndex;
+    argumentBindings[argumentIndex] = index;
+
+    Type argumentType = type.getInput(argument.getArgument());
+    StringRef path = argument.getPath().getValue();
+    PathState &state = paths[path];
+    switch (argument.getKind()) {
+    case UnitArgumentKind::Direct:
+      if (isa<ContextType>(argumentType))
+        return function.emitOpError()
+               << "has malformed " << metadata::bindings << " entry #" << index
+               << ": direct binding cannot target a context argument";
+      if (failed(claimProvider(path, index, ProviderKind::Direct)))
+        return failure();
+      break;
+    case UnitArgumentKind::LValueOnly:
+      if (!isa<RefType, NetType, DriverType>(argumentType))
+        return function.emitOpError()
+               << "has malformed " << metadata::bindings << " entry #" << index
+               << ": lvalue-only binding requires a storage, net, or driver "
+                  "argument";
+      state.lvalueOnly = index;
+      break;
+    case UnitArgumentKind::FormalLocal:
+      if (!isNormalizedValueType(argumentType))
+        return function.emitOpError()
+               << "has malformed " << metadata::bindings << " entry #" << index
+               << ": formal-local binding requires a normalized value "
+                  "argument";
+      if (failed(claimProvider(path, index, ProviderKind::FormalLocal)))
+        return failure();
+      state.formalCopiesOut = argument.getCopyOut();
+      break;
+    case UnitArgumentKind::CopyOutDestination:
+      if (!isa<RefType>(argumentType))
+        return function.emitOpError()
+               << "has malformed " << metadata::bindings << " entry #" << index
+               << ": copy-out destination requires a storage argument";
+      if (state.copyOutDestination)
+        return function.emitOpError()
+               << "has malformed " << metadata::bindings << " entries #"
+               << *state.copyOutDestination << " and #" << index
+               << ": multiple copy-out destinations bind path '" << path << "'";
+      state.copyOutDestination = index;
+      break;
+    }
+  }
+
+  for (const auto &entry : paths) {
+    StringRef path = entry.getKey();
+    const PathState &state = entry.getValue();
+    if (state.lvalueOnly && state.providerKind &&
+        *state.providerKind != ProviderKind::Direct)
+      return function.emitOpError()
+             << "has malformed " << metadata::bindings << " entry #"
+             << *state.lvalueOnly
+             << ": lvalue-only path '" << path
+             << "' conflicts with a non-direct value binding";
+    if (state.copyOutDestination &&
+        (!state.providerKind ||
+         *state.providerKind != ProviderKind::FormalLocal ||
+         !state.formalCopiesOut))
+      return function.emitOpError()
+             << "has malformed " << metadata::bindings << " entry #"
+             << *state.copyOutDestination << ": copy-out destination path '"
+             << path
+             << "' requires a copy-out formal-local binding";
+    if (state.copyOutDestination &&
+        function.getEntryKind() != EntryKind::Task)
+      return function.emitOpError()
+             << "has malformed " << metadata::bindings << " entry #"
+             << *state.copyOutDestination
+             << ": copy-out destination bindings are valid only on tasks";
+    if (function.getEntryKind() == EntryKind::Task && state.formalCopiesOut &&
+        !state.copyOutDestination)
+      return function.emitOpError()
+             << "has malformed " << metadata::bindings << " entry #"
+             << *state.provider << ": task copy-out formal path '" << path
+             << "' requires a destination binding";
+  }
+  return success();
+}
+
 LogicalResult SimFuncOp::verify() {
   FunctionType type = getFunctionType();
   if (getDomain() == ExecutionDomain::Program &&
@@ -1581,6 +1889,8 @@ LogicalResult SimFuncOp::verify() {
         integer && !integer.isSignless())
       return emitOpError("builtin integer results must be signless");
   }
+  if (failed(verifyUnitBindings(*this)))
+    return failure();
 
   bool zeroTimeResultEntry = getEntryKind() == EntryKind::Function ||
                              getEntryKind() == EntryKind::Observer;

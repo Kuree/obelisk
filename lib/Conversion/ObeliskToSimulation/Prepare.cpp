@@ -1843,12 +1843,18 @@ void ObeliskSimPreparePass::runOnOperation() {
     bool automatic = false;
     bool patternVariable = false;
   };
+  struct ConstantInfo {
+    std::string path;
+    sim::FrozenConstantAttr value;
+  };
   llvm::DenseMap<Operation *, SmallVector<LocalInfo>> unitLocals;
+  llvm::DenseMap<Operation *, SmallVector<ConstantInfo>> unitConstants;
   llvm::DenseMap<Operation *, SmallVector<LocalInfo>> observerLocalCaptures;
   llvm::DenseMap<Operation *, llvm::StringSet<>> observerReadLocals;
   for (UnitInfo &unit : units) {
     llvm::StringSet<> seenPaths;
     llvm::StringSet<> seenLocals;
+    llvm::StringSet<> seenConstants;
     std::function<void(Operation *)> collectBinding = [&](Operation *nested) {
       StringRef path;
       SymbolRefAttr reference;
@@ -1882,11 +1888,25 @@ void ObeliskSimPreparePass::runOnOperation() {
       if (!reference)
         return;
       auto symbol = semanticSymbols.find(reference.getLeafReference());
-      if (symbol == semanticSymbols.end() ||
-          (!isa<semantic::SVVariableSymbolOp>(symbol->second) &&
-           !isa<semantic::SVPatternVarSymbolOp>(symbol->second) &&
-           !(unit.entryKind == sim::EntryKind::Observer &&
-             isa<semantic::SVFormalArgumentSymbolOp>(symbol->second))))
+      if (symbol == semanticSymbols.end())
+        return;
+      if (isa<semantic::SVParameterSymbolOp, semantic::SVEnumValueSymbolOp,
+              semantic::SVSpecparamSymbolOp>(symbol->second)) {
+        if (!seenConstants.insert(path).second)
+          return;
+        FailureOr<sim::FrozenConstantAttr> value =
+            freezeSemanticConstant(symbol->second);
+        if (failed(value)) {
+          invalid = true;
+          return;
+        }
+        unitConstants[unit.source].push_back({path.str(), *value});
+        return;
+      }
+      if (!isa<semantic::SVVariableSymbolOp,
+               semantic::SVPatternVarSymbolOp>(symbol->second) &&
+          !(unit.entryKind == sim::EntryKind::Observer &&
+            isa<semantic::SVFormalArgumentSymbolOp>(symbol->second)))
         return;
       FailureOr<Type> type = getNormalizedSemanticType(symbol->second);
       if (failed(type)) {
@@ -1974,6 +1994,9 @@ void ObeliskSimPreparePass::runOnOperation() {
     llvm::sort(unitLocals[unit.source], [](const auto &lhs, const auto &rhs) {
       return lhs.path < rhs.path;
     });
+    llvm::sort(
+        unitConstants[unit.source],
+        [](const auto &lhs, const auto &rhs) { return lhs.path < rhs.path; });
     llvm::sort(observerLocalCaptures[unit.source],
                [](const auto &lhs, const auto &rhs) {
                  return lhs.path < rhs.path;
@@ -2020,6 +2043,7 @@ void ObeliskSimPreparePass::runOnOperation() {
   for (UnitInfo &unit : units) {
     auto captures = unitCaptures.lookup(unit.source);
     auto locals = unitLocals.lookup(unit.source);
+    auto constants = unitConstants.lookup(unit.source);
     auto observerLocals = observerLocalCaptures.lookup(unit.source);
     SmallVector<Type> copyOutResultTypes;
 
@@ -2085,11 +2109,6 @@ void ObeliskSimPreparePass::runOnOperation() {
               builder.getI64IntegerAttr(capture.second.packedViewOffset)));
       }
       argAttrs.push_back(builder.getDictionaryAttr(metadataAttrs));
-      SmallVector<NamedAttribute> binding{
-          builder.getNamedAttr("path", builder.getStringAttr(capture.first)),
-          builder.getNamedAttr("argument",
-                               builder.getI64IntegerAttr(captureIndex + 1)),
-      };
       const DriverInfo *plannedDriver = nullptr;
       if (capture.second.kind == DescriptorInfo::Kind::Driver)
         if (auto found = continuousDrivers.find(unit.source);
@@ -2100,48 +2119,37 @@ void ObeliskSimPreparePass::runOnOperation() {
                   });
               planned != found->second.end())
             plannedDriver = &*planned;
-      if (plannedDriver) {
-        binding.push_back(
-            builder.getNamedAttr("lvalue_only", builder.getUnitAttr()));
-        if (plannedDriver->nodeId)
-          binding.push_back(builder.getNamedAttr(
-              "lvalue_node_id",
-              builder.getI64IntegerAttr(*plannedDriver->nodeId)));
-      }
-      bindings.push_back(builder.getDictionaryAttr(binding));
+      IntegerAttr lvalueNode =
+          plannedDriver && plannedDriver->nodeId
+              ? builder.getI64IntegerAttr(*plannedDriver->nodeId)
+              : IntegerAttr{};
+      bindings.push_back(sim::ArgumentBindingAttr::get(
+          context, builder.getStringAttr(capture.first), captureIndex + 1,
+          plannedDriver ? sim::UnitArgumentKind::LValueOnly
+                        : sim::UnitArgumentKind::Direct,
+          /*copyOut=*/false, lvalueNode));
     }
-    for (const LocalInfo &local : locals)
-      bindings.push_back(builder.getDictionaryAttr([&] {
-        SmallVector<NamedAttribute> attrs{
-            builder.getNamedAttr("path",
-                                 builder.getStringAttr(local.path)),
-            builder.getNamedAttr("local_type", TypeAttr::get(local.type)),
-        };
-        if (local.automatic)
-          attrs.push_back(
-              builder.getNamedAttr("automatic", builder.getUnitAttr()));
-        if (local.patternVariable)
-          attrs.push_back(builder.getNamedAttr("pattern_variable",
-                                                builder.getUnitAttr()));
-        if (auto subroutine =
-                dyn_cast<semantic::SVSubroutineSymbolOp>(unit.source);
-            subroutine &&
-            subroutine.getReturnVariablePath() == local.path)
-          attrs.push_back(
-              builder.getNamedAttr("is_return", builder.getUnitAttr()));
-        return attrs;
-      }()));
+    for (const LocalInfo &local : locals) {
+      auto subroutine =
+          dyn_cast<semantic::SVSubroutineSymbolOp>(unit.source);
+      bool isReturn =
+          subroutine && subroutine.getReturnVariablePath() == local.path;
+      bindings.push_back(sim::LocalBindingAttr::get(
+          context, builder.getStringAttr(local.path), local.type,
+          local.automatic, local.patternVariable, isReturn));
+    }
+    for (const ConstantInfo &constant : constants)
+      bindings.push_back(sim::ConstantBindingAttr::get(
+          context, builder.getStringAttr(constant.path), constant.value));
 
     for (const LocalInfo &local : observerLocals) {
       unsigned argument = inputs.size();
       inputs.push_back(sim::RefType::get(context, local.type));
       argAttrs.push_back(
           captureMetadata(builder, sim::CaptureKind::Value));
-      bindings.push_back(builder.getDictionaryAttr({
-          builder.getNamedAttr("path", builder.getStringAttr(local.path)),
-          builder.getNamedAttr("argument",
-                               builder.getI64IntegerAttr(argument)),
-      }));
+      bindings.push_back(sim::ArgumentBindingAttr::get(
+          context, builder.getStringAttr(local.path), argument,
+          sim::UnitArgumentKind::Direct, /*copyOut=*/false, IntegerAttr{}));
     }
 
     // Subroutine formals precede non-local captures in the public contract.
@@ -2199,65 +2207,43 @@ void ObeliskSimPreparePass::runOnOperation() {
           reordered.push_back(argumentType);
           reorderedAttrs.push_back(
               captureMetadata(builder, sim::CaptureKind::Formal));
-          SmallVector<NamedAttribute> formalBinding{
-              builder.getNamedAttr(
-                  "path", builder.getStringAttr(getHierarchyName(formal))),
-              builder.getNamedAttr("argument",
-                                   builder.getI64IntegerAttr(argument)),
-              builder.getNamedAttr(
-                  "formal_direction",
-                  builder.getI64IntegerAttr(static_cast<int64_t>(direction))),
-          };
           // Value formals are callee-local variables. Inputs copy in, outputs
           // and inouts copy out, and mem2reg removes the allocation whenever
           // the local does not escape. Only `ref` preserves caller aliasing.
-          if (!isRef)
-            formalBinding.push_back(
-                builder.getNamedAttr("formal_local", builder.getUnitAttr()));
-          if (direction == semantic::SVArgumentDirection::Out ||
-              direction == semantic::SVArgumentDirection::InOut) {
-            formalBinding.push_back(
-                builder.getNamedAttr("copy_out", builder.getUnitAttr()));
-            if (!directTask)
-              copyOutResultTypes.push_back(*type);
-          }
-          formalBindings.push_back(builder.getDictionaryAttr(formalBinding));
-          if (directTask &&
-              (direction == semantic::SVArgumentDirection::Out ||
-               direction == semantic::SVArgumentDirection::InOut)) {
+          bool copyOut = direction == semantic::SVArgumentDirection::Out ||
+                         direction == semantic::SVArgumentDirection::InOut;
+          if (copyOut && !directTask)
+            copyOutResultTypes.push_back(*type);
+          formalBindings.push_back(sim::ArgumentBindingAttr::get(
+              context, builder.getStringAttr(getHierarchyName(formal)),
+              argument,
+              isRef ? sim::UnitArgumentKind::Direct
+                    : sim::UnitArgumentKind::FormalLocal,
+              copyOut, IntegerAttr{}));
+          if (directTask && copyOut) {
             unsigned destinationArgument = reordered.size();
             reordered.push_back(sim::RefType::get(context, *type));
             reorderedAttrs.push_back(
                 captureMetadata(builder, sim::CaptureKind::Formal));
-            formalBindings.push_back(builder.getDictionaryAttr({
-                builder.getNamedAttr(
-                    "path",
-                    builder.getStringAttr(getHierarchyName(formal))),
-                builder.getNamedAttr(
-                    "argument",
-                    builder.getI64IntegerAttr(destinationArgument)),
-                builder.getNamedAttr("copy_out_destination",
-                                     builder.getUnitAttr()),
-            }));
+            formalBindings.push_back(sim::ArgumentBindingAttr::get(
+                context, builder.getStringAttr(getHierarchyName(formal)),
+                destinationArgument, sim::UnitArgumentKind::CopyOutDestination,
+                /*copyOut=*/false, IntegerAttr{}));
           }
         }
         unsigned offset = reordered.size() - 1;
         reordered.append(inputs.begin() + 1, inputs.end());
         reorderedAttrs.append(argAttrs.begin() + 1, argAttrs.end());
         for (Attribute binding : bindings) {
-          auto dictionary = cast<DictionaryAttr>(binding);
-          auto argument = dictionary.getAs<IntegerAttr>("argument");
+          auto argument = dyn_cast<sim::ArgumentBindingAttr>(binding);
           if (!argument) {
             formalBindings.push_back(binding);
             continue;
           }
-          SmallVector<NamedAttribute> attrs(dictionary.begin(),
-                                            dictionary.end());
-          uint64_t old = argument.getValue().getZExtValue();
-          for (NamedAttribute &attr : attrs)
-            if (attr.getName() == "argument")
-              attr.setValue(builder.getI64IntegerAttr(old + offset));
-          formalBindings.push_back(builder.getDictionaryAttr(attrs));
+          formalBindings.push_back(sim::ArgumentBindingAttr::get(
+              context, argument.getPath(), argument.getArgument() + offset,
+              argument.getKind(), argument.getCopyOut(),
+              argument.getLvalueNode()));
         }
         inputs = std::move(reordered);
         argAttrs = std::move(reorderedAttrs);

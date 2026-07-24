@@ -19,6 +19,7 @@
 #include "mlir/IR/Matchers.h"
 
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetVector.h"
@@ -26,6 +27,7 @@
 #include "llvm/ADT/StringSet.h"
 
 #include <cmath>
+#include <functional>
 #include <limits>
 
 using namespace mlir;
@@ -50,6 +52,66 @@ static std::optional<StringRef> getConstantSpelling(Operation *op) {
 
 static bool isIntegerLiteral(Operation *op) {
   return isa<semantic::SVIntegerLiteralOp>(op);
+}
+
+/// Fold one already-lowered SSA value to an attribute without rewriting the
+/// surrounding CFG. Unlike m_Constant, this follows pure chains such as
+/// logic.is_true(logic.constant) and arithmetic on frozen parameters.
+static Attribute foldConstantValue(Value value) {
+  llvm::DenseMap<Value, Attribute> constants;
+  llvm::DenseSet<Value> active;
+  std::function<Attribute(Value)> foldValue = [&](Value current) -> Attribute {
+    if (auto found = constants.find(current); found != constants.end())
+      return found->second;
+    if (!active.insert(current).second)
+      return {};
+
+    auto finish = [&](Attribute result) {
+      active.erase(current);
+      if (result)
+        constants.try_emplace(current, result);
+      return result;
+    };
+
+    Attribute direct;
+    if (matchPattern(current, m_Constant(&direct)))
+      return finish(direct);
+
+    auto result = dyn_cast<OpResult>(current);
+    if (!result)
+      return finish({});
+    Operation *producer = result.getOwner();
+    SmallVector<Attribute> operands;
+    operands.reserve(producer->getNumOperands());
+    for (Value operand : producer->getOperands()) {
+      Attribute constant = foldValue(operand);
+      if (!constant)
+        return finish({});
+      operands.push_back(constant);
+    }
+
+    SmallVector<OpFoldResult> folded;
+    if (failed(producer->fold(operands, folded)) ||
+        folded.size() != producer->getNumResults())
+      return finish({});
+    OpFoldResult replacement = folded[result.getResultNumber()];
+    if (!replacement)
+      return finish({});
+    if (auto attribute = dyn_cast<Attribute>(replacement))
+      return finish(attribute);
+    Value replacementValue = cast<Value>(replacement);
+    if (replacementValue == current)
+      return finish({});
+    return finish(foldValue(replacementValue));
+  };
+  return foldValue(value);
+}
+
+static std::optional<bool> foldConstantTruth(Value value) {
+  auto integer = dyn_cast_or_null<IntegerAttr>(foldConstantValue(value));
+  if (!integer)
+    return std::nullopt;
+  return !integer.getValue().isZero();
 }
 
 static bool isUnboundedEndpoint(Operation *op) {
@@ -221,6 +283,7 @@ private:
   SmallVector<ControlScope> controlScopes;
   llvm::StringMap<uint64_t> inheritedControlIDs;
   uint64_t nextForkOrdinal = 0;
+  bool invalidBindings = false;
 };
 
 UnitLowering::UnitLowering(sim::SimFuncOp function)
@@ -241,28 +304,27 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
   if (!bindings)
     return;
   for (Attribute attr : bindings) {
-    auto dictionary = cast<DictionaryAttr>(attr);
-    StringRef path = dictionary.getAs<StringAttr>("path").getValue();
-    if (auto argument = dictionary.getAs<IntegerAttr>("argument")) {
+    if (auto argument = dyn_cast<sim::ArgumentBindingAttr>(attr)) {
+      StringRef path = argument.getPath().getValue();
       Value value = function.getBody().front().getArgument(
-          argument.getValue().getZExtValue());
-      if (dictionary.contains("copy_out_destination")) {
+          argument.getArgument());
+      if (argument.getKind() == sim::UnitArgumentKind::CopyOutDestination) {
         copyOutDestinations[path] = value;
         continue;
       }
-      if (dictionary.contains("formal_local")) {
+      if (argument.getKind() == sim::UnitArgumentKind::FormalLocal) {
         Value local = sim::SimRefAllocOp::create(
             builder, function.getLoc(),
             sim::RefType::get(function.getContext(), value.getType()), value);
         values[path] = local;
         lvalues[path] = local;
-        if (dictionary.contains("copy_out"))
+        if (argument.getCopyOut())
           copyOutPaths.push_back(path.str());
         continue;
       }
-      if (dictionary.contains("lvalue_only")) {
+      if (argument.getKind() == sim::UnitArgumentKind::LValueOnly) {
         lvalues[path] = value;
-        if (auto node = dictionary.getAs<IntegerAttr>("lvalue_node_id"))
+        if (IntegerAttr node = argument.getLvalueNode())
           nodeLvalues[node.getValue().getZExtValue()] = value;
         continue;
       }
@@ -282,24 +344,43 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
         lvalues.try_emplace(path, value);
       continue;
     }
-    auto typeAttr = dictionary.getAs<TypeAttr>("local_type");
-    if (!typeAttr)
+    if (auto constant = dyn_cast<sim::ConstantBindingAttr>(attr)) {
+      FailureOr<Value> value = sim::materializeFrozenConstant(
+          builder, function.getLoc(), constant.getValue());
+      if (failed(value)) {
+        function.emitError() << "cannot materialize frozen constant binding '"
+                             << constant.getPath().getValue() << "'";
+        invalidBindings = true;
+        continue;
+      }
+      values[constant.getPath().getValue()] = *value;
       continue;
-    Type type = typeAttr.getValue();
+    }
+    auto localBinding = dyn_cast<sim::LocalBindingAttr>(attr);
+    if (!localBinding) {
+      invalidBindings = true;
+      continue;
+    }
+    StringRef path = localBinding.getPath().getValue();
+    Type type = localBinding.getType();
     Value initial = createDefaultValue(builder, function.getLoc(), type);
-    if (!initial)
+    if (!initial) {
+      function.emitError() << "cannot initialize local binding '" << path
+                           << "' of type " << type;
+      invalidBindings = true;
       continue;
+    }
     localDefaults[path] = initial;
-    bool isReturn = dictionary.contains("is_return");
+    bool isReturn = localBinding.getIsReturn();
     if (isReturn)
       returnPath = path.str();
-    if (dictionary.contains("automatic")) {
+    if (localBinding.getAutomatic()) {
       automaticLocals.insert(path);
       // Pattern variables have statement-execution lifetime rather than
       // function-activation lifetime. Their references are allocated by
       // lowerPattern at the point where the capture occurs so overlapping
       // loop iterations and detached forks retain independent snapshots.
-      if (dictionary.contains("pattern_variable"))
+      if (localBinding.getPatternVariable())
         continue;
       // Compiler-generated function return variables have no declaration
       // statement at which to allocate their activation-local storage.
@@ -775,6 +856,10 @@ FailureOr<Value> UnitLowering::lowerLiteral(Operation *op) {
   if (failed(type))
     return failure();
   Type scalarType = sim::getPackedScalarType(*type);
+  if (!scalarType) {
+    unsupported(op) << " (integer literal has an unpacked result type)";
+    return failure();
+  }
   std::optional<unsigned> width = sim::getPackedWidth(scalarType);
   std::optional<StringRef> spelling = getConstantSpelling(op);
   if (!width || !spelling) {
@@ -1192,6 +1277,10 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
   }
 
   Type scalarResultType = sim::getPackedScalarType(*resultType);
+  if (!scalarResultType) {
+    unsupported(op) << " (selection result type)";
+    return failure();
+  }
   std::optional<unsigned> resultWidth = sim::getPackedWidth(scalarResultType);
   if (!resultWidth) {
     unsupported(op) << " (selection result type)";
@@ -1223,6 +1312,10 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
   // boundary. Logic resizing retains the unknown plane.
   auto getIndexArithmeticType = [&](Type type) -> FailureOr<Type> {
     Type scalarType = sim::getPackedScalarType(type);
+    if (!scalarType) {
+      emitError(location) << "selection index is not a packed value: " << type;
+      return failure();
+    }
     std::optional<unsigned> width = sim::getPackedWidth(scalarType);
     if (!width || *width > std::numeric_limits<unsigned>::max() - 2) {
       emitError(location) << "selection index is too wide to normalize";
@@ -3720,25 +3813,7 @@ LogicalResult UnitLowering::lowerWait(semantic::SVWaitStatementOp op) {
   if (failed(condition))
     return failure();
   if (dependencies.empty()) {
-    Attribute constant;
-    std::optional<bool> truth;
-    if (matchPattern(*condition, m_Constant(&constant)))
-      if (auto integer = dyn_cast<IntegerAttr>(constant))
-        truth = !integer.getValue().isZero();
-    if (!truth) {
-      if (auto spelling = getConstantSpelling(children[0])) {
-        FailureOr<Type> type = getNormalizedSemanticType(children[0]);
-        std::optional<unsigned> width =
-            succeeded(type) ? sim::getPackedWidth(*type) : std::nullopt;
-        if (failed(type) || !width)
-          return failure();
-        FailureOr<ParsedConstant> parsed =
-            parseSVInteger(*spelling, *width, location);
-        if (failed(parsed))
-          return failure();
-        truth = parsed->unknown.isZero() && !parsed->value.isZero();
-      }
-    }
+    std::optional<bool> truth = foldConstantTruth(*condition);
     if (!truth) {
       unsupported(op) << " (computed wait condition has no readable dependency)";
       return failure();
@@ -5329,11 +5404,9 @@ UnitLowering::outlineForkBranch(Operation *branch, uint64_t forkNode,
     captures.push_back(capture);
     argumentAttrs.push_back(
         captureMetadata(builder, sim::CaptureKind::Formal));
-    bindings.push_back(builder.getDictionaryAttr({
-        builder.getNamedAttr("path", builder.getStringAttr(path)),
-        builder.getNamedAttr("argument",
-                             builder.getI64IntegerAttr(argument)),
-    }));
+    bindings.push_back(sim::ArgumentBindingAttr::get(
+        context, builder.getStringAttr(path), argument,
+        sim::UnitArgumentKind::Direct, /*copyOut=*/false, IntegerAttr{}));
   };
   ArrayAttr parentBindings =
       function->getAttrOfType<ArrayAttr>(bindingsAttrName);
@@ -5354,16 +5427,21 @@ UnitLowering::outlineForkBranch(Operation *branch, uint64_t forkNode,
   });
   if (parentBindings)
     for (Attribute attribute : parentBindings) {
-      auto binding = dyn_cast<DictionaryAttr>(attribute);
-      auto pathAttr = binding ? binding.getAs<StringAttr>("path")
-                              : StringAttr{};
-      if (!pathAttr)
+      StringRef path = sim::getUnitBindingPath(attribute);
+      if (path.empty())
         continue;
       // Only pass bindings actually referenced by the branch or a direct
       // callee. This also excludes pattern variables from unrelated matches.
-      if (!referencedPaths.contains(pathAttr.getValue()))
+      if (!referencedPaths.contains(path))
         continue;
-      addCapture(pathAttr.getValue());
+      // Elaborated constants are immutable compile-time facts, not runtime
+      // ABI captures. Preserve their typed binding on the outlined child.
+      if (isa<sim::ConstantBindingAttr>(attribute)) {
+        if (capturedPaths.insert(path).second)
+          bindings.push_back(attribute);
+        continue;
+      }
+      addCapture(path);
     }
 
   // Foreach iterators and other lexical SSA bindings have no frozen function
@@ -5722,6 +5800,8 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
 }
 
 LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
+  if (invalidBindings)
+    return failure();
   setCurrent(&function.getBody().front());
   sim::EntryKind entryKind = function.getEntryKind();
   if (entryKind == sim::EntryKind::Observer) {
@@ -5827,9 +5907,13 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     return success();
   }
   if (sensitivity.empty()) {
-    if (entryKind == sim::EntryKind::Continuous) {
-      // A constant continuous assignment is a design-lifetime driver with a
-      // one-shot initialization unit; it has no source transition to await.
+    if (entryKind == sim::EntryKind::Continuous ||
+        entryKind == sim::EntryKind::AlwaysComb ||
+        entryKind == sim::EntryKind::AlwaysLatch) {
+      // These units execute once when spawned. If every read is an elaborated
+      // constant, there is no source transition that can trigger another
+      // evaluation. always_comb and always_latch still retain their required
+      // time-zero execution.
       sim::SimReturnOp::create(builder, function.getLoc(), ValueRange{});
       return success();
     }
@@ -5864,6 +5948,10 @@ public:
     // call sites lower to obelisk_sim.dpi.call in the caller instead.
     if (function.getBody().empty())
       return;
+    if (failed(sim::verifyUnitBindings(function))) {
+      signalPassFailure();
+      return;
+    }
 
     Block &entry = function.getBody().front();
     SmallVector<Operation *> sourceRoots;

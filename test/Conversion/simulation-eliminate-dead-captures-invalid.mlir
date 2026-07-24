@@ -38,8 +38,8 @@ module {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %unused: i32 {obelisk_sim.capture_kind = 1 : i32})
         attributes {entry_kind = 8 : i32, code_unit_id = 1 : i64,
-                    obelisk_sim.bindings = [{argument = 2 : i64,
-                                             path = "bad"}]} {
+                    obelisk_sim.bindings = [
+                      #obelisk_sim.argument_binding<path = "bad", argument = 2, kind = direct, copyOut = false>]} {
       obelisk_sim.return
     }
   }

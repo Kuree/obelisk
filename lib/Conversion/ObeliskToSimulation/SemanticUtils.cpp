@@ -9,6 +9,7 @@
 #include "llvm/ADT/StringExtras.h"
 
 #include <cctype>
+#include <cmath>
 #include <limits>
 #include <string>
 
@@ -493,12 +494,21 @@ StringRef getDebugName(Operation *op) {
 
 FailureOr<ParsedConstant> parseSVInteger(StringRef spelling, unsigned width,
                                          Location location) {
+  if (width == 0) {
+    emitError(location) << "cannot parse an integer literal at zero width";
+    return failure();
+  }
   std::string clean;
   clean.reserve(spelling.size());
   for (char c : spelling)
     if (c != '_')
       clean.push_back(static_cast<char>(std::tolower(c)));
   StringRef text(clean);
+  bool negative = false;
+  if (text.consume_front("-"))
+    negative = true;
+  else
+    text.consume_front("+");
   size_t quote = text.find('\'');
   unsigned radix = 10;
   StringRef digits = text;
@@ -549,13 +559,27 @@ FailureOr<ParsedConstant> parseSVInteger(StringRef spelling, unsigned width,
       }
     }
     unsigned needed = APInt::getSufficientBitsNeeded(digits, radix);
-    APInt parsed(std::max(needed, width), digits, radix);
-    if (parsed.getActiveBits() > width) {
+    unsigned parseWidth = std::max(needed, width);
+    APInt parsed(parseWidth, digits, radix);
+    bool fits = parsed.getActiveBits() <= width;
+    if (negative) {
+      APInt signedLimit(parseWidth, 1);
+      signedLimit <<= width - 1;
+      fits = parsed.ule(signedLimit);
+    }
+    if (!fits) {
       emitError(location) << "integer literal '" << spelling
                           << "' does not fit " << "in " << width << " bits";
       return failure();
     }
+    if (negative)
+      parsed.negate();
     return ParsedConstant{parsed.trunc(width), unknown};
+  }
+  if (negative) {
+    emitError(location) << "negative X/Z integer literal '" << spelling
+                        << "' is not supported";
+    return failure();
   }
   if (radix == 10) {
     emitError(location) << "decimal X/Z integer literals are not yet supported";
@@ -586,6 +610,58 @@ FailureOr<ParsedConstant> parseSVInteger(StringRef spelling, unsigned width,
     bit += group;
   }
   return ParsedConstant{value, unknown};
+}
+
+FailureOr<sim::FrozenConstantAttr> freezeSemanticConstant(Operation *symbol) {
+  Location location = getSemanticLocation(symbol);
+  FailureOr<Type> normalized = getNormalizedSemanticType(symbol);
+  if (failed(normalized))
+    return failure();
+  auto semanticType = symbol->getAttrOfType<TypeAttr>("semantic_type");
+  auto spelling = symbol->getAttrOfType<StringAttr>("constant_value");
+  if (!semanticType || !spelling) {
+    symbol->emitError(
+        "constant symbol requires semantic_type and constant_value");
+    return failure();
+  }
+
+  Builder builder(symbol->getContext());
+  Attribute payload;
+  if (normalized->isF64()) {
+    double value = 0.0;
+    if (spelling.getValue().getAsDouble(value) || !std::isfinite(value)) {
+      emitError(location) << "real constant '" << spelling.getValue()
+                          << "' is not finite";
+      return failure();
+    }
+    payload = builder.getF64FloatAttr(value);
+  } else {
+    Type scalar = sim::getPackedScalarType(*normalized);
+    if (!scalar) {
+      emitError(location)
+          << "elaborated constant has unsupported normalized type "
+          << *normalized;
+      return failure();
+    }
+    std::optional<unsigned> width = sim::getPackedWidth(scalar);
+    if (!width) {
+      emitError(location)
+          << "elaborated constant has unsupported normalized type "
+          << *normalized;
+      return failure();
+    }
+    FailureOr<ParsedConstant> parsed =
+        parseSVInteger(spelling.getValue(), *width, location);
+    if (failed(parsed))
+      return failure();
+    auto planeType = builder.getIntegerType(*width);
+    payload = builder.getArrayAttr(
+        {builder.getIntegerAttr(planeType, parsed->value),
+         builder.getIntegerAttr(planeType, parsed->unknown)});
+  }
+  return sim::FrozenConstantAttr::get(
+      symbol->getContext(), *normalized, payload,
+      isSignedSemanticType(semanticType.getValue()));
 }
 
 Value createDefaultValue(OpBuilder &builder, Location location, Type type) {

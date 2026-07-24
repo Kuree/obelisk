@@ -144,6 +144,27 @@ def SimCaptureKind : I32EnumAttr<"CaptureKind", "entry argument binding kind", [
   let cppNamespace = "::obelisk::sim";
 }
 
+// Transient binding roles used while the prepare pass freezes each isolated
+// code unit. These are deliberately distinct from CaptureKind: the latter is
+// stable ABI metadata on a function argument, while these roles describe how
+// unit lowering reconstructs source-level names from that ABI.
+def SimUnitArgumentDirect
+    : I32EnumAttrCase<"Direct", 0, "direct">;
+def SimUnitArgumentLValueOnly
+    : I32EnumAttrCase<"LValueOnly", 1, "lvalue_only">;
+def SimUnitArgumentFormalLocal
+    : I32EnumAttrCase<"FormalLocal", 2, "formal_local">;
+def SimUnitArgumentCopyOutDestination
+    : I32EnumAttrCase<"CopyOutDestination", 3, "copy_out_destination">;
+def SimUnitArgumentKind
+    : I32EnumAttr<"UnitArgumentKind",
+                  "frozen unit argument binding role", [
+        SimUnitArgumentDirect, SimUnitArgumentLValueOnly,
+        SimUnitArgumentFormalLocal, SimUnitArgumentCopyOutDestination
+      ]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
 def SimLifetimeAutomatic : I32EnumAttrCase<"Automatic", 0, "automatic">;
 def SimLifetimeStatic : I32EnumAttrCase<"Static", 1, "static">;
 def SimLifetimeDesign : I32EnumAttrCase<"Design", 2, "design">;

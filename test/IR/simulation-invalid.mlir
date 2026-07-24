@@ -1660,3 +1660,125 @@ module {
     }
   }
 }
+
+// -----
+
+module {
+  obelisk_sim.design @frozen_two_state_unknown {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 function hierarchy "bad"
+    obelisk_sim.func private @bad(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {
+          entry_kind = 8 : i32, code_unit_id = 1 : i64,
+          obelisk_sim.bindings = [
+            // expected-error @+2 {{two-state frozen constant must have a zero unknown plane}}
+            // expected-error @+1 {{failed to parse SimConstantBindingAttr parameter 'value'}}
+            #obelisk_sim.constant_binding<path = "P", value = #obelisk_sim.frozen_constant<value = [1 : i8, 1 : i8], isSigned = false> : i8>]
+        } {
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @binding_role_type {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 function hierarchy "bad"
+    // expected-error @below {{lvalue-only binding requires a storage, net, or driver argument}}
+    obelisk_sim.func private @bad(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %value: i32 {obelisk_sim.capture_kind = 1 : i32})
+        attributes {
+          entry_kind = 8 : i32, code_unit_id = 1 : i64,
+          obelisk_sim.bindings = [
+            #obelisk_sim.argument_binding<path = "value", argument = 1, kind = lvalue_only, copyOut = false>]
+        } {
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @binding_local_type {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 function hierarchy "bad"
+    obelisk_sim.func private @bad(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {
+          entry_kind = 8 : i32, code_unit_id = 1 : i64,
+          obelisk_sim.bindings = [
+            // expected-error @+1 {{local binding type must be a normalized simulation value}}
+            #obelisk_sim.local_binding<path = "local", type = !obelisk_sim.ref<i8>, automatic = false, patternVariable = false, isReturn = false>]
+        } {
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @binding_path_collision {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "bad"
+    // expected-error @below {{both provide the source value for path 'same'}}
+    obelisk_sim.func private @bad(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %value: i32 {obelisk_sim.capture_kind = 1 : i32})
+        attributes {
+          entry_kind = 1 : i32, code_unit_id = 1 : i64,
+          obelisk_sim.bindings = [
+            #obelisk_sim.argument_binding<path = "same", argument = 1, kind = direct, copyOut = false>,
+            #obelisk_sim.local_binding<path = "same", type = i32, automatic = false, patternVariable = false, isReturn = false>]
+        } {
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @binding_copy_out_pair {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 task hierarchy "bad"
+    // expected-error @below {{copy-out destination path 'formal' requires a copy-out formal-local binding}}
+    obelisk_sim.func private @bad(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %destination: !obelisk_sim.ref<i32> {obelisk_sim.capture_kind = 1 : i32})
+        attributes {
+          entry_kind = 12 : i32, code_unit_id = 1 : i64,
+          obelisk_sim.bindings = [
+            #obelisk_sim.argument_binding<path = "formal", argument = 1, kind = copy_out_destination, copyOut = false>]
+        } {
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @binding_multiple_returns {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 function hierarchy "bad"
+    // expected-error @below {{multiple local bindings are marked as the function return}}
+    obelisk_sim.func private @bad(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        -> i32
+        attributes {
+          entry_kind = 8 : i32, code_unit_id = 1 : i64,
+          obelisk_sim.bindings = [
+            #obelisk_sim.local_binding<path = "first", type = i32, automatic = false, patternVariable = false, isReturn = true>,
+            #obelisk_sim.local_binding<path = "second", type = i32, automatic = false, patternVariable = false, isReturn = true>]
+        } {
+      %zero = arith.constant 0 : i32
+      obelisk_sim.return %zero : i32
+    }
+  }
+}

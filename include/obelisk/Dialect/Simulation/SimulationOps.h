@@ -65,6 +65,21 @@ InlineLegality getInlineLegality(SimCallOp call, SimFuncOp callee);
 uint64_t getDPISignatureHash(::mlir::ArrayAttr signature,
                              uint64_t logicalInputs);
 
+/// Validate the transient source-name bindings frozen onto a prepared
+/// simulation function. This is shared by the operation verifier and passes
+/// that must remain defensive when verification between passes is disabled.
+::mlir::LogicalResult verifyUnitBindings(SimFuncOp function);
+
+/// Return the source path carried by any supported unit-binding attribute.
+/// Returns an empty string for an unrelated attribute.
+::llvm::StringRef getUnitBindingPath(::mlir::Attribute binding);
+
+/// Materialize one verified elaborated constant as normalized simulation SSA.
+/// Packed aggregate shape is restored after creating its scalar value planes.
+::mlir::FailureOr<::mlir::Value>
+materializeFrozenConstant(::mlir::OpBuilder &builder, ::mlir::Location location,
+                          FrozenConstantAttr constant);
+
 } // namespace obelisk::sim
 
 #endif // OBELISK_DIALECT_SIMULATION_SIMULATIONOPS_H

@@ -13,6 +13,8 @@
 
 namespace obelisk::sim::metadata {
 
+/// Transient function attribute containing ArgumentBindingAttr,
+/// LocalBindingAttr, and ConstantBindingAttr entries.
 inline constexpr llvm::StringLiteral bindings = "obelisk_sim.bindings";
 inline constexpr llvm::StringLiteral delayScale = "obelisk_sim.delay_scale";
 inline constexpr llvm::StringLiteral delayQuantum = "obelisk_sim.delay_quantum";

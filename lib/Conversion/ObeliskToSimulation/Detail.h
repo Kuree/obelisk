@@ -170,6 +170,11 @@ struct ParsedConstant {
                                                  unsigned width,
                                                  ::mlir::Location location);
 
+/// Freeze the elaborated value and normalized type of a constant symbol.
+/// The symbol must carry semantic_type and constant_value attributes.
+::mlir::FailureOr<sim::FrozenConstantAttr>
+freezeSemanticConstant(::mlir::Operation *symbol);
+
 /// The all-unknown (or zero) initial value of a normalized type.
 ::mlir::Value createDefaultValue(::mlir::OpBuilder &builder,
                                  ::mlir::Location location, ::mlir::Type type);

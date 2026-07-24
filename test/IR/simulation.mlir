@@ -21,7 +21,7 @@ module {
       obelisk_sim.return
     }
 
-    obelisk_sim.func @callee(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %value: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 1 : i32}) -> !obelisk_sim.logic<8> attributes {code_unit_id = 11 : i64, entry_kind = 8 : i32} {
+    obelisk_sim.func @callee(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %value: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 1 : i32}) -> !obelisk_sim.logic<8> attributes {code_unit_id = 11 : i64, entry_kind = 8 : i32, obelisk_sim.bindings = [#obelisk_sim.argument_binding<path = "value", argument = 1, kind = direct, copyOut = false>, #obelisk_sim.constant_binding<path = "P", value = #obelisk_sim.frozen_constant<value = [-3 : i8, 0 : i8], isSigned = true> : !obelisk_sim.logic<8>>]} {
       obelisk_sim.return %value : !obelisk_sim.logic<8>
     }
 
@@ -117,6 +117,7 @@ module {
 // CHECK: obelisk_sim.net.decl 0 in 1 : !obelisk_sim.logic<8>
 // CHECK: obelisk_sim.driver.decl 0 in 1 drives 0
 // CHECK: obelisk_sim.func @callee
+// CHECK-SAME: obelisk_sim.bindings = [#obelisk_sim.argument_binding<path = "value", argument = 1, kind = direct, copyOut = false>, #obelisk_sim.constant_binding<path = "P", value = #obelisk_sim.frozen_constant<value = [-3 : i8, 0 : i8], isSigned = true> : !obelisk_sim.logic<8>>]
 // CHECK: obelisk_sim.logic.is_true
 // CHECK: obelisk_sim.logic.unary logical_not
 // CHECK: obelisk_sim.logic.reduction xor

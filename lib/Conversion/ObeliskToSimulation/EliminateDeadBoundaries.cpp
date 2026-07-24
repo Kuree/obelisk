@@ -98,40 +98,6 @@ static LogicalResult validateDictionaryArray(Operation *owner, ArrayAttr attrs,
   return success();
 }
 
-static LogicalResult validateBindings(sim::SimFuncOp function) {
-  Attribute raw = function->getAttr(bindingsAttrName);
-  if (!raw)
-    return success();
-  auto bindings = dyn_cast<ArrayAttr>(raw);
-  if (!bindings)
-    return function.emitOpError()
-           << "has malformed " << bindingsAttrName << ": expected an array";
-  unsigned numArguments = function.getFunctionType().getNumInputs();
-  for (auto [index, attr] : llvm::enumerate(bindings)) {
-    auto dictionary = dyn_cast<DictionaryAttr>(attr);
-    if (!dictionary)
-      return function.emitOpError()
-             << "has malformed " << bindingsAttrName << " entry #" << index
-             << ": expected a dictionary";
-    Attribute rawArgument = dictionary.get("argument");
-    if (!rawArgument)
-      continue;
-    auto argument = dyn_cast<IntegerAttr>(rawArgument);
-    if (!argument || argument.getValue().isNegative() ||
-        argument.getValue().getActiveBits() > 64)
-      return function.emitOpError()
-             << "has malformed " << bindingsAttrName << " entry #" << index
-             << ": argument must be a nonnegative 64-bit integer";
-    uint64_t argumentIndex = argument.getValue().getZExtValue();
-    if (argumentIndex >= numArguments)
-      return function.emitOpError()
-             << "has malformed " << bindingsAttrName << " entry #" << index
-             << ": argument index " << argumentIndex
-             << " is outside the function signature";
-  }
-  return success();
-}
-
 static unsigned countSymbolReferences(Operation *operation,
                                       SymbolRefAttr reference) {
   unsigned count = 0;
@@ -170,17 +136,15 @@ static void updateBindings(sim::SimFuncOp function,
   auto bindings = function->getAttrOfType<ArrayAttr>(bindingsAttrName);
   if (!bindings)
     return;
-  Builder builder(function.getContext());
   SmallVector<Attribute> updated;
   updated.reserve(bindings.size());
   for (Attribute attr : bindings) {
-    auto dictionary = cast<DictionaryAttr>(attr);
-    auto argument = dictionary.getAs<IntegerAttr>("argument");
+    auto argument = dyn_cast<sim::ArgumentBindingAttr>(attr);
     if (!argument) {
-      updated.push_back(dictionary);
+      updated.push_back(attr);
       continue;
     }
-    uint64_t oldIndex = argument.getValue().getZExtValue();
+    uint64_t oldIndex = argument.getArgument();
     if (erase.test(oldIndex))
       continue;
     uint64_t newIndex = oldIndex;
@@ -188,14 +152,12 @@ static void updateBindings(sim::SimFuncOp function,
          removed >= 0 && uint64_t(removed) < oldIndex;
          removed = erase.find_next(removed))
       --newIndex;
-    SmallVector<NamedAttribute> attributes(dictionary.begin(),
-                                           dictionary.end());
-    for (NamedAttribute &named : attributes)
-      if (named.getName() == "argument")
-        named.setValue(builder.getIntegerAttr(argument.getType(), newIndex));
-    updated.push_back(builder.getDictionaryAttr(attributes));
+    updated.push_back(sim::ArgumentBindingAttr::get(
+        function.getContext(), argument.getPath(), newIndex, argument.getKind(),
+        argument.getCopyOut(), argument.getLvalueNode()));
   }
-  function->setAttr(bindingsAttrName, builder.getArrayAttr(updated));
+  function->setAttr(bindingsAttrName,
+                    ArrayAttr::get(function.getContext(), updated));
 }
 
 /// Return whether an operation is allowed inside a discardable zero-time
@@ -317,7 +279,7 @@ LogicalResult BoundaryEliminator::run() {
         failed(validateDictionaryArray(function, function.getResAttrsAttr(),
                                        type.getNumResults(),
                                        "function result metadata")) ||
-        failed(validateBindings(function))) {
+        failed(sim::verifyUnitBindings(function))) {
       return failure();
     }
     if (!function.isExternal()) {

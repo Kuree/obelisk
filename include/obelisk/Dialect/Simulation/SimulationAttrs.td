@@ -9,9 +9,72 @@ include "mlir/IR/AttrTypeBase.td"
 include "mlir/IR/BuiltinAttributes.td"
 include "mlir/IR/EnumAttr.td"
 
-class SimAttr<string name, string attrMnemonic>
-    : AttrDef<ObeliskSimulationDialect, name> {
+class SimAttr<string name, string attrMnemonic, list<Trait> traits = []>
+    : AttrDef<ObeliskSimulationDialect, name, traits> {
   let mnemonic = attrMnemonic;
+}
+
+//===----------------------------------------------------------------------===//
+// Prepared unit boundary
+//===----------------------------------------------------------------------===//
+
+def SimFrozenConstantAttr
+    : SimAttr<"FrozenConstant", "frozen_constant", [TypedAttrInterface]> {
+  let summary = "typed elaborated constant frozen into one simulation unit";
+  let description = [{
+    Carries the exact value of a parameter, localparam, enum value, specparam,
+    or elaborated genvar after whole-design elaboration has completed. Packed
+    values use the same two-plane `[value, unknown]` representation as
+    `obelisk_sim.logic.constant`; real values use an f64 FloatAttr. The declared
+    normalized type is retained so packed aggregate shape is not lost.
+  }];
+  let parameters = (ins
+    AttributeSelfTypeParameter<"">:$type,
+    "::mlir::Attribute":$value,
+    "bool":$isSigned
+  );
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimArgumentBindingAttr
+    : SimAttr<"ArgumentBinding", "argument_binding"> {
+  let summary = "source name bound to one prepared unit argument";
+  let parameters = (ins
+    "::mlir::StringAttr":$path,
+    "uint64_t":$argument,
+    EnumParameter<SimUnitArgumentKind>:$kind,
+    "bool":$copyOut,
+    OptionalParameter<"::mlir::IntegerAttr">:$lvalueNode
+  );
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimLocalBindingAttr : SimAttr<"LocalBinding", "local_binding"> {
+  let summary = "source name bound to activation-local storage";
+  let parameters = (ins
+    "::mlir::StringAttr":$path,
+    "::mlir::Type":$type,
+    "bool":$automatic,
+    "bool":$patternVariable,
+    "bool":$isReturn
+  );
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimConstantBindingAttr : SimAttr<"ConstantBinding", "constant_binding"> {
+  let summary = "source name bound to a typed elaborated constant";
+  let parameters = (ins
+    "::mlir::StringAttr":$path,
+    SimFrozenConstantAttr:$value
+  );
+  // `qualified` is required for this nested typed attribute so its mnemonic
+  // and trailing type survive textual IR round-trips.
+  let assemblyFormat =
+      "`<` `path` `=` $path `,` `value` `=` qualified($value) `>`";
+  let genVerifyDecl = 1;
 }
 
 def SimFieldAttr : SimAttr<"Field", "field"> {
