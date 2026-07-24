@@ -136,6 +136,122 @@ std::optional<uint64_t> getSemanticBitstreamWidth(Type type) {
   return std::nullopt;
 }
 
+SmallVector<SemanticDimension> getSemanticDimensions(Type type) {
+  SmallVector<SemanticDimension> dimensions;
+  auto appendFixed = [&](bool unpacked, int64_t left, int64_t right) {
+    dimensions.push_back(
+        {SemanticDimensionKind::Fixed, unpacked, left, right, {}});
+  };
+  auto appendRuntime = [&](SemanticDimensionKind kind, bool unpacked,
+                           Type indexType = {}) {
+    dimensions.push_back({kind, unpacked, 0, 0, indexType});
+  };
+
+  while (type) {
+    if (auto array = dyn_cast<semantic::RangedPackedArrayType>(type)) {
+      appendFixed(false, array.getLeft(), array.getRight());
+      type = array.getElementType();
+      continue;
+    }
+    if (auto array = dyn_cast<semantic::RangedUnpackedArrayType>(type)) {
+      appendFixed(true, array.getLeft(), array.getRight());
+      type = array.getElementType();
+      continue;
+    }
+    if (auto array = dyn_cast<semantic::PackedArrayType>(type)) {
+      appendFixed(false, static_cast<int64_t>(array.getSize()) - 1, 0);
+      type = array.getElementType();
+      continue;
+    }
+    if (auto array = dyn_cast<semantic::UnpackedArrayType>(type)) {
+      appendFixed(true, static_cast<int64_t>(array.getSize()) - 1, 0);
+      type = array.getElementType();
+      continue;
+    }
+    if (auto array = dyn_cast<semantic::DynArrayType>(type)) {
+      appendRuntime(SemanticDimensionKind::DynamicArray, true);
+      type = array.getElementType();
+      continue;
+    }
+    if (auto queue = dyn_cast<semantic::QueueType>(type)) {
+      appendRuntime(SemanticDimensionKind::Queue, true);
+      type = queue.getElementType();
+      continue;
+    }
+    if (auto array = dyn_cast<semantic::AssocArrayType>(type)) {
+      appendRuntime(SemanticDimensionKind::AssociativeArray, true,
+                    array.getKeyType());
+      type = array.getElementType();
+      continue;
+    }
+    if (auto array = dyn_cast<semantic::OpenArrayType>(type)) {
+      appendRuntime(SemanticDimensionKind::OpenArray, !array.getIsPacked());
+      type = array.getElementType();
+      continue;
+    }
+    if (isa<semantic::StringType>(type)) {
+      appendRuntime(SemanticDimensionKind::String, false);
+      break;
+    }
+    if (auto enumeration = dyn_cast<semantic::EnumType>(type)) {
+      std::optional<uint64_t> width =
+          getSemanticBitstreamWidth(enumeration.getBaseType());
+      if (width && *width)
+        appendFixed(false, static_cast<int64_t>(*width - 1), 0);
+      break;
+    }
+    if (auto integral = dyn_cast<semantic::IntegralType>(type)) {
+      // Scalar bit / logic / reg types have no dimensions. An explicit
+      // one-element packed range is represented by RangedPackedArrayType and
+      // therefore remains distinguishable here.
+      switch (integral.getFlavor()) {
+      case semantic::SVIntegralFlavor::Bit:
+      case semantic::SVIntegralFlavor::Logic:
+      case semantic::SVIntegralFlavor::Reg:
+        break;
+      default:
+        appendFixed(false, integral.getLeft(), integral.getRight());
+        break;
+      }
+      break;
+    }
+    if (isa<semantic::TimeType>(type)) {
+      appendFixed(false, 63, 0);
+      break;
+    }
+    if (auto aggregate = dyn_cast<semantic::SourceAggregateType>(type)) {
+      if (aggregate.getIsPacked() && aggregate.getBitWidth())
+        appendFixed(false,
+                    static_cast<int64_t>(aggregate.getBitWidth() - 1), 0);
+      break;
+    }
+    if (auto structure = dyn_cast<semantic::PackedStructType>(type)) {
+      std::optional<uint64_t> width = getSemanticBitstreamWidth(structure);
+      if (width && *width)
+        appendFixed(false, static_cast<int64_t>(*width - 1), 0);
+      break;
+    }
+    if (auto unionType = dyn_cast<semantic::PackedUnionType>(type)) {
+      std::optional<uint64_t> width = getSemanticBitstreamWidth(unionType);
+      if (width && *width)
+        appendFixed(false, static_cast<int64_t>(*width - 1), 0);
+      break;
+    }
+    if (auto integer = dyn_cast<IntegerType>(type)) {
+      if (integer.getWidth() > 1)
+        appendFixed(false, integer.getWidth() - 1, 0);
+      break;
+    }
+    if (auto logic = dyn_cast<semantic::LogicType>(type)) {
+      if (logic.getWidth() > 1)
+        appendFixed(false, logic.getWidth() - 1, 0);
+      break;
+    }
+    break;
+  }
+  return dimensions;
+}
+
 static std::optional<uint64_t> getSemanticPackedWidth(Type type) {
   if (auto integral = dyn_cast<semantic::IntegralType>(type))
     return integral.getWidth();

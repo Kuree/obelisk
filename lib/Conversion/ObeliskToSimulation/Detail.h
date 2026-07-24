@@ -148,6 +148,39 @@ bool isSignedSemanticType(::mlir::Type type);
 /// bitstreams have no type-only width and return std::nullopt.
 std::optional<uint64_t> getSemanticBitstreamWidth(::mlir::Type type);
 
+/// One source-level dimension of an elaborated SystemVerilog type.
+///
+/// Dimensions are ordered outermost first, matching the one-based dimension
+/// index accepted by the array query system functions. Fixed dimensions retain
+/// their declared direction and endpoints. The remaining kinds require an
+/// object value (or an open-array descriptor) to answer range queries.
+enum class SemanticDimensionKind : uint8_t {
+  Fixed,
+  String,
+  DynamicArray,
+  Queue,
+  AssociativeArray,
+  OpenArray,
+};
+
+struct SemanticDimension {
+  SemanticDimensionKind kind = SemanticDimensionKind::Fixed;
+  bool unpacked = false;
+  int64_t left = 0;
+  int64_t right = 0;
+  ::mlir::Type indexType;
+
+  bool isFixed() const { return kind == SemanticDimensionKind::Fixed; }
+};
+
+/// Source-level dimensions of a semantic type, ordered outermost first.
+///
+/// This is a shape query only: it never evaluates an object. Dynamic container
+/// dimensions are represented explicitly so callers cannot accidentally fold
+/// a value-dependent query as if it were a fixed range.
+::mlir::SmallVector<SemanticDimension>
+getSemanticDimensions(::mlir::Type type);
+
 /// Normalized type of a semantic node's `semantic_type` attribute.
 ::mlir::FailureOr<::mlir::Type>
 getNormalizedSemanticType(::mlir::Operation *op);
