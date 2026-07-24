@@ -234,6 +234,25 @@ LogicalResult ConditionalStatementOp::verify() {
   return success();
 }
 
+LogicalResult ForLoopStatementOp::verify() {
+  if (getInitializerCountAttr().getValue().isNegative())
+    return emitOpError("initializer_count must be nonnegative");
+  if (getStepCountAttr().getValue().isNegative())
+    return emitOpError("step_count must be nonnegative");
+
+  uint64_t expected = 1;
+  if (failed(addInventory(*this, getInitializerCount(), expected,
+                          "for-loop child")) ||
+      failed(addInventory(*this, getHasCondition(), expected,
+                          "for-loop child")) ||
+      failed(addInventory(*this, getStepCount(), expected,
+                          "for-loop child")))
+    return failure();
+  if (astBodySize(*this) != expected)
+    return emitOpError("malformed for-loop child inventory");
+  return success();
+}
+
 LogicalResult ForeachLoopStatementOp::verify() {
   if (astBodySize(*this) != 2)
     return emitOpError(

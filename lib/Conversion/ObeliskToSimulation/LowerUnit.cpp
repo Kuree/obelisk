@@ -209,7 +209,7 @@ private:
                             StringRef statementKind, StringRef reason);
   LogicalResult lowerWhile(Operation *op);
   LogicalResult lowerDoWhile(Operation *op);
-  LogicalResult lowerFor(Operation *op);
+  LogicalResult lowerFor(semantic::SVForLoopStatementOp op);
   LogicalResult lowerForever(Operation *op);
   LogicalResult lowerForeach(semantic::SVForeachLoopStatementOp op);
   LogicalResult lowerRepeat(Operation *op);
@@ -4998,15 +4998,40 @@ LogicalResult UnitLowering::lowerDoWhile(Operation *op) {
   return success();
 }
 
-LogicalResult UnitLowering::lowerFor(Operation *op) {
+LogicalResult
+UnitLowering::lowerFor(semantic::SVForLoopStatementOp op) {
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
-  // The semantic importer emits declaration initializers immediately before
-  // the loop. The loop inventory is condition, step, then body.
-  if (children.size() != 3) {
-    unsupported(op) << " (expected condition, step, and body)";
+  uint64_t initializerCount = op.getInitializerCount();
+  uint64_t stepCount = op.getStepCount();
+  size_t conditionCount = op.getHasCondition() ? 1 : 0;
+  if (initializerCount > children.size() ||
+      conditionCount > children.size() - initializerCount ||
+      stepCount > children.size() - initializerCount - conditionCount ||
+      children.size() - initializerCount - conditionCount - stepCount != 1) {
+    op.emitError("malformed for-loop child inventory");
     return failure();
   }
+  size_t initializerSize = static_cast<size_t>(initializerCount);
+  size_t stepSize = static_cast<size_t>(stepCount);
+
+  ArrayRef<Operation *> inventory(children);
+  ArrayRef<Operation *> initializers =
+      inventory.take_front(initializerSize);
+  Operation *condition =
+      op.getHasCondition() ? children[initializerSize] : nullptr;
+  ArrayRef<Operation *> steps =
+      inventory.slice(initializerSize + conditionCount, stepSize);
+  Operation *body = children.back();
+
+  // SystemVerilog evaluates expression initializers once, in source order,
+  // before the first condition check. Loop-variable declarations are separate
+  // declaration statements in the enclosing semantic block and have already
+  // been lowered before this node.
+  for (Operation *initializer : initializers)
+    if (failed(lowerExpression(initializer)))
+      return failure();
+
   Block *conditionBlock = addBlock();
   Block *bodyBlock = addBlock();
   Block *stepBlock = addBlock();
@@ -5014,24 +5039,29 @@ LogicalResult UnitLowering::lowerFor(Operation *op) {
   emitBranch(conditionBlock);
 
   setCurrent(conditionBlock);
-  FailureOr<Value> conditionValue = lowerExpression(children[0]);
-  if (failed(conditionValue))
-    return failure();
-  FailureOr<Value> condition = truthValue(*conditionValue, location);
-  if (failed(condition))
-    return failure();
-  cf::CondBranchOp::create(builder, location, *condition, bodyBlock,
-                           ValueRange{}, exitBlock, ValueRange{});
+  if (condition) {
+    FailureOr<Value> conditionValue = lowerExpression(condition);
+    if (failed(conditionValue))
+      return failure();
+    FailureOr<Value> truth = truthValue(*conditionValue, location);
+    if (failed(truth))
+      return failure();
+    cf::CondBranchOp::create(builder, location, *truth, bodyBlock,
+                             ValueRange{}, exitBlock, ValueRange{});
+  } else {
+    cf::BranchOp::create(builder, location, bodyBlock);
+  }
 
   loopTargets.push_back({exitBlock, stepBlock, {}, controlScopes.size()});
   setCurrent(bodyBlock);
-  if (failed(lowerStatement(children[2])))
+  if (failed(lowerStatement(body)))
     return failure();
   emitBranch(stepBlock);
 
   setCurrent(stepBlock);
-  if (failed(lowerStatement(children[1])))
-    return failure();
+  for (Operation *step : steps)
+    if (failed(lowerExpression(step)))
+      return failure();
   emitBranch(conditionBlock);
   loopTargets.pop_back();
   setCurrent(exitBlock);
@@ -5740,8 +5770,8 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
     return lowerWhile(op);
   if (isa<semantic::SVDoWhileLoopStatementOp>(op))
     return lowerDoWhile(op);
-  if (isa<semantic::SVForLoopStatementOp>(op))
-    return lowerFor(op);
+  if (auto forLoop = dyn_cast<semantic::SVForLoopStatementOp>(op))
+    return lowerFor(forLoop);
   if (isa<semantic::SVForeverLoopStatementOp>(op))
     return lowerForever(op);
   if (auto foreach = dyn_cast<semantic::SVForeachLoopStatementOp>(op))

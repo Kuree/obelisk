@@ -187,6 +187,13 @@ module {
       slang.statement.list attributes {node_id = 41 : i64} {
       }
     }
+    slang.statement.for_loop attributes {
+      has_condition = false, initializer_count = 0 : i64,
+      node_id = 42 : i64, step_count = 0 : i64
+    } {
+      slang.statement.empty attributes {node_id = 43 : i64} {
+      }
+    }
     slang.expression.integer_literal attributes {
       constant_value = "42", node_id = 30 : i64,
       semantic_type = !slang.integral<32, true, false, 31 : 0, int>
@@ -267,6 +274,10 @@ module {
 // CHECK: !obelisk.subroutine<(!obelisk.string) -> !obelisk.shortreal, false>
 
 // CHECK: obelisk.sv.statement.conditional
+// CHECK: obelisk.sv.statement.for_loop
+// CHECK-SAME: has_condition = false
+// CHECK-SAME: initializer_count = 0 : i64
+// CHECK-SAME: step_count = 0 : i64
 // CHECK: obelisk.sv.expression.integer_literal attributes {constant_value = "42"
 // CHECK: obelisk.sv.expression.binary_op
 // CHECK: obelisk.sv.expression.assignment

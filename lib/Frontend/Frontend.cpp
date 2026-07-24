@@ -1551,6 +1551,13 @@ private:
       SET_OP_ATTR(ConditionPatternFlags,
                   builder.getDenseI64ArrayAttr(patternFlags));
       SET_OP_ATTR(HasElse, builder.getBoolAttr(node.ifFalse != nullptr));
+    } else if constexpr (std::same_as<T, slang::ast::ForLoopStatement>) {
+      SET_OP_ATTR(InitializerCount,
+                  builder.getI64IntegerAttr(node.initializers.size()));
+      SET_OP_ATTR(HasCondition,
+                  builder.getBoolAttr(node.stopExpr != nullptr));
+      SET_OP_ATTR(StepCount,
+                  builder.getI64IntegerAttr(node.steps.size()));
     } else if constexpr (std::same_as<T, slang::ast::CaseStatement>) {
       SET_OP_ATTR(ConditionKind,
                   slangir::CaseConditionAttr::get(builder.getContext(),

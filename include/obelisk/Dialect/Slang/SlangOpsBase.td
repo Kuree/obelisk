@@ -412,6 +412,15 @@ class SlangRangeSelectExpressionASTNodeOp<string mnemonic>
 
 class SlangStatementASTNodeOp<string mnemonic> : SlangASTNodeOp<mnemonic>;
 
+class SlangForLoopStatementASTNodeOp<string mnemonic>
+    : SlangASTNodeOp<mnemonic, [], (ins
+        I64Attr:$initializer_count,
+        BoolAttr:$has_condition,
+        I64Attr:$step_count
+      )> {
+  let hasVerifier = 1;
+}
+
 class SlangForeachLoopStatementASTNodeOp<string mnemonic>
     : SlangASTNodeOp<mnemonic, [], (ins
         DictArrayAttr:$loop_dimensions

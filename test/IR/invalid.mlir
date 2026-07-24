@@ -37,6 +37,32 @@ module {
 // -----
 
 module {
+  // expected-error @+1 {{malformed for-loop child inventory}}
+  obelisk.sv.statement.for_loop attributes {
+    has_condition = false, initializer_count = 1 : i64,
+    node_id = 0 : i64, step_count = 0 : i64
+  } {
+    obelisk.sv.statement.empty attributes {node_id = 1 : i64} {
+    }
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{initializer_count must be nonnegative}}
+  obelisk.sv.statement.for_loop attributes {
+    has_condition = false, initializer_count = -1 : i64,
+    node_id = 0 : i64, step_count = 0 : i64
+  } {
+    obelisk.sv.statement.empty attributes {node_id = 1 : i64} {
+    }
+  }
+}
+
+// -----
+
+module {
   // expected-error @+1 {{requires attribute 'constant_value'}}
   obelisk.sv.expression.integer_literal attributes {
     node_id = 0 : i64,
