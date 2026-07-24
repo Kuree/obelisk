@@ -1,6 +1,7 @@
 //===- ObeliskDialect.cpp - Obelisk semantic dialect ---------------------===//
 
 #include "obelisk/Dialect/Obelisk/ObeliskOps.h"
+#include "obelisk/Dialect/ForeachLoopMetadata.h"
 
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/TypeUtilities.h"
@@ -405,6 +406,14 @@ LogicalResult SVConditionalStatementOp::verify() {
   if (astBodySize(*this) != expected)
     return emitOpError("malformed condition and statement inventory");
   return success();
+}
+
+LogicalResult SVForeachLoopStatementOp::verify() {
+  if (astBodySize(*this) != 2)
+    return emitOpError(
+        "foreach loop must contain an array expression and body");
+  return foreach_metadata::verify(getLoopDimensions(),
+                                  [&] { return emitOpError(); });
 }
 
 LogicalResult SVCaseStatementOp::verify() {

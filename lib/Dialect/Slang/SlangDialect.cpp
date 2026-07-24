@@ -1,6 +1,7 @@
 //===- SlangDialect.cpp - Elaborated slang semantic AST dialect ----------===//
 
 #include "obelisk/Dialect/Slang/SlangOps.h"
+#include "obelisk/Dialect/ForeachLoopMetadata.h"
 
 #include "mlir/IR/Diagnostics.h"
 
@@ -231,6 +232,14 @@ LogicalResult ConditionalStatementOp::verify() {
   if (astBodySize(*this) != expected)
     return emitOpError("malformed condition and statement inventory");
   return success();
+}
+
+LogicalResult ForeachLoopStatementOp::verify() {
+  if (astBodySize(*this) != 2)
+    return emitOpError(
+        "foreach loop must contain an array expression and body");
+  return foreach_metadata::verify(getLoopDimensions(),
+                                  [&] { return emitOpError(); });
 }
 
 LogicalResult CaseStatementOp::verify() {

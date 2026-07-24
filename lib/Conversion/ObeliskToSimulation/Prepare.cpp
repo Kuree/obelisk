@@ -11,6 +11,7 @@
 #include "Detail.h"
 
 #include "obelisk/Conversion/ObeliskToSimulation.h"
+#include "obelisk/Dialect/ForeachLoopMetadata.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
@@ -82,6 +83,24 @@ static bool isWriteOnlyReferenceUse(Operation *reference) {
     return destinationIndex < children.size() &&
            containsNestedOperation(children[destinationIndex], reference) &&
            isStorageBaseUse(children[destinationIndex], reference);
+  }
+  return false;
+}
+
+/// A fixed foreach uses only elaborated range metadata to enumerate indices.
+/// The collection value itself is not read unless the body references it.
+static bool isFixedForeachCollectionUse(Operation *reference) {
+  for (Operation *ancestor = reference->getParentOp(); ancestor;
+       ancestor = ancestor->getParentOp()) {
+    auto foreach =
+        dyn_cast<semantic::SVForeachLoopStatementOp>(ancestor);
+    if (!foreach)
+      continue;
+    SmallVector<Operation *> children = getChildren(foreach);
+    return children.size() == 2 &&
+           containsNestedOperation(children.front(), reference) &&
+           !foreach_metadata::hasRuntimeDimension(
+               foreach.getLoopDimensions());
   }
   return false;
 }
@@ -412,6 +431,14 @@ void ObeliskSimPreparePass::runOnOperation() {
   module.walk([&](Operation *op) {
     if (!isSemanticOp(op))
       return;
+    if (auto foreach = dyn_cast<semantic::SVForeachLoopStatementOp>(op);
+        foreach &&
+        foreach_metadata::hasRuntimeDimension(foreach.getLoopDimensions())) {
+      emitError(getSemanticLocation(foreach))
+          << "foreach over runtime-sized or associative collections is not "
+             "supported";
+      invalid = true;
+    }
     if (op->hasTrait<OpTrait::SemanticDeclarativeNode>() ||
         isDeclarativeLeafNode(op)) {
       emitError(getSemanticLocation(op))
@@ -1840,6 +1867,9 @@ void ObeliskSimPreparePass::runOnOperation() {
       } else {
         return;
       }
+      if (!isa<semantic::SVVariableDeclStatementOp>(nested) &&
+          isFixedForeachCollectionUse(nested))
+        return;
       auto descriptor = descriptors.find(path);
       if (descriptor != descriptors.end()) {
         if (seenPaths.insert(path).second)

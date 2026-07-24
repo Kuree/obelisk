@@ -404,6 +404,13 @@ class ObeliskRangeSelectExpressionASTNodeOp<string mnemonic>
 
 class ObeliskStatementASTNodeOp<string mnemonic> : ObeliskASTNodeOp<mnemonic>;
 
+class ObeliskForeachLoopStatementASTNodeOp<string mnemonic>
+    : ObeliskASTNodeOp<mnemonic, [], (ins
+        DictArrayAttr:$loop_dimensions
+      )> {
+  let hasVerifier = 1;
+}
+
 class ObeliskBlockStatementASTNodeOp<string mnemonic>
     : ObeliskASTNodeOp<mnemonic, [], (ins
         DefaultValuedAttr<ObeliskSVStatementBlockKind,

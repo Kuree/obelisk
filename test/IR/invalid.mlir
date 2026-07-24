@@ -20,6 +20,23 @@ module {
 // -----
 
 module {
+  // expected-error @+1 {{iterator loop_dimensions entry #0 requires symbol, nonempty path, and type}}
+  obelisk.sv.statement.foreach_loop attributes {
+    loop_dimensions = [{
+      has_iterator = true, has_static_range = true,
+      iterator_path = "i", left = 3 : i64, right = 0 : i64
+    }], node_id = 0 : i64
+  } {
+    obelisk.sv.statement.empty attributes {node_id = 1 : i64} {
+    }
+    obelisk.sv.statement.empty attributes {node_id = 2 : i64} {
+    }
+  }
+}
+
+// -----
+
+module {
   // expected-error @+1 {{requires attribute 'constant_value'}}
   obelisk.sv.expression.integer_literal attributes {
     node_id = 0 : i64,

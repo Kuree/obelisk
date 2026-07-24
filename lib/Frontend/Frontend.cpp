@@ -2,6 +2,7 @@
 
 #include "obelisk/Frontend/Frontend.h"
 
+#include "obelisk/Dialect/ForeachLoopMetadata.h"
 #include "obelisk/Dialect/Slang/SlangOps.h"
 
 #include "mlir/IR/Builders.h"
@@ -1644,25 +1645,32 @@ private:
     } else if constexpr (std::same_as<T, slang::ast::SolveBeforeConstraint>) {
       SET_OP_ATTR(SolveCount, builder.getI64IntegerAttr(node.solve.size()));
       SET_OP_ATTR(AfterCount, builder.getI64IntegerAttr(node.after.size()));
-    } else if constexpr (std::same_as<T, slang::ast::ForeachConstraint>) {
+    } else if constexpr (std::same_as<T, slang::ast::ForeachConstraint> ||
+                         std::same_as<T,
+                                      slang::ast::ForeachLoopStatement>) {
       SmallVector<Attribute> dimensions;
       for (const auto &dimension : node.loopDims) {
         NamedAttrList attributes;
-        attributes.set("has_static_range",
+        attributes.set(foreach_metadata::hasStaticRange,
                        builder.getBoolAttr(dimension.range.has_value()));
         if (dimension.range) {
-          attributes.set("left",
+          attributes.set(foreach_metadata::left,
                          builder.getI64IntegerAttr(dimension.range->left));
-          attributes.set("right",
+          attributes.set(foreach_metadata::right,
                          builder.getI64IntegerAttr(dimension.range->right));
         }
-        attributes.set("has_iterator",
+        attributes.set(foreach_metadata::hasIterator,
                        builder.getBoolAttr(dimension.loopVar != nullptr));
         if (dimension.loopVar) {
-          attributes.set("iterator_symbol",
+          attributes.set(foreach_metadata::iteratorSymbol,
                          getSemanticSymbolReference(*dimension.loopVar));
-          attributes.set("iterator_path", builder.getStringAttr(getSymbolPath(
-                                              *dimension.loopVar)));
+          attributes.set(
+              foreach_metadata::iteratorPath,
+              builder.getStringAttr(getSymbolPath(*dimension.loopVar)));
+          if (std::optional<Type> iteratorType =
+                  getSemanticType(*dimension.loopVar))
+            attributes.set(foreach_metadata::iteratorType,
+                           TypeAttr::get(*iteratorType));
         }
         dimensions.push_back(
             DictionaryAttr::get(builder.getContext(), attributes));

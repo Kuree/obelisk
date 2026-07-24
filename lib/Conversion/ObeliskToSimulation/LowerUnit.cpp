@@ -10,6 +10,7 @@
 #include "Detail.h"
 
 #include "obelisk/Conversion/ObeliskToSimulation.h"
+#include "obelisk/Dialect/ForeachLoopMetadata.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
@@ -17,6 +18,7 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Matchers.h"
 
+#include "llvm/ADT/APInt.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetVector.h"
@@ -144,7 +146,10 @@ private:
                             semantic::SVUniquePriorityCheck qualifier,
                             StringRef statementKind, StringRef reason);
   LogicalResult lowerWhile(Operation *op);
+  LogicalResult lowerDoWhile(Operation *op);
   LogicalResult lowerFor(Operation *op);
+  LogicalResult lowerForever(Operation *op);
+  LogicalResult lowerForeach(semantic::SVForeachLoopStatementOp op);
   LogicalResult lowerRepeat(Operation *op);
   LogicalResult lowerFork(semantic::SVBlockStatementOp op);
   LogicalResult lowerBlock(semantic::SVBlockStatementOp op);
@@ -4883,6 +4888,41 @@ LogicalResult UnitLowering::lowerWhile(Operation *op) {
   return success();
 }
 
+LogicalResult UnitLowering::lowerDoWhile(Operation *op) {
+  Location location = getSemanticLocation(op);
+  SmallVector<Operation *> children = getChildren(op);
+  // The semantic inventory is condition followed by body, even though the
+  // body appears first in source.
+  if (children.size() != 2) {
+    unsupported(op) << " (do-while loop arity)";
+    return failure();
+  }
+  Block *bodyBlock = addBlock();
+  Block *conditionBlock = addBlock();
+  Block *exitBlock = addBlock();
+  emitBranch(bodyBlock);
+
+  loopTargets.push_back(
+      {exitBlock, conditionBlock, {}, controlScopes.size()});
+  setCurrent(bodyBlock);
+  if (failed(lowerStatement(children[1])))
+    return failure();
+  emitBranch(conditionBlock);
+
+  setCurrent(conditionBlock);
+  FailureOr<Value> conditionValue = lowerExpression(children[0]);
+  if (failed(conditionValue))
+    return failure();
+  FailureOr<Value> condition = truthValue(*conditionValue, location);
+  if (failed(condition))
+    return failure();
+  cf::CondBranchOp::create(builder, location, *condition, bodyBlock,
+                           ValueRange{}, exitBlock, ValueRange{});
+  loopTargets.pop_back();
+  setCurrent(exitBlock);
+  return success();
+}
+
 LogicalResult UnitLowering::lowerFor(Operation *op) {
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
@@ -4920,6 +4960,196 @@ LogicalResult UnitLowering::lowerFor(Operation *op) {
   emitBranch(conditionBlock);
   loopTargets.pop_back();
   setCurrent(exitBlock);
+  return success();
+}
+
+LogicalResult UnitLowering::lowerForever(Operation *op) {
+  SmallVector<Operation *> children = getChildren(op);
+  if (children.size() != 1) {
+    unsupported(op) << " (forever loop arity)";
+    return failure();
+  }
+  Block *bodyBlock = addBlock();
+  Block *exitBlock = addBlock();
+  emitBranch(bodyBlock);
+
+  loopTargets.push_back({exitBlock, bodyBlock, {}, controlScopes.size()});
+  setCurrent(bodyBlock);
+  if (failed(lowerStatement(children.front())))
+    return failure();
+  emitBranch(bodyBlock);
+  loopTargets.pop_back();
+  setCurrent(exitBlock);
+  return success();
+}
+
+LogicalResult
+UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
+  Location location = getSemanticLocation(op);
+  SmallVector<Operation *> children = getChildren(op);
+  if (children.size() != 2) {
+    unsupported(op) << " (expected array expression and body)";
+    return failure();
+  }
+
+  struct Dimension {
+    int64_t left;
+    int64_t right;
+    uint64_t size;
+    uint64_t stride;
+    std::string iteratorPath;
+    Type iteratorType;
+  };
+  SmallVector<Dimension> dimensions;
+  for (Attribute attribute : op.getLoopDimensions()) {
+    auto dimension = dyn_cast<DictionaryAttr>(attribute);
+    auto hasIterator =
+        dimension
+            ? dimension.getAs<BoolAttr>(foreach_metadata::hasIterator)
+            : BoolAttr{};
+    if (!hasIterator) {
+      emitError(location) << "malformed foreach dimension metadata";
+      return failure();
+    }
+    // An omitted iterator skips that dimension.
+    if (!hasIterator.getValue())
+      continue;
+    auto hasRange =
+        dimension.getAs<BoolAttr>(foreach_metadata::hasStaticRange);
+    auto left = dimension.getAs<IntegerAttr>(foreach_metadata::left);
+    auto right = dimension.getAs<IntegerAttr>(foreach_metadata::right);
+    auto path = dimension.getAs<StringAttr>(foreach_metadata::iteratorPath);
+    auto semanticIteratorType =
+        dimension.getAs<TypeAttr>(foreach_metadata::iteratorType);
+    if (!hasRange || !hasRange.getValue()) {
+      emitError(location)
+          << "runtime-sized foreach dimension survived simulation "
+             "preparation";
+      return failure();
+    }
+    if (!left || !right || !path || !semanticIteratorType) {
+      emitError(location) << "malformed foreach dimension metadata";
+      return failure();
+    }
+    FailureOr<Type> iteratorType =
+        normalizeSemanticType(semanticIteratorType.getValue(), location);
+    if (failed(iteratorType))
+      return failure();
+
+    int64_t leftValue = left.getInt();
+    int64_t rightValue = right.getInt();
+    llvm::APInt wideLeft(64, static_cast<uint64_t>(leftValue), true);
+    llvm::APInt wideRight(64, static_cast<uint64_t>(rightValue), true);
+    wideLeft = wideLeft.sext(65);
+    wideRight = wideRight.sext(65);
+    llvm::APInt distance = wideLeft.sge(wideRight)
+                               ? wideLeft - wideRight
+                               : wideRight - wideLeft;
+    ++distance;
+    if (distance.getActiveBits() > 64) {
+      emitError(location) << "foreach dimension range is too large";
+      return failure();
+    }
+    dimensions.push_back(
+        {leftValue, rightValue, distance.getZExtValue(), 0,
+         path.getValue().str(), *iteratorType});
+  }
+  if (dimensions.empty()) {
+    emitError(location) << "foreach statement has no iterator";
+    return failure();
+  }
+
+  uint64_t iterationCount = 1;
+  for (Dimension &dimension : llvm::reverse(dimensions)) {
+    dimension.stride = iterationCount;
+    if (dimension.size != 0 &&
+        iterationCount > std::numeric_limits<uint64_t>::max() /
+                             dimension.size) {
+      emitError(location) << "foreach iteration space is too large";
+      return failure();
+    }
+    iterationCount *= dimension.size;
+  }
+
+  Type indexType = builder.getI64Type();
+  auto indexConstant = [&](uint64_t value) -> Value {
+    return arith::ConstantOp::create(
+        builder, location, indexType,
+        builder.getIntegerAttr(indexType, llvm::APInt(64, value)));
+  };
+  Block *header = addBlock();
+  header->addArgument(indexType, location);
+  Block *body = addBlock();
+  Block *step = addBlock();
+  step->addArgument(indexType, location);
+  Block *exit = addBlock();
+  cf::BranchOp::create(builder, location, header,
+                       ValueRange{indexConstant(0)});
+
+  setCurrent(header);
+  Value more = arith::CmpIOp::create(
+      builder, location, arith::CmpIPredicate::ult, header->getArgument(0),
+      indexConstant(iterationCount));
+  cf::CondBranchOp::create(builder, location, more, body, ValueRange{}, exit,
+                           ValueRange{});
+
+  setCurrent(body);
+  struct SavedBinding {
+    std::string path;
+    Value value;
+    bool existed;
+  };
+  SmallVector<SavedBinding> savedBindings;
+  savedBindings.reserve(dimensions.size());
+  for (const Dimension &dimension : dimensions) {
+    auto previous = values.find(dimension.iteratorPath);
+    savedBindings.push_back(
+        {dimension.iteratorPath,
+         previous == values.end() ? Value{} : previous->second,
+         previous != values.end()});
+
+    Value position = header->getArgument(0);
+    if (dimension.stride != 1)
+      position = arith::DivUIOp::create(
+          builder, location, position, indexConstant(dimension.stride));
+    position = arith::RemUIOp::create(
+        builder, location, position, indexConstant(dimension.size));
+    Value leftValue = arith::ConstantOp::create(
+        builder, location, indexType,
+        builder.getI64IntegerAttr(dimension.left));
+    Value index =
+        dimension.left <= dimension.right
+            ? Value(arith::AddIOp::create(builder, location, leftValue,
+                                          position))
+            : Value(arith::SubIOp::create(builder, location, leftValue,
+                                          position));
+    FailureOr<Value> converted =
+        convert(index, dimension.iteratorType, true, location, true);
+    if (failed(converted))
+      return failure();
+    values[dimension.iteratorPath] = *converted;
+  }
+
+  loopTargets.push_back(
+      {exit, step, {header->getArgument(0)}, controlScopes.size()});
+  if (failed(lowerStatement(children[1])))
+    return failure();
+  if (current->empty() || !current->back().hasTrait<OpTrait::IsTerminator>())
+    cf::BranchOp::create(builder, location, step,
+                         ValueRange{header->getArgument(0)});
+  loopTargets.pop_back();
+  for (const SavedBinding &binding : savedBindings) {
+    if (binding.existed)
+      values[binding.path] = binding.value;
+    else
+      values.erase(binding.path);
+  }
+
+  setCurrent(step);
+  Value next = arith::AddIOp::create(builder, location, step->getArgument(0),
+                                     indexConstant(1));
+  cf::BranchOp::create(builder, location, header, ValueRange{next});
+  setCurrent(exit);
   return success();
 }
 
@@ -5086,9 +5316,28 @@ UnitLowering::outlineForkBranch(Operation *branch, uint64_t forkNode,
       captureMetadata(builder, sim::CaptureKind::Context));
 
   llvm::StringSet<> capturedPaths;
+  auto addCapture = [&](StringRef path) {
+    if (!capturedPaths.insert(path).second)
+      return;
+    Value capture = values.lookup(path);
+    if (!capture)
+      capture = lvalues.lookup(path);
+    if (!capture)
+      return;
+    unsigned argument = inputs.size();
+    inputs.push_back(capture.getType());
+    captures.push_back(capture);
+    argumentAttrs.push_back(
+        captureMetadata(builder, sim::CaptureKind::Formal));
+    bindings.push_back(builder.getDictionaryAttr({
+        builder.getNamedAttr("path", builder.getStringAttr(path)),
+        builder.getNamedAttr("argument",
+                             builder.getI64IntegerAttr(argument)),
+    }));
+  };
   ArrayAttr parentBindings =
       function->getAttrOfType<ArrayAttr>(bindingsAttrName);
-  llvm::StringSet<> referencedPatternVariables;
+  llvm::StringSet<> referencedPaths;
   branch->walk([&](Operation *nested) {
     StringRef path;
     if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(nested))
@@ -5097,42 +5346,36 @@ UnitLowering::outlineForkBranch(Operation *branch, uint64_t forkNode,
                  dyn_cast<semantic::SVHierarchicalValueExpressionOp>(nested))
       path = hierarchical.getReferencedPath();
     if (!path.empty())
-      referencedPatternVariables.insert(path);
+      referencedPaths.insert(path);
     if (auto callCaptures =
             nested->getAttrOfType<ArrayAttr>(calleeCapturesAttrName))
       for (Attribute capture : callCaptures)
-        referencedPatternVariables.insert(
-            cast<StringAttr>(capture).getValue());
+        referencedPaths.insert(cast<StringAttr>(capture).getValue());
   });
   if (parentBindings)
     for (Attribute attribute : parentBindings) {
       auto binding = dyn_cast<DictionaryAttr>(attribute);
       auto pathAttr = binding ? binding.getAs<StringAttr>("path")
                               : StringAttr{};
-      if (!pathAttr || !capturedPaths.insert(pathAttr.getValue()).second)
+      if (!pathAttr)
         continue;
-      // A pattern binding does not exist until its containing match executes,
-      // so unrelated bindings from other branches cannot be passed to a fork
-      // merely because they occur elsewhere in the parent unit.
-      if (binding.contains("pattern_variable") &&
-          !referencedPatternVariables.contains(pathAttr.getValue()))
+      // Only pass bindings actually referenced by the branch or a direct
+      // callee. This also excludes pattern variables from unrelated matches.
+      if (!referencedPaths.contains(pathAttr.getValue()))
         continue;
-      Value capture = values.lookup(pathAttr.getValue());
-      if (!capture)
-        capture = lvalues.lookup(pathAttr.getValue());
-      if (!capture)
-        continue;
-      unsigned argument = inputs.size();
-      inputs.push_back(capture.getType());
-      captures.push_back(capture);
-      argumentAttrs.push_back(
-          captureMetadata(builder, sim::CaptureKind::Formal));
-      bindings.push_back(builder.getDictionaryAttr({
-          builder.getNamedAttr("path", pathAttr),
-          builder.getNamedAttr("argument",
-                               builder.getI64IntegerAttr(argument)),
-      }));
+      addCapture(pathAttr.getValue());
     }
+
+  // Foreach iterators and other lexical SSA bindings have no frozen function
+  // binding entry. Capture any such path referenced by the branch explicitly.
+  SmallVector<StringRef> lexicalPaths;
+  lexicalPaths.reserve(referencedPaths.size());
+  for (const auto &entry : referencedPaths)
+    if (!capturedPaths.contains(entry.getKey()))
+      lexicalPaths.push_back(entry.getKey());
+  llvm::sort(lexicalPaths);
+  for (StringRef path : lexicalPaths)
+    addCapture(path);
 
   uint64_t ordinal = nextForkOrdinal++;
   std::string symbol =
@@ -5417,8 +5660,14 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
     return lowerPatternCase(patternCase);
   if (isa<semantic::SVWhileLoopStatementOp>(op))
     return lowerWhile(op);
+  if (isa<semantic::SVDoWhileLoopStatementOp>(op))
+    return lowerDoWhile(op);
   if (isa<semantic::SVForLoopStatementOp>(op))
     return lowerFor(op);
+  if (isa<semantic::SVForeverLoopStatementOp>(op))
+    return lowerForever(op);
+  if (auto foreach = dyn_cast<semantic::SVForeachLoopStatementOp>(op))
+    return lowerForeach(foreach);
   if (isa<semantic::SVRepeatLoopStatementOp>(op))
     return lowerRepeat(op);
   if (isa<semantic::SVBreakStatementOp>(op)) {
