@@ -138,6 +138,15 @@ public:
             converted.front(), true));
         continue;
       }
+      if (sourceType.isF64()) {
+        if (converted.size() != 1)
+          return rewriter.notifyMatchFailure(
+              op, "real display item did not convert 1:1");
+        arguments.push_back(runtime::RTArgumentRealOp::create(
+            rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
+            converted.front()));
+        continue;
+      }
       if (converted.size() != 1 && converted.size() != 2)
         return rewriter.notifyMatchFailure(
             op, "packed display item must convert to one or two planes");
@@ -201,6 +210,22 @@ public:
         runtimeContext(rewriter, op.getLoc(), adaptor.getContext().front());
     rewriter.replaceOpWithNewOp<runtime::RTTerminationRequestedOp>(
         op, rewriter.getI1Type(), context);
+    return success();
+  }
+};
+
+class SchedulerTimeConversion final
+    : public SimIOConversion<sim::SimTimeNowOp> {
+public:
+  using SimIOConversion::SimIOConversion;
+
+  LogicalResult
+  matchAndRewrite(sim::SimTimeNowOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Value context =
+        runtimeContext(rewriter, op.getLoc(), adaptor.getContext().front());
+    rewriter.replaceOpWithNewOp<runtime::RTSchedulerTimeOp>(
+        op, rewriter.getI64Type(), context);
     return success();
   }
 };
@@ -465,11 +490,12 @@ public:
     ConversionTarget target(context);
     target.addIllegalOp<
         sim::SimBytesConstantOp, sim::SimFinishOp, sim::SimStopOp,
-        sim::SimFatalOp, sim::SimTerminationRequestedOp, sim::SimDisplayOp,
-        sim::SimFileOpenMCDOp, sim::SimFileOpenOp, sim::SimFileCloseOp,
-        sim::SimFileFlushOp, sim::SimFileGetcOp, sim::SimFileUngetcOp,
-        sim::SimFileGetlineOp, sim::SimFileReadPackedOp, sim::SimFileEofOp,
-        sim::SimFileSeekOp, sim::SimFileTellOp, sim::SimFileRewindOp>();
+        sim::SimFatalOp, sim::SimTerminationRequestedOp, sim::SimTimeNowOp,
+        sim::SimDisplayOp, sim::SimFileOpenMCDOp, sim::SimFileOpenOp,
+        sim::SimFileCloseOp, sim::SimFileFlushOp, sim::SimFileGetcOp,
+        sim::SimFileUngetcOp, sim::SimFileGetlineOp, sim::SimFileReadPackedOp,
+        sim::SimFileEofOp, sim::SimFileSeekOp, sim::SimFileTellOp,
+        sim::SimFileRewindOp>();
     target.addLegalDialect<runtime::ObeliskRuntimeDialect,
                            arith::ArithDialect>();
     target.addLegalOp<ModuleOp, sim::SimContextRuntimeOp,
@@ -499,7 +525,8 @@ void populateSimulationToRuntimePatterns(const TypeConverter &converter,
                TerminationConversion<sim::SimStopOp, runtime::RTFinishOp>,
                TerminationConversion<sim::SimFatalOp, runtime::RTFatalOp>>(
       converter, context);
-  patterns.add<TerminationRequestedConversion>(converter, context);
+  patterns.add<TerminationRequestedConversion, SchedulerTimeConversion>(
+      converter, context);
   patterns.add<OpenConversion<sim::SimFileOpenMCDOp,
                               runtime::RTFileOpenMCDOp>,
                OpenConversion<sim::SimFileOpenOp, runtime::RTFileOpenOp>,

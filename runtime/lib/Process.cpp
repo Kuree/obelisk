@@ -2235,6 +2235,18 @@ obelisk_rt_v1_scheduler_termination_requested(obelisk_rt_context *context) {
   }
 }
 
+extern "C" uint64_t obelisk_rt_v1_scheduler_time(obelisk_rt_context *context) {
+  if (!context)
+    return 0;
+  ContextTransaction transaction(context);
+  try {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    return context->schedulerTime;
+  } catch (...) {
+    return 0;
+  }
+}
+
 obelisk_rt_status runScheduler(obelisk_rt_context *context) {
   if (!context)
     return OBELISK_RT_INVALID_ARGUMENT;

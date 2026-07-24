@@ -468,6 +468,7 @@ ABI_FUNCTION(obelisk_rt_v1_scheduler_fatal,
              obelisk_rt_status (*)(obelisk_rt_context *, uint32_t));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_termination_requested,
              uint32_t (*)(obelisk_rt_context *));
+ABI_FUNCTION(obelisk_rt_v1_scheduler_time, uint64_t (*)(obelisk_rt_context *));
 ABI_FUNCTION(obelisk_rt_v1_file_open_mcd,
              obelisk_rt_status (*)(obelisk_rt_context *, const char *, uint64_t,
                                    uint32_t *));

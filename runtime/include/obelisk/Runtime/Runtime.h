@@ -290,6 +290,12 @@ enum {
   OBELISK_RT_INTRINSIC_V1_FINISH = UINT32_C(0x0001020a),
   OBELISK_RT_INTRINSIC_V1_FATAL = UINT32_C(0x0001020b),
   OBELISK_RT_INTRINSIC_V1_TERMINATION_REQUESTED = UINT32_C(0x0001020c),
+  OBELISK_RT_INTRINSIC_V1_TIME_NOW = UINT32_C(0x0001020d),
+  OBELISK_RT_INTRINSIC_V1_TIME_TO_REAL = UINT32_C(0x0001020e),
+  OBELISK_RT_INTRINSIC_V1_TIME_FROM_REAL = UINT32_C(0x0001020f),
+  OBELISK_RT_INTRINSIC_V1_REAL_FROM_INTEGER = UINT32_C(0x00010210),
+  OBELISK_RT_INTRINSIC_V1_REAL_TO_INTEGER = UINT32_C(0x00010211),
+  OBELISK_RT_INTRINSIC_V1_REAL_COMPARE = UINT32_C(0x00010212),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_VPI_ROOT = UINT32_C(0x00011000),
@@ -1042,6 +1048,7 @@ obelisk_rt_status obelisk_rt_v1_scheduler_fatal(
     obelisk_rt_context *context, uint32_t verbosity);
 uint32_t obelisk_rt_v1_scheduler_termination_requested(
     obelisk_rt_context *context);
+uint64_t obelisk_rt_v1_scheduler_time(obelisk_rt_context *context);
 obelisk_rt_status obelisk_rt_v1_scheduler_run(obelisk_rt_context *context);
 
 typedef uint32_t obelisk_rt_fragment_code_kind;

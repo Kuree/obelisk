@@ -875,11 +875,13 @@ TEST(RuntimeABI, FinishAndFatalHaveDistinctSchedulerResults) {
   EXPECT_EQ(obelisk_rt_v1_scheduler_fatal(nullptr, 0),
             OBELISK_RT_INVALID_ARGUMENT);
   EXPECT_EQ(obelisk_rt_v1_scheduler_termination_requested(nullptr), 0u);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_time(nullptr), 0u);
 
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
   ASSERT_NE(context, nullptr);
   EXPECT_EQ(obelisk_rt_v1_scheduler_termination_requested(context), 0u);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_time(context), 0u);
   EXPECT_EQ(obelisk_rt_v1_scheduler_finish(context, 2), OBELISK_RT_OK);
   EXPECT_EQ(obelisk_rt_v1_scheduler_termination_requested(context), 1u);
   EXPECT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
@@ -1215,6 +1217,11 @@ TEST_F(RuntimeTest, FormatsStringsRealsTimeAndEnvironment) {
       format("%0t", {timeArg(largestTime)}, &environment);
   EXPECT_EQ(largeStatus, OBELISK_RT_OK);
   EXPECT_EQ(largeOutput, "1844674407370955161500ns");
+
+  auto [realTimeStatus, realTimeOutput] =
+      format("%0t", {realArg(real)}, &environment);
+  EXPECT_EQ(realTimeStatus, OBELISK_RT_OK);
+  EXPECT_EQ(realTimeOutput, "325ns");
 }
 
 TEST_F(RuntimeTest, FormatsRemainingScalarFormsAndEmptyStrings) {

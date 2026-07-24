@@ -166,7 +166,7 @@ private:
   void recordSensitivity(Value value);
 
   FailureOr<Value> convert(Value value, Type targetType, bool sourceSigned,
-                           Location location);
+                           Location location, bool targetSigned = false);
   FailureOr<Value> toPackedScalar(Value value, Location location);
   FailureOr<Value> truthValue(Value value, Location location);
   FailureOr<Value> toLogic(Value value, Location location);
@@ -439,9 +439,53 @@ FailureOr<Value> UnitLowering::bindObserver(Operation *expression) {
 //===----------------------------------------------------------------------===//
 
 FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
-                                       bool sourceSigned, Location location) {
+                                       bool sourceSigned, Location location,
+                                       bool targetSigned) {
   if (value.getType() == targetType)
     return value;
+  if (targetType.isF64()) {
+    if (auto sourceInt = dyn_cast<IntegerType>(value.getType()))
+      return sim::SimRealFromIntegerOp::create(
+                 builder, location, targetType, value,
+                 builder.getBoolAttr(sourceSigned))
+          .getResult();
+    if (auto sourceLogic = dyn_cast<sim::LogicType>(value.getType())) {
+      Type bitsType =
+          IntegerType::get(value.getContext(), sourceLogic.getWidth());
+      Value bits =
+          sim::SimLogicToBitsOp::create(builder, location, bitsType, value);
+      Value roundTrip =
+          sim::SimLogicFromBitsOp::create(builder, location, sourceLogic, bits);
+      Value known = sim::SimLogicCompareOp::create(
+          builder, location, builder.getI1Type(), sim::CompareKind::CaseEq,
+          value, roundTrip);
+      Value zero = arith::ConstantOp::create(
+          builder, location, bitsType, builder.getIntegerAttr(bitsType, 0));
+      Value normalized =
+          arith::SelectOp::create(builder, location, known, bits, zero);
+      return sim::SimRealFromIntegerOp::create(
+                 builder, location, targetType, normalized,
+                 builder.getBoolAttr(sourceSigned))
+          .getResult();
+    }
+  }
+  if (value.getType().isF64()) {
+    if (auto targetInt = dyn_cast<IntegerType>(targetType))
+      return sim::SimRealToIntegerOp::create(builder, location, targetInt,
+                                             value,
+                                             builder.getBoolAttr(targetSigned))
+          .getResult();
+    if (auto targetLogic = dyn_cast<sim::LogicType>(targetType)) {
+      Type bitsType =
+          IntegerType::get(value.getContext(), targetLogic.getWidth());
+      Value bits =
+          sim::SimRealToIntegerOp::create(builder, location, bitsType, value,
+                                          builder.getBoolAttr(targetSigned));
+      return sim::SimLogicFromBitsOp::create(builder, location, targetLogic,
+                                             bits)
+          .getResult();
+    }
+  }
   if (sim::isAggregateType(value.getType())) {
     Type scalarType = sim::getPackedScalarType(value.getType());
     if (!scalarType) {
@@ -451,7 +495,7 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
     }
     Value flattened =
         sim::SimPackedFlattenOp::create(builder, location, scalarType, value);
-    return convert(flattened, targetType, sourceSigned, location);
+    return convert(flattened, targetType, sourceSigned, location, targetSigned);
   }
   if (sim::isAggregateType(targetType)) {
     Type scalarType = sim::getPackedScalarType(targetType);
@@ -461,7 +505,7 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
       return failure();
     }
     FailureOr<Value> converted =
-        convert(value, scalarType, sourceSigned, location);
+        convert(value, scalarType, sourceSigned, location, targetSigned);
     if (failed(converted))
       return failure();
     return sim::SimPackedUnflattenOp::create(builder, location, targetType,
@@ -535,6 +579,13 @@ FailureOr<Value> UnitLowering::toPackedScalar(Value value, Location location) {
 }
 
 FailureOr<Value> UnitLowering::truthValue(Value value, Location location) {
+  if (value.getType().isF64()) {
+    Value zero = arith::ConstantOp::create(builder, location, value.getType(),
+                                           builder.getF64FloatAttr(0.0));
+    return arith::CmpFOp::create(builder, location, arith::CmpFPredicate::UNE,
+                                 value, zero)
+        .getResult();
+  }
   FailureOr<Value> scalar = toPackedScalar(value, location);
   if (failed(scalar))
     return failure();
@@ -1381,8 +1432,8 @@ LogicalResult UnitLowering::writeLValue(Operation *destination, Value value,
     FailureOr<Type> destinationType = getNormalizedSemanticType(destination);
     if (children.empty() || failed(destinationType))
       return failure();
-    FailureOr<Value> converted =
-        convert(value, *destinationType, sourceSigned, location);
+    FailureOr<Value> converted = convert(value, *destinationType, sourceSigned,
+                                         location, isSignedNode(destination));
     if (failed(converted))
       return failure();
     FailureOr<Value> scalar = toPackedScalar(*converted, location);
@@ -1446,8 +1497,8 @@ LogicalResult UnitLowering::writeLValue(Operation *destination, Value value,
     emitError(location) << "assignment destination is not a ref or driver";
     return failure();
   }
-  FailureOr<Value> converted =
-      convert(value, elementType, sourceSigned, location);
+  FailureOr<Value> converted = convert(value, elementType, sourceSigned,
+                                       location, isSignedNode(destination));
   if (failed(converted))
     return failure();
   if (isa<sim::RefType>((*lowered).getType())) {
@@ -1489,8 +1540,8 @@ UnitLowering::lowerAssignment(semantic::SVAssignmentExpressionOp op) {
   FailureOr<Type> destinationType = getNormalizedSemanticType(destination);
   if (failed(destinationType))
     return failure();
-  FailureOr<Value> value =
-      convert(*rhs, *destinationType, isSignedNode(source), location);
+  FailureOr<Value> value = convert(*rhs, *destinationType, isSignedNode(source),
+                                   location, isSignedNode(destination));
   if (failed(value))
     return failure();
   bool nonblocking =
@@ -1727,6 +1778,21 @@ FailureOr<Value> UnitLowering::lowerUnary(semantic::SVUnaryExpressionOp op) {
   FailureOr<Value> input = lowerExpression(children.front());
   if (failed(input))
     return failure();
+  if ((*input).getType().isF64()) {
+    if (kind != semantic::SVUnaryOperator::LogicalNot) {
+      emitError(location)
+          << "real arithmetic and unary sign operations are not supported";
+      return failure();
+    }
+    FailureOr<Value> truth = truthValue(*input, location);
+    if (failed(truth))
+      return failure();
+    Value value = arith::XOrIOp::create(
+        builder, location, *truth,
+        arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                  builder.getBoolAttr(true)));
+    return convert(value, *resultType, false, location);
+  }
   FailureOr<Value> scalarInput = toPackedScalar(*input, location);
   if (failed(scalarInput))
     return failure();
@@ -1903,6 +1969,66 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
           arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                     builder.getBoolAttr(true)));
     return convert(equal, *resultType, false, location);
+  }
+  if ((*lhs).getType().isF64() || (*rhs).getType().isF64()) {
+    if (!(*lhs).getType().isF64()) {
+      lhs = convert(*lhs, builder.getF64Type(), isSignedNode(children[0]),
+                    location);
+      if (failed(lhs))
+        return failure();
+    }
+    if (!(*rhs).getType().isF64()) {
+      rhs = convert(*rhs, builder.getF64Type(), isSignedNode(children[1]),
+                    location);
+      if (failed(rhs))
+        return failure();
+    }
+    if (kind == Binary::LogicalAnd || kind == Binary::LogicalOr) {
+      FailureOr<Value> lhsTruth = truthValue(*lhs, location);
+      FailureOr<Value> rhsTruth = truthValue(*rhs, location);
+      if (failed(lhsTruth) || failed(rhsTruth))
+        return failure();
+      Value logical = kind == Binary::LogicalAnd
+                          ? Value(arith::AndIOp::create(builder, location,
+                                                        *lhsTruth, *rhsTruth))
+                          : Value(arith::OrIOp::create(builder, location,
+                                                       *lhsTruth, *rhsTruth));
+      return convert(logical, *resultType, false, location);
+    }
+    std::optional<arith::CmpFPredicate> predicate;
+    switch (kind) {
+    case Binary::Equality:
+    case Binary::CaseEquality:
+      predicate = arith::CmpFPredicate::OEQ;
+      break;
+    case Binary::Inequality:
+    case Binary::CaseInequality:
+      predicate = arith::CmpFPredicate::UNE;
+      break;
+    case Binary::GreaterThanEqual:
+      predicate = arith::CmpFPredicate::OGE;
+      break;
+    case Binary::GreaterThan:
+      predicate = arith::CmpFPredicate::OGT;
+      break;
+    case Binary::LessThanEqual:
+      predicate = arith::CmpFPredicate::OLE;
+      break;
+    case Binary::LessThan:
+      predicate = arith::CmpFPredicate::OLT;
+      break;
+    default:
+      break;
+    }
+    if (!predicate) {
+      emitError(location)
+          << "real arithmetic is not supported; only comparisons and logical "
+             "operators are executable";
+      return failure();
+    }
+    Value compared =
+        arith::CmpFOp::create(builder, location, *predicate, *lhs, *rhs);
+    return convert(compared, *resultType, false, location);
   }
   FailureOr<Value> scalarLhs = toPackedScalar(*lhs, location);
   FailureOr<Value> scalarRhs = toPackedScalar(*rhs, location);
@@ -2303,6 +2429,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     Value destination;
     Type formalType;
     bool formalSigned;
+    bool destinationSigned;
     uint32_t dpiCategory;
   };
   SmallVector<CopyOut> copyOuts;
@@ -2336,17 +2463,25 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       if (auto assignment =
               dyn_cast<semantic::SVAssignmentExpressionOp>(child)) {
         SmallVector<Operation *> outputChildren = getChildren(assignment);
-        if (outputChildren.size() == 2 &&
-            isa<semantic::SVEmptyArgumentExpressionOp>(outputChildren[1]))
-          actual = outputChildren.front();
+        if (outputChildren.size() == 2) {
+          Operation *placeholder = outputChildren[1];
+          while (isa<semantic::SVConversionExpressionOp>(placeholder)) {
+            SmallVector<Operation *> converted = getChildren(placeholder);
+            if (converted.size() != 1)
+              break;
+            placeholder = converted.front();
+          }
+          if (isa<semantic::SVEmptyArgumentExpressionOp>(placeholder))
+            actual = outputChildren.front();
+        }
       }
 
     if (isInput) {
       FailureOr<Value> argument = lowerExpression(actual);
       if (failed(argument))
         return failure();
-      FailureOr<Value> converted =
-          convert(*argument, formalType, isSignedNode(actual), location);
+      FailureOr<Value> converted = convert(
+          *argument, formalType, isSignedNode(actual), location, formalSigned);
       if (failed(converted))
         return failure();
       operands.push_back(*converted);
@@ -2385,8 +2520,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     } else {
       Value loaded = sim::SimRefLoadOp::create(
           builder, location, ref.getElementType(), *destination);
-      FailureOr<Value> converted =
-          convert(loaded, formalType, isSignedNode(actual), location);
+      FailureOr<Value> converted = convert(
+          loaded, formalType, isSignedNode(actual), location, formalSigned);
       if (failed(converted))
         return failure();
       initial = *converted;
@@ -2395,8 +2530,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     operands.push_back(initial);
     if (directTask)
       operands.push_back(*destination);
-    copyOuts.push_back(
-        {*destination, formalType, formalSigned, dpiCategory});
+    copyOuts.push_back({*destination, formalType, formalSigned,
+                        isSignedNode(actual), dpiCategory});
   }
 
   llvm::StringSet<> readCaptures;
@@ -2541,7 +2676,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
           cast<sim::RefType>(copyOut.destination.getType()).getElementType();
       FailureOr<Value> converted =
           convert(callResults[index + (dpiTask ? 0 : 1)], destinationType,
-                  copyOut.formalSigned, location);
+                  copyOut.formalSigned, location, copyOut.destinationSigned);
       if (failed(converted))
         return failure();
       sim::SimRefStoreOp::create(builder, location, *converted,
@@ -2606,6 +2741,38 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
   auto dummyTaskResult = [&]() -> Value {
     return constant(builder.getI1Type(), 0);
   };
+
+  if (name == "$time" || name == "$stime" || name == "$realtime") {
+    if (!children.empty()) {
+      emitError(location) << name << " accepts no arguments";
+      return failure();
+    }
+    auto scaleAttr = function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
+    if (!scaleAttr || !scaleAttr.getValue().isStrictlyPositive()) {
+      function.emitError("code unit has no valid frozen time scale");
+      return failure();
+    }
+    Value now = sim::SimTimeNowOp::create(builder, location, i64, context);
+    if (name == "$realtime") {
+      Value real = sim::SimTimeToRealOp::create(
+          builder, location, builder.getF64Type(), now, scaleAttr);
+      return convertResult(real);
+    }
+    Value scale = arith::ConstantOp::create(builder, location, i64, scaleAttr);
+    Value quotient = arith::DivUIOp::create(builder, location, now, scale);
+    Value remainder = arith::RemUIOp::create(builder, location, now, scale);
+    uint64_t threshold = scaleAttr.getValue().getZExtValue() / 2 +
+                         scaleAttr.getValue().getZExtValue() % 2;
+    Value halfway = constant(i64, threshold);
+    Value increment = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::uge, remainder, halfway);
+    Value extended = arith::ExtUIOp::create(builder, location, i64, increment);
+    Value rounded =
+        arith::AddIOp::create(builder, location, quotient, extended);
+    if (name == "$stime")
+      rounded = arith::TruncIOp::create(builder, location, i32, rounded);
+    return convertResult(rounded);
+  }
 
   if (name == "triggered") {
     if (children.size() != 1) {
@@ -2767,12 +2934,17 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
         FailureOr<Value> value = lowerExpression(child);
         if (failed(value))
           return failure();
-        FailureOr<Value> scalar =
-            toPackedScalar(*value, getSemanticLocation(child));
-        if (failed(scalar))
-          return failure();
-        items.push_back(*scalar);
-        flags.push_back(isSignedNode(child) ? 1 : 0);
+        if ((*value).getType().isF64()) {
+          items.push_back(*value);
+          flags.push_back(4);
+        } else {
+          FailureOr<Value> scalar =
+              toPackedScalar(*value, getSemanticLocation(child));
+          if (failed(scalar))
+            return failure();
+          items.push_back(*scalar);
+          flags.push_back(isSignedNode(child) ? 1 : 0);
+        }
       }
     }
     auto timeMultiplier =
@@ -2976,6 +3148,11 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
   if (isa<semantic::SVIntegerLiteralOp,
           semantic::SVUnbasedUnsizedIntegerLiteralOp>(op))
     return lowerLiteral(op);
+  if (isa<semantic::SVRealLiteralOp, semantic::SVTimeLiteralOp>(op)) {
+    emitError(getSemanticLocation(op))
+        << "real literals are supported only as procedural delay literals";
+    return failure();
+  }
   if (isa<semantic::SVConversionExpressionOp>(op)) {
     SmallVector<Operation *> children = getChildren(op);
     if (children.size() != 1) {
@@ -2987,7 +3164,7 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
     if (failed(input) || failed(target))
       return failure();
     return convert(*input, *target, isSignedNode(children.front()),
-                   getSemanticLocation(op));
+                   getSemanticLocation(op), isSignedNode(op));
   }
   if (isa<semantic::SVConcatenationExpressionOp>(op))
     return lowerConcatenation(op);
@@ -3126,6 +3303,18 @@ FailureOr<Value> UnitLowering::lowerDelayValue(Operation *control) {
   FailureOr<Value> amount = lowerExpression(children.front());
   if (failed(amount))
     return failure();
+  if ((*amount).getType().isF64()) {
+    auto quantumAttr =
+        function->getAttrOfType<IntegerAttr>(delayQuantumAttrName);
+    if (!quantumAttr) {
+      function.emitError("code unit has no frozen delay quantum");
+      return failure();
+    }
+    return sim::SimTimeFromRealOp::create(
+               builder, location, sim::TimeType::get(function.getContext()),
+               *amount, scaleAttr, quantumAttr)
+        .getResult();
+  }
   FailureOr<Value> scalar = toPackedScalar(*amount, location);
   if (failed(scalar))
     return failure();

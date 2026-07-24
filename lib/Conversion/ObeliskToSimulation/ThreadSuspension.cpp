@@ -145,6 +145,37 @@ public:
     DenseMap<Block *, DenseMap<Value, BlockArgument>> threadedValues;
     DenseMap<Value, Value> threadedRoots;
 
+    // Lowering may have already made some values explicit on a suspension
+    // edge. Record those lanes before discovering additional live values.
+    // Otherwise later CFG splits can keep using the pre-suspension SSA value
+    // even though a resumed bytecode activation only initializes the
+    // continuation argument.
+    for (Operation *suspension : suspensions) {
+      auto branch = cast<BranchOpInterface>(suspension);
+      Block *continuation = suspension->getSuccessor(0);
+      SuccessorOperands successorOperands = branch.getSuccessorOperands(0);
+      ValueRange forwarded = successorOperands.getForwardedOperands();
+      unsigned produced = successorOperands.getProducedOperandCount();
+      if (produced > continuation->getNumArguments() ||
+          forwarded.size() != continuation->getNumArguments() - produced) {
+        suspension->emitError(
+            "continuation operands do not match continuation arguments");
+        signalPassFailure();
+        return;
+      }
+      for (auto [value, argument] : llvm::zip_equal(
+               forwarded, continuation->getArguments().drop_front(produced))) {
+        Value root = threadedRoots.lookup(value);
+        if (!root)
+          root = value;
+        threadedValues[continuation].try_emplace(root, argument);
+        threadedRoots.try_emplace(argument, root);
+        value.replaceUsesWithIf(argument, [&](OpOperand &use) {
+          return dominance.dominates(continuation, use.getOwner()->getBlock());
+        });
+      }
+    }
+
     for (Operation *suspension : suspensions) {
       Liveness liveness(function);
       const auto &liveOut = liveness.getLiveOut(suspension->getBlock());
@@ -295,11 +326,22 @@ public:
               signalPassFailure();
               return;
             }
-            Value incoming = root;
-            if (auto found = threadedValues[predecessor].find(root);
-                found != threadedValues[predecessor].end())
-              incoming = found->second;
-            else if (!dominance.dominates(root, terminator)) {
+            Value incoming;
+            Block *incomingBlock = nullptr;
+            for (auto &[candidateBlock, candidates] : threadedValues) {
+              auto found = candidates.find(root);
+              if (found == candidates.end() ||
+                  !dominance.dominates(candidateBlock, predecessor))
+                continue;
+              if (!incomingBlock ||
+                  dominance.dominates(incomingBlock, candidateBlock)) {
+                incoming = found->second;
+                incomingBlock = candidateBlock;
+              }
+            }
+            if (!incoming && dominance.dominates(root, terminator))
+              incoming = root;
+            if (!incoming) {
               unavailable = true;
               break;
             }

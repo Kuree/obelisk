@@ -145,7 +145,8 @@ bool isSignedSemanticType(Type type) {
   return false;
 }
 
-static FailureOr<Type> normalizeType(Type type, Location location);
+static FailureOr<Type> normalizeType(Type type, Location location,
+                                     bool allowRealScalar = true);
 
 static FailureOr<ArrayAttr> normalizeSourceFields(ArrayAttr fields,
                                                   Location location,
@@ -167,7 +168,8 @@ static FailureOr<ArrayAttr> normalizeSourceFields(ArrayAttr fields,
     FailureOr<Type> fieldType =
         allowVoidFields && isa<semantic::VoidType>(typeAttr.getValue())
             ? FailureOr<Type>(IntegerType::get(fields.getContext(), 1))
-            : normalizeType(typeAttr.getValue(), location);
+            : normalizeType(typeAttr.getValue(), location,
+                            /*allowRealScalar=*/false);
     if (failed(fieldType))
       return failure();
     normalized.push_back(sim::FieldAttr::get(
@@ -189,7 +191,8 @@ static FailureOr<ArrayAttr> normalizeDictionaryFields(DictionaryAttr fields,
       emitError(location) << "aggregate field dictionary contains a non-type";
       return failure();
     }
-    FailureOr<Type> type = normalizeType(typeAttr.getValue(), location);
+    FailureOr<Type> type = normalizeType(typeAttr.getValue(), location,
+                                         /*allowRealScalar=*/false);
     if (failed(type))
       return failure();
     names.push_back(field.getName());
@@ -215,7 +218,8 @@ static FailureOr<ArrayAttr> normalizeDictionaryFields(DictionaryAttr fields,
   return ArrayAttr::get(fields.getContext(), normalized);
 }
 
-static FailureOr<Type> normalizeType(Type type, Location location) {
+static FailureOr<Type> normalizeType(Type type, Location location,
+                                     bool allowRealScalar) {
   MLIRContext *context = type.getContext();
   if (auto integer = dyn_cast<IntegerType>(type)) {
     if (!integer.isSignless()) {
@@ -226,14 +230,16 @@ static FailureOr<Type> normalizeType(Type type, Location location) {
     return type;
   }
   if (auto array = dyn_cast<semantic::RangedPackedArrayType>(type)) {
-    FailureOr<Type> element = normalizeType(array.getElementType(), location);
+    FailureOr<Type> element = normalizeType(array.getElementType(), location,
+                                            /*allowRealScalar=*/false);
     if (failed(element))
       return failure();
     return sim::PackedArrayType::get(context, *element, array.getLeft(),
                                      array.getRight());
   }
   if (auto array = dyn_cast<semantic::RangedUnpackedArrayType>(type)) {
-    FailureOr<Type> element = normalizeType(array.getElementType(), location);
+    FailureOr<Type> element = normalizeType(array.getElementType(), location,
+                                            /*allowRealScalar=*/false);
     if (failed(element))
       return failure();
     return sim::UnpackedArrayType::get(context, *element, array.getLeft(),
@@ -246,7 +252,8 @@ static FailureOr<Type> normalizeType(Type type, Location location) {
       emitError(location) << "fixed array size is outside the supported range";
       return failure();
     }
-    FailureOr<Type> element = normalizeType(array.getElementType(), location);
+    FailureOr<Type> element = normalizeType(array.getElementType(), location,
+                                            /*allowRealScalar=*/false);
     if (failed(element))
       return failure();
     return sim::PackedArrayType::get(context, *element, array.getSize() - 1, 0);
@@ -258,7 +265,8 @@ static FailureOr<Type> normalizeType(Type type, Location location) {
       emitError(location) << "fixed array size is outside the supported range";
       return failure();
     }
-    FailureOr<Type> element = normalizeType(array.getElementType(), location);
+    FailureOr<Type> element = normalizeType(array.getElementType(), location,
+                                            /*allowRealScalar=*/false);
     if (failed(element))
       return failure();
     return sim::UnpackedArrayType::get(context, *element, array.getSize() - 1,
@@ -319,9 +327,19 @@ static FailureOr<Type> normalizeType(Type type, Location location) {
     return IntegerType::get(context, static_cast<unsigned>(*width));
   }
   if (isa<semantic::TimeType>(type))
-    return sim::TimeType::get(context);
+    return IntegerType::get(context, 64);
+  if (isa<semantic::RealType, semantic::RealtimeType>(type)) {
+    if (!allowRealScalar) {
+      emitError(location)
+          << "real and realtime are supported only as scalar variables";
+      return failure();
+    }
+    return Float64Type::get(context);
+  }
   if (isa<semantic::EventType>(type))
     return sim::EventType::get(context);
+  if (type.isF64())
+    return type;
   if (isa<sim::LogicType, sim::TimeType, sim::ContextType, sim::RefType,
           sim::NetType, sim::DriverType, sim::EventType, sim::ProcessType>(
           type) ||
@@ -583,6 +601,9 @@ Value createDefaultValue(OpBuilder &builder, Location location, Type type) {
   if (auto integer = dyn_cast<IntegerType>(type))
     return arith::ConstantOp::create(builder, location, integer,
                                      builder.getIntegerAttr(integer, 0));
+  if (type.isF64())
+    return arith::ConstantOp::create(builder, location, type,
+                                     builder.getF64FloatAttr(0.0));
   return {};
 }
 

@@ -1033,6 +1033,36 @@ module {
 // -----
 
 module {
+  obelisk_sim.design @bad_time_to_real_scale {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_time_to_real_scale.bad.9000001"
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %value = arith.constant 1 : i64
+      // expected-error @+1 {{tick scale must be positive}}
+      %bad = obelisk_sim.time.to_real %value by 0
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @bad_time_from_real_quantum {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_time_from_real_quantum.bad.9000001"
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %value = arith.constant 1.0 : f64
+      // expected-error @+1 {{tick quantum must divide the tick scale}}
+      %bad = obelisk_sim.time.from_real %value by 10 quantum 3
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.design @bad_edge_iff_condition {
     obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_edge_iff_condition.bad.9000001"
     obelisk_sim.scope.decl 0
@@ -1288,7 +1318,7 @@ module {
       %fd = arith.constant 1 : i32
       %value = arith.constant 0 : i8
       // expected-error @+1 {{display item flags contain an unknown bit}}
-      obelisk_sim.display %ctx to %fd(%value) newline = false radix = 10 flags = [4] : i8
+      obelisk_sim.display %ctx to %fd(%value) newline = false radix = 10 flags = [8] : i8
       obelisk_sim.return
     }
   }
@@ -1319,8 +1349,40 @@ module {
     obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %fd = arith.constant 1 : i32
       %value = arith.constant 0.0 : f32
-      // expected-error @+1 {{items must be literal bytes or packed integers}}
+      // expected-error @+1 {{items must be literal bytes, packed integers, or f64 reals}}
       obelisk_sim.display %ctx to %fd(%value) newline = false radix = 10 flags = [0] : f32
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @unmarked_real_display_item {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.unmarked_real_display_item.bad.9000001"
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %fd = arith.constant 1 : i32
+      %value = arith.constant 0.0 : f64
+      // expected-error @+1 {{f64 display operands must be marked real}}
+      obelisk_sim.display %ctx to %fd(%value) newline = false radix = 10 flags = [0] : f64
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @signed_real_display_item {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.signed_real_display_item.bad.9000001"
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %fd = arith.constant 1 : i32
+      %value = arith.constant 0.0 : f64
+      // expected-error @+1 {{real display items cannot be marked signed}}
+      obelisk_sim.display %ctx to %fd(%value) newline = false radix = 10 flags = [5] : f64
       obelisk_sim.return
     }
   }

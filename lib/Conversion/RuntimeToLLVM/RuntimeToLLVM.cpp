@@ -409,6 +409,10 @@ LLVM::LLVMFunctionType getFunctionType(runtime::RuntimeCall call,
   case runtime::RuntimeSignature::TerminationRequested:
     arguments = {abi.pointer};
     break;
+  case runtime::RuntimeSignature::SchedulerTime:
+    result = abi.i64;
+    arguments = {abi.pointer};
+    break;
   case runtime::RuntimeSignature::Format:
     arguments = {abi.pointer, abi.pointer, abi.i64,    abi.pointer,
                  abi.i64,     abi.pointer, abi.pointer};
@@ -629,6 +633,7 @@ enum class RuntimeMaterializer {
   PackedFromBytes,
   ArgumentEmpty,
   ArgumentPacked,
+  ArgumentReal,
   ArgumentBytes,
   ArgumentArray,
   FormatEnvironment,
@@ -815,6 +820,22 @@ public:
           llvmIntegerConstant(rewriter, location, abi.i64, width), 2);
       argument = insertStructValue(rewriter, location, argument, *data, 3);
       argument = insertStructValue(rewriter, location, argument, unknown, 4);
+      rewriter.replaceOp(operation, argument);
+      return success();
+    }
+    case RuntimeMaterializer::ArgumentReal: {
+      FailureOr<Value> data =
+          allocateAtFunctionEntry(operation, rewriter, abi,
+                                  operands[0].getType(), 1, abi.alignments.i64);
+      if (failed(data))
+        return failure();
+      LLVM::StoreOp::create(rewriter, location, operands[0], *data,
+                            abi.alignments.i64);
+      Value argument = LLVM::ZeroOp::create(rewriter, location, abi.argument);
+      argument = insertStructValue(
+          rewriter, location, argument,
+          llvmIntegerConstant(rewriter, location, abi.i32, 3), 0);
+      argument = insertStructValue(rewriter, location, argument, *data, 3);
       rewriter.replaceOp(operation, argument);
       return success();
     }
@@ -1036,6 +1057,9 @@ public:
           operation, rewriter.getI1Type(), requested);
       return success();
     }
+    case runtime::RuntimeCall::SchedulerTime:
+      rewriter.replaceOp(operation, emitCall(operands).getResult());
+      return success();
     case runtime::RuntimeCall::Format: {
       auto [formatData, formatSize] = span(operands[1]);
       auto [argumentData, argumentCount] = span(operands[2]);
@@ -1179,6 +1203,7 @@ void populateRuntimePatterns(const TypeConverter &converter,
   OBELISK_RUNTIME_MATERIALIZER(RTPackedFromBytesOp, PackedFromBytes);
   OBELISK_RUNTIME_MATERIALIZER(RTArgumentEmptyOp, ArgumentEmpty);
   OBELISK_RUNTIME_MATERIALIZER(RTArgumentPackedOp, ArgumentPacked);
+  OBELISK_RUNTIME_MATERIALIZER(RTArgumentRealOp, ArgumentReal);
   OBELISK_RUNTIME_MATERIALIZER(RTArgumentBytesOp, ArgumentBytes);
   OBELISK_RUNTIME_MATERIALIZER(RTArgumentArrayOp, ArgumentArray);
   OBELISK_RUNTIME_MATERIALIZER(RTFormatEnvironmentOp, FormatEnvironment);

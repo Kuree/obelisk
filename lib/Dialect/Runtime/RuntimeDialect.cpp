@@ -342,6 +342,11 @@ LogicalResult RTArgumentPackedOp::verify() {
       *this, getResult(), "stack-backed packed format argument");
 }
 
+LogicalResult RTArgumentRealOp::verify() {
+  return verifyLocalConsumers<RTArgumentArrayOp>(
+      *this, getResult(), "stack-backed real format argument");
+}
+
 LogicalResult RTArgumentBytesOp::verify() {
   return verifyConsumers<RTArgumentArrayOp>(
       *this, getResult(), "format argument");

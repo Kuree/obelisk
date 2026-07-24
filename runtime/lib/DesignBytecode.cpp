@@ -4,6 +4,7 @@
 #include "obelisk/Runtime/StableHandle.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <deque>
 #include <limits>
@@ -580,6 +581,9 @@ bool validIntrinsic(const Image &image, const Function &function,
       signature.id != OBELISK_RT_INTRINSIC_V1_CONTROL_ENTER &&
       signature.id != OBELISK_RT_INTRINSIC_V1_CONTROL_DISABLE &&
       signature.id != OBELISK_RT_INTRINSIC_V1_STATIC_ONCE &&
+      signature.id != OBELISK_RT_INTRINSIC_V1_REAL_FROM_INTEGER &&
+      signature.id != OBELISK_RT_INTRINSIC_V1_REAL_TO_INTEGER &&
+      signature.id != OBELISK_RT_INTRINSIC_V1_REAL_COMPARE &&
       signature.flags != 0)
     return false;
   auto input = [&](uint32_t index) -> std::optional<Layout> {
@@ -605,6 +609,11 @@ bool validIntrinsic(const Image &image, const Function &function,
   };
   auto bits = [&](const std::optional<Layout> &layout, uint32_t width) {
     return numeric(layout) && layout->width == width;
+  };
+  auto twoStateBits = [](const std::optional<Layout> &layout,
+                         std::optional<uint32_t> width = std::nullopt) {
+    return layout && layout->kind == OBELISK_RT_DBREG_BITS &&
+           (!width || layout->width == *width);
   };
   auto bytes = [](const std::optional<Layout> &layout) {
     return layout && layout->kind == OBELISK_RT_DBREG_BYTES;
@@ -717,6 +726,30 @@ bool validIntrinsic(const Image &image, const Function &function,
   case OBELISK_RT_INTRINSIC_V1_TERMINATION_REQUESTED:
     return signature.flags == 0 && site.inputCount == 0 &&
            site.outputCount == 1 && bits(output(0), 1);
+  case OBELISK_RT_INTRINSIC_V1_TIME_NOW:
+    return signature.flags == 0 && site.inputCount == 0 &&
+           site.outputCount == 1 && twoStateBits(output(0), 64);
+  case OBELISK_RT_INTRINSIC_V1_TIME_TO_REAL:
+    return signature.flags == 0 && site.inputCount == 2 &&
+           site.outputCount == 1 && twoStateBits(input(0), 64) &&
+           twoStateBits(input(1), 64) && twoStateBits(output(0), 64);
+  case OBELISK_RT_INTRINSIC_V1_TIME_FROM_REAL:
+    return signature.flags == 0 && site.inputCount == 3 &&
+           site.outputCount == 1 && twoStateBits(input(0), 64) &&
+           twoStateBits(input(1), 64) && twoStateBits(input(2), 64) &&
+           twoStateBits(output(0), 64);
+  case OBELISK_RT_INTRINSIC_V1_REAL_FROM_INTEGER:
+    return signature.flags <= 1 && site.inputCount == 1 &&
+           site.outputCount == 1 && twoStateBits(input(0)) &&
+           twoStateBits(output(0), 64);
+  case OBELISK_RT_INTRINSIC_V1_REAL_TO_INTEGER:
+    return signature.flags <= 1 && site.inputCount == 1 &&
+           site.outputCount == 1 && twoStateBits(input(0), 64) &&
+           twoStateBits(output(0));
+  case OBELISK_RT_INTRINSIC_V1_REAL_COMPARE:
+    return signature.flags <= 5 && site.inputCount == 2 &&
+           site.outputCount == 1 && twoStateBits(input(0), 64) &&
+           twoStateBits(input(1), 64) && twoStateBits(output(0), 1);
   case OBELISK_RT_INTRINSIC_V1_FILE_OPEN_MCD:
     return site.inputCount == 1 && site.outputCount == 1 && bytes(input(0)) &&
            bits(output(0), 32);
@@ -1688,9 +1721,9 @@ bool validateImage(const Image &image) {
           return false;
         break;
       case OBELISK_RT_DB_INTRINSIC:
-        if (instruction.flags || instruction.destination || instruction.source0 ||
-            instruction.source1 || instruction.source2 || instruction.auxiliary ||
-            instruction.immediate > UINT32_MAX ||
+        if (instruction.flags || instruction.destination ||
+            instruction.source0 || instruction.source1 || instruction.source2 ||
+            instruction.auxiliary || instruction.immediate > UINT32_MAX ||
             !validIntrinsic(image, function,
                             static_cast<uint32_t>(instruction.immediate)))
           return false;
@@ -1788,6 +1821,102 @@ Logic negate(Logic value) {
   }
   mask(value);
   return value;
+}
+
+double integerToDouble(Logic integer, bool isSigned) {
+  bool negative =
+      isSigned &&
+      ((integer.value[(integer.width - 1) / 64] >> ((integer.width - 1) % 64)) &
+       1) != 0;
+  if (negative)
+    integer = negate(std::move(integer));
+
+  size_t high = integer.value.size();
+  while (high != 0 && integer.value[high - 1] == 0)
+    --high;
+  if (high == 0)
+    return 0.0;
+
+  uint64_t highLimb = integer.value[high - 1];
+  unsigned highBits = 0;
+  for (uint64_t scan = highLimb; scan != 0; scan >>= 1)
+    ++highBits;
+  uint64_t activeBits = (high - 1) * 64 + highBits;
+  if (activeBits <= 64) {
+    double result = static_cast<double>(integer.value.front());
+    return negative ? -result : result;
+  }
+
+  uint64_t exponent = activeBits - 1;
+  if (exponent > 1023)
+    return negative ? -std::numeric_limits<double>::infinity()
+                    : std::numeric_limits<double>::infinity();
+
+  uint64_t shift = activeBits - 53;
+  size_t word = static_cast<size_t>(shift / 64);
+  unsigned bit = static_cast<unsigned>(shift % 64);
+  uint64_t mantissa = integer.value[word] >> bit;
+  if (bit != 0 && word + 1 < integer.value.size())
+    mantissa |= integer.value[word + 1] << (64 - bit);
+  mantissa &= UINT64_C(0x1fffffffffffff);
+
+  uint64_t halfwayPosition = shift - 1;
+  size_t halfwayWord = static_cast<size_t>(halfwayPosition / 64);
+  unsigned halfwayBit = static_cast<unsigned>(halfwayPosition % 64);
+  bool halfway = ((integer.value[halfwayWord] >> halfwayBit) & 1) != 0;
+  bool lower = false;
+  for (size_t index = 0; index < halfwayWord; ++index)
+    lower |= integer.value[index] != 0;
+  if (halfwayBit != 0)
+    lower |=
+        (integer.value[halfwayWord] & ((uint64_t{1} << halfwayBit) - 1)) != 0;
+  if (halfway && (lower || (mantissa & 1) != 0))
+    ++mantissa;
+  if (mantissa == (uint64_t{1} << 53)) {
+    mantissa >>= 1;
+    if (++exponent > 1023)
+      return negative ? -std::numeric_limits<double>::infinity()
+                      : std::numeric_limits<double>::infinity();
+  }
+
+  uint64_t encoded = (negative ? uint64_t{1} << 63 : 0) |
+                     ((exponent + 1023) << 52) |
+                     (mantissa & UINT64_C(0x000fffffffffffff));
+  double result;
+  std::memcpy(&result, &encoded, sizeof(result));
+  return result;
+}
+
+Logic doubleToInteger(double value, uint32_t width) {
+  uint64_t encoded;
+  std::memcpy(&encoded, &value, sizeof(encoded));
+  bool negative = (encoded >> 63) != 0;
+  uint64_t exponentBits = (encoded >> 52) & UINT64_C(0x7ff);
+  int64_t exponent = static_cast<int64_t>(exponentBits) - 1023;
+  uint64_t mantissa =
+      (encoded & UINT64_C(0x000fffffffffffff)) | (uint64_t{1} << 52);
+
+  Logic integer{width, false, std::vector<uint64_t>(limbCount(width)),
+                std::vector<uint64_t>(limbCount(width))};
+  if (exponent == -1) {
+    integer.value.front() = 1;
+  } else if (exponent >= 0 && exponentBits != UINT64_C(0x7ff)) {
+    if (exponent < 52) {
+      unsigned shift = static_cast<unsigned>(52 - exponent);
+      integer.value.front() =
+          (mantissa >> shift) + ((mantissa >> (shift - 1)) & 1);
+    } else {
+      uint64_t shift = static_cast<uint64_t>(exponent - 52);
+      size_t word = static_cast<size_t>(shift / 64);
+      unsigned bit = static_cast<unsigned>(shift % 64);
+      if (word < integer.value.size())
+        integer.value[word] |= mantissa << bit;
+      if (bit != 0 && word + 1 < integer.value.size())
+        integer.value[word + 1] |= mantissa >> (64 - bit);
+    }
+  }
+  mask(integer);
+  return negative ? negate(std::move(integer)) : integer;
 }
 
 Logic add(const Logic &left, const Logic &right, bool subtract) {
@@ -2551,6 +2680,20 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                ? OBELISK_RT_OK
                : OBELISK_RT_INVALID_BYTECODE;
   };
+  auto realInput = [&](uint32_t index) -> std::optional<double> {
+    auto bits = scalar(index);
+    if (!bits)
+      return std::nullopt;
+    double value;
+    uint64_t encoded = *bits;
+    std::memcpy(&value, &encoded, sizeof(value));
+    return value;
+  };
+  auto writeReal = [&](uint32_t index, double value) {
+    uint64_t encoded;
+    std::memcpy(&encoded, &value, sizeof(encoded));
+    return sentinel(index, encoded);
+  };
   auto writeStatus = [&](uint32_t index, obelisk_rt_status value) {
     Layout output =
         layoutAt(image, frame.function, outputRegister(index));
@@ -3180,11 +3323,14 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     uint32_t physical = 2;
     std::vector<Logic> values;
     values.reserve(site.inputCount - 2);
+    std::vector<double> realValues;
+    realValues.reserve(itemCount);
     std::vector<obelisk_rt_arg_v1> arguments;
     arguments.reserve(itemCount);
     for (uint32_t index = 0; index != itemCount; ++index) {
       uint32_t itemFlags = read32(flags + uint64_t{index} * 4);
-      if ((itemFlags & ~uint32_t{3}) != 0)
+      if ((itemFlags & ~uint32_t{7}) != 0 ||
+          ((itemFlags & 4) != 0 && (itemFlags & 3) != 0))
         return OBELISK_RT_INVALID_BYTECODE;
       if ((itemFlags & 2) != 0) {
         arguments.push_back({OBELISK_RT_ARG_EMPTY, 0, 0, nullptr, nullptr});
@@ -3196,11 +3342,21 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       Layout layout = layoutAt(image, frame.function, reg);
       if (layout.kind == OBELISK_RT_DBREG_BYTES) {
         auto value = readByteSpan(image, frame, reg);
-        if (!value || (itemFlags & 1) != 0)
+        if (!value || (itemFlags & 5) != 0)
           return OBELISK_RT_INVALID_BYTECODE;
         arguments.push_back(
             {OBELISK_RT_ARG_STRING, OBELISK_RT_ARG_FORMAT_STRING, value->size,
              value->data, nullptr});
+      } else if ((itemFlags & 4) != 0) {
+        if (layout.kind != OBELISK_RT_DBREG_BITS || layout.width != 64)
+          return OBELISK_RT_INVALID_BYTECODE;
+        auto encoded = readScalar(image, frame, reg);
+        if (!encoded)
+          return OBELISK_RT_INVALID_BYTECODE;
+        realValues.emplace_back();
+        std::memcpy(&realValues.back(), &*encoded, sizeof(double));
+        arguments.push_back(
+            {OBELISK_RT_ARG_REAL, 0, 0, &realValues.back(), nullptr});
       } else {
         values.push_back(readLogic(frame.data, layout));
         Logic &value = values.back();
@@ -3235,6 +3391,79 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
   case OBELISK_RT_INTRINSIC_V1_TERMINATION_REQUESTED:
     return sentinel(
         0, obelisk_rt_v1_scheduler_termination_requested(context));
+  case OBELISK_RT_INTRINSIC_V1_TIME_NOW:
+    return sentinel(0, obelisk_rt_v1_scheduler_time(context));
+  case OBELISK_RT_INTRINSIC_V1_TIME_TO_REAL: {
+    auto ticks = scalar(0);
+    auto scale = scalar(1);
+    if (!ticks || !scale || *scale == 0)
+      return OBELISK_RT_INVALID_BYTECODE;
+    return writeReal(0,
+                     static_cast<double>(*ticks) / static_cast<double>(*scale));
+  }
+  case OBELISK_RT_INTRINSIC_V1_TIME_FROM_REAL: {
+    auto value = realInput(0);
+    auto scale = scalar(1);
+    auto quantum = scalar(2);
+    if (!value || !scale || !quantum || *scale == 0 || *quantum == 0 ||
+        *scale % *quantum != 0)
+      return OBELISK_RT_INVALID_BYTECODE;
+    double nonnegative = *value >= 0.0 ? *value : 0.0;
+    double steps = nonnegative * (static_cast<double>(*scale) /
+                                  static_cast<double>(*quantum));
+    double rounded = steps + 0.5;
+    uint64_t maximumSteps = UINT64_MAX / *quantum;
+    uint64_t tickSteps =
+        !std::isfinite(rounded) || rounded >= std::ldexp(1.0, 64)
+            ? maximumSteps
+            : std::min(static_cast<uint64_t>(rounded), maximumSteps);
+    return sentinel(0, tickSteps * *quantum);
+  }
+  case OBELISK_RT_INTRINSIC_V1_REAL_FROM_INTEGER: {
+    Layout input = layoutAt(image, frame.function, inputRegister(0));
+    Logic integer = readLogic(frame.data, input);
+    return writeReal(0,
+                     integerToDouble(std::move(integer), signature.flags != 0));
+  }
+  case OBELISK_RT_INTRINSIC_V1_REAL_TO_INTEGER: {
+    auto value = realInput(0);
+    if (!value)
+      return OBELISK_RT_INVALID_BYTECODE;
+    Layout output = layoutAt(image, frame.function, outputRegister(0));
+    Logic integer = doubleToInteger(*value, output.width);
+    writeLogic(frame.data, output, integer);
+    return OBELISK_RT_OK;
+  }
+  case OBELISK_RT_INTRINSIC_V1_REAL_COMPARE: {
+    auto lhs = realInput(0);
+    auto rhs = realInput(1);
+    if (!lhs || !rhs)
+      return OBELISK_RT_INVALID_BYTECODE;
+    bool result;
+    switch (signature.flags) {
+    case 0:
+      result = *lhs == *rhs;
+      break;
+    case 1:
+      result = *lhs != *rhs;
+      break;
+    case 2:
+      result = *lhs < *rhs;
+      break;
+    case 3:
+      result = *lhs <= *rhs;
+      break;
+    case 4:
+      result = *lhs > *rhs;
+      break;
+    case 5:
+      result = *lhs >= *rhs;
+      break;
+    default:
+      return OBELISK_RT_INVALID_BYTECODE;
+    }
+    return sentinel(0, result ? 1 : 0);
+  }
   case OBELISK_RT_INTRINSIC_V1_FILE_OPEN_MCD:
   case OBELISK_RT_INTRINSIC_V1_FILE_OPEN: {
     auto path = bytes(0);

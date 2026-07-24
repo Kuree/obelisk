@@ -469,8 +469,6 @@ obelisk_rt_status formatArgument(std::string &output,
     return formatFloat(output, value, specifier, options);
   }
   case 't': {
-    if (!getLogicView(argument, view))
-      return OBELISK_RT_ARGUMENT_MISMATCH;
     FormatOptions timeOptions = options;
     if (!timeOptions.width)
       timeOptions.width =
@@ -478,8 +476,23 @@ obelisk_rt_status formatArgument(std::string &output,
     uint64_t multiplier = environment && environment->time_multiplier
                               ? environment->time_multiplier
                               : 1;
-    obelisk_rt_status status =
-        formatDecimal(output, view, timeOptions, multiplier);
+    obelisk_rt_status status;
+    if (argument.kind == OBELISK_RT_ARG_REAL && argument.data) {
+      double value = *static_cast<const double *>(argument.data);
+      long double scaled = static_cast<long double>(value) *
+                           static_cast<long double>(multiplier);
+      if (!std::isfinite(value) || scaled < 0 ||
+          scaled >
+              static_cast<long double>(std::numeric_limits<uint64_t>::max()))
+        return OBELISK_RT_ARGUMENT_MISMATCH;
+      uint64_t rounded = static_cast<uint64_t>(std::round(scaled));
+      LogicView realTime{64, false, &rounded, nullptr};
+      status = formatDecimal(output, realTime, timeOptions);
+    } else {
+      if (!getLogicView(argument, view))
+        return OBELISK_RT_ARGUMENT_MISMATCH;
+      status = formatDecimal(output, view, timeOptions, multiplier);
+    }
     if (status != OBELISK_RT_OK)
       return status;
     if (environment &&

@@ -710,7 +710,7 @@ std::optional<uint64_t> getProvenanceSpan(Type type) {
     return uint64_t{1};
   if (std::optional<unsigned> packed = getPackedWidth(type))
     return *packed;
-  if (isa<TimeType>(type))
+  if (isa<TimeType>(type) || type.isF64())
     return uint64_t{64};
   auto checkedAdd = [](uint64_t &total, uint64_t amount) {
     if (amount > std::numeric_limits<uint64_t>::max() - total)
@@ -789,7 +789,7 @@ getAggregateProvenanceSubelement(Type type, unsigned index) {
 static bool isNormalizedValueType(Type type) {
   if (auto integer = dyn_cast<IntegerType>(type))
     return integer.isSignless();
-  return isa<LogicType>(type) || isAggregateType(type);
+  return type.isF64() || isa<LogicType>(type) || isAggregateType(type);
 }
 
 static LogicalResult verifyNormalizedIndex(Operation *op, Type type) {
@@ -857,6 +857,8 @@ verifyArrayType(llvm::function_ref<InFlightDiagnostic()> emitError,
     return emitError() << "fixed array range is too large";
   if (failed(verifyElementType(emitError, elementType)))
     return failure();
+  if (elementType.isF64())
+    return emitError() << "real-valued aggregate elements are not supported";
   if (packed) {
     std::optional<unsigned> elementWidth = getPackedWidth(elementType);
     if (!elementWidth)
@@ -903,6 +905,8 @@ verifyRecordType(llvm::function_ref<InFlightDiagnostic()> emitError,
       return emitError() << "aggregate field names must be unique";
     if (failed(verifyElementType(emitError, field.getType())))
       return failure();
+    if (field.getType().isF64())
+      return emitError() << "real-valued aggregate fields are not supported";
     if (!packed) {
       if (field.getPackedOffset() != 0)
         return emitError() << "unpacked aggregate field has a packed offset";
@@ -1052,12 +1056,16 @@ RefType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
 LogicalResult
 NetType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
                 Type elementType) {
+  if (elementType.isF64())
+    return emitError() << "real-valued nets are not supported";
   return verifyElementType(emitError, elementType);
 }
 
 LogicalResult
 DriverType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
                    Type elementType) {
+  if (elementType.isF64())
+    return emitError() << "real-valued drivers are not supported";
   return verifyElementType(emitError, elementType);
 }
 
@@ -1130,6 +1138,8 @@ LogicalResult SimNetDeclOp::verify() {
   if (failed(verifyNonnegative(*this, getIdAttr(), "net ID")) ||
       failed(verifyNonnegative(*this, getScopeIdAttr(), "scope ID")))
     return failure();
+  if (getType().isF64())
+    return emitOpError("real-valued nets are not supported");
   return verifyElementType([&] { return emitOpError(); }, getType());
 }
 
@@ -1169,6 +1179,8 @@ LogicalResult SimDriverDeclOp::verify() {
     if (!typeWidth || low > *typeWidth || width > *typeWidth - low)
       return emitOpError("driven range exceeds the driver type");
   }
+  if (getType().isF64())
+    return emitOpError("real-valued drivers are not supported");
   return verifyElementType([&] { return emitOpError(); }, getType());
 }
 
@@ -1554,7 +1566,7 @@ LogicalResult SimFuncOp::verify() {
   for (Type input : type.getInputs()) {
     if (!isa<ContextType, RefType, NetType, DriverType, EventType, ProcessType,
              IntegerType, LogicType, TimeType>(input) &&
-        !isAggregateType(input))
+        !input.isF64() && !isAggregateType(input))
       return emitOpError() << "contains non-normalized argument type " << input;
     if (auto integer = dyn_cast<IntegerType>(input);
         integer && !integer.isSignless())
@@ -1563,7 +1575,7 @@ LogicalResult SimFuncOp::verify() {
   for (Type result : type.getResults()) {
     if (!isa<IntegerType, LogicType, TimeType, EventType, ProcessType>(
             result) &&
-        !isAggregateType(result))
+        !result.isF64() && !isAggregateType(result))
       return emitOpError() << "contains non-normalized result type " << result;
     if (auto integer = dyn_cast<IntegerType>(result);
         integer && !integer.isSignless())
@@ -2234,6 +2246,9 @@ static Value materializeDefaultValue(OpBuilder &builder, Location location,
   if (auto integer = dyn_cast<IntegerType>(type))
     return arith::ConstantOp::create(builder, location, integer,
                                      builder.getIntegerAttr(integer, 0));
+  if (type.isF64())
+    return arith::ConstantOp::create(builder, location, type,
+                                     builder.getF64FloatAttr(0.0));
   if (auto logic = dyn_cast<LogicType>(type)) {
     auto plane = IntegerType::get(type.getContext(), logic.getWidth());
     return SimLogicConstantOp::create(
@@ -4116,6 +4131,22 @@ LogicalResult SimTimeScaleOp::verify() {
   return success();
 }
 
+LogicalResult SimTimeToRealOp::verify() {
+  if (!getScaleAttr().getValue().isStrictlyPositive())
+    return emitOpError("tick scale must be positive");
+  return success();
+}
+
+LogicalResult SimTimeFromRealOp::verify() {
+  if (!getScaleAttr().getValue().isStrictlyPositive())
+    return emitOpError("tick scale must be positive");
+  if (!getQuantumAttr().getValue().isStrictlyPositive())
+    return emitOpError("tick quantum must be positive");
+  if (!getScaleAttr().getValue().urem(getQuantumAttr().getValue()).isZero())
+    return emitOpError("tick quantum must divide the tick scale");
+  return success();
+}
+
 LogicalResult SimEventTriggerOp::verify() {
   if (getDelay() && !getNonblocking())
     return emitOpError(
@@ -4469,10 +4500,18 @@ LogicalResult SimDisplayOp::verify() {
     if (itemIndex == getItems().size())
       return emitOpError("item flags require more display operands");
     Value item = getItems()[itemIndex++];
-    if (!isa<BytesType, IntegerType, LogicType>(item.getType()))
-      return emitOpError("items must be literal bytes or packed integers");
-    if ((flags & ~3) != 0)
+    if (!isa<BytesType, IntegerType, LogicType>(item.getType()) &&
+        !item.getType().isF64())
+      return emitOpError(
+          "items must be literal bytes, packed integers, or f64 reals");
+    if ((flags & ~7) != 0)
       return emitOpError("display item flags contain an unknown bit");
+    if ((flags & 4) != 0 && !item.getType().isF64())
+      return emitOpError("real display items must have f64 operands");
+    if ((flags & 4) == 0 && item.getType().isF64())
+      return emitOpError("f64 display operands must be marked real");
+    if ((flags & 5) == 5)
+      return emitOpError("real display items cannot be marked signed");
     if (isa<BytesType>(item.getType()) && flags != 0)
       return emitOpError("literal byte items cannot be signed");
   }

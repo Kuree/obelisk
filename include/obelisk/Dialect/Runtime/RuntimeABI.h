@@ -27,6 +27,7 @@ enum class RuntimeSignature {
   LastError,
   Finish,
   TerminationRequested,
+  SchedulerTime,
   Format,
   Display,
   FileOpenMCD,

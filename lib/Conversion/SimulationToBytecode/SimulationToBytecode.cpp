@@ -55,6 +55,15 @@ constexpr uint32_t kIntrinsicFinish = OBELISK_RT_INTRINSIC_V1_FINISH;
 constexpr uint32_t kIntrinsicFatal = OBELISK_RT_INTRINSIC_V1_FATAL;
 constexpr uint32_t kIntrinsicTerminationRequested =
     OBELISK_RT_INTRINSIC_V1_TERMINATION_REQUESTED;
+constexpr uint32_t kIntrinsicTimeNow = OBELISK_RT_INTRINSIC_V1_TIME_NOW;
+constexpr uint32_t kIntrinsicTimeToReal = OBELISK_RT_INTRINSIC_V1_TIME_TO_REAL;
+constexpr uint32_t kIntrinsicTimeFromReal =
+    OBELISK_RT_INTRINSIC_V1_TIME_FROM_REAL;
+constexpr uint32_t kIntrinsicRealFromInteger =
+    OBELISK_RT_INTRINSIC_V1_REAL_FROM_INTEGER;
+constexpr uint32_t kIntrinsicRealToInteger =
+    OBELISK_RT_INTRINSIC_V1_REAL_TO_INTEGER;
+constexpr uint32_t kIntrinsicRealCompare = OBELISK_RT_INTRINSIC_V1_REAL_COMPARE;
 constexpr uint32_t kIntrinsicFileOpenMCD =
     OBELISK_RT_INTRINSIC_V1_FILE_OPEN_MCD;
 constexpr uint32_t kIntrinsicFileOpen = OBELISK_RT_INTRINSIC_V1_FILE_OPEN;
@@ -367,6 +376,9 @@ FailureOr<Layout> getLayout(Type type) {
     layout.kind = Bits;
     layout.width = integer.getWidth();
     layout.flags = integer.isSigned() ? 1 : 0;
+  } else if (type.isF64()) {
+    layout.kind = Bits;
+    layout.width = 64;
   } else if (auto logic = dyn_cast<sim::LogicType>(type)) {
     layout.kind = Logic;
     layout.width = logic.getWidth();
@@ -377,8 +389,8 @@ FailureOr<Layout> getLayout(Type type) {
     layout.kind = Bits;
     layout.width = 64;
   } else if (isa<sim::RefType, sim::NetType, sim::DriverType, sim::EventType,
-                 sim::ProcessType, sim::ContextType,
-                 sim::ObserverType, runtime::ContextType>(type)) {
+                 sim::ProcessType, sim::ContextType, sim::ObserverType,
+                 runtime::ContextType>(type)) {
     layout.kind = Handle;
     layout.width = 256;
   } else if (isa<runtime::StatusType>(type)) {
@@ -1205,10 +1217,13 @@ private:
 
   LogicalResult encodeOperation(FunctionPlan &plan, Operation *operation) {
     if (auto constant = dyn_cast<arith::ConstantOp>(operation)) {
-      auto integer = dyn_cast<IntegerAttr>(constant.getValue());
-      if (!integer)
-        return operation->emitOpError("bytecode requires integer constants");
-      return emitConstant(plan, constant.getResult(), integer.getValue());
+      if (auto integer = dyn_cast<IntegerAttr>(constant.getValue()))
+        return emitConstant(plan, constant.getResult(), integer.getValue());
+      if (auto floating = dyn_cast<FloatAttr>(constant.getValue()))
+        return emitConstant(plan, constant.getResult(),
+                            floating.getValue().bitcastToAPInt());
+      return operation->emitOpError(
+          "bytecode requires integer or floating-point constants");
     }
     auto binary = [&](uint16_t opcode, Value result, Value left, Value right) {
       emit({opcode, 0, reg(plan, result), reg(plan, left), reg(plan, right)});
@@ -1257,6 +1272,35 @@ private:
       emit({Compare, predicate, reg(plan, op.getResult()), reg(plan, op.getLhs()),
             reg(plan, op.getRhs())});
       return success();
+    }
+    if (auto op = dyn_cast<arith::CmpFOp>(operation)) {
+      uint32_t predicate;
+      switch (op.getPredicate()) {
+      case arith::CmpFPredicate::OEQ:
+        predicate = 0;
+        break;
+      case arith::CmpFPredicate::UNE:
+        predicate = 1;
+        break;
+      case arith::CmpFPredicate::OLT:
+        predicate = 2;
+        break;
+      case arith::CmpFPredicate::OLE:
+        predicate = 3;
+        break;
+      case arith::CmpFPredicate::OGT:
+        predicate = 4;
+        break;
+      case arith::CmpFPredicate::OGE:
+        predicate = 5;
+        break;
+      default:
+        return op.emitOpError(
+            "floating comparison predicate is not executable");
+      }
+      return emitIntrinsic(plan, kIntrinsicRealCompare,
+                           {op.getLhs(), op.getRhs()}, {op.getResult()},
+                           predicate);
     }
     if (auto op = dyn_cast<arith::SelectOp>(operation)) {
       emit({Select, 0, reg(plan, op.getResult()), reg(plan, op.getTrueValue()),
@@ -1365,6 +1409,8 @@ private:
     if (auto op = dyn_cast<sim::SimTerminationRequestedOp>(operation))
       return emitIntrinsic(plan, kIntrinsicTerminationRequested, {},
                            {op.getResult()});
+    if (auto op = dyn_cast<sim::SimTimeNowOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicTimeNow, {}, {op.getResult()});
     if (auto op = dyn_cast<sim::SimDisplayOp>(operation))
       return encodeDisplay(plan, op);
     if (auto op = dyn_cast<sim::SimFileOpenMCDOp>(operation))
@@ -1454,6 +1500,36 @@ private:
     }
     if (auto add = dyn_cast<sim::SimTimeAddOp>(operation))
       return binary(Add, add.getResult(), add.getLhs(), add.getRhs());
+    if (auto op = dyn_cast<sim::SimTimeToRealOp>(operation)) {
+      uint32_t scale = temporary(plan, IntegerType::get(op.getContext(), 64));
+      if (scale == kInvalidRegister)
+        return failure();
+      emit({Constant, 0, scale, 0, 0, 0, 0,
+            addConstant(plan.layouts[scale], APInt(64, op.getScale()))});
+      return emitIntrinsicRegisters(plan, kIntrinsicTimeToReal,
+                                    {reg(plan, op.getInput()), scale},
+                                    {reg(plan, op.getResult())});
+    }
+    if (auto op = dyn_cast<sim::SimTimeFromRealOp>(operation)) {
+      Type i64 = IntegerType::get(op.getContext(), 64);
+      uint32_t scale = temporary(plan, i64);
+      uint32_t quantum = temporary(plan, i64);
+      if (scale == kInvalidRegister || quantum == kInvalidRegister)
+        return failure();
+      emit({Constant, 0, scale, 0, 0, 0, 0,
+            addConstant(plan.layouts[scale], APInt(64, op.getScale()))});
+      emit({Constant, 0, quantum, 0, 0, 0, 0,
+            addConstant(plan.layouts[quantum], APInt(64, op.getQuantum()))});
+      return emitIntrinsicRegisters(plan, kIntrinsicTimeFromReal,
+                                    {reg(plan, op.getInput()), scale, quantum},
+                                    {reg(plan, op.getResult())});
+    }
+    if (auto op = dyn_cast<sim::SimRealFromIntegerOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicRealFromInteger, {op.getInput()},
+                           {op.getResult()}, op.getIsSigned() ? 1 : 0);
+    if (auto op = dyn_cast<sim::SimRealToIntegerOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicRealToInteger, {op.getInput()},
+                           {op.getResult()}, op.getIsSigned() ? 1 : 0);
     if (auto scale = dyn_cast<sim::SimTimeScaleOp>(operation)) {
       uint32_t multiplier = temporary(plan, scale.getResult().getType());
       if (multiplier == kInvalidRegister)
@@ -3026,6 +3102,9 @@ private:
         record.flags |= integer.isSigned() ? 2 : 0;
         record.flags |= 4;
         record.name = "bits";
+      } else if (type.isF64()) {
+        record.kind = 1;
+        record.name = "real";
       } else if (isa<sim::LogicType>(type)) {
         record.kind = 1;
         record.flags |= 4;

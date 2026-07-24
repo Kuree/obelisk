@@ -403,10 +403,11 @@ def SimDisplayOp : SimOp<"display", [
   let description = [{
     `item_flags` describes the logical argument sequence. Bit 0 marks a
     nonempty packed operand signed; bit 1 represents an omitted argument and
-    consumes no entry from `items`. `scope` and `library_cell` carry the
-    elaborated call-site information used by `%m` and `%l`. `time_multiplier`
-    converts a numeric `%t` argument from the invoking scope's time unit to the
-    design precision used by the runtime clock.
+    consumes no entry from `items`; bit 2 marks an f64 real operand. `scope`
+    and `library_cell` carry the elaborated call-site information used by `%m`
+    and `%l`. `time_multiplier` converts a numeric `%t` argument from the
+    invoking scope's time unit to the design precision used by the runtime
+    clock.
   }];
   let arguments = (ins SimContextType:$context, I32:$descriptor,
                        Variadic<AnyType>:$items, BoolAttr:$append_newline,
@@ -1106,6 +1107,57 @@ def SimTimeConstantOp : SimOp<"time.constant", [Pure, ConstantLike]> {
   let assemblyFormat = "$value attr-dict";
   let hasVerifier = 1;
   let hasFolder = 1;
+}
+
+def SimTimeNowOp : SimOp<"time.now", [
+  MemoryEffects<[MemRead<SimSchedulerResource>]>
+]> {
+  let summary = "read the scheduler clock in design-precision ticks";
+  let arguments = (ins SimContextType:$context);
+  let results = (outs I64:$result);
+  let assemblyFormat = "$context attr-dict";
+}
+
+def SimTimeToRealOp : SimOp<"time.to_real", [Pure]> {
+  let summary = "convert design-precision ticks to a realtime value";
+  let arguments = (ins I64:$input, I64Attr:$scale);
+  let results = (outs F64:$result);
+  let assemblyFormat = "$input `by` $scale attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimTimeFromRealOp : SimOp<"time.from_real", [Pure]> {
+  let summary = "convert a realtime delay to design-precision ticks";
+  let description = [{
+    Rounds a nonnegative delay to the nearest source-precision quantum, with
+    ties rounded upward, and then expresses it in design-precision ticks. NaN
+    and negative inputs produce zero. Positive infinity and finite overflow
+    saturate to the largest quantum-aligned value representable in 64 bits.
+  }];
+  let arguments = (ins F64:$input, I64Attr:$scale, I64Attr:$quantum);
+  let results = (outs SimTimeType:$result);
+  let assemblyFormat = "$input `by` $scale `quantum` $quantum attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimRealFromIntegerOp : SimOp<"real.from_integer", [Pure]> {
+  let summary = "convert a two-state integer to an IEEE double";
+  let description = [{
+    Converts with IEEE round-to-nearest, ties-to-even semantics. Magnitudes
+    outside the finite binary64 range produce infinity with the source sign.
+  }];
+  let arguments = (ins AnyInteger:$input, BoolAttr:$is_signed);
+  let results = (outs F64:$result);
+  let assemblyFormat =
+      "$input `signed` `=` $is_signed attr-dict `:` type($input)";
+}
+
+def SimRealToIntegerOp : SimOp<"real.to_integer", [Pure]> {
+  let summary = "round an IEEE double to a two-state integer";
+  let arguments = (ins F64:$input, BoolAttr:$is_signed);
+  let results = (outs AnyInteger:$result);
+  let assemblyFormat =
+      "$input `signed` `=` $is_signed attr-dict `:` type($result)";
 }
 
 def SimTimeScaleOp : SimOp<"time.scale", [Pure]> {

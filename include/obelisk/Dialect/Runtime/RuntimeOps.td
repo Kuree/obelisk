@@ -57,6 +57,12 @@ def RTArgumentPackedOp : RTOp<"argument.packed", [MemoryEffects<[MemAlloc]>]> {
   let hasVerifier = 1;
 }
 
+def RTArgumentRealOp : RTOp<"argument.real", [MemoryEffects<[MemAlloc]>]> {
+  let arguments = (ins F64:$value);
+  let results = (outs RTArgumentType:$result);
+  let hasVerifier = 1;
+}
+
 def RTArgumentBytesOp : RTOp<"argument.bytes", [Pure]> {
   let arguments = (ins RTByteSpanType:$value,
                        BoolAttr:$is_format_string);
@@ -162,6 +168,13 @@ def RTTerminationRequestedOp : RTOp<"termination.requested", [
 ]> {
   let arguments = (ins RTContextType:$context);
   let results = (outs I1:$result);
+}
+
+def RTSchedulerTimeOp : RTOp<"scheduler.time", [
+  MemoryEffects<[MemRead<RTRuntimeResource>]>
+]> {
+  let arguments = (ins RTContextType:$context);
+  let results = (outs I64:$result);
 }
 
 // Formatting and display.

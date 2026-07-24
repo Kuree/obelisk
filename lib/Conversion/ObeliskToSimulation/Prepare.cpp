@@ -832,6 +832,14 @@ void ObeliskSimPreparePass::runOnOperation() {
     aliases[internal] = view->path;
     refViews[internal] = *view;
   });
+  semanticRoot->walk([&](semantic::SVPortSymbolOp port) {
+    std::optional<Type> type = port.getSemanticType();
+    if (type && isa<semantic::RealType, semantic::RealtimeType>(*type)) {
+      emitError(getSemanticLocation(port))
+          << "real and realtime ports are not supported";
+      invalid = true;
+    }
+  });
   semanticRoot->walk([&](semantic::SVModportPortSymbolOp port) {
     Operation *modport = port->getParentOp();
     Operation *interfaceBody = modport ? modport->getParentOp() : nullptr;
@@ -910,6 +918,12 @@ void ObeliskSimPreparePass::runOnOperation() {
                                     scopeId, *type, lifetime, hierarchy, debug,
                                     sim::ComputeObservabilityKindAttr{});
     } else {
+      if ((*type).isF64()) {
+        emitError(getSemanticLocation(op))
+            << "real and realtime nets are not supported";
+        invalid = true;
+        return;
+      }
       auto net = cast<semantic::SVNetSymbolOp>(op);
       sim::NetResolutionKind resolution;
       switch (net.getNetKind()) {

@@ -51,6 +51,8 @@ static bool isExecutableOperation(Operation *op, ModuleOp root) {
 static bool isExecutableType(Type type) {
   if (auto integer = dyn_cast<IntegerType>(type))
     return integer.isSignless();
+  if (type.isF64())
+    return true;
   return isa<FunctionType>(type) ||
          isa<runtime::StatusType>(type) ||
          isa<sim::ContextType, sim::BytesType, sim::LogicType, sim::TimeType,
