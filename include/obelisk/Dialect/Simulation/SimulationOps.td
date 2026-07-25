@@ -909,6 +909,31 @@ def SimStaticOnceOp : SimOp<"static.once", [
   let hasVerifier = 1;
 }
 
+def SimMonitorRegisterOp : SimOp<"monitor.register", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>,
+                   MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "replace the context-wide SystemVerilog monitor process";
+  let arguments = (ins SimProcessType:$process);
+  let assemblyFormat = "$process attr-dict";
+}
+
+def SimMonitorControlOp : SimOp<"monitor.control", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>]>
+  ]> {
+  let summary = "enable or disable context-wide SystemVerilog monitor output";
+  let arguments = (ins BoolAttr:$enabled);
+  let assemblyFormat = "$enabled attr-dict";
+}
+
+def SimMonitorCurrentOp : SimOp<"monitor.current", [
+    MemoryEffects<[MemRead<SimSchedulerResource>]>
+  ]> {
+  let summary = "test whether the executing process is the current monitor";
+  let results = (outs I1:$current);
+  let assemblyFormat = "attr-dict";
+}
+
 def SimDisableChildrenOp : SimOp<"children.disable", [
     MemoryEffects<[MemWrite<SimSchedulerResource>,
                    MemWrite<SimProcessResource>]>
@@ -1634,7 +1659,8 @@ class SimSuspendOp<string mnemonic, dag extraArgs = (ins),
                 ],
                 extraTraits)> {
   let arguments = !con(extraArgs, (ins Variadic<AnyType>:$continuation_operands,
-                                      OptionalAttr<SimContinuationSiteAttr>:$site));
+                                      OptionalAttr<SimContinuationSiteAttr>:$site,
+                                      OptionalAttr<SimEventRegion>:$resume_region));
   let successors = (successor AnySuccessor : $continuation);
   let hasVerifier = 1;
 }
@@ -1696,7 +1722,8 @@ def SimSuspendAnyOp : SimOp<"suspend.any", [
   // segment-size attribute in the persistent IR.
   let arguments = (ins Variadic<AnyType>:$values,
                        DenseI32ArrayAttr:$edges,
-                       OptionalAttr<SimContinuationSiteAttr>:$site);
+                       OptionalAttr<SimContinuationSiteAttr>:$site,
+                       OptionalAttr<SimEventRegion>:$resume_region);
   let successors = (successor AnySuccessor:$continuation);
   let assemblyFormat = [{$values `edges` $edges `to` $continuation
    attr-dict `:` type($values)}];
@@ -1730,7 +1757,8 @@ def SimSuspendObserveOp : SimOp<"suspend.observe", [
                        I32Attr:$condition_count,
                        DenseI32ArrayAttr:$edges,
                        DenseI32ArrayAttr:$condition_indices,
-                       OptionalAttr<SimContinuationSiteAttr>:$site);
+                       OptionalAttr<SimContinuationSiteAttr>:$site,
+                       OptionalAttr<SimEventRegion>:$resume_region);
   let successors = (successor AnySuccessor:$continuation);
   let assemblyFormat = [{
     $values `conditions` $condition_count `edges` $edges
@@ -1777,7 +1805,8 @@ def SimSuspendJoinOp : SimOp<"suspend.join", [
   // pass to append live values.
   let arguments = (ins SimJoinKind:$kind, Variadic<AnyType>:$values,
                        I64Attr:$process_count,
-                       OptionalAttr<SimContinuationSiteAttr>:$site);
+                       OptionalAttr<SimContinuationSiteAttr>:$site,
+                       OptionalAttr<SimEventRegion>:$resume_region);
   let successors = (successor AnySuccessor:$continuation);
   let assemblyFormat = [{$kind $values `processes` $process_count `to`
     $continuation attr-dict `:` type($values)}];
@@ -1796,7 +1825,8 @@ def SimSuspendChildrenOp : SimOp<"suspend.children", [
   ]> {
   let summary = "suspend until every current direct child has terminated";
   let arguments = (ins Variadic<AnyType>:$continuation_operands,
-                       OptionalAttr<SimContinuationSiteAttr>:$site);
+                       OptionalAttr<SimContinuationSiteAttr>:$site,
+                       OptionalAttr<SimEventRegion>:$resume_region);
   let successors = (successor AnySuccessor:$continuation);
   let assemblyFormat = [{`to` $continuation
     (`(` $continuation_operands^ `:` type($continuation_operands) `)`)?

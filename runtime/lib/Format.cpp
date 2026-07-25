@@ -776,6 +776,17 @@ obelisk_rt_v1_display(obelisk_rt_context *context, uint32_t descriptor,
   if (!context || (itemCount != 0 && !items))
     return OBELISK_RT_INVALID_ARGUMENT;
   return guarded(context, [&] {
+    {
+      std::lock_guard<std::recursive_mutex> lock(context->mutex);
+      // A monitor callback is the only display executed by the registered
+      // monitor process. Suppress it while monitoring is disabled without
+      // stealing a bit from the descriptor: all 30 MCD bits are public ABI.
+      if (!context->monitorEnabled &&
+          context->activeLogicalProcessToken != 0 &&
+          context->activeLogicalProcessToken ==
+              context->monitorLogicalProcessToken)
+        return OBELISK_RT_OK;
+    }
     std::string output;
     std::string error;
     obelisk_rt_status status = buildDisplay(output, defaultRadix, items,

@@ -509,6 +509,12 @@ ABI_FUNCTION(obelisk_rt_v1_display,
              obelisk_rt_status (*)(obelisk_rt_context *, uint32_t, uint32_t,
                                    obelisk_rt_radix, const obelisk_rt_arg_v1 *,
                                    uint64_t, const obelisk_rt_format_env_v1 *));
+ABI_FUNCTION(obelisk_rt_v1_monitor_register,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint64_t, uint32_t));
+ABI_FUNCTION(obelisk_rt_v1_monitor_control,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint32_t));
+ABI_FUNCTION(obelisk_rt_v1_monitor_current,
+             uint32_t (*)(obelisk_rt_context *));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_finish,
              obelisk_rt_status (*)(obelisk_rt_context *, uint32_t));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_fatal,

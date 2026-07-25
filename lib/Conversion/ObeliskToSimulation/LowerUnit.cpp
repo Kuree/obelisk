@@ -41,6 +41,44 @@ namespace {
 
 using namespace obelisk::simlowering;
 
+constexpr bool sameEventRegionEncoding(ir::EventRegion source,
+                                       sim::EventRegion target) {
+  return static_cast<uint32_t>(source) == static_cast<uint32_t>(target);
+}
+
+static_assert(
+    sameEventRegionEncoding(ir::EventRegion::Preponed,
+                            sim::EventRegion::Preponed) &&
+    sameEventRegionEncoding(ir::EventRegion::PreActive,
+                            sim::EventRegion::PreActive) &&
+    sameEventRegionEncoding(ir::EventRegion::Active, sim::EventRegion::Active) &&
+    sameEventRegionEncoding(ir::EventRegion::Inactive,
+                            sim::EventRegion::Inactive) &&
+    sameEventRegionEncoding(ir::EventRegion::PreNBA, sim::EventRegion::PreNBA) &&
+    sameEventRegionEncoding(ir::EventRegion::NBA, sim::EventRegion::NBA) &&
+    sameEventRegionEncoding(ir::EventRegion::PostNBA,
+                            sim::EventRegion::PostNBA) &&
+    sameEventRegionEncoding(ir::EventRegion::PreObserved,
+                            sim::EventRegion::PreObserved) &&
+    sameEventRegionEncoding(ir::EventRegion::Observed,
+                            sim::EventRegion::Observed) &&
+    sameEventRegionEncoding(ir::EventRegion::PostObserved,
+                            sim::EventRegion::PostObserved) &&
+    sameEventRegionEncoding(ir::EventRegion::Reactive,
+                            sim::EventRegion::Reactive) &&
+    sameEventRegionEncoding(ir::EventRegion::ReInactive,
+                            sim::EventRegion::ReInactive) &&
+    sameEventRegionEncoding(ir::EventRegion::PreReNBA,
+                            sim::EventRegion::PreReNBA) &&
+    sameEventRegionEncoding(ir::EventRegion::ReNBA, sim::EventRegion::ReNBA) &&
+    sameEventRegionEncoding(ir::EventRegion::PostReNBA,
+                            sim::EventRegion::PostReNBA) &&
+    sameEventRegionEncoding(ir::EventRegion::PrePostponed,
+                            sim::EventRegion::PrePostponed) &&
+    sameEventRegionEncoding(ir::EventRegion::Postponed,
+                            sim::EventRegion::Postponed),
+    "Obelisk and simulation event-region enums must stay in lockstep");
+
 /// Spelling of a semantic integer literal, whichever literal node it is.
 static std::optional<StringRef> getConstantSpelling(Operation *op) {
   if (auto literal = dyn_cast<semantic::SVIntegerLiteralOp>(op))
@@ -135,6 +173,16 @@ static Operation *getSingleRegionRoot(Region &region) {
   return &region.front().front();
 }
 
+static uint64_t stableCodeUnitID(StringRef key) {
+  uint64_t hash = UINT64_C(14695981039346656037);
+  for (uint8_t byte : key.bytes()) {
+    hash ^= byte;
+    hash *= UINT64_C(1099511628211);
+  }
+  hash &= static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
+  return hash == 0 ? 1 : hash;
+}
+
 /// True when an expression denotes storage rather than a computed value, so a
 /// suspension can watch it directly.
 static bool isAddressableExpression(Operation *op) {
@@ -218,7 +266,11 @@ private:
   LogicalResult lowerBlock(semantic::SVBlockStatementOp op);
   LogicalResult lowerDisable(semantic::SVDisableStatementOp op);
   FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>>
-  outlineForkBranch(Operation *branch, uint64_t forkNode, unsigned branchIndex);
+  outlineForkBranch(Operation *branch, uint64_t forkNode, unsigned branchIndex,
+                    bool captureReferences = false);
+  FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>>
+  outlinePostponedDisplay(semantic::SVCallExpressionOp call,
+                          StringRef immediateName, bool persistent);
   LogicalResult
   lowerVariableDeclaration(semantic::SVVariableDeclStatementOp op);
   LogicalResult lowerTiming(Operation *control, Operation *statement);
@@ -290,6 +342,7 @@ private:
   SmallVector<ControlScope> controlScopes;
   llvm::StringMap<uint64_t> inheritedControlIDs;
   uint64_t nextForkOrdinal = 0;
+  uint64_t nextPostponedOrdinal = 0;
   bool invalidBindings = false;
 };
 
@@ -1820,7 +1873,8 @@ UnitLowering::lowerAssignment(semantic::SVAssignmentExpressionOp op) {
     Block *continuation = addBlock();
     sim::SimSuspendDelayOp::create(builder, location, *delay,
                                    sim::TimingSiteAttr{}, ValueRange{},
-                                   sim::ContinuationSiteAttr{}, continuation);
+                                   sim::ContinuationSiteAttr{},
+                                   sim::EventRegionAttr{}, continuation);
     setCurrent(continuation);
     if (failed(writeLValue(destination, *value, false, false, location)))
       return failure();
@@ -4194,6 +4248,53 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     return dummyTaskResult();
   }
 
+  if (name == "$monitoron" || name == "$monitoroff") {
+    if (!children.empty()) {
+      emitError(location) << name << " accepts no arguments";
+      return failure();
+    }
+    sim::SimMonitorControlOp::create(builder, location,
+                                     name == "$monitoron");
+    return dummyTaskResult();
+  }
+
+  StringRef postponedDisplay;
+  bool persistentMonitor = false;
+  if (name == "$strobe")
+    postponedDisplay = "$display";
+  else if (name == "$strobeb")
+    postponedDisplay = "$displayb";
+  else if (name == "$strobeo")
+    postponedDisplay = "$displayo";
+  else if (name == "$strobeh")
+    postponedDisplay = "$displayh";
+  else if (name == "$monitor") {
+    postponedDisplay = "$display";
+    persistentMonitor = true;
+  } else if (name == "$monitorb") {
+    postponedDisplay = "$displayb";
+    persistentMonitor = true;
+  } else if (name == "$monitoro") {
+    postponedDisplay = "$displayo";
+    persistentMonitor = true;
+  } else if (name == "$monitorh") {
+    postponedDisplay = "$displayh";
+    persistentMonitor = true;
+  }
+  if (!postponedDisplay.empty()) {
+    FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> callback =
+        outlinePostponedDisplay(op, postponedDisplay, persistentMonitor);
+    if (failed(callback))
+      return failure();
+    sim::SimSpawnOp spawned = sim::SimSpawnOp::create(
+        builder, location, callback->first.getSymNameAttr(), callback->second,
+        ArrayAttr{}, ArrayAttr{});
+    if (persistentMonitor)
+      sim::SimMonitorRegisterOp::create(builder, location,
+                                        spawned.getProcess());
+    return dummyTaskResult();
+  }
+
   struct DisplayKind {
     bool file = false;
     bool newline = false;
@@ -4262,7 +4363,8 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
         verbosity = *lowered;
       }
     }
-    Value descriptor = constant(i32, static_cast<int32_t>(display->descriptor));
+    Value descriptor =
+        constant(i32, static_cast<int32_t>(display->descriptor));
     if (display->file) {
       if (children.empty()) {
         emitError(location) << name << " requires a descriptor";
@@ -4784,13 +4886,16 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
                         ValueRange operands) {
     if (isa<sim::EventType>(watched.getType()))
       sim::SimSuspendEventOp::create(builder, location, watched, operands,
-                                     sim::ContinuationSiteAttr{}, successor);
+                                     sim::ContinuationSiteAttr{},
+                                     sim::EventRegionAttr{}, successor);
     else if (edge == sim::EdgeKind::Change)
       sim::SimSuspendChangeOp::create(builder, location, watched, operands,
-                                      sim::ContinuationSiteAttr{}, successor);
+                                      sim::ContinuationSiteAttr{},
+                                      sim::EventRegionAttr{}, successor);
     else
       sim::SimSuspendEdgeOp::create(builder, location, edge, watched, operands,
-                                    sim::ContinuationSiteAttr{}, successor);
+                                    sim::ContinuationSiteAttr{},
+                                    sim::EventRegionAttr{}, successor);
   };
   auto evaluateInitial = [&](Operation *expression) -> FailureOr<Value> {
     FailureOr<Value> value = lowerExpression(expression);
@@ -4843,7 +4948,8 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
     llvm::append_range(values, continuationOperands);
     sim::SimSuspendObserveOp::create(
         builder, location, values, static_cast<uint32_t>(conditions.size()),
-        edges, conditionIndices, sim::ContinuationSiteAttr{}, continuation);
+        edges, conditionIndices, sim::ContinuationSiteAttr{},
+        sim::EventRegionAttr{}, continuation);
     return success();
   };
 
@@ -4883,7 +4989,8 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
     }
     sim::SimSuspendEdgeIffOp::create(builder, location, edge, *handle,
                                      *condition, continuationOperands,
-                                     sim::ContinuationSiteAttr{}, continuation);
+                                     sim::ContinuationSiteAttr{},
+                                     sim::EventRegionAttr{}, continuation);
     return success();
   }
 
@@ -4941,7 +5048,8 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
   llvm::append_range(values, continuationOperands);
   sim::SimSuspendAnyOp::create(builder, location, values,
                                builder.getDenseI32ArrayAttr(edges),
-                               sim::ContinuationSiteAttr{}, continuation);
+                               sim::ContinuationSiteAttr{},
+                               sim::EventRegionAttr{}, continuation);
   return success();
 }
 
@@ -5034,12 +5142,13 @@ LogicalResult UnitLowering::lowerTiming(Operation *control,
     if (dependencies.size() == 1)
       sim::SimSuspendChangeOp::create(builder, location, dependencies.front(),
                                       ValueRange{}, sim::ContinuationSiteAttr{},
-                                      continuation);
+                                      sim::EventRegionAttr{}, continuation);
     else
       sim::SimSuspendAnyOp::create(builder, location,
                                    dependencies.getArrayRef(),
                                    builder.getDenseI32ArrayAttr(edges),
-                                   sim::ContinuationSiteAttr{}, continuation);
+                                   sim::ContinuationSiteAttr{},
+                                   sim::EventRegionAttr{}, continuation);
     setCurrent(statementEnd);
     return success();
   }
@@ -5058,7 +5167,8 @@ LogicalResult UnitLowering::lowerTiming(Operation *control,
       return failure();
     sim::SimSuspendDelayOp::create(builder, location, *delay,
                                    sim::TimingSiteAttr{}, ValueRange{},
-                                   sim::ContinuationSiteAttr{}, continuation);
+                                   sim::ContinuationSiteAttr{},
+                                   sim::EventRegionAttr{}, continuation);
   } else if (isa<semantic::SVOneStepDelayControlOp>(control)) {
     if (!children.empty()) {
       unsupported(control) << " (#1step inventory)";
@@ -5069,7 +5179,8 @@ LogicalResult UnitLowering::lowerTiming(Operation *control,
         builder.getI64IntegerAttr(1));
     sim::SimSuspendDelayOp::create(builder, location, delay,
                                    sim::TimingSiteAttr{}, ValueRange{},
-                                   sim::ContinuationSiteAttr{}, continuation);
+                                   sim::ContinuationSiteAttr{},
+                                   sim::EventRegionAttr{}, continuation);
   } else if (isa<semantic::SVSignalEventControlOp,
                  semantic::SVEventListControlOp>(control)) {
     if (failed(emitEventSuspend(control, continuation)))
@@ -5116,7 +5227,8 @@ LogicalResult UnitLowering::lowerWait(semantic::SVWaitStatementOp op) {
     if (!*truth) {
       setCurrent(suspendBlock);
       sim::SimSuspendForeverOp::create(builder, location, ValueRange{},
-                                       sim::ContinuationSiteAttr{}, bodyBlock);
+                                       sim::ContinuationSiteAttr{},
+                                       sim::EventRegionAttr{}, bodyBlock);
     } else
       suspendBlock->erase();
     setCurrent(bodyBlock);
@@ -5136,7 +5248,8 @@ LogicalResult UnitLowering::lowerWait(semantic::SVWaitStatementOp op) {
     SmallVector<Value> values{*observer, *condition};
     sim::SimSuspendObserveOp::create(
         builder, location, values, 0, ArrayRef<int32_t>{0},
-        ArrayRef<int32_t>{-1}, sim::ContinuationSiteAttr{}, bodyBlock);
+        ArrayRef<int32_t>{-1}, sim::ContinuationSiteAttr{},
+        sim::EventRegionAttr{}, bodyBlock);
     setCurrent(bodyBlock);
     return lowerStatement(children[1]);
   }
@@ -5151,7 +5264,8 @@ LogicalResult UnitLowering::lowerWait(semantic::SVWaitStatementOp op) {
                            ValueRange{}, suspendBlock, ValueRange{});
   setCurrent(suspendBlock);
   sim::SimSuspendLevelOp::create(builder, location, *watched, ValueRange{},
-                                 sim::ContinuationSiteAttr{}, bodyBlock);
+                                 sim::ContinuationSiteAttr{},
+                                 sim::EventRegionAttr{}, bodyBlock);
 
   setCurrent(bodyBlock);
   return lowerStatement(children[1]);
@@ -6664,7 +6778,8 @@ UnitLowering::lowerVariableDeclaration(semantic::SVVariableDeclStatementOp op) {
 
 FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>>
 UnitLowering::outlineForkBranch(Operation *branch, uint64_t forkNode,
-                                unsigned branchIndex) {
+                                unsigned branchIndex,
+                                bool captureReferences) {
   auto design = function->getParentOfType<sim::SimDesignOp>();
   if (!design)
     return function.emitError("fork outlining requires a simulation design"),
@@ -6686,9 +6801,11 @@ UnitLowering::outlineForkBranch(Operation *branch, uint64_t forkNode,
   auto addCapture = [&](StringRef path) {
     if (!capturedPaths.insert(path).second)
       return;
-    Value capture = values.lookup(path);
+    Value capture = captureReferences ? lvalues.lookup(path)
+                                      : values.lookup(path);
     if (!capture)
-      capture = lvalues.lookup(path);
+      capture = captureReferences ? values.lookup(path)
+                                  : lvalues.lookup(path);
     if (!capture)
       return;
     unsigned argument = inputs.size();
@@ -6831,6 +6948,104 @@ UnitLowering::outlineForkBranch(Operation *branch, uint64_t forkNode,
   return std::make_pair(outlined, std::move(captures));
 }
 
+FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>>
+UnitLowering::outlinePostponedDisplay(semantic::SVCallExpressionOp call,
+                                     StringRef immediateName,
+                                     bool persistent) {
+  uint64_t ordinal = nextPostponedOrdinal++;
+  uint64_t node =
+      call->getAttrOfType<IntegerAttr>("node_id")
+          ? call->getAttrOfType<IntegerAttr>("node_id")
+                .getValue()
+                .getZExtValue()
+          : ordinal;
+  std::string identity =
+      (function.getSymName() + ".$postponed." + Twine(node) + "." +
+       Twine(ordinal))
+          .str();
+
+  Attribute previousForkID = call->getAttr("obelisk_sim.fork_code_unit_id");
+  StringAttr previousName = call.getCalleeNameAttr();
+  call->setAttr("obelisk_sim.fork_code_unit_id",
+                builder.getI64IntegerAttr(stableCodeUnitID(identity)));
+  call->setAttr("callee_name", builder.getStringAttr(immediateName));
+  FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> outlined =
+      outlineForkBranch(call, node, static_cast<unsigned>(ordinal),
+                        /*captureReferences=*/true);
+  call->setAttr("callee_name", previousName);
+  if (previousForkID)
+    call->setAttr("obelisk_sim.fork_code_unit_id", previousForkID);
+  else
+    call->removeAttr("obelisk_sim.fork_code_unit_id");
+  if (failed(outlined))
+    return failure();
+
+  sim::SimFuncOp callback = outlined->first;
+  callback->setAttr(
+      "home_region",
+      sim::EventRegionAttr::get(function.getContext(),
+                                sim::EventRegion::Postponed));
+  callback->setAttr(
+      "domain", sim::ExecutionDomainAttr::get(function.getContext(),
+                                               sim::ExecutionDomain::Design));
+  if (!persistent)
+    return outlined;
+
+  Block &entry = callback.getBody().front();
+  Block *loop = entry.splitBlock(entry.begin());
+  SmallVector<sim::SimReturnOp> returns;
+  callback.walk([&](sim::SimReturnOp op) { returns.push_back(op); });
+
+  Block *dispatch = new Block;
+  callback.getBody().getBlocks().insert(loop->getIterator(), dispatch);
+  Block *stale = new Block;
+  callback.getBody().push_back(stale);
+  OpBuilder entryBuilder = OpBuilder::atBlockEnd(&entry);
+  cf::BranchOp::create(entryBuilder, callback.getLoc(), dispatch);
+  OpBuilder dispatchBuilder = OpBuilder::atBlockEnd(dispatch);
+  Value current = sim::SimMonitorCurrentOp::create(
+      dispatchBuilder, callback.getLoc(), dispatchBuilder.getI1Type());
+  cf::CondBranchOp::create(dispatchBuilder, callback.getLoc(), current, loop,
+                           stale);
+
+  SmallVector<Value> watched;
+  for (BlockArgument argument : entry.getArguments().drop_front())
+    if (isa<sim::RefType, sim::NetType>(argument.getType()))
+      watched.push_back(argument);
+  for (sim::SimReturnOp returnOp : returns) {
+    OpBuilder waitBuilder(returnOp);
+    if (watched.empty()) {
+      sim::SimSuspendForeverOp::create(
+          waitBuilder, returnOp.getLoc(), ValueRange{},
+          sim::ContinuationSiteAttr{},
+          sim::EventRegionAttr::get(function.getContext(),
+                                    sim::EventRegion::Postponed),
+          dispatch);
+    } else if (watched.size() == 1) {
+      sim::SimSuspendChangeOp::create(
+          waitBuilder, returnOp.getLoc(), watched.front(), ValueRange{},
+          sim::ContinuationSiteAttr{},
+          sim::EventRegionAttr::get(function.getContext(),
+                                    sim::EventRegion::Postponed),
+          dispatch);
+    } else {
+      SmallVector<int32_t> edges(
+          watched.size(), static_cast<int32_t>(sim::EdgeKind::Change));
+      sim::SimSuspendAnyOp::create(
+          waitBuilder, returnOp.getLoc(), watched,
+          waitBuilder.getDenseI32ArrayAttr(edges),
+          sim::ContinuationSiteAttr{},
+          sim::EventRegionAttr::get(function.getContext(),
+                                    sim::EventRegion::Postponed),
+          dispatch);
+    }
+    returnOp.erase();
+  }
+  OpBuilder staleBuilder = OpBuilder::atBlockEnd(stale);
+  sim::SimReturnOp::create(staleBuilder, callback.getLoc(), ValueRange{});
+  return outlined;
+}
+
 LogicalResult UnitLowering::lowerFork(semantic::SVBlockStatementOp op) {
   Location location = getSemanticLocation(op);
   if (function.getEntryKind() == sim::EntryKind::Function &&
@@ -6881,7 +7096,7 @@ LogicalResult UnitLowering::lowerFork(semantic::SVBlockStatementOp op) {
                                : sim::JoinKind::All;
   sim::SimSuspendJoinOp::create(builder, location, joinKind, processes,
                                 processes.size(), sim::ContinuationSiteAttr{},
-                                continuation);
+                                sim::EventRegionAttr{}, continuation);
   setCurrent(continuation);
   return success();
 }
@@ -7038,7 +7253,7 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
     Block *continuation = addBlock();
     sim::SimSuspendChildrenOp::create(builder, location, ValueRange{},
                                       sim::ContinuationSiteAttr{},
-                                      continuation);
+                                      sim::EventRegionAttr{}, continuation);
     setCurrent(continuation);
     return success();
   }
@@ -7243,7 +7458,8 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   if (sensitivity.size() == 1) {
     sim::SimSuspendChangeOp::create(builder, function.getLoc(),
                                     sensitivity.front(), ValueRange{},
-                                    sim::ContinuationSiteAttr{}, loopHeader);
+                                    sim::ContinuationSiteAttr{},
+                                    sim::EventRegionAttr{}, loopHeader);
     return success();
   }
   SmallVector<int32_t> edges(sensitivity.size(),
@@ -7251,7 +7467,8 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   sim::SimSuspendAnyOp::create(builder, function.getLoc(),
                                sensitivity.getArrayRef(),
                                builder.getDenseI32ArrayAttr(edges),
-                               sim::ContinuationSiteAttr{}, loopHeader);
+                               sim::ContinuationSiteAttr{},
+                               sim::EventRegionAttr{}, loopHeader);
   return success();
 }
 

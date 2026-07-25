@@ -1678,6 +1678,7 @@ TEST_F(RuntimeTest, FansOutMultichannelDescriptors) {
 TEST_F(RuntimeTest, ReportsMCDExhaustionAndReusesChannels) {
   TempDirectory temporary;
   uint32_t combined = 0;
+  std::string highestPath;
   for (uint32_t index = 0; index < 30; ++index) {
     std::string path = temporary.file("mcd-" + std::to_string(index)).string();
     uint32_t descriptor = 0;
@@ -1686,8 +1687,15 @@ TEST_F(RuntimeTest, ReportsMCDExhaustionAndReusesChannels) {
               OBELISK_RT_OK);
     EXPECT_EQ(combined & descriptor, 0u);
     combined |= descriptor;
+    if (descriptor == (uint32_t{1} << 30))
+      highestPath = path;
   }
   EXPECT_EQ(combined, 0x7ffffffeu);
+  ASSERT_FALSE(highestPath.empty());
+  obelisk_rt_arg_v1 item = stringArg("highest");
+  ASSERT_EQ(obelisk_rt_v1_display(context, uint32_t{1} << 30, 0,
+                                  OBELISK_RT_RADIX_DECIMAL, &item, 1, nullptr),
+            OBELISK_RT_OK);
   std::string overflowPath = temporary.file("overflow").string();
   uint32_t overflow = 123;
   EXPECT_EQ(obelisk_rt_v1_file_open_mcd(context, overflowPath.data(),
@@ -1695,6 +1703,7 @@ TEST_F(RuntimeTest, ReportsMCDExhaustionAndReusesChannels) {
             OBELISK_RT_OUT_OF_RESOURCES);
   EXPECT_EQ(overflow, 0u);
   ASSERT_EQ(obelisk_rt_v1_file_close(context, combined), OBELISK_RT_OK);
+  EXPECT_EQ(readHostFile(highestPath), "highest");
 
   uint32_t reused = 0;
   ASSERT_EQ(obelisk_rt_v1_file_open_mcd(context, overflowPath.data(),

@@ -909,8 +909,12 @@ The implementation roadmap is:
   `scf` and `vector` used only when profitable as temporary compiler IR.
 - ~~Build and independently verify deterministic dependency, SCC, feedback-cut,
   five-bucket region, and preliminary cost-balanced lane metadata.~~
-- Complete IEEE event-region lowering for the supported language, coarsen the
-  graph into macro tasks, and generate direct acyclic and convergence drivers.
+- ~~Complete IEEE event-region lowering for the currently supported language:
+  execute Active/Inactive/NBA/Observed/Reactive/Re-Inactive/Re-NBA/Postponed
+  with explicit process homes, region barriers, a Preponed slot hook, and
+  Postponed `$strobe`/`$monitor` services.~~ Coarsen the graph into macro tasks
+  and generate direct acyclic and convergence drivers; assertions and clocking
+  blocks will populate the reserved Observed/Preponed hooks.
 - Represent parallel regions in MLIR and lower them to fixed persistent lane
   functions with generated epoch and barrier dependencies.
 - ~~Implement the static runtime's shared native/bytecode fragment ABI and

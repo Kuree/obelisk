@@ -9,7 +9,7 @@ mean that the umbrella IEEE 1800 procedural-synchronization work is complete.
 | --- | --- |
 | Integral `#delay` | Executable for constant and dynamic packed integral expressions up to 64 bits; X/Z and negative values normalize to zero. Static overflow is diagnosed and dynamic scaling is range-checked identically in native and bytecode. |
 | Literal real/realtime delay | Executable for real and time literals, including unary sign; values round at lexical `timeprecision` before design-precision scaling. Dynamic real arithmetic is not yet executable. |
-| `#0` | Executable in a distinct Inactive queue for design-domain processes. Native and design-bytecode work share the same region/rank/insertion ordering key. Program Re-Inactive placement remains pending. |
+| `#0` | Executable in Inactive for design-domain processes and Re-Inactive for program-domain processes. Native and design-bytecode work share the same region/rank/insertion ordering key. |
 | `#1step` | Executable as one design-precision tick. |
 | Direct signal event | Executable for statically addressable signal/net expressions and change/posedge/negedge/both-edge. Vector edges observe only the edge-defining bit. A directly addressable `iff` value is sampled and latched at the primary occurrence. |
 | Event list | Executable for direct and computed signal/net members, including mixed lists and computed or mixed `iff` conditions. All-direct lists retain the handle-based fast path; a list containing a computed member uses source-ordered observers. A single named event retains the direct-event path. |
@@ -21,18 +21,25 @@ mean that the umbrella IEEE 1800 procedural-synchronization work is complete.
 | Static named event | Executable for fresh uninitialized design events, direct waits/triggers, equality, and `.triggered`, including computed reads such as `wait (event.triggered)`. |
 | Event initialization/assignment/null | Rejected pending event cells, nullable handles, and automatic event lifetime. |
 | Blocking `->` | Executable for supported static named events. |
-| Nonblocking `->>` | Executable with optional integral delay through scheduler-owned event commits. Program Re-NBA placement remains pending. |
+| Nonblocking `->>` | Executable with optional integral delay through scheduler-owned event commits. Commits use NBA for design-domain callers and Re-NBA for program-domain callers. |
+| `$strobe` family | Executable as one-shot Postponed processes. Arguments are re-evaluated after same-slot NBA/Re-NBA commits, and strobes complete before final blocks. |
+| `$monitor` family | Executable as one context-wide persistent Postponed process, including replacement by a later `$monitor`, once-per-changed-slot output, and `$monitoron`/`$monitoroff`. |
 | `wait_order` | Imported with unambiguous inventory, then rejected with a targeted occurrence-order diagnostic. |
 | Blocking intra-assignment timing | Executable for delay, direct event, and repeated-event controls. RHS is captured at encounter; LHS is resolved at commit. |
 | Nonblocking intra-assignment timing | Executable for delay controls with encounter-time LHS/RHS capture. Event/repeat controls remain pending deferred actions. |
 | `fork` / join forms | Imported with block-kind metadata, then rejected pending branch outlining and child-process synchronization. |
 | `wait fork` / `disable fork` | Targeted diagnostics; descendant registry and cancellation are pending. |
 | Timed/recursive task calls | Pending canonical task frames and suspension-capable calls. Existing executable functions remain zero-time. |
-| Module/program domain | IR carries and verifies Design/Active versus Program/Reactive home metadata. Design-domain native and bytecode processes use shared Active/Inactive ordering, including continuation ranks. The remaining IEEE regions and program-domain Re-Inactive/Re-NBA behavior are pending. |
+| Module/program domain | Executable with Design/Active and Program/Reactive homes. `#0` maps to Inactive/Re-Inactive and nonblocking commits map to NBA/Re-NBA. Region, rank, and insertion sequence form one shared native/bytecode ordering key. Observed remains reserved for the assertion milestone. |
 
 The umbrella is complete only when the pending rows are implemented and the
 native, bytecode, mixed-tier, region-ordering, cancellation, and leak
 conformance matrix is green.
+
+The runtime materializes eight executable ordinals: Active, Inactive, NBA,
+Observed, Reactive, Re-Inactive, Re-NBA, and Postponed. Preponed is a
+time-slot-boundary hook; the eight PLI callback regions remain compiler enum
+points and fold exactly while the runtime has no VPI callback producer.
 
 Computed observers run under the waiting logical process and sample `iff` only
 after a matching primary occurrence. Signal, resolved-net, NBA, named-event,

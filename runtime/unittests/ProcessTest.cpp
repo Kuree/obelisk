@@ -70,6 +70,7 @@ obelisk_rt_status nativeExecuteStatus;
 bool emitInvalidNativeWait;
 bool emitInvalidNativeTerminate;
 bool emitExistingNativeWait;
+bool emitInvalidResumeRegion;
 obelisk_rt_status frameDuringExecute;
 obelisk_rt_status destroyDuringExecute;
 obelisk_rt_context *observedContext;
@@ -104,11 +105,13 @@ obelisk_rt_status nativeExecute(obelisk_rt_process_instance_v1 *instance) {
                0,
                17,
                0};
-    *instance->action = {OBELISK_RT_FRAGMENT_SUSPEND,
-                         wait->kind,
-                         1,
-                         OBELISK_RT_ACTION_FRAME_WAIT_RECORD,
-                         emitInvalidNativeWait ? 9u : 8u,
+    uint32_t actionFlags = OBELISK_RT_ACTION_FRAME_WAIT_RECORD;
+    if (emitInvalidResumeRegion)
+      actionFlags |= OBELISK_RT_ACTION_RESUME_REGION_VALID |
+                     (OBELISK_RT_REGION_NBA
+                      << OBELISK_RT_ACTION_RESUME_REGION_SHIFT);
+    *instance->action = {OBELISK_RT_FRAGMENT_SUSPEND, wait->kind, 1,
+                         actionFlags, emitInvalidNativeWait ? 9u : 8u,
                          instance->frame_size - 8};
   } else {
     *instance->action = {OBELISK_RT_FRAGMENT_TERMINATE,
@@ -440,6 +443,52 @@ TEST(RuntimeInternals, TerminatedTokenRangesMatchReferenceSet) {
     for (uint64_t probe = 0; probe != 257; ++probe)
       ASSERT_EQ(tokens.count(probe), reference.count(probe));
   }
+}
+
+TEST(RuntimeInternals, ResumeOverridesRequireExecutableHomeRegions) {
+  uint32_t queuedRegion = UINT32_MAX;
+  uint32_t postponed =
+      OBELISK_RT_ACTION_RESUME_REGION_VALID |
+      (OBELISK_RT_REGION_POSTPONED << OBELISK_RT_ACTION_RESUME_REGION_SHIFT);
+  EXPECT_TRUE(obelisk_rt_next_queued_region(
+      OBELISK_RT_REGION_ACTIVE, OBELISK_RT_SUSPEND_CHANGE, 1, postponed,
+      queuedRegion));
+  EXPECT_EQ(queuedRegion, OBELISK_RT_REGION_POSTPONED);
+
+  uint32_t nba =
+      OBELISK_RT_ACTION_RESUME_REGION_VALID |
+      (OBELISK_RT_REGION_NBA << OBELISK_RT_ACTION_RESUME_REGION_SHIFT);
+  EXPECT_FALSE(obelisk_rt_next_queued_region(
+      OBELISK_RT_REGION_ACTIVE, OBELISK_RT_SUSPEND_CHANGE, 1, nba,
+      queuedRegion));
+}
+
+TEST(RuntimeInternals, ReplacedAndReenabledMonitorsAreWokenInPostponed) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  ScheduledDesignTask oldMonitor;
+  oldMonitor.id = 17;
+  oldMonitor.suspendKind = OBELISK_RT_SUSPEND_FOREVER;
+  oldMonitor.queuedRegion = OBELISK_RT_REGION_ACTIVE;
+  context->scheduledDesignTasks.push_back(std::move(oldMonitor));
+
+  ASSERT_EQ(obelisk_rt_v1_monitor_register(context, 17, 1), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_monitor_register(context, 18, 1), OBELISK_RT_OK);
+  EXPECT_EQ(context->scheduledDesignTasks.front().suspendKind,
+            OBELISK_RT_SUSPEND_NONE);
+  EXPECT_EQ(context->scheduledDesignTasks.front().queuedRegion,
+            OBELISK_RT_REGION_POSTPONED);
+
+  context->scheduledDesignTasks.front().suspendKind =
+      OBELISK_RT_SUSPEND_FOREVER;
+  ASSERT_EQ(obelisk_rt_v1_monitor_register(context, 17, 1), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_monitor_control(context, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_monitor_control(context, 1), OBELISK_RT_OK);
+  EXPECT_EQ(context->scheduledDesignTasks.front().suspendKind,
+            OBELISK_RT_SUSPEND_NONE);
+  EXPECT_EQ(context->scheduledDesignTasks.front().queuedRegion,
+            OBELISK_RT_REGION_POSTPONED);
+  obelisk_rt_v1_context_destroy(context);
 }
 
 TEST(Scheduler, SignalWaitsAreSelectiveAndEdgeAware) {
@@ -1314,6 +1363,7 @@ TEST(ProcessInstance, RejectsMalformedWaitSemantics) {
   emitInvalidNativeWait = false;
   emitInvalidNativeTerminate = false;
   emitExistingNativeWait = true;
+  emitInvalidResumeRegion = false;
   fixture.fields[1].size = 64;
   fixture.layout.frame_size = 72;
   fixture.layout.checksum = checksum(fixture.layout);
@@ -1350,6 +1400,15 @@ TEST(ProcessInstance, RejectsMalformedWaitSemantics) {
   expectInvalid(OBELISK_RT_SUSPEND_FRONTIER, 0, 1, OBELISK_RT_WAIT_EDGE_CHANGE);
 
   std::memset(wait, 0, 64);
+  *wait = {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_CHANGE, 0, 1, 0, 0};
+  entries[0] = {17, OBELISK_RT_WAIT_EDGE_CHANGE, 0};
+  emitInvalidResumeRegion = true;
+  EXPECT_EQ(obelisk_rt_v1_process_instance_execute(
+                instance, nullptr, OBELISK_RT_TIER_NATIVE, &action),
+            OBELISK_RT_INVALID_FRAME);
+  emitInvalidResumeRegion = false;
+
+  std::memset(wait, 0, 64);
   *wait = {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_EDGE, 0, 2, 0, 0};
   entries[0] = {17, OBELISK_RT_WAIT_EDGE_CHANGE, 1};
   entries[1] = {18, OBELISK_RT_WAIT_EDGE_POSEDGE, 1};
@@ -1358,7 +1417,7 @@ TEST(ProcessInstance, RejectsMalformedWaitSemantics) {
             OBELISK_RT_OK);
 
   EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
-  EXPECT_EQ(nativeDestroyCount, 9);
+  EXPECT_EQ(nativeDestroyCount, 10);
 }
 
 } // namespace

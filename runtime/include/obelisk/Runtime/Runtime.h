@@ -189,11 +189,40 @@ typedef struct obelisk_rt_handle_v1 {
 #define OBELISK_RT_EXECUTION_VPI_WRITE (UINT32_C(1) << 3)
 #define OBELISK_RT_EXECUTION_REQUIRE_BYTECODE (UINT32_C(1) << 4)
 
+// Executable event-region ordinals. The eight PLI callback regions remain
+// compiler-only until the callback ABI can populate them. Preponed is serviced
+// by a slot-boundary hook rather than a process queue.
+typedef uint32_t obelisk_rt_event_region_v1;
+enum {
+  OBELISK_RT_REGION_ACTIVE = 0,
+  OBELISK_RT_REGION_INACTIVE = 1,
+  OBELISK_RT_REGION_NBA = 2,
+  OBELISK_RT_REGION_OBSERVED = 3,
+  OBELISK_RT_REGION_REACTIVE = 4,
+  OBELISK_RT_REGION_RE_INACTIVE = 5,
+  OBELISK_RT_REGION_RE_NBA = 6,
+  OBELISK_RT_REGION_POSTPONED = 7
+};
+
+// Scheduler registration flags. FINAL deliberately retains the old phase-one
+// encoding. The home region is encoded directly so Observed and Postponed do
+// not require future ABI changes.
+#define OBELISK_RT_SCHEDULE_FINAL (UINT32_C(1) << 0)
+#define OBELISK_RT_SCHEDULE_HOME_SHIFT 1u
+#define OBELISK_RT_SCHEDULE_HOME_MASK (UINT32_C(7) << OBELISK_RT_SCHEDULE_HOME_SHIFT)
+#define OBELISK_RT_SCHEDULE_HOME(region)                                      \
+  ((uint32_t)(region) << OBELISK_RT_SCHEDULE_HOME_SHIFT)
+
 // Serialized design-bytecode function flags. Process functions encode their
-// canonical frame size shifted left by one. The high bit records final-phase
-// scheduling without changing the current function-record layout.
+// canonical frame size shifted left by one. Bits 60-62 encode the executable
+// home region and the high bit records final-phase scheduling.
 #define OBELISK_RT_DESIGN_FUNCTION_PROCESS UINT64_C(0x0000000000000001)
-#define OBELISK_RT_DESIGN_FUNCTION_FRAME_SIZE_MASK UINT64_C(0x7ffffffffffffffe)
+#define OBELISK_RT_DESIGN_FUNCTION_FRAME_SIZE_MASK UINT64_C(0x0ffffffffffffffe)
+#define OBELISK_RT_DESIGN_FUNCTION_FRAME_SIZE_LIMIT UINT64_C(0x0800000000000000)
+#define OBELISK_RT_DESIGN_FUNCTION_HOME_SHIFT 60u
+#define OBELISK_RT_DESIGN_FUNCTION_HOME_MASK UINT64_C(0x7000000000000000)
+#define OBELISK_RT_DESIGN_FUNCTION_HOME(region)                               \
+  ((uint64_t)(region) << OBELISK_RT_DESIGN_FUNCTION_HOME_SHIFT)
 #define OBELISK_RT_DESIGN_FUNCTION_FINAL UINT64_C(0x8000000000000000)
 
 // DPI scope records are immutable execution metadata and remain available
@@ -426,6 +455,9 @@ enum {
   OBELISK_RT_INTRINSIC_V1_REAL_COMPARE = UINT32_C(0x00010212),
   OBELISK_RT_INTRINSIC_V1_COUNT_BITS = UINT32_C(0x00010213),
   OBELISK_RT_INTRINSIC_V1_CLOG2 = UINT32_C(0x00010214),
+  OBELISK_RT_INTRINSIC_V1_MONITOR_REGISTER = UINT32_C(0x00010215),
+  OBELISK_RT_INTRINSIC_V1_MONITOR_CONTROL = UINT32_C(0x00010216),
+  OBELISK_RT_INTRINSIC_V1_MONITOR_CURRENT = UINT32_C(0x00010217),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC = UINT32_C(0x00010400),
@@ -633,6 +665,13 @@ typedef struct obelisk_rt_fragment_action_v1 {
 // to identify payload/auxiliary as a checked frame-relative offset and size.
 #define OBELISK_RT_FRAGMENT_FLAGS_NONE UINT32_C(0)
 #define OBELISK_RT_ACTION_FRAME_WAIT_RECORD (UINT32_C(1) << 0)
+#define OBELISK_RT_ACTION_RESUME_REGION_VALID (UINT32_C(1) << 1)
+#define OBELISK_RT_ACTION_RESUME_REGION_SHIFT 2u
+#define OBELISK_RT_ACTION_RESUME_REGION_MASK                                 \
+  (UINT32_C(7) << OBELISK_RT_ACTION_RESUME_REGION_SHIFT)
+#define OBELISK_RT_ACTION_RESUME_REGION(region)                               \
+  (OBELISK_RT_ACTION_RESUME_REGION_VALID |                                   \
+   ((uint32_t)(region) << OBELISK_RT_ACTION_RESUME_REGION_SHIFT))
 
 typedef obelisk_rt_status (*obelisk_rt_native_fragment_v1)(
     obelisk_rt_context *context, void *frame, uint64_t frame_size,
@@ -1253,20 +1292,22 @@ obelisk_rt_status obelisk_rt_v1_design_write(obelisk_rt_context *context,
                                              uint64_t bit_width);
 
 // Serial generated-simulator scheduler. The scheduler owns an instance after
-// a successful add. Phase zero is ordinary work; phase one is final blocks.
+// a successful add. Bit zero selects final-phase work and bits 1-3 encode the
+// executable home region. A zero flags value retains the historical ordinary
+// Active-process behavior.
 obelisk_rt_status
 obelisk_rt_v1_scheduler_add(obelisk_rt_context *context,
                             obelisk_rt_process_instance_v1 *instance,
-                            uint32_t phase);
+                            uint32_t flags);
 // Ranked form used by generated simulators. Lower ranks execute first within
 // an event region; equal ranks retain deterministic insertion order.
 obelisk_rt_status
 obelisk_rt_v1_scheduler_add_ranked(obelisk_rt_context *context,
                                    obelisk_rt_process_instance_v1 *instance,
-                                   uint32_t phase, uint32_t schedule_rank);
+                                   uint32_t flags, uint32_t schedule_rank);
 obelisk_rt_status obelisk_rt_v1_scheduler_add_planned(
     obelisk_rt_context *context, obelisk_rt_process_instance_v1 *instance,
-    uint32_t phase, uint32_t initial_rank, const uint32_t *continuations,
+    uint32_t flags, uint32_t initial_rank, const uint32_t *continuations,
     const uint32_t *ranks, uint32_t continuation_count);
 // Return the scheduler-owned stable identity used by await/join records. The
 // token is never a host address and is not reused within a context.
@@ -1277,6 +1318,14 @@ obelisk_rt_v1_scheduler_process_token(obelisk_rt_context *context,
 // logical process. Task activations retain their caller's logical identity.
 obelisk_rt_status
 obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context);
+// Install a new context-wide $monitor process. `design_process` selects the
+// design-bytecode token namespace; native process tokens use zero.
+obelisk_rt_status obelisk_rt_v1_monitor_register(obelisk_rt_context *context,
+                                                 uint64_t process_token,
+                                                 uint32_t design_process);
+obelisk_rt_status obelisk_rt_v1_monitor_control(obelisk_rt_context *context,
+                                                uint32_t enabled);
+uint32_t obelisk_rt_v1_monitor_current(obelisk_rt_context *context);
 // Dynamic named-block activations are inherited by spawned logical
 // processes. A nonzero activation selects one lexical activation. With a zero
 // activation, all_activations selects either the innermost inherited lexical

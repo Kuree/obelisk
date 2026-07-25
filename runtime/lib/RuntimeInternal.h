@@ -22,6 +22,9 @@
 #include <utility>
 #include <vector>
 
+constexpr uint64_t OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG =
+    UINT64_C(1) << 63;
+
 struct FileEntry {
   FILE *stream = nullptr;
   int lastError = 0;
@@ -216,6 +219,67 @@ private:
   std::atomic<size_t> cachedBufferCount{0};
 };
 
+inline bool obelisk_rt_is_process_home_region(uint32_t region) {
+  return region == OBELISK_RT_REGION_ACTIVE ||
+         region == OBELISK_RT_REGION_OBSERVED ||
+         region == OBELISK_RT_REGION_REACTIVE ||
+         region == OBELISK_RT_REGION_POSTPONED;
+}
+
+inline bool obelisk_rt_is_mutable_home_region(uint32_t region) {
+  return region == OBELISK_RT_REGION_ACTIVE ||
+         region == OBELISK_RT_REGION_REACTIVE;
+}
+
+inline bool obelisk_rt_decode_schedule_flags(uint32_t flags, uint32_t &phase,
+                                             uint32_t &homeRegion) {
+  constexpr uint32_t known =
+      OBELISK_RT_SCHEDULE_FINAL | OBELISK_RT_SCHEDULE_HOME_MASK;
+  if ((flags & ~known) != 0)
+    return false;
+  phase = (flags & OBELISK_RT_SCHEDULE_FINAL) != 0 ? 1u : 0u;
+  homeRegion =
+      (flags & OBELISK_RT_SCHEDULE_HOME_MASK) >>
+      OBELISK_RT_SCHEDULE_HOME_SHIFT;
+  return obelisk_rt_is_process_home_region(homeRegion) &&
+         (phase == 0 || homeRegion == OBELISK_RT_REGION_ACTIVE);
+}
+
+inline bool obelisk_rt_next_queued_region(uint32_t homeRegion,
+                                          uint32_t suspendKind,
+                                          uint64_t delayPayload,
+                                          uint32_t actionFlags,
+                                          uint32_t &queuedRegion) {
+  constexpr uint32_t known =
+      OBELISK_RT_ACTION_FRAME_WAIT_RECORD |
+      OBELISK_RT_ACTION_RESUME_REGION_VALID |
+      OBELISK_RT_ACTION_RESUME_REGION_MASK;
+  if ((actionFlags & ~known) != 0)
+    return false;
+  if ((actionFlags & OBELISK_RT_ACTION_RESUME_REGION_VALID) != 0) {
+    queuedRegion =
+        (actionFlags & OBELISK_RT_ACTION_RESUME_REGION_MASK) >>
+        OBELISK_RT_ACTION_RESUME_REGION_SHIFT;
+    return obelisk_rt_is_process_home_region(queuedRegion);
+  }
+  if ((actionFlags & OBELISK_RT_ACTION_RESUME_REGION_MASK) != 0)
+    return false;
+  if (suspendKind == OBELISK_RT_SUSPEND_DELAY && delayPayload == 0) {
+    if (!obelisk_rt_is_mutable_home_region(homeRegion))
+      return false;
+    queuedRegion = homeRegion + 1;
+    return true;
+  }
+  queuedRegion = homeRegion;
+  return true;
+}
+
+inline uint32_t obelisk_rt_commit_region(uint32_t homeRegion) {
+  return obelisk_rt_is_mutable_home_region(homeRegion)
+             ? homeRegion + 2
+             : UINT32_MAX;
+}
+
 struct ScheduledProcess {
   obelisk_rt_process_instance_v1 *instance = nullptr;
   std::vector<obelisk_rt_process_instance_v1 *> callers;
@@ -231,10 +295,11 @@ struct ScheduledProcess {
   std::vector<std::pair<uint32_t, uint32_t>> continuationRanks;
   uint32_t suspendKind = OBELISK_RT_SUSPEND_NONE;
   uint32_t phase = 0;
+  uint32_t homeRegion = OBELISK_RT_REGION_ACTIVE;
   uint32_t scheduleRank = UINT32_MAX;
   uint64_t insertionSequence = 0;
-  // 0 is the process home/active queue; 1 is the corresponding inactive
-  // queue used only by a zero delay.
+  // Executable event-region ordinal. Normally the immutable home region,
+  // temporarily an inactive region after #0 or an explicit resume override.
   uint32_t queuedRegion = 0;
   bool started = false;
   bool urgent = false;
@@ -279,6 +344,7 @@ struct NativeStaticState {
 struct ScheduledNBA {
   uint64_t sequence = 0;
   uint64_t dueTime = 0;
+  uint32_t execRegion = OBELISK_RT_REGION_NBA;
   uint32_t retainedAutomaticID = 0;
   uint8_t *valuePlane = nullptr;
   uint8_t *unknownPlane = nullptr;
@@ -292,6 +358,7 @@ struct ScheduledNBA {
 struct ScheduledManagedNBA {
   uint64_t sequence = 0;
   uint64_t dueTime = 0;
+  uint32_t execRegion = OBELISK_RT_REGION_NBA;
   obelisk_rt_object_v1 *destination = nullptr;
   uint64_t offset = 0;
   uint64_t planeSize = 0;
@@ -303,6 +370,7 @@ struct ScheduledManagedNBA {
 struct ScheduledDesignNBA {
   uint64_t sequence = 0;
   uint64_t dueTime = 0;
+  uint32_t execRegion = OBELISK_RT_REGION_NBA;
   uint32_t handleKind = 0;
   int64_t begin = 0;
   int64_t start = 0;
@@ -315,6 +383,7 @@ struct ScheduledDesignNBA {
 struct ScheduledDesignEvent {
   uint64_t sequence = 0;
   uint64_t dueTime = 0;
+  uint32_t execRegion = OBELISK_RT_REGION_NBA;
   uint64_t stableID = 0;
   uint32_t retainedAutomaticID = 0;
 };
@@ -346,6 +415,7 @@ struct ScheduledDesignTask {
   std::vector<uint64_t> waitGenerations;
   uint32_t suspendKind = OBELISK_RT_SUSPEND_NONE;
   uint32_t phase = 0;
+  uint32_t homeRegion = OBELISK_RT_REGION_ACTIVE;
   uint32_t scheduleRank = UINT32_MAX;
   uint32_t queuedRegion = 0;
   uint64_t insertionSequence = 0;
@@ -411,7 +481,11 @@ struct obelisk_rt_context {
   uint64_t nextProcessInsertionSequence = 1;
   uint64_t activeDesignTaskID = 0;
   uint32_t activeDesignTaskPhase = 0;
+  uint32_t activeHomeRegion = UINT32_MAX;
+  uint32_t activeExecRegion = UINT32_MAX;
   uint64_t activeLogicalProcessToken = 0;
+  uint64_t monitorLogicalProcessToken = 0;
+  bool monitorEnabled = true;
   std::vector<uint64_t> activeControls;
   obelisk_rt_process_instance_v1 *activeNativeProcess = nullptr;
   bool designTaskExecuting = false;
@@ -432,6 +506,8 @@ struct obelisk_rt_context {
   size_t schedulerCursor = 0;
   uint64_t schedulerEpoch = 1;
   uint64_t schedulerTime = 0;
+  uint64_t schedulerPreponedTime = UINT64_MAX;
+  uint64_t schedulerSlotProgress = 0;
   bool schedulerRunningFinals = false;
   bool schedulerFinishRequested = false;
   uint32_t schedulerFinishVerbosity = 0;

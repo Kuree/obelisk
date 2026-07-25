@@ -128,6 +128,64 @@ bool isRecursive(SimFuncOp function, SimDesignOp design) {
   return recursive;
 }
 
+LogicalResult verifyPostponedReadOnly(SimFuncOp root) {
+  SmallVector<SimFuncOp> pending{root};
+  llvm::SmallPtrSet<Operation *, 16> visited;
+  while (!pending.empty()) {
+    SimFuncOp function = pending.pop_back_val();
+    if (!visited.insert(function.getOperation()).second)
+      continue;
+    WalkResult readOnly = function.getBody().walk([&](Operation *operation) {
+      if (isa<SimFuncOp>(operation))
+        return WalkResult::skip();
+      if (isa<SimManagedStoreOp, SimManagedNBAEnqueueOp,
+              SimArgumentRefStoreOp, SimRefStoreOp, SimDriverDriveOp,
+              SimNBAEnqueueOp, SimSpawnOp, SimEventTriggerOp,
+              SimSuspendDelayOp, SimTaskCallOp>(operation)) {
+        operation->emitOpError(
+            "is not permitted in a read-only postponed code unit");
+        return WalkResult::interrupt();
+      }
+      if (auto call = dyn_cast<SimCallOp>(operation)) {
+        auto callee = SymbolTable::lookupNearestSymbolFrom<SimFuncOp>(
+            call, call.getCalleeAttr());
+        if (!callee || callee.isExternal()) {
+          call.emitOpError(
+              "cannot prove external call is read-only in a postponed code "
+              "unit");
+          return WalkResult::interrupt();
+        }
+        pending.push_back(callee);
+      } else if (auto call = dyn_cast<SimClassDirectCallOp>(operation)) {
+        auto callee = SymbolTable::lookupNearestSymbolFrom<SimFuncOp>(
+            call, call.getCalleeAttr());
+        if (!callee || callee.isExternal()) {
+          call.emitOpError(
+              "cannot prove method call is read-only in a postponed code "
+              "unit");
+          return WalkResult::interrupt();
+        }
+        pending.push_back(callee);
+      } else if (isa<SimClassVirtualCallOp>(operation)) {
+        operation->emitOpError(
+            "virtual calls are not permitted in a read-only postponed code "
+            "unit");
+        return WalkResult::interrupt();
+      } else if (auto call = dyn_cast<SimDPICallOp>(operation);
+                 call && !call.getIsPure()) {
+        call.emitOpError(
+            "impure DPI calls are not permitted in a read-only postponed code "
+            "unit");
+        return WalkResult::interrupt();
+      }
+      return WalkResult::advance();
+    });
+    if (readOnly.wasInterrupted())
+      return failure();
+  }
+  return success();
+}
+
 } // namespace
 
 InlineLegality getInlineLegality(SimCallOp call, SimFuncOp callee) {
@@ -2333,8 +2391,24 @@ LogicalResult SimFuncOp::verify() {
     return emitOpError(
         "program-domain code units must have reactive home region");
   if (getDomain() == ExecutionDomain::Design &&
-      getHomeRegion() != EventRegion::Active)
-    return emitOpError("design-domain code units must have active home region");
+      getHomeRegion() != EventRegion::Active &&
+      getHomeRegion() != EventRegion::Observed &&
+      getHomeRegion() != EventRegion::Postponed)
+    return emitOpError(
+        "design-domain code units must have active, observed, or postponed "
+        "home region");
+  if (getHomeRegion() == EventRegion::Postponed &&
+      failed(verifyPostponedReadOnly(*this)))
+    return failure();
+  if (getHomeRegion() == EventRegion::Observed) {
+    WalkResult noDelay = getBody().walk([&](SimSuspendDelayOp operation) {
+      operation.emitOpError(
+          "is not permitted in an observed-region code unit");
+      return WalkResult::interrupt();
+    });
+    if (noDelay.wasInterrupted())
+      return failure();
+  }
   if (getCodeUnitIdAttr() &&
       failed(verifyNonnegative(*this, getCodeUnitIdAttr(), "code-unit ID")))
     return failure();
@@ -4990,6 +5064,15 @@ static LogicalResult verifyContinuation(Operation *op,
     return op->emitOpError("continuation must be a block in the same function");
   if (continuation == &function.getBody().front())
     return op->emitOpError("continuation must not target the entry block");
+  if (auto resume =
+          op->template getAttrOfType<EventRegionAttr>("resume_region")) {
+    EventRegion region = resume.getValue();
+    if (region != EventRegion::Active && region != EventRegion::Observed &&
+        region != EventRegion::Reactive &&
+        region != EventRegion::Postponed)
+      return op->emitOpError(
+          "resume region must be an executable process home region");
+  }
   return success();
 }
 

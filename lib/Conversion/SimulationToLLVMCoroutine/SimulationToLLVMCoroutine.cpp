@@ -77,6 +77,30 @@ constexpr uint64_t kInstanceStatusOffset = 68;
 constexpr uint64_t kInstanceContextOffset = 72;
 constexpr uint64_t kInstanceActionOffset = 80;
 
+uint32_t executableRegion(sim::EventRegion region) {
+  switch (region) {
+  case sim::EventRegion::Active:
+    return OBELISK_RT_REGION_ACTIVE;
+  case sim::EventRegion::Observed:
+    return OBELISK_RT_REGION_OBSERVED;
+  case sim::EventRegion::Reactive:
+    return OBELISK_RT_REGION_REACTIVE;
+  case sim::EventRegion::Postponed:
+    return OBELISK_RT_REGION_POSTPONED;
+  default:
+    return UINT32_MAX;
+  }
+}
+
+uint32_t resumeActionFlags(Operation *operation) {
+  auto region = operation->getAttrOfType<sim::EventRegionAttr>("resume_region");
+  if (!region)
+    return 0;
+  uint32_t ordinal = executableRegion(region.getValue());
+  return ordinal == UINT32_MAX ? UINT32_MAX
+                               : OBELISK_RT_ACTION_RESUME_REGION(ordinal);
+}
+
 bool alignUp(uint64_t value, uint64_t alignment, uint64_t &result) {
   if (value > std::numeric_limits<uint64_t>::max() - (alignment - 1))
     return false;
@@ -956,6 +980,84 @@ public:
     Value first = arith::TruncIOp::create(rewriter, location,
                                           rewriter.getI1Type(), claimed);
     rewriter.replaceOp(operation, first);
+    return success();
+  }
+};
+
+class SimMonitorRegisterConversion final
+    : public OpConversionPattern<sim::SimMonitorRegisterOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimMonitorRegisterOp operation, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getProcess().size() != 1)
+      return failure();
+    Location location = operation.getLoc();
+    auto [context, pointer] = loadCurrentRuntimeContext(rewriter, location);
+    (void)pointer;
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_monitor_register"),
+            ValueRange{context, adaptor.getProcess().front(),
+                       llvmConstant(rewriter, location, rewriter.getI32Type(),
+                                    0)})
+            .getResult();
+    reportRuntimeControlStatus(rewriter, location, context, status);
+    rewriter.eraseOp(operation);
+    return success();
+  }
+};
+
+class SimMonitorControlConversion final
+    : public OpConversionPattern<sim::SimMonitorControlOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimMonitorControlOp operation, OneToNOpAdaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location location = operation.getLoc();
+    auto [context, pointer] = loadCurrentRuntimeContext(rewriter, location);
+    (void)pointer;
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_monitor_control"),
+            ValueRange{context,
+                       llvmConstant(rewriter, location, rewriter.getI32Type(),
+                                    operation.getEnabled() ? 1 : 0)})
+            .getResult();
+    reportRuntimeControlStatus(rewriter, location, context, status);
+    rewriter.eraseOp(operation);
+    return success();
+  }
+};
+
+class SimMonitorCurrentConversion final
+    : public OpConversionPattern<sim::SimMonitorCurrentOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimMonitorCurrentOp operation, OneToNOpAdaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location location = operation.getLoc();
+    auto [context, pointer] = loadCurrentRuntimeContext(rewriter, location);
+    (void)pointer;
+    Value current =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_monitor_current"),
+            ValueRange{context})
+            .getResult();
+    rewriter.replaceOpWithNewOp<arith::TruncIOp>(
+        operation, rewriter.getI1Type(), current);
     return success();
   }
 };
@@ -2343,7 +2445,11 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
 
   storeAt(builder, location, instance, kInstanceContinuationOffset,
           llvmConstant(builder, location, i32, continuationID), 4);
-  publishAction(builder, location, instance, 1, kind, continuationID, 1,
+  uint32_t actionFlags = resumeActionFlags(operation);
+  if (actionFlags == UINT32_MAX)
+    return operation->emitError("has no executable resume region");
+  publishAction(builder, location, instance, 1, kind, continuationID,
+                OBELISK_RT_ACTION_FRAME_WAIT_RECORD | actionFlags,
                 llvmConstant(builder, location, i64, waitOffset), waitSize);
 
   Value final = llvmConstant(builder, location, builder.getI1Type(), 0);
@@ -4701,6 +4807,8 @@ NativeScheduleRanks buildNativeScheduleRanks(ModuleOp module) {
   for (Attribute regionAttribute : graph.getRegions()) {
     auto region = dyn_cast<sim::ComputeRegionAttr>(regionAttribute);
     if (!region || (region.getKind() != sim::ComputeRegionKind::Active &&
+                    region.getKind() != sim::ComputeRegionKind::Observed &&
+                    region.getKind() != sim::ComputeRegionKind::Reactive &&
                     region.getKind() != sim::ComputeRegionKind::Postponed))
       continue;
     for (Attribute groupAttribute : region.getGroups()) {
@@ -7923,7 +8031,14 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
   }
   if (physicalArgument != entry->getNumArguments())
     return helper.emitError("spawn capture layout has excess arguments");
-  uint32_t phase = function.getEntryKind() == sim::EntryKind::Final ? 1 : 0;
+  uint32_t homeRegion = executableRegion(function.getHomeRegion());
+  if (homeRegion == UINT32_MAX)
+    return function.emitOpError("has no executable runtime home region");
+  uint32_t scheduleFlags =
+      OBELISK_RT_SCHEDULE_HOME(homeRegion) |
+      (function.getEntryKind() == sim::EntryKind::Final
+           ? OBELISK_RT_SCHEDULE_FINAL
+           : 0);
   Value null = LLVM::ZeroOp::create(builder, location, pointer);
   Value continuationAddress = null;
   Value rankAddress = null;
@@ -7938,7 +8053,7 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
       SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_add_planned"),
       ValueRange{
           entry->getArgument(0), instance,
-          llvmConstant(builder, location, i32, phase),
+          llvmConstant(builder, location, i32, scheduleFlags),
           llvmConstant(builder, location, i32, schedule.initialRank),
           continuationAddress, rankAddress,
           llvmConstant(builder, location, i32, schedule.continuations.size())});
@@ -7986,6 +8101,12 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
                            {pointer, i64, i64, i32});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_static_once", i32,
                            {pointer, i64});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_monitor_register", i32,
+                           {pointer, i64, i32});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_monitor_control", i32,
+                           {pointer, i32});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_monitor_current", i32,
+                           {pointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_process_instance_destroy",
                            i32, {pointer});
   return success();
@@ -8575,7 +8696,9 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       SimSuspendTypeConversion<sim::SimSuspendChildrenOp>,
       SimDisableChildrenConversion, SimControlEnterConversion,
       SimControlLeaveConversion, SimControlDisableConversion,
-      SimStaticOnceConversion>(packedConverter, context);
+      SimStaticOnceConversion, SimMonitorRegisterConversion,
+      SimMonitorControlConversion, SimMonitorCurrentConversion>(
+      packedConverter, context);
   packedPatterns.add<ContextHandleConversion<sim::SimContextStorageOp>>(
       packedConverter, context, stateLayout->storage);
   packedPatterns.add<ContextHandleConversion<sim::SimContextNetOp>>(
@@ -8634,7 +8757,10 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       sim::SimDriverArrayElementOp, sim::SimNBAEnqueueOp,
       sim::SimEventTriggerOp, sim::SimEventTriggeredOp, sim::SimEventEqualOp,
       sim::SimDisableChildrenOp, sim::SimControlEnterOp, sim::SimControlLeaveOp,
-      sim::SimControlDisableOp, sim::SimStaticOnceOp, sim::SimBitsDynExtractOp,
+      sim::SimControlDisableOp, sim::SimStaticOnceOp,
+      sim::SimMonitorRegisterOp, sim::SimMonitorControlOp,
+      sim::SimMonitorCurrentOp,
+      sim::SimBitsDynExtractOp,
       sim::SimClassNullOp, sim::SimClassAllocOp, sim::SimClassCopyOp,
       sim::SimClassIsInstanceOp, sim::SimClassIdOp, sim::SimClassCastOp,
       sim::SimClassFieldRefOp, sim::SimClassRootBindOp, sim::SimManagedLoadOp,

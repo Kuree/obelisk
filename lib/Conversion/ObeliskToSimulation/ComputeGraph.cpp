@@ -1384,12 +1384,24 @@ FailureOr<ArrayAttr> ComputeGraphBuilder::buildRegions() {
   };
 
   SmallVector<uint32_t> activeIds;
+  SmallVector<uint32_t> observedIds;
+  SmallVector<uint32_t> reactiveIds;
+  SmallVector<uint32_t> postponedIds;
   SmallVector<SmallVector<uint32_t>> postponedGroups;
   for (Fragment &fragment : fragments) {
     if (fragment.function.getEntryKind() == sim::EntryKind::Final)
       postponedGroups.push_back({fragment.id});
-    else
+    else if (fragment.function.getHomeRegion() == sim::EventRegion::Active)
       activeIds.push_back(fragment.id);
+    else if (fragment.function.getHomeRegion() == sim::EventRegion::Observed)
+      observedIds.push_back(fragment.id);
+    else if (fragment.function.getHomeRegion() == sim::EventRegion::Reactive)
+      reactiveIds.push_back(fragment.id);
+    else if (fragment.function.getHomeRegion() == sim::EventRegion::Postponed)
+      postponedIds.push_back(fragment.id);
+    else
+      return fragment.function.emitOpError(
+          "has no executable compute-graph home region");
   }
   SmallVector<SmallVector<uint32_t>> nbaGroups;
   for (uint32_t id : nbaCommitIds)
@@ -1401,12 +1413,19 @@ FailureOr<ArrayAttr> ComputeGraphBuilder::buildRegions() {
   // design has no nodes in one of them.
   SmallVector<SmallVector<uint32_t>> activeGroups =
       computeSCCSchedule(activeIds, edges);
+  SmallVector<SmallVector<uint32_t>> observedGroups =
+      computeSCCSchedule(observedIds, edges);
+  SmallVector<SmallVector<uint32_t>> reactiveGroups =
+      computeSCCSchedule(reactiveIds, edges);
+  SmallVector<SmallVector<uint32_t>> ordinaryPostponedGroups =
+      computeSCCSchedule(postponedIds, edges);
+  llvm::append_range(ordinaryPostponedGroups, postponedGroups);
   std::pair<sim::ComputeRegionKind, ArrayRef<SmallVector<uint32_t>>> plans[] = {
       {sim::ComputeRegionKind::Active, activeGroups},
       {sim::ComputeRegionKind::NBA, nbaGroups},
-      {sim::ComputeRegionKind::Observed, {}},
-      {sim::ComputeRegionKind::Reactive, {}},
-      {sim::ComputeRegionKind::Postponed, postponedGroups}};
+      {sim::ComputeRegionKind::Observed, observedGroups},
+      {sim::ComputeRegionKind::Reactive, reactiveGroups},
+      {sim::ComputeRegionKind::Postponed, ordinaryPostponedGroups}};
 
   SmallVector<Attribute> regions;
   for (auto [kind, groups] : plans) {
@@ -1433,14 +1452,20 @@ FailureOr<ComputeGraphResult> ComputeGraphBuilder::derive() {
   SmallVector<Attribute> nodes;
   DenseMap<Operation *, SmallVector<int64_t>> functionFragments;
   for (Fragment &fragment : fragments) {
+    sim::ComputeRegionKind region = sim::ComputeRegionKind::Active;
+    if (fragment.function.getEntryKind() == sim::EntryKind::Final ||
+        fragment.function.getHomeRegion() == sim::EventRegion::Postponed)
+      region = sim::ComputeRegionKind::Postponed;
+    else if (fragment.function.getHomeRegion() == sim::EventRegion::Observed)
+      region = sim::ComputeRegionKind::Observed;
+    else if (fragment.function.getHomeRegion() == sim::EventRegion::Reactive)
+      region = sim::ComputeRegionKind::Reactive;
     nodes.push_back(sim::ComputeFragmentAttr::get(
         design.getContext(), fragment.id,
         FlatSymbolRefAttr::get(design.getContext(),
                                fragment.function.getSymName()),
         fragment.ordinal,
-        fragment.function.getEntryKind() == sim::EntryKind::Final
-            ? sim::ComputeRegionKind::Postponed
-            : sim::ComputeRegionKind::Active,
+        region,
         getFragmentActionKind(fragment.block->getTerminator()),
         sim::ComputeTierKind::Native, fragment.cost, fragment.lane,
         fragment.twoState, getEffectArrayAttr(builder, fragment.effects)));

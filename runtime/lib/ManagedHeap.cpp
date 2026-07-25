@@ -1820,7 +1820,6 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_managed_nba(
       !value || planeSize == 0 ||
       planeSize > std::numeric_limits<size_t>::max())
     return OBELISK_RT_INVALID_ARGUMENT;
-
   const obelisk_rt_trace_layout_v1 *layout =
       destinationMetadata->descriptor->layout;
   bool managedSlot = planeSize == sizeof(obelisk_rt_object_v1 *) &&
@@ -1895,10 +1894,24 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_managed_nba(
     update.managedValues = referents;
     ContextTransaction transaction(context);
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    if (context->activeExecRegion == OBELISK_RT_REGION_POSTPONED) {
+      rollback();
+      context->schedulerStatus = OBELISK_RT_INVALID_LIFECYCLE;
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    }
     if (context->nextSchedulerSequence == 0) {
       rollback();
       context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
       return OBELISK_RT_OUT_OF_RESOURCES;
+    }
+    update.execRegion = obelisk_rt_commit_region(
+        context->activeHomeRegion == UINT32_MAX
+            ? static_cast<uint32_t>(OBELISK_RT_REGION_ACTIVE)
+            : context->activeHomeRegion);
+    if (update.execRegion == UINT32_MAX) {
+      rollback();
+      context->schedulerStatus = OBELISK_RT_INVALID_LIFECYCLE;
+      return OBELISK_RT_INVALID_LIFECYCLE;
     }
     update.sequence = context->nextSchedulerSequence++;
     update.dueTime = delay > UINT64_MAX - context->schedulerTime

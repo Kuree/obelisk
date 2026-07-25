@@ -1782,3 +1782,24 @@ module {
     }
   }
 }
+
+// -----
+
+module {
+  obelisk_sim.design @observed_delay {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "bad"
+    obelisk_sim.func @bad(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {
+          entry_kind = 1 : i32, code_unit_id = 1 : i64,
+          home_region = 8 : i32
+        } {
+      %zero = obelisk_sim.time.constant 0
+      // expected-error @+1 {{is not permitted in an observed-region code unit}}
+      obelisk_sim.suspend.delay %zero to ^resume
+    ^resume:
+      obelisk_sim.return
+    }
+  }
+}

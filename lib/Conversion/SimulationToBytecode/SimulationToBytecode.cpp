@@ -54,6 +54,21 @@ constexpr uint32_t kExecutionRequireBytecode =
 constexpr uint32_t kDatabaseProfileRead = OBELISK_RT_DESIGN_PROFILE_READ;
 constexpr uint32_t kDatabaseProfileWrite = OBELISK_RT_DESIGN_PROFILE_WRITE;
 constexpr uint32_t kInvalidRegister = UINT32_MAX;
+
+uint32_t executableRegion(sim::EventRegion region) {
+  switch (region) {
+  case sim::EventRegion::Active:
+    return OBELISK_RT_REGION_ACTIVE;
+  case sim::EventRegion::Observed:
+    return OBELISK_RT_REGION_OBSERVED;
+  case sim::EventRegion::Reactive:
+    return OBELISK_RT_REGION_REACTIVE;
+  case sim::EventRegion::Postponed:
+    return OBELISK_RT_REGION_POSTPONED;
+  default:
+    return UINT32_MAX;
+  }
+}
 constexpr uint32_t kIntrinsicDisplay = OBELISK_RT_INTRINSIC_V1_DISPLAY;
 constexpr uint32_t kIntrinsicFinish = OBELISK_RT_INTRINSIC_V1_FINISH;
 constexpr uint32_t kIntrinsicFatal = OBELISK_RT_INTRINSIC_V1_FATAL;
@@ -100,6 +115,12 @@ constexpr uint32_t kIntrinsicControlLeave =
 constexpr uint32_t kIntrinsicControlDisable =
     OBELISK_RT_INTRINSIC_V1_CONTROL_DISABLE;
 constexpr uint32_t kIntrinsicStaticOnce = OBELISK_RT_INTRINSIC_V1_STATIC_ONCE;
+constexpr uint32_t kIntrinsicMonitorRegister =
+    OBELISK_RT_INTRINSIC_V1_MONITOR_REGISTER;
+constexpr uint32_t kIntrinsicMonitorControl =
+    OBELISK_RT_INTRINSIC_V1_MONITOR_CONTROL;
+constexpr uint32_t kIntrinsicMonitorCurrent =
+    OBELISK_RT_INTRINSIC_V1_MONITOR_CURRENT;
 constexpr uint32_t kIntrinsicImport = OBELISK_RT_INTRINSIC_V1_IMPORT;
 constexpr uint32_t kIntrinsicDPIImport = OBELISK_RT_INTRINSIC_V1_DPI_IMPORT;
 constexpr uint32_t kIntrinsicClassAlloc = OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC;
@@ -134,6 +155,15 @@ bool isObserverCaptureBridge(Block &block) {
     return false;
   auto branch = dyn_cast<cf::BranchOp>(block.getTerminator());
   return branch && branch->hasAttr("obelisk_sim.observer_capture_bridge");
+}
+
+uint32_t resumeActionFlags(Operation *operation) {
+  auto region = operation->getAttrOfType<sim::EventRegionAttr>("resume_region");
+  if (!region)
+    return 0;
+  uint32_t ordinal = executableRegion(region.getValue());
+  return ordinal == UINT32_MAX ? UINT32_MAX
+                               : OBELISK_RT_ACTION_RESUME_REGION(ordinal);
 }
 
 Block *lookupComputeGraphBlock(sim::SimFuncOp function, uint32_t ordinal) {
@@ -1044,7 +1074,7 @@ private:
           return failure();
         plan.frame = std::move(*frame);
         if (plan.frame->getFrameSize() >=
-            (OBELISK_RT_DESIGN_FUNCTION_FINAL >> 1))
+            OBELISK_RT_DESIGN_FUNCTION_FRAME_SIZE_LIMIT)
           return plan.function.emitOpError(
               "process frame is too large for bytecode function flags");
         ArrayRef<ProcessFrameValue> captures =
@@ -1084,6 +1114,8 @@ private:
     for (Attribute regionAttribute : graph.getRegions()) {
       auto region = dyn_cast<sim::ComputeRegionAttr>(regionAttribute);
       if (!region || (region.getKind() != sim::ComputeRegionKind::Active &&
+                      region.getKind() != sim::ComputeRegionKind::Observed &&
+                      region.getKind() != sim::ComputeRegionKind::Reactive &&
                       region.getKind() != sim::ComputeRegionKind::Postponed))
         continue;
       for (Attribute groupAttribute : region.getGroups()) {
@@ -2263,6 +2295,15 @@ private:
       return emitIntrinsic(plan, kIntrinsicStaticOnce, {}, {op.getFirst()},
                            static_cast<uint32_t>(op.getId()));
     }
+    if (auto op = dyn_cast<sim::SimMonitorRegisterOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicMonitorRegister, {op.getProcess()},
+                           {});
+    if (auto op = dyn_cast<sim::SimMonitorControlOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicMonitorControl, {}, {},
+                           op.getEnabled() ? 1 : 0);
+    if (auto op = dyn_cast<sim::SimMonitorCurrentOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicMonitorCurrent, {},
+                           {op.getCurrent()});
     if (auto op = dyn_cast<sim::SimContextStorageOp>(operation))
       return encodeHandle(plan, op.getResult(), op.getId(), state.storage, 2);
     if (auto op = dyn_cast<sim::SimContextNetOp>(operation))
@@ -3213,7 +3254,11 @@ private:
     plan.layouts.push_back(offsetLayout);
     emit({Constant, 0, offsetRegister, 0, 0, 0, 0,
           addConstant(offsetLayout, APInt(64, suspension->waitOffset))});
-    emit({Suspend, OBELISK_RT_SUSPEND_OBSERVER, 0, offsetRegister, 0, 0, 0,
+    uint32_t actionFlags = resumeActionFlags(operation);
+    if (actionFlags == UINT32_MAX)
+      return operation.emitOpError("has no executable resume region");
+    emit({Suspend, OBELISK_RT_SUSPEND_OBSERVER, 0, offsetRegister, 0, 0,
+          actionFlags,
           suspension->continuationID});
     return success();
   }
@@ -3308,7 +3353,11 @@ private:
     APInt waitOffset(64, suspension->waitOffset);
     emit({Constant, 0, offsetRegister, 0, 0, 0, 0,
           addConstant(offsetLayout, waitOffset)});
-    emit({Suspend, static_cast<uint16_t>(kind), 0, offsetRegister, 0, 0, 0,
+    uint32_t actionFlags = resumeActionFlags(operation);
+    if (actionFlags == UINT32_MAX)
+      return operation->emitOpError("has no executable resume region");
+    emit({Suspend, static_cast<uint16_t>(kind), 0, offsetRegister, 0, 0,
+          actionFlags,
           suspension->continuationID});
     return success();
   }
@@ -3375,6 +3424,14 @@ private:
                     OBELISK_RT_DESIGN_FUNCTION_PROCESS;
       if (plan.function.getEntryKind() == sim::EntryKind::Final)
         functionFlags |= OBELISK_RT_DESIGN_FUNCTION_FINAL;
+      if ((functionFlags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) != 0) {
+        uint32_t homeRegion = executableRegion(plan.function.getHomeRegion());
+        if (homeRegion == UINT32_MAX) {
+          plan.function.emitOpError("has no executable runtime home region");
+          return {};
+        }
+        functionFlags |= OBELISK_RT_DESIGN_FUNCTION_HOME(homeRegion);
+      }
       append64(output, functionFlags);
       layoutCursor += plan.layouts.size();
       continuationCursor += plan.continuations.size();

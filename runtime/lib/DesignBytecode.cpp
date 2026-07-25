@@ -230,6 +230,21 @@ struct Continuation {
   uint32_t reserved = 0;
 };
 
+uint32_t functionHomeRegion(const Function &function) {
+  return static_cast<uint32_t>(
+      (function.flags & OBELISK_RT_DESIGN_FUNCTION_HOME_MASK) >>
+      OBELISK_RT_DESIGN_FUNCTION_HOME_SHIFT);
+}
+
+bool validProcessFunctionFlags(const Function &function) {
+  if ((function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0)
+    return function.flags == 0;
+  uint32_t homeRegion = functionHomeRegion(function);
+  return obelisk_rt_is_process_home_region(homeRegion) &&
+         ((function.flags & OBELISK_RT_DESIGN_FUNCTION_FINAL) == 0 ||
+          homeRegion == OBELISK_RT_REGION_ACTIVE);
+}
+
 struct IntrinsicSignature {
   uint32_t id = 0, inputCount = 0, outputCount = 0, flags = 0;
 };
@@ -618,6 +633,7 @@ bool validIntrinsic(const Image &image, const Function &function,
       signature.id != OBELISK_RT_INTRINSIC_V1_CONTROL_ENTER &&
       signature.id != OBELISK_RT_INTRINSIC_V1_CONTROL_DISABLE &&
       signature.id != OBELISK_RT_INTRINSIC_V1_STATIC_ONCE &&
+      signature.id != OBELISK_RT_INTRINSIC_V1_MONITOR_CONTROL &&
       signature.id != OBELISK_RT_INTRINSIC_V1_REAL_FROM_INTEGER &&
       signature.id != OBELISK_RT_INTRINSIC_V1_REAL_TO_INTEGER &&
       signature.id != OBELISK_RT_INTRINSIC_V1_REAL_COMPARE &&
@@ -730,6 +746,15 @@ bool validIntrinsic(const Image &image, const Function &function,
            ((signature.flags >> 31) == 0 || site.inputCount == 0);
   case OBELISK_RT_INTRINSIC_V1_STATIC_ONCE:
     return signature.flags != 0 && site.inputCount == 0 &&
+           site.outputCount == 1 && bits(output(0), 1);
+  case OBELISK_RT_INTRINSIC_V1_MONITOR_REGISTER:
+    return signature.flags == 0 && site.inputCount == 1 &&
+           site.outputCount == 0 && handle(input(0));
+  case OBELISK_RT_INTRINSIC_V1_MONITOR_CONTROL:
+    return signature.flags <= 1 && site.inputCount == 0 &&
+           site.outputCount == 0;
+  case OBELISK_RT_INTRINSIC_V1_MONITOR_CURRENT:
+    return signature.flags == 0 && site.inputCount == 0 &&
            site.outputCount == 1 && bits(output(0), 1);
   case OBELISK_RT_INTRINSIC_V1_IMPORT:
     if (signature.flags == 0)
@@ -1208,7 +1233,7 @@ bool validateImage(const Image &image) {
        ++functionIndex) {
     Function function = functionAt(image, functionIndex);
     bool process = (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) != 0;
-    if ((!process && function.flags != 0) ||
+    if (!validProcessFunctionFlags(function) ||
         (process && function.resultCount != 0) ||
         function.firstLayout > image.layoutCount ||
         function.layoutCount > image.layoutCount - function.firstLayout ||
@@ -1221,7 +1246,7 @@ bool validateImage(const Image &image) {
        ++functionIndex) {
     Function function = functionAt(image, functionIndex);
     bool process = (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) != 0;
-    if ((!process && function.flags != 0) ||
+    if (!validProcessFunctionFlags(function) ||
         (process && function.resultCount != 0))
       return false;
     uint64_t canonicalSize =
@@ -1469,8 +1494,7 @@ bool validateImage(const Image &image) {
         function.scratchAlignment == 0 || function.scratchAlignment > 4096 ||
         (function.scratchAlignment & (function.scratchAlignment - 1)) != 0 ||
         function.scratchSize % function.scratchAlignment != 0 ||
-        ((function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 &&
-         function.flags != 0) ||
+        !validProcessFunctionFlags(function) ||
         function.continuationCount == 0 ||
         function.firstContinuation > image.continuationCount ||
         function.continuationCount >
@@ -1894,17 +1918,33 @@ bool validateImage(const Image &image) {
             !hasContinuation(instruction.immediate))
           return false;
         break;
-      case OBELISK_RT_DB_SUSPEND:
+      case OBELISK_RT_DB_SUSPEND: {
+        constexpr uint32_t resumeFlags =
+            OBELISK_RT_ACTION_RESUME_REGION_VALID |
+            OBELISK_RT_ACTION_RESUME_REGION_MASK;
+        uint32_t resumeRegion =
+            (instruction.auxiliary &
+             OBELISK_RT_ACTION_RESUME_REGION_MASK) >>
+            OBELISK_RT_ACTION_RESUME_REGION_SHIFT;
         if (instruction.flags < OBELISK_RT_SUSPEND_DELAY ||
             instruction.flags > OBELISK_RT_SUSPEND_OBSERVER ||
             instruction.destination || instruction.source1 ||
-            instruction.source2 || instruction.auxiliary ||
+            instruction.source2 ||
+            (instruction.auxiliary & ~resumeFlags) != 0 ||
+            ((instruction.auxiliary &
+              OBELISK_RT_ACTION_RESUME_REGION_MASK) != 0 &&
+             (instruction.auxiliary &
+              OBELISK_RT_ACTION_RESUME_REGION_VALID) == 0) ||
+            ((instruction.auxiliary &
+              OBELISK_RT_ACTION_RESUME_REGION_VALID) != 0 &&
+             !obelisk_rt_is_process_home_region(resumeRegion)) ||
             !numeric(instruction.source0) ||
             layoutAt(image, function, instruction.source0).width != 64 ||
             (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
             !hasContinuation(instruction.immediate))
           return false;
         break;
+      }
       case OBELISK_RT_DB_TERMINATE:
         if (instruction.flags || instruction.destination ||
             instruction.source0 || instruction.source1 || instruction.source2 ||
@@ -3374,6 +3414,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       task.id = id;
       task.phase =
           (callee.flags & OBELISK_RT_DESIGN_FUNCTION_FINAL) != 0 ? 1 : 0;
+      task.homeRegion = functionHomeRegion(callee);
+      task.queuedRegion = task.homeRegion;
       if (task.phase == 0 && context->activeDesignTaskID != 0)
         task.phase = context->activeDesignTaskPhase;
       if (task.phase == 0 && context->activeNativeProcess)
@@ -3486,6 +3528,12 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
       if (context->nextSchedulerSequence == 0)
         return OBELISK_RT_OUT_OF_RESOURCES;
+      update.execRegion = obelisk_rt_commit_region(
+          context->activeHomeRegion == UINT32_MAX
+              ? static_cast<uint32_t>(OBELISK_RT_REGION_ACTIVE)
+              : context->activeHomeRegion);
+      if (update.execRegion == UINT32_MAX)
+        return OBELISK_RT_INVALID_LIFECYCLE;
       if (automatic) {
         auto found = context->nativeAutomaticStates.find(objectID);
         if (found == context->nativeAutomaticStates.end())
@@ -3515,6 +3563,12 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
       if (context->nextSchedulerSequence == 0)
         return OBELISK_RT_OUT_OF_RESOURCES;
+      update.execRegion = obelisk_rt_commit_region(
+          context->activeHomeRegion == UINT32_MAX
+              ? static_cast<uint32_t>(OBELISK_RT_REGION_ACTIVE)
+              : context->activeHomeRegion);
+      if (update.execRegion == UINT32_MAX)
+        return OBELISK_RT_INVALID_LIFECYCLE;
       update.sequence = context->nextSchedulerSequence++;
       update.dueTime = delay > UINT64_MAX - context->schedulerTime
                            ? UINT64_MAX
@@ -3558,9 +3612,15 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       uint64_t dueTime = delay > UINT64_MAX - context->schedulerTime
                              ? UINT64_MAX
                              : context->schedulerTime + delay;
-      context->scheduledDesignEvents.push_back({context->nextSchedulerSequence,
-                                                dueTime, stableID,
-                                                retainedAutomaticID});
+      uint32_t execRegion = obelisk_rt_commit_region(
+          context->activeHomeRegion == UINT32_MAX
+              ? static_cast<uint32_t>(OBELISK_RT_REGION_ACTIVE)
+              : context->activeHomeRegion);
+      if (execRegion == UINT32_MAX)
+        return OBELISK_RT_INVALID_LIFECYCLE;
+      context->scheduledDesignEvents.push_back(
+          {context->nextSchedulerSequence, dueTime, execRegion, stableID,
+           retainedAutomaticID});
       if (retainedAutomaticID != 0)
         ++context->nativeAutomaticStates.find(retainedAutomaticID)
               ->second.referenceCount;
@@ -3689,6 +3749,29 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if (!context)
       return OBELISK_RT_INVALID_ARGUMENT;
     return sentinel(0, obelisk_rt_v1_static_once(context, signature.flags));
+  case OBELISK_RT_INTRINSIC_V1_MONITOR_REGISTER: {
+    if (!context)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    Layout process = layoutAt(image, frame.function, inputRegister(0));
+    if (process.kind != OBELISK_RT_DBREG_HANDLE || process.size < 32)
+      return OBELISK_RT_INVALID_BYTECODE;
+    const uint8_t *address = frame.data + process.offset;
+    uint32_t kind = 0;
+    int64_t begin = 0, start = kInvalidHandleStart, end = 0;
+    std::memcpy(&kind, address, 4);
+    std::memcpy(&begin, address + 8, 8);
+    std::memcpy(&start, address + 16, 8);
+    std::memcpy(&end, address + 24, 8);
+    if (kind != OBELISK_RT_DESCRIPTOR_PROCESS || begin <= 0 ||
+        begin != start || end != begin + 1)
+      return OBELISK_RT_INVALID_HANDLE;
+    return obelisk_rt_v1_monitor_register(
+        context, static_cast<uint64_t>(begin), 1);
+  }
+  case OBELISK_RT_INTRINSIC_V1_MONITOR_CONTROL:
+    return obelisk_rt_v1_monitor_control(context, signature.flags);
+  case OBELISK_RT_INTRINSIC_V1_MONITOR_CURRENT:
+    return sentinel(0, obelisk_rt_v1_monitor_current(context));
   case OBELISK_RT_INTRINSIC_V1_IMPORT:
   case OBELISK_RT_INTRINSIC_V1_DPI_IMPORT: {
     if (!context)
@@ -5123,6 +5206,9 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       break;
     case OBELISK_RT_DB_LOAD_STATE:
     case OBELISK_RT_DB_STORE_STATE: {
+      if (instruction.opcode == OBELISK_RT_DB_STORE_STATE && context &&
+          context->activeExecRegion == OBELISK_RT_REGION_POSTPONED)
+        return OBELISK_RT_INVALID_LIFECYCLE;
       uint32_t valueRegister = instruction.opcode == OBELISK_RT_DB_LOAD_STATE
                                    ? instruction.destination
                                    : instruction.source1;
@@ -5536,7 +5622,7 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       *action = {OBELISK_RT_FRAGMENT_SUSPEND,
                  static_cast<uint32_t>(instruction.flags),
                  static_cast<uint32_t>(instruction.immediate),
-                 0,
+                 instruction.auxiliary,
                  payload,
                  0};
       return OBELISK_RT_OK;
@@ -6873,6 +6959,8 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
       }
       context->activeDesignTaskID = 0;
       context->activeDesignTaskPhase = 0;
+      context->activeHomeRegion = UINT32_MAX;
+      context->activeExecRegion = UINT32_MAX;
       context->activeLogicalProcessToken = 0;
       context->designTaskExecuting = false;
     } catch (...) {
@@ -7025,6 +7113,8 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
       context->designTaskExecuting = true;
       context->activeDesignTaskID = task.id;
       context->activeDesignTaskPhase = task.phase;
+      context->activeHomeRegion = task.homeRegion;
+      context->activeExecRegion = task.queuedRegion;
       context->activeLogicalProcessToken = task.id;
       context->activeControls = std::move(task.controls);
     }
@@ -7085,6 +7175,8 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
       task.controls = std::move(context->activeControls);
       context->activeDesignTaskID = 0;
       context->activeDesignTaskPhase = 0;
+      context->activeHomeRegion = UINT32_MAX;
+      context->activeExecRegion = UINT32_MAX;
       context->activeLogicalProcessToken = 0;
       context->designTaskExecuting = false;
       task.started = true;
@@ -7105,10 +7197,14 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
         task.waitGenerations.clear();
         task.signalTriggered = false;
         task.urgent = false;
+        task.queuedRegion = task.homeRegion;
         break;
       case OBELISK_RT_FRAGMENT_SUSPEND: {
         if (action.suspend_kind == OBELISK_RT_SUSPEND_OBSERVER) {
-          if (action.flags != 0 ||
+          constexpr uint32_t resumeFlags =
+              OBELISK_RT_ACTION_RESUME_REGION_VALID |
+              OBELISK_RT_ACTION_RESUME_REGION_MASK;
+          if ((action.flags & ~resumeFlags) != 0 ||
               action.payload % alignof(obelisk_rt_computed_wait_record_v1) !=
                   0 ||
               action.payload > task.scratchOffset ||
@@ -7132,7 +7228,12 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
           task.waitGenerations.clear();
           task.signalTriggered = false;
           task.urgent = false;
-          task.queuedRegion = 0;
+          if (!obelisk_rt_next_queued_region(
+                  task.homeRegion, action.suspend_kind, 1, action.flags,
+                  task.queuedRegion)) {
+            finalizeStatus = OBELISK_RT_INVALID_BYTECODE;
+            break;
+          }
           break;
         }
         if (action.payload > task.scratchOffset ||
@@ -7198,10 +7299,12 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
         task.waitGenerations.clear();
         task.signalTriggered = false;
         task.urgent = false;
-        task.queuedRegion = action.suspend_kind == OBELISK_RT_SUSPEND_DELAY &&
-                                    wait->payload == 0
-                                ? 1
-                                : 0;
+        if (!obelisk_rt_next_queued_region(
+                task.homeRegion, action.suspend_kind, wait->payload,
+                action.flags, task.queuedRegion)) {
+          finalizeStatus = OBELISK_RT_INVALID_BYTECODE;
+          break;
+        }
         if (action.suspend_kind == OBELISK_RT_SUSPEND_EVENT) {
           task.waitGenerations.reserve(wait->count);
           for (uint32_t index = 0; index != wait->count; ++index) {
@@ -7237,6 +7340,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
         task.waitGenerations.clear();
         task.signalTriggered = false;
         task.urgent = true;
+        task.queuedRegion = task.homeRegion;
         pendingActivation->disarm();
         currentFrameReleased = false;
         break;
@@ -7258,6 +7362,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
           task.waitGenerations.clear();
           task.signalTriggered = false;
           task.urgent = true;
+          task.queuedRegion = task.homeRegion;
           currentFrameReleased = false;
         } else {
           context->terminatedDesignTasks.insert(task.id);
