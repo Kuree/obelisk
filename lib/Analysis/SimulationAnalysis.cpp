@@ -343,7 +343,8 @@ uint64_t getSimulationOperationCost(Operation &operation) {
       operation.hasTrait<OpTrait::ConstantLike>())
     return 0;
   if (isa<sim::SimRefLoadOp, sim::SimRefStoreOp, sim::SimNetReadOp,
-          sim::SimDriverDriveOp, sim::SimNBAEnqueueOp>(operation))
+          sim::SimDriverDriveOp, sim::SimNBAEnqueueOp,
+          sim::SimManagedNBAEnqueueOp>(operation))
     return 3;
   if (isa<sim::SimCallOp>(operation))
     return 5;

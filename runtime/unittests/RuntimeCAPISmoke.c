@@ -21,6 +21,22 @@ _Static_assert(offsetof(obelisk_rt_arg_v1, unknown) == 16 + sizeof(void *),
                "argument unknown offset changed");
 _Static_assert(offsetof(obelisk_rt_buffer_v1, data) == 0,
                "buffer data offset changed");
+_Static_assert(sizeof(obelisk_rt_trace_entry_v1) == 40,
+               "managed trace entry size changed");
+_Static_assert(sizeof(obelisk_rt_trace_layout_v1) == 40,
+               "managed trace layout size changed");
+_Static_assert(sizeof(obelisk_rt_method_descriptor_v1) == 32,
+               "managed method descriptor size changed");
+_Static_assert(sizeof(obelisk_rt_class_descriptor_v1) == 96,
+               "managed class descriptor size changed");
+_Static_assert(offsetof(obelisk_rt_class_descriptor_v1, base) == 32,
+               "managed class base offset changed");
+_Static_assert(offsetof(obelisk_rt_class_descriptor_v1, methods) == 64,
+               "managed class method table offset changed");
+_Static_assert(sizeof(obelisk_rt_gc_root_v1) == 24,
+               "managed root size changed");
+_Static_assert(sizeof(obelisk_rt_gc_statistics_v1) == 72,
+               "managed statistics size changed");
 _Static_assert(offsetof(obelisk_rt_format_env_v1, scope) == 0,
                "environment scope offset changed");
 _Static_assert(sizeof(obelisk_rt_format_env_v1) == 64,
@@ -85,15 +101,15 @@ _Static_assert(sizeof(obelisk_rt_activation_descriptor_v1) == 24,
                "activation descriptor size changed");
 _Static_assert(offsetof(obelisk_rt_activation_descriptor_v1, native_entry) == 8,
                "activation native entry offset changed");
-_Static_assert(
-    offsetof(obelisk_rt_activation_descriptor_v1, bytecode_function) == 16,
-    "activation bytecode entry offset changed");
+_Static_assert(offsetof(obelisk_rt_activation_descriptor_v1,
+                        bytecode_function) == 16,
+               "activation bytecode entry offset changed");
 _Static_assert(sizeof(obelisk_rt_observer_capture_abi_v1) == 8,
                "observer capture ABI size changed");
 _Static_assert(sizeof(obelisk_rt_observer_descriptor_v1) == 48,
                "observer descriptor size changed");
-_Static_assert(offsetof(obelisk_rt_observer_descriptor_v1,
-                        native_evaluator) == 32,
+_Static_assert(offsetof(obelisk_rt_observer_descriptor_v1, native_evaluator) ==
+                   32,
                "observer native evaluator offset changed");
 _Static_assert(sizeof(obelisk_rt_execution_descriptor_v1) == 120,
                "execution descriptor size changed");
@@ -149,9 +165,9 @@ _Static_assert(offsetof(obelisk_rt_process_instance_v1, ownership_context) ==
 _Static_assert(offsetof(obelisk_rt_process_instance_v1, observer_pin_count) ==
                    96,
                "process observer pin offset changed");
-_Static_assert(
-    offsetof(obelisk_rt_process_instance_v1, observer_destroy_pending) == 100,
-    "process observer pending-destroy offset changed");
+_Static_assert(offsetof(obelisk_rt_process_instance_v1,
+                        observer_destroy_pending) == 100,
+               "process observer pending-destroy offset changed");
 _Static_assert(sizeof(obelisk_rt_bytecode_entry_v1) == 8,
                "bytecode entry size changed");
 _Static_assert(offsetof(obelisk_rt_bytecode_entry_v1, continuation) == 0,
@@ -266,8 +282,8 @@ int obelisk_runtime_c_api_smoke(void) {
   obelisk_rt_fragment_action_v1 action = {0};
   uint64_t frame = 41;
   obelisk_rt_stable_handle_v1 decoded = {0};
-  uint64_t stable = obelisk_rt_stable_handle_encode(
-      OBELISK_RT_STABLE_HANDLE_STATIC, 7, -3);
+  uint64_t stable =
+      obelisk_rt_stable_handle_encode(OBELISK_RT_STABLE_HANDLE_STATIC, 7, -3);
 
   if (OBELISK_RT_VERSION != 1u)
     return 1;

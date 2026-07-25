@@ -26,6 +26,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <charconv>
 #include <concepts>
 #include <functional>
@@ -1087,6 +1088,24 @@ private:
                   builder.getI64IntegerAttr(node.arguments().size()));
       SET_OP_ATTR(HasThisClass,
                   builder.getBoolAttr(node.thisClass() != nullptr));
+      bool isSuperClass = false;
+      slang::SourceRange callRange = getSourceRange(node);
+      if (callRange.start().valid() && callRange.end().valid() &&
+          callRange.start().buffer() == callRange.end().buffer()) {
+        std::string_view source =
+            sourceManager.getSourceText(callRange.start().buffer());
+        size_t begin = callRange.start().offset();
+        size_t end = callRange.end().offset();
+        if (begin <= end && end < source.size()) {
+          std::string_view spelling = source.substr(begin, end - begin + 1);
+          while (!spelling.empty() &&
+                 std::isspace(static_cast<unsigned char>(spelling.front())))
+            spelling.remove_prefix(1);
+          isSuperClass =
+              spelling.size() >= 6 && spelling.substr(0, 6) == "super.";
+        }
+      }
+      SET_OP_ATTR(IsSuperClass, builder.getBoolAttr(isSuperClass));
       SET_OP_ATTR(HasOutputArguments,
                   builder.getBoolAttr(node.hasOutputArgs()));
       SET_OP_ATTR(HasIteratorExpression, builder.getBoolAttr(false));
@@ -1143,8 +1162,7 @@ private:
       SET_OP_ATTR(IsUninstantiated,
                   builder.getBoolAttr(node.body.flags.has(
                       slang::ast::InstanceFlags::Uninstantiated)));
-    } else if constexpr (std::same_as<T,
-                                      slang::ast::ContinuousAssignSymbol>) {
+    } else if constexpr (std::same_as<T, slang::ast::ContinuousAssignSymbol>) {
       auto [strength0, strength1] = node.getDriveStrength();
       if (strength0 || strength1) {
         std::string spelling;
@@ -1164,9 +1182,8 @@ private:
           size_t begin = range.start().offset();
           size_t end = range.end().offset();
           if (begin <= end && end < buffer.size())
-            SET_OP_ATTR(UnsupportedDelay,
-                        builder.getStringAttr(
-                            buffer.substr(begin, end - begin + 1)));
+            SET_OP_ATTR(UnsupportedDelay, builder.getStringAttr(buffer.substr(
+                                              begin, end - begin + 1)));
         }
       }
     } else if constexpr (std::same_as<T, slang::ast::NetSymbol>) {
@@ -1197,9 +1214,8 @@ private:
           size_t begin = range.start().offset();
           size_t end = range.end().offset();
           if (begin <= end && end < buffer.size())
-            SET_OP_ATTR(UnsupportedDelay,
-                        builder.getStringAttr(buffer.substr(
-                            begin, end - begin + 1)));
+            SET_OP_ATTR(UnsupportedDelay, builder.getStringAttr(buffer.substr(
+                                              begin, end - begin + 1)));
         }
       }
     }
@@ -1229,23 +1245,20 @@ private:
                   slangir::StatementBlockKindAttr::get(
                       builder.getContext(), convertEnum(node.blockKind)));
       if (node.blockSymbol && !node.blockSymbol->name.empty())
-        setSymbolReference(
-            attrs, *node.blockSymbol,
-            Op::getBlockSymbolAttrName(operationName),
-            Op::getBlockPathAttrName(operationName));
+        setSymbolReference(attrs, *node.blockSymbol,
+                           Op::getBlockSymbolAttrName(operationName),
+                           Op::getBlockPathAttrName(operationName));
     } else if constexpr (std::same_as<T, slang::ast::DisableStatement>) {
-      if (const slang::ast::Symbol *target =
-              node.target.getSymbolReference())
-        setSymbolReference(
-            attrs, *target, Op::getTargetSymbolAttrName(operationName),
-            Op::getTargetPathAttrName(operationName));
+      if (const slang::ast::Symbol *target = node.target.getSymbolReference())
+        setSymbolReference(attrs, *target,
+                           Op::getTargetSymbolAttrName(operationName),
+                           Op::getTargetPathAttrName(operationName));
       const auto &target =
           node.target.template as<slang::ast::ArbitrarySymbolExpression>();
       SET_OP_ATTR(IsHierarchical,
                   builder.getBoolAttr(target.hierRef.target != nullptr));
     } else if constexpr (std::same_as<T, slang::ast::WaitOrderStatement>) {
-      SET_OP_ATTR(EventCount,
-                  builder.getI64IntegerAttr(node.events.size()));
+      SET_OP_ATTR(EventCount, builder.getI64IntegerAttr(node.events.size()));
       SET_OP_ATTR(HasSuccessAction,
                   builder.getBoolAttr(node.ifTrue != nullptr));
       SET_OP_ATTR(HasFailureAction,
@@ -1258,6 +1271,8 @@ private:
       SET_OP_ATTR(SelectionKind, slangir::RangeSelectionKindAttr::get(
                                      builder.getContext(),
                                      convertEnum(node.getSelectionKind())));
+    } else if constexpr (std::same_as<T, slang::ast::NewClassExpression>) {
+      SET_OP_ATTR(IsSuperClass, builder.getBoolAttr(node.isSuperClass));
     }
 
     if constexpr (std::same_as<T, slang::ast::PortSymbol> ||
@@ -1312,7 +1327,8 @@ private:
       if (node.flags.has(MF::DPIImport)) {
         StringRef cIdentifier = node.name;
         if (const auto *syntax = node.getSyntax()) {
-          const auto &dpi = syntax->template as<slang::syntax::DPIImportSyntax>();
+          const auto &dpi =
+              syntax->template as<slang::syntax::DPIImportSyntax>();
           if (!dpi.c_identifier.valueText().empty())
             cIdentifier = dpi.c_identifier.valueText();
         }
@@ -1554,10 +1570,8 @@ private:
     } else if constexpr (std::same_as<T, slang::ast::ForLoopStatement>) {
       SET_OP_ATTR(InitializerCount,
                   builder.getI64IntegerAttr(node.initializers.size()));
-      SET_OP_ATTR(HasCondition,
-                  builder.getBoolAttr(node.stopExpr != nullptr));
-      SET_OP_ATTR(StepCount,
-                  builder.getI64IntegerAttr(node.steps.size()));
+      SET_OP_ATTR(HasCondition, builder.getBoolAttr(node.stopExpr != nullptr));
+      SET_OP_ATTR(StepCount, builder.getI64IntegerAttr(node.steps.size()));
     } else if constexpr (std::same_as<T, slang::ast::CaseStatement>) {
       SET_OP_ATTR(ConditionKind,
                   slangir::CaseConditionAttr::get(builder.getContext(),
@@ -1573,8 +1587,7 @@ private:
       SET_OP_ATTR(ItemLabelCounts,
                   builder.getDenseI64ArrayAttr(itemLabelCounts));
       SET_OP_ATTR(HasDefault, builder.getBoolAttr(node.defaultCase != nullptr));
-    } else if constexpr (std::same_as<T,
-                                      slang::ast::PatternCaseStatement>) {
+    } else if constexpr (std::same_as<T, slang::ast::PatternCaseStatement>) {
       SET_OP_ATTR(ConditionKind,
                   slangir::CaseConditionAttr::get(builder.getContext(),
                                                   convertEnum(node.condition)));
@@ -1586,26 +1599,22 @@ private:
       filterFlags.reserve(node.items.size());
       for (const auto &item : node.items)
         filterFlags.push_back(item.filter != nullptr);
-      SET_OP_ATTR(ItemFilterFlags,
-                  builder.getDenseI64ArrayAttr(filterFlags));
+      SET_OP_ATTR(ItemFilterFlags, builder.getDenseI64ArrayAttr(filterFlags));
       SET_OP_ATTR(HasDefault, builder.getBoolAttr(node.defaultCase != nullptr));
     } else if constexpr (std::same_as<T, slang::ast::InsideExpression>) {
       SET_OP_ATTR(ItemCount,
                   builder.getI64IntegerAttr(node.rangeList().size()));
-    } else if constexpr (std::same_as<T,
-                                      slang::ast::ValueRangeExpression>) {
-      SET_OP_ATTR(RangeKind,
-                  slangir::ValueRangeKindAttr::get(
-                      builder.getContext(),
-                      static_cast<slangir::ValueRangeKind>(
-                          static_cast<int>(node.rangeKind))));
+    } else if constexpr (std::same_as<T, slang::ast::ValueRangeExpression>) {
+      SET_OP_ATTR(RangeKind, slangir::ValueRangeKindAttr::get(
+                                 builder.getContext(),
+                                 static_cast<slangir::ValueRangeKind>(
+                                     static_cast<int>(node.rangeKind))));
     } else if constexpr (std::same_as<T, slang::ast::StructurePattern>) {
       SmallVector<int64_t> ordinals;
       ordinals.reserve(node.patterns.size());
       for (const auto &pattern : node.patterns)
         ordinals.push_back(pattern.field->fieldIndex);
-      SET_OP_ATTR(FieldOrdinals,
-                  builder.getDenseI64ArrayAttr(ordinals));
+      SET_OP_ATTR(FieldOrdinals, builder.getDenseI64ArrayAttr(ordinals));
     } else if constexpr (std::same_as<
                              T, slang::ast::ImmediateAssertionStatement>) {
       SET_OP_ATTR(AssertionKind,
@@ -1653,8 +1662,7 @@ private:
       SET_OP_ATTR(SolveCount, builder.getI64IntegerAttr(node.solve.size()));
       SET_OP_ATTR(AfterCount, builder.getI64IntegerAttr(node.after.size()));
     } else if constexpr (std::same_as<T, slang::ast::ForeachConstraint> ||
-                         std::same_as<T,
-                                      slang::ast::ForeachLoopStatement>) {
+                         std::same_as<T, slang::ast::ForeachLoopStatement>) {
       SmallVector<Attribute> dimensions;
       for (const auto &dimension : node.loopDims) {
         NamedAttrList attributes;
@@ -1878,10 +1886,11 @@ private:
       currentSymbolPath.pop_back();
   }
 
-  slangir::PortConnectionKind getConnectionProvenance(
-      const slang::ast::InstanceSymbol &instance,
-      const slang::ast::PortConnection &connection,
-      const slang::ast::Symbol &externalPort, size_t resolvedOrdinal) {
+  slangir::PortConnectionKind
+  getConnectionProvenance(const slang::ast::InstanceSymbol &instance,
+                          const slang::ast::PortConnection &connection,
+                          const slang::ast::Symbol &externalPort,
+                          size_t resolvedOrdinal) {
     using Kind = slangir::PortConnectionKind;
     if (connection.isWildcard)
       return Kind::Wildcard;
@@ -1889,14 +1898,16 @@ private:
       return Kind::Implicit;
 
     const slang::syntax::SyntaxNode *syntax = instance.getSyntax();
-    if (!syntax || syntax->kind != slang::syntax::SyntaxKind::HierarchicalInstance)
+    if (!syntax ||
+        syntax->kind != slang::syntax::SyntaxKind::HierarchicalInstance)
       return connection.getExpression() ? Kind::Ordered : Kind::Omitted;
     const auto &connections =
         syntax->as<slang::syntax::HierarchicalInstanceSyntax>().connections;
     bool named = false;
     for (const slang::syntax::PortConnectionSyntax *candidate : connections) {
       if (candidate->kind == slang::syntax::SyntaxKind::NamedPortConnection ||
-          candidate->kind == slang::syntax::SyntaxKind::WildcardPortConnection) {
+          candidate->kind ==
+              slang::syntax::SyntaxKind::WildcardPortConnection) {
         named = true;
         break;
       }
@@ -1960,8 +1971,8 @@ private:
       const slang::ast::Symbol &formal = connection->port;
       const slang::ast::Symbol *external = &formal;
       if (formal.kind == slang::ast::SymbolKind::Port)
-        if (auto found = leafToExternal.find(
-                &formal.as<slang::ast::PortSymbol>());
+        if (auto found =
+                leafToExternal.find(&formal.as<slang::ast::PortSymbol>());
             found != leafToExternal.end())
           external = found->second;
 
@@ -1986,9 +1997,8 @@ private:
       attrs.set("formal_ordinal", builder.getI64IntegerAttr(ordinal));
       if (!formal.name.empty())
         attrs.set("formal_name", builder.getStringAttr(formal.name));
-      attrs.set("direction",
-                slangir::ArgumentDirectionAttr::get(builder.getContext(),
-                                                     convertEnum(direction)));
+      attrs.set("direction", slangir::ArgumentDirectionAttr::get(
+                                 builder.getContext(), convertEnum(direction)));
       attrs.set("formal_type", TypeAttr::get(formalType));
       attrs.set("is_net", builder.getBoolAttr(isNet));
       attrs.set("is_ansi", builder.getBoolAttr(isAnsi));
@@ -2001,14 +2011,12 @@ private:
         slang::ast::EvalContext evalContext(instance);
         actualIsConstant = static_cast<bool>(actual->eval(evalContext));
       }
-      attrs.set("actual_is_constant",
-                builder.getBoolAttr(actualIsConstant));
-      attrs.set("provenance",
-                slangir::PortConnectionKindAttr::get(
-                    builder.getContext(), getConnectionProvenance(
-                                              instance, *connection, *external,
-                                              externalOrdinals.lookup(
-                                                  external))));
+      attrs.set("actual_is_constant", builder.getBoolAttr(actualIsConstant));
+      attrs.set("provenance", slangir::PortConnectionKindAttr::get(
+                                  builder.getContext(),
+                                  getConnectionProvenance(
+                                      instance, *connection, *external,
+                                      externalOrdinals.lookup(external))));
 
       currentPendingReferences.clear();
       setSymbolReference(attrs, formal, builder.getStringAttr("formal_symbol"),

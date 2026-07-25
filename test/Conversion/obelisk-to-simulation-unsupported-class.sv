@@ -1,12 +1,17 @@
-// RUN: not obelisk -emit-sim %s 2>&1 | FileCheck %s
+// RUN: obelisk -emit-sim %s | FileCheck %s
 
-class unsupported_object;
+class supported_object;
   int field;
 endclass
 
-module unsupported_class_use;
+module supported_class_use;
   initial begin
+    automatic supported_object object = new;
+    object.field = 42;
   end
 endmodule
 
-// CHECK: unsupported semantic construct in the first simulation slice
+// CHECK: obelisk_sim.class.decl
+// CHECK-SAME: debug_name = "supported_object"
+// CHECK: obelisk_sim.class.alloc
+// CHECK: obelisk_sim.class.field_ref

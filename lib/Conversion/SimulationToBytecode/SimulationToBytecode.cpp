@@ -8,6 +8,7 @@
 #include "obelisk/Dialect/Runtime/RuntimeTypes.h"
 #include "obelisk/Runtime/Runtime.h"
 
+#include "mlir/Analysis/Liveness.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -20,8 +21,11 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/IR/DataLayout.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Type.h"
 #include "llvm/Support/Error.h"
 
 #include <algorithm>
@@ -95,18 +99,31 @@ constexpr uint32_t kIntrinsicControlLeave =
     OBELISK_RT_INTRINSIC_V1_CONTROL_LEAVE;
 constexpr uint32_t kIntrinsicControlDisable =
     OBELISK_RT_INTRINSIC_V1_CONTROL_DISABLE;
-constexpr uint32_t kIntrinsicStaticOnce =
-    OBELISK_RT_INTRINSIC_V1_STATIC_ONCE;
+constexpr uint32_t kIntrinsicStaticOnce = OBELISK_RT_INTRINSIC_V1_STATIC_ONCE;
 constexpr uint32_t kIntrinsicImport = OBELISK_RT_INTRINSIC_V1_IMPORT;
-constexpr uint32_t kIntrinsicDPIImport =
-    OBELISK_RT_INTRINSIC_V1_DPI_IMPORT;
+constexpr uint32_t kIntrinsicDPIImport = OBELISK_RT_INTRINSIC_V1_DPI_IMPORT;
+constexpr uint32_t kIntrinsicClassAlloc = OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC;
+constexpr uint32_t kIntrinsicClassCopy = OBELISK_RT_INTRINSIC_V1_CLASS_COPY;
+constexpr uint32_t kIntrinsicClassIsInstance =
+    OBELISK_RT_INTRINSIC_V1_CLASS_IS_INSTANCE;
+constexpr uint32_t kIntrinsicClassCast = OBELISK_RT_INTRINSIC_V1_CLASS_CAST;
+constexpr uint32_t kIntrinsicClassFieldRef =
+    OBELISK_RT_INTRINSIC_V1_CLASS_FIELD_REF;
+constexpr uint32_t kIntrinsicManagedLoad = OBELISK_RT_INTRINSIC_V1_MANAGED_LOAD;
+constexpr uint32_t kIntrinsicManagedStore =
+    OBELISK_RT_INTRINSIC_V1_MANAGED_STORE;
+constexpr uint32_t kIntrinsicManagedNBA = OBELISK_RT_INTRINSIC_V1_MANAGED_NBA;
+constexpr uint32_t kIntrinsicWeakCreate = OBELISK_RT_INTRINSIC_V1_WEAK_CREATE;
+constexpr uint32_t kIntrinsicWeakGet = OBELISK_RT_INTRINSIC_V1_WEAK_GET;
+constexpr uint32_t kIntrinsicWeakClear = OBELISK_RT_INTRINSIC_V1_WEAK_CLEAR;
+constexpr uint32_t kIntrinsicGCSafepoint = OBELISK_RT_INTRINSIC_V1_GC_SAFEPOINT;
+constexpr uint32_t kIntrinsicClassID = OBELISK_RT_INTRINSIC_V1_CLASS_ID;
 
 bool isObserverCaptureBridge(Block &block) {
   if (block.getOperations().size() != 1)
     return false;
   auto branch = dyn_cast<cf::BranchOp>(block.getTerminator());
-  return branch &&
-         branch->hasAttr("obelisk_sim.observer_capture_bridge");
+  return branch && branch->hasAttr("obelisk_sim.observer_capture_bridge");
 }
 
 Block *lookupComputeGraphBlock(sim::SimFuncOp function, uint32_t ordinal) {
@@ -127,6 +144,8 @@ enum RegisterKind : uint8_t {
   Status = OBELISK_RT_DBREG_STATUS,
   Resource = OBELISK_RT_DBREG_RESOURCE,
   Bytes = OBELISK_RT_DBREG_BYTES,
+  Managed = OBELISK_RT_DBREG_MANAGED,
+  ManagedRef = OBELISK_RT_DBREG_MANAGED_REF,
 };
 
 enum Opcode : uint16_t {
@@ -171,6 +190,7 @@ enum Opcode : uint16_t {
   MakeLocalHandle = OBELISK_RT_DB_MAKE_LOCAL_HANDLE,
   HandleID = OBELISK_RT_DB_HANDLE_ID,
   TaskCall = OBELISK_RT_DB_TASK_CALL,
+  VirtualCall = OBELISK_RT_DB_VIRTUAL_CALL,
 };
 
 struct Layout {
@@ -245,6 +265,7 @@ struct FunctionPlan {
   uint32_t twoStateLogicRegisters = 0;
   uint32_t initialScheduleRank = UINT32_MAX;
   DenseMap<Block *, uint32_t> blockScheduleRanks;
+  std::unique_ptr<Liveness> liveness;
 };
 
 struct StateLayout {
@@ -313,9 +334,8 @@ void alignTo(SmallVectorImpl<uint8_t> &output, uint64_t alignment) {
 uint64_t checksum(ArrayRef<uint8_t> data, uint64_t checksumOffset) {
   uint64_t hash = UINT64_C(14695981039346656037);
   for (auto [index, byte] : llvm::enumerate(data)) {
-    uint8_t hashed = index >= checksumOffset && index < checksumOffset + 8
-                         ? 0
-                         : byte;
+    uint8_t hashed =
+        index >= checksumOffset && index < checksumOffset + 8 ? 0 : byte;
     hash ^= hashed;
     hash *= UINT64_C(1099511628211);
   }
@@ -344,6 +364,8 @@ bool containsLogic(Type type) {
 }
 
 std::optional<uint32_t> simulationWidth(Type type) {
+  if (isa<sim::ClassHandleType>(type))
+    return 64;
   if (std::optional<unsigned> packed = sim::getPackedWidth(type))
     return *packed;
   std::optional<uint64_t> span = sim::getProvenanceSpan(type);
@@ -401,6 +423,12 @@ FailureOr<Layout> getLayout(Type type) {
   } else if (isa<sim::BytesType>(type)) {
     layout.kind = Bytes;
     layout.width = 128;
+  } else if (isa<sim::ClassHandleType>(type)) {
+    layout.kind = Managed;
+    layout.width = 64;
+  } else if (isa<sim::ManagedRefType>(type)) {
+    layout.kind = ManagedRef;
+    layout.width = 128;
   } else if (std::optional<uint32_t> width = simulationWidth(type)) {
     layout.kind = containsLogic(type) ? Logic : Bits;
     layout.width = static_cast<uint32_t>(*width);
@@ -409,21 +437,74 @@ FailureOr<Layout> getLayout(Type type) {
   }
   uint64_t limbs = (uint64_t{layout.width} + 63) / 64;
   switch (layout.kind) {
-  case Bits: layout.size = limbs * 8; break;
-  case Logic: layout.size = limbs * 16; break;
-  case Handle: layout.size = 32; break;
+  case Bits:
+    layout.size = limbs * 8;
+    break;
+  case Logic:
+    layout.size = limbs * 16;
+    break;
+  case Handle:
+    layout.size = 32;
+    break;
   case Status:
-  case Resource: layout.size = 8; break;
-  case Bytes: layout.size = 16; break;
-  default: return failure();
+  case Resource:
+    layout.size = 8;
+    break;
+  case Bytes:
+    layout.size = 16;
+    break;
+  case Managed:
+    layout.size = 8;
+    break;
+  case ManagedRef:
+    layout.size = 16;
+    break;
+  default:
+    return failure();
   }
   return layout;
+}
+
+struct ManagedValueStorage {
+  uint64_t planeSize;
+  uint32_t alignment;
+  bool fourState;
+};
+
+FailureOr<ManagedValueStorage>
+getManagedValueStorage(Type type, const llvm::DataLayout &dataLayout) {
+  llvm::LLVMContext llvmContext;
+  llvm::Type *nativeType = nullptr;
+  bool fourState = containsLogic(type);
+  if (auto logic = dyn_cast<sim::LogicType>(type))
+    nativeType = llvm::IntegerType::get(llvmContext, logic.getWidth());
+  else if (auto integer = dyn_cast<IntegerType>(type))
+    nativeType = llvm::IntegerType::get(llvmContext, integer.getWidth());
+  else if (type.isF64())
+    nativeType = llvm::Type::getDoubleTy(llvmContext);
+  else if (isa<sim::TimeType>(type))
+    nativeType = llvm::Type::getInt64Ty(llvmContext);
+  else if (isa<sim::ClassHandleType>(type))
+    nativeType = llvm::PointerType::get(llvmContext, 0);
+  else if (std::optional<uint32_t> width = simulationWidth(type))
+    nativeType = llvm::IntegerType::get(llvmContext, *width);
+  if (!nativeType)
+    return failure();
+  llvm::TypeSize nativeSize = dataLayout.getTypeAllocSize(nativeType);
+  uint64_t planeSize = nativeSize.isScalable() ? 0 : nativeSize.getFixedValue();
+  uint32_t alignment =
+      static_cast<uint32_t>(dataLayout.getABITypeAlign(nativeType).value());
+  if (planeSize == 0 || alignment == 0 || (alignment & (alignment - 1)) != 0)
+    return failure();
+  return ManagedValueStorage{planeSize, alignment, fourState};
 }
 
 FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
   StateLayout result;
   auto allocate = [&](Type type, uint64_t &offset) -> LogicalResult {
     std::optional<uint32_t> width = simulationWidth(type);
+    if (isa<sim::ClassHandleType>(type))
+      result.bits = llvm::alignTo(result.bits, uint64_t{64});
     if (!width || *width == 0 ||
         result.bits > std::numeric_limits<uint64_t>::max() - *width)
       return failure();
@@ -435,7 +516,8 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
     if (auto declaration = dyn_cast<sim::SimStorageDeclOp>(operation)) {
       uint64_t offset;
       if (failed(allocate(declaration.getType(), offset)))
-        return declaration.emitOpError("bytecode storage must have fixed width"),
+        return declaration.emitOpError(
+                   "bytecode storage must have fixed width"),
                WalkResult::interrupt();
       result.storage[declaration.getId()] = offset;
     } else if (auto declaration = dyn_cast<sim::SimNetDeclOp>(operation)) {
@@ -444,11 +526,10 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
         return declaration.emitOpError("bytecode net must have fixed width"),
                WalkResult::interrupt();
       result.nets[declaration.getId()] = offset;
-      result.netLayouts.push_back(
-          {declaration.getId(), offset,
-           *simulationWidth(declaration.getType()),
-           containsLogic(declaration.getType()),
-           declaration.getResolutionKind()});
+      result.netLayouts.push_back({declaration.getId(), offset,
+                                   *simulationWidth(declaration.getType()),
+                                   containsLogic(declaration.getType()),
+                                   declaration.getResolutionKind()});
     } else if (auto declaration = dyn_cast<sim::SimDriverDeclOp>(operation)) {
       auto net = result.nets.find(declaration.getNetId());
       if (net == result.nets.end())
@@ -458,34 +539,32 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
       if (failed(allocate(declaration.getType(), offset)))
         return declaration.emitOpError("bytecode driver must have fixed width"),
                WalkResult::interrupt();
-      uint32_t width =
-          *simulationWidth(declaration.getType());
-      uint64_t drivenLow = declaration.getDrivenLowAttr()
-                               ? declaration.getDrivenLowAttr()
-                                     .getValue()
-                                     .getZExtValue()
-                               : 0;
-      uint64_t drivenWidth = declaration.getDrivenWidthAttr()
-                                 ? declaration.getDrivenWidthAttr()
-                                       .getValue()
-                                       .getZExtValue()
-                                 : width;
+      uint32_t width = *simulationWidth(declaration.getType());
+      uint64_t drivenLow =
+          declaration.getDrivenLowAttr()
+              ? declaration.getDrivenLowAttr().getValue().getZExtValue()
+              : 0;
+      uint64_t drivenWidth =
+          declaration.getDrivenWidthAttr()
+              ? declaration.getDrivenWidthAttr().getValue().getZExtValue()
+              : width;
       if (drivenLow > UINT32_MAX || drivenWidth > UINT32_MAX ||
           drivenLow > width || drivenWidth > width - drivenLow)
         return declaration.emitOpError("has an invalid driven range"),
                WalkResult::interrupt();
       result.drivers[declaration.getId()] = offset;
-      auto netLayout = llvm::find_if(result.netLayouts, [&](const auto &layout) {
-        return layout.id == declaration.getNetId();
-      });
+      auto netLayout =
+          llvm::find_if(result.netLayouts, [&](const auto &layout) {
+            return layout.id == declaration.getNetId();
+          });
       if (netLayout == result.netLayouts.end())
         return declaration.emitOpError("driver references unknown net layout"),
                WalkResult::interrupt();
-      result.driverLayouts.push_back({
-          declaration.getId(), declaration.getNetId(), offset, net->second,
-          width, static_cast<uint32_t>(drivenLow),
-          static_cast<uint32_t>(drivenWidth),
-          containsLogic(declaration.getType()), netLayout->resolution});
+      result.driverLayouts.push_back(
+          {declaration.getId(), declaration.getNetId(), offset, net->second,
+           width, static_cast<uint32_t>(drivenLow),
+           static_cast<uint32_t>(drivenWidth),
+           containsLogic(declaration.getType()), netLayout->resolution});
     }
     return WalkResult::advance();
   });
@@ -507,10 +586,9 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
              failure();
     for (uint64_t bit = 0; bit != connection.getWidth(); ++bit) {
       uint64_t lhsBit = lhs->offset + connection.getLhsOffset() + bit;
-      uint64_t rhsBit =
-          rhs->offset + (connection.getRhsReversed()
-                             ? connection.getRhsOffset() - bit
-                             : connection.getRhsOffset() + bit);
+      uint64_t rhsBit = rhs->offset + (connection.getRhsReversed()
+                                           ? connection.getRhsOffset() - bit
+                                           : connection.getRhsOffset() + bit);
       sim::NetResolutionKind lhsResolution = lhs->resolution;
       sim::NetResolutionKind rhsResolution = rhs->resolution;
       if (rhsBit < lhsBit) {
@@ -522,8 +600,8 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
       auto [found, inserted] = scalarConnections.try_emplace(
           std::pair{lhsBit, rhsBit},
           ScalarConnection{lhsResolution, rhsResolution});
-      if (!inserted && found->second !=
-                           ScalarConnection{lhsResolution, rhsResolution})
+      if (!inserted &&
+          found->second != ScalarConnection{lhsResolution, rhsResolution})
         return connection.emitOpError(
                    "has inconsistent duplicate scalar connectivity"),
                failure();
@@ -543,8 +621,7 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
       int candidateDirection = 0;
       if (next->first.second == rhsOffset + width)
         candidateDirection = 1;
-      else if (rhsOffset >= width &&
-               next->first.second == rhsOffset - width)
+      else if (rhsOffset >= width && next->first.second == rhsOffset - width)
         candidateDirection = -1;
       if (candidateDirection == 0 ||
           (direction != 0 && direction != candidateDirection))
@@ -567,9 +644,9 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
          bit != uint64_t{driver.drivenLow} + driver.drivenWidth; ++bit) {
       ArrayRef<analysis::NetBit> component =
           connectivity.getComponent({driver.netID, bit});
-      analysis::NetBit canonical =
-          component.empty() ? analysis::NetBit{driver.netID, bit}
-                            : component.front();
+      analysis::NetBit canonical = component.empty()
+                                       ? analysis::NetBit{driver.netID, bit}
+                                       : component.front();
       if (++uwireDrivers[{canonical.net, canonical.offset}] > 1)
         return design.emitOpError()
                    << "uwire connectivity component " << canonical.net << "["
@@ -588,6 +665,8 @@ public:
       : design(design), options(options), dataLayout(dataLayout) {}
 
   FailureOr<EncodedSimulationDesign> encode() {
+    if (failed(prepareClassLayouts()))
+      return failure();
     FailureOr<StateLayout> builtState = buildStateLayout(design);
     if (failed(builtState))
       return failure();
@@ -618,13 +697,94 @@ public:
     }
     for (FunctionPlan &plan : plans)
       result.functions.push_back({plan.function.getSymName().str(), plan.index,
-                                  plan.scratchSize,
-                                  plan.scratchAlignment,
+                                  plan.scratchSize, plan.scratchAlignment,
                                   plan.twoStateLogicRegisters});
     return result;
   }
 
 private:
+  LogicalResult prepareClassLayouts() {
+    llvm::StringMap<sim::SimClassDeclOp> classes;
+    llvm::StringMap<SmallVector<sim::SimClassFieldDeclOp>> fields;
+    design.walk([&](sim::SimClassDeclOp declaration) {
+      classes[declaration.getSymName()] = declaration;
+      classIDs[declaration.getSymName()] = declaration.getId();
+    });
+    design.walk([&](sim::SimClassFieldDeclOp field) {
+      fields[field.getOwner()].push_back(field);
+    });
+    for (auto &entry : fields)
+      llvm::sort(entry.second, [](auto lhs, auto rhs) {
+        return lhs.getOrdinal() < rhs.getOrdinal();
+      });
+
+    struct PartialLayout {
+      uint64_t size = 8;
+      uint32_t alignment = 8;
+    };
+    llvm::StringMap<PartialLayout> layouts;
+    llvm::StringSet<> active;
+    llvm::DataLayout local(dataLayout.getStringRepresentation());
+    std::function<LogicalResult(sim::SimClassDeclOp)> compute =
+        [&](sim::SimClassDeclOp declaration) -> LogicalResult {
+      if (layouts.count(declaration.getSymName()))
+        return success();
+      if (!active.insert(declaration.getSymName()).second)
+        return declaration.emitOpError("class layout inheritance cycle");
+      PartialLayout layout;
+      if (auto baseName = declaration.getBase()) {
+        auto base = classes.find(*baseName);
+        if (base == classes.end() || failed(compute(base->second)))
+          return declaration.emitOpError("class layout has an unknown base");
+        layout = layouts[base->getKey()];
+      }
+      for (sim::SimClassFieldDeclOp field : fields[declaration.getSymName()]) {
+        if (field.getIsStatic())
+          continue;
+        Type fieldType = field.getType();
+        FailureOr<ManagedValueStorage> storage =
+            getManagedValueStorage(fieldType, local);
+        if (failed(storage))
+          return field.emitOpError(
+              "class property has no fixed bytecode layout");
+        uint64_t offset = llvm::alignTo(
+            layout.size, static_cast<uint64_t>(storage->alignment));
+        uint64_t planes = storage->fourState ? 2 : 1;
+        if (storage->planeSize >
+            (std::numeric_limits<uint64_t>::max() - offset) / planes)
+          return field.emitOpError("class property layout overflows");
+        layout.size = offset + storage->planeSize * planes;
+        layout.alignment =
+            std::max<uint32_t>(layout.alignment, storage->alignment);
+        if (auto existing = field->getAttrOfType<IntegerAttr>("offset");
+            existing && existing.getValue().getZExtValue() != offset)
+          return field.emitOpError(
+              "native and bytecode class layouts disagree");
+        field->setAttr("offset",
+                       IntegerAttr::get(
+                           IntegerType::get(design.getContext(), 64), offset));
+      }
+      layout.size =
+          llvm::alignTo(layout.size, static_cast<uint64_t>(layout.alignment));
+      active.erase(declaration.getSymName());
+      layouts[declaration.getSymName()] = layout;
+      return success();
+    };
+    for (const auto &entry : classes)
+      if (failed(compute(entry.second)))
+        return failure();
+    return success();
+  }
+
+  FailureOr<uint64_t> classID(SymbolRefAttr symbol, Operation *anchor) const {
+    auto found = classIDs.find(symbol.getRootReference().getValue());
+    if (found == classIDs.end()) {
+      anchor->emitOpError("references an unknown managed class");
+      return failure();
+    }
+    return found->second;
+  }
+
   /// Use the whole-design X/Z proof for local bytecode scratch values. Exact
   /// ABI boundaries deliberately remain four-state: process frames, CFG maps,
   /// calls, and returns all use representation-preserving copies. Within a
@@ -681,9 +841,8 @@ private:
             consider(result);
 
           if (isa<BranchOpInterface, sim::SimCallOp, sim::SimTaskCallOp,
-                  sim::SimDPICallOp,
-                  sim::SimSpawnOp,
-                  sim::SimReturnOp>(operation)) {
+                  sim::SimDPICallOp, sim::SimSpawnOp, sim::SimReturnOp>(
+                  operation)) {
             for (Value operand : operation.getOperands())
               force(operand);
             for (Value result : operation.getResults())
@@ -708,16 +867,14 @@ private:
             constrain(op.getLhs(), op.getRhs());
           } else if (auto op = dyn_cast<sim::SimLogicConcatOp>(operation)) {
             constrainResultTo(op.getResult(), op.getInputs());
-          } else if (auto op =
-                         dyn_cast<sim::SimLogicReplicateOp>(operation)) {
+          } else if (auto op = dyn_cast<sim::SimLogicReplicateOp>(operation)) {
             constrain(op.getResult(), op.getInput());
           } else if (auto op = dyn_cast<sim::SimLogicInsertOp>(operation)) {
             constrain(op.getResult(), op.getInput());
           } else if (auto op = dyn_cast<arith::SelectOp>(operation)) {
             constrain(op.getResult(), op.getTrueValue());
             constrain(op.getResult(), op.getFalseValue());
-          } else if (auto op =
-                         dyn_cast<sim::SimAggregateInsertOp>(operation)) {
+          } else if (auto op = dyn_cast<sim::SimAggregateInsertOp>(operation)) {
             constrain(op.getResult(), op.getInput());
           }
         }
@@ -728,8 +885,7 @@ private:
     // registers makes its entire undirected component four-state when any
     // member is unproven or fixed by an ABI boundary. Propagate from those
     // roots once instead of repeatedly rescanning all constraints.
-    SmallVector<Value> worklist(forcedFourState.begin(),
-                                forcedFourState.end());
+    SmallVector<Value> worklist(forcedFourState.begin(), forcedFourState.end());
     for (size_t index = 0; index != worklist.size(); ++index) {
       Value value = worklist[index];
       candidates.erase(value);
@@ -778,14 +934,16 @@ private:
     for (auto [index, function] : llvm::enumerate(functions)) {
       FunctionPlan &plan = plans.emplace_back();
       plan.function = function;
+      plan.liveness = std::make_unique<Liveness>(function);
       plan.index = static_cast<uint32_t>(index);
       plan.stableID = getStableID(function);
       if (plan.stableID == 0)
         return function.emitOpError("executable code-unit ID must be nonzero");
-      auto [collision, inserted] = stableIDs.try_emplace(plan.stableID, function);
+      auto [collision, inserted] =
+          stableIDs.try_emplace(plan.stableID, function);
       if (!inserted) {
-        function.emitOpError() << "duplicate executable code-unit ID "
-                               << plan.stableID;
+        function.emitOpError()
+            << "duplicate executable code-unit ID " << plan.stableID;
         collision->second.emitRemark("first function with this ID is here");
         return failure();
       }
@@ -865,11 +1023,13 @@ private:
         ArrayRef<ProcessFrameValue> captures =
             plan.frame->getEntryCaptureLayout();
         if (captures.size() != entry.getNumArguments())
-          return plan.function.emitOpError("entry capture layout is incomplete");
+          return plan.function.emitOpError(
+              "entry capture layout is incomplete");
         for (auto [argument, capture] : llvm::enumerate(captures))
           captureRecords.push_back(
-              {plan.index, static_cast<uint32_t>(argument),
-               capture.valueOffset, capture.unknownOffset,
+              {plan.index, static_cast<uint32_t>(argument), capture.valueOffset,
+               capture.hasSecondaryStorage() ? capture.getSecondaryOffset()
+                                             : UINT64_MAX,
                capture.storageSize});
       }
     }
@@ -969,8 +1129,7 @@ private:
     auto appendPlane = [&](const APInt &plane) {
       for (uint64_t limb = 0; limb != limbs; ++limb) {
         unsigned bits = std::min<uint64_t>(64, layout.width - limb * 64);
-        append64(constants,
-                 plane.extractBitsAsZExtValue(bits, limb * 64));
+        append64(constants, plane.extractBitsAsZExtValue(bits, limb * 64));
       }
     };
     appendPlane(value);
@@ -984,8 +1143,12 @@ private:
   }
 
   uint64_t addZeroConstant(const Layout &layout) {
+    if (auto found = zeroConstants.find(layout.size);
+        found != zeroConstants.end())
+      return found->second;
     uint64_t offset = constants.size();
     constants.resize(constants.size() + layout.size, 0);
+    zeroConstants.try_emplace(layout.size, offset);
     return offset;
   }
 
@@ -1018,21 +1181,23 @@ private:
     uint32_t firstOperand = static_cast<uint32_t>(operandMaps.size());
     for (uint32_t input : inputs) {
       if (input == kInvalidRegister || input >= plan.layouts.size())
-        return plan.function.emitOpError("bytecode intrinsic input is unmapped");
+        return plan.function.emitOpError(
+            "bytecode intrinsic input is unmapped");
       operandMaps.push_back({0, input});
     }
     for (uint32_t output : outputs) {
       if (output == kInvalidRegister || output >= plan.layouts.size())
-        return plan.function.emitOpError("bytecode intrinsic output is unmapped");
+        return plan.function.emitOpError(
+            "bytecode intrinsic output is unmapped");
       operandMaps.push_back({output, 0});
     }
-    uint32_t signature = addIntrinsicSignature(
-        id, static_cast<uint32_t>(inputs.size()),
-        static_cast<uint32_t>(outputs.size()), flags);
+    uint32_t signature =
+        addIntrinsicSignature(id, static_cast<uint32_t>(inputs.size()),
+                              static_cast<uint32_t>(outputs.size()), flags);
     uint32_t site = intrinsicSites.size();
-    intrinsicSites.push_back(
-        {signature, firstOperand, static_cast<uint32_t>(inputs.size()),
-         static_cast<uint32_t>(outputs.size())});
+    intrinsicSites.push_back({signature, firstOperand,
+                              static_cast<uint32_t>(inputs.size()),
+                              static_cast<uint32_t>(outputs.size())});
     emit({Intrinsic, 0, 0, 0, 0, 0, 0, site});
     return success();
   }
@@ -1050,10 +1215,66 @@ private:
   }
 
   uint32_t emitBytesConstant(FunctionPlan &plan, ArrayRef<uint8_t> bytes) {
-    uint32_t result = temporary(plan, sim::BytesType::get(plan.function.getContext()));
+    uint32_t result =
+        temporary(plan, sim::BytesType::get(plan.function.getContext()));
     if (result != kInvalidRegister)
       emit({Constant, 0, result, 0, 0, 0, 0, addBytesConstant(bytes)});
     return result;
+  }
+
+  uint32_t emitU64Constant(FunctionPlan &plan, uint64_t value) {
+    Type i64 = IntegerType::get(plan.function.getContext(), 64);
+    uint32_t result = temporary(plan, i64);
+    if (result != kInvalidRegister)
+      emit({Constant, 0, result, 0, 0, 0, 0,
+            addConstant(plan.layouts[result], APInt(64, value))});
+    return result;
+  }
+
+  LogicalResult encodeClassDirectCall(FunctionPlan &plan,
+                                      sim::SimClassDirectCallOp call) {
+    auto found = indices.find(call.getCallee());
+    if (found == indices.end())
+      return call.emitOpError("class method has no bytecode body");
+    FunctionPlan &callee = plans[found->second];
+    SmallVector<Value> arguments{plan.function.getBody().front().getArgument(0),
+                                 call.getReceiver()};
+    llvm::append_range(arguments, call.getArguments());
+    auto inputs =
+        addMap(callee, callee.function.getBody().front().getArguments(), plan,
+               arguments);
+    uint64_t firstOutputs = operandMaps.size();
+    for (auto [destination, source] :
+         llvm::zip_equal(call.getResults(), callee.resultRegisters))
+      operandMaps.push_back({reg(plan, destination), source});
+    emit({Call, 0, 0, callee.index, static_cast<uint32_t>(inputs.first),
+          static_cast<uint32_t>(inputs.second),
+          static_cast<uint32_t>(firstOutputs), call.getNumResults()});
+    return success();
+  }
+
+  LogicalResult encodeClassVirtualCall(FunctionPlan &plan,
+                                       sim::SimClassVirtualCallOp call) {
+    if (call.getSlot() > UINT32_MAX || call.getNumResults() > UINT16_MAX)
+      return call.emitOpError("virtual call exceeds the bytecode ABI");
+    SmallVector<Value> arguments{plan.function.getBody().front().getArgument(0),
+                                 call.getReceiver()};
+    llvm::append_range(arguments, call.getArguments());
+    if (arguments.size() > UINT32_MAX || operandMaps.size() > UINT32_MAX)
+      return call.emitOpError("virtual argument map exceeds the bytecode ABI");
+    uint32_t firstInputs = operandMaps.size();
+    for (auto [index, argument] : llvm::enumerate(arguments))
+      operandMaps.push_back(
+          {static_cast<uint32_t>(index), reg(plan, argument)});
+    uint32_t firstOutputs = operandMaps.size();
+    for (auto [index, result] : llvm::enumerate(call.getResults()))
+      operandMaps.push_back(
+          {reg(plan, result), static_cast<uint32_t>(arguments.size() + index)});
+    emit({VirtualCall, static_cast<uint16_t>(call.getNumResults()),
+          static_cast<uint32_t>(call.getSlot()), reg(plan, call.getReceiver()),
+          firstInputs, static_cast<uint32_t>(arguments.size()), firstOutputs,
+          call.getSignatureId()});
+    return success();
   }
 
   LogicalResult encodeDisplay(FunctionPlan &plan, sim::SimDisplayOp op) {
@@ -1076,7 +1297,8 @@ private:
     uint32_t metadataRegister = emitBytesConstant(plan, metadata);
     if (metadataRegister == kInvalidRegister)
       return op.emitOpError("cannot allocate display metadata register");
-    SmallVector<uint32_t> inputs{metadataRegister, reg(plan, op.getDescriptor())};
+    SmallVector<uint32_t> inputs{metadataRegister,
+                                 reg(plan, op.getDescriptor())};
     for (Value item : op.getItems())
       inputs.push_back(reg(plan, item));
     return emitIntrinsicRegisters(plan, kIntrinsicDisplay, inputs, {});
@@ -1087,22 +1309,24 @@ private:
     return instructions.size() - 1;
   }
 
-  std::pair<uint64_t, uint64_t>
-  addMap(FunctionPlan &destinationPlan, ValueRange destination,
-         FunctionPlan &sourcePlan, ValueRange source) {
+  std::pair<uint64_t, uint64_t> addMap(FunctionPlan &destinationPlan,
+                                       ValueRange destination,
+                                       FunctionPlan &sourcePlan,
+                                       ValueRange source) {
     uint64_t first = operandMaps.size();
     for (auto [destinationValue, sourceValue] :
          llvm::zip_equal(destination, source))
-      operandMaps.push_back(
-          {reg(destinationPlan, destinationValue), reg(sourcePlan, sourceValue)});
+      operandMaps.push_back({reg(destinationPlan, destinationValue),
+                             reg(sourcePlan, sourceValue)});
     return {first, destination.size()};
   }
 
-  std::pair<uint64_t, uint64_t>
-  addRegistersMap(ArrayRef<uint32_t> destinations, FunctionPlan &sourcePlan,
-                  ValueRange source) {
+  std::pair<uint64_t, uint64_t> addRegistersMap(ArrayRef<uint32_t> destinations,
+                                                FunctionPlan &sourcePlan,
+                                                ValueRange source) {
     uint64_t first = operandMaps.size();
-    for (auto [destination, sourceValue] : llvm::zip_equal(destinations, source))
+    for (auto [destination, sourceValue] :
+         llvm::zip_equal(destinations, source))
       operandMaps.push_back({destination, reg(sourcePlan, sourceValue)});
     return {first, destinations.size()};
   }
@@ -1112,9 +1336,12 @@ private:
       plan.firstInstruction = instructions.size();
       for (Block &block : plan.function.getBody()) {
         plan.blockPCs[&block] = instructions.size();
-        for (Operation &operation : block)
+        for (Operation &operation : block) {
+          if (mayCollect(&operation))
+            emitDeadManagedClears(plan, &operation);
           if (failed(encodeOperation(plan, &operation)))
             return failure();
+        }
       }
       for (auto [instruction, target] : plan.branches) {
         auto found = plan.blockPCs.find(target);
@@ -1128,6 +1355,28 @@ private:
       plan.scratchSize = llvm::alignTo(plan.scratchSize, uint64_t{8});
     }
     return success();
+  }
+
+  static bool mayCollect(Operation *operation) {
+    return isa<sim::SimClassAllocOp, sim::SimClassCopyOp, sim::SimWeakCreateOp,
+               sim::SimGCSafepointOp, sim::SimCallOp, sim::SimClassDirectCallOp,
+               sim::SimClassVirtualCallOp, sim::SimDPICallOp>(operation);
+  }
+
+  void emitDeadManagedClears(FunctionPlan &plan, Operation *operation) {
+    const LivenessBlockInfo *blockInfo =
+        plan.liveness->getLiveness(operation->getBlock());
+    if (!blockInfo)
+      return;
+    Liveness::ValueSetT live = blockInfo->currentlyLiveValues(operation);
+    for (auto [value, reg] : plan.registers) {
+      const Layout &layout = plan.layouts[reg];
+      if (layout.kind != Managed && layout.kind != ManagedRef)
+        continue;
+      if (live.contains(value) && value.getDefiningOp() != operation)
+        continue;
+      emit({Constant, 0, reg, 0, 0, 0, 0, addZeroConstant(layout)});
+    }
   }
 
   LogicalResult emitContinuationEntries(FunctionPlan &plan) {
@@ -1146,10 +1395,10 @@ private:
             continue;
           }
           if (slot.storageSize > UINT32_MAX ||
-              (slot.isFourState() && slot.storageSize > UINT32_MAX / 2))
+              (slot.hasSecondaryStorage() && slot.storageSize > UINT32_MAX / 2))
             return failure();
           uint64_t transferSize =
-              slot.storageSize * (slot.isFourState() ? 2 : 1);
+              slot.storageSize * (slot.hasSecondaryStorage() ? 2 : 1);
           emitFrameTransfer(plan, LoadFrame, argument, slot.valueOffset,
                             static_cast<uint32_t>(transferSize));
         }
@@ -1160,9 +1409,8 @@ private:
       // captures are immutable SSA values and may remain live in any resumed
       // block even after suspension-live threading has made block operands
       // explicit, so reconstruct them at every non-entry continuation.
-      if (id != 0 &&
-          failed(restore(functionEntry->getArguments(),
-                         plan.frame->getEntryCaptureLayout())))
+      if (id != 0 && failed(restore(functionEntry->getArguments(),
+                                    plan.frame->getEntryCaptureLayout())))
         return plan.function.emitOpError(
             "canonical entry capture exceeds the bytecode ABI limit");
       if (failed(restore(block->getArguments(), slots)))
@@ -1174,8 +1422,7 @@ private:
       if (rank == plan.blockScheduleRanks.end())
         return plan.function.emitOpError(
             "continuation block has no schedule rank");
-      plan.continuations.push_back(
-          {plan.index, id, entryPC, rank->second});
+      plan.continuations.push_back({plan.index, id, entryPC, rank->second});
       return success();
     };
     Block *entry = &plan.function.getBody().front();
@@ -1260,19 +1507,39 @@ private:
     if (auto op = dyn_cast<arith::CmpIOp>(operation)) {
       uint16_t predicate = 0;
       switch (op.getPredicate()) {
-      case arith::CmpIPredicate::eq: predicate = 0; break;
-      case arith::CmpIPredicate::ne: predicate = 1; break;
-      case arith::CmpIPredicate::ult: predicate = 2; break;
-      case arith::CmpIPredicate::ule: predicate = 3; break;
-      case arith::CmpIPredicate::ugt: predicate = 4; break;
-      case arith::CmpIPredicate::uge: predicate = 5; break;
-      case arith::CmpIPredicate::slt: predicate = 6; break;
-      case arith::CmpIPredicate::sle: predicate = 7; break;
-      case arith::CmpIPredicate::sgt: predicate = 8; break;
-      case arith::CmpIPredicate::sge: predicate = 9; break;
+      case arith::CmpIPredicate::eq:
+        predicate = 0;
+        break;
+      case arith::CmpIPredicate::ne:
+        predicate = 1;
+        break;
+      case arith::CmpIPredicate::ult:
+        predicate = 2;
+        break;
+      case arith::CmpIPredicate::ule:
+        predicate = 3;
+        break;
+      case arith::CmpIPredicate::ugt:
+        predicate = 4;
+        break;
+      case arith::CmpIPredicate::uge:
+        predicate = 5;
+        break;
+      case arith::CmpIPredicate::slt:
+        predicate = 6;
+        break;
+      case arith::CmpIPredicate::sle:
+        predicate = 7;
+        break;
+      case arith::CmpIPredicate::sgt:
+        predicate = 8;
+        break;
+      case arith::CmpIPredicate::sge:
+        predicate = 9;
+        break;
       }
-      emit({Compare, predicate, reg(plan, op.getResult()), reg(plan, op.getLhs()),
-            reg(plan, op.getRhs())});
+      emit({Compare, predicate, reg(plan, op.getResult()),
+            reg(plan, op.getLhs()), reg(plan, op.getRhs())});
       return success();
     }
     if (auto op = dyn_cast<arith::CmpFOp>(operation)) {
@@ -1332,25 +1599,23 @@ private:
     if (auto branch = dyn_cast<cf::BranchOp>(operation)) {
       auto mapping = addMap(plan, branch.getDest()->getArguments(), plan,
                             branch.getDestOperands());
-      uint64_t encoded = emit(
-          {Jump, 0, 0, static_cast<uint32_t>(mapping.first),
-           static_cast<uint32_t>(mapping.second)});
+      uint64_t encoded = emit({Jump, 0, 0, static_cast<uint32_t>(mapping.first),
+                               static_cast<uint32_t>(mapping.second)});
       plan.branches.push_back({encoded, branch.getDest()});
       return success();
     }
     if (auto branch = dyn_cast<cf::CondBranchOp>(operation)) {
       auto trueMap = addMap(plan, branch.getTrueDest()->getArguments(), plan,
                             branch.getTrueDestOperands());
-      uint64_t conditional = emit(
-          {Branch, 0, reg(plan, branch.getCondition()),
-           static_cast<uint32_t>(trueMap.first),
-           static_cast<uint32_t>(trueMap.second)});
+      uint64_t conditional = emit({Branch, 0, reg(plan, branch.getCondition()),
+                                   static_cast<uint32_t>(trueMap.first),
+                                   static_cast<uint32_t>(trueMap.second)});
       plan.branches.push_back({conditional, branch.getTrueDest()});
       auto falseMap = addMap(plan, branch.getFalseDest()->getArguments(), plan,
                              branch.getFalseDestOperands());
-      uint64_t fallback = emit(
-          {Jump, 0, 0, static_cast<uint32_t>(falseMap.first),
-           static_cast<uint32_t>(falseMap.second)});
+      uint64_t fallback =
+          emit({Jump, 0, 0, static_cast<uint32_t>(falseMap.first),
+                static_cast<uint32_t>(falseMap.second)});
       plan.branches.push_back({fallback, branch.getFalseDest()});
       return success();
     }
@@ -1366,23 +1631,26 @@ private:
       for (auto [value, destination, operands] :
            llvm::zip_equal(values, destinations, caseOperands)) {
         uint32_t caseValue = temporary(plan, switchOp.getFlag().getType());
-        uint32_t match = temporary(plan, IntegerType::get(operation->getContext(), 1));
+        uint32_t match =
+            temporary(plan, IntegerType::get(operation->getContext(), 1));
         if (caseValue == kInvalidRegister || match == kInvalidRegister)
           return failure();
         emit({Constant, 0, caseValue, 0, 0, 0, 0,
               addConstant(plan.layouts[caseValue], value)});
         emit({Compare, 0, match, reg(plan, switchOp.getFlag()), caseValue});
-        auto mapping = addMap(plan, destination->getArguments(), plan, operands);
-        uint64_t branch = emit({Branch, 0, match,
-                                static_cast<uint32_t>(mapping.first),
-                                static_cast<uint32_t>(mapping.second)});
+        auto mapping =
+            addMap(plan, destination->getArguments(), plan, operands);
+        uint64_t branch =
+            emit({Branch, 0, match, static_cast<uint32_t>(mapping.first),
+                  static_cast<uint32_t>(mapping.second)});
         plan.branches.push_back({branch, destination});
       }
-      auto mapping = addMap(plan, switchOp.getDefaultDestination()->getArguments(),
-                            plan, switchOp.getDefaultOperands());
-      uint64_t fallback = emit({Jump, 0, 0,
-                                static_cast<uint32_t>(mapping.first),
-                                static_cast<uint32_t>(mapping.second)});
+      auto mapping =
+          addMap(plan, switchOp.getDefaultDestination()->getArguments(), plan,
+                 switchOp.getDefaultOperands());
+      uint64_t fallback =
+          emit({Jump, 0, 0, static_cast<uint32_t>(mapping.first),
+                static_cast<uint32_t>(mapping.second)});
       plan.branches.push_back({fallback, switchOp.getDefaultDestination()});
       return success();
     }
@@ -1430,13 +1698,14 @@ private:
                            {op.getResult()});
     if (auto op = dyn_cast<sim::SimFileUngetcOp>(operation))
       return emitIntrinsic(plan, kIntrinsicFileUngetc,
-                           {op.getByte(), op.getDescriptor()}, {op.getResult()});
+                           {op.getByte(), op.getDescriptor()},
+                           {op.getResult()});
     if (auto op = dyn_cast<sim::SimFileGetlineOp>(operation))
       return emitIntrinsic(plan, kIntrinsicFileGetline, {op.getDescriptor()},
                            {op.getData(), op.getCount()});
     if (auto op = dyn_cast<sim::SimFileReadPackedOp>(operation))
-      return emitIntrinsic(plan, kIntrinsicFileReadPacked,
-                           {op.getDescriptor()}, {op.getData(), op.getCount()});
+      return emitIntrinsic(plan, kIntrinsicFileReadPacked, {op.getDescriptor()},
+                           {op.getData(), op.getCount()});
     if (auto op = dyn_cast<sim::SimFileEofOp>(operation))
       return emitIntrinsic(plan, kIntrinsicFileEof, {op.getDescriptor()},
                            {op.getResult()});
@@ -1483,6 +1752,115 @@ private:
             reg(plan, op.getRhs())});
       return success();
     }
+    if (auto op = dyn_cast<sim::SimClassNullOp>(operation)) {
+      uint32_t destination = reg(plan, op.getResult());
+      emit({Constant, 0, destination, 0, 0, 0, 0,
+            addZeroConstant(plan.layouts[destination])});
+      return success();
+    }
+    if (auto op = dyn_cast<sim::SimClassAllocOp>(operation)) {
+      auto type = cast<sim::ClassHandleType>(op.getResult().getType());
+      FailureOr<uint64_t> id = classID(type.getClassName(), operation);
+      if (failed(id))
+        return failure();
+      uint32_t classRegister = emitU64Constant(plan, *id);
+      return emitIntrinsicRegisters(plan, kIntrinsicClassAlloc, {classRegister},
+                                    {reg(plan, op.getResult())});
+    }
+    if (auto op = dyn_cast<sim::SimClassCopyOp>(operation)) {
+      auto type = cast<sim::ClassHandleType>(op.getResult().getType());
+      FailureOr<uint64_t> id = classID(type.getClassName(), operation);
+      if (failed(id))
+        return failure();
+      uint32_t classRegister = emitU64Constant(plan, *id);
+      return emitIntrinsicRegisters(plan, kIntrinsicClassCopy,
+                                    {reg(plan, op.getSource()), classRegister},
+                                    {reg(plan, op.getResult())});
+    }
+    if (auto op = dyn_cast<sim::SimClassIsInstanceOp>(operation)) {
+      FailureOr<uint64_t> id = classID(op.getTargetAttr(), operation);
+      if (failed(id))
+        return failure();
+      uint32_t classRegister = emitU64Constant(plan, *id);
+      return emitIntrinsicRegisters(plan, kIntrinsicClassIsInstance,
+                                    {reg(plan, op.getObject()), classRegister},
+                                    {reg(plan, op.getResult())});
+    }
+    if (auto op = dyn_cast<sim::SimClassIdOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicClassID, {op.getObject()},
+                           {op.getResult()});
+    if (auto op = dyn_cast<sim::SimClassCastOp>(operation)) {
+      auto type = cast<sim::ClassHandleType>(op.getResult().getType());
+      FailureOr<uint64_t> id = classID(type.getClassName(), operation);
+      if (failed(id))
+        return failure();
+      uint32_t classRegister = emitU64Constant(plan, *id);
+      return emitIntrinsicRegisters(plan, kIntrinsicClassCast,
+                                    {reg(plan, op.getObject()), classRegister},
+                                    {reg(plan, op.getResult())});
+    }
+    if (auto op = dyn_cast<sim::SimClassFieldRefOp>(operation)) {
+      auto field =
+          SymbolTable::lookupNearestSymbolFrom<sim::SimClassFieldDeclOp>(
+              op, op.getFieldAttr());
+      auto offset =
+          field ? field->getAttrOfType<IntegerAttr>("offset") : IntegerAttr{};
+      if (!field || !offset)
+        return op.emitOpError("managed field has no bytecode layout");
+      uint32_t offsetRegister =
+          emitU64Constant(plan, offset.getValue().getZExtValue());
+      return emitIntrinsicRegisters(plan, kIntrinsicClassFieldRef,
+                                    {reg(plan, op.getObject()), offsetRegister},
+                                    {reg(plan, op.getResult())});
+    }
+    if (auto op = dyn_cast<sim::SimManagedLoadOp>(operation)) {
+      FailureOr<ManagedValueStorage> storage =
+          getManagedValueStorage(op.getResult().getType(), dataLayout);
+      if (failed(storage))
+        return op.emitOpError("managed result has no bytecode field layout");
+      uint32_t sizeRegister = emitU64Constant(plan, storage->planeSize);
+      return emitIntrinsicRegisters(
+          plan, kIntrinsicManagedLoad,
+          {reg(plan, op.getReference()), sizeRegister},
+          {reg(plan, op.getResult())});
+    }
+    if (auto op = dyn_cast<sim::SimManagedStoreOp>(operation)) {
+      FailureOr<ManagedValueStorage> storage =
+          getManagedValueStorage(op.getValue().getType(), dataLayout);
+      if (failed(storage))
+        return op.emitOpError("managed value has no bytecode field layout");
+      uint32_t sizeRegister = emitU64Constant(plan, storage->planeSize);
+      return emitIntrinsicRegisters(plan, kIntrinsicManagedStore,
+                                    {reg(plan, op.getReference()),
+                                     reg(plan, op.getValue()), sizeRegister},
+                                    {});
+    }
+    if (auto op = dyn_cast<sim::SimManagedNBAEnqueueOp>(operation)) {
+      FailureOr<ManagedValueStorage> storage =
+          getManagedValueStorage(op.getValue().getType(), dataLayout);
+      if (failed(storage))
+        return op.emitOpError("managed NBA value has no bytecode field layout");
+      SmallVector<uint32_t> inputs{reg(plan, op.getDestination()),
+                                   reg(plan, op.getValue()),
+                                   emitU64Constant(plan, storage->planeSize)};
+      if (op.getDelay())
+        inputs.push_back(reg(plan, op.getDelay()));
+      return emitIntrinsicRegisters(plan, kIntrinsicManagedNBA, inputs, {});
+    }
+    if (auto op = dyn_cast<sim::SimClassDirectCallOp>(operation))
+      return encodeClassDirectCall(plan, op);
+    if (auto op = dyn_cast<sim::SimClassVirtualCallOp>(operation))
+      return encodeClassVirtualCall(plan, op);
+    if (auto op = dyn_cast<sim::SimWeakCreateOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicWeakCreate, {op.getReferent()},
+                           {op.getResult()});
+    if (auto op = dyn_cast<sim::SimWeakGetOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicWeakGet, {op.getWeak()},
+                           {op.getResult()});
+    if (auto op = dyn_cast<sim::SimWeakClearOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicWeakClear, {op.getWeak()}, {});
+    if (isa<sim::SimGCSafepointOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicGCSafepoint, {}, {});
     if (auto call = dyn_cast<sim::SimCallOp>(operation))
       return encodeCall(plan, call);
     if (auto call = dyn_cast<sim::SimTaskCallOp>(operation))
@@ -1612,10 +1990,9 @@ private:
       return success();
     }
     if (auto op = dyn_cast<sim::SimLogicShiftOp>(operation)) {
-      uint16_t opcode = op.getKind() == sim::ShiftKind::Left
-                            ? Shl
-                            : op.getKind() == sim::ShiftKind::Right ? LShr
-                                                                    : AShr;
+      uint16_t opcode = op.getKind() == sim::ShiftKind::Left    ? Shl
+                        : op.getKind() == sim::ShiftKind::Right ? LShr
+                                                                : AShr;
       return binary(opcode, op.getResult(), op.getInput(), op.getAmount());
     }
     if (auto op = dyn_cast<sim::SimLogicCompareOp>(operation))
@@ -1701,21 +2078,19 @@ private:
           simulationWidth(op.getInitialValue().getType());
       if (!width)
         return op.emitOpError("automatic storage has no fixed width");
-      return emitIntrinsic(plan, kIntrinsicStateAlloc,
-                           {op.getInitialValue()}, {op.getResult()});
+      return emitIntrinsic(plan, kIntrinsicStateAlloc, {op.getInitialValue()},
+                           {op.getResult()});
     }
     if (isa<sim::SimDisableChildrenOp>(operation))
       return emitIntrinsic(plan, kIntrinsicDisableChildren, {}, {});
     if (auto op = dyn_cast<sim::SimControlEnterOp>(operation)) {
       if (op.getTargetId() == 0 || op.getTargetId() > UINT32_MAX)
         return op.emitOpError("control target ID does not fit bytecode");
-      return emitIntrinsic(plan, kIntrinsicControlEnter, {},
-                           {op.getControl()},
+      return emitIntrinsic(plan, kIntrinsicControlEnter, {}, {op.getControl()},
                            static_cast<uint32_t>(op.getTargetId()));
     }
     if (auto op = dyn_cast<sim::SimControlLeaveOp>(operation))
-      return emitIntrinsic(plan, kIntrinsicControlLeave,
-                           {op.getControl()}, {});
+      return emitIntrinsic(plan, kIntrinsicControlLeave, {op.getControl()}, {});
     if (auto op = dyn_cast<sim::SimControlDisableOp>(operation)) {
       if (op.getTargetId() == 0 || op.getTargetId() > INT32_MAX)
         return op.emitOpError("control target ID does not fit bytecode");
@@ -1725,13 +2100,11 @@ private:
       uint32_t flags = static_cast<uint32_t>(op.getTargetId());
       if (op.getHierarchical())
         flags |= UINT32_C(1) << 31;
-      return emitIntrinsic(plan, kIntrinsicControlDisable, inputs, {},
-                           flags);
+      return emitIntrinsic(plan, kIntrinsicControlDisable, inputs, {}, flags);
     }
     if (auto op = dyn_cast<sim::SimStaticOnceOp>(operation)) {
       if (op.getId() == 0 || op.getId() > UINT32_MAX)
-        return op.emitOpError(
-            "static initialization ID does not fit bytecode");
+        return op.emitOpError("static initialization ID does not fit bytecode");
       return emitIntrinsic(plan, kIntrinsicStaticOnce, {}, {op.getFirst()},
                            static_cast<uint32_t>(op.getId()));
     }
@@ -1770,7 +2143,8 @@ private:
       return encodeArrayView(plan, op.getResult(), op.getInput(), op.getIndex(),
                              op.getOperation());
     if (auto op = dyn_cast<sim::SimRefLoadOp>(operation)) {
-      emit({LoadState, 0, reg(plan, op.getResult()), reg(plan, op.getReference())});
+      emit({LoadState, 0, reg(plan, op.getResult()),
+            reg(plan, op.getReference())});
       return success();
     }
     if (auto op = dyn_cast<sim::SimNetReadOp>(operation)) {
@@ -1783,15 +2157,16 @@ private:
       return success();
     }
     if (auto op = dyn_cast<sim::SimDriverDriveOp>(operation)) {
-      emit({StoreState, 0, 0, reg(plan, op.getDriver()), reg(plan, op.getValue())});
+      emit({StoreState, 0, 0, reg(plan, op.getDriver()),
+            reg(plan, op.getValue())});
       return success();
     }
     if (isa<sim::SimObserverBindOp>(operation))
       return success();
     if (auto suspend = dyn_cast<sim::SimSuspendDelayOp>(operation))
       return encodeWait(plan, suspend.getOperation(),
-                        suspend.getContinuationOperands(), 1, 0, {},
-                        {}, suspend.getDelay());
+                        suspend.getContinuationOperands(), 1, 0, {}, {},
+                        suspend.getDelay());
     if (auto suspend = dyn_cast<sim::SimSuspendChangeOp>(operation)) {
       uint32_t edge = 0;
       return encodeWait(plan, suspend.getOperation(),
@@ -1800,10 +2175,10 @@ private:
     }
     if (auto suspend = dyn_cast<sim::SimSuspendLevelOp>(operation)) {
       uint32_t edge = 0;
-      return encodeWait(
-          plan, suspend.getOperation(), suspend.getContinuationOperands(), 2,
-          OBELISK_RT_WAIT_LEVEL_TRUE, ArrayRef<uint32_t>(&edge, 1),
-          {suspend.getWatched()});
+      return encodeWait(plan, suspend.getOperation(),
+                        suspend.getContinuationOperands(), 2,
+                        OBELISK_RT_WAIT_LEVEL_TRUE,
+                        ArrayRef<uint32_t>(&edge, 1), {suspend.getWatched()});
     }
     if (auto suspend = dyn_cast<sim::SimSuspendEdgeOp>(operation)) {
       uint32_t edge = static_cast<uint32_t>(suspend.getEdge());
@@ -1812,14 +2187,12 @@ private:
                         ArrayRef<uint32_t>(&edge, 1), {suspend.getWatched()});
     }
     if (auto suspend = dyn_cast<sim::SimSuspendEdgeIffOp>(operation)) {
-      SmallVector<uint32_t> edges{
-          static_cast<uint32_t>(suspend.getEdge()),
-          OBELISK_RT_WAIT_EDGE_NONE};
-      SmallVector<Value> watched{suspend.getWatched(),
-                                 suspend.getCondition()};
-      return encodeWait(
-          plan, suspend.getOperation(), suspend.getContinuationOperands(), 3,
-          OBELISK_RT_WAIT_EDGE_IFF, edges, watched);
+      SmallVector<uint32_t> edges{static_cast<uint32_t>(suspend.getEdge()),
+                                  OBELISK_RT_WAIT_EDGE_NONE};
+      SmallVector<Value> watched{suspend.getWatched(), suspend.getCondition()};
+      return encodeWait(plan, suspend.getOperation(),
+                        suspend.getContinuationOperands(), 3,
+                        OBELISK_RT_WAIT_EDGE_IFF, edges, watched);
     }
     if (auto suspend = dyn_cast<sim::SimSuspendAnyOp>(operation)) {
       SmallVector<uint32_t> edges;
@@ -1848,10 +2221,9 @@ private:
     if (auto suspend = dyn_cast<sim::SimSuspendJoinOp>(operation)) {
       SmallVector<uint32_t> edges(suspend.getProcesses().size(), UINT32_MAX);
       SmallVector<Value> processes(suspend.getProcesses());
-      return encodeWait(plan, suspend.getOperation(),
-                        suspend.getContinuationOperands(), 6,
-                        static_cast<uint32_t>(suspend.getKind()), edges,
-                        processes);
+      return encodeWait(
+          plan, suspend.getOperation(), suspend.getContinuationOperands(), 6,
+          static_cast<uint32_t>(suspend.getKind()), edges, processes);
     }
     if (auto suspend = dyn_cast<sim::SimSuspendChildrenOp>(operation))
       return encodeWait(plan, suspend.getOperation(),
@@ -1868,11 +2240,13 @@ private:
     if (found == indices.end()) {
       sim::SimFuncOp declaration = externalFunctions.lookup(call.getCallee());
       if (!declaration)
-        return call.emitOpError("callee has no bytecode body or import declaration");
+        return call.emitOpError(
+            "callee has no bytecode body or import declaration");
       uint32_t importID = stableImportID(declaration.getSymName());
-      auto inserted = importSymbols.try_emplace(
-          importID, declaration.getSymName().str());
-      if (!inserted.second && inserted.first->second != declaration.getSymName())
+      auto inserted =
+          importSymbols.try_emplace(importID, declaration.getSymName().str());
+      if (!inserted.second &&
+          inserted.first->second != declaration.getSymName())
         return call.emitOpError()
                << "import ID collision between '" << inserted.first->second
                << "' and '" << declaration.getSymName() << "'";
@@ -1881,13 +2255,12 @@ private:
         if (isa<sim::ContextType, runtime::ContextType>(operand.getType()))
           continue;
         uint32_t input = reg(plan, operand);
-        if (input == kInvalidRegister ||
-            (plan.layouts[input].kind != Bits &&
-             plan.layouts[input].kind != Logic &&
-             plan.layouts[input].kind != Handle &&
-             plan.layouts[input].kind != Status))
-          return call.emitOpError()
-                 << "generation-one imports require numeric, handle, or status inputs";
+        if (input == kInvalidRegister || (plan.layouts[input].kind != Bits &&
+                                          plan.layouts[input].kind != Logic &&
+                                          plan.layouts[input].kind != Handle &&
+                                          plan.layouts[input].kind != Status))
+          return call.emitOpError() << "generation-one imports require "
+                                       "numeric, handle, or status inputs";
         inputs.push_back(input);
       }
       SmallVector<uint32_t> outputs;
@@ -1898,8 +2271,8 @@ private:
              plan.layouts[output].kind != Logic &&
              plan.layouts[output].kind != Handle &&
              plan.layouts[output].kind != Status))
-          return call.emitOpError()
-                 << "generation-one imports require numeric, handle, or status results";
+          return call.emitOpError() << "generation-one imports require "
+                                       "numeric, handle, or status results";
         outputs.push_back(output);
       }
       return emitIntrinsicRegisters(plan, kIntrinsicImport, inputs, outputs,
@@ -1907,8 +2280,8 @@ private:
     }
     FunctionPlan &callee = plans[found->second];
     Block &calleeEntry = callee.function.getBody().front();
-    auto inputs = addMap(callee, calleeEntry.getArguments(), plan,
-                         call.getOperands());
+    auto inputs =
+        addMap(callee, calleeEntry.getArguments(), plan, call.getOperands());
     SmallVector<Value> synthetic;
     uint64_t firstOutputs = operandMaps.size();
     for (auto [destination, source] :
@@ -1920,8 +2293,7 @@ private:
     return success();
   }
 
-  LogicalResult encodeTaskCall(FunctionPlan &plan,
-                               sim::SimTaskCallOp call) {
+  LogicalResult encodeTaskCall(FunctionPlan &plan, sim::SimTaskCallOp call) {
     if (!plan.frame)
       return call.emitOpError("task call has no canonical caller frame");
     const ProcessSuspension *suspension =
@@ -1935,11 +2307,11 @@ private:
     for (auto [value, slot] :
          llvm::zip_equal(call.getContinuationOperands(), slots)) {
       if (slot.storageSize > UINT32_MAX ||
-          (slot.isFourState() && slot.storageSize > UINT32_MAX / 2))
+          (slot.hasSecondaryStorage() && slot.storageSize > UINT32_MAX / 2))
         return call.emitOpError(
             "canonical frame transfer exceeds the bytecode ABI limit");
       uint64_t transferSize =
-          slot.storageSize * (slot.isFourState() ? 2 : 1);
+          slot.storageSize * (slot.hasSecondaryStorage() ? 2 : 1);
       emitFrameTransfer(plan, StoreFrame, value, slot.valueOffset,
                         static_cast<uint32_t>(transferSize));
     }
@@ -1947,16 +2319,13 @@ private:
     if (found == indices.end())
       return call.emitOpError("task target has no bytecode body");
     FunctionPlan &callee = plans[found->second];
-    if (!callee.frame ||
-        callee.function.getEntryKind() != sim::EntryKind::Task)
+    if (!callee.frame || callee.function.getEntryKind() != sim::EntryKind::Task)
       return call.emitOpError("task target is not an activation entry");
     Block &calleeEntry = callee.function.getBody().front();
-    auto inputs = addMap(callee, calleeEntry.getArguments(), plan,
-                         call.getArguments());
-    emit({TaskCall, 0, 0, callee.index,
-          static_cast<uint32_t>(inputs.first),
-          static_cast<uint32_t>(inputs.second), 0,
-          suspension->continuationID});
+    auto inputs =
+        addMap(callee, calleeEntry.getArguments(), plan, call.getArguments());
+    emit({TaskCall, 0, 0, callee.index, static_cast<uint32_t>(inputs.first),
+          static_cast<uint32_t>(inputs.second), 0, suspension->continuationID});
     return success();
   }
 
@@ -1964,8 +2333,7 @@ private:
     uint32_t importID = call.getImportId();
     auto inserted =
         importSymbols.try_emplace(importID, call.getCIdentifier().str());
-    if (!inserted.second &&
-        inserted.first->second != call.getCIdentifier())
+    if (!inserted.second && inserted.first->second != call.getCIdentifier())
       return call.emitOpError()
              << "import ID collision between '" << inserted.first->second
              << "' and '" << call.getCIdentifier() << "'";
@@ -1984,10 +2352,9 @@ private:
     uint64_t logicalInputs = call.getArguments().size();
     if (logicalInputs > call.getAbiSignature().size())
       return call.emitOpError("DPI ABI signature has too few inputs");
-    uint64_t logicalOutputs =
-        call.getAbiSignature().size() - logicalInputs;
-    append64(metadata, sim::getDPISignatureHash(call.getAbiSignature(),
-                                                logicalInputs));
+    uint64_t logicalOutputs = call.getAbiSignature().size() - logicalInputs;
+    append64(metadata,
+             sim::getDPISignatureHash(call.getAbiSignature(), logicalInputs));
     append32(metadata, static_cast<uint32_t>(logicalInputs));
     append32(metadata, static_cast<uint32_t>(logicalOutputs));
     for (Attribute attribute : call.getAbiSignature()) {
@@ -1995,21 +2362,19 @@ private:
       append32(metadata, static_cast<uint32_t>(abi.getKind()));
       append32(metadata, static_cast<uint32_t>(abi.getDirection()));
       append32(metadata, abi.getWidth());
-      append32(metadata, (abi.getFourState() ? 1u : 0u) |
-                             (abi.getIsSigned() ? 2u : 0u));
+      append32(metadata,
+               (abi.getFourState() ? 1u : 0u) | (abi.getIsSigned() ? 2u : 0u));
     }
-    llvm::append_range(
-        metadata,
-        ArrayRef<uint8_t>(
-            reinterpret_cast<const uint8_t *>(call.getSourceFile().data()),
-            call.getSourceFile().size()));
+    llvm::append_range(metadata,
+                       ArrayRef<uint8_t>(reinterpret_cast<const uint8_t *>(
+                                             call.getSourceFile().data()),
+                                         call.getSourceFile().size()));
     SmallVector<uint32_t> inputs{emitBytesConstant(plan, metadata)};
     for (Value operand : call.getArguments()) {
       uint32_t input = reg(plan, operand);
-      if (input == kInvalidRegister ||
-          (plan.layouts[input].kind != Bits &&
-           plan.layouts[input].kind != Logic &&
-           plan.layouts[input].kind != Status))
+      if (input == kInvalidRegister || (plan.layouts[input].kind != Bits &&
+                                        plan.layouts[input].kind != Logic &&
+                                        plan.layouts[input].kind != Status))
         return call.emitOpError(
             "DPI imports require fixed packed integral inputs");
       inputs.push_back(input);
@@ -2017,10 +2382,9 @@ private:
     SmallVector<uint32_t> outputs;
     for (Value result : call.getResults()) {
       uint32_t output = reg(plan, result);
-      if (output == kInvalidRegister ||
-          (plan.layouts[output].kind != Bits &&
-           plan.layouts[output].kind != Logic &&
-           plan.layouts[output].kind != Status))
+      if (output == kInvalidRegister || (plan.layouts[output].kind != Bits &&
+                                         plan.layouts[output].kind != Logic &&
+                                         plan.layouts[output].kind != Status))
         return call.emitOpError(
             "DPI imports require fixed packed integral results");
       outputs.push_back(output);
@@ -2040,7 +2404,8 @@ private:
       emit({Terminate});
       return success();
     }
-    auto results = addRegistersMap(plan.resultRegisters, plan, op.getOperands());
+    auto results =
+        addRegistersMap(plan.resultRegisters, plan, op.getOperands());
     emit({Return, 0, 0, static_cast<uint32_t>(results.first),
           static_cast<uint32_t>(results.second)});
     return success();
@@ -2051,17 +2416,40 @@ private:
     uint16_t opcode = 0;
     bool invert = false;
     switch (op.getKind()) {
-    case sim::BinaryKind::Add: opcode = Add; break;
-    case sim::BinaryKind::Sub: opcode = Sub; break;
-    case sim::BinaryKind::Mul: opcode = Mul; break;
-    case sim::BinaryKind::UDiv: opcode = UDiv; break;
-    case sim::BinaryKind::SDiv: opcode = SDiv; break;
-    case sim::BinaryKind::UMod: opcode = URem; break;
-    case sim::BinaryKind::SMod: opcode = SRem; break;
-    case sim::BinaryKind::And: opcode = And; break;
-    case sim::BinaryKind::Or: opcode = Or; break;
-    case sim::BinaryKind::Xor: opcode = Xor; break;
-    case sim::BinaryKind::Xnor: opcode = Xor; invert = true; break;
+    case sim::BinaryKind::Add:
+      opcode = Add;
+      break;
+    case sim::BinaryKind::Sub:
+      opcode = Sub;
+      break;
+    case sim::BinaryKind::Mul:
+      opcode = Mul;
+      break;
+    case sim::BinaryKind::UDiv:
+      opcode = UDiv;
+      break;
+    case sim::BinaryKind::SDiv:
+      opcode = SDiv;
+      break;
+    case sim::BinaryKind::UMod:
+      opcode = URem;
+      break;
+    case sim::BinaryKind::SMod:
+      opcode = SRem;
+      break;
+    case sim::BinaryKind::And:
+      opcode = And;
+      break;
+    case sim::BinaryKind::Or:
+      opcode = Or;
+      break;
+    case sim::BinaryKind::Xor:
+      opcode = Xor;
+      break;
+    case sim::BinaryKind::Xnor:
+      opcode = Xor;
+      invert = true;
+      break;
     }
     emit({opcode, 0, reg(plan, op.getResult()), reg(plan, op.getLhs()),
           reg(plan, op.getRhs())});
@@ -2128,7 +2516,8 @@ private:
       return success();
     }
     uint32_t accumulated = reg(plan, op.getInput());
-    unsigned inputWidth = cast<sim::LogicType>(op.getInput().getType()).getWidth();
+    unsigned inputWidth =
+        cast<sim::LogicType>(op.getInput().getType()).getWidth();
     for (uint64_t copy = 1; copy != count; ++copy) {
       uint32_t destination;
       if (copy + 1 == count) {
@@ -2302,8 +2691,7 @@ private:
     if (auto packed = dyn_cast<sim::PackedUnionType>(unionType)) {
       tagBits = packed.getTagBits();
       expected = op.getIndex();
-    } else if (auto unpacked =
-                   dyn_cast<sim::UnpackedUnionType>(unionType)) {
+    } else if (auto unpacked = dyn_cast<sim::UnpackedUnionType>(unionType)) {
       tagBits = llvm::Log2_64_Ceil(
           static_cast<uint64_t>(sim::getAggregateNumElements(unionType)) + 1);
       expected = static_cast<uint64_t>(op.getIndex()) + 1;
@@ -2342,7 +2730,8 @@ private:
     else if (auto driver = dyn_cast<sim::DriverType>(result.getType()))
       element = driver.getElementType();
     else
-      return result.getDefiningOp()->emitOpError("expected a state handle type");
+      return result.getDefiningOp()->emitOpError(
+          "expected a state handle type");
     uint64_t width = *simulationWidth(element);
     emit({MakeHandle, 0, reg(plan, result), kind, static_cast<uint32_t>(width),
           0, 0, found->second});
@@ -2364,13 +2753,14 @@ private:
     if (!width)
       return result.getDefiningOp()->emitOpError(
           "view element has no fixed packed width");
-    emit({HandleOffset, 0, reg(plan, result), reg(plan, input),
-          dynamic, 0, *width, offset});
+    emit({HandleOffset, 0, reg(plan, result), reg(plan, input), dynamic, 0,
+          *width, offset});
     return success();
   }
 
-  LogicalResult encodeHandleOffset(FunctionPlan &plan, Value result, Value input,
-                                   uint64_t offset, Value dynamic) {
+  LogicalResult encodeHandleOffset(FunctionPlan &plan, Value result,
+                                   Value input, uint64_t offset,
+                                   Value dynamic) {
     return encodeHandleOffsetRegister(plan, result, input, offset,
                                       dynamic ? reg(plan, dynamic)
                                               : kInvalidRegister);
@@ -2389,8 +2779,7 @@ private:
     uint64_t offset = 0;
     for (int64_t rawIndex : indices) {
       if (rawIndex < 0 ||
-          static_cast<uint64_t>(rawIndex) >=
-              sim::getAggregateNumElements(type))
+          static_cast<uint64_t>(rawIndex) >= sim::getAggregateNumElements(type))
         return anchor->emitOpError("subelement index is out of range");
       unsigned index = static_cast<unsigned>(rawIndex);
       auto subelement = sim::getAggregateProvenanceSubelement(type, index);
@@ -2413,8 +2802,7 @@ private:
       array = driver.getElementType();
     else
       return anchor->emitOpError("array view input is not a state view");
-    FailureOr<uint32_t> offset =
-        encodeArrayOffset(plan, array, index, anchor);
+    FailureOr<uint32_t> offset = encodeArrayOffset(plan, array, index, anchor);
     if (failed(offset))
       return failure();
     return encodeHandleOffsetRegister(plan, result, input, 0, *offset);
@@ -2451,8 +2839,7 @@ private:
                                    sim::SimSuspendObserveOp operation) {
     if (!plan.frame)
       return operation.emitOpError("suspension has no canonical frame");
-    const ProcessSuspension *suspension =
-        plan.frame->getSuspension(operation);
+    const ProcessSuspension *suspension = plan.frame->getSuspension(operation);
     if (!suspension)
       return operation.emitOpError("suspension is missing frame analysis");
     ArrayRef<ProcessFrameValue> slots =
@@ -2462,7 +2849,7 @@ private:
     for (auto [value, slot] :
          llvm::zip_equal(operation.getContinuationOperands(), slots)) {
       uint64_t transferSize =
-          slot.storageSize * (slot.isFourState() ? 2 : 1);
+          slot.storageSize * (slot.hasSecondaryStorage() ? 2 : 1);
       if (transferSize > UINT32_MAX)
         return operation.emitOpError(
             "canonical frame transfer exceeds the bytecode ABI limit");
@@ -2552,8 +2939,7 @@ private:
         return binding.emitOpError("observer evaluator has no bytecode body");
       FunctionPlan &evaluator = plans[found->second];
       uint64_t entry =
-          observersOffset +
-          index * sizeof(obelisk_rt_computed_observer_v1);
+          observersOffset + index * sizeof(obelisk_rt_computed_observer_v1);
       write64(bytes, entry, evaluator.stableID);
       write32(bytes, entry + 8, captureCursor);
       write32(bytes, entry + 12, binding.getCaptures().size());
@@ -2561,19 +2947,17 @@ private:
       write32(bytes, entry + 20, binding.getDependencies().size());
       write32(bytes, entry + 24,
               index < primaryCount
-                  ? static_cast<uint32_t>(
-                        previousOffset + uint64_t{previousCursor} * 16)
+                  ? static_cast<uint32_t>(previousOffset +
+                                          uint64_t{previousCursor} * 16)
                   : UINT32_MAX);
       captureCursor += binding.getCaptures().size();
       for (Value dependency : binding.getDependencies()) {
         uint64_t entryOffset =
-            dependenciesOffset +
-            uint64_t{dependencyCursor} *
-                sizeof(obelisk_rt_computed_dependency_v1);
+            dependenciesOffset + uint64_t{dependencyCursor} *
+                                     sizeof(obelisk_rt_computed_dependency_v1);
         if (auto event = dyn_cast<sim::EventType>(dependency.getType())) {
           (void)event;
-          write32(bytes, entryOffset + 8,
-                  OBELISK_RT_OBSERVER_DEPENDENCY_EVENT);
+          write32(bytes, entryOffset + 8, OBELISK_RT_OBSERVER_DEPENDENCY_EVENT);
           write32(bytes, entryOffset + 12, 1);
         } else {
           Type element =
@@ -2594,26 +2978,26 @@ private:
         previousCursor += (uint64_t{widths[index]} + 63) / 64;
     }
     for (uint32_t index = 0; index != primaryCount; ++index) {
-      uint64_t clause =
-          clausesOffset +
-          uint64_t{index} * sizeof(obelisk_rt_computed_clause_v1);
+      uint64_t clause = clausesOffset +
+                        uint64_t{index} * sizeof(obelisk_rt_computed_clause_v1);
       int32_t condition = operation.getConditionIndices()[index];
       write32(bytes, clause, index);
       write32(bytes, clause + 4,
-              condition < 0
-                  ? OBELISK_RT_OBSERVER_CONDITION_NONE
-                  : primaryCount + static_cast<uint32_t>(condition));
+              condition < 0 ? OBELISK_RT_OBSERVER_CONDITION_NONE
+                            : primaryCount + static_cast<uint32_t>(condition));
       write32(bytes, clause + 8, operation.getEdges()[index]);
-      write32(
-          bytes, clause + 12,
-          bindings[index]->hasAttr("obelisk_sim.event_primary")
-              ? OBELISK_RT_COMPUTED_CLAUSE_EVENT_PRIMARY
-              : 0);
+      write32(bytes, clause + 12,
+              bindings[index]->hasAttr("obelisk_sim.event_primary")
+                  ? OBELISK_RT_COMPUTED_CLAUSE_EVENT_PRIMARY
+                  : 0);
     }
 
-    Layout record{Bits, 0,
-                  static_cast<uint32_t>(suspension->waitSize * 8), 0,
-                  suspension->waitSize, 0};
+    Layout record{Bits,
+                  0,
+                  static_cast<uint32_t>(suspension->waitSize * 8),
+                  0,
+                  suspension->waitSize,
+                  0};
     uint32_t recordRegister = plan.layouts.size();
     record.offset = llvm::alignTo(plan.scratchSize, uint64_t{8});
     plan.scratchSize = record.offset + record.size;
@@ -2621,8 +3005,7 @@ private:
     uint64_t constantOffset = constants.size();
     llvm::append_range(constants, bytes);
     emit({Constant, 0, recordRegister, 0, 0, 0, 0, constantOffset});
-    emit({StoreFrame, 0, 0, recordRegister, 0, 0, 0,
-          suspension->waitOffset});
+    emit({StoreFrame, 0, 0, recordRegister, 0, 0, 0, suspension->waitOffset});
     // Dynamic captures and dependencies overwrite their zeroed record slots
     // after the constant header has been copied.
     // Re-emit them because the stores above intentionally describe the final
@@ -2631,12 +3014,11 @@ private:
     dependencyCursor = 0;
     for (sim::SimObserverBindOp binding : bindings) {
       for (Value capture : binding.getCaptures()) {
-        emitFrameTransfer(
-            plan, StoreFrame, capture,
-            suspension->waitOffset + capturesOffset +
-                uint64_t{captureCursor++} *
-                    sizeof(obelisk_rt_computed_capture_v1),
-            sizeof(obelisk_rt_computed_capture_v1));
+        emitFrameTransfer(plan, StoreFrame, capture,
+                          suspension->waitOffset + capturesOffset +
+                              uint64_t{captureCursor++} *
+                                  sizeof(obelisk_rt_computed_capture_v1),
+                          sizeof(obelisk_rt_computed_capture_v1));
       }
       for (Value dependency : binding.getDependencies()) {
         uint32_t stableID =
@@ -2653,9 +3035,8 @@ private:
     previousCursor = 0;
     for (auto [index, initial] :
          llvm::enumerate(operation.getInitialValues())) {
-      uint64_t offset =
-          suspension->waitOffset + previousOffset +
-          uint64_t{previousCursor} * sizeof(uint64_t) * 2;
+      uint64_t offset = suspension->waitOffset + previousOffset +
+                        uint64_t{previousCursor} * sizeof(uint64_t) * 2;
       Layout layout = plan.layouts[reg(plan, initial)];
       if (layout.size > UINT32_MAX)
         return operation.emitOpError("observer initial value is too large");
@@ -2669,8 +3050,7 @@ private:
     plan.scratchSize = offsetLayout.offset + offsetLayout.size;
     plan.layouts.push_back(offsetLayout);
     emit({Constant, 0, offsetRegister, 0, 0, 0, 0,
-          addConstant(offsetLayout,
-                      APInt(64, suspension->waitOffset))});
+          addConstant(offsetLayout, APInt(64, suspension->waitOffset))});
     emit({Suspend, OBELISK_RT_SUSPEND_OBSERVER, 0, offsetRegister, 0, 0, 0,
           suspension->continuationID});
     return success();
@@ -2679,39 +3059,38 @@ private:
   LogicalResult encodeWait(FunctionPlan &plan, Operation *operation,
                            ValueRange continuationOperands, uint32_t kind,
                            uint32_t flags, ArrayRef<uint32_t> edges,
-                           ArrayRef<Value> watched,
-                           Value delay = {}) {
+                           ArrayRef<Value> watched, Value delay = {}) {
     if (!plan.frame)
       return operation->emitOpError("suspension has no canonical frame");
-    const ProcessSuspension *suspension =
-        plan.frame->getSuspension(operation);
+    const ProcessSuspension *suspension = plan.frame->getSuspension(operation);
     if (!suspension)
       return operation->emitOpError("suspension is missing frame analysis");
     ArrayRef<ProcessFrameValue> slots =
         plan.frame->getContinuationLayout(suspension->continuationID);
     if (slots.size() != continuationOperands.size())
       return operation->emitOpError("continuation frame arity mismatch");
-    for (auto [value, slot] :
-         llvm::zip_equal(continuationOperands, slots))
+    for (auto [value, slot] : llvm::zip_equal(continuationOperands, slots))
       if (slot.storageSize > UINT32_MAX ||
-          (slot.isFourState() && slot.storageSize > UINT32_MAX / 2))
+          (slot.hasSecondaryStorage() && slot.storageSize > UINT32_MAX / 2))
         return operation->emitOpError(
             "canonical frame transfer exceeds the bytecode ABI limit");
       else {
         uint64_t transferSize =
-            slot.storageSize * (slot.isFourState() ? 2 : 1);
+            slot.storageSize * (slot.hasSecondaryStorage() ? 2 : 1);
         emitFrameTransfer(plan, StoreFrame, value, slot.valueOffset,
                           static_cast<uint32_t>(transferSize));
       }
-    if (suspension->waitSize < 32 ||
-        (suspension->waitSize - 32) % 16 != 0)
+    if (suspension->waitSize < 32 || (suspension->waitSize - 32) % 16 != 0)
       return operation->emitOpError("wait record size does not match operands");
     uint64_t entryCapacity = (suspension->waitSize - 32) / 16;
     if (edges.size() > entryCapacity || watched.size() != edges.size())
       return operation->emitOpError("wait record size does not match operands");
-    Layout record{Bits, 0,
-                  static_cast<uint32_t>(suspension->waitSize * 8), 0,
-                  suspension->waitSize, 0};
+    Layout record{Bits,
+                  0,
+                  static_cast<uint32_t>(suspension->waitSize * 8),
+                  0,
+                  suspension->waitSize,
+                  0};
     uint32_t recordRegister = plan.layouts.size();
     record.offset = llvm::alignTo(plan.scratchSize, uint64_t{8});
     plan.scratchSize = record.offset + record.size;
@@ -2746,10 +3125,10 @@ private:
     uint64_t constantOffset = constants.size();
     llvm::append_range(constants, bytes);
     emit({Constant, 0, recordRegister, 0, 0, 0, 0, constantOffset});
-    emit({StoreFrame, 0, 0, recordRegister, 0, 0, 0,
-          suspension->waitOffset});
+    emit({StoreFrame, 0, 0, recordRegister, 0, 0, 0, suspension->waitOffset});
     for (auto [index, handle] : llvm::enumerate(watched)) {
-      uint32_t stableID = temporary(plan, IntegerType::get(operation->getContext(), 64));
+      uint32_t stableID =
+          temporary(plan, IntegerType::get(operation->getContext(), 64));
       if (stableID == kInvalidRegister)
         return failure();
       emit({HandleID, 0, stableID, reg(plan, handle)});
@@ -2777,9 +3156,15 @@ private:
     if (requested == "auto") {
       if (auto graph = design.getComputeGraphAttr()) {
         switch (graph.getVpi()) {
-        case sim::ComputeVPIMode::Off: requested = "off"; break;
-        case sim::ComputeVPIMode::Read: requested = "read"; break;
-        case sim::ComputeVPIMode::Full: requested = "full"; break;
+        case sim::ComputeVPIMode::Off:
+          requested = "off";
+          break;
+        case sim::ComputeVPIMode::Read:
+          requested = "read";
+          break;
+        case sim::ComputeVPIMode::Full:
+          requested = "full";
+          break;
         }
       } else {
         requested = "off";
@@ -2916,8 +3301,7 @@ private:
       // Driver planes remain four-state even when the logical destination is
       // two-state, so Z release and contention are never inferred from a
       // previously published net value.
-      append32(output,
-               1u | (static_cast<uint32_t>(driver.resolution) << 1));
+      append32(output, 1u | (static_cast<uint32_t>(driver.resolution) << 1));
       append64(output, driver.offset + driver.drivenLow);
       append64(output, driver.netOffset + driver.drivenLow);
       append64(output, driver.drivenWidth);
@@ -2973,8 +3357,8 @@ private:
       if (auto location =
               operation->getLoc()->findInstanceOf<FileLineColLoc>()) {
         source.file = location.getFilename().getValue().str();
-        source.lineColumn = uint64_t{location.getLine()} << 32 |
-                            uint64_t{location.getColumn()};
+        source.lineColumn =
+            uint64_t{location.getLine()} << 32 | uint64_t{location.getColumn()};
       }
       return source;
     };
@@ -2999,17 +3383,18 @@ private:
       else if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation))
         objects.push_back({2, profile & kDatabaseProfileWrite ? 3u : 1u,
                            storage.getId(), storage.getScopeId(),
-                           storage.getHierarchicalName().value_or(
-                               storage.getDebugName().value_or(
+                           storage.getHierarchicalName()
+                               .value_or(storage.getDebugName().value_or(
                                    fallbackName("storage", storage.getId())))
                                .str(),
-                           storage.getType(), state.storage.lookup(storage.getId()),
+                           storage.getType(),
+                           state.storage.lookup(storage.getId()),
                            sourceFor(storage)});
       else if (auto net = dyn_cast<sim::SimNetDeclOp>(operation))
         objects.push_back({3, profile & kDatabaseProfileWrite ? 3u : 1u,
                            net.getId(), net.getScopeId(),
-                           net.getHierarchicalName().value_or(
-                               net.getDebugName().value_or(
+                           net.getHierarchicalName()
+                               .value_or(net.getDebugName().value_or(
                                    fallbackName("net", net.getId())))
                                .str(),
                            net.getType(), state.nets.lookup(net.getId()),
@@ -3017,11 +3402,12 @@ private:
       else if (auto driver = dyn_cast<sim::SimDriverDeclOp>(operation))
         objects.push_back({4, profile & kDatabaseProfileWrite ? 3u : 1u,
                            driver.getId(), driver.getScopeId(),
-                           driver.getHierarchicalName().value_or(
-                               driver.getDebugName().value_or(
+                           driver.getHierarchicalName()
+                               .value_or(driver.getDebugName().value_or(
                                    fallbackName("driver", driver.getId())))
                                .str(),
-                           driver.getType(), state.drivers.lookup(driver.getId()),
+                           driver.getType(),
+                           state.drivers.lookup(driver.getId()),
                            sourceFor(driver)});
       else if (auto codeUnit = dyn_cast<sim::SimCodeUnitDeclOp>(operation))
         objects.push_back(
@@ -3035,7 +3421,9 @@ private:
     }
     if (scopes.empty())
       return {};
-    llvm::sort(scopes, [](auto left, auto right) { return left.getId() < right.getId(); });
+    llvm::sort(scopes, [](auto left, auto right) {
+      return left.getId() < right.getId();
+    });
     llvm::sort(objects, [](const Record &left, const Record &right) {
       return std::tie(left.scope, left.name, left.kind, left.id) <
              std::tie(right.scope, right.name, right.kind, right.id);
@@ -3049,7 +3437,8 @@ private:
       }
       if (!scope.getParent()) {
         if (root) {
-          scope.emitOpError("reflection database requires exactly one root scope");
+          scope.emitOpError(
+              "reflection database requires exactly one root scope");
           return {};
         }
         root = scope;
@@ -3164,8 +3553,8 @@ private:
           tagged = value.getIsTagged();
           fields = value.getFields();
           if (tagged)
-            tagBits = llvm::Log2_64_Ceil(
-                static_cast<uint64_t>(fields.size()) + 1);
+            tagBits =
+                llvm::Log2_64_Ceil(static_cast<uint64_t>(fields.size()) + 1);
           record.name = "unpacked_union";
         } else {
           typeError = true;
@@ -3189,8 +3578,7 @@ private:
           auto element = addType(field.getType());
           if (!element)
             return std::nullopt;
-          TypeRecord &child =
-              types[types[index].firstChild + ordinal];
+          TypeRecord &child = types[types[index].firstChild + ordinal];
           child.kind = 5;
           child.flags = containsLogic(field.getType()) ? 1 : 0;
           child.width = *simulationWidth(field.getType());
@@ -3261,8 +3649,11 @@ private:
       append32(output, 1);
       append32(output, 4);
       append64(output, scope.getId());
-      append64(output, scope.getParent() ? scopeOffsets.lookup(*scope.getParent()) : 0);
-      append64(output, children[scope.getId()].empty() ? 0 : children[scope.getId()][0]);
+      append64(output,
+               scope.getParent() ? scopeOffsets.lookup(*scope.getParent()) : 0);
+      append64(output, children[scope.getId()].empty()
+                           ? 0
+                           : children[scope.getId()][0]);
       uint64_t sibling = 0;
       if (scope.getParent()) {
         ArrayRef<uint64_t> peers = children[*scope.getParent()];
@@ -3276,9 +3667,8 @@ private:
           scope.getDebugName().value_or(generatedName));
       append64(output, stringOffset + intern(name));
       Source source = sourceFor(scope);
-      append64(output, source.file.empty()
-                           ? 0
-                           : stringOffset + intern(source.file));
+      append64(output,
+               source.file.empty() ? 0 : stringOffset + intern(source.file));
       append64(output, source.lineColumn);
     }
     for (auto [index, object] : llvm::enumerate(objects)) {
@@ -3340,7 +3730,10 @@ private:
     llvm::append_range(output, strings);
     alignTo(output, 8);
     indexOffset = output.size();
-    struct Index { uint64_t hash, name, record; std::string text; };
+    struct Index {
+      uint64_t hash, name, record;
+      std::string text;
+    };
     SmallVector<Index> names;
     for (auto scope : scopes) {
       std::string generatedName = fallbackName("scope", scope.getId());
@@ -3350,7 +3743,8 @@ private:
                        scopeOffsets.lookup(scope.getId()), name.str()});
     }
     for (auto [index, object] : llvm::enumerate(objects))
-      names.push_back({stableHash(object.name), stringOffset + intern(object.name),
+      names.push_back({stableHash(object.name),
+                       stringOffset + intern(object.name),
                        objectOffset + index * 96, object.name});
     llvm::sort(names, [](const Index &left, const Index &right) {
       return std::tie(left.hash, left.text) < std::tie(right.hash, right.text);
@@ -3395,11 +3789,13 @@ private:
   DenseSet<Value> twoStateLogicRegisters;
   SmallVector<FunctionPlan, 0> plans;
   llvm::StringMap<uint32_t> indices;
+  llvm::StringMap<uint64_t> classIDs;
   llvm::StringMap<sim::SimFuncOp> externalFunctions;
   DenseMap<uint32_t, std::string> importSymbols;
   SmallVector<Instruction> instructions;
   SmallVector<OperandMap> operandMaps;
   SmallVector<uint8_t> constants;
+  DenseMap<uint64_t, uint64_t> zeroConstants;
   SmallVector<IntrinsicSignature> intrinsicSignatures;
   SmallVector<IntrinsicSite> intrinsicSites;
   SmallVector<CaptureRecord> captureRecords;
@@ -3409,15 +3805,16 @@ class EncodeObeliskSimToBytecodePass final
     : public impl::EncodeObeliskSimToBytecodePassBase<
           EncodeObeliskSimToBytecodePass> {
 public:
-  using Base = impl::EncodeObeliskSimToBytecodePassBase<
-      EncodeObeliskSimToBytecodePass>;
+  using Base =
+      impl::EncodeObeliskSimToBytecodePassBase<EncodeObeliskSimToBytecodePass>;
   using Base::Base;
 
   void runOnOperation() override {
     ModuleOp module = getOperation();
     auto layoutAttr = module->getAttrOfType<StringAttr>("llvm.data_layout");
     if (!layoutAttr) {
-      module.emitError("bytecode encoding requires an explicit llvm.data_layout");
+      module.emitError(
+          "bytecode encoding requires an explicit llvm.data_layout");
       return signalPassFailure();
     }
     llvm::Expected<llvm::DataLayout> parsed =
@@ -3428,13 +3825,15 @@ public:
       return signalPassFailure();
     }
     if (!parsed->isLittleEndian() || parsed->getPointerSizeInBits() != 64) {
-      module.emitError("bytecode encoding requires a 64-bit little-endian target");
+      module.emitError(
+          "bytecode encoding requires a 64-bit little-endian target");
       return signalPassFailure();
     }
     SmallVector<sim::SimDesignOp> designs;
     module.walk([&](sim::SimDesignOp design) { designs.push_back(design); });
     if (designs.size() != 1) {
-      module.emitError("bytecode encoding requires exactly one simulation design");
+      module.emitError(
+          "bytecode encoding requires exactly one simulation design");
       return signalPassFailure();
     }
     SimulationBytecodeOptions options;
@@ -3456,8 +3855,9 @@ public:
     module->setAttr("obelisk.execution.state_bits",
                     builder.getI64IntegerAttr(encoded->stateBitCount));
     if (!encoded->designDatabase.empty())
-      module->setAttr("obelisk.design.database",
-                      builder.getDenseI8ArrayAttr(asI8(encoded->designDatabase)));
+      module->setAttr(
+          "obelisk.design.database",
+          builder.getDenseI8ArrayAttr(asI8(encoded->designDatabase)));
     else
       module->removeAttr("obelisk.design.database");
     llvm::StringMap<sim::SimFuncOp> functions;

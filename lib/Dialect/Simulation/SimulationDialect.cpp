@@ -78,8 +78,7 @@ bool hasUnknownInlineBoundaryMetadata(ArrayAttr dictionaries) {
       return true;
     for (NamedAttribute named : dictionary) {
       StringRef name = named.getName().strref();
-      if (name.starts_with("obelisk_sim.") &&
-          !metadata::isKnownBoundary(name))
+      if (name.starts_with("obelisk_sim.") && !metadata::isKnownBoundary(name))
         return true;
     }
   }
@@ -347,16 +346,16 @@ LogicalResult ComputeEffectAttr::verify(
   return success();
 }
 
-LogicalResult DPIABIAttr::verify(
-    llvm::function_ref<InFlightDiagnostic()> emitError, DPIABIKind kind,
-    DPIArgumentDirection, uint32_t width, bool fourState, bool) {
+LogicalResult
+DPIABIAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                   DPIABIKind kind, DPIArgumentDirection, uint32_t width,
+                   bool fourState, bool) {
   if (width == 0)
     return emitError() << "DPI ABI width must be nonzero";
   auto require = [&](uint32_t expectedWidth,
                      bool expectedFourState) -> LogicalResult {
     if (width != expectedWidth)
-      return emitError() << "DPI ABI category requires width "
-                         << expectedWidth;
+      return emitError() << "DPI ABI category requires width " << expectedWidth;
     if (fourState != expectedFourState)
       return emitError() << "DPI ABI category has incompatible state kind";
     return success();
@@ -376,8 +375,7 @@ LogicalResult DPIABIAttr::verify(
     return require(64, false);
   case DPIABIKind::BitVector:
     return fourState
-               ? emitError()
-                     << "bit-vector DPI ABI category must be two-state"
+               ? emitError() << "bit-vector DPI ABI category must be two-state"
                : success();
   case DPIABIKind::LogicVector:
     return !fourState
@@ -793,7 +791,8 @@ getAggregateProvenanceSubelement(Type type, unsigned index) {
 static bool isNormalizedValueType(Type type) {
   if (auto integer = dyn_cast<IntegerType>(type))
     return integer.isSignless();
-  return type.isF64() || isa<LogicType>(type) || isAggregateType(type);
+  return type.isF64() || isa<LogicType, ClassHandleType>(type) ||
+         isAggregateType(type);
 }
 
 LogicalResult
@@ -1202,6 +1201,25 @@ DriverType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
 }
 
 LogicalResult
+ClassHandleType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                        SymbolRefAttr className) {
+  if (!className || className.getRootReference().empty())
+    return emitError() << "class handle requires a class symbol";
+  return success();
+}
+
+LogicalResult
+ManagedRefType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                       Type elementType, SymbolRefAttr ownerClass) {
+  if (!ownerClass || ownerClass.getRootReference().empty())
+    return emitError() << "managed reference requires an owner class";
+  if (!isNormalizedValueType(elementType))
+    return emitError()
+           << "managed reference element must be a normalized value";
+  return success();
+}
+
+LogicalResult
 ObserverType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
                      Type resultType) {
   if (!isa<IntegerType, LogicType>(resultType))
@@ -1300,8 +1318,7 @@ LogicalResult SimDriverDeclOp::verify() {
         "driven low and width must either both be present or both be absent");
   if (getDrivenLowAttr()) {
     if (failed(verifyNonnegative(*this, getDrivenLowAttr(), "driven low")) ||
-        failed(
-            verifyNonnegative(*this, getDrivenWidthAttr(), "driven width")))
+        failed(verifyNonnegative(*this, getDrivenWidthAttr(), "driven width")))
       return failure();
     uint64_t low = getDrivenLowAttr().getValue().getZExtValue();
     uint64_t width = getDrivenWidthAttr().getValue().getZExtValue();
@@ -1316,16 +1333,234 @@ LogicalResult SimDriverDeclOp::verify() {
   return verifyElementType([&] { return emitOpError(); }, getType());
 }
 
+static SimClassDeclOp lookupClass(Operation *operation, SymbolRefAttr symbol) {
+  return symbol ? SymbolTable::lookupNearestSymbolFrom<SimClassDeclOp>(
+                      operation, symbol)
+                : SimClassDeclOp{};
+}
+
+static bool classDerivesFrom(SimClassDeclOp derived, SimClassDeclOp base) {
+  llvm::SmallPtrSet<Operation *, 8> visited;
+  for (SimClassDeclOp current = derived;
+       current && visited.insert(current).second;) {
+    if (current == base)
+      return true;
+    current = current.getBaseAttr()
+                  ? lookupClass(current, current.getBaseAttr())
+                  : SimClassDeclOp{};
+  }
+  return false;
+}
+
+LogicalResult SimClassDeclOp::verify() {
+  if (failed(verifyPositive(*this, getIdAttr(), "class ID")))
+    return failure();
+  if (getIsInterface() && !getIsAbstract())
+    return emitOpError("interface classes must be abstract");
+  if (getIsInterface() && getBaseAttr())
+    return emitOpError("interface classes cannot have a base class");
+  if (getBaseAttr() && getBase() == getSymName())
+    return emitOpError("class cannot extend itself");
+  if (ArrayAttr interfaces = getInterfacesAttr()) {
+    SmallVector<StringRef> unique;
+    for (Attribute attribute : interfaces) {
+      auto interface = dyn_cast<FlatSymbolRefAttr>(attribute);
+      if (!interface)
+        return emitOpError(
+            "implemented interface list must contain flat symbol references");
+      if (llvm::is_contained(unique, interface.getValue()))
+        return emitOpError("implemented interface list contains a duplicate");
+      unique.push_back(interface.getValue());
+    }
+  }
+  return success();
+}
+
+LogicalResult SimClassFieldDeclOp::verify() {
+  if (!lookupClass(*this, getOwnerAttr()))
+    return emitOpError("references an unknown owner class");
+  if (getOffsetAttr() &&
+      failed(verifyNonnegative(*this, getOffsetAttr(), "field offset")))
+    return failure();
+  if (getIsStatic() && getOffsetAttr())
+    return emitOpError("static properties cannot have an instance offset");
+  if (getIsWeak() && !isa<ClassHandleType>(getType()))
+    return emitOpError("weak properties must have class-handle type");
+  if (!isNormalizedValueType(getType()))
+    return emitOpError("property must have a normalized executable type");
+  return success();
+}
+
+LogicalResult SimClassMethodDeclOp::verify() {
+  SimClassDeclOp owner = lookupClass(*this, getOwnerAttr());
+  if (!owner)
+    return emitOpError("references an unknown owner class");
+  auto functionType = dyn_cast<FunctionType>(getFunctionType());
+  if (!functionType)
+    return emitOpError("method signature must be a function type");
+  if (functionType.getNumInputs() == 0 ||
+      !isa<ContextType>(functionType.getInput(0)))
+    return emitOpError("method signature must begin with context");
+  if (!getIsStatic()) {
+    if (functionType.getNumInputs() < 2)
+      return emitOpError("instance method signature requires explicit this");
+    auto thisType = dyn_cast<ClassHandleType>(functionType.getInput(1));
+    if (!thisType ||
+        thisType.getClassName().getRootReference() != owner.getSymName())
+      return emitOpError("instance method this type must name its owner class");
+  }
+  if (getIsTask() && functionType.getNumResults() != 0)
+    return emitOpError("task method cannot have value results");
+  if (getIsPure() && !getIsVirtual())
+    return emitOpError("pure methods must be virtual");
+  if (getIsStatic() && getIsVirtual())
+    return emitOpError("static methods cannot be virtual");
+  if (getIsFinal() && !getIsVirtual())
+    return emitOpError("final methods must be virtual");
+  if (getIsVirtual() != static_cast<bool>(getSlotAttr()))
+    return emitOpError(
+        "virtual methods require a slot and nonvirtual methods forbid one");
+  if (getIsVirtual() != static_cast<bool>(getSignatureIdAttr()) ||
+      (getSignatureIdAttr() && getSignatureId() == 0))
+    return emitOpError(
+        "virtual methods require a nonzero signature ID and nonvirtual "
+        "methods forbid one");
+  if (getIsPure() == static_cast<bool>(getImplementationAttr()))
+    return emitOpError(
+        "pure methods forbid an implementation and concrete methods require "
+        "one");
+  return success();
+}
+
+LogicalResult SimClassAllocOp::verify() {
+  auto type = getResult().getType();
+  SimClassDeclOp descriptor = lookupClass(*this, type.getClassName());
+  if (!descriptor)
+    return emitOpError("result type references an unknown class");
+  if (descriptor.getIsAbstract() || descriptor.getIsInterface())
+    return emitOpError("cannot allocate an abstract or interface class");
+  return success();
+}
+
+LogicalResult SimClassCopyOp::verify() {
+  if (getSource().getType() != getResult().getType())
+    return emitOpError(
+        "source and result must have the same static class type");
+  return success();
+}
+
+LogicalResult SimClassIsInstanceOp::verify() {
+  if (!lookupClass(*this, getTargetAttr()))
+    return emitOpError("references an unknown target class");
+  return success();
+}
+
+LogicalResult SimClassCastOp::verify() {
+  auto source = getObject().getType();
+  auto target = getResult().getType();
+  SimClassDeclOp sourceClass = lookupClass(*this, source.getClassName());
+  SimClassDeclOp targetClass = lookupClass(*this, target.getClassName());
+  if (!sourceClass || !targetClass)
+    return emitOpError("cast references an unknown class");
+  bool targetInterface = targetClass.getIsInterface();
+  bool sourceInterface = sourceClass.getIsInterface();
+  if (!targetInterface && !sourceInterface &&
+      !classDerivesFrom(sourceClass, targetClass) &&
+      !classDerivesFrom(targetClass, sourceClass))
+    return emitOpError("cast classes are unrelated");
+  return success();
+}
+
+LogicalResult SimClassFieldRefOp::verify() {
+  auto field = SymbolTable::lookupNearestSymbolFrom<SimClassFieldDeclOp>(
+      *this, getFieldAttr());
+  if (!field)
+    return emitOpError("references an unknown class property");
+  if (field.getIsStatic())
+    return emitOpError(
+        "cannot form an instance reference to a static property");
+  auto objectType = getObject().getType();
+  SimClassDeclOp objectClass = lookupClass(*this, objectType.getClassName());
+  SimClassDeclOp fieldOwner = lookupClass(*this, field.getOwnerAttr());
+  if (!objectClass || !fieldOwner || !classDerivesFrom(objectClass, fieldOwner))
+    return emitOpError("property is not a member of the receiver class");
+  auto resultType = getResult().getType();
+  if (resultType.getElementType() != field.getType() ||
+      resultType.getOwnerClass() != objectType.getClassName())
+    return emitOpError("managed reference type does not match the property");
+  return success();
+}
+
+LogicalResult SimManagedLoadOp::verify() {
+  if (getReference().getType().getElementType() != getResult().getType())
+    return emitOpError("result type must match the referenced element");
+  return success();
+}
+
+LogicalResult SimManagedStoreOp::verify() {
+  if (getReference().getType().getElementType() != getValue().getType())
+    return emitOpError("value type must match the referenced element");
+  return success();
+}
+
+LogicalResult SimManagedNBAEnqueueOp::verify() {
+  if (getDestination().getType().getElementType() != getValue().getType())
+    return emitOpError("value type must match the referenced element");
+  return success();
+}
+
+LogicalResult SimClassDirectCallOp::verify() {
+  auto callee =
+      SymbolTable::lookupNearestSymbolFrom<SimFuncOp>(*this, getCalleeAttr());
+  if (!callee)
+    return emitOpError("references an unknown method implementation");
+  FunctionType type = callee.getFunctionType();
+  SmallVector<Type> inputs;
+  inputs.push_back(getReceiver().getType());
+  llvm::append_range(inputs, getArguments().getTypes());
+  // Context is supplied by the containing executable function.
+  if (type.getNumInputs() != inputs.size() + 1 ||
+      !isa<ContextType>(type.getInput(0)) ||
+      !llvm::equal(type.getInputs().drop_front(), inputs) ||
+      !llvm::equal(type.getResults(), getResultTypes()))
+    return emitOpError("operands or results do not match the method");
+  return success();
+}
+
+LogicalResult SimClassVirtualCallOp::verify() {
+  auto method = SymbolTable::lookupNearestSymbolFrom<SimClassMethodDeclOp>(
+      *this, getMethodAttr());
+  if (!method || !method.getIsVirtual() || !method.getSlot() ||
+      *method.getSlot() != getSlot())
+    return emitOpError("references an unknown or incompatible virtual slot");
+  if (getSignatureId() == 0 || !method.getSignatureIdAttr() ||
+      *method.getSignatureId() != getSignatureId())
+    return emitOpError("signature ID does not match the virtual method");
+  auto type = cast<FunctionType>(method.getFunctionType());
+  SmallVector<Type> inputs;
+  inputs.push_back(getReceiver().getType());
+  llvm::append_range(inputs, getArguments().getTypes());
+  if (type.getNumInputs() != inputs.size() + 1 ||
+      !llvm::equal(type.getInputs().drop_front(), inputs) ||
+      !llvm::equal(type.getResults(), getResultTypes()))
+    return emitOpError()
+           << "operands or results do not match the method slot (expected "
+           << type << ", got inputs " << TypeRange(inputs) << " and results "
+           << getResultTypes() << ")";
+  return success();
+}
+
 LogicalResult SimDesignOp::verifyRegions() {
   if (auto precision = getTimePrecisionFsAttr();
       precision &&
       (precision.getValue().isNegative() || precision.getValue().isZero()))
     return emitOpError("time precision must be a positive femtosecond value");
   llvm::DenseSet<uint64_t> scopeIds, codeUnitIds, storageIds, netIds, driverIds,
-      connectionIds;
+      connectionIds, classIds;
   llvm::DenseMap<uint64_t, SimCodeUnitDeclOp> codeUnits;
   llvm::DenseMap<uint64_t, Type> storageTypes, netTypes, driverTypes;
   llvm::DenseMap<uint64_t, NetResolutionKind> netResolutions;
+  llvm::StringMap<SimClassDeclOp> classes;
   SmallVector<SimFuncOp> functions;
   bool sawRoot = false;
   for (Operation &op : getBody().front()) {
@@ -1366,6 +1601,10 @@ LogicalResult SimDesignOp::verifyRegions() {
       if (failed(
               addId(connection.getIdAttr(), connectionIds, "net connection")))
         return failure();
+    } else if (auto classDecl = dyn_cast<SimClassDeclOp>(op)) {
+      if (failed(addId(classDecl.getIdAttr(), classIds, "class")))
+        return failure();
+      classes[classDecl.getSymName()] = classDecl;
     } else if (auto function = dyn_cast<SimFuncOp>(op)) {
       functions.push_back(function);
     }
@@ -1386,6 +1625,60 @@ LogicalResult SimDesignOp::verifyRegions() {
       failed(verifyDense(driverIds, "driver")) ||
       failed(verifyDense(connectionIds, "net connection")))
     return failure();
+  for (uint64_t id = 1; id <= classIds.size(); ++id)
+    if (!classIds.count(id))
+      return emitOpError() << "class IDs must be dense from one; missing "
+                           << id;
+
+  llvm::StringMap<SimFuncOp> functionsByName;
+  for (SimFuncOp function : functions)
+    functionsByName[function.getSymName()] = function;
+  llvm::StringMap<llvm::DenseSet<uint64_t>> fieldOrdinals, methodSlots;
+  for (Operation &op : getBody().front()) {
+    if (auto classDecl = dyn_cast<SimClassDeclOp>(op)) {
+      if (auto base = classDecl.getBase()) {
+        auto found = classes.find(*base);
+        if (found == classes.end())
+          return classDecl.emitOpError("references an unknown base class");
+        if (found->second.getIsInterface())
+          return classDecl.emitOpError("cannot extend an interface class");
+        if (found->second.getIsFinal())
+          return classDecl.emitOpError("cannot extend a final class");
+      }
+      if (ArrayAttr interfaces = classDecl.getInterfacesAttr()) {
+        for (Attribute attribute : interfaces) {
+          auto reference = cast<FlatSymbolRefAttr>(attribute);
+          auto found = classes.find(reference.getValue());
+          if (found == classes.end() || !found->second.getIsInterface())
+            return classDecl.emitOpError(
+                "implements list references a non-interface class");
+        }
+      }
+      llvm::SmallPtrSet<Operation *, 8> path;
+      for (SimClassDeclOp current = classDecl; current;
+           current = current.getBaseAttr()
+                         ? lookupClass(current, current.getBaseAttr())
+                         : SimClassDeclOp{})
+        if (!path.insert(current).second)
+          return classDecl.emitOpError("class inheritance contains a cycle");
+    } else if (auto field = dyn_cast<SimClassFieldDeclOp>(op)) {
+      if (!fieldOrdinals[field.getOwner()].insert(field.getOrdinal()).second)
+        return field.emitOpError(
+            "owner class contains a duplicate direct-property ordinal");
+    } else if (auto method = dyn_cast<SimClassMethodDeclOp>(op)) {
+      if (method.getSlot() &&
+          !methodSlots[method.getOwner()].insert(*method.getSlot()).second)
+        return method.emitOpError(
+            "owner class contains a duplicate virtual-method slot");
+      if (auto implementation = method.getImplementation()) {
+        auto found = functionsByName.find(*implementation);
+        if (found == functionsByName.end() ||
+            found->second.getFunctionType() != method.getFunctionType())
+          return method.emitOpError(
+              "implementation is missing or has an incompatible signature");
+      }
+    }
+  }
   for (Operation &op : getBody().front()) {
     if (auto scope = dyn_cast<SimScopeDeclOp>(op)) {
       if (scope.getParentAttr() && !scopeIds.count(*scope.getParent()))
@@ -1506,8 +1799,8 @@ LogicalResult SimDesignOp::verifyRegions() {
           getCaptureKind(function.getArgAttrDict(index));
       if (!kind)
         return failure(); // Already diagnosed by the function verifier.
-      auto descriptor = function.getArgAttrOfType<IntegerAttr>(
-          index, metadata::descriptorId);
+      auto descriptor =
+          function.getArgAttrOfType<IntegerAttr>(index, metadata::descriptorId);
       std::optional<uint64_t> descriptorId;
       if (descriptor && !descriptor.getValue().isNegative() &&
           descriptor.getValue().getBitWidth() <= 64)
@@ -1525,8 +1818,7 @@ LogicalResult SimDesignOp::verifyRegions() {
           if (!rootType) {
             if (low ||
                 function.getArgAttr(index, metadata::descriptorIndices) ||
-                function.getArgAttr(index,
-                                    metadata::descriptorAggregateType) ||
+                function.getArgAttr(index, metadata::descriptorAggregateType) ||
                 function.getArgAttr(index, metadata::descriptorPackedLow))
               break;
             expected = RefType::get(getContext(), storageType);
@@ -1549,16 +1841,14 @@ LogicalResult SimDesignOp::verifyRegions() {
           bool validView = true;
           if (indices) {
             for (int64_t rawIndex : indices.asArrayRef()) {
-              if (rawIndex < 0 ||
-                  static_cast<uint64_t>(rawIndex) >
-                      std::numeric_limits<unsigned>::max()) {
+              if (rawIndex < 0 || static_cast<uint64_t>(rawIndex) >
+                                      std::numeric_limits<unsigned>::max()) {
                 validView = false;
                 break;
               }
               auto subelement = getAggregateProvenanceSubelement(
                   selected, static_cast<unsigned>(rawIndex));
-              if (!subelement ||
-                  subelement->first > UINT64_MAX - computedLow) {
+              if (!subelement || subelement->first > UINT64_MAX - computedLow) {
                 validView = false;
                 break;
               }
@@ -1596,17 +1886,15 @@ LogicalResult SimDesignOp::verifyRegions() {
               else
                 computedLow += packed;
             }
-          } else if (packedLow &&
-                     (packedLow.getValue().isNegative() ||
-                      packedLow.getValue().getActiveBits() > 64 ||
-                      packedLow.getValue().getZExtValue() != 0)) {
+          } else if (packedLow && (packedLow.getValue().isNegative() ||
+                                   packedLow.getValue().getActiveBits() > 64 ||
+                                   packedLow.getValue().getZExtValue() != 0)) {
             validView = false;
           }
 
           uint64_t encodedLow = low.getValue().getZExtValue();
           if (validView && encodedLow == computedLow &&
-              encodedLow <= *rootSpan &&
-              *viewSpan <= *rootSpan - encodedLow)
+              encodedLow <= *rootSpan && *viewSpan <= *rootSpan - encodedLow)
             expected = argument;
         }
         break;
@@ -1828,8 +2116,7 @@ LogicalResult verifyUnitBindings(SimFuncOp function) {
         *state.providerKind != ProviderKind::Direct)
       return function.emitOpError()
              << "has malformed " << metadata::bindings << " entry #"
-             << *state.lvalueOnly
-             << ": lvalue-only path '" << path
+             << *state.lvalueOnly << ": lvalue-only path '" << path
              << "' conflicts with a non-direct value binding";
     if (state.copyOutDestination &&
         (!state.providerKind ||
@@ -1838,10 +2125,8 @@ LogicalResult verifyUnitBindings(SimFuncOp function) {
       return function.emitOpError()
              << "has malformed " << metadata::bindings << " entry #"
              << *state.copyOutDestination << ": copy-out destination path '"
-             << path
-             << "' requires a copy-out formal-local binding";
-    if (state.copyOutDestination &&
-        function.getEntryKind() != EntryKind::Task)
+             << path << "' requires a copy-out formal-local binding";
+    if (state.copyOutDestination && function.getEntryKind() != EntryKind::Task)
       return function.emitOpError()
              << "has malformed " << metadata::bindings << " entry #"
              << *state.copyOutDestination
@@ -1864,8 +2149,7 @@ LogicalResult SimFuncOp::verify() {
         "program-domain code units must have reactive home region");
   if (getDomain() == ExecutionDomain::Design &&
       getHomeRegion() != EventRegion::Active)
-    return emitOpError(
-        "design-domain code units must have active home region");
+    return emitOpError("design-domain code units must have active home region");
   if (getCodeUnitIdAttr() &&
       failed(verifyNonnegative(*this, getCodeUnitIdAttr(), "code-unit ID")))
     return failure();
@@ -1873,7 +2157,8 @@ LogicalResult SimFuncOp::verify() {
     return emitOpError("first argument must be !obelisk_sim.context");
   for (Type input : type.getInputs()) {
     if (!isa<ContextType, RefType, NetType, DriverType, EventType, ProcessType,
-             IntegerType, LogicType, TimeType>(input) &&
+             ClassHandleType, ManagedRefType, IntegerType, LogicType, TimeType>(
+            input) &&
         !input.isF64() && !isAggregateType(input))
       return emitOpError() << "contains non-normalized argument type " << input;
     if (auto integer = dyn_cast<IntegerType>(input);
@@ -1881,8 +2166,8 @@ LogicalResult SimFuncOp::verify() {
       return emitOpError("builtin integer arguments must be signless");
   }
   for (Type result : type.getResults()) {
-    if (!isa<IntegerType, LogicType, TimeType, EventType, ProcessType>(
-            result) &&
+    if (!isa<IntegerType, LogicType, TimeType, EventType, ProcessType,
+             ClassHandleType, ManagedRefType>(result) &&
         !result.isF64() && !isAggregateType(result))
       return emitOpError() << "contains non-normalized result type " << result;
     if (auto integer = dyn_cast<IntegerType>(result);
@@ -1901,8 +2186,7 @@ LogicalResult SimFuncOp::verify() {
   if (getEntryKind() == EntryKind::Observer) {
     if (type.getNumResults() != 1 ||
         !isa<IntegerType, LogicType>(type.getResult(0)))
-      return emitOpError(
-          "observer entry must return one packed scalar result");
+      return emitOpError("observer entry must return one packed scalar result");
   }
   if (getEntryKind() == EntryKind::Function ||
       getEntryKind() == EntryKind::Observer) {
@@ -1915,14 +2199,12 @@ LogicalResult SimFuncOp::verify() {
               SimSuspendEdgeIffOp, SimSuspendLevelOp, SimSuspendAnyOp,
               SimSuspendEventOp, SimSuspendObserveOp, SimSuspendForeverOp,
               SimSuspendAwaitOp, SimSuspendJoinOp, SimSuspendChildrenOp>(op)) {
-        op->emitOpError(
-            getEntryKind() == EntryKind::Function
-                ? "is not permitted in a zero-time function entry"
-                : "is not permitted in a zero-time observer entry");
+        op->emitOpError(getEntryKind() == EntryKind::Function
+                            ? "is not permitted in a zero-time function entry"
+                            : "is not permitted in a zero-time observer entry");
         return WalkResult::interrupt();
       }
-      if (getEntryKind() == EntryKind::Observer &&
-          isa<SimTaskCallOp>(op)) {
+      if (getEntryKind() == EntryKind::Observer && isa<SimTaskCallOp>(op)) {
         op->emitOpError("task calls are not permitted in an observer entry");
         return WalkResult::interrupt();
       }
@@ -1950,8 +2232,7 @@ LogicalResult SimFuncOp::verify() {
     bool needsDescriptor =
         *kind == CaptureKind::Storage || *kind == CaptureKind::Net ||
         *kind == CaptureKind::Driver || *kind == CaptureKind::Event;
-    auto descriptor =
-        dictionary.getAs<IntegerAttr>(metadata::descriptorId);
+    auto descriptor = dictionary.getAs<IntegerAttr>(metadata::descriptorId);
     if (needsDescriptor && !descriptor)
       return emitOpError() << "argument #" << index
                            << " requires obelisk_sim.descriptor_id metadata";
@@ -1999,18 +2280,16 @@ LogicalResult SimCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 }
 
 Operation::operand_range SimObserverBindOp::getCaptures() {
-  size_t count =
-      getCaptureCountAttr().getValue().isNegative()
-          ? 0
-          : std::min<uint64_t>(getCaptureCount(), getNumOperands());
+  size_t count = getCaptureCountAttr().getValue().isNegative()
+                     ? 0
+                     : std::min<uint64_t>(getCaptureCount(), getNumOperands());
   return getValues().take_front(count);
 }
 
 Operation::operand_range SimObserverBindOp::getDependencies() {
-  size_t count =
-      getCaptureCountAttr().getValue().isNegative()
-          ? 0
-          : std::min<uint64_t>(getCaptureCount(), getNumOperands());
+  size_t count = getCaptureCountAttr().getValue().isNegative()
+                     ? 0
+                     : std::min<uint64_t>(getCaptureCount(), getNumOperands());
   return getValues().drop_front(count);
 }
 
@@ -2126,12 +2405,9 @@ void SimDPICallOp::getEffects(
     SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
   if (getIsPure())
     return;
-  effects.emplace_back(MemoryEffects::Read::get(),
-                       ExternalResource::get());
-  effects.emplace_back(MemoryEffects::Write::get(),
-                       ExternalResource::get());
-  effects.emplace_back(MemoryEffects::Read::get(),
-                       SchedulerResource::get());
+  effects.emplace_back(MemoryEffects::Read::get(), ExternalResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(), ExternalResource::get());
+  effects.emplace_back(MemoryEffects::Read::get(), SchedulerResource::get());
 }
 
 LogicalResult SimDPICallOp::verify() {
@@ -2146,12 +2422,11 @@ LogicalResult SimDPICallOp::verify() {
   if (getNumResults() == 0 ||
       !isa<runtime::StatusType>(getResults().back().getType()))
     return emitOpError("must return a trailing runtime status");
-  auto physicalCount =
-      getOperation()->getAttrOfType<IntegerAttr>(
-          "obelisk.dpi.logical_operand_count");
-  uint64_t logicalInputs =
-      physicalCount ? physicalCount.getValue().getZExtValue()
-                    : getArguments().size();
+  auto physicalCount = getOperation()->getAttrOfType<IntegerAttr>(
+      "obelisk.dpi.logical_operand_count");
+  uint64_t logicalInputs = physicalCount
+                               ? physicalCount.getValue().getZExtValue()
+                               : getArguments().size();
   if (logicalInputs > getAbiSignature().size())
     return emitOpError("logical operand count exceeds the ABI signature");
 
@@ -2167,8 +2442,7 @@ LogicalResult SimDPICallOp::verify() {
   uint64_t outputCursor = logicalInputs;
   if (!getIsTask()) {
     if (outputCursor >= signature.size() ||
-        signature[outputCursor].getDirection() !=
-            DPIArgumentDirection::Result)
+        signature[outputCursor].getDirection() != DPIArgumentDirection::Result)
       return emitOpError(
           "a DPI function signature must place its result first");
     ++outputCursor;
@@ -2187,25 +2461,21 @@ LogicalResult SimDPICallOp::verify() {
         output.getWidth() != input.getWidth() ||
         output.getFourState() != input.getFourState() ||
         output.getIsSigned() != input.getIsSigned())
-      return emitOpError(
-          "DPI formal copy-out must match its input ABI entry");
+      return emitOpError("DPI formal copy-out must match its input ABI entry");
   }
   if (outputCursor != signature.size())
     return emitOpError("DPI signature has excess result entries");
 
   auto verifyLogicalType = [&](Type type, DPIABIAttr abi) -> LogicalResult {
     std::optional<unsigned> width = getPackedWidth(type);
-    bool fourState =
-        isa<LogicType>(getPackedScalarType(type));
-    if (!width || *width != abi.getWidth() ||
-        fourState != abi.getFourState())
+    bool fourState = isa<LogicType>(getPackedScalarType(type));
+    if (!width || *width != abi.getWidth() || fourState != abi.getFourState())
       return emitOpError(
           "logical operand or result type disagrees with its DPI ABI entry");
     return success();
   };
   if (!physicalCount) {
-    if (!isa<runtime::ContextType, ContextType>(
-            getRuntimeContext().getType()))
+    if (!isa<runtime::ContextType, ContextType>(getRuntimeContext().getType()))
       return emitOpError(
           "runtime context must have simulation or runtime context type");
     uint64_t logicalOutputs = signature.size() - logicalInputs;
@@ -2213,14 +2483,12 @@ LogicalResult SimDPICallOp::verify() {
         getNumResults() - 1 != logicalOutputs)
       return emitOpError(
           "ABI signature must describe every data operand and result");
-    for (auto [value, abi] :
-         llvm::zip_equal(getArguments(),
-                         ArrayRef<DPIABIAttr>(signature).take_front(
-                             logicalInputs)))
+    for (auto [value, abi] : llvm::zip_equal(
+             getArguments(),
+             ArrayRef<DPIABIAttr>(signature).take_front(logicalInputs)))
       if (failed(verifyLogicalType(value.getType(), abi)))
         return failure();
-    for (auto [value, abi] :
-         llvm::zip_equal(
+    for (auto [value, abi] : llvm::zip_equal(
              getResults().drop_back(),
              ArrayRef<DPIABIAttr>(signature).drop_front(logicalInputs)))
       if (failed(verifyLogicalType(value.getType(), abi)))
@@ -2228,31 +2496,28 @@ LogicalResult SimDPICallOp::verify() {
     return success();
   }
 
-  auto verifyPhysicalTypes = [&](TypeRange types,
-                                 ArrayRef<DPIABIAttr> entries,
+  auto verifyPhysicalTypes = [&](TypeRange types, ArrayRef<DPIABIAttr> entries,
                                  StringRef role) -> LogicalResult {
     size_t physical = 0;
     for (DPIABIAttr abi : entries) {
       unsigned planes = abi.getFourState() ? 2 : 1;
       if (physical + planes > types.size())
-        return emitOpError() << "is missing a physical DPI " << role
-                             << " plane";
+        return emitOpError()
+               << "is missing a physical DPI " << role << " plane";
       for (unsigned plane = 0; plane != planes; ++plane) {
         auto integer = dyn_cast<IntegerType>(types[physical++]);
         if (!integer || integer.getWidth() != abi.getWidth())
-          return emitOpError() << "has a malformed physical DPI " << role
-                               << " plane";
+          return emitOpError()
+                 << "has a malformed physical DPI " << role << " plane";
       }
     }
     if (physical != types.size())
-      return emitOpError() << "has excess physical DPI " << role
-                           << " planes";
+      return emitOpError() << "has excess physical DPI " << role << " planes";
     return success();
   };
   if (failed(verifyPhysicalTypes(
           getArguments().getTypes(),
-          ArrayRef<DPIABIAttr>(signature).take_front(logicalInputs),
-          "input")))
+          ArrayRef<DPIABIAttr>(signature).take_front(logicalInputs), "input")))
     return failure();
   return verifyPhysicalTypes(
       getResults().drop_back().getTypes(),
@@ -3402,8 +3667,7 @@ OpFoldResult SimLogicShiftOp::fold(FoldAdaptor adaptor) {
 OpFoldResult SimLogicCompareOp::fold(FoldAdaptor adaptor) {
   bool integerResult =
       getKind() == CompareKind::CaseEq || getKind() == CompareKind::CaseNe ||
-      getKind() == CompareKind::CaseZEq ||
-      getKind() == CompareKind::CaseXZEq;
+      getKind() == CompareKind::CaseZEq || getKind() == CompareKind::CaseXZEq;
   bool deterministic = integerResult;
   if (deterministic && getLhs() == getRhs()) {
     bool equal =
@@ -3417,38 +3681,30 @@ OpFoldResult SimLogicCompareOp::fold(FoldAdaptor adaptor) {
   auto rhs = getLogicPlanes(adaptor.getRhs());
   if (!lhs || !rhs)
     return {};
-  if (getKind() == CompareKind::CaseEq ||
-      getKind() == CompareKind::CaseNe) {
+  if (getKind() == CompareKind::CaseEq || getKind() == CompareKind::CaseNe) {
     bool equal = lhs->value == rhs->value && lhs->unknown == rhs->unknown;
     if (getKind() == CompareKind::CaseNe)
       equal = !equal;
     return IntegerAttr::get(getResult().getType(), equal);
   }
-  if (getKind() == CompareKind::WildEq ||
-      getKind() == CompareKind::WildNe ||
-      getKind() == CompareKind::CaseZEq ||
-      getKind() == CompareKind::CaseXZEq) {
+  if (getKind() == CompareKind::WildEq || getKind() == CompareKind::WildNe ||
+      getKind() == CompareKind::CaseZEq || getKind() == CompareKind::CaseXZEq) {
     APInt wildcard = APInt::getZero(lhs->value.getBitWidth());
-    if (getKind() == CompareKind::WildEq ||
-        getKind() == CompareKind::WildNe)
+    if (getKind() == CompareKind::WildEq || getKind() == CompareKind::WildNe)
       wildcard = rhs->unknown;
     else if (getKind() == CompareKind::CaseZEq)
-      wildcard = (lhs->unknown & lhs->value) |
-                 (rhs->unknown & rhs->value);
+      wildcard = (lhs->unknown & lhs->value) | (rhs->unknown & rhs->value);
     else
       wildcard = lhs->unknown | rhs->unknown;
     APInt mismatch;
     APInt relevantUnknown = APInt::getZero(lhs->value.getBitWidth());
-    if (getKind() == CompareKind::WildEq ||
-        getKind() == CompareKind::WildNe) {
+    if (getKind() == CompareKind::WildEq || getKind() == CompareKind::WildNe) {
       APInt compared = ~rhs->unknown;
-      mismatch =
-          (lhs->value ^ rhs->value) & ~lhs->unknown & compared;
+      mismatch = (lhs->value ^ rhs->value) & ~lhs->unknown & compared;
       relevantUnknown = lhs->unknown & compared;
     } else {
-      mismatch =
-          ((lhs->value ^ rhs->value) | (lhs->unknown ^ rhs->unknown)) &
-          ~wildcard;
+      mismatch = ((lhs->value ^ rhs->value) | (lhs->unknown ^ rhs->unknown)) &
+                 ~wildcard;
     }
     bool equal = mismatch.isZero() && relevantUnknown.isZero();
     bool unknown = mismatch.isZero() && !relevantUnknown.isZero();
@@ -3503,8 +3759,7 @@ LogicalResult SimLogicCompareOp::verify() {
   Type result = getResult().getType();
   bool caseComparison =
       getKind() == CompareKind::CaseEq || getKind() == CompareKind::CaseNe ||
-      getKind() == CompareKind::CaseZEq ||
-      getKind() == CompareKind::CaseXZEq;
+      getKind() == CompareKind::CaseZEq || getKind() == CompareKind::CaseXZEq;
   if (caseComparison && !result.isSignlessInteger(1))
     return emitOpError("case comparisons must produce i1");
   if (!caseComparison && !isa<LogicType>(result))
@@ -4513,8 +4768,7 @@ LogicalResult SimTimeFromRealOp::verify() {
 
 LogicalResult SimEventTriggerOp::verify() {
   if (getDelay() && !getNonblocking())
-    return emitOpError(
-        "a delayed named-event trigger must be nonblocking");
+    return emitOpError("a delayed named-event trigger must be nonblocking");
   return success();
 }
 
@@ -4675,8 +4929,7 @@ LogicalResult SimSuspendObserveOp::verify() {
     return emitOpError("condition count must be nonnegative");
   if (getPrimaries().empty())
     return emitOpError("requires at least one primary observer");
-  if (getConditions().size() !=
-      static_cast<uint64_t>(getConditionCount()))
+  if (getConditions().size() != static_cast<uint64_t>(getConditionCount()))
     return emitOpError("condition count exceeds the operand inventory");
   if (getPrimaries().size() != getInitialValues().size() ||
       getPrimaries().size() != getEdges().size() ||
@@ -4695,9 +4948,8 @@ LogicalResult SimSuspendObserveOp::verify() {
                        getConditionIndices())) {
     auto observer = cast<ObserverType>(primary.getType());
     if (initial.getType() != observer.getResultType())
-      return emitOpError()
-             << "initial value #" << index
-             << " does not match its primary observer result";
+      return emitOpError() << "initial value #" << index
+                           << " does not match its primary observer result";
     if (edge < static_cast<int32_t>(EdgeKind::Change) ||
         edge > static_cast<int32_t>(EdgeKind::Both))
       return emitOpError("contains an invalid edge kind");
@@ -4730,28 +4982,23 @@ Operation::operand_range SimSuspendObserveOp::getPrimaries() {
 }
 
 Operation::operand_range SimSuspendObserveOp::getInitialValues() {
-  size_t primaryCount =
-      std::min<size_t>(getEdges().size(), getNumOperands());
+  size_t primaryCount = std::min<size_t>(getEdges().size(), getNumOperands());
   size_t remaining = getNumOperands() - primaryCount;
-  return getValues().slice(primaryCount,
-                           std::min(primaryCount, remaining));
+  return getValues().slice(primaryCount, std::min(primaryCount, remaining));
 }
 
 Operation::operand_range SimSuspendObserveOp::getConditions() {
   if (auto converted = (*this)->getAttrOfType<IntegerAttr>(
           "obelisk.coro.condition_operand_begin")) {
-    size_t begin =
-        std::min<uint64_t>(converted.getValue().getZExtValue(),
-                           getNumOperands());
+    size_t begin = std::min<uint64_t>(converted.getValue().getZExtValue(),
+                                      getNumOperands());
     size_t count =
         getConditionCountAttr().getValue().isNegative()
             ? 0
-            : std::min<uint64_t>(getConditionCount(),
-                                 getNumOperands() - begin);
+            : std::min<uint64_t>(getConditionCount(), getNumOperands() - begin);
     return getValues().slice(begin, count);
   }
-  size_t primaryCount =
-      std::min<size_t>(getEdges().size(), getNumOperands());
+  size_t primaryCount = std::min<size_t>(getEdges().size(), getNumOperands());
   size_t begin = std::min<size_t>(getNumOperands(), primaryCount * 2);
   size_t count =
       getConditionCountAttr().getValue().isNegative()
@@ -4763,36 +5010,28 @@ Operation::operand_range SimSuspendObserveOp::getConditions() {
 Operation::operand_range SimSuspendObserveOp::getContinuationOperands() {
   if (auto converted = (*this)->getAttrOfType<IntegerAttr>(
           "obelisk.coro.continuation_operand_begin")) {
-    size_t begin =
-        std::min<uint64_t>(converted.getValue().getZExtValue(),
-                           getNumOperands());
+    size_t begin = std::min<uint64_t>(converted.getValue().getZExtValue(),
+                                      getNumOperands());
     return getValues().drop_front(begin);
   }
-  size_t primaryCount =
-      std::min<size_t>(getEdges().size(), getNumOperands());
+  size_t primaryCount = std::min<size_t>(getEdges().size(), getNumOperands());
   size_t begin = std::min<size_t>(getNumOperands(), primaryCount * 2);
   if (!getConditionCountAttr().getValue().isNegative())
-    begin += std::min<uint64_t>(getConditionCount(),
-                                getNumOperands() - begin);
+    begin += std::min<uint64_t>(getConditionCount(), getNumOperands() - begin);
   return getValues().drop_front(begin);
 }
 
-MutableOperandRange
-SimSuspendObserveOp::getContinuationOperandsMutable() {
+MutableOperandRange SimSuspendObserveOp::getContinuationOperandsMutable() {
   if (auto converted = (*this)->getAttrOfType<IntegerAttr>(
           "obelisk.coro.continuation_operand_begin")) {
-    size_t begin =
-        std::min<uint64_t>(converted.getValue().getZExtValue(),
-                           getNumOperands());
-    return MutableOperandRange(getOperation(), begin,
-                               getNumOperands() - begin);
+    size_t begin = std::min<uint64_t>(converted.getValue().getZExtValue(),
+                                      getNumOperands());
+    return MutableOperandRange(getOperation(), begin, getNumOperands() - begin);
   }
-  size_t primaryCount =
-      std::min<size_t>(getEdges().size(), getNumOperands());
+  size_t primaryCount = std::min<size_t>(getEdges().size(), getNumOperands());
   size_t begin = std::min<size_t>(getNumOperands(), primaryCount * 2);
   if (!getConditionCountAttr().getValue().isNegative())
-    begin += std::min<uint64_t>(getConditionCount(),
-                                getNumOperands() - begin);
+    begin += std::min<uint64_t>(getConditionCount(), getNumOperands() - begin);
   return MutableOperandRange(getOperation(), begin, getNumOperands() - begin);
 }
 LogicalResult SimSuspendForeverOp::verify() {

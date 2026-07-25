@@ -40,7 +40,7 @@ module attributes {
       obelisk_sim.suspend.delay %delay to ^second
           {site = #obelisk_sim.continuation<id = 7>}
     ^second:
-      // expected-error @+1 {{requires a unique nonzero continuation ID}}
+      // expected-error @+1 {{continuation ID names multiple successor blocks}}
       obelisk_sim.suspend.delay %delay to ^done
           {site = #obelisk_sim.continuation<id = 7>}
     ^done:

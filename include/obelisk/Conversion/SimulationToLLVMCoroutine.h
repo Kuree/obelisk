@@ -35,6 +35,7 @@ enum class ProcessFrameFieldFlags : uint32_t {
   None = 0,
   FourStateValue = 1,
   FourStateUnknown = 2,
+  ManagedRoot = 4,
 };
 
 struct ProcessFrameField {
@@ -50,8 +51,14 @@ struct ProcessFrameValue {
   uint64_t unknownOffset;
   uint64_t storageSize;
   uint32_t alignment;
+  uint64_t auxiliaryOffset = UINT64_MAX;
 
   bool isFourState() const { return unknownOffset != UINT64_MAX; }
+  bool hasAuxiliary() const { return auxiliaryOffset != UINT64_MAX; }
+  bool hasSecondaryStorage() const { return isFourState() || hasAuxiliary(); }
+  uint64_t getSecondaryOffset() const {
+    return isFourState() ? unknownOffset : auxiliaryOffset;
+  }
 };
 
 struct ProcessSuspension {

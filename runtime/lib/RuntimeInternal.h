@@ -261,6 +261,8 @@ struct NativeAutomaticState {
   uint64_t referenceCount = 1;
   std::vector<uint8_t> value;
   std::vector<uint8_t> unknown;
+  obelisk_rt_object_v1 *managedValue = nullptr;
+  bool managedRootRegistered = false;
 };
 
 struct EventState {
@@ -282,6 +284,17 @@ struct ScheduledNBA {
   uint64_t planeBitCount = 0;
   uint64_t bitOffset = 0;
   uint64_t bitWidth = 0;
+  std::vector<uint8_t> value;
+  std::vector<uint8_t> unknown;
+};
+
+struct ScheduledManagedNBA {
+  uint64_t sequence = 0;
+  uint64_t dueTime = 0;
+  obelisk_rt_object_v1 *destination = nullptr;
+  obelisk_rt_object_v1 *managedValue = nullptr;
+  uint64_t offset = 0;
+  uint64_t planeSize = 0;
   std::vector<uint8_t> value;
   std::vector<uint8_t> unknown;
 };
@@ -362,6 +375,8 @@ struct DpiScopeHandle {
   std::unordered_map<void *, void *> userData;
 };
 
+class ManagedHeap;
+
 struct obelisk_rt_context {
   // Mutable state is guarded separately from logical execution. Evaluator
   // callbacks release `mutex` while arbitrary user code runs, but retain the
@@ -383,6 +398,7 @@ struct obelisk_rt_context {
   std::vector<ScheduledSignalEvent> scheduledSignalEvents;
   std::unordered_map<uint64_t, SignalValueSnapshot> signalValueSnapshots;
   std::vector<ScheduledNBA> scheduledNBAs;
+  std::vector<ScheduledManagedNBA> scheduledManagedNBAs;
   std::vector<ScheduledDesignNBA> scheduledDesignNBAs;
   std::vector<ScheduledDesignEvent> scheduledDesignEvents;
   std::vector<ScheduledDesignTask> scheduledDesignTasks;
@@ -427,8 +443,75 @@ struct obelisk_rt_context {
   // in the immutable reflection image.
   std::vector<uint64_t> stateValue;
   std::vector<uint64_t> stateUnknown;
+  std::unordered_map<uint64_t, const obelisk_rt_class_descriptor_v1 *>
+      managedClasses;
+  ManagedHeap *managedHeap = nullptr;
 
   obelisk_rt_context();
+  ~obelisk_rt_context();
+};
+
+ManagedHeap *obelisk_rt_managed_heap_create(obelisk_rt_context *context);
+void obelisk_rt_managed_heap_destroy(ManagedHeap *heap) noexcept;
+obelisk_rt_status
+obelisk_rt_managed_execution_enter(obelisk_rt_context *context,
+                                   obelisk_rt_gc_lane_v1 **outLane,
+                                   bool *outEntered);
+void obelisk_rt_managed_execution_leave(obelisk_rt_gc_lane_v1 *lane,
+                                        bool entered);
+
+using ManagedRootVisit = void (*)(void *, obelisk_rt_object_v1 **);
+using ManagedRootEnumerate = void (*)(void *, ManagedRootVisit, void *);
+
+// Caller-owned root provider. Transient providers form a lane-local stack;
+// persistent providers form an intrusive heap-global list. Both enumerate
+// typed storage directly, avoiding a root record or allocation per managed
+// value.
+struct ManagedRootProvider {
+  ManagedRootEnumerate enumerate = nullptr;
+  void *environment = nullptr;
+  ManagedRootProvider *previous = nullptr;
+  ManagedRootProvider *next = nullptr;
+  uint64_t cookie = 0;
+};
+
+obelisk_rt_status obelisk_rt_managed_roots_push(obelisk_rt_gc_lane_v1 *lane,
+                                                ManagedRootProvider *provider,
+                                                ManagedRootEnumerate enumerate,
+                                                void *environment);
+obelisk_rt_status obelisk_rt_managed_roots_pop(obelisk_rt_gc_lane_v1 *lane,
+                                               ManagedRootProvider *provider);
+obelisk_rt_status obelisk_rt_managed_persistent_roots_register(
+    obelisk_rt_context *context, ManagedRootProvider *provider,
+    ManagedRootEnumerate enumerate, void *environment);
+obelisk_rt_status
+obelisk_rt_managed_persistent_roots_unregister(obelisk_rt_context *context,
+                                               ManagedRootProvider *provider);
+const obelisk_rt_class_descriptor_v1 *
+obelisk_rt_managed_class_lookup(obelisk_rt_context *context, uint64_t classID);
+void obelisk_rt_enumerate_design_managed_roots(
+    obelisk_rt_context *context, ManagedRootVisit visit,
+    void *visitorEnvironment) noexcept;
+
+class ManagedExecutionScope {
+public:
+  explicit ManagedExecutionScope(obelisk_rt_context *context)
+      : status(context ? obelisk_rt_managed_execution_enter(context, &lane,
+                                                            &entered)
+                       : OBELISK_RT_OK) {}
+  ManagedExecutionScope(const ManagedExecutionScope &) = delete;
+  ManagedExecutionScope &operator=(const ManagedExecutionScope &) = delete;
+  ~ManagedExecutionScope() {
+    obelisk_rt_managed_execution_leave(lane, entered);
+  }
+
+  obelisk_rt_status getStatus() const { return status; }
+  obelisk_rt_gc_lane_v1 *getLane() const { return lane; }
+
+private:
+  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  bool entered = false;
+  obelisk_rt_status status = OBELISK_RT_OK;
 };
 
 // Serialize a complete external mutation or scheduler fragment across any
@@ -512,8 +595,8 @@ obelisk_rt_validate_bytecode_program(const obelisk_rt_bytecode_v1 &program,
 // Design-wide bytecode helpers shared by process construction/dispatch.  They
 // perform full image validation before returning layout information.
 obelisk_rt_status obelisk_rt_validate_design_bytecode(
-    const obelisk_rt_design_bytecode_entry_v1 &entry,
-    uint64_t *outScratchSize, uint64_t *outScratchAlignment) noexcept;
+    const obelisk_rt_design_bytecode_entry_v1 &entry, uint64_t *outScratchSize,
+    uint64_t *outScratchAlignment) noexcept;
 obelisk_rt_status obelisk_rt_execute_design_bytecode(
     const obelisk_rt_design_bytecode_entry_v1 &entry,
     obelisk_rt_context *context, void *frame, uint64_t frameSize,
@@ -527,34 +610,40 @@ obelisk_rt_status obelisk_rt_execute_design_observer(
     uint64_t *value, uint64_t *unknown, uint32_t limbCount) noexcept;
 obelisk_rt_status
 obelisk_rt_initialize_design_state(obelisk_rt_context *context) noexcept;
-obelisk_rt_status obelisk_rt_resolve_design_drivers(
-    obelisk_rt_context *context, uint64_t begin, uint64_t end) noexcept;
-obelisk_rt_status obelisk_rt_design_net_is_connected(
-    obelisk_rt_context *context, uint64_t begin, uint64_t end,
-    bool *outConnected) noexcept;
+obelisk_rt_status obelisk_rt_resolve_design_drivers(obelisk_rt_context *context,
+                                                    uint64_t begin,
+                                                    uint64_t end) noexcept;
+obelisk_rt_status
+obelisk_rt_design_net_is_connected(obelisk_rt_context *context, uint64_t begin,
+                                   uint64_t end, bool *outConnected) noexcept;
 obelisk_rt_status obelisk_rt_run_one_design_task(
-    obelisk_rt_context *context, uint32_t maximumRegion,
-    uint32_t maximumRank, uint64_t maximumInsertionSequence,
-    bool *outProgress) noexcept;
+    obelisk_rt_context *context, uint32_t maximumRegion, uint32_t maximumRank,
+    uint64_t maximumInsertionSequence, bool *outProgress) noexcept;
+obelisk_rt_status
+obelisk_rt_apply_managed_nba(obelisk_rt_context *context,
+                             const ScheduledManagedNBA &update);
 
 // Append one already-committed scalar transition while the context mutex is
 // held, and latch level/iff observers against the state at this exact
 // occurrence. Both native stores and design bytecode use this path.
-bool obelisk_rt_append_signal_event_unlocked(
-    obelisk_rt_context *context, uint64_t bitOffset, bool oldValue,
-    bool oldUnknown, bool newValue, bool newUnknown);
-bool obelisk_rt_append_signal_event_unlocked(
-    obelisk_rt_context *context, uint64_t bitOffset, bool oldValue,
-    bool oldUnknown, bool newValue, bool newUnknown,
-    bool evaluateComputedObservers);
+bool obelisk_rt_append_signal_event_unlocked(obelisk_rt_context *context,
+                                             uint64_t bitOffset, bool oldValue,
+                                             bool oldUnknown, bool newValue,
+                                             bool newUnknown);
+bool obelisk_rt_append_signal_event_unlocked(obelisk_rt_context *context,
+                                             uint64_t bitOffset, bool oldValue,
+                                             bool oldUnknown, bool newValue,
+                                             bool newUnknown,
+                                             bool evaluateComputedObservers);
 bool obelisk_rt_notify_observer_event_unlocked(obelisk_rt_context *context,
                                                uint64_t stableID);
 bool obelisk_rt_notify_observer_signal_unlocked(obelisk_rt_context *context,
                                                 uint64_t stableID,
                                                 uint64_t width);
-bool obelisk_rt_evaluate_design_observers_unlocked(
-    obelisk_rt_context *context, uint32_t dependencyKind,
-    uint64_t publishedHandle, uint64_t publishedWidth);
+bool obelisk_rt_evaluate_design_observers_unlocked(obelisk_rt_context *context,
+                                                   uint32_t dependencyKind,
+                                                   uint64_t publishedHandle,
+                                                   uint64_t publishedWidth);
 void obelisk_rt_erase_automatic_bookkeeping_unlocked(
     obelisk_rt_context *context, uint32_t automaticID);
 void obelisk_rt_invalidate_signal_snapshots_unlocked(

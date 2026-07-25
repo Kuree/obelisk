@@ -1593,6 +1593,9 @@ executeFragment(const obelisk_rt_fragment_descriptor_v1 *descriptor,
       OBELISK_RT_FRAGMENT_TERMINATE, OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
   if (descriptor->flags != OBELISK_RT_FRAGMENT_FLAGS_NONE)
     return OBELISK_RT_INVALID_ARGUMENT;
+  ManagedExecutionScope managedExecution(context);
+  if (managedExecution.getStatus() != OBELISK_RT_OK)
+    return managedExecution.getStatus();
   obelisk_rt_status status;
   if (descriptor->code_kind == OBELISK_RT_FRAGMENT_NATIVE) {
     if (bytecodeOnly || !descriptor->code.native_entry)

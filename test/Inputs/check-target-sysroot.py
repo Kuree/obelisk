@@ -215,6 +215,7 @@ native_members = [
     "DPI.o",
     "FileIO.o",
     "Format.o",
+    "ManagedHeap.o",
     "Process.o",
     "Runtime.o",
 ]

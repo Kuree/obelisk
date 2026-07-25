@@ -54,6 +54,11 @@ static bool isIntegerLiteral(Operation *op) {
   return isa<semantic::SVIntegerLiteralOp>(op);
 }
 
+static bool isWeakReferenceCall(semantic::SVCallExpressionOp op) {
+  auto path = op->getAttrOfType<StringAttr>("referenced_path");
+  return path && path.getValue().starts_with("std::weak_reference#(");
+}
+
 /// Fold one already-lowered SSA value to an attribute without rewriting the
 /// surrounding CFG. Unlike m_Constant, this follows pure chains such as
 /// logic.is_true(logic.constant) and arithmetic on frozen parameters.
@@ -144,18 +149,15 @@ static bool isAddressableExpression(Operation *op) {
            semantic::SVRangeSelectExpressionOp>(op))
     return false;
   SmallVector<Operation *> children = getChildren(op);
-  size_t expected =
-      isa<semantic::SVElementSelectExpressionOp>(op) ? 2u : 3u;
-  if (children.size() != expected ||
-      !isAddressableExpression(children.front()))
+  size_t expected = isa<semantic::SVElementSelectExpressionOp>(op) ? 2u : 3u;
+  if (children.size() != expected || !isAddressableExpression(children.front()))
     return false;
   // A direct scheduler subscription captures one stable handle. Dynamic
   // indices require a computed observer so changes to the index can both
   // trigger and retarget the expression.
-  return llvm::all_of(ArrayRef<Operation *>(children).drop_front(),
-                      [](Operation *index) {
-                        return getConstantSpelling(index).has_value();
-                      });
+  return llvm::all_of(
+      ArrayRef<Operation *>(children).drop_front(),
+      [](Operation *index) { return getConstantSpelling(index).has_value(); });
 }
 
 class UnitLowering {
@@ -186,6 +188,7 @@ private:
   FailureOr<Value> lowerBinary(semantic::SVBinaryExpressionOp op);
   FailureOr<Value> lowerInside(semantic::SVInsideExpressionOp op);
   FailureOr<Value> lowerCall(semantic::SVCallExpressionOp op);
+  FailureOr<Value> lowerNewClass(semantic::SVNewClassExpressionOp op);
   FailureOr<Value> lowerSystemCall(semantic::SVCallExpressionOp op);
   LogicalResult lowerPortConnection(semantic::SVPortConnectionOp op);
 
@@ -195,15 +198,13 @@ private:
   LogicalResult
   lowerQualifiedConditional(semantic::SVConditionalStatementOp op);
   LogicalResult lowerCase(semantic::SVCaseStatementOp op);
-  LogicalResult
-  lowerPatternCase(semantic::SVPatternCaseStatementOp op);
-  FailureOr<Value>
-  lowerPattern(Value input, Operation *pattern,
-               semantic::SVCaseCondition condition,
-               llvm::StringMap<Value> *captures = nullptr);
-  FailureOr<Value>
-  lowerCaseLabel(Value selector, Type selectorType, Operation *selectorNode,
-                 Operation *label, semantic::SVCaseCondition condition);
+  LogicalResult lowerPatternCase(semantic::SVPatternCaseStatementOp op);
+  FailureOr<Value> lowerPattern(Value input, Operation *pattern,
+                                semantic::SVCaseCondition condition,
+                                llvm::StringMap<Value> *captures = nullptr);
+  FailureOr<Value> lowerCaseLabel(Value selector, Type selectorType,
+                                  Operation *selectorNode, Operation *label,
+                                  semantic::SVCaseCondition condition);
   void emitQualifierWarning(Location location,
                             semantic::SVUniquePriorityCheck qualifier,
                             StringRef statementKind, StringRef reason);
@@ -262,6 +263,7 @@ private:
   llvm::StringMap<Value> localDefaults;
   llvm::StringSet<> automaticLocals;
   llvm::StringMap<Value> copyOutDestinations;
+  Value thisObject;
   llvm::SetVector<Value> sensitivity;
   llvm::SetVector<Value> *observedDependencies = nullptr;
   Value expressionPlaceholder;
@@ -290,24 +292,30 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
     : function(function), builder(function.getContext()),
       current(&function.getBody().front()) {
   builder.setInsertionPointToStart(current);
+  if (auto argument =
+          function->getAttrOfType<IntegerAttr>("obelisk_sim.this_argument")) {
+    uint64_t index = argument.getValue().getZExtValue();
+    if (index < function.getNumArguments())
+      thisObject = function.getBody().front().getArgument(index);
+    else
+      invalidBindings = true;
+  }
   auto bindings = function->getAttrOfType<ArrayAttr>(bindingsAttrName);
-  if (auto inherited =
-          function->getAttrOfType<ArrayAttr>("inherited_controls"))
+  if (auto inherited = function->getAttrOfType<ArrayAttr>("inherited_controls"))
     for (Attribute attribute : inherited) {
       auto entry = dyn_cast<DictionaryAttr>(attribute);
       auto path = entry ? entry.getAs<StringAttr>("path") : StringAttr{};
       auto id = entry ? entry.getAs<IntegerAttr>("id") : IntegerAttr{};
       if (path && id)
-        inheritedControlIDs[path.getValue()] =
-            id.getValue().getZExtValue();
+        inheritedControlIDs[path.getValue()] = id.getValue().getZExtValue();
     }
   if (!bindings)
     return;
   for (Attribute attr : bindings) {
     if (auto argument = dyn_cast<sim::ArgumentBindingAttr>(attr)) {
       StringRef path = argument.getPath().getValue();
-      Value value = function.getBody().front().getArgument(
-          argument.getArgument());
+      Value value =
+          function.getBody().front().getArgument(argument.getArgument());
       if (argument.getKind() == sim::UnitArgumentKind::CopyOutDestination) {
         copyOutDestinations[path] = value;
         continue;
@@ -451,8 +459,7 @@ FailureOr<Value> UnitLowering::bindObserver(Operation *expression) {
   auto capturePaths =
       expression->getAttrOfType<ArrayAttr>("obelisk_sim.observer_captures");
   auto dependencyPaths =
-      expression->getAttrOfType<ArrayAttr>(
-          "obelisk_sim.observer_dependencies");
+      expression->getAttrOfType<ArrayAttr>("obelisk_sim.observer_dependencies");
   auto resultKind =
       expression->getAttrOfType<IntegerAttr>("obelisk_sim.observer_result");
   if (!evaluator || !capturePaths || !dependencyPaths || !resultKind) {
@@ -486,9 +493,8 @@ FailureOr<Value> UnitLowering::bindObserver(Operation *expression) {
     if (failed(value))
       return failure();
     if (!isa<sim::RefType, sim::NetType, sim::EventType>((*value).getType())) {
-      emitError(location)
-          << "observer dependency is not a watchable handle: "
-          << (*value).getType();
+      emitError(location) << "observer dependency is not a watchable handle: "
+                          << (*value).getType();
       return failure();
     }
     dependencies.push_back(*value);
@@ -529,6 +535,10 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
                                        bool targetSigned) {
   if (value.getType() == targetType)
     return value;
+  if (isa<sim::ClassHandleType>(value.getType()) &&
+      isa<sim::ClassHandleType>(targetType))
+    return sim::SimClassCastOp::create(builder, location, targetType, value)
+        .getResult();
   if (targetType.isF64()) {
     if (auto sourceInt = dyn_cast<IntegerType>(value.getType()))
       return sim::SimRealFromIntegerOp::create(
@@ -722,8 +732,7 @@ LogicalResult UnitLowering::emitFunctionReturn(
     for (StringRef path : copyOutPaths) {
       Value storage = lvalues.lookup(path);
       Value destination = copyOutDestinations.lookup(path);
-      if (!storage || !destination ||
-          !isa<sim::RefType>(storage.getType()) ||
+      if (!storage || !destination || !isa<sim::RefType>(storage.getType()) ||
           storage.getType() != destination.getType()) {
         function.emitError()
             << "task copy-out formal has inconsistent activation storage: "
@@ -748,37 +757,49 @@ LogicalResult UnitLowering::emitFunctionReturn(
   }
 
   TypeRange resultTypes = function.getFunctionType().getResults();
-  if (resultTypes.empty()) {
+  bool hasPrimaryResult = !function->hasAttr("obelisk_sim.constructor") &&
+                          !function->hasAttr("obelisk_sim.static_initializer");
+  if (!hasPrimaryResult && explicitResult) {
+    emitError(location) << "constructor or initializer cannot return a value";
+    return failure();
+  }
+  if (hasPrimaryResult && resultTypes.empty()) {
     function.emitError("function signature has no primary result");
     return failure();
   }
   SmallVector<Value> results;
-  if (explicitResult) {
-    FailureOr<Value> converted =
-        convert(*explicitResult, resultTypes.front(), resultSigned, location);
-    if (failed(converted))
-      return failure();
-    results.push_back(*converted);
-  } else {
-    Value returnStorage = values.lookup(returnPath);
-    if (returnStorage && isa<sim::RefType>(returnStorage.getType()))
-      results.push_back(sim::SimRefLoadOp::create(
-          builder, location,
-          cast<sim::RefType>(returnStorage.getType()).getElementType(),
-          returnStorage));
-    else {
-      Value defaultResult =
-          createDefaultValue(builder, location, resultTypes.front());
-      if (!defaultResult) {
-        function.emitError("cannot materialize the default function result");
+  if (hasPrimaryResult) {
+    if (explicitResult) {
+      FailureOr<Value> converted =
+          convert(*explicitResult, resultTypes.front(), resultSigned, location);
+      if (failed(converted))
         return failure();
+      results.push_back(*converted);
+    } else {
+      Value returnStorage = values.lookup(returnPath);
+      if (returnStorage && isa<sim::RefType>(returnStorage.getType()))
+        results.push_back(sim::SimRefLoadOp::create(
+            builder, location,
+            cast<sim::RefType>(returnStorage.getType()).getElementType(),
+            returnStorage));
+      else {
+        Value defaultResult =
+            createDefaultValue(builder, location, resultTypes.front());
+        if (!defaultResult) {
+          function.emitError("cannot materialize the default function result");
+          return failure();
+        }
+        results.push_back(defaultResult);
       }
-      results.push_back(defaultResult);
     }
   }
 
-  if (resultTypes.size() != copyOutPaths.size() + 1) {
-    function.emitError("function copy-out result inventory is inconsistent");
+  unsigned copyOutResultOffset = hasPrimaryResult ? 1 : 0;
+  if (resultTypes.size() != copyOutPaths.size() + copyOutResultOffset) {
+    function.emitError()
+        << "function copy-out result inventory is inconsistent (signature has "
+        << resultTypes.size() << ", expected "
+        << copyOutPaths.size() + copyOutResultOffset << ")";
     return failure();
   }
   for (auto [index, path] : llvm::enumerate(copyOutPaths)) {
@@ -790,7 +811,7 @@ LogicalResult UnitLowering::emitFunctionReturn(
     Value value = sim::SimRefLoadOp::create(
         builder, location,
         cast<sim::RefType>(storage.getType()).getElementType(), storage);
-    if (value.getType() != resultTypes[index + 1]) {
+    if (value.getType() != resultTypes[index + copyOutResultOffset]) {
       function.emitError("copy-out formal type does not match its result");
       return failure();
     }
@@ -807,12 +828,32 @@ LogicalResult UnitLowering::emitFunctionReturn(
 FailureOr<Value>
 UnitLowering::lowerNamedValue(semantic::SVNamedValueExpressionOp op,
                               bool lvalue) {
+  if (auto field =
+          op->getAttrOfType<FlatSymbolRefAttr>("obelisk_sim.class_field")) {
+    if (!thisObject) {
+      emitError(getSemanticLocation(op))
+          << "instance property reference has no this object";
+      return failure();
+    }
+    FailureOr<Type> elementType = getNormalizedSemanticType(op);
+    auto objectType = dyn_cast<sim::ClassHandleType>(thisObject.getType());
+    if (failed(elementType) || !objectType)
+      return failure();
+    Type referenceType = sim::ManagedRefType::get(
+        function.getContext(), *elementType, objectType.getClassName());
+    Value reference = sim::SimClassFieldRefOp::create(
+        builder, getSemanticLocation(op), referenceType, thisObject, field);
+    if (lvalue)
+      return reference;
+    return sim::SimManagedLoadOp::create(builder, getSemanticLocation(op),
+                                         *elementType, reference)
+        .getResult();
+  }
   return lowerReferencedValue(op, op.getReferencedPath(), lvalue);
 }
 
-FailureOr<Value> UnitLowering::lowerReferencedValue(Operation *op,
-                                                    StringRef path,
-                                                    bool lvalue) {
+FailureOr<Value>
+UnitLowering::lowerReferencedValue(Operation *op, StringRef path, bool lvalue) {
   Location location = getSemanticLocation(op);
   Value value;
   if (lvalue)
@@ -820,6 +861,8 @@ FailureOr<Value> UnitLowering::lowerReferencedValue(Operation *op,
       value = nodeLvalues.lookup(node.getValue().getZExtValue());
   if (!value)
     value = lvalue ? lvalues.lookup(path) : values.lookup(path);
+  if (!value && thisObject && path.ends_with(".this"))
+    value = thisObject;
   if (!value) {
     emitError(location) << "named value has no frozen unit-local binding: "
                         << path;
@@ -1014,6 +1057,25 @@ UnitLowering::lowerMember(semantic::SVMemberAccessExpressionOp op,
   if (children.size() != 1) {
     unsupported(op) << " (member access arity)";
     return failure();
+  }
+  if (auto field =
+          op->getAttrOfType<FlatSymbolRefAttr>("obelisk_sim.class_field")) {
+    FailureOr<Type> resultType = getNormalizedSemanticType(op);
+    FailureOr<Value> object = lowerExpression(children.front());
+    auto objectType = succeeded(object)
+                          ? dyn_cast<sim::ClassHandleType>((*object).getType())
+                          : sim::ClassHandleType{};
+    if (failed(resultType) || failed(object) || !objectType)
+      return failure();
+    Type referenceType = sim::ManagedRefType::get(
+        function.getContext(), *resultType, objectType.getClassName());
+    Value reference = sim::SimClassFieldRefOp::create(
+        builder, location, referenceType, *object, field);
+    if (lvalue)
+      return reference;
+    return sim::SimManagedLoadOp::create(builder, location, *resultType,
+                                         reference)
+        .getResult();
   }
   auto ordinalAttr = op->getAttrOfType<IntegerAttr>("field_ordinal");
   if (!ordinalAttr || ordinalAttr.getValue().isNegative() ||
@@ -1537,7 +1599,8 @@ LogicalResult UnitLowering::writeLValue(Operation *destination, Value value,
     FailureOr<Value> scalar = toPackedScalar(*converted, location);
     if (failed(scalar))
       return failure();
-    std::optional<unsigned> totalWidth = sim::getPackedWidth((*scalar).getType());
+    std::optional<unsigned> totalWidth =
+        sim::getPackedWidth((*scalar).getType());
     if (!totalWidth)
       return failure();
     uint64_t trailing = *totalWidth;
@@ -1553,9 +1616,9 @@ LogicalResult UnitLowering::writeLValue(Operation *destination, Value value,
       Value part;
       if (auto logic = dyn_cast<sim::LogicType>((*scalar).getType())) {
         auto selected = sim::LogicType::get(function.getContext(), *childWidth);
-        part = sim::SimLogicExtractOp::create(
-            builder, location, selected, *scalar,
-            builder.getI64IntegerAttr(trailing));
+        part =
+            sim::SimLogicExtractOp::create(builder, location, selected, *scalar,
+                                           builder.getI64IntegerAttr(trailing));
       } else {
         auto integer = cast<IntegerType>((*scalar).getType());
         Value amount = arith::ConstantOp::create(
@@ -1564,13 +1627,11 @@ LogicalResult UnitLowering::writeLValue(Operation *destination, Value value,
         Value shifted =
             arith::ShRUIOp::create(builder, location, *scalar, amount);
         auto selected = IntegerType::get(function.getContext(), *childWidth);
-        part = selected == integer
-                   ? shifted
-                   : Value(arith::TruncIOp::create(builder, location, selected,
-                                                   shifted));
+        part = selected == integer ? shifted
+                                   : Value(arith::TruncIOp::create(
+                                         builder, location, selected, shifted));
       }
-      FailureOr<Value> childValue =
-          convert(part, *childType, false, location);
+      FailureOr<Value> childValue = convert(part, *childType, false, location);
       if (failed(childValue) ||
           failed(writeLValue(child, *childValue, false, nonblocking, location,
                              delay)))
@@ -1589,17 +1650,26 @@ LogicalResult UnitLowering::writeLValue(Operation *destination, Value value,
   Type elementType;
   if (auto ref = dyn_cast<sim::RefType>((*lowered).getType()))
     elementType = ref.getElementType();
+  else if (auto managed = dyn_cast<sim::ManagedRefType>((*lowered).getType()))
+    elementType = managed.getElementType();
   else if (auto driver = dyn_cast<sim::DriverType>((*lowered).getType()))
     elementType = driver.getElementType();
   else {
-    emitError(location) << "assignment destination is not a ref or driver";
+    emitError(location)
+        << "assignment destination is not a ref, managed ref, or driver";
     return failure();
   }
   FailureOr<Value> converted = convert(value, elementType, sourceSigned,
                                        location, isSignedNode(destination));
   if (failed(converted))
     return failure();
-  if (isa<sim::RefType>((*lowered).getType())) {
+  if (isa<sim::ManagedRefType>((*lowered).getType())) {
+    if (nonblocking)
+      sim::SimManagedNBAEnqueueOp::create(builder, location, *converted,
+                                          *lowered, delay);
+    else
+      sim::SimManagedStoreOp::create(builder, location, *converted, *lowered);
+  } else if (isa<sim::RefType>((*lowered).getType())) {
     if (nonblocking)
       sim::SimNBAEnqueueOp::create(builder, location, *converted, *lowered,
                                    delay, sim::NBASiteAttr{});
@@ -1690,14 +1760,12 @@ UnitLowering::lowerAssignment(semantic::SVAssignmentExpressionOp op) {
                                         ValueRange{*value})))
       return failure();
   } else {
-    if (failed(
-            emitEventSuspend(control, continuation, ValueRange{*value})))
+    if (failed(emitEventSuspend(control, continuation, ValueRange{*value})))
       return failure();
     setCurrent(continuation);
   }
   Value capturedValue = continuation->getArgument(0);
-  if (failed(
-          writeLValue(destination, capturedValue, false, false, location)))
+  if (failed(writeLValue(destination, capturedValue, false, false, location)))
     return failure();
   return capturedValue;
 }
@@ -1769,9 +1837,8 @@ UnitLowering::lowerPortConnection(semantic::SVPortConnectionOp op) {
     FailureOr<Value> source = lowerExpression(actual);
     if (failed(source))
       return failure();
-    bool sourceSigned =
-        actual->getAttrOfType<TypeAttr>("semantic_type") &&
-        isSignedNode(actual);
+    bool sourceSigned = actual->getAttrOfType<TypeAttr>("semantic_type") &&
+                        isSignedNode(actual);
     // A non-ANSI formal can have an aggregate internal expression such as
     // `{high, low}`. Use the same evaluate-once write plan as assignments so
     // every leaf receives the correct slice of the converted actual.
@@ -1780,8 +1847,7 @@ UnitLowering::lowerPortConnection(semantic::SVPortConnectionOp op) {
     FailureOr<Value> destination = endpoint(internalPath, nullptr, true);
     if (failed(destination))
       return failure();
-    return write(*destination, *source,
-                 sourceSigned);
+    return write(*destination, *source, sourceSigned);
   }
   if (op.getDirection() != semantic::SVArgumentDirection::Out) {
     emitError(location) << "non-static ref or inout port reached unit lowering";
@@ -2044,12 +2110,47 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
     unsupported(op) << " (binary arity)";
     return failure();
   }
-  FailureOr<Value> lhs = lowerExpression(children[0]);
-  FailureOr<Value> rhs = lowerExpression(children[1]);
+  FailureOr<Value> lhs = failure();
+  FailureOr<Value> rhs = failure();
+  if (isa<semantic::SVNullLiteralOp>(children[0])) {
+    rhs = lowerExpression(children[1]);
+    if (succeeded(rhs) && isa<sim::ClassHandleType>((*rhs).getType()))
+      lhs = sim::SimClassNullOp::create(builder, location, (*rhs).getType())
+                .getResult();
+  } else if (isa<semantic::SVNullLiteralOp>(children[1])) {
+    lhs = lowerExpression(children[0]);
+    if (succeeded(lhs) && isa<sim::ClassHandleType>((*lhs).getType()))
+      rhs = sim::SimClassNullOp::create(builder, location, (*lhs).getType())
+                .getResult();
+  } else {
+    lhs = lowerExpression(children[0]);
+    rhs = lowerExpression(children[1]);
+  }
   FailureOr<Type> resultType = getNormalizedSemanticType(op);
   if (failed(lhs) || failed(rhs) || failed(resultType))
     return failure();
   Binary kind = op.getOperatorKind();
+  if (isa<sim::ClassHandleType>((*lhs).getType()) ||
+      isa<sim::ClassHandleType>((*rhs).getType())) {
+    if (!isa<sim::ClassHandleType>((*lhs).getType()) ||
+        !isa<sim::ClassHandleType>((*rhs).getType()) ||
+        (kind != Binary::Equality && kind != Binary::Inequality &&
+         kind != Binary::CaseEquality && kind != Binary::CaseInequality)) {
+      unsupported(op) << " (class-handle operator)";
+      return failure();
+    }
+    Value lhsID =
+        sim::SimClassIdOp::create(builder, location, *lhs).getResult();
+    Value rhsID =
+        sim::SimClassIdOp::create(builder, location, *rhs).getResult();
+    arith::CmpIPredicate predicate =
+        kind == Binary::Equality || kind == Binary::CaseEquality
+            ? arith::CmpIPredicate::eq
+            : arith::CmpIPredicate::ne;
+    Value compared =
+        arith::CmpIOp::create(builder, location, predicate, lhsID, rhsID);
+    return convert(compared, *resultType, false, location);
+  }
   if (isa<sim::EventType>((*lhs).getType()) ||
       isa<sim::EventType>((*rhs).getType())) {
     if (!isa<sim::EventType>((*lhs).getType()) ||
@@ -2059,8 +2160,8 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
       unsupported(op) << " (event-handle operator)";
       return failure();
     }
-    Value equal = sim::SimEventEqualOp::create(
-        builder, location, builder.getI1Type(), *lhs, *rhs);
+    Value equal = sim::SimEventEqualOp::create(builder, location,
+                                               builder.getI1Type(), *lhs, *rhs);
     if (kind == Binary::Inequality || kind == Binary::CaseInequality)
       equal = arith::XOrIOp::create(
           builder, location, equal,
@@ -2366,8 +2467,7 @@ FailureOr<Value> UnitLowering::lowerInside(semantic::SVInsideExpressionOp op) {
   FailureOr<Value> loweredSelector = lowerExpression(children.front());
   if (failed(loweredSelector))
     return failure();
-  FailureOr<Value> scalarSelector =
-      toPackedScalar(*loweredSelector, location);
+  FailureOr<Value> scalarSelector = toPackedScalar(*loweredSelector, location);
   if (failed(scalarSelector))
     return failure();
   Value selector = *scalarSelector;
@@ -2379,18 +2479,16 @@ FailureOr<Value> UnitLowering::lowerInside(semantic::SVInsideExpressionOp op) {
         builder, location, sim::LogicType::get(function.getContext(), 1),
         builder.getIntegerAttr(i1, 0), builder.getIntegerAttr(i1, 0));
   } else {
-    matched = arith::ConstantOp::create(
-        builder, location, builder.getI1Type(), builder.getBoolAttr(false));
+    matched = arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                        builder.getBoolAttr(false));
   }
 
   auto combine = [&](Value lhs, Value rhs, bool conjunction,
                      Location itemLocation) -> Value {
     if (logic)
       return sim::SimLogicLogicalOp::create(
-          builder, itemLocation,
-          sim::LogicType::get(function.getContext(), 1),
-          conjunction ? sim::LogicalKind::And : sim::LogicalKind::Or, lhs,
-          rhs);
+          builder, itemLocation, sim::LogicType::get(function.getContext(), 1),
+          conjunction ? sim::LogicalKind::And : sim::LogicalKind::Or, lhs, rhs);
     return conjunction
                ? Value(arith::AndIOp::create(builder, itemLocation, lhs, rhs))
                : Value(arith::OrIOp::create(builder, itemLocation, lhs, rhs));
@@ -2432,9 +2530,8 @@ FailureOr<Value> UnitLowering::lowerInside(semantic::SVInsideExpressionOp op) {
       }
       return success();
     }
-    FailureOr<Value> equal =
-        compare(candidate, sim::CompareKind::WildEq,
-                arith::CmpIPredicate::eq, itemLocation);
+    FailureOr<Value> equal = compare(candidate, sim::CompareKind::WildEq,
+                                     arith::CmpIPredicate::eq, itemLocation);
     if (failed(equal))
       return failure();
     matched = combine(matched, *equal, false, itemLocation);
@@ -2460,13 +2557,12 @@ FailureOr<Value> UnitLowering::lowerInside(semantic::SVInsideExpressionOp op) {
         FailureOr<Value> lower = lowerExpression(endpoints[0]);
         if (failed(lower))
           return failure();
-        FailureOr<Value> above =
-            compare(*lower,
-                    signedSelector ? sim::CompareKind::SGE
-                                   : sim::CompareKind::UGE,
-                    signedSelector ? arith::CmpIPredicate::sge
-                                   : arith::CmpIPredicate::uge,
-                    itemLocation);
+        FailureOr<Value> above = compare(
+            *lower,
+            signedSelector ? sim::CompareKind::SGE : sim::CompareKind::UGE,
+            signedSelector ? arith::CmpIPredicate::sge
+                           : arith::CmpIPredicate::uge,
+            itemLocation);
         if (failed(above))
           return failure();
         inRange = *above;
@@ -2475,17 +2571,16 @@ FailureOr<Value> UnitLowering::lowerInside(semantic::SVInsideExpressionOp op) {
         FailureOr<Value> upper = lowerExpression(endpoints[1]);
         if (failed(upper))
           return failure();
-        FailureOr<Value> below =
-            compare(*upper,
-                    signedSelector ? sim::CompareKind::SLE
-                                   : sim::CompareKind::ULE,
-                    signedSelector ? arith::CmpIPredicate::sle
-                                   : arith::CmpIPredicate::ule,
-                    itemLocation);
+        FailureOr<Value> below = compare(
+            *upper,
+            signedSelector ? sim::CompareKind::SLE : sim::CompareKind::ULE,
+            signedSelector ? arith::CmpIPredicate::sle
+                           : arith::CmpIPredicate::ule,
+            itemLocation);
         if (failed(below))
           return failure();
-        inRange = inRange ? combine(inRange, *below, true, itemLocation)
-                          : *below;
+        inRange =
+            inRange ? combine(inRange, *below, true, itemLocation) : *below;
       }
       if (!inRange) {
         emitError(itemLocation)
@@ -2510,10 +2605,446 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   SmallVector<Operation *> children = getChildren(op);
   if (op.getIsSystemCall())
     return lowerSystemCall(op);
+  if (isWeakReferenceCall(op)) {
+    StringRef name = op.getCalleeName();
+    if (name == "get") {
+      if (children.size() != 1)
+        return emitError(location)
+                   << "weak_reference::get requires one receiver",
+               failure();
+      FailureOr<Value> weak = lowerExpression(children.front());
+      FailureOr<Type> resultType = getNormalizedSemanticType(op);
+      if (failed(weak) || failed(resultType) ||
+          !isa<sim::ClassHandleType>((*weak).getType()) ||
+          !isa<sim::ClassHandleType>(*resultType))
+        return failure();
+      return sim::SimWeakGetOp::create(builder, location, *resultType, *weak)
+          .getResult();
+    }
+    if (name == "clear") {
+      if (children.size() != 1)
+        return emitError(location)
+                   << "weak_reference::clear requires one receiver",
+               failure();
+      FailureOr<Value> weak = lowerExpression(children.front());
+      if (failed(weak) || !isa<sim::ClassHandleType>((*weak).getType()))
+        return failure();
+      sim::SimWeakClearOp::create(builder, location, *weak);
+      return arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                       builder.getBoolAttr(false))
+          .getResult();
+    }
+    if (name == "get_id") {
+      if (children.size() != 1)
+        return emitError(location)
+                   << "weak_reference::get_id requires one object argument",
+               failure();
+      FailureOr<Value> object = lowerExpression(children.front());
+      if (failed(object) || !isa<sim::ClassHandleType>((*object).getType()))
+        return failure();
+      return sim::SimClassIdOp::create(builder, location, *object).getResult();
+    }
+    return emitError(location)
+               << "unsupported weak_reference built-in method " << name,
+           failure();
+  }
   auto callee = op->getAttrOfType<FlatSymbolRefAttr>(calleeAttrName);
   if (!callee) {
     unsupported(op) << " (indirect or system call)";
     return failure();
+  }
+  if (op->hasAttr("obelisk_sim.class_instance")) {
+    auto formals = op->getAttrOfType<ArrayAttr>(calleeFormalsAttrName);
+    bool superCall = op->hasAttr("obelisk_sim.class_super");
+    bool implicitThis = !superCall && formals && thisObject &&
+                        children.size() == formals.size();
+    if (!formals ||
+        formals.size() + (superCall || implicitThis ? 0 : 1) !=
+            children.size() ||
+        ((superCall || implicitThis) && !thisObject)) {
+      emitError(location)
+          << "instance call has no receiver or complete formal inventory";
+      return failure();
+    }
+    FailureOr<Value> receiver = superCall || implicitThis
+                                    ? FailureOr<Value>(thisObject)
+                                    : lowerExpression(children.front());
+    if (failed(receiver) || !isa<sim::ClassHandleType>((*receiver).getType()))
+      return failure();
+    auto method =
+        op->getAttrOfType<FlatSymbolRefAttr>("obelisk_sim.class_method");
+    auto declaration =
+        method
+            ? SymbolTable::lookupNearestSymbolFrom<sim::SimClassMethodDeclOp>(
+                  op, method)
+            : sim::SimClassMethodDeclOp{};
+    if (declaration) {
+      Type targetType = sim::ClassHandleType::get(function.getContext(),
+                                                  declaration.getOwnerAttr());
+      if ((*receiver).getType() != targetType)
+        receiver = sim::SimClassCastOp::create(builder, location, targetType,
+                                               *receiver)
+                       .getResult();
+    } else if (superCall || implicitThis) {
+      emitError(location) << "implicit receiver has no class method descriptor";
+      return failure();
+    }
+    struct ClassCopyOut {
+      Value destination;
+      Type formalType;
+      bool formalSigned;
+      bool destinationSigned;
+    };
+    struct TaskManagedCopyOut {
+      Value temporary;
+      Value destination;
+      bool formalSigned;
+      bool destinationSigned;
+    };
+    SmallVector<Value> arguments;
+    SmallVector<ClassCopyOut> copyOuts;
+    SmallVector<TaskManagedCopyOut> taskManagedCopyOuts;
+    bool classTask = op->hasAttr("obelisk_sim.is_task");
+    for (auto [actual, formalAttr] :
+         llvm::zip_equal(ArrayRef<Operation *>(children).drop_front(
+                             superCall || implicitThis ? 0 : 1),
+                         formals)) {
+      auto formal = cast<DictionaryAttr>(formalAttr);
+      auto direction = static_cast<semantic::SVArgumentDirection>(
+          formal.getAs<IntegerAttr>("direction").getInt());
+      Type formalType = formal.getAs<TypeAttr>("type").getValue();
+      bool formalSigned = formal.getAs<BoolAttr>("is_signed").getValue();
+      if (direction == semantic::SVArgumentDirection::In) {
+        FailureOr<Value> argument = lowerExpression(actual);
+        if (failed(argument))
+          return failure();
+        FailureOr<Value> converted =
+            convert(*argument, formalType, isSignedNode(actual), location,
+                    formalSigned);
+        if (failed(converted))
+          return failure();
+        arguments.push_back(*converted);
+        continue;
+      }
+
+      Operation *destination = actual;
+      if (auto assignment =
+              dyn_cast<semantic::SVAssignmentExpressionOp>(actual)) {
+        SmallVector<Operation *> outputChildren = getChildren(assignment);
+        if (outputChildren.size() == 2) {
+          Operation *placeholder = outputChildren[1];
+          while (isa<semantic::SVConversionExpressionOp>(placeholder)) {
+            SmallVector<Operation *> converted = getChildren(placeholder);
+            if (converted.size() != 1)
+              break;
+            placeholder = converted.front();
+          }
+          if (isa<semantic::SVEmptyArgumentExpressionOp>(placeholder))
+            destination = outputChildren.front();
+        }
+      }
+      FailureOr<Value> destinationRef = lowerExpression(destination, true);
+      if (failed(destinationRef))
+        return failure();
+      Type destinationType;
+      if (auto ref = dyn_cast<sim::RefType>((*destinationRef).getType()))
+        destinationType = ref.getElementType();
+      else if (auto ref =
+                   dyn_cast<sim::ManagedRefType>((*destinationRef).getType()))
+        destinationType = ref.getElementType();
+      else {
+        emitError(location)
+            << "class method output, inout, and ref actuals must be variable "
+               "references";
+        return failure();
+      }
+      if (direction == semantic::SVArgumentDirection::Ref) {
+        auto ref = dyn_cast<sim::RefType>((*destinationRef).getType());
+        if (!ref || ref.getElementType() != formalType) {
+          emitError(location)
+              << "class method ref actual type must exactly match the formal "
+                 "type and use an ordinary variable";
+          return failure();
+        }
+        recordSensitivity(*destinationRef);
+        arguments.push_back(*destinationRef);
+        continue;
+      }
+
+      Value initial;
+      if (direction == semantic::SVArgumentDirection::Out) {
+        initial = createDefaultValue(builder, location, formalType);
+        if (!initial) {
+          emitError(location)
+              << "cannot materialize a class output-formal default for type "
+              << formalType;
+          return failure();
+        }
+      } else {
+        Value loaded;
+        if (auto ref = dyn_cast<sim::RefType>((*destinationRef).getType())) {
+          loaded = sim::SimRefLoadOp::create(
+              builder, location, ref.getElementType(), *destinationRef);
+          recordSensitivity(*destinationRef);
+        } else {
+          auto managedRef =
+              cast<sim::ManagedRefType>((*destinationRef).getType());
+          loaded = sim::SimManagedLoadOp::create(
+              builder, location, managedRef.getElementType(), *destinationRef);
+        }
+        FailureOr<Value> converted =
+            convert(loaded, formalType, isSignedNode(destination), location,
+                    formalSigned);
+        if (failed(converted))
+          return failure();
+        initial = *converted;
+      }
+      arguments.push_back(initial);
+      if (classTask) {
+        if (isa<sim::ManagedRefType>((*destinationRef).getType())) {
+          Value temporary = sim::SimRefAllocOp::create(
+              builder, location,
+              sim::RefType::get(function.getContext(), formalType), initial);
+          arguments.push_back(temporary);
+          taskManagedCopyOuts.push_back({temporary, *destinationRef,
+                                         formalSigned,
+                                         isSignedNode(destination)});
+        } else {
+          arguments.push_back(*destinationRef);
+        }
+      } else {
+        copyOuts.push_back({*destinationRef, formalType, formalSigned,
+                            isSignedNode(destination)});
+      }
+    }
+    if (auto captures = op->getAttrOfType<ArrayAttr>(calleeCapturesAttrName))
+      for (Attribute captureAttr : captures) {
+        StringRef path = cast<StringAttr>(captureAttr).getValue();
+        Value capture = values.lookup(path);
+        if (!capture) {
+          emitError(location)
+              << "method capture has no frozen local binding: " << path;
+          return failure();
+        }
+        arguments.push_back(capture);
+      }
+    SmallVector<Type> resultTypes;
+    if (auto semanticType = op->getAttrOfType<TypeAttr>("semantic_type");
+        semanticType && !isa<semantic::VoidType>(semanticType.getValue())) {
+      FailureOr<Type> resultType = getNormalizedSemanticType(op);
+      if (failed(resultType))
+        return failure();
+      resultTypes.push_back(*resultType);
+    }
+    bool hasFunctionResult = !resultTypes.empty();
+    if (!classTask)
+      for (const ClassCopyOut &copyOut : copyOuts)
+        resultTypes.push_back(copyOut.formalType);
+    if (classTask) {
+      Block *continuation = addBlock();
+      auto finishTask = [&]() -> FailureOr<Value> {
+        setCurrent(continuation);
+        for (const TaskManagedCopyOut &copyOut : taskManagedCopyOuts) {
+          auto temporaryType =
+              cast<sim::RefType>(copyOut.temporary.getType()).getElementType();
+          Value copied = sim::SimRefLoadOp::create(
+              builder, location, temporaryType, copyOut.temporary);
+          auto destinationType =
+              cast<sim::ManagedRefType>(copyOut.destination.getType())
+                  .getElementType();
+          FailureOr<Value> converted =
+              convert(copied, destinationType, copyOut.formalSigned, location,
+                      copyOut.destinationSigned);
+          if (failed(converted))
+            return failure();
+          sim::SimManagedStoreOp::create(builder, location, *converted,
+                                         copyOut.destination);
+        }
+        return arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                         builder.getBoolAttr(false))
+            .getResult();
+      };
+      auto emitTaskCall = [&](FlatSymbolRefAttr target, Value taskReceiver) {
+        SmallVector<Value> operands{function.getBody().front().getArgument(0),
+                                    taskReceiver};
+        llvm::append_range(operands, arguments);
+        sim::SimTaskCallOp::create(builder, location, target, operands,
+                                   builder.getI64IntegerAttr(operands.size()),
+                                   sim::ContinuationSiteAttr{}, continuation);
+      };
+      if (!op->hasAttr("obelisk_sim.class_virtual")) {
+        emitTaskCall(callee, *receiver);
+        return finishTask();
+      }
+
+      auto signature =
+          op->getAttrOfType<IntegerAttr>("obelisk_sim.class_signature");
+      auto receiverType = dyn_cast<sim::ClassHandleType>((*receiver).getType());
+      sim::SimDesignOp design = function->getParentOfType<sim::SimDesignOp>();
+      sim::SimClassDeclOp staticClass =
+          receiverType
+              ? SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+                    function, receiverType.getClassName())
+              : sim::SimClassDeclOp{};
+      if (!method || !signature || !design || !staticClass)
+        return emitError(location)
+                   << "virtual class task has no complete dispatch inventory",
+               failure();
+
+      SmallVector<sim::SimClassMethodDeclOp> methods(
+          design.getBody().front().getOps<sim::SimClassMethodDeclOp>());
+      auto lookupClass = [&](FlatSymbolRefAttr symbol) {
+        return SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+            function, symbol);
+      };
+      auto derivesFrom = [&](sim::SimClassDeclOp candidate,
+                             sim::SimClassDeclOp target) {
+        for (sim::SimClassDeclOp current = candidate; current;) {
+          if (current == target)
+            return true;
+          if (target.getIsInterface() && current.getInterfacesAttr())
+            for (Attribute interface : current.getInterfacesAttr())
+              if (cast<FlatSymbolRefAttr>(interface).getValue() ==
+                  target.getSymName())
+                return true;
+          current = current.getBaseAttr() ? lookupClass(current.getBaseAttr())
+                                          : sim::SimClassDeclOp{};
+        }
+        return false;
+      };
+      auto inheritanceDepth = [&](sim::SimClassDeclOp candidate) {
+        uint64_t depth = 0;
+        for (sim::SimClassDeclOp current = candidate; current;
+             current = current.getBaseAttr()
+                           ? lookupClass(current.getBaseAttr())
+                           : sim::SimClassDeclOp{})
+          ++depth;
+        return depth;
+      };
+      struct TaskTarget {
+        FlatSymbolRefAttr dynamicClass;
+        FlatSymbolRefAttr implementation;
+        uint64_t depth;
+        uint64_t classId;
+      };
+      SmallVector<TaskTarget> targets;
+      for (sim::SimClassDeclOp candidate :
+           design.getBody().front().getOps<sim::SimClassDeclOp>()) {
+        if (candidate.getIsAbstract() || candidate.getIsInterface() ||
+            !derivesFrom(candidate, staticClass))
+          continue;
+        sim::SimClassMethodDeclOp implementation;
+        for (sim::SimClassDeclOp current = candidate;
+             current && !implementation;
+             current = current.getBaseAttr()
+                           ? lookupClass(current.getBaseAttr())
+                           : sim::SimClassDeclOp{})
+          for (sim::SimClassMethodDeclOp candidateMethod : methods)
+            if (candidateMethod.getOwner() == current.getSymName() &&
+                candidateMethod.getSignatureIdAttr() &&
+                candidateMethod.getSignatureId() ==
+                    signature.getValue().getZExtValue() &&
+                candidateMethod.getImplementationAttr()) {
+              implementation = candidateMethod;
+              break;
+            }
+        if (implementation)
+          targets.push_back({
+              FlatSymbolRefAttr::get(function.getContext(),
+                                     candidate.getSymName()),
+              implementation.getImplementationAttr(),
+              inheritanceDepth(candidate),
+              candidate.getId(),
+          });
+      }
+      llvm::sort(targets, [](const TaskTarget &lhs, const TaskTarget &rhs) {
+        return std::tuple(lhs.depth, lhs.classId) >
+               std::tuple(rhs.depth, rhs.classId);
+      });
+      if (targets.empty())
+        return emitError(location)
+                   << "virtual class task has no concrete implementation",
+               failure();
+      for (const TaskTarget &target : targets) {
+        Value matches = sim::SimClassIsInstanceOp::create(
+            builder, location, *receiver, target.dynamicClass);
+        Block *invoke = addBlock();
+        Block *next = addBlock();
+        cf::CondBranchOp::create(builder, location, matches, invoke,
+                                 ValueRange{}, next, ValueRange{});
+        setCurrent(invoke);
+        auto implementation =
+            SymbolTable::lookupNearestSymbolFrom<sim::SimFuncOp>(
+                function, target.implementation);
+        if (!implementation ||
+            implementation.getFunctionType().getNumInputs() < 2)
+          return emitError(location)
+                     << "virtual class task implementation is missing",
+                 failure();
+        Type expectedReceiver = implementation.getFunctionType().getInput(1);
+        Value adjusted = *receiver;
+        if (adjusted.getType() != expectedReceiver)
+          adjusted = sim::SimClassCastOp::create(builder, location,
+                                                 expectedReceiver, adjusted);
+        emitTaskCall(target.implementation, adjusted);
+        setCurrent(next);
+      }
+      Value verbosity =
+          arith::ConstantOp::create(builder, location, builder.getI32Type(),
+                                    builder.getI32IntegerAttr(1));
+      sim::SimFatalOp::create(builder, location,
+                              function.getBody().front().getArgument(0),
+                              verbosity);
+      emitBranch(continuation);
+      return finishTask();
+    }
+    ValueRange results;
+    if (op->hasAttr("obelisk_sim.class_virtual")) {
+      auto slot = op->getAttrOfType<IntegerAttr>("obelisk_sim.class_slot");
+      auto signature =
+          op->getAttrOfType<IntegerAttr>("obelisk_sim.class_signature");
+      if (!method || !slot || !signature || signature.getValue().isZero()) {
+        emitError(location)
+            << "virtual call has no frozen method slot and signature";
+        return failure();
+      }
+      results = sim::SimClassVirtualCallOp::create(
+                    builder, location, resultTypes, *receiver, method, slot,
+                    signature, arguments)
+                    .getResults();
+    } else {
+      results =
+          sim::SimClassDirectCallOp::create(builder, location, resultTypes,
+                                            callee, *receiver, arguments)
+              .getResults();
+    }
+    if (!classTask)
+      for (auto [index, copyOut] : llvm::enumerate(copyOuts)) {
+        Value result = results[index + (hasFunctionResult ? 1 : 0)];
+        Type destinationType;
+        if (auto ref = dyn_cast<sim::RefType>(copyOut.destination.getType()))
+          destinationType = ref.getElementType();
+        else
+          destinationType =
+              cast<sim::ManagedRefType>(copyOut.destination.getType())
+                  .getElementType();
+        FailureOr<Value> converted =
+            convert(result, destinationType, copyOut.formalSigned, location,
+                    copyOut.destinationSigned);
+        if (failed(converted))
+          return failure();
+        if (isa<sim::RefType>(copyOut.destination.getType()))
+          sim::SimRefStoreOp::create(builder, location, *converted,
+                                     copyOut.destination);
+        else
+          sim::SimManagedStoreOp::create(builder, location, *converted,
+                                         copyOut.destination);
+      }
+    if (hasFunctionResult)
+      return results.front();
+    return arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                     builder.getBoolAttr(false))
+        .getResult();
   }
   bool directTask = op->hasAttr("obelisk_sim.is_task");
   SmallVector<Value> operands{function.getBody().front().getArgument(0)};
@@ -2545,8 +3076,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     if (op->hasAttr("obelisk.dpi.import_id")) {
       std::optional<unsigned> width = sim::getPackedWidth(formalType);
       if (!width) {
-        emitError(location)
-            << "DPI formal has no fixed packed integral width";
+        emitError(location) << "DPI formal has no fixed packed integral width";
         return failure();
       }
       dpiOperandABI.push_back(sim::DPIABIAttr::get(
@@ -2633,8 +3163,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   }
 
   llvm::StringSet<> readCaptures;
-  if (auto reads =
-          op->getAttrOfType<ArrayAttr>(calleeReadCapturesAttrName))
+  if (auto reads = op->getAttrOfType<ArrayAttr>(calleeReadCapturesAttrName))
     for (Attribute read : reads)
       readCaptures.insert(cast<StringAttr>(read).getValue());
   if (auto captures = op->getAttrOfType<ArrayAttr>(calleeCapturesAttrName))
@@ -2650,8 +3179,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         recordSensitivity(capture);
       operands.push_back(capture);
     }
-  BoolAttr dpiTaskAttr =
-      op->getAttrOfType<BoolAttr>("obelisk.dpi.is_task");
+  BoolAttr dpiTaskAttr = op->getAttrOfType<BoolAttr>("obelisk.dpi.is_task");
   bool dpiTask = dpiTaskAttr && dpiTaskAttr.getValue();
   SmallVector<Type> callResultTypes;
   if (!dpiTask && !directTask) {
@@ -2664,8 +3192,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     for (const CopyOut &copyOut : copyOuts)
       callResultTypes.push_back(copyOut.formalType);
   ValueRange callResults;
-  if (auto importID =
-          op->getAttrOfType<IntegerAttr>("obelisk.dpi.import_id")) {
+  if (auto importID = op->getAttrOfType<IntegerAttr>("obelisk.dpi.import_id")) {
     if (operands.empty())
       return emitError(location) << "DPI call is missing its runtime context",
              failure();
@@ -2679,8 +3206,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         return emitError(location)
                    << "DPI function result has no fixed packed width",
                failure();
-      auto semanticResult =
-          op->getAttrOfType<TypeAttr>("semantic_type");
+      auto semanticResult = op->getAttrOfType<TypeAttr>("semantic_type");
       if (!semanticResult)
         return emitError(location)
                    << "DPI function result has no semantic ABI type",
@@ -2690,21 +3216,18 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       if (failed(resultCategory))
         return failure();
       signature.push_back(sim::DPIABIAttr::get(
-          builder.getContext(),
-          static_cast<sim::DPIABIKind>(*resultCategory),
+          builder.getContext(), static_cast<sim::DPIABIKind>(*resultCategory),
           sim::DPIArgumentDirection::Result, *width,
           isa<sim::LogicType>(sim::getPackedScalarType(resultType)),
           isSignedSemanticType(semanticResult.getValue())));
     }
     for (const CopyOut &copyOut : copyOuts) {
-      std::optional<unsigned> width =
-          sim::getPackedWidth(copyOut.formalType);
+      std::optional<unsigned> width = sim::getPackedWidth(copyOut.formalType);
       signature.push_back(sim::DPIABIAttr::get(
           builder.getContext(),
           static_cast<sim::DPIABIKind>(copyOut.dpiCategory),
           sim::DPIArgumentDirection::Output, *width,
-          isa<sim::LogicType>(
-              sim::getPackedScalarType(copyOut.formalType)),
+          isa<sim::LogicType>(sim::getPackedScalarType(copyOut.formalType)),
           copyOut.formalSigned));
     }
     FileLineColLoc fileLocation = dyn_cast<FileLineColLoc>(location);
@@ -2724,22 +3247,21 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         op->getAttrOfType<BoolAttr>("obelisk.dpi.is_pure"),
         op->getAttrOfType<BoolAttr>("obelisk.dpi.is_context"),
         op->getAttrOfType<BoolAttr>("obelisk.dpi.is_task"),
-        builder.getStringAttr(sourceFile), builder.getI32IntegerAttr(sourceLine),
+        builder.getStringAttr(sourceFile),
+        builder.getI32IntegerAttr(sourceLine),
         builder.getI32IntegerAttr(sourceColumn), runtimeContext, operands);
-    sim::SimStatusCheckOp::create(builder, location,
-                                  call.getResults().back());
+    sim::SimStatusCheckOp::create(builder, location, call.getResults().back());
     callResults = call.getResults().drop_back();
   } else if (!directTask) {
-    auto call = sim::SimCallOp::create(builder, location, callResultTypes,
-                                       callee, operands, ArrayAttr{},
-                                       ArrayAttr{});
+    auto call =
+        sim::SimCallOp::create(builder, location, callResultTypes, callee,
+                               operands, ArrayAttr{}, ArrayAttr{});
     callResults = call.getResults();
   } else {
     Block *continuation = addBlock();
-    sim::SimTaskCallOp::create(
-        builder, location, callee, operands,
-        builder.getI64IntegerAttr(operands.size()),
-        sim::ContinuationSiteAttr{}, continuation);
+    sim::SimTaskCallOp::create(builder, location, callee, operands,
+                               builder.getI64IntegerAttr(operands.size()),
+                               sim::ContinuationSiteAttr{}, continuation);
     setCurrent(continuation);
   }
   if (!directTask) {
@@ -2783,6 +3305,277 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   }
   if (!dpiTask && !directTask)
     return callResults.front();
+  return arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                   builder.getBoolAttr(false))
+      .getResult();
+}
+
+FailureOr<Value>
+UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
+  Location location = getSemanticLocation(op);
+  SmallVector<Operation *> children = getChildren(op);
+  if (children.empty()) {
+    sim::ClassHandleType receiverType;
+    Value receiver;
+    sim::SimClassDeclOp declaration;
+    if (op.getIsSuperClass()) {
+      if (!thisObject || !(receiverType = dyn_cast<sim::ClassHandleType>(
+                               thisObject.getType()))) {
+        emitError(location) << "implicit super.new has no current this object";
+        return failure();
+      }
+      sim::SimClassDeclOp derived =
+          SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+              function, receiverType.getClassName());
+      if (!derived || !derived.getBaseAttr()) {
+        emitError(location) << "implicit super.new has no resolved base class";
+        return failure();
+      }
+      declaration = SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+          function, derived.getBaseAttr());
+      receiverType = sim::ClassHandleType::get(function.getContext(),
+                                               derived.getBaseAttr());
+      receiver = sim::SimClassCastOp::create(builder, location, receiverType,
+                                             thisObject);
+    } else {
+      FailureOr<Type> resultType = getNormalizedSemanticType(op);
+      if (failed(resultType) ||
+          !(receiverType = dyn_cast<sim::ClassHandleType>(*resultType)))
+        return failure();
+      declaration = SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+          function, receiverType.getClassName());
+      receiver = sim::SimClassAllocOp::create(
+          builder, location, receiverType,
+          function.getBody().front().getArgument(0));
+    }
+    auto constructorName = declaration ? declaration->getAttrOfType<StringAttr>(
+                                             "obelisk_sim.implicit_constructor")
+                                       : StringAttr{};
+    if (!constructorName) {
+      emitError(location)
+          << "implicit class constructor has no executable implementation";
+      return failure();
+    }
+    FlatSymbolRefAttr constructor = FlatSymbolRefAttr::get(
+        function.getContext(), constructorName.getValue());
+    sim::SimClassDirectCallOp::create(builder, location, TypeRange{},
+                                      constructor, receiver, ValueRange{});
+    if (!op.getIsSuperClass())
+      return receiver;
+    return arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                     builder.getBoolAttr(false))
+        .getResult();
+  }
+  if (children.size() != 1) {
+    unsupported(op) << " (constructor inventory)";
+    return failure();
+  }
+  auto call = dyn_cast<semantic::SVCallExpressionOp>(children.front());
+  if (call && isWeakReferenceCall(call) && call.getCalleeName() == "new") {
+    SmallVector<Operation *> actuals = getChildren(call);
+    FailureOr<Type> resultType = getNormalizedSemanticType(op);
+    if (actuals.size() != 1 || failed(resultType) ||
+        !isa<sim::ClassHandleType>(*resultType))
+      return emitError(location)
+                 << "weak_reference constructor requires one class handle",
+             failure();
+    FailureOr<Value> referent = lowerExpression(actuals.front());
+    if (failed(referent) || !isa<sim::ClassHandleType>((*referent).getType()))
+      return failure();
+    return sim::SimWeakCreateOp::create(
+               builder, location, *resultType,
+               function.getBody().front().getArgument(0), *referent)
+        .getResult();
+  }
+  auto callee = call ? call->getAttrOfType<FlatSymbolRefAttr>(calleeAttrName)
+                     : FlatSymbolRefAttr{};
+  auto formals = call ? call->getAttrOfType<ArrayAttr>(calleeFormalsAttrName)
+                      : ArrayAttr{};
+  if (!call || !callee || !formals) {
+    unsupported(op) << " (unresolved constructor"
+                    << (!call ? ": missing call" : "")
+                    << (call && !callee ? ": missing callee" : "")
+                    << (call && !formals ? ": missing formals" : "") << ")";
+    return failure();
+  }
+
+  Value receiver;
+  if (op.getIsSuperClass()) {
+    if (!thisObject) {
+      emitError(location) << "super.new has no current this object";
+      return failure();
+    }
+    receiver = thisObject;
+  } else {
+    FailureOr<Type> resultType = getNormalizedSemanticType(op);
+    if (failed(resultType) || !isa<sim::ClassHandleType>(*resultType))
+      return failure();
+    receiver =
+        sim::SimClassAllocOp::create(builder, location, *resultType,
+                                     function.getBody().front().getArgument(0));
+  }
+
+  SmallVector<Operation *> actuals = getChildren(call);
+  if (actuals.size() != formals.size()) {
+    emitError(location)
+        << "constructor has no complete frozen formal inventory";
+    return failure();
+  }
+  struct ConstructorCopyOut {
+    Value destination;
+    Type formalType;
+    bool formalSigned;
+    bool destinationSigned;
+  };
+  SmallVector<Value> arguments;
+  SmallVector<ConstructorCopyOut> copyOuts;
+  for (auto [actual, formalAttr] : llvm::zip_equal(actuals, formals)) {
+    auto formal = cast<DictionaryAttr>(formalAttr);
+    auto direction = static_cast<semantic::SVArgumentDirection>(
+        formal.getAs<IntegerAttr>("direction").getInt());
+    Type formalType = formal.getAs<TypeAttr>("type").getValue();
+    bool formalSigned = formal.getAs<BoolAttr>("is_signed").getValue();
+    if (direction == semantic::SVArgumentDirection::In) {
+      FailureOr<Value> argument = lowerExpression(actual);
+      if (failed(argument))
+        return failure();
+      FailureOr<Value> converted = convert(
+          *argument, formalType, isSignedNode(actual), location, formalSigned);
+      if (failed(converted))
+        return failure();
+      arguments.push_back(*converted);
+      continue;
+    }
+
+    Operation *destination = actual;
+    if (auto assignment =
+            dyn_cast<semantic::SVAssignmentExpressionOp>(actual)) {
+      SmallVector<Operation *> outputChildren = getChildren(assignment);
+      if (outputChildren.size() == 2) {
+        Operation *placeholder = outputChildren[1];
+        while (isa<semantic::SVConversionExpressionOp>(placeholder)) {
+          SmallVector<Operation *> converted = getChildren(placeholder);
+          if (converted.size() != 1)
+            break;
+          placeholder = converted.front();
+        }
+        if (isa<semantic::SVEmptyArgumentExpressionOp>(placeholder))
+          destination = outputChildren.front();
+      }
+    }
+    FailureOr<Value> destinationRef = lowerExpression(destination, true);
+    if (failed(destinationRef))
+      return failure();
+    Type destinationType;
+    if (auto ref = dyn_cast<sim::RefType>((*destinationRef).getType()))
+      destinationType = ref.getElementType();
+    else if (auto ref =
+                 dyn_cast<sim::ManagedRefType>((*destinationRef).getType()))
+      destinationType = ref.getElementType();
+    else
+      return emitError(location)
+                 << "constructor output, inout, and ref actuals must be "
+                    "variable references",
+             failure();
+
+    if (direction == semantic::SVArgumentDirection::Ref) {
+      auto ref = dyn_cast<sim::RefType>((*destinationRef).getType());
+      if (!ref || ref.getElementType() != formalType)
+        return emitError(location)
+                   << "constructor ref actual type must exactly match the "
+                      "formal type and use an ordinary variable",
+               failure();
+      recordSensitivity(*destinationRef);
+      arguments.push_back(*destinationRef);
+      continue;
+    }
+
+    Value initial;
+    if (direction == semantic::SVArgumentDirection::Out) {
+      initial = createDefaultValue(builder, location, formalType);
+      if (!initial)
+        return emitError(location)
+                   << "cannot materialize a constructor output-formal "
+                      "default for type "
+                   << formalType,
+               failure();
+    } else {
+      Value loaded;
+      if (auto ref = dyn_cast<sim::RefType>((*destinationRef).getType())) {
+        loaded = sim::SimRefLoadOp::create(
+            builder, location, ref.getElementType(), *destinationRef);
+        recordSensitivity(*destinationRef);
+      } else {
+        auto managedRef =
+            cast<sim::ManagedRefType>((*destinationRef).getType());
+        loaded = sim::SimManagedLoadOp::create(
+            builder, location, managedRef.getElementType(), *destinationRef);
+      }
+      FailureOr<Value> converted =
+          convert(loaded, formalType, isSignedNode(destination), location,
+                  formalSigned);
+      if (failed(converted))
+        return failure();
+      initial = *converted;
+    }
+    arguments.push_back(initial);
+    copyOuts.push_back(
+        {*destinationRef, formalType, formalSigned, isSignedNode(destination)});
+  }
+  if (auto captures = call->getAttrOfType<ArrayAttr>(calleeCapturesAttrName))
+    for (Attribute captureAttr : captures) {
+      StringRef path = cast<StringAttr>(captureAttr).getValue();
+      Value capture = values.lookup(path);
+      if (!capture) {
+        emitError(location)
+            << "constructor capture has no frozen local binding: " << path;
+        return failure();
+      }
+      arguments.push_back(capture);
+    }
+  auto constructor =
+      SymbolTable::lookupNearestSymbolFrom<sim::SimFuncOp>(function, callee);
+  if (!constructor || constructor.getFunctionType().getNumInputs() < 2 ||
+      !isa<sim::ClassHandleType>(constructor.getFunctionType().getInput(1))) {
+    emitError(location) << "constructor implementation has no this parameter";
+    return failure();
+  }
+  FailureOr<Value> adjustedReceiver = convert(
+      receiver, constructor.getFunctionType().getInput(1), false, location);
+  if (failed(adjustedReceiver))
+    return failure();
+  SmallVector<Type> resultTypes;
+  for (const ConstructorCopyOut &copyOut : copyOuts)
+    resultTypes.push_back(copyOut.formalType);
+  if (constructor.getFunctionType().getNumResults() != resultTypes.size()) {
+    emitError(location)
+        << "constructor implementation has inconsistent copy-out results";
+    return failure();
+  }
+  auto invocation = sim::SimClassDirectCallOp::create(
+      builder, location, resultTypes, callee, *adjustedReceiver, arguments);
+  for (auto [result, copyOut] :
+       llvm::zip_equal(invocation.getResults(), copyOuts)) {
+    Type destinationType;
+    if (auto ref = dyn_cast<sim::RefType>(copyOut.destination.getType()))
+      destinationType = ref.getElementType();
+    else
+      destinationType = cast<sim::ManagedRefType>(copyOut.destination.getType())
+                            .getElementType();
+    FailureOr<Value> converted =
+        convert(result, destinationType, copyOut.formalSigned, location,
+                copyOut.destinationSigned);
+    if (failed(converted))
+      return failure();
+    if (isa<sim::RefType>(copyOut.destination.getType()))
+      sim::SimRefStoreOp::create(builder, location, *converted,
+                                 copyOut.destination);
+    else
+      sim::SimManagedStoreOp::create(builder, location, *converted,
+                                     copyOut.destination);
+  }
+  if (!op.getIsSuperClass())
+    return receiver;
   return arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                    builder.getBoolAttr(false))
       .getResult();
@@ -2840,6 +3633,88 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     return constant(builder.getI1Type(), 0);
   };
 
+  if (name == "$cast") {
+    if (children.size() != 2) {
+      emitError(location) << "$cast requires exactly two arguments";
+      return failure();
+    }
+    Operation *destination = children.front();
+    if (auto assignment =
+            dyn_cast<semantic::SVAssignmentExpressionOp>(destination)) {
+      SmallVector<Operation *> outputChildren = getChildren(assignment);
+      if (outputChildren.size() == 2) {
+        Operation *placeholder = outputChildren[1];
+        while (isa<semantic::SVConversionExpressionOp>(placeholder)) {
+          SmallVector<Operation *> converted = getChildren(placeholder);
+          if (converted.size() != 1)
+            break;
+          placeholder = converted.front();
+        }
+        if (isa<semantic::SVEmptyArgumentExpressionOp>(placeholder))
+          destination = outputChildren.front();
+      }
+    }
+
+    FailureOr<Value> destinationRef = lowerExpression(destination, true);
+    if (failed(destinationRef))
+      return failure();
+    Type destinationType;
+    if (auto ref = dyn_cast<sim::RefType>((*destinationRef).getType())) {
+      destinationType = ref.getElementType();
+    } else if (auto ref =
+                   dyn_cast<sim::ManagedRefType>((*destinationRef).getType())) {
+      destinationType = ref.getElementType();
+    } else {
+      emitError(location)
+          << "$cast destination must be a variable or class property";
+      return failure();
+    }
+    auto targetClass = dyn_cast<sim::ClassHandleType>(destinationType);
+    if (!targetClass) {
+      emitError(location) << "$cast currently requires class-handle operands";
+      return failure();
+    }
+    FailureOr<Value> source =
+        isa<semantic::SVNullLiteralOp>(children[1])
+            ? FailureOr<Value>(sim::SimClassNullOp::create(
+                                   builder, getSemanticLocation(children[1]),
+                                   destinationType)
+                                   .getResult())
+            : lowerExpression(children[1]);
+    if (failed(source) || !isa<sim::ClassHandleType>((*source).getType())) {
+      emitError(location) << "$cast currently requires class-handle operands";
+      return failure();
+    }
+
+    Value casted = sim::SimClassCastOp::create(builder, location,
+                                               destinationType, *source);
+    Value instance = sim::SimClassIsInstanceOp::create(
+        builder, location, builder.getI1Type(), *source,
+        FlatSymbolRefAttr::get(function.getContext(),
+                               targetClass.getClassName().getRootReference()));
+    Value sourceID = sim::SimClassIdOp::create(builder, location,
+                                               builder.getI64Type(), *source);
+    Value nullID = constant(builder.getI64Type(), 0);
+    Value isNull = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, sourceID, nullID);
+    Value succeeded = arith::OrIOp::create(builder, location, instance, isNull);
+    Block *store = addBlock();
+    Block *resume = addBlock();
+    cf::CondBranchOp::create(builder, location, succeeded, store, resume);
+    setCurrent(store);
+    if (isa<sim::RefType>((*destinationRef).getType()))
+      sim::SimRefStoreOp::create(builder, location, casted, *destinationRef);
+    else
+      sim::SimManagedStoreOp::create(builder, location, casted,
+                                     *destinationRef);
+    emitBranch(resume);
+    setCurrent(resume);
+    FailureOr<Type> resultType = getNormalizedSemanticType(op);
+    if (failed(resultType))
+      return failure();
+    return convert(succeeded, *resultType, false, location);
+  }
+
   if (name == "$bits") {
     if (children.size() != 1) {
       emitError(location) << "$bits requires exactly one argument";
@@ -2869,9 +3744,9 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
 
   bool isDimensionCount =
       name == "$dimensions" || name == "$unpacked_dimensions";
-  bool isRangeQuery =
-      name == "$left" || name == "$right" || name == "$low" ||
-      name == "$high" || name == "$increment" || name == "$size";
+  bool isRangeQuery = name == "$left" || name == "$right" || name == "$low" ||
+                      name == "$high" || name == "$increment" ||
+                      name == "$size";
   if (isDimensionCount || isRangeQuery) {
     size_t maximumArguments = isDimensionCount ? 1 : 2;
     if (children.empty() || children.size() > maximumArguments) {
@@ -3025,20 +3900,18 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
                  builder.getIntegerAttr(planeType, unknown))
           .getResult();
     };
-    Value result = createLogicConstant(resultType, APInt(32, 0),
-                                       APInt::getAllOnes(32));
+    Value result =
+        createLogicConstant(resultType, APInt(32, 0), APInt::getAllOnes(32));
     for (auto [zeroBased, value] : llvm::enumerate(values)) {
       uint64_t oneBased = zeroBased + 1;
       if (!canRepresentPositive(oneBased))
         continue;
-      Value expected =
-          createLogicConstant(indexType, APInt(indexWidth, oneBased),
-                              APInt(indexWidth, 0));
+      Value expected = createLogicConstant(
+          indexType, APInt(indexWidth, oneBased), APInt(indexWidth, 0));
       Value matches = sim::SimLogicCompareOp::create(
           builder, location, builder.getI1Type(), sim::CompareKind::CaseEq,
           *logicIndex, expected);
-      Value queryResult =
-          createLogicConstant(resultType, value, APInt(32, 0));
+      Value queryResult = createLogicConstant(resultType, value, APInt(32, 0));
       result = arith::SelectOp::create(builder, location, matches, queryResult,
                                        result);
     }
@@ -3273,16 +4146,15 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
   else if (name == "$info")
     display = DisplayKind{false, true, 10, 0x80000002u, 0, "INFO", false};
   else if (name == "$warning")
-    display =
-        DisplayKind{false, true, 10, 0x80000002u, 0, "WARNING", false};
+    display = DisplayKind{false, true, 10, 0x80000002u, 0, "WARNING", false};
   else if (name == "$error")
     display = DisplayKind{false, true, 10, 0x80000002u, 0, "ERROR", false};
   else if (name == "$fatal")
-    display = DisplayKind{false, true, 10, 0x80000002u,
-                          children.empty() ? 0u : 1u, "FATAL", true};
+    display =
+        DisplayKind{false,   true, 10, 0x80000002u, children.empty() ? 0u : 1u,
+                    "FATAL", true};
   if (display) {
-    size_t firstItem =
-        display->file ? 1 : display->skippedArguments;
+    size_t firstItem = display->file ? 1 : display->skippedArguments;
     if (children.size() < firstItem) {
       emitError(location) << name << " has too few arguments";
       return failure();
@@ -3297,8 +4169,7 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
         verbosity = *lowered;
       }
     }
-    Value descriptor =
-        constant(i32, static_cast<int32_t>(display->descriptor));
+    Value descriptor = constant(i32, static_cast<int32_t>(display->descriptor));
     if (display->file) {
       if (children.empty()) {
         emitError(location) << name << " requires a descriptor";
@@ -3369,18 +4240,18 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     }
     StringAttr lexicalScope = op.getSystemScopePathAttr();
     if (!lexicalScope)
-      lexicalScope = function->getAttrOfType<StringAttr>(
-          sim::metadata::hierarchicalName);
+      lexicalScope =
+          function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
     if (!lexicalScope) {
       op.emitError("display call has no elaborated lexical scope");
       return failure();
     }
     if (display->fatal)
       sim::SimFatalOp::create(builder, location, context, verbosity);
-    sim::SimDisplayOp::create(
-        builder, location, context, descriptor, items, display->newline,
-        display->radix, flags, lexicalScope,
-        op.getSystemLibraryCellAttr(), timeMultiplier);
+    sim::SimDisplayOp::create(builder, location, context, descriptor, items,
+                              display->newline, display->radix, flags,
+                              lexicalScope, op.getSystemLibraryCellAttr(),
+                              timeMultiplier);
     if (display->fatal) {
       if (failed(emitFunctionReturn(location, std::nullopt, false)))
         return failure();
@@ -3573,12 +4444,39 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
       unsupported(op) << " (conversion arity)";
       return failure();
     }
-    FailureOr<Value> input = lowerExpression(children.front());
     FailureOr<Type> target = getNormalizedSemanticType(op);
-    if (failed(input) || failed(target))
+    if (failed(target))
+      return failure();
+    if (isa<semantic::SVNullLiteralOp>(children.front()) &&
+        isa<sim::ClassHandleType>(*target))
+      return sim::SimClassNullOp::create(builder, getSemanticLocation(op),
+                                         *target)
+          .getResult();
+    FailureOr<Value> input = lowerExpression(children.front());
+    if (failed(input))
       return failure();
     return convert(*input, *target, isSignedNode(children.front()),
                    getSemanticLocation(op), isSignedNode(op));
+  }
+  if (isa<semantic::SVCopyClassExpressionOp>(op)) {
+    SmallVector<Operation *> children = getChildren(op);
+    if (children.size() != 1) {
+      unsupported(op) << " (class copy arity)";
+      return failure();
+    }
+    FailureOr<Value> source = lowerExpression(children.front());
+    FailureOr<Type> resultType = getNormalizedSemanticType(op);
+    if (failed(source) || failed(resultType) ||
+        !isa<sim::ClassHandleType>(*resultType))
+      return failure();
+    FailureOr<Value> converted =
+        convert(*source, *resultType, false, getSemanticLocation(op));
+    if (failed(converted))
+      return failure();
+    return sim::SimClassCopyOp::create(
+               builder, getSemanticLocation(op), *resultType,
+               function.getBody().front().getArgument(0), *converted)
+        .getResult();
   }
   if (isa<semantic::SVConcatenationExpressionOp>(op))
     return lowerConcatenation(op);
@@ -3603,6 +4501,8 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
     return lowerInside(inside);
   if (auto call = dyn_cast<semantic::SVCallExpressionOp>(op))
     return lowerCall(call);
+  if (auto construct = dyn_cast<semantic::SVNewClassExpressionOp>(op))
+    return lowerNewClass(construct);
 
   unsupported(op);
   return failure();
@@ -3647,8 +4547,7 @@ FailureOr<Value> UnitLowering::lowerDelayValue(Operation *control) {
     }
   }
   if (isa<semantic::SVRealLiteralOp, semantic::SVTimeLiteralOp>(realLiteral)) {
-    auto spelling =
-        realLiteral->getAttrOfType<StringAttr>("constant_value");
+    auto spelling = realLiteral->getAttrOfType<StringAttr>("constant_value");
     auto quantumAttr =
         function->getAttrOfType<IntegerAttr>(delayQuantumAttrName);
     if (!spelling || !quantumAttr) {
@@ -3673,14 +4572,11 @@ FailureOr<Value> UnitLowering::lowerDelayValue(Operation *control) {
     // Slang has already expressed a time literal in the lexical timeunit.
     // Round the real value to the lexical timeprecision before converting to
     // the design-wide precision, matching TimeScale::apply's std::round rule.
-    double precisionSteps =
-        amount * static_cast<double>(scale / quantum);
+    double precisionSteps = amount * static_cast<double>(scale / quantum);
     double roundedSteps = std::round(precisionSteps);
-    long double ticks =
-        static_cast<long double>(roundedSteps) * quantum;
+    long double ticks = static_cast<long double>(roundedSteps) * quantum;
     if (!std::isfinite(roundedSteps) || ticks < 0 ||
-        ticks > static_cast<long double>(
-                    std::numeric_limits<int64_t>::max())) {
+        ticks > static_cast<long double>(std::numeric_limits<int64_t>::max())) {
       emitError(location)
           << "scaled real delay exceeds the simulation time range";
       return failure();
@@ -3701,10 +4597,9 @@ FailureOr<Value> UnitLowering::lowerDelayValue(Operation *control) {
     bool zero = !parsed->unknown.isZero() ||
                 (isSignedNode(children.front()) && parsed->value.isNegative());
     APInt amount(128, zero ? 0 : parsed->value.getZExtValue());
-    APInt scaled =
-        amount * APInt(128, scaleAttr.getValue().getZExtValue());
-    if (scaled.ugt(APInt(128, static_cast<uint64_t>(
-                                  std::numeric_limits<int64_t>::max())))) {
+    APInt scaled = amount * APInt(128, scaleAttr.getValue().getZExtValue());
+    if (scaled.ugt(APInt(
+            128, static_cast<uint64_t>(std::numeric_limits<int64_t>::max())))) {
       emitError(location) << "scaled delay exceeds the simulation time range";
       return failure();
     }
@@ -3734,19 +4629,17 @@ FailureOr<Value> UnitLowering::lowerDelayValue(Operation *control) {
     return failure();
   Value normalized = *scalar;
   if (auto logic = dyn_cast<sim::LogicType>(normalized.getType())) {
-    Type bitsType =
-        IntegerType::get(function.getContext(), logic.getWidth());
-    Value bits = sim::SimLogicToBitsOp::create(builder, location, bitsType,
-                                               normalized);
-    Value roundTrip = sim::SimLogicFromBitsOp::create(
-        builder, location, logic, bits);
+    Type bitsType = IntegerType::get(function.getContext(), logic.getWidth());
+    Value bits =
+        sim::SimLogicToBitsOp::create(builder, location, bitsType, normalized);
+    Value roundTrip =
+        sim::SimLogicFromBitsOp::create(builder, location, logic, bits);
     Value known = sim::SimLogicCompareOp::create(
         builder, location, builder.getI1Type(), sim::CompareKind::CaseEq,
         normalized, roundTrip);
-    Value zero = arith::ConstantOp::create(
-        builder, location, bitsType, builder.getIntegerAttr(bitsType, 0));
-    normalized =
-        arith::SelectOp::create(builder, location, known, bits, zero);
+    Value zero = arith::ConstantOp::create(builder, location, bitsType,
+                                           builder.getIntegerAttr(bitsType, 0));
+    normalized = arith::SelectOp::create(builder, location, known, bits, zero);
   }
   auto integer = dyn_cast<IntegerType>(normalized.getType());
   if (!integer || !integer.isSignless()) {
@@ -3754,17 +4647,15 @@ FailureOr<Value> UnitLowering::lowerDelayValue(Operation *control) {
     return failure();
   }
   if (isSignedNode(children.front())) {
-    Value zero = arith::ConstantOp::create(
-        builder, location, integer, builder.getIntegerAttr(integer, 0));
+    Value zero = arith::ConstantOp::create(builder, location, integer,
+                                           builder.getIntegerAttr(integer, 0));
     Value nonnegative = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::sge, normalized, zero);
-    normalized =
-        arith::SelectOp::create(builder, location, nonnegative, normalized,
-                                zero);
+    normalized = arith::SelectOp::create(builder, location, nonnegative,
+                                         normalized, zero);
   }
   if (integer.getWidth() > 64) {
-    emitError(location)
-        << "dynamic delay wider than 64 bits is not executable";
+    emitError(location) << "dynamic delay wider than 64 bits is not executable";
     return failure();
   }
   FailureOr<Value> normalized64 =
@@ -3778,34 +4669,32 @@ FailureOr<Value> UnitLowering::lowerDelayValue(Operation *control) {
   uint64_t scale = scaleAttr.getValue().getZExtValue();
   uint64_t maximumInput =
       static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) / scale;
-  Value maximum = arith::ConstantOp::create(
-      builder, location, builder.getI64Type(),
-      builder.getI64IntegerAttr(maximumInput));
+  Value maximum =
+      arith::ConstantOp::create(builder, location, builder.getI64Type(),
+                                builder.getI64IntegerAttr(maximumInput));
   Value inRange = arith::CmpIOp::create(
       builder, location, arith::CmpIPredicate::ule, *normalized64, maximum);
   Value checked = arith::SelectOp::create(builder, location, inRange,
                                           *normalized64, maximum);
-  return sim::SimTimeScaleOp::create(
-             builder, location, sim::TimeType::get(function.getContext()),
-             checked, scaleAttr,
-             /*is_signed=*/builder.getBoolAttr(false))
+  return sim::SimTimeScaleOp::create(builder, location,
+                                     sim::TimeType::get(function.getContext()),
+                                     checked, scaleAttr,
+                                     /*is_signed=*/builder.getBoolAttr(false))
       .getResult();
 }
 
-LogicalResult
-UnitLowering::emitEventSuspend(Operation *control, Block *continuation,
-                               ValueRange continuationOperands) {
+LogicalResult UnitLowering::emitEventSuspend(Operation *control,
+                                             Block *continuation,
+                                             ValueRange continuationOperands) {
   Location location = getSemanticLocation(control);
-  auto emitDirect = [&](Value watched, sim::EdgeKind edge,
-                        Block *successor, ValueRange operands) {
+  auto emitDirect = [&](Value watched, sim::EdgeKind edge, Block *successor,
+                        ValueRange operands) {
     if (isa<sim::EventType>(watched.getType()))
-      sim::SimSuspendEventOp::create(
-          builder, location, watched, operands, sim::ContinuationSiteAttr{},
-          successor);
+      sim::SimSuspendEventOp::create(builder, location, watched, operands,
+                                     sim::ContinuationSiteAttr{}, successor);
     else if (edge == sim::EdgeKind::Change)
-      sim::SimSuspendChangeOp::create(
-          builder, location, watched, operands, sim::ContinuationSiteAttr{},
-          successor);
+      sim::SimSuspendChangeOp::create(builder, location, watched, operands,
+                                      sim::ContinuationSiteAttr{}, successor);
     else
       sim::SimSuspendEdgeOp::create(builder, location, edge, watched, operands,
                                     sim::ContinuationSiteAttr{}, successor);
@@ -3815,15 +4704,13 @@ UnitLowering::emitEventSuspend(Operation *control, Block *continuation,
     if (failed(value))
       return failure();
     if (isa<sim::EventType>((*value).getType()))
-      return arith::ConstantOp::create(
-                 builder, location, builder.getI1Type(),
-                 builder.getBoolAttr(false))
+      return arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                       builder.getBoolAttr(false))
           .getResult();
     return toPackedScalar(*value, getSemanticLocation(expression));
   };
   auto emitObserved =
-      [&](ArrayRef<semantic::SVSignalEventControlOp> events)
-      -> LogicalResult {
+      [&](ArrayRef<semantic::SVSignalEventControlOp> events) -> LogicalResult {
     SmallVector<Value> primaries;
     SmallVector<Value> initials;
     SmallVector<Value> conditions;
@@ -3843,8 +4730,7 @@ UnitLowering::emitEventSuspend(Operation *control, Block *continuation,
       primaries.push_back(*primary);
       initials.push_back(*initial);
       auto edge = static_cast<int32_t>(event.getEdgeKind());
-      FailureOr<Type> primaryType =
-          getNormalizedSemanticType(children.front());
+      FailureOr<Type> primaryType = getNormalizedSemanticType(children.front());
       if (succeeded(primaryType) && isa<sim::EventType>(*primaryType))
         edge = static_cast<int32_t>(sim::EdgeKind::Change);
       edges.push_back(edge);
@@ -3875,14 +4761,13 @@ UnitLowering::emitEventSuspend(Operation *control, Block *continuation,
       unsupported(event) << " (event expression inventory)";
       return failure();
     }
-    FailureOr<Type> watchedType =
-        getNormalizedSemanticType(children.front());
+    FailureOr<Type> watchedType = getNormalizedSemanticType(children.front());
     if (failed(watchedType))
       return failure();
-    bool computed = !isAddressableExpression(children.front()) ||
-                    (event.getHasIff() &&
-                     (!isAddressableExpression(children[1]) ||
-                      isa<sim::EventType>(*watchedType)));
+    bool computed =
+        !isAddressableExpression(children.front()) ||
+        (event.getHasIff() && (!isAddressableExpression(children[1]) ||
+                               isa<sim::EventType>(*watchedType)));
     if (computed)
       return emitObserved(ArrayRef<semantic::SVSignalEventControlOp>(event));
     FailureOr<Value> handle =
@@ -3903,9 +4788,9 @@ UnitLowering::emitEventSuspend(Operation *control, Block *continuation,
       unsupported(event) << " (iff requires signal handles)";
       return failure();
     }
-    sim::SimSuspendEdgeIffOp::create(
-        builder, location, edge, *handle, *condition, continuationOperands,
-        sim::ContinuationSiteAttr{}, continuation);
+    sim::SimSuspendEdgeIffOp::create(builder, location, edge, *handle,
+                                     *condition, continuationOperands,
+                                     sim::ContinuationSiteAttr{}, continuation);
     return success();
   }
 
@@ -3928,8 +4813,8 @@ UnitLowering::emitEventSuspend(Operation *control, Block *continuation,
       unsupported(event) << " (event expression inventory)";
       return failure();
     }
-    computed |= event.getHasIff() ||
-                !isAddressableExpression(eventChildren.front());
+    computed |=
+        event.getHasIff() || !isAddressableExpression(eventChildren.front());
     FailureOr<Type> watchedType =
         getNormalizedSemanticType(eventChildren.front());
     if (failed(watchedType))
@@ -3968,8 +4853,7 @@ UnitLowering::emitEventSuspend(Operation *control, Block *continuation,
 }
 
 LogicalResult
-UnitLowering::emitRepeatedEventSuspend(Operation *control,
-                                       Block *continuation,
+UnitLowering::emitRepeatedEventSuspend(Operation *control, Block *continuation,
                                        ValueRange continuationOperands) {
   Location location = getSemanticLocation(control);
   SmallVector<Operation *> children = getChildren(control);
@@ -3989,8 +4873,8 @@ UnitLowering::emitRepeatedEventSuspend(Operation *control,
       convert(*scalar, countType, isSignedNode(children[0]), location);
   if (failed(normalized))
     return failure();
-  Value zero = arith::ConstantOp::create(
-      builder, location, countType, builder.getI64IntegerAttr(0));
+  Value zero = arith::ConstantOp::create(builder, location, countType,
+                                         builder.getI64IntegerAttr(0));
   Value positive = arith::CmpIOp::create(
       builder, location, arith::CmpIPredicate::sgt, *normalized, zero);
   Block *wait = addBlock();
@@ -4010,19 +4894,18 @@ UnitLowering::emitRepeatedEventSuspend(Operation *control,
   if (failed(emitEventSuspend(children[1], resume, wait->getArguments())))
     return failure();
   setCurrent(resume);
-  Value one = arith::ConstantOp::create(
-      builder, location, countType, builder.getI64IntegerAttr(1));
-  Value resumeZero = arith::ConstantOp::create(
-      builder, location, countType, builder.getI64IntegerAttr(0));
-  Value remaining = arith::SubIOp::create(
-      builder, location, resume->getArgument(0), one);
+  Value one = arith::ConstantOp::create(builder, location, countType,
+                                        builder.getI64IntegerAttr(1));
+  Value resumeZero = arith::ConstantOp::create(builder, location, countType,
+                                               builder.getI64IntegerAttr(0));
+  Value remaining =
+      arith::SubIOp::create(builder, location, resume->getArgument(0), one);
   Value more = arith::CmpIOp::create(
       builder, location, arith::CmpIPredicate::sgt, remaining, resumeZero);
   SmallVector<Value> nextWaitOperands{remaining};
   llvm::append_range(nextWaitOperands, resume->getArguments().drop_front());
-  cf::CondBranchOp::create(builder, location, more, wait,
-                           nextWaitOperands, continuation,
-                           resume->getArguments().drop_front());
+  cf::CondBranchOp::create(builder, location, more, wait, nextWaitOperands,
+                           continuation, resume->getArguments().drop_front());
   setCurrent(continuation);
   return success();
 }
@@ -4048,16 +4931,17 @@ LogicalResult UnitLowering::lowerTiming(Operation *control,
       return failure();
     Block *statementEnd = current;
     if (dependencies.empty()) {
-      unsupported(control) << " (@* controlled statement has no readable dependency)";
+      unsupported(control)
+          << " (@* controlled statement has no readable dependency)";
       return failure();
     }
     setCurrent(waitBlock);
-    SmallVector<int32_t> edges(
-        dependencies.size(), static_cast<int32_t>(sim::EdgeKind::Change));
+    SmallVector<int32_t> edges(dependencies.size(),
+                               static_cast<int32_t>(sim::EdgeKind::Change));
     if (dependencies.size() == 1)
-      sim::SimSuspendChangeOp::create(
-          builder, location, dependencies.front(), ValueRange{},
-          sim::ContinuationSiteAttr{}, continuation);
+      sim::SimSuspendChangeOp::create(builder, location, dependencies.front(),
+                                      ValueRange{}, sim::ContinuationSiteAttr{},
+                                      continuation);
     else
       sim::SimSuspendAnyOp::create(builder, location,
                                    dependencies.getArrayRef(),
@@ -4131,22 +5015,21 @@ LogicalResult UnitLowering::lowerWait(semantic::SVWaitStatementOp op) {
   if (dependencies.empty()) {
     std::optional<bool> truth = foldConstantTruth(*condition);
     if (!truth) {
-      unsupported(op) << " (computed wait condition has no readable dependency)";
+      unsupported(op)
+          << " (computed wait condition has no readable dependency)";
       return failure();
     }
     emitBranch(*truth ? bodyBlock : suspendBlock);
     if (!*truth) {
       setCurrent(suspendBlock);
-      sim::SimSuspendForeverOp::create(
-          builder, location, ValueRange{}, sim::ContinuationSiteAttr{},
-          bodyBlock);
+      sim::SimSuspendForeverOp::create(builder, location, ValueRange{},
+                                       sim::ContinuationSiteAttr{}, bodyBlock);
     } else
       suspendBlock->erase();
     setCurrent(bodyBlock);
     return lowerStatement(children[1]);
   }
-  if (dependencies.size() != 1 ||
-      !isAddressableExpression(children[0])) {
+  if (dependencies.size() != 1 || !isAddressableExpression(children[0])) {
     if (!children[0]->hasAttr("obelisk_sim.observer")) {
       unsupported(op) << " (computed wait condition requires an observer)";
       return failure();
@@ -4191,8 +5074,7 @@ UnitLowering::lowerEventTrigger(semantic::SVEventTriggerStatementOp op) {
     return failure();
   }
   if (op.getHasTimingControl() && !op.getIsNonblocking()) {
-    emitError(location)
-        << "a timed named-event trigger must be nonblocking";
+    emitError(location) << "a timed named-event trigger must be nonblocking";
     return failure();
   }
   FailureOr<Value> event = lowerExpression(children.front());
@@ -4209,15 +5091,14 @@ UnitLowering::lowerEventTrigger(semantic::SVEventTriggerStatementOp op) {
       return failure();
     delay = *loweredDelay;
   }
-  sim::SimEventTriggerOp::create(
-      builder, location, *event, delay,
-      builder.getBoolAttr(op.getIsNonblocking()), sim::EventSiteAttr{});
+  sim::SimEventTriggerOp::create(builder, location, *event, delay,
+                                 builder.getBoolAttr(op.getIsNonblocking()),
+                                 sim::EventSiteAttr{});
   return success();
 }
 
 LogicalResult
-UnitLowering::lowerQualifiedConditional(
-    semantic::SVConditionalStatementOp op) {
+UnitLowering::lowerQualifiedConditional(semantic::SVConditionalStatementOp op) {
   struct Branch {
     SmallVector<Operation *> expressions;
     SmallVector<Operation *> patterns;
@@ -4259,8 +5140,7 @@ UnitLowering::lowerQualifiedConditional(
     if (!cursor.getHasElse())
       break;
     Operation *otherwise = children[conditionChildren + 1];
-    if (auto nested =
-            dyn_cast<semantic::SVConditionalStatementOp>(otherwise);
+    if (auto nested = dyn_cast<semantic::SVConditionalStatementOp>(otherwise);
         nested &&
         nested.getCheckKind() == semantic::SVUniquePriorityCheck::None) {
       cursor = nested;
@@ -4270,8 +5150,7 @@ UnitLowering::lowerQualifiedConditional(
     break;
   }
 
-  auto evaluateBranch = [&](Branch &branch,
-                            Block *matchedDestination,
+  auto evaluateBranch = [&](Branch &branch, Block *matchedDestination,
                             Block *unmatchedDestination) -> LogicalResult {
     // Hoist this branch's capture storage ahead of its short-circuit CFG.
     // The allocation still executes once per dynamic statement execution, but
@@ -4312,23 +5191,23 @@ UnitLowering::lowerQualifiedConditional(
         return failure();
       FailureOr<Value> matched;
       if (branch.hasPattern[index])
-        matched = lowerPattern(*value, branch.patterns[index],
-                               semantic::SVCaseCondition::Normal,
-                               &branch.captures);
+        matched =
+            lowerPattern(*value, branch.patterns[index],
+                         semantic::SVCaseCondition::Normal, &branch.captures);
       else
         matched = truthValue(*value, getSemanticLocation(expression));
       if (failed(matched))
         return failure();
       if (index + 1 == branch.expressions.size()) {
-        cf::CondBranchOp::create(
-            builder, getSemanticLocation(expression), *matched,
-            matchedDestination, ValueRange{trueValue}, unmatchedDestination,
-            ValueRange{falseValue});
+        cf::CondBranchOp::create(builder, getSemanticLocation(expression),
+                                 *matched, matchedDestination,
+                                 ValueRange{trueValue}, unmatchedDestination,
+                                 ValueRange{falseValue});
       } else {
         Block *nextCondition = addBlock();
-        cf::CondBranchOp::create(
-            builder, getSemanticLocation(expression), *matched, nextCondition,
-            ValueRange{}, unmatchedDestination, ValueRange{falseValue});
+        cf::CondBranchOp::create(builder, getSemanticLocation(expression),
+                                 *matched, nextCondition, ValueRange{},
+                                 unmatchedDestination, ValueRange{falseValue});
         setCurrent(nextCondition);
       }
     }
@@ -4365,10 +5244,10 @@ UnitLowering::lowerQualifiedConditional(
   }
 
   auto i32 = builder.getI32Type();
-  Value matchCount = arith::ConstantOp::create(
-      builder, location, i32, builder.getI32IntegerAttr(0));
-  Value selected = arith::ConstantOp::create(
-      builder, location, i32, builder.getI32IntegerAttr(-1));
+  Value matchCount = arith::ConstantOp::create(builder, location, i32,
+                                               builder.getI32IntegerAttr(0));
+  Value selected = arith::ConstantOp::create(builder, location, i32,
+                                             builder.getI32IntegerAttr(-1));
   for (auto [branchIndex, branch] : llvm::enumerate(branches)) {
     Block *groupDone = addBlock();
     groupDone->addArgument(builder.getI1Type(), location);
@@ -4376,14 +5255,14 @@ UnitLowering::lowerQualifiedConditional(
       return failure();
     setCurrent(groupDone);
     Value groupMatched = groupDone->getArgument(0);
-    Value one = arith::ConstantOp::create(
-        builder, location, i32, builder.getI32IntegerAttr(1));
+    Value one = arith::ConstantOp::create(builder, location, i32,
+                                          builder.getI32IntegerAttr(1));
     Value incremented =
         arith::AddIOp::create(builder, location, matchCount, one);
     matchCount = arith::SelectOp::create(builder, location, groupMatched,
                                          incremented, matchCount);
-    Value zero = arith::ConstantOp::create(
-        builder, location, i32, builder.getI32IntegerAttr(0));
+    Value zero = arith::ConstantOp::create(builder, location, i32,
+                                           builder.getI32IntegerAttr(0));
     Value noSelection = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::slt, selected, zero);
     Value choose =
@@ -4403,8 +5282,8 @@ UnitLowering::lowerQualifiedConditional(
       selected = nextBranch->getArgument(1);
     }
   }
-  Value one = arith::ConstantOp::create(
-      builder, location, i32, builder.getI32IntegerAttr(1));
+  Value one = arith::ConstantOp::create(builder, location, i32,
+                                        builder.getI32IntegerAttr(1));
   Value overlap = arith::CmpIOp::create(
       builder, location, arith::CmpIPredicate::sgt, matchCount, one);
   Block *overlapWarning = addBlock();
@@ -4413,14 +5292,13 @@ UnitLowering::lowerQualifiedConditional(
   cf::CondBranchOp::create(builder, location, overlap, overlapWarning,
                            ValueRange{}, checkNoMatch, ValueRange{});
   setCurrent(overlapWarning);
-  emitQualifierWarning(location, op.getCheckKind(), "if",
-                       "multiple matches");
+  emitQualifierWarning(location, op.getCheckKind(), "if", "multiple matches");
   emitBranch(dispatch);
   setCurrent(checkNoMatch);
   if (op.getCheckKind() == semantic::SVUniquePriorityCheck::Unique &&
       !finalElse) {
-    Value zero = arith::ConstantOp::create(
-        builder, location, i32, builder.getI32IntegerAttr(0));
+    Value zero = arith::ConstantOp::create(builder, location, i32,
+                                           builder.getI32IntegerAttr(0));
     Value noMatch = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq, matchCount, zero);
     Block *noMatchWarning = addBlock();
@@ -4485,8 +5363,8 @@ UnitLowering::lowerConditional(semantic::SVConditionalStatementOp op) {
   Block *elseBlock = addBlock();
   Block *mergeBlock = addBlock();
   size_t childIndex = 0;
-  for (size_t conditionIndex = 0;
-       conditionIndex < op.getConditionCount(); ++conditionIndex) {
+  for (size_t conditionIndex = 0; conditionIndex < op.getConditionCount();
+       ++conditionIndex) {
     Operation *expression = conditions[childIndex++];
     FailureOr<Value> conditionValue = lowerExpression(expression);
     if (failed(conditionValue))
@@ -4525,9 +5403,9 @@ UnitLowering::lowerConditional(semantic::SVConditionalStatementOp op) {
   return success();
 }
 
-FailureOr<Value> UnitLowering::lowerPattern(
-    Value input, Operation *pattern, semantic::SVCaseCondition condition,
-    llvm::StringMap<Value> *captures) {
+FailureOr<Value> UnitLowering::lowerPattern(Value input, Operation *pattern,
+                                            semantic::SVCaseCondition condition,
+                                            llvm::StringMap<Value> *captures) {
   Location location = getSemanticLocation(pattern);
   auto trueValue = [&]() -> Value {
     return arith::ConstantOp::create(builder, location, builder.getI1Type(),
@@ -4616,10 +5494,8 @@ FailureOr<Value> UnitLowering::lowerPattern(
       emitError(location) << "malformed structure pattern inventory";
       return failure();
     }
-    if (!isa<sim::PackedStructType, sim::UnpackedStructType>(
-            input.getType())) {
-      emitError(location)
-          << "structure pattern input is not a fixed struct";
+    if (!isa<sim::PackedStructType, sim::UnpackedStructType>(input.getType())) {
+      emitError(location) << "structure pattern input is not a fixed struct";
       return failure();
     }
     Value matched = trueValue();
@@ -4637,8 +5513,7 @@ FailureOr<Value> UnitLowering::lowerPattern(
       }
       Value field = sim::SimAggregateExtractOp::create(
           builder, getSemanticLocation(child), fieldType, input, ordinal);
-      FailureOr<Value> nested =
-          lowerPattern(field, child, condition, captures);
+      FailureOr<Value> nested = lowerPattern(field, child, condition, captures);
       if (failed(nested))
         return failure();
       matched = arith::AndIOp::create(builder, getSemanticLocation(child),
@@ -4675,11 +5550,10 @@ void UnitLowering::emitQualifierWarning(
     line = fileLocation.getLine();
     column = fileLocation.getColumn();
   }
-  std::string message =
-      (Twine(file) + ":" + Twine(line) + ":" + Twine(column) +
-       ": warning: " + qualifierName + " " + statementKind +
-       " violation: " + reason)
-          .str();
+  std::string message = (Twine(file) + ":" + Twine(line) + ":" + Twine(column) +
+                         ": warning: " + qualifierName + " " + statementKind +
+                         " violation: " + reason)
+                            .str();
   Value text =
       sim::SimBytesConstantOp::create(builder, location, message).getResult();
   Value descriptor = arith::ConstantOp::create(
@@ -4695,9 +5569,10 @@ void UnitLowering::emitQualifierWarning(
       multiplier);
 }
 
-FailureOr<Value> UnitLowering::lowerCaseLabel(
-    Value selector, Type selectorType, Operation *selectorNode,
-    Operation *label, semantic::SVCaseCondition condition) {
+FailureOr<Value>
+UnitLowering::lowerCaseLabel(Value selector, Type selectorType,
+                             Operation *selectorNode, Operation *label,
+                             semantic::SVCaseCondition condition) {
   Location location = getSemanticLocation(label);
   bool selectorLogic =
       isa<sim::LogicType>(sim::getPackedScalarType(selectorType));
@@ -4708,17 +5583,15 @@ FailureOr<Value> UnitLowering::lowerCaseLabel(
         convert(candidate, selectorType, false, location);
     if (failed(normalized))
       return failure();
-    FailureOr<Value> scalarCandidate =
-        toPackedScalar(*normalized, location);
+    FailureOr<Value> scalarCandidate = toPackedScalar(*normalized, location);
     FailureOr<Value> scalarSelector = toPackedScalar(selector, location);
     if (failed(scalarCandidate) || failed(scalarSelector) ||
         (*scalarCandidate).getType() != (*scalarSelector).getType())
       return failure();
     if (selectorLogic) {
-      bool integerResult =
-          logicKind == sim::CompareKind::CaseEq ||
-          logicKind == sim::CompareKind::CaseZEq ||
-          logicKind == sim::CompareKind::CaseXZEq;
+      bool integerResult = logicKind == sim::CompareKind::CaseEq ||
+                           logicKind == sim::CompareKind::CaseZEq ||
+                           logicKind == sim::CompareKind::CaseXZEq;
       return sim::SimLogicCompareOp::create(
                  builder, location,
                  integerResult
@@ -4747,8 +5620,7 @@ FailureOr<Value> UnitLowering::lowerCaseLabel(
   auto combineLogic = [&](Value lhs, Value rhs) -> Value {
     if (selectorLogic)
       return sim::SimLogicLogicalOp::create(
-          builder, location,
-          sim::LogicType::get(function.getContext(), 1),
+          builder, location, sim::LogicType::get(function.getContext(), 1),
           sim::LogicalKind::And, lhs, rhs);
     return arith::AndIOp::create(builder, location, lhs, rhs);
   };
@@ -4794,31 +5666,27 @@ FailureOr<Value> UnitLowering::lowerCaseLabel(
     FailureOr<Value> candidate = lowerExpression(label);
     if (failed(candidate))
       return failure();
-    if (auto array =
-            dyn_cast<sim::UnpackedArrayType>((*candidate).getType())) {
+    if (auto array = dyn_cast<sim::UnpackedArrayType>((*candidate).getType())) {
       unsigned count = sim::getAggregateNumElements(array);
       for (unsigned index = 0; index < count; ++index) {
         Value element = sim::SimAggregateExtractOp::create(
             builder, location, array.getElementType(), *candidate, index);
-        FailureOr<Value> equal =
-            compareValue(element, sim::CompareKind::WildEq,
-                         arith::CmpIPredicate::eq);
+        FailureOr<Value> equal = compareValue(element, sim::CompareKind::WildEq,
+                                              arith::CmpIPredicate::eq);
         if (failed(equal))
           return failure();
         if (!result)
           result = *equal;
         else if (selectorLogic)
           result = sim::SimLogicLogicalOp::create(
-              builder, location,
-              sim::LogicType::get(function.getContext(), 1),
+              builder, location, sim::LogicType::get(function.getContext(), 1),
               sim::LogicalKind::Or, result, *equal);
         else
           result = arith::OrIOp::create(builder, location, result, *equal);
       }
     } else {
-      FailureOr<Value> equal =
-          compareValue(*candidate, sim::CompareKind::WildEq,
-                       arith::CmpIPredicate::eq);
+      FailureOr<Value> equal = compareValue(
+          *candidate, sim::CompareKind::WildEq, arith::CmpIPredicate::eq);
       if (failed(equal))
         return failure();
       result = *equal;
@@ -4923,10 +5791,10 @@ LogicalResult UnitLowering::lowerCase(semantic::SVCaseStatementOp op) {
   }
 
   auto i32 = builder.getI32Type();
-  Value matchCount = arith::ConstantOp::create(
-      builder, location, i32, builder.getI32IntegerAttr(0));
-  Value selected = arith::ConstantOp::create(
-      builder, location, i32, builder.getI32IntegerAttr(-1));
+  Value matchCount = arith::ConstantOp::create(builder, location, i32,
+                                               builder.getI32IntegerAttr(0));
+  Value selected = arith::ConstantOp::create(builder, location, i32,
+                                             builder.getI32IntegerAttr(-1));
   size_t nextLabel = 0;
   for (size_t item = 0; item < itemCount; ++item) {
     size_t labelCount = static_cast<size_t>(labelCounts[item]);
@@ -4958,22 +5826,22 @@ LogicalResult UnitLowering::lowerCase(semantic::SVCaseStatementOp op) {
     }
     setCurrent(groupDone);
     Value groupMatched = groupDone->getArgument(0);
-    Value one = arith::ConstantOp::create(
-        builder, location, i32, builder.getI32IntegerAttr(1));
+    Value one = arith::ConstantOp::create(builder, location, i32,
+                                          builder.getI32IntegerAttr(1));
     Value incremented =
         arith::AddIOp::create(builder, location, matchCount, one);
     matchCount = arith::SelectOp::create(builder, location, groupMatched,
                                          incremented, matchCount);
-    Value zero = arith::ConstantOp::create(
-        builder, location, i32, builder.getI32IntegerAttr(0));
+    Value zero = arith::ConstantOp::create(builder, location, i32,
+                                           builder.getI32IntegerAttr(0));
     Value noSelection = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::slt, selected, zero);
     Value selectThis =
         arith::AndIOp::create(builder, location, groupMatched, noSelection);
     Value itemIndex = arith::ConstantOp::create(
         builder, location, i32, builder.getI32IntegerAttr(item));
-    selected = arith::SelectOp::create(builder, location, selectThis,
-                                       itemIndex, selected);
+    selected = arith::SelectOp::create(builder, location, selectThis, itemIndex,
+                                       selected);
     if (item + 1 != itemCount) {
       Block *nextGroup = addBlock();
       nextGroup->addArgument(i32, location);
@@ -4986,8 +5854,8 @@ LogicalResult UnitLowering::lowerCase(semantic::SVCaseStatementOp op) {
     }
   }
 
-  Value one = arith::ConstantOp::create(
-      builder, location, i32, builder.getI32IntegerAttr(1));
+  Value one = arith::ConstantOp::create(builder, location, i32,
+                                        builder.getI32IntegerAttr(1));
   Value overlap = arith::CmpIOp::create(
       builder, location, arith::CmpIPredicate::sgt, matchCount, one);
   Block *overlapWarning = addBlock();
@@ -4996,14 +5864,13 @@ LogicalResult UnitLowering::lowerCase(semantic::SVCaseStatementOp op) {
   cf::CondBranchOp::create(builder, location, overlap, overlapWarning,
                            ValueRange{}, checkNoMatch, ValueRange{});
   setCurrent(overlapWarning);
-  emitQualifierWarning(location, op.getCheckKind(), "case",
-                       "multiple matches");
+  emitQualifierWarning(location, op.getCheckKind(), "case", "multiple matches");
   emitBranch(dispatch);
   setCurrent(checkNoMatch);
   if (op.getCheckKind() == semantic::SVUniquePriorityCheck::Unique &&
       !hasDefault) {
-    Value zero = arith::ConstantOp::create(
-        builder, location, i32, builder.getI32IntegerAttr(0));
+    Value zero = arith::ConstantOp::create(builder, location, i32,
+                                           builder.getI32IntegerAttr(0));
     Value noMatch = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq, matchCount, zero);
     Block *noMatchWarning = addBlock();
@@ -5084,9 +5951,8 @@ UnitLowering::lowerPatternCase(semantic::SVPatternCaseStatementOp op) {
   if (!inspectAll) {
     for (size_t item = 0; item < itemCount; ++item) {
       llvm::StringMap<Value> captures;
-      FailureOr<Value> patternMatched =
-          lowerPattern(*selector, patterns[item], op.getConditionKind(),
-                       &captures);
+      FailureOr<Value> patternMatched = lowerPattern(
+          *selector, patterns[item], op.getConditionKind(), &captures);
       if (failed(patternMatched))
         return failure();
       Block *bodyBlock = addBlock();
@@ -5131,15 +5997,14 @@ UnitLowering::lowerPatternCase(semantic::SVPatternCaseStatementOp op) {
   }
 
   auto i32 = builder.getI32Type();
-  Value matchCount = arith::ConstantOp::create(
-      builder, location, i32, builder.getI32IntegerAttr(0));
-  Value selected = arith::ConstantOp::create(
-      builder, location, i32, builder.getI32IntegerAttr(-1));
+  Value matchCount = arith::ConstantOp::create(builder, location, i32,
+                                               builder.getI32IntegerAttr(0));
+  Value selected = arith::ConstantOp::create(builder, location, i32,
+                                             builder.getI32IntegerAttr(-1));
   SmallVector<llvm::StringMap<Value>> itemCaptures(itemCount);
   for (size_t item = 0; item < itemCount; ++item) {
-    FailureOr<Value> patternMatched =
-        lowerPattern(*selector, patterns[item], op.getConditionKind(),
-                     &itemCaptures[item]);
+    FailureOr<Value> patternMatched = lowerPattern(
+        *selector, patterns[item], op.getConditionKind(), &itemCaptures[item]);
     if (failed(patternMatched))
       return failure();
     Block *groupDone = addBlock();
@@ -5167,22 +6032,22 @@ UnitLowering::lowerPatternCase(semantic::SVPatternCaseStatementOp op) {
     }
     setCurrent(groupDone);
     Value groupMatched = groupDone->getArgument(0);
-    Value one = arith::ConstantOp::create(
-        builder, location, i32, builder.getI32IntegerAttr(1));
+    Value one = arith::ConstantOp::create(builder, location, i32,
+                                          builder.getI32IntegerAttr(1));
     Value incremented =
         arith::AddIOp::create(builder, location, matchCount, one);
     matchCount = arith::SelectOp::create(builder, location, groupMatched,
                                          incremented, matchCount);
-    Value zero = arith::ConstantOp::create(
-        builder, location, i32, builder.getI32IntegerAttr(0));
+    Value zero = arith::ConstantOp::create(builder, location, i32,
+                                           builder.getI32IntegerAttr(0));
     Value noSelection = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::slt, selected, zero);
     Value selectThis =
         arith::AndIOp::create(builder, location, groupMatched, noSelection);
     Value itemIndex = arith::ConstantOp::create(
         builder, location, i32, builder.getI32IntegerAttr(item));
-    selected = arith::SelectOp::create(builder, location, selectThis,
-                                       itemIndex, selected);
+    selected = arith::SelectOp::create(builder, location, selectThis, itemIndex,
+                                       selected);
     if (item + 1 != itemCount) {
       Block *nextGroup = addBlock();
       nextGroup->addArgument(i32, location);
@@ -5194,8 +6059,8 @@ UnitLowering::lowerPatternCase(semantic::SVPatternCaseStatementOp op) {
       selected = nextGroup->getArgument(1);
     }
   }
-  Value one = arith::ConstantOp::create(
-      builder, location, i32, builder.getI32IntegerAttr(1));
+  Value one = arith::ConstantOp::create(builder, location, i32,
+                                        builder.getI32IntegerAttr(1));
   Value overlap = arith::CmpIOp::create(
       builder, location, arith::CmpIPredicate::sgt, matchCount, one);
   Block *overlapWarning = addBlock();
@@ -5204,14 +6069,13 @@ UnitLowering::lowerPatternCase(semantic::SVPatternCaseStatementOp op) {
   cf::CondBranchOp::create(builder, location, overlap, overlapWarning,
                            ValueRange{}, checkNoMatch, ValueRange{});
   setCurrent(overlapWarning);
-  emitQualifierWarning(location, op.getCheckKind(), "case",
-                       "multiple matches");
+  emitQualifierWarning(location, op.getCheckKind(), "case", "multiple matches");
   emitBranch(dispatch);
   setCurrent(checkNoMatch);
   if (op.getCheckKind() == semantic::SVUniquePriorityCheck::Unique &&
       !op.getHasDefault()) {
-    Value zero = arith::ConstantOp::create(
-        builder, location, i32, builder.getI32IntegerAttr(0));
+    Value zero = arith::ConstantOp::create(builder, location, i32,
+                                           builder.getI32IntegerAttr(0));
     Value noMatch = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq, matchCount, zero);
     Block *noMatchWarning = addBlock();
@@ -5268,8 +6132,7 @@ LogicalResult UnitLowering::lowerWhile(Operation *op) {
     return failure();
   cf::CondBranchOp::create(builder, location, *condition, bodyBlock,
                            ValueRange{}, exitBlock, ValueRange{});
-  loopTargets.push_back(
-      {exitBlock, conditionBlock, {}, controlScopes.size()});
+  loopTargets.push_back({exitBlock, conditionBlock, {}, controlScopes.size()});
   setCurrent(bodyBlock);
   if (failed(lowerStatement(children[1])))
     return failure();
@@ -5293,8 +6156,7 @@ LogicalResult UnitLowering::lowerDoWhile(Operation *op) {
   Block *exitBlock = addBlock();
   emitBranch(bodyBlock);
 
-  loopTargets.push_back(
-      {exitBlock, conditionBlock, {}, controlScopes.size()});
+  loopTargets.push_back({exitBlock, conditionBlock, {}, controlScopes.size()});
   setCurrent(bodyBlock);
   if (failed(lowerStatement(children[1])))
     return failure();
@@ -5314,8 +6176,7 @@ LogicalResult UnitLowering::lowerDoWhile(Operation *op) {
   return success();
 }
 
-LogicalResult
-UnitLowering::lowerFor(semantic::SVForLoopStatementOp op) {
+LogicalResult UnitLowering::lowerFor(semantic::SVForLoopStatementOp op) {
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
   uint64_t initializerCount = op.getInitializerCount();
@@ -5332,8 +6193,7 @@ UnitLowering::lowerFor(semantic::SVForLoopStatementOp op) {
   size_t stepSize = static_cast<size_t>(stepCount);
 
   ArrayRef<Operation *> inventory(children);
-  ArrayRef<Operation *> initializers =
-      inventory.take_front(initializerSize);
+  ArrayRef<Operation *> initializers = inventory.take_front(initializerSize);
   Operation *condition =
       op.getHasCondition() ? children[initializerSize] : nullptr;
   ArrayRef<Operation *> steps =
@@ -5362,8 +6222,8 @@ UnitLowering::lowerFor(semantic::SVForLoopStatementOp op) {
     FailureOr<Value> truth = truthValue(*conditionValue, location);
     if (failed(truth))
       return failure();
-    cf::CondBranchOp::create(builder, location, *truth, bodyBlock,
-                             ValueRange{}, exitBlock, ValueRange{});
+    cf::CondBranchOp::create(builder, location, *truth, bodyBlock, ValueRange{},
+                             exitBlock, ValueRange{});
   } else {
     cf::BranchOp::create(builder, location, bodyBlock);
   }
@@ -5425,9 +6285,8 @@ UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
   for (Attribute attribute : op.getLoopDimensions()) {
     auto dimension = dyn_cast<DictionaryAttr>(attribute);
     auto hasIterator =
-        dimension
-            ? dimension.getAs<BoolAttr>(foreach_metadata::hasIterator)
-            : BoolAttr{};
+        dimension ? dimension.getAs<BoolAttr>(foreach_metadata::hasIterator)
+                  : BoolAttr{};
     if (!hasIterator) {
       emitError(location) << "malformed foreach dimension metadata";
       return failure();
@@ -5435,8 +6294,7 @@ UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
     // An omitted iterator skips that dimension.
     if (!hasIterator.getValue())
       continue;
-    auto hasRange =
-        dimension.getAs<BoolAttr>(foreach_metadata::hasStaticRange);
+    auto hasRange = dimension.getAs<BoolAttr>(foreach_metadata::hasStaticRange);
     auto left = dimension.getAs<IntegerAttr>(foreach_metadata::left);
     auto right = dimension.getAs<IntegerAttr>(foreach_metadata::right);
     auto path = dimension.getAs<StringAttr>(foreach_metadata::iteratorPath);
@@ -5463,17 +6321,15 @@ UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
     llvm::APInt wideRight(64, static_cast<uint64_t>(rightValue), true);
     wideLeft = wideLeft.sext(65);
     wideRight = wideRight.sext(65);
-    llvm::APInt distance = wideLeft.sge(wideRight)
-                               ? wideLeft - wideRight
-                               : wideRight - wideLeft;
+    llvm::APInt distance =
+        wideLeft.sge(wideRight) ? wideLeft - wideRight : wideRight - wideLeft;
     ++distance;
     if (distance.getActiveBits() > 64) {
       emitError(location) << "foreach dimension range is too large";
       return failure();
     }
-    dimensions.push_back(
-        {leftValue, rightValue, distance.getZExtValue(), 0,
-         path.getValue().str(), *iteratorType});
+    dimensions.push_back({leftValue, rightValue, distance.getZExtValue(), 0,
+                          path.getValue().str(), *iteratorType});
   }
   if (dimensions.empty()) {
     emitError(location) << "foreach statement has no iterator";
@@ -5484,8 +6340,8 @@ UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
   for (Dimension &dimension : llvm::reverse(dimensions)) {
     dimension.stride = iterationCount;
     if (dimension.size != 0 &&
-        iterationCount > std::numeric_limits<uint64_t>::max() /
-                             dimension.size) {
+        iterationCount >
+            std::numeric_limits<uint64_t>::max() / dimension.size) {
       emitError(location) << "foreach iteration space is too large";
       return failure();
     }
@@ -5504,8 +6360,7 @@ UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
   Block *step = addBlock();
   step->addArgument(indexType, location);
   Block *exit = addBlock();
-  cf::BranchOp::create(builder, location, header,
-                       ValueRange{indexConstant(0)});
+  cf::BranchOp::create(builder, location, header, ValueRange{indexConstant(0)});
 
   setCurrent(header);
   Value more = arith::CmpIOp::create(
@@ -5531,19 +6386,18 @@ UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
 
     Value position = header->getArgument(0);
     if (dimension.stride != 1)
-      position = arith::DivUIOp::create(
-          builder, location, position, indexConstant(dimension.stride));
-    position = arith::RemUIOp::create(
-        builder, location, position, indexConstant(dimension.size));
-    Value leftValue = arith::ConstantOp::create(
-        builder, location, indexType,
-        builder.getI64IntegerAttr(dimension.left));
-    Value index =
-        dimension.left <= dimension.right
-            ? Value(arith::AddIOp::create(builder, location, leftValue,
-                                          position))
-            : Value(arith::SubIOp::create(builder, location, leftValue,
-                                          position));
+      position = arith::DivUIOp::create(builder, location, position,
+                                        indexConstant(dimension.stride));
+    position = arith::RemUIOp::create(builder, location, position,
+                                      indexConstant(dimension.size));
+    Value leftValue =
+        arith::ConstantOp::create(builder, location, indexType,
+                                  builder.getI64IntegerAttr(dimension.left));
+    Value index = dimension.left <= dimension.right
+                      ? Value(arith::AddIOp::create(builder, location,
+                                                    leftValue, position))
+                      : Value(arith::SubIOp::create(builder, location,
+                                                    leftValue, position));
     FailureOr<Value> converted =
         convert(index, dimension.iteratorType, true, location, true);
     if (failed(converted))
@@ -5602,11 +6456,11 @@ LogicalResult UnitLowering::lowerRepeat(Operation *op) {
   cf::BranchOp::create(builder, location, header, ValueRange{*normalized});
 
   setCurrent(header);
-  Value zero = arith::ConstantOp::create(
-      builder, location, countType, builder.getI64IntegerAttr(0));
-  Value more = arith::CmpIOp::create(
-      builder, location, arith::CmpIPredicate::sgt, header->getArgument(0),
-      zero);
+  Value zero = arith::ConstantOp::create(builder, location, countType,
+                                         builder.getI64IntegerAttr(0));
+  Value more =
+      arith::CmpIOp::create(builder, location, arith::CmpIPredicate::sgt,
+                            header->getArgument(0), zero);
   cf::CondBranchOp::create(builder, location, more, body, ValueRange{}, exit,
                            ValueRange{});
 
@@ -5620,10 +6474,10 @@ LogicalResult UnitLowering::lowerRepeat(Operation *op) {
                          ValueRange{header->getArgument(0)});
 
   setCurrent(step);
-  Value one = arith::ConstantOp::create(
-      builder, location, countType, builder.getI64IntegerAttr(1));
-  Value remaining = arith::SubIOp::create(
-      builder, location, step->getArgument(0), one);
+  Value one = arith::ConstantOp::create(builder, location, countType,
+                                        builder.getI64IntegerAttr(1));
+  Value remaining =
+      arith::SubIOp::create(builder, location, step->getArgument(0), one);
   cf::BranchOp::create(builder, location, header, ValueRange{remaining});
   loopTargets.pop_back();
   setCurrent(exit);
@@ -5683,8 +6537,8 @@ UnitLowering::lowerVariableDeclaration(semantic::SVVariableDeclStatementOp op) {
         builder, location, builder.getI64IntegerAttr(siteID));
     Block *initialize = addBlock();
     Block *continuation = addBlock();
-    cf::CondBranchOp::create(builder, location, first, initialize,
-                             ValueRange{}, continuation, ValueRange{});
+    cf::CondBranchOp::create(builder, location, first, initialize, ValueRange{},
+                             continuation, ValueRange{});
     setCurrent(initialize);
     FailureOr<Value> lowered = lowerExpression(children.front());
     if (failed(lowered))
@@ -5733,8 +6587,7 @@ UnitLowering::outlineForkBranch(Operation *branch, uint64_t forkNode,
   Value processContext = function.getBody().front().getArgument(0);
   inputs.push_back(processContext.getType());
   captures.push_back(processContext);
-  argumentAttrs.push_back(
-      captureMetadata(builder, sim::CaptureKind::Context));
+  argumentAttrs.push_back(captureMetadata(builder, sim::CaptureKind::Context));
 
   llvm::StringSet<> capturedPaths;
   auto addCapture = [&](StringRef path) {
@@ -5748,8 +6601,7 @@ UnitLowering::outlineForkBranch(Operation *branch, uint64_t forkNode,
     unsigned argument = inputs.size();
     inputs.push_back(capture.getType());
     captures.push_back(capture);
-    argumentAttrs.push_back(
-        captureMetadata(builder, sim::CaptureKind::Formal));
+    argumentAttrs.push_back(captureMetadata(builder, sim::CaptureKind::Formal));
     bindings.push_back(sim::ArgumentBindingAttr::get(
         context, builder.getStringAttr(path), argument,
         sim::UnitArgumentKind::Direct, /*copyOut=*/false, IntegerAttr{}));
@@ -5802,10 +6654,9 @@ UnitLowering::outlineForkBranch(Operation *branch, uint64_t forkNode,
     addCapture(path);
 
   uint64_t ordinal = nextForkOrdinal++;
-  std::string symbol =
-      (function.getSymName() + ".fork." + Twine(forkNode) + "." +
-       Twine(ordinal) + "." + Twine(branchIndex))
-          .str();
+  std::string symbol = (function.getSymName() + ".fork." + Twine(forkNode) +
+                        "." + Twine(ordinal) + "." + Twine(branchIndex))
+                           .str();
   uint64_t parentID = function.getCodeUnitId().value_or(0);
   uint64_t scopeID = 0;
   std::string parentHierarchy = function.getSymName().str();
@@ -5817,10 +6668,9 @@ UnitLowering::outlineForkBranch(Operation *branch, uint64_t forkNode,
     parentHierarchy = declaration.getHierarchicalName().str();
     break;
   }
-  std::string hierarchy =
-      (Twine(parentHierarchy) + ".$fork." + Twine(forkNode) + "." +
-       Twine(branchIndex))
-          .str();
+  std::string hierarchy = (Twine(parentHierarchy) + ".$fork." +
+                           Twine(forkNode) + "." + Twine(branchIndex))
+                              .str();
   auto codeUnitIDAttr =
       branch->getAttrOfType<IntegerAttr>("obelisk_sim.fork_code_unit_id");
   if (!codeUnitIDAttr || !codeUnitIDAttr.getValue().isStrictlyPositive())
@@ -5830,11 +6680,11 @@ UnitLowering::outlineForkBranch(Operation *branch, uint64_t forkNode,
 
   OpBuilder outlineBuilder(function);
   outlineBuilder.setInsertionPoint(function);
-  sim::SimCodeUnitDeclOp::create(
-      outlineBuilder, location, codeUnitID, scopeID, sim::EntryKind::Fork,
-      outlineBuilder.getStringAttr(hierarchy),
-      outlineBuilder.getStringAttr("fork branch"),
-      outlineBuilder.getUnitAttr());
+  sim::SimCodeUnitDeclOp::create(outlineBuilder, location, codeUnitID, scopeID,
+                                 sim::EntryKind::Fork,
+                                 outlineBuilder.getStringAttr(hierarchy),
+                                 outlineBuilder.getStringAttr("fork branch"),
+                                 outlineBuilder.getUnitAttr());
 
   SmallVector<NamedAttribute> attributes{
       outlineBuilder.getNamedAttr(bindingsAttrName,
@@ -5854,33 +6704,29 @@ UnitLowering::outlineForkBranch(Operation *branch, uint64_t forkNode,
   llvm::sort(inheritedPaths);
   for (StringRef path : inheritedPaths)
     inheritedControls.push_back(outlineBuilder.getDictionaryAttr({
-        outlineBuilder.getNamedAttr("path",
-                                    outlineBuilder.getStringAttr(path)),
+        outlineBuilder.getNamedAttr("path", outlineBuilder.getStringAttr(path)),
         outlineBuilder.getNamedAttr(
             "id", outlineBuilder.getI64IntegerAttr(inherited.lookup(path))),
     }));
   if (!inheritedControls.empty())
     attributes.push_back(outlineBuilder.getNamedAttr(
-        "inherited_controls",
-        outlineBuilder.getArrayAttr(inheritedControls)));
+        "inherited_controls", outlineBuilder.getArrayAttr(inheritedControls)));
   const StringRef inheritedAttributes[] = {
       delayScaleAttrName, delayQuantumAttrName, "home_region", "domain"};
   for (StringRef name : inheritedAttributes)
     if (Attribute attribute = function->getAttr(name))
       attributes.push_back(outlineBuilder.getNamedAttr(name, attribute));
-  attributes.push_back(outlineBuilder.getNamedAttr(
-      sim::metadata::hierarchicalName,
-      outlineBuilder.getStringAttr(hierarchy)));
+  attributes.push_back(
+      outlineBuilder.getNamedAttr(sim::metadata::hierarchicalName,
+                                  outlineBuilder.getStringAttr(hierarchy)));
 
-  auto outlined = sim::SimFuncOp::create(
-      outlineBuilder, location, symbol,
-      FunctionType::get(context, inputs, TypeRange{}), sim::EntryKind::Fork,
-      attributes, argumentAttrs);
-  SymbolTable::setSymbolVisibility(outlined,
-                                   SymbolTable::Visibility::Private);
+  auto outlined =
+      sim::SimFuncOp::create(outlineBuilder, location, symbol,
+                             FunctionType::get(context, inputs, TypeRange{}),
+                             sim::EntryKind::Fork, attributes, argumentAttrs);
+  SymbolTable::setSymbolVisibility(outlined, SymbolTable::Visibility::Private);
 
-  OpBuilder bodyBuilder =
-      OpBuilder::atBlockEnd(&outlined.getBody().front());
+  OpBuilder bodyBuilder = OpBuilder::atBlockEnd(&outlined.getBody().front());
   Operation *root = bodyBuilder.clone(*branch);
   UnitLowering nested(outlined);
   if (failed(nested.lower({root}))) {
@@ -5896,8 +6742,7 @@ LogicalResult UnitLowering::lowerFork(semantic::SVBlockStatementOp op) {
   Location location = getSemanticLocation(op);
   if (function.getEntryKind() == sim::EntryKind::Function &&
       op.getBlockKind() != semantic::SVStatementBlockKind::JoinNone) {
-    emitError(location)
-        << "a fork in a zero-time function must use join_none";
+    emitError(location) << "a fork in a zero-time function must use join_none";
     return failure();
   }
   SmallVector<Operation *> contents = getChildren(op);
@@ -5928,23 +6773,22 @@ LogicalResult UnitLowering::lowerFork(semantic::SVBlockStatementOp op) {
         outlineForkBranch(branch, forkNode, index);
     if (failed(outlined))
       return failure();
-    processes.push_back(
-        sim::SimSpawnOp::create(builder, location,
-                                outlined->first.getSymNameAttr(),
-                                outlined->second, ArrayAttr{}, ArrayAttr{})
-            .getProcess());
+    processes.push_back(sim::SimSpawnOp::create(
+                            builder, location, outlined->first.getSymNameAttr(),
+                            outlined->second, ArrayAttr{}, ArrayAttr{})
+                            .getProcess());
   }
 
   semantic::SVStatementBlockKind kind = op.getBlockKind();
   if (kind == semantic::SVStatementBlockKind::JoinNone || processes.empty())
     return success();
   Block *continuation = addBlock();
-  sim::JoinKind joinKind =
-      kind == semantic::SVStatementBlockKind::JoinAny ? sim::JoinKind::Any
-                                                       : sim::JoinKind::All;
+  sim::JoinKind joinKind = kind == semantic::SVStatementBlockKind::JoinAny
+                               ? sim::JoinKind::Any
+                               : sim::JoinKind::All;
   sim::SimSuspendJoinOp::create(builder, location, joinKind, processes,
-                                processes.size(),
-                                sim::ContinuationSiteAttr{}, continuation);
+                                processes.size(), sim::ContinuationSiteAttr{},
+                                continuation);
   setCurrent(continuation);
   return success();
 }
@@ -5970,8 +6814,7 @@ LogicalResult UnitLowering::lowerBlock(semantic::SVBlockStatementOp op) {
   Value activation = sim::SimControlEnterOp::create(
       builder, location, builder.getI64IntegerAttr(targetID));
   Block *exit = addBlock();
-  controlScopes.push_back(
-      {path.getValue().str(), targetID, activation, exit});
+  controlScopes.push_back({path.getValue().str(), targetID, activation, exit});
   LogicalResult result = lowerContents();
   controlScopes.pop_back();
   if (failed(result))
@@ -6021,9 +6864,9 @@ LogicalResult UnitLowering::lowerDisable(semantic::SVDisableStatementOp op) {
 
   // A resolved target outside the lexical activation stack is hierarchical:
   // disable every live activation of that exact elaborated block identity.
-  sim::SimControlDisableOp::create(
-      builder, location, builder.getI64IntegerAttr(targetID), Value{},
-      builder.getBoolAttr(true));
+  sim::SimControlDisableOp::create(builder, location,
+                                   builder.getI64IntegerAttr(targetID), Value{},
+                                   builder.getBoolAttr(true));
   return success();
 }
 
@@ -6032,6 +6875,45 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
   Location location = getSemanticLocation(op);
   builder.setInsertionPointToEnd(current);
 
+  if (auto path =
+          op->getAttrOfType<StringAttr>("obelisk_sim.initialize_static")) {
+    Value destination = lvalues.lookup(path.getValue());
+    auto referenceType = destination
+                             ? dyn_cast<sim::RefType>(destination.getType())
+                             : sim::RefType{};
+    if (!referenceType) {
+      emitError(location)
+          << "static class property initializer has no reference binding: "
+          << path.getValue();
+      return failure();
+    }
+    FailureOr<Value> value = lowerExpression(op);
+    if (failed(value))
+      return failure();
+    FailureOr<Value> converted = convert(*value, referenceType.getElementType(),
+                                         isSignedNode(op), location);
+    if (failed(converted))
+      return failure();
+    sim::SimRefStoreOp::create(builder, location, *converted, destination);
+    return success();
+  }
+  if (auto field = op->getAttrOfType<FlatSymbolRefAttr>(
+          "obelisk_sim.initialize_field")) {
+    if (!thisObject) {
+      emitError(location) << "class property initializer has no this object";
+      return failure();
+    }
+    FailureOr<Value> value = lowerExpression(op);
+    if (failed(value))
+      return failure();
+    auto objectType = cast<sim::ClassHandleType>(thisObject.getType());
+    Type referenceType = sim::ManagedRefType::get(
+        function.getContext(), (*value).getType(), objectType.getClassName());
+    Value reference = sim::SimClassFieldRefOp::create(
+        builder, location, referenceType, thisObject, field);
+    sim::SimManagedStoreOp::create(builder, location, *value, reference);
+    return success();
+  }
   if (isa<semantic::SVEmptyStatementOp>(op))
     return success();
   if (isa<semantic::SVExpressionStatementOp>(op)) {
@@ -6061,9 +6943,9 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
   }
   if (isa<semantic::SVWaitForkStatementOp>(op)) {
     Block *continuation = addBlock();
-    sim::SimSuspendChildrenOp::create(
-        builder, location, ValueRange{}, sim::ContinuationSiteAttr{},
-        continuation);
+    sim::SimSuspendChildrenOp::create(builder, location, ValueRange{},
+                                      sim::ContinuationSiteAttr{},
+                                      continuation);
     setCurrent(continuation);
     return success();
   }
@@ -6079,8 +6961,7 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
     return lowerConditional(conditional);
   if (auto caseStatement = dyn_cast<semantic::SVCaseStatementOp>(op))
     return lowerCase(caseStatement);
-  if (auto patternCase =
-          dyn_cast<semantic::SVPatternCaseStatementOp>(op))
+  if (auto patternCase = dyn_cast<semantic::SVPatternCaseStatementOp>(op))
     return lowerPatternCase(patternCase);
   if (isa<semantic::SVWhileLoopStatementOp>(op))
     return lowerWhile(op);
@@ -6170,8 +7051,8 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
         function.emitError("named-event observer did not produce an event");
         return failure();
       }
-      result = sim::SimEventTriggeredOp::create(
-                   builder, function.getLoc(), builder.getI1Type(), *result)
+      result = sim::SimEventTriggeredOp::create(builder, function.getLoc(),
+                                                builder.getI1Type(), *result)
                    .getResult();
     } else if (kind == 2) {
       result = truthValue(*result, function.getLoc());

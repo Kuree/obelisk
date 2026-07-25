@@ -17,6 +17,16 @@ using namespace mlir;
 
 namespace obelisk::simlowering {
 
+StringAttr getSimulationClassSymbol(SymbolRefAttr semanticClass) {
+  std::string name = "__obelisk_class_";
+  StringRef leaf = semanticClass.getLeafReference();
+  name.reserve(name.size() + leaf.size());
+  for (char character : leaf)
+    name.push_back(
+        std::isalnum(static_cast<unsigned char>(character)) ? character : '_');
+  return StringAttr::get(semanticClass.getContext(), name);
+}
+
 bool isSemanticOp(Operation *op) {
   return op->hasTrait<OpTrait::SemanticASTNode>();
 }
@@ -221,8 +231,8 @@ SmallVector<SemanticDimension> getSemanticDimensions(Type type) {
     }
     if (auto aggregate = dyn_cast<semantic::SourceAggregateType>(type)) {
       if (aggregate.getIsPacked() && aggregate.getBitWidth())
-        appendFixed(false,
-                    static_cast<int64_t>(aggregate.getBitWidth() - 1), 0);
+        appendFixed(false, static_cast<int64_t>(aggregate.getBitWidth() - 1),
+                    0);
       break;
     }
     if (auto structure = dyn_cast<semantic::PackedStructType>(type)) {
@@ -416,6 +426,10 @@ static FailureOr<ArrayAttr> normalizeDictionaryFields(DictionaryAttr fields,
 static FailureOr<Type> normalizeType(Type type, Location location,
                                      bool allowRealScalar) {
   MLIRContext *context = type.getContext();
+  if (auto classHandle = dyn_cast<semantic::ClassHandleType>(type))
+    return sim::ClassHandleType::get(
+        context, FlatSymbolRefAttr::get(
+                     getSimulationClassSymbol(classHandle.getClassName())));
   if (auto integer = dyn_cast<IntegerType>(type)) {
     if (!integer.isSignless()) {
       emitError(location) << "signed or unsigned builtin integer survived "
@@ -468,10 +482,9 @@ static FailureOr<Type> normalizeType(Type type, Location location,
                                        0);
   }
   if (auto aggregate = dyn_cast<semantic::SourceAggregateType>(type)) {
-    FailureOr<ArrayAttr> fields =
-        normalizeSourceFields(aggregate.getFields(), location,
-                              aggregate.getIsUnion() &&
-                                  aggregate.getIsTagged());
+    FailureOr<ArrayAttr> fields = normalizeSourceFields(
+        aggregate.getFields(), location,
+        aggregate.getIsUnion() && aggregate.getIsTagged());
     if (failed(fields))
       return failure();
     if (aggregate.getIsPacked() && aggregate.getIsUnion())
@@ -536,8 +549,8 @@ static FailureOr<Type> normalizeType(Type type, Location location,
   if (type.isF64())
     return type;
   if (isa<sim::LogicType, sim::TimeType, sim::ContextType, sim::RefType,
-          sim::NetType, sim::DriverType, sim::EventType, sim::ProcessType>(
-          type) ||
+          sim::NetType, sim::DriverType, sim::EventType, sim::ProcessType,
+          sim::ClassHandleType, sim::ManagedRefType>(type) ||
       sim::isAggregateType(type))
     return type;
 
@@ -582,8 +595,7 @@ FailureOr<DPIABIType> classifyDPIABIType(Type type, Location location) {
     std::optional<DPIABIKind> kind;
     switch (integral.getFlavor()) {
     case semantic::SVIntegralFlavor::Bit:
-      kind = integral.getWidth() == 1 ? DPIABIKind::Bit
-                                      : DPIABIKind::BitVector;
+      kind = integral.getWidth() == 1 ? DPIABIKind::Bit : DPIABIKind::BitVector;
       break;
     case semantic::SVIntegralFlavor::Logic:
     case semantic::SVIntegralFlavor::Reg:
@@ -607,10 +619,10 @@ FailureOr<DPIABIType> classifyDPIABIType(Type type, Location location) {
                                        : DPIABIKind::BitVector;
       break;
     case semantic::SVIntegralFlavor::Integer:
-      emitError(location)
-          << "DPI type category '"
-          << semantic::stringifySVIntegralFlavor(integral.getFlavor())
-          << "' is not supported by the initial integral ABI";
+      emitError(location) << "DPI type category '"
+                          << semantic::stringifySVIntegralFlavor(
+                                 integral.getFlavor())
+                          << "' is not supported by the initial integral ABI";
       return failure();
     }
     if (integral.getWidth() == 0 ||
@@ -640,10 +652,9 @@ FailureOr<DPIABIType> classifyDPIABIType(Type type, Location location) {
     return failure();
   }
   bool fourState = isFourState(type);
-  return DPIABIType{
-      fourState ? DPIABIKind::LogicVector : DPIABIKind::BitVector,
-      static_cast<uint32_t>(*width), fourState,
-      simlowering::isSignedSemanticType(type)};
+  return DPIABIType{fourState ? DPIABIKind::LogicVector : DPIABIKind::BitVector,
+                    static_cast<uint32_t>(*width), fourState,
+                    simlowering::isSignedSemanticType(type)};
 }
 
 StringRef getDPICTypeSpelling(const DPIABIType &type) {
@@ -859,6 +870,8 @@ FailureOr<sim::FrozenConstantAttr> freezeSemanticConstant(Operation *symbol) {
 }
 
 Value createDefaultValue(OpBuilder &builder, Location location, Type type) {
+  if (isa<sim::ClassHandleType>(type))
+    return sim::SimClassNullOp::create(builder, location, type);
   if (sim::isAggregateType(type))
     return sim::SimAggregateDefaultOp::create(builder, location, type);
   if (auto logic = dyn_cast<sim::LogicType>(type)) {
@@ -934,10 +947,9 @@ sim::ContinuationSiteAttr getContinuationSite(Operation *operation) {
             sim::SimSuspendEdgeOp, sim::SimSuspendEdgeIffOp,
             sim::SimSuspendLevelOp, sim::SimSuspendAnyOp,
             sim::SimSuspendEventOp, sim::SimSuspendObserveOp,
-            sim::SimSuspendForeverOp,
-            sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp,
-            sim::SimSuspendChildrenOp, sim::SimTaskCallOp>(
-          [&](auto op) { site = op.getSiteAttr(); });
+            sim::SimSuspendForeverOp, sim::SimSuspendAwaitOp,
+            sim::SimSuspendJoinOp, sim::SimSuspendChildrenOp,
+            sim::SimTaskCallOp>([&](auto op) { site = op.getSiteAttr(); });
   return site;
 }
 
@@ -947,10 +959,9 @@ void setContinuationSite(Operation *operation, sim::ContinuationSiteAttr site) {
             sim::SimSuspendEdgeOp, sim::SimSuspendEdgeIffOp,
             sim::SimSuspendLevelOp, sim::SimSuspendAnyOp,
             sim::SimSuspendEventOp, sim::SimSuspendObserveOp,
-            sim::SimSuspendForeverOp,
-            sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp,
-            sim::SimSuspendChildrenOp, sim::SimTaskCallOp>(
-          [&](auto op) { op.setSiteAttr(site); });
+            sim::SimSuspendForeverOp, sim::SimSuspendAwaitOp,
+            sim::SimSuspendJoinOp, sim::SimSuspendChildrenOp,
+            sim::SimTaskCallOp>([&](auto op) { op.setSiteAttr(site); });
 }
 
 ReexecutingBlockSet getReexecutingBlocks(sim::SimFuncOp function) {

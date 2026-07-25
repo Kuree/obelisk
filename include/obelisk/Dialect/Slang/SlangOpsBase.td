@@ -378,6 +378,7 @@ class SlangCallExpressionASTNodeOp<string mnemonic>
         SlangSubroutineKind:$subroutine_kind,
         I64Attr:$argument_count,
         BoolAttr:$has_this_class,
+        BoolAttr:$is_super_class,
         BoolAttr:$has_output_arguments,
         OptionalAttr<SymbolRefAttr>:$referenced_symbol,
         OptionalAttr<StrAttr>:$referenced_path,
@@ -389,6 +390,11 @@ class SlangCallExpressionASTNodeOp<string mnemonic>
         BoolAttr:$has_iterator_expression,
         BoolAttr:$has_inline_constraints,
         ArrayAttr:$constraint_restrictions
+      )>;
+
+class SlangNewClassExpressionASTNodeOp<string mnemonic>
+    : SlangExpressionASTNodeOp<mnemonic, (ins
+        BoolAttr:$is_super_class
       )>;
 
 class SlangUnaryExpressionASTNodeOp<string mnemonic>

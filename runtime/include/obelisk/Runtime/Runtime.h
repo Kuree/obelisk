@@ -17,6 +17,8 @@ extern "C" {
 #define OBELISK_RT_VERSION 1u
 
 typedef struct obelisk_rt_context obelisk_rt_context;
+typedef struct obelisk_rt_gc_lane_v1 obelisk_rt_gc_lane_v1;
+typedef struct obelisk_rt_object_v1 obelisk_rt_object_v1;
 
 typedef int32_t obelisk_rt_status;
 #define OBELISK_RT_OK INT32_C(0)
@@ -39,6 +41,105 @@ typedef int32_t obelisk_rt_status;
 #define OBELISK_RT_PERMISSION_DENIED INT32_C(17)
 #define OBELISK_RT_DPI_DISABLE_UNSUPPORTED INT32_C(18)
 #define OBELISK_RT_FATAL INT32_C(19)
+
+// Managed SystemVerilog class ABI. Object handles are nullable pointers into
+// the context-owned, non-moving heap. The first word of every nonnull object is
+// its immutable class descriptor; collector and synchronization metadata live
+// outside the language-visible object.
+typedef uint32_t obelisk_rt_trace_kind;
+enum {
+  OBELISK_RT_TRACE_STRONG = 1,
+  OBELISK_RT_TRACE_WEAK = 2,
+  OBELISK_RT_TRACE_EMBEDDED = 3
+};
+
+struct obelisk_rt_trace_layout_v1;
+
+// One entry describes either repeated object-handle slots or repeated embedded
+// values. For scalar fields count is one and stride may be zero. Embedded
+// entries recurse through child_layout; handle entries require it to be null.
+typedef struct obelisk_rt_trace_entry_v1 {
+  uint64_t offset;
+  uint64_t stride;
+  uint64_t count;
+  obelisk_rt_trace_kind kind;
+  uint32_t reserved;
+  const struct obelisk_rt_trace_layout_v1 *child_layout;
+} obelisk_rt_trace_entry_v1;
+
+typedef struct obelisk_rt_trace_layout_v1 {
+  uint32_t version;
+  uint32_t reserved;
+  uint64_t size;
+  uint64_t alignment;
+  const obelisk_rt_trace_entry_v1 *entries;
+  uint64_t entry_count;
+} obelisk_rt_trace_layout_v1;
+
+typedef struct obelisk_rt_method_argument_v1 {
+  const void *data;
+  uint64_t size;
+} obelisk_rt_method_argument_v1;
+
+typedef obelisk_rt_status (*obelisk_rt_native_method_v1)(
+    obelisk_rt_context *context, obelisk_rt_gc_lane_v1 *lane,
+    obelisk_rt_object_v1 *receiver,
+    const obelisk_rt_method_argument_v1 *arguments, uint32_t argument_count,
+    void *result, uint64_t result_size);
+
+#define OBELISK_RT_METHOD_TASK (UINT32_C(1) << 0)
+#define OBELISK_RT_METHOD_PURE (UINT32_C(1) << 1)
+#define OBELISK_RT_METHOD_NO_BYTECODE UINT32_MAX
+
+typedef struct obelisk_rt_method_descriptor_v1 {
+  uint64_t signature_id;
+  uint32_t flags;
+  uint32_t bytecode_function;
+  obelisk_rt_native_method_v1 native_entry;
+  const void *environment;
+} obelisk_rt_method_descriptor_v1;
+
+#define OBELISK_RT_CLASS_ABSTRACT (UINT32_C(1) << 0)
+#define OBELISK_RT_CLASS_INTERFACE (UINT32_C(1) << 1)
+#define OBELISK_RT_CLASS_FINAL (UINT32_C(1) << 2)
+#define OBELISK_RT_CLASS_WEAK_WRAPPER (UINT32_C(1) << 3)
+
+typedef struct obelisk_rt_class_descriptor_v1 {
+  uint32_t version;
+  uint32_t flags;
+  uint64_t class_id;
+  uint64_t instance_size;
+  uint64_t instance_alignment;
+  const struct obelisk_rt_class_descriptor_v1 *base;
+  const uint64_t *interface_ids;
+  uint64_t interface_count;
+  const obelisk_rt_trace_layout_v1 *layout;
+  const obelisk_rt_method_descriptor_v1 *methods;
+  uint64_t method_count;
+  const char *debug_name;
+  uint64_t debug_name_size;
+} obelisk_rt_class_descriptor_v1;
+
+// Stack-owned precise root record. Push/pop must be properly nested on one
+// registered lane. Keeping the record caller-owned avoids an allocation at
+// every native call boundary.
+typedef struct obelisk_rt_gc_root_v1 {
+  obelisk_rt_object_v1 **slot;
+  struct obelisk_rt_gc_root_v1 *previous;
+  uint64_t cookie;
+} obelisk_rt_gc_root_v1;
+
+typedef struct obelisk_rt_gc_statistics_v1 {
+  uint64_t live_objects;
+  uint64_t live_bytes;
+  uint64_t allocated_objects;
+  uint64_t reclaimed_objects;
+  uint64_t collection_count;
+  uint64_t chunk_allocation_count;
+  uint64_t large_allocation_count;
+  uint64_t cached_empty_chunks;
+  uint64_t next_collection_bytes;
+} obelisk_rt_gc_statistics_v1;
 
 typedef struct obelisk_rt_buffer_v1 {
   uint8_t *data;
@@ -187,7 +288,11 @@ enum {
   OBELISK_RT_DBREG_HANDLE = 3,
   OBELISK_RT_DBREG_STATUS = 4,
   OBELISK_RT_DBREG_RESOURCE = 5,
-  OBELISK_RT_DBREG_BYTES = 6
+  OBELISK_RT_DBREG_BYTES = 6,
+  // Native object pointers are confined to these precisely traced register
+  // kinds. MANAGED_REF is {object, byte offset}; its first word is a root.
+  OBELISK_RT_DBREG_MANAGED = 7,
+  OBELISK_RT_DBREG_MANAGED_REF = 8
 };
 
 #define OBELISK_RT_DBREG_SIGNED (UINT8_C(1) << 0)
@@ -234,7 +339,8 @@ enum {
   OBELISK_RT_DB_FAIL = 37,
   OBELISK_RT_DB_MAKE_LOCAL_HANDLE = 38,
   OBELISK_RT_DB_HANDLE_ID = 39,
-  OBELISK_RT_DB_TASK_CALL = 40
+  OBELISK_RT_DB_TASK_CALL = 40,
+  OBELISK_RT_DB_VIRTUAL_CALL = 41
 };
 
 // COMPARE flags. Case comparisons return a known two-state result. Wildcard
@@ -300,6 +406,19 @@ enum {
   OBELISK_RT_INTRINSIC_V1_CLOG2 = UINT32_C(0x00010214),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
+  OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC = UINT32_C(0x00010400),
+  OBELISK_RT_INTRINSIC_V1_CLASS_COPY = UINT32_C(0x00010401),
+  OBELISK_RT_INTRINSIC_V1_CLASS_IS_INSTANCE = UINT32_C(0x00010402),
+  OBELISK_RT_INTRINSIC_V1_CLASS_CAST = UINT32_C(0x00010403),
+  OBELISK_RT_INTRINSIC_V1_CLASS_FIELD_REF = UINT32_C(0x00010404),
+  OBELISK_RT_INTRINSIC_V1_MANAGED_LOAD = UINT32_C(0x00010405),
+  OBELISK_RT_INTRINSIC_V1_MANAGED_STORE = UINT32_C(0x00010406),
+  OBELISK_RT_INTRINSIC_V1_WEAK_CREATE = UINT32_C(0x00010407),
+  OBELISK_RT_INTRINSIC_V1_WEAK_GET = UINT32_C(0x00010408),
+  OBELISK_RT_INTRINSIC_V1_WEAK_CLEAR = UINT32_C(0x00010409),
+  OBELISK_RT_INTRINSIC_V1_GC_SAFEPOINT = UINT32_C(0x0001040a),
+  OBELISK_RT_INTRINSIC_V1_CLASS_ID = UINT32_C(0x0001040b),
+  OBELISK_RT_INTRINSIC_V1_MANAGED_NBA = UINT32_C(0x0001040c),
   OBELISK_RT_INTRINSIC_V1_VPI_ROOT = UINT32_C(0x00011000),
   OBELISK_RT_INTRINSIC_V1_VPI_CHILD = UINT32_C(0x00011001),
   OBELISK_RT_INTRINSIC_V1_VPI_SIBLING = UINT32_C(0x00011002),
@@ -690,7 +809,10 @@ typedef uint32_t obelisk_rt_frame_field_flags;
 enum {
   OBELISK_RT_FRAME_FIELD_FLAGS_NONE = 0,
   OBELISK_RT_FRAME_FOUR_STATE_VALUE = 1u << 0,
-  OBELISK_RT_FRAME_FOUR_STATE_UNKNOWN = 1u << 1
+  OBELISK_RT_FRAME_FOUR_STATE_UNKNOWN = 1u << 1,
+  // The field is an aligned object-pointer slot traced for the lifetime of
+  // its process activation, including while that activation is suspended.
+  OBELISK_RT_FRAME_MANAGED_ROOT = 1u << 2
 };
 
 typedef struct obelisk_rt_frame_field_v1 {
@@ -901,18 +1023,135 @@ obelisk_rt_status obelisk_rt_v1_context_create_for_design(
     const obelisk_rt_execution_descriptor_v1 *execution,
     obelisk_rt_context **out_context);
 
+// Register a generated worker lane with the managed heap. A lane is inactive
+// after creation; generated code brackets executable fragments with enter and
+// leave so a collector never waits for an idle host thread. Active lanes must
+// reach allocation or explicit safepoint calls.
+obelisk_rt_status
+obelisk_rt_v1_gc_lane_create(obelisk_rt_context *context,
+                             obelisk_rt_gc_lane_v1 **out_lane);
+obelisk_rt_status obelisk_rt_v1_gc_lane_destroy(obelisk_rt_gc_lane_v1 *lane);
+obelisk_rt_status obelisk_rt_v1_gc_lane_enter(obelisk_rt_gc_lane_v1 *lane);
+obelisk_rt_status obelisk_rt_v1_gc_lane_leave(obelisk_rt_gc_lane_v1 *lane);
+obelisk_rt_status obelisk_rt_v1_gc_safepoint(obelisk_rt_gc_lane_v1 *lane);
+// Return the active managed lane for the calling generated worker. Execution
+// entry points establish this binding once per fragment/process activation;
+// class intrinsics do not allocate or register a lane per operation.
+obelisk_rt_gc_lane_v1 *
+obelisk_rt_v1_gc_current_lane(obelisk_rt_context *context);
+
+// Root records are caller-owned and allocation-free. Static roots are
+// registered infrequently and remain live until explicitly unregistered.
+obelisk_rt_status obelisk_rt_v1_gc_root_push(obelisk_rt_gc_lane_v1 *lane,
+                                             obelisk_rt_gc_root_v1 *root,
+                                             obelisk_rt_object_v1 **slot);
+obelisk_rt_status obelisk_rt_v1_gc_root_pop(obelisk_rt_gc_lane_v1 *lane,
+                                            obelisk_rt_gc_root_v1 *root);
+obelisk_rt_status
+obelisk_rt_v1_gc_static_root_register(obelisk_rt_context *context,
+                                      obelisk_rt_object_v1 **slot);
+obelisk_rt_status
+obelisk_rt_v1_gc_static_root_unregister(obelisk_rt_context *context,
+                                        obelisk_rt_object_v1 **slot);
+
+// External integrations that cannot expose a root slot may pin an object.
+// Pins are exact roots and must be balanced before context destruction.
+obelisk_rt_status obelisk_rt_v1_gc_pin(obelisk_rt_context *context,
+                                       obelisk_rt_object_v1 *object);
+obelisk_rt_status obelisk_rt_v1_gc_unpin(obelisk_rt_context *context,
+                                         obelisk_rt_object_v1 *object);
+
+// Request a stop-the-world collection. The requesting lane participates in
+// root publication; every other active lane parks at its next safepoint.
+obelisk_rt_status obelisk_rt_v1_gc_collect(obelisk_rt_gc_lane_v1 *lane);
+obelisk_rt_status obelisk_rt_v1_gc_set_threshold(obelisk_rt_context *context,
+                                                 uint64_t allocation_bytes);
+obelisk_rt_status
+obelisk_rt_v1_gc_statistics(obelisk_rt_context *context,
+                            obelisk_rt_gc_statistics_v1 *out_statistics);
+
+// Validate immutable compiler-emitted class metadata without allocating.
+obelisk_rt_status
+obelisk_rt_v1_class_validate(const obelisk_rt_class_descriptor_v1 *descriptor);
+// Register immutable generated metadata with one context. The registry is
+// keyed by stable class ID so pointer-free bytecode can resolve descriptors.
+obelisk_rt_status
+obelisk_rt_v1_class_register(obelisk_rt_context *context,
+                             const obelisk_rt_class_descriptor_v1 *descriptor);
+
+// Register one 64-bit-aligned class-handle slot in the pointer-free design
+// state. This is used by the bytecode tier; the backing state allocation is
+// fixed for the context lifetime.
+obelisk_rt_status
+obelisk_rt_v1_gc_design_root_register(obelisk_rt_context *context,
+                                      uint64_t bit_offset);
+
+// Allocate zero-initialized class storage. Abstract and interface descriptors
+// cannot be allocated. The descriptor word is installed before the object is
+// returned; constructors and property initializers are generated code.
+obelisk_rt_status
+obelisk_rt_v1_object_allocate(obelisk_rt_gc_lane_v1 *lane,
+                              const obelisk_rt_class_descriptor_v1 *descriptor,
+                              obelisk_rt_object_v1 **out_object);
+obelisk_rt_status obelisk_rt_v1_object_shallow_copy(
+    obelisk_rt_gc_lane_v1 *lane,
+    const obelisk_rt_class_descriptor_v1 *static_descriptor,
+    obelisk_rt_object_v1 *source, obelisk_rt_object_v1 **out_object);
+
+// Locked field access supplies a race-free baseline for shared class objects.
+// Offsets are relative to the descriptor word at object byte zero.
+obelisk_rt_status obelisk_rt_v1_object_read(obelisk_rt_object_v1 *object,
+                                            uint64_t offset, void *data,
+                                            uint64_t size);
+obelisk_rt_status obelisk_rt_v1_object_write(obelisk_rt_object_v1 *object,
+                                             uint64_t offset, const void *data,
+                                             uint64_t size);
+obelisk_rt_status
+obelisk_rt_v1_object_field_load(obelisk_rt_object_v1 *object, uint64_t offset,
+                                obelisk_rt_object_v1 **out_value);
+obelisk_rt_status obelisk_rt_v1_object_field_store(obelisk_rt_object_v1 *object,
+                                                   uint64_t offset,
+                                                   obelisk_rt_object_v1 *value);
+
+uint32_t
+obelisk_rt_v1_object_is_instance(const obelisk_rt_object_v1 *object,
+                                 const obelisk_rt_class_descriptor_v1 *target);
+obelisk_rt_status
+obelisk_rt_v1_object_cast(obelisk_rt_object_v1 *object,
+                          const obelisk_rt_class_descriptor_v1 *target,
+                          obelisk_rt_object_v1 **out_object);
+uint64_t obelisk_rt_v1_object_id(const obelisk_rt_object_v1 *object);
+
+obelisk_rt_status obelisk_rt_v1_method_resolve(
+    obelisk_rt_object_v1 *receiver, uint64_t slot, uint64_t signature_id,
+    const obelisk_rt_method_descriptor_v1 **out_method);
+obelisk_rt_status obelisk_rt_v1_method_invoke(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *receiver, uint64_t slot,
+    uint64_t signature_id, const obelisk_rt_method_argument_v1 *arguments,
+    uint32_t argument_count, void *result, uint64_t result_size);
+
+// IEEE 1800-2023 weak_reference support. The wrapper is itself a managed
+// object. Its referent is cleared during the collection that first determines
+// that no strong path reaches the referent.
+obelisk_rt_status obelisk_rt_v1_weak_create(obelisk_rt_gc_lane_v1 *lane,
+                                            obelisk_rt_object_v1 *referent,
+                                            obelisk_rt_object_v1 **out_weak);
+obelisk_rt_status obelisk_rt_v1_weak_get(obelisk_rt_object_v1 *weak,
+                                         obelisk_rt_object_v1 **out_referent);
+obelisk_rt_status obelisk_rt_v1_weak_clear(obelisk_rt_object_v1 *weak);
+
 // Validate and traverse the optional reflection image with checked cursors.
 // Returned names are immutable spans into the database and remain valid for
 // the lifetime of the execution descriptor.
 obelisk_rt_status obelisk_rt_v1_design_validate(
     const obelisk_rt_execution_descriptor_v1 *execution);
-obelisk_rt_status obelisk_rt_v1_design_root(
-    const obelisk_rt_execution_descriptor_v1 *execution,
-    obelisk_rt_design_cursor_v1 *out_cursor);
-obelisk_rt_status obelisk_rt_v1_design_child(
-    const obelisk_rt_execution_descriptor_v1 *execution,
-    obelisk_rt_design_cursor_v1 cursor,
-    obelisk_rt_design_cursor_v1 *out_cursor);
+obelisk_rt_status
+obelisk_rt_v1_design_root(const obelisk_rt_execution_descriptor_v1 *execution,
+                          obelisk_rt_design_cursor_v1 *out_cursor);
+obelisk_rt_status
+obelisk_rt_v1_design_child(const obelisk_rt_execution_descriptor_v1 *execution,
+                           obelisk_rt_design_cursor_v1 cursor,
+                           obelisk_rt_design_cursor_v1 *out_cursor);
 obelisk_rt_status obelisk_rt_v1_design_child_at(
     const obelisk_rt_execution_descriptor_v1 *execution,
     obelisk_rt_design_cursor_v1 cursor, uint64_t index,
@@ -921,12 +1160,14 @@ obelisk_rt_status obelisk_rt_v1_design_sibling(
     const obelisk_rt_execution_descriptor_v1 *execution,
     obelisk_rt_design_cursor_v1 cursor,
     obelisk_rt_design_cursor_v1 *out_cursor);
-obelisk_rt_status obelisk_rt_v1_design_lookup(
-    const obelisk_rt_execution_descriptor_v1 *execution, const uint8_t *name,
-    uint64_t name_size, obelisk_rt_design_cursor_v1 *out_cursor);
-obelisk_rt_status obelisk_rt_v1_design_info(
-    const obelisk_rt_execution_descriptor_v1 *execution,
-    obelisk_rt_design_cursor_v1 cursor, obelisk_rt_design_info_v1 *out_info);
+obelisk_rt_status
+obelisk_rt_v1_design_lookup(const obelisk_rt_execution_descriptor_v1 *execution,
+                            const uint8_t *name, uint64_t name_size,
+                            obelisk_rt_design_cursor_v1 *out_cursor);
+obelisk_rt_status
+obelisk_rt_v1_design_info(const obelisk_rt_execution_descriptor_v1 *execution,
+                          obelisk_rt_design_cursor_v1 cursor,
+                          obelisk_rt_design_info_v1 *out_info);
 obelisk_rt_status obelisk_rt_v1_design_type_info(
     const obelisk_rt_execution_descriptor_v1 *execution,
     obelisk_rt_design_cursor_v1 cursor,
@@ -935,35 +1176,41 @@ obelisk_rt_status obelisk_rt_v1_design_type_child(
     const obelisk_rt_execution_descriptor_v1 *execution,
     obelisk_rt_design_cursor_v1 cursor, uint64_t index,
     obelisk_rt_design_cursor_v1 *out_cursor);
-obelisk_rt_status obelisk_rt_v1_design_name(
-    const obelisk_rt_execution_descriptor_v1 *execution,
-    obelisk_rt_design_cursor_v1 cursor, const uint8_t **out_data,
-    uint64_t *out_size);
-obelisk_rt_status obelisk_rt_v1_design_read(
-    obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
-    uint64_t *value, uint64_t *unknown, uint64_t bit_width);
-obelisk_rt_status obelisk_rt_v1_design_write(
-    obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
-    const uint64_t *value, const uint64_t *unknown, uint64_t bit_width);
+obelisk_rt_status
+obelisk_rt_v1_design_name(const obelisk_rt_execution_descriptor_v1 *execution,
+                          obelisk_rt_design_cursor_v1 cursor,
+                          const uint8_t **out_data, uint64_t *out_size);
+obelisk_rt_status obelisk_rt_v1_design_read(obelisk_rt_context *context,
+                                            obelisk_rt_design_cursor_v1 cursor,
+                                            uint64_t *value, uint64_t *unknown,
+                                            uint64_t bit_width);
+obelisk_rt_status obelisk_rt_v1_design_write(obelisk_rt_context *context,
+                                             obelisk_rt_design_cursor_v1 cursor,
+                                             const uint64_t *value,
+                                             const uint64_t *unknown,
+                                             uint64_t bit_width);
 
 // Serial generated-simulator scheduler. The scheduler owns an instance after
 // a successful add. Phase zero is ordinary work; phase one is final blocks.
-obelisk_rt_status obelisk_rt_v1_scheduler_add(
-    obelisk_rt_context *context, obelisk_rt_process_instance_v1 *instance,
-    uint32_t phase);
+obelisk_rt_status
+obelisk_rt_v1_scheduler_add(obelisk_rt_context *context,
+                            obelisk_rt_process_instance_v1 *instance,
+                            uint32_t phase);
 // Ranked form used by generated simulators. Lower ranks execute first within
 // an event region; equal ranks retain deterministic insertion order.
-obelisk_rt_status obelisk_rt_v1_scheduler_add_ranked(
-    obelisk_rt_context *context, obelisk_rt_process_instance_v1 *instance,
-    uint32_t phase, uint32_t schedule_rank);
+obelisk_rt_status
+obelisk_rt_v1_scheduler_add_ranked(obelisk_rt_context *context,
+                                   obelisk_rt_process_instance_v1 *instance,
+                                   uint32_t phase, uint32_t schedule_rank);
 obelisk_rt_status obelisk_rt_v1_scheduler_add_planned(
     obelisk_rt_context *context, obelisk_rt_process_instance_v1 *instance,
     uint32_t phase, uint32_t initial_rank, const uint32_t *continuations,
     const uint32_t *ranks, uint32_t continuation_count);
 // Return the scheduler-owned stable identity used by await/join records. The
 // token is never a host address and is not reused within a context.
-uint64_t obelisk_rt_v1_scheduler_process_token(
-    obelisk_rt_context *context, obelisk_rt_process_instance_v1 *instance);
+uint64_t
+obelisk_rt_v1_scheduler_process_token(obelisk_rt_context *context,
+                                      obelisk_rt_process_instance_v1 *instance);
 // Recursively terminate every live descendant of the currently executing
 // logical process. Task activations retain their caller's logical identity.
 obelisk_rt_status
@@ -972,14 +1219,15 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context);
 // processes. A nonzero activation selects one lexical activation. With a zero
 // activation, all_activations selects either the innermost inherited lexical
 // activation or every live activation with the exact target ID.
-obelisk_rt_status obelisk_rt_v1_control_enter(
-    obelisk_rt_context *context, uint64_t target_id,
-    uint64_t *out_activation);
-obelisk_rt_status obelisk_rt_v1_control_leave(
-    obelisk_rt_context *context, uint64_t activation);
-obelisk_rt_status obelisk_rt_v1_control_disable(
-    obelisk_rt_context *context, uint64_t target_id, uint64_t activation,
-    uint32_t all_activations);
+obelisk_rt_status obelisk_rt_v1_control_enter(obelisk_rt_context *context,
+                                              uint64_t target_id,
+                                              uint64_t *out_activation);
+obelisk_rt_status obelisk_rt_v1_control_leave(obelisk_rt_context *context,
+                                              uint64_t activation);
+obelisk_rt_status obelisk_rt_v1_control_disable(obelisk_rt_context *context,
+                                                uint64_t target_id,
+                                                uint64_t activation,
+                                                uint32_t all_activations);
 // Return one exactly once for each nonzero site ID in a context and zero on
 // later claims. This guards descriptor-backed static local initialization.
 uint32_t obelisk_rt_v1_static_once(obelisk_rt_context *context,
@@ -988,10 +1236,17 @@ uint32_t obelisk_rt_v1_static_once(obelisk_rt_context *context,
 // applies queued updates in call order after active work reaches quiescence.
 // A UINT64_MAX bit offset is an out-of-range dynamic selection and is ignored.
 obelisk_rt_status obelisk_rt_v1_scheduler_nba(
-    obelisk_rt_context *context, uint8_t *value_plane,
-    uint8_t *unknown_plane, uint64_t plane_bit_count, uint64_t bit_offset,
-    uint64_t bit_width, uint64_t delay, const uint8_t *value,
-    const uint8_t *unknown);
+    obelisk_rt_context *context, uint8_t *value_plane, uint8_t *unknown_plane,
+    uint64_t plane_bit_count, uint64_t bit_offset, uint64_t bit_width,
+    uint64_t delay, const uint8_t *value, const uint8_t *unknown);
+// Schedule one class-property update. The destination and a managed value, if
+// present, remain precise GC roots through commit. `unknown` is either null or
+// a second `plane_size` byte plane immediately following the value plane in
+// the property layout.
+obelisk_rt_status obelisk_rt_v1_scheduler_managed_nba(
+    obelisk_rt_context *context, obelisk_rt_object_v1 *destination,
+    uint64_t offset, const void *value, const void *unknown,
+    uint64_t plane_size, uint64_t delay);
 // Record a changed native-state range. `edges` is a bitmask of the edge kinds
 // observed on the range's least-significant bit. Signal-width wait records use
 // the final wait-entry word for their watched width.
@@ -1012,27 +1267,30 @@ void obelisk_rt_v1_scheduler_event(obelisk_rt_context *context,
 // invalid and records a scheduler failure.
 void obelisk_rt_v1_scheduler_event_after(obelisk_rt_context *context,
                                          uint64_t stable_id,
-                                         uint32_t nonblocking,
-                                         uint64_t delay);
-uint32_t obelisk_rt_v1_scheduler_event_triggered(
-    obelisk_rt_context *context, uint64_t stable_id);
+                                         uint32_t nonblocking, uint64_t delay);
+uint32_t obelisk_rt_v1_scheduler_event_triggered(obelisk_rt_context *context,
+                                                 uint64_t stable_id);
 void obelisk_rt_v1_scheduler_fail(obelisk_rt_context *context,
                                   obelisk_rt_status status);
 // Register one compiler-assigned static-state object. Static handles retain
 // these root bounds when views apply signed offsets, so partial out-of-range
 // accesses cannot spill into an adjacent object in the shared bit plane.
-obelisk_rt_status obelisk_rt_v1_native_state_register_static(
-    obelisk_rt_context *context, uint32_t id, uint64_t bit_offset,
-    uint64_t bit_width);
+obelisk_rt_status
+obelisk_rt_v1_native_state_register_static(obelisk_rt_context *context,
+                                           uint32_t id, uint64_t bit_offset,
+                                           uint64_t bit_width);
 uint64_t obelisk_rt_v1_native_state_static_handle(uint32_t id);
 uint64_t obelisk_rt_v1_native_handle_offset(uint64_t handle, int64_t offset);
-obelisk_rt_status obelisk_rt_v1_native_state_alloc(
-    obelisk_rt_context *context, uint64_t bit_width, const uint8_t *value,
-    const uint8_t *unknown, uint64_t *out_handle);
-obelisk_rt_status obelisk_rt_v1_native_state_retain(
-    obelisk_rt_context *context, uint64_t handle);
-obelisk_rt_status obelisk_rt_v1_native_state_release(
-    obelisk_rt_context *context, uint64_t handle, uint32_t owner_reference);
+obelisk_rt_status obelisk_rt_v1_native_state_alloc(obelisk_rt_context *context,
+                                                   uint64_t bit_width,
+                                                   const uint8_t *value,
+                                                   const uint8_t *unknown,
+                                                   uint64_t *out_handle);
+obelisk_rt_status obelisk_rt_v1_native_state_retain(obelisk_rt_context *context,
+                                                    uint64_t handle);
+obelisk_rt_status
+obelisk_rt_v1_native_state_release(obelisk_rt_context *context, uint64_t handle,
+                                   uint32_t owner_reference);
 obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
     obelisk_rt_context *context, const uint8_t *global_plane,
     uint64_t global_bit_count, uint64_t handle, uint64_t bit_width,
@@ -1046,12 +1304,12 @@ void obelisk_rt_v1_scheduler_notify(obelisk_rt_context *context);
 // ordinary processes and pending updates, then runs every final process.
 // `verbosity` is retained for SystemVerilog compatibility; diagnostic text is
 // implementation-defined and this runtime currently emits none.
-obelisk_rt_status obelisk_rt_v1_scheduler_finish(
-    obelisk_rt_context *context, uint32_t verbosity);
-obelisk_rt_status obelisk_rt_v1_scheduler_fatal(
-    obelisk_rt_context *context, uint32_t verbosity);
-uint32_t obelisk_rt_v1_scheduler_termination_requested(
-    obelisk_rt_context *context);
+obelisk_rt_status obelisk_rt_v1_scheduler_finish(obelisk_rt_context *context,
+                                                 uint32_t verbosity);
+obelisk_rt_status obelisk_rt_v1_scheduler_fatal(obelisk_rt_context *context,
+                                                uint32_t verbosity);
+uint32_t
+obelisk_rt_v1_scheduler_termination_requested(obelisk_rt_context *context);
 uint64_t obelisk_rt_v1_scheduler_time(obelisk_rt_context *context);
 obelisk_rt_status obelisk_rt_v1_scheduler_run(obelisk_rt_context *context);
 
@@ -1144,8 +1402,7 @@ enum {
 // with another runtime call.
 obelisk_rt_status
 obelisk_rt_v1_context_create(obelisk_rt_context **out_context);
-uint32_t obelisk_rt_v1_import_id(const uint8_t *symbol,
-                                 uint64_t symbol_size);
+uint32_t obelisk_rt_v1_import_id(const uint8_t *symbol, uint64_t symbol_size);
 obelisk_rt_status obelisk_rt_v1_context_register_import(
     obelisk_rt_context *context, uint32_t import_id,
     obelisk_rt_import_callback_v1 callback, void *user_data);

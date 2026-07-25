@@ -178,8 +178,7 @@ struct SemanticDimension {
 /// This is a shape query only: it never evaluates an object. Dynamic container
 /// dimensions are represented explicitly so callers cannot accidentally fold
 /// a value-dependent query as if it were a fixed range.
-::mlir::SmallVector<SemanticDimension>
-getSemanticDimensions(::mlir::Type type);
+::mlir::SmallVector<SemanticDimension> getSemanticDimensions(::mlir::Type type);
 
 /// Normalized type of a semantic node's `semantic_type` attribute.
 ::mlir::FailureOr<::mlir::Type>
@@ -187,10 +186,16 @@ getNormalizedSemanticType(::mlir::Operation *op);
 ::mlir::FailureOr<::mlir::Type>
 normalizeSemanticType(::mlir::Type type, ::mlir::Location location);
 
+/// Stable flat executable symbol for a semantic class reference. Semantic
+/// paths may be nested and coexist with the generated design between passes;
+/// executable descriptors therefore use their own collision-free namespace.
+::mlir::StringAttr
+getSimulationClassSymbol(::mlir::SymbolRefAttr semanticClass);
+
 /// Classify a canonical source-semantic type for the initial DPI-C ABI.
 /// Diagnostics are issued at `location` for unsupported categories.
-::mlir::FailureOr<DPIABIKind>
-getDPIABIKind(::mlir::Type type, ::mlir::Location location);
+::mlir::FailureOr<DPIABIKind> getDPIABIKind(::mlir::Type type,
+                                            ::mlir::Location location);
 
 /// Elaborated hierarchical path of a semantic symbol, or its plain name.
 ::mlir::StringRef getHierarchyName(::mlir::Operation *op);

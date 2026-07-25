@@ -162,6 +162,304 @@ def SimDriverDeclOp : SimOp<"driver.decl", [MemoryEffects<[MemWrite<SimInventory
 }
 
 //===----------------------------------------------------------------------===//
+// Managed classes and dispatch inventory
+//===----------------------------------------------------------------------===//
+
+def SimClassDeclOp : SimOp<"class.decl", [
+    Symbol, MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable managed class and hierarchy descriptor";
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    I64Attr:$id,
+    OptionalAttr<FlatSymbolRefAttr>:$base,
+    OptionalAttr<ArrayAttr>:$interfaces,
+    BoolAttr:$is_abstract,
+    BoolAttr:$is_interface,
+    BoolAttr:$is_final,
+    OptionalAttr<StrAttr>:$debug_name
+  );
+  let assemblyFormat = [{
+    $sym_name `id` $id (`extends` $base^)?
+    (`implements` $interfaces^)? attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimClassFieldDeclOp : SimOp<"class.field", [
+    Symbol, MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "declaration-order class property and trace descriptor";
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    FlatSymbolRefAttr:$owner,
+    TypeAttr:$type,
+    I64Attr:$ordinal,
+    OptionalAttr<I64Attr>:$offset,
+    BoolAttr:$is_static,
+    BoolAttr:$is_weak,
+    OptionalAttr<StrAttr>:$debug_name
+  );
+  let assemblyFormat = [{
+    $sym_name `of` $owner `at` $ordinal (`offset` $offset^)?
+    `:` $type attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimClassMethodDeclOp : SimOp<"class.method", [
+    Symbol, MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "class method signature and deterministic dispatch slot";
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    FlatSymbolRefAttr:$owner,
+    TypeAttr:$function_type,
+    OptionalAttr<I64Attr>:$slot,
+    OptionalAttr<I64Attr>:$signature_id,
+    OptionalAttr<FlatSymbolRefAttr>:$implementation,
+    BoolAttr:$is_virtual,
+    BoolAttr:$is_pure,
+    BoolAttr:$is_static,
+    BoolAttr:$is_task,
+    BoolAttr:$is_final,
+    OptionalAttr<StrAttr>:$debug_name
+  );
+  let assemblyFormat = [{
+    $sym_name `of` $owner (`slot` $slot^)?
+    (`signature_id` $signature_id^)?
+    (`implemented_by` $implementation^)? `:` $function_type attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimClassNullOp : SimOp<"class.null", [Pure, ConstantLike]> {
+  let summary = "typed null managed class handle";
+  let results = (outs SimClassHandleType:$result);
+  let assemblyFormat = "attr-dict `:` qualified(type($result))";
+}
+
+def SimClassAllocOp : SimOp<"class.alloc", [
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "allocate zero-initialized storage for a concrete class";
+  let arguments = (ins SimContextType:$context);
+  let results = (outs SimClassHandleType:$result);
+  let assemblyFormat =
+      "$context attr-dict `:` type($context) `->` qualified(type($result))";
+  let hasVerifier = 1;
+}
+
+def SimClassCopyOp : SimOp<"class.copy", [
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "allocate a static-type SystemVerilog shallow class copy";
+  let arguments = (ins SimContextType:$context, SimClassHandleType:$source);
+  let results = (outs SimClassHandleType:$result);
+  let assemblyFormat = [{
+    $context `,` $source attr-dict `:`
+    type($context) `,` qualified(type($source)) `->` qualified(type($result))
+  }];
+  let hasVerifier = 1;
+}
+
+def SimClassIsInstanceOp : SimOp<"class.is_instance", [Pure]> {
+  let summary = "test a dynamic class against a class or interface";
+  let arguments = (ins SimClassHandleType:$object,
+                       FlatSymbolRefAttr:$target);
+  let results = (outs I1:$result);
+  let assemblyFormat =
+      "$object `is` $target attr-dict `:` qualified(type($object))";
+  let hasVerifier = 1;
+}
+
+def SimClassIdOp : SimOp<"class.id", [Pure]> {
+  let summary = "return the stable identity of a managed object";
+  let description = [{
+    Returns zero for a null handle and a nonzero identity that is stable for
+    the lifetime of every allocated object. This implements
+    `weak_reference::get_id` without exposing a native address.
+  }];
+  let arguments = (ins SimClassHandleType:$object);
+  let results = (outs I64:$result);
+  let assemblyFormat =
+      "$object attr-dict `:` qualified(type($object))";
+}
+
+def SimClassCastOp : SimOp<"class.cast", [Pure]> {
+  let summary = "checked class or interface cast";
+  let arguments = (ins SimClassHandleType:$object);
+  let results = (outs SimClassHandleType:$result);
+  let assemblyFormat = [{
+    $object attr-dict `:` qualified(type($object))
+    `to` qualified(type($result))
+  }];
+  let hasVerifier = 1;
+}
+
+def SimClassFieldRefOp : SimOp<"class.field_ref", [Pure]> {
+  let summary = "managed reference to one instance property";
+  let arguments = (ins SimClassHandleType:$object,
+                       FlatSymbolRefAttr:$field);
+  let results = (outs SimManagedRefType:$result);
+  let assemblyFormat = [{
+    $object `[` $field `]` attr-dict `:` qualified(type($object))
+    `->` qualified(type($result))
+  }];
+  let hasVerifier = 1;
+}
+
+def SimManagedLoadOp : SimOp<"managed.load", [
+    MemoryEffects<[MemRead<SimHeapResource>]>
+  ]> {
+  let summary = "race-free load through a managed field reference";
+  let arguments = (ins SimManagedRefType:$reference);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = [{
+    $reference attr-dict `:` qualified(type($reference))
+    `->` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
+def SimManagedStoreOp : SimOp<"managed.store", [
+    MemoryEffects<[MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "race-free store through a managed field reference";
+  let arguments = (ins AnyType:$value, SimManagedRefType:$reference);
+  let assemblyFormat = [{
+    $value `to` $reference attr-dict `:`
+    type($value) `,` qualified(type($reference))
+  }];
+  let hasVerifier = 1;
+}
+
+def SimManagedNBAEnqueueOp : SimOp<"managed.nba.enqueue", [
+    MemoryEffects<[
+      MemWrite<SimHeapResource>, MemWrite<SimSchedulerResource>
+    ]>
+  ]> {
+  let summary = "schedule a nonblocking managed-field update";
+  let description = [{
+    Captures both the owning object and any managed value as precise heap roots
+    until the scheduler commits the update. The destination is revalidated and
+    written atomically with respect to other managed-field accesses.
+  }];
+  let arguments = (ins AnyType:$value, SimManagedRefType:$destination,
+                       Optional<SimTimeType>:$delay);
+  let assemblyFormat = [{$value `to` $destination (`after` $delay^)? attr-dict
+    `:` functional-type(operands, results)}];
+  let hasVerifier = 1;
+}
+
+def SimClassDirectCallOp : SimOp<"class.direct_call", [
+    MemoryEffects<[
+      MemRead<SimStorageResource>, MemWrite<SimStorageResource>,
+      MemRead<SimNetResource>, MemWrite<SimNetResource>,
+      MemRead<SimSchedulerResource>, MemWrite<SimSchedulerResource>,
+      MemRead<SimProcessResource>, MemWrite<SimProcessResource>,
+      MemRead<SimHeapResource>, MemWrite<SimHeapResource>,
+      MemRead<SimIOResource>, MemWrite<SimIOResource>,
+      MemRead<SimRNGResource>, MemWrite<SimRNGResource>,
+      MemRead<SimExternalResource>, MemWrite<SimExternalResource>
+    ]>
+  ]> {
+  let summary = "direct instance method call with explicit receiver";
+  let arguments = (ins FlatSymbolRefAttr:$callee,
+                       SimClassHandleType:$receiver,
+                       Variadic<AnyType>:$arguments);
+  let results = (outs Variadic<AnyType>:$results);
+  let assemblyFormat = [{
+    $callee $receiver `(` $arguments `)` attr-dict `:`
+    functional-type(operands, results)
+  }];
+  let hasVerifier = 1;
+}
+
+def SimClassVirtualCallOp : SimOp<"class.virtual_call", [
+    MemoryEffects<[
+      MemRead<SimStorageResource>, MemWrite<SimStorageResource>,
+      MemRead<SimNetResource>, MemWrite<SimNetResource>,
+      MemRead<SimSchedulerResource>, MemWrite<SimSchedulerResource>,
+      MemRead<SimProcessResource>, MemWrite<SimProcessResource>,
+      MemRead<SimHeapResource>, MemWrite<SimHeapResource>,
+      MemRead<SimIOResource>, MemWrite<SimIOResource>,
+      MemRead<SimRNGResource>, MemWrite<SimRNGResource>,
+      MemRead<SimExternalResource>, MemWrite<SimExternalResource>
+    ]>
+  ]> {
+  let summary = "descriptor-table class or interface dispatch";
+  let arguments = (ins SimClassHandleType:$receiver,
+                       FlatSymbolRefAttr:$method,
+                       I64Attr:$slot,
+                       I64Attr:$signature_id,
+                       Variadic<AnyType>:$arguments);
+  let results = (outs Variadic<AnyType>:$results);
+  let assemblyFormat = [{
+    $receiver `[` $method `]` `slot` $slot `signature_id` $signature_id
+    `(` $arguments `)` attr-dict `:` functional-type(operands, results)
+  }];
+  let hasVerifier = 1;
+}
+
+def SimWeakCreateOp : SimOp<"weak.create", [
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "create a managed weak_reference wrapper";
+  let arguments = (ins SimContextType:$context,
+                       SimClassHandleType:$referent);
+  let results = (outs SimClassHandleType:$result);
+  let assemblyFormat = [{
+    $context `,` $referent attr-dict `:`
+    type($context) `,` qualified(type($referent))
+    `->` qualified(type($result))
+  }];
+}
+
+def SimWeakGetOp : SimOp<"weak.get", [
+    MemoryEffects<[MemRead<SimHeapResource>]>
+  ]> {
+  let summary = "promote a reachable weak referent to a strong handle";
+  let arguments = (ins SimClassHandleType:$weak);
+  let results = (outs SimClassHandleType:$result);
+  let assemblyFormat = [{
+    $weak attr-dict `:` qualified(type($weak))
+    `->` qualified(type($result))
+  }];
+}
+
+def SimWeakClearOp : SimOp<"weak.clear", [
+    MemoryEffects<[MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "clear a weak_reference referent";
+  let arguments = (ins SimClassHandleType:$weak);
+  let assemblyFormat = "$weak attr-dict `:` qualified(type($weak))";
+}
+
+def SimGCSafepointOp : SimOp<"gc.safepoint", [
+    MemoryEffects<[
+      MemRead<SimHeapResource>, MemWrite<SimHeapResource>,
+      MemRead<SimSchedulerResource>, MemWrite<SimSchedulerResource>
+    ]>
+  ]> {
+  let summary = "precise generated collector safepoint";
+  let arguments = (ins SimContextType:$context);
+  let assemblyFormat = "$context attr-dict `:` type($context)";
+}
+
+// Internal native-lowering marker. The slot is an LLVM stack address whose
+// root record is pushed once at function entry; binding updates the precise
+// root immediately after a managed SSA value becomes available.
+def SimClassRootBindOp : SimOp<"class.root_bind", [
+    MemoryEffects<[MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "bind a managed SSA handle to a pre-registered root slot";
+  let arguments = (ins SimClassHandleType:$object, AnyType:$slot);
+  let assemblyFormat =
+      "$object `to` $slot attr-dict `:` qualified(type($object)) `,` type($slot)";
+}
+
+//===----------------------------------------------------------------------===//
 // Isolated code units and direct invocation
 //===----------------------------------------------------------------------===//
 

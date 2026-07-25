@@ -146,9 +146,9 @@ std::atomic<ObserverEvaluatorMode> observerEvaluatorMode{
 std::atomic<uint32_t> observerEvaluatorCalls{0};
 std::atomic<bool> observerJoinedReadCompleted{false};
 
-obelisk_rt_status observerEvaluator(
-    obelisk_rt_context *context, const uint64_t *, uint32_t, uint64_t *value,
-    uint64_t *unknown, uint32_t limbCount) {
+obelisk_rt_status observerEvaluator(obelisk_rt_context *context,
+                                    const uint64_t *, uint32_t, uint64_t *value,
+                                    uint64_t *unknown, uint32_t limbCount) {
   if (!value || !unknown || limbCount == 0)
     return OBELISK_RT_INVALID_ARGUMENT;
   std::fill(value, value + limbCount, 0);
@@ -225,9 +225,10 @@ void observerWaitDestroy(obelisk_rt_process_instance_v1 *) {}
 
 uint32_t observerSecondClauseCalls = 0;
 
-obelisk_rt_status observerSecondEvaluator(
-    obelisk_rt_context *, const uint64_t *, uint32_t, uint64_t *value,
-    uint64_t *unknown, uint32_t limbCount) {
+obelisk_rt_status observerSecondEvaluator(obelisk_rt_context *,
+                                          const uint64_t *, uint32_t,
+                                          uint64_t *value, uint64_t *unknown,
+                                          uint32_t limbCount) {
   if (!value || !unknown || limbCount != 1)
     return OBELISK_RT_INVALID_ARGUMENT;
   ++observerSecondClauseCalls;
@@ -249,8 +250,7 @@ observerTwoClauseExecute(obelisk_rt_process_instance_v1 *instance) {
   return OBELISK_RT_OK;
 }
 
-uint64_t observerWaitLayoutChecksum(
-    const obelisk_rt_frame_layout_v1 &layout) {
+uint64_t observerWaitLayoutChecksum(const obelisk_rt_frame_layout_v1 &layout) {
   uint64_t hash = UINT64_C(14695981039346656037);
   auto append = [&](const void *data, size_t size) {
     const auto *bytes = static_cast<const uint8_t *>(data);
@@ -274,8 +274,8 @@ uint64_t observerWaitLayoutChecksum(
 
 struct ObserverWaitTestDescriptor {
   obelisk_rt_observer_descriptor_v1 observer{
-      7, nullptr, 0, 1, 0, OBELISK_RT_OBSERVER_NO_BYTECODE,
-      observerEvaluator, 0};
+      7, nullptr, 0, 1, 0, OBELISK_RT_OBSERVER_NO_BYTECODE, observerEvaluator,
+      0};
   obelisk_rt_execution_descriptor_v1 execution{};
   obelisk_rt_frame_field_v1 field{
       OBELISK_RT_FRAME_WAIT, OBELISK_RT_FRAME_FIELD_FLAGS_NONE, 0, 176, 8, 0};
@@ -344,15 +344,14 @@ struct ObserverWaitTestDescriptor {
   }
 };
 
-obelisk_rt_status
-startObserverWait(ObserverWaitTestDescriptor &descriptor,
-                  obelisk_rt_context **outContext) {
+obelisk_rt_status startObserverWait(ObserverWaitTestDescriptor &descriptor,
+                                    obelisk_rt_context **outContext) {
   if (!outContext)
     return OBELISK_RT_INVALID_ARGUMENT;
   *outContext = nullptr;
   obelisk_rt_context *context = nullptr;
-  obelisk_rt_status status = obelisk_rt_v1_context_create_for_design(
-      &descriptor.execution, &context);
+  obelisk_rt_status status =
+      obelisk_rt_v1_context_create_for_design(&descriptor.execution, &context);
   if (status != OBELISK_RT_OK)
     return status;
   status = obelisk_rt_v1_native_state_register_static(context, 1, 0, 1);
@@ -361,16 +360,15 @@ startObserverWait(ObserverWaitTestDescriptor &descriptor,
     return status;
   }
   obelisk_rt_process_instance_v1 *instance = nullptr;
-  status = obelisk_rt_v1_process_instance_create(&descriptor.process,
-                                                  &instance);
+  status =
+      obelisk_rt_v1_process_instance_create(&descriptor.process, &instance);
   if (status != OBELISK_RT_OK) {
     obelisk_rt_v1_context_destroy(context);
     return status;
   }
   void *frame = nullptr;
   uint64_t frameSize = 0;
-  status =
-      obelisk_rt_v1_process_instance_frame(instance, &frame, &frameSize);
+  status = obelisk_rt_v1_process_instance_frame(instance, &frame, &frameSize);
   if (status != OBELISK_RT_OK || frameSize != 176) {
     (void)obelisk_rt_v1_process_instance_destroy(instance);
     obelisk_rt_v1_context_destroy(context);
@@ -494,8 +492,8 @@ TEST(RuntimeABI, StableScalarLayout) {
   EXPECT_EQ(offsetof(obelisk_rt_arg_v1, size), 8u);
   EXPECT_EQ(sizeof(obelisk_rt_activation_descriptor_v1), 24u);
   EXPECT_EQ(offsetof(obelisk_rt_activation_descriptor_v1, native_entry), 8u);
-  EXPECT_EQ(
-      offsetof(obelisk_rt_activation_descriptor_v1, bytecode_function), 16u);
+  EXPECT_EQ(offsetof(obelisk_rt_activation_descriptor_v1, bytecode_function),
+            16u);
   EXPECT_EQ(sizeof(obelisk_rt_observer_capture_abi_v1), 8u);
   EXPECT_EQ(sizeof(obelisk_rt_observer_descriptor_v1), 48u);
   EXPECT_EQ(sizeof(obelisk_rt_execution_descriptor_v1), 120u);
@@ -523,21 +521,8 @@ TEST(RuntimeABI, RejectsMalformedActivationInventory) {
       1, nullptr, OBELISK_RT_ACTIVATION_NO_BYTECODE,
       OBELISK_RT_ACTIVATION_HAS_NATIVE};
   const obelisk_rt_execution_descriptor_v1 execution{
-      OBELISK_RT_VERSION,
-      0,
-      0,
-      nullptr,
-      0,
-      nullptr,
-      0,
-      0,
-      0,
-      nullptr,
-      0,
-      0,
-      0,
-      &activation,
-      1,
+      OBELISK_RT_VERSION, 0, 0, nullptr, 0, nullptr, 0, 0, 0, nullptr, 0, 0, 0,
+      &activation,        1,
   };
   obelisk_rt_context *context = nullptr;
   EXPECT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
@@ -549,8 +534,8 @@ TEST(RuntimeABI, ValidatesObserverInventoryAndDescriptorVersion) {
   obelisk_rt_observer_capture_abi_v1 capture{
       OBELISK_RT_OBSERVER_CAPTURE_STORAGE, 8};
   obelisk_rt_observer_descriptor_v1 observer{
-      7, &capture, 1, 1, 0, OBELISK_RT_OBSERVER_NO_BYTECODE,
-      observerEvaluator, 0};
+      7, &capture, 1, 1, 0, OBELISK_RT_OBSERVER_NO_BYTECODE, observerEvaluator,
+      0};
   obelisk_rt_execution_descriptor_v1 execution{};
   execution.version = OBELISK_RT_VERSION;
   execution.observers = &observer;
@@ -582,14 +567,14 @@ TEST(RuntimeABI, RejectsMalformedComputedWaitRecords) {
   ObserverWaitTestDescriptor descriptor;
   auto execute = [&](auto mutate, obelisk_rt_status expected) {
     obelisk_rt_process_instance_v1 *instance = nullptr;
-    ASSERT_EQ(obelisk_rt_v1_process_instance_create(&descriptor.process,
-                                                     &instance),
-              OBELISK_RT_OK);
+    ASSERT_EQ(
+        obelisk_rt_v1_process_instance_create(&descriptor.process, &instance),
+        OBELISK_RT_OK);
     void *frame = nullptr;
     uint64_t frameSize = 0;
-    ASSERT_EQ(obelisk_rt_v1_process_instance_frame(instance, &frame,
-                                                    &frameSize),
-              OBELISK_RT_OK);
+    ASSERT_EQ(
+        obelisk_rt_v1_process_instance_frame(instance, &frame, &frameSize),
+        OBELISK_RT_OK);
     ASSERT_EQ(frameSize, 176u);
     ObserverWaitTestDescriptor::populate(frame);
     mutate(*static_cast<obelisk_rt_computed_wait_record_v1 *>(frame), frame);
@@ -597,19 +582,14 @@ TEST(RuntimeABI, RejectsMalformedComputedWaitRecords) {
     EXPECT_EQ(obelisk_rt_v1_process_instance_execute(
                   instance, nullptr, OBELISK_RT_TIER_NATIVE, &action),
               expected);
-    EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance),
-              OBELISK_RT_OK);
+    EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
   };
 
   execute([](auto &, void *) {}, OBELISK_RT_OK);
-  execute(
-      [](auto &wait, void *) {
-        wait.version = OBELISK_RT_VERSION + 1;
-      },
-      OBELISK_RT_INVALID_FRAME);
-  execute(
-      [](auto &wait, void *) { wait.observers_offset = UINT64_MAX; },
-      OBELISK_RT_INVALID_FRAME);
+  execute([](auto &wait, void *) { wait.version = OBELISK_RT_VERSION + 1; },
+          OBELISK_RT_INVALID_FRAME);
+  execute([](auto &wait, void *) { wait.observers_offset = UINT64_MAX; },
+          OBELISK_RT_INVALID_FRAME);
   execute(
       [](auto &wait, void *frame) {
         auto *binding = reinterpret_cast<obelisk_rt_computed_observer_v1 *>(
@@ -654,9 +634,8 @@ TEST(RuntimeABI, RejectsMalformedComputedWaitRecords) {
         clause->flags = UINT32_MAX;
       },
       OBELISK_RT_INVALID_FRAME);
-  execute(
-      [](auto &wait, void *) { wait.previous_limb_count = UINT32_MAX; },
-      OBELISK_RT_INVALID_FRAME);
+  execute([](auto &wait, void *) { wait.previous_limb_count = UINT32_MAX; },
+          OBELISK_RT_INVALID_FRAME);
 }
 
 TEST(RuntimeABI, ObserverEvaluatorRunsWithoutTheContextMutexHeld) {
@@ -692,8 +671,7 @@ TEST(RuntimeABI, ObserverEvaluatorFailurePropagatesThroughScheduler) {
       context, obelisk_rt_v1_native_state_static_handle(1), 1, &zero, nullptr,
       &one, nullptr);
   EXPECT_EQ(observerEvaluatorCalls.load(), 1u);
-  EXPECT_EQ(obelisk_rt_v1_scheduler_run(context),
-            OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_INVALID_ARGUMENT);
   obelisk_rt_v1_context_destroy(context);
   observerEvaluatorMode = ObserverEvaluatorMode::ConstantZero;
 }
@@ -719,8 +697,8 @@ TEST(RuntimeABI, ObserverEvaluatorDefersContextDestructionUntilReturn) {
 
 TEST(RuntimeABI, NestedObserverLatchStopsLaterSourceClauses) {
   std::array<obelisk_rt_observer_descriptor_v1, 2> observers{{
-      {7, nullptr, 0, 1, 0, OBELISK_RT_OBSERVER_NO_BYTECODE,
-       observerEvaluator, 0},
+      {7, nullptr, 0, 1, 0, OBELISK_RT_OBSERVER_NO_BYTECODE, observerEvaluator,
+       0},
       {8, nullptr, 0, 1, 0, OBELISK_RT_OBSERVER_NO_BYTECODE,
        observerSecondEvaluator, 0},
   }};
@@ -731,9 +709,15 @@ TEST(RuntimeABI, NestedObserverLatchStopsLaterSourceClauses) {
   obelisk_rt_frame_field_v1 field{
       OBELISK_RT_FRAME_WAIT, OBELISK_RT_FRAME_FIELD_FLAGS_NONE, 0, 256, 8, 0};
   std::array<uint32_t, 2> continuations{{0, 1}};
-  obelisk_rt_frame_layout_v1 layout{
-      OBELISK_RT_VERSION, 0, 256, 8, &field, 1,
-      static_cast<uint32_t>(continuations.size()), continuations.data(), 0};
+  obelisk_rt_frame_layout_v1 layout{OBELISK_RT_VERSION,
+                                    0,
+                                    256,
+                                    8,
+                                    &field,
+                                    1,
+                                    static_cast<uint32_t>(continuations.size()),
+                                    continuations.data(),
+                                    0};
   layout.checksum = observerWaitLayoutChecksum(layout);
   obelisk_rt_process_descriptor_v1 process{
       {OBELISK_RT_DESCRIPTOR_PROCESS, 0, 18},
@@ -784,9 +768,8 @@ TEST(RuntimeABI, NestedObserverLatchStopsLaterSourceClauses) {
       static_cast<uint8_t *>(frame) + wait->observers_offset);
   bindings[0] = {7, 0, 0, 0, 1, 224, 0};
   bindings[1] = {8, 0, 0, 1, 1, 240, 0};
-  auto *dependencies =
-      reinterpret_cast<obelisk_rt_computed_dependency_v1 *>(
-          static_cast<uint8_t *>(frame) + wait->dependencies_offset);
+  auto *dependencies = reinterpret_cast<obelisk_rt_computed_dependency_v1 *>(
+      static_cast<uint8_t *>(frame) + wait->dependencies_offset);
   dependencies[0] = {obelisk_rt_v1_native_state_static_handle(1),
                      OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL, 1};
   dependencies[1] = dependencies[0];
@@ -826,8 +809,7 @@ TEST(RuntimeABI, RecursiveObserverEvaluationHasADeterministicDepthLimit) {
       context, obelisk_rt_v1_native_state_static_handle(1), 1, &zero, nullptr,
       &one, nullptr);
   EXPECT_EQ(observerEvaluatorCalls.load(), 256u);
-  EXPECT_EQ(obelisk_rt_v1_scheduler_run(context),
-            OBELISK_RT_OUT_OF_RESOURCES);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OUT_OF_RESOURCES);
   obelisk_rt_v1_context_destroy(context);
   observerEvaluatorMode = ObserverEvaluatorMode::ConstantZero;
 }
@@ -848,13 +830,11 @@ TEST(RuntimeABI, ReportsEveryStatusAndReleasesBuffersIdempotently) {
       {OBELISK_RT_LAYOUT_MISMATCH, "process frame layout mismatch"},
       {OBELISK_RT_INVALID_CONTINUATION, "invalid process continuation"},
       {OBELISK_RT_TIER_UNAVAILABLE, "requested process tier unavailable"},
-      {OBELISK_RT_INVALID_LIFECYCLE,
-       "invalid process lifecycle transition"},
+      {OBELISK_RT_INVALID_LIFECYCLE, "invalid process lifecycle transition"},
       {OBELISK_RT_INVALID_FRAME, "invalid process frame record"},
       {OBELISK_RT_INVALID_DESIGN, "invalid design metadata"},
       {OBELISK_RT_PERMISSION_DENIED, "permission denied"},
-      {OBELISK_RT_DPI_DISABLE_UNSUPPORTED,
-       "DPI task disable is unsupported"},
+      {OBELISK_RT_DPI_DISABLE_UNSUPPORTED, "DPI task disable is unsupported"},
       {OBELISK_RT_FATAL, "fatal SystemVerilog diagnostic"},
   };
   for (const auto &[status, message] : statuses)
@@ -905,11 +885,11 @@ struct DpiObservation {
   int userKey = 0;
 };
 
-obelisk_rt_status observeDpiCall(
-    obelisk_rt_context *context, uint32_t importID,
-    const obelisk_rt_import_input_v1 *inputs, uint32_t inputCount,
-    obelisk_rt_import_output_v1 *outputs, uint32_t outputCount,
-    void *userData) {
+obelisk_rt_status observeDpiCall(obelisk_rt_context *context, uint32_t importID,
+                                 const obelisk_rt_import_input_v1 *inputs,
+                                 uint32_t inputCount,
+                                 obelisk_rt_import_output_v1 *outputs,
+                                 uint32_t outputCount, void *userData) {
   auto &observation = *static_cast<DpiObservation *>(userData);
   ++observation.calls;
   EXPECT_NE(importID, 0u);
@@ -947,9 +927,8 @@ obelisk_rt_status observeDpiCall(
     uint64_t nestedValue[2]{};
     obelisk_rt_import_output_v1 nestedOutput{
         OBELISK_RT_DBREG_BITS, 0, 0, 65, nestedValue, nullptr, 2};
-    EXPECT_EQ(obelisk_rt_v1_import_call(
-                  context, &observation.nestedSite, inputs, inputCount,
-                  &nestedOutput, 1),
+    EXPECT_EQ(obelisk_rt_v1_import_call(context, &observation.nestedSite,
+                                        inputs, inputCount, &nestedOutput, 1),
               OBELISK_RT_OK);
     EXPECT_EQ(svGetScope(), initial);
     EXPECT_STREQ(svGetNameFromScope(initial), "top");
@@ -967,19 +946,8 @@ TEST(RuntimeDPI, ValidatesDispatchContextAndNestedRestoration) {
       {1, 0, childName, sizeof(childName) - 1, -9, -12, 0},
   };
   obelisk_rt_execution_descriptor_v1 execution{
-      OBELISK_RT_VERSION,
-      0,
-      0,
-      nullptr,
-      0,
-      nullptr,
-      0,
-      0,
-      0,
-      scopes,
-      std::size(scopes),
-      -12,
-      0,
+      OBELISK_RT_VERSION, 0,   0, nullptr, 0, nullptr, 0, 0, 0, scopes,
+      std::size(scopes),  -12, 0,
   };
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
@@ -1002,19 +970,19 @@ TEST(RuntimeDPI, ValidatesDispatchContextAndNestedRestoration) {
                             41,
                             7};
   observation.invokeNested = true;
-  ASSERT_EQ(obelisk_rt_v1_context_register_import(
-                context, outerID, observeDpiCall, &observation),
+  ASSERT_EQ(obelisk_rt_v1_context_register_import(context, outerID,
+                                                  observeDpiCall, &observation),
             OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_context_register_import(
-                context, observation.nestedID, observeDpiCall, &observation),
+  ASSERT_EQ(obelisk_rt_v1_context_register_import(context, observation.nestedID,
+                                                  observeDpiCall, &observation),
             OBELISK_RT_OK);
 
   uint64_t inputValue[2]{UINT64_C(0x123456789abcdef0), 1};
   uint64_t outputValue[2]{UINT64_MAX, UINT64_MAX};
   obelisk_rt_import_input_v1 input{
       OBELISK_RT_DBREG_BITS, 0, 0, 65, inputValue, nullptr, 2};
-  obelisk_rt_import_output_v1 output{
-      OBELISK_RT_DBREG_BITS, 0, 0, 65, outputValue, nullptr, 2};
+  obelisk_rt_import_output_v1 output{OBELISK_RT_DBREG_BITS, 0,       0, 65,
+                                     outputValue,           nullptr, 2};
   obelisk_rt_import_site_v1 site{
       OBELISK_RT_VERSION,
       OBELISK_RT_IMPORT_CONTEXT,
@@ -1044,10 +1012,10 @@ TEST(RuntimeDPI, ValidatesDispatchContextAndNestedRestoration) {
   EXPECT_EQ(observation.calls, 2u);
   site.import_id = outerID;
   observation.invokeNested = false;
-  ASSERT_EQ(obelisk_rt_v1_context_register_import_signature(
-                context, outerID, UINT64_C(0x1234), observeDpiCall,
-                &observation),
-            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_context_register_import_signature(
+          context, outerID, UINT64_C(0x1234), observeDpiCall, &observation),
+      OBELISK_RT_OK);
   site.abi_signature = UINT64_C(0x5678);
   EXPECT_EQ(obelisk_rt_v1_import_call(context, &site, &input, 1, &output, 1),
             OBELISK_RT_ARGUMENT_MISMATCH);
@@ -1061,22 +1029,10 @@ TEST(RuntimeDPI, ValidatesDispatchContextAndNestedRestoration) {
 
 TEST(RuntimeDPI, RejectsMalformedScopeMetadata) {
   static constexpr char name[] = "top";
-  obelisk_rt_dpi_scope_v1 scope{
-      1, UINT64_MAX, name, sizeof(name) - 1, -9, -12, 0};
+  obelisk_rt_dpi_scope_v1 scope{1,  UINT64_MAX, name, sizeof(name) - 1,
+                                -9, -12,        0};
   obelisk_rt_execution_descriptor_v1 execution{
-      OBELISK_RT_VERSION,
-      0,
-      0,
-      nullptr,
-      0,
-      nullptr,
-      0,
-      0,
-      0,
-      &scope,
-      1,
-      -12,
-      0,
+      OBELISK_RT_VERSION, 0, 0, nullptr, 0, nullptr, 0, 0, 0, &scope, 1, -12, 0,
   };
   obelisk_rt_context *context = nullptr;
   EXPECT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
@@ -1199,9 +1155,15 @@ TEST_F(RuntimeTest, FormatsStringsRealsTimeAndEnvironment) {
   std::string scope = "top.worker";
   std::string libraryCell = "work.top";
   std::string suffix = "ns";
-  obelisk_rt_format_env_v1 environment{
-      scope.data(),  scope.size(), libraryCell.data(), libraryCell.size(), 20, 0,
-      suffix.data(), suffix.size(), 100};
+  obelisk_rt_format_env_v1 environment{scope.data(),
+                                       scope.size(),
+                                       libraryCell.data(),
+                                       libraryCell.size(),
+                                       20,
+                                       0,
+                                       suffix.data(),
+                                       suffix.size(),
+                                       100};
 
   auto [status, output] =
       format("[%4h][%-4h][%0h][%4s][%-4s] %.2f %m %l %0t%%",
@@ -1455,14 +1417,14 @@ TEST_F(RuntimeTest, ReadsBytesLinesAndReportsEOF) {
   EXPECT_EQ(byte, 'a');
 
   RuntimeBuffer firstLine;
-  ASSERT_EQ(obelisk_rt_v1_file_getline(context, descriptor, 64,
-                                       firstLine.out()),
-            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_file_getline(context, descriptor, 64, firstLine.out()),
+      OBELISK_RT_OK);
   EXPECT_EQ(firstLine.str(), std::string("\0b\n", 3));
   RuntimeBuffer secondLine;
-  ASSERT_EQ(obelisk_rt_v1_file_getline(context, descriptor, 64,
-                                       secondLine.out()),
-            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_file_getline(context, descriptor, 64, secondLine.out()),
+      OBELISK_RT_OK);
   EXPECT_EQ(secondLine.str(), "last");
   RuntimeBuffer eofLine;
   EXPECT_EQ(obelisk_rt_v1_file_getline(context, descriptor, 64, eofLine.out()),
@@ -1477,9 +1439,9 @@ TEST_F(RuntimeTest, BoundsPackedLineReadsWithoutDiscardingRemainingBytes) {
   TempDirectory temporary;
   uint32_t descriptor = open(temporary.file("bounded-line.txt"), "w+");
   uint64_t written = 0;
-  ASSERT_EQ(obelisk_rt_v1_file_write(context, descriptor, "abcdef\n", 7,
-                                     &written),
-            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_file_write(context, descriptor, "abcdef\n", 7, &written),
+      OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_file_rewind(context, descriptor), OBELISK_RT_OK);
 
   RuntimeBuffer prefix;
@@ -1565,9 +1527,9 @@ TEST_F(RuntimeTest, RejectsInvalidFileArgumentsAndOpenFailures) {
             OBELISK_RT_INVALID_HANDLE);
   EXPECT_EQ(obelisk_rt_v1_file_ungetc(context, invalidDescriptor, 'x'),
             OBELISK_RT_INVALID_HANDLE);
-  EXPECT_EQ(obelisk_rt_v1_file_getline(context, invalidDescriptor, 64,
-                                       line.out()),
-            OBELISK_RT_INVALID_HANDLE);
+  EXPECT_EQ(
+      obelisk_rt_v1_file_getline(context, invalidDescriptor, 64, line.out()),
+      OBELISK_RT_INVALID_HANDLE);
   EXPECT_EQ(obelisk_rt_v1_file_eof(context, invalidDescriptor, &eof),
             OBELISK_RT_INVALID_HANDLE);
   EXPECT_EQ(obelisk_rt_v1_file_error(context, invalidDescriptor, &errorCode,
@@ -2441,8 +2403,7 @@ TEST_F(RuntimeTest, BytecodeServicesExerciseEveryFileAndDisplayCall) {
                     sizeof(frame.firstTell))});
   call(OBELISK_RT_BC_SERVICE_FILE_REWIND, {descriptor()});
   call(OBELISK_RT_BC_SERVICE_FILE_GETLINE,
-       {descriptor(), immediate(OBELISK_RT_BC_VALUE_U64, 3),
-        outputBuffer(1)});
+       {descriptor(), immediate(OBELISK_RT_BC_VALUE_U64, 3), outputBuffer(1)});
   call(OBELISK_RT_BC_SERVICE_BUFFER_RELEASE, {inputBuffer(1)});
   call(OBELISK_RT_BC_SERVICE_FILE_TELL,
        {descriptor(),
@@ -2450,8 +2411,7 @@ TEST_F(RuntimeTest, BytecodeServicesExerciseEveryFileAndDisplayCall) {
                     sizeof(frame.boundedTell))});
   call(OBELISK_RT_BC_SERVICE_FILE_REWIND, {descriptor()});
   call(OBELISK_RT_BC_SERVICE_FILE_GETLINE,
-       {descriptor(), immediate(OBELISK_RT_BC_VALUE_U64, 64),
-        outputBuffer(1)});
+       {descriptor(), immediate(OBELISK_RT_BC_VALUE_U64, 64), outputBuffer(1)});
   call(OBELISK_RT_BC_SERVICE_BUFFER_RELEASE, {inputBuffer(1)});
   call(OBELISK_RT_BC_SERVICE_FILE_GETC,
        {descriptor(), outputFrame(OBELISK_RT_BC_VALUE_U8, offsetof(Frame, byte),
@@ -2907,6 +2867,425 @@ TEST(RuntimeFragmentTest, BytecodeServiceStatusPropagatesMissingContext) {
   obelisk_rt_fragment_action_v1 action{};
   EXPECT_EQ(executeBytecode(descriptor, nullptr, 0, 0, &action),
             OBELISK_RT_INVALID_ARGUMENT);
+}
+
+constexpr uint64_t kNodeLinkOffset = sizeof(void *);
+constexpr uint64_t kNodeValueOffset = sizeof(void *) * 2;
+
+const obelisk_rt_trace_entry_v1 nodeTraceEntry{
+    kNodeLinkOffset, 0, 1, OBELISK_RT_TRACE_STRONG, 0, nullptr};
+const obelisk_rt_trace_layout_v1 nodeTraceLayout{
+    OBELISK_RT_VERSION, 0, sizeof(void *) * 3, alignof(void *),
+    &nodeTraceEntry,    1};
+
+obelisk_rt_status nodeValueMethod(obelisk_rt_context *context,
+                                  obelisk_rt_gc_lane_v1 *,
+                                  obelisk_rt_object_v1 *receiver,
+                                  const obelisk_rt_method_argument_v1 *,
+                                  uint32_t argumentCount, void *result,
+                                  uint64_t resultSize) {
+  if (!context || argumentCount != 0 || !result ||
+      resultSize != sizeof(uint64_t))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  return obelisk_rt_v1_object_read(receiver, kNodeValueOffset, result,
+                                   resultSize);
+}
+
+obelisk_rt_status derivedValueMethod(obelisk_rt_context *context,
+                                     obelisk_rt_gc_lane_v1 *,
+                                     obelisk_rt_object_v1 *receiver,
+                                     const obelisk_rt_method_argument_v1 *,
+                                     uint32_t argumentCount, void *result,
+                                     uint64_t resultSize) {
+  uint64_t value = 0;
+  if (!context || argumentCount != 0 || !result ||
+      resultSize != sizeof(value) ||
+      obelisk_rt_v1_object_read(receiver, kNodeValueOffset, &value,
+                                sizeof(value)) != OBELISK_RT_OK)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  value += 100;
+  std::memcpy(result, &value, sizeof(value));
+  return OBELISK_RT_OK;
+}
+
+const obelisk_rt_method_descriptor_v1 nodeMethods[]{
+    {42, 0, OBELISK_RT_METHOD_NO_BYTECODE, nodeValueMethod, nullptr}};
+const obelisk_rt_method_descriptor_v1 derivedMethods[]{
+    {42, 0, OBELISK_RT_METHOD_NO_BYTECODE, derivedValueMethod, nullptr}};
+const char nodeName[] = "node";
+const char derivedName[] = "derived_node";
+const obelisk_rt_class_descriptor_v1 nodeDescriptor{OBELISK_RT_VERSION,
+                                                    0,
+                                                    1,
+                                                    sizeof(void *) * 3,
+                                                    alignof(void *),
+                                                    nullptr,
+                                                    nullptr,
+                                                    0,
+                                                    &nodeTraceLayout,
+                                                    nodeMethods,
+                                                    std::size(nodeMethods),
+                                                    nodeName,
+                                                    sizeof(nodeName) - 1};
+const obelisk_rt_class_descriptor_v1 derivedDescriptor{
+    OBELISK_RT_VERSION,
+    OBELISK_RT_CLASS_FINAL,
+    2,
+    sizeof(void *) * 3,
+    alignof(void *),
+    &nodeDescriptor,
+    nullptr,
+    0,
+    &nodeTraceLayout,
+    derivedMethods,
+    std::size(derivedMethods),
+    derivedName,
+    sizeof(derivedName) - 1};
+
+class ManagedHeapTest : public ::testing::Test {
+protected:
+  void SetUp() override {
+    ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+    ASSERT_NE(context, nullptr);
+    ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
+  }
+
+  void TearDown() override {
+    if (lane) {
+      EXPECT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
+      EXPECT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
+    }
+    obelisk_rt_v1_context_destroy(context);
+  }
+
+  obelisk_rt_context *context = nullptr;
+  obelisk_rt_gc_lane_v1 *lane = nullptr;
+};
+
+TEST_F(ManagedHeapTest, CollectsCyclesAndClearsWeakReferences) {
+  obelisk_rt_object_v1 *first = nullptr;
+  obelisk_rt_object_v1 *second = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &nodeDescriptor, &first),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &nodeDescriptor, &second),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_field_store(first, kNodeLinkOffset, second),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_field_store(second, kNodeLinkOffset, first),
+            OBELISK_RT_OK);
+
+  obelisk_rt_gc_root_v1 firstRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &firstRoot, &first),
+            OBELISK_RT_OK);
+  obelisk_rt_object_v1 *weak = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_weak_create(lane, second, &weak), OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 weakRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &weakRoot, &weak), OBELISK_RT_OK);
+
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  obelisk_rt_gc_statistics_v1 statistics{};
+  ASSERT_EQ(obelisk_rt_v1_gc_statistics(context, &statistics), OBELISK_RT_OK);
+  EXPECT_EQ(statistics.live_objects, 3u);
+
+  first = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  obelisk_rt_object_v1 *referent =
+      reinterpret_cast<obelisk_rt_object_v1 *>(uintptr_t{1});
+  ASSERT_EQ(obelisk_rt_v1_weak_get(weak, &referent), OBELISK_RT_OK);
+  EXPECT_EQ(referent, nullptr);
+  ASSERT_EQ(obelisk_rt_v1_gc_statistics(context, &statistics), OBELISK_RT_OK);
+  EXPECT_EQ(statistics.live_objects, 1u);
+  EXPECT_EQ(statistics.reclaimed_objects, 2u);
+
+  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &weakRoot), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &firstRoot), OBELISK_RT_OK);
+}
+
+TEST_F(ManagedHeapTest, DispatchesOverridesAndShallowCopiesStaticType) {
+  obelisk_rt_object_v1 *object = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &derivedDescriptor, &object),
+            OBELISK_RT_OK);
+  const uint64_t value = 23;
+  ASSERT_EQ(obelisk_rt_v1_object_write(object, kNodeValueOffset, &value,
+                                       sizeof(value)),
+            OBELISK_RT_OK);
+  EXPECT_TRUE(obelisk_rt_v1_object_is_instance(object, &derivedDescriptor));
+  EXPECT_TRUE(obelisk_rt_v1_object_is_instance(object, &nodeDescriptor));
+
+  uint64_t result = 0;
+  ASSERT_EQ(obelisk_rt_v1_method_invoke(lane, object, 0, 42, nullptr, 0,
+                                        &result, sizeof(result)),
+            OBELISK_RT_OK);
+  EXPECT_EQ(result, 123u);
+  EXPECT_EQ(obelisk_rt_v1_method_invoke(lane, object, 0, 43, nullptr, 0,
+                                        &result, sizeof(result)),
+            OBELISK_RT_LAYOUT_MISMATCH);
+
+  obelisk_rt_object_v1 *copy = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_object_shallow_copy(lane, &nodeDescriptor, object, &copy),
+      OBELISK_RT_OK);
+  EXPECT_TRUE(obelisk_rt_v1_object_is_instance(copy, &nodeDescriptor));
+  EXPECT_FALSE(obelisk_rt_v1_object_is_instance(copy, &derivedDescriptor));
+  ASSERT_EQ(obelisk_rt_v1_method_invoke(lane, copy, 0, 42, nullptr, 0, &result,
+                                        sizeof(result)),
+            OBELISK_RT_OK);
+  EXPECT_EQ(result, 23u);
+  EXPECT_NE(obelisk_rt_v1_object_id(object), obelisk_rt_v1_object_id(copy));
+
+  obelisk_rt_object_v1 *castResult = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_object_cast(object, &nodeDescriptor, &castResult),
+            OBELISK_RT_OK);
+  EXPECT_EQ(castResult, object);
+  castResult = object;
+  ASSERT_EQ(obelisk_rt_v1_object_cast(copy, &derivedDescriptor, &castResult),
+            OBELISK_RT_OK);
+  EXPECT_EQ(castResult, nullptr);
+  castResult = object;
+  ASSERT_EQ(obelisk_rt_v1_object_cast(nullptr, &derivedDescriptor, &castResult),
+            OBELISK_RT_OK);
+  EXPECT_EQ(castResult, nullptr);
+}
+
+TEST_F(ManagedHeapTest, UsesChunkAllocationForSmallObjectChurn) {
+  ASSERT_EQ(obelisk_rt_v1_gc_set_threshold(context, UINT64_MAX), OBELISK_RT_OK);
+  constexpr uint64_t objectCount = 200'000;
+  for (uint64_t index = 0; index != objectCount; ++index) {
+    obelisk_rt_object_v1 *object = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &nodeDescriptor, &object),
+              OBELISK_RT_OK);
+  }
+  obelisk_rt_gc_statistics_v1 statistics{};
+  ASSERT_EQ(obelisk_rt_v1_gc_statistics(context, &statistics), OBELISK_RT_OK);
+  EXPECT_EQ(statistics.allocated_objects, objectCount);
+  EXPECT_EQ(statistics.large_allocation_count, 0u);
+  EXPECT_LE(statistics.chunk_allocation_count, 7u);
+
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_statistics(context, &statistics), OBELISK_RT_OK);
+  EXPECT_EQ(statistics.live_objects, 0u);
+  EXPECT_EQ(statistics.reclaimed_objects, objectCount);
+  EXPECT_LE(statistics.cached_empty_chunks, 2u);
+}
+
+TEST_F(ManagedHeapTest, PinsAndStaticSlotsArePreciseRoots) {
+  obelisk_rt_object_v1 *staticObject = nullptr;
+  obelisk_rt_object_v1 *pinnedObject = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &nodeDescriptor, &staticObject),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &nodeDescriptor, &pinnedObject),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_static_root_register(context, &staticObject),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_pin(context, pinnedObject), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  obelisk_rt_gc_statistics_v1 statistics{};
+  ASSERT_EQ(obelisk_rt_v1_gc_statistics(context, &statistics), OBELISK_RT_OK);
+  EXPECT_EQ(statistics.live_objects, 2u);
+
+  ASSERT_EQ(obelisk_rt_v1_gc_static_root_unregister(context, &staticObject),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_unpin(context, pinnedObject), OBELISK_RT_OK);
+  staticObject = nullptr;
+  pinnedObject = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_statistics(context, &statistics), OBELISK_RT_OK);
+  EXPECT_EQ(statistics.live_objects, 0u);
+}
+
+TEST_F(ManagedHeapTest, AutomaticCollectionsClearWeakReferencesDuringChurn) {
+  ASSERT_EQ(obelisk_rt_v1_gc_set_threshold(context, 1024), OBELISK_RT_OK);
+  obelisk_rt_object_v1 *referent = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &nodeDescriptor, &referent),
+            OBELISK_RT_OK);
+  obelisk_rt_object_v1 *weak = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_weak_create(lane, referent, &weak), OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 weakRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &weakRoot, &weak), OBELISK_RT_OK);
+  referent = nullptr;
+
+  for (size_t index = 0; index != 1000; ++index) {
+    obelisk_rt_object_v1 *garbage = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &nodeDescriptor, &garbage),
+              OBELISK_RT_OK);
+  }
+  ASSERT_EQ(obelisk_rt_v1_weak_get(weak, &referent), OBELISK_RT_OK);
+  EXPECT_EQ(referent, nullptr);
+  obelisk_rt_gc_statistics_v1 statistics{};
+  ASSERT_EQ(obelisk_rt_v1_gc_statistics(context, &statistics), OBELISK_RT_OK);
+  EXPECT_GT(statistics.collection_count, 0u);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &weakRoot), OBELISK_RT_OK);
+}
+
+TEST(ManagedHeap, CoordinatesConcurrentLaneSafepoints) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  constexpr size_t laneCount = 4;
+  std::array<obelisk_rt_gc_lane_v1 *, laneCount> lanes{};
+  for (auto &lane : lanes)
+    ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
+
+  std::atomic<size_t> ready{0};
+  std::atomic<bool> start{false};
+  std::atomic<bool> collectionDone{false};
+  std::array<obelisk_rt_status, laneCount> statuses{};
+  std::vector<std::thread> workers;
+  for (size_t index = 0; index != laneCount; ++index) {
+    workers.emplace_back([&, index] {
+      obelisk_rt_gc_lane_v1 *lane = lanes[index];
+      statuses[index] = obelisk_rt_v1_gc_lane_enter(lane);
+      obelisk_rt_object_v1 *rooted = nullptr;
+      obelisk_rt_gc_root_v1 root{};
+      if (statuses[index] == OBELISK_RT_OK)
+        statuses[index] =
+            obelisk_rt_v1_object_allocate(lane, &nodeDescriptor, &rooted);
+      if (statuses[index] == OBELISK_RT_OK)
+        statuses[index] = obelisk_rt_v1_gc_root_push(lane, &root, &rooted);
+      ready.fetch_add(1);
+      while (!start.load())
+        std::this_thread::yield();
+      if (statuses[index] == OBELISK_RT_OK) {
+        if (index == 0) {
+          statuses[index] = obelisk_rt_v1_gc_collect(lane);
+          collectionDone.store(true);
+        } else {
+          while (!collectionDone.load() && statuses[index] == OBELISK_RT_OK)
+            statuses[index] = obelisk_rt_v1_gc_safepoint(lane);
+        }
+      }
+      if (root.cookie) {
+        EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &root), OBELISK_RT_OK);
+      }
+      if (statuses[index] == OBELISK_RT_OK)
+        statuses[index] = obelisk_rt_v1_gc_lane_leave(lane);
+    });
+  }
+  while (ready.load() != laneCount)
+    std::this_thread::yield();
+  start.store(true);
+  for (std::thread &worker : workers)
+    worker.join();
+  for (obelisk_rt_status status : statuses)
+    EXPECT_EQ(status, OBELISK_RT_OK);
+  for (auto *lane : lanes)
+    EXPECT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(ManagedHeap, ConcurrentSmallObjectAllocationUsesChunkedTLSCaches) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_set_threshold(context, UINT64_MAX), OBELISK_RT_OK);
+  constexpr size_t laneCount = 4;
+  constexpr size_t objectsPerLane = 50'000;
+  std::array<obelisk_rt_gc_lane_v1 *, laneCount> lanes{};
+  for (auto &lane : lanes)
+    ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
+
+  std::array<obelisk_rt_status, laneCount> statuses{};
+  std::array<std::vector<uint64_t>, laneCount> identities;
+  std::vector<std::thread> workers;
+  for (size_t index = 0; index != laneCount; ++index) {
+    workers.emplace_back([&, index] {
+      obelisk_rt_gc_lane_v1 *lane = lanes[index];
+      statuses[index] = obelisk_rt_v1_gc_lane_enter(lane);
+      identities[index].reserve(objectsPerLane);
+      for (size_t objectIndex = 0;
+           objectIndex != objectsPerLane && statuses[index] == OBELISK_RT_OK;
+           ++objectIndex) {
+        obelisk_rt_object_v1 *object = nullptr;
+        statuses[index] =
+            obelisk_rt_v1_object_allocate(lane, &nodeDescriptor, &object);
+        if (statuses[index] == OBELISK_RT_OK)
+          identities[index].push_back(obelisk_rt_v1_object_id(object));
+      }
+      if (statuses[index] == OBELISK_RT_OK)
+        statuses[index] = obelisk_rt_v1_gc_lane_leave(lane);
+    });
+  }
+  for (std::thread &worker : workers)
+    worker.join();
+  for (obelisk_rt_status status : statuses)
+    EXPECT_EQ(status, OBELISK_RT_OK);
+
+  std::vector<uint64_t> allIdentities;
+  allIdentities.reserve(laneCount * objectsPerLane);
+  for (const auto &laneIdentities : identities)
+    allIdentities.insert(allIdentities.end(), laneIdentities.begin(),
+                         laneIdentities.end());
+  std::sort(allIdentities.begin(), allIdentities.end());
+  EXPECT_EQ(allIdentities.size(), laneCount * objectsPerLane);
+  EXPECT_EQ(std::adjacent_find(allIdentities.begin(), allIdentities.end()),
+            allIdentities.end());
+
+  obelisk_rt_gc_statistics_v1 statistics{};
+  ASSERT_EQ(obelisk_rt_v1_gc_statistics(context, &statistics), OBELISK_RT_OK);
+  EXPECT_EQ(statistics.allocated_objects, laneCount * objectsPerLane);
+  EXPECT_EQ(statistics.large_allocation_count, 0u);
+  EXPECT_LE(statistics.chunk_allocation_count, 7u);
+  for (auto *lane : lanes)
+    EXPECT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(ManagedHeap, SerializesConcurrentCollectionRequestsWithoutDeadlock) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  constexpr size_t laneCount = 4;
+  std::array<obelisk_rt_gc_lane_v1 *, laneCount> lanes{};
+  for (auto &lane : lanes)
+    ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
+
+  std::atomic<size_t> ready{0};
+  std::atomic<bool> start{false};
+  std::array<obelisk_rt_status, laneCount> statuses{};
+  std::vector<std::thread> workers;
+  for (size_t index = 0; index != laneCount; ++index) {
+    workers.emplace_back([&, index] {
+      obelisk_rt_gc_lane_v1 *lane = lanes[index];
+      statuses[index] = obelisk_rt_v1_gc_lane_enter(lane);
+      ready.fetch_add(1);
+      while (!start.load())
+        std::this_thread::yield();
+      if (statuses[index] == OBELISK_RT_OK)
+        statuses[index] = obelisk_rt_v1_gc_collect(lane);
+      if (statuses[index] == OBELISK_RT_OK)
+        statuses[index] = obelisk_rt_v1_gc_lane_leave(lane);
+    });
+  }
+  while (ready.load() != laneCount)
+    std::this_thread::yield();
+  start.store(true);
+  for (std::thread &worker : workers)
+    worker.join();
+
+  for (obelisk_rt_status status : statuses)
+    EXPECT_EQ(status, OBELISK_RT_OK);
+  obelisk_rt_gc_statistics_v1 statistics{};
+  ASSERT_EQ(obelisk_rt_v1_gc_statistics(context, &statistics), OBELISK_RT_OK);
+  EXPECT_EQ(statistics.collection_count, laneCount);
+  for (auto *lane : lanes)
+    EXPECT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(ManagedHeap, RejectsMalformedClassLayouts) {
+  obelisk_rt_class_descriptor_v1 malformed = nodeDescriptor;
+  malformed.class_id = 0;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&malformed),
+            OBELISK_RT_INVALID_DESIGN);
+  malformed = nodeDescriptor;
+  obelisk_rt_trace_entry_v1 badEntry = nodeTraceEntry;
+  badEntry.offset = 1;
+  obelisk_rt_trace_layout_v1 badLayout = nodeTraceLayout;
+  badLayout.entries = &badEntry;
+  malformed.layout = &badLayout;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&malformed),
+            OBELISK_RT_INVALID_DESIGN);
+  malformed = nodeDescriptor;
+  malformed.flags = OBELISK_RT_CLASS_ABSTRACT;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&malformed), OBELISK_RT_OK);
 }
 
 } // namespace

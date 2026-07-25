@@ -144,6 +144,31 @@ def SimProcessType : SimType<"Process"> {
   let summary = "opaque scheduler process handle";
 }
 
+// Class identity deliberately remains in the executable type. Lowering this
+// to a physical pointer before hierarchy analysis would lose the distinction
+// between inherited fields, interface views, and checked casts.
+def SimClassHandleType : SimType<"ClassHandle"> {
+  let mnemonic = "class_handle";
+  let summary = "nullable statically typed managed class handle";
+  let parameters = (ins "::mlir::SymbolRefAttr":$className);
+  let assemblyFormat = "`<` $className `>`";
+  let genVerifyDecl = 1;
+}
+
+// A reference into a managed object keeps the owner explicit. It may be used
+// for ref/inout formals but must not be lowered to a persistent interior
+// pointer across a safepoint.
+def SimManagedRefType : SimType<"ManagedRef"> {
+  let mnemonic = "managed_ref";
+  let summary = "typed managed field reference with an owning object";
+  let parameters = (ins
+    "::mlir::Type":$elementType,
+    "::mlir::SymbolRefAttr":$ownerClass
+  );
+  let assemblyFormat = "`<` $elementType `,` $ownerClass `>`";
+  let genVerifyDecl = 1;
+}
+
 def SimControlType : SimType<"Control"> {
   let mnemonic = "control";
   let summary = "opaque dynamic named-control activation token";

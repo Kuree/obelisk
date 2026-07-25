@@ -13,6 +13,8 @@
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Transforms/Passes.h"
 
+#include "llvm/ADT/StringSet.h"
+
 #include <string>
 
 using namespace mlir;
@@ -34,9 +36,9 @@ struct ObeliskToSimulationPipelineOptions
   Option<std::string> vpi{
       *this, "vpi", llvm::cl::desc("VPI visibility mode: off, read, or full"),
       llvm::cl::init("off")};
-  Option<unsigned> optLevel{
-      *this, "opt-level", llvm::cl::desc("optimization level from 0 to 3"),
-      llvm::cl::init(3)};
+  Option<unsigned> optLevel{*this, "opt-level",
+                            llvm::cl::desc("optimization level from 0 to 3"),
+                            llvm::cl::init(3)};
 };
 
 /// The executable boundary is defined by the operations that may remain, not
@@ -53,11 +55,11 @@ static bool isExecutableType(Type type) {
     return integer.isSignless();
   if (type.isF64())
     return true;
-  return isa<FunctionType>(type) ||
-         isa<runtime::StatusType>(type) ||
+  return isa<FunctionType>(type) || isa<runtime::StatusType>(type) ||
          isa<sim::ContextType, sim::BytesType, sim::LogicType, sim::TimeType,
              sim::RefType, sim::NetType, sim::DriverType, sim::EventType,
-             sim::ProcessType, sim::ControlType, sim::ObserverType>(type) ||
+             sim::ProcessType, sim::ClassHandleType, sim::ManagedRefType,
+             sim::ControlType, sim::ObserverType>(type) ||
          sim::isAggregateType(type);
 }
 
@@ -90,6 +92,16 @@ void ObeliskSimFinalizePass::runOnOperation() {
   });
   for (Operation *op : obsoleteSemanticRoots)
     op->erase();
+
+  llvm::StringSet<> executableSymbols;
+  module.walk([&](Operation *op) {
+    if (!isa<sim::SimClassDeclOp, sim::SimClassFieldDeclOp,
+             sim::SimClassMethodDeclOp, sim::SimFuncOp>(op))
+      return;
+    if (auto name =
+            op->getAttrOfType<StringAttr>(SymbolTable::getSymbolAttrName()))
+      executableSymbols.insert(name.getValue());
+  });
 
   module.walk([&](Operation *op) {
     if (!isExecutableOperation(op, module)) {
@@ -138,7 +150,11 @@ void ObeliskSimFinalizePass::runOnOperation() {
             isa<sim::SimDesignOp>(op) &&
             named.getName() ==
                 sim::SimDesignOp::getComputeGraphAttrName(op->getName());
-        bool allowed = callTarget || observerTarget || graphReference;
+        bool executableReference =
+            reference.getNestedReferences().empty() &&
+            executableSymbols.contains(reference.getRootReference());
+        bool allowed = callTarget || observerTarget || graphReference ||
+                       executableReference;
         if (!allowed) {
           op->emitError() << "disallowed symbol reference " << reference;
           invalid = true;
@@ -158,6 +174,8 @@ void ObeliskSimFinalizePass::runOnOperation() {
     function->removeAttr(delayScaleAttrName);
     function->removeAttr(delayQuantumAttrName);
     function->removeAttr(sim::metadata::lowered);
+    function->removeAttr("obelisk_sim.this_argument");
+    function->removeAttr("obelisk_sim.constructor");
   });
 
   if (invalid)

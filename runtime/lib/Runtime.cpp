@@ -21,8 +21,8 @@ bool validActivationInventory(
     const obelisk_rt_execution_descriptor_v1 &execution) {
   if ((execution.activation_count == 0) != (execution.activations == nullptr))
     return false;
-  constexpr uint32_t validFlags = OBELISK_RT_ACTIVATION_HAS_NATIVE |
-                                  OBELISK_RT_ACTIVATION_HAS_BYTECODE;
+  constexpr uint32_t validFlags =
+      OBELISK_RT_ACTIVATION_HAS_NATIVE | OBELISK_RT_ACTIVATION_HAS_BYTECODE;
   uint64_t previousID = 0;
   for (uint64_t index = 0; index != execution.activation_count; ++index) {
     const obelisk_rt_activation_descriptor_v1 &activation =
@@ -32,8 +32,7 @@ bool validActivationInventory(
         activation.flags == 0 || (activation.flags & ~validFlags) != 0)
       return false;
     previousID = activation.code_unit_id;
-    bool hasNative =
-        (activation.flags & OBELISK_RT_ACTIVATION_HAS_NATIVE) != 0;
+    bool hasNative = (activation.flags & OBELISK_RT_ACTIVATION_HAS_NATIVE) != 0;
     if (hasNative != (activation.native_entry != nullptr))
       return false;
     if (hasNative &&
@@ -47,8 +46,7 @@ bool validActivationInventory(
         (activation.flags & OBELISK_RT_ACTIVATION_HAS_BYTECODE) != 0;
     if (hasBytecode) {
       if ((execution.flags & OBELISK_RT_EXECUTION_HAS_BYTECODE) == 0 ||
-          activation.bytecode_function ==
-              OBELISK_RT_ACTIVATION_NO_BYTECODE)
+          activation.bytecode_function == OBELISK_RT_ACTIVATION_NO_BYTECODE)
         return false;
     } else if (activation.bytecode_function !=
                OBELISK_RT_ACTIVATION_NO_BYTECODE) {
@@ -78,8 +76,7 @@ bool validObserverInventory(
       const obelisk_rt_observer_capture_abi_v1 &abi =
           observer.capture_abi[capture];
       if (abi.kind < OBELISK_RT_OBSERVER_CAPTURE_STORAGE ||
-          abi.kind > OBELISK_RT_OBSERVER_CAPTURE_DRIVER ||
-          abi.width == 0 ||
+          abi.kind > OBELISK_RT_OBSERVER_CAPTURE_DRIVER || abi.width == 0 ||
           (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_EVENT && abi.width != 1))
         return false;
     }
@@ -97,6 +94,7 @@ bool validObserverInventory(
 } // namespace
 
 obelisk_rt_context::obelisk_rt_context() {
+  managedHeap = obelisk_rt_managed_heap_create(this);
   mcd[0].stream = stdout;
   mcd[0].writable = true;
   files.resize(3);
@@ -105,6 +103,10 @@ obelisk_rt_context::obelisk_rt_context() {
   files[2] = {stderr, 0, true};
   for (uint32_t bit = 30; bit >= 1; --bit)
     freeMCDs.push_back(bit);
+}
+
+obelisk_rt_context::~obelisk_rt_context() {
+  obelisk_rt_managed_heap_destroy(managedHeap);
 }
 
 namespace {
@@ -157,8 +159,7 @@ ContextTransaction::~ContextTransaction() noexcept {
   try {
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
-      if (context->transactionDepth != 0 &&
-          --context->transactionDepth == 0) {
+      if (context->transactionDepth != 0 && --context->transactionDepth == 0) {
         context->transactionOwner = {};
         destroy = context->destroyPending;
       }
@@ -210,9 +211,9 @@ void obelisk_rt_release_control_unlocked(obelisk_rt_context *context,
     context->controlActivations.erase(found);
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_control_enter(
-    obelisk_rt_context *context, uint64_t targetID,
-    uint64_t *outActivation) {
+extern "C" obelisk_rt_status
+obelisk_rt_v1_control_enter(obelisk_rt_context *context, uint64_t targetID,
+                            uint64_t *outActivation) {
   if (!context || targetID == 0 || !outActivation)
     return OBELISK_RT_INVALID_ARGUMENT;
   *outActivation = 0;
@@ -234,8 +235,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_control_enter(
   });
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_control_leave(
-    obelisk_rt_context *context, uint64_t activation) {
+extern "C" obelisk_rt_status
+obelisk_rt_v1_control_leave(obelisk_rt_context *context, uint64_t activation) {
   if (!context || activation == 0)
     return OBELISK_RT_INVALID_ARGUMENT;
   return guarded(context, [&] {
@@ -250,8 +251,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_control_leave(
   });
 }
 
-extern "C" uint32_t obelisk_rt_v1_static_once(
-    obelisk_rt_context *context, uint64_t siteID) {
+extern "C" uint32_t obelisk_rt_v1_static_once(obelisk_rt_context *context,
+                                              uint64_t siteID) {
   if (!context || siteID == 0)
     return 0;
   try {
@@ -297,7 +298,7 @@ obelisk_rt_v1_context_create(obelisk_rt_context **outContext) {
 }
 
 extern "C" uint32_t obelisk_rt_v1_import_id(const uint8_t *symbol,
-                                              uint64_t symbolSize) {
+                                            uint64_t symbolSize) {
   if (!validBytes(symbol, symbolSize) || symbolSize == 0)
     return 0;
   uint64_t hash = UINT64_C(14695981039346656037);
@@ -312,12 +313,11 @@ extern "C" uint32_t obelisk_rt_v1_import_id(const uint8_t *symbol,
 extern "C" obelisk_rt_status obelisk_rt_v1_context_register_import(
     obelisk_rt_context *context, uint32_t importID,
     obelisk_rt_import_callback_v1 callback, void *userData) {
-  return obelisk_rt_v1_context_register_import_signature(
-      context, importID, 0, callback, userData);
+  return obelisk_rt_v1_context_register_import_signature(context, importID, 0,
+                                                         callback, userData);
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_context_register_import_signature(
+extern "C" obelisk_rt_status obelisk_rt_v1_context_register_import_signature(
     obelisk_rt_context *context, uint32_t importID, uint64_t abiSignature,
     obelisk_rt_import_callback_v1 callback, void *userData) {
   if (!context || importID == 0 || !callback)
@@ -337,11 +337,11 @@ extern "C" obelisk_rt_status obelisk_rt_v1_context_create_for_design(
   *outContext = nullptr;
   try {
     if (execution) {
-      constexpr uint32_t validFlags =
-          OBELISK_RT_EXECUTION_HAS_BYTECODE |
-          OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
-          OBELISK_RT_EXECUTION_VPI_READ | OBELISK_RT_EXECUTION_VPI_WRITE |
-          OBELISK_RT_EXECUTION_REQUIRE_BYTECODE;
+      constexpr uint32_t validFlags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
+                                      OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                                      OBELISK_RT_EXECUTION_VPI_READ |
+                                      OBELISK_RT_EXECUTION_VPI_WRITE |
+                                      OBELISK_RT_EXECUTION_REQUIRE_BYTECODE;
       if (execution->version != OBELISK_RT_VERSION ||
           execution->reserved != 0 || execution->dpi_reserved != 0 ||
           (execution->flags & ~validFlags) != 0 ||
@@ -378,8 +378,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_context_create_for_design(
       }
     }
     if (execution && execution->state_bit_count != 0) {
-      if (execution->state_bit_count >
-          std::numeric_limits<size_t>::max() - 63)
+      if (execution->state_bit_count > std::numeric_limits<size_t>::max() - 63)
         throw std::bad_alloc();
       size_t limbs =
           static_cast<size_t>((execution->state_bit_count + 63) / 64);
@@ -409,8 +408,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_context_create_for_design(
 extern "C" void obelisk_rt_v1_context_destroy(obelisk_rt_context *context) {
   if (!context)
     return;
-  std::unique_lock<std::recursive_mutex> transaction(
-      context->transactionMutex);
+  std::unique_lock<std::recursive_mutex> transaction(context->transactionMutex);
   {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     if (context->transactionDepth != 0 &&
