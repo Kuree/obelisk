@@ -174,6 +174,7 @@ def SimClassDeclOp : SimOp<"class.decl", [
     I64Attr:$id,
     OptionalAttr<FlatSymbolRefAttr>:$base,
     OptionalAttr<ArrayAttr>:$interfaces,
+    OptionalAttr<FlatSymbolRefAttr>:$weak_referent,
     BoolAttr:$is_abstract,
     BoolAttr:$is_interface,
     BoolAttr:$is_final,
@@ -352,6 +353,51 @@ def SimManagedNBAEnqueueOp : SimOp<"managed.nba.enqueue", [
   let hasVerifier = 1;
 }
 
+def SimArgumentRefFromRefOp : SimOp<"argument_ref.from_ref", [Pure]> {
+  let summary = "erase an ordinary reference into an exact-alias formal";
+  let arguments = (ins SimRefType:$input);
+  let results = (outs SimArgumentRefType:$result);
+  let assemblyFormat =
+      "$input attr-dict `:` qualified(type($input)) `->` qualified(type($result))";
+  let hasVerifier = 1;
+}
+
+def SimArgumentRefFromManagedOp
+    : SimOp<"argument_ref.from_managed", [Pure]> {
+  let summary = "erase a managed property reference into an exact-alias formal";
+  let arguments = (ins SimManagedRefType:$input);
+  let results = (outs SimArgumentRefType:$result);
+  let assemblyFormat =
+      "$input attr-dict `:` qualified(type($input)) `->` qualified(type($result))";
+  let hasVerifier = 1;
+}
+
+def SimArgumentRefLoadOp : SimOp<"argument_ref.load", [
+    MemoryEffects<[
+      MemRead<SimStorageResource>, MemRead<SimHeapResource>
+    ]>
+  ]> {
+  let summary = "load through an exact-alias subroutine reference";
+  let arguments = (ins SimArgumentRefType:$reference);
+  let results = (outs AnyType:$result);
+  let assemblyFormat =
+      "$reference attr-dict `:` qualified(type($reference)) `->` type($result)";
+  let hasVerifier = 1;
+}
+
+def SimArgumentRefStoreOp : SimOp<"argument_ref.store", [
+    MemoryEffects<[
+      MemRead<SimStorageResource>, MemWrite<SimStorageResource>,
+      MemRead<SimHeapResource>, MemWrite<SimHeapResource>
+    ]>
+  ]> {
+  let summary = "store through an exact-alias subroutine reference";
+  let arguments = (ins AnyType:$value, SimArgumentRefType:$reference);
+  let assemblyFormat =
+      "$value `to` $reference attr-dict `:` type($value) `,` qualified(type($reference))";
+  let hasVerifier = 1;
+}
+
 def SimClassDirectCallOp : SimOp<"class.direct_call", [
     MemoryEffects<[
       MemRead<SimStorageResource>, MemWrite<SimStorageResource>,
@@ -414,6 +460,7 @@ def SimWeakCreateOp : SimOp<"weak.create", [
     type($context) `,` qualified(type($referent))
     `->` qualified(type($result))
   }];
+  let hasVerifier = 1;
 }
 
 def SimWeakGetOp : SimOp<"weak.get", [
@@ -426,6 +473,7 @@ def SimWeakGetOp : SimOp<"weak.get", [
     $weak attr-dict `:` qualified(type($weak))
     `->` qualified(type($result))
   }];
+  let hasVerifier = 1;
 }
 
 def SimWeakClearOp : SimOp<"weak.clear", [
@@ -434,6 +482,7 @@ def SimWeakClearOp : SimOp<"weak.clear", [
   let summary = "clear a weak_reference referent";
   let arguments = (ins SimClassHandleType:$weak);
   let assemblyFormat = "$weak attr-dict `:` qualified(type($weak))";
+  let hasVerifier = 1;
 }
 
 def SimGCSafepointOp : SimOp<"gc.safepoint", [
@@ -454,9 +503,11 @@ def SimClassRootBindOp : SimOp<"class.root_bind", [
     MemoryEffects<[MemWrite<SimHeapResource>]>
   ]> {
   let summary = "bind a managed SSA handle to a pre-registered root slot";
-  let arguments = (ins SimClassHandleType:$object, AnyType:$slot);
+  let arguments = (ins AnyType:$object, AnyType:$slot, I64Attr:$bit_offset);
   let assemblyFormat =
-      "$object `to` $slot attr-dict `:` qualified(type($object)) `,` type($slot)";
+      "$object `to` $slot `at` $bit_offset attr-dict `:` "
+      "qualified(type($object)) `,` type($slot)";
+  let hasVerifier = 1;
 }
 
 //===----------------------------------------------------------------------===//

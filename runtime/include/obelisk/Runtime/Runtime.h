@@ -129,6 +129,16 @@ typedef struct obelisk_rt_gc_root_v1 {
   uint64_t cookie;
 } obelisk_rt_gc_root_v1;
 
+// Stack-owned contiguous root range. Generated activations use one range
+// record and one pointer slot per live managed SSA value, independent of the
+// number of roots.
+typedef struct obelisk_rt_gc_root_range_v1 {
+  obelisk_rt_object_v1 **slots;
+  uint64_t count;
+  struct obelisk_rt_gc_root_range_v1 *previous;
+  uint64_t cookie;
+} obelisk_rt_gc_root_range_v1;
+
 typedef struct obelisk_rt_gc_statistics_v1 {
   uint64_t live_objects;
   uint64_t live_bytes;
@@ -290,9 +300,12 @@ enum {
   OBELISK_RT_DBREG_RESOURCE = 5,
   OBELISK_RT_DBREG_BYTES = 6,
   // Native object pointers are confined to these precisely traced register
-  // kinds. MANAGED_REF is {object, byte offset}; its first word is a root.
+  // kinds. MANAGED_REF is {object, byte offset}; ARGUMENT_REF is
+  // {owner, ordinary handle or managed byte offset, managed tag}. Their first
+  // words are roots.
   OBELISK_RT_DBREG_MANAGED = 7,
-  OBELISK_RT_DBREG_MANAGED_REF = 8
+  OBELISK_RT_DBREG_MANAGED_REF = 8,
+  OBELISK_RT_DBREG_ARGUMENT_REF = 9
 };
 
 #define OBELISK_RT_DBREG_SIGNED (UINT8_C(1) << 0)
@@ -340,8 +353,17 @@ enum {
   OBELISK_RT_DB_MAKE_LOCAL_HANDLE = 38,
   OBELISK_RT_DB_HANDLE_ID = 39,
   OBELISK_RT_DB_TASK_CALL = 40,
-  OBELISK_RT_DB_VIRTUAL_CALL = 41
+  OBELISK_RT_DB_VIRTUAL_CALL = 41,
+  // Consume one precise managed-root word from a canonical continuation
+  // frame after the value has been restored into traced bytecode registers.
+  OBELISK_RT_DB_CLEAR_FRAME_ROOT = 42
 };
+
+// EXTRACT and INSERT flag for the physical 64-bit class-handle lane of an
+// aggregate value.  This is deliberately distinct from ordinary numeric
+// extraction so the bytecode validator can keep managed/numeric coercions
+// confined to compiler-marked aggregate element operations.
+#define OBELISK_RT_DB_AGGREGATE_MANAGED UINT16_C(2)
 
 // COMPARE flags. Case comparisons return a known two-state result. Wildcard
 // equality masks unknown RHS bits but can return X for a relevant unknown LHS
@@ -419,6 +441,11 @@ enum {
   OBELISK_RT_INTRINSIC_V1_GC_SAFEPOINT = UINT32_C(0x0001040a),
   OBELISK_RT_INTRINSIC_V1_CLASS_ID = UINT32_C(0x0001040b),
   OBELISK_RT_INTRINSIC_V1_MANAGED_NBA = UINT32_C(0x0001040c),
+  OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_FROM_REF = UINT32_C(0x0001040d),
+  OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_FROM_MANAGED = UINT32_C(0x0001040e),
+  OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_LOAD = UINT32_C(0x0001040f),
+  OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_STORE = UINT32_C(0x00010410),
+  OBELISK_RT_INTRINSIC_V1_MANAGED_ROOT_EXTRACT = UINT32_C(0x00010411),
   OBELISK_RT_INTRINSIC_V1_VPI_ROOT = UINT32_C(0x00011000),
   OBELISK_RT_INTRINSIC_V1_VPI_CHILD = UINT32_C(0x00011001),
   OBELISK_RT_INTRINSIC_V1_VPI_SIBLING = UINT32_C(0x00011002),
@@ -1048,6 +1075,13 @@ obelisk_rt_status obelisk_rt_v1_gc_root_push(obelisk_rt_gc_lane_v1 *lane,
 obelisk_rt_status obelisk_rt_v1_gc_root_pop(obelisk_rt_gc_lane_v1 *lane,
                                             obelisk_rt_gc_root_v1 *root);
 obelisk_rt_status
+obelisk_rt_v1_gc_root_range_push(obelisk_rt_gc_lane_v1 *lane,
+                                 obelisk_rt_gc_root_range_v1 *range,
+                                 obelisk_rt_object_v1 **slots, uint64_t count);
+obelisk_rt_status
+obelisk_rt_v1_gc_root_range_pop(obelisk_rt_gc_lane_v1 *lane,
+                                obelisk_rt_gc_root_range_v1 *range);
+obelisk_rt_status
 obelisk_rt_v1_gc_static_root_register(obelisk_rt_context *context,
                                       obelisk_rt_object_v1 **slot);
 obelisk_rt_status
@@ -1106,6 +1140,32 @@ obelisk_rt_status obelisk_rt_v1_object_read(obelisk_rt_object_v1 *object,
 obelisk_rt_status obelisk_rt_v1_object_write(obelisk_rt_object_v1 *object,
                                              uint64_t offset, const void *data,
                                              uint64_t size);
+// Atomically access adjacent value/unknown field planes under one object lock.
+obelisk_rt_status obelisk_rt_v1_object_read_planes(obelisk_rt_object_v1 *object,
+                                                   uint64_t offset, void *value,
+                                                   void *unknown,
+                                                   uint64_t plane_size);
+obelisk_rt_status
+obelisk_rt_v1_object_write_planes(obelisk_rt_object_v1 *object, uint64_t offset,
+                                  const void *value, const void *unknown,
+                                  uint64_t plane_size);
+
+// Load/store through the erased representation of a language `ref` formal.
+// `managed` selects an object byte offset in `payload`; otherwise `payload`
+// is a stable ordinary-state handle. Generated code supplies its native state
+// planes so the same ABI serves native and bytecode callees.
+obelisk_rt_status obelisk_rt_v1_argument_ref_load(
+    obelisk_rt_context *context, const uint8_t *state_value,
+    const uint8_t *state_unknown, uint64_t state_bit_count,
+    obelisk_rt_object_v1 *owner, uint64_t payload, uint32_t managed,
+    uint64_t bit_width, uint64_t plane_size, uint32_t four_state,
+    uint32_t managed_value, void *out_value, void *out_unknown);
+obelisk_rt_status obelisk_rt_v1_argument_ref_store(
+    obelisk_rt_context *context, uint8_t *state_value, uint8_t *state_unknown,
+    uint64_t state_bit_count, obelisk_rt_object_v1 *owner, uint64_t payload,
+    uint32_t managed, uint64_t bit_width, uint64_t plane_size,
+    uint32_t four_state, uint32_t managed_value, const void *value,
+    const void *unknown);
 obelisk_rt_status
 obelisk_rt_v1_object_field_load(obelisk_rt_object_v1 *object, uint64_t offset,
                                 obelisk_rt_object_v1 **out_value);
@@ -1133,9 +1193,11 @@ obelisk_rt_status obelisk_rt_v1_method_invoke(
 // IEEE 1800-2023 weak_reference support. The wrapper is itself a managed
 // object. Its referent is cleared during the collection that first determines
 // that no strong path reaches the referent.
-obelisk_rt_status obelisk_rt_v1_weak_create(obelisk_rt_gc_lane_v1 *lane,
-                                            obelisk_rt_object_v1 *referent,
-                                            obelisk_rt_object_v1 **out_weak);
+obelisk_rt_status
+obelisk_rt_v1_weak_create(obelisk_rt_gc_lane_v1 *lane,
+                          const obelisk_rt_class_descriptor_v1 *descriptor,
+                          obelisk_rt_object_v1 *referent,
+                          obelisk_rt_object_v1 **out_weak);
 obelisk_rt_status obelisk_rt_v1_weak_get(obelisk_rt_object_v1 *weak,
                                          obelisk_rt_object_v1 **out_referent);
 obelisk_rt_status obelisk_rt_v1_weak_clear(obelisk_rt_object_v1 *weak);
@@ -1286,8 +1348,20 @@ obelisk_rt_status obelisk_rt_v1_native_state_alloc(obelisk_rt_context *context,
                                                    const uint8_t *value,
                                                    const uint8_t *unknown,
                                                    uint64_t *out_handle);
+// Allocate automatic state and publish all embedded managed roots as one
+// ownership transaction. On failure no automatic state remains registered and
+// out_handle is reset to UINT64_MAX.
+obelisk_rt_status obelisk_rt_v1_native_state_alloc_with_roots(
+    obelisk_rt_context *context, uint64_t bit_width, const uint8_t *value,
+    const uint8_t *unknown, const uint64_t *bit_offsets, uint64_t count,
+    uint64_t *out_handle);
 obelisk_rt_status obelisk_rt_v1_native_state_retain(obelisk_rt_context *context,
                                                     uint64_t handle);
+// Attach precise class-handle offsets to one automatic state allocation.
+// Offsets are in bits from the value plane and must be distinct 64-bit words.
+obelisk_rt_status obelisk_rt_v1_native_state_register_managed_roots(
+    obelisk_rt_context *context, uint64_t handle, const uint64_t *bit_offsets,
+    uint64_t count);
 obelisk_rt_status
 obelisk_rt_v1_native_state_release(obelisk_rt_context *context, uint64_t handle,
                                    uint32_t owner_reference);

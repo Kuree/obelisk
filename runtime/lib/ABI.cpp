@@ -65,6 +65,11 @@ ABI_OFFSET(obelisk_rt_class_descriptor_v1, method_count, 72);
 ABI_OFFSET(obelisk_rt_class_descriptor_v1, debug_name, 80);
 ABI_OFFSET(obelisk_rt_class_descriptor_v1, debug_name_size, 88);
 ABI_SIZE_ALIGN(obelisk_rt_gc_root_v1, 24, 8);
+ABI_SIZE_ALIGN(obelisk_rt_gc_root_range_v1, 32, 8);
+ABI_OFFSET(obelisk_rt_gc_root_range_v1, slots, 0);
+ABI_OFFSET(obelisk_rt_gc_root_range_v1, count, 8);
+ABI_OFFSET(obelisk_rt_gc_root_range_v1, previous, 16);
+ABI_OFFSET(obelisk_rt_gc_root_range_v1, cookie, 24);
 ABI_OFFSET(obelisk_rt_gc_root_v1, slot, 0);
 ABI_OFFSET(obelisk_rt_gc_root_v1, previous, 8);
 ABI_OFFSET(obelisk_rt_gc_root_v1, cookie, 16);
@@ -648,8 +653,15 @@ ABI_FUNCTION(obelisk_rt_v1_native_state_alloc,
              obelisk_rt_status (*)(obelisk_rt_context *, uint64_t,
                                    const uint8_t *, const uint8_t *,
                                    uint64_t *));
+ABI_FUNCTION(obelisk_rt_v1_native_state_alloc_with_roots,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint64_t,
+                                   const uint8_t *, const uint8_t *,
+                                   const uint64_t *, uint64_t, uint64_t *));
 ABI_FUNCTION(obelisk_rt_v1_native_state_retain,
              obelisk_rt_status (*)(obelisk_rt_context *, uint64_t));
+ABI_FUNCTION(obelisk_rt_v1_native_state_register_managed_roots,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint64_t,
+                                   const uint64_t *, uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_native_state_release,
              obelisk_rt_status (*)(obelisk_rt_context *, uint64_t, uint32_t));
 ABI_FUNCTION(obelisk_rt_v1_native_state_load_plane,
@@ -683,6 +695,24 @@ ABI_FUNCTION(obelisk_rt_v1_gc_root_push,
 ABI_FUNCTION(obelisk_rt_v1_gc_root_pop,
              obelisk_rt_status (*)(obelisk_rt_gc_lane_v1 *,
                                    obelisk_rt_gc_root_v1 *));
+ABI_FUNCTION(obelisk_rt_v1_gc_root_range_push,
+             obelisk_rt_status (*)(obelisk_rt_gc_lane_v1 *,
+                                   obelisk_rt_gc_root_range_v1 *,
+                                   obelisk_rt_object_v1 **, uint64_t));
+ABI_FUNCTION(obelisk_rt_v1_gc_root_range_pop,
+             obelisk_rt_status (*)(obelisk_rt_gc_lane_v1 *,
+                                   obelisk_rt_gc_root_range_v1 *));
+ABI_FUNCTION(obelisk_rt_v1_argument_ref_load,
+             obelisk_rt_status (*)(obelisk_rt_context *, const uint8_t *,
+                                   const uint8_t *, uint64_t,
+                                   obelisk_rt_object_v1 *, uint64_t, uint32_t,
+                                   uint64_t, uint64_t, uint32_t, uint32_t,
+                                   void *, void *));
+ABI_FUNCTION(obelisk_rt_v1_argument_ref_store,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint8_t *, uint8_t *,
+                                   uint64_t, obelisk_rt_object_v1 *, uint64_t,
+                                   uint32_t, uint64_t, uint64_t, uint32_t,
+                                   uint32_t, const void *, const void *));
 ABI_FUNCTION(obelisk_rt_v1_gc_static_root_register,
              obelisk_rt_status (*)(obelisk_rt_context *,
                                    obelisk_rt_object_v1 **));
@@ -724,6 +754,12 @@ ABI_FUNCTION(obelisk_rt_v1_object_read,
 ABI_FUNCTION(obelisk_rt_v1_object_write,
              obelisk_rt_status (*)(obelisk_rt_object_v1 *, uint64_t,
                                    const void *, uint64_t));
+ABI_FUNCTION(obelisk_rt_v1_object_read_planes,
+             obelisk_rt_status (*)(obelisk_rt_object_v1 *, uint64_t, void *,
+                                   void *, uint64_t));
+ABI_FUNCTION(obelisk_rt_v1_object_write_planes,
+             obelisk_rt_status (*)(obelisk_rt_object_v1 *, uint64_t,
+                                   const void *, const void *, uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_object_field_load,
              obelisk_rt_status (*)(obelisk_rt_object_v1 *, uint64_t,
                                    obelisk_rt_object_v1 **));
@@ -749,6 +785,7 @@ ABI_FUNCTION(obelisk_rt_v1_method_invoke,
                                    uint32_t, void *, uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_weak_create,
              obelisk_rt_status (*)(obelisk_rt_gc_lane_v1 *,
+                                   const obelisk_rt_class_descriptor_v1 *,
                                    obelisk_rt_object_v1 *,
                                    obelisk_rt_object_v1 **));
 ABI_FUNCTION(obelisk_rt_v1_weak_get,

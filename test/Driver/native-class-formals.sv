@@ -22,9 +22,19 @@ class base;
     return value;
   endfunction
 
+  virtual function base replace(ref base target, input base replacement);
+    target = replacement;
+    return target;
+  endfunction
+
   task set_after(input int value, output int result);
     #1;
     result = value;
+  endtask
+
+  task bump_after(ref int target);
+    #1;
+    target = target + 5;
   endtask
 endclass
 
@@ -64,14 +74,23 @@ module top;
     automatic int constructor_mirror = 30;
     automatic constructed constructed_object =
         new(5, constructor_out, constructor_accumulator, constructor_mirror);
+    automatic base replacement = new;
+    automatic base ref_target = handle;
+    automatic base replaced;
+    replacement.field = 77;
+    replaced = handle.replace(ref_target, replacement);
     object.set_after(9, result);
     object.set_after(13, object.field);
+    object.bump_after(object.field);
+    object.bump_after(mirror);
     $display("%0d %0d %0d %0d %0d", returned, object.field, accumulator,
              mirror, result);
     $display("%0d %0d %0d %0d", constructed_object.value, constructor_out,
              constructor_accumulator, constructor_mirror);
+    $display("%0d %0d", ref_target.field, replaced.field);
   end
 endmodule
 
-// CHECK: 4 13 14 22 9
+// CHECK: 4 18 14 27 9
 // CHECK-NEXT: 5 10 12 33
+// CHECK-NEXT: 77 77

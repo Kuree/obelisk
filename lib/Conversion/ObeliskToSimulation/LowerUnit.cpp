@@ -238,6 +238,11 @@ private:
   FailureOr<Value> toPackedScalar(Value value, Location location);
   FailureOr<Value> truthValue(Value value, Location location);
   FailureOr<Value> toLogic(Value value, Location location);
+  Type getReferenceElementType(Value reference) const;
+  FailureOr<Value> loadReference(Value reference, Location location);
+  LogicalResult storeReference(Value reference, Value value, Location location);
+  FailureOr<Value> toArgumentReference(Value reference, Type elementType,
+                                       Location location);
   LogicalResult emitFunctionReturn(Location location,
                                    std::optional<Value> explicitResult,
                                    bool resultSigned = false);
@@ -348,7 +353,8 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
         }
       }
       values[path] = value;
-      if (isa<sim::RefType, sim::NetType, sim::DriverType>(value.getType()))
+      if (isa<sim::RefType, sim::ArgumentRefType, sim::NetType,
+              sim::DriverType>(value.getType()))
         lvalues.try_emplace(path, value);
       continue;
     }
@@ -418,6 +424,68 @@ Block *UnitLowering::addBlock() {
 void UnitLowering::setCurrent(Block *block) {
   current = block;
   builder.setInsertionPointToEnd(block);
+}
+
+Type UnitLowering::getReferenceElementType(Value reference) const {
+  if (auto type = dyn_cast<sim::RefType>(reference.getType()))
+    return type.getElementType();
+  if (auto type = dyn_cast<sim::ManagedRefType>(reference.getType()))
+    return type.getElementType();
+  if (auto type = dyn_cast<sim::ArgumentRefType>(reference.getType()))
+    return type.getElementType();
+  return {};
+}
+
+FailureOr<Value> UnitLowering::loadReference(Value reference,
+                                             Location location) {
+  if (auto type = dyn_cast<sim::RefType>(reference.getType()))
+    return sim::SimRefLoadOp::create(builder, location, type.getElementType(),
+                                     reference)
+        .getResult();
+  if (auto type = dyn_cast<sim::ManagedRefType>(reference.getType()))
+    return sim::SimManagedLoadOp::create(builder, location,
+                                         type.getElementType(), reference)
+        .getResult();
+  if (auto type = dyn_cast<sim::ArgumentRefType>(reference.getType()))
+    return sim::SimArgumentRefLoadOp::create(builder, location,
+                                             type.getElementType(), reference)
+        .getResult();
+  return failure();
+}
+
+LogicalResult UnitLowering::storeReference(Value reference, Value value,
+                                           Location location) {
+  if (isa<sim::RefType>(reference.getType()))
+    sim::SimRefStoreOp::create(builder, location, value, reference);
+  else if (isa<sim::ManagedRefType>(reference.getType()))
+    sim::SimManagedStoreOp::create(builder, location, value, reference);
+  else if (isa<sim::ArgumentRefType>(reference.getType()))
+    sim::SimArgumentRefStoreOp::create(builder, location, value, reference);
+  else
+    return failure();
+  return success();
+}
+
+FailureOr<Value> UnitLowering::toArgumentReference(Value reference,
+                                                   Type elementType,
+                                                   Location location) {
+  if (getReferenceElementType(reference) != elementType)
+    return failure();
+  Type resultType =
+      sim::ArgumentRefType::get(function.getContext(), elementType);
+  if (isa<sim::ArgumentRefType>(reference.getType()))
+    return reference;
+  if (isa<sim::RefType>(reference.getType())) {
+    recordSensitivity(reference);
+    return sim::SimArgumentRefFromRefOp::create(builder, location, resultType,
+                                                reference)
+        .getResult();
+  }
+  if (isa<sim::ManagedRefType>(reference.getType()))
+    return sim::SimArgumentRefFromManagedOp::create(builder, location,
+                                                    resultType, reference)
+        .getResult();
+  return failure();
 }
 
 void UnitLowering::emitBranch(Block *destination) {
@@ -757,8 +825,10 @@ LogicalResult UnitLowering::emitFunctionReturn(
   }
 
   TypeRange resultTypes = function.getFunctionType().getResults();
-  bool hasPrimaryResult = !function->hasAttr("obelisk_sim.constructor") &&
-                          !function->hasAttr("obelisk_sim.static_initializer");
+  bool hasPrimaryResult =
+      !function->hasAttr("obelisk_sim.constructor") &&
+      !function->hasAttr("obelisk_sim.static_initializer") &&
+      !function->hasAttr("obelisk_sim.void_function");
   if (!hasPrimaryResult && explicitResult) {
     emitError(location) << "constructor or initializer cannot return a value";
     return failure();
@@ -880,6 +950,10 @@ UnitLowering::lowerReferencedValue(Operation *op, StringRef path, bool lvalue) {
                                      value)
         .getResult();
   }
+  if (auto ref = dyn_cast<sim::ArgumentRefType>(value.getType()))
+    return sim::SimArgumentRefLoadOp::create(builder, location,
+                                             ref.getElementType(), value)
+        .getResult();
   if (auto net = dyn_cast<sim::NetType>(value.getType())) {
     recordSensitivity(value);
     return sim::SimNetReadOp::create(builder, location, net.getElementType(),
@@ -1652,11 +1726,13 @@ LogicalResult UnitLowering::writeLValue(Operation *destination, Value value,
     elementType = ref.getElementType();
   else if (auto managed = dyn_cast<sim::ManagedRefType>((*lowered).getType()))
     elementType = managed.getElementType();
+  else if (auto argument = dyn_cast<sim::ArgumentRefType>((*lowered).getType()))
+    elementType = argument.getElementType();
   else if (auto driver = dyn_cast<sim::DriverType>((*lowered).getType()))
     elementType = driver.getElementType();
   else {
     emitError(location)
-        << "assignment destination is not a ref, managed ref, or driver";
+        << "assignment destination is not a reference or driver";
     return failure();
   }
   FailureOr<Value> converted = convert(value, elementType, sourceSigned,
@@ -1675,6 +1751,13 @@ LogicalResult UnitLowering::writeLValue(Operation *destination, Value value,
                                    delay, sim::NBASiteAttr{});
     else
       sim::SimRefStoreOp::create(builder, location, *converted, *lowered);
+  } else if (isa<sim::ArgumentRefType>((*lowered).getType())) {
+    if (nonblocking) {
+      emitError(location)
+          << "nonblocking assignment cannot target a ref formal";
+      return failure();
+    }
+    sim::SimArgumentRefStoreOp::create(builder, location, *converted, *lowered);
   } else {
     if (nonblocking) {
       emitError(location) << "nonblocking assignment cannot target a driver";
@@ -1894,14 +1977,16 @@ FailureOr<Value> UnitLowering::lowerUnary(semantic::SVUnaryExpressionOp op) {
     FailureOr<Value> destination = lowerExpression(children.front(), true);
     if (failed(destination))
       return failure();
-    if (!isa<sim::RefType>((*destination).getType())) {
+    Type referenceType = getReferenceElementType(*destination);
+    if (!referenceType) {
       emitError(location) << "increment and decrement require a variable "
                              "reference";
       return failure();
     }
-    auto reference = cast<sim::RefType>((*destination).getType());
-    Value oldValue = sim::SimRefLoadOp::create(
-        builder, location, reference.getElementType(), *destination);
+    FailureOr<Value> loaded = loadReference(*destination, location);
+    if (failed(loaded))
+      return failure();
+    Value oldValue = *loaded;
     FailureOr<Value> oldScalar = toPackedScalar(oldValue, location);
     if (failed(oldScalar))
       return failure();
@@ -1927,12 +2012,12 @@ FailureOr<Value> UnitLowering::lowerUnary(semantic::SVUnaryExpressionOp op) {
               : Value(
                     arith::SubIOp::create(builder, location, *oldScalar, one));
     }
-    FailureOr<Value> newValue =
-        convert(newScalar, reference.getElementType(),
-                isSignedNode(children.front()), location);
+    FailureOr<Value> newValue = convert(
+        newScalar, referenceType, isSignedNode(children.front()), location);
     if (failed(newValue))
       return failure();
-    sim::SimRefStoreOp::create(builder, location, *newValue, *destination);
+    if (failed(storeReference(*destination, *newValue, location)))
+      return failure();
     bool post = kind == semantic::SVUnaryOperator::Postincrement ||
                 kind == semantic::SVUnaryOperator::Postdecrement;
     return convert(post ? oldValue : *newValue, *resultType,
@@ -2695,7 +2780,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       bool formalSigned;
       bool destinationSigned;
     };
-    struct TaskManagedCopyOut {
+    struct TaskIndirectCopyOut {
       Value temporary;
       Value destination;
       bool formalSigned;
@@ -2703,7 +2788,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     };
     SmallVector<Value> arguments;
     SmallVector<ClassCopyOut> copyOuts;
-    SmallVector<TaskManagedCopyOut> taskManagedCopyOuts;
+    SmallVector<TaskIndirectCopyOut> taskIndirectCopyOuts;
     bool classTask = op->hasAttr("obelisk_sim.is_task");
     for (auto [actual, formalAttr] :
          llvm::zip_equal(ArrayRef<Operation *>(children).drop_front(
@@ -2752,6 +2837,9 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       else if (auto ref =
                    dyn_cast<sim::ManagedRefType>((*destinationRef).getType()))
         destinationType = ref.getElementType();
+      else if (auto ref =
+                   dyn_cast<sim::ArgumentRefType>((*destinationRef).getType()))
+        destinationType = ref.getElementType();
       else {
         emitError(location)
             << "class method output, inout, and ref actuals must be variable "
@@ -2759,15 +2847,15 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         return failure();
       }
       if (direction == semantic::SVArgumentDirection::Ref) {
-        auto ref = dyn_cast<sim::RefType>((*destinationRef).getType());
-        if (!ref || ref.getElementType() != formalType) {
+        FailureOr<Value> argument =
+            toArgumentReference(*destinationRef, formalType, location);
+        if (failed(argument)) {
           emitError(location)
               << "class method ref actual type must exactly match the formal "
-                 "type and use an ordinary variable";
+                 "type";
           return failure();
         }
-        recordSensitivity(*destinationRef);
-        arguments.push_back(*destinationRef);
+        arguments.push_back(*argument);
         continue;
       }
 
@@ -2781,19 +2869,13 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
           return failure();
         }
       } else {
-        Value loaded;
-        if (auto ref = dyn_cast<sim::RefType>((*destinationRef).getType())) {
-          loaded = sim::SimRefLoadOp::create(
-              builder, location, ref.getElementType(), *destinationRef);
+        FailureOr<Value> loaded = loadReference(*destinationRef, location);
+        if (failed(loaded))
+          return failure();
+        if (isa<sim::RefType>((*destinationRef).getType()))
           recordSensitivity(*destinationRef);
-        } else {
-          auto managedRef =
-              cast<sim::ManagedRefType>((*destinationRef).getType());
-          loaded = sim::SimManagedLoadOp::create(
-              builder, location, managedRef.getElementType(), *destinationRef);
-        }
         FailureOr<Value> converted =
-            convert(loaded, formalType, isSignedNode(destination), location,
+            convert(*loaded, formalType, isSignedNode(destination), location,
                     formalSigned);
         if (failed(converted))
           return failure();
@@ -2801,14 +2883,14 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       }
       arguments.push_back(initial);
       if (classTask) {
-        if (isa<sim::ManagedRefType>((*destinationRef).getType())) {
+        if (!isa<sim::RefType>((*destinationRef).getType())) {
           Value temporary = sim::SimRefAllocOp::create(
               builder, location,
               sim::RefType::get(function.getContext(), formalType), initial);
           arguments.push_back(temporary);
-          taskManagedCopyOuts.push_back({temporary, *destinationRef,
-                                         formalSigned,
-                                         isSignedNode(destination)});
+          taskIndirectCopyOuts.push_back({temporary, *destinationRef,
+                                          formalSigned,
+                                          isSignedNode(destination)});
         } else {
           arguments.push_back(*destinationRef);
         }
@@ -2844,21 +2926,21 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       Block *continuation = addBlock();
       auto finishTask = [&]() -> FailureOr<Value> {
         setCurrent(continuation);
-        for (const TaskManagedCopyOut &copyOut : taskManagedCopyOuts) {
+        for (const TaskIndirectCopyOut &copyOut : taskIndirectCopyOuts) {
           auto temporaryType =
               cast<sim::RefType>(copyOut.temporary.getType()).getElementType();
           Value copied = sim::SimRefLoadOp::create(
               builder, location, temporaryType, copyOut.temporary);
-          auto destinationType =
-              cast<sim::ManagedRefType>(copyOut.destination.getType())
-                  .getElementType();
+          Type destinationType = getReferenceElementType(copyOut.destination);
+          if (!destinationType)
+            return failure();
           FailureOr<Value> converted =
               convert(copied, destinationType, copyOut.formalSigned, location,
                       copyOut.destinationSigned);
           if (failed(converted))
             return failure();
-          sim::SimManagedStoreOp::create(builder, location, *converted,
-                                         copyOut.destination);
+          if (failed(storeReference(copyOut.destination, *converted, location)))
+            return failure();
         }
         return arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                          builder.getBoolAttr(false))
@@ -3021,24 +3103,16 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     if (!classTask)
       for (auto [index, copyOut] : llvm::enumerate(copyOuts)) {
         Value result = results[index + (hasFunctionResult ? 1 : 0)];
-        Type destinationType;
-        if (auto ref = dyn_cast<sim::RefType>(copyOut.destination.getType()))
-          destinationType = ref.getElementType();
-        else
-          destinationType =
-              cast<sim::ManagedRefType>(copyOut.destination.getType())
-                  .getElementType();
+        Type destinationType = getReferenceElementType(copyOut.destination);
+        if (!destinationType)
+          return failure();
         FailureOr<Value> converted =
             convert(result, destinationType, copyOut.formalSigned, location,
                     copyOut.destinationSigned);
         if (failed(converted))
           return failure();
-        if (isa<sim::RefType>(copyOut.destination.getType()))
-          sim::SimRefStoreOp::create(builder, location, *converted,
-                                     copyOut.destination);
-        else
-          sim::SimManagedStoreOp::create(builder, location, *converted,
-                                         copyOut.destination);
+        if (failed(storeReference(copyOut.destination, *converted, location)))
+          return failure();
       }
     if (hasFunctionResult)
       return results.front();
@@ -3056,6 +3130,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   }
   struct CopyOut {
     Value destination;
+    Value taskDestination;
     Type formalType;
     bool formalSigned;
     bool destinationSigned;
@@ -3119,16 +3194,18 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     FailureOr<Value> destination = lowerExpression(actual, true);
     if (failed(destination))
       return failure();
-    auto ref = dyn_cast<sim::RefType>((*destination).getType());
-    if (!ref) {
+    Type destinationType = getReferenceElementType(*destination);
+    if (!destinationType) {
       emitError(location)
           << "output, inout, and ref actuals must be variable references";
       return failure();
     }
     if (direction == semantic::SVArgumentDirection::Ref) {
-      if (ref.getElementType() != formalType) {
+      auto reference = dyn_cast<sim::RefType>((*destination).getType());
+      if (!reference || reference.getElementType() != formalType) {
         emitError(location)
-            << "ref actual type must exactly match the formal type";
+            << "ref actual type must exactly match the formal type and use "
+               "ordinary variable storage";
         return failure();
       }
       recordSensitivity(*destination);
@@ -3146,19 +3223,28 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         return failure();
       }
     } else {
-      Value loaded = sim::SimRefLoadOp::create(
-          builder, location, ref.getElementType(), *destination);
+      FailureOr<Value> loaded = loadReference(*destination, location);
+      if (failed(loaded))
+        return failure();
       FailureOr<Value> converted = convert(
-          loaded, formalType, isSignedNode(actual), location, formalSigned);
+          *loaded, formalType, isSignedNode(actual), location, formalSigned);
       if (failed(converted))
         return failure();
       initial = *converted;
-      recordSensitivity(*destination);
+      if (isa<sim::RefType>((*destination).getType()))
+        recordSensitivity(*destination);
     }
     operands.push_back(initial);
-    if (directTask)
-      operands.push_back(*destination);
-    copyOuts.push_back({*destination, formalType, formalSigned,
+    Value taskDestination;
+    if (directTask) {
+      taskDestination = *destination;
+      if (!isa<sim::RefType>((*destination).getType()))
+        taskDestination = sim::SimRefAllocOp::create(
+            builder, location,
+            sim::RefType::get(function.getContext(), formalType), initial);
+      operands.push_back(taskDestination);
+    }
+    copyOuts.push_back({*destination, taskDestination, formalType, formalSigned,
                         isSignedNode(actual), dpiCategory});
   }
 
@@ -3292,15 +3378,32 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   }
   if (!directTask) {
     for (auto [index, copyOut] : llvm::enumerate(copyOuts)) {
-      auto destinationType =
-          cast<sim::RefType>(copyOut.destination.getType()).getElementType();
+      Type destinationType = getReferenceElementType(copyOut.destination);
+      if (!destinationType)
+        return failure();
       FailureOr<Value> converted =
           convert(callResults[index + (dpiTask ? 0 : 1)], destinationType,
                   copyOut.formalSigned, location, copyOut.destinationSigned);
       if (failed(converted))
         return failure();
-      sim::SimRefStoreOp::create(builder, location, *converted,
-                                 copyOut.destination);
+      if (failed(storeReference(copyOut.destination, *converted, location)))
+        return failure();
+    }
+  } else {
+    for (const CopyOut &copyOut : copyOuts) {
+      if (copyOut.taskDestination == copyOut.destination)
+        continue;
+      FailureOr<Value> copied =
+          loadReference(copyOut.taskDestination, location);
+      Type destinationType = getReferenceElementType(copyOut.destination);
+      if (failed(copied) || !destinationType)
+        return failure();
+      FailureOr<Value> converted =
+          convert(*copied, destinationType, copyOut.formalSigned, location,
+                  copyOut.destinationSigned);
+      if (failed(converted) ||
+          failed(storeReference(copyOut.destination, *converted, location)))
+        return failure();
     }
   }
   if (!dpiTask && !directTask)
@@ -3472,6 +3575,9 @@ UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
     else if (auto ref =
                  dyn_cast<sim::ManagedRefType>((*destinationRef).getType()))
       destinationType = ref.getElementType();
+    else if (auto ref =
+                 dyn_cast<sim::ArgumentRefType>((*destinationRef).getType()))
+      destinationType = ref.getElementType();
     else
       return emitError(location)
                  << "constructor output, inout, and ref actuals must be "
@@ -3479,14 +3585,14 @@ UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
              failure();
 
     if (direction == semantic::SVArgumentDirection::Ref) {
-      auto ref = dyn_cast<sim::RefType>((*destinationRef).getType());
-      if (!ref || ref.getElementType() != formalType)
+      FailureOr<Value> argument =
+          toArgumentReference(*destinationRef, formalType, location);
+      if (failed(argument))
         return emitError(location)
                    << "constructor ref actual type must exactly match the "
-                      "formal type and use an ordinary variable",
+                      "formal type",
                failure();
-      recordSensitivity(*destinationRef);
-      arguments.push_back(*destinationRef);
+      arguments.push_back(*argument);
       continue;
     }
 
@@ -3500,19 +3606,13 @@ UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
                    << formalType,
                failure();
     } else {
-      Value loaded;
-      if (auto ref = dyn_cast<sim::RefType>((*destinationRef).getType())) {
-        loaded = sim::SimRefLoadOp::create(
-            builder, location, ref.getElementType(), *destinationRef);
+      FailureOr<Value> loaded = loadReference(*destinationRef, location);
+      if (failed(loaded))
+        return failure();
+      if (isa<sim::RefType>((*destinationRef).getType()))
         recordSensitivity(*destinationRef);
-      } else {
-        auto managedRef =
-            cast<sim::ManagedRefType>((*destinationRef).getType());
-        loaded = sim::SimManagedLoadOp::create(
-            builder, location, managedRef.getElementType(), *destinationRef);
-      }
       FailureOr<Value> converted =
-          convert(loaded, formalType, isSignedNode(destination), location,
+          convert(*loaded, formalType, isSignedNode(destination), location,
                   formalSigned);
       if (failed(converted))
         return failure();
@@ -3556,23 +3656,16 @@ UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
       builder, location, resultTypes, callee, *adjustedReceiver, arguments);
   for (auto [result, copyOut] :
        llvm::zip_equal(invocation.getResults(), copyOuts)) {
-    Type destinationType;
-    if (auto ref = dyn_cast<sim::RefType>(copyOut.destination.getType()))
-      destinationType = ref.getElementType();
-    else
-      destinationType = cast<sim::ManagedRefType>(copyOut.destination.getType())
-                            .getElementType();
+    Type destinationType = getReferenceElementType(copyOut.destination);
+    if (!destinationType)
+      return failure();
     FailureOr<Value> converted =
         convert(result, destinationType, copyOut.formalSigned, location,
                 copyOut.destinationSigned);
     if (failed(converted))
       return failure();
-    if (isa<sim::RefType>(copyOut.destination.getType()))
-      sim::SimRefStoreOp::create(builder, location, *converted,
-                                 copyOut.destination);
-    else
-      sim::SimManagedStoreOp::create(builder, location, *converted,
-                                     copyOut.destination);
+    if (failed(storeReference(copyOut.destination, *converted, location)))
+      return failure();
   }
   if (!op.getIsSuperClass())
     return receiver;

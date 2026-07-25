@@ -52,9 +52,11 @@ struct ProcessFrameValue {
   uint64_t storageSize;
   uint32_t alignment;
   uint64_t auxiliaryOffset = UINT64_MAX;
+  llvm::SmallVector<uint64_t, 2> managedRootOffsets;
 
   bool isFourState() const { return unknownOffset != UINT64_MAX; }
   bool hasAuxiliary() const { return auxiliaryOffset != UINT64_MAX; }
+  bool hasManagedRoots() const { return !managedRootOffsets.empty(); }
   bool hasSecondaryStorage() const { return isFourState() || hasAuxiliary(); }
   uint64_t getSecondaryOffset() const {
     return isFourState() ? unknownOffset : auxiliaryOffset;

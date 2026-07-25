@@ -263,6 +263,7 @@ struct NativeAutomaticState {
   std::vector<uint8_t> unknown;
   obelisk_rt_object_v1 *managedValue = nullptr;
   bool managedRootRegistered = false;
+  std::vector<uint64_t> managedRootByteOffsets;
 };
 
 struct EventState {
@@ -292,11 +293,11 @@ struct ScheduledManagedNBA {
   uint64_t sequence = 0;
   uint64_t dueTime = 0;
   obelisk_rt_object_v1 *destination = nullptr;
-  obelisk_rt_object_v1 *managedValue = nullptr;
   uint64_t offset = 0;
   uint64_t planeSize = 0;
   std::vector<uint8_t> value;
   std::vector<uint8_t> unknown;
+  std::vector<obelisk_rt_object_v1 *> managedValues;
 };
 
 struct ScheduledDesignNBA {
@@ -445,6 +446,7 @@ struct obelisk_rt_context {
   std::vector<uint64_t> stateUnknown;
   std::unordered_map<uint64_t, const obelisk_rt_class_descriptor_v1 *>
       managedClasses;
+  std::vector<obelisk_rt_process_instance_v1 *> managedRootProcesses;
   ManagedHeap *managedHeap = nullptr;
 
   obelisk_rt_context();
@@ -459,19 +461,16 @@ obelisk_rt_managed_execution_enter(obelisk_rt_context *context,
                                    bool *outEntered);
 void obelisk_rt_managed_execution_leave(obelisk_rt_gc_lane_v1 *lane,
                                         bool entered);
-
 using ManagedRootVisit = void (*)(void *, obelisk_rt_object_v1 **);
 using ManagedRootEnumerate = void (*)(void *, ManagedRootVisit, void *);
 
-// Caller-owned root provider. Transient providers form a lane-local stack;
-// persistent providers form an intrusive heap-global list. Both enumerate
+// Caller-owned lane-local root provider. Providers form a stack and enumerate
 // typed storage directly, avoiding a root record or allocation per managed
 // value.
 struct ManagedRootProvider {
   ManagedRootEnumerate enumerate = nullptr;
   void *environment = nullptr;
   ManagedRootProvider *previous = nullptr;
-  ManagedRootProvider *next = nullptr;
   uint64_t cookie = 0;
 };
 
@@ -481,14 +480,10 @@ obelisk_rt_status obelisk_rt_managed_roots_push(obelisk_rt_gc_lane_v1 *lane,
                                                 void *environment);
 obelisk_rt_status obelisk_rt_managed_roots_pop(obelisk_rt_gc_lane_v1 *lane,
                                                ManagedRootProvider *provider);
-obelisk_rt_status obelisk_rt_managed_persistent_roots_register(
-    obelisk_rt_context *context, ManagedRootProvider *provider,
-    ManagedRootEnumerate enumerate, void *environment);
-obelisk_rt_status
-obelisk_rt_managed_persistent_roots_unregister(obelisk_rt_context *context,
-                                               ManagedRootProvider *provider);
 const obelisk_rt_class_descriptor_v1 *
 obelisk_rt_managed_class_lookup(obelisk_rt_context *context, uint64_t classID);
+bool obelisk_rt_managed_object_belongs_to(
+    obelisk_rt_context *context, obelisk_rt_object_v1 *object) noexcept;
 void obelisk_rt_enumerate_design_managed_roots(
     obelisk_rt_context *context, ManagedRootVisit visit,
     void *visitorEnvironment) noexcept;
@@ -646,6 +641,13 @@ bool obelisk_rt_evaluate_design_observers_unlocked(obelisk_rt_context *context,
                                                    uint64_t publishedWidth);
 void obelisk_rt_erase_automatic_bookkeeping_unlocked(
     obelisk_rt_context *context, uint32_t automaticID);
+obelisk_rt_status obelisk_rt_native_state_alloc_with_root_offsets(
+    obelisk_rt_context *context, uint64_t bitWidth, const uint8_t *value,
+    const uint8_t *unknown, std::vector<uint64_t> bitOffsets,
+    uint64_t *outHandle);
+obelisk_rt_status obelisk_rt_native_state_alloc_managed(
+    obelisk_rt_context *context, obelisk_rt_object_v1 *value,
+    uint64_t *outHandle);
 void obelisk_rt_invalidate_signal_snapshots_unlocked(
     obelisk_rt_context *context, uint64_t bitOffset, uint64_t bitWidth);
 

@@ -16,7 +16,6 @@ namespace {
 constexpr uint64_t kObjectMagic = UINT64_C(0x4f424a4543545631);
 constexpr uint64_t kRootCookie = UINT64_C(0x524f4f545f56315a);
 constexpr uint64_t kProviderCookie = UINT64_C(0x50524f565f56315a);
-constexpr uint64_t kPersistentProviderCookie = UINT64_C(0x50524f5650525331);
 constexpr uint64_t kChunkSize = 2 * 1024 * 1024;
 constexpr uint64_t kSpanSize = 64 * 1024;
 constexpr uint64_t kChunkAlignment = 64;
@@ -28,7 +27,13 @@ constexpr size_t kEmptyChunkCache = 2;
 
 static_assert(kSpansPerChunk == 32);
 
-enum class LaneState : uint32_t { Inactive, Active, Parked, Collecting };
+enum class LaneState : uint32_t {
+  Inactive,
+  Active,
+  Parked,
+  Collecting,
+  Destroying
+};
 
 struct Span;
 struct LargeAllocation;
@@ -228,6 +233,111 @@ bool layoutHasHandleAt(const obelisk_rt_trace_layout_v1 *layout,
   return false;
 }
 
+bool layoutHasWeakHandleAt(const obelisk_rt_trace_layout_v1 *layout,
+                           uint64_t baseOffset, uint64_t wantedOffset) {
+  if (!layout)
+    return false;
+  for (uint64_t index = 0; index != layout->entry_count; ++index) {
+    const obelisk_rt_trace_entry_v1 &entry = layout->entries[index];
+    for (uint64_t item = 0; item != entry.count; ++item) {
+      uint64_t offset = baseOffset + entry.offset + item * entry.stride;
+      if (entry.kind == OBELISK_RT_TRACE_EMBEDDED) {
+        if (layoutHasWeakHandleAt(entry.child_layout, offset, wantedOffset))
+          return true;
+      } else if (entry.kind == OBELISK_RT_TRACE_WEAK &&
+                 offset == wantedOffset) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+bool layoutHasStrongHandleAt(const obelisk_rt_trace_layout_v1 *layout,
+                             uint64_t baseOffset, uint64_t wantedOffset) {
+  if (!layout)
+    return false;
+  for (uint64_t index = 0; index != layout->entry_count; ++index) {
+    const obelisk_rt_trace_entry_v1 &entry = layout->entries[index];
+    for (uint64_t item = 0; item != entry.count; ++item) {
+      uint64_t offset = baseOffset + entry.offset + item * entry.stride;
+      if (entry.kind == OBELISK_RT_TRACE_EMBEDDED) {
+        if (layoutHasStrongHandleAt(entry.child_layout, offset, wantedOffset))
+          return true;
+      } else if (entry.kind == OBELISK_RT_TRACE_STRONG &&
+                 offset == wantedOffset) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+unsigned layoutHandleCountAt(const obelisk_rt_trace_layout_v1 *layout,
+                             uint64_t baseOffset, uint64_t wantedOffset) {
+  if (!layout)
+    return 0;
+  unsigned count = 0;
+  for (uint64_t index = 0; index != layout->entry_count; ++index) {
+    const obelisk_rt_trace_entry_v1 &entry = layout->entries[index];
+    for (uint64_t item = 0; item != entry.count; ++item) {
+      uint64_t offset = baseOffset + entry.offset + item * entry.stride;
+      if (entry.kind == OBELISK_RT_TRACE_EMBEDDED)
+        count += layoutHandleCountAt(entry.child_layout, offset, wantedOffset);
+      else if (offset == wantedOffset)
+        ++count;
+      if (count > 1)
+        return count;
+    }
+  }
+  return count;
+}
+
+bool layoutHandlesAreUnique(const obelisk_rt_trace_layout_v1 *root,
+                            const obelisk_rt_trace_layout_v1 *layout,
+                            uint64_t baseOffset = 0) {
+  if (!layout)
+    return true;
+  for (uint64_t index = 0; index != layout->entry_count; ++index) {
+    const obelisk_rt_trace_entry_v1 &entry = layout->entries[index];
+    for (uint64_t item = 0; item != entry.count; ++item) {
+      uint64_t offset = baseOffset + entry.offset + item * entry.stride;
+      if (entry.kind == OBELISK_RT_TRACE_EMBEDDED) {
+        if (!layoutHandlesAreUnique(root, entry.child_layout, offset))
+          return false;
+      } else if (layoutHandleCountAt(root, 0, offset) != 1) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+bool layoutContainsHandles(const obelisk_rt_trace_layout_v1 *candidate,
+                           const obelisk_rt_trace_layout_v1 *required,
+                           uint64_t baseOffset = 0) {
+  if (!required)
+    return true;
+  if (!candidate)
+    return false;
+  for (uint64_t index = 0; index != required->entry_count; ++index) {
+    const obelisk_rt_trace_entry_v1 &entry = required->entries[index];
+    for (uint64_t item = 0; item != entry.count; ++item) {
+      uint64_t offset = baseOffset + entry.offset + item * entry.stride;
+      if (entry.kind == OBELISK_RT_TRACE_EMBEDDED) {
+        if (!layoutContainsHandles(candidate, entry.child_layout, offset))
+          return false;
+      } else if (entry.kind == OBELISK_RT_TRACE_STRONG) {
+        if (!layoutHasStrongHandleAt(candidate, 0, offset))
+          return false;
+      } else if (!layoutHasWeakHandleAt(candidate, 0, offset)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 bool layoutOverlapsHandle(const obelisk_rt_trace_layout_v1 *layout,
                           uint64_t baseOffset, uint64_t offset, uint64_t size) {
   if (!layout)
@@ -250,14 +360,53 @@ bool layoutOverlapsHandle(const obelisk_rt_trace_layout_v1 *layout,
   return false;
 }
 
+bool validateLayoutHandleWrite(
+    const obelisk_rt_trace_layout_v1 *layout, uint64_t baseOffset,
+    uint64_t offset, uint64_t size, const uint8_t *data, ManagedHeap *heap,
+    std::vector<obelisk_rt_object_v1 *> *referents = nullptr) {
+  if (!layout)
+    return true;
+  uint64_t end = offset + size;
+  for (uint64_t index = 0; index != layout->entry_count; ++index) {
+    const obelisk_rt_trace_entry_v1 &entry = layout->entries[index];
+    for (uint64_t item = 0; item != entry.count; ++item) {
+      uint64_t fieldOffset = baseOffset + entry.offset + item * entry.stride;
+      if (entry.kind == OBELISK_RT_TRACE_EMBEDDED) {
+        if (!validateLayoutHandleWrite(entry.child_layout, fieldOffset, offset,
+                                       size, data, heap, referents))
+          return false;
+        continue;
+      }
+      uint64_t fieldEnd = fieldOffset + sizeof(obelisk_rt_object_v1 *);
+      if (offset >= fieldEnd || fieldOffset >= end)
+        continue;
+      // Never admit a torn managed pointer, even from a trusted generated
+      // aggregate store.
+      if (fieldOffset < offset || fieldEnd > end)
+        return false;
+      obelisk_rt_object_v1 *referent = nullptr;
+      std::memcpy(&referent, data + fieldOffset - offset, sizeof(referent));
+      if (!referent)
+        continue;
+      ObjectMetadata *referentMetadata = metadataFor(referent);
+      if (!referentMetadata || referentMetadata->heap != heap)
+        return false;
+      if (referents)
+        referents->push_back(referent);
+    }
+  }
+  return true;
+}
+
 } // namespace
 
 struct obelisk_rt_gc_lane_v1 {
   ManagedHeap *heap = nullptr;
   obelisk_rt_context *context = nullptr;
-  std::thread::id owner;
+  std::atomic<uintptr_t> owner{0};
   std::atomic<LaneState> state{LaneState::Inactive};
   std::atomic<obelisk_rt_gc_root_v1 *> roots{nullptr};
+  std::atomic<obelisk_rt_gc_root_range_v1 *> rootRanges{nullptr};
   std::atomic<ManagedRootProvider *> providers{nullptr};
 };
 
@@ -273,7 +422,12 @@ struct ThreadAllocationCache {
 };
 
 thread_local std::vector<ThreadAllocationCache> allocationCaches;
+thread_local const char laneOwnerToken = 0;
 std::atomic<uint64_t> nextHeapID{1};
+
+uintptr_t currentLaneOwnerToken() {
+  return reinterpret_cast<uintptr_t>(&laneOwnerToken);
+}
 
 std::optional<uint64_t>
 acquireMonotonicIdentity(std::atomic<uint64_t> &source) {
@@ -333,7 +487,8 @@ public:
     lane->heap = this;
     lane->context = context;
     {
-      std::lock_guard<std::mutex> lock(worldMutex);
+      std::lock_guard<std::mutex> worldLock(worldMutex);
+      std::lock_guard<std::mutex> laneLock(laneMutex);
       lanes.push_back(lane.get());
     }
     *outLane = lane.release();
@@ -341,16 +496,26 @@ public:
   }
 
   obelisk_rt_status destroyLane(obelisk_rt_gc_lane_v1 *lane) {
-    if (!owns(lane) ||
-        lane->state.load(std::memory_order_acquire) != LaneState::Inactive ||
-        lane->roots.load(std::memory_order_acquire) ||
-        lane->providers.load(std::memory_order_acquire))
+    if (!owns(lane))
+      return OBELISK_RT_INVALID_ARGUMENT;
+    LaneState expected = LaneState::Inactive;
+    if (!lane->state.compare_exchange_strong(expected, LaneState::Destroying,
+                                             std::memory_order_acq_rel))
       return OBELISK_RT_INVALID_LIFECYCLE;
+    if (lane->roots.load(std::memory_order_acquire) ||
+        lane->rootRanges.load(std::memory_order_acquire) ||
+        lane->providers.load(std::memory_order_acquire)) {
+      lane->state.store(LaneState::Inactive, std::memory_order_release);
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    }
     {
-      std::lock_guard<std::mutex> lock(worldMutex);
+      std::lock_guard<std::mutex> worldLock(worldMutex);
+      std::lock_guard<std::mutex> laneLock(laneMutex);
       auto found = std::find(lanes.begin(), lanes.end(), lane);
-      if (found == lanes.end())
+      if (found == lanes.end()) {
+        lane->state.store(LaneState::Inactive, std::memory_order_release);
         return OBELISK_RT_INVALID_ARGUMENT;
+      }
       lanes.erase(found);
     }
     delete lane;
@@ -364,7 +529,7 @@ public:
     if (!lane->state.compare_exchange_strong(expected, LaneState::Active,
                                              std::memory_order_acq_rel))
       return OBELISK_RT_INVALID_LIFECYCLE;
-    lane->owner = std::this_thread::get_id();
+    lane->owner.store(currentLaneOwnerToken(), std::memory_order_release);
     return safepoint(lane);
   }
 
@@ -375,9 +540,10 @@ public:
     if (status != OBELISK_RT_OK)
       return status;
     if (lane->roots.load(std::memory_order_acquire) ||
+        lane->rootRanges.load(std::memory_order_acquire) ||
         lane->providers.load(std::memory_order_acquire))
       return OBELISK_RT_INVALID_LIFECYCLE;
-    lane->owner = {};
+    lane->owner.store(0, std::memory_order_release);
     lane->state.store(LaneState::Inactive, std::memory_order_release);
     worldCondition.notify_all();
     return OBELISK_RT_OK;
@@ -425,12 +591,43 @@ public:
     return OBELISK_RT_OK;
   }
 
+  obelisk_rt_status pushRootRange(obelisk_rt_gc_lane_v1 *lane,
+                                  obelisk_rt_gc_root_range_v1 *range,
+                                  obelisk_rt_object_v1 **slots,
+                                  uint64_t count) {
+    if (!activeOwner(lane) || !range || (!slots && count != 0) ||
+        range->cookie != 0)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    range->slots = slots;
+    range->count = count;
+    range->previous = lane->rootRanges.load(std::memory_order_relaxed);
+    range->cookie = kRootCookie ^ reinterpret_cast<uintptr_t>(lane) ^
+                    reinterpret_cast<uintptr_t>(range);
+    lane->rootRanges.store(range, std::memory_order_release);
+    return OBELISK_RT_OK;
+  }
+
+  obelisk_rt_status popRootRange(obelisk_rt_gc_lane_v1 *lane,
+                                 obelisk_rt_gc_root_range_v1 *range) {
+    if (!activeOwner(lane) || !range ||
+        range->cookie != (kRootCookie ^ reinterpret_cast<uintptr_t>(lane) ^
+                          reinterpret_cast<uintptr_t>(range)) ||
+        lane->rootRanges.load(std::memory_order_acquire) != range)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    lane->rootRanges.store(range->previous, std::memory_order_release);
+    range->slots = nullptr;
+    range->count = 0;
+    range->previous = nullptr;
+    range->cookie = 0;
+    return OBELISK_RT_OK;
+  }
+
   obelisk_rt_status pushProvider(obelisk_rt_gc_lane_v1 *lane,
                                  ManagedRootProvider *provider,
                                  ManagedRootEnumerate enumerate,
                                  void *environment) {
     if (!activeOwner(lane) || !provider || !enumerate || provider->previous ||
-        provider->next || provider->cookie != 0)
+        provider->cookie != 0)
       return OBELISK_RT_INVALID_ARGUMENT;
     provider->enumerate = enumerate;
     provider->environment = environment;
@@ -451,58 +648,18 @@ public:
     provider->enumerate = nullptr;
     provider->environment = nullptr;
     provider->previous = nullptr;
-    provider->next = nullptr;
     provider->cookie = 0;
     return OBELISK_RT_OK;
   }
 
-  obelisk_rt_status registerPersistentProvider(ManagedRootProvider *provider,
-                                               ManagedRootEnumerate enumerate,
-                                               void *environment) {
-    if (!provider || !enumerate)
-      return OBELISK_RT_INVALID_ARGUMENT;
-    std::lock_guard<std::mutex> lock(worldMutex);
-    if (provider->previous || provider->next || provider->cookie != 0)
-      return OBELISK_RT_INVALID_LIFECYCLE;
-    provider->enumerate = enumerate;
-    provider->environment = environment;
-    provider->next = persistentProviders;
-    if (persistentProviders)
-      persistentProviders->previous = provider;
-    persistentProviders = provider;
-    provider->cookie =
-        kPersistentProviderCookie ^ reinterpret_cast<uintptr_t>(this);
-    return OBELISK_RT_OK;
-  }
-
-  obelisk_rt_status
-  unregisterPersistentProvider(ManagedRootProvider *provider) {
-    if (!provider)
-      return OBELISK_RT_INVALID_ARGUMENT;
-    std::lock_guard<std::mutex> lock(worldMutex);
-    if (provider->cookie !=
-        (kPersistentProviderCookie ^ reinterpret_cast<uintptr_t>(this)))
-      return OBELISK_RT_INVALID_LIFECYCLE;
-    if (provider->previous)
-      provider->previous->next = provider->next;
-    else if (persistentProviders == provider)
-      persistentProviders = provider->next;
-    else
-      return OBELISK_RT_INVALID_LIFECYCLE;
-    if (provider->next)
-      provider->next->previous = provider->previous;
-    provider->enumerate = nullptr;
-    provider->environment = nullptr;
-    provider->previous = nullptr;
-    provider->next = nullptr;
-    provider->cookie = 0;
-    return OBELISK_RT_OK;
-  }
-
-  obelisk_rt_status registerStatic(obelisk_rt_object_v1 **slot) {
+  obelisk_rt_status registerStatic(obelisk_rt_object_v1 **slot,
+                                   bool activeCaller) {
     if (!slot)
       return OBELISK_RT_INVALID_ARGUMENT;
-    std::lock_guard<std::mutex> lock(worldMutex);
+    std::unique_lock<std::mutex> worldLock(worldMutex, std::defer_lock);
+    if (!activeCaller)
+      worldLock.lock();
+    std::lock_guard<std::mutex> rootLock(rootMutex);
     if (std::find(staticRoots.begin(), staticRoots.end(), slot) !=
         staticRoots.end())
       return OBELISK_RT_INVALID_LIFECYCLE;
@@ -510,10 +667,14 @@ public:
     return OBELISK_RT_OK;
   }
 
-  obelisk_rt_status unregisterStatic(obelisk_rt_object_v1 **slot) {
+  obelisk_rt_status unregisterStatic(obelisk_rt_object_v1 **slot,
+                                     bool activeCaller) {
     if (!slot)
       return OBELISK_RT_INVALID_ARGUMENT;
-    std::lock_guard<std::mutex> lock(worldMutex);
+    std::unique_lock<std::mutex> worldLock(worldMutex, std::defer_lock);
+    if (!activeCaller)
+      worldLock.lock();
+    std::lock_guard<std::mutex> rootLock(rootMutex);
     auto found = std::find(staticRoots.begin(), staticRoots.end(), slot);
     if (found == staticRoots.end())
       return OBELISK_RT_INVALID_ARGUMENT;
@@ -521,11 +682,15 @@ public:
     return OBELISK_RT_OK;
   }
 
-  obelisk_rt_status pin(obelisk_rt_object_v1 *object) {
+  obelisk_rt_status pin(obelisk_rt_object_v1 *object, bool activeCaller) {
     // Pins are external roots. Serialize their publication with the
     // stop-the-world snapshot so a successful pin is either visible to the
-    // current collection or begins after that collection has completed.
-    std::lock_guard<std::mutex> worldLock(worldMutex);
+    // current collection or begins after that collection has completed. An
+    // active lane already excludes the collector until its next safepoint and
+    // must not acquire worldMutex while the collector may be waiting for it.
+    std::unique_lock<std::mutex> worldLock(worldMutex, std::defer_lock);
+    if (!activeCaller)
+      worldLock.lock();
     ObjectMetadata *metadata = metadataFor(object);
     if (!metadata || metadata->heap != this)
       return OBELISK_RT_INVALID_HANDLE;
@@ -538,8 +703,10 @@ public:
     return OBELISK_RT_OK;
   }
 
-  obelisk_rt_status unpin(obelisk_rt_object_v1 *object) {
-    std::lock_guard<std::mutex> worldLock(worldMutex);
+  obelisk_rt_status unpin(obelisk_rt_object_v1 *object, bool activeCaller) {
+    std::unique_lock<std::mutex> worldLock(worldMutex, std::defer_lock);
+    if (!activeCaller)
+      worldLock.lock();
     ObjectMetadata *metadata = metadataFor(object);
     if (!metadata || metadata->heap != this)
       return OBELISK_RT_INVALID_HANDLE;
@@ -758,8 +925,20 @@ public:
   }
 
   bool activeOwner(obelisk_rt_gc_lane_v1 *lane) const {
-    return owns(lane) && lane->owner == std::this_thread::get_id() &&
+    return owns(lane) &&
+           lane->owner.load(std::memory_order_acquire) ==
+               currentLaneOwnerToken() &&
            lane->state.load(std::memory_order_acquire) == LaneState::Active;
+  }
+
+  bool hasActiveCaller() {
+    std::lock_guard<std::mutex> laneLock(laneMutex);
+    return std::any_of(lanes.begin(), lanes.end(),
+                       [&](obelisk_rt_gc_lane_v1 *lane) {
+      return lane->owner.load(std::memory_order_acquire) ==
+                 currentLaneOwnerToken() &&
+             lane->state.load(std::memory_order_acquire) == LaneState::Active;
+    });
   }
 
   obelisk_rt_status retainScheduled(obelisk_rt_gc_lane_v1 *lane,
@@ -924,6 +1103,12 @@ private:
                lane->roots.load(std::memory_order_acquire);
            root; root = root->previous)
         markObject(root->slot ? *root->slot : nullptr, pending);
+    for (obelisk_rt_gc_lane_v1 *lane : lanes)
+      for (obelisk_rt_gc_root_range_v1 *range =
+               lane->rootRanges.load(std::memory_order_acquire);
+           range; range = range->previous)
+        for (uint64_t index = 0; index != range->count; ++index)
+          markObject(range->slots ? range->slots[index] : nullptr, pending);
     struct ProviderVisitor {
       ManagedHeap *heap;
       std::vector<ObjectMetadata *> *pending;
@@ -940,13 +1125,11 @@ private:
         if (provider->enumerate)
           provider->enumerate(provider->environment, visitProviderRoot,
                               &providerVisitor);
-    for (ManagedRootProvider *provider = persistentProviders; provider;
-         provider = provider->next)
-      if (provider->enumerate)
-        provider->enumerate(provider->environment, visitProviderRoot,
-                            &providerVisitor);
-    for (obelisk_rt_object_v1 **slot : staticRoots)
-      markObject(slot ? *slot : nullptr, pending);
+    {
+      std::lock_guard<std::mutex> rootLock(rootMutex);
+      for (obelisk_rt_object_v1 **slot : staticRoots)
+        markObject(slot ? *slot : nullptr, pending);
+    }
     obelisk_rt_enumerate_design_managed_roots(context, visitProviderRoot,
                                               &providerVisitor);
     enumerateAllocated([&](ObjectMetadata *metadata) {
@@ -1074,10 +1257,11 @@ private:
   std::mutex allocatorMutex;
   std::mutex collectorMutex;
   std::mutex worldMutex;
+  std::mutex laneMutex;
+  std::mutex rootMutex;
   std::condition_variable worldCondition;
   std::atomic<bool> collectionRequested{false};
   std::vector<obelisk_rt_gc_lane_v1 *> lanes;
-  ManagedRootProvider *persistentProviders = nullptr;
   std::vector<obelisk_rt_object_v1 **> staticRoots;
   std::vector<std::unique_ptr<Chunk>> chunks;
   std::vector<std::unique_ptr<LargeAllocation>> largeAllocations;
@@ -1153,32 +1337,6 @@ descriptorFor(const obelisk_rt_object_v1 *object) {
   return metadata ? metadata->descriptor : nullptr;
 }
 
-const obelisk_rt_trace_entry_v1 weakReferentEntry{
-    sizeof(const obelisk_rt_class_descriptor_v1 *),
-    0,
-    1,
-    OBELISK_RT_TRACE_WEAK,
-    0,
-    nullptr};
-const obelisk_rt_trace_layout_v1 weakReferenceLayout{
-    OBELISK_RT_VERSION, 0, sizeof(void *) * 2, alignof(void *),
-    &weakReferentEntry, 1};
-const char weakReferenceName[] = "weak_reference";
-const obelisk_rt_class_descriptor_v1 weakReferenceDescriptor{
-    OBELISK_RT_VERSION,
-    OBELISK_RT_CLASS_FINAL | OBELISK_RT_CLASS_WEAK_WRAPPER,
-    UINT64_MAX,
-    sizeof(void *) * 2,
-    alignof(void *),
-    nullptr,
-    nullptr,
-    0,
-    &weakReferenceLayout,
-    nullptr,
-    0,
-    weakReferenceName,
-    sizeof(weakReferenceName) - 1};
-
 } // namespace
 
 obelisk_rt_status
@@ -1231,23 +1389,6 @@ obelisk_rt_status obelisk_rt_managed_roots_pop(obelisk_rt_gc_lane_v1 *lane,
                             : OBELISK_RT_INVALID_ARGUMENT;
 }
 
-obelisk_rt_status obelisk_rt_managed_persistent_roots_register(
-    obelisk_rt_context *context, ManagedRootProvider *provider,
-    ManagedRootEnumerate enumerate, void *environment) {
-  ManagedHeap *heap = heapFor(context);
-  return heap ? heap->registerPersistentProvider(provider, enumerate,
-                                                 environment)
-              : OBELISK_RT_INVALID_ARGUMENT;
-}
-
-obelisk_rt_status
-obelisk_rt_managed_persistent_roots_unregister(obelisk_rt_context *context,
-                                               ManagedRootProvider *provider) {
-  ManagedHeap *heap = heapFor(context);
-  return heap ? heap->unregisterPersistentProvider(provider)
-              : OBELISK_RT_INVALID_ARGUMENT;
-}
-
 const obelisk_rt_class_descriptor_v1 *
 obelisk_rt_managed_class_lookup(obelisk_rt_context *context, uint64_t classID) {
   if (!context || classID == 0)
@@ -1255,6 +1396,15 @@ obelisk_rt_managed_class_lookup(obelisk_rt_context *context, uint64_t classID) {
   std::lock_guard<std::recursive_mutex> lock(context->mutex);
   auto found = context->managedClasses.find(classID);
   return found == context->managedClasses.end() ? nullptr : found->second;
+}
+
+bool obelisk_rt_managed_object_belongs_to(
+    obelisk_rt_context *context, obelisk_rt_object_v1 *object) noexcept {
+  if (!object)
+    return true;
+  ManagedHeap *heap = heapFor(context);
+  ObjectMetadata *metadata = metadataFor(object);
+  return heap && metadata && metadata->heap == heap;
 }
 
 extern "C" obelisk_rt_status
@@ -1294,8 +1444,11 @@ obelisk_rt_v1_class_validate(const obelisk_rt_class_descriptor_v1 *descriptor) {
             (current->interface_ids == nullptr) ||
         (current->method_count == 0) != (current->methods == nullptr) ||
         (current->debug_name_size == 0) != (current->debug_name == nullptr) ||
-        (derived && (derived->instance_size < current->instance_size ||
-                     derived->method_count < current->method_count)))
+        (derived &&
+         ((current->flags & OBELISK_RT_CLASS_FINAL) != 0 ||
+          derived->instance_size < current->instance_size ||
+          derived->instance_alignment < current->instance_alignment ||
+          derived->method_count < current->method_count)))
       return OBELISK_RT_INVALID_DESIGN;
     for (uint64_t index = 0; index != current->interface_count; ++index) {
       if (current->interface_ids[index] == 0) {
@@ -1327,11 +1480,24 @@ obelisk_rt_v1_class_validate(const obelisk_rt_class_descriptor_v1 *descriptor) {
     if (current->layout) {
       if (current->layout->size != current->instance_size ||
           !validateTraceLayout(current->layout, current->instance_size) ||
+          !layoutHandlesAreUnique(current->layout, current->layout) ||
           layoutOverlapsHandle(current->layout, 0, 0, sizeof(void *)))
         return OBELISK_RT_INVALID_DESIGN;
     }
+    if (derived && !layoutContainsHandles(derived->layout, current->layout))
+      return OBELISK_RT_INVALID_DESIGN;
+    if ((current->flags & OBELISK_RT_CLASS_WEAK_WRAPPER) != 0 &&
+        (!current->layout ||
+         !layoutHasWeakHandleAt(current->layout, 0, sizeof(void *)) ||
+         layoutHasStrongHandleAt(current->layout, 0, sizeof(void *))))
+      return OBELISK_RT_INVALID_DESIGN;
     derived = current;
   }
+  if ((descriptor->flags &
+       (OBELISK_RT_CLASS_ABSTRACT | OBELISK_RT_CLASS_INTERFACE)) == 0)
+    for (uint64_t index = 0; index != descriptor->method_count; ++index)
+      if ((descriptor->methods[index].flags & OBELISK_RT_METHOD_PURE) != 0)
+        return OBELISK_RT_INVALID_DESIGN;
   return OBELISK_RT_OK;
 }
 
@@ -1397,32 +1563,55 @@ obelisk_rt_v1_gc_root_pop(obelisk_rt_gc_lane_v1 *lane,
 }
 
 extern "C" obelisk_rt_status
+obelisk_rt_v1_gc_root_range_push(obelisk_rt_gc_lane_v1 *lane,
+                                 obelisk_rt_gc_root_range_v1 *range,
+                                 obelisk_rt_object_v1 **slots, uint64_t count) {
+  return lane && lane->heap
+             ? lane->heap->pushRootRange(lane, range, slots, count)
+             : OBELISK_RT_INVALID_ARGUMENT;
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_gc_root_range_pop(obelisk_rt_gc_lane_v1 *lane,
+                                obelisk_rt_gc_root_range_v1 *range) {
+  return lane && lane->heap ? lane->heap->popRootRange(lane, range)
+                            : OBELISK_RT_INVALID_ARGUMENT;
+}
+
+extern "C" obelisk_rt_status
 obelisk_rt_v1_gc_static_root_register(obelisk_rt_context *context,
                                       obelisk_rt_object_v1 **slot) {
   ManagedHeap *heap = heapFor(context);
-  return heap ? guarded(context, [&] { return heap->registerStatic(slot); })
-              : OBELISK_RT_INVALID_ARGUMENT;
+  bool activeCaller = heap && heap->hasActiveCaller();
+  return heap
+             ? guarded(context,
+                       [&] { return heap->registerStatic(slot, activeCaller); })
+             : OBELISK_RT_INVALID_ARGUMENT;
 }
 
 extern "C" obelisk_rt_status
 obelisk_rt_v1_gc_static_root_unregister(obelisk_rt_context *context,
                                         obelisk_rt_object_v1 **slot) {
   ManagedHeap *heap = heapFor(context);
-  return heap ? heap->unregisterStatic(slot) : OBELISK_RT_INVALID_ARGUMENT;
+  bool activeCaller = heap && heap->hasActiveCaller();
+  return heap ? heap->unregisterStatic(slot, activeCaller)
+              : OBELISK_RT_INVALID_ARGUMENT;
 }
 
 extern "C" obelisk_rt_status
 obelisk_rt_v1_gc_pin(obelisk_rt_context *context,
                      obelisk_rt_object_v1 *object) {
   ManagedHeap *heap = heapFor(context);
-  return heap ? heap->pin(object) : OBELISK_RT_INVALID_ARGUMENT;
+  bool activeCaller = heap && heap->hasActiveCaller();
+  return heap ? heap->pin(object, activeCaller) : OBELISK_RT_INVALID_ARGUMENT;
 }
 
 extern "C" obelisk_rt_status
 obelisk_rt_v1_gc_unpin(obelisk_rt_context *context,
                        obelisk_rt_object_v1 *object) {
   ManagedHeap *heap = heapFor(context);
-  return heap ? heap->unpin(object) : OBELISK_RT_INVALID_ARGUMENT;
+  bool activeCaller = heap && heap->hasActiveCaller();
+  return heap ? heap->unpin(object, activeCaller) : OBELISK_RT_INVALID_ARGUMENT;
 }
 
 extern "C" obelisk_rt_status
@@ -1475,7 +1664,8 @@ obelisk_rt_v1_gc_design_root_register(obelisk_rt_context *context,
   return guarded(context, [&] {
     auto **slot = reinterpret_cast<obelisk_rt_object_v1 **>(
         context->stateValue.data() + word);
-    return heap->registerStatic(slot);
+    bool activeCaller = heap->hasActiveCaller();
+    return heap->registerStatic(slot, activeCaller);
   });
 }
 
@@ -1491,7 +1681,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_object_shallow_copy(
     obelisk_rt_gc_lane_v1 *lane,
     const obelisk_rt_class_descriptor_v1 *staticDescriptor,
     obelisk_rt_object_v1 *source, obelisk_rt_object_v1 **outObject) {
-  if (!lane || !lane->heap || !source || !outObject ||
+  if (!outObject)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outObject = nullptr;
+  if (!lane || !lane->heap || !source ||
       !obelisk_rt_v1_object_is_instance(source, staticDescriptor))
     return OBELISK_RT_INVALID_ARGUMENT;
   ObjectMetadata *sourceMetadata = metadataFor(source);
@@ -1531,7 +1724,9 @@ obelisk_rt_v1_object_write(obelisk_rt_object_v1 *object, uint64_t offset,
   ObjectMetadata *metadata = metadataFor(object);
   if (!metadata || (!data && size != 0) || offset < sizeof(void *) ||
       !checkedRange(offset, size, metadata->descriptor->instance_size) ||
-      layoutOverlapsHandle(metadata->descriptor->layout, 0, offset, size))
+      !validateLayoutHandleWrite(metadata->descriptor->layout, 0, offset, size,
+                                 static_cast<const uint8_t *>(data),
+                                 metadata->heap))
     return OBELISK_RT_INVALID_ARGUMENT;
   ObjectLock lock(metadata);
   std::memcpy(reinterpret_cast<uint8_t *>(object) + offset, data, size);
@@ -1539,10 +1734,52 @@ obelisk_rt_v1_object_write(obelisk_rt_object_v1 *object, uint64_t offset,
 }
 
 extern "C" obelisk_rt_status
+obelisk_rt_v1_object_read_planes(obelisk_rt_object_v1 *object, uint64_t offset,
+                                 void *value, void *unknown,
+                                 uint64_t planeSize) {
+  ObjectMetadata *metadata = metadataFor(object);
+  if (!metadata || !value || !unknown || planeSize == 0 ||
+      planeSize > UINT64_MAX / 2 ||
+      !checkedRange(offset, planeSize * 2, metadata->descriptor->instance_size))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ObjectLock lock(metadata);
+  const uint8_t *source = reinterpret_cast<const uint8_t *>(object) + offset;
+  std::memcpy(value, source, planeSize);
+  std::memcpy(unknown, source + planeSize, planeSize);
+  return OBELISK_RT_OK;
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_object_write_planes(obelisk_rt_object_v1 *object, uint64_t offset,
+                                  const void *value, const void *unknown,
+                                  uint64_t planeSize) {
+  ObjectMetadata *metadata = metadataFor(object);
+  if (!metadata || !value || !unknown || planeSize == 0 ||
+      offset < sizeof(void *) || planeSize > UINT64_MAX / 2 ||
+      !checkedRange(offset, planeSize * 2,
+                    metadata->descriptor->instance_size) ||
+      !validateLayoutHandleWrite(metadata->descriptor->layout, 0, offset,
+                                 planeSize, static_cast<const uint8_t *>(value),
+                                 metadata->heap) ||
+      !validateLayoutHandleWrite(
+          metadata->descriptor->layout, 0, offset + planeSize, planeSize,
+          static_cast<const uint8_t *>(unknown), metadata->heap))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ObjectLock lock(metadata);
+  uint8_t *destination = reinterpret_cast<uint8_t *>(object) + offset;
+  std::memcpy(destination, value, planeSize);
+  std::memcpy(destination + planeSize, unknown, planeSize);
+  return OBELISK_RT_OK;
+}
+
+extern "C" obelisk_rt_status
 obelisk_rt_v1_object_field_load(obelisk_rt_object_v1 *object, uint64_t offset,
                                 obelisk_rt_object_v1 **outValue) {
+  if (!outValue)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outValue = nullptr;
   ObjectMetadata *metadata = metadataFor(object);
-  if (!metadata || !outValue ||
+  if (!metadata ||
       !checkedRange(offset, sizeof(*outValue),
                     metadata->descriptor->instance_size) ||
       !layoutHasHandleAt(metadata->descriptor->layout, 0, offset))
@@ -1586,32 +1823,36 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_managed_nba(
 
   const obelisk_rt_trace_layout_v1 *layout =
       destinationMetadata->descriptor->layout;
-  bool managedValue = layoutHasHandleAt(layout, 0, offset);
-  if (managedValue) {
+  bool managedSlot = planeSize == sizeof(obelisk_rt_object_v1 *) &&
+                     layoutHasHandleAt(layout, 0, offset);
+  std::vector<obelisk_rt_object_v1 *> referents;
+  if (managedSlot) {
     if (unknown || planeSize != sizeof(obelisk_rt_object_v1 *) ||
         !checkedRange(offset, planeSize,
                       destinationMetadata->descriptor->instance_size))
       return OBELISK_RT_INVALID_ARGUMENT;
-  } else {
-    if (!checkedRange(offset, planeSize,
-                      destinationMetadata->descriptor->instance_size) ||
-        layoutOverlapsHandle(layout, 0, offset, planeSize))
-      return OBELISK_RT_INVALID_ARGUMENT;
-    if (unknown &&
-        (!checkedRange(offset + planeSize, planeSize,
-                       destinationMetadata->descriptor->instance_size) ||
-         layoutOverlapsHandle(layout, 0, offset + planeSize, planeSize)))
-      return OBELISK_RT_INVALID_ARGUMENT;
-  }
-
-  obelisk_rt_object_v1 *referent = nullptr;
-  if (managedValue) {
+    obelisk_rt_object_v1 *referent = nullptr;
     std::memcpy(&referent, value, sizeof(referent));
     if (referent) {
       ObjectMetadata *referentMetadata = metadataFor(referent);
       if (!referentMetadata || referentMetadata->heap != heap)
         return OBELISK_RT_INVALID_HANDLE;
+      referents.push_back(referent);
     }
+  } else {
+    if (!checkedRange(offset, planeSize,
+                      destinationMetadata->descriptor->instance_size) ||
+        !validateLayoutHandleWrite(layout, 0, offset, planeSize,
+                                   static_cast<const uint8_t *>(value), heap,
+                                   &referents))
+      return OBELISK_RT_INVALID_ARGUMENT;
+    if (unknown &&
+        (!checkedRange(offset + planeSize, planeSize,
+                       destinationMetadata->descriptor->instance_size) ||
+         !validateLayoutHandleWrite(layout, 0, offset + planeSize, planeSize,
+                                    static_cast<const uint8_t *>(unknown),
+                                    heap)))
+      return OBELISK_RT_INVALID_ARGUMENT;
   }
 
   obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
@@ -1620,25 +1861,26 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_managed_nba(
   obelisk_rt_status status = heap->retainScheduled(lane, destination);
   if (status != OBELISK_RT_OK)
     return status;
-  bool retainedReferent = false;
-  if (referent) {
+  size_t retainedReferents = 0;
+  for (obelisk_rt_object_v1 *referent : referents) {
     status = heap->retainScheduled(lane, referent);
     if (status != OBELISK_RT_OK) {
+      while (retainedReferents != 0)
+        (void)heap->releaseScheduled(referents[--retainedReferents]);
       (void)heap->releaseScheduled(destination);
       return status;
     }
-    retainedReferent = true;
+    ++retainedReferents;
   }
 
   auto rollback = [&] {
-    if (retainedReferent)
-      (void)heap->releaseScheduled(referent);
+    while (retainedReferents != 0)
+      (void)heap->releaseScheduled(referents[--retainedReferents]);
     (void)heap->releaseScheduled(destination);
   };
   try {
     ScheduledManagedNBA update;
     update.destination = destination;
-    update.managedValue = referent;
     update.offset = offset;
     update.planeSize = planeSize;
     update.value.assign(static_cast<const uint8_t *>(value),
@@ -1648,6 +1890,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_managed_nba(
       update.unknown.assign(static_cast<const uint8_t *>(unknown),
                             static_cast<const uint8_t *>(unknown) +
                                 static_cast<size_t>(planeSize));
+    // Keep `referents` intact until publication succeeds so exception
+    // rollback can release every scheduled root.
+    update.managedValues = referents;
     ContextTransaction transaction(context);
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     if (context->nextSchedulerSequence == 0) {
@@ -1687,21 +1932,15 @@ obelisk_rt_apply_managed_nba(obelisk_rt_context *context,
   } else {
     ObjectLock lock(destination);
     uint8_t *base = reinterpret_cast<uint8_t *>(update.destination);
-    if (update.managedValue) {
-      std::memcpy(base + update.offset, &update.managedValue,
-                  sizeof(update.managedValue));
-    } else {
-      std::memcpy(base + update.offset, update.value.data(),
-                  static_cast<size_t>(update.planeSize));
-      if (!update.unknown.empty())
-        std::memcpy(base + update.offset + update.planeSize,
-                    update.unknown.data(),
-                    static_cast<size_t>(update.planeSize));
-    }
+    std::memcpy(base + update.offset, update.value.data(),
+                static_cast<size_t>(update.planeSize));
+    if (!update.unknown.empty())
+      std::memcpy(base + update.offset + update.planeSize,
+                  update.unknown.data(), static_cast<size_t>(update.planeSize));
   }
 
-  if (update.managedValue) {
-    obelisk_rt_status released = heap->releaseScheduled(update.managedValue);
+  for (obelisk_rt_object_v1 *managedValue : update.managedValues) {
+    obelisk_rt_status released = heap->releaseScheduled(managedValue);
     if (status == OBELISK_RT_OK && released != OBELISK_RT_OK)
       status = released;
   }
@@ -1803,18 +2042,29 @@ extern "C" obelisk_rt_status obelisk_rt_v1_method_invoke(
   status = lane->heap->pushRoot(lane, &receiverRoot, &receiver);
   if (status != OBELISK_RT_OK)
     return status;
-  obelisk_rt_status callStatus =
-      method->native_entry(lane->context, lane, receiver, arguments,
-                           argumentCount, result, resultSize);
+  obelisk_rt_status callStatus = OBELISK_RT_OK;
+  try {
+    callStatus = method->native_entry(lane->context, lane, receiver, arguments,
+                                      argumentCount, result, resultSize);
+  } catch (const std::bad_alloc &) {
+    callStatus = OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    callStatus = OBELISK_RT_INVALID_ARGUMENT;
+  }
   obelisk_rt_status popStatus = lane->heap->popRoot(lane, &receiverRoot);
   return callStatus == OBELISK_RT_OK ? popStatus : callStatus;
 }
 
 extern "C" obelisk_rt_status
 obelisk_rt_v1_weak_create(obelisk_rt_gc_lane_v1 *lane,
+                          const obelisk_rt_class_descriptor_v1 *descriptor,
                           obelisk_rt_object_v1 *referent,
                           obelisk_rt_object_v1 **outWeak) {
-  if (!lane || !lane->heap || !outWeak)
+  if (!outWeak)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outWeak = nullptr;
+  if (!lane || !lane->heap || !descriptor ||
+      (descriptor->flags & OBELISK_RT_CLASS_WEAK_WRAPPER) == 0)
     return OBELISK_RT_INVALID_ARGUMENT;
   if (referent) {
     ObjectMetadata *metadata = metadataFor(referent);
@@ -1826,7 +2076,7 @@ obelisk_rt_v1_weak_create(obelisk_rt_gc_lane_v1 *lane,
       lane->heap->pushRoot(lane, &referentRoot, &referent);
   if (status != OBELISK_RT_OK)
     return status;
-  status = lane->heap->allocate(lane, &weakReferenceDescriptor, outWeak);
+  status = lane->heap->allocate(lane, descriptor, outWeak);
   if (status != OBELISK_RT_OK) {
     (void)lane->heap->popRoot(lane, &referentRoot);
     return status;

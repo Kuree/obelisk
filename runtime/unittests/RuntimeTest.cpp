@@ -208,6 +208,14 @@ obelisk_rt_status observerWaitRequirements(uint64_t *size,
   return OBELISK_RT_OK;
 }
 
+obelisk_rt_status overAlignedRequirements(uint64_t *size, uint64_t *alignment) {
+  if (!size || !alignment)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *size = 0;
+  *alignment = 32;
+  return OBELISK_RT_OK;
+}
+
 obelisk_rt_status
 observerWaitExecute(obelisk_rt_process_instance_v1 *instance) {
   if (!instance || !instance->action)
@@ -561,6 +569,36 @@ TEST(RuntimeABI, ValidatesObserverInventoryAndDescriptorVersion) {
   EXPECT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
             OBELISK_RT_INVALID_DESIGN);
   EXPECT_EQ(context, nullptr);
+}
+
+TEST(RuntimeABI, AlignsProcessFramesForNativeState) {
+  const uint32_t continuation = 0;
+  obelisk_rt_frame_layout_v1 layout{OBELISK_RT_VERSION, 0, 8, 8, nullptr, 0, 1,
+                                    &continuation,      0};
+  layout.checksum = observerWaitLayoutChecksum(layout);
+  obelisk_rt_process_descriptor_v1 process{
+      {OBELISK_RT_DESCRIPTOR_PROCESS, 0, 19},
+      OBELISK_RT_VERSION,
+      0,
+      OBELISK_RT_TIER_MASK_NATIVE,
+      0,
+      &layout,
+      overAlignedRequirements,
+      observerWaitExecute,
+      observerWaitDestroy,
+      nullptr,
+      nullptr,
+      nullptr};
+  obelisk_rt_process_instance_v1 *instance = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_process_instance_create(&process, &instance),
+            OBELISK_RT_OK);
+  void *frame = nullptr;
+  uint64_t frameSize = 0;
+  ASSERT_EQ(obelisk_rt_v1_process_instance_frame(instance, &frame, &frameSize),
+            OBELISK_RT_OK);
+  EXPECT_EQ(frameSize, 8u);
+  EXPECT_EQ(reinterpret_cast<uintptr_t>(frame) % 32, 0u);
+  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
 }
 
 TEST(RuntimeABI, RejectsMalformedComputedWaitRecords) {
@@ -2908,12 +2946,21 @@ obelisk_rt_status derivedValueMethod(obelisk_rt_context *context,
   return OBELISK_RT_OK;
 }
 
+obelisk_rt_status throwingValueMethod(
+    obelisk_rt_context *, obelisk_rt_gc_lane_v1 *, obelisk_rt_object_v1 *,
+    const obelisk_rt_method_argument_v1 *, uint32_t, void *, uint64_t) {
+  throw std::bad_alloc();
+}
+
 const obelisk_rt_method_descriptor_v1 nodeMethods[]{
     {42, 0, OBELISK_RT_METHOD_NO_BYTECODE, nodeValueMethod, nullptr}};
 const obelisk_rt_method_descriptor_v1 derivedMethods[]{
     {42, 0, OBELISK_RT_METHOD_NO_BYTECODE, derivedValueMethod, nullptr}};
+const obelisk_rt_method_descriptor_v1 throwingMethods[]{
+    {42, 0, OBELISK_RT_METHOD_NO_BYTECODE, throwingValueMethod, nullptr}};
 const char nodeName[] = "node";
 const char derivedName[] = "derived_node";
+const char throwingName[] = "throwing_node";
 const obelisk_rt_class_descriptor_v1 nodeDescriptor{OBELISK_RT_VERSION,
                                                     0,
                                                     1,
@@ -2941,6 +2988,56 @@ const obelisk_rt_class_descriptor_v1 derivedDescriptor{
     std::size(derivedMethods),
     derivedName,
     sizeof(derivedName) - 1};
+const obelisk_rt_class_descriptor_v1 throwingDescriptor{
+    OBELISK_RT_VERSION,
+    OBELISK_RT_CLASS_FINAL,
+    5,
+    sizeof(void *) * 3,
+    alignof(void *),
+    &nodeDescriptor,
+    nullptr,
+    0,
+    &nodeTraceLayout,
+    throwingMethods,
+    std::size(throwingMethods),
+    throwingName,
+    sizeof(throwingName) - 1};
+const obelisk_rt_trace_layout_v1 planeTraceLayout{
+    OBELISK_RT_VERSION, 0, sizeof(void *) * 3, alignof(void *), nullptr, 0};
+const char planeName[] = "plane_object";
+const obelisk_rt_class_descriptor_v1 planeDescriptor{OBELISK_RT_VERSION,
+                                                     OBELISK_RT_CLASS_FINAL,
+                                                     3,
+                                                     sizeof(void *) * 3,
+                                                     alignof(void *),
+                                                     nullptr,
+                                                     nullptr,
+                                                     0,
+                                                     &planeTraceLayout,
+                                                     nullptr,
+                                                     0,
+                                                     planeName,
+                                                     sizeof(planeName) - 1};
+const obelisk_rt_trace_entry_v1 weakTraceEntry{
+    sizeof(void *), 0, 1, OBELISK_RT_TRACE_WEAK, 0, nullptr};
+const obelisk_rt_trace_layout_v1 weakTraceLayout{
+    OBELISK_RT_VERSION, 0, sizeof(void *) * 2, alignof(void *),
+    &weakTraceEntry,    1};
+const char weakName[] = "weak_reference";
+const obelisk_rt_class_descriptor_v1 weakDescriptor{
+    OBELISK_RT_VERSION,
+    OBELISK_RT_CLASS_FINAL | OBELISK_RT_CLASS_WEAK_WRAPPER,
+    4,
+    sizeof(void *) * 2,
+    alignof(void *),
+    nullptr,
+    nullptr,
+    0,
+    &weakTraceLayout,
+    nullptr,
+    0,
+    weakName,
+    sizeof(weakName) - 1};
 
 class ManagedHeapTest : public ::testing::Test {
 protected:
@@ -2979,7 +3076,9 @@ TEST_F(ManagedHeapTest, CollectsCyclesAndClearsWeakReferences) {
   ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &firstRoot, &first),
             OBELISK_RT_OK);
   obelisk_rt_object_v1 *weak = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_weak_create(lane, second, &weak), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_weak_create(lane, &weakDescriptor, second, &weak),
+            OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_object_is_instance(weak, &weakDescriptor), 1u);
   obelisk_rt_gc_root_v1 weakRoot{};
   ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &weakRoot, &weak), OBELISK_RT_OK);
 
@@ -3000,6 +3099,134 @@ TEST_F(ManagedHeapTest, CollectsCyclesAndClearsWeakReferences) {
 
   ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &weakRoot), OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &firstRoot), OBELISK_RT_OK);
+}
+
+TEST_F(ManagedHeapTest, TracesContiguousActivationRootRanges) {
+  obelisk_rt_object_v1 *slots[2] = {};
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &nodeDescriptor, &slots[0]),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &nodeDescriptor, &slots[1]),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_range_v1 range{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_range_push(lane, &range, slots, 2),
+            OBELISK_RT_OK);
+
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  obelisk_rt_gc_statistics_v1 statistics{};
+  ASSERT_EQ(obelisk_rt_v1_gc_statistics(context, &statistics), OBELISK_RT_OK);
+  EXPECT_EQ(statistics.live_objects, 2u);
+
+  slots[0] = nullptr;
+  slots[1] = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_statistics(context, &statistics), OBELISK_RT_OK);
+  EXPECT_EQ(statistics.live_objects, 0u);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_range_pop(lane, &range), OBELISK_RT_OK);
+}
+
+TEST_F(ManagedHeapTest, TracesManagedValuesInAutomaticAggregateState) {
+  obelisk_rt_object_v1 *objects[2] = {};
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &nodeDescriptor, &objects[0]),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &nodeDescriptor, &objects[1]),
+            OBELISK_RT_OK);
+  obelisk_rt_object_v1 *weak[2] = {};
+  ASSERT_EQ(
+      obelisk_rt_v1_weak_create(lane, &weakDescriptor, objects[0], &weak[0]),
+      OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_weak_create(lane, &weakDescriptor, objects[1], &weak[1]),
+      OBELISK_RT_OK);
+  obelisk_rt_gc_root_range_v1 weakRoots{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_range_push(lane, &weakRoots, weak, 2),
+            OBELISK_RT_OK);
+
+  uint8_t initial[sizeof(objects)] = {};
+  std::memcpy(initial, objects, sizeof(objects));
+  const uint64_t invalidRootOffset = 1;
+  uint64_t rolledBackHandle = 0;
+  EXPECT_EQ(obelisk_rt_v1_native_state_alloc_with_roots(
+                context, sizeof(initial) * 8, initial, nullptr,
+                &invalidRootOffset, 1, &rolledBackHandle),
+            OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(rolledBackHandle, UINT64_MAX);
+  rolledBackHandle = 0;
+  EXPECT_EQ(obelisk_rt_v1_native_state_alloc_with_roots(
+                context, sizeof(initial) * 8, initial, nullptr, nullptr, 1,
+                &rolledBackHandle),
+            OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(rolledBackHandle, UINT64_MAX);
+  uint64_t handle = UINT64_MAX;
+  ASSERT_EQ(obelisk_rt_v1_native_state_alloc(context, sizeof(initial) * 8,
+                                             initial, nullptr, &handle),
+            OBELISK_RT_OK);
+  const uint64_t rootOffsets[] = {0, 64};
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_managed_roots(
+                context, handle, rootOffsets, std::size(rootOffsets)),
+            OBELISK_RT_OK);
+  objects[0] = nullptr;
+  objects[1] = nullptr;
+
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  obelisk_rt_object_v1 *referent = nullptr;
+  EXPECT_EQ(obelisk_rt_v1_weak_get(weak[0], &referent), OBELISK_RT_OK);
+  EXPECT_NE(referent, nullptr);
+  EXPECT_EQ(obelisk_rt_v1_weak_get(weak[1], &referent), OBELISK_RT_OK);
+  EXPECT_NE(referent, nullptr);
+
+  ASSERT_EQ(obelisk_rt_v1_native_state_release(context, handle, 0),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_weak_get(weak[0], &referent), OBELISK_RT_OK);
+  EXPECT_EQ(referent, nullptr);
+  EXPECT_EQ(obelisk_rt_v1_weak_get(weak[1], &referent), OBELISK_RT_OK);
+  EXPECT_EQ(referent, nullptr);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_range_pop(lane, &weakRoots), OBELISK_RT_OK);
+}
+
+TEST_F(ManagedHeapTest, AccessesFourStatePlanesAtomicallyAcrossThreads) {
+  obelisk_rt_object_v1 *object = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &planeDescriptor, &object),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 root{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &root, &object), OBELISK_RT_OK);
+  constexpr uint64_t first = UINT64_C(0xaaaaaaaaaaaaaaaa);
+  constexpr uint64_t second = UINT64_C(0x5555555555555555);
+  uint64_t initialUnknown = ~first;
+  ASSERT_EQ(obelisk_rt_v1_object_write_planes(object, sizeof(void *), &first,
+                                              &initialUnknown, sizeof(first)),
+            OBELISK_RT_OK);
+
+  std::atomic<bool> inconsistent{false};
+  std::thread writer([&] {
+    for (unsigned iteration = 0; iteration != 10000; ++iteration) {
+      uint64_t value = (iteration & 1) ? first : second;
+      uint64_t unknown = ~value;
+      if (obelisk_rt_v1_object_write_planes(object, sizeof(void *), &value,
+                                            &unknown,
+                                            sizeof(value)) != OBELISK_RT_OK) {
+        inconsistent.store(true, std::memory_order_relaxed);
+        return;
+      }
+    }
+  });
+  std::thread reader([&] {
+    for (unsigned iteration = 0; iteration != 10000; ++iteration) {
+      uint64_t value = 0;
+      uint64_t unknown = 0;
+      if (obelisk_rt_v1_object_read_planes(object, sizeof(void *), &value,
+                                           &unknown,
+                                           sizeof(value)) != OBELISK_RT_OK ||
+          unknown != ~value) {
+        inconsistent.store(true, std::memory_order_relaxed);
+        return;
+      }
+    }
+  });
+  writer.join();
+  reader.join();
+  EXPECT_FALSE(inconsistent.load(std::memory_order_relaxed));
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &root), OBELISK_RT_OK);
 }
 
 TEST_F(ManagedHeapTest, DispatchesOverridesAndShallowCopiesStaticType) {
@@ -3046,6 +3273,22 @@ TEST_F(ManagedHeapTest, DispatchesOverridesAndShallowCopiesStaticType) {
   ASSERT_EQ(obelisk_rt_v1_object_cast(nullptr, &derivedDescriptor, &castResult),
             OBELISK_RT_OK);
   EXPECT_EQ(castResult, nullptr);
+}
+
+TEST_F(ManagedHeapTest, ContainsExceptionsFromNativeMethodCallbacks) {
+  obelisk_rt_object_v1 *object = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_object_allocate(lane, &throwingDescriptor, &object),
+      OBELISK_RT_OK);
+  uint64_t result = 0;
+  EXPECT_EQ(obelisk_rt_v1_method_invoke(lane, object, 0, 42, nullptr, 0,
+                                        &result, sizeof(result)),
+            OBELISK_RT_OUT_OF_MEMORY);
+
+  // The receiver root must be removed even when a foreign callback throws.
+  obelisk_rt_gc_root_v1 root{};
+  EXPECT_EQ(obelisk_rt_v1_gc_root_push(lane, &root, &object), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &root), OBELISK_RT_OK);
 }
 
 TEST_F(ManagedHeapTest, UsesChunkAllocationForSmallObjectChurn) {
@@ -3100,7 +3343,8 @@ TEST_F(ManagedHeapTest, AutomaticCollectionsClearWeakReferencesDuringChurn) {
   ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &nodeDescriptor, &referent),
             OBELISK_RT_OK);
   obelisk_rt_object_v1 *weak = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_weak_create(lane, referent, &weak), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_weak_create(lane, &weakDescriptor, referent, &weak),
+            OBELISK_RT_OK);
   obelisk_rt_gc_root_v1 weakRoot{};
   ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &weakRoot, &weak), OBELISK_RT_OK);
   referent = nullptr;
@@ -3286,6 +3530,43 @@ TEST(ManagedHeap, RejectsMalformedClassLayouts) {
   malformed = nodeDescriptor;
   malformed.flags = OBELISK_RT_CLASS_ABSTRACT;
   EXPECT_EQ(obelisk_rt_v1_class_validate(&malformed), OBELISK_RT_OK);
+  malformed = nodeDescriptor;
+  malformed.flags = OBELISK_RT_CLASS_WEAK_WRAPPER;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&malformed),
+            OBELISK_RT_INVALID_DESIGN);
+  obelisk_rt_trace_entry_v1 ambiguousWeakEntries[] = {
+      {8, 1, 8, OBELISK_RT_TRACE_WEAK, 0, nullptr},
+      {8, 1, 8, OBELISK_RT_TRACE_STRONG, 0, nullptr}};
+  obelisk_rt_trace_layout_v1 ambiguousWeakLayout{OBELISK_RT_VERSION,   0, 16, 8,
+                                                 ambiguousWeakEntries, 2};
+  malformed.layout = &ambiguousWeakLayout;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&malformed),
+            OBELISK_RT_INVALID_DESIGN);
+
+  obelisk_rt_trace_entry_v1 duplicateEntries[] = {nodeTraceEntry,
+                                                  nodeTraceEntry};
+  obelisk_rt_trace_layout_v1 duplicateLayout{
+      OBELISK_RT_VERSION, 0,
+      sizeof(void *) * 3, alignof(void *),
+      duplicateEntries,   std::size(duplicateEntries)};
+  malformed = nodeDescriptor;
+  malformed.layout = &duplicateLayout;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&malformed),
+            OBELISK_RT_INVALID_DESIGN);
+
+  obelisk_rt_class_descriptor_v1 finalBase = nodeDescriptor;
+  finalBase.flags = OBELISK_RT_CLASS_FINAL;
+  malformed = derivedDescriptor;
+  malformed.base = &finalBase;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&malformed),
+            OBELISK_RT_INVALID_DESIGN);
+
+  obelisk_rt_method_descriptor_v1 pureMethod = nodeMethods[0];
+  pureMethod.flags = OBELISK_RT_METHOD_PURE;
+  malformed = nodeDescriptor;
+  malformed.methods = &pureMethod;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&malformed),
+            OBELISK_RT_INVALID_DESIGN);
 }
 
 } // namespace

@@ -714,6 +714,15 @@ std::optional<uint64_t> getProvenanceSpan(Type type) {
     return *packed;
   if (isa<TimeType>(type) || type.isF64())
     return uint64_t{64};
+  if (isa<ClassHandleType>(type))
+    return uint64_t{64};
+  auto checkedAlign = [](uint64_t value,
+                         uint64_t alignment) -> std::optional<uint64_t> {
+    if (alignment == 0 || (alignment & (alignment - 1)) != 0 ||
+        value > std::numeric_limits<uint64_t>::max() - (alignment - 1))
+      return std::nullopt;
+    return (value + alignment - 1) & ~(alignment - 1);
+  };
   auto checkedAdd = [](uint64_t &total, uint64_t amount) {
     if (amount > std::numeric_limits<uint64_t>::max() - total)
       return false;
@@ -722,35 +731,75 @@ std::optional<uint64_t> getProvenanceSpan(Type type) {
   };
   if (isa<UnpackedArrayType>(type)) {
     uint64_t count = getAggregateNumElements(type);
-    std::optional<uint64_t> element =
-        getProvenanceSpan(getAggregateElementType(type, 0));
-    if (!element ||
-        (count && *element > std::numeric_limits<uint64_t>::max() / count))
+    Type elementType = getAggregateElementType(type, 0);
+    std::optional<uint64_t> element = getProvenanceSpan(elementType);
+    std::optional<uint64_t> alignment = getProvenanceAlignment(elementType);
+    std::optional<uint64_t> stride = element && alignment
+                                         ? checkedAlign(*element, *alignment)
+                                         : std::nullopt;
+    if (!stride ||
+        (count && *stride > std::numeric_limits<uint64_t>::max() / count))
       return std::nullopt;
-    return count * *element;
+    return count * *stride;
   }
   if (isa<UnpackedStructType>(type)) {
     uint64_t total = 0;
+    uint64_t alignment = 1;
     for (unsigned index = 0; index < getAggregateNumElements(type); ++index) {
-      std::optional<uint64_t> child =
-          getProvenanceSpan(getAggregateElementType(type, index));
-      if (!child || !checkedAdd(total, *child))
+      Type childType = getAggregateElementType(type, index);
+      std::optional<uint64_t> child = getProvenanceSpan(childType);
+      std::optional<uint64_t> childAlignment =
+          getProvenanceAlignment(childType);
+      std::optional<uint64_t> offset =
+          childAlignment ? checkedAlign(total, *childAlignment) : std::nullopt;
+      if (!child || !offset || !checkedAdd(*offset, *child))
         return std::nullopt;
+      total = *offset;
+      alignment = std::max(alignment, *childAlignment);
     }
-    return total;
+    return checkedAlign(total, alignment);
   }
   if (isa<UnpackedUnionType>(type)) {
     uint64_t maximum = 0;
+    uint64_t alignment = 1;
     for (unsigned index = 0; index < getAggregateNumElements(type); ++index) {
-      std::optional<uint64_t> child =
-          getProvenanceSpan(getAggregateElementType(type, index));
-      if (!child)
+      Type childType = getAggregateElementType(type, index);
+      std::optional<uint64_t> child = getProvenanceSpan(childType);
+      std::optional<uint64_t> childAlignment =
+          getProvenanceAlignment(childType);
+      if (!child || !childAlignment)
         return std::nullopt;
       maximum = std::max(maximum, *child);
+      alignment = std::max(alignment, *childAlignment);
     }
-    return maximum;
+    return checkedAlign(maximum, alignment);
   }
   return std::nullopt;
+}
+
+std::optional<uint64_t> getProvenanceAlignment(Type type) {
+  if (auto reference = dyn_cast<RefType>(type))
+    return getProvenanceAlignment(reference.getElementType());
+  if (auto net = dyn_cast<NetType>(type))
+    return getProvenanceAlignment(net.getElementType());
+  if (auto driver = dyn_cast<DriverType>(type))
+    return getProvenanceAlignment(driver.getElementType());
+  if (isa<ClassHandleType>(type))
+    return uint64_t{64};
+  if (isa<UnpackedArrayType>(type))
+    return getProvenanceAlignment(getAggregateElementType(type, 0));
+  if (isa<UnpackedStructType, UnpackedUnionType>(type)) {
+    uint64_t alignment = 1;
+    for (unsigned index = 0; index < getAggregateNumElements(type); ++index) {
+      std::optional<uint64_t> child =
+          getProvenanceAlignment(getAggregateElementType(type, index));
+      if (!child)
+        return std::nullopt;
+      alignment = std::max(alignment, *child);
+    }
+    return alignment;
+  }
+  return getProvenanceSpan(type) ? std::optional<uint64_t>{1} : std::nullopt;
 }
 
 std::optional<std::pair<uint64_t, uint64_t>>
@@ -770,22 +819,81 @@ getAggregateProvenanceSubelement(Type type, unsigned index) {
       return std::nullopt;
     offset = (count - index - 1) * *span;
   } else if (isa<UnpackedArrayType>(type)) {
-    if (*span && index > std::numeric_limits<uint64_t>::max() / *span)
+    std::optional<uint64_t> alignment = getProvenanceAlignment(element);
+    if (!alignment || *alignment == 0 ||
+        *span > std::numeric_limits<uint64_t>::max() - (*alignment - 1))
       return std::nullopt;
-    offset = index * *span;
+    uint64_t stride = (*span + *alignment - 1) & ~(*alignment - 1);
+    if (stride && index > std::numeric_limits<uint64_t>::max() / stride)
+      return std::nullopt;
+    offset = index * stride;
   } else if (isa<UnpackedStructType>(type)) {
     for (unsigned previous = 0; previous < index; ++previous) {
-      std::optional<uint64_t> previousSpan =
-          getProvenanceSpan(getAggregateElementType(type, previous));
-      if (!previousSpan ||
-          *previousSpan > std::numeric_limits<uint64_t>::max() - offset)
+      Type previousType = getAggregateElementType(type, previous);
+      std::optional<uint64_t> previousSpan = getProvenanceSpan(previousType);
+      std::optional<uint64_t> previousAlignment =
+          getProvenanceAlignment(previousType);
+      if (!previousSpan || !previousAlignment ||
+          offset >
+              std::numeric_limits<uint64_t>::max() - (*previousAlignment - 1))
+        return std::nullopt;
+      offset = (offset + *previousAlignment - 1) & ~(*previousAlignment - 1);
+      if (*previousSpan > std::numeric_limits<uint64_t>::max() - offset)
         return std::nullopt;
       offset += *previousSpan;
     }
+    std::optional<uint64_t> alignment = getProvenanceAlignment(element);
+    if (!alignment ||
+        offset > std::numeric_limits<uint64_t>::max() - (*alignment - 1))
+      return std::nullopt;
+    offset = (offset + *alignment - 1) & ~(*alignment - 1);
   } else if (!isa<UnpackedUnionType>(type)) {
     return std::nullopt;
   }
   return std::pair<uint64_t, uint64_t>{offset, *span};
+}
+
+bool getManagedHandleOffsets(Type type,
+                             llvm::SmallVectorImpl<uint64_t> &offsets) {
+  if (isa<ClassHandleType>(type)) {
+    offsets.push_back(0);
+    return true;
+  }
+  if (!isAggregateType(type))
+    return true;
+  // Union members overlap. A flat list of root offsets cannot distinguish an
+  // active class member from ordinary bits in another member, and treating
+  // those bits as a pointer would make the collector conservative (and could
+  // admit an invalid host address). Keep the failure explicit until the trace
+  // ABI carries active-member guards.
+  if (isa<PackedUnionType, UnpackedUnionType>(type)) {
+    for (unsigned index = 0; index < getAggregateNumElements(type); ++index) {
+      SmallVector<uint64_t, 2> nested;
+      if (!getManagedHandleOffsets(getAggregateElementType(type, index),
+                                   nested))
+        return false;
+      if (!nested.empty())
+        return false;
+    }
+    return true;
+  }
+  for (unsigned index = 0; index < getAggregateNumElements(type); ++index) {
+    std::optional<std::pair<uint64_t, uint64_t>> child =
+        getAggregateProvenanceSubelement(type, index);
+    if (!child)
+      return false;
+    SmallVector<uint64_t, 2> nested;
+    if (!getManagedHandleOffsets(getAggregateElementType(type, index), nested))
+      return false;
+    for (uint64_t nestedOffset : nested) {
+      if (nestedOffset > std::numeric_limits<uint64_t>::max() - child->first)
+        return false;
+      offsets.push_back(child->first + nestedOffset);
+    }
+  }
+  llvm::sort(offsets);
+  offsets.erase(std::unique(offsets.begin(), offsets.end()), offsets.end());
+  return true;
 }
 
 static bool isNormalizedValueType(Type type) {
@@ -1220,6 +1328,12 @@ ManagedRefType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
 }
 
 LogicalResult
+ArgumentRefType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                        Type elementType) {
+  return verifyElementType(emitError, elementType);
+}
+
+LogicalResult
 ObserverType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
                      Type resultType) {
   if (!isa<IntegerType, LogicType>(resultType))
@@ -1361,6 +1475,8 @@ LogicalResult SimClassDeclOp::verify() {
     return emitOpError("interface classes cannot have a base class");
   if (getBaseAttr() && getBase() == getSymName())
     return emitOpError("class cannot extend itself");
+  if (getWeakReferentAttr() && !lookupClass(*this, getWeakReferentAttr()))
+    return emitOpError("weak wrapper references an unknown referent class");
   if (ArrayAttr interfaces = getInterfacesAttr()) {
     SmallVector<StringRef> unique;
     for (Attribute attribute : interfaces) {
@@ -1449,6 +1565,36 @@ LogicalResult SimClassCopyOp::verify() {
   return success();
 }
 
+LogicalResult SimWeakCreateOp::verify() {
+  SimClassDeclOp wrapper =
+      lookupClass(*this, getResult().getType().getClassName());
+  if (!wrapper || !wrapper.getWeakReferentAttr())
+    return emitOpError("result must be a declared weak_reference wrapper");
+  if (wrapper.getWeakReferentAttr() != getReferent().getType().getClassName())
+    return emitOpError(
+        "referent type does not match the weak_reference specialization");
+  return success();
+}
+
+LogicalResult SimWeakGetOp::verify() {
+  SimClassDeclOp wrapper =
+      lookupClass(*this, getWeak().getType().getClassName());
+  if (!wrapper || !wrapper.getWeakReferentAttr())
+    return emitOpError("operand must be a declared weak_reference wrapper");
+  if (wrapper.getWeakReferentAttr() != getResult().getType().getClassName())
+    return emitOpError(
+        "result type does not match the weak_reference specialization");
+  return success();
+}
+
+LogicalResult SimWeakClearOp::verify() {
+  SimClassDeclOp wrapper =
+      lookupClass(*this, getWeak().getType().getClassName());
+  if (!wrapper || !wrapper.getWeakReferentAttr())
+    return emitOpError("operand must be a declared weak_reference wrapper");
+  return success();
+}
+
 LogicalResult SimClassIsInstanceOp::verify() {
   if (!lookupClass(*this, getTargetAttr()))
     return emitOpError("references an unknown target class");
@@ -1506,6 +1652,45 @@ LogicalResult SimManagedStoreOp::verify() {
 LogicalResult SimManagedNBAEnqueueOp::verify() {
   if (getDestination().getType().getElementType() != getValue().getType())
     return emitOpError("value type must match the referenced element");
+  return success();
+}
+
+LogicalResult SimArgumentRefFromRefOp::verify() {
+  if (getInput().getType().getElementType() !=
+      getResult().getType().getElementType())
+    return emitOpError("input and result element types must match");
+  return success();
+}
+
+LogicalResult SimArgumentRefFromManagedOp::verify() {
+  if (getInput().getType().getElementType() !=
+      getResult().getType().getElementType())
+    return emitOpError("input and result element types must match");
+  return success();
+}
+
+LogicalResult SimArgumentRefLoadOp::verify() {
+  if (getReference().getType().getElementType() != getResult().getType())
+    return emitOpError("result type must match the referenced element");
+  return success();
+}
+
+LogicalResult SimArgumentRefStoreOp::verify() {
+  if (getReference().getType().getElementType() != getValue().getType())
+    return emitOpError("value type must match the referenced element");
+  return success();
+}
+
+LogicalResult SimClassRootBindOp::verify() {
+  Type type = getObject().getType();
+  SmallVector<uint64_t, 2> offsets;
+  if (isa<ManagedRefType, ArgumentRefType>(type))
+    offsets.push_back(0);
+  else if (!getManagedHandleOffsets(type, offsets))
+    return emitOpError("rooted value has no fixed managed layout");
+  uint64_t selected = getBitOffset();
+  if (!llvm::is_contained(offsets, selected))
+    return emitOpError("bit offset does not select a managed handle");
   return success();
 }
 
@@ -2077,7 +2262,7 @@ LogicalResult verifyUnitBindings(SimFuncOp function) {
         return failure();
       break;
     case UnitArgumentKind::LValueOnly:
-      if (!isa<RefType, NetType, DriverType>(argumentType))
+      if (!isa<RefType, ArgumentRefType, NetType, DriverType>(argumentType))
         return function.emitOpError()
                << "has malformed " << metadata::bindings << " entry #" << index
                << ": lvalue-only binding requires a storage, net, or driver "
@@ -2156,9 +2341,9 @@ LogicalResult SimFuncOp::verify() {
   if (type.getNumInputs() == 0 || !isa<ContextType>(type.getInput(0)))
     return emitOpError("first argument must be !obelisk_sim.context");
   for (Type input : type.getInputs()) {
-    if (!isa<ContextType, RefType, NetType, DriverType, EventType, ProcessType,
-             ClassHandleType, ManagedRefType, IntegerType, LogicType, TimeType>(
-            input) &&
+    if (!isa<ContextType, RefType, ArgumentRefType, NetType, DriverType,
+             EventType, ProcessType, ClassHandleType, ManagedRefType,
+             IntegerType, LogicType, TimeType>(input) &&
         !input.isF64() && !isAggregateType(input))
       return emitOpError() << "contains non-normalized argument type " << input;
     if (auto integer = dyn_cast<IntegerType>(input);

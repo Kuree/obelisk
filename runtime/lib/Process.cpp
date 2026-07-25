@@ -26,7 +26,6 @@ struct ProcessAllocationMetadata {
   size_t size;
   size_t alignment;
   obelisk_rt_context *managedRootContext = nullptr;
-  ManagedRootProvider managedRoots;
 };
 
 struct ProcessFreeBlock {
@@ -44,23 +43,6 @@ processMetadata(obelisk_rt_process_instance_v1 *instance) {
       reinterpret_cast<uint8_t *>(instance) + kProcessAllocationMetadataOffset);
 }
 
-void enumerateManagedFrameRoots(void *environment, ManagedRootVisit visit,
-                                void *visitorEnvironment) {
-  auto *instance = static_cast<obelisk_rt_process_instance_v1 *>(environment);
-  if (!instance || !visit)
-    return;
-  const obelisk_rt_frame_layout_v1 &layout =
-      *instance->descriptor->frame_layout;
-  for (uint32_t index = 0; index != layout.field_count; ++index) {
-    const obelisk_rt_frame_field_v1 &field = layout.fields[index];
-    if (field.flags != OBELISK_RT_FRAME_MANAGED_ROOT)
-      continue;
-    auto **slot = reinterpret_cast<obelisk_rt_object_v1 **>(
-        static_cast<uint8_t *>(instance->frame) + field.offset);
-    visit(visitorEnvironment, slot);
-  }
-}
-
 obelisk_rt_status
 registerManagedFrameRoots(obelisk_rt_process_instance_v1 *instance,
                           obelisk_rt_context *context) {
@@ -75,18 +57,19 @@ registerManagedFrameRoots(obelisk_rt_process_instance_v1 *instance,
   const obelisk_rt_frame_layout_v1 &layout =
       *instance->descriptor->frame_layout;
   bool hasManagedRoots = false;
-  for (uint32_t index = 0; index != layout.field_count; ++index) {
-    if (layout.fields[index].flags == OBELISK_RT_FRAME_MANAGED_ROOT) {
-      hasManagedRoots = true;
-      break;
-    }
+  for (uint32_t index = 0; index != layout.field_count; ++index)
+    hasManagedRoots |=
+        layout.fields[index].flags == OBELISK_RT_FRAME_MANAGED_ROOT;
+  if (!hasManagedRoots) {
+    metadata->managedRootContext = context;
+    return OBELISK_RT_OK;
   }
-  if (hasManagedRoots) {
-    obelisk_rt_status status = obelisk_rt_managed_persistent_roots_register(
-        context, &metadata->managedRoots, enumerateManagedFrameRoots, instance);
-    if (status != OBELISK_RT_OK)
-      return status;
-  }
+  std::lock_guard<std::recursive_mutex> lock(context->mutex);
+  if (std::find(context->managedRootProcesses.begin(),
+                context->managedRootProcesses.end(),
+                instance) != context->managedRootProcesses.end())
+    return OBELISK_RT_INVALID_LIFECYCLE;
+  context->managedRootProcesses.push_back(instance);
   metadata->managedRootContext = context;
   return OBELISK_RT_OK;
 }
@@ -95,9 +78,12 @@ void unregisterManagedFrameRoots(obelisk_rt_process_instance_v1 *instance) {
   ProcessAllocationMetadata *metadata = processMetadata(instance);
   if (!metadata->managedRootContext)
     return;
-  if (metadata->managedRoots.cookie)
-    (void)obelisk_rt_managed_persistent_roots_unregister(
-        metadata->managedRootContext, &metadata->managedRoots);
+  obelisk_rt_context *context = metadata->managedRootContext;
+  std::lock_guard<std::recursive_mutex> lock(context->mutex);
+  auto found = std::find(context->managedRootProcesses.begin(),
+                         context->managedRootProcesses.end(), instance);
+  if (found != context->managedRootProcesses.end())
+    context->managedRootProcesses.erase(found);
   metadata->managedRootContext = nullptr;
 }
 
@@ -1004,9 +990,12 @@ void obelisk_rt_erase_automatic_bookkeeping_unlocked(
   if (auto state = context->nativeAutomaticStates.find(automaticID);
       state != context->nativeAutomaticStates.end() &&
       state->second.managedRootRegistered) {
-    (void)obelisk_rt_v1_gc_static_root_unregister(context,
-                                                  &state->second.managedValue);
     state->second.managedRootRegistered = false;
+  }
+  if (auto state = context->nativeAutomaticStates.find(automaticID);
+      state != context->nativeAutomaticStates.end() &&
+      !state->second.managedRootByteOffsets.empty()) {
+    state->second.managedRootByteOffsets.clear();
   }
   for (auto snapshot = context->signalValueSnapshots.begin();
        snapshot != context->signalValueSnapshots.end();) {
@@ -1481,14 +1470,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_process_instance_create(
   uint64_t frameOffset;
   uint64_t tailSize;
   uint64_t totalSize;
-  uint64_t allocationAlignment =
-      std::max<uint64_t>({alignof(obelisk_rt_process_instance_v1),
-                          descriptor->frame_layout->frame_alignment,
-                          nativeAlignment, uint64_t{16}});
+  uint64_t frameAlignment = std::max<uint64_t>(
+      descriptor->frame_layout->frame_alignment, nativeAlignment);
+  uint64_t allocationAlignment = std::max<uint64_t>(
+      {alignof(obelisk_rt_process_instance_v1), frameAlignment, uint64_t{16}});
   if (addOverflow(kProcessAllocationMetadataOffset,
                   sizeof(ProcessAllocationMetadata), headerSize) ||
-      alignUp(headerSize, descriptor->frame_layout->frame_alignment,
-              frameOffset) ||
+      alignUp(headerSize, frameAlignment, frameOffset) ||
       addOverflow(scratchOffset, scratchSize, tailSize) ||
       addOverflow(frameOffset, tailSize, totalSize) ||
       alignUp(totalSize, allocationAlignment, totalSize) ||
@@ -1523,11 +1511,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_process_instance_create(
                                      0,
                                      0};
   ::new (static_cast<uint8_t *>(allocation) + kProcessAllocationMetadataOffset)
-      ProcessAllocationMetadata{kProcessAllocationMagic,
-                                static_cast<size_t>(totalSize),
-                                static_cast<size_t>(allocationAlignment),
-                                nullptr,
-                                {}};
+      ProcessAllocationMetadata{
+          kProcessAllocationMagic, static_cast<size_t>(totalSize),
+          static_cast<size_t>(allocationAlignment), nullptr};
   *outInstance = instance;
   return OBELISK_RT_OK;
 }
@@ -2155,26 +2141,13 @@ extern "C" uint64_t obelisk_rt_v1_native_handle_offset(uint64_t handle,
   return nativeHandleOffset(handle, offset);
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_native_state_alloc(obelisk_rt_context *context, uint64_t bitWidth,
-                                 const uint8_t *value, const uint8_t *unknown,
-                                 uint64_t *outHandle) {
-  if (!outHandle)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  *outHandle = UINT64_MAX;
-  if (!context || !value || bitWidth == 0 || bitWidth > INT32_MAX ||
-      bitWidth > UINT64_MAX - 7)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  uint64_t byteCount = (bitWidth + 7) / 8;
-  if (byteCount > std::numeric_limits<size_t>::max())
-    return OBELISK_RT_INVALID_ARGUMENT;
+namespace {
+
+obelisk_rt_status publishNativeAutomaticState(obelisk_rt_context *context,
+                                              NativeAutomaticState state,
+                                              uint64_t *outHandle) {
   ContextTransaction transaction(context);
   try {
-    NativeAutomaticState state;
-    state.bitWidth = bitWidth;
-    state.value.assign(value, value + static_cast<size_t>(byteCount));
-    if (unknown)
-      state.unknown.assign(unknown, unknown + static_cast<size_t>(byteCount));
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     state.owner = context->activeNativeProcess;
     if (!state.owner)
@@ -2184,7 +2157,8 @@ obelisk_rt_v1_native_state_alloc(obelisk_rt_context *context, uint64_t bitWidth,
       context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
       return OBELISK_RT_OUT_OF_RESOURCES;
     }
-    context->nativeAutomaticStates.emplace(id, std::move(state));
+    if (!context->nativeAutomaticStates.emplace(id, std::move(state)).second)
+      return OBELISK_RT_INVALID_LIFECYCLE;
     ++context->nextNativeAutomaticID;
     *outHandle = obelisk_rt_stable_handle_encode(
         OBELISK_RT_STABLE_HANDLE_AUTOMATIC, id, 0);
@@ -2196,6 +2170,88 @@ obelisk_rt_v1_native_state_alloc(obelisk_rt_context *context, uint64_t bitWidth,
     obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
     return OBELISK_RT_INVALID_ARGUMENT;
   }
+}
+
+} // namespace
+
+obelisk_rt_status obelisk_rt_native_state_alloc_managed(
+    obelisk_rt_context *context, obelisk_rt_object_v1 *value,
+    uint64_t *outHandle) {
+  if (!outHandle)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outHandle = UINT64_MAX;
+  if (!context)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  if (!obelisk_rt_managed_object_belongs_to(context, value))
+    return OBELISK_RT_INVALID_HANDLE;
+  NativeAutomaticState state;
+  state.bitWidth = 64;
+  state.managedValue = value;
+  state.managedRootRegistered = true;
+  return publishNativeAutomaticState(context, std::move(state), outHandle);
+}
+
+obelisk_rt_status obelisk_rt_native_state_alloc_with_root_offsets(
+    obelisk_rt_context *context, uint64_t bitWidth, const uint8_t *value,
+    const uint8_t *unknown, std::vector<uint64_t> bitOffsets,
+    uint64_t *outHandle) {
+  if (!outHandle)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outHandle = UINT64_MAX;
+  if (!context || !value || bitWidth == 0 || bitWidth > INT32_MAX ||
+      bitWidth > UINT64_MAX - 7)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  uint64_t byteCount = (bitWidth + 7) / 8;
+  if (byteCount > std::numeric_limits<size_t>::max())
+    return OBELISK_RT_INVALID_ARGUMENT;
+  try {
+    for (size_t index = 0; index != bitOffsets.size(); ++index) {
+      uint64_t bitOffset = bitOffsets[index];
+      if ((bitOffset & 63) != 0 || bitOffset > bitWidth ||
+          64 > bitWidth - bitOffset)
+        return OBELISK_RT_INVALID_ARGUMENT;
+      bitOffsets[index] = bitOffset / 8;
+    }
+    std::sort(bitOffsets.begin(), bitOffsets.end());
+    if (std::adjacent_find(bitOffsets.begin(), bitOffsets.end()) !=
+        bitOffsets.end())
+      return OBELISK_RT_INVALID_ARGUMENT;
+
+    if (!unknown && bitWidth == 64 && bitOffsets.size() == 1 &&
+        bitOffsets.front() == 0) {
+      obelisk_rt_object_v1 *managed = nullptr;
+      std::memcpy(&managed, value, sizeof(managed));
+      return obelisk_rt_native_state_alloc_managed(context, managed, outHandle);
+    }
+
+    NativeAutomaticState state;
+    state.bitWidth = bitWidth;
+    for (uint64_t byteOffset : bitOffsets) {
+      obelisk_rt_object_v1 *managed = nullptr;
+      std::memcpy(&managed, value + byteOffset, sizeof(managed));
+      if (!obelisk_rt_managed_object_belongs_to(context, managed))
+        return OBELISK_RT_INVALID_HANDLE;
+    }
+    state.managedRootByteOffsets = std::move(bitOffsets);
+    state.value.assign(value, value + static_cast<size_t>(byteCount));
+    if (unknown)
+      state.unknown.assign(unknown, unknown + static_cast<size_t>(byteCount));
+    return publishNativeAutomaticState(context, std::move(state), outHandle);
+  } catch (const std::bad_alloc &) {
+    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_OUT_OF_MEMORY);
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
+    return OBELISK_RT_INVALID_ARGUMENT;
+  }
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_native_state_alloc(obelisk_rt_context *context, uint64_t bitWidth,
+                                 const uint8_t *value, const uint8_t *unknown,
+                                 uint64_t *outHandle) {
+  return obelisk_rt_native_state_alloc_with_root_offsets(
+      context, bitWidth, value, unknown, {}, outHandle);
 }
 
 extern "C" obelisk_rt_status
@@ -2229,6 +2285,73 @@ obelisk_rt_v1_native_state_retain(obelisk_rt_context *context,
     obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
     return OBELISK_RT_INVALID_ARGUMENT;
   }
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_native_state_register_managed_roots(
+    obelisk_rt_context *context, uint64_t handle, const uint64_t *bitOffsets,
+    uint64_t count) {
+  if (!context || !bitOffsets || count == 0 ||
+      count > std::numeric_limits<size_t>::max())
+    return OBELISK_RT_INVALID_ARGUMENT;
+  uint32_t id = 0;
+  int64_t handleOffset = 0;
+  if (!decodeNativeAutomatic(handle, id, handleOffset) || handleOffset != 0)
+    return OBELISK_RT_INVALID_HANDLE;
+  ContextTransaction transaction(context);
+  try {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    auto found = context->nativeAutomaticStates.find(id);
+    if (found == context->nativeAutomaticStates.end())
+      return OBELISK_RT_INVALID_HANDLE;
+    NativeAutomaticState &state = found->second;
+    if (state.managedRootRegistered || !state.managedRootByteOffsets.empty())
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    std::vector<uint64_t> byteOffsets;
+    byteOffsets.reserve(static_cast<size_t>(count));
+    for (uint64_t index = 0; index != count; ++index) {
+      uint64_t bitOffset = bitOffsets[index];
+      if ((bitOffset & 63) != 0 || bitOffset > state.bitWidth ||
+          64 > state.bitWidth - bitOffset)
+        return OBELISK_RT_INVALID_ARGUMENT;
+      byteOffsets.push_back(bitOffset / 8);
+    }
+    std::sort(byteOffsets.begin(), byteOffsets.end());
+    if (std::adjacent_find(byteOffsets.begin(), byteOffsets.end()) !=
+        byteOffsets.end())
+      return OBELISK_RT_INVALID_ARGUMENT;
+    state.managedRootByteOffsets = std::move(byteOffsets);
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_OUT_OF_MEMORY);
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
+    return OBELISK_RT_INVALID_ARGUMENT;
+  }
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_native_state_alloc_with_roots(
+    obelisk_rt_context *context, uint64_t bitWidth, const uint8_t *value,
+    const uint8_t *unknown, const uint64_t *bitOffsets, uint64_t count,
+    uint64_t *outHandle) {
+  if (!outHandle)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outHandle = UINT64_MAX;
+  if (!bitOffsets || count == 0 ||
+      count > std::numeric_limits<size_t>::max())
+    return OBELISK_RT_INVALID_ARGUMENT;
+  return guarded(context, [&] {
+    if (!unknown && bitWidth == 64 && count == 1 && bitOffsets[0] == 0) {
+      obelisk_rt_object_v1 *managed = nullptr;
+      if (!value)
+        return OBELISK_RT_INVALID_ARGUMENT;
+      std::memcpy(&managed, value, sizeof(managed));
+      return obelisk_rt_native_state_alloc_managed(context, managed, outHandle);
+    }
+    std::vector<uint64_t> offsets(bitOffsets, bitOffsets + count);
+    return obelisk_rt_native_state_alloc_with_root_offsets(
+        context, bitWidth, value, unknown, std::move(offsets), outHandle);
+  });
 }
 
 extern "C" obelisk_rt_status
@@ -2306,6 +2429,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
         return OBELISK_RT_INVALID_HANDLE;
       }
       const NativeAutomaticState &state = found->second;
+      if (state.managedRootRegistered) {
+        if (unknownPlane != 0 || offset != 0 || bitWidth != 64)
+          return OBELISK_RT_INVALID_HANDLE;
+        std::memcpy(outValue, &state.managedValue,
+                    sizeof(state.managedValue));
+        return OBELISK_RT_OK;
+      }
       const std::vector<uint8_t> &plane =
           unknownPlane ? state.unknown : state.value;
       for (uint64_t bit = 0; bit != bitWidth; ++bit) {
@@ -2393,6 +2523,17 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_store_plane(
         return OBELISK_RT_INVALID_HANDLE;
       }
       NativeAutomaticState &state = found->second;
+      if (state.managedRootRegistered) {
+        if (unknownPlane != 0 || offset != 0 || bitWidth != 64)
+          return OBELISK_RT_INVALID_HANDLE;
+        obelisk_rt_object_v1 *managed = nullptr;
+        std::memcpy(&managed, value, sizeof(managed));
+        if (!obelisk_rt_managed_object_belongs_to(context, managed))
+          return OBELISK_RT_INVALID_HANDLE;
+        *outChanged = managed != state.managedValue;
+        state.managedValue = managed;
+        return OBELISK_RT_OK;
+      }
       std::vector<uint8_t> &plane = unknownPlane ? state.unknown : state.value;
       if (plane.empty())
         return OBELISK_RT_INVALID_HANDLE;
@@ -2456,6 +2597,118 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_store_plane(
         limb = next ? limb | mask : limb & ~mask;
       }
     }
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_OUT_OF_MEMORY);
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
+    return OBELISK_RT_INVALID_ARGUMENT;
+  }
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_argument_ref_load(
+    obelisk_rt_context *context, const uint8_t *stateValue,
+    const uint8_t *stateUnknown, uint64_t stateBitCount,
+    obelisk_rt_object_v1 *owner, uint64_t payload, uint32_t managed,
+    uint64_t bitWidth, uint64_t planeSize, uint32_t fourState,
+    uint32_t managedValue, void *outValue, void *outUnknown) {
+  if (!context || !stateValue || !stateUnknown || !outValue || bitWidth == 0 ||
+      planeSize == 0 || planeSize > std::numeric_limits<size_t>::max() ||
+      managed > 1 || fourState > 1 || managedValue > 1 ||
+      (fourState && !outUnknown) || (managedValue && fourState))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  std::memset(outValue, 0, static_cast<size_t>(planeSize));
+  if (outUnknown)
+    std::memset(outUnknown, 0, static_cast<size_t>(planeSize));
+  if (managed) {
+    if (managedValue) {
+      if (bitWidth != sizeof(void *) * 8 || planeSize != sizeof(void *))
+        return OBELISK_RT_INVALID_ARGUMENT;
+      return obelisk_rt_v1_object_field_load(
+          owner, payload, static_cast<obelisk_rt_object_v1 **>(outValue));
+    }
+    if (fourState && payload > UINT64_MAX - planeSize)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    if (fourState)
+      return obelisk_rt_v1_object_read_planes(owner, payload, outValue,
+                                              outUnknown, planeSize);
+    return obelisk_rt_v1_object_read(owner, payload, outValue, planeSize);
+  }
+  ContextTransaction transaction(context);
+  obelisk_rt_status status = obelisk_rt_v1_native_state_load_plane(
+      context, stateValue, stateBitCount, payload, bitWidth, 0, 0,
+      static_cast<uint8_t *>(outValue));
+  if (status != OBELISK_RT_OK || !fourState)
+    return status;
+  return obelisk_rt_v1_native_state_load_plane(
+      context, stateUnknown, stateBitCount, payload, bitWidth, 1, 1,
+      static_cast<uint8_t *>(outUnknown));
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_argument_ref_store(
+    obelisk_rt_context *context, uint8_t *stateValue, uint8_t *stateUnknown,
+    uint64_t stateBitCount, obelisk_rt_object_v1 *owner, uint64_t payload,
+    uint32_t managed, uint64_t bitWidth, uint64_t planeSize, uint32_t fourState,
+    uint32_t managedValue, const void *value, const void *unknown) {
+  if (!context || !stateValue || !stateUnknown || !value || bitWidth == 0 ||
+      planeSize == 0 || planeSize > std::numeric_limits<size_t>::max() ||
+      managed > 1 || fourState > 1 || managedValue > 1 ||
+      (fourState && !unknown) || (managedValue && fourState))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  if (managed) {
+    if (managedValue) {
+      if (bitWidth != sizeof(void *) * 8 || planeSize != sizeof(void *))
+        return OBELISK_RT_INVALID_ARGUMENT;
+      obelisk_rt_object_v1 *stored = nullptr;
+      std::memcpy(&stored, value, sizeof(stored));
+      return obelisk_rt_v1_object_field_store(owner, payload, stored);
+    }
+    if (fourState && payload > UINT64_MAX - planeSize)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    if (fourState)
+      return obelisk_rt_v1_object_write_planes(owner, payload, value, unknown,
+                                               planeSize);
+    return obelisk_rt_v1_object_write(owner, payload, value, planeSize);
+  }
+  // Keep one reusable transition snapshot per host thread. This avoids a heap
+  // allocation for each language `ref` write while preserving exact signal
+  // change and edge notification for ordinary simulation storage.
+  struct TransitionScratch {
+    std::vector<uint8_t> value;
+    std::vector<uint8_t> unknown;
+  };
+  thread_local TransitionScratch scratch;
+  ContextTransaction transaction(context);
+  try {
+    scratch.value.resize(static_cast<size_t>(planeSize));
+    if (fourState)
+      scratch.unknown.resize(static_cast<size_t>(planeSize));
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    obelisk_rt_status status = obelisk_rt_v1_argument_ref_load(
+        context, stateValue, stateUnknown, stateBitCount, nullptr, payload, 0,
+        bitWidth, planeSize, fourState, 0, scratch.value.data(),
+        fourState ? scratch.unknown.data() : nullptr);
+    if (status != OBELISK_RT_OK)
+      return status;
+    uint8_t changed = 0;
+    status = obelisk_rt_v1_native_state_store_plane(
+        context, stateValue, stateBitCount, payload, bitWidth, 0,
+        static_cast<const uint8_t *>(value), &changed);
+    if (status != OBELISK_RT_OK)
+      return status;
+    if (fourState) {
+      status = obelisk_rt_v1_native_state_store_plane(
+          context, stateUnknown, stateBitCount, payload, bitWidth, 1,
+          static_cast<const uint8_t *>(unknown), &changed);
+      if (status != OBELISK_RT_OK)
+        return status;
+    }
+    obelisk_rt_v1_scheduler_signal_transition(
+        context, payload, bitWidth, scratch.value.data(),
+        fourState ? scratch.unknown.data() : nullptr,
+        static_cast<const uint8_t *>(value),
+        fourState ? static_cast<const uint8_t *>(unknown) : nullptr);
     return OBELISK_RT_OK;
   } catch (const std::bad_alloc &) {
     obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_OUT_OF_MEMORY);

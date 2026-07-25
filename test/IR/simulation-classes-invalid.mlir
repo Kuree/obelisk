@@ -16,6 +16,36 @@ module {
 // -----
 
 module {
+  obelisk_sim.design @bad_weak_specialization {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "root"
+    obelisk_sim.class.decl @Referent id 1 {
+      is_abstract = false, is_final = false, is_interface = false
+    }
+    obelisk_sim.class.decl @Other id 2 {
+      is_abstract = false, is_final = false, is_interface = false
+    }
+    obelisk_sim.class.decl @Weak id 3 {
+      is_abstract = false, is_final = false, is_interface = false,
+      weak_referent = @Referent
+    }
+    obelisk_sim.func @root(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {code_unit_id = 1 : i64, entry_kind = 0 : i32} {
+      %other = obelisk_sim.class.alloc %ctx :
+        !obelisk_sim.context -> !obelisk_sim.class_handle<@Other>
+      // expected-error @below {{referent type does not match the weak_reference specialization}}
+      %weak = obelisk_sim.weak.create %ctx, %other :
+        !obelisk_sim.context, !obelisk_sim.class_handle<@Other> ->
+        !obelisk_sim.class_handle<@Weak>
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.design @bad_interface {
     obelisk_sim.scope.decl 0
     obelisk_sim.class.decl @NotInterface id 1 {
@@ -136,6 +166,44 @@ module {
       %value = obelisk_sim.class.virtual_call
         %object[@C_f] slot 0 signature_id 18() :
         (!obelisk_sim.class_handle<@C>) -> i64
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @bad_argument_ref_conversion {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 function hierarchy "f"
+    obelisk_sim.func @f(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %storage: !obelisk_sim.ref<i64>
+          {obelisk_sim.capture_kind = 1 : i32})
+        attributes {code_unit_id = 1 : i64, entry_kind = 1 : i32} {
+      // expected-error @below {{input and result element types must match}}
+      %reference = obelisk_sim.argument_ref.from_ref %storage :
+        !obelisk_sim.ref<i64> -> !obelisk_sim.argument_ref<i32>
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @bad_argument_ref_load {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 function hierarchy "f"
+    obelisk_sim.func @f(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %reference: !obelisk_sim.argument_ref<i64>
+          {obelisk_sim.capture_kind = 1 : i32})
+        attributes {code_unit_id = 1 : i64, entry_kind = 1 : i32} {
+      // expected-error @below {{result type must match the referenced element}}
+      %value = obelisk_sim.argument_ref.load %reference :
+        !obelisk_sim.argument_ref<i64> -> i32
       obelisk_sim.return
     }
   }

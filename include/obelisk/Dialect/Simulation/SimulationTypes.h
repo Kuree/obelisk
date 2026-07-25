@@ -41,13 +41,22 @@ std::optional<unsigned> getArrayElementOrdinal(::mlir::Type type,
                                                int64_t sourceIndex);
 
 /// Structural span used only by descriptor provenance analysis. Unlike packed
-/// width, this assigns disjoint intervals to unpacked struct/array children.
+/// width, this assigns ABI-stable, naturally aligned intervals to unpacked
+/// struct/array children. Managed handles occupy one 64-bit aligned word.
 std::optional<uint64_t> getProvenanceSpan(::mlir::Type type);
+
+/// Natural bit alignment used by structural provenance layout.
+std::optional<uint64_t> getProvenanceAlignment(::mlir::Type type);
 
 /// Structural offset/span for one declaration-order child. Union children all
 /// overlap at offset zero.
 std::optional<std::pair<uint64_t, uint64_t>>
 getAggregateProvenanceSubelement(::mlir::Type type, unsigned index);
+
+/// Append every strong managed-handle word in `type`, as a bit offset from the
+/// start of its structural provenance representation.
+bool getManagedHandleOffsets(::mlir::Type type,
+                             ::llvm::SmallVectorImpl<uint64_t> &offsets);
 
 } // namespace obelisk::sim
 

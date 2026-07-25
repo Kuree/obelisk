@@ -708,11 +708,20 @@ void ObeliskSimPreparePass::runOnOperation() {
     StringAttr classSymbol =
         getSimulationClassSymbol(semanticClassType.getClassName());
     classSymbols[classType] = classSymbol;
+    FlatSymbolRefAttr weakReferent;
+    if (isWeakReferenceClass(classType))
+      for (Operation *child : getChildren(classType))
+        if (auto parameter =
+                dyn_cast<semantic::SVTypeParameterSymbolOp>(child)) {
+          if (auto type = parameter->getAttrOfType<TypeAttr>("semantic_type"))
+            weakReferent = classReference(type.getValue());
+          break;
+        }
     auto declaration = sim::SimClassDeclOp::create(
         builder, getSemanticLocation(classType), classSymbol,
         classIDs.lookup(classType), base,
         interfaces.empty() ? ArrayAttr{} : builder.getArrayAttr(interfaces),
-        classType.getIsAbstract() || classType.getIsInterface(),
+        weakReferent, classType.getIsAbstract() || classType.getIsInterface(),
         classType.getIsInterface(), classType.getIsFinal(),
         builder.getStringAttr(getDebugName(classType)));
     // Class inventory is part of the executable ABI. Keep descriptors even
@@ -2619,7 +2628,10 @@ void ObeliskSimPreparePass::runOnOperation() {
           }
           bool isRef = direction == semantic::SVArgumentDirection::Ref;
           Type argumentType =
-              isRef ? Type(sim::RefType::get(context, *type)) : *type;
+              isRef ? (instanceClassMethod
+                           ? Type(sim::ArgumentRefType::get(context, *type))
+                           : Type(sim::RefType::get(context, *type)))
+                    : *type;
           unsigned argument = reordered.size();
           reordered.push_back(argumentType);
           reorderedAttrs.push_back(
@@ -2681,6 +2693,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     if (invalid)
       continue;
     SmallVector<Type> results;
+    bool isVoidFunction = false;
     if (unit.entryKind == sim::EntryKind::Function) {
       auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(unit.source);
       if (!subroutine) {
@@ -2733,14 +2746,18 @@ void ObeliskSimPreparePass::runOnOperation() {
               continue;
             }
             semanticResultType = signature.getResult(0);
-            resultType = normalizeSemanticType(
-                signature.getResult(0), getSemanticLocation(unit.source));
+            if (!isa<semantic::VoidType>(semanticResultType))
+              resultType = normalizeSemanticType(
+                  semanticResultType, getSemanticLocation(unit.source));
           }
-          if (failed(resultType)) {
+          bool voidResult = !dpiImport && isa_and_nonnull<semantic::VoidType>(
+                                              semanticResultType);
+          isVoidFunction = voidResult;
+          if (!voidResult && failed(resultType)) {
             invalid = true;
             continue;
           }
-          if (dpiImport && !sim::getPackedWidth(*resultType)) {
+          if (!voidResult && dpiImport && !sim::getPackedWidth(*resultType)) {
             emitError(getSemanticLocation(unit.source))
                 << "DPI import return type is unsupported by the initial "
                    "integral ABI";
@@ -2754,7 +2771,8 @@ void ObeliskSimPreparePass::runOnOperation() {
             invalid = true;
             continue;
           }
-          results.push_back(*resultType);
+          if (!voidResult)
+            results.push_back(*resultType);
         }
       }
     } else if (unit.entryKind == sim::EntryKind::Observer) {
@@ -2825,6 +2843,9 @@ void ObeliskSimPreparePass::runOnOperation() {
     if (instanceClassMethod)
       functionAttrs.push_back(builder.getNamedAttr(
           "obelisk_sim.this_argument", builder.getI32IntegerAttr(1)));
+    if (isVoidFunction)
+      functionAttrs.push_back(builder.getNamedAttr("obelisk_sim.void_function",
+                                                   builder.getUnitAttr()));
     if (isa<semantic::SVClassPropertySymbolOp>(unit.source))
       functionAttrs.push_back(builder.getNamedAttr(
           "obelisk_sim.static_initializer", builder.getUnitAttr()));

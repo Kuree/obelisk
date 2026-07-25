@@ -118,6 +118,16 @@ constexpr uint32_t kIntrinsicWeakGet = OBELISK_RT_INTRINSIC_V1_WEAK_GET;
 constexpr uint32_t kIntrinsicWeakClear = OBELISK_RT_INTRINSIC_V1_WEAK_CLEAR;
 constexpr uint32_t kIntrinsicGCSafepoint = OBELISK_RT_INTRINSIC_V1_GC_SAFEPOINT;
 constexpr uint32_t kIntrinsicClassID = OBELISK_RT_INTRINSIC_V1_CLASS_ID;
+constexpr uint32_t kIntrinsicArgumentRefFromRef =
+    OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_FROM_REF;
+constexpr uint32_t kIntrinsicArgumentRefFromManaged =
+    OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_FROM_MANAGED;
+constexpr uint32_t kIntrinsicArgumentRefLoad =
+    OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_LOAD;
+constexpr uint32_t kIntrinsicArgumentRefStore =
+    OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_STORE;
+constexpr uint32_t kIntrinsicManagedRootExtract =
+    OBELISK_RT_INTRINSIC_V1_MANAGED_ROOT_EXTRACT;
 
 bool isObserverCaptureBridge(Block &block) {
   if (block.getOperations().size() != 1)
@@ -146,6 +156,7 @@ enum RegisterKind : uint8_t {
   Bytes = OBELISK_RT_DBREG_BYTES,
   Managed = OBELISK_RT_DBREG_MANAGED,
   ManagedRef = OBELISK_RT_DBREG_MANAGED_REF,
+  ArgumentRef = OBELISK_RT_DBREG_ARGUMENT_REF,
 };
 
 enum Opcode : uint16_t {
@@ -191,6 +202,7 @@ enum Opcode : uint16_t {
   HandleID = OBELISK_RT_DB_HANDLE_ID,
   TaskCall = OBELISK_RT_DB_TASK_CALL,
   VirtualCall = OBELISK_RT_DB_VIRTUAL_CALL,
+  ClearFrameRoot = OBELISK_RT_DB_CLEAR_FRAME_ROOT,
 };
 
 struct Layout {
@@ -266,6 +278,12 @@ struct FunctionPlan {
   uint32_t initialScheduleRank = UINT32_MAX;
   DenseMap<Block *, uint32_t> blockScheduleRanks;
   std::unique_ptr<Liveness> liveness;
+  struct ManagedRootShadow {
+    Value value;
+    uint64_t bitOffset;
+    uint32_t reg;
+  };
+  SmallVector<ManagedRootShadow> managedRootShadows;
 };
 
 struct StateLayout {
@@ -429,6 +447,9 @@ FailureOr<Layout> getLayout(Type type) {
   } else if (isa<sim::ManagedRefType>(type)) {
     layout.kind = ManagedRef;
     layout.width = 128;
+  } else if (isa<sim::ArgumentRefType>(type)) {
+    layout.kind = ArgumentRef;
+    layout.width = 192;
   } else if (std::optional<uint32_t> width = simulationWidth(type)) {
     layout.kind = containsLogic(type) ? Logic : Bits;
     layout.width = static_cast<uint32_t>(*width);
@@ -458,6 +479,9 @@ FailureOr<Layout> getLayout(Type type) {
     break;
   case ManagedRef:
     layout.size = 16;
+    break;
+  case ArgumentRef:
+    layout.size = 24;
     break;
   default:
     return failure();
@@ -503,7 +527,10 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
   StateLayout result;
   auto allocate = [&](Type type, uint64_t &offset) -> LogicalResult {
     std::optional<uint32_t> width = simulationWidth(type);
-    if (isa<sim::ClassHandleType>(type))
+    SmallVector<uint64_t, 2> managedRootOffsets;
+    if (!sim::getManagedHandleOffsets(type, managedRootOffsets))
+      return failure();
+    if (!managedRootOffsets.empty())
       result.bits = llvm::alignTo(result.bits, uint64_t{64});
     if (!width || *width == 0 ||
         result.bits > std::numeric_limits<uint64_t>::max() - *width)
@@ -1337,8 +1364,11 @@ private:
       for (Block &block : plan.function.getBody()) {
         plan.blockPCs[&block] = instructions.size();
         for (Operation &operation : block) {
-          if (mayCollect(&operation))
+          if (mayCollect(&operation)) {
+            if (failed(emitAggregateManagedRoots(plan, &operation)))
+              return failure();
             emitDeadManagedClears(plan, &operation);
+          }
           if (failed(encodeOperation(plan, &operation)))
             return failure();
         }
@@ -1363,6 +1393,54 @@ private:
                sim::SimClassVirtualCallOp, sim::SimDPICallOp>(operation);
   }
 
+  LogicalResult emitAggregateManagedRoots(FunctionPlan &plan,
+                                          Operation *operation) {
+    const LivenessBlockInfo *blockInfo =
+        plan.liveness->getLiveness(operation->getBlock());
+    if (!blockInfo)
+      return success();
+    Liveness::ValueSetT live = blockInfo->currentlyLiveValues(operation);
+    for (auto [value, source] : plan.registers) {
+      SmallVector<uint64_t, 2> offsets;
+      if (!sim::getManagedHandleOffsets(value.getType(), offsets))
+        return operation->emitError(
+            "value has no fixed bytecode managed root layout");
+      if (offsets.empty() || plan.layouts[source].kind == Managed)
+        continue;
+      for (uint64_t bitOffset : offsets) {
+        auto found = llvm::find_if(
+            plan.managedRootShadows,
+            [&](const FunctionPlan::ManagedRootShadow &shadow) {
+              return shadow.value == value && shadow.bitOffset == bitOffset;
+            });
+        uint32_t shadow;
+        if (found == plan.managedRootShadows.end()) {
+          Layout layout;
+          layout.kind = Managed;
+          layout.width = 64;
+          layout.size = 8;
+          layout.offset = llvm::alignTo(plan.scratchSize, uint64_t{8});
+          plan.scratchSize = layout.offset + layout.size;
+          plan.layouts.push_back(layout);
+          shadow = plan.layouts.size() - 1;
+          plan.managedRootShadows.push_back({value, bitOffset, shadow});
+        } else {
+          shadow = found->reg;
+        }
+        if (!live.contains(value) || value.getDefiningOp() == operation) {
+          emit({Constant, 0, shadow, 0, 0, 0, 0,
+                addZeroConstant(plan.layouts[shadow])});
+          continue;
+        }
+        if (failed(emitIntrinsicRegisters(
+                plan, kIntrinsicManagedRootExtract,
+                {source, emitU64Constant(plan, bitOffset)}, {shadow})))
+          return failure();
+      }
+    }
+    return success();
+  }
+
   void emitDeadManagedClears(FunctionPlan &plan, Operation *operation) {
     const LivenessBlockInfo *blockInfo =
         plan.liveness->getLiveness(operation->getBlock());
@@ -1371,7 +1449,8 @@ private:
     Liveness::ValueSetT live = blockInfo->currentlyLiveValues(operation);
     for (auto [value, reg] : plan.registers) {
       const Layout &layout = plan.layouts[reg];
-      if (layout.kind != Managed && layout.kind != ManagedRef)
+      if (layout.kind != Managed && layout.kind != ManagedRef &&
+          layout.kind != ArgumentRef)
         continue;
       if (live.contains(value) && value.getDefiningOp() != operation)
         continue;
@@ -1384,7 +1463,8 @@ private:
                          ArrayRef<ProcessFrameValue> slots) -> LogicalResult {
       uint64_t entryPC = instructions.size();
       auto restore = [&](ValueRange values,
-                         ArrayRef<ProcessFrameValue> valueSlots) {
+                         ArrayRef<ProcessFrameValue> valueSlots,
+                         bool consumeRoots) {
         if (values.size() != valueSlots.size())
           return failure();
         for (auto [argument, slot] : llvm::zip_equal(values, valueSlots)) {
@@ -1401,6 +1481,10 @@ private:
               slot.storageSize * (slot.hasSecondaryStorage() ? 2 : 1);
           emitFrameTransfer(plan, LoadFrame, argument, slot.valueOffset,
                             static_cast<uint32_t>(transferSize));
+          if (consumeRoots)
+            for (uint64_t rootOffset : slot.managedRootOffsets)
+              emit({ClearFrameRoot, 0, 0, 0, 0, 0, 0,
+                    slot.valueOffset + rootOffset});
         }
         return success();
       };
@@ -1410,10 +1494,12 @@ private:
       // block even after suspension-live threading has made block operands
       // explicit, so reconstruct them at every non-entry continuation.
       if (id != 0 && failed(restore(functionEntry->getArguments(),
-                                    plan.frame->getEntryCaptureLayout())))
+                                    plan.frame->getEntryCaptureLayout(),
+                                    /*consumeRoots=*/false)))
         return plan.function.emitOpError(
             "canonical entry capture exceeds the bytecode ABI limit");
-      if (failed(restore(block->getArguments(), slots)))
+      if (failed(restore(block->getArguments(), slots,
+                         /*consumeRoots=*/id != 0)))
         return plan.function.emitOpError(
             "canonical frame transfer exceeds the bytecode ABI limit");
       uint64_t jump = emit({Jump});
@@ -1813,6 +1899,44 @@ private:
                                     {reg(plan, op.getObject()), offsetRegister},
                                     {reg(plan, op.getResult())});
     }
+    if (auto op = dyn_cast<sim::SimArgumentRefFromRefOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicArgumentRefFromRef, {op.getInput()},
+                           {op.getResult()});
+    if (auto op = dyn_cast<sim::SimArgumentRefFromManagedOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicArgumentRefFromManaged,
+                           {op.getInput()}, {op.getResult()});
+    if (auto op = dyn_cast<sim::SimArgumentRefLoadOp>(operation)) {
+      FailureOr<ManagedValueStorage> storage =
+          getManagedValueStorage(op.getResult().getType(), dataLayout);
+      std::optional<uint32_t> width = simulationWidth(op.getResult().getType());
+      if (failed(storage) || !width)
+        return op.emitOpError("argument reference has no bytecode layout");
+      uint32_t flags =
+          (storage->fourState ? 1u : 0u) |
+          (isa<sim::ClassHandleType>(op.getResult().getType()) ? 2u : 0u);
+      return emitIntrinsicRegisters(plan, kIntrinsicArgumentRefLoad,
+                                    {reg(plan, op.getReference()),
+                                     emitU64Constant(plan, storage->planeSize),
+                                     emitU64Constant(plan, *width),
+                                     emitU64Constant(plan, flags)},
+                                    {reg(plan, op.getResult())});
+    }
+    if (auto op = dyn_cast<sim::SimArgumentRefStoreOp>(operation)) {
+      FailureOr<ManagedValueStorage> storage =
+          getManagedValueStorage(op.getValue().getType(), dataLayout);
+      std::optional<uint32_t> width = simulationWidth(op.getValue().getType());
+      if (failed(storage) || !width)
+        return op.emitOpError("argument reference has no bytecode layout");
+      uint32_t flags =
+          (storage->fourState ? 1u : 0u) |
+          (isa<sim::ClassHandleType>(op.getValue().getType()) ? 2u : 0u);
+      return emitIntrinsicRegisters(
+          plan, kIntrinsicArgumentRefStore,
+          {reg(plan, op.getReference()), reg(plan, op.getValue()),
+           emitU64Constant(plan, storage->planeSize),
+           emitU64Constant(plan, *width), emitU64Constant(plan, flags)},
+          {});
+    }
     if (auto op = dyn_cast<sim::SimManagedLoadOp>(operation)) {
       FailureOr<ManagedValueStorage> storage =
           getManagedValueStorage(op.getResult().getType(), dataLayout);
@@ -1851,9 +1975,16 @@ private:
       return encodeClassDirectCall(plan, op);
     if (auto op = dyn_cast<sim::SimClassVirtualCallOp>(operation))
       return encodeClassVirtualCall(plan, op);
-    if (auto op = dyn_cast<sim::SimWeakCreateOp>(operation))
-      return emitIntrinsic(plan, kIntrinsicWeakCreate, {op.getReferent()},
-                           {op.getResult()});
+    if (auto op = dyn_cast<sim::SimWeakCreateOp>(operation)) {
+      auto wrapperType = cast<sim::ClassHandleType>(op.getResult().getType());
+      FailureOr<uint64_t> id = classID(wrapperType.getClassName(), operation);
+      if (failed(id))
+        return failure();
+      return emitIntrinsicRegisters(
+          plan, kIntrinsicWeakCreate,
+          {reg(plan, op.getReferent()), emitU64Constant(plan, *id)},
+          {reg(plan, op.getResult())});
+    }
     if (auto op = dyn_cast<sim::SimWeakGetOp>(operation))
       return emitIntrinsic(plan, kIntrinsicWeakGet, {op.getWeak()},
                            {op.getResult()});
@@ -2039,7 +2170,11 @@ private:
             op.getResult().getType(), index);
         if (!subelement)
           return op.emitOpError("aggregate element has no packed provenance");
-        emit({Insert, 0, destination, destination, reg(plan, element), 0, 0,
+        uint32_t elementRegister = reg(plan, element);
+        uint16_t flags = plan.layouts[elementRegister].kind == Managed
+                             ? OBELISK_RT_DB_AGGREGATE_MANAGED
+                             : 0;
+        emit({Insert, flags, destination, destination, elementRegister, 0, 0,
               subelement->first});
       }
       return success();
@@ -2049,7 +2184,11 @@ private:
           op.getInput().getType(), static_cast<unsigned>(op.getIndex()));
       if (!subelement)
         return op.emitOpError("aggregate element has no packed provenance");
-      emit({Extract, 0, reg(plan, op.getResult()), reg(plan, op.getInput()),
+      uint32_t destination = reg(plan, op.getResult());
+      uint16_t flags = plan.layouts[destination].kind == Managed
+                           ? OBELISK_RT_DB_AGGREGATE_MANAGED
+                           : 0;
+      emit({Extract, flags, destination, reg(plan, op.getInput()),
             kInvalidRegister, 0, 0, subelement->first});
       return success();
     }
@@ -2058,8 +2197,12 @@ private:
           op.getInput().getType(), static_cast<unsigned>(op.getIndex()));
       if (!subelement)
         return op.emitOpError("aggregate element has no packed provenance");
-      emit({Insert, 0, reg(plan, op.getResult()), reg(plan, op.getInput()),
-            reg(plan, op.getReplacement()), 0, 0, subelement->first});
+      uint32_t replacement = reg(plan, op.getReplacement());
+      uint16_t flags = plan.layouts[replacement].kind == Managed
+                           ? OBELISK_RT_DB_AGGREGATE_MANAGED
+                           : 0;
+      emit({Insert, flags, reg(plan, op.getResult()), reg(plan, op.getInput()),
+            replacement, 0, 0, subelement->first});
       return success();
     }
     if (auto op = dyn_cast<sim::SimArrayDynExtractOp>(operation))
@@ -2067,7 +2210,11 @@ private:
     if (auto op = dyn_cast<sim::SimUnionConstructOp>(operation))
       return encodeUnionConstruct(plan, op);
     if (auto op = dyn_cast<sim::SimUnionExtractOp>(operation)) {
-      emit({Extract, 0, reg(plan, op.getResult()), reg(plan, op.getInput()),
+      uint32_t destination = reg(plan, op.getResult());
+      uint16_t flags = plan.layouts[destination].kind == Managed
+                           ? OBELISK_RT_DB_AGGREGATE_MANAGED
+                           : 0;
+      emit({Extract, flags, destination, reg(plan, op.getInput()),
             kInvalidRegister});
       return success();
     }
@@ -2078,8 +2225,16 @@ private:
           simulationWidth(op.getInitialValue().getType());
       if (!width)
         return op.emitOpError("automatic storage has no fixed width");
-      return emitIntrinsic(plan, kIntrinsicStateAlloc, {op.getInitialValue()},
-                           {op.getResult()});
+      SmallVector<uint32_t> inputs{reg(plan, op.getInitialValue())};
+      SmallVector<uint64_t, 2> rootOffsets;
+      if (!sim::getManagedHandleOffsets(op.getInitialValue().getType(),
+                                        rootOffsets))
+        return op.emitOpError("automatic storage has no managed root layout");
+      if (plan.layouts[inputs.front()].kind != Managed)
+        for (uint64_t offset : rootOffsets)
+          inputs.push_back(emitU64Constant(plan, offset));
+      return emitIntrinsicRegisters(plan, kIntrinsicStateAlloc, inputs,
+                                    {reg(plan, op.getResult())});
     }
     if (isa<sim::SimDisableChildrenOp>(operation))
       return emitIntrinsic(plan, kIntrinsicDisableChildren, {}, {});
@@ -2641,8 +2796,11 @@ private:
         plan, op.getInput().getType(), op.getIndex(), op.getOperation());
     if (failed(offset))
       return failure();
-    emit({Extract, 0, reg(plan, op.getResult()), reg(plan, op.getInput()),
-          *offset});
+    uint32_t destination = reg(plan, op.getResult());
+    uint16_t flags = plan.layouts[destination].kind == Managed
+                         ? OBELISK_RT_DB_AGGREGATE_MANAGED
+                         : 0;
+    emit({Extract, flags, destination, reg(plan, op.getInput()), *offset});
     return success();
   }
 
@@ -2654,7 +2812,11 @@ private:
     if (!payloadSpan || !width || *payloadSpan > *width)
       return op.emitOpError("union has no fixed packed representation");
     uint32_t destination = reg(plan, op.getResult());
-    emit({Extract, 0, destination, reg(plan, op.getValue()), kInvalidRegister});
+    uint32_t value = reg(plan, op.getValue());
+    uint16_t flags = plan.layouts[value].kind == Managed
+                         ? OBELISK_RT_DB_AGGREGATE_MANAGED
+                         : 0;
+    emit({Extract, flags, destination, value, kInvalidRegister});
     uint64_t tag = 0;
     unsigned tagBits = 0;
     if (auto packed = dyn_cast<sim::PackedUnionType>(unionType);

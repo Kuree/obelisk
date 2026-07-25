@@ -565,6 +565,8 @@ uint64_t layoutSize(uint8_t kind, uint32_t width) {
     return 8;
   case OBELISK_RT_DBREG_MANAGED_REF:
     return 16;
+  case OBELISK_RT_DBREG_ARGUMENT_REF:
+    return 24;
   default:
     return 0;
   }
@@ -665,6 +667,9 @@ bool validIntrinsic(const Image &image, const Function &function,
   auto managedRef = [](const std::optional<Layout> &layout) {
     return layout && layout->kind == OBELISK_RT_DBREG_MANAGED_REF;
   };
+  auto argumentRef = [](const std::optional<Layout> &layout) {
+    return layout && layout->kind == OBELISK_RT_DBREG_ARGUMENT_REF;
+  };
   auto managedValue = [&](const std::optional<Layout> &layout) {
     return numeric(layout) || managed(layout);
   };
@@ -701,9 +706,14 @@ bool validIntrinsic(const Image &image, const Function &function,
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && handle(input(0)) && bits(output(0), 1);
   case OBELISK_RT_INTRINSIC_V1_STATE_ALLOC:
-    return signature.flags == 0 && site.inputCount == 1 &&
-           site.outputCount == 1 && (numeric(input(0)) || managed(input(0))) &&
-           handle(output(0));
+    if (signature.flags != 0 || site.inputCount == 0 || site.outputCount != 1 ||
+        (!numeric(input(0)) && !managed(input(0))) || !handle(output(0)) ||
+        (managed(input(0)) && site.inputCount != 1))
+      return false;
+    for (uint32_t index = 1; index != site.inputCount; ++index)
+      if (!twoStateBits(input(index), 64))
+        return false;
+    return true;
   case OBELISK_RT_INTRINSIC_V1_DISABLE_CHILDREN:
     return signature.flags == 0 && site.inputCount == 0 &&
            site.outputCount == 0;
@@ -788,9 +798,31 @@ bool validIntrinsic(const Image &image, const Function &function,
            site.outputCount == 0 && managedRef(input(0)) &&
            managedValue(input(1)) && twoStateBits(input(2), 64) &&
            (site.inputCount == 3 || twoStateBits(input(3), 64));
-  case OBELISK_RT_INTRINSIC_V1_WEAK_CREATE:
+  case OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_FROM_REF:
     return signature.flags == 0 && site.inputCount == 1 &&
-           site.outputCount == 1 && managed(input(0)) && managed(output(0));
+           site.outputCount == 1 && handle(input(0)) && argumentRef(output(0));
+  case OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_FROM_MANAGED:
+    return signature.flags == 0 && site.inputCount == 1 &&
+           site.outputCount == 1 && managedRef(input(0)) &&
+           argumentRef(output(0));
+  case OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_LOAD:
+    return signature.flags == 0 && site.inputCount == 4 &&
+           site.outputCount == 1 && argumentRef(input(0)) &&
+           twoStateBits(input(1), 64) && twoStateBits(input(2), 64) &&
+           twoStateBits(input(3), 64) && managedValue(output(0));
+  case OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_STORE:
+    return signature.flags == 0 && site.inputCount == 5 &&
+           site.outputCount == 0 && argumentRef(input(0)) &&
+           managedValue(input(1)) && twoStateBits(input(2), 64) &&
+           twoStateBits(input(3), 64) && twoStateBits(input(4), 64);
+  case OBELISK_RT_INTRINSIC_V1_MANAGED_ROOT_EXTRACT:
+    return signature.flags == 0 && site.inputCount == 2 &&
+           site.outputCount == 1 && numeric(input(0)) &&
+           twoStateBits(input(1), 64) && managed(output(0));
+  case OBELISK_RT_INTRINSIC_V1_WEAK_CREATE:
+    return signature.flags == 0 && site.inputCount == 2 &&
+           site.outputCount == 1 && managed(input(0)) &&
+           twoStateBits(input(1), 64) && managed(output(0));
   case OBELISK_RT_INTRINSIC_V1_WEAK_GET:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && managed(input(0)) && managed(output(0));
@@ -1033,6 +1065,8 @@ bool validateInitialization(const Image &image, const Function &function) {
     case OBELISK_RT_DB_VIRTUAL_CALL:
       if (!defineMap(state, instruction.auxiliary, instruction.flags))
         return false;
+      break;
+    case OBELISK_RT_DB_CLEAR_FRAME_ROOT:
       break;
     case OBELISK_RT_DB_INTRINSIC: {
       IntrinsicSite site =
@@ -1549,11 +1583,34 @@ bool validateImage(const Image &image) {
         break;
       case OBELISK_RT_DB_EXTRACT:
         if (instruction.source2 || instruction.auxiliary ||
-            !numeric(instruction.destination) ||
-            !numeric(instruction.source0) || instruction.flags > 1 ||
             (instruction.source1 != kInvalidRegister &&
              !numeric(instruction.source1)))
           return false;
+        if (instruction.flags == OBELISK_RT_DB_AGGREGATE_MANAGED) {
+          if (!reg(instruction.destination) || !reg(instruction.source0))
+            return false;
+          Layout destination =
+              layoutAt(image, function, instruction.destination);
+          Layout source = layoutAt(image, function, instruction.source0);
+          bool extractHandle = destination.kind == OBELISK_RT_DBREG_MANAGED &&
+                               destination.width == 64 &&
+                               numeric(instruction.source0);
+          bool insertHandle =
+              numeric(instruction.destination) &&
+              source.kind == OBELISK_RT_DBREG_MANAGED && source.width == 64 &&
+              instruction.source1 == kInvalidRegister &&
+              instruction.immediate == 0 && destination.width >= 64;
+          if (extractHandle && instruction.source1 == kInvalidRegister &&
+              ((instruction.immediate & 63) != 0 ||
+               instruction.immediate > source.width ||
+               uint64_t{64} > source.width - instruction.immediate))
+            return false;
+          if (!extractHandle && !insertHandle)
+            return false;
+        } else if (instruction.flags > 1 || !numeric(instruction.destination) ||
+                   !numeric(instruction.source0)) {
+          return false;
+        }
         break;
       case OBELISK_RT_DB_AND:
       case OBELISK_RT_DB_OR:
@@ -1619,14 +1676,21 @@ bool validateImage(const Image &image) {
         break;
       }
       case OBELISK_RT_DB_INSERT: {
-        if (instruction.flags || instruction.source2 || instruction.auxiliary ||
+        if (instruction.source2 || instruction.auxiliary ||
             !numeric(instruction.destination) ||
-            !numeric(instruction.source0) || !numeric(instruction.source1) ||
+            !numeric(instruction.source0) ||
             !compatible(layoutAt(image, function, instruction.destination),
                         layoutAt(image, function, instruction.source0)))
           return false;
         Layout destination = layoutAt(image, function, instruction.destination);
         Layout inserted = layoutAt(image, function, instruction.source1);
+        if (instruction.flags == OBELISK_RT_DB_AGGREGATE_MANAGED) {
+          if (inserted.kind != OBELISK_RT_DBREG_MANAGED ||
+              inserted.width != 64 || (instruction.immediate & 63) != 0)
+            return false;
+        } else if (instruction.flags != 0 || !numeric(instruction.source1)) {
+          return false;
+        }
         if (instruction.immediate > destination.width ||
             inserted.width > destination.width - instruction.immediate)
           return false;
@@ -1658,6 +1722,12 @@ bool validateImage(const Image &image) {
         }
         break;
       }
+      case OBELISK_RT_DB_CLEAR_FRAME_ROOT:
+        if (instruction.flags || instruction.destination ||
+            instruction.source0 || instruction.source1 || instruction.source2 ||
+            instruction.auxiliary)
+          return false;
+        break;
       case OBELISK_RT_DB_MAKE_HANDLE:
         if (instruction.flags || !reg(instruction.destination) ||
             layoutAt(image, function, instruction.destination).kind !=
@@ -2247,6 +2317,16 @@ struct BytecodeFrameRoots {
   Frame *frame = nullptr;
 };
 
+void visitObjectWord(const uint8_t *address, ManagedRootVisit visit,
+                     void *visitorEnvironment) {
+  // Byte-backed interpreter and automatic-state storage does not promise
+  // pointer alignment. The collector is non-moving, so an aligned temporary
+  // is sufficient for precise marking and avoids undefined typed loads.
+  obelisk_rt_object_v1 *object = nullptr;
+  std::memcpy(&object, address, sizeof(object));
+  visit(visitorEnvironment, &object);
+}
+
 void enumerateBytecodeFrameRoots(void *environment, ManagedRootVisit visit,
                                  void *visitorEnvironment) {
   auto *roots = static_cast<BytecodeFrameRoots *>(environment);
@@ -2256,11 +2336,11 @@ void enumerateBytecodeFrameRoots(void *environment, ManagedRootVisit visit,
        ++index) {
     Layout layout = layoutAt(*roots->image, roots->frame->function, index);
     if (layout.kind != OBELISK_RT_DBREG_MANAGED &&
-        layout.kind != OBELISK_RT_DBREG_MANAGED_REF)
+        layout.kind != OBELISK_RT_DBREG_MANAGED_REF &&
+        layout.kind != OBELISK_RT_DBREG_ARGUMENT_REF)
       continue;
-    auto **slot = reinterpret_cast<obelisk_rt_object_v1 **>(roots->frame->data +
-                                                            layout.offset);
-    visit(visitorEnvironment, slot);
+    visitObjectWord(roots->frame->data + layout.offset, visit,
+                    visitorEnvironment);
   }
 }
 
@@ -2273,7 +2353,8 @@ public:
     for (uint32_t index = 0; index != frame.function.layoutCount; ++index) {
       uint8_t kind = layoutAt(image, frame.function, index).kind;
       hasManaged |= kind == OBELISK_RT_DBREG_MANAGED ||
-                    kind == OBELISK_RT_DBREG_MANAGED_REF;
+                    kind == OBELISK_RT_DBREG_MANAGED_REF ||
+                    kind == OBELISK_RT_DBREG_ARGUMENT_REF;
     }
     if (!hasManaged)
       return;
@@ -2918,6 +2999,20 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     std::memcpy(&offset, frame.data + layout.offset + 8, sizeof(offset));
     return true;
   };
+  auto readArgumentRef = [&](uint32_t reg, obelisk_rt_object_v1 *&owner,
+                             uint64_t &payload, uint32_t &managed) {
+    Layout layout = layoutAt(image, frame.function, reg);
+    if (layout.kind != OBELISK_RT_DBREG_ARGUMENT_REF || layout.size != 24)
+      return false;
+    std::memcpy(&owner, frame.data + layout.offset, sizeof(owner));
+    std::memcpy(&payload, frame.data + layout.offset + 8, sizeof(payload));
+    uint64_t tag = 0;
+    std::memcpy(&tag, frame.data + layout.offset + 16, sizeof(tag));
+    if (tag > 1)
+      return false;
+    managed = static_cast<uint32_t>(tag);
+    return true;
+  };
   switch (signature.id) {
   case OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC: {
     auto id = scalar(0);
@@ -2981,6 +3076,108 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     std::memcpy(frame.data + output.offset + 8, &*offset, sizeof(*offset));
     return OBELISK_RT_OK;
   }
+  case OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_FROM_REF: {
+    Layout input = layoutAt(image, frame.function, inputRegister(0));
+    Layout output = layoutAt(image, frame.function, outputRegister(0));
+    uint64_t stable = UINT64_MAX;
+    if (!encodeCanonicalHandle(frame.data + input.offset, stable))
+      return OBELISK_RT_INVALID_HANDLE;
+    std::memset(frame.data + output.offset, 0, output.size);
+    std::memcpy(frame.data + output.offset + 8, &stable, sizeof(stable));
+    return OBELISK_RT_OK;
+  }
+  case OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_FROM_MANAGED: {
+    Layout input = layoutAt(image, frame.function, inputRegister(0));
+    Layout output = layoutAt(image, frame.function, outputRegister(0));
+    std::memset(frame.data + output.offset, 0, output.size);
+    std::memcpy(frame.data + output.offset, frame.data + input.offset, 16);
+    uint64_t managed = 1;
+    std::memcpy(frame.data + output.offset + 16, &managed, sizeof(managed));
+    return OBELISK_RT_OK;
+  }
+  case OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_LOAD: {
+    obelisk_rt_object_v1 *owner = nullptr;
+    uint64_t payload = 0;
+    uint32_t managed = 0;
+    auto planeSize = scalar(1);
+    auto bitWidth = scalar(2);
+    auto flags = scalar(3);
+    if (!readArgumentRef(inputRegister(0), owner, payload, managed) ||
+        !planeSize || !bitWidth || !flags || *planeSize == 0 ||
+        *bitWidth == 0 || (*flags & ~uint64_t{3}) != 0)
+      return OBELISK_RT_INVALID_BYTECODE;
+    Layout output = layoutAt(image, frame.function, outputRegister(0));
+    bool fourState = (*flags & 1) != 0;
+    bool managedValue = (*flags & 2) != 0;
+    uint64_t scratchPlaneSize = ((uint64_t{output.width} + 63) / 64) * 8;
+    if (*bitWidth != output.width || *planeSize > scratchPlaneSize ||
+        output.size != scratchPlaneSize * (fourState ? 2 : 1) ||
+        fourState != (output.kind == OBELISK_RT_DBREG_LOGIC) ||
+        managedValue != (output.kind == OBELISK_RT_DBREG_MANAGED))
+      return OBELISK_RT_INVALID_BYTECODE;
+    uint8_t dummy = 0;
+    const uint8_t *stateValue =
+        context->stateValue.empty()
+            ? &dummy
+            : reinterpret_cast<const uint8_t *>(context->stateValue.data());
+    const uint8_t *stateUnknown =
+        context->stateUnknown.empty()
+            ? &dummy
+            : reinterpret_cast<const uint8_t *>(context->stateUnknown.data());
+    return obelisk_rt_v1_argument_ref_load(
+        context, stateValue, stateUnknown, image.stateBitCount, owner, payload,
+        managed, *bitWidth, *planeSize, fourState, managedValue,
+        frame.data + output.offset,
+        fourState ? frame.data + output.offset + scratchPlaneSize : nullptr);
+  }
+  case OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_STORE: {
+    obelisk_rt_object_v1 *owner = nullptr;
+    uint64_t payload = 0;
+    uint32_t managed = 0;
+    auto planeSize = scalar(2);
+    auto bitWidth = scalar(3);
+    auto flags = scalar(4);
+    if (!readArgumentRef(inputRegister(0), owner, payload, managed) ||
+        !planeSize || !bitWidth || !flags || *planeSize == 0 ||
+        *bitWidth == 0 || (*flags & ~uint64_t{3}) != 0)
+      return OBELISK_RT_INVALID_BYTECODE;
+    Layout input = layoutAt(image, frame.function, inputRegister(1));
+    bool fourState = (*flags & 1) != 0;
+    bool managedValue = (*flags & 2) != 0;
+    uint64_t scratchPlaneSize = ((uint64_t{input.width} + 63) / 64) * 8;
+    if (*bitWidth != input.width || *planeSize > scratchPlaneSize ||
+        input.size != scratchPlaneSize * (fourState ? 2 : 1) ||
+        fourState != (input.kind == OBELISK_RT_DBREG_LOGIC) ||
+        managedValue != (input.kind == OBELISK_RT_DBREG_MANAGED))
+      return OBELISK_RT_INVALID_BYTECODE;
+    uint8_t dummy = 0;
+    uint8_t *stateValue =
+        context->stateValue.empty()
+            ? &dummy
+            : reinterpret_cast<uint8_t *>(context->stateValue.data());
+    uint8_t *stateUnknown =
+        context->stateUnknown.empty()
+            ? &dummy
+            : reinterpret_cast<uint8_t *>(context->stateUnknown.data());
+    return obelisk_rt_v1_argument_ref_store(
+        context, stateValue, stateUnknown, image.stateBitCount, owner, payload,
+        managed, *bitWidth, *planeSize, fourState, managedValue,
+        frame.data + input.offset,
+        fourState ? frame.data + input.offset + scratchPlaneSize : nullptr);
+  }
+  case OBELISK_RT_INTRINSIC_V1_MANAGED_ROOT_EXTRACT: {
+    Layout input = layoutAt(image, frame.function, inputRegister(0));
+    std::optional<uint64_t> bitOffset = scalar(1);
+    if (!bitOffset || (*bitOffset & 63) != 0 || *bitOffset > input.width ||
+        64 > input.width - *bitOffset)
+      return OBELISK_RT_INVALID_BYTECODE;
+    obelisk_rt_object_v1 *object = nullptr;
+    std::memcpy(&object, frame.data + input.offset + *bitOffset / 8,
+                sizeof(object));
+    return writeManaged(outputRegister(0), object)
+               ? OBELISK_RT_OK
+               : OBELISK_RT_INVALID_BYTECODE;
+  }
   case OBELISK_RT_INTRINSIC_V1_MANAGED_LOAD: {
     obelisk_rt_object_v1 *object = nullptr;
     uint64_t offset = 0;
@@ -3006,13 +3203,12 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       return OBELISK_RT_INVALID_BYTECODE;
     std::memset(frame.data + output.offset, 0,
                 static_cast<size_t>(output.size));
-    obelisk_rt_status status = obelisk_rt_v1_object_read(
-        object, offset, frame.data + output.offset, *planeSize);
-    if (status != OBELISK_RT_OK || !fourState)
-      return status;
-    return obelisk_rt_v1_object_read(
-        object, offset + *planeSize,
-        frame.data + output.offset + scratchPlaneSize, *planeSize);
+    if (fourState)
+      return obelisk_rt_v1_object_read_planes(
+          object, offset, frame.data + output.offset,
+          frame.data + output.offset + scratchPlaneSize, *planeSize);
+    return obelisk_rt_v1_object_read(object, offset, frame.data + output.offset,
+                                     *planeSize);
   }
   case OBELISK_RT_INTRINSIC_V1_MANAGED_STORE: {
     obelisk_rt_object_v1 *object = nullptr;
@@ -3033,13 +3229,12 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if (*planeSize > scratchPlaneSize ||
         input.size != scratchPlaneSize * (fourState ? 2 : 1))
       return OBELISK_RT_INVALID_BYTECODE;
-    obelisk_rt_status status = obelisk_rt_v1_object_write(
-        object, offset, frame.data + input.offset, *planeSize);
-    if (status != OBELISK_RT_OK || !fourState)
-      return status;
-    return obelisk_rt_v1_object_write(
-        object, offset + *planeSize,
-        frame.data + input.offset + scratchPlaneSize, *planeSize);
+    if (fourState)
+      return obelisk_rt_v1_object_write_planes(
+          object, offset, frame.data + input.offset,
+          frame.data + input.offset + scratchPlaneSize, *planeSize);
+    return obelisk_rt_v1_object_write(object, offset, frame.data + input.offset,
+                                      *planeSize);
   }
   case OBELISK_RT_INTRINSIC_V1_MANAGED_NBA: {
     obelisk_rt_object_v1 *object = nullptr;
@@ -3077,9 +3272,16 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
     if (!lane)
       return OBELISK_RT_INVALID_LIFECYCLE;
+    std::optional<uint64_t> classID = scalar(1);
+    if (!classID)
+      return OBELISK_RT_INVALID_BYTECODE;
+    const obelisk_rt_class_descriptor_v1 *descriptor =
+        obelisk_rt_managed_class_lookup(context, *classID);
+    if (!descriptor)
+      return OBELISK_RT_INVALID_DESIGN;
     obelisk_rt_object_v1 *weak = nullptr;
-    obelisk_rt_status status =
-        obelisk_rt_v1_weak_create(lane, readManaged(inputRegister(0)), &weak);
+    obelisk_rt_status status = obelisk_rt_v1_weak_create(
+        lane, descriptor, readManaged(inputRegister(0)), &weak);
     return status == OBELISK_RT_OK && !writeManaged(outputRegister(0), weak)
                ? OBELISK_RT_INVALID_BYTECODE
                : status;
@@ -3401,50 +3603,32 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     obelisk_rt_status status = OBELISK_RT_OK;
     if (initialLayout.kind == OBELISK_RT_DBREG_MANAGED) {
       obelisk_rt_object_v1 *initial = readManaged(inputRegister(0));
-      obelisk_rt_object_v1 **rootSlot = nullptr;
-      uint32_t id = 0;
-      {
-        std::lock_guard<std::recursive_mutex> lock(context->mutex);
-        id = context->nextNativeAutomaticID;
-        if (id == 0 || id > OBELISK_RT_STABLE_HANDLE_MAX_AUTOMATIC_ID)
-          return OBELISK_RT_OUT_OF_RESOURCES;
-        NativeAutomaticState state;
-        state.bitWidth = 64;
-        state.owner = context->activeNativeProcess;
-        if (!state.owner)
-          state.designOwner = context->activeDesignTaskID;
-        state.managedValue = initial;
-        auto [found, inserted] =
-            context->nativeAutomaticStates.emplace(id, std::move(state));
-        if (!inserted)
-          return OBELISK_RT_INVALID_LIFECYCLE;
-        rootSlot = &found->second.managedValue;
-        ++context->nextNativeAutomaticID;
-      }
-      status = obelisk_rt_v1_gc_static_root_register(context, rootSlot);
-      if (status != OBELISK_RT_OK) {
-        std::lock_guard<std::recursive_mutex> lock(context->mutex);
-        context->nativeAutomaticStates.erase(id);
-        return status;
-      }
-      {
-        std::lock_guard<std::recursive_mutex> lock(context->mutex);
-        auto found = context->nativeAutomaticStates.find(id);
-        if (found == context->nativeAutomaticStates.end())
-          return OBELISK_RT_INVALID_LIFECYCLE;
-        found->second.managedRootRegistered = true;
-      }
-      stable = encodeAutomaticHandle(id, 0);
+      status =
+          obelisk_rt_native_state_alloc_managed(context, initial, &stable);
     } else {
       Logic initial = readLogic(frame.data, initialLayout);
       initialWidth = initial.width;
-      status = obelisk_rt_v1_native_state_alloc(
-          context, initial.width,
-          reinterpret_cast<const uint8_t *>(initial.value.data()),
+      const uint8_t *value =
+          reinterpret_cast<const uint8_t *>(initial.value.data());
+      const uint8_t *unknown =
           initial.fourState
               ? reinterpret_cast<const uint8_t *>(initial.unknown.data())
-              : nullptr,
-          &stable);
+              : nullptr;
+      if (site.inputCount > 1) {
+        std::vector<uint64_t> rootOffsets;
+        rootOffsets.reserve(site.inputCount - 1);
+        for (uint32_t index = 1; index != site.inputCount; ++index) {
+          std::optional<uint64_t> rootOffset = scalar(index);
+          if (!rootOffset)
+            return OBELISK_RT_INVALID_BYTECODE;
+          rootOffsets.push_back(*rootOffset);
+        }
+        status = obelisk_rt_native_state_alloc_with_root_offsets(
+            context, initial.width, value, unknown, std::move(rootOffsets),
+            &stable);
+      } else
+        status = obelisk_rt_v1_native_state_alloc(context, initial.width, value,
+                                                  unknown, &stable);
     }
     if (status != OBELISK_RT_OK)
       return status;
@@ -4546,6 +4730,18 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
           low = fits ? dynamic.value[0] : UINT64_MAX;
         }
       }
+      if (instruction.flags == OBELISK_RT_DB_AGGREGATE_MANAGED &&
+          destination.kind == OBELISK_RT_DBREG_MANAGED &&
+          instruction.source1 != kInvalidRegister &&
+          (negative || low == UINT64_MAX || (low & 63) != 0 ||
+           low > input.width || uint64_t{64} > input.width - low)) {
+        // A dynamic class-handle extraction may only select a complete,
+        // naturally aligned handle word. Invalid array indices yield the
+        // two-state default (null), never a forged host pointer assembled from
+        // adjacent aggregate bits.
+        write(instruction.destination, result);
+        break;
+      }
       for (uint64_t bitIndex = 0; bitIndex != destination.width; ++bitIndex) {
         bool inRange = false;
         uint64_t source = 0;
@@ -4919,6 +5115,12 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       }
       break;
     }
+    case OBELISK_RT_DB_CLEAR_FRAME_ROOT:
+      if (!canonicalFrame || instruction.immediate > canonicalFrameSize ||
+          sizeof(void *) > canonicalFrameSize - instruction.immediate)
+        return OBELISK_RT_INVALID_FRAME;
+      std::memset(canonicalFrame + instruction.immediate, 0, sizeof(void *));
+      break;
     case OBELISK_RT_DB_LOAD_STATE:
     case OBELISK_RT_DB_STORE_STATE: {
       uint32_t valueRegister = instruction.opcode == OBELISK_RT_DB_LOAD_STATE
@@ -4976,20 +5178,40 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
         if (automatic) {
           uint32_t id = 0;
           int64_t baseOffset = 0;
-          if (!decodeAutomaticHandle(automaticBase, id, baseOffset) ||
-              baseOffset != 0 || start != 0) {
+          if (!decodeAutomaticHandle(automaticBase, id, baseOffset)) {
             return OBELISK_RT_INVALID_HANDLE;
           }
           auto found = context->nativeAutomaticStates.find(id);
-          if (found == context->nativeAutomaticStates.end() ||
-              !found->second.managedRootRegistered)
+          if (found == context->nativeAutomaticStates.end())
             return OBELISK_RT_INVALID_HANDLE;
-          if (instruction.opcode == OBELISK_RT_DB_LOAD_STATE)
-            managed = found->second.managedValue;
-          else {
-            std::memcpy(&managed, frame.data + valueLayout.offset,
-                        sizeof(managed));
-            found->second.managedValue = managed;
+          NativeAutomaticState &state = found->second;
+          if (state.managedRootRegistered) {
+            if (baseOffset != 0 || start != 0)
+              return OBELISK_RT_INVALID_HANDLE;
+            if (instruction.opcode == OBELISK_RT_DB_LOAD_STATE)
+              managed = state.managedValue;
+            else {
+              std::memcpy(&managed, frame.data + valueLayout.offset,
+                          sizeof(managed));
+              state.managedValue = managed;
+            }
+          } else {
+            if (start < 0 || baseOffset != start ||
+                (static_cast<uint64_t>(start) & 63) != 0)
+              return OBELISK_RT_INVALID_HANDLE;
+            uint64_t byteOffset = static_cast<uint64_t>(start) / 8;
+            if (byteOffset > state.value.size() ||
+                sizeof(managed) > state.value.size() - byteOffset ||
+                std::find(state.managedRootByteOffsets.begin(),
+                          state.managedRootByteOffsets.end(),
+                          byteOffset) == state.managedRootByteOffsets.end())
+              return OBELISK_RT_INVALID_HANDLE;
+            if (instruction.opcode == OBELISK_RT_DB_LOAD_STATE)
+              std::memcpy(&managed, state.value.data() + byteOffset,
+                          sizeof(managed));
+            else
+              std::memcpy(state.value.data() + byteOffset,
+                          frame.data + valueLayout.offset, sizeof(managed));
           }
         } else {
           uint64_t absolute = static_cast<uint64_t>(start);
@@ -5144,8 +5366,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
             }
             if (!local)
               transitions.push_back(
-                  {automatic ? (automaticBase & ~uint64_t{UINT32_MAX}) |
-                                   static_cast<uint32_t>(absolute)
+                  {automatic       ? (automaticBase & ~uint64_t{UINT32_MAX}) |
+                                         static_cast<uint32_t>(absolute)
                    : boundedStatic ? encodeStaticHandle(staticID, coordinate)
                                    : absolute,
                    oldValue, oldUnknown, newValue, newUnknown});
@@ -5485,15 +5707,48 @@ std::optional<uint32_t> continuationScheduleRank(const Image &image,
 void obelisk_rt_enumerate_design_managed_roots(
     obelisk_rt_context *context, ManagedRootVisit visit,
     void *visitorEnvironment) noexcept {
-  if (!context || !context->execution || !visit ||
-      (context->execution->flags & OBELISK_RT_EXECUTION_HAS_BYTECODE) == 0)
+  if (!context || !visit)
     return;
   try {
-    obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
+    bool hasBytecode =
+        context->execution &&
+        (context->execution->flags & OBELISK_RT_EXECUTION_HAS_BYTECODE) != 0;
     Image image;
-    if (!parseImage(entry, image))
-      return;
+    if (hasBytecode) {
+      obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
+      hasBytecode = parseImage(entry, image);
+    }
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    for (auto &[id, state] : context->nativeAutomaticStates) {
+      (void)id;
+      if (state.managedRootRegistered)
+        visit(visitorEnvironment, &state.managedValue);
+      for (uint64_t offset : state.managedRootByteOffsets) {
+        if (offset > state.value.size() ||
+            sizeof(obelisk_rt_object_v1 *) > state.value.size() - offset)
+          continue;
+        visitObjectWord(state.value.data() + offset, visit,
+                        visitorEnvironment);
+      }
+    }
+    for (obelisk_rt_process_instance_v1 *instance :
+         context->managedRootProcesses) {
+      if (!instance || !instance->descriptor ||
+          !instance->descriptor->frame_layout || !instance->frame)
+        continue;
+      const obelisk_rt_frame_layout_v1 &layout =
+          *instance->descriptor->frame_layout;
+      for (uint32_t index = 0; index != layout.field_count; ++index) {
+        const obelisk_rt_frame_field_v1 &field = layout.fields[index];
+        if (field.flags != OBELISK_RT_FRAME_MANAGED_ROOT)
+          continue;
+        auto **slot = reinterpret_cast<obelisk_rt_object_v1 **>(
+            static_cast<uint8_t *>(instance->frame) + field.offset);
+        visit(visitorEnvironment, slot);
+      }
+    }
+    if (!hasBytecode)
+      return;
     for (ScheduledDesignTask &task : context->scheduledDesignTasks) {
       if (task.terminated || task.function >= image.functionCount)
         continue;
@@ -5502,9 +5757,8 @@ void obelisk_rt_enumerate_design_managed_roots(
         if (offset > task.scratchOffset ||
             sizeof(obelisk_rt_object_v1 *) > task.scratchOffset - offset)
           return;
-        auto **slot = reinterpret_cast<obelisk_rt_object_v1 **>(
-            task.frame.data() + offset);
-        visit(visitorEnvironment, slot);
+        visitObjectWord(task.frame.data() + offset, visit,
+                        visitorEnvironment);
       };
       for (uint64_t index = 0; index != image.stateDescriptorCount; ++index) {
         CaptureRecord capture = captureAt(image, index);
@@ -5514,7 +5768,8 @@ void obelisk_rt_enumerate_design_managed_roots(
           continue;
         uint8_t kind = layoutAt(image, function, capture.argument).kind;
         if (kind == OBELISK_RT_DBREG_MANAGED ||
-            kind == OBELISK_RT_DBREG_MANAGED_REF)
+            kind == OBELISK_RT_DBREG_MANAGED_REF ||
+            kind == OBELISK_RT_DBREG_ARGUMENT_REF)
           visitOffset(capture.valueOffset);
       }
       uint64_t end = function.firstInstruction + function.instructionCount;
@@ -5525,7 +5780,8 @@ void obelisk_rt_enumerate_design_managed_roots(
           continue;
         uint8_t kind = layoutAt(image, function, instruction.source0).kind;
         if (kind == OBELISK_RT_DBREG_MANAGED ||
-            kind == OBELISK_RT_DBREG_MANAGED_REF)
+            kind == OBELISK_RT_DBREG_MANAGED_REF ||
+            kind == OBELISK_RT_DBREG_ARGUMENT_REF)
           visitOffset(instruction.immediate);
       }
     }

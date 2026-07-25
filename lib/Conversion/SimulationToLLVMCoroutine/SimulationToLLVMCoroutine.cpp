@@ -201,6 +201,7 @@ struct StorageProperties {
   bool fourState;
   bool managedRoot;
   bool managedReference;
+  SmallVector<uint64_t, 2> managedRootOffsets;
 };
 
 bool containsLogic(Type type);
@@ -333,6 +334,9 @@ FailureOr<StorageProperties> storageProperties(Type type,
     // pointer size and alignment; process-frame layout describes the object
     // word separately as a precise managed root.
     llvmType = llvm::PointerType::get(context, 0);
+  } else if (isa<sim::ArgumentRefType>(type)) {
+    // {owner root, ordinary handle or managed byte offset, managed tag}.
+    llvmType = llvm::IntegerType::get(context, 192);
   } else if (isa<sim::RefType, sim::NetType, sim::DriverType, sim::EventType,
                  sim::ProcessType, sim::ControlType>(type)) {
     // Simulation handles remain frame-relative stable IDs. They must never
@@ -347,14 +351,42 @@ FailureOr<StorageProperties> storageProperties(Type type,
   } else {
     return failure();
   }
-  llvm::TypeSize typeSize = layout.getTypeAllocSize(llvmType);
+  // Argument references are a packed three-word runtime record represented as
+  // i192 in LLVM. Some targets give i192 a 32-byte allocation stride even
+  // though loads and stores transfer 24 bytes. Canonical process frames are
+  // explicitly laid out records rather than LLVM arrays, so reserve the
+  // transferred payload and align its start according to the target ABI. This
+  // keeps native and bytecode frames compatible without copying ABI padding
+  // past the bytecode register.
+  llvm::TypeSize typeSize =
+      isa<sim::ArgumentRefType>(type) ? layout.getTypeStoreSize(llvmType)
+                                      : layout.getTypeAllocSize(llvmType);
   if (typeSize.isScalable() || typeSize.getFixedValue() == 0)
     return failure();
+  SmallVector<uint64_t, 2> managedRootOffsets;
+  if (isa<sim::ManagedRefType, sim::ArgumentRefType>(type)) {
+    managedRootOffsets.push_back(0);
+  } else {
+    SmallVector<uint64_t, 2> bitOffsets;
+    if (!sim::getManagedHandleOffsets(type, bitOffsets))
+      return failure();
+    for (uint64_t bitOffset : bitOffsets) {
+      if ((bitOffset & 7) != 0)
+        return failure();
+      uint64_t byteOffset = bitOffset / 8;
+      if (byteOffset > typeSize.getFixedValue() ||
+          sizeof(void *) > typeSize.getFixedValue() - byteOffset)
+        return failure();
+      managedRootOffsets.push_back(byteOffset);
+    }
+  }
   return StorageProperties{
       typeSize.getFixedValue(),
       static_cast<uint32_t>(layout.getABITypeAlign(llvmType).value()),
-      fourState, isa<sim::ClassHandleType>(type),
-      isa<sim::ManagedRefType>(type)};
+      fourState,
+      !managedRootOffsets.empty(),
+      isa<sim::ManagedRefType>(type),
+      std::move(managedRootOffsets)};
 }
 
 size_t physicalStorageCount(const StorageProperties &storage) {
@@ -1552,6 +1584,8 @@ Type convertProcessType(Type type, MLIRContext *context) {
     return IntegerType::get(context, 64);
   if (isa<sim::ClassHandleType>(type))
     return IntegerType::get(context, 64);
+  if (isa<sim::ArgumentRefType>(type))
+    return IntegerType::get(context, 192);
   if (isa<sim::TimeType>(type))
     return IntegerType::get(context, 64);
   return type;
@@ -2635,6 +2669,48 @@ makeProcessDescriptor(ModuleOp module, Location location, StringRef baseName,
   return success();
 }
 
+constexpr StringLiteral kManagedRootRangeRecordAttr =
+    "obelisk.managed_root_range_record";
+constexpr StringLiteral kManagedRootRangePushCheckAttr =
+    "obelisk.managed_root_range_push_check";
+
+LLVM::AllocaOp findManagedRootRangeRecord(Operation *scope) {
+  LLVM::AllocaOp record;
+  scope->walk([&](LLVM::AllocaOp allocation) {
+    if (!record && allocation->hasAttr(kManagedRootRangeRecordAttr))
+      record = allocation;
+  });
+  return record;
+}
+
+void emitManagedRootRangePop(OpBuilder &builder, Location location,
+                             Operation *scope) {
+  LLVM::AllocaOp record = findManagedRootRangeRecord(scope);
+  if (!record)
+    return;
+  MLIRContext *context = builder.getContext();
+  Type pointer = LLVM::LLVMPointerType::get(context);
+  Value contextAddress = LLVM::AddressOfOp::create(builder, location, pointer,
+                                                   "__obelisk_current_context");
+  Value runtimeContext =
+      LLVM::LoadOp::create(builder, location, pointer, contextAddress, 8);
+  Value lane = LLVM::CallOp::create(
+                   builder, location, TypeRange{pointer},
+                   SymbolRefAttr::get(context, "obelisk_rt_v1_gc_current_lane"),
+                   runtimeContext)
+                   .getResult();
+  Value status =
+      LLVM::CallOp::create(
+          builder, location, TypeRange{builder.getI32Type()},
+          SymbolRefAttr::get(context, "obelisk_rt_v1_gc_root_range_pop"),
+          ValueRange{lane, record})
+          .getResult();
+  LLVM::CallOp::create(
+      builder, location, TypeRange{},
+      SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
+      ValueRange{runtimeContext, status});
+}
+
 LogicalResult threadRuntimeStatuses(ModuleOp module) {
   MLIRContext *context = module.getContext();
   llvm::StringMap<sim::SimFuncOp> functions;
@@ -2750,6 +2826,7 @@ LogicalResult threadRuntimeStatuses(ModuleOp module) {
       cf::CondBranchOp::create(rewriter, check.getLoc(), ok, continuation,
                                ValueRange{}, failure, ValueRange{});
       Value status = check.getStatus();
+      bool pushFailure = check->hasAttr(kManagedRootRangePushCheckAttr);
       rewriter.eraseOp(check);
 
       rewriter.setInsertionPointToStart(failure);
@@ -2764,6 +2841,8 @@ LogicalResult threadRuntimeStatuses(ModuleOp module) {
                                       rewriter.getIntegerAttr(integer, 0)));
       }
       values.push_back(status);
+      if (!pushFailure)
+        emitManagedRootRangePop(rewriter, function.getLoc(), function);
       sim::SimReturnOp::create(rewriter, function.getLoc(), values);
     }
   }
@@ -3645,10 +3724,13 @@ lowerPlainNativeProcess(sim::SimFuncOp function,
     cf::CondBranchOp::create(rewriter, check.getLoc(), ok, continuation,
                              ValueRange{}, failure, ValueRange{});
     Value status = check.getStatus();
+    bool pushFailure = check->hasAttr(kManagedRootRangePushCheckAttr);
     rewriter.eraseOp(check);
     rewriter.setInsertionPointToStart(failure);
     Value bits = runtime::RTStatusToBitsOp::create(
         rewriter, body.getLoc(), rewriter.getI32Type(), status);
+    if (!pushFailure)
+      emitManagedRootRangePop(rewriter, body.getLoc(), body);
     func::ReturnOp::create(rewriter, body.getLoc(), bits);
   }
 
@@ -3763,6 +3845,7 @@ lowerSuspendableProcess(sim::SimFuncOp function,
   // dominate initial execution and every resume and become stable coroutine
   // frame storage instead of per-iteration stack growth.
   SmallVector<LLVM::AllocaOp> activationAllocas;
+  SmallVector<LLVM::GEPOp> activationAddresses;
   llvm::SetVector<Operation *> allocaConstants;
   for (LLVM::AllocaOp alloca : oldEntry->getOps<LLVM::AllocaOp>()) {
     activationAllocas.push_back(alloca);
@@ -3770,10 +3853,16 @@ lowerSuspendableProcess(sim::SimFuncOp function,
     if (count && count->getBlock() == oldEntry && isa<LLVM::ConstantOp>(count))
       allocaConstants.insert(count);
   }
+  for (LLVM::GEPOp address : oldEntry->getOps<LLVM::GEPOp>())
+    if (auto allocation = address.getBase().getDefiningOp<LLVM::AllocaOp>();
+        allocation && llvm::is_contained(activationAllocas, allocation))
+      activationAddresses.push_back(address);
   for (LLVM::AllocaOp alloca : activationAllocas)
     alloca->moveBefore(execute, execute->begin());
   for (Operation *constant : allocaConstants)
     constant->moveBefore(execute, execute->begin());
+  for (LLVM::GEPOp address : activationAddresses)
+    address->moveBefore(execute, execute->end());
 
   RampBlocks blocks;
   blocks.suspendReturn =
@@ -3817,6 +3906,9 @@ lowerSuspendableProcess(sim::SimFuncOp function,
       Type valueType = continuation->getArgument(argumentIndex++).getType();
       loaded.push_back(loadAt(builder, location, frame, slot.valueOffset,
                               valueType, slot.alignment));
+      for (uint64_t rootOffset : slot.managedRootOffsets)
+        storeAt(builder, location, frame, slot.valueOffset + rootOffset,
+                llvmConstant(builder, location, builder.getI64Type(), 0), 8);
       if (slot.hasSecondaryStorage()) {
         Type secondaryType =
             continuation->getArgument(argumentIndex++).getType();
@@ -4005,11 +4097,14 @@ lowerSuspendableProcess(sim::SimFuncOp function,
     cf::CondBranchOp::create(builder, check.getLoc(), ok, continuation,
                              ValueRange{}, failure, ValueRange{});
     Value status = check.getStatus();
+    bool pushFailure = check->hasAttr(kManagedRootRangePushCheckAttr);
     check.erase();
     builder.setInsertionPointToStart(failure);
     Value bits = runtime::RTStatusToBitsOp::create(
         builder, location, builder.getI32Type(), status);
     storeAt(builder, location, instance, kInstanceStatusOffset, bits, 4);
+    if (!pushFailure)
+      emitManagedRootRangePop(builder, location, ramp);
     cf::BranchOp::create(builder, location, blocks.terminate);
   }
   if (failed(makeNativeWrappers(module, ramp, baseName)))
@@ -4399,7 +4494,7 @@ struct NativeStateLayout {
     uint32_t handleID;
     uint64_t offset;
     unsigned width;
-    bool managedRoot;
+    SmallVector<uint64_t, 2> managedRootOffsets;
   };
   struct Net {
     uint64_t id;
@@ -4441,8 +4536,10 @@ FailureOr<NativeStateLayout> buildNativeStateLayout(ModuleOp module) {
     if (!width || *width == 0 || *width > INT32_MAX || nextHandleID == 0 ||
         nextHandleID > OBELISK_RT_STABLE_HANDLE_MAX_STATIC_ID)
       return failure();
-    bool managedRoot = isa<sim::ClassHandleType>(type);
-    if (managedRoot) {
+    SmallVector<uint64_t, 2> managedRootOffsets;
+    if (!sim::getManagedHandleOffsets(type, managedRootOffsets))
+      return failure();
+    if (!managedRootOffsets.empty()) {
       uint64_t aligned;
       if (!alignUp(layout.bitCount, 64, aligned))
         return failure();
@@ -4453,7 +4550,8 @@ FailureOr<NativeStateLayout> buildNativeStateLayout(ModuleOp module) {
       return failure();
     layout.bitCount += *width;
     handle = encodeNativeStaticHandle(nextHandleID);
-    layout.bounds.push_back({nextHandleID++, offset, *width, managedRoot});
+    layout.bounds.push_back(
+        {nextHandleID++, offset, *width, std::move(managedRootOffsets)});
     return success();
   };
   WalkResult walked = module.walk([&](Operation *operation) {
@@ -4779,6 +4877,8 @@ private:
 void notifySignal(OpBuilder &builder, Location location, Value handle,
                   uint64_t width, Value oldValue, Value oldUnknown,
                   Value newValue, Value newUnknown);
+sim::SimStatusCheckOp reportManagedStatus(OpBuilder &builder, Location location,
+                                          Value context, Value status);
 
 class EventHandleConversion final
     : public OpConversionPattern<sim::SimContextEventOp> {
@@ -5558,12 +5658,32 @@ public:
         rewriter, location, pointer, "__obelisk_current_context");
     Value context =
         LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
-    LLVM::CallOp::create(
-        rewriter, location, TypeRange{i32},
-        SymbolRefAttr::get(rewriter.getContext(),
-                           "obelisk_rt_v1_native_state_alloc"),
-        ValueRange{context, llvmConstant(rewriter, location, i64, *width),
-                   value, unknown, outHandle});
+    SmallVector<uint64_t, 2> rootOffsets;
+    if (!sim::getManagedHandleOffsets(op.getInitialValue().getType(),
+                                      rootOffsets))
+      return failure();
+    SmallVector<Value> arguments{
+        context, llvmConstant(rewriter, location, i64, *width), value, unknown};
+    StringRef allocation = "obelisk_rt_v1_native_state_alloc";
+    if (!rootOffsets.empty()) {
+      Value count = llvmConstant(rewriter, location, i64, rootOffsets.size());
+      Value offsets =
+          entryAlloca(rewriter, location, i64, rootOffsets.size(), 8);
+      for (auto [index, offset] : llvm::enumerate(rootOffsets))
+        LLVM::StoreOp::create(
+            rewriter, location, llvmConstant(rewriter, location, i64, offset),
+            byteGEP(rewriter, location, offsets, index * sizeof(uint64_t)), 8);
+      allocation = "obelisk_rt_v1_native_state_alloc_with_roots";
+      arguments.push_back(offsets);
+      arguments.push_back(count);
+    }
+    arguments.push_back(outHandle);
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(), allocation), arguments)
+            .getResult();
+    reportManagedStatus(rewriter, location, context, status);
     Value handle = LLVM::LoadOp::create(rewriter, location, i64, outHandle, 8);
     rewriter.replaceOp(op, handle);
     return success();
@@ -5769,12 +5889,17 @@ struct ManagedFieldLayout {
   bool fourState = false;
 };
 
+struct ManagedTraceLayout {
+  uint64_t offset = 0;
+  bool weak = false;
+};
+
 struct ManagedClassLayout {
   sim::SimClassDeclOp declaration;
   uint64_t size = sizeof(void *);
   uint32_t alignment = alignof(void *);
   SmallVector<ManagedFieldLayout> fields;
-  SmallVector<ManagedFieldLayout> tracedFields;
+  SmallVector<ManagedTraceLayout> tracedFields;
   SmallVector<sim::SimClassMethodDeclOp> methods;
 };
 
@@ -5844,6 +5969,16 @@ prepareManagedClassInventory(ModuleOp module,
       layout.tracedFields = baseLayout.tracedFields;
       layout.methods = baseLayout.methods;
     }
+    if (declaration.getWeakReferentAttr()) {
+      uint64_t referentOffset;
+      if (!alignUp(layout.size, alignof(void *), referentOffset) ||
+          referentOffset >
+              std::numeric_limits<uint64_t>::max() - sizeof(void *))
+        return declaration.emitError("weak referent layout overflow");
+      layout.size = referentOffset + sizeof(void *);
+      layout.alignment = std::max<uint32_t>(layout.alignment, alignof(void *));
+      layout.tracedFields.push_back({referentOffset, true});
+    }
 
     llvm::DataLayout localDataLayout(dataLayout.getStringRepresentation());
     llvm::LLVMContext llvmContext;
@@ -5853,8 +5988,7 @@ prepareManagedClassInventory(ModuleOp module,
         continue;
       FailureOr<StorageProperties> storage =
           storageProperties(field.getType(), localDataLayout, llvmContext);
-      if (failed(storage) ||
-          storage->managedRoot != isa<sim::ClassHandleType>(field.getType()))
+      if (failed(storage))
         return field.emitError(
             "class property has no fixed native managed layout");
       uint64_t offset;
@@ -5870,8 +6004,10 @@ prepareManagedClassInventory(ModuleOp module,
       ManagedFieldLayout fieldLayout{field, offset, storage->size,
                                      storage->alignment, storage->fourState};
       layout.fields.push_back(fieldLayout);
-      if (isa<sim::ClassHandleType>(field.getType()))
-        layout.tracedFields.push_back(fieldLayout);
+      for (uint64_t rootOffset : storage->managedRootOffsets)
+        layout.tracedFields.push_back(
+            {offset + rootOffset,
+             isa<sim::ClassHandleType>(field.getType()) && field.getIsWeak()});
       if (auto existing = field->getAttrOfType<IntegerAttr>("offset");
           existing && existing.getValue().getZExtValue() != offset)
         return field.emitError("native and bytecode class layouts disagree");
@@ -5972,7 +6108,7 @@ prepareManagedClassInventory(ModuleOp module,
                                     llvmConstant(builder, location, i64, 1), 2);
                 entry = insertValue(builder, location, entry,
                                     llvmConstant(builder, location, i32,
-                                                 field.declaration.getIsWeak()
+                                                 field.weak
                                                      ? OBELISK_RT_TRACE_WEAK
                                                      : OBELISK_RT_TRACE_STRONG),
                                     3);
@@ -6106,6 +6242,8 @@ prepareManagedClassInventory(ModuleOp module,
               flags |= OBELISK_RT_CLASS_INTERFACE;
             if (declaration.getIsFinal())
               flags |= OBELISK_RT_CLASS_FINAL;
+            if (declaration.getWeakReferentAttr())
+              flags |= OBELISK_RT_CLASS_WEAK_WRAPPER;
             descriptor =
                 insertValue(builder, location, descriptor,
                             llvmConstant(builder, location, i32, flags), 1);
@@ -6227,8 +6365,8 @@ void expandManagedSelectsToCFG(ModuleOp module) {
 
 bool managedOperationMayCollect(Operation *operation) {
   return isa<sim::SimClassAllocOp, sim::SimClassCopyOp, sim::SimWeakCreateOp,
-             sim::SimGCSafepointOp, sim::SimCallOp, sim::SimClassVirtualCallOp,
-             sim::SimDPICallOp>(operation);
+             sim::SimGCSafepointOp, sim::SimCallOp, sim::SimClassDirectCallOp,
+             sim::SimClassVirtualCallOp, sim::SimDPICallOp>(operation);
 }
 
 LogicalResult instrumentManagedRoots(ModuleOp module) {
@@ -6242,23 +6380,52 @@ LogicalResult instrumentManagedRoots(ModuleOp module) {
   Type i32 = IntegerType::get(context, 32);
   Type i64 = IntegerType::get(context, 64);
   Type rootType =
-      LLVM::LLVMStructType::getLiteral(context, {pointer, pointer, i64});
+      LLVM::LLVMStructType::getLiteral(context, {pointer, i64, pointer, i64});
   for (sim::SimFuncOp function : functions) {
     Liveness liveness(function);
-    SmallVector<Value> handles;
+    struct ManagedSSAValue {
+      Value value;
+      uint64_t bitOffset;
+    };
+    SmallVector<ManagedSSAValue> handles;
     SmallVector<Operation *> collectionPoints;
+    auto collectHandles = [&](Value value) -> LogicalResult {
+      SmallVector<uint64_t, 2> offsets;
+      if (isa<sim::ManagedRefType, sim::ArgumentRefType>(value.getType()))
+        offsets.push_back(0);
+      else if (!sim::getManagedHandleOffsets(value.getType(), offsets))
+        return failure();
+      for (uint64_t offset : offsets)
+        handles.push_back({value, offset});
+      return success();
+    };
     for (Block &block : function.getBody()) {
       for (BlockArgument argument : block.getArguments())
-        if (isa<sim::ClassHandleType>(argument.getType()))
-          handles.push_back(argument);
+        if (failed(collectHandles(argument)))
+          return function.emitError(
+              "block argument has no fixed managed root layout");
       for (Operation &operation : block) {
         if (managedOperationMayCollect(&operation))
           collectionPoints.push_back(&operation);
         for (Value result : operation.getResults())
-          if (isa<sim::ClassHandleType>(result.getType()))
-            handles.push_back(result);
+          if (failed(collectHandles(result)))
+            return operation.emitError(
+                "result has no fixed managed root layout");
       }
     }
+    if (handles.empty() || collectionPoints.empty())
+      continue;
+    llvm::erase_if(handles, [&](const ManagedSSAValue &handle) {
+      return llvm::none_of(collectionPoints, [&](Operation *point) {
+        const LivenessBlockInfo *blockInfo =
+            liveness.getLiveness(point->getBlock());
+        if (!blockInfo)
+          return false;
+        Liveness::ValueSetT live = blockInfo->currentlyLiveValues(point);
+        return live.contains(handle.value) &&
+               handle.value.getDefiningOp() != point;
+      });
+    });
     if (handles.empty())
       continue;
 
@@ -6266,23 +6433,19 @@ LogicalResult instrumentManagedRoots(ModuleOp module) {
     Block &entry = function.getBody().front();
     builder.setInsertionPointToStart(&entry);
     Location location = function.getLoc();
-    Value one = llvmConstant(builder, location, i64, 1);
+    Value rootCount = llvmConstant(builder, location, i64, handles.size());
     SmallVector<Value> slots;
-    SmallVector<Value> records;
     slots.reserve(handles.size());
-    records.reserve(handles.size());
-    for (Value handle : handles) {
-      (void)handle;
-      Value slot =
-          LLVM::AllocaOp::create(builder, location, pointer, pointer, one, 8);
-      LLVM::StoreOp::create(builder, location,
-                            LLVM::ZeroOp::create(builder, location, pointer),
-                            slot, 8);
-      Value record =
-          LLVM::AllocaOp::create(builder, location, pointer, rootType, one, 8);
-      slots.push_back(slot);
-      records.push_back(record);
-    }
+    Value slotsBase = LLVM::AllocaOp::create(builder, location, pointer,
+                                             pointer, rootCount, 8);
+    for (size_t index = 0; index != handles.size(); ++index)
+      slots.push_back(
+          byteGEP(builder, location, slotsBase, index * sizeof(void *)));
+    Value one = llvmConstant(builder, location, i64, 1);
+    Value record =
+        LLVM::AllocaOp::create(builder, location, pointer, rootType, one, 8);
+    record.getDefiningOp()->setAttr(kManagedRootRangeRecordAttr,
+                                    builder.getUnitAttr());
 
     // Each coroutine activation owns roots only while it is running on the
     // current worker lane. Pop before suspension and reacquire on the resume
@@ -6296,7 +6459,7 @@ LogicalResult instrumentManagedRoots(ModuleOp module) {
     DenseMap<Block *, Operation *> activationEnds;
     for (Block *block : activationBlocks) {
       if (block == &entry)
-        builder.setInsertionPointAfter(records.back().getDefiningOp());
+        builder.setInsertionPointAfter(record.getDefiningOp());
       else
         builder.setInsertionPointToStart(block);
       Value contextAddress = LLVM::AddressOfOp::create(
@@ -6310,39 +6473,39 @@ LogicalResult instrumentManagedRoots(ModuleOp module) {
               runtimeContext)
               .getResult();
       Operation *last = lane.getDefiningOp();
-      for (auto [slot, record] : llvm::zip_equal(slots, records)) {
+      for (Value slot : slots)
         LLVM::StoreOp::create(builder, location,
                               LLVM::ZeroOp::create(builder, location, pointer),
                               slot, 8);
-        LLVM::StoreOp::create(builder, location,
-                              LLVM::ZeroOp::create(builder, location, rootType),
-                              record, 8);
-        Value status =
-            LLVM::CallOp::create(
-                builder, location, TypeRange{i32},
-                SymbolRefAttr::get(context, "obelisk_rt_v1_gc_root_push"),
-                ValueRange{lane, record, slot})
-                .getResult();
-        auto report = LLVM::CallOp::create(
-            builder, location, TypeRange{},
-            SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
-            ValueRange{runtimeContext, status});
-        last = report.getOperation();
-      }
+      LLVM::StoreOp::create(builder, location,
+                            LLVM::ZeroOp::create(builder, location, rootType),
+                            record, 8);
+      Value status =
+          LLVM::CallOp::create(
+              builder, location, TypeRange{i32},
+              SymbolRefAttr::get(context, "obelisk_rt_v1_gc_root_range_push"),
+              ValueRange{lane, record, slotsBase, rootCount})
+              .getResult();
+      sim::SimStatusCheckOp check =
+          reportManagedStatus(builder, location, runtimeContext, status);
+      check->setAttr(kManagedRootRangePushCheckAttr, builder.getUnitAttr());
+      last = check.getOperation();
       activationEnds[block] = last;
     }
 
     for (auto [handle, slot] : llvm::zip_equal(handles, slots)) {
-      if (auto argument = dyn_cast<BlockArgument>(handle)) {
+      if (auto argument = dyn_cast<BlockArgument>(handle.value)) {
         Block *owner = argument.getOwner();
         if (Operation *activationEnd = activationEnds.lookup(owner))
           builder.setInsertionPointAfter(activationEnd);
         else
           builder.setInsertionPointToStart(owner);
       } else {
-        builder.setInsertionPointAfter(cast<OpResult>(handle).getOwner());
+        builder.setInsertionPointAfter(cast<OpResult>(handle.value).getOwner());
       }
-      sim::SimClassRootBindOp::create(builder, handle.getLoc(), handle, slot);
+      sim::SimClassRootBindOp::create(
+          builder, handle.value.getLoc(), handle.value, slot,
+          builder.getI64IntegerAttr(handle.bitOffset));
     }
 
     // A root slot outlives its SSA value and is reused on loop backedges.
@@ -6358,7 +6521,8 @@ LogicalResult instrumentManagedRoots(ModuleOp module) {
           blockInfo->currentlyLiveValues(collectionPoint);
       builder.setInsertionPoint(collectionPoint);
       for (auto [handle, slot] : llvm::zip_equal(handles, slots)) {
-        if (live.contains(handle) && handle.getDefiningOp() != collectionPoint)
+        if (live.contains(handle.value) &&
+            handle.value.getDefiningOp() != collectionPoint)
           continue;
         LLVM::StoreOp::create(
             builder, collectionPoint->getLoc(),
@@ -6374,28 +6538,7 @@ LogicalResult instrumentManagedRoots(ModuleOp module) {
     });
     for (Operation *exit : exits) {
       builder.setInsertionPoint(exit);
-      Value contextAddress = LLVM::AddressOfOp::create(
-          builder, exit->getLoc(), pointer, "__obelisk_current_context");
-      Value runtimeContext = LLVM::LoadOp::create(builder, exit->getLoc(),
-                                                  pointer, contextAddress, 8);
-      Value lane =
-          LLVM::CallOp::create(
-              builder, exit->getLoc(), TypeRange{pointer},
-              SymbolRefAttr::get(context, "obelisk_rt_v1_gc_current_lane"),
-              runtimeContext)
-              .getResult();
-      for (Value record : llvm::reverse(records)) {
-        Value status =
-            LLVM::CallOp::create(
-                builder, exit->getLoc(), TypeRange{i32},
-                SymbolRefAttr::get(context, "obelisk_rt_v1_gc_root_pop"),
-                ValueRange{lane, record})
-                .getResult();
-        LLVM::CallOp::create(
-            builder, exit->getLoc(), TypeRange{},
-            SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
-            ValueRange{runtimeContext, status});
-      }
+      emitManagedRootRangePop(builder, exit->getLoc(), function);
     }
   }
   return success();
@@ -6409,7 +6552,7 @@ void makeCurrentContextGlobal(ModuleOp module) {
   Type pointer = LLVM::LLVMPointerType::get(module.getContext());
   auto global = LLVM::GlobalOp::create(
       builder, module.getLoc(), pointer, false, LLVM::Linkage::Internal,
-      "__obelisk_current_context", Attribute{}, 8);
+      "__obelisk_current_context", Attribute{}, 8, 0, false, true);
   Block *block = new Block;
   global.getInitializerRegion().push_back(block);
   builder.setInsertionPointToStart(block);
@@ -6469,12 +6612,13 @@ std::pair<Value, Value> managedContextAndLane(OpBuilder &builder,
   return {context, lane};
 }
 
-void reportManagedStatus(OpBuilder &builder, Location location, Value context,
-                         Value status) {
-  LLVM::CallOp::create(
-      builder, location, TypeRange{},
-      SymbolRefAttr::get(builder.getContext(), "obelisk_rt_v1_scheduler_fail"),
-      ValueRange{context, status});
+sim::SimStatusCheckOp reportManagedStatus(OpBuilder &builder, Location location,
+                                          Value context, Value status) {
+  (void)context;
+  Type statusType = runtime::StatusType::get(builder.getContext());
+  Value runtimeStatus = runtime::RTStatusFromBitsOp::create(builder, location,
+                                                            statusType, status);
+  return sim::SimStatusCheckOp::create(builder, location, runtimeStatus);
 }
 
 class ClassNullConversion final
@@ -6538,6 +6682,9 @@ public:
         rewriter, op.getLoc(), pointer,
         managedClassDescriptorName(classType.getClassName()));
     Value output = entryAlloca(rewriter, op.getLoc(), pointer, 1, 8);
+    LLVM::StoreOp::create(rewriter, op.getLoc(),
+                          LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer),
+                          output, 8);
     Value source = managedObjectPointer(rewriter, op.getLoc(),
                                         adaptor.getSource().front());
     Value status = LLVM::CallOp::create(
@@ -6667,15 +6814,286 @@ public:
   LogicalResult
   matchAndRewrite(sim::SimClassRootBindOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    if (adaptor.getObject().size() != 1 || adaptor.getSlot().size() != 1)
+    if ((adaptor.getObject().size() != 1 && adaptor.getObject().size() != 2) ||
+        adaptor.getSlot().size() != 1)
       return failure();
+    Value owner = adaptor.getObject().front();
+    Type sourceType = op.getObject().getType();
+    uint64_t bitOffset = op.getBitOffset();
+    if (isa<sim::ArgumentRefType>(sourceType)) {
+      owner = arith::TruncIOp::create(rewriter, op.getLoc(),
+                                      rewriter.getI64Type(), owner);
+    } else if (!isa<sim::ManagedRefType>(sourceType)) {
+      auto integer = dyn_cast<IntegerType>(owner.getType());
+      if (!integer || integer.getWidth() < 64 ||
+          bitOffset > integer.getWidth() - 64)
+        return failure();
+      if (bitOffset != 0)
+        owner = arith::ShRUIOp::create(
+            rewriter, op.getLoc(), owner,
+            llvmConstant(rewriter, op.getLoc(), integer, bitOffset));
+      if (integer.getWidth() != 64)
+        owner = arith::TruncIOp::create(rewriter, op.getLoc(),
+                                        rewriter.getI64Type(), owner);
+    }
     LLVM::StoreOp::create(rewriter, op.getLoc(),
-                          managedObjectPointer(rewriter, op.getLoc(),
-                                               adaptor.getObject().front()),
+                          managedObjectPointer(rewriter, op.getLoc(), owner),
                           adaptor.getSlot().front(), 8);
     rewriter.eraseOp(op);
     return success();
   }
+};
+
+Value packArgumentReference(OpBuilder &builder, Location location, Value owner,
+                            Value payload, bool managed) {
+  Type i192 = builder.getIntegerType(192);
+  Value packed = arith::ExtUIOp::create(builder, location, i192, owner);
+  Value extendedPayload =
+      arith::ExtUIOp::create(builder, location, i192, payload);
+  Value payloadShift = llvmConstant(builder, location, i192, 64);
+  extendedPayload =
+      arith::ShLIOp::create(builder, location, extendedPayload, payloadShift);
+  packed = arith::OrIOp::create(builder, location, packed, extendedPayload);
+  if (managed) {
+    APInt tag(192, 1);
+    tag <<= 128;
+    Value tagValue = arith::ConstantOp::create(
+        builder, location, i192, builder.getIntegerAttr(i192, tag));
+    packed = arith::OrIOp::create(builder, location, packed, tagValue);
+  }
+  return packed;
+}
+
+struct UnpackedArgumentReference {
+  Value owner;
+  Value payload;
+  Value managed;
+};
+
+UnpackedArgumentReference unpackArgumentReference(OpBuilder &builder,
+                                                  Location location,
+                                                  Value reference) {
+  Type i192 = builder.getIntegerType(192);
+  Type i64 = builder.getI64Type();
+  Value owner = arith::TruncIOp::create(builder, location, i64, reference);
+  Value payloadShift = llvmConstant(builder, location, i192, 64);
+  Value shiftedPayload =
+      arith::ShRUIOp::create(builder, location, reference, payloadShift);
+  Value payload =
+      arith::TruncIOp::create(builder, location, i64, shiftedPayload);
+  Value tagShift = llvmConstant(builder, location, i192, 128);
+  Value shiftedTag =
+      arith::ShRUIOp::create(builder, location, reference, tagShift);
+  Value managed = arith::TruncIOp::create(builder, location,
+                                          builder.getI32Type(), shiftedTag);
+  return {owner, payload, managed};
+}
+
+class ArgumentRefFromRefConversion final
+    : public OpConversionPattern<sim::SimArgumentRefFromRefOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimArgumentRefFromRefOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getInput().size() != 1)
+      return failure();
+    Value zero = llvmConstant(rewriter, op.getLoc(), rewriter.getI64Type(), 0);
+    rewriter.replaceOp(op, packArgumentReference(rewriter, op.getLoc(), zero,
+                                                 adaptor.getInput().front(),
+                                                 false));
+    return success();
+  }
+};
+
+class ArgumentRefFromManagedConversion final
+    : public OpConversionPattern<sim::SimArgumentRefFromManagedOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimArgumentRefFromManagedOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getInput().size() != 2)
+      return failure();
+    rewriter.replaceOp(op, packArgumentReference(rewriter, op.getLoc(),
+                                                 adaptor.getInput()[0],
+                                                 adaptor.getInput()[1], true));
+    return success();
+  }
+};
+
+class ArgumentRefLoadConversion final
+    : public OpConversionPattern<sim::SimArgumentRefLoadOp> {
+public:
+  ArgumentRefLoadConversion(const TypeConverter &converter,
+                            MLIRContext *context,
+                            const llvm::DataLayout &dataLayout,
+                            uint64_t stateBitCount)
+      : OpConversionPattern(converter, context), dataLayout(dataLayout),
+        stateBitCount(stateBitCount) {}
+
+  LogicalResult
+  matchAndRewrite(sim::SimArgumentRefLoadOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getReference().size() != 1)
+      return failure();
+    SmallVector<Type> convertedTypes;
+    if (failed(getTypeConverter()->convertType(op.getResult().getType(),
+                                               convertedTypes)) ||
+        convertedTypes.empty())
+      return failure();
+    llvm::DataLayout local(dataLayout.getStringRepresentation());
+    llvm::LLVMContext llvmContext;
+    FailureOr<StorageProperties> storage =
+        storageProperties(op.getResult().getType(), local, llvmContext);
+    std::optional<unsigned> bitWidth =
+        nativeStateWidth(op.getResult().getType());
+    if (failed(storage) || !bitWidth ||
+        convertedTypes.size() != physicalStorageCount(*storage))
+      return failure();
+
+    Location location = op.getLoc();
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Type i32 = rewriter.getI32Type();
+    Type i64 = rewriter.getI64Type();
+    UnpackedArgumentReference reference = unpackArgumentReference(
+        rewriter, location, adaptor.getReference().front());
+    auto [context, lane] = managedContextAndLane(rewriter, location);
+    (void)lane;
+    Value valueOut = entryAlloca(rewriter, location, convertedTypes[0], 1,
+                                 storage->alignment);
+    LLVM::StoreOp::create(
+        rewriter, location,
+        LLVM::ZeroOp::create(rewriter, location, convertedTypes[0]), valueOut,
+        storage->alignment);
+    Value unknownOut = LLVM::ZeroOp::create(rewriter, location, pointer);
+    if (convertedTypes.size() == 2) {
+      unknownOut = entryAlloca(rewriter, location, convertedTypes[1], 1,
+                               storage->alignment);
+      LLVM::StoreOp::create(
+          rewriter, location,
+          LLVM::ZeroOp::create(rewriter, location, convertedTypes[1]),
+          unknownOut, storage->alignment);
+    }
+    Value valueState = LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                                 "__obelisk_state_value");
+    Value unknownState = LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                                   "__obelisk_state_unknown");
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_argument_ref_load"),
+            ValueRange{
+                context, valueState, unknownState,
+                llvmConstant(rewriter, location, i64, stateBitCount),
+                managedObjectPointer(rewriter, location, reference.owner),
+                reference.payload, reference.managed,
+                llvmConstant(rewriter, location, i64, *bitWidth),
+                llvmConstant(rewriter, location, i64, storage->size),
+                llvmConstant(rewriter, location, i32, storage->fourState),
+                llvmConstant(
+                    rewriter, location, i32,
+                    isa<sim::ClassHandleType>(op.getResult().getType())),
+                valueOut, unknownOut})
+            .getResult();
+    reportManagedStatus(rewriter, location, context, status);
+    SmallVector<Value> results{LLVM::LoadOp::create(
+        rewriter, location, convertedTypes[0], valueOut, storage->alignment)};
+    if (convertedTypes.size() == 2)
+      results.push_back(LLVM::LoadOp::create(rewriter, location,
+                                             convertedTypes[1], unknownOut,
+                                             storage->alignment));
+    SmallVector<ValueRange> replacements{ValueRange(results)};
+    rewriter.replaceOpWithMultiple(op, replacements);
+    return success();
+  }
+
+private:
+  const llvm::DataLayout &dataLayout;
+  uint64_t stateBitCount;
+};
+
+class ArgumentRefStoreConversion final
+    : public OpConversionPattern<sim::SimArgumentRefStoreOp> {
+public:
+  ArgumentRefStoreConversion(const TypeConverter &converter,
+                             MLIRContext *context,
+                             const llvm::DataLayout &dataLayout,
+                             uint64_t stateBitCount)
+      : OpConversionPattern(converter, context), dataLayout(dataLayout),
+        stateBitCount(stateBitCount) {}
+
+  LogicalResult
+  matchAndRewrite(sim::SimArgumentRefStoreOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getReference().size() != 1 || adaptor.getValue().empty())
+      return failure();
+    Type valueType = op.getValue().getType();
+    llvm::DataLayout local(dataLayout.getStringRepresentation());
+    llvm::LLVMContext llvmContext;
+    FailureOr<StorageProperties> storage =
+        storageProperties(valueType, local, llvmContext);
+    std::optional<unsigned> bitWidth = nativeStateWidth(valueType);
+    if (failed(storage) || !bitWidth ||
+        adaptor.getValue().size() != physicalStorageCount(*storage))
+      return failure();
+
+    Location location = op.getLoc();
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Type i32 = rewriter.getI32Type();
+    Type i64 = rewriter.getI64Type();
+    UnpackedArgumentReference reference = unpackArgumentReference(
+        rewriter, location, adaptor.getReference().front());
+    auto [context, lane] = managedContextAndLane(rewriter, location);
+    (void)lane;
+    Value valueState = LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                                 "__obelisk_state_value");
+    Value unknownState = LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                                   "__obelisk_state_unknown");
+    SmallVector<Value> commonArguments{
+        context,
+        valueState,
+        unknownState,
+        llvmConstant(rewriter, location, i64, stateBitCount),
+        managedObjectPointer(rewriter, location, reference.owner),
+        reference.payload,
+        reference.managed,
+        llvmConstant(rewriter, location, i64, *bitWidth),
+        llvmConstant(rewriter, location, i64, storage->size),
+        llvmConstant(rewriter, location, i32, storage->fourState),
+        llvmConstant(rewriter, location, i32,
+                     isa<sim::ClassHandleType>(valueType))};
+    Value valueIn =
+        entryAlloca(rewriter, location, adaptor.getValue().front().getType(), 1,
+                    storage->alignment);
+    LLVM::StoreOp::create(rewriter, location, adaptor.getValue().front(),
+                          valueIn, storage->alignment);
+    Value unknownIn = LLVM::ZeroOp::create(rewriter, location, pointer);
+    if (adaptor.getValue().size() == 2) {
+      unknownIn =
+          entryAlloca(rewriter, location, adaptor.getValue()[1].getType(), 1,
+                      storage->alignment);
+      LLVM::StoreOp::create(rewriter, location, adaptor.getValue()[1],
+                            unknownIn, storage->alignment);
+    }
+    SmallVector<Value> storeArguments(commonArguments);
+    storeArguments.push_back(valueIn);
+    storeArguments.push_back(unknownIn);
+    Value status = LLVM::CallOp::create(
+                       rewriter, location, TypeRange{i32},
+                       SymbolRefAttr::get(rewriter.getContext(),
+                                          "obelisk_rt_v1_argument_ref_store"),
+                       storeArguments)
+                       .getResult();
+    reportManagedStatus(rewriter, location, context, status);
+    rewriter.eraseOp(op);
+    return success();
+  }
+
+private:
+  const llvm::DataLayout &dataLayout;
+  uint64_t stateBitCount;
 };
 
 class ManagedLoadConversion final
@@ -6711,40 +7129,49 @@ public:
     auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
     (void)lane;
     SmallVector<Value> results;
-    for (auto [index, type] : llvm::enumerate(convertedTypes)) {
-      Value offset = baseOffset;
-      if (index != 0)
-        offset = arith::AddIOp::create(
-            rewriter, op.getLoc(), baseOffset,
-            llvmConstant(rewriter, op.getLoc(), i64, index * storage->size));
-      Value output;
-      Value status;
-      if (storage->managedRoot) {
-        output = entryAlloca(rewriter, op.getLoc(), pointer, 1, 8);
-        status = LLVM::CallOp::create(
-                     rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
-                     SymbolRefAttr::get(rewriter.getContext(),
-                                        "obelisk_rt_v1_object_field_load"),
-                     ValueRange{object, offset, output})
-                     .getResult();
-        reportManagedStatus(rewriter, op.getLoc(), context, status);
-        Value loaded =
-            LLVM::LoadOp::create(rewriter, op.getLoc(), pointer, output, 8);
-        results.push_back(managedObjectHandle(rewriter, op.getLoc(), loaded));
-        continue;
-      }
-      output = entryAlloca(rewriter, op.getLoc(), type, 1, storage->alignment);
-      status = LLVM::CallOp::create(
-                   rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
-                   SymbolRefAttr::get(rewriter.getContext(),
-                                      "obelisk_rt_v1_object_read"),
-                   ValueRange{
-                       object, offset, output,
-                       llvmConstant(rewriter, op.getLoc(), i64, storage->size)})
-                   .getResult();
+    if (isa<sim::ClassHandleType>(op.getResult().getType())) {
+      Value output = entryAlloca(rewriter, op.getLoc(), pointer, 1, 8);
+      LLVM::StoreOp::create(
+          rewriter, op.getLoc(),
+          LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer), output, 8);
+      Value status =
+          LLVM::CallOp::create(
+              rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+              SymbolRefAttr::get(rewriter.getContext(),
+                                 "obelisk_rt_v1_object_field_load"),
+              ValueRange{object, baseOffset, output})
+              .getResult();
       reportManagedStatus(rewriter, op.getLoc(), context, status);
-      results.push_back(LLVM::LoadOp::create(rewriter, op.getLoc(), type,
-                                             output, storage->alignment));
+      Value loaded =
+          LLVM::LoadOp::create(rewriter, op.getLoc(), pointer, output, 8);
+      results.push_back(managedObjectHandle(rewriter, op.getLoc(), loaded));
+    } else {
+      SmallVector<Value> outputs;
+      for (Type type : convertedTypes) {
+        Value output =
+            entryAlloca(rewriter, op.getLoc(), type, 1, storage->alignment);
+        LLVM::StoreOp::create(rewriter, op.getLoc(),
+                              LLVM::ZeroOp::create(rewriter, op.getLoc(), type),
+                              output, storage->alignment);
+        outputs.push_back(output);
+      }
+      SmallVector<Value> arguments{
+          object, baseOffset, outputs.front(),
+          llvmConstant(rewriter, op.getLoc(), i64, storage->size)};
+      StringRef callee = "obelisk_rt_v1_object_read";
+      if (outputs.size() == 2) {
+        callee = "obelisk_rt_v1_object_read_planes";
+        arguments.insert(arguments.end() - 1, outputs[1]);
+      }
+      Value status =
+          LLVM::CallOp::create(
+              rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+              SymbolRefAttr::get(rewriter.getContext(), callee), arguments)
+              .getResult();
+      reportManagedStatus(rewriter, op.getLoc(), context, status);
+      for (auto [type, output] : llvm::zip_equal(convertedTypes, outputs))
+        results.push_back(LLVM::LoadOp::create(rewriter, op.getLoc(), type,
+                                               output, storage->alignment));
     }
     SmallVector<ValueRange> replacements{ValueRange(results)};
     rewriter.replaceOpWithMultiple(op, replacements);
@@ -6780,38 +7207,39 @@ public:
     Value baseOffset = adaptor.getReference()[1];
     auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
     (void)lane;
-    for (auto [index, value] : llvm::enumerate(adaptor.getValue())) {
-      Value offset = baseOffset;
-      if (index != 0)
-        offset = arith::AddIOp::create(
-            rewriter, op.getLoc(), baseOffset,
-            llvmConstant(rewriter, op.getLoc(), i64, index * storage->size));
-      Value status;
-      if (storage->managedRoot) {
-        status =
-            LLVM::CallOp::create(
-                rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
-                SymbolRefAttr::get(rewriter.getContext(),
-                                   "obelisk_rt_v1_object_field_store"),
-                ValueRange{object, offset,
-                           managedObjectPointer(rewriter, op.getLoc(), value)})
-                .getResult();
-      } else {
+    Value status;
+    if (isa<sim::ClassHandleType>(op.getValue().getType())) {
+      status = LLVM::CallOp::create(
+                   rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+                   SymbolRefAttr::get(rewriter.getContext(),
+                                      "obelisk_rt_v1_object_field_store"),
+                   ValueRange{object, baseOffset,
+                              managedObjectPointer(rewriter, op.getLoc(),
+                                                   adaptor.getValue().front())})
+                   .getResult();
+    } else {
+      SmallVector<Value> inputs;
+      for (Value value : adaptor.getValue()) {
         Value input = entryAlloca(rewriter, op.getLoc(), value.getType(), 1,
                                   storage->alignment);
         LLVM::StoreOp::create(rewriter, op.getLoc(), value, input,
                               storage->alignment);
-        status = LLVM::CallOp::create(
-                     rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
-                     SymbolRefAttr::get(rewriter.getContext(),
-                                        "obelisk_rt_v1_object_write"),
-                     ValueRange{object, offset, input,
-                                llvmConstant(rewriter, op.getLoc(), i64,
-                                             storage->size)})
-                     .getResult();
+        inputs.push_back(input);
       }
-      reportManagedStatus(rewriter, op.getLoc(), context, status);
+      SmallVector<Value> arguments{
+          object, baseOffset, inputs.front(),
+          llvmConstant(rewriter, op.getLoc(), i64, storage->size)};
+      StringRef callee = "obelisk_rt_v1_object_write";
+      if (inputs.size() == 2) {
+        callee = "obelisk_rt_v1_object_write_planes";
+        arguments.insert(arguments.end() - 1, inputs[1]);
+      }
+      status = LLVM::CallOp::create(
+                   rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+                   SymbolRefAttr::get(rewriter.getContext(), callee), arguments)
+                   .getResult();
     }
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
     rewriter.eraseOp(op);
     return success();
   }
@@ -6851,7 +7279,7 @@ public:
     };
 
     Value value;
-    if (storage->managedRoot)
+    if (isa<sim::ClassHandleType>(op.getValue().getType()))
       value = savePlane(
           managedObjectPointer(rewriter, location, adaptor.getValue().front()),
           storage->alignment);
@@ -6904,9 +7332,17 @@ public:
     Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
     auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
     Value output = entryAlloca(rewriter, op.getLoc(), pointer, 1, 8);
+    LLVM::StoreOp::create(rewriter, op.getLoc(),
+                          LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer),
+                          output, 8);
     SmallVector<Value> arguments;
-    if constexpr (std::is_same_v<Op, sim::SimWeakCreateOp>)
+    if constexpr (std::is_same_v<Op, sim::SimWeakCreateOp>) {
       arguments.push_back(lane);
+      auto wrapperType = cast<sim::ClassHandleType>(op.getResult().getType());
+      arguments.push_back(LLVM::AddressOfOp::create(
+          rewriter, op.getLoc(), pointer,
+          managedClassDescriptorName(wrapperType.getClassName())));
+    }
     arguments.push_back(
         managedObjectPointer(rewriter, op.getLoc(), input.front()));
     arguments.push_back(output);
@@ -7197,12 +7633,23 @@ materializeManagedMethodThunks(ModuleOp module,
         resultOffset += storage->size;
       }
     }
+    Value returnedStatus =
+        llvmConstant(builder, method.getLoc(), i32, OBELISK_RT_OK);
+    if (physicalResult + 1 == call.getNumResults()) {
+      Value status = call.getResult(physicalResult);
+      if (status.getType() == i32) {
+        returnedStatus = status;
+        ++physicalResult;
+      } else if (isa<runtime::StatusType>(status.getType())) {
+        returnedStatus = runtime::RTStatusToBitsOp::create(
+            builder, method.getLoc(), i32, status);
+        ++physicalResult;
+      }
+    }
     if (physicalResult != call.getNumResults())
       return method.emitError(
           "managed method result flattening is inconsistent");
-    LLVM::ReturnOp::create(
-        builder, method.getLoc(),
-        llvmConstant(builder, method.getLoc(), i32, OBELISK_RT_OK));
+    LLVM::ReturnOp::create(builder, method.getLoc(), returnedStatus);
   }
   return success();
 }
@@ -7686,10 +8133,13 @@ LogicalResult makeSchedulerMain(ModuleOp module,
         builder, location, TypeRange{},
         SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
         ValueRange{runtimeContext, status.getResult()});
-    if (bound.managedRoot) {
+    for (uint64_t rootOffset : bound.managedRootOffsets) {
+      if ((bound.offset + rootOffset) & 7)
+        return module.emitError("managed static root is not byte aligned");
       Value state = LLVM::AddressOfOp::create(builder, location, pointer,
                                               "__obelisk_state_value");
-      Value slot = byteGEP(builder, location, state, bound.offset / 8);
+      Value slot =
+          byteGEP(builder, location, state, (bound.offset + rootOffset) / 8);
       Value rootStatus =
           LLVM::CallOp::create(
               builder, location, TypeRange{i32},
@@ -7708,7 +8158,8 @@ LogicalResult makeSchedulerMain(ModuleOp module,
                 SymbolRefAttr::get(context,
                                    "obelisk_rt_v1_gc_design_root_register"),
                 ValueRange{runtimeContext,
-                           llvmConstant(builder, location, i64, bound.offset)})
+                           llvmConstant(builder, location, i64,
+                                        bound.offset + rootOffset)})
                 .getResult();
         LLVM::CallOp::create(
             builder, location, TypeRange{},
@@ -7824,6 +8275,13 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
        LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_native_state_alloc_with_roots",
+      IntegerType::get(context, 32),
+      {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
+       LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
+       LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
+       LLVM::LLVMPointerType::get(context)});
+  getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_native_state_retain",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64)});
@@ -7847,6 +8305,24 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
        IntegerType::get(context, 64), IntegerType::get(context, 32),
        LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context)});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_argument_ref_load", IntegerType::get(context, 32),
+      {LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
+       LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
+       LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
+       IntegerType::get(context, 32), IntegerType::get(context, 64),
+       IntegerType::get(context, 64), IntegerType::get(context, 32),
+       IntegerType::get(context, 32), LLVM::LLVMPointerType::get(context),
+       LLVM::LLVMPointerType::get(context)});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_argument_ref_store", IntegerType::get(context, 32),
+      {LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
+       LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
+       LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
+       IntegerType::get(context, 32), IntegerType::get(context, 64),
+       IntegerType::get(context, 64), IntegerType::get(context, 32),
+       IntegerType::get(context, 32), LLVM::LLVMPointerType::get(context),
+       LLVM::LLVMPointerType::get(context)});
   Type managedPointer = LLVM::LLVMPointerType::get(context);
   Type managedI32 = IntegerType::get(context, 32);
   Type managedI64 = IntegerType::get(context, 64);
@@ -7856,6 +8332,11 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                            {managedPointer, managedPointer, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_gc_root_pop", managedI32,
                            {managedPointer, managedPointer});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_gc_root_range_push", managedI32,
+      {managedPointer, managedPointer, managedPointer, managedI64});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_gc_root_range_pop",
+                           managedI32, {managedPointer, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_gc_safepoint", managedI32,
                            {managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_object_allocate", managedI32,
@@ -7869,6 +8350,12 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_object_write", managedI32,
       {managedPointer, managedI64, managedPointer, managedI64});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_object_read_planes", managedI32,
+      {managedPointer, managedI64, managedPointer, managedPointer, managedI64});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_object_write_planes", managedI32,
+      {managedPointer, managedI64, managedPointer, managedPointer, managedI64});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_object_field_load",
                            managedI32,
                            {managedPointer, managedI64, managedPointer});
@@ -7885,8 +8372,9 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                            {managedPointer, managedPointer, managedI64,
                             managedI64, managedPointer, managedI32,
                             managedPointer, managedI64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_weak_create", managedI32,
-                           {managedPointer, managedPointer, managedPointer});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_weak_create", managedI32,
+      {managedPointer, managedPointer, managedPointer, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_weak_get", managedI32,
                            {managedPointer, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_weak_clear", managedI32,
@@ -8014,6 +8502,9 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   packedConverter.addConversion([context](sim::ClassHandleType) -> Type {
     return IntegerType::get(context, 64);
   });
+  packedConverter.addConversion([context](sim::ArgumentRefType) -> Type {
+    return IntegerType::get(context, 192);
+  });
   packedConverter.addConversion(
       [context](sim::ManagedRefType, SmallVectorImpl<Type> &results) {
         results.push_back(IntegerType::get(context, 64));
@@ -8109,10 +8600,13 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       .add<ClassNullConversion, ClassAllocConversion, ClassCopyConversion,
            ClassIsInstanceConversion, ClassIdConversion, ClassCastConversion,
            ClassFieldRefConversion, ClassRootBindConversion,
+           ArgumentRefFromRefConversion, ArgumentRefFromManagedConversion,
            ManagedObjectOutputConversion<sim::SimWeakCreateOp>,
            ManagedObjectOutputConversion<sim::SimWeakGetOp>,
            WeakClearConversion, GCSafepointConversion>(packedConverter,
                                                        context);
+  packedPatterns.add<ArgumentRefLoadConversion, ArgumentRefStoreConversion>(
+      packedConverter, context, dataLayout, stateLayout->bitCount);
   packedPatterns.add<ManagedLoadConversion, ManagedStoreConversion,
                      ManagedNBAConversion, ClassVirtualCallConversion>(
       packedConverter, context, dataLayout);
@@ -8145,6 +8639,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       sim::SimClassIsInstanceOp, sim::SimClassIdOp, sim::SimClassCastOp,
       sim::SimClassFieldRefOp, sim::SimClassRootBindOp, sim::SimManagedLoadOp,
       sim::SimManagedStoreOp, sim::SimManagedNBAEnqueueOp,
+      sim::SimArgumentRefFromRefOp, sim::SimArgumentRefFromManagedOp,
+      sim::SimArgumentRefLoadOp, sim::SimArgumentRefStoreOp,
       sim::SimClassDirectCallOp, sim::SimClassVirtualCallOp,
       sim::SimWeakCreateOp, sim::SimWeakGetOp, sim::SimWeakClearOp,
       sim::SimGCSafepointOp>();
@@ -8420,13 +8916,18 @@ SimulationProcessFrameAnalysis::create(sim::SimFuncOp function,
     end = valueOffset + storage->size;
     uint64_t unknownOffset = kNoOffset;
     uint64_t auxiliaryOffset = kNoOffset;
-    ProcessFrameFieldFlags flags =
-        storage->managedReference ? ProcessFrameFieldFlags::ManagedRoot
-        : storage->fourState      ? ProcessFrameFieldFlags::FourStateValue
-        : storage->managedRoot    ? ProcessFrameFieldFlags::ManagedRoot
-                                  : ProcessFrameFieldFlags::None;
-    result->fields.push_back(
-        {kind, flags, valueOffset, storage->size, storage->alignment});
+    if (storage->managedRootOffsets.empty()) {
+      result->fields.push_back(
+          {kind,
+           storage->fourState ? ProcessFrameFieldFlags::FourStateValue
+                              : ProcessFrameFieldFlags::None,
+           valueOffset, storage->size, storage->alignment});
+    } else {
+      for (uint64_t rootOffset : storage->managedRootOffsets)
+        result->fields.push_back({kind, ProcessFrameFieldFlags::ManagedRoot,
+                                  valueOffset + rootOffset, sizeof(void *),
+                                  alignof(void *)});
+    }
     if (storage->managedReference) {
       auxiliaryOffset = end;
       if (end > std::numeric_limits<uint64_t>::max() - storage->size)
@@ -8448,7 +8949,8 @@ SimulationProcessFrameAnalysis::create(sim::SimFuncOp function,
     result->frameAlignment =
         std::max<uint64_t>(result->frameAlignment, storage->alignment);
     values.push_back({valueOffset, unknownOffset, storage->size,
-                      storage->alignment, auxiliaryOffset});
+                      storage->alignment, auxiliaryOffset,
+                      storage->managedRootOffsets});
     return success();
   };
 
@@ -8481,8 +8983,9 @@ SimulationProcessFrameAnalysis::create(sim::SimFuncOp function,
     uint64_t planeSize = 0;
     uint32_t alignment = 1;
     bool fourState = false;
-    std::optional<bool> managedRoot;
-    std::optional<bool> managedReference;
+    bool initialized = false;
+    bool managedReference = false;
+    SmallVector<uint64_t, 2> managedRootOffsets;
     uint64_t valueOffset = 0;
     uint64_t unknownOffset = kNoOffset;
     uint64_t auxiliaryOffset = kNoOffset;
@@ -8504,9 +9007,9 @@ SimulationProcessFrameAnalysis::create(sim::SimFuncOp function,
       unsigned selected = lanes.size();
       for (auto [index, lane] : llvm::enumerate(lanes))
         if (!used[index] &&
-            (!lane.managedRoot || *lane.managedRoot == storage->managedRoot) &&
-            (!lane.managedReference ||
-             *lane.managedReference == storage->managedReference)) {
+            (!lane.initialized ||
+             (lane.managedReference == storage->managedReference &&
+              lane.managedRootOffsets == storage->managedRootOffsets))) {
           selected = index;
           break;
         }
@@ -8517,8 +9020,9 @@ SimulationProcessFrameAnalysis::create(sim::SimFuncOp function,
       used[selected] = true;
       assignments.push_back(selected);
       ContinuationLane &lane = lanes[selected];
-      lane.managedRoot = storage->managedRoot;
+      lane.initialized = true;
       lane.managedReference = storage->managedReference;
+      lane.managedRootOffsets = storage->managedRootOffsets;
       lane.planeSize = std::max(lane.planeSize, storage->size);
       lane.alignment = std::max(lane.alignment, storage->alignment);
       lane.fourState |= storage->fourState;
@@ -8531,16 +9035,20 @@ SimulationProcessFrameAnalysis::create(sim::SimFuncOp function,
             std::numeric_limits<uint64_t>::max() - lane.planeSize)
       return function.emitError("canonical process frame size overflow");
     uint64_t end = lane.valueOffset + lane.planeSize;
-    bool managedReference = lane.managedReference.value_or(false);
-    result->fields.push_back(
-        {ProcessFrameFieldKind::Continuation,
-         managedReference ? ProcessFrameFieldFlags::ManagedRoot
-         : lane.fourState ? ProcessFrameFieldFlags::FourStateValue
-         : lane.managedRoot.value_or(false)
-             ? ProcessFrameFieldFlags::ManagedRoot
-             : ProcessFrameFieldFlags::None,
-         lane.valueOffset, lane.planeSize, lane.alignment});
-    if (managedReference) {
+    if (lane.managedRootOffsets.empty()) {
+      result->fields.push_back(
+          {ProcessFrameFieldKind::Continuation,
+           lane.fourState ? ProcessFrameFieldFlags::FourStateValue
+                          : ProcessFrameFieldFlags::None,
+           lane.valueOffset, lane.planeSize, lane.alignment});
+    } else {
+      for (uint64_t rootOffset : lane.managedRootOffsets)
+        result->fields.push_back({ProcessFrameFieldKind::Continuation,
+                                  ProcessFrameFieldFlags::ManagedRoot,
+                                  lane.valueOffset + rootOffset, sizeof(void *),
+                                  alignof(void *)});
+    }
+    if (lane.managedReference) {
       lane.auxiliaryOffset = end;
       if (end > std::numeric_limits<uint64_t>::max() - lane.planeSize)
         return function.emitError("canonical process frame size overflow");
@@ -8580,7 +9088,8 @@ SimulationProcessFrameAnalysis::create(sim::SimFuncOp function,
           {lane.valueOffset,
            storage->fourState ? lane.unknownOffset : kNoOffset, storage->size,
            storage->alignment,
-           storage->managedReference ? lane.auxiliaryOffset : kNoOffset});
+           storage->managedReference ? lane.auxiliaryOffset : kNoOffset,
+           storage->managedRootOffsets});
     }
   }
 

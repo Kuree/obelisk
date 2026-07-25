@@ -2468,6 +2468,39 @@ TEST(DesignBytecode, ValidatesComparisonResultDomains) {
             OBELISK_RT_INVALID_BYTECODE);
 }
 
+TEST(DesignBytecode, ValidatesManagedAggregateExtractionBounds) {
+  auto validate = [](uint64_t bitOffset) {
+    Fixture fixture;
+    fixture.bytecode =
+        makeComparisonBytecode(OBELISK_RT_DBREG_MANAGED, OBELISK_RT_DB_CMP_EQ);
+    size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+    size_t layoutOffset = get64(fixture.bytecode, 56);
+    size_t codeOffset = get64(fixture.bytecode, 72);
+    fixture.bytecode[layoutOffset] = OBELISK_RT_DBREG_BITS;
+    put32(fixture.bytecode, layoutOffset + 4, 128);
+    put64(fixture.bytecode, layoutOffset + 16, 16);
+    fixture.bytecode[layoutOffset + 80] = OBELISK_RT_DBREG_MANAGED;
+    put32(fixture.bytecode, layoutOffset + 84, 64);
+    put64(fixture.bytecode, layoutOffset + 96, 8);
+    put32(fixture.bytecode, functionOffset + 48, 2);
+    instruction(fixture.bytecode, codeOffset, 0, OBELISK_RT_DB_EXTRACT,
+                OBELISK_RT_DB_AGGREGATE_MANAGED, 2, 0, UINT32_MAX, 0, 0,
+                bitOffset);
+    put64(fixture.bytecode, 32, imageChecksum(fixture.bytecode));
+    fixture.execution.bytecode = fixture.bytecode.data();
+    fixture.execution.bytecode_size = fixture.bytecode.size();
+    fixture.execution.checksum = imageChecksum(fixture.bytecode);
+    uint64_t scratchSize = 0;
+    uint64_t scratchAlignment = 0;
+    return obelisk_rt_validate_design_bytecode(
+        fixture.entry, &scratchSize, &scratchAlignment);
+  };
+
+  EXPECT_EQ(validate(64), OBELISK_RT_OK);
+  EXPECT_EQ(validate(1), OBELISK_RT_INVALID_BYTECODE);
+  EXPECT_EQ(validate(128), OBELISK_RT_INVALID_BYTECODE);
+}
+
 TEST(DesignBytecode, NativeAndBytecodeShareCanonicalDesignState) {
   Fixture fixture;
   obelisk_rt_context *context = nullptr;

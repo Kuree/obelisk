@@ -169,6 +169,17 @@ def SimManagedRefType : SimType<"ManagedRef"> {
   let genVerifyDecl = 1;
 }
 
+// A language `ref` formal may alias either ordinary simulation storage or a
+// managed class property. Its physical representation keeps an explicit owner
+// word so the collector can trace it without retaining an interior pointer.
+def SimArgumentRefType : SimType<"ArgumentRef"> {
+  let mnemonic = "argument_ref";
+  let summary = "polymorphic exact-alias subroutine reference";
+  let parameters = (ins "::mlir::Type":$elementType);
+  let assemblyFormat = "`<` $elementType `>`";
+  let genVerifyDecl = 1;
+}
+
 def SimControlType : SimType<"Control"> {
   let mnemonic = "control";
   let summary = "opaque dynamic named-control activation token";
