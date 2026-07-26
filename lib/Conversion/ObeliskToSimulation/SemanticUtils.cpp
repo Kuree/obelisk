@@ -579,6 +579,8 @@ static FailureOr<Type> normalizeType(Type type, Location location,
   }
   if (isa<semantic::EventType>(type))
     return sim::EventType::get(context);
+  if (isa<semantic::StringType>(type))
+    return sim::StringType::get(context);
   if (type.isF64() || type.isF32())
     return type;
   if (isa<sim::LogicType, sim::TimeType, sim::ContextType, sim::RefType,
@@ -866,7 +868,9 @@ FailureOr<sim::FrozenConstantAttr> freezeSemanticConstant(Operation *symbol) {
 
   Builder builder(symbol->getContext());
   Attribute payload;
-  if (isa<FloatType>(*normalized)) {
+  if (isa<sim::StringType>(*normalized)) {
+    payload = spelling;
+  } else if (isa<FloatType>(*normalized)) {
     double value = 0.0;
     if (spelling.getValue().getAsDouble(value) || !std::isfinite(value)) {
       emitError(location) << "real constant '" << spelling.getValue()
@@ -906,6 +910,8 @@ FailureOr<sim::FrozenConstantAttr> freezeSemanticConstant(Operation *symbol) {
 Value createDefaultValue(OpBuilder &builder, Location location, Type type) {
   if (isa<sim::ClassHandleType>(type))
     return sim::SimClassNullOp::create(builder, location, type);
+  if (isa<sim::EventType>(type))
+    return sim::SimEventNullOp::create(builder, location, type);
   if (sim::isManagedHandleType(type))
     return sim::SimManagedNullOp::create(builder, location, type);
   if (sim::isAggregateType(type))

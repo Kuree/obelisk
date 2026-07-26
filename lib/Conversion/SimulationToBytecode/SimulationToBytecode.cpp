@@ -88,6 +88,12 @@ constexpr uint32_t kIntrinsicClog2 = OBELISK_RT_INTRINSIC_V1_CLOG2;
 constexpr uint32_t kIntrinsicFileOpenMCD =
     OBELISK_RT_INTRINSIC_V1_FILE_OPEN_MCD;
 constexpr uint32_t kIntrinsicFileOpen = OBELISK_RT_INTRINSIC_V1_FILE_OPEN;
+constexpr uint32_t kIntrinsicFileOpenStringMCD =
+    OBELISK_RT_INTRINSIC_V1_FILE_OPEN_STRING_MCD;
+constexpr uint32_t kIntrinsicFileOpenString =
+    OBELISK_RT_INTRINSIC_V1_FILE_OPEN_STRING;
+constexpr uint32_t kIntrinsicFileGetlineString =
+    OBELISK_RT_INTRINSIC_V1_FILE_GETLINE_STRING;
 constexpr uint32_t kIntrinsicFileClose = OBELISK_RT_INTRINSIC_V1_FILE_CLOSE;
 constexpr uint32_t kIntrinsicFileFlush = OBELISK_RT_INTRINSIC_V1_FILE_FLUSH;
 constexpr uint32_t kIntrinsicFileGetc = OBELISK_RT_INTRINSIC_V1_FILE_GETC;
@@ -153,6 +159,42 @@ constexpr uint32_t kIntrinsicReferencePathIndex =
     OBELISK_RT_INTRINSIC_V1_REFERENCE_PATH_INDEX;
 constexpr uint32_t kIntrinsicArgumentRefFromPath =
     OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_FROM_PATH;
+constexpr uint32_t kIntrinsicStringLiteral =
+    OBELISK_RT_INTRINSIC_V1_STRING_LITERAL;
+constexpr uint32_t kIntrinsicStringFromPacked =
+    OBELISK_RT_INTRINSIC_V1_STRING_FROM_PACKED;
+constexpr uint32_t kIntrinsicStringToPacked =
+    OBELISK_RT_INTRINSIC_V1_STRING_TO_PACKED;
+constexpr uint32_t kIntrinsicStringConcat =
+    OBELISK_RT_INTRINSIC_V1_STRING_CONCAT;
+constexpr uint32_t kIntrinsicStringRepeat =
+    OBELISK_RT_INTRINSIC_V1_STRING_REPEAT;
+constexpr uint32_t kIntrinsicStringLength =
+    OBELISK_RT_INTRINSIC_V1_STRING_LENGTH;
+constexpr uint32_t kIntrinsicStringGetc = OBELISK_RT_INTRINSIC_V1_STRING_GETC;
+constexpr uint32_t kIntrinsicStringPutc = OBELISK_RT_INTRINSIC_V1_STRING_PUTC;
+constexpr uint32_t kIntrinsicStringSubstr =
+    OBELISK_RT_INTRINSIC_V1_STRING_SUBSTR;
+constexpr uint32_t kIntrinsicStringCompare =
+    OBELISK_RT_INTRINSIC_V1_STRING_COMPARE;
+constexpr uint32_t kIntrinsicStringCaseConvert =
+    OBELISK_RT_INTRINSIC_V1_STRING_CASE_CONVERT;
+constexpr uint32_t kIntrinsicStringParseInteger =
+    OBELISK_RT_INTRINSIC_V1_STRING_PARSE_INTEGER;
+constexpr uint32_t kIntrinsicStringParseReal =
+    OBELISK_RT_INTRINSIC_V1_STRING_PARSE_REAL;
+constexpr uint32_t kIntrinsicStringFormatInteger =
+    OBELISK_RT_INTRINSIC_V1_STRING_FORMAT_INTEGER;
+constexpr uint32_t kIntrinsicStringFormatReal =
+    OBELISK_RT_INTRINSIC_V1_STRING_FORMAT_REAL;
+constexpr uint32_t kIntrinsicContainerSize =
+    OBELISK_RT_INTRINSIC_V1_CONTAINER_SIZE;
+constexpr uint32_t kIntrinsicContainerCreateLike =
+    OBELISK_RT_INTRINSIC_V1_CONTAINER_CREATE_LIKE;
+constexpr uint32_t kIntrinsicContainerRead =
+    OBELISK_RT_INTRINSIC_V1_CONTAINER_READ;
+constexpr uint32_t kIntrinsicContainerWrite =
+    OBELISK_RT_INTRINSIC_V1_CONTAINER_WRITE;
 
 bool isObserverCaptureBridge(Block &block) {
   if (block.getOperations().size() != 1)
@@ -953,6 +995,10 @@ private:
               constrain(op.getResult(), op.getInput());
           } else if (auto op = dyn_cast<sim::SimLogicBinaryOp>(operation)) {
             constrainResultTo(op.getResult(), op.getOperands());
+          } else if (auto op = dyn_cast<sim::SimLogicMuxOp>(operation)) {
+            constrain(op.getResult(), op.getTrueValue());
+            constrain(op.getResult(), op.getFalseValue());
+            force(op.getCondition());
           } else if (auto op = dyn_cast<sim::SimLogicShiftOp>(operation)) {
             constrain(op.getResult(), op.getInput());
           } else if (auto op = dyn_cast<sim::SimLogicCompareOp>(operation)) {
@@ -1456,7 +1502,14 @@ private:
 
   static bool mayCollect(Operation *operation) {
     return isa<sim::SimClassAllocOp, sim::SimClassCopyOp, sim::SimWeakCreateOp,
-               sim::SimReferencePathIndexOp, sim::SimGCSafepointOp,
+               sim::SimReferencePathIndexOp, sim::SimContainerCreateLikeOp,
+               sim::SimGCSafepointOp,
+               sim::SimStringLiteralOp, sim::SimStringFromPackedOp,
+               sim::SimStringConcatOp, sim::SimStringRepeatOp,
+               sim::SimStringPutcOp, sim::SimStringSubstrOp,
+               sim::SimStringCaseConvertOp,
+               sim::SimStringFormatIntegerOp, sim::SimStringFormatRealOp,
+               sim::SimFileGetlineStringOp,
                sim::SimCallOp, sim::SimClassDirectCallOp,
                sim::SimClassVirtualCallOp, sim::SimDPICallOp>(operation);
   }
@@ -1473,7 +1526,11 @@ private:
       if (!sim::getManagedHandleOffsets(value.getType(), offsets))
         return operation->emitError(
             "value has no fixed bytecode managed root layout");
-      if (offsets.empty() || plan.layouts[source].kind == Managed)
+      // Scalar managed registers and tagged string words are enumerated
+      // directly from the live bytecode frame. Only aggregate payloads need
+      // object-pointer shadows for their embedded managed slots.
+      if (offsets.empty() || plan.layouts[source].kind == Managed ||
+          plan.layouts[source].kind == String)
         continue;
       for (uint64_t bitOffset : offsets) {
         auto found = llvm::find_if(
@@ -1866,6 +1923,15 @@ private:
     if (auto op = dyn_cast<sim::SimFileOpenOp>(operation))
       return emitIntrinsic(plan, kIntrinsicFileOpen,
                            {op.getPath(), op.getMode()}, {op.getDescriptor()});
+    if (auto op = dyn_cast<sim::SimFileOpenStringMCDOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicFileOpenStringMCD, {op.getPath()},
+                           {op.getDescriptor()});
+    if (auto op = dyn_cast<sim::SimFileOpenStringOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicFileOpenString,
+                           {op.getPath(), op.getMode()}, {op.getDescriptor()});
+    if (auto op = dyn_cast<sim::SimFileGetlineStringOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicFileGetlineString,
+                           {op.getDescriptor()}, {op.getData(), op.getCount()});
     if (auto op = dyn_cast<sim::SimFileCloseOp>(operation))
       return emitIntrinsic(plan, kIntrinsicFileClose, {op.getDescriptor()}, {});
     if (auto op = dyn_cast<sim::SimFileFlushOp>(operation))
@@ -1929,7 +1995,97 @@ private:
             reg(plan, op.getRhs())});
       return success();
     }
-    if (isa<sim::SimClassNullOp, sim::SimManagedNullOp>(operation)) {
+    if (auto op = dyn_cast<sim::SimContainerSizeOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicContainerSize, {op.getContainer()},
+                           {op.getResult()});
+    if (auto op = dyn_cast<sim::SimContainerCreateLikeOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicContainerCreateLike,
+                           {op.getPreferred(), op.getFallback(), op.getSize()},
+                           {op.getResult()});
+    if (auto op = dyn_cast<sim::SimContainerReadOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicContainerRead,
+                           {op.getContainer(), op.getIndex()},
+                           {op.getResult()});
+    if (auto op = dyn_cast<sim::SimContainerWriteOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicContainerWrite,
+                           {op.getContainer(), op.getIndex(), op.getValue()},
+                           {});
+    if (auto op = dyn_cast<sim::SimStringLiteralOp>(operation)) {
+      StringRef value = op.getValue();
+      uint32_t bytes = emitBytesConstant(
+          plan, ArrayRef<uint8_t>(
+                    reinterpret_cast<const uint8_t *>(value.data()),
+                    value.size()));
+      if (bytes == kInvalidRegister)
+        return op.emitOpError("cannot allocate literal byte register");
+      return emitIntrinsicRegisters(plan, kIntrinsicStringLiteral, {bytes},
+                                    {reg(plan, op.getResult())});
+    }
+    if (auto op = dyn_cast<sim::SimStringFromPackedOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicStringFromPacked, {op.getInput()},
+                           {op.getResult()});
+    if (auto op = dyn_cast<sim::SimStringToPackedOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicStringToPacked, {op.getInput()},
+                           {op.getResult()});
+    if (auto op = dyn_cast<sim::SimStringConcatOp>(operation)) {
+      SmallVector<Value> inputs(op.getInputs());
+      return emitIntrinsic(plan, kIntrinsicStringConcat, inputs,
+                           {op.getResult()});
+    }
+    if (auto op = dyn_cast<sim::SimStringRepeatOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicStringRepeat,
+                           {op.getInput(), op.getCount()}, {op.getResult()});
+    if (auto op = dyn_cast<sim::SimStringLengthOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicStringLength, {op.getInput()},
+                           {op.getResult()});
+    if (auto op = dyn_cast<sim::SimStringGetcOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicStringGetc,
+                           {op.getInput(), op.getIndex()}, {op.getResult()});
+    if (auto op = dyn_cast<sim::SimStringPutcOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicStringPutc,
+                           {op.getInput(), op.getIndex(), op.getCharacter()},
+                           {op.getResult()});
+    if (auto op = dyn_cast<sim::SimStringSubstrOp>(operation))
+      return emitIntrinsic(
+          plan, kIntrinsicStringSubstr,
+          {op.getInput(), op.getLeft(), op.getRight()}, {op.getResult()});
+    if (auto op = dyn_cast<sim::SimStringCompareOp>(operation)) {
+      uint32_t mode =
+          emitU64Constant(plan, op.getCaseInsensitive() ? 1 : 0);
+      return emitIntrinsicRegisters(
+          plan, kIntrinsicStringCompare,
+          {reg(plan, op.getLhs()), reg(plan, op.getRhs()), mode},
+          {reg(plan, op.getResult())});
+    }
+    if (auto op = dyn_cast<sim::SimStringCaseConvertOp>(operation)) {
+      uint32_t mode = emitU64Constant(plan, op.getToUpper() ? 1 : 0);
+      return emitIntrinsicRegisters(
+          plan, kIntrinsicStringCaseConvert,
+          {reg(plan, op.getInput()), mode}, {reg(plan, op.getResult())});
+    }
+    if (auto op = dyn_cast<sim::SimStringParseIntegerOp>(operation)) {
+      uint32_t radix = emitU64Constant(plan, op.getRadix());
+      return emitIntrinsicRegisters(
+          plan, kIntrinsicStringParseInteger,
+          {reg(plan, op.getInput()), radix}, {reg(plan, op.getResult())});
+    }
+    if (auto op = dyn_cast<sim::SimStringParseRealOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicStringParseReal, {op.getInput()},
+                           {op.getResult()});
+    if (auto op = dyn_cast<sim::SimStringFormatIntegerOp>(operation)) {
+      uint32_t radix = emitU64Constant(plan, op.getRadix());
+      uint32_t signedMode =
+          emitU64Constant(plan, op.getIsSigned() ? 1 : 0);
+      return emitIntrinsicRegisters(
+          plan, kIntrinsicStringFormatInteger,
+          {reg(plan, op.getInput()), radix, signedMode},
+          {reg(plan, op.getResult())});
+    }
+    if (auto op = dyn_cast<sim::SimStringFormatRealOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicStringFormatReal, {op.getInput()},
+                           {op.getResult()});
+    if (isa<sim::SimClassNullOp, sim::SimManagedNullOp,
+            sim::SimEventNullOp>(operation)) {
       uint32_t destination = reg(plan, operation->getResult(0));
       emit({Constant, 0, destination, 0, 0, 0, 0,
             addZeroConstant(plan.layouts[destination])});
@@ -2011,7 +2167,12 @@ private:
         return op.emitOpError("argument reference has no bytecode layout");
       uint32_t flags =
           (storage->fourState ? 1u : 0u) |
-          (isa<sim::ClassHandleType>(op.getResult().getType()) ? 2u : 0u);
+          ((isa<sim::StringType>(op.getResult().getType())
+                ? OBELISK_RT_ARGUMENT_VALUE_STRING
+            : isa<sim::ClassHandleType>(op.getResult().getType())
+                ? OBELISK_RT_ARGUMENT_VALUE_CLASS
+                : OBELISK_RT_ARGUMENT_VALUE_BITS)
+           << 1);
       return emitIntrinsicRegisters(plan, kIntrinsicArgumentRefLoad,
                                     {reg(plan, op.getReference()),
                                      emitU64Constant(plan, storage->planeSize),
@@ -2027,7 +2188,12 @@ private:
         return op.emitOpError("argument reference has no bytecode layout");
       uint32_t flags =
           (storage->fourState ? 1u : 0u) |
-          (isa<sim::ClassHandleType>(op.getValue().getType()) ? 2u : 0u);
+          ((isa<sim::StringType>(op.getValue().getType())
+                ? OBELISK_RT_ARGUMENT_VALUE_STRING
+            : isa<sim::ClassHandleType>(op.getValue().getType())
+                ? OBELISK_RT_ARGUMENT_VALUE_CLASS
+                : OBELISK_RT_ARGUMENT_VALUE_BITS)
+           << 1);
       return emitIntrinsicRegisters(
           plan, kIntrinsicArgumentRefStore,
           {reg(plan, op.getReference()), reg(plan, op.getValue()),
@@ -2172,6 +2338,11 @@ private:
     }
     if (auto op = dyn_cast<sim::SimLogicIsTrueOp>(operation)) {
       emit({Reduce, 6, reg(plan, op.getResult()), reg(plan, op.getInput())});
+      return success();
+    }
+    if (auto op = dyn_cast<sim::SimLogicMuxOp>(operation)) {
+      emit({Select, 1, reg(plan, op.getResult()), reg(plan, op.getTrueValue()),
+            reg(plan, op.getFalseValue()), reg(plan, op.getCondition())});
       return success();
     }
     if (auto op = dyn_cast<sim::SimLogicUnaryOp>(operation)) {

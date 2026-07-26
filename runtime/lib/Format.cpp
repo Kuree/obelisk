@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <limits>
 #include <optional>
 #include <string>
@@ -57,6 +58,26 @@ bool getLogicView(const obelisk_rt_arg_v1 &argument, LogicView &view) {
     return true;
   }
   return false;
+}
+
+bool getStringBytes(const obelisk_rt_arg_v1 &argument, char scratch[8],
+                    const char *&data, uint64_t &size) {
+  data = "";
+  size = 0;
+  if (argument.kind == OBELISK_RT_ARG_STRING) {
+    if (!validBytes(argument.data, argument.size))
+      return false;
+    data = argument.data ? static_cast<const char *>(argument.data) : "";
+    size = argument.size;
+    return true;
+  }
+  if (argument.kind != OBELISK_RT_ARG_MANAGED_STRING || argument.size != 0 ||
+      !argument.data)
+    return false;
+  obelisk_rt_string_v1 string = 0;
+  std::memcpy(&string, argument.data, sizeof(string));
+  return obelisk_rt_v1_string_view(string, scratch, &data, &size) ==
+         OBELISK_RT_OK;
 }
 
 bool valueBit(const LogicView &view, uint64_t bit) {
@@ -405,12 +426,12 @@ std::string scalarPattern(const obelisk_rt_arg_v1 &argument) {
       result.push_back(logicSymbol(view, bit - 1));
     return result;
   }
-  if (argument.kind == OBELISK_RT_ARG_STRING &&
-      validBytes(argument.data, argument.size) &&
-      argument.size <= std::numeric_limits<size_t>::max())
-    return std::string(argument.data ? static_cast<const char *>(argument.data)
-                                     : "",
-                       static_cast<size_t>(argument.size));
+  char scratch[8];
+  const char *bytes = nullptr;
+  uint64_t size = 0;
+  if (getStringBytes(argument, scratch, bytes, size) &&
+      size <= std::numeric_limits<size_t>::max())
+    return std::string(bytes, static_cast<size_t>(size));
   if (argument.kind == OBELISK_RT_ARG_REAL && argument.data) {
     char buffer[64];
     int length = std::snprintf(buffer, sizeof(buffer), "%g",
@@ -448,15 +469,16 @@ obelisk_rt_status formatArgument(std::string &output,
     return OBELISK_RT_OK;
   }
   case 's':
-    if (argument.kind == OBELISK_RT_ARG_STRING) {
-      if (!validBytes(argument.data, argument.size) ||
-          argument.size > std::numeric_limits<size_t>::max())
+    if (argument.kind == OBELISK_RT_ARG_STRING ||
+        argument.kind == OBELISK_RT_ARG_MANAGED_STRING) {
+      char scratch[8];
+      const char *bytes = nullptr;
+      uint64_t size = 0;
+      if (!getStringBytes(argument, scratch, bytes, size) ||
+          size > std::numeric_limits<size_t>::max())
         return OBELISK_RT_INVALID_ARGUMENT;
       return formatStringValue(
-          output,
-          std::string(argument.data ? static_cast<const char *>(argument.data)
-                                    : "",
-                      static_cast<size_t>(argument.size)),
+          output, std::string(bytes, static_cast<size_t>(size)),
           options);
     }
     if (!getLogicView(argument, view))
@@ -517,7 +539,8 @@ obelisk_rt_status formatArgument(std::string &output,
     return appendRaw(output, view, spec == 'z');
   case 'p': {
     std::string value = scalarPattern(argument);
-    if (value.empty() && argument.kind != OBELISK_RT_ARG_STRING)
+    if (value.empty() && argument.kind != OBELISK_RT_ARG_STRING &&
+        argument.kind != OBELISK_RT_ARG_MANAGED_STRING)
       return OBELISK_RT_ARGUMENT_MISMATCH;
     return formatStringValue(output, std::move(value), options);
   }
@@ -678,6 +701,7 @@ char defaultSpecifier(const obelisk_rt_arg_v1 &argument,
            : radix == OBELISK_RT_RADIX_HEX   ? 'h'
                                              : 'd';
   case OBELISK_RT_ARG_STRING:
+  case OBELISK_RT_ARG_MANAGED_STRING:
     return 's';
   case OBELISK_RT_ARG_REAL:
     return 'f';
@@ -704,17 +728,18 @@ obelisk_rt_status buildDisplay(std::string &output, obelisk_rt_radix radix,
       continue;
     }
     if ((item.flags & OBELISK_RT_ARG_FORMAT_STRING) != 0) {
-      if (item.kind != OBELISK_RT_ARG_STRING ||
-          !validBytes(item.data, item.size) ||
-          item.size > std::numeric_limits<size_t>::max()) {
+      char scratch[8];
+      const char *bytes = nullptr;
+      uint64_t size = 0;
+      if ((item.kind != OBELISK_RT_ARG_STRING &&
+           item.kind != OBELISK_RT_ARG_MANAGED_STRING) ||
+          !getStringBytes(item, scratch, bytes, size) ||
+          size > std::numeric_limits<size_t>::max()) {
         error = "format-string display item is not a valid string";
         return OBELISK_RT_INVALID_ARGUMENT;
       }
       obelisk_rt_status status = formatSequence(
-          output,
-          std::string_view(item.data ? static_cast<const char *>(item.data)
-                                     : "",
-                           static_cast<size_t>(item.size)),
+          output, std::string_view(bytes, static_cast<size_t>(size)),
           items, itemCount, index, environment, error);
       if (status != OBELISK_RT_OK)
         return status;

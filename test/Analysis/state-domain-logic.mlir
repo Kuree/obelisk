@@ -69,6 +69,8 @@ module {
       %local = obelisk_sim.ref.alloc %known : !obelisk_sim.logic<8> -> !obelisk_sim.ref<!obelisk_sim.logic<8>>
       %loaded = obelisk_sim.ref.load %local : !obelisk_sim.ref<!obelisk_sim.logic<8>> -> !obelisk_sim.logic<8>
       %net_value = obelisk_sim.net.read %net : !obelisk_sim.net<!obelisk_sim.logic<8>> -> !obelisk_sim.logic<8>
+      %mux_known = obelisk_sim.logic.mux %reduced ? %known : %one : (!obelisk_sim.logic<1>, !obelisk_sim.logic<8>, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<8>
+      %mux_xz = obelisk_sim.logic.mux %reduced_xz ? %known : %one : (!obelisk_sim.logic<1>, !obelisk_sim.logic<8>, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<8>
       obelisk_sim.return
     }
   }
@@ -127,3 +129,5 @@ module {
 // CHECK-NEXT:   bb0.op51.result0: may-four-state (unsupported-producer)
 // CHECK-NEXT:   bb0.op53.result0: may-four-state (ref-load)
 // CHECK-NEXT:   bb0.op54.result0: may-four-state (net-read)
+// CHECK-NEXT:   bb0.op55.result0: two-state (logic-mux)
+// CHECK-NEXT:   bb0.op56.result0: may-four-state (logic-mux)

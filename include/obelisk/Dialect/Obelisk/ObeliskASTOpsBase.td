@@ -397,6 +397,14 @@ class ObeliskBinaryExpressionASTNodeOp<string mnemonic>
     : ObeliskExpressionASTNodeOp<mnemonic,
         (ins ObeliskSVBinaryOperator:$operator_kind)>;
 
+class ObeliskConditionalExpressionASTNodeOp<string mnemonic>
+    : ObeliskExpressionASTNodeOp<mnemonic, (ins
+        I64Attr:$condition_count,
+        DenseI64ArrayAttr:$condition_pattern_flags
+      )> {
+  let hasVerifier = 1;
+}
+
 class ObeliskAssignmentExpressionASTNodeOp<string mnemonic>
     : ObeliskExpressionASTNodeOp<mnemonic, (ins
         ObeliskSVAssignmentKind:$assignment_kind,

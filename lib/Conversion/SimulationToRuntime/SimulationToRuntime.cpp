@@ -138,6 +138,15 @@ public:
             converted.front(), true));
         continue;
       }
+      if (isa<sim::StringType>(sourceType)) {
+        if (converted.size() != 1)
+          return rewriter.notifyMatchFailure(
+              op, "managed string display item did not convert 1:1");
+        arguments.push_back(runtime::RTArgumentManagedStringOp::create(
+            rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
+            converted.front(), true));
+        continue;
+      }
       if (sourceType.isF64()) {
         if (converted.size() != 1)
           return rewriter.notifyMatchFailure(

@@ -182,6 +182,129 @@ TEST_F(ManagedValueTest, ConcatManyFusesIntoOneManagedAllocation) {
   EXPECT_EQ(std::string(bytes, size), "abcdefghij");
 }
 
+TEST_F(ManagedValueTest, RepeatsAndConvertsPackedByteSequences) {
+  const uint8_t packed[] = {'D', 'C', 'B', 'A'};
+  const uint8_t unknown[] = {0, 0xff, 0, 0};
+  obelisk_rt_string_v1 string = 0;
+  ASSERT_EQ(obelisk_rt_v1_string_from_packed(
+                lane, packed, unknown, 32, &string),
+            OBELISK_RT_OK);
+  char scratch[8] = {};
+  const char *bytes = nullptr;
+  uint64_t size = 0;
+  ASSERT_EQ(obelisk_rt_v1_string_view(string, scratch, &bytes, &size),
+            OBELISK_RT_OK);
+  ASSERT_EQ(size, 4u);
+  EXPECT_EQ(static_cast<uint8_t>(bytes[0]), 'A');
+  EXPECT_EQ(static_cast<uint8_t>(bytes[1]), 'B');
+  EXPECT_EQ(static_cast<uint8_t>(bytes[2]), 0);
+  EXPECT_EQ(static_cast<uint8_t>(bytes[3]), 'D');
+
+  obelisk_rt_string_v1 repeated = 0;
+  ASSERT_EQ(obelisk_rt_v1_string_repeat(lane, string, 3, &repeated),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_string_view(repeated, scratch, &bytes, &size),
+            OBELISK_RT_OK);
+  ASSERT_EQ(size, 12u);
+  EXPECT_EQ(std::memcmp(bytes, "AB\0DAB\0DAB\0D", 12), 0);
+
+  uint8_t narrowed[3] = {0xff, 0xff, 0xff};
+  uint8_t narrowedUnknown[3] = {0xff, 0xff, 0xff};
+  ASSERT_EQ(obelisk_rt_v1_string_to_packed(repeated, narrowed,
+                                           narrowedUnknown, 20),
+            OBELISK_RT_OK);
+  EXPECT_EQ(narrowed[0], 'D');
+  EXPECT_EQ(narrowed[1], 0);
+  EXPECT_EQ(narrowed[2], 2u);
+  EXPECT_EQ(narrowedUnknown[0], 0u);
+  EXPECT_EQ(narrowedUnknown[1], 0u);
+  EXPECT_EQ(narrowedUnknown[2], 0u);
+
+  obelisk_rt_string_v1 empty = UINT64_MAX;
+  EXPECT_EQ(obelisk_rt_v1_string_repeat(lane, string, 0, &empty),
+            OBELISK_RT_OK);
+  EXPECT_EQ(empty, 0u);
+  EXPECT_EQ(obelisk_rt_v1_string_repeat(
+                lane, string, UINT64_MAX, &empty),
+            OBELISK_RT_OUT_OF_RESOURCES);
+}
+
+TEST_F(ManagedValueTest, ParsesAndFormatsStringNumbers) {
+  obelisk_rt_string_v1 input = 0;
+  ASSERT_EQ(obelisk_rt_v1_string_create(lane, " -1_23tail", 10, &input),
+            OBELISK_RT_OK);
+  uint64_t integer = 0;
+  ASSERT_EQ(obelisk_rt_v1_string_parse_integer(input, 10, &integer),
+            OBELISK_RT_OK);
+  EXPECT_EQ(static_cast<int64_t>(integer), -123);
+
+  ASSERT_EQ(obelisk_rt_v1_string_create(nullptr, "f_f", 3, &input),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_string_parse_integer(input, 16, &integer),
+            OBELISK_RT_OK);
+  EXPECT_EQ(integer, 255u);
+
+  ASSERT_EQ(obelisk_rt_v1_string_create(lane, " 3.2_5junk", 11, &input),
+            OBELISK_RT_OK);
+  double real = 0.0;
+  ASSERT_EQ(obelisk_rt_v1_string_parse_real(input, &real), OBELISK_RT_OK);
+  EXPECT_DOUBLE_EQ(real, 3.25);
+
+  auto expectString = [&](obelisk_rt_string_v1 string,
+                          std::string_view expected) {
+    char scratch[8] = {};
+    const char *bytes = nullptr;
+    uint64_t size = 0;
+    ASSERT_EQ(obelisk_rt_v1_string_view(string, scratch, &bytes, &size),
+              OBELISK_RT_OK);
+    EXPECT_EQ(std::string_view(bytes, size), expected);
+  };
+  obelisk_rt_string_v1 output = 0;
+  ASSERT_EQ(obelisk_rt_v1_string_format_integer(
+                lane, static_cast<uint64_t>(int64_t{-42}), 10, 1, &output),
+            OBELISK_RT_OK);
+  expectString(output, "-42");
+  ASSERT_EQ(
+      obelisk_rt_v1_string_format_integer(lane, 255, 16, 0, &output),
+      OBELISK_RT_OK);
+  expectString(output, "ff");
+  ASSERT_EQ(obelisk_rt_v1_string_format_real(lane, 3.25, &output),
+            OBELISK_RT_OK);
+  expectString(output, "3.25");
+
+  EXPECT_EQ(obelisk_rt_v1_string_parse_integer(input, 3, &integer),
+            OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(obelisk_rt_v1_string_format_integer(lane, 0, 3, 0, &output),
+            OBELISK_RT_INVALID_ARGUMENT);
+}
+
+TEST_F(ManagedValueTest, FormatsManagedStringArguments) {
+  obelisk_rt_string_v1 format = 0;
+  obelisk_rt_string_v1 value = 0;
+  ASSERT_EQ(obelisk_rt_v1_string_create(lane, "value=%s", 8, &format),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_string_create(lane, "managed!", 8, &value),
+            OBELISK_RT_OK);
+  obelisk_rt_arg_v1 argument{
+      OBELISK_RT_ARG_MANAGED_STRING, 0, 0, &value, nullptr};
+  obelisk_rt_format_env_v1 environment{};
+  environment.time_multiplier = 1;
+  obelisk_rt_buffer_v1 output{};
+  char scratch[8] = {};
+  const char *formatBytes = nullptr;
+  uint64_t formatSize = 0;
+  ASSERT_EQ(obelisk_rt_v1_string_view(format, scratch, &formatBytes,
+                                      &formatSize),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_format(context, formatBytes, formatSize, &argument,
+                                 1, &environment, &output),
+            OBELISK_RT_OK);
+  EXPECT_EQ(std::string(reinterpret_cast<const char *>(output.data),
+                        output.size),
+            "value=managed!");
+  obelisk_rt_v1_buffer_release(&output);
+}
+
 TEST_F(ManagedValueTest, StringOperationsSurviveCollectionAtEveryAllocation) {
   ASSERT_EQ(obelisk_rt_v1_gc_set_threshold(context, 1), OBELISK_RT_OK);
   obelisk_rt_string_v1 left = 0;
@@ -416,6 +539,82 @@ TEST_F(ManagedValueTest, FourStateElementsPreserveBothPlanes) {
   ASSERT_EQ(obelisk_rt_v1_assoc_write(lane, assoc, &xKey, &stored, nullptr),
             OBELISK_RT_OK);
   EXPECT_EQ(obelisk_rt_v1_container_size(assoc), 0u);
+}
+
+TEST_F(ManagedValueTest, CheckedContainerAccessRejectsMismatchedPlanes) {
+  obelisk_rt_object_v1 *words = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_dynamic_array_create(lane, &wordElement, 1, &words),
+            OBELISK_RT_OK);
+  uint8_t undersized[2] = {0xa5, 0x5a};
+  EXPECT_EQ(obelisk_rt_v1_container_read_checked(
+                words, 0, undersized, sizeof(undersized), nullptr, 0),
+            OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(undersized[0], 0xa5);
+  EXPECT_EQ(undersized[1], 0x5a);
+  EXPECT_EQ(obelisk_rt_v1_container_write_checked(
+                lane, words, 0, undersized, sizeof(undersized), nullptr, 0),
+            OBELISK_RT_INVALID_ARGUMENT);
+
+  uint64_t word = 42;
+  ASSERT_EQ(obelisk_rt_v1_container_write_checked(
+                lane, words, 0, &word, sizeof(word), nullptr, 0),
+            OBELISK_RT_OK);
+  word = 0;
+  ASSERT_EQ(obelisk_rt_v1_container_read_checked(
+                words, 0, &word, sizeof(word), nullptr, 0),
+            OBELISK_RT_OK);
+  EXPECT_EQ(word, 42u);
+  uint64_t paddedWord[2] = {84, UINT64_C(0xfeedfacecafebeef)};
+  ASSERT_EQ(obelisk_rt_v1_container_write_checked(
+                lane, words, 0, paddedWord, sizeof(paddedWord), nullptr, 0),
+            OBELISK_RT_OK);
+  paddedWord[0] = 0;
+  ASSERT_EQ(obelisk_rt_v1_container_read_checked(
+                words, 0, paddedWord, sizeof(paddedWord), nullptr, 0),
+            OBELISK_RT_OK);
+  EXPECT_EQ(paddedWord[0], 84u);
+  EXPECT_EQ(paddedWord[1], UINT64_C(0xfeedfacecafebeef));
+
+  obelisk_rt_object_v1 *logic = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_dynamic_array_create(lane, &logicElement, 1, &logic),
+            OBELISK_RT_OK);
+  uint8_t value = 0xa;
+  uint8_t unknown = 0x4;
+  EXPECT_EQ(obelisk_rt_v1_container_write_checked(
+                lane, logic, 0, &value, sizeof(value), nullptr, 0),
+            OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(obelisk_rt_v1_container_read_checked(
+                logic, 0, &value, sizeof(value), &unknown, 0),
+            OBELISK_RT_INVALID_ARGUMENT);
+  ASSERT_EQ(obelisk_rt_v1_container_write_checked(
+                lane, logic, 0, &value, sizeof(value), &unknown,
+                sizeof(unknown)),
+            OBELISK_RT_OK);
+}
+
+TEST_F(ManagedValueTest, CreateLikePreservesSequentialContainerMetadata) {
+  obelisk_rt_object_v1 *array = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_dynamic_array_create(lane, &wordElement, 1, &array),
+            OBELISK_RT_OK);
+  obelisk_rt_object_v1 *created = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_container_create_like(lane, array, nullptr, 3,
+                                                &created),
+            OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_container_size(created), 3u);
+  uint64_t value = 17;
+  ASSERT_EQ(obelisk_rt_v1_container_write(lane, created, 2, &value, nullptr),
+            OBELISK_RT_OK);
+  value = 0;
+  ASSERT_EQ(obelisk_rt_v1_container_read(created, 2, &value, nullptr),
+            OBELISK_RT_OK);
+  EXPECT_EQ(value, 17u);
+
+  obelisk_rt_object_v1 *nullResult =
+      reinterpret_cast<obelisk_rt_object_v1 *>(UINTPTR_MAX);
+  EXPECT_EQ(obelisk_rt_v1_container_create_like(lane, nullptr, nullptr, 0,
+                                                &nullResult),
+            OBELISK_RT_OK);
+  EXPECT_EQ(nullResult, nullptr);
 }
 
 TEST_F(ManagedValueTest, ContainersTraceStringsAndRecursivelyCloneContainers) {

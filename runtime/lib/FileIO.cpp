@@ -208,6 +208,39 @@ obelisk_rt_v1_file_open(obelisk_rt_context *context, const char *path,
   });
 }
 
+extern "C" obelisk_rt_status obelisk_rt_v1_file_open_string_mcd(
+    obelisk_rt_context *context, obelisk_rt_string_v1 path,
+    uint32_t *outDescriptor) {
+  char scratch[8] = {};
+  const char *bytes = nullptr;
+  uint64_t size = 0;
+  obelisk_rt_status status =
+      obelisk_rt_v1_string_view(path, scratch, &bytes, &size);
+  return status == OBELISK_RT_OK
+             ? obelisk_rt_v1_file_open_mcd(context, bytes, size, outDescriptor)
+             : status;
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_file_open_string(
+    obelisk_rt_context *context, obelisk_rt_string_v1 path,
+    obelisk_rt_string_v1 mode, uint32_t *outDescriptor) {
+  char pathScratch[8] = {};
+  char modeScratch[8] = {};
+  const char *pathBytes = nullptr;
+  const char *modeBytes = nullptr;
+  uint64_t pathSize = 0;
+  uint64_t modeSize = 0;
+  obelisk_rt_status status =
+      obelisk_rt_v1_string_view(path, pathScratch, &pathBytes, &pathSize);
+  if (status != OBELISK_RT_OK)
+    return status;
+  status = obelisk_rt_v1_string_view(mode, modeScratch, &modeBytes, &modeSize);
+  return status == OBELISK_RT_OK
+             ? obelisk_rt_v1_file_open(context, pathBytes, pathSize, modeBytes,
+                                       modeSize, outDescriptor)
+             : status;
+}
+
 extern "C" obelisk_rt_status
 obelisk_rt_v1_file_close(obelisk_rt_context *context, uint32_t descriptor) {
   if (!context || descriptor == 0)
@@ -413,6 +446,33 @@ obelisk_rt_v1_file_getline(obelisk_rt_context *context, uint32_t descriptor,
     }
     return makeBuffer(line, outLine);
   });
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_file_getline_string(
+    obelisk_rt_context *context, obelisk_rt_gc_lane_v1 *lane,
+    uint32_t descriptor, obelisk_rt_string_v1 *outString,
+    uint32_t *outCount) {
+  if (!outString || !outCount)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outString = 0;
+  *outCount = 0;
+  obelisk_rt_buffer_v1 line{};
+  obelisk_rt_status status =
+      obelisk_rt_v1_file_getline(context, descriptor, UINT64_MAX, &line);
+  if (status == OBELISK_RT_EOF)
+    return OBELISK_RT_OK;
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (line.size > UINT32_MAX) {
+    obelisk_rt_v1_buffer_release(&line);
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  }
+  status = obelisk_rt_v1_string_create(
+      lane, reinterpret_cast<const char *>(line.data), line.size, outString);
+  if (status == OBELISK_RT_OK)
+    *outCount = static_cast<uint32_t>(line.size);
+  obelisk_rt_v1_buffer_release(&line);
+  return status;
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_file_eof(obelisk_rt_context *context,

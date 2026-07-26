@@ -61,8 +61,23 @@ Layout and state encoding treat managed types before recursively inspecting
 their element types, so (for example) a dynamic array of `logic` remains one
 managed root rather than acquiring value and unknown planes.
 
-Full source-language string and container lowering, container methods and
-`foreach`, null-owner lvalue writeback, associative/string-character
-reference-path lowering, managed NBAs, wide/wildcard and class keys, and
-compiler-emitted literal/element-descriptor startup remain staged. Unsupported
-forms retain explicit diagnostics instead of silently dropping behavior.
+Source `string` values use this representation throughout semantic constants,
+design and procedural storage, fixed aggregates, ports, parameters, captures,
+and subroutine arguments and results. The native and bytecode tiers share the
+same byte semantics for literals, packed conversion, concatenation and
+replication, comparison, indexing and character update, substring and case
+conversion, every standard numeric conversion method, conditional and case
+selection, delayed assignments, managed `%s` formatting, dynamic display
+formats, managed file paths and modes, and `$fgets` string destinations.
+Whole-string stores compare byte contents before publishing a change, rather
+than comparing allocation handles.
+
+DPI-C and VPI string marshalling and visibility remain intentionally excluded
+and diagnose their unsupported boundary. String scanning (`$sscanf` and
+`$fscanf`), string-building formatting (`$swrite*`, `$sformat*`, and
+`$psprintf`), escaping string-character `ref` aliases, and nonblocking
+character-path updates also retain explicit diagnostics. These require scanner
+target records or reference paths that preserve partial assignment and exact
+alias semantics across both execution tiers. Dynamic containers and their
+remaining source methods are a separate milestone; unsupported forms are
+diagnosed rather than silently discarded.

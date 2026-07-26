@@ -971,6 +971,74 @@ LogicalResult SimManagedNullOp::verify() {
   return success();
 }
 
+static Type getSequentialContainerElement(Type type) {
+  if (auto array = dyn_cast<DynamicArrayType>(type))
+    return array.getElementType();
+  if (auto queue = dyn_cast<QueueType>(type))
+    return queue.getElementType();
+  return {};
+}
+
+LogicalResult SimContainerSizeOp::verify() {
+  if (!getSequentialContainerElement(getContainer().getType()))
+    return emitOpError("container must be a dynamic array or queue");
+  return success();
+}
+
+LogicalResult SimContainerCreateLikeOp::verify() {
+  Type type = getResult().getType();
+  if (!getSequentialContainerElement(type))
+    return emitOpError("result must be a dynamic array or queue");
+  if (getPreferred().getType() != type || getFallback().getType() != type)
+    return emitOpError("source and result container types must match");
+  return success();
+}
+
+LogicalResult SimContainerReadOp::verify() {
+  Type element = getSequentialContainerElement(getContainer().getType());
+  if (!element)
+    return emitOpError("container must be a dynamic array or queue");
+  if (element != getResult().getType())
+    return emitOpError("result type must match the container element");
+  return success();
+}
+
+LogicalResult SimContainerWriteOp::verify() {
+  Type element = getSequentialContainerElement(getContainer().getType());
+  if (!element)
+    return emitOpError("container must be a dynamic array or queue");
+  if (element != getValue().getType())
+    return emitOpError("value type must match the container element");
+  return success();
+}
+
+LogicalResult SimStringFromPackedOp::verify() {
+  Type scalar = getPackedScalarType(getInput().getType());
+  if (!scalar || !getPackedWidth(scalar))
+    return emitOpError("input must be a fixed packed value");
+  return success();
+}
+
+LogicalResult SimStringConcatOp::verify() {
+  if (getInputs().size() > std::numeric_limits<uint32_t>::max())
+    return emitOpError("input count exceeds the managed string ABI");
+  return success();
+}
+
+static LogicalResult verifyStringRadix(Operation *operation, uint32_t radix) {
+  if (radix != 2 && radix != 8 && radix != 10 && radix != 16)
+    return operation->emitOpError("radix must be 2, 8, 10, or 16");
+  return success();
+}
+
+LogicalResult SimStringParseIntegerOp::verify() {
+  return verifyStringRadix(getOperation(), getRadix());
+}
+
+LogicalResult SimStringFormatIntegerOp::verify() {
+  return verifyStringRadix(getOperation(), getRadix());
+}
+
 static bool isNormalizedValueType(Type type) {
   if (auto integer = dyn_cast<IntegerType>(type))
     return integer.isSignless();
@@ -1027,6 +1095,12 @@ FrozenConstantAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
     return emitError() << "frozen constant type must not be null";
   if (!value)
     return emitError() << "frozen constant payload must not be null";
+  if (isa<StringType>(type)) {
+    if (!isa<StringAttr>(value))
+      return emitError()
+             << "string frozen constant requires a string attribute payload";
+    return success();
+  }
   if (isa<FloatType>(type)) {
     auto floating = dyn_cast<FloatAttr>(value);
     if (!floating || floating.getType() != type)
@@ -1118,6 +1192,13 @@ FailureOr<Value> materializeFrozenConstant(OpBuilder &builder,
   if (!constant)
     return failure();
   Type type = constant.getType();
+  if (isa<StringType>(type)) {
+    auto value = dyn_cast<StringAttr>(constant.getValue());
+    if (!value)
+      return failure();
+    return SimStringLiteralOp::create(builder, location, type, value)
+        .getResult();
+  }
   if (isa<FloatType>(type)) {
     auto value = dyn_cast<FloatAttr>(constant.getValue());
     if (!value)
@@ -3800,6 +3881,26 @@ OpFoldResult SimLogicIsTrueOp::fold(FoldAdaptor adaptor) {
   return IntegerAttr::get(getResult().getType(), isTrue ? 1 : 0);
 }
 
+OpFoldResult SimLogicMuxOp::fold(FoldAdaptor adaptor) {
+  if (getTrueValue() == getFalseValue())
+    return getTrueValue();
+  auto condition = getLogicPlanes(adaptor.getCondition());
+  if (!condition)
+    return {};
+  if (condition->unknown.isZero())
+    return condition->value.isZero() ? OpFoldResult(getFalseValue())
+                                     : OpFoldResult(getTrueValue());
+  auto trueValue = getLogicPlanes(adaptor.getTrueValue());
+  auto falseValue = getLogicPlanes(adaptor.getFalseValue());
+  if (!trueValue || !falseValue)
+    return {};
+  APInt mismatch = (trueValue->value ^ falseValue->value) |
+                   (trueValue->unknown ^ falseValue->unknown);
+  LogicPlanes result{trueValue->value & ~mismatch,
+                     trueValue->unknown | mismatch};
+  return getLogicAttribute(getContext(), std::move(result));
+}
+
 OpFoldResult SimLogicResizeOp::fold(FoldAdaptor adaptor) {
   if (getInput().getType() == getResult().getType())
     return getInput();
@@ -5502,11 +5603,12 @@ LogicalResult SimDisplayOp::verify() {
     if (itemIndex == getItems().size())
       return emitOpError("item flags require more display operands");
     Value item = getItems()[itemIndex++];
-    if (!isa<BytesType, IntegerType, LogicType>(item.getType()) &&
+    if (!isa<BytesType, StringType, IntegerType, LogicType>(item.getType()) &&
         !item.getType().isF64())
       return emitOpError(
-          "items must be literal bytes, packed integers, or f64 reals");
-    if ((flags & ~7) != 0)
+          "items must be literal bytes, packed integers, or f64 reals; "
+          "managed strings are also accepted");
+    if ((flags & ~15) != 0)
       return emitOpError("display item flags contain an unknown bit");
     if ((flags & 4) != 0 && !item.getType().isF64())
       return emitOpError("real display items must have f64 operands");
@@ -5516,6 +5618,8 @@ LogicalResult SimDisplayOp::verify() {
       return emitOpError("real display items cannot be marked signed");
     if (isa<BytesType>(item.getType()) && flags != 0)
       return emitOpError("literal byte items cannot be signed");
+    if (isa<StringType>(item.getType()) && flags != 8)
+      return emitOpError("managed string display items require the string flag");
   }
   if (itemIndex != getItems().size())
     return emitOpError("requires one flag entry per display item");

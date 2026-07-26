@@ -3431,6 +3431,46 @@ void ObeliskSimPreparePass::runOnOperation() {
     return operands;
   };
 
+  // Constant declaration initializers for design/static strings require a
+  // managed allocation and therefore cannot be represented in the raw
+  // zero-filled state image. Materialize them in the root initializer before
+  // any process is spawned.
+  for (const auto &symbolEntry : semanticSymbols) {
+    auto variable =
+        dyn_cast<semantic::SVVariableSymbolOp>(symbolEntry.getValue());
+    if (!variable)
+      continue;
+    auto descriptor = descriptors.find(getHierarchyName(variable));
+    if (descriptor == descriptors.end() ||
+        descriptor->second.kind != DescriptorInfo::Kind::Storage ||
+        !isa<sim::StringType>(descriptor->second.type))
+      continue;
+    SmallVector<Operation *> initializer = getChildren(variable);
+    if (initializer.size() != 1)
+      continue;
+    Operation *value = initializer.front();
+    while (isa<semantic::SVConversionExpressionOp>(value)) {
+      SmallVector<Operation *> converted = getChildren(value);
+      if (converted.size() != 1)
+        break;
+      value = converted.front();
+    }
+    auto literal = dyn_cast<semantic::SVStringLiteralOp>(value);
+    auto bytes =
+        literal ? literal->getAttrOfType<StringAttr>("constant_value")
+                : StringAttr{};
+    if (!bytes)
+      continue;
+    Location location = getSemanticLocation(variable);
+    Type referenceType = sim::RefType::get(context, descriptor->second.type);
+    Value storage = sim::SimContextStorageOp::create(
+        rootBuilder, location, referenceType, simContext,
+        rootBuilder.getI64IntegerAttr(descriptor->second.id));
+    Value string = sim::SimStringLiteralOp::create(
+        rootBuilder, location, descriptor->second.type, bytes);
+    sim::SimRefStoreOp::create(rootBuilder, location, string, storage);
+  }
+
   // Static class property initializers are zero-time private functions. Run
   // all of them before creating any process so initial blocks observe the
   // fully initialized class-static state.

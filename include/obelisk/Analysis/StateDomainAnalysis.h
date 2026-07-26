@@ -44,6 +44,7 @@ enum class StateDomainReason {
   LogicUnary,
   LogicReduction,
   LogicBinary,
+  LogicMux,
   LogicLogical,
   LogicShift,
   LogicCompare,

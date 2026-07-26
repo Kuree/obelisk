@@ -3,10 +3,13 @@
 #include "RuntimeInternal.h"
 
 #include <algorithm>
+#include <charconv>
+#include <cmath>
 #include <cstring>
 #include <functional>
 #include <limits>
 #include <optional>
+#include <stdexcept>
 
 namespace {
 
@@ -766,6 +769,15 @@ int32_t compareViews(const StringView &left, const StringView &right,
 
 } // namespace
 
+obelisk_rt_status
+obelisk_rt_validate_string(obelisk_rt_context *context,
+                           obelisk_rt_string_v1 string) noexcept {
+  if (!context)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  return stringBelongsTo(context, string) ? OBELISK_RT_OK
+                                          : OBELISK_RT_INVALID_HANDLE;
+}
+
 void obelisk_rt_managed_trace_runtime_object(obelisk_rt_managed_kind_v1 kind,
                                              uint8_t *object, uint64_t extent,
                                              ManagedTraceVisit visit,
@@ -972,6 +984,99 @@ extern "C" obelisk_rt_status obelisk_rt_v1_string_concat_many(
   return status == OBELISK_RT_OK ? popStatus : status;
 }
 
+extern "C" obelisk_rt_status obelisk_rt_v1_string_repeat(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_string_v1 string, uint64_t count,
+    obelisk_rt_string_v1 *outString) {
+  if (!outString)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outString = 0;
+  StringView view;
+  obelisk_rt_status status = readString(string, view);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (count == 0 || view.size == 0)
+    return OBELISK_RT_OK;
+  if (count == 1) {
+    *outString = string;
+    return OBELISK_RT_OK;
+  }
+  if (view.size > UINT64_MAX / count)
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  uint64_t total = view.size * count;
+  if (total > std::string{}.max_size())
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  try {
+    std::string bytes;
+    bytes.reserve(static_cast<size_t>(total));
+    for (uint64_t index = 0; index != count; ++index)
+      bytes.append(view.bytes, static_cast<size_t>(view.size));
+    return createString(lane, bytes.data(), total, outString);
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (const std::length_error &) {
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  }
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_string_from_packed(
+    obelisk_rt_gc_lane_v1 *lane, const void *value, const void *unknown,
+    uint64_t bitWidth, obelisk_rt_string_v1 *outString) {
+  if (!outString || bitWidth == 0 || !value)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outString = 0;
+  if (bitWidth > UINT64_MAX - 7)
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  uint64_t byteCount = (bitWidth + 7) / 8;
+  if (byteCount > std::string{}.max_size())
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  const auto *valueBytes = static_cast<const uint8_t *>(value);
+  const auto *unknownBytes = static_cast<const uint8_t *>(unknown);
+  try {
+    std::string bytes(static_cast<size_t>(byteCount), '\0');
+    // Packed planes are little-endian. SystemVerilog strings enumerate the
+    // most-significant packed byte first.
+    for (uint64_t index = 0; index != byteCount; ++index) {
+      uint64_t source = byteCount - index - 1;
+      uint8_t byte = valueBytes[source];
+      if (unknownBytes)
+        byte &= static_cast<uint8_t>(~unknownBytes[source]);
+      bytes[static_cast<size_t>(index)] = static_cast<char>(byte);
+    }
+    if ((bitWidth & 7) != 0)
+      bytes.front() &= static_cast<char>((UINT32_C(1) << (bitWidth & 7)) - 1);
+    return createString(lane, bytes.data(), byteCount, outString);
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (const std::length_error &) {
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  }
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_string_to_packed(
+    obelisk_rt_string_v1 string, void *value, void *unknown,
+    uint64_t bitWidth) {
+  if (!value || bitWidth == 0 || bitWidth > UINT64_MAX - 7)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  uint64_t byteCount = (bitWidth + 7) / 8;
+  std::memset(value, 0, static_cast<size_t>(byteCount));
+  if (unknown)
+    std::memset(unknown, 0, static_cast<size_t>(byteCount));
+  StringView view;
+  obelisk_rt_status status = readString(string, view);
+  if (status != OBELISK_RT_OK)
+    return status;
+  uint64_t copied = std::min(view.size, byteCount);
+  auto *output = static_cast<uint8_t *>(value);
+  // Assignment to a narrower packed destination retains the rightmost bytes.
+  for (uint64_t index = 0; index != copied; ++index)
+    output[index] =
+        static_cast<uint8_t>(view.bytes[view.size - index - 1]);
+  if ((bitWidth & 7) != 0)
+    output[byteCount - 1] &=
+        static_cast<uint8_t>((UINT32_C(1) << (bitWidth & 7)) - 1);
+  return OBELISK_RT_OK;
+}
+
 extern "C" obelisk_rt_status obelisk_rt_v1_string_view(
     obelisk_rt_string_v1 string, char scratch[8], const char **outBytes,
     uint64_t *outSize) {
@@ -1025,7 +1130,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_string_putc(
   obelisk_rt_status status = readString(string, view);
   if (status != OBELISK_RT_OK)
     return status;
-  if (index < 0 || static_cast<uint64_t>(index) >= view.size) {
+  if ((character & 0xff) == 0 || index < 0 ||
+      static_cast<uint64_t>(index) >= view.size) {
     *outString = string;
     return OBELISK_RT_OK;
   }
@@ -1123,6 +1229,116 @@ extern "C" obelisk_rt_status obelisk_rt_v1_string_case_convert(
   } catch (const std::bad_alloc &) {
     return OBELISK_RT_OUT_OF_MEMORY;
   }
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_string_parse_integer(
+    obelisk_rt_string_v1 string, uint32_t radix, uint64_t *outValue) {
+  if (!outValue || (radix != 2 && radix != 8 && radix != 10 && radix != 16))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outValue = 0;
+  StringView view;
+  obelisk_rt_status status = readString(string, view);
+  if (status != OBELISK_RT_OK)
+    return status;
+  uint64_t index = 0;
+  while (index < view.size &&
+         (view.bytes[index] == ' ' || view.bytes[index] == '\t' ||
+          view.bytes[index] == '\n' || view.bytes[index] == '\r' ||
+          view.bytes[index] == '\f' || view.bytes[index] == '\v'))
+    ++index;
+  bool negative = false;
+  if (index < view.size &&
+      (view.bytes[index] == '+' || view.bytes[index] == '-')) {
+    negative = view.bytes[index] == '-';
+    ++index;
+  }
+  uint64_t value = 0;
+  for (; index < view.size; ++index) {
+    unsigned char character = static_cast<unsigned char>(view.bytes[index]);
+    if (character == '_')
+      continue;
+    uint32_t digit = character >= '0' && character <= '9'
+                         ? character - '0'
+                     : character >= 'a' && character <= 'f'
+                         ? character - 'a' + 10
+                     : character >= 'A' && character <= 'F'
+                         ? character - 'A' + 10
+                         : UINT32_MAX;
+    if (digit >= radix)
+      break;
+    value = value * radix + digit;
+  }
+  *outValue = negative ? uint64_t{0} - value : value;
+  return OBELISK_RT_OK;
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_string_parse_real(obelisk_rt_string_v1 string,
+                                double *outValue) {
+  if (!outValue)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outValue = 0.0;
+  StringView view;
+  obelisk_rt_status status = readString(string, view);
+  if (status != OBELISK_RT_OK)
+    return status;
+  try {
+    std::string spelling;
+    spelling.reserve(static_cast<size_t>(view.size));
+    for (uint64_t index = 0; index != view.size; ++index)
+      if (view.bytes[index] != '_')
+        spelling.push_back(view.bytes[index]);
+    const char *begin = spelling.data();
+    const char *end = begin + spelling.size();
+    while (begin != end &&
+           (*begin == ' ' || *begin == '\t' || *begin == '\n' ||
+            *begin == '\r' || *begin == '\f' || *begin == '\v'))
+      ++begin;
+    double value = 0.0;
+    auto parsed = std::from_chars(begin, end, value, std::chars_format::general);
+    if (parsed.ec == std::errc{})
+      *outValue = value;
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  }
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_string_format_integer(
+    obelisk_rt_gc_lane_v1 *lane, uint64_t value, uint32_t radix,
+    uint32_t isSigned, obelisk_rt_string_v1 *outString) {
+  if (!outString || isSigned > 1 ||
+      (radix != 2 && radix != 8 && radix != 10 && radix != 16))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outString = 0;
+  char buffer[66];
+  std::to_chars_result formatted;
+  if (isSigned && radix == 10)
+    formatted = std::to_chars(std::begin(buffer), std::end(buffer),
+                              static_cast<int64_t>(value), radix);
+  else
+    formatted =
+        std::to_chars(std::begin(buffer), std::end(buffer), value, radix);
+  if (formatted.ec != std::errc{})
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  return createString(lane, buffer,
+                      static_cast<uint64_t>(formatted.ptr - buffer), outString);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_string_format_real(
+    obelisk_rt_gc_lane_v1 *lane, double value,
+    obelisk_rt_string_v1 *outString) {
+  if (!outString)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outString = 0;
+  char buffer[128];
+  auto formatted =
+      std::to_chars(std::begin(buffer), std::end(buffer), value,
+                    std::chars_format::general);
+  if (formatted.ec != std::errc{})
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  return createString(lane, buffer,
+                      static_cast<uint64_t>(formatted.ptr - buffer), outString);
 }
 
 namespace {
@@ -1677,6 +1893,44 @@ obelisk_rt_v1_queue_create(obelisk_rt_gc_lane_v1 *lane,
                              bound, outQueue);
 }
 
+extern "C" obelisk_rt_status obelisk_rt_v1_container_create_like(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *preferred,
+    obelisk_rt_object_v1 *fallback, uint64_t size,
+    obelisk_rt_object_v1 **outContainer) {
+  if (!lane || !outContainer)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outContainer = nullptr;
+  obelisk_rt_context *context = obelisk_rt_managed_lane_context(lane);
+  if ((preferred &&
+       obelisk_rt_managed_object_context(preferred) != context) ||
+      (fallback && obelisk_rt_managed_object_context(fallback) != context))
+    return OBELISK_RT_INVALID_HANDLE;
+
+  ContainerHeader selected{};
+  bool haveSelected = false;
+  for (obelisk_rt_object_v1 *source : {preferred, fallback}) {
+    if (!source)
+      continue;
+    ContainerHeader current{};
+    obelisk_rt_status status = snapshotHeader(source, current);
+    if (status != OBELISK_RT_OK)
+      return status;
+    if (!haveSelected) {
+      selected = current;
+      haveSelected = true;
+      continue;
+    }
+    if (current.kind != selected.kind ||
+        current.element->type_id != selected.element->type_id ||
+        current.bound != selected.bound)
+      return OBELISK_RT_INVALID_ARGUMENT;
+  }
+  if (!haveSelected)
+    return OBELISK_RT_OK;
+  return initializeContainer(lane, selected.kind, selected.element, size,
+                             selected.bound, outContainer);
+}
+
 extern "C" uint64_t
 obelisk_rt_v1_container_size(obelisk_rt_object_v1 *container) {
   if (!container)
@@ -1738,6 +1992,25 @@ obelisk_rt_v1_container_read(obelisk_rt_object_v1 *container, int64_t index,
         });
       },
       &read);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_container_read_checked(
+    obelisk_rt_object_v1 *container, int64_t index, void *outValue,
+    uint64_t valueSize, void *outUnknown, uint64_t unknownSize) {
+  if (!container || !outValue)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContainerHeader snapshot;
+  obelisk_rt_status status = snapshotHeader(container, snapshot);
+  if (status != OBELISK_RT_OK)
+    return status;
+  bool fourState =
+      (snapshot.element->flags & OBELISK_RT_ELEMENT_FOUR_STATE) != 0;
+  if (valueSize < snapshot.element->value_size ||
+      (fourState && unknownSize < snapshot.element->value_size) ||
+      (!fourState && unknownSize != 0) ||
+      fourState != (outUnknown != nullptr))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  return obelisk_rt_v1_container_read(container, index, outValue, outUnknown);
 }
 
 extern "C" obelisk_rt_status
@@ -1869,6 +2142,26 @@ obelisk_rt_v1_container_write(obelisk_rt_gc_lane_v1 *lane,
         return status;
       },
       &write);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_container_write_checked(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *container,
+    int64_t index, const void *value, uint64_t valueSize,
+    const void *unknown, uint64_t unknownSize) {
+  if (!lane || !container || !value)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContainerHeader snapshot;
+  obelisk_rt_status status = snapshotHeader(container, snapshot);
+  if (status != OBELISK_RT_OK)
+    return status;
+  bool fourState =
+      (snapshot.element->flags & OBELISK_RT_ELEMENT_FOUR_STATE) != 0;
+  if (valueSize < snapshot.element->value_size ||
+      (fourState && unknownSize < snapshot.element->value_size) ||
+      (!fourState && unknownSize != 0) ||
+      fourState != (unknown != nullptr))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  return obelisk_rt_v1_container_write(lane, container, index, value, unknown);
 }
 
 extern "C" obelisk_rt_status

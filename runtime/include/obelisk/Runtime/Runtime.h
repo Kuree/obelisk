@@ -537,6 +537,9 @@ enum {
   OBELISK_RT_INTRINSIC_V1_FILE_SEEK = UINT32_C(0x00010109),
   OBELISK_RT_INTRINSIC_V1_FILE_TELL = UINT32_C(0x0001010a),
   OBELISK_RT_INTRINSIC_V1_FILE_REWIND = UINT32_C(0x0001010b),
+  OBELISK_RT_INTRINSIC_V1_FILE_OPEN_STRING_MCD = UINT32_C(0x0001010c),
+  OBELISK_RT_INTRINSIC_V1_FILE_OPEN_STRING = UINT32_C(0x0001010d),
+  OBELISK_RT_INTRINSIC_V1_FILE_GETLINE_STRING = UINT32_C(0x0001010e),
   OBELISK_RT_INTRINSIC_V1_SPAWN = UINT32_C(0x00010200),
   OBELISK_RT_INTRINSIC_V1_NBA = UINT32_C(0x00010201),
   OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGER = UINT32_C(0x00010202),
@@ -583,6 +586,25 @@ enum {
   OBELISK_RT_INTRINSIC_V1_MANAGED_ROOT_EXTRACT = UINT32_C(0x00010411),
   OBELISK_RT_INTRINSIC_V1_REFERENCE_PATH_INDEX = UINT32_C(0x00010412),
   OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_FROM_PATH = UINT32_C(0x00010413),
+  OBELISK_RT_INTRINSIC_V1_STRING_LITERAL = UINT32_C(0x00010420),
+  OBELISK_RT_INTRINSIC_V1_STRING_FROM_PACKED = UINT32_C(0x00010421),
+  OBELISK_RT_INTRINSIC_V1_STRING_TO_PACKED = UINT32_C(0x00010422),
+  OBELISK_RT_INTRINSIC_V1_STRING_CONCAT = UINT32_C(0x00010423),
+  OBELISK_RT_INTRINSIC_V1_STRING_REPEAT = UINT32_C(0x00010424),
+  OBELISK_RT_INTRINSIC_V1_STRING_LENGTH = UINT32_C(0x00010425),
+  OBELISK_RT_INTRINSIC_V1_STRING_GETC = UINT32_C(0x00010426),
+  OBELISK_RT_INTRINSIC_V1_STRING_PUTC = UINT32_C(0x00010427),
+  OBELISK_RT_INTRINSIC_V1_STRING_SUBSTR = UINT32_C(0x00010428),
+  OBELISK_RT_INTRINSIC_V1_STRING_COMPARE = UINT32_C(0x00010429),
+  OBELISK_RT_INTRINSIC_V1_STRING_CASE_CONVERT = UINT32_C(0x0001042a),
+  OBELISK_RT_INTRINSIC_V1_STRING_PARSE_INTEGER = UINT32_C(0x0001042b),
+  OBELISK_RT_INTRINSIC_V1_STRING_PARSE_REAL = UINT32_C(0x0001042c),
+  OBELISK_RT_INTRINSIC_V1_STRING_FORMAT_INTEGER = UINT32_C(0x0001042d),
+  OBELISK_RT_INTRINSIC_V1_STRING_FORMAT_REAL = UINT32_C(0x0001042e),
+  OBELISK_RT_INTRINSIC_V1_CONTAINER_SIZE = UINT32_C(0x00010430),
+  OBELISK_RT_INTRINSIC_V1_CONTAINER_CREATE_LIKE = UINT32_C(0x00010431),
+  OBELISK_RT_INTRINSIC_V1_CONTAINER_READ = UINT32_C(0x00010432),
+  OBELISK_RT_INTRINSIC_V1_CONTAINER_WRITE = UINT32_C(0x00010433),
   OBELISK_RT_INTRINSIC_V1_VPI_ROOT = UINT32_C(0x00011000),
   OBELISK_RT_INTRINSIC_V1_VPI_CHILD = UINT32_C(0x00011001),
   OBELISK_RT_INTRINSIC_V1_VPI_SIBLING = UINT32_C(0x00011002),
@@ -1319,17 +1341,23 @@ obelisk_rt_v1_object_write_planes(obelisk_rt_object_v1 *object, uint64_t offset,
 // selects a class owner and byte offset, and two selects a ReferencePath in
 // owner (payload is unused). Generated code supplies its native state planes
 // so the same ABI serves native and bytecode callees.
+typedef uint32_t obelisk_rt_argument_value_kind_v1;
+enum {
+  OBELISK_RT_ARGUMENT_VALUE_BITS = 0,
+  OBELISK_RT_ARGUMENT_VALUE_CLASS = 1,
+  OBELISK_RT_ARGUMENT_VALUE_STRING = 2
+};
 obelisk_rt_status obelisk_rt_v1_argument_ref_load(
     obelisk_rt_context *context, const uint8_t *state_value,
     const uint8_t *state_unknown, uint64_t state_bit_count,
     obelisk_rt_object_v1 *owner, uint64_t payload, uint32_t managed,
     uint64_t bit_width, uint64_t plane_size, uint32_t four_state,
-    uint32_t managed_value, void *out_value, void *out_unknown);
+    uint32_t value_kind, void *out_value, void *out_unknown);
 obelisk_rt_status obelisk_rt_v1_argument_ref_store(
     obelisk_rt_context *context, uint8_t *state_value, uint8_t *state_unknown,
     uint64_t state_bit_count, obelisk_rt_object_v1 *owner, uint64_t payload,
     uint32_t managed, uint64_t bit_width, uint64_t plane_size,
-    uint32_t four_state, uint32_t managed_value, const void *value,
+    uint32_t four_state, uint32_t value_kind, const void *value,
     const void *unknown);
 obelisk_rt_status
 obelisk_rt_v1_object_field_load(obelisk_rt_object_v1 *object, uint64_t offset,
@@ -1363,6 +1391,15 @@ obelisk_rt_status obelisk_rt_v1_string_concat(
 obelisk_rt_status obelisk_rt_v1_string_concat_many(
     obelisk_rt_gc_lane_v1 *lane, const obelisk_rt_string_span_v1 *spans,
     uint64_t span_count, obelisk_rt_string_v1 *out_string);
+obelisk_rt_status obelisk_rt_v1_string_repeat(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_string_v1 string, uint64_t count,
+    obelisk_rt_string_v1 *out_string);
+obelisk_rt_status obelisk_rt_v1_string_from_packed(
+    obelisk_rt_gc_lane_v1 *lane, const void *value, const void *unknown,
+    uint64_t bit_width, obelisk_rt_string_v1 *out_string);
+obelisk_rt_status obelisk_rt_v1_string_to_packed(
+    obelisk_rt_string_v1 string, void *value, void *unknown,
+    uint64_t bit_width);
 obelisk_rt_status obelisk_rt_v1_string_view(
     obelisk_rt_string_v1 string, char scratch[8], const char **out_bytes,
     uint64_t *out_size);
@@ -1384,6 +1421,16 @@ int32_t obelisk_rt_v1_string_compare_insensitive(obelisk_rt_string_v1 left,
 obelisk_rt_status obelisk_rt_v1_string_case_convert(
     obelisk_rt_gc_lane_v1 *lane, obelisk_rt_string_v1 string,
     uint32_t to_upper, obelisk_rt_string_v1 *out_string);
+obelisk_rt_status obelisk_rt_v1_string_parse_integer(
+    obelisk_rt_string_v1 string, uint32_t radix, uint64_t *out_value);
+obelisk_rt_status obelisk_rt_v1_string_parse_real(
+    obelisk_rt_string_v1 string, double *out_value);
+obelisk_rt_status obelisk_rt_v1_string_format_integer(
+    obelisk_rt_gc_lane_v1 *lane, uint64_t value, uint32_t radix,
+    uint32_t is_signed, obelisk_rt_string_v1 *out_string);
+obelisk_rt_status obelisk_rt_v1_string_format_real(
+    obelisk_rt_gc_lane_v1 *lane, double value,
+    obelisk_rt_string_v1 *out_string);
 
 typedef uint32_t obelisk_rt_container_kind_v1;
 enum {
@@ -1428,15 +1475,31 @@ obelisk_rt_status
 obelisk_rt_v1_queue_create(obelisk_rt_gc_lane_v1 *lane,
                            const obelisk_rt_element_type_v1 *element_type,
                            uint64_t bound, obelisk_rt_object_v1 **out_queue);
+// Create a dynamic array or queue with the same immutable element metadata as
+// the first nonnull source. Queue bounds are preserved. If both sources are
+// null, the canonical null/default container is returned.
+obelisk_rt_status obelisk_rt_v1_container_create_like(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *preferred,
+    obelisk_rt_object_v1 *fallback, uint64_t size,
+    obelisk_rt_object_v1 **out_container);
 uint64_t obelisk_rt_v1_container_size(obelisk_rt_object_v1 *container);
 obelisk_rt_status obelisk_rt_v1_container_read(obelisk_rt_object_v1 *container,
                                                int64_t index, void *out_value,
                                                void *out_unknown);
+// Bytecode-safe variants reject buffers that cannot hold the immutable element
+// descriptor's planes before reading or writing any bytes.
+obelisk_rt_status obelisk_rt_v1_container_read_checked(
+    obelisk_rt_object_v1 *container, int64_t index, void *out_value,
+    uint64_t value_size, void *out_unknown, uint64_t unknown_size);
 obelisk_rt_status obelisk_rt_v1_container_write(obelisk_rt_gc_lane_v1 *lane,
                                                 obelisk_rt_object_v1 *container,
                                                 int64_t index,
                                                 const void *value,
                                                 const void *unknown);
+obelisk_rt_status obelisk_rt_v1_container_write_checked(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *container,
+    int64_t index, const void *value, uint64_t value_size,
+    const void *unknown, uint64_t unknown_size);
 obelisk_rt_status
 obelisk_rt_v1_container_clone(obelisk_rt_gc_lane_v1 *lane,
                               obelisk_rt_object_v1 *container,
@@ -1650,6 +1713,13 @@ obelisk_rt_status obelisk_rt_v1_scheduler_nba(
     obelisk_rt_context *context, uint8_t *value_plane, uint8_t *unknown_plane,
     uint64_t plane_bit_count, uint64_t bit_offset, uint64_t bit_width,
     uint64_t delay, const uint8_t *value, const uint8_t *unknown);
+// Schedule one whole managed string word. The queued word remains a precise
+// tagged root through commit, and equal byte contents do not publish a signal
+// transition even when the immutable handles differ.
+obelisk_rt_status obelisk_rt_v1_scheduler_string_nba(
+    obelisk_rt_context *context, uint8_t *value_plane,
+    uint64_t plane_bit_count, uint64_t bit_offset, uint64_t delay,
+    obelisk_rt_string_v1 value);
 // Schedule one class-property update. The destination and a managed value, if
 // present, remain precise GC roots through commit. `unknown` is either null or
 // a second `plane_size` byte plane immediately following the value plane in
@@ -1726,8 +1796,9 @@ obelisk_rt_status obelisk_rt_v1_native_state_alloc_with_roots(
     uint64_t *out_handle);
 obelisk_rt_status obelisk_rt_v1_native_state_retain(obelisk_rt_context *context,
                                                     uint64_t handle);
-// Attach precise class-handle offsets to one automatic state allocation.
-// Offsets are in bits from the value plane and must be distinct 64-bit words.
+// Attach precise managed-word offsets to one automatic state allocation.
+// Offsets are in bits from the value plane and must be distinct 64-bit words;
+// tagged inline strings remain allocation-free roots.
 obelisk_rt_status obelisk_rt_v1_native_state_register_managed_roots(
     obelisk_rt_context *context, uint64_t handle, const uint64_t *bit_offsets,
     uint64_t count);
@@ -1791,7 +1862,9 @@ enum {
   OBELISK_RT_ARG_LOGIC = 1,
   OBELISK_RT_ARG_STRING = 2,
   OBELISK_RT_ARG_REAL = 3,
-  OBELISK_RT_ARG_TIME = 4
+  OBELISK_RT_ARG_TIME = 4,
+  // data points to one obelisk_rt_string_v1 word; size must be zero.
+  OBELISK_RT_ARG_MANAGED_STRING = 5
 };
 
 typedef uint32_t obelisk_rt_arg_flags;
@@ -1895,6 +1968,12 @@ obelisk_rt_status obelisk_rt_v1_file_open(obelisk_rt_context *context,
                                           const char *path, uint64_t path_size,
                                           const char *mode, uint64_t mode_size,
                                           uint32_t *out_descriptor);
+obelisk_rt_status obelisk_rt_v1_file_open_string_mcd(
+    obelisk_rt_context *context, obelisk_rt_string_v1 path,
+    uint32_t *out_descriptor);
+obelisk_rt_status obelisk_rt_v1_file_open_string(
+    obelisk_rt_context *context, obelisk_rt_string_v1 path,
+    obelisk_rt_string_v1 mode, uint32_t *out_descriptor);
 obelisk_rt_status obelisk_rt_v1_file_close(obelisk_rt_context *context,
                                            uint32_t descriptor);
 obelisk_rt_status obelisk_rt_v1_file_flush(obelisk_rt_context *context,
@@ -1915,6 +1994,10 @@ obelisk_rt_status obelisk_rt_v1_file_getline(obelisk_rt_context *context,
                                              uint32_t descriptor,
                                              uint64_t max_bytes,
                                              obelisk_rt_buffer_v1 *out_line);
+obelisk_rt_status obelisk_rt_v1_file_getline_string(
+    obelisk_rt_context *context, obelisk_rt_gc_lane_v1 *lane,
+    uint32_t descriptor, obelisk_rt_string_v1 *out_string,
+    uint32_t *out_count);
 obelisk_rt_status obelisk_rt_v1_file_eof(obelisk_rt_context *context,
                                          uint32_t descriptor,
                                          uint32_t *out_is_eof);

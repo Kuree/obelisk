@@ -529,3 +529,15 @@ module {
   // expected-error @+1 {{packed array element must be packed}}
   %bad = obelisk.var.alloc : !obelisk.ref<!obelisk.ranged_packed_array<3 : 0 x !obelisk.string>>
 }
+
+// -----
+
+module {
+  // expected-error @+1 {{condition_pattern_flags must contain one entry per inventory item}}
+  obelisk.sv.expression.conditional_op attributes {
+    condition_count = 2 : i64,
+    condition_pattern_flags = array<i64: 0>, node_id = 0 : i64,
+    semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>
+  } {
+  }
+}

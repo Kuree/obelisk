@@ -199,6 +199,34 @@ module {
       semantic_type = !slang.integral<32, true, false, 31 : 0, int>
     } {
     }
+    slang.expression.conditional_op attributes {
+      condition_count = 2 : i64,
+      condition_pattern_flags = array<i64: 1, 0>, node_id = 44 : i64,
+      semantic_type = !slang.integral<1, false, true, 0 : 0, logic>
+    } {
+      slang.expression.integer_literal attributes {
+        constant_value = "1'bx", node_id = 45 : i64,
+        semantic_type = !slang.integral<1, false, true, 0 : 0, logic>
+      } {
+      }
+      slang.pattern.constant attributes {node_id = 48 : i64} {
+      }
+      slang.expression.integer_literal attributes {
+        constant_value = "1'b1", node_id = 46 : i64,
+        semantic_type = !slang.integral<1, false, true, 0 : 0, logic>
+      } {
+      }
+      slang.expression.integer_literal attributes {
+        constant_value = "1'b1", node_id = 49 : i64,
+        semantic_type = !slang.integral<1, false, true, 0 : 0, logic>
+      } {
+      }
+      slang.expression.integer_literal attributes {
+        constant_value = "1'b0", node_id = 47 : i64,
+        semantic_type = !slang.integral<1, false, true, 0 : 0, logic>
+      } {
+      }
+    }
     slang.expression.binary_op attributes {
       node_id = 31 : i64, operator_kind = 0 : i32,
       semantic_type = !slang.packed_array<15 : 8 x !slang.integral<1, false, true, 0 : 0, logic>>
@@ -279,6 +307,9 @@ module {
 // CHECK-SAME: initializer_count = 0 : i64
 // CHECK-SAME: step_count = 0 : i64
 // CHECK: obelisk.sv.expression.integer_literal attributes {constant_value = "42"
+// CHECK: obelisk.sv.expression.conditional_op
+// CHECK-SAME: condition_count = 2 : i64
+// CHECK-SAME: condition_pattern_flags = array<i64: 1, 0>
 // CHECK: obelisk.sv.expression.binary_op
 // CHECK: obelisk.sv.expression.assignment
 // CHECK-SAME: assignment_kind = 1 : i32

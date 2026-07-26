@@ -41,6 +41,10 @@ module simulation_aggregates;
   unpacked_union_t unpacked_choice;
   tagged_packed_union_t tagged_packed_choice;
   tagged_unpacked_union_t tagged_unpacked_choice;
+  tagged_unpacked_union_t tagged_left [0:1];
+  tagged_unpacked_union_t tagged_right [0:1];
+  tagged_unpacked_union_t tagged_merged [0:1];
+  logic ambiguous;
 
   function automatic unpacked_record_t copy_record(
       input unpacked_record_t value);
@@ -74,6 +78,12 @@ module simulation_aggregates;
     selected = unpacked_choice.byte_value;
     tagged_packed_choice = tagged word_value 16'h1234;
     tagged_unpacked_choice = tagged int_value index;
+    ambiguous = 1'bx;
+    tagged_left[0] = tagged int_value 7;
+    tagged_right[0] = tagged int_value 7;
+    tagged_left[1] = tagged int_value 9;
+    tagged_right[1] = tagged byte_value 8'd9;
+    tagged_merged = ambiguous ? tagged_left : tagged_right;
     copied_record = copy_record(unpacked_record);
     copied_record = copy_update(unpacked_record, output_record, copied_record);
   end
@@ -99,6 +109,9 @@ endmodule
 // CHECK: obelisk_sim.ref.subelement {{.*}}{{\[\[2\]\]}} : !obelisk_sim.ref<!obelisk_sim.unpacked_array<-1 : 1
 // CHECK: obelisk_sim.union.construct {{.*}} as 1 : {{.*}}isTagged = true, tagBits = 2>
 // CHECK: obelisk_sim.union.construct {{.*}} as 1 : {{.*}}isTagged = true>
+// Ambiguous fixed-array merging compares tagged-union activity before values.
+// CHECK: obelisk_sim.union.is_active
+// CHECK: obelisk_sim.logic.compare eq
 // Aggregate output and inout values are explicit copy-out results.
 // CHECK: %[[COPY_CALL:[0-9]+]]:3 = obelisk_sim.call
 // CHECK: obelisk_sim.ref.store %[[COPY_CALL]]#1

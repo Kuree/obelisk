@@ -405,6 +405,14 @@ class SlangBinaryExpressionASTNodeOp<string mnemonic>
     : SlangExpressionASTNodeOp<mnemonic,
         (ins SlangBinaryOperator:$operator_kind)>;
 
+class SlangConditionalExpressionASTNodeOp<string mnemonic>
+    : SlangExpressionASTNodeOp<mnemonic, (ins
+        I64Attr:$condition_count,
+        DenseI64ArrayAttr:$condition_pattern_flags
+      )> {
+  let hasVerifier = 1;
+}
+
 class SlangAssignmentExpressionASTNodeOp<string mnemonic>
     : SlangExpressionASTNodeOp<mnemonic, (ins
         SlangAssignmentKind:$assignment_kind,

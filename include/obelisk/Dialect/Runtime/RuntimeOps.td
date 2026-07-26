@@ -70,6 +70,12 @@ def RTArgumentBytesOp : RTOp<"argument.bytes", [Pure]> {
   let hasVerifier = 1;
 }
 
+def RTArgumentManagedStringOp
+    : RTOp<"argument.managed_string", [MemoryEffects<[MemAlloc]>]> {
+  let arguments = (ins I64:$value, BoolAttr:$is_format_string);
+  let results = (outs RTArgumentType:$result);
+}
+
 def RTArgumentArrayOp : RTOp<"argument.array", [MemoryEffects<[MemAlloc]>]> {
   let arguments = (ins Variadic<RTArgumentType>:$arguments);
   let results = (outs RTArgumentArrayType:$result);

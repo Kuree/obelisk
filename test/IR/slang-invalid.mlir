@@ -12,6 +12,18 @@ module {
 // -----
 
 module {
+  // expected-error @+1 {{malformed conditional-expression child inventory}}
+  slang.expression.conditional_op attributes {
+    condition_count = 1 : i64,
+    condition_pattern_flags = array<i64: 0>, node_id = 0 : i64,
+    semantic_type = !slang.integral<1, false, true, 0 : 0, logic>
+  } {
+  }
+}
+
+// -----
+
+module {
   // expected-error @+1 {{iterator loop_dimensions entry #0 requires symbol, nonempty path, and type}}
   slang.statement.foreach_loop attributes {
     loop_dimensions = [{

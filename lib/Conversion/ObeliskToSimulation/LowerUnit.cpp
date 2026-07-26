@@ -262,6 +262,14 @@ private:
                             Location location, Value delay = {});
   FailureOr<Value> lowerUnary(semantic::SVUnaryExpressionOp op);
   FailureOr<Value> lowerBinary(semantic::SVBinaryExpressionOp op);
+  FailureOr<Value>
+  lowerConditionalExpression(semantic::SVConditionalExpressionOp op);
+  FailureOr<Value> conditionalPredicate(Value value, Location location);
+  FailureOr<Value> conditionalEqual(Value lhs, Value rhs, Type type,
+                                    Location location);
+  FailureOr<Value> mergeConditionalValues(Value condition, Value trueValue,
+                                          Value falseValue, Type type,
+                                          Location location);
   FailureOr<Value> lowerInside(semantic::SVInsideExpressionOp op);
   FailureOr<Value> lowerCall(semantic::SVCallExpressionOp op);
   FailureOr<Value> lowerNewClass(semantic::SVNewClassExpressionOp op);
@@ -686,6 +694,35 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
                                        bool targetSigned) {
   if (value.getType() == targetType)
     return value;
+  if (isa<sim::StringType>(targetType)) {
+    FailureOr<Value> packed = toPackedScalar(value, location);
+    if (failed(packed))
+      return failure();
+    return sim::SimStringFromPackedOp::create(builder, location, targetType,
+                                               *packed)
+        .getResult();
+  }
+  if (isa<sim::StringType>(value.getType())) {
+    Type scalarType = sim::getPackedScalarType(targetType);
+    std::optional<unsigned> width =
+        scalarType ? sim::getPackedWidth(scalarType) : std::nullopt;
+    if (!scalarType || !width) {
+      emitError(location) << "cannot convert string to " << targetType;
+      return failure();
+    }
+    Type bitsType = IntegerType::get(value.getContext(), *width);
+    Value bits = sim::SimStringToPackedOp::create(builder, location, bitsType,
+                                                  value);
+    Value scalar = bits;
+    if (isa<sim::LogicType>(scalarType))
+      scalar = sim::SimLogicFromBitsOp::create(builder, location, scalarType,
+                                               bits);
+    if (scalarType == targetType)
+      return scalar;
+    return sim::SimPackedUnflattenOp::create(builder, location, targetType,
+                                             scalar)
+        .getResult();
+  }
   if (isa<sim::ClassHandleType>(value.getType()) &&
       isa<sim::ClassHandleType>(targetType))
     return sim::SimClassCastOp::create(builder, location, targetType, value)
@@ -846,6 +883,16 @@ FailureOr<Value> UnitLowering::toPackedScalar(Value value, Location location) {
 }
 
 FailureOr<Value> UnitLowering::truthValue(Value value, Location location) {
+  if (isa<sim::StringType>(value.getType())) {
+    Value length = sim::SimStringLengthOp::create(
+        builder, location, builder.getI64Type(), value);
+    Value zero = arith::ConstantOp::create(builder, location,
+                                           builder.getI64Type(),
+                                           builder.getI64IntegerAttr(0));
+    return arith::CmpIOp::create(builder, location,
+                                 arith::CmpIPredicate::ne, length, zero)
+        .getResult();
+  }
   if (isa<FloatType>(value.getType())) {
     Value zero = arith::ConstantOp::create(builder, location, value.getType(),
                                            builder.getFloatAttr(
@@ -1106,6 +1153,44 @@ FailureOr<Value> UnitLowering::lowerLiteral(Operation *op) {
   return convert(value, *type, isSignedNode(op), location);
 }
 
+static FailureOr<Value> lowerStringLiteralValue(OpBuilder &builder,
+                                                Operation *op, Type type,
+                                                Location location) {
+  auto spelling = op->getAttrOfType<StringAttr>("constant_value");
+  if (!spelling)
+    return emitError(location) << "string literal has no byte payload",
+           failure();
+  if (isa<sim::StringType>(type))
+    return sim::SimStringLiteralOp::create(builder, location, type, spelling)
+        .getResult();
+
+  Type scalar = sim::getPackedScalarType(type);
+  std::optional<unsigned> width =
+      scalar ? sim::getPackedWidth(scalar) : std::nullopt;
+  if (!scalar || !width)
+    return emitError(location)
+               << "string literal has a non-packed, non-string result type",
+           failure();
+  APInt bits(*width, 0);
+  for (uint8_t byte : spelling.getValue().bytes()) {
+    bits <<= std::min<unsigned>(8, *width);
+    bits |= APInt(*width, byte);
+  }
+  Value value;
+  auto planeType = IntegerType::get(type.getContext(), *width);
+  if (isa<IntegerType>(scalar))
+    value = arith::ConstantOp::create(builder, location, scalar,
+                                      builder.getIntegerAttr(scalar, bits));
+  else
+    value = sim::SimLogicConstantOp::create(
+        builder, location, scalar, builder.getIntegerAttr(planeType, bits),
+        builder.getIntegerAttr(planeType, APInt(*width, 0)));
+  if (scalar != type)
+    value =
+        sim::SimPackedUnflattenOp::create(builder, location, type, value);
+  return value;
+}
+
 FailureOr<Value> UnitLowering::lowerConcatenation(Operation *op) {
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
@@ -1116,6 +1201,22 @@ FailureOr<Value> UnitLowering::lowerConcatenation(Operation *op) {
   FailureOr<Type> resultType = getNormalizedSemanticType(op);
   if (failed(resultType))
     return failure();
+  if (isa<sim::StringType>(*resultType)) {
+    SmallVector<Value> inputs;
+    for (Operation *child : children) {
+      FailureOr<Value> input = lowerExpression(child);
+      if (failed(input))
+        return failure();
+      FailureOr<Value> converted =
+          convert(*input, *resultType, isSignedNode(child), location);
+      if (failed(converted))
+        return failure();
+      inputs.push_back(*converted);
+    }
+    return sim::SimStringConcatOp::create(builder, location, *resultType,
+                                          inputs)
+        .getResult();
+  }
   Type scalarResultType = sim::getPackedScalarType(*resultType);
   if (!scalarResultType) {
     unsupported(op) << " (unpacked concatenation result)";
@@ -1169,7 +1270,30 @@ FailureOr<Value> UnitLowering::lowerConcatenation(Operation *op) {
 FailureOr<Value> UnitLowering::lowerReplication(Operation *op) {
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
-  if (children.size() != 2 || !isIntegerLiteral(children.front())) {
+  if (children.size() != 2) {
+    unsupported(op) << " (replication arity)";
+    return failure();
+  }
+  FailureOr<Type> resultType = getNormalizedSemanticType(op);
+  if (failed(resultType))
+    return failure();
+  if (isa<sim::StringType>(*resultType)) {
+    FailureOr<Value> count = lowerExpression(children.front());
+    FailureOr<Value> input = lowerExpression(children[1]);
+    if (failed(count) || failed(input))
+      return failure();
+    FailureOr<Value> count64 =
+        convert(*count, builder.getI64Type(), isSignedNode(children.front()),
+                location);
+    FailureOr<Value> string =
+        convert(*input, *resultType, isSignedNode(children[1]), location);
+    if (failed(count64) || failed(string))
+      return failure();
+    return sim::SimStringRepeatOp::create(builder, location, *resultType,
+                                          *string, *count64)
+        .getResult();
+  }
+  if (!isIntegerLiteral(children.front())) {
     unsupported(op) << " (nonconstant replication count)";
     return failure();
   }
@@ -1180,7 +1304,6 @@ FailureOr<Value> UnitLowering::lowerReplication(Operation *op) {
   }
   FailureOr<ParsedConstant> count = parseSVInteger(*spelling, 64, location);
   FailureOr<Value> input = lowerExpression(children[1]);
-  FailureOr<Type> resultType = getNormalizedSemanticType(op);
   if (failed(count) || failed(input) || failed(resultType))
     return failure();
   FailureOr<Value> scalarInput = toPackedScalar(*input, location);
@@ -1432,6 +1555,30 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
     sourceValueType = net.getElementType();
   else if (auto driver = dyn_cast<sim::DriverType>(sourceValueType))
     sourceValueType = driver.getElementType();
+
+  if (isa<sim::StringType>(sourceValueType)) {
+    if (lvalue) {
+      unsupported(op)
+          << " (escaping string-character lvalues are not yet materialized)";
+      return failure();
+    }
+    if (!element) {
+      unsupported(op) << " (string range selection)";
+      return failure();
+    }
+    FailureOr<Value> index = lowerExpression(children[1]);
+    if (failed(index))
+      return failure();
+    FailureOr<Value> index64 =
+        convert(*index, builder.getI64Type(), isSignedNode(children[1]),
+                location);
+    if (failed(index64))
+      return failure();
+    Value byte = sim::SimStringGetcOp::create(builder, location,
+                                              builder.getI8Type(), *input,
+                                              *index64);
+    return convert(byte, *resultType, false, location);
+  }
 
   // Fixed packed and unpacked arrays remain first-class aggregates. Their
   // dynamic operation consumes a source index, while static views use a
@@ -1778,6 +1925,39 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
 LogicalResult UnitLowering::writeLValue(Operation *destination, Value value,
                                         bool sourceSigned, bool nonblocking,
                                         Location location, Value delay) {
+  if (isa<semantic::SVElementSelectExpressionOp>(destination)) {
+    SmallVector<Operation *> selection = getChildren(destination);
+    if (selection.size() == 2) {
+      FailureOr<Type> baseType = getNormalizedSemanticType(selection[0]);
+      if (succeeded(baseType) && isa<sim::StringType>(*baseType)) {
+        if (nonblocking) {
+          emitError(location)
+              << "nonblocking string-character assignment requires a "
+                 "captured element path";
+          return failure();
+        }
+        FailureOr<Value> reference = lowerExpression(selection[0], true);
+        FailureOr<Value> input =
+            succeeded(reference) ? loadReference(*reference, location)
+                                 : FailureOr<Value>(failure());
+        FailureOr<Value> index = lowerExpression(selection[1]);
+        FailureOr<Value> character =
+            convert(value, builder.getI8Type(), sourceSigned, location);
+        if (failed(reference) || failed(input) || failed(index) ||
+            failed(character))
+          return failure();
+        FailureOr<Value> index64 =
+            convert(*index, builder.getI64Type(), isSignedNode(selection[1]),
+                    location);
+        if (failed(index64))
+          return failure();
+        Value updated = sim::SimStringPutcOp::create(
+            builder, location, sim::StringType::get(function.getContext()),
+            *input, *index64, *character);
+        return storeReference(*reference, updated, location);
+      }
+    }
+  }
   if (isa<semantic::SVConcatenationExpressionOp>(destination)) {
     SmallVector<Operation *> children = getChildren(destination);
     FailureOr<Type> destinationType = getNormalizedSemanticType(destination);
@@ -1889,10 +2069,6 @@ FailureOr<Value>
 UnitLowering::lowerAssignment(semantic::SVAssignmentExpressionOp op) {
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
-  if (op.getOperatorKind()) {
-    unsupported(op) << " (compound assignment)";
-    return failure();
-  }
   bool timed = op.getHasTimingControl();
   size_t expected = timed ? 3 : 2;
   if (children.size() != expected) {
@@ -1902,6 +2078,54 @@ UnitLowering::lowerAssignment(semantic::SVAssignmentExpressionOp op) {
   Operation *control = timed ? children[0] : nullptr;
   Operation *destination = children[timed ? 1 : 0];
   Operation *source = children[timed ? 2 : 1];
+  if (auto compound = op.getOperatorKind()) {
+    FailureOr<Type> type = getNormalizedSemanticType(destination);
+    if (failed(type))
+      return failure();
+    // Slang has already made the compound operation explicit in the RHS
+    // semantic subtree. String += is therefore an ordinary concatenating RHS
+    // followed by a single assignment, preserving one evaluation of the
+    // destination.
+    if (!isa<sim::StringType>(*type) ||
+        *compound != semantic::SVBinaryOperator::Add) {
+      unsupported(op) << " (compound assignment)";
+      return failure();
+    }
+    if (timed ||
+        op.getAssignmentKind() == semantic::SVAssignmentKind::Nonblocking) {
+      emitError(location)
+          << "timed or nonblocking string compound assignment is unsupported";
+      return failure();
+    }
+    semantic::SVBinaryExpressionOp binary;
+    source->walk([&](semantic::SVBinaryExpressionOp candidate) {
+      if (!binary)
+        binary = candidate;
+    });
+    SmallVector<Operation *> operands =
+        binary ? getChildren(binary) : SmallVector<Operation *>{};
+    if (!binary || binary.getOperatorKind() != semantic::SVBinaryOperator::Add ||
+        operands.size() != 2) {
+      emitError(location) << "malformed string compound assignment";
+      return failure();
+    }
+    FailureOr<Value> reference = lowerExpression(destination, true);
+    FailureOr<Value> current =
+        succeeded(reference) ? loadReference(*reference, location)
+                             : FailureOr<Value>(failure());
+    FailureOr<Value> suffix = lowerExpression(operands.back());
+    if (failed(reference) || failed(current) || failed(suffix))
+      return failure();
+    FailureOr<Value> converted =
+        convert(*suffix, *type, isSignedNode(operands.back()), location);
+    if (failed(converted))
+      return failure();
+    Value updated = sim::SimStringConcatOp::create(
+        builder, location, *type, ValueRange{*current, *converted});
+    if (failed(storeReference(*reference, updated, location)))
+      return failure();
+    return updated;
+  }
   FailureOr<Value> rhs = lowerExpression(source);
   if (failed(rhs))
     return failure();
@@ -2352,6 +2576,56 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
   if (failed(lhs) || failed(rhs) || failed(resultType))
     return failure();
   Binary kind = op.getOperatorKind();
+  if (isa<sim::StringType>((*lhs).getType()) ||
+      isa<sim::StringType>((*rhs).getType())) {
+    Type stringType = sim::StringType::get(function.getContext());
+    FailureOr<Value> left =
+        convert(*lhs, stringType, isSignedNode(children[0]), location);
+    FailureOr<Value> right =
+        convert(*rhs, stringType, isSignedNode(children[1]), location);
+    if (failed(left) || failed(right))
+      return failure();
+    if (kind == Binary::Add) {
+      Value joined = sim::SimStringConcatOp::create(
+          builder, location, stringType, ValueRange{*left, *right});
+      return convert(joined, *resultType, false, location);
+    }
+    std::optional<arith::CmpIPredicate> predicate;
+    switch (kind) {
+    case Binary::Equality:
+    case Binary::CaseEquality:
+      predicate = arith::CmpIPredicate::eq;
+      break;
+    case Binary::Inequality:
+    case Binary::CaseInequality:
+      predicate = arith::CmpIPredicate::ne;
+      break;
+    case Binary::GreaterThanEqual:
+      predicate = arith::CmpIPredicate::sge;
+      break;
+    case Binary::GreaterThan:
+      predicate = arith::CmpIPredicate::sgt;
+      break;
+    case Binary::LessThanEqual:
+      predicate = arith::CmpIPredicate::sle;
+      break;
+    case Binary::LessThan:
+      predicate = arith::CmpIPredicate::slt;
+      break;
+    default:
+      unsupported(op) << " (string operator)";
+      return failure();
+    }
+    Value compared = sim::SimStringCompareOp::create(
+        builder, location, builder.getI32Type(), *left, *right,
+        builder.getBoolAttr(false));
+    Value zero = arith::ConstantOp::create(builder, location,
+                                           builder.getI32Type(),
+                                           builder.getI32IntegerAttr(0));
+    Value result =
+        arith::CmpIOp::create(builder, location, *predicate, compared, zero);
+    return convert(result, *resultType, false, location);
+  }
   if (isa<sim::ClassHandleType>((*lhs).getType()) ||
       isa<sim::ClassHandleType>((*rhs).getType())) {
     if (!isa<sim::ClassHandleType>((*lhs).getType()) ||
@@ -2704,6 +2978,512 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
   return convert(value, *resultType, signedOp, location);
 }
 
+FailureOr<Value> UnitLowering::conditionalPredicate(Value value,
+                                                    Location location) {
+  if (isa<sim::StringType, FloatType>(value.getType())) {
+    FailureOr<Value> truth = truthValue(value, location);
+    if (failed(truth))
+      return failure();
+    return sim::SimLogicFromBitsOp::create(
+               builder, location,
+               sim::LogicType::get(function.getContext(), 1), *truth)
+        .getResult();
+  }
+  FailureOr<Value> scalar = toPackedScalar(value, location);
+  if (failed(scalar))
+    return failure();
+  if (isa<sim::LogicType>((*scalar).getType()))
+    return sim::SimLogicReductionOp::create(
+               builder, location,
+               sim::LogicType::get(function.getContext(), 1),
+               sim::ReductionKind::Or, *scalar)
+        .getResult();
+  FailureOr<Value> truth = truthValue(*scalar, location);
+  if (failed(truth))
+    return failure();
+  return sim::SimLogicFromBitsOp::create(
+             builder, location, sim::LogicType::get(function.getContext(), 1),
+             *truth)
+      .getResult();
+}
+
+FailureOr<Value> UnitLowering::conditionalEqual(Value lhs, Value rhs, Type type,
+                                                Location location) {
+  auto falseValue = [&]() -> Value {
+    return arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                     builder.getBoolAttr(false));
+  };
+  if (Type scalarType = sim::getPackedScalarType(type)) {
+    FailureOr<Value> left = toPackedScalar(lhs, location);
+    FailureOr<Value> right = toPackedScalar(rhs, location);
+    if (failed(left) || failed(right))
+      return failure();
+    if (isa<sim::LogicType>(scalarType)) {
+      Value compared = sim::SimLogicCompareOp::create(
+          builder, location, sim::LogicType::get(function.getContext(), 1),
+          sim::CompareKind::Eq, *left, *right);
+      return sim::SimLogicIsTrueOp::create(builder, location,
+                                           builder.getI1Type(), compared)
+          .getResult();
+    }
+    return arith::CmpIOp::create(builder, location,
+                                 arith::CmpIPredicate::eq, *left, *right)
+        .getResult();
+  }
+  if (isa<FloatType>(type))
+    return arith::CmpFOp::create(builder, location,
+                                 arith::CmpFPredicate::OEQ, lhs, rhs)
+        .getResult();
+  if (isa<sim::StringType>(type)) {
+    Value compared = sim::SimStringCompareOp::create(
+        builder, location, builder.getI32Type(), lhs, rhs,
+        builder.getBoolAttr(false));
+    Value zero = arith::ConstantOp::create(builder, location,
+                                           builder.getI32Type(),
+                                           builder.getI32IntegerAttr(0));
+    return arith::CmpIOp::create(builder, location,
+                                 arith::CmpIPredicate::eq, compared, zero)
+        .getResult();
+  }
+  if (isa<sim::ClassHandleType>(type)) {
+    Value left = sim::SimClassIdOp::create(builder, location, lhs);
+    Value right = sim::SimClassIdOp::create(builder, location, rhs);
+    return arith::CmpIOp::create(builder, location,
+                                 arith::CmpIPredicate::eq, left, right)
+        .getResult();
+  }
+  if (isa<sim::EventType>(type))
+    return sim::SimEventEqualOp::create(builder, location,
+                                        builder.getI1Type(), lhs, rhs)
+        .getResult();
+  if (isa<sim::DynamicArrayType, sim::QueueType>(type)) {
+    Value leftSize = sim::SimContainerSizeOp::create(
+        builder, location, builder.getI64Type(), lhs);
+    Value rightSize = sim::SimContainerSizeOp::create(
+        builder, location, builder.getI64Type(), rhs);
+    Value sameSize = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, leftSize, rightSize);
+    Block *compareBlock = addBlock();
+    Block *falseBlock = addBlock();
+    Block *loopBlock = addBlock();
+    Block *bodyBlock = addBlock();
+    Block *resultBlock = addBlock();
+    loopBlock->addArgument(builder.getI64Type(), location);
+    resultBlock->addArgument(builder.getI1Type(), location);
+    cf::CondBranchOp::create(builder, location, sameSize, compareBlock,
+                             ValueRange{}, falseBlock, ValueRange{});
+
+    setCurrent(compareBlock);
+    Value zero = arith::ConstantOp::create(
+        builder, location, builder.getI64Type(),
+        builder.getI64IntegerAttr(0));
+    cf::BranchOp::create(builder, location, loopBlock, ValueRange{zero});
+
+    setCurrent(loopBlock);
+    Value index = loopBlock->getArgument(0);
+    Value inRange = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ult, index, leftSize);
+    Value trueValue = arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+    cf::CondBranchOp::create(builder, location, inRange, bodyBlock,
+                             ValueRange{}, resultBlock,
+                             ValueRange{trueValue});
+
+    setCurrent(bodyBlock);
+    Type elementType =
+        isa<sim::DynamicArrayType>(type)
+            ? cast<sim::DynamicArrayType>(type).getElementType()
+            : cast<sim::QueueType>(type).getElementType();
+    Value left = sim::SimContainerReadOp::create(
+        builder, location, elementType, lhs, index);
+    Value right = sim::SimContainerReadOp::create(
+        builder, location, elementType, rhs, index);
+    FailureOr<Value> equal =
+        conditionalEqual(left, right, elementType, location);
+    if (failed(equal))
+      return failure();
+    Block *nextBlock = addBlock();
+    cf::CondBranchOp::create(builder, location, *equal, nextBlock,
+                             ValueRange{}, falseBlock, ValueRange{});
+    setCurrent(nextBlock);
+    Value one = arith::ConstantOp::create(
+        builder, location, builder.getI64Type(),
+        builder.getI64IntegerAttr(1));
+    Value next = arith::AddIOp::create(builder, location, index, one);
+    cf::BranchOp::create(builder, location, loopBlock, ValueRange{next});
+
+    setCurrent(falseBlock);
+    Value falseValue = arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(false));
+    cf::BranchOp::create(builder, location, resultBlock,
+                         ValueRange{falseValue});
+    setCurrent(resultBlock);
+    return resultBlock->getArgument(0);
+  }
+  if (auto unionType = dyn_cast<sim::UnpackedUnionType>(type)) {
+    unsigned count = sim::getAggregateNumElements(unionType);
+    if (!unionType.getIsTagged()) {
+      Value equal = arith::ConstantOp::create(
+          builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+      for (unsigned index = 0; index < count; ++index) {
+        Type elementType = sim::getAggregateElementType(unionType, index);
+        if (!elementType)
+          return failure();
+        Value left = sim::SimUnionExtractOp::create(
+            builder, location, elementType, lhs, index);
+        Value right = sim::SimUnionExtractOp::create(
+            builder, location, elementType, rhs, index);
+        FailureOr<Value> elementEqual =
+            conditionalEqual(left, right, elementType, location);
+        if (failed(elementEqual))
+          return failure();
+        equal =
+            arith::AndIOp::create(builder, location, equal, *elementEqual);
+      }
+      return equal;
+    }
+
+    Block *falseBlock = addBlock();
+    Block *resultBlock = addBlock();
+    resultBlock->addArgument(builder.getI1Type(), location);
+    for (unsigned index = 0; index < count; ++index) {
+      Value leftActive = sim::SimUnionIsActiveOp::create(
+          builder, location, builder.getI1Type(), lhs, index);
+      Value rightActive = sim::SimUnionIsActiveOp::create(
+          builder, location, builder.getI1Type(), rhs, index);
+      Value sameActive = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq, leftActive,
+          rightActive);
+      Block *sameBlock = addBlock();
+      Block *compareBlock = addBlock();
+      Block *nextBlock = addBlock();
+      cf::CondBranchOp::create(builder, location, sameActive, sameBlock,
+                               ValueRange{}, falseBlock, ValueRange{});
+
+      setCurrent(sameBlock);
+      cf::CondBranchOp::create(builder, location, leftActive, compareBlock,
+                               ValueRange{}, nextBlock, ValueRange{});
+
+      setCurrent(compareBlock);
+      Type elementType = sim::getAggregateElementType(unionType, index);
+      if (!elementType)
+        return failure();
+      Value left = sim::SimUnionExtractOp::create(
+          builder, location, elementType, lhs, index);
+      Value right = sim::SimUnionExtractOp::create(
+          builder, location, elementType, rhs, index);
+      FailureOr<Value> elementEqual =
+          conditionalEqual(left, right, elementType, location);
+      if (failed(elementEqual))
+        return failure();
+      cf::CondBranchOp::create(builder, location, *elementEqual, nextBlock,
+                               ValueRange{}, falseBlock, ValueRange{});
+      setCurrent(nextBlock);
+    }
+    Value trueValue = arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+    cf::BranchOp::create(builder, location, resultBlock,
+                         ValueRange{trueValue});
+
+    setCurrent(falseBlock);
+    cf::BranchOp::create(builder, location, resultBlock,
+                         ValueRange{falseValue()});
+    setCurrent(resultBlock);
+    return resultBlock->getArgument(0);
+  }
+  if (!isa<sim::UnpackedArrayType, sim::UnpackedStructType>(type))
+    return falseValue();
+
+  Value equal = arith::ConstantOp::create(
+      builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+  unsigned count = sim::getAggregateNumElements(type);
+  for (unsigned index = 0; index < count; ++index) {
+    Type elementType = sim::getAggregateElementType(type, index);
+    if (!elementType)
+      return failure();
+    Value left = sim::SimAggregateExtractOp::create(
+        builder, location, elementType, lhs, index);
+    Value right = sim::SimAggregateExtractOp::create(
+        builder, location, elementType, rhs, index);
+    FailureOr<Value> elementEqual =
+        conditionalEqual(left, right, elementType, location);
+    if (failed(elementEqual))
+      return failure();
+    equal =
+        arith::AndIOp::create(builder, location, equal, *elementEqual);
+  }
+  return equal;
+}
+
+FailureOr<Value>
+UnitLowering::mergeConditionalValues(Value condition, Value trueValue,
+                                     Value falseValue, Type type,
+                                     Location location) {
+  if (sim::getPackedScalarType(type)) {
+    FailureOr<Value> leftScalar = toPackedScalar(trueValue, location);
+    FailureOr<Value> rightScalar = toPackedScalar(falseValue, location);
+    if (failed(leftScalar) || failed(rightScalar))
+      return failure();
+    FailureOr<Value> left = toLogic(*leftScalar, location);
+    FailureOr<Value> right = toLogic(*rightScalar, location);
+    if (failed(left) || failed(right))
+      return failure();
+    Value merged = sim::SimLogicMuxOp::create(
+        builder, location, (*left).getType(), condition, *left, *right);
+    return convert(merged, type, false, location);
+  }
+  if (auto array = dyn_cast<sim::UnpackedArrayType>(type)) {
+    SmallVector<Value> elements;
+    unsigned count = sim::getAggregateNumElements(array);
+    elements.reserve(count);
+    for (unsigned index = 0; index < count; ++index) {
+      Type elementType = array.getElementType();
+      Value left = sim::SimAggregateExtractOp::create(
+          builder, location, elementType, trueValue, index);
+      Value right = sim::SimAggregateExtractOp::create(
+          builder, location, elementType, falseValue, index);
+      FailureOr<Value> equal =
+          conditionalEqual(left, right, elementType, location);
+      if (failed(equal))
+        return failure();
+      Value defaultValue = createDefaultValue(builder, location, elementType);
+      if (!defaultValue) {
+        emitError(location) << "cannot materialize conditional default for "
+                            << elementType;
+        return failure();
+      }
+      elements.push_back(arith::SelectOp::create(
+          builder, location, *equal, left, defaultValue));
+    }
+    return sim::SimAggregateConstructOp::create(builder, location, type,
+                                                 elements)
+        .getResult();
+  }
+  if (isa<sim::DynamicArrayType, sim::QueueType>(type)) {
+    Type elementType =
+        isa<sim::DynamicArrayType>(type)
+            ? cast<sim::DynamicArrayType>(type).getElementType()
+            : cast<sim::QueueType>(type).getElementType();
+    Value leftSize = sim::SimContainerSizeOp::create(
+        builder, location, builder.getI64Type(), trueValue);
+    Value rightSize = sim::SimContainerSizeOp::create(
+        builder, location, builder.getI64Type(), falseValue);
+    Value sameSize = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, leftSize, rightSize);
+    Block *createBlock = addBlock();
+    Block *defaultBlock = addBlock();
+    Block *loopBlock = addBlock();
+    Block *bodyBlock = addBlock();
+    Block *resultBlock = addBlock();
+    loopBlock->addArgument(builder.getI64Type(), location);
+    resultBlock->addArgument(type, location);
+    cf::CondBranchOp::create(builder, location, sameSize, createBlock,
+                             ValueRange{}, defaultBlock, ValueRange{});
+
+    setCurrent(defaultBlock);
+    Value defaultContainer = createDefaultValue(builder, location, type);
+    if (!defaultContainer)
+      return failure();
+    cf::BranchOp::create(builder, location, resultBlock,
+                         ValueRange{defaultContainer});
+
+    setCurrent(createBlock);
+    Value result = sim::SimContainerCreateLikeOp::create(
+        builder, location, type, trueValue, falseValue, leftSize);
+    Value zero = arith::ConstantOp::create(
+        builder, location, builder.getI64Type(),
+        builder.getI64IntegerAttr(0));
+    cf::BranchOp::create(builder, location, loopBlock, ValueRange{zero});
+
+    setCurrent(loopBlock);
+    Value index = loopBlock->getArgument(0);
+    Value inRange = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ult, index, leftSize);
+    cf::CondBranchOp::create(builder, location, inRange, bodyBlock,
+                             ValueRange{}, resultBlock, ValueRange{result});
+
+    setCurrent(bodyBlock);
+    Value left = sim::SimContainerReadOp::create(
+        builder, location, elementType, trueValue, index);
+    Value right = sim::SimContainerReadOp::create(
+        builder, location, elementType, falseValue, index);
+    FailureOr<Value> equal =
+        conditionalEqual(left, right, elementType, location);
+    if (failed(equal))
+      return failure();
+    Value defaultElement = createDefaultValue(builder, location, elementType);
+    if (!defaultElement)
+      return failure();
+    Value selected = arith::SelectOp::create(
+        builder, location, *equal, left, defaultElement);
+    sim::SimContainerWriteOp::create(builder, location, result, index,
+                                     selected);
+    Value one = arith::ConstantOp::create(
+        builder, location, builder.getI64Type(),
+        builder.getI64IntegerAttr(1));
+    Value next = arith::AddIOp::create(builder, location, index, one);
+    cf::BranchOp::create(builder, location, loopBlock, ValueRange{next});
+
+    setCurrent(resultBlock);
+    return resultBlock->getArgument(0);
+  }
+  Value defaultValue = createDefaultValue(builder, location, type);
+  if (!defaultValue) {
+    emitError(location) << "cannot materialize ambiguous conditional default "
+                        << type;
+    return failure();
+  }
+  return defaultValue;
+}
+
+FailureOr<Value> UnitLowering::lowerConditionalExpression(
+    semantic::SVConditionalExpressionOp op) {
+  Location location = getSemanticLocation(op);
+  SmallVector<Operation *> children = getChildren(op);
+  ArrayRef<int64_t> patternFlags = op.getConditionPatternFlags();
+  if (op.getConditionCount() == 0 ||
+      patternFlags.size() != op.getConditionCount()) {
+    emitError(location) << "malformed conditional-expression metadata";
+    return failure();
+  }
+  size_t conditionChildren = op.getConditionCount();
+  for (int64_t flag : patternFlags) {
+    if (flag != 0 && flag != 1) {
+      emitError(location)
+          << "conditional-expression pattern flags must be zero or one";
+      return failure();
+    }
+    conditionChildren += static_cast<size_t>(flag);
+  }
+  if (children.size() != conditionChildren + 2) {
+    emitError(location) << "malformed conditional-expression inventory";
+    return failure();
+  }
+  FailureOr<Type> resultType = getNormalizedSemanticType(op);
+  if (failed(resultType))
+    return failure();
+
+  ArrayRef<Operation *> conditions =
+      ArrayRef<Operation *>(children).take_front(conditionChildren);
+  Operation *trueExpression = children[conditionChildren];
+  Operation *falseExpression = children[conditionChildren + 1];
+
+  Block *trueBlock = addBlock();
+  Block *falseBlock = addBlock();
+  Block *ambiguousBlock = addBlock();
+  Block *mergeBlock = addBlock();
+  Type predicateType = sim::LogicType::get(function.getContext(), 1);
+  mergeBlock->addArgument(*resultType, location);
+
+  Value sawUnknown = arith::ConstantOp::create(
+      builder, location, builder.getI1Type(), builder.getBoolAttr(false));
+  size_t childIndex = 0;
+  for (size_t conditionIndex = 0; conditionIndex < op.getConditionCount();
+       ++conditionIndex) {
+    Operation *expression = conditions[childIndex++];
+    FailureOr<Value> input = lowerExpression(expression);
+    if (failed(input))
+      return failure();
+    FailureOr<Value> predicate;
+    if (patternFlags[conditionIndex]) {
+      Operation *pattern = conditions[childIndex++];
+      FailureOr<Value> matched = lowerPattern(
+          *input, pattern, semantic::SVCaseCondition::Normal);
+      if (failed(matched))
+        return failure();
+      predicate =
+          conditionalPredicate(*matched, getSemanticLocation(expression));
+    } else {
+      predicate =
+          conditionalPredicate(*input, getSemanticLocation(expression));
+    }
+    if (failed(predicate))
+      return failure();
+
+    Type bitsType = builder.getI1Type();
+    Value bits = sim::SimLogicToBitsOp::create(builder, location, bitsType,
+                                               *predicate);
+    Value roundTrip = sim::SimLogicFromBitsOp::create(
+        builder, location, predicateType, bits);
+    Value known = sim::SimLogicCompareOp::create(
+        builder, location, builder.getI1Type(), sim::CompareKind::CaseEq,
+        *predicate, roundTrip);
+    Value isTrue = sim::SimLogicIsTrueOp::create(
+        builder, getSemanticLocation(expression), builder.getI1Type(),
+        *predicate);
+    Value isFalse = arith::AndIOp::create(
+        builder, getSemanticLocation(expression), known,
+        arith::XOrIOp::create(
+            builder, getSemanticLocation(expression), isTrue,
+            arith::ConstantOp::create(builder, getSemanticLocation(expression),
+                                      builder.getI1Type(),
+                                      builder.getBoolAttr(true))));
+    sawUnknown = arith::OrIOp::create(
+        builder, getSemanticLocation(expression), sawUnknown,
+        arith::XOrIOp::create(
+            builder, getSemanticLocation(expression), known,
+            arith::ConstantOp::create(builder, getSemanticLocation(expression),
+                                      builder.getI1Type(),
+                                      builder.getBoolAttr(true))));
+
+    Block *nonFalse = addBlock();
+    cf::CondBranchOp::create(builder, getSemanticLocation(expression), isFalse,
+                             falseBlock, ValueRange{}, nonFalse, ValueRange{});
+    setCurrent(nonFalse);
+    if (conditionIndex + 1 != op.getConditionCount())
+      continue;
+    cf::CondBranchOp::create(builder, getSemanticLocation(expression),
+                             sawUnknown, ambiguousBlock, ValueRange{},
+                             trueBlock, ValueRange{});
+  }
+
+  auto lowerArm = [&](Operation *expression) -> FailureOr<Value> {
+    if (isa<semantic::SVNullLiteralOp>(expression)) {
+      Value value = createDefaultValue(builder, getSemanticLocation(expression),
+                                       *resultType);
+      return value ? FailureOr<Value>(value) : FailureOr<Value>(failure());
+    }
+    FailureOr<Value> value = lowerExpression(expression);
+    if (failed(value))
+      return failure();
+    return convert(*value, *resultType, isSignedNode(expression),
+                   getSemanticLocation(expression), isSignedNode(op));
+  };
+
+  setCurrent(trueBlock);
+  FailureOr<Value> trueResult = lowerArm(trueExpression);
+  if (failed(trueResult))
+    return failure();
+  cf::BranchOp::create(builder, getSemanticLocation(trueExpression), mergeBlock,
+                       ValueRange{*trueResult});
+
+  setCurrent(falseBlock);
+  FailureOr<Value> falseResult = lowerArm(falseExpression);
+  if (failed(falseResult))
+    return failure();
+  cf::BranchOp::create(builder, getSemanticLocation(falseExpression),
+                       mergeBlock, ValueRange{*falseResult});
+
+  setCurrent(ambiguousBlock);
+  FailureOr<Value> ambiguousTrue = lowerArm(trueExpression);
+  FailureOr<Value> ambiguousFalse = lowerArm(falseExpression);
+  if (failed(ambiguousTrue) || failed(ambiguousFalse))
+    return failure();
+  Type i1 = builder.getI1Type();
+  Value ambiguousCondition = sim::SimLogicConstantOp::create(
+      builder, location, predicateType, builder.getIntegerAttr(i1, 0),
+      builder.getIntegerAttr(i1, 1));
+  FailureOr<Value> merged = mergeConditionalValues(
+      ambiguousCondition, *ambiguousTrue, *ambiguousFalse, *resultType,
+      location);
+  if (failed(merged))
+    return failure();
+  cf::BranchOp::create(builder, location, mergeBlock, ValueRange{*merged});
+
+  setCurrent(mergeBlock);
+  return mergeBlock->getArgument(0);
+}
+
 FailureOr<Value> UnitLowering::lowerInside(semantic::SVInsideExpressionOp op) {
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
@@ -2851,7 +3631,14 @@ FailureOr<Value> UnitLowering::lowerInside(semantic::SVInsideExpressionOp op) {
 FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
-  if (op.getIsSystemCall())
+  bool stringBuiltin = false;
+  if (op.getIsSystemCall() && !op.getCalleeName().starts_with("$") &&
+      !children.empty()) {
+    FailureOr<Type> receiverType = getNormalizedSemanticType(children.front());
+    stringBuiltin =
+        succeeded(receiverType) && isa<sim::StringType>(*receiverType);
+  }
+  if (op.getIsSystemCall() && !stringBuiltin)
     return lowerSystemCall(op);
   if (isWeakReferenceCall(op)) {
     StringRef name = op.getCalleeName();
@@ -2897,6 +3684,167 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
            failure();
   }
   auto callee = op->getAttrOfType<FlatSymbolRefAttr>(calleeAttrName);
+  if (!callee && !children.empty()) {
+    FailureOr<Type> receiverType = getNormalizedSemanticType(children.front());
+    if (succeeded(receiverType) && isa<sim::StringType>(*receiverType)) {
+      StringRef name = op.getCalleeName();
+      auto result = [&](Value value) -> FailureOr<Value> {
+        FailureOr<Type> resultType = getNormalizedSemanticType(op);
+        if (failed(resultType))
+          return failure();
+        return convert(value, *resultType, false, location);
+      };
+      auto receiver = [&]() -> FailureOr<Value> {
+        return lowerExpression(children.front());
+      };
+      auto integerArgument = [&](unsigned index,
+                                 Type type) -> FailureOr<Value> {
+        if (index >= children.size())
+          return failure();
+        FailureOr<Value> value = lowerExpression(children[index]);
+        if (failed(value))
+          return failure();
+        return convert(*value, type, isSignedNode(children[index]), location);
+      };
+
+      if (name == "len" && children.size() == 1) {
+        FailureOr<Value> input = receiver();
+        if (failed(input))
+          return failure();
+        return result(sim::SimStringLengthOp::create(
+            builder, location, builder.getI64Type(), *input));
+      }
+      if (name == "getc" && children.size() == 2) {
+        FailureOr<Value> input = receiver();
+        FailureOr<Value> index = integerArgument(1, builder.getI64Type());
+        if (failed(input) || failed(index))
+          return failure();
+        return result(sim::SimStringGetcOp::create(
+            builder, location, builder.getI8Type(), *input, *index));
+      }
+      if ((name == "toupper" || name == "tolower") &&
+          children.size() == 1) {
+        FailureOr<Value> input = receiver();
+        if (failed(input))
+          return failure();
+        return result(sim::SimStringCaseConvertOp::create(
+            builder, location, sim::StringType::get(function.getContext()),
+            *input, builder.getBoolAttr(name == "toupper")));
+      }
+      if ((name == "compare" || name == "icompare") &&
+          children.size() == 2) {
+        FailureOr<Value> left = receiver();
+        FailureOr<Value> right = lowerExpression(children[1]);
+        if (failed(left) || failed(right))
+          return failure();
+        FailureOr<Value> converted =
+            convert(*right, sim::StringType::get(function.getContext()),
+                    isSignedNode(children[1]), location);
+        if (failed(converted))
+          return failure();
+        return result(sim::SimStringCompareOp::create(
+            builder, location, builder.getI32Type(), *left, *converted,
+            builder.getBoolAttr(name == "icompare")));
+      }
+      if (name == "substr" && children.size() == 3) {
+        FailureOr<Value> input = receiver();
+        FailureOr<Value> left = integerArgument(1, builder.getI64Type());
+        FailureOr<Value> right = integerArgument(2, builder.getI64Type());
+        if (failed(input) || failed(left) || failed(right))
+          return failure();
+        return result(sim::SimStringSubstrOp::create(
+            builder, location, sim::StringType::get(function.getContext()),
+            *input, *left, *right));
+      }
+      if ((name == "atoi" || name == "atohex" || name == "atooct" ||
+           name == "atobin") &&
+          children.size() == 1) {
+        FailureOr<Value> input = receiver();
+        if (failed(input))
+          return failure();
+        unsigned radix = name == "atobin"   ? 2
+                         : name == "atooct" ? 8
+                         : name == "atohex" ? 16
+                                            : 10;
+        return result(sim::SimStringParseIntegerOp::create(
+            builder, location, builder.getI64Type(), *input,
+            builder.getI32IntegerAttr(radix)));
+      }
+      if (name == "atoreal" && children.size() == 1) {
+        FailureOr<Value> input = receiver();
+        if (failed(input))
+          return failure();
+        return result(sim::SimStringParseRealOp::create(
+            builder, location, builder.getF64Type(), *input));
+      }
+      if ((name == "itoa" || name == "hextoa" || name == "octtoa" ||
+           name == "bintoa") &&
+          children.size() == 2) {
+        FailureOr<Value> destination =
+            lowerExpression(children.front(), true);
+        FailureOr<Value> input = integerArgument(1, builder.getI64Type());
+        if (failed(destination) || failed(input))
+          return failure();
+        unsigned radix = name == "bintoa"   ? 2
+                         : name == "octtoa" ? 8
+                         : name == "hextoa" ? 16
+                                            : 10;
+        Value updated = sim::SimStringFormatIntegerOp::create(
+            builder, location, sim::StringType::get(function.getContext()),
+            *input, builder.getI32IntegerAttr(radix),
+            builder.getBoolAttr(name == "itoa" &&
+                                isSignedNode(children[1])));
+        if (failed(storeReference(*destination, updated, location)))
+          return failure();
+        return arith::ConstantOp::create(
+                   builder, location, builder.getI1Type(),
+                   builder.getBoolAttr(false))
+            .getResult();
+      }
+      if (name == "realtoa" && children.size() == 2) {
+        FailureOr<Value> destination =
+            lowerExpression(children.front(), true);
+        FailureOr<Value> input = lowerExpression(children[1]);
+        if (failed(destination) || failed(input))
+          return failure();
+        FailureOr<Value> real =
+            convert(*input, builder.getF64Type(), false, location);
+        if (failed(real))
+          return failure();
+        Value updated = sim::SimStringFormatRealOp::create(
+            builder, location, sim::StringType::get(function.getContext()),
+            *real);
+        if (failed(storeReference(*destination, updated, location)))
+          return failure();
+        return arith::ConstantOp::create(
+                   builder, location, builder.getI1Type(),
+                   builder.getBoolAttr(false))
+            .getResult();
+      }
+      if (name == "putc" && children.size() == 3) {
+        FailureOr<Value> destination =
+            lowerExpression(children.front(), true);
+        FailureOr<Value> index = integerArgument(1, builder.getI64Type());
+        FailureOr<Value> character = integerArgument(2, builder.getI8Type());
+        if (failed(destination) || failed(index) || failed(character))
+          return failure();
+        FailureOr<Value> input = loadReference(*destination, location);
+        if (failed(input))
+          return failure();
+        Value updated = sim::SimStringPutcOp::create(
+            builder, location, sim::StringType::get(function.getContext()),
+            *input, *index, *character);
+        if (failed(storeReference(*destination, updated, location)))
+          return failure();
+        return arith::ConstantOp::create(
+                   builder, location, builder.getI1Type(),
+                   builder.getBoolAttr(false))
+            .getResult();
+      }
+      emitError(location) << "unsupported string built-in method " << name;
+      return failure();
+    }
+  }
   if (!callee) {
     unsupported(op) << " (indirect or system call)";
     return failure();
@@ -4529,6 +5477,9 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
             return failure();
           items.push_back(*real);
           flags.push_back(4);
+        } else if (isa<sim::StringType>((*value).getType())) {
+          items.push_back(*value);
+          flags.push_back(8);
         } else {
           FailureOr<Value> scalar =
               toPackedScalar(*value, getSemanticLocation(child));
@@ -4572,21 +5523,52 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
       emitError(location) << "$fopen requires one or two arguments";
       return failure();
     }
-    FailureOr<Value> path = lowerBytes(children[0]);
-    if (failed(path))
-      return failure();
     Value descriptor;
-    if (children.size() == 1)
-      descriptor =
-          sim::SimFileOpenMCDOp::create(builder, location, i32, context, *path)
-              .getDescriptor();
-    else {
-      FailureOr<Value> mode = lowerBytes(children[1]);
-      if (failed(mode))
+    bool literalPath = static_cast<bool>(getStringLiteral(children[0]));
+    bool literalMode =
+        children.size() == 2 &&
+        static_cast<bool>(getStringLiteral(children[1]));
+    if (literalPath && (children.size() == 1 || literalMode)) {
+      FailureOr<Value> path = lowerBytes(children[0]);
+      if (failed(path))
         return failure();
-      descriptor = sim::SimFileOpenOp::create(builder, location, i32, context,
-                                              *path, *mode)
-                       .getDescriptor();
+      if (children.size() == 1)
+        descriptor = sim::SimFileOpenMCDOp::create(
+                         builder, location, i32, context, *path)
+                         .getDescriptor();
+      else {
+        FailureOr<Value> mode = lowerBytes(children[1]);
+        if (failed(mode))
+          return failure();
+        descriptor = sim::SimFileOpenOp::create(
+                         builder, location, i32, context, *path, *mode)
+                         .getDescriptor();
+      }
+    } else {
+      FailureOr<Value> pathValue = lowerExpression(children[0]);
+      if (failed(pathValue))
+        return failure();
+      Type stringType = sim::StringType::get(function.getContext());
+      FailureOr<Value> path =
+          convert(*pathValue, stringType, isSignedNode(children[0]), location);
+      if (failed(path))
+        return failure();
+      if (children.size() == 1)
+        descriptor = sim::SimFileOpenStringMCDOp::create(
+                         builder, location, i32, context, *path)
+                         .getDescriptor();
+      else {
+        FailureOr<Value> modeValue = lowerExpression(children[1]);
+        if (failed(modeValue))
+          return failure();
+        FailureOr<Value> mode =
+            convert(*modeValue, stringType, isSignedNode(children[1]), location);
+        if (failed(mode))
+          return failure();
+        descriptor = sim::SimFileOpenStringOp::create(
+                         builder, location, i32, context, *path, *mode)
+                         .getDescriptor();
+      }
     }
     return convertResult(descriptor);
   }
@@ -4691,6 +5673,16 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
           << name << " destination must be a packed variable";
       return failure();
     }
+    if (name == "$fgets" &&
+        isa<sim::StringType>(reference.getElementType())) {
+      auto read = sim::SimFileGetlineStringOp::create(
+          builder, location,
+          TypeRange{sim::StringType::get(function.getContext()), i32}, context,
+          *descriptor);
+      sim::SimRefStoreOp::create(builder, location, read.getData(),
+                                 *destination);
+      return convertResult(read.getCount());
+    }
     std::optional<unsigned> width =
         sim::getPackedWidth(reference.getElementType());
     if (!width) {
@@ -4740,6 +5732,13 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
   if (isa<semantic::SVIntegerLiteralOp,
           semantic::SVUnbasedUnsizedIntegerLiteralOp>(op))
     return lowerLiteral(op);
+  if (isa<semantic::SVStringLiteralOp>(op)) {
+    FailureOr<Type> type = getNormalizedSemanticType(op);
+    if (failed(type))
+      return failure();
+    return lowerStringLiteralValue(builder, op, *type,
+                                   getSemanticLocation(op));
+  }
   if (isa<semantic::SVRealLiteralOp, semantic::SVTimeLiteralOp>(op)) {
     Location location = getSemanticLocation(op);
     FailureOr<Type> type = getNormalizedSemanticType(op);
@@ -4816,6 +5815,9 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
     return lowerUnary(unary);
   if (auto binary = dyn_cast<semantic::SVBinaryExpressionOp>(op))
     return lowerBinary(binary);
+  if (auto conditional =
+          dyn_cast<semantic::SVConditionalExpressionOp>(op))
+    return lowerConditionalExpression(conditional);
   if (auto inside = dyn_cast<semantic::SVInsideExpressionOp>(op))
     return lowerInside(inside);
   if (auto call = dyn_cast<semantic::SVCallExpressionOp>(op))
@@ -5904,7 +6906,9 @@ UnitLowering::lowerCaseLabel(Value selector, Type selectorType,
                              Operation *selectorNode, Operation *label,
                              semantic::SVCaseCondition condition) {
   Location location = getSemanticLocation(label);
+  bool selectorString = isa<sim::StringType>(selectorType);
   bool selectorLogic =
+      !selectorString &&
       isa<sim::LogicType>(sim::getPackedScalarType(selectorType));
   auto compareValue =
       [&](Value candidate, sim::CompareKind logicKind,
@@ -5913,6 +6917,30 @@ UnitLowering::lowerCaseLabel(Value selector, Type selectorType,
         convert(candidate, selectorType, false, location);
     if (failed(normalized))
       return failure();
+    if (selectorString) {
+      Value comparison = sim::SimStringCompareOp::create(
+          builder, location, builder.getI32Type(), selector, *normalized,
+          builder.getBoolAttr(false));
+      arith::CmpIPredicate predicate = arith::CmpIPredicate::eq;
+      switch (integerKind) {
+      case arith::CmpIPredicate::sge:
+      case arith::CmpIPredicate::uge:
+        predicate = arith::CmpIPredicate::sge;
+        break;
+      case arith::CmpIPredicate::sle:
+      case arith::CmpIPredicate::ule:
+        predicate = arith::CmpIPredicate::sle;
+        break;
+      default:
+        break;
+      }
+      return arith::CmpIOp::create(
+                 builder, location, predicate, comparison,
+                 arith::ConstantOp::create(builder, location,
+                                           builder.getI32Type(),
+                                           builder.getI32IntegerAttr(0)))
+          .getResult();
+    }
     FailureOr<Value> scalarCandidate = toPackedScalar(*normalized, location);
     FailureOr<Value> scalarSelector = toPackedScalar(selector, location);
     if (failed(scalarCandidate) || failed(scalarSelector) ||
@@ -6068,7 +7096,8 @@ LogicalResult UnitLowering::lowerCase(semantic::SVCaseStatementOp op) {
   FailureOr<Value> selector = lowerExpression(children.front());
   if (failed(selector))
     return failure();
-  if (!sim::getPackedScalarType((*selector).getType())) {
+  if (!sim::getPackedScalarType((*selector).getType()) &&
+      !isa<sim::StringType>((*selector).getType())) {
     emitError(location) << "case selector is not an executable packed value";
     return failure();
   }

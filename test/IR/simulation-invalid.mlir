@@ -12,6 +12,32 @@ module {
 // -----
 
 module {
+  func.func @bad_container_read(
+      %array: !obelisk_sim.dynamic_array<i32>, %index: i64) {
+    // expected-error @+1 {{result type must match the container element}}
+    %value = "obelisk_sim.container.read"(%array, %index) :
+      (!obelisk_sim.dynamic_array<i32>, i64) -> i64
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @bad_container_create(
+      %array: !obelisk_sim.dynamic_array<i32>,
+      %queue: !obelisk_sim.queue<i32, 4>, %size: i64) {
+    // expected-error @+1 {{source and result container types must match}}
+    %value = "obelisk_sim.container.create_like"(%array, %queue, %size) :
+      (!obelisk_sim.dynamic_array<i32>, !obelisk_sim.queue<i32, 4>, i64) ->
+      !obelisk_sim.dynamic_array<i32>
+    return
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.design @dpi_missing_status {
     obelisk_sim.scope.decl 0
     obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "dpi_missing_status"
@@ -1318,7 +1344,7 @@ module {
       %fd = arith.constant 1 : i32
       %value = arith.constant 0 : i8
       // expected-error @+1 {{display item flags contain an unknown bit}}
-      obelisk_sim.display %ctx to %fd(%value) newline = false radix = 10 flags = [8] : i8
+      obelisk_sim.display %ctx to %fd(%value) newline = false radix = 10 flags = [16] : i8
       obelisk_sim.return
     }
   }
@@ -1801,5 +1827,26 @@ module {
     ^resume:
       obelisk_sim.return
     }
+  }
+}
+
+// -----
+
+module {
+  func.func @string_from_real(%value: f64) {
+    // expected-error @+1 {{input must be a fixed packed value}}
+    %string = obelisk_sim.string.from_packed %value :
+      (f64) -> !obelisk_sim.string
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @bad_string_radix(%input: !obelisk_sim.string) {
+    // expected-error @+1 {{radix must be 2, 8, 10, or 16}}
+    %value = obelisk_sim.string.parse_integer %input radix = 3
+    return
   }
 }

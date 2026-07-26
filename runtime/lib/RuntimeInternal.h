@@ -346,6 +346,8 @@ struct ScheduledNBA {
   uint64_t planeBitCount = 0;
   uint64_t bitOffset = 0;
   uint64_t bitWidth = 0;
+  bool stringValue = false;
+  obelisk_rt_string_v1 rootedString = 0;
   std::vector<uint8_t> value;
   std::vector<uint8_t> unknown;
 };
@@ -371,6 +373,8 @@ struct ScheduledDesignNBA {
   int64_t start = 0;
   int64_t end = 0;
   uint64_t bitWidth = 0;
+  bool stringValue = false;
+  obelisk_rt_string_v1 rootedString = 0;
   std::vector<uint64_t> value;
   std::vector<uint64_t> unknown;
 };
@@ -619,6 +623,9 @@ obelisk_rt_status obelisk_rt_reference_path_shape(obelisk_rt_object_v1 *path,
 void obelisk_rt_enumerate_design_managed_roots(
     obelisk_rt_context *context, ManagedRootVisit visit,
     void *visitorEnvironment) noexcept;
+obelisk_rt_status
+obelisk_rt_validate_string(obelisk_rt_context *context,
+                           obelisk_rt_string_v1 string) noexcept;
 
 class ManagedExecutionScope {
 public:

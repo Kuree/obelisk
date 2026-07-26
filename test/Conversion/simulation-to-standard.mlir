@@ -46,6 +46,7 @@ module {
     %neg = obelisk_sim.logic.unary negate %a : (!obelisk_sim.logic<5>) -> !obelisk_sim.logic<5>
     %not = obelisk_sim.logic.unary bit_not %a : (!obelisk_sim.logic<5>) -> !obelisk_sim.logic<5>
     %logical_not = obelisk_sim.logic.unary logical_not %a : (!obelisk_sim.logic<5>) -> !obelisk_sim.logic<1>
+    %mux = obelisk_sim.logic.mux %logical_not ? %a : %b : (!obelisk_sim.logic<1>, !obelisk_sim.logic<5>, !obelisk_sim.logic<5>) -> !obelisk_sim.logic<5>
 
     %red_and = obelisk_sim.logic.reduction and %a : !obelisk_sim.logic<5> -> !obelisk_sim.logic<1>
     %red_or = obelisk_sim.logic.reduction or %a : !obelisk_sim.logic<5> -> !obelisk_sim.logic<1>

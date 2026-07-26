@@ -698,6 +698,46 @@ public:
   }
 };
 
+class MuxConversion final : public LogicOpConversion<sim::SimLogicMuxOp> {
+public:
+  using LogicOpConversion::LogicOpConversion;
+
+  LogicalResult
+  matchAndRewrite(sim::SimLogicMuxOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    ArrayRef<ValueRange> operands = adaptor.getOperands();
+    Location loc = op.getLoc();
+    LogicValue condition = getLogic(operands, 0);
+    LogicValue trueValue = getLogic(operands, 1);
+    LogicValue falseValue = getLogic(operands, 2);
+
+    Value valueMismatch = arith::XOrIOp::create(
+        rewriter, loc, trueValue.value, falseValue.value);
+    Value unknownMismatch = arith::XOrIOp::create(
+        rewriter, loc, trueValue.unknown, falseValue.unknown);
+    Value mismatch = arith::OrIOp::create(rewriter, loc, valueMismatch,
+                                          unknownMismatch);
+    LogicValue merged{
+        arith::AndIOp::create(rewriter, loc, trueValue.value,
+                              bitNot(rewriter, loc, mismatch)),
+        arith::OrIOp::create(rewriter, loc, trueValue.unknown, mismatch)};
+
+    Value conditionKnown = boolNot(rewriter, loc, condition.unknown);
+    LogicValue selected{
+        select(rewriter, loc, condition.value, trueValue.value,
+               falseValue.value),
+        select(rewriter, loc, condition.value, trueValue.unknown,
+               falseValue.unknown)};
+    replaceLogic(op,
+                 {select(rewriter, loc, conditionKnown, selected.value,
+                         merged.value),
+                  select(rewriter, loc, conditionKnown, selected.unknown,
+                         merged.unknown)},
+                 rewriter);
+    return success();
+  }
+};
+
 class CountBitsConversion final
     : public LogicOpConversion<sim::SimLogicCountBitsOp> {
 public:
@@ -1523,7 +1563,8 @@ public:
     ConversionTarget target(context);
     target.addIllegalOp<
         sim::SimLogicConstantOp, sim::SimLogicFromBitsOp, sim::SimLogicToBitsOp,
-        sim::SimLogicIsTrueOp, sim::SimLogicCountBitsOp, sim::SimLogicClog2Op,
+        sim::SimLogicIsTrueOp, sim::SimLogicMuxOp, sim::SimLogicCountBitsOp,
+        sim::SimLogicClog2Op,
         sim::SimLogicResizeOp, sim::SimLogicUnaryOp, sim::SimLogicReductionOp,
         sim::SimLogicBinaryOp, sim::SimLogicLogicalOp, sim::SimLogicShiftOp,
         sim::SimLogicCompareOp, sim::SimLogicConcatOp, sim::SimLogicReplicateOp,
@@ -1555,7 +1596,8 @@ static void populateSimulationToStandardPatternsImpl(
     const TypeConverter &converter, RewritePatternSet &patterns,
     const llvm::DenseSet<Operation *> *provenTwoStateOperations) {
   patterns.add<ConstantConversion, FromBitsConversion, ToBitsConversion,
-               IsTrueConversion, CountBitsConversion, Clog2Conversion,
+               IsTrueConversion, MuxConversion, CountBitsConversion,
+               Clog2Conversion,
                ResizeConversion, UnaryConversion, ReductionConversion,
                BinaryConversion, LogicalConversion, ShiftConversion,
                CompareConversion, ConcatConversion, ReplicateConversion,

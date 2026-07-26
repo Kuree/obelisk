@@ -1567,6 +1567,16 @@ private:
       SET_OP_ATTR(ConditionPatternFlags,
                   builder.getDenseI64ArrayAttr(patternFlags));
       SET_OP_ATTR(HasElse, builder.getBoolAttr(node.ifFalse != nullptr));
+    } else if constexpr (std::same_as<T,
+                                      slang::ast::ConditionalExpression>) {
+      SET_OP_ATTR(ConditionCount,
+                  builder.getI64IntegerAttr(node.conditions.size()));
+      SmallVector<int64_t> patternFlags;
+      patternFlags.reserve(node.conditions.size());
+      for (const auto &condition : node.conditions)
+        patternFlags.push_back(condition.pattern != nullptr);
+      SET_OP_ATTR(ConditionPatternFlags,
+                  builder.getDenseI64ArrayAttr(patternFlags));
     } else if constexpr (std::same_as<T, slang::ast::ForLoopStatement>) {
       SET_OP_ATTR(InitializerCount,
                   builder.getI64IntegerAttr(node.initializers.size()));

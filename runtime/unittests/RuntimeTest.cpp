@@ -3195,6 +3195,61 @@ TEST_F(ManagedHeapTest, TracesManagedValuesInAutomaticAggregateState) {
   EXPECT_EQ(obelisk_rt_v1_gc_root_range_pop(lane, &weakRoots), OBELISK_RT_OK);
 }
 
+TEST_F(ManagedHeapTest, AutomaticStringStatePreservesSSOAndHeapRoots) {
+  obelisk_rt_string_v1 small = 0;
+  ASSERT_EQ(obelisk_rt_v1_string_create(lane, "seven!!", 7, &small),
+            OBELISK_RT_OK);
+  ASSERT_EQ(small & UINT64_C(3), UINT64_C(1));
+  const uint64_t rootOffset = 0;
+  uint64_t smallHandle = UINT64_MAX;
+  ASSERT_EQ(obelisk_rt_v1_native_state_alloc_with_roots(
+                context, 64, reinterpret_cast<const uint8_t *>(&small),
+                nullptr, &rootOffset, 1, &smallHandle),
+            OBELISK_RT_OK);
+  obelisk_rt_string_v1 loaded = 0;
+  uint8_t dummy[8]{};
+  ASSERT_EQ(obelisk_rt_v1_argument_ref_load(
+                context, dummy, dummy, 64, nullptr, smallHandle, 0, 64, 8, 0,
+                OBELISK_RT_ARGUMENT_VALUE_STRING, &loaded, nullptr),
+            OBELISK_RT_OK);
+  EXPECT_EQ(loaded, small);
+  ASSERT_EQ(obelisk_rt_v1_native_state_release(context, smallHandle, 0),
+            OBELISK_RT_OK);
+
+  obelisk_rt_string_v1 heap = 0;
+  ASSERT_EQ(obelisk_rt_v1_string_create(lane, "heap-backed", 11, &heap),
+            OBELISK_RT_OK);
+  ASSERT_EQ(heap & UINT64_C(3), UINT64_C(0));
+  uint64_t heapHandle = UINT64_MAX;
+  ASSERT_EQ(obelisk_rt_v1_native_state_alloc_with_roots(
+                context, 64, reinterpret_cast<const uint8_t *>(&heap),
+                nullptr, &rootOffset, 1, &heapHandle),
+            OBELISK_RT_OK);
+  heap = 0;
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_argument_ref_load(
+                context, dummy, dummy, 64, nullptr, heapHandle, 0, 64, 8, 0,
+                OBELISK_RT_ARGUMENT_VALUE_STRING, &loaded, nullptr),
+            OBELISK_RT_OK);
+  char scratch[8]{};
+  const char *bytes = nullptr;
+  uint64_t size = 0;
+  ASSERT_EQ(obelisk_rt_v1_string_view(loaded, scratch, &bytes, &size),
+            OBELISK_RT_OK);
+  EXPECT_EQ(std::string_view(bytes, size), "heap-backed");
+
+  obelisk_rt_string_v1 equal = 0;
+  ASSERT_EQ(obelisk_rt_v1_string_create(lane, "heap-backed", 11, &equal),
+            OBELISK_RT_OK);
+  ASSERT_NE(equal, loaded);
+  ASSERT_EQ(obelisk_rt_v1_argument_ref_store(
+                context, dummy, dummy, 64, nullptr, heapHandle, 0, 64, 8, 0,
+                OBELISK_RT_ARGUMENT_VALUE_STRING, &equal, nullptr),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_release(context, heapHandle, 0),
+            OBELISK_RT_OK);
+}
+
 TEST_F(ManagedHeapTest, AccessesFourStatePlanesAtomicallyAcrossThreads) {
   obelisk_rt_object_v1 *object = nullptr;
   ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &planeDescriptor, &object),

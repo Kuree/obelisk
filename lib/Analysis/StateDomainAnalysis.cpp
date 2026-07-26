@@ -241,6 +241,9 @@ transferOperation(Operation *op,
       .Case<sim::SimLogicReductionOp>([&](auto) {
         return combineOperands(op, facts, StateDomainReason::LogicReduction);
       })
+      .Case<sim::SimLogicMuxOp>([&](auto) {
+        return combineOperands(op, facts, StateDomainReason::LogicMux);
+      })
       .Case<sim::SimLogicShiftOp>([&](auto) {
         return combineOperands(op, facts, StateDomainReason::LogicShift);
       })
@@ -530,6 +533,8 @@ StringRef stringifyStateDomainReason(StateDomainReason reason) {
     return "logic-reduction";
   case StateDomainReason::LogicBinary:
     return "logic-binary";
+  case StateDomainReason::LogicMux:
+    return "logic-mux";
   case StateDomainReason::LogicLogical:
     return "logic-logical";
   case StateDomainReason::LogicShift:

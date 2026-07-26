@@ -13,6 +13,7 @@
 #include <cstring>
 #include <limits>
 #include <random>
+#include <string_view>
 #include <thread>
 #include <unordered_set>
 #include <vector>
@@ -747,6 +748,53 @@ TEST(Scheduler, DelayedNBAsAdvanceTimeAndPreserveQueueOrder) {
             OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
   EXPECT_EQ(plane, second);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, DelayedStringNBAsRootValuesAndCompareByteContents) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
+
+  obelisk_rt_string_v1 first = 0;
+  obelisk_rt_string_v1 second = 0;
+  ASSERT_EQ(obelisk_rt_v1_string_create(lane, "delayed value", 13, &first),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_string_create(lane, "delayed value", 13, &second),
+            OBELISK_RT_OK);
+  ASSERT_NE(first, second);
+  obelisk_rt_string_v1 plane = 0;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_string_nba(
+                context, reinterpret_cast<uint8_t *>(&plane), 64, 0, 1,
+                first),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_string_nba(
+                context, reinterpret_cast<uint8_t *>(&plane), 64, 0, 2,
+                second),
+            OBELISK_RT_OK);
+  first = 0;
+  second = 0;
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+
+  uint64_t epoch = context->schedulerEpoch;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(context->schedulerEpoch, epoch + 1);
+  char scratch[8]{};
+  const char *bytes = nullptr;
+  uint64_t size = 0;
+  ASSERT_EQ(obelisk_rt_v1_string_view(plane, scratch, &bytes, &size),
+            OBELISK_RT_OK);
+  EXPECT_EQ(std::string_view(bytes, size), "delayed value");
+
+  plane = 0;
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  obelisk_rt_gc_statistics_v1 statistics{};
+  ASSERT_EQ(obelisk_rt_v1_gc_statistics(context, &statistics), OBELISK_RT_OK);
+  EXPECT_EQ(statistics.live_objects, 0u);
+  EXPECT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
   obelisk_rt_v1_context_destroy(context);
 }
 

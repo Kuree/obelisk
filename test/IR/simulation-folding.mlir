@@ -9,6 +9,7 @@ module {
     obelisk_sim.code_unit.decl 9000005 in 0 function hierarchy "test.folding.structural.9000005"
     obelisk_sim.code_unit.decl 9000006 in 0 function hierarchy "test.folding.matching.9000006"
     obelisk_sim.code_unit.decl 9000007 in 0 function hierarchy "test.folding.pure_inquiries.9000007"
+    obelisk_sim.code_unit.decl 9000008 in 0 function hierarchy "test.folding.conditional_merge.9000008"
     obelisk_sim.scope.decl 0
     obelisk_sim.func @constants(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> (!obelisk_sim.logic<4>, i4, i1) attributes {entry_kind = 8 : i32, code_unit_id = 9000001 : i64} {
       %x = obelisk_sim.logic.constant 10 : i4, 4 : i4 : !obelisk_sim.logic<4>
@@ -86,6 +87,19 @@ module {
       %clog2_zero = obelisk_sim.logic.clog2 %zero : !obelisk_sim.logic<1>
       obelisk_sim.return %count_zero, %count_all, %clog2, %clog2_zero : i32, i32, i32, i32
     }
+
+    obelisk_sim.func @conditional_merge(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> (!obelisk_sim.logic<4>, !obelisk_sim.logic<4>, !obelisk_sim.logic<4>) attributes {entry_kind = 8 : i32, code_unit_id = 9000008 : i64} {
+      %zero = obelisk_sim.logic.constant 0 : i1, 0 : i1 : !obelisk_sim.logic<1>
+      %x = obelisk_sim.logic.constant 0 : i1, 1 : i1 : !obelisk_sim.logic<1>
+      %left = obelisk_sim.logic.constant 11 : i4, 1 : i4 : !obelisk_sim.logic<4>
+      %right = obelisk_sim.logic.constant 9 : i4, 1 : i4 : !obelisk_sim.logic<4>
+      %symbols_left = obelisk_sim.logic.constant 6 : i4, 12 : i4 : !obelisk_sim.logic<4>
+      %symbols_right = obelisk_sim.logic.constant 6 : i4, 12 : i4 : !obelisk_sim.logic<4>
+      %mismatch = obelisk_sim.logic.mux %x ? %left : %right : (!obelisk_sim.logic<1>, !obelisk_sim.logic<4>, !obelisk_sim.logic<4>) -> !obelisk_sim.logic<4>
+      %matching_symbols = obelisk_sim.logic.mux %x ? %symbols_left : %symbols_right : (!obelisk_sim.logic<1>, !obelisk_sim.logic<4>, !obelisk_sim.logic<4>) -> !obelisk_sim.logic<4>
+      %known = obelisk_sim.logic.mux %zero ? %left : %right : (!obelisk_sim.logic<1>, !obelisk_sim.logic<4>, !obelisk_sim.logic<4>) -> !obelisk_sim.logic<4>
+      obelisk_sim.return %mismatch, %matching_symbols, %known : !obelisk_sim.logic<4>, !obelisk_sim.logic<4>, !obelisk_sim.logic<4>
+    }
   }
 }
 
@@ -138,3 +152,10 @@ module {
 // CHECK-NOT: obelisk_sim.logic.count_bits
 // CHECK-NOT: obelisk_sim.logic.clog2
 // CHECK: obelisk_sim.return %[[FOUR]], %[[TWELVE]], %[[ELEVEN]], %[[ZERO]]
+
+// CHECK-LABEL: obelisk_sim.func @conditional_merge
+// CHECK-DAG: %[[MISMATCH:.*]] = obelisk_sim.logic.constant -7 : i4, 3 : i4
+// CHECK-DAG: %[[SYMBOLS:.*]] = obelisk_sim.logic.constant 6 : i4, -4 : i4
+// CHECK-DAG: %[[KNOWN:.*]] = obelisk_sim.logic.constant -7 : i4, 1 : i4
+// CHECK-NOT: obelisk_sim.logic.mux
+// CHECK: obelisk_sim.return %[[MISMATCH]], %[[SYMBOLS]], %[[KNOWN]]

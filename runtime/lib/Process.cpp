@@ -1914,17 +1914,19 @@ extern "C" uint32_t obelisk_rt_v1_monitor_current(obelisk_rt_context *context) {
   }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_nba(
+static obelisk_rt_status schedulerNBA(
     obelisk_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
     uint64_t planeBitCount, uint64_t bitOffset, uint64_t bitWidth,
-    uint64_t delay, const uint8_t *value, const uint8_t *unknown) {
+    uint64_t delay, const uint8_t *value, const uint8_t *unknown,
+    bool stringValue) {
   if (!context)
     return OBELISK_RT_INVALID_ARGUMENT;
   auto fail = [&](obelisk_rt_status status) {
     obelisk_rt_v1_scheduler_fail(context, status);
     return status;
   };
-  if (!valuePlane || bitWidth == 0 || (bitWidth + 7) < bitWidth)
+  if (!valuePlane || bitWidth == 0 || (bitWidth + 7) < bitWidth ||
+      (stringValue && (bitWidth != 64 || unknownPlane)))
     return fail(OBELISK_RT_INVALID_ARGUMENT);
   if (bitOffset == UINT64_MAX)
     return OBELISK_RT_OK;
@@ -1945,6 +1947,14 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_nba(
   if (!value || (unknownPlane && !unknown) ||
       byteCount > std::numeric_limits<size_t>::max())
     return fail(OBELISK_RT_INVALID_ARGUMENT);
+  obelisk_rt_string_v1 queuedString = 0;
+  if (stringValue) {
+    std::memcpy(&queuedString, value, sizeof(queuedString));
+    obelisk_rt_status status =
+        obelisk_rt_validate_string(context, queuedString);
+    if (status != OBELISK_RT_OK)
+      return fail(status);
+  }
   try {
     ScheduledNBA update;
     update.valuePlane = valuePlane;
@@ -1952,6 +1962,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_nba(
     update.planeBitCount = planeBitCount;
     update.bitOffset = bitOffset;
     update.bitWidth = bitWidth;
+    update.stringValue = stringValue;
+    update.rootedString = queuedString;
     update.value.assign(value, value + static_cast<size_t>(byteCount));
     if (unknownPlane)
       update.unknown.assign(unknown, unknown + static_cast<size_t>(byteCount));
@@ -2007,6 +2019,22 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_nba(
     obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
     return OBELISK_RT_INVALID_ARGUMENT;
   }
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_nba(
+    obelisk_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
+    uint64_t planeBitCount, uint64_t bitOffset, uint64_t bitWidth,
+    uint64_t delay, const uint8_t *value, const uint8_t *unknown) {
+  return schedulerNBA(context, valuePlane, unknownPlane, planeBitCount,
+                      bitOffset, bitWidth, delay, value, unknown, false);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_string_nba(
+    obelisk_rt_context *context, uint8_t *valuePlane, uint64_t planeBitCount,
+    uint64_t bitOffset, uint64_t delay, obelisk_rt_string_v1 value) {
+  return schedulerNBA(context, valuePlane, nullptr, planeBitCount, bitOffset,
+                      64, delay, reinterpret_cast<const uint8_t *>(&value),
+                      nullptr, true);
 }
 
 extern "C" void obelisk_rt_v1_scheduler_signal(obelisk_rt_context *context,
@@ -2554,6 +2582,19 @@ extern "C" uint64_t obelisk_rt_v1_native_handle_offset(uint64_t handle,
 
 namespace {
 
+bool managedRootWordBelongsTo(obelisk_rt_context *context,
+                              obelisk_rt_managed_word_v1 word) {
+  if (word == 0)
+    return true;
+  if ((word & UINT64_C(3)) == UINT64_C(1))
+    return obelisk_rt_validate_string(context, word) == OBELISK_RT_OK;
+  if ((word & UINT64_C(3)) != 0)
+    return false;
+  return obelisk_rt_managed_object_belongs_to(
+      context, reinterpret_cast<obelisk_rt_object_v1 *>(
+                   static_cast<uintptr_t>(word)));
+}
+
 obelisk_rt_status publishNativeAutomaticState(obelisk_rt_context *context,
                                               NativeAutomaticState state,
                                               uint64_t *outHandle) {
@@ -2629,19 +2670,12 @@ obelisk_rt_status obelisk_rt_native_state_alloc_with_root_offsets(
         bitOffsets.end())
       return OBELISK_RT_INVALID_ARGUMENT;
 
-    if (!unknown && bitWidth == 64 && bitOffsets.size() == 1 &&
-        bitOffsets.front() == 0) {
-      obelisk_rt_object_v1 *managed = nullptr;
-      std::memcpy(&managed, value, sizeof(managed));
-      return obelisk_rt_native_state_alloc_managed(context, managed, outHandle);
-    }
-
     NativeAutomaticState state;
     state.bitWidth = bitWidth;
     for (uint64_t byteOffset : bitOffsets) {
-      obelisk_rt_object_v1 *managed = nullptr;
+      obelisk_rt_managed_word_v1 managed = 0;
       std::memcpy(&managed, value + byteOffset, sizeof(managed));
-      if (!obelisk_rt_managed_object_belongs_to(context, managed))
+      if (!managedRootWordBelongsTo(context, managed))
         return OBELISK_RT_INVALID_HANDLE;
     }
     state.managedRootByteOffsets = std::move(bitOffsets);
@@ -2725,7 +2759,16 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_register_managed_roots(
       if ((bitOffset & 63) != 0 || bitOffset > state.bitWidth ||
           64 > state.bitWidth - bitOffset)
         return OBELISK_RT_INVALID_ARGUMENT;
-      byteOffsets.push_back(bitOffset / 8);
+      uint64_t byteOffset = bitOffset / 8;
+      if (byteOffset > state.value.size() ||
+          sizeof(obelisk_rt_managed_word_v1) >
+              state.value.size() - byteOffset)
+        return OBELISK_RT_INVALID_ARGUMENT;
+      obelisk_rt_managed_word_v1 word = 0;
+      std::memcpy(&word, state.value.data() + byteOffset, sizeof(word));
+      if (!managedRootWordBelongsTo(context, word))
+        return OBELISK_RT_INVALID_HANDLE;
+      byteOffsets.push_back(byteOffset);
     }
     std::sort(byteOffsets.begin(), byteOffsets.end());
     if (std::adjacent_find(byteOffsets.begin(), byteOffsets.end()) !=
@@ -2752,13 +2795,6 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_alloc_with_roots(
   if (!bitOffsets || count == 0 || count > std::numeric_limits<size_t>::max())
     return OBELISK_RT_INVALID_ARGUMENT;
   return guarded(context, [&] {
-    if (!unknown && bitWidth == 64 && count == 1 && bitOffsets[0] == 0) {
-      obelisk_rt_object_v1 *managed = nullptr;
-      if (!value)
-        return OBELISK_RT_INVALID_ARGUMENT;
-      std::memcpy(&managed, value, sizeof(managed));
-      return obelisk_rt_native_state_alloc_managed(context, managed, outHandle);
-    }
     std::vector<uint64_t> offsets(bitOffsets, bitOffsets + count);
     return obelisk_rt_native_state_alloc_with_root_offsets(
         context, bitWidth, value, unknown, std::move(offsets), outHandle);
@@ -3035,30 +3071,51 @@ extern "C" obelisk_rt_status obelisk_rt_v1_argument_ref_load(
     const uint8_t *stateUnknown, uint64_t stateBitCount,
     obelisk_rt_object_v1 *owner, uint64_t payload, uint32_t managed,
     uint64_t bitWidth, uint64_t planeSize, uint32_t fourState,
-    uint32_t managedValue, void *outValue, void *outUnknown) {
+    uint32_t valueKind, void *outValue, void *outUnknown) {
   if (!context || !stateValue || !stateUnknown || !outValue || bitWidth == 0 ||
       planeSize == 0 || planeSize > std::numeric_limits<size_t>::max() ||
-      managed > 2 || fourState > 1 || managedValue > 1 ||
-      (fourState && !outUnknown) || (managedValue && fourState))
+      managed > 2 || fourState > 1 ||
+      valueKind > OBELISK_RT_ARGUMENT_VALUE_STRING ||
+      (fourState && !outUnknown) ||
+      (valueKind != OBELISK_RT_ARGUMENT_VALUE_BITS && fourState))
     return OBELISK_RT_INVALID_ARGUMENT;
   std::memset(outValue, 0, static_cast<size_t>(planeSize));
   if (outUnknown)
     std::memset(outUnknown, 0, static_cast<size_t>(planeSize));
   if (managed == 2) {
     obelisk_rt_status shape = obelisk_rt_reference_path_shape(
-        owner, planeSize, bitWidth, fourState, managedValue);
+        owner, planeSize, bitWidth, fourState,
+        valueKind != OBELISK_RT_ARGUMENT_VALUE_BITS);
     if (shape != OBELISK_RT_OK)
       return shape;
     uint32_t present = 0;
-    return obelisk_rt_v1_reference_path_load(owner, outValue, outUnknown,
-                                             &present);
+    obelisk_rt_status status = obelisk_rt_v1_reference_path_load(
+        owner, outValue, outUnknown, &present);
+    if (status != OBELISK_RT_OK ||
+        valueKind != OBELISK_RT_ARGUMENT_VALUE_STRING)
+      return status;
+    obelisk_rt_string_v1 string = 0;
+    std::memcpy(&string, outValue, sizeof(string));
+    return obelisk_rt_validate_string(context, string);
   }
   if (managed == 1) {
-    if (managedValue) {
+    if (valueKind == OBELISK_RT_ARGUMENT_VALUE_CLASS) {
       if (bitWidth != sizeof(void *) * 8 || planeSize != sizeof(void *))
         return OBELISK_RT_INVALID_ARGUMENT;
       return obelisk_rt_v1_object_field_load(
           owner, payload, static_cast<obelisk_rt_object_v1 **>(outValue));
+    }
+    if (valueKind == OBELISK_RT_ARGUMENT_VALUE_STRING) {
+      if (bitWidth != sizeof(obelisk_rt_string_v1) * 8 ||
+          planeSize != sizeof(obelisk_rt_string_v1))
+        return OBELISK_RT_INVALID_ARGUMENT;
+      obelisk_rt_status status =
+          obelisk_rt_v1_object_read(owner, payload, outValue, planeSize);
+      if (status != OBELISK_RT_OK)
+        return status;
+      obelisk_rt_string_v1 string = 0;
+      std::memcpy(&string, outValue, sizeof(string));
+      return obelisk_rt_validate_string(context, string);
     }
     if (fourState && payload > UINT64_MAX - planeSize)
       return OBELISK_RT_INVALID_ARGUMENT;
@@ -3071,8 +3128,18 @@ extern "C" obelisk_rt_status obelisk_rt_v1_argument_ref_load(
   obelisk_rt_status status = obelisk_rt_v1_native_state_load_plane(
       context, stateValue, stateBitCount, payload, bitWidth, 0, 0,
       static_cast<uint8_t *>(outValue));
-  if (status != OBELISK_RT_OK || !fourState)
+  if (status != OBELISK_RT_OK)
     return status;
+  if (valueKind == OBELISK_RT_ARGUMENT_VALUE_STRING) {
+    if (bitWidth != sizeof(obelisk_rt_string_v1) * 8 ||
+        planeSize != sizeof(obelisk_rt_string_v1))
+      return OBELISK_RT_INVALID_ARGUMENT;
+    obelisk_rt_string_v1 string = 0;
+    std::memcpy(&string, outValue, sizeof(string));
+    return obelisk_rt_validate_string(context, string);
+  }
+  if (!fourState)
+    return OBELISK_RT_OK;
   return obelisk_rt_v1_native_state_load_plane(
       context, stateUnknown, stateBitCount, payload, bitWidth, 1, 1,
       static_cast<uint8_t *>(outUnknown));
@@ -3082,11 +3149,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_argument_ref_store(
     obelisk_rt_context *context, uint8_t *stateValue, uint8_t *stateUnknown,
     uint64_t stateBitCount, obelisk_rt_object_v1 *owner, uint64_t payload,
     uint32_t managed, uint64_t bitWidth, uint64_t planeSize, uint32_t fourState,
-    uint32_t managedValue, const void *value, const void *unknown) {
+    uint32_t valueKind, const void *value, const void *unknown) {
   if (!context || !stateValue || !stateUnknown || !value || bitWidth == 0 ||
       planeSize == 0 || planeSize > std::numeric_limits<size_t>::max() ||
-      managed > 2 || fourState > 1 || managedValue > 1 ||
-      (fourState && !unknown) || (managedValue && fourState))
+      managed > 2 || fourState > 1 ||
+      valueKind > OBELISK_RT_ARGUMENT_VALUE_STRING ||
+      (fourState && !unknown) ||
+      (valueKind != OBELISK_RT_ARGUMENT_VALUE_BITS && fourState))
     return OBELISK_RT_INVALID_ARGUMENT;
   {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
@@ -3097,21 +3166,40 @@ extern "C" obelisk_rt_status obelisk_rt_v1_argument_ref_store(
   }
   if (managed == 2) {
     obelisk_rt_status shape = obelisk_rt_reference_path_shape(
-        owner, planeSize, bitWidth, fourState, managedValue);
+        owner, planeSize, bitWidth, fourState,
+        valueKind != OBELISK_RT_ARGUMENT_VALUE_BITS);
     if (shape != OBELISK_RT_OK)
       return shape;
+    if (valueKind == OBELISK_RT_ARGUMENT_VALUE_STRING) {
+      obelisk_rt_string_v1 string = 0;
+      std::memcpy(&string, value, sizeof(string));
+      obelisk_rt_status status = obelisk_rt_validate_string(context, string);
+      if (status != OBELISK_RT_OK)
+        return status;
+    }
     obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
     if (!lane)
       return OBELISK_RT_INVALID_LIFECYCLE;
     return obelisk_rt_v1_reference_path_store(lane, owner, value, unknown);
   }
   if (managed == 1) {
-    if (managedValue) {
+    if (valueKind == OBELISK_RT_ARGUMENT_VALUE_CLASS) {
       if (bitWidth != sizeof(void *) * 8 || planeSize != sizeof(void *))
         return OBELISK_RT_INVALID_ARGUMENT;
       obelisk_rt_object_v1 *stored = nullptr;
       std::memcpy(&stored, value, sizeof(stored));
       return obelisk_rt_v1_object_field_store(owner, payload, stored);
+    }
+    if (valueKind == OBELISK_RT_ARGUMENT_VALUE_STRING) {
+      if (bitWidth != sizeof(obelisk_rt_string_v1) * 8 ||
+          planeSize != sizeof(obelisk_rt_string_v1))
+        return OBELISK_RT_INVALID_ARGUMENT;
+      obelisk_rt_string_v1 string = 0;
+      std::memcpy(&string, value, sizeof(string));
+      obelisk_rt_status status = obelisk_rt_validate_string(context, string);
+      if (status != OBELISK_RT_OK)
+        return status;
+      return obelisk_rt_v1_object_write(owner, payload, value, planeSize);
     }
     if (fourState && payload > UINT64_MAX - planeSize)
       return OBELISK_RT_INVALID_ARGUMENT;
@@ -3136,10 +3224,22 @@ extern "C" obelisk_rt_status obelisk_rt_v1_argument_ref_store(
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     obelisk_rt_status status = obelisk_rt_v1_argument_ref_load(
         context, stateValue, stateUnknown, stateBitCount, nullptr, payload, 0,
-        bitWidth, planeSize, fourState, 0, scratch.value.data(),
+        bitWidth, planeSize, fourState, valueKind, scratch.value.data(),
         fourState ? scratch.unknown.data() : nullptr);
     if (status != OBELISK_RT_OK)
       return status;
+    bool equalStringContents = false;
+    if (valueKind == OBELISK_RT_ARGUMENT_VALUE_STRING) {
+      obelisk_rt_string_v1 previous = 0;
+      obelisk_rt_string_v1 next = 0;
+      std::memcpy(&previous, scratch.value.data(), sizeof(previous));
+      std::memcpy(&next, value, sizeof(next));
+      status = obelisk_rt_validate_string(context, next);
+      if (status != OBELISK_RT_OK)
+        return status;
+      equalStringContents =
+          obelisk_rt_v1_string_compare(previous, next) == 0;
+    }
     uint8_t changed = 0;
     status = obelisk_rt_v1_native_state_store_plane(
         context, stateValue, stateBitCount, payload, bitWidth, 0,
@@ -3153,11 +3253,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_argument_ref_store(
       if (status != OBELISK_RT_OK)
         return status;
     }
-    obelisk_rt_v1_scheduler_signal_transition(
-        context, payload, bitWidth, scratch.value.data(),
-        fourState ? scratch.unknown.data() : nullptr,
-        static_cast<const uint8_t *>(value),
-        fourState ? static_cast<const uint8_t *>(unknown) : nullptr);
+    if (!equalStringContents)
+      obelisk_rt_v1_scheduler_signal_transition(
+          context, payload, bitWidth, scratch.value.data(),
+          fourState ? scratch.unknown.data() : nullptr,
+          static_cast<const uint8_t *>(value),
+          fourState ? static_cast<const uint8_t *>(unknown) : nullptr);
     return OBELISK_RT_OK;
   } catch (const std::bad_alloc &) {
     obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_OUT_OF_MEMORY);
@@ -3496,6 +3597,72 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
             context->schedulerStatus = OBELISK_RT_INVALID_DESIGN;
             return;
           }
+          bool equalStringContents = false;
+          if (update.stringValue) {
+            if (update.bitWidth != 64 || baseOffset < 0 ||
+                (static_cast<uint64_t>(baseOffset) & 63) != 0 ||
+                obelisk_rt_validate_string(context, update.rootedString) !=
+                    OBELISK_RT_OK) {
+              context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+              return;
+            }
+            obelisk_rt_string_v1 previous = 0;
+            uint64_t byteOffset = static_cast<uint64_t>(baseOffset) / 8;
+            if (automatic) {
+              if (automaticState->managedRootRegistered) {
+                if (baseOffset != 0) {
+                  context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+                  return;
+                }
+                std::memcpy(&previous, &automaticState->managedValue,
+                            sizeof(previous));
+              } else if (byteOffset > automaticState->value.size() ||
+                         sizeof(previous) >
+                             automaticState->value.size() - byteOffset) {
+                context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+                return;
+              } else {
+                std::memcpy(&previous,
+                            automaticState->value.data() + byteOffset,
+                            sizeof(previous));
+              }
+            } else {
+              uint64_t planeBit =
+                  staticState
+                      ? staticState->bitOffset +
+                            static_cast<uint64_t>(baseOffset)
+                      : static_cast<uint64_t>(baseOffset);
+              if ((planeBit & 63) != 0) {
+                context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+                return;
+              }
+              if (canonical) {
+                if (planeBit / 64 >= context->stateValue.size()) {
+                  context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+                  return;
+                }
+                previous = context->stateValue[planeBit / 64];
+              } else {
+                uint64_t globalByte = planeBit / 8;
+                uint64_t globalBytes = (update.planeBitCount + 7) / 8;
+                if (!update.valuePlane || globalByte > globalBytes ||
+                    sizeof(previous) > globalBytes - globalByte) {
+                  context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+                  return;
+                }
+                std::memcpy(&previous, update.valuePlane + globalByte,
+                            sizeof(previous));
+              }
+            }
+            if (obelisk_rt_validate_string(context, previous) !=
+                OBELISK_RT_OK) {
+              context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+              return;
+            }
+            equalStringContents =
+                obelisk_rt_v1_string_compare(previous,
+                                             update.rootedString) == 0;
+          }
           for (uint64_t bit = 0; bit < update.bitWidth; ++bit) {
             uint64_t sourceByte = bit / 8;
             uint8_t sourceMask = static_cast<uint8_t>(1u << (bit % 8));
@@ -3575,7 +3742,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
             apply(update.unknownPlane, true, newUnknown);
             uint32_t edges =
                 transitionEdges(oldValue, oldUnknown, newValue, newUnknown);
-            if (edges != 0) {
+            if (edges != 0 && !equalStringContents) {
               changed = true;
               publicationChanged = true;
               if (context->nextSchedulerSequence == 0) {
@@ -3611,6 +3778,24 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           uint64_t publicationEnd = 0;
           uint64_t available =
               context->execution ? context->execution->state_bit_count : 0;
+          bool equalStringContents = false;
+          if (update.stringValue) {
+            if (update.bitWidth != 64 || update.start < update.begin ||
+                update.start < 0 || (update.start & 63) != 0 ||
+                update.end < update.start || update.end - update.start < 64 ||
+                static_cast<uint64_t>(update.start) > available ||
+                64 > available - static_cast<uint64_t>(update.start) ||
+                obelisk_rt_validate_string(context, update.rootedString) !=
+                    OBELISK_RT_OK)
+              return false;
+            obelisk_rt_string_v1 previous =
+                context->stateValue[static_cast<uint64_t>(update.start) / 64];
+            if (obelisk_rt_validate_string(context, previous) != OBELISK_RT_OK)
+              return false;
+            equalStringContents =
+                obelisk_rt_v1_string_compare(previous,
+                                             update.rootedString) == 0;
+          }
           for (uint64_t bit = 0; bit != update.bitWidth; ++bit) {
             if (bit > uint64_t{INT64_MAX} ||
                 update.start > INT64_MAX - static_cast<int64_t>(bit))
@@ -3635,20 +3820,21 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
             bool newValue = planeBit(update.value, bit);
             bool newUnknown = planeBit(update.unknown, bit);
             publicationChanged |=
-                oldValue != newValue || oldUnknown != newUnknown;
+                !equalStringContents &&
+                (oldValue != newValue || oldUnknown != newUnknown);
             publicationBegin = std::min(publicationBegin, destination);
             publicationEnd = std::max(publicationEnd, destination + 1);
             auto apply = [&](std::vector<uint64_t> &plane, bool value) {
               uint64_t old = plane[limb];
               uint64_t next = value ? old | mask : old & ~mask;
-              changed |= old != next;
+              changed |= !equalStringContents && old != next;
               plane[limb] = next;
             };
             apply(context->stateValue, newValue);
             apply(context->stateUnknown, newUnknown);
             uint32_t edges =
                 transitionEdges(oldValue, oldUnknown, newValue, newUnknown);
-            if (edges != 0) {
+            if (edges != 0 && !equalStringContents) {
               if (context->nextSchedulerSequence == 0) {
                 context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
                 return false;

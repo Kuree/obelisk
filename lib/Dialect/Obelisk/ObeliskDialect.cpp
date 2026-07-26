@@ -408,6 +408,27 @@ LogicalResult SVConditionalStatementOp::verify() {
   return success();
 }
 
+LogicalResult SVConditionalExpressionOp::verify() {
+  if (getConditionCountAttr().getValue().isNegative())
+    return emitOpError("condition_count must be nonnegative");
+  uint64_t patterns = 0;
+  if (failed(verifyFlags(*this, getConditionPatternFlags(),
+                         getConditionCount(), "condition_pattern_flags",
+                         patterns)))
+    return failure();
+  if (getConditionCount() == 0)
+    return emitOpError("must contain at least one condition");
+  uint64_t expected = getConditionCount();
+  if (failed(addInventory(*this, patterns, expected,
+                          "conditional-expression child")) ||
+      failed(addInventory(*this, 2, expected,
+                          "conditional-expression child")))
+    return failure();
+  if (astBodySize(*this) != expected)
+    return emitOpError("malformed conditional-expression child inventory");
+  return success();
+}
+
 LogicalResult SVForLoopStatementOp::verify() {
   if (getInitializerCountAttr().getValue().isNegative())
     return emitOpError("initializer_count must be nonnegative");

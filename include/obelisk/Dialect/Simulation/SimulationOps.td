@@ -247,6 +247,168 @@ def SimManagedNullOp : SimOp<"managed.null", [Pure, ConstantLike]> {
   let hasVerifier = 1;
 }
 
+def SimEventNullOp : SimOp<"event.null", [Pure, ConstantLike]> {
+  let summary = "null/default event handle";
+  let results = (outs SimEventType:$result);
+  let assemblyFormat = "attr-dict";
+}
+
+//===----------------------------------------------------------------------===//
+// Managed sequential containers
+//===----------------------------------------------------------------------===//
+
+def SimContainerSizeOp : SimOp<"container.size", [
+    MemoryEffects<[MemRead<SimHeapResource>]>
+  ]> {
+  let summary = "return the live size of a dynamic array or queue";
+  let arguments = (ins AnyType:$container);
+  let results = (outs I64:$result);
+  let hasVerifier = 1;
+}
+
+def SimContainerCreateLikeOp : SimOp<"container.create_like", [
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "create a sequential container with matching typed metadata";
+  let arguments = (ins AnyType:$preferred, AnyType:$fallback, I64:$size);
+  let results = (outs AnyType:$result);
+  let hasVerifier = 1;
+}
+
+def SimContainerReadOp : SimOp<"container.read", [
+    MemoryEffects<[MemRead<SimHeapResource>]>
+  ]> {
+  let summary = "typed read from a dynamic array or queue";
+  let arguments = (ins AnyType:$container, I64:$index);
+  let results = (outs AnyType:$result);
+  let hasVerifier = 1;
+}
+
+def SimContainerWriteOp : SimOp<"container.write", [
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "typed write to a dynamic array or queue";
+  let arguments = (ins AnyType:$container, I64:$index, AnyType:$value);
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// Managed strings
+//===----------------------------------------------------------------------===//
+
+class SimStringAllocatingOp<string mnemonic, dag stringArgs>
+    : SimOp<mnemonic, [
+        MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+      ]> {
+  let arguments = stringArgs;
+  let results = (outs SimStringType:$result);
+}
+
+def SimStringLiteralOp
+    : SimStringAllocatingOp<"string.literal", (ins StrAttr:$value)> {
+  let summary = "materialize an immutable managed byte string";
+  let assemblyFormat = "$value attr-dict";
+}
+
+def SimStringFromPackedOp
+    : SimStringAllocatingOp<"string.from_packed", (ins AnyType:$input)> {
+  let summary = "convert a packed value to a managed byte string";
+  let hasVerifier = 1;
+}
+
+def SimStringToPackedOp : SimOp<"string.to_packed", [Pure]> {
+  let summary = "convert a managed byte string to a two-state packed value";
+  let arguments = (ins SimStringType:$input);
+  let results = (outs AnyInteger:$result);
+}
+
+def SimStringConcatOp
+    : SimStringAllocatingOp<"string.concat",
+                            (ins Variadic<SimStringType>:$inputs)> {
+  let summary = "concatenate managed byte strings";
+  let hasVerifier = 1;
+}
+
+def SimStringRepeatOp
+    : SimStringAllocatingOp<"string.repeat",
+                            (ins SimStringType:$input, I64:$count)> {
+  let summary = "repeat a managed byte string a runtime number of times";
+}
+
+def SimStringLengthOp : SimOp<"string.length", [Pure]> {
+  let summary = "return the byte length of a managed string";
+  let arguments = (ins SimStringType:$input);
+  let results = (outs I64:$result);
+}
+
+def SimStringGetcOp : SimOp<"string.getc", [Pure]> {
+  let summary = "read one byte, returning zero for an invalid index";
+  let arguments = (ins SimStringType:$input, I64:$index);
+  let results = (outs I8:$result);
+}
+
+def SimStringPutcOp
+    : SimStringAllocatingOp<"string.putc",
+                            (ins SimStringType:$input, I64:$index,
+                                 I8:$character)> {
+  let summary = "return a string with one byte conditionally updated";
+}
+
+def SimStringSubstrOp
+    : SimStringAllocatingOp<"string.substr",
+                            (ins SimStringType:$input, I64:$left, I64:$right)> {
+  let summary = "return an inclusive byte substring";
+}
+
+def SimStringCompareOp : SimOp<"string.compare", [Pure]> {
+  let summary = "compare two managed strings lexicographically";
+  let arguments = (ins SimStringType:$lhs, SimStringType:$rhs,
+                       BoolAttr:$case_insensitive);
+  let results = (outs I32:$result);
+  let assemblyFormat = [{
+    $lhs `,` $rhs `case_insensitive` `=` $case_insensitive attr-dict
+  }];
+}
+
+def SimStringCaseConvertOp
+    : SimStringAllocatingOp<"string.case_convert",
+                            (ins SimStringType:$input, BoolAttr:$to_upper)> {
+  let summary = "apply ASCII upper- or lower-case conversion";
+  let assemblyFormat = [{
+    $input `to_upper` `=` $to_upper attr-dict
+  }];
+}
+
+def SimStringParseIntegerOp : SimOp<"string.parse_integer", [Pure]> {
+  let summary = "parse a managed string using a fixed integer radix";
+  let arguments = (ins SimStringType:$input, I32Attr:$radix);
+  let results = (outs I64:$result);
+  let assemblyFormat = "$input `radix` `=` $radix attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimStringParseRealOp : SimOp<"string.parse_real", [Pure]> {
+  let summary = "parse a locale-independent real from a managed string";
+  let arguments = (ins SimStringType:$input);
+  let results = (outs F64:$result);
+}
+
+def SimStringFormatIntegerOp
+    : SimStringAllocatingOp<"string.format_integer",
+                            (ins I64:$input, I32Attr:$radix,
+                                 BoolAttr:$is_signed)> {
+  let summary = "format an integer into a managed string";
+  let assemblyFormat = [{
+    $input `radix` `=` $radix `signed` `=` $is_signed attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimStringFormatRealOp
+    : SimStringAllocatingOp<"string.format_real", (ins F64:$input)> {
+  let summary = "format a real into a managed string";
+}
+
 def SimClassAllocOp : SimOp<"class.alloc", [
     MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
   ]> {
@@ -774,7 +936,7 @@ def SimTerminationRequestedOp : SimOp<"termination.requested", [
 }
 
 def SimDisplayOp : SimOp<"display", [
-  MemoryEffects<[MemWrite<SimIOResource>]>
+  MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimIOResource>]>
 ]> {
   let summary = "formatted display or write to a SystemVerilog descriptor";
   let description = [{
@@ -817,6 +979,18 @@ def SimFileOpenOp : SimFileOp<"file.open",
     (ins SimContextType:$context, SimBytesType:$path, SimBytesType:$mode),
     (outs I32:$descriptor)>;
 
+def SimFileOpenStringMCDOp : SimFileOp<"file.open_string_mcd",
+    (ins SimContextType:$context, SimStringType:$path),
+    (outs I32:$descriptor),
+    [MemRead<SimIOResource>, MemWrite<SimIOResource>,
+     MemRead<SimHeapResource>]>;
+
+def SimFileOpenStringOp : SimFileOp<"file.open_string",
+    (ins SimContextType:$context, SimStringType:$path, SimStringType:$mode),
+    (outs I32:$descriptor),
+    [MemRead<SimIOResource>, MemWrite<SimIOResource>,
+     MemRead<SimHeapResource>]>;
+
 def SimFileCloseOp : SimFileOp<"file.close",
     (ins SimContextType:$context, I32:$descriptor), (outs)>;
 
@@ -835,6 +1009,14 @@ def SimFileGetlineOp : SimFileOp<"file.getline",
     (outs AnyInteger:$data, I32:$count)> {
   let summary = "read one bounded line for assignment to a packed value";
   let hasVerifier = 1;
+}
+
+def SimFileGetlineStringOp : SimFileOp<"file.getline_string",
+    (ins SimContextType:$context, I32:$descriptor),
+    (outs SimStringType:$data, I32:$count),
+    [MemRead<SimIOResource>, MemWrite<SimIOResource>,
+     MemRead<SimHeapResource>, MemWrite<SimHeapResource>]> {
+  let summary = "read one complete line into a managed string";
 }
 
 def SimFileReadPackedOp : SimFileOp<"file.read_packed",
@@ -1377,6 +1559,25 @@ def SimLogicIsTrueOp : SimOp<"logic.is_true", [Pure]> {
   let arguments = (ins SimLogicType:$input);
   let results = (outs I1:$result);
   let assemblyFormat = "$input attr-dict `:` qualified(type($input))";
+  let hasFolder = 1;
+}
+
+def SimLogicMuxOp : SimOp<"logic.mux", [
+    Pure, AllTypesMatch<["true_value", "false_value", "result"]>
+  ]> {
+  let summary = "conditional-expression selection with exact X/Z merging";
+  let description = [{
+    A known condition selects one operand. For an X or Z condition, each
+    result symbol is preserved when both operands contain the same 0, 1, X,
+    or Z symbol; every mismatch becomes X.
+  }];
+  let arguments = (ins SimLogic1Type:$condition, SimLogicType:$true_value,
+                       SimLogicType:$false_value);
+  let results = (outs SimLogicType:$result);
+  let assemblyFormat = [{
+    $condition `?` $true_value `:` $false_value attr-dict `:`
+    functional-type(operands, results)
+  }];
   let hasFolder = 1;
 }
 
