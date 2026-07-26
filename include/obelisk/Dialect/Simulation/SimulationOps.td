@@ -240,6 +240,13 @@ def SimClassNullOp : SimOp<"class.null", [Pure, ConstantLike]> {
   let assemblyFormat = "attr-dict `:` qualified(type($result))";
 }
 
+def SimManagedNullOp : SimOp<"managed.null", [Pure, ConstantLike]> {
+  let summary = "typed null non-class managed handle";
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "attr-dict `:` qualified(type($result))";
+  let hasVerifier = 1;
+}
+
 def SimClassAllocOp : SimOp<"class.alloc", [
     MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
   ]> {
@@ -366,6 +373,27 @@ def SimArgumentRefFromManagedOp
     : SimOp<"argument_ref.from_managed", [Pure]> {
   let summary = "erase a managed property reference into an exact-alias formal";
   let arguments = (ins SimManagedRefType:$input);
+  let results = (outs SimArgumentRefType:$result);
+  let assemblyFormat =
+      "$input attr-dict `:` qualified(type($input)) `->` qualified(type($result))";
+  let hasVerifier = 1;
+}
+
+def SimReferencePathIndexOp : SimOp<"reference_path.index", [
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "capture an escaping dynamic-array or queue element lvalue";
+  let arguments = (ins SimContextType:$context, AnyType:$container, I64:$index);
+  let results = (outs SimReferencePathType:$result);
+  let assemblyFormat =
+      "$context `,` $container `[` $index `]` attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+def SimArgumentRefFromPathOp
+    : SimOp<"argument_ref.from_path", [Pure]> {
+  let summary = "erase a managed reference path into an exact-alias formal";
+  let arguments = (ins SimReferencePathType:$input);
   let results = (outs SimArgumentRefType:$result);
   let assemblyFormat =
       "$input attr-dict `:` qualified(type($input)) `->` qualified(type($result))";

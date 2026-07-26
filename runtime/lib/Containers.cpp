@@ -1,0 +1,2753 @@
+//===- Containers.cpp - Managed strings and container storage -------------===//
+
+#include "RuntimeInternal.h"
+
+#include <algorithm>
+#include <cctype>
+#include <cstring>
+#include <functional>
+#include <limits>
+#include <optional>
+
+namespace {
+
+const uint64_t stringDescriptorToken = UINT64_C(0x535452494e475631);
+const uint64_t containerDescriptorToken = UINT64_C(0x434f4e5441494e31);
+const uint64_t bufferDescriptorToken = UINT64_C(0x4255464645525631);
+const uint64_t referencePathDescriptorToken = UINT64_C(0x5245465041544831);
+
+struct StringHeader {
+  const void *descriptor;
+  uint64_t length;
+  uint64_t hash;
+};
+
+static_assert(sizeof(StringHeader) == 24);
+
+struct BufferHeader {
+  const void *descriptor;
+  uint64_t reserved;
+};
+
+struct ContainerHeader {
+  const void *descriptor;
+  obelisk_rt_container_kind_v1 kind;
+  uint32_t reserved;
+  const obelisk_rt_element_type_v1 *element;
+  obelisk_rt_object_v1 *buffer;
+  obelisk_rt_object_v1 *ordered;
+  uint64_t size;
+  uint64_t capacity;
+  uint64_t head;
+  uint64_t bound;
+  uint64_t epoch;
+  obelisk_rt_assoc_key_kind_v1 keyKind;
+  uint32_t keyReserved;
+  uint64_t keyWidth;
+};
+
+static_assert(sizeof(BufferHeader) == 16);
+static_assert(sizeof(ContainerHeader) == 96);
+
+struct AssocSlot {
+  uint64_t hash;
+  uint64_t distance;
+  uint64_t integral;
+  obelisk_rt_object_v1 *string;
+};
+
+enum class ReferenceSelector : uint32_t { Index = 1, Associative = 2 };
+
+struct ReferencePathHeader {
+  const void *descriptor;
+  obelisk_rt_object_v1 *owner;
+  const obelisk_rt_element_type_v1 *element;
+  ReferenceSelector selector;
+  uint32_t reserved;
+  int64_t index;
+  obelisk_rt_assoc_key_v1 key;
+};
+
+static_assert(sizeof(ReferencePathHeader) == 80);
+
+constexpr uint64_t emptyAssocHash = 0;
+
+uint64_t elementStride(const obelisk_rt_element_type_v1 *element);
+
+uint64_t assocSlotStride(const obelisk_rt_element_type_v1 *element) {
+  uint64_t valueOffset =
+      (sizeof(AssocSlot) + element->alignment - 1) & ~(element->alignment - 1);
+  uint64_t alignment =
+      std::max<uint64_t>(alignof(AssocSlot), element->alignment);
+  uint64_t size = valueOffset + elementStride(element);
+  return (size + alignment - 1) & ~(alignment - 1);
+}
+
+uint64_t assocValueOffset(const obelisk_rt_element_type_v1 *element) {
+  return (sizeof(AssocSlot) + element->alignment - 1) &
+         ~(element->alignment - 1);
+}
+
+uint64_t elementStride(const obelisk_rt_element_type_v1 *element) {
+  return element->value_size *
+         ((element->flags & OBELISK_RT_ELEMENT_FOUR_STATE) ? 2 : 1);
+}
+
+bool multiplyFits(uint64_t left, uint64_t right, uint64_t &result) {
+  if (left != 0 && right > UINT64_MAX / left)
+    return false;
+  result = left * right;
+  return true;
+}
+
+uint64_t nextPowerOfTwo(uint64_t value) {
+  if (value <= 1)
+    return 1;
+  if (value > (UINT64_C(1) << 63))
+    return 0;
+  --value;
+  for (unsigned shift = 1; shift != 64; shift <<= 1)
+    value |= value >> shift;
+  return value + 1;
+}
+
+uint64_t queueElementLimit(uint64_t declaredBound) {
+  return declaredBound == UINT64_MAX ? UINT64_MAX : declaredBound + 1;
+}
+
+bool queueIsFull(const ContainerHeader &header) {
+  return header.kind == OBELISK_RT_CONTAINER_QUEUE &&
+         header.size >= queueElementLimit(header.bound);
+}
+
+void walkTraceSlots(uint8_t *base, const obelisk_rt_trace_layout_v1 *layout,
+                    const std::function<void(obelisk_rt_object_v1 **)> &visit) {
+  if (!layout)
+    return;
+  for (uint64_t index = 0; index != layout->entry_count; ++index) {
+    const auto &entry = layout->entries[index];
+    for (uint64_t item = 0; item != entry.count; ++item) {
+      uint8_t *address = base + entry.offset + item * entry.stride;
+      if (entry.kind == OBELISK_RT_TRACE_EMBEDDED)
+        walkTraceSlots(address, entry.child_layout, visit);
+      else
+        visit(reinterpret_cast<obelisk_rt_object_v1 **>(address));
+    }
+  }
+}
+
+void enumerateTraceSlots(uint8_t *base,
+                         const obelisk_rt_trace_layout_v1 *layout,
+                         ManagedRootVisit visit, void *environment) noexcept {
+  if (!layout)
+    return;
+  for (uint64_t index = 0; index != layout->entry_count; ++index) {
+    const auto &entry = layout->entries[index];
+    for (uint64_t item = 0; item != entry.count; ++item) {
+      uint8_t *address = base + entry.offset + item * entry.stride;
+      if (entry.kind == OBELISK_RT_TRACE_EMBEDDED)
+        enumerateTraceSlots(address, entry.child_layout, visit, environment);
+      else
+        visit(environment, reinterpret_cast<obelisk_rt_object_v1 **>(address));
+    }
+  }
+}
+
+struct ValueRootEnvironment {
+  uint8_t *data;
+  uint64_t count;
+  uint64_t stride;
+  const obelisk_rt_element_type_v1 *element;
+};
+
+class ScopedManagedRoot {
+public:
+  ScopedManagedRoot(obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 **slot)
+      : lane(lane), status(obelisk_rt_v1_gc_root_push(lane, &root, slot)) {}
+  ScopedManagedRoot(const ScopedManagedRoot &) = delete;
+  ScopedManagedRoot &operator=(const ScopedManagedRoot &) = delete;
+  ~ScopedManagedRoot() {
+    if (status == OBELISK_RT_OK)
+      (void)obelisk_rt_v1_gc_root_pop(lane, &root);
+  }
+  obelisk_rt_status getStatus() const { return status; }
+
+private:
+  obelisk_rt_gc_lane_v1 *lane;
+  obelisk_rt_gc_root_v1 root{};
+  obelisk_rt_status status;
+};
+
+void enumerateValueRoots(void *opaque, ManagedRootVisit visit,
+                         void *environment) {
+  auto *values = static_cast<ValueRootEnvironment *>(opaque);
+  for (uint64_t index = 0; index != values->count; ++index)
+    enumerateTraceSlots(values->data + index * values->stride,
+                        values->element->trace, visit, environment);
+}
+
+obelisk_rt_status
+validateManagedSlots(obelisk_rt_context *context,
+                     const obelisk_rt_element_type_v1 *element,
+                     const uint8_t *value) {
+  obelisk_rt_status status = OBELISK_RT_OK;
+  walkTraceSlots(const_cast<uint8_t *>(value), element->trace,
+                 [&](obelisk_rt_object_v1 **slot) {
+                   if (status == OBELISK_RT_OK &&
+                       !obelisk_rt_managed_object_belongs_to(context, *slot))
+                     status = OBELISK_RT_INVALID_HANDLE;
+                 });
+  return status;
+}
+
+struct HeaderSnapshot {
+  ContainerHeader header{};
+};
+
+obelisk_rt_status snapshotHeader(obelisk_rt_object_v1 *container,
+                                 ContainerHeader &header) {
+  HeaderSnapshot snapshot;
+  obelisk_rt_status status = obelisk_rt_managed_object_access(
+      container, OBELISK_RT_MANAGED_CONTAINER,
+      [](void *environment, uint8_t *object,
+         uint64_t extent) -> obelisk_rt_status {
+        if (extent != sizeof(ContainerHeader))
+          return OBELISK_RT_INVALID_HANDLE;
+        auto *snapshot = static_cast<HeaderSnapshot *>(environment);
+        std::memcpy(&snapshot->header, object, sizeof(ContainerHeader));
+        bool sequential =
+            snapshot->header.kind == OBELISK_RT_CONTAINER_DYNAMIC_ARRAY ||
+            snapshot->header.kind == OBELISK_RT_CONTAINER_QUEUE;
+        bool associative =
+            snapshot->header.kind == OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY;
+        bool validAssocKey =
+            snapshot->header.keyKind == OBELISK_RT_ASSOC_KEY_STRING
+                ? snapshot->header.keyWidth == 0
+                : ((snapshot->header.keyKind == OBELISK_RT_ASSOC_KEY_UNSIGNED ||
+                    snapshot->header.keyKind == OBELISK_RT_ASSOC_KEY_SIGNED) &&
+                   snapshot->header.keyWidth >= 1 &&
+                   snapshot->header.keyWidth <= 64);
+        if (snapshot->header.descriptor != &containerDescriptorToken ||
+            !snapshot->header.element || (!sequential && !associative) ||
+            snapshot->header.size > snapshot->header.capacity ||
+            (snapshot->header.capacity == 0) !=
+                (snapshot->header.buffer == nullptr) ||
+            (snapshot->header.kind == OBELISK_RT_CONTAINER_QUEUE &&
+             snapshot->header.capacity != 0 &&
+             ((snapshot->header.capacity & (snapshot->header.capacity - 1)) !=
+                  0 ||
+              snapshot->header.head >= snapshot->header.capacity)) ||
+            (associative &&
+             (!validAssocKey || (snapshot->header.capacity != 0 &&
+                                 (snapshot->header.capacity < 8 ||
+                                  (snapshot->header.capacity &
+                                   (snapshot->header.capacity - 1)) != 0)))))
+          return OBELISK_RT_INVALID_HANDLE;
+        return OBELISK_RT_OK;
+      },
+      &snapshot);
+  if (status == OBELISK_RT_OK)
+    header = snapshot.header;
+  return status;
+}
+
+template <typename Access>
+obelisk_rt_status accessBuffer(obelisk_rt_object_v1 *buffer, Access &&access) {
+  if (!buffer)
+    return OBELISK_RT_INVALID_HANDLE;
+  struct Environment {
+    Access *access;
+  } environment{&access};
+  return obelisk_rt_managed_object_access(
+      buffer, OBELISK_RT_MANAGED_BUFFER,
+      [](void *opaque, uint8_t *object, uint64_t extent) -> obelisk_rt_status {
+        if (extent < sizeof(BufferHeader))
+          return OBELISK_RT_INVALID_HANDLE;
+        auto *header = reinterpret_cast<BufferHeader *>(object);
+        if (header->descriptor != &bufferDescriptorToken ||
+            header->reserved != 0)
+          return OBELISK_RT_INVALID_HANDLE;
+        auto *environment = static_cast<Environment *>(opaque);
+        return (*environment->access)(object + sizeof(BufferHeader),
+                                      extent - sizeof(BufferHeader));
+      },
+      &environment);
+}
+
+obelisk_rt_status allocateBuffer(obelisk_rt_gc_lane_v1 *lane, uint64_t capacity,
+                                 uint64_t stride,
+                                 obelisk_rt_object_v1 **outBuffer) {
+  if (!outBuffer)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outBuffer = nullptr;
+  if (capacity == 0)
+    return OBELISK_RT_OK;
+  uint64_t bytes = 0;
+  if (!multiplyFits(capacity, stride, bytes) ||
+      bytes > UINT64_MAX - sizeof(BufferHeader))
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  return obelisk_rt_managed_allocate(lane, OBELISK_RT_MANAGED_BUFFER,
+                                     sizeof(BufferHeader) + bytes, 16,
+                                     &bufferDescriptorToken, outBuffer);
+}
+
+obelisk_rt_status initializeContainer(obelisk_rt_gc_lane_v1 *lane,
+                                      obelisk_rt_container_kind_v1 kind,
+                                      const obelisk_rt_element_type_v1 *element,
+                                      uint64_t size, uint64_t bound,
+                                      obelisk_rt_object_v1 **outContainer) {
+  if (!outContainer ||
+      obelisk_rt_v1_element_type_validate(element) != OBELISK_RT_OK)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outContainer = nullptr;
+  if (kind == OBELISK_RT_CONTAINER_QUEUE)
+    size = std::min(size, queueElementLimit(bound));
+  uint64_t capacity =
+      size == 0
+          ? 0
+          : (kind == OBELISK_RT_CONTAINER_QUEUE ? nextPowerOfTwo(size) : size);
+  if (size != 0 && capacity == 0)
+    return OBELISK_RT_OUT_OF_RESOURCES;
+
+  obelisk_rt_object_v1 *container = nullptr;
+  obelisk_rt_status status = obelisk_rt_managed_allocate(
+      lane, OBELISK_RT_MANAGED_CONTAINER, sizeof(ContainerHeader),
+      alignof(ContainerHeader), &containerDescriptorToken, &container);
+  if (status != OBELISK_RT_OK)
+    return status;
+  obelisk_rt_gc_root_v1 root{};
+  status = obelisk_rt_v1_gc_root_push(lane, &root, &container);
+  if (status != OBELISK_RT_OK)
+    return status;
+  obelisk_rt_context *context = obelisk_rt_managed_object_context(container);
+  status = obelisk_rt_v1_element_type_register(context, element);
+  if (status == OBELISK_RT_OK) {
+    element = obelisk_rt_managed_element_type_lookup(context, element->type_id);
+    if (!element)
+      status = OBELISK_RT_INVALID_DESIGN;
+  }
+  obelisk_rt_object_v1 *buffer = nullptr;
+  if (status == OBELISK_RT_OK)
+    status = allocateBuffer(lane, capacity, elementStride(element), &buffer);
+  if (status == OBELISK_RT_OK) {
+    struct Initialize {
+      obelisk_rt_container_kind_v1 kind;
+      const obelisk_rt_element_type_v1 *element;
+      obelisk_rt_object_v1 *buffer;
+      uint64_t size;
+      uint64_t capacity;
+      uint64_t bound;
+    } initialize{kind, element, buffer, size, capacity, bound};
+    status = obelisk_rt_managed_object_access(
+        container, OBELISK_RT_MANAGED_CONTAINER,
+        [](void *environment, uint8_t *object,
+           uint64_t extent) -> obelisk_rt_status {
+          if (extent != sizeof(ContainerHeader))
+            return OBELISK_RT_INVALID_HANDLE;
+          auto *initialize = static_cast<Initialize *>(environment);
+          auto *header = reinterpret_cast<ContainerHeader *>(object);
+          header->descriptor = &containerDescriptorToken;
+          header->kind = initialize->kind;
+          header->element = initialize->element;
+          header->buffer = initialize->buffer;
+          header->size = initialize->size;
+          header->capacity = initialize->capacity;
+          header->bound = initialize->bound;
+          header->epoch = 1;
+          return OBELISK_RT_OK;
+        },
+        &initialize);
+  }
+  obelisk_rt_status popStatus = obelisk_rt_v1_gc_root_pop(lane, &root);
+  if (status == OBELISK_RT_OK) {
+    *outContainer = container;
+    return popStatus;
+  }
+  return status;
+}
+
+obelisk_rt_status initializeAssoc(obelisk_rt_gc_lane_v1 *lane,
+                                  const obelisk_rt_element_type_v1 *element,
+                                  obelisk_rt_assoc_key_kind_v1 keyKind,
+                                  uint64_t keyWidth,
+                                  obelisk_rt_object_v1 **outContainer) {
+  if (!lane || !outContainer ||
+      obelisk_rt_v1_element_type_validate(element) != OBELISK_RT_OK)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  if (keyKind == OBELISK_RT_ASSOC_KEY_STRING) {
+    if (keyWidth != 0)
+      return OBELISK_RT_INVALID_ARGUMENT;
+  } else if ((keyKind != OBELISK_RT_ASSOC_KEY_UNSIGNED &&
+              keyKind != OBELISK_RT_ASSOC_KEY_SIGNED) ||
+             keyWidth == 0 || keyWidth > 64) {
+    return OBELISK_RT_INVALID_ARGUMENT;
+  }
+  *outContainer = nullptr;
+  obelisk_rt_object_v1 *container = nullptr;
+  obelisk_rt_status status = obelisk_rt_managed_allocate(
+      lane, OBELISK_RT_MANAGED_CONTAINER, sizeof(ContainerHeader),
+      alignof(ContainerHeader), &containerDescriptorToken, &container);
+  if (status != OBELISK_RT_OK)
+    return status;
+  obelisk_rt_gc_root_v1 root{};
+  status = obelisk_rt_v1_gc_root_push(lane, &root, &container);
+  if (status != OBELISK_RT_OK)
+    return status;
+  obelisk_rt_context *context = obelisk_rt_managed_object_context(container);
+  status = obelisk_rt_v1_element_type_register(context, element);
+  if (status == OBELISK_RT_OK) {
+    element = obelisk_rt_managed_element_type_lookup(context, element->type_id);
+    if (!element)
+      status = OBELISK_RT_INVALID_DESIGN;
+  }
+  struct Initialize {
+    const obelisk_rt_element_type_v1 *element;
+    obelisk_rt_assoc_key_kind_v1 keyKind;
+    uint64_t keyWidth;
+  } initialize{element, keyKind, keyWidth};
+  if (status == OBELISK_RT_OK)
+    status = obelisk_rt_managed_object_access(
+        container, OBELISK_RT_MANAGED_CONTAINER,
+        [](void *environment, uint8_t *object,
+           uint64_t extent) -> obelisk_rt_status {
+          if (extent != sizeof(ContainerHeader))
+            return OBELISK_RT_INVALID_HANDLE;
+          auto *initialize = static_cast<Initialize *>(environment);
+          auto *header = reinterpret_cast<ContainerHeader *>(object);
+          header->descriptor = &containerDescriptorToken;
+          header->kind = OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY;
+          header->element = initialize->element;
+          header->epoch = 1;
+          header->keyKind = initialize->keyKind;
+          header->keyWidth = initialize->keyWidth;
+          return OBELISK_RT_OK;
+        },
+        &initialize);
+  obelisk_rt_status popStatus = obelisk_rt_v1_gc_root_pop(lane, &root);
+  if (status == OBELISK_RT_OK) {
+    *outContainer = container;
+    return popStatus;
+  }
+  return status;
+}
+
+uint64_t physicalIndex(const ContainerHeader &header, uint64_t logical) {
+  return header.kind == OBELISK_RT_CONTAINER_QUEUE
+             ? (header.head + logical) & (header.capacity - 1)
+             : logical;
+}
+
+obelisk_rt_status ensureCapacity(obelisk_rt_gc_lane_v1 *lane,
+                                 obelisk_rt_object_v1 *container,
+                                 uint64_t required) {
+  if (!lane || !container)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  if (obelisk_rt_managed_object_context(container) !=
+      obelisk_rt_managed_lane_context(lane))
+    return OBELISK_RT_INVALID_HANDLE;
+  obelisk_rt_gc_root_v1 ownerRoot{};
+  obelisk_rt_status status =
+      obelisk_rt_v1_gc_root_push(lane, &ownerRoot, &container);
+  if (status != OBELISK_RT_OK)
+    return status;
+  while (status == OBELISK_RT_OK) {
+    ContainerHeader snapshot;
+    status = snapshotHeader(container, snapshot);
+    if (status != OBELISK_RT_OK || snapshot.capacity >= required)
+      break;
+    uint64_t capacity =
+        snapshot.kind == OBELISK_RT_CONTAINER_QUEUE
+            ? nextPowerOfTwo(std::max<uint64_t>(required, 4))
+            : std::max(required,
+                       snapshot.capacity + snapshot.capacity / 2 + UINT64_C(1));
+    if (capacity == 0) {
+      status = OBELISK_RT_OUT_OF_RESOURCES;
+      break;
+    }
+    obelisk_rt_object_v1 *replacement = nullptr;
+    status = allocateBuffer(lane, capacity, elementStride(snapshot.element),
+                            &replacement);
+    if (status != OBELISK_RT_OK)
+      break;
+    struct Publish {
+      ContainerHeader snapshot;
+      obelisk_rt_object_v1 *replacement;
+      uint64_t capacity;
+      bool retry = false;
+    } publish{snapshot, replacement, capacity};
+    status = obelisk_rt_managed_object_access(
+        container, OBELISK_RT_MANAGED_CONTAINER,
+        [](void *environment, uint8_t *object,
+           uint64_t extent) -> obelisk_rt_status {
+          auto *publish = static_cast<Publish *>(environment);
+          if (extent != sizeof(ContainerHeader))
+            return OBELISK_RT_INVALID_HANDLE;
+          auto *current = reinterpret_cast<ContainerHeader *>(object);
+          if (current->epoch != publish->snapshot.epoch ||
+              current->buffer != publish->snapshot.buffer ||
+              current->capacity != publish->snapshot.capacity) {
+            publish->retry = true;
+            return OBELISK_RT_OK;
+          }
+          uint64_t stride = elementStride(current->element);
+          obelisk_rt_status copyStatus = OBELISK_RT_OK;
+          if (current->size != 0) {
+            copyStatus = accessBuffer(
+                current->buffer, [&](uint8_t *source, uint64_t sourceSize) {
+                  return accessBuffer(
+                      publish->replacement,
+                      [&](uint8_t *destination, uint64_t destinationSize) {
+                        if (sourceSize < current->capacity * stride ||
+                            destinationSize < publish->capacity * stride)
+                          return OBELISK_RT_INVALID_HANDLE;
+                        for (uint64_t index = 0; index != current->size;
+                             ++index)
+                          std::memcpy(destination + index * stride,
+                                      source + physicalIndex(*current, index) *
+                                                   stride,
+                                      static_cast<size_t>(stride));
+                        return OBELISK_RT_OK;
+                      });
+                });
+          }
+          if (copyStatus != OBELISK_RT_OK)
+            return copyStatus;
+          current->buffer = publish->replacement;
+          current->capacity = publish->capacity;
+          current->head = 0;
+          ++current->epoch;
+          return OBELISK_RT_OK;
+        },
+        &publish);
+    if (status == OBELISK_RT_OK && !publish.retry)
+      break;
+  }
+  obelisk_rt_status popStatus = obelisk_rt_v1_gc_root_pop(lane, &ownerRoot);
+  return status == OBELISK_RT_OK ? popStatus : status;
+}
+
+uint64_t hashBytes(const char *bytes, uint64_t size) {
+  uint64_t hash = UINT64_C(1469598103934665603);
+  for (uint64_t index = 0; index != size; ++index) {
+    hash ^= static_cast<unsigned char>(bytes[index]);
+    hash *= UINT64_C(1099511628211);
+  }
+  return hash;
+}
+
+struct StringView {
+  const char *bytes = "";
+  uint64_t size = 0;
+  uint64_t hash = 0;
+};
+
+obelisk_rt_status readString(obelisk_rt_object_v1 *string, StringView &view) {
+  if (!string) {
+    view = {};
+    return OBELISK_RT_OK;
+  }
+  struct Read {
+    StringView *view;
+  } read{&view};
+  return obelisk_rt_managed_object_access(
+      string, OBELISK_RT_MANAGED_STRING,
+      [](void *environment, uint8_t *object,
+         uint64_t extent) -> obelisk_rt_status {
+        auto *read = static_cast<Read *>(environment);
+        if (extent < sizeof(StringHeader) + 1)
+          return OBELISK_RT_INVALID_HANDLE;
+        auto *header = reinterpret_cast<const StringHeader *>(object);
+        if (header->descriptor != &stringDescriptorToken ||
+            header->length > extent - sizeof(StringHeader) - 1)
+          return OBELISK_RT_INVALID_HANDLE;
+        const char *bytes =
+            reinterpret_cast<const char *>(object + sizeof(StringHeader));
+        if (bytes[header->length] != '\0')
+          return OBELISK_RT_INVALID_HANDLE;
+        read->view->bytes = bytes;
+        read->view->size = header->length;
+        read->view->hash = header->hash;
+        return OBELISK_RT_OK;
+      },
+      &read);
+}
+
+obelisk_rt_status createString(obelisk_rt_gc_lane_v1 *lane, const char *bytes,
+                               uint64_t size,
+                               obelisk_rt_object_v1 **outString) {
+  if (!outString || (!bytes && size != 0))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outString = nullptr;
+  if (size == 0)
+    return OBELISK_RT_OK;
+  if (!lane || size > UINT64_MAX - sizeof(StringHeader) - 1)
+    return OBELISK_RT_OUT_OF_RESOURCES;
+
+  obelisk_rt_object_v1 *result = nullptr;
+  obelisk_rt_status status = obelisk_rt_managed_allocate(
+      lane, OBELISK_RT_MANAGED_STRING, sizeof(StringHeader) + size + 1,
+      alignof(StringHeader), &stringDescriptorToken, &result);
+  if (status != OBELISK_RT_OK)
+    return status;
+  struct Initialize {
+    const char *bytes;
+    uint64_t size;
+  } initialize{bytes, size};
+  status = obelisk_rt_managed_object_access(
+      result, OBELISK_RT_MANAGED_STRING,
+      [](void *environment, uint8_t *object,
+         uint64_t extent) -> obelisk_rt_status {
+        auto *initialize = static_cast<Initialize *>(environment);
+        if (extent != sizeof(StringHeader) + initialize->size + 1)
+          return OBELISK_RT_INVALID_HANDLE;
+        auto *header = reinterpret_cast<StringHeader *>(object);
+        header->descriptor = &stringDescriptorToken;
+        header->length = initialize->size;
+        header->hash = hashBytes(initialize->bytes, initialize->size);
+        char *destination =
+            reinterpret_cast<char *>(object + sizeof(StringHeader));
+        std::memcpy(destination, initialize->bytes,
+                    static_cast<size_t>(initialize->size));
+        destination[initialize->size] = '\0';
+        return OBELISK_RT_OK;
+      },
+      &initialize);
+  if (status == OBELISK_RT_OK)
+    *outString = result;
+  return status;
+}
+
+int32_t compareViews(const StringView &left, const StringView &right,
+                     bool insensitive) {
+  uint64_t common = std::min(left.size, right.size);
+  for (uint64_t index = 0; index != common; ++index) {
+    unsigned char a = static_cast<unsigned char>(left.bytes[index]);
+    unsigned char b = static_cast<unsigned char>(right.bytes[index]);
+    if (insensitive) {
+      a = static_cast<unsigned char>(std::tolower(a));
+      b = static_cast<unsigned char>(std::tolower(b));
+    }
+    if (a != b)
+      return a < b ? -1 : 1;
+  }
+  if (left.size == right.size)
+    return 0;
+  return left.size < right.size ? -1 : 1;
+}
+
+} // namespace
+
+void obelisk_rt_managed_trace_runtime_object(obelisk_rt_managed_kind_v1 kind,
+                                             uint8_t *object, uint64_t extent,
+                                             ManagedTraceVisit visit,
+                                             void *environment) noexcept {
+  // Keeping this dispatch centralized prevents runtime values from being
+  // interpreted as class descriptors.
+  switch (kind) {
+  case OBELISK_RT_MANAGED_CONTAINER: {
+    if (extent != sizeof(ContainerHeader))
+      return;
+    auto *header = reinterpret_cast<ContainerHeader *>(object);
+    if (header->descriptor != &containerDescriptorToken || !header->element ||
+        header->size > header->capacity)
+      return;
+    visit(environment, header->buffer);
+    visit(environment, header->ordered);
+    if (!header->buffer || header->size == 0 ||
+        obelisk_rt_managed_object_kind(header->buffer) !=
+            OBELISK_RT_MANAGED_BUFFER)
+      return;
+    uint64_t bufferExtent = obelisk_rt_managed_object_extent(header->buffer);
+    if (bufferExtent < sizeof(BufferHeader))
+      return;
+    auto *buffer = reinterpret_cast<uint8_t *>(header->buffer);
+    auto *bufferHeader = reinterpret_cast<BufferHeader *>(buffer);
+    bool associative = header->kind == OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY;
+    uint64_t stride = associative ? assocSlotStride(header->element)
+                                  : elementStride(header->element);
+    uint64_t required = 0;
+    if (bufferHeader->descriptor != &bufferDescriptorToken ||
+        !multiplyFits(header->capacity, stride, required) ||
+        required > bufferExtent - sizeof(BufferHeader))
+      return;
+    uint8_t *data = buffer + sizeof(BufferHeader);
+    std::pair<ManagedTraceVisit, void *> adapter{visit, environment};
+    if (associative) {
+      uint64_t valueOffset = assocValueOffset(header->element);
+      for (uint64_t index = 0; index != header->capacity; ++index) {
+        auto *slot = reinterpret_cast<AssocSlot *>(data + index * stride);
+        if (slot->hash == emptyAssocHash)
+          continue;
+        if (header->keyKind == OBELISK_RT_ASSOC_KEY_STRING)
+          visit(environment, slot->string);
+        enumerateTraceSlots(
+            reinterpret_cast<uint8_t *>(slot) + valueOffset,
+            header->element->trace,
+            [](void *opaque, obelisk_rt_object_v1 **root) {
+              auto *pair =
+                  static_cast<std::pair<ManagedTraceVisit, void *> *>(opaque);
+              pair->first(pair->second, root ? *root : nullptr);
+            },
+            &adapter);
+      }
+    } else {
+      for (uint64_t index = 0; index != header->size; ++index)
+        enumerateTraceSlots(
+            data + physicalIndex(*header, index) * stride,
+            header->element->trace,
+            [](void *opaque, obelisk_rt_object_v1 **slot) {
+              auto *pair =
+                  static_cast<std::pair<ManagedTraceVisit, void *> *>(opaque);
+              pair->first(pair->second, slot ? *slot : nullptr);
+            },
+            &adapter);
+    }
+    return;
+  }
+  case OBELISK_RT_MANAGED_STRING:
+  case OBELISK_RT_MANAGED_BUFFER:
+  case OBELISK_RT_MANAGED_KEY_BLOB:
+    return;
+  case OBELISK_RT_MANAGED_REFERENCE_PATH: {
+    if (extent != sizeof(ReferencePathHeader))
+      return;
+    auto *path = reinterpret_cast<ReferencePathHeader *>(object);
+    if (path->descriptor != &referencePathDescriptorToken || !path->owner ||
+        !path->element)
+      return;
+    visit(environment, path->owner);
+    if (path->selector == ReferenceSelector::Associative &&
+        path->key.kind == OBELISK_RT_ASSOC_KEY_STRING)
+      visit(environment, path->key.string);
+    return;
+  }
+  default:
+    return;
+  }
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_string_create(obelisk_rt_gc_lane_v1 *lane, const char *bytes,
+                            uint64_t size, obelisk_rt_object_v1 **outString) {
+  return createString(lane, bytes, size, outString);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_string_concat(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *left,
+    obelisk_rt_object_v1 *right, obelisk_rt_object_v1 **outString) {
+  if (!lane || !outString)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outString = nullptr;
+  StringView leftView;
+  StringView rightView;
+  obelisk_rt_status status = readString(left, leftView);
+  if (status != OBELISK_RT_OK)
+    return status;
+  status = readString(right, rightView);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (leftView.size > UINT64_MAX - rightView.size)
+    return OBELISK_RT_OUT_OF_RESOURCES;
+
+  obelisk_rt_object_v1 *roots[] = {left, right};
+  obelisk_rt_gc_root_range_v1 rootRange{};
+  status = obelisk_rt_v1_gc_root_range_push(lane, &rootRange, roots, 2);
+  if (status != OBELISK_RT_OK)
+    return status;
+  // Re-read after root publication. No allocation has happened yet, but this
+  // also makes the lifetime requirement explicit for future callers.
+  status = readString(roots[0], leftView);
+  if (status == OBELISK_RT_OK)
+    status = readString(roots[1], rightView);
+  if (status == OBELISK_RT_OK) {
+    uint64_t size = leftView.size + rightView.size;
+    if (size == 0) {
+      *outString = nullptr;
+    } else {
+      // Materialize a temporary before allocation because createString may
+      // collect and its source must not be an interior heap pointer.
+      try {
+        std::string bytes;
+        bytes.reserve(static_cast<size_t>(size));
+        bytes.append(leftView.bytes, static_cast<size_t>(leftView.size));
+        bytes.append(rightView.bytes, static_cast<size_t>(rightView.size));
+        status = createString(lane, bytes.data(), size, outString);
+      } catch (const std::bad_alloc &) {
+        status = OBELISK_RT_OUT_OF_MEMORY;
+      }
+    }
+  }
+  obelisk_rt_status popStatus =
+      obelisk_rt_v1_gc_root_range_pop(lane, &rootRange);
+  return status == OBELISK_RT_OK ? popStatus : status;
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_string_bytes(obelisk_rt_object_v1 *string, const char **outBytes,
+                           uint64_t *outSize) {
+  if (!outBytes || !outSize)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outBytes = "";
+  *outSize = 0;
+  StringView view;
+  obelisk_rt_status status = readString(string, view);
+  if (status == OBELISK_RT_OK) {
+    *outBytes = view.bytes;
+    *outSize = view.size;
+  }
+  return status;
+}
+
+extern "C" uint64_t obelisk_rt_v1_string_length(obelisk_rt_object_v1 *string) {
+  StringView view;
+  return readString(string, view) == OBELISK_RT_OK ? view.size : 0;
+}
+
+extern "C" uint64_t obelisk_rt_v1_string_hash(obelisk_rt_object_v1 *string) {
+  StringView view;
+  return readString(string, view) == OBELISK_RT_OK ? view.hash
+                                                   : hashBytes("", 0);
+}
+
+extern "C" uint32_t obelisk_rt_v1_string_getc(obelisk_rt_object_v1 *string,
+                                              int64_t index) {
+  StringView view;
+  if (index < 0 || readString(string, view) != OBELISK_RT_OK ||
+      static_cast<uint64_t>(index) >= view.size)
+    return 0;
+  return static_cast<unsigned char>(view.bytes[index]);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_string_putc(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *string, int64_t index,
+    uint32_t character, obelisk_rt_object_v1 **outString) {
+  if (!lane || !outString)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outString = nullptr;
+  StringView view;
+  obelisk_rt_status status = readString(string, view);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (index < 0 || static_cast<uint64_t>(index) >= view.size) {
+    *outString = string;
+    return OBELISK_RT_OK;
+  }
+  try {
+    std::string bytes(view.bytes, static_cast<size_t>(view.size));
+    bytes[static_cast<size_t>(index)] = static_cast<char>(character);
+    return createString(lane, bytes.data(), view.size, outString);
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  }
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_string_substr(obelisk_rt_gc_lane_v1 *lane,
+                            obelisk_rt_object_v1 *string, int64_t left,
+                            int64_t right, obelisk_rt_object_v1 **outString) {
+  if (!lane || !outString)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outString = nullptr;
+  StringView view;
+  obelisk_rt_status status = readString(string, view);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (left < 0 || right < left || static_cast<uint64_t>(right) >= view.size)
+    return OBELISK_RT_OK;
+  try {
+    uint64_t size = static_cast<uint64_t>(right - left) + 1;
+    std::string bytes(view.bytes + left, static_cast<size_t>(size));
+    return createString(lane, bytes.data(), size, outString);
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  }
+}
+
+extern "C" int32_t obelisk_rt_v1_string_compare(obelisk_rt_object_v1 *left,
+                                                obelisk_rt_object_v1 *right) {
+  StringView leftView;
+  StringView rightView;
+  if (readString(left, leftView) != OBELISK_RT_OK ||
+      readString(right, rightView) != OBELISK_RT_OK)
+    return 0;
+  if (leftView.size == rightView.size && leftView.hash != rightView.hash)
+    return compareViews(leftView, rightView, false);
+  return compareViews(leftView, rightView, false);
+}
+
+extern "C" int32_t
+obelisk_rt_v1_string_compare_insensitive(obelisk_rt_object_v1 *left,
+                                         obelisk_rt_object_v1 *right) {
+  StringView leftView;
+  StringView rightView;
+  if (readString(left, leftView) != OBELISK_RT_OK ||
+      readString(right, rightView) != OBELISK_RT_OK)
+    return 0;
+  return compareViews(leftView, rightView, true);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_string_case_convert(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *string, uint32_t toUpper,
+    obelisk_rt_object_v1 **outString) {
+  if (!lane || !outString || toUpper > 1)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outString = nullptr;
+  StringView view;
+  obelisk_rt_status status = readString(string, view);
+  if (status != OBELISK_RT_OK || view.size == 0)
+    return status;
+  try {
+    std::string bytes(view.bytes, static_cast<size_t>(view.size));
+    for (char &character : bytes) {
+      unsigned char value = static_cast<unsigned char>(character);
+      character = static_cast<char>(toUpper ? std::toupper(value)
+                                            : std::tolower(value));
+    }
+    return createString(lane, bytes.data(), view.size, outString);
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  }
+}
+
+namespace {
+
+obelisk_rt_status cloneContainerImpl(obelisk_rt_gc_lane_v1 *lane,
+                                     obelisk_rt_object_v1 *container,
+                                     obelisk_rt_object_v1 **outContainer);
+
+obelisk_rt_status prepareElementValue(obelisk_rt_gc_lane_v1 *lane,
+                                      obelisk_rt_context *context,
+                                      const obelisk_rt_element_type_v1 *element,
+                                      const void *value, const void *unknown,
+                                      std::vector<uint8_t> &storage) {
+  if (!lane || !element || !value ||
+      ((element->flags & OBELISK_RT_ELEMENT_FOUR_STATE) && !unknown))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  uint64_t stride = elementStride(element);
+  if (stride > std::numeric_limits<size_t>::max())
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  try {
+    storage.assign(static_cast<size_t>(stride), 0);
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  }
+  std::memcpy(storage.data(), value, static_cast<size_t>(element->value_size));
+  if (element->flags & OBELISK_RT_ELEMENT_FOUR_STATE)
+    std::memcpy(storage.data() + element->value_size, unknown,
+                static_cast<size_t>(element->value_size));
+  obelisk_rt_status status =
+      validateManagedSlots(context, element, storage.data());
+  if (status != OBELISK_RT_OK || !element->trace)
+    return status;
+
+  ValueRootEnvironment roots{storage.data(), 1, stride, element};
+  ManagedRootProvider provider{};
+  status = obelisk_rt_managed_roots_push(lane, &provider, enumerateValueRoots,
+                                         &roots);
+  if (status != OBELISK_RT_OK)
+    return status;
+  walkTraceSlots(storage.data(), element->trace,
+                 [&](obelisk_rt_object_v1 **slot) {
+                   if (status != OBELISK_RT_OK || !slot || !*slot ||
+                       obelisk_rt_managed_object_kind(*slot) !=
+                           OBELISK_RT_MANAGED_CONTAINER)
+                     return;
+                   obelisk_rt_object_v1 *clone = nullptr;
+                   status = cloneContainerImpl(lane, *slot, &clone);
+                   if (status == OBELISK_RT_OK)
+                     *slot = clone;
+                 });
+  obelisk_rt_status popStatus = obelisk_rt_managed_roots_pop(lane, &provider);
+  return status == OBELISK_RT_OK ? popStatus : status;
+}
+
+struct NormalizedAssocKey {
+  uint64_t hash = 0;
+  uint64_t integral = 0;
+  obelisk_rt_object_v1 *string = nullptr;
+  bool ignored = false;
+};
+
+uint64_t mixAssocHash(uint64_t value) {
+  value ^= value >> 30;
+  value *= UINT64_C(0xbf58476d1ce4e5b9);
+  value ^= value >> 27;
+  value *= UINT64_C(0x94d049bb133111eb);
+  value ^= value >> 31;
+  return value == emptyAssocHash ? UINT64_C(1) : value;
+}
+
+obelisk_rt_status normalizeAssocKey(obelisk_rt_context *context,
+                                    const ContainerHeader &header,
+                                    const obelisk_rt_assoc_key_v1 *key,
+                                    NormalizedAssocKey &normalized) {
+  if (!key || key->reserved != 0 || key->kind != header.keyKind ||
+      key->width != header.keyWidth)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  if (key->kind == OBELISK_RT_ASSOC_KEY_STRING) {
+    if (key->value != 0 || key->unknown != 0 ||
+        !obelisk_rt_managed_object_belongs_to(context, key->string))
+      return OBELISK_RT_INVALID_HANDLE;
+    StringView view;
+    obelisk_rt_status status = readString(key->string, view);
+    if (status != OBELISK_RT_OK)
+      return status;
+    normalized.hash = mixAssocHash(view.hash);
+    normalized.string = key->string;
+    return OBELISK_RT_OK;
+  }
+  uint64_t mask = header.keyWidth == 64
+                      ? UINT64_MAX
+                      : ((UINT64_C(1) << header.keyWidth) - 1);
+  if ((key->unknown & mask) != 0) {
+    normalized.ignored = true;
+    return OBELISK_RT_OK;
+  }
+  normalized.integral = key->value & mask;
+  normalized.hash = mixAssocHash(
+      normalized.integral ^ (uint64_t(header.keyKind) << 56) ^ header.keyWidth);
+  return OBELISK_RT_OK;
+}
+
+bool assocKeysEqual(const ContainerHeader &header, const AssocSlot &slot,
+                    const NormalizedAssocKey &key) {
+  if (header.keyKind != OBELISK_RT_ASSOC_KEY_STRING)
+    return slot.integral == key.integral;
+  StringView left;
+  StringView right;
+  return readString(slot.string, left) == OBELISK_RT_OK &&
+         readString(key.string, right) == OBELISK_RT_OK &&
+         left.size == right.size && left.hash == right.hash &&
+         std::memcmp(left.bytes, right.bytes, static_cast<size_t>(left.size)) ==
+             0;
+}
+
+std::optional<uint64_t> findAssocSlot(const ContainerHeader &header,
+                                      uint8_t *data, uint64_t dataSize,
+                                      const NormalizedAssocKey &key) {
+  uint64_t stride = assocSlotStride(header.element);
+  if (header.capacity == 0 || dataSize < header.capacity * stride)
+    return std::nullopt;
+  uint64_t index = key.hash & (header.capacity - 1);
+  uint64_t distance = 0;
+  while (distance < header.capacity) {
+    auto *slot = reinterpret_cast<AssocSlot *>(data + index * stride);
+    if (slot->hash == emptyAssocHash || slot->distance < distance)
+      return std::nullopt;
+    if (slot->hash == key.hash && assocKeysEqual(header, *slot, key))
+      return index;
+    index = (index + 1) & (header.capacity - 1);
+    ++distance;
+  }
+  return std::nullopt;
+}
+
+obelisk_rt_status insertAssocCandidate(const ContainerHeader &header,
+                                       uint8_t *data, uint64_t dataSize,
+                                       std::vector<uint8_t> &candidate) {
+  uint64_t stride = assocSlotStride(header.element);
+  if (candidate.size() != stride || dataSize < header.capacity * stride)
+    return OBELISK_RT_INVALID_HANDLE;
+  auto *incoming = reinterpret_cast<AssocSlot *>(candidate.data());
+  uint64_t index = incoming->hash & (header.capacity - 1);
+  incoming->distance = 0;
+  for (uint64_t probe = 0; probe != header.capacity; ++probe) {
+    uint8_t *address = data + index * stride;
+    auto *slot = reinterpret_cast<AssocSlot *>(address);
+    if (slot->hash == emptyAssocHash) {
+      std::memcpy(address, candidate.data(), static_cast<size_t>(stride));
+      return OBELISK_RT_OK;
+    }
+    if (slot->distance < incoming->distance) {
+      for (uint64_t byte = 0; byte != stride; ++byte)
+        std::swap(address[byte], candidate[byte]);
+      incoming = reinterpret_cast<AssocSlot *>(candidate.data());
+    }
+    ++incoming->distance;
+    index = (index + 1) & (header.capacity - 1);
+  }
+  return OBELISK_RT_OUT_OF_RESOURCES;
+}
+
+obelisk_rt_status ensureAssocCapacity(obelisk_rt_gc_lane_v1 *lane,
+                                      obelisk_rt_object_v1 *array,
+                                      uint64_t required) {
+  ScopedManagedRoot ownerRoot(lane, &array);
+  if (ownerRoot.getStatus() != OBELISK_RT_OK)
+    return ownerRoot.getStatus();
+  while (true) {
+    ContainerHeader snapshot;
+    obelisk_rt_status status = snapshotHeader(array, snapshot);
+    if (status != OBELISK_RT_OK ||
+        snapshot.kind != OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY)
+      return status == OBELISK_RT_OK ? OBELISK_RT_INVALID_ARGUMENT : status;
+    if (snapshot.capacity != 0 && required <= snapshot.capacity * 3 / 4)
+      return OBELISK_RT_OK;
+    uint64_t capacity =
+        snapshot.capacity == 0 ? 8 : nextPowerOfTwo(snapshot.capacity + 1);
+    while (capacity != 0 && required > capacity * 3 / 4)
+      capacity = nextPowerOfTwo(capacity + 1);
+    if (capacity == 0)
+      return OBELISK_RT_OUT_OF_RESOURCES;
+    uint64_t stride = assocSlotStride(snapshot.element);
+    obelisk_rt_object_v1 *replacement = nullptr;
+    status = allocateBuffer(lane, capacity, stride, &replacement);
+    if (status != OBELISK_RT_OK)
+      return status;
+    ScopedManagedRoot replacementRoot(lane, &replacement);
+    if (replacementRoot.getStatus() != OBELISK_RT_OK)
+      return replacementRoot.getStatus();
+    std::vector<uint8_t> candidate;
+    try {
+      candidate.resize(static_cast<size_t>(stride));
+    } catch (const std::bad_alloc &) {
+      return OBELISK_RT_OUT_OF_MEMORY;
+    }
+    struct Publish {
+      ContainerHeader snapshot;
+      obelisk_rt_object_v1 *replacement;
+      uint64_t capacity;
+      std::vector<uint8_t> *candidate;
+      bool retry = false;
+    } publish{snapshot, replacement, capacity, &candidate};
+    status = obelisk_rt_managed_object_access(
+        array, OBELISK_RT_MANAGED_CONTAINER,
+        [](void *opaque, uint8_t *object,
+           uint64_t extent) -> obelisk_rt_status {
+          auto *publish = static_cast<Publish *>(opaque);
+          if (extent != sizeof(ContainerHeader))
+            return OBELISK_RT_INVALID_HANDLE;
+          auto *header = reinterpret_cast<ContainerHeader *>(object);
+          if (header->epoch != publish->snapshot.epoch ||
+              header->buffer != publish->snapshot.buffer ||
+              header->capacity != publish->snapshot.capacity) {
+            publish->retry = true;
+            return OBELISK_RT_OK;
+          }
+          uint64_t stride = assocSlotStride(header->element);
+          ContainerHeader replacementHeader = *header;
+          replacementHeader.capacity = publish->capacity;
+          obelisk_rt_status rehash =
+              accessBuffer(publish->replacement, [&](uint8_t *destination,
+                                                     uint64_t destinationSize) {
+                if (!header->buffer)
+                  return OBELISK_RT_OK;
+                return accessBuffer(header->buffer, [&](uint8_t *source,
+                                                        uint64_t sourceSize) {
+                  if (sourceSize < header->capacity * stride)
+                    return OBELISK_RT_INVALID_HANDLE;
+                  for (uint64_t index = 0; index != header->capacity; ++index) {
+                    uint8_t *address = source + index * stride;
+                    auto *slot = reinterpret_cast<AssocSlot *>(address);
+                    if (slot->hash == emptyAssocHash)
+                      continue;
+                    std::memcpy(publish->candidate->data(), address,
+                                static_cast<size_t>(stride));
+                    obelisk_rt_status inserted = insertAssocCandidate(
+                        replacementHeader, destination, destinationSize,
+                        *publish->candidate);
+                    if (inserted != OBELISK_RT_OK)
+                      return inserted;
+                  }
+                  return OBELISK_RT_OK;
+                });
+              });
+          if (rehash != OBELISK_RT_OK)
+            return rehash;
+          header->buffer = publish->replacement;
+          header->capacity = publish->capacity;
+          header->ordered = nullptr;
+          ++header->epoch;
+          return OBELISK_RT_OK;
+        },
+        &publish);
+    if (status != OBELISK_RT_OK)
+      return status;
+    if (!publish.retry)
+      return OBELISK_RT_OK;
+  }
+}
+
+obelisk_rt_status snapshotValues(obelisk_rt_object_v1 *container,
+                                 ContainerHeader &snapshot,
+                                 std::vector<uint8_t> &values) {
+  while (true) {
+    obelisk_rt_status status = snapshotHeader(container, snapshot);
+    if (status != OBELISK_RT_OK)
+      return status;
+    uint64_t bytes = 0;
+    if (!multiplyFits(snapshot.size, elementStride(snapshot.element), bytes) ||
+        bytes > std::numeric_limits<size_t>::max())
+      return OBELISK_RT_OUT_OF_RESOURCES;
+    try {
+      values.assign(static_cast<size_t>(bytes), 0);
+    } catch (const std::bad_alloc &) {
+      return OBELISK_RT_OUT_OF_MEMORY;
+    }
+    struct Copy {
+      ContainerHeader snapshot;
+      std::vector<uint8_t> *values;
+      bool retry = false;
+    } copy{snapshot, &values};
+    status = obelisk_rt_managed_object_access(
+        container, OBELISK_RT_MANAGED_CONTAINER,
+        [](void *opaque, uint8_t *object,
+           uint64_t extent) -> obelisk_rt_status {
+          auto *copy = static_cast<Copy *>(opaque);
+          if (extent != sizeof(ContainerHeader))
+            return OBELISK_RT_INVALID_HANDLE;
+          auto *current = reinterpret_cast<ContainerHeader *>(object);
+          if (current->epoch != copy->snapshot.epoch ||
+              current->size != copy->snapshot.size ||
+              current->buffer != copy->snapshot.buffer) {
+            copy->retry = true;
+            return OBELISK_RT_OK;
+          }
+          if (current->size == 0)
+            return OBELISK_RT_OK;
+          uint64_t stride = elementStride(current->element);
+          return accessBuffer(
+              current->buffer, [&](uint8_t *source, uint64_t sourceSize) {
+                if (sourceSize < current->capacity * stride)
+                  return OBELISK_RT_INVALID_HANDLE;
+                for (uint64_t index = 0; index != current->size; ++index)
+                  std::memcpy(copy->values->data() + index * stride,
+                              source + physicalIndex(*current, index) * stride,
+                              static_cast<size_t>(stride));
+                return OBELISK_RT_OK;
+              });
+        },
+        &copy);
+    if (status != OBELISK_RT_OK)
+      return status;
+    if (!copy.retry)
+      return OBELISK_RT_OK;
+  }
+}
+
+struct AssocCloneRoots {
+  uint8_t *entries;
+  uint64_t count;
+  uint64_t stride;
+  uint64_t valueOffset;
+  obelisk_rt_assoc_key_kind_v1 keyKind;
+  const obelisk_rt_element_type_v1 *element;
+};
+
+void enumerateAssocCloneRoots(void *opaque, ManagedRootVisit visit,
+                              void *environment) {
+  auto *roots = static_cast<AssocCloneRoots *>(opaque);
+  for (uint64_t index = 0; index != roots->count; ++index) {
+    auto *slot =
+        reinterpret_cast<AssocSlot *>(roots->entries + index * roots->stride);
+    if (roots->keyKind == OBELISK_RT_ASSOC_KEY_STRING)
+      visit(environment, &slot->string);
+    enumerateTraceSlots(reinterpret_cast<uint8_t *>(slot) + roots->valueOffset,
+                        roots->element->trace, visit, environment);
+  }
+}
+
+obelisk_rt_status cloneAssocContainer(obelisk_rt_gc_lane_v1 *lane,
+                                      obelisk_rt_object_v1 *container,
+                                      const ContainerHeader &initial,
+                                      obelisk_rt_object_v1 **outContainer) {
+  uint64_t stride = assocSlotStride(initial.element);
+  uint64_t valueOffset = assocValueOffset(initial.element);
+  std::vector<uint8_t> entries;
+  ContainerHeader snapshot;
+  while (true) {
+    obelisk_rt_status status = snapshotHeader(container, snapshot);
+    if (status != OBELISK_RT_OK)
+      return status;
+    uint64_t bytes = 0;
+    if (!multiplyFits(snapshot.size, stride, bytes) ||
+        bytes > std::numeric_limits<size_t>::max())
+      return OBELISK_RT_OUT_OF_RESOURCES;
+    try {
+      entries.assign(static_cast<size_t>(bytes), 0);
+    } catch (const std::bad_alloc &) {
+      return OBELISK_RT_OUT_OF_MEMORY;
+    }
+    struct Copy {
+      ContainerHeader snapshot;
+      std::vector<uint8_t> *entries;
+      uint64_t stride;
+      bool retry = false;
+    } copy{snapshot, &entries, stride};
+    status = obelisk_rt_managed_object_access(
+        container, OBELISK_RT_MANAGED_CONTAINER,
+        [](void *opaque, uint8_t *object,
+           uint64_t extent) -> obelisk_rt_status {
+          auto *copy = static_cast<Copy *>(opaque);
+          if (extent != sizeof(ContainerHeader))
+            return OBELISK_RT_INVALID_HANDLE;
+          auto *header = reinterpret_cast<ContainerHeader *>(object);
+          if (header->epoch != copy->snapshot.epoch ||
+              header->buffer != copy->snapshot.buffer ||
+              header->size != copy->snapshot.size) {
+            copy->retry = true;
+            return OBELISK_RT_OK;
+          }
+          if (!header->buffer)
+            return OBELISK_RT_OK;
+          return accessBuffer(header->buffer, [&](uint8_t *data,
+                                                  uint64_t size) {
+            if (size < header->capacity * copy->stride)
+              return OBELISK_RT_INVALID_HANDLE;
+            uint64_t output = 0;
+            for (uint64_t index = 0; index != header->capacity; ++index) {
+              auto *slot =
+                  reinterpret_cast<AssocSlot *>(data + index * copy->stride);
+              if (slot->hash == emptyAssocHash)
+                continue;
+              std::memcpy(copy->entries->data() + output * copy->stride, slot,
+                          static_cast<size_t>(copy->stride));
+              ++output;
+            }
+            return output == header->size ? OBELISK_RT_OK
+                                          : OBELISK_RT_INVALID_HANDLE;
+          });
+        },
+        &copy);
+    if (status != OBELISK_RT_OK)
+      return status;
+    if (!copy.retry)
+      break;
+  }
+
+  AssocCloneRoots roots{entries.data(), snapshot.size,    stride,
+                        valueOffset,    snapshot.keyKind, snapshot.element};
+  ManagedRootProvider provider{};
+  obelisk_rt_status status = obelisk_rt_managed_roots_push(
+      lane, &provider, enumerateAssocCloneRoots, &roots);
+  if (status != OBELISK_RT_OK)
+    return status;
+  obelisk_rt_object_v1 *result = nullptr;
+  status = initializeAssoc(lane, snapshot.element, snapshot.keyKind,
+                           snapshot.keyWidth, &result);
+  ScopedManagedRoot resultRoot(lane, &result);
+  if (status == OBELISK_RT_OK && resultRoot.getStatus() != OBELISK_RT_OK)
+    status = resultRoot.getStatus();
+  for (uint64_t index = 0; status == OBELISK_RT_OK && index != snapshot.size;
+       ++index) {
+    auto *slot = reinterpret_cast<AssocSlot *>(entries.data() + index * stride);
+    obelisk_rt_assoc_key_v1 key{};
+    key.kind = snapshot.keyKind;
+    key.width = snapshot.keyWidth;
+    key.value = slot->integral;
+    key.string = slot->string;
+    const uint8_t *value = reinterpret_cast<uint8_t *>(slot) + valueOffset;
+    const void *unknown =
+        snapshot.element->flags & OBELISK_RT_ELEMENT_FOUR_STATE
+            ? value + snapshot.element->value_size
+            : nullptr;
+    status = obelisk_rt_v1_assoc_write(lane, result, &key, value, unknown);
+  }
+  obelisk_rt_status providerPop = obelisk_rt_managed_roots_pop(lane, &provider);
+  if (status == OBELISK_RT_OK)
+    status = providerPop;
+  if (status == OBELISK_RT_OK)
+    *outContainer = result;
+  return status;
+}
+
+obelisk_rt_status cloneContainerImpl(obelisk_rt_gc_lane_v1 *lane,
+                                     obelisk_rt_object_v1 *container,
+                                     obelisk_rt_object_v1 **outContainer) {
+  if (!lane || !outContainer)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outContainer = nullptr;
+  if (!container)
+    return OBELISK_RT_OK;
+  if (obelisk_rt_managed_object_context(container) !=
+      obelisk_rt_managed_lane_context(lane))
+    return OBELISK_RT_INVALID_HANDLE;
+  obelisk_rt_gc_root_v1 sourceRoot{};
+  obelisk_rt_status status =
+      obelisk_rt_v1_gc_root_push(lane, &sourceRoot, &container);
+  if (status != OBELISK_RT_OK)
+    return status;
+  ContainerHeader snapshot{};
+  status = snapshotHeader(container, snapshot);
+  if (status == OBELISK_RT_OK &&
+      snapshot.kind == OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY) {
+    status = cloneAssocContainer(lane, container, snapshot, outContainer);
+    obelisk_rt_status sourcePop = obelisk_rt_v1_gc_root_pop(lane, &sourceRoot);
+    return status == OBELISK_RT_OK ? sourcePop : status;
+  }
+  std::vector<uint8_t> values;
+  if (status == OBELISK_RT_OK)
+    status = snapshotValues(container, snapshot, values);
+  uint64_t stride =
+      status == OBELISK_RT_OK ? elementStride(snapshot.element) : 0;
+  ValueRootEnvironment roots{values.data(), snapshot.size, stride,
+                             snapshot.element};
+  ManagedRootProvider provider{};
+  bool providerPushed = false;
+  if (status == OBELISK_RT_OK && snapshot.element->trace) {
+    status = obelisk_rt_managed_roots_push(lane, &provider, enumerateValueRoots,
+                                           &roots);
+    providerPushed = status == OBELISK_RT_OK;
+  }
+  if (status == OBELISK_RT_OK && snapshot.element->trace) {
+    for (uint64_t index = 0; index != snapshot.size && status == OBELISK_RT_OK;
+         ++index)
+      walkTraceSlots(values.data() + index * stride, snapshot.element->trace,
+                     [&](obelisk_rt_object_v1 **slot) {
+                       if (status != OBELISK_RT_OK || !slot || !*slot ||
+                           obelisk_rt_managed_object_kind(*slot) !=
+                               OBELISK_RT_MANAGED_CONTAINER)
+                         return;
+                       obelisk_rt_object_v1 *nested = nullptr;
+                       status = cloneContainerImpl(lane, *slot, &nested);
+                       if (status == OBELISK_RT_OK)
+                         *slot = nested;
+                     });
+  }
+  obelisk_rt_object_v1 *result = nullptr;
+  if (status == OBELISK_RT_OK)
+    status = initializeContainer(lane, snapshot.kind, snapshot.element,
+                                 snapshot.size, snapshot.bound, &result);
+  if (status == OBELISK_RT_OK && snapshot.size != 0) {
+    ContainerHeader destination;
+    status = snapshotHeader(result, destination);
+    if (status == OBELISK_RT_OK)
+      status =
+          accessBuffer(destination.buffer, [&](uint8_t *data, uint64_t size) {
+            if (size < values.size())
+              return OBELISK_RT_INVALID_HANDLE;
+            std::memcpy(data, values.data(), values.size());
+            return OBELISK_RT_OK;
+          });
+  }
+  if (providerPushed) {
+    obelisk_rt_status popStatus = obelisk_rt_managed_roots_pop(lane, &provider);
+    if (status == OBELISK_RT_OK)
+      status = popStatus;
+  }
+  obelisk_rt_status sourcePop = obelisk_rt_v1_gc_root_pop(lane, &sourceRoot);
+  if (status == OBELISK_RT_OK) {
+    *outContainer = result;
+    return sourcePop;
+  }
+  return status;
+}
+
+} // namespace
+
+extern "C" obelisk_rt_status obelisk_rt_v1_dynamic_array_create(
+    obelisk_rt_gc_lane_v1 *lane, const obelisk_rt_element_type_v1 *elementType,
+    uint64_t size, obelisk_rt_object_v1 **outArray) {
+  return initializeContainer(lane, OBELISK_RT_CONTAINER_DYNAMIC_ARRAY,
+                             elementType, size, 0, outArray);
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_queue_create(obelisk_rt_gc_lane_v1 *lane,
+                           const obelisk_rt_element_type_v1 *elementType,
+                           uint64_t bound, obelisk_rt_object_v1 **outQueue) {
+  return initializeContainer(lane, OBELISK_RT_CONTAINER_QUEUE, elementType, 0,
+                             bound, outQueue);
+}
+
+extern "C" uint64_t
+obelisk_rt_v1_container_size(obelisk_rt_object_v1 *container) {
+  if (!container)
+    return 0;
+  ContainerHeader snapshot;
+  return snapshotHeader(container, snapshot) == OBELISK_RT_OK ? snapshot.size
+                                                              : 0;
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_container_read(obelisk_rt_object_v1 *container, int64_t index,
+                             void *outValue, void *outUnknown) {
+  if (!container || !outValue)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContainerHeader snapshot;
+  obelisk_rt_status status = snapshotHeader(container, snapshot);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (snapshot.kind == OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  std::memset(outValue, 0, static_cast<size_t>(snapshot.element->value_size));
+  if (snapshot.element->flags & OBELISK_RT_ELEMENT_FOUR_STATE) {
+    if (!outUnknown)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    std::memset(outUnknown, 0,
+                static_cast<size_t>(snapshot.element->value_size));
+  }
+  if (index < 0 || static_cast<uint64_t>(index) >= snapshot.size)
+    return OBELISK_RT_OK;
+  struct Read {
+    int64_t index;
+    void *value;
+    void *unknown;
+  } read{index, outValue, outUnknown};
+  return obelisk_rt_managed_object_access(
+      container, OBELISK_RT_MANAGED_CONTAINER,
+      [](void *opaque, uint8_t *object, uint64_t extent) -> obelisk_rt_status {
+        if (extent != sizeof(ContainerHeader))
+          return OBELISK_RT_INVALID_HANDLE;
+        auto *header = reinterpret_cast<ContainerHeader *>(object);
+        auto *read = static_cast<Read *>(opaque);
+        if (read->index < 0 ||
+            static_cast<uint64_t>(read->index) >= header->size)
+          return OBELISK_RT_OK;
+        uint64_t stride = elementStride(header->element);
+        return accessBuffer(header->buffer, [&](uint8_t *data, uint64_t size) {
+          uint64_t offset =
+              physicalIndex(*header, static_cast<uint64_t>(read->index)) *
+              stride;
+          if (offset > size || stride > size - offset)
+            return OBELISK_RT_INVALID_HANDLE;
+          std::memcpy(read->value, data + offset,
+                      static_cast<size_t>(header->element->value_size));
+          if (header->element->flags & OBELISK_RT_ELEMENT_FOUR_STATE)
+            std::memcpy(read->unknown,
+                        data + offset + header->element->value_size,
+                        static_cast<size_t>(header->element->value_size));
+          return OBELISK_RT_OK;
+        });
+      },
+      &read);
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_dynamic_array_resize(obelisk_rt_gc_lane_v1 *lane,
+                                   obelisk_rt_object_v1 *array,
+                                   uint64_t newSize) {
+  if (!lane || !array)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  if (obelisk_rt_managed_object_context(array) !=
+      obelisk_rt_managed_lane_context(lane))
+    return OBELISK_RT_INVALID_HANDLE;
+  ContainerHeader snapshot;
+  obelisk_rt_status status = snapshotHeader(array, snapshot);
+  if (status != OBELISK_RT_OK ||
+      snapshot.kind != OBELISK_RT_CONTAINER_DYNAMIC_ARRAY)
+    return status == OBELISK_RT_OK ? OBELISK_RT_INVALID_ARGUMENT : status;
+  if (newSize > snapshot.capacity) {
+    status = ensureCapacity(lane, array, newSize);
+    if (status != OBELISK_RT_OK)
+      return status;
+  }
+  struct Resize {
+    uint64_t size;
+  } resize{newSize};
+  return obelisk_rt_managed_object_access(
+      array, OBELISK_RT_MANAGED_CONTAINER,
+      [](void *opaque, uint8_t *object, uint64_t extent) -> obelisk_rt_status {
+        auto *resize = static_cast<Resize *>(opaque);
+        if (extent != sizeof(ContainerHeader))
+          return OBELISK_RT_INVALID_HANDLE;
+        auto *header = reinterpret_cast<ContainerHeader *>(object);
+        if (header->kind != OBELISK_RT_CONTAINER_DYNAMIC_ARRAY ||
+            resize->size > header->capacity)
+          return OBELISK_RT_INVALID_ARGUMENT;
+        uint64_t oldSize = header->size;
+        if (resize->size > oldSize) {
+          uint64_t stride = elementStride(header->element);
+          obelisk_rt_status status =
+              accessBuffer(header->buffer, [&](uint8_t *data, uint64_t size) {
+                uint64_t offset = oldSize * stride;
+                uint64_t bytes = (resize->size - oldSize) * stride;
+                if (offset > size || bytes > size - offset)
+                  return OBELISK_RT_INVALID_HANDLE;
+                std::memset(data + offset, 0, static_cast<size_t>(bytes));
+                return OBELISK_RT_OK;
+              });
+          if (status != OBELISK_RT_OK)
+            return status;
+        }
+        header->size = resize->size;
+        ++header->epoch;
+        return OBELISK_RT_OK;
+      },
+      &resize);
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_container_write(obelisk_rt_gc_lane_v1 *lane,
+                              obelisk_rt_object_v1 *container, int64_t index,
+                              const void *value, const void *unknown) {
+  if (!lane || !container)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  if (obelisk_rt_managed_object_context(container) !=
+      obelisk_rt_managed_lane_context(lane))
+    return OBELISK_RT_INVALID_HANDLE;
+  ScopedManagedRoot ownerRoot(lane, &container);
+  if (ownerRoot.getStatus() != OBELISK_RT_OK)
+    return ownerRoot.getStatus();
+  ContainerHeader snapshot;
+  obelisk_rt_status status = snapshotHeader(container, snapshot);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (snapshot.kind == OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  if (index < 0 || static_cast<uint64_t>(index) > snapshot.size)
+    return OBELISK_RT_OK;
+  bool append = snapshot.kind == OBELISK_RT_CONTAINER_QUEUE &&
+                static_cast<uint64_t>(index) == snapshot.size;
+  if (!append && static_cast<uint64_t>(index) >= snapshot.size)
+    return OBELISK_RT_OK;
+  if (append) {
+    if (queueIsFull(snapshot))
+      return OBELISK_RT_OK;
+    status = ensureCapacity(lane, container, snapshot.size + 1);
+    if (status != OBELISK_RT_OK)
+      return status;
+  }
+  std::vector<uint8_t> prepared;
+  status =
+      prepareElementValue(lane, obelisk_rt_managed_object_context(container),
+                          snapshot.element, value, unknown, prepared);
+  if (status != OBELISK_RT_OK)
+    return status;
+  struct Write {
+    int64_t index;
+    const std::vector<uint8_t> *value;
+    bool append;
+  } write{index, &prepared, append};
+  return obelisk_rt_managed_object_access(
+      container, OBELISK_RT_MANAGED_CONTAINER,
+      [](void *opaque, uint8_t *object, uint64_t extent) -> obelisk_rt_status {
+        auto *write = static_cast<Write *>(opaque);
+        if (extent != sizeof(ContainerHeader))
+          return OBELISK_RT_INVALID_HANDLE;
+        auto *header = reinterpret_cast<ContainerHeader *>(object);
+        if (write->index < 0)
+          return OBELISK_RT_OK;
+        uint64_t index = static_cast<uint64_t>(write->index);
+        if (write->append) {
+          if (index != header->size || header->size >= header->capacity ||
+              queueIsFull(*header))
+            return OBELISK_RT_INVALID_LIFECYCLE;
+          ++header->size;
+        } else if (index >= header->size) {
+          return OBELISK_RT_OK;
+        }
+        uint64_t stride = elementStride(header->element);
+        obelisk_rt_status status =
+            accessBuffer(header->buffer, [&](uint8_t *data, uint64_t size) {
+              uint64_t offset = physicalIndex(*header, index) * stride;
+              if (offset > size || stride > size - offset)
+                return OBELISK_RT_INVALID_HANDLE;
+              std::memcpy(data + offset, write->value->data(),
+                          static_cast<size_t>(stride));
+              return OBELISK_RT_OK;
+            });
+        if (status == OBELISK_RT_OK)
+          ++header->epoch;
+        return status;
+      },
+      &write);
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_container_clone(obelisk_rt_gc_lane_v1 *lane,
+                              obelisk_rt_object_v1 *container,
+                              obelisk_rt_object_v1 **outContainer) {
+  return cloneContainerImpl(lane, container, outContainer);
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_container_delete(obelisk_rt_object_v1 *container) {
+  if (!container)
+    return OBELISK_RT_OK;
+  return obelisk_rt_managed_object_access(
+      container, OBELISK_RT_MANAGED_CONTAINER,
+      [](void *, uint8_t *object, uint64_t extent) -> obelisk_rt_status {
+        if (extent != sizeof(ContainerHeader))
+          return OBELISK_RT_INVALID_HANDLE;
+        auto *header = reinterpret_cast<ContainerHeader *>(object);
+        header->buffer = nullptr;
+        header->ordered = nullptr;
+        header->size = 0;
+        header->capacity = 0;
+        header->head = 0;
+        ++header->epoch;
+        return OBELISK_RT_OK;
+      },
+      nullptr);
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_queue_push(obelisk_rt_gc_lane_v1 *lane,
+                         obelisk_rt_object_v1 *queue, uint32_t front,
+                         const void *value, const void *unknown) {
+  if (!lane || !queue || front > 1)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  if (obelisk_rt_managed_object_context(queue) !=
+      obelisk_rt_managed_lane_context(lane))
+    return OBELISK_RT_INVALID_HANDLE;
+  ScopedManagedRoot ownerRoot(lane, &queue);
+  if (ownerRoot.getStatus() != OBELISK_RT_OK)
+    return ownerRoot.getStatus();
+  ContainerHeader snapshot;
+  obelisk_rt_status status = snapshotHeader(queue, snapshot);
+  if (status != OBELISK_RT_OK || snapshot.kind != OBELISK_RT_CONTAINER_QUEUE)
+    return status == OBELISK_RT_OK ? OBELISK_RT_INVALID_ARGUMENT : status;
+  if (queueIsFull(snapshot))
+    return OBELISK_RT_OK;
+  status = ensureCapacity(lane, queue, snapshot.size + 1);
+  if (status != OBELISK_RT_OK)
+    return status;
+  std::vector<uint8_t> prepared;
+  status = prepareElementValue(lane, obelisk_rt_managed_object_context(queue),
+                               snapshot.element, value, unknown, prepared);
+  if (status != OBELISK_RT_OK)
+    return status;
+  struct Push {
+    uint32_t front;
+    const std::vector<uint8_t> *value;
+  } push{front, &prepared};
+  return obelisk_rt_managed_object_access(
+      queue, OBELISK_RT_MANAGED_CONTAINER,
+      [](void *opaque, uint8_t *object, uint64_t extent) -> obelisk_rt_status {
+        auto *push = static_cast<Push *>(opaque);
+        if (extent != sizeof(ContainerHeader))
+          return OBELISK_RT_INVALID_HANDLE;
+        auto *header = reinterpret_cast<ContainerHeader *>(object);
+        if (header->kind != OBELISK_RT_CONTAINER_QUEUE ||
+            header->size >= header->capacity || queueIsFull(*header))
+          return OBELISK_RT_INVALID_LIFECYCLE;
+        if (push->front)
+          header->head = (header->head - 1) & (header->capacity - 1);
+        uint64_t physical =
+            push->front ? header->head : physicalIndex(*header, header->size);
+        uint64_t stride = elementStride(header->element);
+        obelisk_rt_status status =
+            accessBuffer(header->buffer, [&](uint8_t *data, uint64_t size) {
+              uint64_t offset = physical * stride;
+              if (offset > size || stride > size - offset)
+                return OBELISK_RT_INVALID_HANDLE;
+              std::memcpy(data + offset, push->value->data(),
+                          static_cast<size_t>(stride));
+              return OBELISK_RT_OK;
+            });
+        if (status == OBELISK_RT_OK) {
+          ++header->size;
+          ++header->epoch;
+        }
+        return status;
+      },
+      &push);
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_queue_pop(obelisk_rt_object_v1 *queue, uint32_t front,
+                        void *outValue, void *outUnknown,
+                        uint32_t *outPresent) {
+  if (front > 1 || !outValue || !outPresent)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outPresent = 0;
+  ContainerHeader snapshot;
+  obelisk_rt_status status = snapshotHeader(queue, snapshot);
+  if (status != OBELISK_RT_OK || snapshot.kind != OBELISK_RT_CONTAINER_QUEUE)
+    return status == OBELISK_RT_OK ? OBELISK_RT_INVALID_ARGUMENT : status;
+  std::memset(outValue, 0, static_cast<size_t>(snapshot.element->value_size));
+  if (snapshot.element->flags & OBELISK_RT_ELEMENT_FOUR_STATE) {
+    if (!outUnknown)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    std::memset(outUnknown, 0,
+                static_cast<size_t>(snapshot.element->value_size));
+  }
+  struct Pop {
+    uint32_t front;
+    void *value;
+    void *unknown;
+    uint32_t *present;
+  } pop{front, outValue, outUnknown, outPresent};
+  return obelisk_rt_managed_object_access(
+      queue, OBELISK_RT_MANAGED_CONTAINER,
+      [](void *opaque, uint8_t *object, uint64_t extent) -> obelisk_rt_status {
+        auto *pop = static_cast<Pop *>(opaque);
+        if (extent != sizeof(ContainerHeader))
+          return OBELISK_RT_INVALID_HANDLE;
+        auto *header = reinterpret_cast<ContainerHeader *>(object);
+        if (header->kind != OBELISK_RT_CONTAINER_QUEUE)
+          return OBELISK_RT_INVALID_ARGUMENT;
+        if (header->size == 0)
+          return OBELISK_RT_OK;
+        uint64_t logical = pop->front ? 0 : header->size - 1;
+        uint64_t stride = elementStride(header->element);
+        obelisk_rt_status status =
+            accessBuffer(header->buffer, [&](uint8_t *data, uint64_t size) {
+              uint64_t offset = physicalIndex(*header, logical) * stride;
+              if (offset > size || stride > size - offset)
+                return OBELISK_RT_INVALID_HANDLE;
+              std::memcpy(pop->value, data + offset,
+                          static_cast<size_t>(header->element->value_size));
+              if (header->element->flags & OBELISK_RT_ELEMENT_FOUR_STATE)
+                std::memcpy(pop->unknown,
+                            data + offset + header->element->value_size,
+                            static_cast<size_t>(header->element->value_size));
+              std::memset(data + offset, 0, static_cast<size_t>(stride));
+              return OBELISK_RT_OK;
+            });
+        if (status == OBELISK_RT_OK) {
+          if (pop->front)
+            header->head = (header->head + 1) & (header->capacity - 1);
+          --header->size;
+          ++header->epoch;
+          *pop->present = 1;
+        }
+        return status;
+      },
+      &pop);
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_queue_insert(obelisk_rt_gc_lane_v1 *lane,
+                           obelisk_rt_object_v1 *queue, int64_t index,
+                           const void *value, const void *unknown) {
+  if (!lane || !queue)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  if (obelisk_rt_managed_object_context(queue) !=
+      obelisk_rt_managed_lane_context(lane))
+    return OBELISK_RT_INVALID_HANDLE;
+  if (index < 0)
+    return OBELISK_RT_OK;
+  ScopedManagedRoot ownerRoot(lane, &queue);
+  if (ownerRoot.getStatus() != OBELISK_RT_OK)
+    return ownerRoot.getStatus();
+  ContainerHeader snapshot;
+  obelisk_rt_status status = snapshotHeader(queue, snapshot);
+  if (status != OBELISK_RT_OK || snapshot.kind != OBELISK_RT_CONTAINER_QUEUE)
+    return status == OBELISK_RT_OK ? OBELISK_RT_INVALID_ARGUMENT : status;
+  if (static_cast<uint64_t>(index) > snapshot.size || queueIsFull(snapshot))
+    return OBELISK_RT_OK;
+  status = ensureCapacity(lane, queue, snapshot.size + 1);
+  if (status != OBELISK_RT_OK)
+    return status;
+  std::vector<uint8_t> prepared;
+  status = prepareElementValue(lane, obelisk_rt_managed_object_context(queue),
+                               snapshot.element, value, unknown, prepared);
+  if (status != OBELISK_RT_OK)
+    return status;
+  struct Insert {
+    uint64_t index;
+    const std::vector<uint8_t> *value;
+  } insert{static_cast<uint64_t>(index), &prepared};
+  return obelisk_rt_managed_object_access(
+      queue, OBELISK_RT_MANAGED_CONTAINER,
+      [](void *opaque, uint8_t *object, uint64_t extent) -> obelisk_rt_status {
+        auto *insert = static_cast<Insert *>(opaque);
+        if (extent != sizeof(ContainerHeader))
+          return OBELISK_RT_INVALID_HANDLE;
+        auto *header = reinterpret_cast<ContainerHeader *>(object);
+        if (header->kind != OBELISK_RT_CONTAINER_QUEUE ||
+            insert->index > header->size || header->size >= header->capacity)
+          return OBELISK_RT_INVALID_LIFECYCLE;
+        uint64_t stride = elementStride(header->element);
+        obelisk_rt_status status =
+            accessBuffer(header->buffer, [&](uint8_t *data, uint64_t size) {
+              if (size < header->capacity * stride)
+                return OBELISK_RT_INVALID_HANDLE;
+              for (uint64_t logical = header->size; logical > insert->index;
+                   --logical)
+                std::memcpy(data + physicalIndex(*header, logical) * stride,
+                            data + physicalIndex(*header, logical - 1) * stride,
+                            static_cast<size_t>(stride));
+              std::memcpy(data + physicalIndex(*header, insert->index) * stride,
+                          insert->value->data(), static_cast<size_t>(stride));
+              return OBELISK_RT_OK;
+            });
+        if (status == OBELISK_RT_OK) {
+          ++header->size;
+          ++header->epoch;
+        }
+        return status;
+      },
+      &insert);
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_queue_delete_index(obelisk_rt_object_v1 *queue, int64_t index) {
+  if (index < 0)
+    return OBELISK_RT_OK;
+  struct Delete {
+    uint64_t index;
+  } remove{static_cast<uint64_t>(index)};
+  return obelisk_rt_managed_object_access(
+      queue, OBELISK_RT_MANAGED_CONTAINER,
+      [](void *opaque, uint8_t *object, uint64_t extent) -> obelisk_rt_status {
+        auto *remove = static_cast<Delete *>(opaque);
+        if (extent != sizeof(ContainerHeader))
+          return OBELISK_RT_INVALID_HANDLE;
+        auto *header = reinterpret_cast<ContainerHeader *>(object);
+        if (header->kind != OBELISK_RT_CONTAINER_QUEUE)
+          return OBELISK_RT_INVALID_ARGUMENT;
+        if (remove->index >= header->size)
+          return OBELISK_RT_OK;
+        uint64_t stride = elementStride(header->element);
+        obelisk_rt_status status =
+            accessBuffer(header->buffer, [&](uint8_t *data, uint64_t size) {
+              if (size < header->capacity * stride)
+                return OBELISK_RT_INVALID_HANDLE;
+              for (uint64_t logical = remove->index; logical + 1 < header->size;
+                   ++logical)
+                std::memcpy(data + physicalIndex(*header, logical) * stride,
+                            data + physicalIndex(*header, logical + 1) * stride,
+                            static_cast<size_t>(stride));
+              std::memset(data +
+                              physicalIndex(*header, header->size - 1) * stride,
+                          0, static_cast<size_t>(stride));
+              return OBELISK_RT_OK;
+            });
+        if (status == OBELISK_RT_OK) {
+          --header->size;
+          ++header->epoch;
+        }
+        return status;
+      },
+      &remove);
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_assoc_create(obelisk_rt_gc_lane_v1 *lane,
+                           const obelisk_rt_element_type_v1 *elementType,
+                           obelisk_rt_assoc_key_kind_v1 keyKind,
+                           uint64_t keyWidth, obelisk_rt_object_v1 **outArray) {
+  return initializeAssoc(lane, elementType, keyKind, keyWidth, outArray);
+}
+
+static void warnIgnoredAssocKey() {
+  std::fputs("warning: associative array operation ignored because the key "
+             "contains X or Z bits\n",
+             stderr);
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_assoc_exists(obelisk_rt_object_v1 *array,
+                           const obelisk_rt_assoc_key_v1 *key,
+                           uint32_t *outExists) {
+  if (!array || !outExists)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outExists = 0;
+  ContainerHeader snapshot;
+  obelisk_rt_status status = snapshotHeader(array, snapshot);
+  if (status != OBELISK_RT_OK ||
+      snapshot.kind != OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY)
+    return status == OBELISK_RT_OK ? OBELISK_RT_INVALID_ARGUMENT : status;
+  NormalizedAssocKey normalized;
+  status = normalizeAssocKey(obelisk_rt_managed_object_context(array), snapshot,
+                             key, normalized);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (normalized.ignored) {
+    warnIgnoredAssocKey();
+    return OBELISK_RT_OK;
+  }
+  struct Exists {
+    NormalizedAssocKey key;
+    uint32_t *result;
+  } exists{normalized, outExists};
+  return obelisk_rt_managed_object_access(
+      array, OBELISK_RT_MANAGED_CONTAINER,
+      [](void *opaque, uint8_t *object, uint64_t extent) -> obelisk_rt_status {
+        auto *exists = static_cast<Exists *>(opaque);
+        if (extent != sizeof(ContainerHeader))
+          return OBELISK_RT_INVALID_HANDLE;
+        auto *header = reinterpret_cast<ContainerHeader *>(object);
+        if (header->kind != OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY ||
+            !header->buffer)
+          return header->kind == OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY
+                     ? OBELISK_RT_OK
+                     : OBELISK_RT_INVALID_ARGUMENT;
+        return accessBuffer(header->buffer, [&](uint8_t *data, uint64_t size) {
+          *exists->result =
+              findAssocSlot(*header, data, size, exists->key).has_value();
+          return OBELISK_RT_OK;
+        });
+      },
+      &exists);
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_assoc_read(obelisk_rt_object_v1 *array,
+                         const obelisk_rt_assoc_key_v1 *key, void *outValue,
+                         void *outUnknown, uint32_t *outPresent) {
+  if (!array || !outValue || !outPresent)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outPresent = 0;
+  ContainerHeader snapshot;
+  obelisk_rt_status status = snapshotHeader(array, snapshot);
+  if (status != OBELISK_RT_OK ||
+      snapshot.kind != OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY)
+    return status == OBELISK_RT_OK ? OBELISK_RT_INVALID_ARGUMENT : status;
+  std::memset(outValue, 0, static_cast<size_t>(snapshot.element->value_size));
+  if (snapshot.element->flags & OBELISK_RT_ELEMENT_FOUR_STATE) {
+    if (!outUnknown)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    std::memset(outUnknown, 0,
+                static_cast<size_t>(snapshot.element->value_size));
+  }
+  NormalizedAssocKey normalized;
+  status = normalizeAssocKey(obelisk_rt_managed_object_context(array), snapshot,
+                             key, normalized);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (normalized.ignored) {
+    warnIgnoredAssocKey();
+    return OBELISK_RT_OK;
+  }
+  struct Read {
+    NormalizedAssocKey key;
+    void *value;
+    void *unknown;
+    uint32_t *present;
+  } read{normalized, outValue, outUnknown, outPresent};
+  return obelisk_rt_managed_object_access(
+      array, OBELISK_RT_MANAGED_CONTAINER,
+      [](void *opaque, uint8_t *object, uint64_t extent) -> obelisk_rt_status {
+        auto *read = static_cast<Read *>(opaque);
+        if (extent != sizeof(ContainerHeader))
+          return OBELISK_RT_INVALID_HANDLE;
+        auto *header = reinterpret_cast<ContainerHeader *>(object);
+        if (header->kind != OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY)
+          return OBELISK_RT_INVALID_ARGUMENT;
+        if (!header->buffer)
+          return OBELISK_RT_OK;
+        return accessBuffer(header->buffer, [&](uint8_t *data, uint64_t size) {
+          std::optional<uint64_t> found =
+              findAssocSlot(*header, data, size, read->key);
+          if (!found)
+            return OBELISK_RT_OK;
+          uint64_t offset = *found * assocSlotStride(header->element) +
+                            assocValueOffset(header->element);
+          uint64_t stride = elementStride(header->element);
+          if (offset > size || stride > size - offset)
+            return OBELISK_RT_INVALID_HANDLE;
+          std::memcpy(read->value, data + offset,
+                      static_cast<size_t>(header->element->value_size));
+          if (header->element->flags & OBELISK_RT_ELEMENT_FOUR_STATE)
+            std::memcpy(read->unknown,
+                        data + offset + header->element->value_size,
+                        static_cast<size_t>(header->element->value_size));
+          *read->present = 1;
+          return OBELISK_RT_OK;
+        });
+      },
+      &read);
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_assoc_write(obelisk_rt_gc_lane_v1 *lane,
+                          obelisk_rt_object_v1 *array,
+                          const obelisk_rt_assoc_key_v1 *key, const void *value,
+                          const void *unknown) {
+  if (!lane || !array || !key)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  if (obelisk_rt_managed_object_context(array) !=
+      obelisk_rt_managed_lane_context(lane))
+    return OBELISK_RT_INVALID_HANDLE;
+  ScopedManagedRoot ownerRoot(lane, &array);
+  if (ownerRoot.getStatus() != OBELISK_RT_OK)
+    return ownerRoot.getStatus();
+  ContainerHeader snapshot;
+  obelisk_rt_status status = snapshotHeader(array, snapshot);
+  if (status != OBELISK_RT_OK ||
+      snapshot.kind != OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY)
+    return status == OBELISK_RT_OK ? OBELISK_RT_INVALID_ARGUMENT : status;
+  NormalizedAssocKey normalized;
+  status = normalizeAssocKey(obelisk_rt_managed_object_context(array), snapshot,
+                             key, normalized);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (normalized.ignored) {
+    warnIgnoredAssocKey();
+    return OBELISK_RT_OK;
+  }
+  obelisk_rt_object_v1 *keyRootValue = normalized.string;
+  ScopedManagedRoot keyRoot(lane, &keyRootValue);
+  if (keyRoot.getStatus() != OBELISK_RT_OK)
+    return keyRoot.getStatus();
+  normalized.string = keyRootValue;
+  status = ensureAssocCapacity(lane, array, snapshot.size + 1);
+  if (status != OBELISK_RT_OK)
+    return status;
+  std::vector<uint8_t> prepared;
+  status = prepareElementValue(lane, obelisk_rt_managed_object_context(array),
+                               snapshot.element, value, unknown, prepared);
+  if (status != OBELISK_RT_OK)
+    return status;
+  uint64_t slotStride = assocSlotStride(snapshot.element);
+  std::vector<uint8_t> candidate;
+  try {
+    candidate.assign(static_cast<size_t>(slotStride), 0);
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  }
+  auto *candidateSlot = reinterpret_cast<AssocSlot *>(candidate.data());
+  candidateSlot->hash = normalized.hash;
+  candidateSlot->integral = normalized.integral;
+  candidateSlot->string = normalized.string;
+  std::memcpy(candidate.data() + assocValueOffset(snapshot.element),
+              prepared.data(), prepared.size());
+  struct Write {
+    NormalizedAssocKey key;
+    std::vector<uint8_t> *candidate;
+  } write{normalized, &candidate};
+  return obelisk_rt_managed_object_access(
+      array, OBELISK_RT_MANAGED_CONTAINER,
+      [](void *opaque, uint8_t *object, uint64_t extent) -> obelisk_rt_status {
+        auto *write = static_cast<Write *>(opaque);
+        if (extent != sizeof(ContainerHeader))
+          return OBELISK_RT_INVALID_HANDLE;
+        auto *header = reinterpret_cast<ContainerHeader *>(object);
+        if (header->kind != OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY ||
+            !header->buffer)
+          return OBELISK_RT_INVALID_LIFECYCLE;
+        obelisk_rt_status status =
+            accessBuffer(header->buffer, [&](uint8_t *data, uint64_t size) {
+              std::optional<uint64_t> found =
+                  findAssocSlot(*header, data, size, write->key);
+              uint64_t stride = assocSlotStride(header->element);
+              if (found) {
+                uint64_t valueOffset =
+                    *found * stride + assocValueOffset(header->element);
+                uint64_t valueSize = elementStride(header->element);
+                if (valueOffset > size || valueSize > size - valueOffset)
+                  return OBELISK_RT_INVALID_HANDLE;
+                std::memcpy(data + valueOffset,
+                            write->candidate->data() +
+                                assocValueOffset(header->element),
+                            static_cast<size_t>(valueSize));
+                return OBELISK_RT_OK;
+              }
+              if (header->size >= header->capacity * 3 / 4)
+                return OBELISK_RT_INVALID_LIFECYCLE;
+              obelisk_rt_status inserted =
+                  insertAssocCandidate(*header, data, size, *write->candidate);
+              if (inserted == OBELISK_RT_OK)
+                ++header->size;
+              return inserted;
+            });
+        if (status == OBELISK_RT_OK) {
+          header->ordered = nullptr;
+          ++header->epoch;
+        }
+        return status;
+      },
+      &write);
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_assoc_delete(obelisk_rt_object_v1 *array,
+                           const obelisk_rt_assoc_key_v1 *key) {
+  if (!array || !key)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContainerHeader snapshot;
+  obelisk_rt_status status = snapshotHeader(array, snapshot);
+  if (status != OBELISK_RT_OK ||
+      snapshot.kind != OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY)
+    return status == OBELISK_RT_OK ? OBELISK_RT_INVALID_ARGUMENT : status;
+  NormalizedAssocKey normalized;
+  status = normalizeAssocKey(obelisk_rt_managed_object_context(array), snapshot,
+                             key, normalized);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (normalized.ignored) {
+    warnIgnoredAssocKey();
+    return OBELISK_RT_OK;
+  }
+  struct Delete {
+    NormalizedAssocKey key;
+  } remove{normalized};
+  return obelisk_rt_managed_object_access(
+      array, OBELISK_RT_MANAGED_CONTAINER,
+      [](void *opaque, uint8_t *object, uint64_t extent) -> obelisk_rt_status {
+        auto *remove = static_cast<Delete *>(opaque);
+        if (extent != sizeof(ContainerHeader))
+          return OBELISK_RT_INVALID_HANDLE;
+        auto *header = reinterpret_cast<ContainerHeader *>(object);
+        if (header->kind != OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY)
+          return OBELISK_RT_INVALID_ARGUMENT;
+        if (!header->buffer)
+          return OBELISK_RT_OK;
+        bool deleted = false;
+        obelisk_rt_status status =
+            accessBuffer(header->buffer, [&](uint8_t *data, uint64_t size) {
+              std::optional<uint64_t> found =
+                  findAssocSlot(*header, data, size, remove->key);
+              if (!found)
+                return OBELISK_RT_OK;
+              uint64_t stride = assocSlotStride(header->element);
+              uint64_t current = *found;
+              uint64_t next = (current + 1) & (header->capacity - 1);
+              while (true) {
+                auto *nextSlot =
+                    reinterpret_cast<AssocSlot *>(data + next * stride);
+                if (nextSlot->hash == emptyAssocHash || nextSlot->distance == 0)
+                  break;
+                std::memcpy(data + current * stride, data + next * stride,
+                            static_cast<size_t>(stride));
+                auto *moved =
+                    reinterpret_cast<AssocSlot *>(data + current * stride);
+                --moved->distance;
+                current = next;
+                next = (next + 1) & (header->capacity - 1);
+              }
+              std::memset(data + current * stride, 0,
+                          static_cast<size_t>(stride));
+              deleted = true;
+              return OBELISK_RT_OK;
+            });
+        if (status == OBELISK_RT_OK && deleted) {
+          --header->size;
+          header->ordered = nullptr;
+          ++header->epoch;
+        }
+        return status;
+      },
+      &remove);
+}
+
+static int64_t signedAssocValue(uint64_t value, uint64_t width) {
+  if (width == 64)
+    return static_cast<int64_t>(value);
+  uint64_t mask = (UINT64_C(1) << width) - 1;
+  uint64_t sign = UINT64_C(1) << (width - 1);
+  value &= mask;
+  return static_cast<int64_t>((value & sign) ? (value | ~mask) : value);
+}
+
+static obelisk_rt_status compareAssocSlotWithKey(const ContainerHeader &header,
+                                                 const AssocSlot &slot,
+                                                 const NormalizedAssocKey &key,
+                                                 int &comparison) {
+  if (header.keyKind == OBELISK_RT_ASSOC_KEY_STRING) {
+    StringView slotView;
+    StringView keyView;
+    obelisk_rt_status status = readString(slot.string, slotView);
+    if (status != OBELISK_RT_OK)
+      return status;
+    status = readString(key.string, keyView);
+    if (status != OBELISK_RT_OK)
+      return status;
+    comparison = compareViews(slotView, keyView, false);
+    return OBELISK_RT_OK;
+  }
+  if (header.keyKind == OBELISK_RT_ASSOC_KEY_SIGNED) {
+    int64_t left = signedAssocValue(slot.integral, header.keyWidth);
+    int64_t right = signedAssocValue(key.integral, header.keyWidth);
+    comparison = left < right ? -1 : left > right ? 1 : 0;
+    return OBELISK_RT_OK;
+  }
+  comparison = slot.integral < key.integral   ? -1
+               : slot.integral > key.integral ? 1
+                                              : 0;
+  return OBELISK_RT_OK;
+}
+
+static obelisk_rt_status ensureAssocOrdered(obelisk_rt_gc_lane_v1 *lane,
+                                            obelisk_rt_object_v1 *array) {
+  if (!lane || !array)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ScopedManagedRoot ownerRoot(lane, &array);
+  if (ownerRoot.getStatus() != OBELISK_RT_OK)
+    return ownerRoot.getStatus();
+  while (true) {
+    ContainerHeader snapshot;
+    obelisk_rt_status status = snapshotHeader(array, snapshot);
+    if (status != OBELISK_RT_OK ||
+        snapshot.kind != OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY)
+      return status == OBELISK_RT_OK ? OBELISK_RT_INVALID_ARGUMENT : status;
+    if (snapshot.ordered || snapshot.size == 0)
+      return OBELISK_RT_OK;
+    std::vector<uint64_t> indices;
+    try {
+      indices.resize(static_cast<size_t>(snapshot.size));
+    } catch (const std::bad_alloc &) {
+      return OBELISK_RT_OUT_OF_MEMORY;
+    }
+    struct Order {
+      ContainerHeader snapshot;
+      std::vector<uint64_t> *indices;
+      bool retry = false;
+    } order{snapshot, &indices};
+    status = obelisk_rt_managed_object_access(
+        array, OBELISK_RT_MANAGED_CONTAINER,
+        [](void *opaque, uint8_t *object,
+           uint64_t extent) -> obelisk_rt_status {
+          auto *order = static_cast<Order *>(opaque);
+          if (extent != sizeof(ContainerHeader))
+            return OBELISK_RT_INVALID_HANDLE;
+          auto *header = reinterpret_cast<ContainerHeader *>(object);
+          if (header->epoch != order->snapshot.epoch ||
+              header->buffer != order->snapshot.buffer ||
+              header->size != order->snapshot.size) {
+            order->retry = true;
+            return OBELISK_RT_OK;
+          }
+          uint64_t stride = assocSlotStride(header->element);
+          return accessBuffer(header->buffer, [&](uint8_t *data,
+                                                  uint64_t size) {
+            if (size < header->capacity * stride)
+              return OBELISK_RT_INVALID_HANDLE;
+            uint64_t count = 0;
+            for (uint64_t index = 0; index != header->capacity; ++index) {
+              auto *slot = reinterpret_cast<AssocSlot *>(data + index * stride);
+              if (slot->hash != emptyAssocHash)
+                (*order->indices)[count++] = index;
+            }
+            if (count != header->size)
+              return OBELISK_RT_INVALID_HANDLE;
+            std::sort(
+                order->indices->begin(), order->indices->end(),
+                [&](uint64_t leftIndex, uint64_t rightIndex) {
+                  auto *left =
+                      reinterpret_cast<AssocSlot *>(data + leftIndex * stride);
+                  auto *right =
+                      reinterpret_cast<AssocSlot *>(data + rightIndex * stride);
+                  if (header->keyKind == OBELISK_RT_ASSOC_KEY_STRING) {
+                    StringView leftView;
+                    StringView rightView;
+                    if (readString(left->string, leftView) != OBELISK_RT_OK ||
+                        readString(right->string, rightView) != OBELISK_RT_OK)
+                      return leftIndex < rightIndex;
+                    return compareViews(leftView, rightView, false) < 0;
+                  }
+                  if (header->keyKind == OBELISK_RT_ASSOC_KEY_SIGNED)
+                    return signedAssocValue(left->integral, header->keyWidth) <
+                           signedAssocValue(right->integral, header->keyWidth);
+                  return left->integral < right->integral;
+                });
+            return OBELISK_RT_OK;
+          });
+        },
+        &order);
+    if (status != OBELISK_RT_OK)
+      return status;
+    if (order.retry)
+      continue;
+    obelisk_rt_object_v1 *ordered = nullptr;
+    status = allocateBuffer(lane, snapshot.size, sizeof(uint64_t), &ordered);
+    if (status != OBELISK_RT_OK)
+      return status;
+    ScopedManagedRoot orderedRoot(lane, &ordered);
+    if (orderedRoot.getStatus() != OBELISK_RT_OK)
+      return orderedRoot.getStatus();
+    status = accessBuffer(ordered, [&](uint8_t *data, uint64_t size) {
+      uint64_t bytes = snapshot.size * sizeof(uint64_t);
+      if (size < bytes)
+        return OBELISK_RT_INVALID_HANDLE;
+      std::memcpy(data, indices.data(), static_cast<size_t>(bytes));
+      return OBELISK_RT_OK;
+    });
+    if (status != OBELISK_RT_OK)
+      return status;
+    struct Publish {
+      ContainerHeader snapshot;
+      obelisk_rt_object_v1 *ordered;
+      bool retry = false;
+    } publish{snapshot, ordered};
+    status = obelisk_rt_managed_object_access(
+        array, OBELISK_RT_MANAGED_CONTAINER,
+        [](void *opaque, uint8_t *object,
+           uint64_t extent) -> obelisk_rt_status {
+          auto *publish = static_cast<Publish *>(opaque);
+          if (extent != sizeof(ContainerHeader))
+            return OBELISK_RT_INVALID_HANDLE;
+          auto *header = reinterpret_cast<ContainerHeader *>(object);
+          if (header->epoch != publish->snapshot.epoch ||
+              header->buffer != publish->snapshot.buffer ||
+              header->size != publish->snapshot.size) {
+            publish->retry = true;
+            return OBELISK_RT_OK;
+          }
+          if (!header->ordered)
+            header->ordered = publish->ordered;
+          return OBELISK_RT_OK;
+        },
+        &publish);
+    if (status != OBELISK_RT_OK)
+      return status;
+    if (!publish.retry)
+      return OBELISK_RT_OK;
+  }
+}
+
+static obelisk_rt_status assocTraverse(obelisk_rt_gc_lane_v1 *lane,
+                                       obelisk_rt_object_v1 *array,
+                                       obelisk_rt_assoc_key_v1 *inoutKey,
+                                       uint32_t *outSuccess, int direction,
+                                       bool endpoint) {
+  if (!lane || !array || !inoutKey || !outSuccess ||
+      (direction != -1 && direction != 1))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  if (obelisk_rt_managed_object_context(array) !=
+      obelisk_rt_managed_lane_context(lane))
+    return OBELISK_RT_INVALID_HANDLE;
+  *outSuccess = 0;
+  ContainerHeader preflightHeader;
+  obelisk_rt_status status = snapshotHeader(array, preflightHeader);
+  if (status != OBELISK_RT_OK ||
+      preflightHeader.kind != OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY)
+    return status == OBELISK_RT_OK ? OBELISK_RT_INVALID_ARGUMENT : status;
+  NormalizedAssocKey preflightKey;
+  if (!endpoint) {
+    status = normalizeAssocKey(obelisk_rt_managed_object_context(array),
+                               preflightHeader, inoutKey, preflightKey);
+    if (status != OBELISK_RT_OK)
+      return status;
+    if (preflightKey.ignored) {
+      warnIgnoredAssocKey();
+      return OBELISK_RT_OK;
+    }
+  }
+  obelisk_rt_object_v1 *roots[] = {array,
+                                   endpoint ? nullptr : preflightKey.string};
+  obelisk_rt_gc_root_range_v1 rootRange{};
+  status = obelisk_rt_v1_gc_root_range_push(lane, &rootRange, roots, 2);
+  if (status != OBELISK_RT_OK)
+    return status;
+  status = ensureAssocOrdered(lane, roots[0]);
+  struct Traverse {
+    obelisk_rt_assoc_key_v1 *key;
+    uint32_t *success;
+    int direction;
+    bool endpoint;
+  } traverse{inoutKey, outSuccess, direction, endpoint};
+  if (status == OBELISK_RT_OK)
+    status = obelisk_rt_managed_object_access(
+        roots[0], OBELISK_RT_MANAGED_CONTAINER,
+        [](void *opaque, uint8_t *object,
+           uint64_t extent) -> obelisk_rt_status {
+          auto *traverse = static_cast<Traverse *>(opaque);
+          if (extent != sizeof(ContainerHeader))
+            return OBELISK_RT_INVALID_HANDLE;
+          auto *header = reinterpret_cast<ContainerHeader *>(object);
+          if (header->kind != OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY)
+            return OBELISK_RT_INVALID_ARGUMENT;
+          if (header->size == 0 || !header->ordered || !header->buffer)
+            return OBELISK_RT_OK;
+          NormalizedAssocKey current;
+          if (!traverse->endpoint) {
+            obelisk_rt_status normalized = normalizeAssocKey(
+                obelisk_rt_managed_object_context(
+                    reinterpret_cast<obelisk_rt_object_v1 *>(object)),
+                *header, traverse->key, current);
+            if (normalized != OBELISK_RT_OK)
+              return normalized;
+            if (current.ignored) {
+              warnIgnoredAssocKey();
+              return OBELISK_RT_OK;
+            }
+          }
+          uint64_t stride = assocSlotStride(header->element);
+          return accessBuffer(header->ordered, [&](uint8_t *orderData,
+                                                   uint64_t orderSize) {
+            if (orderSize < header->size * sizeof(uint64_t))
+              return OBELISK_RT_INVALID_HANDLE;
+            auto *indices = reinterpret_cast<uint64_t *>(orderData);
+            int64_t ordinal =
+                traverse->endpoint
+                    ? (traverse->direction > 0
+                           ? 0
+                           : static_cast<int64_t>(header->size - 1))
+                    : -1;
+            return accessBuffer(header->buffer, [&](uint8_t *data,
+                                                    uint64_t size) {
+              if (size < header->capacity * stride)
+                return OBELISK_RT_INVALID_HANDLE;
+              if (!traverse->endpoint) {
+                if (traverse->direction > 0) {
+                  for (uint64_t index = 0; index != header->size; ++index) {
+                    auto *slot = reinterpret_cast<AssocSlot *>(
+                        data + indices[index] * stride);
+                    int comparison = 0;
+                    obelisk_rt_status compared = compareAssocSlotWithKey(
+                        *header, *slot, current, comparison);
+                    if (compared != OBELISK_RT_OK)
+                      return compared;
+                    if (comparison > 0) {
+                      ordinal = static_cast<int64_t>(index);
+                      break;
+                    }
+                  }
+                } else {
+                  for (uint64_t index = header->size; index != 0; --index) {
+                    auto *slot = reinterpret_cast<AssocSlot *>(
+                        data + indices[index - 1] * stride);
+                    int comparison = 0;
+                    obelisk_rt_status compared = compareAssocSlotWithKey(
+                        *header, *slot, current, comparison);
+                    if (compared != OBELISK_RT_OK)
+                      return compared;
+                    if (comparison < 0) {
+                      ordinal = static_cast<int64_t>(index - 1);
+                      break;
+                    }
+                  }
+                }
+              }
+              if (ordinal < 0 || static_cast<uint64_t>(ordinal) >= header->size)
+                return OBELISK_RT_OK;
+              uint64_t slotIndex = indices[ordinal];
+              if (slotIndex >= header->capacity)
+                return OBELISK_RT_INVALID_HANDLE;
+              auto *slot =
+                  reinterpret_cast<AssocSlot *>(data + slotIndex * stride);
+              if (slot->hash == emptyAssocHash)
+                return OBELISK_RT_INVALID_HANDLE;
+              *traverse->key = {};
+              traverse->key->kind = header->keyKind;
+              traverse->key->width = header->keyWidth;
+              traverse->key->value = slot->integral;
+              traverse->key->string = slot->string;
+              *traverse->success = 1;
+              return OBELISK_RT_OK;
+            });
+          });
+        },
+        &traverse);
+  obelisk_rt_status popStatus =
+      obelisk_rt_v1_gc_root_range_pop(lane, &rootRange);
+  return status == OBELISK_RT_OK ? popStatus : status;
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_assoc_first(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *array,
+    obelisk_rt_assoc_key_v1 *inoutKey, uint32_t *outSuccess) {
+  return assocTraverse(lane, array, inoutKey, outSuccess, 1, true);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_assoc_last(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *array,
+    obelisk_rt_assoc_key_v1 *inoutKey, uint32_t *outSuccess) {
+  return assocTraverse(lane, array, inoutKey, outSuccess, -1, true);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_assoc_next(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *array,
+    obelisk_rt_assoc_key_v1 *inoutKey, uint32_t *outSuccess) {
+  return assocTraverse(lane, array, inoutKey, outSuccess, 1, false);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_assoc_prev(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *array,
+    obelisk_rt_assoc_key_v1 *inoutKey, uint32_t *outSuccess) {
+  return assocTraverse(lane, array, inoutKey, outSuccess, -1, false);
+}
+
+static obelisk_rt_status snapshotReferencePath(obelisk_rt_object_v1 *path,
+                                               ReferencePathHeader &snapshot) {
+  struct Snapshot {
+    ReferencePathHeader *output;
+  } environment{&snapshot};
+  return obelisk_rt_managed_object_access(
+      path, OBELISK_RT_MANAGED_REFERENCE_PATH,
+      [](void *opaque, uint8_t *object, uint64_t extent) -> obelisk_rt_status {
+        if (extent != sizeof(ReferencePathHeader))
+          return OBELISK_RT_INVALID_HANDLE;
+        auto *path = reinterpret_cast<ReferencePathHeader *>(object);
+        if (path->descriptor != &referencePathDescriptorToken || !path->owner ||
+            !path->element ||
+            (path->selector != ReferenceSelector::Index &&
+             path->selector != ReferenceSelector::Associative))
+          return OBELISK_RT_INVALID_HANDLE;
+        *static_cast<Snapshot *>(opaque)->output = *path;
+        return OBELISK_RT_OK;
+      },
+      &environment);
+}
+
+obelisk_rt_status obelisk_rt_reference_path_shape(obelisk_rt_object_v1 *path,
+                                                  uint64_t valueSize,
+                                                  uint64_t bitWidth,
+                                                  uint32_t fourState,
+                                                  uint32_t managedValue) {
+  ReferencePathHeader snapshot;
+  obelisk_rt_status status = snapshotReferencePath(path, snapshot);
+  if (status != OBELISK_RT_OK)
+    return status;
+  bool pathFourState =
+      (snapshot.element->flags & OBELISK_RT_ELEMENT_FOUR_STATE) != 0;
+  bool pathManaged =
+      snapshot.element->kind == OBELISK_RT_ELEMENT_CLASS_HANDLE ||
+      snapshot.element->kind == OBELISK_RT_ELEMENT_STRING ||
+      snapshot.element->kind == OBELISK_RT_ELEMENT_CONTAINER_HANDLE;
+  bool widthMatches = false;
+  switch (snapshot.element->kind) {
+  case OBELISK_RT_ELEMENT_BITS:
+  case OBELISK_RT_ELEMENT_LOGIC:
+    widthMatches = snapshot.element->bit_width == bitWidth;
+    break;
+  case OBELISK_RT_ELEMENT_REAL:
+    widthMatches = bitWidth == 64;
+    break;
+  case OBELISK_RT_ELEMENT_CLASS_HANDLE:
+  case OBELISK_RT_ELEMENT_STRING:
+  case OBELISK_RT_ELEMENT_CONTAINER_HANDLE:
+    widthMatches = bitWidth == sizeof(void *) * 8;
+    break;
+  case OBELISK_RT_ELEMENT_AGGREGATE:
+    widthMatches = bitWidth == snapshot.element->value_size * 8;
+    break;
+  default:
+    return OBELISK_RT_INVALID_DESIGN;
+  }
+  return snapshot.element->value_size == valueSize && widthMatches &&
+                 pathFourState == (fourState != 0) &&
+                 pathManaged == (managedValue != 0)
+             ? OBELISK_RT_OK
+             : OBELISK_RT_ARGUMENT_MISMATCH;
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_reference_path_index_create(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *container, int64_t index,
+    obelisk_rt_object_v1 **outPath) {
+  if (!lane || !container || !outPath)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  if (obelisk_rt_managed_object_context(container) !=
+      obelisk_rt_managed_lane_context(lane))
+    return OBELISK_RT_INVALID_HANDLE;
+  *outPath = nullptr;
+  ContainerHeader owner;
+  obelisk_rt_status status = snapshotHeader(container, owner);
+  if (status != OBELISK_RT_OK ||
+      owner.kind == OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY)
+    return status == OBELISK_RT_OK ? OBELISK_RT_INVALID_ARGUMENT : status;
+  ScopedManagedRoot ownerRoot(lane, &container);
+  if (ownerRoot.getStatus() != OBELISK_RT_OK)
+    return ownerRoot.getStatus();
+  obelisk_rt_object_v1 *path = nullptr;
+  status = obelisk_rt_managed_allocate(
+      lane, OBELISK_RT_MANAGED_REFERENCE_PATH, sizeof(ReferencePathHeader),
+      alignof(ReferencePathHeader), &referencePathDescriptorToken, &path);
+  if (status != OBELISK_RT_OK)
+    return status;
+  struct Initialize {
+    obelisk_rt_object_v1 *owner;
+    const obelisk_rt_element_type_v1 *element;
+    int64_t index;
+  } initialize{container, owner.element, index};
+  status = obelisk_rt_managed_object_access(
+      path, OBELISK_RT_MANAGED_REFERENCE_PATH,
+      [](void *opaque, uint8_t *object, uint64_t extent) -> obelisk_rt_status {
+        if (extent != sizeof(ReferencePathHeader))
+          return OBELISK_RT_INVALID_HANDLE;
+        auto *initialize = static_cast<Initialize *>(opaque);
+        auto *path = reinterpret_cast<ReferencePathHeader *>(object);
+        path->descriptor = &referencePathDescriptorToken;
+        path->owner = initialize->owner;
+        path->element = initialize->element;
+        path->selector = ReferenceSelector::Index;
+        path->index = initialize->index;
+        return OBELISK_RT_OK;
+      },
+      &initialize);
+  if (status == OBELISK_RT_OK)
+    *outPath = path;
+  return status;
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_reference_path_assoc_create(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *array,
+    const obelisk_rt_assoc_key_v1 *key, obelisk_rt_object_v1 **outPath) {
+  if (!lane || !array || !key || !outPath)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  if (obelisk_rt_managed_object_context(array) !=
+      obelisk_rt_managed_lane_context(lane))
+    return OBELISK_RT_INVALID_HANDLE;
+  *outPath = nullptr;
+  ContainerHeader owner;
+  obelisk_rt_status status = snapshotHeader(array, owner);
+  if (status != OBELISK_RT_OK ||
+      owner.kind != OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY)
+    return status == OBELISK_RT_OK ? OBELISK_RT_INVALID_ARGUMENT : status;
+  NormalizedAssocKey normalized;
+  status = normalizeAssocKey(obelisk_rt_managed_object_context(array), owner,
+                             key, normalized);
+  if (status != OBELISK_RT_OK)
+    return status;
+  obelisk_rt_object_v1 *roots[] = {array, normalized.string};
+  obelisk_rt_gc_root_range_v1 rootRange{};
+  status = obelisk_rt_v1_gc_root_range_push(lane, &rootRange, roots, 2);
+  if (status != OBELISK_RT_OK)
+    return status;
+  obelisk_rt_object_v1 *path = nullptr;
+  status = obelisk_rt_managed_allocate(
+      lane, OBELISK_RT_MANAGED_REFERENCE_PATH, sizeof(ReferencePathHeader),
+      alignof(ReferencePathHeader), &referencePathDescriptorToken, &path);
+  if (status == OBELISK_RT_OK) {
+    struct Initialize {
+      obelisk_rt_object_v1 *owner;
+      const obelisk_rt_element_type_v1 *element;
+      obelisk_rt_assoc_key_v1 key;
+    } initialize{roots[0], owner.element, *key};
+    initialize.key.value = normalized.integral;
+    initialize.key.string = roots[1];
+    status = obelisk_rt_managed_object_access(
+        path, OBELISK_RT_MANAGED_REFERENCE_PATH,
+        [](void *opaque, uint8_t *object,
+           uint64_t extent) -> obelisk_rt_status {
+          if (extent != sizeof(ReferencePathHeader))
+            return OBELISK_RT_INVALID_HANDLE;
+          auto *initialize = static_cast<Initialize *>(opaque);
+          auto *path = reinterpret_cast<ReferencePathHeader *>(object);
+          path->descriptor = &referencePathDescriptorToken;
+          path->owner = initialize->owner;
+          path->element = initialize->element;
+          path->selector = ReferenceSelector::Associative;
+          path->key = initialize->key;
+          return OBELISK_RT_OK;
+        },
+        &initialize);
+  }
+  obelisk_rt_status popStatus =
+      obelisk_rt_v1_gc_root_range_pop(lane, &rootRange);
+  if (status == OBELISK_RT_OK) {
+    *outPath = path;
+    return popStatus;
+  }
+  return status;
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_reference_path_load(obelisk_rt_object_v1 *path, void *outValue,
+                                  void *outUnknown, uint32_t *outPresent) {
+  if (!outValue || !outPresent)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ReferencePathHeader snapshot;
+  obelisk_rt_status status = snapshotReferencePath(path, snapshot);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (snapshot.selector == ReferenceSelector::Associative)
+    return obelisk_rt_v1_assoc_read(snapshot.owner, &snapshot.key, outValue,
+                                    outUnknown, outPresent);
+  ContainerHeader owner;
+  status = snapshotHeader(snapshot.owner, owner);
+  if (status != OBELISK_RT_OK)
+    return status;
+  *outPresent =
+      snapshot.index >= 0 && static_cast<uint64_t>(snapshot.index) < owner.size;
+  return obelisk_rt_v1_container_read(snapshot.owner, snapshot.index, outValue,
+                                      outUnknown);
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_reference_path_store(obelisk_rt_gc_lane_v1 *lane,
+                                   obelisk_rt_object_v1 *path,
+                                   const void *value, const void *unknown) {
+  if (!lane || !value)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  if (!path || obelisk_rt_managed_object_context(path) !=
+                   obelisk_rt_managed_lane_context(lane))
+    return OBELISK_RT_INVALID_HANDLE;
+  ScopedManagedRoot pathRoot(lane, &path);
+  if (pathRoot.getStatus() != OBELISK_RT_OK)
+    return pathRoot.getStatus();
+  ReferencePathHeader snapshot;
+  obelisk_rt_status status = snapshotReferencePath(path, snapshot);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (snapshot.selector == ReferenceSelector::Associative)
+    return obelisk_rt_v1_assoc_write(lane, snapshot.owner, &snapshot.key, value,
+                                     unknown);
+  return obelisk_rt_v1_container_write(lane, snapshot.owner, snapshot.index,
+                                       value, unknown);
+}

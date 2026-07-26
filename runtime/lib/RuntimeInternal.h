@@ -543,6 +543,8 @@ struct obelisk_rt_context {
   void *vpiState = nullptr;
   std::unordered_map<uint64_t, const obelisk_rt_class_descriptor_v1 *>
       managedClasses;
+  std::unordered_map<uint64_t, const obelisk_rt_element_type_v1 *>
+      managedElementTypes;
   std::vector<obelisk_rt_process_instance_v1 *> managedRootProcesses;
   ManagedHeap *managedHeap = nullptr;
 
@@ -581,6 +583,39 @@ const obelisk_rt_class_descriptor_v1 *
 obelisk_rt_managed_class_lookup(obelisk_rt_context *context, uint64_t classID);
 bool obelisk_rt_managed_object_belongs_to(
     obelisk_rt_context *context, obelisk_rt_object_v1 *object) noexcept;
+obelisk_rt_context *
+obelisk_rt_managed_lane_context(const obelisk_rt_gc_lane_v1 *lane) noexcept;
+const obelisk_rt_element_type_v1 *
+obelisk_rt_managed_element_type_lookup(obelisk_rt_context *context,
+                                       uint64_t typeID);
+
+using ManagedObjectAccess = obelisk_rt_status (*)(void *, uint8_t *, uint64_t);
+using ManagedTraceVisit = void (*)(void *, obelisk_rt_object_v1 *);
+obelisk_rt_status obelisk_rt_managed_allocate(obelisk_rt_gc_lane_v1 *lane,
+                                              obelisk_rt_managed_kind_v1 kind,
+                                              uint64_t extent,
+                                              uint64_t alignment,
+                                              const void *runtimeDescriptor,
+                                              obelisk_rt_object_v1 **outObject);
+obelisk_rt_status
+obelisk_rt_managed_object_access(obelisk_rt_object_v1 *object,
+                                 obelisk_rt_managed_kind_v1 expectedKind,
+                                 ManagedObjectAccess access, void *environment);
+obelisk_rt_managed_kind_v1
+obelisk_rt_managed_object_kind(const obelisk_rt_object_v1 *object) noexcept;
+uint64_t
+obelisk_rt_managed_object_extent(const obelisk_rt_object_v1 *object) noexcept;
+obelisk_rt_context *
+obelisk_rt_managed_object_context(const obelisk_rt_object_v1 *object) noexcept;
+void obelisk_rt_managed_trace_runtime_object(obelisk_rt_managed_kind_v1 kind,
+                                             uint8_t *object, uint64_t extent,
+                                             ManagedTraceVisit visit,
+                                             void *environment) noexcept;
+obelisk_rt_status obelisk_rt_reference_path_shape(obelisk_rt_object_v1 *path,
+                                                  uint64_t valueSize,
+                                                  uint64_t bitWidth,
+                                                  uint32_t fourState,
+                                                  uint32_t managedValue);
 void obelisk_rt_enumerate_design_managed_roots(
     obelisk_rt_context *context, ManagedRootVisit visit,
     void *visitorEnvironment) noexcept;

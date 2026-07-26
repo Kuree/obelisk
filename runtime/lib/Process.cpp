@@ -2977,13 +2977,22 @@ extern "C" obelisk_rt_status obelisk_rt_v1_argument_ref_load(
     uint32_t managedValue, void *outValue, void *outUnknown) {
   if (!context || !stateValue || !stateUnknown || !outValue || bitWidth == 0 ||
       planeSize == 0 || planeSize > std::numeric_limits<size_t>::max() ||
-      managed > 1 || fourState > 1 || managedValue > 1 ||
+      managed > 2 || fourState > 1 || managedValue > 1 ||
       (fourState && !outUnknown) || (managedValue && fourState))
     return OBELISK_RT_INVALID_ARGUMENT;
   std::memset(outValue, 0, static_cast<size_t>(planeSize));
   if (outUnknown)
     std::memset(outUnknown, 0, static_cast<size_t>(planeSize));
-  if (managed) {
+  if (managed == 2) {
+    obelisk_rt_status shape = obelisk_rt_reference_path_shape(
+        owner, planeSize, bitWidth, fourState, managedValue);
+    if (shape != OBELISK_RT_OK)
+      return shape;
+    uint32_t present = 0;
+    return obelisk_rt_v1_reference_path_load(owner, outValue, outUnknown,
+                                             &present);
+  }
+  if (managed == 1) {
     if (managedValue) {
       if (bitWidth != sizeof(void *) * 8 || planeSize != sizeof(void *))
         return OBELISK_RT_INVALID_ARGUMENT;
@@ -3015,7 +3024,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_argument_ref_store(
     uint32_t managedValue, const void *value, const void *unknown) {
   if (!context || !stateValue || !stateUnknown || !value || bitWidth == 0 ||
       planeSize == 0 || planeSize > std::numeric_limits<size_t>::max() ||
-      managed > 1 || fourState > 1 || managedValue > 1 ||
+      managed > 2 || fourState > 1 || managedValue > 1 ||
       (fourState && !unknown) || (managedValue && fourState))
     return OBELISK_RT_INVALID_ARGUMENT;
   {
@@ -3025,7 +3034,17 @@ extern "C" obelisk_rt_status obelisk_rt_v1_argument_ref_store(
       return OBELISK_RT_INVALID_LIFECYCLE;
     }
   }
-  if (managed) {
+  if (managed == 2) {
+    obelisk_rt_status shape = obelisk_rt_reference_path_shape(
+        owner, planeSize, bitWidth, fourState, managedValue);
+    if (shape != OBELISK_RT_OK)
+      return shape;
+    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    if (!lane)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    return obelisk_rt_v1_reference_path_store(lane, owner, value, unknown);
+  }
+  if (managed == 1) {
     if (managedValue) {
       if (bitWidth != sizeof(void *) * 8 || planeSize != sizeof(void *))
         return OBELISK_RT_INVALID_ARGUMENT;

@@ -208,3 +208,19 @@ module {
     }
   }
 }
+
+// -----
+
+module {
+  obelisk_sim.design @bad_managed_null {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 function hierarchy "f"
+    obelisk_sim.func @f(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {code_unit_id = 1 : i64, entry_kind = 1 : i32} {
+      // expected-error @below {{result must be a non-class managed handle type}}
+      %null = obelisk_sim.managed.null : f64
+      obelisk_sim.return
+    }
+  }
+}

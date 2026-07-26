@@ -210,6 +210,7 @@ first_support = fingerprint(support_stamps[0])
 native_members = [
     "ABI.o",
     "Bytecode.o",
+    "Containers.o",
     "DesignBytecode.o",
     "DesignDatabase.o",
     "DPI.o",

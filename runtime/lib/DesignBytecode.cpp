@@ -830,6 +830,13 @@ bool validIntrinsic(const Image &image, const Function &function,
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && managedRef(input(0)) &&
            argumentRef(output(0));
+  case OBELISK_RT_INTRINSIC_V1_REFERENCE_PATH_INDEX:
+    return signature.flags == 0 && site.inputCount == 2 &&
+           site.outputCount == 1 && managed(input(0)) &&
+           twoStateBits(input(1), 64) && managed(output(0));
+  case OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_FROM_PATH:
+    return signature.flags == 0 && site.inputCount == 1 &&
+           site.outputCount == 1 && managed(input(0)) && argumentRef(output(0));
   case OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_LOAD:
     return signature.flags == 0 && site.inputCount == 4 &&
            site.outputCount == 1 && argumentRef(input(0)) &&
@@ -3120,7 +3127,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     std::memcpy(&payload, frame.data + layout.offset + 8, sizeof(payload));
     uint64_t tag = 0;
     std::memcpy(&tag, frame.data + layout.offset + 16, sizeof(tag));
-    if (tag > 1)
+    if (tag > 2)
       return false;
     managed = static_cast<uint32_t>(tag);
     return true;
@@ -3186,6 +3193,33 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     obelisk_rt_object_v1 *object = readManaged(inputRegister(0));
     std::memcpy(frame.data + output.offset, &object, sizeof(object));
     std::memcpy(frame.data + output.offset + 8, &*offset, sizeof(*offset));
+    return OBELISK_RT_OK;
+  }
+  case OBELISK_RT_INTRINSIC_V1_REFERENCE_PATH_INDEX: {
+    auto index = scalar(1);
+    if (!index)
+      return OBELISK_RT_INVALID_BYTECODE;
+    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    if (!lane)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    obelisk_rt_object_v1 *path = nullptr;
+    obelisk_rt_status status = obelisk_rt_v1_reference_path_index_create(
+        lane, readManaged(inputRegister(0)), static_cast<int64_t>(*index),
+        &path);
+    if (status != OBELISK_RT_OK)
+      return status;
+    return writeManaged(outputRegister(0), path) ? OBELISK_RT_OK
+                                                 : OBELISK_RT_INVALID_BYTECODE;
+  }
+  case OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_FROM_PATH: {
+    Layout output = layoutAt(image, frame.function, outputRegister(0));
+    if (output.kind != OBELISK_RT_DBREG_ARGUMENT_REF || output.size != 24)
+      return OBELISK_RT_INVALID_BYTECODE;
+    obelisk_rt_object_v1 *path = readManaged(inputRegister(0));
+    std::memset(frame.data + output.offset, 0, output.size);
+    std::memcpy(frame.data + output.offset, &path, sizeof(path));
+    uint64_t managed = 2;
+    std::memcpy(frame.data + output.offset + 16, &managed, sizeof(managed));
     return OBELISK_RT_OK;
   }
   case OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_FROM_REF: {

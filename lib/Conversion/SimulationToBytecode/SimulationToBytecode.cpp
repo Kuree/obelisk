@@ -149,6 +149,10 @@ constexpr uint32_t kIntrinsicArgumentRefStore =
     OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_STORE;
 constexpr uint32_t kIntrinsicManagedRootExtract =
     OBELISK_RT_INTRINSIC_V1_MANAGED_ROOT_EXTRACT;
+constexpr uint32_t kIntrinsicReferencePathIndex =
+    OBELISK_RT_INTRINSIC_V1_REFERENCE_PATH_INDEX;
+constexpr uint32_t kIntrinsicArgumentRefFromPath =
+    OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_FROM_PATH;
 
 bool isObserverCaptureBridge(Block &block) {
   if (block.getOperations().size() != 1)
@@ -408,13 +412,15 @@ uint32_t stableImportID(StringRef text) {
 }
 
 bool containsLogic(Type type) {
+  if (sim::isManagedHandleType(type))
+    return false;
   bool found = false;
   type.walk([&](sim::LogicType) { found = true; });
   return found;
 }
 
 std::optional<uint32_t> simulationWidth(Type type) {
-  if (isa<sim::ClassHandleType>(type))
+  if (sim::isManagedHandleType(type))
     return 64;
   if (std::optional<unsigned> packed = sim::getPackedWidth(type))
     return *packed;
@@ -473,7 +479,7 @@ FailureOr<Layout> getLayout(Type type) {
   } else if (isa<sim::BytesType>(type)) {
     layout.kind = Bytes;
     layout.width = 128;
-  } else if (isa<sim::ClassHandleType>(type)) {
+  } else if (sim::isManagedHandleType(type)) {
     layout.kind = Managed;
     layout.width = 64;
   } else if (isa<sim::ManagedRefType>(type)) {
@@ -540,7 +546,7 @@ getManagedValueStorage(Type type, const llvm::DataLayout &dataLayout) {
     nativeType = llvm::Type::getDoubleTy(llvmContext);
   else if (isa<sim::TimeType>(type))
     nativeType = llvm::Type::getInt64Ty(llvmContext);
-  else if (isa<sim::ClassHandleType>(type))
+  else if (sim::isManagedHandleType(type))
     nativeType = llvm::PointerType::get(llvmContext, 0);
   else if (std::optional<uint32_t> width = simulationWidth(type))
     nativeType = llvm::IntegerType::get(llvmContext, *width);
@@ -1423,7 +1429,8 @@ private:
 
   static bool mayCollect(Operation *operation) {
     return isa<sim::SimClassAllocOp, sim::SimClassCopyOp, sim::SimWeakCreateOp,
-               sim::SimGCSafepointOp, sim::SimCallOp, sim::SimClassDirectCallOp,
+               sim::SimReferencePathIndexOp, sim::SimGCSafepointOp,
+               sim::SimCallOp, sim::SimClassDirectCallOp,
                sim::SimClassVirtualCallOp, sim::SimDPICallOp>(operation);
   }
 
@@ -1872,12 +1879,19 @@ private:
             reg(plan, op.getRhs())});
       return success();
     }
-    if (auto op = dyn_cast<sim::SimClassNullOp>(operation)) {
-      uint32_t destination = reg(plan, op.getResult());
+    if (isa<sim::SimClassNullOp, sim::SimManagedNullOp>(operation)) {
+      uint32_t destination = reg(plan, operation->getResult(0));
       emit({Constant, 0, destination, 0, 0, 0, 0,
             addZeroConstant(plan.layouts[destination])});
       return success();
     }
+    if (auto op = dyn_cast<sim::SimReferencePathIndexOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicReferencePathIndex,
+                           {op.getContainer(), op.getIndex()},
+                           {op.getResult()});
+    if (auto op = dyn_cast<sim::SimArgumentRefFromPathOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicArgumentRefFromPath, {op.getInput()},
+                           {op.getResult()});
     if (auto op = dyn_cast<sim::SimClassAllocOp>(operation)) {
       auto type = cast<sim::ClassHandleType>(op.getResult().getType());
       FailureOr<uint64_t> id = classID(type.getClassName(), operation);

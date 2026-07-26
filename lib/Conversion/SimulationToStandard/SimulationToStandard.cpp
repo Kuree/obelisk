@@ -1479,6 +1479,8 @@ public:
 };
 
 static bool containsLogic(Type type) {
+  if (sim::isManagedHandleType(type))
+    return false;
   bool contains = false;
   type.walk([&](sim::LogicType) { contains = true; });
   return contains;

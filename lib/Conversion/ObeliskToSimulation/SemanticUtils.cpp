@@ -481,6 +481,30 @@ static FailureOr<Type> normalizeType(Type type, Location location,
     return sim::UnpackedArrayType::get(context, *element, array.getSize() - 1,
                                        0);
   }
+  if (auto array = dyn_cast<semantic::DynArrayType>(type)) {
+    FailureOr<Type> element = normalizeType(array.getElementType(), location,
+                                            /*allowRealScalar=*/false);
+    if (failed(element))
+      return failure();
+    return sim::DynamicArrayType::get(context, *element);
+  }
+  if (auto queue = dyn_cast<semantic::QueueType>(type)) {
+    FailureOr<Type> element = normalizeType(queue.getElementType(), location,
+                                            /*allowRealScalar=*/false);
+    if (failed(element))
+      return failure();
+    return sim::QueueType::get(context, *element, queue.getBound());
+  }
+  if (auto array = dyn_cast<semantic::AssocArrayType>(type)) {
+    FailureOr<Type> key = normalizeType(array.getKeyType(), location,
+                                        /*allowRealScalar=*/false);
+    FailureOr<Type> element = normalizeType(array.getElementType(), location,
+                                            /*allowRealScalar=*/false);
+    if (failed(key) || failed(element))
+      return failure();
+    return sim::AssocArrayType::get(context, *key, *element,
+                                    array.getWildcardIndex());
+  }
   if (auto aggregate = dyn_cast<semantic::SourceAggregateType>(type)) {
     FailureOr<ArrayAttr> fields = normalizeSourceFields(
         aggregate.getFields(), location,
@@ -550,7 +574,8 @@ static FailureOr<Type> normalizeType(Type type, Location location,
     return type;
   if (isa<sim::LogicType, sim::TimeType, sim::ContextType, sim::RefType,
           sim::NetType, sim::DriverType, sim::EventType, sim::ProcessType,
-          sim::ClassHandleType, sim::ManagedRefType>(type) ||
+          sim::ClassHandleType, sim::StringType, sim::DynamicArrayType,
+          sim::QueueType, sim::AssocArrayType, sim::ManagedRefType>(type) ||
       sim::isAggregateType(type))
     return type;
 
@@ -872,6 +897,8 @@ FailureOr<sim::FrozenConstantAttr> freezeSemanticConstant(Operation *symbol) {
 Value createDefaultValue(OpBuilder &builder, Location location, Type type) {
   if (isa<sim::ClassHandleType>(type))
     return sim::SimClassNullOp::create(builder, location, type);
+  if (sim::isManagedHandleType(type))
+    return sim::SimManagedNullOp::create(builder, location, type);
   if (sim::isAggregateType(type))
     return sim::SimAggregateDefaultOp::create(builder, location, type);
   if (auto logic = dyn_cast<sim::LogicType>(type)) {

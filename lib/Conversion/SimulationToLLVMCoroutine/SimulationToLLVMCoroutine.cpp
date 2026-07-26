@@ -231,7 +231,7 @@ struct StorageProperties {
 bool containsLogic(Type type);
 
 std::optional<unsigned> nativeStateWidth(Type type) {
-  if (isa<sim::ClassHandleType>(type))
+  if (sim::isManagedHandleType(type))
     return 64;
   if (std::optional<unsigned> packed = sim::getPackedWidth(type))
     return packed;
@@ -351,7 +351,7 @@ FailureOr<StorageProperties> storageProperties(Type type,
     llvmType = llvm::Type::getDoubleTy(context);
   } else if (isa<sim::TimeType>(type)) {
     llvmType = llvm::Type::getInt64Ty(context);
-  } else if (isa<sim::ClassHandleType>(type)) {
+  } else if (sim::isManagedHandleType(type)) {
     llvmType = llvm::PointerType::get(context, 0);
   } else if (isa<sim::ManagedRefType>(type)) {
     // A managed reference is physically {object, byte offset}. Each word has
@@ -418,6 +418,8 @@ size_t physicalStorageCount(const StorageProperties &storage) {
 }
 
 bool containsLogic(Type type) {
+  if (sim::isManagedHandleType(type))
+    return false;
   bool result = false;
   type.walk([&](sim::LogicType) { result = true; });
   return result;
@@ -1682,7 +1684,7 @@ Type convertProcessType(Type type, MLIRContext *context) {
   if (isa<sim::RefType, sim::NetType, sim::DriverType, sim::EventType,
           sim::ProcessType, sim::ControlType>(type))
     return IntegerType::get(context, 64);
-  if (isa<sim::ClassHandleType>(type))
+  if (sim::isManagedHandleType(type))
     return IntegerType::get(context, 64);
   if (isa<sim::ArgumentRefType>(type))
     return IntegerType::get(context, 192);
@@ -6576,7 +6578,7 @@ LogicalResult normalizeManagedDirectCalls(ModuleOp module) {
 void expandManagedSelectsToCFG(ModuleOp module) {
   SmallVector<arith::SelectOp> selects;
   module.walk([&](arith::SelectOp select) {
-    if (isa<sim::ClassHandleType>(select.getType()))
+    if (sim::isManagedHandleType(select.getType()))
       selects.push_back(select);
   });
 
@@ -6601,7 +6603,8 @@ void expandManagedSelectsToCFG(ModuleOp module) {
 
 bool managedOperationMayCollect(Operation *operation) {
   return isa<sim::SimClassAllocOp, sim::SimClassCopyOp, sim::SimWeakCreateOp,
-             sim::SimGCSafepointOp, sim::SimCallOp, sim::SimClassDirectCallOp,
+             sim::SimReferencePathIndexOp, sim::SimGCSafepointOp,
+             sim::SimCallOp, sim::SimClassDirectCallOp,
              sim::SimClassVirtualCallOp, sim::SimDPICallOp>(operation);
 }
 
@@ -6871,6 +6874,20 @@ public:
   }
 };
 
+class ManagedNullConversion final
+    : public OpConversionPattern<sim::SimManagedNullOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimManagedNullOp op, OneToNOpAdaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    rewriter.replaceOp(op, arith::ConstantOp::create(
+                               rewriter, op.getLoc(), rewriter.getI64Type(),
+                               rewriter.getI64IntegerAttr(0)));
+    return success();
+  }
+};
+
 class ClassAllocConversion final
     : public OpConversionPattern<sim::SimClassAllocOp> {
 public:
@@ -7081,7 +7098,7 @@ public:
 };
 
 Value packArgumentReference(OpBuilder &builder, Location location, Value owner,
-                            Value payload, bool managed) {
+                            Value payload, uint32_t managed) {
   Type i192 = builder.getIntegerType(192);
   Value packed = arith::ExtUIOp::create(builder, location, i192, owner);
   Value extendedPayload =
@@ -7091,7 +7108,7 @@ Value packArgumentReference(OpBuilder &builder, Location location, Value owner,
       arith::ShLIOp::create(builder, location, extendedPayload, payloadShift);
   packed = arith::OrIOp::create(builder, location, packed, extendedPayload);
   if (managed) {
-    APInt tag(192, 1);
+    APInt tag(192, managed);
     tag <<= 128;
     Value tagValue = arith::ConstantOp::create(
         builder, location, i192, builder.getIntegerAttr(i192, tag));
@@ -7154,6 +7171,56 @@ public:
     rewriter.replaceOp(op, packArgumentReference(rewriter, op.getLoc(),
                                                  adaptor.getInput()[0],
                                                  adaptor.getInput()[1], true));
+    return success();
+  }
+};
+
+class ReferencePathIndexConversion final
+    : public OpConversionPattern<sim::SimReferencePathIndexOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimReferencePathIndexOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getContainer().size() != 1 || adaptor.getIndex().size() != 1)
+      return failure();
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    Value output = entryAlloca(rewriter, op.getLoc(), pointer, 1, 8);
+    LLVM::StoreOp::create(rewriter, op.getLoc(),
+                          LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer),
+                          output, 8);
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_reference_path_index_create"),
+            ValueRange{lane,
+                       managedObjectPointer(rewriter, op.getLoc(),
+                                            adaptor.getContainer().front()),
+                       adaptor.getIndex().front(), output})
+            .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    Value path =
+        LLVM::LoadOp::create(rewriter, op.getLoc(), pointer, output, 8);
+    rewriter.replaceOp(op, managedObjectHandle(rewriter, op.getLoc(), path));
+    return success();
+  }
+};
+
+class ArgumentRefFromPathConversion final
+    : public OpConversionPattern<sim::SimArgumentRefFromPathOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimArgumentRefFromPathOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getInput().size() != 1)
+      return failure();
+    Value zero = llvmConstant(rewriter, op.getLoc(), rewriter.getI64Type(), 0);
+    rewriter.replaceOp(op, packArgumentReference(rewriter, op.getLoc(),
+                                                 adaptor.getInput().front(),
+                                                 zero, 2));
     return success();
   }
 };
@@ -8605,6 +8672,9 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_object_allocate", managedI32,
                            {managedPointer, managedPointer, managedPointer});
   getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_reference_path_index_create", managedI32,
+      {managedPointer, managedPointer, managedI64, managedPointer});
+  getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_object_shallow_copy", managedI32,
       {managedPointer, managedPointer, managedPointer, managedPointer});
   getOrDeclareLLVMFunction(
@@ -8762,8 +8832,10 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       return IntegerType::get(context, 64);
     return std::nullopt;
   });
-  packedConverter.addConversion([context](sim::ClassHandleType) -> Type {
-    return IntegerType::get(context, 64);
+  packedConverter.addConversion([context](Type type) -> std::optional<Type> {
+    if (sim::isManagedHandleType(type))
+      return IntegerType::get(context, 64);
+    return std::nullopt;
   });
   packedConverter.addConversion([context](sim::ArgumentRefType) -> Type {
     return IntegerType::get(context, 192);
@@ -8864,10 +8936,12 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                      ReleaseOverrideConversion, NetReadConversion>(
       packedConverter, context, stateLayout->bitCount);
   packedPatterns
-      .add<ClassNullConversion, ClassAllocConversion, ClassCopyConversion,
+      .add<ClassNullConversion, ManagedNullConversion, ClassAllocConversion,
+           ClassCopyConversion,
            ClassIsInstanceConversion, ClassIdConversion, ClassCastConversion,
            ClassFieldRefConversion, ClassRootBindConversion,
            ArgumentRefFromRefConversion, ArgumentRefFromManagedConversion,
+           ReferencePathIndexConversion, ArgumentRefFromPathConversion,
            ManagedObjectOutputConversion<sim::SimWeakCreateOp>,
            ManagedObjectOutputConversion<sim::SimWeakGetOp>,
            WeakClearConversion, GCSafepointConversion>(packedConverter,
@@ -8904,12 +8978,14 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       sim::SimDisableChildrenOp, sim::SimControlEnterOp, sim::SimControlLeaveOp,
       sim::SimControlDisableOp, sim::SimStaticOnceOp, sim::SimMonitorRegisterOp,
       sim::SimMonitorControlOp, sim::SimMonitorCurrentOp,
-      sim::SimBitsDynExtractOp, sim::SimClassNullOp, sim::SimClassAllocOp,
-      sim::SimClassCopyOp, sim::SimClassIsInstanceOp, sim::SimClassIdOp,
+      sim::SimBitsDynExtractOp, sim::SimClassNullOp, sim::SimManagedNullOp,
+      sim::SimClassAllocOp, sim::SimClassCopyOp, sim::SimClassIsInstanceOp,
+      sim::SimClassIdOp,
       sim::SimClassCastOp, sim::SimClassFieldRefOp, sim::SimClassRootBindOp,
       sim::SimManagedLoadOp, sim::SimManagedStoreOp,
       sim::SimManagedNBAEnqueueOp, sim::SimArgumentRefFromRefOp,
-      sim::SimArgumentRefFromManagedOp, sim::SimArgumentRefLoadOp,
+      sim::SimArgumentRefFromManagedOp, sim::SimReferencePathIndexOp,
+      sim::SimArgumentRefFromPathOp, sim::SimArgumentRefLoadOp,
       sim::SimArgumentRefStoreOp, sim::SimClassDirectCallOp,
       sim::SimClassVirtualCallOp, sim::SimWeakCreateOp, sim::SimWeakGetOp,
       sim::SimWeakClearOp, sim::SimGCSafepointOp>();

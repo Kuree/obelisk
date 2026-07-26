@@ -58,6 +58,9 @@ getAggregateProvenanceSubelement(::mlir::Type type, unsigned index);
 bool getManagedHandleOffsets(::mlir::Type type,
                              ::llvm::SmallVectorImpl<uint64_t> &offsets);
 
+/// True for a nullable one-word value owned by the precise managed heap.
+bool isManagedHandleType(::mlir::Type type);
+
 } // namespace obelisk::sim
 
 #endif // OBELISK_DIALECT_SIMULATION_SIMULATIONTYPES_H

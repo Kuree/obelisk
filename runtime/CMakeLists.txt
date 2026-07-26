@@ -9,6 +9,7 @@ add_library(obelisk_rt STATIC
   lib/FileIO.cpp
   lib/Format.cpp
   lib/ManagedHeap.cpp
+  lib/Containers.cpp
   lib/Process.cpp
   lib/Runtime.cpp
   lib/VPI.cpp

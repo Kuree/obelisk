@@ -1,5 +1,8 @@
 # Obelisk native runtime
 
+See [Managed strings and containers](../docs/managed-values.md) for the
+variable-sized managed-object ABI and its current implementation status.
+
 The target build produces two forms of the same support code:
 `libobelisk_rt.a` contains native ELF objects used by `-O0` executable links,
 while `libobelisk_rt_lto.a` contains pinned-LLVM bitcode used by `-O1` through

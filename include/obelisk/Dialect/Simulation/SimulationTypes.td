@@ -155,6 +155,48 @@ def SimClassHandleType : SimType<"ClassHandle"> {
   let genVerifyDecl = 1;
 }
 
+def SimStringType : SimType<"String"> {
+  let mnemonic = "string";
+  let summary = "nullable immutable managed SystemVerilog string";
+}
+
+def SimDynamicArrayType : SimType<"DynamicArray"> {
+  let mnemonic = "dynamic_array";
+  let summary = "managed SystemVerilog dynamic array value";
+  let parameters = (ins "::mlir::Type":$elementType);
+  let assemblyFormat = "`<` $elementType `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimQueueType : SimType<"Queue"> {
+  let mnemonic = "queue";
+  let summary = "managed SystemVerilog queue value";
+  let parameters = (ins "::mlir::Type":$elementType, "uint32_t":$bound);
+  let assemblyFormat = "`<` $elementType `,` $bound `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimAssocArrayType : SimType<"AssocArray"> {
+  let mnemonic = "assoc_array";
+  let summary = "managed SystemVerilog associative array value";
+  let parameters = (ins
+    "::mlir::Type":$keyType,
+    "::mlir::Type":$elementType,
+    "bool":$wildcardIndex
+  );
+  let assemblyFormat =
+      "`<` $keyType `,` $elementType `,` $wildcardIndex `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimReferencePathType : SimType<"ReferencePath"> {
+  let mnemonic = "reference_path";
+  let summary = "managed escaping dynamic-lvalue path";
+  let parameters = (ins "::mlir::Type":$elementType);
+  let assemblyFormat = "`<` $elementType `>`";
+  let genVerifyDecl = 1;
+}
+
 // A reference into a managed object keeps the owner explicit. It may be used
 // for ref/inout formals but must not be lowered to a persistent interior
 // pointer across a safepoint.

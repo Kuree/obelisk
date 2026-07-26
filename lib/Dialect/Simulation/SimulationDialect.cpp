@@ -771,7 +771,7 @@ std::optional<uint64_t> getProvenanceSpan(Type type) {
     return *packed;
   if (isa<TimeType>(type) || type.isF64())
     return uint64_t{64};
-  if (isa<ClassHandleType>(type))
+  if (isManagedHandleType(type))
     return uint64_t{64};
   auto checkedAlign = [](uint64_t value,
                          uint64_t alignment) -> std::optional<uint64_t> {
@@ -841,7 +841,7 @@ std::optional<uint64_t> getProvenanceAlignment(Type type) {
     return getProvenanceAlignment(net.getElementType());
   if (auto driver = dyn_cast<DriverType>(type))
     return getProvenanceAlignment(driver.getElementType());
-  if (isa<ClassHandleType>(type))
+  if (isManagedHandleType(type))
     return uint64_t{64};
   if (isa<UnpackedArrayType>(type))
     return getProvenanceAlignment(getAggregateElementType(type, 0));
@@ -912,7 +912,7 @@ getAggregateProvenanceSubelement(Type type, unsigned index) {
 
 bool getManagedHandleOffsets(Type type,
                              llvm::SmallVectorImpl<uint64_t> &offsets) {
-  if (isa<ClassHandleType>(type)) {
+  if (isManagedHandleType(type)) {
     offsets.push_back(0);
     return true;
   }
@@ -953,11 +953,65 @@ bool getManagedHandleOffsets(Type type,
   return true;
 }
 
+bool isManagedHandleType(Type type) {
+  return isa<ClassHandleType, StringType, DynamicArrayType, QueueType,
+             AssocArrayType, ReferencePathType>(type);
+}
+
+LogicalResult SimManagedNullOp::verify() {
+  if (!isManagedHandleType(getResult().getType()) ||
+      isa<ClassHandleType>(getResult().getType()))
+    return emitOpError("result must be a non-class managed handle type");
+  return success();
+}
+
 static bool isNormalizedValueType(Type type) {
   if (auto integer = dyn_cast<IntegerType>(type))
     return integer.isSignless();
-  return type.isF64() || isa<LogicType, ClassHandleType>(type) ||
+  return type.isF64() || isa<LogicType>(type) || isManagedHandleType(type) ||
          isAggregateType(type);
+}
+
+LogicalResult
+DynamicArrayType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                         Type elementType) {
+  if (!isNormalizedValueType(elementType))
+    return emitError() << "element must be a normalized simulation value";
+  return success();
+}
+
+LogicalResult
+QueueType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                  Type elementType, uint32_t) {
+  if (!isNormalizedValueType(elementType))
+    return emitError() << "element must be a normalized simulation value";
+  return success();
+}
+
+LogicalResult
+AssocArrayType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                       Type keyType, Type elementType, bool wildcardIndex) {
+  if (!isNormalizedValueType(elementType))
+    return emitError() << "element must be a normalized simulation value";
+  bool supportedKey = isa<StringType>(keyType);
+  if (auto integer = dyn_cast<IntegerType>(keyType))
+    supportedKey = integer.isSignless() && integer.getWidth() <= 64;
+  if (auto logic = dyn_cast<LogicType>(keyType))
+    supportedKey = logic.getWidth() <= 64;
+  if (!supportedKey && !wildcardIndex)
+    return emitError()
+           << "key must be a string or normalized integral type up to 64 bits";
+  if (wildcardIndex && !isNormalizedValueType(keyType))
+    return emitError() << "wildcard key must be a normalized simulation value";
+  return success();
+}
+
+LogicalResult
+ReferencePathType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                          Type elementType) {
+  if (!isNormalizedValueType(elementType))
+    return emitError() << "element must be a normalized simulation value";
+  return success();
 }
 
 LogicalResult
@@ -1726,6 +1780,27 @@ LogicalResult SimArgumentRefFromManagedOp::verify() {
   return success();
 }
 
+LogicalResult SimReferencePathIndexOp::verify() {
+  Type containerType = getContainer().getType();
+  Type elementType;
+  if (auto array = dyn_cast<DynamicArrayType>(containerType))
+    elementType = array.getElementType();
+  else if (auto queue = dyn_cast<QueueType>(containerType))
+    elementType = queue.getElementType();
+  else
+    return emitOpError("container must be a dynamic array or queue");
+  if (elementType != getResult().getType().getElementType())
+    return emitOpError("result element must match the container element");
+  return success();
+}
+
+LogicalResult SimArgumentRefFromPathOp::verify() {
+  if (getInput().getType().getElementType() !=
+      getResult().getType().getElementType())
+    return emitOpError("input and result element types must match");
+  return success();
+}
+
 LogicalResult SimArgumentRefLoadOp::verify() {
   if (getReference().getType().getElementType() != getResult().getType())
     return emitOpError("result type must match the referenced element");
@@ -2414,9 +2489,10 @@ LogicalResult SimFuncOp::verify() {
     return emitOpError("first argument must be !obelisk_sim.context");
   for (Type input : type.getInputs()) {
     if (!isa<ContextType, RefType, ArgumentRefType, NetType, DriverType,
-             EventType, ProcessType, ClassHandleType, ManagedRefType,
-             IntegerType, LogicType, TimeType>(input) &&
-        !input.isF64() && !isAggregateType(input))
+             EventType, ProcessType, ManagedRefType, IntegerType, LogicType,
+             TimeType>(input) &&
+        !isManagedHandleType(input) && !input.isF64() &&
+        !isAggregateType(input))
       return emitOpError() << "contains non-normalized argument type " << input;
     if (auto integer = dyn_cast<IntegerType>(input);
         integer && !integer.isSignless())
@@ -2424,8 +2500,9 @@ LogicalResult SimFuncOp::verify() {
   }
   for (Type result : type.getResults()) {
     if (!isa<IntegerType, LogicType, TimeType, EventType, ProcessType,
-             ClassHandleType, ManagedRefType>(result) &&
-        !result.isF64() && !isAggregateType(result))
+             ManagedRefType, ArgumentRefType>(result) &&
+        !isManagedHandleType(result) && !result.isF64() &&
+        !isAggregateType(result))
       return emitOpError() << "contains non-normalized result type " << result;
     if (auto integer = dyn_cast<IntegerType>(result);
         integer && !integer.isSignless())
