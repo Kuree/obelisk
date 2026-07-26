@@ -22,8 +22,7 @@
 #include <utility>
 #include <vector>
 
-constexpr uint64_t OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG =
-    UINT64_C(1) << 63;
+constexpr uint64_t OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG = UINT64_C(1) << 63;
 
 struct FileEntry {
   FILE *stream = nullptr;
@@ -239,8 +238,7 @@ inline bool obelisk_rt_decode_schedule_flags(uint32_t flags, uint32_t &phase,
     return false;
   phase = (flags & OBELISK_RT_SCHEDULE_FINAL) != 0 ? 1u : 0u;
   homeRegion =
-      (flags & OBELISK_RT_SCHEDULE_HOME_MASK) >>
-      OBELISK_RT_SCHEDULE_HOME_SHIFT;
+      (flags & OBELISK_RT_SCHEDULE_HOME_MASK) >> OBELISK_RT_SCHEDULE_HOME_SHIFT;
   return obelisk_rt_is_process_home_region(homeRegion) &&
          (phase == 0 || homeRegion == OBELISK_RT_REGION_ACTIVE);
 }
@@ -250,15 +248,13 @@ inline bool obelisk_rt_next_queued_region(uint32_t homeRegion,
                                           uint64_t delayPayload,
                                           uint32_t actionFlags,
                                           uint32_t &queuedRegion) {
-  constexpr uint32_t known =
-      OBELISK_RT_ACTION_FRAME_WAIT_RECORD |
+  constexpr uint32_t known = OBELISK_RT_ACTION_FRAME_WAIT_RECORD |
       OBELISK_RT_ACTION_RESUME_REGION_VALID |
       OBELISK_RT_ACTION_RESUME_REGION_MASK;
   if ((actionFlags & ~known) != 0)
     return false;
   if ((actionFlags & OBELISK_RT_ACTION_RESUME_REGION_VALID) != 0) {
-    queuedRegion =
-        (actionFlags & OBELISK_RT_ACTION_RESUME_REGION_MASK) >>
+    queuedRegion = (actionFlags & OBELISK_RT_ACTION_RESUME_REGION_MASK) >>
         OBELISK_RT_ACTION_RESUME_REGION_SHIFT;
     return obelisk_rt_is_process_home_region(queuedRegion);
   }
@@ -275,8 +271,7 @@ inline bool obelisk_rt_next_queued_region(uint32_t homeRegion,
 }
 
 inline uint32_t obelisk_rt_commit_region(uint32_t homeRegion) {
-  return obelisk_rt_is_mutable_home_region(homeRegion)
-             ? homeRegion + 2
+  return obelisk_rt_is_mutable_home_region(homeRegion) ? homeRegion + 2
              : UINT32_MAX;
 }
 
@@ -448,6 +443,22 @@ struct DpiScopeHandle {
 
 class ManagedHeap;
 
+struct NetAliasRange {
+  uint64_t valueOffset = 0;
+  uint64_t targetOffset = 0;
+  uint64_t width = 0;
+  bool fourState = false;
+};
+
+struct NetAliasCache {
+  const obelisk_rt_execution_descriptor_v1 *execution = nullptr;
+  std::unordered_map<uint64_t, uint64_t> rootByBit;
+  std::unordered_map<uint64_t, std::vector<uint64_t>> members;
+  std::unordered_map<uint64_t, std::vector<uint64_t>> driverBits;
+  std::vector<NetAliasRange> nets;
+  std::vector<NetAliasRange> drivers;
+};
+
 struct obelisk_rt_context {
   // Mutable state is guarded separately from logical execution. Evaluator
   // callbacks release `mutex` while arbitrary user code runs, but retain the
@@ -520,6 +531,16 @@ struct obelisk_rt_context {
   // in the immutable reflection image.
   std::vector<uint64_t> stateValue;
   std::vector<uint64_t> stateUnknown;
+  // Language and VPI force state is allocated on first use. A set bit masks
+  // every ordinary publication to the corresponding canonical design bit.
+  std::vector<uint64_t> forceMask;
+  std::vector<uint64_t> assignMask;
+  std::vector<uint64_t> assignValue;
+  std::vector<uint64_t> assignUnknown;
+  // Built once from the immutable execution image and shared by net
+  // resolution, force/release, deposits, and reflection connectivity checks.
+  NetAliasCache netAliases;
+  void *vpiState = nullptr;
   std::unordered_map<uint64_t, const obelisk_rt_class_descriptor_v1 *>
       managedClasses;
   std::vector<obelisk_rt_process_instance_v1 *> managedRootProcesses;
@@ -721,11 +742,20 @@ obelisk_rt_status obelisk_rt_native_state_alloc_with_root_offsets(
     obelisk_rt_context *context, uint64_t bitWidth, const uint8_t *value,
     const uint8_t *unknown, std::vector<uint64_t> bitOffsets,
     uint64_t *outHandle);
-obelisk_rt_status obelisk_rt_native_state_alloc_managed(
-    obelisk_rt_context *context, obelisk_rt_object_v1 *value,
+obelisk_rt_status
+obelisk_rt_native_state_alloc_managed(obelisk_rt_context *context,
+                                      obelisk_rt_object_v1 *value,
     uint64_t *outHandle);
 void obelisk_rt_invalidate_signal_snapshots_unlocked(
     obelisk_rt_context *context, uint64_t bitOffset, uint64_t bitWidth);
+
+obelisk_rt_status obelisk_rt_force_design_nets(obelisk_rt_context *context,
+                                               uint64_t begin, uint64_t width,
+                                               const uint8_t *value,
+                                               const uint8_t *unknown) noexcept;
+obelisk_rt_status obelisk_rt_release_design_nets(obelisk_rt_context *context,
+                                                 uint64_t begin,
+                                                 uint64_t width) noexcept;
 
 bool obelisk_rt_checked_design_record(
     const obelisk_rt_execution_descriptor_v1 *execution, uint64_t offset,

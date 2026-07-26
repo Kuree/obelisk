@@ -6,8 +6,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Options.h"
 #include "NativeBackend.h"
+#include "NativeInputs.h"
+#include "Options.h"
 
 #include "obelisk/Conversion/ObeliskToSimulation.h"
 #include "obelisk/Conversion/SlangToObelisk.h"
@@ -19,8 +20,8 @@
 #include "obelisk/Dialect/Slang/SlangDialect.h"
 #include "obelisk/Frontend/Frontend.h"
 
-#include "mlir/IR/AsmState.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/IR/AsmState.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Pass/PassManager.h"
@@ -88,8 +89,8 @@ static FailureOr<DPIHeaderType> getDPIHeaderType(mlir::Type type,
       obelisk::classifyDPIABIType(type, location);
   if (failed(abi))
     return failure();
-  return DPIHeaderType{
-      obelisk::getDPICTypeSpelling(*abi).str(), abi->isVector()};
+  return DPIHeaderType{obelisk::getDPICTypeSpelling(*abi).str(),
+                       abi->isVector()};
 }
 
 static LogicalResult writeDPIHeader(ModuleOp module, raw_ostream &output) {
@@ -105,8 +106,7 @@ static LogicalResult writeDPIHeader(ModuleOp module, raw_ostream &output) {
     SmallVector<std::string> arguments;
     unsigned argumentIndex = 0;
     for (Operation &child : op.getRegion().front()) {
-      auto formal =
-          dyn_cast<obelisk::ir::SVFormalArgumentSymbolOp>(child);
+      auto formal = dyn_cast<obelisk::ir::SVFormalArgumentSymbolOp>(child);
       if (!formal)
         continue;
       std::optional<mlir::Type> semanticType = formal.getSemanticType();
@@ -130,18 +130,15 @@ static LogicalResult writeDPIHeader(ModuleOp module, raw_ostream &output) {
       arguments.push_back(std::move(declaration));
     }
 
-    bool task =
-        op.getSubroutineKind() == obelisk::ir::SVSubroutineKind::Task;
+    bool task = op.getSubroutineKind() == obelisk::ir::SVSubroutineKind::Task;
     std::string returnType = task ? "int" : "";
     if (!task) {
       auto semanticType = op->getAttrOfType<TypeAttr>("semantic_type");
       auto subroutine =
           semanticType
-              ? dyn_cast<obelisk::ir::SubroutineType>(
-                    semanticType.getValue())
+              ? dyn_cast<obelisk::ir::SubroutineType>(semanticType.getValue())
               : obelisk::ir::SubroutineType{};
-      auto signature =
-          subroutine
+      auto signature = subroutine
               ? dyn_cast<FunctionType>(subroutine.getSignature())
               : FunctionType{};
       if (!signature || signature.getNumResults() != 1) {
@@ -171,8 +168,7 @@ static LogicalResult writeDPIHeader(ModuleOp module, raw_ostream &output) {
       }
     }
     prototype += ");";
-    auto inserted =
-        prototypes.try_emplace(cIdentifier.getValue(), prototype);
+    auto inserted = prototypes.try_emplace(cIdentifier.getValue(), prototype);
     if (!inserted.second && inserted.first->second != prototype) {
       op.emitError() << "C identifier '" << cIdentifier.getValue()
                      << "' is imported with incompatible DPI signatures";
@@ -327,19 +323,8 @@ static int executeCompilation(const InputArgList &args) {
       action && action->getOption().matches(OPT_emit_dpi_header);
   bool native = !action || emitObject || emitLLVM;
   if (native && requestedWorkers.value_or(1) != 1) {
-    emitDriverError("native executable generation currently requires --threads=1");
-    valid = false;
-  }
-  if (native && vpiMode != "off") {
-    emitDriverError("native executable generation currently requires --vpi=off");
-    valid = false;
-  }
-  std::vector<std::string> dpiLinkInputs =
-      args.getAllArgValues(OPT_dpi_link_EQ);
-  if (!dpiLinkInputs.empty() &&
-      (!native || emitObject || emitLLVM)) {
     emitDriverError(
-        "--dpi-link is only valid when linking a native executable");
+        "native executable generation currently requires --threads=1");
     valid = false;
   }
   if (!native && executionTier != "native") {
@@ -349,6 +334,19 @@ static int executeCompilation(const InputArgList &args) {
   }
   if (!valid)
     return 1;
+
+  obelisk::driver::ClassifiedInputs classifiedInputs;
+  if (failed(obelisk::driver::classifyDirectInputs(inputs, action == nullptr,
+                                                   vpiMode, classifiedInputs)))
+    return 1;
+  if (classifiedInputs.systemVerilog.empty() &&
+      frontendOptions.commandFiles.empty()) {
+    emitDriverError(
+        "at least one SystemVerilog input or command file is required");
+    return 1;
+  }
+  inputs.assign(classifiedInputs.systemVerilog.begin(),
+                classifiedInputs.systemVerilog.end());
 
   DialectRegistry registry;
   registry.insert<obelisk::slangir::SlangDialect, obelisk::ir::ObeliskDialect,
@@ -390,20 +388,21 @@ static int executeCompilation(const InputArgList &args) {
 
   if (native) {
     obelisk::driver::NativeOutputOptions nativeOptions;
-    nativeOptions.kind = emitObject
-                             ? obelisk::driver::NativeOutputKind::Object
+    nativeOptions.kind = emitObject ? obelisk::driver::NativeOutputKind::Object
                          : emitLLVM
                              ? obelisk::driver::NativeOutputKind::LLVMIR
                              : obelisk::driver::NativeOutputKind::Executable;
-    nativeOptions.outputPath =
-        args.getLastArgValue(OPT_o,
-                             emitObject ? "a.o" : emitLLVM ? "-" : "a.out")
+    nativeOptions.outputPath = args.getLastArgValue(OPT_o, emitObject ? "a.o"
+                                                           : emitLLVM ? "-"
+                                                                      : "a.out")
             .str();
-    nativeOptions.explicitSysroot =
-        args.getLastArgValue(OPT_sysroot_EQ).str();
+    nativeOptions.explicitSysroot = args.getLastArgValue(OPT_sysroot_EQ).str();
     nativeOptions.executablePath = driverExecutablePath;
-    nativeOptions.dpiLinkInputs.assign(dpiLinkInputs.begin(),
-                                       dpiLinkInputs.end());
+    nativeOptions.nativeLinkInputs =
+        std::move(classifiedInputs.nativeLinkInputs);
+    nativeOptions.sharedLibraryInputs =
+        std::move(classifiedInputs.sharedLibraries);
+    nativeOptions.vpi = vpiMode.str();
     nativeOptions.bytecode = executionTier == "bytecode";
     nativeOptions.optLevel = optLevel;
     nativeOptions.compileThreads = resolvedCompilerThreads;

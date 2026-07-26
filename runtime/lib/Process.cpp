@@ -610,8 +610,7 @@ obelisk_rt_status validateWait(obelisk_rt_process_instance_v1 &instance,
     action.flags = OBELISK_RT_ACTION_FRAME_WAIT_RECORD;
     action.auxiliary = field->size;
   }
-  constexpr uint32_t resumeFlags =
-      OBELISK_RT_ACTION_RESUME_REGION_VALID |
+  constexpr uint32_t resumeFlags = OBELISK_RT_ACTION_RESUME_REGION_VALID |
       OBELISK_RT_ACTION_RESUME_REGION_MASK;
   uint32_t resumeRegion =
       (action.flags & OBELISK_RT_ACTION_RESUME_REGION_MASK) >>
@@ -1851,8 +1850,7 @@ extern "C" uint64_t obelisk_rt_v1_scheduler_process_token(
 
 extern "C" obelisk_rt_status
 obelisk_rt_v1_monitor_register(obelisk_rt_context *context,
-                               uint64_t processToken,
-                               uint32_t designProcess) {
+                               uint64_t processToken, uint32_t designProcess) {
   if (!context || processToken == 0 || designProcess > 1)
     return OBELISK_RT_INVALID_ARGUMENT;
   try {
@@ -1879,16 +1877,14 @@ obelisk_rt_v1_monitor_control(obelisk_rt_context *context, uint32_t enabled) {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     context->monitorEnabled = enabled != 0;
     if (enabled)
-      wakeMonitorProcessUnlocked(context,
-                                 context->monitorLogicalProcessToken);
+      wakeMonitorProcessUnlocked(context, context->monitorLogicalProcessToken);
     return OBELISK_RT_OK;
   } catch (...) {
     return OBELISK_RT_INVALID_ARGUMENT;
   }
 }
 
-extern "C" uint32_t
-obelisk_rt_v1_monitor_current(obelisk_rt_context *context) {
+extern "C" uint32_t obelisk_rt_v1_monitor_current(obelisk_rt_context *context) {
   if (!context)
     return 0;
   try {
@@ -2171,8 +2167,8 @@ extern "C" void obelisk_rt_v1_scheduler_event_after(obelisk_rt_context *context,
         context->schedulerStatus = OBELISK_RT_INVALID_LIFECYCLE;
         return;
       }
-      context->scheduledDesignEvents.push_back(
-          {context->nextSchedulerSequence, dueTime, execRegion, stableID,
+      context->scheduledDesignEvents.push_back({context->nextSchedulerSequence,
+                                                dueTime, execRegion, stableID,
            retainedAutomaticID});
       if (retainedAutomaticID != 0)
         ++context->nativeAutomaticStates.find(retainedAutomaticID)
@@ -2251,6 +2247,240 @@ obelisk_rt_v1_native_state_register_static(obelisk_rt_context *context,
   }
 }
 
+extern "C" obelisk_rt_status
+obelisk_rt_v1_native_state_sync(obelisk_rt_context *context,
+                                const uint8_t *value, const uint8_t *unknown,
+                                uint64_t bitCount) {
+  if (!context || !value || !unknown || !context->execution ||
+      context->execution->state_bit_count > bitCount ||
+      (context->execution->state_bit_count + 7) / 8 != (bitCount + 7) / 8 ||
+      context->stateValue.size() !=
+          (context->execution->state_bit_count + 63) / 64 ||
+      context->stateUnknown.size() != context->stateValue.size())
+    return OBELISK_RT_LAYOUT_MISMATCH;
+  ContextTransaction transaction(context);
+  try {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    for (const auto &[id, state] : context->nativeStaticStates)
+      if (state.bitOffset > context->execution->state_bit_count ||
+          state.bitWidth >
+              context->execution->state_bit_count - state.bitOffset)
+        return OBELISK_RT_LAYOUT_MISMATCH;
+    std::fill(context->stateValue.begin(), context->stateValue.end(), 0);
+    std::fill(context->stateUnknown.begin(), context->stateUnknown.end(), 0);
+    for (uint64_t bit = 0; bit != context->execution->state_bit_count; ++bit) {
+      uint64_t mask = uint64_t{1} << (bit % 64);
+      if ((value[bit / 8] & static_cast<uint8_t>(1u << (bit % 8))) != 0)
+        context->stateValue[bit / 64] |= mask;
+      if ((unknown[bit / 8] & static_cast<uint8_t>(1u << (bit % 8))) != 0)
+        context->stateUnknown[bit / 64] |= mask;
+    }
+    return OBELISK_RT_OK;
+  } catch (...) {
+    return OBELISK_RT_INVALID_DESIGN;
+  }
+}
+
+namespace {
+
+bool staticOverrideRange(obelisk_rt_context *context, uint64_t handle,
+                         uint64_t width, uint64_t &absolute) {
+  uint32_t id = 0;
+  int64_t offset = 0;
+  if (!decodeNativeStatic(handle, id, offset) || offset < 0)
+    return false;
+  auto found = context->nativeStaticStates.find(id);
+  if (found == context->nativeStaticStates.end() ||
+      static_cast<uint64_t>(offset) > found->second.bitWidth ||
+      width > found->second.bitWidth - static_cast<uint64_t>(offset))
+    return false;
+  absolute = found->second.bitOffset + static_cast<uint64_t>(offset);
+  return context->execution &&
+         absolute <= context->execution->state_bit_count &&
+         width <= context->execution->state_bit_count - absolute &&
+         context->stateValue.size() ==
+             (context->execution->state_bit_count + 63) / 64 &&
+         context->stateUnknown.size() == context->stateValue.size();
+}
+
+} // namespace
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_native_override(obelisk_rt_context *context, uint8_t *globalValue,
+                              uint8_t *globalUnknown, uint64_t globalBitCount,
+                              uint64_t handle, uint64_t bitWidth,
+                              uint32_t descriptorKind, uint32_t assign,
+                              const uint8_t *value, const uint8_t *unknown) {
+  if (!context || !globalValue || !globalUnknown || !value || bitWidth == 0 ||
+      bitWidth > UINT64_MAX - 7 || assign > 1 ||
+      (descriptorKind != OBELISK_RT_DESCRIPTOR_STORAGE &&
+       descriptorKind != OBELISK_RT_DESCRIPTOR_NET) ||
+      (assign && descriptorKind != OBELISK_RT_DESCRIPTOR_STORAGE) ||
+      !context->execution ||
+      context->execution->state_bit_count != globalBitCount)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContextTransaction transaction(context);
+  try {
+    uint64_t absolute = 0;
+    uint64_t byteCount = (bitWidth + 7) / 8;
+    if (byteCount > std::numeric_limits<size_t>::max())
+      return OBELISK_RT_INVALID_ARGUMENT;
+    if (descriptorKind == OBELISK_RT_DESCRIPTOR_NET) {
+      {
+        std::lock_guard<std::recursive_mutex> lock(context->mutex);
+        if (!staticOverrideRange(context, handle, bitWidth, absolute))
+          return OBELISK_RT_INVALID_HANDLE;
+      }
+      return obelisk_rt_force_design_nets(context, absolute, bitWidth, value,
+                                          unknown);
+    }
+    std::vector<uint8_t> oldValue(static_cast<size_t>(byteCount), 0);
+    std::vector<uint8_t> oldUnknown(static_cast<size_t>(byteCount), 0);
+    std::vector<uint8_t> publishedValue(static_cast<size_t>(byteCount), 0);
+    std::vector<uint8_t> publishedUnknown(static_cast<size_t>(byteCount), 0);
+    {
+      std::lock_guard<std::recursive_mutex> lock(context->mutex);
+      if (!staticOverrideRange(context, handle, bitWidth, absolute))
+        return OBELISK_RT_INVALID_HANDLE;
+      size_t limbs = context->stateValue.size();
+      if (assign) {
+        if (context->assignMask.empty()) {
+          context->assignMask.assign(limbs, 0);
+          context->assignValue.assign(limbs, 0);
+          context->assignUnknown.assign(limbs, 0);
+        }
+      } else if (context->forceMask.empty()) {
+        context->forceMask.assign(limbs, 0);
+      }
+      for (uint64_t bit = 0; bit != bitWidth; ++bit) {
+        uint64_t destination = absolute + bit;
+        uint64_t mask = uint64_t{1} << (destination % 64);
+        uint64_t limb = destination / 64;
+        bool oldV = (context->stateValue[limb] & mask) != 0;
+        bool oldU = (context->stateUnknown[limb] & mask) != 0;
+        bool nextV = byteBit(value, bit);
+        bool nextU = unknown && byteBit(unknown, bit);
+        setByteBit(oldValue.data(), bit, oldV);
+        setByteBit(oldUnknown.data(), bit, oldU);
+        if (assign) {
+          context->assignMask[limb] |= mask;
+          context->assignValue[limb] = nextV
+                                           ? context->assignValue[limb] | mask
+                                           : context->assignValue[limb] & ~mask;
+          context->assignUnknown[limb] =
+              nextU ? context->assignUnknown[limb] | mask
+                    : context->assignUnknown[limb] & ~mask;
+          if (limb < context->forceMask.size() &&
+              (context->forceMask[limb] & mask) != 0) {
+            nextV = oldV;
+            nextU = oldU;
+          }
+        } else {
+          context->forceMask[limb] |= mask;
+        }
+        context->stateValue[limb] = nextV ? context->stateValue[limb] | mask
+                                          : context->stateValue[limb] & ~mask;
+        context->stateUnknown[limb] = nextU
+                                          ? context->stateUnknown[limb] | mask
+                                          : context->stateUnknown[limb] & ~mask;
+        setByteBit(globalValue, destination, nextV);
+        setByteBit(globalUnknown, destination, nextU);
+        setByteBit(publishedValue.data(), bit, nextV);
+        setByteBit(publishedUnknown.data(), bit, nextU);
+      }
+    }
+    obelisk_rt_v1_scheduler_signal_transition(
+        context, handle, bitWidth, oldValue.data(), oldUnknown.data(),
+        publishedValue.data(), publishedUnknown.data());
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_INVALID_DESIGN;
+  }
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_native_release_override(
+    obelisk_rt_context *context, uint8_t *globalValue, uint8_t *globalUnknown,
+    uint64_t globalBitCount, uint64_t handle, uint64_t bitWidth,
+    uint32_t descriptorKind, uint32_t assign) {
+  if (!context || !globalValue || !globalUnknown || bitWidth == 0 ||
+      bitWidth > UINT64_MAX - 7 || assign > 1 ||
+      (descriptorKind != OBELISK_RT_DESCRIPTOR_STORAGE &&
+       descriptorKind != OBELISK_RT_DESCRIPTOR_NET) ||
+      (assign && descriptorKind != OBELISK_RT_DESCRIPTOR_STORAGE) ||
+      !context->execution ||
+      context->execution->state_bit_count != globalBitCount)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContextTransaction transaction(context);
+  try {
+    uint64_t absolute = 0;
+    uint64_t byteCount = (bitWidth + 7) / 8;
+    if (byteCount > std::numeric_limits<size_t>::max())
+      return OBELISK_RT_INVALID_ARGUMENT;
+    if (descriptorKind == OBELISK_RT_DESCRIPTOR_NET) {
+      {
+        std::lock_guard<std::recursive_mutex> lock(context->mutex);
+        if (!staticOverrideRange(context, handle, bitWidth, absolute))
+          return OBELISK_RT_INVALID_HANDLE;
+      }
+      return obelisk_rt_release_design_nets(context, absolute, bitWidth);
+    }
+    std::vector<uint8_t> oldValue(static_cast<size_t>(byteCount), 0);
+    std::vector<uint8_t> oldUnknown(static_cast<size_t>(byteCount), 0);
+    std::vector<uint8_t> publishedValue(static_cast<size_t>(byteCount), 0);
+    std::vector<uint8_t> publishedUnknown(static_cast<size_t>(byteCount), 0);
+    bool changed = false;
+    {
+      std::lock_guard<std::recursive_mutex> lock(context->mutex);
+      if (!staticOverrideRange(context, handle, bitWidth, absolute))
+        return OBELISK_RT_INVALID_HANDLE;
+      for (uint64_t bit = 0; bit != bitWidth; ++bit) {
+        uint64_t destination = absolute + bit;
+        uint64_t mask = uint64_t{1} << (destination % 64);
+        uint64_t limb = destination / 64;
+        bool oldV = (context->stateValue[limb] & mask) != 0;
+        bool oldU = (context->stateUnknown[limb] & mask) != 0;
+        setByteBit(oldValue.data(), bit, oldV);
+        setByteBit(oldUnknown.data(), bit, oldU);
+        bool nextV = oldV, nextU = oldU;
+        if (assign) {
+          if (limb < context->assignMask.size())
+            context->assignMask[limb] &= ~mask;
+        } else {
+          if (limb < context->forceMask.size())
+            context->forceMask[limb] &= ~mask;
+          if (limb < context->assignMask.size() &&
+              (context->assignMask[limb] & mask) != 0) {
+            nextV = (context->assignValue[limb] & mask) != 0;
+            nextU = (context->assignUnknown[limb] & mask) != 0;
+            context->stateValue[limb] = nextV
+                                            ? context->stateValue[limb] | mask
+                                            : context->stateValue[limb] & ~mask;
+            context->stateUnknown[limb] =
+                nextU ? context->stateUnknown[limb] | mask
+                      : context->stateUnknown[limb] & ~mask;
+            setByteBit(globalValue, destination, nextV);
+            setByteBit(globalUnknown, destination, nextU);
+            changed |= oldV != nextV || oldU != nextU;
+          }
+        }
+        setByteBit(publishedValue.data(), bit, nextV);
+        setByteBit(publishedUnknown.data(), bit, nextU);
+      }
+    }
+    if (changed)
+      obelisk_rt_v1_scheduler_signal_transition(
+          context, handle, bitWidth, oldValue.data(), oldUnknown.data(),
+          publishedValue.data(), publishedUnknown.data());
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_INVALID_DESIGN;
+  }
+}
+
 extern "C" uint64_t obelisk_rt_v1_native_state_static_handle(uint32_t id) {
   return obelisk_rt_stable_handle_encode(OBELISK_RT_STABLE_HANDLE_STATIC, id,
                                          0);
@@ -2294,8 +2524,9 @@ obelisk_rt_status publishNativeAutomaticState(obelisk_rt_context *context,
 
 } // namespace
 
-obelisk_rt_status obelisk_rt_native_state_alloc_managed(
-    obelisk_rt_context *context, obelisk_rt_object_v1 *value,
+obelisk_rt_status
+obelisk_rt_native_state_alloc_managed(obelisk_rt_context *context,
+                                      obelisk_rt_object_v1 *value,
     uint64_t *outHandle) {
   if (!outHandle)
     return OBELISK_RT_INVALID_ARGUMENT;
@@ -2457,8 +2688,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_alloc_with_roots(
   if (!outHandle)
     return OBELISK_RT_INVALID_ARGUMENT;
   *outHandle = UINT64_MAX;
-  if (!bitOffsets || count == 0 ||
-      count > std::numeric_limits<size_t>::max())
+  if (!bitOffsets || count == 0 || count > std::numeric_limits<size_t>::max())
     return OBELISK_RT_INVALID_ARGUMENT;
   return guarded(context, [&] {
     if (!unknown && bitWidth == 64 && count == 1 && bitOffsets[0] == 0) {
@@ -2552,8 +2782,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
       if (state.managedRootRegistered) {
         if (unknownPlane != 0 || offset != 0 || bitWidth != 64)
           return OBELISK_RT_INVALID_HANDLE;
-        std::memcpy(outValue, &state.managedValue,
-                    sizeof(state.managedValue));
+        std::memcpy(outValue, &state.managedValue, sizeof(state.managedValue));
         return OBELISK_RT_OK;
       }
       const std::vector<uint8_t> &plane =
@@ -2707,6 +2936,15 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_store_plane(
           static_cast<uint64_t>(coordinate) >= rootWidth)
         continue;
       uint64_t destination = rootOffset + static_cast<uint64_t>(coordinate);
+      uint64_t destinationMask = uint64_t{1} << (destination % 64);
+      bool forced =
+          destination / 64 < context->forceMask.size() &&
+          (context->forceMask[destination / 64] & destinationMask) != 0;
+      bool assigned =
+          destination / 64 < context->assignMask.size() &&
+          (context->assignMask[destination / 64] & destinationMask) != 0;
+      if (canonical && (forced || assigned))
+        continue;
       bool old =
           canonical
               ? (((*canonicalPlane)[destination / 64] >> (destination % 64)) &
@@ -3196,6 +3434,15 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
             }
             uint64_t planeBit =
                 staticState ? staticState->bitOffset + localBit : localBit;
+            uint64_t canonicalMask = uint64_t{1} << (planeBit % 64);
+            bool forced =
+                planeBit / 64 < context->forceMask.size() &&
+                (context->forceMask[planeBit / 64] & canonicalMask) != 0;
+            bool assigned =
+                planeBit / 64 < context->assignMask.size() &&
+                (context->assignMask[planeBit / 64] & canonicalMask) != 0;
+            if (canonical && (forced || assigned))
+              continue;
             uint64_t storageBit = automatic ? localBit : planeBit;
             uint64_t destinationByte = storageBit / 8;
             uint8_t destinationMask =
@@ -3297,6 +3544,12 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
               return false;
             uint64_t limb = destination / 64;
             uint64_t mask = uint64_t{1} << (destination % 64);
+            bool forced = destination / 64 < context->forceMask.size() &&
+                          (context->forceMask[destination / 64] & mask) != 0;
+            bool assigned = destination / 64 < context->assignMask.size() &&
+                            (context->assignMask[destination / 64] & mask) != 0;
+            if (forced || assigned)
+              continue;
             bool oldValue = (context->stateValue[limb] & mask) != 0;
             bool oldUnknown = (context->stateUnknown[limb] & mask) != 0;
             bool newValue = planeBit(update.value, bit);

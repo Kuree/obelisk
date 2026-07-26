@@ -34,10 +34,10 @@ object to the final link:
 
 ```sh
 cc -c dpi.c -I"$RESOURCE_DIR/include" -o dpi.o
-obelisk design.sv --dpi-link=dpi.o -o simulator
+obelisk design.sv dpi.o -o simulator
 
 c++ -c dpi.cpp -I"$RESOURCE_DIR/include" -o dpi.o
-obelisk design.sv --dpi-link=dpi.o -o simulator
+obelisk design.sv dpi.o -o simulator
 ```
 
 The generated header has `extern "C"` guards, so a C++ implementation should
@@ -47,18 +47,31 @@ Static archives and shared libraries are ordinary repeatable linker inputs:
 
 ```sh
 ar rcs libdpi.a dpi.o
-obelisk design.sv --dpi-link=libdpi.a -o simulator
+obelisk design.sv libdpi.a -o simulator
 
 cc -shared -o libdpi.so dpi.pic.o
-obelisk design.sv --dpi-link=libdpi.so -o simulator
+obelisk design.sv libdpi.so -o simulator
 ```
 
-Shared objects retain normal ELF `DT_NEEDED`, SONAME, and loader search-path
-behavior. Configure the deployment's library path in the usual way; Obelisk
-does not add an RPATH or call `dlopen`. Missing imported C symbols are strong
-linker errors. `--dpi-link` is intentionally rejected for `-c`, textual LLVM
-output, and non-link actions because those artifacts can be linked by the
-caller.
+Direct inputs are classified by contents rather than filename suffix. ELF
+objects, archives, LLVM bitcode, and ELF shared objects are passed to the
+native link; text remains SystemVerilog input. Native inputs are rejected for
+`-c`, textual LLVM output, and non-link actions because those artifacts can be
+linked by the caller.
+
+Every shared object is retained as a normal `DT_NEEDED` dependency under
+`--no-as-needed`. Obelisk never copies it. The supplied directory is added to
+the simulator's `DT_RUNPATH`: relative inputs use a literal `$ORIGIN`-relative
+entry and absolute inputs use their normalized absolute parent directory.
+SONAMEs become runtime loader identities. A no-SONAME library is linked by
+basename so an absolute build path is not recorded in `DT_NEEDED`. Duplicate
+loader identities and SONAMEs containing `/` are rejected.
+
+During compilation Obelisk loads each shared object to validate it and probes
+its module handle for `vlog_startup_routines`. This can execute ELF
+constructors, so native inputs must be trusted. A shared object without that
+symbol is an ordinary DPI/helper dependency. A VPI startup object requires
+`--vpi=read` or `--vpi=full`.
 
 Native DPI objects, static archives, and shared libraries remain supported at
 every optimization level. They are ordinary native linker inputs and do not
@@ -77,14 +90,14 @@ falls back to native or non-LTO linking.
 Native execution is the default:
 
 ```sh
-obelisk design.sv --dpi-link=dpi.o -o simulator
+obelisk design.sv dpi.o -o simulator
 ```
 
 To embed and require the bytecode interpreter:
 
 ```sh
 obelisk --execution-tier=bytecode design.sv \
-  --dpi-link=dpi.o -o simulator
+  dpi.o -o simulator
 ```
 
 Bytecode contains stable import and scope IDs, source coordinates, and typed

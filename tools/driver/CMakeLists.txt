@@ -6,9 +6,15 @@ set(OBELISK_RESOURCE_DIR "${CMAKE_BINARY_DIR}/lib/obelisk")
 file(MAKE_DIRECTORY "${OBELISK_RESOURCE_DIR}/include")
 configure_file("${PROJECT_SOURCE_DIR}/runtime/include/svdpi.h"
                "${OBELISK_RESOURCE_DIR}/include/svdpi.h" COPYONLY)
+foreach(vpi_header vpi_user.h sv_vpi_user.h vpi_compatibility.h)
+  configure_file(
+    "${OBELISK_SLANG_SOURCE_DIR}/external/ieee1800/${vpi_header}"
+    "${OBELISK_RESOURCE_DIR}/include/${vpi_header}" COPYONLY)
+endforeach()
 
 set(LLVM_LINK_COMPONENTS
   Analysis
+  BinaryFormat
   BitWriter
   CodeGen
   Core
@@ -16,6 +22,7 @@ set(LLVM_LINK_COMPONENTS
   IPO
   MC
   Option
+  Object
   Passes
   ScalarOpts
   Support
@@ -29,6 +36,7 @@ set(LLVM_LINK_COMPONENTS
 add_llvm_executable(obelisk
   driver.cpp
   NativeBackend.cpp
+  NativeInputs.cpp
   Options.cpp
 )
 

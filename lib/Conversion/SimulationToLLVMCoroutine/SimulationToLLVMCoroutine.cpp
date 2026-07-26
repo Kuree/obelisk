@@ -382,8 +382,8 @@ FailureOr<StorageProperties> storageProperties(Type type,
   // transferred payload and align its start according to the target ABI. This
   // keeps native and bytecode frames compatible without copying ABI padding
   // past the bytecode register.
-  llvm::TypeSize typeSize =
-      isa<sim::ArgumentRefType>(type) ? layout.getTypeStoreSize(llvmType)
+  llvm::TypeSize typeSize = isa<sim::ArgumentRefType>(type)
+                                ? layout.getTypeStoreSize(llvmType)
                                       : layout.getTypeAllocSize(llvmType);
   if (typeSize.isScalable() || typeSize.getFixedValue() == 0)
     return failure();
@@ -997,14 +997,13 @@ public:
     Location location = operation.getLoc();
     auto [context, pointer] = loadCurrentRuntimeContext(rewriter, location);
     (void)pointer;
-    Value status =
-        LLVM::CallOp::create(
+    Value status = LLVM::CallOp::create(
             rewriter, location, TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
                                "obelisk_rt_v1_monitor_register"),
             ValueRange{context, adaptor.getProcess().front(),
-                       llvmConstant(rewriter, location, rewriter.getI32Type(),
-                                    0)})
+                                  llvmConstant(rewriter, location,
+                                               rewriter.getI32Type(), 0)})
             .getResult();
     reportRuntimeControlStatus(rewriter, location, context, status);
     rewriter.eraseOp(operation);
@@ -1049,15 +1048,14 @@ public:
     Location location = operation.getLoc();
     auto [context, pointer] = loadCurrentRuntimeContext(rewriter, location);
     (void)pointer;
-    Value current =
-        LLVM::CallOp::create(
+    Value current = LLVM::CallOp::create(
             rewriter, location, TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
                                "obelisk_rt_v1_monitor_current"),
             ValueRange{context})
             .getResult();
-    rewriter.replaceOpWithNewOp<arith::TruncIOp>(
-        operation, rewriter.getI1Type(), current);
+    rewriter.replaceOpWithNewOp<arith::TruncIOp>(operation,
+                                                 rewriter.getI1Type(), current);
     return success();
   }
 };
@@ -5086,6 +5084,136 @@ private:
   uint64_t stateBitCount;
 };
 
+class OverrideConversion final
+    : public OpConversionPattern<sim::SimOverrideOp> {
+public:
+  OverrideConversion(const TypeConverter &converter, MLIRContext *context,
+                     uint64_t stateBitCount)
+      : OpConversionPattern(converter, context), stateBitCount(stateBitCount) {}
+
+  LogicalResult
+  matchAndRewrite(sim::SimOverrideOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getTarget().size() != 1 || adaptor.getValue().empty())
+      return failure();
+    Type valueType = op.getValue().getType();
+    std::optional<unsigned> width = nativeStateWidth(valueType);
+    if (!width)
+      return failure();
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    IntegerType plane = rewriter.getIntegerType(*width);
+    IntegerType i32 = rewriter.getI32Type();
+    IntegerType i64 = rewriter.getI64Type();
+    Location location = op.getLoc();
+
+    Value value = adaptor.getValue().front();
+    if (valueType.isF64())
+      value = arith::BitcastOp::create(rewriter, location, plane, value);
+    Value valueStorage = entryAlloca(rewriter, location, plane, 1, 1);
+    LLVM::StoreOp::create(rewriter, location, value, valueStorage, 1);
+    Value unknownStorage = LLVM::ZeroOp::create(rewriter, location, pointer);
+    if (adaptor.getValue().size() == 2) {
+      unknownStorage = entryAlloca(rewriter, location, plane, 1, 1);
+      LLVM::StoreOp::create(rewriter, location, adaptor.getValue()[1],
+                            unknownStorage, 1);
+    }
+    Value contextAddress = LLVM::AddressOfOp::create(
+        rewriter, location, pointer, "__obelisk_current_context");
+    Value context =
+        LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
+    Value globalValue = LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                                  "__obelisk_state_value");
+    Value globalUnknown = LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                                    "__obelisk_state_unknown");
+    uint32_t descriptorKind = isa<sim::NetType>(op.getTarget().getType())
+                                  ? OBELISK_RT_DESCRIPTOR_NET
+                                  : OBELISK_RT_DESCRIPTOR_STORAGE;
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_native_override"),
+            ValueRange{
+                context, globalValue, globalUnknown,
+                llvmConstant(rewriter, location, i64, stateBitCount),
+                adaptor.getTarget().front(),
+                llvmConstant(rewriter, location, i64, *width),
+                llvmConstant(rewriter, location, i32, descriptorKind),
+                llvmConstant(rewriter, location, i32, op.getIsAssign() ? 1 : 0),
+                valueStorage, unknownStorage})
+            .getResult();
+    LLVM::CallOp::create(rewriter, location, TypeRange{},
+                         SymbolRefAttr::get(rewriter.getContext(),
+                                            "obelisk_rt_v1_scheduler_fail"),
+                         ValueRange{context, status});
+    rewriter.eraseOp(op);
+    return success();
+  }
+
+private:
+  uint64_t stateBitCount;
+};
+
+class ReleaseOverrideConversion final
+    : public OpConversionPattern<sim::SimReleaseOverrideOp> {
+public:
+  ReleaseOverrideConversion(const TypeConverter &converter,
+                            MLIRContext *context, uint64_t stateBitCount)
+      : OpConversionPattern(converter, context), stateBitCount(stateBitCount) {}
+
+  LogicalResult
+  matchAndRewrite(sim::SimReleaseOverrideOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getTarget().size() != 1)
+      return failure();
+    Type elementType;
+    if (auto ref = dyn_cast<sim::RefType>(op.getTarget().getType()))
+      elementType = ref.getElementType();
+    else if (auto net = dyn_cast<sim::NetType>(op.getTarget().getType()))
+      elementType = net.getElementType();
+    std::optional<unsigned> width = nativeStateWidth(elementType);
+    if (!width)
+      return failure();
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    IntegerType i32 = rewriter.getI32Type();
+    IntegerType i64 = rewriter.getI64Type();
+    Location location = op.getLoc();
+    Value contextAddress = LLVM::AddressOfOp::create(
+        rewriter, location, pointer, "__obelisk_current_context");
+    Value context =
+        LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
+    Value globalValue = LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                                  "__obelisk_state_value");
+    Value globalUnknown = LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                                    "__obelisk_state_unknown");
+    uint32_t descriptorKind = isa<sim::NetType>(op.getTarget().getType())
+                                  ? OBELISK_RT_DESCRIPTOR_NET
+                                  : OBELISK_RT_DESCRIPTOR_STORAGE;
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_native_release_override"),
+            ValueRange{context, globalValue, globalUnknown,
+                       llvmConstant(rewriter, location, i64, stateBitCount),
+                       adaptor.getTarget().front(),
+                       llvmConstant(rewriter, location, i64, *width),
+                       llvmConstant(rewriter, location, i32, descriptorKind),
+                       llvmConstant(rewriter, location, i32,
+                                    op.getIsAssign() ? 1 : 0)})
+            .getResult();
+    LLVM::CallOp::create(rewriter, location, TypeRange{},
+                         SymbolRefAttr::get(rewriter.getContext(),
+                                            "obelisk_rt_v1_scheduler_fail"),
+                         ValueRange{context, status});
+    rewriter.eraseOp(op);
+    return success();
+  }
+
+private:
+  uint64_t stateBitCount;
+};
+
 class NetReadConversion final : public OpConversionPattern<sim::SimNetReadOp> {
 public:
   NetReadConversion(const TypeConverter &converter, MLIRContext *context,
@@ -8034,8 +8162,7 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
   uint32_t homeRegion = executableRegion(function.getHomeRegion());
   if (homeRegion == UINT32_MAX)
     return function.emitOpError("has no executable runtime home region");
-  uint32_t scheduleFlags =
-      OBELISK_RT_SCHEDULE_HOME(homeRegion) |
+  uint32_t scheduleFlags = OBELISK_RT_SCHEDULE_HOME(homeRegion) |
       (function.getEntryKind() == sim::EntryKind::Final
            ? OBELISK_RT_SCHEDULE_FINAL
            : 0);
@@ -8427,6 +8554,21 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
        LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_native_override", IntegerType::get(context, 32),
+      {LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
+       LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
+       IntegerType::get(context, 64), IntegerType::get(context, 64),
+       IntegerType::get(context, 32), IntegerType::get(context, 32),
+       LLVM::LLVMPointerType::get(context),
+       LLVM::LLVMPointerType::get(context)});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_native_release_override",
+      IntegerType::get(context, 32),
+      {LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
+       LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
+       IntegerType::get(context, 64), IntegerType::get(context, 64),
+       IntegerType::get(context, 32), IntegerType::get(context, 32)});
+  getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_argument_ref_load", IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
@@ -8697,8 +8839,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       SimDisableChildrenConversion, SimControlEnterConversion,
       SimControlLeaveConversion, SimControlDisableConversion,
       SimStaticOnceConversion, SimMonitorRegisterConversion,
-      SimMonitorControlConversion, SimMonitorCurrentConversion>(
-      packedConverter, context);
+      SimMonitorControlConversion, SimMonitorCurrentConversion>(packedConverter,
+                                                                context);
   packedPatterns.add<ContextHandleConversion<sim::SimContextStorageOp>>(
       packedConverter, context, stateLayout->storage);
   packedPatterns.add<ContextHandleConversion<sim::SimContextNetOp>>(
@@ -8707,6 +8849,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       packedConverter, context, stateLayout->drivers);
   packedPatterns.add<EventHandleConversion,
                      StaticHandleExtractConversion<sim::SimRefExtractOp>,
+                     StaticHandleExtractConversion<sim::SimNetExtractOp>,
                      StaticHandleExtractConversion<sim::SimDriverExtractOp>,
                      DynamicHandleExtractConversion<sim::SimRefDynExtractOp>,
                      DynamicHandleExtractConversion<sim::SimDriverDynExtractOp>,
@@ -8717,7 +8860,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                      EventTriggerConversion, EventTriggeredConversion,
                      EventEqualConversion, SpawnTypeConversion>(packedConverter,
                                                                 context);
-  packedPatterns.add<RefLoadConversion, RefStoreConversion, NetReadConversion>(
+  packedPatterns.add<RefLoadConversion, RefStoreConversion, OverrideConversion,
+                     ReleaseOverrideConversion, NetReadConversion>(
       packedConverter, context, stateLayout->bitCount);
   packedPatterns
       .add<ClassNullConversion, ClassAllocConversion, ClassCopyConversion,
@@ -8750,26 +8894,25 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   packedTarget.addIllegalOp<
       sim::SimContextStorageOp, sim::SimContextNetOp, sim::SimContextDriverOp,
       sim::SimContextEventOp, sim::SimRefAllocOp, sim::SimRefLoadOp,
-      sim::SimRefStoreOp, sim::SimRefExtractOp, sim::SimRefDynExtractOp,
+      sim::SimRefStoreOp, sim::SimOverrideOp, sim::SimReleaseOverrideOp,
+      sim::SimNetExtractOp, sim::SimRefExtractOp, sim::SimRefDynExtractOp,
       sim::SimRefSubelementOp, sim::SimRefArrayElementOp, sim::SimNetReadOp,
       sim::SimDriverDriveOp, sim::SimDriverExtractOp,
       sim::SimDriverDynExtractOp, sim::SimDriverSubelementOp,
       sim::SimDriverArrayElementOp, sim::SimNBAEnqueueOp,
       sim::SimEventTriggerOp, sim::SimEventTriggeredOp, sim::SimEventEqualOp,
       sim::SimDisableChildrenOp, sim::SimControlEnterOp, sim::SimControlLeaveOp,
-      sim::SimControlDisableOp, sim::SimStaticOnceOp,
-      sim::SimMonitorRegisterOp, sim::SimMonitorControlOp,
-      sim::SimMonitorCurrentOp,
-      sim::SimBitsDynExtractOp,
-      sim::SimClassNullOp, sim::SimClassAllocOp, sim::SimClassCopyOp,
-      sim::SimClassIsInstanceOp, sim::SimClassIdOp, sim::SimClassCastOp,
-      sim::SimClassFieldRefOp, sim::SimClassRootBindOp, sim::SimManagedLoadOp,
-      sim::SimManagedStoreOp, sim::SimManagedNBAEnqueueOp,
-      sim::SimArgumentRefFromRefOp, sim::SimArgumentRefFromManagedOp,
-      sim::SimArgumentRefLoadOp, sim::SimArgumentRefStoreOp,
-      sim::SimClassDirectCallOp, sim::SimClassVirtualCallOp,
-      sim::SimWeakCreateOp, sim::SimWeakGetOp, sim::SimWeakClearOp,
-      sim::SimGCSafepointOp>();
+      sim::SimControlDisableOp, sim::SimStaticOnceOp, sim::SimMonitorRegisterOp,
+      sim::SimMonitorControlOp, sim::SimMonitorCurrentOp,
+      sim::SimBitsDynExtractOp, sim::SimClassNullOp, sim::SimClassAllocOp,
+      sim::SimClassCopyOp, sim::SimClassIsInstanceOp, sim::SimClassIdOp,
+      sim::SimClassCastOp, sim::SimClassFieldRefOp, sim::SimClassRootBindOp,
+      sim::SimManagedLoadOp, sim::SimManagedStoreOp,
+      sim::SimManagedNBAEnqueueOp, sim::SimArgumentRefFromRefOp,
+      sim::SimArgumentRefFromManagedOp, sim::SimArgumentRefLoadOp,
+      sim::SimArgumentRefStoreOp, sim::SimClassDirectCallOp,
+      sim::SimClassVirtualCallOp, sim::SimWeakCreateOp, sim::SimWeakGetOp,
+      sim::SimWeakClearOp, sim::SimGCSafepointOp>();
   packedTarget
       .addIllegalOp<sim::SimAggregateDefaultOp, sim::SimAggregateConstructOp,
                     sim::SimAggregateExtractOp, sim::SimAggregateInsertOp,

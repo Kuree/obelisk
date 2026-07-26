@@ -233,6 +233,8 @@ enum Opcode : uint16_t {
   TaskCall = OBELISK_RT_DB_TASK_CALL,
   VirtualCall = OBELISK_RT_DB_VIRTUAL_CALL,
   ClearFrameRoot = OBELISK_RT_DB_CLEAR_FRAME_ROOT,
+  OverrideState = OBELISK_RT_DB_OVERRIDE_STATE,
+  ReleaseState = OBELISK_RT_DB_RELEASE_STATE,
 };
 
 struct Layout {
@@ -2317,6 +2319,9 @@ private:
     if (auto op = dyn_cast<sim::SimRefExtractOp>(operation))
       return encodeHandleOffset(plan, op.getResult(), op.getInput(),
                                 op.getLowBit(), Value{});
+    if (auto op = dyn_cast<sim::SimNetExtractOp>(operation))
+      return encodeHandleOffset(plan, op.getResult(), op.getInput(),
+                                op.getLowBit(), Value{});
     if (auto op = dyn_cast<sim::SimDriverExtractOp>(operation))
       return encodeHandleOffset(plan, op.getResult(), op.getInput(),
                                 op.getLowBit(), Value{});
@@ -2350,6 +2355,16 @@ private:
     if (auto op = dyn_cast<sim::SimRefStoreOp>(operation)) {
       emit({StoreState, 0, 0, reg(plan, op.getReference()),
             reg(plan, op.getValue())});
+      return success();
+    }
+    if (auto op = dyn_cast<sim::SimOverrideOp>(operation)) {
+      emit({OverrideState, static_cast<uint16_t>(op.getIsAssign() ? 1 : 0), 0,
+            reg(plan, op.getTarget()), reg(plan, op.getValue())});
+      return success();
+    }
+    if (auto op = dyn_cast<sim::SimReleaseOverrideOp>(operation)) {
+      emit({ReleaseState, static_cast<uint16_t>(op.getIsAssign() ? 1 : 0), 0,
+            reg(plan, op.getTarget())});
       return success();
     }
     if (auto op = dyn_cast<sim::SimDriverDriveOp>(operation)) {
@@ -2947,11 +2962,13 @@ private:
     Type element;
     if (auto reference = dyn_cast<sim::RefType>(result.getType()))
       element = reference.getElementType();
+    else if (auto net = dyn_cast<sim::NetType>(result.getType()))
+      element = net.getElementType();
     else if (auto driver = dyn_cast<sim::DriverType>(result.getType()))
       element = driver.getElementType();
     else
       return result.getDefiningOp()->emitOpError(
-          "view result is not a reference or driver");
+          "view result is not a reference, net, or driver");
     std::optional<uint32_t> width = simulationWidth(element);
     if (!width)
       return result.getDefiningOp()->emitOpError(
@@ -3258,8 +3275,7 @@ private:
     if (actionFlags == UINT32_MAX)
       return operation.emitOpError("has no executable resume region");
     emit({Suspend, OBELISK_RT_SUSPEND_OBSERVER, 0, offsetRegister, 0, 0,
-          actionFlags,
-          suspension->continuationID});
+          actionFlags, suspension->continuationID});
     return success();
   }
 
@@ -3357,8 +3373,7 @@ private:
     if (actionFlags == UINT32_MAX)
       return operation->emitOpError("has no executable resume region");
     emit({Suspend, static_cast<uint16_t>(kind), 0, offsetRegister, 0, 0,
-          actionFlags,
-          suspension->continuationID});
+          actionFlags, suspension->continuationID});
     return success();
   }
 
@@ -3621,9 +3636,10 @@ private:
       else if (auto driver = dyn_cast<sim::SimDriverDeclOp>(operation))
         objects.push_back({4, profile & kDatabaseProfileWrite ? 3u : 1u,
                            driver.getId(), driver.getScopeId(),
-                           driver.getHierarchicalName()
-                               .value_or(driver.getDebugName().value_or(
-                                   fallbackName("driver", driver.getId())))
+                           (driver.getHierarchicalName().value_or(
+                                driver.getDebugName().value_or(
+                                    fallbackName("driver", driver.getId()))) +
+                            ".$driver." + Twine(driver.getId()))
                                .str(),
                            driver.getType(),
                            state.drivers.lookup(driver.getId()),

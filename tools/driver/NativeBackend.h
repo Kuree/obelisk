@@ -20,12 +20,34 @@ namespace obelisk::driver {
 
 enum class NativeOutputKind { Object, LLVMIR, Executable };
 
+struct SharedLibraryInput {
+  // The canonical path is used for compiler-side loading and path
+  // deduplication.  The supplied directory remains the runtime search
+  // location so a symlinked input can be deployed without being rewritten.
+  std::string canonicalPath;
+  std::string suppliedDirectory;
+  std::string basename;
+  std::string loaderName;
+  bool hasSoname = false;
+  bool hasVPIStartup = false;
+  bool suppliedPathWasAbsolute = false;
+};
+
+struct NativeLinkInput {
+  enum class Kind { File, SharedLibrary };
+  Kind kind = Kind::File;
+  std::string path;
+  size_t sharedLibraryIndex = 0;
+};
+
 struct NativeOutputOptions {
   NativeOutputKind kind = NativeOutputKind::Executable;
   std::string outputPath;
   std::string explicitSysroot;
   std::string executablePath;
-  std::vector<std::string> dpiLinkInputs;
+  std::vector<NativeLinkInput> nativeLinkInputs;
+  std::vector<SharedLibraryInput> sharedLibraryInputs;
+  std::string vpi = "off";
   bool bytecode = false;
   uint32_t optLevel = 3;
   uint32_t compileThreads = 1;

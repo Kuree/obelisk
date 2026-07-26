@@ -114,6 +114,8 @@ namespace {
 void destroyContextNow(obelisk_rt_context *context) noexcept {
   std::vector<ScheduledProcess> processes;
   try {
+    if (context->vpiState)
+      obelisk_rt_v1_vpi_shutdown(context);
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
       processes.swap(context->scheduledProcesses);

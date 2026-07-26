@@ -161,7 +161,7 @@ design into checked runtime bytecode, and can fully lower the same boundary to
 the MLIR LLVM dialect. The driver translates that dialect to LLVM IR, emits an
 x86-64 ELF object, or links a standalone PIE simulator against the in-tree
 runtime and a pinned hermetic sysroot. Native execution is currently serial and
-requires `--threads=1` and `--vpi=off`.
+requires `--threads=1`; all three VPI capability profiles are linkable.
 
 The `obelisk_sim` dialect is the target-independent executable boundary between
 semantic SystemVerilog and the runtime. A design is flattened into deterministic
@@ -645,13 +645,13 @@ introduced by tuning a heuristic until it fits one library's shapes.
 
 ### VPI observability and storage optimization
 
-The completed bytecode tier will contain the dynamic simulator-side
-implementation of VPI traversal, callback glue, system tasks, and force or
-release orchestration, but it will not remove VPI's semantic effect on native
-code. Unrestricted writable VPI is an optimization fence for every VPI-visible
-object because a plugin may discover that object by hierarchy, read or write
-its current value, write X or Z, force or release it, or register a value-change
-callback.
+The encoded execution/design image supplies VPI traversal and immediate
+backdoor access for both native and bytecode execution. Callback glue and
+system-task dispatch remain future extensions. VPI still has a semantic effect
+on native code: unrestricted writable VPI is an optimization fence for every
+VPI-visible object because a plugin may discover that object by hierarchy,
+read or write its current value, write X or Z, or force or release it. Future
+callback support extends that fence to dynamically registered observations.
 
 Full VPI therefore prevents elimination of a visible object's logical identity,
 coalescing of observable updates, assumptions that external readers, writers,
@@ -686,8 +686,12 @@ VPI full
   assume external mutation, callbacks, and force or release are possible
 ```
 
-Today these modes affect observability and NBA-policy metadata only; VPI
-traversal, mutation, callbacks, force, and release are not executable yet.
+The current runtime implements startup-table discovery and invocation plus the
+hierarchical/scoped backdoor subset described in `docs/vpi.md`. Read mode
+supports traversal and immediate reads. Full mode additionally supports
+immediate deposits, force, and release through the canonical state planes.
+Callbacks, delayed writes, system-task dispatch, strengths, and waveform
+registration remain future work.
 
 An optional plugin capability manifest may restrict the visible hierarchy and
 requested operations further, for example:
@@ -956,7 +960,7 @@ obelisk -emit-schedule --threads=8 --vpi=read design.sv
 
 # Generate and link the supported DPI-C import boundary.
 obelisk --emit-dpi-header design.sv -o design_dpi.h
-obelisk --dpi-link=dpi.o design.sv -o simulator
+obelisk design.sv dpi.o -o simulator
 
 # Inspect or convert persisted source IR.
 obelisk -emit-slang design.sv | obelisk-opt
@@ -969,10 +973,11 @@ supports include paths, system include paths, macro definitions and removals,
 command files, library paths/extensions/files, single compilation units,
 library macro inheritance, selected tops, parameter overrides, language
 revision, timescale, warning control, direct advanced slang arguments,
-optimization levels, native or bytecode execution, DPI link inputs, a pinned or
+optimization levels, native or bytecode execution, automatic native link
+inputs, a pinned or
 user-supplied native sysroot, VPI capability profiles for inspection, and
 independent compiler and generated-worker counts. Native executable emission
-currently accepts only one worker and VPI off.
+currently accepts only one worker.
 
 `obelisk-opt` registers the standard MLIR dialects, all four Obelisk-owned
 dialects, the semantic conversion pass, and the simulation-lowering pipeline.

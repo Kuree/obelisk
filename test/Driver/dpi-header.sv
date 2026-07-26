@@ -5,7 +5,8 @@
 // RUN: %llvm_dist/bin/clang++ -x c++ -fsyntax-only -include %t.h \
 // RUN:   -I$(obelisk --print-resource-dir)/include /dev/null
 // RUN: test -f "$(obelisk --print-resource-dir)/include/svdpi.h"
-// RUN: not obelisk --emit-dpi-header --dpi-link=%t.o %s 2>&1 \
+// RUN: %llvm_dist/bin/clang -x c -c /dev/null -o %t.o
+// RUN: not obelisk --emit-dpi-header %t.o %s 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=LINK-ONLY
 
 module dpi_header;
@@ -33,4 +34,4 @@ endmodule
 // HEADER: int64_t renamed(int8_t arg0, svLogic arg1);
 // HEADER: int transfer(const svLogicVecVal *arg0, svBitVecVal *arg1);
 // HEADER: uint8_t unsigned_types(uint8_t arg0, uint32_t arg1, const svLogicVecVal *arg2, svBitVecVal *arg3);
-// LINK-ONLY: --dpi-link is only valid when linking a native executable
+// LINK-ONLY: native input '{{.*}}' is only valid when linking a final executable

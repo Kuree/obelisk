@@ -521,6 +521,8 @@ class ObeliskConcurrentAssertionStatementASTNodeOp<string mnemonic>
 
 class ObeliskProceduralAssignStatementASTNodeOp<string mnemonic>
     : ObeliskASTNodeOp<mnemonic, [], (ins BoolAttr:$is_force)>;
+class ObeliskProceduralDeassignStatementASTNodeOp<string mnemonic>
+    : ObeliskASTNodeOp<mnemonic, [], (ins BoolAttr:$is_release)>;
 class ObeliskTimingASTNodeOp<string mnemonic> : ObeliskASTNodeOp<mnemonic>;
 
 class ObeliskDelay3TimingASTNodeOp<string mnemonic>

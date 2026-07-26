@@ -43,7 +43,6 @@ endmodule
 // HELP-DAG: -emit-llvm
 // HELP-DAG: --emit-dpi-header
 // HELP-DAG: --execution-tier=<native|bytecode>
-// HELP-DAG: --dpi-link=<path>
 // HELP-DAG: --print-resource-dir
 // HELP-DAG: -c
 // HELP-DAG: --sysroot=<dir>

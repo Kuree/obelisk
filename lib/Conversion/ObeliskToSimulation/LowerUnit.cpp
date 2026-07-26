@@ -51,10 +51,12 @@ static_assert(
                             sim::EventRegion::Preponed) &&
     sameEventRegionEncoding(ir::EventRegion::PreActive,
                             sim::EventRegion::PreActive) &&
-    sameEventRegionEncoding(ir::EventRegion::Active, sim::EventRegion::Active) &&
+        sameEventRegionEncoding(ir::EventRegion::Active,
+                                sim::EventRegion::Active) &&
     sameEventRegionEncoding(ir::EventRegion::Inactive,
                             sim::EventRegion::Inactive) &&
-    sameEventRegionEncoding(ir::EventRegion::PreNBA, sim::EventRegion::PreNBA) &&
+        sameEventRegionEncoding(ir::EventRegion::PreNBA,
+                                sim::EventRegion::PreNBA) &&
     sameEventRegionEncoding(ir::EventRegion::NBA, sim::EventRegion::NBA) &&
     sameEventRegionEncoding(ir::EventRegion::PostNBA,
                             sim::EventRegion::PostNBA) &&
@@ -70,7 +72,8 @@ static_assert(
                             sim::EventRegion::ReInactive) &&
     sameEventRegionEncoding(ir::EventRegion::PreReNBA,
                             sim::EventRegion::PreReNBA) &&
-    sameEventRegionEncoding(ir::EventRegion::ReNBA, sim::EventRegion::ReNBA) &&
+        sameEventRegionEncoding(ir::EventRegion::ReNBA,
+                                sim::EventRegion::ReNBA) &&
     sameEventRegionEncoding(ir::EventRegion::PostReNBA,
                             sim::EventRegion::PostReNBA) &&
     sameEventRegionEncoding(ir::EventRegion::PrePostponed,
@@ -206,6 +209,30 @@ static bool isAddressableExpression(Operation *op) {
   return llvm::all_of(
       ArrayRef<Operation *>(children).drop_front(),
       [](Operation *index) { return getConstantSpelling(index).has_value(); });
+}
+
+static bool isStaticallyAllocatedOverrideTarget(Value value) {
+  while (value) {
+    if (auto extract = value.getDefiningOp<sim::SimRefExtractOp>()) {
+      value = extract.getInput();
+      continue;
+    }
+    if (auto extract = value.getDefiningOp<sim::SimNetExtractOp>()) {
+      value = extract.getInput();
+      continue;
+    }
+    if (value.getDefiningOp<sim::SimRefAllocOp>())
+      return false;
+    if (auto argument = dyn_cast<BlockArgument>(value)) {
+      auto function =
+          dyn_cast_or_null<sim::SimFuncOp>(argument.getOwner()->getParentOp());
+      return function &&
+             !function.getArgAttr(argument.getArgNumber(),
+                                  "obelisk_sim.automatic_reference_capture");
+    }
+    return true;
+  }
+  return false;
 }
 
 class UnitLowering {
@@ -1377,6 +1404,8 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
   Type sourceValueType = (*input).getType();
   if (auto reference = dyn_cast<sim::RefType>(sourceValueType))
     sourceValueType = reference.getElementType();
+  else if (auto net = dyn_cast<sim::NetType>(sourceValueType))
+    sourceValueType = net.getElementType();
   else if (auto driver = dyn_cast<sim::DriverType>(sourceValueType))
     sourceValueType = driver.getElementType();
 
@@ -1666,6 +1695,17 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
                                            dynamicLow)
         .getResult();
   }
+  if (isa<sim::NetType>((*input).getType())) {
+    if (!constant) {
+      emitError(location)
+          << "force and release require constant built-in net selects";
+      return failure();
+    }
+    Type selected = sim::NetType::get(function.getContext(), *resultType);
+    return sim::SimNetExtractOp::create(builder, location, selected, *input,
+                                        builder.getI64IntegerAttr(lowBit))
+        .getResult();
+  }
   if (isa<sim::DriverType>((*input).getType())) {
     Type selected = sim::DriverType::get(function.getContext(), *resultType);
     if (constant)
@@ -1871,10 +1911,9 @@ UnitLowering::lowerAssignment(semantic::SVAssignmentExpressionOp op) {
     // A blocking intra-assignment delay captures only the RHS. The destination
     // expression is intentionally resolved after resumption at commit time.
     Block *continuation = addBlock();
-    sim::SimSuspendDelayOp::create(builder, location, *delay,
-                                   sim::TimingSiteAttr{}, ValueRange{},
-                                   sim::ContinuationSiteAttr{},
-                                   sim::EventRegionAttr{}, continuation);
+    sim::SimSuspendDelayOp::create(
+        builder, location, *delay, sim::TimingSiteAttr{}, ValueRange{},
+        sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, continuation);
     setCurrent(continuation);
     if (failed(writeLValue(destination, *value, false, false, location)))
       return failure();
@@ -4253,8 +4292,7 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
       emitError(location) << name << " accepts no arguments";
       return failure();
     }
-    sim::SimMonitorControlOp::create(builder, location,
-                                     name == "$monitoron");
+    sim::SimMonitorControlOp::create(builder, location, name == "$monitoron");
     return dummyTaskResult();
   }
 
@@ -4363,8 +4401,7 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
         verbosity = *lowered;
       }
     }
-    Value descriptor =
-        constant(i32, static_cast<int32_t>(display->descriptor));
+    Value descriptor = constant(i32, static_cast<int32_t>(display->descriptor));
     if (display->file) {
       if (children.empty()) {
         emitError(location) << name << " requires a descriptor";
@@ -4987,10 +5024,9 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
       unsupported(event) << " (iff requires signal handles)";
       return failure();
     }
-    sim::SimSuspendEdgeIffOp::create(builder, location, edge, *handle,
-                                     *condition, continuationOperands,
-                                     sim::ContinuationSiteAttr{},
-                                     sim::EventRegionAttr{}, continuation);
+    sim::SimSuspendEdgeIffOp::create(
+        builder, location, edge, *handle, *condition, continuationOperands,
+        sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, continuation);
     return success();
   }
 
@@ -5046,10 +5082,9 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
   }
   SmallVector<Value> values(watched);
   llvm::append_range(values, continuationOperands);
-  sim::SimSuspendAnyOp::create(builder, location, values,
-                               builder.getDenseI32ArrayAttr(edges),
-                               sim::ContinuationSiteAttr{},
-                               sim::EventRegionAttr{}, continuation);
+  sim::SimSuspendAnyOp::create(
+      builder, location, values, builder.getDenseI32ArrayAttr(edges),
+      sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, continuation);
   return success();
 }
 
@@ -5144,10 +5179,9 @@ LogicalResult UnitLowering::lowerTiming(Operation *control,
                                       ValueRange{}, sim::ContinuationSiteAttr{},
                                       sim::EventRegionAttr{}, continuation);
     else
-      sim::SimSuspendAnyOp::create(builder, location,
-                                   dependencies.getArrayRef(),
-                                   builder.getDenseI32ArrayAttr(edges),
-                                   sim::ContinuationSiteAttr{},
+      sim::SimSuspendAnyOp::create(
+          builder, location, dependencies.getArrayRef(),
+          builder.getDenseI32ArrayAttr(edges), sim::ContinuationSiteAttr{},
                                    sim::EventRegionAttr{}, continuation);
     setCurrent(statementEnd);
     return success();
@@ -5165,10 +5199,9 @@ LogicalResult UnitLowering::lowerTiming(Operation *control,
     FailureOr<Value> delay = lowerDelayValue(control);
     if (failed(delay))
       return failure();
-    sim::SimSuspendDelayOp::create(builder, location, *delay,
-                                   sim::TimingSiteAttr{}, ValueRange{},
-                                   sim::ContinuationSiteAttr{},
-                                   sim::EventRegionAttr{}, continuation);
+    sim::SimSuspendDelayOp::create(
+        builder, location, *delay, sim::TimingSiteAttr{}, ValueRange{},
+        sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, continuation);
   } else if (isa<semantic::SVOneStepDelayControlOp>(control)) {
     if (!children.empty()) {
       unsupported(control) << " (#1step inventory)";
@@ -5177,10 +5210,9 @@ LogicalResult UnitLowering::lowerTiming(Operation *control,
     Value delay = sim::SimTimeConstantOp::create(
         builder, location, sim::TimeType::get(function.getContext()),
         builder.getI64IntegerAttr(1));
-    sim::SimSuspendDelayOp::create(builder, location, delay,
-                                   sim::TimingSiteAttr{}, ValueRange{},
-                                   sim::ContinuationSiteAttr{},
-                                   sim::EventRegionAttr{}, continuation);
+    sim::SimSuspendDelayOp::create(
+        builder, location, delay, sim::TimingSiteAttr{}, ValueRange{},
+        sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, continuation);
   } else if (isa<semantic::SVSignalEventControlOp,
                  semantic::SVEventListControlOp>(control)) {
     if (failed(emitEventSuspend(control, continuation)))
@@ -6778,8 +6810,7 @@ UnitLowering::lowerVariableDeclaration(semantic::SVVariableDeclStatementOp op) {
 
 FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>>
 UnitLowering::outlineForkBranch(Operation *branch, uint64_t forkNode,
-                                unsigned branchIndex,
-                                bool captureReferences) {
+                                unsigned branchIndex, bool captureReferences) {
   auto design = function->getParentOfType<sim::SimDesignOp>();
   if (!design)
     return function.emitError("fork outlining requires a simulation design"),
@@ -6801,17 +6832,24 @@ UnitLowering::outlineForkBranch(Operation *branch, uint64_t forkNode,
   auto addCapture = [&](StringRef path) {
     if (!capturedPaths.insert(path).second)
       return;
-    Value capture = captureReferences ? lvalues.lookup(path)
-                                      : values.lookup(path);
+    Value capture =
+        captureReferences ? lvalues.lookup(path) : values.lookup(path);
     if (!capture)
-      capture = captureReferences ? values.lookup(path)
-                                  : lvalues.lookup(path);
+      capture = captureReferences ? values.lookup(path) : lvalues.lookup(path);
     if (!capture)
       return;
     unsigned argument = inputs.size();
     inputs.push_back(capture.getType());
     captures.push_back(capture);
-    argumentAttrs.push_back(captureMetadata(builder, sim::CaptureKind::Formal));
+    DictionaryAttr metadata =
+        captureMetadata(builder, sim::CaptureKind::Formal);
+    if (!isStaticallyAllocatedOverrideTarget(capture)) {
+      SmallVector<NamedAttribute> entries(metadata.begin(), metadata.end());
+      entries.push_back(builder.getNamedAttr(
+          "obelisk_sim.automatic_reference_capture", builder.getUnitAttr()));
+      metadata = builder.getDictionaryAttr(entries);
+    }
+    argumentAttrs.push_back(metadata);
     bindings.push_back(sim::ArgumentBindingAttr::get(
         context, builder.getStringAttr(path), argument,
         sim::UnitArgumentKind::Direct, /*copyOut=*/false, IntegerAttr{}));
@@ -6953,15 +6991,13 @@ UnitLowering::outlinePostponedDisplay(semantic::SVCallExpressionOp call,
                                      StringRef immediateName,
                                      bool persistent) {
   uint64_t ordinal = nextPostponedOrdinal++;
-  uint64_t node =
-      call->getAttrOfType<IntegerAttr>("node_id")
+  uint64_t node = call->getAttrOfType<IntegerAttr>("node_id")
           ? call->getAttrOfType<IntegerAttr>("node_id")
                 .getValue()
                 .getZExtValue()
           : ordinal;
-  std::string identity =
-      (function.getSymName() + ".$postponed." + Twine(node) + "." +
-       Twine(ordinal))
+  std::string identity = (function.getSymName() + ".$postponed." + Twine(node) +
+                          "." + Twine(ordinal))
           .str();
 
   Attribute previousForkID = call->getAttr("obelisk_sim.fork_code_unit_id");
@@ -6981,8 +7017,7 @@ UnitLowering::outlinePostponedDisplay(semantic::SVCallExpressionOp call,
     return failure();
 
   sim::SimFuncOp callback = outlined->first;
-  callback->setAttr(
-      "home_region",
+  callback->setAttr("home_region",
       sim::EventRegionAttr::get(function.getContext(),
                                 sim::EventRegion::Postponed));
   callback->setAttr(
@@ -7029,12 +7064,11 @@ UnitLowering::outlinePostponedDisplay(semantic::SVCallExpressionOp call,
                                     sim::EventRegion::Postponed),
           dispatch);
     } else {
-      SmallVector<int32_t> edges(
-          watched.size(), static_cast<int32_t>(sim::EdgeKind::Change));
+      SmallVector<int32_t> edges(watched.size(),
+                                 static_cast<int32_t>(sim::EdgeKind::Change));
       sim::SimSuspendAnyOp::create(
           waitBuilder, returnOp.getLoc(), watched,
-          waitBuilder.getDenseI32ArrayAttr(edges),
-          sim::ContinuationSiteAttr{},
+          waitBuilder.getDenseI32ArrayAttr(edges), sim::ContinuationSiteAttr{},
           sim::EventRegionAttr::get(function.getContext(),
                                     sim::EventRegion::Postponed),
           dispatch);
@@ -7230,6 +7264,156 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
       return failure();
     }
     return success(succeeded(lowerExpression(children.front())));
+  }
+  if (auto override = dyn_cast<semantic::SVProceduralAssignStatementOp>(op)) {
+    if (children.size() != 1) {
+      unsupported(op) << " (procedural force/assign arity)";
+      return failure();
+    }
+    auto assignment =
+        dyn_cast<semantic::SVAssignmentExpressionOp>(children.front());
+    SmallVector<Operation *> assignmentChildren =
+        assignment ? getChildren(assignment) : SmallVector<Operation *>{};
+    if (!assignment || assignmentChildren.size() != 2) {
+      unsupported(op) << " (procedural force/assign expression)";
+      return failure();
+    }
+
+    Operation *lhs = assignmentChildren[0];
+    bool selected = isa<semantic::SVElementSelectExpressionOp,
+                        semantic::SVRangeSelectExpressionOp>(lhs);
+    if (!isa<semantic::SVNamedValueExpressionOp,
+             semantic::SVHierarchicalValueExpressionOp>(lhs) &&
+        !selected) {
+      emitError(getSemanticLocation(lhs))
+          << "force and procedural assign currently require a whole "
+             "statically allocated packed variable or whole built-in net";
+      return failure();
+    }
+    FailureOr<Value> target = lowerExpression(lhs, true);
+    if (failed(target))
+      return failure();
+    auto referenceType = dyn_cast<sim::RefType>((*target).getType());
+    auto netType = dyn_cast<sim::NetType>((*target).getType());
+    if ((!referenceType && !netType) ||
+        !isStaticallyAllocatedOverrideTarget(*target)) {
+      emitError(getSemanticLocation(lhs))
+          << "force and procedural assign require statically allocated "
+             "packed storage";
+      return failure();
+    }
+    bool isAssign = !override.getIsForce();
+    if (selected && (!netType || isAssign)) {
+      emitError(getSemanticLocation(lhs))
+          << "only constant built-in net bit and part selects are supported "
+             "for force";
+      return failure();
+    }
+    if (isAssign && netType) {
+      emitError(getSemanticLocation(lhs))
+          << "procedural assign requires a packed variable";
+      return failure();
+    }
+
+    Operation *rhs = assignmentChildren[1];
+    std::function<bool(Operation *)> isConstantRHS =
+        [&](Operation *expression) -> bool {
+      if (getConstantSpelling(expression) ||
+          expression->hasAttr("constant_value"))
+        return true;
+      StringRef path;
+      if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(expression))
+        path = named.getReferencedPath();
+      else if (auto hierarchical =
+                   dyn_cast<semantic::SVHierarchicalValueExpressionOp>(
+                       expression))
+        path = hierarchical.getReferencedPath();
+      if (!path.empty()) {
+        Value bound = values.lookup(path);
+        return bound && foldConstantValue(bound);
+      }
+      if (isa<semantic::SVCallExpressionOp>(expression))
+        return false;
+      SmallVector<Operation *> operands = getChildren(expression);
+      return !operands.empty() &&
+             llvm::all_of(operands, [&](Operation *operand) {
+               return isConstantRHS(operand);
+             });
+    };
+    if (!isConstantRHS(rhs)) {
+      emitError(getSemanticLocation(rhs))
+          << "signal-dependent force and procedural assign right-hand sides "
+             "are not yet supported";
+      return failure();
+    }
+    FailureOr<Value> value = lowerExpression(rhs);
+    if (failed(value))
+      return failure();
+    Type elementType = referenceType ? referenceType.getElementType()
+                                     : netType.getElementType();
+    if (!sim::getPackedWidth(elementType)) {
+      emitError(getSemanticLocation(lhs))
+          << "force and procedural assign require packed integral storage";
+      return failure();
+    }
+    FailureOr<Value> converted =
+        convert(*value, elementType, isSignedNode(rhs), location);
+    if (failed(converted))
+      return failure();
+    sim::SimOverrideOp::create(builder, location, *target, *converted,
+                               builder.getBoolAttr(isAssign));
+    return success();
+  }
+  if (auto release = dyn_cast<semantic::SVProceduralDeassignStatementOp>(op)) {
+    if (children.size() != 1) {
+      unsupported(op) << " (procedural release/deassign arity)";
+      return failure();
+    }
+    Operation *lhs = children.front();
+    bool selected = isa<semantic::SVElementSelectExpressionOp,
+                        semantic::SVRangeSelectExpressionOp>(lhs);
+    if (!isa<semantic::SVNamedValueExpressionOp,
+             semantic::SVHierarchicalValueExpressionOp>(lhs) &&
+        !selected) {
+      emitError(getSemanticLocation(lhs))
+          << "release and deassign currently require a whole statically "
+             "allocated packed variable or whole built-in net";
+      return failure();
+    }
+    FailureOr<Value> target = lowerExpression(lhs, true);
+    if (failed(target))
+      return failure();
+    auto referenceType = dyn_cast<sim::RefType>((*target).getType());
+    auto netType = dyn_cast<sim::NetType>((*target).getType());
+    if ((!referenceType && !netType) ||
+        !isStaticallyAllocatedOverrideTarget(*target)) {
+      emitError(getSemanticLocation(lhs))
+          << "release and deassign require statically allocated packed "
+             "storage";
+      return failure();
+    }
+    bool isAssign = !release.getIsRelease();
+    if (selected && (!netType || isAssign)) {
+      emitError(getSemanticLocation(lhs))
+          << "only constant built-in net bit and part selects are supported "
+             "for release";
+      return failure();
+    }
+    if (isAssign && netType) {
+      emitError(getSemanticLocation(lhs))
+          << "deassign requires a packed variable";
+      return failure();
+    }
+    Type elementType = referenceType ? referenceType.getElementType()
+                                     : netType.getElementType();
+    if (!sim::getPackedWidth(elementType)) {
+      emitError(getSemanticLocation(lhs))
+          << "release and deassign require packed integral storage";
+      return failure();
+    }
+    sim::SimReleaseOverrideOp::create(builder, location, *target,
+                                      builder.getBoolAttr(isAssign));
+    return success();
   }
   if (auto block = dyn_cast<semantic::SVBlockStatementOp>(op)) {
     return lowerBlock(block);
@@ -7456,18 +7640,16 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     return failure();
   }
   if (sensitivity.size() == 1) {
-    sim::SimSuspendChangeOp::create(builder, function.getLoc(),
-                                    sensitivity.front(), ValueRange{},
-                                    sim::ContinuationSiteAttr{},
-                                    sim::EventRegionAttr{}, loopHeader);
+    sim::SimSuspendChangeOp::create(
+        builder, function.getLoc(), sensitivity.front(), ValueRange{},
+        sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, loopHeader);
     return success();
   }
   SmallVector<int32_t> edges(sensitivity.size(),
                              static_cast<int32_t>(sim::EdgeKind::Change));
-  sim::SimSuspendAnyOp::create(builder, function.getLoc(),
-                               sensitivity.getArrayRef(),
-                               builder.getDenseI32ArrayAttr(edges),
-                               sim::ContinuationSiteAttr{},
+  sim::SimSuspendAnyOp::create(
+      builder, function.getLoc(), sensitivity.getArrayRef(),
+      builder.getDenseI32ArrayAttr(edges), sim::ContinuationSiteAttr{},
                                sim::EventRegionAttr{}, loopHeader);
   return success();
 }

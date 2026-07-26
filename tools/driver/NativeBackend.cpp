@@ -6,6 +6,7 @@
 #include "obelisk/Conversion/SimulationToBytecode.h"
 #include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
 #include "obelisk/Dialect/Runtime/RuntimeDialect.h"
+#include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "lld/Common/Driver.h"
 
@@ -19,9 +20,12 @@
 
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/Analysis/ModuleSummaryAnalysis.h"
 #include "llvm/Analysis/ProfileSummaryInfo.h"
 #include "llvm/Bitcode/BitcodeWriter.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
@@ -200,7 +204,8 @@ LogicalResult addMinimalMain(ModuleOp module) {
 }
 
 LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
-                          bool bytecode) {
+                          bool bytecode, StringRef vpi,
+                          bool &requiresStateSync) {
   module->setAttr("llvm.target_triple",
                   StringAttr::get(module.getContext(), kTargetTriple));
   module->setAttr(
@@ -209,10 +214,17 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
           module.getContext(),
           targetMachine.createDataLayout().getStringRepresentation()));
   mlir::PassManager manager(module.getContext());
-  if (bytecode) {
+  bool hasLanguageOverride = false;
+  module.walk([&](mlir::Operation *operation) {
+    if (mlir::isa<obelisk::sim::SimOverrideOp,
+                  obelisk::sim::SimReleaseOverrideOp>(operation))
+      hasLanguageOverride = true;
+  });
+  requiresStateSync = vpi != "off" || hasLanguageOverride;
+  if (bytecode || vpi != "off" || hasLanguageOverride) {
     EncodeObeliskSimToBytecodePassOptions options;
-    options.vpi = "off";
-    options.requireBytecode = true;
+    options.vpi = vpi.str();
+    options.requireBytecode = bytecode;
     manager.addPass(createEncodeObeliskSimToBytecodePass(options));
   }
   manager.addPass(createConvertObeliskSimProcessesToLLVMCoroutinesPass());
@@ -240,13 +252,125 @@ LogicalResult optimizeLLVMModule(llvm::Module &module,
   builder.crossRegisterProxies(loopAnalyses, functionAnalyses, cgsccAnalyses,
                                moduleAnalyses);
   OptimizationLevel level = getLLVMOptLevel(optLevel);
-  ModulePassManager passes =
-      optLevel == 0 ? builder.buildO0DefaultPipeline(level)
+  ModulePassManager passes = optLevel == 0
+                                 ? builder.buildO0DefaultPipeline(level)
                     : builder.buildPerModuleDefaultPipeline(level);
   passes.run(module, moduleAnalyses);
   if (verifyModule(module, &errs())) {
     errs() << "obelisk: error: invalid LLVM IR after native optimization\n";
     return failure();
+  }
+  return success();
+}
+
+LogicalResult
+addVPIStartupLifecycle(llvm::Module &module, StringRef vpi,
+                       ArrayRef<SharedLibraryInput> sharedLibraryInputs,
+                       bool requiresStateSync) {
+  bool enableVPI = vpi != "off";
+  if (!enableVPI && !requiresStateSync)
+    return success();
+  llvm::Function *main = module.getFunction("main");
+  llvm::GlobalVariable *current =
+      module.getNamedGlobal("__obelisk_current_context");
+  llvm::GlobalVariable *stateValue =
+      module.getNamedGlobal("__obelisk_state_value");
+  llvm::GlobalVariable *stateUnknown =
+      module.getNamedGlobal("__obelisk_state_unknown");
+  if (!main || !current || !stateValue || !stateUnknown) {
+    errs() << "obelisk: error: native state synchronization requires a "
+              "generated scheduler main\n";
+    return failure();
+  }
+  llvm::CallBase *spawn = nullptr;
+  llvm::CallBase *destroy = nullptr;
+  for (llvm::BasicBlock &block : *main)
+    for (llvm::Instruction &instruction : block)
+      if (auto *call = dyn_cast<llvm::CallBase>(&instruction))
+        if (llvm::Function *callee = call->getCalledFunction()) {
+          if (callee->getName().ends_with(".__obelisk_spawn"))
+            spawn = call;
+          else if (callee->getName() == "obelisk_rt_v1_context_destroy")
+            destroy = call;
+        }
+  if (!spawn || (enableVPI && !destroy)) {
+    errs() << "obelisk: error: generated scheduler lifecycle is incomplete\n";
+    return failure();
+  }
+
+  llvm::LLVMContext &context = module.getContext();
+  llvm::Type *pointer = llvm::PointerType::get(context, 0);
+  llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+  SmallVector<llvm::Constant *> names;
+  unsigned stringIndex = 0;
+  for (const SharedLibraryInput &input : sharedLibraryInputs) {
+    if (!input.hasVPIStartup)
+      continue;
+    llvm::Constant *bytes =
+        llvm::ConstantDataArray::getString(context, input.loaderName, true);
+    auto *global = new llvm::GlobalVariable(
+        module, bytes->getType(), true, llvm::GlobalValue::PrivateLinkage,
+        bytes, (Twine("__obelisk_vpi_module_") + Twine(stringIndex++)).str());
+    global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+    names.push_back(global);
+  }
+  llvm::Constant *nameArrayPointer =
+      llvm::ConstantPointerNull::get(cast<llvm::PointerType>(pointer));
+  if (!names.empty()) {
+    llvm::ArrayType *arrayType = llvm::ArrayType::get(pointer, names.size());
+    auto *array = new llvm::GlobalVariable(
+        module, arrayType, true, llvm::GlobalValue::PrivateLinkage,
+        llvm::ConstantArray::get(arrayType, names),
+        "__obelisk_vpi_startup_modules");
+    llvm::Constant *zero = llvm::ConstantInt::get(i64, 0);
+    SmallVector<llvm::Constant *, 2> indices{zero, zero};
+    nameArrayPointer =
+        llvm::ConstantExpr::getInBoundsGetElementPtr(arrayType, array, indices);
+  }
+  llvm::FunctionCallee fail = module.getOrInsertFunction(
+      "obelisk_rt_v1_scheduler_fail",
+      llvm::FunctionType::get(llvm::Type::getVoidTy(context),
+                              {pointer, llvm::Type::getInt32Ty(context)},
+                              false));
+  llvm::IRBuilder<> beforeSpawn(spawn);
+  llvm::Value *runtimeContext =
+      beforeSpawn.CreateLoad(pointer, current, "obelisk.vpi.context");
+  auto *valueArray = dyn_cast<llvm::ArrayType>(stateValue->getValueType());
+  auto *unknownArray = dyn_cast<llvm::ArrayType>(stateUnknown->getValueType());
+  if (!valueArray || !unknownArray ||
+      valueArray->getNumElements() != unknownArray->getNumElements()) {
+    errs() << "obelisk: error: generated native state planes disagree\n";
+    return failure();
+  }
+  if (requiresStateSync) {
+    llvm::FunctionCallee sync = module.getOrInsertFunction(
+        "obelisk_rt_v1_native_state_sync",
+        llvm::FunctionType::get(llvm::Type::getInt32Ty(context),
+                                {pointer, pointer, pointer, i64}, false));
+    llvm::Value *syncStatus = beforeSpawn.CreateCall(
+        sync,
+        {runtimeContext, stateValue, stateUnknown,
+         llvm::ConstantInt::get(i64, valueArray->getNumElements() * 8)},
+        "obelisk.state.sync");
+    beforeSpawn.CreateCall(fail, {runtimeContext, syncStatus});
+  }
+  if (enableVPI) {
+    llvm::FunctionCallee startup = module.getOrInsertFunction(
+        "obelisk_rt_v1_vpi_startup",
+        llvm::FunctionType::get(llvm::Type::getInt32Ty(context),
+                                {pointer, pointer, i64}, false));
+    llvm::Value *status =
+        beforeSpawn.CreateCall(startup,
+                               {runtimeContext, nameArrayPointer,
+                                llvm::ConstantInt::get(i64, names.size())},
+                               "obelisk.vpi.startup");
+    beforeSpawn.CreateCall(fail, {runtimeContext, status});
+    llvm::FunctionCallee shutdown = module.getOrInsertFunction(
+        "obelisk_rt_v1_vpi_shutdown",
+        llvm::FunctionType::get(llvm::Type::getVoidTy(context), {pointer},
+                                false));
+    llvm::IRBuilder<> beforeDestroy(destroy);
+    beforeDestroy.CreateCall(shutdown, {destroy->getArgOperand(0)});
   }
   return success();
 }
@@ -381,7 +505,8 @@ LogicalResult sanitizeBundledBuildPaths(StringRef path, StringRef supportRoot) {
 
 LogicalResult linkExecutable(StringRef modulePath, StringRef outputPath,
                              StringRef supportRoot, StringRef explicitSysroot,
-                             ArrayRef<std::string> dpiLinkInputs,
+                             ArrayRef<NativeLinkInput> nativeLinkInputs,
+                             ArrayRef<SharedLibraryInput> sharedLibraryInputs,
                              uint32_t optLevel, uint32_t linkThreads) {
   bool fullLTO = optLevel != 0;
   SmallString<256> glibcRoot;
@@ -458,6 +583,7 @@ LogicalResult linkExecutable(StringRef modulePath, StringRef outputPath,
   owned.push_back("--no-dependent-libraries");
   owned.push_back("-pie");
   owned.push_back("--export-dynamic-symbol=sv*");
+  owned.push_back("--export-dynamic-symbol=vpi*");
   owned.push_back((Twine("--threads=") + Twine(linkThreads)).str());
   if (fullLTO) {
     owned.push_back("--lto=full");
@@ -476,8 +602,88 @@ LogicalResult linkExecutable(StringRef modulePath, StringRef outputPath,
   owned.push_back(glibcInputs[1]);
   owned.push_back(staticInputs[0]);
   owned.push_back(modulePath.str());
-  for (const std::string &input : dpiLinkInputs)
-    owned.push_back(input);
+  bool noAsNeeded = false;
+  for (const NativeLinkInput &linkInput : nativeLinkInputs) {
+    if (linkInput.kind == NativeLinkInput::Kind::File) {
+      if (noAsNeeded) {
+        owned.push_back("--as-needed");
+        noAsNeeded = false;
+      }
+      owned.push_back(linkInput.path);
+      continue;
+    }
+    if (linkInput.sharedLibraryIndex >= sharedLibraryInputs.size()) {
+      errs() << "obelisk: error: invalid classified shared-library input\n";
+      return failure();
+    }
+    if (!noAsNeeded) {
+      owned.push_back("--no-as-needed");
+      noAsNeeded = true;
+    }
+    const SharedLibraryInput &input =
+        sharedLibraryInputs[linkInput.sharedLibraryIndex];
+    if (input.hasSoname) {
+      owned.push_back(input.canonicalPath);
+    } else {
+      owned.push_back((Twine("-L") + input.suppliedDirectory).str());
+      owned.push_back((Twine("-l:") + input.basename).str());
+    }
+  }
+  if (noAsNeeded)
+    owned.push_back("--as-needed");
+
+  if (!sharedLibraryInputs.empty()) {
+    namespace fs = std::filesystem;
+    std::error_code pathError;
+    fs::path outputAbsolute =
+        fs::absolute(fs::path(outputPath.str()), pathError).lexically_normal();
+    if (pathError) {
+      errs() << "obelisk: error: could not resolve output directory for "
+                "RUNPATH generation: "
+             << pathError.message() << '\n';
+      return failure();
+    }
+    fs::path outputDirectory = outputAbsolute.parent_path();
+    SmallVector<std::string> runpaths;
+    llvm::StringSet<> seenRunpaths;
+    for (const SharedLibraryInput &input : sharedLibraryInputs) {
+      fs::path suppliedDirectory(input.suppliedDirectory);
+      std::string runpath;
+      if (input.suppliedPathWasAbsolute) {
+        runpath = suppliedDirectory.lexically_normal().string();
+      } else {
+        fs::path suppliedAbsolute =
+            fs::absolute(suppliedDirectory, pathError).lexically_normal();
+        if (pathError) {
+          errs() << "obelisk: error: could not resolve shared-library "
+                    "directory '"
+                 << input.suppliedDirectory << "': " << pathError.message()
+                 << '\n';
+          return failure();
+        }
+        fs::path relative =
+            suppliedAbsolute.lexically_relative(outputDirectory);
+        if (relative.empty())
+          relative = ".";
+        runpath = "$ORIGIN";
+        if (relative != ".")
+          runpath += "/" + relative.generic_string();
+      }
+      if (seenRunpaths.insert(runpath).second)
+        runpaths.push_back(std::move(runpath));
+    }
+    if (!runpaths.empty()) {
+      owned.push_back("-z");
+      owned.push_back("origin");
+      std::string joined;
+      for (const std::string &runpath : runpaths) {
+        if (!joined.empty())
+          joined += ':';
+        joined += runpath;
+      }
+      owned.push_back((Twine("--rpath=") + joined).str());
+    }
+  }
   owned.push_back("--start-group");
   for (size_t index = 1; index <= 5; ++index)
     owned.push_back(staticInputs[index]);
@@ -511,9 +717,8 @@ LogicalResult linkExecutable(StringRef modulePath, StringRef outputPath,
     sys::fs::remove(*temporary);
     return failure();
   }
-  if (std::error_code error =
-          sys::fs::setPermissions(*temporary, sys::fs::perms::all_read |
-                                                  sys::fs::perms::all_exe |
+  if (std::error_code error = sys::fs::setPermissions(
+          *temporary, sys::fs::perms::all_read | sys::fs::perms::all_exe |
                                                   sys::fs::perms::owner_write)) {
     errs() << "obelisk: error: could not make '" << outputPath
            << "' executable: " << error.message() << '\n';
@@ -539,7 +744,9 @@ LogicalResult emitNativeOutput(ModuleOp module,
            << targetError << '\n';
     return failure();
   }
-  if (failed(lowerToLLVM(module, *targetMachine, options.bytecode)))
+  bool requiresStateSync = false;
+  if (failed(lowerToLLVM(module, *targetMachine, options.bytecode, options.vpi,
+                         requiresStateSync)))
     return failure();
 
   registerLLVMDialectTranslation(*module.getContext());
@@ -553,8 +760,11 @@ LogicalResult emitNativeOutput(ModuleOp module,
   }
   llvmModule->setTargetTriple(Triple(kTargetTriple));
   llvmModule->setDataLayout(targetMachine->createDataLayout());
-  if (failed(optimizeLLVMModule(*llvmModule, *targetMachine,
-                                options.optLevel)))
+  if (failed(addVPIStartupLifecycle(*llvmModule, options.vpi,
+                                    options.sharedLibraryInputs,
+                                    requiresStateSync)))
+    return failure();
+  if (failed(optimizeLLVMModule(*llvmModule, *targetMachine, options.optLevel)))
     return failure();
   if (options.kind == NativeOutputKind::Executable && options.optLevel != 0) {
     // LLD's explicit --lto=full mode selects LLVM's unified LTO pipeline.
@@ -616,7 +826,8 @@ LogicalResult emitNativeOutput(ModuleOp module,
   }
   LogicalResult linked = linkExecutable(
       *moduleTemporary, options.outputPath, *support, options.explicitSysroot,
-      options.dpiLinkInputs, options.optLevel, options.compileThreads);
+      options.nativeLinkInputs, options.sharedLibraryInputs, options.optLevel,
+      options.compileThreads);
   sys::fs::remove(*moduleTemporary);
   return linked;
 }

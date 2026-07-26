@@ -34,8 +34,9 @@
 // RUN: FileCheck %s --check-prefix=LLVM < %t.ll
 // RUN: not obelisk --threads=2 %s -o %t.threads 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=THREADS
-// RUN: not obelisk --vpi=read %s -o %t.vpi 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=VPI
+// RUN: obelisk --vpi=read %s -o %t.vpi
+// RUN: %t.vpi > %t.vpi.out
+// RUN: diff -u %t.exe.out %t.vpi.out
 // RUN: not obelisk --sysroot=%t.missing %s -o %t.missing.exe 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=SYSROOT
 
@@ -80,6 +81,5 @@ endmodule
 // LLVM: call i32 @obelisk_rt_v1_scheduler_run
 
 // THREADS: native executable generation currently requires --threads=1
-// VPI: native executable generation currently requires --vpi=off
 // SYSROOT: target sysroot input
 // SYSROOT-SAME: is missing or escapes

@@ -1634,6 +1634,9 @@ private:
     } else if constexpr (std::same_as<T,
                                       slang::ast::ProceduralAssignStatement>) {
       SET_OP_ATTR(IsForce, builder.getBoolAttr(node.isForce));
+    } else if constexpr (std::same_as<
+                             T, slang::ast::ProceduralDeassignStatement>) {
+      SET_OP_ATTR(IsRelease, builder.getBoolAttr(node.isRelease));
     } else if constexpr (std::same_as<T, slang::ast::Delay3Control>) {
       int64_t delayCount = node.expr3 ? 3 : node.expr2 ? 2 : 1;
       SET_OP_ATTR(DelayCount, builder.getI64IntegerAttr(delayCount));

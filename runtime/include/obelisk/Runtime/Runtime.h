@@ -209,7 +209,8 @@ enum {
 // not require future ABI changes.
 #define OBELISK_RT_SCHEDULE_FINAL (UINT32_C(1) << 0)
 #define OBELISK_RT_SCHEDULE_HOME_SHIFT 1u
-#define OBELISK_RT_SCHEDULE_HOME_MASK (UINT32_C(7) << OBELISK_RT_SCHEDULE_HOME_SHIFT)
+#define OBELISK_RT_SCHEDULE_HOME_MASK                                          \
+  (UINT32_C(7) << OBELISK_RT_SCHEDULE_HOME_SHIFT)
 #define OBELISK_RT_SCHEDULE_HOME(region)                                      \
   ((uint32_t)(region) << OBELISK_RT_SCHEDULE_HOME_SHIFT)
 
@@ -385,7 +386,9 @@ enum {
   OBELISK_RT_DB_VIRTUAL_CALL = 41,
   // Consume one precise managed-root word from a canonical continuation
   // frame after the value has been restored into traced bytecode registers.
-  OBELISK_RT_DB_CLEAR_FRAME_ROOT = 42
+  OBELISK_RT_DB_CLEAR_FRAME_ROOT = 42,
+  OBELISK_RT_DB_OVERRIDE_STATE = 43,
+  OBELISK_RT_DB_RELEASE_STATE = 44
 };
 
 // EXTRACT and INSERT flag for the physical 64-bit class-handle lane of an
@@ -1290,6 +1293,22 @@ obelisk_rt_status obelisk_rt_v1_design_write(obelisk_rt_context *context,
                                              const uint64_t *value,
                                              const uint64_t *unknown,
                                              uint64_t bit_width);
+obelisk_rt_status obelisk_rt_v1_design_force(obelisk_rt_context *context,
+                                             obelisk_rt_design_cursor_v1 cursor,
+                                             const uint64_t *value,
+                                             const uint64_t *unknown,
+                                             uint64_t bit_width);
+obelisk_rt_status
+obelisk_rt_v1_design_release(obelisk_rt_context *context,
+                             obelisk_rt_design_cursor_v1 cursor);
+
+// Activate the single-context VPI shim and invoke startup tables belonging to
+// already loaded DT_NEEDED modules. Module names are runtime loader identities
+// (DT_SONAME, or the no-SONAME basename) and remain caller-owned for the call.
+obelisk_rt_status obelisk_rt_v1_vpi_startup(obelisk_rt_context *context,
+                                            const char *const *modules,
+                                            uint64_t module_count);
+void obelisk_rt_v1_vpi_shutdown(obelisk_rt_context *context);
 
 // Serial generated-simulator scheduler. The scheduler owns an instance after
 // a successful add. Bit zero selects final-phase work and bits 1-3 encode the
@@ -1390,6 +1409,23 @@ obelisk_rt_status
 obelisk_rt_v1_native_state_register_static(obelisk_rt_context *context,
                                            uint32_t id, uint64_t bit_offset,
                                            uint64_t bit_width);
+// Seed the canonical design image from compiler-emitted native planes after
+// static-state registration and before VPI startup/root-process creation.
+obelisk_rt_status obelisk_rt_v1_native_state_sync(obelisk_rt_context *context,
+                                                  const uint8_t *value,
+                                                  const uint8_t *unknown,
+                                                  uint64_t bit_count);
+// Whole static packed language force/assign services. `assign` selects
+// procedural assign ownership; release with `assign` selects deassign.
+obelisk_rt_status obelisk_rt_v1_native_override(
+    obelisk_rt_context *context, uint8_t *global_value, uint8_t *global_unknown,
+    uint64_t global_bit_count, uint64_t handle, uint64_t bit_width,
+    uint32_t descriptor_kind, uint32_t assign, const uint8_t *value,
+    const uint8_t *unknown);
+obelisk_rt_status obelisk_rt_v1_native_release_override(
+    obelisk_rt_context *context, uint8_t *global_value, uint8_t *global_unknown,
+    uint64_t global_bit_count, uint64_t handle, uint64_t bit_width,
+    uint32_t descriptor_kind, uint32_t assign);
 uint64_t obelisk_rt_v1_native_state_static_handle(uint32_t id);
 uint64_t obelisk_rt_v1_native_handle_offset(uint64_t handle, int64_t offset);
 obelisk_rt_status obelisk_rt_v1_native_state_alloc(obelisk_rt_context *context,

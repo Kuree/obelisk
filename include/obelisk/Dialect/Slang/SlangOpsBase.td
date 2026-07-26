@@ -529,6 +529,8 @@ class SlangConcurrentAssertionStatementASTNodeOp<string mnemonic>
 
 class SlangProceduralAssignStatementASTNodeOp<string mnemonic>
     : SlangASTNodeOp<mnemonic, [], (ins BoolAttr:$is_force)>;
+class SlangProceduralDeassignStatementASTNodeOp<string mnemonic>
+    : SlangASTNodeOp<mnemonic, [], (ins BoolAttr:$is_release)>;
 class SlangTimingASTNodeOp<string mnemonic> : SlangASTNodeOp<mnemonic>;
 
 class SlangDelay3TimingASTNodeOp<string mnemonic>

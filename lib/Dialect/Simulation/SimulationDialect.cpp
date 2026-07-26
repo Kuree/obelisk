@@ -138,10 +138,9 @@ LogicalResult verifyPostponedReadOnly(SimFuncOp root) {
     WalkResult readOnly = function.getBody().walk([&](Operation *operation) {
       if (isa<SimFuncOp>(operation))
         return WalkResult::skip();
-      if (isa<SimManagedStoreOp, SimManagedNBAEnqueueOp,
-              SimArgumentRefStoreOp, SimRefStoreOp, SimDriverDriveOp,
-              SimNBAEnqueueOp, SimSpawnOp, SimEventTriggerOp,
-              SimSuspendDelayOp, SimTaskCallOp>(operation)) {
+      if (isa<SimManagedStoreOp, SimManagedNBAEnqueueOp, SimArgumentRefStoreOp,
+              SimRefStoreOp, SimDriverDriveOp, SimNBAEnqueueOp, SimSpawnOp,
+              SimEventTriggerOp, SimSuspendDelayOp, SimTaskCallOp>(operation)) {
         operation->emitOpError(
             "is not permitted in a read-only postponed code unit");
         return WalkResult::interrupt();
@@ -2402,8 +2401,7 @@ LogicalResult SimFuncOp::verify() {
     return failure();
   if (getHomeRegion() == EventRegion::Observed) {
     WalkResult noDelay = getBody().walk([&](SimSuspendDelayOp operation) {
-      operation.emitOpError(
-          "is not permitted in an observed-region code unit");
+      operation.emitOpError("is not permitted in an observed-region code unit");
       return WalkResult::interrupt();
     });
     if (noDelay.wasInterrupted())
@@ -3377,6 +3375,51 @@ LogicalResult SimRefArrayElementOp::ensureOnlySafeAccesses(
 }
 
 LogicalResult SimRefExtractOp::verify() {
+  Type inputType = getInput().getType().getElementType();
+  Type resultType = getResult().getType().getElementType();
+  if (failed(verifyMatchingStateDomain(*this, inputType, resultType)))
+    return failure();
+  auto input = getPackedWidth(inputType);
+  auto result = getPackedWidth(resultType);
+  if (!input || !result || getLowBitAttr().getValue().isNegative() ||
+      getLowBitAttr().getValue().getZExtValue() + *result > *input)
+    return emitOpError("constant selection is outside the input element width");
+  return success();
+}
+
+LogicalResult SimOverrideOp::verify() {
+  Type elementType;
+  if (auto reference = dyn_cast<RefType>(getTarget().getType()))
+    elementType = reference.getElementType();
+  else if (auto net = dyn_cast<NetType>(getTarget().getType()))
+    elementType = net.getElementType();
+  else
+    return emitOpError("target must be a static reference or built-in net");
+  if (getIsAssign() && !isa<RefType>(getTarget().getType()))
+    return emitOpError("procedural assign requires a variable reference");
+  if (elementType != getValue().getType())
+    return emitOpError("target element type must match the override value");
+  if (!getPackedWidth(elementType))
+    return emitOpError("requires a fixed-width packed value");
+  return success();
+}
+
+LogicalResult SimReleaseOverrideOp::verify() {
+  Type elementType;
+  if (auto reference = dyn_cast<RefType>(getTarget().getType()))
+    elementType = reference.getElementType();
+  else if (auto net = dyn_cast<NetType>(getTarget().getType()))
+    elementType = net.getElementType();
+  else
+    return emitOpError("target must be a static reference or built-in net");
+  if (getIsAssign() && !isa<RefType>(getTarget().getType()))
+    return emitOpError("procedural deassign requires a variable reference");
+  if (!getPackedWidth(elementType))
+    return emitOpError("requires a fixed-width packed value");
+  return success();
+}
+
+LogicalResult SimNetExtractOp::verify() {
   Type inputType = getInput().getType().getElementType();
   Type resultType = getResult().getType().getElementType();
   if (failed(verifyMatchingStateDomain(*this, inputType, resultType)))
@@ -4976,6 +5019,11 @@ void SimRefExtractOp::getCanonicalizationPatterns(RewritePatternSet &results,
   results.add<SimplifyStaticExtract<SimRefExtractOp>>(context);
 }
 
+void SimNetExtractOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                                  MLIRContext *context) {
+  results.add<SimplifyStaticExtract<SimNetExtractOp>>(context);
+}
+
 void SimRefDynExtractOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                      MLIRContext *context) {
   results.add<ConstantDynamicExtract<SimRefDynExtractOp, SimRefExtractOp>>(
@@ -5068,8 +5116,7 @@ static LogicalResult verifyContinuation(Operation *op,
           op->template getAttrOfType<EventRegionAttr>("resume_region")) {
     EventRegion region = resume.getValue();
     if (region != EventRegion::Active && region != EventRegion::Observed &&
-        region != EventRegion::Reactive &&
-        region != EventRegion::Postponed)
+        region != EventRegion::Reactive && region != EventRegion::Postponed)
       return op->emitOpError(
           "resume region must be an executable process home region");
   }

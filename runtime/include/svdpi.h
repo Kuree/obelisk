@@ -33,15 +33,20 @@ typedef uint8_t svScalar;
 typedef svScalar svBit;
 typedef svScalar svLogic;
 
+#ifndef VPI_VECVAL
+#define VPI_VECVAL
 typedef struct t_vpi_vecval {
   uint32_t aval;
   uint32_t bval;
 } s_vpi_vecval, *p_vpi_vecval;
+#endif
 typedef s_vpi_vecval svLogicVecVal;
 typedef uint32_t svBitVecVal;
 
 #define SV_PACKED_DATA_NELEMS(WIDTH) (((WIDTH) + 31) >> 5)
 
+#ifndef VPI_TIME
+#define VPI_TIME
 typedef struct t_vpi_time {
   int32_t type;
   uint32_t high;
@@ -52,6 +57,7 @@ typedef struct t_vpi_time {
 #define vpiScaledRealTime 1
 #define vpiSimTime 2
 #define vpiSuppressTime 3
+#endif
 #define sv_scaled_real_time vpiScaledRealTime
 #define sv_sim_time vpiSimTime
 
@@ -72,6 +78,8 @@ XXTERN void svAckDisabledState(void);
 XXTERN int svGetTime(const svScope scope, svTimeVal *time);
 XXTERN int svGetTimeUnit(const svScope scope, int32_t *time_unit);
 XXTERN int svGetTimePrecision(const svScope scope, int32_t *time_precision);
+
+#undef XXTERN
 
 #ifdef __cplusplus
 }

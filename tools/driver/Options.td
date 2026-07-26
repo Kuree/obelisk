@@ -57,9 +57,6 @@ def execution_tier_EQ : Joined<["--"], "execution-tier=">,
   Group<Compilation_Group>, MetaVarName<"<native|bytecode>">,
   Values<"native,bytecode">,
   HelpText<"Select generated simulator execution tier (default: native)">;
-def dpi_link_EQ : Joined<["--"], "dpi-link=">, Group<Compilation_Group>,
-  MetaVarName<"<path>">,
-  HelpText<"Link a target-compatible DPI object, archive, or shared library">;
 def O0 : Flag<["-"], "O0">, Group<Compilation_Group>,
   HelpText<"Disable simulation and LLVM optimization">;
 def O1 : Flag<["-"], "O1">, Group<Compilation_Group>,

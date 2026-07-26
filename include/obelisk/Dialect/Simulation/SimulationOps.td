@@ -1112,6 +1112,44 @@ def SimRefStoreOp : SimOp<"ref.store", [
   let assemblyFormat = "$value `to` $reference attr-dict `:` type($value) `,` qualified(type($reference))";
 }
 
+def SimOverrideOp : SimOp<"override", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>]>
+  ]> {
+  let summary = "publish a whole static packed force or procedural assign";
+  let arguments = (ins
+    Arg<AnyType, "", [
+      MemWrite<SimStorageResource>, MemWrite<SimNetResource>
+    ]>:$target,
+    AnyType:$value, BoolAttr:$is_assign);
+  let assemblyFormat = "$target `=` $value `assign` $is_assign attr-dict `:` type($target) `,` type($value)";
+  let hasVerifier = 1;
+}
+
+def SimReleaseOverrideOp : SimOp<"release_override", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>]>
+  ]> {
+  let summary = "release a whole static force or procedural assign";
+  let arguments = (ins
+    Arg<AnyType, "", [
+      MemWrite<SimStorageResource>, MemWrite<SimNetResource>
+    ]>:$target,
+    BoolAttr:$is_assign);
+  let assemblyFormat = "$target `assign` $is_assign attr-dict `:` type($target)";
+  let hasVerifier = 1;
+}
+
+def SimNetExtractOp : SimOp<"net.extract", [Pure, ViewLikeOpInterface]> {
+  let summary = "constant packed view into a built-in net";
+  let arguments = (ins SimNetType:$input, I64Attr:$low_bit);
+  let results = (outs SimNetType:$result);
+  let assemblyFormat = "$input `from` $low_bit attr-dict `:` qualified(type($input)) `->` qualified(type($result))";
+  let extraClassDeclaration = [{
+    ::mlir::Value getViewSource() { return getInput(); }
+  }];
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
 def SimRefExtractOp : SimOp<"ref.extract", [
     Pure, ViewLikeOpInterface,
     DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>

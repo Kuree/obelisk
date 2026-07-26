@@ -218,6 +218,7 @@ native_members = [
     "ManagedHeap.o",
     "Process.o",
     "Runtime.o",
+    "VPI.o",
 ]
 lto_members = [
     pathlib.Path(member).with_suffix(".bc").name for member in native_members

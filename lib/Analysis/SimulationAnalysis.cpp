@@ -307,7 +307,8 @@ DescriptorProvenanceMap deriveDescriptorProvenance(sim::SimFuncOp function) {
               declare(op.getResult(), sim::ComputeResourceKind::Local,
                       std::nullopt);
             })
-            .Case<sim::SimRefExtractOp, sim::SimDriverExtractOp>([&](auto op) {
+            .Case<sim::SimRefExtractOp, sim::SimNetExtractOp,
+                  sim::SimDriverExtractOp>([&](auto op) {
               forward(op.getInput(), op.getResult(), op.getLowBit());
             })
             .Case<sim::SimRefSubelementOp, sim::SimDriverSubelementOp>(
@@ -350,9 +351,9 @@ uint64_t getSimulationOperationCost(Operation &operation) {
     return 5;
   if (isa<sim::SimSuspendDelayOp, sim::SimSuspendChangeOp,
           sim::SimSuspendEdgeOp, sim::SimSuspendEdgeIffOp,
-          sim::SimSuspendLevelOp, sim::SimSuspendAnyOp,
-          sim::SimSuspendEventOp, sim::SimSuspendForeverOp,
-          sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp>(operation))
+          sim::SimSuspendLevelOp, sim::SimSuspendAnyOp, sim::SimSuspendEventOp,
+          sim::SimSuspendForeverOp, sim::SimSuspendAwaitOp,
+          sim::SimSuspendJoinOp>(operation))
     return 1;
   return operation.hasTrait<OpTrait::IsTerminator>() ? 0 : 1;
 }
