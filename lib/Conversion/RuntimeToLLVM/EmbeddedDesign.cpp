@@ -693,7 +693,9 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
                                index.getValue().getZExtValue()));
   });
   llvm::sort(entries);
-  for (auto [index, entry] : llvm::enumerate(entries)) {
+  for (auto indexedEntry : llvm::enumerate(entries)) {
+    auto index = indexedEntry.index();
+    const auto &entry = indexedEntry.value();
     if (index != 0 && entries[index - 1].first == entry.first)
       return module.emitError()
              << "duplicate bytecode symbol '" << entry.first << "'";

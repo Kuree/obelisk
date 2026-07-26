@@ -58,6 +58,7 @@ endmodule
 // OFF: exports vlog_startup_routines but --vpi=off
 // OUTPUT: traverse module=vpi_top scope=vpi_top regs=2 same=1
 // OUTPUT-NEXT: startup vpi_top.value size=64 aval=ffffffff bval=ffffffff
+// OUTPUT-NEXT: binary underscore=9
 // OUTPUT-NEXT: startup second
 // OUTPUT-NEXT: run value=7
 // OUTPUT-NEXT: forced net=1

@@ -2967,120 +2967,6 @@ T *computedSpan(obelisk_rt_computed_wait_record_v1 *wait, uint64_t offset,
   return reinterpret_cast<T *>(reinterpret_cast<uint8_t *>(wait) + offset);
 }
 
-bool validateComputedWaitRecord(
-    const obelisk_rt_execution_descriptor_v1 *execution,
-    const obelisk_rt_computed_wait_record_v1 *wait, uint64_t available) {
-  if (!execution || !wait || available < sizeof(*wait) ||
-      wait->version != OBELISK_RT_VERSION ||
-      wait->kind != OBELISK_RT_SUSPEND_OBSERVER ||
-      wait->flags != OBELISK_RT_COMPUTED_WAIT_INTERLEAVED ||
-      wait->clause_count == 0 || wait->observer_count < wait->clause_count ||
-      wait->reserved != 0 || wait->total_size > available)
-    return false;
-
-  uint64_t observersEnd =
-      sizeof(*wait) +
-      uint64_t{wait->observer_count} * sizeof(obelisk_rt_computed_observer_v1);
-  uint64_t capturesEnd =
-      observersEnd +
-      uint64_t{wait->capture_count} * sizeof(obelisk_rt_computed_capture_v1);
-  uint64_t dependenciesEnd =
-      capturesEnd + uint64_t{wait->dependency_count} *
-                        sizeof(obelisk_rt_computed_dependency_v1);
-  uint64_t clausesEnd =
-      dependenciesEnd +
-      uint64_t{wait->clause_count} * sizeof(obelisk_rt_computed_clause_v1);
-  uint64_t previousEnd = clausesEnd + uint64_t{wait->previous_limb_count} * 16;
-  if (wait->observers_offset != sizeof(*wait) ||
-      wait->captures_offset != observersEnd ||
-      wait->dependencies_offset != capturesEnd ||
-      wait->clauses_offset != dependenciesEnd ||
-      wait->previous_value_offset != clausesEnd ||
-      wait->previous_unknown_offset != 0 || wait->total_size != previousEnd)
-    return false;
-
-  auto *mutableWait = const_cast<obelisk_rt_computed_wait_record_v1 *>(wait);
-  auto *observers = computedSpan<obelisk_rt_computed_observer_v1>(
-      mutableWait, wait->observers_offset, wait->observer_count);
-  auto *captures = computedSpan<obelisk_rt_computed_capture_v1>(
-      mutableWait, wait->captures_offset, wait->capture_count);
-  auto *dependencies = computedSpan<obelisk_rt_computed_dependency_v1>(
-      mutableWait, wait->dependencies_offset, wait->dependency_count);
-  auto *clauses = computedSpan<obelisk_rt_computed_clause_v1>(
-      mutableWait, wait->clauses_offset, wait->clause_count);
-  if (!observers || !captures || !dependencies || !clauses)
-    return false;
-
-  std::vector<bool> usedConditions(wait->observer_count, false);
-  uint64_t expectedPrevious = wait->previous_value_offset;
-  for (uint32_t index = 0; index != wait->observer_count; ++index) {
-    const obelisk_rt_computed_observer_v1 &observer = observers[index];
-    const obelisk_rt_observer_descriptor_v1 *descriptor =
-        findObserverDescriptor(execution, observer.code_unit_id);
-    if (!descriptor || observer.capture_begin > wait->capture_count ||
-        observer.capture_count > wait->capture_count - observer.capture_begin ||
-        observer.dependency_begin > wait->dependency_count ||
-        observer.dependency_count >
-            wait->dependency_count - observer.dependency_begin ||
-        observer.capture_count != descriptor->capture_count ||
-        observer.reserved != 0)
-      return false;
-    if (index < wait->clause_count) {
-      uint64_t limbs = (uint64_t{descriptor->result_width} + 63) / 64;
-      if (observer.previous_offset != expectedPrevious ||
-          limbs > (wait->total_size - expectedPrevious) / 16)
-        return false;
-      expectedPrevious += limbs * 16;
-    } else if (observer.previous_offset != UINT32_MAX ||
-               descriptor->result_width != 1) {
-      return false;
-    }
-    for (uint32_t capture = 0; capture != observer.capture_count; ++capture) {
-      obelisk_rt_stable_handle_v1 decoded;
-      if (!obelisk_rt_stable_handle_decode(
-              captures[observer.capture_begin + capture].stable_id, &decoded))
-        return false;
-    }
-    for (uint32_t dependency = 0; dependency != observer.dependency_count;
-         ++dependency) {
-      const obelisk_rt_computed_dependency_v1 &entry =
-          dependencies[observer.dependency_begin + dependency];
-      if ((entry.kind != OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL &&
-           entry.kind != OBELISK_RT_OBSERVER_DEPENDENCY_EVENT) ||
-          entry.width == 0 ||
-          (entry.kind == OBELISK_RT_OBSERVER_DEPENDENCY_EVENT &&
-           entry.width != 1))
-        return false;
-      if (entry.kind == OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL) {
-        obelisk_rt_stable_handle_v1 decoded;
-        if (!obelisk_rt_stable_handle_decode(entry.stable_id, &decoded))
-          return false;
-      }
-    }
-  }
-  if (expectedPrevious != wait->total_size)
-    return false;
-  for (uint32_t index = 0; index != wait->clause_count; ++index) {
-    const obelisk_rt_computed_clause_v1 &clause = clauses[index];
-    if (clause.primary_observer != index ||
-        clause.edge > OBELISK_RT_WAIT_EDGE_BOTH ||
-        (clause.flags & ~OBELISK_RT_COMPUTED_CLAUSE_EVENT_PRIMARY) != 0)
-      return false;
-    if (clause.condition_observer != OBELISK_RT_OBSERVER_CONDITION_NONE) {
-      if (clause.condition_observer < wait->clause_count ||
-          clause.condition_observer >= wait->observer_count ||
-          usedConditions[clause.condition_observer])
-        return false;
-      usedConditions[clause.condition_observer] = true;
-    }
-  }
-  for (uint32_t index = wait->clause_count; index != wait->observer_count;
-       ++index)
-    if (!usedConditions[index])
-      return false;
-  return true;
-}
-
 NetAliasCache *getNetAliasCache(const Image &image,
                                 obelisk_rt_context *context) {
   if (context->netAliases.execution == context->execution)
@@ -5255,6 +5141,7 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
                 uint8_t *canonicalFrame, uint64_t canonicalFrameSize,
                 uint64_t startPC, StepBudget &budget,
                 obelisk_rt_fragment_action_v1 *action, ExecutionState &state,
+                std::unique_ptr<PendingDesignActivation> *pendingActivation,
                 uint64_t returnFirst = 0, uint64_t returnCount = 0,
                 Frame *caller = nullptr) {
   ScopedBytecodeFrameRoots managedRoots(image, frame, context);
@@ -6709,6 +6596,7 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       obelisk_rt_status status = executeFunction(
           image, callee, context, canonicalFrame, canonicalFrameSize,
           calleeFunction.firstInstruction, budget, action, state,
+          pendingActivation,
           instruction.auxiliary, instruction.immediate, &frame);
       --state.callDepth;
       state.frames.erase(callee.id);
@@ -6763,6 +6651,7 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       status = executeFunction(
           image, callee, context, canonicalFrame, canonicalFrameSize,
           calleeFunction.firstInstruction, budget, action, state,
+          pendingActivation,
           instruction.auxiliary, instruction.flags, &frame);
       --state.callDepth;
       state.frames.erase(callee.id);
@@ -6806,6 +6695,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
     case OBELISK_RT_DB_TASK_CALL: {
       if (!context)
         return OBELISK_RT_INVALID_ARGUMENT;
+      if (!pendingActivation || *pendingActivation)
+        return OBELISK_RT_INVALID_LIFECYCLE;
       Function callee = functionAt(image, instruction.source0);
       uint64_t canonicalSize =
           (callee.flags & OBELISK_RT_DESIGN_FUNCTION_FRAME_SIZE_MASK) >> 1;
@@ -6881,12 +6772,13 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
               ->second.referenceCount += count;
       }
       pending->ownsRetainedAutomaticStates = true;
+      *pendingActivation = std::move(pending);
       *action = {
           OBELISK_RT_FRAGMENT_TASK_CALL,
           OBELISK_RT_SUSPEND_NONE,
           static_cast<uint32_t>(instruction.immediate),
           0,
-          static_cast<uint64_t>(reinterpret_cast<uintptr_t>(pending.release())),
+          0,
           0};
       return OBELISK_RT_OK;
     }
@@ -7277,7 +7169,8 @@ obelisk_rt_status obelisk_rt_execute_design_observer(
     obelisk_rt_fragment_action_v1 action{};
     obelisk_rt_status status =
         executeFunction(image, frame, context, nullptr, 0,
-                        function.firstInstruction, budget, &action, state);
+                        function.firstInstruction, budget, &action, state,
+                        nullptr);
     if (status != OBELISK_RT_OK)
       return status;
     Layout result = layoutAt(image, function, function.argumentCount);
@@ -7783,12 +7676,13 @@ obelisk_rt_status obelisk_rt_validate_design_bytecode(
   }
 }
 
-obelisk_rt_status obelisk_rt_execute_design_bytecode(
+static obelisk_rt_status executeDesignBytecode(
     const obelisk_rt_design_bytecode_entry_v1 &entry,
     obelisk_rt_context *context, void *frame, uint64_t frameSize,
     uint64_t scratchOffset, uint64_t scratchSize, uint32_t continuation,
     uint64_t instructionLimit,
-    obelisk_rt_fragment_action_v1 *outAction) noexcept {
+    obelisk_rt_fragment_action_v1 *outAction,
+    std::unique_ptr<PendingDesignActivation> *pendingActivation) noexcept {
   if (!outAction || (frameSize != 0 && !frame))
     return OBELISK_RT_INVALID_ARGUMENT;
   try {
@@ -7815,7 +7709,8 @@ obelisk_rt_status obelisk_rt_execute_design_bytecode(
         OBELISK_RT_FRAGMENT_TERMINATE, OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
     obelisk_rt_status status =
         executeFunction(image, top, context, static_cast<uint8_t *>(frame),
-                        scratchOffset, *pc, budget, outAction, state);
+                        scratchOffset, *pc, budget, outAction, state,
+                        pendingActivation);
     if (status != OBELISK_RT_OK ||
         outAction->kind != OBELISK_RT_FRAGMENT_TERMINATE)
       return status;
@@ -7828,6 +7723,17 @@ obelisk_rt_status obelisk_rt_execute_design_bytecode(
   } catch (...) {
     return OBELISK_RT_INVALID_BYTECODE;
   }
+}
+
+obelisk_rt_status obelisk_rt_execute_design_bytecode(
+    const obelisk_rt_design_bytecode_entry_v1 &entry,
+    obelisk_rt_context *context, void *frame, uint64_t frameSize,
+    uint64_t scratchOffset, uint64_t scratchSize, uint32_t continuation,
+    uint64_t instructionLimit,
+    obelisk_rt_fragment_action_v1 *outAction) noexcept {
+  return executeDesignBytecode(entry, context, frame, frameSize, scratchOffset,
+                               scratchSize, continuation, instructionLimit,
+                               outAction, nullptr);
 }
 
 extern "C" obelisk_rt_status
@@ -8460,15 +8366,13 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
     obelisk_rt_design_bytecode_entry_v1 entry{context->execution, task.function,
                                               0};
     obelisk_rt_fragment_action_v1 action{};
-    obelisk_rt_status status = obelisk_rt_execute_design_bytecode(
+    std::unique_ptr<PendingDesignActivation> pendingActivation;
+    obelisk_rt_status status = executeDesignBytecode(
         entry, context, task.frame.data(), task.frame.size(),
-        task.scratchOffset, task.scratchSize, task.continuation, 0, &action);
+        task.scratchOffset, task.scratchSize, task.continuation, 0, &action,
+        &pendingActivation);
     currentFrameReleased =
         status == OBELISK_RT_OK && action.kind == OBELISK_RT_FRAGMENT_TERMINATE;
-    std::unique_ptr<PendingDesignActivation> pendingActivation;
-    if (status == OBELISK_RT_OK && action.kind == OBELISK_RT_FRAGMENT_TASK_CALL)
-      pendingActivation.reset(reinterpret_cast<PendingDesignActivation *>(
-          static_cast<uintptr_t>(action.payload)));
     bool terminationRequested =
         obelisk_rt_v1_scheduler_termination_requested(context) != 0;
     if (terminationRequested) {
@@ -8555,9 +8459,9 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
           const auto *computed =
               reinterpret_cast<const obelisk_rt_computed_wait_record_v1 *>(
                   task.frame.data() + action.payload);
-          if (!validateComputedWaitRecord(context->execution, computed,
-                                          task.scratchOffset -
-                                              action.payload)) {
+          if (!obelisk_rt_validate_computed_wait_record(
+                  context->execution, computed,
+                  task.scratchOffset - action.payload)) {
             finalizeStatus = OBELISK_RT_INVALID_FRAME;
             break;
           }

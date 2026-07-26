@@ -472,20 +472,18 @@ const T *computedSpan(const obelisk_rt_computed_wait_record_v1 *wait,
                                      offset);
 }
 
-obelisk_rt_status
-validateComputedWait(obelisk_rt_process_instance_v1 &instance,
-                     const obelisk_rt_fragment_action_v1 &action) {
-  if (action.auxiliary < sizeof(obelisk_rt_computed_wait_record_v1))
-    return OBELISK_RT_INVALID_FRAME;
-  const auto *wait =
-      reinterpret_cast<const obelisk_rt_computed_wait_record_v1 *>(
-          static_cast<const uint8_t *>(instance.frame) + action.payload);
-  if (wait->version != OBELISK_RT_VERSION ||
+} // namespace
+
+bool obelisk_rt_validate_computed_wait_record(
+    const obelisk_rt_execution_descriptor_v1 *execution,
+    const obelisk_rt_computed_wait_record_v1 *wait, uint64_t available) {
+  if (!execution || !wait || available < sizeof(*wait) ||
+      wait->version != OBELISK_RT_VERSION ||
       wait->kind != OBELISK_RT_SUSPEND_OBSERVER ||
       wait->flags != OBELISK_RT_COMPUTED_WAIT_INTERLEAVED ||
       wait->clause_count == 0 || wait->observer_count < wait->clause_count ||
-      wait->reserved != 0 || wait->total_size > action.auxiliary)
-    return OBELISK_RT_INVALID_FRAME;
+      wait->reserved != 0 || wait->total_size > available)
+    return false;
   uint64_t observersEnd, capturesEnd, dependenciesEnd, clausesEnd,
       previousValuesEnd;
   if (addOverflow(wait->observers_offset,
@@ -514,8 +512,8 @@ validateComputedWait(obelisk_rt_process_instance_v1 &instance,
       wait->previous_value_offset != clausesEnd ||
       wait->previous_unknown_offset != 0 ||
       wait->total_size != previousValuesEnd ||
-      wait->total_size > action.auxiliary)
-    return OBELISK_RT_INVALID_FRAME;
+      wait->total_size > available)
+    return false;
   const auto *observers = computedSpan<obelisk_rt_computed_observer_v1>(
       wait, wait->observers_offset, wait->observer_count);
   const auto *captures = computedSpan<obelisk_rt_computed_capture_v1>(
@@ -525,10 +523,8 @@ validateComputedWait(obelisk_rt_process_instance_v1 &instance,
   const auto *clauses = computedSpan<obelisk_rt_computed_clause_v1>(
       wait, wait->clauses_offset, wait->clause_count);
   if (!observers || !captures || !dependencies || !clauses)
-    return OBELISK_RT_INVALID_FRAME;
+    return false;
 
-  const obelisk_rt_execution_descriptor_v1 *execution =
-      instance.descriptor->execution;
   std::vector<bool> usedConditions(wait->observer_count, false);
   uint64_t expectedPrevious = wait->previous_value_offset;
   for (uint32_t index = 0; index != wait->observer_count; ++index) {
@@ -542,22 +538,22 @@ validateComputedWait(obelisk_rt_process_instance_v1 &instance,
             wait->dependency_count - observer.dependency_begin ||
         observer.capture_count != descriptor->capture_count ||
         observer.reserved != 0)
-      return OBELISK_RT_INVALID_FRAME;
+      return false;
     if (index < wait->clause_count) {
       uint64_t limbs = (uint64_t{descriptor->result_width} + 63) / 64;
       if (observer.previous_offset != expectedPrevious ||
           limbs > (wait->total_size - expectedPrevious) / 16)
-        return OBELISK_RT_INVALID_FRAME;
+        return false;
       expectedPrevious += limbs * 16;
     } else if (observer.previous_offset != UINT32_MAX ||
                descriptor->result_width != 1) {
-      return OBELISK_RT_INVALID_FRAME;
+      return false;
     }
     for (uint32_t capture = 0; capture != observer.capture_count; ++capture) {
       obelisk_rt_stable_handle_v1 decoded;
       if (!obelisk_rt_stable_handle_decode(
               captures[observer.capture_begin + capture].stable_id, &decoded))
-        return OBELISK_RT_INVALID_FRAME;
+        return false;
     }
     for (uint32_t dependency = 0; dependency != observer.dependency_count;
          ++dependency) {
@@ -568,35 +564,51 @@ validateComputedWait(obelisk_rt_process_instance_v1 &instance,
           entry.width == 0 ||
           (entry.kind == OBELISK_RT_OBSERVER_DEPENDENCY_EVENT &&
            entry.width != 1))
-        return OBELISK_RT_INVALID_FRAME;
+        return false;
       if (entry.kind == OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL) {
         obelisk_rt_stable_handle_v1 decoded;
         if (!obelisk_rt_stable_handle_decode(entry.stable_id, &decoded))
-          return OBELISK_RT_INVALID_FRAME;
+          return false;
       }
     }
   }
   if (expectedPrevious != wait->total_size)
-    return OBELISK_RT_INVALID_FRAME;
+    return false;
   for (uint32_t index = 0; index != wait->clause_count; ++index) {
     const obelisk_rt_computed_clause_v1 &clause = clauses[index];
     if (clause.primary_observer != index ||
         clause.edge > OBELISK_RT_WAIT_EDGE_BOTH ||
         (clause.flags & ~OBELISK_RT_COMPUTED_CLAUSE_EVENT_PRIMARY) != 0)
-      return OBELISK_RT_INVALID_FRAME;
+      return false;
     if (clause.condition_observer != OBELISK_RT_OBSERVER_CONDITION_NONE) {
       if (clause.condition_observer < wait->clause_count ||
           clause.condition_observer >= wait->observer_count ||
           usedConditions[clause.condition_observer])
-        return OBELISK_RT_INVALID_FRAME;
+        return false;
       usedConditions[clause.condition_observer] = true;
     }
   }
   for (uint32_t index = wait->clause_count; index != wait->observer_count;
        ++index)
     if (!usedConditions[index])
-      return OBELISK_RT_INVALID_FRAME;
-  return OBELISK_RT_OK;
+      return false;
+  return true;
+}
+
+namespace {
+
+obelisk_rt_status
+validateComputedWait(obelisk_rt_process_instance_v1 &instance,
+                     const obelisk_rt_fragment_action_v1 &action) {
+  if (action.auxiliary < sizeof(obelisk_rt_computed_wait_record_v1))
+    return OBELISK_RT_INVALID_FRAME;
+  const auto *wait =
+      reinterpret_cast<const obelisk_rt_computed_wait_record_v1 *>(
+          static_cast<const uint8_t *>(instance.frame) + action.payload);
+  return obelisk_rt_validate_computed_wait_record(
+             instance.descriptor->execution, wait, action.auxiliary)
+             ? OBELISK_RT_OK
+             : OBELISK_RT_INVALID_FRAME;
 }
 
 obelisk_rt_status validateWait(obelisk_rt_process_instance_v1 &instance,

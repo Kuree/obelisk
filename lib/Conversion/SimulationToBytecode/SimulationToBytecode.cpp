@@ -1521,7 +1521,9 @@ private:
     if (!blockInfo)
       return success();
     Liveness::ValueSetT live = blockInfo->currentlyLiveValues(operation);
-    for (auto [value, source] : plan.registers) {
+    for (const auto &registerEntry : plan.registers) {
+      Value value = registerEntry.first;
+      uint32_t source = registerEntry.second;
       SmallVector<uint64_t, 2> offsets;
       if (!sim::getManagedHandleOffsets(value.getType(), offsets))
         return operation->emitError(

@@ -201,18 +201,25 @@ def judge_one(obelisk: str, ivtest_dir: Path, desc: Descriptor,
         )
 
         if desc.test_type == "CE":
-            status = model.XFAIL_PASS if not compiled.ok else model.RUN_FAIL
-            return (desc.key, model.Outcome(status))
+            if compiled.failure_kind == "compile":
+                return (desc.key, model.Outcome(model.XFAIL_PASS))
+            if compiled.ok:
+                return (desc.key, model.Outcome(model.RUN_FAIL))
+            return (desc.key,
+                    model.Outcome(model.COMPILE_FAIL, compiled.stderr))
         if not compiled.ok:
             return (desc.key, model.Outcome(model.COMPILE_FAIL, compiled.stderr))
 
         result = runner.execute(str(binary), timeout)
         if desc.gold is not None:
-            if desc.gold.exists() and result.stdout == desc.gold.read_text(
-                    encoding="utf-8", errors="replace"):
+            if (result.ok and desc.gold.exists() and
+                    result.stdout == desc.gold.read_text(
+                        encoding="utf-8", errors="replace")):
                 return (desc.key, model.Outcome(model.PASS))
             return (desc.key, model.Outcome(model.RUN_FAIL, result.stdout))
-        if any(line.strip() == PASSED_MARKER for line in result.stdout.splitlines()):
+        if result.ok and any(
+                line.strip() == PASSED_MARKER
+                for line in result.stdout.splitlines()):
             return (desc.key, model.Outcome(model.PASS))
         # Test doesn't use PASSED marker. Treat clean exit as pass.
         if result.ok:

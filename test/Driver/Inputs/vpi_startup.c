@@ -31,6 +31,12 @@ static void startup(void) {
   vpi_printf("startup %s size=%d aval=%x bval=%x\n",
              vpi_get_str(vpiFullName, object), vpi_get(vpiSize, object),
              value.value.vector[0].aval, value.value.vector[0].bval);
+  value.format = vpiBinStrVal;
+  value.value.str = "10_01";
+  vpi_put_value(object, &value, 0, vpiForceFlag);
+  value.format = vpiIntVal;
+  vpi_get_value(object, &value);
+  vpi_printf("binary underscore=%d\n", value.value.integer);
   value.format = vpiIntVal;
   value.value.integer = 7;
   vpi_put_value(object, &value, 0, vpiForceFlag);

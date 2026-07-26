@@ -17,6 +17,14 @@ namespace {
 
 std::recursive_mutex hostErrorMutex;
 
+struct ThreadError {
+  std::weak_ptr<const uint8_t> contextLifetime;
+  std::string message;
+};
+
+thread_local std::unordered_map<const obelisk_rt_context *, ThreadError>
+    threadErrors;
+
 bool validActivationInventory(
     const obelisk_rt_execution_descriptor_v1 &execution) {
   if ((execution.activation_count == 0) != (execution.activations == nullptr))
@@ -104,6 +112,7 @@ bool validObserverInventory(
 } // namespace
 
 obelisk_rt_context::obelisk_rt_context() {
+  errorLifetime = std::make_shared<const uint8_t>(0);
   managedHeap = obelisk_rt_managed_heap_create(this);
   mcd[0].stream = stdout;
   mcd[0].writable = true;
@@ -116,6 +125,7 @@ obelisk_rt_context::obelisk_rt_context() {
 }
 
 obelisk_rt_context::~obelisk_rt_context() {
+  threadErrors.erase(this);
   obelisk_rt_managed_heap_destroy(managedHeap);
 }
 
@@ -185,7 +195,13 @@ ContextTransaction::~ContextTransaction() noexcept {
 }
 
 void setLastErrorUnlocked(obelisk_rt_context *context, std::string message) {
-  context->lastErrors[std::this_thread::get_id()] = std::move(message);
+  for (auto error = threadErrors.begin(); error != threadErrors.end();) {
+    if (error->second.contextLifetime.expired())
+      error = threadErrors.erase(error);
+    else
+      ++error;
+  }
+  threadErrors[context] = {context->errorLifetime, std::move(message)};
 }
 
 void setLastError(obelisk_rt_context *context, std::string message) {
@@ -495,9 +511,10 @@ obelisk_rt_v1_last_error(obelisk_rt_context *context,
     return OBELISK_RT_INVALID_ARGUMENT;
   return guarded(context, [&] {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
-    auto error = context->lastErrors.find(std::this_thread::get_id());
-    return makeBuffer(error == context->lastErrors.end() ? std::string_view{}
-                                                         : error->second,
-                      outMessage);
+    auto error = threadErrors.find(context);
+    if (error == threadErrors.end() ||
+        error->second.contextLifetime.lock() != context->errorLifetime)
+      return makeBuffer({}, outMessage);
+    return makeBuffer(error->second.message, outMessage);
   });
 }

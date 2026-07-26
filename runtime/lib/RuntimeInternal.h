@@ -479,7 +479,7 @@ struct obelisk_rt_context {
   std::vector<FileEntry> files;
   std::vector<uint32_t> freeFiles;
   std::vector<uint32_t> freeMCDs;
-  std::unordered_map<std::thread::id, std::string> lastErrors;
+  std::shared_ptr<const uint8_t> errorLifetime;
   std::vector<ScheduledProcess> scheduledProcesses;
   std::vector<ScheduledSignalEvent> scheduledSignalEvents;
   std::unordered_map<uint64_t, SignalValueSnapshot> signalValueSnapshots;
@@ -725,6 +725,9 @@ obelisk_rt_status writeUnlocked(obelisk_rt_context *context,
 obelisk_rt_status
 obelisk_rt_validate_bytecode_program(const obelisk_rt_bytecode_v1 &program,
                                      uint32_t continuation) noexcept;
+bool obelisk_rt_validate_computed_wait_record(
+    const obelisk_rt_execution_descriptor_v1 *execution,
+    const obelisk_rt_computed_wait_record_v1 *wait, uint64_t available);
 
 // Design-wide bytecode helpers shared by process construction/dispatch.  They
 // perform full image validation before returning layout information.

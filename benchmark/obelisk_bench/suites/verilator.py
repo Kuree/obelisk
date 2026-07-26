@@ -173,12 +173,16 @@ def judge_one(obelisk: str, top: Path, timeout: float,
         if expects_error:
             # driver.py reports these "passed" whenever the compiler rejects them;
             # their diagnostics are intended, so keep them out of the blocker table.
-            return model.Outcome(model.XFAIL_PASS if not compiled.ok else model.RUN_FAIL)
+            if compiled.failure_kind == "compile":
+                return model.Outcome(model.XFAIL_PASS)
+            if compiled.ok:
+                return model.Outcome(model.RUN_FAIL)
+            return model.Outcome(model.COMPILE_FAIL, compiled.stderr)
         if not compiled.ok:
             return model.Outcome(model.COMPILE_FAIL, compiled.stderr)
 
         result = runner.execute(str(binary), timeout)
-        if FINISHED_MARKER in result.stdout:
+        if result.ok and FINISHED_MARKER in result.stdout:
             return model.Outcome(model.PASS)
         if FINISHED_MARKER in top_text:
             # Test has the marker but didn't print it — genuine runtime bug.

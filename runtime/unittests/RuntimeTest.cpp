@@ -1793,6 +1793,34 @@ TEST_F(RuntimeTest, KeepsLastErrorsIsolatedPerThread) {
   }
 }
 
+TEST_F(RuntimeTest, DoesNotReuseExitedThreadsLastError) {
+  std::thread::id errorThread;
+  std::thread producer([&] {
+    errorThread = std::this_thread::get_id();
+    EXPECT_EQ(format("%q", {}).first, OBELISK_RT_FORMAT_ERROR);
+  });
+  producer.join();
+
+  for (unsigned attempt = 0; attempt != 64; ++attempt) {
+    std::thread::id readerThread;
+    obelisk_rt_status status = OBELISK_RT_IO_ERROR;
+    std::string message;
+    std::thread reader([&] {
+      readerThread = std::this_thread::get_id();
+      RuntimeBuffer buffer;
+      status = obelisk_rt_v1_last_error(context, buffer.out());
+      message = buffer.str();
+    });
+    reader.join();
+    if (readerThread == errorThread) {
+      EXPECT_EQ(status, OBELISK_RT_OK);
+      EXPECT_TRUE(message.empty());
+      return;
+    }
+  }
+  GTEST_SKIP() << "host did not reuse a thread ID";
+}
+
 TEST_F(RuntimeTest, SerializesConcurrentWholeMessageWrites) {
   TempDirectory temporary;
   uint32_t descriptor = open(temporary.file("threads.txt"), "w+");

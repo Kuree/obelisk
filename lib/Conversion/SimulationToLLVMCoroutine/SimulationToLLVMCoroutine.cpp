@@ -6507,7 +6507,9 @@ prepareManagedClassInventory(ModuleOp module,
             8, [&](OpBuilder &builder) {
               Value array =
                   LLVM::ZeroOp::create(builder, location, methodsType);
-              for (auto [index, method] : llvm::enumerate(layout.methods)) {
+              for (auto indexedMethod : llvm::enumerate(layout.methods)) {
+                auto index = indexedMethod.index();
+                auto method = indexedMethod.value();
                 Value entry =
                     LLVM::ZeroOp::create(builder, location, methodType);
                 entry = insertValue(builder, location, entry,

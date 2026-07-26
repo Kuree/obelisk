@@ -46,6 +46,7 @@ def _run_with_retry(command, timeout, cwd=None):
 class CompileResult:
     ok: bool
     stderr: str
+    failure_kind: str | None = None
 
 
 @dataclasses.dataclass
@@ -202,11 +203,24 @@ def compile_design(obelisk: str, sources: list[str], output: str,
     try:
         result = _run_with_retry(command, timeout)
     except subprocess.TimeoutExpired:
-        return CompileResult(ok=False, stderr=f"compile exceeded {timeout:g}s")
+        return CompileResult(
+            ok=False, stderr=f"compile exceeded {timeout:g}s",
+            failure_kind="timeout",
+        )
     except OSError as error:
-        return CompileResult(ok=False, stderr=f"compile could not launch: {error}")
-    return CompileResult(ok=result.returncode == 0,
-                         stderr=result.stdout + result.stderr)
+        return CompileResult(
+            ok=False, stderr=f"compile could not launch: {error}",
+            failure_kind="launch",
+        )
+    return CompileResult(
+        ok=result.returncode == 0,
+        stderr=result.stdout + result.stderr,
+        failure_kind=(
+            None if result.returncode == 0
+            else "crash" if result.returncode < 0
+            else "compile"
+        ),
+    )
 
 
 def execute(binary: str, timeout: float, args: list[str] | None = None) -> ExecResult:

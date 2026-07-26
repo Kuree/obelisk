@@ -242,21 +242,28 @@ bool decodeValue(__vpiHandle *handle, const s_vpi_value *source, uint64_t width,
       if (!source->value.str)
         return false;
       std::string text(source->value.str);
-      size_t count = std::min<size_t>(text.size(), static_cast<size_t>(width));
-      for (size_t index = 0; index < count; ++index) {
-        char digit = text[text.size() - 1 - index];
-        uint64_t mask = uint64_t{1} << (index % 64);
-        if (digit == '1')
-          value[index / 64] |= mask;
-        else if (digit == 'x' || digit == 'X')
-          unknown[index / 64] |= mask;
-        else if (digit == 'z' || digit == 'Z' || digit == '?') {
-          value[index / 64] |= mask;
-          unknown[index / 64] |= mask;
-        } else if (digit != '0' && digit != '_') {
+      size_t bit = 0;
+      for (auto iterator = text.rbegin(); iterator != text.rend(); ++iterator) {
+        char digit = *iterator;
+        if (digit == '_')
+          continue;
+        if (digit != '0' && digit != '1' && digit != 'x' && digit != 'X' &&
+            digit != 'z' && digit != 'Z' && digit != '?') {
           setError(handle->owner, "invalid binary digit in VPI write");
           return false;
         }
+        if (bit < width) {
+          uint64_t mask = uint64_t{1} << (bit % 64);
+          if (digit == '1')
+            value[bit / 64] |= mask;
+          else if (digit == 'x' || digit == 'X')
+            unknown[bit / 64] |= mask;
+          else if (digit == 'z' || digit == 'Z' || digit == '?') {
+            value[bit / 64] |= mask;
+            unknown[bit / 64] |= mask;
+          }
+        }
+        ++bit;
       }
       break;
     }
