@@ -3,7 +3,6 @@
 #include "RuntimeInternal.h"
 
 #include <algorithm>
-#include <cctype>
 #include <cstring>
 #include <functional>
 #include <limits>
@@ -18,11 +17,10 @@ const uint64_t referencePathDescriptorToken = UINT64_C(0x5245465041544831);
 
 struct StringHeader {
   const void *descriptor;
-  uint64_t length;
-  uint64_t hash;
+  std::atomic<uint64_t> hash;
 };
 
-static_assert(sizeof(StringHeader) == 24);
+static_assert(sizeof(StringHeader) == 16);
 
 struct BufferHeader {
   const void *descriptor;
@@ -53,7 +51,7 @@ struct AssocSlot {
   uint64_t hash;
   uint64_t distance;
   uint64_t integral;
-  obelisk_rt_object_v1 *string;
+  obelisk_rt_string_v1 string;
 };
 
 enum class ReferenceSelector : uint32_t { Index = 1, Associative = 2 };
@@ -71,6 +69,12 @@ struct ReferencePathHeader {
 static_assert(sizeof(ReferencePathHeader) == 80);
 
 constexpr uint64_t emptyAssocHash = 0;
+constexpr uint64_t stringTagMask = 3;
+constexpr uint64_t stringInlineTag = 1;
+
+obelisk_rt_object_v1 *heapStringObject(obelisk_rt_string_v1 string);
+bool stringBelongsTo(obelisk_rt_context *context,
+                     obelisk_rt_string_v1 string);
 
 uint64_t elementStride(const obelisk_rt_element_type_v1 *element);
 
@@ -121,7 +125,9 @@ bool queueIsFull(const ContainerHeader &header) {
 }
 
 void walkTraceSlots(uint8_t *base, const obelisk_rt_trace_layout_v1 *layout,
-                    const std::function<void(obelisk_rt_object_v1 **)> &visit) {
+                    const std::function<void(
+                        obelisk_rt_managed_word_v1 *,
+                        obelisk_rt_managed_slot_kind_v1)> &visit) {
   if (!layout)
     return;
   for (uint64_t index = 0; index != layout->entry_count; ++index) {
@@ -131,7 +137,8 @@ void walkTraceSlots(uint8_t *base, const obelisk_rt_trace_layout_v1 *layout,
       if (entry.kind == OBELISK_RT_TRACE_EMBEDDED)
         walkTraceSlots(address, entry.child_layout, visit);
       else
-        visit(reinterpret_cast<obelisk_rt_object_v1 **>(address));
+        visit(reinterpret_cast<obelisk_rt_managed_word_v1 *>(address),
+              entry.slot_kind);
     }
   }
 }
@@ -147,8 +154,18 @@ void enumerateTraceSlots(uint8_t *base,
       uint8_t *address = base + entry.offset + item * entry.stride;
       if (entry.kind == OBELISK_RT_TRACE_EMBEDDED)
         enumerateTraceSlots(address, entry.child_layout, visit, environment);
-      else
+      else if (entry.slot_kind == OBELISK_RT_MANAGED_SLOT_STRING) {
+        obelisk_rt_managed_word_v1 word = 0;
+        std::memcpy(&word, address, sizeof(word));
+        if (word == 0 || (word & stringTagMask) == stringInlineTag)
+          continue;
+        if ((word & stringTagMask) != 0)
+          continue;
+        obelisk_rt_object_v1 *object = heapStringObject(word);
+        visit(environment, &object);
+      } else {
         visit(environment, reinterpret_cast<obelisk_rt_object_v1 **>(address));
+      }
     }
   }
 }
@@ -178,6 +195,26 @@ private:
   obelisk_rt_status status;
 };
 
+class ScopedManagedWordRoot {
+public:
+  ScopedManagedWordRoot(obelisk_rt_gc_lane_v1 *lane,
+                        obelisk_rt_managed_word_v1 *slot)
+      : lane(lane),
+        status(obelisk_rt_v1_gc_managed_root_push(lane, &root, slot)) {}
+  ScopedManagedWordRoot(const ScopedManagedWordRoot &) = delete;
+  ScopedManagedWordRoot &operator=(const ScopedManagedWordRoot &) = delete;
+  ~ScopedManagedWordRoot() {
+    if (status == OBELISK_RT_OK)
+      (void)obelisk_rt_v1_gc_managed_root_pop(lane, &root);
+  }
+  obelisk_rt_status getStatus() const { return status; }
+
+private:
+  obelisk_rt_gc_lane_v1 *lane;
+  obelisk_rt_gc_managed_root_v1 root{};
+  obelisk_rt_status status;
+};
+
 void enumerateValueRoots(void *opaque, ManagedRootVisit visit,
                          void *environment) {
   auto *values = static_cast<ValueRootEnvironment *>(opaque);
@@ -192,9 +229,26 @@ validateManagedSlots(obelisk_rt_context *context,
                      const uint8_t *value) {
   obelisk_rt_status status = OBELISK_RT_OK;
   walkTraceSlots(const_cast<uint8_t *>(value), element->trace,
-                 [&](obelisk_rt_object_v1 **slot) {
-                   if (status == OBELISK_RT_OK &&
-                       !obelisk_rt_managed_object_belongs_to(context, *slot))
+                 [&](obelisk_rt_managed_word_v1 *slot,
+                     obelisk_rt_managed_slot_kind_v1 kind) {
+                   if (status != OBELISK_RT_OK || !slot || *slot == 0)
+                     return;
+                   if (kind == OBELISK_RT_MANAGED_SLOT_STRING) {
+                     if (!stringBelongsTo(context, *slot))
+                       status = OBELISK_RT_INVALID_HANDLE;
+                     return;
+                   }
+                   if ((*slot & stringTagMask) != 0) {
+                     status = OBELISK_RT_INVALID_HANDLE;
+                     return;
+                   }
+                   auto *object = heapStringObject(*slot);
+                   obelisk_rt_managed_kind_v1 expected =
+                       kind == OBELISK_RT_MANAGED_SLOT_CLASS
+                           ? OBELISK_RT_MANAGED_CLASS
+                           : OBELISK_RT_MANAGED_CONTAINER;
+                   if (!obelisk_rt_managed_object_belongs_to(context, object) ||
+                       obelisk_rt_managed_object_kind(object) != expected)
                      status = OBELISK_RT_INVALID_HANDLE;
                  });
   return status;
@@ -539,10 +593,67 @@ struct StringView {
   const char *bytes = "";
   uint64_t size = 0;
   uint64_t hash = 0;
+  char inlineBytes[8] = {};
 };
 
-obelisk_rt_status readString(obelisk_rt_object_v1 *string, StringView &view) {
-  if (!string) {
+obelisk_rt_object_v1 *heapStringObject(obelisk_rt_string_v1 string) {
+  return reinterpret_cast<obelisk_rt_object_v1 *>(
+      static_cast<uintptr_t>(string));
+}
+
+bool isValidInlineString(obelisk_rt_string_v1 string) {
+  if ((string & stringTagMask) != stringInlineTag)
+    return false;
+  uint8_t control = static_cast<uint8_t>(string);
+  uint64_t length = (string >> 2) & 7;
+  if ((control & UINT8_C(0xe0)) != 0 || length == 0)
+    return false;
+  uint64_t usedBits = 8 + length * 8;
+  return usedBits == 64 || (string >> usedBits) == 0;
+}
+
+bool stringBelongsTo(obelisk_rt_context *context,
+                     obelisk_rt_string_v1 string) {
+  if (string == 0)
+    return true;
+  if ((string & stringTagMask) == stringInlineTag)
+    return isValidInlineString(string);
+  return (string & stringTagMask) == 0 &&
+         obelisk_rt_managed_object_belongs_to(context,
+                                              heapStringObject(string)) &&
+         obelisk_rt_managed_object_kind(heapStringObject(string)) ==
+             OBELISK_RT_MANAGED_STRING;
+}
+
+obelisk_rt_string_v1 encodeInlineString(const char *bytes, uint64_t size) {
+  obelisk_rt_string_v1 string = (size << 2) | stringInlineTag;
+  for (uint64_t index = 0; index != size; ++index)
+    string |= static_cast<uint64_t>(
+                  static_cast<unsigned char>(bytes[index]))
+              << (8 + index * 8);
+  return string;
+}
+
+obelisk_rt_status readString(obelisk_rt_string_v1 string, StringView &view) {
+  view = {};
+  if (string == 0)
+    return OBELISK_RT_OK;
+  uint64_t tag = string & stringTagMask;
+  if (tag == stringInlineTag) {
+    if (!isValidInlineString(string))
+      return OBELISK_RT_INVALID_HANDLE;
+    view.size = (string >> 2) & 7;
+    for (uint64_t index = 0; index != view.size; ++index)
+      view.inlineBytes[index] =
+          static_cast<char>(string >> (8 + index * 8));
+    view.bytes = view.inlineBytes;
+    view.hash = hashBytes(view.bytes, view.size);
+    return OBELISK_RT_OK;
+  }
+  if (tag != 0)
+    return OBELISK_RT_INVALID_HANDLE;
+  obelisk_rt_object_v1 *object = heapStringObject(string);
+  if (!object) {
     view = {};
     return OBELISK_RT_OK;
   }
@@ -550,23 +661,28 @@ obelisk_rt_status readString(obelisk_rt_object_v1 *string, StringView &view) {
     StringView *view;
   } read{&view};
   return obelisk_rt_managed_object_access(
-      string, OBELISK_RT_MANAGED_STRING,
+      object, OBELISK_RT_MANAGED_STRING,
       [](void *environment, uint8_t *object,
          uint64_t extent) -> obelisk_rt_status {
         auto *read = static_cast<Read *>(environment);
         if (extent < sizeof(StringHeader) + 1)
           return OBELISK_RT_INVALID_HANDLE;
-        auto *header = reinterpret_cast<const StringHeader *>(object);
-        if (header->descriptor != &stringDescriptorToken ||
-            header->length > extent - sizeof(StringHeader) - 1)
+        auto *header = reinterpret_cast<StringHeader *>(object);
+        if (header->descriptor != &stringDescriptorToken)
           return OBELISK_RT_INVALID_HANDLE;
+        uint64_t length = extent - sizeof(StringHeader) - 1;
         const char *bytes =
             reinterpret_cast<const char *>(object + sizeof(StringHeader));
-        if (bytes[header->length] != '\0')
+        if (bytes[length] != '\0')
           return OBELISK_RT_INVALID_HANDLE;
         read->view->bytes = bytes;
-        read->view->size = header->length;
-        read->view->hash = header->hash;
+        read->view->size = length;
+        uint64_t hash = header->hash.load(std::memory_order_relaxed);
+        if (hash == 0) {
+          hash = hashBytes(bytes, length);
+          header->hash.store(hash, std::memory_order_relaxed);
+        }
+        read->view->hash = hash;
         return OBELISK_RT_OK;
       },
       &read);
@@ -574,12 +690,16 @@ obelisk_rt_status readString(obelisk_rt_object_v1 *string, StringView &view) {
 
 obelisk_rt_status createString(obelisk_rt_gc_lane_v1 *lane, const char *bytes,
                                uint64_t size,
-                               obelisk_rt_object_v1 **outString) {
+                               obelisk_rt_string_v1 *outString) {
   if (!outString || (!bytes && size != 0))
     return OBELISK_RT_INVALID_ARGUMENT;
-  *outString = nullptr;
+  *outString = 0;
   if (size == 0)
     return OBELISK_RT_OK;
+  if (size <= 7) {
+    *outString = encodeInlineString(bytes, size);
+    return OBELISK_RT_OK;
+  }
   if (!lane || size > UINT64_MAX - sizeof(StringHeader) - 1)
     return OBELISK_RT_OUT_OF_RESOURCES;
 
@@ -602,8 +722,7 @@ obelisk_rt_status createString(obelisk_rt_gc_lane_v1 *lane, const char *bytes,
           return OBELISK_RT_INVALID_HANDLE;
         auto *header = reinterpret_cast<StringHeader *>(object);
         header->descriptor = &stringDescriptorToken;
-        header->length = initialize->size;
-        header->hash = hashBytes(initialize->bytes, initialize->size);
+        header->hash.store(0, std::memory_order_relaxed);
         char *destination =
             reinterpret_cast<char *>(object + sizeof(StringHeader));
         std::memcpy(destination, initialize->bytes,
@@ -613,19 +732,29 @@ obelisk_rt_status createString(obelisk_rt_gc_lane_v1 *lane, const char *bytes,
       },
       &initialize);
   if (status == OBELISK_RT_OK)
-    *outString = result;
+    *outString = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(result));
   return status;
 }
 
 int32_t compareViews(const StringView &left, const StringView &right,
                      bool insensitive) {
   uint64_t common = std::min(left.size, right.size);
+  if (!insensitive && common != 0) {
+    int compared =
+        std::memcmp(left.bytes, right.bytes, static_cast<size_t>(common));
+    if (compared != 0)
+      return compared < 0 ? -1 : 1;
+  }
+  if (!insensitive)
+    return left.size == right.size ? 0 : (left.size < right.size ? -1 : 1);
   for (uint64_t index = 0; index != common; ++index) {
     unsigned char a = static_cast<unsigned char>(left.bytes[index]);
     unsigned char b = static_cast<unsigned char>(right.bytes[index]);
     if (insensitive) {
-      a = static_cast<unsigned char>(std::tolower(a));
-      b = static_cast<unsigned char>(std::tolower(b));
+      if (a >= 'A' && a <= 'Z')
+        a = static_cast<unsigned char>(a + ('a' - 'A'));
+      if (b >= 'A' && b <= 'Z')
+        b = static_cast<unsigned char>(b + ('a' - 'A'));
     }
     if (a != b)
       return a < b ? -1 : 1;
@@ -678,8 +807,10 @@ void obelisk_rt_managed_trace_runtime_object(obelisk_rt_managed_kind_v1 kind,
         auto *slot = reinterpret_cast<AssocSlot *>(data + index * stride);
         if (slot->hash == emptyAssocHash)
           continue;
-        if (header->keyKind == OBELISK_RT_ASSOC_KEY_STRING)
-          visit(environment, slot->string);
+        if (header->keyKind == OBELISK_RT_ASSOC_KEY_STRING &&
+            slot->string != 0 &&
+            (slot->string & stringTagMask) == 0)
+          visit(environment, heapStringObject(slot->string));
         enumerateTraceSlots(
             reinterpret_cast<uint8_t *>(slot) + valueOffset,
             header->element->trace,
@@ -717,8 +848,10 @@ void obelisk_rt_managed_trace_runtime_object(obelisk_rt_managed_kind_v1 kind,
       return;
     visit(environment, path->owner);
     if (path->selector == ReferenceSelector::Associative &&
-        path->key.kind == OBELISK_RT_ASSOC_KEY_STRING)
-      visit(environment, path->key.string);
+        path->key.kind == OBELISK_RT_ASSOC_KEY_STRING &&
+        path->key.string != 0 &&
+        (path->key.string & stringTagMask) == 0)
+      visit(environment, heapStringObject(path->key.string));
     return;
   }
   default:
@@ -728,88 +861,152 @@ void obelisk_rt_managed_trace_runtime_object(obelisk_rt_managed_kind_v1 kind,
 
 extern "C" obelisk_rt_status
 obelisk_rt_v1_string_create(obelisk_rt_gc_lane_v1 *lane, const char *bytes,
-                            uint64_t size, obelisk_rt_object_v1 **outString) {
+                            uint64_t size, obelisk_rt_string_v1 *outString) {
   return createString(lane, bytes, size, outString);
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_string_concat(
-    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *left,
-    obelisk_rt_object_v1 *right, obelisk_rt_object_v1 **outString) {
-  if (!lane || !outString)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  *outString = nullptr;
-  StringView leftView;
-  StringView rightView;
-  obelisk_rt_status status = readString(left, leftView);
-  if (status != OBELISK_RT_OK)
-    return status;
-  status = readString(right, rightView);
-  if (status != OBELISK_RT_OK)
-    return status;
-  if (leftView.size > UINT64_MAX - rightView.size)
-    return OBELISK_RT_OUT_OF_RESOURCES;
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_string_v1 left,
+    obelisk_rt_string_v1 right, obelisk_rt_string_v1 *outString) {
+  const obelisk_rt_string_span_v1 spans[] = {{left}, {right}};
+  return obelisk_rt_v1_string_concat_many(lane, spans, 2, outString);
+}
 
-  obelisk_rt_object_v1 *roots[] = {left, right};
-  obelisk_rt_gc_root_range_v1 rootRange{};
-  status = obelisk_rt_v1_gc_root_range_push(lane, &rootRange, roots, 2);
-  if (status != OBELISK_RT_OK)
-    return status;
-  // Re-read after root publication. No allocation has happened yet, but this
-  // also makes the lifetime requirement explicit for future callers.
-  status = readString(roots[0], leftView);
-  if (status == OBELISK_RT_OK)
-    status = readString(roots[1], rightView);
-  if (status == OBELISK_RT_OK) {
-    uint64_t size = leftView.size + rightView.size;
-    if (size == 0) {
-      *outString = nullptr;
-    } else {
-      // Materialize a temporary before allocation because createString may
-      // collect and its source must not be an interior heap pointer.
-      try {
-        std::string bytes;
-        bytes.reserve(static_cast<size_t>(size));
-        bytes.append(leftView.bytes, static_cast<size_t>(leftView.size));
-        bytes.append(rightView.bytes, static_cast<size_t>(rightView.size));
-        status = createString(lane, bytes.data(), size, outString);
-      } catch (const std::bad_alloc &) {
-        status = OBELISK_RT_OUT_OF_MEMORY;
-      }
+extern "C" obelisk_rt_status obelisk_rt_v1_string_concat_many(
+    obelisk_rt_gc_lane_v1 *lane, const obelisk_rt_string_span_v1 *spans,
+    uint64_t spanCount, obelisk_rt_string_v1 *outString) {
+  static_assert(sizeof(obelisk_rt_string_span_v1) ==
+                sizeof(obelisk_rt_managed_word_v1));
+  if (!outString || (!spans && spanCount != 0))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outString = 0;
+  uint64_t total = 0;
+  uint64_t nonempty = 0;
+  obelisk_rt_string_v1 only = 0;
+  for (uint64_t index = 0; index != spanCount; ++index) {
+    StringView view;
+    obelisk_rt_status status = readString(spans[index].string, view);
+    if (status != OBELISK_RT_OK)
+      return status;
+    if (view.size > UINT64_MAX - total)
+      return OBELISK_RT_OUT_OF_RESOURCES;
+    total += view.size;
+    if (view.size != 0) {
+      ++nonempty;
+      only = spans[index].string;
     }
   }
+  if (nonempty == 0)
+    return OBELISK_RT_OK;
+  if (nonempty == 1) {
+    *outString = only;
+    return OBELISK_RT_OK;
+  }
+  if (total <= 7) {
+    char bytes[7];
+    uint64_t offset = 0;
+    for (uint64_t index = 0; index != spanCount; ++index) {
+      StringView view;
+      obelisk_rt_status status = readString(spans[index].string, view);
+      if (status != OBELISK_RT_OK)
+        return status;
+      std::memcpy(bytes + offset, view.bytes, static_cast<size_t>(view.size));
+      offset += view.size;
+    }
+    *outString = encodeInlineString(bytes, total);
+    return OBELISK_RT_OK;
+  }
+  if (!lane || total > UINT64_MAX - sizeof(StringHeader) - 1)
+    return OBELISK_RT_OUT_OF_RESOURCES;
+
+  auto *rootWords = const_cast<obelisk_rt_managed_word_v1 *>(
+      reinterpret_cast<const obelisk_rt_managed_word_v1 *>(spans));
+  obelisk_rt_gc_managed_root_range_v1 rootRange{};
+  obelisk_rt_status status = obelisk_rt_v1_gc_managed_root_range_push(
+      lane, &rootRange, rootWords, spanCount);
+  if (status != OBELISK_RT_OK)
+    return status;
+  obelisk_rt_object_v1 *result = nullptr;
+  status = obelisk_rt_managed_allocate(
+      lane, OBELISK_RT_MANAGED_STRING, sizeof(StringHeader) + total + 1,
+      alignof(StringHeader), &stringDescriptorToken, &result);
+  if (status == OBELISK_RT_OK) {
+    struct Initialize {
+      const obelisk_rt_string_span_v1 *spans;
+      uint64_t count;
+      uint64_t total;
+    } initialize{spans, spanCount, total};
+    status = obelisk_rt_managed_object_access(
+        result, OBELISK_RT_MANAGED_STRING,
+        [](void *environment, uint8_t *object,
+           uint64_t extent) -> obelisk_rt_status {
+          auto *initialize = static_cast<Initialize *>(environment);
+          if (extent != sizeof(StringHeader) + initialize->total + 1)
+            return OBELISK_RT_INVALID_HANDLE;
+          auto *header = reinterpret_cast<StringHeader *>(object);
+          header->descriptor = &stringDescriptorToken;
+          header->hash.store(0, std::memory_order_relaxed);
+          char *destination =
+              reinterpret_cast<char *>(object + sizeof(StringHeader));
+          uint64_t offset = 0;
+          for (uint64_t index = 0; index != initialize->count; ++index) {
+            StringView view;
+            obelisk_rt_status readStatus =
+                readString(initialize->spans[index].string, view);
+            if (readStatus != OBELISK_RT_OK)
+              return readStatus;
+            std::memcpy(destination + offset, view.bytes,
+                        static_cast<size_t>(view.size));
+            offset += view.size;
+          }
+          destination[initialize->total] = '\0';
+          return OBELISK_RT_OK;
+        },
+        &initialize);
+    if (status == OBELISK_RT_OK)
+      *outString =
+          static_cast<uint64_t>(reinterpret_cast<uintptr_t>(result));
+  }
   obelisk_rt_status popStatus =
-      obelisk_rt_v1_gc_root_range_pop(lane, &rootRange);
+      obelisk_rt_v1_gc_managed_root_range_pop(lane, &rootRange);
   return status == OBELISK_RT_OK ? popStatus : status;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_string_bytes(obelisk_rt_object_v1 *string, const char **outBytes,
-                           uint64_t *outSize) {
-  if (!outBytes || !outSize)
+extern "C" obelisk_rt_status obelisk_rt_v1_string_view(
+    obelisk_rt_string_v1 string, char scratch[8], const char **outBytes,
+    uint64_t *outSize) {
+  if (!scratch || !outBytes || !outSize)
     return OBELISK_RT_INVALID_ARGUMENT;
   *outBytes = "";
   *outSize = 0;
   StringView view;
   obelisk_rt_status status = readString(string, view);
   if (status == OBELISK_RT_OK) {
-    *outBytes = view.bytes;
     *outSize = view.size;
+    if (string != 0 && (string & stringTagMask) == stringInlineTag) {
+      std::memcpy(scratch, view.bytes, static_cast<size_t>(view.size));
+      scratch[view.size] = '\0';
+      *outBytes = scratch;
+    } else {
+      *outBytes = view.bytes;
+    }
   }
   return status;
 }
 
-extern "C" uint64_t obelisk_rt_v1_string_length(obelisk_rt_object_v1 *string) {
+extern "C" uint64_t
+obelisk_rt_v1_string_length(obelisk_rt_string_v1 string) {
   StringView view;
   return readString(string, view) == OBELISK_RT_OK ? view.size : 0;
 }
 
-extern "C" uint64_t obelisk_rt_v1_string_hash(obelisk_rt_object_v1 *string) {
+extern "C" uint64_t obelisk_rt_v1_string_hash(obelisk_rt_string_v1 string) {
   StringView view;
   return readString(string, view) == OBELISK_RT_OK ? view.hash
                                                    : hashBytes("", 0);
 }
 
-extern "C" uint32_t obelisk_rt_v1_string_getc(obelisk_rt_object_v1 *string,
+extern "C" uint32_t obelisk_rt_v1_string_getc(obelisk_rt_string_v1 string,
                                               int64_t index) {
   StringView view;
   if (index < 0 || readString(string, view) != OBELISK_RT_OK ||
@@ -819,16 +1016,21 @@ extern "C" uint32_t obelisk_rt_v1_string_getc(obelisk_rt_object_v1 *string,
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_string_putc(
-    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *string, int64_t index,
-    uint32_t character, obelisk_rt_object_v1 **outString) {
-  if (!lane || !outString)
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_string_v1 string, int64_t index,
+    uint32_t character, obelisk_rt_string_v1 *outString) {
+  if (!outString)
     return OBELISK_RT_INVALID_ARGUMENT;
-  *outString = nullptr;
+  *outString = 0;
   StringView view;
   obelisk_rt_status status = readString(string, view);
   if (status != OBELISK_RT_OK)
     return status;
   if (index < 0 || static_cast<uint64_t>(index) >= view.size) {
+    *outString = string;
+    return OBELISK_RT_OK;
+  }
+  if (static_cast<unsigned char>(view.bytes[index]) ==
+      static_cast<unsigned char>(character)) {
     *outString = string;
     return OBELISK_RT_OK;
   }
@@ -843,17 +1045,21 @@ extern "C" obelisk_rt_status obelisk_rt_v1_string_putc(
 
 extern "C" obelisk_rt_status
 obelisk_rt_v1_string_substr(obelisk_rt_gc_lane_v1 *lane,
-                            obelisk_rt_object_v1 *string, int64_t left,
-                            int64_t right, obelisk_rt_object_v1 **outString) {
-  if (!lane || !outString)
+                            obelisk_rt_string_v1 string, int64_t left,
+                            int64_t right, obelisk_rt_string_v1 *outString) {
+  if (!outString)
     return OBELISK_RT_INVALID_ARGUMENT;
-  *outString = nullptr;
+  *outString = 0;
   StringView view;
   obelisk_rt_status status = readString(string, view);
   if (status != OBELISK_RT_OK)
     return status;
   if (left < 0 || right < left || static_cast<uint64_t>(right) >= view.size)
     return OBELISK_RT_OK;
+  if (left == 0 && static_cast<uint64_t>(right) + 1 == view.size) {
+    *outString = string;
+    return OBELISK_RT_OK;
+  }
   try {
     uint64_t size = static_cast<uint64_t>(right - left) + 1;
     std::string bytes(view.bytes + left, static_cast<size_t>(size));
@@ -863,21 +1069,21 @@ obelisk_rt_v1_string_substr(obelisk_rt_gc_lane_v1 *lane,
   }
 }
 
-extern "C" int32_t obelisk_rt_v1_string_compare(obelisk_rt_object_v1 *left,
-                                                obelisk_rt_object_v1 *right) {
+extern "C" int32_t obelisk_rt_v1_string_compare(obelisk_rt_string_v1 left,
+                                                obelisk_rt_string_v1 right) {
+  if (left == right)
+    return 0;
   StringView leftView;
   StringView rightView;
   if (readString(left, leftView) != OBELISK_RT_OK ||
       readString(right, rightView) != OBELISK_RT_OK)
     return 0;
-  if (leftView.size == rightView.size && leftView.hash != rightView.hash)
-    return compareViews(leftView, rightView, false);
   return compareViews(leftView, rightView, false);
 }
 
 extern "C" int32_t
-obelisk_rt_v1_string_compare_insensitive(obelisk_rt_object_v1 *left,
-                                         obelisk_rt_object_v1 *right) {
+obelisk_rt_v1_string_compare_insensitive(obelisk_rt_string_v1 left,
+                                         obelisk_rt_string_v1 right) {
   StringView leftView;
   StringView rightView;
   if (readString(left, leftView) != OBELISK_RT_OK ||
@@ -887,21 +1093,31 @@ obelisk_rt_v1_string_compare_insensitive(obelisk_rt_object_v1 *left,
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_string_case_convert(
-    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *string, uint32_t toUpper,
-    obelisk_rt_object_v1 **outString) {
-  if (!lane || !outString || toUpper > 1)
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_string_v1 string, uint32_t toUpper,
+    obelisk_rt_string_v1 *outString) {
+  if (!outString || toUpper > 1)
     return OBELISK_RT_INVALID_ARGUMENT;
-  *outString = nullptr;
+  *outString = 0;
   StringView view;
   obelisk_rt_status status = readString(string, view);
   if (status != OBELISK_RT_OK || view.size == 0)
     return status;
   try {
     std::string bytes(view.bytes, static_cast<size_t>(view.size));
+    bool changed = false;
     for (char &character : bytes) {
       unsigned char value = static_cast<unsigned char>(character);
-      character = static_cast<char>(toUpper ? std::toupper(value)
-                                            : std::tolower(value));
+      unsigned char converted = value;
+      if (toUpper && value >= 'a' && value <= 'z')
+        converted = static_cast<unsigned char>(value - ('a' - 'A'));
+      if (!toUpper && value >= 'A' && value <= 'Z')
+        converted = static_cast<unsigned char>(value + ('a' - 'A'));
+      changed |= converted != value;
+      character = static_cast<char>(converted);
+    }
+    if (!changed) {
+      *outString = string;
+      return OBELISK_RT_OK;
     }
     return createString(lane, bytes.data(), view.size, outString);
   } catch (const std::bad_alloc &) {
@@ -947,9 +1163,14 @@ obelisk_rt_status prepareElementValue(obelisk_rt_gc_lane_v1 *lane,
   if (status != OBELISK_RT_OK)
     return status;
   walkTraceSlots(storage.data(), element->trace,
-                 [&](obelisk_rt_object_v1 **slot) {
-                   if (status != OBELISK_RT_OK || !slot || !*slot ||
-                       obelisk_rt_managed_object_kind(*slot) !=
+                 [&](obelisk_rt_managed_word_v1 *word,
+                     obelisk_rt_managed_slot_kind_v1 kind) {
+                   if (status != OBELISK_RT_OK || !word || *word == 0 ||
+                       kind != OBELISK_RT_MANAGED_SLOT_CONTAINER)
+                     return;
+                   auto *slot =
+                       reinterpret_cast<obelisk_rt_object_v1 **>(word);
+                   if (obelisk_rt_managed_object_kind(*slot) !=
                            OBELISK_RT_MANAGED_CONTAINER)
                      return;
                    obelisk_rt_object_v1 *clone = nullptr;
@@ -964,7 +1185,7 @@ obelisk_rt_status prepareElementValue(obelisk_rt_gc_lane_v1 *lane,
 struct NormalizedAssocKey {
   uint64_t hash = 0;
   uint64_t integral = 0;
-  obelisk_rt_object_v1 *string = nullptr;
+  obelisk_rt_string_v1 string = 0;
   bool ignored = false;
 };
 
@@ -986,7 +1207,7 @@ obelisk_rt_status normalizeAssocKey(obelisk_rt_context *context,
     return OBELISK_RT_INVALID_ARGUMENT;
   if (key->kind == OBELISK_RT_ASSOC_KEY_STRING) {
     if (key->value != 0 || key->unknown != 0 ||
-        !obelisk_rt_managed_object_belongs_to(context, key->string))
+        !stringBelongsTo(context, key->string))
       return OBELISK_RT_INVALID_HANDLE;
     StringView view;
     obelisk_rt_status status = readString(key->string, view);
@@ -1241,7 +1462,8 @@ void enumerateAssocCloneRoots(void *opaque, ManagedRootVisit visit,
     auto *slot =
         reinterpret_cast<AssocSlot *>(roots->entries + index * roots->stride);
     if (roots->keyKind == OBELISK_RT_ASSOC_KEY_STRING)
-      visit(environment, &slot->string);
+      visit(environment,
+            reinterpret_cast<obelisk_rt_object_v1 **>(&slot->string));
     enumerateTraceSlots(reinterpret_cast<uint8_t *>(slot) + roots->valueOffset,
                         roots->element->trace, visit, environment);
   }
@@ -1393,9 +1615,14 @@ obelisk_rt_status cloneContainerImpl(obelisk_rt_gc_lane_v1 *lane,
     for (uint64_t index = 0; index != snapshot.size && status == OBELISK_RT_OK;
          ++index)
       walkTraceSlots(values.data() + index * stride, snapshot.element->trace,
-                     [&](obelisk_rt_object_v1 **slot) {
-                       if (status != OBELISK_RT_OK || !slot || !*slot ||
-                           obelisk_rt_managed_object_kind(*slot) !=
+                     [&](obelisk_rt_managed_word_v1 *word,
+                         obelisk_rt_managed_slot_kind_v1 kind) {
+                       if (status != OBELISK_RT_OK || !word || *word == 0 ||
+                           kind != OBELISK_RT_MANAGED_SLOT_CONTAINER)
+                         return;
+                       auto *slot =
+                           reinterpret_cast<obelisk_rt_object_v1 **>(word);
+                       if (obelisk_rt_managed_object_kind(*slot) !=
                                OBELISK_RT_MANAGED_CONTAINER)
                          return;
                        obelisk_rt_object_v1 *nested = nullptr;
@@ -2060,8 +2287,8 @@ obelisk_rt_v1_assoc_write(obelisk_rt_gc_lane_v1 *lane,
     warnIgnoredAssocKey();
     return OBELISK_RT_OK;
   }
-  obelisk_rt_object_v1 *keyRootValue = normalized.string;
-  ScopedManagedRoot keyRoot(lane, &keyRootValue);
+  obelisk_rt_string_v1 keyRootValue = normalized.string;
+  ScopedManagedWordRoot keyRoot(lane, &keyRootValue);
   if (keyRoot.getStatus() != OBELISK_RT_OK)
     return keyRoot.getStatus();
   normalized.string = keyRootValue;
@@ -2398,13 +2625,15 @@ static obelisk_rt_status assocTraverse(obelisk_rt_gc_lane_v1 *lane,
       return OBELISK_RT_OK;
     }
   }
-  obelisk_rt_object_v1 *roots[] = {array,
-                                   endpoint ? nullptr : preflightKey.string};
-  obelisk_rt_gc_root_range_v1 rootRange{};
-  status = obelisk_rt_v1_gc_root_range_push(lane, &rootRange, roots, 2);
-  if (status != OBELISK_RT_OK)
-    return status;
-  status = ensureAssocOrdered(lane, roots[0]);
+  ScopedManagedRoot ownerRoot(lane, &array);
+  if (ownerRoot.getStatus() != OBELISK_RT_OK)
+    return ownerRoot.getStatus();
+  obelisk_rt_string_v1 keyRootValue =
+      endpoint ? 0 : preflightKey.string;
+  ScopedManagedWordRoot keyRoot(lane, &keyRootValue);
+  if (keyRoot.getStatus() != OBELISK_RT_OK)
+    return keyRoot.getStatus();
+  status = ensureAssocOrdered(lane, array);
   struct Traverse {
     obelisk_rt_assoc_key_v1 *key;
     uint32_t *success;
@@ -2413,7 +2642,7 @@ static obelisk_rt_status assocTraverse(obelisk_rt_gc_lane_v1 *lane,
   } traverse{inoutKey, outSuccess, direction, endpoint};
   if (status == OBELISK_RT_OK)
     status = obelisk_rt_managed_object_access(
-        roots[0], OBELISK_RT_MANAGED_CONTAINER,
+        array, OBELISK_RT_MANAGED_CONTAINER,
         [](void *opaque, uint8_t *object,
            uint64_t extent) -> obelisk_rt_status {
           auto *traverse = static_cast<Traverse *>(opaque);
@@ -2504,9 +2733,7 @@ static obelisk_rt_status assocTraverse(obelisk_rt_gc_lane_v1 *lane,
           });
         },
         &traverse);
-  obelisk_rt_status popStatus =
-      obelisk_rt_v1_gc_root_range_pop(lane, &rootRange);
-  return status == OBELISK_RT_OK ? popStatus : status;
+  return status;
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_assoc_first(
@@ -2664,11 +2891,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_reference_path_assoc_create(
                              key, normalized);
   if (status != OBELISK_RT_OK)
     return status;
-  obelisk_rt_object_v1 *roots[] = {array, normalized.string};
-  obelisk_rt_gc_root_range_v1 rootRange{};
-  status = obelisk_rt_v1_gc_root_range_push(lane, &rootRange, roots, 2);
-  if (status != OBELISK_RT_OK)
-    return status;
+  ScopedManagedRoot ownerRoot(lane, &array);
+  if (ownerRoot.getStatus() != OBELISK_RT_OK)
+    return ownerRoot.getStatus();
+  obelisk_rt_string_v1 keyRootValue = normalized.string;
+  ScopedManagedWordRoot keyRoot(lane, &keyRootValue);
+  if (keyRoot.getStatus() != OBELISK_RT_OK)
+    return keyRoot.getStatus();
   obelisk_rt_object_v1 *path = nullptr;
   status = obelisk_rt_managed_allocate(
       lane, OBELISK_RT_MANAGED_REFERENCE_PATH, sizeof(ReferencePathHeader),
@@ -2678,9 +2907,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_reference_path_assoc_create(
       obelisk_rt_object_v1 *owner;
       const obelisk_rt_element_type_v1 *element;
       obelisk_rt_assoc_key_v1 key;
-    } initialize{roots[0], owner.element, *key};
+    } initialize{array, owner.element, *key};
     initialize.key.value = normalized.integral;
-    initialize.key.string = roots[1];
+    initialize.key.string = keyRootValue;
     status = obelisk_rt_managed_object_access(
         path, OBELISK_RT_MANAGED_REFERENCE_PATH,
         [](void *opaque, uint8_t *object,
@@ -2698,11 +2927,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_reference_path_assoc_create(
         },
         &initialize);
   }
-  obelisk_rt_status popStatus =
-      obelisk_rt_v1_gc_root_range_pop(lane, &rootRange);
   if (status == OBELISK_RT_OK) {
     *outPath = path;
-    return popStatus;
   }
   return status;
 }

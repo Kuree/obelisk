@@ -1611,15 +1611,15 @@ def SimTimeFromRealOp : SimOp<"time.from_real", [Pure]> {
 }
 
 def SimRealFromIntegerOp : SimOp<"real.from_integer", [Pure]> {
-  let summary = "convert a two-state integer to an IEEE double";
+  let summary = "convert a two-state integer to an IEEE floating value";
   let description = [{
     Converts with IEEE round-to-nearest, ties-to-even semantics. Magnitudes
-    outside the finite binary64 range produce infinity with the source sign.
+    outside the finite result range produce infinity with the source sign.
   }];
   let arguments = (ins AnyInteger:$input, BoolAttr:$is_signed);
-  let results = (outs F64:$result);
+  let results = (outs AnyFloat:$result);
   let assemblyFormat =
-      "$input `signed` `=` $is_signed attr-dict `:` type($input)";
+      "$input `signed` `=` $is_signed attr-dict `:` type($input) `->` type($result)";
 }
 
 def SimRealToIntegerOp : SimOp<"real.to_integer", [Pure]> {

@@ -20,6 +20,19 @@ typedef struct obelisk_rt_context obelisk_rt_context;
 typedef struct obelisk_rt_gc_lane_v1 obelisk_rt_gc_lane_v1;
 typedef struct obelisk_rt_object_v1 obelisk_rt_object_v1;
 
+// A managed word is the common 64-bit storage unit used by values which may
+// either contain an aligned heap handle or an immediate representation.
+// Strings use the low two bits as a tag:
+//
+//   00  zero (empty) or an aligned heap-string handle
+//   01  seven-byte SSO; bits 2..4 are the length and bits 8..63 are bytes
+//
+// Tags 10 and 11, nonzero reserved bits in an SSO control byte, and SSO
+// lengths greater than seven are invalid. Heap handles are always at least
+// 16-byte aligned.
+typedef uint64_t obelisk_rt_managed_word_v1;
+typedef obelisk_rt_managed_word_v1 obelisk_rt_string_v1;
+
 typedef int32_t obelisk_rt_status;
 #define OBELISK_RT_OK INT32_C(0)
 #define OBELISK_RT_EOF INT32_C(1)
@@ -66,6 +79,14 @@ enum {
   OBELISK_RT_TRACE_EMBEDDED = 3
 };
 
+typedef uint32_t obelisk_rt_managed_slot_kind_v1;
+enum {
+  OBELISK_RT_MANAGED_SLOT_INVALID = 0,
+  OBELISK_RT_MANAGED_SLOT_CLASS = 1,
+  OBELISK_RT_MANAGED_SLOT_STRING = 2,
+  OBELISK_RT_MANAGED_SLOT_CONTAINER = 3
+};
+
 struct obelisk_rt_trace_layout_v1;
 
 // One entry describes either repeated object-handle slots or repeated embedded
@@ -76,7 +97,7 @@ typedef struct obelisk_rt_trace_entry_v1 {
   uint64_t stride;
   uint64_t count;
   obelisk_rt_trace_kind kind;
-  uint32_t reserved;
+  obelisk_rt_managed_slot_kind_v1 slot_kind;
   const struct obelisk_rt_trace_layout_v1 *child_layout;
 } obelisk_rt_trace_entry_v1;
 
@@ -184,6 +205,22 @@ typedef struct obelisk_rt_gc_root_range_v1 {
   struct obelisk_rt_gc_root_range_v1 *previous;
   uint64_t cookie;
 } obelisk_rt_gc_root_range_v1;
+
+// Tagged managed roots are separate from legacy object-pointer roots so
+// native class/container ABI users remain source compatible. Immediate words
+// are validated but have no outgoing heap edge.
+typedef struct obelisk_rt_gc_managed_root_v1 {
+  obelisk_rt_managed_word_v1 *slot;
+  struct obelisk_rt_gc_managed_root_v1 *previous;
+  uint64_t cookie;
+} obelisk_rt_gc_managed_root_v1;
+
+typedef struct obelisk_rt_gc_managed_root_range_v1 {
+  obelisk_rt_managed_word_v1 *slots;
+  uint64_t count;
+  struct obelisk_rt_gc_managed_root_range_v1 *previous;
+  uint64_t cookie;
+} obelisk_rt_gc_managed_root_range_v1;
 
 typedef struct obelisk_rt_gc_statistics_v1 {
   uint64_t live_objects;
@@ -317,6 +354,8 @@ typedef struct obelisk_rt_observer_capture_abi_v1 {
 } obelisk_rt_observer_capture_abi_v1;
 
 #define OBELISK_RT_OBSERVER_FOUR_STATE (UINT32_C(1) << 0)
+#define OBELISK_RT_OBSERVER_REAL32 (UINT32_C(1) << 1)
+#define OBELISK_RT_OBSERVER_REAL64 (UINT32_C(1) << 2)
 #define OBELISK_RT_OBSERVER_NO_BYTECODE UINT32_MAX
 
 typedef obelisk_rt_status (*obelisk_rt_native_observer_v1)(
@@ -381,7 +420,13 @@ enum {
   // ReferencePath in its rooted owner word. Their first words are roots.
   OBELISK_RT_DBREG_MANAGED = 7,
   OBELISK_RT_DBREG_MANAGED_REF = 8,
-  OBELISK_RT_DBREG_ARGUMENT_REF = 9
+  OBELISK_RT_DBREG_ARGUMENT_REF = 9,
+  // Managed strings are tagged words, not native object pointers. Floating
+  // registers retain their semantic width so the validator cannot admit
+  // integer opcodes over IEEE payloads.
+  OBELISK_RT_DBREG_STRING = 10,
+  OBELISK_RT_DBREG_REAL32 = 11,
+  OBELISK_RT_DBREG_REAL64 = 12
 };
 
 #define OBELISK_RT_DBREG_SIGNED (UINT8_C(1) << 0)
@@ -434,7 +479,16 @@ enum {
   // frame after the value has been restored into traced bytecode registers.
   OBELISK_RT_DB_CLEAR_FRAME_ROOT = 42,
   OBELISK_RT_DB_OVERRIDE_STATE = 43,
-  OBELISK_RT_DB_RELEASE_STATE = 44
+  OBELISK_RT_DB_RELEASE_STATE = 44,
+  OBELISK_RT_DB_FADD = 45,
+  OBELISK_RT_DB_FSUB = 46,
+  OBELISK_RT_DB_FMUL = 47,
+  OBELISK_RT_DB_FDIV = 48,
+  OBELISK_RT_DB_FNEG = 49,
+  OBELISK_RT_DB_FCOMPARE = 50,
+  OBELISK_RT_DB_FEXT = 51,
+  OBELISK_RT_DB_FTRUNC = 52,
+  OBELISK_RT_DB_FPOW = 53
 };
 
 // EXTRACT and INSERT flag for the physical 64-bit class-handle lane of an
@@ -1171,6 +1225,18 @@ obelisk_rt_v1_gc_root_range_push(obelisk_rt_gc_lane_v1 *lane,
 obelisk_rt_status
 obelisk_rt_v1_gc_root_range_pop(obelisk_rt_gc_lane_v1 *lane,
                                 obelisk_rt_gc_root_range_v1 *range);
+obelisk_rt_status obelisk_rt_v1_gc_managed_root_push(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_gc_managed_root_v1 *root,
+    obelisk_rt_managed_word_v1 *slot);
+obelisk_rt_status obelisk_rt_v1_gc_managed_root_pop(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_gc_managed_root_v1 *root);
+obelisk_rt_status obelisk_rt_v1_gc_managed_root_range_push(
+    obelisk_rt_gc_lane_v1 *lane,
+    obelisk_rt_gc_managed_root_range_v1 *range,
+    obelisk_rt_managed_word_v1 *slots, uint64_t count);
+obelisk_rt_status obelisk_rt_v1_gc_managed_root_range_pop(
+    obelisk_rt_gc_lane_v1 *lane,
+    obelisk_rt_gc_managed_root_range_v1 *range);
 obelisk_rt_status
 obelisk_rt_v1_gc_static_root_register(obelisk_rt_context *context,
                                       obelisk_rt_object_v1 **slot);
@@ -1281,35 +1347,43 @@ obelisk_rt_v1_object_cast(obelisk_rt_object_v1 *object,
                           obelisk_rt_object_v1 **out_object);
 uint64_t obelisk_rt_v1_object_id(const obelisk_rt_object_v1 *object);
 
-// Immutable managed strings. A null handle is the canonical empty string.
-// Returned bytes remain valid while the owner handle remains rooted.
+// Immutable, non-interned managed strings. Zero is the canonical empty string.
+// The view API uses caller scratch for SSO values; heap views remain valid
+// while the string word is rooted. The scratch buffer must have eight bytes.
+typedef struct obelisk_rt_string_span_v1 {
+  obelisk_rt_string_v1 string;
+} obelisk_rt_string_span_v1;
+
 obelisk_rt_status
 obelisk_rt_v1_string_create(obelisk_rt_gc_lane_v1 *lane, const char *bytes,
-                            uint64_t size, obelisk_rt_object_v1 **out_string);
+                            uint64_t size, obelisk_rt_string_v1 *out_string);
 obelisk_rt_status obelisk_rt_v1_string_concat(
-    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *left,
-    obelisk_rt_object_v1 *right, obelisk_rt_object_v1 **out_string);
-obelisk_rt_status obelisk_rt_v1_string_bytes(obelisk_rt_object_v1 *string,
-                                             const char **out_bytes,
-                                             uint64_t *out_size);
-uint64_t obelisk_rt_v1_string_length(obelisk_rt_object_v1 *string);
-uint64_t obelisk_rt_v1_string_hash(obelisk_rt_object_v1 *string);
-uint32_t obelisk_rt_v1_string_getc(obelisk_rt_object_v1 *string, int64_t index);
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_string_v1 left,
+    obelisk_rt_string_v1 right, obelisk_rt_string_v1 *out_string);
+obelisk_rt_status obelisk_rt_v1_string_concat_many(
+    obelisk_rt_gc_lane_v1 *lane, const obelisk_rt_string_span_v1 *spans,
+    uint64_t span_count, obelisk_rt_string_v1 *out_string);
+obelisk_rt_status obelisk_rt_v1_string_view(
+    obelisk_rt_string_v1 string, char scratch[8], const char **out_bytes,
+    uint64_t *out_size);
+uint64_t obelisk_rt_v1_string_length(obelisk_rt_string_v1 string);
+uint64_t obelisk_rt_v1_string_hash(obelisk_rt_string_v1 string);
+uint32_t obelisk_rt_v1_string_getc(obelisk_rt_string_v1 string, int64_t index);
 obelisk_rt_status obelisk_rt_v1_string_putc(obelisk_rt_gc_lane_v1 *lane,
-                                            obelisk_rt_object_v1 *string,
+                                            obelisk_rt_string_v1 string,
                                             int64_t index, uint32_t character,
-                                            obelisk_rt_object_v1 **out_string);
+                                            obelisk_rt_string_v1 *out_string);
 obelisk_rt_status
 obelisk_rt_v1_string_substr(obelisk_rt_gc_lane_v1 *lane,
-                            obelisk_rt_object_v1 *string, int64_t left,
-                            int64_t right, obelisk_rt_object_v1 **out_string);
-int32_t obelisk_rt_v1_string_compare(obelisk_rt_object_v1 *left,
-                                     obelisk_rt_object_v1 *right);
-int32_t obelisk_rt_v1_string_compare_insensitive(obelisk_rt_object_v1 *left,
-                                                 obelisk_rt_object_v1 *right);
+                            obelisk_rt_string_v1 string, int64_t left,
+                            int64_t right, obelisk_rt_string_v1 *out_string);
+int32_t obelisk_rt_v1_string_compare(obelisk_rt_string_v1 left,
+                                     obelisk_rt_string_v1 right);
+int32_t obelisk_rt_v1_string_compare_insensitive(obelisk_rt_string_v1 left,
+                                                 obelisk_rt_string_v1 right);
 obelisk_rt_status obelisk_rt_v1_string_case_convert(
-    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *string,
-    uint32_t to_upper, obelisk_rt_object_v1 **out_string);
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_string_v1 string,
+    uint32_t to_upper, obelisk_rt_string_v1 *out_string);
 
 typedef uint32_t obelisk_rt_container_kind_v1;
 enum {
@@ -1334,7 +1408,7 @@ typedef struct obelisk_rt_assoc_key_v1 {
   uint64_t width;
   uint64_t value;
   uint64_t unknown;
-  obelisk_rt_object_v1 *string;
+  obelisk_rt_string_v1 string;
 } obelisk_rt_assoc_key_v1;
 
 // Erased dynamic-array, queue, and associative-array primitives. Value and
@@ -1597,6 +1671,9 @@ void obelisk_rt_v1_scheduler_signal_transition(
     obelisk_rt_context *context, uint64_t bit_offset, uint64_t bit_width,
     const uint8_t *old_value, const uint8_t *old_unknown,
     const uint8_t *new_value, const uint8_t *new_unknown);
+void obelisk_rt_v1_scheduler_real_transition(
+    obelisk_rt_context *context, uint64_t bit_offset, uint32_t bit_width,
+    const void *old_value, const void *new_value);
 void obelisk_rt_v1_scheduler_event(obelisk_rt_context *context,
                                    uint64_t stable_id, uint32_t nonblocking);
 // Trigger immediately, or enqueue a nonblocking named-event occurrence after

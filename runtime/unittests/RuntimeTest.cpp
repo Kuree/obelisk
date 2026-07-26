@@ -2920,7 +2920,8 @@ constexpr uint64_t kNodeLinkOffset = sizeof(void *);
 constexpr uint64_t kNodeValueOffset = sizeof(void *) * 2;
 
 const obelisk_rt_trace_entry_v1 nodeTraceEntry{
-    kNodeLinkOffset, 0, 1, OBELISK_RT_TRACE_STRONG, 0, nullptr};
+    kNodeLinkOffset, 0, 1, OBELISK_RT_TRACE_STRONG,
+    OBELISK_RT_MANAGED_SLOT_CLASS, nullptr};
 const obelisk_rt_trace_layout_v1 nodeTraceLayout{
     OBELISK_RT_VERSION, 0, sizeof(void *) * 3, alignof(void *),
     &nodeTraceEntry,    1};
@@ -3028,7 +3029,8 @@ const obelisk_rt_class_descriptor_v1 planeDescriptor{OBELISK_RT_VERSION,
                                                      planeName,
                                                      sizeof(planeName) - 1};
 const obelisk_rt_trace_entry_v1 weakTraceEntry{
-    sizeof(void *), 0, 1, OBELISK_RT_TRACE_WEAK, 0, nullptr};
+    sizeof(void *), 0, 1, OBELISK_RT_TRACE_WEAK,
+    OBELISK_RT_MANAGED_SLOT_CLASS, nullptr};
 const obelisk_rt_trace_layout_v1 weakTraceLayout{
     OBELISK_RT_VERSION, 0, sizeof(void *) * 2, alignof(void *),
     &weakTraceEntry,    1};
@@ -3544,8 +3546,10 @@ TEST(ManagedHeap, RejectsMalformedClassLayouts) {
   EXPECT_EQ(obelisk_rt_v1_class_validate(&malformed),
             OBELISK_RT_INVALID_DESIGN);
   obelisk_rt_trace_entry_v1 ambiguousWeakEntries[] = {
-      {8, 1, 8, OBELISK_RT_TRACE_WEAK, 0, nullptr},
-      {8, 1, 8, OBELISK_RT_TRACE_STRONG, 0, nullptr}};
+      {8, 1, 8, OBELISK_RT_TRACE_WEAK, OBELISK_RT_MANAGED_SLOT_CLASS,
+       nullptr},
+      {8, 1, 8, OBELISK_RT_TRACE_STRONG, OBELISK_RT_MANAGED_SLOT_CLASS,
+       nullptr}};
   obelisk_rt_trace_layout_v1 ambiguousWeakLayout{OBELISK_RT_VERSION,   0, 16, 8,
                                                  ambiguousWeakEntries, 2};
   malformed.layout = &ambiguousWeakLayout;

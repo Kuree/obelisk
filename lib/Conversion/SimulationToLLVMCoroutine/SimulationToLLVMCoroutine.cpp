@@ -193,8 +193,13 @@ FailureOr<uint64_t> computedWaitSize(sim::SimSuspendObserveOp operation) {
     if (index < primaryCount) {
       auto observerType = dyn_cast<sim::ObserverType>(value.getType());
       std::optional<unsigned> width =
-          observerType ? sim::getPackedWidth(observerType.getResultType())
-                       : std::nullopt;
+          observerType
+              ? isa<FloatType>(observerType.getResultType())
+                    ? std::optional<unsigned>(
+                          cast<FloatType>(observerType.getResultType())
+                              .getWidth())
+                    : sim::getPackedWidth(observerType.getResultType())
+              : std::nullopt;
       if (!width || *width == 0)
         return failure();
       previousLimbs += (*width + 63) / 64;
@@ -349,6 +354,8 @@ FailureOr<StorageProperties> storageProperties(Type type,
     llvmType = llvm::IntegerType::get(context, integer.getWidth());
   } else if (type.isF64()) {
     llvmType = llvm::Type::getDoubleTy(context);
+  } else if (type.isF32()) {
+    llvmType = llvm::Type::getFloatTy(context);
   } else if (isa<sim::TimeType>(type)) {
     llvmType = llvm::Type::getInt64Ty(context);
   } else if (sim::isManagedHandleType(type)) {
@@ -592,7 +599,10 @@ public:
       return rewriter.notifyMatchFailure(
           operation, "observer token must convert to one physical value");
     auto observerType = operation.getResult().getType().getResultType();
-    std::optional<unsigned> resultWidth = sim::getPackedWidth(observerType);
+    std::optional<unsigned> resultWidth =
+        isa<FloatType>(observerType)
+            ? std::optional<unsigned>(cast<FloatType>(observerType).getWidth())
+            : sim::getPackedWidth(observerType);
     if (!resultWidth)
       return operation.emitOpError("observer result must remain packed");
     auto evaluator = SymbolTable::lookupNearestSymbolFrom<sim::SimFuncOp>(
@@ -613,7 +623,10 @@ public:
           isa<sim::RefType>(dependency.getType())
               ? cast<sim::RefType>(dependency.getType()).getElementType()
               : cast<sim::NetType>(dependency.getType()).getElementType();
-      std::optional<unsigned> width = sim::getPackedWidth(type);
+      std::optional<unsigned> width =
+          isa<FloatType>(type)
+              ? std::optional<unsigned>(cast<FloatType>(type).getWidth())
+              : sim::getPackedWidth(type);
       if (!width)
         return operation.emitOpError(
             "observer signal dependency must have a packed width");
@@ -1891,6 +1904,16 @@ LogicalResult lowerTimeOperations(sim::SimFuncOp function) {
     }
     if (auto fromInteger = dyn_cast<sim::SimRealFromIntegerOp>(operation)) {
       Value input = fromInteger.getInput();
+      if (fromInteger.getResult().getType().isF32()) {
+        Value converted =
+            fromInteger.getIsSigned()
+                ? Value(arith::SIToFPOp::create(
+                      rewriter, location, rewriter.getF32Type(), input))
+                : Value(arith::UIToFPOp::create(
+                      rewriter, location, rewriter.getF32Type(), input));
+        rewriter.replaceOp(operation, converted);
+        continue;
+      }
       auto inputType = cast<IntegerType>(input.getType());
       Value zero = arith::ConstantOp::create(
           rewriter, location, inputType,
@@ -2808,7 +2831,8 @@ void emitManagedRootRangePop(OpBuilder &builder, Location location,
   Value status =
       LLVM::CallOp::create(
           builder, location, TypeRange{builder.getI32Type()},
-          SymbolRefAttr::get(context, "obelisk_rt_v1_gc_root_range_pop"),
+          SymbolRefAttr::get(context,
+                             "obelisk_rt_v1_gc_managed_root_range_pop"),
           ValueRange{lane, record})
           .getResult();
   LLVM::CallOp::create(
@@ -4248,7 +4272,9 @@ LogicalResult makeNativeObserverThunk(ModuleOp module,
         "observer result plane count does not match its descriptor");
   for (Type type : ArrayRef<Type>(results).take_front(expectedResults)) {
     auto integer = dyn_cast<IntegerType>(type);
-    if (!integer || integer.getWidth() != resultWidth)
+    auto floating = dyn_cast<FloatType>(type);
+    if ((!integer && !floating) ||
+        (integer ? integer.getWidth() : floating.getWidth()) != resultWidth)
       return evaluator.emitError(
           "observer result plane width does not match its descriptor");
   }
@@ -5019,7 +5045,7 @@ public:
     Value value =
         loadStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
                        plane, "__obelisk_state_value", false, stateBitCount);
-    if (resultType.isF64())
+    if (isa<FloatType>(resultType))
       value =
           arith::BitcastOp::create(rewriter, op.getLoc(), resultType, value);
     SmallVector<Value> converted{value};
@@ -5061,7 +5087,7 @@ public:
           loadStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
                          plane, "__obelisk_state_unknown", true, stateBitCount);
     Value storedValue = adaptor.getValue().front();
-    if (valueType.isF64())
+    if (isa<FloatType>(valueType))
       storedValue =
           arith::BitcastOp::create(rewriter, op.getLoc(), plane, storedValue);
     Value changed =
@@ -5074,10 +5100,32 @@ public:
                           adaptor.getValue()[1], "__obelisk_state_unknown",
                           stateBitCount));
     (void)changed;
-    notifySignal(rewriter, op.getLoc(), adaptor.getReference().front(), *width,
-                 oldValue, oldUnknown, storedValue,
-                 adaptor.getValue().size() == 2 ? adaptor.getValue()[1]
-                                                : Value{});
+    if (isa<FloatType>(valueType)) {
+      Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+      auto save = [&](Value value) {
+        Value storage =
+            entryAlloca(rewriter, op.getLoc(), value.getType(), 1, 1);
+        LLVM::StoreOp::create(rewriter, op.getLoc(), value, storage, 1);
+        return storage;
+      };
+      Value contextAddress = LLVM::AddressOfOp::create(
+          rewriter, op.getLoc(), pointer, "__obelisk_current_context");
+      Value runtimeContext = LLVM::LoadOp::create(
+          rewriter, op.getLoc(), pointer, contextAddress, 8);
+      LLVM::CallOp::create(
+          rewriter, op.getLoc(), TypeRange{},
+          SymbolRefAttr::get(rewriter.getContext(),
+                             "obelisk_rt_v1_scheduler_real_transition"),
+          ValueRange{runtimeContext, adaptor.getReference().front(),
+                     llvmConstant(rewriter, op.getLoc(), rewriter.getI32Type(),
+                                  *width),
+                     save(oldValue), save(storedValue)});
+    } else {
+      notifySignal(rewriter, op.getLoc(), adaptor.getReference().front(),
+                   *width, oldValue, oldUnknown, storedValue,
+                   adaptor.getValue().size() == 2 ? adaptor.getValue()[1]
+                                                  : Value{});
+    }
     rewriter.eraseOp(op);
     return success();
   }
@@ -5109,7 +5157,7 @@ public:
     Location location = op.getLoc();
 
     Value value = adaptor.getValue().front();
-    if (valueType.isF64())
+    if (isa<FloatType>(valueType))
       value = arith::BitcastOp::create(rewriter, location, plane, value);
     Value valueStorage = entryAlloca(rewriter, location, plane, 1, 1);
     LLVM::StoreOp::create(rewriter, location, value, valueStorage, 1);
@@ -5882,9 +5930,12 @@ public:
       return address;
     };
     Value initial = adaptor.getInitialValue().front();
-    if (op.getInitialValue().getType().isF64())
-      initial = arith::BitcastOp::create(rewriter, location,
-                                         rewriter.getI64Type(), initial);
+    if (isa<FloatType>(op.getInitialValue().getType()))
+      initial = arith::BitcastOp::create(
+          rewriter, location,
+          rewriter.getIntegerType(*nativeStateWidth(
+              op.getInitialValue().getType())),
+          initial);
     Value value = savePlane(initial);
     Value unknown = LLVM::ZeroOp::create(rewriter, location, pointer);
     if (adaptor.getInitialValue().size() == 2)
@@ -6130,6 +6181,7 @@ struct ManagedFieldLayout {
 struct ManagedTraceLayout {
   uint64_t offset = 0;
   bool weak = false;
+  uint32_t slotKind = OBELISK_RT_MANAGED_SLOT_CLASS;
 };
 
 struct ManagedClassLayout {
@@ -6140,6 +6192,36 @@ struct ManagedClassLayout {
   SmallVector<ManagedTraceLayout> tracedFields;
   SmallVector<sim::SimClassMethodDeclOp> methods;
 };
+
+LogicalResult collectManagedTraceSlots(
+    Type type, uint64_t baseBitOffset,
+    SmallVectorImpl<std::pair<uint64_t, uint32_t>> &slots) {
+  if (sim::isManagedHandleType(type)) {
+    if ((baseBitOffset & 7) != 0)
+      return failure();
+    uint32_t kind = OBELISK_RT_MANAGED_SLOT_CLASS;
+    if (isa<sim::StringType>(type))
+      kind = OBELISK_RT_MANAGED_SLOT_STRING;
+    else if (isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
+                 type))
+      kind = OBELISK_RT_MANAGED_SLOT_CONTAINER;
+    slots.push_back({baseBitOffset / 8, kind});
+    return success();
+  }
+  if (!sim::isAggregateType(type))
+    return success();
+  for (unsigned index = 0; index < sim::getAggregateNumElements(type);
+       ++index) {
+    auto child = sim::getAggregateProvenanceSubelement(type, index);
+    if (!child || child->first > UINT64_MAX - baseBitOffset)
+      return failure();
+    if (failed(collectManagedTraceSlots(
+            sim::getAggregateElementType(type, index),
+            baseBitOffset + child->first, slots)))
+      return failure();
+  }
+  return success();
+}
 
 LLVM::GlobalOp makeByteArrayGlobal(ModuleOp module, Location location,
                                    StringRef name, StringRef bytes) {
@@ -6215,7 +6297,8 @@ prepareManagedClassInventory(ModuleOp module,
         return declaration.emitError("weak referent layout overflow");
       layout.size = referentOffset + sizeof(void *);
       layout.alignment = std::max<uint32_t>(layout.alignment, alignof(void *));
-      layout.tracedFields.push_back({referentOffset, true});
+      layout.tracedFields.push_back(
+          {referentOffset, true, OBELISK_RT_MANAGED_SLOT_CLASS});
     }
 
     llvm::DataLayout localDataLayout(dataLayout.getStringRepresentation());
@@ -6242,10 +6325,15 @@ prepareManagedClassInventory(ModuleOp module,
       ManagedFieldLayout fieldLayout{field, offset, storage->size,
                                      storage->alignment, storage->fourState};
       layout.fields.push_back(fieldLayout);
-      for (uint64_t rootOffset : storage->managedRootOffsets)
+      SmallVector<std::pair<uint64_t, uint32_t>, 2> traceSlots;
+      if (failed(collectManagedTraceSlots(field.getType(), 0, traceSlots)) ||
+          traceSlots.size() != storage->managedRootOffsets.size())
+        return field.emitError("class property has no typed managed layout");
+      for (auto [rootOffset, slotKind] : traceSlots)
         layout.tracedFields.push_back(
             {offset + rootOffset,
-             isa<sim::ClassHandleType>(field.getType()) && field.getIsWeak()});
+             isa<sim::ClassHandleType>(field.getType()) && field.getIsWeak(),
+             slotKind});
       if (auto existing = field->getAttrOfType<IntegerAttr>("offset");
           existing && existing.getValue().getZExtValue() != offset)
         return field.emitError("native and bytecode class layouts disagree");
@@ -6350,6 +6438,9 @@ prepareManagedClassInventory(ModuleOp module,
                                                      ? OBELISK_RT_TRACE_WEAK
                                                      : OBELISK_RT_TRACE_STRONG),
                                     3);
+                entry = insertValue(
+                    builder, location, entry,
+                    llvmConstant(builder, location, i32, field.slotKind), 4);
                 array = LLVM::InsertValueOp::create(
                     builder, location, array, entry,
                     ArrayRef<int64_t>{static_cast<int64_t>(index)});
@@ -6722,7 +6813,8 @@ LogicalResult instrumentManagedRoots(ModuleOp module) {
       Value status =
           LLVM::CallOp::create(
               builder, location, TypeRange{i32},
-              SymbolRefAttr::get(context, "obelisk_rt_v1_gc_root_range_push"),
+              SymbolRefAttr::get(
+                  context, "obelisk_rt_v1_gc_managed_root_range_push"),
               ValueRange{lane, record, slotsBase, rootCount})
               .getResult();
       sim::SimStatusCheckOp check =
@@ -7089,8 +7181,7 @@ public:
         owner = arith::TruncIOp::create(rewriter, op.getLoc(),
                                         rewriter.getI64Type(), owner);
     }
-    LLVM::StoreOp::create(rewriter, op.getLoc(),
-                          managedObjectPointer(rewriter, op.getLoc(), owner),
+    LLVM::StoreOp::create(rewriter, op.getLoc(), owner,
                           adaptor.getSlot().front(), 8);
     rewriter.eraseOp(op);
     return success();
@@ -8554,6 +8645,12 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
        LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_scheduler_real_transition",
+      LLVM::LLVMVoidType::get(context),
+      {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
+       IntegerType::get(context, 32), LLVM::LLVMPointerType::get(context),
+       LLVM::LLVMPointerType::get(context)});
+  getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_scheduler_event", LLVM::LLVMVoidType::get(context),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
        IntegerType::get(context, 32)});
@@ -8666,6 +8763,12 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       module, "obelisk_rt_v1_gc_root_range_push", managedI32,
       {managedPointer, managedPointer, managedPointer, managedI64});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_gc_root_range_pop",
+                           managedI32, {managedPointer, managedPointer});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_gc_managed_root_range_push", managedI32,
+      {managedPointer, managedPointer, managedPointer, managedI64});
+  getOrDeclareLLVMFunction(module,
+                           "obelisk_rt_v1_gc_managed_root_range_pop",
                            managedI32, {managedPointer, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_gc_safepoint", managedI32,
                            {managedPointer});

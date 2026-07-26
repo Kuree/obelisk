@@ -167,7 +167,6 @@ func.func private @empty_aggregate(%arg: !obelisk_sim.unpacked_struct<[]>)
 
 // -----
 
-// expected-error @+1 {{element type must be a normalized scalar or fixed aggregate}}
 func.func private @bad_field_type(%arg: !obelisk_sim.unpacked_struct<[#obelisk_sim.field<name = "a", type = f32, ordinal = 0, packedOffset = 0>]>)
 
 // -----

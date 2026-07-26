@@ -32,9 +32,9 @@ def SimBytesType : SimType<"Bytes"> {
   let mnemonic = "bytes";
   let summary = "immutable literal byte sequence";
   let description = [{
-    This type is intentionally limited to compile-time byte strings. Dynamic
-    SystemVerilog strings remain in the semantic dialect until their ownership
-    and mutation model is implemented.
+    This type is intentionally limited to compiler-owned byte spans such as
+    static display formats. Dynamic SystemVerilog strings use `!obelisk_sim.string`
+    and the managed-word ABI instead.
   }];
 }
 

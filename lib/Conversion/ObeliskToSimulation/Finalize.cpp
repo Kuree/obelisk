@@ -7,6 +7,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Pass/PassOptions.h"
@@ -47,13 +48,14 @@ struct ObeliskToSimulationPipelineOptions
 static bool isExecutableOperation(Operation *op, ModuleOp root) {
   return op == root.getOperation() ||
          isa_and_nonnull<sim::ObeliskSimulationDialect, arith::ArithDialect,
-                         cf::ControlFlowDialect>(op->getDialect());
+                         cf::ControlFlowDialect, math::MathDialect>(
+             op->getDialect());
 }
 
 static bool isExecutableType(Type type) {
   if (auto integer = dyn_cast<IntegerType>(type))
     return integer.isSignless();
-  if (type.isF64())
+  if (isa<FloatType>(type))
     return true;
   return isa<FunctionType>(type) || isa<runtime::StatusType>(type) ||
          isa<sim::ContextType, sim::BytesType, sim::LogicType, sim::TimeType,

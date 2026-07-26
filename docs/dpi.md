@@ -12,9 +12,12 @@ types, and fixed packed 2-state or 4-state values. Formal directions may be
 imports are preserved. Fixed packed aggregates, including packed structs and
 unions, use the standard bit-vector or logic-vector representation.
 
-Open and unpacked arrays, strings, real types, `chandle`, `ref`, DPI exports,
-task suspension, and disable acknowledgement are not supported yet. They
-produce diagnostics instead of falling back to a different ABI.
+Open and unpacked arrays, strings, `real`/`shortreal`, `chandle`, `ref`, DPI
+exports, task suspension, and disable acknowledgement are not supported yet.
+They produce diagnostics instead of falling back to a different ABI. The
+execution bytecode now reserves distinct string, binary32, and binary64
+register categories; this is not yet a promise that DPI marshalling accepts
+`const char *`, `float`, or `double`.
 
 ## Build an implementation
 

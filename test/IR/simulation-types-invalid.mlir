@@ -5,7 +5,6 @@ func.func private @zero_width(%arg: !obelisk_sim.logic<0>)
 
 // -----
 
-// expected-error @+1 {{element type must be a normalized scalar or fixed aggregate, got 'f32'}}
 func.func private @ref_of_float(%arg: !obelisk_sim.ref<f32>)
 
 // -----

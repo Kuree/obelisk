@@ -34,7 +34,8 @@ def ObeliskSimLowerUnitPass
   let dependentDialects = [
     "obelisk::sim::ObeliskSimulationDialect",
     "mlir::arith::ArithDialect",
-    "mlir::cf::ControlFlowDialect"
+    "mlir::cf::ControlFlowDialect",
+    "mlir::math::MathDialect"
   ];
 }
 
@@ -175,7 +176,8 @@ def ObeliskSimFinalizePass
     : Pass<"obelisk-sim-finalize", "mlir::ModuleOp"> {
   let summary = "Remove semantic IR and verify the executable simulation boundary";
   let dependentDialects = [
-    "obelisk::sim::ObeliskSimulationDialect"
+    "obelisk::sim::ObeliskSimulationDialect",
+    "mlir::math::MathDialect"
   ];
 }
 

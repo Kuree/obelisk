@@ -12,6 +12,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
@@ -82,7 +83,6 @@ constexpr uint32_t kIntrinsicRealFromInteger =
     OBELISK_RT_INTRINSIC_V1_REAL_FROM_INTEGER;
 constexpr uint32_t kIntrinsicRealToInteger =
     OBELISK_RT_INTRINSIC_V1_REAL_TO_INTEGER;
-constexpr uint32_t kIntrinsicRealCompare = OBELISK_RT_INTRINSIC_V1_REAL_COMPARE;
 constexpr uint32_t kIntrinsicCountBits = OBELISK_RT_INTRINSIC_V1_COUNT_BITS;
 constexpr uint32_t kIntrinsicClog2 = OBELISK_RT_INTRINSIC_V1_CLOG2;
 constexpr uint32_t kIntrinsicFileOpenMCD =
@@ -191,6 +191,9 @@ enum RegisterKind : uint8_t {
   Managed = OBELISK_RT_DBREG_MANAGED,
   ManagedRef = OBELISK_RT_DBREG_MANAGED_REF,
   ArgumentRef = OBELISK_RT_DBREG_ARGUMENT_REF,
+  String = OBELISK_RT_DBREG_STRING,
+  Real32 = OBELISK_RT_DBREG_REAL32,
+  Real64 = OBELISK_RT_DBREG_REAL64,
 };
 
 enum Opcode : uint16_t {
@@ -239,6 +242,15 @@ enum Opcode : uint16_t {
   ClearFrameRoot = OBELISK_RT_DB_CLEAR_FRAME_ROOT,
   OverrideState = OBELISK_RT_DB_OVERRIDE_STATE,
   ReleaseState = OBELISK_RT_DB_RELEASE_STATE,
+  FAdd = OBELISK_RT_DB_FADD,
+  FSub = OBELISK_RT_DB_FSUB,
+  FMul = OBELISK_RT_DB_FMUL,
+  FDiv = OBELISK_RT_DB_FDIV,
+  FNeg = OBELISK_RT_DB_FNEG,
+  FCompare = OBELISK_RT_DB_FCOMPARE,
+  FExt = OBELISK_RT_DB_FEXT,
+  FTrunc = OBELISK_RT_DB_FTRUNC,
+  FPow = OBELISK_RT_DB_FPOW,
 };
 
 struct Layout {
@@ -456,8 +468,11 @@ FailureOr<Layout> getLayout(Type type) {
     layout.kind = Bits;
     layout.width = integer.getWidth();
     layout.flags = integer.isSigned() ? 1 : 0;
+  } else if (type.isF32()) {
+    layout.kind = Real32;
+    layout.width = 32;
   } else if (type.isF64()) {
-    layout.kind = Bits;
+    layout.kind = Real64;
     layout.width = 64;
   } else if (auto logic = dyn_cast<sim::LogicType>(type)) {
     layout.kind = Logic;
@@ -479,6 +494,9 @@ FailureOr<Layout> getLayout(Type type) {
   } else if (isa<sim::BytesType>(type)) {
     layout.kind = Bytes;
     layout.width = 128;
+  } else if (isa<sim::StringType>(type)) {
+    layout.kind = String;
+    layout.width = 64;
   } else if (sim::isManagedHandleType(type)) {
     layout.kind = Managed;
     layout.width = 64;
@@ -513,6 +531,13 @@ FailureOr<Layout> getLayout(Type type) {
     layout.size = 16;
     break;
   case Managed:
+  case String:
+    layout.size = 8;
+    break;
+  case Real32:
+    layout.size = 4;
+    break;
+  case Real64:
     layout.size = 8;
     break;
   case ManagedRef:
@@ -542,6 +567,8 @@ getManagedValueStorage(Type type, const llvm::DataLayout &dataLayout) {
     nativeType = llvm::IntegerType::get(llvmContext, logic.getWidth());
   else if (auto integer = dyn_cast<IntegerType>(type))
     nativeType = llvm::IntegerType::get(llvmContext, integer.getWidth());
+  else if (type.isF32())
+    nativeType = llvm::Type::getFloatTy(llvmContext);
   else if (type.isF64())
     nativeType = llvm::Type::getDoubleTy(llvmContext);
   else if (isa<sim::TimeType>(type))
@@ -1611,6 +1638,18 @@ private:
       return binary(Sub, op.getResult(), op.getLhs(), op.getRhs());
     if (auto op = dyn_cast<arith::MulIOp>(operation))
       return binary(Mul, op.getResult(), op.getLhs(), op.getRhs());
+    if (auto op = dyn_cast<arith::AddFOp>(operation))
+      return binary(FAdd, op.getResult(), op.getLhs(), op.getRhs());
+    if (auto op = dyn_cast<arith::SubFOp>(operation))
+      return binary(FSub, op.getResult(), op.getLhs(), op.getRhs());
+    if (auto op = dyn_cast<arith::MulFOp>(operation))
+      return binary(FMul, op.getResult(), op.getLhs(), op.getRhs());
+    if (auto op = dyn_cast<arith::DivFOp>(operation))
+      return binary(FDiv, op.getResult(), op.getLhs(), op.getRhs());
+    if (auto op = dyn_cast<arith::NegFOp>(operation)) {
+      emit({FNeg, 0, reg(plan, op.getResult()), reg(plan, op.getOperand())});
+      return success();
+    }
     if (auto op = dyn_cast<arith::DivUIOp>(operation))
       return binary(UDiv, op.getResult(), op.getLhs(), op.getRhs());
     if (auto op = dyn_cast<arith::DivSIOp>(operation))
@@ -1694,9 +1733,10 @@ private:
         return op.emitOpError(
             "floating comparison predicate is not executable");
       }
-      return emitIntrinsic(plan, kIntrinsicRealCompare,
-                           {op.getLhs(), op.getRhs()}, {op.getResult()},
-                           predicate);
+      emit({FCompare, static_cast<uint16_t>(predicate),
+            reg(plan, op.getResult()), reg(plan, op.getLhs()),
+            reg(plan, op.getRhs())});
+      return success();
     }
     if (auto op = dyn_cast<arith::SelectOp>(operation)) {
       emit({Select, 0, reg(plan, op.getResult()), reg(plan, op.getTrueValue()),
@@ -1718,6 +1758,16 @@ private:
             kInvalidRegister});
       return success();
     }
+    if (auto op = dyn_cast<arith::ExtFOp>(operation)) {
+      emit({FExt, 0, reg(plan, op.getResult()), reg(plan, op.getIn())});
+      return success();
+    }
+    if (auto op = dyn_cast<arith::TruncFOp>(operation)) {
+      emit({FTrunc, 0, reg(plan, op.getResult()), reg(plan, op.getIn())});
+      return success();
+    }
+    if (auto op = dyn_cast<math::PowFOp>(operation))
+      return binary(FPow, op.getResult(), op.getLhs(), op.getRhs());
     if (auto op = dyn_cast<arith::IndexCastOp>(operation)) {
       emit({Extract, 0, reg(plan, op.getResult()), reg(plan, op.getIn()),
             kInvalidRegister});

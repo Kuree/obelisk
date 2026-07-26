@@ -8,10 +8,10 @@ mean that the umbrella IEEE 1800 procedural-synchronization work is complete.
 | Form | Current boundary |
 | --- | --- |
 | Integral `#delay` | Executable for constant and dynamic packed integral expressions up to 64 bits; X/Z and negative values normalize to zero. Static overflow is diagnosed and dynamic scaling is range-checked identically in native and bytecode. |
-| Literal real/realtime delay | Executable for real and time literals, including unary sign; values round at lexical `timeprecision` before design-precision scaling. Dynamic real arithmetic is not yet executable. |
+| Real/realtime delay | Executable for literals and dynamic binary32/binary64 expressions, including unary sign; values round at lexical `timeprecision` before design-precision scaling. |
 | `#0` | Executable in Inactive for design-domain processes and Re-Inactive for program-domain processes. Native and design-bytecode work share the same region/rank/insertion ordering key. |
 | `#1step` | Executable as one design-precision tick. |
-| Direct signal event | Executable for statically addressable signal/net expressions and change/posedge/negedge/both-edge. Vector edges observe only the edge-defining bit. A directly addressable `iff` value is sampled and latched at the primary occurrence. |
+| Direct signal event | Executable for statically addressable signal/net expressions and change/posedge/negedge/both-edge. Real-valued change events use IEEE equality (`+0.0` and `-0.0` are equal; every NaN publication changes). Vector edges observe only the edge-defining bit. A directly addressable `iff` value is sampled and latched at the primary occurrence. |
 | Event list | Executable for direct and computed signal/net members, including mixed lists and computed or mixed `iff` conditions. All-direct lists retain the handle-based fast path; a list containing a computed member uses source-ordered observers. A single named event retains the direct-event path. |
 | Computed event expression | Executable for change/posedge/negedge/both-edge controls, four-state values, vector LSB edge rules, dynamic selections, and transient same-fragment occurrences. Dependencies watch complete root objects plus dynamic index inputs so retargeting cannot leave stale subscriptions. |
 | `@*` | Executable for dependencies discovered from lowered controlled-statement reads and transitive zero-time callee read summaries; write-only captures are excluded. |

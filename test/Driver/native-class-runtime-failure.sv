@@ -29,5 +29,5 @@ endmodule
 
 // One pop is the success exit. Additional pops prove that generated runtime
 // failure returns also unwind the activation's managed-root range.
-// LLVM: call i32 @obelisk_rt_v1_gc_root_range_push
-// LLVM-COUNT-2: call i32 @obelisk_rt_v1_gc_root_range_pop
+// LLVM: call i32 @obelisk_rt_v1_gc_managed_root_range_push
+// LLVM-COUNT-2: call i32 @obelisk_rt_v1_gc_managed_root_range_pop

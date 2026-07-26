@@ -771,6 +771,8 @@ std::optional<uint64_t> getProvenanceSpan(Type type) {
     return *packed;
   if (isa<TimeType>(type) || type.isF64())
     return uint64_t{64};
+  if (type.isF32())
+    return uint64_t{32};
   if (isManagedHandleType(type))
     return uint64_t{64};
   auto checkedAlign = [](uint64_t value,
@@ -841,6 +843,10 @@ std::optional<uint64_t> getProvenanceAlignment(Type type) {
     return getProvenanceAlignment(net.getElementType());
   if (auto driver = dyn_cast<DriverType>(type))
     return getProvenanceAlignment(driver.getElementType());
+  if (type.isF32())
+    return uint64_t{32};
+  if (type.isF64())
+    return uint64_t{64};
   if (isManagedHandleType(type))
     return uint64_t{64};
   if (isa<UnpackedArrayType>(type))
@@ -968,8 +974,8 @@ LogicalResult SimManagedNullOp::verify() {
 static bool isNormalizedValueType(Type type) {
   if (auto integer = dyn_cast<IntegerType>(type))
     return integer.isSignless();
-  return type.isF64() || isa<LogicType>(type) || isManagedHandleType(type) ||
-         isAggregateType(type);
+  return isa<FloatType>(type) || isa<LogicType>(type) ||
+         isManagedHandleType(type) || isAggregateType(type);
 }
 
 LogicalResult
@@ -1021,18 +1027,18 @@ FrozenConstantAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
     return emitError() << "frozen constant type must not be null";
   if (!value)
     return emitError() << "frozen constant payload must not be null";
-  if (type.isF64()) {
+  if (isa<FloatType>(type)) {
     auto floating = dyn_cast<FloatAttr>(value);
-    if (!floating || !floating.getType().isF64())
+    if (!floating || floating.getType() != type)
       return emitError()
-             << "f64 frozen constant requires an f64 floating payload";
+             << "floating frozen constant requires a matching payload";
     return success();
   }
 
   Type scalar = getPackedScalarType(type);
   if (!scalar)
     return emitError()
-           << "frozen constant type must be f64 or a fixed packed value, got "
+           << "frozen constant type must be floating or a fixed packed value, got "
            << type;
   std::optional<unsigned> width = getPackedWidth(scalar);
   auto planes = dyn_cast<ArrayAttr>(value);
@@ -1112,7 +1118,7 @@ FailureOr<Value> materializeFrozenConstant(OpBuilder &builder,
   if (!constant)
     return failure();
   Type type = constant.getType();
-  if (type.isF64()) {
+  if (isa<FloatType>(type)) {
     auto value = dyn_cast<FloatAttr>(constant.getValue());
     if (!value)
       return failure();
@@ -1207,7 +1213,7 @@ verifyArrayType(llvm::function_ref<InFlightDiagnostic()> emitError,
     return emitError() << "fixed array range is too large";
   if (failed(verifyElementType(emitError, elementType)))
     return failure();
-  if (elementType.isF64())
+  if (packed && isa<FloatType>(elementType))
     return emitError() << "real-valued aggregate elements are not supported";
   if (packed) {
     std::optional<unsigned> elementWidth = getPackedWidth(elementType);
@@ -1255,7 +1261,7 @@ verifyRecordType(llvm::function_ref<InFlightDiagnostic()> emitError,
       return emitError() << "aggregate field names must be unique";
     if (failed(verifyElementType(emitError, field.getType())))
       return failure();
-    if (field.getType().isF64())
+    if (packed && isa<FloatType>(field.getType()))
       return emitError() << "real-valued aggregate fields are not supported";
     if (!packed) {
       if (field.getPackedOffset() != 0)
@@ -1447,8 +1453,8 @@ ArgumentRefType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
 LogicalResult
 ObserverType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
                      Type resultType) {
-  if (!isa<IntegerType, LogicType>(resultType))
-    return emitError() << "observer result must be a packed scalar";
+  if (!isa<IntegerType, LogicType, FloatType>(resultType))
+    return emitError() << "observer result must be a scalar value";
   if (auto integer = dyn_cast<IntegerType>(resultType);
       integer && (!integer.isSignless() || integer.getWidth() == 0))
     return emitError()
@@ -2491,7 +2497,7 @@ LogicalResult SimFuncOp::verify() {
     if (!isa<ContextType, RefType, ArgumentRefType, NetType, DriverType,
              EventType, ProcessType, ManagedRefType, IntegerType, LogicType,
              TimeType>(input) &&
-        !isManagedHandleType(input) && !input.isF64() &&
+        !isManagedHandleType(input) && !isa<FloatType>(input) &&
         !isAggregateType(input))
       return emitOpError() << "contains non-normalized argument type " << input;
     if (auto integer = dyn_cast<IntegerType>(input);
@@ -2501,7 +2507,7 @@ LogicalResult SimFuncOp::verify() {
   for (Type result : type.getResults()) {
     if (!isa<IntegerType, LogicType, TimeType, EventType, ProcessType,
              ManagedRefType, ArgumentRefType>(result) &&
-        !isManagedHandleType(result) && !result.isF64() &&
+        !isManagedHandleType(result) && !isa<FloatType>(result) &&
         !isAggregateType(result))
       return emitOpError() << "contains non-normalized result type " << result;
     if (auto integer = dyn_cast<IntegerType>(result);
@@ -2519,8 +2525,8 @@ LogicalResult SimFuncOp::verify() {
     return emitOpError("root initializer accepts only the context argument");
   if (getEntryKind() == EntryKind::Observer) {
     if (type.getNumResults() != 1 ||
-        !isa<IntegerType, LogicType>(type.getResult(0)))
-      return emitOpError("observer entry must return one packed scalar result");
+        !isa<IntegerType, LogicType, FloatType>(type.getResult(0)))
+      return emitOpError("observer entry must return one scalar result");
   }
   if (getEntryKind() == EntryKind::Function ||
       getEntryKind() == EntryKind::Observer) {
@@ -2645,8 +2651,9 @@ LogicalResult SimObserverBindOp::verify() {
     else
       return emitOpError(
           "captures must use storage, net, driver, or named-event handles");
-    if (!getPackedWidth(element))
-      return emitOpError("captured handles must refer to packed values");
+    if (!isa<FloatType>(element) && !getPackedWidth(element))
+      return emitOpError(
+          "captured handles must refer to packed or floating values");
   }
   for (Value dependency : getDependencies())
     if (!isa<RefType, NetType, EventType>(dependency.getType()))
@@ -3155,9 +3162,9 @@ static Value materializeDefaultValue(OpBuilder &builder, Location location,
   if (auto integer = dyn_cast<IntegerType>(type))
     return arith::ConstantOp::create(builder, location, integer,
                                      builder.getIntegerAttr(integer, 0));
-  if (type.isF64())
+  if (isa<FloatType>(type))
     return arith::ConstantOp::create(builder, location, type,
-                                     builder.getF64FloatAttr(0.0));
+                                     builder.getFloatAttr(type, 0.0));
   if (auto logic = dyn_cast<LogicType>(type)) {
     auto plane = IntegerType::get(type.getContext(), logic.getWidth());
     return SimLogicConstantOp::create(

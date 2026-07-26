@@ -15,6 +15,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Matchers.h"
 
@@ -655,7 +656,9 @@ FailureOr<Value> UnitLowering::bindObserver(Operation *expression) {
     FailureOr<Type> normalized = getNormalizedSemanticType(expression);
     if (failed(normalized))
       return failure();
-    resultType = sim::getPackedScalarType(*normalized);
+    resultType = isa<FloatType>(*normalized)
+                     ? *normalized
+                     : sim::getPackedScalarType(*normalized);
     if (!resultType) {
       emitError(location)
           << "observer expression does not have a packed scalar result";
@@ -687,6 +690,21 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
       isa<sim::ClassHandleType>(targetType))
     return sim::SimClassCastOp::create(builder, location, targetType, value)
         .getResult();
+  if (isa<FloatType>(value.getType()) && isa<FloatType>(targetType)) {
+    auto source = cast<FloatType>(value.getType());
+    auto target = cast<FloatType>(targetType);
+    if (source.getWidth() < target.getWidth())
+      return arith::ExtFOp::create(builder, location, target, value)
+          .getResult();
+    return arith::TruncFOp::create(builder, location, target, value)
+        .getResult();
+  }
+  if (targetType.isF32()) {
+    if (isa<IntegerType>(value.getType()))
+      return sim::SimRealFromIntegerOp::create(
+                 builder, location, targetType, value, sourceSigned)
+          .getResult();
+  }
   if (targetType.isF64()) {
     if (auto sourceInt = dyn_cast<IntegerType>(value.getType()))
       return sim::SimRealFromIntegerOp::create(
@@ -729,6 +747,11 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
                                              bits)
           .getResult();
     }
+  }
+  if (value.getType().isF32()) {
+    Value wide = arith::ExtFOp::create(builder, location, builder.getF64Type(),
+                                      value);
+    return convert(wide, targetType, sourceSigned, location, targetSigned);
   }
   if (sim::isAggregateType(value.getType())) {
     Type scalarType = sim::getPackedScalarType(value.getType());
@@ -823,9 +846,10 @@ FailureOr<Value> UnitLowering::toPackedScalar(Value value, Location location) {
 }
 
 FailureOr<Value> UnitLowering::truthValue(Value value, Location location) {
-  if (value.getType().isF64()) {
+  if (isa<FloatType>(value.getType())) {
     Value zero = arith::ConstantOp::create(builder, location, value.getType(),
-                                           builder.getF64FloatAttr(0.0));
+                                           builder.getFloatAttr(
+                                               value.getType(), 0.0));
     return arith::CmpFOp::create(builder, location, arith::CmpFPredicate::UNE,
                                  value, zero)
         .getResult();
@@ -2080,6 +2104,20 @@ FailureOr<Value> UnitLowering::lowerUnary(semantic::SVUnaryExpressionOp op) {
     if (failed(loaded))
       return failure();
     Value oldValue = *loaded;
+    if (isa<FloatType>(oldValue.getType())) {
+      Value one = arith::ConstantOp::create(
+          builder, location, oldValue.getType(),
+          builder.getFloatAttr(oldValue.getType(), 1.0));
+      Value newValue =
+          increment
+              ? Value(arith::AddFOp::create(builder, location, oldValue, one))
+              : Value(arith::SubFOp::create(builder, location, oldValue, one));
+      if (failed(storeReference(*destination, newValue, location)))
+        return failure();
+      bool post = kind == semantic::SVUnaryOperator::Postincrement ||
+                  kind == semantic::SVUnaryOperator::Postdecrement;
+      return convert(post ? oldValue : newValue, *resultType, false, location);
+    }
     FailureOr<Value> oldScalar = toPackedScalar(oldValue, location);
     if (failed(oldScalar))
       return failure();
@@ -2120,19 +2158,25 @@ FailureOr<Value> UnitLowering::lowerUnary(semantic::SVUnaryExpressionOp op) {
   FailureOr<Value> input = lowerExpression(children.front());
   if (failed(input))
     return failure();
-  if ((*input).getType().isF64()) {
-    if (kind != semantic::SVUnaryOperator::LogicalNot) {
+  if (isa<FloatType>((*input).getType())) {
+    Value value;
+    if (kind == semantic::SVUnaryOperator::Plus) {
+      value = *input;
+    } else if (kind == semantic::SVUnaryOperator::Minus) {
+      value = arith::NegFOp::create(builder, location, *input);
+    } else if (kind == semantic::SVUnaryOperator::LogicalNot) {
+      FailureOr<Value> truth = truthValue(*input, location);
+      if (failed(truth))
+        return failure();
+      value = arith::XOrIOp::create(
+          builder, location, *truth,
+          arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                    builder.getBoolAttr(true)));
+    } else {
       emitError(location)
-          << "real arithmetic and unary sign operations are not supported";
+          << "floating-point operand does not support this unary operator";
       return failure();
     }
-    FailureOr<Value> truth = truthValue(*input, location);
-    if (failed(truth))
-      return failure();
-    Value value = arith::XOrIOp::create(
-        builder, location, *truth,
-        arith::ConstantOp::create(builder, location, builder.getI1Type(),
-                                  builder.getBoolAttr(true)));
     return convert(value, *resultType, false, location);
   }
   FailureOr<Value> scalarInput = toPackedScalar(*input, location);
@@ -2347,15 +2391,20 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
                                     builder.getBoolAttr(true)));
     return convert(equal, *resultType, false, location);
   }
-  if ((*lhs).getType().isF64() || (*rhs).getType().isF64()) {
-    if (!(*lhs).getType().isF64()) {
-      lhs = convert(*lhs, builder.getF64Type(), isSignedNode(children[0]),
+  if (isa<FloatType>((*lhs).getType()) ||
+      isa<FloatType>((*rhs).getType())) {
+    Type arithmeticType =
+        (*lhs).getType().isF64() || (*rhs).getType().isF64()
+            ? Type(builder.getF64Type())
+            : Type(builder.getF32Type());
+    if ((*lhs).getType() != arithmeticType) {
+      lhs = convert(*lhs, arithmeticType, isSignedNode(children[0]),
                     location);
       if (failed(lhs))
         return failure();
     }
-    if (!(*rhs).getType().isF64()) {
-      rhs = convert(*rhs, builder.getF64Type(), isSignedNode(children[1]),
+    if ((*rhs).getType() != arithmeticType) {
+      rhs = convert(*rhs, arithmeticType, isSignedNode(children[1]),
                     location);
       if (failed(rhs))
         return failure();
@@ -2397,15 +2446,36 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
     default:
       break;
     }
-    if (!predicate) {
+    if (predicate) {
+      Value compared =
+          arith::CmpFOp::create(builder, location, *predicate, *lhs, *rhs);
+      return convert(compared, *resultType, false, location);
+    }
+    Value value;
+    switch (kind) {
+    case Binary::Add:
+      value = arith::AddFOp::create(builder, location, *lhs, *rhs);
+      break;
+    case Binary::Subtract:
+      value = arith::SubFOp::create(builder, location, *lhs, *rhs);
+      break;
+    case Binary::Multiply:
+      value = arith::MulFOp::create(builder, location, *lhs, *rhs);
+      break;
+    case Binary::Divide:
+      value = arith::DivFOp::create(builder, location, *lhs, *rhs);
+      break;
+    case Binary::Power:
+      value = math::PowFOp::create(builder, location, arithmeticType, *lhs,
+                                   *rhs)
+                  .getResult();
+      break;
+    default:
       emitError(location)
-          << "real arithmetic is not supported; only comparisons and logical "
-             "operators are executable";
+          << "floating-point operand does not support this binary operator";
       return failure();
     }
-    Value compared =
-        arith::CmpFOp::create(builder, location, *predicate, *lhs, *rhs);
-    return convert(compared, *resultType, false, location);
+    return convert(value, *resultType, false, location);
   }
   FailureOr<Value> scalarLhs = toPackedScalar(*lhs, location);
   FailureOr<Value> scalarRhs = toPackedScalar(*rhs, location);
@@ -4451,8 +4521,13 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
         FailureOr<Value> value = lowerExpression(child);
         if (failed(value))
           return failure();
-        if ((*value).getType().isF64()) {
-          items.push_back(*value);
+        if (isa<FloatType>((*value).getType())) {
+          FailureOr<Value> real =
+              convert(*value, builder.getF64Type(), false,
+                      getSemanticLocation(child));
+          if (failed(real))
+            return failure();
+          items.push_back(*real);
           flags.push_back(4);
         } else {
           FailureOr<Value> scalar =
@@ -4666,9 +4741,21 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
           semantic::SVUnbasedUnsizedIntegerLiteralOp>(op))
     return lowerLiteral(op);
   if (isa<semantic::SVRealLiteralOp, semantic::SVTimeLiteralOp>(op)) {
-    emitError(getSemanticLocation(op))
-        << "real literals are supported only as procedural delay literals";
-    return failure();
+    Location location = getSemanticLocation(op);
+    FailureOr<Type> type = getNormalizedSemanticType(op);
+    auto spelling = op->getAttrOfType<StringAttr>("constant_value");
+    if (failed(type) || !spelling || !isa<FloatType>(*type)) {
+      emitError(location) << "malformed floating-point literal";
+      return failure();
+    }
+    double value = 0.0;
+    if (spelling.getValue().getAsDouble(value)) {
+      emitError(location) << "floating-point literal is not representable";
+      return failure();
+    }
+    return arith::ConstantOp::create(
+               builder, location, *type, builder.getFloatAttr(*type, value))
+        .getResult();
   }
   if (isa<semantic::SVConversionExpressionOp>(op)) {
     SmallVector<Operation *> children = getChildren(op);
@@ -4844,16 +4931,20 @@ FailureOr<Value> UnitLowering::lowerDelayValue(Operation *control) {
   FailureOr<Value> amount = lowerExpression(children.front());
   if (failed(amount))
     return failure();
-  if ((*amount).getType().isF64()) {
+  if (isa<FloatType>((*amount).getType())) {
     auto quantumAttr =
         function->getAttrOfType<IntegerAttr>(delayQuantumAttrName);
     if (!quantumAttr) {
       function.emitError("code unit has no frozen delay quantum");
       return failure();
     }
+    FailureOr<Value> real =
+        convert(*amount, builder.getF64Type(), false, location);
+    if (failed(real))
+      return failure();
     return sim::SimTimeFromRealOp::create(
                builder, location, sim::TimeType::get(function.getContext()),
-               *amount, scaleAttr, quantumAttr)
+               *real, scaleAttr, quantumAttr)
         .getResult();
   }
   FailureOr<Value> scalar = toPackedScalar(*amount, location);
@@ -7550,7 +7641,7 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
       result = truthValue(*result, function.getLoc());
       if (failed(result))
         return failure();
-    } else {
+    } else if (!isa<FloatType>((*result).getType())) {
       result = toPackedScalar(*result, function.getLoc());
       if (failed(result))
         return failure();

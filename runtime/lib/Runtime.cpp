@@ -67,7 +67,17 @@ bool validObserverInventory(
     if (observer.code_unit_id == 0 ||
         (index != 0 && observer.code_unit_id <= previousID) ||
         observer.result_width == 0 ||
-        (observer.flags & ~OBELISK_RT_OBSERVER_FOUR_STATE) != 0 ||
+        (observer.flags &
+         ~(OBELISK_RT_OBSERVER_FOUR_STATE | OBELISK_RT_OBSERVER_REAL32 |
+           OBELISK_RT_OBSERVER_REAL64)) != 0 ||
+        ((observer.flags & OBELISK_RT_OBSERVER_REAL32) != 0 &&
+         (observer.result_width != 32 ||
+          (observer.flags & (OBELISK_RT_OBSERVER_FOUR_STATE |
+                             OBELISK_RT_OBSERVER_REAL64)) != 0)) ||
+        ((observer.flags & OBELISK_RT_OBSERVER_REAL64) != 0 &&
+         (observer.result_width != 64 ||
+          (observer.flags & (OBELISK_RT_OBSERVER_FOUR_STATE |
+                             OBELISK_RT_OBSERVER_REAL32)) != 0)) ||
         observer.reserved != 0 ||
         (observer.capture_count == 0) != (observer.capture_abi == nullptr))
       return false;

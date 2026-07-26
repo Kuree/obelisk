@@ -32,7 +32,7 @@ ABI_OFFSET(obelisk_rt_trace_entry_v1, offset, 0);
 ABI_OFFSET(obelisk_rt_trace_entry_v1, stride, 8);
 ABI_OFFSET(obelisk_rt_trace_entry_v1, count, 16);
 ABI_OFFSET(obelisk_rt_trace_entry_v1, kind, 24);
-ABI_OFFSET(obelisk_rt_trace_entry_v1, reserved, 28);
+ABI_OFFSET(obelisk_rt_trace_entry_v1, slot_kind, 28);
 ABI_OFFSET(obelisk_rt_trace_entry_v1, child_layout, 32);
 ABI_SIZE_ALIGN(obelisk_rt_trace_layout_v1, 40, 8);
 ABI_OFFSET(obelisk_rt_trace_layout_v1, version, 0);
@@ -87,6 +87,17 @@ ABI_OFFSET(obelisk_rt_gc_root_range_v1, slots, 0);
 ABI_OFFSET(obelisk_rt_gc_root_range_v1, count, 8);
 ABI_OFFSET(obelisk_rt_gc_root_range_v1, previous, 16);
 ABI_OFFSET(obelisk_rt_gc_root_range_v1, cookie, 24);
+ABI_SIZE_ALIGN(obelisk_rt_gc_managed_root_v1, 24, 8);
+ABI_OFFSET(obelisk_rt_gc_managed_root_v1, slot, 0);
+ABI_OFFSET(obelisk_rt_gc_managed_root_v1, previous, 8);
+ABI_OFFSET(obelisk_rt_gc_managed_root_v1, cookie, 16);
+ABI_SIZE_ALIGN(obelisk_rt_gc_managed_root_range_v1, 32, 8);
+ABI_OFFSET(obelisk_rt_gc_managed_root_range_v1, slots, 0);
+ABI_OFFSET(obelisk_rt_gc_managed_root_range_v1, count, 8);
+ABI_OFFSET(obelisk_rt_gc_managed_root_range_v1, previous, 16);
+ABI_OFFSET(obelisk_rt_gc_managed_root_range_v1, cookie, 24);
+ABI_SIZE_ALIGN(obelisk_rt_string_span_v1, 8, 8);
+ABI_OFFSET(obelisk_rt_string_span_v1, string, 0);
 ABI_OFFSET(obelisk_rt_gc_root_v1, slot, 0);
 ABI_OFFSET(obelisk_rt_gc_root_v1, previous, 8);
 ABI_OFFSET(obelisk_rt_gc_root_v1, cookie, 16);
@@ -657,6 +668,9 @@ ABI_FUNCTION(obelisk_rt_v1_scheduler_signal,
 ABI_FUNCTION(obelisk_rt_v1_scheduler_signal_transition,
              void (*)(obelisk_rt_context *, uint64_t, uint64_t, const uint8_t *,
                       const uint8_t *, const uint8_t *, const uint8_t *));
+ABI_FUNCTION(obelisk_rt_v1_scheduler_real_transition,
+             void (*)(obelisk_rt_context *, uint64_t, uint32_t, const void *,
+                      const void *));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_event,
              void (*)(obelisk_rt_context *, uint64_t, uint32_t));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_event_after,
@@ -724,6 +738,22 @@ ABI_FUNCTION(obelisk_rt_v1_gc_root_range_push,
 ABI_FUNCTION(obelisk_rt_v1_gc_root_range_pop,
              obelisk_rt_status (*)(obelisk_rt_gc_lane_v1 *,
                                    obelisk_rt_gc_root_range_v1 *));
+ABI_FUNCTION(obelisk_rt_v1_gc_managed_root_push,
+             obelisk_rt_status (*)(obelisk_rt_gc_lane_v1 *,
+                                   obelisk_rt_gc_managed_root_v1 *,
+                                   obelisk_rt_managed_word_v1 *));
+ABI_FUNCTION(obelisk_rt_v1_gc_managed_root_pop,
+             obelisk_rt_status (*)(obelisk_rt_gc_lane_v1 *,
+                                   obelisk_rt_gc_managed_root_v1 *));
+ABI_FUNCTION(obelisk_rt_v1_gc_managed_root_range_push,
+             obelisk_rt_status (*)(
+                 obelisk_rt_gc_lane_v1 *,
+                 obelisk_rt_gc_managed_root_range_v1 *,
+                 obelisk_rt_managed_word_v1 *, uint64_t));
+ABI_FUNCTION(obelisk_rt_v1_gc_managed_root_range_pop,
+             obelisk_rt_status (*)(
+                 obelisk_rt_gc_lane_v1 *,
+                 obelisk_rt_gc_managed_root_range_v1 *));
 ABI_FUNCTION(obelisk_rt_v1_argument_ref_load,
              obelisk_rt_status (*)(obelisk_rt_context *, const uint8_t *,
                                    const uint8_t *, uint64_t,
@@ -804,35 +834,41 @@ ABI_FUNCTION(obelisk_rt_v1_object_id,
              uint64_t (*)(const obelisk_rt_object_v1 *));
 ABI_FUNCTION(obelisk_rt_v1_string_create,
              obelisk_rt_status (*)(obelisk_rt_gc_lane_v1 *, const char *,
-                                   uint64_t, obelisk_rt_object_v1 **));
+                                   uint64_t, obelisk_rt_string_v1 *));
 ABI_FUNCTION(obelisk_rt_v1_string_concat,
              obelisk_rt_status (*)(obelisk_rt_gc_lane_v1 *,
-                                   obelisk_rt_object_v1 *,
-                                   obelisk_rt_object_v1 *,
-                                   obelisk_rt_object_v1 **));
-ABI_FUNCTION(obelisk_rt_v1_string_bytes,
-             obelisk_rt_status (*)(obelisk_rt_object_v1 *, const char **,
+                                   obelisk_rt_string_v1,
+                                   obelisk_rt_string_v1,
+                                   obelisk_rt_string_v1 *));
+ABI_FUNCTION(obelisk_rt_v1_string_concat_many,
+             obelisk_rt_status (*)(obelisk_rt_gc_lane_v1 *,
+                                   const obelisk_rt_string_span_v1 *, uint64_t,
+                                   obelisk_rt_string_v1 *));
+ABI_FUNCTION(obelisk_rt_v1_string_view,
+             obelisk_rt_status (*)(obelisk_rt_string_v1, char *, const char **,
                                    uint64_t *));
-ABI_FUNCTION(obelisk_rt_v1_string_length, uint64_t (*)(obelisk_rt_object_v1 *));
-ABI_FUNCTION(obelisk_rt_v1_string_hash, uint64_t (*)(obelisk_rt_object_v1 *));
+ABI_FUNCTION(obelisk_rt_v1_string_length,
+             uint64_t (*)(obelisk_rt_string_v1));
+ABI_FUNCTION(obelisk_rt_v1_string_hash,
+             uint64_t (*)(obelisk_rt_string_v1));
 ABI_FUNCTION(obelisk_rt_v1_string_getc,
-             uint32_t (*)(obelisk_rt_object_v1 *, int64_t));
+             uint32_t (*)(obelisk_rt_string_v1, int64_t));
 ABI_FUNCTION(obelisk_rt_v1_string_putc,
              obelisk_rt_status (*)(obelisk_rt_gc_lane_v1 *,
-                                   obelisk_rt_object_v1 *, int64_t, uint32_t,
-                                   obelisk_rt_object_v1 **));
+                                   obelisk_rt_string_v1, int64_t, uint32_t,
+                                   obelisk_rt_string_v1 *));
 ABI_FUNCTION(obelisk_rt_v1_string_substr,
              obelisk_rt_status (*)(obelisk_rt_gc_lane_v1 *,
-                                   obelisk_rt_object_v1 *, int64_t, int64_t,
-                                   obelisk_rt_object_v1 **));
+                                   obelisk_rt_string_v1, int64_t, int64_t,
+                                   obelisk_rt_string_v1 *));
 ABI_FUNCTION(obelisk_rt_v1_string_compare,
-             int32_t (*)(obelisk_rt_object_v1 *, obelisk_rt_object_v1 *));
+             int32_t (*)(obelisk_rt_string_v1, obelisk_rt_string_v1));
 ABI_FUNCTION(obelisk_rt_v1_string_compare_insensitive,
-             int32_t (*)(obelisk_rt_object_v1 *, obelisk_rt_object_v1 *));
+             int32_t (*)(obelisk_rt_string_v1, obelisk_rt_string_v1));
 ABI_FUNCTION(obelisk_rt_v1_string_case_convert,
              obelisk_rt_status (*)(obelisk_rt_gc_lane_v1 *,
-                                   obelisk_rt_object_v1 *, uint32_t,
-                                   obelisk_rt_object_v1 **));
+                                   obelisk_rt_string_v1, uint32_t,
+                                   obelisk_rt_string_v1 *));
 ABI_FUNCTION(obelisk_rt_v1_dynamic_array_create,
              obelisk_rt_status (*)(obelisk_rt_gc_lane_v1 *,
                                    const obelisk_rt_element_type_v1 *, uint64_t,

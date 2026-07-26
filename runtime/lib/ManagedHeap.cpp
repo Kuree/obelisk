@@ -8,6 +8,7 @@
 #include <functional>
 #include <limits>
 #include <optional>
+#include <shared_mutex>
 
 struct obelisk_rt_object_v1 {};
 
@@ -135,19 +136,53 @@ unsigned sizeClassFor(uint64_t size, uint32_t &classSize) {
   return index;
 }
 
+std::shared_mutex metadataRegistryMutex;
+std::unordered_map<const obelisk_rt_object_v1 *, ObjectMetadata *>
+    metadataRegistry;
+
+void registerMetadata(ObjectMetadata *metadata) {
+  std::unique_lock<std::shared_mutex> lock(metadataRegistryMutex);
+  metadataRegistry.emplace(
+      static_cast<const obelisk_rt_object_v1 *>(metadata->object), metadata);
+}
+
+void unregisterMetadata(ObjectMetadata *metadata) {
+  std::unique_lock<std::shared_mutex> lock(metadataRegistryMutex);
+  metadataRegistry.erase(
+      static_cast<const obelisk_rt_object_v1 *>(metadata->object));
+}
+
 ObjectMetadata *metadataFor(const obelisk_rt_object_v1 *object) {
   if (!object)
     return nullptr;
-  const auto *bytes = reinterpret_cast<const uint8_t *>(object);
-  const auto *prefix =
-      reinterpret_cast<const SlotPrefix *>(bytes - sizeof(SlotPrefix));
-  if (prefix->magic != kObjectMagic || !prefix->metadata)
+  std::shared_lock<std::shared_mutex> lock(metadataRegistryMutex);
+  auto found = metadataRegistry.find(object);
+  if (found == metadataRegistry.end())
     return nullptr;
-  ObjectMetadata *metadata = prefix->metadata;
+  ObjectMetadata *metadata = found->second;
   if (metadata->object != object ||
       !metadata->allocated.load(std::memory_order_acquire))
     return nullptr;
   return metadata;
+}
+
+obelisk_rt_object_v1 *
+managedWordObject(obelisk_rt_managed_word_v1 word) noexcept {
+  if (word == 0 || (word & UINT64_C(3)) != 0)
+    return nullptr;
+  return reinterpret_cast<obelisk_rt_object_v1 *>(
+      static_cast<uintptr_t>(word));
+}
+
+bool validImmediateManagedWord(obelisk_rt_managed_word_v1 word) noexcept {
+  if ((word & UINT64_C(3)) != UINT64_C(1))
+    return false;
+  uint8_t control = static_cast<uint8_t>(word);
+  uint64_t length = (word >> 2) & 7;
+  if ((control & UINT8_C(0xe0)) != 0 || length == 0)
+    return false;
+  uint64_t usedBits = 8 + length * 8;
+  return usedBits == 64 || (word >> usedBits) == 0;
 }
 
 class ObjectLock {
@@ -191,17 +226,21 @@ bool validateTraceLayout(const obelisk_rt_trace_layout_v1 *layout,
   TraceValidationFrame frame{layout, parent};
   for (uint64_t index = 0; index != layout->entry_count; ++index) {
     const obelisk_rt_trace_entry_v1 &entry = layout->entries[index];
-    if (entry.reserved != 0 || entry.count == 0 ||
-        (entry.count > 1 && entry.stride == 0))
+    if (entry.count == 0 || (entry.count > 1 && entry.stride == 0))
       return false;
     uint64_t elementSize = sizeof(obelisk_rt_object_v1 *);
     if (entry.kind == OBELISK_RT_TRACE_EMBEDDED) {
-      if (!entry.child_layout)
+      if (!entry.child_layout ||
+          entry.slot_kind != OBELISK_RT_MANAGED_SLOT_INVALID)
         return false;
       elementSize = entry.child_layout->size;
     } else if ((entry.kind != OBELISK_RT_TRACE_STRONG &&
                 entry.kind != OBELISK_RT_TRACE_WEAK) ||
-               entry.child_layout)
+               entry.child_layout ||
+               entry.slot_kind < OBELISK_RT_MANAGED_SLOT_CLASS ||
+               entry.slot_kind > OBELISK_RT_MANAGED_SLOT_CONTAINER ||
+               (entry.kind == OBELISK_RT_TRACE_WEAK &&
+                entry.slot_kind != OBELISK_RT_MANAGED_SLOT_CLASS))
       return false;
     uint64_t requiredAlignment = entry.kind == OBELISK_RT_TRACE_EMBEDDED
                                      ? entry.child_layout->alignment
@@ -405,12 +444,23 @@ bool validateLayoutHandleWrite(
       // aggregate store.
       if (fieldOffset < offset || fieldEnd > end)
         return false;
-      obelisk_rt_object_v1 *referent = nullptr;
-      std::memcpy(&referent, data + fieldOffset - offset, sizeof(referent));
-      if (!referent)
+      obelisk_rt_managed_word_v1 word = 0;
+      std::memcpy(&word, data + fieldOffset - offset, sizeof(word));
+      if (word == 0)
         continue;
+      if (entry.slot_kind == OBELISK_RT_MANAGED_SLOT_STRING &&
+          validImmediateManagedWord(word))
+        continue;
+      obelisk_rt_object_v1 *referent = managedWordObject(word);
       ObjectMetadata *referentMetadata = metadataFor(referent);
-      if (!referentMetadata || referentMetadata->heap != heap)
+      obelisk_rt_managed_kind_v1 expectedKind =
+          entry.slot_kind == OBELISK_RT_MANAGED_SLOT_CLASS
+              ? OBELISK_RT_MANAGED_CLASS
+              : (entry.slot_kind == OBELISK_RT_MANAGED_SLOT_STRING
+                     ? OBELISK_RT_MANAGED_STRING
+                     : OBELISK_RT_MANAGED_CONTAINER);
+      if (!referentMetadata || referentMetadata->heap != heap ||
+          referentMetadata->kind != expectedKind)
         return false;
       if (referents)
         referents->push_back(referent);
@@ -428,6 +478,9 @@ struct obelisk_rt_gc_lane_v1 {
   std::atomic<LaneState> state{LaneState::Inactive};
   std::atomic<obelisk_rt_gc_root_v1 *> roots{nullptr};
   std::atomic<obelisk_rt_gc_root_range_v1 *> rootRanges{nullptr};
+  std::atomic<obelisk_rt_gc_managed_root_v1 *> managedRoots{nullptr};
+  std::atomic<obelisk_rt_gc_managed_root_range_v1 *> managedRootRanges{
+      nullptr};
   std::atomic<ManagedRootProvider *> providers{nullptr};
 };
 
@@ -496,6 +549,8 @@ public:
       : context(context), id(acquireHeapIdentity()) {}
 
   ~ManagedHeap() {
+    enumerateAllocated(
+        [](ObjectMetadata *metadata) { unregisterMetadata(metadata); });
     for (obelisk_rt_gc_lane_v1 *lane : lanes)
       delete lane;
   }
@@ -525,6 +580,8 @@ public:
       return OBELISK_RT_INVALID_LIFECYCLE;
     if (lane->roots.load(std::memory_order_acquire) ||
         lane->rootRanges.load(std::memory_order_acquire) ||
+        lane->managedRoots.load(std::memory_order_acquire) ||
+        lane->managedRootRanges.load(std::memory_order_acquire) ||
         lane->providers.load(std::memory_order_acquire)) {
       lane->state.store(LaneState::Inactive, std::memory_order_release);
       return OBELISK_RT_INVALID_LIFECYCLE;
@@ -562,6 +619,8 @@ public:
       return status;
     if (lane->roots.load(std::memory_order_acquire) ||
         lane->rootRanges.load(std::memory_order_acquire) ||
+        lane->managedRoots.load(std::memory_order_acquire) ||
+        lane->managedRootRanges.load(std::memory_order_acquire) ||
         lane->providers.load(std::memory_order_acquire))
       return OBELISK_RT_INVALID_LIFECYCLE;
     lane->owner.store(0, std::memory_order_release);
@@ -636,6 +695,83 @@ public:
         lane->rootRanges.load(std::memory_order_acquire) != range)
       return OBELISK_RT_INVALID_LIFECYCLE;
     lane->rootRanges.store(range->previous, std::memory_order_release);
+    range->slots = nullptr;
+    range->count = 0;
+    range->previous = nullptr;
+    range->cookie = 0;
+    return OBELISK_RT_OK;
+  }
+
+  bool validManagedRootWord(obelisk_rt_managed_word_v1 word) const {
+    if (word == 0 || validImmediateManagedWord(word))
+      return true;
+    obelisk_rt_object_v1 *object = managedWordObject(word);
+    ObjectMetadata *metadata = metadataFor(object);
+    return metadata && metadata->heap == this;
+  }
+
+  obelisk_rt_status
+  pushManagedRoot(obelisk_rt_gc_lane_v1 *lane,
+                  obelisk_rt_gc_managed_root_v1 *root,
+                  obelisk_rt_managed_word_v1 *slot) {
+    if (!activeOwner(lane) || !root || !slot || root->cookie != 0)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    if (!validManagedRootWord(*slot))
+      return OBELISK_RT_INVALID_HANDLE;
+    root->slot = slot;
+    root->previous = lane->managedRoots.load(std::memory_order_relaxed);
+    root->cookie = kRootCookie ^ reinterpret_cast<uintptr_t>(lane) ^
+                   UINT64_C(0x4d414e41474544);
+    lane->managedRoots.store(root, std::memory_order_release);
+    return OBELISK_RT_OK;
+  }
+
+  obelisk_rt_status
+  popManagedRoot(obelisk_rt_gc_lane_v1 *lane,
+                 obelisk_rt_gc_managed_root_v1 *root) {
+    if (!activeOwner(lane) || !root ||
+        root->cookie != (kRootCookie ^ reinterpret_cast<uintptr_t>(lane) ^
+                         UINT64_C(0x4d414e41474544)) ||
+        lane->managedRoots.load(std::memory_order_acquire) != root)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    lane->managedRoots.store(root->previous, std::memory_order_release);
+    root->slot = nullptr;
+    root->previous = nullptr;
+    root->cookie = 0;
+    return OBELISK_RT_OK;
+  }
+
+  obelisk_rt_status pushManagedRootRange(
+      obelisk_rt_gc_lane_v1 *lane,
+      obelisk_rt_gc_managed_root_range_v1 *range,
+      obelisk_rt_managed_word_v1 *slots, uint64_t count) {
+    if (!activeOwner(lane) || !range || (!slots && count != 0) ||
+        range->cookie != 0)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    for (uint64_t index = 0; index != count; ++index)
+      if (!validManagedRootWord(slots[index]))
+        return OBELISK_RT_INVALID_HANDLE;
+    range->slots = slots;
+    range->count = count;
+    range->previous =
+        lane->managedRootRanges.load(std::memory_order_relaxed);
+    range->cookie = kRootCookie ^ reinterpret_cast<uintptr_t>(lane) ^
+                    reinterpret_cast<uintptr_t>(range) ^
+                    UINT64_C(0x4d414e41474544);
+    lane->managedRootRanges.store(range, std::memory_order_release);
+    return OBELISK_RT_OK;
+  }
+
+  obelisk_rt_status popManagedRootRange(
+      obelisk_rt_gc_lane_v1 *lane,
+      obelisk_rt_gc_managed_root_range_v1 *range) {
+    if (!activeOwner(lane) || !range ||
+        range->cookie != (kRootCookie ^ reinterpret_cast<uintptr_t>(lane) ^
+                          reinterpret_cast<uintptr_t>(range) ^
+                          UINT64_C(0x4d414e41474544)) ||
+        lane->managedRootRanges.load(std::memory_order_acquire) != range)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    lane->managedRootRanges.store(range->previous, std::memory_order_release);
     range->slots = nullptr;
     range->count = 0;
     range->previous = nullptr;
@@ -885,6 +1021,7 @@ private:
     metadata->marked = false;
     std::memcpy(object, &runtimeDescriptor, sizeof(runtimeDescriptor));
     metadata->allocated.store(true, std::memory_order_release);
+    registerMetadata(metadata);
 
     allocatedObjects.fetch_add(1, std::memory_order_relaxed);
     allocatedSinceCollection.fetch_add(allocationSize,
@@ -1124,8 +1261,11 @@ private:
         auto **slot = reinterpret_cast<obelisk_rt_object_v1 **>(address);
         if (entry.kind == OBELISK_RT_TRACE_WEAK)
           weakSlots.push_back({owner, slot});
-        else
-          markObject(*slot, pending);
+        else {
+          obelisk_rt_managed_word_v1 word = 0;
+          std::memcpy(&word, address, sizeof(word));
+          markObject(managedWordObject(word), pending);
+        }
       }
     }
   }
@@ -1165,6 +1305,20 @@ private:
            range; range = range->previous)
         for (uint64_t index = 0; index != range->count; ++index)
           markObject(range->slots ? range->slots[index] : nullptr, pending);
+    for (obelisk_rt_gc_lane_v1 *lane : lanes)
+      for (obelisk_rt_gc_managed_root_v1 *root =
+               lane->managedRoots.load(std::memory_order_acquire);
+           root; root = root->previous)
+        markObject(root->slot ? managedWordObject(*root->slot) : nullptr,
+                   pending);
+    for (obelisk_rt_gc_lane_v1 *lane : lanes)
+      for (obelisk_rt_gc_managed_root_range_v1 *range =
+               lane->managedRootRanges.load(std::memory_order_acquire);
+           range; range = range->previous)
+        for (uint64_t index = 0; index != range->count; ++index)
+          markObject(range->slots ? managedWordObject(range->slots[index])
+                                  : nullptr,
+                     pending);
     struct ProviderVisitor {
       ManagedHeap *heap;
       std::vector<ObjectMetadata *> *pending;
@@ -1172,7 +1326,10 @@ private:
     auto visitProviderRoot = [](void *environment,
                                 obelisk_rt_object_v1 **slot) {
       auto *visitor = static_cast<ProviderVisitor *>(environment);
-      visitor->heap->markObject(slot ? *slot : nullptr, *visitor->pending);
+      obelisk_rt_managed_word_v1 word = 0;
+      if (slot)
+        std::memcpy(&word, slot, sizeof(word));
+      visitor->heap->markObject(managedWordObject(word), *visitor->pending);
     };
     for (obelisk_rt_gc_lane_v1 *lane : lanes)
       for (ManagedRootProvider *provider =
@@ -1207,7 +1364,10 @@ private:
         } visitor{this, &pending};
         auto visit = [](void *environment, obelisk_rt_object_v1 *object) {
           auto *visitor = static_cast<RuntimeTraceVisitor *>(environment);
-          visitor->heap->markObject(object, *visitor->pending);
+          obelisk_rt_managed_word_v1 word =
+              static_cast<uint64_t>(reinterpret_cast<uintptr_t>(object));
+          visitor->heap->markObject(managedWordObject(word),
+                                    *visitor->pending);
         };
         obelisk_rt_managed_trace_runtime_object(
             metadata->kind, static_cast<uint8_t *>(metadata->object),
@@ -1243,6 +1403,7 @@ private:
             continue;
           }
           metadata.allocated.store(false, std::memory_order_release);
+          unregisterMetadata(&metadata);
           auto *prefix = reinterpret_cast<SlotPrefix *>(
               static_cast<uint8_t *>(metadata.object) - sizeof(SlotPrefix));
           prefix->magic = 0;
@@ -1268,6 +1429,7 @@ private:
         continue;
       }
       metadata.allocated.store(false, std::memory_order_release);
+      unregisterMetadata(&metadata);
       ++reclaimed;
       it = largeAllocations.erase(it);
     }
@@ -1711,6 +1873,38 @@ obelisk_rt_v1_gc_root_range_pop(obelisk_rt_gc_lane_v1 *lane,
                             : OBELISK_RT_INVALID_ARGUMENT;
 }
 
+extern "C" obelisk_rt_status obelisk_rt_v1_gc_managed_root_push(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_gc_managed_root_v1 *root,
+    obelisk_rt_managed_word_v1 *slot) {
+  return lane && lane->heap
+             ? lane->heap->pushManagedRoot(lane, root, slot)
+             : OBELISK_RT_INVALID_ARGUMENT;
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_gc_managed_root_pop(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_gc_managed_root_v1 *root) {
+  return lane && lane->heap
+             ? lane->heap->popManagedRoot(lane, root)
+             : OBELISK_RT_INVALID_ARGUMENT;
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_gc_managed_root_range_push(
+    obelisk_rt_gc_lane_v1 *lane,
+    obelisk_rt_gc_managed_root_range_v1 *range,
+    obelisk_rt_managed_word_v1 *slots, uint64_t count) {
+  return lane && lane->heap
+             ? lane->heap->pushManagedRootRange(lane, range, slots, count)
+             : OBELISK_RT_INVALID_ARGUMENT;
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_gc_managed_root_range_pop(
+    obelisk_rt_gc_lane_v1 *lane,
+    obelisk_rt_gc_managed_root_range_v1 *range) {
+  return lane && lane->heap
+             ? lane->heap->popManagedRootRange(lane, range)
+             : OBELISK_RT_INVALID_ARGUMENT;
+}
+
 extern "C" obelisk_rt_status
 obelisk_rt_v1_gc_static_root_register(obelisk_rt_context *context,
                                       obelisk_rt_object_v1 **slot) {
@@ -1800,7 +1994,7 @@ bool traceLayoutsEquivalent(const obelisk_rt_trace_layout_v1 *left,
     const auto &a = left->entries[index];
     const auto &b = right->entries[index];
     if (a.offset != b.offset || a.stride != b.stride || a.count != b.count ||
-        a.kind != b.kind || a.reserved != b.reserved ||
+        a.kind != b.kind || a.slot_kind != b.slot_kind ||
         !traceLayoutsEquivalent(a.child_layout, b.child_layout))
       return false;
   }

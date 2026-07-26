@@ -577,7 +577,11 @@ uint64_t layoutSize(uint8_t kind, uint32_t width) {
   case OBELISK_RT_DBREG_BYTES:
     return 16;
   case OBELISK_RT_DBREG_MANAGED:
+  case OBELISK_RT_DBREG_STRING:
+  case OBELISK_RT_DBREG_REAL64:
     return 8;
+  case OBELISK_RT_DBREG_REAL32:
+    return 4;
   case OBELISK_RT_DBREG_MANAGED_REF:
     return 16;
   case OBELISK_RT_DBREG_ARGUMENT_REF:
@@ -660,6 +664,10 @@ bool validIntrinsic(const Image &image, const Function &function,
     return layout && (layout->kind == OBELISK_RT_DBREG_BITS ||
                       layout->kind == OBELISK_RT_DBREG_LOGIC);
   };
+  auto floating = [](const std::optional<Layout> &layout) {
+    return layout && (layout->kind == OBELISK_RT_DBREG_REAL32 ||
+                      layout->kind == OBELISK_RT_DBREG_REAL64);
+  };
   auto bits = [&](const std::optional<Layout> &layout, uint32_t width) {
     return numeric(layout) && layout->width == width;
   };
@@ -680,6 +688,9 @@ bool validIntrinsic(const Image &image, const Function &function,
   auto managed = [](const std::optional<Layout> &layout) {
     return layout && layout->kind == OBELISK_RT_DBREG_MANAGED;
   };
+  auto string = [](const std::optional<Layout> &layout) {
+    return layout && layout->kind == OBELISK_RT_DBREG_STRING;
+  };
   auto managedRef = [](const std::optional<Layout> &layout) {
     return layout && layout->kind == OBELISK_RT_DBREG_MANAGED_REF;
   };
@@ -687,7 +698,8 @@ bool validIntrinsic(const Image &image, const Function &function,
     return layout && layout->kind == OBELISK_RT_DBREG_ARGUMENT_REF;
   };
   auto managedValue = [&](const std::optional<Layout> &layout) {
-    return numeric(layout) || managed(layout);
+    return numeric(layout) || floating(layout) || managed(layout) ||
+           string(layout);
   };
   auto cursor = [&](const std::optional<Layout> &layout) {
     return bits(layout, 64);
@@ -710,7 +722,9 @@ bool validIntrinsic(const Image &image, const Function &function,
   case OBELISK_RT_INTRINSIC_V1_NBA:
     return signature.flags == 0 &&
            (site.inputCount == 2 || site.inputCount == 3) &&
-           site.outputCount == 0 && numeric(input(0)) && handle(input(1)) &&
+           site.outputCount == 0 &&
+           (numeric(input(0)) || floating(input(0)) || string(input(0))) &&
+           handle(input(1)) &&
            (site.inputCount == 2 || bits(input(2), 64));
   case OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGER:
     return signature.flags <= 1 &&
@@ -723,8 +737,10 @@ bool validIntrinsic(const Image &image, const Function &function,
            site.outputCount == 1 && handle(input(0)) && bits(output(0), 1);
   case OBELISK_RT_INTRINSIC_V1_STATE_ALLOC:
     if (signature.flags != 0 || site.inputCount == 0 || site.outputCount != 1 ||
-        (!numeric(input(0)) && !managed(input(0))) || !handle(output(0)) ||
-        (managed(input(0)) && site.inputCount != 1))
+        (!numeric(input(0)) && !floating(input(0)) && !managed(input(0)) &&
+         !string(input(0))) ||
+        !handle(output(0)) ||
+        ((managed(input(0)) || string(input(0))) && site.inputCount != 1))
       return false;
     for (uint32_t index = 1; index != site.inputCount; ++index)
       if (!twoStateBits(input(index), 64))
@@ -869,7 +885,8 @@ bool validIntrinsic(const Image &image, const Function &function,
         !bits(input(1), 32))
       return false;
     for (uint32_t index = 2; index < site.inputCount; ++index)
-      if (!bytes(input(index)) && !numeric(input(index)))
+      if (!bytes(input(index)) && !numeric(input(index)) &&
+          !floating(input(index)))
         return false;
     return true;
   case OBELISK_RT_INTRINSIC_V1_FINISH:
@@ -885,24 +902,29 @@ bool validIntrinsic(const Image &image, const Function &function,
   case OBELISK_RT_INTRINSIC_V1_TIME_TO_REAL:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 1 && twoStateBits(input(0), 64) &&
-           twoStateBits(input(1), 64) && twoStateBits(output(0), 64);
+           twoStateBits(input(1), 64) && output(0) &&
+           output(0)->kind == OBELISK_RT_DBREG_REAL64;
   case OBELISK_RT_INTRINSIC_V1_TIME_FROM_REAL:
     return signature.flags == 0 && site.inputCount == 3 &&
-           site.outputCount == 1 && twoStateBits(input(0), 64) &&
+           site.outputCount == 1 && input(0) &&
+           input(0)->kind == OBELISK_RT_DBREG_REAL64 &&
            twoStateBits(input(1), 64) && twoStateBits(input(2), 64) &&
            twoStateBits(output(0), 64);
   case OBELISK_RT_INTRINSIC_V1_REAL_FROM_INTEGER:
     return signature.flags <= 1 && site.inputCount == 1 &&
            site.outputCount == 1 && twoStateBits(input(0)) &&
-           twoStateBits(output(0), 64);
+           floating(output(0));
   case OBELISK_RT_INTRINSIC_V1_REAL_TO_INTEGER:
     return signature.flags <= 1 && site.inputCount == 1 &&
-           site.outputCount == 1 && twoStateBits(input(0), 64) &&
+           site.outputCount == 1 && input(0) &&
+           input(0)->kind == OBELISK_RT_DBREG_REAL64 &&
            twoStateBits(output(0));
   case OBELISK_RT_INTRINSIC_V1_REAL_COMPARE:
     return signature.flags <= 5 && site.inputCount == 2 &&
-           site.outputCount == 1 && twoStateBits(input(0), 64) &&
-           twoStateBits(input(1), 64) && twoStateBits(output(0), 1);
+           site.outputCount == 1 && input(0) && input(1) &&
+           input(0)->kind == OBELISK_RT_DBREG_REAL64 &&
+           input(1)->kind == OBELISK_RT_DBREG_REAL64 &&
+           twoStateBits(output(0), 1);
   case OBELISK_RT_INTRINSIC_V1_COUNT_BITS:
     if (signature.flags != 0 || site.inputCount < 2 || site.outputCount != 1 ||
         !numeric(input(0)) || !twoStateBits(output(0), 32))
@@ -1074,6 +1096,15 @@ bool validateInitialization(const Image &image, const Function &function) {
     case OBELISK_RT_DB_HANDLE_OFFSET:
     case OBELISK_RT_DB_HANDLE_ID:
     case OBELISK_RT_DB_LOAD_STATE:
+    case OBELISK_RT_DB_FADD:
+    case OBELISK_RT_DB_FSUB:
+    case OBELISK_RT_DB_FMUL:
+    case OBELISK_RT_DB_FDIV:
+    case OBELISK_RT_DB_FNEG:
+    case OBELISK_RT_DB_FCOMPARE:
+    case OBELISK_RT_DB_FEXT:
+    case OBELISK_RT_DB_FTRUNC:
+    case OBELISK_RT_DB_FPOW:
       if (!defineDestination())
         return false;
       break;
@@ -1159,6 +1190,9 @@ bool validateInitialization(const Image &image, const Function &function) {
     case OBELISK_RT_DB_LOAD_STATE:
     case OBELISK_RT_DB_FAIL:
     case OBELISK_RT_DB_RELEASE_STATE:
+    case OBELISK_RT_DB_FNEG:
+    case OBELISK_RT_DB_FEXT:
+    case OBELISK_RT_DB_FTRUNC:
       valid = sources({instruction.source0});
       break;
     case OBELISK_RT_DB_AND:
@@ -1179,6 +1213,12 @@ bool validateInitialization(const Image &image, const Function &function) {
     case OBELISK_RT_DB_INSERT:
     case OBELISK_RT_DB_STORE_STATE:
     case OBELISK_RT_DB_OVERRIDE_STATE:
+    case OBELISK_RT_DB_FADD:
+    case OBELISK_RT_DB_FSUB:
+    case OBELISK_RT_DB_FMUL:
+    case OBELISK_RT_DB_FDIV:
+    case OBELISK_RT_DB_FCOMPARE:
+    case OBELISK_RT_DB_FPOW:
       valid = sources({instruction.source0, instruction.source1});
       break;
     case OBELISK_RT_DB_SELECT:
@@ -1519,6 +1559,9 @@ bool validateImage(const Image &image) {
           (function.firstLayout + registerIndex) * kLayoutSize;
       uint64_t expected = layoutSize(layout.kind, layout.width);
       if (layout.width == 0 || expected == 0 || layout.size != expected ||
+          (layout.kind == OBELISK_RT_DBREG_REAL32 && layout.width != 32) ||
+          (layout.kind == OBELISK_RT_DBREG_REAL64 && layout.width != 64) ||
+          (layout.kind == OBELISK_RT_DBREG_STRING && layout.width != 64) ||
           read16(layoutRecord + 2) != 0 || read64(layoutRecord + 32) != 0 ||
           (layout.flags & ~OBELISK_RT_DBREG_SIGNED) != 0 ||
           (layout.kind != OBELISK_RT_DBREG_BITS &&
@@ -1563,6 +1606,13 @@ bool validateImage(const Image &image) {
           return false;
         uint8_t kind = layoutAt(image, function, index).kind;
         return kind == OBELISK_RT_DBREG_BITS || kind == OBELISK_RT_DBREG_LOGIC;
+      };
+      auto floating = [&](uint32_t index) {
+        if (!reg(index))
+          return false;
+        uint8_t kind = layoutAt(image, function, index).kind;
+        return kind == OBELISK_RT_DBREG_REAL32 ||
+               kind == OBELISK_RT_DBREG_REAL64;
       };
       auto binary = [&] {
         return reg(instruction.destination) && reg(instruction.source0) &&
@@ -1657,6 +1707,60 @@ bool validateImage(const Image &image) {
       case OBELISK_RT_DB_SREM:
         if (instruction.flags || instruction.source2 || instruction.auxiliary ||
             instruction.immediate || !binary())
+          return false;
+        break;
+      case OBELISK_RT_DB_FADD:
+      case OBELISK_RT_DB_FSUB:
+      case OBELISK_RT_DB_FMUL:
+      case OBELISK_RT_DB_FDIV:
+      case OBELISK_RT_DB_FPOW:
+        if (instruction.flags || instruction.source2 || instruction.auxiliary ||
+            instruction.immediate || !binary() ||
+            !floating(instruction.destination))
+          return false;
+        break;
+      case OBELISK_RT_DB_FNEG:
+        if (instruction.flags || instruction.source1 || instruction.source2 ||
+            instruction.auxiliary || instruction.immediate ||
+            !reg(instruction.destination) || !reg(instruction.source0) ||
+            !floating(instruction.destination) ||
+            !compatible(layoutAt(image, function, instruction.destination),
+                        layoutAt(image, function, instruction.source0)))
+          return false;
+        break;
+      case OBELISK_RT_DB_FCOMPARE: {
+        if (instruction.flags > 5 || instruction.source2 ||
+            instruction.auxiliary || instruction.immediate ||
+            !reg(instruction.destination) ||
+            !numeric(instruction.destination) ||
+            layoutAt(image, function, instruction.destination).kind !=
+                OBELISK_RT_DBREG_BITS ||
+            layoutAt(image, function, instruction.destination).width != 1 ||
+            !floating(instruction.source0) ||
+            !floating(instruction.source1) ||
+            !compatible(layoutAt(image, function, instruction.source0),
+                        layoutAt(image, function, instruction.source1)))
+          return false;
+        break;
+      }
+      case OBELISK_RT_DB_FEXT:
+        if (instruction.flags || instruction.source1 || instruction.source2 ||
+            instruction.auxiliary || instruction.immediate ||
+            !reg(instruction.destination) || !reg(instruction.source0) ||
+            layoutAt(image, function, instruction.destination).kind !=
+                OBELISK_RT_DBREG_REAL64 ||
+            layoutAt(image, function, instruction.source0).kind !=
+                OBELISK_RT_DBREG_REAL32)
+          return false;
+        break;
+      case OBELISK_RT_DB_FTRUNC:
+        if (instruction.flags || instruction.source1 || instruction.source2 ||
+            instruction.auxiliary || instruction.immediate ||
+            !reg(instruction.destination) || !reg(instruction.source0) ||
+            layoutAt(image, function, instruction.destination).kind !=
+                OBELISK_RT_DBREG_REAL32 ||
+            layoutAt(image, function, instruction.source0).kind !=
+                OBELISK_RT_DBREG_REAL64)
           return false;
         break;
       case OBELISK_RT_DB_SHL:
@@ -1776,7 +1880,9 @@ bool validateImage(const Image &image) {
             !reg(instruction.destination) ||
             layoutAt(image, function, instruction.destination).kind !=
                 OBELISK_RT_DBREG_HANDLE ||
-            !numeric(instruction.source0) || instruction.source0 > UINT16_MAX)
+            (!numeric(instruction.source0) &&
+             !floating(instruction.source0)) ||
+            instruction.source0 > UINT16_MAX)
           return false;
         break;
       case OBELISK_RT_DB_HANDLE_OFFSET:
@@ -1805,9 +1911,12 @@ bool validateImage(const Image &image) {
         if (instruction.flags || instruction.source1 || instruction.source2 ||
             instruction.auxiliary || instruction.immediate ||
             (!numeric(instruction.destination) &&
+             !floating(instruction.destination) &&
              (!reg(instruction.destination) ||
-              layoutAt(image, function, instruction.destination).kind !=
-                  OBELISK_RT_DBREG_MANAGED)) ||
+              (layoutAt(image, function, instruction.destination).kind !=
+                   OBELISK_RT_DBREG_MANAGED &&
+               layoutAt(image, function, instruction.destination).kind !=
+                   OBELISK_RT_DBREG_STRING))) ||
             !reg(instruction.source0) ||
             layoutAt(image, function, instruction.source0).kind !=
                 OBELISK_RT_DBREG_HANDLE)
@@ -1818,9 +1927,12 @@ bool validateImage(const Image &image) {
             instruction.source2 || instruction.auxiliary ||
             instruction.immediate || !reg(instruction.source0) ||
             (!numeric(instruction.source1) &&
+             !floating(instruction.source1) &&
              (!reg(instruction.source1) ||
-              layoutAt(image, function, instruction.source1).kind !=
-                  OBELISK_RT_DBREG_MANAGED)) ||
+              (layoutAt(image, function, instruction.source1).kind !=
+                   OBELISK_RT_DBREG_MANAGED &&
+               layoutAt(image, function, instruction.source1).kind !=
+                   OBELISK_RT_DBREG_STRING))) ||
             layoutAt(image, function, instruction.source0).kind !=
                 OBELISK_RT_DBREG_HANDLE)
           return false;
@@ -2016,7 +2128,8 @@ Logic readLogic(const uint8_t *frame, const Layout &layout) {
                std::vector<uint64_t>(limbCount(layout.width)),
                std::vector<uint64_t>(limbCount(layout.width))};
   std::memcpy(result.value.data(), frame + layout.offset,
-              result.value.size() * sizeof(uint64_t));
+              std::min<uint64_t>(layout.size,
+                                 result.value.size() * sizeof(uint64_t)));
   if (result.fourState)
     std::memcpy(result.unknown.data(),
                 frame + layout.offset + result.value.size() * sizeof(uint64_t),
@@ -2037,7 +2150,8 @@ void writeLogic(uint8_t *frame, const Layout &layout, const Logic &value) {
       plane[index] &= ~value.unknown[index];
   }
   plane.back() &= finalMask(layout.width);
-  std::memcpy(frame + layout.offset, plane.data(), limbs * sizeof(uint64_t));
+  std::memcpy(frame + layout.offset, plane.data(),
+              std::min<uint64_t>(layout.size, limbs * sizeof(uint64_t)));
   if (layout.kind == OBELISK_RT_DBREG_LOGIC) {
     std::fill(plane.begin(), plane.end(), 0);
     for (uint64_t index = 0;
@@ -2154,6 +2268,71 @@ double integerToDouble(Logic integer, bool isSigned) {
                      ((exponent + 1023) << 52) |
                      (mantissa & UINT64_C(0x000fffffffffffff));
   double result;
+  std::memcpy(&result, &encoded, sizeof(result));
+  return result;
+}
+
+float integerToFloat(Logic integer, bool isSigned) {
+  bool negative =
+      isSigned &&
+      ((integer.value[(integer.width - 1) / 64] >> ((integer.width - 1) % 64)) &
+       1) != 0;
+  if (negative)
+    integer = negate(std::move(integer));
+
+  size_t high = integer.value.size();
+  while (high != 0 && integer.value[high - 1] == 0)
+    --high;
+  if (high == 0)
+    return 0.0f;
+
+  uint64_t highLimb = integer.value[high - 1];
+  unsigned highBits = 0;
+  for (uint64_t scan = highLimb; scan != 0; scan >>= 1)
+    ++highBits;
+  uint64_t activeBits = (high - 1) * 64 + highBits;
+  if (activeBits <= 64) {
+    float result = static_cast<float>(integer.value.front());
+    return negative ? -result : result;
+  }
+
+  uint64_t exponent = activeBits - 1;
+  if (exponent > 127)
+    return negative ? -std::numeric_limits<float>::infinity()
+                    : std::numeric_limits<float>::infinity();
+
+  uint64_t shift = activeBits - 24;
+  size_t word = static_cast<size_t>(shift / 64);
+  unsigned bit = static_cast<unsigned>(shift % 64);
+  uint64_t mantissa = integer.value[word] >> bit;
+  if (bit != 0 && word + 1 < integer.value.size())
+    mantissa |= integer.value[word + 1] << (64 - bit);
+  mantissa &= UINT64_C(0xffffff);
+
+  uint64_t halfwayPosition = shift - 1;
+  size_t halfwayWord = static_cast<size_t>(halfwayPosition / 64);
+  unsigned halfwayBit = static_cast<unsigned>(halfwayPosition % 64);
+  bool halfway = ((integer.value[halfwayWord] >> halfwayBit) & 1) != 0;
+  bool lower = false;
+  for (size_t index = 0; index < halfwayWord; ++index)
+    lower |= integer.value[index] != 0;
+  if (halfwayBit != 0)
+    lower |=
+        (integer.value[halfwayWord] & ((uint64_t{1} << halfwayBit) - 1)) != 0;
+  if (halfway && (lower || (mantissa & 1) != 0))
+    ++mantissa;
+  if (mantissa == (uint64_t{1} << 24)) {
+    mantissa >>= 1;
+    if (++exponent > 127)
+      return negative ? -std::numeric_limits<float>::infinity()
+                      : std::numeric_limits<float>::infinity();
+  }
+
+  uint32_t encoded =
+      (negative ? uint32_t{1} << 31 : 0) |
+      (static_cast<uint32_t>(exponent + 127) << 23) |
+      (static_cast<uint32_t>(mantissa) & UINT32_C(0x007fffff));
+  float result;
   std::memcpy(&result, &encoded, sizeof(result));
   return result;
 }
@@ -2392,6 +2571,19 @@ void visitObjectWord(const uint8_t *address, ManagedRootVisit visit,
   visit(visitorEnvironment, &object);
 }
 
+void visitManagedWord(const uint8_t *address, ManagedRootVisit visit,
+                      void *visitorEnvironment) {
+  obelisk_rt_managed_word_v1 word = 0;
+  std::memcpy(&word, address, sizeof(word));
+  if (word == 0 || (word & 3) == 1)
+    return;
+  if ((word & 3) != 0)
+    return;
+  obelisk_rt_object_v1 *object =
+      reinterpret_cast<obelisk_rt_object_v1 *>(static_cast<uintptr_t>(word));
+  visit(visitorEnvironment, &object);
+}
+
 void enumerateBytecodeFrameRoots(void *environment, ManagedRootVisit visit,
                                  void *visitorEnvironment) {
   auto *roots = static_cast<BytecodeFrameRoots *>(environment);
@@ -2400,6 +2592,11 @@ void enumerateBytecodeFrameRoots(void *environment, ManagedRootVisit visit,
   for (uint32_t index = 0; index != roots->frame->function.layoutCount;
        ++index) {
     Layout layout = layoutAt(*roots->image, roots->frame->function, index);
+    if (layout.kind == OBELISK_RT_DBREG_STRING) {
+      visitManagedWord(roots->frame->data + layout.offset, visit,
+                       visitorEnvironment);
+      continue;
+    }
     if (layout.kind != OBELISK_RT_DBREG_MANAGED &&
         layout.kind != OBELISK_RT_DBREG_MANAGED_REF &&
         layout.kind != OBELISK_RT_DBREG_ARGUMENT_REF)
@@ -2419,7 +2616,8 @@ public:
       uint8_t kind = layoutAt(image, frame.function, index).kind;
       hasManaged |= kind == OBELISK_RT_DBREG_MANAGED ||
                     kind == OBELISK_RT_DBREG_MANAGED_REF ||
-                    kind == OBELISK_RT_DBREG_ARGUMENT_REF;
+                    kind == OBELISK_RT_DBREG_ARGUMENT_REF ||
+                    kind == OBELISK_RT_DBREG_STRING;
     }
     if (!hasManaged)
       return;
@@ -3062,18 +3260,25 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                : OBELISK_RT_INVALID_BYTECODE;
   };
   auto realInput = [&](uint32_t index) -> std::optional<double> {
-    auto bits = scalar(index);
-    if (!bits)
+    uint32_t reg = inputRegister(index);
+    if (!validRegister(frame.function, reg))
       return std::nullopt;
-    double value;
-    uint64_t encoded = *bits;
-    std::memcpy(&value, &encoded, sizeof(value));
+    Layout layout = layoutAt(image, frame.function, reg);
+    if (layout.kind != OBELISK_RT_DBREG_REAL64 || layout.size != sizeof(double))
+      return std::nullopt;
+    double value = 0.0;
+    std::memcpy(&value, frame.data + layout.offset, sizeof(value));
     return value;
   };
   auto writeReal = [&](uint32_t index, double value) {
-    uint64_t encoded;
-    std::memcpy(&encoded, &value, sizeof(encoded));
-    return sentinel(index, encoded);
+    uint32_t reg = outputRegister(index);
+    if (!validRegister(frame.function, reg))
+      return OBELISK_RT_INVALID_BYTECODE;
+    Layout layout = layoutAt(image, frame.function, reg);
+    if (layout.kind != OBELISK_RT_DBREG_REAL64 || layout.size != sizeof(value))
+      return OBELISK_RT_INVALID_BYTECODE;
+    std::memcpy(frame.data + layout.offset, &value, sizeof(value));
+    return OBELISK_RT_OK;
   };
   auto writeStatus = [&](uint32_t index, obelisk_rt_status value) {
     Layout output = layoutAt(image, frame.function, outputRegister(index));
@@ -4140,13 +4345,18 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                              OBELISK_RT_ARG_FORMAT_STRING, value->size,
                              value->data, nullptr});
       } else if ((itemFlags & 4) != 0) {
-        if (layout.kind != OBELISK_RT_DBREG_BITS || layout.width != 64)
+        if (layout.kind != OBELISK_RT_DBREG_REAL32 &&
+            layout.kind != OBELISK_RT_DBREG_REAL64)
           return OBELISK_RT_INVALID_BYTECODE;
-        auto encoded = readScalar(image, frame, reg);
-        if (!encoded)
-          return OBELISK_RT_INVALID_BYTECODE;
-        realValues.emplace_back();
-        std::memcpy(&realValues.back(), &*encoded, sizeof(double));
+        double real = 0.0;
+        if (layout.kind == OBELISK_RT_DBREG_REAL32) {
+          float value = 0.0f;
+          std::memcpy(&value, frame.data + layout.offset, sizeof(value));
+          real = value;
+        } else {
+          std::memcpy(&real, frame.data + layout.offset, sizeof(real));
+        }
+        realValues.push_back(real);
         arguments.push_back(
             {OBELISK_RT_ARG_REAL, 0, 0, &realValues.back(), nullptr});
       } else {
@@ -4212,6 +4422,12 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
   case OBELISK_RT_INTRINSIC_V1_REAL_FROM_INTEGER: {
     Layout input = layoutAt(image, frame.function, inputRegister(0));
     Logic integer = readLogic(frame.data, input);
+    Layout output = layoutAt(image, frame.function, outputRegister(0));
+    if (output.kind == OBELISK_RT_DBREG_REAL32) {
+      float value = integerToFloat(std::move(integer), signature.flags != 0);
+      std::memcpy(frame.data + output.offset, &value, sizeof(value));
+      return OBELISK_RT_OK;
+    }
     return writeReal(0,
                      integerToDouble(std::move(integer), signature.flags != 0));
   }
@@ -4626,6 +4842,26 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
     auto write = [&](uint32_t reg, const Logic &value) {
       writeLogic(frame.data, layout(reg), value);
     };
+    auto readFloat = [&](uint32_t reg) {
+      float value = 0.0f;
+      Layout valueLayout = layout(reg);
+      std::memcpy(&value, frame.data + valueLayout.offset, sizeof(value));
+      return value;
+    };
+    auto readDouble = [&](uint32_t reg) {
+      double value = 0.0;
+      Layout valueLayout = layout(reg);
+      std::memcpy(&value, frame.data + valueLayout.offset, sizeof(value));
+      return value;
+    };
+    auto writeFloat = [&](uint32_t reg, float value) {
+      Layout valueLayout = layout(reg);
+      std::memcpy(frame.data + valueLayout.offset, &value, sizeof(value));
+    };
+    auto writeDouble = [&](uint32_t reg, double value) {
+      Layout valueLayout = layout(reg);
+      std::memcpy(frame.data + valueLayout.offset, &value, sizeof(value));
+    };
     switch (instruction.opcode) {
     case OBELISK_RT_DB_NOP:
       break;
@@ -4732,6 +4968,104 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
     case OBELISK_RT_DB_MUL:
       write(instruction.destination,
             multiply(read(instruction.source0), read(instruction.source1)));
+      break;
+    case OBELISK_RT_DB_FADD:
+    case OBELISK_RT_DB_FSUB:
+    case OBELISK_RT_DB_FMUL:
+    case OBELISK_RT_DB_FDIV:
+    case OBELISK_RT_DB_FPOW: {
+      Layout destination = layout(instruction.destination);
+      if (destination.kind == OBELISK_RT_DBREG_REAL32) {
+        float lhs = readFloat(instruction.source0);
+        float rhs = readFloat(instruction.source1);
+        float result = 0.0f;
+        switch (instruction.opcode) {
+        case OBELISK_RT_DB_FADD:
+          result = lhs + rhs;
+          break;
+        case OBELISK_RT_DB_FSUB:
+          result = lhs - rhs;
+          break;
+        case OBELISK_RT_DB_FMUL:
+          result = lhs * rhs;
+          break;
+        case OBELISK_RT_DB_FDIV:
+          result = lhs / rhs;
+          break;
+        default:
+          result = std::pow(lhs, rhs);
+          break;
+        }
+        writeFloat(instruction.destination, result);
+      } else {
+        double lhs = readDouble(instruction.source0);
+        double rhs = readDouble(instruction.source1);
+        double result = 0.0;
+        switch (instruction.opcode) {
+        case OBELISK_RT_DB_FADD:
+          result = lhs + rhs;
+          break;
+        case OBELISK_RT_DB_FSUB:
+          result = lhs - rhs;
+          break;
+        case OBELISK_RT_DB_FMUL:
+          result = lhs * rhs;
+          break;
+        case OBELISK_RT_DB_FDIV:
+          result = lhs / rhs;
+          break;
+        default:
+          result = std::pow(lhs, rhs);
+          break;
+        }
+        writeDouble(instruction.destination, result);
+      }
+      break;
+    }
+    case OBELISK_RT_DB_FNEG: {
+      Layout destination = layout(instruction.destination);
+      if (destination.kind == OBELISK_RT_DBREG_REAL32)
+        writeFloat(instruction.destination, -readFloat(instruction.source0));
+      else
+        writeDouble(instruction.destination, -readDouble(instruction.source0));
+      break;
+    }
+    case OBELISK_RT_DB_FCOMPARE: {
+      Layout source = layout(instruction.source0);
+      bool result = false;
+      auto compare = [&](auto lhs, auto rhs) {
+        switch (instruction.flags) {
+        case 0:
+          return lhs == rhs;
+        case 1:
+          return lhs != rhs;
+        case 2:
+          return lhs < rhs;
+        case 3:
+          return lhs <= rhs;
+        case 4:
+          return lhs > rhs;
+        default:
+          return lhs >= rhs;
+        }
+      };
+      if (source.kind == OBELISK_RT_DBREG_REAL32)
+        result = compare(readFloat(instruction.source0),
+                         readFloat(instruction.source1));
+      else
+        result = compare(readDouble(instruction.source0),
+                         readDouble(instruction.source1));
+      Logic encoded{1, false, {result ? uint64_t{1} : uint64_t{0}}, {0}};
+      write(instruction.destination, encoded);
+      break;
+    }
+    case OBELISK_RT_DB_FEXT:
+      writeDouble(instruction.destination,
+                  static_cast<double>(readFloat(instruction.source0)));
+      break;
+    case OBELISK_RT_DB_FTRUNC:
+      writeFloat(instruction.destination,
+                 static_cast<float>(readDouble(instruction.source0)));
       break;
     case OBELISK_RT_DB_UDIV:
     case OBELISK_RT_DB_SDIV:
@@ -5001,7 +5335,9 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       Layout storage = layout(instruction.source0);
       if (destination.kind != OBELISK_RT_DBREG_HANDLE ||
           (storage.kind != OBELISK_RT_DBREG_BITS &&
-           storage.kind != OBELISK_RT_DBREG_LOGIC) ||
+           storage.kind != OBELISK_RT_DBREG_LOGIC &&
+           storage.kind != OBELISK_RT_DBREG_REAL32 &&
+           storage.kind != OBELISK_RT_DBREG_REAL64) ||
           frame.id == 0 || frame.id > UINT32_C(0x7fff) ||
           instruction.source0 > UINT16_MAX)
         return OBELISK_RT_OUT_OF_RESOURCES;
@@ -5475,7 +5811,9 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
         localFrame = found->second;
         localLayout = layoutAt(image, localFrame->function, registerIndex);
         if (localLayout.kind != OBELISK_RT_DBREG_BITS &&
-            localLayout.kind != OBELISK_RT_DBREG_LOGIC)
+            localLayout.kind != OBELISK_RT_DBREG_LOGIC &&
+            localLayout.kind != OBELISK_RT_DBREG_REAL32 &&
+            localLayout.kind != OBELISK_RT_DBREG_REAL64)
           return OBELISK_RT_INVALID_HANDLE;
         localValue = readLogic(localFrame->data, localLayout);
       } else if (!context) {
@@ -5543,6 +5881,11 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
           }
         }
         bool changed = false;
+        bool realValue = valueLayout.kind == OBELISK_RT_DBREG_REAL32 ||
+                         valueLayout.kind == OBELISK_RT_DBREG_REAL64;
+        Logic oldReal{value.width, false,
+                      std::vector<uint64_t>(limbCount(value.width)),
+                      std::vector<uint64_t>(limbCount(value.width))};
         for (uint64_t bitIndex = 0; bitIndex != value.width; ++bitIndex) {
           bool valid = bitIndex <= uint64_t{INT64_MAX} &&
                        start <= INT64_MAX - static_cast<int64_t>(bitIndex);
@@ -5599,6 +5942,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
                           storageBit);
             bool newValue = bit(value.value, bitIndex);
             bool newUnknown = bit(value.unknown, bitIndex);
+            if (realValue)
+              setBit(oldReal.value, bitIndex, oldValue);
             if (isOverride) {
               uint64_t limb = storageBit / 64;
               if (isAssignOverride) {
@@ -5613,8 +5958,10 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
                 context->forceMask[limb] |= forceMask;
               }
             }
-            changed |= oldValue != newValue;
-            changed |= oldUnknown != newUnknown;
+            if (!realValue) {
+              changed |= oldValue != newValue;
+              changed |= oldUnknown != newUnknown;
+            }
             if (automatic) {
               setAutomaticBit(automaticState->value, absolute, newValue);
               setAutomaticBit(automaticState->unknown, absolute, newUnknown);
@@ -5624,13 +5971,50 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
               setBit(local ? localValue.unknown : context->stateUnknown,
                      storageBit, newUnknown);
             }
-            if (!local)
+            if (!local && !realValue)
               transitions.push_back(
                   {automatic ? (automaticBase & ~uint64_t{UINT32_MAX}) |
                                    static_cast<uint32_t>(absolute)
                    : boundedStatic ? encodeStaticHandle(staticID, coordinate)
                                    : absolute,
                    oldValue, oldUnknown, newValue, newUnknown});
+          }
+        }
+        bool realNotified = false;
+        if (realValue && !isLoad && !local) {
+          if (valueLayout.kind == OBELISK_RT_DBREG_REAL32) {
+            float oldValue = 0.0f;
+            float newValue = 0.0f;
+            std::memcpy(&oldValue, oldReal.value.data(), sizeof(oldValue));
+            std::memcpy(&newValue, value.value.data(), sizeof(newValue));
+            changed = oldValue != newValue || std::isnan(newValue);
+          } else {
+            double oldValue = 0.0;
+            double newValue = 0.0;
+            std::memcpy(&oldValue, oldReal.value.data(), sizeof(oldValue));
+            std::memcpy(&newValue, value.value.data(), sizeof(newValue));
+            changed = oldValue != newValue || std::isnan(newValue);
+          }
+          if (changed) {
+            uint64_t realHandle =
+                automatic
+                    ? (automaticBase & ~uint64_t{UINT32_MAX}) |
+                          static_cast<uint32_t>(start)
+                : boundedStatic ? encodeStaticHandle(staticID, start)
+                                : static_cast<uint64_t>(start);
+            if (context->nextSchedulerSequence == 0)
+              return OBELISK_RT_OUT_OF_RESOURCES;
+            context->scheduledSignalEvents.push_back(
+                {context->nextSchedulerSequence++, realHandle, value.width,
+                 OBELISK_RT_SIGNAL_CHANGE});
+            obelisk_rt_invalidate_signal_snapshots_unlocked(
+                context, realHandle, value.width);
+            if (!obelisk_rt_notify_observer_signal_unlocked(
+                    context, realHandle, value.width))
+              return context->schedulerStatus;
+            if (++context->schedulerEpoch == 0)
+              context->schedulerEpoch = 1;
+            realNotified = true;
           }
         }
         // A blocking assignment publishes its complete packed value before
@@ -5663,7 +6047,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
                     : end,
                 changed))
           return OBELISK_RT_INVALID_HANDLE;
-        if (!local && changed && ++context->schedulerEpoch == 0)
+        if (!local && changed && !realNotified &&
+            ++context->schedulerEpoch == 0)
           context->schedulerEpoch = 1;
       }
       if (local && instruction.opcode == OBELISK_RT_DB_STORE_STATE)
@@ -6138,7 +6523,13 @@ void obelisk_rt_enumerate_design_managed_roots(
             capture.valueOffset == UINT64_MAX)
           continue;
         uint8_t kind = layoutAt(image, function, capture.argument).kind;
-        if (kind == OBELISK_RT_DBREG_MANAGED ||
+        if (kind == OBELISK_RT_DBREG_STRING) {
+          if (capture.valueOffset <= task.scratchOffset &&
+              sizeof(obelisk_rt_managed_word_v1) <=
+                  task.scratchOffset - capture.valueOffset)
+            visitManagedWord(task.frame.data() + capture.valueOffset, visit,
+                             visitorEnvironment);
+        } else if (kind == OBELISK_RT_DBREG_MANAGED ||
             kind == OBELISK_RT_DBREG_MANAGED_REF ||
             kind == OBELISK_RT_DBREG_ARGUMENT_REF)
           visitOffset(capture.valueOffset);
@@ -6150,7 +6541,13 @@ void obelisk_rt_enumerate_design_managed_roots(
             instruction.source0 >= function.layoutCount)
           continue;
         uint8_t kind = layoutAt(image, function, instruction.source0).kind;
-        if (kind == OBELISK_RT_DBREG_MANAGED ||
+        if (kind == OBELISK_RT_DBREG_STRING) {
+          if (instruction.immediate <= task.scratchOffset &&
+              sizeof(obelisk_rt_managed_word_v1) <=
+                  task.scratchOffset - instruction.immediate)
+            visitManagedWord(task.frame.data() + instruction.immediate, visit,
+                             visitorEnvironment);
+        } else if (kind == OBELISK_RT_DBREG_MANAGED ||
             kind == OBELISK_RT_DBREG_MANAGED_REF ||
             kind == OBELISK_RT_DBREG_ARGUMENT_REF)
           visitOffset(instruction.immediate);
@@ -6202,11 +6599,17 @@ bool obelisk_rt_validate_activation_bytecode_inventory(
         return false;
       Layout result = layoutAt(image, function, function.argumentCount);
       bool fourState = (observer.flags & OBELISK_RT_OBSERVER_FOUR_STATE) != 0;
+      uint32_t expectedKind =
+          (observer.flags & OBELISK_RT_OBSERVER_REAL32) != 0
+              ? OBELISK_RT_DBREG_REAL32
+          : (observer.flags & OBELISK_RT_OBSERVER_REAL64) != 0
+              ? OBELISK_RT_DBREG_REAL64
+          : fourState ? OBELISK_RT_DBREG_LOGIC
+                      : OBELISK_RT_DBREG_BITS;
       if (layoutAt(image, function, 0).kind != OBELISK_RT_DBREG_HANDLE ||
           layoutAt(image, function, 0).size != 32 ||
           result.width != observer.result_width ||
-          result.kind !=
-              (fourState ? OBELISK_RT_DBREG_LOGIC : OBELISK_RT_DBREG_BITS))
+          result.kind != expectedKind)
         return false;
       for (uint32_t capture = 0; capture != observer.capture_count; ++capture)
         if (layoutAt(image, function, capture + 1).kind !=
@@ -6253,10 +6656,15 @@ obelisk_rt_status obelisk_rt_execute_design_observer(
     Layout contextLayout = layoutAt(image, function, 0);
     Layout resultLayout = layoutAt(image, function, function.argumentCount);
     bool fourState = (descriptor->flags & OBELISK_RT_OBSERVER_FOUR_STATE) != 0;
+    uint32_t expectedKind =
+        (descriptor->flags & OBELISK_RT_OBSERVER_REAL32) != 0
+            ? OBELISK_RT_DBREG_REAL32
+        : (descriptor->flags & OBELISK_RT_OBSERVER_REAL64) != 0
+            ? OBELISK_RT_DBREG_REAL64
+        : fourState ? OBELISK_RT_DBREG_LOGIC : OBELISK_RT_DBREG_BITS;
     if (contextLayout.kind != OBELISK_RT_DBREG_HANDLE ||
         contextLayout.size != 32 ||
-        resultLayout.kind !=
-            (fourState ? OBELISK_RT_DBREG_LOGIC : OBELISK_RT_DBREG_BITS) ||
+        resultLayout.kind != expectedKind ||
         resultLayout.width != descriptor->result_width)
       return OBELISK_RT_INVALID_BYTECODE;
     uint32_t resultLimbs =
@@ -6569,9 +6977,23 @@ bool obelisk_rt_evaluate_design_observers_unlocked(obelisk_rt_context *context,
           reinterpret_cast<uint8_t *>(wait) + primary.previous_offset);
       auto *previousUnknown = previousValue + limbs;
       bool changed = false;
-      for (uint32_t limb = 0; limb != limbs; ++limb)
-        changed |= previousValue[limb] != value[limb] ||
-                   previousUnknown[limb] != unknown[limb];
+      if ((descriptor->flags & OBELISK_RT_OBSERVER_REAL32) != 0) {
+        float previous = 0.0f;
+        float current = 0.0f;
+        std::memcpy(&previous, previousValue, sizeof(previous));
+        std::memcpy(&current, value.data(), sizeof(current));
+        changed = previous != current || std::isnan(current);
+      } else if ((descriptor->flags & OBELISK_RT_OBSERVER_REAL64) != 0) {
+        double previous = 0.0;
+        double current = 0.0;
+        std::memcpy(&previous, previousValue, sizeof(previous));
+        std::memcpy(&current, value.data(), sizeof(current));
+        changed = previous != current || std::isnan(current);
+      } else {
+        for (uint32_t limb = 0; limb != limbs; ++limb)
+          changed |= previousValue[limb] != value[limb] ||
+                     previousUnknown[limb] != unknown[limb];
+      }
       uint32_t observedEdges = transitionEdges(
           (previousValue[0] & 1) != 0, (previousUnknown[0] & 1) != 0,
           (value[0] & 1) != 0, (unknown[0] & 1) != 0);

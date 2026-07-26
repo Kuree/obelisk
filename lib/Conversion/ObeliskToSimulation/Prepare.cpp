@@ -1100,14 +1100,6 @@ void ObeliskSimPreparePass::runOnOperation() {
     aliases[internal] = view->path;
     refViews[internal] = *view;
   });
-  semanticRoot->walk([&](semantic::SVPortSymbolOp port) {
-    std::optional<Type> type = port.getSemanticType();
-    if (type && isa<semantic::RealType, semantic::RealtimeType>(*type)) {
-      emitError(getSemanticLocation(port))
-          << "real and realtime ports are not supported";
-      invalid = true;
-    }
-  });
   semanticRoot->walk([&](semantic::SVModportPortSymbolOp port) {
     Operation *modport = port->getParentOp();
     Operation *interfaceBody = modport ? modport->getParentOp() : nullptr;
@@ -2786,7 +2778,9 @@ void ObeliskSimPreparePass::runOnOperation() {
           invalid = true;
           continue;
         }
-        resultType = sim::getPackedScalarType(*normalized);
+        resultType = isa<FloatType>(*normalized)
+                         ? *normalized
+                         : sim::getPackedScalarType(*normalized);
         if (!resultType) {
           emitError(getSemanticLocation(unit.source))
               << "observer expression does not have a packed scalar result";
@@ -2860,7 +2854,12 @@ void ObeliskSimPreparePass::runOnOperation() {
                                    unit.observerResult))));
     if (unit.entryKind == sim::EntryKind::Observer) {
       std::optional<unsigned> width =
-          results.empty() ? std::nullopt : sim::getPackedWidth(results.front());
+          results.empty()
+              ? std::nullopt
+              : isa<FloatType>(results.front())
+                    ? std::optional<unsigned>(
+                          cast<FloatType>(results.front()).getWidth())
+                    : sim::getPackedWidth(results.front());
       if (!width) {
         emitError(getSemanticLocation(unit.source))
             << "observer result width is not fixed";

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
@@ -1291,9 +1292,23 @@ bool evaluateNativeComputedWaiters(obelisk_rt_context *context,
           reinterpret_cast<uint8_t *>(wait) + primary.previous_offset);
       auto *previousUnknown = previousValue + limbs;
       bool changed = false;
-      for (uint32_t limb = 0; limb != limbs; ++limb)
-        changed |= previousValue[limb] != value[limb] ||
-                   previousUnknown[limb] != unknown[limb];
+      if ((descriptor->flags & OBELISK_RT_OBSERVER_REAL32) != 0) {
+        float previous = 0.0f;
+        float current = 0.0f;
+        std::memcpy(&previous, previousValue, sizeof(previous));
+        std::memcpy(&current, value.data(), sizeof(current));
+        changed = previous != current || std::isnan(current);
+      } else if ((descriptor->flags & OBELISK_RT_OBSERVER_REAL64) != 0) {
+        double previous = 0.0;
+        double current = 0.0;
+        std::memcpy(&previous, previousValue, sizeof(previous));
+        std::memcpy(&current, value.data(), sizeof(current));
+        changed = previous != current || std::isnan(current);
+      } else {
+        for (uint32_t limb = 0; limb != limbs; ++limb)
+          changed |= previousValue[limb] != value[limb] ||
+                     previousUnknown[limb] != unknown[limb];
+      }
       uint32_t observedEdges = transitionEdges(
           (previousValue[0] & 1) != 0, (previousUnknown[0] & 1) != 0,
           (value[0] & 1) != 0, (unknown[0] & 1) != 0);
@@ -2109,6 +2124,52 @@ extern "C" void obelisk_rt_v1_scheduler_signal_transition(
       context->schedulerEpoch = 1;
   } catch (const std::bad_alloc &) {
     obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_OUT_OF_MEMORY);
+  } catch (...) {
+    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
+  }
+}
+
+extern "C" void obelisk_rt_v1_scheduler_real_transition(
+    obelisk_rt_context *context, uint64_t bitOffset, uint32_t bitWidth,
+    const void *oldValue, const void *newValue) {
+  if (!context || bitOffset == UINT64_MAX ||
+      (bitWidth != 32 && bitWidth != 64) || !oldValue || !newValue)
+    return;
+  bool changed = false;
+  if (bitWidth == 32) {
+    float oldReal = 0.0f;
+    float newReal = 0.0f;
+    std::memcpy(&oldReal, oldValue, sizeof(oldReal));
+    std::memcpy(&newReal, newValue, sizeof(newReal));
+    changed = oldReal != newReal || std::isnan(newReal);
+  } else {
+    double oldReal = 0.0;
+    double newReal = 0.0;
+    std::memcpy(&oldReal, oldValue, sizeof(oldReal));
+    std::memcpy(&newReal, newValue, sizeof(newReal));
+    changed = oldReal != newReal || std::isnan(newReal);
+  }
+  if (!changed)
+    return;
+  ContextTransaction transaction(context);
+  try {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    if (context->schedulerStatus != OBELISK_RT_OK)
+      return;
+    if (context->nextSchedulerSequence == 0) {
+      context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
+      return;
+    }
+    context->scheduledSignalEvents.push_back(
+        {context->nextSchedulerSequence++, bitOffset, bitWidth,
+         OBELISK_RT_SIGNAL_CHANGE});
+    obelisk_rt_invalidate_signal_snapshots_unlocked(context, bitOffset,
+                                                    bitWidth);
+    if (!obelisk_rt_notify_observer_signal_unlocked(context, bitOffset,
+                                                    bitWidth))
+      return;
+    if (++context->schedulerEpoch == 0)
+      context->schedulerEpoch = 1;
   } catch (...) {
     obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
   }

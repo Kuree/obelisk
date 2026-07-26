@@ -1491,7 +1491,7 @@ module {
   obelisk_sim.design @observer_bad_result {
     obelisk_sim.scope.decl 0
     obelisk_sim.code_unit.decl 9000001 in 0 observer hierarchy "test.observer_bad_result"
-    // expected-error @+1 {{observer entry must return one packed scalar result}}
+    // expected-error @+1 {{observer entry must return one scalar result}}
     obelisk_sim.func private @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> !obelisk_sim.time attributes {entry_kind = 14 : i32, code_unit_id = 9000001 : i64} {
       %zero = obelisk_sim.time.constant 0
       obelisk_sim.return %zero : !obelisk_sim.time

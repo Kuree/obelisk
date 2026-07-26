@@ -223,6 +223,8 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
     std::optional<uint32_t> bytecodeFunction;
     uint32_t resultWidth;
     bool fourState;
+    bool real32;
+    bool real64;
     SmallVector<std::pair<uint32_t, uint32_t>> captures;
     std::string capturesSymbol;
   };
@@ -235,8 +237,11 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
     if (!codeUnitID || *codeUnitID <= 0 ||
         function.getFunctionType().getNumResults() != 1)
       return;
+    Type resultType = function.getFunctionType().getResult(0);
     std::optional<unsigned> width =
-        sim::getPackedWidth(function.getFunctionType().getResult(0));
+        isa<FloatType>(resultType)
+            ? std::optional<unsigned>(cast<FloatType>(resultType).getWidth())
+            : sim::getPackedWidth(resultType);
     if (!width)
       return;
     ObserverInfo info{
@@ -244,7 +249,9 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
         function.getSymName().str(),
         std::nullopt,
         *width,
-        isa<sim::LogicType>(function.getFunctionType().getResult(0)),
+        isa<sim::LogicType>(resultType),
+        resultType.isF32(),
+        resultType.isF64(),
         {},
         {}};
     if (auto bytecodeFunction =
@@ -255,20 +262,22 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
       Type type = function.getArgumentTypes()[index];
       uint32_t kind = 0;
       uint32_t captureWidth = 0;
+      auto widthOf = [](Type element) -> uint32_t {
+        if (auto floating = dyn_cast<FloatType>(element))
+          return floating.getWidth();
+        return sim::getPackedWidth(element).value_or(0);
+      };
       if (isa<sim::RefType>(type))
-        kind = 1, captureWidth = sim::getPackedWidth(
-                                      cast<sim::RefType>(type).getElementType())
-                                      .value_or(0);
+        kind = 1,
+        captureWidth = widthOf(cast<sim::RefType>(type).getElementType());
       else if (isa<sim::NetType>(type))
-        kind = 2, captureWidth = sim::getPackedWidth(
-                                      cast<sim::NetType>(type).getElementType())
-                                      .value_or(0);
+        kind = 2,
+        captureWidth = widthOf(cast<sim::NetType>(type).getElementType());
       else if (isa<sim::EventType>(type))
         kind = 3, captureWidth = 1;
       else if (isa<sim::DriverType>(type))
-        kind = 4, captureWidth = sim::getPackedWidth(
-                                      cast<sim::DriverType>(type).getElementType())
-                                      .value_or(0);
+        kind = 4,
+        captureWidth = widthOf(cast<sim::DriverType>(type).getElementType());
       if (kind == 0 || captureWidth == 0) {
         function.emitError()
             << "observer capture #" << index - 1
@@ -426,7 +435,15 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
             record = insertValue(
                 builder, module.getLoc(), record,
                 integerConstant(builder, module.getLoc(), i32,
-                                observer.fourState ? 1 : 0),
+                                (observer.fourState
+                                     ? OBELISK_RT_OBSERVER_FOUR_STATE
+                                     : 0) |
+                                    (observer.real32
+                                         ? OBELISK_RT_OBSERVER_REAL32
+                                         : 0) |
+                                    (observer.real64
+                                         ? OBELISK_RT_OBSERVER_REAL64
+                                         : 0)),
                 4);
             record = insertValue(
                 builder, module.getLoc(), record,

@@ -355,7 +355,8 @@ static FailureOr<Type> normalizeType(Type type, Location location,
 
 static FailureOr<ArrayAttr> normalizeSourceFields(ArrayAttr fields,
                                                   Location location,
-                                                  bool allowVoidFields) {
+                                                  bool allowVoidFields,
+                                                  bool allowRealFields) {
   SmallVector<Attribute> normalized;
   normalized.reserve(fields.size());
   for (Attribute attribute : fields) {
@@ -373,8 +374,7 @@ static FailureOr<ArrayAttr> normalizeSourceFields(ArrayAttr fields,
     FailureOr<Type> fieldType =
         allowVoidFields && isa<semantic::VoidType>(typeAttr.getValue())
             ? FailureOr<Type>(IntegerType::get(fields.getContext(), 1))
-            : normalizeType(typeAttr.getValue(), location,
-                            /*allowRealScalar=*/false);
+            : normalizeType(typeAttr.getValue(), location, allowRealFields);
     if (failed(fieldType))
       return failure();
     normalized.push_back(sim::FieldAttr::get(
@@ -397,7 +397,7 @@ static FailureOr<ArrayAttr> normalizeDictionaryFields(DictionaryAttr fields,
       return failure();
     }
     FailureOr<Type> type = normalizeType(typeAttr.getValue(), location,
-                                         /*allowRealScalar=*/false);
+                                         /*allowRealScalar=*/!packed);
     if (failed(type))
       return failure();
     names.push_back(field.getName());
@@ -448,7 +448,7 @@ static FailureOr<Type> normalizeType(Type type, Location location,
   }
   if (auto array = dyn_cast<semantic::RangedUnpackedArrayType>(type)) {
     FailureOr<Type> element = normalizeType(array.getElementType(), location,
-                                            /*allowRealScalar=*/false);
+                                            /*allowRealScalar=*/true);
     if (failed(element))
       return failure();
     return sim::UnpackedArrayType::get(context, *element, array.getLeft(),
@@ -475,7 +475,7 @@ static FailureOr<Type> normalizeType(Type type, Location location,
       return failure();
     }
     FailureOr<Type> element = normalizeType(array.getElementType(), location,
-                                            /*allowRealScalar=*/false);
+                                            /*allowRealScalar=*/true);
     if (failed(element))
       return failure();
     return sim::UnpackedArrayType::get(context, *element, array.getSize() - 1,
@@ -483,14 +483,14 @@ static FailureOr<Type> normalizeType(Type type, Location location,
   }
   if (auto array = dyn_cast<semantic::DynArrayType>(type)) {
     FailureOr<Type> element = normalizeType(array.getElementType(), location,
-                                            /*allowRealScalar=*/false);
+                                            /*allowRealScalar=*/true);
     if (failed(element))
       return failure();
     return sim::DynamicArrayType::get(context, *element);
   }
   if (auto queue = dyn_cast<semantic::QueueType>(type)) {
     FailureOr<Type> element = normalizeType(queue.getElementType(), location,
-                                            /*allowRealScalar=*/false);
+                                            /*allowRealScalar=*/true);
     if (failed(element))
       return failure();
     return sim::QueueType::get(context, *element, queue.getBound());
@@ -499,7 +499,7 @@ static FailureOr<Type> normalizeType(Type type, Location location,
     FailureOr<Type> key = normalizeType(array.getKeyType(), location,
                                         /*allowRealScalar=*/false);
     FailureOr<Type> element = normalizeType(array.getElementType(), location,
-                                            /*allowRealScalar=*/false);
+                                            /*allowRealScalar=*/true);
     if (failed(key) || failed(element))
       return failure();
     return sim::AssocArrayType::get(context, *key, *element,
@@ -508,7 +508,8 @@ static FailureOr<Type> normalizeType(Type type, Location location,
   if (auto aggregate = dyn_cast<semantic::SourceAggregateType>(type)) {
     FailureOr<ArrayAttr> fields = normalizeSourceFields(
         aggregate.getFields(), location,
-        aggregate.getIsUnion() && aggregate.getIsTagged());
+        aggregate.getIsUnion() && aggregate.getIsTagged(),
+        !aggregate.getIsPacked());
     if (failed(fields))
       return failure();
     if (aggregate.getIsPacked() && aggregate.getIsUnion())
@@ -568,9 +569,17 @@ static FailureOr<Type> normalizeType(Type type, Location location,
     }
     return Float64Type::get(context);
   }
+  if (isa<semantic::ShortRealType>(type)) {
+    if (!allowRealScalar) {
+      emitError(location)
+          << "shortreal is not permitted in this packed type";
+      return failure();
+    }
+    return Float32Type::get(context);
+  }
   if (isa<semantic::EventType>(type))
     return sim::EventType::get(context);
-  if (type.isF64())
+  if (type.isF64() || type.isF32())
     return type;
   if (isa<sim::LogicType, sim::TimeType, sim::ContextType, sim::RefType,
           sim::NetType, sim::DriverType, sim::EventType, sim::ProcessType,
@@ -857,14 +866,14 @@ FailureOr<sim::FrozenConstantAttr> freezeSemanticConstant(Operation *symbol) {
 
   Builder builder(symbol->getContext());
   Attribute payload;
-  if (normalized->isF64()) {
+  if (isa<FloatType>(*normalized)) {
     double value = 0.0;
     if (spelling.getValue().getAsDouble(value) || !std::isfinite(value)) {
       emitError(location) << "real constant '" << spelling.getValue()
                           << "' is not finite";
       return failure();
     }
-    payload = builder.getF64FloatAttr(value);
+    payload = builder.getFloatAttr(*normalized, value);
   } else {
     Type scalar = sim::getPackedScalarType(*normalized);
     if (!scalar) {
@@ -911,9 +920,9 @@ Value createDefaultValue(OpBuilder &builder, Location location, Type type) {
   if (auto integer = dyn_cast<IntegerType>(type))
     return arith::ConstantOp::create(builder, location, integer,
                                      builder.getIntegerAttr(integer, 0));
-  if (type.isF64())
+  if (isa<FloatType>(type))
     return arith::ConstantOp::create(builder, location, type,
-                                     builder.getF64FloatAttr(0.0));
+                                     builder.getFloatAttr(type, 0.0));
   return {};
 }
 
