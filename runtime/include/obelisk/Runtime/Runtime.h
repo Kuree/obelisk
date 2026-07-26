@@ -166,11 +166,18 @@ enum {
   OBELISK_RT_ELEMENT_CLASS_HANDLE = 4,
   OBELISK_RT_ELEMENT_STRING = 5,
   OBELISK_RT_ELEMENT_CONTAINER_HANDLE = 6,
-  OBELISK_RT_ELEMENT_AGGREGATE = 7
+  OBELISK_RT_ELEMENT_AGGREGATE = 7,
+  OBELISK_RT_ELEMENT_EVENT = 8
 };
 
 #define OBELISK_RT_ELEMENT_FOUR_STATE (UINT32_C(1) << 0)
 #define OBELISK_RT_ELEMENT_SIGNED (UINT32_C(1) << 1)
+
+typedef struct obelisk_rt_element_trace_slot_v1 {
+  uint64_t offset;
+  obelisk_rt_managed_slot_kind_v1 kind;
+  uint32_t reserved;
+} obelisk_rt_element_trace_slot_v1;
 
 typedef struct obelisk_rt_element_type_v1 {
   uint32_t version;
@@ -605,6 +612,10 @@ enum {
   OBELISK_RT_INTRINSIC_V1_CONTAINER_CREATE_LIKE = UINT32_C(0x00010431),
   OBELISK_RT_INTRINSIC_V1_CONTAINER_READ = UINT32_C(0x00010432),
   OBELISK_RT_INTRINSIC_V1_CONTAINER_WRITE = UINT32_C(0x00010433),
+  OBELISK_RT_INTRINSIC_V1_CONTAINER_CREATE = UINT32_C(0x00010434),
+  OBELISK_RT_INTRINSIC_V1_CONTAINER_CLONE = UINT32_C(0x00010435),
+  OBELISK_RT_INTRINSIC_V1_CONTAINER_DELETE = UINT32_C(0x00010436),
+  OBELISK_RT_INTRINSIC_V1_RANDOM_BOUNDED = UINT32_C(0x00010437),
   OBELISK_RT_INTRINSIC_V1_VPI_ROOT = UINT32_C(0x00011000),
   OBELISK_RT_INTRINSIC_V1_VPI_CHILD = UINT32_C(0x00011001),
   OBELISK_RT_INTRINSIC_V1_VPI_SIBLING = UINT32_C(0x00011002),
@@ -1482,6 +1493,13 @@ obelisk_rt_status obelisk_rt_v1_container_create_like(
     obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *preferred,
     obelisk_rt_object_v1 *fallback, uint64_t size,
     obelisk_rt_object_v1 **out_container);
+obelisk_rt_status obelisk_rt_v1_container_create_typed(
+    obelisk_rt_gc_lane_v1 *lane, uint32_t container_kind, uint64_t type_id,
+    uint32_t element_kind, uint32_t element_flags, uint64_t value_size,
+    uint64_t alignment, uint64_t bit_width,
+    const obelisk_rt_element_trace_slot_v1 *trace_slots,
+    uint64_t trace_slot_count, uint64_t size, uint64_t bound,
+    obelisk_rt_object_v1 **out_container);
 uint64_t obelisk_rt_v1_container_size(obelisk_rt_object_v1 *container);
 obelisk_rt_status obelisk_rt_v1_container_read(obelisk_rt_object_v1 *container,
                                                int64_t index, void *out_value,
@@ -1556,8 +1574,9 @@ obelisk_rt_status obelisk_rt_v1_assoc_prev(
 // interior pointers. A path captures its container owner and canonical
 // selector and resolves the live element on every access.
 obelisk_rt_status obelisk_rt_v1_reference_path_index_create(
-    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *container,
-    int64_t index, obelisk_rt_object_v1 **out_path);
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *container, int64_t index,
+    uint64_t owner_payload, uint32_t owner_managed,
+    obelisk_rt_object_v1 **out_path);
 obelisk_rt_status obelisk_rt_v1_reference_path_assoc_create(
     obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *array,
     const obelisk_rt_assoc_key_v1 *key, obelisk_rt_object_v1 **out_path);
@@ -1864,7 +1883,10 @@ enum {
   OBELISK_RT_ARG_REAL = 3,
   OBELISK_RT_ARG_TIME = 4,
   // data points to one obelisk_rt_string_v1 word; size must be zero.
-  OBELISK_RT_ARG_MANAGED_STRING = 5
+  OBELISK_RT_ARG_MANAGED_STRING = 5,
+  // data points to one obelisk_rt_object_v1 pointer word naming a sequential
+  // container; size must be zero.
+  OBELISK_RT_ARG_MANAGED_CONTAINER = 6
 };
 
 typedef uint32_t obelisk_rt_arg_flags;
@@ -1918,6 +1940,14 @@ enum {
 // with another runtime call.
 obelisk_rt_status
 obelisk_rt_v1_context_create(obelisk_rt_context **out_context);
+obelisk_rt_status
+obelisk_rt_v1_context_configure_argv(obelisk_rt_context *context, int argc,
+                                     const char *const *argv);
+obelisk_rt_status obelisk_rt_v1_context_seed(obelisk_rt_context *context,
+                                             uint64_t seed);
+obelisk_rt_status obelisk_rt_v1_random_bounded(obelisk_rt_context *context,
+                                               uint64_t bound,
+                                               uint64_t *out_value);
 uint32_t obelisk_rt_v1_import_id(const uint8_t *symbol, uint64_t symbol_size);
 obelisk_rt_status obelisk_rt_v1_context_register_import(
     obelisk_rt_context *context, uint32_t import_id,

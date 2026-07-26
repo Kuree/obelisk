@@ -45,6 +45,23 @@ void ObeliskSimBuildComputeGraphPass::runOnOperation() {
     return signalPassFailure();
   }
   options.vpi = *vpiMode;
+  if (*vpiMode != sim::ComputeVPIMode::Off) {
+    bool unsupportedContainer = false;
+    for (sim::SimStorageDeclOp storage :
+         design.getBody().front().getOps<sim::SimStorageDeclOp>()) {
+      bool dynamic = false;
+      storage.getType().walk([&](Type type) {
+        dynamic |= isa<sim::DynamicArrayType, sim::QueueType>(type);
+      });
+      if (!dynamic)
+        continue;
+      storage.emitOpError(
+          "VPI dynamic-array and queue marshalling is unsupported");
+      unsupportedContainer = true;
+    }
+    if (unsupportedContainer)
+      return signalPassFailure();
+  }
 
   FailureOr<simlowering::ComputeGraphResult> derived =
       simlowering::deriveComputeGraph(design, options);

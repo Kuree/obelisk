@@ -487,6 +487,7 @@ static_assert(OBELISK_RT_ARG_STRING == 2);
 static_assert(OBELISK_RT_ARG_REAL == 3);
 static_assert(OBELISK_RT_ARG_TIME == 4);
 static_assert(OBELISK_RT_ARG_MANAGED_STRING == 5);
+static_assert(OBELISK_RT_ARG_MANAGED_CONTAINER == 6);
 static_assert(OBELISK_RT_ARG_SIGNED == 1);
 static_assert(OBELISK_RT_ARG_FORMAT_STRING == 2);
 static_assert(OBELISK_RT_ARGUMENT_VALUE_BITS == 0);
@@ -511,6 +512,13 @@ static_assert(std::is_same_v<obelisk_rt_native_fragment_v1, NativeFragment>);
 
 ABI_FUNCTION(obelisk_rt_v1_context_create,
              obelisk_rt_status (*)(obelisk_rt_context **));
+ABI_FUNCTION(obelisk_rt_v1_context_configure_argv,
+             obelisk_rt_status (*)(obelisk_rt_context *, int,
+                                   const char *const *));
+ABI_FUNCTION(obelisk_rt_v1_context_seed,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint64_t));
+ABI_FUNCTION(obelisk_rt_v1_random_bounded,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint64_t, uint64_t *));
 ABI_FUNCTION(obelisk_rt_v1_context_create_for_design,
              obelisk_rt_status (*)(const obelisk_rt_execution_descriptor_v1 *,
                                    obelisk_rt_context **));
@@ -927,6 +935,13 @@ ABI_FUNCTION(obelisk_rt_v1_container_create_like,
                                    obelisk_rt_object_v1 *,
                                    obelisk_rt_object_v1 *, uint64_t,
                                    obelisk_rt_object_v1 **));
+ABI_FUNCTION(obelisk_rt_v1_container_create_typed,
+             obelisk_rt_status (*)(obelisk_rt_gc_lane_v1 *, uint32_t, uint64_t,
+                                   uint32_t, uint32_t, uint64_t, uint64_t,
+                                   uint64_t,
+                                   const obelisk_rt_element_trace_slot_v1 *,
+                                   uint64_t, uint64_t, uint64_t,
+                                   obelisk_rt_object_v1 **));
 ABI_FUNCTION(obelisk_rt_v1_container_size,
              uint64_t (*)(obelisk_rt_object_v1 *));
 ABI_FUNCTION(obelisk_rt_v1_container_read,
@@ -1002,8 +1017,8 @@ ABI_FUNCTION(obelisk_rt_v1_assoc_prev,
                                    obelisk_rt_assoc_key_v1 *, uint32_t *));
 ABI_FUNCTION(obelisk_rt_v1_reference_path_index_create,
              obelisk_rt_status (*)(obelisk_rt_gc_lane_v1 *,
-                                   obelisk_rt_object_v1 *, int64_t,
-                                   obelisk_rt_object_v1 **));
+                                   obelisk_rt_object_v1 *, int64_t, uint64_t,
+                                   uint32_t, obelisk_rt_object_v1 **));
 ABI_FUNCTION(obelisk_rt_v1_reference_path_assoc_create,
              obelisk_rt_status (*)(obelisk_rt_gc_lane_v1 *,
                                    obelisk_rt_object_v1 *,

@@ -636,6 +636,7 @@ enum class RuntimeMaterializer {
   ArgumentReal,
   ArgumentBytes,
   ArgumentManagedString,
+  ArgumentManagedContainer,
   ArgumentArray,
   FormatEnvironment,
   DescriptorFromBits,
@@ -878,6 +879,22 @@ public:
           1);
       argument =
           insertStructValue(rewriter, location, argument, *data, 3);
+      rewriter.replaceOp(operation, argument);
+      return success();
+    }
+    case RuntimeMaterializer::ArgumentManagedContainer: {
+      FailureOr<Value> data =
+          allocateAtFunctionEntry(operation, rewriter, abi,
+                                  operands[0].getType(), 1, abi.alignments.i64);
+      if (failed(data))
+        return failure();
+      LLVM::StoreOp::create(rewriter, location, operands[0], *data,
+                            abi.alignments.i64);
+      Value argument = LLVM::ZeroOp::create(rewriter, location, abi.argument);
+      argument = insertStructValue(
+          rewriter, location, argument,
+          llvmIntegerConstant(rewriter, location, abi.i32, 6), 0);
+      argument = insertStructValue(rewriter, location, argument, *data, 3);
       rewriter.replaceOp(operation, argument);
       return success();
     }
@@ -1231,6 +1248,8 @@ void populateRuntimePatterns(const TypeConverter &converter,
   OBELISK_RUNTIME_MATERIALIZER(RTArgumentBytesOp, ArgumentBytes);
   OBELISK_RUNTIME_MATERIALIZER(RTArgumentManagedStringOp,
                                ArgumentManagedString);
+  OBELISK_RUNTIME_MATERIALIZER(RTArgumentManagedContainerOp,
+                               ArgumentManagedContainer);
   OBELISK_RUNTIME_MATERIALIZER(RTArgumentArrayOp, ArgumentArray);
   OBELISK_RUNTIME_MATERIALIZER(RTFormatEnvironmentOp, FormatEnvironment);
   OBELISK_RUNTIME_MATERIALIZER(RTFileDescriptorFromBitsOp, DescriptorFromBits);

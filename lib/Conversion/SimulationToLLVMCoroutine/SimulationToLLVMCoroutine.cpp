@@ -6723,13 +6723,14 @@ void expandManagedSelectsToCFG(ModuleOp module) {
 bool managedOperationMayCollect(Operation *operation) {
   return isa<sim::SimClassAllocOp, sim::SimClassCopyOp, sim::SimWeakCreateOp,
              sim::SimReferencePathIndexOp, sim::SimContainerCreateLikeOp,
-             sim::SimGCSafepointOp,
+             sim::SimContainerCreateOp, sim::SimContainerCloneOp,
+             sim::SimContainerWriteOp, sim::SimArgumentRefStoreOp,
+             sim::SimReferencePathNBAEnqueueOp, sim::SimGCSafepointOp,
              sim::SimStringLiteralOp, sim::SimStringFromPackedOp,
-               sim::SimStringConcatOp, sim::SimStringRepeatOp,
-               sim::SimStringPutcOp, sim::SimStringSubstrOp,
-               sim::SimStringCaseConvertOp,
-               sim::SimStringFormatIntegerOp, sim::SimStringFormatRealOp,
-               sim::SimFileGetlineStringOp,
+             sim::SimStringConcatOp, sim::SimStringRepeatOp,
+             sim::SimStringPutcOp, sim::SimStringSubstrOp,
+             sim::SimStringCaseConvertOp, sim::SimStringFormatIntegerOp,
+             sim::SimStringFormatRealOp, sim::SimFileGetlineStringOp,
              sim::SimCallOp, sim::SimClassDirectCallOp,
              sim::SimClassVirtualCallOp, sim::SimDPICallOp>(operation);
 }
@@ -7093,6 +7094,156 @@ public:
     Value result =
         LLVM::LoadOp::create(rewriter, op.getLoc(), pointer, output, 8);
     rewriter.replaceOp(op, managedObjectHandle(rewriter, op.getLoc(), result));
+    return success();
+  }
+};
+
+class ContainerCreateConversion final
+    : public OpConversionPattern<sim::SimContainerCreateOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimContainerCreateOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getSize().size() != 1)
+      return failure();
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Type i32 = rewriter.getI32Type();
+    Type i64 = rewriter.getI64Type();
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    Value output = entryAlloca(rewriter, op.getLoc(), pointer, 1, 8);
+    LLVM::StoreOp::create(rewriter, op.getLoc(),
+                          LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer),
+                          output, 8);
+    auto c32 = [&](uint32_t value) {
+      return llvmConstant(rewriter, op.getLoc(), i32, value);
+    };
+    auto c64 = [&](uint64_t value) {
+      return llvmConstant(rewriter, op.getLoc(), i64, value);
+    };
+    ArrayRef<int64_t> traceOffsets = op.getTraceOffsets();
+    ArrayRef<int32_t> traceKinds = op.getTraceKinds();
+    Value traceSlots = LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer);
+    if (!traceOffsets.empty()) {
+      std::string bytes(
+          traceOffsets.size() * sizeof(obelisk_rt_element_trace_slot_v1), '\0');
+      for (auto [index, offset, kind] :
+           llvm::enumerate(traceOffsets, traceKinds)) {
+        obelisk_rt_element_trace_slot_v1 slot{
+            static_cast<uint64_t>(offset),
+            static_cast<obelisk_rt_managed_slot_kind_v1>(kind), 0};
+        std::memcpy(bytes.data() +
+                        index * sizeof(obelisk_rt_element_trace_slot_v1),
+                    &slot, sizeof(slot));
+      }
+      ModuleOp module = op->getParentOfType<ModuleOp>();
+      std::string name =
+          "__obelisk_element_trace_" + std::to_string(op.getTypeId());
+      LLVM::GlobalOp global = module.lookupSymbol<LLVM::GlobalOp>(name);
+      if (!global)
+        global = makeByteArrayGlobal(module, op.getLoc(), name, bytes);
+      traceSlots = LLVM::AddressOfOp::create(rewriter, op.getLoc(), global);
+    }
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_container_create_typed"),
+            ValueRange{lane, c32(op.getContainerKind()), c64(op.getTypeId()),
+                       c32(op.getElementKind()), c32(op.getElementFlags()),
+                       c64(op.getValueSize()), c64(op.getAlignment()),
+                       c64(op.getBitWidth()), traceSlots,
+                       c64(traceOffsets.size()), adaptor.getSize().front(),
+                       c64(op.getBound()), output})
+            .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    Value result =
+        LLVM::LoadOp::create(rewriter, op.getLoc(), pointer, output, 8);
+    rewriter.replaceOp(op, managedObjectHandle(rewriter, op.getLoc(), result));
+    return success();
+  }
+};
+
+class ContainerCloneConversion final
+    : public OpConversionPattern<sim::SimContainerCloneOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimContainerCloneOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getInput().size() != 1)
+      return failure();
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    Value output = entryAlloca(rewriter, op.getLoc(), pointer, 1, 8);
+    LLVM::StoreOp::create(rewriter, op.getLoc(),
+                          LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer),
+                          output, 8);
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_container_clone"),
+            ValueRange{lane,
+                       managedObjectPointer(rewriter, op.getLoc(),
+                                            adaptor.getInput().front()),
+                       output})
+            .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    Value result =
+        LLVM::LoadOp::create(rewriter, op.getLoc(), pointer, output, 8);
+    rewriter.replaceOp(op, managedObjectHandle(rewriter, op.getLoc(), result));
+    return success();
+  }
+};
+
+class ContainerDeleteConversion final
+    : public OpConversionPattern<sim::SimContainerDeleteOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimContainerDeleteOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getContainer().size() != 1)
+      return failure();
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    (void)lane;
+    Value status = LLVM::CallOp::create(
+                       rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+                       SymbolRefAttr::get(rewriter.getContext(),
+                                          "obelisk_rt_v1_container_delete"),
+                       managedObjectPointer(rewriter, op.getLoc(),
+                                            adaptor.getContainer().front()))
+                       .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+class RandomBoundedConversion final
+    : public OpConversionPattern<sim::SimRandomBoundedOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimRandomBoundedOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getBound().size() != 1)
+      return failure();
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    (void)lane;
+    Value output =
+        entryAlloca(rewriter, op.getLoc(), rewriter.getI64Type(), 1, 8);
+    Value status = LLVM::CallOp::create(
+                       rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+                       SymbolRefAttr::get(rewriter.getContext(),
+                                          "obelisk_rt_v1_random_bounded"),
+                       ValueRange{context, adaptor.getBound().front(), output})
+                       .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    rewriter.replaceOp(op,
+                       LLVM::LoadOp::create(rewriter, op.getLoc(),
+                                            rewriter.getI64Type(), output, 8));
     return success();
   }
 };
@@ -7905,7 +8056,8 @@ public:
   LogicalResult
   matchAndRewrite(sim::SimReferencePathIndexOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    if (adaptor.getContainer().size() != 1 || adaptor.getIndex().size() != 1)
+    if (adaptor.getContainer().size() != 1 || adaptor.getIndex().size() != 1 ||
+        adaptor.getOwnerReference().size() != 1)
       return failure();
     Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
     auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
@@ -7913,6 +8065,8 @@ public:
     LLVM::StoreOp::create(rewriter, op.getLoc(),
                           LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer),
                           output, 8);
+    UnpackedArgumentReference ownerReference = unpackArgumentReference(
+        rewriter, op.getLoc(), adaptor.getOwnerReference().front());
     Value status =
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
@@ -7921,7 +8075,8 @@ public:
             ValueRange{lane,
                        managedObjectPointer(rewriter, op.getLoc(),
                                             adaptor.getContainer().front()),
-                       adaptor.getIndex().front(), output})
+                       adaptor.getIndex().front(), ownerReference.payload,
+                       ownerReference.managed, output})
             .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
     Value path =
@@ -8021,8 +8176,8 @@ public:
                 llvmConstant(rewriter, location, i32,
                              isa<sim::StringType>(op.getResult().getType())
                                  ? OBELISK_RT_ARGUMENT_VALUE_STRING
-                             : isa<sim::ClassHandleType>(
-                                   op.getResult().getType())
+                             : isa<sim::ClassHandleType, sim::DynamicArrayType,
+                                   sim::QueueType>(op.getResult().getType())
                                  ? OBELISK_RT_ARGUMENT_VALUE_CLASS
                                  : OBELISK_RT_ARGUMENT_VALUE_BITS),
                 valueOut, unknownOut})
@@ -8092,12 +8247,13 @@ public:
         llvmConstant(rewriter, location, i64, *bitWidth),
         llvmConstant(rewriter, location, i64, storage->size),
         llvmConstant(rewriter, location, i32, storage->fourState),
-        llvmConstant(rewriter, location, i32,
-                     isa<sim::StringType>(valueType)
-                         ? OBELISK_RT_ARGUMENT_VALUE_STRING
-                     : isa<sim::ClassHandleType>(valueType)
-                         ? OBELISK_RT_ARGUMENT_VALUE_CLASS
-                         : OBELISK_RT_ARGUMENT_VALUE_BITS)};
+        llvmConstant(
+            rewriter, location, i32,
+            isa<sim::StringType>(valueType) ? OBELISK_RT_ARGUMENT_VALUE_STRING
+            : isa<sim::ClassHandleType, sim::DynamicArrayType, sim::QueueType>(
+                  valueType)
+                ? OBELISK_RT_ARGUMENT_VALUE_CLASS
+                : OBELISK_RT_ARGUMENT_VALUE_BITS)};
     Value valueIn =
         entryAlloca(rewriter, location, adaptor.getValue().front().getType(), 1,
                     storage->alignment);
@@ -8336,6 +8492,74 @@ public:
                        managedObjectPointer(rewriter, location,
                                             adaptor.getDestination()[0]),
                        adaptor.getDestination()[1], value, unknown,
+                       llvmConstant(rewriter, location, i64, storage->size),
+                       delay})
+            .getResult();
+    reportManagedStatus(rewriter, location, context, status);
+    rewriter.eraseOp(op);
+    return success();
+  }
+
+private:
+  const llvm::DataLayout &dataLayout;
+};
+
+class ReferencePathNBAConversion final
+    : public OpConversionPattern<sim::SimReferencePathNBAEnqueueOp> {
+public:
+  ReferencePathNBAConversion(const TypeConverter &converter,
+                             MLIRContext *context,
+                             const llvm::DataLayout &dataLayout)
+      : OpConversionPattern(converter, context), dataLayout(dataLayout) {}
+
+  LogicalResult
+  matchAndRewrite(sim::SimReferencePathNBAEnqueueOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getDestination().size() != 1 || adaptor.getValue().empty())
+      return failure();
+    llvm::DataLayout local(dataLayout.getStringRepresentation());
+    llvm::LLVMContext llvmContext;
+    FailureOr<StorageProperties> storage =
+        storageProperties(op.getValue().getType(), local, llvmContext);
+    if (failed(storage) ||
+        adaptor.getValue().size() != physicalStorageCount(*storage))
+      return failure();
+
+    Location location = op.getLoc();
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Type i64 = rewriter.getI64Type();
+    auto savePlane = [&](Value value, uint32_t alignment) {
+      Value address =
+          entryAlloca(rewriter, location, value.getType(), 1, alignment);
+      LLVM::StoreOp::create(rewriter, location, value, address, alignment);
+      return address;
+    };
+
+    Value value;
+    if (isa<sim::ClassHandleType>(op.getValue().getType()))
+      value = savePlane(
+          managedObjectPointer(rewriter, location, adaptor.getValue().front()),
+          storage->alignment);
+    else
+      value = savePlane(adaptor.getValue().front(), storage->alignment);
+    Value unknown = LLVM::ZeroOp::create(rewriter, location, pointer);
+    if (storage->fourState)
+      unknown = savePlane(adaptor.getValue()[1], storage->alignment);
+    Value delay = adaptor.getDelay().empty()
+                      ? llvmConstant(rewriter, location, i64, 0)
+                      : adaptor.getDelay().front();
+    auto [context, lane] = managedContextAndLane(rewriter, location);
+    (void)lane;
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_scheduler_managed_nba"),
+            ValueRange{context,
+                       managedObjectPointer(rewriter, location,
+                                            adaptor.getDestination().front()),
+                       llvmConstant(rewriter, location, i64, UINT64_MAX), value,
+                       unknown,
                        llvmConstant(rewriter, location, i64, storage->size),
                        delay})
             .getResult();
@@ -9057,7 +9281,8 @@ LogicalResult makeSchedulerMain(ModuleOp module,
   Type i64 = builder.getI64Type();
   Type voidType = LLVM::LLVMVoidType::get(context);
   auto main = LLVM::LLVMFuncOp::create(
-      builder, location, "main", LLVM::LLVMFunctionType::get(i32, {}, false));
+      builder, location, "main",
+      LLVM::LLVMFunctionType::get(i32, {i32, pointer}, false));
   Block *entry = main.addEntryBlock(builder);
   Block *ready = new Block;
   Block *failed = new Block;
@@ -9107,6 +9332,17 @@ LogicalResult makeSchedulerMain(ModuleOp module,
   builder.setInsertionPointToStart(ready);
   Value runtimeContext =
       LLVM::LoadOp::create(builder, location, pointer, outContext, 8);
+  Value configureStatus =
+      LLVM::CallOp::create(
+          builder, location, TypeRange{i32},
+          SymbolRefAttr::get(context, "obelisk_rt_v1_context_configure_argv"),
+          ValueRange{runtimeContext, entry->getArgument(0),
+                     entry->getArgument(1)})
+          .getResult();
+  LLVM::CallOp::create(
+      builder, location, TypeRange{},
+      SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
+      ValueRange{runtimeContext, configureStatus});
   Value currentAddress = LLVM::AddressOfOp::create(builder, location, pointer,
                                                    "__obelisk_current_context");
   LLVM::StoreOp::create(builder, location, runtimeContext, currentAddress, 8);
@@ -9236,6 +9472,8 @@ LogicalResult makeSchedulerMain(ModuleOp module,
                              {pointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_context_destroy", voidType,
                            {pointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_context_configure_argv", i32,
+                           {pointer, i32, pointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_native_state_register_static",
                            i32, {pointer, i32, i64, i64});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_gc_static_root_register", i32,
@@ -9421,15 +9659,27 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                            {managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_object_allocate", managedI32,
                            {managedPointer, managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_reference_path_index_create", managedI32,
-      {managedPointer, managedPointer, managedI64, managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_reference_path_index_create",
+                           managedI32,
+                           {managedPointer, managedPointer, managedI64,
+                            managedI64, managedI32, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_container_size", managedI64,
                            {managedPointer});
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_container_create_like", managedI32,
       {managedPointer, managedPointer, managedPointer, managedI64,
        managedPointer});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_container_create_typed", managedI32,
+      {managedPointer, managedI32, managedI64, managedI32, managedI32,
+       managedI64, managedI64, managedI64, managedPointer, managedI64,
+       managedI64, managedI64, managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_container_clone", managedI32,
+                           {managedPointer, managedPointer, managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_container_delete", managedI32,
+                           {managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_random_bounded", managedI32,
+                           {managedPointer, managedI64, managedPointer});
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_container_read", managedI32,
       {managedPointer, managedI64, managedPointer, managedPointer});
@@ -9753,26 +10003,25 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   packedPatterns.add<RefLoadConversion, RefStoreConversion, OverrideConversion,
                      ReleaseOverrideConversion, NetReadConversion>(
       packedConverter, context, stateLayout->bitCount);
-  packedPatterns
-      .add<ClassNullConversion, ManagedNullConversion, EventNullConversion,
-           ContainerSizeConversion, ContainerCreateLikeConversion,
-           ContainerReadConversion, ContainerWriteConversion,
-           StringLiteralConversion,
-           StringFromPackedConversion, StringToPackedConversion,
-           StringConcatConversion, StringLengthConversion,
-           StringGetcConversion, StringCompareConversion, ClassAllocConversion,
-           StringFileOpenConversion<sim::SimFileOpenStringMCDOp>,
-           StringFileOpenConversion<sim::SimFileOpenStringOp>,
-           StringFileGetlineConversion,
-           ClassCopyConversion,
-           ClassIsInstanceConversion, ClassIdConversion, ClassCastConversion,
-           ClassFieldRefConversion, ClassRootBindConversion,
-           ArgumentRefFromRefConversion, ArgumentRefFromManagedConversion,
-           ReferencePathIndexConversion, ArgumentRefFromPathConversion,
-           ManagedObjectOutputConversion<sim::SimWeakCreateOp>,
-           ManagedObjectOutputConversion<sim::SimWeakGetOp>,
-           WeakClearConversion, GCSafepointConversion>(packedConverter,
-                                                       context);
+  packedPatterns.add<
+      ClassNullConversion, ManagedNullConversion, EventNullConversion,
+      ContainerSizeConversion, ContainerCreateLikeConversion,
+      ContainerCreateConversion, ContainerCloneConversion,
+      ContainerDeleteConversion, ContainerReadConversion,
+      ContainerWriteConversion, RandomBoundedConversion,
+      StringLiteralConversion, StringFromPackedConversion,
+      StringToPackedConversion, StringConcatConversion, StringLengthConversion,
+      StringGetcConversion, StringCompareConversion, ClassAllocConversion,
+      StringFileOpenConversion<sim::SimFileOpenStringMCDOp>,
+      StringFileOpenConversion<sim::SimFileOpenStringOp>,
+      StringFileGetlineConversion, ClassCopyConversion,
+      ClassIsInstanceConversion, ClassIdConversion, ClassCastConversion,
+      ClassFieldRefConversion, ClassRootBindConversion,
+      ArgumentRefFromRefConversion, ArgumentRefFromManagedConversion,
+      ReferencePathIndexConversion, ArgumentRefFromPathConversion,
+      ManagedObjectOutputConversion<sim::SimWeakCreateOp>,
+      ManagedObjectOutputConversion<sim::SimWeakGetOp>, WeakClearConversion,
+      GCSafepointConversion>(packedConverter, context);
   packedPatterns.add<StringAllocatingCallConversion<sim::SimStringRepeatOp>>(
       packedConverter, context, "obelisk_rt_v1_string_repeat");
   packedPatterns.add<StringAllocatingCallConversion<sim::SimStringPutcOp>>(
@@ -9794,9 +10043,10 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       packedConverter, context, "obelisk_rt_v1_string_parse_real");
   packedPatterns.add<ArgumentRefLoadConversion, ArgumentRefStoreConversion>(
       packedConverter, context, dataLayout, stateLayout->bitCount);
-  packedPatterns.add<ManagedLoadConversion, ManagedStoreConversion,
-                     ManagedNBAConversion, ClassVirtualCallConversion>(
-      packedConverter, context, dataLayout);
+  packedPatterns
+      .add<ManagedLoadConversion, ManagedStoreConversion, ManagedNBAConversion,
+           ReferencePathNBAConversion, ClassVirtualCallConversion>(
+          packedConverter, context, dataLayout);
   packedPatterns.add<DriverDriveConversion>(packedConverter, context,
                                             *stateLayout);
   packedPatterns.add<ImmediateNBAConversion>(packedConverter, context,
@@ -9825,23 +10075,23 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       sim::SimControlDisableOp, sim::SimStaticOnceOp, sim::SimMonitorRegisterOp,
       sim::SimMonitorControlOp, sim::SimMonitorCurrentOp,
       sim::SimBitsDynExtractOp, sim::SimClassNullOp, sim::SimManagedNullOp,
-      sim::SimEventNullOp,
-      sim::SimContainerSizeOp, sim::SimContainerCreateLikeOp,
+      sim::SimEventNullOp, sim::SimContainerSizeOp,
+      sim::SimContainerCreateLikeOp, sim::SimContainerCreateOp,
+      sim::SimContainerCloneOp, sim::SimContainerDeleteOp,
       sim::SimContainerReadOp, sim::SimContainerWriteOp,
-      sim::SimStringLiteralOp, sim::SimStringFromPackedOp,
-      sim::SimStringToPackedOp, sim::SimStringConcatOp,
-      sim::SimStringRepeatOp, sim::SimStringLengthOp, sim::SimStringGetcOp,
-      sim::SimStringPutcOp, sim::SimStringSubstrOp, sim::SimStringCompareOp,
-      sim::SimStringCaseConvertOp, sim::SimStringParseIntegerOp,
-      sim::SimStringParseRealOp, sim::SimStringFormatIntegerOp,
-      sim::SimStringFormatRealOp,
+      sim::SimRandomBoundedOp, sim::SimStringLiteralOp,
+      sim::SimStringFromPackedOp, sim::SimStringToPackedOp,
+      sim::SimStringConcatOp, sim::SimStringRepeatOp, sim::SimStringLengthOp,
+      sim::SimStringGetcOp, sim::SimStringPutcOp, sim::SimStringSubstrOp,
+      sim::SimStringCompareOp, sim::SimStringCaseConvertOp,
+      sim::SimStringParseIntegerOp, sim::SimStringParseRealOp,
+      sim::SimStringFormatIntegerOp, sim::SimStringFormatRealOp,
       sim::SimFileOpenStringMCDOp, sim::SimFileOpenStringOp,
-      sim::SimFileGetlineStringOp,
-      sim::SimClassAllocOp, sim::SimClassCopyOp, sim::SimClassIsInstanceOp,
-      sim::SimClassIdOp,
-      sim::SimClassCastOp, sim::SimClassFieldRefOp, sim::SimClassRootBindOp,
-      sim::SimManagedLoadOp, sim::SimManagedStoreOp,
-      sim::SimManagedNBAEnqueueOp, sim::SimArgumentRefFromRefOp,
+      sim::SimFileGetlineStringOp, sim::SimClassAllocOp, sim::SimClassCopyOp,
+      sim::SimClassIsInstanceOp, sim::SimClassIdOp, sim::SimClassCastOp,
+      sim::SimClassFieldRefOp, sim::SimClassRootBindOp, sim::SimManagedLoadOp,
+      sim::SimManagedStoreOp, sim::SimManagedNBAEnqueueOp,
+      sim::SimReferencePathNBAEnqueueOp, sim::SimArgumentRefFromRefOp,
       sim::SimArgumentRefFromManagedOp, sim::SimReferencePathIndexOp,
       sim::SimArgumentRefFromPathOp, sim::SimArgumentRefLoadOp,
       sim::SimArgumentRefStoreOp, sim::SimClassDirectCallOp,

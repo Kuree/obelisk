@@ -109,6 +109,22 @@ bool validObserverInventory(
   return true;
 }
 
+uint32_t nextRandom32(obelisk_rt_context *context) {
+  uint64_t old = context->randomState;
+  context->randomState =
+      old * UINT64_C(6364136223846793005) + context->randomIncrement;
+  uint32_t shifted = static_cast<uint32_t>(((old >> 18) ^ old) >> 27);
+  uint32_t rotation = static_cast<uint32_t>(old >> 59);
+  return (shifted >> rotation) | (shifted << ((0u - rotation) & 31));
+}
+
+void seedRandom(obelisk_rt_context *context, uint64_t seed) {
+  context->randomState = 0;
+  (void)nextRandom32(context);
+  context->randomState += seed;
+  (void)nextRandom32(context);
+}
+
 } // namespace
 
 obelisk_rt_context::obelisk_rt_context() {
@@ -122,6 +138,7 @@ obelisk_rt_context::obelisk_rt_context() {
   files[2] = {stderr, 0, true};
   for (uint32_t bit = 30; bit >= 1; --bit)
     freeMCDs.push_back(bit);
+  seedRandom(this, 1);
 }
 
 obelisk_rt_context::~obelisk_rt_context() {
@@ -323,6 +340,66 @@ std::string hostErrorMessage(int error) {
 extern "C" obelisk_rt_status
 obelisk_rt_v1_context_create(obelisk_rt_context **outContext) {
   return obelisk_rt_v1_context_create_for_design(nullptr, outContext);
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_context_seed(obelisk_rt_context *context, uint64_t seed) {
+  if (!context)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  return guarded(context, [&] {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    seedRandom(context, seed);
+    return OBELISK_RT_OK;
+  });
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_context_configure_argv(obelisk_rt_context *context, int argc,
+                                     const char *const *argv) {
+  if (!context || argc < 0 || (argc != 0 && !argv))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  for (int index = 1; index < argc; ++index) {
+    if (!argv[index])
+      return OBELISK_RT_INVALID_ARGUMENT;
+    std::string_view argument(argv[index]);
+    constexpr std::string_view prefix = "--seed=";
+    if (argument.substr(0, prefix.size()) != prefix)
+      continue;
+    std::string_view digits = argument.substr(prefix.size());
+    if (digits.empty())
+      return OBELISK_RT_INVALID_ARGUMENT;
+    uint64_t seed = 0;
+    for (char digit : digits) {
+      if (digit < '0' || digit > '9')
+        return OBELISK_RT_INVALID_ARGUMENT;
+      uint64_t value = static_cast<uint64_t>(digit - '0');
+      if (seed > (UINT64_MAX - value) / 10)
+        return OBELISK_RT_INVALID_ARGUMENT;
+      seed = seed * 10 + value;
+    }
+    obelisk_rt_status status = obelisk_rt_v1_context_seed(context, seed);
+    if (status != OBELISK_RT_OK)
+      return status;
+  }
+  return OBELISK_RT_OK;
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_random_bounded(obelisk_rt_context *context, uint64_t bound,
+                             uint64_t *outValue) {
+  if (!context || !outValue || bound == 0)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  return guarded(context, [&] {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    uint64_t threshold = (uint64_t{0} - bound) % bound;
+    uint64_t value;
+    do {
+      value = (static_cast<uint64_t>(nextRandom32(context)) << 32) |
+              nextRandom32(context);
+    } while (value < threshold);
+    *outValue = value % bound;
+    return OBELISK_RT_OK;
+  });
 }
 
 extern "C" uint32_t obelisk_rt_v1_import_id(const uint8_t *symbol,

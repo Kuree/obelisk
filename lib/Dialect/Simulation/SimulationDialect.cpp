@@ -138,7 +138,8 @@ LogicalResult verifyPostponedReadOnly(SimFuncOp root) {
     WalkResult readOnly = function.getBody().walk([&](Operation *operation) {
       if (isa<SimFuncOp>(operation))
         return WalkResult::skip();
-      if (isa<SimManagedStoreOp, SimManagedNBAEnqueueOp, SimArgumentRefStoreOp,
+      if (isa<SimManagedStoreOp, SimManagedNBAEnqueueOp,
+              SimReferencePathNBAEnqueueOp, SimArgumentRefStoreOp,
               SimRefStoreOp, SimDriverDriveOp, SimNBAEnqueueOp, SimSpawnOp,
               SimEventTriggerOp, SimSuspendDelayOp, SimTaskCallOp>(operation)) {
         operation->emitOpError(
@@ -991,6 +992,153 @@ LogicalResult SimContainerCreateLikeOp::verify() {
     return emitOpError("result must be a dynamic array or queue");
   if (getPreferred().getType() != type || getFallback().getType() != type)
     return emitOpError("source and result container types must match");
+  return success();
+}
+
+LogicalResult SimContainerCreateOp::verify() {
+  Type type = getResult().getType();
+  Type element = getSequentialContainerElement(type);
+  if (!element)
+    return emitOpError("result must be a dynamic array or queue");
+  if (getTypeId() == 0)
+    return emitOpError("element type ID must be nonzero");
+  if (getElementKind() < 1 || getElementKind() > 8)
+    return emitOpError("element kind is outside the runtime ABI");
+  if ((getElementFlags() & ~3u) != 0)
+    return emitOpError("element flags contain an unknown runtime ABI bit");
+  if (getValueSize() == 0 || getAlignment() == 0 ||
+      !llvm::isPowerOf2_64(getAlignment()) ||
+      getValueSize() % getAlignment() != 0)
+    return emitOpError("element size and alignment are invalid");
+  if (getContainerKind() != 1 && getContainerKind() != 2)
+    return emitOpError("container kind is outside the runtime ABI");
+  ArrayRef<int64_t> traceOffsets = getTraceOffsets();
+  ArrayRef<int32_t> traceKinds = getTraceKinds();
+  if (traceOffsets.size() != traceKinds.size())
+    return emitOpError("trace offset and kind inventories must match");
+  if (getElementKind() != 7 && !traceOffsets.empty())
+    return emitOpError("only aggregate elements carry explicit trace slots");
+  int64_t previousOffset = -1;
+  for (auto [offset, kind] : llvm::zip_equal(traceOffsets, traceKinds)) {
+    if (offset < 0 || static_cast<uint64_t>(offset) > getValueSize() ||
+        sizeof(void *) > getValueSize() - static_cast<uint64_t>(offset))
+      return emitOpError("trace slot is outside the element value plane");
+    if (static_cast<uint64_t>(offset) % alignof(void *) != 0)
+      return emitOpError("trace slot is not pointer aligned");
+    if (kind < 1 || kind > 3)
+      return emitOpError("trace slot kind is outside the runtime ABI");
+    if (offset <= previousOffset)
+      return emitOpError("trace slot offsets must be strictly increasing");
+    previousOffset = offset;
+  }
+  if (isa<DynamicArrayType>(type) && getContainerKind() != 1)
+    return emitOpError("dynamic-array result requires dynamic-array metadata");
+  if (isa<QueueType>(type) && getContainerKind() != 2)
+    return emitOpError("queue result requires queue metadata");
+  uint32_t expectedKind = 0;
+  uint64_t expectedSize = 0;
+  uint64_t expectedWidth = 0;
+  bool fourState = false;
+  SmallVector<int64_t, 2> expectedTraceOffsets;
+  SmallVector<int32_t, 2> expectedTraceKinds;
+  if (auto integer = dyn_cast<IntegerType>(element)) {
+    expectedKind = 1;
+    expectedSize = (integer.getWidth() + 7) / 8;
+    expectedWidth = integer.getWidth();
+  } else if (auto logic = dyn_cast<LogicType>(element)) {
+    expectedKind = 2;
+    expectedSize = (logic.getWidth() + 7) / 8;
+    expectedWidth = logic.getWidth();
+    fourState = true;
+  } else if (auto real = dyn_cast<FloatType>(element)) {
+    expectedKind = 3;
+    expectedSize = real.getWidth() / 8;
+    expectedWidth = real.getWidth();
+  } else if (isa<ClassHandleType>(element)) {
+    expectedKind = 4;
+    expectedSize = sizeof(void *);
+  } else if (isa<StringType>(element)) {
+    expectedKind = 5;
+    expectedSize = sizeof(void *);
+  } else if (isa<DynamicArrayType, QueueType>(element)) {
+    expectedKind = 6;
+    expectedSize = sizeof(void *);
+  } else if (isa<EventType>(element)) {
+    expectedKind = 8;
+    expectedSize = sizeof(uint64_t);
+  } else if (Type scalar = getPackedScalarType(element)) {
+    std::optional<unsigned> width = getPackedWidth(element);
+    if (!width || *width == 0)
+      return emitOpError("packed element has no canonical width");
+    fourState = isa<LogicType>(scalar);
+    expectedKind = fourState ? 2 : 1;
+    expectedSize = (*width + 7) / 8;
+    expectedWidth = *width;
+  } else if (isAggregateType(element)) {
+    std::optional<uint64_t> width = getProvenanceSpan(element);
+    if (!width || *width == 0)
+      return emitOpError("aggregate element has no canonical layout");
+    element.walk([&](LogicType) { fourState = true; });
+    expectedKind = 7;
+    expectedSize = (*width + 7) / 8;
+    expectedWidth = expectedSize * 8;
+    std::function<LogicalResult(Type, uint64_t)> collectTrace =
+        [&](Type nested, uint64_t baseBitOffset) -> LogicalResult {
+      if (isManagedHandleType(nested)) {
+        if ((baseBitOffset & 7) != 0 || baseBitOffset / 8 > uint64_t{INT64_MAX})
+          return failure();
+        int32_t kind = 1;
+        if (isa<StringType>(nested))
+          kind = 2;
+        else if (isa<DynamicArrayType, QueueType, AssocArrayType,
+                     ReferencePathType>(nested))
+          kind = 3;
+        expectedTraceOffsets.push_back(static_cast<int64_t>(baseBitOffset / 8));
+        expectedTraceKinds.push_back(kind);
+        return success();
+      }
+      if (!isAggregateType(nested))
+        return success();
+      if (isa<PackedUnionType, UnpackedUnionType>(nested)) {
+        SmallVector<uint64_t, 2> offsets;
+        return getManagedHandleOffsets(nested, offsets) ? success() : failure();
+      }
+      for (unsigned index = 0; index < getAggregateNumElements(nested);
+           ++index) {
+        auto child = getAggregateProvenanceSubelement(nested, index);
+        if (!child || child->first > UINT64_MAX - baseBitOffset ||
+            failed(collectTrace(getAggregateElementType(nested, index),
+                                baseBitOffset + child->first)))
+          return failure();
+      }
+      return success();
+    };
+    if (failed(collectTrace(element, 0)))
+      return emitOpError("aggregate element has no canonical trace layout");
+  }
+  if (expectedKind != 0 &&
+      (getElementKind() != expectedKind || getValueSize() != expectedSize ||
+       getBitWidth() != expectedWidth ||
+       ((getElementFlags() & 1u) != 0) != fourState))
+    return emitOpError(
+        "element metadata does not match the result container element type");
+  if (traceOffsets != ArrayRef<int64_t>(expectedTraceOffsets) ||
+      traceKinds != ArrayRef<int32_t>(expectedTraceKinds))
+    return emitOpError(
+        "trace inventory does not match the result container element type");
+  return success();
+}
+
+LogicalResult SimContainerCloneOp::verify() {
+  if (!getSequentialContainerElement(getInput().getType()) ||
+      getInput().getType() != getResult().getType())
+    return emitOpError("input and result must be the same container type");
+  return success();
+}
+
+LogicalResult SimContainerDeleteOp::verify() {
+  if (!getSequentialContainerElement(getContainer().getType()))
+    return emitOpError("operand must be a dynamic array or queue");
   return success();
 }
 
@@ -1853,6 +2001,12 @@ LogicalResult SimManagedNBAEnqueueOp::verify() {
   return success();
 }
 
+LogicalResult SimReferencePathNBAEnqueueOp::verify() {
+  if (getDestination().getType().getElementType() != getValue().getType())
+    return emitOpError("value type must match the referenced element");
+  return success();
+}
+
 LogicalResult SimArgumentRefFromRefOp::verify() {
   if (getInput().getType().getElementType() !=
       getResult().getType().getElementType())
@@ -1878,6 +2032,8 @@ LogicalResult SimReferencePathIndexOp::verify() {
     return emitOpError("container must be a dynamic array or queue");
   if (elementType != getResult().getType().getElementType())
     return emitOpError("result element must match the container element");
+  if (getOwnerReference().getType().getElementType() != containerType)
+    return emitOpError("owner reference must refer to the container type");
   return success();
 }
 
@@ -2013,6 +2169,43 @@ LogicalResult SimDesignOp::verifyRegions() {
       functions.push_back(function);
     }
   }
+  struct ElementShape {
+    uint32_t kind;
+    uint32_t flags;
+    uint64_t valueSize;
+    uint64_t alignment;
+    uint64_t bitWidth;
+    SmallVector<int64_t, 2> traceOffsets;
+    SmallVector<int32_t, 2> traceKinds;
+  };
+  llvm::DenseMap<uint64_t, ElementShape> elementShapes;
+  WalkResult descriptors =
+      walk([&](SimContainerCreateOp create) {
+        ElementShape shape{static_cast<uint32_t>(create.getElementKind()),
+                           static_cast<uint32_t>(create.getElementFlags()),
+                           create.getValueSize(),
+                           create.getAlignment(),
+                           create.getBitWidth(),
+                           SmallVector<int64_t, 2>(create.getTraceOffsets()),
+                           SmallVector<int32_t, 2>(create.getTraceKinds())};
+        auto [found, inserted] =
+            elementShapes.try_emplace(create.getTypeId(), shape);
+        if (!inserted && (found->second.kind != shape.kind ||
+                          found->second.flags != shape.flags ||
+                          found->second.valueSize != shape.valueSize ||
+                          found->second.alignment != shape.alignment ||
+                          found->second.bitWidth != shape.bitWidth ||
+                          found->second.traceOffsets != shape.traceOffsets ||
+                          found->second.traceKinds != shape.traceKinds)) {
+          create.emitOpError()
+              << "element type ID " << create.getTypeId()
+              << " conflicts with another container descriptor in the design";
+          return WalkResult::interrupt();
+        }
+        return WalkResult::advance();
+      });
+  if (descriptors.wasInterrupted())
+    return failure();
   if (!sawRoot)
     return emitOpError("design must contain a root scope descriptor");
   auto verifyDense = [&](const llvm::DenseSet<uint64_t> &ids,
@@ -5603,13 +5796,16 @@ LogicalResult SimDisplayOp::verify() {
     if (itemIndex == getItems().size())
       return emitOpError("item flags require more display operands");
     Value item = getItems()[itemIndex++];
-    if (!isa<BytesType, StringType, IntegerType, LogicType>(item.getType()) &&
+    if (!isa<BytesType, StringType, DynamicArrayType, QueueType, IntegerType,
+             LogicType>(item.getType()) &&
         !item.getType().isF64())
       return emitOpError(
           "items must be literal bytes, packed integers, or f64 reals; "
-          "managed strings are also accepted");
-    if ((flags & ~15) != 0)
+          "managed strings and sequential containers are also accepted");
+    if ((flags & ~31) != 0)
       return emitOpError("display item flags contain an unknown bit");
+    if ((flags & 16) != 0 && !isa<DynamicArrayType, QueueType>(item.getType()))
+      return emitOpError("container display flags require a container operand");
     if ((flags & 4) != 0 && !item.getType().isF64())
       return emitOpError("real display items must have f64 operands");
     if ((flags & 4) == 0 && item.getType().isF64())
@@ -5620,6 +5816,9 @@ LogicalResult SimDisplayOp::verify() {
       return emitOpError("literal byte items cannot be signed");
     if (isa<StringType>(item.getType()) && flags != 8)
       return emitOpError("managed string display items require the string flag");
+    if (isa<DynamicArrayType, QueueType>(item.getType()) && flags != 16)
+      return emitOpError(
+          "managed container display items require the container flag");
   }
   if (itemIndex != getItems().size())
     return emitOpError("requires one flag entry per display item");

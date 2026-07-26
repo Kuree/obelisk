@@ -538,6 +538,18 @@ obelisk_rt_status formatArgument(std::string &output,
       return OBELISK_RT_ARGUMENT_MISMATCH;
     return appendRaw(output, view, spec == 'z');
   case 'p': {
+    if (argument.kind == OBELISK_RT_ARG_MANAGED_CONTAINER) {
+      if (argument.size != 0 || !argument.data || argument.unknown)
+        return OBELISK_RT_INVALID_ARGUMENT;
+      obelisk_rt_object_v1 *container = nullptr;
+      std::memcpy(&container, argument.data, sizeof(container));
+      std::string value;
+      obelisk_rt_status status =
+          obelisk_rt_container_pattern(container, value, 0);
+      if (status != OBELISK_RT_OK)
+        return status;
+      return formatStringValue(output, std::move(value), options);
+    }
     std::string value = scalarPattern(argument);
     if (value.empty() && argument.kind != OBELISK_RT_ARG_STRING &&
         argument.kind != OBELISK_RT_ARG_MANAGED_STRING)
@@ -705,6 +717,8 @@ char defaultSpecifier(const obelisk_rt_arg_v1 &argument,
     return 's';
   case OBELISK_RT_ARG_REAL:
     return 'f';
+  case OBELISK_RT_ARG_MANAGED_CONTAINER:
+    return 'p';
   default:
     return 0;
   }

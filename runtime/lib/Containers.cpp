@@ -100,6 +100,14 @@ uint64_t elementStride(const obelisk_rt_element_type_v1 *element) {
          ((element->flags & OBELISK_RT_ELEMENT_FOUR_STATE) ? 2 : 1);
 }
 
+void initializeElementDefault(const obelisk_rt_element_type_v1 *element,
+                              void *value, void *unknown = nullptr) {
+  std::memset(value, element->kind == OBELISK_RT_ELEMENT_EVENT ? 0xff : 0,
+              static_cast<size_t>(element->value_size));
+  if ((element->flags & OBELISK_RT_ELEMENT_FOUR_STATE) && unknown)
+    std::memset(unknown, 0, static_cast<size_t>(element->value_size));
+}
+
 bool multiplyFits(uint64_t left, uint64_t right, uint64_t &result) {
   if (left != 0 && right > UINT64_MAX / left)
     return false;
@@ -386,6 +394,15 @@ obelisk_rt_status initializeContainer(obelisk_rt_gc_lane_v1 *lane,
   obelisk_rt_object_v1 *buffer = nullptr;
   if (status == OBELISK_RT_OK)
     status = allocateBuffer(lane, capacity, elementStride(element), &buffer);
+  if (status == OBELISK_RT_OK && size != 0 &&
+      element->kind == OBELISK_RT_ELEMENT_EVENT)
+    status = accessBuffer(buffer, [&](uint8_t *data, uint64_t extent) {
+      uint64_t bytes = size * elementStride(element);
+      if (bytes > extent)
+        return OBELISK_RT_INVALID_HANDLE;
+      std::memset(data, 0xff, static_cast<size_t>(bytes));
+      return OBELISK_RT_OK;
+    });
   if (status == OBELISK_RT_OK) {
     struct Initialize {
       obelisk_rt_container_kind_v1 kind;
@@ -1878,6 +1895,188 @@ obelisk_rt_status cloneContainerImpl(obelisk_rt_gc_lane_v1 *lane,
 
 } // namespace
 
+obelisk_rt_status obelisk_rt_container_pattern(obelisk_rt_object_v1 *container,
+                                               std::string &output,
+                                               unsigned depth) {
+  if (!container) {
+    output += "'{}";
+    return OBELISK_RT_OK;
+  }
+  if (depth >= 32) {
+    output += "<recursive-container>";
+    return OBELISK_RT_OK;
+  }
+  ContainerHeader snapshot;
+  obelisk_rt_status status = snapshotHeader(container, snapshot);
+  if (status != OBELISK_RT_OK ||
+      snapshot.kind == OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY)
+    return status == OBELISK_RT_OK ? OBELISK_RT_ARGUMENT_MISMATCH : status;
+  if (!snapshot.element ||
+      snapshot.element->value_size > std::numeric_limits<size_t>::max())
+    return OBELISK_RT_INVALID_DESIGN;
+
+  size_t valueSize = static_cast<size_t>(snapshot.element->value_size);
+  std::vector<uint8_t> value;
+  std::vector<uint8_t> unknown;
+  try {
+    value.resize(valueSize);
+    if (snapshot.element->flags & OBELISK_RT_ELEMENT_FOUR_STATE)
+      unknown.resize(valueSize);
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  }
+
+  auto bit = [](const std::vector<uint8_t> &bytes, uint64_t index) {
+    return index / 8 < bytes.size() &&
+           ((bytes[static_cast<size_t>(index / 8)] >> (index % 8)) & 1) != 0;
+  };
+  auto appendString = [&](obelisk_rt_string_v1 string) {
+    char inlineBytes[8];
+    const char *bytes = nullptr;
+    uint64_t size = 0;
+    obelisk_rt_status stringStatus =
+        obelisk_rt_v1_string_view(string, inlineBytes, &bytes, &size);
+    if (stringStatus != OBELISK_RT_OK ||
+        size > std::numeric_limits<size_t>::max())
+      return stringStatus == OBELISK_RT_OK ? OBELISK_RT_OUT_OF_RESOURCES
+                                           : stringStatus;
+    output.push_back('"');
+    for (size_t index = 0; index != static_cast<size_t>(size); ++index) {
+      unsigned char character = static_cast<unsigned char>(bytes[index]);
+      switch (character) {
+      case '\\':
+        output += "\\\\";
+        break;
+      case '"':
+        output += "\\\"";
+        break;
+      case '\n':
+        output += "\\n";
+        break;
+      case '\r':
+        output += "\\r";
+        break;
+      case '\t':
+        output += "\\t";
+        break;
+      default:
+        if (character >= 0x20 && character < 0x7f)
+          output.push_back(static_cast<char>(character));
+        else {
+          static constexpr char digits[] = "0123456789abcdef";
+          output += "\\x";
+          output.push_back(digits[character >> 4]);
+          output.push_back(digits[character & 15]);
+        }
+      }
+    }
+    output.push_back('"');
+    return OBELISK_RT_OK;
+  };
+
+  output += "'{";
+  for (uint64_t index = 0; index != snapshot.size; ++index) {
+    if (index)
+      output += ", ";
+    status = obelisk_rt_v1_container_read(
+        container, static_cast<int64_t>(index), value.data(),
+        unknown.empty() ? nullptr : unknown.data());
+    if (status != OBELISK_RT_OK)
+      return status;
+    switch (snapshot.element->kind) {
+    case OBELISK_RT_ELEMENT_BITS:
+    case OBELISK_RT_ELEMENT_LOGIC:
+      output += std::to_string(snapshot.element->bit_width);
+      output.push_back('\'');
+      if (snapshot.element->flags & OBELISK_RT_ELEMENT_SIGNED)
+        output.push_back('s');
+      output.push_back('b');
+      for (uint64_t position = snapshot.element->bit_width; position != 0;
+           --position) {
+        uint64_t selected = position - 1;
+        if (!unknown.empty() && bit(unknown, selected))
+          output.push_back(bit(value, selected) ? 'z' : 'x');
+        else
+          output.push_back(bit(value, selected) ? '1' : '0');
+      }
+      break;
+    case OBELISK_RT_ELEMENT_REAL: {
+      double real = 0.0;
+      if (valueSize == sizeof(double))
+        std::memcpy(&real, value.data(), sizeof(real));
+      else if (valueSize == sizeof(float)) {
+        float shortReal = 0.0f;
+        std::memcpy(&shortReal, value.data(), sizeof(shortReal));
+        real = shortReal;
+      } else {
+        return OBELISK_RT_INVALID_DESIGN;
+      }
+      char buffer[64];
+      int length = std::snprintf(buffer, sizeof(buffer), "%g", real);
+      if (length <= 0 || static_cast<size_t>(length) >= sizeof(buffer))
+        return OBELISK_RT_OUT_OF_RESOURCES;
+      output.append(buffer, static_cast<size_t>(length));
+      break;
+    }
+    case OBELISK_RT_ELEMENT_STRING: {
+      obelisk_rt_string_v1 string = 0;
+      if (valueSize != sizeof(string))
+        return OBELISK_RT_INVALID_DESIGN;
+      std::memcpy(&string, value.data(), sizeof(string));
+      status = appendString(string);
+      if (status != OBELISK_RT_OK)
+        return status;
+      break;
+    }
+    case OBELISK_RT_ELEMENT_CLASS_HANDLE: {
+      obelisk_rt_object_v1 *object = nullptr;
+      if (valueSize != sizeof(object))
+        return OBELISK_RT_INVALID_DESIGN;
+      std::memcpy(&object, value.data(), sizeof(object));
+      output += object ? "<object>" : "null";
+      break;
+    }
+    case OBELISK_RT_ELEMENT_CONTAINER_HANDLE: {
+      obelisk_rt_object_v1 *nested = nullptr;
+      if (valueSize != sizeof(nested))
+        return OBELISK_RT_INVALID_DESIGN;
+      std::memcpy(&nested, value.data(), sizeof(nested));
+      status = obelisk_rt_container_pattern(nested, output, depth + 1);
+      if (status != OBELISK_RT_OK)
+        return status;
+      break;
+    }
+    case OBELISK_RT_ELEMENT_EVENT: {
+      uint64_t event = UINT64_MAX;
+      if (valueSize != sizeof(event))
+        return OBELISK_RT_INVALID_DESIGN;
+      std::memcpy(&event, value.data(), sizeof(event));
+      if (event == UINT64_MAX)
+        output += "null";
+      else {
+        output += "<event:";
+        output += std::to_string(event);
+        output.push_back('>');
+      }
+      break;
+    }
+    case OBELISK_RT_ELEMENT_AGGREGATE:
+      output += "'h";
+      for (size_t position = value.size(); position != 0; --position) {
+        static constexpr char digits[] = "0123456789abcdef";
+        uint8_t byte = value[position - 1];
+        output.push_back(digits[byte >> 4]);
+        output.push_back(digits[byte & 15]);
+      }
+      break;
+    default:
+      return OBELISK_RT_INVALID_DESIGN;
+    }
+  }
+  output.push_back('}');
+  return OBELISK_RT_OK;
+}
+
 extern "C" obelisk_rt_status obelisk_rt_v1_dynamic_array_create(
     obelisk_rt_gc_lane_v1 *lane, const obelisk_rt_element_type_v1 *elementType,
     uint64_t size, obelisk_rt_object_v1 **outArray) {
@@ -1931,6 +2130,120 @@ extern "C" obelisk_rt_status obelisk_rt_v1_container_create_like(
                              selected.bound, outContainer);
 }
 
+extern "C" obelisk_rt_status obelisk_rt_v1_container_create_typed(
+    obelisk_rt_gc_lane_v1 *lane, uint32_t containerKind, uint64_t typeID,
+    uint32_t elementKind, uint32_t elementFlags, uint64_t valueSize,
+    uint64_t alignment, uint64_t bitWidth,
+    const obelisk_rt_element_trace_slot_v1 *traceSlots, uint64_t traceSlotCount,
+    uint64_t size, uint64_t bound, obelisk_rt_object_v1 **outContainer) {
+  if (!lane || !outContainer || typeID == 0 ||
+      (traceSlotCount != 0 && !traceSlots) ||
+      traceSlotCount >
+          std::numeric_limits<size_t>::max() - (elementKind != 0 ? 1 : 0))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outContainer = nullptr;
+  if (containerKind != OBELISK_RT_CONTAINER_DYNAMIC_ARRAY &&
+      containerKind != OBELISK_RT_CONTAINER_QUEUE)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  if (containerKind == OBELISK_RT_CONTAINER_DYNAMIC_ARRAY &&
+      size > uint64_t{INT64_MAX})
+    return OBELISK_RT_INVALID_ARGUMENT;
+
+  std::unique_ptr<OwnedElementTypeDescriptor> owned;
+  try {
+    owned = std::make_unique<OwnedElementTypeDescriptor>();
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  }
+  owned->descriptor = {
+      OBELISK_RT_VERSION,
+      static_cast<obelisk_rt_element_kind_v1>(elementKind),
+      typeID,
+      elementFlags,
+      0,
+      valueSize,
+      alignment,
+      bitWidth,
+      nullptr,
+  };
+  uint32_t slotKind = 0;
+  if (elementKind == OBELISK_RT_ELEMENT_CLASS_HANDLE)
+    slotKind = OBELISK_RT_MANAGED_SLOT_CLASS;
+  else if (elementKind == OBELISK_RT_ELEMENT_STRING)
+    slotKind = OBELISK_RT_MANAGED_SLOT_STRING;
+  else if (elementKind == OBELISK_RT_ELEMENT_CONTAINER_HANDLE)
+    slotKind = OBELISK_RT_MANAGED_SLOT_CONTAINER;
+  if (slotKind && traceSlotCount != 0)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  if (elementKind != OBELISK_RT_ELEMENT_AGGREGATE && traceSlotCount != 0)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  try {
+    owned->entries.reserve(
+        static_cast<size_t>(traceSlotCount + (slotKind != 0)));
+    if (slotKind)
+      owned->entries.push_back(
+          {0, 0, 1, OBELISK_RT_TRACE_STRONG, slotKind, nullptr});
+    for (uint64_t index = 0; index != traceSlotCount; ++index) {
+      obelisk_rt_element_trace_slot_v1 slot{};
+      std::memcpy(&slot, traceSlots + index, sizeof(slot));
+      if (slot.reserved != 0 || slot.kind < OBELISK_RT_MANAGED_SLOT_CLASS ||
+          slot.kind > OBELISK_RT_MANAGED_SLOT_CONTAINER ||
+          slot.offset > valueSize ||
+          sizeof(obelisk_rt_managed_word_v1) > valueSize - slot.offset ||
+          slot.offset % alignof(obelisk_rt_managed_word_v1) != 0 ||
+          (!owned->entries.empty() &&
+           slot.offset <= owned->entries.back().offset))
+        return OBELISK_RT_INVALID_ARGUMENT;
+      owned->entries.push_back(
+          {slot.offset, 0, 1, OBELISK_RT_TRACE_STRONG, slot.kind, nullptr});
+    }
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  }
+  if (!owned->entries.empty()) {
+    owned->trace = {
+        OBELISK_RT_VERSION,   0, valueSize, alignment, owned->entries.data(),
+        owned->entries.size()};
+    owned->descriptor.trace = &owned->trace;
+  }
+  if (obelisk_rt_v1_element_type_validate(&owned->descriptor) != OBELISK_RT_OK)
+    return OBELISK_RT_INVALID_ARGUMENT;
+
+  obelisk_rt_context *context = obelisk_rt_managed_lane_context(lane);
+  const obelisk_rt_element_type_v1 *element = nullptr;
+  try {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    auto found = context->managedElementTypes.find(typeID);
+    if (found != context->managedElementTypes.end()) {
+      obelisk_rt_status status =
+          obelisk_rt_v1_element_type_register(context, &owned->descriptor);
+      if (status != OBELISK_RT_OK)
+        return status;
+      element = found->second;
+    } else {
+      auto [stored, inserted] = context->managedOwnedElementTypes.try_emplace(
+          typeID, std::move(owned));
+      if (!inserted)
+        return OBELISK_RT_INVALID_DESIGN;
+      const obelisk_rt_element_type_v1 *descriptor =
+          &stored->second->descriptor;
+      obelisk_rt_status status =
+          obelisk_rt_v1_element_type_register(context, descriptor);
+      if (status != OBELISK_RT_OK) {
+        context->managedOwnedElementTypes.erase(stored);
+        return status;
+      }
+      element = descriptor;
+    }
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  }
+  return initializeContainer(
+      lane, static_cast<obelisk_rt_container_kind_v1>(containerKind), element,
+      containerKind == OBELISK_RT_CONTAINER_QUEUE ? 0 : size, bound,
+      outContainer);
+}
+
 extern "C" uint64_t
 obelisk_rt_v1_container_size(obelisk_rt_object_v1 *container) {
   if (!container)
@@ -1951,12 +2264,10 @@ obelisk_rt_v1_container_read(obelisk_rt_object_v1 *container, int64_t index,
     return status;
   if (snapshot.kind == OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY)
     return OBELISK_RT_INVALID_ARGUMENT;
-  std::memset(outValue, 0, static_cast<size_t>(snapshot.element->value_size));
+  initializeElementDefault(snapshot.element, outValue, outUnknown);
   if (snapshot.element->flags & OBELISK_RT_ELEMENT_FOUR_STATE) {
     if (!outUnknown)
       return OBELISK_RT_INVALID_ARGUMENT;
-    std::memset(outUnknown, 0,
-                static_cast<size_t>(snapshot.element->value_size));
   }
   if (index < 0 || static_cast<uint64_t>(index) >= snapshot.size)
     return OBELISK_RT_OK;
@@ -2054,7 +2365,10 @@ obelisk_rt_v1_dynamic_array_resize(obelisk_rt_gc_lane_v1 *lane,
                 uint64_t bytes = (resize->size - oldSize) * stride;
                 if (offset > size || bytes > size - offset)
                   return OBELISK_RT_INVALID_HANDLE;
-                std::memset(data + offset, 0, static_cast<size_t>(bytes));
+                if (header->element->kind == OBELISK_RT_ELEMENT_EVENT)
+                  std::memset(data + offset, 0xff, static_cast<size_t>(bytes));
+                else
+                  std::memset(data + offset, 0, static_cast<size_t>(bytes));
                 return OBELISK_RT_OK;
               });
           if (status != OBELISK_RT_OK)
@@ -3099,6 +3413,9 @@ obelisk_rt_status obelisk_rt_reference_path_shape(obelisk_rt_object_v1 *path,
   case OBELISK_RT_ELEMENT_REAL:
     widthMatches = bitWidth == 64;
     break;
+  case OBELISK_RT_ELEMENT_EVENT:
+    widthMatches = bitWidth == 64;
+    break;
   case OBELISK_RT_ELEMENT_CLASS_HANDLE:
   case OBELISK_RT_ELEMENT_STRING:
   case OBELISK_RT_ELEMENT_CONTAINER_HANDLE:
@@ -3119,8 +3436,9 @@ obelisk_rt_status obelisk_rt_reference_path_shape(obelisk_rt_object_v1 *path,
 
 extern "C" obelisk_rt_status obelisk_rt_v1_reference_path_index_create(
     obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *container, int64_t index,
+    uint64_t ownerPayload, uint32_t ownerManaged,
     obelisk_rt_object_v1 **outPath) {
-  if (!lane || !container || !outPath)
+  if (!lane || !container || !outPath || ownerManaged > 2)
     return OBELISK_RT_INVALID_ARGUMENT;
   if (obelisk_rt_managed_object_context(container) !=
       obelisk_rt_managed_lane_context(lane))
@@ -3144,7 +3462,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_reference_path_index_create(
     obelisk_rt_object_v1 *owner;
     const obelisk_rt_element_type_v1 *element;
     int64_t index;
-  } initialize{container, owner.element, index};
+    uint64_t ownerPayload;
+    uint32_t ownerManaged;
+  } initialize{container, owner.element, index, ownerPayload, ownerManaged};
   status = obelisk_rt_managed_object_access(
       path, OBELISK_RT_MANAGED_REFERENCE_PATH,
       [](void *opaque, uint8_t *object, uint64_t extent) -> obelisk_rt_status {
@@ -3156,7 +3476,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_reference_path_index_create(
         path->owner = initialize->owner;
         path->element = initialize->element;
         path->selector = ReferenceSelector::Index;
+        path->reserved = initialize->ownerManaged;
         path->index = initialize->index;
+        path->key.value = initialize->ownerPayload;
         return OBELISK_RT_OK;
       },
       &initialize);
@@ -3267,6 +3589,17 @@ obelisk_rt_v1_reference_path_store(obelisk_rt_gc_lane_v1 *lane,
   if (snapshot.selector == ReferenceSelector::Associative)
     return obelisk_rt_v1_assoc_write(lane, snapshot.owner, &snapshot.key, value,
                                      unknown);
-  return obelisk_rt_v1_container_write(lane, snapshot.owner, snapshot.index,
-                                       value, unknown);
+  ContainerHeader owner;
+  status = snapshotHeader(snapshot.owner, owner);
+  if (status != OBELISK_RT_OK)
+    return status;
+  bool present =
+      snapshot.index >= 0 && static_cast<uint64_t>(snapshot.index) < owner.size;
+  status = obelisk_rt_v1_container_write(lane, snapshot.owner, snapshot.index,
+                                         value, unknown);
+  if (status == OBELISK_RT_OK && present && snapshot.reserved == 0)
+    obelisk_rt_v1_scheduler_signal(
+        obelisk_rt_managed_lane_context(lane), snapshot.key.value,
+        sizeof(obelisk_rt_managed_word_v1) * 8, OBELISK_RT_SIGNAL_CHANGE);
+  return status;
 }

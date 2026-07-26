@@ -471,14 +471,6 @@ void ObeliskSimPreparePass::runOnOperation() {
   module.walk([&](Operation *op) {
     if (!isSemanticOp(op))
       return;
-    if (auto foreach = dyn_cast<semantic::SVForeachLoopStatementOp>(op);
-        foreach &&
-        foreach_metadata::hasRuntimeDimension(foreach.getLoopDimensions())) {
-      emitError(getSemanticLocation(foreach))
-          << "foreach over runtime-sized or associative collections is not "
-             "supported";
-      invalid = true;
-    }
     if ((op->hasTrait<OpTrait::SemanticDeclarativeNode>() &&
          !isSupportedClassDeclaration(op)) ||
         isDeclarativeLeafNode(op)) {
@@ -489,8 +481,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     }
     for (NamedAttribute attr : op->getAttrs()) {
       attr.getValue().walk([&](Type type) {
-        if (isa<semantic::DynArrayType, semantic::QueueType,
-                semantic::AssocArrayType, semantic::ObjectType>(type)) {
+        if (isa<semantic::AssocArrayType, semantic::ObjectType>(type)) {
           emitError(getSemanticLocation(op))
               << "unsupported dynamic or object type in the first simulation "
                  "slice: "
@@ -2673,9 +2664,9 @@ void ObeliskSimPreparePass::runOnOperation() {
           }
           bool isRef = direction == semantic::SVArgumentDirection::Ref;
           Type argumentType =
-              isRef ? (instanceClassMethod
-                           ? Type(sim::ArgumentRefType::get(context, *type))
-                           : Type(sim::RefType::get(context, *type)))
+              isRef ? (directTask && !instanceClassMethod
+                           ? Type(sim::RefType::get(context, *type))
+                           : Type(sim::ArgumentRefType::get(context, *type)))
                     : *type;
           unsigned argument = reordered.size();
           reordered.push_back(argumentType);

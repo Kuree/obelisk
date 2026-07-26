@@ -147,6 +147,15 @@ public:
             converted.front(), true));
         continue;
       }
+      if (isa<sim::DynamicArrayType, sim::QueueType>(sourceType)) {
+        if (converted.size() != 1)
+          return rewriter.notifyMatchFailure(
+              op, "managed container display item did not convert 1:1");
+        arguments.push_back(runtime::RTArgumentManagedContainerOp::create(
+            rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
+            converted.front()));
+        continue;
+      }
       if (sourceType.isF64()) {
         if (converted.size() != 1)
           return rewriter.notifyMatchFailure(

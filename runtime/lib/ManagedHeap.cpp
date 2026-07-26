@@ -2022,7 +2022,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_element_type_validate(
   if (!descriptor || descriptor->version != OBELISK_RT_VERSION ||
       descriptor->type_id == 0 || descriptor->reserved != 0 ||
       descriptor->kind < OBELISK_RT_ELEMENT_BITS ||
-      descriptor->kind > OBELISK_RT_ELEMENT_AGGREGATE ||
+      descriptor->kind > OBELISK_RT_ELEMENT_EVENT ||
       (descriptor->flags & ~validFlags) != 0 || descriptor->value_size == 0 ||
       descriptor->value_size > UINT64_MAX - 64 ||
       !validPowerOfTwo(descriptor->alignment) || descriptor->alignment > 16 ||
@@ -2039,7 +2039,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_element_type_validate(
   if ((descriptor->kind == OBELISK_RT_ELEMENT_REAL ||
        descriptor->kind == OBELISK_RT_ELEMENT_CLASS_HANDLE ||
        descriptor->kind == OBELISK_RT_ELEMENT_STRING ||
-       descriptor->kind == OBELISK_RT_ELEMENT_CONTAINER_HANDLE) &&
+       descriptor->kind == OBELISK_RT_ELEMENT_CONTAINER_HANDLE ||
+       descriptor->kind == OBELISK_RT_ELEMENT_EVENT) &&
       (descriptor->flags & OBELISK_RT_ELEMENT_FOUR_STATE) != 0)
     return OBELISK_RT_INVALID_DESIGN;
   if ((descriptor->kind == OBELISK_RT_ELEMENT_BITS ||
@@ -2237,15 +2238,28 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_managed_nba(
     uint64_t delay) {
   ManagedHeap *heap = heapFor(context);
   ObjectMetadata *destinationMetadata = metadataFor(destination);
+  bool referencePath =
+      destinationMetadata &&
+      destinationMetadata->kind == OBELISK_RT_MANAGED_REFERENCE_PATH &&
+      offset == UINT64_MAX;
   if (!heap || !destinationMetadata ||
-      destinationMetadata->kind != OBELISK_RT_MANAGED_CLASS ||
+      (!referencePath &&
+       destinationMetadata->kind != OBELISK_RT_MANAGED_CLASS) ||
       destinationMetadata->heap != heap || !value || planeSize == 0 ||
       planeSize > std::numeric_limits<size_t>::max())
     return OBELISK_RT_INVALID_ARGUMENT;
+  if (referencePath) {
+    if (planeSize > UINT64_MAX / 8)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    obelisk_rt_status shape = obelisk_rt_reference_path_shape(
+        destination, planeSize, planeSize * 8, unknown != nullptr, 0);
+    if (shape != OBELISK_RT_OK)
+      return shape;
+  }
   const obelisk_rt_trace_layout_v1 *layout =
-      destinationMetadata->descriptor->layout;
+      referencePath ? nullptr : destinationMetadata->descriptor->layout;
   bool managedSlot = planeSize == sizeof(obelisk_rt_object_v1 *) &&
-                     layoutHasHandleAt(layout, 0, offset);
+                     !referencePath && layoutHasHandleAt(layout, 0, offset);
   std::vector<obelisk_rt_object_v1 *> referents;
   if (managedSlot) {
     if (unknown || planeSize != sizeof(obelisk_rt_object_v1 *) ||
@@ -2260,7 +2274,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_managed_nba(
         return OBELISK_RT_INVALID_HANDLE;
       referents.push_back(referent);
     }
-  } else {
+  } else if (!referencePath) {
     if (!checkedRange(offset, planeSize,
                       destinationMetadata->descriptor->instance_size) ||
         !validateLayoutHandleWrite(layout, 0, offset, planeSize,
@@ -2304,6 +2318,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_managed_nba(
     update.destination = destination;
     update.offset = offset;
     update.planeSize = planeSize;
+    update.referencePath = referencePath;
     update.value.assign(static_cast<const uint8_t *>(value),
                         static_cast<const uint8_t *>(value) +
                             static_cast<size_t>(planeSize));
@@ -2360,10 +2375,20 @@ obelisk_rt_apply_managed_nba(obelisk_rt_context *context,
     return OBELISK_RT_INVALID_ARGUMENT;
   ObjectMetadata *destination = metadataFor(update.destination);
   obelisk_rt_status status = OBELISK_RT_OK;
-  if (!destination || destination->kind != OBELISK_RT_MANAGED_CLASS ||
+  if (!destination ||
+      (update.referencePath
+           ? destination->kind != OBELISK_RT_MANAGED_REFERENCE_PATH
+           : destination->kind != OBELISK_RT_MANAGED_CLASS) ||
       destination->heap != heap || update.value.size() != update.planeSize ||
       (!update.unknown.empty() && update.unknown.size() != update.planeSize)) {
     status = OBELISK_RT_INVALID_HANDLE;
+  } else if (update.referencePath) {
+    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    status = lane
+                 ? obelisk_rt_v1_reference_path_store(
+                       lane, update.destination, update.value.data(),
+                       update.unknown.empty() ? nullptr : update.unknown.data())
+                 : OBELISK_RT_INVALID_LIFECYCLE;
   } else {
     ObjectLock lock(destination);
     uint8_t *base = reinterpret_cast<uint8_t *>(update.destination);

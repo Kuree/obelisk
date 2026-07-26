@@ -624,6 +624,12 @@ namespace obelisk {
 FailureOr<DPIABIType> classifyDPIABIType(Type type, Location location) {
   using namespace simlowering;
   namespace semantic = ::obelisk::ir;
+  if (isa<semantic::DynArrayType, semantic::QueueType, semantic::OpenArrayType,
+          sim::DynamicArrayType, sim::QueueType>(type)) {
+    emitError(location)
+        << "DPI-C dynamic-array and queue marshalling is unsupported";
+    return failure();
+  }
   if (auto enumeration = dyn_cast<semantic::EnumType>(type))
     return classifyDPIABIType(enumeration.getBaseType(), location);
   auto integral = dyn_cast<semantic::IntegralType>(type);

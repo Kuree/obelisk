@@ -9,6 +9,8 @@
 _Static_assert(sizeof(obelisk_rt_status) == 4, "status ABI changed");
 _Static_assert(sizeof(obelisk_rt_arg_kind) == 4, "argument kind ABI changed");
 _Static_assert(sizeof(obelisk_rt_arg_flags) == 4, "argument flags ABI changed");
+_Static_assert(OBELISK_RT_ARG_MANAGED_CONTAINER == 6,
+               "managed container argument kind ABI changed");
 _Static_assert(offsetof(obelisk_rt_arg_v1, kind) == 0,
                "argument kind offset changed");
 _Static_assert(offsetof(obelisk_rt_arg_v1, flags) == 4,

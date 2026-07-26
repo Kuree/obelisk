@@ -38,6 +38,133 @@ module {
 // -----
 
 module {
+  func.func @bad_typed_container_create(%size: i64) {
+    // expected-error @+1 {{element metadata does not match the result container element type}}
+    %array = "obelisk_sim.container.create"(%size) {
+      type_id = 42 : i64, element_kind = 3 : i32,
+      element_flags = 0 : i32, value_size = 8 : i64,
+      alignment = 1 : i64, bit_width = 64 : i64,
+      trace_offsets = array<i64>, trace_kinds = array<i32>,
+      container_kind = 1 : i32, bound = 0 : i64
+    } : (i64) -> !obelisk_sim.dynamic_array<i32>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @bad_packed_aggregate_container_create(%size: i64) {
+    // expected-error @+1 {{element metadata does not match the result container element type}}
+    %array = "obelisk_sim.container.create"(%size) {
+      type_id = 43 : i64, element_kind = 7 : i32,
+      element_flags = 0 : i32, value_size = 1 : i64,
+      alignment = 1 : i64, bit_width = 8 : i64,
+      trace_offsets = array<i64>, trace_kinds = array<i32>,
+      container_kind = 1 : i32, bound = 0 : i64
+    } : (i64) ->
+      !obelisk_sim.dynamic_array<!obelisk_sim.packed_array<7 : 0 x i1>>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @missing_aggregate_trace(%size: i64) {
+    // expected-error @+1 {{trace inventory does not match the result container element type}}
+    %array = "obelisk_sim.container.create"(%size) {
+      type_id = 44 : i64, element_kind = 7 : i32,
+      element_flags = 0 : i32, value_size = 16 : i64,
+      alignment = 1 : i64, bit_width = 128 : i64,
+      trace_offsets = array<i64>, trace_kinds = array<i32>,
+      container_kind = 1 : i32, bound = 0 : i64
+    } : (i64) -> !obelisk_sim.dynamic_array<!obelisk_sim.unpacked_struct<[
+      #obelisk_sim.field<name = "number", type = i32, ordinal = 0, packedOffset = 0>,
+      #obelisk_sim.field<name = "text", type = !obelisk_sim.string, ordinal = 1, packedOffset = 0>
+    ]>>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @wrong_aggregate_trace_kind(%size: i64) {
+    // expected-error @+1 {{trace inventory does not match the result container element type}}
+    %array = "obelisk_sim.container.create"(%size) {
+      type_id = 45 : i64, element_kind = 7 : i32,
+      element_flags = 0 : i32, value_size = 16 : i64,
+      alignment = 1 : i64, bit_width = 128 : i64,
+      trace_offsets = array<i64: 8>, trace_kinds = array<i32: 1>,
+      container_kind = 1 : i32, bound = 0 : i64
+    } : (i64) -> !obelisk_sim.dynamic_array<!obelisk_sim.unpacked_struct<[
+      #obelisk_sim.field<name = "number", type = i32, ordinal = 0, packedOffset = 0>,
+      #obelisk_sim.field<name = "text", type = !obelisk_sim.string, ordinal = 1, packedOffset = 0>
+    ]>>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @wrong_aggregate_trace_offset(%size: i64) {
+    // expected-error @+1 {{trace inventory does not match the result container element type}}
+    %array = "obelisk_sim.container.create"(%size) {
+      type_id = 46 : i64, element_kind = 7 : i32,
+      element_flags = 0 : i32, value_size = 16 : i64,
+      alignment = 1 : i64, bit_width = 128 : i64,
+      trace_offsets = array<i64: 0>, trace_kinds = array<i32: 2>,
+      container_kind = 1 : i32, bound = 0 : i64
+    } : (i64) -> !obelisk_sim.dynamic_array<!obelisk_sim.unpacked_struct<[
+      #obelisk_sim.field<name = "number", type = i32, ordinal = 0, packedOffset = 0>,
+      #obelisk_sim.field<name = "text", type = !obelisk_sim.string, ordinal = 1, packedOffset = 0>
+    ]>>
+    return
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @conflicting_container_descriptors {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "first"
+    obelisk_sim.code_unit.decl 2 in 0 initial hierarchy "second"
+    obelisk_sim.func @first(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %size: i64 {obelisk_sim.capture_kind = 1 : i32})
+        attributes {entry_kind = 1 : i32, code_unit_id = 1 : i64} {
+      %array = "obelisk_sim.container.create"(%size) {
+        type_id = 99 : i64, element_kind = 1 : i32,
+        element_flags = 0 : i32, value_size = 4 : i64,
+        alignment = 1 : i64, bit_width = 32 : i64,
+        trace_offsets = array<i64>, trace_kinds = array<i32>,
+        container_kind = 1 : i32, bound = 0 : i64
+      } : (i64) -> !obelisk_sim.dynamic_array<i32>
+      obelisk_sim.return
+    }
+    obelisk_sim.func @second(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %size: i64 {obelisk_sim.capture_kind = 1 : i32})
+        attributes {entry_kind = 1 : i32, code_unit_id = 2 : i64} {
+      // expected-error @+1 {{element type ID 99 conflicts with another container descriptor}}
+      %array = "obelisk_sim.container.create"(%size) {
+        type_id = 99 : i64, element_kind = 3 : i32,
+        element_flags = 0 : i32, value_size = 8 : i64,
+        alignment = 1 : i64, bit_width = 64 : i64,
+        trace_offsets = array<i64>, trace_kinds = array<i32>,
+        container_kind = 1 : i32, bound = 0 : i64
+      } : (i64) -> !obelisk_sim.dynamic_array<f64>
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.design @dpi_missing_status {
     obelisk_sim.scope.decl 0
     obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "dpi_missing_status"
@@ -1343,7 +1470,7 @@ module {
     obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %fd = arith.constant 1 : i32
       %value = arith.constant 0 : i8
-      // expected-error @+1 {{display item flags contain an unknown bit}}
+      // expected-error @+1 {{container display flags require a container operand}}
       obelisk_sim.display %ctx to %fd(%value) newline = false radix = 10 flags = [16] : i8
       obelisk_sim.return
     }

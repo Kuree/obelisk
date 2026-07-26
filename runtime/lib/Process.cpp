@@ -3609,6 +3609,82 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
             context->schedulerStatus = OBELISK_RT_INVALID_DESIGN;
             return;
           }
+          if (update.managedValue) {
+            if (update.bitWidth != 64 || baseOffset < 0 ||
+                (static_cast<uint64_t>(baseOffset) & 63) != 0 ||
+                update.value.size() != sizeof(obelisk_rt_object_v1 *) ||
+                update.unknown.size() != 0 ||
+                (update.rootedManaged &&
+                 obelisk_rt_managed_object_context(update.rootedManaged) !=
+                     context)) {
+              context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+              return;
+            }
+            obelisk_rt_object_v1 *previous = nullptr;
+            uint64_t byteOffset = static_cast<uint64_t>(baseOffset) / 8;
+            if (automatic) {
+              if (automaticState->managedRootRegistered) {
+                if (baseOffset != 0) {
+                  context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+                  return;
+                }
+                previous = automaticState->managedValue;
+                automaticState->managedValue = update.rootedManaged;
+              } else {
+                if (byteOffset > automaticState->value.size() ||
+                    sizeof(previous) >
+                        automaticState->value.size() - byteOffset ||
+                    std::find(automaticState->managedRootByteOffsets.begin(),
+                              automaticState->managedRootByteOffsets.end(),
+                              byteOffset) ==
+                        automaticState->managedRootByteOffsets.end()) {
+                  context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+                  return;
+                }
+                std::memcpy(&previous,
+                            automaticState->value.data() + byteOffset,
+                            sizeof(previous));
+                std::memcpy(automaticState->value.data() + byteOffset,
+                            &update.rootedManaged,
+                            sizeof(update.rootedManaged));
+              }
+            } else {
+              if (!canonical) {
+                context->schedulerStatus = OBELISK_RT_INVALID_DESIGN;
+                return;
+              }
+              uint64_t planeBit = staticState
+                                      ? staticState->bitOffset +
+                                            static_cast<uint64_t>(baseOffset)
+                                      : static_cast<uint64_t>(baseOffset);
+              if ((planeBit & 63) != 0 ||
+                  planeBit / 64 >= context->stateValue.size()) {
+                context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+                return;
+              }
+              std::memcpy(&previous, &context->stateValue[planeBit / 64],
+                          sizeof(previous));
+              std::memcpy(&context->stateValue[planeBit / 64],
+                          &update.rootedManaged, sizeof(update.rootedManaged));
+            }
+            if (previous != update.rootedManaged) {
+              changed = true;
+              publicationChanged = true;
+              if (context->nextSchedulerSequence == 0) {
+                context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
+                return;
+              }
+              context->scheduledSignalEvents.push_back(
+                  {context->nextSchedulerSequence++, update.bitOffset, 64,
+                   OBELISK_RT_SIGNAL_CHANGE});
+              obelisk_rt_invalidate_signal_snapshots_unlocked(
+                  context, update.bitOffset, 64);
+              if (!obelisk_rt_notify_observer_signal_unlocked(
+                      context, update.bitOffset, 64))
+                return;
+            }
+            return;
+          }
           bool equalStringContents = false;
           if (update.stringValue) {
             if (update.bitWidth != 64 || baseOffset < 0 ||

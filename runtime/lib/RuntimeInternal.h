@@ -30,6 +30,19 @@ struct FileEntry {
   bool writable = false;
 };
 
+struct OwnedElementTypeDescriptor {
+  obelisk_rt_element_type_v1 descriptor{};
+  obelisk_rt_trace_layout_v1 trace{};
+  std::vector<obelisk_rt_trace_entry_v1> entries;
+};
+
+// Append an IEEE-style recursive assignment-pattern representation of a
+// managed sequential container. This is shared by display formatting while
+// keeping the container storage layout private to Containers.cpp.
+obelisk_rt_status obelisk_rt_container_pattern(obelisk_rt_object_v1 *container,
+                                               std::string &output,
+                                               unsigned depth);
+
 // Exact membership set optimized for monotonically allocated process tokens.
 // Completed tokens normally form long contiguous runs, so retaining their
 // await/join semantics costs one pair of endpoints per run rather than one
@@ -347,7 +360,9 @@ struct ScheduledNBA {
   uint64_t bitOffset = 0;
   uint64_t bitWidth = 0;
   bool stringValue = false;
+  bool managedValue = false;
   obelisk_rt_string_v1 rootedString = 0;
+  obelisk_rt_object_v1 *rootedManaged = nullptr;
   std::vector<uint8_t> value;
   std::vector<uint8_t> unknown;
 };
@@ -359,6 +374,7 @@ struct ScheduledManagedNBA {
   obelisk_rt_object_v1 *destination = nullptr;
   uint64_t offset = 0;
   uint64_t planeSize = 0;
+  bool referencePath = false;
   std::vector<uint8_t> value;
   std::vector<uint8_t> unknown;
   std::vector<obelisk_rt_object_v1 *> managedValues;
@@ -549,8 +565,12 @@ struct obelisk_rt_context {
       managedClasses;
   std::unordered_map<uint64_t, const obelisk_rt_element_type_v1 *>
       managedElementTypes;
+  std::unordered_map<uint64_t, std::unique_ptr<OwnedElementTypeDescriptor>>
+      managedOwnedElementTypes;
   std::vector<obelisk_rt_process_instance_v1 *> managedRootProcesses;
   ManagedHeap *managedHeap = nullptr;
+  uint64_t randomState = 0;
+  uint64_t randomIncrement = UINT64_C(1442695040888963407);
 
   obelisk_rt_context();
   ~obelisk_rt_context();

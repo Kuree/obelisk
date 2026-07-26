@@ -195,6 +195,14 @@ constexpr uint32_t kIntrinsicContainerRead =
     OBELISK_RT_INTRINSIC_V1_CONTAINER_READ;
 constexpr uint32_t kIntrinsicContainerWrite =
     OBELISK_RT_INTRINSIC_V1_CONTAINER_WRITE;
+constexpr uint32_t kIntrinsicContainerCreate =
+    OBELISK_RT_INTRINSIC_V1_CONTAINER_CREATE;
+constexpr uint32_t kIntrinsicContainerClone =
+    OBELISK_RT_INTRINSIC_V1_CONTAINER_CLONE;
+constexpr uint32_t kIntrinsicContainerDelete =
+    OBELISK_RT_INTRINSIC_V1_CONTAINER_DELETE;
+constexpr uint32_t kIntrinsicRandomBounded =
+    OBELISK_RT_INTRINSIC_V1_RANDOM_BOUNDED;
 
 bool isObserverCaptureBridge(Block &block) {
   if (block.getOperations().size() != 1)
@@ -303,6 +311,10 @@ struct Layout {
   uint64_t size = 0;
   uint64_t auxiliary = 0;
 };
+
+bool isManagedAggregateWord(uint8_t kind) {
+  return kind == Managed || kind == String;
+}
 
 struct Instruction {
   uint16_t opcode = Nop;
@@ -1292,6 +1304,12 @@ private:
     return offset;
   }
 
+  uint64_t addRawConstant(ArrayRef<uint8_t> bytes) {
+    uint64_t offset = constants.size();
+    llvm::append_range(constants, bytes);
+    return offset;
+  }
+
   uint64_t addBytesConstant(ArrayRef<uint8_t> bytes) {
     uint64_t dataOffset = constants.size();
     llvm::append_range(constants, bytes);
@@ -1503,13 +1521,14 @@ private:
   static bool mayCollect(Operation *operation) {
     return isa<sim::SimClassAllocOp, sim::SimClassCopyOp, sim::SimWeakCreateOp,
                sim::SimReferencePathIndexOp, sim::SimContainerCreateLikeOp,
-               sim::SimGCSafepointOp,
+               sim::SimContainerCreateOp, sim::SimContainerCloneOp,
+               sim::SimContainerWriteOp, sim::SimArgumentRefStoreOp,
+               sim::SimReferencePathNBAEnqueueOp, sim::SimGCSafepointOp,
                sim::SimStringLiteralOp, sim::SimStringFromPackedOp,
                sim::SimStringConcatOp, sim::SimStringRepeatOp,
                sim::SimStringPutcOp, sim::SimStringSubstrOp,
-               sim::SimStringCaseConvertOp,
-               sim::SimStringFormatIntegerOp, sim::SimStringFormatRealOp,
-               sim::SimFileGetlineStringOp,
+               sim::SimStringCaseConvertOp, sim::SimStringFormatIntegerOp,
+               sim::SimStringFormatRealOp, sim::SimFileGetlineStringOp,
                sim::SimCallOp, sim::SimClassDirectCallOp,
                sim::SimClassVirtualCallOp, sim::SimDPICallOp>(operation);
   }
@@ -2004,6 +2023,36 @@ private:
       return emitIntrinsic(plan, kIntrinsicContainerCreateLike,
                            {op.getPreferred(), op.getFallback(), op.getSize()},
                            {op.getResult()});
+    if (auto op = dyn_cast<sim::SimContainerCreateOp>(operation)) {
+      SmallVector<uint8_t> traceSlots;
+      for (auto [offset, kind] :
+           llvm::zip_equal(op.getTraceOffsets(), op.getTraceKinds())) {
+        append64(traceSlots, static_cast<uint64_t>(offset));
+        append32(traceSlots, static_cast<uint32_t>(kind));
+        append32(traceSlots, 0);
+      }
+      return emitIntrinsicRegisters(
+          plan, kIntrinsicContainerCreate,
+          {emitU64Constant(plan, op.getContainerKind()),
+           emitU64Constant(plan, op.getTypeId()),
+           emitU64Constant(plan, op.getElementKind()),
+           emitU64Constant(plan, op.getElementFlags()),
+           emitU64Constant(plan, op.getValueSize()),
+           emitU64Constant(plan, op.getAlignment()),
+           emitU64Constant(plan, op.getBitWidth()),
+           emitBytesConstant(plan, traceSlots), reg(plan, op.getSize()),
+           emitU64Constant(plan, op.getBound())},
+          {reg(plan, op.getResult())});
+    }
+    if (auto op = dyn_cast<sim::SimContainerCloneOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicContainerClone, {op.getInput()},
+                           {op.getResult()});
+    if (auto op = dyn_cast<sim::SimContainerDeleteOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicContainerDelete, {op.getContainer()},
+                           {});
+    if (auto op = dyn_cast<sim::SimRandomBoundedOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicRandomBounded, {op.getBound()},
+                           {op.getResult()});
     if (auto op = dyn_cast<sim::SimContainerReadOp>(operation))
       return emitIntrinsic(plan, kIntrinsicContainerRead,
                            {op.getContainer(), op.getIndex()},
@@ -2086,17 +2135,30 @@ private:
     if (auto op = dyn_cast<sim::SimStringFormatRealOp>(operation))
       return emitIntrinsic(plan, kIntrinsicStringFormatReal, {op.getInput()},
                            {op.getResult()});
-    if (isa<sim::SimClassNullOp, sim::SimManagedNullOp,
-            sim::SimEventNullOp>(operation)) {
+    if (isa<sim::SimClassNullOp, sim::SimManagedNullOp>(operation)) {
       uint32_t destination = reg(plan, operation->getResult(0));
       emit({Constant, 0, destination, 0, 0, 0, 0,
             addZeroConstant(plan.layouts[destination])});
       return success();
     }
+    if (isa<sim::SimEventNullOp>(operation)) {
+      uint32_t destination = reg(plan, operation->getResult(0));
+      const Layout &layout = plan.layouts[destination];
+      if (layout.kind != Handle || layout.size != 32)
+        return operation->emitOpError(
+            "event null requires the canonical handle layout");
+      SmallVector<uint8_t, 32> bytes(layout.size, 0);
+      write32(bytes, 0, OBELISK_RT_DESCRIPTOR_EVENT);
+      write64(bytes, 8, UINT64_MAX);
+      write64(bytes, 16, UINT64_MAX);
+      emit({Constant, 0, destination, 0, 0, 0, 0, addRawConstant(bytes)});
+      return success();
+    }
     if (auto op = dyn_cast<sim::SimReferencePathIndexOp>(operation))
-      return emitIntrinsic(plan, kIntrinsicReferencePathIndex,
-                           {op.getContainer(), op.getIndex()},
-                           {op.getResult()});
+      return emitIntrinsic(
+          plan, kIntrinsicReferencePathIndex,
+          {op.getContainer(), op.getIndex(), op.getOwnerReference()},
+          {op.getResult()});
     if (auto op = dyn_cast<sim::SimArgumentRefFromPathOp>(operation))
       return emitIntrinsic(plan, kIntrinsicArgumentRefFromPath, {op.getInput()},
                            {op.getResult()});
@@ -2171,7 +2233,8 @@ private:
           (storage->fourState ? 1u : 0u) |
           ((isa<sim::StringType>(op.getResult().getType())
                 ? OBELISK_RT_ARGUMENT_VALUE_STRING
-            : isa<sim::ClassHandleType>(op.getResult().getType())
+            : isa<sim::ClassHandleType, sim::DynamicArrayType, sim::QueueType>(
+                  op.getResult().getType())
                 ? OBELISK_RT_ARGUMENT_VALUE_CLASS
                 : OBELISK_RT_ARGUMENT_VALUE_BITS)
            << 1);
@@ -2192,7 +2255,8 @@ private:
           (storage->fourState ? 1u : 0u) |
           ((isa<sim::StringType>(op.getValue().getType())
                 ? OBELISK_RT_ARGUMENT_VALUE_STRING
-            : isa<sim::ClassHandleType>(op.getValue().getType())
+            : isa<sim::ClassHandleType, sim::DynamicArrayType, sim::QueueType>(
+                  op.getValue().getType())
                 ? OBELISK_RT_ARGUMENT_VALUE_CLASS
                 : OBELISK_RT_ARGUMENT_VALUE_BITS)
            << 1);
@@ -2230,6 +2294,19 @@ private:
           getManagedValueStorage(op.getValue().getType(), dataLayout);
       if (failed(storage))
         return op.emitOpError("managed NBA value has no bytecode field layout");
+      SmallVector<uint32_t> inputs{reg(plan, op.getDestination()),
+                                   reg(plan, op.getValue()),
+                                   emitU64Constant(plan, storage->planeSize)};
+      if (op.getDelay())
+        inputs.push_back(reg(plan, op.getDelay()));
+      return emitIntrinsicRegisters(plan, kIntrinsicManagedNBA, inputs, {});
+    }
+    if (auto op = dyn_cast<sim::SimReferencePathNBAEnqueueOp>(operation)) {
+      FailureOr<ManagedValueStorage> storage =
+          getManagedValueStorage(op.getValue().getType(), dataLayout);
+      if (failed(storage))
+        return op.emitOpError(
+            "reference-path NBA value has no bytecode field layout");
       SmallVector<uint32_t> inputs{reg(plan, op.getDestination()),
                                    reg(plan, op.getValue()),
                                    emitU64Constant(plan, storage->planeSize)};
@@ -2442,9 +2519,10 @@ private:
         if (!subelement)
           return op.emitOpError("aggregate element has no packed provenance");
         uint32_t elementRegister = reg(plan, element);
-        uint16_t flags = plan.layouts[elementRegister].kind == Managed
-                             ? OBELISK_RT_DB_AGGREGATE_MANAGED
-                             : 0;
+        uint16_t flags =
+            isManagedAggregateWord(plan.layouts[elementRegister].kind)
+                ? OBELISK_RT_DB_AGGREGATE_MANAGED
+                : 0;
         emit({Insert, flags, destination, destination, elementRegister, 0, 0,
               subelement->first});
       }
@@ -2456,7 +2534,7 @@ private:
       if (!subelement)
         return op.emitOpError("aggregate element has no packed provenance");
       uint32_t destination = reg(plan, op.getResult());
-      uint16_t flags = plan.layouts[destination].kind == Managed
+      uint16_t flags = isManagedAggregateWord(plan.layouts[destination].kind)
                            ? OBELISK_RT_DB_AGGREGATE_MANAGED
                            : 0;
       emit({Extract, flags, destination, reg(plan, op.getInput()),
@@ -2469,7 +2547,7 @@ private:
       if (!subelement)
         return op.emitOpError("aggregate element has no packed provenance");
       uint32_t replacement = reg(plan, op.getReplacement());
-      uint16_t flags = plan.layouts[replacement].kind == Managed
+      uint16_t flags = isManagedAggregateWord(plan.layouts[replacement].kind)
                            ? OBELISK_RT_DB_AGGREGATE_MANAGED
                            : 0;
       emit({Insert, flags, reg(plan, op.getResult()), reg(plan, op.getInput()),
@@ -2482,7 +2560,7 @@ private:
       return encodeUnionConstruct(plan, op);
     if (auto op = dyn_cast<sim::SimUnionExtractOp>(operation)) {
       uint32_t destination = reg(plan, op.getResult());
-      uint16_t flags = plan.layouts[destination].kind == Managed
+      uint16_t flags = isManagedAggregateWord(plan.layouts[destination].kind)
                            ? OBELISK_RT_DB_AGGREGATE_MANAGED
                            : 0;
       emit({Extract, flags, destination, reg(plan, op.getInput()),
@@ -3090,7 +3168,7 @@ private:
     if (failed(offset))
       return failure();
     uint32_t destination = reg(plan, op.getResult());
-    uint16_t flags = plan.layouts[destination].kind == Managed
+    uint16_t flags = isManagedAggregateWord(plan.layouts[destination].kind)
                          ? OBELISK_RT_DB_AGGREGATE_MANAGED
                          : 0;
     emit({Extract, flags, destination, reg(plan, op.getInput()), *offset});
@@ -3106,7 +3184,7 @@ private:
       return op.emitOpError("union has no fixed packed representation");
     uint32_t destination = reg(plan, op.getResult());
     uint32_t value = reg(plan, op.getValue());
-    uint16_t flags = plan.layouts[value].kind == Managed
+    uint16_t flags = isManagedAggregateWord(plan.layouts[value].kind)
                          ? OBELISK_RT_DB_AGGREGATE_MANAGED
                          : 0;
     emit({Extract, flags, destination, value, kInvalidRegister});

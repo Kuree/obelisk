@@ -1,4 +1,4 @@
-// RUN: not obelisk -emit-sim %s 2>&1 | FileCheck %s
+// RUN: obelisk -emit-sim %s | FileCheck %s
 
 module unsupported_foreach;
   int values[];
@@ -8,4 +8,6 @@ module unsupported_foreach;
       values[index] = index;
 endmodule
 
-// CHECK: foreach over runtime-sized or associative collections is not supported
+// CHECK: obelisk_sim.container.size
+// CHECK: cf.cond_br
+// CHECK: obelisk_sim.container.write

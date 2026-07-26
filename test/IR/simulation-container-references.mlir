@@ -13,10 +13,12 @@ module attributes {
     obelisk_sim.func @capture(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %queue: !obelisk_sim.queue<i64, 0> {obelisk_sim.capture_kind = 1 : i32},
-        %index: i64 {obelisk_sim.capture_kind = 1 : i32})
+        %index: i64 {obelisk_sim.capture_kind = 1 : i32},
+        %owner: !obelisk_sim.argument_ref<!obelisk_sim.queue<i64, 0>> {obelisk_sim.capture_kind = 1 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 1 : i32} {
-      %path = obelisk_sim.reference_path.index %ctx, %queue[%index] :
-        (!obelisk_sim.context, !obelisk_sim.queue<i64, 0>, i64) ->
+      %path = obelisk_sim.reference_path.index %ctx, %queue[%index] watching %owner :
+        (!obelisk_sim.context, !obelisk_sim.queue<i64, 0>, i64,
+         !obelisk_sim.argument_ref<!obelisk_sim.queue<i64, 0>>) ->
         !obelisk_sim.reference_path<i64>
       %reference = obelisk_sim.argument_ref.from_path %path :
         !obelisk_sim.reference_path<i64> ->

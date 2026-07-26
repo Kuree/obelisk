@@ -275,6 +275,52 @@ def SimContainerCreateLikeOp : SimOp<"container.create_like", [
   let hasVerifier = 1;
 }
 
+def SimContainerCreateOp : SimOp<"container.create", [
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "create a sequential container from stable type metadata";
+  let arguments = (ins
+    I64:$size,
+    I64Attr:$type_id,
+    I32Attr:$element_kind,
+    I32Attr:$element_flags,
+    I64Attr:$value_size,
+    I64Attr:$alignment,
+    I64Attr:$bit_width,
+    DenseI64ArrayAttr:$trace_offsets,
+    DenseI32ArrayAttr:$trace_kinds,
+    I32Attr:$container_kind,
+    I64Attr:$bound
+  );
+  let results = (outs AnyType:$result);
+  let hasVerifier = 1;
+}
+
+def SimContainerCloneOp : SimOp<"container.clone", [
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "deep-clone a dynamic array or queue value";
+  let arguments = (ins AnyType:$input);
+  let results = (outs AnyType:$result);
+  let hasVerifier = 1;
+}
+
+def SimContainerDeleteOp : SimOp<"container.delete", [
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "clear a dynamic array or queue";
+  let arguments = (ins AnyType:$container);
+  let hasVerifier = 1;
+}
+
+def SimRandomBoundedOp : SimOp<"random.bounded", [
+    MemoryEffects<[MemRead<SimRNGResource>, MemWrite<SimRNGResource>]>
+  ]> {
+  let summary = "draw a deterministic context-local integer below a bound";
+  let arguments = (ins I64:$bound);
+  let results = (outs I64:$result);
+}
+
 def SimContainerReadOp : SimOp<"container.read", [
     MemoryEffects<[MemRead<SimHeapResource>]>
   ]> {
@@ -522,6 +568,25 @@ def SimManagedNBAEnqueueOp : SimOp<"managed.nba.enqueue", [
   let hasVerifier = 1;
 }
 
+def SimReferencePathNBAEnqueueOp : SimOp<"reference_path.nba.enqueue", [
+    MemoryEffects<[
+      MemRead<SimHeapResource>, MemWrite<SimHeapResource>,
+      MemWrite<SimSchedulerResource>
+    ]>
+  ]> {
+  let summary = "schedule a nonblocking dynamic-container element update";
+  let description = [{
+    Captures a managed index path and the right-hand-side value. The scheduler
+    roots the path until commit, then resolves the captured container and index;
+    invalid indices remain no-ops.
+  }];
+  let arguments = (ins AnyType:$value, SimReferencePathType:$destination,
+                       Optional<SimTimeType>:$delay);
+  let assemblyFormat = [{$value `to` $destination (`after` $delay^)? attr-dict
+    `:` functional-type(operands, results)}];
+  let hasVerifier = 1;
+}
+
 def SimArgumentRefFromRefOp : SimOp<"argument_ref.from_ref", [Pure]> {
   let summary = "erase an ordinary reference into an exact-alias formal";
   let arguments = (ins SimRefType:$input);
@@ -545,10 +610,11 @@ def SimReferencePathIndexOp : SimOp<"reference_path.index", [
     MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
   ]> {
   let summary = "capture an escaping dynamic-array or queue element lvalue";
-  let arguments = (ins SimContextType:$context, AnyType:$container, I64:$index);
+  let arguments = (ins SimContextType:$context, AnyType:$container, I64:$index,
+                       SimArgumentRefType:$owner_reference);
   let results = (outs SimReferencePathType:$result);
   let assemblyFormat =
-      "$context `,` $container `[` $index `]` attr-dict `:` functional-type(operands, results)";
+      "$context `,` $container `[` $index `]` `watching` $owner_reference attr-dict `:` functional-type(operands, results)";
   let hasVerifier = 1;
 }
 

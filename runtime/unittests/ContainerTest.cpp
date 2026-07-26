@@ -305,6 +305,87 @@ TEST_F(ManagedValueTest, FormatsManagedStringArguments) {
   obelisk_rt_v1_buffer_release(&output);
 }
 
+TEST_F(ManagedValueTest, CreatesTypedContainersAndFormatsPatterns) {
+  obelisk_rt_object_v1 *array = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_container_create_typed(
+                lane, OBELISK_RT_CONTAINER_DYNAMIC_ARRAY, 777,
+                OBELISK_RT_ELEMENT_BITS, OBELISK_RT_ELEMENT_SIGNED,
+                sizeof(uint32_t), 1, 32, nullptr, 0, 2, 0, &array),
+            OBELISK_RT_OK);
+  uint32_t first = 3;
+  uint32_t second = 1;
+  ASSERT_EQ(obelisk_rt_v1_container_write(lane, array, 0, &first, nullptr),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_container_write(lane, array, 1, &second, nullptr),
+            OBELISK_RT_OK);
+
+  obelisk_rt_arg_v1 argument{OBELISK_RT_ARG_MANAGED_CONTAINER, 0, 0, &array,
+                             nullptr};
+  obelisk_rt_format_env_v1 environment{};
+  environment.time_multiplier = 1;
+  obelisk_rt_buffer_v1 output{};
+  ASSERT_EQ(obelisk_rt_v1_format(context, "%p", 2, &argument, 1, &environment,
+                                 &output),
+            OBELISK_RT_OK);
+  EXPECT_EQ(
+      std::string(reinterpret_cast<const char *>(output.data), output.size),
+      "'{32'sb00000000000000000000000000000011, "
+      "32'sb00000000000000000000000000000001}");
+  obelisk_rt_v1_buffer_release(&output);
+
+  obelisk_rt_object_v1 *clone = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_container_clone(lane, array, &clone), OBELISK_RT_OK);
+  uint32_t replacement = 9;
+  ASSERT_EQ(
+      obelisk_rt_v1_container_write(lane, clone, 0, &replacement, nullptr),
+      OBELISK_RT_OK);
+  uint32_t observed = 0;
+  ASSERT_EQ(obelisk_rt_v1_container_read(array, 0, &observed, nullptr),
+            OBELISK_RT_OK);
+  EXPECT_EQ(observed, first);
+
+  obelisk_rt_object_v1 *conflict = nullptr;
+  EXPECT_EQ(obelisk_rt_v1_container_create_typed(
+                lane, OBELISK_RT_CONTAINER_DYNAMIC_ARRAY, 777,
+                OBELISK_RT_ELEMENT_REAL, 0, sizeof(double), 1, 64, nullptr, 0,
+                1, 0, &conflict),
+            OBELISK_RT_INVALID_DESIGN);
+  obelisk_rt_object_v1 *negativeSize = nullptr;
+  EXPECT_EQ(obelisk_rt_v1_container_create_typed(
+                lane, OBELISK_RT_CONTAINER_DYNAMIC_ARRAY, 778,
+                OBELISK_RT_ELEMENT_BITS, 0, sizeof(uint32_t), 1, 32, nullptr, 0,
+                UINT64_MAX, 0, &negativeSize),
+            OBELISK_RT_INVALID_ARGUMENT);
+}
+
+TEST_F(ManagedValueTest, SeededBoundedRandomIsRepeatableAndBounded) {
+  std::vector<uint64_t> first;
+  std::vector<uint64_t> second;
+  ASSERT_EQ(obelisk_rt_v1_context_seed(context, 12345), OBELISK_RT_OK);
+  for (unsigned index = 0; index != 32; ++index) {
+    uint64_t value = UINT64_MAX;
+    ASSERT_EQ(obelisk_rt_v1_random_bounded(context, 7, &value), OBELISK_RT_OK);
+    EXPECT_LT(value, 7u);
+    first.push_back(value);
+  }
+  ASSERT_EQ(obelisk_rt_v1_context_seed(context, 12345), OBELISK_RT_OK);
+  for (unsigned index = 0; index != first.size(); ++index) {
+    uint64_t value = UINT64_MAX;
+    ASSERT_EQ(obelisk_rt_v1_random_bounded(context, 7, &value), OBELISK_RT_OK);
+    second.push_back(value);
+  }
+  EXPECT_EQ(first, second);
+  uint64_t value = 0;
+  EXPECT_EQ(obelisk_rt_v1_random_bounded(context, 0, &value),
+            OBELISK_RT_INVALID_ARGUMENT);
+  const char *valid[] = {"sim", "--seed=18446744073709551615"};
+  EXPECT_EQ(obelisk_rt_v1_context_configure_argv(context, 2, valid),
+            OBELISK_RT_OK);
+  const char *invalid[] = {"sim", "--seed=18446744073709551616"};
+  EXPECT_EQ(obelisk_rt_v1_context_configure_argv(context, 2, invalid),
+            OBELISK_RT_INVALID_ARGUMENT);
+}
+
 TEST_F(ManagedValueTest, StringOperationsSurviveCollectionAtEveryAllocation) {
   ASSERT_EQ(obelisk_rt_v1_gc_set_threshold(context, 1), OBELISK_RT_OK);
   obelisk_rt_string_v1 left = 0;
@@ -684,6 +765,94 @@ TEST_F(ManagedValueTest, ContainersTraceStringsAndRecursivelyCloneContainers) {
   EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &stringsRoot), OBELISK_RT_OK);
 }
 
+TEST_F(ManagedValueTest,
+       RegisteredAggregateContainersTraceAndCloneManagedMembers) {
+  struct Aggregate {
+    obelisk_rt_string_v1 text;
+    obelisk_rt_object_v1 *nested;
+    uint64_t number;
+  };
+  const obelisk_rt_element_trace_slot_v1 traceSlots[] = {
+      {offsetof(Aggregate, text), OBELISK_RT_MANAGED_SLOT_STRING, 0},
+      {offsetof(Aggregate, nested), OBELISK_RT_MANAGED_SLOT_CONTAINER, 0},
+  };
+
+  obelisk_rt_object_v1 *outer = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_container_create_typed(
+                lane, OBELISK_RT_CONTAINER_DYNAMIC_ARRAY, 778,
+                OBELISK_RT_ELEMENT_AGGREGATE, 0, sizeof(Aggregate),
+                alignof(Aggregate), 0, traceSlots, std::size(traceSlots), 1, 0,
+                &outer),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 outerRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &outerRoot, &outer),
+            OBELISK_RT_OK);
+
+  obelisk_rt_object_v1 *inner = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_dynamic_array_create(lane, &wordElement, 1, &inner),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 innerRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &innerRoot, &inner),
+            OBELISK_RT_OK);
+  uint64_t original = 12;
+  ASSERT_EQ(obelisk_rt_v1_container_write(lane, inner, 0, &original, nullptr),
+            OBELISK_RT_OK);
+
+  obelisk_rt_string_v1 text = 0;
+  ASSERT_EQ(obelisk_rt_v1_string_create(lane, "kept", 4, &text), OBELISK_RT_OK);
+  obelisk_rt_gc_managed_root_v1 textRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_push(lane, &textRoot, &text),
+            OBELISK_RT_OK);
+  Aggregate input{text, inner, 7};
+  ASSERT_EQ(obelisk_rt_v1_container_write(lane, outer, 0, &input, nullptr),
+            OBELISK_RT_OK);
+
+  uint64_t changed = 34;
+  ASSERT_EQ(obelisk_rt_v1_container_write(lane, inner, 0, &changed, nullptr),
+            OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_managed_root_pop(lane, &textRoot), OBELISK_RT_OK);
+  text = 0;
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+
+  Aggregate stored{};
+  ASSERT_EQ(obelisk_rt_v1_container_read(outer, 0, &stored, nullptr),
+            OBELISK_RT_OK);
+  EXPECT_EQ(stored.number, 7u);
+  char scratch[8];
+  const char *bytes = nullptr;
+  uint64_t size = 0;
+  ASSERT_EQ(obelisk_rt_v1_string_view(stored.text, scratch, &bytes, &size),
+            OBELISK_RT_OK);
+  EXPECT_EQ(std::string(bytes, size), "kept");
+  EXPECT_NE(stored.nested, inner);
+  uint64_t storedValue = 0;
+  ASSERT_EQ(
+      obelisk_rt_v1_container_read(stored.nested, 0, &storedValue, nullptr),
+      OBELISK_RT_OK);
+  EXPECT_EQ(storedValue, original);
+
+  obelisk_rt_object_v1 *copy = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_container_clone(lane, outer, &copy), OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 copyRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &copyRoot, &copy), OBELISK_RT_OK);
+  Aggregate copied{};
+  ASSERT_EQ(obelisk_rt_v1_container_read(copy, 0, &copied, nullptr),
+            OBELISK_RT_OK);
+  EXPECT_NE(copied.nested, stored.nested);
+  ASSERT_EQ(
+      obelisk_rt_v1_container_write(lane, copied.nested, 0, &changed, nullptr),
+      OBELISK_RT_OK);
+  storedValue = 0;
+  ASSERT_EQ(
+      obelisk_rt_v1_container_read(stored.nested, 0, &storedValue, nullptr),
+      OBELISK_RT_OK);
+  EXPECT_EQ(storedValue, original);
+
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &copyRoot), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &innerRoot), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &outerRoot), OBELISK_RT_OK);
+}
+
 TEST_F(ManagedValueTest, QueueRingOperationsPreserveLogicalOrder) {
   obelisk_rt_object_v1 *queue = nullptr;
   ASSERT_EQ(obelisk_rt_v1_queue_create(lane, &wordElement, UINT64_MAX, &queue),
@@ -1008,8 +1177,9 @@ TEST_F(ManagedValueTest, ReferencePathsResolveAgainAfterContainerMutation) {
   ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &queueRoot, &queue),
             OBELISK_RT_OK);
   obelisk_rt_object_v1 *path = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_reference_path_index_create(lane, queue, 0, &path),
-            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_reference_path_index_create(lane, queue, 0, 0, 0, &path),
+      OBELISK_RT_OK);
   obelisk_rt_gc_root_v1 pathRoot{};
   ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &pathRoot, &path), OBELISK_RT_OK);
   uint64_t value = 41;
