@@ -168,6 +168,12 @@ def judge_one(obelisk: str, top: Path, timeout: float) -> model.Outcome:
         result = runner.execute(str(binary), timeout)
         if FINISHED_MARKER in result.stdout:
             return model.Outcome(model.PASS)
+        if FINISHED_MARKER in top_text:
+            # Test has the marker but didn't print it — genuine runtime bug.
+            return model.Outcome(model.RUN_FAIL, result.stdout)
+        # Test doesn't use the marker at all. Treat clean exit as pass.
+        if result.ok:
+            return model.Outcome(model.PASS)
         return model.Outcome(model.RUN_FAIL, result.stdout)
 
 

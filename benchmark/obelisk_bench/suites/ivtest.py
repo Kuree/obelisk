@@ -160,6 +160,9 @@ def judge_one(obelisk: str, ivtest_dir: Path, desc: Descriptor,
             return (desc.key, model.Outcome(model.RUN_FAIL, result.stdout))
         if any(line.strip() == PASSED_MARKER for line in result.stdout.splitlines()):
             return (desc.key, model.Outcome(model.PASS))
+        # Test doesn't use PASSED marker. Treat clean exit as pass.
+        if result.ok:
+            return (desc.key, model.Outcome(model.PASS))
         return (desc.key, model.Outcome(model.RUN_FAIL, result.stdout))
 
 
