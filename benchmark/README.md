@@ -28,7 +28,8 @@ each suite. The two suites differ only in what a "test" is:
   design's `module t` is wrapped in a generated clock top-shell (the same one
   Verilator's `driver.py` would produce) so clocked designs advance.
 - **ivtest** — Icarus's `ivltests` corpus, described by per-test list entries in
-  either of ivtest's two formats (JSON descriptors or the legacy inline form).
+  JSON, legacy inline, or VPI-regression form. VPI entries build their C/C++
+  sources into a shared module and attach it as a positional native input.
 
 Diagnostics from compile failures are bucketed into named language features
 (`classify.py`), so the output is a roadmap, not just a pass count.
@@ -46,6 +47,16 @@ python3 benchmark/run.py verilator --fetch
 # ivtest list selection (default: the full regress-sv + regress-vlg corpus):
 python3 benchmark/run.py ivtest --suite-root /path/to/iverilog --lists obelisk-smoke.list
 
+# Compile and attach VPI code to every test. Source/object/archive/bitcode
+# components are linked into a DSO; an existing .so/.vpi is retained directly.
+python3 benchmark/run.py verilator --suite-root /path/to/verilator \
+  --vpi-code plugin.c --vpi=full
+
+# Run an ivtest VPI-format list. Each entry supplies its own C/C++ module and
+# vpi_gold expectation; --vpi=full is selected automatically.
+python3 benchmark/run.py ivtest --suite-root /path/to/iverilog \
+  --lists obelisk-vpi-smoke.list
+
 # Record the run into the tracked history, and view the curve:
 python3 benchmark/run.py verilator --suite-root /path/to/verilator --record
 python3 benchmark/run.py report --history verilator
@@ -55,10 +66,14 @@ python3 benchmark/run.py verilator --suite-root /path/to/verilator --greedy
 ```
 
 Useful flags: `-j` (parallel workers, default all cores), `--timeout` (per-test
-execution timeout, default 10s), `--obelisk PATH` (driver binary). The Obelisk
-binary is otherwise resolved from `OBELISK_BENCH_COMPILER`, then the repo-relative
-`build/tools/driver/obelisk`. A suite checkout is resolved from `--suite-root`,
-then `OBELISK_BENCH_<SUITE>_ROOT`, then `benchmark/cache/`, then `--fetch`.
+execution timeout, default 10s), `--obelisk PATH` (driver binary),
+`--vpi-code PATH` (repeatable native module components), and
+`--vpi=off|read|full`. VPI defaults to `full` when code is supplied and `off`
+otherwise. `CC` and `CXX` select the native compilers used to form a VPI DSO.
+The Obelisk binary is otherwise resolved from `OBELISK_BENCH_COMPILER`, then
+the repo-relative `build/tools/driver/obelisk`. A suite checkout is resolved
+from `--suite-root`, then `OBELISK_BENCH_<SUITE>_ROOT`, then
+`benchmark/cache/`, then `--fetch`.
 
 ## Reading the output
 

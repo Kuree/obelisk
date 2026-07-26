@@ -86,6 +86,14 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--fetch", action="store_true",
                          help="fetch the pinned revision into benchmark/cache/")
         sub.add_argument("--obelisk", help="path to the Obelisk driver binary")
+        sub.add_argument(
+            "--vpi", choices=("off", "read", "full"), default=None,
+            help="Obelisk VPI capability mode (default: full with VPI code, "
+                 "off otherwise)")
+        sub.add_argument(
+            "--vpi-code", action="append", default=[], metavar="PATH",
+            help="C/C++/native VPI module input to attach to every test "
+                 "(repeatable)")
         sub.add_argument("-j", "--jobs", type=int, default=os.cpu_count() or 1,
                          help="parallel workers (default: all cores)")
         sub.add_argument("--timeout", type=float, default=10.0,

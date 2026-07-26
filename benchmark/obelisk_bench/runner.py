@@ -18,11 +18,13 @@ from __future__ import annotations
 
 import dataclasses
 import os
+from pathlib import Path
+import shlex
 import subprocess
 import time
 
 
-def _run_with_retry(command, timeout):
+def _run_with_retry(command, timeout, cwd=None):
     """Run a subprocess, retrying once on a transient exec failure.
 
     Launching many copies of the large statically-linked Obelisk binary at once
@@ -32,7 +34,7 @@ def _run_with_retry(command, timeout):
     for attempt in range(2):
         try:
             return subprocess.run(command, capture_output=True, text=True,
-                                  timeout=timeout, check=False)
+                                  timeout=timeout, check=False, cwd=cwd)
         except OSError:
             if attempt == 0:
                 time.sleep(0.2)
@@ -53,10 +55,135 @@ class ExecResult:
     timed_out: bool
 
 
+@dataclasses.dataclass
+class NativeBuildResult:
+    ok: bool
+    inputs: list[str]
+    stderr: str
+
+
+_SHARED_SUFFIXES = {".so", ".vpi"}
+_NATIVE_COMPONENT_SUFFIXES = {
+    ".a", ".bc", ".c", ".cc", ".cpp", ".cxx", ".o",
+}
+
+
+def build_vpi_inputs(obelisk: str, code: list[str], output_dir: str,
+                     timeout: float = 60.0,
+                     compiler_flags: list[str] | None = None,
+                     cwd: str | None = None,
+                     module_name: str = "benchmark_vpi") -> NativeBuildResult:
+    """Build VPI source/native components into a DSO and retain supplied DSOs.
+
+    C, C++, object, archive, and bitcode inputs are linked into one shared
+    object. Existing `.so`/`.vpi` inputs remain separate positional inputs so
+    each startup table keeps its own loader identity and ordering.
+    """
+    if not code:
+        return NativeBuildResult(ok=True, inputs=[], stderr="")
+    base = Path(cwd).resolve() if cwd else Path.cwd()
+    components: list[str] = []
+    input_order: list[tuple[str, str]] = []
+    component_slot_added = False
+    use_cxx = False
+    for spelling in code:
+        path = Path(spelling)
+        if not path.is_absolute():
+            path = base / path
+        path = path.resolve()
+        if not path.exists():
+            return NativeBuildResult(
+                ok=False, inputs=[],
+                stderr=f"VPI code input does not exist: {path}",
+            )
+        suffix = path.suffix.lower()
+        if suffix in _SHARED_SUFFIXES:
+            input_order.append(("shared", str(path)))
+            continue
+        if suffix not in _NATIVE_COMPONENT_SUFFIXES:
+            return NativeBuildResult(
+                ok=False, inputs=[],
+                stderr=f"unsupported VPI code input: {path}",
+            )
+        components.append(str(path))
+        if not component_slot_added:
+            input_order.append(("built", ""))
+            component_slot_added = True
+        use_cxx |= path.suffix == ".C" or suffix in {".cc", ".cpp", ".cxx"}
+
+    if not components:
+        return NativeBuildResult(
+            ok=True,
+            inputs=[path for kind, path in input_order if kind == "shared"],
+            stderr="",
+        )
+    try:
+        resource = _run_with_retry([obelisk, "--print-resource-dir"], timeout)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return NativeBuildResult(
+            ok=False, inputs=[],
+            stderr=f"could not locate Obelisk VPI headers: {error}",
+        )
+    if resource.returncode != 0:
+        return NativeBuildResult(
+            ok=False, inputs=[],
+            stderr=resource.stdout + resource.stderr,
+        )
+    resource_dir = Path(resource.stdout.strip())
+    compiler_var = "CXX" if use_cxx else "CC"
+    compiler = shlex.split(os.environ.get(
+        compiler_var, "c++" if use_cxx else "cc"))
+    if not compiler:
+        return NativeBuildResult(
+            ok=False, inputs=[],
+            stderr=f"{compiler_var} names no compiler",
+        )
+    output_path = Path(output_dir) / f"lib{module_name}.so"
+    link_components: list[str] = []
+    for component in components:
+        if Path(component).suffix.lower() == ".a":
+            link_components.extend([
+                "-Wl,--whole-archive", component, "-Wl,--no-whole-archive",
+            ])
+        else:
+            link_components.append(component)
+    command = [
+        *compiler, "-shared", "-fPIC", *link_components,
+        *(compiler_flags or []),
+        "-I", str(resource_dir / "include"),
+        f"-Wl,-soname,{output_path.name}",
+        "-o", str(output_path),
+    ]
+    try:
+        result = _run_with_retry(command, timeout, cwd=cwd)
+    except subprocess.TimeoutExpired:
+        return NativeBuildResult(
+            ok=False, inputs=[],
+            stderr=f"VPI compilation exceeded {timeout:g}s",
+        )
+    except OSError as error:
+        return NativeBuildResult(
+            ok=False, inputs=[],
+            stderr=f"VPI compiler could not launch: {error}",
+        )
+    if result.returncode != 0:
+        return NativeBuildResult(
+            ok=False, inputs=[],
+            stderr=result.stdout + result.stderr,
+        )
+    inputs = [
+        str(output_path) if kind == "built" else path
+        for kind, path in input_order
+    ]
+    return NativeBuildResult(ok=True, inputs=inputs, stderr="")
+
+
 def compile_design(obelisk: str, sources: list[str], output: str,
                    extra_flags: list[str], std: str = "1800-2017",
                    single_unit: bool = True, opt: str = "-O0",
-                   timeout: float = 60.0) -> CompileResult:
+                   timeout: float = 60.0,
+                   native_inputs: list[str] | None = None,
+                   vpi: str = "off") -> CompileResult:
     """Compile `sources` into the native executable `output`.
 
     Obelisk is invoked directly — there is no `iverilog` shim in this model. A
@@ -68,7 +195,10 @@ def compile_design(obelisk: str, sources: list[str], output: str,
     command = [obelisk]
     if single_unit:
         command.append("--single-unit")
-    command += [f"--std={std}", opt, *extra_flags, *sources, "-o", output]
+    command += [
+        f"--std={std}", opt, f"--vpi={vpi}", *extra_flags, *sources,
+        *(native_inputs or []), "-o", output,
+    ]
     try:
         result = _run_with_retry(command, timeout)
     except subprocess.TimeoutExpired:

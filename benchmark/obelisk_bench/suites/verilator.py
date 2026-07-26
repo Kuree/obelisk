@@ -141,13 +141,23 @@ def make_top_shell(inputs: list[str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def judge_one(obelisk: str, top: Path, timeout: float) -> model.Outcome:
+def judge_one(obelisk: str, top: Path, timeout: float,
+              vpi_code: tuple[str, ...] = (),
+              vpi_mode: str | None = None) -> model.Outcome:
     """Compile and run one test, returning its outcome."""
     name = top.stem
     top_text = top.read_text(encoding="utf-8", errors="replace")
     expects_error = bool(EXPECTED_ERROR.search(name))
 
     with tempfile.TemporaryDirectory(prefix="obelisk-vlt-") as tmp:
+        native = runner.build_vpi_inputs(
+            obelisk, list(vpi_code), tmp, cwd=str(top.parent),
+            module_name="verilator_" + "".join(
+                character if character.isalnum() else "_"
+                for character in name),
+        )
+        if not native.ok:
+            return model.Outcome(model.COMPILE_FAIL, native.stderr)
         shell = Path(tmp) / "top.v"
         shell.write_text(make_top_shell(detect_inputs(top_text)), encoding="utf-8")
         binary = Path(tmp) / "sim"
@@ -156,6 +166,8 @@ def judge_one(obelisk: str, top: Path, timeout: float) -> model.Outcome:
         compiled = runner.compile_design(
             obelisk, [str(top), str(shell)], str(binary), extra,
             single_unit=SINGLE_UNIT,
+            native_inputs=native.inputs,
+            vpi=vpi_mode or ("full" if native.inputs else "off"),
         )
 
         if expects_error:
@@ -184,16 +196,22 @@ def run(root: Path, args) -> dict[str, model.Outcome]:
     tops = select(root, args)
     obelisk = args.obelisk_binary
     timeout = args.timeout
+    vpi_code = tuple(
+        str(Path(path).resolve()) for path in getattr(args, "vpi_code", []))
+    vpi_mode = getattr(args, "vpi", None)
     print(f"Running {len(tops)} Verilator simulator-scenario tests with "
           f"-j{args.jobs} ...")
 
     outcomes: dict[str, model.Outcome] = {}
     if args.jobs == 1:
         for top in tops:
-            outcomes[top.stem] = judge_one(obelisk, top, timeout)
+            outcomes[top.stem] = judge_one(
+                obelisk, top, timeout, vpi_code, vpi_mode)
     else:
         with ProcessPoolExecutor(max_workers=args.jobs) as pool:
-            futures = {pool.submit(judge_one, obelisk, top, timeout): top.stem
+            futures = {
+                pool.submit(judge_one, obelisk, top, timeout, vpi_code,
+                            vpi_mode): top.stem
                        for top in tops}
             for future in futures:
                 outcomes[futures[future]] = future.result()

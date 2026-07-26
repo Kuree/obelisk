@@ -1,9 +1,9 @@
 """Icarus Verilog ivtest suite driver.
 
 Runs the ivtest corpus against Obelisk with a runner we own — no dependency on
-ivtest's `vvp_reg`/`run_ivl`. Each test is described by a small JSON descriptor
-(type, source, iverilog-args, gold); we translate its Icarus arguments, compile
-the source with Obelisk, run it, and judge it three ways:
+ivtest's `vvp_reg`/`run_ivl`. Tests use JSON, legacy inline, or VPI-regression
+descriptors. We translate Icarus arguments, build any C/C++ VPI module, compile
+the design and native inputs with Obelisk, run it, and judge it three ways:
 
   * type `CE` expects a compile error;
   * a descriptor with a gold file passes iff its stdout matches the gold;
@@ -67,6 +67,8 @@ class Descriptor:
     iverilog_args: list[str]
     source: Path
     gold: Path | None
+    vpi_sources: list[Path]
+    vpi_compiler_args: list[str]
 
 
 def _parse_descriptor(ivtest_dir: Path, key: str, fields: list[str]) -> Descriptor:
@@ -84,12 +86,45 @@ def _parse_descriptor(ivtest_dir: Path, key: str, fields: list[str]) -> Descript
     if second.endswith(".json"):
         data = json.loads((ivtest_dir / second).read_text(encoding="ascii"))
         gold = data.get("gold")
+        vpi_sources = [
+            ivtest_dir / source for source in data.get("vpi-sources", [])
+        ]
         return Descriptor(
             key=key,
             test_type=data.get("type", "normal"),
             iverilog_args=list(data.get("iverilog-args", [])),
             source=ivtest_dir / "ivltests" / data["source"],
             gold=(ivtest_dir / "gold" / f"{gold}-vvp-stdout.gold") if gold else None,
+            vpi_sources=vpi_sources,
+            vpi_compiler_args=list(data.get("vpi-compiler-args", [])),
+        )
+    # VPI regression form:
+    #   name type[,iverilog-args] C/C++-file gold-file [compiler args/sources]
+    # The HDL and primary native source live under vpi/, while expected output
+    # lives under vpi_gold/.
+    native_suffixes = {".a", ".bc", ".c", ".cc", ".cpp", ".cxx", ".o"}
+    if len(fields) >= 3 and Path(fields[1]).suffix.lower() in native_suffixes:
+        type_and_args = second.split(",")
+        source = ivtest_dir / "vpi" / f"{key}.v"
+        if not source.exists():
+            source = source.with_suffix(".sv")
+        vpi_sources = [ivtest_dir / "vpi" / fields[1]]
+        compiler_args: list[str] = []
+        for spelling in fields[3:]:
+            candidate = ivtest_dir / spelling
+            if (Path(spelling).suffix.lower() in native_suffixes and
+                    candidate.exists()):
+                vpi_sources.append(candidate)
+            else:
+                compiler_args.append(spelling)
+        return Descriptor(
+            key=key,
+            test_type=type_and_args[0],
+            iverilog_args=type_and_args[1:],
+            source=source,
+            gold=ivtest_dir / "vpi_gold" / fields[2],
+            vpi_sources=vpi_sources,
+            vpi_compiler_args=compiler_args,
         )
     # Legacy: fields = [type[,args], directory, gold=file ...].
     type_and_args = second.split(",")
@@ -104,6 +139,8 @@ def _parse_descriptor(ivtest_dir: Path, key: str, fields: list[str]) -> Descript
         iverilog_args=type_and_args[1:],
         source=ivtest_dir / directory / f"{key}.v",
         gold=gold,
+        vpi_sources=[],
+        vpi_compiler_args=[],
     )
 
 
@@ -127,7 +164,8 @@ def read_items(ivtest_dir: Path, lists: list[Path]) -> list[Descriptor]:
 
 
 def judge_one(obelisk: str, ivtest_dir: Path, desc: Descriptor,
-              timeout: float) -> tuple[str, model.Outcome]:
+              timeout: float, vpi_code: tuple[str, ...] = (),
+              vpi_mode: str | None = None) -> tuple[str, model.Outcome]:
     """Compile, run, and judge one ivtest test in its own temporary directory."""
     if not desc.source.exists():
         return (desc.key, model.Outcome(model.SKIP))
@@ -140,10 +178,26 @@ def judge_one(obelisk: str, ivtest_dir: Path, desc: Descriptor,
     flags += ["-y", str(ivtest_dir / "ivltests"), "-I", str(ivtest_dir / "ivltests")]
 
     with tempfile.TemporaryDirectory(prefix="obelisk-ivt-") as tmp:
+        native = runner.build_vpi_inputs(
+            obelisk,
+            [*(str(path) for path in desc.vpi_sources), *vpi_code],
+            tmp,
+            compiler_flags=desc.vpi_compiler_args,
+            cwd=str(ivtest_dir),
+            module_name="ivtest_" + "".join(
+                character if character.isalnum() else "_"
+                for character in desc.key),
+        )
+        if not native.ok:
+            return (desc.key,
+                    model.Outcome(model.COMPILE_FAIL, native.stderr))
         binary = Path(tmp) / "sim"
+        selected_vpi = vpi_mode or (
+            "full" if native.inputs else "off")
         compiled = runner.compile_design(
             obelisk, [str(desc.source)], str(binary), flags, std=std,
             single_unit=SINGLE_UNIT,
+            native_inputs=native.inputs, vpi=selected_vpi,
         )
 
         if desc.test_type == "CE":
@@ -174,18 +228,23 @@ def run(root: Path, args) -> dict[str, model.Outcome]:
     items = read_items(ivtest_dir, lists)
     obelisk = args.obelisk_binary
     timeout = args.timeout
+    vpi_code = tuple(
+        str(Path(path).resolve()) for path in getattr(args, "vpi_code", []))
+    vpi_mode = getattr(args, "vpi", None)
     print(f"Running {len(items)} ivtest tests from "
           f"{', '.join(path.name for path in lists)} with -j{args.jobs} ...")
 
     outcomes: dict[str, model.Outcome] = {}
     if args.jobs == 1:
         for item in items:
-            key, outcome = judge_one(obelisk, ivtest_dir, item, timeout)
+            key, outcome = judge_one(
+                obelisk, ivtest_dir, item, timeout, vpi_code, vpi_mode)
             outcomes[key] = outcome
     else:
         with ProcessPoolExecutor(max_workers=args.jobs) as pool:
             for key, outcome in pool.map(
                     judge_one,
-                    *zip(*[(obelisk, ivtest_dir, item, timeout) for item in items])):
+                    *zip(*[(obelisk, ivtest_dir, item, timeout, vpi_code,
+                            vpi_mode) for item in items])):
                 outcomes[key] = outcome
     return outcomes
