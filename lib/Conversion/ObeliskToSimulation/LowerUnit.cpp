@@ -8359,6 +8359,27 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
     sim::SimRefStoreOp::create(builder, location, *converted, destination);
     return success();
   }
+  if (auto path =
+          op->getAttrOfType<StringAttr>("obelisk_sim.initialize_net")) {
+    Value destination = lvalues.lookup(path.getValue());
+    auto driverType = destination
+                          ? dyn_cast<sim::DriverType>(destination.getType())
+                          : sim::DriverType{};
+    if (!driverType) {
+      emitError(location) << "net initializer has no driver binding: "
+                          << path.getValue();
+      return failure();
+    }
+    FailureOr<Value> value = lowerExpression(op);
+    if (failed(value))
+      return failure();
+    FailureOr<Value> converted =
+        convert(*value, driverType.getElementType(), isSignedNode(op), location);
+    if (failed(converted))
+      return failure();
+    sim::SimDriverDriveOp::create(builder, location, destination, *converted);
+    return success();
+  }
   if (auto field = op->getAttrOfType<FlatSymbolRefAttr>(
           "obelisk_sim.initialize_field")) {
     if (!thisObject) {

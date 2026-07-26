@@ -235,10 +235,14 @@ static bool isAddressableTimingExpression(Operation *op) {
 }
 
 static FailureOr<sim::EntryKind> getEntryKind(Operation *op) {
+  if (isa<semantic::SVVariableSymbolOp>(op))
+    return sim::EntryKind::Function;
   if (auto property = dyn_cast<semantic::SVClassPropertySymbolOp>(op);
       property &&
       property.getLifetime() == semantic::SVVariableLifetime::Static)
     return sim::EntryKind::Function;
+  if (isa<semantic::SVNetSymbolOp>(op))
+    return sim::EntryKind::Continuous;
   if (auto connection = dyn_cast<semantic::SVPortConnectionOp>(op)) {
     if (connection.getDirection() == semantic::SVArgumentDirection::Out)
       return sim::EntryKind::PortOutput;
@@ -312,8 +316,10 @@ static bool isProgramCodeUnit(Operation *op) {
 }
 
 static std::string getCodeUnitHierarchy(Operation *op) {
-  if (isa<semantic::SVClassPropertySymbolOp>(op))
+  if (isa<semantic::SVVariableSymbolOp, semantic::SVClassPropertySymbolOp>(op))
     return (getHierarchyName(op) + ".$static_initializer").str();
+  if (isa<semantic::SVNetSymbolOp>(op))
+    return (getHierarchyName(op) + ".$net_initializer").str();
   if (auto connection = dyn_cast<semantic::SVPortConnectionOp>(op)) {
     Operation *instance = connection->getParentOp();
     return (getHierarchyName(instance) + ".$port_connection_" +
@@ -509,7 +515,14 @@ void ObeliskSimPreparePass::runOnOperation() {
         property &&
         property.getLifetime() == semantic::SVVariableLifetime::Static &&
         !getChildren(property).empty();
-    if (isCodeUnit(op) || staticInitializer)
+    auto variable = dyn_cast<semantic::SVVariableSymbolOp>(op);
+    bool designInitializer = variable && !isNestedInCodeUnit(variable) &&
+                             !isAutomaticLocalSymbol(variable) &&
+                             !getChildren(variable).empty();
+    auto net = dyn_cast<semantic::SVNetSymbolOp>(op);
+    bool netInitializer = net && !getChildren(net).empty();
+    if (isCodeUnit(op) || staticInitializer || designInitializer ||
+        netInitializer)
       sourceUnits.push_back(op);
   });
 
@@ -1742,7 +1755,9 @@ void ObeliskSimPreparePass::runOnOperation() {
     }
   };
   for (Operation *unit : sourceUnits) {
-    bool continuous = isa<semantic::SVContinuousAssignSymbolOp>(unit);
+    bool continuous =
+        isa<semantic::SVContinuousAssignSymbolOp, semantic::SVNetSymbolOp>(
+            unit);
     auto connection = dyn_cast<semantic::SVPortConnectionOp>(unit);
     if (!continuous && !connection)
       continue;
@@ -1774,6 +1789,25 @@ void ObeliskSimPreparePass::runOnOperation() {
               {target->second, 0, *width, path.str(), std::nullopt});
         }
       }
+    } else if (auto net = dyn_cast<semantic::SVNetSymbolOp>(unit)) {
+      auto target = descriptors.find(getHierarchyName(net));
+      if (target == descriptors.end() ||
+          target->second.kind != DescriptorInfo::Kind::Net) {
+        emitError(getSemanticLocation(unit))
+            << "net initializer target has no flattened net descriptor";
+        invalid = true;
+        continue;
+      }
+      std::optional<unsigned> width =
+          sim::getPackedWidth(target->second.type);
+      if (!width) {
+        emitError(getSemanticLocation(unit))
+            << "net initializer target has no fixed packed width";
+        invalid = true;
+        continue;
+      }
+      sinks.push_back({target->second, 0, *width,
+                       getHierarchyName(net).str(), std::nullopt});
     } else {
       Operation *assignmentRoot = nullptr;
       if (connection) {
@@ -1808,7 +1842,10 @@ void ObeliskSimPreparePass::runOnOperation() {
           builder, getSemanticLocation(unit), id, scopeId, sink.descriptor.id,
           sink.descriptor.type, sim::Lifetime::Design,
           builder.getStringAttr(sink.path),
-          builder.getStringAttr(connection ? "port connection" : "continuous"),
+          builder.getStringAttr(connection ? "port connection"
+                                           : isa<semantic::SVNetSymbolOp>(unit)
+                                                 ? "net initializer"
+                                                 : "continuous"),
           builder.getI64IntegerAttr(sink.offset),
           builder.getI64IntegerAttr(sink.width));
     }
@@ -1838,7 +1875,8 @@ void ObeliskSimPreparePass::runOnOperation() {
     }
     if ((*entryKind == sim::EntryKind::Function ||
          *entryKind == sim::EntryKind::Task) &&
-        !isa<semantic::SVClassPropertySymbolOp>(source)) {
+        !isa<semantic::SVVariableSymbolOp,
+             semantic::SVClassPropertySymbolOp>(source)) {
       auto subroutine = cast<semantic::SVSubroutineSymbolOp>(source);
       bool dpiImport = subroutine.getIsDpiImport().value_or(false);
       if (*entryKind == sim::EntryKind::Function && !dpiImport &&
@@ -1897,7 +1935,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                      {},
                      UnitInfo::ObserverResult::None});
     if (!hierarchy.empty() &&
-        !isa<semantic::SVPortConnectionOp, semantic::SVClassPropertySymbolOp>(
+        !isa<semantic::SVPortConnectionOp, semantic::SVVariableSymbolOp,
+             semantic::SVNetSymbolOp, semantic::SVClassPropertySymbolOp>(
             source)) {
       directCallees[hierarchy] = symbol;
       directCalleeSources[hierarchy] = source;
@@ -2128,6 +2167,20 @@ void ObeliskSimPreparePass::runOnOperation() {
       if (!isa<semantic::SVVariableDeclStatementOp>(nested) &&
           isFixedForeachCollectionUse(nested))
         return;
+      Operation *referencedSymbol = nullptr;
+      if (reference) {
+        auto symbol = semanticSymbols.find(reference.getLeafReference());
+        if (symbol != semanticSymbols.end())
+          referencedSymbol = symbol->second;
+      }
+      // Function formals are already represented by the function's public
+      // argument bindings. Capturing descriptor-backed static storage too
+      // would create two providers for the same path. Static tasks retain
+      // their descriptor capture because they may suspend and overlap; task
+      // lowering copies each activation's formal into that shared storage.
+      if (unit.entryKind == sim::EntryKind::Function &&
+          isa_and_nonnull<semantic::SVFormalArgumentSymbolOp>(referencedSymbol))
+        return;
       auto descriptor = descriptors.find(path);
       if (descriptor != descriptors.end()) {
         if (seenPaths.insert(path).second)
@@ -2137,17 +2190,14 @@ void ObeliskSimPreparePass::runOnOperation() {
           unitReadCaptures[unit.source].insert(path);
         return;
       }
-      if (!reference)
-        return;
-      auto symbol = semanticSymbols.find(reference.getLeafReference());
-      if (symbol == semanticSymbols.end())
+      if (!referencedSymbol)
         return;
       if (isa<semantic::SVParameterSymbolOp, semantic::SVEnumValueSymbolOp,
-              semantic::SVSpecparamSymbolOp>(symbol->second)) {
+              semantic::SVSpecparamSymbolOp>(referencedSymbol)) {
         if (!seenConstants.insert(path).second)
           return;
         FailureOr<sim::FrozenConstantAttr> value =
-            freezeSemanticConstant(symbol->second);
+            freezeSemanticConstant(referencedSymbol);
         if (failed(value)) {
           invalid = true;
           return;
@@ -2156,11 +2206,11 @@ void ObeliskSimPreparePass::runOnOperation() {
         return;
       }
       if (!isa<semantic::SVVariableSymbolOp, semantic::SVPatternVarSymbolOp>(
-              symbol->second) &&
+              referencedSymbol) &&
           !(unit.entryKind == sim::EntryKind::Observer &&
-            isa<semantic::SVFormalArgumentSymbolOp>(symbol->second)))
+            isa<semantic::SVFormalArgumentSymbolOp>(referencedSymbol)))
         return;
-      FailureOr<Type> type = getNormalizedSemanticType(symbol->second);
+      FailureOr<Type> type = getNormalizedSemanticType(referencedSymbol);
       if (failed(type)) {
         invalid = true;
         return;
@@ -2170,9 +2220,9 @@ void ObeliskSimPreparePass::runOnOperation() {
                                 ? observerLocalCaptures[unit.source]
                                 : unitLocals[unit.source];
         destination.push_back(
-            {path.str(), *type, isAutomaticLocalSymbol(symbol->second),
-             isa<semantic::SVPatternVarSymbolOp>(symbol->second)});
-        symbol->second->walk<WalkOrder::PreOrder>(
+            {path.str(), *type, isAutomaticLocalSymbol(referencedSymbol),
+             isa<semantic::SVPatternVarSymbolOp>(referencedSymbol)});
+        referencedSymbol->walk<WalkOrder::PreOrder>(
             [&](Operation *initializerNode) {
               collectBinding(initializerNode);
             });
@@ -2181,15 +2231,18 @@ void ObeliskSimPreparePass::runOnOperation() {
           !isWriteOnlyReferenceUse(nested))
         observerReadLocals[unit.source].insert(path);
     };
+    bool initializesDesignStorage =
+        isa<semantic::SVVariableSymbolOp>(unit.source);
     if (auto property =
-            dyn_cast<semantic::SVClassPropertySymbolOp>(unit.source);
-        property &&
-        property.getLifetime() == semantic::SVVariableLifetime::Static) {
-      StringRef path = getHierarchyName(property);
+            dyn_cast<semantic::SVClassPropertySymbolOp>(unit.source))
+      initializesDesignStorage =
+          property.getLifetime() == semantic::SVVariableLifetime::Static;
+    if (initializesDesignStorage) {
+      StringRef path = getHierarchyName(unit.source);
       auto descriptor = descriptors.find(path);
       if (descriptor == descriptors.end()) {
-        emitError(getSemanticLocation(property))
-            << "static class property initializer has no storage descriptor";
+        emitError(getSemanticLocation(unit.source))
+            << "design initializer has no storage descriptor";
         invalid = true;
       } else if (seenPaths.insert(path).second) {
         unitCaptures[unit.source].push_back({path.str(), descriptor->second});
@@ -2689,10 +2742,13 @@ void ObeliskSimPreparePass::runOnOperation() {
     if (unit.entryKind == sim::EntryKind::Function) {
       auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(unit.source);
       if (!subroutine) {
-        if (!isa<semantic::SVClassPropertySymbolOp>(unit.source)) {
+        if (!isa<semantic::SVVariableSymbolOp,
+                 semantic::SVClassPropertySymbolOp>(unit.source)) {
           emitError(getSemanticLocation(unit.source))
               << "synthetic zero-time function has an unsupported source";
           invalid = true;
+        } else {
+          isVoidFunction = true;
         }
       } else {
         bool dpiImport = subroutine.getIsDpiImport().value_or(false);
@@ -3012,19 +3068,28 @@ void ObeliskSimPreparePass::runOnOperation() {
     if (unit.entryKind == sim::EntryKind::Observer ||
         isa<semantic::SVPortConnectionOp>(unit.source)) {
       bodyBuilder.clone(*unit.source);
-    } else if (auto property =
-                   dyn_cast<semantic::SVClassPropertySymbolOp>(unit.source);
-               property &&
-               property.getLifetime() == semantic::SVVariableLifetime::Static) {
-      SmallVector<Operation *> initializer = getChildren(property);
+    } else if (isa<semantic::SVVariableSymbolOp,
+                   semantic::SVClassPropertySymbolOp>(unit.source)) {
+      SmallVector<Operation *> initializer = getChildren(unit.source);
       if (initializer.size() != 1) {
-        emitError(getSemanticLocation(property))
-            << "static class property initializer must have one expression";
+        emitError(getSemanticLocation(unit.source))
+            << "design initializer must have one expression";
         invalid = true;
       } else {
         Operation *cloned = bodyBuilder.clone(*initializer.front());
         cloned->setAttr("obelisk_sim.initialize_static",
-                        builder.getStringAttr(getHierarchyName(property)));
+                        builder.getStringAttr(getHierarchyName(unit.source)));
+      }
+    } else if (isa<semantic::SVNetSymbolOp>(unit.source)) {
+      SmallVector<Operation *> initializer = getChildren(unit.source);
+      if (initializer.size() != 1) {
+        emitError(getSemanticLocation(unit.source))
+            << "net initializer must have one expression";
+        invalid = true;
+      } else {
+        Operation *cloned = bodyBuilder.clone(*initializer.front());
+        cloned->setAttr("obelisk_sim.initialize_net",
+                        builder.getStringAttr(getHierarchyName(unit.source)));
       }
     } else {
       auto clonePropertyInitializers = [&] {
@@ -3431,53 +3496,15 @@ void ObeliskSimPreparePass::runOnOperation() {
     return operands;
   };
 
-  // Constant declaration initializers for design/static strings require a
-  // managed allocation and therefore cannot be represented in the raw
-  // zero-filled state image. Materialize them in the root initializer before
-  // any process is spawned.
-  for (const auto &symbolEntry : semanticSymbols) {
-    auto variable =
-        dyn_cast<semantic::SVVariableSymbolOp>(symbolEntry.getValue());
-    if (!variable)
-      continue;
-    auto descriptor = descriptors.find(getHierarchyName(variable));
-    if (descriptor == descriptors.end() ||
-        descriptor->second.kind != DescriptorInfo::Kind::Storage ||
-        !isa<sim::StringType>(descriptor->second.type))
-      continue;
-    SmallVector<Operation *> initializer = getChildren(variable);
-    if (initializer.size() != 1)
-      continue;
-    Operation *value = initializer.front();
-    while (isa<semantic::SVConversionExpressionOp>(value)) {
-      SmallVector<Operation *> converted = getChildren(value);
-      if (converted.size() != 1)
-        break;
-      value = converted.front();
-    }
-    auto literal = dyn_cast<semantic::SVStringLiteralOp>(value);
-    auto bytes =
-        literal ? literal->getAttrOfType<StringAttr>("constant_value")
-                : StringAttr{};
-    if (!bytes)
-      continue;
-    Location location = getSemanticLocation(variable);
-    Type referenceType = sim::RefType::get(context, descriptor->second.type);
-    Value storage = sim::SimContextStorageOp::create(
-        rootBuilder, location, referenceType, simContext,
-        rootBuilder.getI64IntegerAttr(descriptor->second.id));
-    Value string = sim::SimStringLiteralOp::create(
-        rootBuilder, location, descriptor->second.type, bytes);
-    sim::SimRefStoreOp::create(rootBuilder, location, string, storage);
-  }
-
-  // Static class property initializers are zero-time private functions. Run
-  // all of them before creating any process so initial blocks observe the
-  // fully initialized class-static state.
+  // Design variable and static class-property initializers are zero-time
+  // private functions. Run all of them before creating any process so initial
+  // blocks observe fully initialized static state.
   for (UnitInfo &unit : units) {
     auto property = dyn_cast<semantic::SVClassPropertySymbolOp>(unit.source);
-    if (!property ||
-        property.getLifetime() != semantic::SVVariableLifetime::Static)
+    bool initializer = isa<semantic::SVVariableSymbolOp>(unit.source) ||
+                       (property && property.getLifetime() ==
+                                        semantic::SVVariableLifetime::Static);
+    if (!initializer)
       continue;
     FailureOr<SmallVector<Value>> operands = materializeRootOperands(unit);
     if (failed(operands))
