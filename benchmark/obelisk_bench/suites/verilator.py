@@ -35,7 +35,7 @@ SCENARIO = "simulator"
 SIM_TIME = 1100  # matches driver.py's default; the shell runs `while ($time < N)`
 
 EXPECTED_ERROR = re.compile(r"_(bad|unsup|fail\d*)$")
-MODULE_T = re.compile(r"^\s*module\s+t\s*\(", re.MULTILINE)
+MODULE_T = re.compile(r"^\s*module\s+t\b", re.MULTILINE)
 # driver.py's input detector: an `input [type] name` line inside module t.
 INPUT_DECL = re.compile(r"^\s*input\s*(?:logic|bit|reg|wire)?\s*([A-Za-z0-9_]+)")
 STOP_SCANNING = re.compile(r"^\s*(function|task|endmodule)")
