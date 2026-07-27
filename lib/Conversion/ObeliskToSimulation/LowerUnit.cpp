@@ -3777,6 +3777,80 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
     unsupported(op) << " (binary arity)";
     return failure();
   }
+  Binary kind = op.getOperatorKind();
+  FailureOr<Type> resultType = getNormalizedSemanticType(op);
+  if (failed(resultType))
+    return failure();
+
+  // Logical conjunction and disjunction only evaluate their right operand
+  // when the left operand does not determine the result.  Keep the
+  // four-state predicate for the eventual logical operation, but branch on an
+  // ordinary i1 that recognizes only the controlling known value.
+  if (kind == Binary::LogicalAnd || kind == Binary::LogicalOr) {
+    FailureOr<Value> lhs = lowerExpression(children[0]);
+    if (failed(lhs))
+      return failure();
+    FailureOr<Value> lhsPredicate =
+        conditionalPredicate(*lhs, getSemanticLocation(children[0]));
+    if (failed(lhsPredicate))
+      return failure();
+
+    Type predicateType = sim::LogicType::get(function.getContext(), 1);
+    Value controlling;
+    if (kind == Binary::LogicalAnd) {
+      Value falsePredicate = sim::SimLogicConstantOp::create(
+          builder, location, predicateType,
+          builder.getIntegerAttr(builder.getI1Type(), 0),
+          builder.getIntegerAttr(builder.getI1Type(), 0));
+      controlling = sim::SimLogicCompareOp::create(
+          builder, location, builder.getI1Type(), sim::CompareKind::CaseEq,
+          *lhsPredicate, falsePredicate);
+    } else {
+      controlling = sim::SimLogicIsTrueOp::create(
+          builder, location, builder.getI1Type(), *lhsPredicate);
+    }
+
+    Value controllingPredicate = sim::SimLogicConstantOp::create(
+        builder, location, predicateType,
+        builder.getIntegerAttr(builder.getI1Type(),
+                               kind == Binary::LogicalOr),
+        builder.getIntegerAttr(builder.getI1Type(), 0));
+    FailureOr<Value> controllingResult =
+        convert(controllingPredicate, *resultType, false, location);
+    if (failed(controllingResult))
+      return failure();
+
+    Block *rhsBlock = addBlock();
+    Block *mergeBlock = addBlock();
+    mergeBlock->addArgument(*resultType, location);
+    cf::CondBranchOp::create(builder, location, controlling, mergeBlock,
+                             ValueRange{*controllingResult}, rhsBlock,
+                             ValueRange{});
+
+    setCurrent(rhsBlock);
+    FailureOr<Value> rhs = lowerExpression(children[1]);
+    if (failed(rhs))
+      return failure();
+    FailureOr<Value> rhsPredicate =
+        conditionalPredicate(*rhs, getSemanticLocation(children[1]));
+    if (failed(rhsPredicate))
+      return failure();
+    Value logical = sim::SimLogicLogicalOp::create(
+        builder, location, predicateType,
+        kind == Binary::LogicalAnd ? sim::LogicalKind::And
+                                   : sim::LogicalKind::Or,
+        *lhsPredicate, *rhsPredicate);
+    FailureOr<Value> rhsResult =
+        convert(logical, *resultType, false, location);
+    if (failed(rhsResult))
+      return failure();
+    cf::BranchOp::create(builder, location, mergeBlock,
+                         ValueRange{*rhsResult});
+
+    setCurrent(mergeBlock);
+    return mergeBlock->getArgument(0);
+  }
+
   FailureOr<Value> lhs = failure();
   FailureOr<Value> rhs = failure();
   if (isa<semantic::SVNullLiteralOp>(children[0])) {
@@ -3803,10 +3877,8 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
     lhs = lowerExpression(children[0]);
     rhs = lowerExpression(children[1]);
   }
-  FailureOr<Type> resultType = getNormalizedSemanticType(op);
-  if (failed(lhs) || failed(rhs) || failed(resultType))
+  if (failed(lhs) || failed(rhs))
     return failure();
-  Binary kind = op.getOperatorKind();
   if (isa<sim::StringType>((*lhs).getType()) ||
       isa<sim::StringType>((*rhs).getType())) {
     Type stringType = sim::StringType::get(function.getContext());
@@ -3946,18 +4018,6 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
       if (failed(rhs))
         return failure();
     }
-    if (kind == Binary::LogicalAnd || kind == Binary::LogicalOr) {
-      FailureOr<Value> lhsTruth = truthValue(*lhs, location);
-      FailureOr<Value> rhsTruth = truthValue(*rhs, location);
-      if (failed(lhsTruth) || failed(rhsTruth))
-        return failure();
-      Value logical = kind == Binary::LogicalAnd
-                          ? Value(arith::AndIOp::create(builder, location,
-                                                        *lhsTruth, *rhsTruth))
-                          : Value(arith::OrIOp::create(builder, location,
-                                                       *lhsTruth, *rhsTruth));
-      return convert(logical, *resultType, false, location);
-    }
     std::optional<arith::CmpFPredicate> predicate;
     switch (kind) {
     case Binary::Equality:
@@ -4022,32 +4082,6 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
   lhs = *scalarLhs;
   rhs = *scalarRhs;
   bool signedOp = isSignedNode(children.front());
-
-  if (kind == Binary::LogicalAnd || kind == Binary::LogicalOr) {
-    if (isa<sim::LogicType>((*lhs).getType()) ||
-        isa<sim::LogicType>((*rhs).getType())) {
-      FailureOr<Value> logicLhs = toLogic(*lhs, location);
-      FailureOr<Value> logicRhs = toLogic(*rhs, location);
-      if (failed(logicLhs) || failed(logicRhs))
-        return failure();
-      Value logical = sim::SimLogicLogicalOp::create(
-          builder, location, sim::LogicType::get(function.getContext(), 1),
-          kind == Binary::LogicalAnd ? sim::LogicalKind::And
-                                     : sim::LogicalKind::Or,
-          *logicLhs, *logicRhs);
-      return convert(logical, *resultType, false, location);
-    }
-    FailureOr<Value> lhsTruth = truthValue(*lhs, location);
-    FailureOr<Value> rhsTruth = truthValue(*rhs, location);
-    if (failed(lhsTruth) || failed(rhsTruth))
-      return failure();
-    Value logical = kind == Binary::LogicalAnd
-                        ? Value(arith::AndIOp::create(builder, location,
-                                                      *lhsTruth, *rhsTruth))
-                        : Value(arith::OrIOp::create(builder, location,
-                                                     *lhsTruth, *rhsTruth));
-    return convert(logical, *resultType, false, location);
-  }
 
   if (isa<sim::LogicType>((*lhs).getType())) {
     std::optional<sim::CompareKind> compare;
