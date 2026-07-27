@@ -322,6 +322,14 @@ static bool isUnboundedEndpoint(Operation *op) {
   return isa<semantic::SVUnboundedLiteralOp>(op);
 }
 
+static bool isTaggedUnionType(Type type) {
+  if (auto packed = dyn_cast<sim::PackedUnionType>(type))
+    return packed.getIsTagged();
+  if (auto unpacked = dyn_cast<sim::UnpackedUnionType>(type))
+    return unpacked.getIsTagged();
+  return false;
+}
+
 static Operation *getSingleRegionRoot(Region &region) {
   if (region.empty() || region.front().empty())
     return nullptr;
@@ -443,6 +451,8 @@ private:
   FailureOr<Value> lowerReplication(Operation *op);
   FailureOr<Value> lowerMember(semantic::SVMemberAccessExpressionOp op,
                                bool lvalue);
+  LogicalResult guardTaggedUnionMember(Value input, unsigned ordinal,
+                                       Location location);
   FailureOr<Value> lowerTaggedUnion(semantic::SVTaggedUnionExpressionOp op);
   FailureOr<Value> lowerAssignmentPattern(Operation *op);
   FailureOr<Value> lowerNewArray(Operation *op);
@@ -497,6 +507,7 @@ private:
   LogicalResult
   lowerImmediateAssertion(semantic::SVImmediateAssertionStatementOp op);
   void emitDefaultAssertionFailure(Location location);
+  LogicalResult emitRuntimeFatal(Location location, StringRef message);
   LogicalResult lowerConditional(semantic::SVConditionalStatementOp op);
   LogicalResult
   lowerQualifiedConditional(semantic::SVConditionalStatementOp op);
@@ -1457,6 +1468,41 @@ LogicalResult UnitLowering::emitFunctionReturn(
   return success();
 }
 
+LogicalResult UnitLowering::emitRuntimeFatal(Location location,
+                                             StringRef detail) {
+  std::string file = "<unknown>";
+  unsigned line = 0;
+  if (auto source = location->findInstanceOf<FileLineColLoc>()) {
+    file = source.getFilename().str();
+    line = source.getLine();
+  }
+  std::string message =
+      (Twine("FATAL: ") + file + ":" + Twine(line) + ": " + detail).str();
+  for (size_t position = 0;
+       (position = message.find('%', position)) != std::string::npos;
+       position += 2)
+    message.insert(position, 1, '%');
+
+  Value context = function.getBody().front().getArgument(0);
+  Value descriptor = arith::ConstantOp::create(
+      builder, location, builder.getI32Type(),
+      builder.getI32IntegerAttr(static_cast<int32_t>(0x80000002u)));
+  Value item =
+      sim::SimBytesConstantOp::create(builder, location, message).getResult();
+  auto timeMultiplier =
+      function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
+  StringAttr scope =
+      function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
+  sim::SimDisplayOp::create(
+      builder, location, context, descriptor, ValueRange{item}, true, 10,
+      builder.getDenseI32ArrayAttr({0}), scope, StringAttr{}, timeMultiplier);
+  Value verbosity =
+      arith::ConstantOp::create(builder, location, builder.getI32Type(),
+                                builder.getI32IntegerAttr(1));
+  sim::SimFatalOp::create(builder, location, context, verbosity);
+  return emitFunctionReturn(location, std::nullopt, false);
+}
+
 //===----------------------------------------------------------------------===//
 // Expressions
 //===----------------------------------------------------------------------===//
@@ -1813,10 +1859,16 @@ UnitLowering::lowerMember(semantic::SVMemberAccessExpressionOp op,
     return failure();
   Type inputValueType = (*input).getType();
   if (auto reference = dyn_cast<sim::RefType>(inputValueType)) {
-    if (sim::getAggregateElementType(reference.getElementType(), ordinal) !=
-        *resultType) {
+    Type aggregateType = reference.getElementType();
+    if (sim::getAggregateElementType(aggregateType, ordinal) != *resultType) {
       emitError(location) << "member ordinal does not match the aggregate type";
       return failure();
+    }
+    if (isTaggedUnionType(aggregateType)) {
+      Value aggregate = sim::SimRefLoadOp::create(builder, location,
+                                                  aggregateType, *input);
+      if (failed(guardTaggedUnionMember(aggregate, ordinal, location)))
+        return failure();
     }
     Type selected = sim::RefType::get(function.getContext(), *resultType);
     return sim::SimRefSubelementOp::create(
@@ -1840,13 +1892,35 @@ UnitLowering::lowerMember(semantic::SVMemberAccessExpressionOp op,
     emitError(location) << "member access input is not a matching aggregate";
     return failure();
   }
-  if (isa<sim::PackedUnionType, sim::UnpackedUnionType>(inputValueType))
+  if (isa<sim::PackedUnionType, sim::UnpackedUnionType>(inputValueType)) {
+    if (isTaggedUnionType(inputValueType) &&
+        failed(guardTaggedUnionMember(*input, ordinal, location)))
+      return failure();
     return sim::SimUnionExtractOp::create(builder, location, *resultType,
                                           *input, ordinal)
         .getResult();
+  }
   return sim::SimAggregateExtractOp::create(builder, location, *resultType,
                                             *input, ordinal)
       .getResult();
+}
+
+LogicalResult UnitLowering::guardTaggedUnionMember(Value input,
+                                                   unsigned ordinal,
+                                                   Location location) {
+  Value active = sim::SimUnionIsActiveOp::create(
+      builder, location, builder.getI1Type(), input, ordinal);
+  Block *valid = addBlock();
+  Block *invalid = addBlock();
+  cf::CondBranchOp::create(builder, location, active, valid, ValueRange{},
+                           invalid, ValueRange{});
+  setCurrent(invalid);
+  if (failed(emitRuntimeFatal(
+          location,
+          "tagged union member access selected an inactive member.")))
+    return failure();
+  setCurrent(valid);
+  return success();
 }
 
 FailureOr<Value>
