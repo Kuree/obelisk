@@ -2,16 +2,16 @@
 
 The benchmark owns its run loop rather than delegating to the upstream test
 harnesses. That keeps the harness small and independent of upstream churn, and it
-reflects what the suites actually need: Obelisk compiles a design to a native
-executable, we run that executable, and the test is judged three ways —
+reflects what the suites actually need: Obelisk compiles a design either to
+frontend IR or a native executable, and each suite judges the applicable phase —
 
-  * a test that expects a compile error passes iff Obelisk fails to compile it;
+  * a test that expects an error passes iff its selected phase fails;
   * a test with a gold file passes iff its stdout matches the gold;
-  * otherwise the test self-checks, and passes iff it prints its success marker.
+  * otherwise the test self-checks through its suite-specific output protocol.
 
 The reference simulator (real Verilator/Icarus/vvp) is never involved; gold files
-are the ones checked into each suite. This module provides just the compile and
-execute primitives; the three-way judgement lives in each suite driver.
+are the ones checked into each suite. This module provides just the frontend,
+native compile, and execute primitives; judgement lives in each suite driver.
 """
 
 from __future__ import annotations
@@ -54,6 +54,7 @@ class ExecResult:
     ok: bool          # process exited 0 within the timeout
     stdout: str
     timed_out: bool
+    stderr: str = ""
 
 
 @dataclasses.dataclass
@@ -223,6 +224,46 @@ def compile_design(obelisk: str, sources: list[str], output: str,
     )
 
 
+def compile_frontend(obelisk: str, sources: list[str], output: str,
+                     extra_flags: list[str], std: str = "1800-2017",
+                     single_unit: bool = True,
+                     timeout: float = 60.0) -> CompileResult:
+    """Preprocess, parse, and elaborate sources without lowering a simulator.
+
+    ``-emit-slang`` stops after the elaborated frontend IR. This is the closest
+    phase boundary Obelisk exposes for preprocessing, parsing, and elaboration
+    conformance tests, and avoids turning compile-only tests into native-runtime
+    tests.
+    """
+    command = [obelisk]
+    if single_unit:
+        command.append("--single-unit")
+    command += [
+        f"--std={std}", *extra_flags, *sources, "-emit-slang", "-o", output,
+    ]
+    try:
+        result = _run_with_retry(command, timeout)
+    except subprocess.TimeoutExpired:
+        return CompileResult(
+            ok=False, stderr=f"frontend compile exceeded {timeout:g}s",
+            failure_kind="timeout",
+        )
+    except OSError as error:
+        return CompileResult(
+            ok=False, stderr=f"frontend compile could not launch: {error}",
+            failure_kind="launch",
+        )
+    return CompileResult(
+        ok=result.returncode == 0,
+        stderr=result.stdout + result.stderr,
+        failure_kind=(
+            None if result.returncode == 0
+            else "crash" if result.returncode < 0
+            else "compile"
+        ),
+    )
+
+
 def execute(binary: str, timeout: float, args: list[str] | None = None) -> ExecResult:
     """Run a compiled test executable and capture its stdout.
 
@@ -238,12 +279,16 @@ def execute(binary: str, timeout: float, args: list[str] | None = None) -> ExecR
             result = subprocess.run(command, capture_output=True, text=True,
                                     timeout=timeout, check=False)
             return ExecResult(ok=result.returncode == 0, stdout=result.stdout,
-                              timed_out=False)
+                              timed_out=False, stderr=result.stderr)
         except subprocess.TimeoutExpired as expired:
             stdout = expired.stdout or b""
             if isinstance(stdout, bytes):
                 stdout = stdout.decode("utf-8", errors="replace")
-            return ExecResult(ok=False, stdout=stdout, timed_out=True)
+            stderr = expired.stderr or b""
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode("utf-8", errors="replace")
+            return ExecResult(
+                ok=False, stdout=stdout, timed_out=True, stderr=stderr)
         except OSError as error:
             if attempt == 0:
                 time.sleep(0.2)

@@ -7,9 +7,10 @@ Adding a suite means writing a module and adding one line here.
 
 from __future__ import annotations
 
-from . import ivtest, verilator
+from . import ivtest, svtests, verilator
 
 REGISTRY = {
     "verilator": verilator,
     "ivtest": ivtest,
+    "svtests": svtests,
 }

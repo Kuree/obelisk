@@ -104,6 +104,10 @@ def build_parser() -> argparse.ArgumentParser:
                          help="also print the greedy unblock ordering")
         sub.add_argument("--lists", nargs="*", default=None,
                          help="ivtest list files to run (ivtest only)")
+        if name == "svtests":
+            sub.add_argument("--design", default=None,
+                             help="compile a third_party/cores/ design from its "
+                                  "explicit file list (use 'all' for every core)")
         sub.add_argument("tests", nargs="*",
                          help="specific tests to run instead of the full corpus")
         sub.set_defaults(func=command_run, suite=name)
