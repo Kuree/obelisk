@@ -678,6 +678,11 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
               cast<sim::RefType>(local.getType()).getElementType(), local);
           sim::SimRefStoreOp::create(builder, function.getLoc(), initial,
                                      value);
+          // A static task formal is backed by its descriptor after copy-in.
+          // Keep reads and writes on that same storage; otherwise reads use
+          // the descriptor while assignments continue updating the discarded
+          // activation-local reference.
+          lvalues[path] = value;
         }
       }
       values[path] = value;
