@@ -894,6 +894,12 @@ bool validIntrinsic(const Image &image, const Function &function,
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && twoStateBits(input(0), 64) &&
            twoStateBits(output(0), 64);
+  case OBELISK_RT_INTRINSIC_V1_RANDOM_NEXT:
+    return signature.flags == 0 && site.inputCount == 0 &&
+           site.outputCount == 1 && twoStateBits(output(0), 64);
+  case OBELISK_RT_INTRINSIC_V1_RANDOM_SEED:
+    return signature.flags == 0 && site.inputCount == 1 &&
+           site.outputCount == 0 && twoStateBits(input(0), 64);
   case OBELISK_RT_INTRINSIC_V1_ASSOC_CREATE:
     if (signature.flags != 0 || site.inputCount != 9 ||
         site.outputCount != 1 || !managed(output(0)))
@@ -3763,6 +3769,16 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         obelisk_rt_v1_random_bounded(context, *bound, &result);
     return status == OBELISK_RT_OK ? sentinel(0, result) : status;
   }
+  case OBELISK_RT_INTRINSIC_V1_RANDOM_NEXT: {
+    uint64_t result = 0;
+    obelisk_rt_status status = obelisk_rt_v1_random_next(context, &result);
+    return status == OBELISK_RT_OK ? sentinel(0, result) : status;
+  }
+  case OBELISK_RT_INTRINSIC_V1_RANDOM_SEED: {
+    auto seed = scalar(0);
+    return seed ? obelisk_rt_v1_random_seed(context, *seed)
+                : OBELISK_RT_INVALID_BYTECODE;
+  }
   case OBELISK_RT_INTRINSIC_V1_STRING_LITERAL: {
     auto literal = bytes(0);
     obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
@@ -4329,6 +4345,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       return OBELISK_RT_OUT_OF_MEMORY;
     ScheduledDesignTask task;
     task.parent = context->activeLogicalProcessToken;
+    obelisk_rt_random_split_unlocked(context, task.random);
     task.function = signature.flags;
     task.scheduleRank = static_cast<uint32_t>(callee.initialScheduleRank);
     task.scratchOffset = scratchOffset;
@@ -8655,6 +8672,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
         releaseDesignTaskOwnedStatesUnlocked(context, task.id);
       }
       context->activeDesignTaskID = 0;
+      context->activeRandom = nullptr;
       context->activeDesignTaskPhase = 0;
       context->activeHomeRegion = UINT32_MAX;
       context->activeExecRegion = UINT32_MAX;
@@ -8809,6 +8827,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
       taskDequeued = true;
       context->designTaskExecuting = true;
       context->activeDesignTaskID = task.id;
+      context->activeRandom = &task.random;
       context->activeDesignTaskPhase = task.phase;
       context->activeHomeRegion = task.homeRegion;
       context->activeExecRegion = task.queuedRegion;
@@ -8869,6 +8888,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
       task.controls = std::move(context->activeControls);
       context->activeDesignTaskID = 0;
+      context->activeRandom = nullptr;
       context->activeDesignTaskPhase = 0;
       context->activeHomeRegion = UINT32_MAX;
       context->activeExecRegion = UINT32_MAX;

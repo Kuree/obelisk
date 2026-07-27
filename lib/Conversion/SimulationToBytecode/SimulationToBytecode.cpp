@@ -205,6 +205,10 @@ constexpr uint32_t kIntrinsicContainerDelete =
     OBELISK_RT_INTRINSIC_V1_CONTAINER_DELETE;
 constexpr uint32_t kIntrinsicRandomBounded =
     OBELISK_RT_INTRINSIC_V1_RANDOM_BOUNDED;
+constexpr uint32_t kIntrinsicRandomNext =
+    OBELISK_RT_INTRINSIC_V1_RANDOM_NEXT;
+constexpr uint32_t kIntrinsicRandomSeed =
+    OBELISK_RT_INTRINSIC_V1_RANDOM_SEED;
 constexpr uint32_t kIntrinsicAssocCreate =
     OBELISK_RT_INTRINSIC_V1_ASSOC_CREATE;
 constexpr uint32_t kIntrinsicAssocRead = OBELISK_RT_INTRINSIC_V1_ASSOC_READ;
@@ -899,6 +903,17 @@ private:
         if (base == classes.end() || failed(compute(base->second)))
           return declaration.emitOpError("class layout has an unknown base");
         layout = layouts[base->getKey()];
+      }
+      // Native weak-reference wrappers reserve one inline referent pointer
+      // before declared fields. Whole-design bytecode uses the same managed
+      // object descriptor and must therefore account for that ABI slot even
+      // though bytecode never interprets its contents directly.
+      if (declaration.getWeakReferentAttr()) {
+        layout.size = llvm::alignTo(layout.size, uint64_t{8});
+        if (layout.size > UINT64_MAX - 8)
+          return declaration.emitOpError("weak referent layout overflows");
+        layout.size += 8;
+        layout.alignment = std::max<uint32_t>(layout.alignment, 8);
       }
       for (sim::SimClassFieldDeclOp field : fields[declaration.getSymName()]) {
         if (field.getIsStatic())
@@ -2069,6 +2084,10 @@ private:
     if (auto op = dyn_cast<sim::SimContainerDeleteOp>(operation))
       return emitIntrinsic(plan, kIntrinsicContainerDelete, {op.getContainer()},
                            {});
+    if (auto op = dyn_cast<sim::SimRandomNextOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicRandomNext, {}, {op.getResult()});
+    if (auto op = dyn_cast<sim::SimRandomSeedOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicRandomSeed, {op.getSeed()}, {});
     if (auto op = dyn_cast<sim::SimRandomBoundedOp>(operation))
       return emitIntrinsic(plan, kIntrinsicRandomBounded, {op.getBound()},
                            {op.getResult()});

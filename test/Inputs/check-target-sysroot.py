@@ -218,6 +218,7 @@ native_members = [
     "Format.o",
     "ManagedHeap.o",
     "Process.o",
+    "Random.o",
     "Runtime.o",
     "VPI.o",
 ]

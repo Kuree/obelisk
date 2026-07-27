@@ -4,6 +4,7 @@
 
 #include "gtest/gtest.h"
 
+#include <array>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -384,6 +385,57 @@ TEST_F(ManagedValueTest, SeededBoundedRandomIsRepeatableAndBounded) {
   const char *invalid[] = {"sim", "--seed=18446744073709551616"};
   EXPECT_EQ(obelisk_rt_v1_context_configure_argv(context, 2, invalid),
             OBELISK_RT_INVALID_ARGUMENT);
+}
+
+TEST(RandomStateTest, MatchesPublishedPcgXshRrVector) {
+  obelisk_rt_random_state_v1 state{};
+  obelisk_rt_v1_random_state_seed(&state, 42, 54);
+  constexpr uint32_t expected[] = {
+      UINT32_C(0xa15c02b7), UINT32_C(0x7b47f409),
+      UINT32_C(0xba1d3330), UINT32_C(0x83d2f293),
+      UINT32_C(0xbfa4784b)};
+  for (uint32_t value : expected)
+    EXPECT_EQ(obelisk_rt_v1_random_state_next32(&state), value);
+  EXPECT_EQ(state.increment, UINT64_C(109));
+}
+
+TEST_F(ManagedValueTest, RandomStateSnapshotRestoresExactly) {
+  ASSERT_EQ(obelisk_rt_v1_context_seed(context, 987654321), OBELISK_RT_OK);
+  obelisk_rt_random_state_v1 snapshot{};
+  ASSERT_EQ(obelisk_rt_v1_random_get_state(context, &snapshot),
+            OBELISK_RT_OK);
+  EXPECT_NE(snapshot.increment & 1, 0u);
+  uint64_t first = 0;
+  uint64_t second = 0;
+  ASSERT_EQ(obelisk_rt_v1_random_next(context, &first), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_random_set_state(context, &snapshot),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_random_next(context, &second), OBELISK_RT_OK);
+  EXPECT_EQ(first, second);
+  snapshot.increment &= ~uint64_t{1};
+  EXPECT_EQ(obelisk_rt_v1_random_set_state(context, &snapshot),
+            OBELISK_RT_INVALID_ARGUMENT);
+}
+
+TEST(RandomStateTest, BoundedDrawCoversRangeDeterministically) {
+  obelisk_rt_random_state_v1 left{};
+  obelisk_rt_random_state_v1 right{};
+  obelisk_rt_v1_random_state_seed(&left, 1234, 99);
+  right = left;
+  std::array<uint64_t, 7> counts{};
+  for (unsigned index = 0; index != 7000; ++index) {
+    uint64_t lhs = UINT64_MAX;
+    uint64_t rhs = UINT64_MAX;
+    ASSERT_EQ(obelisk_rt_v1_random_state_bounded(&left, counts.size(), &lhs),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_random_state_bounded(&right, counts.size(), &rhs),
+              OBELISK_RT_OK);
+    ASSERT_EQ(lhs, rhs);
+    ASSERT_LT(lhs, counts.size());
+    ++counts[lhs];
+  }
+  for (uint64_t count : counts)
+    EXPECT_GT(count, 850u);
 }
 
 TEST_F(ManagedValueTest, StringOperationsSurviveCollectionAtEveryAllocation) {

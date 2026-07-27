@@ -306,6 +306,7 @@ struct ScheduledProcess {
   uint32_t homeRegion = OBELISK_RT_REGION_ACTIVE;
   uint32_t scheduleRank = UINT32_MAX;
   uint64_t insertionSequence = 0;
+  obelisk_rt_random_state_v1 random{};
   // Executable event-region ordinal. Normally the immutable home region,
   // temporarily an inactive region after #0 or an explicit resume override.
   uint32_t queuedRegion = 0;
@@ -434,6 +435,7 @@ struct ScheduledDesignTask {
   uint32_t scheduleRank = UINT32_MAX;
   uint32_t queuedRegion = 0;
   uint64_t insertionSequence = 0;
+  obelisk_rt_random_state_v1 random{};
   bool started = false;
   bool urgent = false;
   bool terminated = false;
@@ -515,6 +517,9 @@ struct obelisk_rt_context {
   uint32_t activeHomeRegion = UINT32_MAX;
   uint32_t activeExecRegion = UINT32_MAX;
   uint64_t activeLogicalProcessToken = 0;
+  // A bytecode design task is moved out of the scheduler vector while it
+  // executes, so its lane-local stream cannot be rediscovered by token.
+  obelisk_rt_random_state_v1 *activeRandom = nullptr;
   uint64_t monitorLogicalProcessToken = 0;
   bool monitorEnabled = true;
   std::vector<uint64_t> activeControls;
@@ -572,8 +577,7 @@ struct obelisk_rt_context {
       managedOwnedElementTypes;
   std::vector<obelisk_rt_process_instance_v1 *> managedRootProcesses;
   ManagedHeap *managedHeap = nullptr;
-  uint64_t randomState = 0;
-  uint64_t randomIncrement = UINT64_C(1442695040888963407);
+  obelisk_rt_random_state_v1 random{};
 
   obelisk_rt_context();
   ~obelisk_rt_context();
@@ -608,6 +612,12 @@ obelisk_rt_status obelisk_rt_managed_roots_pop(obelisk_rt_gc_lane_v1 *lane,
                                                ManagedRootProvider *provider);
 const obelisk_rt_class_descriptor_v1 *
 obelisk_rt_managed_class_lookup(obelisk_rt_context *context, uint64_t classID);
+obelisk_rt_random_state_v1 *
+obelisk_rt_random_active_state_unlocked(obelisk_rt_context *context);
+void obelisk_rt_random_split_unlocked(obelisk_rt_context *context,
+                                      obelisk_rt_random_state_v1 &child);
+void obelisk_rt_random_seed_context_unlocked(obelisk_rt_context *context,
+                                             uint64_t seed);
 bool obelisk_rt_managed_object_belongs_to(
     obelisk_rt_context *context, obelisk_rt_object_v1 *object) noexcept;
 obelisk_rt_context *

@@ -11,6 +11,7 @@ add_library(obelisk_rt STATIC
   lib/ManagedHeap.cpp
   lib/Containers.cpp
   lib/Process.cpp
+  lib/Random.cpp
   lib/Runtime.cpp
   lib/VPI.cpp
 )

@@ -7267,6 +7267,54 @@ public:
   }
 };
 
+class RandomNextConversion final
+    : public OpConversionPattern<sim::SimRandomNextOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimRandomNextOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getContext().size() != 1)
+      return failure();
+    Value context = adaptor.getContext().front();
+    Value output =
+        entryAlloca(rewriter, op.getLoc(), rewriter.getI64Type(), 1, 8);
+    Value status = LLVM::CallOp::create(
+                       rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+                       SymbolRefAttr::get(rewriter.getContext(),
+                                          "obelisk_rt_v1_random_next"),
+                       ValueRange{context, output})
+                       .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    rewriter.replaceOp(op,
+                       LLVM::LoadOp::create(rewriter, op.getLoc(),
+                                            rewriter.getI64Type(), output, 8));
+    return success();
+  }
+};
+
+class RandomSeedConversion final
+    : public OpConversionPattern<sim::SimRandomSeedOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimRandomSeedOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getContext().size() != 1 || adaptor.getSeed().size() != 1)
+      return failure();
+    Value context = adaptor.getContext().front();
+    Value status = LLVM::CallOp::create(
+                       rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+                       SymbolRefAttr::get(rewriter.getContext(),
+                                          "obelisk_rt_v1_random_seed"),
+                       ValueRange{context, adaptor.getSeed().front()})
+                       .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 class RandomBoundedConversion final
     : public OpConversionPattern<sim::SimRandomBoundedOp> {
 public:
@@ -7274,10 +7322,9 @@ public:
   LogicalResult
   matchAndRewrite(sim::SimRandomBoundedOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    if (adaptor.getBound().size() != 1)
+    if (adaptor.getContext().size() != 1 || adaptor.getBound().size() != 1)
       return failure();
-    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
-    (void)lane;
+    Value context = adaptor.getContext().front();
     Value output =
         entryAlloca(rewriter, op.getLoc(), rewriter.getI64Type(), 1, 8);
     Value status = LLVM::CallOp::create(
@@ -10201,6 +10248,10 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                            {managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_random_bounded", managedI32,
                            {managedPointer, managedI64, managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_random_next", managedI32,
+                           {managedPointer, managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_random_seed", managedI32,
+                           {managedPointer, managedI64});
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_container_read", managedI32,
       {managedPointer, managedI64, managedPointer, managedPointer});
@@ -10564,7 +10615,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       ContainerDeleteConversion, ContainerReadConversion,
       ContainerWriteConversion, AssocCreateConversion, AssocReadConversion,
       AssocWriteConversion, AssocDefaultConversion, AssocExistsConversion,
-      AssocDeleteConversion, AssocTraverseConversion, RandomBoundedConversion,
+      AssocDeleteConversion, AssocTraverseConversion, RandomNextConversion,
+      RandomSeedConversion, RandomBoundedConversion,
       StringLiteralConversion, StringFromPackedConversion,
       StringToPackedConversion, StringConcatConversion, StringLengthConversion,
       StringGetcConversion, StringCompareConversion, ClassAllocConversion,
@@ -10640,7 +10692,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       sim::SimAssocCreateOp, sim::SimAssocReadOp, sim::SimAssocWriteOp,
       sim::SimAssocExistsOp, sim::SimAssocDeleteOp,
       sim::SimAssocSetDefaultOp, sim::SimAssocTraverseOp,
-      sim::SimRandomBoundedOp, sim::SimStringLiteralOp,
+      sim::SimRandomNextOp, sim::SimRandomSeedOp, sim::SimRandomBoundedOp,
+      sim::SimStringLiteralOp,
       sim::SimStringFromPackedOp, sim::SimStringToPackedOp,
       sim::SimStringConcatOp, sim::SimStringRepeatOp, sim::SimStringLengthOp,
       sim::SimStringGetcOp, sim::SimStringPutcOp, sim::SimStringSubstrOp,

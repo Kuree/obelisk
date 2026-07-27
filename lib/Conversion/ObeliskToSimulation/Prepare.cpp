@@ -787,6 +787,29 @@ void ObeliskSimPreparePass::runOnOperation() {
           ordinal++, IntegerAttr{}, isStatic,
           /*isWeak=*/false, builder.getStringAttr(getDebugName(property)));
     }
+    // Every inheritance tree owns exactly one inline PCG stream. Derived
+    // instances inherit these two ordinary, GC-invisible i64 fields from the
+    // root class.
+    if (!base && !classType.getIsInterface()) {
+      auto addRandomField = [&](StringRef suffix, StringRef debugName) {
+        std::string name =
+            (classSymbol.getValue() + "_field_" + suffix).str();
+        FlatSymbolRefAttr symbol = FlatSymbolRefAttr::get(context, name);
+        sim::SimClassFieldDeclOp::create(
+            builder, getSemanticLocation(classType), name, classSymbol,
+            builder.getI64Type(), ordinal++, IntegerAttr{},
+            /*isStatic=*/false, /*isWeak=*/false,
+            builder.getStringAttr(debugName));
+        return symbol;
+      };
+      declaration->setAttr(
+          "obelisk_sim.random_state_field",
+          addRandomField("__obelisk_rng_state", "__obelisk_rng_state"));
+      declaration->setAttr(
+          "obelisk_sim.random_increment_field",
+          addRandomField("__obelisk_rng_increment",
+                         "__obelisk_rng_increment"));
+    }
   }
   llvm::DenseMap<Operation *, uint64_t> classVirtualCounts;
   llvm::SmallPtrSet<Operation *, 8> assigningClasses;

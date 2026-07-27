@@ -1829,6 +1829,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_planned(
     }
     process.token = context->nextNativeProcessToken++;
     process.parent = context->activeLogicalProcessToken;
+    obelisk_rt_random_split_unlocked(context, process.random);
     process.controls = context->activeControls;
     process.insertionSequence = context->nextProcessInsertionSequence++;
     process.observedEpoch = context->schedulerEpoch;

@@ -483,6 +483,7 @@ private:
   lowerAssociativeArrayMethod(semantic::SVCallExpressionOp op);
   FailureOr<Value> lowerNewClass(semantic::SVNewClassExpressionOp op);
   FailureOr<Value> lowerSystemCall(semantic::SVCallExpressionOp op);
+  LogicalResult initializeObjectRandomStream(Value object, Location location);
   LogicalResult lowerPortConnection(semantic::SVPortConnectionOp op);
 
   LogicalResult lowerStatement(Operation *op);
@@ -5445,8 +5446,9 @@ UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
     setCurrent(body);
     Value last =
         arith::SubIOp::create(builder, location, count, indexConstant(1));
-    Value random = sim::SimRandomBoundedOp::create(builder, location,
-                                                   builder.getI64Type(), count);
+    Value context = function.getBody().front().getArgument(0);
+    Value random = sim::SimRandomBoundedOp::create(
+        builder, location, builder.getI64Type(), context, count);
     Value left = sim::SimContainerReadOp::create(builder, location, elementType,
                                                  *receiver, last);
     Value right = sim::SimContainerReadOp::create(
@@ -7316,6 +7318,8 @@ UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
       receiver = sim::SimClassAllocOp::create(
           builder, location, receiverType,
           function.getBody().front().getArgument(0));
+      if (failed(initializeObjectRandomStream(receiver, location)))
+        return failure();
     }
     auto constructorName = declaration ? declaration->getAttrOfType<StringAttr>(
                                              "obelisk_sim.implicit_constructor")
@@ -7379,9 +7383,11 @@ UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
     FailureOr<Type> resultType = getNormalizedSemanticType(op);
     if (failed(resultType) || !isa<sim::ClassHandleType>(*resultType))
       return failure();
-    receiver =
-        sim::SimClassAllocOp::create(builder, location, *resultType,
-                                     function.getBody().front().getArgument(0));
+    receiver = sim::SimClassAllocOp::create(
+        builder, location, *resultType,
+        function.getBody().front().getArgument(0));
+    if (failed(initializeObjectRandomStream(receiver, location)))
+      return failure();
   }
 
   SmallVector<Operation *> actuals = getChildren(call);
@@ -7543,6 +7549,56 @@ UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
       .getResult();
 }
 
+LogicalResult
+UnitLowering::initializeObjectRandomStream(Value object, Location location) {
+  auto objectType = dyn_cast<sim::ClassHandleType>(object.getType());
+  if (!objectType)
+    return failure();
+  sim::SimClassDeclOp declaration =
+      SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+          function, objectType.getClassName());
+  while (declaration &&
+         !declaration->hasAttr("obelisk_sim.random_state_field")) {
+    if (!declaration.getBaseAttr())
+      break;
+    declaration = SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+        function, declaration.getBaseAttr());
+  }
+  auto stateField = declaration ? declaration->getAttrOfType<FlatSymbolRefAttr>(
+                                      "obelisk_sim.random_state_field")
+                                : FlatSymbolRefAttr{};
+  auto incrementField =
+      declaration ? declaration->getAttrOfType<FlatSymbolRefAttr>(
+                        "obelisk_sim.random_increment_field")
+                  : FlatSymbolRefAttr{};
+  if (!declaration || !stateField || !incrementField) {
+    emitError(location) << "class hierarchy has no inline random stream";
+    return failure();
+  }
+
+  Value context = function.getBody().front().getArgument(0);
+  Value state =
+      sim::SimRandomNextOp::create(builder, location, builder.getI64Type(),
+                                   context);
+  Value increment =
+      sim::SimRandomNextOp::create(builder, location, builder.getI64Type(),
+                                   context);
+  Value one = arith::ConstantOp::create(builder, location, builder.getI64Type(),
+                                        builder.getI64IntegerAttr(1));
+  increment = arith::OrIOp::create(builder, location, increment, one);
+  Type referenceType = sim::ManagedRefType::get(
+      function.getContext(), builder.getI64Type(),
+      objectType.getClassName());
+  Value stateReference = sim::SimClassFieldRefOp::create(
+      builder, location, referenceType, object, stateField);
+  Value incrementReference = sim::SimClassFieldRefOp::create(
+      builder, location, referenceType, object, incrementField);
+  sim::SimManagedStoreOp::create(builder, location, state, stateReference);
+  sim::SimManagedStoreOp::create(builder, location, increment,
+                                 incrementReference);
+  return success();
+}
+
 FailureOr<Value>
 UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
   Location location = getSemanticLocation(op);
@@ -7594,6 +7650,101 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
   auto dummyTaskResult = [&]() -> Value {
     return constant(builder.getI1Type(), 0);
   };
+
+  if (name == "$urandom" || name == "$srandom") {
+    constexpr size_t maximum = 1;
+    size_t minimum = name == "$urandom" ? 0 : 1;
+    if (children.size() < minimum || children.size() > maximum) {
+      emitError(location) << name
+                          << (name == "$urandom"
+                                  ? " accepts zero or one seed argument"
+                                  : " requires exactly one seed argument");
+      return failure();
+    }
+    if (!children.empty()) {
+      FailureOr<Value> seed32 = lowerInteger(children.front(), i32);
+      if (failed(seed32))
+        return failure();
+      Value seed = arith::ExtUIOp::create(builder, location, i64, *seed32);
+      sim::SimRandomSeedOp::create(builder, location, context, seed);
+    }
+    if (name == "$srandom")
+      return dummyTaskResult();
+    Value value =
+        sim::SimRandomNextOp::create(builder, location, i64, context);
+    value = arith::TruncIOp::create(builder, location, i32, value);
+    return convertResult(value);
+  }
+
+  if (name == "$urandom_range") {
+    if (children.empty() || children.size() > 2) {
+      emitError(location)
+          << "$urandom_range requires one or two arguments";
+      return failure();
+    }
+    FailureOr<Value> first32 = lowerInteger(children[0], i32);
+    if (failed(first32))
+      return failure();
+    Value first = arith::ExtUIOp::create(builder, location, i64, *first32);
+    Value second = constant(i64, 0);
+    if (children.size() == 2) {
+      FailureOr<Value> second32 = lowerInteger(children[1], i32);
+      if (failed(second32))
+        return failure();
+      second = arith::ExtUIOp::create(builder, location, i64, *second32);
+    }
+    Value firstBelow = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ult, first, second);
+    Value low =
+        arith::SelectOp::create(builder, location, firstBelow, first, second);
+    Value high =
+        arith::SelectOp::create(builder, location, firstBelow, second, first);
+    Value extent = arith::SubIOp::create(builder, location, high, low);
+    extent =
+        arith::AddIOp::create(builder, location, extent, constant(i64, 1));
+    Value draw = sim::SimRandomBoundedOp::create(
+        builder, location, i64, context, extent);
+    Value value = arith::AddIOp::create(builder, location, low, draw);
+    return convertResult(value);
+  }
+
+  if (name == "$random") {
+    if (children.size() > 1) {
+      emitError(location) << "$random accepts zero or one seed argument";
+      return failure();
+    }
+    FailureOr<Value> seedDestination = failure();
+    if (!children.empty()) {
+      seedDestination = lowerExpression(children.front(), true);
+      if (failed(seedDestination)) {
+        emitError(getSemanticLocation(children.front()))
+            << "$random seed must be a writable integral variable";
+        return failure();
+      }
+      FailureOr<Value> seedValue =
+          loadReference(*seedDestination, getSemanticLocation(children.front()));
+      if (failed(seedValue))
+        return failure();
+      FailureOr<Value> seed32 =
+          convert(*seedValue, i32, isSignedNode(children.front()), location);
+      if (failed(seed32))
+        return failure();
+      Value seed = arith::ExtUIOp::create(builder, location, i64, *seed32);
+      sim::SimRandomSeedOp::create(builder, location, context, seed);
+    }
+    Value value =
+        sim::SimRandomNextOp::create(builder, location, i64, context);
+    value = arith::TruncIOp::create(builder, location, i32, value);
+    if (succeeded(seedDestination)) {
+      Type destinationType = getReferenceElementType(*seedDestination);
+      FailureOr<Value> updated =
+          convert(value, destinationType, true, location);
+      if (failed(updated) ||
+          failed(storeReference(*seedDestination, *updated, location)))
+        return failure();
+    }
+    return convertResult(value);
+  }
 
   if (name == "$sampled") {
     if (children.size() != 1) {
@@ -8716,10 +8867,14 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
         convert(*source, *resultType, false, getSemanticLocation(op));
     if (failed(converted))
       return failure();
-    return sim::SimClassCopyOp::create(
-               builder, getSemanticLocation(op), *resultType,
-               function.getBody().front().getArgument(0), *converted)
-        .getResult();
+    Value copy =
+        sim::SimClassCopyOp::create(
+            builder, getSemanticLocation(op), *resultType,
+            function.getBody().front().getArgument(0), *converted)
+            .getResult();
+    if (failed(initializeObjectRandomStream(copy, getSemanticLocation(op))))
+      return failure();
+    return copy;
   }
   if (isa<semantic::SVConcatenationExpressionOp>(op))
     return lowerConcatenation(op);

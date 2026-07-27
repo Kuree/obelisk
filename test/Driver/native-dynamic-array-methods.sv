@@ -85,6 +85,6 @@ module native_dynamic_array_methods;
   // CHECK-NEXT: keyeval: 4
   // CHECK-NEXT: rsort: 3 2 1 1
   // CHECK-NEXT: reverse: 1 1 2 3
-  // CHECK-NEXT: shuffle: 3 1 1 2
-  // CHECK-NEXT: map: 13 11 11 12
+  // CHECK-NEXT: shuffle: 2 1 1 3
+  // CHECK-NEXT: map: 12 11 11 13
 endmodule

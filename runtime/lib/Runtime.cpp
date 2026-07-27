@@ -109,22 +109,6 @@ bool validObserverInventory(
   return true;
 }
 
-uint32_t nextRandom32(obelisk_rt_context *context) {
-  uint64_t old = context->randomState;
-  context->randomState =
-      old * UINT64_C(6364136223846793005) + context->randomIncrement;
-  uint32_t shifted = static_cast<uint32_t>(((old >> 18) ^ old) >> 27);
-  uint32_t rotation = static_cast<uint32_t>(old >> 59);
-  return (shifted >> rotation) | (shifted << ((0u - rotation) & 31));
-}
-
-void seedRandom(obelisk_rt_context *context, uint64_t seed) {
-  context->randomState = 0;
-  (void)nextRandom32(context);
-  context->randomState += seed;
-  (void)nextRandom32(context);
-}
-
 } // namespace
 
 obelisk_rt_context::obelisk_rt_context() {
@@ -138,7 +122,7 @@ obelisk_rt_context::obelisk_rt_context() {
   files[2] = {stderr, 0, true};
   for (uint32_t bit = 30; bit >= 1; --bit)
     freeMCDs.push_back(bit);
-  seedRandom(this, 1);
+  obelisk_rt_random_seed_context_unlocked(this, 1);
 }
 
 obelisk_rt_context::~obelisk_rt_context() {
@@ -372,7 +356,30 @@ obelisk_rt_v1_context_seed(obelisk_rt_context *context, uint64_t seed) {
     return OBELISK_RT_INVALID_ARGUMENT;
   return guarded(context, [&] {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
-    seedRandom(context, seed);
+    obelisk_rt_random_seed_context_unlocked(context, seed);
+    // Generated executables configure argv after elaboration has registered
+    // root processes. Re-split those dormant roots in their common lexical
+    // insertion order so --seed governs their streams and native/bytecode
+    // registration details cannot perturb the result.
+    struct RootStream {
+      uint64_t sequence;
+      obelisk_rt_random_state_v1 *state;
+    };
+    std::vector<RootStream> roots;
+    roots.reserve(context->scheduledProcesses.size() +
+                  context->scheduledDesignTasks.size());
+    for (ScheduledProcess &process : context->scheduledProcesses)
+      if (process.parent == 0 && !process.started)
+        roots.push_back({process.insertionSequence, &process.random});
+    for (ScheduledDesignTask &task : context->scheduledDesignTasks)
+      if (task.parent == 0 && !task.started)
+        roots.push_back({task.insertionSequence, &task.random});
+    std::sort(roots.begin(), roots.end(),
+              [](const RootStream &left, const RootStream &right) {
+                return left.sequence < right.sequence;
+              });
+    for (RootStream root : roots)
+      obelisk_rt_random_split_unlocked(context, *root.state);
     return OBELISK_RT_OK;
   });
 }
@@ -406,24 +413,6 @@ obelisk_rt_v1_context_configure_argv(obelisk_rt_context *context, int argc,
       return status;
   }
   return OBELISK_RT_OK;
-}
-
-extern "C" obelisk_rt_status
-obelisk_rt_v1_random_bounded(obelisk_rt_context *context, uint64_t bound,
-                             uint64_t *outValue) {
-  if (!context || !outValue || bound == 0)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  return guarded(context, [&] {
-    std::lock_guard<std::recursive_mutex> lock(context->mutex);
-    uint64_t threshold = (uint64_t{0} - bound) % bound;
-    uint64_t value;
-    do {
-      value = (static_cast<uint64_t>(nextRandom32(context)) << 32) |
-              nextRandom32(context);
-    } while (value < threshold);
-    *outValue = value % bound;
-    return OBELISK_RT_OK;
-  });
 }
 
 extern "C" uint32_t obelisk_rt_v1_import_id(const uint8_t *symbol,

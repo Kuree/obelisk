@@ -320,12 +320,27 @@ def SimContainerDeleteOp : SimOp<"container.delete", [
   let hasVerifier = 1;
 }
 
+def SimRandomNextOp : SimOp<"random.next", [
+    MemoryEffects<[MemRead<SimRNGResource>, MemWrite<SimRNGResource>]>
+  ]> {
+  let summary = "draw the next 64 bits from the active process stream";
+  let arguments = (ins SimContextType:$context);
+  let results = (outs I64:$result);
+}
+
 def SimRandomBoundedOp : SimOp<"random.bounded", [
     MemoryEffects<[MemRead<SimRNGResource>, MemWrite<SimRNGResource>]>
   ]> {
-  let summary = "draw a deterministic context-local integer below a bound";
-  let arguments = (ins I64:$bound);
+  let summary = "draw an unbiased active-process integer below a bound";
+  let arguments = (ins SimContextType:$context, I64:$bound);
   let results = (outs I64:$result);
+}
+
+def SimRandomSeedOp : SimOp<"random.seed", [
+    MemoryEffects<[MemWrite<SimRNGResource>]>
+  ]> {
+  let summary = "seed the active process stream";
+  let arguments = (ins SimContextType:$context, I64:$seed);
 }
 
 def SimContainerReadOp : SimOp<"container.read", [

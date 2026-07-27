@@ -517,8 +517,27 @@ ABI_FUNCTION(obelisk_rt_v1_context_configure_argv,
                                    const char *const *));
 ABI_FUNCTION(obelisk_rt_v1_context_seed,
              obelisk_rt_status (*)(obelisk_rt_context *, uint64_t));
+ABI_FUNCTION(obelisk_rt_v1_random_next,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint64_t *));
+ABI_FUNCTION(obelisk_rt_v1_random_seed,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_random_bounded,
              obelisk_rt_status (*)(obelisk_rt_context *, uint64_t, uint64_t *));
+ABI_FUNCTION(obelisk_rt_v1_random_get_state,
+             obelisk_rt_status (*)(obelisk_rt_context *,
+                                   obelisk_rt_random_state_v1 *));
+ABI_FUNCTION(obelisk_rt_v1_random_set_state,
+             obelisk_rt_status (*)(obelisk_rt_context *,
+                                   const obelisk_rt_random_state_v1 *));
+ABI_FUNCTION(obelisk_rt_v1_random_state_seed,
+             void (*)(obelisk_rt_random_state_v1 *, uint64_t, uint64_t));
+ABI_FUNCTION(obelisk_rt_v1_random_state_next32,
+             uint32_t (*)(obelisk_rt_random_state_v1 *));
+ABI_FUNCTION(obelisk_rt_v1_random_state_next64,
+             uint64_t (*)(obelisk_rt_random_state_v1 *));
+ABI_FUNCTION(obelisk_rt_v1_random_state_bounded,
+             obelisk_rt_status (*)(obelisk_rt_random_state_v1 *, uint64_t,
+                                   uint64_t *));
 ABI_FUNCTION(obelisk_rt_v1_context_create_for_design,
              obelisk_rt_status (*)(const obelisk_rt_execution_descriptor_v1 *,
                                    obelisk_rt_context **));

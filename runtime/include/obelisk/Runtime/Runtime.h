@@ -625,6 +625,10 @@ enum {
   OBELISK_RT_INTRINSIC_V1_ASSOC_DEFAULT = UINT32_C(0x0001043d),
   OBELISK_RT_INTRINSIC_V1_ASSOC_TRAVERSE = UINT32_C(0x0001043e),
   OBELISK_RT_INTRINSIC_V1_REFERENCE_PATH_ASSOC = UINT32_C(0x0001043f),
+  OBELISK_RT_INTRINSIC_V1_RANDOM_NEXT = UINT32_C(0x00010440),
+  OBELISK_RT_INTRINSIC_V1_RANDOM_SEED = UINT32_C(0x00010441),
+  OBELISK_RT_INTRINSIC_V1_RANDOM_GET_STATE = UINT32_C(0x00010442),
+  OBELISK_RT_INTRINSIC_V1_RANDOM_SET_STATE = UINT32_C(0x00010443),
   OBELISK_RT_INTRINSIC_V1_VPI_ROOT = UINT32_C(0x00011000),
   OBELISK_RT_INTRINSIC_V1_VPI_CHILD = UINT32_C(0x00011001),
   OBELISK_RT_INTRINSIC_V1_VPI_SIBLING = UINT32_C(0x00011002),
@@ -1975,6 +1979,14 @@ enum {
   OBELISK_RT_SEEK_END = 2
 };
 
+// PCG-XSH-RR stream state. The increment is always odd for runtime-created
+// streams. Both words are explicit so generated code can snapshot and step an
+// object-local stream without a runtime call.
+typedef struct obelisk_rt_random_state_v1 {
+  uint64_t state;
+  uint64_t increment;
+} obelisk_rt_random_state_v1;
+
 // Context and error handling. Operations on one live context may be called
 // concurrently; last_error is isolated per calling thread. The caller must
 // keep the context alive until all operations finish and must not race destroy
@@ -1986,9 +1998,28 @@ obelisk_rt_v1_context_configure_argv(obelisk_rt_context *context, int argc,
                                      const char *const *argv);
 obelisk_rt_status obelisk_rt_v1_context_seed(obelisk_rt_context *context,
                                              uint64_t seed);
+obelisk_rt_status obelisk_rt_v1_random_next(obelisk_rt_context *context,
+                                            uint64_t *out_value);
+obelisk_rt_status obelisk_rt_v1_random_seed(obelisk_rt_context *context,
+                                            uint64_t seed);
 obelisk_rt_status obelisk_rt_v1_random_bounded(obelisk_rt_context *context,
                                                uint64_t bound,
                                                uint64_t *out_value);
+obelisk_rt_status
+obelisk_rt_v1_random_get_state(obelisk_rt_context *context,
+                               obelisk_rt_random_state_v1 *out_state);
+obelisk_rt_status
+obelisk_rt_v1_random_set_state(obelisk_rt_context *context,
+                               const obelisk_rt_random_state_v1 *state);
+void obelisk_rt_v1_random_state_seed(obelisk_rt_random_state_v1 *state,
+                                     uint64_t seed, uint64_t sequence);
+uint32_t
+obelisk_rt_v1_random_state_next32(obelisk_rt_random_state_v1 *state);
+uint64_t
+obelisk_rt_v1_random_state_next64(obelisk_rt_random_state_v1 *state);
+obelisk_rt_status
+obelisk_rt_v1_random_state_bounded(obelisk_rt_random_state_v1 *state,
+                                   uint64_t bound, uint64_t *out_value);
 uint32_t obelisk_rt_v1_import_id(const uint8_t *symbol, uint64_t symbol_size);
 obelisk_rt_status obelisk_rt_v1_context_register_import(
     obelisk_rt_context *context, uint32_t import_id,
