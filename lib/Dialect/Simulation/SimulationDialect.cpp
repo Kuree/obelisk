@@ -715,7 +715,8 @@ unsigned getAggregateNumElements(Type type) {
         getArrayElementOrdinal(array, array.getRight());
     return last ? *last + 1 : 0;
   }
-  return getAggregateFields(type).size();
+  ArrayAttr fields = getAggregateFields(type);
+  return fields ? fields.size() : 0;
 }
 
 Type getAggregateElementType(Type type, unsigned index) {
@@ -726,7 +727,7 @@ Type getAggregateElementType(Type type, unsigned index) {
     return index < getAggregateNumElements(type) ? array.getElementType()
                                                  : Type{};
   ArrayAttr fields = getAggregateFields(type);
-  if (index >= fields.size())
+  if (!fields || index >= fields.size())
     return {};
   auto field = dyn_cast<FieldAttr>(fields[index]);
   return field ? field.getType() : Type{};

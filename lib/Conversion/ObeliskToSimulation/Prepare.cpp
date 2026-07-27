@@ -3232,6 +3232,13 @@ void ObeliskSimPreparePass::runOnOperation() {
             member.getReferencedSymbol().getLeafReference());
         if (symbol == semanticSymbols.end())
           return;
+        if (isa<semantic::SVParameterSymbolOp, semantic::SVEnumValueSymbolOp,
+                semantic::SVSpecparamSymbolOp>(symbol->second)) {
+          if (auto constant =
+                  symbol->second->getAttrOfType<StringAttr>("constant_value"))
+            member->setAttr("obelisk_sim.constant_value", constant);
+          return;
+        }
         auto field = classFieldSymbols.find(symbol->second);
         auto property =
             dyn_cast<semantic::SVClassPropertySymbolOp>(symbol->second);

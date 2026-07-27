@@ -1769,6 +1769,13 @@ FailureOr<Value>
 UnitLowering::lowerMember(semantic::SVMemberAccessExpressionOp op,
                           bool lvalue) {
   Location location = getSemanticLocation(op);
+  if (getConstantSpelling(op)) {
+    if (lvalue) {
+      emitError(location) << "constant member access is not an lvalue";
+      return failure();
+    }
+    return lowerLiteral(op);
+  }
   SmallVector<Operation *> children = getChildren(op);
   if (children.size() != 1) {
     unsupported(op) << " (member access arity)";
