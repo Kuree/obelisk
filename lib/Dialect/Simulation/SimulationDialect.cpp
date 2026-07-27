@@ -4639,6 +4639,18 @@ OpFoldResult SimLogicCompareOp::fold(FoldAdaptor adaptor) {
       return IntegerAttr::get(getResult().getType(), equal);
     return getLogicAttribute(getContext(), getLogicBoolean(equal, unknown));
   }
+  if (getKind() == CompareKind::Eq || getKind() == CompareKind::Ne) {
+    APInt knownMask = ~(lhs->unknown | rhs->unknown);
+    bool knownMismatch =
+        !((lhs->value ^ rhs->value) & knownMask).isZero();
+    if (knownMismatch)
+      return getLogicAttribute(
+          getContext(), getLogicBoolean(getKind() == CompareKind::Ne));
+    if (!lhs->unknown.isZero() || !rhs->unknown.isZero())
+      return getLogicAttribute(getContext(), getLogicBoolean(false, true));
+    return getLogicAttribute(
+        getContext(), getLogicBoolean(getKind() == CompareKind::Eq));
+  }
   if (!lhs->unknown.isZero() || !rhs->unknown.isZero())
     return getLogicAttribute(getContext(), getLogicBoolean(false, true));
 

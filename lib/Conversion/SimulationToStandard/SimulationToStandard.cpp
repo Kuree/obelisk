@@ -1274,6 +1274,28 @@ public:
       return success();
     }
 
+    if (op.getKind() == sim::CompareKind::Eq ||
+        op.getKind() == sim::CompareKind::Ne) {
+      Value unknownBits =
+          arith::OrIOp::create(rewriter, loc, lhs.unknown, rhs.unknown);
+      Value mismatchBits = arith::AndIOp::create(
+          rewriter, loc,
+          arith::XOrIOp::create(rewriter, loc, lhs.value, rhs.value),
+          bitNot(rewriter, loc, unknownBits));
+      Value knownMismatch = isNonZero(rewriter, loc, mismatchBits);
+      Value unknown = boolAnd(
+          rewriter, loc, isNonZero(rewriter, loc, unknownBits),
+          boolNot(rewriter, loc, knownMismatch));
+      Value value =
+          op.getKind() == sim::CompareKind::Eq
+              ? boolAnd(rewriter, loc,
+                        boolNot(rewriter, loc, knownMismatch),
+                        boolNot(rewriter, loc, unknown))
+              : knownMismatch;
+      replaceLogic(op, {value, unknown}, rewriter);
+      return success();
+    }
+
     arith::CmpIPredicate predicate;
     switch (op.getKind()) {
     case sim::CompareKind::Eq:

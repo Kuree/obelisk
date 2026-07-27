@@ -5860,7 +5860,23 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
                    {0}};
       if (!deterministic && !wildcardEquality &&
           (anyUnknown(left) || anyUnknown(right))) {
-        result = allX(1, result.fourState);
+        bool logicalEquality = instruction.flags == OBELISK_RT_DB_CMP_EQ ||
+                               instruction.flags == OBELISK_RT_DB_CMP_NE;
+        bool knownMismatch = false;
+        if (logicalEquality) {
+          for (size_t index = 0; index < left.value.size(); ++index) {
+            uint64_t known =
+                ~(left.unknown[index] | right.unknown[index]);
+            if (((left.value[index] ^ right.value[index]) & known) != 0) {
+              knownMismatch = true;
+              break;
+            }
+          }
+        }
+        if (logicalEquality && knownMismatch)
+          result.value[0] = instruction.flags == OBELISK_RT_DB_CMP_NE;
+        else
+          result = allX(1, result.fourState);
       } else {
         int compared = compareUnsigned(left.value, right.value);
         bool signedOperands = instruction.flags >= OBELISK_RT_DB_CMP_SLT &&
