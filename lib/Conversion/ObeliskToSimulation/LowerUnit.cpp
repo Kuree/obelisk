@@ -31,6 +31,7 @@
 #include <cmath>
 #include <functional>
 #include <limits>
+#include <vector>
 
 using namespace mlir;
 
@@ -356,6 +357,25 @@ static bool isAddressableExpression(Operation *op) {
       [](Operation *index) { return getConstantSpelling(index).has_value(); });
 }
 
+/// True when an expression selects a subvalue through a dynamic array or
+/// queue. Such lvalues must rebuild the captured container instead of
+/// materializing an unstable interior reference.
+static bool isSequentialContainerSubvalue(Operation *expression) {
+  SmallVector<Operation *> children = getChildren(expression);
+  if (isa<semantic::SVElementSelectExpressionOp>(expression) &&
+      children.size() == 2) {
+    FailureOr<Type> baseType = getNormalizedSemanticType(children.front());
+    if (succeeded(baseType) &&
+        isa<sim::DynamicArrayType, sim::QueueType>(*baseType))
+      return true;
+    return isSequentialContainerSubvalue(children.front());
+  }
+  if (isa<semantic::SVMemberAccessExpressionOp>(expression) &&
+      children.size() == 1)
+    return isSequentialContainerSubvalue(children.front());
+  return false;
+}
+
 static bool isStaticallyAllocatedOverrideTarget(Value value) {
   while (value) {
     if (auto extract = value.getDefiningOp<sim::SimRefExtractOp>()) {
@@ -387,6 +407,25 @@ public:
   LogicalResult lower(ArrayRef<Operation *> roots);
 
 private:
+  struct CapturedLValue {
+    enum class Kind {
+      Reference,
+      ContainerElement,
+      AggregateElement,
+      StringCharacter,
+      Concatenation,
+    };
+
+    Kind kind = Kind::Reference;
+    Operation *semanticNode = nullptr;
+    Type type;
+    Value reference;
+    Value container;
+    Value index;
+    unsigned ordinal = 0;
+    std::vector<CapturedLValue> children;
+  };
+
   FailureOr<Value> lowerExpression(Operation *op, bool lvalue = false);
   FailureOr<Value> lowerNamedValue(semantic::SVNamedValueExpressionOp op,
                                    bool lvalue);
@@ -402,6 +441,22 @@ private:
   FailureOr<Value> lowerNewArray(Operation *op);
   FailureOr<Value> lowerSelection(Operation *op, bool lvalue);
   FailureOr<Value> lowerAssignment(semantic::SVAssignmentExpressionOp op);
+  FailureOr<CapturedLValue> captureLValue(Operation *destination,
+                                         Location location);
+  FailureOr<Value> loadCapturedLValue(const CapturedLValue &destination,
+                                      Location location);
+  LogicalResult writeCapturedLValue(CapturedLValue &destination,
+                                    Value value, bool sourceSigned,
+                                    bool nonblocking, Location location,
+                                    Value delay = {});
+  bool haveSameCapturedStorage(const CapturedLValue &lhs,
+                               const CapturedLValue &rhs) const;
+  void propagateCapturedContainers(const CapturedLValue &source,
+                                   CapturedLValue &destination);
+  void appendCapturedValues(const CapturedLValue &destination,
+                            SmallVectorImpl<Value> &values);
+  LogicalResult replaceCapturedValues(CapturedLValue &destination,
+                                      ValueRange values, unsigned &next);
   LogicalResult writeLValue(Operation *destination, Value value,
                             bool sourceSigned, bool nonblocking,
                             Location location, Value delay = {});
@@ -511,6 +566,7 @@ private:
   llvm::SetVector<Value> sensitivity;
   llvm::SetVector<Value> *observedDependencies = nullptr;
   Value expressionPlaceholder;
+  Value lvalueReferencePlaceholder;
   std::string returnPath;
   SmallVector<std::string> copyOutPaths;
   struct LoopTargets {
@@ -2321,66 +2377,78 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
   return convert(value, *resultType, false, location);
 }
 
-LogicalResult UnitLowering::writeLValue(Operation *destination, Value value,
-                                        bool sourceSigned, bool nonblocking,
-                                        Location location, Value delay) {
-  std::function<bool(Operation *)> isSequentialContainerSubvalue =
-      [&](Operation *expression) -> bool {
-    SmallVector<Operation *> children = getChildren(expression);
-    if (isa<semantic::SVElementSelectExpressionOp>(expression) &&
-        children.size() == 2) {
-      FailureOr<Type> baseType = getNormalizedSemanticType(children.front());
-      if (succeeded(baseType) &&
-          isa<sim::DynamicArrayType, sim::QueueType>(*baseType))
-        return true;
-      return isSequentialContainerSubvalue(children.front());
-    }
-    if (isa<semantic::SVMemberAccessExpressionOp>(expression) &&
-        children.size() == 1)
-      return isSequentialContainerSubvalue(children.front());
-    return false;
-  };
+FailureOr<UnitLowering::CapturedLValue>
+UnitLowering::captureLValue(Operation *destination, Location location) {
+  CapturedLValue captured;
+  captured.semanticNode = destination;
+  FailureOr<Type> destinationType = getNormalizedSemanticType(destination);
+  if (failed(destinationType))
+    return failure();
+  captured.type = *destinationType;
 
-  if (!nonblocking && isa<semantic::SVMemberAccessExpressionOp>(destination) &&
-      !destination->hasAttr("obelisk_sim.class_field") &&
-      (isSequentialContainerSubvalue(destination) || [&] {
-        FailureOr<Type> type = getNormalizedSemanticType(destination);
-        return succeeded(type) && sim::isManagedHandleType(*type);
-      }())) {
-    SmallVector<Operation *> members = getChildren(destination);
-    auto ordinalAttr = destination->getAttrOfType<IntegerAttr>("field_ordinal");
-    FailureOr<Type> memberType = getNormalizedSemanticType(destination);
-    if (members.size() != 1 || !ordinalAttr ||
-        ordinalAttr.getValue().isNegative() ||
-        ordinalAttr.getValue().getActiveBits() > 32 || failed(memberType))
+  if (isa<semantic::SVConcatenationExpressionOp>(destination)) {
+    SmallVector<Operation *> children = getChildren(destination);
+    if (children.empty())
       return failure();
-    unsigned ordinal = ordinalAttr.getValue().getZExtValue();
-    FailureOr<Value> aggregate = lowerExpression(members.front());
-    if (failed(aggregate) ||
-        sim::getAggregateElementType((*aggregate).getType(), ordinal) !=
-            *memberType)
-      return failure();
-    if (isa<sim::PackedUnionType, sim::UnpackedUnionType>(
-            (*aggregate).getType()))
-      return failure();
-    FailureOr<Value> replacement = convert(value, *memberType, sourceSigned,
-                                           location, isSignedNode(destination));
-    if (failed(replacement))
-      return failure();
-    Value updated = sim::SimAggregateInsertOp::create(
-        builder, location, (*aggregate).getType(), *aggregate, *replacement,
-        ordinal);
-    return writeLValue(members.front(), updated, false, false, location);
+    captured.kind = CapturedLValue::Kind::Concatenation;
+    for (Operation *child : children) {
+      FailureOr<CapturedLValue> element = captureLValue(child, location);
+      if (failed(element))
+        return failure();
+      captured.children.push_back(std::move(*element));
+    }
+    return captured;
   }
 
   if (isa<semantic::SVElementSelectExpressionOp>(destination)) {
     SmallVector<Operation *> selection = getChildren(destination);
     if (selection.size() == 2) {
-      FailureOr<Type> baseType = getNormalizedSemanticType(selection[0]);
-      if (!nonblocking && succeeded(baseType) &&
-          isa<sim::PackedArrayType, sim::UnpackedArrayType>(*baseType) &&
+      FailureOr<Type> baseType = getNormalizedSemanticType(selection.front());
+      if (failed(baseType))
+        return failure();
+      if (isa<sim::DynamicArrayType, sim::QueueType>(*baseType)) {
+        FailureOr<CapturedLValue> base =
+            captureLValue(selection.front(), location);
+        FailureOr<Value> container =
+            succeeded(base) ? loadCapturedLValue(*base, location)
+                            : FailureOr<Value>(failure());
+        FailureOr<Value> index = lowerExpression(selection[1]);
+        if (failed(base) || failed(container) || failed(index))
+          return failure();
+        FailureOr<Value> scalarIndex = toPackedScalar(*index, location);
+        if (failed(scalarIndex))
+          return failure();
+        FailureOr<Value> index64 =
+            convert(*scalarIndex, builder.getI64Type(),
+                    isSignedNode(selection[1]), location);
+        if (failed(index64))
+          return failure();
+        captured.kind = CapturedLValue::Kind::ContainerElement;
+        captured.container = *container;
+        captured.index = *index64;
+        captured.children.push_back(std::move(*base));
+        return captured;
+      }
+      if (isa<sim::StringType>(*baseType)) {
+        FailureOr<CapturedLValue> base =
+            captureLValue(selection.front(), location);
+        FailureOr<Value> index = lowerExpression(selection[1]);
+        if (failed(base) || failed(index))
+          return failure();
+        FailureOr<Value> index64 =
+            convert(*index, builder.getI64Type(), isSignedNode(selection[1]),
+                    location);
+        if (failed(index64))
+          return failure();
+        captured.kind = CapturedLValue::Kind::StringCharacter;
+        captured.index = *index64;
+        captured.children.push_back(std::move(*base));
+        return captured;
+      }
+
+      if (isa<sim::PackedArrayType, sim::UnpackedArrayType>(*baseType) &&
           isIntegerLiteral(selection[1]) &&
-          isSequentialContainerSubvalue(selection[0])) {
+          isSequentialContainerSubvalue(selection.front())) {
         FailureOr<Type> indexType = getNormalizedSemanticType(selection[1]);
         std::optional<unsigned> indexWidth =
             succeeded(indexType) ? sim::getPackedWidth(*indexType)
@@ -2389,140 +2457,380 @@ LogicalResult UnitLowering::writeLValue(Operation *destination, Value value,
           return failure();
         FailureOr<ParsedConstant> parsed = parseSVInteger(
             *getConstantSpelling(selection[1]), *indexWidth, location);
-        if (failed(parsed))
+        if (failed(parsed) || !parsed->unknown.isZero())
           return failure();
-        std::optional<unsigned> ordinal;
-        if (parsed->unknown.isZero()) {
-          APInt index = isSignedNode(selection[1])
-                            ? parsed->value.sextOrTrunc(65)
-                            : parsed->value.zextOrTrunc(65);
-          if (index.isSignedIntN(64))
-            ordinal =
-                sim::getArrayElementOrdinal(*baseType, index.getSExtValue());
-        }
-        if (ordinal) {
-          FailureOr<Value> aggregate = lowerExpression(selection[0]);
-          FailureOr<Type> elementType = getNormalizedSemanticType(destination);
-          if (failed(aggregate) || failed(elementType))
-            return failure();
-          FailureOr<Value> replacement =
-              convert(value, *elementType, sourceSigned, location,
-                      isSignedNode(destination));
-          if (failed(replacement))
-            return failure();
-          Value updated = sim::SimAggregateInsertOp::create(
-              builder, location, (*aggregate).getType(), *aggregate,
-              *replacement, *ordinal);
-          return writeLValue(selection[0], updated, false, false, location);
-        }
-      }
-      if (succeeded(baseType) && isa<sim::StringType>(*baseType)) {
-        if (nonblocking) {
-          emitError(location)
-              << "nonblocking string-character assignment requires a "
-                 "captured element path";
+        APInt index = isSignedNode(selection[1])
+                          ? parsed->value.sextOrTrunc(65)
+                          : parsed->value.zextOrTrunc(65);
+        if (!index.isSignedIntN(64))
           return failure();
-        }
-        FailureOr<Value> reference = lowerExpression(selection[0], true);
-        FailureOr<Value> input =
-            succeeded(reference) ? loadReference(*reference, location)
-                                 : FailureOr<Value>(failure());
-        FailureOr<Value> index = lowerExpression(selection[1]);
-        FailureOr<Value> character =
-            convert(value, builder.getI8Type(), sourceSigned, location);
-        if (failed(reference) || failed(input) || failed(index) ||
-            failed(character))
+        std::optional<unsigned> ordinal =
+            sim::getArrayElementOrdinal(*baseType, index.getSExtValue());
+        if (!ordinal)
           return failure();
-        FailureOr<Value> index64 =
-            convert(*index, builder.getI64Type(), isSignedNode(selection[1]),
-                    location);
-        if (failed(index64))
+        FailureOr<CapturedLValue> base =
+            captureLValue(selection.front(), location);
+        if (failed(base))
           return failure();
-        Value updated = sim::SimStringPutcOp::create(
-            builder, location, sim::StringType::get(function.getContext()),
-            *input, *index64, *character);
-        return storeReference(*reference, updated, location);
-      }
-      if (succeeded(baseType) &&
-          isa<sim::DynamicArrayType, sim::QueueType>(*baseType)) {
-        if (nonblocking) {
-          FailureOr<Value> path = lowerExpression(destination, true);
-          Type elementType =
-              isa<sim::DynamicArrayType>(*baseType)
-                  ? cast<sim::DynamicArrayType>(*baseType).getElementType()
-                  : cast<sim::QueueType>(*baseType).getElementType();
-          FailureOr<Value> converted =
-              convert(value, elementType, sourceSigned, location);
-          if (failed(path) || failed(converted) ||
-              !isa<sim::ReferencePathType>((*path).getType()))
-            return failure();
-          sim::SimReferencePathNBAEnqueueOp::create(builder, location,
-                                                    *converted, *path, delay);
-          return success();
-        }
-        FailureOr<Value> reference = lowerExpression(selection[0], true);
-        FailureOr<Value> container = succeeded(reference)
-                                         ? loadReference(*reference, location)
-                                         : FailureOr<Value>(failure());
-        FailureOr<Value> index = lowerExpression(selection[1]);
-        if (failed(reference) || failed(container) || failed(index))
-          return failure();
-        FailureOr<Value> scalarIndex = toPackedScalar(*index, location);
-        if (failed(scalarIndex))
-          return failure();
-        FailureOr<Value> index64 =
-            convert(*scalarIndex, builder.getI64Type(),
-                    isSignedNode(selection[1]), location);
-        Type elementType =
-            isa<sim::DynamicArrayType>(*baseType)
-                ? cast<sim::DynamicArrayType>(*baseType).getElementType()
-                : cast<sim::QueueType>(*baseType).getElementType();
-        FailureOr<Value> converted =
-            convert(value, elementType, sourceSigned, location);
-        if (failed(index64) || failed(converted))
-          return failure();
-        Value size = sim::SimContainerSizeOp::create(
-            builder, location, builder.getI64Type(), *container);
-        Value zero =
-            arith::ConstantOp::create(builder, location, builder.getI64Type(),
-                                      builder.getI64IntegerAttr(0));
-        Value nonnegative = arith::CmpIOp::create(
-            builder, location, arith::CmpIPredicate::sge, *index64, zero);
-        Value inRange = arith::CmpIOp::create(
-            builder, location, arith::CmpIPredicate::ult, *index64, size);
-        Value valid =
-            arith::AndIOp::create(builder, location, nonnegative, inRange);
-        Block *write = addBlock();
-        Block *resume = addBlock();
-        cf::CondBranchOp::create(builder, location, valid, write, ValueRange{},
-                                 resume, ValueRange{});
-        setCurrent(write);
-        Value updated = cloneSequentialValue(*container, location);
-        sim::SimContainerWriteOp::create(builder, location, updated, *index64,
-                                         *converted);
-        if (isa<sim::RefType>((*reference).getType()))
-          sim::SimRefStoreOp::create(builder, location, updated, *reference);
-        else if (isa<sim::ManagedRefType>((*reference).getType()))
-          sim::SimManagedStoreOp::create(builder, location, updated,
-                                         *reference);
-        else if (isa<sim::ArgumentRefType>((*reference).getType()))
-          sim::SimArgumentRefStoreOp::create(builder, location, updated,
-                                             *reference);
-        else
-          return failure();
-        emitBranch(resume);
-        setCurrent(resume);
-        return success();
+        captured.kind = CapturedLValue::Kind::AggregateElement;
+        captured.ordinal = *ordinal;
+        captured.children.push_back(std::move(*base));
+        return captured;
       }
     }
   }
-  if (isa<semantic::SVConcatenationExpressionOp>(destination)) {
-    SmallVector<Operation *> children = getChildren(destination);
-    FailureOr<Type> destinationType = getNormalizedSemanticType(destination);
-    if (children.empty() || failed(destinationType))
+
+  if (isa<semantic::SVMemberAccessExpressionOp>(destination) &&
+      !destination->hasAttr("obelisk_sim.class_field") &&
+      (isSequentialContainerSubvalue(destination) ||
+       sim::isManagedHandleType(*destinationType))) {
+    SmallVector<Operation *> members = getChildren(destination);
+    auto ordinalAttr = destination->getAttrOfType<IntegerAttr>("field_ordinal");
+    if (members.size() != 1 || !ordinalAttr ||
+        ordinalAttr.getValue().isNegative() ||
+        ordinalAttr.getValue().getActiveBits() > 32)
       return failure();
-    FailureOr<Value> converted = convert(value, *destinationType, sourceSigned,
-                                         location, isSignedNode(destination));
+    FailureOr<CapturedLValue> base =
+        captureLValue(members.front(), location);
+    if (failed(base))
+      return failure();
+    Type baseType = base->type;
+    unsigned ordinal = ordinalAttr.getValue().getZExtValue();
+    if (isa<sim::PackedUnionType, sim::UnpackedUnionType>(baseType) ||
+        sim::getAggregateElementType(baseType, ordinal) != *destinationType)
+      return failure();
+    captured.kind = CapturedLValue::Kind::AggregateElement;
+    captured.ordinal = ordinal;
+    captured.children.push_back(std::move(*base));
+    return captured;
+  }
+
+  FailureOr<Value> reference = lowerExpression(destination, true);
+  if (failed(reference))
+    return failure();
+  Type elementType = getReferenceElementType(*reference);
+  if (!elementType) {
+    if (auto driver = dyn_cast<sim::DriverType>((*reference).getType()))
+      elementType = driver.getElementType();
+  }
+  if (!elementType) {
+    emitError(location)
+        << "assignment destination is not a reference or driver";
+    return failure();
+  }
+  captured.reference = *reference;
+  captured.type = elementType;
+  return captured;
+}
+
+FailureOr<Value>
+UnitLowering::loadCapturedLValue(const CapturedLValue &destination,
+                                 Location location) {
+  switch (destination.kind) {
+  case CapturedLValue::Kind::Reference:
+    return loadReference(destination.reference, location);
+  case CapturedLValue::Kind::ContainerElement:
+    return sim::SimContainerReadOp::create(
+               builder, location, destination.type, destination.container,
+               destination.index)
+        .getResult();
+  case CapturedLValue::Kind::AggregateElement: {
+    if (destination.children.size() != 1)
+      return failure();
+    FailureOr<Value> aggregate =
+        loadCapturedLValue(destination.children.front(), location);
+    if (failed(aggregate) ||
+        sim::getAggregateElementType((*aggregate).getType(),
+                                     destination.ordinal) != destination.type)
+      return failure();
+    return sim::SimAggregateExtractOp::create(
+               builder, location, destination.type, *aggregate,
+               destination.ordinal)
+        .getResult();
+  }
+  case CapturedLValue::Kind::StringCharacter: {
+    if (destination.children.size() != 1)
+      return failure();
+    FailureOr<Value> string =
+        loadCapturedLValue(destination.children.front(), location);
+    if (failed(string))
+      return failure();
+    Value character = sim::SimStringGetcOp::create(
+        builder, location, builder.getI8Type(), *string, destination.index);
+    return convert(character, destination.type, false, location,
+                   isSignedNode(destination.semanticNode));
+  }
+  case CapturedLValue::Kind::Concatenation: {
+    Type scalarResultType = sim::getPackedScalarType(destination.type);
+    if (!scalarResultType || destination.children.empty())
+      return failure();
+    SmallVector<Value> inputs;
+    for (const CapturedLValue &child : destination.children) {
+      FailureOr<Value> input = loadCapturedLValue(child, location);
+      if (failed(input))
+        return failure();
+      FailureOr<Value> scalar = toPackedScalar(*input, location);
+      if (failed(scalar))
+        return failure();
+      inputs.push_back(*scalar);
+    }
+    if (auto resultLogic = dyn_cast<sim::LogicType>(scalarResultType)) {
+      SmallVector<Value> logicInputs;
+      for (Value input : inputs) {
+        FailureOr<Value> logic = toLogic(input, location);
+        if (failed(logic))
+          return failure();
+        logicInputs.push_back(*logic);
+      }
+      Value result = sim::SimLogicConcatOp::create(
+          builder, location, resultLogic, logicInputs);
+      return convert(result, destination.type, false, location,
+                     isSignedNode(destination.semanticNode));
+    }
+    auto resultInteger = dyn_cast<IntegerType>(scalarResultType);
+    if (!resultInteger)
+      return failure();
+    Value combined = arith::ConstantOp::create(
+        builder, location, resultInteger,
+        builder.getIntegerAttr(resultInteger, 0));
+    unsigned trailingWidth = resultInteger.getWidth();
+    for (Value input : inputs) {
+      auto inputInteger = dyn_cast<IntegerType>(input.getType());
+      if (!inputInteger || inputInteger.getWidth() > trailingWidth)
+        return failure();
+      trailingWidth -= inputInteger.getWidth();
+      FailureOr<Value> extended =
+          convert(input, resultInteger, false, location);
+      if (failed(extended))
+        return failure();
+      Value shifted = *extended;
+      if (trailingWidth) {
+        Value amount = arith::ConstantOp::create(
+            builder, location, resultInteger,
+            builder.getIntegerAttr(resultInteger, trailingWidth));
+        shifted = arith::ShLIOp::create(builder, location, shifted, amount);
+      }
+      combined = arith::OrIOp::create(builder, location, combined, shifted);
+    }
+    return convert(combined, destination.type, false, location,
+                   isSignedNode(destination.semanticNode));
+  }
+  }
+  llvm_unreachable("unknown captured lvalue kind");
+}
+
+bool UnitLowering::haveSameCapturedStorage(const CapturedLValue &lhs,
+                                           const CapturedLValue &rhs) const {
+  if (lhs.kind != rhs.kind)
+    return false;
+  switch (lhs.kind) {
+  case CapturedLValue::Kind::Reference: {
+    if (lhs.reference == rhs.reference)
+      return true;
+    auto lhsField = lhs.reference.getDefiningOp<sim::SimClassFieldRefOp>();
+    auto rhsField = rhs.reference.getDefiningOp<sim::SimClassFieldRefOp>();
+    return lhsField && rhsField &&
+           lhsField.getObject() == rhsField.getObject() &&
+           lhsField.getFieldAttr() == rhsField.getFieldAttr();
+  }
+  case CapturedLValue::Kind::AggregateElement:
+    return lhs.ordinal == rhs.ordinal && lhs.children.size() == 1 &&
+           rhs.children.size() == 1 &&
+           haveSameCapturedStorage(lhs.children.front(),
+                                   rhs.children.front());
+  case CapturedLValue::Kind::ContainerElement: {
+    if (lhs.children.size() != 1 || rhs.children.size() != 1 ||
+        !haveSameCapturedStorage(lhs.children.front(), rhs.children.front()))
+      return false;
+    if (lhs.index == rhs.index)
+      return true;
+    Attribute lhsConstant;
+    Attribute rhsConstant;
+    return matchPattern(lhs.index, m_Constant(&lhsConstant)) &&
+           matchPattern(rhs.index, m_Constant(&rhsConstant)) &&
+           lhsConstant == rhsConstant;
+  }
+  case CapturedLValue::Kind::StringCharacter:
+  case CapturedLValue::Kind::Concatenation:
+    return false;
+  }
+  llvm_unreachable("unknown captured lvalue kind");
+}
+
+void UnitLowering::propagateCapturedContainers(
+    const CapturedLValue &source, CapturedLValue &destination) {
+  // Concatenation leaves commit in source order. When two leaves target the
+  // same captured container storage, feed the first leaf's rebuilt container
+  // into the second so its write cannot restore the encounter-time snapshot
+  // and discard the earlier update.
+  if (source.kind == CapturedLValue::Kind::ContainerElement &&
+      destination.kind == CapturedLValue::Kind::ContainerElement &&
+      source.children.size() == 1 && destination.children.size() == 1 &&
+      haveSameCapturedStorage(source.children.front(),
+                              destination.children.front()))
+    destination.container = source.container;
+  for (CapturedLValue &child : destination.children)
+    propagateCapturedContainers(source, child);
+  for (const CapturedLValue &child : source.children)
+    propagateCapturedContainers(child, destination);
+}
+
+LogicalResult UnitLowering::writeCapturedLValue(
+    CapturedLValue &destination, Value value, bool sourceSigned,
+    bool nonblocking, Location location, Value delay) {
+  switch (destination.kind) {
+  case CapturedLValue::Kind::Reference: {
+    FailureOr<Value> converted =
+        convert(value, destination.type, sourceSigned, location,
+                isSignedNode(destination.semanticNode));
+    if (failed(converted))
+      return failure();
+    Value published = *converted;
+    if (isa<sim::DynamicArrayType, sim::QueueType>(destination.type))
+      published = sim::SimContainerCloneOp::create(
+          builder, location, destination.type, published);
+    Type referenceType = destination.reference.getType();
+    if (isa<sim::ManagedRefType>(referenceType)) {
+      if (nonblocking)
+        sim::SimManagedNBAEnqueueOp::create(
+            builder, location, published, destination.reference, delay);
+      else
+        sim::SimManagedStoreOp::create(builder, location, published,
+                                       destination.reference);
+    } else if (isa<sim::RefType>(referenceType)) {
+      if (nonblocking)
+        sim::SimNBAEnqueueOp::create(builder, location, published,
+                                     destination.reference, delay,
+                                     sim::NBASiteAttr{});
+      else
+        sim::SimRefStoreOp::create(builder, location, published,
+                                   destination.reference);
+    } else if (isa<sim::ArgumentRefType>(referenceType)) {
+      if (nonblocking) {
+        emitError(location)
+            << "nonblocking assignment cannot target a ref formal";
+        return failure();
+      }
+      sim::SimArgumentRefStoreOp::create(builder, location, published,
+                                         destination.reference);
+    } else if (isa<sim::ReferencePathType>(referenceType)) {
+      if (nonblocking)
+        sim::SimReferencePathNBAEnqueueOp::create(
+            builder, location, published, destination.reference, delay);
+      else if (failed(storeReference(destination.reference, published,
+                                     location)))
+        return failure();
+    } else if (isa<sim::DriverType>(referenceType)) {
+      if (nonblocking) {
+        emitError(location)
+            << "nonblocking assignment cannot target a driver";
+        return failure();
+      }
+      sim::SimDriverDriveOp::create(builder, location, destination.reference,
+                                    published);
+    } else {
+      return failure();
+    }
+    return success();
+  }
+  case CapturedLValue::Kind::ContainerElement: {
+    if (destination.children.size() != 1)
+      return failure();
+    FailureOr<Value> converted =
+        convert(value, destination.type, sourceSigned, location,
+                isSignedNode(destination.semanticNode));
+    if (failed(converted))
+      return failure();
+    CapturedLValue &base = destination.children.front();
+    if (nonblocking) {
+      if (base.kind != CapturedLValue::Kind::Reference)
+        return failure();
+      FailureOr<Value> owner = toArgumentReference(
+          base.reference, destination.container.getType(), location);
+      if (failed(owner))
+        return failure();
+      Type pathType = sim::ReferencePathType::get(function.getContext(),
+                                                  destination.type);
+      Value path = sim::SimReferencePathIndexOp::create(
+          builder, location, pathType,
+          function.getBody().front().getArgument(0), destination.container,
+          destination.index, *owner);
+      sim::SimReferencePathNBAEnqueueOp::create(builder, location, *converted,
+                                                path, delay);
+      return success();
+    }
+
+    Value size = sim::SimContainerSizeOp::create(
+        builder, location, builder.getI64Type(), destination.container);
+    Value zero = arith::ConstantOp::create(
+        builder, location, builder.getI64Type(), builder.getI64IntegerAttr(0));
+    Value nonnegative = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::sge, destination.index, zero);
+    Value inRange = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ult, destination.index, size);
+    Value valid =
+        arith::AndIOp::create(builder, location, nonnegative, inRange);
+    Block *write = addBlock();
+    Block *resume = addBlock();
+    resume->addArgument(destination.container.getType(), location);
+    cf::CondBranchOp::create(builder, location, valid, write, ValueRange{},
+                             resume, ValueRange{destination.container});
+    setCurrent(write);
+    Value updated = cloneSequentialValue(destination.container, location);
+    sim::SimContainerWriteOp::create(builder, location, updated,
+                                     destination.index, *converted);
+    if (failed(writeCapturedLValue(base, updated, false, false, location)))
+      return failure();
+    if (current->empty() ||
+        !current->back().hasTrait<OpTrait::IsTerminator>())
+      cf::BranchOp::create(builder, location, resume, ValueRange{updated});
+    setCurrent(resume);
+    destination.container = resume->getArgument(0);
+    return success();
+  }
+  case CapturedLValue::Kind::AggregateElement: {
+    if (destination.children.size() != 1)
+      return failure();
+    CapturedLValue &base = destination.children.front();
+    FailureOr<Value> aggregate = loadCapturedLValue(base, location);
+    FailureOr<Value> replacement =
+        convert(value, destination.type, sourceSigned, location,
+                isSignedNode(destination.semanticNode));
+    if (failed(aggregate) || failed(replacement) ||
+        sim::getAggregateElementType((*aggregate).getType(),
+                                     destination.ordinal) != destination.type)
+      return failure();
+    Value updated = sim::SimAggregateInsertOp::create(
+        builder, location, (*aggregate).getType(), *aggregate, *replacement,
+        destination.ordinal);
+    return writeCapturedLValue(base, updated, false, nonblocking, location,
+                               delay);
+  }
+  case CapturedLValue::Kind::StringCharacter: {
+    if (destination.children.size() != 1) {
+      return failure();
+    }
+    if (nonblocking) {
+      emitError(location)
+          << "nonblocking string-character assignment requires a captured "
+             "element path";
+      return failure();
+    }
+    CapturedLValue &base = destination.children.front();
+    FailureOr<Value> string = loadCapturedLValue(base, location);
+    FailureOr<Value> character =
+        convert(value, builder.getI8Type(), sourceSigned, location);
+    if (failed(string) || failed(character))
+      return failure();
+    Value updated = sim::SimStringPutcOp::create(
+        builder, location, sim::StringType::get(function.getContext()),
+        *string, destination.index, *character);
+    return writeCapturedLValue(base, updated, false, false, location);
+  }
+  case CapturedLValue::Kind::Concatenation: {
+    FailureOr<Value> converted =
+        convert(value, destination.type, sourceSigned, location,
+                isSignedNode(destination.semanticNode));
     if (failed(converted))
       return failure();
     FailureOr<Value> scalar = toPackedScalar(*converted, location);
@@ -2533,37 +2841,41 @@ LogicalResult UnitLowering::writeLValue(Operation *destination, Value value,
     if (!totalWidth)
       return failure();
     uint64_t trailing = *totalWidth;
-    for (Operation *child : children) {
-      FailureOr<Type> childType = getNormalizedSemanticType(child);
-      std::optional<unsigned> childWidth =
-          succeeded(childType) ? sim::getPackedWidth(*childType) : std::nullopt;
+    for (auto [childIndex, child] : llvm::enumerate(destination.children)) {
+      for (CapturedLValue &previous :
+           MutableArrayRef(destination.children).take_front(childIndex))
+        propagateCapturedContainers(previous, child);
+      std::optional<unsigned> childWidth = sim::getPackedWidth(child.type);
       if (!childWidth || *childWidth > trailing) {
         emitError(location) << "concatenation lvalue width is inconsistent";
         return failure();
       }
       trailing -= *childWidth;
       Value part;
-      if (auto logic = dyn_cast<sim::LogicType>((*scalar).getType())) {
-        auto selected = sim::LogicType::get(function.getContext(), *childWidth);
-        part =
-            sim::SimLogicExtractOp::create(builder, location, selected, *scalar,
-                                           builder.getI64IntegerAttr(trailing));
+      if (isa<sim::LogicType>((*scalar).getType())) {
+        auto selected =
+            sim::LogicType::get(function.getContext(), *childWidth);
+        part = sim::SimLogicExtractOp::create(
+            builder, location, selected, *scalar,
+            builder.getI64IntegerAttr(trailing));
       } else {
-        auto integer = cast<IntegerType>((*scalar).getType());
+        auto integer = dyn_cast<IntegerType>((*scalar).getType());
+        if (!integer)
+          return failure();
         Value amount = arith::ConstantOp::create(
             builder, location, integer,
             builder.getIntegerAttr(integer, trailing));
         Value shifted =
             arith::ShRUIOp::create(builder, location, *scalar, amount);
-        auto selected = IntegerType::get(function.getContext(), *childWidth);
-        part = selected == integer ? shifted
-                                   : Value(arith::TruncIOp::create(
-                                         builder, location, selected, shifted));
+        auto selected =
+            IntegerType::get(function.getContext(), *childWidth);
+        part = selected == integer
+                   ? shifted
+                   : Value(arith::TruncIOp::create(builder, location, selected,
+                                                  shifted));
       }
-      FailureOr<Value> childValue = convert(part, *childType, false, location);
-      if (failed(childValue) ||
-          failed(writeLValue(child, *childValue, false, nonblocking, location,
-                             delay)))
+      if (failed(writeCapturedLValue(child, part, false, nonblocking, location,
+                                     delay)))
         return failure();
     }
     if (trailing != 0) {
@@ -2572,59 +2884,57 @@ LogicalResult UnitLowering::writeLValue(Operation *destination, Value value,
     }
     return success();
   }
-
-  FailureOr<Value> lowered = lowerExpression(destination, true);
-  if (failed(lowered))
-    return failure();
-  Type elementType;
-  if (auto ref = dyn_cast<sim::RefType>((*lowered).getType()))
-    elementType = ref.getElementType();
-  else if (auto managed = dyn_cast<sim::ManagedRefType>((*lowered).getType()))
-    elementType = managed.getElementType();
-  else if (auto argument = dyn_cast<sim::ArgumentRefType>((*lowered).getType()))
-    elementType = argument.getElementType();
-  else if (auto driver = dyn_cast<sim::DriverType>((*lowered).getType()))
-    elementType = driver.getElementType();
-  else {
-    emitError(location)
-        << "assignment destination is not a reference or driver";
-    return failure();
   }
-  FailureOr<Value> converted = convert(value, elementType, sourceSigned,
-                                       location, isSignedNode(destination));
-  if (failed(converted))
-    return failure();
-  Value published = *converted;
-  if (isa<sim::DynamicArrayType, sim::QueueType>(elementType))
-    published = sim::SimContainerCloneOp::create(builder, location, elementType,
-                                                 published);
-  if (isa<sim::ManagedRefType>((*lowered).getType())) {
-    if (nonblocking)
-      sim::SimManagedNBAEnqueueOp::create(builder, location, published,
-                                          *lowered, delay);
-    else
-      sim::SimManagedStoreOp::create(builder, location, published, *lowered);
-  } else if (isa<sim::RefType>((*lowered).getType())) {
-    if (nonblocking)
-      sim::SimNBAEnqueueOp::create(builder, location, published, *lowered,
-                                   delay, sim::NBASiteAttr{});
-    else
-      sim::SimRefStoreOp::create(builder, location, published, *lowered);
-  } else if (isa<sim::ArgumentRefType>((*lowered).getType())) {
-    if (nonblocking) {
-      emitError(location)
-          << "nonblocking assignment cannot target a ref formal";
+  llvm_unreachable("unknown captured lvalue kind");
+}
+
+void UnitLowering::appendCapturedValues(
+    const CapturedLValue &destination, SmallVectorImpl<Value> &values) {
+  if (destination.kind == CapturedLValue::Kind::Reference)
+    values.push_back(destination.reference);
+  for (const CapturedLValue &child : destination.children)
+    appendCapturedValues(child, values);
+  if (destination.kind == CapturedLValue::Kind::ContainerElement) {
+    values.push_back(destination.container);
+    values.push_back(destination.index);
+  } else if (destination.kind == CapturedLValue::Kind::StringCharacter) {
+    values.push_back(destination.index);
+  }
+}
+
+LogicalResult UnitLowering::replaceCapturedValues(CapturedLValue &destination,
+                                                  ValueRange values,
+                                                  unsigned &next) {
+  if (destination.kind == CapturedLValue::Kind::Reference) {
+    if (next >= values.size())
       return failure();
-    }
-    sim::SimArgumentRefStoreOp::create(builder, location, published, *lowered);
-  } else {
-    if (nonblocking) {
-      emitError(location) << "nonblocking assignment cannot target a driver";
+    destination.reference = values[next++];
+  }
+  for (CapturedLValue &child : destination.children) {
+    if (failed(replaceCapturedValues(child, values, next)))
       return failure();
-    }
-    sim::SimDriverDriveOp::create(builder, location, *lowered, published);
+  }
+  if (destination.kind == CapturedLValue::Kind::ContainerElement) {
+    if (next > values.size() || values.size() - next < 2)
+      return failure();
+    destination.container = values[next++];
+    destination.index = values[next++];
+  } else if (destination.kind == CapturedLValue::Kind::StringCharacter) {
+    if (next >= values.size())
+      return failure();
+    destination.index = values[next++];
   }
   return success();
+}
+
+LogicalResult UnitLowering::writeLValue(Operation *destination, Value value,
+                                        bool sourceSigned, bool nonblocking,
+                                        Location location, Value delay) {
+  FailureOr<CapturedLValue> captured = captureLValue(destination, location);
+  if (failed(captured))
+    return failure();
+  return writeCapturedLValue(*captured, value, sourceSigned, nonblocking,
+                             location, delay);
 }
 
 FailureOr<Value>
@@ -2640,55 +2950,38 @@ UnitLowering::lowerAssignment(semantic::SVAssignmentExpressionOp op) {
   Operation *control = timed ? children[0] : nullptr;
   Operation *destination = children[timed ? 1 : 0];
   Operation *source = children[timed ? 2 : 1];
-  if (auto compound = op.getOperatorKind()) {
-    FailureOr<Type> type = getNormalizedSemanticType(destination);
-    if (failed(type))
-      return failure();
-    // Slang has already made the compound operation explicit in the RHS
-    // semantic subtree. String += is therefore an ordinary concatenating RHS
-    // followed by a single assignment, preserving one evaluation of the
-    // destination.
-    if (!isa<sim::StringType>(*type) ||
-        *compound != semantic::SVBinaryOperator::Add) {
-      unsupported(op) << " (compound assignment)";
-      return failure();
-    }
-    if (timed ||
-        op.getAssignmentKind() == semantic::SVAssignmentKind::Nonblocking) {
-      emitError(location)
-          << "timed or nonblocking string compound assignment is unsupported";
-      return failure();
-    }
-    semantic::SVBinaryExpressionOp binary;
-    source->walk([&](semantic::SVBinaryExpressionOp candidate) {
-      if (!binary)
-        binary = candidate;
-    });
-    SmallVector<Operation *> operands =
-        binary ? getChildren(binary) : SmallVector<Operation *>{};
-    if (!binary || binary.getOperatorKind() != semantic::SVBinaryOperator::Add ||
-        operands.size() != 2) {
-      emitError(location) << "malformed string compound assignment";
-      return failure();
-    }
-    FailureOr<Value> reference = lowerExpression(destination, true);
-    FailureOr<Value> current =
-        succeeded(reference) ? loadReference(*reference, location)
-                             : FailureOr<Value>(failure());
-    FailureOr<Value> suffix = lowerExpression(operands.back());
-    if (failed(reference) || failed(current) || failed(suffix))
-      return failure();
-    FailureOr<Value> converted =
-        convert(*suffix, *type, isSignedNode(operands.back()), location);
-    if (failed(converted))
-      return failure();
-    Value updated = sim::SimStringConcatOp::create(
-        builder, location, *type, ValueRange{*current, *converted});
-    if (failed(storeReference(*reference, updated, location)))
-      return failure();
-    return updated;
+  bool compound = op.getOperatorKind().has_value();
+  bool nonblocking =
+      op.getAssignmentKind() == semantic::SVAssignmentKind::Nonblocking;
+  if (compound && nonblocking) {
+    emitError(location)
+        << "nonblocking compound assignment is not valid SystemVerilog";
+    return failure();
   }
-  FailureOr<Value> rhs = lowerExpression(source);
+
+  std::optional<CapturedLValue> captured;
+  FailureOr<Value> rhs = failure();
+  if (compound) {
+    FailureOr<CapturedLValue> destinationCapture =
+        captureLValue(destination, location);
+    if (failed(destinationCapture))
+      return failure();
+    captured = std::move(*destinationCapture);
+    FailureOr<Value> oldValue = loadCapturedLValue(*captured, location);
+    if (failed(oldValue))
+      return failure();
+
+    // Slang represents the left operand of a compound assignment's explicit
+    // binary subtree with an lvalue-reference placeholder. Resolve it to the
+    // value loaded from the already captured destination, so every other
+    // binary conversion rule remains shared with ordinary expressions.
+    Value previousPlaceholder = lvalueReferencePlaceholder;
+    lvalueReferencePlaceholder = *oldValue;
+    rhs = lowerExpression(source);
+    lvalueReferencePlaceholder = previousPlaceholder;
+  } else {
+    rhs = lowerExpression(source);
+  }
   if (failed(rhs))
     return failure();
   FailureOr<Type> destinationType = getNormalizedSemanticType(destination);
@@ -2698,12 +2991,56 @@ UnitLowering::lowerAssignment(semantic::SVAssignmentExpressionOp op) {
                                    location, isSignedNode(destination));
   if (failed(value))
     return failure();
-  bool nonblocking =
-      op.getAssignmentKind() == semantic::SVAssignmentKind::Nonblocking;
   if (!timed) {
-    if (failed(writeLValue(destination, *value, false, nonblocking, location)))
+    LogicalResult written =
+        compound
+            ? writeCapturedLValue(*captured, *value, false, false, location)
+            : writeLValue(destination, *value, false, nonblocking, location);
+    if (failed(written))
       return failure();
     return *value;
+  }
+
+  if (compound) {
+    SmallVector<Value> continuationOperands;
+    appendCapturedValues(*captured, continuationOperands);
+    continuationOperands.push_back(*value);
+    Block *continuation = addBlock();
+    for (Value operand : continuationOperands)
+      continuation->addArgument(operand.getType(), location);
+
+    if (isa<semantic::SVDelayControlOp>(control)) {
+      FailureOr<Value> delay = lowerDelayValue(control);
+      if (failed(delay))
+        return failure();
+      sim::SimSuspendDelayOp::create(
+          builder, location, *delay, sim::TimingSiteAttr{},
+          continuationOperands, sim::ContinuationSiteAttr{},
+          sim::EventRegionAttr{}, continuation);
+      setCurrent(continuation);
+    } else if (isa<semantic::SVRepeatedEventControlOp>(control)) {
+      if (failed(emitRepeatedEventSuspend(control, continuation,
+                                          continuationOperands)))
+        return failure();
+    } else {
+      if (failed(
+              emitEventSuspend(control, continuation, continuationOperands)))
+        return failure();
+      setCurrent(continuation);
+    }
+
+    unsigned next = 0;
+    if (failed(replaceCapturedValues(*captured,
+                                     continuation->getArguments(), next)))
+      return failure();
+    if (next >= continuation->getNumArguments())
+      return failure();
+    Value storedValue = continuation->getArgument(next);
+    if (next + 1 != continuation->getNumArguments() ||
+        failed(writeCapturedLValue(*captured, storedValue, false, false,
+                                   location)))
+      return failure();
+    return storedValue;
   }
 
   if (isa<semantic::SVDelayControlOp>(control)) {
@@ -2721,13 +3058,16 @@ UnitLowering::lowerAssignment(semantic::SVAssignmentExpressionOp op) {
     // A blocking intra-assignment delay captures only the RHS. The destination
     // expression is intentionally resolved after resumption at commit time.
     Block *continuation = addBlock();
+    continuation->addArgument((*value).getType(), location);
     sim::SimSuspendDelayOp::create(
-        builder, location, *delay, sim::TimingSiteAttr{}, ValueRange{},
+        builder, location, *delay, sim::TimingSiteAttr{}, ValueRange{*value},
         sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, continuation);
     setCurrent(continuation);
-    if (failed(writeLValue(destination, *value, false, false, location)))
+    Value capturedValue = continuation->getArgument(0);
+    if (failed(
+            writeLValue(destination, capturedValue, false, false, location)))
       return failure();
-    return *value;
+    return capturedValue;
   }
 
   if (nonblocking) {
@@ -7420,6 +7760,13 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
       return expressionPlaceholder;
     emitError(getSemanticLocation(op))
         << "empty expression placeholder has no resolved value";
+    return failure();
+  }
+  if (isa<semantic::SVLValueReferenceExpressionOp>(op)) {
+    if (lvalueReferencePlaceholder)
+      return lvalueReferencePlaceholder;
+    emitError(getSemanticLocation(op))
+        << "lvalue-reference placeholder has no resolved value";
     return failure();
   }
   if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(op))
