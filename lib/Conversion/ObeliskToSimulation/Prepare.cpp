@@ -3200,6 +3200,11 @@ void ObeliskSimPreparePass::runOnOperation() {
             named.getReferencedSymbol().getLeafReference());
         if (symbol == semanticSymbols.end())
           return;
+        if (isa<semantic::SVParameterSymbolOp, semantic::SVEnumValueSymbolOp,
+                semantic::SVSpecparamSymbolOp>(symbol->second))
+          if (auto constant =
+                  symbol->second->getAttrOfType<StringAttr>("constant_value"))
+            named->setAttr("obelisk_sim.constant_value", constant);
         auto field = classFieldSymbols.find(symbol->second);
         auto property =
             dyn_cast<semantic::SVClassPropertySymbolOp>(symbol->second);
@@ -3207,6 +3212,18 @@ void ObeliskSimPreparePass::runOnOperation() {
             (!property ||
              property.getLifetime() != semantic::SVVariableLifetime::Static))
           named->setAttr("obelisk_sim.class_field", field->second);
+        return;
+      }
+      if (auto hierarchical =
+              dyn_cast<semantic::SVHierarchicalValueExpressionOp>(nested)) {
+        auto symbol = semanticSymbols.find(
+            hierarchical.getReferencedSymbol().getLeafReference());
+        if (symbol != semanticSymbols.end() &&
+            isa<semantic::SVParameterSymbolOp, semantic::SVEnumValueSymbolOp,
+                semantic::SVSpecparamSymbolOp>(symbol->second))
+          if (auto constant =
+                  symbol->second->getAttrOfType<StringAttr>("constant_value"))
+            hierarchical->setAttr("obelisk_sim.constant_value", constant);
         return;
       }
       if (auto member =

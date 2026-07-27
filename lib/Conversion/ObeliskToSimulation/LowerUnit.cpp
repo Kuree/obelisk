@@ -85,17 +85,23 @@ static_assert(
                             sim::EventRegion::Postponed),
     "Obelisk and simulation event-region enums must stay in lockstep");
 
-/// Spelling of a semantic integer literal, whichever literal node it is.
+/// Spelling of an elaborated integer constant.
+///
+/// References to parameters and enum values acquire the prefixed attribute
+/// while their unit is frozen, after the referenced symbol is still available.
 static std::optional<StringRef> getConstantSpelling(Operation *op) {
   if (auto literal = dyn_cast<semantic::SVIntegerLiteralOp>(op))
     return literal.getConstantValue();
   if (auto literal = dyn_cast<semantic::SVUnbasedUnsizedIntegerLiteralOp>(op))
     return literal.getConstantValue();
+  if (auto constant =
+          op->getAttrOfType<StringAttr>("obelisk_sim.constant_value"))
+    return constant.getValue();
   return std::nullopt;
 }
 
-static bool isIntegerLiteral(Operation *op) {
-  return isa<semantic::SVIntegerLiteralOp>(op);
+static bool isIntegerConstant(Operation *op) {
+  return getConstantSpelling(op).has_value();
 }
 
 static bool isWeakReferenceCall(semantic::SVCallExpressionOp op) {
@@ -1702,7 +1708,7 @@ FailureOr<Value> UnitLowering::lowerReplication(Operation *op) {
                                           *string, *count64)
         .getResult();
   }
-  if (!isIntegerLiteral(children.front())) {
+  if (!isIntegerConstant(children.front())) {
     unsupported(op) << " (nonconstant replication count)";
     return failure();
   }
@@ -2248,7 +2254,7 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
   if (element &&
       isa<sim::PackedArrayType, sim::UnpackedArrayType>(sourceValueType)) {
     std::optional<unsigned> ordinal;
-    if (isIntegerLiteral(children[1])) {
+    if (isIntegerConstant(children[1])) {
       FailureOr<Type> indexType = getNormalizedSemanticType(children[1]);
       std::optional<unsigned> indexWidth =
           succeeded(indexType) ? sim::getPackedWidth(*indexType) : std::nullopt;
@@ -2426,7 +2432,7 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
                                 : value.zextOrTrunc(constantOffsetWidth);
   };
 
-  bool literalIndex = isIntegerLiteral(children[1]);
+  bool literalIndex = isIntegerConstant(children[1]);
   bool constant = false;
   uint64_t lowBit = 0;
   Value dynamicLow;
@@ -2443,7 +2449,7 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
       knownLow =
           sourceOffset(extendLiteral(*first, children[1], *firstIndexType));
     if (knownLow && !element) {
-      if (!isIntegerLiteral(children[2])) {
+      if (!isIntegerConstant(children[2])) {
         unsupported(op) << " (mixed constant and dynamic selection bounds)";
         return failure();
       }
@@ -2674,7 +2680,7 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
       }
 
       if (isa<sim::PackedArrayType, sim::UnpackedArrayType>(*baseType) &&
-          isIntegerLiteral(selection[1]) &&
+          isIntegerConstant(selection[1]) &&
           isSequentialContainerSubvalue(selection.front())) {
         FailureOr<Type> indexType = getNormalizedSemanticType(selection[1]);
         std::optional<unsigned> indexWidth =
@@ -8991,7 +8997,7 @@ FailureOr<Value> UnitLowering::lowerDelayValue(Operation *control) {
         .getResult();
   }
 
-  if (isIntegerLiteral(children.front())) {
+  if (isIntegerConstant(children.front())) {
     FailureOr<ParsedConstant> parsed =
         parseSVInteger(*getConstantSpelling(children.front()), 64, location);
     if (failed(parsed))
