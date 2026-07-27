@@ -2535,25 +2535,39 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
       knownLow =
           sourceOffset(extendLiteral(*first, children[1], *firstIndexType));
     if (knownLow && !element) {
-      if (!isIntegerConstant(children[2])) {
-        unsupported(op) << " (mixed constant and dynamic selection bounds)";
-        return failure();
-      }
-      FailureOr<ParsedConstant> second =
-          parseSVInteger(*getConstantSpelling(children[2]), 64, location);
-      if (failed(second))
-        return failure();
-      if (second->unknown.isZero()) {
-        FailureOr<Type> secondIndexType =
-            getNormalizedSemanticType(children[2]);
-        if (failed(secondIndexType))
+      if (selectionKind == semantic::SVRangeSelectionKind::Simple) {
+        if (!isIntegerConstant(children[2])) {
+          unsupported(op) << " (mixed constant and dynamic selection bounds)";
           return failure();
-        APInt secondLow =
-            sourceOffset(extendLiteral(*second, children[2], *secondIndexType));
-        if (secondLow.slt(*knownLow))
-          knownLow = secondLow;
+        }
+        FailureOr<ParsedConstant> second =
+            parseSVInteger(*getConstantSpelling(children[2]), 64, location);
+        if (failed(second))
+          return failure();
+        if (second->unknown.isZero()) {
+          FailureOr<Type> secondIndexType =
+              getNormalizedSemanticType(children[2]);
+          if (failed(secondIndexType))
+            return failure();
+          APInt secondLow = sourceOffset(
+              extendLiteral(*second, children[2], *secondIndexType));
+          if (secondLow.slt(*knownLow))
+            knownLow = secondLow;
+        } else {
+          knownLow.reset();
+        }
       } else {
-        knownLow.reset();
+        // The second operand of an indexed part-select is its width, not a
+        // second source index.  The elaborated result type already carries
+        // that constant width.  Convert a base that names the high physical
+        // bit to the low-bit offset expected by the simulation extract ops.
+        bool baseNamesHighBit =
+            (descending &&
+             selectionKind == semantic::SVRangeSelectionKind::IndexedDown) ||
+            (!descending &&
+             selectionKind == semantic::SVRangeSelectionKind::IndexedUp);
+        if (baseNamesHighBit && *resultWidth > 1)
+          *knownLow -= APInt(constantOffsetWidth, *resultWidth - 1);
       }
     }
     bool inRange =
