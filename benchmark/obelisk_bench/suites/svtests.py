@@ -235,6 +235,8 @@ def _safe_assertion_value(expression: str) -> bool:
         ast.LtE,
         ast.Gt,
         ast.GtE,
+        ast.In,
+        ast.NotIn,
     )
     for node in ast.walk(tree):
         if not isinstance(node, allowed):

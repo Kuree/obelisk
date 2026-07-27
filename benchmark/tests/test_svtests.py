@@ -51,7 +51,10 @@ class SvTestsHelpersTest(unittest.TestCase):
     def test_assertion_output_is_checked_without_arbitrary_python(self):
         self.assertEqual(
             svtests._assertions_pass(
-                "noise\n:assert: ((2 + 3) == int(5.0))\n"),
+                "noise\n"
+                ":assert: ((2 + 3) == int(5.0))\n"
+                ":assert: ('TEST' in 'TestTEST')\n"
+                ":assert: ('missing' not in 'TestTEST')\n"),
             (True, ""),
         )
         passed, detail = svtests._assertions_pass(":assert: (3 == 4)")
