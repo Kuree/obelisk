@@ -1173,6 +1173,41 @@ void ComputeGraphBuilder::buildControlEdges() {
       addEdge(fragment.id, fragmentForBlock.lookup(&target.getBody().front()),
               sim::ComputeEdgeKind::Spawn);
     }
+
+    // Root spawn operations encode the deterministic time-zero startup order
+    // frozen by the prepare pass. Ensure repeating processes reach their first
+    // suspension before any initial process runs, without imposing a total
+    // order on otherwise independent sibling processes.
+    if (fragment.function.getEntryKind() ==
+        sim::EntryKind::RootInitializer) {
+      std::optional<uint32_t> repeatingEntry;
+      for (sim::SimSpawnOp spawn :
+           fragment.block->getOps<sim::SimSpawnOp>()) {
+        auto callee = analysis.functionIndex.find(spawn.getCallee());
+        if (callee == analysis.functionIndex.end())
+          continue;
+        sim::SimFuncOp target = analysis.functions[callee->second].function;
+        if (target.getBody().empty())
+          continue;
+        uint32_t entry =
+            fragmentForBlock.lookup(&target.getBody().front());
+        switch (target.getEntryKind()) {
+        case sim::EntryKind::Always:
+        case sim::EntryKind::AlwaysComb:
+        case sim::EntryKind::AlwaysLatch:
+        case sim::EntryKind::AlwaysFF:
+          repeatingEntry = entry;
+          break;
+        case sim::EntryKind::Initial:
+          if (repeatingEntry)
+            addEdge(*repeatingEntry, entry,
+                    sim::ComputeEdgeKind::ProcessOrder);
+          break;
+        default:
+          break;
+        }
+      }
+    }
   }
 }
 

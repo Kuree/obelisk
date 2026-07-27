@@ -3613,18 +3613,42 @@ void ObeliskSimPreparePass::runOnOperation() {
                            *operands, ArrayAttr{}, ArrayAttr{});
   }
 
-  for (UnitInfo &unit : units) {
-    if (unit.entryKind == sim::EntryKind::Function ||
-        unit.entryKind == sim::EntryKind::Task ||
-        unit.entryKind == sim::EntryKind::Observer)
-      continue;
+  auto spawnRootUnit = [&](UnitInfo &unit) -> LogicalResult {
     FailureOr<SmallVector<Value>> operands = materializeRootOperands(unit);
     if (failed(operands))
-      return abort();
+      return failure();
     sim::SimSpawnOp::create(rootBuilder, unit.function.getLoc(),
                             sim::ProcessType::get(context),
                             FlatSymbolRefAttr::get(context, unit.symbol),
                             *operands, ArrayAttr{}, ArrayAttr{});
+    return success();
+  };
+  auto isRootSpawned = [](const UnitInfo &unit) {
+    return unit.entryKind != sim::EntryKind::Function &&
+           unit.entryKind != sim::EntryKind::Task &&
+           unit.entryKind != sim::EntryKind::Observer;
+  };
+  auto isRepeatingProcess = [](const UnitInfo &unit) {
+    return unit.entryKind == sim::EntryKind::Always ||
+           unit.entryKind == sim::EntryKind::AlwaysComb ||
+           unit.entryKind == sim::EntryKind::AlwaysLatch ||
+           unit.entryKind == sim::EntryKind::AlwaysFF;
+  };
+
+  // Establish repeating-process sensitivities before initial processes can
+  // trigger events or mutate their watched values. The standard permits
+  // either Active-region order at time zero; choosing this deterministic
+  // order matches established simulator behavior and prevents a source-order
+  // race from losing an event before an `always @(event)` has suspended.
+  for (UnitInfo &unit : units)
+    if (isRootSpawned(unit) && isRepeatingProcess(unit))
+      if (failed(spawnRootUnit(unit)))
+        return abort();
+  for (UnitInfo &unit : units) {
+    if (!isRootSpawned(unit) || isRepeatingProcess(unit))
+      continue;
+    if (failed(spawnRootUnit(unit)))
+      return abort();
   }
   sim::SimReturnOp::create(rootBuilder, module.getLoc(), ValueRange{});
 }
