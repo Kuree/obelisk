@@ -68,6 +68,11 @@ The dialect also defines first-class lower-level operations for:
 Rewriting a high-level operation to these runtime-oriented operations is a
 separate, semantics-preserving lowering step.
 
+The operation inventory above is a representation contract, not a claim that
+every family is executable today. The current source-to-simulator boundary and
+its intentional diagnostics are summarized in `DESIGN.md` and the focused
+documents under `docs/`.
+
 ## Verification
 
 ODS constraints express structural invariants where possible. Focused native

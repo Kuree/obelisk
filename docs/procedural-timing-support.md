@@ -30,14 +30,17 @@ mean that the umbrella IEEE 1800 procedural-synchronization work is complete.
 | Immediate assertions | Ordinary `assert`, `assume`, and `cover` lower to control flow with four-state truth semantics, explicit action blocks, and source-qualified default assertion diagnostics. Deferred `#0` evaluation is queued in Observed and explicit actions are spawned in Reactive; `final` evaluation and action execute in read-only Postponed. Repeated deferred executions are coalesced by site and logical process within a time slot. |
 | Concurrent assertions | Rejected with a targeted diagnostic pending typed Preponed sample bindings, asynchronous cancellation, and a verifier-backed temporal monitor. This avoids evaluating live post-Active state or committing one endpoint of a ranged sequence prematurely. |
 | Sampled-value functions | `$sampled`, `$past`, `$rose`, `$fell`, `$stable`, and `$changed` receive targeted diagnostics pending assertion-clock history storage. |
-| `fork` / join forms | Imported with block-kind metadata, then rejected pending branch outlining and child-process synchronization. |
-| `wait fork` / `disable fork` | Targeted diagnostics; descendant registry and cancellation are pending. |
-| Timed/recursive task calls | Pending canonical task frames and suspension-capable calls. Existing executable functions remain zero-time. |
+| `fork` / join forms | Executable for `join`, `join_any`, and `join_none`, including empty forks, automatic declaration capture, nested descendants, and `join_none` spawned from a zero-time function. Other fork forms in a zero-time function are rejected because they can block. |
+| `wait fork` / `disable fork` | Executable through the logical-process descendant registry. `wait fork` observes outstanding descendants and `disable fork` recursively cancels the current process's live descendants without affecting unrelated processes. |
+| Named block disable | Executable for lexical, named-fork, and resolved hierarchical targets. Cancellation propagates through nested task calls and suppresses pending task copy-out. |
+| Timed/recursive task calls | Executable for direct static and automatic tasks with value, output, inout, and ref formals, early return, suspension, direct and mutual recursion, and cancellation. Class tasks use the same suspension-capable call path. Functions remain zero-time, except that they may launch `join_none` children. |
 | Module/program domain | Executable with Design/Active and Program/Reactive homes. Assertion evaluators additionally use Design/Observed, assertion action callbacks use Design/Reactive, and final deferred assertions use Design/Postponed. `#0` maps to Inactive/Re-Inactive and nonblocking commits map to NBA/Re-NBA. Region, rank, and insertion sequence form one shared native/bytecode ordering key. |
 
 The umbrella is complete only when the pending rows are implemented and the
-native, bytecode, mixed-tier, region-ordering, cancellation, and leak
-conformance matrix is green.
+native, bytecode, mixed-tier, region-ordering, and leak conformance matrix is
+green. Cancellation is executable for the current fork, task, and named-block
+surface and remains a required regression dimension as new suspending forms
+are added.
 
 The runtime materializes eight executable ordinals: Active, Inactive, NBA,
 Observed, Reactive, Re-Inactive, Re-NBA, and Postponed. Preponed is a

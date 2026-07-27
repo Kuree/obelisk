@@ -2,6 +2,9 @@
 
 See [Managed strings and containers](../docs/managed-values.md) for the
 variable-sized managed-object ABI and its current implementation status.
+See [Randomization support](../docs/randomization-support.md) for the
+process-stream ABI and the boundary between executable random draws and
+pending constraint solving.
 
 The target build produces two forms of the same support code:
 `libobelisk_rt.a` contains native ELF objects used by `-O0` executable links,
@@ -48,12 +51,19 @@ identity and continuations are never truncated to bytecode program counters.
 Entry lookup is logarithmic. Typed register scratch is assigned a fixed range
 inside each process frame and cleared on entry, avoiding interpreter heap
 allocation on every resume.
-It currently provides typed 64-bit integer and boolean constants, moves,
-arithmetic, bitwise operations, comparisons, bounded frame loads/stores,
-branches, and fragment actions. The interpreter validates instruction size,
-register types and indices, branch destinations, frame ranges, and terminal
-actions. Malformed programs return `OBELISK_RT_INVALID_BYTECODE`; they do not
-read or write outside the supplied process frame.
+
+The current register model covers two-state integers, four-state value/unknown
+planes, binary32/binary64 values, stable resource and reference handles, and
+managed strings, containers, and class handles. Instructions provide scalar
+and logic computation, checked frame and aggregate access, control flow, calls,
+spawns, suspension, and fragment actions. Validated intrinsic sites cover the
+same scheduler, event, net/driver, task, class/GC, string/container,
+formatting/file, DPI, VPI-backdoor, and immediate-assertion services used by
+native lowering. The interpreter validates instruction size, register types
+and indices, branch destinations, frame ranges, intrinsic signatures, resource
+lifetimes, and terminal actions. Malformed programs return
+`OBELISK_RT_INVALID_BYTECODE`; they do not read or write outside the supplied
+process frame.
 
 Validation covers the entire instruction encoding plus reachable control-flow
 register/resource types before the first instruction executes. A malformed

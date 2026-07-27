@@ -78,6 +78,20 @@ and diagnose their unsupported boundary. String scanning (`$sscanf` and
 `$psprintf`), escaping string-character `ref` aliases, and nonblocking
 character-path updates also retain explicit diagnostics. These require scanner
 target records or reference paths that preserve partial assignment and exact
-alias semantics across both execution tiers. Dynamic containers and their
-remaining source methods are a separate milestone; unsupported forms are
-diagnosed rather than silently discarded.
+alias semantics across both execution tiers.
+
+Source dynamic arrays execute allocation and resize, value-copy assignment,
+indexing and reference formals, equality, `foreach`, assignment patterns,
+aggregate elements, array queries, sensitivity, and the implemented reduction,
+locator, ordering, uniqueness, mapping, reverse, and shuffle methods.
+Associative arrays execute signed and unsigned integral keys up to 64 bits and
+string keys, hidden defaults, indexing, deletion, equality, value-copy and
+reference semantics, deterministic traversal, mixed-container `foreach`, array
+queries, and every array method registered by the current Slang frontend.
+
+Queues have a validated managed ring-buffer representation and are used for
+array-method result values, but the complete source queue surface is not yet
+executable. Queue-specific insertion/removal methods and unsupported source
+forms receive diagnostics rather than being silently discarded. DPI-C and VPI
+marshalling of every managed container also remains outside the current
+boundary.

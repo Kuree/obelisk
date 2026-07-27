@@ -171,6 +171,44 @@ spawns, memory effects, and suspension continuations. Source hierarchy remains
 available for diagnostics and future placement hints, but it does not determine
 the unit of optimization or parallel execution.
 
+### Current executable boundary
+
+The exhaustive Slang and Obelisk semantic inventories are representational
+boundaries, not executable-support claims. At the current executable boundary,
+the same supported source subset lowers to native code and whole-design
+bytecode and is exercised at `-O0` and `-O3`. That subset includes:
+
+- elaborated modules, programs, interfaces and modports, aggregate port
+  conversions, packed variables, built-in `wire`, `tri`, and `uwire` nets, and
+  continuous assignments without strengths or delays;
+- two-state and four-state packed computation, binary32/binary64 real
+  computation, fixed aggregates, strings, dynamic arrays, and associative
+  arrays with integral or string keys;
+- classes with inheritance, interface and abstract classes, constructors,
+  static and instance properties, direct and virtual methods, casts, class
+  tasks, suspension, nonblocking field updates, precise collection, and
+  `std::weak_reference`;
+- integral and real delays, direct and computed event controls, named events,
+  `wait`, the supported blocking and nonblocking intra-assignment timing forms,
+  all executable event regions,
+  `$strobe`/`$monitor`, fork/join forms, descendant waits and cancellation,
+  named-block disable, and static or automatic suspendable tasks including
+  recursion;
+- deterministic process-local `$random`, `$urandom`, `$urandom_range`, and
+  `$srandom` streams plus seeded array shuffle;
+- ordinary and deferred immediate `assert`, `assume`, and `cover`; and
+- the scalar/fixed-packed DPI-C import subset and the hierarchical immediate
+  VPI backdoor subset documented below.
+
+Important runtime gaps remain explicit compile-time errors. They include
+constraint solving and object randomization, concurrent assertions and
+sampled-value history, covergroups, clocking blocks and checkers, mailboxes and
+semaphores, the remaining queue surface, net strengths and delays, VPI
+callbacks and delayed operations, and the remaining DPI types and task
+behaviors. Detailed boundaries live in
+`docs/procedural-timing-support.md`, `docs/managed-values.md`, `docs/dpi.md`,
+`docs/vpi.md`, `docs/force.md`, and `docs/randomization-support.md`.
+
 ### Packed-value semantic contract
 
 Builtin integers in `obelisk_sim` are exact two-state values; `logic` values
@@ -467,9 +505,10 @@ state, RNG stream, and resource handles:
    behavior.
 
 Both forms invoke the same implemented runtime intrinsics for scheduling,
-formatting, file I/O, and DPI. Future containers, synchronization, constraint
-solving, and VPI likewise belong in shared runtime services rather than
-duplicated generated code.
+formatting, file I/O, DPI, strings, dynamic arrays, associative arrays, class
+allocation and dispatch, and garbage collection. Remaining queue operations,
+synchronization, constraint solving, and broader VPI likewise belong in shared
+runtime services rather than duplicated generated code.
 
 Complex dynamic behavior does not imply interpretation by default. Dynamic
 arrays, queues, associative arrays, mailboxes, semaphores, and randomization can
@@ -518,20 +557,18 @@ changing the runtime architecture.
 
 SystemVerilog class semantics remain explicit above the physical pointer layer.
 Typed class handles, allocation, field access, inheritance, casts, constructors,
-method calls, and virtual dispatch must survive in `obelisk_sim` until
-class-hierarchy analysis, devirtualization, escape analysis, and object layout
-have run. The `ptr` dialect can express the resulting addresses and memory
-accesses, but it is not the class model.
+method calls, and virtual dispatch survive in `obelisk_sim`. Native lowering
+materializes target-layout descriptors and method tables; bytecode records the
+same class, field, method, and virtual-slot identities. A heap object begins
+with a class-descriptor pointer followed by its laid-out instance fields.
+Direct calls retain a typed method target, while residual virtual calls use the
+runtime descriptor and method table through the common method ABI.
 
-Monomorphic virtual calls become direct `func.call` operations. A small proven
-receiver set becomes a class-ID test with direct calls, allowing ordinary
-inlining and specialization. Only residual megamorphic dispatch uses a runtime
-class descriptor and method table. A heap object begins with a class-descriptor
-pointer followed by its laid-out instance fields. Method-table entries identify
-stable method or fragment descriptors, so the same virtual call can select a
-native entry or immutable bytecode without changing object identity. Residual
-pointer-valued indirect calls are formed at the LLVM-dialect boundary with the
-uniform method ABI.
+Class-hierarchy analysis, devirtualization, escape analysis, object scalar
+replacement, and specialization are not implemented yet. They may replace
+proven monomorphic virtual calls with direct calls and scalar-replace
+nonescaping objects, but they must preserve the current descriptor-based
+fallback and managed identity.
 
 SystemVerilog requires automatic memory management for class instances. IEEE
 1800-2023 additionally defines strong, weak, and unreachable states and the
@@ -542,40 +579,24 @@ acyclic regions. General escaping object graphs must use the managed runtime
 heap because they may contain cycles. `chandle` values remain opaque foreign
 pointers and are not roots in the class heap.
 
-The initial general collector will be a precise, non-moving mark-and-sweep
-collector in `obelisk_rt`. Collection occurs only at generated scheduler safe
-points, with worker lanes stopped at a known epoch. Roots include static class
-handles, process and continuation frames, live call state, typed bytecode
-registers, runtime containers and mailboxes, pending NBAs to non-static object
-members, registered external pins, and callback state. Object-layout descriptors
-enumerate strong fields. Weak references do not keep their referents alive and
-transition to the unreachable state during the same stop-the-world collection
-that determines their referents are no longer strongly reachable.
+The runtime implements a precise, non-moving mark-and-sweep collector.
+Allocation-capable operations are collection points, and active managed lanes
+participate in a stop-the-world safepoint protocol. Compiler-emitted root
+ranges describe live native SSA values and aggregates; design storage, process
+and continuation frames, pending nonblocking updates, object fields, managed
+containers, and typed bytecode registers are traced through explicit
+descriptors. Object-layout descriptors distinguish strong, weak, string, and
+container slots. Weak references do not keep their referents alive and are
+cleared by the collection that proves the referent unreachable.
 
-LLVM's GC facilities provide native stack-root reporting, not the collector.
-Native class references use a dedicated managed pointer address space. Functions
-that may reach an allocation or GC poll carry an Obelisk GC strategy, and
-GC-capable calls become `gc.statepoint` sites after translation to LLVM IR. The
-LLVM statepoint rewrite records transient live native references in object-file
-stack maps. Persistent process-frame, global, heap, and runtime-container roots
-remain described explicitly by Obelisk, while the bytecode interpreter scans its
-typed registers directly.
-
-The non-moving collector needs root locations but no `gc.relocate` results.
-Statepoint relocation may be enabled later if a moving or compacting collector
-justifies its pointer-update and foreign-interface costs. The legacy `gcroot`
-shadow-stack mechanism is not used: its per-call maintenance and threading model
-conflict with persistent worker lanes. Closed-world RTL functions that cannot
-reach managed allocation or a GC poll carry no GC strategy, safepoint, barrier,
-or root-map overhead.
-
-LLVM statepoints and their stack-map format remain version-coupled interfaces.
-Obelisk's pinned LLVM toolchain makes that coupling explicit. GC lowering is
-isolated behind an Obelisk adapter and verified after MLIR-to-LLVM translation,
-after optimization and LTO, and in the final linked executable. The runtime owns
-heap allocation, tracing, weak-reference processing, reclamation, stack walking,
-and worker coordination; LLVM never becomes a second runtime scheduler or heap
-implementation.
+The current native backend uses explicit, liveness-pruned managed-root ranges;
+it does not emit LLVM GC strategies, statepoints, stack maps, or relocation
+records. This is sufficient for the non-moving collector and keeps code that
+cannot reach a managed collection point free of root-registration overhead.
+LLVM statepoints remain an optional future representation if optimized native
+frames or a moving collector make them worthwhile. Heap allocation, tracing,
+weak-reference processing, reclamation, and lane coordination remain owned by
+the Obelisk runtime rather than LLVM.
 
 ### Framework and library code
 
@@ -617,11 +638,13 @@ pure. That enables memoizing derived values such as hierarchical names, which
 framework code recomputes constantly, and permits constant folding through
 structures that are immutable once elaboration has finished.
 
-String representation is a whole-program decision rather than a container
-detail. Interned handles make equality, hashing, and associative-array keying
-constant time and collapse duplicate storage, and framework code manipulates a
-small set of heavily repeated strings. The choice must be made before the
-container and class layers consume it, because it cannot be retrofitted.
+The implemented string representation is immutable and non-interned. Empty
+strings use the zero word, one through seven bytes use a tagged inline encoding,
+and longer values use managed heap storage with a cached hash. Equality remains
+byte equality and associative string keys hash and compare their contents.
+Whole-program interning could still be evaluated as an optimization for
+framework workloads, but it is not part of the current semantic or ABI
+contract.
 
 Supported zero-time DPI-C functions and synchronous tasks already use one
 generated C thunk and validated runtime boundary in both execution tiers.
@@ -885,17 +908,37 @@ The implementation roadmap is:
   structural matching for fixed structs and tagged unions, including
   activation-local captures and runtime `unique`, `unique0`, and `priority`
   checks in native and whole-design bytecode execution.~~
+- ~~Complete executable associative arrays with signed and unsigned integral
+  keys up to 64 bits and string keys: typed creation, assignment patterns and
+  hidden defaults, indexing, deletion, equality, value-copy and exact-reference
+  call semantics, deterministic traversal, mixed-container `foreach`, array
+  queries, every Slang-registered associative method, recursive formatting,
+  scheduler notification, precise GC tracing, and native/bytecode execution in
+  both supported language modes.~~
+- ~~Implement executable classes with inheritance, interface and abstract
+  classes, construction and copy, static and instance fields, direct and
+  virtual methods, casts, timed class tasks, nonblocking field updates,
+  precise non-moving collection, and `std::weak_reference` in native and
+  bytecode execution.~~
+- Complete constrained randomization. Hierarchical PCG process streams,
+  system random functions, and inline object-stream layout/lifecycle are
+  implemented. The remaining gate is the compiler-owned formula/plan model,
+  transactional snapshot/commit, pointer-free program encoding, complete
+  runtime fallback, and compiler-only Z3 planning. The exact current boundary
+  is recorded in `docs/randomization-support.md`.
 - Extend executable lowering across the remaining broad UVM gate: complete
-  event regions, classes, containers, synchronization, randomization,
-  assertions, coverage, VPI, and the remaining DPI types and behaviors.
+  the remaining dynamic-array and queue surface, mailboxes, semaphores,
+  synchronization, concurrent assertions, coverage, clocking blocks and
+  checkers, VPI, and the remaining DPI types and behaviors.
 - ~~Run canonicalization, CSE, and memory promotion before late graph
   derivation.~~
 - ~~Add SROA, interprocedural SCCP, simulation-aware inlining, and dead capture
   and private-boundary elimination before final graph derivation.~~
 - Add class-hierarchy analysis, devirtualization, specialization, escape
   analysis, object SROA, load forwarding, DSE, and state-layout optimization.
-- Define class-handle, object-layout, direct and polymorphic dispatch, and
-  automatic-memory-management semantics in `obelisk_sim`.
+- ~~Define typed class handles, object layout, direct and polymorphic dispatch,
+  explicit managed roots, and automatic-memory-management semantics in
+  `obelisk_sim`.~~
 - ~~Derive descriptor provenance, interprocedural descriptor-range effects,
   VPI-profile observability annotations, and four-state knownness facts.~~
 - ~~Extract block-level static fragments, assign a uniform fragment ABI and
@@ -927,9 +970,10 @@ The implementation roadmap is:
   bytecode and an embedded pointer-free design database.~~
 - Add per-fragment native/bytecode AOT tier selection, mixed-tier schedule
   execution, and profile-guided promotion.
-- Implement the precise non-moving class heap, weak-reference processing,
-  explicit persistent-root maps, worker safe points, and LLVM statepoint
-  integration for transient native roots.
+- ~~Implement the precise non-moving class heap, weak-reference processing,
+  explicit native and bytecode root maps, and worker safe points.~~ Evaluate
+  LLVM statepoint integration only if later frame optimization or a moving
+  collector justifies replacing the current explicit transient-root ranges.
 
 ## Driver and tools
 
@@ -1007,8 +1051,9 @@ The test suites cover:
   malformed-bytecode rejection, four-state formatting, file I/O, shared DPI
   calls, and scheduler ordering;
 - deterministic full-design bytecode encoding and native/bytecode differential
-  execution for the supported timing, event, I/O, DPI, and RTL connection
-  slices; and
+  execution at `-O0` and `-O3` for the supported timing, event-region,
+  fork/task, class/GC, string/container, immediate-assertion, random-number,
+  I/O, DPI, VPI-backdoor, and RTL connection slices; and
 - LLVM IR, ELF object, and hermetically linked PIE emission for the pinned
   x86-64 Linux target.
 
@@ -1027,13 +1072,13 @@ A successful source-to-target regression round-trips emitted Slang assembly,
 runs the complete conversion, verifies the result, and checks that no Slang
 entity survives.
 
-The class and GC gate must cover cyclic object graphs, strong and weak
-references, roots held by process frames, bytecode registers, containers,
-callbacks, and pending operations, and collection at every generated safe
-point. Native and bytecode executions must agree under forced collection. The
-native tests must also validate stack maps after optimization and LTO and prove
-that closed-world RTL unable to reach class allocation contains no GC polls or
-root-tracking instrumentation.
+The class and GC regressions cover cyclic object graphs, strong and weak
+references, roots held by design state, process frames, native SSA values,
+bytecode registers, aggregates, containers, and pending nonblocking updates,
+including collection across calls and suspension. Native and bytecode
+executions agree under allocation pressure at `-O0` and `-O3`. Callback roots
+remain part of future VPI callback work. The current native ABI uses explicit
+managed-root ranges rather than LLVM stack maps.
 
 Broader native/bytecode differential coverage grows with each executable
 language slice. Exact full-region golden traces, simulation determinism across
