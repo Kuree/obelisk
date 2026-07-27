@@ -164,7 +164,7 @@ describeContainerElement(Type type, Location location) {
     result.valueSize = sizeof(uint64_t);
     return result;
   }
-  if (isa<sim::DynamicArrayType, sim::QueueType>(type)) {
+  if (isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(type)) {
     result.kind = 6;
     result.valueSize = sizeof(void *);
     return result;
@@ -411,6 +411,7 @@ private:
     enum class Kind {
       Reference,
       ContainerElement,
+      AssociativeElement,
       AggregateElement,
       StringCharacter,
       Concatenation,
@@ -475,7 +476,11 @@ private:
                                           Location location);
   FailureOr<Value> lowerInside(semantic::SVInsideExpressionOp op);
   FailureOr<Value> lowerCall(semantic::SVCallExpressionOp op);
-  FailureOr<Value> lowerArrayMethod(semantic::SVCallExpressionOp op);
+  FailureOr<Value> lowerArrayMethod(semantic::SVCallExpressionOp op,
+                                    Value receiverOverride = {},
+                                    Value iteratorKeys = {});
+  FailureOr<Value>
+  lowerAssociativeArrayMethod(semantic::SVCallExpressionOp op);
   FailureOr<Value> lowerNewClass(semantic::SVNewClassExpressionOp op);
   FailureOr<Value> lowerSystemCall(semantic::SVCallExpressionOp op);
   LogicalResult lowerPortConnection(semantic::SVPortConnectionOp op);
@@ -531,6 +536,12 @@ private:
   FailureOr<Value> truthValue(Value value, Location location);
   FailureOr<Value> toLogic(Value value, Location location);
   Value cloneSequentialValue(Value value, Location location);
+  FailureOr<Value> createAssocArray(sim::AssocArrayType type,
+                                    Location location);
+  FailureOr<Value> ensureAssocArray(Value value, Location location);
+  FailureOr<std::pair<Value, Value>>
+  traverseAssoc(Value array, Value key, int32_t direction, bool endpoint,
+                Location location);
   Type getReferenceElementType(Value reference) const;
   FailureOr<Value> loadReference(Value reference, Location location);
   LogicalResult storeReference(Value reference, Value value, Location location);
@@ -736,7 +747,7 @@ Type UnitLowering::getReferenceElementType(Value reference) const {
 
 Value UnitLowering::cloneSequentialValue(Value value, Location location) {
   Type type = value.getType();
-  if (isa<sim::DynamicArrayType, sim::QueueType>(type))
+  if (isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(type))
     return sim::SimContainerCloneOp::create(builder, location, type, value);
   if (!isa<sim::UnpackedArrayType, sim::UnpackedStructType>(type))
     return value;
@@ -752,6 +763,87 @@ Value UnitLowering::cloneSequentialValue(Value value, Location location) {
   }
   return sim::SimAggregateConstructOp::create(builder, location, type,
                                               elements);
+}
+
+FailureOr<Value>
+UnitLowering::createAssocArray(sim::AssocArrayType type, Location location) {
+  FailureOr<ContainerElementDescriptor> descriptor =
+      describeContainerElement(type.getElementType(), location);
+  if (failed(descriptor))
+    return failure();
+  bool stringKey = isa<sim::StringType>(type.getKeyType());
+  std::optional<unsigned> width =
+      stringKey ? std::optional<unsigned>(0)
+                : sim::getPackedWidth(type.getKeyType());
+  if (!width || *width > 64 || (!stringKey && *width == 0)) {
+    emitError(location)
+        << "associative array key must be string or integral up to 64 bits";
+    return failure();
+  }
+  uint32_t keyKind =
+      stringKey ? 3 : (type.getSignedKey() ? 2 : 1);
+  return sim::SimAssocCreateOp::create(
+             builder, location, type, descriptor->typeID, descriptor->kind,
+             descriptor->flags, descriptor->valueSize, descriptor->alignment,
+             descriptor->bitWidth,
+             builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
+             builder.getDenseI32ArrayAttr(descriptor->traceKinds), keyKind,
+             *width)
+      .getResult();
+}
+
+FailureOr<Value> UnitLowering::ensureAssocArray(Value value,
+                                                Location location) {
+  auto type = dyn_cast<sim::AssocArrayType>(value.getType());
+  if (!type)
+    return failure();
+  Value isNull = sim::SimManagedIsNullOp::create(
+      builder, location, builder.getI1Type(), value);
+  Block *create = addBlock();
+  Block *resume = addBlock();
+  resume->addArgument(type, location);
+  cf::CondBranchOp::create(builder, location, isNull, create, ValueRange{},
+                           resume, ValueRange{value});
+  setCurrent(create);
+  FailureOr<Value> allocated = createAssocArray(type, location);
+  if (failed(allocated))
+    return failure();
+  cf::BranchOp::create(builder, location, resume, ValueRange{*allocated});
+  setCurrent(resume);
+  return resume->getArgument(0);
+}
+
+FailureOr<std::pair<Value, Value>>
+UnitLowering::traverseAssoc(Value array, Value key, int32_t direction,
+                            bool endpoint, Location location) {
+  auto type = dyn_cast<sim::AssocArrayType>(array.getType());
+  if (!type || key.getType() != type.getKeyType() ||
+      (direction != -1 && direction != 1))
+    return failure();
+  Value isNull = sim::SimManagedIsNullOp::create(
+      builder, location, builder.getI1Type(), array);
+  Block *empty = addBlock();
+  Block *present = addBlock();
+  Block *resume = addBlock();
+  resume->addArgument(type.getKeyType(), location);
+  resume->addArgument(builder.getI1Type(), location);
+  cf::CondBranchOp::create(builder, location, isNull, empty, ValueRange{},
+                           present, ValueRange{});
+  setCurrent(empty);
+  Value falseValue = arith::ConstantOp::create(
+      builder, location, builder.getI1Type(), builder.getBoolAttr(false));
+  cf::BranchOp::create(builder, location, resume,
+                       ValueRange{key, falseValue});
+  setCurrent(present);
+  auto traversed = sim::SimAssocTraverseOp::create(
+      builder, location, type.getKeyType(), builder.getI1Type(), array, key,
+      static_cast<uint32_t>(direction), endpoint);
+  cf::BranchOp::create(
+      builder, location, resume,
+      ValueRange{traversed.getResultKey(), traversed.getSuccess()});
+  setCurrent(resume);
+  return std::pair<Value, Value>{resume->getArgument(0),
+                                 resume->getArgument(1)};
 }
 
 FailureOr<Value> UnitLowering::loadReference(Value reference,
@@ -1807,6 +1899,66 @@ FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
   FailureOr<Type> resultType = getNormalizedSemanticType(op);
   if (failed(resultType))
     return failure();
+  if (auto array = dyn_cast<sim::AssocArrayType>(*resultType)) {
+    auto structured =
+        dyn_cast<semantic::SVStructuredAssignmentPatternExpressionOp>(op);
+    if (!structured) {
+      emitError(location)
+          << "associative assignment patterns require keyed setters";
+      return failure();
+    }
+    if (structured.getMemberSetterCount() != 0 ||
+        structured.getTypeSetterCount() != 0) {
+      emitError(location)
+          << "associative assignment pattern contains a non-index setter";
+      return failure();
+    }
+    SmallVector<Operation *> children = getChildren(op);
+    uint64_t indexCount = structured.getIndexSetterCount();
+    uint64_t expected =
+        indexCount * 2 + (structured.getHasDefaultSetter() ? 1 : 0);
+    if (children.size() != expected) {
+      emitError(location)
+          << "malformed associative assignment-pattern setter inventory";
+      return failure();
+    }
+    FailureOr<Value> created = createAssocArray(array, location);
+    if (failed(created))
+      return failure();
+    Value result = *created;
+    for (uint64_t index = 0; index < indexCount; ++index) {
+      Operation *keyNode = children[index * 2];
+      Operation *valueNode = children[index * 2 + 1];
+      FailureOr<Value> key = lowerExpression(keyNode);
+      FailureOr<Value> value = lowerExpression(valueNode);
+      if (failed(key) || failed(value))
+        return failure();
+      FailureOr<Value> convertedKey =
+          convert(*key, array.getKeyType(), isSignedNode(keyNode),
+                  getSemanticLocation(keyNode), array.getSignedKey());
+      FailureOr<Value> convertedValue =
+          convert(*value, array.getElementType(), isSignedNode(valueNode),
+                  getSemanticLocation(valueNode));
+      if (failed(convertedKey) || failed(convertedValue))
+        return failure();
+      sim::SimAssocWriteOp::create(builder, getSemanticLocation(valueNode),
+                                   result, *convertedKey, *convertedValue);
+    }
+    if (structured.getHasDefaultSetter()) {
+      Operation *defaultNode = children.back();
+      FailureOr<Value> value = lowerExpression(defaultNode);
+      if (failed(value))
+        return failure();
+      FailureOr<Value> converted =
+          convert(*value, array.getElementType(), isSignedNode(defaultNode),
+                  getSemanticLocation(defaultNode));
+      if (failed(converted))
+        return failure();
+      sim::SimAssocSetDefaultOp::create(
+          builder, getSemanticLocation(defaultNode), result, *converted);
+    }
+    return result;
+  }
   if (auto array = dyn_cast<sim::DynamicArrayType>(*resultType)) {
     SmallVector<Operation *> children = getChildren(op);
     FailureOr<ContainerElementDescriptor> descriptor =
@@ -1973,6 +2125,57 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
     sourceValueType = net.getElementType();
   else if (auto driver = dyn_cast<sim::DriverType>(sourceValueType))
     sourceValueType = driver.getElementType();
+
+  if (element) {
+    if (auto array = dyn_cast<sim::AssocArrayType>(sourceValueType)) {
+      Value container = *input;
+      bool isReference =
+          isa<sim::RefType, sim::ManagedRefType, sim::ArgumentRefType>(
+              container.getType());
+      if (isReference) {
+        FailureOr<Value> loaded = loadReference(container, location);
+        if (failed(loaded))
+          return failure();
+        container = *loaded;
+      }
+      FailureOr<Value> key = lowerExpression(children[1]);
+      FailureOr<Value> convertedKey =
+          succeeded(key)
+              ? convert(*key, array.getKeyType(), isSignedNode(children[1]),
+                        location, array.getSignedKey())
+              : FailureOr<Value>(failure());
+      FailureOr<Value> materialized =
+          succeeded(convertedKey)
+              ? ensureAssocArray(container, location)
+              : FailureOr<Value>(failure());
+      if (failed(convertedKey) || failed(materialized))
+        return failure();
+      container = *materialized;
+      if (lvalue) {
+        if (!isReference)
+          return emitError(location)
+                     << "associative element lvalue has no owning storage",
+                 failure();
+        if (failed(storeReference(*input, container, location)))
+          return failure();
+        FailureOr<Value> published = loadReference(*input, location);
+        FailureOr<Value> owner =
+            toArgumentReference(*input, sourceValueType, location);
+        if (failed(published) || failed(owner))
+          return failure();
+        Type pathType =
+            sim::ReferencePathType::get(function.getContext(), *resultType);
+        return sim::SimReferencePathAssocOp::create(
+                   builder, location, pathType,
+                   function.getBody().front().getArgument(0), *published,
+                   *convertedKey, *owner)
+            .getResult();
+      }
+      return sim::SimAssocReadOp::create(builder, location, *resultType,
+                                         container, *convertedKey)
+          .getResult();
+    }
+  }
 
   if (element && isa<sim::DynamicArrayType, sim::QueueType>(sourceValueType)) {
     Value container = *input;
@@ -2429,6 +2632,26 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
         captured.children.push_back(std::move(*base));
         return captured;
       }
+      if (auto array = dyn_cast<sim::AssocArrayType>(*baseType)) {
+        FailureOr<CapturedLValue> base =
+            captureLValue(selection.front(), location);
+        FailureOr<Value> container =
+            succeeded(base) ? loadCapturedLValue(*base, location)
+                            : FailureOr<Value>(failure());
+        FailureOr<Value> key = lowerExpression(selection[1]);
+        if (failed(base) || failed(container) || failed(key))
+          return failure();
+        FailureOr<Value> convertedKey =
+            convert(*key, array.getKeyType(), isSignedNode(selection[1]),
+                    location, array.getSignedKey());
+        if (failed(convertedKey))
+          return failure();
+        captured.kind = CapturedLValue::Kind::AssociativeElement;
+        captured.container = *container;
+        captured.index = *convertedKey;
+        captured.children.push_back(std::move(*base));
+        return captured;
+      }
       if (isa<sim::StringType>(*baseType)) {
         FailureOr<CapturedLValue> base =
             captureLValue(selection.front(), location);
@@ -2534,6 +2757,29 @@ UnitLowering::loadCapturedLValue(const CapturedLValue &destination,
                builder, location, destination.type, destination.container,
                destination.index)
         .getResult();
+  case CapturedLValue::Kind::AssociativeElement: {
+    Value isNull = sim::SimManagedIsNullOp::create(
+        builder, location, builder.getI1Type(), destination.container);
+    Block *missing = addBlock();
+    Block *present = addBlock();
+    Block *resume = addBlock();
+    resume->addArgument(destination.type, location);
+    cf::CondBranchOp::create(builder, location, isNull, missing, ValueRange{},
+                             present, ValueRange{});
+    setCurrent(missing);
+    Value defaultValue = createDefaultValue(builder, location, destination.type);
+    if (!defaultValue)
+      return failure();
+    cf::BranchOp::create(builder, location, resume,
+                         ValueRange{defaultValue});
+    setCurrent(present);
+    Value value = sim::SimAssocReadOp::create(
+        builder, location, destination.type, destination.container,
+        destination.index);
+    cf::BranchOp::create(builder, location, resume, ValueRange{value});
+    setCurrent(resume);
+    return resume->getArgument(0);
+  }
   case CapturedLValue::Kind::AggregateElement: {
     if (destination.children.size() != 1)
       return failure();
@@ -2638,7 +2884,8 @@ bool UnitLowering::haveSameCapturedStorage(const CapturedLValue &lhs,
            rhs.children.size() == 1 &&
            haveSameCapturedStorage(lhs.children.front(),
                                    rhs.children.front());
-  case CapturedLValue::Kind::ContainerElement: {
+  case CapturedLValue::Kind::ContainerElement:
+  case CapturedLValue::Kind::AssociativeElement: {
     if (lhs.children.size() != 1 || rhs.children.size() != 1 ||
         !haveSameCapturedStorage(lhs.children.front(), rhs.children.front()))
       return false;
@@ -2663,8 +2910,9 @@ void UnitLowering::propagateCapturedContainers(
   // same captured container storage, feed the first leaf's rebuilt container
   // into the second so its write cannot restore the encounter-time snapshot
   // and discard the earlier update.
-  if (source.kind == CapturedLValue::Kind::ContainerElement &&
-      destination.kind == CapturedLValue::Kind::ContainerElement &&
+  if ((source.kind == CapturedLValue::Kind::ContainerElement ||
+       source.kind == CapturedLValue::Kind::AssociativeElement) &&
+      source.kind == destination.kind &&
       source.children.size() == 1 && destination.children.size() == 1 &&
       haveSameCapturedStorage(source.children.front(),
                               destination.children.front()))
@@ -2686,7 +2934,8 @@ LogicalResult UnitLowering::writeCapturedLValue(
     if (failed(converted))
       return failure();
     Value published = *converted;
-    if (isa<sim::DynamicArrayType, sim::QueueType>(destination.type))
+    if (isa<sim::DynamicArrayType, sim::QueueType,
+            sim::AssocArrayType>(destination.type))
       published = sim::SimContainerCloneOp::create(
           builder, location, destination.type, published);
     Type referenceType = destination.reference.getType();
@@ -2784,6 +3033,57 @@ LogicalResult UnitLowering::writeCapturedLValue(
     if (current->empty() ||
         !current->back().hasTrait<OpTrait::IsTerminator>())
       cf::BranchOp::create(builder, location, resume, ValueRange{updated});
+    setCurrent(resume);
+    destination.container = resume->getArgument(0);
+    return success();
+  }
+  case CapturedLValue::Kind::AssociativeElement: {
+    if (destination.children.size() != 1)
+      return failure();
+    if (nonblocking) {
+      emitError(location)
+          << "nonblocking assignment cannot target an associative element";
+      return failure();
+    }
+    FailureOr<Value> converted =
+        convert(value, destination.type, sourceSigned, location,
+                isSignedNode(destination.semanticNode));
+    if (failed(converted))
+      return failure();
+    CapturedLValue &base = destination.children.front();
+    CapturedLValue createBase = base;
+    CapturedLValue existingBase = base;
+    Value isNull = sim::SimManagedIsNullOp::create(
+        builder, location, builder.getI1Type(), destination.container);
+    Block *create = addBlock();
+    Block *existing = addBlock();
+    Block *resume = addBlock();
+    resume->addArgument(destination.container.getType(), location);
+    cf::CondBranchOp::create(builder, location, isNull, create, ValueRange{},
+                             existing, ValueRange{});
+    setCurrent(create);
+    auto arrayType =
+        cast<sim::AssocArrayType>(destination.container.getType());
+    FailureOr<Value> allocated = createAssocArray(arrayType, location);
+    if (failed(allocated))
+      return failure();
+    sim::SimAssocWriteOp::create(builder, location, *allocated,
+                                 destination.index, *converted);
+    if (failed(writeCapturedLValue(createBase, *allocated, false, false,
+                                   location)))
+      return failure();
+    cf::BranchOp::create(builder, location, resume, ValueRange{*allocated});
+
+    setCurrent(existing);
+    Value updated = sim::SimContainerCloneOp::create(
+        builder, location, destination.container.getType(),
+        destination.container);
+    sim::SimAssocWriteOp::create(builder, location, updated, destination.index,
+                                 *converted);
+    if (failed(writeCapturedLValue(existingBase, updated, false, false,
+                                   location)))
+      return failure();
+    cf::BranchOp::create(builder, location, resume, ValueRange{updated});
     setCurrent(resume);
     destination.container = resume->getArgument(0);
     return success();
@@ -2894,7 +3194,8 @@ void UnitLowering::appendCapturedValues(
     values.push_back(destination.reference);
   for (const CapturedLValue &child : destination.children)
     appendCapturedValues(child, values);
-  if (destination.kind == CapturedLValue::Kind::ContainerElement) {
+  if (destination.kind == CapturedLValue::Kind::ContainerElement ||
+      destination.kind == CapturedLValue::Kind::AssociativeElement) {
     values.push_back(destination.container);
     values.push_back(destination.index);
   } else if (destination.kind == CapturedLValue::Kind::StringCharacter) {
@@ -2914,7 +3215,8 @@ LogicalResult UnitLowering::replaceCapturedValues(CapturedLValue &destination,
     if (failed(replaceCapturedValues(child, values, next)))
       return failure();
   }
-  if (destination.kind == CapturedLValue::Kind::ContainerElement) {
+  if (destination.kind == CapturedLValue::Kind::ContainerElement ||
+      destination.kind == CapturedLValue::Kind::AssociativeElement) {
     if (next > values.size() || values.size() - next < 2)
       return failure();
     destination.container = values[next++];
@@ -3538,8 +3840,10 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
         arith::CmpIOp::create(builder, location, *predicate, compared, zero);
     return convert(result, *resultType, false, location);
   }
-  if (isa<sim::DynamicArrayType, sim::QueueType>((*lhs).getType()) ||
-      isa<sim::DynamicArrayType, sim::QueueType>((*rhs).getType())) {
+  if (isa<sim::DynamicArrayType, sim::QueueType,
+          sim::AssocArrayType>((*lhs).getType()) ||
+      isa<sim::DynamicArrayType, sim::QueueType,
+          sim::AssocArrayType>((*rhs).getType())) {
     if ((*lhs).getType() != (*rhs).getType() ||
         (kind != Binary::Equality && kind != Binary::Inequality &&
          kind != Binary::CaseEquality && kind != Binary::CaseInequality)) {
@@ -4004,6 +4308,74 @@ FailureOr<Value> UnitLowering::conditionalEqual(Value lhs, Value rhs, Type type,
     return sim::SimEventEqualOp::create(builder, location,
                                         builder.getI1Type(), lhs, rhs)
         .getResult();
+  if (auto associative = dyn_cast<sim::AssocArrayType>(type)) {
+    Value leftSize = sim::SimContainerSizeOp::create(
+        builder, location, builder.getI64Type(), lhs);
+    Value rightSize = sim::SimContainerSizeOp::create(
+        builder, location, builder.getI64Type(), rhs);
+    Value sameSize = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, leftSize, rightSize);
+    Block *start = addBlock();
+    Block *falseBlock = addBlock();
+    Block *loop = addBlock();
+    Block *body = addBlock();
+    Block *next = addBlock();
+    Block *result = addBlock();
+    loop->addArgument(associative.getKeyType(), location);
+    loop->addArgument(builder.getI1Type(), location);
+    next->addArgument(associative.getKeyType(), location);
+    result->addArgument(builder.getI1Type(), location);
+    cf::CondBranchOp::create(builder, location, sameSize, start, ValueRange{},
+                             falseBlock, ValueRange{});
+    setCurrent(start);
+    Value defaultKey =
+        createDefaultValue(builder, location, associative.getKeyType());
+    FailureOr<std::pair<Value, Value>> first =
+        traverseAssoc(lhs, defaultKey, 1, true, location);
+    if (failed(first))
+      return failure();
+    cf::BranchOp::create(
+        builder, location, loop,
+        ValueRange{first->first, first->second});
+    setCurrent(loop);
+    Value key = loop->getArgument(0);
+    Value valid = loop->getArgument(1);
+    Value trueValue = arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+    cf::CondBranchOp::create(builder, location, valid, body, ValueRange{},
+                             result, ValueRange{trueValue});
+    setCurrent(body);
+    Value exists = sim::SimAssocExistsOp::create(
+        builder, location, builder.getI1Type(), rhs, key);
+    Block *compare = addBlock();
+    cf::CondBranchOp::create(builder, location, exists, compare, ValueRange{},
+                             falseBlock, ValueRange{});
+    setCurrent(compare);
+    Value left = sim::SimAssocReadOp::create(
+        builder, location, associative.getElementType(), lhs, key);
+    Value right = sim::SimAssocReadOp::create(
+        builder, location, associative.getElementType(), rhs, key);
+    FailureOr<Value> equal =
+        conditionalEqual(left, right, associative.getElementType(), location,
+                         caseEquality);
+    if (failed(equal))
+      return failure();
+    cf::CondBranchOp::create(builder, location, *equal, next, ValueRange{key},
+                             falseBlock, ValueRange{});
+    setCurrent(next);
+    FailureOr<std::pair<Value, Value>> following =
+        traverseAssoc(lhs, next->getArgument(0), 1, false, location);
+    if (failed(following))
+      return failure();
+    cf::BranchOp::create(
+        builder, location, loop,
+        ValueRange{following->first, following->second});
+    setCurrent(falseBlock);
+    cf::BranchOp::create(builder, location, result,
+                         ValueRange{falseValue()});
+    setCurrent(result);
+    return result->getArgument(0);
+  }
   if (isa<sim::DynamicArrayType, sim::QueueType>(type)) {
     Value leftSize = sim::SimContainerSizeOp::create(
         builder, location, builder.getI64Type(), lhs);
@@ -4199,6 +4571,75 @@ FailureOr<Value> UnitLowering::logicalEqual(Value lhs, Value rhs, Type type,
     if (failed(equal))
       return failure();
     return fromBits(*equal);
+  }
+  if (auto associative = dyn_cast<sim::AssocArrayType>(type)) {
+    Value leftSize = sim::SimContainerSizeOp::create(
+        builder, location, builder.getI64Type(), lhs);
+    Value rightSize = sim::SimContainerSizeOp::create(
+        builder, location, builder.getI64Type(), rhs);
+    Value sameSize = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, leftSize, rightSize);
+    Block *start = addBlock();
+    Block *falseBlock = addBlock();
+    Block *loop = addBlock();
+    Block *body = addBlock();
+    Block *next = addBlock();
+    Block *result = addBlock();
+    loop->addArgument(associative.getKeyType(), location);
+    loop->addArgument(builder.getI1Type(), location);
+    loop->addArgument(logicType, location);
+    next->addArgument(associative.getKeyType(), location);
+    next->addArgument(logicType, location);
+    result->addArgument(logicType, location);
+    cf::CondBranchOp::create(builder, location, sameSize, start, ValueRange{},
+                             falseBlock, ValueRange{});
+    setCurrent(start);
+    Value defaultKey =
+        createDefaultValue(builder, location, associative.getKeyType());
+    FailureOr<std::pair<Value, Value>> first =
+        traverseAssoc(lhs, defaultKey, 1, true, location);
+    if (failed(first))
+      return failure();
+    cf::BranchOp::create(
+        builder, location, loop,
+        ValueRange{first->first, first->second, known(true)});
+    setCurrent(loop);
+    Value key = loop->getArgument(0);
+    Value valid = loop->getArgument(1);
+    Value accumulated = loop->getArgument(2);
+    cf::CondBranchOp::create(builder, location, valid, body, ValueRange{},
+                             result, ValueRange{accumulated});
+    setCurrent(body);
+    Value exists = sim::SimAssocExistsOp::create(
+        builder, location, builder.getI1Type(), rhs, key);
+    Block *compare = addBlock();
+    cf::CondBranchOp::create(builder, location, exists, compare, ValueRange{},
+                             falseBlock, ValueRange{});
+    setCurrent(compare);
+    Value left = sim::SimAssocReadOp::create(
+        builder, location, associative.getElementType(), lhs, key);
+    Value right = sim::SimAssocReadOp::create(
+        builder, location, associative.getElementType(), rhs, key);
+    FailureOr<Value> elementEqual =
+        logicalEqual(left, right, associative.getElementType(), location);
+    if (failed(elementEqual))
+      return failure();
+    Value combined = conjunction(accumulated, *elementEqual);
+    cf::BranchOp::create(builder, location, next,
+                         ValueRange{key, combined});
+    setCurrent(next);
+    FailureOr<std::pair<Value, Value>> following =
+        traverseAssoc(lhs, next->getArgument(0), 1, false, location);
+    if (failed(following))
+      return failure();
+    cf::BranchOp::create(
+        builder, location, loop,
+        ValueRange{following->first, following->second, next->getArgument(1)});
+    setCurrent(falseBlock);
+    cf::BranchOp::create(builder, location, result,
+                         ValueRange{known(false)});
+    setCurrent(result);
+    return result->getArgument(0);
   }
   if (isa<sim::DynamicArrayType, sim::QueueType>(type)) {
     Value leftSize = sim::SimContainerSizeOp::create(builder, location,
@@ -4701,7 +5142,8 @@ FailureOr<Value> UnitLowering::lowerInside(semantic::SVInsideExpressionOp op) {
 }
 
 FailureOr<Value>
-UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op) {
+UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
+                               Value receiverOverride, Value iteratorKeys) {
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
   bool withClause = op.getHasIteratorExpression();
@@ -4715,7 +5157,9 @@ UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op) {
   bool mutatesReceiver = name == "delete" || name == "reverse" ||
                          name == "shuffle" || name == "sort" || name == "rsort";
   FailureOr<Value> receiver;
-  if (mutatesReceiver) {
+  if (receiverOverride) {
+    receiver = receiverOverride;
+  } else if (mutatesReceiver) {
     FailureOr<Value> reference = lowerExpression(receiverNode, true);
     FailureOr<Value> loaded = succeeded(reference)
                                   ? loadReference(*reference, location)
@@ -4821,9 +5265,16 @@ UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op) {
     return arith::ConstantOp::create(builder, location, builder.getI64Type(),
                                      builder.getI64IntegerAttr(value));
   };
+  auto sourceIndex = [&](Value ordinal) -> Value {
+    if (!iteratorKeys)
+      return ordinal;
+    auto keys = cast<sim::QueueType>(iteratorKeys.getType());
+    return sim::SimContainerReadOp::create(
+        builder, location, keys.getElementType(), iteratorKeys, ordinal);
+  };
   auto evaluateClause = [&](StringRef path, Value element,
                             Value index) -> FailureOr<Value> {
-    bindIterator(path, element, index);
+    bindIterator(path, element, sourceIndex(index));
     return clause ? lowerExpression(clause) : FailureOr<Value>(element);
   };
 
@@ -5065,7 +5516,8 @@ UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op) {
     Value appended = element;
     if (indexResult) {
       FailureOr<Value> converted =
-          convert(index, queue.getElementType(), true, location, true);
+          convert(sourceIndex(index), queue.getElementType(), true, location,
+                  true);
       if (failed(converted))
         return failure();
       appended = *converted;
@@ -5562,8 +6014,8 @@ UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op) {
     Value resultValue = append->getArgument(0);
     if (name == "unique_index") {
       FailureOr<Value> convertedIndex =
-          convert(append->getArgument(2), resultQueue.getElementType(), true,
-                  location, true);
+          convert(sourceIndex(append->getArgument(2)),
+                  resultQueue.getElementType(), true, location, true);
       if (failed(convertedIndex))
         return failure();
       resultValue = *convertedIndex;
@@ -5589,6 +6041,300 @@ UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op) {
          failure();
 }
 
+FailureOr<Value>
+UnitLowering::lowerAssociativeArrayMethod(semantic::SVCallExpressionOp op) {
+  Location location = getSemanticLocation(op);
+  SmallVector<Operation *> children = getChildren(op);
+  if (children.empty()) {
+    emitError(location)
+        << "malformed associative-array method argument inventory";
+    return failure();
+  }
+  bool withClause = op.getHasIteratorExpression();
+  Operation *receiverNode = withClause ? children.back() : children.front();
+  FailureOr<Type> semanticReceiverType =
+      getNormalizedSemanticType(receiverNode);
+  if (failed(semanticReceiverType))
+    return failure();
+  auto arrayType = dyn_cast<sim::AssocArrayType>(*semanticReceiverType);
+  if (!arrayType)
+    return failure();
+  StringRef name = op.getCalleeName();
+
+  auto result = [&](Value value) -> FailureOr<Value> {
+    FailureOr<Type> resultType = getNormalizedSemanticType(op);
+    if (failed(resultType))
+      return failure();
+    return convert(value, *resultType, false, location);
+  };
+  auto lowerKey = [&](Operation *node) -> FailureOr<Value> {
+    FailureOr<Value> value = lowerExpression(node);
+    if (failed(value))
+      return failure();
+    return convert(*value, arrayType.getKeyType(), isSignedNode(node),
+                   getSemanticLocation(node), arrayType.getSignedKey());
+  };
+  auto receiverValue = [&]() -> FailureOr<Value> {
+    FailureOr<Value> value = lowerExpression(children.front());
+    if (failed(value))
+      return failure();
+    return ensureAssocArray(*value, location);
+  };
+
+  if (name == "size" || name == "num") {
+    if (children.size() != 1)
+      return emitError(location) << name << " takes no arguments", failure();
+    FailureOr<Value> receiver = receiverValue();
+    if (failed(receiver))
+      return failure();
+    Value size = sim::SimContainerSizeOp::create(
+        builder, location, builder.getI64Type(), *receiver);
+    return result(size);
+  }
+  if (name == "exists") {
+    if (children.size() != 2)
+      return emitError(location) << "exists takes one key argument", failure();
+    FailureOr<Value> receiver = receiverValue();
+    FailureOr<Value> key = lowerKey(children[1]);
+    if (failed(receiver) || failed(key))
+      return failure();
+    Value exists = sim::SimAssocExistsOp::create(
+        builder, location, builder.getI1Type(), *receiver, *key);
+    return result(exists);
+  }
+  if (name == "delete") {
+    if (children.size() > 2)
+      return emitError(location) << "delete takes at most one key argument",
+             failure();
+    FailureOr<Value> reference = lowerExpression(children.front(), true);
+    FailureOr<Value> loaded = succeeded(reference)
+                                  ? loadReference(*reference, location)
+                                  : FailureOr<Value>(failure());
+    if (failed(reference) || failed(loaded))
+      return failure();
+    Value updated = cloneSequentialValue(*loaded, location);
+    FailureOr<Value> allocated = ensureAssocArray(updated, location);
+    if (failed(allocated))
+      return failure();
+    updated = *allocated;
+    if (children.size() == 1) {
+      sim::SimContainerDeleteOp::create(builder, location, updated);
+    } else {
+      FailureOr<Value> key = lowerKey(children[1]);
+      if (failed(key))
+        return failure();
+      sim::SimAssocDeleteOp::create(builder, location, updated, *key);
+    }
+    if (failed(storeReference(*reference, updated, location)))
+      return failure();
+    return arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                     builder.getBoolAttr(false))
+        .getResult();
+  }
+  if (name == "first" || name == "last" || name == "next" ||
+      name == "prev") {
+    if (children.size() != 2)
+      return emitError(location) << name << " takes one key output argument",
+             failure();
+    FailureOr<Value> receiver = receiverValue();
+    FailureOr<Value> destination = lowerExpression(children[1], true);
+    if (failed(receiver) || failed(destination))
+      return failure();
+    Value inputKey;
+    bool endpoint = name == "first" || name == "last";
+    if (endpoint)
+      inputKey =
+          createDefaultValue(builder, location, arrayType.getKeyType());
+    else {
+      FailureOr<Value> current = loadReference(*destination, location);
+      if (failed(current))
+        return failure();
+      FailureOr<Value> converted =
+          convert(*current, arrayType.getKeyType(), isSignedNode(children[1]),
+                  location, arrayType.getSignedKey());
+      if (failed(converted))
+        return failure();
+      inputKey = *converted;
+    }
+    int32_t direction = name == "first" || name == "next" ? 1 : -1;
+    FailureOr<std::pair<Value, Value>> traversed =
+        traverseAssoc(*receiver, inputKey, direction, endpoint, location);
+    if (failed(traversed))
+      return failure();
+    Block *store = addBlock();
+    Block *done = addBlock();
+    cf::CondBranchOp::create(builder, location, traversed->second, store,
+                             ValueRange{}, done, ValueRange{});
+    setCurrent(store);
+    FailureOr<Type> destinationType = getNormalizedSemanticType(children[1]);
+    if (failed(destinationType))
+      return failure();
+    FailureOr<Value> converted =
+        convert(traversed->first, *destinationType,
+                arrayType.getSignedKey(), location, isSignedNode(children[1]));
+    if (failed(converted) ||
+        failed(storeReference(*destination, *converted, location)))
+      return failure();
+    cf::BranchOp::create(builder, location, done);
+    setCurrent(done);
+    return result(traversed->second);
+  }
+
+  bool expressionMethod =
+      name == "sum" || name == "product" || name == "and" || name == "or" ||
+      name == "xor" || name == "find" || name == "find_index" ||
+      name == "find_first" || name == "find_first_index" ||
+      name == "find_last" || name == "find_last_index" || name == "min" ||
+      name == "max" || name == "unique" || name == "unique_index" ||
+      name == "map";
+  if (expressionMethod) {
+    if (children.size() != (withClause ? 2u : 1u)) {
+      emitError(location)
+          << "malformed associative-array expression-method inventory";
+      return failure();
+    }
+    FailureOr<Value> receiver = lowerExpression(receiverNode);
+    if (failed(receiver))
+      return failure();
+    receiver = ensureAssocArray(*receiver, location);
+    if (failed(receiver))
+      return failure();
+    Type valueQueueType =
+        sim::QueueType::get(function.getContext(), arrayType.getElementType(),
+                            0);
+    Type keyQueueType =
+        sim::QueueType::get(function.getContext(), arrayType.getKeyType(), 0);
+    FailureOr<ContainerElementDescriptor> valueDescriptor =
+        describeContainerElement(arrayType.getElementType(), location);
+    FailureOr<ContainerElementDescriptor> keyDescriptor =
+        describeContainerElement(arrayType.getKeyType(), location);
+    if (failed(valueDescriptor) || failed(keyDescriptor))
+      return failure();
+    Value zero = arith::ConstantOp::create(
+        builder, location, builder.getI64Type(), builder.getI64IntegerAttr(0));
+    auto createQueue = [&](Type type,
+                           const ContainerElementDescriptor &descriptor) {
+      return sim::SimContainerCreateOp::create(
+          builder, location, type, zero, descriptor.typeID, descriptor.kind,
+          descriptor.flags, descriptor.valueSize, descriptor.alignment,
+          descriptor.bitWidth,
+          builder.getDenseI64ArrayAttr(descriptor.traceOffsets),
+          builder.getDenseI32ArrayAttr(descriptor.traceKinds), 2, UINT64_MAX);
+    };
+    Value orderedValues = createQueue(valueQueueType, *valueDescriptor);
+    Value orderedKeys = createQueue(keyQueueType, *keyDescriptor);
+    Value defaultKey =
+        createDefaultValue(builder, location, arrayType.getKeyType());
+    FailureOr<std::pair<Value, Value>> first =
+        traverseAssoc(*receiver, defaultKey, 1, true, location);
+    if (failed(first))
+      return failure();
+    Block *header = addBlock();
+    header->addArgument(arrayType.getKeyType(), location);
+    header->addArgument(builder.getI1Type(), location);
+    Block *body = addBlock();
+    Block *exit = addBlock();
+    cf::BranchOp::create(
+        builder, location, header,
+        ValueRange{first->first, first->second});
+    setCurrent(header);
+    Value key = header->getArgument(0);
+    cf::CondBranchOp::create(builder, location, header->getArgument(1), body,
+                             ValueRange{}, exit, ValueRange{});
+    setCurrent(body);
+    Value value = sim::SimAssocReadOp::create(
+        builder, location, arrayType.getElementType(), *receiver, key);
+    Value ordinal = sim::SimContainerSizeOp::create(
+        builder, location, builder.getI64Type(), orderedValues);
+    sim::SimContainerWriteOp::create(builder, location, orderedValues, ordinal,
+                                     value);
+    sim::SimContainerWriteOp::create(builder, location, orderedKeys, ordinal,
+                                     key);
+    FailureOr<std::pair<Value, Value>> next =
+        traverseAssoc(*receiver, key, 1, false, location);
+    if (failed(next))
+      return failure();
+    cf::BranchOp::create(
+        builder, location, header,
+        ValueRange{next->first, next->second});
+    setCurrent(exit);
+
+    if (name == "map") {
+      if (!withClause)
+        return emitError(location) << "map requires a with clause", failure();
+      FailureOr<Type> resultType = getNormalizedSemanticType(op);
+      auto resultArray = succeeded(resultType)
+                             ? dyn_cast<sim::AssocArrayType>(*resultType)
+                             : sim::AssocArrayType{};
+      if (!resultArray || resultArray.getKeyType() != arrayType.getKeyType())
+        return failure();
+      FailureOr<Value> mappedArray = createAssocArray(resultArray, location);
+      if (failed(mappedArray))
+        return failure();
+      auto iteratorPath =
+          op->getAttrOfType<StringAttr>("iterator_variable_path");
+      if (!iteratorPath)
+        return emitError(location)
+                   << "map with clause has no iterator-variable path",
+               failure();
+      StringRef path = iteratorPath.getValue();
+      Value savedValue = values.lookup(path);
+      Value savedIndex = iteratorIndices.lookup(path);
+      Value count = sim::SimContainerSizeOp::create(
+          builder, location, builder.getI64Type(), orderedValues);
+      Block *mapHeader = addBlock();
+      mapHeader->addArgument(builder.getI64Type(), location);
+      Block *mapBody = addBlock();
+      Block *mapExit = addBlock();
+      cf::BranchOp::create(builder, location, mapHeader, ValueRange{zero});
+      setCurrent(mapHeader);
+      Value index = mapHeader->getArgument(0);
+      Value more = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ult, index, count);
+      cf::CondBranchOp::create(builder, location, more, mapBody, ValueRange{},
+                               mapExit, ValueRange{});
+      setCurrent(mapBody);
+      Value item = sim::SimContainerReadOp::create(
+          builder, location, arrayType.getElementType(), orderedValues, index);
+      Value itemKey = sim::SimContainerReadOp::create(
+          builder, location, arrayType.getKeyType(), orderedKeys, index);
+      values[path] = item;
+      iteratorIndices[path] = itemKey;
+      FailureOr<Value> mapped = lowerExpression(children.front());
+      if (failed(mapped))
+        return failure();
+      FailureOr<Value> converted =
+          convert(*mapped, resultArray.getElementType(),
+                  isSignedNode(children.front()), location);
+      if (failed(converted))
+        return failure();
+      sim::SimAssocWriteOp::create(builder, location, *mappedArray, itemKey,
+                                   *converted);
+      Value one = arith::ConstantOp::create(
+          builder, location, builder.getI64Type(),
+          builder.getI64IntegerAttr(1));
+      Value following =
+          arith::AddIOp::create(builder, location, index, one);
+      cf::BranchOp::create(builder, location, mapHeader,
+                           ValueRange{following});
+      if (savedValue)
+        values[path] = savedValue;
+      else
+        values.erase(path);
+      if (savedIndex)
+        iteratorIndices[path] = savedIndex;
+      else
+        iteratorIndices.erase(path);
+      setCurrent(mapExit);
+      return *mappedArray;
+    }
+    return lowerArrayMethod(op, orderedValues, orderedKeys);
+  }
+
+  return emitError(location) << "unsupported associative-array method " << name,
+         failure();
+}
+
 FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
@@ -5607,6 +6353,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   }
   bool stringBuiltin = false;
   bool containerBuiltin = false;
+  bool associativeBuiltin = false;
   if (op.getIsSystemCall() && !op.getCalleeName().starts_with("$") &&
       !children.empty()) {
     Operation *receiverNode =
@@ -5617,9 +6364,14 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     containerBuiltin =
         succeeded(receiverType) &&
         isa<sim::DynamicArrayType, sim::QueueType>(*receiverType);
+    associativeBuiltin =
+        succeeded(receiverType) && isa<sim::AssocArrayType>(*receiverType);
   }
-  if (op.getIsSystemCall() && !stringBuiltin && !containerBuiltin)
+  if (op.getIsSystemCall() && !stringBuiltin && !containerBuiltin &&
+      !associativeBuiltin)
     return lowerSystemCall(op);
+  if (associativeBuiltin)
+    return lowerAssociativeArrayMethod(op);
   if (containerBuiltin)
     return lowerArrayMethod(op);
   if (isWeakReferenceCall(op)) {
@@ -6246,9 +6998,11 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     bool isInput = direction == semantic::SVArgumentDirection::In;
     if (op->hasAttr("obelisk.dpi.import_id")) {
       if (isa<semantic::DynArrayType, semantic::QueueType,
-              sim::DynamicArrayType, sim::QueueType>(formalType)) {
+              semantic::AssocArrayType, sim::DynamicArrayType, sim::QueueType,
+              sim::AssocArrayType>(formalType)) {
         emitError(location)
-            << "DPI-C dynamic-array and queue marshalling is unsupported";
+            << "DPI-C dynamic-array, queue, and associative-array "
+               "marshalling is unsupported";
         return failure();
       }
       std::optional<unsigned> width = sim::getPackedWidth(formalType);
@@ -7051,6 +7805,78 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     SmallVector<Value> values;
     values.reserve(dimensions.size());
     for (auto [dimensionIndex, dimension] : llvm::enumerate(dimensions)) {
+      if (dimension.kind == SemanticDimensionKind::AssociativeArray &&
+          dimensionIndex == 0) {
+        FailureOr<Type> normalizedIndex =
+            normalizeSemanticType(dimension.indexType, location);
+        if (failed(normalizedIndex))
+          return failure();
+        if (isa<sim::StringType>(*normalizedIndex)) {
+          emitError(getSemanticLocation(children.front()))
+              << name
+              << " is not defined for string-key associative arrays";
+          return failure();
+        }
+        FailureOr<Value> container = lowerExpression(children.front());
+        if (failed(container) ||
+            !isa<sim::AssocArrayType>((*container).getType())) {
+          emitError(getSemanticLocation(children.front()))
+              << name << " requires an associative-array value";
+          return failure();
+        }
+        auto associative =
+            cast<sim::AssocArrayType>((*container).getType());
+        if (children.size() != 1) {
+          emitError(location)
+              << "a dimension selector is not supported for associative "
+                 "array queries";
+          return failure();
+        }
+        if (name == "$size") {
+          Value size = sim::SimContainerSizeOp::create(
+              builder, location, builder.getI64Type(), *container);
+          return convertResult(size);
+        }
+        if (name == "$left")
+          return convertResult(arith::ConstantOp::create(
+              builder, location, i32, builder.getI32IntegerAttr(0)));
+        if (name == "$right")
+          return convertResult(arith::ConstantOp::create(
+              builder, location, i32, builder.getI32IntegerAttr(-1)));
+        if (name == "$increment")
+          return convertResult(arith::ConstantOp::create(
+              builder, location, i32, builder.getI32IntegerAttr(-1)));
+
+        Value defaultKey = createDefaultValue(
+            builder, location, associative.getKeyType());
+        bool first = name == "$low";
+        FailureOr<std::pair<Value, Value>> traversed = traverseAssoc(
+            *container, defaultKey, first ? 1 : -1, true, location);
+        if (failed(traversed))
+          return failure();
+        FailureOr<Type> queryType = getNormalizedSemanticType(op);
+        if (failed(queryType))
+          return failure();
+        FailureOr<Value> key = convert(
+            traversed->first, *queryType, associative.getSignedKey(),
+            location, true);
+        if (failed(key))
+          return failure();
+        Value empty;
+        if (auto logic = dyn_cast<sim::LogicType>(*queryType)) {
+          Type plane = builder.getIntegerType(logic.getWidth());
+          empty = sim::SimLogicConstantOp::create(
+              builder, location, logic,
+              builder.getIntegerAttr(plane, APInt(logic.getWidth(), 0)),
+              builder.getIntegerAttr(
+                  plane, APInt::getAllOnes(logic.getWidth())));
+        } else {
+          empty = createDefaultValue(builder, location, *queryType);
+        }
+        return arith::SelectOp::create(
+                   builder, location, traversed->second, *key, empty)
+            .getResult();
+      }
       if ((dimension.kind == SemanticDimensionKind::DynamicArray ||
            dimension.kind == SemanticDimensionKind::Queue) &&
           dimensionIndex == 0) {
@@ -7514,7 +8340,8 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
         } else if (isa<sim::StringType>((*value).getType())) {
           items.push_back(*value);
           flags.push_back(8);
-        } else if (isa<sim::DynamicArrayType, sim::QueueType>(
+        } else if (isa<sim::DynamicArrayType, sim::QueueType,
+                       sim::AssocArrayType>(
                        (*value).getType())) {
           items.push_back(*value);
           flags.push_back(16);
@@ -7849,7 +8676,8 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
     return lowerMember(member, lvalue);
   if (auto tagged = dyn_cast<semantic::SVTaggedUnionExpressionOp>(op))
     return lowerTaggedUnion(tagged);
-  if (isa<semantic::SVSimpleAssignmentPatternExpressionOp>(op))
+  if (isa<semantic::SVSimpleAssignmentPatternExpressionOp,
+          semantic::SVStructuredAssignmentPatternExpressionOp>(op))
     return lowerAssignmentPattern(op);
   if (isa<semantic::SVNewArrayExpressionOp>(op))
     return lowerNewArray(op);
@@ -9772,6 +10600,79 @@ UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
         if (!traverseOmitted)
           return emitDimension(dimensionIndex + 1, currentCollection,
                                parentStep);
+      }
+
+      if (dimension.runtime &&
+          isa<sim::AssocArrayType>(currentCollection.getType())) {
+        auto associative =
+            cast<sim::AssocArrayType>(currentCollection.getType());
+        Type keyType = associative.getKeyType();
+        Value initialKey = createDefaultValue(builder, location, keyType);
+        FailureOr<std::pair<Value, Value>> first =
+            traverseAssoc(currentCollection, initialKey, 1, true, location);
+        if (failed(first))
+          return failure();
+        Block *header = addBlock();
+        header->addArgument(keyType, location);
+        header->addArgument(builder.getI1Type(), location);
+        Block *body = addBlock();
+        Block *step = addBlock();
+        step->addArgument(keyType, location);
+        Block *localExit = !parentStep ? exit : addBlock();
+        cf::BranchOp::create(
+            builder, location, header,
+            ValueRange{first->first, first->second});
+        setCurrent(header);
+        Value key = header->getArgument(0);
+        Value valid = header->getArgument(1);
+        cf::CondBranchOp::create(builder, location, valid, body, ValueRange{},
+                                 localExit, ValueRange{});
+
+        setCurrent(body);
+        bool hadPrevious = false;
+        Value saved;
+        if (dimension.hasIterator) {
+          auto previous = values.find(dimension.iteratorPath);
+          hadPrevious = previous != values.end();
+          saved = hadPrevious ? previous->second : Value{};
+          FailureOr<Value> iterator =
+              convert(key, dimension.iteratorType,
+                      associative.getSignedKey(), location, true);
+          if (failed(iterator))
+            return failure();
+          values[dimension.iteratorPath] = *iterator;
+        }
+
+        Value nestedCollection = currentCollection;
+        if (dimensionIndex + 1 != dimensions.size())
+          nestedCollection = sim::SimAssocReadOp::create(
+              builder, location, associative.getElementType(),
+              currentCollection, key);
+        if (failed(emitDimension(dimensionIndex + 1, nestedCollection, step)))
+          return failure();
+        if (dimension.hasIterator) {
+          if (hadPrevious)
+            values[dimension.iteratorPath] = saved;
+          else
+            values.erase(dimension.iteratorPath);
+        }
+        if (current->empty() ||
+            !current->back().hasTrait<OpTrait::IsTerminator>())
+          cf::BranchOp::create(builder, location, step, ValueRange{key});
+
+        setCurrent(step);
+        Value previousKey = step->getArgument(0);
+        FailureOr<std::pair<Value, Value>> next =
+            traverseAssoc(currentCollection, previousKey, 1, false, location);
+        if (failed(next))
+          return failure();
+        cf::BranchOp::create(
+            builder, location, header,
+            ValueRange{next->first, next->second});
+        setCurrent(localExit);
+        if (parentStep)
+          emitBranch(parentStep);
+        return success();
       }
 
       Value count;

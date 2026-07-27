@@ -616,6 +616,14 @@ enum {
   OBELISK_RT_INTRINSIC_V1_CONTAINER_CLONE = UINT32_C(0x00010435),
   OBELISK_RT_INTRINSIC_V1_CONTAINER_DELETE = UINT32_C(0x00010436),
   OBELISK_RT_INTRINSIC_V1_RANDOM_BOUNDED = UINT32_C(0x00010437),
+  OBELISK_RT_INTRINSIC_V1_ASSOC_CREATE = UINT32_C(0x00010438),
+  OBELISK_RT_INTRINSIC_V1_ASSOC_READ = UINT32_C(0x00010439),
+  OBELISK_RT_INTRINSIC_V1_ASSOC_WRITE = UINT32_C(0x0001043a),
+  OBELISK_RT_INTRINSIC_V1_ASSOC_EXISTS = UINT32_C(0x0001043b),
+  OBELISK_RT_INTRINSIC_V1_ASSOC_DELETE = UINT32_C(0x0001043c),
+  OBELISK_RT_INTRINSIC_V1_ASSOC_DEFAULT = UINT32_C(0x0001043d),
+  OBELISK_RT_INTRINSIC_V1_ASSOC_TRAVERSE = UINT32_C(0x0001043e),
+  OBELISK_RT_INTRINSIC_V1_REFERENCE_PATH_ASSOC = UINT32_C(0x0001043f),
   OBELISK_RT_INTRINSIC_V1_VPI_ROOT = UINT32_C(0x00011000),
   OBELISK_RT_INTRINSIC_V1_VPI_CHILD = UINT32_C(0x00011001),
   OBELISK_RT_INTRINSIC_V1_VPI_SIBLING = UINT32_C(0x00011002),
@@ -1542,16 +1550,41 @@ obelisk_rt_status obelisk_rt_v1_assoc_create(
     obelisk_rt_gc_lane_v1 *lane, const obelisk_rt_element_type_v1 *element_type,
     obelisk_rt_assoc_key_kind_v1 key_kind, uint64_t key_width,
     obelisk_rt_object_v1 **out_array);
+obelisk_rt_status obelisk_rt_v1_assoc_create_typed(
+    obelisk_rt_gc_lane_v1 *lane, uint64_t type_id, uint32_t element_kind,
+    uint32_t element_flags, uint64_t value_size, uint64_t alignment,
+    uint64_t bit_width,
+    const obelisk_rt_element_trace_slot_v1 *trace_slots,
+    uint64_t trace_slot_count, obelisk_rt_assoc_key_kind_v1 key_kind,
+    uint64_t key_width, obelisk_rt_object_v1 **out_array);
 obelisk_rt_status obelisk_rt_v1_assoc_exists(
     obelisk_rt_object_v1 *array, const obelisk_rt_assoc_key_v1 *key,
     uint32_t *out_exists);
+obelisk_rt_status obelisk_rt_v1_assoc_key_info(
+    obelisk_rt_object_v1 *array, obelisk_rt_assoc_key_kind_v1 *out_kind,
+    uint64_t *out_width);
 obelisk_rt_status obelisk_rt_v1_assoc_read(
     obelisk_rt_object_v1 *array, const obelisk_rt_assoc_key_v1 *key,
     void *out_value, void *out_unknown, uint32_t *out_present);
+obelisk_rt_status obelisk_rt_v1_assoc_read_checked(
+    obelisk_rt_object_v1 *array, const obelisk_rt_assoc_key_v1 *key,
+    void *out_value, uint64_t value_size, void *out_unknown,
+    uint64_t unknown_size, uint32_t *out_present);
 obelisk_rt_status obelisk_rt_v1_assoc_write(
     obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *array,
     const obelisk_rt_assoc_key_v1 *key, const void *value,
     const void *unknown);
+obelisk_rt_status obelisk_rt_v1_assoc_write_checked(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *array,
+    const obelisk_rt_assoc_key_v1 *key, const void *value,
+    uint64_t value_size, const void *unknown, uint64_t unknown_size);
+obelisk_rt_status obelisk_rt_v1_assoc_set_default(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *array,
+    const void *value, const void *unknown);
+obelisk_rt_status obelisk_rt_v1_assoc_set_default_checked(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *array,
+    const void *value, uint64_t value_size, const void *unknown,
+    uint64_t unknown_size);
 obelisk_rt_status obelisk_rt_v1_assoc_delete(
     obelisk_rt_object_v1 *array, const obelisk_rt_assoc_key_v1 *key);
 // Ordered traversal follows SystemVerilog key ordering. first/last ignore the
@@ -1575,11 +1608,14 @@ obelisk_rt_status obelisk_rt_v1_assoc_prev(
 // selector and resolves the live element on every access.
 obelisk_rt_status obelisk_rt_v1_reference_path_index_create(
     obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *container, int64_t index,
-    uint64_t owner_payload, uint32_t owner_managed,
+    obelisk_rt_object_v1 *watch_owner, uint64_t owner_payload,
+    uint32_t owner_managed,
     obelisk_rt_object_v1 **out_path);
 obelisk_rt_status obelisk_rt_v1_reference_path_assoc_create(
     obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *array,
-    const obelisk_rt_assoc_key_v1 *key, obelisk_rt_object_v1 **out_path);
+    const obelisk_rt_assoc_key_v1 *key, obelisk_rt_object_v1 *watch_owner,
+    uint64_t owner_payload, uint32_t owner_managed,
+    obelisk_rt_object_v1 **out_path);
 obelisk_rt_status obelisk_rt_v1_reference_path_load(
     obelisk_rt_object_v1 *path, void *out_value, void *out_unknown,
     uint32_t *out_present);

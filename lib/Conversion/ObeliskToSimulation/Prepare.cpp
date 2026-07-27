@@ -481,7 +481,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     }
     for (NamedAttribute attr : op->getAttrs()) {
       attr.getValue().walk([&](Type type) {
-        if (isa<semantic::AssocArrayType, semantic::ObjectType>(type)) {
+        if (isa<semantic::ObjectType>(type)) {
           emitError(getSemanticLocation(op))
               << "unsupported dynamic or object type in the first simulation "
                  "slice: "

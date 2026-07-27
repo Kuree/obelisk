@@ -4,4 +4,4 @@ module dynamic_array_dpi_unsupported;
   import "DPI-C" function void consume(input int value[]);
 endmodule
 
-// CHECK: DPI-C dynamic-array and queue marshalling is unsupported
+// CHECK: DPI-C dynamic-array, queue, and associative-array marshalling is unsupported

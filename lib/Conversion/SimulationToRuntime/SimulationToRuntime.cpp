@@ -147,7 +147,8 @@ public:
             converted.front(), true));
         continue;
       }
-      if (isa<sim::DynamicArrayType, sim::QueueType>(sourceType)) {
+      if (isa<sim::DynamicArrayType, sim::QueueType,
+              sim::AssocArrayType>(sourceType)) {
         if (converted.size() != 1)
           return rewriter.notifyMatchFailure(
               op, "managed container display item did not convert 1:1");

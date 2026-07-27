@@ -24,6 +24,19 @@ module {
 // -----
 
 module {
+  // expected-error @+1 {{setter inventory describes 3 children but body contains 0}}
+  slang.expression.structured_assignment_pattern attributes {
+    has_default_setter = true, index_setter_count = 1 : i64,
+    member_setter_count = 0 : i64, node_id = 0 : i64,
+    semantic_type = !slang.integral<32, true, false, 31 : 0, int>,
+    type_setter_count = 0 : i64
+  } {
+  }
+}
+
+// -----
+
+module {
   // expected-error @+1 {{iterator loop_dimensions entry #0 requires symbol, nonempty path, and type}}
   slang.statement.foreach_loop attributes {
     loop_dimensions = [{

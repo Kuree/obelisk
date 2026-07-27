@@ -1058,6 +1058,18 @@ private:
       SET_OP_ATTR(ConstantValue, builder.getStringAttr(node.getValue()));
     }
 
+    if constexpr (std::same_as<
+                      T, slang::ast::StructuredAssignmentPatternExpression>) {
+      SET_OP_ATTR(MemberSetterCount,
+                  builder.getI64IntegerAttr(node.memberSetters.size()));
+      SET_OP_ATTR(TypeSetterCount,
+                  builder.getI64IntegerAttr(node.typeSetters.size()));
+      SET_OP_ATTR(IndexSetterCount,
+                  builder.getI64IntegerAttr(node.indexSetters.size()));
+      SET_OP_ATTR(HasDefaultSetter,
+                  builder.getBoolAttr(node.defaultSetter != nullptr));
+    }
+
     if constexpr (std::same_as<T, slang::ast::NamedValueExpression> ||
                   std::same_as<T, slang::ast::HierarchicalValueExpression>) {
       setReferencedSymbol<Op>(attrs, node.symbol);

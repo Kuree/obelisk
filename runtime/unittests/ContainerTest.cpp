@@ -998,6 +998,130 @@ TEST_F(ManagedValueTest,
   EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &arrayRoot), OBELISK_RT_OK);
 }
 
+TEST_F(ManagedValueTest,
+       AssociativeDefaultsTypedCreationCloneDeleteAndPatternFormatting) {
+  obelisk_rt_object_v1 *array = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_assoc_create_typed(
+                lane, wordElement.type_id, wordElement.kind, wordElement.flags,
+                wordElement.value_size, wordElement.alignment,
+                wordElement.bit_width, nullptr, 0,
+                OBELISK_RT_ASSOC_KEY_SIGNED, 12, &array),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 root{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &root, &array), OBELISK_RT_OK);
+
+  uint64_t fallback = 77;
+  ASSERT_EQ(obelisk_rt_v1_assoc_set_default_checked(
+                lane, array, &fallback, sizeof(fallback), nullptr, 0),
+            OBELISK_RT_OK);
+  obelisk_rt_assoc_key_v1 missing{
+      OBELISK_RT_ASSOC_KEY_SIGNED, 0, 12, 3, 0, 0};
+  uint64_t value = 0;
+  uint32_t present = 1;
+  ASSERT_EQ(obelisk_rt_v1_assoc_read_checked(
+                array, &missing, &value, sizeof(value), nullptr, 0, &present),
+            OBELISK_RT_OK);
+  EXPECT_EQ(present, 0u);
+  EXPECT_EQ(value, fallback);
+
+  for (auto [keyValue, stored] :
+       {std::pair<int16_t, uint64_t>{4, 9},
+        std::pair<int16_t, uint64_t>{-2, 5}}) {
+    obelisk_rt_assoc_key_v1 key{
+        OBELISK_RT_ASSOC_KEY_SIGNED, 0, 12,
+        static_cast<uint16_t>(keyValue), 0, 0};
+    ASSERT_EQ(obelisk_rt_v1_assoc_write_checked(
+                  lane, array, &key, &stored, sizeof(stored), nullptr, 0),
+              OBELISK_RT_OK);
+  }
+  obelisk_rt_arg_v1 argument{
+      OBELISK_RT_ARG_MANAGED_CONTAINER, 0, 0, &array, nullptr};
+  obelisk_rt_format_env_v1 environment{};
+  environment.time_multiplier = 1;
+  obelisk_rt_buffer_v1 output{};
+  ASSERT_EQ(obelisk_rt_v1_format(context, "%p", 2, &argument, 1, &environment,
+                                 &output),
+            OBELISK_RT_OK);
+  EXPECT_EQ(std::string(reinterpret_cast<const char *>(output.data),
+                        output.size),
+            "'{-2:64'b000000000000000000000000000000000000000000000000000000"
+            "0000000101, 4:64'b000000000000000000000000000000000000000000000000"
+            "0000000000001001}");
+  obelisk_rt_v1_buffer_release(&output);
+
+  obelisk_rt_object_v1 *copy = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_container_clone(lane, array, &copy), OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 copyRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &copyRoot, &copy), OBELISK_RT_OK);
+  value = 0;
+  ASSERT_EQ(obelisk_rt_v1_assoc_read(copy, &missing, &value, nullptr, &present),
+            OBELISK_RT_OK);
+  EXPECT_EQ(value, fallback);
+
+  obelisk_rt_assoc_key_v1 explicitKey{
+      OBELISK_RT_ASSOC_KEY_SIGNED, 0, 12, 4, 0, 0};
+  ASSERT_EQ(obelisk_rt_v1_assoc_delete(copy, &explicitKey), OBELISK_RT_OK);
+  value = 0;
+  ASSERT_EQ(obelisk_rt_v1_assoc_read(copy, &missing, &value, nullptr, &present),
+            OBELISK_RT_OK);
+  EXPECT_EQ(value, fallback);
+  ASSERT_EQ(obelisk_rt_v1_container_delete(copy), OBELISK_RT_OK);
+  value = UINT64_MAX;
+  ASSERT_EQ(obelisk_rt_v1_assoc_read(copy, &missing, &value, nullptr, &present),
+            OBELISK_RT_OK);
+  EXPECT_EQ(value, 0u);
+
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &copyRoot), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &root), OBELISK_RT_OK);
+}
+
+TEST_F(ManagedValueTest,
+       AssociativeManagedDefaultRemainsRootedDuringPublication) {
+  ASSERT_EQ(obelisk_rt_v1_gc_set_threshold(context, 1), OBELISK_RT_OK);
+  obelisk_rt_object_v1 *inner = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_dynamic_array_create(lane, &wordElement, 1, &inner),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 innerRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &innerRoot, &inner),
+            OBELISK_RT_OK);
+  uint64_t stored = 91;
+  ASSERT_EQ(obelisk_rt_v1_container_write(lane, inner, 0, &stored, nullptr),
+            OBELISK_RT_OK);
+
+  obelisk_rt_object_v1 *outer = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_assoc_create(
+                lane, &containerElement, OBELISK_RT_ASSOC_KEY_UNSIGNED, 32,
+                &outer),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 outerRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &outerRoot, &outer),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_assoc_set_default(lane, outer, &inner, nullptr),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &outerRoot), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &innerRoot), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &outerRoot, &outer),
+            OBELISK_RT_OK);
+  inner = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+
+  obelisk_rt_assoc_key_v1 missing{
+      OBELISK_RT_ASSOC_KEY_UNSIGNED, 0, 32, 17, 0, 0};
+  obelisk_rt_object_v1 *fallback = nullptr;
+  uint32_t present = 1;
+  ASSERT_EQ(obelisk_rt_v1_assoc_read(outer, &missing, &fallback, nullptr,
+                                     &present),
+            OBELISK_RT_OK);
+  EXPECT_EQ(present, 0u);
+  ASSERT_NE(fallback, nullptr);
+  uint64_t value = 0;
+  ASSERT_EQ(obelisk_rt_v1_container_read(fallback, 0, &value, nullptr),
+            OBELISK_RT_OK);
+  EXPECT_EQ(value, stored);
+
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &outerRoot), OBELISK_RT_OK);
+}
+
 TEST_F(ManagedValueTest, AssociativeSlotsPreserveAlignmentForByteElements) {
   obelisk_rt_object_v1 *array = nullptr;
   ASSERT_EQ(obelisk_rt_v1_assoc_create(
@@ -1178,7 +1302,8 @@ TEST_F(ManagedValueTest, ReferencePathsResolveAgainAfterContainerMutation) {
             OBELISK_RT_OK);
   obelisk_rt_object_v1 *path = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_reference_path_index_create(lane, queue, 0, 0, 0, &path),
+      obelisk_rt_v1_reference_path_index_create(lane, queue, 0, nullptr, 0, 0,
+                                                &path),
       OBELISK_RT_OK);
   obelisk_rt_gc_root_v1 pathRoot{};
   ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &pathRoot, &path), OBELISK_RT_OK);

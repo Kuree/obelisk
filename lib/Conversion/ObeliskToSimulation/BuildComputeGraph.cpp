@@ -51,12 +51,14 @@ void ObeliskSimBuildComputeGraphPass::runOnOperation() {
          design.getBody().front().getOps<sim::SimStorageDeclOp>()) {
       bool dynamic = false;
       storage.getType().walk([&](Type type) {
-        dynamic |= isa<sim::DynamicArrayType, sim::QueueType>(type);
+        dynamic |= isa<sim::DynamicArrayType, sim::QueueType,
+                       sim::AssocArrayType>(type);
       });
       if (!dynamic)
         continue;
       storage.emitOpError(
-          "VPI dynamic-array and queue marshalling is unsupported");
+          "VPI dynamic-array, queue, and associative-array marshalling is "
+          "unsupported");
       unsupportedContainer = true;
     }
     if (unsupportedContainer)

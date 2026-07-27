@@ -15,7 +15,7 @@ module attributes {
         hierarchy "top.values"
     obelisk_sim.storage.decl 2 in 0 : !obelisk_sim.queue<!obelisk_sim.string, 8> design
         hierarchy "top.names"
-    obelisk_sim.storage.decl 3 in 0 : !obelisk_sim.assoc_array<!obelisk_sim.string, i64, false> design
+    obelisk_sim.storage.decl 3 in 0 : !obelisk_sim.assoc_array<!obelisk_sim.string, i64, false, false> design
         hierarchy "top.lookup"
     obelisk_sim.func @process(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
@@ -54,7 +54,7 @@ module attributes {
 // CHECK: !obelisk_sim.string
 // CHECK: !obelisk_sim.dynamic_array<!obelisk_sim.logic<4>>
 // CHECK: !obelisk_sim.queue<!obelisk_sim.string, 8>
-// CHECK: !obelisk_sim.assoc_array<!obelisk_sim.string, i64, false>
+// CHECK: !obelisk_sim.assoc_array<!obelisk_sim.string, i64, false, false>
 // CHECK: obelisk_sim.managed.null
 // CHECK: obelisk_sim.aggregate.construct
 // CHECK: obelisk_sim.container.size

@@ -429,6 +429,26 @@ LogicalResult SVConditionalExpressionOp::verify() {
   return success();
 }
 
+LogicalResult SVStructuredAssignmentPatternExpressionOp::verify() {
+  uint64_t memberCount = getMemberSetterCount();
+  uint64_t typeCount = getTypeSetterCount();
+  uint64_t indexCount = getIndexSetterCount();
+  uint64_t childCount = getBody().front().getOperations().size();
+  uint64_t expected = memberCount + typeCount;
+  if (indexCount > (std::numeric_limits<uint64_t>::max() - expected) / 2)
+    return emitOpError("setter inventory overflows");
+  expected += indexCount * 2;
+  if (getHasDefaultSetter()) {
+    if (expected == std::numeric_limits<uint64_t>::max())
+      return emitOpError("setter inventory overflows");
+    ++expected;
+  }
+  if (childCount != expected)
+    return emitOpError("setter inventory describes ")
+           << expected << " children but body contains " << childCount;
+  return success();
+}
+
 LogicalResult SVForLoopStatementOp::verify() {
   if (getInitializerCountAttr().getValue().isNegative())
     return emitOpError("initializer_count must be nonnegative");

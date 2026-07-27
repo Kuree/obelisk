@@ -1203,6 +1203,20 @@ void ComputeGraphBuilder::buildDataEdges() {
       if (effect.kind != sim::ComputeEffectKind::Watch &&
           effect.kind != sim::ComputeEffectKind::NBA)
         activeEffects.add(fragment, effect);
+  DenseMap<uint32_t, SmallVector<uint32_t>> processSuccessors;
+  for (sim::ComputeEdgeAttr edge : edges)
+    if (edge.getKind() == sim::ComputeEdgeKind::ProcessOrder)
+      processSuccessors[edge.getSource()].push_back(edge.getTarget());
+  SmallVector<DenseSet<uint32_t>> processReachability(fragments.size());
+  for (Fragment &origin : fragments) {
+    SmallVector<uint32_t> pending{origin.id};
+    while (!pending.empty()) {
+      uint32_t source = pending.pop_back_val();
+      for (uint32_t target : processSuccessors[source])
+        if (processReachability[origin.id].insert(target).second)
+          pending.push_back(target);
+    }
+  }
   for (unsigned lhs = 0; lhs != fragments.size(); ++lhs)
     for (const ComputeEffect &left : fragments[lhs].effects) {
       if (left.kind == sim::ComputeEffectKind::Watch ||
@@ -1211,6 +1225,10 @@ void ComputeGraphBuilder::buildDataEdges() {
       activeEffects.forEachAlias(left.target, [&](IndexedEffect right) {
         if (right.owner <= lhs ||
             fragments[right.owner].function == fragments[lhs].function ||
+            processReachability[fragments[lhs].id].contains(
+                fragments[right.owner].id) ||
+            processReachability[fragments[right.owner].id].contains(
+                fragments[lhs].id) ||
             !activeEffectsConflict(left, *right.effect))
           return;
         addEdge(fragments[lhs].id, fragments[right.owner].id,

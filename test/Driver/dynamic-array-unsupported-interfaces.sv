@@ -5,4 +5,4 @@ module dynamic_array_unsupported_interfaces;
   initial array = '{1};
 endmodule
 
-// VPI: VPI dynamic-array and queue marshalling is unsupported
+// VPI: VPI dynamic-array, queue, and associative-array marshalling is unsupported

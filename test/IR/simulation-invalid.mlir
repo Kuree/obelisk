@@ -38,6 +38,68 @@ module {
 // -----
 
 module {
+  func.func @bad_assoc_create() {
+    // expected-error @+1 {{element metadata does not match the associative element type}}
+    %array = "obelisk_sim.assoc.create"() {
+      type_id = 42 : i64, element_kind = 3 : i32,
+      element_flags = 0 : i32, value_size = 8 : i64,
+      alignment = 1 : i64, bit_width = 64 : i64,
+      trace_offsets = array<i64>, trace_kinds = array<i32>,
+      key_kind = 2 : i32, key_width = 32 : i64
+    } : () -> !obelisk_sim.assoc_array<i32, i32, true, false>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @bad_assoc_key(
+      %array: !obelisk_sim.assoc_array<i32, i64, true, false>,
+      %key: i64) {
+    // expected-error @+1 {{key type must match the associative array key}}
+    %value = "obelisk_sim.assoc.read"(%array, %key) :
+      (!obelisk_sim.assoc_array<i32, i64, true, false>, i64) -> i64
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @missing_assoc_aggregate_trace() {
+    // expected-error @+1 {{trace inventory does not match the associative element type}}
+    %array = "obelisk_sim.assoc.create"() {
+      type_id = 47 : i64, element_kind = 7 : i32,
+      element_flags = 0 : i32, value_size = 16 : i64,
+      alignment = 1 : i64, bit_width = 128 : i64,
+      trace_offsets = array<i64>, trace_kinds = array<i32>,
+      key_kind = 2 : i32, key_width = 32 : i64
+    } : () -> !obelisk_sim.assoc_array<i32, !obelisk_sim.unpacked_struct<[
+      #obelisk_sim.field<name = "number", type = i32, ordinal = 0, packedOffset = 0>,
+      #obelisk_sim.field<name = "text", type = !obelisk_sim.string, ordinal = 1, packedOffset = 0>
+    ]>, true, false>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @bad_assoc_traversal(
+      %array: !obelisk_sim.assoc_array<i32, i64, true, false>,
+      %key: i32) {
+    // expected-error @+1 {{direction must be -1 or 1}}
+    %next, %valid = "obelisk_sim.assoc.traverse"(%array, %key) {
+      direction = 0 : i32, endpoint = false
+    } : (!obelisk_sim.assoc_array<i32, i64, true, false>, i32) -> (i32, i1)
+    return
+  }
+}
+
+// -----
+
+module {
   func.func @bad_typed_container_create(%size: i64) {
     // expected-error @+1 {{element metadata does not match the result container element type}}
     %array = "obelisk_sim.container.create"(%size) {

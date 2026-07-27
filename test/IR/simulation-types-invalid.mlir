@@ -21,3 +21,21 @@ func.func private @driver_of_signed(%arg: !obelisk_sim.driver<si8>)
 
 // expected-error @+1 {{element type must be a normalized scalar or fixed aggregate, got '!obelisk_sim.ref<i8>'}}
 func.func private @nested_ref(%arg: !obelisk_sim.ref<!obelisk_sim.ref<i8>>)
+
+// -----
+
+// expected-error @+2 {{wildcard associative-array indices are not executable}}
+func.func private @wildcard_assoc(
+    %arg: !obelisk_sim.assoc_array<i32, i32, true, true>)
+
+// -----
+
+// expected-error @+2 {{key must be a string or normalized integral type up to 64 bits}}
+func.func private @wide_assoc(
+    %arg: !obelisk_sim.assoc_array<i128, i32, true, false>)
+
+// -----
+
+// expected-error @+2 {{string key cannot be signed}}
+func.func private @signed_string_assoc(
+    %arg: !obelisk_sim.assoc_array<!obelisk_sim.string, i32, true, false>)

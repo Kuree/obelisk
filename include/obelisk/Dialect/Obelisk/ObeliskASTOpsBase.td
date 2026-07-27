@@ -350,6 +350,16 @@ class ObeliskExpressionASTNodeOp<string mnemonic, dag expressionArgs = (ins)>
     : ObeliskASTNodeOp<mnemonic, [],
         !con((ins TypeAttr:$semantic_type), expressionArgs)>;
 
+class ObeliskStructuredAssignmentPatternASTNodeOp<string mnemonic>
+    : ObeliskExpressionASTNodeOp<mnemonic, (ins
+        I64Attr:$member_setter_count,
+        I64Attr:$type_setter_count,
+        I64Attr:$index_setter_count,
+        BoolAttr:$has_default_setter
+      )> {
+  let hasVerifier = 1;
+}
+
 class ObeliskConstantExpressionASTNodeOp<string mnemonic>
     : ObeliskExpressionASTNodeOp<mnemonic, (ins StrAttr:$constant_value)>;
 

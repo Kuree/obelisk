@@ -247,6 +247,13 @@ def SimManagedNullOp : SimOp<"managed.null", [Pure, ConstantLike]> {
   let hasVerifier = 1;
 }
 
+def SimManagedIsNullOp : SimOp<"managed.is_null", [Pure]> {
+  let summary = "test a managed handle for the canonical null value";
+  let arguments = (ins AnyType:$input);
+  let results = (outs I1:$result);
+  let hasVerifier = 1;
+}
+
 def SimEventNullOp : SimOp<"event.null", [Pure, ConstantLike]> {
   let summary = "null/default event handle";
   let results = (outs SimEventType:$result);
@@ -335,6 +342,81 @@ def SimContainerWriteOp : SimOp<"container.write", [
   ]> {
   let summary = "typed write to a dynamic array or queue";
   let arguments = (ins AnyType:$container, I64:$index, AnyType:$value);
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// Managed associative arrays
+//===----------------------------------------------------------------------===//
+
+def SimAssocCreateOp : SimOp<"assoc.create", [
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "create an empty typed associative array";
+  let arguments = (ins
+    I64Attr:$type_id,
+    I32Attr:$element_kind,
+    I32Attr:$element_flags,
+    I64Attr:$value_size,
+    I64Attr:$alignment,
+    I64Attr:$bit_width,
+    DenseI64ArrayAttr:$trace_offsets,
+    DenseI32ArrayAttr:$trace_kinds,
+    I32Attr:$key_kind,
+    I64Attr:$key_width);
+  let results = (outs SimAssocArrayType:$result);
+  let hasVerifier = 1;
+}
+
+def SimAssocReadOp : SimOp<"assoc.read", [
+    MemoryEffects<[MemRead<SimHeapResource>]>
+  ]> {
+  let summary = "read an associative entry or its installed default";
+  let arguments = (ins SimAssocArrayType:$array, AnyType:$key);
+  let results = (outs AnyType:$result);
+  let hasVerifier = 1;
+}
+
+def SimAssocWriteOp : SimOp<"assoc.write", [
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "insert or replace an explicit associative entry";
+  let arguments = (ins SimAssocArrayType:$array, AnyType:$key, AnyType:$value);
+  let hasVerifier = 1;
+}
+
+def SimAssocExistsOp : SimOp<"assoc.exists", [
+    MemoryEffects<[MemRead<SimHeapResource>]>
+  ]> {
+  let summary = "test whether an explicit associative entry exists";
+  let arguments = (ins SimAssocArrayType:$array, AnyType:$key);
+  let results = (outs I1:$result);
+  let hasVerifier = 1;
+}
+
+def SimAssocDeleteOp : SimOp<"assoc.delete", [
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "delete one associative key";
+  let arguments = (ins SimAssocArrayType:$array, AnyType:$key);
+  let hasVerifier = 1;
+}
+
+def SimAssocSetDefaultOp : SimOp<"assoc.set_default", [
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "install a hidden assignment-pattern default";
+  let arguments = (ins SimAssocArrayType:$array, AnyType:$value);
+  let hasVerifier = 1;
+}
+
+def SimAssocTraverseOp : SimOp<"assoc.traverse", [
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "perform ordered first, last, next, or previous traversal";
+  let arguments = (ins SimAssocArrayType:$array, AnyType:$key,
+                       I32Attr:$direction, BoolAttr:$endpoint);
+  let results = (outs AnyType:$result_key, I1:$success);
   let hasVerifier = 1;
 }
 
@@ -615,6 +697,18 @@ def SimReferencePathIndexOp : SimOp<"reference_path.index", [
   let results = (outs SimReferencePathType:$result);
   let assemblyFormat =
       "$context `,` $container `[` $index `]` `watching` $owner_reference attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+def SimReferencePathAssocOp : SimOp<"reference_path.assoc", [
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "capture an escaping associative-array element lvalue";
+  let arguments = (ins SimContextType:$context, SimAssocArrayType:$array,
+                       AnyType:$key, SimArgumentRefType:$owner_reference);
+  let results = (outs SimReferencePathType:$result);
+  let assemblyFormat =
+      "$context `,` $array `[` $key `]` `watching` $owner_reference attr-dict `:` functional-type(operands, results)";
   let hasVerifier = 1;
 }
 

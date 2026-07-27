@@ -972,6 +972,12 @@ LogicalResult SimManagedNullOp::verify() {
   return success();
 }
 
+LogicalResult SimManagedIsNullOp::verify() {
+  if (!isManagedHandleType(getInput().getType()))
+    return emitOpError("input must be a managed handle type");
+  return success();
+}
+
 static Type getSequentialContainerElement(Type type) {
   if (auto array = dyn_cast<DynamicArrayType>(type))
     return array.getElementType();
@@ -980,9 +986,18 @@ static Type getSequentialContainerElement(Type type) {
   return {};
 }
 
+static Type getContainerElement(Type type) {
+  if (Type element = getSequentialContainerElement(type))
+    return element;
+  if (auto array = dyn_cast<AssocArrayType>(type))
+    return array.getElementType();
+  return {};
+}
+
 LogicalResult SimContainerSizeOp::verify() {
-  if (!getSequentialContainerElement(getContainer().getType()))
-    return emitOpError("container must be a dynamic array or queue");
+  if (!getContainerElement(getContainer().getType()))
+    return emitOpError(
+        "container must be a dynamic array, queue, or associative array");
   return success();
 }
 
@@ -1060,7 +1075,7 @@ LogicalResult SimContainerCreateOp::verify() {
   } else if (isa<StringType>(element)) {
     expectedKind = 5;
     expectedSize = sizeof(void *);
-  } else if (isa<DynamicArrayType, QueueType>(element)) {
+  } else if (isa<DynamicArrayType, QueueType, AssocArrayType>(element)) {
     expectedKind = 6;
     expectedSize = sizeof(void *);
   } else if (isa<EventType>(element)) {
@@ -1130,15 +1145,16 @@ LogicalResult SimContainerCreateOp::verify() {
 }
 
 LogicalResult SimContainerCloneOp::verify() {
-  if (!getSequentialContainerElement(getInput().getType()) ||
+  if (!getContainerElement(getInput().getType()) ||
       getInput().getType() != getResult().getType())
     return emitOpError("input and result must be the same container type");
   return success();
 }
 
 LogicalResult SimContainerDeleteOp::verify() {
-  if (!getSequentialContainerElement(getContainer().getType()))
-    return emitOpError("operand must be a dynamic array or queue");
+  if (!getContainerElement(getContainer().getType()))
+    return emitOpError(
+        "operand must be a dynamic array, queue, or associative array");
   return success();
 }
 
@@ -1157,6 +1173,195 @@ LogicalResult SimContainerWriteOp::verify() {
     return emitOpError("container must be a dynamic array or queue");
   if (element != getValue().getType())
     return emitOpError("value type must match the container element");
+  return success();
+}
+
+static LogicalResult verifyAssocKey(Operation *op, AssocArrayType array,
+                                    Type key) {
+  if (array.getWildcardIndex())
+    return op->emitOpError("wildcard associative arrays are not executable");
+  if (array.getKeyType() != key)
+    return op->emitOpError("key type must match the associative array key");
+  return success();
+}
+
+LogicalResult SimAssocCreateOp::verify() {
+  AssocArrayType array = getResult().getType();
+  if (array.getWildcardIndex())
+    return emitOpError("wildcard associative arrays are not executable");
+  if (getTypeId() == 0 || getElementKind() < 1 || getElementKind() > 8)
+    return emitOpError("element descriptor is outside the runtime ABI");
+  if ((getElementFlags() & ~3u) != 0 || getValueSize() == 0 ||
+      getAlignment() == 0 || !llvm::isPowerOf2_64(getAlignment()) ||
+      getValueSize() % getAlignment() != 0)
+    return emitOpError("element descriptor has an invalid layout");
+  if (getTraceOffsets().size() != getTraceKinds().size())
+    return emitOpError("trace offset and kind inventories must match");
+  int64_t previousOffset = -1;
+  for (auto [offset, kind] :
+       llvm::zip_equal(getTraceOffsets(), getTraceKinds())) {
+    if (offset < 0 || static_cast<uint64_t>(offset) > getValueSize() ||
+        sizeof(void *) > getValueSize() - static_cast<uint64_t>(offset))
+      return emitOpError("trace slot is outside the element value plane");
+    if (static_cast<uint64_t>(offset) % alignof(void *) != 0)
+      return emitOpError("trace slot is not pointer aligned");
+    if (kind < 1 || kind > 3)
+      return emitOpError("trace slot kind is outside the runtime ABI");
+    if (offset <= previousOffset)
+      return emitOpError("trace slot offsets must be strictly increasing");
+    previousOffset = offset;
+  }
+  Type element = array.getElementType();
+  uint32_t expectedKind = 0;
+  uint64_t expectedSize = 0;
+  uint64_t expectedWidth = 0;
+  bool fourState = false;
+  SmallVector<int64_t, 2> expectedTraceOffsets;
+  SmallVector<int32_t, 2> expectedTraceKinds;
+  if (auto integer = dyn_cast<IntegerType>(element)) {
+    expectedKind = 1;
+    expectedSize = (integer.getWidth() + 7) / 8;
+    expectedWidth = integer.getWidth();
+  } else if (auto logic = dyn_cast<LogicType>(element)) {
+    expectedKind = 2;
+    expectedSize = (logic.getWidth() + 7) / 8;
+    expectedWidth = logic.getWidth();
+    fourState = true;
+  } else if (auto real = dyn_cast<FloatType>(element)) {
+    expectedKind = 3;
+    expectedSize = real.getWidth() / 8;
+    expectedWidth = real.getWidth();
+  } else if (isa<ClassHandleType>(element)) {
+    expectedKind = 4;
+    expectedSize = sizeof(void *);
+  } else if (isa<StringType>(element)) {
+    expectedKind = 5;
+    expectedSize = sizeof(void *);
+  } else if (isa<DynamicArrayType, QueueType, AssocArrayType>(element)) {
+    expectedKind = 6;
+    expectedSize = sizeof(void *);
+  } else if (isa<EventType>(element)) {
+    expectedKind = 8;
+    expectedSize = sizeof(uint64_t);
+  } else if (Type scalar = getPackedScalarType(element)) {
+    std::optional<unsigned> width = getPackedWidth(element);
+    if (!width || *width == 0)
+      return emitOpError("packed element has no canonical width");
+    fourState = isa<LogicType>(scalar);
+    expectedKind = fourState ? 2 : 1;
+    expectedSize = (*width + 7) / 8;
+    expectedWidth = *width;
+  } else if (isAggregateType(element)) {
+    std::optional<uint64_t> width = getProvenanceSpan(element);
+    if (!width || *width == 0)
+      return emitOpError("aggregate element has no canonical layout");
+    element.walk([&](LogicType) { fourState = true; });
+    expectedKind = 7;
+    expectedSize = (*width + 7) / 8;
+    expectedWidth = expectedSize * 8;
+    std::function<LogicalResult(Type, uint64_t)> collectTrace =
+        [&](Type nested, uint64_t baseBitOffset) -> LogicalResult {
+      if (isManagedHandleType(nested)) {
+        if ((baseBitOffset & 7) != 0 || baseBitOffset / 8 > uint64_t{INT64_MAX})
+          return failure();
+        int32_t kind = 1;
+        if (isa<StringType>(nested))
+          kind = 2;
+        else if (isa<DynamicArrayType, QueueType, AssocArrayType,
+                     ReferencePathType>(nested))
+          kind = 3;
+        expectedTraceOffsets.push_back(static_cast<int64_t>(baseBitOffset / 8));
+        expectedTraceKinds.push_back(kind);
+        return success();
+      }
+      if (!isAggregateType(nested))
+        return success();
+      if (isa<PackedUnionType, UnpackedUnionType>(nested)) {
+        SmallVector<uint64_t, 2> offsets;
+        return getManagedHandleOffsets(nested, offsets) ? success() : failure();
+      }
+      for (unsigned index = 0; index < getAggregateNumElements(nested);
+           ++index) {
+        auto child = getAggregateProvenanceSubelement(nested, index);
+        if (!child || child->first > UINT64_MAX - baseBitOffset ||
+            failed(collectTrace(getAggregateElementType(nested, index),
+                                baseBitOffset + child->first)))
+          return failure();
+      }
+      return success();
+    };
+    if (failed(collectTrace(element, 0)))
+      return emitOpError("aggregate element has no canonical trace layout");
+  }
+  if (expectedKind != 0 &&
+      (getElementKind() != expectedKind || getValueSize() != expectedSize ||
+       getBitWidth() != expectedWidth ||
+       ((getElementFlags() & 1u) != 0) != fourState))
+    return emitOpError(
+        "element metadata does not match the associative element type");
+  if (getElementKind() != 7 && !getTraceOffsets().empty())
+    return emitOpError("only aggregate elements carry explicit trace slots");
+  if (getTraceOffsets() != ArrayRef<int64_t>(expectedTraceOffsets) ||
+      getTraceKinds() != ArrayRef<int32_t>(expectedTraceKinds))
+    return emitOpError(
+        "trace inventory does not match the associative element type");
+  Type key = array.getKeyType();
+  if (isa<StringType>(key)) {
+    if (getKeyKind() != 3 || getKeyWidth() != 0)
+      return emitOpError("string key metadata is inconsistent");
+  } else {
+    std::optional<unsigned> width = getPackedWidth(key);
+    if (!width || *width == 0 || *width > 64 ||
+        (getKeyKind() != 1 && getKeyKind() != 2) ||
+        getKeyWidth() != *width)
+      return emitOpError("integral key metadata is inconsistent");
+  }
+  return success();
+}
+
+LogicalResult SimAssocReadOp::verify() {
+  AssocArrayType array = getArray().getType();
+  if (failed(verifyAssocKey(getOperation(), array, getKey().getType())))
+    return failure();
+  if (getResult().getType() != array.getElementType())
+    return emitOpError("result type must match the associative element");
+  return success();
+}
+
+LogicalResult SimAssocWriteOp::verify() {
+  AssocArrayType array = getArray().getType();
+  if (failed(verifyAssocKey(getOperation(), array, getKey().getType())))
+    return failure();
+  if (getValue().getType() != array.getElementType())
+    return emitOpError("value type must match the associative element");
+  return success();
+}
+
+LogicalResult SimAssocExistsOp::verify() {
+  return verifyAssocKey(getOperation(), getArray().getType(),
+                        getKey().getType());
+}
+
+LogicalResult SimAssocDeleteOp::verify() {
+  return verifyAssocKey(getOperation(), getArray().getType(),
+                        getKey().getType());
+}
+
+LogicalResult SimAssocSetDefaultOp::verify() {
+  if (getValue().getType() != getArray().getType().getElementType())
+    return emitOpError("default type must match the associative element");
+  return success();
+}
+
+LogicalResult SimAssocTraverseOp::verify() {
+  AssocArrayType array = getArray().getType();
+  if (failed(verifyAssocKey(getOperation(), array, getKey().getType())))
+    return failure();
+  if (getResultKey().getType() != array.getKeyType())
+    return emitOpError("result key type must match the associative key");
+  int32_t direction = static_cast<int32_t>(getDirection());
+  if (direction != -1 && direction != 1)
+    return emitOpError("direction must be -1 or 1");
   return success();
 }
 
@@ -1212,19 +1417,23 @@ QueueType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
 
 LogicalResult
 AssocArrayType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
-                       Type keyType, Type elementType, bool wildcardIndex) {
+                       Type keyType, Type elementType, bool signedKey,
+                       bool wildcardIndex) {
   if (!isNormalizedValueType(elementType))
     return emitError() << "element must be a normalized simulation value";
+  if (wildcardIndex)
+    return emitError()
+           << "wildcard associative-array indices are not executable";
   bool supportedKey = isa<StringType>(keyType);
   if (auto integer = dyn_cast<IntegerType>(keyType))
     supportedKey = integer.isSignless() && integer.getWidth() <= 64;
   if (auto logic = dyn_cast<LogicType>(keyType))
     supportedKey = logic.getWidth() <= 64;
-  if (!supportedKey && !wildcardIndex)
+  if (!supportedKey)
     return emitError()
            << "key must be a string or normalized integral type up to 64 bits";
-  if (wildcardIndex && !isNormalizedValueType(keyType))
-    return emitError() << "wildcard key must be a normalized simulation value";
+  if (isa<StringType>(keyType) && signedKey)
+    return emitError() << "string key cannot be signed";
   return success();
 }
 
@@ -2037,6 +2246,17 @@ LogicalResult SimReferencePathIndexOp::verify() {
   return success();
 }
 
+LogicalResult SimReferencePathAssocOp::verify() {
+  AssocArrayType array = getArray().getType();
+  if (failed(verifyAssocKey(getOperation(), array, getKey().getType())))
+    return failure();
+  if (array.getElementType() != getResult().getType().getElementType())
+    return emitOpError("result element must match the associative element");
+  if (getOwnerReference().getType().getElementType() != array)
+    return emitOpError("owner reference must refer to the associative array");
+  return success();
+}
+
 LogicalResult SimArgumentRefFromPathOp::verify() {
   if (getInput().getType().getElementType() !=
       getResult().getType().getElementType())
@@ -2170,6 +2390,7 @@ LogicalResult SimDesignOp::verifyRegions() {
     }
   }
   struct ElementShape {
+    Type type;
     uint32_t kind;
     uint32_t flags;
     uint64_t valueSize;
@@ -2179,31 +2400,49 @@ LogicalResult SimDesignOp::verifyRegions() {
     SmallVector<int32_t, 2> traceKinds;
   };
   llvm::DenseMap<uint64_t, ElementShape> elementShapes;
-  WalkResult descriptors =
-      walk([&](SimContainerCreateOp create) {
-        ElementShape shape{static_cast<uint32_t>(create.getElementKind()),
-                           static_cast<uint32_t>(create.getElementFlags()),
-                           create.getValueSize(),
-                           create.getAlignment(),
-                           create.getBitWidth(),
-                           SmallVector<int64_t, 2>(create.getTraceOffsets()),
-                           SmallVector<int32_t, 2>(create.getTraceKinds())};
-        auto [found, inserted] =
-            elementShapes.try_emplace(create.getTypeId(), shape);
-        if (!inserted && (found->second.kind != shape.kind ||
+  auto recordElementShape =
+      [&](Operation *operation, uint64_t typeId, Type type, uint32_t kind,
+          uint32_t flags, uint64_t valueSize, uint64_t alignment,
+          uint64_t bitWidth, ArrayRef<int64_t> traceOffsets,
+          ArrayRef<int32_t> traceKinds) -> WalkResult {
+        ElementShape shape{type, kind, flags, valueSize, alignment, bitWidth,
+                           SmallVector<int64_t, 2>(traceOffsets),
+                           SmallVector<int32_t, 2>(traceKinds)};
+        auto [found, inserted] = elementShapes.try_emplace(typeId, shape);
+        if (!inserted && (found->second.type != shape.type ||
+                          found->second.kind != shape.kind ||
                           found->second.flags != shape.flags ||
                           found->second.valueSize != shape.valueSize ||
                           found->second.alignment != shape.alignment ||
                           found->second.bitWidth != shape.bitWidth ||
                           found->second.traceOffsets != shape.traceOffsets ||
                           found->second.traceKinds != shape.traceKinds)) {
-          create.emitOpError()
-              << "element type ID " << create.getTypeId()
+          operation->emitOpError()
+              << "element type ID " << typeId
               << " conflicts with another container descriptor in the design";
           return WalkResult::interrupt();
         }
         return WalkResult::advance();
-      });
+      };
+  WalkResult descriptors = walk([&](Operation *operation) {
+    if (auto create = dyn_cast<SimContainerCreateOp>(operation))
+      return recordElementShape(
+          operation, create.getTypeId(),
+          getContainerElement(create.getResult().getType()),
+          static_cast<uint32_t>(create.getElementKind()),
+          static_cast<uint32_t>(create.getElementFlags()),
+          create.getValueSize(), create.getAlignment(), create.getBitWidth(),
+          create.getTraceOffsets(), create.getTraceKinds());
+    if (auto create = dyn_cast<SimAssocCreateOp>(operation))
+      return recordElementShape(
+          operation, create.getTypeId(),
+          create.getResult().getType().getElementType(),
+          static_cast<uint32_t>(create.getElementKind()),
+          static_cast<uint32_t>(create.getElementFlags()),
+          create.getValueSize(), create.getAlignment(), create.getBitWidth(),
+          create.getTraceOffsets(), create.getTraceKinds());
+    return WalkResult::advance();
+  });
   if (descriptors.wasInterrupted())
     return failure();
   if (!sawRoot)
@@ -5796,15 +6035,16 @@ LogicalResult SimDisplayOp::verify() {
     if (itemIndex == getItems().size())
       return emitOpError("item flags require more display operands");
     Value item = getItems()[itemIndex++];
-    if (!isa<BytesType, StringType, DynamicArrayType, QueueType, IntegerType,
-             LogicType>(item.getType()) &&
+    if (!isa<BytesType, StringType, DynamicArrayType, QueueType,
+             AssocArrayType, IntegerType, LogicType>(item.getType()) &&
         !item.getType().isF64())
       return emitOpError(
           "items must be literal bytes, packed integers, or f64 reals; "
-          "managed strings and sequential containers are also accepted");
+          "managed strings and containers are also accepted");
     if ((flags & ~31) != 0)
       return emitOpError("display item flags contain an unknown bit");
-    if ((flags & 16) != 0 && !isa<DynamicArrayType, QueueType>(item.getType()))
+    if ((flags & 16) != 0 &&
+        !isa<DynamicArrayType, QueueType, AssocArrayType>(item.getType()))
       return emitOpError("container display flags require a container operand");
     if ((flags & 4) != 0 && !item.getType().isF64())
       return emitOpError("real display items must have f64 operands");
@@ -5816,7 +6056,8 @@ LogicalResult SimDisplayOp::verify() {
       return emitOpError("literal byte items cannot be signed");
     if (isa<StringType>(item.getType()) && flags != 8)
       return emitOpError("managed string display items require the string flag");
-    if (isa<DynamicArrayType, QueueType>(item.getType()) && flags != 16)
+    if (isa<DynamicArrayType, QueueType, AssocArrayType>(item.getType()) &&
+        flags != 16)
       return emitOpError(
           "managed container display items require the container flag");
   }

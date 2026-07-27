@@ -203,6 +203,20 @@ constexpr uint32_t kIntrinsicContainerDelete =
     OBELISK_RT_INTRINSIC_V1_CONTAINER_DELETE;
 constexpr uint32_t kIntrinsicRandomBounded =
     OBELISK_RT_INTRINSIC_V1_RANDOM_BOUNDED;
+constexpr uint32_t kIntrinsicAssocCreate =
+    OBELISK_RT_INTRINSIC_V1_ASSOC_CREATE;
+constexpr uint32_t kIntrinsicAssocRead = OBELISK_RT_INTRINSIC_V1_ASSOC_READ;
+constexpr uint32_t kIntrinsicAssocWrite = OBELISK_RT_INTRINSIC_V1_ASSOC_WRITE;
+constexpr uint32_t kIntrinsicAssocExists =
+    OBELISK_RT_INTRINSIC_V1_ASSOC_EXISTS;
+constexpr uint32_t kIntrinsicAssocDelete =
+    OBELISK_RT_INTRINSIC_V1_ASSOC_DELETE;
+constexpr uint32_t kIntrinsicAssocDefault =
+    OBELISK_RT_INTRINSIC_V1_ASSOC_DEFAULT;
+constexpr uint32_t kIntrinsicAssocTraverse =
+    OBELISK_RT_INTRINSIC_V1_ASSOC_TRAVERSE;
+constexpr uint32_t kIntrinsicReferencePathAssoc =
+    OBELISK_RT_INTRINSIC_V1_REFERENCE_PATH_ASSOC;
 
 bool isObserverCaptureBridge(Block &block) {
   if (block.getOperations().size() != 1)
@@ -1520,9 +1534,12 @@ private:
 
   static bool mayCollect(Operation *operation) {
     return isa<sim::SimClassAllocOp, sim::SimClassCopyOp, sim::SimWeakCreateOp,
-               sim::SimReferencePathIndexOp, sim::SimContainerCreateLikeOp,
+               sim::SimReferencePathIndexOp, sim::SimReferencePathAssocOp,
+               sim::SimContainerCreateLikeOp,
                sim::SimContainerCreateOp, sim::SimContainerCloneOp,
-               sim::SimContainerWriteOp, sim::SimArgumentRefStoreOp,
+               sim::SimContainerWriteOp, sim::SimAssocCreateOp,
+               sim::SimAssocWriteOp, sim::SimAssocSetDefaultOp,
+               sim::SimAssocTraverseOp, sim::SimArgumentRefStoreOp,
                sim::SimReferencePathNBAEnqueueOp, sim::SimGCSafepointOp,
                sim::SimStringLiteralOp, sim::SimStringFromPackedOp,
                sim::SimStringConcatOp, sim::SimStringRepeatOp,
@@ -2061,6 +2078,52 @@ private:
       return emitIntrinsic(plan, kIntrinsicContainerWrite,
                            {op.getContainer(), op.getIndex(), op.getValue()},
                            {});
+    if (auto op = dyn_cast<sim::SimAssocCreateOp>(operation)) {
+      SmallVector<uint8_t> traceSlots;
+      for (auto [offset, kind] :
+           llvm::zip_equal(op.getTraceOffsets(), op.getTraceKinds())) {
+        append64(traceSlots, static_cast<uint64_t>(offset));
+        append32(traceSlots, static_cast<uint32_t>(kind));
+        append32(traceSlots, 0);
+      }
+      return emitIntrinsicRegisters(
+          plan, kIntrinsicAssocCreate,
+          {emitU64Constant(plan, op.getTypeId()),
+           emitU64Constant(plan, op.getElementKind()),
+           emitU64Constant(plan, op.getElementFlags()),
+           emitU64Constant(plan, op.getValueSize()),
+           emitU64Constant(plan, op.getAlignment()),
+           emitU64Constant(plan, op.getBitWidth()),
+           emitBytesConstant(plan, traceSlots),
+           emitU64Constant(plan, op.getKeyKind()),
+           emitU64Constant(plan, op.getKeyWidth())},
+          {reg(plan, op.getResult())});
+    }
+    if (auto op = dyn_cast<sim::SimAssocReadOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicAssocRead,
+                           {op.getArray(), op.getKey()}, {op.getResult()});
+    if (auto op = dyn_cast<sim::SimAssocWriteOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicAssocWrite,
+                           {op.getArray(), op.getKey(), op.getValue()}, {});
+    if (auto op = dyn_cast<sim::SimAssocExistsOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicAssocExists,
+                           {op.getArray(), op.getKey()}, {op.getResult()});
+    if (auto op = dyn_cast<sim::SimAssocDeleteOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicAssocDelete,
+                           {op.getArray(), op.getKey()}, {});
+    if (auto op = dyn_cast<sim::SimAssocSetDefaultOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicAssocDefault,
+                           {op.getArray(), op.getValue()}, {});
+    if (auto op = dyn_cast<sim::SimAssocTraverseOp>(operation))
+      return emitIntrinsicRegisters(
+          plan, kIntrinsicAssocTraverse,
+          {reg(plan, op.getArray()), reg(plan, op.getKey()),
+           emitU64Constant(plan,
+                           static_cast<uint64_t>(
+                               static_cast<int64_t>(
+                                   static_cast<int32_t>(op.getDirection())))),
+           emitU64Constant(plan, op.getEndpoint() ? 1 : 0)},
+          {reg(plan, op.getResultKey()), reg(plan, op.getSuccess())});
     if (auto op = dyn_cast<sim::SimStringLiteralOp>(operation)) {
       StringRef value = op.getValue();
       uint32_t bytes = emitBytesConstant(
@@ -2141,6 +2204,17 @@ private:
             addZeroConstant(plan.layouts[destination])});
       return success();
     }
+    if (auto op = dyn_cast<sim::SimManagedIsNullOp>(operation)) {
+      uint32_t input = reg(plan, op.getInput());
+      uint32_t zero = addZeroConstant(plan.layouts[input]);
+      uint32_t constant = temporary(plan, op.getInput().getType());
+      if (constant == kInvalidRegister)
+        return failure();
+      emit({Constant, 0, constant, 0, 0, 0, 0, zero});
+      emit({Compare, OBELISK_RT_DB_CMP_EQ, reg(plan, op.getResult()), input,
+            constant});
+      return success();
+    }
     if (isa<sim::SimEventNullOp>(operation)) {
       uint32_t destination = reg(plan, operation->getResult(0));
       const Layout &layout = plan.layouts[destination];
@@ -2158,6 +2232,11 @@ private:
       return emitIntrinsic(
           plan, kIntrinsicReferencePathIndex,
           {op.getContainer(), op.getIndex(), op.getOwnerReference()},
+          {op.getResult()});
+    if (auto op = dyn_cast<sim::SimReferencePathAssocOp>(operation))
+      return emitIntrinsic(
+          plan, kIntrinsicReferencePathAssoc,
+          {op.getArray(), op.getKey(), op.getOwnerReference()},
           {op.getResult()});
     if (auto op = dyn_cast<sim::SimArgumentRefFromPathOp>(operation))
       return emitIntrinsic(plan, kIntrinsicArgumentRefFromPath, {op.getInput()},

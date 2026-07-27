@@ -182,10 +182,11 @@ def SimAssocArrayType : SimType<"AssocArray"> {
   let parameters = (ins
     "::mlir::Type":$keyType,
     "::mlir::Type":$elementType,
+    "bool":$signedKey,
     "bool":$wildcardIndex
   );
   let assemblyFormat =
-      "`<` $keyType `,` $elementType `,` $wildcardIndex `>`";
+      "`<` $keyType `,` $elementType `,` $signedKey `,` $wildcardIndex `>`";
   let genVerifyDecl = 1;
 }
 

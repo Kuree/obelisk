@@ -502,8 +502,9 @@ static FailureOr<Type> normalizeType(Type type, Location location,
                                             /*allowRealScalar=*/true);
     if (failed(key) || failed(element))
       return failure();
-    return sim::AssocArrayType::get(context, *key, *element,
-                                    array.getWildcardIndex());
+    return sim::AssocArrayType::get(
+        context, *key, *element,
+        isSignedSemanticType(array.getKeyType()), array.getWildcardIndex());
   }
   if (auto aggregate = dyn_cast<semantic::SourceAggregateType>(type)) {
     FailureOr<ArrayAttr> fields = normalizeSourceFields(
@@ -624,10 +625,12 @@ namespace obelisk {
 FailureOr<DPIABIType> classifyDPIABIType(Type type, Location location) {
   using namespace simlowering;
   namespace semantic = ::obelisk::ir;
-  if (isa<semantic::DynArrayType, semantic::QueueType, semantic::OpenArrayType,
-          sim::DynamicArrayType, sim::QueueType>(type)) {
+  if (isa<semantic::DynArrayType, semantic::QueueType,
+          semantic::AssocArrayType, semantic::OpenArrayType,
+          sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(type)) {
     emitError(location)
-        << "DPI-C dynamic-array and queue marshalling is unsupported";
+        << "DPI-C dynamic-array, queue, and associative-array marshalling is "
+           "unsupported";
     return failure();
   }
   if (auto enumeration = dyn_cast<semantic::EnumType>(type))

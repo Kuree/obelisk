@@ -358,6 +358,16 @@ class SlangExpressionASTNodeOp<string mnemonic, dag expressionArgs = (ins)>
     : SlangASTNodeOp<mnemonic, [],
         !con((ins TypeAttr:$semantic_type), expressionArgs)>;
 
+class SlangStructuredAssignmentPatternASTNodeOp<string mnemonic>
+    : SlangExpressionASTNodeOp<mnemonic, (ins
+        I64Attr:$member_setter_count,
+        I64Attr:$type_setter_count,
+        I64Attr:$index_setter_count,
+        BoolAttr:$has_default_setter
+      )> {
+  let hasVerifier = 1;
+}
+
 class SlangConstantExpressionASTNodeOp<string mnemonic>
     : SlangExpressionASTNodeOp<mnemonic, (ins StrAttr:$constant_value)>;
 
