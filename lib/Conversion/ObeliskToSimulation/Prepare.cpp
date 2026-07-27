@@ -148,12 +148,10 @@ static uint32_t getStableImportID(StringRef cIdentifier) {
 /// generic base, so they cannot carry the SemanticDeclarativeNode trait.
 static bool isDeclarativeLeafNode(Operation *op) {
   return isa<
-      semantic::SVAssertionInstanceExpressionOp,
       semantic::SVNewCovergroupExpressionOp,
-      semantic::SVRandSequenceStatementOp, semantic::SVAssertionPortSymbolOp,
-      semantic::SVCoverCrossSymbolOp, semantic::SVCoverCrossBodySymbolOp,
-      semantic::SVCovergroupBodySymbolOp, semantic::SVCoverpointSymbolOp,
-      semantic::SVLocalAssertionVarSymbolOp,
+      semantic::SVRandSequenceStatementOp, semantic::SVCoverCrossSymbolOp,
+      semantic::SVCoverCrossBodySymbolOp, semantic::SVCovergroupBodySymbolOp,
+      semantic::SVCoverpointSymbolOp, semantic::SVLocalAssertionVarSymbolOp,
       semantic::SVRandSeqProductionSymbolOp, semantic::SVDPIOpenArrayTypeOp>(
       op);
 }
@@ -162,6 +160,27 @@ static bool isSupportedClassDeclaration(Operation *op) {
   return isa<semantic::SVClassTypeOp, semantic::SVGenericClassDefSymbolOp,
              semantic::SVMethodPrototypeSymbolOp,
              semantic::SVClassPropertySymbolOp>(op);
+}
+
+static bool isSupportedAssertionNode(Operation *op) {
+  return isa<semantic::SVImmediateAssertionStatementOp,
+             semantic::SVConcurrentAssertionStatementOp,
+             semantic::SVPropertySymbolOp, semantic::SVSequenceSymbolOp,
+             semantic::SVAssertionPortSymbolOp,
+             semantic::SVAssertionInstanceExpressionOp,
+             semantic::SVInvalidAssertionExprOp,
+             semantic::SVSimpleAssertionExprOp,
+             semantic::SVSequenceConcatExprOp,
+             semantic::SVSequenceWithMatchExprOp,
+             semantic::SVUnaryAssertionExprOp,
+             semantic::SVBinaryAssertionExprOp,
+             semantic::SVFirstMatchAssertionExprOp,
+             semantic::SVClockingAssertionExprOp,
+             semantic::SVStrongWeakAssertionExprOp,
+             semantic::SVAbortAssertionExprOp,
+             semantic::SVConditionalAssertionExprOp,
+             semantic::SVCaseAssertionExprOp,
+             semantic::SVDisableIffAssertionExprOp>(op);
 }
 
 static bool isWeakReferenceClass(semantic::SVClassTypeOp classType) {
@@ -472,7 +491,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     if (!isSemanticOp(op))
       return;
     if ((op->hasTrait<OpTrait::SemanticDeclarativeNode>() &&
-         !isSupportedClassDeclaration(op)) ||
+         !isSupportedClassDeclaration(op) && !isSupportedAssertionNode(op)) ||
         isDeclarativeLeafNode(op)) {
       emitError(getSemanticLocation(op))
           << "unsupported semantic construct in the first simulation slice: "

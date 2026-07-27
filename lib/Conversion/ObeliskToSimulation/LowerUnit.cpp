@@ -487,6 +487,9 @@ private:
 
   LogicalResult lowerStatement(Operation *op);
   LogicalResult lowerSequence(ArrayRef<Operation *> operations);
+  LogicalResult
+  lowerImmediateAssertion(semantic::SVImmediateAssertionStatementOp op);
+  void emitDefaultAssertionFailure(Location location);
   LogicalResult lowerConditional(semantic::SVConditionalStatementOp op);
   LogicalResult
   lowerQualifiedConditional(semantic::SVConditionalStatementOp op);
@@ -7592,6 +7595,56 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     return constant(builder.getI1Type(), 0);
   };
 
+  if (name == "$sampled") {
+    if (children.size() != 1) {
+      emitError(location) << "$sampled requires exactly one argument";
+      return failure();
+    }
+    emitError(location)
+        << "$sampled requires concurrent assertion Preponed sampling, which "
+           "is not executable yet";
+    return failure();
+  }
+
+  if (name == "$past") {
+    if (children.empty() || children.size() > 4) {
+      emitError(location) << "$past requires one to four arguments";
+      return failure();
+    }
+    if (children.size() >= 2 && !getConstantSpelling(children[1])) {
+      emitError(getSemanticLocation(children[1]))
+          << "$past history depth must be a constant integer";
+      return failure();
+    }
+    if (children.size() >= 3) {
+      emitError(getSemanticLocation(children[2]))
+          << "$past gating expressions are not supported";
+      return failure();
+    }
+    if (children.size() >= 4) {
+      emitError(getSemanticLocation(children[3]))
+          << "$past alternate clock arguments are not supported";
+      return failure();
+    }
+    emitError(location)
+        << "$past requires assertion-clock history, which is unavailable for "
+           "this operand";
+    return failure();
+  }
+
+  if (name == "$rose" || name == "$fell" || name == "$stable" ||
+      name == "$changed") {
+    if (children.size() != 1) {
+      emitError(location) << name << " requires exactly one argument";
+      return failure();
+    }
+    emitError(location)
+        << name
+        << " requires assertion-clock history, which is unavailable for this "
+           "operand";
+    return failure();
+  }
+
   if (name == "$cast") {
     if (children.size() != 2) {
       emitError(location) << "$cast requires exactly two arguments";
@@ -9301,6 +9354,202 @@ UnitLowering::lowerEventTrigger(semantic::SVEventTriggerStatementOp op) {
   sim::SimEventTriggerOp::create(builder, location, *event, delay,
                                  builder.getBoolAttr(op.getIsNonblocking()),
                                  sim::EventSiteAttr{});
+  return success();
+}
+
+void UnitLowering::emitDefaultAssertionFailure(Location location) {
+  std::string file = "<unknown>";
+  unsigned line = 0;
+  if (auto source = location->findInstanceOf<FileLineColLoc>()) {
+    file = source.getFilename().str();
+    line = source.getLine();
+  }
+  std::string message =
+      (Twine("ERROR: ") + file + ":" + Twine(line) +
+       ": immediate assertion failed.")
+          .str();
+  for (size_t position = 0;
+       (position = message.find('%', position)) != std::string::npos;
+       position += 2)
+    message.insert(position, 1, '%');
+
+  Value context = function.getBody().front().getArgument(0);
+  Value descriptor = arith::ConstantOp::create(
+      builder, location, builder.getI32Type(),
+      builder.getI32IntegerAttr(static_cast<int32_t>(0x80000002u)));
+  Value item =
+      sim::SimBytesConstantOp::create(builder, location, message).getResult();
+  auto timeMultiplier =
+      function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
+  StringAttr scope =
+      function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
+  sim::SimDisplayOp::create(
+      builder, location, context, descriptor, ValueRange{item}, true, 10,
+      builder.getDenseI32ArrayAttr({0}), scope, StringAttr{}, timeMultiplier);
+}
+
+LogicalResult UnitLowering::lowerImmediateAssertion(
+    semantic::SVImmediateAssertionStatementOp op) {
+  Location location = getSemanticLocation(op);
+  if (op->hasAttr("obelisk_sim.default_assertion_failure")) {
+    emitDefaultAssertionFailure(location);
+    return success();
+  }
+  if (op.getIsDeferred()) {
+    auto nodeAttr = op->getAttrOfType<IntegerAttr>("node_id");
+    uint64_t node = nodeAttr ? nodeAttr.getValue().getZExtValue() : 0;
+    std::string identity =
+        (function.getSymName() + ".$deferred_assert." + Twine(node) + "." +
+         Twine(node ? 0 : nextForkOrdinal))
+            .str();
+    uint64_t siteID = stableCodeUnitID(identity);
+    Value first = sim::SimDeferredOnceOp::create(
+        builder, location, builder.getI64IntegerAttr(siteID));
+    Block *schedule = addBlock();
+    Block *merge = addBlock();
+    cf::CondBranchOp::create(builder, location, first, schedule, ValueRange{},
+                             merge, ValueRange{});
+    setCurrent(schedule);
+    Attribute previousCodeUnit = op->getAttr("obelisk_sim.fork_code_unit_id");
+    BoolAttr previousDeferred = op.getIsDeferredAttr();
+    op->setAttr("obelisk_sim.deferred_evaluator", builder.getUnitAttr());
+    op->setAttr("obelisk_sim.fork_code_unit_id",
+                builder.getI64IntegerAttr(stableCodeUnitID(identity)));
+    op->setAttr("is_deferred", builder.getBoolAttr(false));
+    FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> callback =
+        outlineForkBranch(op, node, 0, /*captureReferences=*/true);
+    op->setAttr("is_deferred", previousDeferred);
+    op->removeAttr("obelisk_sim.deferred_evaluator");
+    if (previousCodeUnit)
+      op->setAttr("obelisk_sim.fork_code_unit_id", previousCodeUnit);
+    else
+      op->removeAttr("obelisk_sim.fork_code_unit_id");
+    if (failed(callback))
+      return failure();
+
+    sim::EventRegion region = op.getIsFinal() ? sim::EventRegion::Postponed
+                                              : sim::EventRegion::Observed;
+    callback->first->setAttr("home_region", sim::EventRegionAttr::get(
+                                                function.getContext(), region));
+    callback->first->setAttr(
+        "domain", sim::ExecutionDomainAttr::get(function.getContext(),
+                                                 sim::ExecutionDomain::Design));
+    sim::SimSpawnOp::create(builder, location, callback->first.getSymNameAttr(),
+                            callback->second, ArrayAttr{}, ArrayAttr{});
+    emitBranch(merge);
+    setCurrent(merge);
+    return success();
+  }
+
+  SmallVector<Operation *> children = getChildren(op);
+  size_t expected = 1 + static_cast<size_t>(op.getHasPassAction()) +
+                    static_cast<size_t>(op.getHasFailAction());
+  if (children.size() != expected) {
+    emitError(location) << "malformed immediate assertion inventory";
+    return failure();
+  }
+
+  FailureOr<Value> value = lowerExpression(children.front());
+  if (failed(value))
+    return failure();
+  FailureOr<Value> condition = truthValue(*value, location);
+  if (failed(condition))
+    return failure();
+
+  bool reactiveActions =
+      op->hasAttr("obelisk_sim.deferred_evaluator") && !op.getIsFinal();
+  auto lowerAction = [&](Operation *action, unsigned branch) -> LogicalResult {
+    if (!reactiveActions)
+      return lowerStatement(action);
+    auto nodeAttr = op->getAttrOfType<IntegerAttr>("node_id");
+    uint64_t node = nodeAttr ? nodeAttr.getValue().getZExtValue() : 0;
+    std::string identity =
+        (function.getSymName() + ".$reactive_assert_action." + Twine(node) +
+         "." + Twine(branch))
+            .str();
+    Attribute previousCodeUnit =
+        action->getAttr("obelisk_sim.fork_code_unit_id");
+    action->setAttr("obelisk_sim.fork_code_unit_id",
+                    builder.getI64IntegerAttr(stableCodeUnitID(identity)));
+    FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> callback =
+        outlineForkBranch(action, node, branch, /*captureReferences=*/true);
+    if (previousCodeUnit)
+      action->setAttr("obelisk_sim.fork_code_unit_id", previousCodeUnit);
+    else
+      action->removeAttr("obelisk_sim.fork_code_unit_id");
+    if (failed(callback))
+      return failure();
+    callback->first->setAttr(
+        "home_region", sim::EventRegionAttr::get(function.getContext(),
+                                                 sim::EventRegion::Reactive));
+    sim::SimSpawnOp::create(builder, getSemanticLocation(action),
+                            callback->first.getSymNameAttr(), callback->second,
+                            ArrayAttr{}, ArrayAttr{});
+    return success();
+  };
+  auto lowerDefaultFailure = [&]() -> LogicalResult {
+    if (!reactiveActions) {
+      emitDefaultAssertionFailure(location);
+      return success();
+    }
+    auto nodeAttr = op->getAttrOfType<IntegerAttr>("node_id");
+    uint64_t node = nodeAttr ? nodeAttr.getValue().getZExtValue() : 0;
+    std::string identity =
+        (function.getSymName() + ".$reactive_assert_default." + Twine(node))
+            .str();
+    Attribute previousCodeUnit =
+        op->getAttr("obelisk_sim.fork_code_unit_id");
+    op->setAttr("obelisk_sim.default_assertion_failure",
+                builder.getUnitAttr());
+    op->setAttr("obelisk_sim.fork_code_unit_id",
+                builder.getI64IntegerAttr(stableCodeUnitID(identity)));
+    FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> callback =
+        outlineForkBranch(op, node, 3, /*captureReferences=*/true);
+    op->removeAttr("obelisk_sim.default_assertion_failure");
+    if (previousCodeUnit)
+      op->setAttr("obelisk_sim.fork_code_unit_id", previousCodeUnit);
+    else
+      op->removeAttr("obelisk_sim.fork_code_unit_id");
+    if (failed(callback))
+      return failure();
+    callback->first->setAttr(
+        "home_region", sim::EventRegionAttr::get(function.getContext(),
+                                                 sim::EventRegion::Reactive));
+    callback->first->setAttr(
+        "domain", sim::ExecutionDomainAttr::get(function.getContext(),
+                                                 sim::ExecutionDomain::Design));
+    sim::SimSpawnOp::create(builder, location,
+                            callback->first.getSymNameAttr(), callback->second,
+                            ArrayAttr{}, ArrayAttr{});
+    return success();
+  };
+
+  Block *passBlock = addBlock();
+  Block *failBlock = addBlock();
+  Block *mergeBlock = addBlock();
+  cf::CondBranchOp::create(builder, location, *condition, passBlock,
+                           ValueRange{}, failBlock, ValueRange{});
+
+  size_t nextChild = 1;
+  setCurrent(passBlock);
+  bool cover =
+      op.getAssertionKind() == semantic::SVAssertionKind::CoverProperty ||
+      op.getAssertionKind() == semantic::SVAssertionKind::CoverSequence;
+  if (op.getHasPassAction() && failed(lowerAction(children[nextChild++], 0)))
+    return failure();
+  emitBranch(mergeBlock);
+
+  setCurrent(failBlock);
+  if (!cover) {
+    if (op.getHasFailAction()) {
+      if (failed(lowerAction(children[nextChild++], 1)))
+        return failure();
+    } else if (op.getAssertionKind() == semantic::SVAssertionKind::Assert &&
+               failed(lowerDefaultFailure()))
+      return failure();
+  }
+  emitBranch(mergeBlock);
+  setCurrent(mergeBlock);
   return success();
 }
 
@@ -11549,6 +11798,14 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
   }
   if (isa<semantic::SVEmptyStatementOp>(op))
     return success();
+  if (auto assertion = dyn_cast<semantic::SVImmediateAssertionStatementOp>(op))
+    return lowerImmediateAssertion(assertion);
+  if (isa<semantic::SVConcurrentAssertionStatementOp>(op)) {
+    emitError(location)
+        << "concurrent assertions require typed Preponed sampling and a "
+           "verified temporal monitor, which are not executable yet";
+    return failure();
+  }
   if (isa<semantic::SVExpressionStatementOp>(op)) {
     if (children.size() != 1) {
       unsupported(op) << " (expression statement arity)";

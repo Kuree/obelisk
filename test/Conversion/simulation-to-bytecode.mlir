@@ -60,6 +60,7 @@ module attributes {
       %three = obelisk_sim.logic.constant 3 : i65, 0 : i65 : !obelisk_sim.logic<65>
       %sum = obelisk_sim.call @add(%ctx, %two, %three)
           : (!obelisk_sim.context, !obelisk_sim.logic<65>, !obelisk_sim.logic<65>) -> !obelisk_sim.logic<65>
+      %first = obelisk_sim.assert.deferred_once 4294967297
       %delay = obelisk_sim.time.constant 1
       obelisk_sim.suspend.delay %delay to ^done
     ^done:

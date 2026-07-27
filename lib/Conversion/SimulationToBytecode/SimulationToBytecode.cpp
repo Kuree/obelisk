@@ -121,6 +121,8 @@ constexpr uint32_t kIntrinsicControlLeave =
 constexpr uint32_t kIntrinsicControlDisable =
     OBELISK_RT_INTRINSIC_V1_CONTROL_DISABLE;
 constexpr uint32_t kIntrinsicStaticOnce = OBELISK_RT_INTRINSIC_V1_STATIC_ONCE;
+constexpr uint32_t kIntrinsicDeferredOnce =
+    OBELISK_RT_INTRINSIC_V1_DEFERRED_ONCE;
 constexpr uint32_t kIntrinsicMonitorRegister =
     OBELISK_RT_INTRINSIC_V1_MONITOR_REGISTER;
 constexpr uint32_t kIntrinsicMonitorControl =
@@ -2690,6 +2692,14 @@ private:
         return op.emitOpError("static initialization ID does not fit bytecode");
       return emitIntrinsic(plan, kIntrinsicStaticOnce, {}, {op.getFirst()},
                            static_cast<uint32_t>(op.getId()));
+    }
+    if (auto op = dyn_cast<sim::SimDeferredOnceOp>(operation)) {
+      if (op.getId() == 0)
+        return op.emitOpError("deferred assertion ID must be positive");
+      return emitIntrinsicRegisters(
+          plan, kIntrinsicDeferredOnce,
+          {emitU64Constant(plan, static_cast<uint64_t>(op.getId()))},
+          {reg(plan, op.getFirst())});
     }
     if (auto op = dyn_cast<sim::SimMonitorRegisterOp>(operation))
       return emitIntrinsic(plan, kIntrinsicMonitorRegister, {op.getProcess()},

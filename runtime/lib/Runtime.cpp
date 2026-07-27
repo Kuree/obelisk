@@ -310,6 +310,30 @@ extern "C" uint32_t obelisk_rt_v1_static_once(obelisk_rt_context *context,
   }
 }
 
+extern "C" uint32_t obelisk_rt_v1_deferred_once(obelisk_rt_context *context,
+                                                uint64_t siteID) {
+  if (!context || siteID == 0)
+    return 0;
+  try {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    if (context->activeLogicalProcessToken == 0)
+      return 0;
+    if (context->deferredImmediateTime != context->schedulerTime) {
+      context->deferredImmediateSites.clear();
+      context->deferredImmediateTime = context->schedulerTime;
+    }
+    return context->deferredImmediateSites[context->activeLogicalProcessToken]
+                   .insert(siteID)
+                   .second
+               ? 1u
+               : 0u;
+  } catch (...) {
+    if (context)
+      context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
+    return 0;
+  }
+}
+
 obelisk_rt_status makeBuffer(std::string_view source,
                              obelisk_rt_buffer_v1 *output) {
   if (!output)

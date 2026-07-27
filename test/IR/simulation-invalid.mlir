@@ -2039,3 +2039,19 @@ module {
     return
   }
 }
+
+// -----
+
+module {
+  obelisk_sim.design @invalid_deferred_assertion_site {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "bad"
+    obelisk_sim.func @bad(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {entry_kind = 1 : i32, code_unit_id = 1 : i64} {
+      // expected-error @+1 {{deferred assertion site ID must be positive}}
+      %first = obelisk_sim.assert.deferred_once 0
+      obelisk_sim.return
+    }
+  }
+}

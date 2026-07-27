@@ -1279,6 +1279,18 @@ def SimStaticOnceOp : SimOp<"static.once", [
   let hasVerifier = 1;
 }
 
+def SimDeferredOnceOp : SimOp<"assert.deferred_once", [
+    MemoryEffects<[MemRead<SimSchedulerResource>,
+                   MemWrite<SimSchedulerResource>,
+                   MemRead<SimProcessResource>]>
+  ]> {
+  let summary = "claim one deferred-immediate assertion site in this slot";
+  let arguments = (ins I64Attr:$id);
+  let results = (outs I1:$first);
+  let assemblyFormat = "$id attr-dict";
+  let hasVerifier = 1;
+}
+
 def SimMonitorRegisterOp : SimOp<"monitor.register", [
     MemoryEffects<[MemWrite<SimSchedulerResource>,
                    MemWrite<SimProcessResource>]>

@@ -528,6 +528,9 @@ struct obelisk_rt_context {
   uint64_t nextControlActivation = 1;
   std::unordered_map<uint64_t, ControlActivation> controlActivations;
   std::unordered_set<uint64_t> initializedStaticSites;
+  uint64_t deferredImmediateTime = UINT64_MAX;
+  std::unordered_map<uint64_t, std::unordered_set<uint64_t>>
+      deferredImmediateSites;
   std::unordered_map<uint32_t, NativeStaticState> nativeStaticStates;
   std::unordered_map<uint32_t, NativeAutomaticState> nativeAutomaticStates;
   std::map<uint64_t, EventState> events;

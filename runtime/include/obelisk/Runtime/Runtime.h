@@ -571,6 +571,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_MONITOR_REGISTER = UINT32_C(0x00010215),
   OBELISK_RT_INTRINSIC_V1_MONITOR_CONTROL = UINT32_C(0x00010216),
   OBELISK_RT_INTRINSIC_V1_MONITOR_CURRENT = UINT32_C(0x00010217),
+  OBELISK_RT_INTRINSIC_V1_DEFERRED_ONCE = UINT32_C(0x00010218),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC = UINT32_C(0x00010400),
@@ -1761,6 +1762,10 @@ obelisk_rt_status obelisk_rt_v1_control_disable(obelisk_rt_context *context,
 // later claims. This guards descriptor-backed static local initialization.
 uint32_t obelisk_rt_v1_static_once(obelisk_rt_context *context,
                                    uint64_t site_id);
+// Return one for the first execution of a deferred-immediate assertion site
+// by the current logical process in a time slot, and zero for repeats.
+uint32_t obelisk_rt_v1_deferred_once(obelisk_rt_context *context,
+                                     uint64_t site_id);
 // Copy one nonblocking assignment into the current time slot. The scheduler
 // applies queued updates in call order after active work reaches quiescence.
 // A UINT64_MAX bit offset is an out-of-range dynamic selection and is ignored.

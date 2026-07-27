@@ -2986,10 +2986,11 @@ LogicalResult SimFuncOp::verify() {
   if (getDomain() == ExecutionDomain::Design &&
       getHomeRegion() != EventRegion::Active &&
       getHomeRegion() != EventRegion::Observed &&
+      getHomeRegion() != EventRegion::Reactive &&
       getHomeRegion() != EventRegion::Postponed)
     return emitOpError(
-        "design-domain code units must have active, observed, or postponed "
-        "home region");
+        "design-domain code units must have active, observed, reactive, or "
+        "postponed home region");
   if (getHomeRegion() == EventRegion::Postponed &&
       failed(verifyPostponedReadOnly(*this)))
     return failure();
@@ -3416,6 +3417,10 @@ LogicalResult SimControlDisableOp::verify() {
 
 LogicalResult SimStaticOnceOp::verify() {
   return verifyPositive(*this, getIdAttr(), "static initialization ID");
+}
+
+LogicalResult SimDeferredOnceOp::verify() {
+  return verifyPositive(*this, getIdAttr(), "deferred assertion site ID");
 }
 
 LogicalResult SimContextStorageOp::verify() {

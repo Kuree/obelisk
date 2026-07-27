@@ -17,7 +17,7 @@ mean that the umbrella IEEE 1800 procedural-synchronization work is complete.
 | `@*` | Executable for dependencies discovered from lowered controlled-statement reads and transitive zero-time callee read summaries; write-only captures are excluded. |
 | Repeated event control | Executable, including zero and dynamic counts. |
 | `wait (expr)` | Executable for constants, directly addressable packed values, and computed expressions. A true occurrence is latched at the relevant publication, including same-fragment transients. Computed evaluators support the executable zero-time expression and call subset. |
-| `##` cycle control | Not executable; default-clocking resolution and counted clock subscriptions remain pending. |
+| Concurrent assertion cycle delays | Imported, then rejected pending typed Preponed samples and a verifier-backed temporal monitor. |
 | Static named event | Executable for fresh uninitialized design events, direct waits/triggers, equality, and `.triggered`, including computed reads such as `wait (event.triggered)`. |
 | Event initialization/assignment/null | Rejected pending event cells, nullable handles, and automatic event lifetime. |
 | Blocking `->` | Executable for supported static named events. |
@@ -27,10 +27,13 @@ mean that the umbrella IEEE 1800 procedural-synchronization work is complete.
 | `wait_order` | Imported with unambiguous inventory, then rejected with a targeted occurrence-order diagnostic. |
 | Blocking intra-assignment timing | Executable for delay, direct event, and repeated-event controls. RHS is captured at encounter; LHS is resolved at commit. |
 | Nonblocking intra-assignment timing | Executable for delay controls with encounter-time LHS/RHS capture. Event/repeat controls remain pending deferred actions. |
+| Immediate assertions | Ordinary `assert`, `assume`, and `cover` lower to control flow with four-state truth semantics, explicit action blocks, and source-qualified default assertion diagnostics. Deferred `#0` evaluation is queued in Observed and explicit actions are spawned in Reactive; `final` evaluation and action execute in read-only Postponed. Repeated deferred executions are coalesced by site and logical process within a time slot. |
+| Concurrent assertions | Rejected with a targeted diagnostic pending typed Preponed sample bindings, asynchronous cancellation, and a verifier-backed temporal monitor. This avoids evaluating live post-Active state or committing one endpoint of a ranged sequence prematurely. |
+| Sampled-value functions | `$sampled`, `$past`, `$rose`, `$fell`, `$stable`, and `$changed` receive targeted diagnostics pending assertion-clock history storage. |
 | `fork` / join forms | Imported with block-kind metadata, then rejected pending branch outlining and child-process synchronization. |
 | `wait fork` / `disable fork` | Targeted diagnostics; descendant registry and cancellation are pending. |
 | Timed/recursive task calls | Pending canonical task frames and suspension-capable calls. Existing executable functions remain zero-time. |
-| Module/program domain | Executable with Design/Active and Program/Reactive homes. `#0` maps to Inactive/Re-Inactive and nonblocking commits map to NBA/Re-NBA. Region, rank, and insertion sequence form one shared native/bytecode ordering key. Observed remains reserved for the assertion milestone. |
+| Module/program domain | Executable with Design/Active and Program/Reactive homes. Assertion evaluators additionally use Design/Observed, assertion action callbacks use Design/Reactive, and final deferred assertions use Design/Postponed. `#0` maps to Inactive/Re-Inactive and nonblocking commits map to NBA/Re-NBA. Region, rank, and insertion sequence form one shared native/bytecode ordering key. |
 
 The umbrella is complete only when the pending rows are implemented and the
 native, bytecode, mixed-tier, region-ordering, cancellation, and leak

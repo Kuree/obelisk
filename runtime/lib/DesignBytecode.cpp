@@ -767,6 +767,9 @@ bool validIntrinsic(const Image &image, const Function &function,
   case OBELISK_RT_INTRINSIC_V1_STATIC_ONCE:
     return signature.flags != 0 && site.inputCount == 0 &&
            site.outputCount == 1 && bits(output(0), 1);
+  case OBELISK_RT_INTRINSIC_V1_DEFERRED_ONCE:
+    return signature.flags == 0 && site.inputCount == 1 &&
+           site.outputCount == 1 && bits(input(0), 64) && bits(output(0), 1);
   case OBELISK_RT_INTRINSIC_V1_MONITOR_REGISTER:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 0 && handle(input(0));
@@ -4739,6 +4742,14 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if (!context)
       return OBELISK_RT_INVALID_ARGUMENT;
     return sentinel(0, obelisk_rt_v1_static_once(context, signature.flags));
+  case OBELISK_RT_INTRINSIC_V1_DEFERRED_ONCE: {
+    if (!context)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    std::optional<uint64_t> siteID = scalar(0);
+    if (!siteID || *siteID == 0)
+      return OBELISK_RT_INVALID_BYTECODE;
+    return sentinel(0, obelisk_rt_v1_deferred_once(context, *siteID));
+  }
   case OBELISK_RT_INTRINSIC_V1_MONITOR_REGISTER: {
     if (!context)
       return OBELISK_RT_INVALID_ARGUMENT;

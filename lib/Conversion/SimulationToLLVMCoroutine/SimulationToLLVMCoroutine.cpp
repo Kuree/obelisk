@@ -999,6 +999,32 @@ public:
   }
 };
 
+class SimDeferredOnceConversion final
+    : public OpConversionPattern<sim::SimDeferredOnceOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimDeferredOnceOp operation, OneToNOpAdaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location location = operation.getLoc();
+    auto [context, pointer] = loadCurrentRuntimeContext(rewriter, location);
+    (void)pointer;
+    Value claimed = LLVM::CallOp::create(
+                        rewriter, location, TypeRange{rewriter.getI32Type()},
+                        SymbolRefAttr::get(rewriter.getContext(),
+                                           "obelisk_rt_v1_deferred_once"),
+                        ValueRange{context, llvmConstant(rewriter, location,
+                                                         rewriter.getI64Type(),
+                                                         operation.getId())})
+                        .getResult();
+    Value first = arith::TruncIOp::create(rewriter, location,
+                                          rewriter.getI1Type(), claimed);
+    rewriter.replaceOp(operation, first);
+    return success();
+  }
+};
+
 class SimMonitorRegisterConversion final
     : public OpConversionPattern<sim::SimMonitorRegisterOp> {
 public:
@@ -9742,6 +9768,8 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
                            {pointer, i64, i64, i32});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_static_once", i32,
                            {pointer, i64});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_deferred_once", i32,
+                           {pointer, i64});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_monitor_register", i32,
                            {pointer, i64, i32});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_monitor_control", i32,
@@ -10503,9 +10531,9 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       SimSuspendTypeConversion<sim::SimSuspendChildrenOp>,
       SimDisableChildrenConversion, SimControlEnterConversion,
       SimControlLeaveConversion, SimControlDisableConversion,
-      SimStaticOnceConversion, SimMonitorRegisterConversion,
-      SimMonitorControlConversion, SimMonitorCurrentConversion>(packedConverter,
-                                                                context);
+      SimStaticOnceConversion, SimDeferredOnceConversion,
+      SimMonitorRegisterConversion, SimMonitorControlConversion,
+      SimMonitorCurrentConversion>(packedConverter, context);
   packedPatterns.add<ContextHandleConversion<sim::SimContextStorageOp>>(
       packedConverter, context, stateLayout->storage);
   packedPatterns.add<ContextHandleConversion<sim::SimContextNetOp>>(
@@ -10601,10 +10629,10 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       sim::SimDriverArrayElementOp, sim::SimNBAEnqueueOp,
       sim::SimEventTriggerOp, sim::SimEventTriggeredOp, sim::SimEventEqualOp,
       sim::SimDisableChildrenOp, sim::SimControlEnterOp, sim::SimControlLeaveOp,
-      sim::SimControlDisableOp, sim::SimStaticOnceOp, sim::SimMonitorRegisterOp,
-      sim::SimMonitorControlOp, sim::SimMonitorCurrentOp,
-      sim::SimBitsDynExtractOp, sim::SimClassNullOp, sim::SimManagedNullOp,
-      sim::SimManagedIsNullOp,
+      sim::SimControlDisableOp, sim::SimStaticOnceOp, sim::SimDeferredOnceOp,
+      sim::SimMonitorRegisterOp, sim::SimMonitorControlOp,
+      sim::SimMonitorCurrentOp, sim::SimBitsDynExtractOp,
+      sim::SimClassNullOp, sim::SimManagedNullOp, sim::SimManagedIsNullOp,
       sim::SimEventNullOp, sim::SimContainerSizeOp,
       sim::SimContainerCreateLikeOp, sim::SimContainerCreateOp,
       sim::SimContainerCloneOp, sim::SimContainerDeleteOp,
