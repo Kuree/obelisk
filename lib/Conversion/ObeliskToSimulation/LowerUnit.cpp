@@ -11543,13 +11543,61 @@ UnitLowering::lowerVariableDeclaration(semantic::SVVariableDeclStatementOp op) {
   SmallVector<Operation *> children = getChildren(op);
   StringRef path = op.getReferencedPath();
   Value initial = localDefaults.lookup(path);
+  bool aggregateMemberInitializers =
+      op->hasAttr("obelisk_sim.aggregate_member_initializers");
+  auto initializeAggregateMembers =
+      [&](Value destination) -> LogicalResult {
+    auto referenceType = dyn_cast<sim::RefType>(destination.getType());
+    if (!referenceType) {
+      emitError(location)
+          << "aggregate member initializer destination is not a reference";
+      return failure();
+    }
+    Type aggregateType = referenceType.getElementType();
+    for (Operation *child : children) {
+      auto ordinalAttr =
+          child->getAttrOfType<IntegerAttr>(
+              "obelisk_sim.initialize_subelement");
+      if (!ordinalAttr) {
+        emitError(getSemanticLocation(child))
+            << "aggregate member initializer has no field ordinal";
+        return failure();
+      }
+      int64_t ordinal = ordinalAttr.getInt();
+      if (ordinal < 0 ||
+          static_cast<uint64_t>(ordinal) >=
+              sim::getAggregateNumElements(aggregateType)) {
+        emitError(getSemanticLocation(child))
+            << "aggregate member initializer ordinal " << ordinal
+            << " is out of range for " << aggregateType;
+        return failure();
+      }
+      Type fieldType =
+          sim::getAggregateElementType(aggregateType, unsigned(ordinal));
+      FailureOr<Value> lowered = lowerExpression(child);
+      if (failed(lowered))
+        return failure();
+      FailureOr<Value> converted =
+          convert(*lowered, fieldType, isSignedNode(child),
+                  getSemanticLocation(child));
+      if (failed(converted))
+        return failure();
+      Value fieldReference = sim::SimRefSubelementOp::create(
+          builder, getSemanticLocation(child),
+          sim::RefType::get(function.getContext(), fieldType), destination,
+          builder.getDenseI64ArrayAttr({ordinal}));
+      sim::SimRefStoreOp::create(builder, getSemanticLocation(child),
+                                 *converted, fieldReference);
+    }
+    return success();
+  };
   if (automaticLocals.contains(path)) {
     if (!initial) {
       emitError(location)
           << "automatic variable declaration has no frozen binding type";
       return failure();
     }
-    if (!children.empty()) {
+    if (!children.empty() && !aggregateMemberInitializers) {
       FailureOr<Value> lowered = lowerExpression(children.front());
       if (failed(lowered))
         return failure();
@@ -11565,6 +11613,8 @@ UnitLowering::lowerVariableDeclaration(semantic::SVVariableDeclStatementOp op) {
         sim::RefType::get(function.getContext(), initial.getType()), initial);
     values[path] = destination;
     lvalues[path] = destination;
+    if (aggregateMemberInitializers)
+      return initializeAggregateMembers(destination);
     return success();
   }
   Value destination = lvalues.lookup(path);
@@ -11593,19 +11643,26 @@ UnitLowering::lowerVariableDeclaration(semantic::SVVariableDeclStatementOp op) {
     cf::CondBranchOp::create(builder, location, first, initialize, ValueRange{},
                              continuation, ValueRange{});
     setCurrent(initialize);
-    FailureOr<Value> lowered = lowerExpression(children.front());
-    if (failed(lowered))
-      return failure();
-    FailureOr<Value> converted = convert(
-        *lowered, cast<sim::RefType>(destination.getType()).getElementType(),
-        isSignedNode(children.front()), location);
-    if (failed(converted))
-      return failure();
-    sim::SimRefStoreOp::create(builder, location, *converted, destination);
+    if (aggregateMemberInitializers) {
+      if (failed(initializeAggregateMembers(destination)))
+        return failure();
+    } else {
+      FailureOr<Value> lowered = lowerExpression(children.front());
+      if (failed(lowered))
+        return failure();
+      FailureOr<Value> converted = convert(
+          *lowered, cast<sim::RefType>(destination.getType()).getElementType(),
+          isSignedNode(children.front()), location);
+      if (failed(converted))
+        return failure();
+      sim::SimRefStoreOp::create(builder, location, *converted, destination);
+    }
     cf::BranchOp::create(builder, location, continuation);
     setCurrent(continuation);
     return success();
   }
+  if (aggregateMemberInitializers)
+    return initializeAggregateMembers(destination);
   if (!children.empty()) {
     FailureOr<Value> lowered = lowerExpression(children.front());
     if (failed(lowered))
@@ -12042,6 +12099,29 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
           << "static class property initializer has no reference binding: "
           << path.getValue();
       return failure();
+    }
+    if (auto ordinalAttr =
+            op->getAttrOfType<IntegerAttr>(
+                "obelisk_sim.initialize_subelement")) {
+      int64_t ordinal = ordinalAttr.getInt();
+      Type aggregateType = referenceType.getElementType();
+      if (ordinal < 0 ||
+          static_cast<uint64_t>(ordinal) >=
+              sim::getAggregateNumElements(aggregateType)) {
+        emitError(location) << "aggregate member initializer ordinal "
+                            << ordinal << " is out of range for "
+                            << aggregateType;
+        return failure();
+      }
+      Type fieldType =
+          sim::getAggregateElementType(aggregateType, unsigned(ordinal));
+      destination = sim::SimRefSubelementOp::create(
+                        builder, location,
+                        sim::RefType::get(function.getContext(), fieldType),
+                        destination,
+                        builder.getDenseI64ArrayAttr({ordinal}))
+                        .getResult();
+      referenceType = cast<sim::RefType>(destination.getType());
     }
     FailureOr<Value> value = lowerExpression(op);
     if (failed(value))

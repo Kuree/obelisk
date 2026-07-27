@@ -3104,7 +3104,27 @@ void ObeliskSimPreparePass::runOnOperation() {
     } else if (isa<semantic::SVVariableSymbolOp,
                    semantic::SVClassPropertySymbolOp>(unit.source)) {
       SmallVector<Operation *> initializer = getChildren(unit.source);
-      if (initializer.size() != 1) {
+      auto memberOrdinals = unit.source->getAttrOfType<DenseI64ArrayAttr>(
+          "obelisk.aggregate_member_initializer_ordinals");
+      if (memberOrdinals &&
+          initializer.size() !=
+              static_cast<size_t>(memberOrdinals.size())) {
+        emitError(getSemanticLocation(unit.source))
+            << "aggregate member initializer metadata has "
+            << memberOrdinals.size() << " ordinals but " << initializer.size()
+            << " expressions";
+        invalid = true;
+      } else if (memberOrdinals) {
+        for (auto [expression, ordinal] :
+             llvm::zip_equal(initializer, memberOrdinals.asArrayRef())) {
+          Operation *cloned = bodyBuilder.clone(*expression);
+          cloned->setAttr(
+              "obelisk_sim.initialize_static",
+              builder.getStringAttr(getHierarchyName(unit.source)));
+          cloned->setAttr("obelisk_sim.initialize_subelement",
+                          builder.getI64IntegerAttr(ordinal));
+        }
+      } else if (initializer.size() != 1) {
         emitError(getSemanticLocation(unit.source))
             << "design initializer must have one expression";
         invalid = true;
@@ -3188,7 +3208,29 @@ void ObeliskSimPreparePass::runOnOperation() {
         return;
       OpBuilder declarationBuilder =
           OpBuilder::atBlockEnd(&declaration->getRegion(0).front());
-      declarationBuilder.clone(*initializer.front());
+      auto memberOrdinals = symbol->second->getAttrOfType<DenseI64ArrayAttr>(
+          "obelisk.aggregate_member_initializer_ordinals");
+      if (!memberOrdinals) {
+        declarationBuilder.clone(*initializer.front());
+        return;
+      }
+      if (initializer.size() !=
+          static_cast<size_t>(memberOrdinals.size())) {
+        emitError(getSemanticLocation(symbol->second))
+            << "aggregate member initializer metadata has "
+            << memberOrdinals.size() << " ordinals but " << initializer.size()
+            << " expressions";
+        invalid = true;
+        return;
+      }
+      declaration->setAttr("obelisk_sim.aggregate_member_initializers",
+                           builder.getUnitAttr());
+      for (auto [expression, ordinal] :
+           llvm::zip_equal(initializer, memberOrdinals.asArrayRef())) {
+        Operation *cloned = declarationBuilder.clone(*expression);
+        cloned->setAttr("obelisk_sim.initialize_subelement",
+                        builder.getI64IntegerAttr(ordinal));
+      }
     });
     unit.function.walk([&](Operation *nested) {
       if (auto call = dyn_cast<semantic::SVCallExpressionOp>(nested)) {

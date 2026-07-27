@@ -1029,6 +1029,26 @@ private:
         SET_OP_ATTR(IsCheckerFreeVariable, builder.getUnitAttr());
       if (node.flags.has(VF::RefStatic))
         SET_OP_ATTR(IsRefStatic, builder.getUnitAttr());
+
+      // Slang keeps unpacked-structure member defaults on the FieldSymbols,
+      // rather than synthesizing an initializer on every variable of that
+      // type. Record which field expressions are imported below so later
+      // stages can initialize the corresponding aggregate subelements.
+      if constexpr (std::same_as<T, slang::ast::VariableSymbol>) {
+        if (!node.getInitializer()) {
+          const slang::ast::Type &type = node.getType().getCanonicalType();
+          if (type.kind == slang::ast::SymbolKind::UnpackedStructType) {
+            SmallVector<int64_t> ordinals;
+            for (const slang::ast::FieldSymbol *field :
+                 type.as<slang::ast::UnpackedStructType>().fields)
+              if (field->getInitializer())
+                ordinals.push_back(field->fieldIndex);
+            if (!ordinals.empty())
+              attrs.set("obelisk.aggregate_member_initializer_ordinals",
+                        builder.getDenseI64ArrayAttr(ordinals));
+          }
+        }
+      }
     }
 
     if constexpr (std::same_as<T, slang::ast::ClassPropertySymbol>) {
@@ -1872,6 +1892,17 @@ private:
     } else if constexpr (std::same_as<T, slang::ast::InstanceSymbol>) {
       importPortConnections(node);
       node.body.visit(*this);
+    } else if constexpr (std::same_as<T, slang::ast::VariableSymbol>) {
+      this->visitDefault(node);
+      if (!node.getInitializer()) {
+        const slang::ast::Type &type = node.getType().getCanonicalType();
+        if (type.kind == slang::ast::SymbolKind::UnpackedStructType)
+          for (const slang::ast::FieldSymbol *field :
+               type.as<slang::ast::UnpackedStructType>().fields)
+            if (const slang::ast::Expression *initializer =
+                    field->getInitializer())
+              initializer->visit(*this);
+      }
     } else if constexpr (std::same_as<T, slang::ast::ClockVarSymbol>) {
       this->visitDefault(node);
       if (node.inputSkew.delay)
