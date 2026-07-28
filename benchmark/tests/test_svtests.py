@@ -65,6 +65,17 @@ class SvTestsHelpersTest(unittest.TestCase):
         self.assertFalse(passed)
         self.assertIn("invalid", detail)
 
+    def test_assertion_output_recovers_assignment_pattern_strings(self):
+        self.assertEqual(
+            svtests._assertions_pass(
+                ":assert: (''{valid:10}' == ''{valid:10}')\n"),
+            (True, ""),
+        )
+        passed, detail = svtests._assertions_pass(
+            ":assert: (''{valid:9}' == ''{valid:10}')\n")
+        self.assertFalse(passed)
+        self.assertIn("failed", detail)
+
     def test_filelist_preserves_order_and_expands_nested_inputs(self):
         with tempfile.TemporaryDirectory() as temporary:
             core = Path(temporary).resolve()

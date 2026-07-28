@@ -576,6 +576,8 @@ private:
   FailureOr<Value> convert(Value value, Type targetType, bool sourceSigned,
                            Location location, bool targetSigned = false);
   FailureOr<Value> toPackedScalar(Value value, Location location);
+  FailureOr<Value> formatTaggedUnionPattern(Value value, Type semanticType,
+                                            Location location);
   FailureOr<Value> truthValue(Value value, Location location);
   FailureOr<Value> toLogic(Value value, Location location);
   Value cloneSequentialValue(Value value, Location location);
@@ -1413,6 +1415,72 @@ FailureOr<Value> UnitLowering::toPackedScalar(Value value, Location location) {
     return value;
   return sim::SimPackedFlattenOp::create(builder, location, scalarType, value)
       .getResult();
+}
+
+FailureOr<Value>
+UnitLowering::formatTaggedUnionPattern(Value value, Type semanticType,
+                                       Location location) {
+  auto unionType = dyn_cast<sim::UnpackedUnionType>(value.getType());
+  auto sourceType = dyn_cast<semantic::SourceAggregateType>(semanticType);
+  if (!unionType || !unionType.getIsTagged() || !sourceType ||
+      !sourceType.getIsUnion() || !sourceType.getIsTagged() ||
+      sourceType.getFields().size() != unionType.getFields().size())
+    return failure();
+  if (sourceType.getIsFourState()) {
+    emitError(location)
+        << "four-state tagged-union pattern formatting is unsupported";
+    return failure();
+  }
+
+  Type stringType = sim::StringType::get(function.getContext());
+  auto literal = [&](StringRef text) {
+    return sim::SimStringLiteralOp::create(builder, location, stringType, text)
+        .getResult();
+  };
+  Value pattern = literal("'{}");
+  for (auto [index, attribute] : llvm::enumerate(unionType.getFields())) {
+    auto field = cast<sim::FieldAttr>(attribute);
+    auto sourceField =
+        cast<DictionaryAttr>(sourceType.getFields()[index]);
+    Type sourceFieldType =
+        cast<TypeAttr>(sourceField.get("type")).getValue();
+    Type fieldType = field.getType();
+    Value candidate;
+    if (isa<semantic::VoidType>(sourceFieldType)) {
+      candidate =
+          literal((Twine("'{") + field.getName().getValue() + "}").str());
+    } else {
+      Value member = sim::SimUnionExtractOp::create(
+          builder, location, fieldType, value, index);
+      FailureOr<Value> scalar = toPackedScalar(member, location);
+      if (failed(scalar))
+        return failure();
+      std::optional<unsigned> width = sim::getPackedWidth((*scalar).getType());
+      if (!width || *width > 64) {
+        emitError(location)
+            << "tagged-union pattern member is not a scalar of at most 64 bits";
+        return failure();
+      }
+      bool isSigned = isSignedSemanticType(sourceFieldType);
+      FailureOr<Value> integer =
+          convert(*scalar, builder.getI64Type(), isSigned, location);
+      if (failed(integer))
+        return failure();
+      Value formatted = sim::SimStringFormatIntegerOp::create(
+          builder, location, stringType, *integer,
+          builder.getI32IntegerAttr(10), builder.getBoolAttr(isSigned));
+      SmallVector<Value> parts{
+          literal((Twine("'{") + field.getName().getValue() + ":").str()),
+          formatted, literal("}")};
+      candidate = sim::SimStringConcatOp::create(
+          builder, location, stringType, parts);
+    }
+    Value active = sim::SimUnionIsActiveOp::create(
+        builder, location, builder.getI1Type(), value, index);
+    pattern =
+        arith::SelectOp::create(builder, location, active, candidate, pattern);
+  }
+  return pattern;
 }
 
 FailureOr<Value> UnitLowering::truthValue(Value value, Location location) {
@@ -10436,6 +10504,23 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
                        (*value).getType())) {
           items.push_back(*value);
           flags.push_back(16);
+        } else if (auto unionType =
+                       dyn_cast<sim::UnpackedUnionType>((*value).getType());
+                   unionType && unionType.getIsTagged()) {
+          auto semanticType =
+              child->getAttrOfType<TypeAttr>("semantic_type");
+          if (!semanticType) {
+            emitError(getSemanticLocation(child))
+                << "tagged-union display operand has no semantic type";
+            return failure();
+          }
+          FailureOr<Value> pattern =
+              formatTaggedUnionPattern(*value, semanticType.getValue(),
+                                       getSemanticLocation(child));
+          if (failed(pattern))
+            return failure();
+          items.push_back(*pattern);
+          flags.push_back(8);
         } else {
           FailureOr<Value> scalar =
               toPackedScalar(*value, getSemanticLocation(child));

@@ -32,6 +32,7 @@ SOURCE = model.GitSource(
 
 _METADATA = re.compile(r"^\s*:([a-zA-Z_-]+):\s*(.+)$")
 _ASSERTION = re.compile(r":assert:(.*)")
+_PATTERN_STRING = re.compile(r"''(\{.*?\})'")
 _MODE_ORDER = (
     "simulation",
     "simulation_without_run",
@@ -200,6 +201,12 @@ def _resolve_test_inputs(
 
 def _safe_assertion_value(expression: str) -> bool:
     """Evaluate the deliberately small expression language emitted by sv-tests."""
+    # Assignment-pattern text begins with an apostrophe. Some upstream tests
+    # place that text inside a single-quoted Python string without escaping the
+    # apostrophe, producing tokens such as ``''{valid:10}'``. Recover the
+    # intended string before parsing while leaving the accepted AST unchanged.
+    expression = _PATTERN_STRING.sub(
+        lambda match: repr("'" + match.group(1)), expression)
     tree = ast.parse(expression, mode="eval")
     allowed = (
         ast.Expression,
