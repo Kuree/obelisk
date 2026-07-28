@@ -427,6 +427,7 @@ private:
       ContainerElement,
       AssociativeElement,
       AggregateElement,
+      AggregateSlice,
       StringCharacter,
       Concatenation,
     };
@@ -3112,6 +3113,98 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
     return captured;
   }
 
+  if (auto range =
+          dyn_cast<semantic::SVRangeSelectExpressionOp>(destination)) {
+    SmallVector<Operation *> selection = getChildren(destination);
+    FailureOr<Type> baseType =
+        selection.empty()
+            ? FailureOr<Type>(failure())
+            : getNormalizedSemanticType(selection.front());
+    auto sourceArray =
+        succeeded(baseType) ? dyn_cast<sim::UnpackedArrayType>(*baseType)
+                            : sim::UnpackedArrayType{};
+    auto resultArray = dyn_cast<sim::UnpackedArrayType>(*destinationType);
+    if (selection.size() == 3 && sourceArray && resultArray) {
+      FailureOr<Value> base = lowerExpression(selection.front(), true);
+      if (failed(base))
+        return failure();
+      bool reference = isa<sim::RefType>((*base).getType());
+      bool driver = isa<sim::DriverType>((*base).getType());
+      if (!reference && !driver) {
+        emitError(location)
+            << "unpacked array slice destination is not a reference or driver";
+        return failure();
+      }
+      auto indexType = IntegerType::get(function.getContext(), 65);
+      auto lowerIndex = [&](Operation *index) -> FailureOr<Value> {
+        FailureOr<Value> value = lowerExpression(index);
+        if (failed(value))
+          return failure();
+        FailureOr<Value> scalar =
+            toPackedScalar(*value, getSemanticLocation(index));
+        if (failed(scalar))
+          return failure();
+        return convert(*scalar, indexType, isSignedNode(index),
+                       getSemanticLocation(index));
+      };
+      FailureOr<Value> first = lowerIndex(selection[1]);
+      if (failed(first))
+        return failure();
+      Value ascends;
+      if (range.getSelectionKind() ==
+          semantic::SVRangeSelectionKind::Simple) {
+        FailureOr<Value> second = lowerIndex(selection[2]);
+        if (failed(second))
+          return failure();
+        ascends = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::slt, *first, *second);
+      }
+
+      captured.kind = CapturedLValue::Kind::AggregateSlice;
+      unsigned count = sim::getAggregateNumElements(resultArray);
+      captured.children.reserve(count);
+      for (unsigned ordinal = 0; ordinal < count; ++ordinal) {
+        Value offset = arith::ConstantOp::create(
+            builder, location, indexType,
+            builder.getIntegerAttr(indexType, ordinal));
+        Value above =
+            arith::AddIOp::create(builder, location, *first, offset);
+        Value below =
+            arith::SubIOp::create(builder, location, *first, offset);
+        Value index;
+        switch (range.getSelectionKind()) {
+        case semantic::SVRangeSelectionKind::Simple:
+          index =
+              arith::SelectOp::create(builder, location, ascends, above, below);
+          break;
+        case semantic::SVRangeSelectionKind::IndexedUp:
+          index = above;
+          break;
+        case semantic::SVRangeSelectionKind::IndexedDown:
+          index = below;
+          break;
+        }
+        Type elementType =
+            sim::getAggregateElementType(resultArray, ordinal);
+        CapturedLValue element;
+        element.semanticNode = destination;
+        element.type = elementType;
+        if (reference)
+          element.reference = sim::SimRefArrayElementOp::create(
+              builder, location,
+              sim::RefType::get(function.getContext(), elementType), *base,
+              index);
+        else
+          element.reference = sim::SimDriverArrayElementOp::create(
+              builder, location,
+              sim::DriverType::get(function.getContext(), elementType), *base,
+              index);
+        captured.children.push_back(std::move(element));
+      }
+      return captured;
+    }
+  }
+
   if (isa<semantic::SVElementSelectExpressionOp>(destination)) {
     SmallVector<Operation *> selection = getChildren(destination);
     if (selection.size() == 2) {
@@ -3303,6 +3396,19 @@ UnitLowering::loadCapturedLValue(const CapturedLValue &destination,
                destination.ordinal)
         .getResult();
   }
+  case CapturedLValue::Kind::AggregateSlice: {
+    SmallVector<Value> elements;
+    elements.reserve(destination.children.size());
+    for (const CapturedLValue &child : destination.children) {
+      FailureOr<Value> element = loadCapturedLValue(child, location);
+      if (failed(element))
+        return failure();
+      elements.push_back(*element);
+    }
+    return sim::SimAggregateConstructOp::create(
+               builder, location, destination.type, elements)
+        .getResult();
+  }
   case CapturedLValue::Kind::StringCharacter: {
     if (destination.children.size() != 1)
       return failure();
@@ -3407,6 +3513,7 @@ bool UnitLowering::haveSameCapturedStorage(const CapturedLValue &lhs,
            lhsConstant == rhsConstant;
   }
   case CapturedLValue::Kind::StringCharacter:
+  case CapturedLValue::Kind::AggregateSlice:
   case CapturedLValue::Kind::Concatenation:
     return false;
   }
@@ -3614,6 +3721,25 @@ LogicalResult UnitLowering::writeCapturedLValue(
         destination.ordinal);
     return writeCapturedLValue(base, updated, false, nonblocking, location,
                                delay);
+  }
+  case CapturedLValue::Kind::AggregateSlice: {
+    FailureOr<Value> converted =
+        convert(value, destination.type, sourceSigned, location,
+                isSignedNode(destination.semanticNode));
+    if (failed(converted) ||
+        destination.children.size() !=
+            sim::getAggregateNumElements(destination.type))
+      return failure();
+    for (auto [ordinal, child] : llvm::enumerate(destination.children)) {
+      Type elementType =
+          sim::getAggregateElementType(destination.type, ordinal);
+      Value element = sim::SimAggregateExtractOp::create(
+          builder, location, elementType, *converted, ordinal);
+      if (failed(writeCapturedLValue(child, element, false, nonblocking,
+                                     location, delay)))
+        return failure();
+    }
+    return success();
   }
   case CapturedLValue::Kind::StringCharacter: {
     if (destination.children.size() != 1) {
