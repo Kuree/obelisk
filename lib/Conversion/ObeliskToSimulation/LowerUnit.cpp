@@ -8921,6 +8921,14 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     postponedDisplay = "$displayo";
   else if (name == "$strobeh")
     postponedDisplay = "$displayh";
+  else if (name == "$fstrobe")
+    postponedDisplay = "$fdisplay";
+  else if (name == "$fstrobeb")
+    postponedDisplay = "$fdisplayb";
+  else if (name == "$fstrobeo")
+    postponedDisplay = "$fdisplayo";
+  else if (name == "$fstrobeh")
+    postponedDisplay = "$fdisplayh";
   else if (name == "$monitor") {
     postponedDisplay = "$display";
     persistentMonitor = true;
