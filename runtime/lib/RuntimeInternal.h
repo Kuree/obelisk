@@ -10,6 +10,7 @@
 #include <array>
 #include <atomic>
 #include <cstdio>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -23,6 +24,13 @@
 #include <vector>
 
 constexpr uint64_t OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG = UINT64_C(1) << 63;
+
+struct SignalWaitLatch {
+  bool triggered = false;
+  bool affected = false;
+};
+
+struct SignalSubscription;
 
 struct FileEntry {
   FILE *stream = nullptr;
@@ -295,11 +303,12 @@ struct ScheduledProcess {
   uint64_t token = 0;
   uint64_t parent = 0;
   uint64_t observedEpoch = 0;
-  uint64_t observedSignalSequence = 0;
   uint64_t wakeTime = 0;
   uint64_t waitOffset = 0;
   uint64_t waitSize = 0;
   std::vector<uint64_t> waitGenerations;
+  std::vector<std::unique_ptr<SignalSubscription>> signalSubscriptions;
+  std::unique_ptr<SignalWaitLatch> signalLatch;
   std::vector<std::pair<uint32_t, uint32_t>> continuationRanks;
   uint32_t suspendKind = OBELISK_RT_SUSPEND_NONE;
   uint32_t phase = 0;
@@ -313,13 +322,6 @@ struct ScheduledProcess {
   bool started = false;
   bool urgent = false;
   bool signalTriggered = false;
-};
-
-struct ScheduledSignalEvent {
-  uint64_t sequence = 0;
-  uint64_t bitOffset = 0;
-  uint64_t bitWidth = 0;
-  uint32_t edges = 0;
 };
 
 struct SignalValueSnapshot {
@@ -424,11 +426,12 @@ struct ScheduledDesignTask {
   uint64_t scratchOffset = 0;
   uint64_t scratchSize = 0;
   uint64_t observedEpoch = 0;
-  uint64_t observedSignalSequence = 0;
   uint64_t wakeTime = 0;
   uint64_t waitOffset = 0;
   uint64_t waitSize = 0;
   std::vector<uint64_t> waitGenerations;
+  std::vector<std::unique_ptr<SignalSubscription>> signalSubscriptions;
+  std::unique_ptr<SignalWaitLatch> signalLatch;
   uint32_t suspendKind = OBELISK_RT_SUSPEND_NONE;
   uint32_t phase = 0;
   uint32_t homeRegion = OBELISK_RT_REGION_ACTIVE;
@@ -440,6 +443,106 @@ struct ScheduledDesignTask {
   bool urgent = false;
   bool terminated = false;
   bool signalTriggered = false;
+};
+
+struct SignalSubscriptionBucketKey {
+  uint32_t kind = 0;
+  uint32_t id = 0;
+  int64_t page = 0;
+
+  bool operator==(const SignalSubscriptionBucketKey &other) const {
+    return kind == other.kind && id == other.id && page == other.page;
+  }
+};
+
+struct SignalSubscriptionBucketKeyHash {
+  size_t operator()(const SignalSubscriptionBucketKey &key) const {
+    size_t hash =
+        std::hash<uint64_t>{}((uint64_t{key.kind} << 32) | uint64_t{key.id});
+    size_t page = std::hash<int64_t>{}(key.page);
+    return hash ^ (page + size_t{0x9e3779b9} + (hash << 6) + (hash >> 2));
+  }
+};
+
+struct SignalSubscriptionBucketSlot {
+  SignalSubscriptionBucketKey key;
+  size_t bucketIndex = 0;
+};
+
+struct SignalSubscriptionBucketEntry {
+  SignalSubscription *subscription = nullptr;
+  size_t slotIndex = 0;
+};
+
+struct SignalSubscription {
+  enum Target : uint8_t {
+    NativeDirectWait,
+    DesignDirectWait,
+    NativeComputedWait,
+    DesignComputedWait,
+  };
+
+  uint64_t stableID = 0;
+  uint64_t bitWidth = 0;
+  uint64_t lastExaminedSequence = 0;
+  uint64_t waiterToken = 0;
+  uint32_t edge = 0;
+  Target target = NativeDirectWait;
+  SignalWaitLatch *latch = nullptr;
+  std::vector<SignalSubscriptionBucketSlot> bucketSlots;
+};
+
+struct SignalSubscriptionDiagnostics {
+  uint64_t publications = 0;
+  uint64_t subscriptionsCurrent = 0;
+  uint64_t subscriptionsHighWater = 0;
+  uint64_t subscribersExamined = 0;
+  uint64_t readinessCalls = 0;
+  uint64_t candidateScans = 0;
+  uint64_t schedulerIterations = 0;
+  uint64_t fallbackRescans = 0;
+};
+
+// Three packed edge planes with allocation-free storage for the common
+// <=64-bit signal. Keeping edge identity per bit lets range publication batch
+// map lookups without conflating a posedge on one bit with a negedge on
+// another.
+class PackedSignalTransitionBuffer {
+public:
+  explicit PackedSignalTransitionBuffer(uint64_t bitWidth)
+      : byteCount((bitWidth + 7) / 8) {
+    if (bitWidth > UINT64_MAX - 7 ||
+        byteCount > std::numeric_limits<size_t>::max() / uint64_t{3})
+      throw std::bad_alloc();
+    if (byteCount > kInlineBytes)
+      overflow.assign(static_cast<size_t>(byteCount * 3), 0);
+  }
+
+  void record(uint64_t bit, uint32_t edges) {
+    set(changed(), bit);
+    if ((edges & OBELISK_RT_SIGNAL_POSEDGE) != 0)
+      set(posedge(), bit);
+    if ((edges & OBELISK_RT_SIGNAL_NEGEDGE) != 0)
+      set(negedge(), bit);
+  }
+
+  uint8_t *changed() { return storage(); }
+  uint8_t *posedge() { return storage() + byteCount; }
+  uint8_t *negedge() { return storage() + byteCount * 2; }
+
+private:
+  static constexpr uint64_t kInlineBytes = 8;
+
+  static void set(uint8_t *plane, uint64_t bit) {
+    plane[bit / 8] |= static_cast<uint8_t>(1u << (bit % 8));
+  }
+  uint8_t *storage() {
+    return byteCount <= kInlineBytes ? inlineStorage.data() : overflow.data();
+  }
+
+  uint64_t byteCount;
+  std::array<uint8_t, kInlineBytes * 3> inlineStorage{};
+  std::vector<uint8_t> overflow;
 };
 
 struct ImportBinding {
@@ -510,13 +613,28 @@ struct obelisk_rt_context {
   std::vector<uint32_t> freeMCDs;
   std::shared_ptr<const uint8_t> errorLifetime;
   std::vector<ScheduledProcess> scheduledProcesses;
-  std::vector<ScheduledSignalEvent> scheduledSignalEvents;
+  std::unordered_map<uint64_t, size_t> scheduledProcessIndices;
+  std::unordered_set<uint64_t> nativePollCandidates;
   std::unordered_map<uint64_t, SignalValueSnapshot> signalValueSnapshots;
+  std::unordered_map<SignalSubscriptionBucketKey,
+                     std::vector<SignalSubscriptionBucketEntry>,
+                     SignalSubscriptionBucketKeyHash>
+      signalSubscriptionBuckets;
+  std::vector<uint64_t> pendingNativeComputedWaiters;
+  std::vector<uint64_t> pendingDesignComputedWaiters;
+  std::unordered_set<uint64_t> nativeConditionalSignalWaiters;
+  std::unordered_set<uint64_t> designConditionalSignalWaiters;
+  uint64_t schedulerSelectionGeneration = 1;
+  bool signalDiagnosticsEnabled = false;
+  bool signalDiagnosticsReport = false;
+  SignalSubscriptionDiagnostics signalDiagnostics;
   std::vector<ScheduledNBA> scheduledNBAs;
   std::vector<ScheduledManagedNBA> scheduledManagedNBAs;
   std::vector<ScheduledDesignNBA> scheduledDesignNBAs;
   std::vector<ScheduledDesignEvent> scheduledDesignEvents;
   std::vector<ScheduledDesignTask> scheduledDesignTasks;
+  std::unordered_map<uint64_t, size_t> scheduledDesignTaskIndices;
+  std::unordered_set<uint64_t> designPollCandidates;
   ReusableByteBufferPool designTaskFrames;
   uint64_t nextSchedulerSequence = 1;
   uint64_t nextNativeProcessToken = 1;
@@ -596,6 +714,32 @@ struct obelisk_rt_context {
   obelisk_rt_context();
   ~obelisk_rt_context();
 };
+
+inline bool
+obelisk_rt_has_conditional_signal_waiters(const obelisk_rt_context *context) {
+  return context && (!context->nativeConditionalSignalWaiters.empty() ||
+                     !context->designConditionalSignalWaiters.empty());
+}
+
+inline bool
+obelisk_rt_design_signal_wait_blocked(const ScheduledDesignTask &task) {
+  if (task.terminated || !task.started || task.signalTriggered)
+    return false;
+  bool signalSuspend = task.suspendKind == OBELISK_RT_SUSPEND_CHANGE ||
+                       task.suspendKind == OBELISK_RT_SUSPEND_EDGE;
+  if (signalSuspend && task.waitSize >= sizeof(obelisk_rt_wait_record_v1) &&
+      task.waitOffset <= task.frame.size() &&
+      task.waitSize <= task.frame.size() - task.waitOffset) {
+    const auto *wait = reinterpret_cast<const obelisk_rt_wait_record_v1 *>(
+        task.frame.data() + task.waitOffset);
+    if (wait->flags == OBELISK_RT_WAIT_LEVEL_TRUE ||
+        wait->flags == OBELISK_RT_WAIT_EDGE_IFF)
+      return true;
+  }
+  return !task.signalSubscriptions.empty() && task.signalLatch &&
+         !task.signalLatch->triggered &&
+         (signalSuspend || task.suspendKind == OBELISK_RT_SUSPEND_OBSERVER);
+}
 
 ManagedHeap *obelisk_rt_managed_heap_create(obelisk_rt_context *context);
 void obelisk_rt_managed_heap_destroy(ManagedHeap *heap) noexcept;
@@ -726,6 +870,7 @@ private:
 
 void setLastErrorUnlocked(obelisk_rt_context *context, std::string message);
 void setLastError(obelisk_rt_context *context, std::string message);
+void obelisk_rt_report_signal_diagnostics_unlocked(obelisk_rt_context *context);
 
 void obelisk_rt_retain_controls_unlocked(obelisk_rt_context *context,
                                          const std::vector<uint64_t> &controls);
@@ -819,6 +964,35 @@ bool obelisk_rt_append_signal_event_unlocked(obelisk_rt_context *context,
                                              bool oldUnknown, bool newValue,
                                              bool newUnknown,
                                              bool evaluateComputedObservers);
+bool obelisk_rt_publish_signal_occurrence_unlocked(
+    obelisk_rt_context *context, uint64_t stableID, uint64_t bitWidth,
+    uint32_t edges, uint64_t *outSequence = nullptr);
+// Publish one packed transition mask for a committed signal range. The three
+// planes retain per-bit edge identity so a batched NBA cannot spuriously wake
+// a posedge waiter because another bit in the range had a posedge.
+bool obelisk_rt_publish_signal_transition_batch_unlocked(
+    obelisk_rt_context *context, uint64_t stableID, uint64_t bitWidth,
+    const uint8_t *changed, const uint8_t *posedge, const uint8_t *negedge,
+    uint64_t edgeBitOffset = 0, uint64_t *outSequence = nullptr);
+bool obelisk_rt_latch_conditional_signal_waiters_unlocked(
+    obelisk_rt_context *context, uint64_t stableID, uint32_t edges);
+bool obelisk_rt_latch_conditional_signal_range_unlocked(
+    obelisk_rt_context *context, uint64_t stableID, uint64_t bitWidth,
+    uint32_t edges);
+bool obelisk_rt_register_signal_wait_unlocked(
+    obelisk_rt_context *context, const obelisk_rt_wait_record_v1 *wait,
+    std::vector<std::unique_ptr<SignalSubscription>> &subscriptions,
+    std::unique_ptr<SignalWaitLatch> &latch, uint64_t waiterToken = 0,
+    bool designWaiter = false);
+bool obelisk_rt_register_computed_signal_wait_unlocked(
+    obelisk_rt_context *context, const obelisk_rt_computed_wait_record_v1 *wait,
+    uint64_t waiterToken, bool designWaiter,
+    std::vector<std::unique_ptr<SignalSubscription>> &subscriptions,
+    std::unique_ptr<SignalWaitLatch> &latch);
+void obelisk_rt_unregister_signal_wait_unlocked(
+    obelisk_rt_context *context,
+    std::vector<std::unique_ptr<SignalSubscription>> &subscriptions,
+    uint64_t waiterToken = 0, bool designWaiter = false);
 bool obelisk_rt_notify_observer_event_unlocked(obelisk_rt_context *context,
                                                uint64_t stableID);
 bool obelisk_rt_notify_observer_signal_unlocked(obelisk_rt_context *context,

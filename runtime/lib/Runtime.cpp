@@ -112,6 +112,11 @@ bool validObserverInventory(
 } // namespace
 
 obelisk_rt_context::obelisk_rt_context() {
+  if (const char *diagnostics = std::getenv("OBELISK_RT_SIGNAL_DIAGNOSTICS")) {
+    signalDiagnosticsEnabled =
+        diagnostics[0] != '\0' && std::strcmp(diagnostics, "0") != 0;
+    signalDiagnosticsReport = signalDiagnosticsEnabled;
+  }
   errorLifetime = std::make_shared<const uint8_t>(0);
   managedHeap = obelisk_rt_managed_heap_create(this);
   mcd[0].stream = stdout;
@@ -125,7 +130,36 @@ obelisk_rt_context::obelisk_rt_context() {
   obelisk_rt_random_seed_context_unlocked(this, 1);
 }
 
+void obelisk_rt_report_signal_diagnostics_unlocked(
+    obelisk_rt_context *context) {
+  if (!context || !context->signalDiagnosticsReport)
+    return;
+  std::fprintf(
+      stderr,
+      "obelisk-signal-diagnostics publications=%llu "
+      "subscriptions_current=%llu subscriptions_high_water=%llu "
+      "subscribers_examined=%llu readiness_calls=%llu "
+      "candidate_scans=%llu scheduler_iterations=%llu "
+      "fallback_rescans=%llu\n",
+      static_cast<unsigned long long>(context->signalDiagnostics.publications),
+      static_cast<unsigned long long>(
+          context->signalDiagnostics.subscriptionsCurrent),
+      static_cast<unsigned long long>(
+          context->signalDiagnostics.subscriptionsHighWater),
+      static_cast<unsigned long long>(
+          context->signalDiagnostics.subscribersExamined),
+      static_cast<unsigned long long>(
+          context->signalDiagnostics.readinessCalls),
+      static_cast<unsigned long long>(
+          context->signalDiagnostics.candidateScans),
+      static_cast<unsigned long long>(
+          context->signalDiagnostics.schedulerIterations),
+      static_cast<unsigned long long>(
+          context->signalDiagnostics.fallbackRescans));
+}
+
 obelisk_rt_context::~obelisk_rt_context() {
+  obelisk_rt_report_signal_diagnostics_unlocked(this);
   threadErrors.erase(this);
   obelisk_rt_managed_heap_destroy(managedHeap);
 }
@@ -139,6 +173,12 @@ void destroyContextNow(obelisk_rt_context *context) noexcept {
       obelisk_rt_v1_vpi_shutdown(context);
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
+      for (ScheduledProcess &scheduled : context->scheduledProcesses)
+        obelisk_rt_unregister_signal_wait_unlocked(
+            context, scheduled.signalSubscriptions);
+      for (ScheduledDesignTask &task : context->scheduledDesignTasks)
+        obelisk_rt_unregister_signal_wait_unlocked(context,
+                                                   task.signalSubscriptions);
       processes.swap(context->scheduledProcesses);
     }
     for (ScheduledProcess &scheduled : processes) {

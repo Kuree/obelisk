@@ -946,11 +946,14 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
                             ((stateValue & stateMask) ? sourceMask : 0);
         if (unknown && fourState)
           unknown[sourceLimb] = (unknown[sourceLimb] & ~sourceMask) |
-              ((stateUnknown & stateMask) ? sourceMask : 0);
+                                ((stateUnknown & stateMask) ? sourceMask : 0);
         else if (unknown)
           unknown[sourceLimb] &= ~sourceMask;
       }
     }
+    if (write && !transitions.empty())
+      obelisk_rt_invalidate_signal_snapshots_unlocked(context, stateOffset,
+                                                      width);
   }
   if (!write && width % 64 != 0) {
     uint64_t mask = (uint64_t{1} << (width % 64)) - 1;
@@ -969,7 +972,7 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
     }
     if (kind == OBELISK_RT_DESIGN_RECORD_DRIVER)
       return obelisk_rt_resolve_design_drivers(context, stateOffset,
-                                                stateOffset + width);
+                                               stateOffset + width);
   }
   return OBELISK_RT_OK;
 }
@@ -1087,6 +1090,9 @@ obelisk_rt_v1_design_release(obelisk_rt_context *context,
           transitions.push_back({absolute, edges});
       }
     }
+    if (!transitions.empty())
+      obelisk_rt_invalidate_signal_snapshots_unlocked(context, stateOffset,
+                                                      bitWidth);
   }
   // A variable retains the forced value. A net is immediately republished
   // from its current driver slots (and becomes Z when the component is
