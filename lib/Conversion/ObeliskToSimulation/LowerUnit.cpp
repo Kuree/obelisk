@@ -8251,6 +8251,65 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     return convertResult(value);
   }
 
+  if (name == "$dist_uniform") {
+    if (children.size() != 3) {
+      emitError(location) << "$dist_uniform requires exactly three arguments";
+      return failure();
+    }
+    Operation *seed = children[0];
+    if (auto assignment =
+            dyn_cast<semantic::SVAssignmentExpressionOp>(seed)) {
+      SmallVector<Operation *> outputChildren = getChildren(assignment);
+      if (outputChildren.size() == 2)
+        seed = outputChildren.front();
+    }
+    FailureOr<Value> seedDestination = lowerExpression(seed, true);
+    if (failed(seedDestination)) {
+      emitError(getSemanticLocation(seed))
+          << "$dist_uniform seed must be a writable integral variable";
+      return failure();
+    }
+    FailureOr<Value> seedValue =
+        loadReference(*seedDestination, getSemanticLocation(seed));
+    if (failed(seedValue))
+      return failure();
+    FailureOr<Value> seed32 =
+        convert(*seedValue, i32, isSignedNode(seed), location);
+    if (failed(seed32))
+      return failure();
+    Value extendedSeed =
+        arith::ExtUIOp::create(builder, location, i64, *seed32);
+    sim::SimRandomSeedOp::create(builder, location, context, extendedSeed);
+
+    FailureOr<Value> first32 = lowerInteger(children[1], i32);
+    FailureOr<Value> second32 = lowerInteger(children[2], i32);
+    if (failed(first32) || failed(second32))
+      return failure();
+    Value first = arith::ExtSIOp::create(builder, location, i64, *first32);
+    Value second = arith::ExtSIOp::create(builder, location, i64, *second32);
+    Value firstBelow = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::slt, first, second);
+    Value low =
+        arith::SelectOp::create(builder, location, firstBelow, first, second);
+    Value high =
+        arith::SelectOp::create(builder, location, firstBelow, second, first);
+    Value extent = arith::SubIOp::create(builder, location, high, low);
+    extent =
+        arith::AddIOp::create(builder, location, extent, constant(i64, 1));
+    Value draw = sim::SimRandomBoundedOp::create(
+        builder, location, i64, context, extent);
+    Value value = arith::AddIOp::create(builder, location, low, draw);
+    value = arith::TruncIOp::create(builder, location, i32, value);
+
+    Type destinationType = getReferenceElementType(*seedDestination);
+    FailureOr<Value> updated =
+        convert(value, destinationType, true, location);
+    if (failed(updated) ||
+        failed(storeReference(*seedDestination, *updated, location)))
+      return failure();
+    return convertResult(value);
+  }
+
   if (name == "$sampled") {
     if (children.size() != 1) {
       emitError(location) << "$sampled requires exactly one argument";
