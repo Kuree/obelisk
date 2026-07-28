@@ -8808,8 +8808,8 @@ public:
                 llvmConstant(rewriter, location, i32,
                              isa<sim::StringType>(op.getResult().getType())
                                  ? OBELISK_RT_ARGUMENT_VALUE_STRING
-                             : isa<sim::ClassHandleType, sim::DynamicArrayType,
-                                   sim::QueueType>(op.getResult().getType())
+                             : sim::isManagedHandleType(
+                                   op.getResult().getType())
                                  ? OBELISK_RT_ARGUMENT_VALUE_CLASS
                                  : OBELISK_RT_ARGUMENT_VALUE_BITS),
                 valueOut, unknownOut})
@@ -8882,8 +8882,7 @@ public:
         llvmConstant(
             rewriter, location, i32,
             isa<sim::StringType>(valueType) ? OBELISK_RT_ARGUMENT_VALUE_STRING
-            : isa<sim::ClassHandleType, sim::DynamicArrayType, sim::QueueType>(
-                  valueType)
+            : sim::isManagedHandleType(valueType)
                 ? OBELISK_RT_ARGUMENT_VALUE_CLASS
                 : OBELISK_RT_ARGUMENT_VALUE_BITS)};
     Value valueIn =

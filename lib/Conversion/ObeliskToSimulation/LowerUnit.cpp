@@ -7454,7 +7454,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       return failure();
     }
     if (direction == semantic::SVArgumentDirection::Ref) {
-      if (directTask) {
+      auto argumentRef = formal.getAs<BoolAttr>("argument_ref");
+      if (directTask && (!argumentRef || !argumentRef.getValue())) {
         if (!isa<sim::RefType>((*destination).getType())) {
           emitError(location) << "task ref actual must be directly addressable";
           return failure();

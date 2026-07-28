@@ -9,6 +9,7 @@ module attributes {
   obelisk_sim.design @container_references {
     obelisk_sim.scope.decl 0 hierarchy "top"
     obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.capture"
+    obelisk_sim.code_unit.decl 2 in 0 initial hierarchy "top.managed_ref"
 
     obelisk_sim.func @capture(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
@@ -25,11 +26,33 @@ module attributes {
         !obelisk_sim.argument_ref<i64>
       obelisk_sim.return
     }
+
+    obelisk_sim.func @managed_ref(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %reference: !obelisk_sim.argument_ref<!obelisk_sim.assoc_array<i32, i64, true, false>>
+            {obelisk_sim.capture_kind = 1 : i32})
+        attributes {code_unit_id = 2 : i64, entry_kind = 1 : i32} {
+      %value = obelisk_sim.argument_ref.load %reference :
+          !obelisk_sim.argument_ref<!obelisk_sim.assoc_array<i32, i64, true, false>> ->
+          !obelisk_sim.assoc_array<i32, i64, true, false>
+      obelisk_sim.argument_ref.store %value to %reference :
+          !obelisk_sim.assoc_array<i32, i64, true, false>,
+          !obelisk_sim.argument_ref<!obelisk_sim.assoc_array<i32, i64, true, false>>
+      obelisk_sim.return
+    }
   }
 }
 
 // CHECK: obelisk_sim.reference_path.index
 // CHECK: !obelisk_sim.reference_path<i64>
 // CHECK: obelisk_sim.argument_ref.from_path
+// CHECK: obelisk_sim.argument_ref.load
+// CHECK: obelisk_sim.argument_ref.store
 // NATIVE: llvm.call @obelisk_rt_v1_reference_path_index_create
+// NATIVE: %[[LOAD_KIND:.*]] = llvm.mlir.constant(1 : i32) : i32
+// NATIVE-NEXT: llvm.call @obelisk_rt_v1_argument_ref_load
+// NATIVE-SAME: %[[LOAD_KIND]]
+// NATIVE: %[[STORE_KIND:.*]] = llvm.mlir.constant(1 : i32) : i32
+// NATIVE: llvm.call @obelisk_rt_v1_argument_ref_store
+// NATIVE-SAME: %[[STORE_KIND]]
 // BYTECODE: obelisk.bytecode.image

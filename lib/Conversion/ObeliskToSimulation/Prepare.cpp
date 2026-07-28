@@ -2309,6 +2309,41 @@ void ObeliskSimPreparePass::runOnOperation() {
         callEdges[unit.source].push_back(target);
     });
   }
+  llvm::DenseSet<Operation *> indirectRefTasks;
+  for (UnitInfo &unit : units)
+    unit.source->walk([&](semantic::SVCallExpressionOp call) {
+      Operation *target = resolveDirectCallee(call);
+      auto task = dyn_cast_or_null<semantic::SVSubroutineSymbolOp>(target);
+      if (!task ||
+          task.getSubroutineKind() != semantic::SVSubroutineKind::Task ||
+          getOwningClass(task))
+        return;
+      SmallVector<semantic::SVFormalArgumentSymbolOp> formals;
+      for (Operation *child : getChildren(task))
+        if (auto formal =
+                dyn_cast<semantic::SVFormalArgumentSymbolOp>(child))
+          formals.push_back(formal);
+      SmallVector<Operation *> actuals = getChildren(call);
+      if (actuals.size() != formals.size())
+        return;
+      for (auto [actual, formal] : llvm::zip_equal(actuals, formals)) {
+        if (formal.getDirection() != semantic::SVArgumentDirection::Ref)
+          continue;
+        auto select = dyn_cast<semantic::SVElementSelectExpressionOp>(actual);
+        if (!select)
+          continue;
+        SmallVector<Operation *> selection = getChildren(select);
+        if (selection.size() != 2)
+          continue;
+        FailureOr<Type> base = getNormalizedSemanticType(selection.front());
+        if (succeeded(base) &&
+            isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
+                *base)) {
+          indirectRefTasks.insert(target);
+          return;
+        }
+      }
+    });
   SmallVector<std::pair<Operation *, Operation *>> virtualOverrideEdges;
   for (semantic::SVClassTypeOp classType : classSources)
     for (Operation *child : getChildren(classType)) {
@@ -2496,6 +2531,12 @@ void ObeliskSimPreparePass::runOnOperation() {
               "is_signed",
               builder.getBoolAttr(semanticType &&
                                   isSignedSemanticType(*semanticType))),
+          builder.getNamedAttr(
+              "argument_ref",
+              builder.getBoolAttr(
+                  formal.getDirection() ==
+                      semantic::SVArgumentDirection::Ref &&
+                  indirectRefTasks.contains(targetSource))),
       };
       if (dpiTarget && semanticType) {
         FailureOr<DPIABIKind> category =
@@ -2705,8 +2746,9 @@ void ObeliskSimPreparePass::runOnOperation() {
             continue;
           }
           bool isRef = direction == semantic::SVArgumentDirection::Ref;
+          bool indirectRef = indirectRefTasks.contains(unit.source);
           Type argumentType =
-              isRef ? (directTask && !instanceClassMethod
+              isRef ? (directTask && !instanceClassMethod && !indirectRef
                            ? Type(sim::RefType::get(context, *type))
                            : Type(sim::ArgumentRefType::get(context, *type)))
                     : *type;

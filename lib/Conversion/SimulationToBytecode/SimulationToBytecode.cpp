@@ -2344,8 +2344,7 @@ private:
           (storage->fourState ? 1u : 0u) |
           ((isa<sim::StringType>(op.getResult().getType())
                 ? OBELISK_RT_ARGUMENT_VALUE_STRING
-            : isa<sim::ClassHandleType, sim::DynamicArrayType, sim::QueueType>(
-                  op.getResult().getType())
+            : sim::isManagedHandleType(op.getResult().getType())
                 ? OBELISK_RT_ARGUMENT_VALUE_CLASS
                 : OBELISK_RT_ARGUMENT_VALUE_BITS)
            << 1);
@@ -2366,8 +2365,7 @@ private:
           (storage->fourState ? 1u : 0u) |
           ((isa<sim::StringType>(op.getValue().getType())
                 ? OBELISK_RT_ARGUMENT_VALUE_STRING
-            : isa<sim::ClassHandleType, sim::DynamicArrayType, sim::QueueType>(
-                  op.getValue().getType())
+            : sim::isManagedHandleType(op.getValue().getType())
                 ? OBELISK_RT_ARGUMENT_VALUE_CLASS
                 : OBELISK_RT_ARGUMENT_VALUE_BITS)
            << 1);
