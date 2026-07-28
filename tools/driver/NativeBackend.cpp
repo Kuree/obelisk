@@ -205,7 +205,10 @@ LogicalResult addMinimalMain(ModuleOp module) {
 
 LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
                           bool bytecode, StringRef vpi,
-                          StringRef nativeScheduler, bool &requiresStateSync) {
+                          obelisk::sim::NativeSchedulerMode nativeScheduler,
+                          bool &requiresStateSync) {
+  if (bytecode && nativeScheduler == obelisk::sim::NativeSchedulerMode::Auto)
+    nativeScheduler = obelisk::sim::NativeSchedulerMode::Generic;
   module->setAttr("llvm.target_triple",
                   StringAttr::get(module.getContext(), kTargetTriple));
   module->setAttr(
@@ -221,13 +224,16 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
       hasLanguageOverride = true;
   });
   requiresStateSync = vpi != "off" || hasLanguageOverride;
-  module->setAttr("obelisk.native_scheduler",
-                  StringAttr::get(module.getContext(), nativeScheduler));
+  module->setAttr(
+      "obelisk.native_scheduler",
+      obelisk::sim::NativeSchedulerModeAttr::get(module.getContext(),
+                                                 nativeScheduler));
   // Hybrid AOT keeps bytecode available as the canonical implementation for
   // fragments that cannot be scheduled statically and for writable VPI
   // transition stages. The shared process frame lets those fragments return
   // to native execution at a continuation boundary without copying state.
-  bool needsHybridBytecode = nativeScheduler != "generic";
+  bool needsHybridBytecode =
+      nativeScheduler != obelisk::sim::NativeSchedulerMode::Generic;
   if (bytecode || needsHybridBytecode || vpi != "off" || hasLanguageOverride) {
     EncodeObeliskSimToBytecodePassOptions options;
     options.vpi = vpi.str();
@@ -752,8 +758,14 @@ LogicalResult emitNativeOutput(ModuleOp module,
     return failure();
   }
   bool requiresStateSync = false;
+  std::optional<obelisk::sim::NativeSchedulerMode> nativeScheduler =
+      obelisk::sim::symbolizeNativeSchedulerMode(options.nativeScheduler);
+  if (!nativeScheduler) {
+    errs() << "obelisk: error: invalid native scheduler mode\n";
+    return failure();
+  }
   if (failed(lowerToLLVM(module, *targetMachine, options.bytecode, options.vpi,
-                         options.nativeScheduler, requiresStateSync)))
+                         *nativeScheduler, requiresStateSync)))
     return failure();
 
   registerLLVMDialectTranslation(*module.getContext());

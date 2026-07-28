@@ -1025,6 +1025,21 @@ bool nativeWaitReady(obelisk_rt_context &context,
   }
 }
 
+bool nativeProcessReady(obelisk_rt_context &context,
+                        const ScheduledProcess &process,
+                        bool directStaticSignalWait) {
+  if (!process.started || process.suspendKind == OBELISK_RT_SUSPEND_NONE)
+    return true;
+  if (process.suspendKind == OBELISK_RT_SUSPEND_DELAY)
+    return process.wakeTime <= context.schedulerTime;
+  if (directStaticSignalWait &&
+      (process.suspendKind == OBELISK_RT_SUSPEND_CHANGE ||
+       process.suspendKind == OBELISK_RT_SUSPEND_EDGE))
+    return process.signalTriggered ||
+           (process.signalLatch && process.signalLatch->triggered);
+  return nativeWaitReady(context, process);
+}
+
 bool indexedSignalBlocked(const ScheduledProcess &process) {
   if (!process.instance || !process.started || process.signalTriggered)
     return false;
@@ -2516,7 +2531,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
       plan->version != OBELISK_RT_NATIVE_SCHEDULE_PLAN_VERSION ||
       plan->size < sizeof(obelisk_rt_native_schedule_plan_v1) ||
       !plan->mutable_state || plan->mutable_state_size == 0 ||
-      plan->actor_capacity == 0 || !actorStorageFits || plan->flags != 0 ||
+      plan->actor_capacity == 0 || !actorStorageFits ||
+      (plan->flags & ~OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC) != 0 ||
       !plan->bind || !plan->run || !plan->fallback_snapshot)
     return OBELISK_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
@@ -2536,6 +2552,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
     }
     try {
       context->nativeScheduleActors.assign(plan->actor_capacity, nullptr);
+      context->nativeScheduleActorTokens.assign(plan->actor_capacity, 0);
     } catch (...) {
       std::lock_guard<std::mutex> registryLock(nativeScheduleRegistryMutex);
       installedNativeScheduleStates.erase(plan->mutable_state);
@@ -2601,6 +2618,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_aot(
     context->scheduledProcesses.erase(found);
     rebuildNativeSchedulerIndexUnlocked(context);
   };
+  uint64_t actorToken = 0;
   try {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     auto found = std::find_if(context->scheduledProcesses.begin(),
@@ -2618,6 +2636,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_aot(
                                             bytecodeContinuations +
                                                 bytecodeContinuationCount);
       found->aotActorSlot = actorSlot;
+      actorToken = found->token;
     }
   } catch (const std::bad_alloc &) {
     status = OBELISK_RT_OUT_OF_MEMORY;
@@ -2629,19 +2648,29 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_aot(
     return status;
   }
   status = plan->bind(plan->mutable_state, context, actorSlot, instance);
-  if (status == OBELISK_RT_OK) {
+  bool bound = status == OBELISK_RT_OK;
+  if (bound) {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    ScheduledProcess *scheduled = findScheduledProcess(context, actorToken);
     if (context->nativeSchedulePlan != plan ||
-        context->nativeScheduleActors[actorSlot]) {
+        context->nativeScheduleActors[actorSlot] || !scheduled ||
+        scheduled->instance != instance) {
       status = OBELISK_RT_INVALID_LIFECYCLE;
     } else {
       context->nativeScheduleActors[actorSlot] = instance;
+      context->nativeScheduleActorTokens[actorSlot] = actorToken;
       if (context->nativeScheduleExternalWritePending &&
           (instance->descriptor->available_tiers &
            OBELISK_RT_TIER_MASK_BYTECODE) != 0)
         instance->tier = OBELISK_RT_TIER_BYTECODE;
       return OBELISK_RT_OK;
     }
+  }
+  if (bound) {
+    obelisk_rt_status clearStatus =
+        plan->bind(plan->mutable_state, context, actorSlot, nullptr);
+    if (clearStatus != OBELISK_RT_OK)
+      status = clearStatus;
   }
   // Roll back the generic ownership record as one transaction. The caller
   // retains ownership when add_aot fails.
@@ -4276,23 +4305,22 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
       nativeScanSelectionGeneration = context->schedulerSelectionGeneration;
       nativeScanInsertionSequence = context->nextProcessInsertionSequence;
       size_t nativeUrgentDistance = SIZE_MAX;
-      for (uint64_t token : context->nativePollCandidates) {
+      bool forcedNativeNode =
+          context->nativeScheduleForcedSlot != UINT32_MAX;
+      auto considerNativeToken = [&](uint64_t token) {
         auto indexed = context->scheduledProcessIndices.find(token);
         if (indexed == context->scheduledProcessIndices.end() ||
             indexed->second >= nativeScanProcessCount)
-          continue;
+          return;
         size_t index = indexed->second;
         const ScheduledProcess &candidate = context->scheduledProcesses[index];
-        if (context->signalDiagnosticsEnabled)
+        if (context->signalDiagnosticsEnabled && !forcedNativeNode)
           ++context->signalDiagnostics.candidateScans;
         if (!candidate.instance ||
             candidate.phase != (context->schedulerRunningFinals ? 1u : 0u))
-          continue;
-        bool runnable = !candidate.started ||
-                        candidate.suspendKind == OBELISK_RT_SUSPEND_NONE ||
-                        (candidate.suspendKind == OBELISK_RT_SUSPEND_DELAY
-                             ? candidate.wakeTime <= context->schedulerTime
-                             : nativeWaitReady(*context, candidate));
+          return;
+        bool runnable =
+            nativeProcessReady(*context, candidate, forcedNativeNode);
         if (runnable && candidate.urgent) {
           size_t distance =
               nativeScanProcessCount == 0
@@ -4308,10 +4336,10 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
             nativeCandidateIndex = index;
             nativeCandidateToken = candidate.token;
           }
-          continue;
+          return;
         }
         if (nativeUrgentDistance != SIZE_MAX)
-          continue;
+          return;
         auto key = std::tuple{candidate.queuedRegion, candidate.scheduleRank,
                               candidate.insertionSequence};
         if (runnable && key < std::tuple{nativeRegion, nativeRank,
@@ -4322,6 +4350,16 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           nativeCandidateIndex = index;
           nativeCandidateToken = candidate.token;
         }
+      };
+      if (forcedNativeNode) {
+        uint32_t slot = context->nativeScheduleForcedSlot;
+        if (slot >= context->nativeScheduleActorTokens.size() ||
+            context->nativeScheduleActorTokens[slot] == 0)
+          return OBELISK_RT_INVALID_LIFECYCLE;
+        considerNativeToken(context->nativeScheduleActorTokens[slot]);
+      } else if (!context->nativeScheduleControlOnly) {
+        for (uint64_t token : context->nativePollCandidates)
+          considerNativeToken(token);
       }
       auto considerBarrier = [&](const auto &entries) {
         for (const auto &entry : entries)
@@ -4352,6 +4390,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
       obelisk_rt_status status = recordSlotProgress();
       if (status != OBELISK_RT_OK)
         return status;
+      if (context->nativeScheduleSingleStep)
+        return OBELISK_RT_OK;
       continue;
     }
     obelisk_rt_process_instance_v1 *selected = nullptr;
@@ -4381,11 +4421,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         bool runnable =
             candidate.instance && candidate.token == nativeCandidateToken &&
             candidate.phase == (context->schedulerRunningFinals ? 1u : 0u) &&
-            (!candidate.started ||
-             candidate.suspendKind == OBELISK_RT_SUSPEND_NONE ||
-             (candidate.suspendKind == OBELISK_RT_SUSPEND_DELAY
-                  ? candidate.wakeTime <= context->schedulerTime
-                  : nativeWaitReady(*context, candidate)));
+            nativeProcessReady(*context, candidate,
+                               context->nativeScheduleForcedSlot != UINT32_MAX);
         auto key = std::tuple{candidate.queuedRegion, candidate.scheduleRank,
                               candidate.insertionSequence};
         if (runnable &&
@@ -4412,11 +4449,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           if (!candidate.instance ||
               candidate.phase != (context->schedulerRunningFinals ? 1u : 0u))
             continue;
-          bool runnable = !candidate.started ||
-                          candidate.suspendKind == OBELISK_RT_SUSPEND_NONE ||
-                          (candidate.suspendKind == OBELISK_RT_SUSPEND_DELAY
-                               ? candidate.wakeTime <= context->schedulerTime
-                               : nativeWaitReady(*context, candidate));
+          bool runnable = nativeProcessReady(*context, candidate, false);
           if (!runnable)
             continue;
           if (candidate.urgent) {
@@ -5006,6 +5039,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           return context->schedulerStatus;
         }
         ++context->schedulerSlotProgress;
+        if (context->nativeScheduleSingleStep)
+          return OBELISK_RT_OK;
         continue;
       }
       if (!selected && !context->schedulerRunningFinals) {
@@ -5051,6 +5086,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
             considerTime(event.dueTime);
         if (nextTime) {
           context->schedulerTime = *nextTime;
+          if (context->nativeScheduleSingleStep)
+            return OBELISK_RT_OK;
           continue;
         }
         bool hasFinal = false;
@@ -5061,6 +5098,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           hasFinal |= !candidate.terminated && candidate.phase == 1;
         if (hasFinal) {
           context->schedulerRunningFinals = true;
+          if (context->nativeScheduleSingleStep)
+            return OBELISK_RT_OK;
           continue;
         }
       }
@@ -5070,6 +5109,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
       return context->schedulerFinishStatus;
     }
 
+    if (context->nativeScheduleForcedSlot != UINT32_MAX)
+      context->nativeScheduleForcedExecuted = true;
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
       if (context->activeNativeProcess)
@@ -5089,7 +5130,12 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
     obelisk_rt_execution_tier tier = selected->tier;
     const ScheduledProcess &scheduled =
         context->scheduledProcesses[selectedIndex];
-    if (scheduled.aotActorSlot != UINT32_MAX) {
+    bool requireBytecode =
+        context->execution &&
+        (context->execution->flags & OBELISK_RT_EXECUTION_REQUIRE_BYTECODE) != 0;
+    if (requireBytecode) {
+      tier = OBELISK_RT_TIER_BYTECODE;
+    } else if (scheduled.aotActorSlot != UINT32_MAX) {
       bool bytecodeFragment = std::binary_search(
           scheduled.bytecodeContinuations.begin(),
           scheduled.bytecodeContinuations.end(), selected->continuation);
@@ -5266,12 +5312,13 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         scheduled.urgent = false;
         scheduled.queuedRegion = scheduled.homeRegion;
       }
-      if (destroy)
-        if (scheduled.aotActorSlot != UINT32_MAX) {
-          uint32_t slot = scheduled.aotActorSlot;
-          if (!context->nativeSchedulePlan ||
-              slot >= context->nativeScheduleActors.size() ||
-              context->nativeScheduleActors[slot] != selected)
+      if (destroy && scheduled.aotActorSlot != UINT32_MAX) {
+        uint32_t slot = scheduled.aotActorSlot;
+        if (!context->nativeSchedulePlan ||
+            slot >= context->nativeScheduleActors.size())
+          return OBELISK_RT_INVALID_LIFECYCLE;
+        if (context->nativeScheduleActors[slot] != scheduled.instance) {
+          if (context->nativeScheduleActors[slot] != selected)
             return OBELISK_RT_INVALID_LIFECYCLE;
           status = context->nativeSchedulePlan->bind(
               context->nativeSchedulePlan->mutable_state, context, slot,
@@ -5279,7 +5326,10 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           if (status != OBELISK_RT_OK)
             return status;
           context->nativeScheduleActors[slot] = scheduled.instance;
+          context->nativeScheduleActorTokens[slot] =
+              scheduled.instance ? scheduled.token : 0;
         }
+      }
       if (scheduled.instance && !indexedSignalBlocked(scheduled))
         context->nativePollCandidates.insert(scheduled.token);
       else
@@ -5298,6 +5348,167 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
     }
     status = recordSlotProgress();
     if (status != OBELISK_RT_OK)
+      return status;
+    if (context->nativeScheduleSingleStep)
+      return OBELISK_RT_OK;
+  }
+}
+
+namespace {
+
+class NativeScheduleStepScope {
+public:
+  NativeScheduleStepScope(obelisk_rt_context *context, uint32_t actorSlot,
+                          bool controlOnly)
+      : context(context) {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    context->nativeScheduleForcedSlot = actorSlot;
+    context->nativeScheduleSingleStep = true;
+    context->nativeScheduleForcedExecuted = false;
+    context->nativeScheduleControlOnly = controlOnly;
+  }
+
+  NativeScheduleStepScope(const NativeScheduleStepScope &) = delete;
+  NativeScheduleStepScope &operator=(const NativeScheduleStepScope &) = delete;
+
+  ~NativeScheduleStepScope() {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    context->nativeScheduleForcedSlot = UINT32_MAX;
+    context->nativeScheduleSingleStep = false;
+    context->nativeScheduleForcedExecuted = false;
+    context->nativeScheduleControlOnly = false;
+  }
+
+  bool executed() const {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    return context->nativeScheduleForcedExecuted;
+  }
+
+private:
+  obelisk_rt_context *context;
+};
+
+} // namespace
+
+extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_run_aot_nodes(
+    obelisk_rt_context *context,
+    const obelisk_rt_native_schedule_node_v1 *nodes, uint32_t nodeCount) {
+  if (!context || !nodes || nodeCount == 0)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContextTransaction transaction(context);
+  {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    if (!context->nativeSchedulePlan || context->nativeScheduleSingleStep ||
+        context->nativeScheduleForcedSlot != UINT32_MAX ||
+        context->nativeScheduleControlOnly)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    for (uint32_t nodeIndex = 0; nodeIndex != nodeCount; ++nodeIndex) {
+      const obelisk_rt_native_schedule_node_v1 &node = nodes[nodeIndex];
+      if (node.actor_slot >= context->nativeScheduleActors.size())
+        return OBELISK_RT_INVALID_ARGUMENT;
+      for (uint32_t previous = 0; previous != nodeIndex; ++previous)
+        if (nodes[previous].actor_slot == node.actor_slot &&
+            nodes[previous].continuation == node.continuation)
+          return OBELISK_RT_INVALID_ARGUMENT;
+    }
+  }
+  for (;;) {
+    bool progress = false;
+    for (uint32_t nodeIndex = 0; nodeIndex != nodeCount; ++nodeIndex) {
+      const obelisk_rt_native_schedule_node_v1 &node = nodes[nodeIndex];
+      {
+        std::lock_guard<std::recursive_mutex> lock(context->mutex);
+        if (!context->nativeSchedulePlan ||
+            node.actor_slot >= context->nativeScheduleActors.size())
+          return OBELISK_RT_INVALID_LIFECYCLE;
+        obelisk_rt_process_instance_v1 *actor =
+            context->nativeScheduleActors[node.actor_slot];
+        uint64_t token = context->nativeScheduleActorTokens[node.actor_slot];
+        if (!actor || token == 0)
+          continue;
+        if (!validContinuation(*actor->descriptor->frame_layout,
+                               node.continuation))
+          return OBELISK_RT_INVALID_CONTINUATION;
+        if (actor->continuation != node.continuation)
+          continue;
+        ScheduledProcess *scheduled = findScheduledProcess(context, token);
+        if (!scheduled || scheduled->instance != actor ||
+            scheduled->phase != (context->schedulerRunningFinals ? 1u : 0u))
+          continue;
+        if (!nativeProcessReady(*context, *scheduled, true))
+          continue;
+      }
+      obelisk_rt_status status;
+      bool executed = false;
+      {
+        NativeScheduleStepScope step(context, node.actor_slot, false);
+        status = runScheduler(context);
+        executed = step.executed();
+      }
+      if (executed) {
+        std::lock_guard<std::recursive_mutex> lock(context->mutex);
+        ++context->signalDiagnostics.aotNodeExecutions;
+        progress = true;
+      }
+      if (status != OBELISK_RT_OK)
+        return status;
+    }
+    if (progress) {
+      std::lock_guard<std::recursive_mutex> lock(context->mutex);
+      ++context->signalDiagnostics.aotRegionPasses;
+      continue;
+    }
+
+    {
+      std::lock_guard<std::recursive_mutex> lock(context->mutex);
+      for (uint32_t slot = 0; slot != context->nativeScheduleActors.size();
+           ++slot) {
+        obelisk_rt_process_instance_v1 *actor =
+            context->nativeScheduleActors[slot];
+        uint64_t token = context->nativeScheduleActorTokens[slot];
+        if (!actor || token == 0)
+          continue;
+        ScheduledProcess *scheduled = findScheduledProcess(context, token);
+        if (!scheduled || scheduled->instance != actor ||
+            scheduled->phase != (context->schedulerRunningFinals ? 1u : 0u) ||
+            !nativeProcessReady(*context, *scheduled, true))
+          continue;
+        bool hasNode = false;
+        for (uint32_t nodeIndex = 0; nodeIndex != nodeCount; ++nodeIndex)
+          hasNode |= nodes[nodeIndex].actor_slot == slot &&
+                     nodes[nodeIndex].continuation == actor->continuation;
+        if (!hasNode)
+          return OBELISK_RT_INVALID_CONTINUATION;
+      }
+    }
+
+    uint64_t previousProgress;
+    uint64_t previousTime;
+    bool previousFinals;
+    bool controlOnly;
+    {
+      std::lock_guard<std::recursive_mutex> lock(context->mutex);
+      previousProgress = context->schedulerSlotProgress;
+      previousTime = context->schedulerTime;
+      previousFinals = context->schedulerRunningFinals;
+      controlOnly =
+          (context->nativeSchedulePlan->flags &
+           OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC) != 0;
+    }
+    obelisk_rt_status status;
+    {
+      NativeScheduleStepScope step(context, UINT32_MAX, controlOnly);
+      status = runScheduler(context);
+    }
+    bool controlProgress;
+    {
+      std::lock_guard<std::recursive_mutex> lock(context->mutex);
+      controlProgress =
+          context->schedulerSlotProgress != previousProgress ||
+          context->schedulerTime != previousTime ||
+          context->schedulerRunningFinals != previousFinals;
+    }
+    if (status != OBELISK_RT_OK || !controlProgress)
       return status;
   }
 }
@@ -5387,6 +5598,11 @@ void obelisk_rt_release_native_schedule_plan(
   }
   context->nativeSchedulePlan = nullptr;
   context->nativeScheduleActors.clear();
+  context->nativeScheduleActorTokens.clear();
+  context->nativeScheduleForcedSlot = UINT32_MAX;
+  context->nativeScheduleSingleStep = false;
+  context->nativeScheduleForcedExecuted = false;
+  context->nativeScheduleControlOnly = false;
 }
 
 void obelisk_rt_aot_external_write_unlocked(obelisk_rt_context *context) {

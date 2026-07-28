@@ -1747,6 +1747,7 @@ void obelisk_rt_v1_vpi_shutdown(obelisk_rt_context *context);
 // ownership to the runtime, just like the generic scheduler add APIs.
 #define OBELISK_RT_NATIVE_SCHEDULE_PLAN_VERSION UINT32_C(1)
 #define OBELISK_RT_AOT_SNAPSHOT_VERSION UINT32_C(1)
+#define OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC UINT32_C(1)
 
 typedef struct obelisk_rt_aot_deopt_actor_v1 {
   uint32_t slot;
@@ -1781,6 +1782,11 @@ typedef struct obelisk_rt_aot_deopt_snapshot_v1 {
   uint32_t reserved;
   uint64_t next_sequence;
 } obelisk_rt_aot_deopt_snapshot_v1;
+
+typedef struct obelisk_rt_native_schedule_node_v1 {
+  uint32_t actor_slot;
+  uint32_t continuation;
+} obelisk_rt_native_schedule_node_v1;
 
 typedef obelisk_rt_status (*obelisk_rt_native_schedule_bind_v1)(
     void *mutable_state, obelisk_rt_context *context, uint32_t actor_slot,
@@ -1833,6 +1839,9 @@ obelisk_rt_status obelisk_rt_v1_scheduler_add_aot(
     const uint32_t *continuations, const uint32_t *ranks,
     uint32_t continuation_count, const uint32_t *bytecode_continuations,
     uint32_t bytecode_continuation_count);
+obelisk_rt_status obelisk_rt_v1_scheduler_run_aot_nodes(
+    obelisk_rt_context *context,
+    const obelisk_rt_native_schedule_node_v1 *nodes, uint32_t node_count);
 // Return the scheduler-owned stable identity used by await/join records. The
 // token is never a host address and is not reused within a context.
 uint64_t

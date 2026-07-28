@@ -24,11 +24,12 @@ module {
     ^loop:
       %value = obelisk_sim.logic.constant 1 : i8, 0 : i8 : !obelisk_sim.logic<8>
       // A repeated immediate assignment to one known root accumulates in
-      // generated state. Unrestricted writable VPI can observe or rewrite that
-      // root between staging and commit, so it falls back to the frontier.
+      // generated state. Writable VPI deposits enter through the bytecode
+      // transition stage at a scheduler boundary, so they cannot interleave
+      // with staging and commit.
       // OFF: storage = root_accumulator
       // READ: storage = root_accumulator
-      // FULL: storage = dynamic_frontier
+      // FULL: storage = root_accumulator
       obelisk_sim.nba.enqueue %value to %dst : (!obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>) -> ()
       obelisk_sim.suspend.delay %delay to ^loop
     }

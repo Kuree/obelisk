@@ -627,9 +627,14 @@ struct obelisk_rt_context {
   std::vector<ScheduledProcess> scheduledProcesses;
   const obelisk_rt_native_schedule_plan_v1 *nativeSchedulePlan = nullptr;
   std::vector<obelisk_rt_process_instance_v1 *> nativeScheduleActors;
+  std::vector<uint64_t> nativeScheduleActorTokens;
   bool nativeScheduleRunning = false;
   bool nativeScheduleDeoptimized = false;
   bool nativeScheduleExternalWritePending = false;
+  uint32_t nativeScheduleForcedSlot = UINT32_MAX;
+  bool nativeScheduleSingleStep = false;
+  bool nativeScheduleForcedExecuted = false;
+  bool nativeScheduleControlOnly = false;
   std::unordered_map<uint64_t, size_t> scheduledProcessIndices;
   std::unordered_set<uint64_t> nativePollCandidates;
   std::unordered_map<uint64_t, SignalValueSnapshot> signalValueSnapshots;

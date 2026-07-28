@@ -702,6 +702,10 @@ ABI_FUNCTION(obelisk_rt_v1_scheduler_add_aot,
                                    uint32_t, uint32_t, const uint32_t *,
                                    const uint32_t *, uint32_t, const uint32_t *,
                                    uint32_t));
+ABI_FUNCTION(obelisk_rt_v1_scheduler_run_aot_nodes,
+             obelisk_rt_status (*)(
+                 obelisk_rt_context *,
+                 const obelisk_rt_native_schedule_node_v1 *, uint32_t));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_process_token,
              uint64_t (*)(obelisk_rt_context *,
                           obelisk_rt_process_instance_v1 *));

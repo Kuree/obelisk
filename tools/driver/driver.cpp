@@ -298,8 +298,7 @@ static int executeCompilation(const InputArgList &args) {
   }
   StringRef nativeScheduler =
       args.getLastArgValue(OPT_native_scheduler_EQ, "auto");
-  if (nativeScheduler != "auto" && nativeScheduler != "generic" &&
-      nativeScheduler != "aot") {
+  if (!obelisk::sim::symbolizeNativeSchedulerMode(nativeScheduler)) {
     emitDriverError(Twine("unsupported native scheduler '") + nativeScheduler +
                     "'; expected auto, generic, or aot");
     valid = false;

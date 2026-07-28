@@ -29,7 +29,7 @@ endmodule
 // CHECK-NEXT: delay32
 // CHECK-NEXT: delay64
 // AOT-ERROR: design is ineligible for native AOT scheduling: dynamic deadline
-// HYBRID-DAG: @unit_0.__obelisk_bytecode_continuations
+// HYBRID-NOT: @unit_0.__obelisk_bytecode_continuations
 // HYBRID-DAG: call i32 @obelisk_rt_v1_scheduler_add_aot
 // HYBRID-DAG: call i32 @obelisk_rt_v1_scheduler_install_aot
 // HYBRID-DAG: call i32 @obelisk_rt_v1_scheduler_run_aot

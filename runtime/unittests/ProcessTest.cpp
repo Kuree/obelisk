@@ -1063,6 +1063,45 @@ TEST(Scheduler, AOTPlanInstallBindRunAndExclusiveMutableState) {
   obelisk_rt_v1_context_destroy(second);
 }
 
+TEST(Scheduler, AOTNodesValidateInventoryAndExecuteExactActor) {
+  AOTTestState state;
+  obelisk_rt_native_schedule_plan_v1 plan = makeAOTPlan(state, 1);
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
+            OBELISK_RT_OK);
+
+  SchedulerFixture fixture(100);
+  ASSERT_EQ(
+      obelisk_rt_v1_scheduler_add_aot(context, makeSchedulerInstance(fixture),
+                                      0, 0, 7, nullptr, nullptr, 0, nullptr, 0),
+      OBELISK_RT_OK);
+  constexpr obelisk_rt_native_schedule_node_v1 duplicateNodes[] = {
+      {0, 0}, {0, 0}};
+  EXPECT_EQ(obelisk_rt_v1_scheduler_run_aot_nodes(
+                context, duplicateNodes, std::size(duplicateNodes)),
+            OBELISK_RT_INVALID_ARGUMENT);
+  constexpr obelisk_rt_native_schedule_node_v1 missingEntry[] = {{0, 1}};
+  EXPECT_EQ(obelisk_rt_v1_scheduler_run_aot_nodes(context, missingEntry,
+                                                  std::size(missingEntry)),
+            OBELISK_RT_INVALID_CONTINUATION);
+  EXPECT_FALSE(context->nativeScheduleSingleStep);
+  EXPECT_EQ(context->nativeScheduleForcedSlot, UINT32_MAX);
+  EXPECT_FALSE(context->nativeScheduleControlOnly);
+
+  constexpr obelisk_rt_native_schedule_node_v1 nodes[] = {{0, 0}};
+  schedulerOrder.clear();
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot_nodes(context, nodes,
+                                                  std::size(nodes)),
+            OBELISK_RT_OK);
+  EXPECT_EQ(schedulerOrder, (std::vector<uint64_t>{100}));
+  EXPECT_EQ(context->signalDiagnostics.aotNodeExecutions, 1u);
+  EXPECT_EQ(context->signalDiagnostics.candidateScans, 0u);
+  EXPECT_EQ(state.actors[0], nullptr);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, AOTFallbackSnapshotIsValidatedBeforeGenericResume) {
   AOTTestState state;
   state.requestFallback = true;

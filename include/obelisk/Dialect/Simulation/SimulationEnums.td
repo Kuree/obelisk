@@ -31,6 +31,20 @@ def SimEntryKind : I32EnumAttr<"EntryKind", "simulation code-unit kind", [
   let cppNamespace = "::obelisk::sim";
 }
 
+def SimNativeSchedulerAuto
+    : I32EnumAttrCase<"Auto", 0, "auto">;
+def SimNativeSchedulerGeneric
+    : I32EnumAttrCase<"Generic", 1, "generic">;
+def SimNativeSchedulerAOT
+    : I32EnumAttrCase<"AOT", 2, "aot">;
+def SimNativeSchedulerMode
+    : I32EnumAttr<"NativeSchedulerMode", "native scheduling policy", [
+        SimNativeSchedulerAuto, SimNativeSchedulerGeneric,
+        SimNativeSchedulerAOT
+      ]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
 // IEEE 1800-2023 event regions in their normative scheduling order. These
 // remain distinct from ComputeRegionKind: the latter is a coarse graph
 // partition and is not an executable scheduler queue.

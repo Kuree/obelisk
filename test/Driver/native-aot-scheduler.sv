@@ -28,8 +28,10 @@ module native_aot_scheduler;
 endmodule
 
 // AOT: @__obelisk_aot_schedule_plan_v1
+// AOT: @__obelisk_aot_schedule_nodes_v1
 // AOT-DAG: call i32 @obelisk_rt_v1_scheduler_install_aot
 // AOT-DAG: call i32 @obelisk_rt_v1_scheduler_add_aot
+// AOT-DAG: call i32 @obelisk_rt_v1_scheduler_run_aot_nodes
 // AOT-DAG: call i32 @obelisk_rt_v1_scheduler_run_aot
 // GENERIC-NOT: @__obelisk_aot_schedule_plan_v1
 // GENERIC-NOT: call i32 @obelisk_rt_v1_scheduler_install_aot
