@@ -8120,6 +8120,24 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     return convertResult(result);
   }
 
+  if (name == "$bitstoshortreal") {
+    if (children.size() != 1) {
+      emitError(location) << "$bitstoshortreal requires exactly one argument";
+      return failure();
+    }
+    FailureOr<Value> input = lowerExpression(children.front());
+    if (failed(input))
+      return failure();
+    FailureOr<Value> bits =
+        convert(*input, builder.getI32Type(), isSignedNode(children.front()),
+                getSemanticLocation(children.front()));
+    if (failed(bits))
+      return failure();
+    Value result = arith::BitcastOp::create(
+        builder, location, builder.getF32Type(), *bits);
+    return convertResult(result);
+  }
+
   if (name == "$urandom" || name == "$srandom") {
     constexpr size_t maximum = 1;
     size_t minimum = name == "$urandom" ? 0 : 1;
