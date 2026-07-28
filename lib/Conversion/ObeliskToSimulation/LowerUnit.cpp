@@ -557,6 +557,7 @@ private:
   FailureOr<Value> truthValue(Value value, Location location);
   FailureOr<Value> toLogic(Value value, Location location);
   Value cloneSequentialValue(Value value, Location location);
+  FailureOr<Value> ensureSequentialContainer(Value value, Location location);
   FailureOr<Value> createAssocArray(sim::AssocArrayType type,
                                     Location location);
   FailureOr<Value> ensureAssocArray(Value value, Location location);
@@ -789,6 +790,48 @@ Value UnitLowering::cloneSequentialValue(Value value, Location location) {
   }
   return sim::SimAggregateConstructOp::create(builder, location, type,
                                               elements);
+}
+
+FailureOr<Value>
+UnitLowering::ensureSequentialContainer(Value value, Location location) {
+  Type type = value.getType();
+  Type elementType;
+  uint32_t containerKind;
+  uint64_t bound = 0;
+  if (auto array = dyn_cast<sim::DynamicArrayType>(type)) {
+    elementType = array.getElementType();
+    containerKind = 1;
+  } else if (auto queue = dyn_cast<sim::QueueType>(type)) {
+    elementType = queue.getElementType();
+    containerKind = 2;
+    bound = queue.getBound() ? queue.getBound() : UINT64_MAX;
+  } else {
+    return failure();
+  }
+  FailureOr<ContainerElementDescriptor> descriptor =
+      describeContainerElement(elementType, location);
+  if (failed(descriptor))
+    return failure();
+  Value isNull = sim::SimManagedIsNullOp::create(
+      builder, location, builder.getI1Type(), value);
+  Block *create = addBlock();
+  Block *resume = addBlock();
+  resume->addArgument(type, location);
+  cf::CondBranchOp::create(builder, location, isNull, create, ValueRange{},
+                           resume, ValueRange{value});
+  setCurrent(create);
+  Value size = arith::ConstantOp::create(
+      builder, location, builder.getI64Type(), builder.getI64IntegerAttr(0));
+  Value allocated = sim::SimContainerCreateOp::create(
+      builder, location, type, size, descriptor->typeID, descriptor->kind,
+      descriptor->flags, descriptor->valueSize, descriptor->alignment,
+      descriptor->bitWidth,
+      builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
+      builder.getDenseI32ArrayAttr(descriptor->traceKinds), containerKind,
+      bound);
+  cf::BranchOp::create(builder, location, resume, ValueRange{allocated});
+  setCurrent(resume);
+  return resume->getArgument(0);
 }
 
 FailureOr<Value>
@@ -5355,15 +5398,17 @@ UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
   bool withClause = op.getHasIteratorExpression();
-  if (children.size() != (withClause ? 2u : 1u)) {
+  if ((withClause && children.size() != 2u) ||
+      (!withClause && children.empty())) {
     emitError(location) << "malformed array-method expression inventory";
     return failure();
   }
-  Operation *receiverNode = children.back();
+  Operation *receiverNode = withClause ? children.back() : children.front();
   Operation *clause = withClause ? children.front() : nullptr;
   StringRef name = op.getCalleeName();
   bool mutatesReceiver = name == "delete" || name == "reverse" ||
-                         name == "shuffle" || name == "sort" || name == "rsort";
+                         name == "shuffle" || name == "sort" || name == "rsort" ||
+                         name == "push_back";
   FailureOr<Value> receiver;
   if (receiverOverride) {
     receiver = receiverOverride;
@@ -5375,6 +5420,10 @@ UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
     if (failed(reference) || failed(loaded))
       return failure();
     Value updated = cloneSequentialValue(*loaded, location);
+    FailureOr<Value> allocated = ensureSequentialContainer(updated, location);
+    if (failed(allocated))
+      return failure();
+    updated = *allocated;
     if (isa<sim::RefType>((*reference).getType()))
       sim::SimRefStoreOp::create(builder, location, updated, *reference);
     else if (isa<sim::ManagedRefType>((*reference).getType()))
@@ -5400,8 +5449,9 @@ UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
     return failure();
 
   if (name == "size") {
-    if (withClause)
-      return emitError(location) << "size does not accept a with clause",
+    if (withClause || children.size() != 1)
+      return emitError(location) << "size does not accept arguments or a "
+                                    "with clause",
              failure();
     Value size = sim::SimContainerSizeOp::create(
         builder, location, builder.getI64Type(), *receiver);
@@ -5409,9 +5459,34 @@ UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
     return failed(resultType) ? FailureOr<Value>(failure())
                               : convert(size, *resultType, false, location);
   }
+  if (name == "push_back") {
+    if (withClause || children.size() != 2)
+      return emitError(location)
+                 << "push_back requires exactly one value argument",
+             failure();
+    auto queue = dyn_cast<sim::QueueType>(receiverType);
+    if (!queue)
+      return emitError(location) << "push_back requires a queue receiver",
+             failure();
+    FailureOr<Value> value = lowerExpression(children[1]);
+    FailureOr<Value> converted =
+        succeeded(value)
+            ? convert(*value, elementType, isSignedNode(children[1]), location)
+            : FailureOr<Value>(failure());
+    if (failed(converted))
+      return failure();
+    Value size = sim::SimContainerSizeOp::create(
+        builder, location, builder.getI64Type(), *receiver);
+    sim::SimContainerWriteOp::create(builder, location, *receiver, size,
+                                     *converted);
+    return arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                     builder.getBoolAttr(false))
+        .getResult();
+  }
   if (name == "delete") {
-    if (withClause)
-      return emitError(location) << "delete does not accept a with clause",
+    if (withClause || children.size() != 1)
+      return emitError(location) << "whole-container delete does not accept "
+                                    "arguments or a with clause",
              failure();
     sim::SimContainerDeleteOp::create(builder, location, *receiver);
     return arith::ConstantOp::create(builder, location, builder.getI1Type(),
