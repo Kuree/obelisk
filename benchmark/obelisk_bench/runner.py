@@ -264,7 +264,8 @@ def compile_frontend(obelisk: str, sources: list[str], output: str,
     )
 
 
-def execute(binary: str, timeout: float, args: list[str] | None = None) -> ExecResult:
+def execute(binary: str, timeout: float, args: list[str] | None = None,
+            cwd: str | None = None) -> ExecResult:
     """Run a compiled test executable and capture its stdout.
 
     This is the step the upstream harnesses perform by calling `vvp`; because
@@ -277,7 +278,7 @@ def execute(binary: str, timeout: float, args: list[str] | None = None) -> ExecR
     for attempt in range(2):
         try:
             result = subprocess.run(command, capture_output=True, text=True,
-                                    timeout=timeout, check=False)
+                                    timeout=timeout, check=False, cwd=cwd)
             return ExecResult(ok=result.returncode == 0, stdout=result.stdout,
                               timed_out=False, stderr=result.stderr)
         except subprocess.TimeoutExpired as expired:

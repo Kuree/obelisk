@@ -240,7 +240,7 @@ class SvTestsJudgeTest(unittest.TestCase):
 
         self.assertEqual(outcome.status, model.PASS)
         self.assertEqual(compile_mock.call_args.kwargs["timeout"], 300)
-        execute_mock.assert_called_once_with(mock.ANY, 300)
+        execute_mock.assert_called_once_with(mock.ANY, 300, cwd=mock.ANY)
 
     def test_invalid_metadata_timeout_is_skipped_with_a_reason(self):
         self.write_test(":type: simulation\n:timeout: eventually")

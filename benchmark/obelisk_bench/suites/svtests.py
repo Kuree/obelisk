@@ -389,7 +389,9 @@ def judge_one(
             status = model.RUN_FAIL if expected_fail else model.PASS
             return rel, model.Outcome(status)
 
-        result = runner.execute(str(binary), timeout)
+        # Keep files created through relative SystemVerilog paths inside this
+        # test's temporary directory instead of polluting the caller's cwd.
+        result = runner.execute(str(binary), timeout, cwd=tmp)
         output = result.stdout + result.stderr
         if expected_fail:
             if result.timed_out:
