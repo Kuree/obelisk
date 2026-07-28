@@ -8843,6 +8843,74 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     return dummyTaskResult();
   }
 
+  if (name == "$printtimescale") {
+    if (children.size() > 1) {
+      emitError(location) << "$printtimescale accepts zero or one scope";
+      return failure();
+    }
+    StringAttr targetPath = op.getSystemScopePathAttr();
+    if (!children.empty())
+      targetPath =
+          children.front()->getAttrOfType<StringAttr>("referenced_path");
+    if (!targetPath) {
+      emitError(location) << "$printtimescale has no elaborated target scope";
+      return failure();
+    }
+
+    sim::SimDesignOp design = function->getParentOfType<sim::SimDesignOp>();
+    sim::SimScopeDeclOp targetScope;
+    if (design)
+      for (sim::SimScopeDeclOp scope :
+           design.getBody().front().getOps<sim::SimScopeDeclOp>())
+        if (scope.getHierarchicalName() &&
+            *scope.getHierarchicalName() == targetPath.getValue()) {
+          targetScope = scope;
+          break;
+        }
+    if (!targetScope) {
+      emitError(location) << "$printtimescale target scope '"
+                          << targetPath.getValue()
+                          << "' has no simulation descriptor";
+      return failure();
+    }
+    auto unit = targetScope->getAttrOfType<IntegerAttr>(
+        "dpi_unit_femtoseconds");
+    auto precision = targetScope->getAttrOfType<IntegerAttr>(
+        "dpi_precision_femtoseconds");
+    if (!unit || !precision) {
+      emitError(location)
+          << "$printtimescale target has no frozen time scale";
+      return failure();
+    }
+
+    auto formatScale = [](uint64_t femtoseconds) -> std::string {
+      static constexpr std::pair<uint64_t, StringLiteral> scales[] = {
+          {1'000'000'000'000'000ULL, "s"},
+          {1'000'000'000'000ULL, "ms"},
+          {1'000'000'000ULL, "us"},
+          {1'000'000ULL, "ns"},
+          {1'000ULL, "ps"},
+          {1ULL, "fs"},
+      };
+      for (auto [factor, suffix] : scales)
+        if (femtoseconds >= factor && femtoseconds % factor == 0)
+          return (Twine(femtoseconds / factor) + suffix).str();
+      return (Twine(femtoseconds) + "fs").str();
+    };
+    std::string text =
+        (Twine("Time scale of (") + targetPath.getValue() + ") is " +
+         formatScale(unit.getValue().getZExtValue()) + " / " +
+         formatScale(precision.getValue().getZExtValue()))
+            .str();
+    Value item =
+        sim::SimBytesConstantOp::create(builder, location, text).getResult();
+    Value descriptor = constant(i32, 1);
+    sim::SimDisplayOp::create(builder, location, context, descriptor, item,
+                              true, 10, ArrayRef<int32_t>{0}, targetPath,
+                              StringAttr{}, builder.getI64IntegerAttr(1));
+    return dummyTaskResult();
+  }
+
   StringRef postponedDisplay;
   bool persistentMonitor = false;
   if (name == "$strobe")

@@ -956,7 +956,7 @@ void ObeliskSimPreparePass::runOnOperation() {
   for (sim::SimScopeDeclOp declaration : scopeDeclarations) {
     if (!declaration->hasAttr("dpi_unit_femtoseconds"))
       declaration->setAttr("dpi_unit_femtoseconds",
-                           builder.getI64IntegerAttr(1'000'000));
+                           builder.getI64IntegerAttr(designPrecisionFs));
     if (!declaration->hasAttr("dpi_precision_femtoseconds"))
       declaration->setAttr("dpi_precision_femtoseconds",
                            builder.getI64IntegerAttr(designPrecisionFs));
