@@ -8323,6 +8323,53 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     return convertResult(result);
   }
 
+  if (name == "$typename") {
+    if (children.size() != 1) {
+      emitError(location) << "$typename requires exactly one argument";
+      return failure();
+    }
+    auto semanticType =
+        children.front()->getAttrOfType<TypeAttr>("semantic_type");
+    if (!semanticType) {
+      emitError(getSemanticLocation(children.front()))
+          << "$typename argument has no elaborated semantic type";
+      return failure();
+    }
+
+    StringRef spelling;
+    Type type = semanticType.getValue();
+    if (auto integral = dyn_cast<ir::IntegralType>(type)) {
+      spelling = ir::stringifySVIntegralFlavor(integral.getFlavor());
+      if (integral.getFlavor() == ir::SVIntegralFlavor::Generic)
+        spelling = integral.getIsFourState() ? "logic" : "bit";
+    } else if (isa<ir::StringType>(type))
+      spelling = "string";
+    else if (isa<ir::RealType>(type))
+      spelling = "real";
+    else if (isa<ir::ShortRealType>(type))
+      spelling = "shortreal";
+    else if (isa<ir::RealtimeType>(type))
+      spelling = "realtime";
+    else if (isa<ir::TimeType>(type))
+      spelling = "time";
+    else if (auto enumeration = dyn_cast<ir::EnumType>(type))
+      spelling = enumeration.getName();
+    else if (auto aggregate = dyn_cast<ir::SourceAggregateType>(type))
+      spelling = aggregate.getName();
+    else {
+      emitError(getSemanticLocation(children.front()))
+          << "$typename has no executable spelling for type " << type;
+      return failure();
+    }
+
+    // `$typename` is an inquiry function; only its elaborated operand type is
+    // observed. Materialize the spelling directly as a simulation string.
+    Type resultType = sim::StringType::get(function.getContext());
+    Value result = sim::SimStringLiteralOp::create(
+        builder, location, resultType, builder.getStringAttr(spelling));
+    return convertResult(result);
+  }
+
   bool isDimensionCount =
       name == "$dimensions" || name == "$unpacked_dimensions";
   bool isRangeQuery = name == "$left" || name == "$right" || name == "$low" ||
