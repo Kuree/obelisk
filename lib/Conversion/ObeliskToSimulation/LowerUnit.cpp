@@ -4086,6 +4086,38 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
     }
     return convert(result, *resultType, false, location);
   }
+  if (isa<sim::UnpackedArrayType, sim::UnpackedStructType,
+          sim::UnpackedUnionType>((*lhs).getType()) ||
+      isa<sim::UnpackedArrayType, sim::UnpackedStructType,
+          sim::UnpackedUnionType>((*rhs).getType())) {
+    if ((*lhs).getType() != (*rhs).getType() ||
+        (kind != Binary::Equality && kind != Binary::Inequality &&
+         kind != Binary::CaseEquality && kind != Binary::CaseInequality)) {
+      unsupported(op) << " (unpacked-aggregate operator)";
+      return failure();
+    }
+    bool caseEquality =
+        kind == Binary::CaseEquality || kind == Binary::CaseInequality;
+    FailureOr<Value> equal =
+        caseEquality
+            ? conditionalEqual(*lhs, *rhs, (*lhs).getType(), location, true)
+            : logicalEqual(*lhs, *rhs, (*lhs).getType(), location);
+    if (failed(equal))
+      return failure();
+    Value result = *equal;
+    if (kind == Binary::Inequality || kind == Binary::CaseInequality) {
+      if (caseEquality)
+        result = arith::XOrIOp::create(
+            builder, location, result,
+            arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                      builder.getBoolAttr(true)));
+      else
+        result =
+            sim::SimLogicUnaryOp::create(builder, location, result.getType(),
+                                         sim::UnaryKind::LogicalNot, result);
+    }
+    return convert(result, *resultType, false, location);
+  }
   if (isa<sim::ClassHandleType>((*lhs).getType()) ||
       isa<sim::ClassHandleType>((*rhs).getType())) {
     if (!isa<sim::ClassHandleType>((*lhs).getType()) ||
