@@ -311,9 +311,10 @@ static int executeCompilation(const InputArgList &args) {
   uint32_t resolvedCompilerThreads = compilerThreads.value_or(
       std::max(1u, llvm::hardware_concurrency().compute_thread_count()));
 
-  const Arg *action = args.getLastArg(OPT_emit_slang, OPT_emit_obelisk,
-                                      OPT_emit_sim, OPT_emit_schedule, OPT_c,
-                                      OPT_emit_llvm, OPT_emit_dpi_header);
+  const Arg *action = args.getLastArg(
+      OPT_E, OPT_emit_slang, OPT_emit_obelisk, OPT_emit_sim, OPT_emit_schedule,
+      OPT_c, OPT_emit_llvm, OPT_emit_dpi_header);
+  bool preprocess = action && action->getOption().matches(OPT_E);
   bool emitSlang = action && action->getOption().matches(OPT_emit_slang);
   bool emitSim = action && action->getOption().matches(OPT_emit_sim);
   bool emitSchedule = action && action->getOption().matches(OPT_emit_schedule);
@@ -347,6 +348,24 @@ static int executeCompilation(const InputArgList &args) {
   }
   inputs.assign(classifiedInputs.systemVerilog.begin(),
                 classifiedInputs.systemVerilog.end());
+
+  if (preprocess) {
+    FailureOr<std::string> preprocessed =
+        obelisk::frontend::preprocessSystemVerilog(inputs, frontendOptions);
+    if (failed(preprocessed))
+      return 1;
+    std::string outputFilename = args.getLastArgValue(OPT_o, "-").str();
+    std::error_code error;
+    ToolOutputFile output(outputFilename, error, sys::fs::OF_None);
+    if (error) {
+      emitDriverError(Twine("could not open output '") + outputFilename +
+                      "': " + error.message());
+      return 1;
+    }
+    output.os() << *preprocessed;
+    output.keep();
+    return 0;
+  }
 
   DialectRegistry registry;
   registry.insert<obelisk::slangir::SlangDialect, obelisk::ir::ObeliskDialect,

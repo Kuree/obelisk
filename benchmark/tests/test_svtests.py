@@ -205,13 +205,35 @@ class SvTestsJudgeTest(unittest.TestCase):
         compile_design.assert_not_called()
         execute.assert_not_called()
 
+    def test_preprocessing_test_stops_after_preprocessor(self):
+        self.write_test(":type: preprocessing")
+        with (
+            mock.patch.object(
+                svtests.runner,
+                "compile_preprocessor",
+                return_value=runner.CompileResult(True, ""),
+            ) as compile_preprocessor,
+            mock.patch.object(
+                svtests.runner, "compile_frontend") as compile_frontend,
+            mock.patch.object(svtests.runner, "compile_design") as compile_design,
+            mock.patch.object(svtests.runner, "execute") as execute,
+        ):
+            _, outcome = svtests.judge_one(
+                "obelisk", self.root, self.test, 60, 10)
+
+        self.assertEqual(outcome.status, model.PASS)
+        compile_preprocessor.assert_called_once()
+        compile_frontend.assert_not_called()
+        compile_design.assert_not_called()
+        execute.assert_not_called()
+
     def test_expected_frontend_failure_is_xfail(self):
         self.write_test(
             ":type: preprocessing\n"
             ":should_fail_because: invalid directive")
         with mock.patch.object(
                 svtests.runner,
-                "compile_frontend",
+                "compile_preprocessor",
                 return_value=runner.CompileResult(
                     False, "bad directive", "compile")):
             _, outcome = svtests.judge_one(
@@ -268,6 +290,26 @@ class BenchmarkRunnerTest(unittest.TestCase):
         self.assertTrue(result.ok)
         command = run.call_args.args[0]
         self.assertIn("-emit-slang", command)
+        self.assertIn("--single-unit", command)
+        self.assertEqual(run.call_args.args[1], 12)
+
+    def test_compile_preprocessor_uses_preprocessing_phase_boundary(self):
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="", stderr="")
+        with mock.patch.object(
+                runner, "_run_with_retry", return_value=completed) as run:
+            result = runner.compile_preprocessor(
+                "obelisk",
+                ["input.sv"],
+                "output.sv",
+                ["-D", "VALUE=1"],
+                timeout=12,
+            )
+
+        self.assertTrue(result.ok)
+        command = run.call_args.args[0]
+        self.assertIn("-E", command)
+        self.assertNotIn("-emit-slang", command)
         self.assertIn("--single-unit", command)
         self.assertEqual(run.call_args.args[1], 12)
 

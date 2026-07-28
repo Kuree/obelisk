@@ -53,6 +53,12 @@ struct FrontendOptions {
   std::optional<std::string> timeScale;
 };
 
+/// Run preprocessing without parsing or elaborating the resulting token
+/// stream. The returned string is the fully preprocessed source text.
+mlir::FailureOr<std::string>
+preprocessSystemVerilog(llvm::ArrayRef<std::string> inputFilenames,
+                        const FrontendOptions &options);
+
 /// Import one SystemVerilog compilation from the given primary source files.
 /// Frontend search paths, macros, libraries, and language settings are supplied
 /// through `options`. The returned module has passed the MLIR verifier when

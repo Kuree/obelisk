@@ -264,6 +264,40 @@ def compile_frontend(obelisk: str, sources: list[str], output: str,
     )
 
 
+def compile_preprocessor(obelisk: str, sources: list[str], output: str,
+                         extra_flags: list[str], std: str = "1800-2017",
+                         single_unit: bool = True,
+                         timeout: float = 60.0) -> CompileResult:
+    """Preprocess sources without parsing or elaborating the token stream."""
+    command = [obelisk]
+    if single_unit:
+        command.append("--single-unit")
+    command += [
+        f"--std={std}", *extra_flags, *sources, "-E", "-o", output,
+    ]
+    try:
+        result = _run_with_retry(command, timeout)
+    except subprocess.TimeoutExpired:
+        return CompileResult(
+            ok=False, stderr=f"preprocessing exceeded {timeout:g}s",
+            failure_kind="timeout",
+        )
+    except OSError as error:
+        return CompileResult(
+            ok=False, stderr=f"preprocessor could not launch: {error}",
+            failure_kind="launch",
+        )
+    return CompileResult(
+        ok=result.returncode == 0,
+        stderr=result.stdout + result.stderr,
+        failure_kind=(
+            None if result.returncode == 0
+            else "crash" if result.returncode < 0
+            else "compile"
+        ),
+    )
+
+
 def execute(binary: str, timeout: float, args: list[str] | None = None,
             cwd: str | None = None) -> ExecResult:
     """Run a compiled test executable and capture its stdout.

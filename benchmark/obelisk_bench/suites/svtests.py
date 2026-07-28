@@ -344,7 +344,18 @@ def judge_one(
         return rel, model.Outcome(model.SKIP, str(error))
     frontend_timeout = max(compile_timeout, timeout)
     with tempfile.TemporaryDirectory(prefix="obelisk-svt-") as tmp:
-        if mode in _FRONTEND_MODES:
+        if mode == "preprocessing":
+            output = str(Path(tmp) / "preprocessed.sv")
+            compiled = runner.compile_preprocessor(
+                obelisk,
+                sources,
+                output,
+                flags,
+                std="1800-2017",
+                single_unit=True,
+                timeout=frontend_timeout,
+            )
+        elif mode in _FRONTEND_MODES:
             output = str(Path(tmp) / "frontend.mlir")
             compiled = runner.compile_frontend(
                 obelisk,

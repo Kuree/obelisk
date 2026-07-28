@@ -19,6 +19,10 @@ def version : Flag<["--"], "version">,
 
 def emit_slang : Flag<["-"], "emit-slang">, Group<Action_Group>,
   HelpText<"Emit elaborated Slang dialect MLIR after SystemVerilog import">;
+def E : Flag<["-"], "E">, Group<Action_Group>,
+  HelpText<"Run only the SystemVerilog preprocessor">;
+def preprocess : Flag<["--"], "preprocess">, Alias<E>,
+  Flags<[HelpHidden]>;
 def emit_obelisk : Flag<["-"], "emit-obelisk">, Group<Action_Group>,
   HelpText<"Emit Obelisk dialect MLIR">;
 def emit_sim : Flag<["-"], "emit-sim">, Group<Action_Group>,

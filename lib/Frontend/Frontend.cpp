@@ -14,6 +14,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include "slang/ast/ASTVisitor.h"
 #include "slang/ast/EvalContext.h"
@@ -22,6 +23,7 @@
 #include "slang/driver/Driver.h"
 #include "slang/numeric/Time.h"
 #include "slang/syntax/AllSyntax.h"
+#include "slang/util/OS.h"
 #include "slang/util/VersionInfo.h"
 
 #include <algorithm>
@@ -2230,6 +2232,38 @@ buildSlangArguments(ArrayRef<std::string> inputs,
 }
 
 } // namespace
+
+FailureOr<std::string>
+preprocessSystemVerilog(ArrayRef<std::string> inputFilenames,
+                        const FrontendOptions &options) {
+  slang::driver::Driver driver;
+  driver.addStandardArgs();
+
+  std::vector<std::string> arguments =
+      buildSlangArguments(inputFilenames, options);
+  SmallVector<const char *> argv;
+  argv.reserve(arguments.size());
+  for (const std::string &argument : arguments)
+    argv.push_back(argument.c_str());
+
+  bool succeeded = false;
+  std::string output;
+  std::string diagnostics;
+  {
+    auto capture = slang::OS::captureOutput();
+    slang::bitmask<slang::driver::PreprocessOutputFlags> flags;
+    succeeded =
+        driver.parseCommandLine(static_cast<int>(argv.size()), argv.data()) &&
+        driver.processOptions() && driver.runPreprocessor(flags);
+    output = slang::OS::capturedStdout;
+    diagnostics = slang::OS::capturedStderr;
+  }
+  if (!diagnostics.empty())
+    llvm::errs() << diagnostics;
+  if (!succeeded)
+    return failure();
+  return output;
+}
 
 FailureOr<OwningOpRef<ModuleOp>>
 importSystemVerilog(ArrayRef<std::string> inputFilenames, MLIRContext &context,
