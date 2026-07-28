@@ -1758,6 +1758,143 @@ FailureOr<Value> UnitLowering::lowerConcatenation(Operation *op) {
                                           inputs)
         .getResult();
   }
+  if (isa<sim::DynamicArrayType, sim::QueueType>(*resultType)) {
+    Type elementType =
+        isa<sim::DynamicArrayType>(*resultType)
+            ? cast<sim::DynamicArrayType>(*resultType).getElementType()
+            : cast<sim::QueueType>(*resultType).getElementType();
+    struct Part {
+      Operation *node;
+      Value value;
+      Value size;
+      Type elementType;
+      unsigned fixedSize;
+    };
+    auto i64Constant = [&](int64_t value) -> Value {
+      return arith::ConstantOp::create(
+          builder, location, builder.getI64Type(),
+          builder.getI64IntegerAttr(value));
+    };
+    SmallVector<Part> parts;
+    Value totalSize = i64Constant(0);
+    Value one = i64Constant(1);
+    for (Operation *child : children) {
+      FailureOr<Value> input = lowerExpression(child);
+      if (failed(input))
+        return failure();
+      Type inputType = (*input).getType();
+      Part part{child, *input, one, {}, 0};
+      if (inputType != elementType) {
+        if (auto array = dyn_cast<sim::DynamicArrayType>(inputType)) {
+          part.elementType = array.getElementType();
+          part.size = sim::SimContainerSizeOp::create(
+              builder, getSemanticLocation(child), builder.getI64Type(),
+              *input);
+        } else if (auto queue = dyn_cast<sim::QueueType>(inputType)) {
+          part.elementType = queue.getElementType();
+          part.size = sim::SimContainerSizeOp::create(
+              builder, getSemanticLocation(child), builder.getI64Type(),
+              *input);
+        } else if (auto array = dyn_cast<sim::UnpackedArrayType>(inputType)) {
+          part.elementType = array.getElementType();
+          part.fixedSize = sim::getAggregateNumElements(array);
+          part.size = i64Constant(static_cast<int64_t>(part.fixedSize));
+        }
+      }
+      totalSize =
+          arith::AddIOp::create(builder, location, totalSize, part.size);
+      parts.push_back(part);
+    }
+
+    FailureOr<ContainerElementDescriptor> descriptor =
+        describeContainerElement(elementType, location);
+    if (failed(descriptor))
+      return failure();
+    uint32_t containerKind = isa<sim::DynamicArrayType>(*resultType) ? 1 : 2;
+    uint64_t bound = 0;
+    if (auto queue = dyn_cast<sim::QueueType>(*resultType))
+      bound = queue.getBound() ? queue.getBound() : UINT64_MAX;
+    Value allocationSize =
+        containerKind == 1 ? totalSize : i64Constant(0);
+    Value result = sim::SimContainerCreateOp::create(
+        builder, location, *resultType, allocationSize, descriptor->typeID,
+        descriptor->kind, descriptor->flags, descriptor->valueSize,
+        descriptor->alignment, descriptor->bitWidth,
+        builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
+        builder.getDenseI32ArrayAttr(descriptor->traceKinds), containerKind,
+        bound);
+
+    Value outputIndex = i64Constant(0);
+    for (const Part &part : parts) {
+      if (!part.elementType) {
+        FailureOr<Value> converted =
+            convert(part.value, elementType, isSignedNode(part.node),
+                    getSemanticLocation(part.node));
+        if (failed(converted))
+          return failure();
+        sim::SimContainerWriteOp::create(builder, getSemanticLocation(part.node),
+                                         result, outputIndex, *converted);
+        outputIndex =
+            arith::AddIOp::create(builder, location, outputIndex, one);
+        continue;
+      }
+      if (part.fixedSize) {
+        for (unsigned index = 0; index < part.fixedSize; ++index) {
+          Value value = sim::SimAggregateExtractOp::create(
+              builder, getSemanticLocation(part.node), part.elementType,
+              part.value, index);
+          FailureOr<Value> converted =
+              convert(value, elementType, isSignedNode(part.node),
+                      getSemanticLocation(part.node));
+          if (failed(converted))
+            return failure();
+          sim::SimContainerWriteOp::create(
+              builder, getSemanticLocation(part.node), result, outputIndex,
+              *converted);
+          outputIndex =
+              arith::AddIOp::create(builder, location, outputIndex, one);
+        }
+        continue;
+      }
+
+      Block *header = addBlock();
+      header->addArgument(builder.getI64Type(), location);
+      header->addArgument(builder.getI64Type(), location);
+      Block *body = addBlock();
+      Block *exit = addBlock();
+      exit->addArgument(builder.getI64Type(), location);
+      Value zero = i64Constant(0);
+      cf::BranchOp::create(builder, location, header,
+                           ValueRange{zero, outputIndex});
+      setCurrent(header);
+      Value inputIndex = header->getArgument(0);
+      Value destinationIndex = header->getArgument(1);
+      Value more = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ult, inputIndex, part.size);
+      cf::CondBranchOp::create(builder, location, more, body, ValueRange{},
+                               exit, ValueRange{destinationIndex});
+      setCurrent(body);
+      Value value = sim::SimContainerReadOp::create(
+          builder, getSemanticLocation(part.node), part.elementType, part.value,
+          inputIndex);
+      FailureOr<Value> converted =
+          convert(value, elementType, isSignedNode(part.node),
+                  getSemanticLocation(part.node));
+      if (failed(converted))
+        return failure();
+      sim::SimContainerWriteOp::create(builder, getSemanticLocation(part.node),
+                                       result, destinationIndex, *converted);
+      Value nextInput =
+          arith::AddIOp::create(builder, location, inputIndex, one);
+      Value nextDestination =
+          arith::AddIOp::create(builder, location, destinationIndex, one);
+      cf::BranchOp::create(builder, location, header,
+                           ValueRange{nextInput, nextDestination});
+      setCurrent(exit);
+      outputIndex = exit->getArgument(0);
+    }
+    return result;
+  }
   Type scalarResultType = sim::getPackedScalarType(*resultType);
   if (!scalarResultType) {
     unsupported(op) << " (unpacked concatenation result)";
