@@ -5409,7 +5409,8 @@ UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
   bool mutatesReceiver = name == "delete" || name == "reverse" ||
                          name == "shuffle" || name == "sort" || name == "rsort" ||
                          name == "push_back" || name == "push_front" ||
-                         name == "pop_front" || name == "insert";
+                         name == "pop_front" || name == "pop_back" ||
+                         name == "insert";
   FailureOr<Value> receiver;
   if (receiverOverride) {
     receiver = receiverOverride;
@@ -5523,6 +5524,28 @@ UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
     Value value = sim::SimContainerReadOp::create(
         builder, location, elementType, *receiver, zero);
     sim::SimQueueDeleteOp::create(builder, location, *receiver, zero);
+    FailureOr<Type> resultType = getNormalizedSemanticType(op);
+    return failed(resultType)
+               ? FailureOr<Value>(failure())
+               : convert(value, *resultType, isSignedNode(op), location);
+  }
+  if (name == "pop_back") {
+    if (withClause || children.size() != 1)
+      return emitError(location) << "pop_back does not accept arguments",
+             failure();
+    auto queue = dyn_cast<sim::QueueType>(receiverType);
+    if (!queue)
+      return emitError(location) << "pop_back requires a queue receiver",
+             failure();
+    Value size = sim::SimContainerSizeOp::create(
+        builder, location, builder.getI64Type(), *receiver);
+    Value one = arith::ConstantOp::create(
+        builder, location, builder.getI64Type(),
+        builder.getI64IntegerAttr(1));
+    Value index = arith::SubIOp::create(builder, location, size, one);
+    Value value = sim::SimContainerReadOp::create(
+        builder, location, elementType, *receiver, index);
+    sim::SimQueueDeleteOp::create(builder, location, *receiver, index);
     FailureOr<Type> resultType = getNormalizedSemanticType(op);
     return failed(resultType)
                ? FailureOr<Value>(failure())

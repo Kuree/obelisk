@@ -149,6 +149,57 @@ module {
             }
           }
         }
+        obelisk.sv.symbol.procedural_block attributes {
+          hierarchical_name = "queue_push_front_lowering",
+          node_id = 21 : i64,
+          procedure_kind = 0 : i32,
+          sym_name = "s21",
+          time_precision_fs = 1000000 : i64,
+          time_unit_fs = 1000000 : i64
+        } {
+          obelisk.sv.statement.expression_statement attributes {
+            node_id = 22 : i64
+          } {
+            obelisk.sv.expression.assignment attributes {
+              assignment_kind = 0 : i32,
+              node_id = 23 : i64,
+              semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
+            } {
+              obelisk.sv.expression.named_value attributes {
+                node_id = 24 : i64,
+                referenced_path = "queue_push_front_lowering.result",
+                referenced_symbol = @s1.$root::@s3.queue_push_front_lowering::@s4.queue_push_front_lowering::@s20.result,
+                semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
+              } {
+              }
+              obelisk.sv.expression.call attributes {
+                argument_count = 1 : i64,
+                callee_name = "pop_back",
+                constraint_restrictions = [],
+                has_inline_constraints = false,
+                has_iterator_expression = false,
+                has_output_arguments = false,
+                has_this_class = false,
+                is_super_class = false,
+                is_system_call = true,
+                node_id = 25 : i64,
+                semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>,
+                subroutine_kind = 0 : i32,
+                system_library_cell = "work.queue_push_front_lowering",
+                system_scope_path = "queue_push_front_lowering",
+                system_scope_symbol = @s1.$root::@s3.queue_push_front_lowering::@s4.queue_push_front_lowering
+              } {
+                obelisk.sv.expression.named_value attributes {
+                  node_id = 26 : i64,
+                  referenced_path = "queue_push_front_lowering.queue",
+                  referenced_symbol = @s1.$root::@s3.queue_push_front_lowering::@s4.queue_push_front_lowering::@s5.queue,
+                  semantic_type = !obelisk.queue<!obelisk.integral<32, true, false, 31 : 0, int>, 0>
+                } {
+                }
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -165,3 +216,10 @@ module {
 // CHECK: obelisk_sim.container.read {{.*}}, %[[POP_ZERO]]
 // CHECK: %[[DELETE_ZERO:.*]] = arith.constant {{.*}}0 : i64
 // CHECK: obelisk_sim.queue.delete {{.*}}[%[[DELETE_ZERO]]]
+
+// pop_back reads and removes the element at size - 1.
+// CHECK-LABEL: obelisk_sim.func private @unit_2
+// CHECK: %[[SIZE:.*]] = obelisk_sim.container.size
+// CHECK: %[[LAST:.*]] = arith.subi %[[SIZE]],
+// CHECK: obelisk_sim.container.read {{.*}}, %[[LAST]]
+// CHECK: obelisk_sim.queue.delete {{.*}}[%[[LAST]]]
