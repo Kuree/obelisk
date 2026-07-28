@@ -374,6 +374,77 @@ module {
               }
             }
           }
+          obelisk.sv.statement.expression_statement attributes {
+            node_id = 30 : i64
+          } {
+            obelisk.sv.expression.call attributes {
+              argument_count = 1 : i64,
+              callee_name = "$display",
+              constraint_restrictions = [],
+              defaulted_arguments = array<i64>,
+              has_inline_constraints = false,
+              has_iterator_expression = false,
+              has_output_arguments = false,
+              has_this_class = false,
+              is_super_class = false,
+              is_system_call = true,
+              node_id = 31 : i64,
+              semantic_type = !obelisk.void,
+              subroutine_kind = 1 : i32,
+              system_library_cell = "work.top",
+              system_scope_path = "top",
+              system_scope_symbol = @s1.$root::@s3.top::@s4.top
+            } {
+              obelisk.sv.expression.call attributes {
+                argument_count = 2 : i64,
+                callee_name = "$pow",
+                constraint_restrictions = [],
+                defaulted_arguments = array<i64>,
+                has_inline_constraints = false,
+                has_iterator_expression = false,
+                has_output_arguments = false,
+                has_this_class = false,
+                is_super_class = false,
+                is_system_call = true,
+                node_id = 32 : i64,
+                semantic_type = !obelisk.real,
+                subroutine_kind = 0 : i32
+              } {
+                obelisk.sv.expression.call attributes {
+                  argument_count = 0 : i64,
+                  callee_name = "$urandom",
+                  constraint_restrictions = [],
+                  defaulted_arguments = array<i64>,
+                  has_inline_constraints = false,
+                  has_iterator_expression = false,
+                  has_output_arguments = false,
+                  has_this_class = false,
+                  is_super_class = false,
+                  is_system_call = true,
+                  node_id = 33 : i64,
+                  semantic_type = !obelisk.integral<32, false, false, 31 : 0, integer>,
+                  subroutine_kind = 0 : i32
+                } {
+                }
+                obelisk.sv.expression.call attributes {
+                  argument_count = 0 : i64,
+                  callee_name = "$urandom",
+                  constraint_restrictions = [],
+                  defaulted_arguments = array<i64>,
+                  has_inline_constraints = false,
+                  has_iterator_expression = false,
+                  has_output_arguments = false,
+                  has_this_class = false,
+                  is_super_class = false,
+                  is_system_call = true,
+                  node_id = 34 : i64,
+                  semantic_type = !obelisk.integral<32, false, false, 31 : 0, integer>,
+                  subroutine_kind = 0 : i32
+                } {
+                }
+              }
+            }
+          }
         }
       }
     }
@@ -400,3 +471,7 @@ module {
 // CHECK: %[[LOG10_INPUT:.*]] = obelisk_sim.real.from_integer
 // CHECK: %[[LOG10_RESULT:.*]] = math.log10 %[[LOG10_INPUT]] : f64
 // CHECK: obelisk_sim.display {{.*}}(%[[LOG10_RESULT]])
+// CHECK: %[[POW_BASE:.*]] = obelisk_sim.real.from_integer
+// CHECK: %[[POW_EXPONENT:.*]] = obelisk_sim.real.from_integer
+// CHECK: %[[POW_RESULT:.*]] = math.powf %[[POW_BASE]], %[[POW_EXPONENT]] : f64
+// CHECK: obelisk_sim.display {{.*}}(%[[POW_RESULT]])

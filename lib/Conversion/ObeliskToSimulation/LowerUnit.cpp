@@ -8478,6 +8478,32 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     return convertResult(result);
   }
 
+  if (name == "$pow") {
+    if (children.size() != 2) {
+      emitError(location) << "$pow requires exactly two arguments";
+      return failure();
+    }
+    FailureOr<Value> base = lowerExpression(children[0]);
+    if (failed(base))
+      return failure();
+    FailureOr<Value> exponent = lowerExpression(children[1]);
+    if (failed(exponent))
+      return failure();
+    FailureOr<Value> realBase =
+        convert(*base, builder.getF64Type(), isSignedNode(children[0]),
+                getSemanticLocation(children[0]));
+    if (failed(realBase))
+      return failure();
+    FailureOr<Value> realExponent =
+        convert(*exponent, builder.getF64Type(), isSignedNode(children[1]),
+                getSemanticLocation(children[1]));
+    if (failed(realExponent))
+      return failure();
+    Value result = math::PowFOp::create(builder, location, builder.getF64Type(),
+                                        *realBase, *realExponent);
+    return convertResult(result);
+  }
+
   bool isDimensionCount =
       name == "$dimensions" || name == "$unpacked_dimensions";
   bool isRangeQuery = name == "$left" || name == "$right" || name == "$low" ||
