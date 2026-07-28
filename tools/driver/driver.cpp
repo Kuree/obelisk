@@ -139,8 +139,8 @@ static LogicalResult writeDPIHeader(ModuleOp module, raw_ostream &output) {
               ? dyn_cast<obelisk::ir::SubroutineType>(semanticType.getValue())
               : obelisk::ir::SubroutineType{};
       auto signature = subroutine
-              ? dyn_cast<FunctionType>(subroutine.getSignature())
-              : FunctionType{};
+                           ? dyn_cast<FunctionType>(subroutine.getSignature())
+                           : FunctionType{};
       if (!signature || signature.getNumResults() != 1) {
         op.emitError("DPI function has no resolved result signature");
         return WalkResult::interrupt();
@@ -296,6 +296,14 @@ static int executeCompilation(const InputArgList &args) {
                     "'; expected native or bytecode");
     valid = false;
   }
+  StringRef nativeScheduler =
+      args.getLastArgValue(OPT_native_scheduler_EQ, "auto");
+  if (nativeScheduler != "auto" && nativeScheduler != "generic" &&
+      nativeScheduler != "aot") {
+    emitDriverError(Twine("unsupported native scheduler '") + nativeScheduler +
+                    "'; expected auto, generic, or aot");
+    valid = false;
+  }
   uint32_t optLevel = 3;
   if (const Arg *optimization =
           args.getLastArg(OPT_O0, OPT_O1, OPT_O2, OPT_O3)) {
@@ -311,9 +319,9 @@ static int executeCompilation(const InputArgList &args) {
   uint32_t resolvedCompilerThreads = compilerThreads.value_or(
       std::max(1u, llvm::hardware_concurrency().compute_thread_count()));
 
-  const Arg *action = args.getLastArg(
-      OPT_E, OPT_emit_slang, OPT_emit_obelisk, OPT_emit_sim, OPT_emit_schedule,
-      OPT_c, OPT_emit_llvm, OPT_emit_dpi_header);
+  const Arg *action = args.getLastArg(OPT_E, OPT_emit_slang, OPT_emit_obelisk,
+                                      OPT_emit_sim, OPT_emit_schedule, OPT_c,
+                                      OPT_emit_llvm, OPT_emit_dpi_header);
   bool preprocess = action && action->getOption().matches(OPT_E);
   bool emitSlang = action && action->getOption().matches(OPT_emit_slang);
   bool emitSim = action && action->getOption().matches(OPT_emit_sim);
@@ -331,6 +339,11 @@ static int executeCompilation(const InputArgList &args) {
   if (!native && executionTier != "native") {
     emitDriverError(
         "--execution-tier is only valid for native executable generation");
+    valid = false;
+  }
+  if (!native && args.hasArg(OPT_native_scheduler_EQ)) {
+    emitDriverError(
+        "--native-scheduler is only valid for native executable generation");
     valid = false;
   }
   if (!valid)
@@ -414,7 +427,7 @@ static int executeCompilation(const InputArgList &args) {
     nativeOptions.outputPath = args.getLastArgValue(OPT_o, emitObject ? "a.o"
                                                            : emitLLVM ? "-"
                                                                       : "a.out")
-            .str();
+                                   .str();
     nativeOptions.explicitSysroot = args.getLastArgValue(OPT_sysroot_EQ).str();
     nativeOptions.executablePath = driverExecutablePath;
     nativeOptions.nativeLinkInputs =
@@ -422,6 +435,7 @@ static int executeCompilation(const InputArgList &args) {
     nativeOptions.sharedLibraryInputs =
         std::move(classifiedInputs.sharedLibraries);
     nativeOptions.vpi = vpiMode.str();
+    nativeOptions.nativeScheduler = nativeScheduler.str();
     nativeOptions.bytecode = executionTier == "bytecode";
     nativeOptions.optLevel = optLevel;
     nativeOptions.compileThreads = resolvedCompilerThreads;

@@ -205,7 +205,7 @@ LogicalResult addMinimalMain(ModuleOp module) {
 
 LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
                           bool bytecode, StringRef vpi,
-                          bool &requiresStateSync) {
+                          StringRef nativeScheduler, bool &requiresStateSync) {
   module->setAttr("llvm.target_triple",
                   StringAttr::get(module.getContext(), kTargetTriple));
   module->setAttr(
@@ -221,7 +221,14 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
       hasLanguageOverride = true;
   });
   requiresStateSync = vpi != "off" || hasLanguageOverride;
-  if (bytecode || vpi != "off" || hasLanguageOverride) {
+  module->setAttr("obelisk.native_scheduler",
+                  StringAttr::get(module.getContext(), nativeScheduler));
+  // Hybrid AOT keeps bytecode available as the canonical implementation for
+  // fragments that cannot be scheduled statically and for writable VPI
+  // transition stages. The shared process frame lets those fragments return
+  // to native execution at a continuation boundary without copying state.
+  bool needsHybridBytecode = nativeScheduler != "generic";
+  if (bytecode || needsHybridBytecode || vpi != "off" || hasLanguageOverride) {
     EncodeObeliskSimToBytecodePassOptions options;
     options.vpi = vpi.str();
     options.requireBytecode = bytecode;
@@ -254,7 +261,7 @@ LogicalResult optimizeLLVMModule(llvm::Module &module,
   OptimizationLevel level = getLLVMOptLevel(optLevel);
   ModulePassManager passes = optLevel == 0
                                  ? builder.buildO0DefaultPipeline(level)
-                    : builder.buildPerModuleDefaultPipeline(level);
+                                 : builder.buildPerModuleDefaultPipeline(level);
   passes.run(module, moduleAnalyses);
   if (verifyModule(module, &errs())) {
     errs() << "obelisk: error: invalid LLVM IR after native optimization\n";
@@ -719,7 +726,7 @@ LogicalResult linkExecutable(StringRef modulePath, StringRef outputPath,
   }
   if (std::error_code error = sys::fs::setPermissions(
           *temporary, sys::fs::perms::all_read | sys::fs::perms::all_exe |
-                                                  sys::fs::perms::owner_write)) {
+                          sys::fs::perms::owner_write)) {
     errs() << "obelisk: error: could not make '" << outputPath
            << "' executable: " << error.message() << '\n';
     sys::fs::remove(*temporary);
@@ -746,7 +753,7 @@ LogicalResult emitNativeOutput(ModuleOp module,
   }
   bool requiresStateSync = false;
   if (failed(lowerToLLVM(module, *targetMachine, options.bytecode, options.vpi,
-                         requiresStateSync)))
+                         options.nativeScheduler, requiresStateSync)))
     return failure();
 
   registerLLVMDialectTranslation(*module.getContext());

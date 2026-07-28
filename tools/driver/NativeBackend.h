@@ -48,6 +48,7 @@ struct NativeOutputOptions {
   std::vector<NativeLinkInput> nativeLinkInputs;
   std::vector<SharedLibraryInput> sharedLibraryInputs;
   std::string vpi = "off";
+  std::string nativeScheduler = "auto";
   bool bytecode = false;
   uint32_t optLevel = 3;
   uint32_t compileThreads = 1;

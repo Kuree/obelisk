@@ -75,11 +75,13 @@ endmodule
 // PATHS: obelisk_rt_v1_scheduler_run
 
 // LLVM: target triple = "x86_64-unknown-linux-gnu"
-// LLVM: @unit_0.__obelisk_schedule_ranks = internal constant [1 x i32] [i32 2]
-// LLVM: call i32 @obelisk_rt_v1_scheduler_add_planned
+// LLVM-DAG: @unit_0.__obelisk_schedule_ranks = internal constant [1 x i32] [i32 2]
+// LLVM-DAG: @__obelisk_aot_schedule_plan_v1
+// LLVM-DAG: call i32 @obelisk_rt_v1_scheduler_add_aot
 // LLVM: define i32 @main(i32
 // LLVM-SAME: ptr
-// LLVM: call i32 @obelisk_rt_v1_scheduler_run
+// LLVM: call i32 @obelisk_rt_v1_scheduler_install_aot
+// LLVM: call i32 @obelisk_rt_v1_scheduler_run_aot
 
 // THREADS: native executable generation currently requires --threads=1
 // SYSROOT: target sysroot input

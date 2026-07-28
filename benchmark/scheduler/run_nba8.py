@@ -120,13 +120,19 @@ def summarize(
 
 
 def build_obelisk(
-    compiler: Path, output: Path, tier: str, cycles: int, waiters: int
+    compiler: Path,
+    output: Path,
+    tier: str,
+    scheduler: str,
+    cycles: int,
+    waiters: int,
 ) -> None:
     run(
         [
             str(compiler),
             "-O3",
             f"--execution-tier={tier}",
+            f"--native-scheduler={scheduler}",
             "-D",
             f"CYCLES={cycles}",
             "-D",
@@ -172,9 +178,19 @@ def main() -> int:
         "--tier", choices=("native", "bytecode", "all"), default="all"
     )
     parser.add_argument(
-        "--cycles", nargs="+", type=int, default=[10_000, 20_000, 40_000]
+        "--native-scheduler",
+        choices=("auto", "generic", "aot"),
+        default="aot",
     )
-    parser.add_argument("--waiters", nargs="+", type=int, default=[0])
+    parser.add_argument(
+        "--cycles",
+        nargs="+",
+        type=int,
+        default=[100_000, 200_000, 400_000, 1_000_000],
+    )
+    parser.add_argument(
+        "--waiters", nargs="+", type=int, default=[0, 1024, 3072]
+    )
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--verilator", type=Path)
     parser.add_argument("--output", type=Path)
@@ -198,9 +214,29 @@ def main() -> int:
             for tier in tiers:
                 binary = work / f"nba8-{tier}-{cycles}-{waiters}"
                 build_obelisk(
-                    arguments.obelisk, binary, tier, cycles, waiters
+                    arguments.obelisk,
+                    binary,
+                    tier,
+                    arguments.native_scheduler,
+                    cycles,
+                    waiters,
                 )
                 records, output = measure(binary, arguments.runs)
+                if arguments.native_scheduler == "aot":
+                    diagnostics = records[len(records) // 2]["diagnostics"]
+                    forbidden = {
+                        key: diagnostics.get(key, 0)
+                        for key in (
+                            "candidate_scans",
+                            "readiness_calls",
+                            "aot_fallbacks",
+                        )
+                        if diagnostics.get(key, 0) != 0
+                    }
+                    if forbidden:
+                        raise RuntimeError(
+                            f"AOT hot path used generic scheduling: {forbidden}"
+                        )
                 if output != reference:
                     raise RuntimeError(
                         f"incorrect lane output for {tier} at {cycles} cycles"

@@ -17,6 +17,32 @@ obelisk -c design.sv -o design.o # writes an ELF object
 obelisk -emit-llvm design.sv     # writes textual LLVM IR to stdout
 ```
 
+Native executables accept `--native-scheduler=auto|generic|aot`. `auto` is
+the default hybrid mode: it emits a versioned static schedule for every
+proven-unique actor and uses embedded bytecode only for continuation fragments
+that cannot be scheduled statically. A bytecode fragment returns to AOT/native
+execution at its next supported continuation boundary without replacing its
+canonical frame. If no actor is statically schedulable, `auto` uses the generic
+scheduler. `generic` explicitly forces that correctness oracle for the whole
+design. `aot` requires every fragment to be statically schedulable and reports
+the exact unsupported metadata or language feature during compilation.
+
+The generated plan is installed before the root initializer spawns any
+process. It owns fixed actor slots and is checksum-coupled to an embedded
+bytecode/design image when one exists. The runtime rejects duplicate slots,
+stale checksums, malformed plans, and simultaneous use of one generated
+mutable state block by two contexts.
+
+Actor scheduling and actor execution tier are independent. Consequently
+`--execution-tier=bytecode --native-scheduler=aot` uses the same static actor
+inventory and ordering as native fragments. Writable VPI deposits
+conservatively select bytecode for bytecode-capable static actors until the
+current time slot reaches quiescence; native execution resumes only at that
+boundary. Other unsupported fragments are selected by their generated
+continuation table while supported actors remain on the AOT schedule. A
+runtime action that invalidates the installed plan still uses a validated
+transactional snapshot and permanently deoptimizes to the generic path.
+
 `-c` always emits a conventional native ELF relocatable, independent of the
 optimization level. Executable links select the runtime representation by
 optimization level:

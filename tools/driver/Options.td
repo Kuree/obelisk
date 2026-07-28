@@ -61,6 +61,10 @@ def execution_tier_EQ : Joined<["--"], "execution-tier=">,
   Group<Compilation_Group>, MetaVarName<"<native|bytecode>">,
   Values<"native,bytecode">,
   HelpText<"Select generated simulator execution tier (default: native)">;
+def native_scheduler_EQ : Joined<["--"], "native-scheduler=">,
+  Group<Compilation_Group>, MetaVarName<"<auto|generic|aot>">,
+  Values<"auto,generic,aot">,
+  HelpText<"Select native scheduler generation (default: hybrid auto)">;
 def O0 : Flag<["-"], "O0">, Group<Compilation_Group>,
   HelpText<"Disable simulation and LLVM optimization">;
 def O1 : Flag<["-"], "O1">, Group<Compilation_Group>,

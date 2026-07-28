@@ -270,13 +270,13 @@ inline bool obelisk_rt_next_queued_region(uint32_t homeRegion,
                                           uint32_t actionFlags,
                                           uint32_t &queuedRegion) {
   constexpr uint32_t known = OBELISK_RT_ACTION_FRAME_WAIT_RECORD |
-      OBELISK_RT_ACTION_RESUME_REGION_VALID |
-      OBELISK_RT_ACTION_RESUME_REGION_MASK;
+                             OBELISK_RT_ACTION_RESUME_REGION_VALID |
+                             OBELISK_RT_ACTION_RESUME_REGION_MASK;
   if ((actionFlags & ~known) != 0)
     return false;
   if ((actionFlags & OBELISK_RT_ACTION_RESUME_REGION_VALID) != 0) {
     queuedRegion = (actionFlags & OBELISK_RT_ACTION_RESUME_REGION_MASK) >>
-        OBELISK_RT_ACTION_RESUME_REGION_SHIFT;
+                   OBELISK_RT_ACTION_RESUME_REGION_SHIFT;
     return obelisk_rt_is_process_home_region(queuedRegion);
   }
   if ((actionFlags & OBELISK_RT_ACTION_RESUME_REGION_MASK) != 0)
@@ -293,7 +293,7 @@ inline bool obelisk_rt_next_queued_region(uint32_t homeRegion,
 
 inline uint32_t obelisk_rt_commit_region(uint32_t homeRegion) {
   return obelisk_rt_is_mutable_home_region(homeRegion) ? homeRegion + 2
-             : UINT32_MAX;
+                                                       : UINT32_MAX;
 }
 
 struct ScheduledProcess {
@@ -310,6 +310,11 @@ struct ScheduledProcess {
   std::vector<std::unique_ptr<SignalSubscription>> signalSubscriptions;
   std::unique_ptr<SignalWaitLatch> signalLatch;
   std::vector<std::pair<uint32_t, uint32_t>> continuationRanks;
+  // AOT-owned actors may execute selected continuation activations through
+  // bytecode without leaving the static schedule. The sorted table includes
+  // continuation zero when the initial activation is bytecode-only.
+  std::vector<uint32_t> bytecodeContinuations;
+  uint32_t aotActorSlot = UINT32_MAX;
   uint32_t suspendKind = OBELISK_RT_SUSPEND_NONE;
   uint32_t phase = 0;
   uint32_t homeRegion = OBELISK_RT_REGION_ACTIVE;
@@ -501,6 +506,13 @@ struct SignalSubscriptionDiagnostics {
   uint64_t candidateScans = 0;
   uint64_t schedulerIterations = 0;
   uint64_t fallbackRescans = 0;
+  uint64_t aotNodeExecutions = 0;
+  uint64_t aotRegionPasses = 0;
+  uint64_t aotFanoutEntries = 0;
+  uint64_t aotNBAStages = 0;
+  uint64_t aotNBACommits = 0;
+  uint64_t aotDeadlineHighWater = 0;
+  uint64_t aotFallbacks = 0;
 };
 
 // Three packed edge planes with allocation-free storage for the common
@@ -613,6 +625,11 @@ struct obelisk_rt_context {
   std::vector<uint32_t> freeMCDs;
   std::shared_ptr<const uint8_t> errorLifetime;
   std::vector<ScheduledProcess> scheduledProcesses;
+  const obelisk_rt_native_schedule_plan_v1 *nativeSchedulePlan = nullptr;
+  std::vector<obelisk_rt_process_instance_v1 *> nativeScheduleActors;
+  bool nativeScheduleRunning = false;
+  bool nativeScheduleDeoptimized = false;
+  bool nativeScheduleExternalWritePending = false;
   std::unordered_map<uint64_t, size_t> scheduledProcessIndices;
   std::unordered_set<uint64_t> nativePollCandidates;
   std::unordered_map<uint64_t, SignalValueSnapshot> signalValueSnapshots;
@@ -871,6 +888,9 @@ private:
 void setLastErrorUnlocked(obelisk_rt_context *context, std::string message);
 void setLastError(obelisk_rt_context *context, std::string message);
 void obelisk_rt_report_signal_diagnostics_unlocked(obelisk_rt_context *context);
+void obelisk_rt_release_native_schedule_plan(
+    obelisk_rt_context *context) noexcept;
+void obelisk_rt_aot_external_write_unlocked(obelisk_rt_context *context);
 
 void obelisk_rt_retain_controls_unlocked(obelisk_rt_context *context,
                                          const std::vector<uint64_t> &controls);
@@ -1011,7 +1031,7 @@ obelisk_rt_status obelisk_rt_native_state_alloc_with_root_offsets(
 obelisk_rt_status
 obelisk_rt_native_state_alloc_managed(obelisk_rt_context *context,
                                       obelisk_rt_object_v1 *value,
-    uint64_t *outHandle);
+                                      uint64_t *outHandle);
 void obelisk_rt_invalidate_signal_snapshots_unlocked(
     obelisk_rt_context *context, uint64_t bitOffset, uint64_t bitWidth);
 

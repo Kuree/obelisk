@@ -488,8 +488,8 @@ struct ProgramAnalysis {
           effect.target.dynamic ? effect.target.rootWidth : effect.target.width;
       bool found = false;
       for (uint64_t bit = 0; bit != width; ++bit) {
-        ArrayRef<::obelisk::analysis::NetBit> component = connectivity.getComponent(
-            {*effect.target.descriptor, begin + bit});
+        ArrayRef<::obelisk::analysis::NetBit> component =
+            connectivity.getComponent({*effect.target.descriptor, begin + bit});
         for (::obelisk::analysis::NetBit member : component) {
           std::optional<uint64_t> rootWidth =
               connectivity.getNetWidth(member.net);
@@ -545,12 +545,10 @@ ProgramAnalysis analyzeProgram(sim::SimDesignOp design) {
     function.walk([&](sim::SimSuspendObserveOp observe) {
       llvm::SetVector<Operation *> bindings;
       for (Value observer : observe.getPrimaries())
-        if (auto binding =
-                observer.getDefiningOp<sim::SimObserverBindOp>())
+        if (auto binding = observer.getDefiningOp<sim::SimObserverBindOp>())
           bindings.insert(binding);
       for (Value observer : observe.getConditions())
-        if (auto binding =
-                observer.getDefiningOp<sim::SimObserverBindOp>())
+        if (auto binding = observer.getDefiningOp<sim::SimObserverBindOp>())
           bindings.insert(binding);
       for (Operation *binding : bindings)
         info.observerBindings.push_back(cast<sim::SimObserverBindOp>(binding));
@@ -668,12 +666,10 @@ collectFragmentEffects(const ProgramAnalysis &analysis,
        block.getOps<sim::SimSuspendObserveOp>()) {
     llvm::SetVector<Operation *> bindings;
     for (Value observer : observe.getPrimaries())
-      if (auto binding =
-              observer.getDefiningOp<sim::SimObserverBindOp>())
+      if (auto binding = observer.getDefiningOp<sim::SimObserverBindOp>())
         bindings.insert(binding);
     for (Value observer : observe.getConditions())
-      if (auto binding =
-              observer.getDefiningOp<sim::SimObserverBindOp>())
+      if (auto binding = observer.getDefiningOp<sim::SimObserverBindOp>())
         bindings.insert(binding);
     for (Operation *operation : bindings) {
       auto binding = cast<sim::SimObserverBindOp>(operation);
@@ -805,13 +801,17 @@ getNBAStorageKind(sim::SimNBAEnqueueOp nba, sim::SimFuncOp function,
                   const SpawnMultiplicity &multiplicity,
                   const DescriptorProvenance &destination,
                   sim::ComputeVPIMode vpi) {
+  (void)vpi;
   bool fixed = function.getEntryKind() != sim::EntryKind::Function &&
                !multiplicity.isDynamicallySpawned(function) &&
                !multiplicity.mayReexecute(function, nba->getBlock());
   if (fixed)
     return sim::ComputeNBAStorageKind::FixedSlot;
-  if (!nba.getDelay() && destination.descriptor &&
-      vpi != sim::ComputeVPIMode::Full)
+  // Writable VPI deposits are admitted only at scheduler boundaries. Native
+  // AOT actors temporarily execute through bytecode until that slot
+  // quiesces, so a deposit cannot interleave between accumulator staging and
+  // commit. DPI reentrancy remains independently ineligible for AOT.
+  if (!nba.getDelay() && destination.descriptor)
     return sim::ComputeNBAStorageKind::RootAccumulator;
   return sim::ComputeNBAStorageKind::DynamicFrontier;
 }
@@ -1151,8 +1151,7 @@ void ComputeGraphBuilder::buildControlEdges() {
       if (callee != analysis.functionIndex.end()) {
         sim::SimFuncOp target = analysis.functions[callee->second].function;
         if (!target.getBody().empty()) {
-          addEdge(fragment.id,
-                  fragmentID(&target.getBody().front()),
+          addEdge(fragment.id, fragmentID(&target.getBody().front()),
                   sim::ComputeEdgeKind::ProcessOrder);
           uint32_t continuation = fragmentID(taskCall.getContinuation());
           for (Block &block : target.getBody())
@@ -1197,19 +1196,16 @@ void ComputeGraphBuilder::buildControlEdges() {
     // frozen by the prepare pass. Ensure repeating processes reach their first
     // suspension before any initial process runs, without imposing a total
     // order on otherwise independent sibling processes.
-    if (fragment.function.getEntryKind() ==
-        sim::EntryKind::RootInitializer) {
+    if (fragment.function.getEntryKind() == sim::EntryKind::RootInitializer) {
       std::optional<uint32_t> repeatingEntry;
-      for (sim::SimSpawnOp spawn :
-           fragment.block->getOps<sim::SimSpawnOp>()) {
+      for (sim::SimSpawnOp spawn : fragment.block->getOps<sim::SimSpawnOp>()) {
         auto callee = analysis.functionIndex.find(spawn.getCallee());
         if (callee == analysis.functionIndex.end())
           continue;
         sim::SimFuncOp target = analysis.functions[callee->second].function;
         if (target.getBody().empty())
           continue;
-        uint32_t entry =
-            fragmentForBlock.lookup(&target.getBody().front());
+        uint32_t entry = fragmentForBlock.lookup(&target.getBody().front());
         switch (target.getEntryKind()) {
         case sim::EntryKind::Always:
         case sim::EntryKind::AlwaysComb:
@@ -1219,8 +1215,7 @@ void ComputeGraphBuilder::buildControlEdges() {
           break;
         case sim::EntryKind::Initial:
           if (repeatingEntry)
-            addEdge(*repeatingEntry, entry,
-                    sim::ComputeEdgeKind::ProcessOrder);
+            addEdge(*repeatingEntry, entry, sim::ComputeEdgeKind::ProcessOrder);
           break;
         default:
           break;
@@ -1287,11 +1282,11 @@ void ComputeGraphBuilder::buildDataEdges() {
           return;
         uint32_t source = fragments[lhs].id;
         uint32_t target = fragments[right.owner].id;
-        if (isSettlingEntryKind(fragments[right.owner].function.getEntryKind()) &&
+        if (isSettlingEntryKind(
+                fragments[right.owner].function.getEntryKind()) &&
             !isSettlingEntryKind(fragments[lhs].function.getEntryKind()))
           std::swap(source, target);
-        addEdge(source, target,
-                sim::ComputeEdgeKind::Conflict,
+        addEdge(source, target, sim::ComputeEdgeKind::Conflict,
                 effectAttr(isActiveProducer(left) ? left : *right.effect));
       });
     }
@@ -1401,13 +1396,12 @@ LogicalResult ComputeGraphBuilder::buildSites(ComputeGraphResult &result) {
             eventSites[*commit].push_back(site);
             sim::TimingSiteAttr delayedTiming;
             if (trigger.getDelay())
-              delayedTiming =
-                  sim::TimingSiteAttr::get(
-                      design.getContext(), timingSite++,
-                      sim::ComputeTimingKind::DelayedEvent);
-            result.eventSites[operation] = sim::EventSiteAttr::get(
-                design.getContext(), site, eventCommitIds[*commit],
-                delayedTiming);
+              delayedTiming = sim::TimingSiteAttr::get(
+                  design.getContext(), timingSite++,
+                  sim::ComputeTimingKind::DelayedEvent);
+            result.eventSites[operation] =
+                sim::EventSiteAttr::get(design.getContext(), site,
+                                        eventCommitIds[*commit], delayedTiming);
           }
           return WalkResult::advance();
         });
@@ -1489,8 +1483,7 @@ FailureOr<ArrayAttr> ComputeGraphBuilder::buildRegions() {
   // Every standard event region is planned explicitly, even when a supported
   // design has no nodes in one of them.
   auto activePriority = [&](uint32_t id) {
-    return isSettlingEntryKind(fragments[id].function.getEntryKind()) ? 0u
-                                                                     : 1u;
+    return isSettlingEntryKind(fragments[id].function.getEntryKind()) ? 0u : 1u;
   };
   SmallVector<SmallVector<uint32_t>> activeGroups =
       computeSCCSchedule(activeIds, edges, activePriority);
@@ -1545,8 +1538,7 @@ FailureOr<ComputeGraphResult> ComputeGraphBuilder::derive() {
         design.getContext(), fragment.id,
         FlatSymbolRefAttr::get(design.getContext(),
                                fragment.function.getSymName()),
-        fragment.ordinal,
-        region,
+        fragment.ordinal, region,
         getFragmentActionKind(fragment.block->getTerminator()),
         sim::ComputeTierKind::Native, fragment.cost, fragment.lane,
         fragment.twoState, getEffectArrayAttr(builder, fragment.effects)));

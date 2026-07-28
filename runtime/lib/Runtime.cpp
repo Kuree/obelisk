@@ -140,7 +140,10 @@ void obelisk_rt_report_signal_diagnostics_unlocked(
       "subscriptions_current=%llu subscriptions_high_water=%llu "
       "subscribers_examined=%llu readiness_calls=%llu "
       "candidate_scans=%llu scheduler_iterations=%llu "
-      "fallback_rescans=%llu\n",
+      "fallback_rescans=%llu aot_node_executions=%llu "
+      "aot_region_passes=%llu aot_fanout_entries=%llu "
+      "aot_nba_stages=%llu aot_nba_commits=%llu "
+      "aot_deadline_high_water=%llu aot_fallbacks=%llu\n",
       static_cast<unsigned long long>(context->signalDiagnostics.publications),
       static_cast<unsigned long long>(
           context->signalDiagnostics.subscriptionsCurrent),
@@ -155,11 +158,23 @@ void obelisk_rt_report_signal_diagnostics_unlocked(
       static_cast<unsigned long long>(
           context->signalDiagnostics.schedulerIterations),
       static_cast<unsigned long long>(
-          context->signalDiagnostics.fallbackRescans));
+          context->signalDiagnostics.fallbackRescans),
+      static_cast<unsigned long long>(
+          context->signalDiagnostics.aotNodeExecutions),
+      static_cast<unsigned long long>(
+          context->signalDiagnostics.aotRegionPasses),
+      static_cast<unsigned long long>(
+          context->signalDiagnostics.aotFanoutEntries),
+      static_cast<unsigned long long>(context->signalDiagnostics.aotNBAStages),
+      static_cast<unsigned long long>(context->signalDiagnostics.aotNBACommits),
+      static_cast<unsigned long long>(
+          context->signalDiagnostics.aotDeadlineHighWater),
+      static_cast<unsigned long long>(context->signalDiagnostics.aotFallbacks));
 }
 
 obelisk_rt_context::~obelisk_rt_context() {
   obelisk_rt_report_signal_diagnostics_unlocked(this);
+  obelisk_rt_release_native_schedule_plan(this);
   threadErrors.erase(this);
   obelisk_rt_managed_heap_destroy(managedHeap);
 }

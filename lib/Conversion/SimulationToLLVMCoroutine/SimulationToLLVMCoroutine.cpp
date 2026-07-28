@@ -193,13 +193,12 @@ FailureOr<uint64_t> computedWaitSize(sim::SimSuspendObserveOp operation) {
     if (index < primaryCount) {
       auto observerType = dyn_cast<sim::ObserverType>(value.getType());
       std::optional<unsigned> width =
-          observerType
-              ? isa<FloatType>(observerType.getResultType())
-                    ? std::optional<unsigned>(
-                          cast<FloatType>(observerType.getResultType())
-                              .getWidth())
-                    : sim::getPackedWidth(observerType.getResultType())
-              : std::nullopt;
+          observerType ? isa<FloatType>(observerType.getResultType())
+                             ? std::optional<unsigned>(
+                                   cast<FloatType>(observerType.getResultType())
+                                       .getWidth())
+                             : sim::getPackedWidth(observerType.getResultType())
+                       : std::nullopt;
       if (!width || *width == 0)
         return failure();
       previousLimbs += (*width + 63) / 64;
@@ -236,8 +235,7 @@ struct StorageProperties {
 bool containsLogic(Type type);
 
 std::optional<unsigned> nativeStateWidth(Type type) {
-  if (isa<sim::CovergroupHandleType>(type) ||
-      sim::isManagedHandleType(type))
+  if (isa<sim::CovergroupHandleType>(type) || sim::isManagedHandleType(type))
     return 64;
   if (std::optional<unsigned> packed = sim::getPackedWidth(type))
     return packed;
@@ -392,7 +390,7 @@ FailureOr<StorageProperties> storageProperties(Type type,
   // past the bytecode register.
   llvm::TypeSize typeSize = isa<sim::ArgumentRefType>(type)
                                 ? layout.getTypeStoreSize(llvmType)
-                                      : layout.getTypeAllocSize(llvmType);
+                                : layout.getTypeAllocSize(llvmType);
   if (typeSize.isScalable() || typeSize.getFixedValue() == 0)
     return failure();
   SmallVector<uint64_t, 2> managedRootOffsets;
@@ -1040,13 +1038,13 @@ public:
     auto [context, pointer] = loadCurrentRuntimeContext(rewriter, location);
     (void)pointer;
     Value status = LLVM::CallOp::create(
-            rewriter, location, TypeRange{rewriter.getI32Type()},
-            SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_monitor_register"),
-            ValueRange{context, adaptor.getProcess().front(),
+                       rewriter, location, TypeRange{rewriter.getI32Type()},
+                       SymbolRefAttr::get(rewriter.getContext(),
+                                          "obelisk_rt_v1_monitor_register"),
+                       ValueRange{context, adaptor.getProcess().front(),
                                   llvmConstant(rewriter, location,
                                                rewriter.getI32Type(), 0)})
-            .getResult();
+                       .getResult();
     reportRuntimeControlStatus(rewriter, location, context, status);
     rewriter.eraseOp(operation);
     return success();
@@ -1091,11 +1089,11 @@ public:
     auto [context, pointer] = loadCurrentRuntimeContext(rewriter, location);
     (void)pointer;
     Value current = LLVM::CallOp::create(
-            rewriter, location, TypeRange{rewriter.getI32Type()},
-            SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_monitor_current"),
-            ValueRange{context})
-            .getResult();
+                        rewriter, location, TypeRange{rewriter.getI32Type()},
+                        SymbolRefAttr::get(rewriter.getContext(),
+                                           "obelisk_rt_v1_monitor_current"),
+                        ValueRange{context})
+                        .getResult();
     rewriter.replaceOpWithNewOp<arith::TruncIOp>(operation,
                                                  rewriter.getI1Type(), current);
     return success();
@@ -1934,10 +1932,10 @@ LogicalResult lowerTimeOperations(sim::SimFuncOp function) {
       if (fromInteger.getResult().getType().isF32()) {
         Value converted =
             fromInteger.getIsSigned()
-                ? Value(arith::SIToFPOp::create(
-                      rewriter, location, rewriter.getF32Type(), input))
-                : Value(arith::UIToFPOp::create(
-                      rewriter, location, rewriter.getF32Type(), input));
+                ? Value(arith::SIToFPOp::create(rewriter, location,
+                                                rewriter.getF32Type(), input))
+                : Value(arith::UIToFPOp::create(rewriter, location,
+                                                rewriter.getF32Type(), input));
         rewriter.replaceOp(operation, converted);
         continue;
       }
@@ -2855,13 +2853,12 @@ void emitManagedRootRangePop(OpBuilder &builder, Location location,
                    SymbolRefAttr::get(context, "obelisk_rt_v1_gc_current_lane"),
                    runtimeContext)
                    .getResult();
-  Value status =
-      LLVM::CallOp::create(
-          builder, location, TypeRange{builder.getI32Type()},
-          SymbolRefAttr::get(context,
-                             "obelisk_rt_v1_gc_managed_root_range_pop"),
-          ValueRange{lane, record})
-          .getResult();
+  Value status = LLVM::CallOp::create(
+                     builder, location, TypeRange{builder.getI32Type()},
+                     SymbolRefAttr::get(
+                         context, "obelisk_rt_v1_gc_managed_root_range_pop"),
+                     ValueRange{lane, record})
+                     .getResult();
   LLVM::CallOp::create(
       builder, location, TypeRange{},
       SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
@@ -4836,7 +4833,193 @@ struct NativeScheduleRanks {
 struct NativeSchedulePlan {
   uint32_t initialRank = UINT32_MAX;
   SmallVector<std::pair<uint32_t, uint32_t>> continuations;
+  SmallVector<uint32_t> bytecodeContinuations;
+  std::optional<uint32_t> actorSlot;
 };
+
+struct NativeAOTEligibility {
+  bool eligible = false;
+  bool fullyEligible = false;
+  SmallVector<std::string> reasons;
+  DenseMap<Operation *, uint32_t> actorSlots;
+  DenseMap<Operation *, SmallVector<Block *>> bytecodeFragments;
+};
+
+NativeAOTEligibility analyzeNativeAOTEligibility(ModuleOp module) {
+  NativeAOTEligibility result;
+  bool invalidPlan = false;
+  llvm::SmallDenseSet<Operation *> dynamicActors;
+  auto rejectPlan = [&](StringRef reason) {
+    invalidPlan = true;
+    result.reasons.emplace_back(reason);
+  };
+  auto requireBytecodeFragment = [&](Operation *operation, StringRef reason) {
+    result.reasons.emplace_back(reason);
+    auto function = operation->getParentOfType<sim::SimFuncOp>();
+    if (!function || !operation->getBlock())
+      return;
+    auto &fragments = result.bytecodeFragments[function.getOperation()];
+    if (!llvm::is_contained(fragments, operation->getBlock()))
+      fragments.push_back(operation->getBlock());
+  };
+  sim::SimDesignOp design;
+  module.walk([&](sim::SimDesignOp candidate) { design = candidate; });
+  if (!design || !design.getComputeGraphAttr()) {
+    rejectPlan("missing compute-graph metadata");
+    return result;
+  }
+  sim::ComputeGraphAttr graph = design.getComputeGraphAttr();
+  if (graph.getVersion() != 1)
+    rejectPlan("unsupported compute-graph version");
+  if (graph.getWorkers() != 1)
+    rejectPlan("AOT scheduling requires one worker");
+  ArrayAttr nodes = graph.getNodes();
+  for (auto [index, attribute] : llvm::enumerate(nodes)) {
+    if (auto fragment = dyn_cast<sim::ComputeFragmentAttr>(attribute)) {
+      if (fragment.getId() != index)
+        rejectPlan("compute-fragment IDs do not match the node inventory");
+      sim::SimFuncOp function = design.lookupSymbol<sim::SimFuncOp>(
+          fragment.getFunction().getValue());
+      Block *block =
+          function ? lookupComputeGraphBlock(function, fragment.getBlock())
+                   : nullptr;
+      if (!function || !block)
+        rejectPlan("compute graph references a stale function or block");
+      else if (fragment.getTier() != sim::ComputeTierKind::Native) {
+        result.reasons.emplace_back(
+            "compute graph contains a bytecode-only fragment");
+        auto &fragments = result.bytecodeFragments[function.getOperation()];
+        if (!llvm::is_contained(fragments, block))
+          fragments.push_back(block);
+      }
+    } else if (auto commit = dyn_cast<sim::ComputeNBACommitAttr>(attribute)) {
+      if (commit.getId() != index)
+        rejectPlan("NBA commit IDs do not match the node inventory");
+      if (!commit.getFrontierSites().empty())
+        result.reasons.emplace_back(
+            "NBA site requires DynamicFrontier storage");
+    } else if (auto commit = dyn_cast<sim::ComputeEventCommitAttr>(attribute)) {
+      if (commit.getId() != index)
+        rejectPlan("event commit IDs do not match the node inventory");
+      if (!commit.getSites().empty())
+        result.reasons.emplace_back("deferred events require dynamic storage");
+    } else {
+      rejectPlan("compute graph contains an unknown node kind");
+    }
+  }
+
+  DenseMap<StringRef, unsigned> rootSpawnCounts;
+  sim::SimFuncOp root;
+  module.walk([&](sim::SimFuncOp function) {
+    if (function.getEntryKind() == sim::EntryKind::RootInitializer)
+      root = function;
+  });
+  if (!root)
+    rejectPlan("missing root initializer");
+  module.walk([&](sim::SimSpawnOp spawn) {
+    sim::SimFuncOp owner = spawn->getParentOfType<sim::SimFuncOp>();
+    if (!owner || owner != root) {
+      requireBytecodeFragment(spawn, "dynamic spawn multiplicity");
+      if (sim::SimFuncOp target =
+              design.lookupSymbol<sim::SimFuncOp>(spawn.getCallee()))
+        dynamicActors.insert(target.getOperation());
+      return;
+    }
+    if (++rootSpawnCounts[spawn.getCallee()] != 1) {
+      result.reasons.emplace_back("duplicate statically spawned process");
+      if (sim::SimFuncOp target =
+              design.lookupSymbol<sim::SimFuncOp>(spawn.getCallee()))
+        dynamicActors.insert(target.getOperation());
+    }
+  });
+
+  module.walk([&](sim::SimFuncOp function) {
+    if (function.getEntryKind() == sim::EntryKind::Task ||
+        function.getEntryKind() == sim::EntryKind::Fork) {
+      result.reasons.emplace_back("task, await, or join control is present");
+      dynamicActors.insert(function.getOperation());
+    }
+  });
+  std::function<bool(Type)> isManagedType = [&](Type type) {
+    if (isa<sim::StringType, sim::ClassHandleType, sim::DynamicArrayType,
+            sim::QueueType, sim::AssocArrayType, sim::ReferencePathType,
+            sim::ManagedRefType, sim::ArgumentRefType>(type))
+      return true;
+    if (auto ref = dyn_cast<sim::RefType>(type))
+      return isManagedType(ref.getElementType());
+    if (auto array = dyn_cast<sim::UnpackedArrayType>(type))
+      return isManagedType(array.getElementType());
+    if (auto record = dyn_cast<sim::UnpackedStructType>(type))
+      return llvm::any_of(record.getFields(), [&](Attribute field) {
+        return isManagedType(cast<sim::FieldAttr>(field).getType());
+      });
+    if (auto record = dyn_cast<sim::UnpackedUnionType>(type))
+      return llvm::any_of(record.getFields(), [&](Attribute field) {
+        return isManagedType(cast<sim::FieldAttr>(field).getType());
+      });
+    return false;
+  };
+  module.walk([&](Operation *operation) {
+    if (isa<sim::SimDPICallOp>(operation))
+      requireBytecodeFragment(operation, "DPI reentrancy is present");
+    else if (isa<sim::SimOverrideOp, sim::SimReleaseOverrideOp>(operation))
+      requireBytecodeFragment(operation, "force/release state is present");
+    else if (isa<sim::SimManagedNBAEnqueueOp,
+                 sim::SimReferencePathNBAEnqueueOp>(operation))
+      requireBytecodeFragment(operation,
+                              "managed or automatic NBA destination");
+    else if (isa<sim::SimSuspendEdgeIffOp, sim::SimSuspendLevelOp,
+                 sim::SimSuspendAnyOp, sim::SimSuspendObserveOp>(operation))
+      requireBytecodeFragment(operation, "computed or conditional wait");
+    else if (isa<sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp,
+                 sim::SimSuspendChildrenOp>(operation))
+      requireBytecodeFragment(operation,
+                              "task, await, or join control is present");
+    else if (auto delay = dyn_cast<sim::SimSuspendDelayOp>(operation)) {
+      auto timing = delay.getTimingAttr();
+      if (!timing || timing.getKind() != sim::ComputeTimingKind::Calendar)
+        requireBytecodeFragment(operation, "dynamic deadline");
+    } else if (auto nba = dyn_cast<sim::SimNBAEnqueueOp>(operation)) {
+      auto site = nba->getAttrOfType<sim::NBASiteAttr>("site");
+      if (!site)
+        requireBytecodeFragment(operation, "NBA site metadata is missing");
+      else if (site.getTiming())
+        requireBytecodeFragment(operation, "delayed NBA site");
+      else if (site.getStorage() == sim::ComputeNBAStorageKind::DynamicFrontier)
+        requireBytecodeFragment(operation,
+                                "NBA site requires DynamicFrontier storage");
+    } else if (isa<sim::SimSuspendChangeOp, sim::SimSuspendEdgeOp>(operation)) {
+      if (!operation->getAttrOfType<sim::ContinuationSiteAttr>("site"))
+        requireBytecodeFragment(operation,
+                                "continuation-site metadata is missing");
+    }
+    if (llvm::any_of(operation->getOperandTypes(), isManagedType) ||
+        llvm::any_of(operation->getResultTypes(), isManagedType))
+      requireBytecodeFragment(operation, "managed or string state is present");
+  });
+
+  llvm::sort(result.reasons);
+  result.reasons.erase(
+      std::unique(result.reasons.begin(), result.reasons.end()),
+      result.reasons.end());
+  if (invalidPlan || !root)
+    return result;
+
+  uint32_t slot = 0;
+  if (!dynamicActors.contains(root.getOperation()))
+    result.actorSlots[root.getOperation()] = slot++;
+  root.walk([&](sim::SimSpawnOp spawn) {
+    sim::SimFuncOp target =
+        design.lookupSymbol<sim::SimFuncOp>(spawn.getCallee());
+    if (!target || dynamicActors.contains(target.getOperation()))
+      return;
+    if (result.actorSlots.try_emplace(target.getOperation(), slot).second)
+      ++slot;
+  });
+  result.eligible = !result.actorSlots.empty();
+  result.fullyEligible = result.eligible && result.reasons.empty();
+  return result;
+}
 
 NativeScheduleRanks buildNativeScheduleRanks(ModuleOp module) {
   NativeScheduleRanks ranks;
@@ -5129,8 +5312,8 @@ public:
       Value equal = arith::CmpIOp::create(
           rewriter, op.getLoc(), arith::CmpIPredicate::eq, comparison,
           llvmConstant(rewriter, op.getLoc(), rewriter.getI32Type(), 0));
-      notificationValue = arith::SelectOp::create(
-          rewriter, op.getLoc(), equal, oldValue, storedValue);
+      notificationValue = arith::SelectOp::create(rewriter, op.getLoc(), equal,
+                                                  oldValue, storedValue);
     }
     Value changed =
         storeStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
@@ -5152,8 +5335,8 @@ public:
       };
       Value contextAddress = LLVM::AddressOfOp::create(
           rewriter, op.getLoc(), pointer, "__obelisk_current_context");
-      Value runtimeContext = LLVM::LoadOp::create(
-          rewriter, op.getLoc(), pointer, contextAddress, 8);
+      Value runtimeContext = LLVM::LoadOp::create(rewriter, op.getLoc(),
+                                                  pointer, contextAddress, 8);
       LLVM::CallOp::create(
           rewriter, op.getLoc(), TypeRange{},
           SymbolRefAttr::get(rewriter.getContext(),
@@ -5973,11 +6156,11 @@ public:
     };
     Value initial = adaptor.getInitialValue().front();
     if (isa<FloatType>(op.getInitialValue().getType()))
-      initial = arith::BitcastOp::create(
-          rewriter, location,
-          rewriter.getIntegerType(*nativeStateWidth(
-              op.getInitialValue().getType())),
-          initial);
+      initial =
+          arith::BitcastOp::create(rewriter, location,
+                                   rewriter.getIntegerType(*nativeStateWidth(
+                                       op.getInitialValue().getType())),
+                                   initial);
     Value value = savePlane(initial);
     Value unknown = LLVM::ZeroOp::create(rewriter, location, pointer);
     if (adaptor.getInitialValue().size() == 2)
@@ -6268,9 +6451,9 @@ LogicalResult collectManagedTraceSlots(
     auto child = sim::getAggregateProvenanceSubelement(type, index);
     if (!child || child->first > UINT64_MAX - baseBitOffset)
       return failure();
-    if (failed(collectManagedTraceSlots(
-            sim::getAggregateElementType(type, index),
-            baseBitOffset + child->first, slots)))
+    if (failed(
+            collectManagedTraceSlots(sim::getAggregateElementType(type, index),
+                                     baseBitOffset + child->first, slots)))
       return failure();
   }
   return success();
@@ -6748,22 +6931,20 @@ void expandManagedSelectsToCFG(ModuleOp module) {
 }
 
 bool managedOperationMayCollect(Operation *operation) {
-  return isa<sim::SimClassAllocOp, sim::SimClassCopyOp, sim::SimWeakCreateOp,
-             sim::SimReferencePathIndexOp, sim::SimReferencePathAssocOp,
-             sim::SimContainerCreateLikeOp, sim::SimContainerCreateOp,
-             sim::SimContainerCloneOp, sim::SimContainerWriteOp,
-             sim::SimQueueInsertOp,
-             sim::SimAssocCreateOp, sim::SimAssocWriteOp,
-             sim::SimAssocSetDefaultOp, sim::SimAssocTraverseOp,
-             sim::SimArgumentRefStoreOp,
-             sim::SimReferencePathNBAEnqueueOp, sim::SimGCSafepointOp,
-             sim::SimStringLiteralOp, sim::SimStringFromPackedOp,
-             sim::SimStringConcatOp, sim::SimStringRepeatOp,
-             sim::SimStringPutcOp, sim::SimStringSubstrOp,
-             sim::SimStringCaseConvertOp, sim::SimStringFormatIntegerOp,
-             sim::SimStringFormatRealOp, sim::SimFileGetlineStringOp,
-             sim::SimCallOp, sim::SimClassDirectCallOp,
-             sim::SimClassVirtualCallOp, sim::SimDPICallOp>(operation);
+  return isa<
+      sim::SimClassAllocOp, sim::SimClassCopyOp, sim::SimWeakCreateOp,
+      sim::SimReferencePathIndexOp, sim::SimReferencePathAssocOp,
+      sim::SimContainerCreateLikeOp, sim::SimContainerCreateOp,
+      sim::SimContainerCloneOp, sim::SimContainerWriteOp, sim::SimQueueInsertOp,
+      sim::SimAssocCreateOp, sim::SimAssocWriteOp, sim::SimAssocSetDefaultOp,
+      sim::SimAssocTraverseOp, sim::SimArgumentRefStoreOp,
+      sim::SimReferencePathNBAEnqueueOp, sim::SimGCSafepointOp,
+      sim::SimStringLiteralOp, sim::SimStringFromPackedOp,
+      sim::SimStringConcatOp, sim::SimStringRepeatOp, sim::SimStringPutcOp,
+      sim::SimStringSubstrOp, sim::SimStringCaseConvertOp,
+      sim::SimStringFormatIntegerOp, sim::SimStringFormatRealOp,
+      sim::SimFileGetlineStringOp, sim::SimCallOp, sim::SimClassDirectCallOp,
+      sim::SimClassVirtualCallOp, sim::SimDPICallOp>(operation);
 }
 
 LogicalResult instrumentManagedRoots(ModuleOp module) {
@@ -6880,8 +7061,8 @@ LogicalResult instrumentManagedRoots(ModuleOp module) {
       Value status =
           LLVM::CallOp::create(
               builder, location, TypeRange{i32},
-              SymbolRefAttr::get(
-                  context, "obelisk_rt_v1_gc_managed_root_range_push"),
+              SymbolRefAttr::get(context,
+                                 "obelisk_rt_v1_gc_managed_root_range_push"),
               ValueRange{lane, record, slotsBase, rootCount})
               .getResult();
       sim::SimStatusCheckOp check =
@@ -7130,13 +7311,12 @@ public:
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
                                "obelisk_rt_v1_container_create_like"),
-            ValueRange{
-                lane,
-                managedObjectPointer(rewriter, op.getLoc(),
-                                     adaptor.getPreferred().front()),
-                managedObjectPointer(rewriter, op.getLoc(),
-                                     adaptor.getFallback().front()),
-                adaptor.getSize().front(), output})
+            ValueRange{lane,
+                       managedObjectPointer(rewriter, op.getLoc(),
+                                            adaptor.getPreferred().front()),
+                       managedObjectPointer(rewriter, op.getLoc(),
+                                            adaptor.getFallback().front()),
+                       adaptor.getSize().front(), output})
             .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
     Value result =
@@ -7285,10 +7465,9 @@ public:
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
                                "obelisk_rt_v1_queue_delete_index"),
-            ValueRange{
-                managedObjectPointer(rewriter, op.getLoc(),
-                                     adaptor.getQueue().front()),
-                adaptor.getIndex().front()})
+            ValueRange{managedObjectPointer(rewriter, op.getLoc(),
+                                            adaptor.getQueue().front()),
+                       adaptor.getIndex().front()})
             .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
     rewriter.eraseOp(op);
@@ -7313,21 +7492,20 @@ public:
       storage.push_back(slot);
     }
     Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
-    Value unknown = storage.size() == 2
-                        ? storage[1]
-                        : Value(LLVM::ZeroOp::create(rewriter, op.getLoc(),
-                                                    pointer));
+    Value unknown =
+        storage.size() == 2
+            ? storage[1]
+            : Value(LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer));
     auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
     Value status =
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
                                "obelisk_rt_v1_queue_insert"),
-            ValueRange{
-                lane,
-                managedObjectPointer(rewriter, op.getLoc(),
-                                     adaptor.getQueue().front()),
-                adaptor.getIndex().front(), storage.front(), unknown})
+            ValueRange{lane,
+                       managedObjectPointer(rewriter, op.getLoc(),
+                                            adaptor.getQueue().front()),
+                       adaptor.getIndex().front(), storage.front(), unknown})
             .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
     rewriter.eraseOp(op);
@@ -7419,8 +7597,8 @@ public:
     if (adaptor.getContainer().size() != 1 || adaptor.getIndex().size() != 1)
       return failure();
     SmallVector<Type> types;
-    if (failed(getTypeConverter()->convertType(op.getResult().getType(),
-                                               types)) ||
+    if (failed(
+            getTypeConverter()->convertType(op.getResult().getType(), types)) ||
         types.empty() || types.size() > 2)
       return failure();
     SmallVector<Value> storage;
@@ -7433,19 +7611,18 @@ public:
       storage.push_back(slot);
     }
     Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
-    Value unknown = storage.size() == 2
-                        ? storage[1]
-                        : Value(LLVM::ZeroOp::create(rewriter, op.getLoc(),
-                                                    pointer));
+    Value unknown =
+        storage.size() == 2
+            ? storage[1]
+            : Value(LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer));
     Value status =
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
                                "obelisk_rt_v1_container_read"),
-            ValueRange{
-                managedObjectPointer(rewriter, op.getLoc(),
-                                     adaptor.getContainer().front()),
-                adaptor.getIndex().front(), storage.front(), unknown})
+            ValueRange{managedObjectPointer(rewriter, op.getLoc(),
+                                            adaptor.getContainer().front()),
+                       adaptor.getIndex().front(), storage.front(), unknown})
             .getResult();
     auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
     (void)lane;
@@ -7476,21 +7653,20 @@ public:
       storage.push_back(slot);
     }
     Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
-    Value unknown = storage.size() == 2
-                        ? storage[1]
-                        : Value(LLVM::ZeroOp::create(rewriter, op.getLoc(),
-                                                    pointer));
+    Value unknown =
+        storage.size() == 2
+            ? storage[1]
+            : Value(LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer));
     auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
     Value status =
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
                                "obelisk_rt_v1_container_write"),
-            ValueRange{
-                lane,
-                managedObjectPointer(rewriter, op.getLoc(),
-                                     adaptor.getContainer().front()),
-                adaptor.getIndex().front(), storage.front(), unknown})
+            ValueRange{lane,
+                       managedObjectPointer(rewriter, op.getLoc(),
+                                            adaptor.getContainer().front()),
+                       adaptor.getIndex().front(), storage.front(), unknown})
             .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
     rewriter.eraseOp(op);
@@ -7499,13 +7675,12 @@ public:
 };
 
 static Value makeNativeAssocKey(OpBuilder &builder, Location location,
-                                sim::AssocArrayType array,
-                                ValueRange values) {
+                                sim::AssocArrayType array, ValueRange values) {
   Type i8 = builder.getI8Type();
   Type i32 = builder.getI32Type();
   Type i64 = builder.getI64Type();
-  Value storage = entryAlloca(builder, location, i8,
-                              sizeof(obelisk_rt_assoc_key_v1), 8);
+  Value storage =
+      entryAlloca(builder, location, i8, sizeof(obelisk_rt_assoc_key_v1), 8);
   auto store32 = [&](uint64_t offset, uint32_t value) {
     LLVM::StoreOp::create(builder, location,
                           llvmConstant(builder, location, i32, value),
@@ -7521,49 +7696,45 @@ static Value makeNativeAssocKey(OpBuilder &builder, Location location,
       stringKey ? OBELISK_RT_ASSOC_KEY_STRING
                 : (array.getSignedKey() ? OBELISK_RT_ASSOC_KEY_SIGNED
                                         : OBELISK_RT_ASSOC_KEY_UNSIGNED);
-  uint64_t keyWidth =
-      stringKey ? 0 : *sim::getPackedWidth(array.getKeyType());
+  uint64_t keyWidth = stringKey ? 0 : *sim::getPackedWidth(array.getKeyType());
   store32(offsetof(obelisk_rt_assoc_key_v1, kind), keyKind);
   store32(offsetof(obelisk_rt_assoc_key_v1, reserved), 0);
-  LLVM::StoreOp::create(
-      builder, location, llvmConstant(builder, location, i64, keyWidth),
-      byteGEP(builder, location, storage,
-              offsetof(obelisk_rt_assoc_key_v1, width)),
-      8);
+  LLVM::StoreOp::create(builder, location,
+                        llvmConstant(builder, location, i64, keyWidth),
+                        byteGEP(builder, location, storage,
+                                offsetof(obelisk_rt_assoc_key_v1, width)),
+                        8);
   Value zero = llvmConstant(builder, location, i64, 0);
   if (stringKey) {
-    LLVM::StoreOp::create(
-        builder, location, zero,
-        byteGEP(builder, location, storage,
-                offsetof(obelisk_rt_assoc_key_v1, value)),
-        8);
-    LLVM::StoreOp::create(
-        builder, location, zero,
-        byteGEP(builder, location, storage,
-                offsetof(obelisk_rt_assoc_key_v1, unknown)),
-        8);
+    LLVM::StoreOp::create(builder, location, zero,
+                          byteGEP(builder, location, storage,
+                                  offsetof(obelisk_rt_assoc_key_v1, value)),
+                          8);
+    LLVM::StoreOp::create(builder, location, zero,
+                          byteGEP(builder, location, storage,
+                                  offsetof(obelisk_rt_assoc_key_v1, unknown)),
+                          8);
     store64(offsetof(obelisk_rt_assoc_key_v1, string), values.front());
   } else {
     store64(offsetof(obelisk_rt_assoc_key_v1, value), values.front());
     if (values.size() == 2)
       store64(offsetof(obelisk_rt_assoc_key_v1, unknown), values[1]);
     else
-      LLVM::StoreOp::create(
-          builder, location, zero,
-          byteGEP(builder, location, storage,
-                  offsetof(obelisk_rt_assoc_key_v1, unknown)),
-          8);
-    LLVM::StoreOp::create(
-        builder, location, zero,
-        byteGEP(builder, location, storage,
-                offsetof(obelisk_rt_assoc_key_v1, string)),
-        8);
+      LLVM::StoreOp::create(builder, location, zero,
+                            byteGEP(builder, location, storage,
+                                    offsetof(obelisk_rt_assoc_key_v1, unknown)),
+                            8);
+    LLVM::StoreOp::create(builder, location, zero,
+                          byteGEP(builder, location, storage,
+                                  offsetof(obelisk_rt_assoc_key_v1, string)),
+                          8);
   }
   return storage;
 }
 
-static SmallVector<Value> makeNativeValueStorage(
-    OpBuilder &builder, Location location, ValueRange values) {
+static SmallVector<Value> makeNativeValueStorage(OpBuilder &builder,
+                                                 Location location,
+                                                 ValueRange values) {
   SmallVector<Value> storage;
   for (Value value : values) {
     Value slot = entryAlloca(builder, location, value.getType(), 1, 8);
@@ -7580,15 +7751,13 @@ static Value makeNativeAssocTrace(OpBuilder &builder, Location location,
   Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
   if (offsets.empty())
     return LLVM::ZeroOp::create(builder, location, pointer);
-  std::string bytes(offsets.size() *
-                        sizeof(obelisk_rt_element_trace_slot_v1),
+  std::string bytes(offsets.size() * sizeof(obelisk_rt_element_trace_slot_v1),
                     '\0');
   for (auto [index, offset, kind] : llvm::enumerate(offsets, kinds)) {
     obelisk_rt_element_trace_slot_v1 slot{
         static_cast<uint64_t>(offset),
         static_cast<obelisk_rt_managed_slot_kind_v1>(kind), 0};
-    std::memcpy(bytes.data() +
-                    index * sizeof(obelisk_rt_element_trace_slot_v1),
+    std::memcpy(bytes.data() + index * sizeof(obelisk_rt_element_trace_slot_v1),
                 &slot, sizeof(slot));
   }
   ModuleOp module = operation->getParentOfType<ModuleOp>();
@@ -7614,9 +7783,9 @@ public:
     LLVM::StoreOp::create(rewriter, op.getLoc(),
                           LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer),
                           output, 8);
-    Value trace = makeNativeAssocTrace(
-        rewriter, op.getLoc(), op, op.getTypeId(), op.getTraceOffsets(),
-        op.getTraceKinds());
+    Value trace =
+        makeNativeAssocTrace(rewriter, op.getLoc(), op, op.getTypeId(),
+                             op.getTraceOffsets(), op.getTraceKinds());
     auto c32 = [&](uint32_t value) {
       return llvmConstant(rewriter, op.getLoc(), i32, value);
     };
@@ -7653,8 +7822,8 @@ public:
         adaptor.getKey().size() > 2)
       return failure();
     SmallVector<Type> types;
-    if (failed(getTypeConverter()->convertType(op.getResult().getType(),
-                                               types)) ||
+    if (failed(
+            getTypeConverter()->convertType(op.getResult().getType(), types)) ||
         types.empty() || types.size() > 2)
       return failure();
     SmallVector<Value> storage;
@@ -7670,18 +7839,19 @@ public:
     Value key =
         makeNativeAssocKey(rewriter, op.getLoc(), array, adaptor.getKey());
     Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
-    Value unknown = storage.size() == 2
-                        ? storage[1]
-                        : Value(LLVM::ZeroOp::create(rewriter, op.getLoc(),
-                                                    pointer));
+    Value unknown =
+        storage.size() == 2
+            ? storage[1]
+            : Value(LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer));
     Value present =
         entryAlloca(rewriter, op.getLoc(), rewriter.getI32Type(), 1, 4);
-    Value planeSize = llvmConstant(
-        rewriter, op.getLoc(), rewriter.getI64Type(),
-        (sim::getPackedWidth(op.getResult().getType()).value_or(
-             static_cast<unsigned>(types.front().getIntOrFloatBitWidth())) +
-         7) /
-            8);
+    Value planeSize =
+        llvmConstant(rewriter, op.getLoc(), rewriter.getI64Type(),
+                     (sim::getPackedWidth(op.getResult().getType())
+                          .value_or(static_cast<unsigned>(
+                              types.front().getIntOrFloatBitWidth())) +
+                      7) /
+                         8);
     if (sim::isManagedHandleType(op.getResult().getType()))
       planeSize = llvmConstant(rewriter, op.getLoc(), rewriter.getI64Type(),
                                sizeof(void *));
@@ -7712,19 +7882,19 @@ public:
 };
 
 template <typename Op, typename Adaptor>
-static LogicalResult lowerAssocValueMutation(
-    Op op, Adaptor adaptor, ConversionPatternRewriter &rewriter,
-    StringRef callee) {
+static LogicalResult
+lowerAssocValueMutation(Op op, Adaptor adaptor,
+                        ConversionPatternRewriter &rewriter, StringRef callee) {
   if (adaptor.getArray().size() != 1 || adaptor.getValue().empty() ||
       adaptor.getValue().size() > 2)
     return failure();
   SmallVector<Value> storage =
       makeNativeValueStorage(rewriter, op.getLoc(), adaptor.getValue());
   Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
-  Value unknown = storage.size() == 2
-                      ? storage[1]
-                      : Value(LLVM::ZeroOp::create(rewriter, op.getLoc(),
-                                                  pointer));
+  Value unknown =
+      storage.size() == 2
+          ? storage[1]
+          : Value(LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer));
   uint64_t bytes = 0;
   if (auto width = sim::getPackedWidth(op.getValue().getType()))
     bytes = (*width + 7) / 8;
@@ -7773,8 +7943,8 @@ public:
   LogicalResult
   matchAndRewrite(sim::SimAssocWriteOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    return lowerAssocValueMutation(
-        op, adaptor, rewriter, "obelisk_rt_v1_assoc_write_checked");
+    return lowerAssocValueMutation(op, adaptor, rewriter,
+                                   "obelisk_rt_v1_assoc_write_checked");
   }
 };
 
@@ -7785,8 +7955,8 @@ public:
   LogicalResult
   matchAndRewrite(sim::SimAssocSetDefaultOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    return lowerAssocValueMutation(
-        op, adaptor, rewriter, "obelisk_rt_v1_assoc_set_default_checked");
+    return lowerAssocValueMutation(op, adaptor, rewriter,
+                                   "obelisk_rt_v1_assoc_set_default_checked");
   }
 };
 
@@ -7818,8 +7988,8 @@ public:
     reportManagedStatus(rewriter, op.getLoc(), context, status);
     Value loaded = LLVM::LoadOp::create(rewriter, op.getLoc(),
                                         rewriter.getI32Type(), output, 4);
-    rewriter.replaceOpWithNewOp<arith::TruncIOp>(
-        op, rewriter.getI1Type(), loaded);
+    rewriter.replaceOpWithNewOp<arith::TruncIOp>(op, rewriter.getI1Type(),
+                                                 loaded);
     return success();
   }
 };
@@ -7898,25 +8068,25 @@ public:
       keyValues.push_back(loaded);
     } else {
       SmallVector<Type> converted;
-      if (failed(getTypeConverter()->convertType(array.getKeyType(),
-                                                 converted)) ||
+      if (failed(
+              getTypeConverter()->convertType(array.getKeyType(), converted)) ||
           converted.empty() || converted.size() > 2)
         return failure();
       for (auto [index, type] : llvm::enumerate(converted)) {
-        uint64_t offset =
-            index == 0 ? offsetof(obelisk_rt_assoc_key_v1, value)
-                       : offsetof(obelisk_rt_assoc_key_v1, unknown);
+        uint64_t offset = index == 0
+                              ? offsetof(obelisk_rt_assoc_key_v1, value)
+                              : offsetof(obelisk_rt_assoc_key_v1, unknown);
         Value loaded = LLVM::LoadOp::create(
             rewriter, op.getLoc(), i64,
             byteGEP(rewriter, op.getLoc(), key, offset), 8);
-        keyValues.push_back(castIntegerWidth(rewriter, op.getLoc(), loaded,
-                                             type));
+        keyValues.push_back(
+            castIntegerWidth(rewriter, op.getLoc(), loaded, type));
       }
     }
     Value success32 = LLVM::LoadOp::create(
         rewriter, op.getLoc(), rewriter.getI32Type(), successSlot, 4);
-    Value success1 = arith::TruncIOp::create(
-        rewriter, op.getLoc(), rewriter.getI1Type(), success32);
+    Value success1 = arith::TruncIOp::create(rewriter, op.getLoc(),
+                                             rewriter.getI1Type(), success32);
     SmallVector<ValueRange> replacements;
     replacements.push_back(keyValues);
     replacements.push_back(ValueRange{success1});
@@ -7929,8 +8099,8 @@ static Value finishStringAllocation(ConversionPatternRewriter &rewriter,
                                     Location location, Value context,
                                     Value status, Value output) {
   reportManagedStatus(rewriter, location, context, status);
-  return LLVM::LoadOp::create(rewriter, location, rewriter.getI64Type(),
-                              output, 8);
+  return LLVM::LoadOp::create(rewriter, location, rewriter.getI64Type(), output,
+                              8);
 }
 
 class StringLiteralConversion final
@@ -7958,26 +8128,24 @@ public:
       data = LLVM::AddressOfOp::create(rewriter, op.getLoc(), global);
     }
     auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
-    Value output = entryAlloca(rewriter, op.getLoc(), rewriter.getI64Type(), 1,
-                               8);
+    Value output =
+        entryAlloca(rewriter, op.getLoc(), rewriter.getI64Type(), 1, 8);
     LLVM::StoreOp::create(
         rewriter, op.getLoc(),
         LLVM::ZeroOp::create(rewriter, op.getLoc(), rewriter.getI64Type()),
         output, 8);
-    Value status = LLVM::CallOp::create(
-                       rewriter, op.getLoc(),
-                       TypeRange{rewriter.getI32Type()},
-                       SymbolRefAttr::get(rewriter.getContext(),
-                                          "obelisk_rt_v1_string_create"),
-                       ValueRange{lane, data,
-                                  llvmConstant(rewriter, op.getLoc(),
-                                               rewriter.getI64Type(),
-                                               bytes.size()),
-                                  output})
-                       .getResult();
-    rewriter.replaceOp(
-        op, finishStringAllocation(rewriter, op.getLoc(), context, status,
-                                   output));
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_string_create"),
+            ValueRange{lane, data,
+                       llvmConstant(rewriter, op.getLoc(),
+                                    rewriter.getI64Type(), bytes.size()),
+                       output})
+            .getResult();
+    rewriter.replaceOp(op, finishStringAllocation(rewriter, op.getLoc(),
+                                                  context, status, output));
     return success();
   }
 };
@@ -7989,9 +8157,10 @@ public:
   LogicalResult
   matchAndRewrite(sim::SimStringFromPackedOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    std::optional<unsigned> width = sim::getPackedWidth(op.getInput().getType());
-    if (!width || (adaptor.getInput().size() != 1 &&
-                   adaptor.getInput().size() != 2))
+    std::optional<unsigned> width =
+        sim::getPackedWidth(op.getInput().getType());
+    if (!width ||
+        (adaptor.getInput().size() != 1 && adaptor.getInput().size() != 2))
       return failure();
     Type planeType = adaptor.getInput().front().getType();
     Value value = entryAlloca(rewriter, op.getLoc(), planeType, 1, 8);
@@ -8005,26 +8174,23 @@ public:
                             unknown, 8);
     }
     auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
-    Value output = entryAlloca(rewriter, op.getLoc(), rewriter.getI64Type(), 1,
-                               8);
+    Value output =
+        entryAlloca(rewriter, op.getLoc(), rewriter.getI64Type(), 1, 8);
     LLVM::StoreOp::create(
         rewriter, op.getLoc(),
         LLVM::ZeroOp::create(rewriter, op.getLoc(), rewriter.getI64Type()),
         output, 8);
     Value status = LLVM::CallOp::create(
-                       rewriter, op.getLoc(),
-                       TypeRange{rewriter.getI32Type()},
-                       SymbolRefAttr::get(
-                           rewriter.getContext(),
-                           "obelisk_rt_v1_string_from_packed"),
+                       rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+                       SymbolRefAttr::get(rewriter.getContext(),
+                                          "obelisk_rt_v1_string_from_packed"),
                        ValueRange{lane, value, unknown,
                                   llvmConstant(rewriter, op.getLoc(),
                                                rewriter.getI64Type(), *width),
                                   output})
                        .getResult();
-    rewriter.replaceOp(
-        op, finishStringAllocation(rewriter, op.getLoc(), context, status,
-                                   output));
+    rewriter.replaceOp(op, finishStringAllocation(rewriter, op.getLoc(),
+                                                  context, status, output));
     return success();
   }
 };
@@ -8045,19 +8211,17 @@ public:
         rewriter, op.getLoc(),
         LLVM::ZeroOp::create(rewriter, op.getLoc(), resultType), output, 8);
     Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
-    Value status = LLVM::CallOp::create(
-                       rewriter, op.getLoc(),
-                       TypeRange{rewriter.getI32Type()},
-                       SymbolRefAttr::get(
-                           rewriter.getContext(),
-                           "obelisk_rt_v1_string_to_packed"),
-                       ValueRange{adaptor.getInput().front(), output,
-                                  LLVM::ZeroOp::create(rewriter, op.getLoc(),
-                                                      pointer),
-                                  llvmConstant(rewriter, op.getLoc(),
-                                               rewriter.getI64Type(),
-                                               resultType.getWidth())})
-                       .getResult();
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_string_to_packed"),
+            ValueRange{adaptor.getInput().front(), output,
+                       LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer),
+                       llvmConstant(rewriter, op.getLoc(),
+                                    rewriter.getI64Type(),
+                                    resultType.getWidth())})
+            .getResult();
     auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
     (void)lane;
     reportManagedStatus(rewriter, op.getLoc(), context, status);
@@ -8094,19 +8258,16 @@ public:
                           LLVM::ZeroOp::create(rewriter, op.getLoc(), i64),
                           output, 8);
     Value status = LLVM::CallOp::create(
-                       rewriter, op.getLoc(),
-                       TypeRange{rewriter.getI32Type()},
-                       SymbolRefAttr::get(
-                           rewriter.getContext(),
-                           "obelisk_rt_v1_string_concat_many"),
+                       rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+                       SymbolRefAttr::get(rewriter.getContext(),
+                                          "obelisk_rt_v1_string_concat_many"),
                        ValueRange{lane, spans,
                                   llvmConstant(rewriter, op.getLoc(), i64,
                                                adaptor.getInputs().size()),
                                   output})
                        .getResult();
-    rewriter.replaceOp(
-        op, finishStringAllocation(rewriter, op.getLoc(), context, status,
-                                   output));
+    rewriter.replaceOp(op, finishStringAllocation(rewriter, op.getLoc(),
+                                                  context, status, output));
     return success();
   }
 };
@@ -8119,7 +8280,8 @@ public:
       : OpConversionPattern<Op>(converter, context), symbol(symbol) {}
 
   LogicalResult
-  matchAndRewrite(Op op, typename OpConversionPattern<Op>::OneToNOpAdaptor adaptor,
+  matchAndRewrite(Op op,
+                  typename OpConversionPattern<Op>::OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     SmallVector<Value> operands;
     for (ValueRange range : adaptor.getOperands()) {
@@ -8139,12 +8301,12 @@ public:
     if constexpr (std::is_same_v<Op, sim::SimStringFormatIntegerOp>) {
       operands.push_back(llvmConstant(rewriter, op.getLoc(),
                                       rewriter.getI32Type(), op.getRadix()));
-      operands.push_back(
-          llvmConstant(rewriter, op.getLoc(), rewriter.getI32Type(),
-                       op.getIsSigned() ? 1 : 0));
+      operands.push_back(llvmConstant(rewriter, op.getLoc(),
+                                      rewriter.getI32Type(),
+                                      op.getIsSigned() ? 1 : 0));
     }
-    Value output = entryAlloca(rewriter, op.getLoc(), rewriter.getI64Type(), 1,
-                               8);
+    Value output =
+        entryAlloca(rewriter, op.getLoc(), rewriter.getI64Type(), 1, 8);
     LLVM::StoreOp::create(
         rewriter, op.getLoc(),
         LLVM::ZeroOp::create(rewriter, op.getLoc(), rewriter.getI64Type()),
@@ -8155,9 +8317,8 @@ public:
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(), symbol), operands)
             .getResult();
-    rewriter.replaceOp(
-        op, finishStringAllocation(rewriter, op.getLoc(), context, status,
-                                   output));
+    rewriter.replaceOp(op, finishStringAllocation(rewriter, op.getLoc(),
+                                                  context, status, output));
     return success();
   }
 
@@ -8197,9 +8358,9 @@ public:
                                "obelisk_rt_v1_string_getc"),
             ValueRange{adaptor.getInput().front(), adaptor.getIndex().front()})
             .getResult();
-    rewriter.replaceOp(
-        op, arith::TruncIOp::create(rewriter, op.getLoc(),
-                                    rewriter.getI8Type(), result));
+    rewriter.replaceOp(op,
+                       arith::TruncIOp::create(rewriter, op.getLoc(),
+                                               rewriter.getI8Type(), result));
     return success();
   }
 };
@@ -8218,8 +8379,7 @@ public:
         op, LLVM::CallOp::create(
                 rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
                 SymbolRefAttr::get(rewriter.getContext(), symbol),
-                ValueRange{adaptor.getLhs().front(),
-                           adaptor.getRhs().front()})
+                ValueRange{adaptor.getLhs().front(), adaptor.getRhs().front()})
                 .getResult());
     return success();
   }
@@ -8230,12 +8390,13 @@ class StringFileOpenConversion final : public OpConversionPattern<Op> {
 public:
   using OpConversionPattern<Op>::OpConversionPattern;
   LogicalResult
-  matchAndRewrite(Op op, typename OpConversionPattern<Op>::OneToNOpAdaptor adaptor,
+  matchAndRewrite(Op op,
+                  typename OpConversionPattern<Op>::OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
     (void)lane;
-    Value output = entryAlloca(rewriter, op.getLoc(), rewriter.getI32Type(), 1,
-                               4);
+    Value output =
+        entryAlloca(rewriter, op.getLoc(), rewriter.getI32Type(), 1, 4);
     LLVM::StoreOp::create(
         rewriter, op.getLoc(),
         LLVM::ZeroOp::create(rewriter, op.getLoc(), rewriter.getI32Type()),
@@ -8252,16 +8413,15 @@ public:
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(), symbol), operands)
             .getResult();
-    Value descriptor = LLVM::LoadOp::create(
-        rewriter, op.getLoc(), rewriter.getI32Type(), output, 4);
+    Value descriptor = LLVM::LoadOp::create(rewriter, op.getLoc(),
+                                            rewriter.getI32Type(), output, 4);
     Value ok = arith::CmpIOp::create(
         rewriter, op.getLoc(), arith::CmpIPredicate::eq, status,
         llvmConstant(rewriter, op.getLoc(), rewriter.getI32Type(), 0));
-    rewriter.replaceOp(
-        op, arith::SelectOp::create(
-                rewriter, op.getLoc(), ok, descriptor,
-                LLVM::ZeroOp::create(rewriter, op.getLoc(),
-                                     rewriter.getI32Type())));
+    rewriter.replaceOp(op, arith::SelectOp::create(
+                               rewriter, op.getLoc(), ok, descriptor,
+                               LLVM::ZeroOp::create(rewriter, op.getLoc(),
+                                                    rewriter.getI32Type())));
     return success();
   }
 };
@@ -8295,18 +8455,17 @@ public:
     Value ok = arith::CmpIOp::create(
         rewriter, op.getLoc(), arith::CmpIPredicate::eq, status,
         llvmConstant(rewriter, op.getLoc(), i32, 0));
-    Value string = LLVM::LoadOp::create(rewriter, op.getLoc(), i64,
-                                        stringOutput, 8);
+    Value string =
+        LLVM::LoadOp::create(rewriter, op.getLoc(), i64, stringOutput, 8);
     Value count =
         LLVM::LoadOp::create(rewriter, op.getLoc(), i32, countOutput, 4);
     rewriter.replaceOp(
-        op, ValueRange{
-                arith::SelectOp::create(
-                    rewriter, op.getLoc(), ok, string,
-                    LLVM::ZeroOp::create(rewriter, op.getLoc(), i64)),
-                arith::SelectOp::create(
-                    rewriter, op.getLoc(), ok, count,
-                    LLVM::ZeroOp::create(rewriter, op.getLoc(), i32))});
+        op, ValueRange{arith::SelectOp::create(
+                           rewriter, op.getLoc(), ok, string,
+                           LLVM::ZeroOp::create(rewriter, op.getLoc(), i64)),
+                       arith::SelectOp::create(
+                           rewriter, op.getLoc(), ok, count,
+                           LLVM::ZeroOp::create(rewriter, op.getLoc(), i32))});
     return success();
   }
 };
@@ -8319,12 +8478,12 @@ public:
       : OpConversionPattern<Op>(converter, context), symbol(symbol) {}
 
   LogicalResult
-  matchAndRewrite(Op op, typename OpConversionPattern<Op>::OneToNOpAdaptor adaptor,
+  matchAndRewrite(Op op,
+                  typename OpConversionPattern<Op>::OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    Type resultType =
-        std::is_same_v<Op, sim::SimStringParseIntegerOp>
-            ? Type(rewriter.getI64Type())
-            : Type(rewriter.getF64Type());
+    Type resultType = std::is_same_v<Op, sim::SimStringParseIntegerOp>
+                          ? Type(rewriter.getI64Type())
+                          : Type(rewriter.getF64Type());
     Value output = entryAlloca(rewriter, op.getLoc(), resultType, 1, 8);
     LLVM::StoreOp::create(
         rewriter, op.getLoc(),
@@ -8410,8 +8569,7 @@ public:
     Type i64 = rewriter.getI64Type();
     Value bins = entryAlloca(rewriter, op.getLoc(), i64,
                              declaration.getCoverpointBins().size(), 8);
-    for (auto [index, count] :
-         llvm::enumerate(declaration.getCoverpointBins()))
+    for (auto [index, count] : llvm::enumerate(declaration.getCoverpointBins()))
       LLVM::StoreOp::create(
           rewriter, op.getLoc(),
           llvmConstant(rewriter, op.getLoc(), i64,
@@ -8448,9 +8606,9 @@ class CovergroupControlConversion final : public OpConversionPattern<Op> {
 public:
   using OpConversionPattern<Op>::OpConversionPattern;
   LogicalResult
-  matchAndRewrite(
-      Op op, typename OpConversionPattern<Op>::OneToNOpAdaptor adaptor,
-      ConversionPatternRewriter &rewriter) const override {
+  matchAndRewrite(Op op,
+                  typename OpConversionPattern<Op>::OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
     if (adaptor.getHandle().size() != 1)
       return failure();
     auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
@@ -8475,8 +8633,7 @@ class CovergroupEnabledConversion final
 public:
   using OpConversionPattern::OpConversionPattern;
   LogicalResult
-  matchAndRewrite(sim::SimCovergroupSampleEnabledOp op,
-                  OneToNOpAdaptor adaptor,
+  matchAndRewrite(sim::SimCovergroupSampleEnabledOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     if (adaptor.getHandle().size() != 1)
       return failure();
@@ -8493,9 +8650,9 @@ public:
             .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
     Value enabled = LLVM::LoadOp::create(rewriter, op.getLoc(), i32, output, 4);
-    rewriter.replaceOp(
-        op, LLVM::TruncOp::create(rewriter, op.getLoc(),
-                                  rewriter.getI1Type(), enabled));
+    rewriter.replaceOp(op,
+                       LLVM::TruncOp::create(rewriter, op.getLoc(),
+                                             rewriter.getI1Type(), enabled));
     return success();
   }
 };
@@ -8539,8 +8696,7 @@ public:
       return failure();
     SmallVector<Value> hitValues = flatten(adaptor.getHits());
     Type i8 = rewriter.getI8Type();
-    Value hits =
-        entryAlloca(rewriter, op.getLoc(), i8, hitValues.size(), 1);
+    Value hits = entryAlloca(rewriter, op.getLoc(), i8, hitValues.size(), 1);
     for (auto [index, hit] : llvm::enumerate(hitValues))
       LLVM::StoreOp::create(
           rewriter, op.getLoc(),
@@ -8553,10 +8709,9 @@ public:
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
                                "obelisk_rt_v1_covergroup_sample"),
-            ValueRange{
-                context, adaptor.getHandle().front(), hits,
-                llvmConstant(rewriter, op.getLoc(), rewriter.getI64Type(),
-                             hitValues.size())})
+            ValueRange{context, adaptor.getHandle().front(), hits,
+                       llvmConstant(rewriter, op.getLoc(),
+                                    rewriter.getI64Type(), hitValues.size())})
             .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
     rewriter.eraseOp(op);
@@ -8569,9 +8724,9 @@ class CovergroupQueryConversion final : public OpConversionPattern<Op> {
 public:
   using OpConversionPattern<Op>::OpConversionPattern;
   LogicalResult
-  matchAndRewrite(
-      Op op, typename OpConversionPattern<Op>::OneToNOpAdaptor adaptor,
-      ConversionPatternRewriter &rewriter) const override {
+  matchAndRewrite(Op op,
+                  typename OpConversionPattern<Op>::OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
     Type f64 = rewriter.getF64Type();
     Type i32 = rewriter.getI32Type();
     Value percentage = entryAlloca(rewriter, op.getLoc(), f64, 1, 8);
@@ -8603,9 +8758,8 @@ public:
                          static_cast<uint64_t>(count)),
             byteGEP(rewriter, op.getLoc(), bins, index * sizeof(uint64_t)), 8);
       arguments.push_back(bins);
-      arguments.push_back(llvmConstant(
-          rewriter, op.getLoc(), i64,
-          declaration.getCoverpointBins().size()));
+      arguments.push_back(llvmConstant(rewriter, op.getLoc(), i64,
+                                       declaration.getCoverpointBins().size()));
     } else {
       if (adaptor.getHandle().size() != 1)
         return failure();
@@ -8615,19 +8769,16 @@ public:
     }
     arguments.append({percentage, covered, total});
     Value status =
-        LLVM::CallOp::create(
-            rewriter, op.getLoc(), TypeRange{i32},
-            SymbolRefAttr::get(rewriter.getContext(), symbol),
-            arguments)
+        LLVM::CallOp::create(rewriter, op.getLoc(), TypeRange{i32},
+                             SymbolRefAttr::get(rewriter.getContext(), symbol),
+                             arguments)
             .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
     rewriter.replaceOp(
-        op, ValueRange{LLVM::LoadOp::create(rewriter, op.getLoc(), f64,
-                                            percentage, 8),
-                       LLVM::LoadOp::create(rewriter, op.getLoc(), i32, covered,
-                                            4),
-                       LLVM::LoadOp::create(rewriter, op.getLoc(), i32, total,
-                                            4)});
+        op, ValueRange{
+                LLVM::LoadOp::create(rewriter, op.getLoc(), f64, percentage, 8),
+                LLVM::LoadOp::create(rewriter, op.getLoc(), i32, covered, 4),
+                LLVM::LoadOp::create(rewriter, op.getLoc(), i32, total, 4)});
     return success();
   }
 };
@@ -8916,8 +9067,7 @@ public:
                        adaptor.getIndex().front(),
                        managedObjectPointer(rewriter, op.getLoc(),
                                             ownerReference.owner),
-                       ownerReference.payload,
-                       ownerReference.managed, output})
+                       ownerReference.payload, ownerReference.managed, output})
             .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
     Value path =
@@ -8935,8 +9085,7 @@ public:
   matchAndRewrite(sim::SimReferencePathAssocOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     if (adaptor.getArray().size() != 1 || adaptor.getKey().empty() ||
-        adaptor.getKey().size() > 2 ||
-        adaptor.getOwnerReference().size() != 1)
+        adaptor.getKey().size() > 2 || adaptor.getOwnerReference().size() != 1)
       return failure();
     Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
     auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
@@ -9056,13 +9205,13 @@ public:
                 llvmConstant(rewriter, location, i64, *bitWidth),
                 llvmConstant(rewriter, location, i64, storage->size),
                 llvmConstant(rewriter, location, i32, storage->fourState),
-                llvmConstant(rewriter, location, i32,
-                             isa<sim::StringType>(op.getResult().getType())
-                                 ? OBELISK_RT_ARGUMENT_VALUE_STRING
-                             : sim::isManagedHandleType(
-                                   op.getResult().getType())
-                                 ? OBELISK_RT_ARGUMENT_VALUE_CLASS
-                                 : OBELISK_RT_ARGUMENT_VALUE_BITS),
+                llvmConstant(
+                    rewriter, location, i32,
+                    isa<sim::StringType>(op.getResult().getType())
+                        ? OBELISK_RT_ARGUMENT_VALUE_STRING
+                    : sim::isManagedHandleType(op.getResult().getType())
+                        ? OBELISK_RT_ARGUMENT_VALUE_CLASS
+                        : OBELISK_RT_ARGUMENT_VALUE_BITS),
                 valueOut, unknownOut})
             .getResult();
     reportManagedStatus(rewriter, location, context, status);
@@ -9130,12 +9279,12 @@ public:
         llvmConstant(rewriter, location, i64, *bitWidth),
         llvmConstant(rewriter, location, i64, storage->size),
         llvmConstant(rewriter, location, i32, storage->fourState),
-        llvmConstant(
-            rewriter, location, i32,
-            isa<sim::StringType>(valueType) ? OBELISK_RT_ARGUMENT_VALUE_STRING
-            : sim::isManagedHandleType(valueType)
-                ? OBELISK_RT_ARGUMENT_VALUE_CLASS
-                : OBELISK_RT_ARGUMENT_VALUE_BITS)};
+        llvmConstant(rewriter, location, i32,
+                     isa<sim::StringType>(valueType)
+                         ? OBELISK_RT_ARGUMENT_VALUE_STRING
+                     : sim::isManagedHandleType(valueType)
+                         ? OBELISK_RT_ARGUMENT_VALUE_CLASS
+                         : OBELISK_RT_ARGUMENT_VALUE_BITS)};
     Value valueIn =
         entryAlloca(rewriter, location, adaptor.getValue().front().getType(), 1,
                     storage->alignment);
@@ -9975,6 +10124,8 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
       (function.getSymName() + ".__obelisk_schedule_continuations").str();
   std::string rankName =
       (function.getSymName() + ".__obelisk_schedule_ranks").str();
+  std::string bytecodeContinuationName =
+      (function.getSymName() + ".__obelisk_bytecode_continuations").str();
   if (!schedule.continuations.empty()) {
     auto arrayType =
         LLVM::LLVMArrayType::get(i32, schedule.continuations.size());
@@ -9997,6 +10148,22 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
     };
     makeArray(continuationName, 0);
     makeArray(rankName, 1);
+  }
+  if (!schedule.bytecodeContinuations.empty()) {
+    auto arrayType =
+        LLVM::LLVMArrayType::get(i32, schedule.bytecodeContinuations.size());
+    makeConstantGlobal(
+        module, location, arrayType, bytecodeContinuationName,
+        LLVM::Linkage::Internal, 4, [&](OpBuilder &initializer) {
+          Value array = LLVM::ZeroOp::create(initializer, location, arrayType);
+          for (auto [index, continuation] :
+               llvm::enumerate(schedule.bytecodeContinuations))
+            array = LLVM::InsertValueOp::create(
+                initializer, location, array,
+                llvmConstant(initializer, location, i32, continuation),
+                ArrayRef<int64_t>{static_cast<int64_t>(index)});
+          return array;
+        });
   }
   builder.setInsertionPointAfter(function);
   auto helper = LLVM::LLVMFuncOp::create(
@@ -10067,9 +10234,9 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
   if (homeRegion == UINT32_MAX)
     return function.emitOpError("has no executable runtime home region");
   uint32_t scheduleFlags = OBELISK_RT_SCHEDULE_HOME(homeRegion) |
-      (function.getEntryKind() == sim::EntryKind::Final
-           ? OBELISK_RT_SCHEDULE_FINAL
-           : 0);
+                           (function.getEntryKind() == sim::EntryKind::Final
+                                ? OBELISK_RT_SCHEDULE_FINAL
+                                : 0);
   Value null = LLVM::ZeroOp::create(builder, location, pointer);
   Value continuationAddress = null;
   Value rankAddress = null;
@@ -10079,15 +10246,33 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
     rankAddress =
         LLVM::AddressOfOp::create(builder, location, pointer, rankName);
   }
-  auto add = LLVM::CallOp::create(
-      builder, location, TypeRange{i32},
-      SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_add_planned"),
+  SmallVector<Value> addArguments{
+      entry->getArgument(0), instance,
+      llvmConstant(builder, location, i32, scheduleFlags)};
+  StringRef addName = "obelisk_rt_v1_scheduler_add_planned";
+  if (schedule.actorSlot) {
+    addName = "obelisk_rt_v1_scheduler_add_aot";
+    addArguments.push_back(
+        llvmConstant(builder, location, i32, *schedule.actorSlot));
+  }
+  llvm::append_range(
+      addArguments,
       ValueRange{
-          entry->getArgument(0), instance,
-          llvmConstant(builder, location, i32, scheduleFlags),
           llvmConstant(builder, location, i32, schedule.initialRank),
           continuationAddress, rankAddress,
           llvmConstant(builder, location, i32, schedule.continuations.size())});
+  if (schedule.actorSlot) {
+    Value bytecodeContinuations = null;
+    if (!schedule.bytecodeContinuations.empty())
+      bytecodeContinuations = LLVM::AddressOfOp::create(
+          builder, location, pointer, bytecodeContinuationName);
+    addArguments.push_back(bytecodeContinuations);
+    addArguments.push_back(llvmConstant(builder, location, i32,
+                                        schedule.bytecodeContinuations.size()));
+  }
+  auto add =
+      LLVM::CallOp::create(builder, location, TypeRange{i32},
+                           SymbolRefAttr::get(context, addName), addArguments);
   Value addSucceeded = arith::CmpIOp::create(
       builder, location, arith::CmpIPredicate::eq, add.getResult(),
       llvmConstant(builder, location, i32, 0));
@@ -10118,6 +10303,9 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
                            {pointer, pointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_add_planned", i32,
                            {pointer, pointer, i32, i32, pointer, pointer, i32});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_scheduler_add_aot", i32,
+      {pointer, pointer, i32, i32, i32, pointer, pointer, i32, pointer, i32});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_process_token", i64,
                            {pointer, pointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_fail",
@@ -10145,8 +10333,140 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
   return success();
 }
 
+LogicalResult makeNativeAOTPlan(ModuleOp module, uint32_t actorCount) {
+  if (actorCount == 0)
+    return module.emitError("AOT schedule has no actor slots");
+  MLIRContext *context = module.getContext();
+  OpBuilder builder(context);
+  Location location = module.getLoc();
+  Type pointer = LLVM::LLVMPointerType::get(context);
+  Type i32 = builder.getI32Type();
+  Type i64 = builder.getI64Type();
+  uint64_t graphLayoutChecksum = 0;
+  if (auto image =
+          module->getAttrOfType<DenseI8ArrayAttr>("obelisk.bytecode.image")) {
+    ArrayRef<int8_t> bytes = image.asArrayRef();
+    if (bytes.size() < 40)
+      return module.emitError("embedded bytecode checksum is truncated");
+    for (unsigned byte = 0; byte != 8; ++byte)
+      graphLayoutChecksum |= uint64_t{static_cast<uint8_t>(bytes[32 + byte])}
+                             << (byte * 8);
+  }
+  Type stateType = LLVM::LLVMArrayType::get(pointer, actorCount);
+  constexpr StringLiteral stateName = "__obelisk_aot_schedule_state_v1";
+  constexpr StringLiteral bindName = "__obelisk_aot_schedule_bind_v1";
+  constexpr StringLiteral runName = "__obelisk_aot_schedule_run_v1";
+  constexpr StringLiteral snapshotName = "__obelisk_aot_schedule_snapshot_v1";
+  constexpr StringLiteral planName = "__obelisk_aot_schedule_plan_v1";
+
+  builder.setInsertionPointToStart(module.getBody());
+  auto state = LLVM::GlobalOp::create(builder, location, stateType, false,
+                                      LLVM::Linkage::Internal, stateName,
+                                      Attribute{}, 8);
+  Block *initializer = new Block;
+  state.getInitializerRegion().push_back(initializer);
+  builder.setInsertionPointToStart(initializer);
+  LLVM::ReturnOp::create(builder, location,
+                         LLVM::ZeroOp::create(builder, location, stateType));
+
+  builder.setInsertionPointToEnd(module.getBody());
+  auto bind = LLVM::LLVMFuncOp::create(
+      builder, location, bindName,
+      LLVM::LLVMFunctionType::get(i32, {pointer, pointer, i32, pointer},
+                                  false));
+  Block *bindEntry = bind.addEntryBlock(builder);
+  builder.setInsertionPointToStart(bindEntry);
+  Value slot =
+      LLVM::ZExtOp::create(builder, location, i64, bindEntry->getArgument(2));
+  Value actorAddress =
+      LLVM::GEPOp::create(builder, location, pointer, pointer,
+                          bindEntry->getArgument(0), ValueRange{slot});
+  LLVM::StoreOp::create(builder, location, bindEntry->getArgument(3),
+                        actorAddress, 8);
+  LLVM::ReturnOp::create(builder, location,
+                         llvmConstant(builder, location, i32, OBELISK_RT_OK));
+
+  builder.setInsertionPointToEnd(module.getBody());
+  auto run = LLVM::LLVMFuncOp::create(
+      builder, location, runName,
+      LLVM::LLVMFunctionType::get(i32, {pointer, pointer}, false));
+  Block *runEntry = run.addEntryBlock(builder);
+  builder.setInsertionPointToStart(runEntry);
+  Value runStatus =
+      LLVM::CallOp::create(
+          builder, location, TypeRange{i32},
+          SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_run"),
+          runEntry->getArgument(1))
+          .getResult();
+  LLVM::ReturnOp::create(builder, location, runStatus);
+
+  builder.setInsertionPointToEnd(module.getBody());
+  auto snapshot = LLVM::LLVMFuncOp::create(
+      builder, location, snapshotName,
+      LLVM::LLVMFunctionType::get(i32, {pointer, pointer, pointer}, false));
+  Block *snapshotEntry = snapshot.addEntryBlock(builder);
+  builder.setInsertionPointToStart(snapshotEntry);
+  LLVM::ReturnOp::create(
+      builder, location,
+      llvmConstant(builder, location, i32, OBELISK_RT_INVALID_LIFECYCLE));
+
+  auto planType = LLVM::LLVMStructType::getLiteral(
+      context,
+      {i32, i32, i64, pointer, i64, i32, i32, pointer, pointer, pointer});
+  makeConstantGlobal(
+      module, location, planType, planName, LLVM::Linkage::Internal, 8,
+      [&](OpBuilder &initializerBuilder) {
+        Value value =
+            LLVM::ZeroOp::create(initializerBuilder, location, planType);
+        value =
+            insertValue(initializerBuilder, location, value,
+                        llvmConstant(initializerBuilder, location, i32,
+                                     OBELISK_RT_NATIVE_SCHEDULE_PLAN_VERSION),
+                        0);
+        value = insertValue(
+            initializerBuilder, location, value,
+            llvmConstant(initializerBuilder, location, i32,
+                         sizeof(obelisk_rt_native_schedule_plan_v1)),
+            1);
+        value = insertValue(initializerBuilder, location, value,
+                            llvmConstant(initializerBuilder, location, i64,
+                                         graphLayoutChecksum),
+                            2);
+        value =
+            insertValue(initializerBuilder, location, value,
+                        LLVM::AddressOfOp::create(initializerBuilder, location,
+                                                  pointer, stateName),
+                        3);
+        value = insertValue(initializerBuilder, location, value,
+                            llvmConstant(initializerBuilder, location, i64,
+                                         uint64_t{actorCount} * sizeof(void *)),
+                            4);
+        value = insertValue(
+            initializerBuilder, location, value,
+            llvmConstant(initializerBuilder, location, i32, actorCount), 5);
+        value =
+            insertValue(initializerBuilder, location, value,
+                        LLVM::AddressOfOp::create(initializerBuilder, location,
+                                                  pointer, bindName),
+                        7);
+        value = insertValue(initializerBuilder, location, value,
+                            LLVM::AddressOfOp::create(
+                                initializerBuilder, location, pointer, runName),
+                            8);
+        return insertValue(initializerBuilder, location, value,
+                           LLVM::AddressOfOp::create(initializerBuilder,
+                                                     location, pointer,
+                                                     snapshotName),
+                           9);
+      });
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_run", i32,
+                           {pointer});
+  return success();
+}
+
 LogicalResult makeSchedulerMain(ModuleOp module,
-                                const NativeStateLayout &stateLayout) {
+                                const NativeStateLayout &stateLayout,
+                                bool useAOT) {
   if (module.lookupSymbol("main"))
     return success();
   sim::SimFuncOp root;
@@ -10334,13 +10654,28 @@ LogicalResult makeSchedulerMain(ModuleOp module,
       }
     }
   }
+  if (useAOT) {
+    Value plan = LLVM::AddressOfOp::create(builder, location, pointer,
+                                           "__obelisk_aot_schedule_plan_v1");
+    Value installStatus =
+        LLVM::CallOp::create(
+            builder, location, TypeRange{i32},
+            SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_install_aot"),
+            ValueRange{runtimeContext, plan})
+            .getResult();
+    LLVM::CallOp::create(
+        builder, location, TypeRange{},
+        SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
+        ValueRange{runtimeContext, installStatus});
+  }
   LLVM::CallOp::create(
       builder, location, TypeRange{i64},
       SymbolRefAttr::get(context, "__obelisk_root.__obelisk_spawn"),
       runtimeContext);
   auto run = LLVM::CallOp::create(
       builder, location, TypeRange{i32},
-      SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_run"),
+      SymbolRefAttr::get(context, useAOT ? "obelisk_rt_v1_scheduler_run_aot"
+                                         : "obelisk_rt_v1_scheduler_run"),
       runtimeContext);
   LLVM::CallOp::create(
       builder, location, TypeRange{},
@@ -10373,6 +10708,10 @@ LogicalResult makeSchedulerMain(ModuleOp module,
                            {pointer, i32});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_run", i32,
                            {pointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_install_aot", i32,
+                           {pointer, pointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_run_aot", i32,
+                           {pointer});
   return success();
 }
 
@@ -10388,6 +10727,27 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   FailureOr<NativeStateLayout> stateLayout = buildNativeStateLayout(module);
   if (failed(stateLayout))
     return failure();
+  StringRef nativeScheduler = "auto";
+  if (auto mode = module->getAttrOfType<StringAttr>("obelisk.native_scheduler"))
+    nativeScheduler = mode.getValue();
+  if (nativeScheduler != "auto" && nativeScheduler != "generic" &&
+      nativeScheduler != "aot")
+    return module.emitError("invalid native scheduler lowering mode");
+  NativeAOTEligibility aotEligibility;
+  bool useAOT = false;
+  if (nativeScheduler != "generic") {
+    aotEligibility = analyzeNativeAOTEligibility(module);
+    useAOT = aotEligibility.eligible;
+    if (nativeScheduler == "aot" && !aotEligibility.fullyEligible) {
+      InFlightDiagnostic diagnostic =
+          module.emitError("design is ineligible for native AOT scheduling: ");
+      if (aotEligibility.reasons.empty())
+        diagnostic << "no statically schedulable process actors";
+      else
+        llvm::interleaveComma(aotEligibility.reasons, diagnostic);
+      return failure();
+    }
+  }
   NativeScheduleRanks scheduleRanks = buildNativeScheduleRanks(module);
   uint64_t stateBytes = (stateLayout->bitCount + 7) / 8;
   makeStatePlane(module, "__obelisk_state_value", stateBytes, false,
@@ -10536,24 +10896,22 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_gc_managed_root_range_push", managedI32,
       {managedPointer, managedPointer, managedPointer, managedI64});
-  getOrDeclareLLVMFunction(module,
-                           "obelisk_rt_v1_gc_managed_root_range_pop",
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_gc_managed_root_range_pop",
                            managedI32, {managedPointer, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_gc_safepoint", managedI32,
                            {managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_object_allocate", managedI32,
                            {managedPointer, managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_reference_path_index_create",
-                           managedI32,
-                           {managedPointer, managedPointer, managedI64,
-                            managedPointer, managedI64, managedI32,
-                            managedPointer});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_reference_path_index_create", managedI32,
+      {managedPointer, managedPointer, managedI64, managedPointer, managedI64,
+       managedI32, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_container_size", managedI64,
                            {managedPointer});
-  getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_container_create_like", managedI32,
-      {managedPointer, managedPointer, managedPointer, managedI64,
-       managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_container_create_like",
+                           managedI32,
+                           {managedPointer, managedPointer, managedPointer,
+                            managedI64, managedPointer});
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_container_create_typed", managedI32,
       {managedPointer, managedI32, managedI64, managedI32, managedI32,
@@ -10565,10 +10923,9 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                            {managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_queue_delete_index",
                            managedI32, {managedPointer, managedI64});
-  getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_queue_insert", managedI32,
-      {managedPointer, managedPointer, managedI64, managedPointer,
-       managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_queue_insert", managedI32,
+                           {managedPointer, managedPointer, managedI64,
+                            managedPointer, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_random_bounded", managedI32,
                            {managedPointer, managedI64, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_random_next", managedI32,
@@ -10578,22 +10935,22 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_covergroup_create", managedI32,
       {managedPointer, managedI64, managedPointer, managedI64, managedPointer});
-  getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_covergroup_set_enabled", managedI32,
-      {managedPointer, managedI64, managedI32});
-  getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_covergroup_sample_enabled", managedI32,
-      {managedPointer, managedI64, managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_covergroup_set_enabled",
+                           managedI32,
+                           {managedPointer, managedI64, managedI32});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_covergroup_sample_enabled",
+                           managedI32,
+                           {managedPointer, managedI64, managedPointer});
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_covergroup_bin_hit", managedI32,
       {managedPointer, managedI64, managedI32, managedI32});
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_covergroup_sample", managedI32,
       {managedPointer, managedI64, managedPointer, managedI64});
-  getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_covergroup_instance_query", managedI32,
-      {managedPointer, managedI64, managedPointer, managedPointer,
-       managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_covergroup_instance_query",
+                           managedI32,
+                           {managedPointer, managedI64, managedPointer,
+                            managedPointer, managedPointer});
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_covergroup_type_query", managedI32,
       {managedPointer, managedI64, managedPointer, managedI64, managedPointer,
@@ -10601,10 +10958,9 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_container_read", managedI32,
       {managedPointer, managedI64, managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_container_write", managedI32,
-      {managedPointer, managedPointer, managedI64, managedPointer,
-       managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_container_write", managedI32,
+                           {managedPointer, managedPointer, managedI64,
+                            managedPointer, managedPointer});
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_assoc_create_typed", managedI32,
       {managedPointer, managedI64, managedI32, managedI32, managedI64,
@@ -10618,15 +10974,14 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       module, "obelisk_rt_v1_assoc_write_checked", managedI32,
       {managedPointer, managedPointer, managedPointer, managedPointer,
        managedI64, managedPointer, managedI64});
-  getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_assoc_exists", managedI32,
-      {managedPointer, managedPointer, managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_assoc_exists", managedI32,
+                           {managedPointer, managedPointer, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_assoc_delete", managedI32,
                            {managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_assoc_set_default_checked", managedI32,
-      {managedPointer, managedPointer, managedPointer, managedI64,
-       managedPointer, managedI64});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_assoc_set_default_checked",
+                           managedI32,
+                           {managedPointer, managedPointer, managedPointer,
+                            managedI64, managedPointer, managedI64});
   for (StringRef name :
        {"obelisk_rt_v1_assoc_first", "obelisk_rt_v1_assoc_last",
         "obelisk_rt_v1_assoc_next", "obelisk_rt_v1_assoc_prev"})
@@ -10678,10 +11033,10 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_string_create", managedI32,
       {managedPointer, managedPointer, managedI64, managedPointer});
-  getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_string_from_packed", managedI32,
-      {managedPointer, managedPointer, managedPointer, managedI64,
-       managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_string_from_packed",
+                           managedI32,
+                           {managedPointer, managedPointer, managedPointer,
+                            managedI64, managedPointer});
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_string_to_packed", managedI32,
       {managedI64, managedPointer, managedPointer, managedI64});
@@ -10703,33 +11058,32 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       {managedPointer, managedI64, managedI64, managedI64, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_string_compare", managedI32,
                            {managedI64, managedI64});
-  getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_string_compare_insensitive", managedI32,
-      {managedI64, managedI64});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_string_compare_insensitive",
+                           managedI32, {managedI64, managedI64});
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_string_case_convert", managedI32,
       {managedPointer, managedI64, managedI32, managedPointer});
-  getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_string_parse_integer", managedI32,
-      {managedI64, managedI32, managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_string_parse_integer",
+                           managedI32,
+                           {managedI64, managedI32, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_string_parse_real",
                            managedI32, {managedI64, managedPointer});
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_string_format_integer", managedI32,
       {managedPointer, managedI64, managedI32, managedI32, managedPointer});
-  getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_string_format_real", managedI32,
-      {managedPointer, managedF64, managedPointer});
-  getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_file_open_string_mcd", managedI32,
-      {managedPointer, managedI64, managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_string_format_real",
+                           managedI32,
+                           {managedPointer, managedF64, managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_file_open_string_mcd",
+                           managedI32,
+                           {managedPointer, managedI64, managedPointer});
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_file_open_string", managedI32,
       {managedPointer, managedI64, managedI64, managedPointer});
-  getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_file_getline_string", managedI32,
-      {managedPointer, managedPointer, managedI32, managedPointer,
-       managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_file_getline_string",
+                           managedI32,
+                           {managedPointer, managedPointer, managedI32,
+                            managedPointer, managedPointer});
   llvm::MapVector<Operation *, std::unique_ptr<SimulationProcessFrameAnalysis>>
       analyses;
   WalkResult analyzed = module.walk([&](sim::SimFuncOp function) {
@@ -10955,15 +11309,14 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                      ReleaseOverrideConversion, NetReadConversion>(
       packedConverter, context, stateLayout->bitCount);
   packedPatterns.add<
-      ClassNullConversion, CovergroupNullConversion,
-      CovergroupCreateConversion, CovergroupEnabledConversion,
-      CovergroupBinHitConversion, CovergroupSampleConversion,
+      ClassNullConversion, CovergroupNullConversion, CovergroupCreateConversion,
+      CovergroupEnabledConversion, CovergroupBinHitConversion,
+      CovergroupSampleConversion,
       CovergroupControlConversion<sim::SimCovergroupStartOp, true>,
       CovergroupControlConversion<sim::SimCovergroupStopOp, false>,
       CovergroupQueryConversion<sim::SimCovergroupInstanceQueryOp, false>,
       CovergroupQueryConversion<sim::SimCovergroupTypeQueryOp, true>,
-      ManagedNullConversion, ManagedIsNullConversion,
-      EventNullConversion,
+      ManagedNullConversion, ManagedIsNullConversion, EventNullConversion,
       ContainerSizeConversion, ContainerCreateLikeConversion,
       ContainerCreateConversion, ContainerCloneConversion,
       ContainerDeleteConversion, QueueDeleteConversion, QueueInsertConversion,
@@ -10997,11 +11350,11 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   packedPatterns
       .add<StringAllocatingCallConversion<sim::SimStringFormatIntegerOp>>(
           packedConverter, context, "obelisk_rt_v1_string_format_integer");
-  packedPatterns.add<StringAllocatingCallConversion<sim::SimStringFormatRealOp>>(
-      packedConverter, context, "obelisk_rt_v1_string_format_real");
   packedPatterns
-      .add<StringParseConversion<sim::SimStringParseIntegerOp>>(
-          packedConverter, context, "obelisk_rt_v1_string_parse_integer");
+      .add<StringAllocatingCallConversion<sim::SimStringFormatRealOp>>(
+          packedConverter, context, "obelisk_rt_v1_string_format_real");
+  packedPatterns.add<StringParseConversion<sim::SimStringParseIntegerOp>>(
+      packedConverter, context, "obelisk_rt_v1_string_parse_integer");
   packedPatterns.add<StringParseConversion<sim::SimStringParseRealOp>>(
       packedConverter, context, "obelisk_rt_v1_string_parse_real");
   packedPatterns.add<ArgumentRefLoadConversion, ArgumentRefStoreConversion>(
@@ -11037,37 +11390,33 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       sim::SimDisableChildrenOp, sim::SimControlEnterOp, sim::SimControlLeaveOp,
       sim::SimControlDisableOp, sim::SimStaticOnceOp, sim::SimDeferredOnceOp,
       sim::SimMonitorRegisterOp, sim::SimMonitorControlOp,
-      sim::SimMonitorCurrentOp, sim::SimBitsDynExtractOp,
-      sim::SimClassNullOp, sim::SimCovergroupNullOp,
-      sim::SimCovergroupCreateOp, sim::SimCovergroupSampleEnabledOp,
-      sim::SimCovergroupBinHitOp, sim::SimCovergroupStartOp,
-      sim::SimCovergroupStopOp, sim::SimCovergroupInstanceQueryOp,
-      sim::SimCovergroupTypeQueryOp, sim::SimManagedNullOp,
-      sim::SimManagedIsNullOp,
-      sim::SimEventNullOp, sim::SimContainerSizeOp,
-      sim::SimContainerCreateLikeOp, sim::SimContainerCreateOp,
-      sim::SimContainerCloneOp, sim::SimContainerDeleteOp,
-      sim::SimQueueDeleteOp, sim::SimQueueInsertOp, sim::SimContainerReadOp,
-      sim::SimContainerWriteOp,
-      sim::SimAssocCreateOp, sim::SimAssocReadOp, sim::SimAssocWriteOp,
-      sim::SimAssocExistsOp, sim::SimAssocDeleteOp,
-      sim::SimAssocSetDefaultOp, sim::SimAssocTraverseOp,
+      sim::SimMonitorCurrentOp, sim::SimBitsDynExtractOp, sim::SimClassNullOp,
+      sim::SimCovergroupNullOp, sim::SimCovergroupCreateOp,
+      sim::SimCovergroupSampleEnabledOp, sim::SimCovergroupBinHitOp,
+      sim::SimCovergroupStartOp, sim::SimCovergroupStopOp,
+      sim::SimCovergroupInstanceQueryOp, sim::SimCovergroupTypeQueryOp,
+      sim::SimManagedNullOp, sim::SimManagedIsNullOp, sim::SimEventNullOp,
+      sim::SimContainerSizeOp, sim::SimContainerCreateLikeOp,
+      sim::SimContainerCreateOp, sim::SimContainerCloneOp,
+      sim::SimContainerDeleteOp, sim::SimQueueDeleteOp, sim::SimQueueInsertOp,
+      sim::SimContainerReadOp, sim::SimContainerWriteOp, sim::SimAssocCreateOp,
+      sim::SimAssocReadOp, sim::SimAssocWriteOp, sim::SimAssocExistsOp,
+      sim::SimAssocDeleteOp, sim::SimAssocSetDefaultOp, sim::SimAssocTraverseOp,
       sim::SimRandomNextOp, sim::SimRandomSeedOp, sim::SimRandomBoundedOp,
-      sim::SimStringLiteralOp,
-      sim::SimStringFromPackedOp, sim::SimStringToPackedOp,
-      sim::SimStringConcatOp, sim::SimStringRepeatOp, sim::SimStringLengthOp,
-      sim::SimStringGetcOp, sim::SimStringPutcOp, sim::SimStringSubstrOp,
-      sim::SimStringCompareOp, sim::SimStringCaseConvertOp,
-      sim::SimStringParseIntegerOp, sim::SimStringParseRealOp,
-      sim::SimStringFormatIntegerOp, sim::SimStringFormatRealOp,
-      sim::SimFileOpenStringMCDOp, sim::SimFileOpenStringOp,
-      sim::SimFileGetlineStringOp, sim::SimClassAllocOp, sim::SimClassCopyOp,
-      sim::SimClassIsInstanceOp, sim::SimClassIdOp, sim::SimClassCastOp,
-      sim::SimClassFieldRefOp, sim::SimClassRootBindOp, sim::SimManagedLoadOp,
-      sim::SimManagedStoreOp, sim::SimManagedNBAEnqueueOp,
-      sim::SimReferencePathNBAEnqueueOp, sim::SimArgumentRefFromRefOp,
-      sim::SimArgumentRefFromManagedOp, sim::SimReferencePathIndexOp,
-      sim::SimReferencePathAssocOp,
+      sim::SimStringLiteralOp, sim::SimStringFromPackedOp,
+      sim::SimStringToPackedOp, sim::SimStringConcatOp, sim::SimStringRepeatOp,
+      sim::SimStringLengthOp, sim::SimStringGetcOp, sim::SimStringPutcOp,
+      sim::SimStringSubstrOp, sim::SimStringCompareOp,
+      sim::SimStringCaseConvertOp, sim::SimStringParseIntegerOp,
+      sim::SimStringParseRealOp, sim::SimStringFormatIntegerOp,
+      sim::SimStringFormatRealOp, sim::SimFileOpenStringMCDOp,
+      sim::SimFileOpenStringOp, sim::SimFileGetlineStringOp,
+      sim::SimClassAllocOp, sim::SimClassCopyOp, sim::SimClassIsInstanceOp,
+      sim::SimClassIdOp, sim::SimClassCastOp, sim::SimClassFieldRefOp,
+      sim::SimClassRootBindOp, sim::SimManagedLoadOp, sim::SimManagedStoreOp,
+      sim::SimManagedNBAEnqueueOp, sim::SimReferencePathNBAEnqueueOp,
+      sim::SimArgumentRefFromRefOp, sim::SimArgumentRefFromManagedOp,
+      sim::SimReferencePathIndexOp, sim::SimReferencePathAssocOp,
       sim::SimArgumentRefFromPathOp, sim::SimArgumentRefLoadOp,
       sim::SimArgumentRefStoreOp, sim::SimClassDirectCallOp,
       sim::SimClassVirtualCallOp, sim::SimWeakCreateOp, sim::SimWeakGetOp,
@@ -11174,6 +11523,45 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       return failure();
     NativeSchedulePlan schedule;
     schedule.initialRank = scheduleRanks.entries.lookup(entry.first);
+    if (useAOT) {
+      auto slot = aotEligibility.actorSlots.find(entry.first);
+      if (slot != aotEligibility.actorSlots.end())
+        schedule.actorSlot = slot->second;
+    }
+    if (schedule.actorSlot) {
+      auto bytecode = aotEligibility.bytecodeFragments.find(entry.first);
+      if (bytecode != aotEligibility.bytecodeFragments.end()) {
+        SmallPtrSet<Block *, 8> bytecodeBlocks(bytecode->second.begin(),
+                                               bytecode->second.end());
+        auto activationRequiresBytecode = [&](Block *start) {
+          SmallVector<Block *> pending{start};
+          SmallPtrSet<Block *, 16> visited;
+          while (!pending.empty()) {
+            Block *block = pending.pop_back_val();
+            if (!visited.insert(block).second)
+              continue;
+            if (bytecodeBlocks.contains(block))
+              return true;
+            Operation *terminator = block->getTerminator();
+            if (isSuspension(terminator))
+              continue;
+            llvm::append_range(pending, terminator->getSuccessors());
+          }
+          return false;
+        };
+        if (activationRequiresBytecode(&function.getBody().front()))
+          schedule.bytecodeContinuations.push_back(0);
+        for (const ProcessSuspension &suspension :
+             entry.second->getSuspensions())
+          if (activationRequiresBytecode(suspension.continuation))
+            schedule.bytecodeContinuations.push_back(suspension.continuationID);
+        llvm::sort(schedule.bytecodeContinuations);
+        schedule.bytecodeContinuations.erase(
+            std::unique(schedule.bytecodeContinuations.begin(),
+                        schedule.bytecodeContinuations.end()),
+            schedule.bytecodeContinuations.end());
+      }
+    }
     DenseMap<uint32_t, uint32_t> continuationRanks;
     for (const ProcessSuspension &suspension : entry.second->getSuspensions()) {
       uint32_t rank = scheduleRanks.blocks.lookup(suspension.continuation);
@@ -11194,7 +11582,10 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
             makeProcessSpawnHelper(module, function, *entry.second, schedule)))
       return failure();
   }
-  if (failed(makeSchedulerMain(module, *stateLayout)))
+  if (useAOT &&
+      failed(makeNativeAOTPlan(module, aotEligibility.actorSlots.size())))
+    return failure();
+  if (failed(makeSchedulerMain(module, *stateLayout, useAOT)))
     return failure();
 
   SmallVector<sim::SimFuncOp> ordinary;
@@ -11231,8 +11622,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       if (isa<sim::SimScopeDeclOp, sim::SimCodeUnitDeclOp,
               sim::SimStorageDeclOp, sim::SimNetDeclOp, sim::SimDriverDeclOp,
               sim::SimNetConnectDeclOp, sim::SimClassDeclOp,
-              sim::SimCovergroupDeclOp,
-              sim::SimClassFieldDeclOp, sim::SimClassMethodDeclOp>(operation)) {
+              sim::SimCovergroupDeclOp, sim::SimClassFieldDeclOp,
+              sim::SimClassMethodDeclOp>(operation)) {
         operation->erase();
         continue;
       }

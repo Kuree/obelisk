@@ -401,7 +401,7 @@ bool validateDatabaseImpl(const Database &database) {
       if (!hasElement || hasChildren ||
           (flags &
            (OBELISK_RT_DESIGN_TYPE_SIGNED | OBELISK_RT_DESIGN_TYPE_PACKED |
-                    OBELISK_RT_DESIGN_TYPE_TAGGED)) != 0 ||
+            OBELISK_RT_DESIGN_TYPE_TAGGED)) != 0 ||
           !rangeExtent(record, extent) || extent != width)
         return false;
       {
@@ -556,7 +556,7 @@ bool validateDatabaseImpl(const Database &database) {
         !indexedRecords.insert(recordOffset).second ||
         read64(record + 40) != read64(entry + 8) ||
         (index != 0 && (hash < previousHash ||
-          (hash == previousHash && name <= previousName))))
+                        (hash == previousHash && name <= previousName))))
       return false;
     previousHash = hash;
     previousName = name;
@@ -649,7 +649,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_design_validate(
 
 extern "C" obelisk_rt_status
 obelisk_rt_v1_design_root(const obelisk_rt_execution_descriptor_v1 *execution,
-    obelisk_rt_design_cursor_v1 *outCursor) {
+                          obelisk_rt_design_cursor_v1 *outCursor) {
   if (!outCursor)
     return OBELISK_RT_INVALID_ARGUMENT;
   Database database;
@@ -661,8 +661,8 @@ obelisk_rt_v1_design_root(const obelisk_rt_execution_descriptor_v1 *execution,
 
 extern "C" obelisk_rt_status
 obelisk_rt_v1_design_child(const obelisk_rt_execution_descriptor_v1 *execution,
-    obelisk_rt_design_cursor_v1 cursor,
-    obelisk_rt_design_cursor_v1 *outCursor) {
+                           obelisk_rt_design_cursor_v1 cursor,
+                           obelisk_rt_design_cursor_v1 *outCursor) {
   if (!outCursor)
     return OBELISK_RT_INVALID_ARGUMENT;
   Database database;
@@ -758,8 +758,8 @@ obelisk_rt_v1_design_lookup(const obelisk_rt_execution_descriptor_v1 *execution,
 
 extern "C" obelisk_rt_status
 obelisk_rt_v1_design_info(const obelisk_rt_execution_descriptor_v1 *execution,
-    obelisk_rt_design_cursor_v1 cursor,
-    obelisk_rt_design_info_v1 *outInfo) {
+                          obelisk_rt_design_cursor_v1 cursor,
+                          obelisk_rt_design_info_v1 *outInfo) {
   if (!outInfo)
     return OBELISK_RT_INVALID_ARGUMENT;
   Database database;
@@ -855,7 +855,7 @@ obelisk_rt_v1_design_name(const obelisk_rt_execution_descriptor_v1 *execution,
       !getString(
           database,
           read64(record + (kind == OBELISK_RT_DESIGN_RECORD_TYPE ? 72 : 40)),
-                 name))
+          name))
     return OBELISK_RT_INVALID_HANDLE;
   *outData = reinterpret_cast<const uint8_t *>(name.data());
   *outSize = name.size();
@@ -954,6 +954,8 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
     if (write && !transitions.empty())
       obelisk_rt_invalidate_signal_snapshots_unlocked(context, stateOffset,
                                                       width);
+    if (write && !transitions.empty())
+      obelisk_rt_aot_external_write_unlocked(context);
   }
   if (!write && width % 64 != 0) {
     uint64_t mask = (uint64_t{1} << (width % 64)) - 1;
@@ -1093,6 +1095,8 @@ obelisk_rt_v1_design_release(obelisk_rt_context *context,
     if (!transitions.empty())
       obelisk_rt_invalidate_signal_snapshots_unlocked(context, stateOffset,
                                                       bitWidth);
+    if (!transitions.empty())
+      obelisk_rt_aot_external_write_unlocked(context);
   }
   // A variable retains the forced value. A net is immediately republished
   // from its current driver slots (and becomes Z when the component is
