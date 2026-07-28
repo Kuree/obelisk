@@ -7528,8 +7528,13 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     }
   BoolAttr dpiTaskAttr = op->getAttrOfType<BoolAttr>("obelisk.dpi.is_task");
   bool dpiTask = dpiTaskAttr && dpiTaskAttr.getValue();
+  sim::SimFuncOp directCallee =
+      SymbolTable::lookupNearestSymbolFrom<sim::SimFuncOp>(op, callee);
+  bool voidFunction =
+      directCallee && directCallee->hasAttr("obelisk_sim.void_function");
+  bool hasFunctionResult = !dpiTask && !directTask && !voidFunction;
   SmallVector<Type> callResultTypes;
-  if (!dpiTask && !directTask) {
+  if (hasFunctionResult) {
     FailureOr<Type> resultType = getNormalizedSemanticType(op);
     if (failed(resultType))
       return failure();
@@ -7643,7 +7648,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       if (!destinationType)
         return failure();
       FailureOr<Value> converted =
-          convert(callResults[index + (dpiTask ? 0 : 1)], destinationType,
+          convert(callResults[index + (hasFunctionResult ? 1 : 0)],
+                  destinationType,
                   copyOut.formalSigned, location, copyOut.destinationSigned);
       if (failed(converted))
         return failure();
@@ -7667,7 +7673,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         return failure();
     }
   }
-  if (!dpiTask && !directTask)
+  if (hasFunctionResult)
     return callResults.front();
   return arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                    builder.getBoolAttr(false))
