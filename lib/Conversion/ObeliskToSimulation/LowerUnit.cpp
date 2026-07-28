@@ -8050,6 +8050,22 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     return constant(builder.getI1Type(), 0);
   };
 
+  if (name == "$itor") {
+    if (children.size() != 1) {
+      emitError(location) << "$itor requires exactly one argument";
+      return failure();
+    }
+    FailureOr<Value> input = lowerExpression(children.front());
+    if (failed(input))
+      return failure();
+    FailureOr<Value> result =
+        convert(*input, builder.getF64Type(), isSignedNode(children.front()),
+                getSemanticLocation(children.front()));
+    if (failed(result))
+      return failure();
+    return convertResult(*result);
+  }
+
   if (name == "$urandom" || name == "$srandom") {
     constexpr size_t maximum = 1;
     size_t minimum = name == "$urandom" ? 0 : 1;
