@@ -8933,6 +8933,18 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
   } else if (name == "$monitorh") {
     postponedDisplay = "$displayh";
     persistentMonitor = true;
+  } else if (name == "$fmonitor") {
+    postponedDisplay = "$fdisplay";
+    persistentMonitor = true;
+  } else if (name == "$fmonitorb") {
+    postponedDisplay = "$fdisplayb";
+    persistentMonitor = true;
+  } else if (name == "$fmonitoro") {
+    postponedDisplay = "$fdisplayo";
+    persistentMonitor = true;
+  } else if (name == "$fmonitorh") {
+    postponedDisplay = "$fdisplayh";
+    persistentMonitor = true;
   }
   if (!postponedDisplay.empty()) {
     FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> callback =
