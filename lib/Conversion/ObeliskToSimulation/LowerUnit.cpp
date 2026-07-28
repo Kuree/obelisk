@@ -2434,6 +2434,114 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
   else if (auto driver = dyn_cast<sim::DriverType>(sourceValueType))
     sourceValueType = driver.getElementType();
 
+  if (!element && isa<sim::QueueType>(sourceValueType) &&
+      isa<sim::QueueType>(*resultType)) {
+    if (lvalue) {
+      unsupported(op) << " (queue slice lvalue)";
+      return failure();
+    }
+    auto range = cast<semantic::SVRangeSelectExpressionOp>(op);
+    if (range.getSelectionKind() != semantic::SVRangeSelectionKind::Simple) {
+      unsupported(op) << " (indexed queue slice)";
+      return failure();
+    }
+    Value container = *input;
+    if (isa<sim::RefType, sim::ManagedRefType, sim::ArgumentRefType>(
+            container.getType())) {
+      FailureOr<Value> loaded = loadReference(container, location);
+      if (failed(loaded))
+        return failure();
+      container = *loaded;
+    }
+    auto i64Constant = [&](int64_t value) -> Value {
+      return arith::ConstantOp::create(
+          builder, location, builder.getI64Type(),
+          builder.getI64IntegerAttr(value));
+    };
+    Value zero = i64Constant(0);
+    Value one = i64Constant(1);
+    Value size = sim::SimContainerSizeOp::create(
+        builder, location, builder.getI64Type(), container);
+    Value last = arith::SubIOp::create(builder, location, size, one);
+    auto lowerBound = [&](Operation *bound) -> FailureOr<Value> {
+      if (isa<semantic::SVUnboundedLiteralOp>(bound))
+        return last;
+      FailureOr<Value> value = lowerExpression(bound);
+      if (failed(value))
+        return failure();
+      FailureOr<Value> scalar =
+          toPackedScalar(*value, getSemanticLocation(bound));
+      if (failed(scalar))
+        return failure();
+      return convert(*scalar, builder.getI64Type(), isSignedNode(bound),
+                     getSemanticLocation(bound));
+    };
+    FailureOr<Value> first = lowerBound(children[1]);
+    FailureOr<Value> second = lowerBound(children[2]);
+    if (failed(first) || failed(second))
+      return failure();
+    Value firstNegative = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::slt, *first, zero);
+    Value start =
+        arith::SelectOp::create(builder, location, firstNegative, zero, *first);
+    Value secondAbove = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::sgt, *second, last);
+    Value finish = arith::SelectOp::create(builder, location, secondAbove, last,
+                                           *second);
+    Value nonempty = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ne, size, zero);
+    Value startInRange = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::slt, start, size);
+    Value ordered = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::sle, start, finish);
+    Value valid =
+        arith::AndIOp::create(builder, location, nonempty, startInRange);
+    valid = arith::AndIOp::create(builder, location, valid, ordered);
+
+    auto resultQueue = cast<sim::QueueType>(*resultType);
+    FailureOr<ContainerElementDescriptor> descriptor =
+        describeContainerElement(resultQueue.getElementType(), location);
+    if (failed(descriptor))
+      return failure();
+    uint64_t bound =
+        resultQueue.getBound() ? resultQueue.getBound() : UINT64_MAX;
+    Value result = sim::SimContainerCreateOp::create(
+        builder, location, *resultType, zero, descriptor->typeID,
+        descriptor->kind, descriptor->flags, descriptor->valueSize,
+        descriptor->alignment, descriptor->bitWidth,
+        builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
+        builder.getDenseI32ArrayAttr(descriptor->traceKinds), 2, bound);
+
+    Block *header = addBlock();
+    header->addArgument(builder.getI64Type(), location);
+    Block *body = addBlock();
+    Block *exit = addBlock();
+    cf::CondBranchOp::create(builder, location, valid, header,
+                             ValueRange{start}, exit, ValueRange{});
+    setCurrent(header);
+    Value index = header->getArgument(0);
+    Value inRange = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::sle, index, finish);
+    cf::CondBranchOp::create(builder, location, inRange, body, ValueRange{},
+                             exit, ValueRange{});
+    setCurrent(body);
+    Type sourceElement = cast<sim::QueueType>(sourceValueType).getElementType();
+    Value value = sim::SimContainerReadOp::create(
+        builder, location, sourceElement, container, index);
+    FailureOr<Value> converted =
+        convert(value, resultQueue.getElementType(), false, location);
+    if (failed(converted))
+      return failure();
+    Value outputIndex =
+        arith::SubIOp::create(builder, location, index, start);
+    sim::SimContainerWriteOp::create(builder, location, result, outputIndex,
+                                     *converted);
+    Value next = arith::AddIOp::create(builder, location, index, one);
+    cf::BranchOp::create(builder, location, header, ValueRange{next});
+    setCurrent(exit);
+    return result;
+  }
+
   if (element) {
     if (auto array = dyn_cast<sim::AssocArrayType>(sourceValueType)) {
       Value container = *input;
