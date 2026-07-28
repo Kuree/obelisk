@@ -107,6 +107,7 @@ constexpr uint32_t kIntrinsicFileTell = OBELISK_RT_INTRINSIC_V1_FILE_TELL;
 constexpr uint32_t kIntrinsicFileRewind = OBELISK_RT_INTRINSIC_V1_FILE_REWIND;
 constexpr uint32_t kIntrinsicSpawn = OBELISK_RT_INTRINSIC_V1_SPAWN;
 constexpr uint32_t kIntrinsicNBA = OBELISK_RT_INTRINSIC_V1_NBA;
+constexpr uint32_t kIntrinsicStaticNBA = OBELISK_RT_INTRINSIC_V1_STATIC_NBA;
 constexpr uint32_t kIntrinsicEventTrigger =
     OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGER;
 constexpr uint32_t kIntrinsicEventTriggered =
@@ -2053,7 +2054,23 @@ private:
       SmallVector<Value> inputs{op.getValue(), op.getDestination()};
       if (op.getDelay())
         inputs.push_back(op.getDelay());
-      return emitIntrinsic(plan, kIntrinsicNBA, inputs, {});
+      sim::NBASiteAttr site = op.getSiteAttr();
+      bool staticallyStaged =
+          site && !isa<sim::StringType>(op.getValue().getType()) &&
+          !sim::isManagedHandleType(op.getValue().getType()) &&
+          !op.getDelay() && !site.getTiming() &&
+          site.getStorage() != sim::ComputeNBAStorageKind::DynamicFrontier;
+      if (!staticallyStaged)
+        return emitIntrinsic(plan, kIntrinsicNBA, inputs, {});
+      uint32_t siteRegister = emitU64Constant(plan, site.getId());
+      if (siteRegister == kInvalidRegister)
+        return op.emitOpError("cannot encode static NBA site identity");
+      SmallVector<uint32_t> inputRegisters;
+      llvm::transform(inputs, std::back_inserter(inputRegisters),
+                      [&](Value value) { return reg(plan, value); });
+      inputRegisters.push_back(siteRegister);
+      return emitIntrinsicRegisters(plan, kIntrinsicStaticNBA, inputRegisters,
+                                    {});
     }
     if (auto op = dyn_cast<sim::SimEventTriggerOp>(operation)) {
       SmallVector<Value> inputs{op.getEvent()};

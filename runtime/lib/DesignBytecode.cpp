@@ -739,6 +739,12 @@ bool validIntrinsic(const Image &image, const Function &function,
            (numeric(input(0)) || floating(input(0)) || string(input(0)) ||
             managed(input(0))) &&
            handle(input(1)) && (site.inputCount == 2 || bits(input(2), 64));
+  case OBELISK_RT_INTRINSIC_V1_STATIC_NBA:
+    return signature.flags == 0 && site.inputCount == 3 &&
+           site.outputCount == 0 &&
+           (numeric(input(0)) || floating(input(0)) || string(input(0)) ||
+            managed(input(0))) &&
+           handle(input(1)) && bits(input(2), 64);
   case OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGER:
     return signature.flags <= 1 &&
            (site.inputCount == 1 || site.inputCount == 2) &&
@@ -4685,7 +4691,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     std::memcpy(address + 24, &end, 8);
     return OBELISK_RT_OK;
   }
-  case OBELISK_RT_INTRINSIC_V1_NBA: {
+  case OBELISK_RT_INTRINSIC_V1_NBA:
+  case OBELISK_RT_INTRINSIC_V1_STATIC_NBA: {
     if (!context || !context->execution)
       return OBELISK_RT_INVALID_ARGUMENT;
     Layout destination = layoutAt(image, frame.function, inputRegister(1));
@@ -4724,11 +4731,20 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         managedValue ? readManaged(inputRegister(0)) : nullptr;
     Logic value = readLogic(frame.data, valueLayout);
     uint64_t delay = 0;
-    if (site.inputCount == 3) {
+    bool staticSite = signature.id == OBELISK_RT_INTRINSIC_V1_STATIC_NBA;
+    uint64_t staticSiteID = UINT64_MAX;
+    uint32_t delayInputCount = staticSite ? 2 : site.inputCount;
+    if (delayInputCount == 3) {
       auto encodedDelay = scalar(2);
       if (!encodedDelay)
         return OBELISK_RT_INVALID_BYTECODE;
       delay = *encodedDelay;
+    }
+    if (staticSite) {
+      auto encodedSite = scalar(2);
+      if (!encodedSite || *encodedSite == UINT64_MAX)
+        return OBELISK_RT_INVALID_BYTECODE;
+      staticSiteID = *encodedSite;
     }
     if (managedValue || automatic || boundedStatic) {
       int64_t first = start < begin ? begin - start : 0;
@@ -4768,6 +4784,21 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           update.value[bitIndex / 8] |= mask;
         if (value.fourState && bit(value.unknown, source))
           update.unknown[bitIndex / 8] |= mask;
+      }
+      if (staticSiteID != UINT64_MAX && !stringValue && !managedValue &&
+          boundedStatic && context->nativeSchedulePlan &&
+          !context->nativeScheduleDeoptimized) {
+        uint8_t *valuePlane =
+            reinterpret_cast<uint8_t *>(context->stateValue.data());
+        uint8_t *unknownPlane =
+            value.fourState
+                ? reinterpret_cast<uint8_t *>(context->stateUnknown.data())
+                : nullptr;
+        return obelisk_rt_v1_scheduler_static_nba(
+            context, staticSiteID, valuePlane, unknownPlane,
+            context->execution->state_bit_count, stable, update.bitWidth,
+            update.value.data(),
+            value.fourState ? update.unknown.data() : nullptr);
       }
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
       if (context->nextSchedulerSequence == 0)

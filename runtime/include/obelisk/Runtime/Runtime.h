@@ -553,6 +553,11 @@ enum {
   OBELISK_RT_INTRINSIC_V1_FILE_GETLINE_STRING = UINT32_C(0x0001010e),
   OBELISK_RT_INTRINSIC_V1_SPAWN = UINT32_C(0x00010200),
   OBELISK_RT_INTRINSIC_V1_NBA = UINT32_C(0x00010201),
+  // Statically planned NBA. The final i64 input is the NBASiteAttr identity;
+  // the remaining inputs have the same ABI as OBELISK_RT_INTRINSIC_V1_NBA.
+  // Runtimes without an installed static schedule execute this through the
+  // canonical generic NBA path.
+  OBELISK_RT_INTRINSIC_V1_STATIC_NBA = UINT32_C(0x00010219),
   OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGER = UINT32_C(0x00010202),
   OBELISK_RT_INTRINSIC_V1_STATE_ALLOC = UINT32_C(0x00010203),
   OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGERED = UINT32_C(0x00010204),
@@ -1745,15 +1750,13 @@ void obelisk_rt_v1_vpi_shutdown(obelisk_rt_context *context);
 // generated storage is reached through `mutable_state` and may be installed in
 // at most one live context at a time.  A successful add transfers process
 // ownership to the runtime, just like the generic scheduler add APIs.
-#define OBELISK_RT_NATIVE_SCHEDULE_PLAN_VERSION UINT32_C(1)
-#define OBELISK_RT_AOT_SNAPSHOT_VERSION UINT32_C(1)
 #define OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC UINT32_C(1)
 // Actor slot zero is the native-only root bootstrap. It must run natively so
 // static child ownership is established before bytecode/VPI transition
 // fragments execute.
 #define OBELISK_RT_NATIVE_SCHEDULE_ROOT_SLOT_ZERO UINT32_C(2)
 
-typedef struct obelisk_rt_aot_deopt_actor_v1 {
+typedef struct obelisk_rt_aot_deopt_actor {
   uint32_t slot;
   uint32_t flags;
   uint32_t schedule_rank;
@@ -1765,56 +1768,78 @@ typedef struct obelisk_rt_aot_deopt_actor_v1 {
   obelisk_rt_fragment_action_v1 action;
   uint32_t started;
   uint32_t ready;
-} obelisk_rt_aot_deopt_actor_v1;
+} obelisk_rt_aot_deopt_actor;
 
-typedef struct obelisk_rt_aot_deopt_nba_v1 {
+typedef struct obelisk_rt_aot_deopt_nba {
   uint32_t slot;
   uint32_t exec_region;
   uint64_t sequence;
   uint64_t due_time;
-} obelisk_rt_aot_deopt_nba_v1;
+} obelisk_rt_aot_deopt_nba;
 
-typedef struct obelisk_rt_aot_deopt_snapshot_v1 {
-  uint32_t version;
+typedef struct obelisk_rt_aot_deopt_snapshot {
   uint32_t size;
   uint64_t current_time;
-  const obelisk_rt_aot_deopt_actor_v1 *actors;
+  const obelisk_rt_aot_deopt_actor *actors;
   uint32_t actor_count;
   uint32_t ready_count;
-  const obelisk_rt_aot_deopt_nba_v1 *nbas;
+  const obelisk_rt_aot_deopt_nba *nbas;
   uint32_t nba_count;
   uint32_t reserved;
   uint64_t next_sequence;
-} obelisk_rt_aot_deopt_snapshot_v1;
+} obelisk_rt_aot_deopt_snapshot;
 
-typedef struct obelisk_rt_native_schedule_node_v1 {
+typedef struct obelisk_rt_native_schedule_node {
   uint32_t actor_slot;
   uint32_t continuation;
-} obelisk_rt_native_schedule_node_v1;
+} obelisk_rt_native_schedule_node;
 
-typedef obelisk_rt_status (*obelisk_rt_native_schedule_bind_v1)(
+typedef uint32_t obelisk_rt_static_nba_storage;
+enum {
+  OBELISK_RT_STATIC_NBA_FIXED_SLOT = 0,
+  OBELISK_RT_STATIC_NBA_ROOT_ACCUMULATOR = 1
+};
+
+typedef struct obelisk_rt_static_nba_root {
+  uint32_t commit_node;
+  uint32_t static_state;
+  uint64_t bit_width;
+} obelisk_rt_static_nba_root;
+
+typedef struct obelisk_rt_static_nba_site {
+  uint64_t site;
+  uint32_t root;
+  obelisk_rt_static_nba_storage storage;
+} obelisk_rt_static_nba_site;
+
+typedef obelisk_rt_status (*obelisk_rt_native_schedule_bind)(
     void *mutable_state, obelisk_rt_context *context, uint32_t actor_slot,
     obelisk_rt_process_instance_v1 *instance);
 // The runtime calls `bind` with a null instance when a slot is released.
 // Implementations must clear that slot without inspecting the former actor.
-typedef obelisk_rt_status (*obelisk_rt_native_schedule_run_v1)(
+typedef obelisk_rt_status (*obelisk_rt_native_schedule_run)(
     void *mutable_state, obelisk_rt_context *context);
-typedef obelisk_rt_status (*obelisk_rt_native_schedule_snapshot_v1)(
+typedef obelisk_rt_status (*obelisk_rt_native_schedule_snapshot)(
     void *mutable_state, obelisk_rt_context *context,
-    obelisk_rt_aot_deopt_snapshot_v1 *out_snapshot);
+    obelisk_rt_aot_deopt_snapshot *out_snapshot);
 
-typedef struct obelisk_rt_native_schedule_plan_v1 {
-  uint32_t version;
+typedef struct obelisk_rt_native_schedule_plan {
   uint32_t size;
   uint64_t graph_layout_checksum;
   void *mutable_state;
   uint64_t mutable_state_size;
   uint32_t actor_capacity;
   uint32_t flags;
-  obelisk_rt_native_schedule_bind_v1 bind;
-  obelisk_rt_native_schedule_run_v1 run;
-  obelisk_rt_native_schedule_snapshot_v1 fallback_snapshot;
-} obelisk_rt_native_schedule_plan_v1;
+  obelisk_rt_native_schedule_bind bind;
+  obelisk_rt_native_schedule_run run;
+  obelisk_rt_native_schedule_snapshot fallback_snapshot;
+  // The prototype ABI accepts exactly sizeof(this structure).
+  const obelisk_rt_static_nba_root *nba_roots;
+  uint32_t nba_root_count;
+  uint32_t nba_reserved;
+  const obelisk_rt_static_nba_site *nba_sites;
+  uint64_t nba_site_count;
+} obelisk_rt_native_schedule_plan;
 
 // Serial generated-simulator scheduler. The scheduler owns an instance after
 // a successful add. Bit zero selects final-phase work and bits 1-3 encode the
@@ -1836,7 +1861,7 @@ obelisk_rt_status obelisk_rt_v1_scheduler_add_planned(
     const uint32_t *ranks, uint32_t continuation_count);
 obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
     obelisk_rt_context *context,
-    const obelisk_rt_native_schedule_plan_v1 *plan);
+    const obelisk_rt_native_schedule_plan *plan);
 obelisk_rt_status obelisk_rt_v1_scheduler_add_aot(
     obelisk_rt_context *context, obelisk_rt_process_instance_v1 *instance,
     uint32_t flags, uint32_t actor_slot, uint32_t initial_rank,
@@ -1845,7 +1870,7 @@ obelisk_rt_status obelisk_rt_v1_scheduler_add_aot(
     uint32_t bytecode_continuation_count);
 obelisk_rt_status obelisk_rt_v1_scheduler_run_aot_nodes(
     obelisk_rt_context *context,
-    const obelisk_rt_native_schedule_node_v1 *nodes, uint32_t node_count);
+    const obelisk_rt_native_schedule_node *nodes, uint32_t node_count);
 // Return the scheduler-owned stable identity used by await/join records. The
 // token is never a host address and is not reused within a context.
 uint64_t
@@ -1891,6 +1916,13 @@ obelisk_rt_status obelisk_rt_v1_scheduler_nba(
     obelisk_rt_context *context, uint8_t *value_plane, uint8_t *unknown_plane,
     uint64_t plane_bit_count, uint64_t bit_offset, uint64_t bit_width,
     uint64_t delay, const uint8_t *value, const uint8_t *unknown);
+// Site-aware form shared by native and design-bytecode fragments. The site
+// identity is validated against an installed static schedule when one is
+// present; otherwise this has exactly the generic scheduler semantics.
+obelisk_rt_status obelisk_rt_v1_scheduler_static_nba(
+    obelisk_rt_context *context, uint64_t site, uint8_t *value_plane,
+    uint8_t *unknown_plane, uint64_t plane_bit_count, uint64_t bit_offset,
+    uint64_t bit_width, const uint8_t *value, const uint8_t *unknown);
 // Schedule one whole managed string word. The queued word remains a precise
 // tagged root through commit, and equal byte contents do not publish a signal
 // transition even when the immutable handles differ.

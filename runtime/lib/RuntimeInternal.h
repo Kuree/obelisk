@@ -378,6 +378,20 @@ struct ScheduledNBA {
   std::vector<uint8_t> unknown;
 };
 
+struct StaticNBAAccumulator {
+  uint8_t *valuePlane = nullptr;
+  uint8_t *unknownPlane = nullptr;
+  uint64_t planeBitCount = 0;
+  uint32_t execRegion = OBELISK_RT_REGION_NBA;
+  bool valid = false;
+  std::vector<uint64_t> value;
+  std::vector<uint64_t> unknown;
+  std::vector<uint64_t> writeMask;
+  std::vector<uint64_t> changed;
+  std::vector<uint64_t> posedge;
+  std::vector<uint64_t> negedge;
+};
+
 struct ScheduledManagedNBA {
   uint64_t sequence = 0;
   uint64_t dueTime = 0;
@@ -628,7 +642,11 @@ struct obelisk_rt_context {
   std::vector<uint32_t> freeMCDs;
   std::shared_ptr<const uint8_t> errorLifetime;
   std::vector<ScheduledProcess> scheduledProcesses;
-  const obelisk_rt_native_schedule_plan_v1 *nativeSchedulePlan = nullptr;
+  const obelisk_rt_native_schedule_plan *nativeSchedulePlan = nullptr;
+  const obelisk_rt_static_nba_root *nativeScheduleNBARoots = nullptr;
+  uint32_t nativeScheduleNBARootCount = 0;
+  const obelisk_rt_static_nba_site *nativeScheduleNBASites = nullptr;
+  uint64_t nativeScheduleNBASiteCount = 0;
   std::vector<obelisk_rt_process_instance_v1 *> nativeScheduleActors;
   std::vector<uint64_t> nativeScheduleActorTokens;
   std::vector<size_t> nativeScheduleActorIndices;
@@ -655,6 +673,7 @@ struct obelisk_rt_context {
   bool signalDiagnosticsReport = false;
   SignalSubscriptionDiagnostics signalDiagnostics;
   std::vector<ScheduledNBA> scheduledNBAs;
+  std::vector<StaticNBAAccumulator> staticNBAAccumulators;
   std::vector<ScheduledManagedNBA> scheduledManagedNBAs;
   std::vector<ScheduledDesignNBA> scheduledDesignNBAs;
   std::vector<ScheduledDesignEvent> scheduledDesignEvents;

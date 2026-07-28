@@ -6388,15 +6388,31 @@ public:
                      adaptor.getDestination().front(), delay,
                      adaptor.getValue().front()});
     } else {
+      sim::NBASiteAttr site = op.getSiteAttr();
+      bool staticallyStaged =
+          site && adaptor.getDelay().empty() && !site.getTiming() &&
+          site.getStorage() != sim::ComputeNBAStorageKind::DynamicFrontier;
+      SmallVector<Value> arguments{
+          runtimeContext,
+          valuePlane,
+          unknownPlane,
+          llvmConstant(rewriter, location, i64, stateBitCount),
+          adaptor.getDestination().front(),
+          llvmConstant(rewriter, location, i64, *width)};
+      if (staticallyStaged)
+        arguments.insert(arguments.begin() + 1,
+                         llvmConstant(rewriter, location, i64, site.getId()));
+      else
+        arguments.push_back(delay);
+      arguments.push_back(value);
+      arguments.push_back(unknown);
       LLVM::CallOp::create(
           rewriter, location, TypeRange{i32},
           SymbolRefAttr::get(rewriter.getContext(),
-                             "obelisk_rt_v1_scheduler_nba"),
-          ValueRange{runtimeContext, valuePlane, unknownPlane,
-                     llvmConstant(rewriter, location, i64, stateBitCount),
-                     adaptor.getDestination().front(),
-                     llvmConstant(rewriter, location, i64, *width), delay,
-                     value, unknown});
+                             staticallyStaged
+                                 ? "obelisk_rt_v1_scheduler_static_nba"
+                                 : "obelisk_rt_v1_scheduler_nba"),
+          arguments);
     }
     rewriter.eraseOp(op);
     return success();
@@ -10398,7 +10414,8 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
 LogicalResult
 makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
                   ArrayRef<std::pair<uint32_t, uint32_t>> executableNodes,
-                  bool fullyStatic, bool rootSlotZero) {
+                  const NativeStateLayout &stateLayout, bool fullyStatic,
+                  bool rootSlotZero) {
   if (actorCount == 0 || executableNodes.empty())
     return module.emitError("AOT schedule has no executable actor nodes");
   MLIRContext *context = module.getContext();
@@ -10407,6 +10424,100 @@ makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
   Type pointer = LLVM::LLVMPointerType::get(context);
   Type i32 = builder.getI32Type();
   Type i64 = builder.getI64Type();
+  SmallVector<obelisk_rt_static_nba_root> nbaRoots;
+  SmallVector<obelisk_rt_static_nba_site> nbaSites;
+  sim::SimDesignOp design;
+  module.walk([&](sim::SimDesignOp candidate) { design = candidate; });
+  sim::ComputeGraphAttr graph = design ? design.getComputeGraphAttr() : nullptr;
+  bool staticNBAEnabled =
+      fullyStatic && graph && graph.getVpi() == sim::ComputeVPIMode::Off;
+  if (staticNBAEnabled) {
+    SmallVector<sim::ComputeNBACommitAttr> orderedCommits;
+    llvm::SmallDenseSet<uint32_t> seenCommits;
+    for (Attribute regionAttribute : graph.getRegions()) {
+      auto region = cast<sim::ComputeRegionAttr>(regionAttribute);
+      if (region.getKind() != sim::ComputeRegionKind::NBA)
+        continue;
+      for (Attribute groupAttribute : region.getGroups()) {
+        auto group = cast<sim::ComputeGroupAttr>(groupAttribute);
+        if (group.getSchedule() != sim::ComputeScheduleKind::Acyclic)
+          return module.emitError(
+              "static NBA plan requires acyclic commit groups");
+        for (int64_t member : group.getFragments().asArrayRef()) {
+          if (member < 0 ||
+              static_cast<uint64_t>(member) >= graph.getNodes().size())
+            return module.emitError(
+                "static NBA group references an invalid node");
+          auto commit = dyn_cast<sim::ComputeNBACommitAttr>(
+              graph.getNodes()[static_cast<size_t>(member)]);
+          if (!commit)
+            continue;
+          if (!seenCommits.insert(commit.getId()).second)
+            return module.emitError(
+                "static NBA commit appears in multiple schedule groups");
+          orderedCommits.push_back(commit);
+        }
+      }
+    }
+    size_t commitCount = llvm::count_if(graph.getNodes(), [](Attribute node) {
+      return isa<sim::ComputeNBACommitAttr>(node);
+    });
+    if (orderedCommits.size() != commitCount)
+      return module.emitError(
+          "static NBA schedule omits one or more commit nodes");
+    for (sim::ComputeNBACommitAttr commit : orderedCommits) {
+      sim::ComputeEffectAttr effect = commit.getEffect();
+      if (effect.getResource() != sim::ComputeResourceKind::Storage ||
+          effect.getTarget() != sim::ComputeTargetKind::Descriptor ||
+          effect.getDynamic() || effect.getDeferred())
+        return module.emitError(
+            "static NBA commit does not identify one fixed storage root");
+      auto handle = stateLayout.storage.find(effect.getDescriptor());
+      if (handle == stateLayout.storage.end())
+        return module.emitError(
+            "static NBA commit references an unknown storage descriptor");
+      obelisk_rt_stable_handle_v1 decoded{};
+      if (!obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
+          decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC ||
+          decoded.offset != 0)
+        return module.emitError(
+            "static NBA commit has an invalid native state root");
+      auto bound =
+          llvm::find_if(stateLayout.bounds, [&](const auto &candidate) {
+            return candidate.handleID == decoded.id;
+          });
+      if (bound == stateLayout.bounds.end())
+        return module.emitError(
+            "static NBA commit root is absent from native state layout");
+      uint32_t root = static_cast<uint32_t>(nbaRoots.size());
+      nbaRoots.push_back(
+          {commit.getId(), decoded.id, static_cast<uint64_t>(bound->width)});
+      auto appendSites = [&](DenseI64ArrayAttr ids, uint32_t storage) {
+        for (int64_t id : ids.asArrayRef()) {
+          if (id < 0)
+            return failure();
+          nbaSites.push_back({static_cast<uint64_t>(id), root, storage});
+        }
+        return success();
+      };
+      if (failed(appendSites(commit.getSlots(),
+                             OBELISK_RT_STATIC_NBA_FIXED_SLOT)) ||
+          failed(appendSites(commit.getAccumulatorSites(),
+                             OBELISK_RT_STATIC_NBA_ROOT_ACCUMULATOR)))
+        return module.emitError("static NBA site identity is negative");
+      if (!commit.getFrontierSites().empty())
+        return module.emitError(
+            "static NBA plan contains a DynamicFrontier site");
+    }
+    llvm::sort(nbaSites, [](const auto &left, const auto &right) {
+      return left.site < right.site;
+    });
+    if (std::adjacent_find(nbaSites.begin(), nbaSites.end(),
+                           [](const auto &left, const auto &right) {
+                             return left.site == right.site;
+                           }) != nbaSites.end())
+      return module.emitError("static NBA site identity is duplicated");
+  }
   uint64_t graphLayoutChecksum = 0;
   if (auto image =
           module->getAttrOfType<DenseI8ArrayAttr>("obelisk.bytecode.image")) {
@@ -10420,6 +10531,8 @@ makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
   Type stateType = LLVM::LLVMArrayType::get(pointer, actorCount);
   constexpr StringLiteral stateName = "__obelisk_aot_schedule_state_v1";
   constexpr StringLiteral nodesName = "__obelisk_aot_schedule_nodes_v1";
+  constexpr StringLiteral nbaRootsName = "__obelisk_aot_nba_roots_v1";
+  constexpr StringLiteral nbaSitesName = "__obelisk_aot_nba_sites_v1";
   constexpr StringLiteral bindName = "__obelisk_aot_schedule_bind_v1";
   constexpr StringLiteral runName = "__obelisk_aot_schedule_run_v1";
   constexpr StringLiteral snapshotName = "__obelisk_aot_schedule_snapshot_v1";
@@ -10457,6 +10570,65 @@ makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
         }
         return nodes;
       });
+
+  Type nbaRootType = LLVM::LLVMStructType::getLiteral(context, {i32, i32, i64});
+  if (!nbaRoots.empty()) {
+    Type rootsType = LLVM::LLVMArrayType::get(nbaRootType, nbaRoots.size());
+    makeConstantGlobal(
+        module, location, rootsType, nbaRootsName, LLVM::Linkage::Internal, 8,
+        [&](OpBuilder &initializerBuilder) {
+          Value roots =
+              LLVM::ZeroOp::create(initializerBuilder, location, rootsType);
+          for (auto [index, root] : llvm::enumerate(nbaRoots)) {
+            Value value =
+                LLVM::ZeroOp::create(initializerBuilder, location, nbaRootType);
+            value = insertValue(initializerBuilder, location, value,
+                                llvmConstant(initializerBuilder, location, i32,
+                                             root.commit_node),
+                                0);
+            value = insertValue(initializerBuilder, location, value,
+                                llvmConstant(initializerBuilder, location, i32,
+                                             root.static_state),
+                                1);
+            value = insertValue(
+                initializerBuilder, location, value,
+                llvmConstant(initializerBuilder, location, i64, root.bit_width),
+                2);
+            roots = LLVM::InsertValueOp::create(
+                initializerBuilder, location, roots, value,
+                ArrayRef<int64_t>{static_cast<int64_t>(index)});
+          }
+          return roots;
+        });
+  }
+  Type nbaSiteType = LLVM::LLVMStructType::getLiteral(context, {i64, i32, i32});
+  if (!nbaSites.empty()) {
+    Type sitesType = LLVM::LLVMArrayType::get(nbaSiteType, nbaSites.size());
+    makeConstantGlobal(
+        module, location, sitesType, nbaSitesName, LLVM::Linkage::Internal, 8,
+        [&](OpBuilder &initializerBuilder) {
+          Value sites =
+              LLVM::ZeroOp::create(initializerBuilder, location, sitesType);
+          for (auto [index, site] : llvm::enumerate(nbaSites)) {
+            Value value =
+                LLVM::ZeroOp::create(initializerBuilder, location, nbaSiteType);
+            value = insertValue(
+                initializerBuilder, location, value,
+                llvmConstant(initializerBuilder, location, i64, site.site), 0);
+            value = insertValue(
+                initializerBuilder, location, value,
+                llvmConstant(initializerBuilder, location, i32, site.root), 1);
+            value = insertValue(
+                initializerBuilder, location, value,
+                llvmConstant(initializerBuilder, location, i32, site.storage),
+                2);
+            sites = LLVM::InsertValueOp::create(
+                initializerBuilder, location, sites, value,
+                ArrayRef<int64_t>{static_cast<int64_t>(index)});
+          }
+          return sites;
+        });
+  }
 
   builder.setInsertionPointToEnd(module.getBody());
   auto bind = LLVM::LLVMFuncOp::create(
@@ -10507,8 +10679,8 @@ makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
       llvmConstant(builder, location, i32, OBELISK_RT_INVALID_LIFECYCLE));
 
   auto planType = LLVM::LLVMStructType::getLiteral(
-      context,
-      {i32, i32, i64, pointer, i64, i32, i32, pointer, pointer, pointer});
+      context, {i32, i64, pointer, i64, i32, i32, pointer, pointer, pointer,
+                pointer, i32, i32, pointer, i64});
   makeConstantGlobal(
       module, location, planType, planName, LLVM::Linkage::Internal, 8,
       [&](OpBuilder &initializerBuilder) {
@@ -10517,29 +10689,24 @@ makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
         value =
             insertValue(initializerBuilder, location, value,
                         llvmConstant(initializerBuilder, location, i32,
-                                     OBELISK_RT_NATIVE_SCHEDULE_PLAN_VERSION),
+                                     sizeof(obelisk_rt_native_schedule_plan)),
                         0);
-        value = insertValue(
-            initializerBuilder, location, value,
-            llvmConstant(initializerBuilder, location, i32,
-                         sizeof(obelisk_rt_native_schedule_plan_v1)),
-            1);
         value = insertValue(initializerBuilder, location, value,
                             llvmConstant(initializerBuilder, location, i64,
                                          graphLayoutChecksum),
-                            2);
+                            1);
         value =
             insertValue(initializerBuilder, location, value,
                         LLVM::AddressOfOp::create(initializerBuilder, location,
                                                   pointer, stateName),
-                        3);
+                        2);
         value = insertValue(initializerBuilder, location, value,
                             llvmConstant(initializerBuilder, location, i64,
                                          uint64_t{actorCount} * sizeof(void *)),
-                            4);
+                            3);
         value = insertValue(
             initializerBuilder, location, value,
-            llvmConstant(initializerBuilder, location, i32, actorCount), 5);
+            llvmConstant(initializerBuilder, location, i32, actorCount), 4);
         value = insertValue(
             initializerBuilder, location, value,
             llvmConstant(
@@ -10547,21 +10714,50 @@ makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
                 (fullyStatic ? OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC : 0) |
                     (rootSlotZero ? OBELISK_RT_NATIVE_SCHEDULE_ROOT_SLOT_ZERO
                                   : 0)),
-            6);
+            5);
         value =
             insertValue(initializerBuilder, location, value,
                         LLVM::AddressOfOp::create(initializerBuilder, location,
                                                   pointer, bindName),
-                        7);
+                        6);
         value = insertValue(initializerBuilder, location, value,
                             LLVM::AddressOfOp::create(
                                 initializerBuilder, location, pointer, runName),
-                            8);
-        return insertValue(initializerBuilder, location, value,
-                           LLVM::AddressOfOp::create(initializerBuilder,
-                                                     location, pointer,
-                                                     snapshotName),
-                           9);
+                            7);
+        value =
+            insertValue(initializerBuilder, location, value,
+                        LLVM::AddressOfOp::create(initializerBuilder, location,
+                                                  pointer, snapshotName),
+                        8);
+        Value rootsAddress =
+            nbaRoots.empty()
+                ? LLVM::ZeroOp::create(initializerBuilder, location, pointer)
+                      .getResult()
+                : LLVM::AddressOfOp::create(initializerBuilder, location,
+                                            pointer, nbaRootsName)
+                      .getResult();
+        value =
+            insertValue(initializerBuilder, location, value, rootsAddress, 9);
+        value = insertValue(
+            initializerBuilder, location, value,
+            llvmConstant(initializerBuilder, location, i32, nbaRoots.size()),
+            10);
+        value =
+            insertValue(initializerBuilder, location, value,
+                        llvmConstant(initializerBuilder, location, i32, 0), 11);
+        Value sitesAddress =
+            nbaSites.empty()
+                ? LLVM::ZeroOp::create(initializerBuilder, location, pointer)
+                      .getResult()
+                : LLVM::AddressOfOp::create(initializerBuilder, location,
+                                            pointer, nbaSitesName)
+                      .getResult();
+        value =
+            insertValue(initializerBuilder, location, value, sitesAddress, 12);
+        return insertValue(
+            initializerBuilder, location, value,
+            llvmConstant(initializerBuilder, location, i64, nbaSites.size()),
+            13);
       });
   if (fullyStatic)
     getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_run_aot_nodes",
@@ -10887,6 +11083,14 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       module, "obelisk_rt_v1_scheduler_nba", IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
+       IntegerType::get(context, 64), IntegerType::get(context, 64),
+       IntegerType::get(context, 64), LLVM::LLVMPointerType::get(context),
+       LLVM::LLVMPointerType::get(context)});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_scheduler_static_nba",
+      IntegerType::get(context, 32),
+      {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
+       LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        IntegerType::get(context, 64), IntegerType::get(context, 64),
        IntegerType::get(context, 64), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context)});
@@ -11741,8 +11945,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                  entry.second == 0;
         });
     if (failed(makeNativeAOTPlan(module, aotEligibility.actorSlots.size(),
-                                 executableNodes, aotEligibility.fullyEligible,
-                                 rootSlotZero)))
+                                 executableNodes, *stateLayout,
+                                 aotEligibility.fullyEligible, rootSlotZero)))
       return failure();
   }
   if (failed(makeSchedulerMain(module, *stateLayout, useAOT)))
