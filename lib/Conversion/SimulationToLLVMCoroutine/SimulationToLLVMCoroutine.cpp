@@ -7267,6 +7267,33 @@ public:
   }
 };
 
+class QueueDeleteConversion final
+    : public OpConversionPattern<sim::SimQueueDeleteOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimQueueDeleteOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getQueue().size() != 1 || adaptor.getIndex().size() != 1)
+      return failure();
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    (void)lane;
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_queue_delete_index"),
+            ValueRange{
+                managedObjectPointer(rewriter, op.getLoc(),
+                                     adaptor.getQueue().front()),
+                adaptor.getIndex().front()})
+            .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 class RandomNextConversion final
     : public OpConversionPattern<sim::SimRandomNextOp> {
 public:
@@ -10246,6 +10273,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                            {managedPointer, managedPointer, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_container_delete", managedI32,
                            {managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_queue_delete_index",
+                           managedI32, {managedPointer, managedI64});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_random_bounded", managedI32,
                            {managedPointer, managedI64, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_random_next", managedI32,
@@ -10612,7 +10641,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       EventNullConversion,
       ContainerSizeConversion, ContainerCreateLikeConversion,
       ContainerCreateConversion, ContainerCloneConversion,
-      ContainerDeleteConversion, ContainerReadConversion,
+      ContainerDeleteConversion, QueueDeleteConversion, ContainerReadConversion,
       ContainerWriteConversion, AssocCreateConversion, AssocReadConversion,
       AssocWriteConversion, AssocDefaultConversion, AssocExistsConversion,
       AssocDeleteConversion, AssocTraverseConversion, RandomNextConversion,
@@ -10688,7 +10717,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       sim::SimEventNullOp, sim::SimContainerSizeOp,
       sim::SimContainerCreateLikeOp, sim::SimContainerCreateOp,
       sim::SimContainerCloneOp, sim::SimContainerDeleteOp,
-      sim::SimContainerReadOp, sim::SimContainerWriteOp,
+      sim::SimQueueDeleteOp, sim::SimContainerReadOp,
+      sim::SimContainerWriteOp,
       sim::SimAssocCreateOp, sim::SimAssocReadOp, sim::SimAssocWriteOp,
       sim::SimAssocExistsOp, sim::SimAssocDeleteOp,
       sim::SimAssocSetDefaultOp, sim::SimAssocTraverseOp,

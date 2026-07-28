@@ -320,6 +320,15 @@ def SimContainerDeleteOp : SimOp<"container.delete", [
   let hasVerifier = 1;
 }
 
+def SimQueueDeleteOp : SimOp<"queue.delete", [
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "delete one queue element by logical index";
+  let arguments = (ins SimQueueType:$queue, I64:$index);
+  let assemblyFormat = "$queue `[` $index `]` attr-dict `:` type($queue)";
+  let hasVerifier = 1;
+}
+
 def SimRandomNextOp : SimOp<"random.next", [
     MemoryEffects<[MemRead<SimRNGResource>, MemWrite<SimRNGResource>]>
   ]> {

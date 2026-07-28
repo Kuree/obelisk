@@ -890,6 +890,10 @@ bool validIntrinsic(const Image &image, const Function &function,
   case OBELISK_RT_INTRINSIC_V1_CONTAINER_DELETE:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 0 && managed(input(0));
+  case OBELISK_RT_INTRINSIC_V1_QUEUE_DELETE:
+    return signature.flags == 0 && site.inputCount == 2 &&
+           site.outputCount == 0 && managed(input(0)) &&
+           twoStateBits(input(1), 64);
   case OBELISK_RT_INTRINSIC_V1_RANDOM_BOUNDED:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && twoStateBits(input(0), 64) &&
@@ -3584,6 +3588,13 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
   }
   case OBELISK_RT_INTRINSIC_V1_CONTAINER_DELETE:
     return obelisk_rt_v1_container_delete(readManaged(inputRegister(0)));
+  case OBELISK_RT_INTRINSIC_V1_QUEUE_DELETE: {
+    auto index = scalar(1);
+    return index ? obelisk_rt_v1_queue_delete_index(
+                       readManaged(inputRegister(0)),
+                       static_cast<int64_t>(*index))
+                 : OBELISK_RT_INVALID_BYTECODE;
+  }
   case OBELISK_RT_INTRINSIC_V1_ASSOC_CREATE: {
     std::array<std::optional<uint64_t>, 8> inputs;
     for (uint32_t index = 0; index != 6; ++index)

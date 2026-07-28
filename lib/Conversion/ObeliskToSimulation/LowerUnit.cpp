@@ -5484,11 +5484,28 @@ UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
         .getResult();
   }
   if (name == "delete") {
-    if (withClause || children.size() != 1)
-      return emitError(location) << "whole-container delete does not accept "
-                                    "arguments or a with clause",
+    if (withClause || children.size() > 2)
+      return emitError(location)
+                 << "delete accepts at most one index and no with clause",
              failure();
-    sim::SimContainerDeleteOp::create(builder, location, *receiver);
+    if (children.size() == 1) {
+      sim::SimContainerDeleteOp::create(builder, location, *receiver);
+    } else {
+      auto queue = dyn_cast<sim::QueueType>(receiverType);
+      if (!queue)
+        return emitError(location)
+                   << "indexed delete requires a queue receiver",
+               failure();
+      FailureOr<Value> index = lowerExpression(children[1]);
+      FailureOr<Value> converted =
+          succeeded(index)
+              ? convert(*index, builder.getI64Type(),
+                        isSignedNode(children[1]), location)
+              : FailureOr<Value>(failure());
+      if (failed(converted))
+        return failure();
+      sim::SimQueueDeleteOp::create(builder, location, *receiver, *converted);
+    }
     return arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                      builder.getBoolAttr(false))
         .getResult();

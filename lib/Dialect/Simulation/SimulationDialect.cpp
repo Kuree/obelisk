@@ -1159,6 +1159,12 @@ LogicalResult SimContainerDeleteOp::verify() {
   return success();
 }
 
+LogicalResult SimQueueDeleteOp::verify() {
+  if (!isa<QueueType>(getQueue().getType()))
+    return emitOpError("queue operand must have queue type");
+  return success();
+}
+
 LogicalResult SimContainerReadOp::verify() {
   Type element = getSequentialContainerElement(getContainer().getType());
   if (!element)
