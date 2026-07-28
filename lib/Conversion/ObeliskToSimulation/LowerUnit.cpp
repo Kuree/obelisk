@@ -5408,7 +5408,8 @@ UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
   StringRef name = op.getCalleeName();
   bool mutatesReceiver = name == "delete" || name == "reverse" ||
                          name == "shuffle" || name == "sort" || name == "rsort" ||
-                         name == "push_back" || name == "insert";
+                         name == "push_back" || name == "push_front" ||
+                         name == "insert";
   FailureOr<Value> receiver;
   if (receiverOverride) {
     receiver = receiverOverride;
@@ -5479,6 +5480,31 @@ UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
         builder, location, builder.getI64Type(), *receiver);
     sim::SimContainerWriteOp::create(builder, location, *receiver, size,
                                      *converted);
+    return arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                     builder.getBoolAttr(false))
+        .getResult();
+  }
+  if (name == "push_front") {
+    if (withClause || children.size() != 2)
+      return emitError(location)
+                 << "push_front requires exactly one value argument",
+             failure();
+    auto queue = dyn_cast<sim::QueueType>(receiverType);
+    if (!queue)
+      return emitError(location) << "push_front requires a queue receiver",
+             failure();
+    FailureOr<Value> value = lowerExpression(children[1]);
+    FailureOr<Value> converted =
+        succeeded(value)
+            ? convert(*value, elementType, isSignedNode(children[1]), location)
+            : FailureOr<Value>(failure());
+    if (failed(converted))
+      return failure();
+    Value zero = arith::ConstantOp::create(
+        builder, location, builder.getI64Type(),
+        builder.getI64IntegerAttr(0));
+    sim::SimQueueInsertOp::create(builder, location, *receiver, zero,
+                                  *converted);
     return arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                      builder.getBoolAttr(false))
         .getResult();
