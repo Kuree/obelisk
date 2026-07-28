@@ -8304,6 +8304,25 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     return convertResult(result);
   }
 
+  if (name == "$isunbounded") {
+    if (children.size() != 1) {
+      emitError(location) << "$isunbounded requires exactly one argument";
+      return failure();
+    }
+    auto semanticType =
+        children.front()->getAttrOfType<TypeAttr>("semantic_type");
+    if (!semanticType) {
+      emitError(getSemanticLocation(children.front()))
+          << "$isunbounded argument has no elaborated semantic type";
+      return failure();
+    }
+    // `$isunbounded` is an inquiry function. Its operand is unevaluated, and
+    // Slang records an unbounded parameter reference with !obelisk.unbounded.
+    Value result = constant(builder.getI1Type(),
+                            isa<ir::UnboundedType>(semanticType.getValue()));
+    return convertResult(result);
+  }
+
   bool isDimensionCount =
       name == "$dimensions" || name == "$unpacked_dimensions";
   bool isRangeQuery = name == "$left" || name == "$right" || name == "$low" ||

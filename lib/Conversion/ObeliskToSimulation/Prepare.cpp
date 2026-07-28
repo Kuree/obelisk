@@ -2227,6 +2227,13 @@ void ObeliskSimPreparePass::runOnOperation() {
         return;
       if (isa<semantic::SVParameterSymbolOp, semantic::SVEnumValueSymbolOp,
               semantic::SVSpecparamSymbolOp>(referencedSymbol)) {
+        // An unbounded parameter has no runtime integer representation. It is
+        // only meaningful to unevaluated inquiry functions such as
+        // `$isunbounded`, which inspect the elaborated operand type directly.
+        // Do not try to freeze its "$" spelling as an integer constant.
+        if (auto type = nested->getAttrOfType<TypeAttr>("semantic_type");
+            type && isa<ir::UnboundedType>(type.getValue()))
+          return;
         if (!seenConstants.insert(path).second)
           return;
         FailureOr<sim::FrozenConstantAttr> value =
