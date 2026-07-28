@@ -4457,18 +4457,34 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
           sim::UnpackedUnionType>((*lhs).getType()) ||
       isa<sim::UnpackedArrayType, sim::UnpackedStructType,
           sim::UnpackedUnionType>((*rhs).getType())) {
-    if ((*lhs).getType() != (*rhs).getType() ||
-        (kind != Binary::Equality && kind != Binary::Inequality &&
-         kind != Binary::CaseEquality && kind != Binary::CaseInequality)) {
+    if (kind != Binary::Equality && kind != Binary::Inequality &&
+        kind != Binary::CaseEquality && kind != Binary::CaseInequality) {
       unsupported(op) << " (unpacked-aggregate operator)";
       return failure();
+    }
+    Value right = *rhs;
+    if ((*lhs).getType() != right.getType()) {
+      auto leftArray = dyn_cast<sim::UnpackedArrayType>((*lhs).getType());
+      auto rightArray = dyn_cast<sim::UnpackedArrayType>(right.getType());
+      if (!leftArray || !rightArray ||
+          sim::getAggregateNumElements(leftArray) !=
+              sim::getAggregateNumElements(rightArray)) {
+        unsupported(op) << " (unpacked-aggregate operator)";
+        return failure();
+      }
+      FailureOr<Value> converted =
+          convert(right, leftArray, isSignedNode(children[1]), location,
+                  isSignedNode(children[0]));
+      if (failed(converted))
+        return failure();
+      right = *converted;
     }
     bool caseEquality =
         kind == Binary::CaseEquality || kind == Binary::CaseInequality;
     FailureOr<Value> equal =
         caseEquality
-            ? conditionalEqual(*lhs, *rhs, (*lhs).getType(), location, true)
-            : logicalEqual(*lhs, *rhs, (*lhs).getType(), location);
+            ? conditionalEqual(*lhs, right, (*lhs).getType(), location, true)
+            : logicalEqual(*lhs, right, (*lhs).getType(), location);
     if (failed(equal))
       return failure();
     Value result = *equal;
