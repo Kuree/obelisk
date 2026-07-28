@@ -144,6 +144,18 @@ def SimProcessType : SimType<"Process"> {
   let summary = "opaque scheduler process handle";
 }
 
+// Functional-coverage instances are context-local runtime objects, but unlike
+// managed heap values their physical representation is a stable 64-bit ID.
+// Retaining the declaration symbol here prevents accidental mixing of handles
+// from distinct covergroup types before physical lowering.
+def SimCovergroupHandleType : SimType<"CovergroupHandle"> {
+  let mnemonic = "covergroup_handle";
+  let summary = "nullable statically typed functional coverage handle";
+  let parameters = (ins "::mlir::SymbolRefAttr":$covergroupName);
+  let assemblyFormat = "`<` $covergroupName `>`";
+  let genVerifyDecl = 1;
+}
+
 // Class identity deliberately remains in the executable type. Lowering this
 // to a physical pointer before hierarchy analysis would lose the distinction
 // between inherited fields, interface views, and checked casts.

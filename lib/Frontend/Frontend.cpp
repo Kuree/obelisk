@@ -1145,6 +1145,25 @@ private:
       SET_OP_ATTR(HasIteratorExpression, builder.getBoolAttr(false));
       SET_OP_ATTR(HasInlineConstraints, builder.getBoolAttr(false));
       SET_OP_ATTR(ConstraintRestrictions, builder.getArrayAttr({}));
+      SmallVector<int64_t> defaultedArguments;
+      defaultedArguments.reserve(node.arguments().size());
+      const slang::ast::SubroutineSymbol *calledSubroutine = nullptr;
+      if (const auto *subroutine =
+              std::get_if<const slang::ast::SubroutineSymbol *>(
+                  &node.subroutine))
+        calledSubroutine = *subroutine;
+      auto formalArguments =
+          calledSubroutine ? calledSubroutine->getArguments()
+                           : std::span<
+                                 const slang::ast::FormalArgumentSymbol *const>();
+      for (auto [index, argument] : llvm::enumerate(node.arguments())) {
+        bool isDefaulted =
+            index < formalArguments.size() &&
+            formalArguments[index]->getDefaultValue() == argument;
+        defaultedArguments.push_back(isDefaulted);
+      }
+      SET_OP_ATTR(DefaultedArguments,
+                  builder.getDenseI64ArrayAttr(defaultedArguments));
       if (const auto *subroutine =
               std::get_if<const slang::ast::SubroutineSymbol *>(
                   &node.subroutine);
@@ -1579,6 +1598,25 @@ private:
     } else if constexpr (std::same_as<T, slang::ast::CovergroupType>) {
       if (const slang::ast::Type *base = node.getBaseGroup())
         SET_OP_ATTR(BaseGroup, TypeAttr::get(typeConverter.convert(*base)));
+      SET_OP_ATTR(ConstructorArgumentCount,
+                  builder.getI64IntegerAttr(node.getArguments().size()));
+      uint64_t sampleFormals = 0;
+      for (const auto &formal :
+           node.template membersOfType<slang::ast::FormalArgumentSymbol>())
+        sampleFormals += formal.flags.has(
+            slang::ast::VariableFlags::CoverageSampleFormal);
+      SET_OP_ATTR(SampleFormalCount,
+                  builder.getI64IntegerAttr(sampleFormals));
+      SET_OP_ATTR(HasCoverageEvent,
+                  builder.getBoolAttr(node.getCoverageEvent() != nullptr));
+    } else if constexpr (std::same_as<T,
+                                      slang::ast::CovergroupBodySymbol>) {
+      SET_OP_ATTR(OptionCount,
+                  builder.getI64IntegerAttr(node.options.size()));
+    } else if constexpr (std::same_as<T, slang::ast::CoverpointSymbol>) {
+      SET_OP_ATTR(HasIff, builder.getBoolAttr(node.getIffExpr() != nullptr));
+      SET_OP_ATTR(OptionCount,
+                  builder.getI64IntegerAttr(node.options.size()));
     } else if constexpr (std::same_as<T, slang::ast::CoverageBinSymbol>) {
       SET_OP_ATTR(BinsKind,
                   slangir::CoverageBinKindAttr::get(
@@ -1588,6 +1626,21 @@ private:
       SET_OP_ATTR(IsDefault, builder.getBoolAttr(node.isDefault));
       SET_OP_ATTR(IsDefaultSequence,
                   builder.getBoolAttr(node.isDefaultSequence));
+      SET_OP_ATTR(HasIff, builder.getBoolAttr(node.getIffExpr() != nullptr));
+      SET_OP_ATTR(HasNumberOfBins,
+                  builder.getBoolAttr(node.getNumberOfBinsExpr() != nullptr));
+      SET_OP_ATTR(HasSetCoverage,
+                  builder.getBoolAttr(node.getSetCoverageExpr() != nullptr));
+      SET_OP_ATTR(HasWith,
+                  builder.getBoolAttr(node.getWithExpr() != nullptr));
+      SET_OP_ATTR(ValueCount,
+                  builder.getI64IntegerAttr(node.getValues().size()));
+      SET_OP_ATTR(TransitionSetCount,
+                  builder.getI64IntegerAttr(node.getTransList().size()));
+    } else if constexpr (std::same_as<T,
+                                      slang::ast::NewCovergroupExpression>) {
+      SET_OP_ATTR(ArgumentCount,
+                  builder.getI64IntegerAttr(node.arguments.size()));
     } else if constexpr (std::same_as<T, slang::ast::ConditionalStatement>) {
       SET_OP_ATTR(CheckKind,
                   slangir::UniquePriorityCheckAttr::get(

@@ -197,17 +197,52 @@ bytecode and is exercised at `-O0` and `-O3`. That subset includes:
 - deterministic process-local `$random`, `$urandom`, `$urandom_range`, and
   `$srandom` streams plus seeded array shuffle;
 - ordinary and deferred immediate `assert`, `assume`, and `cover`; and
+- module-, interface-, and program-scoped covergroups with manual scalar
+  sampling, explicit value/range/default bins, coverpoint `iff`, per-instance
+  start/stop state, and instance/type coverage queries; and
 - the scalar/fixed-packed DPI-C import subset and the hierarchical immediate
   VPI backdoor subset documented below.
 
 Important runtime gaps remain explicit compile-time errors. They include
 constraint solving and object randomization, concurrent assertions and
-sampled-value history, covergroups, clocking blocks and checkers, mailboxes and
-semaphores, the remaining queue surface, net strengths and delays, VPI
-callbacks and delayed operations, and the remaining DPI types and task
-behaviors. Detailed boundaries live in
+sampled-value history, event-driven and cross functional coverage, clocking
+blocks and checkers, mailboxes and semaphores, the remaining queue surface, net
+strengths and delays, VPI callbacks and delayed operations, and the remaining
+DPI types and task behaviors. Detailed boundaries live in
 `docs/procedural-timing-support.md`, `docs/managed-values.md`, `docs/dpi.md`,
 `docs/vpi.md`, `docs/force.md`, and `docs/randomization-support.md`.
+
+### Executable functional coverage
+
+Covergroups declared directly in modules, interfaces, or programs lower to an
+immutable `obelisk_sim.covergroup.decl` schema and context-local 64-bit
+instance handles. Construction is zero-argument and each instance starts
+enabled. `sample(...)` binds scalar integral `with function sample` inputs,
+evaluates enclosing design-variable reads and each coverpoint expression, and
+skips a coverpoint when its `iff` is false or unknown.
+
+Every named value or inclusive-range bin matches independently, so overlapping
+bins can all receive a hit while any one bin increments at most once per
+sample. A named default bin receives a known sample only when no explicit bin
+matches. Samples containing X or Z receive no bin hit. Hit counters saturate at
+64 bits and remain per-instance. Each complete sample commits atomically with
+respect to queries and `start()`/`stop()`; the control methods only disable and
+re-enable sampling.
+
+`get_inst_coverage([covered, total])` computes the equal-weight average of the
+instance's coverpoints. Static `get_coverage([covered, total])` averages all
+instances ever constructed, including instances whose handles were later
+overwritten or became unreachable. Query calls accept either zero or two
+output arguments, return an `f64` percentage in `[0,100]`, and saturate the
+signed 32-bit output counts. A type query before the first construction returns
+zero percentage and zero counts. Native code and whole-design bytecode call
+the same thread-safe runtime ABI and report null or invalid handles identically.
+
+Automatic bins, bin arrays, wildcard and transition bins, `ignore_bins`,
+`illegal_bins`, bin-level `iff`, crosses, coverage events, class-contained or
+inherited covergroups, coverage options, and coverpoint methods remain targeted
+compile-time errors. Reports, UCIS/database persistence, `set_inst_name`, and
+automatic end-of-run output are not part of this executable subset.
 
 ### Packed-value semantic contract
 
@@ -928,8 +963,9 @@ The implementation roadmap is:
   is recorded in `docs/randomization-support.md`.
 - Extend executable lowering across the remaining broad UVM gate: complete
   the remaining dynamic-array and queue surface, mailboxes, semaphores,
-  synchronization, concurrent assertions, coverage, clocking blocks and
-  checkers, VPI, and the remaining DPI types and behaviors.
+  synchronization, concurrent assertions, advanced and event-driven functional
+  coverage, clocking blocks and checkers, VPI, and the remaining DPI types and
+  behaviors.
 - ~~Run canonicalization, CSE, and memory promotion before late graph
   derivation.~~
 - ~~Add SROA, interprocedural SCCP, simulation-aware inlining, and dead capture

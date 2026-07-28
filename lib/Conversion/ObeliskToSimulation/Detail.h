@@ -191,6 +191,8 @@ normalizeSemanticType(::mlir::Type type, ::mlir::Location location);
 /// executable descriptors therefore use their own collision-free namespace.
 ::mlir::StringAttr
 getSimulationClassSymbol(::mlir::SymbolRefAttr semanticClass);
+::mlir::StringAttr
+getSimulationCovergroupSymbol(::mlir::SymbolRefAttr semanticCovergroup);
 
 /// Classify a canonical source-semantic type for the initial DPI-C ABI.
 /// Diagnostics are issued at `location` for unsupported categories.

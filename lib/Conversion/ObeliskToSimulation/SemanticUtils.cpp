@@ -27,6 +27,16 @@ StringAttr getSimulationClassSymbol(SymbolRefAttr semanticClass) {
   return StringAttr::get(semanticClass.getContext(), name);
 }
 
+StringAttr getSimulationCovergroupSymbol(SymbolRefAttr semanticCovergroup) {
+  std::string name = "__obelisk_covergroup_";
+  StringRef leaf = semanticCovergroup.getLeafReference();
+  name.reserve(name.size() + leaf.size());
+  for (char character : leaf)
+    name.push_back(
+        std::isalnum(static_cast<unsigned char>(character)) ? character : '_');
+  return StringAttr::get(semanticCovergroup.getContext(), name);
+}
+
 bool isSemanticOp(Operation *op) {
   return op->hasTrait<OpTrait::SemanticASTNode>();
 }
@@ -580,6 +590,13 @@ static FailureOr<Type> normalizeType(Type type, Location location,
   }
   if (isa<semantic::EventType>(type))
     return sim::EventType::get(context);
+  if (auto covergroup = dyn_cast<semantic::CovergroupHandleType>(type))
+    return sim::CovergroupHandleType::get(
+        context, SymbolRefAttr::get(
+                     context,
+                     getSimulationCovergroupSymbol(
+                         covergroup.getCovergroupName())
+                         .getValue()));
   if (isa<semantic::StringType>(type))
     return sim::StringType::get(context);
   if (type.isF64() || type.isF32())
@@ -919,6 +936,8 @@ FailureOr<sim::FrozenConstantAttr> freezeSemanticConstant(Operation *symbol) {
 Value createDefaultValue(OpBuilder &builder, Location location, Type type) {
   if (isa<sim::ClassHandleType>(type))
     return sim::SimClassNullOp::create(builder, location, type);
+  if (isa<sim::CovergroupHandleType>(type))
+    return sim::SimCovergroupNullOp::create(builder, location, type);
   if (isa<sim::EventType>(type))
     return sim::SimEventNullOp::create(builder, location, type);
   if (sim::isManagedHandleType(type))

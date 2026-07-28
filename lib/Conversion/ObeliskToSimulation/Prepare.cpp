@@ -148,12 +148,27 @@ static uint32_t getStableImportID(StringRef cIdentifier) {
 /// generic base, so they cannot carry the SemanticDeclarativeNode trait.
 static bool isDeclarativeLeafNode(Operation *op) {
   return isa<
-      semantic::SVNewCovergroupExpressionOp,
       semantic::SVRandSequenceStatementOp, semantic::SVCoverCrossSymbolOp,
-      semantic::SVCoverCrossBodySymbolOp, semantic::SVCovergroupBodySymbolOp,
-      semantic::SVCoverpointSymbolOp, semantic::SVLocalAssertionVarSymbolOp,
+      semantic::SVCoverCrossBodySymbolOp,
+      semantic::SVLocalAssertionVarSymbolOp,
       semantic::SVRandSeqProductionSymbolOp, semantic::SVDPIOpenArrayTypeOp>(
       op);
+}
+
+static bool isCoverageNode(Operation *op) {
+  if (isa<semantic::SVCovergroupTypeOp,
+          semantic::SVCovergroupBodySymbolOp,
+          semantic::SVCoverpointSymbolOp,
+          semantic::SVCoverageBinSymbolOp,
+          semantic::SVNewCovergroupExpressionOp>(op))
+    return true;
+  if (auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(op))
+    return formal.getIsCoverageSampleFormal().value_or(false);
+  return false;
+}
+
+static bool isInsideCovergroup(Operation *op) {
+  return op && op->getParentOfType<semantic::SVCovergroupTypeOp>();
 }
 
 static bool isSupportedClassDeclaration(Operation *op) {
@@ -484,6 +499,35 @@ void ObeliskSimPreparePass::runOnOperation() {
     }
   });
 
+  std::function<bool(Operation *)> isCoverageConstant =
+      [&](Operation *expression) {
+        if (isa<semantic::SVIntegerLiteralOp,
+                semantic::SVUnbasedUnsizedIntegerLiteralOp>(expression))
+          return true;
+        if (isa<semantic::SVConversionExpressionOp,
+                semantic::SVUnaryExpressionOp,
+                semantic::SVBinaryExpressionOp>(expression)) {
+          SmallVector<Operation *> children = getChildren(expression);
+          return !children.empty() &&
+                 llvm::all_of(children, isCoverageConstant);
+        }
+        SymbolRefAttr reference;
+        if (auto named =
+                dyn_cast<semantic::SVNamedValueExpressionOp>(expression))
+          reference = named.getReferencedSymbol();
+        else if (auto hierarchical =
+                     dyn_cast<semantic::SVHierarchicalValueExpressionOp>(
+                         expression))
+          reference = hierarchical.getReferencedSymbol();
+        if (!reference)
+          return false;
+        auto symbol = semanticSymbols.find(reference.getLeafReference());
+        return symbol != semanticSymbols.end() &&
+               isa<semantic::SVParameterSymbolOp,
+                   semantic::SVEnumValueSymbolOp,
+                   semantic::SVSpecparamSymbolOp>(symbol->second);
+      };
+
   // Reject the declarative node families and the dynamic object types before
   // producing any target IR, so an unsupported construct never survives as
   // silently dropped semantics.
@@ -491,11 +535,138 @@ void ObeliskSimPreparePass::runOnOperation() {
     if (!isSemanticOp(op))
       return;
     if ((op->hasTrait<OpTrait::SemanticDeclarativeNode>() &&
-         !isSupportedClassDeclaration(op) && !isSupportedAssertionNode(op)) ||
+         !isSupportedClassDeclaration(op) && !isSupportedAssertionNode(op) &&
+         !isCoverageNode(op) && !isInsideCovergroup(op)) ||
         isDeclarativeLeafNode(op)) {
       emitError(getSemanticLocation(op))
           << "unsupported semantic construct in the first simulation slice: "
           << op->getName();
+      invalid = true;
+    }
+    if (auto covergroup = dyn_cast<semantic::SVCovergroupTypeOp>(op)) {
+      if (covergroup->getParentOfType<semantic::SVClassTypeOp>()) {
+        emitError(getSemanticLocation(op))
+            << "class-member and inherited covergroups are not executable";
+        invalid = true;
+      }
+      if (covergroup.getBaseGroupAttr()) {
+        emitError(getSemanticLocation(op))
+            << "inherited covergroups are not executable";
+        invalid = true;
+      }
+      if (covergroup.getConstructorArgumentCount() != 0) {
+        emitError(getSemanticLocation(op))
+            << "covergroup constructor formals are not supported; use "
+               "zero-argument new";
+        invalid = true;
+      }
+      if (covergroup.getHasCoverageEvent()) {
+        emitError(getSemanticLocation(op))
+            << "coverage events and automatic sampling are not supported";
+        invalid = true;
+      }
+      for (Operation *child : getChildren(covergroup)) {
+        auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(child);
+        if (!formal ||
+            !formal.getIsCoverageSampleFormal().value_or(false))
+          continue;
+        FailureOr<Type> type = getNormalizedSemanticType(formal);
+        Type scalar = succeeded(type) ? sim::getPackedScalarType(*type) : Type{};
+        if (formal.getDirection() != semantic::SVArgumentDirection::In ||
+            !scalar || !isa<IntegerType, sim::LogicType>(scalar)) {
+          emitError(getSemanticLocation(formal))
+              << "coverage sample formals must be scalar integral inputs";
+          invalid = true;
+        }
+      }
+    } else if (auto body =
+                   dyn_cast<semantic::SVCovergroupBodySymbolOp>(op)) {
+      if (body.getOptionCount() != 0) {
+        emitError(getSemanticLocation(op))
+            << "covergroup coverage options are not supported";
+        invalid = true;
+      }
+    } else if (auto coverpoint =
+                   dyn_cast<semantic::SVCoverpointSymbolOp>(op)) {
+      if (coverpoint.getOptionCount() != 0) {
+        emitError(getSemanticLocation(op))
+            << "coverpoint coverage options are not supported";
+        invalid = true;
+      }
+      size_t namedBins = llvm::count_if(
+          getChildren(op), [](Operation *child) {
+            return isa<semantic::SVCoverageBinSymbolOp>(child);
+          });
+      if (namedBins == 0) {
+        emitError(getSemanticLocation(op))
+            << "coverpoints require explicit named bins; automatic bins are "
+               "not supported";
+        invalid = true;
+      }
+      FailureOr<Type> type = getNormalizedSemanticType(coverpoint);
+      Type scalar = succeeded(type) ? sim::getPackedScalarType(*type) : Type{};
+      if (!scalar || !isa<IntegerType, sim::LogicType>(scalar)) {
+        emitError(getSemanticLocation(op))
+            << "coverpoint expressions must have a two-state or four-state "
+               "integral type";
+        invalid = true;
+      }
+    } else if (auto bin = dyn_cast<semantic::SVCoverageBinSymbolOp>(op)) {
+      if (bin.getBinsKind() != semantic::SVCoverageBinKind::Bins) {
+        emitError(getSemanticLocation(op))
+            << (bin.getBinsKind() ==
+                        semantic::SVCoverageBinKind::IgnoreBins
+                    ? "ignore_bins are not supported"
+                    : "illegal_bins are not supported");
+        invalid = true;
+      }
+      if (bin.getIsArray() || bin.getHasNumberOfBins()) {
+        emitError(getSemanticLocation(op))
+            << "coverage bin arrays and automatic bin counts are not "
+               "supported";
+        invalid = true;
+      }
+      if (bin.getIsWildcard()) {
+        emitError(getSemanticLocation(op))
+            << "wildcard coverage bins are not supported";
+        invalid = true;
+      }
+      if (bin.getHasIff()) {
+        emitError(getSemanticLocation(op))
+            << "bin-level iff is not supported";
+        invalid = true;
+      }
+      if (bin.getTransitionSetCount() != 0 ||
+          bin.getIsDefaultSequence()) {
+        emitError(getSemanticLocation(op))
+            << "transition coverage bins are not supported";
+        invalid = true;
+      }
+      if (bin.getHasSetCoverage() || bin.getHasWith()) {
+        emitError(getSemanticLocation(op))
+            << "coverage bin with/select expressions are not supported";
+        invalid = true;
+      }
+      if (!bin.getIsDefault())
+        for (Operation *value : getChildren(bin)) {
+          if (auto range =
+                  dyn_cast<semantic::SVValueRangeExpressionOp>(value)) {
+            if (!llvm::all_of(getChildren(range), isCoverageConstant)) {
+              emitError(getSemanticLocation(value))
+                  << "coverage bin range bounds must be elaboration-time "
+                     "constants";
+              invalid = true;
+            }
+          } else if (!isCoverageConstant(value)) {
+            emitError(getSemanticLocation(value))
+                << "coverage bin values must be elaboration-time constants";
+            invalid = true;
+          }
+        }
+    } else if (isa<semantic::SVCoverCrossSymbolOp,
+                           semantic::SVCoverCrossBodySymbolOp>(op)) {
+      emitError(getSemanticLocation(op))
+          << "coverage crosses are not supported";
       invalid = true;
     }
     for (NamedAttribute attr : op->getAttrs()) {
@@ -658,6 +829,62 @@ void ObeliskSimPreparePass::runOnOperation() {
     design.erase();
     signalPassFailure();
   };
+
+  SmallVector<semantic::SVCovergroupTypeOp> covergroupSources;
+  semanticRoot->walk([&](semantic::SVCovergroupTypeOp covergroup) {
+    covergroupSources.push_back(covergroup);
+  });
+  llvm::sort(
+      covergroupSources,
+      [](semantic::SVCovergroupTypeOp lhs,
+         semantic::SVCovergroupTypeOp rhs) {
+        return std::tuple(getHierarchyName(lhs), lhs.getSymName()) <
+               std::tuple(getHierarchyName(rhs), rhs.getSymName());
+      });
+  for (auto [index, covergroup] : llvm::enumerate(covergroupSources)) {
+    auto handle =
+        dyn_cast<semantic::CovergroupHandleType>(covergroup.getSemanticType());
+    if (!handle) {
+      emitError(getSemanticLocation(covergroup))
+          << "covergroup declaration has no handle type";
+      invalid = true;
+      continue;
+    }
+    SmallVector<int64_t> coverpointBins;
+    for (Operation *child : getChildren(covergroup)) {
+      auto body = dyn_cast<semantic::SVCovergroupBodySymbolOp>(child);
+      if (!body)
+        continue;
+      for (Operation *member : getChildren(body)) {
+        if (auto coverpoint =
+                dyn_cast<semantic::SVCoverpointSymbolOp>(member)) {
+          int64_t bins = llvm::count_if(
+              getChildren(coverpoint), [](Operation *candidate) {
+                return isa<semantic::SVCoverageBinSymbolOp>(candidate);
+              });
+          coverpointBins.push_back(bins);
+        }
+      }
+    }
+    if (coverpointBins.empty()) {
+      emitError(getSemanticLocation(covergroup))
+          << "covergroup requires at least one coverpoint";
+      invalid = true;
+      continue;
+    }
+    StringAttr symbol =
+        getSimulationCovergroupSymbol(handle.getCovergroupName());
+    auto declaration = sim::SimCovergroupDeclOp::create(
+        builder, getSemanticLocation(covergroup), symbol, index + 1,
+        builder.getDenseI64ArrayAttr(coverpointBins),
+        builder.getStringAttr(getDebugName(covergroup)));
+    SymbolTable::setSymbolVisibility(declaration,
+                                     SymbolTable::Visibility::Public);
+  }
+  if (invalid) {
+    abort();
+    return;
+  }
 
   // Freeze the complete elaborated class inventory before units become
   // isolated. Class symbols are already globally unique node-prefixed names,
@@ -2290,6 +2517,24 @@ void ObeliskSimPreparePass::runOnOperation() {
     }
     unit.source->walk<WalkOrder::PreOrder>(
         [&](Operation *nested) { collectBinding(nested); });
+    // Manual covergroup sampling evaluates the declaration's coverpoint and
+    // iff expressions in the caller. Capture any enclosing design storage
+    // those expressions read as part of the sampling unit.
+    unit.source->walk([&](semantic::SVCallExpressionOp call) {
+      if (call.getIsSystemCall() || call.getCalleeName() != "sample" ||
+          !call.getReferencedSymbol())
+        return;
+      auto symbol =
+          semanticSymbols.find(call.getReferencedSymbol()->getLeafReference());
+      if (symbol == semanticSymbols.end())
+        return;
+      auto covergroup =
+          symbol->second->getParentOfType<semantic::SVCovergroupTypeOp>();
+      if (!covergroup)
+        return;
+      covergroup->walk<WalkOrder::PreOrder>(
+          [&](Operation *nested) { collectBinding(nested); });
+    });
     if (auto connection = dyn_cast<semantic::SVPortConnectionOp>(unit.source)) {
       StringRef internal = connection.getInternalPath().value_or(StringRef{});
       if (!internal.empty())

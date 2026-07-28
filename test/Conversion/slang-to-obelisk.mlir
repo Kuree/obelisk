@@ -155,15 +155,72 @@ module {
     } {
     }
     slang.type.covergroup_type attributes {
-      node_id = 26 : i64, sym_name = "cg_t",
+      constructor_argument_count = 0 : i64,
+      has_coverage_event = false,
+      node_id = 26 : i64,
+      sample_formal_count = 0 : i64,
+      sym_name = "cg_t",
       semantic_type = !slang.covergroup_handle<@cg_t>
     } {
+      slang.symbol.covergroup_body attributes {
+        node_id = 260 : i64, option_count = 0 : i64, sym_name = "cg_body"
+      } {
+        slang.symbol.coverpoint attributes {
+          has_iff = false, node_id = 261 : i64, option_count = 0 : i64,
+          semantic_type = !slang.integral<8, false, true, 7 : 0, generic>,
+          sym_name = "cp"
+        } {
+          slang.expression.integer_literal attributes {
+            constant_value = "1", node_id = 262 : i64,
+            semantic_type = !slang.integral<8, false, true, 7 : 0, generic>
+          } {
+          }
+          slang.symbol.coverage_bin attributes {
+            bins_kind = 0 : i32, has_iff = false,
+            has_number_of_bins = false, has_set_coverage = false,
+            has_with = false, is_array = false, is_default = false,
+            is_default_sequence = false, is_wildcard = false,
+            node_id = 263 : i64, sym_name = "named_bin",
+            transition_set_count = 0 : i64, value_count = 1 : i64
+          } {
+            slang.expression.integer_literal attributes {
+              constant_value = "1", node_id = 264 : i64,
+              semantic_type = !slang.integral<8, false, true, 7 : 0, generic>
+            } {
+            }
+          }
+        }
+      }
     }
     slang.symbol.variable attributes {
       lifetime = 0 : i32, node_id = 27 : i64, rand_mode = 0 : i32,
       sym_name = "cg_handle",
       semantic_type = !slang.covergroup_handle<@cg_t>
     } {
+    }
+    slang.expression.new_covergroup attributes {
+      argument_count = 0 : i64, node_id = 271 : i64,
+      semantic_type = !slang.covergroup_handle<@cg_t>
+    } {
+    }
+    slang.expression.call attributes {
+      argument_count = 2 : i64, callee_name = "get_inst_coverage",
+      constraint_restrictions = [], defaulted_arguments = array<i64: 1, 1>,
+      has_inline_constraints = false, has_iterator_expression = false,
+      has_output_arguments = true, has_this_class = true,
+      is_super_class = false, is_system_call = false, node_id = 272 : i64,
+      semantic_type = !slang.real, subroutine_kind = 0 : i32
+    } {
+      slang.expression.integer_literal attributes {
+        constant_value = "0", node_id = 273 : i64,
+        semantic_type = !slang.integral<32, true, false, 31 : 0, int>
+      } {
+      }
+      slang.expression.integer_literal attributes {
+        constant_value = "0", node_id = 274 : i64,
+        semantic_type = !slang.integral<32, true, false, 31 : 0, int>
+      } {
+      }
     }
     slang.symbol.subroutine attributes {
       default_lifetime = 0 : i32, is_virtual, node_id = 28 : i64,
@@ -298,7 +355,24 @@ module {
 
 // CHECK: !obelisk.virtual_interface<@bus, "master">
 // CHECK: obelisk.sv.type.covergroup_type
+// CHECK-SAME: constructor_argument_count = 0
+// CHECK-SAME: has_coverage_event = false
+// CHECK-SAME: sample_formal_count = 0
 // CHECK: !obelisk.covergroup_handle<@cg_t>
+// CHECK: obelisk.sv.symbol.covergroup_body
+// CHECK-SAME: option_count = 0
+// CHECK: obelisk.sv.symbol.coverpoint
+// CHECK-SAME: has_iff = false
+// CHECK-SAME: option_count = 0
+// CHECK: obelisk.sv.symbol.coverage_bin
+// CHECK-SAME: has_iff = false
+// CHECK-SAME: transition_set_count = 0
+// CHECK-SAME: value_count = 1
+// CHECK: obelisk.sv.expression.new_covergroup
+// CHECK-SAME: argument_count = 0
+// CHECK: obelisk.sv.expression.call
+// CHECK-SAME: callee_name = "get_inst_coverage"
+// CHECK-SAME: defaulted_arguments = array<i64: 1, 1>
 // CHECK: !obelisk.subroutine<(!obelisk.string) -> !obelisk.shortreal, false>
 
 // CHECK: obelisk.sv.statement.conditional

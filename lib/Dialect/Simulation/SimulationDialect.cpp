@@ -1412,7 +1412,8 @@ static bool isNormalizedValueType(Type type) {
   if (auto integer = dyn_cast<IntegerType>(type))
     return integer.isSignless();
   return isa<FloatType>(type) || isa<LogicType>(type) ||
-         isManagedHandleType(type) || isAggregateType(type);
+         isa<CovergroupHandleType>(type) || isManagedHandleType(type) ||
+         isAggregateType(type);
 }
 
 LogicalResult
@@ -1887,6 +1888,14 @@ ClassHandleType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
   return success();
 }
 
+LogicalResult CovergroupHandleType::verify(
+    llvm::function_ref<InFlightDiagnostic()> emitError,
+    SymbolRefAttr covergroupName) {
+  if (!covergroupName || covergroupName.getRootReference().empty())
+    return emitError() << "covergroup handle requires a declaration symbol";
+  return success();
+}
+
 LogicalResult
 ManagedRefType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
                        Type elementType, SymbolRefAttr ownerClass) {
@@ -2016,6 +2025,104 @@ LogicalResult SimDriverDeclOp::verify() {
   if (getType().isF64())
     return emitOpError("real-valued drivers are not supported");
   return verifyElementType([&] { return emitOpError(); }, getType());
+}
+
+static SimCovergroupDeclOp lookupCovergroup(Operation *operation,
+                                            SymbolRefAttr symbol) {
+  return symbol
+             ? SymbolTable::lookupNearestSymbolFrom<SimCovergroupDeclOp>(
+                   operation, symbol)
+             : SimCovergroupDeclOp{};
+}
+
+static LogicalResult verifyCovergroupHandle(Operation *operation,
+                                            CovergroupHandleType handle) {
+  if (!lookupCovergroup(operation, handle.getCovergroupName()))
+    return operation->emitOpError(
+        "handle type references an unknown covergroup declaration");
+  return success();
+}
+
+LogicalResult SimCovergroupDeclOp::verify() {
+  if (failed(verifyPositive(*this, getIdAttr(), "covergroup ID")))
+    return failure();
+  if (getCoverpointBins().empty())
+    return emitOpError("requires at least one coverpoint");
+  for (int64_t bins : getCoverpointBins())
+    if (bins <= 0 || static_cast<uint64_t>(bins) > UINT32_MAX)
+      return emitOpError(
+          "every coverpoint requires a positive 32-bit named-bin count");
+  return success();
+}
+
+LogicalResult SimCovergroupNullOp::verify() {
+  return verifyCovergroupHandle(*this, getResult().getType());
+}
+
+LogicalResult SimCovergroupCreateOp::verify() {
+  SimCovergroupDeclOp declaration =
+      lookupCovergroup(*this, getDeclarationAttr());
+  if (!declaration)
+    return emitOpError("references an unknown covergroup declaration");
+  auto expected = FlatSymbolRefAttr::get(declaration.getOperation());
+  if (getResult().getType().getCovergroupName() != expected)
+    return emitOpError("result type must name the selected declaration");
+  return success();
+}
+
+LogicalResult SimCovergroupSampleEnabledOp::verify() {
+  return verifyCovergroupHandle(*this, getHandle().getType());
+}
+
+LogicalResult SimCovergroupBinHitOp::verify() {
+  SimCovergroupDeclOp declaration = lookupCovergroup(
+      *this, getHandle().getType().getCovergroupName());
+  if (!declaration)
+    return emitOpError("handle type references an unknown declaration");
+  uint64_t coverpoint = getCoverpoint();
+  if (coverpoint >= declaration.getCoverpointBins().size())
+    return emitOpError("coverpoint index is outside the declaration");
+  uint64_t bin = getBin();
+  if (bin >=
+      static_cast<uint64_t>(declaration.getCoverpointBins()[coverpoint]))
+    return emitOpError("bin index is outside the selected coverpoint");
+  return success();
+}
+
+LogicalResult SimCovergroupSampleOp::verify() {
+  SimCovergroupDeclOp declaration = lookupCovergroup(
+      *this, getHandle().getType().getCovergroupName());
+  if (!declaration)
+    return emitOpError(
+        "handle type references an unknown covergroup declaration");
+  uint64_t expected = 0;
+  for (int64_t bins : declaration.getCoverpointBins()) {
+    if (static_cast<uint64_t>(bins) > UINT64_MAX - expected)
+      return emitOpError("declaration bin inventory is too large");
+    expected += static_cast<uint64_t>(bins);
+  }
+  if (getHits().size() != expected)
+    return emitOpError() << "requires exactly " << expected
+                         << " flattened bin-hit operands";
+  return success();
+}
+
+LogicalResult SimCovergroupStartOp::verify() {
+  return verifyCovergroupHandle(*this, getHandle().getType());
+}
+
+LogicalResult SimCovergroupStopOp::verify() {
+  return verifyCovergroupHandle(*this, getHandle().getType());
+}
+
+LogicalResult SimCovergroupInstanceQueryOp::verify() {
+  return verifyCovergroupHandle(*this, getHandle().getType());
+}
+
+LogicalResult SimCovergroupTypeQueryOp::verify() {
+  if (!lookupCovergroup(*this, getDeclarationAttr()))
+    return emitOpError("references an unknown covergroup declaration");
+  return success();
 }
 
 static SimClassDeclOp lookupClass(Operation *operation, SymbolRefAttr symbol) {
@@ -2352,7 +2459,7 @@ LogicalResult SimDesignOp::verifyRegions() {
       (precision.getValue().isNegative() || precision.getValue().isZero()))
     return emitOpError("time precision must be a positive femtosecond value");
   llvm::DenseSet<uint64_t> scopeIds, codeUnitIds, storageIds, netIds, driverIds,
-      connectionIds, classIds;
+      connectionIds, covergroupIds, classIds;
   llvm::DenseMap<uint64_t, SimCodeUnitDeclOp> codeUnits;
   llvm::DenseMap<uint64_t, Type> storageTypes, netTypes, driverTypes;
   llvm::DenseMap<uint64_t, NetResolutionKind> netResolutions;
@@ -2396,6 +2503,9 @@ LogicalResult SimDesignOp::verifyRegions() {
     } else if (auto connection = dyn_cast<SimNetConnectDeclOp>(op)) {
       if (failed(
               addId(connection.getIdAttr(), connectionIds, "net connection")))
+        return failure();
+    } else if (auto covergroup = dyn_cast<SimCovergroupDeclOp>(op)) {
+      if (failed(addId(covergroup.getIdAttr(), covergroupIds, "covergroup")))
         return failure();
     } else if (auto classDecl = dyn_cast<SimClassDeclOp>(op)) {
       if (failed(addId(classDecl.getIdAttr(), classIds, "class")))
@@ -3026,7 +3136,7 @@ LogicalResult SimFuncOp::verify() {
   for (Type input : type.getInputs()) {
     if (!isa<ContextType, RefType, ArgumentRefType, NetType, DriverType,
              EventType, ProcessType, ManagedRefType, IntegerType, LogicType,
-             TimeType>(input) &&
+             TimeType, CovergroupHandleType>(input) &&
         !isManagedHandleType(input) && !isa<FloatType>(input) &&
         !isAggregateType(input))
       return emitOpError() << "contains non-normalized argument type " << input;
@@ -3036,7 +3146,7 @@ LogicalResult SimFuncOp::verify() {
   }
   for (Type result : type.getResults()) {
     if (!isa<IntegerType, LogicType, TimeType, EventType, ProcessType,
-             ManagedRefType, ArgumentRefType>(result) &&
+             ManagedRefType, ArgumentRefType, CovergroupHandleType>(result) &&
         !isManagedHandleType(result) && !isa<FloatType>(result) &&
         !isAggregateType(result))
       return emitOpError() << "contains non-normalized result type " << result;

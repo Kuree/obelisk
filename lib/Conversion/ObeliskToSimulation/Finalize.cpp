@@ -60,7 +60,8 @@ static bool isExecutableType(Type type) {
   return isa<FunctionType>(type) || isa<runtime::StatusType>(type) ||
          isa<sim::ContextType, sim::BytesType, sim::LogicType, sim::TimeType,
              sim::RefType, sim::NetType, sim::DriverType, sim::EventType,
-             sim::ProcessType, sim::ClassHandleType, sim::StringType,
+             sim::ProcessType, sim::ClassHandleType,
+             sim::CovergroupHandleType, sim::StringType,
              sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType,
              sim::ReferencePathType, sim::ManagedRefType, sim::ArgumentRefType,
              sim::ControlType, sim::ObserverType>(type) ||
@@ -99,7 +100,8 @@ void ObeliskSimFinalizePass::runOnOperation() {
 
   llvm::StringSet<> executableSymbols;
   module.walk([&](Operation *op) {
-    if (!isa<sim::SimClassDeclOp, sim::SimClassFieldDeclOp,
+    if (!isa<sim::SimCovergroupDeclOp, sim::SimClassDeclOp,
+             sim::SimClassFieldDeclOp,
              sim::SimClassMethodDeclOp, sim::SimFuncOp>(op))
       return;
     if (auto name =

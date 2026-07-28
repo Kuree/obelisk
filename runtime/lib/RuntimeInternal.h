@@ -481,6 +481,17 @@ struct NetAliasCache {
   std::vector<NetAliasRange> drivers;
 };
 
+struct CoverageTypeState {
+  std::vector<uint32_t> coverpointBins;
+  std::vector<uint64_t> instances;
+};
+
+struct CoverageInstanceState {
+  uint64_t typeID = 0;
+  bool enabled = true;
+  std::vector<std::vector<uint64_t>> hits;
+};
+
 struct obelisk_rt_context {
   // Mutable state is guarded separately from logical execution. Evaluator
   // callbacks release `mutex` while arbitrary user code runs, but retain the
@@ -575,6 +586,9 @@ struct obelisk_rt_context {
       managedElementTypes;
   std::unordered_map<uint64_t, std::unique_ptr<OwnedElementTypeDescriptor>>
       managedOwnedElementTypes;
+  uint64_t nextCoverageInstance = 1;
+  std::unordered_map<uint64_t, CoverageTypeState> coverageTypes;
+  std::unordered_map<uint64_t, CoverageInstanceState> coverageInstances;
   std::vector<obelisk_rt_process_instance_v1 *> managedRootProcesses;
   ManagedHeap *managedHeap = nullptr;
   obelisk_rt_random_state_v1 random{};

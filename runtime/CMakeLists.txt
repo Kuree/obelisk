@@ -10,6 +10,7 @@ add_library(obelisk_rt STATIC
   lib/Format.cpp
   lib/ManagedHeap.cpp
   lib/Containers.cpp
+  lib/Coverage.cpp
   lib/Process.cpp
   lib/Random.cpp
   lib/Runtime.cpp

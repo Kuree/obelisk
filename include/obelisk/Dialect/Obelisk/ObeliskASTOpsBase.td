@@ -334,8 +334,20 @@ class ObeliskClassTypeASTNodeOp<string mnemonic>
 
 class ObeliskCovergroupTypeASTNodeOp<string mnemonic>
     : ObeliskScopeTypeASTNodeOp<mnemonic,
-        (ins OptionalAttr<TypeAttr>:$base_group),
+        (ins OptionalAttr<TypeAttr>:$base_group,
+             I64Attr:$constructor_argument_count,
+             I64Attr:$sample_formal_count,
+             BoolAttr:$has_coverage_event),
         [ObeliskSemanticDeclarativeNode]>;
+
+class ObeliskCovergroupBodyASTNodeOp<string mnemonic>
+    : ObeliskSymbolTableASTNodeOp<mnemonic, (ins I64Attr:$option_count)>;
+
+class ObeliskCoverpointASTNodeOp<string mnemonic>
+    : ObeliskSymbolTableASTNodeOp<mnemonic, (ins
+        BoolAttr:$has_iff,
+        I64Attr:$option_count
+      )>;
 
 class ObeliskCoverageBinASTNodeOp<string mnemonic>
     : ObeliskSymbolASTNodeOp<mnemonic, [ObeliskSemanticDeclarativeNode], (ins
@@ -343,7 +355,13 @@ class ObeliskCoverageBinASTNodeOp<string mnemonic>
         BoolAttr:$is_array,
         BoolAttr:$is_wildcard,
         BoolAttr:$is_default,
-        BoolAttr:$is_default_sequence
+        BoolAttr:$is_default_sequence,
+        BoolAttr:$has_iff,
+        BoolAttr:$has_number_of_bins,
+        BoolAttr:$has_set_coverage,
+        BoolAttr:$has_with,
+        I64Attr:$value_count,
+        I64Attr:$transition_set_count
       )>;
 
 class ObeliskExpressionASTNodeOp<string mnemonic, dag expressionArgs = (ins)>
@@ -391,13 +409,17 @@ class ObeliskCallExpressionASTNodeOp<string mnemonic>
         OptionalAttr<StrAttr>:$iterator_variable_path,
         BoolAttr:$has_iterator_expression,
         BoolAttr:$has_inline_constraints,
-        ArrayAttr:$constraint_restrictions
+        ArrayAttr:$constraint_restrictions,
+        OptionalAttr<DenseI64ArrayAttr>:$defaulted_arguments
       )>;
 
 class ObeliskNewClassExpressionASTNodeOp<string mnemonic>
     : ObeliskExpressionASTNodeOp<mnemonic, (ins
         BoolAttr:$is_super_class
       )>;
+
+class ObeliskNewCovergroupExpressionASTNodeOp<string mnemonic>
+    : ObeliskExpressionASTNodeOp<mnemonic, (ins I64Attr:$argument_count)>;
 
 class ObeliskUnaryExpressionASTNodeOp<string mnemonic>
     : ObeliskExpressionASTNodeOp<mnemonic,

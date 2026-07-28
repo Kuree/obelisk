@@ -24,6 +24,7 @@ def SimProcessResource : Resource<"::obelisk::sim::ProcessResource">;
 def SimHeapResource : Resource<"::obelisk::sim::HeapResource">;
 def SimIOResource : Resource<"::obelisk::sim::IOResource">;
 def SimRNGResource : Resource<"::obelisk::sim::RNGResource">;
+def SimCoverageResource : Resource<"::obelisk::sim::CoverageResource">;
 def SimExternalResource : Resource<"::obelisk::sim::ExternalResource">;
 // Descriptor declarations populate the design inventory. Modelling that as a
 // write keeps them inside the effect system and, because they have no results,
@@ -158,6 +159,131 @@ def SimDriverDeclOp : SimOp<"driver.decl", [MemoryEffects<[MemWrite<SimInventory
   let assemblyFormat = [{$id `in` $scope_id `drives` $net_id `:` $type
     $lifetime (`hierarchy` $hierarchical_name^)?
     (`debug` $debug_name^)? attr-dict}];
+  let hasVerifier = 1;
+}
+
+def SimCovergroupDeclOp : SimOp<"covergroup.decl", [
+    Symbol, MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable executable covergroup schema";
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id,
+                       DenseI64ArrayAttr:$coverpoint_bins,
+                       OptionalAttr<StrAttr>:$debug_name);
+  let assemblyFormat = [{
+    $sym_name `id` $id `bins` $coverpoint_bins
+    (`debug` $debug_name^)? attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimCovergroupNullOp : SimOp<"covergroup.null", [Pure, ConstantLike]> {
+  let summary = "typed null functional coverage handle";
+  let results = (outs SimCovergroupHandleType:$result);
+  let assemblyFormat = "attr-dict `:` qualified(type($result))";
+  let hasVerifier = 1;
+}
+
+def SimCovergroupCreateOp : SimOp<"covergroup.create", [
+    MemoryEffects<[MemRead<SimCoverageResource>,
+                   MemWrite<SimCoverageResource>]>
+  ]> {
+  let summary = "create an enabled per-instance coverage accumulator";
+  let arguments = (ins SimContextType:$context,
+                       FlatSymbolRefAttr:$declaration);
+  let results = (outs SimCovergroupHandleType:$result);
+  let assemblyFormat = [{
+    $context `from` $declaration attr-dict `:`
+    type($context) `->` qualified(type($result))
+  }];
+  let hasVerifier = 1;
+}
+
+def SimCovergroupSampleEnabledOp : SimOp<"covergroup.sample_enabled", [
+    MemoryEffects<[MemRead<SimCoverageResource>]>
+  ]> {
+  let summary = "test whether a covergroup instance currently samples";
+  let arguments = (ins SimContextType:$context,
+                       SimCovergroupHandleType:$handle);
+  let results = (outs I1:$result);
+  let hasVerifier = 1;
+}
+
+def SimCovergroupBinHitOp : SimOp<"covergroup.bin_hit", [
+    MemoryEffects<[MemRead<SimCoverageResource>,
+                   MemWrite<SimCoverageResource>]>
+  ]> {
+  let summary = "saturating hit of one named bin";
+  let arguments = (ins SimContextType:$context,
+                       SimCovergroupHandleType:$handle,
+                       I32Attr:$coverpoint, I32Attr:$bin);
+  let assemblyFormat = [{
+    $context `,` $handle `[` $coverpoint `,` $bin `]` attr-dict `:`
+    type($context) `,` qualified(type($handle))
+  }];
+  let hasVerifier = 1;
+}
+
+def SimCovergroupSampleOp : SimOp<"covergroup.sample", [
+    MemoryEffects<[MemRead<SimCoverageResource>,
+                   MemWrite<SimCoverageResource>]>
+  ]> {
+  let summary = "atomically commit one complete manual sample";
+  let arguments = (ins SimContextType:$context,
+                       SimCovergroupHandleType:$handle,
+                       Variadic<I1>:$hits);
+  let assemblyFormat = [{
+    $context `,` $handle `[` $hits `]` attr-dict `:`
+    type($context) `,` qualified(type($handle))
+  }];
+  let hasVerifier = 1;
+}
+
+class SimCovergroupControlOp<string mnemonic>
+    : SimOp<mnemonic, [
+        MemoryEffects<[MemRead<SimCoverageResource>,
+                       MemWrite<SimCoverageResource>]>
+      ]> {
+  let arguments = (ins SimContextType:$context,
+                       SimCovergroupHandleType:$handle);
+  let assemblyFormat = [{
+    $context `,` $handle attr-dict `:`
+    type($context) `,` qualified(type($handle))
+  }];
+  let hasVerifier = 1;
+}
+
+def SimCovergroupStartOp
+    : SimCovergroupControlOp<"covergroup.start"> {
+  let summary = "enable sampling without clearing coverage";
+}
+
+def SimCovergroupStopOp
+    : SimCovergroupControlOp<"covergroup.stop"> {
+  let summary = "disable sampling without clearing coverage";
+}
+
+def SimCovergroupInstanceQueryOp : SimOp<"covergroup.instance_query", [
+    MemoryEffects<[MemRead<SimCoverageResource>]>
+  ]> {
+  let summary = "query equal-weight per-instance coverage";
+  let arguments = (ins SimContextType:$context,
+                       SimCovergroupHandleType:$handle);
+  let results = (outs F64:$percentage, I32:$covered, I32:$total);
+  let hasVerifier = 1;
+}
+
+def SimCovergroupTypeQueryOp : SimOp<"covergroup.type_query", [
+    MemoryEffects<[MemRead<SimCoverageResource>]>
+  ]> {
+  let summary = "query average coverage of all constructed instances";
+  let arguments = (ins SimContextType:$context,
+                       FlatSymbolRefAttr:$declaration);
+  let results = (outs F64:$percentage, I32:$covered, I32:$total);
+  let assemblyFormat = [{
+    $context `from` $declaration attr-dict `:`
+    type($context) `->` `(` type($percentage) `,`
+    type($covered) `,` type($total) `)`
+  }];
   let hasVerifier = 1;
 }
 

@@ -11,6 +11,7 @@
 #include <limits>
 #include <new>
 #include <optional>
+#include <stdexcept>
 #include <tuple>
 #include <unordered_map>
 #include <vector>
@@ -908,6 +909,49 @@ bool validIntrinsic(const Image &image, const Function &function,
   case OBELISK_RT_INTRINSIC_V1_RANDOM_SEED:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 0 && twoStateBits(input(0), 64);
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_CREATE:
+    if (signature.flags != 0 || site.inputCount < 2 ||
+        site.outputCount != 1 || !twoStateBits(output(0), 64))
+      return false;
+    for (uint32_t index = 0; index != site.inputCount; ++index)
+      if (!twoStateBits(input(index), 64))
+        return false;
+    return true;
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_ENABLED:
+    return signature.flags == 0 && site.inputCount == 2 &&
+           site.outputCount == 0 && twoStateBits(input(0), 64) &&
+           twoStateBits(input(1), 64);
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SAMPLE_ENABLED:
+    return signature.flags == 0 && site.inputCount == 1 &&
+           site.outputCount == 1 && twoStateBits(input(0), 64) &&
+           twoStateBits(output(0), 1);
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_BIN_HIT:
+    return signature.flags == 0 && site.inputCount == 3 &&
+           site.outputCount == 0 && twoStateBits(input(0), 64) &&
+           twoStateBits(input(1), 64) && twoStateBits(input(2), 64);
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SAMPLE:
+    if (signature.flags != 0 || site.inputCount < 2 ||
+        site.outputCount != 0 || !twoStateBits(input(0), 64))
+      return false;
+    for (uint32_t index = 1; index != site.inputCount; ++index)
+      if (!twoStateBits(input(index), 1))
+        return false;
+    return true;
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_INSTANCE_QUERY:
+    return signature.flags == 0 && site.inputCount == 1 &&
+           site.outputCount == 3 && twoStateBits(input(0), 64) &&
+           output(0) && output(0)->kind == OBELISK_RT_DBREG_REAL64 &&
+           twoStateBits(output(1), 32) && twoStateBits(output(2), 32);
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_TYPE_QUERY:
+    if (signature.flags != 0 || site.inputCount < 2 ||
+        site.outputCount != 3 ||
+        !output(0) || output(0)->kind != OBELISK_RT_DBREG_REAL64 ||
+        !twoStateBits(output(1), 32) || !twoStateBits(output(2), 32))
+      return false;
+    for (uint32_t index = 0; index != site.inputCount; ++index)
+      if (!twoStateBits(input(index), 64))
+        return false;
+    return true;
   case OBELISK_RT_INTRINSIC_V1_ASSOC_CREATE:
     if (signature.flags != 0 || site.inputCount != 9 ||
         site.outputCount != 1 || !managed(output(0)))
@@ -3817,6 +3861,131 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     auto seed = scalar(0);
     return seed ? obelisk_rt_v1_random_seed(context, *seed)
                 : OBELISK_RT_INVALID_BYTECODE;
+  }
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_CREATE: {
+    auto type = scalar(0);
+    if (!type || site.inputCount < 2)
+      return OBELISK_RT_INVALID_BYTECODE;
+    std::vector<uint64_t> bins;
+    try {
+      bins.reserve(site.inputCount - 1);
+      for (uint32_t index = 1; index != site.inputCount; ++index) {
+        auto count = scalar(index);
+        if (!count)
+          return OBELISK_RT_INVALID_BYTECODE;
+        bins.push_back(*count);
+      }
+    } catch (const std::bad_alloc &) {
+      return OBELISK_RT_OUT_OF_MEMORY;
+    } catch (const std::length_error &) {
+      return OBELISK_RT_OUT_OF_RESOURCES;
+    }
+    obelisk_rt_covergroup_v1 handle = 0;
+    obelisk_rt_status status = obelisk_rt_v1_covergroup_create(
+        context, *type, bins.data(), bins.size(), &handle);
+    return status == OBELISK_RT_OK ? sentinel(0, handle) : status;
+  }
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_ENABLED: {
+    auto handle = scalar(0);
+    auto enabled = scalar(1);
+    return handle && enabled && *enabled <= 1
+               ? obelisk_rt_v1_covergroup_set_enabled(
+                     context, *handle, static_cast<uint32_t>(*enabled))
+               : OBELISK_RT_INVALID_BYTECODE;
+  }
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SAMPLE_ENABLED: {
+    auto handle = scalar(0);
+    uint32_t enabled = 0;
+    if (!handle)
+      return OBELISK_RT_INVALID_BYTECODE;
+    obelisk_rt_status status = obelisk_rt_v1_covergroup_sample_enabled(
+        context, *handle, &enabled);
+    return status == OBELISK_RT_OK ? sentinel(0, enabled) : status;
+  }
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_BIN_HIT: {
+    auto handle = scalar(0);
+    auto coverpoint = scalar(1);
+    auto bin = scalar(2);
+    return handle && coverpoint && bin && *coverpoint <= UINT32_MAX &&
+                   *bin <= UINT32_MAX
+               ? obelisk_rt_v1_covergroup_bin_hit(
+                     context, *handle, static_cast<uint32_t>(*coverpoint),
+                     static_cast<uint32_t>(*bin))
+               : OBELISK_RT_INVALID_BYTECODE;
+  }
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SAMPLE: {
+    auto handle = scalar(0);
+    if (!handle || site.inputCount < 2)
+      return OBELISK_RT_INVALID_BYTECODE;
+    std::vector<uint8_t> hits;
+    try {
+      hits.reserve(site.inputCount - 1);
+      for (uint32_t index = 1; index != site.inputCount; ++index) {
+        auto hit = scalar(index);
+        if (!hit || *hit > 1)
+          return OBELISK_RT_INVALID_BYTECODE;
+        hits.push_back(static_cast<uint8_t>(*hit));
+      }
+    } catch (const std::bad_alloc &) {
+      return OBELISK_RT_OUT_OF_MEMORY;
+    } catch (const std::length_error &) {
+      return OBELISK_RT_OUT_OF_RESOURCES;
+    }
+    return obelisk_rt_v1_covergroup_sample(context, *handle, hits.data(),
+                                           hits.size());
+  }
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_INSTANCE_QUERY: {
+    auto handle = scalar(0);
+    if (!handle)
+      return OBELISK_RT_INVALID_BYTECODE;
+    double percentage = 0.0;
+    int32_t covered = 0;
+    int32_t total = 0;
+    obelisk_rt_status status = obelisk_rt_v1_covergroup_instance_query(
+        context, *handle, &percentage, &covered, &total);
+    if (status != OBELISK_RT_OK)
+      return status;
+    status = writeReal(0, percentage);
+    if (status != OBELISK_RT_OK)
+      return status;
+    status = sentinel(1, static_cast<uint32_t>(covered));
+    return status == OBELISK_RT_OK
+               ? sentinel(2, static_cast<uint32_t>(total))
+               : status;
+  }
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_TYPE_QUERY: {
+    auto type = scalar(0);
+    if (!type || site.inputCount < 2)
+      return OBELISK_RT_INVALID_BYTECODE;
+    std::vector<uint64_t> bins;
+    try {
+      bins.reserve(site.inputCount - 1);
+      for (uint32_t index = 1; index != site.inputCount; ++index) {
+        auto count = scalar(index);
+        if (!count)
+          return OBELISK_RT_INVALID_BYTECODE;
+        bins.push_back(*count);
+      }
+    } catch (const std::bad_alloc &) {
+      return OBELISK_RT_OUT_OF_MEMORY;
+    } catch (const std::length_error &) {
+      return OBELISK_RT_OUT_OF_RESOURCES;
+    }
+    double percentage = 0.0;
+    int32_t covered = 0;
+    int32_t total = 0;
+    obelisk_rt_status status = obelisk_rt_v1_covergroup_type_query(
+        context, *type, bins.data(), bins.size(), &percentage, &covered,
+        &total);
+    if (status != OBELISK_RT_OK)
+      return status;
+    status = writeReal(0, percentage);
+    if (status != OBELISK_RT_OK)
+      return status;
+    status = sentinel(1, static_cast<uint32_t>(covered));
+    return status == OBELISK_RT_OK
+               ? sentinel(2, static_cast<uint32_t>(total))
+               : status;
   }
   case OBELISK_RT_INTRINSIC_V1_STRING_LITERAL: {
     auto literal = bytes(0);

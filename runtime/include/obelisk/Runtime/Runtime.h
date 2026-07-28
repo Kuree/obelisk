@@ -20,6 +20,10 @@ typedef struct obelisk_rt_context obelisk_rt_context;
 typedef struct obelisk_rt_gc_lane_v1 obelisk_rt_gc_lane_v1;
 typedef struct obelisk_rt_object_v1 obelisk_rt_object_v1;
 
+// Functional-coverage handles are context-local monotonically allocated IDs.
+// Zero is the language null value and never names a live instance.
+typedef uint64_t obelisk_rt_covergroup_v1;
+
 // A managed word is the common 64-bit storage unit used by values which may
 // either contain an aligned heap handle or an immediate representation.
 // Strings use the low two bits as a tag:
@@ -631,6 +635,13 @@ enum {
   OBELISK_RT_INTRINSIC_V1_RANDOM_SET_STATE = UINT32_C(0x00010443),
   OBELISK_RT_INTRINSIC_V1_QUEUE_DELETE = UINT32_C(0x00010444),
   OBELISK_RT_INTRINSIC_V1_QUEUE_INSERT = UINT32_C(0x00010445),
+  OBELISK_RT_INTRINSIC_V1_COVERGROUP_CREATE = UINT32_C(0x00010450),
+  OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_ENABLED = UINT32_C(0x00010451),
+  OBELISK_RT_INTRINSIC_V1_COVERGROUP_SAMPLE_ENABLED = UINT32_C(0x00010452),
+  OBELISK_RT_INTRINSIC_V1_COVERGROUP_BIN_HIT = UINT32_C(0x00010453),
+  OBELISK_RT_INTRINSIC_V1_COVERGROUP_INSTANCE_QUERY = UINT32_C(0x00010454),
+  OBELISK_RT_INTRINSIC_V1_COVERGROUP_TYPE_QUERY = UINT32_C(0x00010455),
+  OBELISK_RT_INTRINSIC_V1_COVERGROUP_SAMPLE = UINT32_C(0x00010456),
   OBELISK_RT_INTRINSIC_V1_VPI_ROOT = UINT32_C(0x00011000),
   OBELISK_RT_INTRINSIC_V1_VPI_CHILD = UINT32_C(0x00011001),
   OBELISK_RT_INTRINSIC_V1_VPI_SIBLING = UINT32_C(0x00011002),
@@ -2000,6 +2011,29 @@ obelisk_rt_v1_context_configure_argv(obelisk_rt_context *context, int argc,
                                      const char *const *argv);
 obelisk_rt_status obelisk_rt_v1_context_seed(obelisk_rt_context *context,
                                              uint64_t seed);
+obelisk_rt_status obelisk_rt_v1_covergroup_create(
+    obelisk_rt_context *context, uint64_t type_id,
+    const uint64_t *coverpoint_bins, uint64_t coverpoint_count,
+    obelisk_rt_covergroup_v1 *out_handle);
+obelisk_rt_status obelisk_rt_v1_covergroup_set_enabled(
+    obelisk_rt_context *context, obelisk_rt_covergroup_v1 handle,
+    uint32_t enabled);
+obelisk_rt_status obelisk_rt_v1_covergroup_sample_enabled(
+    obelisk_rt_context *context, obelisk_rt_covergroup_v1 handle,
+    uint32_t *out_enabled);
+obelisk_rt_status obelisk_rt_v1_covergroup_bin_hit(
+    obelisk_rt_context *context, obelisk_rt_covergroup_v1 handle,
+    uint32_t coverpoint, uint32_t bin);
+obelisk_rt_status obelisk_rt_v1_covergroup_sample(
+    obelisk_rt_context *context, obelisk_rt_covergroup_v1 handle,
+    const uint8_t *hits, uint64_t hit_count);
+obelisk_rt_status obelisk_rt_v1_covergroup_instance_query(
+    obelisk_rt_context *context, obelisk_rt_covergroup_v1 handle,
+    double *out_percentage, int32_t *out_covered, int32_t *out_total);
+obelisk_rt_status obelisk_rt_v1_covergroup_type_query(
+    obelisk_rt_context *context, uint64_t type_id,
+    const uint64_t *coverpoint_bins, uint64_t coverpoint_count,
+    double *out_percentage, int32_t *out_covered, int32_t *out_total);
 obelisk_rt_status obelisk_rt_v1_random_next(obelisk_rt_context *context,
                                             uint64_t *out_value);
 obelisk_rt_status obelisk_rt_v1_random_seed(obelisk_rt_context *context,

@@ -342,8 +342,20 @@ class SlangClassTypeASTNodeOp<string mnemonic>
 
 class SlangCovergroupTypeASTNodeOp<string mnemonic>
     : SlangScopeTypeASTNodeOp<mnemonic,
-        (ins OptionalAttr<TypeAttr>:$base_group),
+        (ins OptionalAttr<TypeAttr>:$base_group,
+             I64Attr:$constructor_argument_count,
+             I64Attr:$sample_formal_count,
+             BoolAttr:$has_coverage_event),
         [SlangSemanticDeclarativeNode]>;
+
+class SlangCovergroupBodyASTNodeOp<string mnemonic>
+    : SlangSymbolTableASTNodeOp<mnemonic, (ins I64Attr:$option_count)>;
+
+class SlangCoverpointASTNodeOp<string mnemonic>
+    : SlangSymbolTableASTNodeOp<mnemonic, (ins
+        BoolAttr:$has_iff,
+        I64Attr:$option_count
+      )>;
 
 class SlangCoverageBinASTNodeOp<string mnemonic>
     : SlangSymbolASTNodeOp<mnemonic, [SlangSemanticDeclarativeNode], (ins
@@ -351,7 +363,13 @@ class SlangCoverageBinASTNodeOp<string mnemonic>
         BoolAttr:$is_array,
         BoolAttr:$is_wildcard,
         BoolAttr:$is_default,
-        BoolAttr:$is_default_sequence
+        BoolAttr:$is_default_sequence,
+        BoolAttr:$has_iff,
+        BoolAttr:$has_number_of_bins,
+        BoolAttr:$has_set_coverage,
+        BoolAttr:$has_with,
+        I64Attr:$value_count,
+        I64Attr:$transition_set_count
       )>;
 
 class SlangExpressionASTNodeOp<string mnemonic, dag expressionArgs = (ins)>
@@ -399,13 +417,17 @@ class SlangCallExpressionASTNodeOp<string mnemonic>
         OptionalAttr<StrAttr>:$iterator_variable_path,
         BoolAttr:$has_iterator_expression,
         BoolAttr:$has_inline_constraints,
-        ArrayAttr:$constraint_restrictions
+        ArrayAttr:$constraint_restrictions,
+        OptionalAttr<DenseI64ArrayAttr>:$defaulted_arguments
       )>;
 
 class SlangNewClassExpressionASTNodeOp<string mnemonic>
     : SlangExpressionASTNodeOp<mnemonic, (ins
         BoolAttr:$is_super_class
       )>;
+
+class SlangNewCovergroupExpressionASTNodeOp<string mnemonic>
+    : SlangExpressionASTNodeOp<mnemonic, (ins I64Attr:$argument_count)>;
 
 class SlangUnaryExpressionASTNodeOp<string mnemonic>
     : SlangExpressionASTNodeOp<mnemonic,

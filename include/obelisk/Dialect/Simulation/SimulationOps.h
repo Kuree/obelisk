@@ -32,6 +32,7 @@ OBELISK_SIM_RESOURCE(ProcessResource, "obelisk_sim.process");
 OBELISK_SIM_RESOURCE(HeapResource, "obelisk_sim.heap");
 OBELISK_SIM_RESOURCE(IOResource, "obelisk_sim.io");
 OBELISK_SIM_RESOURCE(RNGResource, "obelisk_sim.rng");
+OBELISK_SIM_RESOURCE(CoverageResource, "obelisk_sim.coverage");
 OBELISK_SIM_RESOURCE(ExternalResource, "obelisk_sim.external");
 OBELISK_SIM_RESOURCE(InventoryResource, "obelisk_sim.inventory");
 

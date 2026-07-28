@@ -211,6 +211,7 @@ native_members = [
     "ABI.o",
     "Bytecode.o",
     "Containers.o",
+    "Coverage.o",
     "DesignBytecode.o",
     "DesignDatabase.o",
     "DPI.o",
