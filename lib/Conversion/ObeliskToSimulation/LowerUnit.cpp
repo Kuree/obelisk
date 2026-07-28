@@ -1735,13 +1735,14 @@ static FailureOr<Value> lowerStringLiteralValue(OpBuilder &builder,
 FailureOr<Value> UnitLowering::lowerConcatenation(Operation *op) {
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
-  if (children.empty()) {
-    unsupported(op) << " (empty concatenation)";
-    return failure();
-  }
   FailureOr<Type> resultType = getNormalizedSemanticType(op);
   if (failed(resultType))
     return failure();
+  if (children.empty() &&
+      !isa<sim::DynamicArrayType, sim::QueueType>(*resultType)) {
+    unsupported(op) << " (empty concatenation)";
+    return failure();
+  }
   if (isa<sim::StringType>(*resultType)) {
     SmallVector<Value> inputs;
     for (Operation *child : children) {
