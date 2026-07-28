@@ -829,6 +829,14 @@ bool isSchedulingEdge(sim::ComputeEdgeKind kind) {
          kind != sim::ComputeEdgeKind::Spawn;
 }
 
+bool isSettlingEntryKind(sim::EntryKind kind) {
+  return kind == sim::EntryKind::AlwaysComb ||
+         kind == sim::EntryKind::AlwaysLatch ||
+         kind == sim::EntryKind::Continuous ||
+         kind == sim::EntryKind::PortInput ||
+         kind == sim::EntryKind::PortOutput;
+}
+
 void normalizeEdges(SmallVectorImpl<sim::ComputeEdgeAttr> &edges) {
   llvm::sort(edges, [](sim::ComputeEdgeAttr lhs, sim::ComputeEdgeAttr rhs) {
     auto key = [](sim::ComputeEdgeAttr edge) {
@@ -887,7 +895,8 @@ bool hasProceduralControlCycle(ArrayRef<uint32_t> group,
 /// Condensation of one event region, in a deterministic topological order.
 SmallVector<SmallVector<uint32_t>>
 computeSCCSchedule(ArrayRef<uint32_t> nodes,
-                   ArrayRef<sim::ComputeEdgeAttr> edges) {
+                   ArrayRef<sim::ComputeEdgeAttr> edges,
+                   llvm::function_ref<unsigned(uint32_t)> priority = {}) {
   DenseMap<uint32_t, SmallVector<uint32_t>> adjacency;
   DenseSet<uint32_t> nodeSet(nodes.begin(), nodes.end());
   for (sim::ComputeEdgeAttr edge : edges)
@@ -922,20 +931,30 @@ computeSCCSchedule(ArrayRef<uint32_t> nodes,
     if (source != target && successors[source].insert(target).second)
       ++indegree[target];
   }
-  // Break ties on the lowest member so repeated builds are identical.
-  using Ready = std::pair<uint32_t, unsigned>;
+  // Break ties on the caller's semantic priority and then the lowest member so
+  // repeated builds are identical.
+  using Ready = std::tuple<unsigned, uint32_t, unsigned>;
   std::priority_queue<Ready, std::vector<Ready>, std::greater<Ready>> ready;
+  auto enqueue = [&](unsigned component) {
+    unsigned componentPriority = 0;
+    if (priority) {
+      componentPriority = std::numeric_limits<unsigned>::max();
+      for (uint32_t member : components[component])
+        componentPriority = std::min(componentPriority, priority(member));
+    }
+    ready.emplace(componentPriority, components[component].front(), component);
+  };
   for (unsigned component = 0; component != components.size(); ++component)
     if (indegree[component] == 0)
-      ready.emplace(components[component].front(), component);
+      enqueue(component);
   SmallVector<SmallVector<uint32_t>> schedule;
   while (!ready.empty()) {
-    unsigned component = ready.top().second;
+    unsigned component = std::get<2>(ready.top());
     ready.pop();
     schedule.push_back(components[component]);
     for (unsigned successor : successors[component])
       if (--indegree[successor] == 0)
-        ready.emplace(components[successor].front(), successor);
+        enqueue(successor);
   }
   return schedule;
 }
@@ -1266,7 +1285,12 @@ void ComputeGraphBuilder::buildDataEdges() {
                 fragments[lhs].id) ||
             !activeEffectsConflict(left, *right.effect))
           return;
-        addEdge(fragments[lhs].id, fragments[right.owner].id,
+        uint32_t source = fragments[lhs].id;
+        uint32_t target = fragments[right.owner].id;
+        if (isSettlingEntryKind(fragments[right.owner].function.getEntryKind()) &&
+            !isSettlingEntryKind(fragments[lhs].function.getEntryKind()))
+          std::swap(source, target);
+        addEdge(source, target,
                 sim::ComputeEdgeKind::Conflict,
                 effectAttr(isActiveProducer(left) ? left : *right.effect));
       });
@@ -1464,8 +1488,12 @@ FailureOr<ArrayAttr> ComputeGraphBuilder::buildRegions() {
 
   // Every standard event region is planned explicitly, even when a supported
   // design has no nodes in one of them.
+  auto activePriority = [&](uint32_t id) {
+    return isSettlingEntryKind(fragments[id].function.getEntryKind()) ? 0u
+                                                                     : 1u;
+  };
   SmallVector<SmallVector<uint32_t>> activeGroups =
-      computeSCCSchedule(activeIds, edges);
+      computeSCCSchedule(activeIds, edges, activePriority);
   SmallVector<SmallVector<uint32_t>> observedGroups =
       computeSCCSchedule(observedIds, edges);
   SmallVector<SmallVector<uint32_t>> reactiveGroups =
