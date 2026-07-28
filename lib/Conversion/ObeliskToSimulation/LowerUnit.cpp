@@ -8424,6 +8424,24 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     return convertResult(result);
   }
 
+  if (name == "$exp") {
+    if (children.size() != 1) {
+      emitError(location) << "$exp requires exactly one argument";
+      return failure();
+    }
+    FailureOr<Value> input = lowerExpression(children.front());
+    if (failed(input))
+      return failure();
+    FailureOr<Value> real =
+        convert(*input, builder.getF64Type(), isSignedNode(children.front()),
+                getSemanticLocation(children.front()));
+    if (failed(real))
+      return failure();
+    Value result =
+        math::ExpOp::create(builder, location, builder.getF64Type(), *real);
+    return convertResult(result);
+  }
+
   bool isDimensionCount =
       name == "$dimensions" || name == "$unpacked_dimensions";
   bool isRangeQuery = name == "$left" || name == "$right" || name == "$low" ||

@@ -51,6 +51,7 @@ module {
               argument_count = 1 : i64,
               callee_name = "$display",
               constraint_restrictions = [],
+              defaulted_arguments = array<i64>,
               has_inline_constraints = false,
               has_iterator_expression = false,
               has_output_arguments = false,
@@ -68,6 +69,7 @@ module {
                 argument_count = 1 : i64,
                 callee_name = "$ceil",
                 constraint_restrictions = [],
+                defaulted_arguments = array<i64>,
                 has_inline_constraints = false,
                 has_iterator_expression = false,
                 has_output_arguments = false,
@@ -82,6 +84,7 @@ module {
                   argument_count = 0 : i64,
                   callee_name = "$urandom",
                   constraint_restrictions = [],
+                  defaulted_arguments = array<i64>,
                   has_inline_constraints = false,
                   has_iterator_expression = false,
                   has_output_arguments = false,
@@ -103,6 +106,7 @@ module {
               argument_count = 1 : i64,
               callee_name = "$display",
               constraint_restrictions = [],
+              defaulted_arguments = array<i64>,
               has_inline_constraints = false,
               has_iterator_expression = false,
               has_output_arguments = false,
@@ -120,6 +124,7 @@ module {
                 argument_count = 1 : i64,
                 callee_name = "$floor",
                 constraint_restrictions = [],
+                defaulted_arguments = array<i64>,
                 has_inline_constraints = false,
                 has_iterator_expression = false,
                 has_output_arguments = false,
@@ -134,6 +139,7 @@ module {
                   argument_count = 0 : i64,
                   callee_name = "$urandom",
                   constraint_restrictions = [],
+                  defaulted_arguments = array<i64>,
                   has_inline_constraints = false,
                   has_iterator_expression = false,
                   has_output_arguments = false,
@@ -155,6 +161,7 @@ module {
               argument_count = 1 : i64,
               callee_name = "$display",
               constraint_restrictions = [],
+              defaulted_arguments = array<i64>,
               has_inline_constraints = false,
               has_iterator_expression = false,
               has_output_arguments = false,
@@ -172,6 +179,7 @@ module {
                 argument_count = 1 : i64,
                 callee_name = "$sqrt",
                 constraint_restrictions = [],
+                defaulted_arguments = array<i64>,
                 has_inline_constraints = false,
                 has_iterator_expression = false,
                 has_output_arguments = false,
@@ -186,6 +194,7 @@ module {
                   argument_count = 0 : i64,
                   callee_name = "$urandom",
                   constraint_restrictions = [],
+                  defaulted_arguments = array<i64>,
                   has_inline_constraints = false,
                   has_iterator_expression = false,
                   has_output_arguments = false,
@@ -193,6 +202,61 @@ module {
                   is_super_class = false,
                   is_system_call = true,
                   node_id = 17 : i64,
+                  semantic_type = !obelisk.integral<32, false, false, 31 : 0, integer>,
+                  subroutine_kind = 0 : i32
+                } {
+                }
+              }
+            }
+          }
+          obelisk.sv.statement.expression_statement attributes {
+            node_id = 18 : i64
+          } {
+            obelisk.sv.expression.call attributes {
+              argument_count = 1 : i64,
+              callee_name = "$display",
+              constraint_restrictions = [],
+              defaulted_arguments = array<i64>,
+              has_inline_constraints = false,
+              has_iterator_expression = false,
+              has_output_arguments = false,
+              has_this_class = false,
+              is_super_class = false,
+              is_system_call = true,
+              node_id = 19 : i64,
+              semantic_type = !obelisk.void,
+              subroutine_kind = 1 : i32,
+              system_library_cell = "work.top",
+              system_scope_path = "top",
+              system_scope_symbol = @s1.$root::@s3.top::@s4.top
+            } {
+              obelisk.sv.expression.call attributes {
+                argument_count = 1 : i64,
+                callee_name = "$exp",
+                constraint_restrictions = [],
+                defaulted_arguments = array<i64>,
+                has_inline_constraints = false,
+                has_iterator_expression = false,
+                has_output_arguments = false,
+                has_this_class = false,
+                is_super_class = false,
+                is_system_call = true,
+                node_id = 20 : i64,
+                semantic_type = !obelisk.real,
+                subroutine_kind = 0 : i32
+              } {
+                obelisk.sv.expression.call attributes {
+                  argument_count = 0 : i64,
+                  callee_name = "$urandom",
+                  constraint_restrictions = [],
+                  defaulted_arguments = array<i64>,
+                  has_inline_constraints = false,
+                  has_iterator_expression = false,
+                  has_output_arguments = false,
+                  has_this_class = false,
+                  is_super_class = false,
+                  is_system_call = true,
+                  node_id = 21 : i64,
                   semantic_type = !obelisk.integral<32, false, false, 31 : 0, integer>,
                   subroutine_kind = 0 : i32
                 } {
@@ -217,3 +281,6 @@ module {
 // CHECK: %[[SQRT_INPUT:.*]] = obelisk_sim.real.from_integer
 // CHECK: %[[SQRT_RESULT:.*]] = math.sqrt %[[SQRT_INPUT]] : f64
 // CHECK: obelisk_sim.display {{.*}}(%[[SQRT_RESULT]])
+// CHECK: %[[EXP_INPUT:.*]] = obelisk_sim.real.from_integer
+// CHECK: %[[EXP_RESULT:.*]] = math.exp %[[EXP_INPUT]] : f64
+// CHECK: obelisk_sim.display {{.*}}(%[[EXP_RESULT]])
