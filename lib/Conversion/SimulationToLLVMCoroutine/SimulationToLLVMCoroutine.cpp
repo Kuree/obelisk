@@ -4912,6 +4912,39 @@ NativeAOTEligibility analyzeNativeAOTEligibility(ModuleOp module) {
       rejectPlan("compute graph contains an unknown node kind");
     }
   }
+  for (Attribute regionAttribute : graph.getRegions()) {
+    auto region = dyn_cast<sim::ComputeRegionAttr>(regionAttribute);
+    if (!region)
+      continue;
+    for (Attribute groupAttribute : region.getGroups()) {
+      auto group = dyn_cast<sim::ComputeGroupAttr>(groupAttribute);
+      if (!group)
+        continue;
+      StringRef reason;
+      if (group.getSchedule() == sim::ComputeScheduleKind::ControlLoop)
+        reason = "control-loop group requires bytecode scheduling";
+      else if (group.getSchedule() == sim::ComputeScheduleKind::Convergence)
+        reason = "convergence group requires bytecode scheduling";
+      else if (group.getFragments().size() > 1)
+        reason = "multi-member compute group requires bytecode scheduling";
+      else
+        continue;
+      for (int64_t member : group.getFragments().asArrayRef()) {
+        if (member < 0 || static_cast<uint64_t>(member) >= nodes.size())
+          continue;
+        auto fragment = dyn_cast<sim::ComputeFragmentAttr>(nodes[member]);
+        if (!fragment)
+          continue;
+        sim::SimFuncOp function = design.lookupSymbol<sim::SimFuncOp>(
+            fragment.getFunction().getValue());
+        Block *block =
+            function ? lookupComputeGraphBlock(function, fragment.getBlock())
+                     : nullptr;
+        if (block)
+          requireBytecodeFragment(block->getTerminator(), reason);
+      }
+    }
+  }
 
   DenseMap<StringRef, unsigned> rootSpawnCounts;
   sim::SimFuncOp root;
@@ -4986,16 +5019,14 @@ NativeAOTEligibility analyzeNativeAOTEligibility(ModuleOp module) {
                               "managed or automatic NBA destination");
       excludeBytecodeActor(operation);
     } else if (isa<sim::SimSuspendEdgeIffOp, sim::SimSuspendLevelOp,
-                   sim::SimSuspendAnyOp,
-                   sim::SimSuspendObserveOp>(operation)) {
+                   sim::SimSuspendAnyOp, sim::SimSuspendObserveOp>(operation)) {
       requireBytecodeFragment(operation, "computed or conditional wait");
       excludeBytecodeActor(operation);
     } else if (isa<sim::SimSuspendEventOp>(operation)) {
       requireBytecodeFragment(operation, "event wait requires dynamic state");
       excludeBytecodeActor(operation);
     } else if (isa<sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp,
-                   sim::SimSuspendChildrenOp,
-                   sim::SimTaskCallOp>(operation)) {
+                   sim::SimSuspendChildrenOp, sim::SimTaskCallOp>(operation)) {
       requireBytecodeFragment(operation,
                               "task, await, or join control is present");
       excludeBytecodeActor(operation);
@@ -10364,10 +10395,10 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
   return success();
 }
 
-LogicalResult makeNativeAOTPlan(
-    ModuleOp module, uint32_t actorCount,
-    ArrayRef<std::pair<uint32_t, uint32_t>> executableNodes,
-    bool fullyStatic) {
+LogicalResult
+makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
+                  ArrayRef<std::pair<uint32_t, uint32_t>> executableNodes,
+                  bool fullyStatic, bool rootSlotZero) {
   if (actorCount == 0 || executableNodes.empty())
     return module.emitError("AOT schedule has no executable actor nodes");
   MLIRContext *context = module.getContext();
@@ -10458,11 +10489,10 @@ LogicalResult makeNativeAOTPlan(
           SymbolRefAttr::get(
               context, fullyStatic ? "obelisk_rt_v1_scheduler_run_aot_nodes"
                                    : "obelisk_rt_v1_scheduler_run"),
-          fullyStatic
-              ? ValueRange{runEntry->getArgument(1), nodes,
-                           llvmConstant(builder, location, i32,
-                                        executableNodes.size())}
-              : ValueRange{runEntry->getArgument(1)})
+          fullyStatic ? ValueRange{runEntry->getArgument(1), nodes,
+                                   llvmConstant(builder, location, i32,
+                                                executableNodes.size())}
+                      : ValueRange{runEntry->getArgument(1)})
           .getResult();
   LLVM::ReturnOp::create(builder, location, runStatus);
 
@@ -10512,10 +10542,11 @@ LogicalResult makeNativeAOTPlan(
             llvmConstant(initializerBuilder, location, i32, actorCount), 5);
         value = insertValue(
             initializerBuilder, location, value,
-            llvmConstant(initializerBuilder, location, i32,
-                         fullyStatic
-                             ? OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC
-                             : 0),
+            llvmConstant(
+                initializerBuilder, location, i32,
+                (fullyStatic ? OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC : 0) |
+                    (rootSlotZero ? OBELISK_RT_NATIVE_SCHEDULE_ROOT_SLOT_ZERO
+                                  : 0)),
             6);
         value =
             insertValue(initializerBuilder, location, value,
@@ -10804,8 +10835,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   FailureOr<NativeStateLayout> stateLayout = buildNativeStateLayout(module);
   if (failed(stateLayout))
     return failure();
-  sim::NativeSchedulerMode nativeScheduler =
-      sim::NativeSchedulerMode::Auto;
+  sim::NativeSchedulerMode nativeScheduler = sim::NativeSchedulerMode::Auto;
   if (auto mode = module->getAttrOfType<sim::NativeSchedulerModeAttr>(
           "obelisk.native_scheduler"))
     nativeScheduler = mode.getValue();
@@ -11229,8 +11259,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
           aotBytecodeContinuations[entry.first];
       if (activationRequiresBytecode(&function.getBody().front()))
         continuations.push_back(0);
-      for (const ProcessSuspension &suspension :
-           entry.second->getSuspensions())
+      for (const ProcessSuspension &suspension : entry.second->getSuspensions())
         if (activationRequiresBytecode(suspension.continuation))
           continuations.push_back(suspension.continuationID);
       llvm::sort(continuations);
@@ -11671,8 +11700,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       rankedAOTNodes.emplace_back(
           scheduleRanks.blocks.lookup(&function.getBody().front()),
           *schedule.actorSlot, 0);
-      for (const ProcessSuspension &suspension :
-           entry.second->getSuspensions())
+      for (const ProcessSuspension &suspension : entry.second->getSuspensions())
         rankedAOTNodes.emplace_back(
             scheduleRanks.blocks.lookup(suspension.continuation),
             *schedule.actorSlot, suspension.continuationID);
@@ -11705,9 +11733,16 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       (void)rank;
       executableNodes.emplace_back(slot, continuation);
     }
+    bool rootSlotZero =
+        llvm::any_of(aotEligibility.actorSlots, [](const auto &entry) {
+          auto function = dyn_cast_if_present<sim::SimFuncOp>(entry.first);
+          return function &&
+                 function.getEntryKind() == sim::EntryKind::RootInitializer &&
+                 entry.second == 0;
+        });
     if (failed(makeNativeAOTPlan(module, aotEligibility.actorSlots.size(),
-                                 executableNodes,
-                                 aotEligibility.fullyEligible)))
+                                 executableNodes, aotEligibility.fullyEligible,
+                                 rootSlotZero)))
       return failure();
   }
   if (failed(makeSchedulerMain(module, *stateLayout, useAOT)))

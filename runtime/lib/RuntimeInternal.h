@@ -369,8 +369,11 @@ struct ScheduledNBA {
   uint64_t bitWidth = 0;
   bool stringValue = false;
   bool managedValue = false;
+  bool inlinePacked = false;
   obelisk_rt_string_v1 rootedString = 0;
   obelisk_rt_object_v1 *rootedManaged = nullptr;
+  uint64_t inlineValue = 0;
+  uint64_t inlineUnknown = 0;
   std::vector<uint8_t> value;
   std::vector<uint8_t> unknown;
 };
@@ -628,6 +631,7 @@ struct obelisk_rt_context {
   const obelisk_rt_native_schedule_plan_v1 *nativeSchedulePlan = nullptr;
   std::vector<obelisk_rt_process_instance_v1 *> nativeScheduleActors;
   std::vector<uint64_t> nativeScheduleActorTokens;
+  std::vector<size_t> nativeScheduleActorIndices;
   bool nativeScheduleRunning = false;
   bool nativeScheduleDeoptimized = false;
   bool nativeScheduleExternalWritePending = false;
@@ -688,6 +692,7 @@ struct obelisk_rt_context {
   std::unordered_map<uint64_t, std::unordered_set<uint64_t>>
       deferredImmediateSites;
   std::unordered_map<uint32_t, NativeStaticState> nativeStaticStates;
+  std::vector<NativeStaticState> nativeScheduleStaticStateIndex;
   std::unordered_map<uint32_t, NativeAutomaticState> nativeAutomaticStates;
   std::map<uint64_t, EventState> events;
   std::unordered_map<uint32_t, ImportBinding> imports;
@@ -874,6 +879,9 @@ public:
 private:
   obelisk_rt_context *context = nullptr;
   std::unique_lock<std::recursive_mutex> transactionLock;
+  obelisk_rt_context *previousThreadContext = nullptr;
+  uint32_t previousThreadDepth = 0;
+  bool nested = false;
 };
 
 class ContextCallbackUnlock {

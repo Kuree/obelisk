@@ -1,6 +1,7 @@
 # -*- Python -*-
 
 import os
+import shutil
 import sys
 
 import lit.formats
@@ -36,6 +37,27 @@ config.substitutions.append(
 config.substitutions.append(("%source_root", config.obelisk_source_root))
 config.substitutions.append(("%llvm_dist", config.obelisk_llvm_dist))
 config.substitutions.append(("%cmake", config.cmake_executable))
+split_file = next(
+    (
+        path
+        for name in [
+            "split-file",
+            "split-file-22",
+            "split-file-21",
+            "split-file-20",
+            "split-file-19",
+            "split-file-18",
+            "split-file-17",
+            "split-file-16",
+            "split-file-15",
+        ]
+        if (path := shutil.which(name))
+    ),
+    None,
+)
+if not split_file:
+    lit_config.fatal("unable to find LLVM split-file")
+config.substitutions.append(("%split-file", split_file))
 llvm_config.add_err_msg_substitutions()
 
 tool_dirs = [

@@ -15,6 +15,9 @@
 
 namespace {
 
+thread_local obelisk_rt_context *threadTransactionContext = nullptr;
+thread_local uint32_t threadTransactionDepth = 0;
+
 std::recursive_mutex hostErrorMutex;
 
 struct ThreadError {
@@ -223,16 +226,32 @@ ContextTransaction::ContextTransaction(obelisk_rt_context *context)
     : context(context) {
   if (!context)
     return;
+  if (threadTransactionContext == context) {
+    ++threadTransactionDepth;
+    nested = true;
+    return;
+  }
+  previousThreadContext = threadTransactionContext;
+  previousThreadDepth = threadTransactionDepth;
   transactionLock =
       std::unique_lock<std::recursive_mutex>(context->transactionMutex);
   std::lock_guard<std::recursive_mutex> lock(context->mutex);
   if (context->transactionDepth++ == 0)
     context->transactionOwner = std::this_thread::get_id();
+  threadTransactionContext = context;
+  threadTransactionDepth = 1;
 }
 
 ContextTransaction::~ContextTransaction() noexcept {
   if (!context)
     return;
+  if (nested) {
+    if (threadTransactionContext == context && threadTransactionDepth != 0)
+      --threadTransactionDepth;
+    return;
+  }
+  threadTransactionContext = previousThreadContext;
+  threadTransactionDepth = previousThreadDepth;
   bool destroy = false;
   try {
     {

@@ -1748,6 +1748,10 @@ void obelisk_rt_v1_vpi_shutdown(obelisk_rt_context *context);
 #define OBELISK_RT_NATIVE_SCHEDULE_PLAN_VERSION UINT32_C(1)
 #define OBELISK_RT_AOT_SNAPSHOT_VERSION UINT32_C(1)
 #define OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC UINT32_C(1)
+// Actor slot zero is the native-only root bootstrap. It must run natively so
+// static child ownership is established before bytecode/VPI transition
+// fragments execute.
+#define OBELISK_RT_NATIVE_SCHEDULE_ROOT_SLOT_ZERO UINT32_C(2)
 
 typedef struct obelisk_rt_aot_deopt_actor_v1 {
   uint32_t slot;

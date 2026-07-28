@@ -18,9 +18,17 @@ module native_partial_oob_handle;
     index = 3;
     value[index +: 2] = 2'b01;
     $display("partial=%b guards=%b%b", value, lower_guard, upper_guard);
+    value = 4'b0000;
+    index = -1;
+    value[index +: 2] <= 2'b10;
+    index = 3;
+    value[index +: 2] <= 2'b01;
+    #1;
+    $display("partial_nba=%b guards=%b%b", value, lower_guard, upper_guard);
   end
 endmodule
 
 // The lower selection maps only result bit 1 to value[0], and the upper
 // selection maps only result bit 0 to value[3]. Adjacent roots remain intact.
 // CHECK: partial=1001 guards=11
+// CHECK: partial_nba=1001 guards=11
