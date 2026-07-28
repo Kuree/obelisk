@@ -8530,6 +8530,35 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     return convertResult(result);
   }
 
+  if (name == "$hypot") {
+    if (children.size() != 2) {
+      emitError(location) << "$hypot requires exactly two arguments";
+      return failure();
+    }
+    FailureOr<Value> x = lowerExpression(children[0]);
+    if (failed(x))
+      return failure();
+    FailureOr<Value> y = lowerExpression(children[1]);
+    if (failed(y))
+      return failure();
+    FailureOr<Value> realX =
+        convert(*x, builder.getF64Type(), isSignedNode(children[0]),
+                getSemanticLocation(children[0]));
+    if (failed(realX))
+      return failure();
+    FailureOr<Value> realY =
+        convert(*y, builder.getF64Type(), isSignedNode(children[1]),
+                getSemanticLocation(children[1]));
+    if (failed(realY))
+      return failure();
+    Value xSquared = arith::MulFOp::create(builder, location, *realX, *realX);
+    Value ySquared = arith::MulFOp::create(builder, location, *realY, *realY);
+    Value sum = arith::AddFOp::create(builder, location, xSquared, ySquared);
+    Value result =
+        math::SqrtOp::create(builder, location, builder.getF64Type(), sum);
+    return convertResult(result);
+  }
+
   bool isDimensionCount =
       name == "$dimensions" || name == "$unpacked_dimensions";
   bool isRangeQuery = name == "$left" || name == "$right" || name == "$low" ||
