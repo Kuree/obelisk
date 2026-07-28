@@ -1218,6 +1218,38 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
                                       value);
     return convert(wide, targetType, sourceSigned, location, targetSigned);
   }
+  if (auto sourceArray =
+          dyn_cast<sim::UnpackedArrayType>(value.getType())) {
+    if (auto targetArray = dyn_cast<sim::UnpackedArrayType>(targetType)) {
+      unsigned sourceCount = sim::getAggregateNumElements(sourceArray);
+      unsigned targetCount = sim::getAggregateNumElements(targetArray);
+      if (sourceCount != targetCount) {
+        emitError(location) << "cannot convert unpacked array "
+                            << value.getType() << " to " << targetType
+                            << " because their sizes differ";
+        return failure();
+      }
+      SmallVector<Value> elements;
+      elements.reserve(sourceCount);
+      for (unsigned ordinal = 0; ordinal < sourceCount; ++ordinal) {
+        Type sourceElement =
+            sim::getAggregateElementType(sourceArray, ordinal);
+        Type targetElement =
+            sim::getAggregateElementType(targetArray, ordinal);
+        Value element = sim::SimAggregateExtractOp::create(
+            builder, location, sourceElement, value, ordinal);
+        FailureOr<Value> converted =
+            convert(element, targetElement, sourceSigned, location,
+                    targetSigned);
+        if (failed(converted))
+          return failure();
+        elements.push_back(*converted);
+      }
+      return sim::SimAggregateConstructOp::create(builder, location, targetType,
+                                                   elements)
+          .getResult();
+    }
+  }
   if (sim::isAggregateType(value.getType())) {
     Type scalarType = sim::getPackedScalarType(value.getType());
     if (!scalarType) {
