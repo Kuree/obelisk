@@ -445,6 +445,77 @@ module {
               }
             }
           }
+          obelisk.sv.statement.expression_statement attributes {
+            node_id = 35 : i64
+          } {
+            obelisk.sv.expression.call attributes {
+              argument_count = 1 : i64,
+              callee_name = "$display",
+              constraint_restrictions = [],
+              defaulted_arguments = array<i64>,
+              has_inline_constraints = false,
+              has_iterator_expression = false,
+              has_output_arguments = false,
+              has_this_class = false,
+              is_super_class = false,
+              is_system_call = true,
+              node_id = 36 : i64,
+              semantic_type = !obelisk.void,
+              subroutine_kind = 1 : i32,
+              system_library_cell = "work.top",
+              system_scope_path = "top",
+              system_scope_symbol = @s1.$root::@s3.top::@s4.top
+            } {
+              obelisk.sv.expression.call attributes {
+                argument_count = 2 : i64,
+                callee_name = "$atan2",
+                constraint_restrictions = [],
+                defaulted_arguments = array<i64>,
+                has_inline_constraints = false,
+                has_iterator_expression = false,
+                has_output_arguments = false,
+                has_this_class = false,
+                is_super_class = false,
+                is_system_call = true,
+                node_id = 37 : i64,
+                semantic_type = !obelisk.real,
+                subroutine_kind = 0 : i32
+              } {
+                obelisk.sv.expression.call attributes {
+                  argument_count = 0 : i64,
+                  callee_name = "$urandom",
+                  constraint_restrictions = [],
+                  defaulted_arguments = array<i64>,
+                  has_inline_constraints = false,
+                  has_iterator_expression = false,
+                  has_output_arguments = false,
+                  has_this_class = false,
+                  is_super_class = false,
+                  is_system_call = true,
+                  node_id = 38 : i64,
+                  semantic_type = !obelisk.integral<32, false, false, 31 : 0, integer>,
+                  subroutine_kind = 0 : i32
+                } {
+                }
+                obelisk.sv.expression.call attributes {
+                  argument_count = 0 : i64,
+                  callee_name = "$urandom",
+                  constraint_restrictions = [],
+                  defaulted_arguments = array<i64>,
+                  has_inline_constraints = false,
+                  has_iterator_expression = false,
+                  has_output_arguments = false,
+                  has_this_class = false,
+                  is_super_class = false,
+                  is_system_call = true,
+                  node_id = 39 : i64,
+                  semantic_type = !obelisk.integral<32, false, false, 31 : 0, integer>,
+                  subroutine_kind = 0 : i32
+                } {
+                }
+              }
+            }
+          }
         }
       }
     }
@@ -475,3 +546,7 @@ module {
 // CHECK: %[[POW_EXPONENT:.*]] = obelisk_sim.real.from_integer
 // CHECK: %[[POW_RESULT:.*]] = math.powf %[[POW_BASE]], %[[POW_EXPONENT]] : f64
 // CHECK: obelisk_sim.display {{.*}}(%[[POW_RESULT]])
+// CHECK: %[[ATAN2_Y:.*]] = obelisk_sim.real.from_integer
+// CHECK: %[[ATAN2_X:.*]] = obelisk_sim.real.from_integer
+// CHECK: %[[ATAN2_RESULT:.*]] = math.atan2 %[[ATAN2_Y]], %[[ATAN2_X]] : f64
+// CHECK: obelisk_sim.display {{.*}}(%[[ATAN2_RESULT]])
