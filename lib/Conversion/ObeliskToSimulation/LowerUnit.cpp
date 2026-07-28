@@ -322,6 +322,15 @@ static bool isUnboundedEndpoint(Operation *op) {
   return isa<semantic::SVUnboundedLiteralOp>(op);
 }
 
+static bool containsUnboundedLiteral(Operation *op) {
+  bool found = false;
+  op->walk([&](semantic::SVUnboundedLiteralOp) {
+    found = true;
+    return WalkResult::interrupt();
+  });
+  return found;
+}
+
 static bool isTaggedUnionType(Type type) {
   if (auto packed = dyn_cast<sim::PackedUnionType>(type))
     return packed.getIsTagged();
@@ -600,6 +609,7 @@ private:
   llvm::SetVector<Value> sensitivity;
   llvm::SetVector<Value> *observedDependencies = nullptr;
   Value expressionPlaceholder;
+  Value unboundedPlaceholder;
   Value lvalueReferencePlaceholder;
   std::string returnPath;
   SmallVector<std::string> copyOutPaths;
@@ -2466,9 +2476,12 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
         builder, location, builder.getI64Type(), container);
     Value last = arith::SubIOp::create(builder, location, size, one);
     auto lowerBound = [&](Operation *bound) -> FailureOr<Value> {
-      if (isa<semantic::SVUnboundedLiteralOp>(bound))
+      if (isUnboundedEndpoint(bound))
         return last;
+      Value previousPlaceholder = unboundedPlaceholder;
+      unboundedPlaceholder = last;
       FailureOr<Value> value = lowerExpression(bound);
+      unboundedPlaceholder = previousPlaceholder;
       if (failed(value))
         return failure();
       FailureOr<Value> scalar =
@@ -2682,16 +2695,39 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
         return failure();
       container = *loaded;
     }
-    FailureOr<Value> index = lowerExpression(children[1]);
-    if (failed(index))
-      return failure();
-    FailureOr<Value> scalarIndex = toPackedScalar(*index, location);
-    if (failed(scalarIndex))
-      return failure();
-    FailureOr<Value> index64 = convert(*scalarIndex, builder.getI64Type(),
-                                       isSignedNode(children[1]), location);
-    if (failed(index64))
-      return failure();
+    bool hasUnboundedIndex = containsUnboundedLiteral(children[1]);
+    Value previousPlaceholder = unboundedPlaceholder;
+    if (hasUnboundedIndex && isa<sim::QueueType>(sourceValueType)) {
+      Value size = sim::SimContainerSizeOp::create(
+          builder, location, builder.getI64Type(), container);
+      Value one = arith::ConstantOp::create(
+          builder, location, builder.getI64Type(),
+          builder.getI64IntegerAttr(1));
+      unboundedPlaceholder =
+          arith::SubIOp::create(builder, location, size, one);
+    }
+    Value resolvedIndex;
+    if (isUnboundedEndpoint(children[1]))
+      resolvedIndex = unboundedPlaceholder;
+    else {
+      FailureOr<Value> index = lowerExpression(children[1]);
+      unboundedPlaceholder = previousPlaceholder;
+      if (failed(index))
+        return failure();
+      FailureOr<Value> scalarIndex = toPackedScalar(*index, location);
+      if (failed(scalarIndex))
+        return failure();
+      FailureOr<Value> index64 = convert(*scalarIndex, builder.getI64Type(),
+                                         isSignedNode(children[1]), location);
+      if (failed(index64))
+        return failure();
+      resolvedIndex = *index64;
+    }
+    unboundedPlaceholder = previousPlaceholder;
+    if (!resolvedIndex)
+      return emitError(location)
+                 << "unbounded index requires a queue container",
+             failure();
     if (lvalue) {
       Type pathType =
           sim::ReferencePathType::get(function.getContext(), *resultType);
@@ -2701,12 +2737,13 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
         return failure();
       return sim::SimReferencePathIndexOp::create(
                  builder, location, pathType,
-                 function.getBody().front().getArgument(0), container, *index64,
+                 function.getBody().front().getArgument(0), container,
+                 resolvedIndex,
                  *ownerReference)
           .getResult();
     }
     return sim::SimContainerReadOp::create(builder, location, *resultType,
-                                           container, *index64)
+                                           container, resolvedIndex)
         .getResult();
   }
 
@@ -10164,6 +10201,13 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
       return expressionPlaceholder;
     emitError(getSemanticLocation(op))
         << "empty expression placeholder has no resolved value";
+    return failure();
+  }
+  if (isa<semantic::SVUnboundedLiteralOp>(op)) {
+    if (unboundedPlaceholder)
+      return unboundedPlaceholder;
+    emitError(getSemanticLocation(op))
+        << "unbounded literal has no resolved container bound";
     return failure();
   }
   if (isa<semantic::SVLValueReferenceExpressionOp>(op)) {
