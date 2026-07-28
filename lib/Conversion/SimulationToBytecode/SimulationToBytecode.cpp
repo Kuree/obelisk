@@ -211,6 +211,8 @@ constexpr uint32_t kIntrinsicRandomSeed =
     OBELISK_RT_INTRINSIC_V1_RANDOM_SEED;
 constexpr uint32_t kIntrinsicQueueDelete =
     OBELISK_RT_INTRINSIC_V1_QUEUE_DELETE;
+constexpr uint32_t kIntrinsicQueueInsert =
+    OBELISK_RT_INTRINSIC_V1_QUEUE_INSERT;
 constexpr uint32_t kIntrinsicAssocCreate =
     OBELISK_RT_INTRINSIC_V1_ASSOC_CREATE;
 constexpr uint32_t kIntrinsicAssocRead = OBELISK_RT_INTRINSIC_V1_ASSOC_READ;
@@ -1556,7 +1558,8 @@ private:
                sim::SimReferencePathIndexOp, sim::SimReferencePathAssocOp,
                sim::SimContainerCreateLikeOp,
                sim::SimContainerCreateOp, sim::SimContainerCloneOp,
-               sim::SimContainerWriteOp, sim::SimAssocCreateOp,
+               sim::SimContainerWriteOp, sim::SimQueueInsertOp,
+               sim::SimAssocCreateOp,
                sim::SimAssocWriteOp, sim::SimAssocSetDefaultOp,
                sim::SimAssocTraverseOp, sim::SimArgumentRefStoreOp,
                sim::SimReferencePathNBAEnqueueOp, sim::SimGCSafepointOp,
@@ -2089,6 +2092,9 @@ private:
     if (auto op = dyn_cast<sim::SimQueueDeleteOp>(operation))
       return emitIntrinsic(plan, kIntrinsicQueueDelete,
                            {op.getQueue(), op.getIndex()}, {});
+    if (auto op = dyn_cast<sim::SimQueueInsertOp>(operation))
+      return emitIntrinsic(plan, kIntrinsicQueueInsert,
+                           {op.getQueue(), op.getIndex(), op.getValue()}, {});
     if (auto op = dyn_cast<sim::SimRandomNextOp>(operation))
       return emitIntrinsic(plan, kIntrinsicRandomNext, {}, {op.getResult()});
     if (auto op = dyn_cast<sim::SimRandomSeedOp>(operation))

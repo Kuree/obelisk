@@ -329,6 +329,16 @@ def SimQueueDeleteOp : SimOp<"queue.delete", [
   let hasVerifier = 1;
 }
 
+def SimQueueInsertOp : SimOp<"queue.insert", [
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "insert one queue element at a logical index";
+  let arguments = (ins SimQueueType:$queue, I64:$index, AnyType:$value);
+  let assemblyFormat = "$value `into` $queue `[` $index `]` attr-dict `:` "
+                       "type($queue) `,` type($value)";
+  let hasVerifier = 1;
+}
+
 def SimRandomNextOp : SimOp<"random.next", [
     MemoryEffects<[MemRead<SimRNGResource>, MemWrite<SimRNGResource>]>
   ]> {

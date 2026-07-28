@@ -894,6 +894,10 @@ bool validIntrinsic(const Image &image, const Function &function,
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 0 && managed(input(0)) &&
            twoStateBits(input(1), 64);
+  case OBELISK_RT_INTRINSIC_V1_QUEUE_INSERT:
+    return signature.flags == 0 && site.inputCount == 3 &&
+           site.outputCount == 0 && managed(input(0)) &&
+           twoStateBits(input(1), 64) && managedValue(input(2));
   case OBELISK_RT_INTRINSIC_V1_RANDOM_BOUNDED:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && twoStateBits(input(0), 64) &&
@@ -3594,6 +3598,30 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                        readManaged(inputRegister(0)),
                        static_cast<int64_t>(*index))
                  : OBELISK_RT_INVALID_BYTECODE;
+  }
+  case OBELISK_RT_INTRINSIC_V1_QUEUE_INSERT: {
+    auto index = scalar(1);
+    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    if (!index)
+      return OBELISK_RT_INVALID_BYTECODE;
+    if (!lane)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    Layout input = layoutAt(image, frame.function, inputRegister(2));
+    if (input.kind == OBELISK_RT_DBREG_HANDLE) {
+      int64_t event = kInvalidHandleStart;
+      std::memcpy(&event, frame.data + input.offset + 16, sizeof(event));
+      return obelisk_rt_v1_queue_insert(
+          lane, readManaged(inputRegister(0)), static_cast<int64_t>(*index),
+          &event, nullptr);
+    }
+    uint64_t planeSize =
+        input.kind == OBELISK_RT_DBREG_LOGIC ? input.size / 2 : input.size;
+    const void *unknown = input.kind == OBELISK_RT_DBREG_LOGIC
+                              ? frame.data + input.offset + planeSize
+                              : nullptr;
+    return obelisk_rt_v1_queue_insert(
+        lane, readManaged(inputRegister(0)), static_cast<int64_t>(*index),
+        frame.data + input.offset, unknown);
   }
   case OBELISK_RT_INTRINSIC_V1_ASSOC_CREATE: {
     std::array<std::optional<uint64_t>, 8> inputs;

@@ -5408,7 +5408,7 @@ UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
   StringRef name = op.getCalleeName();
   bool mutatesReceiver = name == "delete" || name == "reverse" ||
                          name == "shuffle" || name == "sort" || name == "rsort" ||
-                         name == "push_back";
+                         name == "push_back" || name == "insert";
   FailureOr<Value> receiver;
   if (receiverOverride) {
     receiver = receiverOverride;
@@ -5479,6 +5479,34 @@ UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
         builder, location, builder.getI64Type(), *receiver);
     sim::SimContainerWriteOp::create(builder, location, *receiver, size,
                                      *converted);
+    return arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                     builder.getBoolAttr(false))
+        .getResult();
+  }
+  if (name == "insert") {
+    if (withClause || children.size() != 3)
+      return emitError(location)
+                 << "insert requires exactly an index and a value",
+             failure();
+    auto queue = dyn_cast<sim::QueueType>(receiverType);
+    if (!queue)
+      return emitError(location) << "insert requires a queue receiver",
+             failure();
+    FailureOr<Value> index = lowerExpression(children[1]);
+    FailureOr<Value> value = lowerExpression(children[2]);
+    FailureOr<Value> convertedIndex =
+        succeeded(index)
+            ? convert(*index, builder.getI64Type(),
+                      isSignedNode(children[1]), location)
+            : FailureOr<Value>(failure());
+    FailureOr<Value> convertedValue =
+        succeeded(value)
+            ? convert(*value, elementType, isSignedNode(children[2]), location)
+            : FailureOr<Value>(failure());
+    if (failed(convertedIndex) || failed(convertedValue))
+      return failure();
+    sim::SimQueueInsertOp::create(builder, location, *receiver,
+                                  *convertedIndex, *convertedValue);
     return arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                      builder.getBoolAttr(false))
         .getResult();

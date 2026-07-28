@@ -6751,6 +6751,7 @@ bool managedOperationMayCollect(Operation *operation) {
              sim::SimReferencePathIndexOp, sim::SimReferencePathAssocOp,
              sim::SimContainerCreateLikeOp, sim::SimContainerCreateOp,
              sim::SimContainerCloneOp, sim::SimContainerWriteOp,
+             sim::SimQueueInsertOp,
              sim::SimAssocCreateOp, sim::SimAssocWriteOp,
              sim::SimAssocSetDefaultOp, sim::SimAssocTraverseOp,
              sim::SimArgumentRefStoreOp,
@@ -7287,6 +7288,45 @@ public:
                 managedObjectPointer(rewriter, op.getLoc(),
                                      adaptor.getQueue().front()),
                 adaptor.getIndex().front()})
+            .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+class QueueInsertConversion final
+    : public OpConversionPattern<sim::SimQueueInsertOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimQueueInsertOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getQueue().size() != 1 || adaptor.getIndex().size() != 1 ||
+        adaptor.getValue().empty() || adaptor.getValue().size() > 2)
+      return failure();
+    SmallVector<Value> storage;
+    for (Value value : adaptor.getValue()) {
+      Value slot = entryAlloca(rewriter, op.getLoc(), value.getType(), 1, 8);
+      LLVM::StoreOp::create(rewriter, op.getLoc(), value, slot, 8);
+      storage.push_back(slot);
+    }
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Value unknown = storage.size() == 2
+                        ? storage[1]
+                        : Value(LLVM::ZeroOp::create(rewriter, op.getLoc(),
+                                                    pointer));
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_queue_insert"),
+            ValueRange{
+                lane,
+                managedObjectPointer(rewriter, op.getLoc(),
+                                     adaptor.getQueue().front()),
+                adaptor.getIndex().front(), storage.front(), unknown})
             .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
     rewriter.eraseOp(op);
@@ -10275,6 +10315,10 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                            {managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_queue_delete_index",
                            managedI32, {managedPointer, managedI64});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_queue_insert", managedI32,
+      {managedPointer, managedPointer, managedI64, managedPointer,
+       managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_random_bounded", managedI32,
                            {managedPointer, managedI64, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_random_next", managedI32,
@@ -10641,11 +10685,11 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       EventNullConversion,
       ContainerSizeConversion, ContainerCreateLikeConversion,
       ContainerCreateConversion, ContainerCloneConversion,
-      ContainerDeleteConversion, QueueDeleteConversion, ContainerReadConversion,
-      ContainerWriteConversion, AssocCreateConversion, AssocReadConversion,
-      AssocWriteConversion, AssocDefaultConversion, AssocExistsConversion,
-      AssocDeleteConversion, AssocTraverseConversion, RandomNextConversion,
-      RandomSeedConversion, RandomBoundedConversion,
+      ContainerDeleteConversion, QueueDeleteConversion, QueueInsertConversion,
+      ContainerReadConversion, ContainerWriteConversion, AssocCreateConversion,
+      AssocReadConversion, AssocWriteConversion, AssocDefaultConversion,
+      AssocExistsConversion, AssocDeleteConversion, AssocTraverseConversion,
+      RandomNextConversion, RandomSeedConversion, RandomBoundedConversion,
       StringLiteralConversion, StringFromPackedConversion,
       StringToPackedConversion, StringConcatConversion, StringLengthConversion,
       StringGetcConversion, StringCompareConversion, ClassAllocConversion,
@@ -10717,7 +10761,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       sim::SimEventNullOp, sim::SimContainerSizeOp,
       sim::SimContainerCreateLikeOp, sim::SimContainerCreateOp,
       sim::SimContainerCloneOp, sim::SimContainerDeleteOp,
-      sim::SimQueueDeleteOp, sim::SimContainerReadOp,
+      sim::SimQueueDeleteOp, sim::SimQueueInsertOp, sim::SimContainerReadOp,
       sim::SimContainerWriteOp,
       sim::SimAssocCreateOp, sim::SimAssocReadOp, sim::SimAssocWriteOp,
       sim::SimAssocExistsOp, sim::SimAssocDeleteOp,

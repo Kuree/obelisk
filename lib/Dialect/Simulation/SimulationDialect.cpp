@@ -1165,6 +1165,15 @@ LogicalResult SimQueueDeleteOp::verify() {
   return success();
 }
 
+LogicalResult SimQueueInsertOp::verify() {
+  auto queue = dyn_cast<QueueType>(getQueue().getType());
+  if (!queue)
+    return emitOpError("queue operand must have queue type");
+  if (queue.getElementType() != getValue().getType())
+    return emitOpError("value type must match the queue element");
+  return success();
+}
+
 LogicalResult SimContainerReadOp::verify() {
   Type element = getSequentialContainerElement(getContainer().getType());
   if (!element)
