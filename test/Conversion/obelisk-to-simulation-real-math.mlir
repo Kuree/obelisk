@@ -319,6 +319,61 @@ module {
               }
             }
           }
+          obelisk.sv.statement.expression_statement attributes {
+            node_id = 26 : i64
+          } {
+            obelisk.sv.expression.call attributes {
+              argument_count = 1 : i64,
+              callee_name = "$display",
+              constraint_restrictions = [],
+              defaulted_arguments = array<i64>,
+              has_inline_constraints = false,
+              has_iterator_expression = false,
+              has_output_arguments = false,
+              has_this_class = false,
+              is_super_class = false,
+              is_system_call = true,
+              node_id = 27 : i64,
+              semantic_type = !obelisk.void,
+              subroutine_kind = 1 : i32,
+              system_library_cell = "work.top",
+              system_scope_path = "top",
+              system_scope_symbol = @s1.$root::@s3.top::@s4.top
+            } {
+              obelisk.sv.expression.call attributes {
+                argument_count = 1 : i64,
+                callee_name = "$log10",
+                constraint_restrictions = [],
+                defaulted_arguments = array<i64>,
+                has_inline_constraints = false,
+                has_iterator_expression = false,
+                has_output_arguments = false,
+                has_this_class = false,
+                is_super_class = false,
+                is_system_call = true,
+                node_id = 28 : i64,
+                semantic_type = !obelisk.real,
+                subroutine_kind = 0 : i32
+              } {
+                obelisk.sv.expression.call attributes {
+                  argument_count = 0 : i64,
+                  callee_name = "$urandom",
+                  constraint_restrictions = [],
+                  defaulted_arguments = array<i64>,
+                  has_inline_constraints = false,
+                  has_iterator_expression = false,
+                  has_output_arguments = false,
+                  has_this_class = false,
+                  is_super_class = false,
+                  is_system_call = true,
+                  node_id = 29 : i64,
+                  semantic_type = !obelisk.integral<32, false, false, 31 : 0, integer>,
+                  subroutine_kind = 0 : i32
+                } {
+                }
+              }
+            }
+          }
         }
       }
     }
@@ -342,3 +397,6 @@ module {
 // CHECK: %[[LN_INPUT:.*]] = obelisk_sim.real.from_integer
 // CHECK: %[[LN_RESULT:.*]] = math.log %[[LN_INPUT]] : f64
 // CHECK: obelisk_sim.display {{.*}}(%[[LN_RESULT]])
+// CHECK: %[[LOG10_INPUT:.*]] = obelisk_sim.real.from_integer
+// CHECK: %[[LOG10_RESULT:.*]] = math.log10 %[[LOG10_INPUT]] : f64
+// CHECK: obelisk_sim.display {{.*}}(%[[LOG10_RESULT]])
