@@ -1243,6 +1243,13 @@ TEST_F(RuntimeTest, FormatsRemainingScalarFormsAndEmptyStrings) {
   EXPECT_EQ(paddingStatus, OBELISK_RT_OK);
   EXPECT_EQ(paddingOutput, "[00003.25][3.25    ]");
 
+  double positive = 3.7;
+  double negative = -3.7;
+  auto [integerStatus, integerOutput] =
+      format("%0d %0d", {realArg(positive), realArg(negative)});
+  EXPECT_EQ(integerStatus, OBELISK_RT_OK);
+  EXPECT_EQ(integerOutput, "4 -4");
+
   uint64_t time = 10;
   auto [timeStatus, timeOutput] = format("[%t]", {timeArg(time)});
   EXPECT_EQ(timeStatus, OBELISK_RT_OK);

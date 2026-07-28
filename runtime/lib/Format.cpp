@@ -455,8 +455,22 @@ obelisk_rt_status formatArgument(std::string &output,
   case 'd':
   case 'h':
   case 'x':
-    if (!getLogicView(argument, view))
-      return OBELISK_RT_ARGUMENT_MISMATCH;
+    if (!getLogicView(argument, view)) {
+      if (argument.kind != OBELISK_RT_ARG_REAL || !argument.data)
+        return OBELISK_RT_ARGUMENT_MISMATCH;
+      double real = *static_cast<const double *>(argument.data);
+      long double rounded = std::round(static_cast<long double>(real));
+      if (!std::isfinite(real) ||
+          rounded <
+              static_cast<long double>(std::numeric_limits<int64_t>::min()) ||
+          rounded >
+              static_cast<long double>(std::numeric_limits<int64_t>::max()))
+        return OBELISK_RT_ARGUMENT_MISMATCH;
+      uint64_t integer =
+          static_cast<uint64_t>(static_cast<int64_t>(rounded));
+      view = LogicView{64, true, &integer, nullptr};
+      return formatInteger(output, view, spec, options);
+    }
     return formatInteger(output, view, spec, options);
   case 'c': {
     if (!getLogicView(argument, view))
