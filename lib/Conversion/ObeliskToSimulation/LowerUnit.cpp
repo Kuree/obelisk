@@ -2543,6 +2543,84 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
     return result;
   }
 
+  if (!element && isa<sim::UnpackedArrayType>(sourceValueType) &&
+      isa<sim::UnpackedArrayType>(*resultType)) {
+    if (lvalue) {
+      unsupported(op) << " (unpacked array slice lvalue)";
+      return failure();
+    }
+    auto range = cast<semantic::SVRangeSelectExpressionOp>(op);
+    auto resultArray = cast<sim::UnpackedArrayType>(*resultType);
+    Value aggregate = *input;
+    if (isa<sim::RefType, sim::ManagedRefType, sim::ArgumentRefType>(
+            aggregate.getType())) {
+      FailureOr<Value> loaded = loadReference(aggregate, location);
+      if (failed(loaded))
+        return failure();
+      aggregate = *loaded;
+    }
+    auto indexType = IntegerType::get(function.getContext(), 65);
+    auto lowerIndex = [&](Operation *index) -> FailureOr<Value> {
+      FailureOr<Value> value = lowerExpression(index);
+      if (failed(value))
+        return failure();
+      FailureOr<Value> scalar =
+          toPackedScalar(*value, getSemanticLocation(index));
+      if (failed(scalar))
+        return failure();
+      return convert(*scalar, indexType, isSignedNode(index),
+                     getSemanticLocation(index));
+    };
+    FailureOr<Value> first = lowerIndex(children[1]);
+    if (failed(first))
+      return failure();
+    Value ascends;
+    if (range.getSelectionKind() == semantic::SVRangeSelectionKind::Simple) {
+      FailureOr<Value> second = lowerIndex(children[2]);
+      if (failed(second))
+        return failure();
+      ascends = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::slt, *first, *second);
+    }
+    SmallVector<Value> elements;
+    unsigned count = sim::getAggregateNumElements(resultArray);
+    elements.reserve(count);
+    for (unsigned ordinal = 0; ordinal < count; ++ordinal) {
+      Value offset = arith::ConstantOp::create(
+          builder, location, indexType,
+          builder.getIntegerAttr(indexType, ordinal));
+      Value above =
+          arith::AddIOp::create(builder, location, *first, offset);
+      Value below =
+          arith::SubIOp::create(builder, location, *first, offset);
+      Value index;
+      switch (range.getSelectionKind()) {
+      case semantic::SVRangeSelectionKind::Simple:
+        index =
+            arith::SelectOp::create(builder, location, ascends, above, below);
+        break;
+      case semantic::SVRangeSelectionKind::IndexedUp:
+        index = above;
+        break;
+      case semantic::SVRangeSelectionKind::IndexedDown:
+        index = below;
+        break;
+      }
+      Type sourceElement =
+          cast<sim::UnpackedArrayType>(sourceValueType).getElementType();
+      Value elementValue = sim::SimArrayDynExtractOp::create(
+          builder, location, sourceElement, aggregate, index);
+      FailureOr<Value> converted =
+          convert(elementValue, resultArray.getElementType(), false, location);
+      if (failed(converted))
+        return failure();
+      elements.push_back(*converted);
+    }
+    return sim::SimAggregateConstructOp::create(builder, location, *resultType,
+                                                elements)
+        .getResult();
+  }
+
   if (element) {
     if (auto array = dyn_cast<sim::AssocArrayType>(sourceValueType)) {
       Value container = *input;
