@@ -8102,6 +8102,24 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     return convertResult(result);
   }
 
+  if (name == "$realtobits") {
+    if (children.size() != 1) {
+      emitError(location) << "$realtobits requires exactly one argument";
+      return failure();
+    }
+    FailureOr<Value> input = lowerExpression(children.front());
+    if (failed(input))
+      return failure();
+    FailureOr<Value> real =
+        convert(*input, builder.getF64Type(), isSignedNode(children.front()),
+                getSemanticLocation(children.front()));
+    if (failed(real))
+      return failure();
+    Value result = arith::BitcastOp::create(
+        builder, location, builder.getI64Type(), *real);
+    return convertResult(result);
+  }
+
   if (name == "$urandom" || name == "$srandom") {
     constexpr size_t maximum = 1;
     size_t minimum = name == "$urandom" ? 0 : 1;
