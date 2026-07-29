@@ -15,7 +15,7 @@
 #include "mlir/Transforms/Passes.h"
 
 #ifdef OBELISK_INCLUDE_TESTS
-#include "StateDomainTestPasses.h"
+#include "AnalysisTestPasses.h"
 #endif
 
 int main(int argc, char **argv) {
@@ -25,6 +25,7 @@ int main(int argc, char **argv) {
   obelisk::registerObeliskConversionPasses();
   obelisk::registerObeliskToSimulationPipeline();
 #ifdef OBELISK_INCLUDE_TESTS
+  obelisk::registerNativeAOTAnalysisTestPass();
   obelisk::registerStateDomainTestPasses();
 #endif
 

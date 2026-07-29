@@ -5,7 +5,7 @@ add_llvm_executable(obelisk-opt
 if(OBELISK_INCLUDE_TESTS)
   add_subdirectory(
     ${PROJECT_SOURCE_DIR}/test/Analysis
-    ${CMAKE_CURRENT_BINARY_DIR}/StateDomainTestPasses
+    ${CMAKE_CURRENT_BINARY_DIR}/AnalysisTestPasses
   )
   target_include_directories(obelisk-opt PRIVATE
     ${PROJECT_SOURCE_DIR}/test/Analysis
@@ -34,7 +34,7 @@ target_link_libraries(obelisk-opt
 )
 
 if(OBELISK_INCLUDE_TESTS)
-  target_link_libraries(obelisk-opt PRIVATE ObeliskStateDomainTestPasses)
+  target_link_libraries(obelisk-opt PRIVATE ObeliskAnalysisTestPasses)
 endif()
 
 mlir_check_all_link_libraries(obelisk-opt)

@@ -1,6 +1,6 @@
 //===- StateDomainTestPass.cpp - Print whole-value state facts -----------===//
 
-#include "StateDomainTestPasses.h"
+#include "AnalysisTestPasses.h"
 
 #include "obelisk/Analysis/StateDomainAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"

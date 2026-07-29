@@ -1,4 +1,5 @@
 add_mlir_library(ObeliskSimulationAnalysis
+  NativeAOTAnalysis.cpp
   NetConnectivityAnalysis.cpp
   SimulationAnalysis.cpp
   StaticSpecializationAnalysis.cpp
@@ -9,6 +10,7 @@ add_mlir_library(ObeliskSimulationAnalysis
 
   LINK_LIBS PUBLIC
   ObeliskSimulationIR
+  MLIRControlFlowDialect
   MLIRControlFlowInterfaces
   MLIRIR
 )

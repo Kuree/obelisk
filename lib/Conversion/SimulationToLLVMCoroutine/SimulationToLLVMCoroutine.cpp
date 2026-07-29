@@ -2,6 +2,7 @@
 
 #include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
 
+#include "obelisk/Analysis/NativeAOTAnalysis.h"
 #include "obelisk/Analysis/NetConnectivityAnalysis.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Analysis/StaticSpecializationAnalysis.h"
@@ -4810,255 +4811,9 @@ struct NativeSchedulePlan {
   std::optional<uint32_t> actorSlot;
 };
 
-struct NativeAOTEligibility {
-  bool eligible = false;
-  bool fullyEligible = false;
-  SmallVector<std::string> reasons;
-  DenseMap<Operation *, uint32_t> actorSlots;
-  DenseMap<Operation *, SmallVector<Block *>> bytecodeFragments;
-};
-
-NativeAOTEligibility analyzeNativeAOTEligibility(ModuleOp module) {
-  NativeAOTEligibility result;
-  bool invalidPlan = false;
-  llvm::SmallDenseSet<Operation *> dynamicActors;
-  llvm::SmallDenseSet<Operation *> bytecodeActors;
-  auto rejectPlan = [&](StringRef reason) {
-    invalidPlan = true;
-    result.reasons.emplace_back(reason);
-  };
-  auto requireBytecodeFragment = [&](Operation *operation, StringRef reason) {
-    result.reasons.emplace_back(reason);
-    auto function = operation->getParentOfType<sim::SimFuncOp>();
-    if (!function || !operation->getBlock())
-      return;
-    auto &fragments = result.bytecodeFragments[function.getOperation()];
-    if (!llvm::is_contained(fragments, operation->getBlock()))
-      fragments.push_back(operation->getBlock());
-  };
-  auto excludeBytecodeActor = [&](Operation *operation) {
-    if (auto function = operation->getParentOfType<sim::SimFuncOp>())
-      bytecodeActors.insert(function.getOperation());
-  };
-  sim::SimDesignOp design;
-  module.walk([&](sim::SimDesignOp candidate) { design = candidate; });
-  if (!design || !design.getComputeGraphAttr()) {
-    rejectPlan("missing compute-graph metadata");
-    return result;
-  }
-  sim::ComputeGraphAttr graph = design.getComputeGraphAttr();
-  if (graph.getVersion() != sim::metadata::schemaVersion)
-    rejectPlan("unsupported compute-graph version");
-  if (graph.getWorkers() != 1)
-    rejectPlan("AOT scheduling requires one worker");
-  ArrayAttr nodes = graph.getNodes();
-  for (auto [index, attribute] : llvm::enumerate(nodes)) {
-    if (auto fragment = dyn_cast<sim::ComputeFragmentAttr>(attribute)) {
-      if (fragment.getId() != index)
-        rejectPlan("compute-fragment IDs do not match the node inventory");
-      sim::SimFuncOp function = design.lookupSymbol<sim::SimFuncOp>(
-          fragment.getFunction().getValue());
-      Block *block =
-          function ? lookupComputeGraphBlock(function, fragment.getBlock())
-                   : nullptr;
-      if (!function || !block)
-        rejectPlan("compute graph references a stale function or block");
-      else if (fragment.getTier() != sim::ComputeTierKind::Native) {
-        result.reasons.emplace_back(
-            "compute graph contains a bytecode-only fragment");
-        auto &fragments = result.bytecodeFragments[function.getOperation()];
-        if (!llvm::is_contained(fragments, block))
-          fragments.push_back(block);
-      }
-    } else if (auto commit = dyn_cast<sim::ComputeNBACommitAttr>(attribute)) {
-      if (commit.getId() != index)
-        rejectPlan("NBA commit IDs do not match the node inventory");
-      if (!commit.getFrontierSites().empty())
-        result.reasons.emplace_back(
-            "NBA site requires DynamicFrontier storage");
-    } else if (auto commit = dyn_cast<sim::ComputeEventCommitAttr>(attribute)) {
-      if (commit.getId() != index)
-        rejectPlan("event commit IDs do not match the node inventory");
-      if (!commit.getSites().empty())
-        result.reasons.emplace_back("deferred events require dynamic storage");
-    } else {
-      rejectPlan("compute graph contains an unknown node kind");
-    }
-  }
-  for (Attribute regionAttribute : graph.getRegions()) {
-    auto region = dyn_cast<sim::ComputeRegionAttr>(regionAttribute);
-    if (!region)
-      continue;
-    for (Attribute groupAttribute : region.getGroups()) {
-      auto group = dyn_cast<sim::ComputeGroupAttr>(groupAttribute);
-      if (!group)
-        continue;
-      StringRef reason;
-      if (group.getSchedule() == sim::ComputeScheduleKind::ControlLoop)
-        reason = "control-loop group requires bytecode scheduling";
-      else if (group.getSchedule() == sim::ComputeScheduleKind::Convergence)
-        reason = "convergence group requires bytecode scheduling";
-      else if (group.getFragments().size() > 1)
-        reason = "multi-member compute group requires bytecode scheduling";
-      else
-        continue;
-      for (int64_t member : group.getFragments().asArrayRef()) {
-        if (member < 0 || static_cast<uint64_t>(member) >= nodes.size())
-          continue;
-        auto fragment = dyn_cast<sim::ComputeFragmentAttr>(nodes[member]);
-        if (!fragment)
-          continue;
-        sim::SimFuncOp function = design.lookupSymbol<sim::SimFuncOp>(
-            fragment.getFunction().getValue());
-        Block *block =
-            function ? lookupComputeGraphBlock(function, fragment.getBlock())
-                     : nullptr;
-        if (block)
-          requireBytecodeFragment(block->getTerminator(), reason);
-      }
-    }
-  }
-
-  DenseMap<StringRef, unsigned> rootSpawnCounts;
-  sim::SimFuncOp root;
-  module.walk([&](sim::SimFuncOp function) {
-    if (function.getEntryKind() == sim::EntryKind::RootInitializer)
-      root = function;
-  });
-  if (!root)
-    rejectPlan("missing root initializer");
-  module.walk([&](sim::SimSpawnOp spawn) {
-    sim::SimFuncOp owner = spawn->getParentOfType<sim::SimFuncOp>();
-    if (!owner || owner != root) {
-      requireBytecodeFragment(spawn, "dynamic spawn multiplicity");
-      if (sim::SimFuncOp target =
-              design.lookupSymbol<sim::SimFuncOp>(spawn.getCallee()))
-        dynamicActors.insert(target.getOperation());
-      return;
-    }
-    if (++rootSpawnCounts[spawn.getCallee()] != 1) {
-      result.reasons.emplace_back("duplicate statically spawned process");
-      if (sim::SimFuncOp target =
-              design.lookupSymbol<sim::SimFuncOp>(spawn.getCallee()))
-        dynamicActors.insert(target.getOperation());
-    }
-  });
-
-  module.walk([&](sim::SimFuncOp function) {
-    if (function.getEntryKind() == sim::EntryKind::Task ||
-        function.getEntryKind() == sim::EntryKind::Fork) {
-      result.reasons.emplace_back("task, await, or join control is present");
-      dynamicActors.insert(function.getOperation());
-    }
-    if (function.getHomeRegion() != sim::EventRegion::Active) {
-      result.reasons.emplace_back(
-          "non-Active process scheduling requires generic ordering");
-      bytecodeActors.insert(function.getOperation());
-    }
-  });
-  std::function<bool(Type)> isManagedType = [&](Type type) {
-    if (isa<sim::StringType, sim::ClassHandleType, sim::DynamicArrayType,
-            sim::QueueType, sim::AssocArrayType, sim::ReferencePathType,
-            sim::ManagedRefType, sim::ArgumentRefType>(type))
-      return true;
-    if (auto ref = dyn_cast<sim::RefType>(type))
-      return isManagedType(ref.getElementType());
-    if (auto array = dyn_cast<sim::UnpackedArrayType>(type))
-      return isManagedType(array.getElementType());
-    if (auto record = dyn_cast<sim::UnpackedStructType>(type))
-      return llvm::any_of(record.getFields(), [&](Attribute field) {
-        return isManagedType(cast<sim::FieldAttr>(field).getType());
-      });
-    if (auto record = dyn_cast<sim::UnpackedUnionType>(type))
-      return llvm::any_of(record.getFields(), [&](Attribute field) {
-        return isManagedType(cast<sim::FieldAttr>(field).getType());
-      });
-    return false;
-  };
-  module.walk([&](Operation *operation) {
-    if (isa<sim::SimStopOp, sim::SimFatalOp>(operation)) {
-      result.reasons.emplace_back(
-          "fatal or stop control requires generic ordering");
-      excludeBytecodeActor(operation);
-    } else if (isa<sim::SimDPICallOp>(operation)) {
-      requireBytecodeFragment(operation, "DPI reentrancy is present");
-      excludeBytecodeActor(operation);
-    } else if (isa<sim::SimOverrideOp, sim::SimReleaseOverrideOp>(operation)) {
-      requireBytecodeFragment(operation, "force/release state is present");
-      excludeBytecodeActor(operation);
-    } else if (isa<sim::SimManagedNBAEnqueueOp,
-                   sim::SimReferencePathNBAEnqueueOp>(operation)) {
-      requireBytecodeFragment(operation,
-                              "managed or automatic NBA destination");
-      excludeBytecodeActor(operation);
-    } else if (isa<sim::SimSuspendEdgeIffOp, sim::SimSuspendLevelOp,
-                   sim::SimSuspendAnyOp, sim::SimSuspendObserveOp>(operation)) {
-      requireBytecodeFragment(operation, "computed or conditional wait");
-      excludeBytecodeActor(operation);
-    } else if (isa<sim::SimSuspendEventOp>(operation)) {
-      requireBytecodeFragment(operation, "event wait requires dynamic state");
-      excludeBytecodeActor(operation);
-    } else if (isa<sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp,
-                   sim::SimSuspendChildrenOp, sim::SimTaskCallOp>(operation)) {
-      requireBytecodeFragment(operation,
-                              "task, await, or join control is present");
-      excludeBytecodeActor(operation);
-    } else if (auto delay = dyn_cast<sim::SimSuspendDelayOp>(operation)) {
-      auto timing = delay.getTimingAttr();
-      if (!timing || timing.getKind() != sim::ComputeTimingKind::Calendar)
-        result.reasons.emplace_back("dynamic deadline");
-    } else if (auto nba = dyn_cast<sim::SimNBAEnqueueOp>(operation)) {
-      auto site = nba->getAttrOfType<sim::NBASiteAttr>("site");
-      if (!site)
-        requireBytecodeFragment(operation, "NBA site metadata is missing");
-      else if (site.getTiming())
-        requireBytecodeFragment(operation, "delayed NBA site");
-      else if (site.getStorage() == sim::ComputeNBAStorageKind::DynamicFrontier)
-        requireBytecodeFragment(operation,
-                                "NBA site requires DynamicFrontier storage");
-      if (!site || site.getTiming() ||
-          site.getStorage() == sim::ComputeNBAStorageKind::DynamicFrontier)
-        excludeBytecodeActor(operation);
-    } else if (isa<sim::SimSuspendChangeOp, sim::SimSuspendEdgeOp>(operation)) {
-      if (!operation->getAttrOfType<sim::ContinuationSiteAttr>("site"))
-        requireBytecodeFragment(operation,
-                                "continuation-site metadata is missing");
-    }
-    if (llvm::any_of(operation->getOperandTypes(), isManagedType) ||
-        llvm::any_of(operation->getResultTypes(), isManagedType)) {
-      requireBytecodeFragment(operation, "managed or string state is present");
-      excludeBytecodeActor(operation);
-    }
-  });
-
-  llvm::sort(result.reasons);
-  result.reasons.erase(
-      std::unique(result.reasons.begin(), result.reasons.end()),
-      result.reasons.end());
-  if (invalidPlan || !root)
-    return result;
-
-  uint32_t slot = 0;
-  if (!dynamicActors.contains(root.getOperation()) &&
-      !bytecodeActors.contains(root.getOperation()))
-    result.actorSlots[root.getOperation()] = slot++;
-  root.walk([&](sim::SimSpawnOp spawn) {
-    sim::SimFuncOp target =
-        design.lookupSymbol<sim::SimFuncOp>(spawn.getCallee());
-    if (!target || dynamicActors.contains(target.getOperation()) ||
-        bytecodeActors.contains(target.getOperation()))
-      return;
-    if (result.actorSlots.try_emplace(target.getOperation(), slot).second)
-      ++slot;
-  });
-  result.eligible = !result.actorSlots.empty();
-  result.fullyEligible = result.eligible && result.reasons.empty();
-  return result;
-}
-
 LogicalResult
 specializeNativeAOTCaptures(ModuleOp module,
-                            const NativeAOTEligibility &eligibility) {
+                            const analysis::NativeAOTAnalysis &eligibility) {
   sim::SimFuncOp root;
   module.walk([&](sim::SimFuncOp function) {
     if (function.getEntryKind() == sim::EntryKind::RootInitializer)
@@ -5073,7 +4828,8 @@ specializeNativeAOTCaptures(ModuleOp module,
     sim::SimFuncOp target =
         design ? design.lookupSymbol<sim::SimFuncOp>(spawn.getCallee())
                : nullptr;
-    if (!target || !eligibility.actorSlots.contains(target.getOperation()))
+    if (!target ||
+        !eligibility.getActorSlots().contains(target.getOperation()))
       return WalkResult::advance();
     Block &entry = target.getBody().front();
     if (spawn.getNumOperands() != entry.getNumArguments()) {
@@ -12517,7 +12273,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   if (auto mode = module->getAttrOfType<sim::NativeSchedulerModeAttr>(
           "obelisk.native_scheduler"))
     nativeScheduler = mode.getValue();
-  NativeAOTEligibility aotEligibility;
+  analysis::NativeAOTAnalysis aotEligibility;
   bool useAOT = false;
   NativeScheduleRanks scheduleRanks;
   DenseMap<Operation *, SmallVector<uint32_t>> aotBytecodeContinuations;
@@ -12940,23 +12696,23 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   if (analyzed.wasInterrupted())
     return failure();
   if (nativeScheduler != sim::NativeSchedulerMode::Generic) {
-    aotEligibility = analyzeNativeAOTEligibility(module);
-    useAOT = aotEligibility.eligible;
+    aotEligibility = analysis::NativeAOTAnalysis::compute(module);
+    useAOT = aotEligibility.isEligible();
     if (nativeScheduler == sim::NativeSchedulerMode::AOT &&
-        !aotEligibility.fullyEligible) {
+        !aotEligibility.isFullyEligible()) {
       InFlightDiagnostic diagnostic =
           module.emitError("design is ineligible for native AOT scheduling: ");
-      if (aotEligibility.reasons.empty())
+      if (aotEligibility.getReasons().empty())
         diagnostic << "no statically schedulable process actors";
       else
-        llvm::interleaveComma(aotEligibility.reasons, diagnostic);
+        llvm::interleaveComma(aotEligibility.getReasons(), diagnostic);
       return failure();
     }
   }
   bool cleanSuperstep = false;
-  if (staticSuperstep && useAOT && aotEligibility.fullyEligible) {
+  if (staticSuperstep && useAOT && aotEligibility.isFullyEligible()) {
     ArrayAttr actors = staticSuperstep.getActors();
-    if (actors.size() != aotEligibility.actorSlots.size())
+    if (actors.size() != aotEligibility.getActorSlots().size())
       return module.emitError(
           "native lowering rejected stale static-superstep actor inventory");
     for (auto [slot, attribute] : llvm::enumerate(actors)) {
@@ -12966,9 +12722,9 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                 : nullptr;
       auto planned =
           function
-              ? aotEligibility.actorSlots.find(function.getOperation())
-              : aotEligibility.actorSlots.end();
-      if (!function || planned == aotEligibility.actorSlots.end() ||
+              ? aotEligibility.getActorSlots().find(function.getOperation())
+              : aotEligibility.getActorSlots().end();
+      if (!function || planned == aotEligibility.getActorSlots().end() ||
           planned->second != slot)
         return module.emitError(
             "native lowering rejected stale static-superstep actor order");
@@ -12988,7 +12744,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   NativeStaticNBAPlan staticNBAPlan;
   NativeStaticFanoutPlan staticFanoutPlan;
   SmallVector<obelisk_rt_static_actor_root> staticActorRoots;
-  if (useAOT && aotEligibility.fullyEligible)
+  if (useAOT && aotEligibility.isFullyEligible())
     module.walk([&](sim::SimDesignOp design) {
       sim::ComputeGraphAttr graph = design.getComputeGraphAttr();
       staticControl = graph != nullptr;
@@ -13040,7 +12796,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   }
   if (staticFanoutMetadata) {
     FailureOr<NativeStaticFanoutPlan> fanout = buildNativeStaticFanoutPlan(
-        module, *stateLayout, aotEligibility.actorSlots, true);
+        module, *stateLayout, aotEligibility.getActorSlots(), true);
     if (failed(fanout))
       return failure();
     staticFanoutPlan = std::move(*fanout);
@@ -13056,7 +12812,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   if (staticSpecialization && useAOT) {
     FailureOr<SmallVector<obelisk_rt_static_actor_root>> dependencies =
         buildNativeStaticActorRootPlan(module, *stateLayout,
-                                       aotEligibility.actorSlots);
+                                       aotEligibility.getActorSlots());
     if (failed(dependencies))
       return failure();
     staticActorRoots = std::move(*dependencies);
@@ -13067,8 +12823,9 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       auto function = dyn_cast_if_present<sim::SimFuncOp>(entry.first);
       if (!function)
         return failure();
-      auto bytecode = aotEligibility.bytecodeFragments.find(entry.first);
-      if (bytecode == aotEligibility.bytecodeFragments.end())
+      auto bytecode =
+          aotEligibility.getBytecodeFragments().find(entry.first);
+      if (bytecode == aotEligibility.getBytecodeFragments().end())
         continue;
       SmallPtrSet<Block *, 8> bytecodeBlocks(bytecode->second.begin(),
                                              bytecode->second.end());
@@ -13108,13 +12865,13 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   if (failed(instrumentManagedRoots(module)))
     return failure();
   bool guardedAOTSpecialization = staticSpecialization && useAOT &&
-                                  aotEligibility.fullyEligible && vpiFull &&
+                                  aotEligibility.isFullyEligible() && vpiFull &&
                                   (directStaticState || staticNBA);
   // AOT dispatch checks the specialization invariant once per actor
   // activation. Apply that proof to every non-bootstrap actor, including
   // delay/clock processes that are not part of a fused compute body.
   if (guardedAOTSpecialization)
-    for (const auto &entry : aotEligibility.actorSlots) {
+    for (const auto &entry : aotEligibility.getActorSlots()) {
       auto function = dyn_cast<sim::SimFuncOp>(entry.first);
       if (!function ||
           function.getEntryKind() == sim::EntryKind::RootInitializer)
@@ -13310,7 +13067,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                                                                 context);
   packedPatterns.add<RefLoadConversion, RefStoreConversion>(
       packedConverter, context, stateLayout->bitCount,
-      staticSpecialization && useAOT && aotEligibility.fullyEligible
+      staticSpecialization && useAOT && aotEligibility.isFullyEligible()
           ? &*stateLayout
           : nullptr);
   packedPatterns
@@ -13557,8 +13314,9 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
               function ? lookupComputeGraphBlock(function, fragment.getBlock())
                        : nullptr;
           auto actor =
-              function ? aotEligibility.actorSlots.find(function.getOperation())
-                       : aotEligibility.actorSlots.end();
+              function
+                  ? aotEligibility.getActorSlots().find(function.getOperation())
+                  : aotEligibility.getActorSlots().end();
           sim::ContinuationSiteAttr site;
           if (block) {
             Operation *terminator = block->getTerminator();
@@ -13575,7 +13333,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
           // before native AOT actor eligibility is known. Hybrid lowering must
           // retain valid bytecode-only fragments without treating them as
           // stale metadata.
-          if (actor == aotEligibility.actorSlots.end())
+          if (actor == aotEligibility.getActorSlots().end())
             continue;
           auto [entry, inserted] = aotFusionGroups.try_emplace(
               std::pair{actor->second, site.getId()}, fusion.getId());
@@ -13601,8 +13359,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     NativeSchedulePlan schedule;
     schedule.initialRank = scheduleRanks.entries.lookup(entry.first);
     if (useAOT) {
-      auto slot = aotEligibility.actorSlots.find(entry.first);
-      if (slot != aotEligibility.actorSlots.end())
+      auto slot = aotEligibility.getActorSlots().find(entry.first);
+      if (slot != aotEligibility.getActorSlots().end())
         schedule.actorSlot = slot->second;
     }
     if (schedule.actorSlot) {
@@ -13645,12 +13403,12 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     for (auto [rank, slot, continuation, fusionGroup] : rankedAOTNodes) {
       (void)rank;
       (void)fusionGroup;
-      if (slot >= aotEligibility.actorSlots.size())
+      if (slot >= aotEligibility.getActorSlots().size())
         return module.emitError("AOT node references an invalid actor slot");
       if (continuation == 0)
         entrySlots.insert(slot);
     }
-    if (entrySlots.size() != aotEligibility.actorSlots.size())
+    if (entrySlots.size() != aotEligibility.getActorSlots().size())
       return module.emitError(
           "AOT node inventory is missing an actor entry continuation");
     llvm::sort(rankedAOTNodes);
@@ -13664,17 +13422,17 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       executableNodes.push_back({slot, continuation, fusionGroup});
     }
     bool rootSlotZero =
-        llvm::any_of(aotEligibility.actorSlots, [](const auto &entry) {
+        llvm::any_of(aotEligibility.getActorSlots(), [](const auto &entry) {
           auto function = dyn_cast_if_present<sim::SimFuncOp>(entry.first);
           return function &&
                  function.getEntryKind() == sim::EntryKind::RootInitializer &&
                  entry.second == 0;
         });
     if (failed(makeNativeAOTPlan(
-            module, aotEligibility.actorSlots.size(), executableNodes,
+            module, aotEligibility.getActorSlots().size(), executableNodes,
             *stateLayout, staticNBAPlan, staticFanoutPlan, staticActorRoots,
             directStaticState, staticNBA, staticControl, staticFanout,
-            cleanSuperstep, aotEligibility.fullyEligible, rootSlotZero)))
+            cleanSuperstep, aotEligibility.isFullyEligible(), rootSlotZero)))
       return failure();
   }
   if (failed(makeSchedulerMain(module, *stateLayout, useAOT)))
