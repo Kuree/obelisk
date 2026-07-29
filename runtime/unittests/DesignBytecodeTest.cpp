@@ -223,6 +223,85 @@ std::vector<uint8_t> makeComparisonBytecode(uint8_t resultKind,
   return bytes;
 }
 
+std::vector<uint8_t> makeInitializationBoundaryBytecode(bool invalidJoin) {
+  constexpr uint64_t registerCount = 66;
+  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+  constexpr size_t layoutOffset = functionOffset + 96;
+  constexpr size_t layoutSize = registerCount * 40;
+  constexpr size_t codeOffset = layoutOffset + layoutSize;
+  const size_t instructionCount = invalidJoin ? 6 : 4;
+  const size_t operandOffset = codeOffset + instructionCount * 32;
+  const size_t operandCount = invalidJoin ? 0 : 3;
+  const size_t constantOffset = operandOffset + operandCount * 8;
+  const size_t continuationOffset = constantOffset + 32;
+  std::vector<uint8_t> bytes(continuationOffset + 24, 0);
+  std::memcpy(bytes.data(), "OBBCDS1\0", 8);
+  put32(bytes, 8, OBELISK_RT_VERSION);
+  put32(bytes, 16, OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE);
+  put64(bytes, 24, bytes.size());
+  put64(bytes, 40, functionOffset);
+  put64(bytes, 48, 1);
+  put64(bytes, 56, layoutOffset);
+  put64(bytes, 64, registerCount);
+  put64(bytes, 72, codeOffset);
+  put64(bytes, 80, instructionCount);
+  put64(bytes, 88, operandOffset);
+  put64(bytes, 96, operandCount);
+  put64(bytes, 104, constantOffset);
+  put64(bytes, 112, 32);
+  put64(bytes, 120, continuationOffset);
+  put64(bytes, 128, 1);
+  put64(bytes, 136, bytes.size());
+  put64(bytes, 152, bytes.size());
+  put64(bytes, 168, bytes.size());
+  put64(bytes, 184, bytes.size());
+
+  put64(bytes, functionOffset, 1);
+  put64(bytes, functionOffset + 16, 0);
+  put64(bytes, functionOffset + 24, instructionCount);
+  put64(bytes, functionOffset + 32, 0);
+  put64(bytes, functionOffset + 40, registerCount);
+  put32(bytes, functionOffset + 48, 1);
+  put32(bytes, functionOffset + 52, invalidJoin ? 0 : 3);
+  put64(bytes, functionOffset + 56, registerCount * 8);
+  put64(bytes, functionOffset + 64, 8);
+  put64(bytes, functionOffset + 72, 0);
+  put64(bytes, functionOffset + 80, 1);
+
+  for (uint64_t index = 0; index != registerCount; ++index) {
+    size_t layout = layoutOffset + index * 40;
+    bytes[layout] = OBELISK_RT_DBREG_BITS;
+    put32(bytes, layout + 4, 1);
+    put64(bytes, layout + 8, index * 8);
+    put64(bytes, layout + 16, 8);
+  }
+
+  if (invalidJoin) {
+    instruction(bytes, codeOffset, 0, OBELISK_RT_DB_CONSTANT, 0, 63);
+    instruction(bytes, codeOffset, 1, OBELISK_RT_DB_BRANCH, 0, 0, 0, 0, 0, 4);
+    instruction(bytes, codeOffset, 2, OBELISK_RT_DB_CONSTANT, 0, 64);
+    instruction(bytes, codeOffset, 3, OBELISK_RT_DB_JUMP, 0, 0, 0, 0, 0, 4);
+    instruction(bytes, codeOffset, 4, OBELISK_RT_DB_MOVE, 0, 65, 64);
+    instruction(bytes, codeOffset, 5, OBELISK_RT_DB_RETURN);
+  } else {
+    instruction(bytes, codeOffset, 0, OBELISK_RT_DB_CONSTANT, 0, 63);
+    instruction(bytes, codeOffset, 1, OBELISK_RT_DB_CONSTANT, 0, 64);
+    instruction(bytes, codeOffset, 2, OBELISK_RT_DB_CONSTANT, 0, 65);
+    instruction(bytes, codeOffset, 3, OBELISK_RT_DB_RETURN, 0, 0, 0, 3);
+    put32(bytes, operandOffset, 1);
+    put32(bytes, operandOffset + 4, 63);
+    put32(bytes, operandOffset + 8, 2);
+    put32(bytes, operandOffset + 12, 64);
+    put32(bytes, operandOffset + 16, 3);
+    put32(bytes, operandOffset + 20, 65);
+  }
+  put32(bytes, continuationOffset, 0);
+  put32(bytes, continuationOffset + 4, 0);
+  put64(bytes, continuationOffset + 8, 0);
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
 std::vector<uint8_t> makeObserverBytecode(uint8_t resultKind) {
   constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
@@ -2632,6 +2711,25 @@ TEST(DesignBytecode, RejectsNonCanonicalTablesAndUncallableFunctions) {
       imageChecksum(overlappingUWireDrivers.bytecode);
   overlappingUWireDrivers.entry = {&overlappingUWireDrivers.execution, 0, 0};
   rejected(overlappingUWireDrivers);
+}
+
+TEST(DesignBytecode, InitializationBitsetsCoverWordBoundariesAndCFGJoins) {
+  auto validate = [](std::vector<uint8_t> bytecode) {
+    Fixture fixture;
+    fixture.bytecode = std::move(bytecode);
+    fixture.execution.bytecode = fixture.bytecode.data();
+    fixture.execution.bytecode_size = fixture.bytecode.size();
+    fixture.execution.checksum = imageChecksum(fixture.bytecode);
+    fixture.entry = {&fixture.execution, 0, 0};
+    uint64_t scratchSize = 0;
+    uint64_t scratchAlignment = 0;
+    return obelisk_rt_validate_design_bytecode(fixture.entry, &scratchSize,
+                                               &scratchAlignment);
+  };
+
+  EXPECT_EQ(validate(makeInitializationBoundaryBytecode(false)), OBELISK_RT_OK);
+  EXPECT_EQ(validate(makeInitializationBoundaryBytecode(true)),
+            OBELISK_RT_INVALID_BYTECODE);
 }
 
 TEST(DesignBytecode, ValidatesComparisonResultDomains) {

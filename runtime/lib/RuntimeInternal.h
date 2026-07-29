@@ -658,6 +658,7 @@ struct obelisk_rt_context {
   std::vector<std::vector<std::pair<uint32_t, uint32_t>>>
       nativeScheduleActorNodes;
   std::vector<uint64_t> nativeScheduleReadyNodes;
+  uint32_t nativeScheduleMinimumActivatedNode = UINT32_MAX;
   std::vector<uint64_t> nativeScheduleDeadlines;
   std::vector<uint32_t> nativeScheduleDeadlineHeap;
   std::vector<uint32_t> nativeScheduleDeadlinePositions;

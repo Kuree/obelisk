@@ -1231,7 +1231,19 @@ bool validIntrinsic(const Image &image, const Function &function,
 bool validateInitialization(const Image &image, const Function &function) {
   const uint64_t begin = function.firstInstruction;
   const uint64_t count = function.instructionCount;
-  using State = std::vector<uint8_t>;
+  const uint64_t registerCount = function.layoutCount;
+  const uint64_t stateWordCount =
+      registerCount / 64 + (registerCount % 64 != 0);
+  if (stateWordCount > std::numeric_limits<size_t>::max())
+    return false;
+  const size_t stateWords = static_cast<size_t>(stateWordCount);
+  using State = std::vector<uint64_t>;
+  auto setInitialized = [&](State &state, uint32_t reg) {
+    if (reg >= registerCount)
+      return false;
+    state[reg / 64] |= uint64_t{1} << (reg % 64);
+    return true;
+  };
   std::vector<std::optional<State>> incoming(static_cast<size_t>(count));
   std::deque<uint64_t> worklist;
   auto merge = [&](uint64_t pc, const State &state) {
@@ -1243,35 +1255,36 @@ bool validateInitialization(const Image &image, const Function &function) {
       target = state;
       changed = true;
     } else {
-      for (uint32_t reg = 0; reg != function.layoutCount; ++reg) {
-        uint8_t next = (*target)[reg] & state[reg];
-        changed |= next != (*target)[reg];
-        (*target)[reg] = next;
+      for (size_t word = 0; word != stateWords; ++word) {
+        uint64_t next = (*target)[word] & state[word];
+        changed |= next != (*target)[word];
+        (*target)[word] = next;
       }
     }
     if (changed)
       worklist.push_back(pc);
     return true;
   };
-  State seed(static_cast<size_t>(function.layoutCount));
+  State seed(stateWords);
   if ((function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0)
-    std::fill(seed.begin(), seed.begin() + function.argumentCount, 1);
+    for (uint32_t argument = 0; argument != function.argumentCount; ++argument)
+      if (!setInitialized(seed, argument))
+        return false;
   for (uint64_t index = 0; index != function.continuationCount; ++index) {
     Continuation entry =
         continuationAt(image, function.firstContinuation + index);
     State entryState = seed;
     if (index != 0 ||
         (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) != 0)
-      std::fill(entryState.begin(), entryState.end(), 0);
+      std::fill(entryState.begin(), entryState.end(), uint64_t{0});
     if (!merge(entry.instruction, entryState))
       return false;
   }
   auto defineMap = [&](State &state, uint64_t first, uint64_t mapCount) {
     for (uint64_t index = 0; index != mapCount; ++index) {
       uint32_t destination = operandAt(image, first + index).first;
-      if (destination >= state.size())
+      if (!setInitialized(state, destination))
         return false;
-      state[destination] = 1;
     }
     return true;
   };
@@ -1281,10 +1294,7 @@ bool validateInitialization(const Image &image, const Function &function) {
     State state = *incoming[static_cast<size_t>(pc - begin)];
     Instruction instruction = instructionAt(image, pc);
     auto defineDestination = [&] {
-      if (instruction.destination >= state.size())
-        return false;
-      state[instruction.destination] = 1;
-      return true;
+      return setInitialized(state, instruction.destination);
     };
     bool fallthrough = true;
     switch (instruction.opcode) {
@@ -1357,9 +1367,8 @@ bool validateInitialization(const Image &image, const Function &function) {
       for (uint32_t index = 0; index != site.outputCount; ++index) {
         uint32_t destination =
             operandAt(image, site.firstOperand + site.inputCount + index).first;
-        if (destination >= state.size())
+        if (!setInitialized(state, destination))
           return false;
-        state[destination] = 1;
       }
       break;
     }
@@ -1379,7 +1388,8 @@ bool validateInitialization(const Image &image, const Function &function) {
     }
   }
   auto initialized = [&](const State &state, uint32_t reg) {
-    return reg < state.size() && state[reg] != 0;
+    return reg < registerCount &&
+           ((state[reg / 64] >> (reg % 64)) & uint64_t{1}) != 0;
   };
   auto mapSourcesInitialized = [&](const State &state, uint64_t first,
                                    uint64_t mapCount) {

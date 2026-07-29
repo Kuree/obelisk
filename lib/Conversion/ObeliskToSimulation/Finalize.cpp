@@ -254,8 +254,20 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
   designManager.addPass(
       createObeliskSimBuildComputeGraphPass(std::move(graphOptions)));
   designManager.addPass(createObeliskSimVerifyComputeGraphPass());
-  if (optLevel > 0)
+  if (optLevel > 0) {
+    ObeliskSimFuseComputeFragmentsPassOptions bodyFusionOptions;
+    bodyFusionOptions.bodyFusion = true;
+    designManager.addPass(
+        createObeliskSimFuseComputeFragmentsPass(std::move(bodyFusionOptions)));
+    designManager.addPass(createObeliskSimMaterializeComputeFusionPass());
+    ObeliskSimBuildComputeGraphPassOptions fusedGraphOptions;
+    fusedGraphOptions.workers = workers;
+    fusedGraphOptions.vpi = vpiMode.str();
+    designManager.addPass(
+        createObeliskSimBuildComputeGraphPass(std::move(fusedGraphOptions)));
+    designManager.addPass(createObeliskSimVerifyComputeGraphPass());
     designManager.addPass(createObeliskSimFuseComputeFragmentsPass());
+  }
   manager.addPass(createObeliskSimFinalizePass());
 }
 

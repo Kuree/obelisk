@@ -186,6 +186,27 @@ def ObeliskSimFuseComputeFragmentsPass
   let dependentDialects = [
     "obelisk::sim::ObeliskSimulationDialect"
   ];
+  let options = [
+    Option<"bodyFusion", "body-fusion", "bool", "false",
+           "Plan candidates for physical process-body fusion instead of AOT dispatch batches">
+  ];
+}
+
+def ObeliskSimMaterializeComputeFusionPass
+    : Pass<"obelisk-sim-materialize-compute-fusion",
+           "obelisk::sim::SimDesignOp"> {
+  let summary = "Fuse proven-adjacent process activations into one body";
+  let description = [{
+    Consumes verified static body-fusion metadata and combines eligible
+    root-created processes with the same direct sensitivity into one simulation
+    function. The pass preserves the graph's deterministic activation order,
+    rewrites root spawn captures, and invalidates the consumed compute graph so
+    it can be rebuilt from the fused executable CFG.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect",
+    "mlir::cf::ControlFlowDialect"
+  ];
 }
 
 def ObeliskSimFinalizePass

@@ -2171,6 +2171,8 @@ bool markNativeAOTActorReadyUnlocked(obelisk_rt_context *context,
   if (node == UINT32_MAX)
     return false;
   context->nativeScheduleReadyNodes[node / 64] |= uint64_t{1} << (node % 64);
+  context->nativeScheduleMinimumActivatedNode =
+      std::min(context->nativeScheduleMinimumActivatedNode, node);
   return true;
 }
 
@@ -7237,12 +7239,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_run_aot_nodes(
         break;
       }
       for (uint32_t wordIndex = 0;
-           wordIndex < context->nativeScheduleReadyNodes.size(); ++wordIndex) {
+           wordIndex <= cursorWord &&
+           wordIndex < context->nativeScheduleReadyNodes.size();
+           ++wordIndex) {
         uint64_t word = context->nativeScheduleReadyNodes[wordIndex];
         if (wordIndex == cursorWord && cursorBit != 0)
           word &= (uint64_t{1} << cursorBit) - 1;
-        else if (wordIndex >= cursorWord)
-          word = 0;
         if (word != 0) {
           readyBeforeCursor = true;
           break;
@@ -7261,9 +7263,14 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_run_aot_nodes(
     }
     if (selectedNode != UINT32_MAX) {
       uint32_t lastNode = selectedNode;
+      bool restartBeforeCursor = false;
       for (;;) {
         const obelisk_rt_native_schedule_node &selected =
             context->nativeScheduleNodes[lastNode];
+        {
+          ContextMutexLock lock(context);
+          context->nativeScheduleMinimumActivatedNode = UINT32_MAX;
+        }
         obelisk_rt_status status = executeAOTNode(context, selected.actor_slot);
         if (status != OBELISK_RT_OK)
           return status;
@@ -7273,7 +7280,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_run_aot_nodes(
         bool fuseNext = false;
         {
           ContextMutexLock lock(context);
-          if (selected.fusion_group != UINT32_MAX &&
+          restartBeforeCursor =
+              context->nativeScheduleMinimumActivatedNode < nextNode;
+          if (!restartBeforeCursor && selected.fusion_group != UINT32_MAX &&
               nextNode < context->nativeScheduleNodes.size()) {
             const obelisk_rt_native_schedule_node &next =
                 context->nativeScheduleNodes[nextNode];
@@ -7287,14 +7296,14 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_run_aot_nodes(
                 context->nativeScheduleActors[next.actor_slot]->continuation ==
                     next.continuation;
             if (fuseNext)
-              context->nativeScheduleReadyNodes[nextNode / 64] &= ~mask;
+              clearNativeAOTNodeReadyUnlocked(context, nextNode);
           }
         }
         if (!fuseNext)
           break;
         lastNode = nextNode;
       }
-      nodeCursor = lastNode + 1;
+      nodeCursor = restartBeforeCursor ? 0 : lastNode + 1;
       continue;
     }
     if (passProgress) {

@@ -1,5 +1,6 @@
 add_mlir_library(ObeliskToSimulation
   BuildComputeGraph.cpp
+  ComputeFusion.cpp
   ComputeGraph.cpp
   EliminateDeadBoundaries.cpp
   EliminateDeadCaptures.cpp
@@ -7,6 +8,7 @@ add_mlir_library(ObeliskToSimulation
   FuseComputeFragments.cpp
   Inline.cpp
   LowerUnit.cpp
+  MaterializeComputeFusion.cpp
   Prepare.cpp
   SCCP.cpp
   SemanticUtils.cpp
