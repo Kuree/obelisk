@@ -3,10 +3,11 @@
 #include "obelisk/Conversion/SimulationToBytecode.h"
 
 #include "obelisk/Analysis/NetConnectivityAnalysis.h"
-#include "obelisk/Analysis/StaticSpecializationAnalysis.h"
+#include "obelisk/Analysis/SimulationScheduleAnalysis.h"
 #include "obelisk/Analysis/StateDomainAnalysis.h"
-#include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
+#include "obelisk/Analysis/StaticSpecializationAnalysis.h"
 #include "obelisk/Conversion/SimulationRuntime.h"
+#include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
 #include "obelisk/Dialect/Runtime/RuntimeTypes.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Runtime/Runtime.h"
@@ -224,23 +225,6 @@ constexpr uint32_t kIntrinsicAssocTraverse =
     OBELISK_RT_INTRINSIC_V1_ASSOC_TRAVERSE;
 constexpr uint32_t kIntrinsicReferencePathAssoc =
     OBELISK_RT_INTRINSIC_V1_REFERENCE_PATH_ASSOC;
-
-bool isObserverCaptureBridge(Block &block) {
-  if (block.getOperations().size() != 1)
-    return false;
-  auto branch = dyn_cast<cf::BranchOp>(block.getTerminator());
-  return branch && branch->hasAttr("obelisk_sim.observer_capture_bridge");
-}
-
-Block *lookupComputeGraphBlock(sim::SimFuncOp function, uint32_t ordinal) {
-  for (Block &block : function.getBody()) {
-    if (isObserverCaptureBridge(block))
-      continue;
-    if (ordinal-- == 0)
-      return &block;
-  }
-  return nullptr;
-}
 
 enum RegisterKind : uint8_t {
   Invalid = OBELISK_RT_DBREG_INVALID,
@@ -1220,56 +1204,17 @@ private:
   }
 
   LogicalResult planScheduleRanks() {
-    uint32_t fallback = 0;
+    FailureOr<analysis::SimulationScheduleAnalysis> schedule =
+        analysis::SimulationScheduleAnalysis::compute(design);
+    if (failed(schedule))
+      return failure();
     for (FunctionPlan &plan : plans) {
-      if (plan.function.getEntryKind() == sim::EntryKind::Function ||
-          plan.function.getEntryKind() == sim::EntryKind::Observer)
-        continue;
-      plan.initialScheduleRank = fallback;
+      if (std::optional<uint32_t> rank =
+              schedule->getEntryRank(plan.function.getOperation()))
+        plan.initialScheduleRank = *rank;
       for (Block &block : plan.function.getBody())
-        plan.blockScheduleRanks[&block] = fallback;
-      if (fallback != UINT32_MAX)
-        ++fallback;
-    }
-
-    sim::ComputeGraphAttr graph = design.getComputeGraphAttr();
-    if (!graph)
-      return success();
-    ArrayAttr nodes = graph.getNodes();
-    uint32_t rank = 0;
-    for (Attribute regionAttribute : graph.getRegions()) {
-      auto region = dyn_cast<sim::ComputeRegionAttr>(regionAttribute);
-      if (!region || (region.getKind() != sim::ComputeRegionKind::Active &&
-                      region.getKind() != sim::ComputeRegionKind::Observed &&
-                      region.getKind() != sim::ComputeRegionKind::Reactive &&
-                      region.getKind() != sim::ComputeRegionKind::Postponed))
-        continue;
-      for (Attribute groupAttribute : region.getGroups()) {
-        auto group = dyn_cast<sim::ComputeGroupAttr>(groupAttribute);
-        if (!group)
-          continue;
-        for (int64_t member : group.getFragments().asArrayRef()) {
-          if (member < 0 || static_cast<uint64_t>(member) >= nodes.size())
-            continue;
-          auto fragment = dyn_cast<sim::ComputeFragmentAttr>(nodes[member]);
-          if (!fragment)
-            continue;
-          auto found = indices.find(fragment.getFunction().getValue());
-          if (found == indices.end())
-            continue;
-          FunctionPlan &plan = plans[found->second];
-          Block *block =
-              lookupComputeGraphBlock(plan.function, fragment.getBlock());
-          if (!block)
-            return plan.function.emitOpError(
-                "compute-graph fragment block is out of range");
-          plan.blockScheduleRanks[block] = rank;
-          if (fragment.getBlock() == 0)
-            plan.initialScheduleRank = rank;
-        }
-        if (rank != UINT32_MAX)
-          ++rank;
-      }
+        if (std::optional<uint32_t> rank = schedule->getBlockRank(&block))
+          plan.blockScheduleRanks[&block] = *rank;
     }
     return success();
   }

@@ -1,5 +1,6 @@
 add_mlir_library(ObeliskAnalysisTestPasses
   NativeAOTAnalysisTestPass.cpp
+  SimulationScheduleAnalysisTestPass.cpp
   StateDomainTestPass.cpp
 
   EXCLUDE_FROM_LIBMLIR

@@ -1,6 +1,7 @@
 add_mlir_library(ObeliskSimulationAnalysis
   NativeAOTAnalysis.cpp
   NetConnectivityAnalysis.cpp
+  SimulationScheduleAnalysis.cpp
   SimulationAnalysis.cpp
   StaticSpecializationAnalysis.cpp
   StateDomainAnalysis.cpp

@@ -6,6 +6,7 @@
 namespace obelisk {
 
 void registerNativeAOTAnalysisTestPass();
+void registerSimulationScheduleAnalysisTestPass();
 void registerStateDomainTestPasses();
 
 } // namespace obelisk

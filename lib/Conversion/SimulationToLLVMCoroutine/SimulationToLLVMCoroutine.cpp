@@ -5,8 +5,9 @@
 #include "obelisk/Analysis/NativeAOTAnalysis.h"
 #include "obelisk/Analysis/NetConnectivityAnalysis.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Analysis/StaticSpecializationAnalysis.h"
+#include "obelisk/Analysis/SimulationScheduleAnalysis.h"
 #include "obelisk/Analysis/StateDomainAnalysis.h"
+#include "obelisk/Analysis/StaticSpecializationAnalysis.h"
 #include "obelisk/Conversion/RuntimeToLLVM.h"
 #include "obelisk/Conversion/SimulationRuntime.h"
 #include "obelisk/Conversion/SimulationToRuntime.h"
@@ -107,23 +108,6 @@ bool isSuspension(Operation *operation) {
       sim::SimSuspendEventOp, sim::SimSuspendForeverOp, sim::SimSuspendAwaitOp,
       sim::SimSuspendJoinOp, sim::SimSuspendChildrenOp,
       sim::SimSuspendObserveOp, sim::SimTaskCallOp>(operation);
-}
-
-bool isObserverCaptureBridge(Block &block) {
-  if (block.getOperations().size() != 1)
-    return false;
-  auto branch = dyn_cast<cf::BranchOp>(block.getTerminator());
-  return branch && branch->hasAttr("obelisk_sim.observer_capture_bridge");
-}
-
-Block *lookupComputeGraphBlock(sim::SimFuncOp function, uint32_t ordinal) {
-  for (Block &block : function.getBody()) {
-    if (isObserverCaptureBridge(block))
-      continue;
-    if (ordinal-- == 0)
-      return &block;
-  }
-  return nullptr;
 }
 
 uint32_t suspensionKind(Operation *operation) {
@@ -4799,11 +4783,6 @@ FailureOr<NativeStateLayout> buildNativeStateLayout(ModuleOp module) {
   return layout;
 }
 
-struct NativeScheduleRanks {
-  DenseMap<Operation *, uint32_t> entries;
-  DenseMap<Block *, uint32_t> blocks;
-};
-
 struct NativeSchedulePlan {
   uint32_t initialRank = UINT32_MAX;
   SmallVector<std::pair<uint32_t, uint32_t>> continuations;
@@ -4876,59 +4855,6 @@ specializeNativeAOTCaptures(ModuleOp module,
     return WalkResult::advance();
   });
   return specialized.wasInterrupted() ? failure() : success();
-}
-
-NativeScheduleRanks buildNativeScheduleRanks(ModuleOp module) {
-  NativeScheduleRanks ranks;
-  uint32_t fallback = 0;
-  module.walk([&](sim::SimFuncOp function) {
-    if (function.getEntryKind() == sim::EntryKind::Function ||
-        function.getEntryKind() == sim::EntryKind::Observer)
-      return;
-    ranks.entries[function.getOperation()] = fallback;
-    for (Block &block : function.getBody())
-      ranks.blocks[&block] = fallback;
-    ++fallback;
-  });
-  sim::SimDesignOp design;
-  module.walk([&](sim::SimDesignOp candidate) { design = candidate; });
-  if (!design || !design.getComputeGraphAttr())
-    return ranks;
-  sim::ComputeGraphAttr graph = design.getComputeGraphAttr();
-  ArrayAttr nodes = graph.getNodes();
-  uint32_t rank = 0;
-  for (Attribute regionAttribute : graph.getRegions()) {
-    auto region = dyn_cast<sim::ComputeRegionAttr>(regionAttribute);
-    if (!region || (region.getKind() != sim::ComputeRegionKind::Active &&
-                    region.getKind() != sim::ComputeRegionKind::Observed &&
-                    region.getKind() != sim::ComputeRegionKind::Reactive &&
-                    region.getKind() != sim::ComputeRegionKind::Postponed))
-      continue;
-    for (Attribute groupAttribute : region.getGroups()) {
-      auto group = dyn_cast<sim::ComputeGroupAttr>(groupAttribute);
-      if (!group)
-        continue;
-      for (int64_t member : group.getFragments().asArrayRef()) {
-        if (member < 0 || static_cast<uint64_t>(member) >= nodes.size())
-          continue;
-        auto fragment = dyn_cast<sim::ComputeFragmentAttr>(nodes[member]);
-        if (!fragment)
-          continue;
-        if (auto function = design.lookupSymbol<sim::SimFuncOp>(
-                fragment.getFunction().getValue())) {
-          Block *block = lookupComputeGraphBlock(function, fragment.getBlock());
-          if (!block)
-            continue;
-          ranks.blocks[block] = rank;
-          if (fragment.getBlock() == 0)
-            ranks.entries[function.getOperation()] = rank;
-        }
-      }
-      if (rank != UINT32_MAX)
-        ++rank;
-    }
-  }
-  return ranks;
 }
 
 LLVM::GlobalOp
@@ -11346,9 +11272,10 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
       continue;
     sim::SimFuncOp function =
         design.lookupSymbol<sim::SimFuncOp>(fragment.getFunction().getValue());
-    Block *block = function
-                       ? lookupComputeGraphBlock(function, fragment.getBlock())
-                       : nullptr;
+    Block *block =
+        function
+            ? analysis::lookupComputeGraphBlock(function, fragment.getBlock())
+            : nullptr;
     auto actor =
         function ? actorSlots.find(function.getOperation()) : actorSlots.end();
     if (!function || !block || actor == actorSlots.end())
@@ -12275,7 +12202,6 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     nativeScheduler = mode.getValue();
   analysis::NativeAOTAnalysis aotEligibility;
   bool useAOT = false;
-  NativeScheduleRanks scheduleRanks;
   DenseMap<Operation *, SmallVector<uint32_t>> aotBytecodeContinuations;
   uint64_t stateBytes = (stateLayout->bitCount + 7) / 8;
   makeStatePlane(module, "__obelisk_state_value", stateBytes, false,
@@ -12817,7 +12743,10 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       return failure();
     staticActorRoots = std::move(*dependencies);
   }
-  scheduleRanks = buildNativeScheduleRanks(module);
+  FailureOr<analysis::SimulationScheduleAnalysis> scheduleRanks =
+      analysis::SimulationScheduleAnalysis::compute(module);
+  if (failed(scheduleRanks))
+    return failure();
   if (useAOT) {
     for (auto &entry : analyses) {
       auto function = dyn_cast_if_present<sim::SimFuncOp>(entry.first);
@@ -13310,9 +13239,9 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                                         ? design.lookupSymbol<sim::SimFuncOp>(
                                               fragment.getFunction().getValue())
                                         : nullptr;
-          Block *block =
-              function ? lookupComputeGraphBlock(function, fragment.getBlock())
-                       : nullptr;
+          Block *block = function ? analysis::lookupComputeGraphBlock(
+                                        function, fragment.getBlock())
+                                  : nullptr;
           auto actor =
               function
                   ? aotEligibility.getActorSlots().find(function.getOperation())
@@ -13357,7 +13286,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     if (!function)
       return failure();
     NativeSchedulePlan schedule;
-    schedule.initialRank = scheduleRanks.entries.lookup(entry.first);
+    schedule.initialRank =
+        scheduleRanks->getEntryRank(entry.first).value_or(0);
     if (useAOT) {
       auto slot = aotEligibility.getActorSlots().find(entry.first);
       if (slot != aotEligibility.getActorSlots().end())
@@ -13370,7 +13300,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     }
     DenseMap<uint32_t, uint32_t> continuationRanks;
     for (const ProcessSuspension &suspension : entry.second->getSuspensions()) {
-      uint32_t rank = scheduleRanks.blocks.lookup(suspension.continuation);
+      uint32_t rank =
+          scheduleRanks->getBlockRank(suspension.continuation).value_or(0);
       auto [rankIt, inserted] =
           continuationRanks.try_emplace(suspension.continuationID, rank);
       if (!inserted && rankIt->second != rank)
@@ -13384,11 +13315,11 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     });
     if (schedule.actorSlot) {
       rankedAOTNodes.emplace_back(
-          scheduleRanks.blocks.lookup(&function.getBody().front()),
+          scheduleRanks->getBlockRank(&function.getBody().front()).value_or(0),
           *schedule.actorSlot, 0, UINT32_MAX);
       for (const ProcessSuspension &suspension : entry.second->getSuspensions())
         rankedAOTNodes.emplace_back(
-            scheduleRanks.blocks.lookup(suspension.continuation),
+            scheduleRanks->getBlockRank(suspension.continuation).value_or(0),
             *schedule.actorSlot, suspension.continuationID,
             fusionGroupFor(*schedule.actorSlot, suspension.continuationID));
     }

@@ -26,6 +26,7 @@ int main(int argc, char **argv) {
   obelisk::registerObeliskToSimulationPipeline();
 #ifdef OBELISK_INCLUDE_TESTS
   obelisk::registerNativeAOTAnalysisTestPass();
+  obelisk::registerSimulationScheduleAnalysisTestPass();
   obelisk::registerStateDomainTestPasses();
 #endif
 

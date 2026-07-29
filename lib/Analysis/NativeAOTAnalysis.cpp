@@ -2,10 +2,9 @@
 
 #include "obelisk/Analysis/NativeAOTAnalysis.h"
 
+#include "obelisk/Analysis/SimulationScheduleAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
-
-#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
@@ -17,23 +16,6 @@ using namespace mlir;
 
 namespace obelisk::analysis {
 namespace {
-
-bool isObserverCaptureBridge(Block &block) {
-  if (block.getOperations().size() != 1)
-    return false;
-  auto branch = dyn_cast<cf::BranchOp>(block.getTerminator());
-  return branch && branch->hasAttr("obelisk_sim.observer_capture_bridge");
-}
-
-Block *lookupComputeGraphBlock(sim::SimFuncOp function, uint32_t ordinal) {
-  for (Block &block : function.getBody()) {
-    if (isObserverCaptureBridge(block))
-      continue;
-    if (ordinal-- == 0)
-      return &block;
-  }
-  return nullptr;
-}
 
 bool isManagedType(Type type) {
   if (isa<sim::StringType, sim::ClassHandleType, sim::DynamicArrayType,
