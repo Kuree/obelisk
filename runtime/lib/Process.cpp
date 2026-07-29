@@ -3382,7 +3382,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
         root.bit_width > UINT64_MAX - 63 ||
         (root.bit_width + 7) / 8 > std::numeric_limits<size_t>::max() ||
         (root.generated_accumulator &&
-         (root.bit_width <= 64 || root.bit_width > 256)))
+         (root.bit_width <= OBELISK_RT_SCALAR_NBA_MAX_BITS ||
+          root.bit_width > OBELISK_RT_GENERATED_NBA_MAX_BITS)))
       return OBELISK_RT_INVALID_ARGUMENT;
     for (uint32_t previous = 0; previous != index; ++previous)
       if (nbaRoots[previous].static_state == root.static_state)
@@ -4248,7 +4249,8 @@ static obelisk_rt_status materializeGeneratedNBAAccumulatorUnlocked(
     return OBELISK_RT_OK;
   std::optional<uint64_t> stageCount = countGeneratedNBAStages(*generated);
   if (!stageCount || generated->exec_region != execRegion ||
-      root.bit_width <= 64 || root.bit_width > 256)
+      root.bit_width <= OBELISK_RT_SCALAR_NBA_MAX_BITS ||
+      root.bit_width > OBELISK_RT_GENERATED_NBA_MAX_BITS)
     return OBELISK_RT_INVALID_DESIGN;
   StaticNBAAccumulator &accumulator = context->staticNBAAccumulators[rootIndex];
   const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;

@@ -1,5 +1,6 @@
 //===- SpecializeStaticStateNBA.cpp - Plan static state/NBA specialization ===//
 
+#include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Conversion/ObeliskToSimulation.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
@@ -41,7 +42,8 @@ void ObeliskSimSpecializeStaticStateNBAPass::runOnOperation() {
         "static specialization requires a verified compute graph");
     return signalPassFailure();
   }
-  if (maxPackedWidth == 0 || maxPackedWidth > 64) {
+  if (maxPackedWidth == 0 ||
+      maxPackedWidth > sim::metadata::maxDirectStaticStateBits) {
     design.emitOpError("max-packed-width must be in the range 1 through 64");
     return signalPassFailure();
   }
@@ -99,18 +101,23 @@ void ObeliskSimSpecializeStaticStateNBAPass::runOnOperation() {
       guardAllRoots = true;
   });
 
-  llvm::SmallDenseSet<uint64_t, 16> eligible;
+  llvm::SmallDenseSet<uint64_t, 16> stateEligible;
+  DenseMap<uint64_t, unsigned> storageRootWidths;
   SmallVector<sim::SimStorageDeclOp> storages;
   for (sim::SimStorageDeclOp storage :
        design.getBody().front().getOps<sim::SimStorageDeclOp>()) {
     storages.push_back(storage);
     std::optional<unsigned> width = sim::getPackedWidth(storage.getType());
+    std::optional<unsigned> storageWidth =
+        analysis::getSimulationStorageBitWidth(storage.getType());
+    if (storageWidth)
+      storageRootWidths.try_emplace(storage.getId(), *storageWidth);
     bool supported = width && *width != 0 && *width <= maxPackedWidth &&
                      !isa<FloatType>(storage.getType());
     if (supported)
-      eligible.insert(storage.getId());
+      stateEligible.insert(storage.getId());
     else if (missedRemarks)
-      storage.emitRemark("static state specialization requires a fixed "
+      storage.emitRemark("direct static state specialization requires a fixed "
                          "packed integer or logic root within the width limit");
   }
 
@@ -124,7 +131,7 @@ void ObeliskSimSpecializeStaticStateNBAPass::runOnOperation() {
     if (effect.getResource() != sim::ComputeResourceKind::Storage ||
         effect.getTarget() != sim::ComputeTargetKind::Descriptor ||
         effect.getDynamic() || effect.getDeferred() ||
-        !eligible.contains(effect.getDescriptor()) ||
+        !storageRootWidths.contains(effect.getDescriptor()) ||
         !commit.getFrontierSites().empty()) {
       if (missedRemarks)
         design.emitRemark("NBA commit root remains on the generic frontier");
@@ -145,17 +152,15 @@ void ObeliskSimSpecializeStaticStateNBAPass::runOnOperation() {
 
   SmallVector<Attribute> roots;
   for (sim::SimStorageDeclOp storage : storages) {
-    std::optional<unsigned> width = sim::getPackedWidth(storage.getType());
-    if (!eligible.contains(storage.getId())) {
-      roots.push_back(sim::StaticStateRootAttr::get(
-          design.getContext(), storage.getId(), width.value_or(0),
-          /*direct=*/false, /*guarded=*/false, /*nba=*/false));
-      continue;
-    }
-    bool guarded = graph.getVpi() == sim::ComputeVPIMode::Full ||
-                   guardAllRoots || overrideRoots.contains(storage.getId());
+    bool stateSpecialized = stateEligible.contains(storage.getId());
+    auto width = storageRootWidths.find(storage.getId());
+    bool guarded = stateSpecialized &&
+                   (graph.getVpi() == sim::ComputeVPIMode::Full ||
+                    guardAllRoots || overrideRoots.contains(storage.getId()));
     roots.push_back(sim::StaticStateRootAttr::get(
-        design.getContext(), storage.getId(), *width, !guarded, guarded,
+        design.getContext(), storage.getId(),
+        width == storageRootWidths.end() ? 0 : width->second,
+        stateSpecialized && !guarded, guarded,
         nbaEligible.contains(storage.getId())));
   }
 
@@ -170,7 +175,7 @@ void ObeliskSimSpecializeStaticStateNBAPass::runOnOperation() {
       if (effect.getResource() != sim::ComputeResourceKind::Storage ||
           effect.getTarget() != sim::ComputeTargetKind::Descriptor ||
           effect.getDynamic() || effect.getDeferred() ||
-          !eligible.contains(effect.getDescriptor()))
+          !stateEligible.contains(effect.getDescriptor()))
         continue;
       Dependency &dependency = dependencies[{
           fragment.getFunction().getValue().str(), effect.getDescriptor()}];
@@ -197,7 +202,7 @@ void ObeliskSimSpecializeStaticStateNBAPass::runOnOperation() {
         dependency.read, dependency.write));
 
   auto plan = sim::StaticSpecializationAttr::get(
-      design.getContext(), 1, maxPackedWidth, graph,
+      design.getContext(), sim::metadata::schemaVersion, maxPackedWidth, graph,
       builder.getArrayAttr(roots), builder.getArrayAttr(actorRoots),
       builder.getDenseI64ArrayAttr(nbaRoots));
   design->setAttr(sim::metadata::staticSpecialization, plan);

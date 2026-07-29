@@ -175,13 +175,15 @@ def ObeliskSimVerifyComputeGraphPass
 def ObeliskSimSpecializeStaticStateNBAPass
     : Pass<"obelisk-sim-specialize-static-state-nba",
            "obelisk::sim::SimDesignOp"> {
-  let summary = "Plan guarded direct static state and generated narrow NBA";
+  let summary = "Plan guarded direct static state and fixed-root NBA";
   let description = [{
     Consumes the final verified compute graph and records a revision-coupled
-    specialization plan for fixed packed roots. Integer and logic roots no
-    wider than the configured limit receive direct or guarded state policy,
-    actor read/write dependencies, and eligible NBA commit order. The pass
-    does not clone or otherwise rewrite executable coroutine bodies.
+    specialization plan for fixed storage roots. Integer and logic roots no
+    wider than the configured limit receive direct or guarded state policy
+    and actor read/write dependencies. Every eligible fixed-storage NBA root
+    receives a canonical commit order independent of the direct-state width
+    policy. The pass does not clone or otherwise rewrite executable coroutine
+    bodies.
   }];
   let dependentDialects = [
     "obelisk::sim::ObeliskSimulationDialect"

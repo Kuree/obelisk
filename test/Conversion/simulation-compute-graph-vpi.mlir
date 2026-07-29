@@ -14,6 +14,7 @@ module {
     obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.vpi.repeats.9000001"
     obelisk_sim.code_unit.decl 9000002 in 0 initial hierarchy "test.vpi.once.9000002"
     obelisk_sim.code_unit.decl 9000003 in 0 initial hierarchy "test.vpi.override.9000003"
+    obelisk_sim.code_unit.decl 9000004 in 0 initial hierarchy "test.vpi.wide.9000004"
     obelisk_sim.scope.decl 0
 
     // VPI capability is a property of the whole compilation, so it reaches
@@ -23,18 +24,18 @@ module {
     // FULL: obelisk_sim.storage.decl 0 {{.*}}observability = 2
     // READ-SPEC: obelisk_sim.static_specialization<version = 1, maxPackedWidth = 64
     // READ-SPEC-SAME: static_state_root<descriptor = 0, width = 8, direct = true, guarded = false, nba = true>
-    // READ-SPEC-SAME: static_state_root<descriptor = 1, width = 65, direct = false, guarded = false, nba = false>
+    // READ-SPEC-SAME: static_state_root<descriptor = 1, width = 256, direct = false, guarded = false, nba = true>
     // READ-SPEC-SAME: static_state_root<descriptor = 2, width = 8, direct = false, guarded = true, nba = false>
     // READ-SPEC-SAME: static_actor_root<function = @once, descriptor = 0, read = false, write = true>
     // READ-SPEC-SAME: static_actor_root<function = @repeats, descriptor = 0, read = false, write = true>
-    // READ-SPEC-SAME: nbaRoots = [0]
+    // READ-SPEC-SAME: nbaRoots = [0, 1]
     // FULL-SPEC: obelisk_sim.static_specialization<version = 1, maxPackedWidth = 64
     // FULL-SPEC-SAME: static_state_root<descriptor = 0, width = 8, direct = false, guarded = true, nba = true>
-    // FULL-SPEC-SAME: static_state_root<descriptor = 1, width = 65, direct = false, guarded = false, nba = false>
+    // FULL-SPEC-SAME: static_state_root<descriptor = 1, width = 256, direct = false, guarded = false, nba = true>
     // FULL-SPEC-SAME: static_state_root<descriptor = 2, width = 8, direct = false, guarded = true, nba = false>
-    // FULL-SPEC-SAME: nbaRoots = [0]
+    // FULL-SPEC-SAME: nbaRoots = [0, 1]
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<8> design
-    obelisk_sim.storage.decl 1 in 0 : !obelisk_sim.logic<65> design
+    obelisk_sim.storage.decl 1 in 0 : !obelisk_sim.unpacked_array<0 : 7 x i32> design
     obelisk_sim.storage.decl 2 in 0 : !obelisk_sim.logic<8> design
 
     obelisk_sim.func @repeats(
@@ -77,6 +78,19 @@ module {
       %value = obelisk_sim.logic.constant 42 : i8, 0 : i8 : !obelisk_sim.logic<8>
       obelisk_sim.override %dst = %value assign false : !obelisk_sim.ref<!obelisk_sim.logic<8>>, !obelisk_sim.logic<8>
       obelisk_sim.release_override %dst assign false : !obelisk_sim.ref<!obelisk_sim.logic<8>>
+      obelisk_sim.return
+    }
+
+    // Wide fixed packed NBA roots participate in the same canonical plan as
+    // narrow direct-state roots. Native lowering may select its generated
+    // accumulator while bytecode consumes the same ordered site inventory.
+    obelisk_sim.func @wide(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %dst: !obelisk_sim.ref<!obelisk_sim.unpacked_array<0 : 7 x i32>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64})
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000004 : i64} {
+      %word = arith.constant 1 : i32
+      %value = obelisk_sim.aggregate.construct %word, %word, %word, %word, %word, %word, %word, %word : (i32, i32, i32, i32, i32, i32, i32, i32) -> !obelisk_sim.unpacked_array<0 : 7 x i32>
+      obelisk_sim.nba.enqueue %value to %dst : (!obelisk_sim.unpacked_array<0 : 7 x i32>, !obelisk_sim.ref<!obelisk_sim.unpacked_array<0 : 7 x i32>>) -> ()
       obelisk_sim.return
     }
   }

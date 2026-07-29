@@ -40,7 +40,7 @@ void ObeliskSimPlanStaticSuperstepPass::runOnOperation() {
     if (reason.empty())
       reason = message.str();
   };
-  if (graph.getVersion() != 1)
+  if (graph.getVersion() != sim::metadata::schemaVersion)
     reject("unsupported compute-graph version");
   if (graph.getWorkers() != 1)
     reject("static supersteps require one worker");
@@ -124,7 +124,7 @@ void ObeliskSimPlanStaticSuperstepPass::runOnOperation() {
   }
   design->setAttr(sim::metadata::staticSuperstep,
                   sim::StaticSuperstepAttr::get(
-                      design.getContext(), 1, graph,
+                      design.getContext(), sim::metadata::schemaVersion, graph,
                       ArrayAttr::get(design.getContext(), actors)));
 }
 

@@ -5,6 +5,7 @@
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 
 #include "llvm/ADT/TypeSwitch.h"
+#include "llvm/Support/MathExtras.h"
 
 #include <algorithm>
 #include <limits>
@@ -111,6 +112,25 @@ void forEachIncoming(Block &block, Callback &&callback) {
 }
 
 } // namespace
+
+std::optional<unsigned> getSimulationStorageBitWidth(Type type) {
+  if (isa<sim::CovergroupHandleType>(type) || sim::isManagedHandleType(type))
+    return 64;
+  if (std::optional<unsigned> packed = sim::getPackedWidth(type))
+    return packed;
+  std::optional<uint64_t> span = sim::getProvenanceSpan(type);
+  if (auto unionType = dyn_cast<sim::UnpackedUnionType>(type);
+      unionType && unionType.getIsTagged() && span) {
+    uint64_t tagBits = llvm::Log2_64_Ceil(
+        static_cast<uint64_t>(sim::getAggregateNumElements(type)) + 1);
+    if (tagBits > std::numeric_limits<uint64_t>::max() - *span)
+      return std::nullopt;
+    *span += tagBits;
+  }
+  if (!span || *span == 0 || *span > std::numeric_limits<unsigned>::max())
+    return std::nullopt;
+  return static_cast<unsigned>(*span);
+}
 
 DescriptorProvenanceMap deriveDescriptorProvenance(sim::SimFuncOp function) {
   DescriptorProvenanceMap provenanceMap;

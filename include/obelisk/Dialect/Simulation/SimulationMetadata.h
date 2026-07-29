@@ -11,7 +11,14 @@
 
 #include "llvm/ADT/StringRef.h"
 
+#include <cstdint>
+
 namespace obelisk::sim::metadata {
+
+/// All transient late-lowering metadata is revision-coupled and uses one
+/// schema. Consumers reject stale IR instead of maintaining parallel readers.
+inline constexpr uint32_t schemaVersion = 1;
+inline constexpr uint32_t maxDirectStaticStateBits = 64;
 
 /// Transient function attribute containing ArgumentBindingAttr,
 /// LocalBindingAttr, and ConstantBindingAttr entries.

@@ -3,8 +3,11 @@
 #include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
 
 #include "obelisk/Analysis/NetConnectivityAnalysis.h"
+#include "obelisk/Analysis/SimulationAnalysis.h"
+#include "obelisk/Analysis/StaticSpecializationAnalysis.h"
 #include "obelisk/Analysis/StateDomainAnalysis.h"
 #include "obelisk/Conversion/RuntimeToLLVM.h"
+#include "obelisk/Conversion/SimulationRuntime.h"
 #include "obelisk/Conversion/SimulationToRuntime.h"
 #include "obelisk/Conversion/SimulationToStandard.h"
 #include "obelisk/Dialect/Runtime/RuntimeOps.h"
@@ -80,30 +83,6 @@ constexpr uint64_t kInstanceContinuationOffset = 56;
 constexpr uint64_t kInstanceStatusOffset = 68;
 constexpr uint64_t kInstanceContextOffset = 72;
 constexpr uint64_t kInstanceActionOffset = 80;
-
-uint32_t executableRegion(sim::EventRegion region) {
-  switch (region) {
-  case sim::EventRegion::Active:
-    return OBELISK_RT_REGION_ACTIVE;
-  case sim::EventRegion::Observed:
-    return OBELISK_RT_REGION_OBSERVED;
-  case sim::EventRegion::Reactive:
-    return OBELISK_RT_REGION_REACTIVE;
-  case sim::EventRegion::Postponed:
-    return OBELISK_RT_REGION_POSTPONED;
-  default:
-    return UINT32_MAX;
-  }
-}
-
-uint32_t resumeActionFlags(Operation *operation) {
-  auto region = operation->getAttrOfType<sim::EventRegionAttr>("resume_region");
-  if (!region)
-    return 0;
-  uint32_t ordinal = executableRegion(region.getValue());
-  return ordinal == UINT32_MAX ? UINT32_MAX
-                               : OBELISK_RT_ACTION_RESUME_REGION(ordinal);
-}
 
 bool alignUp(uint64_t value, uint64_t alignment, uint64_t &result) {
   if (value > std::numeric_limits<uint64_t>::max() - (alignment - 1))
@@ -239,22 +218,7 @@ struct StorageProperties {
 bool containsLogic(Type type);
 
 std::optional<unsigned> nativeStateWidth(Type type) {
-  if (isa<sim::CovergroupHandleType>(type) || sim::isManagedHandleType(type))
-    return 64;
-  if (std::optional<unsigned> packed = sim::getPackedWidth(type))
-    return packed;
-  std::optional<uint64_t> span = sim::getProvenanceSpan(type);
-  if (auto unionType = dyn_cast<sim::UnpackedUnionType>(type);
-      unionType && unionType.getIsTagged() && span) {
-    uint64_t tagBits = llvm::Log2_64_Ceil(
-        static_cast<uint64_t>(sim::getAggregateNumElements(type)) + 1);
-    if (tagBits > std::numeric_limits<uint64_t>::max() - *span)
-      return std::nullopt;
-    *span += tagBits;
-  }
-  if (!span || *span == 0 || *span > std::numeric_limits<unsigned>::max())
-    return std::nullopt;
-  return static_cast<unsigned>(*span);
+  return analysis::getSimulationStorageBitWidth(type);
 }
 
 std::optional<uint64_t> unionPayloadSpan(Type type) {
@@ -2497,7 +2461,7 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
 
   storeAt(builder, location, instance, kInstanceContinuationOffset,
           llvmConstant(builder, location, i32, continuationID), 4);
-  uint32_t actionFlags = resumeActionFlags(operation);
+  uint32_t actionFlags = getRuntimeResumeActionFlags(operation);
   if (actionFlags == UINT32_MAX)
     return operation->emitError("has no executable resume region");
   publishAction(builder, location, instance, 1, kind, continuationID,
@@ -4883,7 +4847,7 @@ NativeAOTEligibility analyzeNativeAOTEligibility(ModuleOp module) {
     return result;
   }
   sim::ComputeGraphAttr graph = design.getComputeGraphAttr();
-  if (graph.getVersion() != 1)
+  if (graph.getVersion() != sim::metadata::schemaVersion)
     rejectPlan("unsupported compute-graph version");
   if (graph.getWorkers() != 1)
     rejectPlan("AOT scheduling requires one worker");
@@ -7257,7 +7221,8 @@ public:
               : StringRef{};
       sim::SimFuncOp function = op->getParentOfType<sim::SimFuncOp>();
       uint32_t homeRegion =
-          function ? executableRegion(function.getHomeRegion()) : UINT32_MAX;
+          function ? getRuntimeEventRegion(function.getHomeRegion())
+                   : UINT32_MAX;
       uint32_t commitRegion = homeRegion == OBELISK_RT_REGION_ACTIVE ||
                                       homeRegion == OBELISK_RT_REGION_REACTIVE
                                   ? homeRegion + 2
@@ -11418,7 +11383,7 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
   }
   if (physicalArgument != entry->getNumArguments())
     return helper.emitError("spawn capture layout has excess arguments");
-  uint32_t homeRegion = executableRegion(function.getHomeRegion());
+  uint32_t homeRegion = getRuntimeEventRegion(function.getHomeRegion());
   if (homeRegion == UINT32_MAX)
     return function.emitOpError("has no executable runtime home region");
   uint32_t scheduleFlags = OBELISK_RT_SCHEDULE_HOME(homeRegion) |
@@ -11523,53 +11488,11 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
 
 FailureOr<NativeStaticNBAPlan>
 buildNativeStaticNBAPlan(ModuleOp module, const NativeStateLayout &stateLayout,
-                         bool enabled, bool allowLegacyWideRoots = false) {
+                         ArrayRef<sim::ComputeNBACommitAttr> orderedCommits,
+                         bool enabled) {
   NativeStaticNBAPlan plan;
   if (!enabled)
     return plan;
-  sim::SimDesignOp design;
-  module.walk([&](sim::SimDesignOp candidate) { design = candidate; });
-  sim::ComputeGraphAttr graph = design ? design.getComputeGraphAttr() : nullptr;
-  if (!graph)
-    return module.emitError("static NBA plan requires a compute graph"),
-           failure();
-  SmallVector<sim::ComputeNBACommitAttr> orderedCommits;
-  llvm::SmallDenseSet<uint32_t> seenCommits;
-  for (Attribute regionAttribute : graph.getRegions()) {
-    auto region = cast<sim::ComputeRegionAttr>(regionAttribute);
-    if (region.getKind() != sim::ComputeRegionKind::NBA)
-      continue;
-    for (Attribute groupAttribute : region.getGroups()) {
-      auto group = cast<sim::ComputeGroupAttr>(groupAttribute);
-      if (group.getSchedule() != sim::ComputeScheduleKind::Acyclic)
-        return module.emitError(
-                   "static NBA plan requires acyclic commit groups"),
-               failure();
-      for (int64_t member : group.getFragments().asArrayRef()) {
-        if (member < 0 ||
-            static_cast<uint64_t>(member) >= graph.getNodes().size())
-          return module.emitError(
-                     "static NBA group references an invalid node"),
-                 failure();
-        auto commit = dyn_cast<sim::ComputeNBACommitAttr>(
-            graph.getNodes()[static_cast<size_t>(member)]);
-        if (!commit)
-          continue;
-        if (!seenCommits.insert(commit.getId()).second)
-          return module.emitError(
-                     "static NBA commit appears in multiple schedule groups"),
-                 failure();
-        orderedCommits.push_back(commit);
-      }
-    }
-  }
-  size_t commitCount = llvm::count_if(graph.getNodes(), [](Attribute node) {
-    return isa<sim::ComputeNBACommitAttr>(node);
-  });
-  if (orderedCommits.size() != commitCount)
-    return module.emitError(
-               "static NBA schedule omits one or more commit nodes"),
-           failure();
   for (sim::ComputeNBACommitAttr commit : orderedCommits) {
     sim::ComputeEffectAttr effect = commit.getEffect();
     if (effect.getResource() != sim::ComputeResourceKind::Storage ||
@@ -11596,15 +11519,15 @@ buildNativeStaticNBAPlan(ModuleOp module, const NativeStateLayout &stateLayout,
       return module.emitError(
                  "static NBA commit root is absent from native state layout"),
              failure();
-    if ((!allowLegacyWideRoots &&
-         (!stateLayout.nbaHandles.contains(decoded.id) || bound->width > 64)) ||
+    if (!stateLayout.nbaHandles.contains(decoded.id) ||
         !commit.getFrontierSites().empty())
       continue;
     uint32_t root = static_cast<uint32_t>(plan.roots.size());
     plan.roots.push_back({commit.getId(), decoded.id,
                           static_cast<uint64_t>(bound->width), nullptr});
     plan.generatedAccumulators.emplace_back();
-    if (allowLegacyWideRoots && bound->width > 64 && bound->width <= 256)
+    if (bound->width > OBELISK_RT_SCALAR_NBA_MAX_BITS &&
+        bound->width <= OBELISK_RT_GENERATED_NBA_MAX_BITS)
       plan.generatedAccumulators.back() =
           ("__obelisk_aot_nba_accumulator_" + Twine(root)).str();
     auto appendSites = [&](DenseI64ArrayAttr ids, uint32_t storage) {
@@ -12531,41 +12454,36 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     return failure();
   sim::StaticSpecializationAttr staticSpecialization;
   sim::StaticSuperstepAttr staticSuperstep;
+  SmallVector<sim::ComputeNBACommitAttr> staticNBACommits;
   sim::SimDesignOp metadataDesign;
   module.walk([&](sim::SimDesignOp design) {
     metadataDesign = design;
-    staticSpecialization = design->getAttrOfType<sim::StaticSpecializationAttr>(
-        sim::metadata::staticSpecialization);
     staticSuperstep = design->getAttrOfType<sim::StaticSuperstepAttr>(
         sim::metadata::staticSuperstep);
   });
   if (staticSuperstep &&
-      (!metadataDesign || staticSuperstep.getVersion() != 1 ||
+      (!metadataDesign ||
        staticSuperstep.getSourceGraph() !=
            metadataDesign.getComputeGraphAttr()))
     return module.emitError(
         "native lowering rejected stale static-superstep metadata");
-  if (staticSpecialization) {
-    if (!metadataDesign || staticSpecialization.getVersion() != 1 ||
-        staticSpecialization.getMaxPackedWidth() == 0 ||
-        staticSpecialization.getMaxPackedWidth() > 64 ||
-        staticSpecialization.getSourceGraph() !=
-            metadataDesign.getComputeGraphAttr())
-      return module.emitError(
-          "native lowering rejected stale static-specialization metadata");
+  if (metadataDesign) {
+    FailureOr<analysis::StaticSpecializationAnalysis> analyzed =
+        analysis::StaticSpecializationAnalysis::compute(metadataDesign);
+    if (failed(analyzed))
+      return failure();
+    staticSpecialization = analyzed->getPlan();
+    llvm::append_range(staticNBACommits, analyzed->getOrderedNBACommits());
     DenseSet<uint64_t> plannedNBARoots;
-    for (Attribute attribute : staticSpecialization.getRoots()) {
-      auto root = dyn_cast<sim::StaticStateRootAttr>(attribute);
-      if (!root)
-        return module.emitError(
-            "native lowering rejected invalid static-specialization root");
+    for (const auto &[descriptor, root] : analyzed->getRoots()) {
       if (!root.getDirect() && !root.getGuarded() && !root.getNba())
         continue;
       if (root.getWidth() == 0 ||
-          root.getWidth() > staticSpecialization.getMaxPackedWidth())
+          ((root.getDirect() || root.getGuarded()) &&
+           root.getWidth() > staticSpecialization.getMaxPackedWidth()))
         return module.emitError(
             "native lowering rejected invalid static-specialization root");
-      auto handle = stateLayout->storage.find(root.getDescriptor());
+      auto handle = stateLayout->storage.find(descriptor);
       if (handle == stateLayout->storage.end())
         return module.emitError(
             "static-specialization root references unknown storage");
@@ -12586,23 +12504,11 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       if (root.getGuarded())
         stateLayout->guardedHandles.insert(decoded.id);
       if (root.getNba()) {
-        if (!plannedNBARoots.insert(root.getDescriptor()).second)
-          return module.emitError(
-              "static-specialization NBA root is duplicated");
+        plannedNBARoots.insert(descriptor);
         stateLayout->nbaHandles.insert(decoded.id);
       }
     }
-    DenseSet<uint64_t> listedNBARoots;
-    for (int64_t descriptor : staticSpecialization.getNbaRoots().asArrayRef()) {
-      if (descriptor < 0 ||
-          !listedNBARoots.insert(static_cast<uint64_t>(descriptor)).second)
-        return module.emitError(
-            "static-specialization NBA root inventory is malformed");
-    }
-    if (listedNBARoots.size() != plannedNBARoots.size() ||
-        !llvm::all_of(listedNBARoots, [&](uint64_t descriptor) {
-          return plannedNBARoots.contains(descriptor);
-        }))
+    if (analyzed->getNBARoots().size() != plannedNBARoots.size())
       return module.emitError(
           "static-specialization NBA root policies disagree with the "
           "ordered inventory");
@@ -13079,7 +12985,6 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   bool vpiFull = false;
   bool directStaticState = false;
   bool staticNBA = false;
-  bool legacyStaticNBA = false;
   NativeStaticNBAPlan staticNBAPlan;
   NativeStaticFanoutPlan staticFanoutPlan;
   SmallVector<obelisk_rt_static_actor_root> staticActorRoots;
@@ -13112,18 +13017,13 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       }
     });
   }
-  // Preserve the pre-specialization wide AOT accumulator whenever exact
-  // fanout metadata is available. Writable VPI schedules use guarded claims:
-  // a clean root keeps the fixed accumulator, while the first dirty or generic
-  // update claims the root's ordered slow path for the rest of the event slot.
-  legacyStaticNBA = staticSpecialization && staticFanoutMetadata;
   // State, NBA, and fanout are independent capabilities. Direct access is
   // selected per operation by resolveDirectStaticStateRange; a wide or
   // otherwise generic root does not prevent an independent narrow root from
   // using generated planes.
-  if (staticNBA || legacyStaticNBA) {
+  if (staticNBA) {
     FailureOr<NativeStaticNBAPlan> plan =
-        buildNativeStaticNBAPlan(module, *stateLayout, true, legacyStaticNBA);
+        buildNativeStaticNBAPlan(module, *stateLayout, staticNBACommits, true);
     if (failed(plan))
       return failure();
     staticNBAPlan = std::move(*plan);

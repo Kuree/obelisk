@@ -3,8 +3,10 @@
 #include "obelisk/Conversion/SimulationToBytecode.h"
 
 #include "obelisk/Analysis/NetConnectivityAnalysis.h"
+#include "obelisk/Analysis/StaticSpecializationAnalysis.h"
 #include "obelisk/Analysis/StateDomainAnalysis.h"
 #include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
+#include "obelisk/Conversion/SimulationRuntime.h"
 #include "obelisk/Dialect/Runtime/RuntimeTypes.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Runtime/Runtime.h"
@@ -57,20 +59,6 @@ constexpr uint32_t kDatabaseProfileRead = OBELISK_RT_DESIGN_PROFILE_READ;
 constexpr uint32_t kDatabaseProfileWrite = OBELISK_RT_DESIGN_PROFILE_WRITE;
 constexpr uint32_t kInvalidRegister = UINT32_MAX;
 
-uint32_t executableRegion(sim::EventRegion region) {
-  switch (region) {
-  case sim::EventRegion::Active:
-    return OBELISK_RT_REGION_ACTIVE;
-  case sim::EventRegion::Observed:
-    return OBELISK_RT_REGION_OBSERVED;
-  case sim::EventRegion::Reactive:
-    return OBELISK_RT_REGION_REACTIVE;
-  case sim::EventRegion::Postponed:
-    return OBELISK_RT_REGION_POSTPONED;
-  default:
-    return UINT32_MAX;
-  }
-}
 constexpr uint32_t kIntrinsicDisplay = OBELISK_RT_INTRINSIC_V1_DISPLAY;
 constexpr uint32_t kIntrinsicFinish = OBELISK_RT_INTRINSIC_V1_FINISH;
 constexpr uint32_t kIntrinsicFatal = OBELISK_RT_INTRINSIC_V1_FATAL;
@@ -242,15 +230,6 @@ bool isObserverCaptureBridge(Block &block) {
     return false;
   auto branch = dyn_cast<cf::BranchOp>(block.getTerminator());
   return branch && branch->hasAttr("obelisk_sim.observer_capture_bridge");
-}
-
-uint32_t resumeActionFlags(Operation *operation) {
-  auto region = operation->getAttrOfType<sim::EventRegionAttr>("resume_region");
-  if (!region)
-    return 0;
-  uint32_t ordinal = executableRegion(region.getValue());
-  return ordinal == UINT32_MAX ? UINT32_MAX
-                               : OBELISK_RT_ACTION_RESUME_REGION(ordinal);
 }
 
 Block *lookupComputeGraphBlock(sim::SimFuncOp function, uint32_t ordinal) {
@@ -884,50 +863,11 @@ public:
 
 private:
   LogicalResult prepareStaticSpecializationSites() {
-    auto specialization = design->getAttrOfType<sim::StaticSpecializationAttr>(
-        sim::metadata::staticSpecialization);
-    if (!specialization)
-      return success();
-    if (specialization.getVersion() != 1 ||
-        specialization.getSourceGraph() != design.getComputeGraphAttr())
-      return design.emitOpError(
-          "bytecode encoding rejected stale static-specialization metadata");
-
-    DenseSet<uint64_t> plannedRoots;
-    for (int64_t descriptor : specialization.getNbaRoots().asArrayRef()) {
-      if (descriptor < 0 ||
-          !plannedRoots.insert(static_cast<uint64_t>(descriptor)).second)
-        return design.emitOpError(
-            "static-specialization NBA root inventory is malformed");
-    }
-    DenseSet<uint64_t> foundRoots;
-    for (Attribute node : specialization.getSourceGraph().getNodes()) {
-      auto commit = dyn_cast<sim::ComputeNBACommitAttr>(node);
-      if (!commit)
-        continue;
-      uint64_t descriptor = commit.getEffect().getDescriptor();
-      if (!plannedRoots.contains(descriptor))
-        continue;
-      if (!commit.getFrontierSites().empty() ||
-          !foundRoots.insert(descriptor).second)
-        return design.emitOpError(
-            "static-specialization NBA root disagrees with its source graph");
-      for (int64_t site : commit.getSlots().asArrayRef()) {
-        if (site < 0 ||
-            !staticNBASites.insert(static_cast<uint64_t>(site)).second)
-          return design.emitOpError(
-              "static-specialization NBA site inventory is malformed");
-      }
-      for (int64_t site : commit.getAccumulatorSites().asArrayRef()) {
-        if (site < 0 ||
-            !staticNBASites.insert(static_cast<uint64_t>(site)).second)
-          return design.emitOpError(
-              "static-specialization NBA site inventory is malformed");
-      }
-    }
-    if (foundRoots.size() != plannedRoots.size())
-      return design.emitOpError(
-          "static-specialization NBA root is absent from its source graph");
+    FailureOr<analysis::StaticSpecializationAnalysis> specialization =
+        analysis::StaticSpecializationAnalysis::compute(design);
+    if (failed(specialization))
+      return failure();
+    staticNBASites = specialization->getNBASites();
     return success();
   }
 
@@ -3830,7 +3770,7 @@ private:
     plan.layouts.push_back(offsetLayout);
     emit({Constant, 0, offsetRegister, 0, 0, 0, 0,
           addConstant(offsetLayout, APInt(64, suspension->waitOffset))});
-    uint32_t actionFlags = resumeActionFlags(operation);
+    uint32_t actionFlags = getRuntimeResumeActionFlags(operation);
     if (actionFlags == UINT32_MAX)
       return operation.emitOpError("has no executable resume region");
     emit({Suspend, OBELISK_RT_SUSPEND_OBSERVER, 0, offsetRegister, 0, 0,
@@ -3928,7 +3868,7 @@ private:
     APInt waitOffset(64, suspension->waitOffset);
     emit({Constant, 0, offsetRegister, 0, 0, 0, 0,
           addConstant(offsetLayout, waitOffset)});
-    uint32_t actionFlags = resumeActionFlags(operation);
+    uint32_t actionFlags = getRuntimeResumeActionFlags(operation);
     if (actionFlags == UINT32_MAX)
       return operation->emitOpError("has no executable resume region");
     emit({Suspend, static_cast<uint16_t>(kind), 0, offsetRegister, 0, 0,
@@ -3999,7 +3939,8 @@ private:
       if (plan.function.getEntryKind() == sim::EntryKind::Final)
         functionFlags |= OBELISK_RT_DESIGN_FUNCTION_FINAL;
       if ((functionFlags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) != 0) {
-        uint32_t homeRegion = executableRegion(plan.function.getHomeRegion());
+        uint32_t homeRegion =
+            getRuntimeEventRegion(plan.function.getHomeRegion());
         if (homeRegion == UINT32_MAX) {
           plan.function.emitOpError("has no executable runtime home region");
           return {};

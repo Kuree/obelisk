@@ -1,6 +1,7 @@
 //===- SimulationDialect.cpp - Executable simulation dialect ------------===//
 
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -574,7 +575,7 @@ LogicalResult
 ComputeGraphAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
                          uint32_t version, ComputeVPIMode vpi, uint32_t workers,
                          ArrayAttr nodes, ArrayAttr edges, ArrayAttr regions) {
-  if (version != 1)
+  if (version != metadata::schemaVersion)
     return emitError() << "unsupported compute-graph version";
   if (workers == 0 || workers > 65535)
     return emitError() << "worker count is outside the lane ID range";
@@ -629,7 +630,8 @@ LogicalResult StaticSpecializationAttr::verify(
     llvm::function_ref<InFlightDiagnostic()> emitError, uint32_t version,
     uint32_t maxPackedWidth, ComputeGraphAttr sourceGraph, ArrayAttr roots,
     ArrayAttr actorRoots, DenseI64ArrayAttr nbaRoots) {
-  if (version != 1 || maxPackedWidth == 0 || maxPackedWidth > 64 ||
+  if (version != metadata::schemaVersion || maxPackedWidth == 0 ||
+      maxPackedWidth > metadata::maxDirectStaticStateBits ||
       !sourceGraph)
     return emitError() << "invalid static-specialization version or width";
   if (!roots || !actorRoots || !nbaRoots)
@@ -644,9 +646,9 @@ LogicalResult StaticSpecializationAttr::verify(
     if (!rootByDescriptor.try_emplace(root.getDescriptor(), root).second)
       return emitError() << "static-specialization root is duplicated";
     if (root.getWidth() > maxPackedWidth &&
-        (root.getDirect() || root.getGuarded() || root.getNba()))
+        (root.getDirect() || root.getGuarded()))
       return emitError()
-             << "static-specialization root exceeds the width policy";
+             << "direct static-specialization root exceeds the width policy";
   }
 
   llvm::SmallDenseSet<std::pair<Attribute, uint64_t>, 16> dependencies;
@@ -686,7 +688,8 @@ LogicalResult StaticSpecializationAttr::verify(
 LogicalResult StaticSuperstepAttr::verify(
     llvm::function_ref<InFlightDiagnostic()> emitError, uint32_t version,
     ComputeGraphAttr sourceGraph, ArrayAttr actors) {
-  if (version != 1 || !sourceGraph || sourceGraph.getWorkers() != 1)
+  if (version != metadata::schemaVersion || !sourceGraph ||
+      sourceGraph.getWorkers() != 1)
     return emitError() << "invalid static-superstep version or worker count";
   if (!actors || actors.empty())
     return emitError() << "static-superstep actor inventory is absent";
@@ -703,7 +706,7 @@ LogicalResult StaticSuperstepAttr::verify(
 LogicalResult
 FragmentABIAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
                         uint32_t version, DenseI64ArrayAttr fragments) {
-  if (version != 1 || !fragments)
+  if (version != metadata::schemaVersion || !fragments)
     return emitError() << "invalid fragment ABI version or inventory";
   llvm::SmallDenseSet<int64_t> ids;
   for (int64_t id : fragments.asArrayRef())

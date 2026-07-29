@@ -37,6 +37,11 @@ struct DescriptorProvenance {
 using DescriptorProvenanceMap =
     llvm::DenseMap<mlir::Value, DescriptorProvenance>;
 
+/// Physical bit width used by the canonical simulation state and process
+/// frame representations. This includes fixed unpacked aggregates and the tag
+/// carried beside an unpacked tagged-union payload.
+std::optional<unsigned> getSimulationStorageBitWidth(mlir::Type type);
+
 /// Derive stable descriptor roots and ranges for all handle-typed values in a
 /// defined simulation function. Driver handles are normalized to their net.
 DescriptorProvenanceMap deriveDescriptorProvenance(sim::SimFuncOp function);

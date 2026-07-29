@@ -1,6 +1,7 @@
 add_mlir_library(ObeliskSimulationAnalysis
   NetConnectivityAnalysis.cpp
   SimulationAnalysis.cpp
+  StaticSpecializationAnalysis.cpp
   StateDomainAnalysis.cpp
 
   DEPENDS

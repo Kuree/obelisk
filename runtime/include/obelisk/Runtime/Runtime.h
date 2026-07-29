@@ -1827,12 +1827,13 @@ enum {
   OBELISK_RT_STATIC_NBA_ROOT_ACCUMULATOR = 1
 };
 
-// Revision-coupled storage emitted into a generated module for fixed packed
-// roots of at most 256 bits. Staging writes this record directly; the runtime
-// consumes it at the NBA barrier and owns validation, force masking, edge
-// computation, fanout, observer notification, snapshot, and deoptimization.
-// Each write-mask run is one aligned 32-bit lane; repeated writes to a lane
-// coalesce in place and therefore incur one barrier-stage operation.
+// Shared scalar and generated-accumulator width policies. Generated staging
+// writes the record below directly; the runtime consumes it at the NBA barrier
+// and owns validation, force masking, edge computation, fanout, observer
+// notification, snapshot, and deoptimization. Each write-mask run is one
+// aligned 32-bit lane; repeated writes to a lane coalesce in place.
+#define OBELISK_RT_SCALAR_NBA_MAX_BITS UINT64_C(64)
+#define OBELISK_RT_GENERATED_NBA_MAX_BITS UINT64_C(256)
 typedef struct obelisk_rt_generated_nba_accumulator_256 {
   uint64_t value[4];
   uint64_t unknown[4];

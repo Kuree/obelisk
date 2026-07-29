@@ -207,7 +207,7 @@ def SimComputeGraphAttr : SimAttr<"ComputeGraph", "graph"> {
 }
 
 def SimStaticStateRootAttr : SimAttr<"StaticStateRoot", "static_state_root"> {
-  let summary = "one fixed packed root selected for static specialization";
+  let summary = "one fixed storage root selected for static specialization";
   let parameters = (ins
     "uint64_t":$descriptor,
     "uint32_t":$width,
@@ -234,7 +234,7 @@ def SimStaticActorRootAttr
 
 def SimStaticSpecializationAttr
     : SimAttr<"StaticSpecialization", "static_specialization"> {
-  let summary = "revision-coupled direct-state and narrow-NBA plan";
+  let summary = "revision-coupled direct-state and fixed-root NBA plan";
   let parameters = (ins
     "uint32_t":$version,
     "uint32_t":$maxPackedWidth,

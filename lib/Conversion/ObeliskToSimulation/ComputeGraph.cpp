@@ -1562,7 +1562,7 @@ FailureOr<ComputeGraphResult> ComputeGraphBuilder::derive() {
         getEffectArrayAttr(builder, info.summary);
     result.fragmentAbis[info.getFunction().getOperation()] =
         sim::FragmentABIAttr::get(
-            design.getContext(), 1,
+            design.getContext(), sim::metadata::schemaVersion,
             builder.getDenseI64ArrayAttr(
                 functionFragments[info.getFunction().getOperation()]));
   }
@@ -1573,7 +1573,8 @@ FailureOr<ComputeGraphResult> ComputeGraphBuilder::derive() {
 
   result.observability = getObservability(options.vpi);
   result.graph = sim::ComputeGraphAttr::get(
-      design.getContext(), 1, options.vpi, options.workers,
+      design.getContext(), sim::metadata::schemaVersion, options.vpi,
+      options.workers,
       builder.getArrayAttr(nodes),
       builder.getArrayAttr(SmallVector<Attribute>(edges.begin(), edges.end())),
       *regions);
