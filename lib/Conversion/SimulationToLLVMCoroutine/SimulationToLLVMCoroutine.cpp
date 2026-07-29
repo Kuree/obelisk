@@ -5295,7 +5295,10 @@ resolveDirectStaticStateRange(Value handle, unsigned width,
   auto bound = llvm::find_if(layout->bounds, [&](const auto &candidate) {
     return candidate.handleID == decoded.id;
   });
-  if (bound == layout->bounds.end() ||
+  // Keep every access to a wide root on the canonical path. Mixing a direct
+  // narrow selection with a generic whole-root access would otherwise require
+  // synchronizing both representations between operations.
+  if (bound == layout->bounds.end() || bound->width > 64 ||
       static_cast<uint64_t>(decoded.offset) > bound->width ||
       width > bound->width - static_cast<uint64_t>(decoded.offset))
     return std::nullopt;
@@ -6537,6 +6540,11 @@ struct NativeStaticNBAPlan {
   SmallVector<obelisk_rt_static_nba_root> roots;
   SmallVector<obelisk_rt_static_nba_site> sites;
   DenseMap<uint64_t, uint32_t> siteRoots;
+};
+
+struct NativeStaticFanoutPlan {
+  SmallVector<obelisk_rt_static_fanout_entry> entries;
+  bool exact = false;
 };
 
 class ImmediateNBAConversion final
@@ -10807,13 +10815,142 @@ buildNativeStaticNBAPlan(ModuleOp module, const NativeStateLayout &stateLayout,
   return plan;
 }
 
+FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
+    ModuleOp module, const NativeStateLayout &stateLayout,
+    const DenseMap<Operation *, uint32_t> &actorSlots, bool enabled) {
+  NativeStaticFanoutPlan plan;
+  plan.exact = enabled;
+  if (!enabled)
+    return plan;
+  sim::SimDesignOp design;
+  module.walk([&](sim::SimDesignOp candidate) { design = candidate; });
+  sim::ComputeGraphAttr graph = design ? design.getComputeGraphAttr() : nullptr;
+  if (!graph)
+    return module.emitError("static fanout plan requires a compute graph"),
+           failure();
+  auto disableExactFanout = [&] {
+    plan.entries.clear();
+    plan.exact = false;
+  };
+  for (Attribute node : graph.getNodes()) {
+    auto fragment = dyn_cast<sim::ComputeFragmentAttr>(node);
+    if (!fragment)
+      continue;
+    SmallVector<sim::ComputeEffectAttr> watches;
+    for (Attribute effectAttribute : fragment.getEffects()) {
+      auto effect = cast<sim::ComputeEffectAttr>(effectAttribute);
+      if (effect.getEffect() == sim::ComputeEffectKind::Watch)
+        watches.push_back(effect);
+    }
+    if (watches.empty())
+      continue;
+    sim::SimFuncOp function =
+        design.lookupSymbol<sim::SimFuncOp>(fragment.getFunction().getValue());
+    Block *block = function
+                       ? lookupComputeGraphBlock(function, fragment.getBlock())
+                       : nullptr;
+    auto actor =
+        function ? actorSlots.find(function.getOperation()) : actorSlots.end();
+    if (!function || !block || actor == actorSlots.end())
+      return module.emitError(
+                 "static fanout references a stale compute fragment"),
+             failure();
+    Operation *terminator = block->getTerminator();
+    sim::ContinuationSiteAttr site;
+    if (auto suspend = dyn_cast<sim::SimSuspendChangeOp>(terminator))
+      site = suspend.getSiteAttr();
+    else if (auto suspend = dyn_cast<sim::SimSuspendEdgeOp>(terminator))
+      site = suspend.getSiteAttr();
+    else {
+      disableExactFanout();
+      continue;
+    }
+    if (!site || site.getId() == 0)
+      return terminator->emitError(
+                 "static fanout suspension has no continuation metadata"),
+             failure();
+    for (sim::ComputeEffectAttr effect : watches) {
+      if (effect.getTarget() != sim::ComputeTargetKind::Descriptor ||
+          effect.getDynamic() || effect.getDeferred() ||
+          (effect.getResource() != sim::ComputeResourceKind::Storage &&
+           effect.getResource() != sim::ComputeResourceKind::Net)) {
+        disableExactFanout();
+        continue;
+      }
+      const auto &handles =
+          effect.getResource() == sim::ComputeResourceKind::Storage
+              ? stateLayout.storage
+              : stateLayout.nets;
+      auto handle = handles.find(effect.getDescriptor());
+      if (handle == handles.end())
+        return terminator->emitError(
+                   "static fanout references an unknown state descriptor"),
+               failure();
+      obelisk_rt_stable_handle_v1 decoded{};
+      if (!obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
+          decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC ||
+          decoded.offset != 0)
+        return terminator->emitError(
+                   "static fanout descriptor has an invalid native root"),
+               failure();
+      auto bound =
+          llvm::find_if(stateLayout.bounds, [&](const auto &candidate) {
+            return candidate.handleID == decoded.id;
+          });
+      if (bound == stateLayout.bounds.end() || effect.getWidth() == 0 ||
+          effect.getLow() > bound->width ||
+          effect.getWidth() > bound->width - effect.getLow())
+        return terminator->emitError("static fanout range is out of bounds"),
+               failure();
+      uint32_t edge;
+      switch (effect.getTrigger()) {
+      case sim::ComputeTriggerKind::Change:
+        edge = OBELISK_RT_WAIT_EDGE_CHANGE;
+        break;
+      case sim::ComputeTriggerKind::Posedge:
+        edge = OBELISK_RT_WAIT_EDGE_POSEDGE;
+        break;
+      case sim::ComputeTriggerKind::Negedge:
+        edge = OBELISK_RT_WAIT_EDGE_NEGEDGE;
+        break;
+      case sim::ComputeTriggerKind::Both:
+        edge = OBELISK_RT_WAIT_EDGE_BOTH;
+        break;
+      default:
+        disableExactFanout();
+        continue;
+      }
+      plan.entries.push_back({decoded.id, actor->second, site.getId(), edge,
+                              effect.getLow(), effect.getWidth()});
+    }
+  }
+  llvm::sort(plan.entries, [](const auto &lhs, const auto &rhs) {
+    return std::tuple{lhs.static_state, lhs.low_bit, lhs.actor_slot,
+                      lhs.continuation} <
+           std::tuple{rhs.static_state, rhs.low_bit, rhs.actor_slot,
+                      rhs.continuation};
+  });
+  if (std::adjacent_find(plan.entries.begin(), plan.entries.end(),
+                         [](const auto &lhs, const auto &rhs) {
+                           return lhs.static_state == rhs.static_state &&
+                                  lhs.actor_slot == rhs.actor_slot &&
+                                  lhs.continuation == rhs.continuation &&
+                                  lhs.edge == rhs.edge &&
+                                  lhs.low_bit == rhs.low_bit &&
+                                  lhs.bit_width == rhs.bit_width;
+                         }) != plan.entries.end())
+    return module.emitError("static fanout entry is duplicated"), failure();
+  return plan;
+}
+
 LogicalResult
 makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
-                  ArrayRef<std::pair<uint32_t, uint32_t>> executableNodes,
+                  ArrayRef<obelisk_rt_native_schedule_node> executableNodes,
                   const NativeStateLayout &stateLayout,
                   const NativeStaticNBAPlan &staticNBAPlan,
-                  bool enableStaticControl, bool fullyStatic,
-                  bool rootSlotZero) {
+                  const NativeStaticFanoutPlan &staticFanoutPlan,
+                  bool enableStaticControl, bool enableStaticFanout,
+                  bool fullyStatic, bool rootSlotZero) {
   if (actorCount == 0 || executableNodes.empty())
     return module.emitError("AOT schedule has no executable actor nodes");
   MLIRContext *context = module.getContext();
@@ -10824,11 +10961,18 @@ makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
   Type i64 = builder.getI64Type();
   ArrayRef<obelisk_rt_static_nba_root> nbaRoots = staticNBAPlan.roots;
   ArrayRef<obelisk_rt_static_nba_site> nbaSites = staticNBAPlan.sites;
+  ArrayRef<obelisk_rt_static_fanout_entry> fanoutEntries =
+      staticFanoutPlan.exact
+          ? ArrayRef<obelisk_rt_static_fanout_entry>(staticFanoutPlan.entries)
+          : ArrayRef<obelisk_rt_static_fanout_entry>{};
   sim::SimDesignOp design;
   module.walk([&](sim::SimDesignOp candidate) { design = candidate; });
   sim::ComputeGraphAttr graph = design ? design.getComputeGraphAttr() : nullptr;
   bool staticControlEnabled = enableStaticControl && fullyStatic && graph &&
                               graph.getVpi() == sim::ComputeVPIMode::Off;
+  bool staticFanoutEnabled = enableStaticFanout && staticFanoutPlan.exact &&
+                             fullyStatic && graph &&
+                             graph.getVpi() == sim::ComputeVPIMode::Off;
   uint64_t graphLayoutChecksum = 0;
   if (auto image =
           module->getAttrOfType<DenseI8ArrayAttr>("obelisk.bytecode.image")) {
@@ -10844,6 +10988,7 @@ makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
   constexpr StringLiteral nodesName = "__obelisk_aot_schedule_nodes_v1";
   constexpr StringLiteral nbaRootsName = "__obelisk_aot_nba_roots_v1";
   constexpr StringLiteral nbaSitesName = "__obelisk_aot_nba_sites_v1";
+  constexpr StringLiteral fanoutName = "__obelisk_aot_static_fanout_v1";
   constexpr StringLiteral bindName = "__obelisk_aot_schedule_bind_v1";
   constexpr StringLiteral runName = "__obelisk_aot_schedule_run_v1";
   constexpr StringLiteral snapshotName = "__obelisk_aot_schedule_snapshot_v1";
@@ -10859,7 +11004,7 @@ makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
   LLVM::ReturnOp::create(builder, location,
                          LLVM::ZeroOp::create(builder, location, stateType));
 
-  Type nodeType = LLVM::LLVMStructType::getLiteral(context, {i32, i32});
+  Type nodeType = LLVM::LLVMStructType::getLiteral(context, {i32, i32, i32});
   Type nodesType = LLVM::LLVMArrayType::get(nodeType, executableNodes.size());
   makeConstantGlobal(
       module, location, nodesType, nodesName, LLVM::Linkage::Internal, 4,
@@ -10871,10 +11016,16 @@ makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
               LLVM::ZeroOp::create(initializerBuilder, location, nodeType);
           value = insertValue(
               initializerBuilder, location, value,
-              llvmConstant(initializerBuilder, location, i32, node.first), 0);
-          value = insertValue(
-              initializerBuilder, location, value,
-              llvmConstant(initializerBuilder, location, i32, node.second), 1);
+              llvmConstant(initializerBuilder, location, i32, node.actor_slot),
+              0);
+          value = insertValue(initializerBuilder, location, value,
+                              llvmConstant(initializerBuilder, location, i32,
+                                           node.continuation),
+                              1);
+          value = insertValue(initializerBuilder, location, value,
+                              llvmConstant(initializerBuilder, location, i32,
+                                           node.fusion_group),
+                              2);
           nodes = LLVM::InsertValueOp::create(
               initializerBuilder, location, nodes, value,
               ArrayRef<int64_t>{static_cast<int64_t>(index)});
@@ -10940,6 +11091,49 @@ makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
           return sites;
         });
   }
+  Type fanoutType =
+      LLVM::LLVMStructType::getLiteral(context, {i32, i32, i32, i32, i64, i64});
+  if (!fanoutEntries.empty()) {
+    Type entriesType =
+        LLVM::LLVMArrayType::get(fanoutType, fanoutEntries.size());
+    makeConstantGlobal(
+        module, location, entriesType, fanoutName, LLVM::Linkage::Internal, 8,
+        [&](OpBuilder &initializerBuilder) {
+          Value entries =
+              LLVM::ZeroOp::create(initializerBuilder, location, entriesType);
+          for (auto [index, entry] : llvm::enumerate(fanoutEntries)) {
+            Value value =
+                LLVM::ZeroOp::create(initializerBuilder, location, fanoutType);
+            value = insertValue(initializerBuilder, location, value,
+                                llvmConstant(initializerBuilder, location, i32,
+                                             entry.static_state),
+                                0);
+            value = insertValue(initializerBuilder, location, value,
+                                llvmConstant(initializerBuilder, location, i32,
+                                             entry.actor_slot),
+                                1);
+            value = insertValue(initializerBuilder, location, value,
+                                llvmConstant(initializerBuilder, location, i32,
+                                             entry.continuation),
+                                2);
+            value = insertValue(
+                initializerBuilder, location, value,
+                llvmConstant(initializerBuilder, location, i32, entry.edge), 3);
+            value = insertValue(
+                initializerBuilder, location, value,
+                llvmConstant(initializerBuilder, location, i64, entry.low_bit),
+                4);
+            value = insertValue(initializerBuilder, location, value,
+                                llvmConstant(initializerBuilder, location, i64,
+                                             entry.bit_width),
+                                5);
+            entries = LLVM::InsertValueOp::create(
+                initializerBuilder, location, entries, value,
+                ArrayRef<int64_t>{static_cast<int64_t>(index)});
+          }
+          return entries;
+        });
+  }
 
   builder.setInsertionPointToEnd(module.getBody());
   auto bind = LLVM::LLVMFuncOp::create(
@@ -10995,8 +11189,9 @@ makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
   LLVM::ReturnOp::create(builder, location, snapshotStatus);
 
   auto planType = LLVM::LLVMStructType::getLiteral(
-      context, {i32, i64, pointer, i64, i32, i32, pointer, pointer, i64,
-                pointer, pointer, pointer, pointer, i32, i32, pointer, i64});
+      context,
+      {i32, i64, pointer, i64, i32, i32, pointer, pointer, i64, pointer,
+       pointer, pointer, pointer, i32, i32, pointer, i64, pointer, i64});
   makeConstantGlobal(
       module, location, planType, planName, LLVM::Linkage::Internal, 8,
       [&](OpBuilder &initializerBuilder) {
@@ -11032,6 +11227,9 @@ makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
                                   : 0) |
                     (staticControlEnabled
                          ? OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL
+                         : 0) |
+                    (staticFanoutEnabled
+                         ? OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT
                          : 0)),
             5);
         value = insertValue(initializerBuilder, location, value,
@@ -11087,10 +11285,23 @@ makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
                       .getResult();
         value =
             insertValue(initializerBuilder, location, value, sitesAddress, 15);
-        return insertValue(
+        value = insertValue(
             initializerBuilder, location, value,
             llvmConstant(initializerBuilder, location, i64, nbaSites.size()),
             16);
+        Value fanoutAddress =
+            fanoutEntries.empty()
+                ? LLVM::ZeroOp::create(initializerBuilder, location, pointer)
+                      .getResult()
+                : LLVM::AddressOfOp::create(initializerBuilder, location,
+                                            pointer, fanoutName)
+                      .getResult();
+        value =
+            insertValue(initializerBuilder, location, value, fanoutAddress, 17);
+        return insertValue(initializerBuilder, location, value,
+                           llvmConstant(initializerBuilder, location, i64,
+                                        fanoutEntries.size()),
+                           18);
       });
   if (fullyStatic)
     getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_run_aot_nodes",
@@ -11777,31 +11988,40 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   }
   if (useAOT && failed(specializeNativeAOTCaptures(module, aotEligibility)))
     return failure();
+  bool staticFanout = false;
   bool directStaticState = false;
   NativeStaticNBAPlan staticNBAPlan;
+  NativeStaticFanoutPlan staticFanoutPlan;
   if (useAOT && aotEligibility.fullyEligible)
     module.walk([&](sim::SimDesignOp design) {
       sim::ComputeGraphAttr graph = design.getComputeGraphAttr();
-      directStaticState = graph && graph.getVpi() == sim::ComputeVPIMode::Off;
+      staticFanout = graph && graph.getVpi() == sim::ComputeVPIMode::Off;
     });
-  if (directStaticState) {
-    directStaticState =
-        llvm::all_of(stateLayout->bounds,
-                     [](const auto &bound) { return bound.width <= 64; });
+  if (staticFanout) {
     module.walk([&](Operation *operation) {
       if (llvm::any_of(operation->getOperandTypes(),
                        [](Type type) { return isa<FloatType>(type); }) ||
           llvm::any_of(operation->getResultTypes(),
                        [](Type type) { return isa<FloatType>(type); }))
-        directStaticState = false;
+        staticFanout = false;
     });
   }
-  if (directStaticState) {
+  // Direct access is selected per operation by resolveDirectStaticStateRange,
+  // so a wide root does not prevent independent narrow roots from using the
+  // generated planes.
+  directStaticState = staticFanout;
+  if (staticFanout) {
     FailureOr<NativeStaticNBAPlan> plan =
         buildNativeStaticNBAPlan(module, *stateLayout, true);
     if (failed(plan))
       return failure();
     staticNBAPlan = std::move(*plan);
+    FailureOr<NativeStaticFanoutPlan> fanout = buildNativeStaticFanoutPlan(
+        module, *stateLayout, aotEligibility.actorSlots, true);
+    if (failed(fanout))
+      return failure();
+    staticFanoutPlan = std::move(*fanout);
+    staticFanout &= staticFanoutPlan.exact;
   }
   scheduleRanks = buildNativeScheduleRanks(module);
   if (useAOT) {
@@ -12244,7 +12464,75 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   if (failed(validateRuntimeToLLVMPreconditions(module, dataLayout)))
     return failure();
 
-  SmallVector<std::tuple<uint32_t, uint32_t, uint32_t>> rankedAOTNodes;
+  DenseMap<std::pair<uint32_t, uint32_t>, uint32_t> aotFusionGroups;
+  if (useAOT) {
+    sim::SimDesignOp design;
+    module.walk([&](sim::SimDesignOp candidate) { design = candidate; });
+    ArrayAttr fusions =
+        design ? design->getAttrOfType<ArrayAttr>(sim::metadata::staticFusion)
+               : ArrayAttr{};
+    sim::ComputeGraphAttr graph =
+        design ? design.getComputeGraphAttr() : nullptr;
+    if (fusions && graph) {
+      for (Attribute fusionAttribute : fusions) {
+        auto fusion = dyn_cast<sim::ComputeFusionAttr>(fusionAttribute);
+        if (!fusion)
+          return design.emitOpError("has malformed static fusion metadata"),
+                 failure();
+        for (int64_t fragmentIndex : fusion.getFragments().asArrayRef()) {
+          if (fragmentIndex < 0 ||
+              static_cast<uint64_t>(fragmentIndex) >= graph.getNodes().size())
+            return design.emitOpError(
+                       "static fusion references an invalid compute fragment"),
+                   failure();
+          auto fragment = dyn_cast<sim::ComputeFragmentAttr>(
+              graph.getNodes()[static_cast<size_t>(fragmentIndex)]);
+          sim::SimFuncOp function = fragment
+                                        ? design.lookupSymbol<sim::SimFuncOp>(
+                                              fragment.getFunction().getValue())
+                                        : nullptr;
+          Block *block =
+              function ? lookupComputeGraphBlock(function, fragment.getBlock())
+                       : nullptr;
+          auto actor =
+              function ? aotEligibility.actorSlots.find(function.getOperation())
+                       : aotEligibility.actorSlots.end();
+          sim::ContinuationSiteAttr site;
+          if (block) {
+            Operation *terminator = block->getTerminator();
+            if (auto suspend = dyn_cast<sim::SimSuspendChangeOp>(terminator))
+              site = suspend.getSiteAttr();
+            else if (auto suspend =
+                         dyn_cast<sim::SimSuspendEdgeOp>(terminator))
+              site = suspend.getSiteAttr();
+          }
+          if (!fragment || !block || !site)
+            return design.emitOpError(
+                       "static fusion references a stale AOT continuation"),
+                   failure();
+          // Fusion metadata describes graph-level opportunities and is built
+          // before native AOT actor eligibility is known. Hybrid lowering must
+          // retain valid bytecode-only fragments without treating them as
+          // stale metadata.
+          if (actor == aotEligibility.actorSlots.end())
+            continue;
+          auto [entry, inserted] = aotFusionGroups.try_emplace(
+              std::pair{actor->second, site.getId()}, fusion.getId());
+          if (!inserted && entry->second != fusion.getId())
+            return design.emitOpError(
+                       "AOT continuation appears in multiple fusion groups"),
+                   failure();
+        }
+      }
+    }
+  }
+  auto fusionGroupFor = [&](uint32_t slot, uint32_t continuation) {
+    auto found = aotFusionGroups.find({slot, continuation});
+    return found == aotFusionGroups.end() ? UINT32_MAX : found->second;
+  };
+
+  SmallVector<std::tuple<uint32_t, uint32_t, uint32_t, uint32_t>>
+      rankedAOTNodes;
   for (auto &entry : analyses) {
     auto function = dyn_cast_if_present<sim::SimFuncOp>(entry.first);
     if (!function)
@@ -12278,11 +12566,12 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     if (schedule.actorSlot) {
       rankedAOTNodes.emplace_back(
           scheduleRanks.blocks.lookup(&function.getBody().front()),
-          *schedule.actorSlot, 0);
+          *schedule.actorSlot, 0, UINT32_MAX);
       for (const ProcessSuspension &suspension : entry.second->getSuspensions())
         rankedAOTNodes.emplace_back(
             scheduleRanks.blocks.lookup(suspension.continuation),
-            *schedule.actorSlot, suspension.continuationID);
+            *schedule.actorSlot, suspension.continuationID,
+            fusionGroupFor(*schedule.actorSlot, suspension.continuationID));
     }
     if (failed(makeProcessActivationHelper(module, function, *entry.second)))
       return failure();
@@ -12292,8 +12581,9 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   }
   if (useAOT) {
     llvm::SmallDenseSet<uint32_t, 16> entrySlots;
-    for (auto [rank, slot, continuation] : rankedAOTNodes) {
+    for (auto [rank, slot, continuation, fusionGroup] : rankedAOTNodes) {
       (void)rank;
+      (void)fusionGroup;
       if (slot >= aotEligibility.actorSlots.size())
         return module.emitError("AOT node references an invalid actor slot");
       if (continuation == 0)
@@ -12306,11 +12596,11 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     rankedAOTNodes.erase(
         std::unique(rankedAOTNodes.begin(), rankedAOTNodes.end()),
         rankedAOTNodes.end());
-    SmallVector<std::pair<uint32_t, uint32_t>> executableNodes;
+    SmallVector<obelisk_rt_native_schedule_node> executableNodes;
     executableNodes.reserve(rankedAOTNodes.size());
-    for (auto [rank, slot, continuation] : rankedAOTNodes) {
+    for (auto [rank, slot, continuation, fusionGroup] : rankedAOTNodes) {
       (void)rank;
-      executableNodes.emplace_back(slot, continuation);
+      executableNodes.push_back({slot, continuation, fusionGroup});
     }
     bool rootSlotZero =
         llvm::any_of(aotEligibility.actorSlots, [](const auto &entry) {
@@ -12321,7 +12611,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
         });
     if (failed(makeNativeAOTPlan(module, aotEligibility.actorSlots.size(),
                                  executableNodes, *stateLayout, staticNBAPlan,
-                                 directStaticState,
+                                 staticFanoutPlan, staticFanout, staticFanout,
                                  aotEligibility.fullyEligible, rootSlotZero)))
       return failure();
   }

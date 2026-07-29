@@ -547,6 +547,20 @@ ComputeGroupAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
 }
 
 LogicalResult
+ComputeFusionAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                          uint32_t id, DenseI64ArrayAttr fragments) {
+  (void)id;
+  if (!fragments || fragments.size() < 2)
+    return emitError() << "compute fusion requires at least two fragments";
+  llvm::SmallDenseSet<int64_t> unique;
+  for (int64_t fragment : fragments.asArrayRef())
+    if (fragment < 0 || !unique.insert(fragment).second)
+      return emitError()
+             << "compute fusion has an invalid or duplicate fragment";
+  return success();
+}
+
+LogicalResult
 ComputeRegionAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
                           ComputeRegionKind kind, ArrayAttr groups) {
   if (!groups || llvm::any_of(groups, [](Attribute attr) {

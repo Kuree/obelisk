@@ -1758,6 +1758,9 @@ void obelisk_rt_v1_vpi_shutdown(obelisk_rt_context *context);
 // The generated plan has no external event source and may advance constant
 // deadlines and static NBA barriers without entering the generic scheduler.
 #define OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL UINT32_C(4)
+// Direct packed transitions may use compiler-proven static sensitivity fanout
+// without allocating generic signal subscriptions.
+#define OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT UINT32_C(8)
 
 typedef struct obelisk_rt_aot_deopt_actor {
   uint32_t slot;
@@ -1795,6 +1798,7 @@ typedef struct obelisk_rt_aot_deopt_snapshot {
 typedef struct obelisk_rt_native_schedule_node {
   uint32_t actor_slot;
   uint32_t continuation;
+  uint32_t fusion_group;
 } obelisk_rt_native_schedule_node;
 
 typedef uint32_t obelisk_rt_static_nba_storage;
@@ -1814,6 +1818,15 @@ typedef struct obelisk_rt_static_nba_site {
   uint32_t root;
   obelisk_rt_static_nba_storage storage;
 } obelisk_rt_static_nba_site;
+
+typedef struct obelisk_rt_static_fanout_entry {
+  uint32_t static_state;
+  uint32_t actor_slot;
+  uint32_t continuation;
+  obelisk_rt_wait_edge_kind edge;
+  uint64_t low_bit;
+  uint64_t bit_width;
+} obelisk_rt_static_fanout_entry;
 
 typedef obelisk_rt_status (*obelisk_rt_native_schedule_bind)(
     void *mutable_state, obelisk_rt_context *context, uint32_t actor_slot,
@@ -1846,6 +1859,8 @@ typedef struct obelisk_rt_native_schedule_plan {
   uint32_t nba_reserved;
   const obelisk_rt_static_nba_site *nba_sites;
   uint64_t nba_site_count;
+  const obelisk_rt_static_fanout_entry *fanout_entries;
+  uint64_t fanout_entry_count;
 } obelisk_rt_native_schedule_plan;
 
 // Serial generated-simulator scheduler. The scheduler owns an instance after

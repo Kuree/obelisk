@@ -254,6 +254,8 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
   designManager.addPass(
       createObeliskSimBuildComputeGraphPass(std::move(graphOptions)));
   designManager.addPass(createObeliskSimVerifyComputeGraphPass());
+  if (optLevel > 0)
+    designManager.addPass(createObeliskSimFuseComputeFragmentsPass());
   manager.addPass(createObeliskSimFinalizePass());
 }
 

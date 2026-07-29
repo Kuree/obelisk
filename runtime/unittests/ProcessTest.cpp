@@ -193,6 +193,7 @@ uint32_t schedulerWaitEdge;
 uint64_t schedulerWaitHandle;
 uint32_t schedulerWaitWidth;
 uint64_t schedulerWaitOffset;
+uint64_t schedulerWaitDelay;
 unsigned schedulerResumeCount;
 std::vector<uint64_t> schedulerOrder;
 
@@ -289,7 +290,8 @@ obelisk_rt_status schedulerExecute(obelisk_rt_process_instance_v1 *instance) {
       static_cast<uint8_t *>(instance->frame) + schedulerWaitOffset);
   auto *entry = reinterpret_cast<obelisk_rt_wait_entry_v1 *>(wait + 1);
   if (schedulerWaitKind == OBELISK_RT_SUSPEND_DELAY) {
-    *wait = {OBELISK_RT_VERSION, schedulerWaitKind, 0, 0, 17, 0};
+    *wait = {OBELISK_RT_VERSION, schedulerWaitKind, 0, 0, schedulerWaitDelay,
+             0};
   } else {
     *wait = {OBELISK_RT_VERSION, schedulerWaitKind, 0, 1, 0, 0};
     *entry = {schedulerWaitHandle, schedulerWaitEdge,
@@ -445,6 +447,7 @@ struct SchedulerFixture {
 
   explicit SchedulerFixture(uint64_t id) {
     schedulerWaitOffset = 0;
+    schedulerWaitDelay = 17;
     layout = {OBELISK_RT_VERSION,
               0,
               96,
@@ -1167,6 +1170,176 @@ TEST(Scheduler, AOTNodesValidateInventoryAndExecuteExactActor) {
   EXPECT_EQ(context->signalDiagnostics.aotNodeExecutions, 1u);
   EXPECT_EQ(context->signalDiagnostics.candidateScans, 0u);
   EXPECT_EQ(state.actors[0], nullptr);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, AOTFusedReadyNodesRetainStaticNodeOrder) {
+  AOTTestState state;
+  obelisk_rt_native_schedule_plan plan = makeAOTPlan(state);
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+
+  SchedulerFixture first(100);
+  SchedulerFixture second(200);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add_aot(
+                context, makeSchedulerInstance(first), 0, 0, 0, nullptr,
+                nullptr, 0, nullptr, 0),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add_aot(
+                context, makeSchedulerInstance(second), 0, 1, 0, nullptr,
+                nullptr, 0, nullptr, 0),
+            OBELISK_RT_OK);
+  constexpr obelisk_rt_native_schedule_node nodes[] = {
+      {0, 0, 7},
+      {1, 0, 7},
+  };
+  schedulerOrder.clear();
+  ASSERT_EQ(
+      obelisk_rt_v1_scheduler_run_aot_nodes(context, nodes, std::size(nodes)),
+      OBELISK_RT_OK);
+  EXPECT_EQ(schedulerOrder, (std::vector<uint64_t>{100, 200}));
+  EXPECT_EQ(context->signalDiagnostics.aotNodeExecutions, 2u);
+  EXPECT_EQ(context->signalDiagnostics.candidateScans, 0u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, AOTStaticFanoutMatchesRangeAndFourStateEdgeExactly) {
+  AOTTestState state;
+  const obelisk_rt_static_fanout_entry fanout[] = {
+      {1, 0, 1, OBELISK_RT_WAIT_EDGE_POSEDGE, 2, 2},
+  };
+  obelisk_rt_native_schedule_plan plan = makeAOTPlan(state, 1);
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
+               OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT;
+  plan.fanout_entries = fanout;
+  plan.fanout_entry_count = std::size(fanout);
+
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 8;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 8),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+
+  SchedulerFixture fixture(4);
+  fixture.descriptor.execution = &execution;
+  uint64_t root = obelisk_rt_v1_native_state_static_handle(1);
+  ASSERT_NE(root, UINT64_MAX);
+  schedulerWaitKind = OBELISK_RT_SUSPEND_EDGE;
+  schedulerWaitEdge = OBELISK_RT_WAIT_EDGE_POSEDGE;
+  schedulerWaitHandle = obelisk_rt_v1_native_handle_offset(root, 2);
+  schedulerWaitWidth = 2;
+  schedulerResumeCount = 0;
+  ASSERT_EQ(
+      obelisk_rt_v1_scheduler_add_aot(context, makeSchedulerInstance(fixture),
+                                      0, 0, 0, nullptr, nullptr, 0, nullptr, 0),
+      OBELISK_RT_OK);
+  constexpr obelisk_rt_native_schedule_node nodes[] = {
+      {0, 0, UINT32_MAX},
+      {0, 1, UINT32_MAX},
+  };
+  ASSERT_EQ(
+      obelisk_rt_v1_scheduler_run_aot_nodes(context, nodes, std::size(nodes)),
+      OBELISK_RT_OK);
+
+  uint8_t oldValue = 0;
+  uint8_t newValue = 1;
+  obelisk_rt_v1_scheduler_signal_transition(context, root, 8, &oldValue,
+                                            nullptr, &newValue, nullptr);
+  ASSERT_EQ(
+      obelisk_rt_v1_scheduler_run_aot_nodes(context, nodes, std::size(nodes)),
+      OBELISK_RT_OK);
+  EXPECT_EQ(schedulerResumeCount, 0u);
+
+  oldValue = 1u << 2;
+  newValue = 0;
+  obelisk_rt_v1_scheduler_signal_transition(context, root, 8, &oldValue,
+                                            nullptr, &newValue, nullptr);
+  ASSERT_EQ(
+      obelisk_rt_v1_scheduler_run_aot_nodes(context, nodes, std::size(nodes)),
+      OBELISK_RT_OK);
+  EXPECT_EQ(schedulerResumeCount, 0u);
+
+  oldValue = 0;
+  newValue = 0;
+  uint8_t oldUnknown = 0;
+  uint8_t newUnknown = 1u << 2;
+  obelisk_rt_v1_scheduler_signal_transition(
+      context, root, 8, &oldValue, &oldUnknown, &newValue, &newUnknown);
+  ASSERT_EQ(
+      obelisk_rt_v1_scheduler_run_aot_nodes(context, nodes, std::size(nodes)),
+      OBELISK_RT_OK);
+  EXPECT_EQ(schedulerResumeCount, 1u);
+  EXPECT_EQ(context->signalDiagnostics.aotFanoutEntries, 3u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, AOTTiedDeadlinesUseFixedHeapAndDeterministicNodeOrder) {
+  AOTTestState state;
+  obelisk_rt_native_schedule_plan plan = makeAOTPlan(state);
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
+               OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+
+  SchedulerFixture first(1);
+  SchedulerFixture second(2);
+  schedulerWaitKind = OBELISK_RT_SUSPEND_DELAY;
+  schedulerResumeCount = 0;
+  schedulerOrder.clear();
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add_aot(
+                context, makeSchedulerInstance(first), 0, 0, 0, nullptr,
+                nullptr, 0, nullptr, 0),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add_aot(
+                context, makeSchedulerInstance(second), 0, 1, 0, nullptr,
+                nullptr, 0, nullptr, 0),
+            OBELISK_RT_OK);
+  constexpr obelisk_rt_native_schedule_node nodes[] = {
+      {0, 0, UINT32_MAX},
+      {1, 0, UINT32_MAX},
+      {0, 1, UINT32_MAX},
+      {1, 1, UINT32_MAX},
+  };
+  ASSERT_EQ(
+      obelisk_rt_v1_scheduler_run_aot_nodes(context, nodes, std::size(nodes)),
+      OBELISK_RT_OK);
+  EXPECT_EQ(context->schedulerTime, 17u);
+  EXPECT_EQ(schedulerOrder, (std::vector<uint64_t>{1, 2}));
+  EXPECT_EQ(context->signalDiagnostics.aotDeadlineHighWater, 2u);
+  EXPECT_TRUE(context->nativeScheduleDeadlineHeap.empty());
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, AOTZeroDelayTransactionallyFallsBackBeforeRegionBoundary) {
+  AOTTestState state;
+  obelisk_rt_native_schedule_plan plan = makeAOTPlan(state, 1);
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
+               OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL;
+  plan.run = aotRunNodes;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+
+  SchedulerFixture fixture(3);
+  schedulerWaitKind = OBELISK_RT_SUSPEND_DELAY;
+  schedulerWaitDelay = 0;
+  schedulerResumeCount = 0;
+  ASSERT_EQ(
+      obelisk_rt_v1_scheduler_add_aot(context, makeSchedulerInstance(fixture),
+                                      0, 0, 0, nullptr, nullptr, 0, nullptr, 0),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot(context), OBELISK_RT_OK);
+  EXPECT_TRUE(context->nativeScheduleDeoptimized);
+  EXPECT_EQ(context->signalDiagnostics.aotFallbacks, 1u);
+  EXPECT_EQ(context->schedulerTime, 0u);
+  EXPECT_EQ(schedulerResumeCount, 1u);
   obelisk_rt_v1_context_destroy(context);
 }
 

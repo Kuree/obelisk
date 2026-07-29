@@ -175,6 +175,15 @@ def SimComputeGroupAttr : SimAttr<"ComputeGroup", "group"> {
   let genVerifyDecl = 1;
 }
 
+def SimComputeFusionAttr : SimAttr<"ComputeFusion", "fusion"> {
+  let parameters = (ins
+    "uint32_t":$id,
+    "::mlir::DenseI64ArrayAttr":$fragments
+  );
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
 def SimComputeRegionAttr : SimAttr<"ComputeRegion", "region"> {
   let parameters = (ins
     EnumParameter<SimComputeRegionKind>:$kind,

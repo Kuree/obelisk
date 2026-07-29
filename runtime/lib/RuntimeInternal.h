@@ -648,11 +648,19 @@ struct obelisk_rt_context {
   uint32_t nativeScheduleNBARootCount = 0;
   const obelisk_rt_static_nba_site *nativeScheduleNBASites = nullptr;
   uint64_t nativeScheduleNBASiteCount = 0;
+  const obelisk_rt_static_fanout_entry *nativeScheduleFanoutEntries = nullptr;
+  uint64_t nativeScheduleFanoutEntryCount = 0;
   std::vector<uint32_t> nativeScheduleNBASiteIndex;
   std::vector<obelisk_rt_process_instance_v1 *> nativeScheduleActors;
   std::vector<uint64_t> nativeScheduleActorTokens;
   std::vector<size_t> nativeScheduleActorIndices;
-  std::vector<std::vector<uint64_t>> nativeScheduleStaticFanout;
+  std::vector<obelisk_rt_native_schedule_node> nativeScheduleNodes;
+  std::vector<std::vector<std::pair<uint32_t, uint32_t>>>
+      nativeScheduleActorNodes;
+  std::vector<uint64_t> nativeScheduleReadyNodes;
+  std::vector<uint64_t> nativeScheduleDeadlines;
+  std::vector<uint32_t> nativeScheduleDeadlineHeap;
+  std::vector<uint32_t> nativeScheduleDeadlinePositions;
   std::vector<obelisk_rt_aot_deopt_actor> nativeScheduleSnapshotActors;
   std::vector<obelisk_rt_aot_deopt_nba> nativeScheduleSnapshotNBAs;
   bool nativeScheduleRunning = false;

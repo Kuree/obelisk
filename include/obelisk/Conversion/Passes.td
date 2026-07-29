@@ -172,6 +172,22 @@ def ObeliskSimVerifyComputeGraphPass
   }];
 }
 
+def ObeliskSimFuseComputeFragmentsPass
+    : Pass<"obelisk-sim-fuse-compute-fragments",
+           "obelisk::sim::SimDesignOp"> {
+  let summary = "Plan conservative static compute-fragment fusion";
+  let description = [{
+    Groups native single-worker suspension fragments with identical direct
+    sensitivity into deterministic AOT execution batches. The pass consumes
+    the verified compute graph, rejects observable or control-sensitive
+    boundaries, and records only typed fusion metadata; bytecode continuation
+    boundaries and the executable CFG remain unchanged.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect"
+  ];
+}
+
 def ObeliskSimFinalizePass
     : Pass<"obelisk-sim-finalize", "mlir::ModuleOp"> {
   let summary = "Remove semantic IR and verify the executable simulation boundary";

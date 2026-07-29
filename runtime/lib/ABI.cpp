@@ -362,9 +362,10 @@ ABI_OFFSET(obelisk_rt_aot_deopt_snapshot, nbas, 32);
 ABI_OFFSET(obelisk_rt_aot_deopt_snapshot, nba_count, 40);
 ABI_OFFSET(obelisk_rt_aot_deopt_snapshot, reserved, 44);
 ABI_OFFSET(obelisk_rt_aot_deopt_snapshot, next_sequence, 48);
-ABI_SIZE_ALIGN(obelisk_rt_native_schedule_node, 8, 4);
+ABI_SIZE_ALIGN(obelisk_rt_native_schedule_node, 12, 4);
 ABI_OFFSET(obelisk_rt_native_schedule_node, actor_slot, 0);
 ABI_OFFSET(obelisk_rt_native_schedule_node, continuation, 4);
+ABI_OFFSET(obelisk_rt_native_schedule_node, fusion_group, 8);
 ABI_SIZE_ALIGN(obelisk_rt_static_nba_storage, 4, 4);
 ABI_SIZE_ALIGN(obelisk_rt_static_nba_root, 16, 8);
 ABI_OFFSET(obelisk_rt_static_nba_root, commit_node, 0);
@@ -374,7 +375,14 @@ ABI_SIZE_ALIGN(obelisk_rt_static_nba_site, 16, 8);
 ABI_OFFSET(obelisk_rt_static_nba_site, site, 0);
 ABI_OFFSET(obelisk_rt_static_nba_site, root, 8);
 ABI_OFFSET(obelisk_rt_static_nba_site, storage, 12);
-ABI_SIZE_ALIGN(obelisk_rt_native_schedule_plan, 120, 8);
+ABI_SIZE_ALIGN(obelisk_rt_static_fanout_entry, 32, 8);
+ABI_OFFSET(obelisk_rt_static_fanout_entry, static_state, 0);
+ABI_OFFSET(obelisk_rt_static_fanout_entry, actor_slot, 4);
+ABI_OFFSET(obelisk_rt_static_fanout_entry, continuation, 8);
+ABI_OFFSET(obelisk_rt_static_fanout_entry, edge, 12);
+ABI_OFFSET(obelisk_rt_static_fanout_entry, low_bit, 16);
+ABI_OFFSET(obelisk_rt_static_fanout_entry, bit_width, 24);
+ABI_SIZE_ALIGN(obelisk_rt_native_schedule_plan, 136, 8);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, size, 0);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, graph_layout_checksum, 8);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, mutable_state, 16);
@@ -392,6 +400,8 @@ ABI_OFFSET(obelisk_rt_native_schedule_plan, nba_root_count, 96);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, nba_reserved, 100);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, nba_sites, 104);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, nba_site_count, 112);
+ABI_OFFSET(obelisk_rt_native_schedule_plan, fanout_entries, 120);
+ABI_OFFSET(obelisk_rt_native_schedule_plan, fanout_entry_count, 128);
 
 #undef ABI_OFFSET
 #undef ABI_SIZE_ALIGN

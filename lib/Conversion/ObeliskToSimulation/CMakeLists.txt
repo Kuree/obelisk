@@ -4,6 +4,7 @@ add_mlir_library(ObeliskToSimulation
   EliminateDeadBoundaries.cpp
   EliminateDeadCaptures.cpp
   Finalize.cpp
+  FuseComputeFragments.cpp
   Inline.cpp
   LowerUnit.cpp
   Prepare.cpp
