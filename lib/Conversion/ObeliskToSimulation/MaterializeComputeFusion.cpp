@@ -866,6 +866,12 @@ FailureOr<sim::SimFuncOp> materializeFusion(
       FunctionType::get(design.getContext(), inputTypes, TypeRange{}),
       first.getEntryKind(), fusedAttributes, argumentAttrs);
   SymbolTable::setSymbolVisibility(fused, SymbolTable::Visibility::Private);
+  // This closed-world fused activation cannot call foreign code or suspend
+  // while its body is running. Mark it so native lowering can prove which NBA
+  // sites are safe in the clean body selected by AOT actor dispatch.
+  if (graph.getVpi() == sim::ComputeVPIMode::Full)
+    fused->setAttr(sim::metadata::nativeGuardedSpecializationBody,
+                   builder.getUnitAttr());
 
   Block &entry = fused.getBody().front();
   Block *wait = new Block;
@@ -994,8 +1000,7 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
   ArrayAttr fusions =
       design->getAttrOfType<ArrayAttr>(sim::metadata::staticBodyFusion);
   sim::ComputeGraphAttr graph = design.getComputeGraphAttr();
-  if (!fusions || !graph || graph.getWorkers() != 1 ||
-      graph.getVpi() != sim::ComputeVPIMode::Off)
+  if (!fusions || !graph || graph.getWorkers() != 1)
     return;
 
   DenseMap<uint32_t, uint32_t> scheduleOrder;

@@ -69,6 +69,8 @@ constexpr StringLiteral kAutomaticOwnerReleaseMarker =
     "__obelisk_release_automatic_owner";
 constexpr StringLiteral kNativeTwoStateBlockUnknownsAttr =
     "obelisk.native.two_state_block_unknowns";
+constexpr StringLiteral kAssumeCleanSpecializationAttr =
+    "obelisk.native.assume_clean_specialization";
 
 constexpr uint64_t kInstanceAllocationOffset = 8;
 constexpr uint64_t kInstanceFrameOffset = 16;
@@ -4677,6 +4679,8 @@ struct NativeStateLayout {
   DenseSet<uint32_t> directHandles;
   DenseSet<uint32_t> guardedHandles;
   DenseSet<uint32_t> nbaHandles;
+  DenseSet<uint32_t> transitionHandles;
+  bool transitionHandlesExact = false;
   SmallVector<Bound> bounds;
   SmallVector<Net> netLayouts;
   SmallVector<Driver> driverLayouts;
@@ -5397,10 +5401,272 @@ Value storeDirectPackedPlane(OpBuilder &builder, Location location, Value input,
                                input);
 }
 
-Value staticSpecializationGuard(OpBuilder &builder, Location location,
-                                uint32_t staticID, uint32_t flags) {
+void recordStaticSpecializationCFGBlocks(ConversionPatternRewriter &rewriter,
+                                         Block *head, unsigned newBlockCount);
+
+void markLikelyTrue(cf::CondBranchOp branch) {
+  constexpr int32_t hot = (1 << 20) - 1;
+  constexpr int32_t cold = 1;
+  branch.setBranchWeights(ArrayRef<int32_t>{hot, cold});
+}
+
+Value loadStaticSpecializationFast(ConversionPatternRewriter &builder,
+                                   Location location) {
   Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
   IntegerType i32 = builder.getI32Type();
+  Value fastAddress = LLVM::AddressOfOp::create(
+      builder, location, pointer, "__obelisk_static_specialization_fast_v1");
+  Value fast = LLVM::LoadOp::create(builder, location, i32, fastAddress, 4);
+  auto useFast =
+      arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne, fast,
+                            llvmConstant(builder, location, i32, 0));
+  return useFast;
+}
+
+/// Prove which NBA enqueues in a closed-world fused activation may use the
+/// clean native body selected by AOT actor dispatch.
+struct StaticNBADestination {
+  uint32_t staticID;
+  uint64_t offset;
+};
+
+/// Resolve the same fixed reference forms that native handle conversion folds
+/// to a constant stable handle. Dynamic and CFG-selected references
+/// deliberately do not satisfy this proof.
+std::optional<StaticNBADestination>
+resolveStaticNBADestination(Value value, const NativeStateLayout &layout,
+                            DenseSet<Value> &active) {
+  if (!value || !active.insert(value).second)
+    return std::nullopt;
+  auto finish = [&](std::optional<StaticNBADestination> result) {
+    active.erase(value);
+    return result;
+  };
+  auto addOffset = [&](std::optional<StaticNBADestination> base,
+                       uint64_t offset) -> std::optional<StaticNBADestination> {
+    if (!base || offset > std::numeric_limits<uint64_t>::max() - base->offset)
+      return std::nullopt;
+    base->offset += offset;
+    return base;
+  };
+  auto resolveDescriptor =
+      [&](uint64_t descriptor) -> std::optional<StaticNBADestination> {
+    auto handle = layout.storage.find(descriptor);
+    if (handle == layout.storage.end())
+      return std::nullopt;
+    obelisk_rt_stable_handle_v1 decoded{};
+    if (!obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
+        decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC || decoded.offset < 0)
+      return std::nullopt;
+    return StaticNBADestination{decoded.id,
+                                static_cast<uint64_t>(decoded.offset)};
+  };
+
+  if (auto argument = dyn_cast<BlockArgument>(value)) {
+    auto function =
+        dyn_cast<sim::SimFuncOp>(argument.getOwner()->getParentOp());
+    if (!function)
+      return finish(std::nullopt);
+    // Capture specialization has already replaced every direct context
+    // descriptor with a SimContextStorageOp. A surviving entry argument may
+    // be a view or another runtime-selected handle; descriptor provenance does
+    // not prove that native lowering will materialize it as a constant.
+    if (argument.getOwner() == &function.getBody().front())
+      return finish(std::nullopt);
+
+    std::optional<StaticNBADestination> resolved;
+    Block *block = argument.getOwner();
+    for (Block *predecessor : block->getPredecessors()) {
+      Operation *terminator = predecessor->getTerminator();
+      auto branch = dyn_cast<BranchOpInterface>(terminator);
+      if (!branch)
+        return finish(std::nullopt);
+      for (unsigned successor = 0; successor != terminator->getNumSuccessors();
+           ++successor) {
+        if (terminator->getSuccessor(successor) != block)
+          continue;
+        SuccessorOperands operands = branch.getSuccessorOperands(successor);
+        unsigned index = argument.getArgNumber();
+        if (index >= operands.size() || operands.isOperandProduced(index))
+          return finish(std::nullopt);
+        std::optional<StaticNBADestination> incoming =
+            resolveStaticNBADestination(operands[index], layout, active);
+        if (!incoming ||
+            (resolved && (resolved->staticID != incoming->staticID ||
+                          resolved->offset != incoming->offset)))
+          return finish(std::nullopt);
+        resolved = incoming;
+      }
+    }
+    return finish(resolved);
+  }
+
+  if (auto storage = value.getDefiningOp<sim::SimContextStorageOp>())
+    return finish(resolveDescriptor(storage.getId()));
+  if (auto view = value.getDefiningOp<sim::SimRefExtractOp>())
+    return finish(
+        addOffset(resolveStaticNBADestination(view.getInput(), layout, active),
+                  view.getLowBit()));
+  if (auto view = value.getDefiningOp<sim::SimRefSubelementOp>()) {
+    uint64_t offset = 0;
+    Type type = cast<sim::RefType>(view.getInput().getType()).getElementType();
+    for (int64_t index : view.getIndices()) {
+      if (index < 0)
+        return finish(std::nullopt);
+      auto child = sim::getAggregateProvenanceSubelement(
+          type, static_cast<unsigned>(index));
+      if (!child ||
+          child->first > std::numeric_limits<uint64_t>::max() - offset)
+        return finish(std::nullopt);
+      offset += child->first;
+      type = sim::getAggregateElementType(type, static_cast<unsigned>(index));
+    }
+    return finish(addOffset(
+        resolveStaticNBADestination(view.getInput(), layout, active), offset));
+  }
+  return finish(std::nullopt);
+}
+
+std::optional<StaticNBADestination>
+resolveStaticNBADestination(Value value, const NativeStateLayout &layout) {
+  DenseSet<Value> active;
+  return resolveStaticNBADestination(value, layout, active);
+}
+
+bool isNonInvalidatingStaticNBA(
+    sim::SimNBAEnqueueOp op,
+    const DenseMap<uint64_t, uint32_t> &staticNBASiteRoots,
+    ArrayRef<obelisk_rt_static_nba_root> staticNBARoots,
+    const NativeStateLayout &stateLayout) {
+  sim::NBASiteAttr site = op.getSiteAttr();
+  std::optional<unsigned> width = nativeStateWidth(op.getValue().getType());
+  if (!site || !width || *width > 64 || op.getDelay() || site.getTiming() ||
+      site.getStorage() == sim::ComputeNBAStorageKind::DynamicFrontier)
+    return false;
+  auto planned = staticNBASiteRoots.find(site.getId());
+  if (planned == staticNBASiteRoots.end() ||
+      planned->second >= staticNBARoots.size())
+    return false;
+  std::optional<StaticNBADestination> destination =
+      resolveStaticNBADestination(op.getDestination(), stateLayout);
+  const obelisk_rt_static_nba_root &root = staticNBARoots[planned->second];
+  return destination && destination->staticID == root.static_state &&
+         destination->offset <= root.bit_width &&
+         *width <= root.bit_width - destination->offset;
+}
+
+LogicalResult markCleanStaticNBAsInGuardedBodies(
+    ModuleOp module, bool enabled,
+    const DenseMap<uint64_t, uint32_t> &staticNBASiteRoots,
+    ArrayRef<obelisk_rt_static_nba_root> staticNBARoots,
+    const NativeStateLayout &stateLayout) {
+  SmallVector<sim::SimFuncOp> functions;
+  module.walk([&](sim::SimFuncOp function) {
+    if (function->hasAttr(sim::metadata::nativeGuardedSpecializationBody))
+      functions.push_back(function);
+  });
+
+  for (sim::SimFuncOp function : functions) {
+    function->removeAttr(sim::metadata::nativeGuardedSpecializationBody);
+    if (!enabled)
+      continue;
+
+    Operation *suspension = nullptr;
+    bool multipleSuspensions = false;
+    function.walk([&](Operation *operation) {
+      if (!isSuspension(operation))
+        return;
+      multipleSuspensions |= suspension != nullptr;
+      suspension = operation;
+    });
+    if (multipleSuspensions || !suspension ||
+        suspension->getNumSuccessors() != 1)
+      return function.emitOpError(
+                 "has invalid guarded-specialization activation structure"),
+             failure();
+
+    Block *activationEntry = suspension->getSuccessor(0);
+    if (activationEntry == &function.getBody().front() ||
+        activationEntry->getParent() != &function.getBody())
+      return function.emitOpError(
+                 "has invalid guarded-specialization continuation"),
+             failure();
+
+    // The runtime selects native or bytecode execution at this activation
+    // boundary. Keep a single native body and make it the clean form; dirty
+    // actors and globally slow environments never enter it.
+    SmallVector<Block *> activationBlocks;
+    SmallVector<Block *> pending{activationEntry};
+    llvm::SmallPtrSet<Block *, 16> visited;
+    Block *suspensionBlock = suspension->getBlock();
+    while (!pending.empty()) {
+      Block *block = pending.pop_back_val();
+      if (block == suspensionBlock || !visited.insert(block).second)
+        continue;
+      if (block->getParent() != &function.getBody())
+        return function.emitOpError(
+                   "guarded-specialization body leaves its process region"),
+               failure();
+      if (llvm::any_of(*block, [](Operation &operation) {
+            return isSuspension(&operation);
+          }))
+        return function.emitOpError(
+                   "guarded-specialization body contains a suspension"),
+               failure();
+      activationBlocks.push_back(block);
+      for (Block *successor : block->getSuccessors())
+        if (successor != suspensionBlock)
+          pending.push_back(successor);
+    }
+    if (activationBlocks.empty())
+      return function.emitOpError("has an empty guarded-specialization body"),
+             failure();
+
+    // A writable-VPI handover cannot race an activation. NBA lowering has an
+    // additional slot-local invariant: a generic enqueue claims its root's
+    // slow path for the rest of the slot. Only elide per-site NBA guards when
+    // every enqueue reachable in this activation is statically staged and
+    // therefore cannot invalidate that invariant mid-activation.
+    bool nbaActivationIsNonInvalidating = true;
+    for (Block *block : activationBlocks)
+      block->walk([&](sim::SimNBAEnqueueOp nba) {
+        nbaActivationIsNonInvalidating &= isNonInvalidatingStaticNBA(
+            nba, staticNBASiteRoots, staticNBARoots, stateLayout);
+      });
+
+    for (Block *source : activationBlocks)
+      for (Operation &operation : *source)
+        operation.walk([&](Operation *nested) {
+          if (nbaActivationIsNonInvalidating &&
+              isa<sim::SimNBAEnqueueOp>(nested))
+            nested->setAttr(kAssumeCleanSpecializationAttr,
+                            UnitAttr::get(function.getContext()));
+        });
+  }
+  return success();
+}
+
+Value staticSpecializationGuard(ConversionPatternRewriter &builder,
+                                Location location, uint32_t staticID,
+                                uint32_t flags) {
+  Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
+  IntegerType i32 = builder.getI32Type();
+  Block *head = builder.getInsertionBlock();
+  Block *continuation = builder.splitBlock(head, builder.getInsertionPoint());
+  BlockArgument result =
+      continuation->addArgument(builder.getI1Type(), location);
+  Region *region = head->getParent();
+  Block *slowBlock = builder.createBlock(region, continuation->getIterator());
+  recordStaticSpecializationCFGBlocks(builder, head, 2);
+
+  builder.setInsertionPointToEnd(head);
+  Value useFast = loadStaticSpecializationFast(builder, location);
+  Value fastAllowed = llvmConstant(builder, location, builder.getI1Type(), 1);
+  markLikelyTrue(cf::CondBranchOp::create(builder, location, useFast,
+                                          continuation, ValueRange{fastAllowed},
+                                          slowBlock, ValueRange{}));
+
+  builder.setInsertionPointToEnd(slowBlock);
   Value contextAddress = LLVM::AddressOfOp::create(builder, location, pointer,
                                                    "__obelisk_current_context");
   Value context =
@@ -5414,9 +5680,53 @@ Value staticSpecializationGuard(OpBuilder &builder, Location location,
                      llvmConstant(builder, location, i32, staticID),
                      llvmConstant(builder, location, i32, flags)})
           .getResult();
-  return arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
-                               allowed,
-                               llvmConstant(builder, location, i32, 0));
+  Value useDirect =
+      arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                            allowed, llvmConstant(builder, location, i32, 0));
+  cf::BranchOp::create(builder, location, continuation, ValueRange{useDirect});
+
+  builder.setInsertionPointToStart(continuation);
+  return result;
+}
+
+Value staticNBASpecializationGuard(ConversionPatternRewriter &builder,
+                                   Location location, uint32_t rootIndex) {
+  Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
+  IntegerType i32 = builder.getI32Type();
+  Block *head = builder.getInsertionBlock();
+  Block *continuation = builder.splitBlock(head, builder.getInsertionPoint());
+  BlockArgument result =
+      continuation->addArgument(builder.getI1Type(), location);
+  Region *region = head->getParent();
+  Block *slowBlock = builder.createBlock(region, continuation->getIterator());
+  recordStaticSpecializationCFGBlocks(builder, head, 2);
+
+  builder.setInsertionPointToEnd(head);
+  Value useFast = loadStaticSpecializationFast(builder, location);
+  Value fastAllowed = llvmConstant(builder, location, builder.getI1Type(), 1);
+  markLikelyTrue(cf::CondBranchOp::create(builder, location, useFast,
+                                          continuation, ValueRange{fastAllowed},
+                                          slowBlock, ValueRange{}));
+
+  builder.setInsertionPointToEnd(slowBlock);
+  Value contextAddress = LLVM::AddressOfOp::create(builder, location, pointer,
+                                                   "__obelisk_current_context");
+  Value context =
+      LLVM::LoadOp::create(builder, location, pointer, contextAddress, 8);
+  Value allowed =
+      LLVM::CallOp::create(
+          builder, location, TypeRange{i32},
+          SymbolRefAttr::get(builder.getContext(),
+                             "obelisk_rt_v1_static_nba_specialization_guard"),
+          ValueRange{context, llvmConstant(builder, location, i32, rootIndex)})
+          .getResult();
+  Value useDirect =
+      arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                            allowed, llvmConstant(builder, location, i32, 0));
+  cf::BranchOp::create(builder, location, continuation, ValueRange{useDirect});
+
+  builder.setInsertionPointToStart(continuation);
+  return result;
 }
 
 void recordStaticSpecializationCFGBlocks(ConversionPatternRewriter &rewriter,
@@ -5443,10 +5753,10 @@ Value loadStatePlane(ConversionPatternRewriter &rewriter, Location location,
                      Value handle, IntegerType resultType, StringRef globalName,
                      bool unknownFallback, uint64_t stateBitCount,
                      const NativeStateLayout *directLayout = nullptr,
-                     Value guardedPermission = {}) {
+                     Value guardedPermission = {}, bool assumeClean = false) {
   std::optional<DirectStaticStateRange> range = resolveDirectStaticStateRange(
       handle, resultType.getWidth(), directLayout);
-  if (range && !range->guarded)
+  if (range && (!range->guarded || assumeClean))
     return extractDirectPackedPlane(
         rewriter, location,
         loadDirectPackedPlane(rewriter, location, globalName, range->offset,
@@ -5497,8 +5807,9 @@ Value loadStatePlane(ConversionPatternRewriter &rewriter, Location location,
           ? guardedPermission
           : staticSpecializationGuard(rewriter, location, range->staticID,
                                       OBELISK_RT_STATIC_ROOT_READ);
-  cf::CondBranchOp::create(rewriter, location, useDirect, directBlock,
-                           ValueRange{}, genericBlock, ValueRange{});
+  markLikelyTrue(cf::CondBranchOp::create(rewriter, location, useDirect,
+                                          directBlock, ValueRange{},
+                                          genericBlock, ValueRange{}));
 
   rewriter.setInsertionPointToEnd(directBlock);
   Value direct = extractDirectPackedPlane(
@@ -5520,11 +5831,11 @@ Value storeStatePlane(ConversionPatternRewriter &rewriter, Location location,
                       Value handle, Value input, StringRef globalName,
                       uint64_t stateBitCount,
                       const NativeStateLayout *directLayout = nullptr,
-                      Value guardedPermission = {}) {
+                      Value guardedPermission = {}, bool assumeClean = false) {
   IntegerType inputType = cast<IntegerType>(input.getType());
   std::optional<DirectStaticStateRange> range =
       resolveDirectStaticStateRange(handle, inputType.getWidth(), directLayout);
-  if (range && !range->guarded)
+  if (range && (!range->guarded || assumeClean))
     return storeDirectPackedPlane(rewriter, location, input, globalName,
                                   range->offset);
 
@@ -5580,8 +5891,9 @@ Value storeStatePlane(ConversionPatternRewriter &rewriter, Location location,
           ? guardedPermission
           : staticSpecializationGuard(rewriter, location, range->staticID,
                                       OBELISK_RT_STATIC_ROOT_WRITE);
-  cf::CondBranchOp::create(rewriter, location, useDirect, directBlock,
-                           ValueRange{}, genericBlock, ValueRange{});
+  markLikelyTrue(cf::CondBranchOp::create(rewriter, location, useDirect,
+                                          directBlock, ValueRange{},
+                                          genericBlock, ValueRange{}));
 
   rewriter.setInsertionPointToEnd(directBlock);
   Value directChanged = storeDirectPackedPlane(rewriter, location, input,
@@ -5658,16 +5970,17 @@ public:
     if (!width || adaptor.getReference().size() != 1)
       return failure();
     IntegerType plane = rewriter.getIntegerType(*width);
+    bool assumeClean = op->hasAttr(kAssumeCleanSpecializationAttr);
     Value guardedPermission;
     if (auto range = resolveDirectStaticStateRange(
             adaptor.getReference().front(), *width, directLayout);
-        range && range->guarded)
+        range && range->guarded && !assumeClean)
       guardedPermission = staticSpecializationGuard(
           rewriter, op.getLoc(), range->staticID, OBELISK_RT_STATIC_ROOT_READ);
     Value value =
         loadStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
                        plane, "__obelisk_state_value", false, stateBitCount,
-                       directLayout, guardedPermission);
+                       directLayout, guardedPermission, assumeClean);
     if (isa<FloatType>(resultType))
       value =
           arith::BitcastOp::create(rewriter, op.getLoc(), resultType, value);
@@ -5676,7 +5989,7 @@ public:
       converted.push_back(
           loadStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
                          plane, "__obelisk_state_unknown", true, stateBitCount,
-                         directLayout, guardedPermission));
+                         directLayout, guardedPermission, assumeClean));
     SmallVector<ValueRange> replacements{ValueRange(converted)};
     rewriter.replaceOpWithMultiple(op, replacements);
     return success();
@@ -5705,23 +6018,24 @@ public:
     if (!width)
       return failure();
     IntegerType plane = rewriter.getIntegerType(*width);
+    bool assumeClean = op->hasAttr(kAssumeCleanSpecializationAttr);
     Value guardedPermission;
     if (auto range = resolveDirectStaticStateRange(
             adaptor.getReference().front(), *width, directLayout);
-        range && range->guarded)
+        range && range->guarded && !assumeClean)
       guardedPermission = staticSpecializationGuard(
           rewriter, op.getLoc(), range->staticID,
           OBELISK_RT_STATIC_ROOT_READ | OBELISK_RT_STATIC_ROOT_WRITE);
     Value oldValue =
         loadStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
                        plane, "__obelisk_state_value", false, stateBitCount,
-                       directLayout, guardedPermission);
+                       directLayout, guardedPermission, assumeClean);
     Value oldUnknown;
     if (containsLogic(valueType))
       oldUnknown =
           loadStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
                          plane, "__obelisk_state_unknown", true, stateBitCount,
-                         directLayout, guardedPermission);
+                         directLayout, guardedPermission, assumeClean);
     Value storedValue = adaptor.getValue().front();
     if (isa<FloatType>(valueType))
       storedValue =
@@ -5744,14 +6058,29 @@ public:
     Value changed =
         storeStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
                         storedValue, "__obelisk_state_value", stateBitCount,
-                        directLayout, guardedPermission);
+                        directLayout, guardedPermission, assumeClean);
     if (adaptor.getValue().size() == 2)
       changed = arith::OrIOp::create(
           rewriter, op.getLoc(), changed,
           storeStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
                           adaptor.getValue()[1], "__obelisk_state_unknown",
-                          stateBitCount, directLayout, guardedPermission));
+                          stateBitCount, directLayout, guardedPermission,
+                          assumeClean));
     (void)changed;
+    bool needsNotification = true;
+    // Exact fanout proves that an absent root has no language-level waiter.
+    // Direct roots are also immune to external writes (VPI-off/read), while a
+    // guarded VPI-full root may elide observers only in its clean fast body.
+    if (directLayout && directLayout->transitionHandlesExact)
+      if (auto range = resolveDirectStaticStateRange(
+              adaptor.getReference().front(), *width, directLayout);
+          range && (assumeClean || !range->guarded))
+        needsNotification =
+            directLayout->transitionHandles.contains(range->staticID);
+    if (!needsNotification) {
+      rewriter.eraseOp(op);
+      return success();
+    }
     if (isa<FloatType>(valueType)) {
       Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
       auto save = [&](Value value) {
@@ -6893,9 +7222,11 @@ public:
          (*width <= 64 && adaptor.getValue().size() == 1 &&
           isa<LLVM::LLVMPointerType>(adaptor.getValue().front().getType())));
     if (packedStaticStage) {
+      bool assumeClean = op->hasAttr(kAssumeCleanSpecializationAttr);
       bool useGuardedClaim =
-          guardedClaims ||
-          staticPlan->roots[staticRoot->second].bit_width <= 64;
+          !assumeClean &&
+          (guardedClaims ||
+           staticPlan->roots[staticRoot->second].bit_width <= 64);
       auto widen = [&](Value value) {
         if (isa<LLVM::LLVMPointerType>(value.getType()))
           value = LLVM::LoadOp::create(
@@ -6922,9 +7253,11 @@ public:
                                       homeRegion == OBELISK_RT_REGION_REACTIVE
                                   ? homeRegion + 2
                                   : UINT32_MAX;
-      if (!useGuardedClaim && !generatedAccumulator.empty() && *width == 32 &&
+      bool directGeneratedStage =
+          !generatedAccumulator.empty() && *width == 32 &&
           adaptor.getValue().size() == 1 && (decoded.offset & 31) == 0 &&
-          commitRegion != UINT32_MAX) {
+          commitRegion != UINT32_MAX;
+      auto emitDirectGeneratedStage = [&] {
         Value base = LLVM::AddressOfOp::create(rewriter, location, pointer,
                                                generatedAccumulator);
         uint64_t laneOffset = static_cast<uint64_t>(decoded.offset / 8);
@@ -6958,6 +7291,63 @@ public:
                     offsetof(obelisk_rt_generated_nba_accumulator_256,
                              exec_region)),
             4);
+      };
+      if (!useGuardedClaim && directGeneratedStage) {
+        emitDirectGeneratedStage();
+        rewriter.eraseOp(op);
+        return success();
+      }
+      if (useGuardedClaim && directGeneratedStage) {
+        Value useDirect = staticNBASpecializationGuard(rewriter, location,
+                                                       staticRoot->second);
+        Block *head = rewriter.getInsertionBlock();
+        Block *continuation =
+            rewriter.splitBlock(head, rewriter.getInsertionPoint());
+        Region *region = head->getParent();
+        Block *directBlock =
+            rewriter.createBlock(region, continuation->getIterator());
+        Block *claimBlock =
+            rewriter.createBlock(region, continuation->getIterator());
+        recordStaticSpecializationCFGBlocks(rewriter, head, 3);
+
+        rewriter.setInsertionPointToEnd(head);
+        markLikelyTrue(cf::CondBranchOp::create(rewriter, location, useDirect,
+                                                directBlock, ValueRange{},
+                                                claimBlock, ValueRange{}));
+
+        rewriter.setInsertionPointToEnd(directBlock);
+        emitDirectGeneratedStage();
+        cf::BranchOp::create(rewriter, location, continuation);
+
+        rewriter.setInsertionPointToEnd(claimBlock);
+        Value contextAddress = LLVM::AddressOfOp::create(
+            rewriter, location, pointer, "__obelisk_current_context");
+        Value runtimeContext = LLVM::LoadOp::create(rewriter, location, pointer,
+                                                    contextAddress, 8);
+        Value status =
+            LLVM::CallOp::create(
+                rewriter, location, TypeRange{i32},
+                SymbolRefAttr::get(rewriter.getContext(),
+                                   "obelisk_rt_v1_static_nba_claim"),
+                ValueRange{
+                    runtimeContext,
+                    llvmConstant(rewriter, location, i32, staticRoot->second),
+                    LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                              "__obelisk_state_value"),
+                    LLVM::ZeroOp::create(rewriter, location, pointer),
+                    llvmConstant(rewriter, location, i64, stateBitCount),
+                    llvmConstant(rewriter, location, i64,
+                                 static_cast<uint64_t>(decoded.offset)),
+                    llvmConstant(rewriter, location, i64, *width), value,
+                    unknown})
+                .getResult();
+        LLVM::CallOp::create(rewriter, location, TypeRange{},
+                             SymbolRefAttr::get(rewriter.getContext(),
+                                                "obelisk_rt_v1_scheduler_fail"),
+                             ValueRange{runtimeContext, status});
+        cf::BranchOp::create(rewriter, location, continuation);
+
+        rewriter.setInsertionPointToStart(continuation);
         rewriter.eraseOp(op);
         return success();
       }
@@ -7887,6 +8277,24 @@ void makeCurrentContextGlobal(ModuleOp module) {
   LLVM::ReturnOp::create(
       builder, module.getLoc(),
       LLVM::ZeroOp::create(builder, module.getLoc(), pointer));
+}
+
+void makeStaticSpecializationFastGlobal(ModuleOp module) {
+  constexpr StringLiteral name = "__obelisk_static_specialization_fast_v1";
+  if (module.lookupSymbol(name))
+    return;
+  OpBuilder builder(module.getContext());
+  builder.setInsertionPointToStart(module.getBody());
+  Type i32 = builder.getI32Type();
+  auto global =
+      LLVM::GlobalOp::create(builder, module.getLoc(), i32, false,
+                             LLVM::Linkage::Internal, name, Attribute{}, 4);
+  Block *block = new Block;
+  global.getInitializerRegion().push_back(block);
+  builder.setInsertionPointToStart(block);
+  LLVM::ReturnOp::create(
+      builder, module.getLoc(),
+      llvmConstant(builder, module.getLoc(), i32, uint32_t{0}));
 }
 
 void notifySignal(OpBuilder &builder, Location location, Value handle,
@@ -11361,6 +11769,9 @@ makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
       enableStaticFanout && staticFanoutPlan.exact && fullyStatic && graph;
   bool guardedFanoutEnabled =
       !staticFanoutEnabled && staticFanoutPlan.exact && fullyStatic && graph;
+  bool guardedSpecializationEnabled =
+      graph && graph.getVpi() == sim::ComputeVPIMode::Full &&
+      (enableDirectState || enableStaticNBA);
   uint64_t graphLayoutChecksum = 0;
   if (auto image =
           module->getAttrOfType<DenseI8ArrayAttr>("obelisk.bytecode.image")) {
@@ -11644,9 +12055,9 @@ makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
 
   auto planType = LLVM::LLVMStructType::getLiteral(
       context,
-      {i32, i64,     pointer, i64,     i32,     i32,    pointer, pointer,
-       i64, pointer, pointer, pointer, pointer, i32,    i32,     pointer,
-       i64, pointer, i64,     pointer, i64,     pointer});
+      {i32, i64,     pointer, i64,     i32,     i32,     pointer, pointer,
+       i64, pointer, pointer, pointer, pointer, i32,     i32,     pointer,
+       i64, pointer, i64,     pointer, i64,     pointer, pointer});
   makeConstantGlobal(
       module, location, planType, planName, LLVM::Linkage::Internal, 8,
       [&](OpBuilder &initializerBuilder) {
@@ -11690,11 +12101,13 @@ makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
                                        : 0) |
                     (enableStaticNBA ? OBELISK_RT_NATIVE_SCHEDULE_STATIC_NBA
                                      : 0) |
-                    (fullyStatic
-                         ? OBELISK_RT_NATIVE_SCHEDULE_GENERATED_ACTIONS
-                         : 0) |
+                    (fullyStatic ? OBELISK_RT_NATIVE_SCHEDULE_GENERATED_ACTIONS
+                                 : 0) |
                     (guardedFanoutEnabled
                          ? OBELISK_RT_NATIVE_SCHEDULE_GUARDED_FANOUT
+                         : 0) |
+                    (guardedSpecializationEnabled
+                         ? OBELISK_RT_NATIVE_SCHEDULE_GUARDED_SPECIALIZATION
                          : 0)),
             5);
         value = insertValue(initializerBuilder, location, value,
@@ -11787,8 +12200,18 @@ makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
                       .getResult()
                 : LLVM::ZeroOp::create(initializerBuilder, location, pointer)
                       .getResult();
-        return insertValue(initializerBuilder, location, value, commitAddress,
-                           21);
+        value =
+            insertValue(initializerBuilder, location, value, commitAddress, 21);
+        Value specializationFast =
+            guardedSpecializationEnabled
+                ? LLVM::AddressOfOp::create(
+                      initializerBuilder, location, pointer,
+                      "__obelisk_static_specialization_fast_v1")
+                      .getResult()
+                : LLVM::ZeroOp::create(initializerBuilder, location, pointer)
+                      .getResult();
+        return insertValue(initializerBuilder, location, value,
+                           specializationFast, 22);
       });
   if (fullyStatic)
     getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_run_aot_nodes",
@@ -12150,6 +12573,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                  stateLayout->driverLayouts, stateLayout->netLayouts);
   makeStatePlane(module, "__obelisk_state_unknown", stateBytes, true);
   makeCurrentContextGlobal(module);
+  makeStaticSpecializationFastGlobal(module);
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_scheduler_signal",
       LLVM::LLVMVoidType::get(context),
@@ -12173,6 +12597,10 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 32),
        IntegerType::get(context, 32), IntegerType::get(context, 32)});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_static_nba_specialization_guard",
+      IntegerType::get(context, 32),
+      {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 32)});
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_scheduler_event", LLVM::LLVMVoidType::get(context),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
@@ -12571,6 +12999,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   bool staticFanout = false;
   bool staticFanoutMetadata = false;
   bool vpiOff = false;
+  bool vpiRead = false;
+  bool vpiFull = false;
   bool directStaticState = false;
   bool staticNBA = false;
   bool legacyStaticNBA = false;
@@ -12583,7 +13013,12 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       staticControl = graph != nullptr;
       staticFanoutMetadata = graph != nullptr;
       vpiOff = graph && graph.getVpi() == sim::ComputeVPIMode::Off;
-      staticFanout = staticFanoutMetadata && vpiOff;
+      vpiRead = graph && graph.getVpi() == sim::ComputeVPIMode::Read;
+      vpiFull = graph && graph.getVpi() == sim::ComputeVPIMode::Full;
+      // Read-only VPI observes the same canonical planes but cannot mutate
+      // roots or invalidate the closed-world waiter inventory. It therefore
+      // uses the fully static fanout schedule just like VPI-off.
+      staticFanout = staticFanoutMetadata && (vpiOff || vpiRead);
       directStaticState = staticSpecialization && graph &&
                           (!stateLayout->directHandles.empty() ||
                            !stateLayout->guardedHandles.empty());
@@ -12601,11 +13036,11 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       }
     });
   }
-  // Preserve the pre-specialization AOT accumulator for fully static VPI-off
-  // schedules.  The new pass deliberately leaves wide roots generic, but it
-  // must not remove the existing wide-root batching that static fanout had
-  // already proven safe.
-  legacyStaticNBA = staticSpecialization && staticFanout && vpiOff;
+  // Preserve the pre-specialization wide AOT accumulator whenever exact
+  // fanout metadata is available. Writable VPI schedules use guarded claims:
+  // a clean root keeps the fixed accumulator, while the first dirty or generic
+  // update claims the root's ordered slow path for the rest of the event slot.
+  legacyStaticNBA = staticSpecialization && staticFanoutMetadata;
   // State, NBA, and fanout are independent capabilities. Direct access is
   // selected per operation by resolveDirectStaticStateRange; a wide or
   // otherwise generic root does not prevent an independent narrow root from
@@ -12635,6 +13070,12 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     staticFanoutPlan = std::move(*fanout);
     staticFanoutMetadata &= staticFanoutPlan.exact;
     staticFanout &= staticFanoutPlan.exact;
+    if (staticFanoutPlan.exact) {
+      stateLayout->transitionHandlesExact = true;
+      for (const obelisk_rt_static_fanout_entry &entry :
+           staticFanoutPlan.entries)
+        stateLayout->transitionHandles.insert(entry.static_state);
+    }
   }
   if (staticSpecialization && useAOT) {
     FailureOr<SmallVector<obelisk_rt_static_actor_root>> dependencies =
@@ -12689,6 +13130,28 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   // threaded and the shared native/bytecode frame has been analyzed. LLVM
   // coroutine lowering preserves these fixed entry allocas across resume.
   if (failed(instrumentManagedRoots(module)))
+    return failure();
+  bool guardedAOTSpecialization = staticSpecialization && useAOT &&
+                                  aotEligibility.fullyEligible && vpiFull &&
+                                  (directStaticState || staticNBA);
+  // AOT dispatch checks the specialization invariant once per actor
+  // activation. Apply that proof to every non-bootstrap actor, including
+  // delay/clock processes that are not part of a fused compute body.
+  if (guardedAOTSpecialization)
+    for (const auto &entry : aotEligibility.actorSlots) {
+      auto function = dyn_cast<sim::SimFuncOp>(entry.first);
+      if (!function ||
+          function.getEntryKind() == sim::EntryKind::RootInitializer)
+        continue;
+      function.walk([&](Operation *nested) {
+        if (isa<sim::SimRefLoadOp, sim::SimRefStoreOp>(nested))
+          nested->setAttr(kAssumeCleanSpecializationAttr,
+                          UnitAttr::get(context));
+      });
+    }
+  if (failed(markCleanStaticNBAsInGuardedBodies(
+          module, guardedAOTSpecialization, staticNBAPlan.siteRoots,
+          staticNBAPlan.roots, *stateLayout)))
     return failure();
 
   // Consume the whole-design X/Z proof in the AOT path after suspension
@@ -12936,7 +13399,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                                             *stateLayout);
   packedPatterns.add<ImmediateNBAConversion>(
       packedConverter, context, stateLayout->bitCount,
-      staticNBA ? &staticNBAPlan : nullptr, staticNBA, !legacyStaticNBA);
+      staticNBA ? &staticNBAPlan : nullptr, staticNBA, vpiFull);
   packedPatterns.add<RefAllocConversion>(packedConverter, context);
   ConversionTarget packedTarget(*context);
   packedTarget.addIllegalOp<

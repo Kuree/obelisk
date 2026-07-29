@@ -14,13 +14,23 @@
 // RUN:   lib/libnative_aot_vpi_transition.so -o bin/simulator
 // RUN: cd %t.dir && obelisk --vpi=full --native-scheduler=aot %t/design.sv \
 // RUN:   lib/libnative_aot_vpi_readonly.so -o bin/readonly
+// RUN: cd %t.dir && obelisk --vpi=read --native-scheduler=aot %t/design.sv \
+// RUN:   lib/libnative_aot_vpi_readonly.so -o bin/readmode
 // RUN: cd %t.dir && obelisk -O2 --vpi=full --native-scheduler=aot \
 // RUN:   -emit-llvm %t/design.sv -o bin/guarded.ll
+// RUN: cd %t.dir && obelisk -O2 --vpi=full --native-scheduler=aot \
+// RUN:   %t/mixed_nba.sv -o bin/mixed_nba
+// RUN: obelisk -O2 --vpi=full -emit-sim %t/mixed_nba.sv \
+// RUN:   -o %t.dir/bin/mixed_nba.mlir
 // RUN: FileCheck %s --check-prefix=GUARD < %t.dir/bin/guarded.ll
 // RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.dir/bin/simulator 2>&1 \
 // RUN:   | FileCheck %s
 // RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.dir/bin/readonly 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=READONLY
+// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.dir/bin/readmode 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=READMODE
+// RUN: %t.dir/bin/mixed_nba | FileCheck %s --check-prefix=MIXED-NBA
+// RUN: FileCheck %s --check-prefix=MIXED-IR < %t.dir/bin/mixed_nba.mlir
 
 //--- design.sv
 module native_aot_vpi_transition;
@@ -42,12 +52,12 @@ module native_aot_vpi_transition;
   end
 endmodule
 
-// CHECK: seed=41 total=82
+// CHECK: seed=7 total=14
 // CHECK: obelisk-signal-diagnostics
 // CHECK-SAME: scheduler_iterations=1
 // CHECK-SAME: aot_node_executions={{([2-9]|[1-9][0-9]+)}}
 // CHECK-SAME: aot_fanout_entries=0
-// CHECK-SAME: aot_state_fast_paths={{[1-9][0-9]*}}
+// CHECK-SAME: aot_state_fast_paths=0
 // CHECK-SAME: aot_state_slow_paths={{[1-9][0-9]*}}
 // CHECK-SAME: aot_fallbacks=0
 
@@ -59,13 +69,48 @@ endmodule
 // READONLY-SAME: aot_state_slow_paths=0
 // READONLY-SAME: aot_fallbacks=0
 
-// GUARD-DAG: call i32 @obelisk_rt_v1_static_specialization_guard
-// GUARD-DAG: @__obelisk_aot_schedule_plan_v1 = internal constant {{.*}} i32 247, ptr @__obelisk_state_value
+// READMODE: vpi-startup-read={{0|41}}
+// READMODE: seed=41 total=82
+// READMODE: scheduler_iterations=0
+// READMODE-SAME: aot_fanout_entries={{[1-9][0-9]*}}
+// READMODE-SAME: aot_state_slow_paths=0
+// READMODE-SAME: aot_fallbacks=0
+
+// GUARD-DAG: @__obelisk_aot_schedule_plan_v1 = internal constant {{.*}} i32 503, ptr @__obelisk_state_value
 // GUARD-DAG: br i1
 // GUARD-DAG: load {{.*}} @__obelisk_state_value
 // GUARD-DAG: call i32 @obelisk_rt_v1_native_state_load_plane
 // GUARD-DAG: store {{.*}} @__obelisk_state_value
 // GUARD-DAG: call i32 @obelisk_rt_v1_native_state_store_plane
+// GUARD-NOT: @obelisk_rt_v1_static_specialization_guard
+
+//--- mixed_nba.sv
+module native_aot_vpi_mixed_nba;
+  bit clock = 0;
+  bit [255:0] state = 0;
+  bit witness = 0;
+
+  always @(posedge clock) begin
+    state[127:0] <= 128'h01234567_89abcdef_fedcba98_76543210;
+    state[31:0] <= 32'hdeadbeef;
+  end
+
+  // Keep a second adjacent actor on the same sensitivity so this regression
+  // exercises fused activation handover, not only ordinary guarded lowering.
+  always @(posedge clock)
+    witness <= ~witness;
+
+  initial begin
+    #1 clock = 1;
+    #1;
+    $display("mixed=%032h", state[127:0]);
+    $finish;
+  end
+endmodule
+
+// MIXED-NBA: mixed=0123456789abcdeffedcba98deadbeef
+// MIXED-IR: obelisk_sim.func private @__obelisk_fused_
+// MIXED-IR-SAME: obelisk.native.guarded_specialization_body
 
 //--- plugin.c
 #include "vpi_user.h"
@@ -78,7 +123,7 @@ static void startup(void) {
     return;
   }
   s_vpi_value value = {vpiIntVal};
-  value.value.integer = 41;
+  value.value.integer = 7;
   vpi_put_value(seed, &value, 0, vpiForceFlag);
   vpi_release_handle(seed);
 }

@@ -50,8 +50,7 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
                                       : sim::metadata::staticFusion;
   design->removeAttr(metadataName);
   sim::ComputeGraphAttr graph = design.getComputeGraphAttr();
-  if (!graph || graph.getWorkers() != 1 ||
-      graph.getVpi() != sim::ComputeVPIMode::Off)
+  if (!graph || graph.getWorkers() != 1)
     return;
 
   ArrayAttr nodes = graph.getNodes();

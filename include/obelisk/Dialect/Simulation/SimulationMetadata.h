@@ -38,6 +38,10 @@ inline constexpr llvm::StringLiteral staticBodyFusion =
 inline constexpr llvm::StringLiteral staticFusion = "obelisk_sim.static_fusion";
 inline constexpr llvm::StringLiteral staticSpecialization =
     "obelisk_sim.static_specialization";
+/// Native-only annotation for a closed-world activation whose state and NBA
+/// accesses may use the actor-boundary clean-specialization proof.
+inline constexpr llvm::StringLiteral nativeGuardedSpecializationBody =
+    "obelisk.native.guarded_specialization_body";
 
 inline bool isKnownBoundary(llvm::StringRef name) {
   return name == captureKind || name == descriptorId ||

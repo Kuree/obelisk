@@ -1,6 +1,7 @@
 // RUN: %split-file %s %t
 // RUN: obelisk-opt %t/off.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-fuse-compute-fragments))' | FileCheck %s --check-prefix=FUSED
 // RUN: obelisk-opt %t/full.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-fuse-compute-fragments))' | FileCheck %s --check-prefix=VPI
+// RUN: obelisk-opt %t/full.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=VPI-BODY
 // RUN: obelisk-opt %t/wait-view.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=WAIT-VIEW
 // RUN: obelisk --native-scheduler=auto -emit-llvm %t/hybrid.sv -o %t/hybrid.ll
 // RUN: FileCheck %s --check-prefix=HYBRID < %t/hybrid.ll
@@ -86,8 +87,13 @@
 
 // FUSED: obelisk_sim.design @fusion attributes {
 // FUSED-SAME: obelisk_sim.static_fusion = [#obelisk_sim.fusion<id = 0, fragments = [{{[0-9]+}}, {{[0-9]+}}]>]
-// VPI: obelisk_sim.design @fusion
-// VPI-NOT: obelisk_sim.static_fusion
+// VPI: obelisk_sim.design @fusion attributes {
+// VPI-SAME: obelisk_sim.static_fusion = [#obelisk_sim.fusion<id = 0, fragments = [{{[0-9]+}}, {{[0-9]+}}]>]
+// VPI-BODY: obelisk_sim.spawn @__obelisk_fused_0
+// VPI-BODY: obelisk_sim.func private @__obelisk_fused_0
+// VPI-BODY-SAME: obelisk.native.guarded_specialization_body
+// VPI-BODY-NOT: obelisk_sim.func private @a
+// VPI-BODY-NOT: obelisk_sim.func private @b
 // WAIT-VIEW: obelisk_sim.design @wait_view
 // WAIT-VIEW-NOT: __obelisk_fused_
 // HYBRID: @__obelisk_aot_schedule_plan_v1

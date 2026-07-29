@@ -1773,6 +1773,9 @@ void obelisk_rt_v1_vpi_shutdown(obelisk_rt_context *context);
 // Exact fanout metadata is present but must be activated only after the
 // runtime proves that VPI startup did not write or dirty native state.
 #define OBELISK_RT_NATIVE_SCHEDULE_GUARDED_FANOUT UINT32_C(128)
+// The generated plan exposes a runtime-owned clean-state flag used to bypass
+// per-root specialization guards while no writable VPI state is dirty.
+#define OBELISK_RT_NATIVE_SCHEDULE_GUARDED_SPECIALIZATION UINT32_C(256)
 
 typedef struct obelisk_rt_aot_deopt_actor {
   uint32_t slot;
@@ -1904,6 +1907,10 @@ typedef struct obelisk_rt_native_schedule_plan {
   const obelisk_rt_static_actor_root *actor_roots;
   uint64_t actor_root_count;
   obelisk_rt_native_schedule_nba_commit nba_commit;
+  // Compiler-emitted hot-path guard. The runtime sets this to one only while
+  // the generated state planes are canonical for every root, and clears it
+  // before handing any VPI write to the guarded per-root path.
+  uint32_t *specialization_fast;
 } obelisk_rt_native_schedule_plan;
 
 // Serial generated-simulator scheduler. The scheduler owns an instance after
@@ -1946,6 +1953,9 @@ uint32_t obelisk_rt_v1_static_specialization_guard(obelisk_rt_context *context,
                                                    uint32_t actor_slot,
                                                    uint32_t static_state,
                                                    uint32_t flags);
+uint32_t
+obelisk_rt_v1_static_nba_specialization_guard(obelisk_rt_context *context,
+                                              uint32_t root_index);
 // Return the scheduler-owned stable identity used by await/join records. The
 // token is never a host address and is not reused within a context.
 uint64_t
