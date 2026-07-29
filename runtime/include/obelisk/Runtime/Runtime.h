@@ -1755,8 +1755,9 @@ void obelisk_rt_v1_vpi_shutdown(obelisk_rt_context *context);
 // static child ownership is established before bytecode/VPI transition
 // fragments execute.
 #define OBELISK_RT_NATIVE_SCHEDULE_ROOT_SLOT_ZERO UINT32_C(2)
-// The generated plan has no external event source and may advance constant
-// deadlines and static NBA barriers without entering the generic scheduler.
+// The generated plan may advance constant deadlines and static NBA barriers
+// without entering the generic scheduler. An external write or unsupported
+// control operation requests a generic handover at a region boundary.
 #define OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL UINT32_C(4)
 // Direct packed transitions may use compiler-proven static sensitivity fanout
 // without allocating generic signal subscriptions.
@@ -1815,11 +1816,12 @@ enum {
 // roots of at most 256 bits. Staging writes this record directly; the runtime
 // consumes it at the NBA barrier and owns validation, force masking, edge
 // computation, fanout, observer notification, snapshot, and deoptimization.
+// Each write-mask run is one aligned 32-bit lane; repeated writes to a lane
+// coalesce in place and therefore incur one barrier-stage operation.
 typedef struct obelisk_rt_generated_nba_accumulator_256 {
   uint64_t value[4];
   uint64_t unknown[4];
   uint64_t write_mask[4];
-  uint64_t stage_count;
   uint32_t valid;
   uint32_t exec_region;
 } obelisk_rt_generated_nba_accumulator_256;

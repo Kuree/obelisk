@@ -57,9 +57,12 @@
 // DIAG-SAME: aot_nba_commits={{[1-9][0-9]*}}
 // DIAG-SAME: aot_fallbacks=0
 
-// WIDE: @__obelisk_aot_nba_accumulator_0 = internal global [112 x i8]
+// WIDE: @__obelisk_aot_nba_accumulator_0 = internal global [104 x i8]
+// WIDE-NOT: call i32 @obelisk_rt_v1_native_state_load_plane
 // WIDE: load i40, ptr {{.*}}@__obelisk_state_value
-// WIDE: call i32 @obelisk_rt_v1_scheduler_static_nba
+// WIDE: store i32 -1, ptr {{.*}}@__obelisk_aot_nba_accumulator_0
+// WIDE-NOT: call i32 @obelisk_rt_v1_scheduler_static_nba
+// WIDE-NOT: call i32 @obelisk_rt_v1_native_state_load_plane
 
 // HYBRID: @__obelisk_aot_schedule_plan_v1
 // HYBRID-NOT: call i32 @obelisk_rt_v1_scheduler_static_nba

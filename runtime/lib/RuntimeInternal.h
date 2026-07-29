@@ -699,6 +699,7 @@ struct obelisk_rt_context {
   std::vector<ScheduledNBA> scheduledNBAs;
   std::vector<StaticNBAAccumulator> staticNBAAccumulators;
   std::vector<uint8_t> staticNBASlowRoots;
+  std::vector<uint8_t> staticNBARootHasFanout;
   std::vector<ScheduledManagedNBA> scheduledManagedNBAs;
   std::vector<ScheduledDesignNBA> scheduledDesignNBAs;
   std::vector<ScheduledDesignEvent> scheduledDesignEvents;
