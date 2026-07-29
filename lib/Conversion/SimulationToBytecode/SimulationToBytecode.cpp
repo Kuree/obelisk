@@ -3800,11 +3800,13 @@ private:
         return failure();
       emit({HandleID, 0, stableID, reg(plan, handle)});
       emit({StoreFrame, 0, 0, stableID, 0, 0, 0,
-            suspension->waitOffset + 32 + index * 16});
+            suspension->waitOffset + sizeof(obelisk_rt_wait_record_v1) +
+                index * sizeof(obelisk_rt_wait_entry_v1)});
     }
     if (delay)
       emit({StoreFrame, 0, 0, reg(plan, delay), 0, 0, 0,
-            suspension->waitOffset + 16});
+            suspension->waitOffset +
+                offsetof(obelisk_rt_wait_record_v1, payload)});
     Layout offsetLayout{Bits, 0, 64, 0, 8, 0};
     uint32_t offsetRegister = plan.layouts.size();
     offsetLayout.offset = llvm::alignTo(plan.scratchSize, uint64_t{8});

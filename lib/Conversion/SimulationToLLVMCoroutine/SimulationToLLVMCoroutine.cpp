@@ -67,8 +67,8 @@ namespace obelisk {
 namespace {
 
 constexpr uint64_t kNoOffset = std::numeric_limits<uint64_t>::max();
-constexpr uint64_t kWaitHeaderSize = 32;
-constexpr uint64_t kWaitEntrySize = 16;
+constexpr uint64_t kWaitHeaderSize = sizeof(obelisk_rt_wait_record_v1);
+constexpr uint64_t kWaitEntrySize = sizeof(obelisk_rt_wait_entry_v1);
 constexpr uint32_t kWaitEdgeNone = std::numeric_limits<uint32_t>::max();
 constexpr StringLiteral kAutomaticOwnerReleaseMarker =
     "__obelisk_release_automatic_owner";
@@ -77,14 +77,22 @@ constexpr StringLiteral kNativeTwoStateBlockUnknownsAttr =
 constexpr StringLiteral kAssumeCleanSpecializationAttr =
     "obelisk.native.assume_clean_specialization";
 
-constexpr uint64_t kInstanceAllocationOffset = 8;
-constexpr uint64_t kInstanceFrameOffset = 16;
-constexpr uint64_t kInstanceScratchOffset = 32;
-constexpr uint64_t kInstanceNativeHandleOffset = 48;
-constexpr uint64_t kInstanceContinuationOffset = 56;
-constexpr uint64_t kInstanceStatusOffset = 68;
-constexpr uint64_t kInstanceContextOffset = 72;
-constexpr uint64_t kInstanceActionOffset = 80;
+constexpr uint64_t kInstanceAllocationOffset =
+    offsetof(obelisk_rt_process_instance_v1, allocation);
+constexpr uint64_t kInstanceFrameOffset =
+    offsetof(obelisk_rt_process_instance_v1, frame);
+constexpr uint64_t kInstanceScratchOffset =
+    offsetof(obelisk_rt_process_instance_v1, scratch_offset);
+constexpr uint64_t kInstanceNativeHandleOffset =
+    offsetof(obelisk_rt_process_instance_v1, native_handle);
+constexpr uint64_t kInstanceContinuationOffset =
+    offsetof(obelisk_rt_process_instance_v1, continuation);
+constexpr uint64_t kInstanceStatusOffset =
+    offsetof(obelisk_rt_process_instance_v1, status);
+constexpr uint64_t kInstanceContextOffset =
+    offsetof(obelisk_rt_process_instance_v1, context);
+constexpr uint64_t kInstanceActionOffset =
+    offsetof(obelisk_rt_process_instance_v1, action);
 
 bool alignUp(uint64_t value, uint64_t alignment, uint64_t &result) {
   if (value > std::numeric_limits<uint64_t>::max() - (alignment - 1))
