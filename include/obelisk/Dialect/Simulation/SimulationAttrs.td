@@ -206,6 +206,47 @@ def SimComputeGraphAttr : SimAttr<"ComputeGraph", "graph"> {
   let genVerifyDecl = 1;
 }
 
+def SimStaticStateRootAttr : SimAttr<"StaticStateRoot", "static_state_root"> {
+  let summary = "one fixed packed root selected for static specialization";
+  let parameters = (ins
+    "uint64_t":$descriptor,
+    "uint32_t":$width,
+    "bool":$direct,
+    "bool":$guarded,
+    "bool":$nba
+  );
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimStaticActorRootAttr
+    : SimAttr<"StaticActorRoot", "static_actor_root"> {
+  let summary = "one actor's dependency on a fixed packed root";
+  let parameters = (ins
+    "::mlir::FlatSymbolRefAttr":$function,
+    "uint64_t":$descriptor,
+    "bool":$read,
+    "bool":$write
+  );
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimStaticSpecializationAttr
+    : SimAttr<"StaticSpecialization", "static_specialization"> {
+  let summary = "revision-coupled direct-state and narrow-NBA plan";
+  let parameters = (ins
+    "uint32_t":$version,
+    "uint32_t":$maxPackedWidth,
+    SimComputeGraphAttr:$sourceGraph,
+    "::mlir::ArrayAttr":$roots,
+    "::mlir::ArrayAttr":$actorRoots,
+    "::mlir::DenseI64ArrayAttr":$nbaRoots
+  );
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
 def SimFragmentABIAttr : SimAttr<"FragmentABI", "fragment_abi"> {
   let parameters = (ins
     "uint32_t":$version,

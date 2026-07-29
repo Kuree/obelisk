@@ -529,6 +529,8 @@ struct SignalSubscriptionDiagnostics {
   uint64_t aotFanoutEntries = 0;
   uint64_t aotNBAStages = 0;
   uint64_t aotNBACommits = 0;
+  uint64_t aotStateFastPaths = 0;
+  uint64_t aotStateSlowPaths = 0;
   uint64_t aotDeadlineHighWater = 0;
   uint64_t aotFallbacks = 0;
 };
@@ -650,6 +652,8 @@ struct obelisk_rt_context {
   uint64_t nativeScheduleNBASiteCount = 0;
   const obelisk_rt_static_fanout_entry *nativeScheduleFanoutEntries = nullptr;
   uint64_t nativeScheduleFanoutEntryCount = 0;
+  const obelisk_rt_static_actor_root *nativeScheduleActorRoots = nullptr;
+  uint64_t nativeScheduleActorRootCount = 0;
   std::vector<uint32_t> nativeScheduleNBASiteIndex;
   std::vector<obelisk_rt_process_instance_v1 *> nativeScheduleActors;
   std::vector<uint64_t> nativeScheduleActorTokens;
@@ -667,6 +671,12 @@ struct obelisk_rt_context {
   bool nativeScheduleRunning = false;
   bool nativeScheduleDeoptimized = false;
   bool nativeScheduleExternalWritePending = false;
+  std::unordered_set<uint32_t> nativeScheduleTransientDirtyRoots;
+  std::unordered_set<uint32_t> nativeSchedulePersistentDirtyRoots;
+  std::vector<uint8_t> nativeScheduleTransientDirtyMask;
+  std::vector<uint8_t> nativeSchedulePersistentDirtyMask;
+  bool nativeScheduleDirtyRootsPresent = false;
+  bool nativeScheduleAVX2 = false;
   uint32_t nativeScheduleForcedSlot = UINT32_MAX;
   bool nativeScheduleSingleStep = false;
   bool nativeScheduleForcedExecuted = false;
@@ -688,6 +698,7 @@ struct obelisk_rt_context {
   SignalSubscriptionDiagnostics signalDiagnostics;
   std::vector<ScheduledNBA> scheduledNBAs;
   std::vector<StaticNBAAccumulator> staticNBAAccumulators;
+  std::vector<uint8_t> staticNBASlowRoots;
   std::vector<ScheduledManagedNBA> scheduledManagedNBAs;
   std::vector<ScheduledDesignNBA> scheduledDesignNBAs;
   std::vector<ScheduledDesignEvent> scheduledDesignEvents;
@@ -937,6 +948,13 @@ void obelisk_rt_report_signal_diagnostics_unlocked(obelisk_rt_context *context);
 void obelisk_rt_release_native_schedule_plan(
     obelisk_rt_context *context) noexcept;
 void obelisk_rt_aot_external_write_unlocked(obelisk_rt_context *context);
+void obelisk_rt_aot_external_write_range_unlocked(obelisk_rt_context *context,
+                                                  uint64_t bitOffset,
+                                                  uint64_t bitWidth,
+                                                  bool persistent);
+void obelisk_rt_aot_release_range_unlocked(obelisk_rt_context *context,
+                                           uint64_t bitOffset,
+                                           uint64_t bitWidth);
 
 void obelisk_rt_retain_controls_unlocked(obelisk_rt_context *context,
                                          const std::vector<uint64_t> &controls);

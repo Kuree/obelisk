@@ -367,7 +367,14 @@ ABI_OFFSET(obelisk_rt_native_schedule_node, actor_slot, 0);
 ABI_OFFSET(obelisk_rt_native_schedule_node, continuation, 4);
 ABI_OFFSET(obelisk_rt_native_schedule_node, fusion_group, 8);
 ABI_SIZE_ALIGN(obelisk_rt_static_nba_storage, 4, 4);
-ABI_SIZE_ALIGN(obelisk_rt_static_nba_root, 16, 8);
+ABI_SIZE_ALIGN(obelisk_rt_generated_nba_accumulator_256, 112, 8);
+ABI_OFFSET(obelisk_rt_generated_nba_accumulator_256, value, 0);
+ABI_OFFSET(obelisk_rt_generated_nba_accumulator_256, unknown, 32);
+ABI_OFFSET(obelisk_rt_generated_nba_accumulator_256, write_mask, 64);
+ABI_OFFSET(obelisk_rt_generated_nba_accumulator_256, stage_count, 96);
+ABI_OFFSET(obelisk_rt_generated_nba_accumulator_256, valid, 104);
+ABI_OFFSET(obelisk_rt_generated_nba_accumulator_256, exec_region, 108);
+ABI_SIZE_ALIGN(obelisk_rt_static_nba_root, 24, 8);
 ABI_OFFSET(obelisk_rt_static_nba_root, commit_node, 0);
 ABI_OFFSET(obelisk_rt_static_nba_root, static_state, 4);
 ABI_OFFSET(obelisk_rt_static_nba_root, bit_width, 8);
@@ -382,7 +389,12 @@ ABI_OFFSET(obelisk_rt_static_fanout_entry, continuation, 8);
 ABI_OFFSET(obelisk_rt_static_fanout_entry, edge, 12);
 ABI_OFFSET(obelisk_rt_static_fanout_entry, low_bit, 16);
 ABI_OFFSET(obelisk_rt_static_fanout_entry, bit_width, 24);
-ABI_SIZE_ALIGN(obelisk_rt_native_schedule_plan, 136, 8);
+ABI_SIZE_ALIGN(obelisk_rt_static_actor_root, 16, 4);
+ABI_OFFSET(obelisk_rt_static_actor_root, actor_slot, 0);
+ABI_OFFSET(obelisk_rt_static_actor_root, static_state, 4);
+ABI_OFFSET(obelisk_rt_static_actor_root, flags, 8);
+ABI_OFFSET(obelisk_rt_static_actor_root, reserved, 12);
+ABI_SIZE_ALIGN(obelisk_rt_native_schedule_plan, 160, 8);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, size, 0);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, graph_layout_checksum, 8);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, mutable_state, 16);
@@ -402,6 +414,9 @@ ABI_OFFSET(obelisk_rt_native_schedule_plan, nba_sites, 104);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, nba_site_count, 112);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, fanout_entries, 120);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, fanout_entry_count, 128);
+ABI_OFFSET(obelisk_rt_native_schedule_plan, actor_roots, 136);
+ABI_OFFSET(obelisk_rt_native_schedule_plan, actor_root_count, 144);
+ABI_OFFSET(obelisk_rt_native_schedule_plan, nba_commit, 152);
 
 #undef ABI_OFFSET
 #undef ABI_SIZE_ALIGN
@@ -792,6 +807,19 @@ ABI_FUNCTION(obelisk_rt_v1_scheduler_static_nba_packed,
              obelisk_rt_status (*)(obelisk_rt_context *, uint32_t, uint8_t *,
                                    uint8_t *, uint64_t, uint64_t, uint64_t,
                                    uint64_t, uint64_t));
+ABI_FUNCTION(obelisk_rt_v1_static_nba_stage_wide,
+             void (*)(obelisk_rt_context *, uint32_t, uint64_t, uint64_t,
+                      uint64_t, uint64_t, uint32_t));
+ABI_FUNCTION(obelisk_rt_v1_static_nba_claim,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint32_t, uint8_t *,
+                                   uint8_t *, uint64_t, uint64_t, uint64_t,
+                                   uint64_t, uint64_t));
+ABI_FUNCTION(obelisk_rt_v1_static_nba_commit_root,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint32_t, uint32_t,
+                                   uint32_t *));
+ABI_FUNCTION(obelisk_rt_v1_static_nba_commit_roots,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint32_t, uint32_t,
+                                   uint32_t *));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_string_nba,
              obelisk_rt_status (*)(obelisk_rt_context *, uint8_t *, uint64_t,
                                    uint64_t, uint64_t, obelisk_rt_string_v1));

@@ -7,6 +7,9 @@
 // RUN:   -o %t.dir/lib/libnative_aot_vpi_transition.so
 // RUN: cd %t.dir && obelisk --vpi=full --native-scheduler=aot %t/design.sv \
 // RUN:   lib/libnative_aot_vpi_transition.so -o bin/simulator
+// RUN: cd %t.dir && obelisk -O2 --vpi=full --native-scheduler=aot \
+// RUN:   -emit-llvm %t/design.sv -o bin/guarded.ll
+// RUN: FileCheck %s --check-prefix=GUARD < %t.dir/bin/guarded.ll
 // RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.dir/bin/simulator 2>&1 \
 // RUN:   | FileCheck %s
 
@@ -33,6 +36,14 @@ endmodule
 // CHECK: seed=41 total=82
 // CHECK: aot_node_executions={{([2-9]|[1-9][0-9]+)}}
 // CHECK-SAME: aot_fallbacks=0
+
+// GUARD-DAG: call i32 @obelisk_rt_v1_static_specialization_guard
+// GUARD-DAG: @__obelisk_aot_schedule_plan_v1 = internal constant {{.*}} i32 51, ptr @__obelisk_state_value
+// GUARD-DAG: br i1
+// GUARD-DAG: load {{.*}} @__obelisk_state_value
+// GUARD-DAG: call i32 @obelisk_rt_v1_native_state_load_plane
+// GUARD-DAG: store {{.*}} @__obelisk_state_value
+// GUARD-DAG: call i32 @obelisk_rt_v1_native_state_store_plane
 
 //--- plugin.c
 #include "vpi_user.h"

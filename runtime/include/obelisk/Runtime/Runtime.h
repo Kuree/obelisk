@@ -1761,6 +1761,10 @@ void obelisk_rt_v1_vpi_shutdown(obelisk_rt_context *context);
 // Direct packed transitions may use compiler-proven static sensitivity fanout
 // without allocating generic signal subscriptions.
 #define OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT UINT32_C(8)
+// Compiler-emitted state planes are canonical for eligible narrow roots.
+#define OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE UINT32_C(16)
+// The plan carries fixed narrow-NBA root accumulators and site claims.
+#define OBELISK_RT_NATIVE_SCHEDULE_STATIC_NBA UINT32_C(32)
 
 typedef struct obelisk_rt_aot_deopt_actor {
   uint32_t slot;
@@ -1807,10 +1811,24 @@ enum {
   OBELISK_RT_STATIC_NBA_ROOT_ACCUMULATOR = 1
 };
 
+// Revision-coupled storage emitted into a generated module for fixed packed
+// roots of at most 256 bits. Staging writes this record directly; the runtime
+// consumes it at the NBA barrier and owns validation, force masking, edge
+// computation, fanout, observer notification, snapshot, and deoptimization.
+typedef struct obelisk_rt_generated_nba_accumulator_256 {
+  uint64_t value[4];
+  uint64_t unknown[4];
+  uint64_t write_mask[4];
+  uint64_t stage_count;
+  uint32_t valid;
+  uint32_t exec_region;
+} obelisk_rt_generated_nba_accumulator_256;
+
 typedef struct obelisk_rt_static_nba_root {
   uint32_t commit_node;
   uint32_t static_state;
   uint64_t bit_width;
+  obelisk_rt_generated_nba_accumulator_256 *generated_accumulator;
 } obelisk_rt_static_nba_root;
 
 typedef struct obelisk_rt_static_nba_site {
@@ -1828,6 +1846,16 @@ typedef struct obelisk_rt_static_fanout_entry {
   uint64_t bit_width;
 } obelisk_rt_static_fanout_entry;
 
+#define OBELISK_RT_STATIC_ROOT_READ UINT32_C(1)
+#define OBELISK_RT_STATIC_ROOT_WRITE UINT32_C(2)
+
+typedef struct obelisk_rt_static_actor_root {
+  uint32_t actor_slot;
+  uint32_t static_state;
+  uint32_t flags;
+  uint32_t reserved;
+} obelisk_rt_static_actor_root;
+
 typedef obelisk_rt_status (*obelisk_rt_native_schedule_bind)(
     void *mutable_state, obelisk_rt_context *context, uint32_t actor_slot,
     obelisk_rt_process_instance_v1 *instance);
@@ -1839,6 +1867,9 @@ typedef obelisk_rt_status (*obelisk_rt_native_schedule_run)(
 typedef obelisk_rt_status (*obelisk_rt_native_schedule_snapshot)(
     void *mutable_state, obelisk_rt_context *context,
     obelisk_rt_aot_deopt_snapshot *out_snapshot);
+typedef obelisk_rt_status (*obelisk_rt_native_schedule_nba_commit)(
+    void *mutable_state, obelisk_rt_context *context, uint32_t barrier_region,
+    uint32_t *out_changed);
 
 typedef struct obelisk_rt_native_schedule_plan {
   uint32_t size;
@@ -1861,6 +1892,9 @@ typedef struct obelisk_rt_native_schedule_plan {
   uint64_t nba_site_count;
   const obelisk_rt_static_fanout_entry *fanout_entries;
   uint64_t fanout_entry_count;
+  const obelisk_rt_static_actor_root *actor_roots;
+  uint64_t actor_root_count;
+  obelisk_rt_native_schedule_nba_commit nba_commit;
 } obelisk_rt_native_schedule_plan;
 
 // Serial generated-simulator scheduler. The scheduler owns an instance after
@@ -1896,6 +1930,13 @@ obelisk_rt_status obelisk_rt_v1_scheduler_run_aot_nodes(
 // boundary. Returned pointers remain context-owned until scheduler mutation.
 obelisk_rt_status obelisk_rt_v1_scheduler_snapshot_aot(
     obelisk_rt_context *context, obelisk_rt_aot_deopt_snapshot *out_snapshot);
+// Return nonzero when an actor/root access may use compiler-emitted planes.
+// Deposits are transient until slot quiescence; force/assign ownership remains
+// dirty until its corresponding release.
+uint32_t obelisk_rt_v1_static_specialization_guard(obelisk_rt_context *context,
+                                                   uint32_t actor_slot,
+                                                   uint32_t static_state,
+                                                   uint32_t flags);
 // Return the scheduler-owned stable identity used by await/join records. The
 // token is never a host address and is not reused within a context.
 uint64_t
@@ -1954,6 +1995,34 @@ obelisk_rt_status obelisk_rt_v1_scheduler_static_nba_packed(
     obelisk_rt_context *context, uint32_t root, uint8_t *value_plane,
     uint8_t *unknown_plane, uint64_t plane_bit_count, uint64_t root_offset,
     uint64_t bit_width, uint64_t value, uint64_t unknown);
+// Revision-coupled generated staging for a compiler-proven fixed wide root in
+// a VPI-off static-control schedule. Lifecycle, root bounds, and plane layout
+// are established by the installed plan, so this avoids redundant hot checks.
+void obelisk_rt_v1_static_nba_stage_wide(obelisk_rt_context *context,
+                                         uint32_t root, uint64_t root_offset,
+                                         uint64_t bit_width, uint64_t value,
+                                         uint64_t unknown,
+                                         uint32_t has_unknown);
+// Claim one statically resolved narrow root update for this event slot. If a
+// generic update has already claimed the root, the runtime stages this and
+// subsequent claims through the ordered generic queue until slot quiescence.
+obelisk_rt_status obelisk_rt_v1_static_nba_claim(
+    obelisk_rt_context *context, uint32_t root, uint8_t *value_plane,
+    uint8_t *unknown_plane, uint64_t plane_bit_count, uint64_t root_offset,
+    uint64_t bit_width, uint64_t value, uint64_t unknown);
+// Commit one valid fixed accumulator at an NBA barrier. Generated callbacks
+// invoke roots in compute-graph order and OR their transition result into
+// out_changed.
+obelisk_rt_status
+obelisk_rt_v1_static_nba_commit_root(obelisk_rt_context *context, uint32_t root,
+                                     uint32_t barrier_region,
+                                     uint32_t *out_changed);
+// Commit the leading compute-graph-ordered accumulator roots in one runtime
+// call. Generated callbacks use this bulk form to avoid one ABI crossing per
+// root; the single-root entry remains available for mixed/deoptimized paths.
+obelisk_rt_status obelisk_rt_v1_static_nba_commit_roots(
+    obelisk_rt_context *context, uint32_t root_count, uint32_t barrier_region,
+    uint32_t *out_changed);
 // Schedule one whole managed string word. The queued word remains a precise
 // tagged root through commit, and equal byte contents do not publish a signal
 // transition even when the immutable handles differ.

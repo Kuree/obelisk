@@ -602,6 +602,88 @@ ComputeGraphAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
 }
 
 LogicalResult
+StaticStateRootAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                            uint64_t descriptor, uint32_t width, bool direct,
+                            bool guarded, bool nba) {
+  (void)descriptor;
+  if (direct && guarded)
+    return emitError() << "static state root cannot be both direct and guarded";
+  if ((direct || guarded || nba) && width == 0)
+    return emitError() << "specialized static state root has zero width";
+  return success();
+}
+
+LogicalResult
+StaticActorRootAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                            FlatSymbolRefAttr function, uint64_t descriptor,
+                            bool read, bool write) {
+  (void)descriptor;
+  if (!function)
+    return emitError() << "static actor/root dependency has no actor";
+  if (!read && !write)
+    return emitError() << "static actor/root dependency has no access kind";
+  return success();
+}
+
+LogicalResult StaticSpecializationAttr::verify(
+    llvm::function_ref<InFlightDiagnostic()> emitError, uint32_t version,
+    uint32_t maxPackedWidth, ComputeGraphAttr sourceGraph, ArrayAttr roots,
+    ArrayAttr actorRoots, DenseI64ArrayAttr nbaRoots) {
+  if (version != 1 || maxPackedWidth == 0 || maxPackedWidth > 64 ||
+      !sourceGraph)
+    return emitError() << "invalid static-specialization version or width";
+  if (!roots || !actorRoots || !nbaRoots)
+    return emitError() << "static-specialization inventory is absent";
+
+  DenseMap<uint64_t, StaticStateRootAttr> rootByDescriptor;
+  for (Attribute attribute : roots) {
+    auto root = dyn_cast<StaticStateRootAttr>(attribute);
+    if (!root)
+      return emitError()
+             << "static-specialization root array has an invalid element";
+    if (!rootByDescriptor.try_emplace(root.getDescriptor(), root).second)
+      return emitError() << "static-specialization root is duplicated";
+    if (root.getWidth() > maxPackedWidth &&
+        (root.getDirect() || root.getGuarded() || root.getNba()))
+      return emitError()
+             << "static-specialization root exceeds the width policy";
+  }
+
+  llvm::SmallDenseSet<std::pair<Attribute, uint64_t>, 16> dependencies;
+  for (Attribute attribute : actorRoots) {
+    auto dependency = dyn_cast<StaticActorRootAttr>(attribute);
+    if (!dependency)
+      return emitError() << "static actor/root array has an invalid element";
+    auto root = rootByDescriptor.find(dependency.getDescriptor());
+    if (root == rootByDescriptor.end() ||
+        (!root->second.getDirect() && !root->second.getGuarded()))
+      return emitError()
+             << "static actor/root dependency references a generic root";
+    if (!dependencies
+             .insert({dependency.getFunction(), dependency.getDescriptor()})
+             .second)
+      return emitError() << "static actor/root dependency is duplicated";
+  }
+
+  llvm::SmallDenseSet<uint64_t, 16> orderedNBARoots;
+  for (int64_t descriptor : nbaRoots.asArrayRef()) {
+    if (descriptor < 0 ||
+        !orderedNBARoots.insert(static_cast<uint64_t>(descriptor)).second)
+      return emitError()
+             << "static NBA root inventory has an invalid or duplicate root";
+    auto root = rootByDescriptor.find(static_cast<uint64_t>(descriptor));
+    if (root == rootByDescriptor.end() || !root->second.getNba())
+      return emitError()
+             << "static NBA root inventory references a generic root";
+  }
+  for (const auto &entry : rootByDescriptor)
+    if (entry.second.getNba() && !orderedNBARoots.contains(entry.first))
+      return emitError()
+             << "static NBA root policy is absent from the ordered inventory";
+  return success();
+}
+
+LogicalResult
 FragmentABIAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
                         uint32_t version, DenseI64ArrayAttr fragments) {
   if (version != 1 || !fragments)

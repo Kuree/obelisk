@@ -6,6 +6,7 @@
 #include "obelisk/Analysis/StateDomainAnalysis.h"
 #include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
 #include "obelisk/Dialect/Runtime/RuntimeTypes.h"
+#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Runtime/Runtime.h"
 
 #include "mlir/Analysis/Liveness.h"
@@ -843,7 +844,8 @@ public:
       : design(design), options(options), dataLayout(dataLayout) {}
 
   FailureOr<EncodedSimulationDesign> encode() {
-    if (failed(prepareClassLayouts()))
+    if (failed(prepareClassLayouts()) ||
+        failed(prepareStaticSpecializationSites()))
       return failure();
     FailureOr<StateLayout> builtState = buildStateLayout(design);
     if (failed(builtState))
@@ -881,6 +883,54 @@ public:
   }
 
 private:
+  LogicalResult prepareStaticSpecializationSites() {
+    auto specialization = design->getAttrOfType<sim::StaticSpecializationAttr>(
+        sim::metadata::staticSpecialization);
+    if (!specialization)
+      return success();
+    if (specialization.getVersion() != 1 ||
+        specialization.getSourceGraph() != design.getComputeGraphAttr())
+      return design.emitOpError(
+          "bytecode encoding rejected stale static-specialization metadata");
+
+    DenseSet<uint64_t> plannedRoots;
+    for (int64_t descriptor : specialization.getNbaRoots().asArrayRef()) {
+      if (descriptor < 0 ||
+          !plannedRoots.insert(static_cast<uint64_t>(descriptor)).second)
+        return design.emitOpError(
+            "static-specialization NBA root inventory is malformed");
+    }
+    DenseSet<uint64_t> foundRoots;
+    for (Attribute node : specialization.getSourceGraph().getNodes()) {
+      auto commit = dyn_cast<sim::ComputeNBACommitAttr>(node);
+      if (!commit)
+        continue;
+      uint64_t descriptor = commit.getEffect().getDescriptor();
+      if (!plannedRoots.contains(descriptor))
+        continue;
+      if (!commit.getFrontierSites().empty() ||
+          !foundRoots.insert(descriptor).second)
+        return design.emitOpError(
+            "static-specialization NBA root disagrees with its source graph");
+      for (int64_t site : commit.getSlots().asArrayRef()) {
+        if (site < 0 ||
+            !staticNBASites.insert(static_cast<uint64_t>(site)).second)
+          return design.emitOpError(
+              "static-specialization NBA site inventory is malformed");
+      }
+      for (int64_t site : commit.getAccumulatorSites().asArrayRef()) {
+        if (site < 0 ||
+            !staticNBASites.insert(static_cast<uint64_t>(site)).second)
+          return design.emitOpError(
+              "static-specialization NBA site inventory is malformed");
+      }
+    }
+    if (foundRoots.size() != plannedRoots.size())
+      return design.emitOpError(
+          "static-specialization NBA root is absent from its source graph");
+    return success();
+  }
+
   LogicalResult prepareClassLayouts() {
     llvm::StringMap<sim::SimClassDeclOp> classes;
     llvm::StringMap<SmallVector<sim::SimClassFieldDeclOp>> fields;
@@ -2047,7 +2097,8 @@ private:
         inputs.push_back(op.getDelay());
       sim::NBASiteAttr site = op.getSiteAttr();
       bool staticallyStaged =
-          site && !isa<sim::StringType>(op.getValue().getType()) &&
+          site && staticNBASites.contains(site.getId()) &&
+          !isa<sim::StringType>(op.getValue().getType()) &&
           !sim::isManagedHandleType(op.getValue().getType()) &&
           !op.getDelay() && !site.getTiming() &&
           site.getStorage() != sim::ComputeNBAStorageKind::DynamicFrontier;
@@ -4530,6 +4581,7 @@ private:
   const llvm::DataLayout &dataLayout;
   StateLayout state;
   DenseSet<Value> twoStateLogicRegisters;
+  DenseSet<uint64_t> staticNBASites;
   SmallVector<FunctionPlan, 0> plans;
   llvm::StringMap<uint32_t> indices;
   llvm::StringMap<uint64_t> classIDs;

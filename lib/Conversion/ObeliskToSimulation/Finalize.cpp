@@ -40,6 +40,10 @@ struct ObeliskToSimulationPipelineOptions
   Option<unsigned> optLevel{*this, "opt-level",
                             llvm::cl::desc("optimization level from 0 to 3"),
                             llvm::cl::init(3)};
+  Option<std::string> staticSpecialization{
+      *this, "static-specialization",
+      llvm::cl::desc("static state/NBA specialization: auto, off, or on"),
+      llvm::cl::init("auto")};
 };
 
 /// The executable boundary is defined by the operations that may remain, not
@@ -60,11 +64,10 @@ static bool isExecutableType(Type type) {
   return isa<FunctionType>(type) || isa<runtime::StatusType>(type) ||
          isa<sim::ContextType, sim::BytesType, sim::LogicType, sim::TimeType,
              sim::RefType, sim::NetType, sim::DriverType, sim::EventType,
-             sim::ProcessType, sim::ClassHandleType,
-             sim::CovergroupHandleType, sim::StringType,
-             sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType,
-             sim::ReferencePathType, sim::ManagedRefType, sim::ArgumentRefType,
-             sim::ControlType, sim::ObserverType>(type) ||
+             sim::ProcessType, sim::ClassHandleType, sim::CovergroupHandleType,
+             sim::StringType, sim::DynamicArrayType, sim::QueueType,
+             sim::AssocArrayType, sim::ReferencePathType, sim::ManagedRefType,
+             sim::ArgumentRefType, sim::ControlType, sim::ObserverType>(type) ||
          sim::isAggregateType(type);
 }
 
@@ -101,8 +104,8 @@ void ObeliskSimFinalizePass::runOnOperation() {
   llvm::StringSet<> executableSymbols;
   module.walk([&](Operation *op) {
     if (!isa<sim::SimCovergroupDeclOp, sim::SimClassDeclOp,
-             sim::SimClassFieldDeclOp,
-             sim::SimClassMethodDeclOp, sim::SimFuncOp>(op))
+             sim::SimClassFieldDeclOp, sim::SimClassMethodDeclOp,
+             sim::SimFuncOp>(op))
       return;
     if (auto name =
             op->getAttrOfType<StringAttr>(SymbolTable::getSymbolAttrName()))
@@ -191,7 +194,8 @@ void ObeliskSimFinalizePass::runOnOperation() {
 } // namespace
 
 void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
-                                      StringRef vpiMode, uint32_t optLevel) {
+                                      StringRef vpiMode, uint32_t optLevel,
+                                      StringRef staticSpecialization) {
   manager.addPass(createObeliskSimPreparePass());
   OpPassManager &designManager = manager.nest<sim::SimDesignOp>();
   {
@@ -268,16 +272,25 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
     designManager.addPass(createObeliskSimVerifyComputeGraphPass());
     designManager.addPass(createObeliskSimFuseComputeFragmentsPass());
   }
+  bool specialize = staticSpecialization == "on" ||
+                    (staticSpecialization == "auto" && optLevel >= 2);
+  if (specialize)
+    designManager.addPass(createObeliskSimSpecializeStaticStateNBAPass());
   manager.addPass(createObeliskSimFinalizePass());
 }
 
 void buildObeliskToSimulationPipeline(OpPassManager &manager) {
-  buildObeliskToSimulationPipeline(manager, 1, "off", 3);
+  buildObeliskToSimulationPipeline(manager, 1, "off", 3, "auto");
 }
 
 void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
                                       StringRef vpiMode) {
-  buildObeliskToSimulationPipeline(manager, workers, vpiMode, 3);
+  buildObeliskToSimulationPipeline(manager, workers, vpiMode, 3, "auto");
+}
+
+void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
+                                      StringRef vpiMode, uint32_t optLevel) {
+  buildObeliskToSimulationPipeline(manager, workers, vpiMode, optLevel, "auto");
 }
 
 void registerObeliskToSimulationPipeline() {
@@ -286,9 +299,10 @@ void registerObeliskToSimulationPipeline() {
       "Lower elaborated obelisk.sv semantic IR to isolated obelisk_sim SSA",
       [](OpPassManager &manager,
          const ObeliskToSimulationPipelineOptions &options) {
-        buildObeliskToSimulationPipeline(manager, options.workers.getValue(),
-                                         options.vpi.getValue(),
-                                         options.optLevel.getValue());
+        buildObeliskToSimulationPipeline(
+            manager, options.workers.getValue(), options.vpi.getValue(),
+            options.optLevel.getValue(),
+            options.staticSpecialization.getValue());
       });
 }
 

@@ -914,6 +914,32 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
   }
   {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    const uint8_t *canonicalValuePlane = nullptr;
+    const uint8_t *canonicalUnknownPlane = nullptr;
+    const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
+    if (!write && plan &&
+        (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE) != 0 &&
+        !context->nativeScheduleDeoptimized &&
+        plan->state_bit_count == context->execution->state_bit_count &&
+        plan->state_value && plan->state_unknown) {
+      bool dirty = false;
+      __int128 accessEnd = static_cast<__int128>(stateOffset) + width;
+      for (const auto &[id, state] : context->nativeStaticStates)
+        if (static_cast<__int128>(state.bitOffset) < accessEnd &&
+            static_cast<__int128>(stateOffset) <
+                static_cast<__int128>(state.bitOffset) + state.bitWidth &&
+            (context->nativeScheduleTransientDirtyRoots.find(id) !=
+                 context->nativeScheduleTransientDirtyRoots.end() ||
+             context->nativeSchedulePersistentDirtyRoots.find(id) !=
+                 context->nativeSchedulePersistentDirtyRoots.end())) {
+          dirty = true;
+          break;
+        }
+      if (!dirty) {
+        canonicalValuePlane = plan->state_value;
+        canonicalUnknownPlane = plan->state_unknown;
+      }
+    }
     for (uint64_t bit = 0; bit != width; ++bit) {
       uint64_t sourceLimb = bit / 64;
       uint64_t sourceMask = uint64_t{1} << (bit % 64);
@@ -942,11 +968,21 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
         if (edges != 0)
           transitions.push_back({absolute, edges});
       } else {
-        value[sourceLimb] = (value[sourceLimb] & ~sourceMask) |
-                            ((stateValue & stateMask) ? sourceMask : 0);
+        bool readValue =
+            canonicalValuePlane
+                ? ((canonicalValuePlane[absolute / 8] >> (absolute % 8)) & 1) !=
+                      0
+                : (stateValue & stateMask) != 0;
+        bool readUnknown =
+            canonicalUnknownPlane
+                ? ((canonicalUnknownPlane[absolute / 8] >> (absolute % 8)) &
+                   1) != 0
+                : (stateUnknown & stateMask) != 0;
+        value[sourceLimb] =
+            (value[sourceLimb] & ~sourceMask) | (readValue ? sourceMask : 0);
         if (unknown && fourState)
           unknown[sourceLimb] = (unknown[sourceLimb] & ~sourceMask) |
-                                ((stateUnknown & stateMask) ? sourceMask : 0);
+                                (readUnknown ? sourceMask : 0);
         else if (unknown)
           unknown[sourceLimb] &= ~sourceMask;
       }
@@ -955,7 +991,8 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
       obelisk_rt_invalidate_signal_snapshots_unlocked(context, stateOffset,
                                                       width);
     if (write && !transitions.empty())
-      obelisk_rt_aot_external_write_unlocked(context);
+      obelisk_rt_aot_external_write_range_unlocked(context, stateOffset, width,
+                                                   false);
   }
   if (!write && width % 64 != 0) {
     uint64_t mask = (uint64_t{1} << (width % 64)) - 1;
@@ -1028,8 +1065,15 @@ extern "C" obelisk_rt_status obelisk_rt_v1_design_force(
         context->forceMask[absolute / 64] |= uint64_t{1} << (absolute % 64);
       }
     }
-    return accessState(context, cursor, const_cast<uint64_t *>(value),
-                       const_cast<uint64_t *>(unknown), bitWidth, true, true);
+    obelisk_rt_status status =
+        accessState(context, cursor, const_cast<uint64_t *>(value),
+                    const_cast<uint64_t *>(unknown), bitWidth, true, true);
+    if (status == OBELISK_RT_OK) {
+      std::lock_guard<std::recursive_mutex> lock(context->mutex);
+      obelisk_rt_aot_external_write_range_unlocked(context, stateOffset,
+                                                   bitWidth, true);
+    }
+    return status;
   } catch (const std::bad_alloc &) {
     return OBELISK_RT_OUT_OF_MEMORY;
   } catch (...) {
@@ -1097,6 +1141,7 @@ obelisk_rt_v1_design_release(obelisk_rt_context *context,
                                                       bitWidth);
     if (!transitions.empty())
       obelisk_rt_aot_external_write_unlocked(context);
+    obelisk_rt_aot_release_range_unlocked(context, stateOffset, bitWidth);
   }
   // A variable retains the forced value. A net is immediately republished
   // from its current driver slots (and becomes Z when the component is

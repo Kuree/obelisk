@@ -8,6 +8,7 @@
 #include "obelisk/Conversion/SimulationToRuntime.h"
 #include "obelisk/Conversion/SimulationToStandard.h"
 #include "obelisk/Dialect/Runtime/RuntimeOps.h"
+#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Runtime/Runtime.h"
 #include "obelisk/Runtime/StableHandle.h"
 
@@ -46,6 +47,7 @@
 #include "llvm/TargetParser/Triple.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <limits>
 #include <set>
 #include <type_traits>
@@ -4672,6 +4674,9 @@ struct NativeStateLayout {
   DenseMap<uint64_t, uint64_t> storage;
   DenseMap<uint64_t, uint64_t> nets;
   DenseMap<uint64_t, uint64_t> drivers;
+  DenseSet<uint32_t> directHandles;
+  DenseSet<uint32_t> guardedHandles;
+  DenseSet<uint32_t> nbaHandles;
   SmallVector<Bound> bounds;
   SmallVector<Net> netLayouts;
   SmallVector<Driver> driverLayouts;
@@ -5277,7 +5282,13 @@ Value isValidHandle(OpBuilder &builder, Location location, Value handle) {
                                handle, invalid);
 }
 
-std::optional<uint64_t>
+struct DirectStaticStateRange {
+  uint64_t offset;
+  uint32_t staticID;
+  bool guarded;
+};
+
+std::optional<DirectStaticStateRange>
 resolveDirectStaticStateRange(Value handle, unsigned width,
                               const NativeStateLayout *layout) {
   if (!layout || width == 0 || width > 64)
@@ -5292,17 +5303,23 @@ resolveDirectStaticStateRange(Value handle, unsigned width,
                                        &decoded) ||
       decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC || decoded.offset < 0)
     return std::nullopt;
+  bool direct = layout->directHandles.contains(decoded.id);
+  bool guarded = layout->guardedHandles.contains(decoded.id);
+  if (!direct && !guarded)
+    return std::nullopt;
   auto bound = llvm::find_if(layout->bounds, [&](const auto &candidate) {
     return candidate.handleID == decoded.id;
   });
-  // Keep every access to a wide root on the canonical path. Mixing a direct
-  // narrow selection with a generic whole-root access would otherwise require
-  // synchronizing both representations between operations.
-  if (bound == layout->bounds.end() || bound->width > 64 ||
+  // Direct accesses are only authorized by the static-specialization root
+  // policy. Generated wide-NBA planes authorize staging and commit, not direct
+  // state access.
+  if (bound == layout->bounds.end() ||
       static_cast<uint64_t>(decoded.offset) > bound->width ||
       width > bound->width - static_cast<uint64_t>(decoded.offset))
     return std::nullopt;
-  return bound->offset + static_cast<uint64_t>(decoded.offset);
+  return DirectStaticStateRange{bound->offset +
+                                    static_cast<uint64_t>(decoded.offset),
+                                decoded.id, guarded};
 }
 
 struct DirectPackedPlane {
@@ -5344,108 +5361,242 @@ Value extractDirectPackedPlane(OpBuilder &builder, Location location,
   return LLVM::TruncOp::create(builder, location, resultType, shifted);
 }
 
-Value loadStatePlane(OpBuilder &builder, Location location, Value handle,
-                     IntegerType resultType, StringRef globalName,
-                     bool unknownFallback, uint64_t stateBitCount,
-                     const NativeStateLayout *directLayout = nullptr) {
-  if (auto offset = resolveDirectStaticStateRange(handle, resultType.getWidth(),
-                                                  directLayout))
-    return extractDirectPackedPlane(
-        builder, location,
-        loadDirectPackedPlane(builder, location, globalName, *offset,
-                              resultType.getWidth()),
-        resultType);
-  Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
-  IntegerType i32 = builder.getI32Type();
-  IntegerType i64 = builder.getI64Type();
-  Value base =
-      LLVM::AddressOfOp::create(builder, location, pointer, globalName);
-  Value out = entryAlloca(builder, location, resultType, 1, 1);
-  Value contextAddress = LLVM::AddressOfOp::create(builder, location, pointer,
-                                                   "__obelisk_current_context");
-  Value context =
-      LLVM::LoadOp::create(builder, location, pointer, contextAddress, 8);
-  LLVM::CallOp::create(
-      builder, location, TypeRange{i32},
-      SymbolRefAttr::get(builder.getContext(),
-                         "obelisk_rt_v1_native_state_load_plane"),
-      ValueRange{
-          context, base, llvmConstant(builder, location, i64, stateBitCount),
-          handle, llvmConstant(builder, location, i64, resultType.getWidth()),
-          llvmConstant(builder, location, i32,
-                       globalName == "__obelisk_state_unknown" ? 1 : 0),
-          llvmConstant(builder, location, i32, unknownFallback ? 1 : 0), out});
-  return LLVM::LoadOp::create(builder, location, resultType, out, 1);
+Value storeDirectPackedPlane(OpBuilder &builder, Location location, Value input,
+                             StringRef globalName, uint64_t bitOffset) {
+  IntegerType inputType = cast<IntegerType>(input.getType());
+  DirectPackedPlane plane = loadDirectPackedPlane(
+      builder, location, globalName, bitOffset, inputType.getWidth());
+  APInt fieldMask =
+      APInt::getBitsSet(plane.spanType.getWidth(), plane.bitOffset,
+                        plane.bitOffset + inputType.getWidth());
+  Value mask = arith::ConstantOp::create(
+      builder, location, plane.spanType,
+      builder.getIntegerAttr(plane.spanType, fieldMask));
+  Value preserved = arith::AndIOp::create(
+      builder, location, plane.span,
+      arith::XOrIOp::create(
+          builder, location, mask,
+          arith::ConstantOp::create(
+              builder, location, plane.spanType,
+              builder.getIntegerAttr(
+                  plane.spanType,
+                  APInt::getAllOnes(plane.spanType.getWidth())))));
+  Value extended =
+      inputType == plane.spanType
+          ? input
+          : LLVM::ZExtOp::create(builder, location, plane.spanType, input);
+  if (plane.bitOffset != 0)
+    extended = arith::ShLIOp::create(
+        builder, location, extended,
+        llvmConstant(builder, location, plane.spanType, plane.bitOffset));
+  Value updated = arith::OrIOp::create(
+      builder, location, preserved,
+      arith::AndIOp::create(builder, location, extended, mask));
+  LLVM::StoreOp::create(builder, location, updated, plane.address, 1);
+  Value old = extractDirectPackedPlane(builder, location, plane, inputType);
+  return arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne, old,
+                               input);
 }
 
-Value storeStatePlane(OpBuilder &builder, Location location, Value handle,
-                      Value input, StringRef globalName, uint64_t stateBitCount,
-                      const NativeStateLayout *directLayout = nullptr) {
+Value staticSpecializationGuard(OpBuilder &builder, Location location,
+                                uint32_t staticID, uint32_t flags) {
   Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
-  IntegerType inputType = cast<IntegerType>(input.getType());
-  if (auto offset = resolveDirectStaticStateRange(handle, inputType.getWidth(),
-                                                  directLayout)) {
-    DirectPackedPlane plane = loadDirectPackedPlane(
-        builder, location, globalName, *offset, inputType.getWidth());
-    APInt fieldMask =
-        APInt::getBitsSet(plane.spanType.getWidth(), plane.bitOffset,
-                          plane.bitOffset + inputType.getWidth());
-    Value mask = arith::ConstantOp::create(
-        builder, location, plane.spanType,
-        builder.getIntegerAttr(plane.spanType, fieldMask));
-    Value preserved = arith::AndIOp::create(
-        builder, location, plane.span,
-        arith::XOrIOp::create(
-            builder, location, mask,
-            arith::ConstantOp::create(
-                builder, location, plane.spanType,
-                builder.getIntegerAttr(
-                    plane.spanType,
-                    APInt::getAllOnes(plane.spanType.getWidth())))));
-    Value extended =
-        inputType == plane.spanType
-            ? input
-            : LLVM::ZExtOp::create(builder, location, plane.spanType, input);
-    if (plane.bitOffset != 0)
-      extended = arith::ShLIOp::create(
-          builder, location, extended,
-          llvmConstant(builder, location, plane.spanType, plane.bitOffset));
-    Value updated = arith::OrIOp::create(
-        builder, location, preserved,
-        arith::AndIOp::create(builder, location, extended, mask));
-    LLVM::StoreOp::create(builder, location, updated, plane.address, 1);
-    Value old = extractDirectPackedPlane(builder, location, plane, inputType);
-    return arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
-                                 old, input);
-  }
-  IntegerType i8 = builder.getI8Type();
   IntegerType i32 = builder.getI32Type();
-  IntegerType i64 = builder.getI64Type();
-  Value base =
-      LLVM::AddressOfOp::create(builder, location, pointer, globalName);
-  Value in = entryAlloca(builder, location, inputType, 1, 1);
-  LLVM::StoreOp::create(builder, location, input, in, 1);
-  Value changed = entryAlloca(builder, location, i8, 1, 1);
-  LLVM::StoreOp::create(builder, location,
-                        llvmConstant(builder, location, i8, 0), changed, 1);
   Value contextAddress = LLVM::AddressOfOp::create(builder, location, pointer,
                                                    "__obelisk_current_context");
   Value context =
       LLVM::LoadOp::create(builder, location, pointer, contextAddress, 8);
-  LLVM::CallOp::create(
-      builder, location, TypeRange{i32},
-      SymbolRefAttr::get(builder.getContext(),
-                         "obelisk_rt_v1_native_state_store_plane"),
-      ValueRange{context, base,
-                 llvmConstant(builder, location, i64, stateBitCount), handle,
-                 llvmConstant(builder, location, i64, inputType.getWidth()),
-                 llvmConstant(builder, location, i32,
-                              globalName == "__obelisk_state_unknown" ? 1 : 0),
-                 in, changed});
-  Value changedByte = LLVM::LoadOp::create(builder, location, i8, changed, 1);
+  Value allowed =
+      LLVM::CallOp::create(
+          builder, location, TypeRange{i32},
+          SymbolRefAttr::get(builder.getContext(),
+                             "obelisk_rt_v1_static_specialization_guard"),
+          ValueRange{context, llvmConstant(builder, location, i32, UINT32_MAX),
+                     llvmConstant(builder, location, i32, staticID),
+                     llvmConstant(builder, location, i32, flags)})
+          .getResult();
   return arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
-                               changedByte,
-                               llvmConstant(builder, location, i8, 0));
+                               allowed,
+                               llvmConstant(builder, location, i32, 0));
+}
+
+void recordStaticSpecializationCFGBlocks(ConversionPatternRewriter &rewriter,
+                                         Block *head, unsigned newBlockCount) {
+  auto function = dyn_cast<sim::SimFuncOp>(head->getParentOp());
+  if (!function)
+    return;
+  auto metadata =
+      function->getAttrOfType<ArrayAttr>(kNativeTwoStateBlockUnknownsAttr);
+  if (!metadata)
+    return;
+  unsigned headIndex = static_cast<unsigned>(
+      std::distance(function.getBody().begin(), head->getIterator()));
+  SmallVector<Attribute> entries(metadata.begin(), metadata.end());
+  entries.insert(entries.begin() + headIndex + 1, newBlockCount,
+                 rewriter.getDenseI64ArrayAttr({}));
+  rewriter.modifyOpInPlace(function, [&] {
+    function->setAttr(kNativeTwoStateBlockUnknownsAttr,
+                      rewriter.getArrayAttr(entries));
+  });
+}
+
+Value loadStatePlane(ConversionPatternRewriter &rewriter, Location location,
+                     Value handle, IntegerType resultType, StringRef globalName,
+                     bool unknownFallback, uint64_t stateBitCount,
+                     const NativeStateLayout *directLayout = nullptr,
+                     Value guardedPermission = {}) {
+  std::optional<DirectStaticStateRange> range = resolveDirectStaticStateRange(
+      handle, resultType.getWidth(), directLayout);
+  if (range && !range->guarded)
+    return extractDirectPackedPlane(
+        rewriter, location,
+        loadDirectPackedPlane(rewriter, location, globalName, range->offset,
+                              resultType.getWidth()),
+        resultType);
+
+  auto emitGeneric = [&]() -> Value {
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    IntegerType i32 = rewriter.getI32Type();
+    IntegerType i64 = rewriter.getI64Type();
+    Value base =
+        LLVM::AddressOfOp::create(rewriter, location, pointer, globalName);
+    Value out = entryAlloca(rewriter, location, resultType, 1, 1);
+    Value contextAddress = LLVM::AddressOfOp::create(
+        rewriter, location, pointer, "__obelisk_current_context");
+    Value context =
+        LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
+    LLVM::CallOp::create(
+        rewriter, location, TypeRange{i32},
+        SymbolRefAttr::get(rewriter.getContext(),
+                           "obelisk_rt_v1_native_state_load_plane"),
+        ValueRange{
+            context, base, llvmConstant(rewriter, location, i64, stateBitCount),
+            handle,
+            llvmConstant(rewriter, location, i64, resultType.getWidth()),
+            llvmConstant(rewriter, location, i32,
+                         globalName == "__obelisk_state_unknown" ? 1 : 0),
+            llvmConstant(rewriter, location, i32, unknownFallback ? 1 : 0),
+            out});
+    return LLVM::LoadOp::create(rewriter, location, resultType, out, 1);
+  };
+  if (!range || !range->guarded)
+    return emitGeneric();
+
+  Block *head = rewriter.getInsertionBlock();
+  Block *continuation = rewriter.splitBlock(head, rewriter.getInsertionPoint());
+  BlockArgument result = continuation->addArgument(resultType, location);
+  Region *region = head->getParent();
+  Block *directBlock =
+      rewriter.createBlock(region, continuation->getIterator());
+  Block *genericBlock =
+      rewriter.createBlock(region, continuation->getIterator());
+  recordStaticSpecializationCFGBlocks(rewriter, head, 3);
+
+  rewriter.setInsertionPointToEnd(head);
+  Value useDirect =
+      guardedPermission
+          ? guardedPermission
+          : staticSpecializationGuard(rewriter, location, range->staticID,
+                                      OBELISK_RT_STATIC_ROOT_READ);
+  cf::CondBranchOp::create(rewriter, location, useDirect, directBlock,
+                           ValueRange{}, genericBlock, ValueRange{});
+
+  rewriter.setInsertionPointToEnd(directBlock);
+  Value direct = extractDirectPackedPlane(
+      rewriter, location,
+      loadDirectPackedPlane(rewriter, location, globalName, range->offset,
+                            resultType.getWidth()),
+      resultType);
+  cf::BranchOp::create(rewriter, location, continuation, ValueRange{direct});
+
+  rewriter.setInsertionPointToEnd(genericBlock);
+  Value generic = emitGeneric();
+  cf::BranchOp::create(rewriter, location, continuation, ValueRange{generic});
+
+  rewriter.setInsertionPointToStart(continuation);
+  return result;
+}
+
+Value storeStatePlane(ConversionPatternRewriter &rewriter, Location location,
+                      Value handle, Value input, StringRef globalName,
+                      uint64_t stateBitCount,
+                      const NativeStateLayout *directLayout = nullptr,
+                      Value guardedPermission = {}) {
+  IntegerType inputType = cast<IntegerType>(input.getType());
+  std::optional<DirectStaticStateRange> range =
+      resolveDirectStaticStateRange(handle, inputType.getWidth(), directLayout);
+  if (range && !range->guarded)
+    return storeDirectPackedPlane(rewriter, location, input, globalName,
+                                  range->offset);
+
+  auto emitGeneric = [&]() -> Value {
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    IntegerType i8 = rewriter.getI8Type();
+    IntegerType i32 = rewriter.getI32Type();
+    IntegerType i64 = rewriter.getI64Type();
+    Value base =
+        LLVM::AddressOfOp::create(rewriter, location, pointer, globalName);
+    Value in = entryAlloca(rewriter, location, inputType, 1, 1);
+    LLVM::StoreOp::create(rewriter, location, input, in, 1);
+    Value changed = entryAlloca(rewriter, location, i8, 1, 1);
+    LLVM::StoreOp::create(rewriter, location,
+                          llvmConstant(rewriter, location, i8, 0), changed, 1);
+    Value contextAddress = LLVM::AddressOfOp::create(
+        rewriter, location, pointer, "__obelisk_current_context");
+    Value context =
+        LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
+    LLVM::CallOp::create(
+        rewriter, location, TypeRange{i32},
+        SymbolRefAttr::get(rewriter.getContext(),
+                           "obelisk_rt_v1_native_state_store_plane"),
+        ValueRange{
+            context, base, llvmConstant(rewriter, location, i64, stateBitCount),
+            handle, llvmConstant(rewriter, location, i64, inputType.getWidth()),
+            llvmConstant(rewriter, location, i32,
+                         globalName == "__obelisk_state_unknown" ? 1 : 0),
+            in, changed});
+    Value changedByte =
+        LLVM::LoadOp::create(rewriter, location, i8, changed, 1);
+    return arith::CmpIOp::create(rewriter, location, arith::CmpIPredicate::ne,
+                                 changedByte,
+                                 llvmConstant(rewriter, location, i8, 0));
+  };
+  if (!range || !range->guarded)
+    return emitGeneric();
+
+  Block *head = rewriter.getInsertionBlock();
+  Block *continuation = rewriter.splitBlock(head, rewriter.getInsertionPoint());
+  BlockArgument changed =
+      continuation->addArgument(rewriter.getI1Type(), location);
+  Region *region = head->getParent();
+  Block *directBlock =
+      rewriter.createBlock(region, continuation->getIterator());
+  Block *genericBlock =
+      rewriter.createBlock(region, continuation->getIterator());
+  recordStaticSpecializationCFGBlocks(rewriter, head, 3);
+
+  rewriter.setInsertionPointToEnd(head);
+  Value useDirect =
+      guardedPermission
+          ? guardedPermission
+          : staticSpecializationGuard(rewriter, location, range->staticID,
+                                      OBELISK_RT_STATIC_ROOT_WRITE);
+  cf::CondBranchOp::create(rewriter, location, useDirect, directBlock,
+                           ValueRange{}, genericBlock, ValueRange{});
+
+  rewriter.setInsertionPointToEnd(directBlock);
+  Value directChanged = storeDirectPackedPlane(rewriter, location, input,
+                                               globalName, range->offset);
+  cf::BranchOp::create(rewriter, location, continuation,
+                       ValueRange{directChanged});
+
+  rewriter.setInsertionPointToEnd(genericBlock);
+  Value genericChanged = emitGeneric();
+  cf::BranchOp::create(rewriter, location, continuation,
+                       ValueRange{genericChanged});
+
+  rewriter.setInsertionPointToStart(continuation);
+  return changed;
 }
 
 template <typename Op>
@@ -5508,17 +5659,25 @@ public:
     if (!width || adaptor.getReference().size() != 1)
       return failure();
     IntegerType plane = rewriter.getIntegerType(*width);
-    Value value = loadStatePlane(
-        rewriter, op.getLoc(), adaptor.getReference().front(), plane,
-        "__obelisk_state_value", false, stateBitCount, directLayout);
+    Value guardedPermission;
+    if (auto range = resolveDirectStaticStateRange(
+            adaptor.getReference().front(), *width, directLayout);
+        range && range->guarded)
+      guardedPermission = staticSpecializationGuard(
+          rewriter, op.getLoc(), range->staticID, OBELISK_RT_STATIC_ROOT_READ);
+    Value value =
+        loadStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
+                       plane, "__obelisk_state_value", false, stateBitCount,
+                       directLayout, guardedPermission);
     if (isa<FloatType>(resultType))
       value =
           arith::BitcastOp::create(rewriter, op.getLoc(), resultType, value);
     SmallVector<Value> converted{value};
     if (containsLogic(resultType))
-      converted.push_back(loadStatePlane(
-          rewriter, op.getLoc(), adaptor.getReference().front(), plane,
-          "__obelisk_state_unknown", true, stateBitCount, directLayout));
+      converted.push_back(
+          loadStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
+                         plane, "__obelisk_state_unknown", true, stateBitCount,
+                         directLayout, guardedPermission));
     SmallVector<ValueRange> replacements{ValueRange(converted)};
     rewriter.replaceOpWithMultiple(op, replacements);
     return success();
@@ -5547,14 +5706,23 @@ public:
     if (!width)
       return failure();
     IntegerType plane = rewriter.getIntegerType(*width);
-    Value oldValue = loadStatePlane(
-        rewriter, op.getLoc(), adaptor.getReference().front(), plane,
-        "__obelisk_state_value", false, stateBitCount, directLayout);
+    Value guardedPermission;
+    if (auto range = resolveDirectStaticStateRange(
+            adaptor.getReference().front(), *width, directLayout);
+        range && range->guarded)
+      guardedPermission = staticSpecializationGuard(
+          rewriter, op.getLoc(), range->staticID,
+          OBELISK_RT_STATIC_ROOT_READ | OBELISK_RT_STATIC_ROOT_WRITE);
+    Value oldValue =
+        loadStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
+                       plane, "__obelisk_state_value", false, stateBitCount,
+                       directLayout, guardedPermission);
     Value oldUnknown;
     if (containsLogic(valueType))
-      oldUnknown = loadStatePlane(
-          rewriter, op.getLoc(), adaptor.getReference().front(), plane,
-          "__obelisk_state_unknown", true, stateBitCount, directLayout);
+      oldUnknown =
+          loadStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
+                         plane, "__obelisk_state_unknown", true, stateBitCount,
+                         directLayout, guardedPermission);
     Value storedValue = adaptor.getValue().front();
     if (isa<FloatType>(valueType))
       storedValue =
@@ -5574,15 +5742,16 @@ public:
       notificationValue = arith::SelectOp::create(rewriter, op.getLoc(), equal,
                                                   oldValue, storedValue);
     }
-    Value changed = storeStatePlane(
-        rewriter, op.getLoc(), adaptor.getReference().front(), storedValue,
-        "__obelisk_state_value", stateBitCount, directLayout);
+    Value changed =
+        storeStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
+                        storedValue, "__obelisk_state_value", stateBitCount,
+                        directLayout, guardedPermission);
     if (adaptor.getValue().size() == 2)
       changed = arith::OrIOp::create(
           rewriter, op.getLoc(), changed,
           storeStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
                           adaptor.getValue()[1], "__obelisk_state_unknown",
-                          stateBitCount, directLayout));
+                          stateBitCount, directLayout, guardedPermission));
     (void)changed;
     if (isa<FloatType>(valueType)) {
       Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
@@ -6540,21 +6709,106 @@ struct NativeStaticNBAPlan {
   SmallVector<obelisk_rt_static_nba_root> roots;
   SmallVector<obelisk_rt_static_nba_site> sites;
   DenseMap<uint64_t, uint32_t> siteRoots;
+  SmallVector<std::string> generatedAccumulators;
 };
+
+LogicalResult
+materializeGeneratedNBAAccumulators(ModuleOp module,
+                                    const NativeStaticNBAPlan &plan) {
+  if (plan.generatedAccumulators.size() != plan.roots.size())
+    return module.emitError("generated NBA accumulator plan is malformed");
+  OpBuilder builder(module.getContext());
+  Location location = module.getLoc();
+  Type storageType = LLVM::LLVMArrayType::get(
+      builder.getI8Type(), sizeof(obelisk_rt_generated_nba_accumulator_256));
+  for (StringRef name : plan.generatedAccumulators) {
+    if (name.empty())
+      continue;
+    if (module.lookupSymbol<LLVM::GlobalOp>(name))
+      return module.emitError("generated NBA accumulator symbol is duplicated");
+    builder.setInsertionPointToStart(module.getBody());
+    auto global =
+        LLVM::GlobalOp::create(builder, location, storageType, false,
+                               LLVM::Linkage::Internal, name, Attribute{}, 32);
+    Block *initializer = new Block;
+    global.getInitializerRegion().push_back(initializer);
+    builder.setInsertionPointToStart(initializer);
+    LLVM::ReturnOp::create(
+        builder, location,
+        LLVM::ZeroOp::create(builder, location, storageType));
+  }
+  return success();
+}
 
 struct NativeStaticFanoutPlan {
   SmallVector<obelisk_rt_static_fanout_entry> entries;
   bool exact = false;
 };
 
+FailureOr<SmallVector<obelisk_rt_static_actor_root>>
+buildNativeStaticActorRootPlan(
+    ModuleOp module, const NativeStateLayout &stateLayout,
+    const DenseMap<Operation *, uint32_t> &actorSlots) {
+  SmallVector<obelisk_rt_static_actor_root> plan;
+  sim::SimDesignOp design;
+  module.walk([&](sim::SimDesignOp candidate) { design = candidate; });
+  auto specialization =
+      design ? design->getAttrOfType<sim::StaticSpecializationAttr>(
+                   sim::metadata::staticSpecialization)
+             : sim::StaticSpecializationAttr{};
+  if (!specialization)
+    return plan;
+  for (Attribute attribute : specialization.getActorRoots()) {
+    auto dependency = dyn_cast<sim::StaticActorRootAttr>(attribute);
+    if (!dependency)
+      return module.emitError("invalid static actor/root dependency"),
+             failure();
+    sim::SimFuncOp function =
+        design.lookupSymbol<sim::SimFuncOp>(dependency.getFunction());
+    auto actor =
+        function ? actorSlots.find(function.getOperation()) : actorSlots.end();
+    if (!function || actor == actorSlots.end())
+      continue;
+    auto handle = stateLayout.storage.find(dependency.getDescriptor());
+    if (handle == stateLayout.storage.end())
+      return module.emitError(
+                 "static actor/root dependency references unknown storage"),
+             failure();
+    obelisk_rt_stable_handle_v1 decoded{};
+    if (!obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
+        decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC || decoded.offset != 0)
+      return module.emitError(
+                 "static actor/root dependency has an invalid native handle"),
+             failure();
+    uint32_t flags = (dependency.getRead() ? OBELISK_RT_STATIC_ROOT_READ : 0) |
+                     (dependency.getWrite() ? OBELISK_RT_STATIC_ROOT_WRITE : 0);
+    if (flags != 0)
+      plan.push_back({actor->second, decoded.id, flags, 0});
+  }
+  llvm::sort(plan, [](const auto &lhs, const auto &rhs) {
+    return std::tuple{lhs.actor_slot, lhs.static_state, lhs.flags} <
+           std::tuple{rhs.actor_slot, rhs.static_state, rhs.flags};
+  });
+  plan.erase(std::unique(plan.begin(), plan.end(),
+                         [](const auto &lhs, const auto &rhs) {
+                           return lhs.actor_slot == rhs.actor_slot &&
+                                  lhs.static_state == rhs.static_state &&
+                                  lhs.flags == rhs.flags;
+                         }),
+             plan.end());
+  return plan;
+}
+
 class ImmediateNBAConversion final
     : public OpConversionPattern<sim::SimNBAEnqueueOp> {
 public:
   ImmediateNBAConversion(const TypeConverter &converter, MLIRContext *context,
                          uint64_t stateBitCount,
-                         const NativeStaticNBAPlan *staticPlan)
+                         const NativeStaticNBAPlan *staticPlan,
+                         bool staticSitesEnabled, bool guardedClaims)
       : OpConversionPattern(converter, context), stateBitCount(stateBitCount),
-        staticPlan(staticPlan) {}
+        staticPlan(staticPlan), staticSitesEnabled(staticSitesEnabled),
+        guardedClaims(guardedClaims) {}
   LogicalResult
   matchAndRewrite(sim::SimNBAEnqueueOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
@@ -6567,10 +6821,6 @@ public:
     Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
     Type i32 = rewriter.getI32Type();
     Type i64 = rewriter.getI64Type();
-    Value contextAddress = LLVM::AddressOfOp::create(
-        rewriter, location, pointer, "__obelisk_current_context");
-    Value runtimeContext =
-        LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
 
     sim::NBASiteAttr site = op.getSiteAttr();
     auto staticRoot = site && staticPlan
@@ -6601,6 +6851,9 @@ public:
           return isa<IntegerType>(value.getType());
         });
     if (packedStaticStage) {
+      bool useGuardedClaim =
+          guardedClaims ||
+          staticPlan->roots[staticRoot->second].bit_width <= 64;
       auto widen = [&](Value value) {
         auto type = cast<IntegerType>(value.getType());
         return type.getWidth() == 64
@@ -6611,11 +6864,113 @@ public:
       Value unknown = llvmConstant(rewriter, location, i64, 0);
       if (adaptor.getValue().size() == 2)
         unknown = widen(adaptor.getValue()[1]);
+      Value value = widen(adaptor.getValue().front());
+      StringRef generatedAccumulator =
+          staticRoot->second < staticPlan->generatedAccumulators.size()
+              ? staticPlan->generatedAccumulators[staticRoot->second]
+              : StringRef{};
+      sim::SimFuncOp function = op->getParentOfType<sim::SimFuncOp>();
+      uint32_t homeRegion =
+          function ? executableRegion(function.getHomeRegion()) : UINT32_MAX;
+      uint32_t commitRegion = homeRegion == OBELISK_RT_REGION_ACTIVE ||
+                                      homeRegion == OBELISK_RT_REGION_REACTIVE
+                                  ? homeRegion + 2
+                                  : UINT32_MAX;
+      if (!useGuardedClaim && !generatedAccumulator.empty() && *width == 32 &&
+          adaptor.getValue().size() == 1 && (decoded.offset & 31) == 0 &&
+          commitRegion != UINT32_MAX) {
+        Value base = LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                               generatedAccumulator);
+        uint64_t wordOffset =
+            static_cast<uint64_t>(decoded.offset / 64) * sizeof(uint64_t);
+        bool high = (decoded.offset & 63) != 0;
+        uint64_t laneMask =
+            high ? UINT64_C(0xffffffff00000000) : UINT64_C(0x00000000ffffffff);
+        uint64_t keepMask = ~laneMask;
+        Value laneValue = value;
+        if (high)
+          laneValue =
+              arith::ShLIOp::create(rewriter, location, laneValue,
+                                    llvmConstant(rewriter, location, i64, 32));
+        auto updatePlane = [&](uint64_t planeOffset, Value replacement) {
+          Value address =
+              byteGEP(rewriter, location, base, planeOffset + wordOffset);
+          Value previous =
+              LLVM::LoadOp::create(rewriter, location, i64, address, 8);
+          Value kept = arith::AndIOp::create(
+              rewriter, location, previous,
+              llvmConstant(rewriter, location, i64, keepMask));
+          LLVM::StoreOp::create(
+              rewriter, location,
+              arith::OrIOp::create(rewriter, location, kept, replacement),
+              address, 8);
+        };
+        updatePlane(offsetof(obelisk_rt_generated_nba_accumulator_256, value),
+                    laneValue);
+        updatePlane(offsetof(obelisk_rt_generated_nba_accumulator_256, unknown),
+                    llvmConstant(rewriter, location, i64, 0));
+        Value maskAddress = byteGEP(
+            rewriter, location, base,
+            offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask) +
+                wordOffset);
+        Value previousMask =
+            LLVM::LoadOp::create(rewriter, location, i64, maskAddress, 8);
+        LLVM::StoreOp::create(
+            rewriter, location,
+            arith::OrIOp::create(
+                rewriter, location, previousMask,
+                llvmConstant(rewriter, location, i64, laneMask)),
+            maskAddress, 8);
+        Value countAddress = byteGEP(
+            rewriter, location, base,
+            offsetof(obelisk_rt_generated_nba_accumulator_256, stage_count));
+        Value count =
+            LLVM::LoadOp::create(rewriter, location, i64, countAddress, 8);
+        LLVM::StoreOp::create(
+            rewriter, location,
+            arith::AddIOp::create(rewriter, location, count,
+                                  llvmConstant(rewriter, location, i64, 1)),
+            countAddress, 8);
+        LLVM::StoreOp::create(
+            rewriter, location, llvmConstant(rewriter, location, i32, 1),
+            byteGEP(rewriter, location, base,
+                    offsetof(obelisk_rt_generated_nba_accumulator_256, valid)),
+            4);
+        LLVM::StoreOp::create(
+            rewriter, location,
+            llvmConstant(rewriter, location, i32, commitRegion),
+            byteGEP(rewriter, location, base,
+                    offsetof(obelisk_rt_generated_nba_accumulator_256,
+                             exec_region)),
+            4);
+        rewriter.eraseOp(op);
+        return success();
+      }
+      Value contextAddress = LLVM::AddressOfOp::create(
+          rewriter, location, pointer, "__obelisk_current_context");
+      Value runtimeContext =
+          LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
+      if (!useGuardedClaim) {
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_static_nba_stage_wide"),
+            ValueRange{
+                runtimeContext,
+                llvmConstant(rewriter, location, i32, staticRoot->second),
+                llvmConstant(rewriter, location, i64,
+                             static_cast<uint64_t>(decoded.offset)),
+                llvmConstant(rewriter, location, i64, *width), value, unknown,
+                llvmConstant(rewriter, location, i32,
+                             adaptor.getValue().size() == 2 ? 1 : 0)});
+        rewriter.eraseOp(op);
+        return success();
+      }
       Value status =
           LLVM::CallOp::create(
               rewriter, location, TypeRange{i32},
               SymbolRefAttr::get(rewriter.getContext(),
-                                 "obelisk_rt_v1_scheduler_static_nba_packed"),
+                                 "obelisk_rt_v1_static_nba_claim"),
               ValueRange{
                   runtimeContext,
                   llvmConstant(rewriter, location, i32, staticRoot->second),
@@ -6630,8 +6985,8 @@ public:
                   llvmConstant(rewriter, location, i64, stateBitCount),
                   llvmConstant(rewriter, location, i64,
                                static_cast<uint64_t>(decoded.offset)),
-                  llvmConstant(rewriter, location, i64, *width),
-                  widen(adaptor.getValue().front()), unknown})
+                  llvmConstant(rewriter, location, i64, *width), value,
+                  unknown})
               .getResult();
       LLVM::CallOp::create(rewriter, location, TypeRange{},
                            SymbolRefAttr::get(rewriter.getContext(),
@@ -6641,6 +6996,10 @@ public:
       return success();
     }
 
+    Value contextAddress = LLVM::AddressOfOp::create(
+        rewriter, location, pointer, "__obelisk_current_context");
+    Value runtimeContext =
+        LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
     auto savePlane = [&](Value value) {
       Value address = entryAlloca(rewriter, location, value.getType(), 1, 1);
       LLVM::StoreOp::create(rewriter, location, value, address, 1);
@@ -6676,7 +7035,9 @@ public:
                            ValueRange{runtimeContext, status});
     } else {
       bool staticallyStaged =
-          site && adaptor.getDelay().empty() && !site.getTiming() &&
+          staticSitesEnabled && staticPlan && site &&
+          staticPlan->siteRoots.contains(site.getId()) &&
+          adaptor.getDelay().empty() && !site.getTiming() &&
           site.getStorage() != sim::ComputeNBAStorageKind::DynamicFrontier;
       SmallVector<Value> arguments{
           runtimeContext,
@@ -6713,6 +7074,8 @@ public:
 private:
   uint64_t stateBitCount;
   const NativeStaticNBAPlan *staticPlan;
+  bool staticSitesEnabled;
+  bool guardedClaims;
 };
 
 class SpawnTypeConversion final : public OpConversionPattern<sim::SimSpawnOp> {
@@ -10706,7 +11069,7 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
 
 FailureOr<NativeStaticNBAPlan>
 buildNativeStaticNBAPlan(ModuleOp module, const NativeStateLayout &stateLayout,
-                         bool enabled) {
+                         bool enabled, bool allowLegacyWideRoots = false) {
   NativeStaticNBAPlan plan;
   if (!enabled)
     return plan;
@@ -10779,9 +11142,17 @@ buildNativeStaticNBAPlan(ModuleOp module, const NativeStateLayout &stateLayout,
       return module.emitError(
                  "static NBA commit root is absent from native state layout"),
              failure();
+    if ((!allowLegacyWideRoots &&
+         (!stateLayout.nbaHandles.contains(decoded.id) || bound->width > 64)) ||
+        !commit.getFrontierSites().empty())
+      continue;
     uint32_t root = static_cast<uint32_t>(plan.roots.size());
-    plan.roots.push_back(
-        {commit.getId(), decoded.id, static_cast<uint64_t>(bound->width)});
+    plan.roots.push_back({commit.getId(), decoded.id,
+                          static_cast<uint64_t>(bound->width), nullptr});
+    plan.generatedAccumulators.emplace_back();
+    if (allowLegacyWideRoots && bound->width > 64 && bound->width <= 256)
+      plan.generatedAccumulators.back() =
+          ("__obelisk_aot_nba_accumulator_" + Twine(root)).str();
     auto appendSites = [&](DenseI64ArrayAttr ids, uint32_t storage) {
       for (int64_t id : ids.asArrayRef()) {
         if (id < 0)
@@ -10795,10 +11166,6 @@ buildNativeStaticNBAPlan(ModuleOp module, const NativeStateLayout &stateLayout,
         failed(appendSites(commit.getAccumulatorSites(),
                            OBELISK_RT_STATIC_NBA_ROOT_ACCUMULATOR)))
       return module.emitError("static NBA site identity is negative"),
-             failure();
-    if (!commit.getFrontierSites().empty())
-      return module.emitError(
-                 "static NBA plan contains a DynamicFrontier site"),
              failure();
   }
   llvm::sort(plan.sites, [](const auto &left, const auto &right) {
@@ -10949,6 +11316,8 @@ makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
                   const NativeStateLayout &stateLayout,
                   const NativeStaticNBAPlan &staticNBAPlan,
                   const NativeStaticFanoutPlan &staticFanoutPlan,
+                  ArrayRef<obelisk_rt_static_actor_root> actorRoots,
+                  bool enableDirectState, bool enableStaticNBA,
                   bool enableStaticControl, bool enableStaticFanout,
                   bool fullyStatic, bool rootSlotZero) {
   if (actorCount == 0 || executableNodes.empty())
@@ -10989,9 +11358,12 @@ makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
   constexpr StringLiteral nbaRootsName = "__obelisk_aot_nba_roots_v1";
   constexpr StringLiteral nbaSitesName = "__obelisk_aot_nba_sites_v1";
   constexpr StringLiteral fanoutName = "__obelisk_aot_static_fanout_v1";
+  constexpr StringLiteral actorRootsName =
+      "__obelisk_aot_static_actor_roots_v1";
   constexpr StringLiteral bindName = "__obelisk_aot_schedule_bind_v1";
   constexpr StringLiteral runName = "__obelisk_aot_schedule_run_v1";
   constexpr StringLiteral snapshotName = "__obelisk_aot_schedule_snapshot_v1";
+  constexpr StringLiteral nbaCommitName = "__obelisk_aot_static_nba_commit_v1";
   constexpr StringLiteral planName = "__obelisk_aot_schedule_plan_v1";
 
   builder.setInsertionPointToStart(module.getBody());
@@ -11033,7 +11405,8 @@ makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
         return nodes;
       });
 
-  Type nbaRootType = LLVM::LLVMStructType::getLiteral(context, {i32, i32, i64});
+  Type nbaRootType =
+      LLVM::LLVMStructType::getLiteral(context, {i32, i32, i64, pointer});
   if (!nbaRoots.empty()) {
     Type rootsType = LLVM::LLVMArrayType::get(nbaRootType, nbaRoots.size());
     makeConstantGlobal(
@@ -11056,6 +11429,18 @@ makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
                 initializerBuilder, location, value,
                 llvmConstant(initializerBuilder, location, i64, root.bit_width),
                 2);
+            Value accumulator =
+                index < staticNBAPlan.generatedAccumulators.size() &&
+                        !staticNBAPlan.generatedAccumulators[index].empty()
+                    ? LLVM::AddressOfOp::create(
+                          initializerBuilder, location, pointer,
+                          staticNBAPlan.generatedAccumulators[index])
+                          .getResult()
+                    : LLVM::ZeroOp::create(initializerBuilder, location,
+                                           pointer)
+                          .getResult();
+            value = insertValue(initializerBuilder, location, value,
+                                accumulator, 3);
             roots = LLVM::InsertValueOp::create(
                 initializerBuilder, location, roots, value,
                 ArrayRef<int64_t>{static_cast<int64_t>(index)});
@@ -11134,6 +11519,38 @@ makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
           return entries;
         });
   }
+  Type actorRootType =
+      LLVM::LLVMStructType::getLiteral(context, {i32, i32, i32, i32});
+  if (!actorRoots.empty()) {
+    Type entriesType =
+        LLVM::LLVMArrayType::get(actorRootType, actorRoots.size());
+    makeConstantGlobal(
+        module, location, entriesType, actorRootsName, LLVM::Linkage::Internal,
+        4, [&](OpBuilder &initializerBuilder) {
+          Value entries =
+              LLVM::ZeroOp::create(initializerBuilder, location, entriesType);
+          for (auto [index, entry] : llvm::enumerate(actorRoots)) {
+            Value value = LLVM::ZeroOp::create(initializerBuilder, location,
+                                               actorRootType);
+            value = insertValue(initializerBuilder, location, value,
+                                llvmConstant(initializerBuilder, location, i32,
+                                             entry.actor_slot),
+                                0);
+            value = insertValue(initializerBuilder, location, value,
+                                llvmConstant(initializerBuilder, location, i32,
+                                             entry.static_state),
+                                1);
+            value = insertValue(
+                initializerBuilder, location, value,
+                llvmConstant(initializerBuilder, location, i32, entry.flags),
+                2);
+            entries = LLVM::InsertValueOp::create(
+                initializerBuilder, location, entries, value,
+                ArrayRef<int64_t>{static_cast<int64_t>(index)});
+          }
+          return entries;
+        });
+  }
 
   builder.setInsertionPointToEnd(module.getBody());
   auto bind = LLVM::LLVMFuncOp::create(
@@ -11188,10 +11605,29 @@ makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
           .getResult();
   LLVM::ReturnOp::create(builder, location, snapshotStatus);
 
+  builder.setInsertionPointToEnd(module.getBody());
+  auto nbaCommit = LLVM::LLVMFuncOp::create(
+      builder, location, nbaCommitName,
+      LLVM::LLVMFunctionType::get(i32, {pointer, pointer, i32, pointer},
+                                  false));
+  Block *nbaCommitEntry = nbaCommit.addEntryBlock(builder);
+  builder.setInsertionPointToStart(nbaCommitEntry);
+  Value nbaCommitStatus =
+      LLVM::CallOp::create(
+          builder, location, TypeRange{i32},
+          SymbolRefAttr::get(context, "obelisk_rt_v1_static_nba_commit_roots"),
+          ValueRange{nbaCommitEntry->getArgument(1),
+                     llvmConstant(builder, location, i32, nbaRoots.size()),
+                     nbaCommitEntry->getArgument(2),
+                     nbaCommitEntry->getArgument(3)})
+          .getResult();
+  LLVM::ReturnOp::create(builder, location, nbaCommitStatus);
+
   auto planType = LLVM::LLVMStructType::getLiteral(
       context,
-      {i32, i64, pointer, i64, i32, i32, pointer, pointer, i64, pointer,
-       pointer, pointer, pointer, i32, i32, pointer, i64, pointer, i64});
+      {i32, i64,     pointer, i64,     i32,     i32,    pointer, pointer,
+       i64, pointer, pointer, pointer, pointer, i32,    i32,     pointer,
+       i64, pointer, i64,     pointer, i64,     pointer});
   makeConstantGlobal(
       module, location, planType, planName, LLVM::Linkage::Internal, 8,
       [&](OpBuilder &initializerBuilder) {
@@ -11230,7 +11666,11 @@ makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
                          : 0) |
                     (staticFanoutEnabled
                          ? OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT
-                         : 0)),
+                         : 0) |
+                    (enableDirectState ? OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE
+                                       : 0) |
+                    (enableStaticNBA ? OBELISK_RT_NATIVE_SCHEDULE_STATIC_NBA
+                                     : 0)),
             5);
         value = insertValue(initializerBuilder, location, value,
                             LLVM::AddressOfOp::create(initializerBuilder,
@@ -11298,10 +11738,32 @@ makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
                       .getResult();
         value =
             insertValue(initializerBuilder, location, value, fanoutAddress, 17);
-        return insertValue(initializerBuilder, location, value,
-                           llvmConstant(initializerBuilder, location, i64,
-                                        fanoutEntries.size()),
-                           18);
+        value = insertValue(initializerBuilder, location, value,
+                            llvmConstant(initializerBuilder, location, i64,
+                                         fanoutEntries.size()),
+                            18);
+        Value actorRootsAddress =
+            actorRoots.empty()
+                ? LLVM::ZeroOp::create(initializerBuilder, location, pointer)
+                      .getResult()
+                : LLVM::AddressOfOp::create(initializerBuilder, location,
+                                            pointer, actorRootsName)
+                      .getResult();
+        value = insertValue(initializerBuilder, location, value,
+                            actorRootsAddress, 19);
+        value = insertValue(
+            initializerBuilder, location, value,
+            llvmConstant(initializerBuilder, location, i64, actorRoots.size()),
+            20);
+        Value commitAddress =
+            enableStaticNBA
+                ? LLVM::AddressOfOp::create(initializerBuilder, location,
+                                            pointer, nbaCommitName)
+                      .getResult()
+                : LLVM::ZeroOp::create(initializerBuilder, location, pointer)
+                      .getResult();
+        return insertValue(initializerBuilder, location, value, commitAddress,
+                           21);
       });
   if (fullyStatic)
     getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_run_aot_nodes",
@@ -11311,6 +11773,10 @@ makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
                              {pointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_snapshot_aot", i32,
                            {pointer, pointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_static_nba_commit_root", i32,
+                           {pointer, i32, i32, pointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_static_nba_commit_roots", i32,
+                           {pointer, i32, i32, pointer});
   return success();
 }
 
@@ -11577,6 +12043,75 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   FailureOr<NativeStateLayout> stateLayout = buildNativeStateLayout(module);
   if (failed(stateLayout))
     return failure();
+  sim::StaticSpecializationAttr staticSpecialization;
+  sim::SimDesignOp staticSpecializationDesign;
+  module.walk([&](sim::SimDesignOp design) {
+    staticSpecializationDesign = design;
+    staticSpecialization = design->getAttrOfType<sim::StaticSpecializationAttr>(
+        sim::metadata::staticSpecialization);
+  });
+  if (staticSpecialization) {
+    if (!staticSpecializationDesign || staticSpecialization.getVersion() != 1 ||
+        staticSpecialization.getMaxPackedWidth() == 0 ||
+        staticSpecialization.getMaxPackedWidth() > 64 ||
+        staticSpecialization.getSourceGraph() !=
+            staticSpecializationDesign.getComputeGraphAttr())
+      return module.emitError(
+          "native lowering rejected stale static-specialization metadata");
+    DenseSet<uint64_t> plannedNBARoots;
+    for (Attribute attribute : staticSpecialization.getRoots()) {
+      auto root = dyn_cast<sim::StaticStateRootAttr>(attribute);
+      if (!root)
+        return module.emitError(
+            "native lowering rejected invalid static-specialization root");
+      if (!root.getDirect() && !root.getGuarded() && !root.getNba())
+        continue;
+      if (root.getWidth() == 0 ||
+          root.getWidth() > staticSpecialization.getMaxPackedWidth())
+        return module.emitError(
+            "native lowering rejected invalid static-specialization root");
+      auto handle = stateLayout->storage.find(root.getDescriptor());
+      if (handle == stateLayout->storage.end())
+        return module.emitError(
+            "static-specialization root references unknown storage");
+      obelisk_rt_stable_handle_v1 decoded{};
+      if (!obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
+          decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC ||
+          decoded.offset != 0)
+        return module.emitError(
+            "static-specialization root has an invalid native handle");
+      auto bound = llvm::find_if(stateLayout->bounds, [&](const auto &entry) {
+        return entry.handleID == decoded.id;
+      });
+      if (bound == stateLayout->bounds.end() || bound->width != root.getWidth())
+        return module.emitError(
+            "static-specialization root disagrees with native state layout");
+      if (root.getDirect())
+        stateLayout->directHandles.insert(decoded.id);
+      if (root.getGuarded())
+        stateLayout->guardedHandles.insert(decoded.id);
+      if (root.getNba()) {
+        if (!plannedNBARoots.insert(root.getDescriptor()).second)
+          return module.emitError(
+              "static-specialization NBA root is duplicated");
+        stateLayout->nbaHandles.insert(decoded.id);
+      }
+    }
+    DenseSet<uint64_t> listedNBARoots;
+    for (int64_t descriptor : staticSpecialization.getNbaRoots().asArrayRef()) {
+      if (descriptor < 0 ||
+          !listedNBARoots.insert(static_cast<uint64_t>(descriptor)).second)
+        return module.emitError(
+            "static-specialization NBA root inventory is malformed");
+    }
+    if (listedNBARoots.size() != plannedNBARoots.size() ||
+        !llvm::all_of(listedNBARoots, [&](uint64_t descriptor) {
+          return plannedNBARoots.contains(descriptor);
+        }))
+      return module.emitError(
+          "static-specialization NBA root policies disagree with the "
+          "ordered inventory");
+  }
   sim::NativeSchedulerMode nativeScheduler = sim::NativeSchedulerMode::Auto;
   if (auto mode = module->getAttrOfType<sim::NativeSchedulerModeAttr>(
           "obelisk.native_scheduler"))
@@ -11608,6 +12143,11 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
        IntegerType::get(context, 32), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context)});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_static_specialization_guard",
+      IntegerType::get(context, 32),
+      {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 32),
+       IntegerType::get(context, 32), IntegerType::get(context, 32)});
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_scheduler_event", LLVM::LLVMVoidType::get(context),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
@@ -11641,6 +12181,13 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
        IntegerType::get(context, 64), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_static_nba_claim", IntegerType::get(context, 32),
+      {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 32),
+       LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
+       IntegerType::get(context, 64), IntegerType::get(context, 64),
+       IntegerType::get(context, 64), IntegerType::get(context, 64),
+       IntegerType::get(context, 64)});
+  getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_scheduler_static_nba_packed",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 32),
@@ -11648,6 +12195,13 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
        IntegerType::get(context, 64), IntegerType::get(context, 64),
        IntegerType::get(context, 64), IntegerType::get(context, 64),
        IntegerType::get(context, 64)});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_static_nba_stage_wide",
+      LLVM::LLVMVoidType::get(context),
+      {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 32),
+       IntegerType::get(context, 64), IntegerType::get(context, 64),
+       IntegerType::get(context, 64), IntegerType::get(context, 64),
+       IntegerType::get(context, 32)});
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_scheduler_string_nba",
       IntegerType::get(context, 32),
@@ -11990,12 +12544,19 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     return failure();
   bool staticFanout = false;
   bool directStaticState = false;
+  bool staticNBA = false;
+  bool legacyStaticNBA = false;
   NativeStaticNBAPlan staticNBAPlan;
   NativeStaticFanoutPlan staticFanoutPlan;
+  SmallVector<obelisk_rt_static_actor_root> staticActorRoots;
   if (useAOT && aotEligibility.fullyEligible)
     module.walk([&](sim::SimDesignOp design) {
       sim::ComputeGraphAttr graph = design.getComputeGraphAttr();
       staticFanout = graph && graph.getVpi() == sim::ComputeVPIMode::Off;
+      directStaticState = staticSpecialization && graph &&
+                          (!stateLayout->directHandles.empty() ||
+                           !stateLayout->guardedHandles.empty());
+      staticNBA = staticSpecialization && !stateLayout->nbaHandles.empty();
     });
   if (staticFanout) {
     module.walk([&](Operation *operation) {
@@ -12006,22 +12567,43 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
         staticFanout = false;
     });
   }
-  // Direct access is selected per operation by resolveDirectStaticStateRange,
-  // so a wide root does not prevent independent narrow roots from using the
-  // generated planes.
-  directStaticState = staticFanout;
-  if (staticFanout) {
+  // Preserve the pre-specialization AOT accumulator for fully static VPI-off
+  // schedules.  The new pass deliberately leaves wide roots generic, but it
+  // must not remove the existing wide-root batching that static fanout had
+  // already proven safe.
+  legacyStaticNBA = staticSpecialization && staticFanout;
+  // State, NBA, and fanout are independent capabilities. Direct access is
+  // selected per operation by resolveDirectStaticStateRange; a wide or
+  // otherwise generic root does not prevent an independent narrow root from
+  // using generated planes.
+  if (staticNBA || legacyStaticNBA) {
     FailureOr<NativeStaticNBAPlan> plan =
-        buildNativeStaticNBAPlan(module, *stateLayout, true);
+        buildNativeStaticNBAPlan(module, *stateLayout, true, legacyStaticNBA);
     if (failed(plan))
       return failure();
     staticNBAPlan = std::move(*plan);
+    staticNBA = !staticNBAPlan.roots.empty();
+    if (failed(materializeGeneratedNBAAccumulators(module, staticNBAPlan)))
+      return failure();
+    directStaticState |=
+        llvm::any_of(staticNBAPlan.generatedAccumulators,
+                     [](const std::string &name) { return !name.empty(); });
+  }
+  if (staticFanout) {
     FailureOr<NativeStaticFanoutPlan> fanout = buildNativeStaticFanoutPlan(
         module, *stateLayout, aotEligibility.actorSlots, true);
     if (failed(fanout))
       return failure();
     staticFanoutPlan = std::move(*fanout);
     staticFanout &= staticFanoutPlan.exact;
+  }
+  if (staticSpecialization && useAOT) {
+    FailureOr<SmallVector<obelisk_rt_static_actor_root>> dependencies =
+        buildNativeStaticActorRootPlan(module, *stateLayout,
+                                       aotEligibility.actorSlots);
+    if (failed(dependencies))
+      return failure();
+    staticActorRoots = std::move(*dependencies);
   }
   scheduleRanks = buildNativeScheduleRanks(module);
   if (useAOT) {
@@ -12250,7 +12832,9 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                                                                 context);
   packedPatterns.add<RefLoadConversion, RefStoreConversion>(
       packedConverter, context, stateLayout->bitCount,
-      directStaticState ? &*stateLayout : nullptr);
+      staticSpecialization && useAOT && aotEligibility.fullyEligible
+          ? &*stateLayout
+          : nullptr);
   packedPatterns
       .add<OverrideConversion, ReleaseOverrideConversion, NetReadConversion>(
           packedConverter, context, stateLayout->bitCount);
@@ -12313,7 +12897,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                                             *stateLayout);
   packedPatterns.add<ImmediateNBAConversion>(
       packedConverter, context, stateLayout->bitCount,
-      directStaticState ? &staticNBAPlan : nullptr);
+      staticNBA ? &staticNBAPlan : nullptr, staticNBA, !legacyStaticNBA);
   packedPatterns.add<RefAllocConversion>(packedConverter, context);
   ConversionTarget packedTarget(*context);
   packedTarget.addIllegalOp<
@@ -12502,8 +13086,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
             Operation *terminator = block->getTerminator();
             if (auto suspend = dyn_cast<sim::SimSuspendChangeOp>(terminator))
               site = suspend.getSiteAttr();
-            else if (auto suspend =
-                         dyn_cast<sim::SimSuspendEdgeOp>(terminator))
+            else if (auto suspend = dyn_cast<sim::SimSuspendEdgeOp>(terminator))
               site = suspend.getSiteAttr();
           }
           if (!fragment || !block || !site)
@@ -12609,10 +13192,11 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                  function.getEntryKind() == sim::EntryKind::RootInitializer &&
                  entry.second == 0;
         });
-    if (failed(makeNativeAOTPlan(module, aotEligibility.actorSlots.size(),
-                                 executableNodes, *stateLayout, staticNBAPlan,
-                                 staticFanoutPlan, staticFanout, staticFanout,
-                                 aotEligibility.fullyEligible, rootSlotZero)))
+    if (failed(makeNativeAOTPlan(
+            module, aotEligibility.actorSlots.size(), executableNodes,
+            *stateLayout, staticNBAPlan, staticFanoutPlan, staticActorRoots,
+            directStaticState, staticNBA, staticFanout, staticFanout,
+            aotEligibility.fullyEligible, rootSlotZero)))
       return failure();
   }
   if (failed(makeSchedulerMain(module, *stateLayout, useAOT)))

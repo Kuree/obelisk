@@ -303,6 +303,14 @@ static int executeCompilation(const InputArgList &args) {
                     "'; expected auto, generic, or aot");
     valid = false;
   }
+  StringRef staticSpecialization =
+      args.getLastArgValue(OPT_static_specialization_EQ, "auto");
+  if (staticSpecialization != "auto" && staticSpecialization != "off" &&
+      staticSpecialization != "on") {
+    emitDriverError(Twine("unsupported static specialization '") +
+                    staticSpecialization + "'; expected auto, off, or on");
+    valid = false;
+  }
   uint32_t optLevel = 3;
   if (const Arg *optimization =
           args.getLastArg(OPT_O0, OPT_O1, OPT_O2, OPT_O3)) {
@@ -412,7 +420,8 @@ static int executeCompilation(const InputArgList &args) {
     passManager.addPass(obelisk::createConvertSlangToObeliskPass());
     if (emitSim || emitSchedule || native)
       obelisk::buildObeliskToSimulationPipeline(
-          passManager, requestedWorkers.value_or(1), vpiMode, optLevel);
+          passManager, requestedWorkers.value_or(1), vpiMode, optLevel,
+          staticSpecialization);
     if (failed(passManager.run(*module)))
       return 1;
   }

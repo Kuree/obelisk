@@ -36,6 +36,8 @@ inline constexpr llvm::StringLiteral lowered = "obelisk_sim.lowered";
 inline constexpr llvm::StringLiteral staticBodyFusion =
     "obelisk_sim.static_body_fusion";
 inline constexpr llvm::StringLiteral staticFusion = "obelisk_sim.static_fusion";
+inline constexpr llvm::StringLiteral staticSpecialization =
+    "obelisk_sim.static_specialization";
 
 inline bool isKnownBoundary(llvm::StringRef name) {
   return name == captureKind || name == descriptorId ||
@@ -47,7 +49,8 @@ inline bool isKnownBoundary(llvm::StringRef name) {
 inline bool isKnownOperation(llvm::StringRef name) {
   return isKnownBoundary(name) || name == bindings || name == delayScale ||
          name == delayQuantum || name == hierarchicalName || name == lowered ||
-         name == staticBodyFusion || name == staticFusion;
+         name == staticBodyFusion || name == staticFusion ||
+         name == staticSpecialization;
 }
 
 } // namespace obelisk::sim::metadata
