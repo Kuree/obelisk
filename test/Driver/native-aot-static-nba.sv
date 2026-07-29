@@ -26,6 +26,15 @@
 // RUN: obelisk -O2 --native-scheduler=aot %t/wide.sv -o %t/wide
 // RUN: %t/wide > %t/wide.out
 // RUN: diff -u %t/wide-expected.txt %t/wide.out
+// RUN: obelisk -O2 --native-scheduler=aot %t/shifted.sv -o %t/shifted
+// RUN: obelisk -O2 --static-specialization=off --native-scheduler=aot \
+// RUN:   %t/shifted.sv -o %t/shifted-generic
+// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t/shifted \
+// RUN:   > %t/shifted.out 2> %t/shifted.diag
+// RUN: %t/shifted-generic > %t/shifted-generic.out
+// RUN: diff -u %t/shifted-expected.txt %t/shifted.out
+// RUN: diff -u %t/shifted-generic.out %t/shifted.out
+// RUN: FileCheck %s --check-prefix=SHIFTED-DIAG < %t/shifted.diag
 // RUN: obelisk -O0 --native-scheduler=auto -emit-llvm %t/string.sv \
 // RUN:   -o %t/string.ll
 // RUN: FileCheck %s --check-prefix=HYBRID < %t/string.ll
@@ -56,6 +65,11 @@
 // DIAG: aot_nba_stages={{[1-9][0-9]*}}
 // DIAG-SAME: aot_nba_commits={{[1-9][0-9]*}}
 // DIAG-SAME: aot_fallbacks=0
+
+// SHIFTED-DIAG: scheduler_iterations=0
+// SHIFTED-DIAG-SAME: aot_nba_stages=8
+// SHIFTED-DIAG-SAME: aot_nba_commits=1
+// SHIFTED-DIAG-SAME: aot_fallbacks=0
 
 // WIDE: @__obelisk_aot_nba_accumulator_0 = internal global [104 x i8]
 // WIDE-NOT: call i32 @obelisk_rt_v1_native_state_load_plane
@@ -112,6 +126,35 @@ endmodule
 
 //--- wide-expected.txt
 values=00000055,00000001
+//--- shifted.sv
+module native_aot_shifted_four_state_nba;
+  logic [4:0] pad = 5'b10101;
+  logic [31:0] values [0:7];
+  bit clock = 0;
+
+  always @(posedge clock) begin
+    values[0] <= 32'h0123_4567;
+    values[1] <= 32'h89ab_cdef;
+    values[2] <= 32'hxxxx_1357;
+    values[3] <= 32'h2468_zzzz;
+    values[4] <= 32'h0x0x_a5a5;
+    values[5] <= 32'h5a5a_z0z0;
+    values[6] <= 32'hffff_0000;
+    values[7] <= 32'h0000_ffff;
+  end
+
+  initial begin
+    #1 clock = 1;
+    #1;
+    $display("shifted=%h:%h:%h:%h:%h:%h:%h:%h:%h", pad, values[0],
+             values[1], values[2], values[3], values[4], values[5], values[6],
+             values[7]);
+    $finish;
+  end
+endmodule
+
+//--- shifted-expected.txt
+shifted=15:01234567:89abcdef:xxxx1357:2468zzzz:0x0xa5a5:5a5az0z0:ffff0000:0000ffff
 //--- string.sv
 module native_aot_string_nba;
   string value = "old";

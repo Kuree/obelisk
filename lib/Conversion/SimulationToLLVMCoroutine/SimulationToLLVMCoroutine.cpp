@@ -5288,6 +5288,7 @@ Value isValidHandle(OpBuilder &builder, Location location, Value handle) {
 
 struct DirectStaticStateRange {
   uint64_t offset;
+  uint64_t localOffset;
   uint32_t staticID;
   bool guarded;
 };
@@ -5322,6 +5323,7 @@ resolveDirectStaticStateRange(Value handle, unsigned width,
     return std::nullopt;
   return DirectStaticStateRange{bound->offset +
                                     static_cast<uint64_t>(decoded.offset),
+                                static_cast<uint64_t>(decoded.offset),
                                 decoded.id, guarded};
 }
 
@@ -5936,7 +5938,9 @@ private:
 
 void notifySignal(OpBuilder &builder, Location location, Value handle,
                   uint64_t width, Value oldValue, Value oldUnknown,
-                  Value newValue, Value newUnknown);
+                  Value newValue, Value newUnknown,
+                  std::optional<DirectStaticStateRange> directRange =
+                      std::nullopt);
 sim::SimStatusCheckOp reportManagedStatus(OpBuilder &builder, Location location,
                                           Value context, Value status);
 
@@ -6019,12 +6023,13 @@ public:
       return failure();
     IntegerType plane = rewriter.getIntegerType(*width);
     bool assumeClean = op->hasAttr(kAssumeCleanSpecializationAttr);
+    std::optional<DirectStaticStateRange> directRange =
+        resolveDirectStaticStateRange(adaptor.getReference().front(), *width,
+                                      directLayout);
     Value guardedPermission;
-    if (auto range = resolveDirectStaticStateRange(
-            adaptor.getReference().front(), *width, directLayout);
-        range && range->guarded && !assumeClean)
+    if (directRange && directRange->guarded && !assumeClean)
       guardedPermission = staticSpecializationGuard(
-          rewriter, op.getLoc(), range->staticID,
+          rewriter, op.getLoc(), directRange->staticID,
           OBELISK_RT_STATIC_ROOT_READ | OBELISK_RT_STATIC_ROOT_WRITE);
     Value oldValue =
         loadStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
@@ -6072,11 +6077,9 @@ public:
     // Direct roots are also immune to external writes (VPI-off/read), while a
     // guarded VPI-full root may elide observers only in its clean fast body.
     if (directLayout && directLayout->transitionHandlesExact)
-      if (auto range = resolveDirectStaticStateRange(
-              adaptor.getReference().front(), *width, directLayout);
-          range && (assumeClean || !range->guarded))
+      if (directRange && (assumeClean || !directRange->guarded))
         needsNotification =
-            directLayout->transitionHandles.contains(range->staticID);
+            directLayout->transitionHandles.contains(directRange->staticID);
     if (!needsNotification) {
       rewriter.eraseOp(op);
       return success();
@@ -6105,7 +6108,13 @@ public:
       notifySignal(rewriter, op.getLoc(), adaptor.getReference().front(),
                    *width, oldValue, oldUnknown, notificationValue,
                    adaptor.getValue().size() == 2 ? adaptor.getValue()[1]
-                                                  : Value{});
+                                                  : Value{},
+                   directRange &&
+                           (assumeClean || !directRange->guarded) &&
+                           directLayout &&
+                           directLayout->transitionHandlesExact
+                       ? directRange
+                       : std::nullopt);
     }
     rewriter.eraseOp(op);
     return success();
@@ -8299,12 +8308,34 @@ void makeStaticSpecializationFastGlobal(ModuleOp module) {
 
 void notifySignal(OpBuilder &builder, Location location, Value handle,
                   uint64_t width, Value oldValue, Value oldUnknown,
-                  Value newValue, Value newUnknown) {
+                  Value newValue, Value newUnknown,
+                  std::optional<DirectStaticStateRange> directRange) {
   Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
+  Type i32 = builder.getI32Type();
   Type i64 = builder.getI64Type();
   Value address = LLVM::AddressOfOp::create(builder, location, pointer,
                                             "__obelisk_current_context");
   Value context = LLVM::LoadOp::create(builder, location, pointer, address, 8);
+  if (directRange && width <= 64) {
+    auto scalar = [&](Value value) -> Value {
+      if (!value)
+        return llvmConstant(builder, location, i64, uint64_t{0});
+      if (value.getType() == i64)
+        return value;
+      return LLVM::ZExtOp::create(builder, location, i64, value);
+    };
+    LLVM::CallOp::create(
+        builder, location, TypeRange{},
+        SymbolRefAttr::get(builder.getContext(),
+                           "obelisk_rt_v1_scheduler_static_transition"),
+        ValueRange{
+            context,
+            llvmConstant(builder, location, i32, directRange->staticID),
+            llvmConstant(builder, location, i64, directRange->localOffset),
+            llvmConstant(builder, location, i64, width), scalar(oldValue),
+            scalar(oldUnknown), scalar(newValue), scalar(newUnknown)});
+    return;
+  }
   auto save = [&](Value value) {
     if (!value)
       return LLVM::ZeroOp::create(builder, location, pointer).getResult();
@@ -12586,6 +12617,13 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
        IntegerType::get(context, 64), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context)});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_scheduler_static_transition",
+      LLVM::LLVMVoidType::get(context),
+      {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 32),
+       IntegerType::get(context, 64), IntegerType::get(context, 64),
+       IntegerType::get(context, 64), IntegerType::get(context, 64),
+       IntegerType::get(context, 64), IntegerType::get(context, 64)});
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_scheduler_real_transition",
       LLVM::LLVMVoidType::get(context),

@@ -662,6 +662,7 @@ struct obelisk_rt_context {
   std::vector<std::vector<std::pair<uint32_t, uint32_t>>>
       nativeScheduleActorNodes;
   std::vector<uint64_t> nativeScheduleReadyNodes;
+  std::vector<uint32_t> nativeScheduleFanoutNodes;
   uint32_t nativeScheduleMinimumActivatedNode = UINT32_MAX;
   std::vector<uint64_t> nativeScheduleDeadlines;
   std::vector<uint32_t> nativeScheduleDeadlineHeap;
@@ -701,6 +702,9 @@ struct obelisk_rt_context {
   std::vector<StaticNBAAccumulator> staticNBAAccumulators;
   std::vector<uint8_t> staticNBASlowRoots;
   std::vector<uint8_t> staticNBARootHasFanout;
+  std::vector<uint8_t> nativeScheduleGeneratedNBAStageCounts;
+  std::vector<uint64_t> nativeScheduleGeneratedNBAOffsets;
+  bool nativeScheduleGeneratedBatchEligible = false;
   std::vector<ScheduledManagedNBA> scheduledManagedNBAs;
   std::vector<ScheduledDesignNBA> scheduledDesignNBAs;
   std::vector<ScheduledDesignEvent> scheduledDesignEvents;
@@ -739,6 +743,7 @@ struct obelisk_rt_context {
       deferredImmediateSites;
   std::unordered_map<uint32_t, NativeStaticState> nativeStaticStates;
   std::vector<NativeStaticState> nativeScheduleStaticStateIndex;
+  std::vector<uint8_t> nativeScheduleStaticStateFanoutEdges;
   std::unordered_map<uint32_t, NativeAutomaticState> nativeAutomaticStates;
   std::map<uint64_t, EventState> events;
   std::unordered_map<uint32_t, ImportBinding> imports;
