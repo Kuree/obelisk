@@ -1992,6 +1992,52 @@ TEST(Scheduler, GeneratedNBA256CommitsDirectlyWithoutFanout) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, GeneratedNBA256BatchRejectsRootsThatNeedTransitions) {
+  AOTTestState state;
+  obelisk_rt_generated_nba_accumulator_256 generated{};
+  const obelisk_rt_static_nba_root roots[] = {
+      {17, 1, 256, &generated},
+  };
+  std::array<uint8_t, 32> valuePlane{};
+  std::array<uint8_t, 32> unknownPlane{};
+  obelisk_rt_native_schedule_plan plan = makeAOTPlan(state, 1);
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
+               OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT;
+  plan.state_value = valuePlane.data();
+  plan.state_unknown = unknownPlane.data();
+  plan.state_bit_count = 256;
+  plan.nba_roots = roots;
+  plan.nba_root_count = std::size(roots);
+
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 256;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  context->stateUnknown.assign(4, 0);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 256),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+  ASSERT_EQ(context->staticNBARootHasFanout.size(), 1u);
+  context->staticNBARootHasFanout[0] = 1;
+
+  generated.value[0] = 0x55;
+  generated.write_mask[0] = UINT32_MAX;
+  generated.valid = 1;
+  generated.exec_region = OBELISK_RT_REGION_NBA;
+  uint32_t changed = 0;
+  ASSERT_EQ(obelisk_rt_v1_static_nba_commit_roots(
+                context, 1, OBELISK_RT_REGION_NBA, &changed),
+            OBELISK_RT_OK);
+  EXPECT_EQ(changed, 1u);
+  EXPECT_EQ(valuePlane[0], 0x55);
+  // Transition-tracking commits keep canonical runtime state synchronized.
+  // The no-fanout AVX batch intentionally defers that duplicate write.
+  EXPECT_EQ(context->stateValue[0] & 0xff, 0x55);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, GeneratedNBA256TracksTransitionsWithoutExactFanout) {
   constexpr uint64_t rootOffset = 5;
   constexpr uint64_t planeBits = 272;

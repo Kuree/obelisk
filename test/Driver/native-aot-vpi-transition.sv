@@ -46,6 +46,7 @@ endmodule
 // CHECK: obelisk-signal-diagnostics
 // CHECK-SAME: scheduler_iterations=1
 // CHECK-SAME: aot_node_executions={{([2-9]|[1-9][0-9]+)}}
+// CHECK-SAME: aot_fanout_entries=0
 // CHECK-SAME: aot_state_fast_paths={{[1-9][0-9]*}}
 // CHECK-SAME: aot_state_slow_paths={{[1-9][0-9]*}}
 // CHECK-SAME: aot_fallbacks=0
@@ -53,12 +54,13 @@ endmodule
 // READONLY: vpi-startup-read={{0|41}}
 // READONLY: seed=41 total=82
 // READONLY: scheduler_iterations=0
+// READONLY-SAME: aot_fanout_entries={{[1-9][0-9]*}}
 // READONLY-SAME: aot_state_fast_paths={{[1-9][0-9]*}}
 // READONLY-SAME: aot_state_slow_paths=0
 // READONLY-SAME: aot_fallbacks=0
 
 // GUARD-DAG: call i32 @obelisk_rt_v1_static_specialization_guard
-// GUARD-DAG: @__obelisk_aot_schedule_plan_v1 = internal constant {{.*}} i32 55, ptr @__obelisk_state_value
+// GUARD-DAG: @__obelisk_aot_schedule_plan_v1 = internal constant {{.*}} i32 247, ptr @__obelisk_state_value
 // GUARD-DAG: br i1
 // GUARD-DAG: load {{.*}} @__obelisk_state_value
 // GUARD-DAG: call i32 @obelisk_rt_v1_native_state_load_plane

@@ -677,6 +677,7 @@ struct obelisk_rt_context {
   std::vector<uint8_t> nativeSchedulePersistentDirtyMask;
   bool nativeScheduleDirtyRootsPresent = false;
   bool nativeScheduleAVX2 = false;
+  bool nativeScheduleGuardedFanoutActive = false;
   uint32_t nativeScheduleForcedSlot = UINT32_MAX;
   bool nativeScheduleSingleStep = false;
   bool nativeScheduleForcedExecuted = false;

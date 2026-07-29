@@ -1766,6 +1766,13 @@ void obelisk_rt_v1_vpi_shutdown(obelisk_rt_context *context);
 #define OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE UINT32_C(16)
 // The plan carries fixed narrow-NBA root accumulators and site claims.
 #define OBELISK_RT_NATIVE_SCHEDULE_STATIC_NBA UINT32_C(32)
+// Native fragment actions are emitted by the same revision-coupled compiler as
+// the plan. The runtime may omit redundant generic frame/action validation
+// after the generated executor returns successfully.
+#define OBELISK_RT_NATIVE_SCHEDULE_GENERATED_ACTIONS UINT32_C(64)
+// Exact fanout metadata is present but must be activated only after the
+// runtime proves that VPI startup did not write or dirty native state.
+#define OBELISK_RT_NATIVE_SCHEDULE_GUARDED_FANOUT UINT32_C(128)
 
 typedef struct obelisk_rt_aot_deopt_actor {
   uint32_t slot;

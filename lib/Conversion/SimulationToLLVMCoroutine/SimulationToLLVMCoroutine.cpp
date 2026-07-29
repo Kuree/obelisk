@@ -11352,15 +11352,15 @@ makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
   sim::SimDesignOp design;
   module.walk([&](sim::SimDesignOp candidate) { design = candidate; });
   sim::ComputeGraphAttr graph = design ? design.getComputeGraphAttr() : nullptr;
-  // Static time/region control is independent of VPI observability. Writable
-  // VPI already hands a dirty event slot to the generic scheduler through
-  // nativeScheduleExternalWritePending; read-only slots can retain the AOT
-  // control path. Exact fanout remains restricted below because VPI can
-  // observe signal transitions.
+  // Static time/region control and exact actor fanout are independent of VPI
+  // reads. Writable VPI hands dirty roots and the affected event slot to the
+  // existing guarded state/control paths; the exact dependency table remains
+  // valid and can continue to wake native actors without subscriptions.
   bool staticControlEnabled = enableStaticControl && fullyStatic && graph;
-  bool staticFanoutEnabled = enableStaticFanout && staticFanoutPlan.exact &&
-                             fullyStatic && graph &&
-                             graph.getVpi() == sim::ComputeVPIMode::Off;
+  bool staticFanoutEnabled =
+      enableStaticFanout && staticFanoutPlan.exact && fullyStatic && graph;
+  bool guardedFanoutEnabled =
+      !staticFanoutEnabled && staticFanoutPlan.exact && fullyStatic && graph;
   uint64_t graphLayoutChecksum = 0;
   if (auto image =
           module->getAttrOfType<DenseI8ArrayAttr>("obelisk.bytecode.image")) {
@@ -11689,7 +11689,13 @@ makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
                     (enableDirectState ? OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE
                                        : 0) |
                     (enableStaticNBA ? OBELISK_RT_NATIVE_SCHEDULE_STATIC_NBA
-                                     : 0)),
+                                     : 0) |
+                    (fullyStatic
+                         ? OBELISK_RT_NATIVE_SCHEDULE_GENERATED_ACTIONS
+                         : 0) |
+                    (guardedFanoutEnabled
+                         ? OBELISK_RT_NATIVE_SCHEDULE_GUARDED_FANOUT
+                         : 0)),
             5);
         value = insertValue(initializerBuilder, location, value,
                             LLVM::AddressOfOp::create(initializerBuilder,
@@ -12563,6 +12569,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     return failure();
   bool staticControl = false;
   bool staticFanout = false;
+  bool staticFanoutMetadata = false;
+  bool vpiOff = false;
   bool directStaticState = false;
   bool staticNBA = false;
   bool legacyStaticNBA = false;
@@ -12573,7 +12581,9 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     module.walk([&](sim::SimDesignOp design) {
       sim::ComputeGraphAttr graph = design.getComputeGraphAttr();
       staticControl = graph != nullptr;
-      staticFanout = graph && graph.getVpi() == sim::ComputeVPIMode::Off;
+      staticFanoutMetadata = graph != nullptr;
+      vpiOff = graph && graph.getVpi() == sim::ComputeVPIMode::Off;
+      staticFanout = staticFanoutMetadata && vpiOff;
       directStaticState = staticSpecialization && graph &&
                           (!stateLayout->directHandles.empty() ||
                            !stateLayout->guardedHandles.empty());
@@ -12587,6 +12597,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                        [](Type type) { return isa<FloatType>(type); })) {
         staticControl = false;
         staticFanout = false;
+        staticFanoutMetadata = false;
       }
     });
   }
@@ -12594,7 +12605,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   // schedules.  The new pass deliberately leaves wide roots generic, but it
   // must not remove the existing wide-root batching that static fanout had
   // already proven safe.
-  legacyStaticNBA = staticSpecialization && staticFanout;
+  legacyStaticNBA = staticSpecialization && staticFanout && vpiOff;
   // State, NBA, and fanout are independent capabilities. Direct access is
   // selected per operation by resolveDirectStaticStateRange; a wide or
   // otherwise generic root does not prevent an independent narrow root from
@@ -12611,18 +12622,18 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     directStaticState |=
         llvm::any_of(staticNBAPlan.generatedAccumulators,
                      [](const std::string &name) { return !name.empty(); });
-    for (auto [root, accumulator] :
-         llvm::zip_equal(staticNBAPlan.roots,
-                         staticNBAPlan.generatedAccumulators))
+    for (auto [root, accumulator] : llvm::zip_equal(
+             staticNBAPlan.roots, staticNBAPlan.generatedAccumulators))
       if (!accumulator.empty())
         stateLayout->directHandles.insert(root.static_state);
   }
-  if (staticFanout) {
+  if (staticFanoutMetadata) {
     FailureOr<NativeStaticFanoutPlan> fanout = buildNativeStaticFanoutPlan(
         module, *stateLayout, aotEligibility.actorSlots, true);
     if (failed(fanout))
       return failure();
     staticFanoutPlan = std::move(*fanout);
+    staticFanoutMetadata &= staticFanoutPlan.exact;
     staticFanout &= staticFanoutPlan.exact;
   }
   if (staticSpecialization && useAOT) {
