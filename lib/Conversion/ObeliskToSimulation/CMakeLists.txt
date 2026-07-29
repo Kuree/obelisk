@@ -9,6 +9,7 @@ add_mlir_library(ObeliskToSimulation
   Inline.cpp
   LowerUnit.cpp
   MaterializeComputeFusion.cpp
+  PlanStaticSuperstep.cpp
   Prepare.cpp
   SCCP.cpp
   SemanticUtils.cpp

@@ -1776,6 +1776,11 @@ void obelisk_rt_v1_vpi_shutdown(obelisk_rt_context *context);
 // The generated plan exposes a runtime-owned clean-state flag used to bypass
 // per-root specialization guards while no writable VPI state is dirty.
 #define OBELISK_RT_NATIVE_SCHEDULE_GUARDED_SPECIALIZATION UINT32_C(256)
+// The compiler proved fixed actor multiplicity, generated actions, static
+// control, and exact fanout. While the run-level VPI guard is clean, the
+// runtime may omit per-actor handover checks; an unexpected action requests a
+// transactional transfer to the generic scheduler.
+#define OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP UINT32_C(512)
 
 typedef struct obelisk_rt_aot_deopt_actor {
   uint32_t slot;

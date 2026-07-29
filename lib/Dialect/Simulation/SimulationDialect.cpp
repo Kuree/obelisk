@@ -683,6 +683,23 @@ LogicalResult StaticSpecializationAttr::verify(
   return success();
 }
 
+LogicalResult StaticSuperstepAttr::verify(
+    llvm::function_ref<InFlightDiagnostic()> emitError, uint32_t version,
+    ComputeGraphAttr sourceGraph, ArrayAttr actors) {
+  if (version != 1 || !sourceGraph || sourceGraph.getWorkers() != 1)
+    return emitError() << "invalid static-superstep version or worker count";
+  if (!actors || actors.empty())
+    return emitError() << "static-superstep actor inventory is absent";
+  llvm::SmallDenseSet<Attribute, 16> uniqueActors;
+  for (Attribute attribute : actors) {
+    auto actor = dyn_cast<FlatSymbolRefAttr>(attribute);
+    if (!actor || !uniqueActors.insert(actor).second)
+      return emitError()
+             << "static-superstep actor inventory is invalid or duplicated";
+  }
+  return success();
+}
+
 LogicalResult
 FragmentABIAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
                         uint32_t version, DenseI64ArrayAttr fragments) {

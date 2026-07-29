@@ -3338,6 +3338,16 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
       ((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_GUARDED_SPECIALIZATION) == 0 ||
        (plan->flags & (OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE |
                        OBELISK_RT_NATIVE_SCHEDULE_STATIC_NBA)) != 0);
+  constexpr uint32_t cleanSuperstepRequirements =
+      OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
+      OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL |
+      OBELISK_RT_NATIVE_SCHEDULE_GENERATED_ACTIONS;
+  bool cleanSuperstepValid =
+      (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP) == 0 ||
+      ((plan->flags & cleanSuperstepRequirements) ==
+           cleanSuperstepRequirements &&
+       (plan->flags & (OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT |
+                       OBELISK_RT_NATIVE_SCHEDULE_GUARDED_FANOUT)) != 0);
   bool statePlanesValid =
       plan->state_bit_count == 0
           ? plan->state_value == nullptr && plan->state_unknown == nullptr
@@ -3345,7 +3355,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
   if (!plan->mutable_state || plan->mutable_state_size == 0 ||
       plan->actor_capacity == 0 || !actorStorageFits || !statePlanesValid ||
       !nbaTablesValid || !fanoutTableValid || !actorRootTableValid ||
-      !nbaCommitValid || !specializationFastValid ||
+      !nbaCommitValid || !specializationFastValid || !cleanSuperstepValid ||
       (plan->flags & ~(OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
                        OBELISK_RT_NATIVE_SCHEDULE_ROOT_SLOT_ZERO |
                        OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL |
@@ -3354,8 +3364,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
                        OBELISK_RT_NATIVE_SCHEDULE_STATIC_NBA |
                        OBELISK_RT_NATIVE_SCHEDULE_GENERATED_ACTIONS |
                        OBELISK_RT_NATIVE_SCHEDULE_GUARDED_FANOUT |
-                       OBELISK_RT_NATIVE_SCHEDULE_GUARDED_SPECIALIZATION)) !=
-          0 ||
+                       OBELISK_RT_NATIVE_SCHEDULE_GUARDED_SPECIALIZATION |
+                       OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP)) != 0 ||
       !plan->bind || !plan->run || !plan->fallback_snapshot)
     return OBELISK_RT_INVALID_ARGUMENT;
   const obelisk_rt_static_nba_root *nbaRoots = plan->nba_roots;
@@ -6786,6 +6796,33 @@ obelisk_rt_status runStaticAOTControlStep(obelisk_rt_context *context) {
   return context->schedulerFinishStatus;
 }
 
+uint32_t nativeAOTContinuationRank(const ScheduledProcess &scheduled,
+                                   uint32_t continuation) {
+  if (scheduled.continuationRanks.empty())
+    return scheduled.scheduleRank;
+  if (scheduled.continuationRanks.size() == 1) {
+    if (scheduled.continuationRanks.front().first == continuation)
+      return scheduled.continuationRanks.front().second;
+    return scheduled.scheduleRank;
+  }
+  auto rank = std::lower_bound(
+      scheduled.continuationRanks.begin(), scheduled.continuationRanks.end(),
+      continuation,
+      [](const std::pair<uint32_t, uint32_t> &entry, uint32_t continuation) {
+        return entry.first < continuation;
+      });
+  if (rank != scheduled.continuationRanks.end() &&
+      rank->first == continuation)
+    return rank->second;
+  return scheduled.scheduleRank;
+}
+
+void updateNativeAOTContinuationRank(ScheduledProcess &scheduled,
+                                     uint32_t continuation) {
+  scheduled.scheduleRank =
+      nativeAOTContinuationRank(scheduled, continuation);
+}
+
 obelisk_rt_status
 adoptScheduledSuspendUnlocked(obelisk_rt_context *context,
                               ScheduledProcess &scheduled,
@@ -6793,17 +6830,7 @@ adoptScheduledSuspendUnlocked(obelisk_rt_context *context,
   scheduled.suspendKind = action.suspend_kind;
   scheduled.waitOffset = action.payload;
   scheduled.waitSize = action.auxiliary;
-  if (!scheduled.continuationRanks.empty()) {
-    auto rank = std::lower_bound(
-        scheduled.continuationRanks.begin(), scheduled.continuationRanks.end(),
-        action.continuation,
-        [](const std::pair<uint32_t, uint32_t> &entry, uint32_t continuation) {
-          return entry.first < continuation;
-        });
-    if (rank != scheduled.continuationRanks.end() &&
-        rank->first == action.continuation)
-      scheduled.scheduleRank = rank->second;
-  }
+  updateNativeAOTContinuationRank(scheduled, action.continuation);
   scheduled.observedEpoch = context->schedulerEpoch;
   scheduled.waitGenerations.clear();
   scheduled.signalTriggered = false;
@@ -8200,6 +8227,168 @@ obelisk_rt_status executeStaticNativeAOT(
   return OBELISK_RT_OK;
 }
 
+obelisk_rt_status executeTrustedAOTNode(obelisk_rt_context *context,
+                                        uint32_t actorSlot) {
+  if (!context->nativeSchedulePlan ||
+      actorSlot >= context->nativeScheduleActors.size())
+    return OBELISK_RT_INVALID_LIFECYCLE;
+  obelisk_rt_process_instance_v1 *selected =
+      context->nativeScheduleActors[actorSlot];
+  uint64_t token = context->nativeScheduleActorTokens[actorSlot];
+  size_t selectedIndex = context->nativeScheduleActorIndices[actorSlot];
+  if (!selected || token == 0 ||
+      selectedIndex >= context->scheduledProcesses.size() ||
+      context->activeNativeProcess)
+    return OBELISK_RT_INVALID_LIFECYCLE;
+  {
+    ScheduledProcess &scheduled = context->scheduledProcesses[selectedIndex];
+    if (scheduled.instance != selected || scheduled.token != token ||
+        scheduled.aotActorSlot != actorSlot)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    scheduled.started = true;
+    scheduled.observedEpoch = context->schedulerEpoch;
+    context->activeNativeProcess = selected;
+    context->activeHomeRegion = scheduled.homeRegion;
+    context->activeExecRegion = scheduled.queuedRegion;
+    context->activeLogicalProcessToken = kNativeLogicalProcessTag | token;
+    context->activeControls = std::move(scheduled.controls);
+  }
+
+  obelisk_rt_fragment_action_v1 action{};
+  obelisk_rt_status status =
+      executeStaticNativeAOT(selected, context, action, true);
+
+  bool actorValid =
+      selectedIndex < context->scheduledProcesses.size() &&
+      context->scheduledProcesses[selectedIndex].instance == selected;
+  if (actorValid)
+    context->scheduledProcesses[selectedIndex].controls =
+        std::move(context->activeControls);
+  context->activeControls.clear();
+  context->activeNativeProcess = nullptr;
+  context->activeHomeRegion = UINT32_MAX;
+  context->activeExecRegion = UINT32_MAX;
+  context->activeLogicalProcessToken = 0;
+  if (!actorValid)
+    return OBELISK_RT_INVALID_LIFECYCLE;
+  ScheduledProcess &scheduled = context->scheduledProcesses[selectedIndex];
+  bool terminationRequested = context->schedulerFinishRequested;
+  if (terminationRequested) {
+    context->schedulerRunningFinals = true;
+    action = {
+        OBELISK_RT_FRAGMENT_TERMINATE, OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
+  } else if (status != OBELISK_RT_OK) {
+    return status;
+  }
+
+  bool destroy = false;
+  bool requestFallback = false;
+  switch (action.kind) {
+  case OBELISK_RT_FRAGMENT_SUSPEND: {
+    scheduled.suspendKind = action.suspend_kind;
+    scheduled.waitOffset = action.payload;
+    scheduled.waitSize = action.auxiliary;
+    scheduled.observedEpoch = context->schedulerEpoch;
+    scheduled.signalTriggered = false;
+    scheduled.urgent = false;
+    if (action.suspend_kind != OBELISK_RT_SUSPEND_DELAY &&
+        action.suspend_kind != OBELISK_RT_SUSPEND_CHANGE &&
+        action.suspend_kind != OBELISK_RT_SUSPEND_EDGE) {
+      status = adoptScheduledSuspendUnlocked(context, scheduled, action);
+      if (status != OBELISK_RT_OK)
+        return status;
+      removeNativeAOTDeadlineUnlocked(context, actorSlot);
+      requestFallback = true;
+      break;
+    }
+    if (!scheduled.signalSubscriptions.empty() ||
+        !scheduled.waitGenerations.empty())
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    const auto *wait = reinterpret_cast<const obelisk_rt_wait_record_v1 *>(
+        static_cast<const uint8_t *>(selected->frame) + action.payload);
+    uint64_t delay =
+        action.suspend_kind == OBELISK_RT_SUSPEND_DELAY ? wait->payload : 1;
+    if (!obelisk_rt_next_queued_region(scheduled.homeRegion,
+                                       action.suspend_kind, delay, action.flags,
+                                       scheduled.queuedRegion))
+      return OBELISK_RT_INVALID_ARGUMENT;
+    if (action.suspend_kind == OBELISK_RT_SUSPEND_DELAY) {
+      scheduled.wakeTime = delay > UINT64_MAX - context->schedulerTime
+                               ? UINT64_MAX
+                               : context->schedulerTime + delay;
+      if (delay == 0) {
+        removeNativeAOTDeadlineUnlocked(context, actorSlot);
+        requestFallback = true;
+      } else {
+        setNativeAOTDeadlineUnlocked(context, actorSlot, scheduled.wakeTime);
+      }
+    } else {
+      removeNativeAOTDeadlineUnlocked(context, actorSlot);
+      scheduled.signalLatch.reset();
+    }
+    break;
+  }
+  case OBELISK_RT_FRAGMENT_CONTINUE:
+    scheduled.suspendKind = OBELISK_RT_SUSPEND_NONE;
+    scheduled.waitOffset = 0;
+    scheduled.waitSize = 0;
+    scheduled.signalTriggered = false;
+    scheduled.urgent = false;
+    scheduled.queuedRegion = scheduled.homeRegion;
+    removeNativeAOTDeadlineUnlocked(context, actorSlot);
+    if (!markNativeAOTActorReadyUnlocked(context, actorSlot))
+      return OBELISK_RT_INVALID_CONTINUATION;
+    break;
+  case OBELISK_RT_FRAGMENT_TERMINATE:
+    if (!scheduled.callers.empty())
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    status = context->nativeSchedulePlan->bind(
+        context->nativeSchedulePlan->mutable_state, context, actorSlot,
+        nullptr);
+    if (status != OBELISK_RT_OK)
+      return status;
+    context->terminatedNativeProcesses.insert(token);
+    if (!scheduled.signalSubscriptions.empty())
+      obelisk_rt_unregister_signal_wait_unlocked(
+          context, scheduled.signalSubscriptions, token, false);
+    scheduled.instance = nullptr;
+    ++context->schedulerDeadProcessCount;
+    context->schedulerCompactionPending = true;
+    obelisk_rt_release_controls_unlocked(context, scheduled.controls);
+    scheduled.controls.clear();
+    scheduled.signalTriggered = false;
+    scheduled.urgent = false;
+    if (++context->schedulerEpoch == 0)
+      context->schedulerEpoch = 1;
+    context->nativeScheduleActors[actorSlot] = nullptr;
+    context->nativeScheduleActorTokens[actorSlot] = 0;
+    context->nativeScheduleActorIndices[actorSlot] = SIZE_MAX;
+    removeNativeAOTDeadlineUnlocked(context, actorSlot);
+    destroy = true;
+    break;
+  default:
+    return OBELISK_RT_INVALID_ARGUMENT;
+  }
+
+  if (terminationRequested) {
+    status = refreshNativeAOTReadyPhaseUnlocked(context);
+    if (status != OBELISK_RT_OK)
+      return status;
+  }
+  if (context->schedulerSlotProgress == (UINT64_C(1) << 20)) {
+    context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
+    return context->schedulerStatus;
+  }
+  ++context->schedulerSlotProgress;
+  ++context->signalDiagnostics.aotNodeExecutions;
+  if (destroy) {
+    status = obelisk_rt_v1_process_instance_destroy(selected);
+    if (status != OBELISK_RT_OK)
+      return status;
+  }
+  return requestFallback ? OBELISK_RT_TIER_UNAVAILABLE : OBELISK_RT_OK;
+}
+
 obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
                                  uint32_t actorSlot) {
   obelisk_rt_process_instance_v1 *selected = nullptr;
@@ -8350,18 +8539,7 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
         scheduled.suspendKind = action.suspend_kind;
         scheduled.waitOffset = action.payload;
         scheduled.waitSize = action.auxiliary;
-        if (!scheduled.continuationRanks.empty()) {
-          auto rank = std::lower_bound(
-              scheduled.continuationRanks.begin(),
-              scheduled.continuationRanks.end(), action.continuation,
-              [](const std::pair<uint32_t, uint32_t> &entry,
-                 uint32_t continuation) {
-                return entry.first < continuation;
-              });
-          if (rank != scheduled.continuationRanks.end() &&
-              rank->first == action.continuation)
-            scheduled.scheduleRank = rank->second;
-        }
+        updateNativeAOTContinuationRank(scheduled, action.continuation);
         scheduled.observedEpoch = context->schedulerEpoch;
         scheduled.signalTriggered = false;
         scheduled.urgent = false;
@@ -8484,16 +8662,7 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
       scheduled.suspendKind = action.suspend_kind;
       scheduled.waitOffset = action.payload;
       scheduled.waitSize = action.auxiliary;
-      if (!scheduled.continuationRanks.empty()) {
-        auto rank = std::lower_bound(
-            scheduled.continuationRanks.begin(),
-            scheduled.continuationRanks.end(), action.continuation,
-            [](const std::pair<uint32_t, uint32_t> &entry,
-               uint32_t continuation) { return entry.first < continuation; });
-        if (rank != scheduled.continuationRanks.end() &&
-            rank->first == action.continuation)
-          scheduled.scheduleRank = rank->second;
-      }
+      updateNativeAOTContinuationRank(scheduled, action.continuation);
       scheduled.observedEpoch = context->schedulerEpoch;
       scheduled.waitGenerations.clear();
       scheduled.signalTriggered = false;
@@ -8682,6 +8851,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_run_aot_nodes(
   if (!context || !nodes || nodeCount == 0)
     return OBELISK_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
+  bool trustedSuperstep = false;
   {
     ContextMutexLock lock(context);
     if (!context->nativeSchedulePlan || context->nativeScheduleSingleStep ||
@@ -8692,6 +8862,16 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_run_aot_nodes(
         initializeNativeAOTNodesUnlocked(context, nodes, nodeCount);
     if (status != OBELISK_RT_OK)
       return status;
+    const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
+    trustedSuperstep =
+        (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP) != 0 &&
+        activeNativeAOTContext == context &&
+        lockedNativeAOTContext == context &&
+        canUseStaticAOTFanout(context) &&
+        !context->nativeScheduleExternalWritePending &&
+        !context->nativeScheduleDirtyRootsPresent &&
+        nativeStaticSpecializationEnvironmentClean(context) &&
+        (!plan->specialization_fast || *plan->specialization_fast != 0);
   }
 
   uint32_t nodeCursor = 0;
@@ -8758,7 +8938,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_run_aot_nodes(
           ContextMutexLock lock(context);
           context->nativeScheduleMinimumActivatedNode = UINT32_MAX;
         }
-        obelisk_rt_status status = executeAOTNode(context, selected.actor_slot);
+        obelisk_rt_status status =
+            trustedSuperstep
+                ? executeTrustedAOTNode(context, selected.actor_slot)
+                : executeAOTNode(context, selected.actor_slot);
         if (status != OBELISK_RT_OK)
           return status;
         passProgress = true;
@@ -8771,7 +8954,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_run_aot_nodes(
               context->nativeScheduleMinimumActivatedNode < nextNode;
           if (!restartBeforeCursor && selected.fusion_group != UINT32_MAX &&
               nextNode < context->nativeScheduleNodes.size() &&
-              (!context->nativeSchedulePlan->specialization_fast ||
+              (trustedSuperstep ||
+               !context->nativeSchedulePlan->specialization_fast ||
                *context->nativeSchedulePlan->specialization_fast != 0)) {
             const obelisk_rt_native_schedule_node &next =
                 context->nativeScheduleNodes[nextNode];
@@ -8934,7 +9118,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_snapshot_aot(
               : OBELISK_RT_ACTION_FRAME_WAIT_RECORD,
           scheduled.waitOffset,
           scheduled.waitSize};
-      actors.push_back({slot, scheduled.phase, scheduled.scheduleRank,
+      actors.push_back({slot, scheduled.phase,
+                        nativeAOTContinuationRank(scheduled,
+                                                  instance->continuation),
                         scheduled.queuedRegion, scheduled.insertionSequence,
                         scheduled.wakeTime, scheduled.waitOffset,
                         scheduled.waitSize, action, scheduled.started ? 1u : 0u,
@@ -9115,7 +9301,8 @@ obelisk_rt_v1_scheduler_run_aot(obelisk_rt_context *context) {
           scheduled.instance == instance &&
           scheduled.aotActorSlot == actor.slot &&
           actor.flags == scheduled.phase &&
-          actor.schedule_rank == scheduled.scheduleRank &&
+          actor.schedule_rank ==
+              nativeAOTContinuationRank(scheduled, instance->continuation) &&
           actor.queued_region == scheduled.queuedRegion &&
           actor.insertion_sequence == scheduled.insertionSequence &&
           actor.wake_time == scheduled.wakeTime &&
@@ -9158,6 +9345,12 @@ obelisk_rt_v1_scheduler_run_aot(obelisk_rt_context *context) {
     valid &= nbaIndex == snapshot.nba_count;
     if (!valid)
       return OBELISK_RT_INVALID_ARGUMENT;
+    for (uint32_t index = 0; index != snapshot.actor_count; ++index) {
+      const obelisk_rt_aot_deopt_actor &actor = snapshot.actors[index];
+      size_t processIndex = context->nativeScheduleActorIndices[actor.slot];
+      context->scheduledProcesses[processIndex].scheduleRank =
+          actor.schedule_rank;
+    }
     context->nativeScheduleDeoptimized = true;
     rebuildNativeSchedulerIndexUnlocked(context);
     ++context->signalDiagnostics.aotFallbacks;

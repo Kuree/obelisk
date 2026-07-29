@@ -247,6 +247,18 @@ def SimStaticSpecializationAttr
   let genVerifyDecl = 1;
 }
 
+def SimStaticSuperstepAttr
+    : SimAttr<"StaticSuperstep", "static_superstep"> {
+  let summary = "verified-graph fixed-actor clean AOT superstep candidate";
+  let parameters = (ins
+    "uint32_t":$version,
+    SimComputeGraphAttr:$sourceGraph,
+    "::mlir::ArrayAttr":$actors
+  );
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
 def SimFragmentABIAttr : SimAttr<"FragmentABI", "fragment_abi"> {
   let parameters = (ins
     "uint32_t":$version,

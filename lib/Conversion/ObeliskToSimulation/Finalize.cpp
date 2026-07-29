@@ -274,8 +274,10 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
   }
   bool specialize = staticSpecialization == "on" ||
                     (staticSpecialization == "auto" && optLevel >= 2);
-  if (specialize)
+  if (specialize) {
     designManager.addPass(createObeliskSimSpecializeStaticStateNBAPass());
+    designManager.addPass(createObeliskSimPlanStaticSuperstepPass());
+  }
   manager.addPass(createObeliskSimFinalizePass());
 }
 

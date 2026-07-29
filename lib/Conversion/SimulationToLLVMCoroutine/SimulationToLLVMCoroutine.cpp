@@ -11773,7 +11773,8 @@ makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
                   ArrayRef<obelisk_rt_static_actor_root> actorRoots,
                   bool enableDirectState, bool enableStaticNBA,
                   bool enableStaticControl, bool enableStaticFanout,
-                  bool fullyStatic, bool rootSlotZero) {
+                  bool enableCleanSuperstep, bool fullyStatic,
+                  bool rootSlotZero) {
   if (actorCount == 0 || executableNodes.empty())
     return module.emitError("AOT schedule has no executable actor nodes");
   MLIRContext *context = module.getContext();
@@ -11803,6 +11804,9 @@ makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
   bool guardedSpecializationEnabled =
       graph && graph.getVpi() == sim::ComputeVPIMode::Full &&
       (enableDirectState || enableStaticNBA);
+  bool cleanSuperstepEnabled =
+      enableCleanSuperstep && staticControlEnabled &&
+      staticFanoutPlan.exact && fullyStatic;
   uint64_t graphLayoutChecksum = 0;
   if (auto image =
           module->getAttrOfType<DenseI8ArrayAttr>("obelisk.bytecode.image")) {
@@ -12139,6 +12143,9 @@ makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
                          : 0) |
                     (guardedSpecializationEnabled
                          ? OBELISK_RT_NATIVE_SCHEDULE_GUARDED_SPECIALIZATION
+                         : 0) |
+                    (cleanSuperstepEnabled
+                         ? OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP
                          : 0)),
             5);
         value = insertValue(initializerBuilder, location, value,
@@ -12523,18 +12530,27 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   if (failed(stateLayout))
     return failure();
   sim::StaticSpecializationAttr staticSpecialization;
-  sim::SimDesignOp staticSpecializationDesign;
+  sim::StaticSuperstepAttr staticSuperstep;
+  sim::SimDesignOp metadataDesign;
   module.walk([&](sim::SimDesignOp design) {
-    staticSpecializationDesign = design;
+    metadataDesign = design;
     staticSpecialization = design->getAttrOfType<sim::StaticSpecializationAttr>(
         sim::metadata::staticSpecialization);
+    staticSuperstep = design->getAttrOfType<sim::StaticSuperstepAttr>(
+        sim::metadata::staticSuperstep);
   });
+  if (staticSuperstep &&
+      (!metadataDesign || staticSuperstep.getVersion() != 1 ||
+       staticSuperstep.getSourceGraph() !=
+           metadataDesign.getComputeGraphAttr()))
+    return module.emitError(
+        "native lowering rejected stale static-superstep metadata");
   if (staticSpecialization) {
-    if (!staticSpecializationDesign || staticSpecialization.getVersion() != 1 ||
+    if (!metadataDesign || staticSpecialization.getVersion() != 1 ||
         staticSpecialization.getMaxPackedWidth() == 0 ||
         staticSpecialization.getMaxPackedWidth() > 64 ||
         staticSpecialization.getSourceGraph() !=
-            staticSpecializationDesign.getComputeGraphAttr())
+            metadataDesign.getComputeGraphAttr())
       return module.emitError(
           "native lowering rejected stale static-specialization metadata");
     DenseSet<uint64_t> plannedNBARoots;
@@ -13030,6 +13046,28 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
         llvm::interleaveComma(aotEligibility.reasons, diagnostic);
       return failure();
     }
+  }
+  bool cleanSuperstep = false;
+  if (staticSuperstep && useAOT && aotEligibility.fullyEligible) {
+    ArrayAttr actors = staticSuperstep.getActors();
+    if (actors.size() != aotEligibility.actorSlots.size())
+      return module.emitError(
+          "native lowering rejected stale static-superstep actor inventory");
+    for (auto [slot, attribute] : llvm::enumerate(actors)) {
+      auto actor = dyn_cast<FlatSymbolRefAttr>(attribute);
+      sim::SimFuncOp function =
+          actor ? metadataDesign.lookupSymbol<sim::SimFuncOp>(actor.getValue())
+                : nullptr;
+      auto planned =
+          function
+              ? aotEligibility.actorSlots.find(function.getOperation())
+              : aotEligibility.actorSlots.end();
+      if (!function || planned == aotEligibility.actorSlots.end() ||
+          planned->second != slot)
+        return module.emitError(
+            "native lowering rejected stale static-superstep actor order");
+    }
+    cleanSuperstep = true;
   }
   if (useAOT && failed(specializeNativeAOTCaptures(module, aotEligibility)))
     return failure();
@@ -13736,7 +13774,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
             module, aotEligibility.actorSlots.size(), executableNodes,
             *stateLayout, staticNBAPlan, staticFanoutPlan, staticActorRoots,
             directStaticState, staticNBA, staticControl, staticFanout,
-            aotEligibility.fullyEligible, rootSlotZero)))
+            cleanSuperstep, aotEligibility.fullyEligible, rootSlotZero)))
       return failure();
   }
   if (failed(makeSchedulerMain(module, *stateLayout, useAOT)))

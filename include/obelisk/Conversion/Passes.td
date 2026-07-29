@@ -194,6 +194,27 @@ def ObeliskSimSpecializeStaticStateNBAPass
   ];
 }
 
+def ObeliskSimPlanStaticSuperstepPass
+    : Pass<"obelisk-sim-plan-static-superstep",
+           "obelisk::sim::SimDesignOp"> {
+  let summary = "Plan a guarded fixed-actor native AOT superstep";
+  let description = [{
+    Consumes the final verified single-worker compute graph and records a typed,
+    revision-coupled superstep candidate with a fixed actor inventory. Native
+    lowering combines the candidate with its complete AOT eligibility analysis
+    and suppresses it when later ABI or operation checks require a hybrid
+    schedule. The runtime activates an accepted plan only while the VPI
+    environment remains clean.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect"
+  ];
+  let options = [
+    Option<"missedRemarks", "missed-remarks", "bool", "false",
+           "Emit a remark explaining why no static superstep was planned">
+  ];
+}
+
 def ObeliskSimFuseComputeFragmentsPass
     : Pass<"obelisk-sim-fuse-compute-fragments",
            "obelisk::sim::SimDesignOp"> {

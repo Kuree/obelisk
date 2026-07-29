@@ -38,6 +38,8 @@ inline constexpr llvm::StringLiteral staticBodyFusion =
 inline constexpr llvm::StringLiteral staticFusion = "obelisk_sim.static_fusion";
 inline constexpr llvm::StringLiteral staticSpecialization =
     "obelisk_sim.static_specialization";
+inline constexpr llvm::StringLiteral staticSuperstep =
+    "obelisk_sim.static_superstep";
 /// Native-only annotation for a closed-world activation whose state and NBA
 /// accesses may use the actor-boundary clean-specialization proof.
 inline constexpr llvm::StringLiteral nativeGuardedSpecializationBody =
@@ -54,7 +56,7 @@ inline bool isKnownOperation(llvm::StringRef name) {
   return isKnownBoundary(name) || name == bindings || name == delayScale ||
          name == delayQuantum || name == hierarchicalName || name == lowered ||
          name == staticBodyFusion || name == staticFusion ||
-         name == staticSpecialization;
+         name == staticSpecialization || name == staticSuperstep;
 }
 
 } // namespace obelisk::sim::metadata

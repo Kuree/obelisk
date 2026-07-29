@@ -3,8 +3,13 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph))' | FileCheck %s --check-prefix=FULL
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph{vpi=read},obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba))' | FileCheck %s --check-prefix=READ-SPEC
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba))' | FileCheck %s --check-prefix=FULL-SPEC
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-plan-static-superstep{missed-remarks=true}))' > %t.no-superstep 2> %t.superstep-remarks
+// RUN: FileCheck %s --check-prefix=NO-SUPERSTEP < %t.no-superstep
+// RUN: FileCheck %s --check-prefix=SUPERSTEP-REMARK < %t.superstep-remarks
 
 module {
+  // NO-SUPERSTEP-NOT: obelisk_sim.static_superstep
+  // SUPERSTEP-REMARK: remark: static superstep not planned: missing root initializer
   obelisk_sim.design @vpi {
     obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.vpi.repeats.9000001"
     obelisk_sim.code_unit.decl 9000002 in 0 initial hierarchy "test.vpi.once.9000002"

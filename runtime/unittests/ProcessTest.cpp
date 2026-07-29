@@ -291,6 +291,20 @@ obelisk_rt_status aotRunNodes(void *opaque, obelisk_rt_context *context) {
                                                std::size(nodes));
 }
 
+obelisk_rt_status aotRunOneNode(void *opaque, obelisk_rt_context *context) {
+  if (!opaque)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  constexpr obelisk_rt_native_schedule_node nodes[] = {{0, 0}};
+  return obelisk_rt_v1_scheduler_run_aot_nodes(context, nodes,
+                                               std::size(nodes));
+}
+
+obelisk_rt_status aotRunOneNodeThenFallback(void *opaque,
+                                           obelisk_rt_context *context) {
+  obelisk_rt_status status = aotRunOneNode(opaque, context);
+  return status == OBELISK_RT_OK ? OBELISK_RT_TIER_UNAVAILABLE : status;
+}
+
 obelisk_rt_status aotSnapshot(void *opaque, obelisk_rt_context *context,
                               obelisk_rt_aot_deopt_snapshot *snapshot) {
   auto *state = static_cast<AOTTestState *>(opaque);
@@ -1203,6 +1217,123 @@ TEST(Scheduler, AOTPlanInstallBindRunAndExclusiveMutableState) {
   EXPECT_EQ(second->nativeScheduleNBARootCount, 0u);
   EXPECT_EQ(second->nativeScheduleNBASiteCount, 0u);
   obelisk_rt_v1_context_destroy(second);
+}
+
+TEST(Scheduler, AOTCleanSuperstepRequiresACompleteStaticPlan) {
+  AOTTestState state;
+  obelisk_rt_native_schedule_plan plan = makeAOTPlan(state);
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
+            OBELISK_RT_INVALID_ARGUMENT);
+
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP |
+               OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
+               OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL |
+               OBELISK_RT_NATIVE_SCHEDULE_GENERATED_ACTIONS |
+               OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT;
+  EXPECT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
+            OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, AOTCleanSuperstepExecutesCertifiedNativeActor) {
+  AOTTestState state;
+  obelisk_rt_native_schedule_plan plan = makeAOTPlan(state, 1);
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP |
+               OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
+               OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL |
+               OBELISK_RT_NATIVE_SCHEDULE_GENERATED_ACTIONS |
+               OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT;
+  plan.run = aotRunOneNode;
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+
+  SchedulerFixture fixture(100);
+  fixture.descriptor.execution = &execution;
+  schedulerOrder.clear();
+  ASSERT_EQ(
+      obelisk_rt_v1_scheduler_add_aot(context, makeSchedulerInstance(fixture),
+                                      0, 0, 0, nullptr, nullptr, 0, nullptr, 0),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot(context), OBELISK_RT_OK);
+  EXPECT_EQ(schedulerOrder, (std::vector<uint64_t>{100}));
+  EXPECT_EQ(context->signalDiagnostics.aotNodeExecutions, 1u);
+  EXPECT_EQ(state.actors[0], nullptr);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, AOTCleanSuperstepDirectNodeCallUsesLockedGenericPath) {
+  AOTTestState state;
+  obelisk_rt_native_schedule_plan plan = makeAOTPlan(state, 1);
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP |
+               OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
+               OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL |
+               OBELISK_RT_NATIVE_SCHEDULE_GENERATED_ACTIONS |
+               OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT;
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+
+  SchedulerFixture fixture(100);
+  fixture.descriptor.execution = &execution;
+  schedulerOrder.clear();
+  ASSERT_EQ(
+      obelisk_rt_v1_scheduler_add_aot(context, makeSchedulerInstance(fixture),
+                                      0, 0, 0, nullptr, nullptr, 0, nullptr, 0),
+      OBELISK_RT_OK);
+  constexpr obelisk_rt_native_schedule_node nodes[] = {{0, 0}};
+  ASSERT_EQ(
+      obelisk_rt_v1_scheduler_run_aot_nodes(context, nodes, std::size(nodes)),
+      OBELISK_RT_OK);
+  EXPECT_EQ(schedulerOrder, (std::vector<uint64_t>{100}));
+  EXPECT_EQ(state.actors[0], nullptr);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, AOTCleanSuperstepSnapshotsContinuationRankForHandover) {
+  AOTTestState state;
+  obelisk_rt_native_schedule_plan plan = makeAOTPlan(state, 1);
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP |
+               OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
+               OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL |
+               OBELISK_RT_NATIVE_SCHEDULE_GENERATED_ACTIONS |
+               OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT;
+  plan.run = aotRunOneNodeThenFallback;
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+
+  SchedulerFixture fixture(4);
+  fixture.descriptor.execution = &execution;
+  schedulerWaitKind = OBELISK_RT_SUSPEND_CHANGE;
+  schedulerWaitEdge = OBELISK_RT_WAIT_EDGE_CHANGE;
+  schedulerWaitHandle = 1;
+  schedulerWaitWidth = 1;
+  constexpr uint32_t continuation = 1;
+  constexpr uint32_t continuationRank = 42;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add_aot(
+                context, makeSchedulerInstance(fixture), 0, 0, 0,
+                &continuation, &continuationRank, 1, nullptr, 0),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot(context), OBELISK_RT_OK);
+  EXPECT_TRUE(context->nativeScheduleDeoptimized);
+  EXPECT_EQ(context->signalDiagnostics.aotFallbacks, 1u);
+  ASSERT_EQ(context->scheduledProcesses.size(), 1u);
+  EXPECT_EQ(context->scheduledProcesses.front().scheduleRank,
+            continuationRank);
+  obelisk_rt_v1_context_destroy(context);
 }
 
 TEST(Scheduler, StaticSpecializationGuardsIntersectOnlyDirtyRoots) {
