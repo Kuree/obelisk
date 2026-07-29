@@ -6,6 +6,28 @@
 // RUN: FileCheck %s --check-prefix=HYBRID < %t/hybrid.ll
 // RUN: obelisk -O3 -emit-sim %t/materialize.sv -o %t/materialized.mlir
 // RUN: FileCheck %s --check-prefix=MATERIALIZED < %t/materialized.mlir
+// RUN: obelisk -O3 -emit-sim %t/fused-ssa.sv -o %t/fused-ssa.mlir
+// RUN: FileCheck %s --check-prefix=FUSED-SSA < %t/fused-ssa.mlir
+// RUN: obelisk -O0 --native-scheduler=generic %t/fused-ssa.sv -o %t/fused-ssa.unfused
+// RUN: obelisk -O3 --native-scheduler=generic %t/fused-ssa.sv -o %t/fused-ssa.fused
+// RUN: %t/fused-ssa.unfused > %t/fused-ssa.unfused.out
+// RUN: %t/fused-ssa.fused > %t/fused-ssa.fused.out
+// RUN: diff %t/fused-ssa.unfused.out %t/fused-ssa.fused.out
+// RUN: obelisk -O3 -emit-sim %t/fused-four-state.sv -o %t/fused-four-state.mlir
+// RUN: FileCheck %s --check-prefix=FOUR-STATE < %t/fused-four-state.mlir
+// RUN: obelisk -O0 --native-scheduler=generic %t/fused-four-state.sv -o %t/fused-four-state.unfused
+// RUN: obelisk -O3 --native-scheduler=generic %t/fused-four-state.sv -o %t/fused-four-state.fused
+// RUN: %t/fused-four-state.unfused > %t/fused-four-state.unfused.out
+// RUN: %t/fused-four-state.fused > %t/fused-four-state.fused.out
+// RUN: diff %t/fused-four-state.unfused.out %t/fused-four-state.fused.out
+// RUN: obelisk -O3 -emit-sim %t/fused-callee-write.sv -o %t/fused-callee-write.mlir
+// RUN: FileCheck %s --check-prefix=CALLEE-WRITE-IR < %t/fused-callee-write.mlir
+// RUN: obelisk -O0 --native-scheduler=generic %t/fused-callee-write.sv -o %t/fused-callee-write.unfused
+// RUN: obelisk -O3 --native-scheduler=generic %t/fused-callee-write.sv -o %t/fused-callee-write.fused
+// RUN: %t/fused-callee-write.unfused > %t/fused-callee-write.unfused.out
+// RUN: %t/fused-callee-write.fused > %t/fused-callee-write.fused.out
+// RUN: diff %t/fused-callee-write.unfused.out %t/fused-callee-write.fused.out
+// RUN: FileCheck %s --check-prefix=CALLEE-WRITE < %t/fused-callee-write.fused.out
 // RUN: obelisk -O3 --native-scheduler=generic %t/materialize.sv -o %t/generic
 // RUN: obelisk -O3 --native-scheduler=aot %t/materialize.sv -o %t/aot
 // RUN: %t/generic > %t/generic.out
@@ -77,6 +99,19 @@
 // MATERIALIZED-COUNT-2: obelisk_sim.nba.enqueue
 // MATERIALIZED-NOT: obelisk_sim.func private @unit_0
 // MATERIALIZED-NOT: obelisk_sim.func private @unit_1
+// FUSED-SSA: obelisk_sim.func private @__obelisk_fused_
+// FUSED-SSA-NOT: obelisk_sim.termination.requested
+// FUSED-SSA-NOT: obelisk_sim.ref.store
+// FUSED-SSA: arith.select
+// FUSED-SSA-NOT: obelisk_sim.termination.requested
+// FUSED-SSA-NOT: obelisk_sim.ref.store
+// FUSED-SSA: arith.select
+// FUSED-SSA-NOT: obelisk_sim.termination.requested
+// FUSED-SSA-NOT: obelisk_sim.ref.store
+// FOUR-STATE: obelisk_sim.func private @__obelisk_fused_
+// FOUR-STATE-COUNT-2: obelisk_sim.ref.store
+// CALLEE-WRITE-IR: obelisk_sim.func private @__obelisk_fused_
+// CALLEE-WRITE: 1 0
 // ORDER: 1
 // RANDOM: 1202223563 1622423293
 // NBA-ORDER: 2
@@ -324,6 +359,109 @@ module activation_order;
     d = trigger;
     #1;
     $display("%0d", sampled);
+    $finish;
+  end
+endmodule
+
+//--- fused-ssa.sv
+module fused_ssa;
+  bit clock;
+  bit reset = 1;
+  bit [31:0] value [0:1];
+
+  function automatic bit [31:0] mix(input bit [31:0] input_value);
+    mix = input_value ^ (input_value << 7) ^ (input_value >> 11);
+  endfunction
+
+  for (genvar lane = 0; lane < 2; lane++) begin : lanes
+    always @(posedge clock) begin
+      bit [31:0] next;
+      if (reset) begin
+        value[lane] <= lane;
+      end else begin
+        next = mix(value[lane] + lane + 1);
+        value[lane] <= next;
+        if (next[0])
+          value[lane] <= next ^ 32'ha5a5_0000;
+      end
+    end
+  end
+
+  initial begin
+    #1 clock = 1;
+    #1 clock = 0;
+    reset = 0;
+    repeat (4) begin
+      #1 clock = 1;
+      #1 clock = 0;
+    end
+    #1;
+    $display("%08h %08h", value[0], value[1]);
+    $finish;
+  end
+endmodule
+
+//--- fused-four-state.sv
+module fused_four_state;
+  bit clock;
+  bit reset = 1;
+  logic [31:0] value [2];
+
+  function automatic logic [31:0] mix(logic [31:0] input_value);
+    mix = input_value ^ (input_value << 7) ^ (input_value >> 11);
+  endfunction
+
+  for (genvar lane = 0; lane < 2; ++lane) begin
+    always @(posedge clock) begin
+      logic [31:0] next;
+      if (reset)
+        value[lane] <= lane;
+      else begin
+        next = mix(value[lane] + lane + 1);
+        value[lane] <= next;
+        if (next[0])
+          value[lane] <= next ^ 32'ha5a5_0000;
+      end
+    end
+  end
+
+  initial begin
+    clock = 0;
+    reset = 0;
+    repeat (4) begin
+      #1 clock = 1;
+      #1 clock = 0;
+    end
+    #1 $display("%08h %08h", value[0], value[1]);
+    $finish;
+  end
+endmodule
+
+//--- fused-callee-write.sv
+module fused_callee_write;
+  bit clock;
+  bit gate = 1;
+  bit value [2];
+
+  function automatic void clear_gate();
+    gate = 0;
+  endfunction
+
+  for (genvar lane = 0; lane < 2; ++lane) begin
+    always @(posedge clock) begin
+      if (gate)
+        value[lane] <= 1;
+      else
+        value[lane] <= 0;
+      if (lane == 0)
+        clear_gate();
+    end
+  end
+
+  initial begin
+    clock = 0;
+    #1 clock = 1;
+    #1 $display("%0d %0d", value[0], value[1]);
     $finish;
   end
 endmodule

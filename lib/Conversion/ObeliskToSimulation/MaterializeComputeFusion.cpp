@@ -6,13 +6,16 @@
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallString.h"
 
@@ -37,6 +40,18 @@ private:
   Statistic rejectedFusions{
       this, "rejected-fusions",
       "planned fusions rejected by executable-structure validation"};
+  Statistic eliminatedTerminationPolls{
+      this, "eliminated-termination-polls",
+      "redundant post-inline termination polls removed from fused bodies"};
+  Statistic ifConvertedNBAs{
+      this, "if-converted-nbas",
+      "conditional last-write NBA diamonds converted to selects"};
+  Statistic sharedStableConditions{
+      this, "shared-stable-conditions",
+      "equivalent stable branch conditions shared across fused actors"};
+  Statistic promotedPrivateStores{
+      this, "promoted-private-stores",
+      "private static temporaries promoted to fused-activation SSA"};
 };
 
 struct BodyFusionCandidate {
@@ -166,11 +181,482 @@ sim::ComputeEffectAttr getDirectSensitivity(sim::ComputeFragmentAttr fragment) {
   return sensitivity;
 }
 
+/// Fold
+///
+///   enqueue %first to %destination
+///   cond_br %condition, ^overwrite, ^continue
+/// ^overwrite:
+///   %second = <speculatable computation>
+///   enqueue %second to %destination
+///   br ^continue
+///
+/// to one unconditional enqueue of `select %condition, %second, %first`.
+///
+/// NBA values are not observable until the region barrier, so the two writes
+/// have ordinary last-write semantics. Restrict this to adjacent accumulator
+/// sites for the same commit root and to a speculatable, side-effect-free
+/// overwrite arm. Besides removing a hot branch, the resulting straight-line
+/// arithmetic is suitable for downstream SLP/vector formation.
+uint64_t ifConvertConditionalNBAWrites(sim::SimFuncOp function,
+                                       Block *protectedWait) {
+  uint64_t converted = 0;
+  bool changed;
+  do {
+    changed = false;
+    for (Block &source : function.getBody()) {
+      auto conditional = dyn_cast<cf::CondBranchOp>(source.getTerminator());
+      if (!conditional || !conditional.getTrueDestOperands().empty() ||
+          !conditional.getFalseDestOperands().empty())
+        continue;
+      Block *overwrite = conditional.getTrueDest();
+      Block *continuation = conditional.getFalseDest();
+      if (overwrite == continuation || overwrite == protectedWait ||
+          !llvm::hasSingleElement(overwrite->getPredecessors()) ||
+          overwrite->getNumArguments() != 0)
+        continue;
+      auto join = dyn_cast<cf::BranchOp>(overwrite->getTerminator());
+      if (!join || join.getDest() != continuation ||
+          !join.getDestOperands().empty())
+        continue;
+
+      sim::SimNBAEnqueueOp first;
+      for (Operation &operation : llvm::reverse(source.without_terminator())) {
+        if (auto enqueue = dyn_cast<sim::SimNBAEnqueueOp>(operation)) {
+          first = enqueue;
+          break;
+        }
+      }
+      if (!first || first.getDelay())
+        continue;
+      bool safeTail = true;
+      for (Operation *operation = first->getNextNode();
+           operation && operation != source.getTerminator();
+           operation = operation->getNextNode())
+        safeTail &=
+            isa<sim::SimRefLoadOp>(operation) ||
+            (isMemoryEffectFree(operation) && isSpeculatable(operation));
+      if (!safeTail)
+        continue;
+
+      sim::SimNBAEnqueueOp second;
+      bool safeOverwrite = true;
+      for (Operation &operation : overwrite->without_terminator()) {
+        if (auto enqueue = dyn_cast<sim::SimNBAEnqueueOp>(operation)) {
+          if (second)
+            safeOverwrite = false;
+          second = enqueue;
+          continue;
+        }
+        safeOverwrite &=
+            isMemoryEffectFree(&operation) && isSpeculatable(&operation);
+      }
+      if (!safeOverwrite || !second || second.getDelay() ||
+          first.getDestination() != second.getDestination() ||
+          first.getValue().getType() != second.getValue().getType())
+        continue;
+      sim::NBASiteAttr firstSite = first.getSiteAttr();
+      sim::NBASiteAttr secondSite = second.getSiteAttr();
+      if (!firstSite || !secondSite || firstSite.getTiming() ||
+          secondSite.getTiming() ||
+          firstSite.getStorage() !=
+              sim::ComputeNBAStorageKind::RootAccumulator ||
+          secondSite.getStorage() !=
+              sim::ComputeNBAStorageKind::RootAccumulator ||
+          firstSite.getCommit() != secondSite.getCommit())
+        continue;
+
+      // Move only the proven-speculatable value computation. The replacement
+      // enqueue retains the later site's identity, which is the observable
+      // last-write position in the static NBA plan.
+      for (Operation &operation :
+           llvm::make_early_inc_range(overwrite->without_terminator()))
+        if (&operation != second.getOperation())
+          operation.moveBefore(conditional);
+      OpBuilder builder(conditional);
+      Value selected = arith::SelectOp::create(
+          builder, conditional.getLoc(), conditional.getCondition(),
+          second.getValue(), first.getValue());
+      sim::SimNBAEnqueueOp::create(builder, second.getLoc(), selected,
+                                   second.getDestination(), Value{},
+                                   secondSite);
+      first.erase();
+      second.erase();
+      cf::BranchOp::create(builder, conditional.getLoc(), continuation);
+      conditional.erase();
+      overwrite->erase();
+
+      // Join the now-single-predecessor continuation locally. Running the
+      // generic canonicalizer here would CSE rematerialized constants across
+      // the coroutine suspension and incorrectly force non-frameable values
+      // into the process frame.
+      if (continuation != protectedWait &&
+          llvm::hasSingleElement(continuation->getPredecessors()) &&
+          continuation->getNumArguments() == 0) {
+        cast<cf::BranchOp>(source.getTerminator()).erase();
+        source.getOperations().splice(source.end(),
+                                      continuation->getOperations());
+        continuation->erase();
+      }
+      ++converted;
+      changed = true;
+      break;
+    }
+  } while (changed);
+  return converted;
+}
+
+std::optional<uint64_t> resolveStorageRoot(Value value) {
+  llvm::SmallDenseSet<Value, 8> visited;
+  while (value && visited.insert(value).second) {
+    if (auto argument = dyn_cast<BlockArgument>(value)) {
+      auto function =
+          dyn_cast<sim::SimFuncOp>(argument.getOwner()->getParentOp());
+      if (!function || argument.getOwner() != &function.getBody().front())
+        return std::nullopt;
+      auto descriptor = function.getArgAttrOfType<IntegerAttr>(
+          argument.getArgNumber(), sim::metadata::descriptorId);
+      if (!descriptor || descriptor.getValue().isNegative() ||
+          descriptor.getValue().getBitWidth() > 64)
+        return std::nullopt;
+      return descriptor.getValue().getZExtValue();
+    }
+    Operation *definition = value.getDefiningOp();
+    if (auto view = dyn_cast_or_null<sim::SimRefExtractOp>(definition))
+      value = view.getInput();
+    else if (auto view = dyn_cast_or_null<sim::SimRefDynExtractOp>(definition))
+      value = view.getInput();
+    else if (auto view = dyn_cast_or_null<sim::SimRefSubelementOp>(definition))
+      value = view.getInput();
+    else if (auto view =
+                 dyn_cast_or_null<sim::SimRefArrayElementOp>(definition))
+      value = view.getInput();
+    else
+      return std::nullopt;
+  }
+  return std::nullopt;
+}
+
+/// Promote a static procedure temporary when this fused function is its sole
+/// executable accessor and one store dominates every read. Such a declaration
+/// is state only because its source-level lifetime spans activations; if every
+/// activation overwrites it before use, retaining the canonical store would
+/// add a signal-transition publication with no observer or semantic consumer.
+uint64_t promotePrivateStaticTemporaries(sim::SimDesignOp design,
+                                         sim::SimFuncOp function) {
+  DenseMap<uint64_t, sim::SimStorageDeclOp> declarations;
+  for (sim::SimStorageDeclOp declaration :
+       design.getBody().front().getOps<sim::SimStorageDeclOp>())
+    declarations.try_emplace(declaration.getId(), declaration);
+
+  DenseMap<uint64_t, SmallVector<sim::SimRefLoadOp>> loads;
+  DenseMap<uint64_t, SmallVector<sim::SimRefStoreOp>> stores;
+  llvm::SmallDenseSet<uint64_t, 8> accessedElsewhere;
+  llvm::SmallDenseSet<uint64_t, 8> unsupportedUses;
+  design.walk([&](Operation *operation) {
+    Value reference;
+    if (auto load = dyn_cast<sim::SimRefLoadOp>(operation))
+      reference = load.getReference();
+    else if (auto store = dyn_cast<sim::SimRefStoreOp>(operation))
+      reference = store.getReference();
+    else {
+      // Reference views are checked through their eventual users below, and
+      // the root initializer must pass each reference to the replacement
+      // fused process. Any other reference-consuming operation can observe
+      // identity or state (for example an NBA enqueue, force, or foreign
+      // call), so conservatively exclude its root from promotion.
+      if (isa<sim::SimRefExtractOp, sim::SimRefDynExtractOp,
+              sim::SimRefSubelementOp, sim::SimRefArrayElementOp>(operation))
+        return;
+      if (auto spawn = dyn_cast<sim::SimSpawnOp>(operation);
+          spawn && spawn.getCalleeAttr() == function.getSymNameAttr())
+        return;
+      for (Value operand : operation->getOperands()) {
+        if (!isa<sim::RefType>(operand.getType()))
+          continue;
+        if (std::optional<uint64_t> root = resolveStorageRoot(operand))
+          unsupportedUses.insert(*root);
+      }
+      return;
+    }
+    std::optional<uint64_t> root = resolveStorageRoot(reference);
+    if (!root)
+      return;
+    if (operation->getParentOfType<sim::SimFuncOp>() != function) {
+      accessedElsewhere.insert(*root);
+      return;
+    }
+    if (auto load = dyn_cast<sim::SimRefLoadOp>(operation))
+      loads[*root].push_back(load);
+    else
+      stores[*root].push_back(cast<sim::SimRefStoreOp>(operation));
+  });
+
+  DominanceInfo dominance(function);
+  uint64_t promoted = 0;
+  for (auto &[descriptor, rootStores] : stores) {
+    auto declaration = declarations.find(descriptor);
+    auto rootLoads = loads.find(descriptor);
+    if (declaration == declarations.end() || rootLoads == loads.end() ||
+        rootStores.size() != 1 || rootLoads->second.empty() ||
+        accessedElsewhere.contains(descriptor) ||
+        unsupportedUses.contains(descriptor) ||
+        declaration->second.getLifetime() != sim::Lifetime::Static ||
+        declaration->second.getObservability() !=
+            sim::ComputeObservabilityKind::Invisible)
+      continue;
+    sim::SimRefStoreOp store = rootStores.front();
+    Value rootReference = store.getReference();
+    std::optional<unsigned> totalWidth =
+        sim::getPackedWidth(store.getValue().getType());
+    if (!totalWidth || *totalWidth == 0 || *totalWidth > 64)
+      continue;
+    // The slicing sequence below operates on one integer plane. Four-state
+    // values have distinct value/unknown planes and require a plane-aware
+    // implementation rather than integer shifts and truncations.
+    Type packedScalar = sim::getPackedScalarType(store.getValue().getType());
+    if (!isa<IntegerType>(packedScalar))
+      continue;
+
+    // Accept only a tree of static subelement views, loads, and the one
+    // dominating store. This excludes escapes, NBA destinations, dynamic
+    // indexing, and any use whose identity could be observed elsewhere.
+    llvm::SetVector<Value> family;
+    family.insert(rootReference);
+    bool closed = true;
+    for (size_t index = 0; index < family.size() && closed; ++index) {
+      for (OpOperand &use : family[index].getUses()) {
+        Operation *user = use.getOwner();
+        if (auto view = dyn_cast<sim::SimRefSubelementOp>(user)) {
+          family.insert(view.getResult());
+          continue;
+        }
+        if (isa<sim::SimRefLoadOp>(user) || user == store.getOperation())
+          continue;
+        closed = false;
+        break;
+      }
+    }
+    if (!closed ||
+        !llvm::all_of(rootLoads->second, [&](sim::SimRefLoadOp load) {
+          return dominance.dominates(store.getOperation(),
+                                     load.getOperation()) &&
+                 family.contains(load.getReference());
+        }))
+      continue;
+
+    auto getPackedOffset =
+        [&](Value reference) -> std::optional<std::pair<uint64_t, Type>> {
+      SmallVector<sim::SimRefSubelementOp> path;
+      Value current = reference;
+      while (current != rootReference) {
+        auto view = current.getDefiningOp<sim::SimRefSubelementOp>();
+        if (!view)
+          return std::nullopt;
+        path.push_back(view);
+        current = view.getInput();
+      }
+      uint64_t offset = 0;
+      Type type = store.getValue().getType();
+      for (sim::SimRefSubelementOp view : llvm::reverse(path)) {
+        for (int64_t index : view.getIndices()) {
+          if (index < 0)
+            return std::nullopt;
+          auto child = sim::getAggregateProvenanceSubelement(
+              type, static_cast<unsigned>(index));
+          if (!child ||
+              child->first > std::numeric_limits<uint64_t>::max() - offset)
+            return std::nullopt;
+          offset += child->first;
+          type =
+              sim::getAggregateElementType(type, static_cast<unsigned>(index));
+        }
+      }
+      return std::pair{offset, type};
+    };
+
+    SmallVector<std::pair<sim::SimRefLoadOp, std::pair<uint64_t, Type>>>
+        replacements;
+    bool representable = true;
+    for (sim::SimRefLoadOp load : rootLoads->second) {
+      auto selected = getPackedOffset(load.getReference());
+      if (!selected || selected->second != load.getResult().getType()) {
+        representable = false;
+        break;
+      }
+      std::optional<unsigned> width = sim::getPackedWidth(selected->second);
+      if (!width || selected->first > *totalWidth ||
+          *width > *totalWidth - selected->first) {
+        representable = false;
+        break;
+      }
+      replacements.push_back({load, *selected});
+    }
+    if (!representable)
+      continue;
+
+    IntegerType flattenedType = cast<IntegerType>(packedScalar);
+    OpBuilder storeBuilder(store);
+    Value flattened = sim::SimPackedFlattenOp::create(
+        storeBuilder, store.getLoc(), flattenedType, store.getValue());
+    for (auto &[load, selected] : replacements) {
+      if (selected.first == 0 &&
+          selected.second == store.getValue().getType()) {
+        load.getResult().replaceAllUsesWith(store.getValue());
+        load.erase();
+        continue;
+      }
+      OpBuilder builder(load);
+      Value bits = flattened;
+      if (selected.first != 0)
+        bits = arith::ShRUIOp::create(
+            builder, load.getLoc(), bits,
+            arith::ConstantOp::create(
+                builder, load.getLoc(), flattenedType,
+                builder.getIntegerAttr(flattenedType, selected.first)));
+      unsigned selectedWidth = *sim::getPackedWidth(selected.second);
+      if (selectedWidth != *totalWidth)
+        bits = arith::TruncIOp::create(
+            builder, load.getLoc(),
+            IntegerType::get(function.getContext(), selectedWidth), bits);
+      Value replacement =
+          isa<IntegerType>(selected.second)
+              ? bits
+              : sim::SimPackedUnflattenOp::create(builder, load.getLoc(),
+                                                  selected.second, bits)
+                    .getResult();
+      load.getResult().replaceAllUsesWith(replacement);
+      load.erase();
+    }
+    store.erase();
+    for (Value reference : llvm::reverse(family))
+      if (Operation *definition = reference.getDefiningOp();
+          definition && definition->use_empty())
+        definition->erase();
+    if (flattened.use_empty())
+      flattened.getDefiningOp()->erase();
+    ++promoted;
+  }
+  return promoted;
+}
+
+/// Share branch conditions whose complete expression trees are structurally
+/// identical and read only storage roots that this fused activation cannot
+/// update immediately. NBA enqueues do not modify canonical state until the
+/// barrier, so they do not invalidate such a condition.
+uint64_t shareStableBranchConditions(sim::SimFuncOp function,
+                                     Block *bodyEntry) {
+  // A remaining call can mutate a captured root even when the fused body has
+  // no direct store. Avoid hoisting loads across calls until interprocedural
+  // mod/ref information is available here.
+  bool hasCalls = false;
+  function.walk([&](sim::SimCallOp) { hasCalls = true; });
+  if (hasCalls)
+    return 0;
+
+  llvm::SmallDenseSet<uint64_t, 8> writtenRoots;
+  function.walk([&](sim::SimRefStoreOp store) {
+    if (std::optional<uint64_t> root = resolveStorageRoot(store.getReference()))
+      writtenRoots.insert(*root);
+  });
+
+  llvm::DenseMap<Value, bool> stableCache;
+  std::function<bool(Value)> isStable = [&](Value value) {
+    if (isa<BlockArgument>(value))
+      return true;
+    if (auto cached = stableCache.find(value); cached != stableCache.end())
+      return cached->second;
+    Operation *definition = value.getDefiningOp();
+    bool stable = false;
+    if (auto load = dyn_cast_or_null<sim::SimRefLoadOp>(definition)) {
+      std::optional<uint64_t> root = resolveStorageRoot(load.getReference());
+      stable = root && !writtenRoots.contains(*root);
+    } else if (definition && definition->getNumRegions() == 0 &&
+               definition->getNumResults() == 1 &&
+               isMemoryEffectFree(definition) && isSpeculatable(definition)) {
+      stable = llvm::all_of(definition->getOperands(), isStable);
+    }
+    stableCache[value] = stable;
+    return stable;
+  };
+
+  using ValuePair = std::pair<Value, Value>;
+  llvm::DenseMap<ValuePair, bool> equivalentCache;
+  std::function<bool(Value, Value)> equivalent = [&](Value lhs, Value rhs) {
+    if (lhs == rhs)
+      return true;
+    ValuePair pair{lhs, rhs};
+    if (auto cached = equivalentCache.find(pair);
+        cached != equivalentCache.end())
+      return cached->second;
+    Operation *left = lhs.getDefiningOp();
+    Operation *right = rhs.getDefiningOp();
+    bool same = left && right && left->getName() == right->getName() &&
+                left->getAttrs() == right->getAttrs() &&
+                left->getResultTypes() == right->getResultTypes() &&
+                left->getNumOperands() == right->getNumOperands();
+    if (same) {
+      if (auto leftLoad = dyn_cast<sim::SimRefLoadOp>(left)) {
+        auto rightLoad = cast<sim::SimRefLoadOp>(right);
+        same = leftLoad.getReference() == rightLoad.getReference();
+      } else {
+        for (auto [leftOperand, rightOperand] :
+             llvm::zip_equal(left->getOperands(), right->getOperands()))
+          same &= equivalent(leftOperand, rightOperand);
+      }
+    }
+    equivalentCache[pair] = same;
+    return same;
+  };
+
+  SmallVector<cf::CondBranchOp> branches;
+  function.walk([&](cf::CondBranchOp branch) {
+    if (isStable(branch.getCondition()))
+      branches.push_back(branch);
+  });
+  SmallVector<SmallVector<cf::CondBranchOp>> groups;
+  for (cf::CondBranchOp branch : branches) {
+    auto group = llvm::find_if(groups, [&](auto &candidate) {
+      return equivalent(candidate.front().getCondition(),
+                        branch.getCondition());
+    });
+    if (group == groups.end())
+      groups.push_back({branch});
+    else
+      group->push_back(branch);
+  }
+
+  uint64_t shared = 0;
+  OpBuilder builder = OpBuilder::atBlockBegin(bodyEntry);
+  for (auto &group : groups) {
+    if (group.size() < 2)
+      continue;
+    IRMapping mapping;
+    std::function<Value(Value)> cloneTree = [&](Value value) -> Value {
+      if (isa<BlockArgument>(value))
+        return value;
+      if (Value mapped = mapping.lookupOrNull(value))
+        return mapped;
+      Operation *definition = value.getDefiningOp();
+      for (Value operand : definition->getOperands())
+        (void)cloneTree(operand);
+      Operation *cloned = builder.clone(*definition, mapping);
+      return cloned->getResult(0);
+    };
+    Value common = cloneTree(group.front().getCondition());
+    for (cf::CondBranchOp branch : group)
+      branch.getConditionMutable().assign(common);
+    shared += group.size() - 1;
+  }
+  return shared;
+}
+
 FailureOr<sim::SimFuncOp> materializeFusion(
     sim::SimDesignOp design, sim::ComputeFusionAttr fusion,
     sim::ComputeGraphAttr graph,
     const DenseMap<uint32_t, uint32_t> &scheduleOrder,
-    const DenseMap<StringAttr, SmallVector<sim::SimSpawnOp>> &spawnsByCallee) {
+    const DenseMap<StringAttr, SmallVector<sim::SimSpawnOp>> &spawnsByCallee,
+    uint64_t &eliminatedTerminationPolls, uint64_t &ifConvertedNBAs,
+    uint64_t &sharedStableConditions, uint64_t &promotedPrivateStores) {
   DenseMap<uint32_t, uint32_t> resumeTargets;
   for (Attribute attribute : graph.getEdges()) {
     auto edge = cast<sim::ComputeEdgeAttr>(attribute);
@@ -426,6 +912,51 @@ FailureOr<sim::SimFuncOp> materializeFusion(
     }
   }
 
+  // LowerUnit inserts a termination poll after every direct function call.
+  // Inlining intentionally leaves that control boundary behind because a
+  // general callee may request termination. Compute-body fusion has a stronger
+  // closed-world proof: every operation in every transitive callee was checked
+  // by isComputeBodyFusionEligible, which excludes finish, stop, fatal, task
+  // calls, and every other scheduler-writing operation. The scheduler also
+  // never starts ordinary Active work after a pre-existing termination
+  // request. Consequently these post-inline polls are invariantly false for
+  // the duration of the fused activation.
+  //
+  // Remove the return diamonds here, before rebuilding the compute graph. In
+  // addition to avoiding runtime scheduler reads, this joins the arithmetic
+  // into larger basic blocks that downstream scalar and vector optimizers can
+  // analyze together.
+  SmallVector<cf::CondBranchOp> redundantPolls;
+  fused.walk([&](cf::CondBranchOp branch) {
+    auto requested =
+        branch.getCondition().getDefiningOp<sim::SimTerminationRequestedOp>();
+    if (!requested ||
+        !isa<sim::SimReturnOp>(branch.getTrueDest()->getTerminator()))
+      return;
+    redundantPolls.push_back(branch);
+  });
+  for (cf::CondBranchOp branch : redundantPolls) {
+    sim::SimTerminationRequestedOp requested =
+        branch.getCondition().getDefiningOp<sim::SimTerminationRequestedOp>();
+    Block *source = branch->getBlock();
+    Block *continuation = branch.getFalseDest();
+    bool canMerge = llvm::hasSingleElement(continuation->getPredecessors()) &&
+                    continuation->getNumArguments() == 0 &&
+                    branch.getFalseDestOperands().empty();
+    branch.erase();
+    if (requested->use_empty())
+      requested.erase();
+    if (canMerge) {
+      source->getOperations().splice(source->end(),
+                                     continuation->getOperations());
+      continuation->erase();
+    } else {
+      builder.setInsertionPointToEnd(source);
+      cf::BranchOp::create(builder, fused.getLoc(), continuation, ValueRange{});
+    }
+    ++eliminatedTerminationPolls;
+  }
+
   builder.setInsertionPoint(insertionSpawn);
   sim::SimSpawnOp::create(builder, fused.getLoc(), fused.getSymNameAttr(),
                           operands, ArrayAttr{}, ArrayAttr{});
@@ -433,6 +964,28 @@ FailureOr<sim::SimFuncOp> materializeFusion(
     candidate.spawn.erase();
   for (BodyFusionCandidate &candidate : candidates)
     candidate.function.erase();
+
+  // Remove private activation temporaries before if-converting NBA diamonds.
+  // Besides avoiding canonical state publication, this turns overwrite-arm
+  // loads into SSA values so only genuinely speculatable arithmetic is moved
+  // out of the branch.
+  promotedPrivateStores += promotePrivateStaticTemporaries(design, fused);
+  ifConvertedNBAs += ifConvertConditionalNBAWrites(fused, wait);
+  sharedStableConditions += shareStableBranchConditions(
+      fused, clonedBlocks.front().lookup(candidates.front().body));
+
+  // The true arms above are now unreachable single-return blocks. Erase only
+  // blocks with no predecessors; any unexpected structure remains intact and
+  // will be validated by the rebuilt graph.
+  for (auto block = fused.getBody().begin(), end = fused.getBody().end();
+       block != end;) {
+    Block &current = *block++;
+    if (&current != &entry && &current != wait && current.hasNoPredecessors() &&
+        current.without_terminator().empty() &&
+        isa<sim::SimReturnOp>(current.getTerminator()))
+      current.erase();
+  }
+
   return fused;
 }
 
@@ -464,18 +1017,27 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
   });
 
   bool changed = false;
+  uint64_t removedPolls = 0;
+  uint64_t convertedNBAs = 0;
+  uint64_t sharedConditions = 0;
+  uint64_t promotedStores = 0;
   for (Attribute attribute : fusions) {
     auto fusion = dyn_cast<sim::ComputeFusionAttr>(attribute);
     if (!fusion)
       continue;
-    FailureOr<sim::SimFuncOp> fused =
-        materializeFusion(design, fusion, graph, scheduleOrder, spawnsByCallee);
+    FailureOr<sim::SimFuncOp> fused = materializeFusion(
+        design, fusion, graph, scheduleOrder, spawnsByCallee, removedPolls,
+        convertedNBAs, sharedConditions, promotedStores);
     changed |= succeeded(fused);
     if (succeeded(fused))
       ++materializedFusions;
     else
       ++rejectedFusions;
   }
+  eliminatedTerminationPolls += removedPolls;
+  ifConvertedNBAs += convertedNBAs;
+  sharedStableConditions += sharedConditions;
+  promotedPrivateStores += promotedStores;
   design->removeAttr(sim::metadata::staticBodyFusion);
   if (!changed)
     return;
