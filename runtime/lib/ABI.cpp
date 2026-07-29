@@ -374,21 +374,24 @@ ABI_SIZE_ALIGN(obelisk_rt_static_nba_site, 16, 8);
 ABI_OFFSET(obelisk_rt_static_nba_site, site, 0);
 ABI_OFFSET(obelisk_rt_static_nba_site, root, 8);
 ABI_OFFSET(obelisk_rt_static_nba_site, storage, 12);
-ABI_SIZE_ALIGN(obelisk_rt_native_schedule_plan, 96, 8);
+ABI_SIZE_ALIGN(obelisk_rt_native_schedule_plan, 120, 8);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, size, 0);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, graph_layout_checksum, 8);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, mutable_state, 16);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, mutable_state_size, 24);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, actor_capacity, 32);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, flags, 36);
-ABI_OFFSET(obelisk_rt_native_schedule_plan, bind, 40);
-ABI_OFFSET(obelisk_rt_native_schedule_plan, run, 48);
-ABI_OFFSET(obelisk_rt_native_schedule_plan, fallback_snapshot, 56);
-ABI_OFFSET(obelisk_rt_native_schedule_plan, nba_roots, 64);
-ABI_OFFSET(obelisk_rt_native_schedule_plan, nba_root_count, 72);
-ABI_OFFSET(obelisk_rt_native_schedule_plan, nba_reserved, 76);
-ABI_OFFSET(obelisk_rt_native_schedule_plan, nba_sites, 80);
-ABI_OFFSET(obelisk_rt_native_schedule_plan, nba_site_count, 88);
+ABI_OFFSET(obelisk_rt_native_schedule_plan, state_value, 40);
+ABI_OFFSET(obelisk_rt_native_schedule_plan, state_unknown, 48);
+ABI_OFFSET(obelisk_rt_native_schedule_plan, state_bit_count, 56);
+ABI_OFFSET(obelisk_rt_native_schedule_plan, bind, 64);
+ABI_OFFSET(obelisk_rt_native_schedule_plan, run, 72);
+ABI_OFFSET(obelisk_rt_native_schedule_plan, fallback_snapshot, 80);
+ABI_OFFSET(obelisk_rt_native_schedule_plan, nba_roots, 88);
+ABI_OFFSET(obelisk_rt_native_schedule_plan, nba_root_count, 96);
+ABI_OFFSET(obelisk_rt_native_schedule_plan, nba_reserved, 100);
+ABI_OFFSET(obelisk_rt_native_schedule_plan, nba_sites, 104);
+ABI_OFFSET(obelisk_rt_native_schedule_plan, nba_site_count, 112);
 
 #undef ABI_OFFSET
 #undef ABI_SIZE_ALIGN
@@ -761,6 +764,9 @@ ABI_FUNCTION(obelisk_rt_v1_scheduler_run_aot_nodes,
              obelisk_rt_status (*)(obelisk_rt_context *,
                                    const obelisk_rt_native_schedule_node *,
                                    uint32_t));
+ABI_FUNCTION(obelisk_rt_v1_scheduler_snapshot_aot,
+             obelisk_rt_status (*)(obelisk_rt_context *,
+                                   obelisk_rt_aot_deopt_snapshot *));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_process_token,
              uint64_t (*)(obelisk_rt_context *,
                           obelisk_rt_process_instance_v1 *));
@@ -772,6 +778,10 @@ ABI_FUNCTION(obelisk_rt_v1_scheduler_static_nba,
              obelisk_rt_status (*)(obelisk_rt_context *, uint64_t, uint8_t *,
                                    uint8_t *, uint64_t, uint64_t, uint64_t,
                                    const uint8_t *, const uint8_t *));
+ABI_FUNCTION(obelisk_rt_v1_scheduler_static_nba_packed,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint32_t, uint8_t *,
+                                   uint8_t *, uint64_t, uint64_t, uint64_t,
+                                   uint64_t, uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_string_nba,
              obelisk_rt_status (*)(obelisk_rt_context *, uint8_t *, uint64_t,
                                    uint64_t, uint64_t, obelisk_rt_string_v1));

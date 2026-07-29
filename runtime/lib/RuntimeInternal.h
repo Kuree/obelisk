@@ -383,6 +383,7 @@ struct StaticNBAAccumulator {
   uint8_t *unknownPlane = nullptr;
   uint64_t planeBitCount = 0;
   uint32_t execRegion = OBELISK_RT_REGION_NBA;
+  uint64_t sequence = 0;
   bool valid = false;
   std::vector<uint64_t> value;
   std::vector<uint64_t> unknown;
@@ -647,9 +648,13 @@ struct obelisk_rt_context {
   uint32_t nativeScheduleNBARootCount = 0;
   const obelisk_rt_static_nba_site *nativeScheduleNBASites = nullptr;
   uint64_t nativeScheduleNBASiteCount = 0;
+  std::vector<uint32_t> nativeScheduleNBASiteIndex;
   std::vector<obelisk_rt_process_instance_v1 *> nativeScheduleActors;
   std::vector<uint64_t> nativeScheduleActorTokens;
   std::vector<size_t> nativeScheduleActorIndices;
+  std::vector<std::vector<uint64_t>> nativeScheduleStaticFanout;
+  std::vector<obelisk_rt_aot_deopt_actor> nativeScheduleSnapshotActors;
+  std::vector<obelisk_rt_aot_deopt_nba> nativeScheduleSnapshotNBAs;
   bool nativeScheduleRunning = false;
   bool nativeScheduleDeoptimized = false;
   bool nativeScheduleExternalWritePending = false;

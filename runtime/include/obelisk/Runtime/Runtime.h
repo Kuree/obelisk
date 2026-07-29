@@ -1755,6 +1755,9 @@ void obelisk_rt_v1_vpi_shutdown(obelisk_rt_context *context);
 // static child ownership is established before bytecode/VPI transition
 // fragments execute.
 #define OBELISK_RT_NATIVE_SCHEDULE_ROOT_SLOT_ZERO UINT32_C(2)
+// The generated plan has no external event source and may advance constant
+// deadlines and static NBA barriers without entering the generic scheduler.
+#define OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL UINT32_C(4)
 
 typedef struct obelisk_rt_aot_deopt_actor {
   uint32_t slot;
@@ -1815,8 +1818,9 @@ typedef struct obelisk_rt_static_nba_site {
 typedef obelisk_rt_status (*obelisk_rt_native_schedule_bind)(
     void *mutable_state, obelisk_rt_context *context, uint32_t actor_slot,
     obelisk_rt_process_instance_v1 *instance);
-// The runtime calls `bind` with a null instance when a slot is released.
-// Implementations must clear that slot without inspecting the former actor.
+// The runtime may replace an occupied slot when entering or returning from a
+// task call, and passes a null instance when releasing a slot. Implementations
+// must store the supplied instance without inspecting the former actor.
 typedef obelisk_rt_status (*obelisk_rt_native_schedule_run)(
     void *mutable_state, obelisk_rt_context *context);
 typedef obelisk_rt_status (*obelisk_rt_native_schedule_snapshot)(
@@ -1830,6 +1834,9 @@ typedef struct obelisk_rt_native_schedule_plan {
   uint64_t mutable_state_size;
   uint32_t actor_capacity;
   uint32_t flags;
+  uint8_t *state_value;
+  uint8_t *state_unknown;
+  uint64_t state_bit_count;
   obelisk_rt_native_schedule_bind bind;
   obelisk_rt_native_schedule_run run;
   obelisk_rt_native_schedule_snapshot fallback_snapshot;
@@ -1860,8 +1867,7 @@ obelisk_rt_status obelisk_rt_v1_scheduler_add_planned(
     uint32_t flags, uint32_t initial_rank, const uint32_t *continuations,
     const uint32_t *ranks, uint32_t continuation_count);
 obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
-    obelisk_rt_context *context,
-    const obelisk_rt_native_schedule_plan *plan);
+    obelisk_rt_context *context, const obelisk_rt_native_schedule_plan *plan);
 obelisk_rt_status obelisk_rt_v1_scheduler_add_aot(
     obelisk_rt_context *context, obelisk_rt_process_instance_v1 *instance,
     uint32_t flags, uint32_t actor_slot, uint32_t initial_rank,
@@ -1869,8 +1875,12 @@ obelisk_rt_status obelisk_rt_v1_scheduler_add_aot(
     uint32_t continuation_count, const uint32_t *bytecode_continuations,
     uint32_t bytecode_continuation_count);
 obelisk_rt_status obelisk_rt_v1_scheduler_run_aot_nodes(
-    obelisk_rt_context *context,
-    const obelisk_rt_native_schedule_node *nodes, uint32_t node_count);
+    obelisk_rt_context *context, const obelisk_rt_native_schedule_node *nodes,
+    uint32_t node_count);
+// Materialize the runtime-owned hybrid scheduler records at an AOT region
+// boundary. Returned pointers remain context-owned until scheduler mutation.
+obelisk_rt_status obelisk_rt_v1_scheduler_snapshot_aot(
+    obelisk_rt_context *context, obelisk_rt_aot_deopt_snapshot *out_snapshot);
 // Return the scheduler-owned stable identity used by await/join records. The
 // token is never a host address and is not reused within a context.
 uint64_t
@@ -1923,6 +1933,12 @@ obelisk_rt_status obelisk_rt_v1_scheduler_static_nba(
     obelisk_rt_context *context, uint64_t site, uint8_t *value_plane,
     uint8_t *unknown_plane, uint64_t plane_bit_count, uint64_t bit_offset,
     uint64_t bit_width, const uint8_t *value, const uint8_t *unknown);
+// AOT-only packed staging entry. The compiler has already resolved the site
+// to an installed root and proved the destination to be wholly in range.
+obelisk_rt_status obelisk_rt_v1_scheduler_static_nba_packed(
+    obelisk_rt_context *context, uint32_t root, uint8_t *value_plane,
+    uint8_t *unknown_plane, uint64_t plane_bit_count, uint64_t root_offset,
+    uint64_t bit_width, uint64_t value, uint64_t unknown);
 // Schedule one whole managed string word. The queued word remains a precise
 // tagged root through commit, and equal byte contents do not publish a signal
 // transition even when the immutable handles differ.

@@ -10,6 +10,14 @@
 // RUN: %t.o3.bytecode > %t.o3.bytecode.out 2> %t.o3.bytecode.err
 // RUN: diff -u %t.o3.native.out %t.o3.bytecode.out
 // RUN: diff -u %t.o3.native.err %t.o3.bytecode.err
+// RUN: obelisk -O3 --native-scheduler=generic %s -o %t.o3.generic
+// RUN: %t.o3.generic > %t.o3.generic.out 2> %t.o3.generic.err
+// RUN: obelisk -O3 --native-scheduler=aot %s -o %t.o3.aot
+// RUN: %t.o3.aot > %t.o3.aot.out 2> %t.o3.aot.err
+// RUN: diff -u %t.o3.generic.out %t.o3.bytecode.out
+// RUN: diff -u %t.o3.generic.err %t.o3.bytecode.err
+// RUN: diff -u %t.o3.aot.out %t.o3.bytecode.out
+// RUN: diff -u %t.o3.aot.err %t.o3.bytecode.err
 // RUN: diff -u %t.o0.native.out %t.o3.native.out
 // RUN: diff -u %t.o0.native.err %t.o3.native.err
 // RUN: FileCheck %s --check-prefix=STDOUT < %t.o3.native.out

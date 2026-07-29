@@ -266,7 +266,7 @@ struct ConnectivityRecord {
 };
 
 bool decodeImageHeader(const obelisk_rt_design_bytecode_entry_v1 &entry,
-                Image &image) {
+                       Image &image) {
   const auto *execution = entry.execution;
   if (!execution || entry.reserved != 0 ||
       execution->version != OBELISK_RT_VERSION || execution->reserved != 0 ||
@@ -2346,13 +2346,10 @@ bool validateImage(const Image &image) {
 }
 
 bool loadValidatedImage(const obelisk_rt_design_bytecode_entry_v1 &entry,
-                        const obelisk_rt_context *context, Image &image) {
-  // Context creation validates the complete execution inventory and bytecode
-  // image before publishing the context. The execution descriptor and its
-  // backing image are immutable for the context lifetime, so an entry for that
-  // exact descriptor only needs its fixed-size header decoded here. Entries
-  // used without their owning context retain the full checksum and structural
-  // validation fallback.
+                        obelisk_rt_context *context, Image &image) {
+  // Context creation validates the complete inventory and immutable bytecode
+  // image before publishing the context. Standalone entries retain full
+  // checksum and structural validation.
   if (context && context->execution == entry.execution)
     return decodeImageHeader(entry, image);
   return parseImage(entry, image) && validateImage(image);
@@ -2571,8 +2568,8 @@ float integerToFloat(Logic integer, bool isSigned) {
   }
 
   uint32_t encoded = (negative ? uint32_t{1} << 31 : 0) |
-      (static_cast<uint32_t>(exponent + 127) << 23) |
-      (static_cast<uint32_t>(mantissa) & UINT32_C(0x007fffff));
+                     (static_cast<uint32_t>(exponent + 127) << 23) |
+                     (static_cast<uint32_t>(mantissa) & UINT32_C(0x007fffff));
   float result;
   std::memcpy(&result, &encoded, sizeof(result));
   return result;
@@ -3683,8 +3680,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     auto index = scalar(1);
     return index
                ? obelisk_rt_v1_queue_delete_index(readManaged(inputRegister(0)),
-                       static_cast<int64_t>(*index))
-                 : OBELISK_RT_INVALID_BYTECODE;
+                                                  static_cast<int64_t>(*index))
+               : OBELISK_RT_INVALID_BYTECODE;
   }
   case OBELISK_RT_INTRINSIC_V1_QUEUE_INSERT: {
     auto index = scalar(1);
@@ -3708,7 +3705,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                               : nullptr;
     return obelisk_rt_v1_queue_insert(lane, readManaged(inputRegister(0)),
                                       static_cast<int64_t>(*index),
-        frame.data + input.offset, unknown);
+                                      frame.data + input.offset, unknown);
   }
   case OBELISK_RT_INTRINSIC_V1_ASSOC_CREATE: {
     std::array<std::optional<uint64_t>, 8> inputs;
@@ -3992,7 +3989,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       return status;
     status = sentinel(1, static_cast<uint32_t>(covered));
     return status == OBELISK_RT_OK ? sentinel(2, static_cast<uint32_t>(total))
-               : status;
+                                   : status;
   }
   case OBELISK_RT_INTRINSIC_V1_COVERGROUP_TYPE_QUERY: {
     auto type = scalar(0);
@@ -4025,7 +4022,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       return status;
     status = sentinel(1, static_cast<uint32_t>(covered));
     return status == OBELISK_RT_OK ? sentinel(2, static_cast<uint32_t>(total))
-               : status;
+                                   : status;
   }
   case OBELISK_RT_INTRINSIC_V1_STRING_LITERAL: {
     auto literal = bytes(0);
@@ -4048,8 +4045,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       return OBELISK_RT_INVALID_LIFECYCLE;
     uint64_t planeSize = ((uint64_t{input.width} + 63) / 64) * 8;
     const void *unknown = input.kind == OBELISK_RT_DBREG_LOGIC
-            ? frame.data + input.offset + planeSize
-            : nullptr;
+                              ? frame.data + input.offset + planeSize
+                              : nullptr;
     obelisk_rt_string_v1 result = 0;
     obelisk_rt_status status = obelisk_rt_v1_string_from_packed(
         lane, frame.data + input.offset, unknown, input.width, &result);
@@ -4125,7 +4122,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     obelisk_rt_string_v1 result = 0;
     obelisk_rt_status status =
         obelisk_rt_v1_string_putc(lane, input, static_cast<int64_t>(*index),
-        static_cast<uint32_t>(*character), &result);
+                                  static_cast<uint32_t>(*character), &result);
     return status == OBELISK_RT_OK && !writeString(outputRegister(0), result)
                ? OBELISK_RT_INVALID_BYTECODE
                : status;
@@ -5327,7 +5324,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           return OBELISK_RT_INVALID_BYTECODE;
         arguments.push_back({OBELISK_RT_ARG_MANAGED_STRING,
                              OBELISK_RT_ARG_FORMAT_STRING, 0,
-             frame.data + layout.offset, nullptr});
+                             frame.data + layout.offset, nullptr});
       } else if ((itemFlags & 16) != 0) {
         if (layout.kind != OBELISK_RT_DBREG_MANAGED || layout.size != 8 ||
             (itemFlags & 15) != 0)
@@ -7141,7 +7138,7 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
           if (changed) {
             uint64_t realHandle =
                 automatic ? (automaticBase & ~uint64_t{UINT32_MAX}) |
-                          static_cast<uint32_t>(start)
+                                static_cast<uint32_t>(start)
                 : boundedStatic ? encodeStaticHandle(staticID, start)
                                 : static_cast<uint64_t>(start);
             if (!obelisk_rt_publish_signal_occurrence_unlocked(
@@ -7150,8 +7147,7 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
             obelisk_rt_invalidate_signal_snapshots_unlocked(context, realHandle,
                                                             value.width);
             if (!obelisk_rt_latch_conditional_signal_range_unlocked(
-                    context, realHandle, value.width,
-                    OBELISK_RT_SIGNAL_CHANGE))
+                    context, realHandle, value.width, OBELISK_RT_SIGNAL_CHANGE))
               return context->schedulerStatus;
             if (!obelisk_rt_notify_observer_signal_unlocked(context, realHandle,
                                                             value.width))
@@ -7407,7 +7403,7 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
           executeFunction(image, callee, context, canonicalFrame,
                           canonicalFrameSize, calleeFunction.firstInstruction,
                           budget, action, state, pendingActivation,
-          instruction.auxiliary, instruction.immediate, &frame);
+                          instruction.auxiliary, instruction.immediate, &frame);
       --state.callDepth;
       state.frames.erase(callee.id);
       if (status != OBELISK_RT_OK)
@@ -7583,11 +7579,11 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       pending->ownsRetainedAutomaticStates = true;
       *pendingActivation = std::move(pending);
       *action = {OBELISK_RT_FRAGMENT_TASK_CALL,
-          OBELISK_RT_SUSPEND_NONE,
-          static_cast<uint32_t>(instruction.immediate),
-          0,
-          0,
-          0};
+                 OBELISK_RT_SUSPEND_NONE,
+                 static_cast<uint32_t>(instruction.immediate),
+                 0,
+                 0,
+                 0};
       return OBELISK_RT_OK;
     }
     case OBELISK_RT_DB_TERMINATE:
@@ -7765,8 +7761,8 @@ void obelisk_rt_enumerate_design_managed_roots(
             visitManagedWord(task.frame.data() + capture.valueOffset, visit,
                              visitorEnvironment);
         } else if (kind == OBELISK_RT_DBREG_MANAGED ||
-            kind == OBELISK_RT_DBREG_MANAGED_REF ||
-            kind == OBELISK_RT_DBREG_ARGUMENT_REF)
+                   kind == OBELISK_RT_DBREG_MANAGED_REF ||
+                   kind == OBELISK_RT_DBREG_ARGUMENT_REF)
           visitOffset(capture.valueOffset);
       }
       uint64_t end = function.firstInstruction + function.instructionCount;
@@ -7783,8 +7779,8 @@ void obelisk_rt_enumerate_design_managed_roots(
             visitManagedWord(task.frame.data() + instruction.immediate, visit,
                              visitorEnvironment);
         } else if (kind == OBELISK_RT_DBREG_MANAGED ||
-            kind == OBELISK_RT_DBREG_MANAGED_REF ||
-            kind == OBELISK_RT_DBREG_ARGUMENT_REF)
+                   kind == OBELISK_RT_DBREG_MANAGED_REF ||
+                   kind == OBELISK_RT_DBREG_ARGUMENT_REF)
           visitOffset(instruction.immediate);
       }
     }
@@ -7795,6 +7791,55 @@ void obelisk_rt_enumerate_design_managed_roots(
   }
 }
 
+static bool matchesActivationBytecodeInventory(
+    const obelisk_rt_execution_descriptor_v1 &execution, const Image &image) {
+  for (uint64_t index = 0; index != execution.activation_count; ++index) {
+    const obelisk_rt_activation_descriptor_v1 &activation =
+        execution.activations[index];
+    if ((activation.flags & OBELISK_RT_ACTIVATION_HAS_BYTECODE) == 0)
+      continue;
+    if (activation.bytecode_function >= image.functionCount)
+      return false;
+    Function function = functionAt(image, activation.bytecode_function);
+    if (function.id != activation.code_unit_id ||
+        (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
+        function.resultCount != 0)
+      return false;
+  }
+  for (uint64_t index = 0; index != execution.observer_count; ++index) {
+    const obelisk_rt_observer_descriptor_v1 &observer =
+        execution.observers[index];
+    if (observer.bytecode_function == OBELISK_RT_OBSERVER_NO_BYTECODE)
+      continue;
+    if (observer.bytecode_function >= image.functionCount)
+      return false;
+    Function function = functionAt(image, observer.bytecode_function);
+    if (function.id != observer.code_unit_id ||
+        (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) != 0 ||
+        function.resultCount != 1 ||
+        function.argumentCount != observer.capture_count + 1)
+      return false;
+    Layout result = layoutAt(image, function, function.argumentCount);
+    bool fourState = (observer.flags & OBELISK_RT_OBSERVER_FOUR_STATE) != 0;
+    uint32_t expectedKind = (observer.flags & OBELISK_RT_OBSERVER_REAL32) != 0
+                                ? OBELISK_RT_DBREG_REAL32
+                            : (observer.flags & OBELISK_RT_OBSERVER_REAL64) != 0
+                                ? OBELISK_RT_DBREG_REAL64
+                            : fourState ? OBELISK_RT_DBREG_LOGIC
+                                        : OBELISK_RT_DBREG_BITS;
+    if (layoutAt(image, function, 0).kind != OBELISK_RT_DBREG_HANDLE ||
+        layoutAt(image, function, 0).size != 32 ||
+        result.width != observer.result_width || result.kind != expectedKind)
+      return false;
+    for (uint32_t capture = 0; capture != observer.capture_count; ++capture)
+      if (layoutAt(image, function, capture + 1).kind !=
+              OBELISK_RT_DBREG_HANDLE ||
+          layoutAt(image, function, capture + 1).size != 32)
+        return false;
+  }
+  return true;
+}
+
 bool obelisk_rt_validate_activation_bytecode_inventory(
     const obelisk_rt_execution_descriptor_v1 &execution) noexcept {
   if ((execution.flags & OBELISK_RT_EXECUTION_HAS_BYTECODE) == 0)
@@ -7802,56 +7847,8 @@ bool obelisk_rt_validate_activation_bytecode_inventory(
   try {
     obelisk_rt_design_bytecode_entry_v1 entry{&execution, 0, 0};
     Image image;
-    if (!parseImage(entry, image))
-      return false;
-    if (!validateImage(image))
-      return false;
-    for (uint64_t index = 0; index != execution.activation_count; ++index) {
-      const obelisk_rt_activation_descriptor_v1 &activation =
-          execution.activations[index];
-      if ((activation.flags & OBELISK_RT_ACTIVATION_HAS_BYTECODE) == 0)
-        continue;
-      if (activation.bytecode_function >= image.functionCount)
-        return false;
-      Function function = functionAt(image, activation.bytecode_function);
-      if (function.id != activation.code_unit_id ||
-          (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
-          function.resultCount != 0)
-        return false;
-    }
-    for (uint64_t index = 0; index != execution.observer_count; ++index) {
-      const obelisk_rt_observer_descriptor_v1 &observer =
-          execution.observers[index];
-      if (observer.bytecode_function == OBELISK_RT_OBSERVER_NO_BYTECODE)
-        continue;
-      if (observer.bytecode_function >= image.functionCount)
-        return false;
-      Function function = functionAt(image, observer.bytecode_function);
-      if (function.id != observer.code_unit_id ||
-          (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) != 0 ||
-          function.resultCount != 1 ||
-          function.argumentCount != observer.capture_count + 1)
-        return false;
-      Layout result = layoutAt(image, function, function.argumentCount);
-      bool fourState = (observer.flags & OBELISK_RT_OBSERVER_FOUR_STATE) != 0;
-      uint32_t expectedKind =
-          (observer.flags & OBELISK_RT_OBSERVER_REAL32) != 0
-              ? OBELISK_RT_DBREG_REAL32
-          : (observer.flags & OBELISK_RT_OBSERVER_REAL64) != 0
-              ? OBELISK_RT_DBREG_REAL64
-          : fourState ? OBELISK_RT_DBREG_LOGIC
-                      : OBELISK_RT_DBREG_BITS;
-      if (layoutAt(image, function, 0).kind != OBELISK_RT_DBREG_HANDLE ||
-          layoutAt(image, function, 0).size != 32 ||
-          result.width != observer.result_width || result.kind != expectedKind)
-        return false;
-      for (uint32_t capture = 0; capture != observer.capture_count; ++capture)
-        if (layoutAt(image, function, capture + 1).kind !=
-                OBELISK_RT_DBREG_HANDLE ||
-            layoutAt(image, function, capture + 1).size != 32)
-          return false;
-    }
-    return true;
+    return parseImage(entry, image) && validateImage(image) &&
+           matchesActivationBytecodeInventory(execution, image);
   } catch (...) {
     return false;
   }
@@ -9126,7 +9123,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
         bool signalTriggered =
             iterator->signalTriggered ||
             ((iterator->suspendKind == OBELISK_RT_SUSPEND_CHANGE ||
-             iterator->suspendKind == OBELISK_RT_SUSPEND_EDGE) &&
+              iterator->suspendKind == OBELISK_RT_SUSPEND_EDGE) &&
              iterator->signalLatch && iterator->signalLatch->triggered);
         if (context->signalDiagnosticsEnabled && iterator->started &&
             (iterator->suspendKind == OBELISK_RT_SUSPEND_CHANGE ||
