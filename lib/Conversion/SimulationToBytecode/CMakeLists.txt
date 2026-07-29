@@ -9,7 +9,6 @@ add_mlir_library(ObeliskSimulationToBytecode
   ObeliskSimulationAnalysis
   ObeliskSimulationIR
   ObeliskSimulationToStandard
-  ObeliskSimulationToLLVMCoroutine
   MLIRArithDialect
   MLIRControlFlowDialect
   MLIRIR

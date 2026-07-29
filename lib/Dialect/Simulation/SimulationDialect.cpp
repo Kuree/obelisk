@@ -40,6 +40,28 @@ using namespace mlir;
 
 namespace obelisk::sim {
 
+bool isSuspensionOp(Operation *operation) {
+  return isa<
+      SimSuspendDelayOp, SimSuspendChangeOp, SimSuspendEdgeOp,
+      SimSuspendEdgeIffOp, SimSuspendLevelOp, SimSuspendAnyOp,
+      SimSuspendEventOp, SimSuspendForeverOp, SimSuspendAwaitOp,
+      SimSuspendJoinOp, SimSuspendChildrenOp, SimSuspendObserveOp,
+      SimTaskCallOp>(operation);
+}
+
+uint32_t getWaitEntryCount(Operation *operation) {
+  return TypeSwitch<Operation *, uint32_t>(operation)
+      .Case<SimSuspendChangeOp, SimSuspendLevelOp, SimSuspendEdgeOp,
+            SimSuspendEventOp, SimSuspendAwaitOp>([](auto) { return 1; })
+      .Case<SimSuspendEdgeIffOp>([](auto) { return 2; })
+      .Case<SimSuspendAnyOp>(
+          [](auto op) { return static_cast<uint32_t>(op.getWatched().size()); })
+      .Case<SimSuspendJoinOp>([](auto op) {
+        return static_cast<uint32_t>(op.getProcesses().size());
+      })
+      .Default([](Operation *) { return 0; });
+}
+
 namespace {
 
 bool hasLateInlineMetadata(SimDesignOp design) {

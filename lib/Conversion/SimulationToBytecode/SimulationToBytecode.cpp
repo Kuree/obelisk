@@ -3,11 +3,11 @@
 #include "obelisk/Conversion/SimulationToBytecode.h"
 
 #include "obelisk/Analysis/NetConnectivityAnalysis.h"
+#include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
 #include "obelisk/Analysis/SimulationScheduleAnalysis.h"
 #include "obelisk/Analysis/StateDomainAnalysis.h"
 #include "obelisk/Analysis/StaticSpecializationAnalysis.h"
 #include "obelisk/Conversion/SimulationRuntime.h"
-#include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
 #include "obelisk/Dialect/Runtime/RuntimeTypes.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Runtime/Runtime.h"

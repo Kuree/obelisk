@@ -1,8 +1,10 @@
 add_mlir_library(ObeliskSimulationAnalysis
   NativeAOTAnalysis.cpp
   NetConnectivityAnalysis.cpp
+  SimulationProcessFrameAnalysis.cpp
   SimulationScheduleAnalysis.cpp
   SimulationAnalysis.cpp
+  SimulationStorageAnalysis.cpp
   StaticSpecializationAnalysis.cpp
   StateDomainAnalysis.cpp
 
@@ -14,4 +16,9 @@ add_mlir_library(ObeliskSimulationAnalysis
   MLIRControlFlowDialect
   MLIRControlFlowInterfaces
   MLIRIR
+  LLVMCore
+)
+
+target_include_directories(ObeliskSimulationAnalysis PRIVATE
+  "${PROJECT_SOURCE_DIR}/runtime/include"
 )

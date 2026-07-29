@@ -81,6 +81,13 @@ uint64_t getDPISignatureHash(::mlir::ArrayAttr signature,
 materializeFrozenConstant(::mlir::OpBuilder &builder, ::mlir::Location location,
                           FrozenConstantAttr constant);
 
+/// Whether an operation transfers execution to a scheduler continuation.
+bool isSuspensionOp(::mlir::Operation *operation);
+
+/// Number of ordinary wait entries required by a suspension operation.
+/// Computed-observer waits use their own variable-sized record.
+uint32_t getWaitEntryCount(::mlir::Operation *operation);
+
 } // namespace obelisk::sim
 
 #endif // OBELISK_DIALECT_SIMULATION_SIMULATIONOPS_H
