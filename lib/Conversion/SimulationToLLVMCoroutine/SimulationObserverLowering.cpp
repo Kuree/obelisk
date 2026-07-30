@@ -2,9 +2,13 @@
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 
+#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Runtime/Runtime.h"
+
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SetVector.h"
 
 using namespace mlir;
 
@@ -99,6 +103,203 @@ LogicalResult makeNativeObserverThunk(ModuleOp module,
 }
 
 } // namespace
+
+LogicalResult
+serializeComputedObserverWait(Operation *operation, Value wait,
+                              uint64_t waitSize, OpBuilder &builder,
+                              SmallVectorImpl<Operation *> &observerBindings) {
+  auto observe = dyn_cast<sim::SimSuspendObserveOp>(operation);
+  if (!observe)
+    return operation->emitError("expected an observer suspension");
+  Location location = operation->getLoc();
+  Type i32 = builder.getI32Type();
+  Type i64 = builder.getI64Type();
+  uint32_t primaryCount = observe.getEdges().size();
+  uint32_t conditionCount = observe.getConditionCount();
+  uint32_t observerCount = primaryCount + conditionCount;
+  auto planeCounts = operation->getAttrOfType<DenseI32ArrayAttr>(
+      "obelisk.coro.initial_plane_counts");
+  auto conditionBegin = operation->getAttrOfType<IntegerAttr>(
+      "obelisk.coro.condition_operand_begin");
+  if (!planeCounts || planeCounts.size() != primaryCount || !conditionBegin)
+    return operation->emitError("missing converted observer operand metadata");
+  SmallVector<sim::SimObserverBindOp> bindings;
+  bindings.reserve(observerCount);
+  for (uint32_t index = 0; index != primaryCount; ++index) {
+    auto binding =
+        operation->getOperand(index).getDefiningOp<sim::SimObserverBindOp>();
+    if (!binding)
+      return operation->emitError(
+          "primary observer token is not produced by observer.bind");
+    bindings.push_back(binding);
+  }
+  uint64_t conditionOperand = conditionBegin.getValue().getZExtValue();
+  for (uint32_t index = 0; index != conditionCount; ++index) {
+    if (conditionOperand + index >= operation->getNumOperands())
+      return operation->emitError("condition observer inventory is truncated");
+    auto binding = operation->getOperand(conditionOperand + index)
+                       .getDefiningOp<sim::SimObserverBindOp>();
+    if (!binding)
+      return operation->emitError(
+          "condition observer token is not produced by observer.bind");
+    bindings.push_back(binding);
+  }
+
+  uint32_t captureCount = 0;
+  uint32_t dependencyCount = 0;
+  uint32_t previousLimbs = 0;
+  SmallVector<uint32_t> widths;
+  for (auto [index, binding] : llvm::enumerate(bindings)) {
+    captureCount += binding.getCaptureCount();
+    dependencyCount += binding.getDependencies().size();
+    auto width =
+        binding->getAttrOfType<IntegerAttr>("obelisk.coro.observer_width");
+    auto fourState =
+        binding->getAttrOfType<BoolAttr>("obelisk.coro.observer_four_state");
+    if (!width || !fourState)
+      return binding.emitOpError("missing converted observer metadata");
+    widths.push_back(width.getValue().getZExtValue());
+    if (index < primaryCount)
+      previousLimbs += (uint64_t{widths.back()} + 63) / 64;
+  }
+
+  uint64_t observersOffset = sizeof(obelisk_rt_computed_wait_record_v1);
+  uint64_t capturesOffset =
+      observersOffset +
+      uint64_t{observerCount} * sizeof(obelisk_rt_computed_observer_v1);
+  uint64_t dependenciesOffset =
+      capturesOffset +
+      uint64_t{captureCount} * sizeof(obelisk_rt_computed_capture_v1);
+  uint64_t clausesOffset =
+      dependenciesOffset +
+      uint64_t{dependencyCount} * sizeof(obelisk_rt_computed_dependency_v1);
+  uint64_t previousValueOffset =
+      clausesOffset +
+      uint64_t{primaryCount} * sizeof(obelisk_rt_computed_clause_v1);
+  uint64_t totalSize =
+      previousValueOffset + uint64_t{previousLimbs} * sizeof(uint64_t) * 2;
+  if (totalSize > waitSize)
+    return operation->emitError(
+        "computed observer wait exceeds its canonical frame field");
+
+  auto storeI32 = [&](uint64_t offset, uint32_t value) {
+    storeAt(builder, location, wait, offset,
+            llvmConstant(builder, location, i32, value), 4);
+  };
+  auto storeI64 = [&](uint64_t offset, uint64_t value) {
+    storeAt(builder, location, wait, offset,
+            llvmConstant(builder, location, i64, value), 8);
+  };
+  storeI32(0, OBELISK_RT_VERSION);
+  storeI32(4, OBELISK_RT_SUSPEND_OBSERVER);
+  storeI32(8, OBELISK_RT_COMPUTED_WAIT_INTERLEAVED);
+  storeI32(12, primaryCount);
+  storeI32(16, observerCount);
+  storeI32(20, captureCount);
+  storeI32(24, dependencyCount);
+  storeI32(28, previousLimbs);
+  storeI64(32, observersOffset);
+  storeI64(40, capturesOffset);
+  storeI64(48, dependenciesOffset);
+  storeI64(56, clausesOffset);
+  storeI64(64, previousValueOffset);
+  storeI64(72, 0);
+  storeI64(80, totalSize);
+  storeI64(88, 0);
+
+  uint32_t captureCursor = 0;
+  uint32_t dependencyCursor = 0;
+  uint32_t previousCursor = 0;
+  llvm::SetVector<Operation *> uniqueBindings;
+  for (auto [index, binding] : llvm::enumerate(bindings)) {
+    auto observerID =
+        binding->getAttrOfType<IntegerAttr>("obelisk.coro.observer_id");
+    auto dependencyKinds = binding->getAttrOfType<DenseI32ArrayAttr>(
+        "obelisk.coro.dependency_kinds");
+    auto dependencyWidths = binding->getAttrOfType<DenseI32ArrayAttr>(
+        "obelisk.coro.dependency_widths");
+    if (!observerID || !dependencyKinds || !dependencyWidths ||
+        static_cast<size_t>(dependencyKinds.size()) !=
+            binding.getDependencies().size() ||
+        static_cast<size_t>(dependencyWidths.size()) !=
+            binding.getDependencies().size())
+      return binding.emitOpError("has malformed converted dependency metadata");
+    uint64_t entry =
+        observersOffset + index * sizeof(obelisk_rt_computed_observer_v1);
+    storeI64(entry, observerID.getValue().getZExtValue());
+    storeI32(entry + 8, captureCursor);
+    storeI32(entry + 12, binding.getCaptureCount());
+    storeI32(entry + 16, dependencyCursor);
+    storeI32(entry + 20, binding.getDependencies().size());
+    storeI32(entry + 24, index < primaryCount
+                             ? static_cast<uint32_t>(previousValueOffset +
+                                                     uint64_t{previousCursor} *
+                                                         sizeof(uint64_t) * 2)
+                             : UINT32_MAX);
+    storeI32(entry + 28, 0);
+    for (Value capture : binding.getCaptures()) {
+      uint64_t captureOffset =
+          capturesOffset +
+          uint64_t{captureCursor++} * sizeof(obelisk_rt_computed_capture_v1);
+      storeAt(builder, location, wait, captureOffset,
+              asI64(builder, location, capture), 8);
+      storeI64(captureOffset + 8, 0);
+      storeI64(captureOffset + 16, 0);
+      storeI64(captureOffset + 24, 0);
+    }
+    for (auto [dependencyIndex, dependency] :
+         llvm::enumerate(binding.getDependencies())) {
+      uint64_t dependencyOffset =
+          dependenciesOffset + uint64_t{dependencyCursor++} *
+                                   sizeof(obelisk_rt_computed_dependency_v1);
+      storeAt(builder, location, wait, dependencyOffset,
+              asI64(builder, location, dependency), 8);
+      storeI32(dependencyOffset + 8, dependencyKinds[dependencyIndex]);
+      storeI32(dependencyOffset + 12, dependencyWidths[dependencyIndex]);
+    }
+    if (index < primaryCount)
+      previousCursor += (uint64_t{widths[index]} + 63) / 64;
+    uniqueBindings.insert(binding);
+  }
+  llvm::append_range(observerBindings, uniqueBindings);
+
+  for (uint32_t index = 0; index != primaryCount; ++index) {
+    uint64_t clause =
+        clausesOffset + uint64_t{index} * sizeof(obelisk_rt_computed_clause_v1);
+    int32_t conditionIndex = observe.getConditionIndices()[index];
+    storeI32(clause, index);
+    storeI32(clause + 4,
+             conditionIndex < 0
+                 ? OBELISK_RT_OBSERVER_CONDITION_NONE
+                 : primaryCount + static_cast<uint32_t>(conditionIndex));
+    storeI32(clause + 8, observe.getEdges()[index]);
+    storeI32(clause + 12, bindings[index]->hasAttr("obelisk_sim.event_primary")
+                              ? OBELISK_RT_COMPUTED_CLAUSE_EVENT_PRIMARY
+                              : 0);
+  }
+  for (uint32_t limb = 0; limb != previousLimbs * 2; ++limb)
+    storeI64(previousValueOffset + uint64_t{limb} * 8, 0);
+  uint64_t initialOperand = primaryCount;
+  previousCursor = 0;
+  for (uint32_t index = 0; index != primaryCount; ++index) {
+    uint32_t planes = planeCounts[index];
+    if (planes == 0 || planes > 2 ||
+        initialOperand + planes > operation->getNumOperands())
+      return operation->emitError(
+          "computed observer initial plane inventory is malformed");
+    storeAt(builder, location, wait,
+            previousValueOffset + uint64_t{previousCursor} * 16,
+            operation->getOperand(initialOperand), 1);
+    if (planes == 2)
+      storeAt(builder, location, wait,
+              previousValueOffset + uint64_t{previousCursor} * 16 +
+                  ((uint64_t{widths[index]} + 63) / 64) * 8,
+              operation->getOperand(initialOperand + 1), 1);
+    initialOperand += planes;
+    previousCursor += (uint64_t{widths[index]} + 63) / 64;
+  }
+  return success();
+}
 
 LogicalResult materializeNativeObserverThunks(ModuleOp module) {
   SmallVector<LLVM::LLVMFuncOp> evaluators;

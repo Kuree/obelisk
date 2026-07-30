@@ -103,6 +103,18 @@ Value castIntegerWidth(OpBuilder &builder, Location location, Value value,
   return arith::TruncIOp::create(builder, location, target, value);
 }
 
+Value asI64(OpBuilder &builder, Location location, Value value) {
+  Type i64 = builder.getI64Type();
+  if (isa<LLVM::LLVMPointerType>(value.getType()))
+    return LLVM::PtrToIntOp::create(builder, location, i64, value);
+  auto integer = cast<IntegerType>(value.getType());
+  if (integer.getWidth() == 64)
+    return value;
+  if (integer.getWidth() < 64)
+    return arith::ExtUIOp::create(builder, location, i64, value);
+  return arith::TruncIOp::create(builder, location, i64, value);
+}
+
 Value resizeNativeInteger(OpBuilder &builder, Location location, Value value,
                           IntegerType result, bool isSigned) {
   auto input = cast<IntegerType>(value.getType());

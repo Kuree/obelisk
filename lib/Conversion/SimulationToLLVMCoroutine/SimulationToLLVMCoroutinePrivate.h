@@ -54,6 +54,8 @@ void storeAt(mlir::OpBuilder &builder, mlir::Location location,
              unsigned alignment);
 mlir::Value castIntegerWidth(mlir::OpBuilder &builder, mlir::Location location,
                              mlir::Value value, mlir::Type target);
+mlir::Value asI64(mlir::OpBuilder &builder, mlir::Location location,
+                  mlir::Value value);
 mlir::Value resizeNativeInteger(mlir::OpBuilder &builder,
                                 mlir::Location location, mlir::Value value,
                                 mlir::IntegerType result,
@@ -109,6 +111,10 @@ mlir::LogicalResult
 materializeManagedMethodThunks(mlir::ModuleOp module,
                                const llvm::DataLayout &dataLayout);
 mlir::LogicalResult materializeNativeObserverThunks(mlir::ModuleOp module);
+mlir::LogicalResult serializeComputedObserverWait(
+    mlir::Operation *operation, mlir::Value wait, uint64_t waitSize,
+    mlir::OpBuilder &builder,
+    mlir::SmallVectorImpl<mlir::Operation *> &observerBindings);
 mlir::LogicalResult prepareManagedLowering(mlir::ModuleOp module,
                                            const llvm::DataLayout &dataLayout);
 
