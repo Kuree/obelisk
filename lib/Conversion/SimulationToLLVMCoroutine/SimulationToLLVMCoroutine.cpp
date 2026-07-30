@@ -75,6 +75,7 @@ using detail::byteGEP;
 using detail::castIntegerWidth;
 using detail::containsLogic;
 using detail::convertProcessType;
+using detail::DirectStaticStateRange;
 using detail::entryAlloca;
 using detail::emitManagedRootRangePop;
 using detail::getOrDeclareLLVMFunction;
@@ -83,6 +84,7 @@ using detail::insertAutomaticOwnerReleases;
 using detail::instrumentManagedRoots;
 using detail::llvmConstant;
 using detail::loadAt;
+using detail::loadStatePlane;
 using detail::lowerNativeDPICalls;
 using detail::lowerNativeFunctionBody;
 using detail::materializeNativeSchedulerGlobals;
@@ -99,6 +101,7 @@ using detail::materializeManagedMethodThunks;
 using detail::materializeNativeObserverThunks;
 using detail::nativeStateWidth;
 using detail::nativeTwoStateBlockUnknownsAttr;
+using detail::notifySignal;
 using detail::NativeCallResultLowering;
 using detail::NativeReturnLowering;
 using detail::NativeStateLayout;
@@ -112,9 +115,12 @@ using detail::populateNativeHandleConversionPatterns;
 using detail::populateOverrideToLLVMConversionPatterns;
 using detail::populateReferenceLifetimeToLLVMConversionPatterns;
 using detail::populateSchedulerToLLVMConversionPatterns;
+using detail::populateStateReadWriteToLLVMConversionPatterns;
 using detail::populateSuspensionTypeConversionPatterns;
 using detail::prepareManagedLowering;
 using detail::recordStaticSpecializationCFGBlocks;
+using detail::resolveCFGConstantInteger;
+using detail::resolveDirectStaticStateRange;
 using detail::reportManagedStatus;
 using detail::releaseNativeAutomaticState;
 using detail::resizeSignedIndexToI64;
@@ -124,6 +130,7 @@ using detail::stableProcessID;
 using detail::staticNBASpecializationGuard;
 using detail::staticSpecializationGuard;
 using detail::storeAt;
+using detail::storeStatePlane;
 using detail::threadProcessStateThroughCFG;
 using detail::threadRuntimeStatuses;
 using detail::validateProcessABI;
@@ -1194,14 +1201,9 @@ makeStatePlane(ModuleOp module, StringRef name, uint64_t bytes, bool unknown,
   return global;
 }
 
-struct DirectStaticStateRange {
-  uint64_t offset;
-  uint64_t localOffset;
-  uint32_t staticID;
-  bool guarded;
-};
+} // namespace
 
-std::optional<uint64_t> resolveCFGConstantInteger(Value value);
+namespace detail {
 
 std::optional<DirectStaticStateRange>
 resolveDirectStaticStateRange(Value handle, unsigned width,
@@ -1310,6 +1312,10 @@ Value storeDirectPackedPlane(OpBuilder &builder, Location location, Value input,
   return arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne, old,
                                input);
 }
+
+} // namespace detail
+
+namespace {
 
 /// Prove which NBA enqueues in a closed-world fused activation may use the
 /// clean native body selected by AOT actor dispatch.
@@ -1534,11 +1540,15 @@ LogicalResult markCleanStaticNBAsInGuardedBodies(
   return success();
 }
 
+} // namespace
+
+namespace detail {
+
 Value loadStatePlane(ConversionPatternRewriter &rewriter, Location location,
                      Value handle, IntegerType resultType, StringRef globalName,
                      bool unknownFallback, uint64_t stateBitCount,
-                     const NativeStateLayout *directLayout = nullptr,
-                     Value guardedPermission = {}, bool assumeClean = false) {
+                     const NativeStateLayout *directLayout,
+                     Value guardedPermission, bool assumeClean) {
   std::optional<DirectStaticStateRange> range = resolveDirectStaticStateRange(
       handle, resultType.getWidth(), directLayout);
   if (range && (!range->guarded || assumeClean))
@@ -1615,8 +1625,8 @@ Value loadStatePlane(ConversionPatternRewriter &rewriter, Location location,
 Value storeStatePlane(ConversionPatternRewriter &rewriter, Location location,
                       Value handle, Value input, StringRef globalName,
                       uint64_t stateBitCount,
-                      const NativeStateLayout *directLayout = nullptr,
-                      Value guardedPermission = {}, bool assumeClean = false) {
+                      const NativeStateLayout *directLayout,
+                      Value guardedPermission, bool assumeClean) {
   IntegerType inputType = cast<IntegerType>(input.getType());
   std::optional<DirectStaticStateRange> range =
       resolveDirectStaticStateRange(handle, inputType.getWidth(), directLayout);
@@ -1695,205 +1705,9 @@ Value storeStatePlane(ConversionPatternRewriter &rewriter, Location location,
   return changed;
 }
 
-void notifySignal(OpBuilder &builder, Location location, Value handle,
-                  uint64_t width, Value oldValue, Value oldUnknown,
-                  Value newValue, Value newUnknown,
-                  std::optional<DirectStaticStateRange> directRange =
-                      std::nullopt);
-class RefLoadConversion final : public OpConversionPattern<sim::SimRefLoadOp> {
-public:
-  RefLoadConversion(const TypeConverter &converter, MLIRContext *context,
-                    uint64_t stateBitCount,
-                    const NativeStateLayout *directLayout)
-      : OpConversionPattern(converter, context), stateBitCount(stateBitCount),
-        directLayout(directLayout) {}
-  LogicalResult
-  matchAndRewrite(sim::SimRefLoadOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    Type resultType = op.getResult().getType();
-    std::optional<unsigned> width = nativeStateWidth(resultType);
-    if (!width || adaptor.getReference().size() != 1)
-      return failure();
-    IntegerType plane = rewriter.getIntegerType(*width);
-    bool assumeClean = op->hasAttr(assumeCleanSpecializationAttr);
-    Value guardedPermission;
-    if (auto range = resolveDirectStaticStateRange(
-            adaptor.getReference().front(), *width, directLayout);
-        range && range->guarded && !assumeClean)
-      guardedPermission = staticSpecializationGuard(
-          rewriter, op.getLoc(), range->staticID, OBELISK_RT_STATIC_ROOT_READ);
-    Value value =
-        loadStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
-                       plane, "__obelisk_state_value", false, stateBitCount,
-                       directLayout, guardedPermission, assumeClean);
-    if (isa<FloatType>(resultType))
-      value =
-          arith::BitcastOp::create(rewriter, op.getLoc(), resultType, value);
-    SmallVector<Value> converted{value};
-    if (containsLogic(resultType))
-      converted.push_back(
-          loadStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
-                         plane, "__obelisk_state_unknown", true, stateBitCount,
-                         directLayout, guardedPermission, assumeClean));
-    SmallVector<ValueRange> replacements{ValueRange(converted)};
-    rewriter.replaceOpWithMultiple(op, replacements);
-    return success();
-  }
+} // namespace detail
 
-private:
-  uint64_t stateBitCount;
-  const NativeStateLayout *directLayout;
-};
-
-class RefStoreConversion final
-    : public OpConversionPattern<sim::SimRefStoreOp> {
-public:
-  RefStoreConversion(const TypeConverter &converter, MLIRContext *context,
-                     uint64_t stateBitCount,
-                     const NativeStateLayout *directLayout)
-      : OpConversionPattern(converter, context), stateBitCount(stateBitCount),
-        directLayout(directLayout) {}
-  LogicalResult
-  matchAndRewrite(sim::SimRefStoreOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    if (adaptor.getReference().size() != 1 || adaptor.getValue().empty())
-      return failure();
-    Type valueType = op.getValue().getType();
-    std::optional<unsigned> width = nativeStateWidth(valueType);
-    if (!width)
-      return failure();
-    IntegerType plane = rewriter.getIntegerType(*width);
-    bool assumeClean = op->hasAttr(assumeCleanSpecializationAttr);
-    std::optional<DirectStaticStateRange> directRange =
-        resolveDirectStaticStateRange(adaptor.getReference().front(), *width,
-                                      directLayout);
-    Value guardedPermission;
-    if (directRange && directRange->guarded && !assumeClean)
-      guardedPermission = staticSpecializationGuard(
-          rewriter, op.getLoc(), directRange->staticID,
-          OBELISK_RT_STATIC_ROOT_READ | OBELISK_RT_STATIC_ROOT_WRITE);
-    Value oldValue =
-        loadStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
-                       plane, "__obelisk_state_value", false, stateBitCount,
-                       directLayout, guardedPermission, assumeClean);
-    Value oldUnknown;
-    if (containsLogic(valueType))
-      oldUnknown =
-          loadStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
-                         plane, "__obelisk_state_unknown", true, stateBitCount,
-                         directLayout, guardedPermission, assumeClean);
-    Value storedValue = adaptor.getValue().front();
-    if (isa<FloatType>(valueType))
-      storedValue =
-          arith::BitcastOp::create(rewriter, op.getLoc(), plane, storedValue);
-    Value notificationValue = storedValue;
-    if (isa<sim::StringType>(valueType)) {
-      Value comparison =
-          LLVM::CallOp::create(
-              rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
-              SymbolRefAttr::get(rewriter.getContext(),
-                                 "obelisk_rt_v1_string_compare"),
-              ValueRange{oldValue, storedValue})
-              .getResult();
-      Value equal = arith::CmpIOp::create(
-          rewriter, op.getLoc(), arith::CmpIPredicate::eq, comparison,
-          llvmConstant(rewriter, op.getLoc(), rewriter.getI32Type(), 0));
-      notificationValue = arith::SelectOp::create(rewriter, op.getLoc(), equal,
-                                                  oldValue, storedValue);
-    }
-    Value changed =
-        storeStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
-                        storedValue, "__obelisk_state_value", stateBitCount,
-                        directLayout, guardedPermission, assumeClean);
-    if (adaptor.getValue().size() == 2)
-      changed = arith::OrIOp::create(
-          rewriter, op.getLoc(), changed,
-          storeStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
-                          adaptor.getValue()[1], "__obelisk_state_unknown",
-                          stateBitCount, directLayout, guardedPermission,
-                          assumeClean));
-    (void)changed;
-    bool needsNotification = true;
-    // Exact fanout proves that an absent root has no language-level waiter.
-    // Direct roots are also immune to external writes (VPI-off/read), while a
-    // guarded VPI-full root may elide observers only in its clean fast body.
-    if (directLayout && directLayout->transitionHandlesExact)
-      if (directRange && (assumeClean || !directRange->guarded))
-        needsNotification =
-            directLayout->transitionHandles.contains(directRange->staticID);
-    if (!needsNotification) {
-      rewriter.eraseOp(op);
-      return success();
-    }
-    if (isa<FloatType>(valueType)) {
-      Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
-      auto save = [&](Value value) {
-        Value storage =
-            entryAlloca(rewriter, op.getLoc(), value.getType(), 1, 1);
-        LLVM::StoreOp::create(rewriter, op.getLoc(), value, storage, 1);
-        return storage;
-      };
-      Value contextAddress = LLVM::AddressOfOp::create(
-          rewriter, op.getLoc(), pointer, "__obelisk_current_context");
-      Value runtimeContext = LLVM::LoadOp::create(rewriter, op.getLoc(),
-                                                  pointer, contextAddress, 8);
-      LLVM::CallOp::create(
-          rewriter, op.getLoc(), TypeRange{},
-          SymbolRefAttr::get(rewriter.getContext(),
-                             "obelisk_rt_v1_scheduler_real_transition"),
-          ValueRange{runtimeContext, adaptor.getReference().front(),
-                     llvmConstant(rewriter, op.getLoc(), rewriter.getI32Type(),
-                                  *width),
-                     save(oldValue), save(storedValue)});
-    } else {
-      notifySignal(rewriter, op.getLoc(), adaptor.getReference().front(),
-                   *width, oldValue, oldUnknown, notificationValue,
-                   adaptor.getValue().size() == 2 ? adaptor.getValue()[1]
-                                                  : Value{},
-                   directRange &&
-                           (assumeClean || !directRange->guarded) &&
-                           directLayout &&
-                           directLayout->transitionHandlesExact
-                       ? directRange
-                       : std::nullopt);
-    }
-    rewriter.eraseOp(op);
-    return success();
-  }
-
-private:
-  uint64_t stateBitCount;
-  const NativeStateLayout *directLayout;
-};
-
-class NetReadConversion final : public OpConversionPattern<sim::SimNetReadOp> {
-public:
-  NetReadConversion(const TypeConverter &converter, MLIRContext *context,
-                    uint64_t stateBitCount)
-      : OpConversionPattern(converter, context), stateBitCount(stateBitCount) {}
-  LogicalResult
-  matchAndRewrite(sim::SimNetReadOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    Type resultType = op.getResult().getType();
-    std::optional<unsigned> width = nativeStateWidth(resultType);
-    if (!width || adaptor.getNet().size() != 1)
-      return failure();
-    IntegerType plane = rewriter.getIntegerType(*width);
-    SmallVector<Value> converted{
-        loadStatePlane(rewriter, op.getLoc(), adaptor.getNet().front(), plane,
-                       "__obelisk_state_value", false, stateBitCount)};
-    if (containsLogic(resultType))
-      converted.push_back(
-          loadStatePlane(rewriter, op.getLoc(), adaptor.getNet().front(), plane,
-                         "__obelisk_state_unknown", true, stateBitCount));
-    SmallVector<ValueRange> replacements{ValueRange(converted)};
-    rewriter.replaceOpWithMultiple(op, replacements);
-    return success();
-  }
-
-private:
-  uint64_t stateBitCount;
-};
+namespace {
 
 std::optional<uint64_t> getStaticDriverID(Value value) {
   while (value) {
@@ -2159,6 +1973,10 @@ struct NativeStaticFanoutPlan {
   bool exact = false;
 };
 
+} // namespace
+
+namespace detail {
+
 std::optional<uint64_t> resolveCFGConstantInteger(Value value,
                                                   DenseSet<Value> &active) {
   if (auto constant = value.getDefiningOp<arith::ConstantOp>())
@@ -2203,6 +2021,10 @@ std::optional<uint64_t> resolveCFGConstantInteger(Value value) {
   DenseSet<Value> active;
   return resolveCFGConstantInteger(value, active);
 }
+
+} // namespace detail
+
+namespace {
 
 FailureOr<SmallVector<obelisk_rt_static_actor_root>>
 buildNativeStaticActorRootPlan(
@@ -2570,6 +2392,10 @@ private:
   bool guardedClaims;
 };
 
+} // namespace
+
+namespace detail {
+
 void notifySignal(OpBuilder &builder, Location location, Value handle,
                   uint64_t width, Value oldValue, Value oldUnknown,
                   Value newValue, Value newUnknown,
@@ -2615,6 +2441,10 @@ void notifySignal(OpBuilder &builder, Location location, Value handle,
                  save(oldValue), save(oldUnknown), save(newValue),
                  save(newUnknown)});
 }
+
+} // namespace detail
+
+namespace {
 
 LogicalResult
 makeProcessActivationHelper(ModuleOp module, sim::SimFuncOp function,
@@ -4067,6 +3897,10 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
        LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
        IntegerType::get(context, 64)});
   getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_scheduler_fail",
+      LLVM::LLVMVoidType::get(context),
+      {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 32)});
+  getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_native_state_alloc", IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
        LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
@@ -4708,15 +4542,13 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       packedPatterns, packedConverter, stateLayout->storage, stateLayout->nets,
       stateLayout->drivers);
   populateSchedulerToLLVMConversionPatterns(packedPatterns, packedConverter);
-  packedPatterns.add<RefLoadConversion, RefStoreConversion>(
-      packedConverter, context, stateLayout->bitCount,
+  populateStateReadWriteToLLVMConversionPatterns(
+      packedPatterns, packedConverter, stateLayout->bitCount,
       staticSpecialization && useAOT && aotEligibility.isFullyEligible()
           ? &*stateLayout
           : nullptr);
   populateOverrideToLLVMConversionPatterns(packedPatterns, packedConverter,
                                            stateLayout->bitCount);
-  packedPatterns.add<NetReadConversion>(packedConverter, context,
-                                        stateLayout->bitCount);
   populateManagedToLLVMConversionPatterns(
       packedPatterns, packedConverter, dataLayout, stateLayout->bitCount);
   packedPatterns.add<DriverDriveConversion>(packedConverter, context,

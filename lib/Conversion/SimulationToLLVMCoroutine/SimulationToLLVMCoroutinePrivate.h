@@ -75,6 +75,13 @@ struct NativeStateLayout : analysis::NativeStateLayoutAnalysis {
   bool transitionHandlesExact = false;
 };
 
+struct DirectStaticStateRange {
+  uint64_t offset;
+  uint64_t localOffset;
+  uint32_t staticID;
+  bool guarded;
+};
+
 using ReferenceArgumentMap =
     llvm::DenseMap<mlir::Operation *, mlir::SmallVector<unsigned>>;
 
@@ -173,6 +180,9 @@ void populateReferenceLifetimeToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
 void populateSchedulerToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
+void populateStateReadWriteToLLVMConversionPatterns(
+    mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter,
+    uint64_t stateBitCount, const NativeStateLayout *directLayout);
 void materializeNativeSchedulerGlobals(mlir::ModuleOp module);
 void markLikelyTrue(mlir::cf::CondBranchOp branch);
 void recordStaticSpecializationCFGBlocks(
@@ -184,6 +194,26 @@ mlir::Value staticSpecializationGuard(
 mlir::Value staticNBASpecializationGuard(
     mlir::ConversionPatternRewriter &rewriter, mlir::Location location,
     uint32_t rootIndex);
+std::optional<DirectStaticStateRange>
+resolveDirectStaticStateRange(mlir::Value handle, unsigned width,
+                              const NativeStateLayout *layout);
+std::optional<uint64_t> resolveCFGConstantInteger(mlir::Value value);
+mlir::Value loadStatePlane(
+    mlir::ConversionPatternRewriter &rewriter, mlir::Location location,
+    mlir::Value handle, mlir::IntegerType resultType,
+    llvm::StringRef globalName, bool unknownFallback, uint64_t stateBitCount,
+    const NativeStateLayout *directLayout = nullptr,
+    mlir::Value guardedPermission = {}, bool assumeClean = false);
+mlir::Value storeStatePlane(
+    mlir::ConversionPatternRewriter &rewriter, mlir::Location location,
+    mlir::Value handle, mlir::Value input, llvm::StringRef globalName,
+    uint64_t stateBitCount, const NativeStateLayout *directLayout = nullptr,
+    mlir::Value guardedPermission = {}, bool assumeClean = false);
+void notifySignal(
+    mlir::OpBuilder &builder, mlir::Location location, mlir::Value handle,
+    uint64_t width, mlir::Value oldValue, mlir::Value oldUnknown,
+    mlir::Value newValue, mlir::Value newUnknown,
+    std::optional<DirectStaticStateRange> directRange = std::nullopt);
 mlir::LogicalResult
 insertAutomaticOwnerReleases(obelisk::sim::SimFuncOp function);
 mlir::LogicalResult
