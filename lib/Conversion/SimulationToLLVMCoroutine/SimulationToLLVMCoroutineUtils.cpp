@@ -152,6 +152,21 @@ LLVM::GlobalOp makeByteArrayGlobal(ModuleOp module, Location location,
   return global;
 }
 
+LLVM::GlobalOp
+makeConstantGlobal(ModuleOp module, Location location, Type type,
+                   StringRef name, LLVM::Linkage linkage, uint64_t alignment,
+                   llvm::function_ref<Value(OpBuilder &)> initializer) {
+  OpBuilder builder(module.getContext());
+  builder.setInsertionPointToStart(module.getBody());
+  auto global = LLVM::GlobalOp::create(builder, location, type, true, linkage,
+                                       name, Attribute{}, alignment);
+  Block *block = new Block;
+  global.getInitializerRegion().push_back(block);
+  builder.setInsertionPointToStart(block);
+  LLVM::ReturnOp::create(builder, location, initializer(builder));
+  return global;
+}
+
 LLVM::LLVMFuncOp getOrDeclareLLVMFunction(ModuleOp module, StringRef name,
                                           Type result,
                                           ArrayRef<Type> arguments) {

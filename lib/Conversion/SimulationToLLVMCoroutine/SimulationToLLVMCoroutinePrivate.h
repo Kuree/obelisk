@@ -8,6 +8,7 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Support/LLVM.h"
 
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/StringRef.h"
 
 #include <cstdint>
@@ -58,6 +59,10 @@ mlir::LLVM::GlobalOp makeByteArrayGlobal(mlir::ModuleOp module,
                                          mlir::Location location,
                                          llvm::StringRef name,
                                          llvm::StringRef bytes);
+mlir::LLVM::GlobalOp makeConstantGlobal(
+    mlir::ModuleOp module, mlir::Location location, mlir::Type type,
+    llvm::StringRef name, mlir::LLVM::Linkage linkage, uint64_t alignment,
+    llvm::function_ref<mlir::Value(mlir::OpBuilder &)> initializer);
 
 mlir::LLVM::LLVMFuncOp
 getOrDeclareLLVMFunction(mlir::ModuleOp module, llvm::StringRef name,
@@ -73,6 +78,8 @@ void populateManagedToLLVMConversionPatterns(mlir::RewritePatternSet &patterns,
 mlir::LogicalResult
 materializeManagedMethodThunks(mlir::ModuleOp module,
                                const llvm::DataLayout &dataLayout);
+mlir::LogicalResult prepareManagedLowering(mlir::ModuleOp module,
+                                           const llvm::DataLayout &dataLayout);
 
 } // namespace obelisk::detail
 
