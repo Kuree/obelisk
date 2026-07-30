@@ -3,6 +3,8 @@
 #ifndef OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_PRIVATE_H
 #define OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_PRIVATE_H
 
+#include "obelisk/Analysis/NativeStateLayoutAnalysis.h"
+
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -57,6 +59,14 @@ enum class NativeCallResultLowering {
 struct SignedI64Index {
   mlir::Value value;
   mlir::Value representable;
+};
+
+struct NativeStateLayout : analysis::NativeStateLayoutAnalysis {
+  llvm::DenseSet<uint32_t> directHandles;
+  llvm::DenseSet<uint32_t> guardedHandles;
+  llvm::DenseSet<uint32_t> nbaHandles;
+  llvm::DenseSet<uint32_t> transitionHandles;
+  bool transitionHandlesExact = false;
 };
 
 bool alignUp(uint64_t value, uint64_t alignment, uint64_t &result);

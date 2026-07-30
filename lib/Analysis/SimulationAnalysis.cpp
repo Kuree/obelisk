@@ -132,6 +132,14 @@ std::optional<unsigned> getSimulationStorageBitWidth(Type type) {
   return static_cast<unsigned>(*span);
 }
 
+bool containsFourStateLogic(Type type) {
+  if (sim::isManagedHandleType(type))
+    return false;
+  bool result = false;
+  type.walk([&](sim::LogicType) { result = true; });
+  return result;
+}
+
 DescriptorProvenanceMap deriveDescriptorProvenance(sim::SimFuncOp function) {
   DescriptorProvenanceMap provenanceMap;
   if (function.isExternal() || function.getBody().empty())

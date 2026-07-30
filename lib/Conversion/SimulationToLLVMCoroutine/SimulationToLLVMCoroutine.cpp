@@ -98,6 +98,7 @@ using detail::nativeStateWidth;
 using detail::nativeTwoStateBlockUnknownsAttr;
 using detail::NativeCallResultLowering;
 using detail::NativeReturnLowering;
+using detail::NativeStateLayout;
 using detail::populateAggregateToLLVMConversionPatterns;
 using detail::populateControlToLLVMConversionPatterns;
 using detail::populateContextRuntimeToLLVMConversionPattern;
@@ -1123,188 +1124,14 @@ uint64_t encodeNativeStaticHandle(uint32_t id, int32_t offset = 0) {
                                          offset);
 }
 
-struct NativeStateLayout {
-  struct Bound {
-    uint32_t handleID;
-    uint64_t offset;
-    unsigned width;
-    SmallVector<uint64_t, 2> managedRootOffsets;
-  };
-  struct Net {
-    uint64_t id;
-    uint32_t handleID;
-    uint64_t offset;
-    unsigned width;
-    bool fourState;
-    sim::NetResolutionKind resolution;
-  };
-  struct Driver {
-    uint64_t id;
-    uint64_t netId;
-    uint32_t handleID;
-    uint64_t offset;
-    unsigned width;
-    unsigned drivenLow;
-    unsigned drivenWidth;
-  };
-  DenseMap<uint64_t, uint64_t> storage;
-  DenseMap<uint64_t, uint64_t> nets;
-  DenseMap<uint64_t, uint64_t> drivers;
-  DenseSet<uint32_t> directHandles;
-  DenseSet<uint32_t> guardedHandles;
-  DenseSet<uint32_t> nbaHandles;
-  DenseSet<uint32_t> transitionHandles;
-  bool transitionHandlesExact = false;
-  SmallVector<Bound> bounds;
-  SmallVector<Net> netLayouts;
-  SmallVector<Driver> driverLayouts;
-  DenseMap<std::pair<uint64_t, uint64_t>, std::pair<uint64_t, uint64_t>>
-      connectivityCanonical;
-  DenseMap<std::pair<uint64_t, uint64_t>,
-           SmallVector<::obelisk::analysis::NetBit>>
-      connectivityComponents;
-  uint64_t bitCount = 0;
-};
-
 FailureOr<NativeStateLayout> buildNativeStateLayout(ModuleOp module) {
+  FailureOr<analysis::NativeStateLayoutAnalysis> analyzed =
+      analysis::NativeStateLayoutAnalysis::compute(module);
+  if (failed(analyzed))
+    return failure();
   NativeStateLayout layout;
-  uint32_t nextHandleID = 1;
-  auto allocate = [&](Type type, uint64_t &offset,
-                      uint64_t &handle) -> LogicalResult {
-    std::optional<unsigned> width = nativeStateWidth(type);
-    if (!width || *width == 0 || *width > INT32_MAX || nextHandleID == 0 ||
-        nextHandleID > OBELISK_RT_STABLE_HANDLE_MAX_STATIC_ID)
-      return failure();
-    SmallVector<uint64_t, 2> managedRootOffsets;
-    if (!sim::getManagedHandleOffsets(type, managedRootOffsets))
-      return failure();
-    if (!managedRootOffsets.empty()) {
-      uint64_t aligned;
-      if (!alignUp(layout.bitCount, 64, aligned))
-        return failure();
-      layout.bitCount = aligned;
-    }
-    offset = layout.bitCount;
-    if (layout.bitCount > std::numeric_limits<uint64_t>::max() - *width)
-      return failure();
-    layout.bitCount += *width;
-    handle = encodeNativeStaticHandle(nextHandleID);
-    layout.bounds.push_back(
-        {nextHandleID++, offset, *width, std::move(managedRootOffsets)});
-    return success();
-  };
-  WalkResult walked = module.walk([&](Operation *operation) {
-    if (auto declaration = dyn_cast<sim::SimStorageDeclOp>(operation)) {
-      uint64_t offset;
-      uint64_t handle;
-      if (failed(allocate(declaration.getType(), offset, handle))) {
-        declaration.emitError("native storage must have a fixed packed width");
-        return WalkResult::interrupt();
-      }
-      layout.storage[declaration.getId()] = handle;
-    } else if (auto declaration = dyn_cast<sim::SimNetDeclOp>(operation)) {
-      uint64_t offset;
-      uint64_t handle;
-      if (failed(allocate(declaration.getType(), offset, handle))) {
-        declaration.emitError("native net must have a fixed packed width");
-        return WalkResult::interrupt();
-      }
-      layout.nets[declaration.getId()] = handle;
-      layout.netLayouts.push_back({declaration.getId(), nextHandleID - 1,
-                                   offset,
-                                   *nativeStateWidth(declaration.getType()),
-                                   containsLogic(declaration.getType()),
-                                   declaration.getResolutionKind()});
-    } else if (auto declaration = dyn_cast<sim::SimDriverDeclOp>(operation)) {
-      auto found = layout.nets.find(declaration.getNetId());
-      if (found == layout.nets.end()) {
-        declaration.emitError("native driver references an unknown net");
-        return WalkResult::interrupt();
-      }
-      uint64_t offset;
-      uint64_t handle;
-      std::optional<unsigned> width = nativeStateWidth(declaration.getType());
-      if (!width || failed(allocate(declaration.getType(), offset, handle))) {
-        declaration.emitError("native driver must have a fixed packed width");
-        return WalkResult::interrupt();
-      }
-      uint64_t drivenLow =
-          declaration.getDrivenLowAttr()
-              ? declaration.getDrivenLowAttr().getValue().getZExtValue()
-              : 0;
-      uint64_t drivenWidth =
-          declaration.getDrivenWidthAttr()
-              ? declaration.getDrivenWidthAttr().getValue().getZExtValue()
-              : *width;
-      if (drivenLow > *width || drivenWidth > *width - drivenLow) {
-        declaration.emitError("native driver has an invalid driven range");
-        return WalkResult::interrupt();
-      }
-      layout.drivers[declaration.getId()] = handle;
-      layout.driverLayouts.push_back(
-          {declaration.getId(), declaration.getNetId(), nextHandleID - 1,
-           offset, *width, static_cast<unsigned>(drivenLow),
-           static_cast<unsigned>(drivenWidth)});
-    }
-    return WalkResult::advance();
-  });
-  if (walked.wasInterrupted())
-    return failure();
-  SmallVector<sim::SimDesignOp> designs;
-  module.walk([&](sim::SimDesignOp design) { designs.push_back(design); });
-  if (designs.size() > 1) {
-    module.emitError("native lowering requires at most one simulation design");
-    return failure();
-  }
-  if (!designs.empty()) {
-    ::obelisk::analysis::NetConnectivityAnalysis connectivity(designs.front());
-    for (const NativeStateLayout::Net &net : layout.netLayouts) {
-      for (uint64_t bit = 0; bit != net.width; ++bit) {
-        ArrayRef<::obelisk::analysis::NetBit> component =
-            connectivity.getComponent({net.id, bit});
-        if (component.size() <= 1)
-          continue;
-        std::pair<uint64_t, uint64_t> key{net.id, bit};
-        std::pair<uint64_t, uint64_t> canonical{component.front().net,
-                                                component.front().offset};
-        layout.connectivityCanonical[key] = canonical;
-        if (key == canonical)
-          llvm::append_range(layout.connectivityComponents[canonical],
-                             component);
-      }
-    }
-
-    DenseMap<std::pair<uint64_t, uint64_t>, uint64_t> uwireDrivers;
-    for (const NativeStateLayout::Driver &driver : layout.driverLayouts) {
-      auto target = llvm::find_if(layout.netLayouts, [&](const auto &net) {
-        return net.id == driver.netId;
-      });
-      if (target == layout.netLayouts.end() ||
-          target->resolution != sim::NetResolutionKind::UWire)
-        continue;
-      for (uint64_t bit = driver.drivenLow;
-           bit != uint64_t{driver.drivenLow} + driver.drivenWidth; ++bit) {
-        ArrayRef<::obelisk::analysis::NetBit> component =
-            connectivity.getComponent({driver.netId, bit});
-        ::obelisk::analysis::NetBit canonical =
-            component.empty() ? ::obelisk::analysis::NetBit{driver.netId, bit}
-                              : component.front();
-        if (++uwireDrivers[{canonical.net, canonical.offset}] > 1) {
-          module.emitError()
-              << "uwire connectivity component " << canonical.net << "["
-              << canonical.offset << "] has more than one driver";
-          return failure();
-        }
-      }
-    }
-  }
-  if (layout.bitCount >= OBELISK_RT_STABLE_HANDLE_STATIC_TAG) {
-    module.emitError("native static state exceeds the handle address space");
-    return failure();
-  }
-  // Keep one byte addressable so poison-free invalid-handle paths always have
-  // a safe GEP base even for a design with no state.
-  layout.bitCount = std::max<uint64_t>(layout.bitCount, 8);
+  static_cast<analysis::NativeStateLayoutAnalysis &>(layout) =
+      std::move(*analyzed);
   return layout;
 }
 

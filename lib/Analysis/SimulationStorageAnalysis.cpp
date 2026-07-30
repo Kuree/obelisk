@@ -12,18 +12,6 @@
 using namespace mlir;
 
 namespace obelisk::analysis {
-namespace {
-
-bool containsLogic(Type type) {
-  if (sim::isManagedHandleType(type))
-    return false;
-  bool result = false;
-  type.walk([&](sim::LogicType) { result = true; });
-  return result;
-}
-
-} // namespace
-
 FailureOr<SimulationStorageProperties>
 getSimulationStorageProperties(Type type, const llvm::DataLayout &dataLayout,
                                llvm::LLVMContext &llvmContext) {
@@ -60,7 +48,7 @@ getSimulationStorageProperties(Type type, const llvm::DataLayout &dataLayout,
     if (!width)
       return failure();
     llvmType = llvm::IntegerType::get(llvmContext, *width);
-    fourState = containsLogic(type);
+    fourState = containsFourStateLogic(type);
   } else {
     return failure();
   }

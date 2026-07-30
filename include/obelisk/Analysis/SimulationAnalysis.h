@@ -42,6 +42,11 @@ using DescriptorProvenanceMap =
 /// carried beside an unpacked tagged-union payload.
 std::optional<unsigned> getSimulationStorageBitWidth(mlir::Type type);
 
+/// Whether a type contains four-state logic in canonical simulation storage.
+/// Managed handles are opaque two-state words even when their pointee types
+/// contain logic.
+bool containsFourStateLogic(mlir::Type type);
+
 /// Derive stable descriptor roots and ranges for all handle-typed values in a
 /// defined simulation function. Driver handles are normalized to their net.
 DescriptorProvenanceMap deriveDescriptorProvenance(sim::SimFuncOp function);

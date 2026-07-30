@@ -3,6 +3,7 @@
 #include "obelisk/Conversion/SimulationToBytecode.h"
 
 #include "obelisk/Analysis/NetConnectivityAnalysis.h"
+#include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
 #include "obelisk/Analysis/SimulationScheduleAnalysis.h"
 #include "obelisk/Analysis/SimulationVPIAnalysis.h"
@@ -475,11 +476,7 @@ uint32_t stableImportID(StringRef text) {
 }
 
 bool containsLogic(Type type) {
-  if (sim::isManagedHandleType(type))
-    return false;
-  bool found = false;
-  type.walk([&](sim::LogicType) { found = true; });
-  return found;
+  return analysis::containsFourStateLogic(type);
 }
 
 std::optional<uint32_t> simulationWidth(Type type) {

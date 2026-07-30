@@ -6,6 +6,7 @@
 namespace obelisk {
 
 void registerNativeAOTAnalysisTestPass();
+void registerNativeStateLayoutAnalysisTestPass();
 void registerSimulationProcessFrameAnalysisTestPass();
 void registerSimulationScheduleAnalysisTestPass();
 void registerSimulationVPIAnalysisTestPass();

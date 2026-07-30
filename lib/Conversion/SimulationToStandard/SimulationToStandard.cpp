@@ -2,6 +2,7 @@
 
 #include "obelisk/Conversion/SimulationToStandard.h"
 
+#include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Conversion/Passes.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
@@ -1541,11 +1542,7 @@ public:
 };
 
 static bool containsLogic(Type type) {
-  if (sim::isManagedHandleType(type))
-    return false;
-  bool contains = false;
-  type.walk([&](sim::LogicType) { contains = true; });
-  return contains;
+  return analysis::containsFourStateLogic(type);
 }
 
 static bool hasNoLogicTypesOrAttrs(Operation *op) {

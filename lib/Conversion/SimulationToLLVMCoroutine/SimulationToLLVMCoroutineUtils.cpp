@@ -26,11 +26,7 @@ bool alignUp(uint64_t value, uint64_t alignment, uint64_t &result) {
 }
 
 bool containsLogic(Type type) {
-  if (sim::isManagedHandleType(type))
-    return false;
-  bool result = false;
-  type.walk([&](sim::LogicType) { result = true; });
-  return result;
+  return analysis::containsFourStateLogic(type);
 }
 
 std::optional<unsigned> nativeStateWidth(Type type) {
