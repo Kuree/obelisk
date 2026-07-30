@@ -157,8 +157,9 @@ file(GLOB_RECURSE _obelisk_target_runtime_headers CONFIGURE_DEPENDS
   "${_obelisk_runtime_source_dir}/lib/*.h")
 set(_obelisk_target_runtime_objects)
 set(_obelisk_target_runtime_lto_objects)
-foreach(source ABI Bytecode Containers Coverage DesignBytecode DesignDatabase
-               DPI FileIO Format ManagedHeap Process Random Runtime VPI)
+foreach(source ABI Bytecode Containers Coverage DesignBytecode
+               DesignBytecodeLogic DesignDatabase DPI FileIO Format ManagedHeap
+               Process Random Runtime VPI)
   set(object "${_obelisk_target_runtime_dir}/${source}.o")
   set(lto_object "${_obelisk_target_runtime_dir}/${source}.bc")
   list(APPEND _obelisk_target_runtime_objects "${object}")

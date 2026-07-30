@@ -213,6 +213,7 @@ native_members = [
     "Containers.o",
     "Coverage.o",
     "DesignBytecode.o",
+    "DesignBytecodeLogic.o",
     "DesignDatabase.o",
     "DPI.o",
     "FileIO.o",

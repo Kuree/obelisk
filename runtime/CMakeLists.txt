@@ -4,6 +4,7 @@ add_library(obelisk_rt STATIC
   lib/ABI.cpp
   lib/Bytecode.cpp
   lib/DesignBytecode.cpp
+  lib/DesignBytecodeLogic.cpp
   lib/DesignDatabase.cpp
   lib/DPI.cpp
   lib/FileIO.cpp
