@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <map>
+#include <new>
 #include <unordered_map>
 
 namespace obelisk::designbytecode {
@@ -341,3 +342,224 @@ bool resolveDrivenNets(const Image &image, obelisk_rt_context *context,
 }
 
 } // namespace obelisk::designbytecode
+
+using namespace obelisk::designbytecode;
+
+obelisk_rt_status
+obelisk_rt_initialize_design_state(obelisk_rt_context *context) noexcept {
+  if (!context || !context->execution)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  if ((context->execution->flags & OBELISK_RT_EXECUTION_HAS_BYTECODE) == 0)
+    return OBELISK_RT_OK;
+  try {
+    obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
+    Image image;
+    if (!loadValidatedImage(entry, context, image))
+      return OBELISK_RT_INVALID_BYTECODE;
+    if (context->stateValue.size() !=
+            static_cast<size_t>((image.stateBitCount + 63) / 64) ||
+        context->stateUnknown.size() != context->stateValue.size())
+      return OBELISK_RT_INVALID_DESIGN;
+    for (uint64_t index = 0; index != image.stateDescriptorCount; ++index) {
+      CaptureRecord driver = captureAt(image, index);
+      if (driver.function == kNetStateDescriptor) {
+        bool fourState = (driver.argument & 1) != 0;
+        for (uint64_t bitIndex = 0; bitIndex != driver.planeSize; ++bitIndex) {
+          setBit(context->stateValue, driver.valueOffset + bitIndex, fourState);
+          setBit(context->stateUnknown, driver.valueOffset + bitIndex,
+                 fourState);
+        }
+      } else if (driver.function == kDriverStateDescriptor) {
+        for (uint64_t bitIndex = 0; bitIndex != driver.planeSize; ++bitIndex) {
+          setBit(context->stateValue, driver.valueOffset + bitIndex, true);
+          setBit(context->stateUnknown, driver.valueOffset + bitIndex, true);
+        }
+      }
+    }
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_INVALID_BYTECODE;
+  }
+}
+
+obelisk_rt_status obelisk_rt_resolve_design_drivers(obelisk_rt_context *context,
+                                                    uint64_t begin,
+                                                    uint64_t end) noexcept {
+  if (!context || !context->execution || begin > end ||
+      end > uint64_t{INT64_MAX})
+    return OBELISK_RT_INVALID_ARGUMENT;
+  try {
+    ContextTransaction transaction(context);
+    obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
+    Image image;
+    if (!loadValidatedImage(entry, context, image))
+      return OBELISK_RT_INVALID_BYTECODE;
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    bool changed = false;
+    if (!resolveDrivenNets(image, context, static_cast<int64_t>(begin),
+                           static_cast<int64_t>(end), changed))
+      return context->schedulerStatus == OBELISK_RT_OK
+                 ? OBELISK_RT_INVALID_HANDLE
+                 : context->schedulerStatus;
+    if (changed && ++context->schedulerEpoch == 0)
+      context->schedulerEpoch = 1;
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_INVALID_BYTECODE;
+  }
+}
+
+obelisk_rt_status
+obelisk_rt_force_design_nets(obelisk_rt_context *context, uint64_t begin,
+                             uint64_t width, const uint8_t *value,
+                             const uint8_t *unknown) noexcept {
+  if (!context || !context->execution || !value || width == 0 ||
+      begin > UINT64_MAX - width)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  try {
+    ContextTransaction transaction(context);
+    obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
+    Image image;
+    if (!loadValidatedImage(entry, context, image))
+      return OBELISK_RT_INVALID_BYTECODE;
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    NetAliasCache *cache = getNetAliasCache(image, context);
+    std::map<uint64_t, std::pair<bool, bool>> forcedRoots;
+    for (uint64_t index = 0; index != width; ++index) {
+      auto found = cache->rootByBit.find(begin + index);
+      if (found == cache->rootByBit.end())
+        return OBELISK_RT_INVALID_HANDLE;
+      bool nextValue =
+          (value[index / 8] & static_cast<uint8_t>(1u << (index % 8))) != 0;
+      bool nextUnknown =
+          unknown &&
+          (unknown[index / 8] & static_cast<uint8_t>(1u << (index % 8))) != 0;
+      forcedRoots[found->second] = {nextValue, nextUnknown};
+    }
+    if (context->forceMask.empty())
+      context->forceMask.assign(context->stateValue.size(), 0);
+    std::vector<NetPublication> publications;
+    for (const auto &[root, forced] : forcedRoots) {
+      auto members = cache->members.find(root);
+      if (members == cache->members.end())
+        return OBELISK_RT_INVALID_HANDLE;
+      for (uint64_t destination : members->second) {
+        bool fourState = false;
+        for (const NetAliasRange &net : cache->nets)
+          if (destination >= net.valueOffset &&
+              destination < net.valueOffset + net.width) {
+            fourState = net.fourState;
+            break;
+          }
+        bool nextValue = forced.first;
+        bool nextUnknown = fourState && forced.second;
+        if (!fourState && forced.second)
+          nextValue = false;
+        publications.push_back(
+            {destination, bit(context->stateValue, destination),
+             bit(context->stateUnknown, destination), nextValue, nextUnknown});
+        context->forceMask[destination / 64] |= uint64_t{1}
+                                                << (destination % 64);
+      }
+    }
+    bool changed = false;
+    if (!publishNetBits(context, *cache, publications, changed))
+      return context->schedulerStatus;
+    if (changed && ++context->schedulerEpoch == 0)
+      context->schedulerEpoch = 1;
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_INVALID_BYTECODE;
+  }
+}
+
+obelisk_rt_status obelisk_rt_release_design_nets(obelisk_rt_context *context,
+                                                 uint64_t begin,
+                                                 uint64_t width) noexcept {
+  if (!context || !context->execution || width == 0 ||
+      begin > UINT64_MAX - width)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  try {
+    ContextTransaction transaction(context);
+    obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
+    Image image;
+    if (!loadValidatedImage(entry, context, image))
+      return OBELISK_RT_INVALID_BYTECODE;
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    NetAliasCache *cache = getNetAliasCache(image, context);
+    std::vector<uint64_t> roots;
+    for (uint64_t index = 0; index != width; ++index) {
+      auto found = cache->rootByBit.find(begin + index);
+      if (found == cache->rootByBit.end())
+        return OBELISK_RT_INVALID_HANDLE;
+      roots.push_back(found->second);
+    }
+    std::sort(roots.begin(), roots.end());
+    roots.erase(std::unique(roots.begin(), roots.end()), roots.end());
+    for (uint64_t root : roots) {
+      auto members = cache->members.find(root);
+      if (members == cache->members.end())
+        return OBELISK_RT_INVALID_HANDLE;
+      for (uint64_t destination : members->second)
+        if (destination / 64 < context->forceMask.size())
+          context->forceMask[destination / 64] &=
+              ~(uint64_t{1} << (destination % 64));
+    }
+    bool changed = false;
+    if (!resolveNetRoots(*cache, context, std::move(roots), changed))
+      return context->schedulerStatus == OBELISK_RT_OK
+                 ? OBELISK_RT_INVALID_HANDLE
+                 : context->schedulerStatus;
+    if (changed && ++context->schedulerEpoch == 0)
+      context->schedulerEpoch = 1;
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_INVALID_BYTECODE;
+  }
+}
+
+obelisk_rt_status
+obelisk_rt_design_net_is_connected(obelisk_rt_context *context, uint64_t begin,
+                                   uint64_t end, bool *outConnected) noexcept {
+  if (!context || !context->execution || !outConnected || begin > end)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  try {
+    obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
+    Image image;
+    if (!loadValidatedImage(entry, context, image))
+      return OBELISK_RT_INVALID_BYTECODE;
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    NetAliasCache *cache = getNetAliasCache(image, context);
+    *outConnected = false;
+    for (uint64_t bitIndex = begin; bitIndex != end; ++bitIndex) {
+      auto root = cache->rootByBit.find(bitIndex);
+      if (root != cache->rootByBit.end()) {
+        auto members = cache->members.find(root->second);
+        if (members != cache->members.end() && members->second.size() > 1) {
+          *outConnected = true;
+          break;
+        }
+      }
+      auto drivers = root == cache->rootByBit.end()
+                         ? cache->driverBits.end()
+                         : cache->driverBits.find(root->second);
+      if (drivers != cache->driverBits.end() && !drivers->second.empty()) {
+        *outConnected = true;
+        break;
+      }
+    }
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_INVALID_BYTECODE;
+  }
+}
