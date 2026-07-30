@@ -16,12 +16,19 @@ module attributes {
         attributes {entry_kind = 1 : i32,
                     obelisk_sim.hierarchical_name = "top.plain", code_unit_id = 9000001 : i64} {
       %format = obelisk_sim.bytes.constant "%m %l %0d"
+      %path = obelisk_sim.bytes.constant "/dev/stdout"
+      %mode = obelisk_sim.bytes.constant "w"
+      %opened = obelisk_sim.file.open %ctx, %path, %mode :
+          (!obelisk_sim.context, !obelisk_sim.bytes,
+           !obelisk_sim.bytes) -> i32
       obelisk_sim.display %ctx to %fd(%format, %fd) newline = true radix = 10
           flags = [0, 2, 0]
           {library_cell = "work.plain", scope = "top.plain.named",
            time_multiplier = 1000 : i64}
           : !obelisk_sim.bytes, i32
           loc("native_io.sv":7:9)
+      obelisk_sim.file.close %ctx, %opened :
+          (!obelisk_sim.context, i32) -> ()
       %line, %line_count = obelisk_sim.file.getline %ctx, %fd :
           (!obelisk_sim.context, i32) -> (i13, i32)
       %data, %read_count = obelisk_sim.file.read_packed %ctx, %fd :
@@ -62,12 +69,20 @@ module attributes {
 
 // CHECK-DAG: llvm.mlir.global internal constant @{{.*}}("top.plain.named")
 // CHECK-DAG: llvm.mlir.global internal constant @{{.*}}("work.plain")
+// CHECK-DAG: llvm.mlir.global internal constant @{{.*}}("/dev/stdout")
+// CHECK-DAG: llvm.mlir.global internal constant @{{.*}}("w")
 // CHECK-DAG: llvm.func @obelisk_rt_v1_display
+// CHECK-DAG: llvm.func @obelisk_rt_v1_file_open
+// CHECK-DAG: llvm.func @obelisk_rt_v1_file_close
 // CHECK-DAG: llvm.func @obelisk_rt_v1_file_getline
 // CHECK-DAG: llvm.func @obelisk_rt_v1_file_read
 // CHECK-DAG: llvm.func @obelisk_rt_v1_buffer_release
 // CHECK-LABEL: llvm.func @plain_io(
+// CHECK: llvm.call @obelisk_rt_v1_file_open
 // CHECK: llvm.call @obelisk_rt_v1_display
+// CHECK: llvm.icmp "eq"
+// CHECK: llvm.cond_br
+// CHECK: llvm.call @obelisk_rt_v1_file_close
 // CHECK: llvm.icmp "eq"
 // CHECK: llvm.cond_br
 // CHECK: llvm.call @obelisk_rt_v1_file_getline
