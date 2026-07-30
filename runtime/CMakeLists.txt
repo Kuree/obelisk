@@ -13,6 +13,7 @@ add_library(obelisk_rt STATIC
   lib/Containers.cpp
   lib/Coverage.cpp
   lib/Process.cpp
+  lib/ProcessValidation.cpp
   lib/Random.cpp
   lib/Runtime.cpp
   lib/VPI.cpp
