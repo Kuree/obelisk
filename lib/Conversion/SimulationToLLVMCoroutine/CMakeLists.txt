@@ -13,6 +13,7 @@ add_mlir_library(ObeliskSimulationToLLVMCoroutine
   SimulationManagedRootInstrumentation.cpp
   SimulationManagedRootSupport.cpp
   SimulationNBALowering.cpp
+  SimulationNBAPlanning.cpp
   SimulationObserverLowering.cpp
   SimulationOverrideLowering.cpp
   SimulationProcessDescriptorLowering.cpp

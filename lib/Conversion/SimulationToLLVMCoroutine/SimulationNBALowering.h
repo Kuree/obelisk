@@ -3,8 +3,10 @@
 #ifndef OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_NBA_LOWERING_H
 #define OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_NBA_LOWERING_H
 
+#include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/Runtime.h"
 
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/PatternMatch.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -19,6 +21,8 @@ class TypeConverter;
 
 namespace obelisk::detail {
 
+struct NativeStateLayout;
+
 struct NativeStaticNBAPlan {
   llvm::SmallVector<obelisk_rt_static_nba_root> roots;
   llvm::SmallVector<obelisk_rt_static_nba_site> sites;
@@ -32,6 +36,17 @@ void populateNBAToLLVMConversionPatterns(mlir::RewritePatternSet &patterns,
                                          const NativeStaticNBAPlan *staticPlan,
                                          bool staticSitesEnabled,
                                          bool guardedClaims);
+mlir::FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
+    mlir::ModuleOp module, const NativeStateLayout &stateLayout,
+    mlir::ArrayRef<sim::ComputeNBACommitAttr> orderedCommits, bool enabled);
+mlir::LogicalResult
+materializeGeneratedNBAAccumulators(mlir::ModuleOp module,
+                                    const NativeStaticNBAPlan &plan);
+mlir::LogicalResult markCleanStaticNBAsInGuardedBodies(
+    mlir::ModuleOp module, bool enabled,
+    const llvm::DenseMap<uint64_t, uint32_t> &staticNBASiteRoots,
+    mlir::ArrayRef<obelisk_rt_static_nba_root> staticNBARoots,
+    const NativeStateLayout &stateLayout);
 
 } // namespace obelisk::detail
 
