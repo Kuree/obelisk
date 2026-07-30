@@ -99,6 +99,8 @@ void populateControlToLLVMConversionPatterns(
 void populateFunctionTypeConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter,
     const llvm::DenseSet<mlir::Value> &twoStateValues);
+void populateEventToLLVMConversionPatterns(
+    mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
 void populateContextRuntimeToLLVMConversionPattern(
     mlir::RewritePatternSet &patterns, const mlir::TypeConverter &converter);
 mlir::LogicalResult

@@ -93,6 +93,7 @@ using detail::nativeTwoStateBlockUnknownsAttr;
 using detail::populateAggregateToLLVMConversionPatterns;
 using detail::populateControlToLLVMConversionPatterns;
 using detail::populateContextRuntimeToLLVMConversionPattern;
+using detail::populateEventToLLVMConversionPatterns;
 using detail::populateFunctionTypeConversionPatterns;
 using detail::populateManagedToLLVMConversionPatterns;
 using detail::prepareManagedLowering;
@@ -5172,80 +5173,6 @@ void notifySignal(OpBuilder &builder, Location location, Value handle,
                  save(newUnknown)});
 }
 
-class EventTriggerConversion final
-    : public OpConversionPattern<sim::SimEventTriggerOp> {
-public:
-  using OpConversionPattern::OpConversionPattern;
-  LogicalResult
-  matchAndRewrite(sim::SimEventTriggerOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    if (adaptor.getEvent().size() != 1 || adaptor.getDelay().size() > 1)
-      return failure();
-    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
-    Type i64 = rewriter.getI64Type();
-    Value address = LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer,
-                                              "__obelisk_current_context");
-    Value context =
-        LLVM::LoadOp::create(rewriter, op.getLoc(), pointer, address, 8);
-    Value delay = adaptor.getDelay().empty()
-                      ? llvmConstant(rewriter, op.getLoc(), i64, 0)
-                      : adaptor.getDelay().front();
-    LLVM::CallOp::create(
-        rewriter, op.getLoc(), TypeRange{},
-        SymbolRefAttr::get(rewriter.getContext(),
-                           "obelisk_rt_v1_scheduler_event_after"),
-        ValueRange{context, adaptor.getEvent().front(),
-                   llvmConstant(rewriter, op.getLoc(), rewriter.getI32Type(),
-                                op.getNonblocking() ? 1 : 0),
-                   delay});
-    rewriter.eraseOp(op);
-    return success();
-  }
-};
-
-class EventTriggeredConversion final
-    : public OpConversionPattern<sim::SimEventTriggeredOp> {
-public:
-  using OpConversionPattern::OpConversionPattern;
-  LogicalResult
-  matchAndRewrite(sim::SimEventTriggeredOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    if (adaptor.getEvent().size() != 1)
-      return failure();
-    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
-    Value address = LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer,
-                                              "__obelisk_current_context");
-    Value context =
-        LLVM::LoadOp::create(rewriter, op.getLoc(), pointer, address, 8);
-    auto call = LLVM::CallOp::create(
-        rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
-        SymbolRefAttr::get(rewriter.getContext(),
-                           "obelisk_rt_v1_scheduler_event_triggered"),
-        ValueRange{context, adaptor.getEvent().front()});
-    Value result = LLVM::TruncOp::create(
-        rewriter, op.getLoc(), rewriter.getI1Type(), call.getResult());
-    rewriter.replaceOp(op, result);
-    return success();
-  }
-};
-
-class EventEqualConversion final
-    : public OpConversionPattern<sim::SimEventEqualOp> {
-public:
-  using OpConversionPattern::OpConversionPattern;
-  LogicalResult
-  matchAndRewrite(sim::SimEventEqualOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    if (adaptor.getLhs().size() != 1 || adaptor.getRhs().size() != 1)
-      return failure();
-    Value result = arith::CmpIOp::create(
-        rewriter, op.getLoc(), arith::CmpIPredicate::eq,
-        adaptor.getLhs().front(), adaptor.getRhs().front());
-    rewriter.replaceOp(op, result);
-    return success();
-  }
-};
-
 LogicalResult
 makeProcessActivationHelper(ModuleOp module, sim::SimFuncOp function,
                             const SimulationProcessFrameAnalysis &analysis) {
@@ -7331,6 +7258,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                                          nativeTwoStateValues);
   populateAggregateToLLVMConversionPatterns(packedPatterns, packedConverter);
   populateControlToLLVMConversionPatterns(packedPatterns, packedConverter);
+  populateEventToLLVMConversionPatterns(packedPatterns, packedConverter);
   packedPatterns.add<
       SimObserverBindTypeConversion, SimSuspendObserveTypeConversion,
       AutomaticOwnerReleaseMarkerConversion,
@@ -7362,9 +7290,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                      SubelementHandleConversion<sim::SimDriverSubelementOp>,
                      ArrayElementHandleConversion<sim::SimRefArrayElementOp>,
                      ArrayElementHandleConversion<sim::SimDriverArrayElementOp>,
-                     EventTriggerConversion, EventTriggeredConversion,
-                     EventEqualConversion, SpawnTypeConversion>(packedConverter,
-                                                                context);
+                     SpawnTypeConversion>(packedConverter, context);
   packedPatterns.add<RefLoadConversion, RefStoreConversion>(
       packedConverter, context, stateLayout->bitCount,
       staticSpecialization && useAOT && aotEligibility.isFullyEligible()
