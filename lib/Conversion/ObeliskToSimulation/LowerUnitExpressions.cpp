@@ -1,6 +1,7 @@
 //===- LowerUnitExpressions.cpp - Lower values and selections ---------===//
 
 #include "LowerUnit.h"
+#include "obelisk/Runtime/Runtime.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -264,11 +265,15 @@ FailureOr<Value> UnitLowering::lowerConcatenation(Operation *op) {
         describeContainerElement(elementType, location);
     if (failed(descriptor))
       return failure();
-    uint32_t containerKind = isa<sim::DynamicArrayType>(*resultType) ? 1 : 2;
+    uint32_t containerKind = isa<sim::DynamicArrayType>(*resultType)
+                                 ? OBELISK_RT_CONTAINER_DYNAMIC_ARRAY
+                                 : OBELISK_RT_CONTAINER_QUEUE;
     uint64_t bound = 0;
     if (auto queue = dyn_cast<sim::QueueType>(*resultType))
       bound = queue.getBound() ? queue.getBound() : UINT64_MAX;
-    Value allocationSize = containerKind == 1 ? totalSize : i64Constant(0);
+    Value allocationSize = containerKind == OBELISK_RT_CONTAINER_DYNAMIC_ARRAY
+                               ? totalSize
+                               : i64Constant(0);
     Value result = sim::SimContainerCreateOp::create(
         builder, location, *resultType, allocationSize, descriptor->typeID,
         descriptor->kind, descriptor->flags, descriptor->valueSize,
@@ -733,7 +738,8 @@ FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
         descriptor->kind, descriptor->flags, descriptor->valueSize,
         descriptor->alignment, descriptor->bitWidth,
         builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
-        builder.getDenseI32ArrayAttr(descriptor->traceKinds), 1, 0);
+        builder.getDenseI32ArrayAttr(descriptor->traceKinds),
+        OBELISK_RT_CONTAINER_DYNAMIC_ARRAY, 0);
     for (auto [index, child] : llvm::enumerate(children)) {
       FailureOr<Value> value = lowerExpression(child);
       if (failed(value))
@@ -823,7 +829,8 @@ FailureOr<Value> UnitLowering::lowerNewArray(Operation *op) {
       descriptor->kind, descriptor->flags, descriptor->valueSize,
       descriptor->alignment, descriptor->bitWidth,
       builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
-      builder.getDenseI32ArrayAttr(descriptor->traceKinds), 1, 0);
+      builder.getDenseI32ArrayAttr(descriptor->traceKinds),
+      OBELISK_RT_CONTAINER_DYNAMIC_ARRAY, 0);
   if (children.size() == 1)
     return result;
 
@@ -964,7 +971,8 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
         descriptor->kind, descriptor->flags, descriptor->valueSize,
         descriptor->alignment, descriptor->bitWidth,
         builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
-        builder.getDenseI32ArrayAttr(descriptor->traceKinds), 2, bound);
+        builder.getDenseI32ArrayAttr(descriptor->traceKinds),
+        OBELISK_RT_CONTAINER_QUEUE, bound);
 
     Block *header = addBlock();
     header->addArgument(builder.getI64Type(), location);

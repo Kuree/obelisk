@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "LowerUnit.h"
+#include "obelisk/Runtime/Runtime.h"
 
 #include "obelisk/Conversion/ObeliskToSimulation.h"
 #include "obelisk/Dialect/ForeachLoopMetadata.h"
@@ -103,41 +104,41 @@ FailureOr<simlowering::ContainerElementDescriptor>
 describeContainerElementImpl(Type type, Location location) {
   ContainerElementDescriptor result{stableTypeID(type), 0, 0, 0, 1, 0, {}, {}};
   if (auto integer = dyn_cast<IntegerType>(type)) {
-    result.kind = 1;
+    result.kind = OBELISK_RT_ELEMENT_BITS;
     result.valueSize = (integer.getWidth() + 7) / 8;
     result.bitWidth = integer.getWidth();
     return result;
   }
   if (auto logic = dyn_cast<sim::LogicType>(type)) {
-    result.kind = 2;
-    result.flags = 1;
+    result.kind = OBELISK_RT_ELEMENT_LOGIC;
+    result.flags = OBELISK_RT_ELEMENT_FOUR_STATE;
     result.valueSize = (logic.getWidth() + 7) / 8;
     result.bitWidth = logic.getWidth();
     return result;
   }
   if (auto real = dyn_cast<FloatType>(type)) {
-    result.kind = 3;
+    result.kind = OBELISK_RT_ELEMENT_REAL;
     result.valueSize = real.getWidth() / 8;
     result.bitWidth = real.getWidth();
     return result;
   }
   if (isa<sim::ClassHandleType>(type)) {
-    result.kind = 4;
+    result.kind = OBELISK_RT_ELEMENT_CLASS_HANDLE;
     result.valueSize = sizeof(void *);
     return result;
   }
   if (isa<sim::StringType>(type)) {
-    result.kind = 5;
+    result.kind = OBELISK_RT_ELEMENT_STRING;
     result.valueSize = sizeof(void *);
     return result;
   }
   if (isa<sim::EventType>(type)) {
-    result.kind = 8;
+    result.kind = OBELISK_RT_ELEMENT_EVENT;
     result.valueSize = sizeof(uint64_t);
     return result;
   }
   if (isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(type)) {
-    result.kind = 6;
+    result.kind = OBELISK_RT_ELEMENT_CONTAINER_HANDLE;
     result.valueSize = sizeof(void *);
     return result;
   }
@@ -146,8 +147,9 @@ describeContainerElementImpl(Type type, Location location) {
     if (!width || *width == 0)
       return failure();
     bool fourState = isa<sim::LogicType>(scalar);
-    result.kind = fourState ? 2 : 1;
-    result.flags = fourState ? 1 : 0;
+    result.kind =
+        fourState ? OBELISK_RT_ELEMENT_LOGIC : OBELISK_RT_ELEMENT_BITS;
+    result.flags = fourState ? OBELISK_RT_ELEMENT_FOUR_STATE : 0;
     result.valueSize = (*width + 7) / 8;
     result.bitWidth = *width;
     return result;
@@ -165,12 +167,12 @@ describeContainerElementImpl(Type type, Location location) {
       if (sim::isManagedHandleType(nested)) {
         if ((baseBitOffset & 7) != 0 || baseBitOffset / 8 > uint64_t{INT64_MAX})
           return failure();
-        int32_t kind = 1;
+        int32_t kind = OBELISK_RT_MANAGED_SLOT_CLASS;
         if (isa<sim::StringType>(nested))
-          kind = 2;
+          kind = OBELISK_RT_MANAGED_SLOT_STRING;
         else if (isa<sim::DynamicArrayType, sim::QueueType,
                      sim::AssocArrayType>(nested))
-          kind = 3;
+          kind = OBELISK_RT_MANAGED_SLOT_CONTAINER;
         result.traceOffsets.push_back(static_cast<int64_t>(baseBitOffset / 8));
         result.traceKinds.push_back(kind);
         return success();
@@ -207,8 +209,8 @@ describeContainerElementImpl(Type type, Location location) {
     }
     bool fourState = false;
     type.walk([&](sim::LogicType) { fourState = true; });
-    result.kind = 7;
-    result.flags = fourState ? 1 : 0;
+    result.kind = OBELISK_RT_ELEMENT_AGGREGATE;
+    result.flags = fourState ? OBELISK_RT_ELEMENT_FOUR_STATE : 0;
     result.valueSize = (*width + 7) / 8;
     result.bitWidth = result.valueSize * 8;
     return result;
@@ -411,10 +413,10 @@ FailureOr<Value> UnitLowering::ensureSequentialContainer(Value value,
   uint64_t bound = 0;
   if (auto array = dyn_cast<sim::DynamicArrayType>(type)) {
     elementType = array.getElementType();
-    containerKind = 1;
+    containerKind = OBELISK_RT_CONTAINER_DYNAMIC_ARRAY;
   } else if (auto queue = dyn_cast<sim::QueueType>(type)) {
     elementType = queue.getElementType();
-    containerKind = 2;
+    containerKind = OBELISK_RT_CONTAINER_QUEUE;
     bound = queue.getBound() ? queue.getBound() : UINT64_MAX;
   } else {
     return failure();
@@ -460,7 +462,10 @@ FailureOr<Value> UnitLowering::createAssocArray(sim::AssocArrayType type,
         << "associative array key must be string or integral up to 64 bits";
     return failure();
   }
-  uint32_t keyKind = stringKey ? 3 : (type.getSignedKey() ? 2 : 1);
+  uint32_t keyKind =
+      stringKey ? OBELISK_RT_ASSOC_KEY_STRING
+                : (type.getSignedKey() ? OBELISK_RT_ASSOC_KEY_SIGNED
+                                       : OBELISK_RT_ASSOC_KEY_UNSIGNED);
   return sim::SimAssocCreateOp::create(
              builder, location, type, descriptor->typeID, descriptor->kind,
              descriptor->flags, descriptor->valueSize, descriptor->alignment,
@@ -762,11 +767,13 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
       return failure();
     Value size = sim::SimContainerSizeOp::create(builder, location,
                                                  builder.getI64Type(), value);
-    uint32_t containerKind = isa<sim::DynamicArrayType>(targetType) ? 1 : 2;
+    uint32_t containerKind = isa<sim::DynamicArrayType>(targetType)
+                                 ? OBELISK_RT_CONTAINER_DYNAMIC_ARRAY
+                                 : OBELISK_RT_CONTAINER_QUEUE;
     uint64_t bound = 0;
     if (auto queue = dyn_cast<sim::QueueType>(targetType))
       bound = queue.getBound() ? queue.getBound() : UINT64_MAX;
-    Value allocationSize = containerKind == 1
+    Value allocationSize = containerKind == OBELISK_RT_CONTAINER_DYNAMIC_ARRAY
                                ? size
                                : Value(arith::ConstantOp::create(
                                      builder, location, builder.getI64Type(),

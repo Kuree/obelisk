@@ -42,3 +42,7 @@ add_mlir_library(ObeliskToSimulation
   MLIRPass
   MLIRTransforms
 )
+
+target_include_directories(ObeliskToSimulation PRIVATE
+  "${PROJECT_SOURCE_DIR}/runtime/include"
+)
