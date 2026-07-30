@@ -14,8 +14,8 @@ module {
 }
 
 // CHECK: native-state bits=16
-// CHECK-NEXT: bound 1 offset=0 width=8
-// CHECK-NEXT: bound 2 offset=8 width=4
-// CHECK-NEXT: bound 3 offset=12 width=4
+// CHECK-NEXT: bound 1 offset=0 width=8 four-state=false
+// CHECK-NEXT: bound 2 offset=8 width=4 four-state=true
+// CHECK-NEXT: bound 3 offset=12 width=4 four-state=true
 // CHECK-NEXT: net 0 handle=2 offset=8 width=4 four-state=true
 // CHECK-NEXT: driver 0 net=0 handle=3 offset=12 width=4 driven=[1,3)

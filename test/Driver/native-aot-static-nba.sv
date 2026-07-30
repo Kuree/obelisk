@@ -26,6 +26,14 @@
 // RUN: obelisk -O2 --native-scheduler=aot %t/wide.sv -o %t/wide
 // RUN: %t/wide > %t/wide.out
 // RUN: diff -u %t/wide-expected.txt %t/wide.out
+// RUN: obelisk -O2 --native-scheduler=aot --execution-tier=bytecode \
+// RUN:   %t/wide.sv -o %t/wide-bytecode
+// RUN: %t/wide-bytecode > %t/wide-bytecode.out
+// RUN: diff -u %t/wide-expected.txt %t/wide-bytecode.out
+// RUN: obelisk -O2 --native-scheduler=aot --execution-tier=bytecode \
+// RUN:   %t/typed-state.sv -o %t/typed-state
+// RUN: %t/typed-state > %t/typed-state.out
+// RUN: diff -u %t/typed-state-expected.txt %t/typed-state.out
 // RUN: obelisk -O2 --native-scheduler=aot %t/shifted.sv -o %t/shifted
 // RUN: obelisk -O2 --static-specialization=off --native-scheduler=aot \
 // RUN:   %t/shifted.sv -o %t/shifted-generic
@@ -126,6 +134,32 @@ endmodule
 
 //--- wide-expected.txt
 values=00000055,00000001
+//--- typed-state.sv
+module native_aot_typed_state;
+  bit clock = 0;
+  bit reset = 1;
+  bit [7:0] value;
+
+  always @(posedge clock) begin
+    if (reset)
+      value <= 8'ha5;
+    else
+      value <= value + 1;
+  end
+
+  initial begin
+    #1 clock = 1;
+    #1 clock = 0;
+    reset = 0;
+    #1 clock = 1;
+    #1;
+    $display("typed=%02h", value);
+    $finish;
+  end
+endmodule
+
+//--- typed-state-expected.txt
+typed=a6
 //--- shifted.sv
 module native_aot_shifted_four_state_nba;
   logic [4:0] pad = 5'b10101;

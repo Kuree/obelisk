@@ -27,7 +27,7 @@ FailureOr<NativeStateLayoutAnalysis>
 NativeStateLayoutAnalysis::compute(ModuleOp module) {
   NativeStateLayoutAnalysis layout;
   uint32_t nextHandleID = 1;
-  auto allocate = [&](Type type, uint64_t &offset,
+  auto allocate = [&](Type type, bool fourState, uint64_t &offset,
                       uint64_t &handle) -> LogicalResult {
     std::optional<unsigned> width = getSimulationStorageBitWidth(type);
     if (!width || *width == 0 || *width > INT32_MAX || nextHandleID == 0 ||
@@ -47,27 +47,33 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
       return failure();
     layout.bitCount += *width;
     handle = encodeStaticHandle(nextHandleID);
-    layout.bounds.push_back(
-        {nextHandleID++, offset, *width, std::move(managedRootOffsets)});
+    layout.bounds.push_back({nextHandleID++, offset, *width, fourState,
+                             std::move(managedRootOffsets)});
     return success();
   };
   WalkResult walked = module.walk([&](Operation *operation) {
     if (auto declaration = dyn_cast<sim::SimStorageDeclOp>(operation)) {
       uint64_t offset;
       uint64_t handle;
-      if (failed(allocate(declaration.getType(), offset, handle))) {
+      if (failed(allocate(declaration.getType(),
+                          containsFourStateLogic(declaration.getType()), offset,
+                          handle))) {
         declaration.emitError("native storage must have a fixed packed width");
         return WalkResult::interrupt();
       }
       layout.storage[declaration.getId()] = handle;
+      layout.storageOffsets[declaration.getId()] = offset;
     } else if (auto declaration = dyn_cast<sim::SimNetDeclOp>(operation)) {
       uint64_t offset;
       uint64_t handle;
-      if (failed(allocate(declaration.getType(), offset, handle))) {
+      if (failed(allocate(declaration.getType(),
+                          containsFourStateLogic(declaration.getType()), offset,
+                          handle))) {
         declaration.emitError("native net must have a fixed packed width");
         return WalkResult::interrupt();
       }
       layout.nets[declaration.getId()] = handle;
+      layout.netOffsets[declaration.getId()] = offset;
       layout.netLayouts.push_back(
           {declaration.getId(), nextHandleID - 1, offset,
            *getSimulationStorageBitWidth(declaration.getType()),
@@ -83,7 +89,10 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
       uint64_t handle;
       std::optional<unsigned> width =
           getSimulationStorageBitWidth(declaration.getType());
-      if (!width || failed(allocate(declaration.getType(), offset, handle))) {
+      // Driver state always retains an unknown plane so it can represent Z
+      // release even when the resolved destination is two-state.
+      if (!width ||
+          failed(allocate(declaration.getType(), true, offset, handle))) {
         declaration.emitError("native driver must have a fixed packed width");
         return WalkResult::interrupt();
       }
@@ -100,6 +109,7 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
         return WalkResult::interrupt();
       }
       layout.drivers[declaration.getId()] = handle;
+      layout.driverOffsets[declaration.getId()] = offset;
       layout.driverLayouts.push_back(
           {declaration.getId(), declaration.getNetId(), nextHandleID - 1,
            offset, *width, static_cast<unsigned>(drivenLow),

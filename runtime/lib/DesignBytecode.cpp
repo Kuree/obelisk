@@ -6376,26 +6376,29 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       uint8_t *address = frame.data + destination.offset;
       std::memset(address, 0, destination.size);
       uint32_t kind = instruction.source0;
-      uint64_t stateOffset = instruction.immediate;
       uint64_t width = instruction.source1;
-      if (stateOffset > uint64_t{INT64_MAX} ||
-          width > uint64_t{INT64_MAX} - stateOffset)
+      obelisk_rt_stable_handle_v1 decoded;
+      if (!obelisk_rt_stable_handle_decode(instruction.immediate, &decoded) ||
+          decoded.kind == OBELISK_RT_STABLE_HANDLE_AUTOMATIC ||
+          decoded.offset < 0 ||
+          width > uint64_t{INT64_MAX} -
+                      static_cast<uint64_t>(decoded.offset))
         return OBELISK_RT_INVALID_HANDLE;
-      int64_t begin = static_cast<int64_t>(stateOffset);
-      int64_t end = static_cast<int64_t>(stateOffset + width);
+      int64_t begin = decoded.offset;
+      int64_t end = begin + static_cast<int64_t>(width);
       uint64_t base = static_cast<uint64_t>(begin);
-      if (context && kind <= OBELISK_RT_DESCRIPTOR_DRIVER) {
+      if (decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC) {
+        if (!context || kind > OBELISK_RT_DESCRIPTOR_DRIVER)
+          return OBELISK_RT_INVALID_HANDLE;
         std::lock_guard<std::recursive_mutex> lock(context->mutex);
-        for (const auto &[id, state] : context->nativeStaticStates) {
-          if (state.bitOffset != stateOffset || state.bitWidth != width)
-            continue;
-          base = encodeStaticHandle(id, 0);
-          if (base == UINT64_MAX)
-            return OBELISK_RT_INVALID_HANDLE;
-          begin = 0;
-          end = static_cast<int64_t>(width);
-          break;
-        }
+        auto state = context->nativeStaticStates.find(decoded.id);
+        if (state == context->nativeStaticStates.end() ||
+            static_cast<uint64_t>(begin) > state->second.bitWidth ||
+            width > state->second.bitWidth - static_cast<uint64_t>(begin))
+          return OBELISK_RT_INVALID_HANDLE;
+        base = encodeStaticHandle(decoded.id, 0);
+        if (base == UINT64_MAX)
+          return OBELISK_RT_INVALID_HANDLE;
       }
       std::memcpy(address, &kind, sizeof(kind));
       std::memcpy(address + 8, &base, sizeof(base));

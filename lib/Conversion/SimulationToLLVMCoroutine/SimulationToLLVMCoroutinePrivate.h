@@ -278,8 +278,7 @@ mlir::FailureOr<NativeStateLayout>
 buildNativeStateLayout(mlir::ModuleOp module);
 mlir::LLVM::GlobalOp makeStatePlane(
     mlir::ModuleOp module, llvm::StringRef name, uint64_t bytes, bool unknown,
-    mlir::ArrayRef<NativeStateLayout::Driver> highImpedanceDrivers = {},
-    mlir::ArrayRef<NativeStateLayout::Net> highImpedanceNets = {});
+    const NativeStateLayout &layout);
 
 } // namespace obelisk::detail
 

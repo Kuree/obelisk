@@ -166,8 +166,9 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   DenseMap<Operation *, SmallVector<uint32_t>> aotBytecodeContinuations;
   uint64_t stateBytes = (stateLayout->bitCount + 7) / 8;
   makeStatePlane(module, "__obelisk_state_value", stateBytes, false,
-                 stateLayout->driverLayouts, stateLayout->netLayouts);
-  makeStatePlane(module, "__obelisk_state_unknown", stateBytes, true);
+                 *stateLayout);
+  makeStatePlane(module, "__obelisk_state_unknown", stateBytes, true,
+                 *stateLayout);
   materializeNativeSchedulerGlobals(module);
   declareNativeRuntimeABI(module);
   llvm::MapVector<Operation *, std::unique_ptr<SimulationProcessFrameAnalysis>>

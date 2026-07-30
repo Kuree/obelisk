@@ -2,7 +2,7 @@
 
 #include "obelisk/Conversion/SimulationToBytecode.h"
 
-#include "obelisk/Analysis/NetConnectivityAnalysis.h"
+#include "obelisk/Analysis/NativeStateLayoutAnalysis.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
 #include "obelisk/Analysis/SimulationScheduleAnalysis.h"
@@ -397,13 +397,11 @@ struct StateLayout {
   };
   struct Driver {
     uint64_t id;
-    uint64_t netID;
     uint64_t offset;
     uint64_t netOffset;
     uint32_t width;
     uint32_t drivenLow;
     uint32_t drivenWidth;
-    bool fourState;
     sim::NetResolutionKind resolution;
   };
   struct Connection {
@@ -417,6 +415,9 @@ struct StateLayout {
   DenseMap<uint64_t, uint64_t> storage;
   DenseMap<uint64_t, uint64_t> nets;
   DenseMap<uint64_t, uint64_t> drivers;
+  DenseMap<uint64_t, uint64_t> storageOffsets;
+  DenseMap<uint64_t, uint64_t> netOffsets;
+  DenseMap<uint64_t, uint64_t> driverOffsets;
   SmallVector<Net> netLayouts;
   SmallVector<Driver> driverLayouts;
   SmallVector<Connection> connections;
@@ -639,78 +640,35 @@ getManagedValueStorage(Type type, const llvm::DataLayout &dataLayout) {
 
 FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
   StateLayout result;
-  auto allocate = [&](Type type, uint64_t &offset) -> LogicalResult {
-    std::optional<uint32_t> width = simulationWidth(type);
-    SmallVector<uint64_t, 2> managedRootOffsets;
-    if (!sim::getManagedHandleOffsets(type, managedRootOffsets))
-      return failure();
-    if (!managedRootOffsets.empty())
-      result.bits = llvm::alignTo(result.bits, uint64_t{64});
-    if (!width || *width == 0 ||
-        result.bits > std::numeric_limits<uint64_t>::max() - *width)
-      return failure();
-    offset = result.bits;
-    result.bits += *width;
-    return success();
-  };
-  WalkResult walked = design.walk([&](Operation *operation) {
-    if (auto declaration = dyn_cast<sim::SimStorageDeclOp>(operation)) {
-      uint64_t offset;
-      if (failed(allocate(declaration.getType(), offset)))
-        return declaration.emitOpError(
-                   "bytecode storage must have fixed width"),
-               WalkResult::interrupt();
-      result.storage[declaration.getId()] = offset;
-    } else if (auto declaration = dyn_cast<sim::SimNetDeclOp>(operation)) {
-      uint64_t offset;
-      if (failed(allocate(declaration.getType(), offset)))
-        return declaration.emitOpError("bytecode net must have fixed width"),
-               WalkResult::interrupt();
-      result.nets[declaration.getId()] = offset;
-      result.netLayouts.push_back({declaration.getId(), offset,
-                                   *simulationWidth(declaration.getType()),
-                                   containsLogic(declaration.getType()),
-                                   declaration.getResolutionKind()});
-    } else if (auto declaration = dyn_cast<sim::SimDriverDeclOp>(operation)) {
-      auto net = result.nets.find(declaration.getNetId());
-      if (net == result.nets.end())
-        return declaration.emitOpError("driver references unknown net"),
-               WalkResult::interrupt();
-      uint64_t offset;
-      if (failed(allocate(declaration.getType(), offset)))
-        return declaration.emitOpError("bytecode driver must have fixed width"),
-               WalkResult::interrupt();
-      uint32_t width = *simulationWidth(declaration.getType());
-      uint64_t drivenLow =
-          declaration.getDrivenLowAttr()
-              ? declaration.getDrivenLowAttr().getValue().getZExtValue()
-              : 0;
-      uint64_t drivenWidth =
-          declaration.getDrivenWidthAttr()
-              ? declaration.getDrivenWidthAttr().getValue().getZExtValue()
-              : width;
-      if (drivenLow > UINT32_MAX || drivenWidth > UINT32_MAX ||
-          drivenLow > width || drivenWidth > width - drivenLow)
-        return declaration.emitOpError("has an invalid driven range"),
-               WalkResult::interrupt();
-      result.drivers[declaration.getId()] = offset;
-      auto netLayout =
-          llvm::find_if(result.netLayouts, [&](const auto &layout) {
-            return layout.id == declaration.getNetId();
-          });
-      if (netLayout == result.netLayouts.end())
-        return declaration.emitOpError("driver references unknown net layout"),
-               WalkResult::interrupt();
-      result.driverLayouts.push_back(
-          {declaration.getId(), declaration.getNetId(), offset, net->second,
-           width, static_cast<uint32_t>(drivenLow),
-           static_cast<uint32_t>(drivenWidth),
-           containsLogic(declaration.getType()), netLayout->resolution});
-    }
-    return WalkResult::advance();
-  });
-  if (walked.wasInterrupted())
+  ModuleOp module = design->getParentOfType<ModuleOp>();
+  FailureOr<analysis::NativeStateLayoutAnalysis> analyzed =
+      analysis::NativeStateLayoutAnalysis::compute(module);
+  if (failed(analyzed))
     return failure();
+
+  result.storage = analyzed->storage;
+  result.nets = analyzed->nets;
+  result.drivers = analyzed->drivers;
+  result.storageOffsets = analyzed->storageOffsets;
+  result.netOffsets = analyzed->netOffsets;
+  result.driverOffsets = analyzed->driverOffsets;
+  result.bits = analyzed->bitCount;
+
+  for (const auto &net : analyzed->netLayouts)
+    result.netLayouts.push_back({net.id, net.offset, net.width, net.fourState,
+                                 net.resolution});
+  for (const auto &driver : analyzed->driverLayouts) {
+    auto net = llvm::find_if(analyzed->netLayouts, [&](const auto &candidate) {
+      return candidate.id == driver.netId;
+    });
+    if (net == analyzed->netLayouts.end())
+      return module.emitError("analyzed driver references an unknown net"),
+             failure();
+    result.driverLayouts.push_back(
+        {driver.id, driver.offset, net->offset, driver.width, driver.drivenLow,
+         driver.drivenWidth, net->resolution});
+  }
+
   using ScalarConnection =
       std::pair<sim::NetResolutionKind, sim::NetResolutionKind>;
   std::map<std::pair<uint64_t, uint64_t>, ScalarConnection> scalarConnections;
@@ -776,26 +734,6 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
     scalar = next;
   }
 
-  analysis::NetConnectivityAnalysis connectivity(design);
-  DenseMap<std::pair<uint64_t, uint64_t>, uint64_t> uwireDrivers;
-  for (const StateLayout::Driver &driver : result.driverLayouts) {
-    if (driver.resolution != sim::NetResolutionKind::UWire)
-      continue;
-    for (uint64_t bit = driver.drivenLow;
-         bit != uint64_t{driver.drivenLow} + driver.drivenWidth; ++bit) {
-      ArrayRef<analysis::NetBit> component =
-          connectivity.getComponent({driver.netID, bit});
-      analysis::NetBit canonical = component.empty()
-                                       ? analysis::NetBit{driver.netID, bit}
-                                       : component.front();
-      if (++uwireDrivers[{canonical.net, canonical.offset}] > 1)
-        return design.emitOpError()
-                   << "uwire connectivity component " << canonical.net << "["
-                   << canonical.offset << "] has more than one driver",
-               failure();
-    }
-  }
-  result.bits = std::max<uint64_t>(result.bits, 8);
   return result;
 }
 
@@ -4066,7 +4004,7 @@ private:
                                    fallbackName("storage", storage.getId())))
                                .str(),
                            storage.getType(),
-                           state.storage.lookup(storage.getId()),
+                           state.storageOffsets.lookup(storage.getId()),
                            sourceFor(storage)});
       else if (auto net = dyn_cast<sim::SimNetDeclOp>(operation))
         objects.push_back({3, profile & kDatabaseProfileWrite ? 3u : 1u,
@@ -4075,7 +4013,7 @@ private:
                                .value_or(net.getDebugName().value_or(
                                    fallbackName("net", net.getId())))
                                .str(),
-                           net.getType(), state.nets.lookup(net.getId()),
+                           net.getType(), state.netOffsets.lookup(net.getId()),
                            sourceFor(net)});
       else if (auto driver = dyn_cast<sim::SimDriverDeclOp>(operation))
         objects.push_back({4, profile & kDatabaseProfileWrite ? 3u : 1u,
@@ -4086,7 +4024,7 @@ private:
                             ".$driver." + Twine(driver.getId()))
                                .str(),
                            driver.getType(),
-                           state.drivers.lookup(driver.getId()),
+                           state.driverOffsets.lookup(driver.getId()),
                            sourceFor(driver)});
       else if (auto codeUnit = dyn_cast<sim::SimCodeUnitDeclOp>(operation))
         objects.push_back(

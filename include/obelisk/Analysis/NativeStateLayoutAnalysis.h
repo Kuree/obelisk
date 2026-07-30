@@ -22,6 +22,7 @@ struct NativeStateLayoutAnalysis {
     uint32_t handleID;
     uint64_t offset;
     unsigned width;
+    bool fourState;
     mlir::SmallVector<uint64_t, 2> managedRootOffsets;
   };
   struct Net {
@@ -48,6 +49,9 @@ struct NativeStateLayoutAnalysis {
   llvm::DenseMap<uint64_t, uint64_t> storage;
   llvm::DenseMap<uint64_t, uint64_t> nets;
   llvm::DenseMap<uint64_t, uint64_t> drivers;
+  llvm::DenseMap<uint64_t, uint64_t> storageOffsets;
+  llvm::DenseMap<uint64_t, uint64_t> netOffsets;
+  llvm::DenseMap<uint64_t, uint64_t> driverOffsets;
   mlir::SmallVector<Bound> bounds;
   mlir::SmallVector<Net> netLayouts;
   mlir::SmallVector<Driver> driverLayouts;

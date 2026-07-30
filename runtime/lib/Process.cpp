@@ -1193,6 +1193,22 @@ void storePackedBytes(uint8_t *plane, uint64_t bitOffset, uint64_t bitWidth,
     plane[firstByte + byte] = static_cast<uint8_t>(bits >> (byte * 8));
 }
 
+bool storeNativeScheduleStateUnlocked(obelisk_rt_context *context,
+                                      uint64_t bitOffset, uint64_t bitWidth,
+                                      uint64_t value, uint64_t unknown) {
+  const obelisk_rt_native_schedule_plan *plan =
+      context ? context->nativeSchedulePlan : nullptr;
+  if (!plan || plan->state_bit_count == 0)
+    return true;
+  if (!plan->state_value || !plan->state_unknown || bitWidth == 0 ||
+      bitWidth > 64 || bitOffset > plan->state_bit_count ||
+      bitWidth > plan->state_bit_count - bitOffset)
+    return false;
+  storePackedBytes(plan->state_value, bitOffset, bitWidth, value);
+  storePackedBytes(plan->state_unknown, bitOffset, bitWidth, unknown);
+  return true;
+}
+
 bool nativeWaitReady(obelisk_rt_context &context,
                      const ScheduledProcess &process) {
   if (context.signalDiagnosticsEnabled)
@@ -6295,7 +6311,7 @@ obelisk_rt_status commitStaticNBARootUnlocked(obelisk_rt_context *context,
       accumulator.value.size() == 4 && accumulator.unknown.size() == 4 &&
       accumulator.writeMask.size() == 4 && accumulator.changed.size() == 4 &&
       accumulator.posedge.size() == 4 && accumulator.negedge.size() == 4;
-  if (usedAVX2)
+  if (usedAVX2) {
     rootChanged = commitStaticNBA256AVX2(
         accumulator.value.data(), accumulator.unknown.data(),
         accumulator.writeMask.data(), accumulator.changed.data(),
@@ -6305,7 +6321,19 @@ obelisk_rt_status commitStaticNBARootUnlocked(obelisk_rt_context *context,
                        : context->nativeSchedulePlan->state_unknown,
         context->stateValue.data(), context->stateUnknown.data(), true,
         trackTransitions, true);
-  else
+    auto *canonicalValue =
+        reinterpret_cast<uint8_t *>(context->stateValue.data());
+    auto *canonicalUnknown =
+        reinterpret_cast<uint8_t *>(context->stateUnknown.data());
+    for (uint64_t local = 0; local != root.bit_width; local += 64) {
+      uint64_t planeBit = staticState->bitOffset + local;
+      uint64_t newValue = loadPackedBytes(canonicalValue, planeBit, 64);
+      uint64_t newUnknown = loadPackedBytes(canonicalUnknown, planeBit, 64);
+      if (!storeNativeScheduleStateUnlocked(context, planeBit, 64, newValue,
+                                            newUnknown))
+        return OBELISK_RT_LAYOUT_MISMATCH;
+    }
+  } else
 #endif
     for (uint64_t local = 0; local < root.bit_width; local += 64) {
       size_t word = static_cast<size_t>(local / 64);
@@ -6635,6 +6663,9 @@ commitInlineNativeNBABarrierUnlocked(obelisk_rt_context *context,
     if (update.unknownPlane)
       storePackedBytes(update.unknownPlane, planeBit, update.bitWidth,
                        newUnknown);
+    if (!storeNativeScheduleStateUnlocked(context, planeBit, update.bitWidth,
+                                          newValue, newUnknown))
+      return OBELISK_RT_LAYOUT_MISMATCH;
     storePackedBytes(canonicalValue, planeBit, update.bitWidth, newValue);
     storePackedBytes(canonicalUnknown, planeBit, update.bitWidth, newUnknown);
 
@@ -7278,6 +7309,14 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
                           sizeof(previous));
               std::memcpy(&context->stateValue[planeBit / 64],
                           &update.rootedManaged, sizeof(update.rootedManaged));
+              if (!storeNativeScheduleStateUnlocked(
+                      context, planeBit, 64,
+                      static_cast<uint64_t>(reinterpret_cast<uintptr_t>(
+                          update.rootedManaged)),
+                      0)) {
+                context->schedulerStatus = OBELISK_RT_LAYOUT_MISMATCH;
+                return;
+              }
             }
             if (previous != update.rootedManaged) {
               changed = true;
@@ -7448,6 +7487,12 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
                              newValue);
             storePackedBytes(canonicalUnknown, packedPlaneBit, update.bitWidth,
                              newUnknown);
+            if (!storeNativeScheduleStateUnlocked(
+                    context, packedPlaneBit, update.bitWidth, newValue,
+                    newUnknown)) {
+              context->schedulerStatus = OBELISK_RT_LAYOUT_MISMATCH;
+              return;
+            }
             publicationChanged = changedBits != 0;
             changed |= publicationChanged;
           } else
@@ -7542,6 +7587,13 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
               };
               apply(update.valuePlane, false, newValue);
               apply(update.unknownPlane, true, newUnknown);
+              if (canonical &&
+                  !storeNativeScheduleStateUnlocked(
+                      context, planeBit, 1, newValue ? 1 : 0,
+                      newUnknown ? 1 : 0)) {
+                context->schedulerStatus = OBELISK_RT_LAYOUT_MISMATCH;
+                return;
+              }
               uint32_t edges =
                   transitionEdges(oldValue, oldUnknown, newValue, newUnknown);
               if (edges != 0 && !equalStringContents) {
@@ -7669,6 +7721,10 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
             };
             apply(context->stateValue, newValue);
             apply(context->stateUnknown, newUnknown);
+            if (!storeNativeScheduleStateUnlocked(
+                    context, destination, 1, newValue ? 1 : 0,
+                    newUnknown ? 1 : 0))
+              return false;
             uint32_t edges =
                 transitionEdges(oldValue, oldUnknown, newValue, newUnknown);
             if (edges != 0 && !equalStringContents) {

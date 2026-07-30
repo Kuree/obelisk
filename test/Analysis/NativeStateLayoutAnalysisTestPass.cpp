@@ -39,7 +39,9 @@ public:
     llvm::errs() << "native-state bits=" << layout->bitCount << "\n";
     for (const auto &bound : layout->bounds) {
       llvm::errs() << "  bound " << bound.handleID << " offset="
-                   << bound.offset << " width=" << bound.width;
+                   << bound.offset << " width=" << bound.width
+                   << " four-state="
+                   << (bound.fourState ? "true" : "false");
       if (!bound.managedRootOffsets.empty()) {
         llvm::errs() << " roots=";
         llvm::interleaveComma(bound.managedRootOffsets, llvm::errs());

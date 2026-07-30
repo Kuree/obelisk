@@ -470,7 +470,7 @@ obelisk_rt_status importedLogic(obelisk_rt_context *, uint32_t importID,
   return OBELISK_RT_OK;
 }
 
-std::vector<uint8_t> makeSchedulerBytecode() {
+std::vector<uint8_t> makeSchedulerBytecode(uint64_t stateHandle = 0) {
   constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + 4 * 40;
@@ -535,7 +535,7 @@ std::vector<uint8_t> makeSchedulerBytecode() {
   instruction(bytes, codeOffset, 0, OBELISK_RT_DB_CONSTANT, 0, 0, 0, 0, 0, 0,
               0);
   instruction(bytes, codeOffset, 1, OBELISK_RT_DB_MAKE_HANDLE, 0, 1,
-              OBELISK_RT_DESCRIPTOR_STORAGE, 8, 0, 0, 0);
+              OBELISK_RT_DESCRIPTOR_STORAGE, 8, 0, 0, stateHandle);
   instruction(bytes, codeOffset, 2, OBELISK_RT_DB_CONSTANT, 0, 2, 0, 0, 0, 0,
               16);
   instruction(bytes, codeOffset, 3, OBELISK_RT_DB_INTRINSIC, 0, 0, 0, 0, 0, 0,
@@ -1774,6 +1774,48 @@ TEST(DesignBytecode, SchedulerCommitsDelayedNBAAndDeferredEvent) {
   ASSERT_EQ(
       obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
             OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, instance, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+
+  obelisk_rt_design_cursor_v1 object{};
+  ASSERT_EQ(obelisk_rt_v1_design_lookup(
+                &fixture.execution,
+                reinterpret_cast<const uint8_t *>("top.value"), 9, &object),
+            OBELISK_RT_OK);
+  std::array<uint64_t, 2> value{}, unknown{};
+  ASSERT_EQ(obelisk_rt_v1_design_read(context, object, value.data(),
+                                      unknown.data(), 65),
+            OBELISK_RT_OK);
+  EXPECT_EQ(value[0] & UINT64_C(0xff), UINT64_C(0xa5));
+  EXPECT_EQ(unknown[0] & UINT64_C(0xff), UINT64_C(0x04));
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(DesignBytecode, ResolvesEncodedStaticStateHandlesByIdentity) {
+  Fixture fixture;
+  uint64_t stateHandle = obelisk_rt_v1_native_state_static_handle(1);
+  ASSERT_NE(stateHandle, UINT64_MAX);
+  fixture.bytecode = makeSchedulerBytecode(stateHandle);
+  fixture.execution.bytecode = fixture.bytecode.data();
+  fixture.execution.bytecode_size = fixture.bytecode.size();
+  fixture.execution.checksum = imageChecksum(fixture.bytecode);
+  fixture.entry = {&fixture.execution, 0, 0};
+  fixture.layout.frame_size = 0;
+  fixture.layout.checksum = frameChecksum(fixture.layout);
+  fixture.descriptor.frame_layout = &fixture.layout;
+  fixture.descriptor.execution = &fixture.execution;
+  fixture.descriptor.design_bytecode = &fixture.entry;
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 8),
+            OBELISK_RT_OK);
+  obelisk_rt_process_instance_v1 *instance = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
+      OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, instance, 0), OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
 
