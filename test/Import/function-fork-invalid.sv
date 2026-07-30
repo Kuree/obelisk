@@ -1,4 +1,4 @@
-// RUN: not obelisk -emit-sim %s 2>&1 | FileCheck %s
+// RUN: not obelisk -emit-obelisk %s 2>&1 | FileCheck %s
 
 module function_fork_invalid;
   function bit launch;
