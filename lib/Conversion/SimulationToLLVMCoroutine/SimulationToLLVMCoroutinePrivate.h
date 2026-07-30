@@ -183,6 +183,11 @@ void populateSchedulerToLLVMConversionPatterns(
 void populateStateReadWriteToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter,
     uint64_t stateBitCount, const NativeStateLayout *directLayout);
+void annotateStaticDriverNets(mlir::ModuleOp module,
+                              const NativeStateLayout &layout);
+void populateDriverToLLVMConversionPatterns(mlir::RewritePatternSet &patterns,
+                                            mlir::TypeConverter &converter,
+                                            const NativeStateLayout &layout);
 void materializeNativeSchedulerGlobals(mlir::ModuleOp module);
 void markLikelyTrue(mlir::cf::CondBranchOp branch);
 void recordStaticSpecializationCFGBlocks(
