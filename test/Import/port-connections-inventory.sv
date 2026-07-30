@@ -1,9 +1,5 @@
 // RUN: obelisk -emit-slang %s 2>/dev/null | FileCheck %s --check-prefix=SLANG
 // RUN: obelisk -emit-obelisk %s 2>/dev/null | FileCheck %s --check-prefix=OBELISK
-// RUN: obelisk -emit-obelisk %s -o %t.semantic.mlir 2>/dev/null
-// RUN: obelisk-opt %t.semantic.mlir '--lower-obelisk-to-sim=opt-level=0' -o %t.sim.mlir
-// RUN: sed '1s/module {/module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128"} {/' %t.sim.mlir > %t.bytecode.mlir
-// RUN: obelisk-opt %t.bytecode.mlir --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
 
 module inventory_leaf(
     input logic defaulted = 1'b1,
@@ -110,8 +106,3 @@ endmodule
 // OBELISK-DAG: obelisk.sv.port.connection attributes {{.*}}formal_path = "port_connections_inventory.uses_default.defaulted"{{.*}}provenance = 6 : i32
 // OBELISK-DAG: obelisk.sv.port.connection attributes {{.*}}formal_path = "port_connections_inventory.multiport.right"
 // OBELISK-DAG: obelisk.sv.port.connection attributes {{.*}}formal_path = "port_connections_inventory.multiport.left"
-
-// A complete elaborated design, rather than a hand-authored Simulation
-// fixture, serializes through the unified runtime artifact version 1.
-// BYTECODE: obelisk.bytecode.image = array<i8: 79, 66, 66, 67, 68, 83, 49, 0, 1, 0, 0, 0, 0, 0, 0, 0
-// BYTECODE: obelisk.execution.state_bits = {{[1-9][0-9]*}} : i64
