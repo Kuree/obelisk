@@ -90,6 +90,7 @@ using detail::materializeDPIThunks;
 using detail::materializeManagedMethodThunks;
 using detail::nativeStateWidth;
 using detail::populateAggregateToLLVMConversionPatterns;
+using detail::populateControlToLLVMConversionPatterns;
 using detail::populateManagedToLLVMConversionPatterns;
 using detail::prepareManagedLowering;
 using detail::reportManagedStatus;
@@ -584,273 +585,6 @@ public:
     state.attributes.set(operation.getArgumentCountAttrName(),
                          rewriter.getI64IntegerAttr(physicalArguments));
     rewriter.replaceOp(operation, rewriter.create(state));
-    return success();
-  }
-};
-
-class SimDisableChildrenConversion final
-    : public OpConversionPattern<sim::SimDisableChildrenOp> {
-public:
-  using OpConversionPattern::OpConversionPattern;
-
-  LogicalResult
-  matchAndRewrite(sim::SimDisableChildrenOp operation, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    (void)adaptor;
-    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
-    Type i32 = rewriter.getI32Type();
-    Value contextAddress = LLVM::AddressOfOp::create(
-        rewriter, operation.getLoc(), pointer, "__obelisk_current_context");
-    Value context = LLVM::LoadOp::create(rewriter, operation.getLoc(), pointer,
-                                         contextAddress, 8);
-    Value status =
-        LLVM::CallOp::create(
-            rewriter, operation.getLoc(), TypeRange{i32},
-            SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_scheduler_disable_children"),
-            ValueRange{context})
-            .getResult();
-    LLVM::CallOp::create(rewriter, operation.getLoc(), TypeRange{},
-                         SymbolRefAttr::get(rewriter.getContext(),
-                                            "obelisk_rt_v1_scheduler_fail"),
-                         ValueRange{context, status});
-    rewriter.eraseOp(operation);
-    return success();
-  }
-};
-
-static std::pair<Value, Type>
-loadCurrentRuntimeContext(ConversionPatternRewriter &rewriter,
-                          Location location) {
-  Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
-  Value address = LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                            "__obelisk_current_context");
-  return {LLVM::LoadOp::create(rewriter, location, pointer, address, 8),
-          pointer};
-}
-
-static void reportRuntimeControlStatus(ConversionPatternRewriter &rewriter,
-                                       Location location, Value context,
-                                       Value status) {
-  LLVM::CallOp::create(
-      rewriter, location, TypeRange{},
-      SymbolRefAttr::get(rewriter.getContext(), "obelisk_rt_v1_scheduler_fail"),
-      ValueRange{context, status});
-}
-
-class SimControlEnterConversion final
-    : public OpConversionPattern<sim::SimControlEnterOp> {
-public:
-  using OpConversionPattern::OpConversionPattern;
-
-  LogicalResult
-  matchAndRewrite(sim::SimControlEnterOp operation, OneToNOpAdaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    Location location = operation.getLoc();
-    auto [context, pointer] = loadCurrentRuntimeContext(rewriter, location);
-    Type i32 = rewriter.getI32Type();
-    Type i64 = rewriter.getI64Type();
-    Value out = entryAlloca(rewriter, location, i64, 1, 8);
-    LLVM::StoreOp::create(rewriter, location,
-                          llvmConstant(rewriter, location, i64, 0), out, 8);
-    Value status =
-        LLVM::CallOp::create(rewriter, location, TypeRange{i32},
-                             SymbolRefAttr::get(rewriter.getContext(),
-                                                "obelisk_rt_v1_control_enter"),
-                             ValueRange{context,
-                                        llvmConstant(rewriter, location, i64,
-                                                     operation.getTargetId()),
-                                        out})
-            .getResult();
-    reportRuntimeControlStatus(rewriter, location, context, status);
-    Value activation = LLVM::LoadOp::create(rewriter, location, i64, out, 8);
-    rewriter.replaceOp(operation, activation);
-    return success();
-  }
-};
-
-class SimControlLeaveConversion final
-    : public OpConversionPattern<sim::SimControlLeaveOp> {
-public:
-  using OpConversionPattern::OpConversionPattern;
-
-  LogicalResult
-  matchAndRewrite(sim::SimControlLeaveOp operation, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    if (adaptor.getControl().size() != 1)
-      return failure();
-    Location location = operation.getLoc();
-    auto [context, pointer] = loadCurrentRuntimeContext(rewriter, location);
-    (void)pointer;
-    Value status = LLVM::CallOp::create(
-                       rewriter, location, TypeRange{rewriter.getI32Type()},
-                       SymbolRefAttr::get(rewriter.getContext(),
-                                          "obelisk_rt_v1_control_leave"),
-                       ValueRange{context, adaptor.getControl().front()})
-                       .getResult();
-    reportRuntimeControlStatus(rewriter, location, context, status);
-    rewriter.eraseOp(operation);
-    return success();
-  }
-};
-
-class SimControlDisableConversion final
-    : public OpConversionPattern<sim::SimControlDisableOp> {
-public:
-  using OpConversionPattern::OpConversionPattern;
-
-  LogicalResult
-  matchAndRewrite(sim::SimControlDisableOp operation, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    Location location = operation.getLoc();
-    auto [context, pointer] = loadCurrentRuntimeContext(rewriter, location);
-    (void)pointer;
-    Value activation =
-        adaptor.getActivation().empty()
-            ? llvmConstant(rewriter, location, rewriter.getI64Type(), 0)
-            : adaptor.getActivation().front();
-    Value status =
-        LLVM::CallOp::create(
-            rewriter, location, TypeRange{rewriter.getI32Type()},
-            SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_control_disable"),
-            ValueRange{context,
-                       llvmConstant(rewriter, location, rewriter.getI64Type(),
-                                    operation.getTargetId()),
-                       activation,
-                       llvmConstant(rewriter, location, rewriter.getI32Type(),
-                                    operation.getHierarchical() ? 1 : 0)})
-            .getResult();
-    reportRuntimeControlStatus(rewriter, location, context, status);
-    rewriter.eraseOp(operation);
-    return success();
-  }
-};
-
-class SimStaticOnceConversion final
-    : public OpConversionPattern<sim::SimStaticOnceOp> {
-public:
-  using OpConversionPattern::OpConversionPattern;
-
-  LogicalResult
-  matchAndRewrite(sim::SimStaticOnceOp operation, OneToNOpAdaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    Location location = operation.getLoc();
-    auto [context, pointer] = loadCurrentRuntimeContext(rewriter, location);
-    (void)pointer;
-    Value claimed = LLVM::CallOp::create(
-                        rewriter, location, TypeRange{rewriter.getI32Type()},
-                        SymbolRefAttr::get(rewriter.getContext(),
-                                           "obelisk_rt_v1_static_once"),
-                        ValueRange{context, llvmConstant(rewriter, location,
-                                                         rewriter.getI64Type(),
-                                                         operation.getId())})
-                        .getResult();
-    Value first = arith::TruncIOp::create(rewriter, location,
-                                          rewriter.getI1Type(), claimed);
-    rewriter.replaceOp(operation, first);
-    return success();
-  }
-};
-
-class SimDeferredOnceConversion final
-    : public OpConversionPattern<sim::SimDeferredOnceOp> {
-public:
-  using OpConversionPattern::OpConversionPattern;
-
-  LogicalResult
-  matchAndRewrite(sim::SimDeferredOnceOp operation, OneToNOpAdaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    Location location = operation.getLoc();
-    auto [context, pointer] = loadCurrentRuntimeContext(rewriter, location);
-    (void)pointer;
-    Value claimed = LLVM::CallOp::create(
-                        rewriter, location, TypeRange{rewriter.getI32Type()},
-                        SymbolRefAttr::get(rewriter.getContext(),
-                                           "obelisk_rt_v1_deferred_once"),
-                        ValueRange{context, llvmConstant(rewriter, location,
-                                                         rewriter.getI64Type(),
-                                                         operation.getId())})
-                        .getResult();
-    Value first = arith::TruncIOp::create(rewriter, location,
-                                          rewriter.getI1Type(), claimed);
-    rewriter.replaceOp(operation, first);
-    return success();
-  }
-};
-
-class SimMonitorRegisterConversion final
-    : public OpConversionPattern<sim::SimMonitorRegisterOp> {
-public:
-  using OpConversionPattern::OpConversionPattern;
-
-  LogicalResult
-  matchAndRewrite(sim::SimMonitorRegisterOp operation, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    if (adaptor.getProcess().size() != 1)
-      return failure();
-    Location location = operation.getLoc();
-    auto [context, pointer] = loadCurrentRuntimeContext(rewriter, location);
-    (void)pointer;
-    Value status = LLVM::CallOp::create(
-                       rewriter, location, TypeRange{rewriter.getI32Type()},
-                       SymbolRefAttr::get(rewriter.getContext(),
-                                          "obelisk_rt_v1_monitor_register"),
-                       ValueRange{context, adaptor.getProcess().front(),
-                                  llvmConstant(rewriter, location,
-                                               rewriter.getI32Type(), 0)})
-                       .getResult();
-    reportRuntimeControlStatus(rewriter, location, context, status);
-    rewriter.eraseOp(operation);
-    return success();
-  }
-};
-
-class SimMonitorControlConversion final
-    : public OpConversionPattern<sim::SimMonitorControlOp> {
-public:
-  using OpConversionPattern::OpConversionPattern;
-
-  LogicalResult
-  matchAndRewrite(sim::SimMonitorControlOp operation, OneToNOpAdaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    Location location = operation.getLoc();
-    auto [context, pointer] = loadCurrentRuntimeContext(rewriter, location);
-    (void)pointer;
-    Value status =
-        LLVM::CallOp::create(
-            rewriter, location, TypeRange{rewriter.getI32Type()},
-            SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_monitor_control"),
-            ValueRange{context,
-                       llvmConstant(rewriter, location, rewriter.getI32Type(),
-                                    operation.getEnabled() ? 1 : 0)})
-            .getResult();
-    reportRuntimeControlStatus(rewriter, location, context, status);
-    rewriter.eraseOp(operation);
-    return success();
-  }
-};
-
-class SimMonitorCurrentConversion final
-    : public OpConversionPattern<sim::SimMonitorCurrentOp> {
-public:
-  using OpConversionPattern::OpConversionPattern;
-
-  LogicalResult
-  matchAndRewrite(sim::SimMonitorCurrentOp operation, OneToNOpAdaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    Location location = operation.getLoc();
-    auto [context, pointer] = loadCurrentRuntimeContext(rewriter, location);
-    (void)pointer;
-    Value current = LLVM::CallOp::create(
-                        rewriter, location, TypeRange{rewriter.getI32Type()},
-                        SymbolRefAttr::get(rewriter.getContext(),
-                                           "obelisk_rt_v1_monitor_current"),
-                        ValueRange{context})
-                        .getResult();
-    rewriter.replaceOpWithNewOp<arith::TruncIOp>(operation,
-                                                 rewriter.getI1Type(), current);
     return success();
   }
 };
@@ -7843,6 +7577,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   packedPatterns.add<SimTaskCallTypeConversion>(packedConverter, context);
   packedPatterns.add<SimDPICallTypeConversion>(packedConverter, context);
   populateAggregateToLLVMConversionPatterns(packedPatterns, packedConverter);
+  populateControlToLLVMConversionPatterns(packedPatterns, packedConverter);
   packedPatterns.add<
       ArithSelectTypeConversion, SimReturnTypeConversion,
       SimObserverBindTypeConversion, SimSuspendObserveTypeConversion,
@@ -7857,12 +7592,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       SimSuspendTypeConversion<sim::SimSuspendForeverOp>,
       SimSuspendTypeConversion<sim::SimSuspendAwaitOp>,
       SimSuspendTypeConversion<sim::SimSuspendJoinOp>,
-      SimSuspendTypeConversion<sim::SimSuspendChildrenOp>,
-      SimDisableChildrenConversion, SimControlEnterConversion,
-      SimControlLeaveConversion, SimControlDisableConversion,
-      SimStaticOnceConversion, SimDeferredOnceConversion,
-      SimMonitorRegisterConversion, SimMonitorControlConversion,
-      SimMonitorCurrentConversion>(packedConverter, context);
+      SimSuspendTypeConversion<sim::SimSuspendChildrenOp>>(packedConverter,
+                                                           context);
   packedPatterns.add<ContextHandleConversion<sim::SimContextStorageOp>>(
       packedConverter, context, stateLayout->storage);
   packedPatterns.add<ContextHandleConversion<sim::SimContextNetOp>>(

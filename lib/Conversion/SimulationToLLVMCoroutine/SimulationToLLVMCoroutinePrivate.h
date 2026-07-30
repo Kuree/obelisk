@@ -90,6 +90,8 @@ void populateManagedToLLVMConversionPatterns(mlir::RewritePatternSet &patterns,
                                              uint64_t stateBitCount);
 void populateAggregateToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
+void populateControlToLLVMConversionPatterns(
+    mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
 mlir::LogicalResult
 materializeManagedMethodThunks(mlir::ModuleOp module,
                                const llvm::DataLayout &dataLayout);
