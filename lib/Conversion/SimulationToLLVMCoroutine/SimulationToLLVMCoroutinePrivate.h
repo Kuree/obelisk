@@ -8,6 +8,7 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Support/LLVM.h"
 
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/StringRef.h"
 
@@ -25,6 +26,9 @@ class TypeConverter;
 } // namespace mlir
 
 namespace obelisk::detail {
+
+inline constexpr llvm::StringLiteral nativeTwoStateBlockUnknownsAttr =
+    "obelisk.native.two_state_block_unknowns";
 
 struct SignedI64Index {
   mlir::Value value;
@@ -92,6 +96,11 @@ void populateAggregateToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
 void populateControlToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
+void populateFunctionTypeConversionPatterns(
+    mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter,
+    const llvm::DenseSet<mlir::Value> &twoStateValues);
+void populateContextRuntimeToLLVMConversionPattern(
+    mlir::RewritePatternSet &patterns, const mlir::TypeConverter &converter);
 mlir::LogicalResult
 materializeManagedMethodThunks(mlir::ModuleOp module,
                                const llvm::DataLayout &dataLayout);
