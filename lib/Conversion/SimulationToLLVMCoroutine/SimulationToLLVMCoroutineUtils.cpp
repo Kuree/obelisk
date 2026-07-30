@@ -3,6 +3,7 @@
 #include "SimulationToLLVMCoroutinePrivate.h"
 
 #include "obelisk/Analysis/SimulationAnalysis.h"
+#include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 
@@ -21,6 +22,14 @@ bool alignUp(uint64_t value, uint64_t alignment, uint64_t &result) {
     return false;
   result = llvm::alignTo(value, alignment);
   return true;
+}
+
+bool containsLogic(Type type) {
+  if (sim::isManagedHandleType(type))
+    return false;
+  bool result = false;
+  type.walk([&](sim::LogicType) { result = true; });
+  return result;
 }
 
 std::optional<unsigned> nativeStateWidth(Type type) {
@@ -92,6 +101,35 @@ Value castIntegerWidth(OpBuilder &builder, Location location, Value value,
   if (source.getWidth() < destination.getWidth())
     return arith::ExtUIOp::create(builder, location, target, value);
   return arith::TruncIOp::create(builder, location, target, value);
+}
+
+Value resizeNativeInteger(OpBuilder &builder, Location location, Value value,
+                          IntegerType result, bool isSigned) {
+  auto input = cast<IntegerType>(value.getType());
+  if (input == result)
+    return value;
+  if (input.getWidth() < result.getWidth()) {
+    if (isSigned)
+      return arith::ExtSIOp::create(builder, location, result, value);
+    return arith::ExtUIOp::create(builder, location, result, value);
+  }
+  return arith::TruncIOp::create(builder, location, result, value);
+}
+
+SignedI64Index resizeSignedIndexToI64(OpBuilder &builder, Location location,
+                                      Value source) {
+  IntegerType i64 = builder.getI64Type();
+  auto sourceType = cast<IntegerType>(source.getType());
+  Value value = resizeNativeInteger(builder, location, source, i64, true);
+  Value representable = arith::ConstantOp::create(
+      builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+  if (sourceType.getWidth() > i64.getWidth()) {
+    Value roundTripped =
+        resizeNativeInteger(builder, location, value, sourceType, true);
+    representable = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, source, roundTripped);
+  }
+  return {value, representable};
 }
 
 Value insertValue(OpBuilder &builder, Location location, Value aggregate,

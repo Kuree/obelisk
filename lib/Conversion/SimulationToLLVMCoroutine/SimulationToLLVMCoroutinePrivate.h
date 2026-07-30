@@ -26,7 +26,13 @@ class TypeConverter;
 
 namespace obelisk::detail {
 
+struct SignedI64Index {
+  mlir::Value value;
+  mlir::Value representable;
+};
+
 bool alignUp(uint64_t value, uint64_t alignment, uint64_t &result);
+bool containsLogic(mlir::Type type);
 std::optional<unsigned> nativeStateWidth(mlir::Type type);
 mlir::SmallVector<mlir::Value> flatten(mlir::ArrayRef<mlir::ValueRange> ranges);
 mlir::Value llvmConstant(mlir::OpBuilder &builder, mlir::Location location,
@@ -44,6 +50,13 @@ void storeAt(mlir::OpBuilder &builder, mlir::Location location,
              unsigned alignment);
 mlir::Value castIntegerWidth(mlir::OpBuilder &builder, mlir::Location location,
                              mlir::Value value, mlir::Type target);
+mlir::Value resizeNativeInteger(mlir::OpBuilder &builder,
+                                mlir::Location location, mlir::Value value,
+                                mlir::IntegerType result,
+                                bool isSigned = false);
+SignedI64Index resizeSignedIndexToI64(mlir::OpBuilder &builder,
+                                      mlir::Location location,
+                                      mlir::Value source);
 mlir::Value insertValue(mlir::OpBuilder &builder, mlir::Location location,
                         mlir::Value aggregate, mlir::Value element,
                         int64_t index);
@@ -75,6 +88,8 @@ void populateManagedToLLVMConversionPatterns(mlir::RewritePatternSet &patterns,
                                              mlir::TypeConverter &converter,
                                              const llvm::DataLayout &dataLayout,
                                              uint64_t stateBitCount);
+void populateAggregateToLLVMConversionPatterns(
+    mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
 mlir::LogicalResult
 materializeManagedMethodThunks(mlir::ModuleOp module,
                                const llvm::DataLayout &dataLayout);
