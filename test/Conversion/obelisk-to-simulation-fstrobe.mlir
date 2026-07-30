@@ -78,6 +78,34 @@ module {
               }
             }
           }
+          obelisk.sv.statement.expression_statement attributes {
+            node_id = 10 : i64
+          } {
+            obelisk.sv.expression.call attributes {
+              argument_count = 1 : i64,
+              callee_name = "$strobe",
+              constraint_restrictions = [],
+              has_inline_constraints = false,
+              has_iterator_expression = false,
+              has_output_arguments = false,
+              has_this_class = false,
+              is_super_class = false,
+              is_system_call = true,
+              node_id = 11 : i64,
+              semantic_type = !obelisk.void,
+              subroutine_kind = 1 : i32,
+              system_library_cell = "work.top",
+              system_scope_path = "top",
+              system_scope_symbol = @s1.$root::@s3.top::@s4.top
+            } {
+              obelisk.sv.expression.integer_literal attributes {
+                constant_value = "2",
+                node_id = 12 : i64,
+                semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
+              } {
+              }
+            }
+          }
         }
       }
     }
@@ -88,6 +116,11 @@ module {
 // CHECK: obelisk_sim.display
 // CHECK-SAME: radix = 10
 // CHECK: obelisk_sim.return
+// CHECK: obelisk_sim.func private @[[STROBE:unit_0[.][^(]+]](
+// CHECK: obelisk_sim.display
+// CHECK-SAME: radix = 10
+// CHECK: obelisk_sim.return
 // CHECK-LABEL: obelisk_sim.func private @unit_0(
 // CHECK: obelisk_sim.spawn @[[CALLBACK]]
+// CHECK: obelisk_sim.spawn @[[STROBE]]
 // CHECK-NOT: obelisk_sim.monitor.register

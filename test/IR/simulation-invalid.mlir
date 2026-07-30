@@ -2022,6 +2022,31 @@ module {
 // -----
 
 module {
+  obelisk_sim.design @postponed_store {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.storage.decl 0 in 0 : i8 design hierarchy "top.value"
+    obelisk_sim.code_unit.decl 1 in 0 task hierarchy "top.strobe"
+    obelisk_sim.func @strobe(
+        %ctx: !obelisk_sim.context
+            {obelisk_sim.capture_kind = 0 : i32},
+        %value: !obelisk_sim.ref<i8>
+            {obelisk_sim.capture_kind = 3 : i32,
+             obelisk_sim.descriptor_id = 0 : i64})
+        attributes {
+          entry_kind = 12 : i32, code_unit_id = 1 : i64,
+          home_region = 16 : i32
+        } {
+      %one = arith.constant 1 : i8
+      // expected-error @+1 {{is not permitted in a read-only postponed code unit}}
+      obelisk_sim.ref.store %one to %value : i8, !obelisk_sim.ref<i8>
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
   func.func @string_from_real(%value: f64) {
     // expected-error @+1 {{input must be a fixed packed value}}
     %string = obelisk_sim.string.from_packed %value :
