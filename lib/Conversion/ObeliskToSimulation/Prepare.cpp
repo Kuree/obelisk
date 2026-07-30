@@ -9,6 +9,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "Detail.h"
+#include "PrepareDeclarations.h"
+#include "PrepareValidation.h"
 
 #include "obelisk/Conversion/ObeliskToSimulation.h"
 #include "obelisk/Dialect/ForeachLoopMetadata.h"
@@ -110,30 +112,6 @@ static std::optional<uint64_t> getUnsigned64(IntegerAttr attribute) {
   return attribute.getValue().getZExtValue();
 }
 
-/// FNV-1a over the elaborated hierarchical name. Keep the sign bit clear so
-/// the stable unsigned identity has one canonical nonnegative i64 encoding.
-static uint64_t getStableCodeUnitID(StringRef hierarchy) {
-  uint64_t hash = UINT64_C(14695981039346656037);
-  for (unsigned char byte : hierarchy.bytes()) {
-    hash ^= byte;
-    hash *= UINT64_C(1099511628211);
-  }
-  hash &= static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
-  return hash == 0 ? 1 : hash;
-}
-
-static uint64_t
-getVirtualMethodSignatureID(semantic::SVSubroutineSymbolOp method) {
-  std::string key;
-  llvm::raw_string_ostream stream(key);
-  if (auto name = method->getAttrOfType<StringAttr>("name"))
-    stream << name.getValue();
-  stream << '#' << static_cast<uint32_t>(method.getSubroutineKind()) << '#';
-  if (auto type = method->getAttrOfType<TypeAttr>("semantic_type"))
-    type.getValue().print(stream);
-  return getStableCodeUnitID(key);
-}
-
 static uint32_t getStableImportID(StringRef cIdentifier) {
   uint64_t hash = UINT64_C(14695981039346656037);
   for (unsigned char byte : cIdentifier.bytes()) {
@@ -142,66 +120,6 @@ static uint32_t getStableImportID(StringRef cIdentifier) {
   }
   uint32_t result = static_cast<uint32_t>(hash ^ (hash >> 32));
   return result == 0 ? 1 : result;
-}
-
-/// Node kinds whose semantics are declarative but that derive from a shared
-/// generic base, so they cannot carry the SemanticDeclarativeNode trait.
-static bool isDeclarativeLeafNode(Operation *op) {
-  return isa<
-      semantic::SVRandSequenceStatementOp, semantic::SVCoverCrossSymbolOp,
-      semantic::SVCoverCrossBodySymbolOp, semantic::SVLocalAssertionVarSymbolOp,
-      semantic::SVRandSeqProductionSymbolOp, semantic::SVDPIOpenArrayTypeOp>(
-      op);
-}
-
-static bool isCoverageNode(Operation *op) {
-  if (isa<semantic::SVCovergroupTypeOp, semantic::SVCovergroupBodySymbolOp,
-          semantic::SVCoverpointSymbolOp, semantic::SVCoverageBinSymbolOp,
-          semantic::SVNewCovergroupExpressionOp>(op))
-    return true;
-  if (auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(op))
-    return formal.getIsCoverageSampleFormal().value_or(false);
-  return false;
-}
-
-static bool isInsideCovergroup(Operation *op) {
-  return op && op->getParentOfType<semantic::SVCovergroupTypeOp>();
-}
-
-static bool isSupportedClassDeclaration(Operation *op) {
-  return isa<semantic::SVClassTypeOp, semantic::SVGenericClassDefSymbolOp,
-             semantic::SVMethodPrototypeSymbolOp,
-             semantic::SVClassPropertySymbolOp>(op);
-}
-
-static bool isSupportedAssertionNode(Operation *op) {
-  return isa<
-      semantic::SVImmediateAssertionStatementOp,
-      semantic::SVConcurrentAssertionStatementOp, semantic::SVPropertySymbolOp,
-      semantic::SVSequenceSymbolOp, semantic::SVAssertionPortSymbolOp,
-      semantic::SVAssertionInstanceExpressionOp,
-      semantic::SVInvalidAssertionExprOp, semantic::SVSimpleAssertionExprOp,
-      semantic::SVSequenceConcatExprOp, semantic::SVSequenceWithMatchExprOp,
-      semantic::SVUnaryAssertionExprOp, semantic::SVBinaryAssertionExprOp,
-      semantic::SVFirstMatchAssertionExprOp,
-      semantic::SVClockingAssertionExprOp,
-      semantic::SVStrongWeakAssertionExprOp, semantic::SVAbortAssertionExprOp,
-      semantic::SVConditionalAssertionExprOp, semantic::SVCaseAssertionExprOp,
-      semantic::SVDisableIffAssertionExprOp>(op);
-}
-
-static bool isWeakReferenceClass(semantic::SVClassTypeOp classType) {
-  return getHierarchyName(classType).starts_with("std::weak_reference#(");
-}
-
-static semantic::SVSubroutineSymbolOp getClassMethod(Operation *member) {
-  if (auto method = dyn_cast<semantic::SVSubroutineSymbolOp>(member))
-    return method;
-  if (auto prototype = dyn_cast<semantic::SVMethodPrototypeSymbolOp>(member))
-    for (Operation *child : getChildren(prototype))
-      if (auto method = dyn_cast<semantic::SVSubroutineSymbolOp>(child))
-        return method;
-  return {};
 }
 
 static semantic::SVClassTypeOp getOwningClass(Operation *member) {
@@ -428,243 +346,15 @@ void ObeliskSimPreparePass::runOnOperation() {
   ModuleOp module = getOperation();
   MLIRContext *context = &getContext();
 
-  semantic::SVRootSymbolOp semanticRoot;
-  llvm::DenseMap<uint64_t, Operation *> nodeIds;
+  FailureOr<ValidatedSemanticDesign> validated =
+      validateSemanticDesign(module);
+  if (failed(validated)) {
+    signalPassFailure();
+    return;
+  }
+  semantic::SVRootSymbolOp semanticRoot = validated->root;
+  llvm::StringMap<Operation *> &semanticSymbols = validated->symbols;
   bool invalid = false;
-  module.walk<WalkOrder::PreOrder>([&](Operation *op) {
-    if (!isSemanticOp(op))
-      return;
-    if (auto root = dyn_cast<semantic::SVRootSymbolOp>(op)) {
-      if (semanticRoot) {
-        op->emitError("multiple elaborated semantic roots");
-        invalid = true;
-      }
-      semanticRoot = root;
-    }
-    auto nodeId = op->getAttrOfType<IntegerAttr>("node_id");
-    if (!nodeId) {
-      op->emitError("semantic node is missing node_id");
-      invalid = true;
-      return;
-    }
-    uint64_t id = nodeId.getValue().getZExtValue();
-    auto [it, inserted] = nodeIds.try_emplace(id, op);
-    if (!inserted) {
-      op->emitError() << "duplicate semantic node_id " << id;
-      it->second->emitRemark("first node with this ID is here");
-      invalid = true;
-    }
-  });
-  if (!semanticRoot) {
-    module.emitError(
-        "obelisk-sim-prepare requires an elaborated obelisk.sv root");
-    signalPassFailure();
-    return;
-  }
-
-  // Resolve the entire semantic reference graph once, before isolated units
-  // can be scheduled independently. Semantic symbols are isolated at every
-  // scope, so nearest-symbol lookup cannot traverse these elaboration paths.
-  // Node-prefixed symbol names are globally unique; validate every path
-  // component directly against that frozen namespace.
-  llvm::StringMap<Operation *> semanticSymbols;
-  module.walk([&](Operation *op) {
-    if (auto name =
-            op->getAttrOfType<StringAttr>(SymbolTable::getSymbolAttrName()))
-      semanticSymbols.try_emplace(name.getValue(), op);
-  });
-  semanticRoot->walk([&](Operation *op) {
-    for (NamedAttribute named : op->getAttrs()) {
-      if (!named.getName().strref().ends_with("_symbol"))
-        continue;
-      named.getValue().walk([&](SymbolRefAttr reference) {
-        bool resolved = semanticSymbols.count(reference.getRootReference());
-        for (FlatSymbolRefAttr nested : reference.getNestedReferences())
-          resolved &= semanticSymbols.count(nested.getValue());
-        if (!resolved) {
-          op->emitError() << "unresolved semantic reference " << reference;
-          invalid = true;
-        }
-      });
-    }
-  });
-
-  std::function<bool(Operation *)> isCoverageConstant = [&](Operation
-                                                                *expression) {
-    if (isa<semantic::SVIntegerLiteralOp,
-            semantic::SVUnbasedUnsizedIntegerLiteralOp>(expression))
-      return true;
-    if (isa<semantic::SVConversionExpressionOp, semantic::SVUnaryExpressionOp,
-            semantic::SVBinaryExpressionOp>(expression)) {
-      SmallVector<Operation *> children = getChildren(expression);
-      return !children.empty() && llvm::all_of(children, isCoverageConstant);
-    }
-    SymbolRefAttr reference;
-    if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(expression))
-      reference = named.getReferencedSymbol();
-    else if (auto hierarchical =
-                 dyn_cast<semantic::SVHierarchicalValueExpressionOp>(
-                     expression))
-      reference = hierarchical.getReferencedSymbol();
-    if (!reference)
-      return false;
-    auto symbol = semanticSymbols.find(reference.getLeafReference());
-    return symbol != semanticSymbols.end() &&
-           isa<semantic::SVParameterSymbolOp, semantic::SVEnumValueSymbolOp,
-               semantic::SVSpecparamSymbolOp>(symbol->second);
-  };
-
-  // Reject the declarative node families and the dynamic object types before
-  // producing any target IR, so an unsupported construct never survives as
-  // silently dropped semantics.
-  module.walk([&](Operation *op) {
-    if (!isSemanticOp(op))
-      return;
-    if ((op->hasTrait<OpTrait::SemanticDeclarativeNode>() &&
-         !isSupportedClassDeclaration(op) && !isSupportedAssertionNode(op) &&
-         !isCoverageNode(op) && !isInsideCovergroup(op)) ||
-        isDeclarativeLeafNode(op)) {
-      emitError(getSemanticLocation(op))
-          << "unsupported semantic construct in the first simulation slice: "
-          << op->getName();
-      invalid = true;
-    }
-    if (auto covergroup = dyn_cast<semantic::SVCovergroupTypeOp>(op)) {
-      if (covergroup->getParentOfType<semantic::SVClassTypeOp>()) {
-        emitError(getSemanticLocation(op))
-            << "class-member and inherited covergroups are not executable";
-        invalid = true;
-      }
-      if (covergroup.getBaseGroupAttr()) {
-        emitError(getSemanticLocation(op))
-            << "inherited covergroups are not executable";
-        invalid = true;
-      }
-      if (covergroup.getConstructorArgumentCount() != 0) {
-        emitError(getSemanticLocation(op))
-            << "covergroup constructor formals are not supported; use "
-               "zero-argument new";
-        invalid = true;
-      }
-      if (covergroup.getHasCoverageEvent()) {
-        emitError(getSemanticLocation(op))
-            << "coverage events and automatic sampling are not supported";
-        invalid = true;
-      }
-      for (Operation *child : getChildren(covergroup)) {
-        auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(child);
-        if (!formal || !formal.getIsCoverageSampleFormal().value_or(false))
-          continue;
-        FailureOr<Type> type = getNormalizedSemanticType(formal);
-        Type scalar =
-            succeeded(type) ? sim::getPackedScalarType(*type) : Type{};
-        if (formal.getDirection() != semantic::SVArgumentDirection::In ||
-            !scalar || !isa<IntegerType, sim::LogicType>(scalar)) {
-          emitError(getSemanticLocation(formal))
-              << "coverage sample formals must be scalar integral inputs";
-          invalid = true;
-        }
-      }
-    } else if (auto body = dyn_cast<semantic::SVCovergroupBodySymbolOp>(op)) {
-      if (body.getOptionCount() != 0) {
-        emitError(getSemanticLocation(op))
-            << "covergroup coverage options are not supported";
-        invalid = true;
-      }
-    } else if (auto coverpoint = dyn_cast<semantic::SVCoverpointSymbolOp>(op)) {
-      if (coverpoint.getOptionCount() != 0) {
-        emitError(getSemanticLocation(op))
-            << "coverpoint coverage options are not supported";
-        invalid = true;
-      }
-      size_t namedBins = llvm::count_if(getChildren(op), [](Operation *child) {
-        return isa<semantic::SVCoverageBinSymbolOp>(child);
-      });
-      if (namedBins == 0) {
-        emitError(getSemanticLocation(op))
-            << "coverpoints require explicit named bins; automatic bins are "
-               "not supported";
-        invalid = true;
-      }
-      FailureOr<Type> type = getNormalizedSemanticType(coverpoint);
-      Type scalar = succeeded(type) ? sim::getPackedScalarType(*type) : Type{};
-      if (!scalar || !isa<IntegerType, sim::LogicType>(scalar)) {
-        emitError(getSemanticLocation(op))
-            << "coverpoint expressions must have a two-state or four-state "
-               "integral type";
-        invalid = true;
-      }
-    } else if (auto bin = dyn_cast<semantic::SVCoverageBinSymbolOp>(op)) {
-      if (bin.getBinsKind() != semantic::SVCoverageBinKind::Bins) {
-        emitError(getSemanticLocation(op))
-            << (bin.getBinsKind() == semantic::SVCoverageBinKind::IgnoreBins
-                    ? "ignore_bins are not supported"
-                    : "illegal_bins are not supported");
-        invalid = true;
-      }
-      if (bin.getIsArray() || bin.getHasNumberOfBins()) {
-        emitError(getSemanticLocation(op))
-            << "coverage bin arrays and automatic bin counts are not "
-               "supported";
-        invalid = true;
-      }
-      if (bin.getIsWildcard()) {
-        emitError(getSemanticLocation(op))
-            << "wildcard coverage bins are not supported";
-        invalid = true;
-      }
-      if (bin.getHasIff()) {
-        emitError(getSemanticLocation(op)) << "bin-level iff is not supported";
-        invalid = true;
-      }
-      if (bin.getTransitionSetCount() != 0 || bin.getIsDefaultSequence()) {
-        emitError(getSemanticLocation(op))
-            << "transition coverage bins are not supported";
-        invalid = true;
-      }
-      if (bin.getHasSetCoverage() || bin.getHasWith()) {
-        emitError(getSemanticLocation(op))
-            << "coverage bin with/select expressions are not supported";
-        invalid = true;
-      }
-      if (!bin.getIsDefault())
-        for (Operation *value : getChildren(bin)) {
-          if (auto range =
-                  dyn_cast<semantic::SVValueRangeExpressionOp>(value)) {
-            if (!llvm::all_of(getChildren(range), isCoverageConstant)) {
-              emitError(getSemanticLocation(value))
-                  << "coverage bin range bounds must be elaboration-time "
-                     "constants";
-              invalid = true;
-            }
-          } else if (!isCoverageConstant(value)) {
-            emitError(getSemanticLocation(value))
-                << "coverage bin values must be elaboration-time constants";
-            invalid = true;
-          }
-        }
-    } else if (isa<semantic::SVCoverCrossSymbolOp,
-                   semantic::SVCoverCrossBodySymbolOp>(op)) {
-      emitError(getSemanticLocation(op))
-          << "coverage crosses are not supported";
-      invalid = true;
-    }
-    for (NamedAttribute attr : op->getAttrs()) {
-      attr.getValue().walk([&](Type type) {
-        if (isa<semantic::ObjectType>(type)) {
-          emitError(getSemanticLocation(op))
-              << "unsupported dynamic or object type in the first simulation "
-                 "slice: "
-              << type;
-          invalid = true;
-        }
-      });
-    }
-  });
-  if (invalid) {
-    signalPassFailure();
-    return;
-  }
 
   SmallVector<Operation *> sourceUnits;
   semanticRoot->walk<WalkOrder::PreOrder>([&](Operation *op) {
@@ -810,290 +500,25 @@ void ObeliskSimPreparePass::runOnOperation() {
     signalPassFailure();
   };
 
-  SmallVector<semantic::SVCovergroupTypeOp> covergroupSources;
-  semanticRoot->walk([&](semantic::SVCovergroupTypeOp covergroup) {
-    covergroupSources.push_back(covergroup);
-  });
-  llvm::sort(covergroupSources, [](semantic::SVCovergroupTypeOp lhs,
-                                   semantic::SVCovergroupTypeOp rhs) {
-    return std::tuple(getHierarchyName(lhs), lhs.getSymName()) <
-           std::tuple(getHierarchyName(rhs), rhs.getSymName());
-  });
-  for (auto [index, covergroup] : llvm::enumerate(covergroupSources)) {
-    auto handle =
-        dyn_cast<semantic::CovergroupHandleType>(covergroup.getSemanticType());
-    if (!handle) {
-      emitError(getSemanticLocation(covergroup))
-          << "covergroup declaration has no handle type";
-      invalid = true;
-      continue;
-    }
-    SmallVector<int64_t> coverpointBins;
-    for (Operation *child : getChildren(covergroup)) {
-      auto body = dyn_cast<semantic::SVCovergroupBodySymbolOp>(child);
-      if (!body)
-        continue;
-      for (Operation *member : getChildren(body)) {
-        if (auto coverpoint =
-                dyn_cast<semantic::SVCoverpointSymbolOp>(member)) {
-          int64_t bins =
-              llvm::count_if(getChildren(coverpoint), [](Operation *candidate) {
-                return isa<semantic::SVCoverageBinSymbolOp>(candidate);
-              });
-          coverpointBins.push_back(bins);
-        }
-      }
-    }
-    if (coverpointBins.empty()) {
-      emitError(getSemanticLocation(covergroup))
-          << "covergroup requires at least one coverpoint";
-      invalid = true;
-      continue;
-    }
-    StringAttr symbol =
-        getSimulationCovergroupSymbol(handle.getCovergroupName());
-    auto declaration = sim::SimCovergroupDeclOp::create(
-        builder, getSemanticLocation(covergroup), symbol, index + 1,
-        builder.getDenseI64ArrayAttr(coverpointBins),
-        builder.getStringAttr(getDebugName(covergroup)));
-    SymbolTable::setSymbolVisibility(declaration,
-                                     SymbolTable::Visibility::Public);
-  }
-  if (invalid) {
+  if (failed(materializeCovergroupDeclarations(semanticRoot, builder))) {
     abort();
     return;
   }
 
-  // Freeze the complete elaborated class inventory before units become
-  // isolated. Class symbols are already globally unique node-prefixed names,
-  // so preserving them also keeps every ClassHandleType reference valid.
-  SmallVector<semantic::SVClassTypeOp> classSources;
-  semanticRoot->walk([&](semantic::SVClassTypeOp classType) {
-    if (!classType.getIsUninstantiated())
-      classSources.push_back(classType);
-  });
-  // The IEEE weak_reference specializations live in the standard package,
-  // outside the elaborated source root, but their handles can occur in source
-  // storage and function signatures. Retain exactly the referenced built-in
-  // class family in the executable class inventory; its operations lower to
-  // dedicated weak-reference intrinsics below.
-  module.walk([&](semantic::SVClassTypeOp classType) {
-    if (!classType.getIsUninstantiated() && isWeakReferenceClass(classType) &&
-        !llvm::is_contained(classSources, classType))
-      classSources.push_back(classType);
-  });
-  llvm::sort(classSources,
-             [](semantic::SVClassTypeOp lhs, semantic::SVClassTypeOp rhs) {
-               return std::tuple(getHierarchyName(lhs), lhs.getSymName()) <
-                      std::tuple(getHierarchyName(rhs), rhs.getSymName());
-             });
-  llvm::DenseMap<Operation *, uint64_t> classIDs;
-  for (auto [index, classType] : llvm::enumerate(classSources))
-    classIDs[classType] = index + 1;
-  llvm::DenseMap<Operation *, StringAttr> classSymbols;
-  llvm::DenseMap<Operation *, FlatSymbolRefAttr> classFieldSymbols;
-  llvm::DenseMap<Operation *, FlatSymbolRefAttr> classMethodSymbols;
-  llvm::DenseMap<Operation *, FlatSymbolRefAttr> implicitConstructorSymbols;
-  llvm::DenseMap<Operation *, uint64_t> virtualMethodSlots;
-  llvm::DenseMap<Operation *, uint64_t> virtualMethodSignatures;
-  llvm::StringMap<semantic::SVClassTypeOp> semanticClasses;
-  for (semantic::SVClassTypeOp classType : classSources) {
-    auto handle = cast<semantic::ClassHandleType>(classType.getSemanticType());
-    semanticClasses[handle.getClassName().getLeafReference()] = classType;
-  }
-
-  auto classReference = [&](Type type) -> FlatSymbolRefAttr {
-    auto handle = dyn_cast<semantic::ClassHandleType>(type);
-    return handle ? FlatSymbolRefAttr::get(
-                        getSimulationClassSymbol(handle.getClassName()))
-                  : FlatSymbolRefAttr{};
-  };
-  for (semantic::SVClassTypeOp classType : classSources) {
-    FlatSymbolRefAttr base;
-    if (std::optional<Type> baseType = classType.getBaseClass()) {
-      base = classReference(*baseType);
-      if (!base) {
-        emitError(getSemanticLocation(classType))
-            << "class base is not a class handle";
-        invalid = true;
-      }
-    }
-    SmallVector<Attribute> interfaces;
-    for (Attribute attribute : classType.getImplementedInterfaces()) {
-      auto type = dyn_cast<TypeAttr>(attribute);
-      FlatSymbolRefAttr interface =
-          type ? classReference(type.getValue()) : FlatSymbolRefAttr{};
-      if (!interface) {
-        emitError(getSemanticLocation(classType))
-            << "implemented interface is not a class handle";
-        invalid = true;
-        continue;
-      }
-      interfaces.push_back(interface);
-    }
-    auto semanticClassType =
-        cast<semantic::ClassHandleType>(classType.getSemanticType());
-    StringAttr classSymbol =
-        getSimulationClassSymbol(semanticClassType.getClassName());
-    classSymbols[classType] = classSymbol;
-    FlatSymbolRefAttr weakReferent;
-    if (isWeakReferenceClass(classType))
-      for (Operation *child : getChildren(classType))
-        if (auto parameter =
-                dyn_cast<semantic::SVTypeParameterSymbolOp>(child)) {
-          if (auto type = parameter->getAttrOfType<TypeAttr>("semantic_type"))
-            weakReferent = classReference(type.getValue());
-          break;
-        }
-    auto declaration = sim::SimClassDeclOp::create(
-        builder, getSemanticLocation(classType), classSymbol,
-        classIDs.lookup(classType), base,
-        interfaces.empty() ? ArrayAttr{} : builder.getArrayAttr(interfaces),
-        weakReferent, classType.getIsAbstract() || classType.getIsInterface(),
-        classType.getIsInterface(), classType.getIsFinal(),
-        builder.getStringAttr(getDebugName(classType)));
-    // Class inventory is part of the executable ABI. Keep descriptors even
-    // when the only current reference is embedded in a type; SymbolDCE does
-    // not treat type parameters as symbol uses.
-    SymbolTable::setSymbolVisibility(declaration,
-                                     SymbolTable::Visibility::Public);
-    bool hasExplicitConstructor =
-        llvm::any_of(getChildren(classType), [](Operation *child) {
-          semantic::SVSubroutineSymbolOp method = getClassMethod(child);
-          return method && method.getIsConstructor().value_or(false);
-        });
-    if (!hasExplicitConstructor && !classType.getIsInterface()) {
-      FlatSymbolRefAttr constructor = FlatSymbolRefAttr::get(
-          context, (classSymbol.getValue() + "_implicit_new").str());
-      implicitConstructorSymbols[classType] = constructor;
-      declaration->setAttr("obelisk_sim.implicit_constructor",
-                           builder.getStringAttr(constructor.getValue()));
-    }
-
-    uint64_t ordinal = 0;
-    for (Operation *child : getChildren(classType)) {
-      auto property = dyn_cast<semantic::SVClassPropertySymbolOp>(child);
-      if (!property)
-        continue;
-      FailureOr<Type> type = getNormalizedSemanticType(property);
-      if (failed(type)) {
-        invalid = true;
-        continue;
-      }
-      bool isStatic =
-          property.getLifetime() == semantic::SVVariableLifetime::Static;
-      std::string fieldName =
-          (classSymbol.getValue() + "_field_" + llvm::Twine(ordinal)).str();
-      FlatSymbolRefAttr fieldSymbol =
-          FlatSymbolRefAttr::get(context, fieldName);
-      classFieldSymbols[property] = fieldSymbol;
-      sim::SimClassFieldDeclOp::create(
-          builder, getSemanticLocation(property), fieldName, classSymbol, *type,
-          ordinal++, IntegerAttr{}, isStatic,
-          /*isWeak=*/false, builder.getStringAttr(getDebugName(property)));
-    }
-    // Every inheritance tree owns exactly one inline PCG stream. Derived
-    // instances inherit these two ordinary, GC-invisible i64 fields from the
-    // root class.
-    if (!base && !classType.getIsInterface()) {
-      auto addRandomField = [&](StringRef suffix, StringRef debugName) {
-        std::string name = (classSymbol.getValue() + "_field_" + suffix).str();
-        FlatSymbolRefAttr symbol = FlatSymbolRefAttr::get(context, name);
-        sim::SimClassFieldDeclOp::create(
-            builder, getSemanticLocation(classType), name, classSymbol,
-            builder.getI64Type(), ordinal++, IntegerAttr{},
-            /*isStatic=*/false, /*isWeak=*/false,
-            builder.getStringAttr(debugName));
-        return symbol;
-      };
-      declaration->setAttr(
-          "obelisk_sim.random_state_field",
-          addRandomField("__obelisk_rng_state", "__obelisk_rng_state"));
-      declaration->setAttr(
-          "obelisk_sim.random_increment_field",
-          addRandomField("__obelisk_rng_increment", "__obelisk_rng_increment"));
-    }
-  }
-  llvm::DenseMap<Operation *, uint64_t> classVirtualCounts;
-  llvm::SmallPtrSet<Operation *, 8> assigningClasses;
-  std::function<LogicalResult(semantic::SVClassTypeOp)> assignVirtualSlots =
-      [&](semantic::SVClassTypeOp classType) -> LogicalResult {
-    if (classVirtualCounts.count(classType))
-      return success();
-    if (!assigningClasses.insert(classType).second)
-      return classType.emitError("class inheritance contains a cycle");
-    uint64_t nextSlot = 0;
-    if (std::optional<Type> baseType = classType.getBaseClass()) {
-      auto baseHandle = dyn_cast<semantic::ClassHandleType>(*baseType);
-      auto base = baseHandle ? semanticClasses.find(
-                                   baseHandle.getClassName().getLeafReference())
-                             : semanticClasses.end();
-      if (base == semanticClasses.end() ||
-          failed(assignVirtualSlots(base->second)))
-        return failure();
-      nextSlot = classVirtualCounts.lookup(base->second);
-    }
-    uint64_t methodOrdinal = 0;
-    for (Operation *child : getChildren(classType)) {
-      auto method = getClassMethod(child);
-      if (!method || method.getIsBuiltin().value_or(false))
-        continue;
-      std::string methodName = (classSymbols.lookup(classType).getValue() +
-                                "_method_" + llvm::Twine(methodOrdinal++))
-                                   .str();
-      classMethodSymbols[method] = FlatSymbolRefAttr::get(context, methodName);
-      if (!method.getIsVirtual().value_or(false))
-        continue;
-      if (classType.getIsInterface()) {
-        virtualMethodSlots[method] = UINT32_MAX;
-        virtualMethodSignatures[method] = getVirtualMethodSignatureID(method);
-        continue;
-      }
-      if (std::optional<SymbolRefAttr> overridden =
-              method.getOverrideSymbol()) {
-        auto target = semanticSymbols.find(overridden->getLeafReference());
-        if (target == semanticSymbols.end() ||
-            !virtualMethodSlots.count(target->second)) {
-          method.emitError(
-              "virtual override does not resolve to an inherited slot");
-          return failure();
-        }
-        uint64_t inheritedSlot = virtualMethodSlots.lookup(target->second);
-        virtualMethodSlots[method] =
-            inheritedSlot == UINT32_MAX ? nextSlot++ : inheritedSlot;
-        virtualMethodSignatures[method] =
-            virtualMethodSignatures.lookup(target->second);
-      } else {
-        virtualMethodSlots[method] = nextSlot++;
-        virtualMethodSignatures[method] = getVirtualMethodSignatureID(method);
-      }
-      nextSlot = std::max(nextSlot, virtualMethodSlots.lookup(method) + 1);
-    }
-    assigningClasses.erase(classType);
-    classVirtualCounts[classType] = nextSlot;
-    return success();
-  };
-  for (semantic::SVClassTypeOp classType : classSources)
-    if (failed(assignVirtualSlots(classType)))
-      invalid = true;
-  {
-    SymbolTable classTable(design);
-    for (semantic::SVClassTypeOp classType : classSources) {
-      auto semanticClassType =
-          cast<semantic::ClassHandleType>(classType.getSemanticType());
-      StringAttr classSymbol =
-          getSimulationClassSymbol(semanticClassType.getClassName());
-      if (!classTable.lookup(classSymbol)) {
-        emitError(getSemanticLocation(classType))
-            << "internal error: flattened class symbol was not inserted";
-        invalid = true;
-      }
-    }
-  }
-  if (invalid) {
+  FailureOr<PreparedClassDeclarations> classes = materializeClassDeclarations(
+      module, design, semanticRoot, builder, semanticSymbols);
+  if (failed(classes)) {
     abort();
     return;
   }
+  auto &classSources = classes->sources;
+  auto &classSymbols = classes->symbols;
+  auto &classFieldSymbols = classes->fieldSymbols;
+  auto &classMethodSymbols = classes->methodSymbols;
+  auto &implicitConstructorSymbols = classes->implicitConstructorSymbols;
+  auto &virtualMethodSlots = classes->virtualMethodSlots;
+  auto &virtualMethodSignatures = classes->virtualMethodSignatures;
+  auto &semanticClasses = classes->semanticClasses;
 
   llvm::DenseMap<Operation *, uint64_t> scopeIds;
   SmallVector<sim::SimScopeDeclOp> scopeDeclarations;
@@ -2152,7 +1577,7 @@ void ObeliskSimPreparePass::runOnOperation() {
       continue;
     }
     std::string codeUnitHierarchy = getCodeUnitHierarchy(source);
-    uint64_t id = getStableCodeUnitID(codeUnitHierarchy);
+    uint64_t id = stableCodeUnitID(codeUnitHierarchy);
     auto [collision, inserted] = codeUnitIDs.try_emplace(id, source);
     if (!inserted) {
       emitError(getSemanticLocation(source))
@@ -2258,7 +1683,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     std::string hierarchy = (Twine(candidate.parentHierarchy) + ".$observer." +
                              Twine(ordinal) + "." + candidate.label)
                                 .str();
-    uint64_t id = getStableCodeUnitID(hierarchy);
+    uint64_t id = stableCodeUnitID(hierarchy);
     auto [collision, inserted] =
         codeUnitIDs.try_emplace(id, candidate.expression);
     if (!inserted) {
@@ -2287,7 +1712,7 @@ void ObeliskSimPreparePass::runOnOperation() {
   if (invalid)
     return abort();
 
-  uint64_t rootCodeUnitID = getStableCodeUnitID("__obelisk_root");
+  uint64_t rootCodeUnitID = stableCodeUnitID("__obelisk_root");
   if (auto collision = codeUnitIDs.find(rootCodeUnitID);
       collision != codeUnitIDs.end()) {
     emitError(getSemanticLocation(collision->second))
@@ -2317,7 +1742,7 @@ void ObeliskSimPreparePass::runOnOperation() {
             (Twine(parentHierarchy) + ".$fork." +
              Twine(nodeID.getValue().getZExtValue()) + "." + Twine(index))
                 .str();
-        uint64_t id = getStableCodeUnitID(hierarchy);
+        uint64_t id = stableCodeUnitID(hierarchy);
         auto [collision, inserted] = codeUnitIDs.try_emplace(id, branch);
         if (!inserted) {
           emitError(getSemanticLocation(branch))
@@ -3611,7 +3036,7 @@ void ObeliskSimPreparePass::runOnOperation() {
         captureMetadata(builder, sim::CaptureKind::Formal)};
     std::string hierarchy =
         (getHierarchyName(classType) + Twine("::new")).str();
-    uint64_t codeUnitID = getStableCodeUnitID(hierarchy);
+    uint64_t codeUnitID = stableCodeUnitID(hierarchy);
     sim::SimCodeUnitDeclOp::create(
         builder, getSemanticLocation(classType), codeUnitID, uint64_t{0},
         sim::EntryKind::Function, builder.getStringAttr(hierarchy),

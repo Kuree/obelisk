@@ -26,6 +26,8 @@ add_mlir_library(ObeliskToSimulation
   MaterializeComputeFusion.cpp
   PlanStaticSuperstep.cpp
   Prepare.cpp
+  PrepareDeclarations.cpp
+  PrepareValidation.cpp
   SCCP.cpp
   SemanticUtils.cpp
   SpecializeStaticStateNBA.cpp
