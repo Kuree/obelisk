@@ -3,6 +3,7 @@
 #include "Detail.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 
 #include "llvm/ADT/DenseSet.h"
@@ -10,6 +11,7 @@
 
 #include <cctype>
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <string>
 
@@ -64,6 +66,140 @@ SmallVector<Operation *> getChildren(Operation *op) {
     for (Operation &child : op->getRegion(0).front())
       children.push_back(&child);
   return children;
+}
+
+std::optional<StringRef> getConstantSpelling(Operation *operation) {
+  if (auto literal = dyn_cast<semantic::SVIntegerLiteralOp>(operation))
+    return literal.getConstantValue();
+  if (auto literal =
+          dyn_cast<semantic::SVUnbasedUnsizedIntegerLiteralOp>(operation))
+    return literal.getConstantValue();
+  if (auto constant =
+          operation->getAttrOfType<StringAttr>("obelisk_sim.constant_value"))
+    return constant.getValue();
+  return std::nullopt;
+}
+
+Attribute foldConstantValue(Value value) {
+  llvm::DenseMap<Value, Attribute> constants;
+  llvm::DenseSet<Value> active;
+  std::function<Attribute(Value)> foldValue = [&](Value current) -> Attribute {
+    if (auto found = constants.find(current); found != constants.end())
+      return found->second;
+    if (!active.insert(current).second)
+      return {};
+
+    auto finish = [&](Attribute result) {
+      active.erase(current);
+      if (result)
+        constants.try_emplace(current, result);
+      return result;
+    };
+
+    Attribute direct;
+    if (matchPattern(current, m_Constant(&direct)))
+      return finish(direct);
+
+    auto result = dyn_cast<OpResult>(current);
+    if (!result)
+      return finish({});
+    Operation *producer = result.getOwner();
+    SmallVector<Attribute> operands;
+    operands.reserve(producer->getNumOperands());
+    for (Value operand : producer->getOperands()) {
+      Attribute constant = foldValue(operand);
+      if (!constant)
+        return finish({});
+      operands.push_back(constant);
+    }
+
+    SmallVector<OpFoldResult> folded;
+    if (failed(producer->fold(operands, folded)) ||
+        folded.size() != producer->getNumResults())
+      return finish({});
+    OpFoldResult replacement = folded[result.getResultNumber()];
+    if (!replacement)
+      return finish({});
+    if (auto attribute = dyn_cast<Attribute>(replacement))
+      return finish(attribute);
+    Value replacementValue = cast<Value>(replacement);
+    if (replacementValue == current)
+      return finish({});
+    return finish(foldValue(replacementValue));
+  };
+  return foldValue(value);
+}
+
+std::optional<bool> foldConstantTruth(Value value) {
+  auto integer = dyn_cast_or_null<IntegerAttr>(foldConstantValue(value));
+  if (!integer)
+    return std::nullopt;
+  return !integer.getValue().isZero();
+}
+
+bool isAddressableExpression(Operation *operation) {
+  if (isa<semantic::SVNamedValueExpressionOp,
+          semantic::SVHierarchicalValueExpressionOp>(operation))
+    return true;
+  if (isa<semantic::SVMemberAccessExpressionOp>(operation)) {
+    SmallVector<Operation *> children = getChildren(operation);
+    return !children.empty() && isAddressableExpression(children.front());
+  }
+  if (!isa<semantic::SVElementSelectExpressionOp,
+           semantic::SVRangeSelectExpressionOp>(operation))
+    return false;
+  SmallVector<Operation *> children = getChildren(operation);
+  size_t expected =
+      isa<semantic::SVElementSelectExpressionOp>(operation) ? 2u : 3u;
+  if (children.size() != expected || !isAddressableExpression(children.front()))
+    return false;
+  return llvm::all_of(
+      ArrayRef<Operation *>(children).drop_front(),
+      [](Operation *index) { return getConstantSpelling(index).has_value(); });
+}
+
+bool isUnboundedEndpoint(Operation *operation) {
+  while (isa<semantic::SVConversionExpressionOp>(operation)) {
+    SmallVector<Operation *> children = getChildren(operation);
+    if (children.size() != 1)
+      return false;
+    operation = children.front();
+  }
+  return isa<semantic::SVUnboundedLiteralOp>(operation);
+}
+
+uint64_t stableCodeUnitID(StringRef key) {
+  uint64_t hash = UINT64_C(14695981039346656037);
+  for (uint8_t byte : key.bytes()) {
+    hash ^= byte;
+    hash *= UINT64_C(1099511628211);
+  }
+  hash &= static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
+  return hash == 0 ? 1 : hash;
+}
+
+bool isStaticallyAllocatedOverrideTarget(Value value) {
+  while (value) {
+    if (auto extract = value.getDefiningOp<sim::SimRefExtractOp>()) {
+      value = extract.getInput();
+      continue;
+    }
+    if (auto extract = value.getDefiningOp<sim::SimNetExtractOp>()) {
+      value = extract.getInput();
+      continue;
+    }
+    if (value.getDefiningOp<sim::SimRefAllocOp>())
+      return false;
+    if (auto argument = dyn_cast<BlockArgument>(value)) {
+      auto function =
+          dyn_cast_or_null<sim::SimFuncOp>(argument.getOwner()->getParentOp());
+      return function &&
+             !function.getArgAttr(argument.getArgNumber(),
+                                  "obelisk_sim.automatic_reference_capture");
+    }
+    return true;
+  }
+  return false;
 }
 
 static std::optional<uint64_t> getRangeExtent(int64_t left, int64_t right) {
@@ -512,15 +648,15 @@ static FailureOr<Type> normalizeType(Type type, Location location,
                                             /*allowRealScalar=*/true);
     if (failed(key) || failed(element))
       return failure();
-    return sim::AssocArrayType::get(
-        context, *key, *element,
-        isSignedSemanticType(array.getKeyType()), array.getWildcardIndex());
+    return sim::AssocArrayType::get(context, *key, *element,
+                                    isSignedSemanticType(array.getKeyType()),
+                                    array.getWildcardIndex());
   }
   if (auto aggregate = dyn_cast<semantic::SourceAggregateType>(type)) {
-    FailureOr<ArrayAttr> fields = normalizeSourceFields(
-        aggregate.getFields(), location,
-        aggregate.getIsUnion() && aggregate.getIsTagged(),
-        !aggregate.getIsPacked());
+    FailureOr<ArrayAttr> fields =
+        normalizeSourceFields(aggregate.getFields(), location,
+                              aggregate.getIsUnion() && aggregate.getIsTagged(),
+                              !aggregate.getIsPacked());
     if (failed(fields))
       return failure();
     if (aggregate.getIsPacked() && aggregate.getIsUnion())
@@ -582,8 +718,7 @@ static FailureOr<Type> normalizeType(Type type, Location location,
   }
   if (isa<semantic::ShortRealType>(type)) {
     if (!allowRealScalar) {
-      emitError(location)
-          << "shortreal is not permitted in this packed type";
+      emitError(location) << "shortreal is not permitted in this packed type";
       return failure();
     }
     return Float32Type::get(context);
@@ -592,11 +727,9 @@ static FailureOr<Type> normalizeType(Type type, Location location,
     return sim::EventType::get(context);
   if (auto covergroup = dyn_cast<semantic::CovergroupHandleType>(type))
     return sim::CovergroupHandleType::get(
-        context, SymbolRefAttr::get(
-                     context,
-                     getSimulationCovergroupSymbol(
-                         covergroup.getCovergroupName())
-                         .getValue()));
+        context, SymbolRefAttr::get(context, getSimulationCovergroupSymbol(
+                                                 covergroup.getCovergroupName())
+                                                 .getValue()));
   if (isa<semantic::StringType>(type))
     return sim::StringType::get(context);
   if (type.isF64() || type.isF32())
@@ -642,9 +775,9 @@ namespace obelisk {
 FailureOr<DPIABIType> classifyDPIABIType(Type type, Location location) {
   using namespace simlowering;
   namespace semantic = ::obelisk::ir;
-  if (isa<semantic::DynArrayType, semantic::QueueType,
-          semantic::AssocArrayType, semantic::OpenArrayType,
-          sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(type)) {
+  if (isa<semantic::DynArrayType, semantic::QueueType, semantic::AssocArrayType,
+          semantic::OpenArrayType, sim::DynamicArrayType, sim::QueueType,
+          sim::AssocArrayType>(type)) {
     emitError(location)
         << "DPI-C dynamic-array, queue, and associative-array marshalling is "
            "unsupported";

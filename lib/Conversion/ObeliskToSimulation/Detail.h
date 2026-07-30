@@ -138,6 +138,31 @@ bool isCodeUnit(::mlir::Operation *op);
 /// Operations in the first block of an AST node's inventory region.
 ::mlir::SmallVector<::mlir::Operation *> getChildren(::mlir::Operation *op);
 
+/// Literal spelling of an integer node, including constants frozen by the
+/// prepare pass after their defining symbol is no longer in scope.
+std::optional<::mlir::StringRef>
+getConstantSpelling(::mlir::Operation *operation);
+
+/// Fold a pure, already-lowered SSA chain without rewriting its surrounding
+/// CFG. This also follows constants frozen from elaborated parameters.
+::mlir::Attribute foldConstantValue(::mlir::Value value);
+std::optional<bool> foldConstantTruth(::mlir::Value value);
+
+/// Whether an expression denotes stable storage that the scheduler can watch
+/// directly, without a computed observer.
+bool isAddressableExpression(::mlir::Operation *operation);
+
+/// Whether a semantic endpoint is the unbounded `$` literal, ignoring
+/// source-level conversion wrappers.
+bool isUnboundedEndpoint(::mlir::Operation *operation);
+
+/// Deterministic nonzero identifier for an outlined semantic code unit.
+uint64_t stableCodeUnitID(::mlir::StringRef key);
+
+/// Whether overriding a captured reference mutates design/static storage
+/// rather than activation-local automatic storage.
+bool isStaticallyAllocatedOverrideTarget(::mlir::Value value);
+
 /// Whether a packed semantic type is signed.
 bool isSignedSemanticType(::mlir::Type type);
 

@@ -8,6 +8,16 @@ add_mlir_library(ObeliskToSimulation
   FuseComputeFragments.cpp
   Inline.cpp
   LowerUnit.cpp
+  LowerUnitCalls.cpp
+  LowerUnitConditionals.cpp
+  LowerUnitContainers.cpp
+  LowerUnitControlFlow.cpp
+  LowerUnitCovergroups.cpp
+  LowerUnitExpressions.cpp
+  LowerUnitLValues.cpp
+  LowerUnitOperators.cpp
+  LowerUnitSystemCalls.cpp
+  LowerUnitTiming.cpp
   MaterializeComputeFusion.cpp
   PlanStaticSuperstep.cpp
   Prepare.cpp
