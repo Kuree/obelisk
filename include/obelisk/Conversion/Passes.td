@@ -48,6 +48,16 @@ def ObeliskSimThreadSuspensionPass
   ];
 }
 
+def ObeliskSimThreadProcessCFGPass
+    : Pass<"obelisk-sim-thread-process-cfg", "obelisk::sim::SimFuncOp"> {
+  let summary = "Make process state explicit on every CFG edge";
+  let description = [{
+    Threads non-capture SSA values through block arguments to make process
+    continuation state explicit, and rematerializes constant continuation
+    operands instead of storing them in the canonical process frame.
+  }];
+}
+
 def ObeliskSimSCCPPass
     : Pass<"obelisk-sim-sccp", "obelisk::sim::SimDesignOp"> {
   let summary = "Propagate constants across simulation code-unit boundaries";

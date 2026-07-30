@@ -29,6 +29,10 @@ namespace obelisk {
 class SimulationProcessFrameAnalysis;
 }
 
+namespace obelisk::sim {
+class SimFuncOp;
+}
+
 namespace obelisk::detail {
 
 inline constexpr llvm::StringLiteral nativeTwoStateBlockUnknownsAttr =
@@ -109,6 +113,8 @@ mlir::LogicalResult
 lowerNativeFunctionBody(mlir::Operation *root,
                         NativeReturnLowering returnLowering,
                         NativeCallResultLowering callResultLowering);
+mlir::LogicalResult
+threadProcessStateThroughCFG(obelisk::sim::SimFuncOp function);
 mlir::LogicalResult materializeDPIThunks(mlir::ModuleOp module);
 void populateManagedToLLVMConversionPatterns(mlir::RewritePatternSet &patterns,
                                              mlir::TypeConverter &converter,

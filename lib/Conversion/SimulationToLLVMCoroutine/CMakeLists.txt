@@ -9,6 +9,7 @@ add_mlir_library(ObeliskSimulationToLLVMCoroutine
   SimulationManagedPreparation.cpp
   SimulationObserverLowering.cpp
   SimulationProcessDescriptorLowering.cpp
+  SimulationProcessCFGThreading.cpp
   SimulationSuspensionTypeLowering.cpp
   SimulationToLLVMCoroutine.cpp
   SimulationToLLVMCoroutineUtils.cpp
