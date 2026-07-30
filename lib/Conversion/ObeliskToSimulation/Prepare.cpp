@@ -520,79 +520,15 @@ void ObeliskSimPreparePass::runOnOperation() {
   auto &virtualMethodSignatures = classes->virtualMethodSignatures;
   auto &semanticClasses = classes->semanticClasses;
 
-  llvm::DenseMap<Operation *, uint64_t> scopeIds;
-  SmallVector<sim::SimScopeDeclOp> scopeDeclarations;
-  uint64_t nextScopeId = 0;
-  scopeIds[semanticRoot] = nextScopeId;
-  scopeDeclarations.push_back(sim::SimScopeDeclOp::create(
-      builder, getSemanticLocation(semanticRoot), nextScopeId++, IntegerAttr{},
-      builder.getStringAttr(getHierarchyName(semanticRoot)),
-      builder.getStringAttr(getDebugName(semanticRoot))));
-  semanticRoot->walk<WalkOrder::PreOrder>(
-      [&](semantic::SVInstanceBodySymbolOp body) {
-        Operation *parent = body->getParentOp();
-        while (parent && !scopeIds.count(parent))
-          parent = parent->getParentOp();
-        uint64_t parentId = parent ? scopeIds.lookup(parent) : 0;
-        uint64_t id = nextScopeId++;
-        scopeIds[body] = id;
-        scopeDeclarations.push_back(sim::SimScopeDeclOp::create(
-            builder, getSemanticLocation(body), id,
-            builder.getI64IntegerAttr(parentId),
-            builder.getStringAttr(getHierarchyName(body)),
-            builder.getStringAttr(getDebugName(body))));
-      });
-
-  auto getScopeId = [&](Operation *op) {
-    for (Operation *cursor = op; cursor; cursor = cursor->getParentOp())
-      if (auto found = scopeIds.find(cursor); found != scopeIds.end())
-        return found->second;
-    return uint64_t{0};
-  };
-  for (Operation *unit : sourceUnits) {
-    uint64_t scopeID = getScopeId(unit);
-    if (scopeID >= scopeDeclarations.size())
-      continue;
-    uint64_t unitFs = 1'000'000;
-    uint64_t precisionFs = 1'000'000;
-    if (auto attr = unit->getAttrOfType<IntegerAttr>("time_unit_fs"))
-      unitFs = attr.getValue().getZExtValue();
-    if (auto attr = unit->getAttrOfType<IntegerAttr>("time_precision_fs"))
-      precisionFs = attr.getValue().getZExtValue();
-    sim::SimScopeDeclOp declaration = scopeDeclarations[scopeID];
-    if (auto existing =
-            declaration->getAttrOfType<IntegerAttr>("dpi_unit_femtoseconds");
-        existing && existing.getValue().getZExtValue() != unitFs) {
-      emitError(getSemanticLocation(unit))
-          << "DPI declaration scope has inconsistent time units";
-      invalid = true;
-      continue;
-    }
-    if (auto existing = declaration->getAttrOfType<IntegerAttr>(
-            "dpi_precision_femtoseconds");
-        existing && existing.getValue().getZExtValue() != precisionFs) {
-      emitError(getSemanticLocation(unit))
-          << "DPI declaration scope has inconsistent time precisions";
-      invalid = true;
-      continue;
-    }
-    declaration->setAttr("dpi_unit_femtoseconds",
-                         builder.getI64IntegerAttr(unitFs));
-    declaration->setAttr("dpi_precision_femtoseconds",
-                         builder.getI64IntegerAttr(precisionFs));
-  }
-  for (sim::SimScopeDeclOp declaration : scopeDeclarations) {
-    if (!declaration->hasAttr("dpi_unit_femtoseconds"))
-      declaration->setAttr("dpi_unit_femtoseconds",
-                           builder.getI64IntegerAttr(designPrecisionFs));
-    if (!declaration->hasAttr("dpi_precision_femtoseconds"))
-      declaration->setAttr("dpi_precision_femtoseconds",
-                           builder.getI64IntegerAttr(designPrecisionFs));
-  }
-  if (invalid) {
+  FailureOr<PreparedScopeDeclarations> scopes = materializeScopeDeclarations(
+      semanticRoot, sourceUnits, designPrecisionFs, builder);
+  if (failed(scopes)) {
     abort();
     return;
   }
+  auto getScopeId = [&](Operation *operation) {
+    return scopes->lookup(operation);
+  };
 
   // `ref` is the only variable-port association that aliases storage. Every
   // value port is frozen below either as static net topology or as an explicit

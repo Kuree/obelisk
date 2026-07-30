@@ -32,6 +32,13 @@ struct PreparedClassDeclarations {
   llvm::StringMap<ir::SVClassTypeOp> semanticClasses;
 };
 
+struct PreparedScopeDeclarations {
+  llvm::DenseMap<mlir::Operation *, uint64_t> ids;
+  mlir::SmallVector<sim::SimScopeDeclOp> declarations;
+
+  uint64_t lookup(mlir::Operation *operation) const;
+};
+
 /// Return the executable method behind either a direct method or prototype.
 ir::SVSubroutineSymbolOp getClassMethod(mlir::Operation *member);
 
@@ -45,6 +52,11 @@ mlir::FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
     mlir::ModuleOp module, sim::SimDesignOp design,
     ir::SVRootSymbolOp semanticRoot, mlir::OpBuilder &builder,
     const llvm::StringMap<mlir::Operation *> &semanticSymbols);
+
+/// Materialize hierarchical scopes and their DPI time-scale metadata.
+mlir::FailureOr<PreparedScopeDeclarations> materializeScopeDeclarations(
+    ir::SVRootSymbolOp semanticRoot, mlir::ArrayRef<mlir::Operation *> units,
+    uint64_t designPrecisionFemtoseconds, mlir::OpBuilder &builder);
 
 } // namespace obelisk::simlowering
 

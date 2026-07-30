@@ -337,4 +337,85 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
   return result;
 }
 
+uint64_t
+PreparedScopeDeclarations::lookup(Operation *operation) const {
+  for (Operation *cursor = operation; cursor; cursor = cursor->getParentOp())
+    if (auto found = ids.find(cursor); found != ids.end())
+      return found->second;
+  return 0;
+}
+
+FailureOr<PreparedScopeDeclarations> materializeScopeDeclarations(
+    semantic::SVRootSymbolOp semanticRoot, ArrayRef<Operation *> units,
+    uint64_t designPrecisionFemtoseconds, OpBuilder &builder) {
+  PreparedScopeDeclarations result;
+  uint64_t nextScopeId = 0;
+  result.ids[semanticRoot] = nextScopeId;
+  result.declarations.push_back(sim::SimScopeDeclOp::create(
+      builder, getSemanticLocation(semanticRoot), nextScopeId++, IntegerAttr{},
+      builder.getStringAttr(getHierarchyName(semanticRoot)),
+      builder.getStringAttr(getDebugName(semanticRoot))));
+  semanticRoot->walk<WalkOrder::PreOrder>(
+      [&](semantic::SVInstanceBodySymbolOp body) {
+        Operation *parent = body->getParentOp();
+        while (parent && !result.ids.count(parent))
+          parent = parent->getParentOp();
+        uint64_t parentId = parent ? result.ids.lookup(parent) : 0;
+        uint64_t id = nextScopeId++;
+        result.ids[body] = id;
+        result.declarations.push_back(sim::SimScopeDeclOp::create(
+            builder, getSemanticLocation(body), id,
+            builder.getI64IntegerAttr(parentId),
+            builder.getStringAttr(getHierarchyName(body)),
+            builder.getStringAttr(getDebugName(body))));
+      });
+
+  bool invalid = false;
+  for (Operation *unit : units) {
+    uint64_t scopeID = result.lookup(unit);
+    if (scopeID >= result.declarations.size())
+      continue;
+    uint64_t unitFs = 1'000'000;
+    uint64_t precisionFs = 1'000'000;
+    if (auto attr = unit->getAttrOfType<IntegerAttr>("time_unit_fs"))
+      unitFs = attr.getValue().getZExtValue();
+    if (auto attr = unit->getAttrOfType<IntegerAttr>("time_precision_fs"))
+      precisionFs = attr.getValue().getZExtValue();
+    sim::SimScopeDeclOp declaration = result.declarations[scopeID];
+    if (auto existing =
+            declaration->getAttrOfType<IntegerAttr>("dpi_unit_femtoseconds");
+        existing && existing.getValue().getZExtValue() != unitFs) {
+      emitError(getSemanticLocation(unit))
+          << "DPI declaration scope has inconsistent time units";
+      invalid = true;
+      continue;
+    }
+    if (auto existing = declaration->getAttrOfType<IntegerAttr>(
+            "dpi_precision_femtoseconds");
+        existing && existing.getValue().getZExtValue() != precisionFs) {
+      emitError(getSemanticLocation(unit))
+          << "DPI declaration scope has inconsistent time precisions";
+      invalid = true;
+      continue;
+    }
+    declaration->setAttr("dpi_unit_femtoseconds",
+                         builder.getI64IntegerAttr(unitFs));
+    declaration->setAttr("dpi_precision_femtoseconds",
+                         builder.getI64IntegerAttr(precisionFs));
+  }
+  for (sim::SimScopeDeclOp declaration : result.declarations) {
+    if (!declaration->hasAttr("dpi_unit_femtoseconds"))
+      declaration->setAttr(
+          "dpi_unit_femtoseconds",
+          builder.getI64IntegerAttr(designPrecisionFemtoseconds));
+    if (!declaration->hasAttr("dpi_precision_femtoseconds"))
+      declaration->setAttr(
+          "dpi_precision_femtoseconds",
+          builder.getI64IntegerAttr(designPrecisionFemtoseconds));
+  }
+  if (invalid)
+    return failure();
+  return result;
+}
+
 } // namespace obelisk::simlowering
