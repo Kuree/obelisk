@@ -1,4 +1,5 @@
 add_mlir_library(ObeliskSimulationToStandard
+  SimulationTimeLowering.cpp
   SimulationToStandard.cpp
 
   DEPENDS

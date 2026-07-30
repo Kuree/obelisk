@@ -13,6 +13,7 @@
 #include "obelisk/Conversion/SimulationRuntime.h"
 #include "obelisk/Conversion/SimulationToRuntime.h"
 #include "obelisk/Conversion/SimulationToStandard.h"
+#include "obelisk/Conversion/SimulationTimeLowering.h"
 #include "obelisk/Dialect/Runtime/RuntimeOps.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Runtime/Runtime.h"
@@ -1638,275 +1639,6 @@ void addFrameAttributes(LLVM::LLVMFuncOp ramp,
     fields.push_back(attributes.getDictionary(builder.getContext()));
   }
   ramp->setAttr("obelisk.frame.fields", builder.getArrayAttr(fields));
-}
-
-LogicalResult lowerTimeOperations(sim::SimFuncOp function) {
-  IRRewriter rewriter(function.getContext());
-  SmallVector<Operation *> operations;
-  function.walk([&](Operation *operation) {
-    if (isa<sim::SimTimeConstantOp, sim::SimTimeAddOp, sim::SimTimeScaleOp,
-            sim::SimTimeToRealOp, sim::SimTimeFromRealOp,
-            sim::SimRealFromIntegerOp, sim::SimRealToIntegerOp>(operation))
-      operations.push_back(operation);
-  });
-  for (Operation *operation : operations) {
-    rewriter.setInsertionPoint(operation);
-    Location location = operation->getLoc();
-    if (auto constant = dyn_cast<sim::SimTimeConstantOp>(operation)) {
-      Value value = arith::ConstantOp::create(
-          rewriter, location, rewriter.getI64Type(),
-          rewriter.getI64IntegerAttr(constant.getValue()));
-      rewriter.replaceOp(operation, value);
-      continue;
-    }
-    if (auto add = dyn_cast<sim::SimTimeAddOp>(operation)) {
-      Value value =
-          arith::AddIOp::create(rewriter, location, add.getLhs(), add.getRhs());
-      rewriter.replaceOp(operation, value);
-      continue;
-    }
-    if (auto toReal = dyn_cast<sim::SimTimeToRealOp>(operation)) {
-      Value input = arith::UIToFPOp::create(
-          rewriter, location, rewriter.getF64Type(), toReal.getInput());
-      Value scale = arith::ConstantOp::create(
-          rewriter, location, rewriter.getF64Type(),
-          rewriter.getF64FloatAttr(static_cast<double>(toReal.getScale())));
-      rewriter.replaceOp(
-          operation, arith::DivFOp::create(rewriter, location, input, scale));
-      continue;
-    }
-    if (auto fromReal = dyn_cast<sim::SimTimeFromRealOp>(operation)) {
-      double factor = static_cast<double>(fromReal.getScale()) /
-                      static_cast<double>(fromReal.getQuantum());
-      Value zero =
-          arith::ConstantOp::create(rewriter, location, rewriter.getF64Type(),
-                                    rewriter.getF64FloatAttr(0.0));
-      Value nonnegative =
-          arith::CmpFOp::create(rewriter, location, arith::CmpFPredicate::OGE,
-                                fromReal.getInput(), zero);
-      Value clamped = arith::SelectOp::create(rewriter, location, nonnegative,
-                                              fromReal.getInput(), zero);
-      Value factorValue =
-          arith::ConstantOp::create(rewriter, location, rewriter.getF64Type(),
-                                    rewriter.getF64FloatAttr(factor));
-      Value steps =
-          arith::MulFOp::create(rewriter, location, clamped, factorValue);
-      Value half =
-          arith::ConstantOp::create(rewriter, location, rewriter.getF64Type(),
-                                    rewriter.getF64FloatAttr(0.5));
-      Value rounded = arith::AddFOp::create(rewriter, location, steps, half);
-      Value upperBound =
-          arith::ConstantOp::create(rewriter, location, rewriter.getF64Type(),
-                                    rewriter.getF64FloatAttr(0x1p64));
-      Value representable = arith::CmpFOp::create(
-          rewriter, location, arith::CmpFPredicate::OLT, rounded, upperBound);
-      Value safeRounded = arith::SelectOp::create(rewriter, location,
-                                                  representable, rounded, zero);
-      Value ticks = arith::FPToUIOp::create(rewriter, location,
-                                            rewriter.getI64Type(), safeRounded);
-      uint64_t maximumSteps = UINT64_MAX / fromReal.getQuantum();
-      Value maximum = arith::ConstantOp::create(
-          rewriter, location, rewriter.getI64Type(),
-          rewriter.getIntegerAttr(rewriter.getI64Type(),
-                                  APInt(64, maximumSteps)));
-      Value exceedsMaximum = arith::CmpIOp::create(
-          rewriter, location, arith::CmpIPredicate::ugt, ticks, maximum);
-      ticks = arith::SelectOp::create(rewriter, location, representable, ticks,
-                                      maximum);
-      ticks = arith::SelectOp::create(rewriter, location, exceedsMaximum,
-                                      maximum, ticks);
-      if (fromReal.getQuantum() != 1) {
-        Value quantum = arith::ConstantOp::create(
-            rewriter, location, rewriter.getI64Type(),
-            rewriter.getI64IntegerAttr(fromReal.getQuantum()));
-        ticks = arith::MulIOp::create(rewriter, location, ticks, quantum);
-      }
-      rewriter.replaceOp(operation, ticks);
-      continue;
-    }
-    if (auto fromInteger = dyn_cast<sim::SimRealFromIntegerOp>(operation)) {
-      Value input = fromInteger.getInput();
-      if (fromInteger.getResult().getType().isF32()) {
-        Value converted =
-            fromInteger.getIsSigned()
-                ? Value(arith::SIToFPOp::create(rewriter, location,
-                                                rewriter.getF32Type(), input))
-                : Value(arith::UIToFPOp::create(rewriter, location,
-                                                rewriter.getF32Type(), input));
-        rewriter.replaceOp(operation, converted);
-        continue;
-      }
-      auto inputType = cast<IntegerType>(input.getType());
-      Value zero = arith::ConstantOp::create(
-          rewriter, location, inputType,
-          rewriter.getIntegerAttr(inputType, APInt(inputType.getWidth(), 0)));
-      Value magnitude = input;
-      Value negative;
-      if (fromInteger.getIsSigned()) {
-        negative = arith::CmpIOp::create(
-            rewriter, location, arith::CmpIPredicate::slt, input, zero);
-        Value negated = arith::SubIOp::create(rewriter, location, zero, input);
-        magnitude = arith::SelectOp::create(rewriter, location, negative,
-                                            negated, input);
-      }
-
-      bool canOverflow =
-          inputType.getWidth() > 1024 ||
-          (!fromInteger.getIsSigned() && inputType.getWidth() == 1024);
-      Value overflow;
-      if (canOverflow) {
-        APInt threshold = APInt::getBitsSet(inputType.getWidth(), 970, 1024);
-        Value thresholdValue = arith::ConstantOp::create(
-            rewriter, location, inputType,
-            rewriter.getIntegerAttr(inputType, threshold));
-        overflow =
-            arith::CmpIOp::create(rewriter, location, arith::CmpIPredicate::uge,
-                                  magnitude, thresholdValue);
-        magnitude = arith::SelectOp::create(rewriter, location, overflow, zero,
-                                            magnitude);
-      }
-
-      Value converted = arith::UIToFPOp::create(
-          rewriter, location, rewriter.getF64Type(), magnitude);
-      if (fromInteger.getIsSigned()) {
-        Value negated = arith::NegFOp::create(rewriter, location, converted);
-        converted = arith::SelectOp::create(rewriter, location, negative,
-                                            negated, converted);
-      }
-      if (canOverflow) {
-        Value infinity = arith::ConstantOp::create(
-            rewriter, location, rewriter.getF64Type(),
-            rewriter.getF64FloatAttr(std::numeric_limits<double>::infinity()));
-        if (fromInteger.getIsSigned()) {
-          Value negativeInfinity =
-              arith::NegFOp::create(rewriter, location, infinity);
-          infinity = arith::SelectOp::create(rewriter, location, negative,
-                                             negativeInfinity, infinity);
-        }
-        converted = arith::SelectOp::create(rewriter, location, overflow,
-                                            infinity, converted);
-      }
-      rewriter.replaceOp(operation, converted);
-      continue;
-    }
-    if (auto toInteger = dyn_cast<sim::SimRealToIntegerOp>(operation)) {
-      auto resultType = cast<IntegerType>(toInteger.getResult().getType());
-      Type i64 = rewriter.getI64Type();
-      auto integer = [&](Type type, uint64_t value) -> Value {
-        return arith::ConstantOp::create(
-            rewriter, location, type,
-            rewriter.getIntegerAttr(
-                type, APInt(cast<IntegerType>(type).getWidth(), value)));
-      };
-      auto compare = [&](arith::CmpIPredicate predicate, Value lhs,
-                         Value rhs) -> Value {
-        return arith::CmpIOp::create(rewriter, location, predicate, lhs, rhs);
-      };
-      auto select = [&](Value condition, Value trueValue,
-                        Value falseValue) -> Value {
-        return arith::SelectOp::create(rewriter, location, condition, trueValue,
-                                       falseValue);
-      };
-      auto convertInteger = [&](Value value, IntegerType target) -> Value {
-        auto source = cast<IntegerType>(value.getType());
-        if (source == target)
-          return value;
-        if (source.getWidth() < target.getWidth())
-          return arith::ExtUIOp::create(rewriter, location, target, value);
-        return arith::TruncIOp::create(rewriter, location, target, value);
-      };
-
-      Value encoded = arith::BitcastOp::create(rewriter, location, i64,
-                                               toInteger.getInput());
-      Value sign =
-          arith::ShRUIOp::create(rewriter, location, encoded, integer(i64, 63));
-      sign = compare(arith::CmpIPredicate::ne, sign, integer(i64, 0));
-      Value exponentBits = arith::AndIOp::create(
-          rewriter, location,
-          arith::ShRUIOp::create(rewriter, location, encoded, integer(i64, 52)),
-          integer(i64, 0x7ff));
-      Value exponent = arith::SubIOp::create(rewriter, location, exponentBits,
-                                             integer(i64, 1023));
-      Value mantissa = arith::OrIOp::create(
-          rewriter, location,
-          arith::AndIOp::create(rewriter, location, encoded,
-                                integer(i64, UINT64_C(0x000fffffffffffff))),
-          integer(i64, uint64_t{1} << 52));
-      Value finite =
-          compare(arith::CmpIPredicate::ne, exponentBits, integer(i64, 0x7ff));
-      Value exponentIsMinusOne =
-          compare(arith::CmpIPredicate::eq, exponent, integer(i64, -1));
-      Value exponentNonnegative =
-          compare(arith::CmpIPredicate::sge, exponent, integer(i64, 0));
-      Value exponentBelowMantissa =
-          compare(arith::CmpIPredicate::slt, exponent, integer(i64, 52));
-      Value small = arith::AndIOp::create(
-          rewriter, location, finite,
-          arith::AndIOp::create(rewriter, location, exponentNonnegative,
-                                exponentBelowMantissa));
-      Value smallShift =
-          arith::SubIOp::create(rewriter, location, integer(i64, 52), exponent);
-      smallShift = select(small, smallShift, integer(i64, 1));
-      Value truncated =
-          arith::ShRUIOp::create(rewriter, location, mantissa, smallShift);
-      Value roundShift = arith::SubIOp::create(rewriter, location, smallShift,
-                                               integer(i64, 1));
-      Value round = arith::AndIOp::create(
-          rewriter, location,
-          arith::ShRUIOp::create(rewriter, location, mantissa, roundShift),
-          integer(i64, 1));
-      Value smallMagnitude =
-          arith::AddIOp::create(rewriter, location, truncated, round);
-      smallMagnitude = select(exponentIsMinusOne, integer(i64, 1),
-                              select(small, smallMagnitude, integer(i64, 0)));
-      smallMagnitude = convertInteger(smallMagnitude, resultType);
-
-      Value large = arith::AndIOp::create(
-          rewriter, location, finite,
-          compare(arith::CmpIPredicate::sge, exponent, integer(i64, 52)));
-      Value largeShift =
-          arith::SubIOp::create(rewriter, location, exponent, integer(i64, 52));
-      Value shiftFits = compare(arith::CmpIPredicate::ult, largeShift,
-                                integer(i64, resultType.getWidth()));
-      Value useLarge =
-          arith::AndIOp::create(rewriter, location, large, shiftFits);
-      largeShift = select(useLarge, largeShift, integer(i64, 0));
-      Value resultMantissa = convertInteger(mantissa, resultType);
-      Value resultShift = convertInteger(largeShift, resultType);
-      Value largeMagnitude = arith::ShLIOp::create(rewriter, location,
-                                                   resultMantissa, resultShift);
-      Value resultZero = integer(resultType, 0);
-      largeMagnitude = select(useLarge, largeMagnitude, resultZero);
-
-      Value useSmall =
-          arith::OrIOp::create(rewriter, location, exponentIsMinusOne, small);
-      Value magnitude = select(useSmall, smallMagnitude, largeMagnitude);
-      Value negated =
-          arith::SubIOp::create(rewriter, location, resultZero, magnitude);
-      rewriter.replaceOp(operation, select(sign, negated, magnitude));
-      continue;
-    }
-    auto scale = cast<sim::SimTimeScaleOp>(operation);
-    Value input = scale.getInput();
-    auto inputType = cast<IntegerType>(input.getType());
-    Value extended = input;
-    if (inputType.getWidth() < 64) {
-      if (scale.getIsSigned())
-        extended = arith::ExtSIOp::create(rewriter, location,
-                                          rewriter.getI64Type(), input);
-      else
-        extended = arith::ExtUIOp::create(rewriter, location,
-                                          rewriter.getI64Type(), input);
-    } else if (inputType.getWidth() > 64)
-      extended = arith::TruncIOp::create(rewriter, location,
-                                         rewriter.getI64Type(), input);
-    Value multiplier =
-        arith::ConstantOp::create(rewriter, location, rewriter.getI64Type(),
-                                  rewriter.getI64IntegerAttr(scale.getScale()));
-    rewriter.replaceOp(operation, arith::MulIOp::create(rewriter, location,
-                                                        extended, multiplier));
-  }
-  return success();
 }
 
 struct RampBlocks {
@@ -3601,7 +3333,7 @@ lowerPlainNativeProcess(sim::SimFuncOp function,
                         const SimulationProcessFrameAnalysis &analysis) {
   if (!function.getResultTypes().empty())
     return function.emitError("simulation process cannot return values");
-  if (failed(lowerTimeOperations(function)))
+  if (failed(lowerSimulationTimeOperations(function)))
     return failure();
   ModuleOp module = function->getParentOfType<ModuleOp>();
   Location location = function.getLoc();
@@ -3693,7 +3425,7 @@ lowerPlainNativeProcess(sim::SimFuncOp function,
 LogicalResult
 lowerSuspendableProcess(sim::SimFuncOp function,
                         const SimulationProcessFrameAnalysis &analysis) {
-  if (failed(lowerTimeOperations(function)))
+  if (failed(lowerSimulationTimeOperations(function)))
     return failure();
   ModuleOp module = function->getParentOfType<ModuleOp>();
   OpBuilder builder(function);
@@ -4172,7 +3904,7 @@ LogicalResult materializeNativeObserverThunks(ModuleOp module) {
 }
 
 LogicalResult lowerOrdinaryFunction(sim::SimFuncOp function) {
-  if (failed(lowerTimeOperations(function)))
+  if (failed(lowerSimulationTimeOperations(function)))
     return failure();
   Location location = function.getLoc();
   std::string symbolName = function.getSymName().str();

@@ -281,6 +281,21 @@ def ConvertObeliskSimValuesToStandardPass
   ];
 }
 
+def ObeliskSimLowerRealConversionsPass
+    : Pass<"obelisk-sim-lower-real-conversions",
+           "obelisk::sim::SimFuncOp"> {
+  let summary = "Normalize pure simulation real conversions to arith";
+  let description = [{
+    Rewrites simulation time-to-real and integer/real conversions whose
+    operands and results already have standard types. The pass introduces no
+    runtime calls. Time-valued operations are normalized later with their
+    backend type boundary.
+  }];
+  let dependentDialects = [
+    "mlir::arith::ArithDialect"
+  ];
+}
+
 def ConvertObeliskSimToRuntimePass
     : Pass<"convert-obelisk-sim-to-runtime", "mlir::ModuleOp"> {
   let summary = "Lower precise simulation display and file I/O to runtime calls";
