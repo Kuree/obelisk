@@ -21,7 +21,8 @@ namespace {
 
 using BytecodeHeader = obelisk_rt_design_bytecode_header_v1;
 
-constexpr char kMagic[8] = {'O', 'B', 'B', 'C', 'D', 'S', '1', '\0'};
+constexpr char kMagic[] = OBELISK_RT_DESIGN_BYTECODE_MAGIC;
+static_assert(sizeof(kMagic) == sizeof(BytecodeHeader::magic));
 constexpr uint64_t kFunctionSize = 96;
 constexpr uint64_t kLayoutSize = 40;
 constexpr uint64_t kInstructionSize =

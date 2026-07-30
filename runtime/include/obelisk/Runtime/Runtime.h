@@ -471,6 +471,8 @@ typedef struct obelisk_rt_design_database_header_v1 {
 #define OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE 208u
 #define OBELISK_RT_DESIGN_DATABASE_HEADER_SIZE 128u
 #define OBELISK_RT_DESIGN_BYTECODE_INSTRUCTION_SIZE 32u
+#define OBELISK_RT_DESIGN_BYTECODE_MAGIC "OBBCDS1"
+#define OBELISK_RT_DESIGN_DATABASE_MAGIC "OBDSGN1"
 
 typedef uint8_t obelisk_rt_design_register_kind;
 enum {

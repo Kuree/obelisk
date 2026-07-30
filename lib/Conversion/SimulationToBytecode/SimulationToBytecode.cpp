@@ -3784,7 +3784,8 @@ private:
   SmallVector<uint8_t> serializeBytecode() {
     using Header = obelisk_rt_design_bytecode_header_v1;
     SmallVector<uint8_t> output(OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE, 0);
-    static constexpr char magic[8] = {'O', 'B', 'B', 'C', 'D', 'S', '1', '\0'};
+    static constexpr char magic[] = OBELISK_RT_DESIGN_BYTECODE_MAGIC;
+    static_assert(sizeof(magic) == sizeof(Header::magic));
     std::copy(std::begin(magic), std::end(magic),
               output.begin() + offsetof(Header, magic));
     write32(output, offsetof(Header, version), OBELISK_RT_VERSION);
@@ -4378,7 +4379,8 @@ private:
       append64(output, entry.record);
     }
     using Header = obelisk_rt_design_database_header_v1;
-    static constexpr char magic[8] = {'O', 'B', 'D', 'S', 'G', 'N', '1', '\0'};
+    static constexpr char magic[] = OBELISK_RT_DESIGN_DATABASE_MAGIC;
+    static_assert(sizeof(magic) == sizeof(Header::magic));
     std::copy(std::begin(magic), std::end(magic),
               output.begin() + offsetof(Header, magic));
     write32(output, offsetof(Header, version), OBELISK_RT_VERSION);

@@ -16,7 +16,8 @@ namespace {
 
 using DatabaseHeader = obelisk_rt_design_database_header_v1;
 
-constexpr char kMagic[8] = {'O', 'B', 'D', 'S', 'G', 'N', '1', '\0'};
+constexpr char kMagic[] = OBELISK_RT_DESIGN_DATABASE_MAGIC;
+static_assert(sizeof(kMagic) == sizeof(DatabaseHeader::magic));
 constexpr uint64_t kHeaderSize = OBELISK_RT_DESIGN_DATABASE_HEADER_SIZE;
 constexpr uint64_t kScopeSize = 64;
 constexpr uint64_t kObjectSize = 96;
