@@ -24,8 +24,12 @@ class DataLayout;
 }
 
 namespace mlir {
+class ConversionPatternRewriter;
 class RewritePatternSet;
 class TypeConverter;
+namespace cf {
+class CondBranchOp;
+}
 } // namespace mlir
 
 namespace obelisk {
@@ -44,6 +48,8 @@ inline constexpr llvm::StringLiteral managedRootRangeRecordAttr =
     "obelisk.managed_root_range_record";
 inline constexpr llvm::StringLiteral managedRootRangePushCheckAttr =
     "obelisk.managed_root_range_push_check";
+inline constexpr llvm::StringLiteral assumeCleanSpecializationAttr =
+    "obelisk.native.assume_clean_specialization";
 
 enum class NativeReturnLowering {
   None,
@@ -166,6 +172,16 @@ void populateReferenceLifetimeToLLVMConversionPatterns(
 void populateSchedulerToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
 void materializeNativeSchedulerGlobals(mlir::ModuleOp module);
+void markLikelyTrue(mlir::cf::CondBranchOp branch);
+void recordStaticSpecializationCFGBlocks(
+    mlir::ConversionPatternRewriter &rewriter, mlir::Block *head,
+    unsigned newBlockCount);
+mlir::Value staticSpecializationGuard(
+    mlir::ConversionPatternRewriter &rewriter, mlir::Location location,
+    uint32_t staticID, uint32_t flags);
+mlir::Value staticNBASpecializationGuard(
+    mlir::ConversionPatternRewriter &rewriter, mlir::Location location,
+    uint32_t rootIndex);
 mlir::LogicalResult
 insertAutomaticOwnerReleases(obelisk::sim::SimFuncOp function);
 mlir::LogicalResult

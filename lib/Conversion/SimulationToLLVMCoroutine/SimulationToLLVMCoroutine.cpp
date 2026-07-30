@@ -70,6 +70,7 @@ namespace obelisk {
 namespace {
 
 using detail::alignUp;
+using detail::assumeCleanSpecializationAttr;
 using detail::byteGEP;
 using detail::castIntegerWidth;
 using detail::containsLogic;
@@ -92,6 +93,7 @@ using detail::managedClassDescriptorName;
 using detail::managedMethodThunkName;
 using detail::managedRootRangePushCheckAttr;
 using detail::managedRootRangeRecordAttr;
+using detail::markLikelyTrue;
 using detail::materializeDPIThunks;
 using detail::materializeManagedMethodThunks;
 using detail::materializeNativeObserverThunks;
@@ -112,20 +114,21 @@ using detail::populateReferenceLifetimeToLLVMConversionPatterns;
 using detail::populateSchedulerToLLVMConversionPatterns;
 using detail::populateSuspensionTypeConversionPatterns;
 using detail::prepareManagedLowering;
+using detail::recordStaticSpecializationCFGBlocks;
 using detail::reportManagedStatus;
 using detail::releaseNativeAutomaticState;
 using detail::resizeSignedIndexToI64;
 using detail::serializeComputedObserverWait;
 using detail::serializeRuntimeWait;
 using detail::stableProcessID;
+using detail::staticNBASpecializationGuard;
+using detail::staticSpecializationGuard;
 using detail::storeAt;
 using detail::threadProcessStateThroughCFG;
 using detail::threadRuntimeStatuses;
 using detail::ReferenceArgumentMap;
 
 constexpr uint64_t kNoOffset = std::numeric_limits<uint64_t>::max();
-constexpr StringLiteral kAssumeCleanSpecializationAttr =
-    "obelisk.native.assume_clean_specialization";
 
 constexpr uint64_t kInstanceAllocationOffset =
     offsetof(obelisk_rt_process_instance_v1, allocation);
@@ -1371,28 +1374,6 @@ Value storeDirectPackedPlane(OpBuilder &builder, Location location, Value input,
                                input);
 }
 
-void recordStaticSpecializationCFGBlocks(ConversionPatternRewriter &rewriter,
-                                         Block *head, unsigned newBlockCount);
-
-void markLikelyTrue(cf::CondBranchOp branch) {
-  constexpr int32_t hot = (1 << 20) - 1;
-  constexpr int32_t cold = 1;
-  branch.setBranchWeights(ArrayRef<int32_t>{hot, cold});
-}
-
-Value loadStaticSpecializationFast(ConversionPatternRewriter &builder,
-                                   Location location) {
-  Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
-  IntegerType i32 = builder.getI32Type();
-  Value fastAddress = LLVM::AddressOfOp::create(
-      builder, location, pointer, "__obelisk_static_specialization_fast_v1");
-  Value fast = LLVM::LoadOp::create(builder, location, i32, fastAddress, 4);
-  auto useFast =
-      arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne, fast,
-                            llvmConstant(builder, location, i32, 0));
-  return useFast;
-}
-
 /// Prove which NBA enqueues in a closed-world fused activation may use the
 /// clean native body selected by AOT actor dispatch.
 struct StaticNBADestination {
@@ -1609,114 +1590,11 @@ LogicalResult markCleanStaticNBAsInGuardedBodies(
         operation.walk([&](Operation *nested) {
           if (nbaActivationIsNonInvalidating &&
               isa<sim::SimNBAEnqueueOp>(nested))
-            nested->setAttr(kAssumeCleanSpecializationAttr,
+            nested->setAttr(assumeCleanSpecializationAttr,
                             UnitAttr::get(function.getContext()));
         });
   }
   return success();
-}
-
-Value staticSpecializationGuard(ConversionPatternRewriter &builder,
-                                Location location, uint32_t staticID,
-                                uint32_t flags) {
-  Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
-  IntegerType i32 = builder.getI32Type();
-  Block *head = builder.getInsertionBlock();
-  Block *continuation = builder.splitBlock(head, builder.getInsertionPoint());
-  BlockArgument result =
-      continuation->addArgument(builder.getI1Type(), location);
-  Region *region = head->getParent();
-  Block *slowBlock = builder.createBlock(region, continuation->getIterator());
-  recordStaticSpecializationCFGBlocks(builder, head, 2);
-
-  builder.setInsertionPointToEnd(head);
-  Value useFast = loadStaticSpecializationFast(builder, location);
-  Value fastAllowed = llvmConstant(builder, location, builder.getI1Type(), 1);
-  markLikelyTrue(cf::CondBranchOp::create(builder, location, useFast,
-                                          continuation, ValueRange{fastAllowed},
-                                          slowBlock, ValueRange{}));
-
-  builder.setInsertionPointToEnd(slowBlock);
-  Value contextAddress = LLVM::AddressOfOp::create(builder, location, pointer,
-                                                   "__obelisk_current_context");
-  Value context =
-      LLVM::LoadOp::create(builder, location, pointer, contextAddress, 8);
-  Value allowed =
-      LLVM::CallOp::create(
-          builder, location, TypeRange{i32},
-          SymbolRefAttr::get(builder.getContext(),
-                             "obelisk_rt_v1_static_specialization_guard"),
-          ValueRange{context, llvmConstant(builder, location, i32, UINT32_MAX),
-                     llvmConstant(builder, location, i32, staticID),
-                     llvmConstant(builder, location, i32, flags)})
-          .getResult();
-  Value useDirect =
-      arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
-                            allowed, llvmConstant(builder, location, i32, 0));
-  cf::BranchOp::create(builder, location, continuation, ValueRange{useDirect});
-
-  builder.setInsertionPointToStart(continuation);
-  return result;
-}
-
-Value staticNBASpecializationGuard(ConversionPatternRewriter &builder,
-                                   Location location, uint32_t rootIndex) {
-  Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
-  IntegerType i32 = builder.getI32Type();
-  Block *head = builder.getInsertionBlock();
-  Block *continuation = builder.splitBlock(head, builder.getInsertionPoint());
-  BlockArgument result =
-      continuation->addArgument(builder.getI1Type(), location);
-  Region *region = head->getParent();
-  Block *slowBlock = builder.createBlock(region, continuation->getIterator());
-  recordStaticSpecializationCFGBlocks(builder, head, 2);
-
-  builder.setInsertionPointToEnd(head);
-  Value useFast = loadStaticSpecializationFast(builder, location);
-  Value fastAllowed = llvmConstant(builder, location, builder.getI1Type(), 1);
-  markLikelyTrue(cf::CondBranchOp::create(builder, location, useFast,
-                                          continuation, ValueRange{fastAllowed},
-                                          slowBlock, ValueRange{}));
-
-  builder.setInsertionPointToEnd(slowBlock);
-  Value contextAddress = LLVM::AddressOfOp::create(builder, location, pointer,
-                                                   "__obelisk_current_context");
-  Value context =
-      LLVM::LoadOp::create(builder, location, pointer, contextAddress, 8);
-  Value allowed =
-      LLVM::CallOp::create(
-          builder, location, TypeRange{i32},
-          SymbolRefAttr::get(builder.getContext(),
-                             "obelisk_rt_v1_static_nba_specialization_guard"),
-          ValueRange{context, llvmConstant(builder, location, i32, rootIndex)})
-          .getResult();
-  Value useDirect =
-      arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
-                            allowed, llvmConstant(builder, location, i32, 0));
-  cf::BranchOp::create(builder, location, continuation, ValueRange{useDirect});
-
-  builder.setInsertionPointToStart(continuation);
-  return result;
-}
-
-void recordStaticSpecializationCFGBlocks(ConversionPatternRewriter &rewriter,
-                                         Block *head, unsigned newBlockCount) {
-  auto function = dyn_cast<sim::SimFuncOp>(head->getParentOp());
-  if (!function)
-    return;
-  auto metadata =
-      function->getAttrOfType<ArrayAttr>(nativeTwoStateBlockUnknownsAttr);
-  if (!metadata)
-    return;
-  unsigned headIndex = static_cast<unsigned>(
-      std::distance(function.getBody().begin(), head->getIterator()));
-  SmallVector<Attribute> entries(metadata.begin(), metadata.end());
-  entries.insert(entries.begin() + headIndex + 1, newBlockCount,
-                 rewriter.getDenseI64ArrayAttr({}));
-  rewriter.modifyOpInPlace(function, [&] {
-    function->setAttr(nativeTwoStateBlockUnknownsAttr,
-                      rewriter.getArrayAttr(entries));
-  });
 }
 
 Value loadStatePlane(ConversionPatternRewriter &rewriter, Location location,
@@ -1900,7 +1778,7 @@ public:
     if (!width || adaptor.getReference().size() != 1)
       return failure();
     IntegerType plane = rewriter.getIntegerType(*width);
-    bool assumeClean = op->hasAttr(kAssumeCleanSpecializationAttr);
+    bool assumeClean = op->hasAttr(assumeCleanSpecializationAttr);
     Value guardedPermission;
     if (auto range = resolveDirectStaticStateRange(
             adaptor.getReference().front(), *width, directLayout);
@@ -1948,7 +1826,7 @@ public:
     if (!width)
       return failure();
     IntegerType plane = rewriter.getIntegerType(*width);
-    bool assumeClean = op->hasAttr(kAssumeCleanSpecializationAttr);
+    bool assumeClean = op->hasAttr(assumeCleanSpecializationAttr);
     std::optional<DirectStaticStateRange> directRange =
         resolveDirectStaticStateRange(adaptor.getReference().front(), *width,
                                       directLayout);
@@ -2493,7 +2371,7 @@ public:
          (*width <= 64 && adaptor.getValue().size() == 1 &&
           isa<LLVM::LLVMPointerType>(adaptor.getValue().front().getType())));
     if (packedStaticStage) {
-      bool assumeClean = op->hasAttr(kAssumeCleanSpecializationAttr);
+      bool assumeClean = op->hasAttr(assumeCleanSpecializationAttr);
       bool useGuardedClaim =
           !assumeClean &&
           (guardedClaims ||
@@ -4742,7 +4620,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
         continue;
       function.walk([&](Operation *nested) {
         if (isa<sim::SimRefLoadOp, sim::SimRefStoreOp>(nested))
-          nested->setAttr(kAssumeCleanSpecializationAttr,
+          nested->setAttr(assumeCleanSpecializationAttr,
                           UnitAttr::get(context));
       });
     }
