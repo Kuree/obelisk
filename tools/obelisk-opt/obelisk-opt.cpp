@@ -30,6 +30,7 @@ int main(int argc, char **argv) {
   obelisk::registerSimulationProcessFrameAnalysisTestPass();
   obelisk::registerSimulationScheduleAnalysisTestPass();
   obelisk::registerSimulationVPIAnalysisTestPass();
+  obelisk::registerStaticSpecializationAnalysisTestPass();
   obelisk::registerStateDomainTestPasses();
 #endif
 

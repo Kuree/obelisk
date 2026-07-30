@@ -4,6 +4,7 @@ add_mlir_library(ObeliskAnalysisTestPasses
   SimulationProcessFrameAnalysisTestPass.cpp
   SimulationScheduleAnalysisTestPass.cpp
   SimulationVPIAnalysisTestPass.cpp
+  StaticSpecializationAnalysisTestPass.cpp
   StateDomainTestPass.cpp
 
   EXCLUDE_FROM_LIBMLIR

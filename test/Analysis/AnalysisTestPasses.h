@@ -10,6 +10,7 @@ void registerNativeStateLayoutAnalysisTestPass();
 void registerSimulationProcessFrameAnalysisTestPass();
 void registerSimulationScheduleAnalysisTestPass();
 void registerSimulationVPIAnalysisTestPass();
+void registerStaticSpecializationAnalysisTestPass();
 void registerStateDomainTestPasses();
 
 } // namespace obelisk
