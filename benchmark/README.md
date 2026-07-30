@@ -83,7 +83,8 @@ errors for any reason, which is real conformance but not a completed simulation.
 Only `passed` counts a run that actually finished; `xfail_passed` is tracked
 separately, and those tests' diagnostics are kept out of the blocker table.
 
-The feature table has three columns:
+The feature table groups each feature by its corresponding IEEE 1800-2017
+chapter in the **Area** column and has three counters:
 
 - **blocks** — tests that cannot pass until this feature exists;
 - **first** — tests where it is the earliest diagnostic;
