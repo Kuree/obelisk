@@ -68,6 +68,15 @@ def ObeliskSimThreadRuntimeStatusesPass
   }];
 }
 
+def ObeliskSimInstrumentManagedRootsPass
+    : Pass<"obelisk-sim-instrument-managed-roots", "mlir::ModuleOp"> {
+  let summary = "Bind live managed SSA values to precise GC roots";
+  let description = [{
+    Uses MLIR liveness to allocate and maintain precise managed-root slots
+    around collection points and process activation boundaries.
+  }];
+}
+
 def ObeliskSimSCCPPass
     : Pass<"obelisk-sim-sccp", "obelisk::sim::SimDesignOp"> {
   let summary = "Propagate constants across simulation code-unit boundaries";

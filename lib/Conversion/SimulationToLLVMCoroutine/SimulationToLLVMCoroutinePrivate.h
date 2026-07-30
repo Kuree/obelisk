@@ -131,6 +131,7 @@ lowerNativeFunctionBody(mlir::Operation *root,
 mlir::LogicalResult
 threadProcessStateThroughCFG(obelisk::sim::SimFuncOp function);
 mlir::LogicalResult threadRuntimeStatuses(mlir::ModuleOp module);
+mlir::LogicalResult instrumentManagedRoots(mlir::ModuleOp module);
 void emitManagedRootRangePop(mlir::OpBuilder &builder, mlir::Location location,
                              mlir::Operation *scope);
 mlir::LogicalResult materializeDPIThunks(mlir::ModuleOp module);
