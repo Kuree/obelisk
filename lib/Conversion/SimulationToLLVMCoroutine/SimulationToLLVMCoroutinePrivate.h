@@ -8,10 +8,26 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Support/LLVM.h"
 
+#include "llvm/ADT/StringRef.h"
+
 #include <cstdint>
+#include <optional>
+#include <string>
+
+namespace llvm {
+class DataLayout;
+}
+
+namespace mlir {
+class RewritePatternSet;
+class TypeConverter;
+} // namespace mlir
 
 namespace obelisk::detail {
 
+bool alignUp(uint64_t value, uint64_t alignment, uint64_t &result);
+std::optional<unsigned> nativeStateWidth(mlir::Type type);
+mlir::SmallVector<mlir::Value> flatten(mlir::ArrayRef<mlir::ValueRange> ranges);
 mlir::Value llvmConstant(mlir::OpBuilder &builder, mlir::Location location,
                          mlir::Type type, uint64_t value);
 mlir::Value entryAlloca(mlir::OpBuilder &builder, mlir::Location location,
@@ -27,6 +43,21 @@ void storeAt(mlir::OpBuilder &builder, mlir::Location location,
              unsigned alignment);
 mlir::Value castIntegerWidth(mlir::OpBuilder &builder, mlir::Location location,
                              mlir::Value value, mlir::Type target);
+mlir::Value insertValue(mlir::OpBuilder &builder, mlir::Location location,
+                        mlir::Value aggregate, mlir::Value element,
+                        int64_t index);
+void emitNativeStateRetain(mlir::OpBuilder &builder, mlir::Location location,
+                           mlir::Value handle);
+mlir::Operation *reportManagedStatus(mlir::OpBuilder &builder,
+                                     mlir::Location location,
+                                     mlir::Value context, mlir::Value status);
+
+std::string managedClassDescriptorName(mlir::SymbolRefAttr className);
+std::string managedMethodThunkName(llvm::StringRef methodName);
+mlir::LLVM::GlobalOp makeByteArrayGlobal(mlir::ModuleOp module,
+                                         mlir::Location location,
+                                         llvm::StringRef name,
+                                         llvm::StringRef bytes);
 
 mlir::LLVM::LLVMFuncOp
 getOrDeclareLLVMFunction(mlir::ModuleOp module, llvm::StringRef name,
@@ -35,6 +66,13 @@ getOrDeclareLLVMFunction(mlir::ModuleOp module, llvm::StringRef name,
 
 mlir::LogicalResult lowerNativeDPICalls(mlir::Operation *root);
 mlir::LogicalResult materializeDPIThunks(mlir::ModuleOp module);
+void populateManagedToLLVMConversionPatterns(mlir::RewritePatternSet &patterns,
+                                             mlir::TypeConverter &converter,
+                                             const llvm::DataLayout &dataLayout,
+                                             uint64_t stateBitCount);
+mlir::LogicalResult
+materializeManagedMethodThunks(mlir::ModuleOp module,
+                               const llvm::DataLayout &dataLayout);
 
 } // namespace obelisk::detail
 

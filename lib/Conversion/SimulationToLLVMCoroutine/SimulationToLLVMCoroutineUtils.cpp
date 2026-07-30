@@ -2,15 +2,37 @@
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 
+#include "obelisk/Analysis/SimulationAnalysis.h"
+
 #include "mlir/Dialect/Arith/IR/Arith.h"
 
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/MathExtras.h"
 
 #include <cassert>
+#include <limits>
 
 using namespace mlir;
 
 namespace obelisk::detail {
+
+bool alignUp(uint64_t value, uint64_t alignment, uint64_t &result) {
+  if (value > std::numeric_limits<uint64_t>::max() - (alignment - 1))
+    return false;
+  result = llvm::alignTo(value, alignment);
+  return true;
+}
+
+std::optional<unsigned> nativeStateWidth(Type type) {
+  return analysis::getSimulationStorageBitWidth(type);
+}
+
+SmallVector<Value> flatten(ArrayRef<ValueRange> ranges) {
+  SmallVector<Value> values;
+  for (ValueRange range : ranges)
+    llvm::append_range(values, range);
+  return values;
+}
 
 Value llvmConstant(OpBuilder &builder, Location location, Type type,
                    uint64_t value) {
@@ -70,6 +92,64 @@ Value castIntegerWidth(OpBuilder &builder, Location location, Value value,
   if (source.getWidth() < destination.getWidth())
     return arith::ExtUIOp::create(builder, location, target, value);
   return arith::TruncIOp::create(builder, location, target, value);
+}
+
+Value insertValue(OpBuilder &builder, Location location, Value aggregate,
+                  Value element, int64_t index) {
+  return LLVM::InsertValueOp::create(builder, location, aggregate, element,
+                                     ArrayRef<int64_t>{index});
+}
+
+void emitNativeStateRetain(OpBuilder &builder, Location location,
+                           Value handle) {
+  Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
+  Type i32 = builder.getI32Type();
+  Value contextAddress = LLVM::AddressOfOp::create(builder, location, pointer,
+                                                   "__obelisk_current_context");
+  Value context =
+      LLVM::LoadOp::create(builder, location, pointer, contextAddress, 8);
+  Value status = LLVM::CallOp::create(
+                     builder, location, TypeRange{i32},
+                     SymbolRefAttr::get(builder.getContext(),
+                                        "obelisk_rt_v1_native_state_retain"),
+                     ValueRange{context, handle})
+                     .getResult();
+  LLVM::CallOp::create(
+      builder, location, TypeRange{},
+      SymbolRefAttr::get(builder.getContext(), "obelisk_rt_v1_scheduler_fail"),
+      ValueRange{context, status});
+}
+
+std::string managedClassDescriptorName(SymbolRefAttr className) {
+  return (className.getRootReference().getValue() +
+          ".__obelisk_class_descriptor")
+      .str();
+}
+
+std::string managedMethodThunkName(StringRef methodName) {
+  return (methodName + ".__obelisk_native_thunk").str();
+}
+
+LLVM::GlobalOp makeByteArrayGlobal(ModuleOp module, Location location,
+                                   StringRef name, StringRef bytes) {
+  MLIRContext *context = module.getContext();
+  Type i8 = IntegerType::get(context, 8);
+  Type type = LLVM::LLVMArrayType::get(i8, bytes.size());
+  OpBuilder builder(context);
+  builder.setInsertionPointToStart(module.getBody());
+  auto global =
+      LLVM::GlobalOp::create(builder, location, type, true,
+                             LLVM::Linkage::Internal, name, Attribute{}, 1);
+  Block *block = new Block;
+  global.getInitializerRegion().push_back(block);
+  builder.setInsertionPointToStart(block);
+  Value value = LLVM::ZeroOp::create(builder, location, type);
+  for (auto [index, byte] : llvm::enumerate(bytes.bytes()))
+    value = LLVM::InsertValueOp::create(
+        builder, location, value, llvmConstant(builder, location, i8, byte),
+        ArrayRef<int64_t>{static_cast<int64_t>(index)});
+  LLVM::ReturnOp::create(builder, location, value);
+  return global;
 }
 
 LLVM::LLVMFuncOp getOrDeclareLLVMFunction(ModuleOp module, StringRef name,
