@@ -3,11 +3,7 @@
 #include "BytecodeEncoder.h"
 #include "BytecodeSerialization.h"
 
-#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
-#include "mlir/Dialect/Math/IR/Math.h"
-
-#include "llvm/ADT/TypeSwitch.h"
 
 using namespace mlir;
 
@@ -15,158 +11,13 @@ namespace obelisk::bytecode {
 
 LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
                                        Operation *operation) {
-  if (auto constant = dyn_cast<arith::ConstantOp>(operation)) {
-    if (auto integer = dyn_cast<IntegerAttr>(constant.getValue()))
-      return emitConstant(plan, constant.getResult(), integer.getValue());
-    if (auto floating = dyn_cast<FloatAttr>(constant.getValue()))
-      return emitConstant(plan, constant.getResult(),
-                          floating.getValue().bitcastToAPInt());
-    return operation->emitOpError(
-        "bytecode requires integer or floating-point constants");
-  }
+  if (std::optional<LogicalResult> encoded =
+          encodeArithmeticOperation(plan, operation))
+    return *encoded;
   auto binary = [&](uint16_t opcode, Value result, Value left, Value right) {
     emit({opcode, 0, reg(plan, result), reg(plan, left), reg(plan, right)});
     return success();
   };
-  if (auto op = dyn_cast<arith::AddIOp>(operation))
-    return binary(Add, op.getResult(), op.getLhs(), op.getRhs());
-  if (auto op = dyn_cast<arith::SubIOp>(operation))
-    return binary(Sub, op.getResult(), op.getLhs(), op.getRhs());
-  if (auto op = dyn_cast<arith::MulIOp>(operation))
-    return binary(Mul, op.getResult(), op.getLhs(), op.getRhs());
-  if (auto op = dyn_cast<arith::AddFOp>(operation))
-    return binary(FAdd, op.getResult(), op.getLhs(), op.getRhs());
-  if (auto op = dyn_cast<arith::SubFOp>(operation))
-    return binary(FSub, op.getResult(), op.getLhs(), op.getRhs());
-  if (auto op = dyn_cast<arith::MulFOp>(operation))
-    return binary(FMul, op.getResult(), op.getLhs(), op.getRhs());
-  if (auto op = dyn_cast<arith::DivFOp>(operation))
-    return binary(FDiv, op.getResult(), op.getLhs(), op.getRhs());
-  if (auto op = dyn_cast<arith::NegFOp>(operation)) {
-    emit({FNeg, 0, reg(plan, op.getResult()), reg(plan, op.getOperand())});
-    return success();
-  }
-  if (auto op = dyn_cast<arith::DivUIOp>(operation))
-    return binary(UDiv, op.getResult(), op.getLhs(), op.getRhs());
-  if (auto op = dyn_cast<arith::DivSIOp>(operation))
-    return binary(SDiv, op.getResult(), op.getLhs(), op.getRhs());
-  if (auto op = dyn_cast<arith::RemUIOp>(operation))
-    return binary(URem, op.getResult(), op.getLhs(), op.getRhs());
-  if (auto op = dyn_cast<arith::RemSIOp>(operation))
-    return binary(SRem, op.getResult(), op.getLhs(), op.getRhs());
-  if (auto op = dyn_cast<arith::AndIOp>(operation))
-    return binary(And, op.getResult(), op.getLhs(), op.getRhs());
-  if (auto op = dyn_cast<arith::OrIOp>(operation))
-    return binary(Or, op.getResult(), op.getLhs(), op.getRhs());
-  if (auto op = dyn_cast<arith::XOrIOp>(operation))
-    return binary(Xor, op.getResult(), op.getLhs(), op.getRhs());
-  if (auto op = dyn_cast<arith::ShLIOp>(operation))
-    return binary(Shl, op.getResult(), op.getLhs(), op.getRhs());
-  if (auto op = dyn_cast<arith::ShRUIOp>(operation))
-    return binary(LShr, op.getResult(), op.getLhs(), op.getRhs());
-  if (auto op = dyn_cast<arith::ShRSIOp>(operation))
-    return binary(AShr, op.getResult(), op.getLhs(), op.getRhs());
-  if (auto op = dyn_cast<arith::CmpIOp>(operation)) {
-    uint16_t predicate = 0;
-    switch (op.getPredicate()) {
-    case arith::CmpIPredicate::eq:
-      predicate = 0;
-      break;
-    case arith::CmpIPredicate::ne:
-      predicate = 1;
-      break;
-    case arith::CmpIPredicate::ult:
-      predicate = 2;
-      break;
-    case arith::CmpIPredicate::ule:
-      predicate = 3;
-      break;
-    case arith::CmpIPredicate::ugt:
-      predicate = 4;
-      break;
-    case arith::CmpIPredicate::uge:
-      predicate = 5;
-      break;
-    case arith::CmpIPredicate::slt:
-      predicate = 6;
-      break;
-    case arith::CmpIPredicate::sle:
-      predicate = 7;
-      break;
-    case arith::CmpIPredicate::sgt:
-      predicate = 8;
-      break;
-    case arith::CmpIPredicate::sge:
-      predicate = 9;
-      break;
-    }
-    emit({Compare, predicate, reg(plan, op.getResult()), reg(plan, op.getLhs()),
-          reg(plan, op.getRhs())});
-    return success();
-  }
-  if (auto op = dyn_cast<arith::CmpFOp>(operation)) {
-    uint32_t predicate;
-    switch (op.getPredicate()) {
-    case arith::CmpFPredicate::OEQ:
-      predicate = 0;
-      break;
-    case arith::CmpFPredicate::UNE:
-      predicate = 1;
-      break;
-    case arith::CmpFPredicate::OLT:
-      predicate = 2;
-      break;
-    case arith::CmpFPredicate::OLE:
-      predicate = 3;
-      break;
-    case arith::CmpFPredicate::OGT:
-      predicate = 4;
-      break;
-    case arith::CmpFPredicate::OGE:
-      predicate = 5;
-      break;
-    default:
-      return op.emitOpError("floating comparison predicate is not executable");
-    }
-    emit({FCompare, static_cast<uint16_t>(predicate), reg(plan, op.getResult()),
-          reg(plan, op.getLhs()), reg(plan, op.getRhs())});
-    return success();
-  }
-  if (auto op = dyn_cast<arith::SelectOp>(operation)) {
-    emit({Select, 0, reg(plan, op.getResult()), reg(plan, op.getTrueValue()),
-          reg(plan, op.getFalseValue()), reg(plan, op.getCondition())});
-    return success();
-  }
-  if (auto op = dyn_cast<arith::ExtUIOp>(operation)) {
-    emit({Extract, 0, reg(plan, op.getResult()), reg(plan, op.getIn()),
-          kInvalidRegister});
-    return success();
-  }
-  if (auto op = dyn_cast<arith::ExtSIOp>(operation)) {
-    emit({Extract, 1, reg(plan, op.getResult()), reg(plan, op.getIn()),
-          kInvalidRegister});
-    return success();
-  }
-  if (auto op = dyn_cast<arith::TruncIOp>(operation)) {
-    emit({Extract, 0, reg(plan, op.getResult()), reg(plan, op.getIn()),
-          kInvalidRegister});
-    return success();
-  }
-  if (auto op = dyn_cast<arith::ExtFOp>(operation)) {
-    emit({FExt, 0, reg(plan, op.getResult()), reg(plan, op.getIn())});
-    return success();
-  }
-  if (auto op = dyn_cast<arith::TruncFOp>(operation)) {
-    emit({FTrunc, 0, reg(plan, op.getResult()), reg(plan, op.getIn())});
-    return success();
-  }
-  if (auto op = dyn_cast<math::PowFOp>(operation))
-    return binary(FPow, op.getResult(), op.getLhs(), op.getRhs());
-  if (auto op = dyn_cast<arith::IndexCastOp>(operation)) {
-    emit({Extract, 0, reg(plan, op.getResult()), reg(plan, op.getIn()),
-          kInvalidRegister});
-    return success();
-  }
   if (auto branch = dyn_cast<cf::BranchOp>(operation)) {
     auto mapping = addMap(plan, branch.getDest()->getArguments(), plan,
                           branch.getDestOperands());
@@ -345,174 +196,16 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
           reg(plan, op.getRhs())});
     return success();
   }
-  if (auto op = dyn_cast<sim::SimContainerSizeOp>(operation))
-    return emitIntrinsic(plan, kIntrinsicContainerSize, {op.getContainer()},
-                         {op.getResult()});
-  if (auto op = dyn_cast<sim::SimContainerCreateLikeOp>(operation))
-    return emitIntrinsic(plan, kIntrinsicContainerCreateLike,
-                         {op.getPreferred(), op.getFallback(), op.getSize()},
-                         {op.getResult()});
-  if (auto op = dyn_cast<sim::SimContainerCreateOp>(operation)) {
-    SmallVector<uint8_t> traceSlots;
-    for (auto [offset, kind] :
-         llvm::zip_equal(op.getTraceOffsets(), op.getTraceKinds())) {
-      append64(traceSlots, static_cast<uint64_t>(offset));
-      append32(traceSlots, static_cast<uint32_t>(kind));
-      append32(traceSlots, 0);
-    }
-    return emitIntrinsicRegisters(plan, kIntrinsicContainerCreate,
-                                  {emitU64Constant(plan, op.getContainerKind()),
-                                   emitU64Constant(plan, op.getTypeId()),
-                                   emitU64Constant(plan, op.getElementKind()),
-                                   emitU64Constant(plan, op.getElementFlags()),
-                                   emitU64Constant(plan, op.getValueSize()),
-                                   emitU64Constant(plan, op.getAlignment()),
-                                   emitU64Constant(plan, op.getBitWidth()),
-                                   emitBytesConstant(plan, traceSlots),
-                                   reg(plan, op.getSize()),
-                                   emitU64Constant(plan, op.getBound())},
-                                  {reg(plan, op.getResult())});
-  }
-  if (auto op = dyn_cast<sim::SimContainerCloneOp>(operation))
-    return emitIntrinsic(plan, kIntrinsicContainerClone, {op.getInput()},
-                         {op.getResult()});
-  if (auto op = dyn_cast<sim::SimContainerDeleteOp>(operation))
-    return emitIntrinsic(plan, kIntrinsicContainerDelete, {op.getContainer()},
-                         {});
-  if (auto op = dyn_cast<sim::SimQueueDeleteOp>(operation))
-    return emitIntrinsic(plan, kIntrinsicQueueDelete,
-                         {op.getQueue(), op.getIndex()}, {});
-  if (auto op = dyn_cast<sim::SimQueueInsertOp>(operation))
-    return emitIntrinsic(plan, kIntrinsicQueueInsert,
-                         {op.getQueue(), op.getIndex(), op.getValue()}, {});
-  if (auto op = dyn_cast<sim::SimRandomNextOp>(operation))
-    return emitIntrinsic(plan, kIntrinsicRandomNext, {}, {op.getResult()});
-  if (auto op = dyn_cast<sim::SimRandomSeedOp>(operation))
-    return emitIntrinsic(plan, kIntrinsicRandomSeed, {op.getSeed()}, {});
-  if (auto op = dyn_cast<sim::SimRandomBoundedOp>(operation))
-    return emitIntrinsic(plan, kIntrinsicRandomBounded, {op.getBound()},
-                         {op.getResult()});
-  if (auto op = dyn_cast<sim::SimContainerReadOp>(operation))
-    return emitIntrinsic(plan, kIntrinsicContainerRead,
-                         {op.getContainer(), op.getIndex()}, {op.getResult()});
-  if (auto op = dyn_cast<sim::SimContainerWriteOp>(operation))
-    return emitIntrinsic(plan, kIntrinsicContainerWrite,
-                         {op.getContainer(), op.getIndex(), op.getValue()}, {});
-  if (auto op = dyn_cast<sim::SimAssocCreateOp>(operation)) {
-    SmallVector<uint8_t> traceSlots;
-    for (auto [offset, kind] :
-         llvm::zip_equal(op.getTraceOffsets(), op.getTraceKinds())) {
-      append64(traceSlots, static_cast<uint64_t>(offset));
-      append32(traceSlots, static_cast<uint32_t>(kind));
-      append32(traceSlots, 0);
-    }
-    return emitIntrinsicRegisters(plan, kIntrinsicAssocCreate,
-                                  {emitU64Constant(plan, op.getTypeId()),
-                                   emitU64Constant(plan, op.getElementKind()),
-                                   emitU64Constant(plan, op.getElementFlags()),
-                                   emitU64Constant(plan, op.getValueSize()),
-                                   emitU64Constant(plan, op.getAlignment()),
-                                   emitU64Constant(plan, op.getBitWidth()),
-                                   emitBytesConstant(plan, traceSlots),
-                                   emitU64Constant(plan, op.getKeyKind()),
-                                   emitU64Constant(plan, op.getKeyWidth())},
-                                  {reg(plan, op.getResult())});
-  }
-  if (auto op = dyn_cast<sim::SimAssocReadOp>(operation))
-    return emitIntrinsic(plan, kIntrinsicAssocRead,
-                         {op.getArray(), op.getKey()}, {op.getResult()});
-  if (auto op = dyn_cast<sim::SimAssocWriteOp>(operation))
-    return emitIntrinsic(plan, kIntrinsicAssocWrite,
-                         {op.getArray(), op.getKey(), op.getValue()}, {});
-  if (auto op = dyn_cast<sim::SimAssocExistsOp>(operation))
-    return emitIntrinsic(plan, kIntrinsicAssocExists,
-                         {op.getArray(), op.getKey()}, {op.getResult()});
-  if (auto op = dyn_cast<sim::SimAssocDeleteOp>(operation))
-    return emitIntrinsic(plan, kIntrinsicAssocDelete,
-                         {op.getArray(), op.getKey()}, {});
-  if (auto op = dyn_cast<sim::SimAssocSetDefaultOp>(operation))
-    return emitIntrinsic(plan, kIntrinsicAssocDefault,
-                         {op.getArray(), op.getValue()}, {});
-  if (auto op = dyn_cast<sim::SimAssocTraverseOp>(operation))
-    return emitIntrinsicRegisters(
-        plan, kIntrinsicAssocTraverse,
-        {reg(plan, op.getArray()), reg(plan, op.getKey()),
-         emitU64Constant(plan, static_cast<uint64_t>(static_cast<int64_t>(
-                                   static_cast<int32_t>(op.getDirection())))),
-         emitU64Constant(plan, op.getEndpoint() ? 1 : 0)},
-        {reg(plan, op.getResultKey()), reg(plan, op.getSuccess())});
-  if (auto op = dyn_cast<sim::SimStringLiteralOp>(operation)) {
-    StringRef value = op.getValue();
-    uint32_t bytes = emitBytesConstant(
-        plan, ArrayRef<uint8_t>(reinterpret_cast<const uint8_t *>(value.data()),
-                                value.size()));
-    if (bytes == kInvalidRegister)
-      return op.emitOpError("cannot allocate literal byte register");
-    return emitIntrinsicRegisters(plan, kIntrinsicStringLiteral, {bytes},
-                                  {reg(plan, op.getResult())});
-  }
-  if (auto op = dyn_cast<sim::SimStringFromPackedOp>(operation))
-    return emitIntrinsic(plan, kIntrinsicStringFromPacked, {op.getInput()},
-                         {op.getResult()});
-  if (auto op = dyn_cast<sim::SimStringToPackedOp>(operation))
-    return emitIntrinsic(plan, kIntrinsicStringToPacked, {op.getInput()},
-                         {op.getResult()});
-  if (auto op = dyn_cast<sim::SimStringConcatOp>(operation)) {
-    SmallVector<Value> inputs(op.getInputs());
-    return emitIntrinsic(plan, kIntrinsicStringConcat, inputs,
-                         {op.getResult()});
-  }
-  if (auto op = dyn_cast<sim::SimStringRepeatOp>(operation))
-    return emitIntrinsic(plan, kIntrinsicStringRepeat,
-                         {op.getInput(), op.getCount()}, {op.getResult()});
-  if (auto op = dyn_cast<sim::SimStringLengthOp>(operation))
-    return emitIntrinsic(plan, kIntrinsicStringLength, {op.getInput()},
-                         {op.getResult()});
-  if (auto op = dyn_cast<sim::SimStringGetcOp>(operation))
-    return emitIntrinsic(plan, kIntrinsicStringGetc,
-                         {op.getInput(), op.getIndex()}, {op.getResult()});
-  if (auto op = dyn_cast<sim::SimStringPutcOp>(operation))
-    return emitIntrinsic(plan, kIntrinsicStringPutc,
-                         {op.getInput(), op.getIndex(), op.getCharacter()},
-                         {op.getResult()});
-  if (auto op = dyn_cast<sim::SimStringSubstrOp>(operation))
-    return emitIntrinsic(plan, kIntrinsicStringSubstr,
-                         {op.getInput(), op.getLeft(), op.getRight()},
-                         {op.getResult()});
-  if (auto op = dyn_cast<sim::SimStringCompareOp>(operation)) {
-    uint32_t mode = emitU64Constant(plan, op.getCaseInsensitive() ? 1 : 0);
-    return emitIntrinsicRegisters(
-        plan, kIntrinsicStringCompare,
-        {reg(plan, op.getLhs()), reg(plan, op.getRhs()), mode},
-        {reg(plan, op.getResult())});
-  }
-  if (auto op = dyn_cast<sim::SimStringCaseConvertOp>(operation)) {
-    uint32_t mode = emitU64Constant(plan, op.getToUpper() ? 1 : 0);
-    return emitIntrinsicRegisters(plan, kIntrinsicStringCaseConvert,
-                                  {reg(plan, op.getInput()), mode},
-                                  {reg(plan, op.getResult())});
-  }
-  if (auto op = dyn_cast<sim::SimStringParseIntegerOp>(operation)) {
-    uint32_t radix = emitU64Constant(plan, op.getRadix());
-    return emitIntrinsicRegisters(plan, kIntrinsicStringParseInteger,
-                                  {reg(plan, op.getInput()), radix},
-                                  {reg(plan, op.getResult())});
-  }
-  if (auto op = dyn_cast<sim::SimStringParseRealOp>(operation))
-    return emitIntrinsic(plan, kIntrinsicStringParseReal, {op.getInput()},
-                         {op.getResult()});
-  if (auto op = dyn_cast<sim::SimStringFormatIntegerOp>(operation)) {
-    uint32_t radix = emitU64Constant(plan, op.getRadix());
-    uint32_t signedMode = emitU64Constant(plan, op.getIsSigned() ? 1 : 0);
-    return emitIntrinsicRegisters(plan, kIntrinsicStringFormatInteger,
-                                  {reg(plan, op.getInput()), radix, signedMode},
-                                  {reg(plan, op.getResult())});
-  }
-  if (auto op = dyn_cast<sim::SimStringFormatRealOp>(operation))
-    return emitIntrinsic(plan, kIntrinsicStringFormatReal, {op.getInput()},
-                         {op.getResult()});
-  if (isa<sim::SimClassNullOp, sim::SimManagedNullOp, sim::SimCovergroupNullOp>(
-          operation)) {
+  if (std::optional<LogicalResult> encoded =
+          encodeContainerOperation(plan, operation))
+    return *encoded;
+  if (std::optional<LogicalResult> encoded =
+          encodeStringOperation(plan, operation))
+    return *encoded;
+  if (std::optional<LogicalResult> encoded =
+          encodeClassOperation(plan, operation))
+    return *encoded;
+  if (isa<sim::SimManagedNullOp, sim::SimCovergroupNullOp>(operation)) {
     uint32_t destination = reg(plan, operation->getResult(0));
     emit({Constant, 0, destination, 0, 0, 0, 0,
           addZeroConstant(plan.layouts[destination])});
@@ -612,60 +305,6 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
   if (auto op = dyn_cast<sim::SimArgumentRefFromPathOp>(operation))
     return emitIntrinsic(plan, kIntrinsicArgumentRefFromPath, {op.getInput()},
                          {op.getResult()});
-  if (auto op = dyn_cast<sim::SimClassAllocOp>(operation)) {
-    auto type = cast<sim::ClassHandleType>(op.getResult().getType());
-    FailureOr<uint64_t> id = classID(type.getClassName(), operation);
-    if (failed(id))
-      return failure();
-    uint32_t classRegister = emitU64Constant(plan, *id);
-    return emitIntrinsicRegisters(plan, kIntrinsicClassAlloc, {classRegister},
-                                  {reg(plan, op.getResult())});
-  }
-  if (auto op = dyn_cast<sim::SimClassCopyOp>(operation)) {
-    auto type = cast<sim::ClassHandleType>(op.getResult().getType());
-    FailureOr<uint64_t> id = classID(type.getClassName(), operation);
-    if (failed(id))
-      return failure();
-    uint32_t classRegister = emitU64Constant(plan, *id);
-    return emitIntrinsicRegisters(plan, kIntrinsicClassCopy,
-                                  {reg(plan, op.getSource()), classRegister},
-                                  {reg(plan, op.getResult())});
-  }
-  if (auto op = dyn_cast<sim::SimClassIsInstanceOp>(operation)) {
-    FailureOr<uint64_t> id = classID(op.getTargetAttr(), operation);
-    if (failed(id))
-      return failure();
-    uint32_t classRegister = emitU64Constant(plan, *id);
-    return emitIntrinsicRegisters(plan, kIntrinsicClassIsInstance,
-                                  {reg(plan, op.getObject()), classRegister},
-                                  {reg(plan, op.getResult())});
-  }
-  if (auto op = dyn_cast<sim::SimClassIdOp>(operation))
-    return emitIntrinsic(plan, kIntrinsicClassID, {op.getObject()},
-                         {op.getResult()});
-  if (auto op = dyn_cast<sim::SimClassCastOp>(operation)) {
-    auto type = cast<sim::ClassHandleType>(op.getResult().getType());
-    FailureOr<uint64_t> id = classID(type.getClassName(), operation);
-    if (failed(id))
-      return failure();
-    uint32_t classRegister = emitU64Constant(plan, *id);
-    return emitIntrinsicRegisters(plan, kIntrinsicClassCast,
-                                  {reg(plan, op.getObject()), classRegister},
-                                  {reg(plan, op.getResult())});
-  }
-  if (auto op = dyn_cast<sim::SimClassFieldRefOp>(operation)) {
-    auto field = SymbolTable::lookupNearestSymbolFrom<sim::SimClassFieldDeclOp>(
-        op, op.getFieldAttr());
-    auto offset =
-        field ? field->getAttrOfType<IntegerAttr>("offset") : IntegerAttr{};
-    if (!field || !offset)
-      return op.emitOpError("managed field has no bytecode layout");
-    uint32_t offsetRegister =
-        emitU64Constant(plan, offset.getValue().getZExtValue());
-    return emitIntrinsicRegisters(plan, kIntrinsicClassFieldRef,
-                                  {reg(plan, op.getObject()), offsetRegister},
-                                  {reg(plan, op.getResult())});
-  }
   if (auto op = dyn_cast<sim::SimArgumentRefFromRefOp>(operation))
     return emitIntrinsic(plan, kIntrinsicArgumentRefFromRef, {op.getInput()},
                          {op.getResult()});
@@ -757,20 +396,6 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     if (op.getDelay())
       inputs.push_back(reg(plan, op.getDelay()));
     return emitIntrinsicRegisters(plan, kIntrinsicManagedNBA, inputs, {});
-  }
-  if (auto op = dyn_cast<sim::SimClassDirectCallOp>(operation))
-    return encodeClassDirectCall(plan, op);
-  if (auto op = dyn_cast<sim::SimClassVirtualCallOp>(operation))
-    return encodeClassVirtualCall(plan, op);
-  if (auto op = dyn_cast<sim::SimWeakCreateOp>(operation)) {
-    auto wrapperType = cast<sim::ClassHandleType>(op.getResult().getType());
-    FailureOr<uint64_t> id = classID(wrapperType.getClassName(), operation);
-    if (failed(id))
-      return failure();
-    return emitIntrinsicRegisters(
-        plan, kIntrinsicWeakCreate,
-        {reg(plan, op.getReferent()), emitU64Constant(plan, *id)},
-        {reg(plan, op.getResult())});
   }
   if (auto op = dyn_cast<sim::SimWeakGetOp>(operation))
     return emitIntrinsic(plan, kIntrinsicWeakGet, {op.getWeak()},

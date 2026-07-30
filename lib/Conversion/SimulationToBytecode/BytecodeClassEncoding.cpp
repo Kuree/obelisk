@@ -33,6 +33,85 @@ FailureOr<uint64_t> Encoder::classID(SymbolRefAttr symbol,
   return found->second;
 }
 
+std::optional<LogicalResult>
+Encoder::encodeClassOperation(FunctionPlan &plan, Operation *operation) {
+  if (isa<sim::SimClassNullOp>(operation)) {
+    uint32_t destination = reg(plan, operation->getResult(0));
+    emit({Constant, 0, destination, 0, 0, 0, 0,
+          addZeroConstant(plan.layouts[destination])});
+    return success();
+  }
+  if (auto op = dyn_cast<sim::SimClassAllocOp>(operation)) {
+    auto type = cast<sim::ClassHandleType>(op.getResult().getType());
+    FailureOr<uint64_t> id = classID(type.getClassName(), operation);
+    if (failed(id))
+      return failure();
+    uint32_t classRegister = emitU64Constant(plan, *id);
+    return emitIntrinsicRegisters(plan, kIntrinsicClassAlloc, {classRegister},
+                                  {reg(plan, op.getResult())});
+  }
+  if (auto op = dyn_cast<sim::SimClassCopyOp>(operation)) {
+    auto type = cast<sim::ClassHandleType>(op.getResult().getType());
+    FailureOr<uint64_t> id = classID(type.getClassName(), operation);
+    if (failed(id))
+      return failure();
+    uint32_t classRegister = emitU64Constant(plan, *id);
+    return emitIntrinsicRegisters(plan, kIntrinsicClassCopy,
+                                  {reg(plan, op.getSource()), classRegister},
+                                  {reg(plan, op.getResult())});
+  }
+  if (auto op = dyn_cast<sim::SimClassIsInstanceOp>(operation)) {
+    FailureOr<uint64_t> id = classID(op.getTargetAttr(), operation);
+    if (failed(id))
+      return failure();
+    uint32_t classRegister = emitU64Constant(plan, *id);
+    return emitIntrinsicRegisters(plan, kIntrinsicClassIsInstance,
+                                  {reg(plan, op.getObject()), classRegister},
+                                  {reg(plan, op.getResult())});
+  }
+  if (auto op = dyn_cast<sim::SimClassIdOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicClassID, {op.getObject()},
+                         {op.getResult()});
+  if (auto op = dyn_cast<sim::SimClassCastOp>(operation)) {
+    auto type = cast<sim::ClassHandleType>(op.getResult().getType());
+    FailureOr<uint64_t> id = classID(type.getClassName(), operation);
+    if (failed(id))
+      return failure();
+    uint32_t classRegister = emitU64Constant(plan, *id);
+    return emitIntrinsicRegisters(plan, kIntrinsicClassCast,
+                                  {reg(plan, op.getObject()), classRegister},
+                                  {reg(plan, op.getResult())});
+  }
+  if (auto op = dyn_cast<sim::SimClassFieldRefOp>(operation)) {
+    auto field = SymbolTable::lookupNearestSymbolFrom<sim::SimClassFieldDeclOp>(
+        op, op.getFieldAttr());
+    auto offset =
+        field ? field->getAttrOfType<IntegerAttr>("offset") : IntegerAttr{};
+    if (!field || !offset)
+      return op.emitOpError("managed field has no bytecode layout");
+    uint32_t offsetRegister =
+        emitU64Constant(plan, offset.getValue().getZExtValue());
+    return emitIntrinsicRegisters(plan, kIntrinsicClassFieldRef,
+                                  {reg(plan, op.getObject()), offsetRegister},
+                                  {reg(plan, op.getResult())});
+  }
+  if (auto op = dyn_cast<sim::SimClassDirectCallOp>(operation))
+    return encodeClassDirectCall(plan, op);
+  if (auto op = dyn_cast<sim::SimClassVirtualCallOp>(operation))
+    return encodeClassVirtualCall(plan, op);
+  if (auto op = dyn_cast<sim::SimWeakCreateOp>(operation)) {
+    auto wrapperType = cast<sim::ClassHandleType>(op.getResult().getType());
+    FailureOr<uint64_t> id = classID(wrapperType.getClassName(), operation);
+    if (failed(id))
+      return failure();
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicWeakCreate,
+        {reg(plan, op.getReferent()), emitU64Constant(plan, *id)},
+        {reg(plan, op.getResult())});
+  }
+  return std::nullopt;
+}
+
 LogicalResult Encoder::encodeClassDirectCall(FunctionPlan &plan,
                                              sim::SimClassDirectCallOp call) {
   auto found = indices.find(call.getCallee());

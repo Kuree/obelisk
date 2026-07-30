@@ -76,6 +76,8 @@ private:
                                             sim::SimClassDirectCallOp call);
   mlir::LogicalResult encodeClassVirtualCall(FunctionPlan &plan,
                                              sim::SimClassVirtualCallOp call);
+  std::optional<mlir::LogicalResult>
+  encodeClassOperation(FunctionPlan &plan, mlir::Operation *operation);
   mlir::LogicalResult encodeDisplay(FunctionPlan &plan, sim::SimDisplayOp op);
   uint64_t emit(Instruction instruction);
   std::pair<uint64_t, uint64_t> addMap(FunctionPlan &destinationPlan,
@@ -98,6 +100,12 @@ private:
 
   mlir::LogicalResult encodeOperation(FunctionPlan &plan,
                                       mlir::Operation *operation);
+  std::optional<mlir::LogicalResult>
+  encodeArithmeticOperation(FunctionPlan &plan, mlir::Operation *operation);
+  std::optional<mlir::LogicalResult>
+  encodeContainerOperation(FunctionPlan &plan, mlir::Operation *operation);
+  std::optional<mlir::LogicalResult>
+  encodeStringOperation(FunctionPlan &plan, mlir::Operation *operation);
   mlir::LogicalResult encodeCall(FunctionPlan &plan, sim::SimCallOp call);
   mlir::LogicalResult encodeTaskCall(FunctionPlan &plan,
                                      sim::SimTaskCallOp call);
