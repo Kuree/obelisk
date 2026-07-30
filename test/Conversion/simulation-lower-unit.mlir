@@ -7,6 +7,8 @@
 !logic1 = !obelisk.integral<1, false, true, 0 : 0, logic>
 !logic8_declared = !obelisk.ranged_packed_array<15 : 8 x !obelisk.integral<1, false, true, 0 : 0, logic>>
 !logic64 = !obelisk.integral<64, false, true, 63 : 0, logic>
+!packed_logic8 = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>
+!packed_logic32 = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>
 
 module {
   obelisk_sim.design @units {
@@ -15,10 +17,14 @@ module {
     obelisk_sim.code_unit.decl 9000003 in 0 initial hierarchy "test.units.unit_2.9000003"
     obelisk_sim.code_unit.decl 9000004 in 0 initial hierarchy "test.units.unit_3.9000004"
     obelisk_sim.code_unit.decl 9000005 in 0 function hierarchy "test.units.compare.9000005"
+    obelisk_sim.code_unit.decl 9000006 in 0 initial hierarchy "test.units.compound.9000006"
     obelisk_sim.scope.decl 0
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<8> design hierarchy "top.a"
     obelisk_sim.storage.decl 1 in 0 : !obelisk_sim.logic<8> design hierarchy "top.b"
     obelisk_sim.storage.decl 2 in 0 : !obelisk_sim.logic<1> design hierarchy "top.selected"
+    obelisk_sim.storage.decl 3 in 0 :
+        !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>
+        design hierarchy "top.value"
 
     // CHECK-LABEL: obelisk_sim.func @unit_0
     // A blocking assignment of a literal stores directly.
@@ -204,6 +210,72 @@ module {
           obelisk.sv.expression.named_value attributes {
               node_id = 57 : i64, referenced_path = "top.b",
               referenced_symbol = @b, semantic_type = !logic8} {
+          }
+        }
+      }
+      obelisk_sim.return
+    }
+
+    // Compound assignments carry the destination through a semantic
+    // lvalue-reference placeholder. Lowering resolves it to the old value,
+    // applies the usual arithmetic conversions, and stores back through the
+    // original reference.
+    // CHECK-LABEL: obelisk_sim.func @compound
+    // CHECK: %[[OLD:.*]] = obelisk_sim.ref.load [[DEST:%[a-zA-Z0-9]+]]
+    // CHECK: %[[FLAT:.*]] = obelisk_sim.packed.flatten %[[OLD]]
+    // CHECK: %[[WIDE:.*]] = obelisk_sim.logic.resize %[[FLAT]]
+    // CHECK: %[[SUM:.*]] = obelisk_sim.logic.binary add
+    // CHECK: %[[SUM_FLAT:.*]] = obelisk_sim.packed.flatten
+    // CHECK: %[[NARROW:.*]] = obelisk_sim.logic.resize %[[SUM_FLAT]]
+    // CHECK: %[[STORED:.*]] = obelisk_sim.packed.unflatten %[[NARROW]]
+    // CHECK: obelisk_sim.ref.store %[[STORED]] to [[DEST]]
+    obelisk_sim.func @compound(
+        %ctx: !obelisk_sim.context
+            {obelisk_sim.capture_kind = 0 : i32},
+        %value: !obelisk_sim.ref<!obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>>
+            {obelisk_sim.capture_kind = 3 : i32,
+             obelisk_sim.descriptor_id = 3 : i64})
+        attributes {
+          entry_kind = 1 : i32,
+          obelisk_sim.bindings = [
+            #obelisk_sim.argument_binding<path = "top.value", argument = 1,
+                kind = direct, copyOut = false>
+          ],
+          code_unit_id = 9000006 : i64
+        } {
+      obelisk.sv.statement.expression_statement attributes {
+          node_id = 60 : i64} {
+        obelisk.sv.expression.assignment attributes {
+            assignment_kind = 0 : i32, node_id = 61 : i64,
+            operator_kind = 0 : i32, semantic_type = !packed_logic8} {
+          obelisk.sv.expression.named_value attributes {
+              node_id = 62 : i64, referenced_path = "top.value",
+              referenced_symbol = @value,
+              semantic_type = !packed_logic8} {
+          }
+          obelisk.sv.expression.conversion attributes {
+              node_id = 63 : i64, semantic_type = !packed_logic8} {
+            obelisk.sv.expression.binary_op attributes {
+                node_id = 64 : i64, operator_kind = 0 : i32,
+                semantic_type = !packed_logic32} {
+              obelisk.sv.expression.conversion attributes {
+                  node_id = 65 : i64,
+                  semantic_type = !packed_logic32} {
+                obelisk.sv.expression.l_value_reference attributes {
+                    node_id = 66 : i64,
+                    semantic_type = !packed_logic8} {
+                }
+              }
+              obelisk.sv.expression.conversion attributes {
+                  node_id = 67 : i64,
+                  semantic_type = !packed_logic32} {
+                obelisk.sv.expression.integer_literal attributes {
+                    constant_value = "1", node_id = 68 : i64,
+                    semantic_type =
+                        !obelisk.integral<32, true, false, 31 : 0, int>} {
+                }
+              }
+            }
           }
         }
       }
