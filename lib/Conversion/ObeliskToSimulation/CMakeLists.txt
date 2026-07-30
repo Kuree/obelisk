@@ -13,7 +13,9 @@ add_mlir_library(ObeliskToSimulation
   LowerUnitContainers.cpp
   LowerUnitControlFlow.cpp
   LowerUnitCovergroups.cpp
+  LowerUnitDisplaySystemCalls.cpp
   LowerUnitExpressions.cpp
+  LowerUnitFileSystemCalls.cpp
   LowerUnitLValues.cpp
   LowerUnitOperators.cpp
   LowerUnitSystemCalls.cpp
