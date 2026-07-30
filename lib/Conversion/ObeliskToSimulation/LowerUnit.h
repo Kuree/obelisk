@@ -156,6 +156,8 @@ private:
   ::mlir::FailureOr<::mlir::Value>
   lowerSystemCall(semantic::SVCallExpressionOp op);
   ::mlir::FailureOr<::mlir::Value>
+  lowerArrayQuerySystemCall(semantic::SVCallExpressionOp op);
+  ::mlir::FailureOr<::mlir::Value>
   lowerDisplaySystemCall(semantic::SVCallExpressionOp op);
   ::mlir::FailureOr<::mlir::Value>
   lowerFileSystemCall(semantic::SVCallExpressionOp op);
