@@ -9,6 +9,7 @@
 #include "BytecodeSerialization.h"
 
 #include "obelisk/Analysis/NativeStateLayoutAnalysis.h"
+#include "obelisk/Analysis/SimulationStorageAnalysis.h"
 #include "obelisk/Dialect/Runtime/RuntimeTypes.h"
 
 #include "mlir/IR/BuiltinOps.h"
@@ -119,31 +120,12 @@ FailureOr<Layout> getLayout(Type type) {
 FailureOr<ManagedValueStorage>
 getManagedValueStorage(Type type, const llvm::DataLayout &dataLayout) {
   llvm::LLVMContext llvmContext;
-  llvm::Type *nativeType = nullptr;
-  bool fourState = containsLogic(type);
-  if (auto logic = dyn_cast<sim::LogicType>(type))
-    nativeType = llvm::IntegerType::get(llvmContext, logic.getWidth());
-  else if (auto integer = dyn_cast<IntegerType>(type))
-    nativeType = llvm::IntegerType::get(llvmContext, integer.getWidth());
-  else if (type.isF32())
-    nativeType = llvm::Type::getFloatTy(llvmContext);
-  else if (type.isF64())
-    nativeType = llvm::Type::getDoubleTy(llvmContext);
-  else if (isa<sim::TimeType>(type))
-    nativeType = llvm::Type::getInt64Ty(llvmContext);
-  else if (sim::isManagedHandleType(type))
-    nativeType = llvm::PointerType::get(llvmContext, 0);
-  else if (std::optional<uint32_t> width = simulationWidth(type))
-    nativeType = llvm::IntegerType::get(llvmContext, *width);
-  if (!nativeType)
+  FailureOr<analysis::SimulationStorageProperties> storage =
+      analysis::getSimulationStorageProperties(type, dataLayout, llvmContext);
+  if (failed(storage) || storage->managedReference)
     return failure();
-  llvm::TypeSize nativeSize = dataLayout.getTypeAllocSize(nativeType);
-  uint64_t planeSize = nativeSize.isScalable() ? 0 : nativeSize.getFixedValue();
-  uint32_t alignment =
-      static_cast<uint32_t>(dataLayout.getABITypeAlign(nativeType).value());
-  if (planeSize == 0 || alignment == 0 || (alignment & (alignment - 1)) != 0)
-    return failure();
-  return ManagedValueStorage{planeSize, alignment, fourState};
+  return ManagedValueStorage{storage->size, storage->alignment,
+                             storage->fourState};
 }
 
 FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {

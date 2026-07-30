@@ -6,6 +6,7 @@
 #include "BytecodePlan.h"
 #include "BytecodeRegisterPlanning.h"
 #include "BytecodeSerialization.h"
+#include "obelisk/Analysis/ManagedClassLayoutAnalysis.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
 #include "obelisk/Analysis/SimulationScheduleAnalysis.h"
@@ -30,14 +31,12 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallString.h"
-#include "llvm/ADT/StringSet.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/Support/Error.h"
 
 #include <algorithm>
 #include <cstddef>
-#include <functional>
 #include <limits>
 #include <optional>
 #include <string>
@@ -361,86 +360,16 @@ private:
   }
 
   LogicalResult prepareClassLayouts() {
-    llvm::StringMap<sim::SimClassDeclOp> classes;
-    llvm::StringMap<SmallVector<sim::SimClassFieldDeclOp>> fields;
-    design.walk([&](sim::SimClassDeclOp declaration) {
-      classes[declaration.getSymName()] = declaration;
+    FailureOr<analysis::ManagedClassLayoutAnalysis> layouts =
+        analysis::ManagedClassLayoutAnalysis::compute(design, dataLayout);
+    if (failed(layouts) ||
+        failed(analysis::materializeManagedClassFieldOffsets(*layouts)))
+      return failure();
+    for (const analysis::ManagedClassLayoutAnalysis::Class &layout :
+         layouts->classes) {
+      sim::SimClassDeclOp declaration = layout.declaration;
       classIDs[declaration.getSymName()] = declaration.getId();
-    });
-    design.walk([&](sim::SimClassFieldDeclOp field) {
-      fields[field.getOwner()].push_back(field);
-    });
-    for (auto &entry : fields)
-      llvm::sort(entry.second, [](auto lhs, auto rhs) {
-        return lhs.getOrdinal() < rhs.getOrdinal();
-      });
-
-    struct PartialLayout {
-      uint64_t size = 8;
-      uint32_t alignment = 8;
-    };
-    llvm::StringMap<PartialLayout> layouts;
-    llvm::StringSet<> active;
-    llvm::DataLayout local(dataLayout.getStringRepresentation());
-    std::function<LogicalResult(sim::SimClassDeclOp)> compute =
-        [&](sim::SimClassDeclOp declaration) -> LogicalResult {
-      if (layouts.count(declaration.getSymName()))
-        return success();
-      if (!active.insert(declaration.getSymName()).second)
-        return declaration.emitOpError("class layout inheritance cycle");
-      PartialLayout layout;
-      if (auto baseName = declaration.getBase()) {
-        auto base = classes.find(*baseName);
-        if (base == classes.end() || failed(compute(base->second)))
-          return declaration.emitOpError("class layout has an unknown base");
-        layout = layouts[base->getKey()];
-      }
-      // Native weak-reference wrappers reserve one inline referent pointer
-      // before declared fields. Whole-design bytecode uses the same managed
-      // object descriptor and must therefore account for that ABI slot even
-      // though bytecode never interprets its contents directly.
-      if (declaration.getWeakReferentAttr()) {
-        layout.size = llvm::alignTo(layout.size, uint64_t{8});
-        if (layout.size > UINT64_MAX - 8)
-          return declaration.emitOpError("weak referent layout overflows");
-        layout.size += 8;
-        layout.alignment = std::max<uint32_t>(layout.alignment, 8);
-      }
-      for (sim::SimClassFieldDeclOp field : fields[declaration.getSymName()]) {
-        if (field.getIsStatic())
-          continue;
-        Type fieldType = field.getType();
-        FailureOr<ManagedValueStorage> storage =
-            getManagedValueStorage(fieldType, local);
-        if (failed(storage))
-          return field.emitOpError(
-              "class property has no fixed bytecode layout");
-        uint64_t offset = llvm::alignTo(
-            layout.size, static_cast<uint64_t>(storage->alignment));
-        uint64_t planes = storage->fourState ? 2 : 1;
-        if (storage->planeSize >
-            (std::numeric_limits<uint64_t>::max() - offset) / planes)
-          return field.emitOpError("class property layout overflows");
-        layout.size = offset + storage->planeSize * planes;
-        layout.alignment =
-            std::max<uint32_t>(layout.alignment, storage->alignment);
-        if (auto existing = field->getAttrOfType<IntegerAttr>("offset");
-            existing && existing.getValue().getZExtValue() != offset)
-          return field.emitOpError(
-              "native and bytecode class layouts disagree");
-        field->setAttr("offset",
-                       IntegerAttr::get(
-                           IntegerType::get(design.getContext(), 64), offset));
-      }
-      layout.size =
-          llvm::alignTo(layout.size, static_cast<uint64_t>(layout.alignment));
-      active.erase(declaration.getSymName());
-      layouts[declaration.getSymName()] = layout;
-      return success();
-    };
-    for (const auto &entry : classes)
-      if (failed(compute(entry.second)))
-        return failure();
+    }
     return success();
   }
 

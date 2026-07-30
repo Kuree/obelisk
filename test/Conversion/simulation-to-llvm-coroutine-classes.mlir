@@ -18,7 +18,7 @@ module attributes {
     obelisk_sim.class.decl @Derived id 3 extends @Base implements [@I] {
       is_abstract = false, is_final = true, is_interface = false
     }
-    obelisk_sim.class.field @Base_value of @Base at 0 offset 8 : i64 {
+    obelisk_sim.class.field @Base_value of @Base at 0 : i64 {
       is_static = false, is_weak = false
     }
     obelisk_sim.class.method @Base_get of @Base slot 0 signature_id 17 implemented_by @base_get :

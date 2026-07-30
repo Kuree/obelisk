@@ -2,7 +2,7 @@
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 
-#include "obelisk/Analysis/SimulationStorageAnalysis.h"
+#include "obelisk/Analysis/ManagedClassLayoutAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/Runtime.h"
 
@@ -16,8 +16,6 @@
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/IR/DataLayout.h"
-#include "llvm/IR/LLVMContext.h"
-
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -29,14 +27,6 @@ namespace obelisk::detail {
 
 namespace {
 
-struct ManagedFieldLayout {
-  sim::SimClassFieldDeclOp declaration;
-  uint64_t offset = 0;
-  uint64_t planeSize = 0;
-  uint32_t alignment = 1;
-  bool fourState = false;
-};
-
 struct ManagedTraceLayout {
   uint64_t offset = 0;
   bool weak = false;
@@ -47,7 +37,6 @@ struct ManagedClassLayout {
   sim::SimClassDeclOp declaration;
   uint64_t size = sizeof(void *);
   uint32_t alignment = alignof(void *);
-  SmallVector<ManagedFieldLayout> fields;
   SmallVector<ManagedTraceLayout> tracedFields;
   SmallVector<sim::SimClassMethodDeclOp> methods;
 };
@@ -87,106 +76,54 @@ prepareManagedClassInventory(ModuleOp module,
                              const llvm::DataLayout &dataLayout,
                              llvm::StringMap<ManagedClassLayout> &layouts) {
   SmallVector<sim::SimClassDeclOp> classes;
-  SmallVector<sim::SimClassFieldDeclOp> fields;
   SmallVector<sim::SimClassMethodDeclOp> methods;
   module.walk([&](sim::SimClassDeclOp op) { classes.push_back(op); });
-  module.walk([&](sim::SimClassFieldDeclOp op) { fields.push_back(op); });
   module.walk([&](sim::SimClassMethodDeclOp op) { methods.push_back(op); });
   if (classes.empty())
     return success();
 
   llvm::StringMap<sim::SimClassDeclOp> classesByName;
-  llvm::StringMap<SmallVector<sim::SimClassFieldDeclOp>> fieldsByOwner;
   llvm::StringMap<SmallVector<sim::SimClassMethodDeclOp>> methodsByOwner;
   for (sim::SimClassDeclOp declaration : classes)
     classesByName[declaration.getSymName()] = declaration;
-  for (sim::SimClassFieldDeclOp field : fields)
-    fieldsByOwner[field.getOwner()].push_back(field);
   for (sim::SimClassMethodDeclOp method : methods)
     methodsByOwner[method.getOwner()].push_back(method);
-  for (auto &entry : fieldsByOwner)
-    llvm::sort(entry.second, [](auto lhs, auto rhs) {
-      return lhs.getOrdinal() < rhs.getOrdinal();
-    });
 
-  llvm::SmallPtrSet<Operation *, 8> active;
-  std::function<LogicalResult(sim::SimClassDeclOp)> compute =
-      [&](sim::SimClassDeclOp declaration) -> LogicalResult {
-    if (layouts.count(declaration.getSymName()))
-      return success();
-    if (!active.insert(declaration).second)
-      return declaration.emitError("managed class layout contains a cycle");
-
+  FailureOr<analysis::ManagedClassLayoutAnalysis> analyzed =
+      analysis::ManagedClassLayoutAnalysis::compute(
+          classes.front()->getParentOfType<sim::SimDesignOp>(), dataLayout);
+  if (failed(analyzed) ||
+      failed(analysis::materializeManagedClassFieldOffsets(*analyzed)))
+    return failure();
+  for (const analysis::ManagedClassLayoutAnalysis::Class &shared :
+       analyzed->classes) {
+    sim::SimClassDeclOp declaration = shared.declaration;
     ManagedClassLayout layout;
     layout.declaration = declaration;
     if (auto baseName = declaration.getBase()) {
-      auto base = classesByName.find(*baseName);
-      if (base == classesByName.end() || failed(compute(base->second)))
-        return declaration.emitError(
-            "managed class layout references an unknown base");
-      const ManagedClassLayout &baseLayout = layouts[base->getKey()];
-      layout.size = baseLayout.size;
-      layout.alignment = baseLayout.alignment;
+      const ManagedClassLayout &baseLayout = layouts[*baseName];
       layout.tracedFields = baseLayout.tracedFields;
       layout.methods = baseLayout.methods;
     }
-    if (declaration.getWeakReferentAttr()) {
-      uint64_t referentOffset;
-      if (!alignUp(layout.size, alignof(void *), referentOffset) ||
-          referentOffset >
-              std::numeric_limits<uint64_t>::max() - sizeof(void *))
-        return declaration.emitError("weak referent layout overflow");
-      layout.size = referentOffset + sizeof(void *);
-      layout.alignment = std::max<uint32_t>(layout.alignment, alignof(void *));
+    layout.size = shared.size;
+    layout.alignment = shared.alignment;
+    if (shared.weakReferentOffset)
       layout.tracedFields.push_back(
-          {referentOffset, true, OBELISK_RT_MANAGED_SLOT_CLASS});
-    }
+          {*shared.weakReferentOffset, true, OBELISK_RT_MANAGED_SLOT_CLASS});
 
-    llvm::DataLayout localDataLayout(dataLayout.getStringRepresentation());
-    llvm::LLVMContext llvmContext;
-    for (sim::SimClassFieldDeclOp field :
-         fieldsByOwner[declaration.getSymName()]) {
-      if (field.getIsStatic())
-        continue;
-      FailureOr<analysis::SimulationStorageProperties> storage =
-          analysis::getSimulationStorageProperties(
-              field.getType(), localDataLayout, llvmContext);
-      if (failed(storage))
-        return field.emitError(
-            "class property has no fixed native managed layout");
-      uint64_t offset;
-      if (!alignUp(layout.size, storage->alignment, offset))
-        return field.emitError("class property offset overflow");
-      uint64_t planes = storage->fourState ? 2 : 1;
-      if (storage->size >
-          (std::numeric_limits<uint64_t>::max() - offset) / planes)
-        return field.emitError("class property size overflow");
-      layout.size = offset + storage->size * planes;
-      layout.alignment =
-          std::max<uint32_t>(layout.alignment, storage->alignment);
-      ManagedFieldLayout fieldLayout{field, offset, storage->size,
-                                     storage->alignment, storage->fourState};
-      layout.fields.push_back(fieldLayout);
+    for (const analysis::ManagedClassLayoutAnalysis::Field &sharedField :
+         shared.fields) {
+      sim::SimClassFieldDeclOp field = sharedField.declaration;
       SmallVector<std::pair<uint64_t, uint32_t>, 2> traceSlots;
       if (failed(collectManagedTraceSlots(field.getType(), 0, traceSlots)) ||
-          traceSlots.size() != storage->managedRootOffsets.size())
+          traceSlots.size() != sharedField.storage.managedRootOffsets.size())
         return field.emitError("class property has no typed managed layout");
       for (auto [rootOffset, slotKind] : traceSlots)
         layout.tracedFields.push_back(
-            {offset + rootOffset,
+            {sharedField.offset + rootOffset,
              isa<sim::ClassHandleType>(field.getType()) && field.getIsWeak(),
              slotKind});
-      if (auto existing = field->getAttrOfType<IntegerAttr>("offset");
-          existing && existing.getValue().getZExtValue() != offset)
-        return field.emitError("native and bytecode class layouts disagree");
-      field->setAttr(
-          "offset",
-          IntegerAttr::get(IntegerType::get(module.getContext(), 64), offset));
     }
-    uint64_t alignedSize;
-    if (!alignUp(layout.size, layout.alignment, alignedSize))
-      return declaration.emitError("class instance size overflow");
-    layout.size = alignedSize;
 
     for (sim::SimClassMethodDeclOp method :
          methodsByOwner[declaration.getSymName()]) {
@@ -214,13 +151,8 @@ prepareManagedClassInventory(ModuleOp module,
         "obelisk.native.instance_alignment",
         IntegerAttr::get(IntegerType::get(module.getContext(), 32),
                          layout.alignment));
-    active.erase(declaration);
     layouts[declaration.getSymName()] = std::move(layout);
-    return success();
-  };
-  for (sim::SimClassDeclOp declaration : classes)
-    if (failed(compute(declaration)))
-      return failure();
+  }
 
   MLIRContext *context = module.getContext();
   Type pointer = LLVM::LLVMPointerType::get(context);
