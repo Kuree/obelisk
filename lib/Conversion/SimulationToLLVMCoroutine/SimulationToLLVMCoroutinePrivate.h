@@ -25,6 +25,10 @@ class RewritePatternSet;
 class TypeConverter;
 } // namespace mlir
 
+namespace obelisk {
+class SimulationProcessFrameAnalysis;
+}
+
 namespace obelisk::detail {
 
 inline constexpr llvm::StringLiteral nativeTwoStateBlockUnknownsAttr =
@@ -119,6 +123,11 @@ mlir::LogicalResult serializeRuntimeWait(mlir::Operation *operation,
                                          mlir::Value wait, uint32_t kind,
                                          uint32_t count,
                                          mlir::OpBuilder &builder);
+uint64_t stableProcessID(llvm::StringRef name);
+mlir::LogicalResult
+makeProcessDescriptor(mlir::ModuleOp module, mlir::Location location,
+                      llvm::StringRef baseName, uint64_t stableID,
+                      const SimulationProcessFrameAnalysis &analysis);
 mlir::LogicalResult prepareManagedLowering(mlir::ModuleOp module,
                                            const llvm::DataLayout &dataLayout);
 

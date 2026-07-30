@@ -82,6 +82,7 @@ using detail::insertValue;
 using detail::llvmConstant;
 using detail::loadAt;
 using detail::lowerNativeDPICalls;
+using detail::makeProcessDescriptor;
 using detail::makeByteArrayGlobal;
 using detail::makeConstantGlobal;
 using detail::managedClassDescriptorName;
@@ -104,6 +105,7 @@ using detail::resizeSignedIndexToI64;
 using detail::serializeComputedObserverWait;
 using detail::serializeRuntimeWait;
 using detail::SignedI64Index;
+using detail::stableProcessID;
 using detail::storeAt;
 
 constexpr uint64_t kNoOffset = std::numeric_limits<uint64_t>::max();
@@ -559,177 +561,6 @@ LogicalResult makeNativeWrappers(ModuleOp module, LLVM::LLVMFuncOp ramp,
   cf::BranchOp::create(builder, location, destroyDone);
   builder.setInsertionPointToStart(destroyDone);
   LLVM::ReturnOp::create(builder, location, ValueRange{});
-  return success();
-}
-
-uint64_t stableProcessID(StringRef name) {
-  uint64_t hash = UINT64_C(14695981039346656037);
-  for (unsigned char byte : name.bytes()) {
-    hash ^= byte;
-    hash *= UINT64_C(1099511628211);
-  }
-  return hash;
-}
-
-LogicalResult
-makeProcessDescriptor(ModuleOp module, Location location, StringRef baseName,
-                      uint64_t stableID,
-                      const SimulationProcessFrameAnalysis &analysis) {
-  MLIRContext *context = module.getContext();
-  Type pointer = LLVM::LLVMPointerType::get(context);
-  Type i32 = IntegerType::get(context, 32);
-  Type i64 = IntegerType::get(context, 64);
-  auto fieldType =
-      LLVM::LLVMStructType::getLiteral(context, {i32, i32, i64, i64, i32, i32});
-  auto fieldsType =
-      LLVM::LLVMArrayType::get(fieldType, analysis.getFields().size());
-  auto continuationsType =
-      LLVM::LLVMArrayType::get(i32, analysis.getContinuations().size());
-  auto layoutType = LLVM::LLVMStructType::getLiteral(
-      context, {i32, i32, i64, i64, pointer, i32, i32, pointer, i64});
-  auto handleType = LLVM::LLVMStructType::getLiteral(context, {i32, i32, i64});
-  auto descriptorType = LLVM::LLVMStructType::getLiteral(
-      context, {handleType, i32, i32, i32, i32, pointer, pointer, pointer,
-                pointer, pointer, pointer, pointer});
-
-  std::string fieldsName = (baseName + ".__obelisk_frame_fields").str();
-  std::string continuationsName = (baseName + ".__obelisk_continuations").str();
-  std::string layoutName = (baseName + ".__obelisk_frame_layout").str();
-  std::string descriptorName =
-      (baseName + ".__obelisk_process_descriptor").str();
-  std::string designBytecodeName =
-      (baseName + ".__obelisk_bytecode_entry").str();
-  constexpr StringLiteral executionName = "__obelisk_execution_descriptor_v1";
-  bool hasExecution = module.lookupSymbol(executionName) != nullptr;
-  bool hasDesignBytecode = module.lookupSymbol(designBytecodeName) != nullptr;
-
-  makeConstantGlobal(
-      module, location, fieldsType, fieldsName, LLVM::Linkage::Internal, 8,
-      [&](OpBuilder &builder) {
-        Value array = LLVM::ZeroOp::create(builder, location, fieldsType);
-        for (auto [index, field] : llvm::enumerate(analysis.getFields())) {
-          Value value = LLVM::ZeroOp::create(builder, location, fieldType);
-          value = insertValue(builder, location, value,
-                              llvmConstant(builder, location, i32,
-                                           static_cast<uint32_t>(field.kind)),
-                              0);
-          value = insertValue(builder, location, value,
-                              llvmConstant(builder, location, i32,
-                                           static_cast<uint32_t>(field.flags)),
-                              1);
-          value = insertValue(
-              builder, location, value,
-              llvmConstant(builder, location, i64, field.offset), 2);
-          value =
-              insertValue(builder, location, value,
-                          llvmConstant(builder, location, i64, field.size), 3);
-          value = insertValue(
-              builder, location, value,
-              llvmConstant(builder, location, i32, field.alignment), 4);
-          array = LLVM::InsertValueOp::create(
-              builder, location, array, value,
-              ArrayRef<int64_t>{static_cast<int64_t>(index)});
-        }
-        return array;
-      });
-  makeConstantGlobal(module, location, continuationsType, continuationsName,
-                     LLVM::Linkage::Internal, 4, [&](OpBuilder &builder) {
-                       Value array = LLVM::ZeroOp::create(builder, location,
-                                                          continuationsType);
-                       for (auto [index, continuation] :
-                            llvm::enumerate(analysis.getContinuations()))
-                         array = LLVM::InsertValueOp::create(
-                             builder, location, array,
-                             llvmConstant(builder, location, i32, continuation),
-                             ArrayRef<int64_t>{static_cast<int64_t>(index)});
-                       return array;
-                     });
-  makeConstantGlobal(
-      module, location, layoutType, layoutName, LLVM::Linkage::Internal, 8,
-      [&](OpBuilder &builder) {
-        Value layout = LLVM::ZeroOp::create(builder, location, layoutType);
-        layout = insertValue(builder, location, layout,
-                             llvmConstant(builder, location, i32, 1), 0);
-        layout = insertValue(
-            builder, location, layout,
-            llvmConstant(builder, location, i64, analysis.getFrameSize()), 2);
-        layout = insertValue(
-            builder, location, layout,
-            llvmConstant(builder, location, i64, analysis.getFrameAlignment()),
-            3);
-        layout = insertValue(
-            builder, location, layout,
-            LLVM::AddressOfOp::create(builder, location, pointer, fieldsName),
-            4);
-        layout = insertValue(
-            builder, location, layout,
-            llvmConstant(builder, location, i32, analysis.getFields().size()),
-            5);
-        layout = insertValue(builder, location, layout,
-                             llvmConstant(builder, location, i32,
-                                          analysis.getContinuations().size()),
-                             6);
-        layout = insertValue(builder, location, layout,
-                             LLVM::AddressOfOp::create(
-                                 builder, location, pointer, continuationsName),
-                             7);
-        return insertValue(
-            builder, location, layout,
-            llvmConstant(builder, location, i64, analysis.getChecksum()), 8);
-      });
-  makeConstantGlobal(
-      module, location, descriptorType, descriptorName, LLVM::Linkage::External,
-      8, [&](OpBuilder &builder) {
-        Value handle = LLVM::ZeroOp::create(builder, location, handleType);
-        handle = insertValue(builder, location, handle,
-                             llvmConstant(builder, location, i32, 6), 0);
-        handle = insertValue(builder, location, handle,
-                             llvmConstant(builder, location, i64, stableID), 2);
-        Value descriptor =
-            LLVM::ZeroOp::create(builder, location, descriptorType);
-        descriptor = insertValue(builder, location, descriptor, handle, 0);
-        descriptor = insertValue(
-            builder, location, descriptor,
-            llvmConstant(builder, location, i32, OBELISK_RT_VERSION), 1);
-        descriptor = insertValue(
-            builder, location, descriptor,
-            llvmConstant(builder, location, i32, hasDesignBytecode ? 3 : 1), 3);
-        descriptor = insertValue(
-            builder, location, descriptor,
-            LLVM::AddressOfOp::create(builder, location, pointer, layoutName),
-            5);
-        descriptor = insertValue(
-            builder, location, descriptor,
-            LLVM::AddressOfOp::create(
-                builder, location, pointer,
-                (baseName + ".__obelisk_native_requirements").str()),
-            6);
-        descriptor =
-            insertValue(builder, location, descriptor,
-                        LLVM::AddressOfOp::create(
-                            builder, location, pointer,
-                            (baseName + ".__obelisk_native_execute").str()),
-                        7);
-        descriptor =
-            insertValue(builder, location, descriptor,
-                        LLVM::AddressOfOp::create(
-                            builder, location, pointer,
-                            (baseName + ".__obelisk_native_destroy").str()),
-                        8);
-        if (hasExecution)
-          descriptor =
-              insertValue(builder, location, descriptor,
-                          LLVM::AddressOfOp::create(builder, location, pointer,
-                                                    executionName),
-                          10);
-        if (hasDesignBytecode)
-          descriptor =
-              insertValue(builder, location, descriptor,
-                          LLVM::AddressOfOp::create(builder, location, pointer,
-                                                    designBytecodeName),
-                          11);
-        return descriptor;
-      });
   return success();
 }
 
