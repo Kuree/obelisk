@@ -227,16 +227,6 @@ findObserverDescriptor(const obelisk_rt_execution_descriptor_v1 *execution,
              : nullptr;
 }
 
-template <typename T>
-const T *computedSpan(const obelisk_rt_computed_wait_record_v1 *wait,
-                      uint64_t offset, uint64_t count) {
-  if (!wait || offset > wait->total_size ||
-      count > (wait->total_size - offset) / sizeof(T))
-    return nullptr;
-  return reinterpret_cast<const T *>(reinterpret_cast<const uint8_t *>(wait) +
-                                     offset);
-}
-
 } // namespace obelisk::process
 
 using namespace obelisk::process;
@@ -280,13 +270,14 @@ bool obelisk_rt_validate_computed_wait_record(
       wait->previous_unknown_offset != 0 ||
       wait->total_size != previousValuesEnd || wait->total_size > available)
     return false;
-  const auto *observers = computedSpan<obelisk_rt_computed_observer_v1>(
+  const auto *observers = computedWaitSpan<obelisk_rt_computed_observer_v1>(
       wait, wait->observers_offset, wait->observer_count);
-  const auto *captures = computedSpan<obelisk_rt_computed_capture_v1>(
+  const auto *captures = computedWaitSpan<obelisk_rt_computed_capture_v1>(
       wait, wait->captures_offset, wait->capture_count);
-  const auto *dependencies = computedSpan<obelisk_rt_computed_dependency_v1>(
-      wait, wait->dependencies_offset, wait->dependency_count);
-  const auto *clauses = computedSpan<obelisk_rt_computed_clause_v1>(
+  const auto *dependencies =
+      computedWaitSpan<obelisk_rt_computed_dependency_v1>(
+          wait, wait->dependencies_offset, wait->dependency_count);
+  const auto *clauses = computedWaitSpan<obelisk_rt_computed_clause_v1>(
       wait, wait->clauses_offset, wait->clause_count);
   if (!observers || !captures || !dependencies || !clauses)
     return false;
