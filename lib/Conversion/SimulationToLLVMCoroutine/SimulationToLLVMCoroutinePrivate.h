@@ -136,6 +136,8 @@ mlir::Value makeNativeAssocKey(mlir::OpBuilder &builder,
                                mlir::Location location,
                                sim::AssocArrayType array,
                                mlir::ValueRange values);
+mlir::Value zeroNativeValue(mlir::OpBuilder &builder,
+                            mlir::Location location, mlir::Type type);
 
 std::string managedClassDescriptorName(mlir::SymbolRefAttr className);
 std::string managedMethodThunkName(llvm::StringRef methodName);
@@ -172,6 +174,8 @@ void populateManagedToLLVMConversionPatterns(mlir::RewritePatternSet &patterns,
 void populateManagedStringToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
 void populateManagedContainerToLLVMConversionPatterns(
+    mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
+void populateManagedAssociativeToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
 void populateManagedCoverageToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
