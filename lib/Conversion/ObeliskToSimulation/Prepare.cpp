@@ -149,17 +149,14 @@ static uint32_t getStableImportID(StringRef cIdentifier) {
 static bool isDeclarativeLeafNode(Operation *op) {
   return isa<
       semantic::SVRandSequenceStatementOp, semantic::SVCoverCrossSymbolOp,
-      semantic::SVCoverCrossBodySymbolOp,
-      semantic::SVLocalAssertionVarSymbolOp,
+      semantic::SVCoverCrossBodySymbolOp, semantic::SVLocalAssertionVarSymbolOp,
       semantic::SVRandSeqProductionSymbolOp, semantic::SVDPIOpenArrayTypeOp>(
       op);
 }
 
 static bool isCoverageNode(Operation *op) {
-  if (isa<semantic::SVCovergroupTypeOp,
-          semantic::SVCovergroupBodySymbolOp,
-          semantic::SVCoverpointSymbolOp,
-          semantic::SVCoverageBinSymbolOp,
+  if (isa<semantic::SVCovergroupTypeOp, semantic::SVCovergroupBodySymbolOp,
+          semantic::SVCoverpointSymbolOp, semantic::SVCoverageBinSymbolOp,
           semantic::SVNewCovergroupExpressionOp>(op))
     return true;
   if (auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(op))
@@ -178,24 +175,19 @@ static bool isSupportedClassDeclaration(Operation *op) {
 }
 
 static bool isSupportedAssertionNode(Operation *op) {
-  return isa<semantic::SVImmediateAssertionStatementOp,
-             semantic::SVConcurrentAssertionStatementOp,
-             semantic::SVPropertySymbolOp, semantic::SVSequenceSymbolOp,
-             semantic::SVAssertionPortSymbolOp,
-             semantic::SVAssertionInstanceExpressionOp,
-             semantic::SVInvalidAssertionExprOp,
-             semantic::SVSimpleAssertionExprOp,
-             semantic::SVSequenceConcatExprOp,
-             semantic::SVSequenceWithMatchExprOp,
-             semantic::SVUnaryAssertionExprOp,
-             semantic::SVBinaryAssertionExprOp,
-             semantic::SVFirstMatchAssertionExprOp,
-             semantic::SVClockingAssertionExprOp,
-             semantic::SVStrongWeakAssertionExprOp,
-             semantic::SVAbortAssertionExprOp,
-             semantic::SVConditionalAssertionExprOp,
-             semantic::SVCaseAssertionExprOp,
-             semantic::SVDisableIffAssertionExprOp>(op);
+  return isa<
+      semantic::SVImmediateAssertionStatementOp,
+      semantic::SVConcurrentAssertionStatementOp, semantic::SVPropertySymbolOp,
+      semantic::SVSequenceSymbolOp, semantic::SVAssertionPortSymbolOp,
+      semantic::SVAssertionInstanceExpressionOp,
+      semantic::SVInvalidAssertionExprOp, semantic::SVSimpleAssertionExprOp,
+      semantic::SVSequenceConcatExprOp, semantic::SVSequenceWithMatchExprOp,
+      semantic::SVUnaryAssertionExprOp, semantic::SVBinaryAssertionExprOp,
+      semantic::SVFirstMatchAssertionExprOp,
+      semantic::SVClockingAssertionExprOp,
+      semantic::SVStrongWeakAssertionExprOp, semantic::SVAbortAssertionExprOp,
+      semantic::SVConditionalAssertionExprOp, semantic::SVCaseAssertionExprOp,
+      semantic::SVDisableIffAssertionExprOp>(op);
 }
 
 static bool isWeakReferenceClass(semantic::SVClassTypeOp classType) {
@@ -234,8 +226,6 @@ struct DescriptorInfo {
 };
 
 struct UnitInfo {
-  enum class ObserverResult { None, Value, Truth, Event };
-
   Operation *source;
   uint64_t id;
   sim::EntryKind entryKind;
@@ -499,34 +489,30 @@ void ObeliskSimPreparePass::runOnOperation() {
     }
   });
 
-  std::function<bool(Operation *)> isCoverageConstant =
-      [&](Operation *expression) {
-        if (isa<semantic::SVIntegerLiteralOp,
-                semantic::SVUnbasedUnsizedIntegerLiteralOp>(expression))
-          return true;
-        if (isa<semantic::SVConversionExpressionOp,
-                semantic::SVUnaryExpressionOp,
-                semantic::SVBinaryExpressionOp>(expression)) {
-          SmallVector<Operation *> children = getChildren(expression);
-          return !children.empty() &&
-                 llvm::all_of(children, isCoverageConstant);
-        }
-        SymbolRefAttr reference;
-        if (auto named =
-                dyn_cast<semantic::SVNamedValueExpressionOp>(expression))
-          reference = named.getReferencedSymbol();
-        else if (auto hierarchical =
-                     dyn_cast<semantic::SVHierarchicalValueExpressionOp>(
-                         expression))
-          reference = hierarchical.getReferencedSymbol();
-        if (!reference)
-          return false;
-        auto symbol = semanticSymbols.find(reference.getLeafReference());
-        return symbol != semanticSymbols.end() &&
-               isa<semantic::SVParameterSymbolOp,
-                   semantic::SVEnumValueSymbolOp,
-                   semantic::SVSpecparamSymbolOp>(symbol->second);
-      };
+  std::function<bool(Operation *)> isCoverageConstant = [&](Operation
+                                                                *expression) {
+    if (isa<semantic::SVIntegerLiteralOp,
+            semantic::SVUnbasedUnsizedIntegerLiteralOp>(expression))
+      return true;
+    if (isa<semantic::SVConversionExpressionOp, semantic::SVUnaryExpressionOp,
+            semantic::SVBinaryExpressionOp>(expression)) {
+      SmallVector<Operation *> children = getChildren(expression);
+      return !children.empty() && llvm::all_of(children, isCoverageConstant);
+    }
+    SymbolRefAttr reference;
+    if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(expression))
+      reference = named.getReferencedSymbol();
+    else if (auto hierarchical =
+                 dyn_cast<semantic::SVHierarchicalValueExpressionOp>(
+                     expression))
+      reference = hierarchical.getReferencedSymbol();
+    if (!reference)
+      return false;
+    auto symbol = semanticSymbols.find(reference.getLeafReference());
+    return symbol != semanticSymbols.end() &&
+           isa<semantic::SVParameterSymbolOp, semantic::SVEnumValueSymbolOp,
+               semantic::SVSpecparamSymbolOp>(symbol->second);
+  };
 
   // Reject the declarative node families and the dynamic object types before
   // producing any target IR, so an unsupported construct never survives as
@@ -567,11 +553,11 @@ void ObeliskSimPreparePass::runOnOperation() {
       }
       for (Operation *child : getChildren(covergroup)) {
         auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(child);
-        if (!formal ||
-            !formal.getIsCoverageSampleFormal().value_or(false))
+        if (!formal || !formal.getIsCoverageSampleFormal().value_or(false))
           continue;
         FailureOr<Type> type = getNormalizedSemanticType(formal);
-        Type scalar = succeeded(type) ? sim::getPackedScalarType(*type) : Type{};
+        Type scalar =
+            succeeded(type) ? sim::getPackedScalarType(*type) : Type{};
         if (formal.getDirection() != semantic::SVArgumentDirection::In ||
             !scalar || !isa<IntegerType, sim::LogicType>(scalar)) {
           emitError(getSemanticLocation(formal))
@@ -579,24 +565,21 @@ void ObeliskSimPreparePass::runOnOperation() {
           invalid = true;
         }
       }
-    } else if (auto body =
-                   dyn_cast<semantic::SVCovergroupBodySymbolOp>(op)) {
+    } else if (auto body = dyn_cast<semantic::SVCovergroupBodySymbolOp>(op)) {
       if (body.getOptionCount() != 0) {
         emitError(getSemanticLocation(op))
             << "covergroup coverage options are not supported";
         invalid = true;
       }
-    } else if (auto coverpoint =
-                   dyn_cast<semantic::SVCoverpointSymbolOp>(op)) {
+    } else if (auto coverpoint = dyn_cast<semantic::SVCoverpointSymbolOp>(op)) {
       if (coverpoint.getOptionCount() != 0) {
         emitError(getSemanticLocation(op))
             << "coverpoint coverage options are not supported";
         invalid = true;
       }
-      size_t namedBins = llvm::count_if(
-          getChildren(op), [](Operation *child) {
-            return isa<semantic::SVCoverageBinSymbolOp>(child);
-          });
+      size_t namedBins = llvm::count_if(getChildren(op), [](Operation *child) {
+        return isa<semantic::SVCoverageBinSymbolOp>(child);
+      });
       if (namedBins == 0) {
         emitError(getSemanticLocation(op))
             << "coverpoints require explicit named bins; automatic bins are "
@@ -614,8 +597,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     } else if (auto bin = dyn_cast<semantic::SVCoverageBinSymbolOp>(op)) {
       if (bin.getBinsKind() != semantic::SVCoverageBinKind::Bins) {
         emitError(getSemanticLocation(op))
-            << (bin.getBinsKind() ==
-                        semantic::SVCoverageBinKind::IgnoreBins
+            << (bin.getBinsKind() == semantic::SVCoverageBinKind::IgnoreBins
                     ? "ignore_bins are not supported"
                     : "illegal_bins are not supported");
         invalid = true;
@@ -632,12 +614,10 @@ void ObeliskSimPreparePass::runOnOperation() {
         invalid = true;
       }
       if (bin.getHasIff()) {
-        emitError(getSemanticLocation(op))
-            << "bin-level iff is not supported";
+        emitError(getSemanticLocation(op)) << "bin-level iff is not supported";
         invalid = true;
       }
-      if (bin.getTransitionSetCount() != 0 ||
-          bin.getIsDefaultSequence()) {
+      if (bin.getTransitionSetCount() != 0 || bin.getIsDefaultSequence()) {
         emitError(getSemanticLocation(op))
             << "transition coverage bins are not supported";
         invalid = true;
@@ -664,7 +644,7 @@ void ObeliskSimPreparePass::runOnOperation() {
           }
         }
     } else if (isa<semantic::SVCoverCrossSymbolOp,
-                           semantic::SVCoverCrossBodySymbolOp>(op)) {
+                   semantic::SVCoverCrossBodySymbolOp>(op)) {
       emitError(getSemanticLocation(op))
           << "coverage crosses are not supported";
       invalid = true;
@@ -834,13 +814,11 @@ void ObeliskSimPreparePass::runOnOperation() {
   semanticRoot->walk([&](semantic::SVCovergroupTypeOp covergroup) {
     covergroupSources.push_back(covergroup);
   });
-  llvm::sort(
-      covergroupSources,
-      [](semantic::SVCovergroupTypeOp lhs,
-         semantic::SVCovergroupTypeOp rhs) {
-        return std::tuple(getHierarchyName(lhs), lhs.getSymName()) <
-               std::tuple(getHierarchyName(rhs), rhs.getSymName());
-      });
+  llvm::sort(covergroupSources, [](semantic::SVCovergroupTypeOp lhs,
+                                   semantic::SVCovergroupTypeOp rhs) {
+    return std::tuple(getHierarchyName(lhs), lhs.getSymName()) <
+           std::tuple(getHierarchyName(rhs), rhs.getSymName());
+  });
   for (auto [index, covergroup] : llvm::enumerate(covergroupSources)) {
     auto handle =
         dyn_cast<semantic::CovergroupHandleType>(covergroup.getSemanticType());
@@ -858,8 +836,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       for (Operation *member : getChildren(body)) {
         if (auto coverpoint =
                 dyn_cast<semantic::SVCoverpointSymbolOp>(member)) {
-          int64_t bins = llvm::count_if(
-              getChildren(coverpoint), [](Operation *candidate) {
+          int64_t bins =
+              llvm::count_if(getChildren(coverpoint), [](Operation *candidate) {
                 return isa<semantic::SVCoverageBinSymbolOp>(candidate);
               });
           coverpointBins.push_back(bins);
@@ -1019,8 +997,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     // root class.
     if (!base && !classType.getIsInterface()) {
       auto addRandomField = [&](StringRef suffix, StringRef debugName) {
-        std::string name =
-            (classSymbol.getValue() + "_field_" + suffix).str();
+        std::string name = (classSymbol.getValue() + "_field_" + suffix).str();
         FlatSymbolRefAttr symbol = FlatSymbolRefAttr::get(context, name);
         sim::SimClassFieldDeclOp::create(
             builder, getSemanticLocation(classType), name, classSymbol,
@@ -1034,8 +1011,7 @@ void ObeliskSimPreparePass::runOnOperation() {
           addRandomField("__obelisk_rng_state", "__obelisk_rng_state"));
       declaration->setAttr(
           "obelisk_sim.random_increment_field",
-          addRandomField("__obelisk_rng_increment",
-                         "__obelisk_rng_increment"));
+          addRandomField("__obelisk_rng_increment", "__obelisk_rng_increment"));
     }
   }
   llvm::DenseMap<Operation *, uint64_t> classVirtualCounts;
@@ -2058,16 +2034,15 @@ void ObeliskSimPreparePass::runOnOperation() {
         invalid = true;
         continue;
       }
-      std::optional<unsigned> width =
-          sim::getPackedWidth(target->second.type);
+      std::optional<unsigned> width = sim::getPackedWidth(target->second.type);
       if (!width) {
         emitError(getSemanticLocation(unit))
             << "net initializer target has no fixed packed width";
         invalid = true;
         continue;
       }
-      sinks.push_back({target->second, 0, *width,
-                       getHierarchyName(net).str(), std::nullopt});
+      sinks.push_back({target->second, 0, *width, getHierarchyName(net).str(),
+                       std::nullopt});
     } else {
       Operation *assignmentRoot = nullptr;
       if (connection) {
@@ -2103,9 +2078,9 @@ void ObeliskSimPreparePass::runOnOperation() {
           sink.descriptor.type, sim::Lifetime::Design,
           builder.getStringAttr(sink.path),
           builder.getStringAttr(connection ? "port connection"
-                                           : isa<semantic::SVNetSymbolOp>(unit)
-                                                 ? "net initializer"
-                                                 : "continuous"),
+                                : isa<semantic::SVNetSymbolOp>(unit)
+                                    ? "net initializer"
+                                    : "continuous"),
           builder.getI64IntegerAttr(sink.offset),
           builder.getI64IntegerAttr(sink.width));
     }
@@ -2135,8 +2110,8 @@ void ObeliskSimPreparePass::runOnOperation() {
     }
     if ((*entryKind == sim::EntryKind::Function ||
          *entryKind == sim::EntryKind::Task) &&
-        !isa<semantic::SVVariableSymbolOp,
-             semantic::SVClassPropertySymbolOp>(source)) {
+        !isa<semantic::SVVariableSymbolOp, semantic::SVClassPropertySymbolOp>(
+            source)) {
       auto subroutine = cast<semantic::SVSubroutineSymbolOp>(source);
       bool dpiImport = subroutine.getIsDpiImport().value_or(false);
       if (*entryKind == sim::EntryKind::Function && !dpiImport &&
@@ -2193,7 +2168,7 @@ void ObeliskSimPreparePass::runOnOperation() {
                      symbol,
                      std::move(codeUnitHierarchy),
                      {},
-                     UnitInfo::ObserverResult::None});
+                     ObserverResult::None});
     if (!hierarchy.empty() &&
         !isa<semantic::SVPortConnectionOp, semantic::SVVariableSymbolOp,
              semantic::SVNetSymbolOp, semantic::SVClassPropertySymbolOp>(
@@ -2233,7 +2208,7 @@ void ObeliskSimPreparePass::runOnOperation() {
   // evaluator is removed by symbol DCE.
   struct ObserverCandidate {
     Operation *expression;
-    UnitInfo::ObserverResult result;
+    ObserverResult result;
     std::string label;
     uint64_t parentID;
     std::string parentHierarchy;
@@ -2247,9 +2222,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         SmallVector<Operation *> children = getChildren(wait);
         if (children.size() == 2 &&
             !isAddressableTimingExpression(children.front()))
-          observerCandidates.push_back({children.front(),
-                                        UnitInfo::ObserverResult::Truth, "wait",
-                                        unit.id, unit.hierarchy});
+          observerCandidates.push_back({children.front(), ObserverResult::Truth,
+                                        "wait", unit.id, unit.hierarchy});
         return;
       }
       auto event = dyn_cast<semantic::SVSignalEventControlOp>(nested);
@@ -2258,15 +2232,14 @@ void ObeliskSimPreparePass::runOnOperation() {
       SmallVector<Operation *> children = getChildren(event);
       if (children.empty())
         return;
-      UnitInfo::ObserverResult primaryResult = UnitInfo::ObserverResult::Value;
+      ObserverResult primaryResult = ObserverResult::Value;
       FailureOr<Type> primaryType = getNormalizedSemanticType(children.front());
       if (succeeded(primaryType) && isa<sim::EventType>(*primaryType))
-        primaryResult = UnitInfo::ObserverResult::Event;
+        primaryResult = ObserverResult::Event;
       observerCandidates.push_back({children.front(), primaryResult, "primary",
                                     unit.id, unit.hierarchy});
       if (event.getHasIff() && children.size() == 2)
-        observerCandidates.push_back({children[1],
-                                      UnitInfo::ObserverResult::Truth, "iff",
+        observerCandidates.push_back({children[1], ObserverResult::Truth, "iff",
                                       unit.id, unit.hierarchy});
     });
   }
@@ -2301,7 +2274,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     candidate.expression->setAttr("obelisk_sim.observer",
                                   FlatSymbolRefAttr::get(context, symbol));
     candidate.expression->setAttr(
-        "obelisk_sim.observer_result",
+        observerResultAttrName,
         builder.getI32IntegerAttr(static_cast<uint32_t>(candidate.result)));
     units.push_back({candidate.expression,
                      id,
@@ -2572,8 +2545,7 @@ void ObeliskSimPreparePass::runOnOperation() {
         return;
       SmallVector<semantic::SVFormalArgumentSymbolOp> formals;
       for (Operation *child : getChildren(task))
-        if (auto formal =
-                dyn_cast<semantic::SVFormalArgumentSymbolOp>(child))
+        if (auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(child))
           formals.push_back(formal);
       SmallVector<Operation *> actuals = getChildren(call);
       if (actuals.size() != formals.size())
@@ -2785,10 +2757,9 @@ void ObeliskSimPreparePass::runOnOperation() {
                                   isSignedSemanticType(*semanticType))),
           builder.getNamedAttr(
               "argument_ref",
-              builder.getBoolAttr(
-                  formal.getDirection() ==
-                      semantic::SVArgumentDirection::Ref &&
-                  indirectRefTasks.contains(targetSource))),
+              builder.getBoolAttr(formal.getDirection() ==
+                                      semantic::SVArgumentDirection::Ref &&
+                                  indirectRefTasks.contains(targetSource))),
       };
       if (dpiTarget && semanticType) {
         FailureOr<DPIABIKind> category =
@@ -3152,8 +3123,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       }
     } else if (unit.entryKind == sim::EntryKind::Observer) {
       Type resultType;
-      if (unit.observerResult == UnitInfo::ObserverResult::Truth ||
-          unit.observerResult == UnitInfo::ObserverResult::Event) {
+      if (unit.observerResult == ObserverResult::Truth ||
+          unit.observerResult == ObserverResult::Event) {
         resultType = builder.getI1Type();
       } else {
         FailureOr<Type> normalized = getNormalizedSemanticType(unit.source);
@@ -3232,17 +3203,16 @@ void ObeliskSimPreparePass::runOnOperation() {
                                                    builder.getUnitAttr()));
     if (unit.entryKind == sim::EntryKind::Observer)
       functionAttrs.push_back(
-          builder.getNamedAttr("obelisk_sim.observer_result",
+          builder.getNamedAttr(observerResultAttrName,
                                builder.getI32IntegerAttr(static_cast<uint32_t>(
                                    unit.observerResult))));
     if (unit.entryKind == sim::EntryKind::Observer) {
       std::optional<unsigned> width =
-          results.empty()
-              ? std::nullopt
-              : isa<FloatType>(results.front())
-                    ? std::optional<unsigned>(
-                          cast<FloatType>(results.front()).getWidth())
-                    : sim::getPackedWidth(results.front());
+          results.empty() ? std::nullopt
+          : isa<FloatType>(results.front())
+              ? std::optional<unsigned>(
+                    cast<FloatType>(results.front()).getWidth())
+              : sim::getPackedWidth(results.front());
       if (!width) {
         emitError(getSemanticLocation(unit.source))
             << "observer result width is not fixed";
@@ -3401,8 +3371,7 @@ void ObeliskSimPreparePass::runOnOperation() {
       auto memberOrdinals = unit.source->getAttrOfType<DenseI64ArrayAttr>(
           "obelisk.aggregate_member_initializer_ordinals");
       if (memberOrdinals &&
-          initializer.size() !=
-              static_cast<size_t>(memberOrdinals.size())) {
+          initializer.size() != static_cast<size_t>(memberOrdinals.size())) {
         emitError(getSemanticLocation(unit.source))
             << "aggregate member initializer metadata has "
             << memberOrdinals.size() << " ordinals but " << initializer.size()
@@ -3412,9 +3381,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         for (auto [expression, ordinal] :
              llvm::zip_equal(initializer, memberOrdinals.asArrayRef())) {
           Operation *cloned = bodyBuilder.clone(*expression);
-          cloned->setAttr(
-              "obelisk_sim.initialize_static",
-              builder.getStringAttr(getHierarchyName(unit.source)));
+          cloned->setAttr("obelisk_sim.initialize_static",
+                          builder.getStringAttr(getHierarchyName(unit.source)));
           cloned->setAttr("obelisk_sim.initialize_subelement",
                           builder.getI64IntegerAttr(ordinal));
         }
@@ -3508,8 +3476,7 @@ void ObeliskSimPreparePass::runOnOperation() {
         declarationBuilder.clone(*initializer.front());
         return;
       }
-      if (initializer.size() !=
-          static_cast<size_t>(memberOrdinals.size())) {
+      if (initializer.size() != static_cast<size_t>(memberOrdinals.size())) {
         emitError(getSemanticLocation(symbol->second))
             << "aggregate member initializer metadata has "
             << memberOrdinals.size() << " ordinals but " << initializer.size()

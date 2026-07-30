@@ -27,6 +27,7 @@
 #include "llvm/ADT/SmallVector.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <optional>
 
 namespace obelisk::simlowering {
@@ -125,6 +126,36 @@ inline constexpr ::llvm::StringLiteral captureKindAttrName =
     sim::metadata::captureKind;
 inline constexpr ::llvm::StringLiteral descriptorIdAttrName =
     sim::metadata::descriptorId;
+inline constexpr ::mlir::StringLiteral observerResultAttrName =
+    "obelisk_sim.observer_result";
+inline constexpr ::mlir::StringLiteral observerEventPrimaryAttrName =
+    "obelisk_sim.event_primary";
+
+/// Result representation frozen by prepare for computed timing observers.
+/// Keep this strongly typed at both ends of the private pass boundary so a
+/// malformed integer attribute cannot silently select value semantics.
+enum class ObserverResult : uint32_t {
+  None,
+  Value,
+  Truth,
+  Event,
+};
+
+inline std::optional<ObserverResult>
+parseObserverResult(::mlir::IntegerAttr attribute) {
+  if (!attribute)
+    return std::nullopt;
+  switch (attribute.getValue().getZExtValue()) {
+  case static_cast<uint32_t>(ObserverResult::Value):
+    return ObserverResult::Value;
+  case static_cast<uint32_t>(ObserverResult::Truth):
+    return ObserverResult::Truth;
+  case static_cast<uint32_t>(ObserverResult::Event):
+    return ObserverResult::Event;
+  default:
+    return std::nullopt;
+  }
+}
 
 /// True for any operation in the elaborated semantic dialect.
 bool isSemanticOp(::mlir::Operation *op);

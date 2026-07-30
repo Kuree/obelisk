@@ -642,9 +642,15 @@ FailureOr<Value> UnitLowering::bindObserver(Operation *expression) {
   auto dependencyPaths =
       expression->getAttrOfType<ArrayAttr>("obelisk_sim.observer_dependencies");
   auto resultKind =
-      expression->getAttrOfType<IntegerAttr>("obelisk_sim.observer_result");
+      expression->getAttrOfType<IntegerAttr>(observerResultAttrName);
   if (!evaluator || !capturePaths || !dependencyPaths || !resultKind) {
     emitError(location) << "computed timing expression has no observer binding";
+    return failure();
+  }
+  std::optional<ObserverResult> parsedResult = parseObserverResult(resultKind);
+  if (!parsedResult) {
+    emitError(location) << "unknown observer result kind "
+                        << resultKind.getValue().getZExtValue();
     return failure();
   }
   SmallVector<Value> captures;
@@ -681,8 +687,8 @@ FailureOr<Value> UnitLowering::bindObserver(Operation *expression) {
     dependencies.push_back(*value);
   }
   Type resultType;
-  uint64_t kind = resultKind.getValue().getZExtValue();
-  if (kind == 2 || kind == 3) {
+  if (*parsedResult == ObserverResult::Truth ||
+      *parsedResult == ObserverResult::Event) {
     resultType = builder.getI1Type();
   } else {
     FailureOr<Type> normalized = getNormalizedSemanticType(expression);
@@ -704,8 +710,8 @@ FailureOr<Value> UnitLowering::bindObserver(Operation *expression) {
       sim::ObserverType::get(function.getContext(), resultType), evaluator,
       operands,
       builder.getI32IntegerAttr(static_cast<uint32_t>(captures.size())));
-  if (kind == 3)
-    binding->setAttr("obelisk_sim.event_primary", builder.getUnitAttr());
+  if (*parsedResult == ObserverResult::Event)
+    binding->setAttr(observerEventPrimaryAttrName, builder.getUnitAttr());
   return binding.getResult();
 }
 
@@ -1773,13 +1779,19 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     if (failed(result))
       return failure();
     auto resultKind =
-        function->getAttrOfType<IntegerAttr>("obelisk_sim.observer_result");
+        function->getAttrOfType<IntegerAttr>(observerResultAttrName);
     if (!resultKind) {
       function.emitError("observer entry has no result-kind metadata");
       return failure();
     }
-    uint64_t kind = resultKind.getValue().getZExtValue();
-    if (kind == 3) {
+    std::optional<ObserverResult> parsedResult =
+        parseObserverResult(resultKind);
+    if (!parsedResult) {
+      function.emitError() << "unknown observer result kind "
+                           << resultKind.getValue().getZExtValue();
+      return failure();
+    }
+    if (*parsedResult == ObserverResult::Event) {
       if (!isa<sim::EventType>((*result).getType())) {
         function.emitError("named-event observer did not produce an event");
         return failure();
@@ -1787,7 +1799,7 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
       result = sim::SimEventTriggeredOp::create(builder, function.getLoc(),
                                                 builder.getI1Type(), *result)
                    .getResult();
-    } else if (kind == 2) {
+    } else if (*parsedResult == ObserverResult::Truth) {
       result = truthValue(*result, function.getLoc());
       if (failed(result))
         return failure();
