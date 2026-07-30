@@ -5,6 +5,7 @@
 #include "obelisk/Analysis/NetConnectivityAnalysis.h"
 #include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
 #include "obelisk/Analysis/SimulationScheduleAnalysis.h"
+#include "obelisk/Analysis/SimulationVPIAnalysis.h"
 #include "obelisk/Analysis/StateDomainAnalysis.h"
 #include "obelisk/Analysis/StaticSpecializationAnalysis.h"
 #include "obelisk/Conversion/SimulationRuntime.h"
@@ -3824,32 +3825,24 @@ private:
   }
 
   uint32_t getVPIProfile() {
-    StringRef requested = options.vpi;
-    if (requested == "auto") {
-      if (auto graph = design.getComputeGraphAttr()) {
-        switch (graph.getVpi()) {
-        case sim::ComputeVPIMode::Off:
-          requested = "off";
-          break;
-        case sim::ComputeVPIMode::Read:
-          requested = "read";
-          break;
-        case sim::ComputeVPIMode::Full:
-          requested = "full";
-          break;
-        }
-      } else {
-        requested = "off";
+    analysis::SimulationVPIAnalysis vpi =
+        analysis::SimulationVPIAnalysis::compute(design);
+    if (options.vpi != "auto") {
+      std::optional<sim::ComputeVPIMode> mode =
+          sim::symbolizeComputeVPIMode(options.vpi);
+      if (!mode) {
+        design.emitOpError(
+            "bytecode VPI profile must be auto, off, read, or full");
+        return UINT32_MAX;
       }
+      vpi = analysis::SimulationVPIAnalysis::forMode(*mode);
     }
-    if (requested == "off")
-      return 0;
-    if (requested == "read")
-      return kDatabaseProfileRead;
-    if (requested == "full")
-      return kDatabaseProfileRead | kDatabaseProfileWrite;
-    design.emitOpError("bytecode VPI profile must be auto, off, read, or full");
-    return UINT32_MAX;
+    uint32_t profile = 0;
+    if (vpi.allowsRead())
+      profile |= kDatabaseProfileRead;
+    if (vpi.allowsWrite())
+      profile |= kDatabaseProfileWrite;
+    return profile;
   }
 
   SmallVector<uint8_t> serializeBytecode() {

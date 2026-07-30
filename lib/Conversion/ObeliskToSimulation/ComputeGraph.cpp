@@ -10,6 +10,7 @@
 #include "ComputeGraph.h"
 
 #include "obelisk/Analysis/NetConnectivityAnalysis.h"
+#include "obelisk/Analysis/SimulationVPIAnalysis.h"
 #include "obelisk/Analysis/StateDomainAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
@@ -799,9 +800,7 @@ private:
 sim::ComputeNBAStorageKind
 getNBAStorageKind(sim::SimNBAEnqueueOp nba, sim::SimFuncOp function,
                   const SpawnMultiplicity &multiplicity,
-                  const DescriptorProvenance &destination,
-                  sim::ComputeVPIMode vpi) {
-  (void)vpi;
+                  const DescriptorProvenance &destination) {
   bool fixed = function.getEntryKind() != sim::EntryKind::Function &&
                !multiplicity.isDynamicallySpawned(function) &&
                !multiplicity.mayReexecute(function, nba->getBlock());
@@ -1360,9 +1359,8 @@ LogicalResult ComputeGraphBuilder::buildSites(ComputeGraphResult &result) {
             if (!commit)
               return nba.emitOpError("has no generated commit node");
             uint64_t site = nbaSite++;
-            sim::ComputeNBAStorageKind storage =
-                getNBAStorageKind(nba, info.getFunction(), multiplicity,
-                                  destination, options.vpi);
+            sim::ComputeNBAStorageKind storage = getNBAStorageKind(
+                nba, info.getFunction(), multiplicity, destination);
             switch (storage) {
             case sim::ComputeNBAStorageKind::FixedSlot:
               nbaSlots[*commit].push_back(site);
@@ -1571,7 +1569,8 @@ FailureOr<ComputeGraphResult> ComputeGraphBuilder::derive() {
   if (failed(regions))
     return failure();
 
-  result.observability = getObservability(options.vpi);
+  result.observability =
+      analysis::SimulationVPIAnalysis::forMode(options.vpi).getObservability();
   result.graph = sim::ComputeGraphAttr::get(
       design.getContext(), sim::metadata::schemaVersion, options.vpi,
       options.workers,
@@ -1768,18 +1767,6 @@ LogicalResult validateComputeGraphStructure(sim::SimDesignOp design,
     return design.emitOpError(
         "event-region plans do not schedule every compute-graph node");
   return success();
-}
-
-sim::ComputeObservabilityKind getObservability(sim::ComputeVPIMode mode) {
-  switch (mode) {
-  case sim::ComputeVPIMode::Off:
-    return sim::ComputeObservabilityKind::Invisible;
-  case sim::ComputeVPIMode::Read:
-    return sim::ComputeObservabilityKind::SafePoint;
-  case sim::ComputeVPIMode::Full:
-    return sim::ComputeObservabilityKind::ExternallyWritable;
-  }
-  llvm_unreachable("unknown VPI mode");
 }
 
 FailureOr<ComputeGraphResult> deriveComputeGraph(sim::SimDesignOp design,

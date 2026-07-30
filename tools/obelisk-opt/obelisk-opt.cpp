@@ -28,6 +28,7 @@ int main(int argc, char **argv) {
   obelisk::registerNativeAOTAnalysisTestPass();
   obelisk::registerSimulationProcessFrameAnalysisTestPass();
   obelisk::registerSimulationScheduleAnalysisTestPass();
+  obelisk::registerSimulationVPIAnalysisTestPass();
   obelisk::registerStateDomainTestPasses();
 #endif
 

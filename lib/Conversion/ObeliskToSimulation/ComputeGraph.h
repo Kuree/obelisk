@@ -63,11 +63,6 @@ deriveComputeGraph(sim::SimDesignOp design, ComputeGraphOptions options);
 validateComputeGraphStructure(sim::SimDesignOp design,
                               sim::ComputeGraphAttr graph);
 
-/// VPI capability implied by a compilation mode. Unrestricted writable VPI is
-/// an optimization fence for every visible object, so this mapping is what ties
-/// the mode to per-descriptor observability.
-sim::ComputeObservabilityKind getObservability(sim::ComputeVPIMode mode);
-
 } // namespace obelisk::simlowering
 
 #endif // OBELISK_LIB_CONVERSION_OBELISKTOSIMULATION_COMPUTEGRAPH_H

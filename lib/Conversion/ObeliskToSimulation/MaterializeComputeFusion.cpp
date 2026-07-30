@@ -2,6 +2,7 @@
 
 #include "ComputeFusion.h"
 
+#include "obelisk/Analysis/SimulationVPIAnalysis.h"
 #include "obelisk/Conversion/ObeliskToSimulation.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
@@ -869,7 +870,7 @@ FailureOr<sim::SimFuncOp> materializeFusion(
   // This closed-world fused activation cannot call foreign code or suspend
   // while its body is running. Mark it so native lowering can prove which NBA
   // sites are safe in the clean body selected by AOT actor dispatch.
-  if (graph.getVpi() == sim::ComputeVPIMode::Full)
+  if (analysis::SimulationVPIAnalysis::compute(design).allowsWrite())
     fused->setAttr(sim::metadata::nativeGuardedSpecializationBody,
                    builder.getUnitAttr());
 

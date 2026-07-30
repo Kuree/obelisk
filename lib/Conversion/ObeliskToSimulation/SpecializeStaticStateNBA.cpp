@@ -1,6 +1,7 @@
 //===- SpecializeStaticStateNBA.cpp - Plan static state/NBA specialization ===//
 
 #include "obelisk/Analysis/SimulationAnalysis.h"
+#include "obelisk/Analysis/SimulationVPIAnalysis.h"
 #include "obelisk/Conversion/ObeliskToSimulation.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
@@ -47,6 +48,8 @@ void ObeliskSimSpecializeStaticStateNBAPass::runOnOperation() {
     design.emitOpError("max-packed-width must be in the range 1 through 64");
     return signalPassFailure();
   }
+  analysis::SimulationVPIAnalysis vpi =
+      analysis::SimulationVPIAnalysis::compute(design);
 
   Builder builder(design.getContext());
   llvm::SmallDenseSet<uint64_t, 8> overrideRoots;
@@ -154,9 +157,9 @@ void ObeliskSimSpecializeStaticStateNBAPass::runOnOperation() {
   for (sim::SimStorageDeclOp storage : storages) {
     bool stateSpecialized = stateEligible.contains(storage.getId());
     auto width = storageRootWidths.find(storage.getId());
-    bool guarded = stateSpecialized &&
-                   (graph.getVpi() == sim::ComputeVPIMode::Full ||
-                    guardAllRoots || overrideRoots.contains(storage.getId()));
+    bool guarded =
+        stateSpecialized && (vpi.allowsWrite() || guardAllRoots ||
+                             overrideRoots.contains(storage.getId()));
     roots.push_back(sim::StaticStateRootAttr::get(
         design.getContext(), storage.getId(),
         width == storageRootWidths.end() ? 0 : width->second,

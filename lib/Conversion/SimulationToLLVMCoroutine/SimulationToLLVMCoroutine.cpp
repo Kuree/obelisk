@@ -9,6 +9,7 @@
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Analysis/SimulationScheduleAnalysis.h"
 #include "obelisk/Analysis/SimulationStorageAnalysis.h"
+#include "obelisk/Analysis/SimulationVPIAnalysis.h"
 #include "obelisk/Analysis/StateDomainAnalysis.h"
 #include "obelisk/Analysis/StaticSpecializationAnalysis.h"
 #include "obelisk/Conversion/RuntimeToLLVM.h"
@@ -6272,17 +6273,16 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
   return plan;
 }
 
-LogicalResult
-makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
-                  ArrayRef<obelisk_rt_native_schedule_node> executableNodes,
-                  const NativeStateLayout &stateLayout,
-                  const NativeStaticNBAPlan &staticNBAPlan,
-                  const NativeStaticFanoutPlan &staticFanoutPlan,
-                  ArrayRef<obelisk_rt_static_actor_root> actorRoots,
-                  bool enableDirectState, bool enableStaticNBA,
-                  bool enableStaticControl, bool enableStaticFanout,
-                  bool enableCleanSuperstep, bool fullyStatic,
-                  bool rootSlotZero) {
+LogicalResult makeNativeAOTPlan(
+    ModuleOp module, uint32_t actorCount,
+    ArrayRef<obelisk_rt_native_schedule_node> executableNodes,
+    const NativeStateLayout &stateLayout,
+    const NativeStaticNBAPlan &staticNBAPlan,
+    const NativeStaticFanoutPlan &staticFanoutPlan,
+    ArrayRef<obelisk_rt_static_actor_root> actorRoots, bool enableDirectState,
+    bool enableStaticNBA, bool enableStaticControl, bool enableStaticFanout,
+    bool enableCleanSuperstep, bool fullyStatic, bool rootSlotZero,
+    const analysis::SimulationVPIAnalysis &vpi) {
   if (actorCount == 0 || executableNodes.empty())
     return module.emitError("AOT schedule has no executable actor nodes");
   MLIRContext *context = module.getContext();
@@ -6297,24 +6297,20 @@ makeNativeAOTPlan(ModuleOp module, uint32_t actorCount,
       staticFanoutPlan.exact
           ? ArrayRef<obelisk_rt_static_fanout_entry>(staticFanoutPlan.entries)
           : ArrayRef<obelisk_rt_static_fanout_entry>{};
-  sim::SimDesignOp design;
-  module.walk([&](sim::SimDesignOp candidate) { design = candidate; });
-  sim::ComputeGraphAttr graph = design ? design.getComputeGraphAttr() : nullptr;
   // Static time/region control and exact actor fanout are independent of VPI
   // reads. Writable VPI hands dirty roots and the affected event slot to the
   // existing guarded state/control paths; the exact dependency table remains
   // valid and can continue to wake native actors without subscriptions.
-  bool staticControlEnabled = enableStaticControl && fullyStatic && graph;
-  bool staticFanoutEnabled =
-      enableStaticFanout && staticFanoutPlan.exact && fullyStatic && graph;
-  bool guardedFanoutEnabled =
-      !staticFanoutEnabled && staticFanoutPlan.exact && fullyStatic && graph;
+  bool staticControlEnabled =
+      enableStaticControl && fullyStatic && vpi.hasComputeGraph();
+  bool staticFanoutEnabled = enableStaticFanout && staticFanoutPlan.exact &&
+                             fullyStatic && vpi.hasComputeGraph();
+  bool guardedFanoutEnabled = !staticFanoutEnabled && staticFanoutPlan.exact &&
+                              fullyStatic && vpi.hasComputeGraph();
   bool guardedSpecializationEnabled =
-      graph && graph.getVpi() == sim::ComputeVPIMode::Full &&
-      (enableDirectState || enableStaticNBA);
-  bool cleanSuperstepEnabled =
-      enableCleanSuperstep && staticControlEnabled &&
-      staticFanoutPlan.exact && fullyStatic;
+      vpi.allowsWrite() && (enableDirectState || enableStaticNBA);
+  bool cleanSuperstepEnabled = enableCleanSuperstep && staticControlEnabled &&
+                               staticFanoutPlan.exact && fullyStatic;
   uint64_t graphLayoutChecksum = 0;
   if (auto image =
           module->getAttrOfType<DenseI8ArrayAttr>("obelisk.bytecode.image")) {
@@ -7042,6 +7038,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     staticSuperstep = design->getAttrOfType<sim::StaticSuperstepAttr>(
         sim::metadata::staticSuperstep);
   });
+  analysis::SimulationVPIAnalysis vpi =
+      analysis::SimulationVPIAnalysis::compute(metadataDesign);
   if (staticSuperstep &&
       (!metadataDesign ||
        staticSuperstep.getSourceGraph() !=
@@ -7562,31 +7560,23 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   bool staticControl = false;
   bool staticFanout = false;
   bool staticFanoutMetadata = false;
-  bool vpiOff = false;
-  bool vpiRead = false;
-  bool vpiFull = false;
   bool directStaticState = false;
   bool staticNBA = false;
   NativeStaticNBAPlan staticNBAPlan;
   NativeStaticFanoutPlan staticFanoutPlan;
   SmallVector<obelisk_rt_static_actor_root> staticActorRoots;
-  if (useAOT && aotEligibility.isFullyEligible())
-    module.walk([&](sim::SimDesignOp design) {
-      sim::ComputeGraphAttr graph = design.getComputeGraphAttr();
-      staticControl = graph != nullptr;
-      staticFanoutMetadata = graph != nullptr;
-      vpiOff = graph && graph.getVpi() == sim::ComputeVPIMode::Off;
-      vpiRead = graph && graph.getVpi() == sim::ComputeVPIMode::Read;
-      vpiFull = graph && graph.getVpi() == sim::ComputeVPIMode::Full;
-      // Read-only VPI observes the same canonical planes but cannot mutate
-      // roots or invalidate the closed-world waiter inventory. It therefore
-      // uses the fully static fanout schedule just like VPI-off.
-      staticFanout = staticFanoutMetadata && (vpiOff || vpiRead);
-      directStaticState = staticSpecialization && graph &&
-                          (!stateLayout->directHandles.empty() ||
-                           !stateLayout->guardedHandles.empty());
-      staticNBA = staticSpecialization && !stateLayout->nbaHandles.empty();
-    });
+  if (useAOT && aotEligibility.isFullyEligible()) {
+    staticControl = vpi.hasComputeGraph();
+    staticFanoutMetadata = vpi.hasComputeGraph();
+    // Read-only VPI observes the same canonical planes but cannot mutate
+    // roots or invalidate the closed-world waiter inventory. It therefore
+    // uses the fully static fanout schedule just like VPI-off.
+    staticFanout = vpi.preservesStaticDependencies();
+    directStaticState = staticSpecialization && vpi.hasComputeGraph() &&
+                        (!stateLayout->directHandles.empty() ||
+                         !stateLayout->guardedHandles.empty());
+    staticNBA = staticSpecialization && !stateLayout->nbaHandles.empty();
+  }
   if (staticControl) {
     module.walk([&](Operation *operation) {
       if (llvm::any_of(operation->getOperandTypes(),
@@ -7693,9 +7683,9 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   // coroutine lowering preserves these fixed entry allocas across resume.
   if (failed(instrumentManagedRoots(module)))
     return failure();
-  bool guardedAOTSpecialization = staticSpecialization && useAOT &&
-                                  aotEligibility.isFullyEligible() && vpiFull &&
-                                  (directStaticState || staticNBA);
+  bool guardedAOTSpecialization =
+      staticSpecialization && useAOT && aotEligibility.isFullyEligible() &&
+      vpi.allowsWrite() && (directStaticState || staticNBA);
   // AOT dispatch checks the specialization invariant once per actor
   // activation. Apply that proof to every non-bootstrap actor, including
   // delay/clock processes that are not part of a fused compute body.
@@ -7906,7 +7896,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                                             *stateLayout);
   packedPatterns.add<ImmediateNBAConversion>(
       packedConverter, context, stateLayout->bitCount,
-      staticNBA ? &staticNBAPlan : nullptr, staticNBA, vpiFull);
+      staticNBA ? &staticNBAPlan : nullptr, staticNBA, vpi.allowsWrite());
   packedPatterns.add<RefAllocConversion>(packedConverter, context);
   ConversionTarget packedTarget(*context);
   packedTarget.addIllegalOp<
@@ -8208,7 +8198,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
             module, aotEligibility.getActorSlots().size(), executableNodes,
             *stateLayout, staticNBAPlan, staticFanoutPlan, staticActorRoots,
             directStaticState, staticNBA, staticControl, staticFanout,
-            cleanSuperstep, aotEligibility.isFullyEligible(), rootSlotZero)))
+            cleanSuperstep, aotEligibility.isFullyEligible(), rootSlotZero,
+            vpi)))
       return failure();
   }
   if (failed(makeSchedulerMain(module, *stateLayout, useAOT)))

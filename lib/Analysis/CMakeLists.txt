@@ -5,6 +5,7 @@ add_mlir_library(ObeliskSimulationAnalysis
   SimulationScheduleAnalysis.cpp
   SimulationAnalysis.cpp
   SimulationStorageAnalysis.cpp
+  SimulationVPIAnalysis.cpp
   StaticSpecializationAnalysis.cpp
   StateDomainAnalysis.cpp
 

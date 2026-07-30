@@ -9,6 +9,7 @@
 
 #include "ComputeGraph.h"
 
+#include "obelisk/Analysis/SimulationVPIAnalysis.h"
 #include "obelisk/Conversion/ObeliskToSimulation.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
@@ -113,7 +114,7 @@ void ObeliskSimBuildComputeGraphPass::runOnOperation() {
     return signalPassFailure();
   }
   options.vpi = *vpiMode;
-  if (*vpiMode != sim::ComputeVPIMode::Off) {
+  if (analysis::SimulationVPIAnalysis::forMode(*vpiMode).allowsRead()) {
     bool unsupportedContainer = false;
     for (sim::SimStorageDeclOp storage :
          design.getBody().front().getOps<sim::SimStorageDeclOp>()) {
