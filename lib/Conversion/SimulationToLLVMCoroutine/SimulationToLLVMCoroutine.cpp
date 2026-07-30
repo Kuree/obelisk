@@ -157,8 +157,6 @@ using detail::threadRuntimeStatuses;
 using detail::validateProcessABI;
 using detail::ReferenceArgumentMap;
 
-constexpr uint64_t kNoOffset = std::numeric_limits<uint64_t>::max();
-
 constexpr uint64_t kInstanceAllocationOffset =
     offsetof(obelisk_rt_process_instance_v1, allocation);
 constexpr uint64_t kInstanceFrameOffset =
@@ -175,22 +173,40 @@ constexpr uint64_t kInstanceContextOffset =
     offsetof(obelisk_rt_process_instance_v1, context);
 constexpr uint64_t kInstanceActionOffset =
     offsetof(obelisk_rt_process_instance_v1, action);
+constexpr uint64_t kActionKindOffset =
+    offsetof(obelisk_rt_fragment_action_v1, kind);
+constexpr uint64_t kActionSuspendKindOffset =
+    offsetof(obelisk_rt_fragment_action_v1, suspend_kind);
+constexpr uint64_t kActionContinuationOffset =
+    offsetof(obelisk_rt_fragment_action_v1, continuation);
+constexpr uint64_t kActionFlagsOffset =
+    offsetof(obelisk_rt_fragment_action_v1, flags);
+constexpr uint64_t kActionPayloadOffset =
+    offsetof(obelisk_rt_fragment_action_v1, payload);
+constexpr uint64_t kActionAuxiliaryOffset =
+    offsetof(obelisk_rt_fragment_action_v1, auxiliary);
 
 uint32_t suspensionKind(Operation *operation) {
   return TypeSwitch<Operation *, uint32_t>(operation)
-      .Case<sim::SimSuspendDelayOp>([](auto) { return 1; })
-      .Case<sim::SimSuspendChangeOp>([](auto) { return 2; })
-      .Case<sim::SimSuspendLevelOp>([](auto) { return 2; })
-      .Case<sim::SimSuspendEdgeOp>([](auto) { return 3; })
-      .Case<sim::SimSuspendEdgeIffOp>([](auto) { return 3; })
-      .Case<sim::SimSuspendAnyOp>([](auto) { return 3; })
-      .Case<sim::SimSuspendEventOp>([](auto) { return 4; })
-      .Case<sim::SimSuspendAwaitOp>([](auto) { return 5; })
-      .Case<sim::SimSuspendJoinOp>([](auto) { return 6; })
-      .Case<sim::SimSuspendForeverOp>([](auto) { return 7; })
-      .Case<sim::SimSuspendChildrenOp>([](auto) { return 9; })
-      .Case<sim::SimSuspendObserveOp>([](auto) { return 10; })
-      .Default([](Operation *) { return 0; });
+      .Case<sim::SimSuspendDelayOp>(
+          [](auto) { return OBELISK_RT_SUSPEND_DELAY; })
+      .Case<sim::SimSuspendChangeOp, sim::SimSuspendLevelOp>(
+          [](auto) { return OBELISK_RT_SUSPEND_CHANGE; })
+      .Case<sim::SimSuspendEdgeOp, sim::SimSuspendEdgeIffOp,
+            sim::SimSuspendAnyOp>([](auto) { return OBELISK_RT_SUSPEND_EDGE; })
+      .Case<sim::SimSuspendEventOp>(
+          [](auto) { return OBELISK_RT_SUSPEND_EVENT; })
+      .Case<sim::SimSuspendAwaitOp>(
+          [](auto) { return OBELISK_RT_SUSPEND_AWAIT; })
+      .Case<sim::SimSuspendJoinOp>(
+          [](auto) { return OBELISK_RT_SUSPEND_JOIN; })
+      .Case<sim::SimSuspendForeverOp>(
+          [](auto) { return OBELISK_RT_SUSPEND_FOREVER; })
+      .Case<sim::SimSuspendChildrenOp>(
+          [](auto) { return OBELISK_RT_SUSPEND_CHILDREN; })
+      .Case<sim::SimSuspendObserveOp>(
+          [](auto) { return OBELISK_RT_SUSPEND_OBSERVER; })
+      .Default([](Operation *) { return OBELISK_RT_SUSPEND_NONE; });
 }
 
 void publishAction(OpBuilder &builder, Location location, Value instance,
@@ -202,16 +218,16 @@ void publishAction(OpBuilder &builder, Location location, Value instance,
   Type i64 = builder.getI64Type();
   Value action =
       loadAt(builder, location, instance, kInstanceActionOffset, pointer, 8);
-  storeAt(builder, location, action, 0,
+  storeAt(builder, location, action, kActionKindOffset,
           llvmConstant(builder, location, i32, actionKind), 4);
-  storeAt(builder, location, action, 4,
+  storeAt(builder, location, action, kActionSuspendKindOffset,
           llvmConstant(builder, location, i32, suspendKind), 4);
-  storeAt(builder, location, action, 8,
+  storeAt(builder, location, action, kActionContinuationOffset,
           llvmConstant(builder, location, i32, continuation), 4);
-  storeAt(builder, location, action, 12,
+  storeAt(builder, location, action, kActionFlagsOffset,
           llvmConstant(builder, location, i32, flags), 4);
-  storeAt(builder, location, action, 16, payload, 8);
-  storeAt(builder, location, action, 24,
+  storeAt(builder, location, action, kActionPayloadOffset, payload, 8);
+  storeAt(builder, location, action, kActionAuxiliaryOffset,
           llvmConstant(builder, location, i64, auxiliary), 8);
 }
 
@@ -327,8 +343,9 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
                              SymbolRefAttr::get(builder.getContext(), helper),
                              task.getArguments())
             .getResult();
-    publishAction(builder, location, instance, 3, 0, continuationID, 0,
-                  activation, 0);
+    publishAction(builder, location, instance, OBELISK_RT_FRAGMENT_TASK_CALL,
+                  OBELISK_RT_SUSPEND_NONE, continuationID,
+                  OBELISK_RT_FRAGMENT_FLAGS_NONE, activation, 0);
     Value final = llvmConstant(builder, location, builder.getI1Type(), 0);
     Value save = LLVM::CoroSaveOp::create(
         builder, location, LLVM::LLVMTokenType::get(builder.getContext()),
@@ -368,7 +385,8 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
   uint32_t actionFlags = getRuntimeResumeActionFlags(operation);
   if (actionFlags == UINT32_MAX)
     return operation->emitError("has no executable resume region");
-  publishAction(builder, location, instance, 1, kind, continuationID,
+  publishAction(builder, location, instance, OBELISK_RT_FRAGMENT_SUSPEND, kind,
+                continuationID,
                 OBELISK_RT_ACTION_FRAME_WAIT_RECORD | actionFlags,
                 llvmConstant(builder, location, i64, waitOffset), waitSize);
 
@@ -569,7 +587,8 @@ makePlainNativeWrappers(ModuleOp module, func::FuncOp body, StringRef baseName,
                                    TypeRange{i32}, arguments);
   storeAt(builder, location, instance, kInstanceContinuationOffset,
           llvmConstant(builder, location, i32, 0), 4);
-  publishAction(builder, location, instance, 2, 0, 0, 0,
+  publishAction(builder, location, instance, OBELISK_RT_FRAGMENT_TERMINATE,
+                OBELISK_RT_SUSPEND_NONE, 0, OBELISK_RT_FRAGMENT_FLAGS_NONE,
                 llvmConstant(builder, location, i64, 0), 0);
   LLVM::ReturnOp::create(builder, location, call.getResult(0));
 
@@ -913,7 +932,9 @@ lowerSuspendableProcess(sim::SimFuncOp function,
   ramp.getBody().push_back(invalid);
   builder.setInsertionPointToStart(invalid);
   storeAt(builder, location, instance, kInstanceStatusOffset,
-          llvmConstant(builder, location, i32, 12), 4);
+          llvmConstant(builder, location, i32,
+                       OBELISK_RT_INVALID_CONTINUATION),
+          4);
   cf::BranchOp::create(builder, location, blocks.cleanup);
   Block *test = dispatch;
   for (auto [index, target] : llvm::enumerate(targets)) {
@@ -935,7 +956,8 @@ lowerSuspendableProcess(sim::SimFuncOp function,
     // LLVM permits exactly one final suspend per switched-resume coroutine.
     // Funnel every semantic process return through this shared block.
     builder.setInsertionPointToStart(blocks.terminate);
-    publishAction(builder, location, instance, 2, 0, 0, 0,
+    publishAction(builder, location, instance, OBELISK_RT_FRAGMENT_TERMINATE,
+                  OBELISK_RT_SUSPEND_NONE, 0, OBELISK_RT_FRAGMENT_FLAGS_NONE,
                   llvmConstant(builder, location, i64, 0), 0);
     Value final = llvmConstant(builder, location, builder.getI1Type(), 1);
     Value save = LLVM::CoroSaveOp::create(
