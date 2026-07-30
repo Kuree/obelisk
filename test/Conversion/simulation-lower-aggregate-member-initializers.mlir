@@ -14,6 +14,8 @@ module {
   obelisk_sim.design @aggregate_member_initializers {
     obelisk_sim.code_unit.decl 9600001 in 0 function
         hierarchy "top.value.$static_initializer"
+    obelisk_sim.code_unit.decl 9600002 in 0 function
+        hierarchy "top.initialize_local"
     obelisk_sim.scope.decl 0
     obelisk_sim.storage.decl 0 in 0 : !record
         design hierarchy "top.value"
@@ -43,6 +45,40 @@ module {
           semantic_type = !bit4,
           obelisk_sim.initialize_static = "top.value",
           obelisk_sim.initialize_subelement = 0 : i64} {
+      }
+      obelisk_sim.return
+    }
+
+    // Automatic aggregate locals are allocated first, then each declared
+    // member initializer is stored through a subelement of that allocation.
+    // CHECK-LABEL: obelisk_sim.func @initialize_local
+    // CHECK: %[[DEFAULT:.*]] = obelisk_sim.aggregate.default
+    // CHECK: %[[LOCAL:.*]] = obelisk_sim.ref.alloc %[[DEFAULT]]
+    // CHECK: %[[LOCAL_FIVE:.*]] = arith.constant 5 : i4
+    // CHECK: %[[LOCAL_VALUE:.*]] = obelisk_sim.packed.unflatten %[[LOCAL_FIVE]]
+    // CHECK: %[[LOCAL_FIELD:.*]] = obelisk_sim.ref.subelement %[[LOCAL]]{{.*}}0
+    // CHECK: obelisk_sim.ref.store %[[LOCAL_VALUE]] to %[[LOCAL_FIELD]]
+    obelisk_sim.func @initialize_local(
+        %ctx: !obelisk_sim.context
+            {obelisk_sim.capture_kind = 0 : i32})
+        attributes {
+          entry_kind = 8 : i32,
+          obelisk_sim.bindings = [
+            #obelisk_sim.local_binding<path = "local", type = !record,
+                automatic = true, patternVariable = false, isReturn = false>
+          ],
+          code_unit_id = 9600002 : i64,
+          obelisk_sim.void_function
+        } {
+      obelisk.sv.statement.variable_declaration attributes {
+          node_id = 2 : i64, referenced_path = "local",
+          referenced_symbol = @local,
+          obelisk_sim.aggregate_member_initializers} {
+        obelisk.sv.expression.integer_literal attributes {
+            node_id = 3 : i64, constant_value = "4'h5",
+            semantic_type = !bit4,
+            obelisk_sim.initialize_subelement = 0 : i64} {
+        }
       }
       obelisk_sim.return
     }
