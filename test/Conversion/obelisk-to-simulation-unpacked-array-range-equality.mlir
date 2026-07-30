@@ -6,6 +6,9 @@
 !logic = !obelisk.integral<1, false, true, 0 : 0, logic>
 !logic_left_array = !obelisk.ranged_unpacked_array<7 : 4 x !logic>
 !logic_right_array = !obelisk.ranged_unpacked_array<3 : 0 x !logic>
+!int = !obelisk.integral<32, true, false, 31 : 0, int>
+!descending_array = !obelisk.ranged_unpacked_array<3 : 0 x !int>
+!ascending_array = !obelisk.ranged_unpacked_array<0 : 3 x !int>
 
 module {
   obelisk_sim.design @range_equality {
@@ -13,6 +16,8 @@ module {
         hierarchy "test.range_equality.9200001"
     obelisk_sim.code_unit.decl 9200002 in 0 function
         hierarchy "test.range_equality.logic.9200002"
+    obelisk_sim.code_unit.decl 9200003 in 0 function
+        hierarchy "test.range_assignment.9200003"
     obelisk_sim.scope.decl 0
     obelisk_sim.storage.decl 0 in 0 :
         !obelisk_sim.unpacked_array<7 : 4 x i1> design hierarchy "top.left"
@@ -25,6 +30,12 @@ module {
     obelisk_sim.storage.decl 4 in 0 :
         !obelisk_sim.unpacked_array<3 : 0 x !obelisk_sim.logic<1>>
         design hierarchy "top.logic_right"
+    obelisk_sim.storage.decl 5 in 0 :
+        !obelisk_sim.unpacked_array<3 : 0 x i32>
+        design hierarchy "top.descending"
+    obelisk_sim.storage.decl 6 in 0 :
+        !obelisk_sim.unpacked_array<0 : 3 x i32>
+        design hierarchy "top.ascending"
 
     // CHECK-LABEL: obelisk_sim.func @unit
     // CHECK: %[[NORMALIZED:.*]] = obelisk_sim.aggregate.construct
@@ -176,6 +187,59 @@ module {
               node_id = 25 : i64, referenced_path = "top.logic_right",
               referenced_symbol = @logic_right,
               semantic_type = !logic_right_array} {
+          }
+        }
+      }
+      obelisk_sim.return
+    }
+
+    // Assignment across opposite declared directions pairs elements by
+    // ordinal position and reconstructs the destination's declared range.
+    // CHECK-LABEL: obelisk_sim.func @range_assignment
+    // CHECK: %[[SOURCE:.*]] = obelisk_sim.ref.load %arg1
+    // CHECK: %[[E0:.*]] = obelisk_sim.aggregate.extract %[[SOURCE]][0]
+    // CHECK: %[[E1:.*]] = obelisk_sim.aggregate.extract %[[SOURCE]][1]
+    // CHECK: %[[E2:.*]] = obelisk_sim.aggregate.extract %[[SOURCE]][2]
+    // CHECK: %[[E3:.*]] = obelisk_sim.aggregate.extract %[[SOURCE]][3]
+    // CHECK: %[[NORMALIZED:.*]] = obelisk_sim.aggregate.construct
+    // CHECK-SAME: %[[E0]], %[[E1]], %[[E2]], %[[E3]]
+    // CHECK-SAME: -> !obelisk_sim.unpacked_array<0 : 3 x i32>
+    // CHECK: obelisk_sim.ref.store %[[NORMALIZED]] to %arg2
+    obelisk_sim.func @range_assignment(
+        %ctx: !obelisk_sim.context
+            {obelisk_sim.capture_kind = 0 : i32},
+        %descending: !obelisk_sim.ref<
+            !obelisk_sim.unpacked_array<3 : 0 x i32>>
+            {obelisk_sim.capture_kind = 3 : i32,
+             obelisk_sim.descriptor_id = 5 : i64},
+        %ascending: !obelisk_sim.ref<
+            !obelisk_sim.unpacked_array<0 : 3 x i32>>
+            {obelisk_sim.capture_kind = 3 : i32,
+             obelisk_sim.descriptor_id = 6 : i64})
+        attributes {
+          entry_kind = 8 : i32,
+          obelisk_sim.bindings = [
+            #obelisk_sim.argument_binding<path = "top.descending",
+                argument = 1, kind = direct, copyOut = false>,
+            #obelisk_sim.argument_binding<path = "top.ascending",
+                argument = 2, kind = direct, copyOut = false>
+          ],
+          code_unit_id = 9200003 : i64,
+          obelisk_sim.void_function
+        } {
+      obelisk.sv.statement.expression_statement attributes {node_id = 30 : i64} {
+        obelisk.sv.expression.assignment attributes {
+            node_id = 31 : i64, assignment_kind = 0 : i32,
+            semantic_type = !ascending_array} {
+          obelisk.sv.expression.named_value attributes {
+              node_id = 32 : i64, referenced_path = "top.ascending",
+              referenced_symbol = @ascending,
+              semantic_type = !ascending_array} {
+          }
+          obelisk.sv.expression.named_value attributes {
+              node_id = 33 : i64, referenced_path = "top.descending",
+              referenced_symbol = @descending,
+              semantic_type = !descending_array} {
           }
         }
       }
