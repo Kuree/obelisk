@@ -944,6 +944,8 @@ TEST_F(ManagedValueTest, QueueRingOperationsPreserveLogicalOrder) {
   ASSERT_EQ(obelisk_rt_v1_queue_pop(queue, 0, &value, nullptr, &present),
             OBELISK_RT_OK);
   EXPECT_EQ(value, appended);
+  ASSERT_EQ(obelisk_rt_v1_container_delete(queue), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_container_size(queue), 0u);
   EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &queueRoot), OBELISK_RT_OK);
 }
 
@@ -958,6 +960,19 @@ TEST_F(ManagedValueTest, QueueBoundsAreMaximumLegalIndices) {
       ASSERT_EQ(obelisk_rt_v1_queue_push(lane, queue, 0, &value, nullptr),
                 OBELISK_RT_OK);
     EXPECT_EQ(obelisk_rt_v1_container_size(queue), bound + 1);
+    uint64_t front = 97;
+    ASSERT_EQ(obelisk_rt_v1_queue_push(lane, queue, 1, &front, nullptr),
+              OBELISK_RT_OK);
+    uint64_t inserted = 98;
+    ASSERT_EQ(obelisk_rt_v1_queue_insert(lane, queue, 0, &inserted, nullptr),
+              OBELISK_RT_OK);
+    EXPECT_EQ(obelisk_rt_v1_container_size(queue), bound + 1);
+    for (uint64_t index = 0; index <= bound; ++index) {
+      uint64_t value = UINT64_MAX;
+      ASSERT_EQ(obelisk_rt_v1_container_read(queue, index, &value, nullptr),
+                OBELISK_RT_OK);
+      EXPECT_EQ(value, index);
+    }
     uint64_t replacement = 99;
     ASSERT_EQ(obelisk_rt_v1_container_write(lane, queue,
                                             static_cast<int64_t>(bound + 1),
