@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 
 namespace llvm {
 class DataLayout;
@@ -124,6 +125,12 @@ void emitNativeStateRetain(mlir::OpBuilder &builder, mlir::Location location,
 mlir::Operation *reportManagedStatus(mlir::OpBuilder &builder,
                                      mlir::Location location,
                                      mlir::Value context, mlir::Value status);
+mlir::Value managedObjectPointer(mlir::OpBuilder &builder,
+                                 mlir::Location location, mlir::Value handle);
+mlir::Value managedObjectHandle(mlir::OpBuilder &builder,
+                                mlir::Location location, mlir::Value object);
+std::pair<mlir::Value, mlir::Value>
+managedContextAndLane(mlir::OpBuilder &builder, mlir::Location location);
 
 std::string managedClassDescriptorName(mlir::SymbolRefAttr className);
 std::string managedMethodThunkName(llvm::StringRef methodName);
@@ -157,6 +164,8 @@ void populateManagedToLLVMConversionPatterns(mlir::RewritePatternSet &patterns,
                                              mlir::TypeConverter &converter,
                                              const llvm::DataLayout &dataLayout,
                                              uint64_t stateBitCount);
+void populateManagedStringToLLVMConversionPatterns(
+    mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
 void populateAggregateToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
 void populateControlToLLVMConversionPatterns(mlir::RewritePatternSet &patterns,
