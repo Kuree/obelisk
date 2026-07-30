@@ -14,6 +14,7 @@ add_mlir_library(ObeliskSimulationToLLVMCoroutine
   SimulationManagedContainerLowering.cpp
   SimulationManagedCoverageLowering.cpp
   SimulationManagedPreparation.cpp
+  SimulationManagedReferenceLowering.cpp
   SimulationManagedRootInstrumentation.cpp
   SimulationManagedRootSupport.cpp
   SimulationManagedStringLowering.cpp
