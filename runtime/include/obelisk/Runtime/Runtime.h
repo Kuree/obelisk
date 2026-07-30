@@ -413,7 +413,63 @@ typedef struct obelisk_rt_design_bytecode_entry_v1 {
   uint32_t reserved;
 } obelisk_rt_design_bytecode_entry_v1;
 
+// Pointer-free serialized image headers shared by the encoder and runtime
+// validator. Fields are read and written explicitly as little-endian values;
+// the structs provide one typed source of truth for field offsets.
+typedef struct obelisk_rt_design_bytecode_header_v1 {
+  uint8_t magic[8];
+  uint32_t version;
+  uint32_t reserved;
+  uint32_t header_size;
+  uint32_t flags;
+  uint64_t image_size;
+  uint64_t checksum;
+  uint64_t function_offset;
+  uint64_t function_count;
+  uint64_t layout_offset;
+  uint64_t layout_count;
+  uint64_t code_offset;
+  uint64_t instruction_count;
+  uint64_t operand_offset;
+  uint64_t operand_count;
+  uint64_t constant_offset;
+  uint64_t constant_size;
+  uint64_t continuation_offset;
+  uint64_t continuation_count;
+  uint64_t intrinsic_offset;
+  uint64_t intrinsic_count;
+  uint64_t site_offset;
+  uint64_t site_count;
+  uint64_t state_offset;
+  uint64_t state_count;
+  uint64_t connectivity_offset;
+  uint64_t connectivity_count;
+  uint64_t tail_reserved;
+} obelisk_rt_design_bytecode_header_v1;
+
+typedef struct obelisk_rt_design_database_header_v1 {
+  uint8_t magic[8];
+  uint32_t version;
+  uint32_t reserved;
+  uint32_t profile;
+  uint32_t header_size;
+  uint64_t image_size;
+  uint64_t checksum;
+  uint64_t root_offset;
+  uint64_t scope_offset;
+  uint64_t scope_count;
+  uint64_t object_offset;
+  uint64_t object_count;
+  uint64_t type_offset;
+  uint64_t type_count;
+  uint64_t string_offset;
+  uint64_t string_size;
+  uint64_t index_offset;
+  uint64_t index_count;
+} obelisk_rt_design_database_header_v1;
+
 #define OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE 208u
+#define OBELISK_RT_DESIGN_DATABASE_HEADER_SIZE 128u
 #define OBELISK_RT_DESIGN_BYTECODE_INSTRUCTION_SIZE 32u
 
 typedef uint8_t obelisk_rt_design_register_kind;

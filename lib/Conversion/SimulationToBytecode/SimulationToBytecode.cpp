@@ -36,6 +36,7 @@
 #include "llvm/Support/Error.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <functional>
 #include <limits>
 #include <map>
@@ -3843,12 +3844,15 @@ private:
   }
 
   SmallVector<uint8_t> serializeBytecode() {
+    using Header = obelisk_rt_design_bytecode_header_v1;
     SmallVector<uint8_t> output(OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE, 0);
     static constexpr char magic[8] = {'O', 'B', 'B', 'C', 'D', 'S', '1', '\0'};
-    std::copy(std::begin(magic), std::end(magic), output.begin());
-    write32(output, 8, OBELISK_RT_VERSION);
-    write32(output, 12, 0);
-    write32(output, 16, OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE);
+    std::copy(std::begin(magic), std::end(magic),
+              output.begin() + offsetof(Header, magic));
+    write32(output, offsetof(Header, version), OBELISK_RT_VERSION);
+    write32(output, offsetof(Header, reserved), 0);
+    write32(output, offsetof(Header, header_size),
+            OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE);
 
     alignTo(output, 8);
     uint64_t functionOffset = output.size();
@@ -3990,31 +3994,34 @@ private:
       append32(output, 0);
     }
 
-    write64(output, 24, output.size());
-    write64(output, 40, functionOffset);
-    write64(output, 48, plans.size());
-    write64(output, 56, layoutOffset);
-    write64(output, 64, layoutCursor);
-    write64(output, 72, codeOffset);
-    write64(output, 80, instructions.size());
-    write64(output, 88, operandOffset);
-    write64(output, 96, operandMaps.size());
-    write64(output, 104, constantOffset);
-    write64(output, 112, constants.size());
-    write64(output, 120, continuationOffset);
-    write64(output, 128, continuationCursor);
-    write64(output, 136, intrinsicOffset);
-    write64(output, 144, intrinsicSignatures.size());
-    write64(output, 152, siteOffset);
-    write64(output, 160, intrinsicSites.size());
-    write64(output, 168, stateOffset);
-    write64(output, 176,
+    write64(output, offsetof(Header, image_size), output.size());
+    write64(output, offsetof(Header, function_offset), functionOffset);
+    write64(output, offsetof(Header, function_count), plans.size());
+    write64(output, offsetof(Header, layout_offset), layoutOffset);
+    write64(output, offsetof(Header, layout_count), layoutCursor);
+    write64(output, offsetof(Header, code_offset), codeOffset);
+    write64(output, offsetof(Header, instruction_count), instructions.size());
+    write64(output, offsetof(Header, operand_offset), operandOffset);
+    write64(output, offsetof(Header, operand_count), operandMaps.size());
+    write64(output, offsetof(Header, constant_offset), constantOffset);
+    write64(output, offsetof(Header, constant_size), constants.size());
+    write64(output, offsetof(Header, continuation_offset), continuationOffset);
+    write64(output, offsetof(Header, continuation_count), continuationCursor);
+    write64(output, offsetof(Header, intrinsic_offset), intrinsicOffset);
+    write64(output, offsetof(Header, intrinsic_count),
+            intrinsicSignatures.size());
+    write64(output, offsetof(Header, site_offset), siteOffset);
+    write64(output, offsetof(Header, site_count), intrinsicSites.size());
+    write64(output, offsetof(Header, state_offset), stateOffset);
+    write64(output, offsetof(Header, state_count),
             captureRecords.size() + state.netLayouts.size() +
                 state.driverLayouts.size());
-    write64(output, 184, connectivityOffset);
-    write64(output, 192, state.connections.size());
-    write64(output, 200, 0);
-    write64(output, 32, checksum(output, 32));
+    write64(output, offsetof(Header, connectivity_offset), connectivityOffset);
+    write64(output, offsetof(Header, connectivity_count),
+            state.connections.size());
+    write64(output, offsetof(Header, tail_reserved), 0);
+    write64(output, offsetof(Header, checksum),
+            checksum(output, offsetof(Header, checksum)));
     return output;
   }
 
@@ -4432,25 +4439,30 @@ private:
       append64(output, entry.name);
       append64(output, entry.record);
     }
+    using Header = obelisk_rt_design_database_header_v1;
     static constexpr char magic[8] = {'O', 'B', 'D', 'S', 'G', 'N', '1', '\0'};
-    std::copy(std::begin(magic), std::end(magic), output.begin());
-    write32(output, 8, OBELISK_RT_VERSION);
-    write32(output, 12, 0);
-    write32(output, 16, profile);
-    write32(output, 20, 128);
-    write64(output, 24, output.size());
-    write64(output, 40, scopeOffsets.lookup(root.getId()));
-    write64(output, 48, scopeOffset);
-    write64(output, 56, scopes.size());
-    write64(output, 64, objectOffset);
-    write64(output, 72, objects.size());
-    write64(output, 80, typeOffset);
-    write64(output, 88, types.size());
-    write64(output, 96, stringOffset);
-    write64(output, 104, strings.size());
-    write64(output, 112, indexOffset);
-    write64(output, 120, names.size());
-    write64(output, 32, checksum(output, 32));
+    std::copy(std::begin(magic), std::end(magic),
+              output.begin() + offsetof(Header, magic));
+    write32(output, offsetof(Header, version), OBELISK_RT_VERSION);
+    write32(output, offsetof(Header, reserved), 0);
+    write32(output, offsetof(Header, profile), profile);
+    write32(output, offsetof(Header, header_size),
+            OBELISK_RT_DESIGN_DATABASE_HEADER_SIZE);
+    write64(output, offsetof(Header, image_size), output.size());
+    write64(output, offsetof(Header, root_offset),
+            scopeOffsets.lookup(root.getId()));
+    write64(output, offsetof(Header, scope_offset), scopeOffset);
+    write64(output, offsetof(Header, scope_count), scopes.size());
+    write64(output, offsetof(Header, object_offset), objectOffset);
+    write64(output, offsetof(Header, object_count), objects.size());
+    write64(output, offsetof(Header, type_offset), typeOffset);
+    write64(output, offsetof(Header, type_count), types.size());
+    write64(output, offsetof(Header, string_offset), stringOffset);
+    write64(output, offsetof(Header, string_size), strings.size());
+    write64(output, offsetof(Header, index_offset), indexOffset);
+    write64(output, offsetof(Header, index_count), names.size());
+    write64(output, offsetof(Header, checksum),
+            checksum(output, offsetof(Header, checksum)));
     return output;
   }
 

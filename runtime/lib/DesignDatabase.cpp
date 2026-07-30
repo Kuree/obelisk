@@ -3,6 +3,7 @@
 #include "RuntimeInternal.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstring>
 #include <limits>
 #include <mutex>
@@ -13,8 +14,10 @@
 
 namespace {
 
+using DatabaseHeader = obelisk_rt_design_database_header_v1;
+
 constexpr char kMagic[8] = {'O', 'B', 'D', 'S', 'G', 'N', '1', '\0'};
-constexpr uint64_t kHeaderSize = 128;
+constexpr uint64_t kHeaderSize = OBELISK_RT_DESIGN_DATABASE_HEADER_SIZE;
 constexpr uint64_t kScopeSize = 64;
 constexpr uint64_t kObjectSize = 96;
 constexpr uint64_t kTypeSize = 80;
@@ -96,27 +99,31 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       execution->design_database_size < kHeaderSize)
     return false;
   const uint8_t *data = execution->design_database;
-  if (std::memcmp(data, kMagic, sizeof(kMagic)) != 0 ||
-      read32(data + 8) != OBELISK_RT_VERSION || read32(data + 12) != 0 ||
-      read32(data + 20) != kHeaderSize ||
-      read64(data + 24) != execution->design_database_size ||
-      read64(data + 32) == 0 ||
-      read64(data + 32) != checksum(data, execution->design_database_size))
+  if (std::memcmp(data + offsetof(DatabaseHeader, magic), kMagic,
+                  sizeof(kMagic)) != 0 ||
+      read32(data + offsetof(DatabaseHeader, version)) != OBELISK_RT_VERSION ||
+      read32(data + offsetof(DatabaseHeader, reserved)) != 0 ||
+      read32(data + offsetof(DatabaseHeader, header_size)) != kHeaderSize ||
+      read64(data + offsetof(DatabaseHeader, image_size)) !=
+          execution->design_database_size ||
+      read64(data + offsetof(DatabaseHeader, checksum)) == 0 ||
+      read64(data + offsetof(DatabaseHeader, checksum)) !=
+          checksum(data, execution->design_database_size))
     return false;
   database = {data,
               execution->design_database_size,
-              read32(data + 16),
-              read64(data + 40),
-              read64(data + 48),
-              read64(data + 56),
-              read64(data + 64),
-              read64(data + 72),
-              read64(data + 80),
-              read64(data + 88),
-              read64(data + 96),
-              read64(data + 104),
-              read64(data + 112),
-              read64(data + 120),
+              read32(data + offsetof(DatabaseHeader, profile)),
+              read64(data + offsetof(DatabaseHeader, root_offset)),
+              read64(data + offsetof(DatabaseHeader, scope_offset)),
+              read64(data + offsetof(DatabaseHeader, scope_count)),
+              read64(data + offsetof(DatabaseHeader, object_offset)),
+              read64(data + offsetof(DatabaseHeader, object_count)),
+              read64(data + offsetof(DatabaseHeader, type_offset)),
+              read64(data + offsetof(DatabaseHeader, type_count)),
+              read64(data + offsetof(DatabaseHeader, string_offset)),
+              read64(data + offsetof(DatabaseHeader, string_size)),
+              read64(data + offsetof(DatabaseHeader, index_offset)),
+              read64(data + offsetof(DatabaseHeader, index_count)),
               execution->state_bit_count};
   uint32_t supportedProfile =
       OBELISK_RT_DESIGN_PROFILE_READ | OBELISK_RT_DESIGN_PROFILE_WRITE;

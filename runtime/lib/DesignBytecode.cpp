@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <cstddef>
 #include <cstring>
 #include <deque>
 #include <limits>
@@ -17,6 +18,8 @@
 #include <vector>
 
 namespace {
+
+using BytecodeHeader = obelisk_rt_design_bytecode_header_v1;
 
 constexpr char kMagic[8] = {'O', 'B', 'B', 'C', 'D', 'S', '1', '\0'};
 constexpr uint64_t kFunctionSize = 96;
@@ -277,26 +280,26 @@ bool decodeImageHeader(const obelisk_rt_design_bytecode_entry_v1 &entry,
   const uint8_t *data = execution->bytecode;
   image = {data,
            execution->bytecode_size,
-           read64(data + 40),
-           read64(data + 48),
-           read64(data + 56),
-           read64(data + 64),
-           read64(data + 72),
-           read64(data + 80),
-           read64(data + 88),
-           read64(data + 96),
-           read64(data + 104),
-           read64(data + 112),
-           read64(data + 120),
-           read64(data + 128),
-           read64(data + 136),
-           read64(data + 144),
-           read64(data + 152),
-           read64(data + 160),
-           read64(data + 168),
-           read64(data + 176),
-           read64(data + 184),
-           read64(data + 192),
+           read64(data + offsetof(BytecodeHeader, function_offset)),
+           read64(data + offsetof(BytecodeHeader, function_count)),
+           read64(data + offsetof(BytecodeHeader, layout_offset)),
+           read64(data + offsetof(BytecodeHeader, layout_count)),
+           read64(data + offsetof(BytecodeHeader, code_offset)),
+           read64(data + offsetof(BytecodeHeader, instruction_count)),
+           read64(data + offsetof(BytecodeHeader, operand_offset)),
+           read64(data + offsetof(BytecodeHeader, operand_count)),
+           read64(data + offsetof(BytecodeHeader, constant_offset)),
+           read64(data + offsetof(BytecodeHeader, constant_size)),
+           read64(data + offsetof(BytecodeHeader, continuation_offset)),
+           read64(data + offsetof(BytecodeHeader, continuation_count)),
+           read64(data + offsetof(BytecodeHeader, intrinsic_offset)),
+           read64(data + offsetof(BytecodeHeader, intrinsic_count)),
+           read64(data + offsetof(BytecodeHeader, site_offset)),
+           read64(data + offsetof(BytecodeHeader, site_count)),
+           read64(data + offsetof(BytecodeHeader, state_offset)),
+           read64(data + offsetof(BytecodeHeader, state_count)),
+           read64(data + offsetof(BytecodeHeader, connectivity_offset)),
+           read64(data + offsetof(BytecodeHeader, connectivity_count)),
            execution->state_bit_count};
   return image.functionCount <= UINT32_MAX &&
          entry.function < image.functionCount;
@@ -308,14 +311,21 @@ bool parseImage(const obelisk_rt_design_bytecode_entry_v1 &entry,
     return false;
   const auto *execution = entry.execution;
   const uint8_t *data = execution->bytecode;
-  if (std::memcmp(data, kMagic, sizeof(kMagic)) != 0 ||
-      read32(data + 8) != OBELISK_RT_VERSION || read32(data + 12) != 0 ||
-      read32(data + 16) != OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE ||
-      read64(data + 24) != execution->bytecode_size || read64(data + 32) == 0 ||
-      read64(data + 32) != execution->checksum ||
-      read64(data + 32) != imageChecksum(data, execution->bytecode_size))
+  if (std::memcmp(data + offsetof(BytecodeHeader, magic), kMagic,
+                  sizeof(kMagic)) != 0 ||
+      read32(data + offsetof(BytecodeHeader, version)) != OBELISK_RT_VERSION ||
+      read32(data + offsetof(BytecodeHeader, reserved)) != 0 ||
+      read32(data + offsetof(BytecodeHeader, header_size)) !=
+          OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE ||
+      read64(data + offsetof(BytecodeHeader, image_size)) !=
+          execution->bytecode_size ||
+      read64(data + offsetof(BytecodeHeader, checksum)) == 0 ||
+      read64(data + offsetof(BytecodeHeader, checksum)) != execution->checksum ||
+      read64(data + offsetof(BytecodeHeader, checksum)) !=
+          imageChecksum(data, execution->bytecode_size))
     return false;
-  if (read32(data + 20) != 0 || read64(data + 200) != 0 ||
+  if (read32(data + offsetof(BytecodeHeader, flags)) != 0 ||
+      read64(data + offsetof(BytecodeHeader, tail_reserved)) != 0 ||
       !validRange(image.functions, image.functionCount, kFunctionSize,
                   image.size) ||
       !validRange(image.layouts, image.layoutCount, kLayoutSize, image.size) ||
