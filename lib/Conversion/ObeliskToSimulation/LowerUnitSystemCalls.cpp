@@ -4,7 +4,6 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
-#include "mlir/Dialect/Math/IR/Math.h"
 
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/StringSwitch.h"
@@ -45,111 +44,14 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     return constant(builder.getI1Type(), 0);
   };
 
-  if (name == "$itor") {
-    if (children.size() != 1) {
-      emitError(location) << "$itor requires exactly one argument";
-      return failure();
-    }
-    FailureOr<Value> input = lowerExpression(children.front());
-    if (failed(input))
-      return failure();
-    FailureOr<Value> result =
-        convert(*input, builder.getF64Type(), isSignedNode(children.front()),
-                getSemanticLocation(children.front()));
-    if (failed(result))
-      return failure();
-    return convertResult(*result);
-  }
-
-  if (name == "$rtoi") {
-    if (children.size() != 1) {
-      emitError(location) << "$rtoi requires exactly one argument";
-      return failure();
-    }
-    FailureOr<Value> input = lowerExpression(children.front());
-    if (failed(input))
-      return failure();
-    FailureOr<Value> real =
-        convert(*input, builder.getF64Type(), isSignedNode(children.front()),
-                getSemanticLocation(children.front()));
-    if (failed(real))
-      return failure();
-    Value truncated =
-        math::TruncOp::create(builder, location, builder.getF64Type(), *real);
-    return convertResult(truncated);
-  }
-
-  if (name == "$bitstoreal") {
-    if (children.size() != 1) {
-      emitError(location) << "$bitstoreal requires exactly one argument";
-      return failure();
-    }
-    FailureOr<Value> input = lowerExpression(children.front());
-    if (failed(input))
-      return failure();
-    FailureOr<Value> bits =
-        convert(*input, builder.getI64Type(), isSignedNode(children.front()),
-                getSemanticLocation(children.front()));
-    if (failed(bits))
-      return failure();
-    Value result = arith::BitcastOp::create(builder, location,
-                                            builder.getF64Type(), *bits);
-    return convertResult(result);
-  }
-
-  if (name == "$realtobits") {
-    if (children.size() != 1) {
-      emitError(location) << "$realtobits requires exactly one argument";
-      return failure();
-    }
-    FailureOr<Value> input = lowerExpression(children.front());
-    if (failed(input))
-      return failure();
-    FailureOr<Value> real =
-        convert(*input, builder.getF64Type(), isSignedNode(children.front()),
-                getSemanticLocation(children.front()));
-    if (failed(real))
-      return failure();
-    Value result = arith::BitcastOp::create(builder, location,
-                                            builder.getI64Type(), *real);
-    return convertResult(result);
-  }
-
-  if (name == "$bitstoshortreal") {
-    if (children.size() != 1) {
-      emitError(location) << "$bitstoshortreal requires exactly one argument";
-      return failure();
-    }
-    FailureOr<Value> input = lowerExpression(children.front());
-    if (failed(input))
-      return failure();
-    FailureOr<Value> bits =
-        convert(*input, builder.getI32Type(), isSignedNode(children.front()),
-                getSemanticLocation(children.front()));
-    if (failed(bits))
-      return failure();
-    Value result = arith::BitcastOp::create(builder, location,
-                                            builder.getF32Type(), *bits);
-    return convertResult(result);
-  }
-
-  if (name == "$shortrealtobits") {
-    if (children.size() != 1) {
-      emitError(location) << "$shortrealtobits requires exactly one argument";
-      return failure();
-    }
-    FailureOr<Value> input = lowerExpression(children.front());
-    if (failed(input))
-      return failure();
-    FailureOr<Value> real =
-        convert(*input, builder.getF32Type(), isSignedNode(children.front()),
-                getSemanticLocation(children.front()));
-    if (failed(real))
-      return failure();
-    Value result = arith::BitcastOp::create(builder, location,
-                                            builder.getI32Type(), *real);
-    return convertResult(result);
-  }
+  bool realConversion =
+      llvm::StringSwitch<bool>(name)
+          .Cases({"$itor", "$rtoi", "$bitstoreal", "$realtobits",
+                  "$bitstoshortreal", "$shortrealtobits"},
+                 true)
+          .Default(false);
+  if (realConversion)
+    return lowerRealConversionSystemCall(op);
 
   if (name == "$urandom" || name == "$srandom") {
     constexpr size_t maximum = 1;
@@ -523,194 +425,13 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     return convertResult(result);
   }
 
-  if (name == "$ceil") {
-    if (children.size() != 1) {
-      emitError(location) << "$ceil requires exactly one argument";
-      return failure();
-    }
-    FailureOr<Value> input = lowerExpression(children.front());
-    if (failed(input))
-      return failure();
-    FailureOr<Value> real =
-        convert(*input, builder.getF64Type(), isSignedNode(children.front()),
-                getSemanticLocation(children.front()));
-    if (failed(real))
-      return failure();
-    Value result =
-        math::CeilOp::create(builder, location, builder.getF64Type(), *real);
-    return convertResult(result);
-  }
-
-  if (name == "$floor") {
-    if (children.size() != 1) {
-      emitError(location) << "$floor requires exactly one argument";
-      return failure();
-    }
-    FailureOr<Value> input = lowerExpression(children.front());
-    if (failed(input))
-      return failure();
-    FailureOr<Value> real =
-        convert(*input, builder.getF64Type(), isSignedNode(children.front()),
-                getSemanticLocation(children.front()));
-    if (failed(real))
-      return failure();
-    Value result =
-        math::FloorOp::create(builder, location, builder.getF64Type(), *real);
-    return convertResult(result);
-  }
-
-  if (name == "$sqrt") {
-    if (children.size() != 1) {
-      emitError(location) << "$sqrt requires exactly one argument";
-      return failure();
-    }
-    FailureOr<Value> input = lowerExpression(children.front());
-    if (failed(input))
-      return failure();
-    FailureOr<Value> real =
-        convert(*input, builder.getF64Type(), isSignedNode(children.front()),
-                getSemanticLocation(children.front()));
-    if (failed(real))
-      return failure();
-    Value result =
-        math::SqrtOp::create(builder, location, builder.getF64Type(), *real);
-    return convertResult(result);
-  }
-
-  if (name == "$exp") {
-    if (children.size() != 1) {
-      emitError(location) << "$exp requires exactly one argument";
-      return failure();
-    }
-    FailureOr<Value> input = lowerExpression(children.front());
-    if (failed(input))
-      return failure();
-    FailureOr<Value> real =
-        convert(*input, builder.getF64Type(), isSignedNode(children.front()),
-                getSemanticLocation(children.front()));
-    if (failed(real))
-      return failure();
-    Value result =
-        math::ExpOp::create(builder, location, builder.getF64Type(), *real);
-    return convertResult(result);
-  }
-
-  if (name == "$ln") {
-    if (children.size() != 1) {
-      emitError(location) << "$ln requires exactly one argument";
-      return failure();
-    }
-    FailureOr<Value> input = lowerExpression(children.front());
-    if (failed(input))
-      return failure();
-    FailureOr<Value> real =
-        convert(*input, builder.getF64Type(), isSignedNode(children.front()),
-                getSemanticLocation(children.front()));
-    if (failed(real))
-      return failure();
-    Value result =
-        math::LogOp::create(builder, location, builder.getF64Type(), *real);
-    return convertResult(result);
-  }
-
-  if (name == "$log10") {
-    if (children.size() != 1) {
-      emitError(location) << "$log10 requires exactly one argument";
-      return failure();
-    }
-    FailureOr<Value> input = lowerExpression(children.front());
-    if (failed(input))
-      return failure();
-    FailureOr<Value> real =
-        convert(*input, builder.getF64Type(), isSignedNode(children.front()),
-                getSemanticLocation(children.front()));
-    if (failed(real))
-      return failure();
-    Value result =
-        math::Log10Op::create(builder, location, builder.getF64Type(), *real);
-    return convertResult(result);
-  }
-
-  if (name == "$pow") {
-    if (children.size() != 2) {
-      emitError(location) << "$pow requires exactly two arguments";
-      return failure();
-    }
-    FailureOr<Value> base = lowerExpression(children[0]);
-    if (failed(base))
-      return failure();
-    FailureOr<Value> exponent = lowerExpression(children[1]);
-    if (failed(exponent))
-      return failure();
-    FailureOr<Value> realBase =
-        convert(*base, builder.getF64Type(), isSignedNode(children[0]),
-                getSemanticLocation(children[0]));
-    if (failed(realBase))
-      return failure();
-    FailureOr<Value> realExponent =
-        convert(*exponent, builder.getF64Type(), isSignedNode(children[1]),
-                getSemanticLocation(children[1]));
-    if (failed(realExponent))
-      return failure();
-    Value result = math::PowFOp::create(builder, location, builder.getF64Type(),
-                                        *realBase, *realExponent);
-    return convertResult(result);
-  }
-
-  if (name == "$atan2") {
-    if (children.size() != 2) {
-      emitError(location) << "$atan2 requires exactly two arguments";
-      return failure();
-    }
-    FailureOr<Value> y = lowerExpression(children[0]);
-    if (failed(y))
-      return failure();
-    FailureOr<Value> x = lowerExpression(children[1]);
-    if (failed(x))
-      return failure();
-    FailureOr<Value> realY =
-        convert(*y, builder.getF64Type(), isSignedNode(children[0]),
-                getSemanticLocation(children[0]));
-    if (failed(realY))
-      return failure();
-    FailureOr<Value> realX =
-        convert(*x, builder.getF64Type(), isSignedNode(children[1]),
-                getSemanticLocation(children[1]));
-    if (failed(realX))
-      return failure();
-    Value result = math::Atan2Op::create(builder, location,
-                                         builder.getF64Type(), *realY, *realX);
-    return convertResult(result);
-  }
-
-  if (name == "$hypot") {
-    if (children.size() != 2) {
-      emitError(location) << "$hypot requires exactly two arguments";
-      return failure();
-    }
-    FailureOr<Value> x = lowerExpression(children[0]);
-    if (failed(x))
-      return failure();
-    FailureOr<Value> y = lowerExpression(children[1]);
-    if (failed(y))
-      return failure();
-    FailureOr<Value> realX =
-        convert(*x, builder.getF64Type(), isSignedNode(children[0]),
-                getSemanticLocation(children[0]));
-    if (failed(realX))
-      return failure();
-    FailureOr<Value> realY =
-        convert(*y, builder.getF64Type(), isSignedNode(children[1]),
-                getSemanticLocation(children[1]));
-    if (failed(realY))
-      return failure();
-    Value xSquared = arith::MulFOp::create(builder, location, *realX, *realX);
-    Value ySquared = arith::MulFOp::create(builder, location, *realY, *realY);
-    Value sum = arith::AddFOp::create(builder, location, xSquared, ySquared);
-    Value result =
-        math::SqrtOp::create(builder, location, builder.getF64Type(), sum);
-    return convertResult(result);
-  }
+  bool realMath = llvm::StringSwitch<bool>(name)
+                      .Cases({"$ceil", "$floor", "$sqrt", "$exp", "$ln",
+                              "$log10", "$pow", "$atan2", "$hypot"},
+                             true)
+                      .Default(false);
+  if (realMath)
+    return lowerRealMathSystemCall(op);
 
   bool arrayQuery =
       llvm::StringSwitch<bool>(name)

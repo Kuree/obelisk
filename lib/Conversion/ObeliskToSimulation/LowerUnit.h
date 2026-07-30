@@ -161,6 +161,10 @@ private:
   lowerDisplaySystemCall(semantic::SVCallExpressionOp op);
   ::mlir::FailureOr<::mlir::Value>
   lowerFileSystemCall(semantic::SVCallExpressionOp op);
+  ::mlir::FailureOr<::mlir::Value>
+  lowerRealConversionSystemCall(semantic::SVCallExpressionOp op);
+  ::mlir::FailureOr<::mlir::Value>
+  lowerRealMathSystemCall(semantic::SVCallExpressionOp op);
   ::mlir::LogicalResult initializeObjectRandomStream(::mlir::Value object,
                                                      ::mlir::Location location);
   ::mlir::LogicalResult lowerPortConnection(semantic::SVPortConnectionOp op);

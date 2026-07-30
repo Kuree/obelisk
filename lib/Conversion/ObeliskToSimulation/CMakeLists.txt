@@ -19,6 +19,8 @@ add_mlir_library(ObeliskToSimulation
   LowerUnitFileSystemCalls.cpp
   LowerUnitLValues.cpp
   LowerUnitOperators.cpp
+  LowerUnitRealConversionSystemCalls.cpp
+  LowerUnitRealMathSystemCalls.cpp
   LowerUnitSystemCalls.cpp
   LowerUnitTiming.cpp
   MaterializeComputeFusion.cpp
