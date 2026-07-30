@@ -38,6 +38,7 @@ class SimulationProcessFrameAnalysis;
 }
 
 namespace obelisk::sim {
+class AssocArrayType;
 class SimFuncOp;
 }
 
@@ -131,6 +132,10 @@ mlir::Value managedObjectHandle(mlir::OpBuilder &builder,
                                 mlir::Location location, mlir::Value object);
 std::pair<mlir::Value, mlir::Value>
 managedContextAndLane(mlir::OpBuilder &builder, mlir::Location location);
+mlir::Value makeNativeAssocKey(mlir::OpBuilder &builder,
+                               mlir::Location location,
+                               sim::AssocArrayType array,
+                               mlir::ValueRange values);
 
 std::string managedClassDescriptorName(mlir::SymbolRefAttr className);
 std::string managedMethodThunkName(llvm::StringRef methodName);
@@ -165,6 +170,8 @@ void populateManagedToLLVMConversionPatterns(mlir::RewritePatternSet &patterns,
                                              const llvm::DataLayout &dataLayout,
                                              uint64_t stateBitCount);
 void populateManagedStringToLLVMConversionPatterns(
+    mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
+void populateManagedContainerToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
 void populateAggregateToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
