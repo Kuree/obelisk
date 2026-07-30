@@ -245,6 +245,9 @@ makeProcessDescriptor(mlir::ModuleOp module, mlir::Location location,
                       const SimulationProcessFrameAnalysis &analysis);
 mlir::LogicalResult prepareManagedLowering(mlir::ModuleOp module,
                                            const llvm::DataLayout &dataLayout);
+mlir::LogicalResult makeSchedulerMain(mlir::ModuleOp module,
+                                      const NativeStateLayout &stateLayout,
+                                      bool useAOT);
 
 } // namespace obelisk::detail
 
