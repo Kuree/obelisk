@@ -74,6 +74,7 @@ using detail::alignUp;
 using detail::byteGEP;
 using detail::castIntegerWidth;
 using detail::containsLogic;
+using detail::convertProcessType;
 using detail::emitNativeStateRetain;
 using detail::entryAlloca;
 using detail::flatten;
@@ -82,6 +83,7 @@ using detail::insertValue;
 using detail::llvmConstant;
 using detail::loadAt;
 using detail::lowerNativeDPICalls;
+using detail::lowerNativeFunctionBody;
 using detail::makeProcessDescriptor;
 using detail::makeByteArrayGlobal;
 using detail::makeConstantGlobal;
@@ -92,6 +94,8 @@ using detail::materializeManagedMethodThunks;
 using detail::materializeNativeObserverThunks;
 using detail::nativeStateWidth;
 using detail::nativeTwoStateBlockUnknownsAttr;
+using detail::NativeCallResultLowering;
+using detail::NativeReturnLowering;
 using detail::populateAggregateToLLVMConversionPatterns;
 using detail::populateControlToLLVMConversionPatterns;
 using detail::populateContextRuntimeToLLVMConversionPattern;
@@ -237,22 +241,6 @@ bool hasNoLogic(Operation *operation) {
         if (containsLogic(argument.getType()))
           return false;
   return true;
-}
-
-Type convertProcessType(Type type, MLIRContext *context) {
-  if (isa<sim::ContextType, runtime::ContextType,
-          runtime::ProcessDescriptorType, runtime::ProcessInstanceType>(type))
-    return LLVM::LLVMPointerType::get(context);
-  if (isa<sim::RefType, sim::NetType, sim::DriverType, sim::EventType,
-          sim::ProcessType, sim::ControlType, sim::CovergroupHandleType>(type))
-    return IntegerType::get(context, 64);
-  if (sim::isManagedHandleType(type))
-    return IntegerType::get(context, 64);
-  if (isa<sim::ArgumentRefType>(type))
-    return IntegerType::get(context, 192);
-  if (isa<sim::TimeType>(type))
-    return IntegerType::get(context, 64);
-  return type;
 }
 
 void publishAction(OpBuilder &builder, Location location, Value instance,
@@ -860,36 +848,10 @@ lowerPlainNativeProcess(sim::SimFuncOp function,
     return failure();
 
   IRRewriter rewriter(context);
-  SmallVector<Operation *> operations;
-  body.walk([&](Operation *operation) {
-    if (isa<sim::SimReturnOp, sim::SimCallOp, sim::SimSpawnOp>(operation))
-      operations.push_back(operation);
-  });
-  for (Operation *operation : operations) {
-    rewriter.setInsertionPoint(operation);
-    if (auto returnOp = dyn_cast<sim::SimReturnOp>(operation)) {
-      Value zero = arith::ConstantOp::create(rewriter, returnOp.getLoc(),
-                                             rewriter.getI32Type(),
-                                             rewriter.getI32IntegerAttr(0));
-      func::ReturnOp::create(rewriter, returnOp.getLoc(), zero);
-      rewriter.eraseOp(returnOp);
-      continue;
-    }
-    if (auto call = dyn_cast<sim::SimCallOp>(operation)) {
-      auto converted =
-          func::CallOp::create(rewriter, call.getLoc(), call.getCallee(),
-                               call.getResultTypes(), call.getOperands());
-      rewriter.replaceOp(call, converted.getResults());
-      continue;
-    }
-    auto spawn = cast<sim::SimSpawnOp>(operation);
-    auto converted = LLVM::CallOp::create(
-        rewriter, spawn.getLoc(), TypeRange{rewriter.getI64Type()},
-        SymbolRefAttr::get(rewriter.getContext(),
-                           (spawn.getCallee() + ".__obelisk_spawn").str()),
-        spawn.getOperands());
-    rewriter.replaceOp(spawn, converted.getResults());
-  }
+  if (failed(lowerNativeFunctionBody(
+          body, NativeReturnLowering::SuccessStatus,
+          NativeCallResultLowering::Preserve)))
+    return failure();
 
   SmallVector<sim::SimStatusCheckOp> checks;
   body.walk([&](sim::SimStatusCheckOp check) { checks.push_back(check); });
@@ -953,29 +915,9 @@ lowerSuspendableProcess(sim::SimFuncOp function,
   if (failed(lowerNativeDPICalls(ramp)))
     return failure();
 
-  IRRewriter callRewriter(context);
-  SmallVector<Operation *> calls;
-  ramp.walk([&](Operation *operation) {
-    if (isa<sim::SimCallOp, sim::SimSpawnOp>(operation))
-      calls.push_back(operation);
-  });
-  for (Operation *operation : calls) {
-    callRewriter.setInsertionPoint(operation);
-    if (auto call = dyn_cast<sim::SimCallOp>(operation)) {
-      auto converted =
-          func::CallOp::create(callRewriter, call.getLoc(), call.getCallee(),
-                               call.getResultTypes(), call.getOperands());
-      callRewriter.replaceOp(call, converted.getResults());
-      continue;
-    }
-    auto spawn = cast<sim::SimSpawnOp>(operation);
-    auto converted = LLVM::CallOp::create(
-        callRewriter, spawn.getLoc(), TypeRange{callRewriter.getI64Type()},
-        SymbolRefAttr::get(callRewriter.getContext(),
-                           (spawn.getCallee() + ".__obelisk_spawn").str()),
-        spawn.getOperands());
-    callRewriter.replaceOp(spawn, converted.getResults());
-  }
+  if (failed(lowerNativeFunctionBody(ramp, NativeReturnLowering::None,
+                                     NativeCallResultLowering::Preserve)))
+    return failure();
 
   Block *oldEntry = &ramp.getBody().front();
   Block *entry = new Block;
@@ -1330,37 +1272,10 @@ LogicalResult lowerOrdinaryFunction(sim::SimFuncOp function) {
           convertProcessType(argument.getType(), replacement.getContext()));
   if (failed(lowerNativeDPICalls(replacement)))
     return failure();
-  IRRewriter rewriter(replacement.getContext());
-  SmallVector<Operation *> operations;
-  replacement.walk([&](Operation *operation) {
-    if (isa<sim::SimReturnOp, sim::SimCallOp, sim::SimSpawnOp>(operation))
-      operations.push_back(operation);
-  });
-  for (Operation *operation : operations) {
-    rewriter.setInsertionPoint(operation);
-    if (auto returnOp = dyn_cast<sim::SimReturnOp>(operation)) {
-      func::ReturnOp::create(rewriter, returnOp.getLoc(),
-                             returnOp.getOperands());
-      rewriter.eraseOp(returnOp);
-    } else if (auto call = dyn_cast<sim::SimCallOp>(operation)) {
-      SmallVector<Type> convertedResults;
-      for (Type type : call.getResultTypes())
-        convertedResults.push_back(
-            convertProcessType(type, replacement.getContext()));
-      auto converted =
-          func::CallOp::create(rewriter, call.getLoc(), call.getCallee(),
-                               convertedResults, call.getOperands());
-      rewriter.replaceOp(call, converted.getResults());
-    } else {
-      auto spawn = cast<sim::SimSpawnOp>(operation);
-      auto converted = LLVM::CallOp::create(
-          rewriter, spawn.getLoc(), TypeRange{rewriter.getI64Type()},
-          SymbolRefAttr::get(rewriter.getContext(),
-                             (spawn.getCallee() + ".__obelisk_spawn").str()),
-          spawn.getOperands());
-      rewriter.replaceOp(spawn, converted.getResults());
-    }
-  }
+  if (failed(lowerNativeFunctionBody(
+          replacement, NativeReturnLowering::Preserve,
+          NativeCallResultLowering::ConvertProcessTypes)))
+    return failure();
   if (observer) {
     if (!observerWidth || !observerFourState)
       return replacement.emitError(

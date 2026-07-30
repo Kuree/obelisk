@@ -3,6 +3,7 @@
 #include "SimulationToLLVMCoroutinePrivate.h"
 
 #include "obelisk/Analysis/SimulationAnalysis.h"
+#include "obelisk/Dialect/Runtime/RuntimeOps.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -34,6 +35,22 @@ bool containsLogic(Type type) {
 
 std::optional<unsigned> nativeStateWidth(Type type) {
   return analysis::getSimulationStorageBitWidth(type);
+}
+
+Type convertProcessType(Type type, MLIRContext *context) {
+  if (isa<sim::ContextType, runtime::ContextType,
+          runtime::ProcessDescriptorType, runtime::ProcessInstanceType>(type))
+    return LLVM::LLVMPointerType::get(context);
+  if (isa<sim::RefType, sim::NetType, sim::DriverType, sim::EventType,
+          sim::ProcessType, sim::ControlType, sim::CovergroupHandleType>(type))
+    return IntegerType::get(context, 64);
+  if (sim::isManagedHandleType(type))
+    return IntegerType::get(context, 64);
+  if (isa<sim::ArgumentRefType>(type))
+    return IntegerType::get(context, 192);
+  if (isa<sim::TimeType>(type))
+    return IntegerType::get(context, 64);
+  return type;
 }
 
 SmallVector<Value> flatten(ArrayRef<ValueRange> ranges) {

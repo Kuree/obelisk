@@ -34,6 +34,17 @@ namespace obelisk::detail {
 inline constexpr llvm::StringLiteral nativeTwoStateBlockUnknownsAttr =
     "obelisk.native.two_state_block_unknowns";
 
+enum class NativeReturnLowering {
+  None,
+  Preserve,
+  SuccessStatus,
+};
+
+enum class NativeCallResultLowering {
+  Preserve,
+  ConvertProcessTypes,
+};
+
 struct SignedI64Index {
   mlir::Value value;
   mlir::Value representable;
@@ -42,6 +53,7 @@ struct SignedI64Index {
 bool alignUp(uint64_t value, uint64_t alignment, uint64_t &result);
 bool containsLogic(mlir::Type type);
 std::optional<unsigned> nativeStateWidth(mlir::Type type);
+mlir::Type convertProcessType(mlir::Type type, mlir::MLIRContext *context);
 mlir::SmallVector<mlir::Value> flatten(mlir::ArrayRef<mlir::ValueRange> ranges);
 mlir::Value llvmConstant(mlir::OpBuilder &builder, mlir::Location location,
                          mlir::Type type, uint64_t value);
@@ -93,6 +105,10 @@ getOrDeclareLLVMFunction(mlir::ModuleOp module, llvm::StringRef name,
                          mlir::ArrayRef<mlir::Type> arguments);
 
 mlir::LogicalResult lowerNativeDPICalls(mlir::Operation *root);
+mlir::LogicalResult
+lowerNativeFunctionBody(mlir::Operation *root,
+                        NativeReturnLowering returnLowering,
+                        NativeCallResultLowering callResultLowering);
 mlir::LogicalResult materializeDPIThunks(mlir::ModuleOp module);
 void populateManagedToLLVMConversionPatterns(mlir::RewritePatternSet &patterns,
                                              mlir::TypeConverter &converter,
