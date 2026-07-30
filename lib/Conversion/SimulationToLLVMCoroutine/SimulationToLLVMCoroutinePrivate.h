@@ -79,6 +79,8 @@ using ReferenceArgumentMap =
     llvm::DenseMap<mlir::Operation *, mlir::SmallVector<unsigned>>;
 
 bool alignUp(uint64_t value, uint64_t alignment, uint64_t &result);
+mlir::LogicalResult validateProcessABI(mlir::ModuleOp module,
+                                       const llvm::DataLayout &layout);
 bool containsLogic(mlir::Type type);
 std::optional<unsigned> nativeStateWidth(mlir::Type type);
 mlir::Type convertProcessType(mlir::Type type, mlir::MLIRContext *context);
