@@ -10,6 +10,7 @@
 
 #include "Detail.h"
 #include "PrepareDeclarations.h"
+#include "PrepareTopology.h"
 #include "PrepareValidation.h"
 
 #include "obelisk/Conversion/ObeliskToSimulation.h"
@@ -114,8 +115,7 @@ static std::optional<uint64_t> getUnsigned64(IntegerAttr attribute) {
 }
 
 static uint32_t getStableImportID(StringRef cIdentifier) {
-  uint64_t hash =
-      obelisk_stable_hash(cIdentifier.data(), cIdentifier.size());
+  uint64_t hash = obelisk_stable_hash(cIdentifier.data(), cIdentifier.size());
   uint32_t result = static_cast<uint32_t>(hash ^ (hash >> 32));
   return result == 0 ? 1 : result;
 }
@@ -127,19 +127,6 @@ static semantic::SVClassTypeOp getOwningClass(Operation *member) {
       return classType;
   return {};
 }
-
-struct DescriptorInfo {
-  enum class Kind { Storage, Net, Driver, Event } kind;
-  uint64_t id;
-  uint64_t scopeId;
-  Type type;
-  sim::NetResolutionKind netKind = sim::NetResolutionKind::Wire;
-  Type rootType;
-  uint64_t viewOffset = 0;
-  uint64_t packedViewOffset = 0;
-  SmallVector<int64_t> viewIndices;
-  Type aggregateViewType;
-};
 
 struct UnitInfo {
   Operation *source;
@@ -274,66 +261,6 @@ static std::string getCodeUnitHierarchy(Operation *op) {
       .str();
 }
 
-static Operation *getSingleRegionRoot(Region &region) {
-  if (region.empty() || region.front().empty())
-    return nullptr;
-  return &region.front().front();
-}
-
-static Operation *getPortActualLValue(semantic::SVPortConnectionOp connection) {
-  Operation *actual = getSingleRegionRoot(connection.getActual());
-  auto assignment =
-      dyn_cast_or_null<semantic::SVAssignmentExpressionOp>(actual);
-  if (!assignment)
-    return actual;
-  SmallVector<Operation *> children = getChildren(assignment);
-  if (children.size() == 2 &&
-      isa<semantic::SVEmptyArgumentExpressionOp>(children[1]))
-    return children.front();
-  return actual;
-}
-
-/// Automatic locals live in the owning unit's binding table instead of the
-/// design descriptor inventory. A variable is automatic when it is declared
-/// inside a statement block and not explicitly static.
-static bool isAutomaticLocalSymbol(Operation *op) {
-  if (isa<semantic::SVPatternVarSymbolOp>(op))
-    return true;
-  auto statementBlock =
-      op->getParentOfType<semantic::SVStatementBlockSymbolOp>();
-  auto variable = dyn_cast<semantic::SVVariableSymbolOp>(op);
-  if (!variable)
-    return statementBlock != nullptr;
-  if (variable.getLifetime() == semantic::SVVariableLifetime::Static)
-    return false;
-  // Zero-time function locals retain their established SSA treatment. Direct
-  // task locals, on the other hand, need activation-owned storage because the
-  // task may suspend after the declaration's lexical block has returned.
-  if (auto subroutine = op->getParentOfType<semantic::SVSubroutineSymbolOp>();
-      subroutine &&
-      subroutine.getSubroutineKind() == semantic::SVSubroutineKind::Function)
-    return statementBlock != nullptr;
-  return variable.getLifetime() == semantic::SVVariableLifetime::Automatic ||
-         statementBlock != nullptr;
-}
-
-static bool isStaticFormal(Operation *op) {
-  auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(op);
-  if (!formal || formal.getDirection() == semantic::SVArgumentDirection::Ref)
-    return false;
-  auto subroutine = op->getParentOfType<semantic::SVSubroutineSymbolOp>();
-  return subroutine && subroutine.getDefaultLifetime() ==
-                           semantic::SVVariableLifetime::Static;
-}
-
-static bool isNestedInCodeUnit(Operation *op) {
-  for (Operation *parent = op->getParentOp(); parent;
-       parent = parent->getParentOp())
-    if (isCodeUnit(parent))
-      return true;
-  return false;
-}
-
 class ObeliskSimPreparePass
     : public impl::ObeliskSimPreparePassBase<ObeliskSimPreparePass> {
 public:
@@ -344,8 +271,7 @@ void ObeliskSimPreparePass::runOnOperation() {
   ModuleOp module = getOperation();
   MLIRContext *context = &getContext();
 
-  FailureOr<ValidatedSemanticDesign> validated =
-      validateSemanticDesign(module);
+  FailureOr<ValidatedSemanticDesign> validated = validateSemanticDesign(module);
   if (failed(validated)) {
     signalPassFailure();
     return;
@@ -528,423 +454,19 @@ void ObeliskSimPreparePass::runOnOperation() {
     return scopes->lookup(operation);
   };
 
-  // `ref` is the only variable-port association that aliases storage. Every
-  // value port is frozen below either as static net topology or as an explicit
-  // hidden connection unit.
-  struct StaticStorageView {
-    std::string path;
-    Type rootType;
-    Type viewType;
-    uint64_t offset = 0;
-    uint64_t packedOffset = 0;
-    SmallVector<int64_t> indices;
-    Type aggregateType;
-  };
-  std::function<FailureOr<StaticStorageView>(Operation *)> getStaticStorageView;
-  getStaticStorageView =
-      [&](Operation *expression) -> FailureOr<StaticStorageView> {
-    StringRef path;
-    if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(expression))
-      path = named.getReferencedPath();
-    else if (auto hierarchical =
-                 dyn_cast<semantic::SVHierarchicalValueExpressionOp>(
-                     expression))
-      path = hierarchical.getReferencedPath();
-    if (!path.empty()) {
-      FailureOr<Type> type = getNormalizedSemanticType(expression);
-      if (failed(type))
-        return failure();
-      return StaticStorageView{path.str(), *type, *type, 0, 0, {}, *type};
-    }
-
-    SmallVector<Operation *> children = getChildren(expression);
-    if (children.empty())
-      return failure();
-    FailureOr<StaticStorageView> base = getStaticStorageView(children.front());
-    FailureOr<Type> resultType = getNormalizedSemanticType(expression);
-    if (failed(base) || failed(resultType))
-      return failure();
-
-    if (auto member =
-            dyn_cast<semantic::SVMemberAccessExpressionOp>(expression)) {
-      // A declaration-order subelement cannot be represented after a packed
-      // bit view. Keep the supported view grammar unambiguous instead of
-      // silently applying the member to the wrong aggregate.
-      if (base->packedOffset != 0)
-        return failure();
-      auto ordinal = member->getAttrOfType<IntegerAttr>("field_ordinal");
-      if (!ordinal || ordinal.getValue().isNegative())
-        return failure();
-      auto subelement = sim::getAggregateProvenanceSubelement(
-          base->viewType, ordinal.getValue().getZExtValue());
-      if (!subelement || subelement->first > UINT64_MAX - base->offset)
-        return failure();
-      base->offset += subelement->first;
-      base->indices.push_back(ordinal.getValue().getZExtValue());
-      base->viewType = *resultType;
-      base->aggregateType = *resultType;
-      return *base;
-    }
-
-    bool element = isa<semantic::SVElementSelectExpressionOp>(expression);
-    if (!element && !isa<semantic::SVRangeSelectExpressionOp>(expression))
-      return failure();
-    if (children.size() < 2)
-      return failure();
-    auto literal = dyn_cast<semantic::SVIntegerLiteralOp>(children[1]);
-    if (!literal)
-      return failure();
-    FailureOr<ParsedConstant> parsed = parseSVInteger(
-        literal.getConstantValue(), 64, getSemanticLocation(children[1]));
-    if (failed(parsed) || !parsed->unknown.isZero())
-      return failure();
-    int64_t first = parsed->value.getSExtValue();
-    auto semanticType =
-        children.front()->getAttrOfType<TypeAttr>("semantic_type");
-    if (!semanticType)
-      return failure();
-
-    if (auto unpacked = dyn_cast<semantic::RangedUnpackedArrayType>(
-            semanticType.getValue())) {
-      if (!element || base->packedOffset != 0)
-        return failure();
-      llvm::APInt left(65, static_cast<uint64_t>(unpacked.getLeft()), true);
-      llvm::APInt selected(65, static_cast<uint64_t>(first), true);
-      llvm::APInt ordinal = unpacked.getLeft() >= unpacked.getRight()
-                                ? left - selected
-                                : selected - left;
-      if (ordinal.isNegative() ||
-          ordinal.ugt(llvm::APInt(65, std::numeric_limits<unsigned>::max())))
-        return failure();
-      auto subelement = sim::getAggregateProvenanceSubelement(
-          base->viewType, static_cast<unsigned>(ordinal.getZExtValue()));
-      if (!subelement || subelement->first > UINT64_MAX - base->offset)
-        return failure();
-      base->offset += subelement->first;
-      base->indices.push_back(static_cast<unsigned>(ordinal.getZExtValue()));
-      base->viewType = *resultType;
-      base->aggregateType = *resultType;
-      return *base;
-    }
-
-    int64_t right;
-    bool descending;
-    if (auto integral =
-            dyn_cast<semantic::IntegralType>(semanticType.getValue())) {
-      right = integral.getRight();
-      descending = integral.getLeft() >= integral.getRight();
-    } else if (auto packed = dyn_cast<semantic::RangedPackedArrayType>(
-                   semanticType.getValue())) {
-      right = packed.getRight();
-      descending = packed.getLeft() >= packed.getRight();
-    } else {
-      return failure();
-    }
-    auto physical = [&](int64_t index) -> std::optional<uint64_t> {
-      llvm::APInt selected(65, static_cast<uint64_t>(index), true);
-      llvm::APInt boundary(65, static_cast<uint64_t>(right), true);
-      llvm::APInt offset =
-          descending ? selected - boundary : boundary - selected;
-      if (offset.isNegative() || offset.getActiveBits() > 64)
-        return std::nullopt;
-      return offset.getZExtValue();
-    };
-    std::optional<uint64_t> low = physical(first);
-    if (!low)
-      return failure();
-    if (!element) {
-      if (children.size() < 3)
-        return failure();
-      auto secondLiteral = dyn_cast<semantic::SVIntegerLiteralOp>(children[2]);
-      if (!secondLiteral)
-        return failure();
-      FailureOr<ParsedConstant> second =
-          parseSVInteger(secondLiteral.getConstantValue(), 64,
-                         getSemanticLocation(children[2]));
-      if (failed(second) || !second->unknown.isZero())
-        return failure();
-      std::optional<uint64_t> other = physical(second->value.getSExtValue());
-      if (!other)
-        return failure();
-      low = std::min(*low, *other);
-    }
-    if (!low || *low > UINT64_MAX - base->offset)
-      return failure();
-    base->offset += *low;
-    if (*low > UINT64_MAX - base->packedOffset)
-      return failure();
-    base->packedOffset += *low;
-    base->viewType = *resultType;
-    return *base;
-  };
-
-  llvm::StringMap<std::string> aliases;
-  llvm::StringMap<StaticStorageView> refViews;
-  llvm::StringMap<std::string> interfaceAliases;
-  SmallVector<semantic::SVPortConnectionOp> portConnections;
-  semanticRoot->walk([&](semantic::SVPortConnectionOp connection) {
-    portConnections.push_back(connection);
-    if (connection.getDirection() != semantic::SVArgumentDirection::Ref)
-      return;
-    StringRef internal = connection.getInternalPath().value_or(StringRef{});
-    Operation *actual = getSingleRegionRoot(connection.getActual());
-    FailureOr<StaticStorageView> view =
-        actual ? getStaticStorageView(actual)
-               : FailureOr<StaticStorageView>(failure());
-    if (internal.empty() || !actual || failed(view)) {
-      emitError(getSemanticLocation(connection))
-          << "ref port requires a static variable, member, packed selection, "
-             "or fixed-array element association";
-      invalid = true;
-      return;
-    }
-    if (connection.getFormalType() !=
-        actual->getAttrOfType<TypeAttr>("semantic_type").getValue()) {
-      emitError(getSemanticLocation(connection))
-          << "ref port association has a mismatched or converted type";
-      invalid = true;
-      return;
-    }
-    aliases[internal] = view->path;
-    refViews[internal] = *view;
-  });
-  semanticRoot->walk([&](semantic::SVModportPortSymbolOp port) {
-    Operation *modport = port->getParentOp();
-    Operation *interfaceBody = modport ? modport->getParentOp() : nullptr;
-    StringRef path = getHierarchyName(port);
-    StringRef base = getHierarchyName(interfaceBody);
-    StringRef name = getDebugName(port);
-    if (!path.empty() && !base.empty() && !name.empty())
-      interfaceAliases[path] = (base + Twine(".") + name).str();
-  });
-
-  llvm::StringMap<DescriptorInfo> descriptors;
-  uint64_t nextStorageId = 0;
-  uint64_t nextNetId = 0;
-  uint64_t nextEventId = 0;
-  SmallVector<Operation *> designObjects;
-  semanticRoot->walk<WalkOrder::PreOrder>([&](Operation *op) {
-    auto variable = dyn_cast<semantic::SVVariableSymbolOp>(op);
-    auto classProperty = dyn_cast<semantic::SVClassPropertySymbolOp>(op);
-    bool staticVariable = variable && variable.getLifetime() ==
-                                          semantic::SVVariableLifetime::Static;
-    bool staticClassProperty =
-        classProperty &&
-        classProperty.getLifetime() == semantic::SVVariableLifetime::Static;
-    if (isNestedInCodeUnit(op) && !staticVariable && !isStaticFormal(op))
-      return;
-    bool storage = (isa<semantic::SVVariableSymbolOp>(op) &&
-                    !isAutomaticLocalSymbol(op)) ||
-                   isStaticFormal(op) || staticClassProperty;
-    if (storage || isa<semantic::SVNetSymbolOp>(op))
-      designObjects.push_back(op);
-  });
-  auto emitDescriptor = [&](Operation *op) {
-    bool storage =
-        isa<semantic::SVVariableSymbolOp, semantic::SVFormalArgumentSymbolOp,
-            semantic::SVClassPropertySymbolOp>(op);
-    StringRef path = getHierarchyName(op);
-    if (path.empty()) {
-      emitError(getSemanticLocation(op))
-          << "design object is missing a hierarchy name";
-      invalid = true;
-      return;
-    }
-    if (descriptors.count(path))
-      return;
-    FailureOr<Type> type = getNormalizedSemanticType(op);
-    if (failed(type)) {
-      invalid = true;
-      return;
-    }
-    uint64_t scopeId = getScopeId(op);
-    StringAttr hierarchy = builder.getStringAttr(path);
-    StringAttr debug = builder.getStringAttr(getDebugName(op));
-    if (storage && isa<sim::EventType>(*type)) {
-      if (!getChildren(op).empty()) {
-        emitError(getSemanticLocation(op))
-            << "initialized event variables require event-cell lowering";
-        invalid = true;
-        return;
-      }
-      uint64_t id = nextEventId++;
-      descriptors[path] = {DescriptorInfo::Kind::Event, id, scopeId, *type,
-                           sim::NetResolutionKind::Wire};
-      descriptors[path].rootType = *type;
-      return;
-    }
-    if (storage) {
-      uint64_t id = nextStorageId++;
-      descriptors[path] = {DescriptorInfo::Kind::Storage, id, scopeId, *type,
-                           sim::NetResolutionKind::Wire};
-      descriptors[path].rootType = *type;
-      sim::Lifetime lifetime =
-          (op->getParentOfType<semantic::SVStatementBlockSymbolOp>() ||
-           isStaticFormal(op))
-              ? sim::Lifetime::Static
-              : sim::Lifetime::Design;
-      sim::SimStorageDeclOp::create(builder, getSemanticLocation(op), id,
-                                    scopeId, *type, lifetime, hierarchy, debug,
-                                    sim::ComputeObservabilityKindAttr{});
-    } else {
-      if ((*type).isF64()) {
-        emitError(getSemanticLocation(op))
-            << "real and realtime nets are not supported";
-        invalid = true;
-        return;
-      }
-      auto net = cast<semantic::SVNetSymbolOp>(op);
-      sim::NetResolutionKind resolution;
-      switch (net.getNetKind()) {
-      case semantic::SVNetKind::Wire:
-        resolution = sim::NetResolutionKind::Wire;
-        break;
-      case semantic::SVNetKind::Tri:
-        resolution = sim::NetResolutionKind::Tri;
-        break;
-      case semantic::SVNetKind::UWire:
-        resolution = sim::NetResolutionKind::UWire;
-        break;
-      default:
-        emitError(getSemanticLocation(op))
-            << "unsupported net resolution kind "
-            << semantic::stringifySVNetKind(net.getNetKind());
-        invalid = true;
-        return;
-      }
-      if (net.getUnsupportedStrength()) {
-        emitError(getSemanticLocation(op))
-            << "net strengths are not supported: "
-            << *net.getUnsupportedStrength();
-        invalid = true;
-        return;
-      }
-      if (net.getUnsupportedDelay()) {
-        emitError(getSemanticLocation(op))
-            << "net delays are not supported: " << *net.getUnsupportedDelay();
-        invalid = true;
-        return;
-      }
-      uint64_t id = nextNetId++;
-      descriptors[path] = {DescriptorInfo::Kind::Net, id, scopeId, *type,
-                           resolution};
-      descriptors[path].rootType = *type;
-      sim::SimNetDeclOp::create(builder, getSemanticLocation(op), id, scopeId,
-                                *type, sim::Lifetime::Design, hierarchy, debug,
-                                sim::ComputeObservabilityKindAttr{}, resolution,
-                                UnitAttr{});
-    }
-  };
-  // Materialize canonical objects first so alias resolution is independent of
-  // semantic-tree traversal order.
-  for (Operation *op : designObjects)
-    if (!aliases.count(getHierarchyName(op)))
-      emitDescriptor(op);
-  for (Operation *op : designObjects) {
-    StringRef path = getHierarchyName(op);
-    auto alias = aliases.find(path);
-    if (alias == aliases.end())
-      continue;
-    llvm::StringSet<> seen;
-    StringRef canonical = alias->second;
-    uint64_t viewOffset = 0;
-    uint64_t packedViewOffset = 0;
-    SmallVector<const StaticStorageView *> viewChain;
-    if (auto view = refViews.find(path); view != refViews.end()) {
-      viewOffset = view->second.offset;
-      packedViewOffset = view->second.packedOffset;
-      viewChain.push_back(&view->second);
-    }
-    bool cyclic = false;
-    auto next = aliases.find(canonical);
-    while (next != aliases.end()) {
-      if (!seen.insert(canonical).second) {
-        emitError(getSemanticLocation(op)) << "cyclic port alias for " << path;
-        invalid = true;
-        cyclic = true;
-        break;
-      }
-      if (auto view = refViews.find(canonical); view != refViews.end()) {
-        if (view->second.offset > UINT64_MAX - viewOffset) {
-          emitError(getSemanticLocation(op))
-              << "ref port view offset overflows for " << path;
-          invalid = true;
-          cyclic = true;
-          break;
-        }
-        viewOffset += view->second.offset;
-        if (view->second.packedOffset > UINT64_MAX - packedViewOffset) {
-          emitError(getSemanticLocation(op))
-              << "ref port packed view offset overflows for " << path;
-          invalid = true;
-          cyclic = true;
-          break;
-        }
-        packedViewOffset += view->second.packedOffset;
-        viewChain.push_back(&view->second);
-      }
-      canonical = next->second;
-      next = aliases.find(canonical);
-    }
-    if (cyclic)
-      continue;
-    auto target = descriptors.find(canonical);
-    if (target == descriptors.end()) {
-      emitError(getSemanticLocation(op))
-          << "port alias target has no flattened descriptor: " << canonical;
-      invalid = true;
-      continue;
-    }
-    if (refViews.count(path) &&
-        target->second.kind != DescriptorInfo::Kind::Storage) {
-      emitError(getSemanticLocation(op))
-          << "ref port cannot alias a net or driver";
-      invalid = true;
-      continue;
-    }
-    descriptors[path] = target->second;
-    if (auto view = refViews.find(path); view != refViews.end()) {
-      SmallVector<int64_t> viewIndices;
-      for (const StaticStorageView *component : llvm::reverse(viewChain))
-        viewIndices.append(component->indices);
-      Type aggregateViewType = target->second.rootType;
-      for (int64_t index : viewIndices) {
-        if (index < 0 || static_cast<uint64_t>(index) >
-                             std::numeric_limits<unsigned>::max()) {
-          aggregateViewType = {};
-          break;
-        }
-        aggregateViewType = sim::getAggregateElementType(
-            aggregateViewType, static_cast<unsigned>(index));
-        if (!aggregateViewType)
-          break;
-      }
-      if (!aggregateViewType) {
-        emitError(getSemanticLocation(op))
-            << "ref port has an invalid composed storage view for " << path;
-        invalid = true;
-        continue;
-      }
-      descriptors[path].type = view->second.viewType;
-      descriptors[path].rootType = target->second.rootType;
-      descriptors[path].viewOffset = viewOffset;
-      descriptors[path].packedViewOffset = packedViewOffset;
-      descriptors[path].viewIndices = std::move(viewIndices);
-      descriptors[path].aggregateViewType = aggregateViewType;
-    }
+  FailureOr<PreparedPortAliases> portAliases = analyzePortAliases(semanticRoot);
+  if (failed(portAliases)) {
+    abort();
+    return;
   }
-  for (const auto &[path, targetPath] : interfaceAliases) {
-    auto target = descriptors.find(targetPath);
-    if (target == descriptors.end()) {
-      emitError(module.getLoc())
-          << "interface modport member has no flattened target: " << path;
-      invalid = true;
-      continue;
-    }
-    descriptors[path] = target->second;
-  }
-  if (invalid)
+  auto &portConnections = portAliases->connections;
+
+  FailureOr<llvm::StringMap<DescriptorInfo>> preparedDescriptors =
+      materializeDesignDescriptors(module, semanticRoot, *portAliases, *scopes,
+                                   builder);
+  if (failed(preparedDescriptors))
     return abort();
+  llvm::StringMap<DescriptorInfo> &descriptors = *preparedDescriptors;
 
   struct NetRun {
     DescriptorInfo descriptor;
