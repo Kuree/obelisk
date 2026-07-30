@@ -33,6 +33,7 @@ add_mlir_library(ObeliskSimulationToLLVMCoroutine
   SimulationStaticSpecializationLowering.cpp
   SimulationStateAccessLowering.cpp
   SimulationStatePlaneLowering.cpp
+  SimulationStatePlaneMaterialization.cpp
   SimulationSuspensionTypeLowering.cpp
   SimulationToLLVMCoroutine.cpp
   SimulationToLLVMCoroutineUtils.cpp

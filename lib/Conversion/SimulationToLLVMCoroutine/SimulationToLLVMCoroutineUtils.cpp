@@ -7,6 +7,7 @@
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Interfaces/ControlFlowInterfaces.h"
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/MathExtras.h"
@@ -18,6 +19,50 @@ using namespace mlir;
 
 namespace obelisk::detail {
 
+std::optional<uint64_t> resolveCFGConstantInteger(Value value,
+                                                  DenseSet<Value> &active) {
+  if (auto constant = value.getDefiningOp<arith::ConstantOp>())
+    if (auto integer = dyn_cast<IntegerAttr>(constant.getValue()))
+      return integer.getValue().getZExtValue();
+  auto argument = dyn_cast<BlockArgument>(value);
+  if (!argument || !active.insert(value).second)
+    return std::nullopt;
+  std::optional<uint64_t> resolved;
+  Block *block = argument.getOwner();
+  for (Block *predecessor : block->getPredecessors()) {
+    Operation *terminator = predecessor->getTerminator();
+    auto branch = dyn_cast<BranchOpInterface>(terminator);
+    if (!branch) {
+      active.erase(value);
+      return std::nullopt;
+    }
+    for (unsigned successor = 0; successor != terminator->getNumSuccessors();
+         ++successor) {
+      if (terminator->getSuccessor(successor) != block)
+        continue;
+      SuccessorOperands operands = branch.getSuccessorOperands(successor);
+      unsigned index = argument.getArgNumber();
+      if (index >= operands.size() || operands.isOperandProduced(index)) {
+        active.erase(value);
+        return std::nullopt;
+      }
+      std::optional<uint64_t> incoming =
+          resolveCFGConstantInteger(operands[index], active);
+      if (!incoming || (resolved && *resolved != *incoming)) {
+        active.erase(value);
+        return std::nullopt;
+      }
+      resolved = incoming;
+    }
+  }
+  active.erase(value);
+  return resolved;
+}
+
+std::optional<uint64_t> resolveCFGConstantInteger(Value value) {
+  DenseSet<Value> active;
+  return resolveCFGConstantInteger(value, active);
+}
 bool alignUp(uint64_t value, uint64_t alignment, uint64_t &result) {
   if (value > std::numeric_limits<uint64_t>::max() - (alignment - 1))
     return false;

@@ -18,6 +18,51 @@ namespace obelisk {
 
 namespace detail {
 
+void notifySignal(OpBuilder &builder, Location location, Value handle,
+                  uint64_t width, Value oldValue, Value oldUnknown,
+                  Value newValue, Value newUnknown,
+                  std::optional<DirectStaticStateRange> directRange) {
+  Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
+  Type i32 = builder.getI32Type();
+  Type i64 = builder.getI64Type();
+  Value address = LLVM::AddressOfOp::create(builder, location, pointer,
+                                            "__obelisk_current_context");
+  Value context = LLVM::LoadOp::create(builder, location, pointer, address, 8);
+  if (directRange && width <= 64) {
+    auto scalar = [&](Value value) -> Value {
+      if (!value)
+        return llvmConstant(builder, location, i64, uint64_t{0});
+      if (value.getType() == i64)
+        return value;
+      return LLVM::ZExtOp::create(builder, location, i64, value);
+    };
+    LLVM::CallOp::create(
+        builder, location, TypeRange{},
+        SymbolRefAttr::get(builder.getContext(),
+                           "obelisk_rt_v1_scheduler_static_transition"),
+        ValueRange{
+            context,
+            llvmConstant(builder, location, i32, directRange->staticID),
+            llvmConstant(builder, location, i64, directRange->localOffset),
+            llvmConstant(builder, location, i64, width), scalar(oldValue),
+            scalar(oldUnknown), scalar(newValue), scalar(newUnknown)});
+    return;
+  }
+  auto save = [&](Value value) {
+    if (!value)
+      return LLVM::ZeroOp::create(builder, location, pointer).getResult();
+    Value storage = entryAlloca(builder, location, value.getType(), 1, 1);
+    LLVM::StoreOp::create(builder, location, value, storage, 1);
+    return storage;
+  };
+  LLVM::CallOp::create(
+      builder, location, TypeRange{},
+      SymbolRefAttr::get(builder.getContext(),
+                         "obelisk_rt_v1_scheduler_signal_transition"),
+      ValueRange{context, handle, llvmConstant(builder, location, i64, width),
+                 save(oldValue), save(oldUnknown), save(newValue),
+                 save(newUnknown)});
+}
 std::optional<DirectStaticStateRange>
 resolveDirectStaticStateRange(Value handle, unsigned width,
                               const NativeStateLayout *layout) {

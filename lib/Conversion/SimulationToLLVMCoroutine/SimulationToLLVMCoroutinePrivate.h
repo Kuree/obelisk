@@ -249,6 +249,12 @@ mlir::LogicalResult makeSchedulerMain(mlir::ModuleOp module,
                                       const NativeStateLayout &stateLayout,
                                       bool useAOT);
 void declareNativeRuntimeABI(mlir::ModuleOp module);
+mlir::FailureOr<NativeStateLayout>
+buildNativeStateLayout(mlir::ModuleOp module);
+mlir::LLVM::GlobalOp makeStatePlane(
+    mlir::ModuleOp module, llvm::StringRef name, uint64_t bytes, bool unknown,
+    mlir::ArrayRef<NativeStateLayout::Driver> highImpedanceDrivers = {},
+    mlir::ArrayRef<NativeStateLayout::Net> highImpedanceNets = {});
 
 } // namespace obelisk::detail
 

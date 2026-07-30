@@ -6,6 +6,7 @@
 #include "SimulationNBALowering.h"
 
 #include "obelisk/Analysis/SimulationVPIAnalysis.h"
+#include "obelisk/Analysis/NativeAOTAnalysis.h"
 #include "obelisk/Runtime/Runtime.h"
 
 #include "mlir/IR/BuiltinOps.h"
@@ -22,6 +23,9 @@ struct NativeStaticFanoutPlan {
   bool exact = false;
 };
 
+mlir::LogicalResult specializeNativeAOTCaptures(
+    mlir::ModuleOp module,
+    const analysis::NativeAOTAnalysis &eligibility);
 mlir::FailureOr<llvm::SmallVector<obelisk_rt_static_actor_root>>
 buildNativeStaticActorRootPlan(
     mlir::ModuleOp module, const NativeStateLayout &stateLayout,

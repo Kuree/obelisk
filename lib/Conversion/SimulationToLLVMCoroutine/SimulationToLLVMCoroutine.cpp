@@ -11,24 +11,15 @@
 #include "SimulationProcessFunctionLowering.h"
 
 #include "obelisk/Analysis/NativeAOTAnalysis.h"
-#include "obelisk/Analysis/NetConnectivityAnalysis.h"
-#include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Analysis/SimulationScheduleAnalysis.h"
-#include "obelisk/Analysis/SimulationStorageAnalysis.h"
 #include "obelisk/Analysis/SimulationVPIAnalysis.h"
-#include "obelisk/Analysis/StateDomainAnalysis.h"
 #include "obelisk/Analysis/StaticSpecializationAnalysis.h"
 #include "obelisk/Conversion/RuntimeToLLVM.h"
 #include "obelisk/Conversion/SimulationRuntime.h"
-#include "obelisk/Conversion/SimulationToRuntime.h"
-#include "obelisk/Conversion/SimulationToStandard.h"
-#include "obelisk/Conversion/SimulationTimeLowering.h"
-#include "obelisk/Dialect/Runtime/RuntimeOps.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Runtime/Runtime.h"
 #include "obelisk/Runtime/StableHandle.h"
 
-#include "mlir/Analysis/Liveness.h"
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
 #include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
 #include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h"
@@ -37,34 +28,21 @@
 #include "mlir/Conversion/MathToLLVM/MathToLLVM.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
-#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/IR/BuiltinOps.h"
-#include "mlir/IR/Dominance.h"
-#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Verifier.h"
-#include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
 
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
-#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/StringSet.h"
 #include "llvm/IR/DataLayout.h"
-#include "llvm/IR/DerivedTypes.h"
-#include "llvm/IR/LLVMContext.h"
 #include "llvm/Support/Error.h"
-#include "llvm/Support/MathExtras.h"
-#include "llvm/TargetParser/Triple.h"
 
 #include <algorithm>
-#include <cstddef>
-#include <limits>
-#include <type_traits>
 
 using namespace mlir;
 
@@ -75,319 +53,38 @@ namespace obelisk {
 
 namespace {
 
-using detail::alignUp;
-using detail::annotateStaticDriverNets;
 using detail::assumeCleanSpecializationAttr;
-using detail::byteGEP;
 using detail::buildNativeStaticActorRootPlan;
 using detail::buildNativeStaticFanoutPlan;
 using detail::buildNativeStaticNBAPlan;
-using detail::castIntegerWidth;
-using detail::containsLogic;
+using detail::buildNativeStateLayout;
 using detail::convertProcessType;
 using detail::declareNativeRuntimeABI;
-using detail::DirectStaticStateRange;
-using detail::entryAlloca;
-using detail::emitManagedRootRangePop;
-using detail::getOrDeclareLLVMFunction;
-using detail::insertValue;
 using detail::insertAutomaticOwnerReleases;
 using detail::instrumentManagedRoots;
-using detail::llvmConstant;
-using detail::loadAt;
-using detail::loadStatePlane;
-using detail::lowerNativeDPICalls;
-using detail::lowerNativeFunctionBody;
 using detail::lowerOrdinaryFunction;
 using detail::lowerPackedSimulationOperations;
 using detail::lowerPlainNativeProcess;
 using detail::lowerSuspendableProcess;
 using detail::materializeNativeSchedulerGlobals;
 using detail::makeProcessActivationHelper;
-using detail::makeProcessDescriptor;
 using detail::makeProcessSpawnHelper;
 using detail::makeSchedulerMain;
-using detail::makeByteArrayGlobal;
-using detail::makeConstantGlobal;
-using detail::managedClassDescriptorName;
-using detail::managedMethodThunkName;
-using detail::managedRootRangePushCheckAttr;
-using detail::managedRootRangeRecordAttr;
+using detail::makeStatePlane;
 using detail::markCleanStaticNBAsInGuardedBodies;
-using detail::markLikelyTrue;
 using detail::makeNativeAOTPlan;
-using detail::materializeDPIThunks;
 using detail::materializeManagedMethodThunks;
 using detail::materializeGeneratedNBAAccumulators;
 using detail::materializeNativeObserverThunks;
-using detail::nativeStateWidth;
-using detail::nativeTwoStateBlockUnknownsAttr;
-using detail::notifySignal;
-using detail::NativeCallResultLowering;
-using detail::NativeReturnLowering;
 using detail::NativeSchedulePlan;
 using detail::NativeStateLayout;
 using detail::NativeStaticFanoutPlan;
 using detail::NativeStaticNBAPlan;
-using detail::populateAggregateToLLVMConversionPatterns;
-using detail::populateControlToLLVMConversionPatterns;
 using detail::populateContextRuntimeToLLVMConversionPattern;
-using detail::populateDriverToLLVMConversionPatterns;
-using detail::populateEventToLLVMConversionPatterns;
-using detail::populateFunctionTypeConversionPatterns;
-using detail::populateManagedToLLVMConversionPatterns;
-using detail::populateNBAToLLVMConversionPatterns;
-using detail::populateNativeHandleConversionPatterns;
-using detail::populateOverrideToLLVMConversionPatterns;
-using detail::populateReferenceLifetimeToLLVMConversionPatterns;
-using detail::populateSchedulerToLLVMConversionPatterns;
-using detail::populateStateReadWriteToLLVMConversionPatterns;
-using detail::populateSuspensionTypeConversionPatterns;
 using detail::prepareManagedLowering;
-using detail::recordStaticSpecializationCFGBlocks;
-using detail::resolveCFGConstantInteger;
-using detail::resolveDirectStaticStateRange;
-using detail::reportManagedStatus;
-using detail::releaseNativeAutomaticState;
-using detail::resizeSignedIndexToI64;
-using detail::serializeComputedObserverWait;
-using detail::serializeRuntimeWait;
-using detail::stableProcessID;
-using detail::staticNBASpecializationGuard;
-using detail::staticSpecializationGuard;
-using detail::storeAt;
-using detail::storeStatePlane;
+using detail::specializeNativeAOTCaptures;
 using detail::threadProcessStateThroughCFG;
-using detail::threadRuntimeStatuses;
 using detail::validateProcessABI;
-using detail::ReferenceArgumentMap;
-
-
-FailureOr<NativeStateLayout> buildNativeStateLayout(ModuleOp module) {
-  FailureOr<analysis::NativeStateLayoutAnalysis> analyzed =
-      analysis::NativeStateLayoutAnalysis::compute(module);
-  if (failed(analyzed))
-    return failure();
-  NativeStateLayout layout;
-  static_cast<analysis::NativeStateLayoutAnalysis &>(layout) =
-      std::move(*analyzed);
-  return layout;
-}
-
-LogicalResult
-specializeNativeAOTCaptures(ModuleOp module,
-                            const analysis::NativeAOTAnalysis &eligibility) {
-  sim::SimFuncOp root;
-  module.walk([&](sim::SimFuncOp function) {
-    if (function.getEntryKind() == sim::EntryKind::RootInitializer)
-      root = function;
-  });
-  if (!root)
-    return module.emitError(
-        "cannot specialize AOT captures without a root initializer");
-
-  WalkResult specialized = root.walk([&](sim::SimSpawnOp spawn) {
-    sim::SimDesignOp design = spawn->getParentOfType<sim::SimDesignOp>();
-    sim::SimFuncOp target =
-        design ? design.lookupSymbol<sim::SimFuncOp>(spawn.getCallee())
-               : nullptr;
-    if (!target ||
-        !eligibility.getActorSlots().contains(target.getOperation()))
-      return WalkResult::advance();
-    Block &entry = target.getBody().front();
-    if (spawn.getNumOperands() != entry.getNumArguments()) {
-      spawn.emitOpError("AOT capture specialization found an invalid arity");
-      return WalkResult::interrupt();
-    }
-    if (entry.getNumArguments() == 0 ||
-        !isa<sim::ContextType>(entry.getArgument(0).getType())) {
-      target.emitOpError(
-          "AOT capture specialization requires a context entry capture");
-      return WalkResult::interrupt();
-    }
-
-    for (unsigned index = 1; index != entry.getNumArguments(); ++index) {
-      Operation *producer = spawn.getOperand(index).getDefiningOp();
-      if (!producer ||
-          !isa<sim::SimContextStorageOp, sim::SimContextNetOp,
-               sim::SimContextDriverOp, sim::SimContextEventOp>(producer))
-        continue;
-      if (producer->getNumOperands() != 1 ||
-          producer->getOperand(0) != spawn.getOperand(0) ||
-          producer->getNumResults() != 1 ||
-          producer->getResult(0) != spawn.getOperand(index))
-        continue;
-
-      SmallVector<OpOperand *> uses;
-      for (OpOperand &use : entry.getArgument(index).getUses())
-        uses.push_back(&use);
-      DenseMap<Block *, Value> specializedByBlock;
-      for (OpOperand *use : uses) {
-        Block *block = use->getOwner()->getBlock();
-        auto [position, inserted] =
-            specializedByBlock.try_emplace(block, Value{});
-        if (inserted) {
-          OpBuilder builder(target.getContext());
-          builder.setInsertionPointToStart(block);
-          IRMapping mapping;
-          mapping.map(spawn.getOperand(0), entry.getArgument(0));
-          position->second = builder.clone(*producer, mapping)->getResult(0);
-        }
-        use->set(position->second);
-      }
-    }
-    return WalkResult::advance();
-  });
-  return specialized.wasInterrupted() ? failure() : success();
-}
-
-LLVM::GlobalOp
-makeStatePlane(ModuleOp module, StringRef name, uint64_t bytes, bool unknown,
-               ArrayRef<NativeStateLayout::Driver> highImpedanceDrivers = {},
-               ArrayRef<NativeStateLayout::Net> highImpedanceNets = {}) {
-  OpBuilder builder(module.getContext());
-  builder.setInsertionPointToStart(module.getBody());
-  Location location = module.getLoc();
-  Type i8 = builder.getI8Type();
-  Type array = LLVM::LLVMArrayType::get(i8, bytes);
-  auto global =
-      LLVM::GlobalOp::create(builder, location, array, false,
-                             LLVM::Linkage::Internal, name, Attribute{}, 8);
-  Block *block = new Block;
-  global.getInitializerRegion().push_back(block);
-  builder.setInsertionPointToStart(block);
-  Value value = LLVM::ZeroOp::create(builder, location, array);
-  SmallVector<uint8_t> initial(bytes, unknown ? UINT8_MAX : 0);
-  if (!unknown)
-    for (const NativeStateLayout::Driver &driver : highImpedanceDrivers)
-      for (unsigned bit = 0; bit < driver.width; ++bit) {
-        uint64_t absolute = driver.offset + bit;
-        initial[absolute / 8] |= static_cast<uint8_t>(1u << (absolute % 8));
-      }
-  if (!unknown)
-    for (const NativeStateLayout::Net &net : highImpedanceNets) {
-      if (!net.fourState)
-        continue;
-      for (unsigned bit = 0; bit < net.width; ++bit) {
-        uint64_t absolute = net.offset + bit;
-        initial[absolute / 8] |= static_cast<uint8_t>(1u << (absolute % 8));
-      }
-    }
-  for (auto [index, byte] : llvm::enumerate(initial))
-    if (byte != 0)
-      value = LLVM::InsertValueOp::create(
-          builder, location, value, llvmConstant(builder, location, i8, byte),
-          ArrayRef<int64_t>{static_cast<int64_t>(index)});
-  LLVM::ReturnOp::create(builder, location, value);
-  return global;
-}
-
-} // namespace
-
-
-namespace detail {
-
-std::optional<uint64_t> resolveCFGConstantInteger(Value value,
-                                                  DenseSet<Value> &active) {
-  if (auto constant = value.getDefiningOp<arith::ConstantOp>())
-    if (auto integer = dyn_cast<IntegerAttr>(constant.getValue()))
-      return integer.getValue().getZExtValue();
-  auto argument = dyn_cast<BlockArgument>(value);
-  if (!argument || !active.insert(value).second)
-    return std::nullopt;
-  std::optional<uint64_t> resolved;
-  Block *block = argument.getOwner();
-  for (Block *predecessor : block->getPredecessors()) {
-    Operation *terminator = predecessor->getTerminator();
-    auto branch = dyn_cast<BranchOpInterface>(terminator);
-    if (!branch) {
-      active.erase(value);
-      return std::nullopt;
-    }
-    for (unsigned successor = 0; successor != terminator->getNumSuccessors();
-         ++successor) {
-      if (terminator->getSuccessor(successor) != block)
-        continue;
-      SuccessorOperands operands = branch.getSuccessorOperands(successor);
-      unsigned index = argument.getArgNumber();
-      if (index >= operands.size() || operands.isOperandProduced(index)) {
-        active.erase(value);
-        return std::nullopt;
-      }
-      std::optional<uint64_t> incoming =
-          resolveCFGConstantInteger(operands[index], active);
-      if (!incoming || (resolved && *resolved != *incoming)) {
-        active.erase(value);
-        return std::nullopt;
-      }
-      resolved = incoming;
-    }
-  }
-  active.erase(value);
-  return resolved;
-}
-
-std::optional<uint64_t> resolveCFGConstantInteger(Value value) {
-  DenseSet<Value> active;
-  return resolveCFGConstantInteger(value, active);
-}
-
-} // namespace detail
-
-namespace detail {
-
-void notifySignal(OpBuilder &builder, Location location, Value handle,
-                  uint64_t width, Value oldValue, Value oldUnknown,
-                  Value newValue, Value newUnknown,
-                  std::optional<DirectStaticStateRange> directRange) {
-  Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
-  Type i32 = builder.getI32Type();
-  Type i64 = builder.getI64Type();
-  Value address = LLVM::AddressOfOp::create(builder, location, pointer,
-                                            "__obelisk_current_context");
-  Value context = LLVM::LoadOp::create(builder, location, pointer, address, 8);
-  if (directRange && width <= 64) {
-    auto scalar = [&](Value value) -> Value {
-      if (!value)
-        return llvmConstant(builder, location, i64, uint64_t{0});
-      if (value.getType() == i64)
-        return value;
-      return LLVM::ZExtOp::create(builder, location, i64, value);
-    };
-    LLVM::CallOp::create(
-        builder, location, TypeRange{},
-        SymbolRefAttr::get(builder.getContext(),
-                           "obelisk_rt_v1_scheduler_static_transition"),
-        ValueRange{
-            context,
-            llvmConstant(builder, location, i32, directRange->staticID),
-            llvmConstant(builder, location, i64, directRange->localOffset),
-            llvmConstant(builder, location, i64, width), scalar(oldValue),
-            scalar(oldUnknown), scalar(newValue), scalar(newUnknown)});
-    return;
-  }
-  auto save = [&](Value value) {
-    if (!value)
-      return LLVM::ZeroOp::create(builder, location, pointer).getResult();
-    Value storage = entryAlloca(builder, location, value.getType(), 1, 1);
-    LLVM::StoreOp::create(builder, location, value, storage, 1);
-    return storage;
-  };
-  LLVM::CallOp::create(
-      builder, location, TypeRange{},
-      SymbolRefAttr::get(builder.getContext(),
-                         "obelisk_rt_v1_scheduler_signal_transition"),
-      ValueRange{context, handle, llvmConstant(builder, location, i64, width),
-                 save(oldValue), save(oldUnknown), save(newValue),
-                 save(newUnknown)});
-}
-
-} // namespace detail
-
-namespace {
-
-
-
 
 LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     ModuleOp module, const llvm::DataLayout &dataLayout) {

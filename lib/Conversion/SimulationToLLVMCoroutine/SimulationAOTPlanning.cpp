@@ -9,6 +9,7 @@
 #include "obelisk/Runtime/StableHandle.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/IR/IRMapping.h"
 
 #include "llvm/ADT/STLExtras.h"
 
@@ -16,6 +17,72 @@ using namespace mlir;
 
 namespace obelisk::detail {
 
+LogicalResult
+specializeNativeAOTCaptures(ModuleOp module,
+                            const analysis::NativeAOTAnalysis &eligibility) {
+  sim::SimFuncOp root;
+  module.walk([&](sim::SimFuncOp function) {
+    if (function.getEntryKind() == sim::EntryKind::RootInitializer)
+      root = function;
+  });
+  if (!root)
+    return module.emitError(
+        "cannot specialize AOT captures without a root initializer");
+
+  WalkResult specialized = root.walk([&](sim::SimSpawnOp spawn) {
+    sim::SimDesignOp design = spawn->getParentOfType<sim::SimDesignOp>();
+    sim::SimFuncOp target =
+        design ? design.lookupSymbol<sim::SimFuncOp>(spawn.getCallee())
+               : nullptr;
+    if (!target ||
+        !eligibility.getActorSlots().contains(target.getOperation()))
+      return WalkResult::advance();
+    Block &entry = target.getBody().front();
+    if (spawn.getNumOperands() != entry.getNumArguments()) {
+      spawn.emitOpError("AOT capture specialization found an invalid arity");
+      return WalkResult::interrupt();
+    }
+    if (entry.getNumArguments() == 0 ||
+        !isa<sim::ContextType>(entry.getArgument(0).getType())) {
+      target.emitOpError(
+          "AOT capture specialization requires a context entry capture");
+      return WalkResult::interrupt();
+    }
+
+    for (unsigned index = 1; index != entry.getNumArguments(); ++index) {
+      Operation *producer = spawn.getOperand(index).getDefiningOp();
+      if (!producer ||
+          !isa<sim::SimContextStorageOp, sim::SimContextNetOp,
+               sim::SimContextDriverOp, sim::SimContextEventOp>(producer))
+        continue;
+      if (producer->getNumOperands() != 1 ||
+          producer->getOperand(0) != spawn.getOperand(0) ||
+          producer->getNumResults() != 1 ||
+          producer->getResult(0) != spawn.getOperand(index))
+        continue;
+
+      SmallVector<OpOperand *> uses;
+      for (OpOperand &use : entry.getArgument(index).getUses())
+        uses.push_back(&use);
+      DenseMap<Block *, Value> specializedByBlock;
+      for (OpOperand *use : uses) {
+        Block *block = use->getOwner()->getBlock();
+        auto [position, inserted] =
+            specializedByBlock.try_emplace(block, Value{});
+        if (inserted) {
+          OpBuilder builder(target.getContext());
+          builder.setInsertionPointToStart(block);
+          IRMapping mapping;
+          mapping.map(spawn.getOperand(0), entry.getArgument(0));
+          position->second = builder.clone(*producer, mapping)->getResult(0);
+        }
+        use->set(position->second);
+      }
+    }
+    return WalkResult::advance();
+  });
+  return specialized.wasInterrupted() ? failure() : success();
+}
 FailureOr<SmallVector<obelisk_rt_static_actor_root>>
 buildNativeStaticActorRootPlan(
     ModuleOp module, const NativeStateLayout &stateLayout,
