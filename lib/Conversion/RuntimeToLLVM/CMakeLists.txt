@@ -1,6 +1,8 @@
 add_mlir_library(ObeliskRuntimeToLLVM
   EmbeddedDesign.cpp
   RuntimeToLLVM.cpp
+  RuntimeToLLVMABI.cpp
+  RuntimeToLLVMPatterns.cpp
 
   DEPENDS
   ObeliskConversionPassIncGen
