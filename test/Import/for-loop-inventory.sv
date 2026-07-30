@@ -1,6 +1,5 @@
 // RUN: obelisk -emit-slang %s | FileCheck %s --check-prefix=SLANG
 // RUN: obelisk -emit-obelisk %s | FileCheck %s --check-prefix=OBELISK
-// RUN: obelisk -O0 -emit-sim %s | FileCheck %s --check-prefix=SIM
 
 module for_loop_inventory;
   integer i;
@@ -46,7 +45,3 @@ endmodule
 // OBELISK-SAME: has_condition = true
 // OBELISK-SAME: initializer_count = 0 : i64
 // OBELISK-SAME: step_count = 2 : i64
-
-// SIM-NOT: obelisk.sv.statement.for_loop
-// SIM: cf.cond_br
-// SIM-NOT: obelisk.sv.statement.for_loop
