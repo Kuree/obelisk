@@ -163,6 +163,9 @@ void populateOverrideToLLVMConversionPatterns(
     uint64_t stateBitCount);
 void populateReferenceLifetimeToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
+void populateSchedulerToLLVMConversionPatterns(
+    mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
+void materializeNativeSchedulerGlobals(mlir::ModuleOp module);
 mlir::LogicalResult
 insertAutomaticOwnerReleases(obelisk::sim::SimFuncOp function);
 mlir::LogicalResult

@@ -74,10 +74,8 @@ using detail::byteGEP;
 using detail::castIntegerWidth;
 using detail::containsLogic;
 using detail::convertProcessType;
-using detail::emitNativeStateRetain;
 using detail::entryAlloca;
 using detail::emitManagedRootRangePop;
-using detail::flatten;
 using detail::getOrDeclareLLVMFunction;
 using detail::insertValue;
 using detail::insertAutomaticOwnerReleases;
@@ -86,6 +84,7 @@ using detail::llvmConstant;
 using detail::loadAt;
 using detail::lowerNativeDPICalls;
 using detail::lowerNativeFunctionBody;
+using detail::materializeNativeSchedulerGlobals;
 using detail::makeProcessDescriptor;
 using detail::makeByteArrayGlobal;
 using detail::makeConstantGlobal;
@@ -110,6 +109,7 @@ using detail::populateManagedToLLVMConversionPatterns;
 using detail::populateNativeHandleConversionPatterns;
 using detail::populateOverrideToLLVMConversionPatterns;
 using detail::populateReferenceLifetimeToLLVMConversionPatterns;
+using detail::populateSchedulerToLLVMConversionPatterns;
 using detail::populateSuspensionTypeConversionPatterns;
 using detail::prepareManagedLowering;
 using detail::reportManagedStatus;
@@ -2755,81 +2755,6 @@ private:
   bool guardedClaims;
 };
 
-class SpawnTypeConversion final : public OpConversionPattern<sim::SimSpawnOp> {
-public:
-  using OpConversionPattern::OpConversionPattern;
-  LogicalResult
-  matchAndRewrite(sim::SimSpawnOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    for (auto [operand, converted] :
-         llvm::zip_equal(op.getOperands(), adaptor.getOperands()))
-      if (isa<sim::RefType>(operand.getType()) && converted.size() == 1)
-        emitNativeStateRetain(rewriter, op.getLoc(), converted.front());
-    OperationState state(op.getLoc(), op->getName());
-    state.addOperands(flatten(adaptor.getOperands()));
-    state.addTypes(rewriter.getI64Type());
-    state.addAttributes(op->getAttrs());
-    Operation *replacement = rewriter.create(state);
-    rewriter.replaceOp(op, replacement->getResults());
-    return success();
-  }
-};
-
-class SchedulerEffectEraseConversion final : public ConversionPattern {
-public:
-  SchedulerEffectEraseConversion(const TypeConverter &converter,
-                                 StringRef operation, MLIRContext *context)
-      : ConversionPattern(converter, operation, 1, context) {}
-  LogicalResult
-  matchAndRewrite(Operation *operation, ArrayRef<Value>,
-                  ConversionPatternRewriter &rewriter) const override {
-    if (operation->getNumResults() == 0) {
-      rewriter.eraseOp(operation);
-      return success();
-    }
-    Value zero = arith::ConstantOp::create(rewriter, operation->getLoc(),
-                                           rewriter.getI64Type(),
-                                           rewriter.getI64IntegerAttr(0));
-    rewriter.replaceOp(operation, zero);
-    return success();
-  }
-};
-
-void makeCurrentContextGlobal(ModuleOp module) {
-  if (module.lookupSymbol("__obelisk_current_context"))
-    return;
-  OpBuilder builder(module.getContext());
-  builder.setInsertionPointToStart(module.getBody());
-  Type pointer = LLVM::LLVMPointerType::get(module.getContext());
-  auto global = LLVM::GlobalOp::create(
-      builder, module.getLoc(), pointer, false, LLVM::Linkage::Internal,
-      "__obelisk_current_context", Attribute{}, 8, 0, false, true);
-  Block *block = new Block;
-  global.getInitializerRegion().push_back(block);
-  builder.setInsertionPointToStart(block);
-  LLVM::ReturnOp::create(
-      builder, module.getLoc(),
-      LLVM::ZeroOp::create(builder, module.getLoc(), pointer));
-}
-
-void makeStaticSpecializationFastGlobal(ModuleOp module) {
-  constexpr StringLiteral name = "__obelisk_static_specialization_fast_v1";
-  if (module.lookupSymbol(name))
-    return;
-  OpBuilder builder(module.getContext());
-  builder.setInsertionPointToStart(module.getBody());
-  Type i32 = builder.getI32Type();
-  auto global =
-      LLVM::GlobalOp::create(builder, module.getLoc(), i32, false,
-                             LLVM::Linkage::Internal, name, Attribute{}, 4);
-  Block *block = new Block;
-  global.getInitializerRegion().push_back(block);
-  builder.setInsertionPointToStart(block);
-  LLVM::ReturnOp::create(
-      builder, module.getLoc(),
-      llvmConstant(builder, module.getLoc(), i32, uint32_t{0}));
-}
-
 void notifySignal(OpBuilder &builder, Location location, Value handle,
                   uint64_t width, Value oldValue, Value oldUnknown,
                   Value newValue, Value newUnknown,
@@ -4224,8 +4149,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   makeStatePlane(module, "__obelisk_state_value", stateBytes, false,
                  stateLayout->driverLayouts, stateLayout->netLayouts);
   makeStatePlane(module, "__obelisk_state_unknown", stateBytes, true);
-  makeCurrentContextGlobal(module);
-  makeStaticSpecializationFastGlobal(module);
+  materializeNativeSchedulerGlobals(module);
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_scheduler_signal",
       LLVM::LLVMVoidType::get(context),
@@ -4968,7 +4892,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   populateNativeHandleConversionPatterns(
       packedPatterns, packedConverter, stateLayout->storage, stateLayout->nets,
       stateLayout->drivers);
-  packedPatterns.add<SpawnTypeConversion>(packedConverter, context);
+  populateSchedulerToLLVMConversionPatterns(packedPatterns, packedConverter);
   packedPatterns.add<RefLoadConversion, RefStoreConversion>(
       packedConverter, context, stateLayout->bitCount,
       staticSpecialization && useAOT && aotEligibility.isFullyEligible()
