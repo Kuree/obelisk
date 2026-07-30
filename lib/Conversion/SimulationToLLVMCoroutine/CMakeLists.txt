@@ -21,6 +21,7 @@ add_mlir_library(ObeliskSimulationToLLVMCoroutine
   SimulationPackedLowering.cpp
   SimulationProcessDescriptorLowering.cpp
   SimulationProcessCFGThreading.cpp
+  SimulationProcessCoroutineLowering.cpp
   SimulationProcessActivationLowering.cpp
   SimulationReferenceLifetimeLowering.cpp
   SimulationRuntimeABILowering.cpp

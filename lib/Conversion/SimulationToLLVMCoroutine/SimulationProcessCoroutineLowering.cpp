@@ -1,0 +1,956 @@
+//===- SimulationProcessCoroutineLowering.cpp - Native process lowering ===//
+
+#include "SimulationProcessCoroutineLowering.h"
+
+#include "obelisk/Analysis/SimulationAnalysis.h"
+#include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
+#include "obelisk/Conversion/SimulationRuntime.h"
+#include "obelisk/Conversion/SimulationTimeLowering.h"
+#include "obelisk/Dialect/Runtime/RuntimeOps.h"
+#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Runtime/Runtime.h"
+
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Interfaces/ControlFlowInterfaces.h"
+
+#include "llvm/ADT/SetVector.h"
+
+#include <cstddef>
+#include <limits>
+
+using namespace mlir;
+
+namespace obelisk::detail {
+
+namespace {
+
+constexpr uint64_t kInstanceAllocationOffset =
+    offsetof(obelisk_rt_process_instance_v1, allocation);
+constexpr uint64_t kInstanceFrameOffset =
+    offsetof(obelisk_rt_process_instance_v1, frame);
+constexpr uint64_t kInstanceScratchOffset =
+    offsetof(obelisk_rt_process_instance_v1, scratch_offset);
+constexpr uint64_t kInstanceNativeHandleOffset =
+    offsetof(obelisk_rt_process_instance_v1, native_handle);
+constexpr uint64_t kInstanceContinuationOffset =
+    offsetof(obelisk_rt_process_instance_v1, continuation);
+constexpr uint64_t kInstanceStatusOffset =
+    offsetof(obelisk_rt_process_instance_v1, status);
+constexpr uint64_t kInstanceContextOffset =
+    offsetof(obelisk_rt_process_instance_v1, context);
+constexpr uint64_t kInstanceActionOffset =
+    offsetof(obelisk_rt_process_instance_v1, action);
+constexpr uint64_t kActionKindOffset =
+    offsetof(obelisk_rt_fragment_action_v1, kind);
+constexpr uint64_t kActionSuspendKindOffset =
+    offsetof(obelisk_rt_fragment_action_v1, suspend_kind);
+constexpr uint64_t kActionContinuationOffset =
+    offsetof(obelisk_rt_fragment_action_v1, continuation);
+constexpr uint64_t kActionFlagsOffset =
+    offsetof(obelisk_rt_fragment_action_v1, flags);
+constexpr uint64_t kActionPayloadOffset =
+    offsetof(obelisk_rt_fragment_action_v1, payload);
+constexpr uint64_t kActionAuxiliaryOffset =
+    offsetof(obelisk_rt_fragment_action_v1, auxiliary);
+
+uint32_t suspensionKind(Operation *operation) {
+  return TypeSwitch<Operation *, uint32_t>(operation)
+      .Case<sim::SimSuspendDelayOp>(
+          [](auto) { return OBELISK_RT_SUSPEND_DELAY; })
+      .Case<sim::SimSuspendChangeOp, sim::SimSuspendLevelOp>(
+          [](auto) { return OBELISK_RT_SUSPEND_CHANGE; })
+      .Case<sim::SimSuspendEdgeOp, sim::SimSuspendEdgeIffOp,
+            sim::SimSuspendAnyOp>([](auto) { return OBELISK_RT_SUSPEND_EDGE; })
+      .Case<sim::SimSuspendEventOp>(
+          [](auto) { return OBELISK_RT_SUSPEND_EVENT; })
+      .Case<sim::SimSuspendAwaitOp>(
+          [](auto) { return OBELISK_RT_SUSPEND_AWAIT; })
+      .Case<sim::SimSuspendJoinOp>(
+          [](auto) { return OBELISK_RT_SUSPEND_JOIN; })
+      .Case<sim::SimSuspendForeverOp>(
+          [](auto) { return OBELISK_RT_SUSPEND_FOREVER; })
+      .Case<sim::SimSuspendChildrenOp>(
+          [](auto) { return OBELISK_RT_SUSPEND_CHILDREN; })
+      .Case<sim::SimSuspendObserveOp>(
+          [](auto) { return OBELISK_RT_SUSPEND_OBSERVER; })
+      .Default([](Operation *) { return OBELISK_RT_SUSPEND_NONE; });
+}
+
+void publishAction(OpBuilder &builder, Location location, Value instance,
+                   uint32_t actionKind, uint32_t suspendKind,
+                   uint32_t continuation, uint32_t flags, Value payload,
+                   uint64_t auxiliary) {
+  Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
+  Type i32 = builder.getI32Type();
+  Type i64 = builder.getI64Type();
+  Value action =
+      loadAt(builder, location, instance, kInstanceActionOffset, pointer, 8);
+  storeAt(builder, location, action, kActionKindOffset,
+          llvmConstant(builder, location, i32, actionKind), 4);
+  storeAt(builder, location, action, kActionSuspendKindOffset,
+          llvmConstant(builder, location, i32, suspendKind), 4);
+  storeAt(builder, location, action, kActionContinuationOffset,
+          llvmConstant(builder, location, i32, continuation), 4);
+  storeAt(builder, location, action, kActionFlagsOffset,
+          llvmConstant(builder, location, i32, flags), 4);
+  storeAt(builder, location, action, kActionPayloadOffset, payload, 8);
+  storeAt(builder, location, action, kActionAuxiliaryOffset,
+          llvmConstant(builder, location, i64, auxiliary), 8);
+}
+
+void addFrameAttributes(LLVM::LLVMFuncOp ramp,
+                        const SimulationProcessFrameAnalysis &analysis,
+                        OpBuilder &builder) {
+  ramp->setAttr("obelisk.frame.size",
+                builder.getI64IntegerAttr(analysis.getFrameSize()));
+  ramp->setAttr("obelisk.frame.alignment",
+                builder.getI64IntegerAttr(analysis.getFrameAlignment()));
+  ramp->setAttr("obelisk.frame.checksum",
+                builder.getI64IntegerAttr(analysis.getChecksum()));
+  SmallVector<int32_t> continuationIDs;
+  for (uint32_t continuation : analysis.getContinuations())
+    continuationIDs.push_back(static_cast<int32_t>(continuation));
+  ramp->setAttr("obelisk.frame.continuations",
+                builder.getDenseI32ArrayAttr(continuationIDs));
+  SmallVector<Attribute> fields;
+  for (const ProcessFrameField &field : analysis.getFields()) {
+    NamedAttrList attributes;
+    attributes.set(
+        "kind", builder.getI32IntegerAttr(static_cast<uint32_t>(field.kind)));
+    attributes.set(
+        "flags", builder.getI32IntegerAttr(static_cast<uint32_t>(field.flags)));
+    attributes.set("offset", builder.getI64IntegerAttr(field.offset));
+    attributes.set("size", builder.getI64IntegerAttr(field.size));
+    attributes.set("alignment", builder.getI32IntegerAttr(field.alignment));
+    fields.push_back(attributes.getDictionary(builder.getContext()));
+  }
+  ramp->setAttr("obelisk.frame.fields", builder.getArrayAttr(fields));
+}
+
+struct RampBlocks {
+  Block *suspendReturn;
+  Block *terminate;
+  Block *cleanup;
+  DenseMap<Block *, Block *> shims;
+};
+
+Block *makeCoroutineReturnBlock(Region &region, Location location,
+                                Value handle) {
+  Block *block = new Block;
+  region.push_back(block);
+  OpBuilder builder(block, block->begin());
+  Value unwind = llvmConstant(builder, location, builder.getI1Type(), 0);
+  Value none = LLVM::NoneTokenOp::create(builder, location);
+  LLVM::CoroEndOp::create(builder, location, builder.getI1Type(), handle,
+                          unwind, none);
+  LLVM::ReturnOp::create(builder, location, ValueRange{});
+  return block;
+}
+
+LogicalResult storeFrameValue(OpBuilder &builder, Location location,
+                              Value frame, Value value, uint64_t offset,
+                              uint32_t alignment) {
+  if (!isa<IntegerType, Float64Type, LLVM::LLVMPointerType>(value.getType()))
+    return failure();
+  storeAt(builder, location, frame, offset, value, alignment);
+  return success();
+}
+
+LogicalResult
+lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
+                       const SimulationProcessFrameAnalysis &analysis,
+                       const RampBlocks &blocks) {
+  IRRewriter builder(operation->getContext());
+  builder.setInsertionPoint(operation);
+  Location location = operation->getLoc();
+  auto branch = cast<BranchOpInterface>(operation);
+  auto continuationAttr =
+      operation->getAttrOfType<IntegerAttr>("obelisk.coro.continuation");
+  auto waitOffsetAttr =
+      operation->getAttrOfType<IntegerAttr>("obelisk.coro.wait_offset");
+  auto waitSizeAttr =
+      operation->getAttrOfType<IntegerAttr>("obelisk.coro.wait_size");
+  if (!continuationAttr || !waitOffsetAttr || !waitSizeAttr)
+    return operation->emitError("missing coroutine frame analysis metadata");
+  uint32_t continuationID = continuationAttr.getInt();
+  Block *continuation = operation->getSuccessor(0);
+  ArrayRef<ProcessFrameValue> layout =
+      analysis.getContinuationLayout(continuationID);
+  SmallVector<Value> operands(
+      branch.getSuccessorOperands(0).getForwardedOperands().begin(),
+      branch.getSuccessorOperands(0).getForwardedOperands().end());
+  Value frame = loadAt(builder, location, instance, kInstanceFrameOffset,
+                       LLVM::LLVMPointerType::get(builder.getContext()), 8);
+  size_t physical = 0;
+  for (const ProcessFrameValue &slot : layout) {
+    if (physical >= operands.size() ||
+        failed(storeFrameValue(builder, location, frame, operands[physical++],
+                               slot.valueOffset, slot.alignment)))
+      return operation->emitError("cannot store continuation value in frame");
+    if (slot.hasSecondaryStorage()) {
+      if (physical >= operands.size() ||
+          failed(storeFrameValue(builder, location, frame, operands[physical++],
+                                 slot.getSecondaryOffset(), slot.alignment)))
+        return operation->emitError(
+            "cannot store secondary continuation value in frame");
+    }
+  }
+  if (physical != operands.size())
+    return operation->emitError(
+        "converted continuation arity disagrees with frame analysis");
+
+  if (auto task = dyn_cast<sim::SimTaskCallOp>(operation)) {
+    Type i32 = builder.getI32Type();
+    Type i64 = builder.getI64Type();
+    storeAt(builder, location, instance, kInstanceContinuationOffset,
+            llvmConstant(builder, location, i32, continuationID), 4);
+    std::string helper = (task.getCallee() + ".__obelisk_activate").str();
+    Value activation =
+        LLVM::CallOp::create(builder, location, TypeRange{i64},
+                             SymbolRefAttr::get(builder.getContext(), helper),
+                             task.getArguments())
+            .getResult();
+    publishAction(builder, location, instance, OBELISK_RT_FRAGMENT_TASK_CALL,
+                  OBELISK_RT_SUSPEND_NONE, continuationID,
+                  OBELISK_RT_FRAGMENT_FLAGS_NONE, activation, 0);
+    Value final = llvmConstant(builder, location, builder.getI1Type(), 0);
+    Value save = LLVM::CoroSaveOp::create(
+        builder, location, LLVM::LLVMTokenType::get(builder.getContext()),
+        handle);
+    Value state = LLVM::CoroSuspendOp::create(builder, location,
+                                              builder.getI8Type(), save, final);
+    SmallVector<Block *> destinations{blocks.shims.lookup(continuation),
+                                      blocks.cleanup};
+    SmallVector<ValueRange> destinationOperands(2);
+    SmallVector<APInt> caseValues{APInt(8, 0), APInt(8, 1)};
+    LLVM::SwitchOp::create(builder, location, state, blocks.suspendReturn,
+                           ValueRange{}, caseValues, destinations,
+                           destinationOperands, ArrayRef<int32_t>{});
+    builder.eraseOp(operation);
+    return success();
+  }
+
+  uint64_t waitOffset = waitOffsetAttr.getInt();
+  uint64_t waitSize = waitSizeAttr.getInt();
+  uint32_t kind = suspensionKind(operation);
+  uint32_t count = sim::getWaitEntryCount(operation);
+  Value wait = byteGEP(builder, location, frame, waitOffset);
+  Type i32 = builder.getI32Type();
+  Type i64 = builder.getI64Type();
+  SmallVector<Operation *> observerBindings;
+  if (isa<sim::SimSuspendObserveOp>(operation)) {
+    if (failed(serializeComputedObserverWait(
+            operation, wait, waitSize, builder, observerBindings)))
+      return failure();
+  } else {
+    if (failed(serializeRuntimeWait(operation, wait, kind, count, builder)))
+      return failure();
+  }
+
+  storeAt(builder, location, instance, kInstanceContinuationOffset,
+          llvmConstant(builder, location, i32, continuationID), 4);
+  uint32_t actionFlags = getRuntimeResumeActionFlags(operation);
+  if (actionFlags == UINT32_MAX)
+    return operation->emitError("has no executable resume region");
+  publishAction(builder, location, instance, OBELISK_RT_FRAGMENT_SUSPEND, kind,
+                continuationID,
+                OBELISK_RT_ACTION_FRAME_WAIT_RECORD | actionFlags,
+                llvmConstant(builder, location, i64, waitOffset), waitSize);
+
+  Value final = llvmConstant(builder, location, builder.getI1Type(), 0);
+  Value save = LLVM::CoroSaveOp::create(
+      builder, location, LLVM::LLVMTokenType::get(builder.getContext()),
+      handle);
+  Value state = LLVM::CoroSuspendOp::create(builder, location,
+                                            builder.getI8Type(), save, final);
+  SmallVector<Block *> destinations{blocks.shims.lookup(continuation),
+                                    blocks.cleanup};
+  SmallVector<ValueRange> destinationOperands(2);
+  SmallVector<APInt> caseValues{APInt(8, 0), APInt(8, 1)};
+  LLVM::SwitchOp::create(builder, location, state, blocks.suspendReturn,
+                         ValueRange{}, caseValues, destinations,
+                         destinationOperands, ArrayRef<int32_t>{});
+  builder.eraseOp(operation);
+  for (Operation *binding : observerBindings)
+    if (binding->use_empty())
+      builder.eraseOp(binding);
+  return success();
+}
+
+LogicalResult lowerFinalReturn(sim::SimReturnOp operation,
+                               const RampBlocks &blocks) {
+  if (!operation.getOperands().empty())
+    return operation.emitError("suspendable process cannot return values");
+  IRRewriter builder(operation->getContext());
+  builder.setInsertionPoint(operation);
+  cf::BranchOp::create(builder, operation.getLoc(), blocks.terminate);
+  builder.eraseOp(operation);
+  return success();
+}
+
+LogicalResult makeNativeWrappers(ModuleOp module, LLVM::LLVMFuncOp ramp,
+                                 StringRef baseName) {
+  OpBuilder builder(ramp);
+  builder.setInsertionPointAfter(ramp);
+  Location location = ramp.getLoc();
+  MLIRContext *context = module.getContext();
+  Type pointer = LLVM::LLVMPointerType::get(context);
+  Type i32 = builder.getI32Type();
+  Type voidType = LLVM::LLVMVoidType::get(context);
+  auto makeName = [&](StringRef suffix) { return (baseName + suffix).str(); };
+
+  auto requirements = LLVM::LLVMFuncOp::create(
+      builder, location, makeName(".__obelisk_native_requirements"),
+      LLVM::LLVMFunctionType::get(i32, {pointer, pointer}, false));
+  Block *requirementsEntry = requirements.addEntryBlock(builder);
+  builder.setInsertionPointToStart(requirementsEntry);
+  Value null = LLVM::ZeroOp::create(builder, location, pointer);
+  Value mode = llvmConstant(builder, location, i32, 0);
+  auto requirementsCall = LLVM::CallOp::create(
+      builder, location, TypeRange{}, SymbolRefAttr::get(ramp),
+      ValueRange{null, mode, requirementsEntry->getArgument(0),
+                 requirementsEntry->getArgument(1)});
+  (void)requirementsCall;
+  LLVM::ReturnOp::create(builder, location,
+                         llvmConstant(builder, location, i32, 0));
+
+  builder.setInsertionPointAfter(requirements);
+  auto execute = LLVM::LLVMFuncOp::create(
+      builder, location, makeName(".__obelisk_native_execute"),
+      LLVM::LLVMFunctionType::get(i32, {pointer}, false));
+  Block *executeEntry = execute.addEntryBlock(builder);
+  Block *start = new Block;
+  Block *resume = new Block;
+  Block *done = new Block;
+  execute.getBody().push_back(start);
+  execute.getBody().push_back(resume);
+  execute.getBody().push_back(done);
+  builder.setInsertionPointToStart(executeEntry);
+  Value instance = executeEntry->getArgument(0);
+  Value runtimeContext =
+      loadAt(builder, location, instance, kInstanceContextOffset, pointer, 8);
+  Value currentContext = LLVM::AddressOfOp::create(builder, location, pointer,
+                                                   "__obelisk_current_context");
+  LLVM::StoreOp::create(builder, location, runtimeContext, currentContext, 8);
+  Value handle = loadAt(builder, location, instance,
+                        kInstanceNativeHandleOffset, pointer, 8);
+  Value bits =
+      LLVM::PtrToIntOp::create(builder, location, builder.getI64Type(), handle);
+  Value isNull = arith::CmpIOp::create(
+      builder, location, arith::CmpIPredicate::eq, bits,
+      llvmConstant(builder, location, builder.getI64Type(), 0));
+  cf::CondBranchOp::create(builder, location, isNull, start, ValueRange{},
+                           resume, ValueRange{});
+  builder.setInsertionPointToStart(start);
+  Value modeExecute = llvmConstant(builder, location, i32, 1);
+  Value nullOut = LLVM::ZeroOp::create(builder, location, pointer);
+  LLVM::CallOp::create(builder, location, TypeRange{}, SymbolRefAttr::get(ramp),
+                       ValueRange{instance, modeExecute, nullOut, nullOut});
+  cf::BranchOp::create(builder, location, done);
+  builder.setInsertionPointToStart(resume);
+  LLVM::CoroResumeOp::create(builder, location, handle);
+  cf::BranchOp::create(builder, location, done);
+  builder.setInsertionPointToStart(done);
+  Value status =
+      loadAt(builder, location, instance, kInstanceStatusOffset, i32, 4);
+  LLVM::ReturnOp::create(builder, location, status);
+
+  builder.setInsertionPointAfter(execute);
+  auto destroy = LLVM::LLVMFuncOp::create(
+      builder, location, makeName(".__obelisk_native_destroy"),
+      LLVM::LLVMFunctionType::get(voidType, {pointer}, false));
+  Block *destroyEntry = destroy.addEntryBlock(builder);
+  Block *destroyCall = new Block;
+  Block *destroyDone = new Block;
+  destroy.getBody().push_back(destroyCall);
+  destroy.getBody().push_back(destroyDone);
+  builder.setInsertionPointToStart(destroyEntry);
+  Value destroyInstance = destroyEntry->getArgument(0);
+  Value destroyHandle = loadAt(builder, location, destroyInstance,
+                               kInstanceNativeHandleOffset, pointer, 8);
+  Value destroyBits = LLVM::PtrToIntOp::create(
+      builder, location, builder.getI64Type(), destroyHandle);
+  Value destroyIsNull = arith::CmpIOp::create(
+      builder, location, arith::CmpIPredicate::eq, destroyBits,
+      llvmConstant(builder, location, builder.getI64Type(), 0));
+  cf::CondBranchOp::create(builder, location, destroyIsNull, destroyDone,
+                           ValueRange{}, destroyCall, ValueRange{});
+  builder.setInsertionPointToStart(destroyCall);
+  LLVM::CallIntrinsicOp::create(builder, location,
+                                builder.getStringAttr("llvm.coro.destroy"),
+                                destroyHandle);
+  storeAt(builder, location, destroyInstance, kInstanceNativeHandleOffset,
+          LLVM::ZeroOp::create(builder, location, pointer), 8);
+  cf::BranchOp::create(builder, location, destroyDone);
+  builder.setInsertionPointToStart(destroyDone);
+  LLVM::ReturnOp::create(builder, location, ValueRange{});
+  return success();
+}
+
+LogicalResult
+makePlainNativeWrappers(ModuleOp module, func::FuncOp body, StringRef baseName,
+                        const SimulationProcessFrameAnalysis &analysis) {
+  OpBuilder builder(body);
+  builder.setInsertionPointAfter(body);
+  Location location = body.getLoc();
+  MLIRContext *context = module.getContext();
+  Type pointer = LLVM::LLVMPointerType::get(context);
+  Type i32 = builder.getI32Type();
+  Type i64 = builder.getI64Type();
+  Type voidType = LLVM::LLVMVoidType::get(context);
+
+  auto requirements = LLVM::LLVMFuncOp::create(
+      builder, location, (baseName + ".__obelisk_native_requirements").str(),
+      LLVM::LLVMFunctionType::get(i32, {pointer, pointer}, false));
+  Block *requirementsEntry = requirements.addEntryBlock(builder);
+  builder.setInsertionPointToStart(requirementsEntry);
+  LLVM::StoreOp::create(builder, location,
+                        llvmConstant(builder, location, i64, 0),
+                        requirementsEntry->getArgument(0), 8);
+  LLVM::StoreOp::create(builder, location,
+                        llvmConstant(builder, location, i64, 1),
+                        requirementsEntry->getArgument(1), 8);
+  LLVM::ReturnOp::create(builder, location,
+                         llvmConstant(builder, location, i32, 0));
+
+  builder.setInsertionPointAfter(requirements);
+  auto execute = LLVM::LLVMFuncOp::create(
+      builder, location, (baseName + ".__obelisk_native_execute").str(),
+      LLVM::LLVMFunctionType::get(i32, {pointer}, false));
+  Block *executeEntry = execute.addEntryBlock(builder);
+  builder.setInsertionPointToStart(executeEntry);
+  Value instance = executeEntry->getArgument(0);
+  Value runtimeContext =
+      loadAt(builder, location, instance, kInstanceContextOffset, pointer, 8);
+  Value currentContext = LLVM::AddressOfOp::create(builder, location, pointer,
+                                                   "__obelisk_current_context");
+  LLVM::StoreOp::create(builder, location, runtimeContext, currentContext, 8);
+  Value frame =
+      loadAt(builder, location, instance, kInstanceFrameOffset, pointer, 8);
+  SmallVector<Value> arguments;
+  size_t physicalArgument = 0;
+  Block &bodyEntry = body.getBody().front();
+  for (const ProcessFrameValue &slot : analysis.getEntryCaptureLayout()) {
+    if (!slot.hasValueStorage()) {
+      arguments.push_back(loadAt(builder, location, instance,
+                                 kInstanceContextOffset, pointer, 8));
+      ++physicalArgument;
+      continue;
+    }
+    Type valueType = bodyEntry.getArgument(physicalArgument++).getType();
+    arguments.push_back(loadAt(builder, location, frame, slot.valueOffset,
+                               valueType, slot.alignment));
+    if (slot.hasSecondaryStorage()) {
+      Type secondaryType = bodyEntry.getArgument(physicalArgument++).getType();
+      arguments.push_back(loadAt(builder, location, frame,
+                                 slot.getSecondaryOffset(), secondaryType,
+                                 slot.alignment));
+    }
+  }
+  if (arguments.size() != bodyEntry.getNumArguments())
+    return body.emitError(
+        "converted entry arity disagrees with canonical capture layout");
+  auto call = func::CallOp::create(builder, location, body.getSymName(),
+                                   TypeRange{i32}, arguments);
+  storeAt(builder, location, instance, kInstanceContinuationOffset,
+          llvmConstant(builder, location, i32, 0), 4);
+  publishAction(builder, location, instance, OBELISK_RT_FRAGMENT_TERMINATE,
+                OBELISK_RT_SUSPEND_NONE, 0, OBELISK_RT_FRAGMENT_FLAGS_NONE,
+                llvmConstant(builder, location, i64, 0), 0);
+  LLVM::ReturnOp::create(builder, location, call.getResult(0));
+
+  builder.setInsertionPointAfter(execute);
+  auto destroy = LLVM::LLVMFuncOp::create(
+      builder, location, (baseName + ".__obelisk_native_destroy").str(),
+      LLVM::LLVMFunctionType::get(voidType, {pointer}, false));
+  Block *destroyEntry = destroy.addEntryBlock(builder);
+  builder.setInsertionPointToStart(destroyEntry);
+  LLVM::ReturnOp::create(builder, location, ValueRange{});
+  return success();
+}
+
+} // namespace
+
+LogicalResult
+lowerPlainNativeProcess(sim::SimFuncOp function,
+                        const SimulationProcessFrameAnalysis &analysis) {
+  if (!function.getResultTypes().empty())
+    return function.emitError("simulation process cannot return values");
+  if (failed(lowerSimulationTimeOperations(function)))
+    return failure();
+  ModuleOp module = function->getParentOfType<ModuleOp>();
+  Location location = function.getLoc();
+  MLIRContext *context = function.getContext();
+  std::string baseName = function.getSymName().str();
+  uint64_t stableID = function.getCodeUnitId().value_or(
+      stableProcessID(baseName) &
+      static_cast<uint64_t>(std::numeric_limits<int64_t>::max()));
+  context->getOrLoadDialect<func::FuncDialect>();
+  SmallVector<Type> inputTypes;
+  for (BlockArgument argument : function.getBody().front().getArguments())
+    inputTypes.push_back(convertProcessType(argument.getType(), context));
+  OpBuilder builder(function);
+  auto body = func::FuncOp::create(
+      builder, location, baseName,
+      FunctionType::get(context, inputTypes, TypeRange{builder.getI32Type()}));
+  body->setAttr("obelisk.entry_kind",
+                builder.getI32IntegerAttr(
+                    static_cast<uint32_t>(function.getEntryKind())));
+  body->setAttr("obelisk.native_scratch_size", builder.getI64IntegerAttr(0));
+  body.getBody().takeBody(function.getBody());
+  function.erase();
+  for (Block &block : body.getBody())
+    for (BlockArgument argument : block.getArguments())
+      argument.setType(convertProcessType(argument.getType(), context));
+  if (failed(lowerNativeDPICalls(body)))
+    return failure();
+
+  IRRewriter rewriter(context);
+  if (failed(lowerNativeFunctionBody(
+          body, NativeReturnLowering::SuccessStatus,
+          NativeCallResultLowering::Preserve)))
+    return failure();
+
+  SmallVector<sim::SimStatusCheckOp> checks;
+  body.walk([&](sim::SimStatusCheckOp check) { checks.push_back(check); });
+  for (sim::SimStatusCheckOp check : checks) {
+    Block *source = check->getBlock();
+    Block *continuation = source->splitBlock(std::next(check->getIterator()));
+    Block *failure = new Block;
+    body.getBody().push_back(failure);
+    rewriter.setInsertionPoint(check);
+    Value ok = runtime::RTStatusIsOp::create(
+        rewriter, check.getLoc(), rewriter.getI1Type(), check.getStatus(), 0);
+    cf::CondBranchOp::create(rewriter, check.getLoc(), ok, continuation,
+                             ValueRange{}, failure, ValueRange{});
+    Value status = check.getStatus();
+    bool pushFailure = check->hasAttr(managedRootRangePushCheckAttr);
+    rewriter.eraseOp(check);
+    rewriter.setInsertionPointToStart(failure);
+    Value bits = runtime::RTStatusToBitsOp::create(
+        rewriter, body.getLoc(), rewriter.getI32Type(), status);
+    if (!pushFailure)
+      emitManagedRootRangePop(rewriter, body.getLoc(), body);
+    func::ReturnOp::create(rewriter, body.getLoc(), bits);
+  }
+
+  if (failed(makePlainNativeWrappers(module, body, baseName, analysis)))
+    return failure();
+  return makeProcessDescriptor(module, location, baseName, stableID, analysis);
+}
+
+LogicalResult
+lowerSuspendableProcess(sim::SimFuncOp function,
+                        const SimulationProcessFrameAnalysis &analysis) {
+  if (failed(lowerSimulationTimeOperations(function)))
+    return failure();
+  ModuleOp module = function->getParentOfType<ModuleOp>();
+  OpBuilder builder(function);
+  Location location = function.getLoc();
+  MLIRContext *context = function.getContext();
+  Type pointer = LLVM::LLVMPointerType::get(context);
+  Type i32 = builder.getI32Type();
+  Type i64 = builder.getI64Type();
+  std::string baseName = function.getSymName().str();
+  uint64_t stableID = function.getCodeUnitId().value_or(
+      stableProcessID(baseName) &
+      static_cast<uint64_t>(std::numeric_limits<int64_t>::max()));
+  std::string rampName = baseName + ".__obelisk_coro_ramp";
+  auto ramp = LLVM::LLVMFuncOp::create(
+      builder, location, rampName,
+      LLVM::LLVMFunctionType::get(LLVM::LLVMVoidType::get(context),
+                                  {pointer, i32, pointer, pointer}, false));
+  ramp->setAttr(
+      "passthrough",
+      builder.getArrayAttr({builder.getStringAttr("presplitcoroutine")}));
+  addFrameAttributes(ramp, analysis, builder);
+  ramp.getBody().takeBody(function.getBody());
+  function.erase();
+
+  for (Block &block : ramp.getBody())
+    for (BlockArgument argument : block.getArguments())
+      argument.setType(convertProcessType(argument.getType(), context));
+  if (failed(lowerNativeDPICalls(ramp)))
+    return failure();
+
+  if (failed(lowerNativeFunctionBody(ramp, NativeReturnLowering::None,
+                                     NativeCallResultLowering::Preserve)))
+    return failure();
+
+  Block *oldEntry = &ramp.getBody().front();
+  Block *entry = new Block;
+  for (Type type : {pointer, i32, pointer, pointer})
+    entry->addArgument(type, location);
+  ramp.getBody().getBlocks().insert(ramp.getBody().begin(), entry);
+  Block *requirements = new Block;
+  Block *execute = new Block;
+  ramp.getBody().push_back(requirements);
+  ramp.getBody().push_back(execute);
+  builder.setInsertionPointToStart(entry);
+  Value zero32 = llvmConstant(builder, location, i32, 0);
+  Value null = LLVM::ZeroOp::create(builder, location, pointer);
+  Value id = LLVM::CoroIdOp::create(builder, location,
+                                    LLVM::LLVMTokenType::get(context), zero32,
+                                    null, null, null);
+  Value requirementsMode =
+      arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                            entry->getArgument(1), zero32);
+  cf::CondBranchOp::create(builder, location, requirementsMode, requirements,
+                           ValueRange{}, execute, ValueRange{});
+
+  builder.setInsertionPointToStart(requirements);
+  Value size = LLVM::CoroSizeOp::create(builder, location, i64);
+  Value alignment = LLVM::CoroAlignOp::create(builder, location, i64);
+  LLVM::StoreOp::create(builder, location, size, entry->getArgument(2), 8);
+  LLVM::StoreOp::create(builder, location, alignment, entry->getArgument(3), 8);
+  LLVM::ReturnOp::create(builder, location, ValueRange{});
+
+  builder.setInsertionPointToStart(execute);
+  Value instance = entry->getArgument(0);
+  Value allocation = loadAt(builder, location, instance,
+                            kInstanceAllocationOffset, pointer, 8);
+  Value scratchOffset =
+      loadAt(builder, location, instance, kInstanceScratchOffset, i64, 8);
+  Value scratch =
+      LLVM::GEPOp::create(builder, location, pointer, builder.getI8Type(),
+                          allocation, ValueRange{scratchOffset});
+  Value handle =
+      LLVM::CoroBeginOp::create(builder, location, pointer, id, scratch);
+  storeAt(builder, location, instance, kInstanceNativeHandleOffset, handle, 8);
+
+  // Fixed ABI temporaries and managed-root records were deliberately hoisted
+  // to the source function entry. The coroutine ramp adds a new dispatch
+  // entry which can resume directly at a continuation shim, bypassing that
+  // source block. Move the allocas to the ramp's execute block so they
+  // dominate initial execution and every resume and become stable coroutine
+  // frame storage instead of per-iteration stack growth.
+  SmallVector<LLVM::AllocaOp> activationAllocas;
+  SmallVector<LLVM::GEPOp> activationAddresses;
+  llvm::SetVector<Operation *> allocaConstants;
+  for (LLVM::AllocaOp alloca : oldEntry->getOps<LLVM::AllocaOp>()) {
+    activationAllocas.push_back(alloca);
+    Operation *count = alloca.getArraySize().getDefiningOp();
+    if (count && count->getBlock() == oldEntry && isa<LLVM::ConstantOp>(count))
+      allocaConstants.insert(count);
+  }
+  for (LLVM::GEPOp address : oldEntry->getOps<LLVM::GEPOp>())
+    if (auto allocation = address.getBase().getDefiningOp<LLVM::AllocaOp>();
+        allocation && llvm::is_contained(activationAllocas, allocation))
+      activationAddresses.push_back(address);
+  for (LLVM::AllocaOp alloca : activationAllocas)
+    alloca->moveBefore(execute, execute->begin());
+  for (Operation *constant : allocaConstants)
+    constant->moveBefore(execute, execute->begin());
+  for (LLVM::GEPOp address : activationAddresses)
+    address->moveBefore(execute, execute->end());
+
+  RampBlocks blocks;
+  blocks.suspendReturn =
+      makeCoroutineReturnBlock(ramp.getBody(), location, handle);
+  blocks.cleanup = new Block;
+  bool canTerminate = false;
+  ramp.walk([&](Operation *operation) {
+    canTerminate |= isa<sim::SimReturnOp, sim::SimStatusCheckOp>(operation);
+  });
+  blocks.terminate = canTerminate ? new Block : nullptr;
+  ramp.getBody().push_back(blocks.cleanup);
+  if (blocks.terminate)
+    ramp.getBody().push_back(blocks.terminate);
+
+  llvm::SetVector<Block *> continuationBlocks;
+  for (Block &block : ramp.getBody())
+    if (!block.empty() && sim::isSuspensionOp(block.getTerminator()))
+      continuationBlocks.insert(block.getTerminator()->getSuccessor(0));
+  for (Block *continuation : continuationBlocks) {
+    Block *shim = new Block;
+    ramp.getBody().push_back(shim);
+    blocks.shims[continuation] = shim;
+    builder.setInsertionPointToStart(shim);
+    Value frame =
+        loadAt(builder, location, instance, kInstanceFrameOffset, pointer, 8);
+    SmallVector<Value> loaded;
+    size_t argumentIndex = 0;
+    uint32_t continuationID = 0;
+    for (Block *predecessor : continuation->getPredecessors()) {
+      if (auto id = predecessor->getTerminator()->getAttrOfType<IntegerAttr>(
+              "obelisk.coro.continuation")) {
+        continuationID = id.getInt();
+        break;
+      }
+    }
+    if (continuationID == 0)
+      return continuation->getParentOp()->emitError(
+          "continuation block is missing its stable continuation ID");
+    for (const ProcessFrameValue &slot :
+         analysis.getContinuationLayout(continuationID)) {
+      Type valueType = continuation->getArgument(argumentIndex++).getType();
+      loaded.push_back(loadAt(builder, location, frame, slot.valueOffset,
+                              valueType, slot.alignment));
+      for (uint64_t rootOffset : slot.managedRootOffsets)
+        storeAt(builder, location, frame, slot.valueOffset + rootOffset,
+                llvmConstant(builder, location, builder.getI64Type(), 0), 8);
+      if (slot.hasSecondaryStorage()) {
+        Type secondaryType =
+            continuation->getArgument(argumentIndex++).getType();
+        loaded.push_back(loadAt(builder, location, frame,
+                                slot.getSecondaryOffset(), secondaryType,
+                                slot.alignment));
+      }
+    }
+    cf::BranchOp::create(builder, location, continuation, loaded);
+  }
+
+  builder.setInsertionPointToEnd(execute);
+  SmallVector<Value> entryArguments;
+  Value frame =
+      loadAt(builder, location, instance, kInstanceFrameOffset, pointer, 8);
+  ArrayRef<ProcessFrameValue> captureLayout = analysis.getEntryCaptureLayout();
+  size_t physicalArgument = 0;
+  auto refreshFrameArgument = [&](BlockArgument argument, Type type,
+                                  uint64_t offset, uint32_t alignment) {
+    SmallVector<OpOperand *> uses;
+    for (OpOperand &use : argument.getUses())
+      uses.push_back(&use);
+    OpBuilder refreshBuilder(context);
+    for (OpOperand *use : uses) {
+      Location useLocation = use->getOwner()->getLoc();
+      refreshBuilder.setInsertionPoint(use->getOwner());
+      Value currentFrame = loadAt(refreshBuilder, useLocation, instance,
+                                  kInstanceFrameOffset, pointer, 8);
+      use->set(loadAt(refreshBuilder, useLocation, currentFrame, offset, type,
+                      alignment));
+    }
+  };
+  for (const ProcessFrameValue &slot : captureLayout) {
+    if (!slot.hasValueStorage()) {
+      entryArguments.push_back(loadAt(builder, location, instance,
+                                      kInstanceContextOffset, pointer, 8));
+      // The scheduler may supply a different transient context on every
+      // invocation.  Do not let LLVM preserve the first context in the
+      // coroutine frame: reload it through the runtime-owned instance at each
+      // actual use, including uses reached after a resume.
+      BlockArgument contextArgument = oldEntry->getArgument(physicalArgument);
+      SmallVector<OpOperand *> contextUses;
+      for (OpOperand &use : contextArgument.getUses())
+        contextUses.push_back(&use);
+      OpBuilder refreshBuilder(context);
+      for (OpOperand *use : contextUses) {
+        refreshBuilder.setInsertionPoint(use->getOwner());
+        Value currentContext =
+            loadAt(refreshBuilder, use->getOwner()->getLoc(), instance,
+                   kInstanceContextOffset, pointer, 8);
+        use->set(currentContext);
+      }
+      ++physicalArgument;
+      continue;
+    }
+    BlockArgument valueArgument = oldEntry->getArgument(physicalArgument++);
+    Type valueType = valueArgument.getType();
+    entryArguments.push_back(loadAt(builder, location, frame, slot.valueOffset,
+                                    valueType, slot.alignment));
+    // Captures are canonical-frame state, not coroutine-frame state. Reload
+    // them through the instance at every use so LLVM only needs to preserve
+    // the instance/control pointer across suspension.
+    refreshFrameArgument(valueArgument, valueType, slot.valueOffset,
+                         slot.alignment);
+    if (slot.hasSecondaryStorage()) {
+      BlockArgument secondaryArgument =
+          oldEntry->getArgument(physicalArgument++);
+      Type secondaryType = secondaryArgument.getType();
+      entryArguments.push_back(loadAt(builder, location, frame,
+                                      slot.getSecondaryOffset(), secondaryType,
+                                      slot.alignment));
+      refreshFrameArgument(secondaryArgument, secondaryType,
+                           slot.getSecondaryOffset(), slot.alignment);
+    }
+  }
+  if (entryArguments.size() != oldEntry->getNumArguments())
+    return ramp.emitError(
+        "converted entry arity disagrees with canonical capture layout");
+  for (auto [argument, loaded] :
+       llvm::zip_equal(oldEntry->getArguments(), entryArguments))
+    argument.replaceAllUsesWith(loaded);
+
+  // Dynamic entry dispatch supports bytecode -> native reconstruction at any
+  // stable semantic continuation. Ordinary CFG edges remain direct branches.
+  Block *dispatch = new Block;
+  ramp.getBody().push_back(dispatch);
+  cf::BranchOp::create(builder, location, dispatch);
+  builder.setInsertionPointToStart(dispatch);
+  Value continuationID =
+      loadAt(builder, location, instance, kInstanceContinuationOffset, i32, 4);
+  SmallVector<std::pair<uint32_t, Block *>> targets;
+  targets.emplace_back(0, oldEntry);
+  for (uint32_t idValue : analysis.getContinuations()) {
+    if (idValue == 0)
+      continue;
+    Block *target = nullptr;
+    for (Block *candidate : continuationBlocks) {
+      for (Block *predecessor : candidate->getPredecessors()) {
+        Operation *terminator = predecessor->getTerminator();
+        auto idAttr =
+            terminator->getAttrOfType<IntegerAttr>("obelisk.coro.continuation");
+        if (idAttr && idAttr.getInt() == idValue)
+          target = blocks.shims.lookup(candidate);
+      }
+    }
+    if (target)
+      targets.emplace_back(idValue, target);
+  }
+  Block *invalid = new Block;
+  ramp.getBody().push_back(invalid);
+  builder.setInsertionPointToStart(invalid);
+  storeAt(builder, location, instance, kInstanceStatusOffset,
+          llvmConstant(builder, location, i32,
+                       OBELISK_RT_INVALID_CONTINUATION),
+          4);
+  cf::BranchOp::create(builder, location, blocks.cleanup);
+  Block *test = dispatch;
+  for (auto [index, target] : llvm::enumerate(targets)) {
+    builder.setInsertionPointToEnd(test);
+    Value expected = llvmConstant(builder, location, i32, target.first);
+    Value equal = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, continuationID, expected);
+    Block *next = index + 1 == targets.size() ? invalid : new Block;
+    if (next != invalid)
+      ramp.getBody().push_back(next);
+    ValueRange arguments =
+        target.first == 0 ? ValueRange(entryArguments) : ValueRange{};
+    cf::CondBranchOp::create(builder, location, equal, target.second, arguments,
+                             next, ValueRange{});
+    test = next;
+  }
+
+  if (blocks.terminate) {
+    // LLVM permits exactly one final suspend per switched-resume coroutine.
+    // Funnel every semantic process return through this shared block.
+    builder.setInsertionPointToStart(blocks.terminate);
+    publishAction(builder, location, instance, OBELISK_RT_FRAGMENT_TERMINATE,
+                  OBELISK_RT_SUSPEND_NONE, 0, OBELISK_RT_FRAGMENT_FLAGS_NONE,
+                  llvmConstant(builder, location, i64, 0), 0);
+    Value final = llvmConstant(builder, location, builder.getI1Type(), 1);
+    Value save = LLVM::CoroSaveOp::create(
+        builder, location, LLVM::LLVMTokenType::get(context), handle);
+    Value finalState = LLVM::CoroSuspendOp::create(
+        builder, location, builder.getI8Type(), save, final);
+    Block *invalidFinalResume = new Block;
+    ramp.getBody().push_back(invalidFinalResume);
+    builder.setInsertionPointToStart(invalidFinalResume);
+    LLVM::UnreachableOp::create(builder, location);
+    builder.setInsertionPointToEnd(blocks.terminate);
+    SmallVector<Block *> destinations{invalidFinalResume, blocks.cleanup};
+    SmallVector<ValueRange> destinationOperands(2);
+    SmallVector<APInt> caseValues{APInt(8, 0), APInt(8, 1)};
+    LLVM::SwitchOp::create(builder, location, finalState, blocks.suspendReturn,
+                           ValueRange{}, caseValues, destinations,
+                           destinationOperands, ArrayRef<int32_t>{});
+  }
+
+  builder.setInsertionPointToStart(blocks.cleanup);
+  storeAt(builder, location, instance, kInstanceNativeHandleOffset,
+          LLVM::ZeroOp::create(builder, location, pointer), 8);
+  cf::BranchOp::create(builder, location, blocks.suspendReturn);
+
+  SmallVector<Operation *> terminators;
+  ramp.walk([&](Operation *operation) {
+    if (sim::isSuspensionOp(operation) || isa<sim::SimReturnOp>(operation))
+      terminators.push_back(operation);
+  });
+  for (Operation *operation : terminators) {
+    if (sim::isSuspensionOp(operation)) {
+      if (failed(lowerSuspendTerminator(operation, instance, handle, analysis,
+                                        blocks)))
+        return failure();
+    } else if (failed(lowerFinalReturn(cast<sim::SimReturnOp>(operation),
+                                       blocks))) {
+      return failure();
+    }
+  }
+
+  SmallVector<sim::SimStatusCheckOp> checks;
+  ramp.walk([&](sim::SimStatusCheckOp check) { checks.push_back(check); });
+  for (sim::SimStatusCheckOp check : checks) {
+    Block *source = check->getBlock();
+    Block *continuation = source->splitBlock(std::next(check->getIterator()));
+    Block *failure = new Block;
+    ramp.getBody().push_back(failure);
+    builder.setInsertionPoint(check);
+    Value ok = runtime::RTStatusIsOp::create(
+        builder, check.getLoc(), builder.getI1Type(), check.getStatus(), 0);
+    cf::CondBranchOp::create(builder, check.getLoc(), ok, continuation,
+                             ValueRange{}, failure, ValueRange{});
+    Value status = check.getStatus();
+    bool pushFailure = check->hasAttr(managedRootRangePushCheckAttr);
+    check.erase();
+    builder.setInsertionPointToStart(failure);
+    Value bits = runtime::RTStatusToBitsOp::create(
+        builder, location, builder.getI32Type(), status);
+    storeAt(builder, location, instance, kInstanceStatusOffset, bits, 4);
+    if (!pushFailure)
+      emitManagedRootRangePop(builder, location, ramp);
+    cf::BranchOp::create(builder, location, blocks.terminate);
+  }
+  if (failed(makeNativeWrappers(module, ramp, baseName)))
+    return failure();
+  return makeProcessDescriptor(module, location, baseName, stableID, analysis);
+}
+
+LogicalResult lowerOrdinaryFunction(sim::SimFuncOp function) {
+  if (failed(lowerSimulationTimeOperations(function)))
+    return failure();
+  Location location = function.getLoc();
+  std::string symbolName = function.getSymName().str();
+  FunctionType functionType = function.getFunctionType();
+  SmallVector<Type> inputTypes;
+  SmallVector<Type> resultTypes;
+  for (Type type : functionType.getInputs())
+    inputTypes.push_back(convertProcessType(type, function.getContext()));
+  for (Type type : functionType.getResults())
+    resultTypes.push_back(convertProcessType(type, function.getContext()));
+  uint32_t entryKind = static_cast<uint32_t>(function.getEntryKind());
+  bool observer = function.getEntryKind() == sim::EntryKind::Observer;
+  auto observerWidth =
+      function->getAttrOfType<IntegerAttr>("obelisk_sim.observer_width");
+  auto observerFourState =
+      function->getAttrOfType<BoolAttr>("obelisk_sim.observer_four_state");
+  function.getContext()->getOrLoadDialect<func::FuncDialect>();
+  OpBuilder builder(function.getContext());
+  builder.setInsertionPoint(function);
+  auto replacement =
+      func::FuncOp::create(builder, location, builder.getStringAttr(symbolName),
+                           TypeAttr::get(FunctionType::get(
+                               function.getContext(), inputTypes, resultTypes)),
+                           StringAttr{}, ArrayAttr{}, ArrayAttr{}, UnitAttr{});
+  replacement->setAttr("obelisk.entry_kind",
+                       builder.getI32IntegerAttr(entryKind));
+  replacement->setAttr("obelisk.native_scratch_size",
+                       builder.getI64IntegerAttr(0));
+  replacement.getBody().takeBody(function.getBody());
+  function.erase();
+  for (Block &block : replacement.getBody())
+    for (BlockArgument argument : block.getArguments())
+      argument.setType(
+          convertProcessType(argument.getType(), replacement.getContext()));
+  if (failed(lowerNativeDPICalls(replacement)))
+    return failure();
+  if (failed(lowerNativeFunctionBody(
+          replacement, NativeReturnLowering::Preserve,
+          NativeCallResultLowering::ConvertProcessTypes)))
+    return failure();
+  if (observer) {
+    if (!observerWidth || !observerFourState)
+      return replacement.emitError(
+          "observer entry is missing native descriptor metadata");
+    replacement->setAttr(
+        "obelisk.observer_width",
+        builder.getI32IntegerAttr(observerWidth.getValue().getZExtValue()));
+    replacement->setAttr("obelisk.observer_four_state",
+                         builder.getBoolAttr(observerFourState.getValue()));
+  }
+  return success();
+}
+
+} // namespace obelisk::detail
