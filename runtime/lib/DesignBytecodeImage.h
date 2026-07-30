@@ -4,8 +4,10 @@
 #define OBELISK_RUNTIME_LIB_DESIGNBYTECODEIMAGE_H
 
 #include "obelisk/Runtime/Runtime.h"
+#include "obelisk/Runtime/StableHandle.h"
 
 #include <cstdint>
+#include <cstring>
 #include <utility>
 
 namespace obelisk::designbytecode {
@@ -16,6 +18,75 @@ constexpr uint32_t kDriverStateDescriptor = UINT32_MAX;
 constexpr uint32_t kAutomaticHandleKind = UINT32_C(1) << 30;
 constexpr uint32_t kLocalHandleKind = UINT32_C(1) << 31;
 constexpr int64_t kInvalidHandleStart = INT64_MIN;
+
+inline bool decodeAutomaticHandle(uint64_t handle, uint32_t &id,
+                                  int64_t &offset) {
+  obelisk_rt_stable_handle_v1 decoded;
+  if (!obelisk_rt_stable_handle_decode(handle, &decoded) ||
+      decoded.kind != OBELISK_RT_STABLE_HANDLE_AUTOMATIC)
+    return false;
+  id = decoded.id;
+  offset = decoded.offset;
+  return true;
+}
+
+inline bool decodeStaticHandle(uint64_t handle, uint32_t &id, int64_t &offset) {
+  obelisk_rt_stable_handle_v1 decoded;
+  if (!obelisk_rt_stable_handle_decode(handle, &decoded) ||
+      decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC)
+    return false;
+  id = decoded.id;
+  offset = decoded.offset;
+  return true;
+}
+
+inline bool decodeGlobalHandle(uint64_t handle, int64_t &offset) {
+  obelisk_rt_stable_handle_v1 decoded;
+  if (!obelisk_rt_stable_handle_decode(handle, &decoded) ||
+      decoded.kind != OBELISK_RT_STABLE_HANDLE_GLOBAL)
+    return false;
+  offset = decoded.offset;
+  return true;
+}
+
+inline uint64_t encodeGlobalHandle(int64_t offset) {
+  return obelisk_rt_stable_handle_encode(OBELISK_RT_STABLE_HANDLE_GLOBAL, 0,
+                                         offset);
+}
+inline uint64_t encodeAutomaticHandle(uint32_t id, int64_t offset) {
+  return obelisk_rt_stable_handle_encode(OBELISK_RT_STABLE_HANDLE_AUTOMATIC, id,
+                                         offset);
+}
+inline uint64_t encodeStaticHandle(uint32_t id, int64_t offset) {
+  return obelisk_rt_stable_handle_encode(OBELISK_RT_STABLE_HANDLE_STATIC, id,
+                                         offset);
+}
+
+inline bool encodeCanonicalHandle(const uint8_t *address, uint64_t &stable) {
+  uint32_t kind = 0;
+  int64_t start = kInvalidHandleStart;
+  std::memcpy(&kind, address, sizeof(kind));
+  std::memcpy(&start, address + 16, sizeof(start));
+  if ((kind & kLocalHandleKind) != 0)
+    return false;
+  if (start == kInvalidHandleStart) {
+    stable = UINT64_MAX;
+    return true;
+  }
+  stable = encodeGlobalHandle(start);
+  uint64_t base = 0;
+  std::memcpy(&base, address + 8, sizeof(base));
+  uint32_t id = 0;
+  int64_t begin = 0;
+  if ((kind & kAutomaticHandleKind) != 0) {
+    if (!decodeAutomaticHandle(base, id, begin))
+      return false;
+    stable = encodeAutomaticHandle(id, start);
+  } else if (decodeStaticHandle(base, id, begin)) {
+    stable = encodeStaticHandle(id, start);
+  }
+  return stable != UINT64_MAX;
+}
 
 struct Image {
   const uint8_t *data = nullptr;
