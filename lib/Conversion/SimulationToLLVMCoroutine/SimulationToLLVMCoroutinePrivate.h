@@ -248,6 +248,7 @@ mlir::LogicalResult prepareManagedLowering(mlir::ModuleOp module,
 mlir::LogicalResult makeSchedulerMain(mlir::ModuleOp module,
                                       const NativeStateLayout &stateLayout,
                                       bool useAOT);
+void declareNativeRuntimeABI(mlir::ModuleOp module);
 
 } // namespace obelisk::detail
 
