@@ -8,6 +8,7 @@
 #include "SimulationPackedLowering.h"
 #include "SimulationProcessActivationLowering.h"
 #include "SimulationProcessCoroutineLowering.h"
+#include "SimulationProcessFunctionLowering.h"
 
 #include "obelisk/Analysis/NativeAOTAnalysis.h"
 #include "obelisk/Analysis/NetConnectivityAnalysis.h"

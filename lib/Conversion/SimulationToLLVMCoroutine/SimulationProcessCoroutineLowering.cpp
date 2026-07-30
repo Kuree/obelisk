@@ -1,6 +1,8 @@
 //===- SimulationProcessCoroutineLowering.cpp - Native process lowering ===//
 
 #include "SimulationProcessCoroutineLowering.h"
+#include "SimulationProcessRuntimeABI.h"
+#include "SimulationProcessWrapperLowering.h"
 
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
@@ -27,34 +29,6 @@ namespace obelisk::detail {
 
 namespace {
 
-constexpr uint64_t kInstanceAllocationOffset =
-    offsetof(obelisk_rt_process_instance_v1, allocation);
-constexpr uint64_t kInstanceFrameOffset =
-    offsetof(obelisk_rt_process_instance_v1, frame);
-constexpr uint64_t kInstanceScratchOffset =
-    offsetof(obelisk_rt_process_instance_v1, scratch_offset);
-constexpr uint64_t kInstanceNativeHandleOffset =
-    offsetof(obelisk_rt_process_instance_v1, native_handle);
-constexpr uint64_t kInstanceContinuationOffset =
-    offsetof(obelisk_rt_process_instance_v1, continuation);
-constexpr uint64_t kInstanceStatusOffset =
-    offsetof(obelisk_rt_process_instance_v1, status);
-constexpr uint64_t kInstanceContextOffset =
-    offsetof(obelisk_rt_process_instance_v1, context);
-constexpr uint64_t kInstanceActionOffset =
-    offsetof(obelisk_rt_process_instance_v1, action);
-constexpr uint64_t kActionKindOffset =
-    offsetof(obelisk_rt_fragment_action_v1, kind);
-constexpr uint64_t kActionSuspendKindOffset =
-    offsetof(obelisk_rt_fragment_action_v1, suspend_kind);
-constexpr uint64_t kActionContinuationOffset =
-    offsetof(obelisk_rt_fragment_action_v1, continuation);
-constexpr uint64_t kActionFlagsOffset =
-    offsetof(obelisk_rt_fragment_action_v1, flags);
-constexpr uint64_t kActionPayloadOffset =
-    offsetof(obelisk_rt_fragment_action_v1, payload);
-constexpr uint64_t kActionAuxiliaryOffset =
-    offsetof(obelisk_rt_fragment_action_v1, auxiliary);
 
 uint32_t suspensionKind(Operation *operation) {
   return TypeSwitch<Operation *, uint32_t>(operation)
@@ -79,27 +53,6 @@ uint32_t suspensionKind(Operation *operation) {
       .Default([](Operation *) { return OBELISK_RT_SUSPEND_NONE; });
 }
 
-void publishAction(OpBuilder &builder, Location location, Value instance,
-                   uint32_t actionKind, uint32_t suspendKind,
-                   uint32_t continuation, uint32_t flags, Value payload,
-                   uint64_t auxiliary) {
-  Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
-  Type i32 = builder.getI32Type();
-  Type i64 = builder.getI64Type();
-  Value action =
-      loadAt(builder, location, instance, kInstanceActionOffset, pointer, 8);
-  storeAt(builder, location, action, kActionKindOffset,
-          llvmConstant(builder, location, i32, actionKind), 4);
-  storeAt(builder, location, action, kActionSuspendKindOffset,
-          llvmConstant(builder, location, i32, suspendKind), 4);
-  storeAt(builder, location, action, kActionContinuationOffset,
-          llvmConstant(builder, location, i32, continuation), 4);
-  storeAt(builder, location, action, kActionFlagsOffset,
-          llvmConstant(builder, location, i32, flags), 4);
-  storeAt(builder, location, action, kActionPayloadOffset, payload, 8);
-  storeAt(builder, location, action, kActionAuxiliaryOffset,
-          llvmConstant(builder, location, i64, auxiliary), 8);
-}
 
 void addFrameAttributes(LLVM::LLVMFuncOp ramp,
                         const SimulationProcessFrameAnalysis &analysis,
@@ -291,256 +244,9 @@ LogicalResult lowerFinalReturn(sim::SimReturnOp operation,
   return success();
 }
 
-LogicalResult makeNativeWrappers(ModuleOp module, LLVM::LLVMFuncOp ramp,
-                                 StringRef baseName) {
-  OpBuilder builder(ramp);
-  builder.setInsertionPointAfter(ramp);
-  Location location = ramp.getLoc();
-  MLIRContext *context = module.getContext();
-  Type pointer = LLVM::LLVMPointerType::get(context);
-  Type i32 = builder.getI32Type();
-  Type voidType = LLVM::LLVMVoidType::get(context);
-  auto makeName = [&](StringRef suffix) { return (baseName + suffix).str(); };
-
-  auto requirements = LLVM::LLVMFuncOp::create(
-      builder, location, makeName(".__obelisk_native_requirements"),
-      LLVM::LLVMFunctionType::get(i32, {pointer, pointer}, false));
-  Block *requirementsEntry = requirements.addEntryBlock(builder);
-  builder.setInsertionPointToStart(requirementsEntry);
-  Value null = LLVM::ZeroOp::create(builder, location, pointer);
-  Value mode = llvmConstant(builder, location, i32, 0);
-  auto requirementsCall = LLVM::CallOp::create(
-      builder, location, TypeRange{}, SymbolRefAttr::get(ramp),
-      ValueRange{null, mode, requirementsEntry->getArgument(0),
-                 requirementsEntry->getArgument(1)});
-  (void)requirementsCall;
-  LLVM::ReturnOp::create(builder, location,
-                         llvmConstant(builder, location, i32, 0));
-
-  builder.setInsertionPointAfter(requirements);
-  auto execute = LLVM::LLVMFuncOp::create(
-      builder, location, makeName(".__obelisk_native_execute"),
-      LLVM::LLVMFunctionType::get(i32, {pointer}, false));
-  Block *executeEntry = execute.addEntryBlock(builder);
-  Block *start = new Block;
-  Block *resume = new Block;
-  Block *done = new Block;
-  execute.getBody().push_back(start);
-  execute.getBody().push_back(resume);
-  execute.getBody().push_back(done);
-  builder.setInsertionPointToStart(executeEntry);
-  Value instance = executeEntry->getArgument(0);
-  Value runtimeContext =
-      loadAt(builder, location, instance, kInstanceContextOffset, pointer, 8);
-  Value currentContext = LLVM::AddressOfOp::create(builder, location, pointer,
-                                                   "__obelisk_current_context");
-  LLVM::StoreOp::create(builder, location, runtimeContext, currentContext, 8);
-  Value handle = loadAt(builder, location, instance,
-                        kInstanceNativeHandleOffset, pointer, 8);
-  Value bits =
-      LLVM::PtrToIntOp::create(builder, location, builder.getI64Type(), handle);
-  Value isNull = arith::CmpIOp::create(
-      builder, location, arith::CmpIPredicate::eq, bits,
-      llvmConstant(builder, location, builder.getI64Type(), 0));
-  cf::CondBranchOp::create(builder, location, isNull, start, ValueRange{},
-                           resume, ValueRange{});
-  builder.setInsertionPointToStart(start);
-  Value modeExecute = llvmConstant(builder, location, i32, 1);
-  Value nullOut = LLVM::ZeroOp::create(builder, location, pointer);
-  LLVM::CallOp::create(builder, location, TypeRange{}, SymbolRefAttr::get(ramp),
-                       ValueRange{instance, modeExecute, nullOut, nullOut});
-  cf::BranchOp::create(builder, location, done);
-  builder.setInsertionPointToStart(resume);
-  LLVM::CoroResumeOp::create(builder, location, handle);
-  cf::BranchOp::create(builder, location, done);
-  builder.setInsertionPointToStart(done);
-  Value status =
-      loadAt(builder, location, instance, kInstanceStatusOffset, i32, 4);
-  LLVM::ReturnOp::create(builder, location, status);
-
-  builder.setInsertionPointAfter(execute);
-  auto destroy = LLVM::LLVMFuncOp::create(
-      builder, location, makeName(".__obelisk_native_destroy"),
-      LLVM::LLVMFunctionType::get(voidType, {pointer}, false));
-  Block *destroyEntry = destroy.addEntryBlock(builder);
-  Block *destroyCall = new Block;
-  Block *destroyDone = new Block;
-  destroy.getBody().push_back(destroyCall);
-  destroy.getBody().push_back(destroyDone);
-  builder.setInsertionPointToStart(destroyEntry);
-  Value destroyInstance = destroyEntry->getArgument(0);
-  Value destroyHandle = loadAt(builder, location, destroyInstance,
-                               kInstanceNativeHandleOffset, pointer, 8);
-  Value destroyBits = LLVM::PtrToIntOp::create(
-      builder, location, builder.getI64Type(), destroyHandle);
-  Value destroyIsNull = arith::CmpIOp::create(
-      builder, location, arith::CmpIPredicate::eq, destroyBits,
-      llvmConstant(builder, location, builder.getI64Type(), 0));
-  cf::CondBranchOp::create(builder, location, destroyIsNull, destroyDone,
-                           ValueRange{}, destroyCall, ValueRange{});
-  builder.setInsertionPointToStart(destroyCall);
-  LLVM::CallIntrinsicOp::create(builder, location,
-                                builder.getStringAttr("llvm.coro.destroy"),
-                                destroyHandle);
-  storeAt(builder, location, destroyInstance, kInstanceNativeHandleOffset,
-          LLVM::ZeroOp::create(builder, location, pointer), 8);
-  cf::BranchOp::create(builder, location, destroyDone);
-  builder.setInsertionPointToStart(destroyDone);
-  LLVM::ReturnOp::create(builder, location, ValueRange{});
-  return success();
-}
-
-LogicalResult
-makePlainNativeWrappers(ModuleOp module, func::FuncOp body, StringRef baseName,
-                        const SimulationProcessFrameAnalysis &analysis) {
-  OpBuilder builder(body);
-  builder.setInsertionPointAfter(body);
-  Location location = body.getLoc();
-  MLIRContext *context = module.getContext();
-  Type pointer = LLVM::LLVMPointerType::get(context);
-  Type i32 = builder.getI32Type();
-  Type i64 = builder.getI64Type();
-  Type voidType = LLVM::LLVMVoidType::get(context);
-
-  auto requirements = LLVM::LLVMFuncOp::create(
-      builder, location, (baseName + ".__obelisk_native_requirements").str(),
-      LLVM::LLVMFunctionType::get(i32, {pointer, pointer}, false));
-  Block *requirementsEntry = requirements.addEntryBlock(builder);
-  builder.setInsertionPointToStart(requirementsEntry);
-  LLVM::StoreOp::create(builder, location,
-                        llvmConstant(builder, location, i64, 0),
-                        requirementsEntry->getArgument(0), 8);
-  LLVM::StoreOp::create(builder, location,
-                        llvmConstant(builder, location, i64, 1),
-                        requirementsEntry->getArgument(1), 8);
-  LLVM::ReturnOp::create(builder, location,
-                         llvmConstant(builder, location, i32, 0));
-
-  builder.setInsertionPointAfter(requirements);
-  auto execute = LLVM::LLVMFuncOp::create(
-      builder, location, (baseName + ".__obelisk_native_execute").str(),
-      LLVM::LLVMFunctionType::get(i32, {pointer}, false));
-  Block *executeEntry = execute.addEntryBlock(builder);
-  builder.setInsertionPointToStart(executeEntry);
-  Value instance = executeEntry->getArgument(0);
-  Value runtimeContext =
-      loadAt(builder, location, instance, kInstanceContextOffset, pointer, 8);
-  Value currentContext = LLVM::AddressOfOp::create(builder, location, pointer,
-                                                   "__obelisk_current_context");
-  LLVM::StoreOp::create(builder, location, runtimeContext, currentContext, 8);
-  Value frame =
-      loadAt(builder, location, instance, kInstanceFrameOffset, pointer, 8);
-  SmallVector<Value> arguments;
-  size_t physicalArgument = 0;
-  Block &bodyEntry = body.getBody().front();
-  for (const ProcessFrameValue &slot : analysis.getEntryCaptureLayout()) {
-    if (!slot.hasValueStorage()) {
-      arguments.push_back(loadAt(builder, location, instance,
-                                 kInstanceContextOffset, pointer, 8));
-      ++physicalArgument;
-      continue;
-    }
-    Type valueType = bodyEntry.getArgument(physicalArgument++).getType();
-    arguments.push_back(loadAt(builder, location, frame, slot.valueOffset,
-                               valueType, slot.alignment));
-    if (slot.hasSecondaryStorage()) {
-      Type secondaryType = bodyEntry.getArgument(physicalArgument++).getType();
-      arguments.push_back(loadAt(builder, location, frame,
-                                 slot.getSecondaryOffset(), secondaryType,
-                                 slot.alignment));
-    }
-  }
-  if (arguments.size() != bodyEntry.getNumArguments())
-    return body.emitError(
-        "converted entry arity disagrees with canonical capture layout");
-  auto call = func::CallOp::create(builder, location, body.getSymName(),
-                                   TypeRange{i32}, arguments);
-  storeAt(builder, location, instance, kInstanceContinuationOffset,
-          llvmConstant(builder, location, i32, 0), 4);
-  publishAction(builder, location, instance, OBELISK_RT_FRAGMENT_TERMINATE,
-                OBELISK_RT_SUSPEND_NONE, 0, OBELISK_RT_FRAGMENT_FLAGS_NONE,
-                llvmConstant(builder, location, i64, 0), 0);
-  LLVM::ReturnOp::create(builder, location, call.getResult(0));
-
-  builder.setInsertionPointAfter(execute);
-  auto destroy = LLVM::LLVMFuncOp::create(
-      builder, location, (baseName + ".__obelisk_native_destroy").str(),
-      LLVM::LLVMFunctionType::get(voidType, {pointer}, false));
-  Block *destroyEntry = destroy.addEntryBlock(builder);
-  builder.setInsertionPointToStart(destroyEntry);
-  LLVM::ReturnOp::create(builder, location, ValueRange{});
-  return success();
-}
 
 } // namespace
 
-LogicalResult
-lowerPlainNativeProcess(sim::SimFuncOp function,
-                        const SimulationProcessFrameAnalysis &analysis) {
-  if (!function.getResultTypes().empty())
-    return function.emitError("simulation process cannot return values");
-  if (failed(lowerSimulationTimeOperations(function)))
-    return failure();
-  ModuleOp module = function->getParentOfType<ModuleOp>();
-  Location location = function.getLoc();
-  MLIRContext *context = function.getContext();
-  std::string baseName = function.getSymName().str();
-  uint64_t stableID = function.getCodeUnitId().value_or(
-      stableProcessID(baseName) &
-      static_cast<uint64_t>(std::numeric_limits<int64_t>::max()));
-  context->getOrLoadDialect<func::FuncDialect>();
-  SmallVector<Type> inputTypes;
-  for (BlockArgument argument : function.getBody().front().getArguments())
-    inputTypes.push_back(convertProcessType(argument.getType(), context));
-  OpBuilder builder(function);
-  auto body = func::FuncOp::create(
-      builder, location, baseName,
-      FunctionType::get(context, inputTypes, TypeRange{builder.getI32Type()}));
-  body->setAttr("obelisk.entry_kind",
-                builder.getI32IntegerAttr(
-                    static_cast<uint32_t>(function.getEntryKind())));
-  body->setAttr("obelisk.native_scratch_size", builder.getI64IntegerAttr(0));
-  body.getBody().takeBody(function.getBody());
-  function.erase();
-  for (Block &block : body.getBody())
-    for (BlockArgument argument : block.getArguments())
-      argument.setType(convertProcessType(argument.getType(), context));
-  if (failed(lowerNativeDPICalls(body)))
-    return failure();
-
-  IRRewriter rewriter(context);
-  if (failed(lowerNativeFunctionBody(
-          body, NativeReturnLowering::SuccessStatus,
-          NativeCallResultLowering::Preserve)))
-    return failure();
-
-  SmallVector<sim::SimStatusCheckOp> checks;
-  body.walk([&](sim::SimStatusCheckOp check) { checks.push_back(check); });
-  for (sim::SimStatusCheckOp check : checks) {
-    Block *source = check->getBlock();
-    Block *continuation = source->splitBlock(std::next(check->getIterator()));
-    Block *failure = new Block;
-    body.getBody().push_back(failure);
-    rewriter.setInsertionPoint(check);
-    Value ok = runtime::RTStatusIsOp::create(
-        rewriter, check.getLoc(), rewriter.getI1Type(), check.getStatus(), 0);
-    cf::CondBranchOp::create(rewriter, check.getLoc(), ok, continuation,
-                             ValueRange{}, failure, ValueRange{});
-    Value status = check.getStatus();
-    bool pushFailure = check->hasAttr(managedRootRangePushCheckAttr);
-    rewriter.eraseOp(check);
-    rewriter.setInsertionPointToStart(failure);
-    Value bits = runtime::RTStatusToBitsOp::create(
-        rewriter, body.getLoc(), rewriter.getI32Type(), status);
-    if (!pushFailure)
-      emitManagedRootRangePop(rewriter, body.getLoc(), body);
-    func::ReturnOp::create(rewriter, body.getLoc(), bits);
-  }
-
-  if (failed(makePlainNativeWrappers(module, body, baseName, analysis)))
-    return failure();
-  return makeProcessDescriptor(module, location, baseName, stableID, analysis);
-}
 
 LogicalResult
 lowerSuspendableProcess(sim::SimFuncOp function,
@@ -898,59 +604,5 @@ lowerSuspendableProcess(sim::SimFuncOp function,
   return makeProcessDescriptor(module, location, baseName, stableID, analysis);
 }
 
-LogicalResult lowerOrdinaryFunction(sim::SimFuncOp function) {
-  if (failed(lowerSimulationTimeOperations(function)))
-    return failure();
-  Location location = function.getLoc();
-  std::string symbolName = function.getSymName().str();
-  FunctionType functionType = function.getFunctionType();
-  SmallVector<Type> inputTypes;
-  SmallVector<Type> resultTypes;
-  for (Type type : functionType.getInputs())
-    inputTypes.push_back(convertProcessType(type, function.getContext()));
-  for (Type type : functionType.getResults())
-    resultTypes.push_back(convertProcessType(type, function.getContext()));
-  uint32_t entryKind = static_cast<uint32_t>(function.getEntryKind());
-  bool observer = function.getEntryKind() == sim::EntryKind::Observer;
-  auto observerWidth =
-      function->getAttrOfType<IntegerAttr>("obelisk_sim.observer_width");
-  auto observerFourState =
-      function->getAttrOfType<BoolAttr>("obelisk_sim.observer_four_state");
-  function.getContext()->getOrLoadDialect<func::FuncDialect>();
-  OpBuilder builder(function.getContext());
-  builder.setInsertionPoint(function);
-  auto replacement =
-      func::FuncOp::create(builder, location, builder.getStringAttr(symbolName),
-                           TypeAttr::get(FunctionType::get(
-                               function.getContext(), inputTypes, resultTypes)),
-                           StringAttr{}, ArrayAttr{}, ArrayAttr{}, UnitAttr{});
-  replacement->setAttr("obelisk.entry_kind",
-                       builder.getI32IntegerAttr(entryKind));
-  replacement->setAttr("obelisk.native_scratch_size",
-                       builder.getI64IntegerAttr(0));
-  replacement.getBody().takeBody(function.getBody());
-  function.erase();
-  for (Block &block : replacement.getBody())
-    for (BlockArgument argument : block.getArguments())
-      argument.setType(
-          convertProcessType(argument.getType(), replacement.getContext()));
-  if (failed(lowerNativeDPICalls(replacement)))
-    return failure();
-  if (failed(lowerNativeFunctionBody(
-          replacement, NativeReturnLowering::Preserve,
-          NativeCallResultLowering::ConvertProcessTypes)))
-    return failure();
-  if (observer) {
-    if (!observerWidth || !observerFourState)
-      return replacement.emitError(
-          "observer entry is missing native descriptor metadata");
-    replacement->setAttr(
-        "obelisk.observer_width",
-        builder.getI32IntegerAttr(observerWidth.getValue().getZExtValue()));
-    replacement->setAttr("obelisk.observer_four_state",
-                         builder.getBoolAttr(observerFourState.getValue()));
-  }
-  return success();
-}
 
 } // namespace obelisk::detail
