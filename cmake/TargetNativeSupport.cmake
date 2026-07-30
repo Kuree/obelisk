@@ -160,7 +160,7 @@ set(_obelisk_target_runtime_lto_objects)
 foreach(source ABI Bytecode Containers Coverage DesignBytecode
                DesignBytecodeImage DesignBytecodeIntrinsics
                DesignBytecodeLogic DesignBytecodeNets DesignBytecodeObservers
-               DesignDatabase DPI
+               DesignBytecodeRoots DesignDatabase DPI
                FileIO Format ManagedHeap Process
                ProcessAllocation ProcessValidation Random Runtime VPI)
   set(object "${_obelisk_target_runtime_dir}/${source}.o")

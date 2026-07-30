@@ -218,6 +218,7 @@ native_members = [
     "DesignBytecodeLogic.o",
     "DesignBytecodeNets.o",
     "DesignBytecodeObservers.o",
+    "DesignBytecodeRoots.o",
     "DesignDatabase.o",
     "DPI.o",
     "FileIO.o",
