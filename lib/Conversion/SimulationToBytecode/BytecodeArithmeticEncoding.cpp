@@ -63,37 +63,37 @@ Encoder::encodeArithmeticOperation(FunctionPlan &plan, Operation *operation) {
   if (auto op = dyn_cast<arith::ShRSIOp>(operation))
     return binary(AShr, op.getResult(), op.getLhs(), op.getRhs());
   if (auto op = dyn_cast<arith::CmpIOp>(operation)) {
-    uint16_t predicate = 0;
+    obelisk_rt_design_compare_kind predicate = OBELISK_RT_DB_CMP_EQ;
     switch (op.getPredicate()) {
     case arith::CmpIPredicate::eq:
-      predicate = 0;
+      predicate = OBELISK_RT_DB_CMP_EQ;
       break;
     case arith::CmpIPredicate::ne:
-      predicate = 1;
+      predicate = OBELISK_RT_DB_CMP_NE;
       break;
     case arith::CmpIPredicate::ult:
-      predicate = 2;
+      predicate = OBELISK_RT_DB_CMP_ULT;
       break;
     case arith::CmpIPredicate::ule:
-      predicate = 3;
+      predicate = OBELISK_RT_DB_CMP_ULE;
       break;
     case arith::CmpIPredicate::ugt:
-      predicate = 4;
+      predicate = OBELISK_RT_DB_CMP_UGT;
       break;
     case arith::CmpIPredicate::uge:
-      predicate = 5;
+      predicate = OBELISK_RT_DB_CMP_UGE;
       break;
     case arith::CmpIPredicate::slt:
-      predicate = 6;
+      predicate = OBELISK_RT_DB_CMP_SLT;
       break;
     case arith::CmpIPredicate::sle:
-      predicate = 7;
+      predicate = OBELISK_RT_DB_CMP_SLE;
       break;
     case arith::CmpIPredicate::sgt:
-      predicate = 8;
+      predicate = OBELISK_RT_DB_CMP_SGT;
       break;
     case arith::CmpIPredicate::sge:
-      predicate = 9;
+      predicate = OBELISK_RT_DB_CMP_SGE;
       break;
     }
     emit({Compare, predicate, reg(plan, op.getResult()), reg(plan, op.getLhs()),
@@ -104,22 +104,22 @@ Encoder::encodeArithmeticOperation(FunctionPlan &plan, Operation *operation) {
     uint32_t predicate;
     switch (op.getPredicate()) {
     case arith::CmpFPredicate::OEQ:
-      predicate = 0;
+      predicate = OBELISK_RT_DB_FCMP_EQ;
       break;
     case arith::CmpFPredicate::UNE:
-      predicate = 1;
+      predicate = OBELISK_RT_DB_FCMP_NE;
       break;
     case arith::CmpFPredicate::OLT:
-      predicate = 2;
+      predicate = OBELISK_RT_DB_FCMP_LT;
       break;
     case arith::CmpFPredicate::OLE:
-      predicate = 3;
+      predicate = OBELISK_RT_DB_FCMP_LE;
       break;
     case arith::CmpFPredicate::OGT:
-      predicate = 4;
+      predicate = OBELISK_RT_DB_FCMP_GT;
       break;
     case arith::CmpFPredicate::OGE:
-      predicate = 5;
+      predicate = OBELISK_RT_DB_FCMP_GE;
       break;
     default:
       return op.emitOpError("floating comparison predicate is not executable");
@@ -129,23 +129,24 @@ Encoder::encodeArithmeticOperation(FunctionPlan &plan, Operation *operation) {
     return success();
   }
   if (auto op = dyn_cast<arith::SelectOp>(operation)) {
-    emit({Select, 0, reg(plan, op.getResult()), reg(plan, op.getTrueValue()),
-          reg(plan, op.getFalseValue()), reg(plan, op.getCondition())});
+    emit({Select, OBELISK_RT_DB_SELECT_BINARY, reg(plan, op.getResult()),
+          reg(plan, op.getTrueValue()), reg(plan, op.getFalseValue()),
+          reg(plan, op.getCondition())});
     return success();
   }
   if (auto op = dyn_cast<arith::ExtUIOp>(operation)) {
-    emit({Extract, 0, reg(plan, op.getResult()), reg(plan, op.getIn()),
-          kInvalidRegister});
+    emit({Extract, OBELISK_RT_DB_EXTRACT_ZERO_EXTEND,
+          reg(plan, op.getResult()), reg(plan, op.getIn()), kInvalidRegister});
     return success();
   }
   if (auto op = dyn_cast<arith::ExtSIOp>(operation)) {
-    emit({Extract, 1, reg(plan, op.getResult()), reg(plan, op.getIn()),
-          kInvalidRegister});
+    emit({Extract, OBELISK_RT_DB_EXTRACT_SIGN_EXTEND,
+          reg(plan, op.getResult()), reg(plan, op.getIn()), kInvalidRegister});
     return success();
   }
   if (auto op = dyn_cast<arith::TruncIOp>(operation)) {
-    emit({Extract, 0, reg(plan, op.getResult()), reg(plan, op.getIn()),
-          kInvalidRegister});
+    emit({Extract, OBELISK_RT_DB_EXTRACT_ZERO_EXTEND,
+          reg(plan, op.getResult()), reg(plan, op.getIn()), kInvalidRegister});
     return success();
   }
   if (auto op = dyn_cast<arith::ExtFOp>(operation)) {
@@ -159,8 +160,8 @@ Encoder::encodeArithmeticOperation(FunctionPlan &plan, Operation *operation) {
   if (auto op = dyn_cast<math::PowFOp>(operation))
     return binary(FPow, op.getResult(), op.getLhs(), op.getRhs());
   if (auto op = dyn_cast<arith::IndexCastOp>(operation)) {
-    emit({Extract, 0, reg(plan, op.getResult()), reg(plan, op.getIn()),
-          kInvalidRegister});
+    emit({Extract, OBELISK_RT_DB_EXTRACT_ZERO_EXTEND,
+          reg(plan, op.getResult()), reg(plan, op.getIn()), kInvalidRegister});
     return success();
   }
   return std::nullopt;

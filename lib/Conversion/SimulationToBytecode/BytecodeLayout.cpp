@@ -136,9 +136,13 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
   if (failed(analyzed))
     return failure();
 
-  result.storage = analyzed->storage;
-  result.nets = analyzed->nets;
-  result.drivers = analyzed->drivers;
+  // Bytecode state lives in the execution context's canonical flat planes.
+  // Native lowering uses the stable object handles from the same analysis,
+  // while bytecode handles must retain canonical bit offsets so direct entry
+  // execution does not depend on scheduler-main static-state registration.
+  result.storage = analyzed->storageOffsets;
+  result.nets = analyzed->netOffsets;
+  result.drivers = analyzed->driverOffsets;
   result.storageOffsets = analyzed->storageOffsets;
   result.netOffsets = analyzed->netOffsets;
   result.driverOffsets = analyzed->driverOffsets;

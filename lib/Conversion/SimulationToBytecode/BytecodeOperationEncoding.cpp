@@ -58,7 +58,8 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
         return failure();
       emit({Constant, 0, caseValue, 0, 0, 0, 0,
             addConstant(plan.layouts[caseValue], value)});
-      emit({Compare, 0, match, reg(plan, switchOp.getFlag()), caseValue});
+      emit({Compare, OBELISK_RT_DB_CMP_EQ, match,
+            reg(plan, switchOp.getFlag()), caseValue});
       auto mapping = addMap(plan, destination->getArguments(), plan, operands);
       uint64_t branch =
           emit({Branch, 0, match, static_cast<uint32_t>(mapping.first),
@@ -192,8 +193,8 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     return emitIntrinsic(plan, kIntrinsicEventTriggered, {op.getEvent()},
                          {op.getResult()});
   if (auto op = dyn_cast<sim::SimEventEqualOp>(operation)) {
-    emit({Compare, 0, reg(plan, op.getResult()), reg(plan, op.getLhs()),
-          reg(plan, op.getRhs())});
+    emit({Compare, OBELISK_RT_DB_CMP_EQ, reg(plan, op.getResult()),
+          reg(plan, op.getLhs()), reg(plan, op.getRhs())});
     return success();
   }
   if (std::optional<LogicalResult> encoded =
@@ -474,23 +475,28 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
   }
   if (isa<sim::SimLogicFromBitsOp, sim::SimLogicToBitsOp,
           sim::SimPackedFlattenOp, sim::SimPackedUnflattenOp>(operation)) {
-    emit({Extract, 0, reg(plan, operation->getResult(0)),
+    emit({Extract, OBELISK_RT_DB_EXTRACT_ZERO_EXTEND,
+          reg(plan, operation->getResult(0)),
           reg(plan, operation->getOperand(0)), kInvalidRegister});
     return success();
   }
   if (auto op = dyn_cast<sim::SimLogicResizeOp>(operation)) {
-    emit({Extract, static_cast<uint16_t>(op.getIsSigned()),
+    emit({Extract,
+          op.getIsSigned() ? OBELISK_RT_DB_EXTRACT_SIGN_EXTEND
+                           : OBELISK_RT_DB_EXTRACT_ZERO_EXTEND,
           reg(plan, op.getResult()), reg(plan, op.getInput()),
           kInvalidRegister});
     return success();
   }
   if (auto op = dyn_cast<sim::SimLogicIsTrueOp>(operation)) {
-    emit({Reduce, 6, reg(plan, op.getResult()), reg(plan, op.getInput())});
+    emit({Reduce, OBELISK_RT_DB_REDUCE_IS_TRUE, reg(plan, op.getResult()),
+          reg(plan, op.getInput())});
     return success();
   }
   if (auto op = dyn_cast<sim::SimLogicMuxOp>(operation)) {
-    emit({Select, 1, reg(plan, op.getResult()), reg(plan, op.getTrueValue()),
-          reg(plan, op.getFalseValue()), reg(plan, op.getCondition())});
+    emit({Select, OBELISK_RT_DB_SELECT_FOUR_STATE, reg(plan, op.getResult()),
+          reg(plan, op.getTrueValue()), reg(plan, op.getFalseValue()),
+          reg(plan, op.getCondition())});
     return success();
   }
   if (auto op = dyn_cast<sim::SimLogicUnaryOp>(operation)) {
@@ -502,7 +508,8 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
       emit({Not, 0, reg(plan, op.getResult()), reg(plan, op.getInput())});
       break;
     case sim::UnaryKind::LogicalNot:
-      emit({Reduce, 7, reg(plan, op.getResult()), reg(plan, op.getInput())});
+      emit({Reduce, OBELISK_RT_DB_REDUCE_LOGICAL_NOT,
+            reg(plan, op.getResult()), reg(plan, op.getInput())});
       break;
     case sim::UnaryKind::Negate: {
       uint32_t zero =
@@ -530,8 +537,10 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     uint32_t rightTruth = temporaryLike(plan, truthType, op.getResult());
     if (leftTruth == kInvalidRegister || rightTruth == kInvalidRegister)
       return failure();
-    emit({Reduce, 8, leftTruth, reg(plan, op.getLhs())});
-    emit({Reduce, 8, rightTruth, reg(plan, op.getRhs())});
+    emit({Reduce, OBELISK_RT_DB_REDUCE_LOGICAL_VALUE, leftTruth,
+          reg(plan, op.getLhs())});
+    emit({Reduce, OBELISK_RT_DB_REDUCE_LOGICAL_VALUE, rightTruth,
+          reg(plan, op.getRhs())});
     emit({op.getKind() == sim::LogicalKind::And ? And : Or, 0,
           reg(plan, op.getResult()), leftTruth, rightTruth});
     return success();
@@ -545,17 +554,20 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
   if (auto op = dyn_cast<sim::SimLogicCompareOp>(operation))
     return encodeLogicCompare(plan, op);
   if (auto op = dyn_cast<sim::SimLogicExtractOp>(operation)) {
-    emit({Extract, 0, reg(plan, op.getResult()), reg(plan, op.getInput()),
+    emit({Extract, OBELISK_RT_DB_EXTRACT_ZERO_EXTEND,
+          reg(plan, op.getResult()), reg(plan, op.getInput()),
           kInvalidRegister, 0, 0, op.getLowBit()});
     return success();
   }
   if (auto op = dyn_cast<sim::SimLogicDynExtractOp>(operation)) {
-    emit({Extract, 0, reg(plan, op.getResult()), reg(plan, op.getInput()),
+    emit({Extract, OBELISK_RT_DB_EXTRACT_ZERO_EXTEND,
+          reg(plan, op.getResult()), reg(plan, op.getInput()),
           reg(plan, op.getLowBit())});
     return success();
   }
   if (auto op = dyn_cast<sim::SimBitsDynExtractOp>(operation)) {
-    emit({Extract, 0, reg(plan, op.getResult()), reg(plan, op.getInput()),
+    emit({Extract, OBELISK_RT_DB_EXTRACT_ZERO_EXTEND,
+          reg(plan, op.getResult()), reg(plan, op.getInput()),
           reg(plan, op.getLowBit())});
     return success();
   }
@@ -697,13 +709,17 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
   if (auto op = dyn_cast<sim::SimMonitorCurrentOp>(operation))
     return emitIntrinsic(plan, kIntrinsicMonitorCurrent, {}, {op.getCurrent()});
   if (auto op = dyn_cast<sim::SimContextStorageOp>(operation))
-    return encodeHandle(plan, op.getResult(), op.getId(), state.storage, 2);
+    return encodeHandle(plan, op.getResult(), op.getId(), state.storage,
+                        OBELISK_RT_DESCRIPTOR_STORAGE);
   if (auto op = dyn_cast<sim::SimContextNetOp>(operation))
-    return encodeHandle(plan, op.getResult(), op.getId(), state.nets, 3);
+    return encodeHandle(plan, op.getResult(), op.getId(), state.nets,
+                        OBELISK_RT_DESCRIPTOR_NET);
   if (auto op = dyn_cast<sim::SimContextDriverOp>(operation))
-    return encodeHandle(plan, op.getResult(), op.getId(), state.drivers, 4);
+    return encodeHandle(plan, op.getResult(), op.getId(), state.drivers,
+                        OBELISK_RT_DESCRIPTOR_DRIVER);
   if (auto op = dyn_cast<sim::SimContextEventOp>(operation)) {
-    emit({MakeHandle, 0, reg(plan, op.getResult()), 5, 0, 0, 0, op.getId()});
+    emit({MakeHandle, 0, reg(plan, op.getResult()),
+          OBELISK_RT_DESCRIPTOR_EVENT, 0, 0, 0, op.getId()});
     return success();
   }
   if (auto op = dyn_cast<sim::SimRefExtractOp>(operation))
@@ -748,12 +764,18 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     return success();
   }
   if (auto op = dyn_cast<sim::SimOverrideOp>(operation)) {
-    emit({OverrideState, static_cast<uint16_t>(op.getIsAssign() ? 1 : 0), 0,
+    emit({OverrideState,
+          op.getIsAssign() ? OBELISK_RT_DB_OVERRIDE_ASSIGN
+                           : OBELISK_RT_DB_OVERRIDE_FORCE,
+          0,
           reg(plan, op.getTarget()), reg(plan, op.getValue())});
     return success();
   }
   if (auto op = dyn_cast<sim::SimReleaseOverrideOp>(operation)) {
-    emit({ReleaseState, static_cast<uint16_t>(op.getIsAssign() ? 1 : 0), 0,
+    emit({ReleaseState,
+          op.getIsAssign() ? OBELISK_RT_DB_OVERRIDE_ASSIGN
+                           : OBELISK_RT_DB_OVERRIDE_FORCE,
+          0,
           reg(plan, op.getTarget())});
     return success();
   }
@@ -766,25 +788,29 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     return success();
   if (auto suspend = dyn_cast<sim::SimSuspendDelayOp>(operation))
     return encodeWait(plan, suspend.getOperation(),
-                      suspend.getContinuationOperands(), 1, 0, {}, {},
-                      suspend.getDelay());
+                      suspend.getContinuationOperands(),
+                      OBELISK_RT_SUSPEND_DELAY, OBELISK_RT_WAIT_FLAGS_NONE, {},
+                      {}, suspend.getDelay());
   if (auto suspend = dyn_cast<sim::SimSuspendChangeOp>(operation)) {
-    uint32_t edge = 0;
+    uint32_t edge = OBELISK_RT_WAIT_EDGE_CHANGE;
     return encodeWait(plan, suspend.getOperation(),
-                      suspend.getContinuationOperands(), 2, 0,
+                      suspend.getContinuationOperands(),
+                      OBELISK_RT_SUSPEND_CHANGE, OBELISK_RT_WAIT_FLAGS_NONE,
                       ArrayRef<uint32_t>(&edge, 1), {suspend.getWatched()});
   }
   if (auto suspend = dyn_cast<sim::SimSuspendLevelOp>(operation)) {
-    uint32_t edge = 0;
+    uint32_t edge = OBELISK_RT_WAIT_EDGE_CHANGE;
     return encodeWait(plan, suspend.getOperation(),
-                      suspend.getContinuationOperands(), 2,
+                      suspend.getContinuationOperands(),
+                      OBELISK_RT_SUSPEND_CHANGE,
                       OBELISK_RT_WAIT_LEVEL_TRUE, ArrayRef<uint32_t>(&edge, 1),
                       {suspend.getWatched()});
   }
   if (auto suspend = dyn_cast<sim::SimSuspendEdgeOp>(operation)) {
     uint32_t edge = static_cast<uint32_t>(suspend.getEdge());
     return encodeWait(plan, suspend.getOperation(),
-                      suspend.getContinuationOperands(), 3, 0,
+                      suspend.getContinuationOperands(),
+                      OBELISK_RT_SUSPEND_EDGE, OBELISK_RT_WAIT_FLAGS_NONE,
                       ArrayRef<uint32_t>(&edge, 1), {suspend.getWatched()});
   }
   if (auto suspend = dyn_cast<sim::SimSuspendEdgeIffOp>(operation)) {
@@ -792,7 +818,8 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
                                 OBELISK_RT_WAIT_EDGE_NONE};
     SmallVector<Value> watched{suspend.getWatched(), suspend.getCondition()};
     return encodeWait(plan, suspend.getOperation(),
-                      suspend.getContinuationOperands(), 3,
+                      suspend.getContinuationOperands(),
+                      OBELISK_RT_SUSPEND_EDGE,
                       OBELISK_RT_WAIT_EDGE_IFF, edges, watched);
   }
   if (auto suspend = dyn_cast<sim::SimSuspendAnyOp>(operation)) {
@@ -801,33 +828,44 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
       edges.push_back(static_cast<uint32_t>(edge));
     SmallVector<Value> watched(suspend.getWatched());
     return encodeWait(plan, suspend.getOperation(),
-                      suspend.getContinuationOperands(), 3, 0, edges, watched);
+                      suspend.getContinuationOperands(),
+                      OBELISK_RT_SUSPEND_EDGE, OBELISK_RT_WAIT_FLAGS_NONE,
+                      edges, watched);
   }
   if (auto suspend = dyn_cast<sim::SimSuspendEventOp>(operation)) {
-    uint32_t edge = UINT32_MAX;
+    uint32_t edge = OBELISK_RT_WAIT_EDGE_NONE;
     return encodeWait(plan, suspend.getOperation(),
-                      suspend.getContinuationOperands(), 4, 0,
+                      suspend.getContinuationOperands(),
+                      OBELISK_RT_SUSPEND_EVENT, OBELISK_RT_WAIT_FLAGS_NONE,
                       ArrayRef<uint32_t>(&edge, 1), {suspend.getEvent()});
   }
   if (auto suspend = dyn_cast<sim::SimSuspendForeverOp>(operation))
     return encodeWait(plan, suspend.getOperation(),
-                      suspend.getContinuationOperands(), 7, 0, {}, {});
+                      suspend.getContinuationOperands(),
+                      OBELISK_RT_SUSPEND_FOREVER, OBELISK_RT_WAIT_FLAGS_NONE,
+                      {}, {});
   if (auto suspend = dyn_cast<sim::SimSuspendAwaitOp>(operation)) {
-    uint32_t edge = UINT32_MAX;
+    uint32_t edge = OBELISK_RT_WAIT_EDGE_NONE;
     return encodeWait(plan, suspend.getOperation(),
-                      suspend.getContinuationOperands(), 5, 0,
+                      suspend.getContinuationOperands(),
+                      OBELISK_RT_SUSPEND_AWAIT, OBELISK_RT_WAIT_FLAGS_NONE,
                       ArrayRef<uint32_t>(&edge, 1), {suspend.getProcess()});
   }
   if (auto suspend = dyn_cast<sim::SimSuspendJoinOp>(operation)) {
-    SmallVector<uint32_t> edges(suspend.getProcesses().size(), UINT32_MAX);
+    SmallVector<uint32_t> edges(suspend.getProcesses().size(),
+                                OBELISK_RT_WAIT_EDGE_NONE);
     SmallVector<Value> processes(suspend.getProcesses());
     return encodeWait(
-        plan, suspend.getOperation(), suspend.getContinuationOperands(), 6,
-        static_cast<uint32_t>(suspend.getKind()), edges, processes);
+        plan, suspend.getOperation(), suspend.getContinuationOperands(),
+        OBELISK_RT_SUSPEND_JOIN,
+        static_cast<obelisk_rt_wait_flags>(suspend.getKind()), edges,
+        processes);
   }
   if (auto suspend = dyn_cast<sim::SimSuspendChildrenOp>(operation))
     return encodeWait(plan, suspend.getOperation(),
-                      suspend.getContinuationOperands(), 9, 0, {}, {});
+                      suspend.getContinuationOperands(),
+                      OBELISK_RT_SUSPEND_CHILDREN, OBELISK_RT_WAIT_FLAGS_NONE,
+                      {}, {});
   if (auto suspend = dyn_cast<sim::SimSuspendObserveOp>(operation))
     return encodeObserverWait(plan, suspend);
   return operation->emitOpError()

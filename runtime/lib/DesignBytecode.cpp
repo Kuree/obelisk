@@ -1901,7 +1901,8 @@ bool validateImage(const Image &image) {
         if (instruction.source1 || instruction.source2 ||
             instruction.auxiliary || instruction.immediate ||
             !numeric(instruction.destination) ||
-            !numeric(instruction.source0) || instruction.flags > 8 ||
+            !numeric(instruction.source0) ||
+            instruction.flags > OBELISK_RT_DB_REDUCE_LOGICAL_VALUE ||
             layoutAt(image, function, instruction.destination).width != 1)
           return false;
         break;
@@ -1933,7 +1934,8 @@ bool validateImage(const Image &image) {
             return false;
           if (!extractHandle && !insertHandle)
             return false;
-        } else if (instruction.flags > 1 || !numeric(instruction.destination) ||
+        } else if (instruction.flags > OBELISK_RT_DB_EXTRACT_SIGN_EXTEND ||
+                   !numeric(instruction.destination) ||
                    !numeric(instruction.source0)) {
           return false;
         }
@@ -1972,7 +1974,8 @@ bool validateImage(const Image &image) {
           return false;
         break;
       case OBELISK_RT_DB_FCOMPARE: {
-        if (instruction.flags > 5 || instruction.source2 ||
+        if (instruction.flags > OBELISK_RT_DB_FCMP_GE ||
+            instruction.source2 ||
             instruction.auxiliary || instruction.immediate ||
             !reg(instruction.destination) ||
             !numeric(instruction.destination) ||
@@ -2035,11 +2038,12 @@ bool validateImage(const Image &image) {
         break;
       }
       case OBELISK_RT_DB_SELECT:
-        if (instruction.flags > 1 || instruction.auxiliary ||
+        if (instruction.flags > OBELISK_RT_DB_SELECT_FOUR_STATE ||
+            instruction.auxiliary ||
             instruction.immediate || !binary() ||
             !numeric(instruction.source2) ||
             layoutAt(image, function, instruction.source2).width != 1 ||
-            (instruction.flags == 1 &&
+            (instruction.flags == OBELISK_RT_DB_SELECT_FOUR_STATE &&
              (layoutAt(image, function, instruction.destination).kind !=
                   OBELISK_RT_DBREG_LOGIC ||
               layoutAt(image, function, instruction.source0).kind !=
@@ -2188,7 +2192,8 @@ bool validateImage(const Image &image) {
           return false;
         break;
       case OBELISK_RT_DB_OVERRIDE_STATE:
-        if (instruction.flags > 1 || instruction.destination ||
+        if (instruction.flags > OBELISK_RT_DB_OVERRIDE_ASSIGN ||
+            instruction.destination ||
             instruction.source2 || instruction.auxiliary ||
             instruction.immediate || !reg(instruction.source0) ||
             !numeric(instruction.source1) ||
@@ -2197,7 +2202,8 @@ bool validateImage(const Image &image) {
           return false;
         break;
       case OBELISK_RT_DB_RELEASE_STATE:
-        if (instruction.flags > 1 || instruction.destination ||
+        if (instruction.flags > OBELISK_RT_DB_OVERRIDE_ASSIGN ||
+            instruction.destination ||
             instruction.source1 || instruction.source2 ||
             instruction.auxiliary || instruction.immediate ||
             !reg(instruction.source0) ||
@@ -5949,39 +5955,39 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       }
       bool value = false, resultUnknown = false;
       switch (instruction.flags) {
-      case 0:
+      case OBELISK_RT_DB_REDUCE_AND:
         value = !anyKnownZero && !unknown;
         resultUnknown = !anyKnownZero && unknown;
         break;
-      case 1:
+      case OBELISK_RT_DB_REDUCE_OR:
         value = anyKnownOne;
         resultUnknown = !anyKnownOne && unknown;
         break;
-      case 2:
+      case OBELISK_RT_DB_REDUCE_XOR:
         value = parity && !unknown;
         resultUnknown = unknown;
         break;
-      case 3:
+      case OBELISK_RT_DB_REDUCE_NAND:
         value = anyKnownZero;
         resultUnknown = !anyKnownZero && unknown;
         break;
-      case 4:
+      case OBELISK_RT_DB_REDUCE_NOR:
         value = !anyKnownOne && !unknown;
         resultUnknown = !anyKnownOne && unknown;
         break;
-      case 5:
+      case OBELISK_RT_DB_REDUCE_XNOR:
         value = !parity && !unknown;
         resultUnknown = unknown;
         break;
-      case 6:
+      case OBELISK_RT_DB_REDUCE_IS_TRUE:
         value = anyKnownOne;
         resultUnknown = false;
         break;
-      case 7:
+      case OBELISK_RT_DB_REDUCE_LOGICAL_NOT:
         value = !anyKnownOne && !unknown;
         resultUnknown = !anyKnownOne && unknown;
         break;
-      case 8:
+      case OBELISK_RT_DB_REDUCE_LOGICAL_VALUE:
         value = anyKnownOne;
         resultUnknown = !anyKnownOne && unknown;
         break;
@@ -6076,18 +6082,20 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       bool result = false;
       auto compare = [&](auto lhs, auto rhs) {
         switch (instruction.flags) {
-        case 0:
+        case OBELISK_RT_DB_FCMP_EQ:
           return lhs == rhs;
-        case 1:
+        case OBELISK_RT_DB_FCMP_NE:
           return lhs != rhs;
-        case 2:
+        case OBELISK_RT_DB_FCMP_LT:
           return lhs < rhs;
-        case 3:
+        case OBELISK_RT_DB_FCMP_LE:
           return lhs <= rhs;
-        case 4:
+        case OBELISK_RT_DB_FCMP_GT:
           return lhs > rhs;
-        default:
+        case OBELISK_RT_DB_FCMP_GE:
           return lhs >= rhs;
+        default:
+          return false;
         }
       };
       if (source.kind == OBELISK_RT_DBREG_REAL32)
@@ -6261,7 +6269,7 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
     case OBELISK_RT_DB_SELECT: {
       Logic condition = read(instruction.source2);
       if (anyUnknown(condition)) {
-        if (instruction.flags == 1) {
+        if (instruction.flags == OBELISK_RT_DB_SELECT_FOUR_STATE) {
           Logic left = read(instruction.source0);
           Logic right = read(instruction.source1);
           Logic result{left.width, true,
@@ -6400,6 +6408,23 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
         base = encodeStaticHandle(decoded.id, 0);
         if (base == UINT64_MAX)
           return OBELISK_RT_INVALID_HANDLE;
+      } else if (context && kind <= OBELISK_RT_DESCRIPTOR_DRIVER) {
+        // Bytecode encodes canonical plane offsets so a process can execute
+        // directly without scheduler-main registration. Once native static
+        // state is registered, use its stable identity so mixed-tier waits and
+        // publications name the same object.
+        std::lock_guard<std::recursive_mutex> lock(context->mutex);
+        for (const auto &[id, state] : context->nativeStaticStates) {
+          if (state.bitOffset != static_cast<uint64_t>(begin) ||
+              state.bitWidth != width)
+            continue;
+          base = encodeStaticHandle(id, 0);
+          if (base == UINT64_MAX)
+            return OBELISK_RT_INVALID_HANDLE;
+          begin = 0;
+          end = static_cast<int64_t>(width);
+          break;
+        }
       }
       std::memcpy(address, &kind, sizeof(kind));
       std::memcpy(address + 8, &base, sizeof(base));
@@ -6727,7 +6752,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
     case OBELISK_RT_DB_OVERRIDE_STATE: {
       bool isLoad = instruction.opcode == OBELISK_RT_DB_LOAD_STATE;
       bool isOverride = instruction.opcode == OBELISK_RT_DB_OVERRIDE_STATE;
-      bool isAssignOverride = isOverride && instruction.flags != 0;
+      bool isAssignOverride =
+          isOverride && instruction.flags == OBELISK_RT_DB_OVERRIDE_ASSIGN;
       if (!isLoad && context &&
           context->activeExecRegion == OBELISK_RT_REGION_POSTPONED)
         return OBELISK_RT_INVALID_LIFECYCLE;
@@ -7279,7 +7305,7 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       if (local || automatic || start < 0 || start > end ||
           (descriptorKind != OBELISK_RT_DESCRIPTOR_STORAGE &&
            descriptorKind != OBELISK_RT_DESCRIPTOR_NET) ||
-          (instruction.flags != 0 &&
+          (instruction.flags == OBELISK_RT_DB_OVERRIDE_ASSIGN &&
            descriptorKind != OBELISK_RT_DESCRIPTOR_STORAGE))
         return OBELISK_RT_INVALID_HANDLE;
 
@@ -7298,7 +7324,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
           boundedStatic ? staticState->bitOffset + static_cast<uint64_t>(start)
                         : static_cast<uint64_t>(start);
       uint64_t width = static_cast<uint64_t>(end - start);
-      bool releaseAssign = instruction.flags != 0;
+      bool releaseAssign =
+          instruction.flags == OBELISK_RT_DB_OVERRIDE_ASSIGN;
 
       struct PendingTransition {
         uint64_t bitIndex;

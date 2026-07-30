@@ -1833,6 +1833,43 @@ TEST(DesignBytecode, ResolvesEncodedStaticStateHandlesByIdentity) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(DesignBytecode, CanonicalizesFlatHandlesToRegisteredStaticState) {
+  Fixture fixture;
+  fixture.bytecode = makeSchedulerBytecode(/*stateHandle=*/0);
+  fixture.execution.bytecode = fixture.bytecode.data();
+  fixture.execution.bytecode_size = fixture.bytecode.size();
+  fixture.execution.checksum = imageChecksum(fixture.bytecode);
+  fixture.entry = {&fixture.execution, 0, 0};
+  fixture.layout.frame_size = 0;
+  fixture.layout.checksum = frameChecksum(fixture.layout);
+  fixture.descriptor.frame_layout = &fixture.layout;
+  fixture.descriptor.execution = &fixture.execution;
+  fixture.descriptor.design_bytecode = &fixture.entry;
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 8),
+            OBELISK_RT_OK);
+  obelisk_rt_process_instance_v1 *instance = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
+      OBELISK_RT_OK);
+  obelisk_rt_fragment_action_v1 action{};
+  ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
+                instance, context, OBELISK_RT_TIER_BYTECODE, &action),
+            OBELISK_RT_OK);
+
+  ASSERT_EQ(context->scheduledNBAs.size(), 1u);
+  EXPECT_TRUE(context->scheduledDesignNBAs.empty());
+  EXPECT_EQ(context->scheduledNBAs.front().bitOffset,
+            obelisk_rt_v1_native_state_static_handle(1));
+
+  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(DesignBytecode, ResolvesFourStateDriversFromInitialHighImpedance) {
   Fixture fixture;
   fixture.bytecode = makeDriverBytecode();

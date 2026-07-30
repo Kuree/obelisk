@@ -560,11 +560,51 @@ enum {
   OBELISK_RT_DB_FPOW = 53
 };
 
-// EXTRACT and INSERT flag for the physical 64-bit class-handle lane of an
-// aggregate value.  This is deliberately distinct from ordinary numeric
-// extraction so the bytecode validator can keep managed/numeric coercions
-// confined to compiler-marked aggregate element operations.
-#define OBELISK_RT_DB_AGGREGATE_MANAGED UINT16_C(2)
+typedef uint16_t obelisk_rt_design_extract_kind;
+enum {
+  OBELISK_RT_DB_EXTRACT_ZERO_EXTEND = 0,
+  OBELISK_RT_DB_EXTRACT_SIGN_EXTEND = 1,
+  // Physical 64-bit class-handle lane of an aggregate value. This is
+  // deliberately distinct from ordinary numeric extraction so the bytecode
+  // validator can keep managed/numeric coercions confined to compiler-marked
+  // aggregate element operations.
+  OBELISK_RT_DB_AGGREGATE_MANAGED = 2
+};
+
+typedef uint16_t obelisk_rt_design_select_kind;
+enum {
+  OBELISK_RT_DB_SELECT_BINARY = 0,
+  OBELISK_RT_DB_SELECT_FOUR_STATE = 1
+};
+
+typedef uint16_t obelisk_rt_design_reduction_kind;
+enum {
+  OBELISK_RT_DB_REDUCE_AND = 0,
+  OBELISK_RT_DB_REDUCE_OR = 1,
+  OBELISK_RT_DB_REDUCE_XOR = 2,
+  OBELISK_RT_DB_REDUCE_NAND = 3,
+  OBELISK_RT_DB_REDUCE_NOR = 4,
+  OBELISK_RT_DB_REDUCE_XNOR = 5,
+  OBELISK_RT_DB_REDUCE_IS_TRUE = 6,
+  OBELISK_RT_DB_REDUCE_LOGICAL_NOT = 7,
+  OBELISK_RT_DB_REDUCE_LOGICAL_VALUE = 8
+};
+
+typedef uint16_t obelisk_rt_design_float_compare_kind;
+enum {
+  OBELISK_RT_DB_FCMP_EQ = 0,
+  OBELISK_RT_DB_FCMP_NE = 1,
+  OBELISK_RT_DB_FCMP_LT = 2,
+  OBELISK_RT_DB_FCMP_LE = 3,
+  OBELISK_RT_DB_FCMP_GT = 4,
+  OBELISK_RT_DB_FCMP_GE = 5
+};
+
+typedef uint16_t obelisk_rt_design_override_kind;
+enum {
+  OBELISK_RT_DB_OVERRIDE_FORCE = 0,
+  OBELISK_RT_DB_OVERRIDE_ASSIGN = 1
+};
 
 // COMPARE flags. Case comparisons return a known two-state result. Wildcard
 // equality masks unknown RHS bits but can return X for a relevant unknown LHS

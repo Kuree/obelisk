@@ -216,12 +216,14 @@ FailureOr<uint32_t> Encoder::encodeArrayOffset(FunctionPlan &plan, Type array,
       (sourceLayout->width > 64 &&
        (roundTrip == kInvalidRegister || fits == kInvalidRegister)))
     return failure();
-  emit({Extract, 1, index, reg(plan, indexValue), kInvalidRegister});
+  emit({Extract, OBELISK_RT_DB_EXTRACT_SIGN_EXTEND, index,
+        reg(plan, indexValue), kInvalidRegister});
   if (sourceLayout->width > 64) {
     // Narrowing alone would turn an overflowing or high-plane-X index into
     // an apparently valid low 64-bit value. Require the original index to
     // equal a signed round trip through the runtime's i64 coordinate type.
-    emit({Extract, 1, roundTrip, index, kInvalidRegister});
+    emit({Extract, OBELISK_RT_DB_EXTRACT_SIGN_EXTEND, roundTrip, index,
+          kInvalidRegister});
     emit({Compare, OBELISK_RT_DB_CMP_EQ, fits, reg(plan, indexValue),
           roundTrip});
   }
@@ -232,12 +234,12 @@ FailureOr<uint32_t> Encoder::encodeArrayOffset(FunctionPlan &plan, Type array,
   constant(leftReg, APInt(64, static_cast<uint64_t>(left), true));
   constant(rightReg, APInt(64, static_cast<uint64_t>(right), true));
   if (left >= right) {
-    emit({Compare, 7, lower, index, leftReg});
-    emit({Compare, 9, upper, index, rightReg});
+    emit({Compare, OBELISK_RT_DB_CMP_SLE, lower, index, leftReg});
+    emit({Compare, OBELISK_RT_DB_CMP_SGE, upper, index, rightReg});
     emit({Sub, 0, ordinal, leftReg, index});
   } else {
-    emit({Compare, 9, lower, index, leftReg});
-    emit({Compare, 7, upper, index, rightReg});
+    emit({Compare, OBELISK_RT_DB_CMP_SGE, lower, index, leftReg});
+    emit({Compare, OBELISK_RT_DB_CMP_SLE, upper, index, rightReg});
     emit({Sub, 0, ordinal, index, leftReg});
   }
   emit({And, 0, valid, lower, upper});
@@ -250,7 +252,7 @@ FailureOr<uint32_t> Encoder::encodeArrayOffset(FunctionPlan &plan, Type array,
   constant(scalar, APInt(64, *span));
   emit({Mul, 0, offset, ordinal, scalar});
   constant(invalid, APInt(64, *simulationWidth(array)));
-  emit({Select, 0, offset, offset, invalid, valid});
+  emit({Select, OBELISK_RT_DB_SELECT_BINARY, offset, offset, invalid, valid});
   return offset;
 }
 
@@ -333,8 +335,8 @@ LogicalResult Encoder::encodeUnionIsActive(FunctionPlan &plan,
   uint32_t expectedTag = temporaryLike(plan, tagType, op.getInput());
   if (tag == kInvalidRegister || expectedTag == kInvalidRegister)
     return failure();
-  emit({Extract, 0, tag, reg(plan, op.getInput()), kInvalidRegister, 0, 0,
-        *payloadSpan});
+  emit({Extract, OBELISK_RT_DB_EXTRACT_ZERO_EXTEND, tag,
+        reg(plan, op.getInput()), kInvalidRegister, 0, 0, *payloadSpan});
   emit({Constant, 0, expectedTag, 0, 0, 0, 0,
         addConstant(plan.layouts[expectedTag], APInt(tagBits, expected))});
   emit({Compare, OBELISK_RT_DB_CMP_CASE_EQ, reg(plan, op.getResult()), tag,
@@ -345,7 +347,7 @@ LogicalResult Encoder::encodeUnionIsActive(FunctionPlan &plan,
 LogicalResult
 Encoder::encodeHandle(FunctionPlan &plan, Value result, uint64_t id,
                       const llvm::DenseMap<uint64_t, uint64_t> &offsets,
-                      uint32_t kind) {
+                      obelisk_rt_descriptor_kind kind) {
   auto found = offsets.find(id);
   if (found == offsets.end())
     return result.getDefiningOp()->emitOpError("unknown state descriptor");

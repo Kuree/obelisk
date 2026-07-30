@@ -233,7 +233,8 @@ LogicalResult Encoder::encodeObserverWait(FunctionPlan &plan,
 
 LogicalResult Encoder::encodeWait(FunctionPlan &plan, Operation *operation,
                                   ValueRange continuationOperands,
-                                  uint32_t kind, uint32_t flags,
+                                  obelisk_rt_suspend_kind kind,
+                                  obelisk_rt_wait_flags flags,
                                   ArrayRef<uint32_t> edges,
                                   ArrayRef<Value> watched, Value delay) {
   if (!plan.frame)
@@ -272,7 +273,8 @@ LogicalResult Encoder::encodeWait(FunctionPlan &plan, Operation *operation,
   plan.scratchSize = record.offset + record.size;
   plan.layouts.push_back(record);
   SmallVector<uint8_t> bytes(suspension->waitSize, 0);
-  bool signalWait = kind == 2 || kind == 3;
+  bool signalWait = kind == OBELISK_RT_SUSPEND_CHANGE ||
+                    kind == OBELISK_RT_SUSPEND_EDGE;
   write32(bytes, 0, OBELISK_RT_VERSION);
   write32(bytes, 4, kind);
   write32(bytes, 8, flags);
