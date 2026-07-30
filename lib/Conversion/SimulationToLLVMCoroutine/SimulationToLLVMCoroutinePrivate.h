@@ -115,6 +115,10 @@ mlir::LogicalResult serializeComputedObserverWait(
     mlir::Operation *operation, mlir::Value wait, uint64_t waitSize,
     mlir::OpBuilder &builder,
     mlir::SmallVectorImpl<mlir::Operation *> &observerBindings);
+mlir::LogicalResult serializeRuntimeWait(mlir::Operation *operation,
+                                         mlir::Value wait, uint32_t kind,
+                                         uint32_t count,
+                                         mlir::OpBuilder &builder);
 mlir::LogicalResult prepareManagedLowering(mlir::ModuleOp module,
                                            const llvm::DataLayout &dataLayout);
 

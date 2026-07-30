@@ -10,6 +10,7 @@ add_mlir_library(ObeliskSimulationToLLVMCoroutine
   SimulationSuspensionTypeLowering.cpp
   SimulationToLLVMCoroutine.cpp
   SimulationToLLVMCoroutineUtils.cpp
+  SimulationWaitLowering.cpp
 
   DEPENDS
   ObeliskConversionPassIncGen

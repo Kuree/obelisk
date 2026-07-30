@@ -71,7 +71,6 @@ namespace obelisk {
 namespace {
 
 using detail::alignUp;
-using detail::asI64;
 using detail::byteGEP;
 using detail::castIntegerWidth;
 using detail::containsLogic;
@@ -103,13 +102,11 @@ using detail::prepareManagedLowering;
 using detail::reportManagedStatus;
 using detail::resizeSignedIndexToI64;
 using detail::serializeComputedObserverWait;
+using detail::serializeRuntimeWait;
 using detail::SignedI64Index;
 using detail::storeAt;
 
 constexpr uint64_t kNoOffset = std::numeric_limits<uint64_t>::max();
-constexpr uint64_t kWaitHeaderSize = sizeof(obelisk_rt_wait_record_v1);
-constexpr uint64_t kWaitEntrySize = sizeof(obelisk_rt_wait_entry_v1);
-constexpr uint32_t kWaitEdgeNone = std::numeric_limits<uint32_t>::max();
 constexpr StringLiteral kAutomaticOwnerReleaseMarker =
     "__obelisk_release_automatic_owner";
 constexpr StringLiteral kAssumeCleanSpecializationAttr =
@@ -422,85 +419,8 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
             operation, wait, waitSize, builder, observerBindings)))
       return failure();
   } else {
-    storeAt(builder, location, wait, 0,
-            llvmConstant(builder, location, i32, OBELISK_RT_VERSION), 4);
-    storeAt(builder, location, wait, 4,
-            llvmConstant(builder, location, i32, kind), 4);
-    uint32_t waitFlags = 0;
-    if (auto join = dyn_cast<sim::SimSuspendJoinOp>(operation))
-      waitFlags = static_cast<uint32_t>(join.getKind());
-    else if (isa<sim::SimSuspendLevelOp>(operation))
-      waitFlags = OBELISK_RT_WAIT_LEVEL_TRUE;
-    else if (isa<sim::SimSuspendEdgeIffOp>(operation))
-      waitFlags = OBELISK_RT_WAIT_EDGE_IFF;
-    storeAt(builder, location, wait, 8,
-            llvmConstant(builder, location, i32, waitFlags), 4);
-    storeAt(builder, location, wait, 12,
-            llvmConstant(builder, location, i32, count), 4);
-    Value payload = llvmConstant(builder, location, i64, 0);
-    if (auto delay = dyn_cast<sim::SimSuspendDelayOp>(operation))
-      payload = asI64(builder, location, delay.getDelay());
-    storeAt(builder, location, wait, 16, payload, 8);
-    storeAt(builder, location, wait, 24,
-            llvmConstant(builder, location, i64, 0), 8);
-
-    SmallVector<Value> watched;
-    SmallVector<uint32_t> watchedEdges;
-    TypeSwitch<Operation *>(operation)
-        .Case<sim::SimSuspendChangeOp>([&](auto op) {
-          watched.push_back(op.getWatched());
-          watchedEdges.push_back(static_cast<uint32_t>(sim::EdgeKind::Change));
-        })
-        .Case<sim::SimSuspendLevelOp>([&](auto op) {
-          watched.push_back(op.getWatched());
-          watchedEdges.push_back(static_cast<uint32_t>(sim::EdgeKind::Change));
-        })
-        .Case<sim::SimSuspendEdgeOp>([&](auto op) {
-          watched.push_back(op.getWatched());
-          watchedEdges.push_back(static_cast<uint32_t>(op.getEdge()));
-        })
-        .Case<sim::SimSuspendEdgeIffOp>([&](auto op) {
-          watched.push_back(op.getWatched());
-          watchedEdges.push_back(static_cast<uint32_t>(op.getEdge()));
-          watched.push_back(op.getCondition());
-          watchedEdges.push_back(kWaitEdgeNone);
-        })
-        .Case<sim::SimSuspendAnyOp>([&](auto op) {
-          llvm::append_range(watched, op.getWatched());
-          for (int32_t edge : op.getEdges())
-            watchedEdges.push_back(static_cast<uint32_t>(edge));
-        })
-        .Case<sim::SimSuspendEventOp>([&](auto op) {
-          watched.push_back(op.getEvent());
-          watchedEdges.push_back(kWaitEdgeNone);
-        })
-        .Case<sim::SimSuspendAwaitOp>([&](auto op) {
-          watched.push_back(op.getProcess());
-          watchedEdges.push_back(kWaitEdgeNone);
-        })
-        .Case<sim::SimSuspendJoinOp>([&](auto op) {
-          llvm::append_range(watched, op.getProcesses());
-          watchedEdges.append(op.getProcesses().size(), kWaitEdgeNone);
-        });
-    if (watched.size() != watchedEdges.size())
-      return operation->emitError("wait handle and edge inventories disagree");
-    auto waitWidths =
-        operation->getAttrOfType<DenseI32ArrayAttr>("obelisk.coro.wait_widths");
-    if (!watched.empty() &&
-        (!waitWidths ||
-         static_cast<size_t>(waitWidths.size()) != watched.size()))
-      return operation->emitError("wait handle and width inventories disagree");
-    for (auto [index, value] : llvm::enumerate(watched)) {
-      uint64_t entryOffset = kWaitHeaderSize + index * kWaitEntrySize;
-      storeAt(builder, location, wait, entryOffset,
-              asI64(builder, location, value), 8);
-      storeAt(builder, location, wait, entryOffset + 8,
-              llvmConstant(builder, location, i32, watchedEdges[index]), 4);
-      storeAt(builder, location, wait, entryOffset + 12,
-              llvmConstant(builder, location, i32,
-                           static_cast<uint32_t>(waitWidths[index])),
-              4);
-    }
+    if (failed(serializeRuntimeWait(operation, wait, kind, count, builder)))
+      return failure();
   }
 
   storeAt(builder, location, instance, kInstanceContinuationOffset,
