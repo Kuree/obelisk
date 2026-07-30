@@ -20,3 +20,7 @@ add_mlir_library(ObeliskSimulationIR
   MLIRSideEffectInterfaces
   MLIRViewLikeInterface
 )
+
+target_include_directories(ObeliskSimulationIR PRIVATE
+  "${PROJECT_SOURCE_DIR}/runtime/include"
+)

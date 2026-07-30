@@ -4,6 +4,7 @@
 
 #include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
 #include "obelisk/Runtime/Runtime.h"
+#include "obelisk/Runtime/StableHash.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 
@@ -14,12 +15,7 @@ using namespace mlir;
 namespace obelisk::detail {
 
 uint64_t stableProcessID(StringRef name) {
-  uint64_t hash = UINT64_C(14695981039346656037);
-  for (unsigned char byte : name.bytes()) {
-    hash ^= byte;
-    hash *= UINT64_C(1099511628211);
-  }
-  return hash;
+  return obelisk_stable_hash(name.data(), name.size());
 }
 
 LogicalResult

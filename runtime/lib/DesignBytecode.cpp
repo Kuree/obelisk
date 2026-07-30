@@ -2,6 +2,7 @@
 
 #include "RuntimeInternal.h"
 #include "obelisk/Runtime/StableHandle.h"
+#include "obelisk/Runtime/StableHash.h"
 
 #include <algorithm>
 #include <cassert>
@@ -178,11 +179,10 @@ bool validRange(uint64_t offset, uint64_t count, uint64_t stride,
 }
 
 uint64_t imageChecksum(const uint8_t *data, uint64_t size) {
-  uint64_t hash = UINT64_C(14695981039346656037);
+  uint64_t hash = OBELISK_STABLE_HASH_OFFSET_BASIS;
   for (uint64_t index = 0; index != size; ++index) {
     uint8_t byte = index >= 32 && index < 40 ? 0 : data[index];
-    hash ^= byte;
-    hash *= UINT64_C(1099511628211);
+    hash = obelisk_stable_hash_append_byte(hash, byte);
   }
   return hash;
 }
@@ -5177,12 +5177,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                                                     : OBELISK_RT_DBREG_BITS;
         return layout.kind == expectedKind && layout.width == abi.width;
       };
-      uint64_t hash = UINT64_C(14695981039346656037);
+      uint64_t hash = OBELISK_STABLE_HASH_OFFSET_BASIS;
       auto appendHash = [&](uint64_t value, unsigned bytes) {
-        for (unsigned index = 0; index != bytes; ++index) {
-          hash ^= static_cast<uint8_t>(value >> (index * 8));
-          hash *= UINT64_C(1099511628211);
-        }
+        hash = obelisk_stable_hash_append_uint_le(hash, value, bytes);
       };
       appendHash(logicalInputs, 8);
       appendHash(logicalOutputs, 8);

@@ -1,6 +1,7 @@
 //===- Containers.cpp - Managed strings and container storage -------------===//
 
 #include "RuntimeInternal.h"
+#include "obelisk/Runtime/StableHash.h"
 
 #include <algorithm>
 #include <charconv>
@@ -630,11 +631,13 @@ obelisk_rt_status ensureCapacity(obelisk_rt_gc_lane_v1 *lane,
 }
 
 uint64_t hashBytes(const char *bytes, uint64_t size) {
-  uint64_t hash = UINT64_C(1469598103934665603);
-  for (uint64_t index = 0; index != size; ++index) {
-    hash ^= static_cast<unsigned char>(bytes[index]);
-    hash *= UINT64_C(1099511628211);
-  }
+  // Preserve the container table's established seed; only serialized hashes
+  // use the canonical stable-hash offset basis.
+  constexpr uint64_t stringHashSeed = UINT64_C(1469598103934665603);
+  uint64_t hash = stringHashSeed;
+  for (uint64_t index = 0; index != size; ++index)
+    hash = obelisk_stable_hash_append_byte(
+        hash, static_cast<unsigned char>(bytes[index]));
   return hash;
 }
 

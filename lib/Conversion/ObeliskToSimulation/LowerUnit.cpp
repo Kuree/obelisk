@@ -9,6 +9,7 @@
 
 #include "LowerUnit.h"
 #include "obelisk/Runtime/Runtime.h"
+#include "obelisk/Runtime/StableHash.h"
 
 #include "obelisk/Conversion/ObeliskToSimulation.h"
 #include "obelisk/Dialect/ForeachLoopMetadata.h"
@@ -92,11 +93,7 @@ static uint64_t stableTypeID(Type type) {
   llvm::raw_string_ostream stream(spelling);
   type.print(stream);
   stream.flush();
-  uint64_t hash = UINT64_C(14695981039346656037);
-  for (unsigned char byte : spelling) {
-    hash ^= byte;
-    hash *= UINT64_C(1099511628211);
-  }
+  uint64_t hash = obelisk_stable_hash(spelling.data(), spelling.size());
   return hash ? hash : 1;
 }
 

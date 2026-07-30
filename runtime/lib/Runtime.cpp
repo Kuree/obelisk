@@ -2,6 +2,7 @@
 //------------===//
 
 #include "RuntimeInternal.h"
+#include "obelisk/Runtime/StableHash.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -498,11 +499,7 @@ extern "C" uint32_t obelisk_rt_v1_import_id(const uint8_t *symbol,
                                             uint64_t symbolSize) {
   if (!validBytes(symbol, symbolSize) || symbolSize == 0)
     return 0;
-  uint64_t hash = UINT64_C(14695981039346656037);
-  for (uint64_t index = 0; index != symbolSize; ++index) {
-    hash ^= symbol[index];
-    hash *= UINT64_C(1099511628211);
-  }
+  uint64_t hash = obelisk_stable_hash(symbol, symbolSize);
   uint32_t result = static_cast<uint32_t>(hash ^ (hash >> 32));
   return result == 0 ? 1 : result;
 }

@@ -14,6 +14,7 @@
 
 #include "obelisk/Conversion/ObeliskToSimulation.h"
 #include "obelisk/Dialect/ForeachLoopMetadata.h"
+#include "obelisk/Runtime/StableHash.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
@@ -113,11 +114,8 @@ static std::optional<uint64_t> getUnsigned64(IntegerAttr attribute) {
 }
 
 static uint32_t getStableImportID(StringRef cIdentifier) {
-  uint64_t hash = UINT64_C(14695981039346656037);
-  for (unsigned char byte : cIdentifier.bytes()) {
-    hash ^= byte;
-    hash *= UINT64_C(1099511628211);
-  }
+  uint64_t hash =
+      obelisk_stable_hash(cIdentifier.data(), cIdentifier.size());
   uint32_t result = static_cast<uint32_t>(hash ^ (hash >> 32));
   return result == 0 ? 1 : result;
 }

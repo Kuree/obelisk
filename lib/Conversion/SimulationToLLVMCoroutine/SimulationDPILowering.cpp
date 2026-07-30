@@ -6,6 +6,7 @@
 #include "obelisk/Dialect/Runtime/RuntimeOps.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/Runtime.h"
+#include "obelisk/Runtime/StableHash.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/PatternMatch.h"
@@ -50,11 +51,7 @@ static_assert(offsetof(obelisk_rt_import_input_v1, limb_count) ==
               offsetof(obelisk_rt_import_output_v1, limb_count));
 
 uint64_t appendHash(uint64_t hash, uint64_t value, unsigned bytes) {
-  for (unsigned index = 0; index != bytes; ++index) {
-    hash ^= static_cast<uint8_t>(value >> (index * 8));
-    hash *= UINT64_C(1099511628211);
-  }
-  return hash;
+  return obelisk_stable_hash_append_uint_le(hash, value, bytes);
 }
 
 Value padDPIPlane(OpBuilder &builder, Location location, Value value,
@@ -210,7 +207,7 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
       (operation.getIsTask() ? OBELISK_RT_IMPORT_TASK : 0u);
   Value source = null;
   if (!operation.getSourceFile().empty()) {
-    uint64_t fileHash = UINT64_C(14695981039346656037);
+    uint64_t fileHash = OBELISK_STABLE_HASH_OFFSET_BASIS;
     for (unsigned char byte : operation.getSourceFile().bytes())
       fileHash = appendHash(fileHash, byte, 1);
     std::string base =

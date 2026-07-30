@@ -1,6 +1,7 @@
 //===- DesignDatabase.cpp - Checked DWARF-like design reflection ----------===//
 
 #include "RuntimeInternal.h"
+#include "obelisk/Runtime/StableHash.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -63,12 +64,11 @@ bool rangesDisjoint(uint64_t leftOffset, uint64_t leftCount,
 uint64_t nameHash(const uint8_t *name, uint64_t size);
 
 uint64_t checksum(const uint8_t *data, uint64_t size) {
-  uint64_t hash = UINT64_C(14695981039346656037);
+  uint64_t hash = OBELISK_STABLE_HASH_OFFSET_BASIS;
   for (uint64_t index = 0; index != size; ++index) {
     // The checksum field is treated as zero while hashing.
     uint8_t byte = index >= 32 && index < 40 ? 0 : data[index];
-    hash ^= byte;
-    hash *= UINT64_C(1099511628211);
+    hash = obelisk_stable_hash_append_byte(hash, byte);
   }
   return hash;
 }
@@ -584,12 +584,7 @@ bool validateDatabase(const Database &database) noexcept {
 }
 
 uint64_t nameHash(const uint8_t *name, uint64_t size) {
-  uint64_t hash = UINT64_C(14695981039346656037);
-  for (uint64_t index = 0; index != size; ++index) {
-    hash ^= name[index];
-    hash *= UINT64_C(1099511628211);
-  }
-  return hash;
+  return obelisk_stable_hash(name, size);
 }
 
 uint32_t descriptorKind(uint32_t recordKind) {

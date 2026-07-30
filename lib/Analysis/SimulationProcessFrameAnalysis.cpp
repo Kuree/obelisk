@@ -4,6 +4,7 @@
 
 #include "obelisk/Analysis/SimulationStorageAnalysis.h"
 #include "obelisk/Runtime/Runtime.h"
+#include "obelisk/Runtime/StableHash.h"
 
 #include "mlir/IR/BuiltinTypes.h"
 
@@ -28,8 +29,6 @@ constexpr uint64_t kWaitHeaderSize = sizeof(obelisk_rt_wait_record_v1);
 constexpr uint64_t kWaitEntrySize = sizeof(obelisk_rt_wait_entry_v1);
 constexpr uint64_t kWaitAlignment = alignof(obelisk_rt_wait_record_v1);
 constexpr uint32_t kFrameChecksumReserved = 0;
-constexpr uint64_t kFNVOffsetBasis = UINT64_C(14695981039346656037);
-constexpr uint64_t kFNVPrime = UINT64_C(1099511628211);
 
 bool alignUp(uint64_t value, uint64_t alignment, uint64_t &result) {
   if (value > std::numeric_limits<uint64_t>::max() - (alignment - 1))
@@ -39,11 +38,7 @@ bool alignUp(uint64_t value, uint64_t alignment, uint64_t &result) {
 }
 
 uint64_t appendHash(uint64_t hash, uint64_t value, unsigned bytes) {
-  for (unsigned index = 0; index != bytes; ++index) {
-    hash ^= static_cast<uint8_t>(value >> (index * 8));
-    hash *= kFNVPrime;
-  }
-  return hash;
+  return obelisk_stable_hash_append_uint_le(hash, value, bytes);
 }
 
 FailureOr<uint64_t> getComputedWaitSize(sim::SimSuspendObserveOp operation) {
@@ -393,7 +388,7 @@ SimulationProcessFrameAnalysis::create(sim::SimFuncOp function,
   if (!alignUp(cursor, result->frameAlignment, result->frameSize))
     return function.emitError("canonical process frame size overflow");
 
-  uint64_t hash = kFNVOffsetBasis;
+  uint64_t hash = OBELISK_STABLE_HASH_OFFSET_BASIS;
   hash = appendHash(hash, OBELISK_RT_VERSION, 4);
   hash = appendHash(hash, kFrameChecksumReserved, 4);
   hash = appendHash(hash, result->frameSize, 8);

@@ -9,6 +9,7 @@
 
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Runtime/StableHash.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
@@ -55,23 +56,17 @@ inline void alignTo(llvm::SmallVectorImpl<uint8_t> &output,
 
 inline uint64_t checksum(llvm::ArrayRef<uint8_t> data,
                          uint64_t checksumOffset) {
-  uint64_t hash = UINT64_C(14695981039346656037);
+  uint64_t hash = OBELISK_STABLE_HASH_OFFSET_BASIS;
   for (auto [index, byte] : llvm::enumerate(data)) {
     uint8_t hashed =
         index >= checksumOffset && index < checksumOffset + 8 ? 0 : byte;
-    hash ^= hashed;
-    hash *= UINT64_C(1099511628211);
+    hash = obelisk_stable_hash_append_byte(hash, hashed);
   }
   return hash;
 }
 
 inline uint64_t stableHash(llvm::StringRef text) {
-  uint64_t hash = UINT64_C(14695981039346656037);
-  for (unsigned char byte : text.bytes()) {
-    hash ^= byte;
-    hash *= UINT64_C(1099511628211);
-  }
-  return hash;
+  return obelisk_stable_hash(text.data(), text.size());
 }
 
 inline bool containsLogic(mlir::Type type) {

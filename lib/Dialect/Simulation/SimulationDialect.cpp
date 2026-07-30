@@ -2,6 +2,7 @@
 
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
+#include "obelisk/Runtime/StableHash.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -468,23 +469,21 @@ DPIABIAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
 }
 
 uint64_t getDPISignatureHash(ArrayAttr signature, uint64_t logicalInputs) {
-  auto append = [](uint64_t hash, uint64_t value, unsigned bytes) {
-    for (unsigned index = 0; index != bytes; ++index) {
-      hash ^= static_cast<uint8_t>(value >> (index * 8));
-      hash *= UINT64_C(1099511628211);
-    }
-    return hash;
-  };
-  uint64_t hash = UINT64_C(14695981039346656037);
-  hash = append(hash, logicalInputs, 8);
-  hash = append(hash, signature.size() - logicalInputs, 8);
+  uint64_t hash = OBELISK_STABLE_HASH_OFFSET_BASIS;
+  hash = obelisk_stable_hash_append_uint_le(hash, logicalInputs, 8);
+  hash = obelisk_stable_hash_append_uint_le(
+      hash, signature.size() - logicalInputs, 8);
   for (Attribute attribute : signature) {
     auto abi = cast<DPIABIAttr>(attribute);
-    hash = append(hash, static_cast<uint32_t>(abi.getKind()), 4);
-    hash = append(hash, static_cast<uint32_t>(abi.getDirection()), 4);
-    hash = append(hash, abi.getWidth(), 4);
-    hash = append(hash, abi.getFourState() ? 1 : 0, 1);
-    hash = append(hash, abi.getIsSigned() ? 1 : 0, 1);
+    hash = obelisk_stable_hash_append_uint_le(
+        hash, static_cast<uint32_t>(abi.getKind()), 4);
+    hash = obelisk_stable_hash_append_uint_le(
+        hash, static_cast<uint32_t>(abi.getDirection()), 4);
+    hash = obelisk_stable_hash_append_uint_le(hash, abi.getWidth(), 4);
+    hash =
+        obelisk_stable_hash_append_uint_le(hash, abi.getFourState() ? 1 : 0, 1);
+    hash =
+        obelisk_stable_hash_append_uint_le(hash, abi.getIsSigned() ? 1 : 0, 1);
   }
   return hash ? hash : 1;
 }

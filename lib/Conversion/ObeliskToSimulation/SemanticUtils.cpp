@@ -2,6 +2,8 @@
 
 #include "Detail.h"
 
+#include "obelisk/Runtime/StableHash.h"
+
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
@@ -169,11 +171,7 @@ bool isUnboundedEndpoint(Operation *operation) {
 }
 
 uint64_t stableCodeUnitID(StringRef key) {
-  uint64_t hash = UINT64_C(14695981039346656037);
-  for (uint8_t byte : key.bytes()) {
-    hash ^= byte;
-    hash *= UINT64_C(1099511628211);
-  }
+  uint64_t hash = obelisk_stable_hash(key.data(), key.size());
   hash &= static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
   return hash == 0 ? 1 : hash;
 }

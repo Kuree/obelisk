@@ -2,6 +2,7 @@
 
 #include "RuntimeInternal.h"
 #include "obelisk/Runtime/StableHandle.h"
+#include "obelisk/Runtime/StableHash.h"
 
 #include <algorithm>
 #include <atomic>
@@ -322,30 +323,27 @@ bool alignUp(uint64_t value, uint64_t alignment, uint64_t &result) {
          (result = padded & ~(alignment - 1), false);
 }
 
-uint64_t hashBytes(uint64_t hash, const void *data, size_t size) {
-  const auto *bytes = static_cast<const uint8_t *>(data);
-  for (size_t index = 0; index != size; ++index) {
-    hash ^= bytes[index];
-    hash *= UINT64_C(1099511628211);
-  }
-  return hash;
-}
-
 uint64_t layoutChecksum(const obelisk_rt_frame_layout_v1 &layout) {
-  uint64_t hash = UINT64_C(14695981039346656037);
-  hash = hashBytes(hash, &layout.version, sizeof(layout.version));
-  hash = hashBytes(hash, &layout.flags, sizeof(layout.flags));
-  hash = hashBytes(hash, &layout.frame_size, sizeof(layout.frame_size));
+  uint64_t hash = OBELISK_STABLE_HASH_OFFSET_BASIS;
+  hash = obelisk_stable_hash_append_uint_le(hash, layout.version, 4);
+  hash = obelisk_stable_hash_append_uint_le(hash, layout.flags, 4);
+  hash = obelisk_stable_hash_append_uint_le(hash, layout.frame_size, 8);
+  hash = obelisk_stable_hash_append_uint_le(hash, layout.frame_alignment, 8);
+  hash = obelisk_stable_hash_append_uint_le(hash, layout.field_count, 4);
   hash =
-      hashBytes(hash, &layout.frame_alignment, sizeof(layout.frame_alignment));
-  hash = hashBytes(hash, &layout.field_count, sizeof(layout.field_count));
-  hash = hashBytes(hash, &layout.continuation_count,
-                   sizeof(layout.continuation_count));
-  for (uint32_t index = 0; index != layout.field_count; ++index)
-    hash = hashBytes(hash, &layout.fields[index], sizeof(layout.fields[index]));
+      obelisk_stable_hash_append_uint_le(hash, layout.continuation_count, 4);
+  for (uint32_t index = 0; index != layout.field_count; ++index) {
+    const obelisk_rt_frame_field_v1 &field = layout.fields[index];
+    hash = obelisk_stable_hash_append_uint_le(hash, field.kind, 4);
+    hash = obelisk_stable_hash_append_uint_le(hash, field.flags, 4);
+    hash = obelisk_stable_hash_append_uint_le(hash, field.offset, 8);
+    hash = obelisk_stable_hash_append_uint_le(hash, field.size, 8);
+    hash = obelisk_stable_hash_append_uint_le(hash, field.alignment, 4);
+    hash = obelisk_stable_hash_append_uint_le(hash, field.reserved, 4);
+  }
   for (uint32_t index = 0; index != layout.continuation_count; ++index)
-    hash = hashBytes(hash, &layout.continuations[index],
-                     sizeof(layout.continuations[index]));
+    hash =
+        obelisk_stable_hash_append_uint_le(hash, layout.continuations[index], 4);
   return hash;
 }
 
