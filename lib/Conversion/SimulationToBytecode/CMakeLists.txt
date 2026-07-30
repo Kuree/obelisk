@@ -1,4 +1,5 @@
 add_mlir_library(ObeliskSimulationToBytecode
+  DesignDatabaseSerialization.cpp
   SimulationToBytecode.cpp
 
   DEPENDS
