@@ -9,6 +9,7 @@ module attributes {
   obelisk_sim.design @associative_array {
     obelisk_sim.scope.decl 0 hierarchy "top"
     obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.assoc"
+    obelisk_sim.code_unit.decl 2 in 0 initial hierarchy "top.logic_assoc"
 
     obelisk_sim.func @assoc(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
@@ -51,6 +52,46 @@ module attributes {
         (!obelisk_sim.assoc_array<i32, i64, true, false>) -> ()
       obelisk_sim.return
     }
+
+    // Exercise one-to-many conversion results directly. A four-state element
+    // lowers to value and unknown planes, while traversal replaces both its
+    // key and success results.
+    obelisk_sim.func @logic_assoc(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {code_unit_id = 2 : i64, entry_kind = 1 : i32} {
+      %key = arith.constant 4 : i32
+      %value = obelisk_sim.logic.constant 5 : i4, 2 : i4 :
+          !obelisk_sim.logic<4>
+      %array = obelisk_sim.assoc.create {
+        alignment = 1 : i64,
+        bit_width = 4 : i64,
+        element_flags = 1 : i32,
+        element_kind = 2 : i32,
+        key_kind = 2 : i32,
+        key_width = 32 : i64,
+        trace_kinds = array<i32>,
+        trace_offsets = array<i64>,
+        type_id = 2 : i64,
+        value_size = 1 : i64
+      } : () -> !obelisk_sim.assoc_array<i32, !obelisk_sim.logic<4>, true, false>
+      obelisk_sim.assoc.write %array, %key, %value :
+        (!obelisk_sim.assoc_array<i32, !obelisk_sim.logic<4>, true, false>,
+         i32, !obelisk_sim.logic<4>) -> ()
+      %read = obelisk_sim.assoc.read %array, %key :
+        (!obelisk_sim.assoc_array<i32, !obelisk_sim.logic<4>, true, false>,
+         i32) -> !obelisk_sim.logic<4>
+      obelisk_sim.assoc.set_default %array, %read :
+        (!obelisk_sim.assoc_array<i32, !obelisk_sim.logic<4>, true, false>,
+         !obelisk_sim.logic<4>) -> ()
+      %next, %valid = obelisk_sim.assoc.traverse %array, %key {
+        direction = 1 : i32, endpoint = false
+      } : (!obelisk_sim.assoc_array<i32, !obelisk_sim.logic<4>, true, false>,
+           i32) -> (i32, i1)
+      obelisk_sim.assoc.delete %array, %next :
+        (!obelisk_sim.assoc_array<i32, !obelisk_sim.logic<4>, true, false>,
+         i32) -> ()
+      obelisk_sim.return
+    }
   }
 }
 
@@ -70,4 +111,5 @@ module attributes {
 // NATIVE-DAG: llvm.call @obelisk_rt_v1_assoc_next
 // NATIVE-DAG: llvm.call @obelisk_rt_v1_reference_path_assoc_create
 // NATIVE-DAG: llvm.call @obelisk_rt_v1_assoc_delete
+// NATIVE-NOT: unrealized_conversion_cast
 // BYTECODE: obelisk.bytecode.image

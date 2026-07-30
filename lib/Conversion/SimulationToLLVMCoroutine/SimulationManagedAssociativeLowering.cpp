@@ -219,7 +219,9 @@ public:
     for (auto [type, slot] : llvm::zip_equal(types, storage))
       values.push_back(
           LLVM::LoadOp::create(rewriter, op.getLoc(), type, slot, 8));
-    rewriter.replaceOpWithMultiple(op, {ValueRange(values)});
+    SmallVector<SmallVector<Value>> replacements;
+    replacements.push_back(std::move(values));
+    rewriter.replaceOpWithMultiple(op, std::move(replacements));
     return success();
   }
 };
@@ -430,10 +432,10 @@ public:
         rewriter, op.getLoc(), rewriter.getI32Type(), successSlot, 4);
     Value success1 = arith::TruncIOp::create(rewriter, op.getLoc(),
                                              rewriter.getI1Type(), success32);
-    SmallVector<ValueRange> replacements;
-    replacements.push_back(keyValues);
-    replacements.push_back(ValueRange{success1});
-    rewriter.replaceOpWithMultiple(op, replacements);
+    SmallVector<SmallVector<Value>> replacements;
+    replacements.push_back(std::move(keyValues));
+    replacements.push_back({success1});
+    rewriter.replaceOpWithMultiple(op, std::move(replacements));
     return success();
   }
 };
@@ -450,4 +452,3 @@ void populateManagedAssociativeToLLVMConversionPatterns(
 }
 
 } // namespace obelisk::detail
-
