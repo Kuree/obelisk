@@ -18,7 +18,7 @@
 #include <memory>
 #include <new>
 #include <string>
-#include <unordered_set>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -50,8 +50,7 @@ namespace {
 
 struct VPIState {
   obelisk_rt_context *context = nullptr;
-  std::vector<std::unique_ptr<__vpiHandle>> handles;
-  std::unordered_set<__vpiHandle *> arena;
+  std::unordered_map<__vpiHandle *, std::unique_ptr<__vpiHandle>> handles;
   std::string errorMessage;
   std::string errorCode;
   int errorLevel = 0;
@@ -81,7 +80,8 @@ VPIState *requireState() {
 __vpiHandle *validate(vpiHandle opaque, bool iterator = false) {
   VPIState *state = requireState();
   auto *handle = reinterpret_cast<__vpiHandle *>(opaque);
-  if (!state || !handle || state->arena.find(handle) == state->arena.end() ||
+  if (!state || !handle ||
+      state->handles.find(handle) == state->handles.end() ||
       handle->owner != state || !handle->alive ||
       handle->iterator != iterator) {
     setError(state, "invalid, released, or wrong-kind VPI handle");
@@ -90,20 +90,19 @@ __vpiHandle *validate(vpiHandle opaque, bool iterator = false) {
   return handle;
 }
 
+vpiHandle keepHandle(VPIState *state,
+                     std::unique_ptr<__vpiHandle> handle) {
+  __vpiHandle *result = handle.get();
+  state->handles.try_emplace(result, std::move(handle));
+  return reinterpret_cast<vpiHandle>(result);
+}
+
 vpiHandle makeHandle(VPIState *state, obelisk_rt_design_cursor_v1 cursor) {
   try {
     auto handle = std::make_unique<__vpiHandle>();
     handle->owner = state;
     handle->cursor = cursor;
-    __vpiHandle *result = handle.get();
-    state->handles.push_back(std::move(handle));
-    try {
-      state->arena.insert(result);
-    } catch (...) {
-      state->handles.pop_back();
-      throw;
-    }
-    return reinterpret_cast<vpiHandle>(result);
+    return keepHandle(state, std::move(handle));
   } catch (const std::bad_alloc &) {
     setError(state, "VPI handle arena is out of memory", vpiSystem);
     return nullptr;
@@ -471,15 +470,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
     iterator->owner = state;
     iterator->iterator = true;
     iterator->items = std::move(items);
-    __vpiHandle *result = iterator.get();
-    state->handles.push_back(std::move(iterator));
-    try {
-      state->arena.insert(result);
-    } catch (...) {
-      state->handles.pop_back();
-      throw;
-    }
-    return reinterpret_cast<vpiHandle>(result);
+    return keepHandle(state, std::move(iterator));
   } catch (...) {
     setError(state, "could not allocate VPI iterator", vpiSystem);
     return nullptr;
@@ -657,7 +648,8 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_compare_objects(vpiHandle first,
 extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_release_handle(vpiHandle opaque) {
   VPIState *state = requireState();
   auto *handle = reinterpret_cast<__vpiHandle *>(opaque);
-  if (!state || !handle || state->arena.find(handle) == state->arena.end() ||
+  if (!state || !handle ||
+      state->handles.find(handle) == state->handles.end() ||
       handle->owner != state || !handle->alive) {
     setError(state, "VPI handle was already released or is invalid");
     return 0;
