@@ -1,6 +1,9 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
 // RUN:   --encode-obelisk-sim-to-bytecode='vpi=off' \
 // RUN:   | FileCheck %s
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
+// RUN:   | FileCheck %s --check-prefix=LOWER \
+// RUN:     --implicit-check-not=obelisk.sv.
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128"
@@ -750,3 +753,15 @@ module attributes {
 // artifact version 1.
 // CHECK: obelisk.bytecode.image = array<i8: 79, 66, 66, 67, 68, 83, 49, 0, 1, 0, 0, 0, 0, 0, 0, 0
 // CHECK: obelisk.execution.state_bits = {{[1-9][0-9]*}} : i64
+
+// Port connection lowering owns the semantic inventory independently of the
+// driver: static net topology remains declarative, empty defaulted inputs get
+// initialization code units, and generated/arrayed instances retain distinct
+// hidden connection identities.
+// LOWER-DAG: obelisk_sim.net.connect.decl {{[0-9]+}} in {{[0-9]+}} 0[0] to 1[0] width 1 reversed = false provenance "ordered"
+// LOWER-DAG: obelisk_sim.net.connect.decl {{[0-9]+}} in {{[0-9]+}} 0[0] to 2[0] width 1 reversed = false provenance "named"
+// LOWER-DAG: obelisk_sim.code_unit.decl {{[0-9]+}} in {{[0-9]+}} port_initialize hierarchy "port_connections_inventory.uses_default.$port_connection_0"{{.*}}{internal}
+// LOWER-DAG: obelisk_sim.code_unit.decl {{[0-9]+}} in {{[0-9]+}} port_output hierarchy "port_connections_inventory.arrayed[0].$port_connection_2"{{.*}}{internal}
+// LOWER-DAG: obelisk_sim.code_unit.decl {{[0-9]+}} in {{[0-9]+}} port_output hierarchy "port_connections_inventory.arrayed[1].$port_connection_2"{{.*}}{internal}
+// LOWER-DAG: obelisk_sim.code_unit.decl {{[0-9]+}} in {{[0-9]+}} port_input hierarchy "port_connections_inventory.generated[0].element.$port_connection_0"{{.*}}{internal}
+// LOWER-DAG: obelisk_sim.code_unit.decl {{[0-9]+}} in {{[0-9]+}} port_input hierarchy "port_connections_inventory.generated[1].element.$port_connection_0"{{.*}}{internal}
