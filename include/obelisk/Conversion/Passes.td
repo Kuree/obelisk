@@ -77,6 +77,20 @@ def ObeliskSimInstrumentManagedRootsPass
   }];
 }
 
+def ObeliskSimInstrumentReferenceLifetimesPass
+    : Pass<"obelisk-sim-instrument-reference-lifetimes",
+           "obelisk::sim::SimFuncOp"> {
+  let summary = "Release automatic simulation references on CFG exits";
+  let description = [{
+    Uses MLIR dominance and liveness to insert one owner release on every
+    control-flow edge where an automatic simulation reference dies.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect",
+    "mlir::cf::ControlFlowDialect"
+  ];
+}
+
 def ObeliskSimSCCPPass
     : Pass<"obelisk-sim-sccp", "obelisk::sim::SimDesignOp"> {
   let summary = "Propagate constants across simulation code-unit boundaries";

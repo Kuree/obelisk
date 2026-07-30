@@ -1632,6 +1632,19 @@ def SimRefAllocOp : SimOp<"ref.alloc", [
   let hasVerifier = 1;
 }
 
+def SimRefReleaseOwnerOp : SimOp<"ref.release_owner"> {
+  let summary = "end an automatic reference ownership lifetime";
+  let description = [{
+    Marks a control-flow point where the owner reference created by
+    `obelisk_sim.ref.alloc` is no longer live. This internal operation is
+    inserted by lifetime analysis and consumed by native lowering.
+  }];
+  let arguments =
+      (ins Arg<SimRefType, "", [MemFree<SimStorageResource>]>:$reference);
+  let assemblyFormat =
+      "$reference attr-dict `:` qualified(type($reference))";
+}
+
 def SimRefLoadOp : SimOp<"ref.load", [
     DeclareOpInterfaceMethods<PromotableMemOpInterface>,
     DeclareOpInterfaceMethods<DestructurableAccessorOpInterface>,

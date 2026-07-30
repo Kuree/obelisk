@@ -69,6 +69,9 @@ struct NativeStateLayout : analysis::NativeStateLayoutAnalysis {
   bool transitionHandlesExact = false;
 };
 
+using ReferenceArgumentMap =
+    llvm::DenseMap<mlir::Operation *, mlir::SmallVector<unsigned>>;
+
 bool alignUp(uint64_t value, uint64_t alignment, uint64_t &result);
 bool containsLogic(mlir::Type type);
 std::optional<unsigned> nativeStateWidth(mlir::Type type);
@@ -158,6 +161,13 @@ void populateNativeHandleConversionPatterns(
 void populateOverrideToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter,
     uint64_t stateBitCount);
+void populateReferenceLifetimeToLLVMConversionPatterns(
+    mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
+mlir::LogicalResult
+insertAutomaticOwnerReleases(obelisk::sim::SimFuncOp function);
+mlir::LogicalResult
+releaseNativeAutomaticState(mlir::ModuleOp module,
+                            const ReferenceArgumentMap &referenceArguments);
 void populateContextRuntimeToLLVMConversionPattern(
     mlir::RewritePatternSet &patterns, const mlir::TypeConverter &converter);
 mlir::LogicalResult
