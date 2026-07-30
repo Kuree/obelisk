@@ -171,6 +171,7 @@ foreach(source ABI Bytecode Containers Coverage DesignBytecode DesignDatabase
       --target=${OBELISK_TARGET_TRIPLE}
       --sysroot=${OBELISK_TARGET_SYSROOT}
       -std=c++17 -O3 -fPIC -fvisibility=hidden
+      -ffunction-sections -fdata-sections
       "-ffile-prefix-map=${_obelisk_runtime_source_dir}=/obelisk/runtime"
       "-fmacro-prefix-map=${_obelisk_runtime_source_dir}=/obelisk/runtime"
       -nostdinc++
@@ -184,6 +185,7 @@ foreach(source ABI Bytecode Containers Coverage DesignBytecode DesignDatabase
       --target=${OBELISK_TARGET_TRIPLE}
       --sysroot=${OBELISK_TARGET_SYSROOT}
       -std=c++17 -O3 -flto=full -funified-lto -fPIC -fvisibility=hidden
+      -ffunction-sections -fdata-sections
       "-ffile-prefix-map=${_obelisk_runtime_source_dir}=/obelisk/runtime"
       "-fmacro-prefix-map=${_obelisk_runtime_source_dir}=/obelisk/runtime"
       -nostdinc++

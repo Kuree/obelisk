@@ -12,6 +12,10 @@
 // RUN: %t.exe > %t.exe.out
 // RUN: FileCheck %s --check-prefix=OUTPUT < %t.exe.out
 // RUN: obelisk -O0 --compile-threads=1 %s -o %t.o0.exe
+// RUN: llvm-readelf --symbols %t.o0.exe \
+// RUN:   | FileCheck %s --check-prefix=GC-SECTIONS \
+// RUN:     --implicit-check-not=obelisk_rt_v1_queue_create \
+// RUN:     --implicit-check-not=obelisk_rt_v1_vpi_startup
 // RUN: %t.o0.exe > %t.o0.out
 // RUN: diff -u %t.exe.out %t.o0.out
 // RUN: obelisk -O1 --compile-threads=1 %s -o %t.o1.t1.exe
@@ -73,6 +77,10 @@ endmodule
 // VERSIONS: Name: GLIBC_2.
 
 // PATHS: obelisk_rt_v1_scheduler_run
+
+// The non-LTO runtime uses one ELF section per function so the linker can
+// retain scheduler support without pulling unrelated container or VPI APIs.
+// GC-SECTIONS: obelisk_rt_v1_scheduler_run_aot
 
 // LLVM: target triple = "x86_64-unknown-linux-gnu"
 // LLVM-DAG: @unit_0.__obelisk_schedule_ranks = internal constant [1 x i32] [i32 2]

@@ -594,6 +594,7 @@ LogicalResult linkExecutable(StringRef modulePath, StringRef outputPath,
   SmallVector<std::string> owned;
   owned.push_back("ld.lld");
   owned.push_back("--no-dependent-libraries");
+  owned.push_back("--gc-sections");
   owned.push_back("-pie");
   owned.push_back("--export-dynamic-symbol=sv*");
   owned.push_back("--export-dynamic-symbol=vpi*");
