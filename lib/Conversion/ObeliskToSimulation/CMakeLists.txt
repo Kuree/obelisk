@@ -27,6 +27,7 @@ add_mlir_library(ObeliskToSimulation
   PlanStaticSuperstep.cpp
   Prepare.cpp
   PrepareDeclarations.cpp
+  PrepareNetTopology.cpp
   PrepareTopology.cpp
   PrepareValidation.cpp
   SCCP.cpp
