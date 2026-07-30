@@ -1,6 +1,7 @@
 //===- DesignBytecodeLogic.cpp - Bytecode integer value semantics -------===//
 
 #include "DesignBytecodeLogic.h"
+#include "DesignBytecodeImage.h"
 #include "obelisk/Runtime/Runtime.h"
 
 #include <algorithm>
@@ -394,6 +395,46 @@ Logic shift(const Logic &input, const Logic &amount, uint16_t opcode) {
            fill ? bit(input.unknown, source) : arithmetic && signUnknown);
   }
   return result;
+}
+
+Logic readLogic(const uint8_t *frame, const Layout &layout) {
+  Logic result{layout.width, layout.kind == OBELISK_RT_DBREG_LOGIC,
+               std::vector<uint64_t>(limbCount(layout.width)),
+               std::vector<uint64_t>(limbCount(layout.width))};
+  std::memcpy(
+      result.value.data(), frame + layout.offset,
+      std::min<uint64_t>(layout.size, result.value.size() * sizeof(uint64_t)));
+  if (result.fourState)
+    std::memcpy(result.unknown.data(),
+                frame + layout.offset + result.value.size() * sizeof(uint64_t),
+                result.unknown.size() * sizeof(uint64_t));
+  result.value.back() &= finalMask(result.width);
+  result.unknown.back() &= finalMask(result.width);
+  return result;
+}
+
+void writeLogic(uint8_t *frame, const Layout &layout, const Logic &value) {
+  uint64_t limbs = limbCount(layout.width);
+  std::vector<uint64_t> plane(limbs, 0);
+  for (uint64_t index = 0;
+       index != std::min<uint64_t>(limbs, value.value.size()); ++index) {
+    plane[index] = value.value[index];
+    // Four-state to two-state conversion maps both X and Z to zero.
+    if (layout.kind == OBELISK_RT_DBREG_BITS && index < value.unknown.size())
+      plane[index] &= ~value.unknown[index];
+  }
+  plane.back() &= finalMask(layout.width);
+  std::memcpy(frame + layout.offset, plane.data(),
+              std::min<uint64_t>(layout.size, limbs * sizeof(uint64_t)));
+  if (layout.kind == OBELISK_RT_DBREG_LOGIC) {
+    std::fill(plane.begin(), plane.end(), 0);
+    for (uint64_t index = 0;
+         index != std::min<uint64_t>(limbs, value.unknown.size()); ++index)
+      plane[index] = value.unknown[index];
+    plane.back() &= finalMask(layout.width);
+    std::memcpy(frame + layout.offset + limbs * sizeof(uint64_t), plane.data(),
+                limbs * sizeof(uint64_t));
+  }
 }
 
 } // namespace obelisk::designbytecode

@@ -214,6 +214,7 @@ native_members = [
     "Coverage.o",
     "DesignBytecode.o",
     "DesignBytecodeImage.o",
+    "DesignBytecodeIntrinsics.o",
     "DesignBytecodeLogic.o",
     "DesignBytecodeNets.o",
     "DesignDatabase.o",
