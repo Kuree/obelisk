@@ -38,6 +38,10 @@ namespace obelisk::detail {
 
 inline constexpr llvm::StringLiteral nativeTwoStateBlockUnknownsAttr =
     "obelisk.native.two_state_block_unknowns";
+inline constexpr llvm::StringLiteral managedRootRangeRecordAttr =
+    "obelisk.managed_root_range_record";
+inline constexpr llvm::StringLiteral managedRootRangePushCheckAttr =
+    "obelisk.managed_root_range_push_check";
 
 enum class NativeReturnLowering {
   None,
@@ -116,6 +120,9 @@ lowerNativeFunctionBody(mlir::Operation *root,
                         NativeCallResultLowering callResultLowering);
 mlir::LogicalResult
 threadProcessStateThroughCFG(obelisk::sim::SimFuncOp function);
+mlir::LogicalResult threadRuntimeStatuses(mlir::ModuleOp module);
+void emitManagedRootRangePop(mlir::OpBuilder &builder, mlir::Location location,
+                             mlir::Operation *scope);
 mlir::LogicalResult materializeDPIThunks(mlir::ModuleOp module);
 void populateManagedToLLVMConversionPatterns(mlir::RewritePatternSet &patterns,
                                              mlir::TypeConverter &converter,

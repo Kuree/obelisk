@@ -47,7 +47,6 @@
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -77,6 +76,7 @@ using detail::containsLogic;
 using detail::convertProcessType;
 using detail::emitNativeStateRetain;
 using detail::entryAlloca;
+using detail::emitManagedRootRangePop;
 using detail::flatten;
 using detail::getOrDeclareLLVMFunction;
 using detail::insertValue;
@@ -89,6 +89,8 @@ using detail::makeByteArrayGlobal;
 using detail::makeConstantGlobal;
 using detail::managedClassDescriptorName;
 using detail::managedMethodThunkName;
+using detail::managedRootRangePushCheckAttr;
+using detail::managedRootRangeRecordAttr;
 using detail::materializeDPIThunks;
 using detail::materializeManagedMethodThunks;
 using detail::materializeNativeObserverThunks;
@@ -112,6 +114,7 @@ using detail::serializeRuntimeWait;
 using detail::stableProcessID;
 using detail::storeAt;
 using detail::threadProcessStateThroughCFG;
+using detail::threadRuntimeStatuses;
 
 constexpr uint64_t kNoOffset = std::numeric_limits<uint64_t>::max();
 constexpr StringLiteral kAutomaticOwnerReleaseMarker =
@@ -553,186 +556,6 @@ LogicalResult makeNativeWrappers(ModuleOp module, LLVM::LLVMFuncOp ramp,
   return success();
 }
 
-constexpr StringLiteral kManagedRootRangeRecordAttr =
-    "obelisk.managed_root_range_record";
-constexpr StringLiteral kManagedRootRangePushCheckAttr =
-    "obelisk.managed_root_range_push_check";
-
-LLVM::AllocaOp findManagedRootRangeRecord(Operation *scope) {
-  LLVM::AllocaOp record;
-  scope->walk([&](LLVM::AllocaOp allocation) {
-    if (!record && allocation->hasAttr(kManagedRootRangeRecordAttr))
-      record = allocation;
-  });
-  return record;
-}
-
-void emitManagedRootRangePop(OpBuilder &builder, Location location,
-                             Operation *scope) {
-  LLVM::AllocaOp record = findManagedRootRangeRecord(scope);
-  if (!record)
-    return;
-  MLIRContext *context = builder.getContext();
-  Type pointer = LLVM::LLVMPointerType::get(context);
-  Value contextAddress = LLVM::AddressOfOp::create(builder, location, pointer,
-                                                   "__obelisk_current_context");
-  Value runtimeContext =
-      LLVM::LoadOp::create(builder, location, pointer, contextAddress, 8);
-  Value lane = LLVM::CallOp::create(
-                   builder, location, TypeRange{pointer},
-                   SymbolRefAttr::get(context, "obelisk_rt_v1_gc_current_lane"),
-                   runtimeContext)
-                   .getResult();
-  Value status = LLVM::CallOp::create(
-                     builder, location, TypeRange{builder.getI32Type()},
-                     SymbolRefAttr::get(
-                         context, "obelisk_rt_v1_gc_managed_root_range_pop"),
-                     ValueRange{lane, record})
-                     .getResult();
-  LLVM::CallOp::create(
-      builder, location, TypeRange{},
-      SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
-      ValueRange{runtimeContext, status});
-}
-
-LogicalResult threadRuntimeStatuses(ModuleOp module) {
-  MLIRContext *context = module.getContext();
-  llvm::StringMap<sim::SimFuncOp> functions;
-  SmallVector<sim::SimFuncOp> orderedFunctions;
-  module.walk([&](sim::SimFuncOp function) {
-    functions[function.getSymName()] = function;
-    orderedFunctions.push_back(function);
-  });
-
-  llvm::DenseSet<Operation *> mayFail;
-  for (sim::SimFuncOp function : orderedFunctions)
-    function.walk([&](sim::SimStatusCheckOp) {
-      mayFail.insert(function.getOperation());
-    });
-
-  bool changed;
-  do {
-    changed = false;
-    for (sim::SimFuncOp function : orderedFunctions) {
-      if (mayFail.contains(function.getOperation()))
-        continue;
-      bool callsFailing = false;
-      function.walk([&](sim::SimCallOp call) {
-        auto callee = functions.find(call.getCallee());
-        callsFailing |= callee != functions.end() &&
-                        mayFail.contains(callee->second.getOperation());
-      });
-      if (callsFailing)
-        changed |= mayFail.insert(function.getOperation()).second;
-    }
-  } while (changed);
-
-  llvm::DenseSet<Operation *> statusReturning;
-  OpBuilder builder(context);
-  Type statusType = runtime::StatusType::get(context);
-  for (sim::SimFuncOp function : orderedFunctions) {
-    if (!mayFail.contains(function.getOperation()) ||
-        (function.getEntryKind() != sim::EntryKind::Function &&
-         function.getEntryKind() != sim::EntryKind::Observer))
-      continue;
-    statusReturning.insert(function.getOperation());
-    SmallVector<Type> results(function.getResultTypes());
-    results.push_back(statusType);
-    function.setType(
-        FunctionType::get(context, function.getArgumentTypes(), results));
-    SmallVector<Attribute> resultAttrs;
-    if (auto attrs = function.getResAttrs())
-      llvm::append_range(resultAttrs, *attrs);
-    while (resultAttrs.size() != results.size())
-      resultAttrs.push_back(builder.getDictionaryAttr({}));
-    function.setResAttrsAttr(builder.getArrayAttr(resultAttrs));
-  }
-
-  SmallVector<sim::SimCallOp> calls;
-  module.walk([&](sim::SimCallOp call) { calls.push_back(call); });
-  IRRewriter rewriter(context);
-  for (sim::SimCallOp call : calls) {
-    auto callee = functions.find(call.getCallee());
-    if (callee == functions.end() ||
-        !statusReturning.contains(callee->second.getOperation()))
-      continue;
-    SmallVector<Type> results(call.getResultTypes());
-    results.push_back(statusType);
-    SmallVector<Attribute> resultAttrs;
-    if (auto attrs = call.getResAttrs())
-      llvm::append_range(resultAttrs, *attrs);
-    while (resultAttrs.size() != results.size())
-      resultAttrs.push_back(rewriter.getDictionaryAttr({}));
-    rewriter.setInsertionPoint(call);
-    auto replacement = sim::SimCallOp::create(
-        rewriter, call.getLoc(), results, call.getCalleeAttr(),
-        call.getOperands(), call.getArgAttrsAttr(),
-        rewriter.getArrayAttr(resultAttrs));
-    for (auto [oldResult, newResult] : llvm::zip_equal(
-             call.getResults(), replacement.getResults().drop_back()))
-      oldResult.replaceAllUsesWith(newResult);
-    rewriter.setInsertionPointAfter(replacement);
-    sim::SimStatusCheckOp::create(rewriter, call.getLoc(),
-                                  replacement.getResults().back());
-    rewriter.eraseOp(call);
-  }
-
-  for (sim::SimFuncOp function : orderedFunctions) {
-    if (!statusReturning.contains(function.getOperation()))
-      continue;
-    SmallVector<sim::SimReturnOp> returns;
-    function.walk(
-        [&](sim::SimReturnOp operation) { returns.push_back(operation); });
-    for (sim::SimReturnOp operation : returns) {
-      rewriter.setInsertionPoint(operation);
-      Value zero = arith::ConstantOp::create(rewriter, operation.getLoc(),
-                                             rewriter.getI32Type(),
-                                             rewriter.getI32IntegerAttr(0));
-      Value ok = runtime::RTStatusFromBitsOp::create(
-          rewriter, operation.getLoc(), statusType, zero);
-      SmallVector<Value> operands(operation.getOperands());
-      operands.push_back(ok);
-      sim::SimReturnOp::create(rewriter, operation.getLoc(), operands);
-      rewriter.eraseOp(operation);
-    }
-
-    SmallVector<sim::SimStatusCheckOp> checks;
-    function.walk(
-        [&](sim::SimStatusCheckOp check) { checks.push_back(check); });
-    for (sim::SimStatusCheckOp check : checks) {
-      Block *source = check->getBlock();
-      Block *continuation = source->splitBlock(std::next(check->getIterator()));
-      Block *failure = new Block;
-      function.getBody().push_back(failure);
-      rewriter.setInsertionPoint(check);
-      Value ok = runtime::RTStatusIsOp::create(
-          rewriter, check.getLoc(), rewriter.getI1Type(), check.getStatus(), 0);
-      cf::CondBranchOp::create(rewriter, check.getLoc(), ok, continuation,
-                               ValueRange{}, failure, ValueRange{});
-      Value status = check.getStatus();
-      bool pushFailure = check->hasAttr(kManagedRootRangePushCheckAttr);
-      rewriter.eraseOp(check);
-
-      rewriter.setInsertionPointToStart(failure);
-      SmallVector<Value> values;
-      for (Type type : function.getResultTypes().drop_back()) {
-        auto integer = dyn_cast<IntegerType>(type);
-        if (!integer)
-          return function.emitError()
-                 << "cannot materialize a failure result for " << type;
-        values.push_back(
-            arith::ConstantOp::create(rewriter, function.getLoc(), integer,
-                                      rewriter.getIntegerAttr(integer, 0)));
-      }
-      values.push_back(status);
-      if (!pushFailure)
-        emitManagedRootRangePop(rewriter, function.getLoc(), function);
-      sim::SimReturnOp::create(rewriter, function.getLoc(), values);
-    }
-  }
-  return success();
-}
-
 LogicalResult
 makePlainNativeWrappers(ModuleOp module, func::FuncOp body, StringRef baseName,
                         const SimulationProcessFrameAnalysis &analysis) {
@@ -867,7 +690,7 @@ lowerPlainNativeProcess(sim::SimFuncOp function,
     cf::CondBranchOp::create(rewriter, check.getLoc(), ok, continuation,
                              ValueRange{}, failure, ValueRange{});
     Value status = check.getStatus();
-    bool pushFailure = check->hasAttr(kManagedRootRangePushCheckAttr);
+    bool pushFailure = check->hasAttr(managedRootRangePushCheckAttr);
     rewriter.eraseOp(check);
     rewriter.setInsertionPointToStart(failure);
     Value bits = runtime::RTStatusToBitsOp::create(
@@ -1220,7 +1043,7 @@ lowerSuspendableProcess(sim::SimFuncOp function,
     cf::CondBranchOp::create(builder, check.getLoc(), ok, continuation,
                              ValueRange{}, failure, ValueRange{});
     Value status = check.getStatus();
-    bool pushFailure = check->hasAttr(kManagedRootRangePushCheckAttr);
+    bool pushFailure = check->hasAttr(managedRootRangePushCheckAttr);
     check.erase();
     builder.setInsertionPointToStart(failure);
     Value bits = runtime::RTStatusToBitsOp::create(
@@ -3695,7 +3518,7 @@ LogicalResult instrumentManagedRoots(ModuleOp module) {
     Value one = llvmConstant(builder, location, i64, 1);
     Value record =
         LLVM::AllocaOp::create(builder, location, pointer, rootType, one, 8);
-    record.getDefiningOp()->setAttr(kManagedRootRangeRecordAttr,
+    record.getDefiningOp()->setAttr(managedRootRangeRecordAttr,
                                     builder.getUnitAttr());
 
     // Each coroutine activation owns roots only while it is running on the
@@ -3741,7 +3564,7 @@ LogicalResult instrumentManagedRoots(ModuleOp module) {
               .getResult();
       Operation *check =
           reportManagedStatus(builder, location, runtimeContext, status);
-      check->setAttr(kManagedRootRangePushCheckAttr, builder.getUnitAttr());
+      check->setAttr(managedRootRangePushCheckAttr, builder.getUnitAttr());
       last = check;
       activationEnds[block] = last;
     }

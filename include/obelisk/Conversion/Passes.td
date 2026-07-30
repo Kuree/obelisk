@@ -58,6 +58,16 @@ def ObeliskSimThreadProcessCFGPass
   }];
 }
 
+def ObeliskSimThreadRuntimeStatusesPass
+    : Pass<"obelisk-sim-thread-runtime-statuses", "mlir::ModuleOp"> {
+  let summary = "Thread runtime failures through simulation calls";
+  let description = [{
+    Computes the transitive set of simulation functions that may fail, appends
+    a runtime status result to their signatures and call sites, and lowers
+    status checks to explicit success and failure control flow.
+  }];
+}
+
 def ObeliskSimSCCPPass
     : Pass<"obelisk-sim-sccp", "obelisk::sim::SimDesignOp"> {
   let summary = "Propagate constants across simulation code-unit boundaries";
