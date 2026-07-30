@@ -65,6 +65,13 @@ module attributes {
   }
 }
 
+// CHECK-LABEL: llvm.func @evaluate.__obelisk_observer(
+// CHECK-SAME: %[[CONTEXT:.*]]: !llvm.ptr, %{{.*}}: !llvm.ptr, %{{.*}}: i32,
+// CHECK-SAME: %[[VALUE:.*]]: !llvm.ptr, %[[UNKNOWN:.*]]: !llvm.ptr,
+// CHECK-SAME: %{{.*}}: i32) -> i32
+// CHECK: %[[RESULT:.*]] = llvm.call @evaluate(%[[CONTEXT]])
+// CHECK: llvm.store %[[RESULT]], %[[VALUE]]
+// CHECK: llvm.return
 // CHECK-LABEL: llvm.func @process.__obelisk_coro_ramp
 // CHECK-SAME: obelisk.frame.continuations = array<i32: 0, 1, 2, 3, 4, 5, 6, 7, 8>
 // CHECK: llvm.mlir.constant(1 : i64)

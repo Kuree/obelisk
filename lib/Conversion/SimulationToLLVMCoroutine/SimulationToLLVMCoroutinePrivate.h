@@ -108,6 +108,7 @@ void populateContextRuntimeToLLVMConversionPattern(
 mlir::LogicalResult
 materializeManagedMethodThunks(mlir::ModuleOp module,
                                const llvm::DataLayout &dataLayout);
+mlir::LogicalResult materializeNativeObserverThunks(mlir::ModuleOp module);
 mlir::LogicalResult prepareManagedLowering(mlir::ModuleOp module,
                                            const llvm::DataLayout &dataLayout);
 
