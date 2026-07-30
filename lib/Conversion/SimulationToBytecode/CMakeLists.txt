@@ -4,13 +4,17 @@ add_mlir_library(ObeliskSimulationToBytecode
   BytecodeCallEncoding.cpp
   BytecodeClassEncoding.cpp
   BytecodeContainerEncoding.cpp
-  BytecodeOperationEncoding.cpp
-  BytecodePlanning.cpp
-  BytecodeStringEncoding.cpp
-  BytecodeWaitEncoding.cpp
+  BytecodeCoverageEncoding.cpp
   BytecodeImageSerialization.cpp
   BytecodeLayout.cpp
+  BytecodeManagedReferenceEncoding.cpp
+  BytecodeOperationEncoding.cpp
+  BytecodePlanning.cpp
   BytecodeRegisterPlanning.cpp
+  BytecodeStateEncoding.cpp
+  BytecodeStringEncoding.cpp
+  BytecodeSuspensionEncoding.cpp
+  BytecodeWaitEncoding.cpp
   DesignDatabaseSerialization.cpp
   SimulationToBytecode.cpp
 

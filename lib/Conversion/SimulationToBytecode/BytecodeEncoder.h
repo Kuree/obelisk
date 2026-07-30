@@ -105,7 +105,16 @@ private:
   std::optional<mlir::LogicalResult>
   encodeContainerOperation(FunctionPlan &plan, mlir::Operation *operation);
   std::optional<mlir::LogicalResult>
+  encodeCoverageOperation(FunctionPlan &plan, mlir::Operation *operation);
+  std::optional<mlir::LogicalResult>
+  encodeManagedReferenceOperation(FunctionPlan &plan,
+                                  mlir::Operation *operation);
+  std::optional<mlir::LogicalResult>
   encodeStringOperation(FunctionPlan &plan, mlir::Operation *operation);
+  std::optional<mlir::LogicalResult>
+  encodeStateOperation(FunctionPlan &plan, mlir::Operation *operation);
+  std::optional<mlir::LogicalResult>
+  encodeSuspensionOperation(FunctionPlan &plan, mlir::Operation *operation);
   mlir::LogicalResult encodeCall(FunctionPlan &plan, sim::SimCallOp call);
   mlir::LogicalResult encodeTaskCall(FunctionPlan &plan,
                                      sim::SimTaskCallOp call);
