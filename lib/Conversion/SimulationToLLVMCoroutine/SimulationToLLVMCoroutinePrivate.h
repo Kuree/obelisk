@@ -94,13 +94,15 @@ void populateManagedToLLVMConversionPatterns(mlir::RewritePatternSet &patterns,
                                              uint64_t stateBitCount);
 void populateAggregateToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
-void populateControlToLLVMConversionPatterns(
-    mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
+void populateControlToLLVMConversionPatterns(mlir::RewritePatternSet &patterns,
+                                             mlir::TypeConverter &converter);
 void populateFunctionTypeConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter,
     const llvm::DenseSet<mlir::Value> &twoStateValues);
-void populateEventToLLVMConversionPatterns(
-    mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
+void populateEventToLLVMConversionPatterns(mlir::RewritePatternSet &patterns,
+                                           mlir::TypeConverter &converter);
+void populateSuspensionTypeConversionPatterns(mlir::RewritePatternSet &patterns,
+                                              mlir::TypeConverter &converter);
 void populateContextRuntimeToLLVMConversionPattern(
     mlir::RewritePatternSet &patterns, const mlir::TypeConverter &converter);
 mlir::LogicalResult
