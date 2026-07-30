@@ -25,10 +25,12 @@ add_mlir_library(ObeliskToSimulation
   LowerUnitTiming.cpp
   MaterializeComputeFusion.cpp
   PlanStaticSuperstep.cpp
+  PrepareCaptures.cpp
   Prepare.cpp
   PrepareDeclarations.cpp
   PrepareNetTopology.cpp
   PrepareTopology.cpp
+  PrepareUnits.cpp
   PrepareValidation.cpp
   SCCP.cpp
   SemanticUtils.cpp
