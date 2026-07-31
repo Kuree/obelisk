@@ -261,6 +261,36 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
   });
   result.eligible = !result.actorSlots.empty();
   result.fullyEligible = result.eligible && result.reasons.empty();
+  for (Attribute attribute : nodes) {
+    auto fragment = dyn_cast<sim::ComputeFragmentAttr>(attribute);
+    if (!fragment)
+      continue;
+    uint64_t weight = std::max<uint64_t>(fragment.getCost(), 1);
+    result.totalGraphCost += weight;
+    sim::SimFuncOp function = design.lookupSymbol<sim::SimFuncOp>(
+        fragment.getFunction().getValue());
+    Block *block =
+        function ? lookupComputeGraphBlock(function, fragment.getBlock())
+                 : nullptr;
+    if (!function || !block ||
+        !result.actorSlots.contains(function.getOperation()))
+      continue;
+    auto bytecode = result.bytecodeFragments.find(function.getOperation());
+    if (bytecode != result.bytecodeFragments.end() &&
+        llvm::is_contained(bytecode->second, block))
+      continue;
+    result.nativeGraphCost += weight;
+  }
+  // Hybrid handoff has a substantial fixed cost. Select it automatically only
+  // when the static actors cover at least seven tenths of estimated graph work;
+  // a fully closed schedule remains unconditionally profitable. Explicit AOT
+  // retains its strict full-eligibility contract.
+  result.aotCostEffective =
+      result.fullyEligible ||
+      (result.totalGraphCost != 0 &&
+       static_cast<long double>(result.nativeGraphCost) /
+               static_cast<long double>(result.totalGraphCost) >=
+           0.7L);
   return result;
 }
 

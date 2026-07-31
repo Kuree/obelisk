@@ -98,9 +98,10 @@
 // VPI-BODY-NOT: obelisk_sim.func private @b
 // WAIT-VIEW: obelisk_sim.design @wait_view
 // WAIT-VIEW-NOT: __obelisk_fused_
-// HYBRID: @__obelisk_aot_schedule_plan_v1
-// HYBRID-COUNT-1: call i32 @obelisk_rt_v1_scheduler_add_aot
-// HYBRID: call i32 @obelisk_rt_v1_scheduler_install_aot
+// HYBRID-NOT: @__obelisk_aot_schedule_plan_v1
+// HYBRID: call i32 @obelisk_rt_v1_scheduler_add_planned
+// HYBRID-NOT: call i32 @obelisk_rt_v1_scheduler_install_aot
+// HYBRID: call i32 @obelisk_rt_v1_scheduler_run
 // MATERIALIZED: obelisk_sim.spawn @__obelisk_fused_0
 // MATERIALIZED-COUNT-1: obelisk_sim.func private @__obelisk_fused_0
 // MATERIALIZED-COUNT-1: obelisk_sim.suspend.edge posedge

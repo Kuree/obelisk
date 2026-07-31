@@ -34,6 +34,10 @@ public:
     llvm::errs() << "native-aot eligible="
                  << (analysis.isEligible() ? "true" : "false")
                  << " fully=" << (analysis.isFullyEligible() ? "true" : "false")
+                 << " selected="
+                 << (analysis.isAOTCostEffective() ? "true" : "false")
+                 << " cost=" << analysis.getNativeGraphCost() << "/"
+                 << analysis.getTotalGraphCost()
                  << "\n";
 
     SmallVector<std::pair<StringRef, uint32_t>> actors;

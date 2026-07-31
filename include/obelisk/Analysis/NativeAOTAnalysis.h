@@ -32,6 +32,9 @@ public:
 
   bool isEligible() const { return eligible; }
   bool isFullyEligible() const { return fullyEligible; }
+  bool isAOTCostEffective() const { return aotCostEffective; }
+  uint64_t getTotalGraphCost() const { return totalGraphCost; }
+  uint64_t getNativeGraphCost() const { return nativeGraphCost; }
   mlir::ArrayRef<std::string> getReasons() const { return reasons; }
 
   const llvm::DenseMap<mlir::Operation *, uint32_t> &getActorSlots() const {
@@ -45,6 +48,9 @@ public:
 private:
   bool eligible = false;
   bool fullyEligible = false;
+  bool aotCostEffective = false;
+  uint64_t totalGraphCost = 0;
+  uint64_t nativeGraphCost = 0;
   mlir::SmallVector<std::string> reasons;
   llvm::DenseMap<mlir::Operation *, uint32_t> actorSlots;
   llvm::DenseMap<mlir::Operation *, mlir::SmallVector<mlir::Block *>>

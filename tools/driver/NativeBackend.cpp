@@ -2,6 +2,7 @@
 
 #include "NativeBackend.h"
 
+#include "obelisk/Analysis/NativeAOTAnalysis.h"
 #include "obelisk/Conversion/Passes.h"
 #include "obelisk/Conversion/SimulationToBytecode.h"
 #include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
@@ -764,6 +765,20 @@ LogicalResult emitNativeOutput(ModuleOp module,
   if (!nativeScheduler) {
     errs() << "obelisk: error: invalid native scheduler mode\n";
     return failure();
+  }
+  // Decide auto before bytecode materialization.  Coroutine lowering also
+  // validates the plan, but waiting until then leaves hybrid bytecode entries
+  // on every descriptor even when the selected scheduler is generic.  Those
+  // entries can make an otherwise native-only design hand hot continuations
+  // to the interpreter.  The compute graph is final at this backend boundary,
+  // so use the same general cost analysis here and compile a rejected auto
+  // plan exactly like an explicit generic request.
+  if (*nativeScheduler == obelisk::sim::NativeSchedulerMode::Auto &&
+      !options.bytecode) {
+    obelisk::analysis::NativeAOTAnalysis aot =
+        obelisk::analysis::NativeAOTAnalysis::compute(module);
+    if (!aot.isEligible() || !aot.isAOTCostEffective())
+      *nativeScheduler = obelisk::sim::NativeSchedulerMode::Generic;
   }
   if (failed(lowerToLLVM(module, *targetMachine, options.bytecode, options.vpi,
                          *nativeScheduler, requiresStateSync)))
