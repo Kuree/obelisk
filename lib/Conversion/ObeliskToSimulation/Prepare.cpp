@@ -558,7 +558,9 @@ void ObeliskSimPreparePass::runOnOperation() {
     SmallVector<DictionaryAttr> argAttrs{
         captureMetadata(builder, sim::CaptureKind::Context)};
     SmallVector<Attribute> bindings;
-    for (auto [captureIndex, capture] : llvm::enumerate(captures)) {
+    for (auto indexedCapture : llvm::enumerate(captures)) {
+      size_t captureIndex = indexedCapture.index();
+      const auto &capture = indexedCapture.value();
       sim::CaptureKind captureKind = sim::CaptureKind::Storage;
       Type handleType;
       switch (capture.second.kind) {

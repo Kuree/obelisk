@@ -58,6 +58,20 @@ module attributes {
         attributes {code_unit_id = 71 : i64, entry_kind = 1 : i32} {
       %two = obelisk_sim.logic.constant 2 : i65, 0 : i65 : !obelisk_sim.logic<65>
       %three = obelisk_sim.logic.constant 3 : i65, 0 : i65 : !obelisk_sim.logic<65>
+      %narrow = obelisk_sim.logic.resize %two signed = false
+          : !obelisk_sim.logic<65> -> !obelisk_sim.logic<64>
+      %extended = obelisk_sim.logic.resize %narrow signed = true
+          : !obelisk_sim.logic<64> -> !obelisk_sim.logic<65>
+      %storage = obelisk_sim.context.storage %ctx[0]
+          : !obelisk_sim.ref<!obelisk_sim.logic<65>>
+      obelisk_sim.override %storage = %extended assign true
+          : !obelisk_sim.ref<!obelisk_sim.logic<65>>, !obelisk_sim.logic<65>
+      obelisk_sim.release_override %storage assign true
+          : !obelisk_sim.ref<!obelisk_sim.logic<65>>
+      obelisk_sim.override %storage = %extended assign false
+          : !obelisk_sim.ref<!obelisk_sim.logic<65>>, !obelisk_sim.logic<65>
+      obelisk_sim.release_override %storage assign false
+          : !obelisk_sim.ref<!obelisk_sim.logic<65>>
       %sum = obelisk_sim.call @add(%ctx, %two, %three)
           : (!obelisk_sim.context, !obelisk_sim.logic<65>, !obelisk_sim.logic<65>) -> !obelisk_sim.logic<65>
       %first = obelisk_sim.assert.deferred_once 4294967297

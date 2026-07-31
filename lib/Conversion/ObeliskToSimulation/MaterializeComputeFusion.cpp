@@ -33,6 +33,13 @@ class ObeliskSimMaterializeComputeFusionPass final
     : public impl::ObeliskSimMaterializeComputeFusionPassBase<
           ObeliskSimMaterializeComputeFusionPass> {
 public:
+  using Base = impl::ObeliskSimMaterializeComputeFusionPassBase<
+      ObeliskSimMaterializeComputeFusionPass>;
+  using Base::Base;
+  ObeliskSimMaterializeComputeFusionPass(
+      const ObeliskSimMaterializeComputeFusionPass &other)
+      : Base(other) {}
+
   void runOnOperation() override;
 
 private:

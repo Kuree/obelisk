@@ -20,6 +20,9 @@ public:
   using Base = impl::ObeliskSimEliminateDeadCapturesPassBase<
       ObeliskSimEliminateDeadCapturesPass>;
   using Base::Base;
+  ObeliskSimEliminateDeadCapturesPass(
+      const ObeliskSimEliminateDeadCapturesPass &other)
+      : Base(other) {}
 
   void runOnOperation() override {
     EliminationStatistics statistics{&functionsConsidered,

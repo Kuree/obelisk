@@ -307,7 +307,9 @@ void ObeliskSimSCCPPass::runOnOperation() {
 
   // Index boundary operations in stable IR order and resolve every direct edge
   // before workers begin. No worker consults a mutable symbol table cache.
-  for (auto [functionIndex, info] : llvm::enumerate(functions)) {
+  for (auto indexedInfo : llvm::enumerate(functions)) {
+    unsigned functionIndex = indexedInfo.index();
+    FunctionInfo &info = indexedInfo.value();
     if (info.function.isExternal())
       continue;
     info.function.walk<WalkOrder::PreOrder>([&](Operation *operation) {

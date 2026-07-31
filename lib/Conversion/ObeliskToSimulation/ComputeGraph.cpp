@@ -1308,14 +1308,19 @@ void ComputeGraphBuilder::buildDataEdges() {
                   : sim::ComputeEdgeKind::DeferredStage,
               effectAttr(effect));
     }
-  for (auto [roots, ids, activate] :
+  for (auto activationSet :
        {std::tuple{ArrayRef<DescriptorProvenance>(nbaRoots),
                    ArrayRef<uint32_t>(nbaCommitIds),
                    sim::ComputeEdgeKind::NBAActivate},
         std::tuple{ArrayRef<DescriptorProvenance>(eventRoots),
                    ArrayRef<uint32_t>(eventCommitIds),
-                   sim::ComputeEdgeKind::DeferredActivate}})
-    for (auto [index, root] : llvm::enumerate(roots)) {
+                   sim::ComputeEdgeKind::DeferredActivate}}) {
+    ArrayRef<DescriptorProvenance> roots = std::get<0>(activationSet);
+    ArrayRef<uint32_t> ids = std::get<1>(activationSet);
+    sim::ComputeEdgeKind activate = std::get<2>(activationSet);
+    for (auto indexedRoot : llvm::enumerate(roots)) {
+      size_t index = indexedRoot.index();
+      const DescriptorProvenance &root = indexedRoot.value();
       uint32_t id = ids[index];
       watchedEffects.forEachAlias(
           root, [&, root = root](IndexedEffect consumed) {
@@ -1324,6 +1329,7 @@ void ComputeGraphBuilder::buildDataEdges() {
                       effectAttr(*consumed.effect));
           });
     }
+  }
   normalizeEdges(edges);
 }
 

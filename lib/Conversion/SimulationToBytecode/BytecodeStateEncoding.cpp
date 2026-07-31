@@ -78,17 +78,19 @@ Encoder::encodeStateOperation(FunctionPlan &plan, Operation *operation) {
     return success();
   }
   if (auto op = dyn_cast<sim::SimOverrideOp>(operation)) {
-    emit({OverrideState,
-          op.getIsAssign() ? OBELISK_RT_DB_OVERRIDE_ASSIGN
-                           : OBELISK_RT_DB_OVERRIDE_FORCE,
-          0, reg(plan, op.getTarget()), reg(plan, op.getValue())});
+    emit(
+        {OverrideState,
+         static_cast<uint16_t>(op.getIsAssign() ? OBELISK_RT_DB_OVERRIDE_ASSIGN
+                                                : OBELISK_RT_DB_OVERRIDE_FORCE),
+         0, reg(plan, op.getTarget()), reg(plan, op.getValue())});
     return success();
   }
   if (auto op = dyn_cast<sim::SimReleaseOverrideOp>(operation)) {
-    emit({ReleaseState,
-          op.getIsAssign() ? OBELISK_RT_DB_OVERRIDE_ASSIGN
-                           : OBELISK_RT_DB_OVERRIDE_FORCE,
-          0, reg(plan, op.getTarget())});
+    emit(
+        {ReleaseState,
+         static_cast<uint16_t>(op.getIsAssign() ? OBELISK_RT_DB_OVERRIDE_ASSIGN
+                                                : OBELISK_RT_DB_OVERRIDE_FORCE),
+         0, reg(plan, op.getTarget())});
     return success();
   }
   if (auto op = dyn_cast<sim::SimDriverDriveOp>(operation)) {

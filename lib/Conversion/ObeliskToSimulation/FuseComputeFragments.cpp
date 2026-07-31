@@ -25,6 +25,9 @@ public:
   using Base = impl::ObeliskSimFuseComputeFragmentsPassBase<
       ObeliskSimFuseComputeFragmentsPass>;
   using Base::Base;
+  ObeliskSimFuseComputeFragmentsPass(
+      const ObeliskSimFuseComputeFragmentsPass &other)
+      : Base(other) {}
 
   void runOnOperation() override;
 

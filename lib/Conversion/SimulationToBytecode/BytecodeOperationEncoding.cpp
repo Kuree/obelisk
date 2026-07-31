@@ -289,8 +289,9 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
   }
   if (auto op = dyn_cast<sim::SimLogicResizeOp>(operation)) {
     emit({Extract,
-          op.getIsSigned() ? OBELISK_RT_DB_EXTRACT_SIGN_EXTEND
-                           : OBELISK_RT_DB_EXTRACT_ZERO_EXTEND,
+          static_cast<uint16_t>(op.getIsSigned()
+                                    ? OBELISK_RT_DB_EXTRACT_SIGN_EXTEND
+                                    : OBELISK_RT_DB_EXTRACT_ZERO_EXTEND),
           reg(plan, op.getResult()), reg(plan, op.getInput()),
           kInvalidRegister});
     return success();

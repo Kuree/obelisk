@@ -264,7 +264,9 @@ LogicalResult BoundaryEliminator::run() {
 
   // Validate every piece of positional metadata and every direct boundary
   // before changing anything. This also builds stable IR-order site records.
-  for (auto [index, info] : llvm::enumerate(functions)) {
+  for (auto indexedInfo : llvm::enumerate(functions)) {
+    unsigned index = indexedInfo.index();
+    FunctionInfo &info = indexedInfo.value();
     sim::SimFuncOp function = info.function;
     FunctionType type = function.getFunctionType();
     ArrayAttr argAttrs = function.getArgAttrsAttr();
@@ -865,6 +867,9 @@ public:
   using Base = impl::ObeliskSimEliminateDeadBoundariesPassBase<
       ObeliskSimEliminateDeadBoundariesPass>;
   using Base::Base;
+  ObeliskSimEliminateDeadBoundariesPass(
+      const ObeliskSimEliminateDeadBoundariesPass &other)
+      : Base(other) {}
 
   void runOnOperation() override {
     EliminationStatistics statistics{

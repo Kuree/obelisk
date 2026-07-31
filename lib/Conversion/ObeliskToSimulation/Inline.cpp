@@ -105,6 +105,7 @@ class ObeliskSimInlinePass final
 public:
   using Base = impl::ObeliskSimInlinePassBase<ObeliskSimInlinePass>;
   using Base::Base;
+  ObeliskSimInlinePass(const ObeliskSimInlinePass &other) : Base(other) {}
 
   void runOnOperation() override;
 
