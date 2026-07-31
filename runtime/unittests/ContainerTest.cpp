@@ -399,6 +399,26 @@ TEST(RandomStateTest, MatchesPublishedPcgXshRrVector) {
   EXPECT_EQ(state.increment, UINT64_C(109));
 }
 
+TEST(RandomStateTest, Next64CombinesConsecutivePublishedOutputs) {
+  obelisk_rt_random_state_v1 state{};
+  obelisk_rt_v1_random_state_seed(&state, 42, 54);
+  EXPECT_EQ(obelisk_rt_v1_random_state_next64(&state),
+            UINT64_C(0xa15c02b77b47f409));
+  EXPECT_EQ(obelisk_rt_v1_random_state_next64(nullptr), 0u);
+}
+
+TEST_F(ManagedValueTest, RandomSeedRestartsTheActiveStream) {
+  EXPECT_EQ(obelisk_rt_v1_random_seed(nullptr, 123),
+            OBELISK_RT_INVALID_ARGUMENT);
+  ASSERT_EQ(obelisk_rt_v1_random_seed(context, 123), OBELISK_RT_OK);
+  uint64_t first = 0;
+  ASSERT_EQ(obelisk_rt_v1_random_next(context, &first), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_random_seed(context, 123), OBELISK_RT_OK);
+  uint64_t second = 0;
+  ASSERT_EQ(obelisk_rt_v1_random_next(context, &second), OBELISK_RT_OK);
+  EXPECT_EQ(first, second);
+}
+
 TEST_F(ManagedValueTest, RandomStateSnapshotRestoresExactly) {
   ASSERT_EQ(obelisk_rt_v1_context_seed(context, 987654321), OBELISK_RT_OK);
   obelisk_rt_random_state_v1 snapshot{};

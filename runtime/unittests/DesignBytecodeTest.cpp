@@ -1635,6 +1635,101 @@ TEST(DesignBytecode, RejectsNonPackedObserverResultLayout) {
   EXPECT_EQ(context, nullptr);
 }
 
+TEST(DesignBytecode, BytecodeComputedObserverWakesOnlyForAffectedSignal) {
+  constexpr uint64_t taskID = 17;
+  constexpr uint32_t resultWidth = 256;
+  constexpr uint32_t dependencyWidth = 65;
+  constexpr uint32_t previousLimbCount = resultWidth / 64;
+  constexpr uint64_t observersOffset =
+      sizeof(obelisk_rt_computed_wait_record_v1);
+  constexpr uint64_t capturesOffset =
+      observersOffset + sizeof(obelisk_rt_computed_observer_v1);
+  constexpr uint64_t dependenciesOffset = capturesOffset;
+  constexpr uint64_t clausesOffset =
+      dependenciesOffset + sizeof(obelisk_rt_computed_dependency_v1);
+  constexpr uint64_t previousOffset =
+      clausesOffset + sizeof(obelisk_rt_computed_clause_v1);
+  constexpr uint64_t waitSize =
+      previousOffset + 2 * previousLimbCount * sizeof(uint64_t);
+
+  Fixture fixture;
+  fixture.bytecode = makeObserverBytecode(OBELISK_RT_DBREG_BITS);
+  fixture.execution.bytecode = fixture.bytecode.data();
+  fixture.execution.bytecode_size = fixture.bytecode.size();
+  fixture.execution.checksum = imageChecksum(fixture.bytecode);
+  obelisk_rt_observer_descriptor_v1 observer{7, nullptr, 0,       resultWidth,
+                                             0, 0,       nullptr, 0};
+  fixture.execution.observers = &observer;
+  fixture.execution.observer_count = 1;
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+
+  ScheduledDesignTask task;
+  task.id = taskID;
+  task.started = true;
+  task.suspendKind = OBELISK_RT_SUSPEND_OBSERVER;
+  task.waitSize = waitSize;
+  task.scratchOffset = waitSize;
+  task.frame.resize(waitSize);
+
+  auto *wait =
+      reinterpret_cast<obelisk_rt_computed_wait_record_v1 *>(task.frame.data());
+  *wait = {OBELISK_RT_VERSION,
+           OBELISK_RT_SUSPEND_OBSERVER,
+           OBELISK_RT_COMPUTED_WAIT_INTERLEAVED,
+           1,
+           1,
+           0,
+           1,
+           previousLimbCount,
+           observersOffset,
+           capturesOffset,
+           dependenciesOffset,
+           clausesOffset,
+           previousOffset,
+           0,
+           waitSize,
+           0};
+  auto *binding = reinterpret_cast<obelisk_rt_computed_observer_v1 *>(
+      task.frame.data() + wait->observers_offset);
+  *binding = {7, 0, 0, 0, 1, static_cast<uint32_t>(wait->previous_value_offset),
+              0};
+  auto *dependency = reinterpret_cast<obelisk_rt_computed_dependency_v1 *>(
+      task.frame.data() + wait->dependencies_offset);
+  *dependency = {0, OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL, dependencyWidth};
+  auto *clause = reinterpret_cast<obelisk_rt_computed_clause_v1 *>(
+      task.frame.data() + wait->clauses_offset);
+  *clause = {0, OBELISK_RT_OBSERVER_CONDITION_NONE, OBELISK_RT_WAIT_EDGE_CHANGE,
+             0};
+  auto *previous = reinterpret_cast<uint64_t *>(task.frame.data() +
+                                                wait->previous_value_offset);
+  previous[0] = 1;
+  ASSERT_TRUE(obelisk_rt_validate_computed_wait_record(&fixture.execution, wait,
+                                                       waitSize));
+
+  context->scheduledDesignTasks.push_back(std::move(task));
+  context->scheduledDesignTaskIndices.emplace(taskID, 0);
+  context->pendingDesignComputedWaiters.push_back(taskID);
+
+  ASSERT_TRUE(obelisk_rt_evaluate_design_observers_unlocked(
+      context, OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL, 128, 1));
+  EXPECT_EQ(context->pendingDesignComputedWaiters,
+            std::vector<uint64_t>({taskID}));
+  EXPECT_FALSE(context->scheduledDesignTasks.front().signalTriggered);
+
+  uint64_t selectionGeneration = context->schedulerSelectionGeneration;
+  ASSERT_TRUE(obelisk_rt_evaluate_design_observers_unlocked(
+      context, OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL, 0, dependencyWidth));
+  EXPECT_TRUE(context->pendingDesignComputedWaiters.empty());
+  EXPECT_TRUE(context->scheduledDesignTasks.front().signalTriggered);
+  EXPECT_EQ(context->designPollCandidates.count(taskID), 1u);
+  EXPECT_NE(context->schedulerSelectionGeneration, selectionGeneration);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 uint64_t mixedTierObservedHandle = UINT64_MAX;
 uint8_t mixedTierObservedValue = UINT8_MAX;
 
