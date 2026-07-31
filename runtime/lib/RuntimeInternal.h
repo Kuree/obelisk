@@ -4,6 +4,7 @@
 #ifndef OBELISK_RUNTIME_LIB_RUNTIMEINTERNAL_H
 #define OBELISK_RUNTIME_LIB_RUNTIMEINTERNAL_H
 
+#include "DesignBytecodeImage.h"
 #include "obelisk/Runtime/Runtime.h"
 
 #include <algorithm>
@@ -800,6 +801,8 @@ struct obelisk_rt_context {
   NetAliasCache netAliases;
   DesignDatabaseCache designDatabase;
   bool designDatabaseRegistered = false;
+  obelisk::designbytecode::Image designBytecodeImage;
+  bool designBytecodeImageValidated = false;
   void *vpiState = nullptr;
   std::unordered_map<uint64_t, const obelisk_rt_class_descriptor_v1 *>
       managedClasses;
@@ -995,8 +998,9 @@ void obelisk_rt_release_control_unlocked(obelisk_rt_context *context,
 void obelisk_rt_release_controls_unlocked(
     obelisk_rt_context *context, const std::vector<uint64_t> &controls);
 
-bool obelisk_rt_validate_activation_bytecode_inventory(
-    const obelisk_rt_execution_descriptor_v1 &execution) noexcept;
+obelisk_rt_status obelisk_rt_initialize_design_bytecode_image(
+    const obelisk_rt_execution_descriptor_v1 &execution,
+    obelisk::designbytecode::Image &image) noexcept;
 
 DpiScopeHandle *obelisk_rt_find_dpi_scope(obelisk_rt_context *context,
                                           uint64_t id);
@@ -1037,10 +1041,12 @@ bool obelisk_rt_validate_computed_wait_record(
     const obelisk_rt_execution_descriptor_v1 *execution,
     const obelisk_rt_computed_wait_record_v1 *wait, uint64_t available);
 
-// Design-wide bytecode helpers shared by process construction/dispatch.  They
-// perform full image validation before returning layout information.
+// Design-wide bytecode helpers shared by process construction/dispatch.
+// Standalone descriptors receive full validation; context-bound dispatch
+// reuses the image validated when that context was created.
 obelisk_rt_status obelisk_rt_validate_design_bytecode(
-    const obelisk_rt_design_bytecode_entry_v1 &entry, uint64_t *outScratchSize,
+    const obelisk_rt_design_bytecode_entry_v1 &entry,
+    obelisk_rt_context *context, uint64_t *outScratchSize,
     uint64_t *outScratchAlignment) noexcept;
 obelisk_rt_status obelisk_rt_execute_design_bytecode(
     const obelisk_rt_design_bytecode_entry_v1 &entry,

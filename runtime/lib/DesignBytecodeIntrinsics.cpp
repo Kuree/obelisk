@@ -60,7 +60,7 @@ bool writeScalar(const Image &image, Frame &frame, uint32_t reg,
       layout.width > 64)
     return false;
   Logic result{layout.width, layout.kind == OBELISK_RT_DBREG_LOGIC,
-               std::vector<uint64_t>(1, value), std::vector<uint64_t>(1)};
+               LimbVector(1, value), LimbVector(1)};
   writeLogic(frame.data, layout, result);
   return true;
 }
@@ -76,8 +76,8 @@ bool packBytes(const Image &image, Frame &frame, uint32_t reg,
   uint64_t capacity = (uint64_t{layout.width} + 7) / 8;
   uint64_t count = std::min(size, capacity);
   Logic result{layout.width, layout.kind == OBELISK_RT_DBREG_LOGIC,
-               std::vector<uint64_t>(limbCount(layout.width)),
-               std::vector<uint64_t>(limbCount(layout.width))};
+               LimbVector(limbCount(layout.width)),
+               LimbVector(limbCount(layout.width))};
   for (uint64_t index = 0; index != count; ++index) {
     uint64_t byte = highAlignment ? capacity - 1 - index : count - 1 - index;
     for (unsigned bitIndex = 0; bitIndex != 8; ++bitIndex) {
@@ -1539,8 +1539,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     update.bitWidth = value.width;
     update.stringValue = stringValue;
     update.rootedString = rootedString;
-    update.value = std::move(value.value);
-    update.unknown = std::move(value.unknown);
+    update.value = std::move(value.value).takeVector();
+    update.unknown = std::move(value.unknown).takeVector();
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
       if (context->nextSchedulerSequence == 0)
@@ -2509,8 +2509,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       return OBELISK_RT_INVALID_BYTECODE;
     Layout output = layoutAt(image, frame.function, outputRegister(0));
     Logic value{output.width, output.kind == OBELISK_RT_DBREG_LOGIC,
-                std::vector<uint64_t>(limbCount(output.width)),
-                std::vector<uint64_t>(limbCount(output.width))};
+                LimbVector(limbCount(output.width)),
+                LimbVector(limbCount(output.width))};
     obelisk_rt_status status = obelisk_rt_v1_design_read(
         context, cursor, value.value.data(), value.unknown.data(), value.width);
     writeLogic(frame.data, output, value);

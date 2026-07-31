@@ -21,8 +21,8 @@ bool isZero(const Logic &value) {
                      [](uint64_t limb) { return limb == 0; });
 }
 Logic allX(uint32_t width, bool fourState) {
-  Logic result{width, fourState, std::vector<uint64_t>(limbCount(width), 0),
-               std::vector<uint64_t>(limbCount(width), UINT64_MAX)};
+  Logic result{width, fourState, LimbVector(limbCount(width), 0),
+               LimbVector(limbCount(width), UINT64_MAX)};
   result.unknown.back() &= finalMask(width);
   return result;
 }
@@ -31,8 +31,7 @@ void mask(Logic &value) {
   value.unknown.back() &= finalMask(value.width);
 }
 
-int compareUnsigned(const std::vector<uint64_t> &left,
-                    const std::vector<uint64_t> &right) {
+int compareUnsigned(const LimbVector &left, const LimbVector &right) {
   // Callers always pass equal-width operands (enforced upstream by the
   // SameOperandsAndResultType / SameTypeOperands op traits). Guard the
   // invariant so a future IR regression trips here instead of reading past
@@ -194,8 +193,8 @@ Logic doubleToInteger(double value, uint32_t width) {
   uint64_t mantissa =
       (encoded & UINT64_C(0x000fffffffffffff)) | (uint64_t{1} << 52);
 
-  Logic integer{width, false, std::vector<uint64_t>(limbCount(width)),
-                std::vector<uint64_t>(limbCount(width))};
+  Logic integer{width, false, LimbVector(limbCount(width)),
+                LimbVector(limbCount(width))};
   if (exponent == -1) {
     integer.value.front() = 1;
   } else if (exponent >= 0 && exponentBits != UINT64_C(0x7ff)) {
@@ -222,9 +221,8 @@ Logic add(const Logic &left, const Logic &right, bool subtract) {
   if (anyUnknown(left) || anyUnknown(right))
     return allX(left.width, left.fourState);
   Logic rhs = subtract ? negate(right) : right;
-  Logic result{left.width, left.fourState,
-               std::vector<uint64_t>(left.value.size()),
-               std::vector<uint64_t>(left.value.size())};
+  Logic result{left.width, left.fourState, LimbVector(left.value.size()),
+               LimbVector(left.value.size())};
   uint64_t carry = 0;
   for (size_t index = 0; index != result.value.size(); ++index) {
     uint64_t first = left.value[index] + rhs.value[index];
@@ -268,9 +266,8 @@ Logic multiply(const Logic &left, const Logic &right) {
   assert(left.value.size() == right.value.size() && "multiply width mismatch");
   if (anyUnknown(left) || anyUnknown(right))
     return allX(left.width, left.fourState);
-  Logic result{left.width, left.fourState,
-               std::vector<uint64_t>(left.value.size()),
-               std::vector<uint64_t>(left.value.size())};
+  Logic result{left.width, left.fourState, LimbVector(left.value.size()),
+               LimbVector(left.value.size())};
   for (size_t i = 0; i != left.value.size(); ++i) {
     uint64_t carry = 0;
     for (size_t j = 0; j + i < result.value.size(); ++j) {
@@ -287,6 +284,14 @@ Logic multiply(const Logic &left, const Logic &right) {
   return result;
 }
 
+bool bit(const LimbVector &value, uint64_t index) {
+  return ((value[index / 64] >> (index % 64)) & 1) != 0;
+}
+void setBit(LimbVector &value, uint64_t index, bool enabled) {
+  uint64_t mask = uint64_t{1} << (index % 64);
+  value[index / 64] =
+      enabled ? value[index / 64] | mask : value[index / 64] & ~mask;
+}
 bool bit(const std::vector<uint64_t> &value, uint64_t index) {
   return ((value[index / 64] >> (index % 64)) & 1) != 0;
 }
@@ -308,8 +313,8 @@ std::pair<Logic, Logic> divide(const Logic &dividend, const Logic &divisor,
   Logic numerator = dividendNegative ? negate(dividend) : dividend;
   Logic denominator = divisorNegative ? negate(divisor) : divisor;
   Logic quotient{dividend.width, dividend.fourState,
-                 std::vector<uint64_t>(dividend.value.size()),
-                 std::vector<uint64_t>(dividend.value.size())};
+                 LimbVector(dividend.value.size()),
+                 LimbVector(dividend.value.size())};
   Logic remainder = quotient;
   for (uint64_t index = dividend.width; index != 0; --index) {
     uint64_t carry = bit(numerator.value, index - 1);
@@ -333,9 +338,8 @@ std::pair<Logic, Logic> divide(const Logic &dividend, const Logic &divisor,
 
 Logic bitwise(const Logic &left, const Logic &right, uint16_t opcode) {
   assert(left.value.size() == right.value.size() && "bitwise width mismatch");
-  Logic result{left.width, left.fourState,
-               std::vector<uint64_t>(left.value.size()),
-               std::vector<uint64_t>(left.value.size())};
+  Logic result{left.width, left.fourState, LimbVector(left.value.size()),
+               LimbVector(left.value.size())};
   for (size_t index = 0; index != result.value.size(); ++index) {
     uint64_t lv = left.value[index], rv = right.value[index];
     uint64_t lu = left.unknown[index], ru = right.unknown[index];
@@ -373,9 +377,8 @@ Logic shift(const Logic &input, const Logic &amount, uint16_t opcode) {
   for (size_t index = 1; index < amount.value.size(); ++index)
     oversized |= amount.value[index] != 0;
   oversized |= distance >= input.width;
-  Logic result{input.width, input.fourState,
-               std::vector<uint64_t>(input.value.size()),
-               std::vector<uint64_t>(input.value.size())};
+  Logic result{input.width, input.fourState, LimbVector(input.value.size()),
+               LimbVector(input.value.size())};
   bool arithmetic = opcode == OBELISK_RT_DB_ASHR;
   bool signValue = arithmetic && bit(input.value, input.width - 1);
   bool signUnknown = arithmetic && bit(input.unknown, input.width - 1);
@@ -399,8 +402,8 @@ Logic shift(const Logic &input, const Logic &amount, uint16_t opcode) {
 
 Logic readLogic(const uint8_t *frame, const Layout &layout) {
   Logic result{layout.width, layout.kind == OBELISK_RT_DBREG_LOGIC,
-               std::vector<uint64_t>(limbCount(layout.width)),
-               std::vector<uint64_t>(limbCount(layout.width))};
+               LimbVector(limbCount(layout.width)),
+               LimbVector(limbCount(layout.width))};
   std::memcpy(
       result.value.data(), frame + layout.offset,
       std::min<uint64_t>(layout.size, result.value.size() * sizeof(uint64_t)));
@@ -415,7 +418,7 @@ Logic readLogic(const uint8_t *frame, const Layout &layout) {
 
 void writeLogic(uint8_t *frame, const Layout &layout, const Logic &value) {
   uint64_t limbs = limbCount(layout.width);
-  std::vector<uint64_t> plane(limbs, 0);
+  LimbVector plane(limbs, 0);
   for (uint64_t index = 0;
        index != std::min<uint64_t>(limbs, value.value.size()); ++index) {
     plane[index] = value.value[index];

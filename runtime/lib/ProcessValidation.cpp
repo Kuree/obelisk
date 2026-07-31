@@ -184,8 +184,9 @@ validateDescriptor(const obelisk_rt_process_descriptor_v1 &descriptor,
           descriptor.design_bytecode->execution != descriptor.execution)
         return OBELISK_RT_TIER_UNAVAILABLE;
       uint64_t bytecodeAlignment = 1;
-      status = obelisk_rt_validate_design_bytecode(
-          *descriptor.design_bytecode, &bytecodeSize, &bytecodeAlignment);
+      status = obelisk_rt_validate_design_bytecode(*descriptor.design_bytecode,
+                                                   nullptr, &bytecodeSize,
+                                                   &bytecodeAlignment);
       if (status != OBELISK_RT_OK)
         return status;
       tailAlignment = std::max(tailAlignment, bytecodeAlignment);

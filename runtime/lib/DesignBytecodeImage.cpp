@@ -2036,8 +2036,17 @@ bool loadValidatedImage(const obelisk_rt_design_bytecode_entry_v1 &entry,
   // Context creation validates the complete inventory and immutable bytecode
   // image before publishing the context. Standalone entries retain full
   // checksum and structural validation.
-  if (context && context->execution == entry.execution)
-    return decodeImageHeader(entry, image);
+  if (context && context->execution == entry.execution &&
+      context->designBytecodeImageValidated) {
+    const Image &cached = context->designBytecodeImage;
+    if (cached.data != entry.execution->bytecode ||
+        cached.size != entry.execution->bytecode_size ||
+        cached.stateBitCount != entry.execution->state_bit_count ||
+        entry.function >= cached.functionCount)
+      return false;
+    image = cached;
+    return true;
+  }
   return parseImage(entry, image) && validateImage(image);
 }
 
@@ -2094,26 +2103,33 @@ static bool matchesActivationBytecodeInventory(
   return true;
 }
 
-bool obelisk_rt_validate_activation_bytecode_inventory(
-    const obelisk_rt_execution_descriptor_v1 &execution) noexcept {
+obelisk_rt_status obelisk_rt_initialize_design_bytecode_image(
+    const obelisk_rt_execution_descriptor_v1 &execution,
+    Image &outImage) noexcept {
   if ((execution.flags & OBELISK_RT_EXECUTION_HAS_BYTECODE) == 0)
-    return true;
+    return OBELISK_RT_INVALID_ARGUMENT;
   try {
     obelisk_rt_design_bytecode_entry_v1 entry{&execution, 0, 0};
     Image image;
-    return parseImage(entry, image) && validateImage(image) &&
-           matchesActivationBytecodeInventory(execution, image);
+    if (!parseImage(entry, image) || !validateImage(image) ||
+        !matchesActivationBytecodeInventory(execution, image))
+      return OBELISK_RT_INVALID_DESIGN;
+    outImage = image;
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
   } catch (...) {
-    return false;
+    return OBELISK_RT_INVALID_DESIGN;
   }
 }
 
 obelisk_rt_status obelisk_rt_validate_design_bytecode(
-    const obelisk_rt_design_bytecode_entry_v1 &entry, uint64_t *outScratchSize,
+    const obelisk_rt_design_bytecode_entry_v1 &entry,
+    obelisk_rt_context *context, uint64_t *outScratchSize,
     uint64_t *outScratchAlignment) noexcept {
   try {
     Image image;
-    if (!parseImage(entry, image) || !validateImage(image))
+    if (!loadValidatedImage(entry, context, image))
       return OBELISK_RT_INVALID_BYTECODE;
     Function function = functionAt(image, entry.function);
     if (outScratchSize)

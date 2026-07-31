@@ -3158,8 +3158,8 @@ TEST(DesignBytecode, InitializationBitsetsCoverWordBoundariesAndCFGJoins) {
     fixture.entry = {&fixture.execution, 0, 0};
     uint64_t scratchSize = 0;
     uint64_t scratchAlignment = 0;
-    return obelisk_rt_validate_design_bytecode(fixture.entry, &scratchSize,
-                                               &scratchAlignment);
+    return obelisk_rt_validate_design_bytecode(
+        fixture.entry, nullptr, &scratchSize, &scratchAlignment);
   };
 
   EXPECT_EQ(validate(makeInitializationBoundaryBytecode(false)), OBELISK_RT_OK);
@@ -3176,8 +3176,8 @@ TEST(DesignBytecode, ValidatesComparisonResultDomains) {
     fixture.execution.checksum = imageChecksum(fixture.bytecode);
     uint64_t scratchSize = 0;
     uint64_t scratchAlignment = 0;
-    return obelisk_rt_validate_design_bytecode(fixture.entry, &scratchSize,
-                                               &scratchAlignment);
+    return obelisk_rt_validate_design_bytecode(
+        fixture.entry, nullptr, &scratchSize, &scratchAlignment);
   };
 
   EXPECT_EQ(validate(OBELISK_RT_DBREG_LOGIC, OBELISK_RT_DB_CMP_WILD_EQ),
@@ -3214,8 +3214,8 @@ TEST(DesignBytecode, ValidatesManagedAggregateExtractionBounds) {
     fixture.execution.checksum = imageChecksum(fixture.bytecode);
     uint64_t scratchSize = 0;
     uint64_t scratchAlignment = 0;
-    return obelisk_rt_validate_design_bytecode(fixture.entry, &scratchSize,
-                                               &scratchAlignment);
+    return obelisk_rt_validate_design_bytecode(
+        fixture.entry, nullptr, &scratchSize, &scratchAlignment);
   };
 
   EXPECT_EQ(validate(64), OBELISK_RT_OK);

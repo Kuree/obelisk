@@ -533,6 +533,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_context_create_for_design(
   *outContext = nullptr;
   try {
     DesignDatabaseCache designDatabase;
+    obelisk::designbytecode::Image designBytecodeImage;
     if (execution) {
       constexpr uint32_t validFlags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
                                       OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
@@ -552,9 +553,14 @@ extern "C" obelisk_rt_status obelisk_rt_v1_context_create_for_design(
                : (execution->bytecode || execution->bytecode_size != 0 ||
                   execution->checksum != 0)) ||
           !validActivationInventory(*execution) ||
-          !validObserverInventory(*execution) ||
-          !obelisk_rt_validate_activation_bytecode_inventory(*execution))
+          !validObserverInventory(*execution))
         return OBELISK_RT_INVALID_DESIGN;
+      if ((execution->flags & OBELISK_RT_EXECUTION_HAS_BYTECODE) != 0) {
+        obelisk_rt_status status = obelisk_rt_initialize_design_bytecode_image(
+            *execution, designBytecodeImage);
+        if (status != OBELISK_RT_OK)
+          return status;
+      }
       if ((execution->flags & OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE) == 0 &&
           (execution->design_database || execution->design_database_size != 0))
         return OBELISK_RT_INVALID_DESIGN;
@@ -568,6 +574,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_context_create_for_design(
     auto *context = new obelisk_rt_context();
     context->execution = execution;
     context->designDatabase = designDatabase;
+    context->designBytecodeImage = designBytecodeImage;
+    context->designBytecodeImageValidated = designBytecodeImage.data != nullptr;
     if (execution) {
       obelisk_rt_status status =
           obelisk_rt_initialize_dpi_scopes(context, execution);

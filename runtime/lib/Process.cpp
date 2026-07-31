@@ -1512,7 +1512,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_process_instance_execute(
             ? obelisk_rt_validate_bytecode_program(
                   *instance->descriptor->bytecode, instance->continuation)
             : obelisk_rt_validate_design_bytecode(
-                  *instance->descriptor->design_bytecode, nullptr, nullptr);
+                  *instance->descriptor->design_bytecode, context, nullptr,
+                  nullptr);
     if (status != OBELISK_RT_OK)
       return status;
   }

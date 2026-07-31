@@ -20,7 +20,6 @@
 #include <optional>
 #include <stdexcept>
 #include <tuple>
-#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -51,6 +50,25 @@ public:
 private:
   ReusableByteBufferPool *pool;
   std::vector<uint8_t> buffer;
+};
+
+class ScopedCopyMapBuffer {
+public:
+  ScopedCopyMapBuffer(obelisk_rt_context *context, size_t size) {
+    if (size > inlineBuffer.size())
+      overflow.emplace(context, size);
+  }
+  ScopedCopyMapBuffer(const ScopedCopyMapBuffer &) = delete;
+  ScopedCopyMapBuffer &operator=(const ScopedCopyMapBuffer &) = delete;
+
+  uint8_t *data() { return overflow ? overflow->data() : inlineBuffer.data(); }
+
+private:
+  // Most block maps only move a handful of scalar values. Keeping that
+  // snapshot inline avoids both allocator traffic and pressure on the shared
+  // frame pool; unusually wide maps still reuse a context-owned buffer.
+  std::array<uint8_t, 256> inlineBuffer;
+  std::optional<ScopedReusableByteBuffer> overflow;
 };
 
 struct PendingDesignActivation {
@@ -210,8 +228,9 @@ void releaseDesignTaskOwnedStatesUnlocked(obelisk_rt_context *context,
 }
 
 struct ExecutionState {
+  static constexpr size_t kMaxFrameCount = 1026;
   uint32_t callDepth = 0;
-  std::unordered_map<uint32_t, Frame *> frames;
+  std::array<Frame *, kMaxFrameCount> frames{};
 };
 
 bool copyRegister(const Image &image, const Frame &source, uint32_t sourceIndex,
@@ -230,12 +249,14 @@ bool copyRegister(const Image &image, const Frame &source, uint32_t sourceIndex,
 }
 
 bool copyMap(const Image &image, const Frame &source, Frame &destination,
-             uint64_t first, uint64_t count) {
+             uint64_t first, uint64_t count, obelisk_rt_context *context) {
   if (first > image.operandCount || count > image.operandCount - first)
     return false;
+  if (count == 0)
+    return true;
+
   // Snapshot sources to make parallel block-argument assignment well defined.
-  std::vector<std::vector<uint8_t>> values;
-  values.reserve(static_cast<size_t>(count));
+  size_t byteCount = 0;
   for (uint64_t index = 0; index != count; ++index) {
     auto [destinationRegister, sourceRegister] =
         operandAt(image, first + index);
@@ -243,20 +264,34 @@ bool copyMap(const Image &image, const Frame &source, Frame &destination,
     if (!validRegister(source.function, sourceRegister))
       return false;
     Layout layout = layoutAt(image, source.function, sourceRegister);
-    values.emplace_back(source.data + layout.offset,
-                        source.data + layout.offset + layout.size);
+    if (layout.size > std::numeric_limits<size_t>::max())
+      throw std::bad_alloc();
+    byteCount = checkedSizeSum(byteCount, static_cast<size_t>(layout.size));
   }
+  ScopedCopyMapBuffer values(context, byteCount);
+  size_t valueOffset = 0;
   for (uint64_t index = 0; index != count; ++index) {
     auto [destinationRegister, sourceRegister] =
         operandAt(image, first + index);
-    (void)sourceRegister;
+    (void)destinationRegister;
+    Layout layout = layoutAt(image, source.function, sourceRegister);
+    std::memcpy(values.data() + valueOffset, source.data + layout.offset,
+                static_cast<size_t>(layout.size));
+    valueOffset += static_cast<size_t>(layout.size);
+  }
+  valueOffset = 0;
+  for (uint64_t index = 0; index != count; ++index) {
+    auto [destinationRegister, sourceRegister] =
+        operandAt(image, first + index);
     if (!validRegister(destination.function, destinationRegister))
       return false;
     Layout layout = layoutAt(image, destination.function, destinationRegister);
-    if (layout.size != values[index].size())
+    Layout sourceLayout = layoutAt(image, source.function, sourceRegister);
+    if (layout.size != sourceLayout.size)
       return false;
-    std::memcpy(destination.data + layout.offset, values[index].data(),
-                layout.size);
+    std::memcpy(destination.data + layout.offset, values.data() + valueOffset,
+                static_cast<size_t>(layout.size));
+    valueOffset += static_cast<size_t>(layout.size);
   }
   return true;
 }
@@ -677,9 +712,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
         if (instruction.flags == OBELISK_RT_DB_SELECT_FOUR_STATE) {
           Logic left = read(instruction.source0);
           Logic right = read(instruction.source1);
-          Logic result{left.width, true,
-                       std::vector<uint64_t>(limbCount(left.width)),
-                       std::vector<uint64_t>(limbCount(left.width))};
+          Logic result{left.width, true, LimbVector(limbCount(left.width)),
+                       LimbVector(limbCount(left.width))};
           for (uint32_t bitIndex = 0; bitIndex < left.width; ++bitIndex) {
             bool leftValue = bit(left.value, bitIndex);
             bool leftUnknown = bit(left.unknown, bitIndex);
@@ -707,8 +741,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       Layout destination = layout(instruction.destination);
       Logic result{destination.width,
                    destination.kind == OBELISK_RT_DBREG_LOGIC,
-                   std::vector<uint64_t>(limbCount(destination.width)),
-                   std::vector<uint64_t>(limbCount(destination.width))};
+                   LimbVector(limbCount(destination.width)),
+                   LimbVector(limbCount(destination.width))};
       uint64_t low = instruction.immediate;
       bool negative = false;
       uint64_t negativeMagnitude = 0;
@@ -999,8 +1033,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       Layout destination = layout(instruction.destination);
       Logic result{destination.width,
                    destination.kind == OBELISK_RT_DBREG_LOGIC,
-                   std::vector<uint64_t>(limbCount(destination.width)),
-                   std::vector<uint64_t>(limbCount(destination.width))};
+                   LimbVector(limbCount(destination.width)),
+                   LimbVector(limbCount(destination.width))};
       for (uint64_t bitIndex = 0; bitIndex != right.width; ++bitIndex) {
         setBit(result.value, bitIndex, bit(right.value, bitIndex));
         setBit(result.unknown, bitIndex, bit(right.unknown, bitIndex));
@@ -1166,12 +1200,11 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       uint32_t valueRegister =
           isLoad ? instruction.destination : instruction.source1;
       Layout valueLayout = layout(valueRegister);
-      Logic value =
-          !isLoad ? read(valueRegister)
-                  : Logic{valueLayout.width,
-                          valueLayout.kind == OBELISK_RT_DBREG_LOGIC,
-                          std::vector<uint64_t>(limbCount(valueLayout.width)),
-                          std::vector<uint64_t>(limbCount(valueLayout.width))};
+      Logic value = !isLoad ? read(valueRegister)
+                            : Logic{valueLayout.width,
+                                    valueLayout.kind == OBELISK_RT_DBREG_LOGIC,
+                                    LimbVector(limbCount(valueLayout.width)),
+                                    LimbVector(limbCount(valueLayout.width))};
       Layout handleLayout = layout(instruction.source0);
       if (handleLayout.kind != OBELISK_RT_DBREG_HANDLE)
         return OBELISK_RT_INVALID_HANDLE;
@@ -1346,11 +1379,10 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       if (local) {
         uint32_t frameID = (handleKind >> 16) & UINT32_C(0x7fff);
         uint32_t registerIndex = handleKind & UINT32_C(0xffff);
-        auto found = state.frames.find(frameID);
-        if (found == state.frames.end() ||
-            !validRegister(found->second->function, registerIndex))
+        if (frameID >= state.frames.size() || !state.frames[frameID] ||
+            !validRegister(state.frames[frameID]->function, registerIndex))
           return OBELISK_RT_INVALID_HANDLE;
-        localFrame = found->second;
+        localFrame = state.frames[frameID];
         localLayout = layoutAt(image, localFrame->function, registerIndex);
         if (localLayout.kind != OBELISK_RT_DBREG_BITS &&
             localLayout.kind != OBELISK_RT_DBREG_LOGIC &&
@@ -1478,9 +1510,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
         }
         bool realValue = valueLayout.kind == OBELISK_RT_DBREG_REAL32 ||
                          valueLayout.kind == OBELISK_RT_DBREG_REAL64;
-        Logic oldReal{value.width, false,
-                      std::vector<uint64_t>(limbCount(value.width)),
-                      std::vector<uint64_t>(limbCount(value.width))};
+        Logic oldReal{value.width, false, LimbVector(limbCount(value.width)),
+                      LimbVector(limbCount(value.width))};
         for (uint64_t bitIndex = 0; bitIndex != value.width; ++bitIndex) {
           bool valid = bitIndex <= uint64_t{INT64_MAX} &&
                        start <= INT64_MAX - static_cast<int64_t>(bitIndex);
@@ -1507,13 +1538,12 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
           if (isLoad) {
             bool loadedValue =
                 automatic ? automaticBit(automaticState->value, absolute)
-                          : bit(local ? localValue.value : context->stateValue,
-                                storageBit);
+                : local   ? bit(localValue.value, storageBit)
+                          : bit(context->stateValue, storageBit);
             bool loadedUnknown =
-                automatic
-                    ? automaticBit(automaticState->unknown, absolute)
-                    : bit(local ? localValue.unknown : context->stateUnknown,
-                          storageBit);
+                automatic ? automaticBit(automaticState->unknown, absolute)
+                : local   ? bit(localValue.unknown, storageBit)
+                          : bit(context->stateUnknown, storageBit);
             setBit(value.value, bitIndex, loadedValue);
             setBit(value.unknown, bitIndex, loadedUnknown);
           } else {
@@ -1526,15 +1556,14 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
                 (context->assignMask[storageBit / 64] & forceMask) != 0;
             if (!isOverride && !local && !automatic && (forced || assigned))
               continue;
-            bool oldValue =
-                automatic ? automaticBit(automaticState->value, absolute)
-                          : bit(local ? localValue.value : context->stateValue,
-                                storageBit);
+            bool oldValue = automatic
+                                ? automaticBit(automaticState->value, absolute)
+                            : local ? bit(localValue.value, storageBit)
+                                    : bit(context->stateValue, storageBit);
             bool oldUnknown =
-                automatic
-                    ? automaticBit(automaticState->unknown, absolute)
-                    : bit(local ? localValue.unknown : context->stateUnknown,
-                          storageBit);
+                automatic ? automaticBit(automaticState->unknown, absolute)
+                : local   ? bit(localValue.unknown, storageBit)
+                          : bit(context->stateUnknown, storageBit);
             bool newValue = bit(value.value, bitIndex);
             bool newUnknown = bit(value.unknown, bitIndex);
             if (realValue)
@@ -1560,11 +1589,12 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
             if (automatic) {
               setAutomaticBit(automaticState->value, absolute, newValue);
               setAutomaticBit(automaticState->unknown, absolute, newUnknown);
+            } else if (local) {
+              setBit(localValue.value, storageBit, newValue);
+              setBit(localValue.unknown, storageBit, newUnknown);
             } else {
-              setBit(local ? localValue.value : context->stateValue, storageBit,
-                     newValue);
-              setBit(local ? localValue.unknown : context->stateUnknown,
-                     storageBit, newUnknown);
+              setBit(context->stateValue, storageBit, newValue);
+              setBit(context->stateUnknown, storageBit, newUnknown);
             }
             if (!local && !realValue && !equalStringContents)
               transitions.push_back(
@@ -1825,7 +1855,7 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
     }
     case OBELISK_RT_DB_JUMP:
       if (!copyMap(image, frame, frame, instruction.source0,
-                   instruction.source1))
+                   instruction.source1, context))
         return OBELISK_RT_INVALID_BYTECODE;
       pc = instruction.immediate;
       break;
@@ -1833,7 +1863,7 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       Logic condition = read(instruction.destination);
       if (anyUnknown(condition) || !isZero(condition)) {
         if (!copyMap(image, frame, frame, instruction.source0,
-                     instruction.source1))
+                     instruction.source1, context))
           return OBELISK_RT_INVALID_BYTECODE;
         pc = instruction.immediate;
       }
@@ -1850,9 +1880,9 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       state.frames[callee.id] = &callee;
       ++state.callDepth;
       if (!copyMap(image, frame, callee, instruction.source1,
-                   instruction.source2)) {
+                   instruction.source2, context)) {
         --state.callDepth;
-        state.frames.erase(callee.id);
+        state.frames[callee.id] = nullptr;
         return OBELISK_RT_INVALID_BYTECODE;
       }
       obelisk_rt_status status =
@@ -1861,7 +1891,7 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
                           budget, action, state, pendingActivation,
                           instruction.auxiliary, instruction.immediate, &frame);
       --state.callDepth;
-      state.frames.erase(callee.id);
+      state.frames[callee.id] = nullptr;
       if (status != OBELISK_RT_OK)
         return status;
       break;
@@ -1905,9 +1935,9 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       state.frames[callee.id] = &callee;
       ++state.callDepth;
       if (!copyMap(image, frame, callee, instruction.source1,
-                   instruction.source2)) {
+                   instruction.source2, context)) {
         --state.callDepth;
-        state.frames.erase(callee.id);
+        state.frames[callee.id] = nullptr;
         return OBELISK_RT_INVALID_BYTECODE;
       }
       status = executeFunction(
@@ -1915,18 +1945,18 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
           calleeFunction.firstInstruction, budget, action, state,
           pendingActivation, instruction.auxiliary, instruction.flags, &frame);
       --state.callDepth;
-      state.frames.erase(callee.id);
+      state.frames[callee.id] = nullptr;
       if (status != OBELISK_RT_OK)
         return status;
       break;
     }
     case OBELISK_RT_DB_RETURN:
       if (!copyMap(image, frame, frame, instruction.source0,
-                   instruction.source1))
+                   instruction.source1, context))
         return OBELISK_RT_INVALID_BYTECODE;
       if (!caller)
         return OBELISK_RT_OK;
-      if (!copyMap(image, frame, *caller, returnFirst, returnCount))
+      if (!copyMap(image, frame, *caller, returnFirst, returnCount, context))
         return OBELISK_RT_INVALID_BYTECODE;
       return OBELISK_RT_OK;
     case OBELISK_RT_DB_CONTINUE:
