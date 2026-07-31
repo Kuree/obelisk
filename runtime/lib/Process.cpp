@@ -408,6 +408,39 @@ uint64_t loadPackedBytes(const uint8_t *plane, uint64_t bitOffset,
   uint64_t firstByte = bitOffset / 8;
   uint32_t shift = bitOffset % 8;
   uint64_t byteCount = (shift + bitWidth + 7) / 8;
+  if (byteCount == 1)
+    return (plane[firstByte] >> shift) & packedWidthMask(bitWidth);
+  if (shift == 0) {
+    uint64_t value = 0;
+    switch (bitWidth) {
+    case 8:
+      return plane[firstByte];
+    case 16: {
+      uint16_t loaded;
+      std::memcpy(&loaded, plane + firstByte, sizeof(loaded));
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+      loaded = __builtin_bswap16(loaded);
+#endif
+      return loaded;
+    }
+    case 32: {
+      uint32_t loaded;
+      std::memcpy(&loaded, plane + firstByte, sizeof(loaded));
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+      loaded = __builtin_bswap32(loaded);
+#endif
+      return loaded;
+    }
+    case 64:
+      std::memcpy(&value, plane + firstByte, sizeof(value));
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+      value = __builtin_bswap64(value);
+#endif
+      return value;
+    default:
+      break;
+    }
+  }
   unsigned __int128 bits = 0;
   for (uint64_t byte = 0; byte != byteCount; ++byte)
     bits |= static_cast<unsigned __int128>(plane[firstByte + byte])
@@ -435,6 +468,45 @@ void storePackedBytes(uint8_t *plane, uint64_t bitOffset, uint64_t bitWidth,
   uint64_t firstByte = bitOffset / 8;
   uint32_t shift = bitOffset % 8;
   uint64_t byteCount = (shift + bitWidth + 7) / 8;
+  if (byteCount == 1) {
+    uint8_t mask = static_cast<uint8_t>(packedWidthMask(bitWidth) << shift);
+    plane[firstByte] = static_cast<uint8_t>(
+        (plane[firstByte] & ~mask) | ((value << shift) & mask));
+    return;
+  }
+  if (shift == 0) {
+    switch (bitWidth) {
+    case 8:
+      plane[firstByte] = static_cast<uint8_t>(value);
+      return;
+    case 16: {
+      uint16_t stored = static_cast<uint16_t>(value);
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+      stored = __builtin_bswap16(stored);
+#endif
+      std::memcpy(plane + firstByte, &stored, sizeof(stored));
+      return;
+    }
+    case 32: {
+      uint32_t stored = static_cast<uint32_t>(value);
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+      stored = __builtin_bswap32(stored);
+#endif
+      std::memcpy(plane + firstByte, &stored, sizeof(stored));
+      return;
+    }
+    case 64: {
+      uint64_t stored = value;
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+      stored = __builtin_bswap64(stored);
+#endif
+      std::memcpy(plane + firstByte, &stored, sizeof(stored));
+      return;
+    }
+    default:
+      break;
+    }
+  }
   unsigned __int128 bits = 0;
   for (uint64_t byte = 0; byte != byteCount; ++byte)
     bits |= static_cast<unsigned __int128>(plane[firstByte + byte])
@@ -901,10 +973,7 @@ bool signalTransitionBatchMatches(const SignalSubscription &subscription,
 bool nativeStaticSpecializationEnvironmentClean(
     const obelisk_rt_context *context) {
   return context &&
-         (!context->execution ||
-          (((context->execution->flags &
-             OBELISK_RT_EXECUTION_REQUIRE_BYTECODE) == 0) &&
-           context->execution->observer_count == 0)) &&
+         (!context->execution || context->execution->observer_count == 0) &&
          context->scheduledDesignTasks.empty() &&
          context->nativeConditionalSignalWaiters.empty() &&
          context->designConditionalSignalWaiters.empty();
@@ -926,6 +995,20 @@ bool canUseStaticAOTFanout(const obelisk_rt_context *context) {
          nativeStaticSpecializationEnvironmentClean(context);
 }
 
+bool canUseIndexedExternalAOTFanout(const obelisk_rt_context *context) {
+  const obelisk_rt_native_schedule_plan *plan =
+      context ? context->nativeSchedulePlan : nullptr;
+  return plan &&
+         (plan->flags & (OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT |
+                         OBELISK_RT_NATIVE_SCHEDULE_GUARDED_FANOUT)) != 0 &&
+         !context->nativeScheduleDeoptimized &&
+         !context->nativeScheduleExternalWritePending &&
+         !context->nativeScheduleDirtyRootsPresent &&
+         !context->nativeScheduleNodes.empty() &&
+         !context->nativeScheduleReadyNodes.empty() &&
+         nativeStaticSpecializationEnvironmentClean(context);
+}
+
 bool staticNBARootNeedsTransitions(const obelisk_rt_context *context,
                                    uint32_t rootIndex) {
   return !canUseStaticAOTFanout(context) ||
@@ -935,16 +1018,55 @@ bool staticNBARootNeedsTransitions(const obelisk_rt_context *context,
 
 bool nativeStaticRootDirty(const obelisk_rt_context *context,
                            uint32_t staticState) {
-  auto dirty = [staticState](const std::vector<uint8_t> &mask,
+  auto dirty = [staticState](const std::vector<uint64_t> &mask,
                              const std::unordered_set<uint32_t> &sparse) {
-    return staticState < mask.size() ? mask[staticState] != 0
-                                     : sparse.find(staticState) != sparse.end();
+    uint64_t word = staticState / 64;
+    return word < mask.size()
+               ? (mask[word] & (uint64_t{1} << (staticState % 64))) != 0
+               : sparse.find(staticState) != sparse.end();
   };
   return context->nativeScheduleDirtyRootsPresent &&
          (dirty(context->nativeScheduleTransientDirtyMask,
                 context->nativeScheduleTransientDirtyRoots) ||
           dirty(context->nativeSchedulePersistentDirtyMask,
                 context->nativeSchedulePersistentDirtyRoots));
+}
+
+void markNativeDirtyRootUnlocked(obelisk_rt_context *context, uint32_t id,
+                                 bool persistent) {
+  auto &dirty = persistent ? context->nativeSchedulePersistentDirtyRoots
+                           : context->nativeScheduleTransientDirtyRoots;
+  auto &mask = persistent ? context->nativeSchedulePersistentDirtyMask
+                          : context->nativeScheduleTransientDirtyMask;
+  auto &summary = persistent ? context->nativeSchedulePersistentDirtySummary
+                             : context->nativeScheduleTransientDirtySummary;
+  dirty.insert(id);
+  uint32_t word = id / 64;
+  if (word < mask.size()) {
+    mask[word] |= uint64_t{1} << (id % 64);
+    uint32_t summaryWord = word / 64;
+    if (summaryWord < summary.size())
+      summary[summaryWord] |= uint64_t{1} << (word % 64);
+  }
+  context->nativeScheduleDirtyRootsPresent = true;
+}
+
+void clearNativeDirtyRootUnlocked(obelisk_rt_context *context, uint32_t id,
+                                  bool persistent) {
+  auto &dirty = persistent ? context->nativeSchedulePersistentDirtyRoots
+                           : context->nativeScheduleTransientDirtyRoots;
+  auto &mask = persistent ? context->nativeSchedulePersistentDirtyMask
+                          : context->nativeScheduleTransientDirtyMask;
+  auto &summary = persistent ? context->nativeSchedulePersistentDirtySummary
+                             : context->nativeScheduleTransientDirtySummary;
+  dirty.erase(id);
+  uint32_t word = id / 64;
+  if (word >= mask.size())
+    return;
+  mask[word] &= ~(uint64_t{1} << (id % 64));
+  uint32_t summaryWord = word / 64;
+  if (mask[word] == 0 && summaryWord < summary.size())
+    summary[summaryWord] &= ~(uint64_t{1} << (word % 64));
 }
 
 void invalidateNativeStaticSpecializationFastUnlocked(
@@ -1229,17 +1351,13 @@ initializeNativeAOTNodesUnlocked(obelisk_rt_context *context,
        ++index) {
     const obelisk_rt_static_fanout_entry &entry =
         context->nativeScheduleFanoutEntries[index];
-    if (entry.actor_slot >= actorNodes.size())
+    if (entry.actor_slot >= actorNodes.size() || entry.compute_node >= nodeCount)
       return OBELISK_RT_INVALID_ARGUMENT;
-    const auto &entries = actorNodes[entry.actor_slot];
-    auto found = std::lower_bound(
-        entries.begin(), entries.end(), entry.continuation,
-        [](const std::pair<uint32_t, uint32_t> &candidate, uint32_t value) {
-          return candidate.first < value;
-        });
-    if (found == entries.end() || found->first != entry.continuation)
+    const obelisk_rt_native_schedule_node &node = nodes[entry.compute_node];
+    if (node.actor_slot != entry.actor_slot ||
+        node.continuation != entry.continuation)
       return OBELISK_RT_INVALID_CONTINUATION;
-    fanoutNodes[index] = found->second;
+    fanoutNodes[index] = entry.compute_node;
   }
   context->nativeScheduleNodes = std::move(installedNodes);
   context->nativeScheduleActorNodes = std::move(actorNodes);
@@ -1287,13 +1405,26 @@ bool staticAOTFanoutRangeHasConsumer(const obelisk_rt_context *context,
       context->nativeScheduleFanoutEntries;
   const obelisk_rt_static_fanout_entry *end =
       begin + context->nativeScheduleFanoutEntryCount;
-  auto first =
-      std::lower_bound(begin, end, staticID,
-                       [](const obelisk_rt_static_fanout_entry &entry,
-                          uint32_t id) { return entry.static_state < id; });
-  auto last = first;
-  while (last != end && last->static_state == staticID)
-    ++last;
+  auto first = end;
+  auto last = end;
+  if (staticID < context->nativeScheduleFanoutRanges.size()) {
+    auto [firstIndex, lastIndex] =
+        context->nativeScheduleFanoutRanges[staticID];
+    if (firstIndex <= lastIndex &&
+        lastIndex <= context->nativeScheduleFanoutEntryCount) {
+      first = begin + firstIndex;
+      last = begin + lastIndex;
+    }
+  } else {
+    first = std::lower_bound(
+        begin, end, staticID,
+        [](const obelisk_rt_static_fanout_entry &entry, uint32_t id) {
+          return entry.static_state < id;
+        });
+    last = first;
+    while (last != end && last->static_state == staticID)
+      ++last;
+  }
   return std::any_of(
       first, last, [&](const obelisk_rt_static_fanout_entry &entry) {
         return static_cast<__int128>(staticOffset) <
@@ -1306,10 +1437,11 @@ bool staticAOTFanoutRangeHasConsumer(const obelisk_rt_context *context,
 bool publishStaticAOTSignalTransitionUnlocked(
     obelisk_rt_context *context, uint64_t stableID, uint64_t bitWidth,
     const uint8_t *changed, const uint8_t *posedge, const uint8_t *negedge,
-    uint64_t *outSequence) {
+    uint64_t *outSequence, bool indexedExternalDeposit = false) {
   if (outSequence)
     *outSequence = 0;
-  if (!canUseStaticAOTFanout(context))
+  if (!(indexedExternalDeposit ? canUseIndexedExternalAOTFanout(context)
+                               : canUseStaticAOTFanout(context)))
     return false;
   uint32_t staticID = 0;
   int64_t staticOffset = 0;
@@ -1327,12 +1459,27 @@ bool publishStaticAOTSignalTransitionUnlocked(
       context->nativeScheduleFanoutEntries;
   const obelisk_rt_static_fanout_entry *end =
       begin + context->nativeScheduleFanoutEntryCount;
-  auto first =
-      std::lower_bound(begin, end, staticID,
-                       [](const obelisk_rt_static_fanout_entry &entry,
-                          uint32_t id) { return entry.static_state < id; });
-  for (auto entry = first; entry != end && entry->static_state == staticID;
-       ++entry) {
+  auto first = end;
+  auto last = end;
+  if (staticID < context->nativeScheduleFanoutRanges.size()) {
+    auto [firstIndex, lastIndex] =
+        context->nativeScheduleFanoutRanges[staticID];
+    if (firstIndex <= lastIndex &&
+        lastIndex <= context->nativeScheduleFanoutEntryCount) {
+      first = begin + firstIndex;
+      last = begin + lastIndex;
+    }
+  } else {
+    first = std::lower_bound(
+        begin, end, staticID,
+        [](const obelisk_rt_static_fanout_entry &entry, uint32_t id) {
+          return entry.static_state < id;
+        });
+    last = first;
+    while (last != end && last->static_state == staticID)
+      ++last;
+  }
+  for (auto entry = first; entry != last; ++entry) {
     ++context->signalDiagnostics.aotFanoutEntries;
     uint32_t slot = entry->actor_slot;
     if (slot >= context->nativeScheduleActors.size()) {
@@ -1386,10 +1533,19 @@ bool publishStaticAOTSignalTransitionUnlocked(
       published = true;
     }
     scheduled.signalTriggered = true;
-    if (!markNativeAOTActorReadyUnlocked(context, slot)) {
+    uint32_t node = entry->compute_node;
+    if (node >= context->nativeScheduleNodes.size() ||
+        node / 64 >= context->nativeScheduleReadyNodes.size() ||
+        context->nativeScheduleNodes[node].actor_slot != slot ||
+        context->nativeScheduleNodes[node].continuation !=
+            entry->continuation) {
       context->schedulerStatus = OBELISK_RT_INVALID_CONTINUATION;
       return true;
     }
+    context->nativeScheduleReadyNodes[node / 64] |=
+        uint64_t{1} << (node % 64);
+    context->nativeScheduleMinimumActivatedNode =
+        std::min(context->nativeScheduleMinimumActivatedNode, node);
   }
   return true;
 }
@@ -1423,7 +1579,7 @@ bool obelisk_rt_publish_signal_transition_batch_unlocked(
     uint64_t edgeBitOffset, uint64_t *outSequence) {
   if (edgeBitOffset == 0 && publishStaticAOTSignalTransitionUnlocked(
                                 context, stableID, bitWidth, changed, posedge,
-                                negedge, outSequence)) {
+                                negedge, outSequence, false)) {
     return context->schedulerStatus == OBELISK_RT_OK;
   }
   return publishSignalTransitionBatchImpl(context, stableID, bitWidth, changed,
@@ -1832,6 +1988,20 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
   bool nbaCommitValid =
       ((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_STATIC_NBA) != 0) ==
       (plan->nba_commit != nullptr);
+  uint32_t expectedNBADirtyWords = (plan->nba_root_count + 63) / 64;
+  uint32_t expectedNBADirtySummaryWords =
+      (expectedNBADirtyWords + 63) / 64;
+  bool nbaDirtyRootsValid =
+      plan->nba_dirty_reserved == 0 &&
+      plan->nba_dirty_summary_reserved == 0 &&
+      ((plan->nba_dirty_word_count == 0 &&
+        plan->nba_dirty_roots == nullptr &&
+        plan->nba_dirty_summary_word_count == 0 &&
+        plan->nba_dirty_summary == nullptr) ||
+       (plan->nba_dirty_word_count == expectedNBADirtyWords &&
+        plan->nba_dirty_roots != nullptr &&
+        plan->nba_dirty_summary_word_count == expectedNBADirtySummaryWords &&
+        plan->nba_dirty_summary != nullptr));
   bool specializationFastValid =
       ((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_GUARDED_SPECIALIZATION) !=
        0) == (plan->specialization_fast != nullptr) &&
@@ -1855,7 +2025,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
   if (!plan->mutable_state || plan->mutable_state_size == 0 ||
       plan->actor_capacity == 0 || !actorStorageFits || !statePlanesValid ||
       !nbaTablesValid || !fanoutTableValid || !actorRootTableValid ||
-      !nbaCommitValid || !specializationFastValid || !cleanSuperstepValid ||
+      !nbaCommitValid || !nbaDirtyRootsValid || !specializationFastValid ||
+      !cleanSuperstepValid ||
       (plan->flags & ~(OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
                        OBELISK_RT_NATIVE_SCHEDULE_ROOT_SLOT_ZERO |
                        OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL |
@@ -1882,8 +2053,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
         root.bit_width > UINT64_MAX - 63 ||
         (root.bit_width + 7) / 8 > std::numeric_limits<size_t>::max() ||
         (root.generated_accumulator &&
-         (root.bit_width <= OBELISK_RT_SCALAR_NBA_MAX_BITS ||
-          root.bit_width > OBELISK_RT_GENERATED_NBA_MAX_BITS)))
+         root.bit_width > OBELISK_RT_GENERATED_NBA_MAX_BITS))
       return OBELISK_RT_INVALID_ARGUMENT;
     for (uint32_t previous = 0; previous != index; ++previous)
       if (nbaRoots[previous].static_state == root.static_state)
@@ -1901,6 +2071,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
     const obelisk_rt_static_fanout_entry &entry = fanoutEntries[index];
     if (entry.static_state == 0 || entry.actor_slot >= plan->actor_capacity ||
         entry.continuation == 0 || entry.bit_width == 0 ||
+        entry.compute_node == UINT32_MAX || entry.reserved != 0 ||
         entry.low_bit > UINT64_MAX - entry.bit_width ||
         entry.edge < OBELISK_RT_WAIT_EDGE_CHANGE ||
         entry.edge > OBELISK_RT_WAIT_EDGE_BOTH ||
@@ -1992,6 +2163,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
       context->nativeScheduleNodes.clear();
       context->nativeScheduleActorNodes.clear();
       context->nativeScheduleFanoutNodes.clear();
+      context->nativeScheduleFanoutRanges.clear();
       context->nativeScheduleReadyNodes.clear();
       context->nativeScheduleDeadlines.assign(plan->actor_capacity, UINT64_MAX);
       context->nativeScheduleDeadlineHeap.clear();
@@ -2011,17 +2183,32 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
       }
       context->nativeScheduleStaticStateFanoutEdges.assign(
           context->nativeScheduleStaticStateIndex.size(), 0);
+      context->nativeScheduleFanoutRanges.assign(
+          context->nativeScheduleStaticStateIndex.size(),
+          {fanoutEntryCount, fanoutEntryCount});
       for (uint64_t index = 0; index != fanoutEntryCount; ++index) {
         const obelisk_rt_static_fanout_entry &entry = fanoutEntries[index];
+        if (entry.static_state < context->nativeScheduleFanoutRanges.size()) {
+          auto &range =
+              context->nativeScheduleFanoutRanges[entry.static_state];
+          if (range.first == fanoutEntryCount)
+            range.first = index;
+          range.second = index + 1;
+        }
         if (entry.static_state <
             context->nativeScheduleStaticStateFanoutEdges.size())
           context->nativeScheduleStaticStateFanoutEdges[entry.static_state] |=
               static_cast<uint8_t>(uint32_t{1} << entry.edge);
       }
-      context->nativeScheduleTransientDirtyMask.assign(
-          context->nativeScheduleStaticStateIndex.size(), 0);
-      context->nativeSchedulePersistentDirtyMask.assign(
-          context->nativeScheduleStaticStateIndex.size(), 0);
+      size_t dirtyWords =
+          (context->nativeScheduleStaticStateIndex.size() + 63) / 64;
+      size_t dirtySummaryWords = (dirtyWords + 63) / 64;
+      context->nativeScheduleTransientDirtyMask.assign(dirtyWords, 0);
+      context->nativeSchedulePersistentDirtyMask.assign(dirtyWords, 0);
+      context->nativeScheduleTransientDirtySummary.assign(dirtySummaryWords,
+                                                          0);
+      context->nativeSchedulePersistentDirtySummary.assign(dirtySummaryWords,
+                                                           0);
       context->staticNBAAccumulators.clear();
       context->staticNBAAccumulators.reserve(nbaRootCount);
       context->staticNBAAccumulatorsPending = false;
@@ -2047,14 +2234,16 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
           context->staticNBARootHasFanout[index] = 1;
         const NativeStaticState *state =
             findNativeStaticState(context, root.static_state);
-        bool generatedBatchRoot =
-            root.generated_accumulator && root.bit_width == 256 && state &&
+        bool generatedRoot =
+            root.generated_accumulator && state &&
             state->bitWidth == root.bit_width &&
             state->bitOffset <= plan->state_bit_count &&
-            root.bit_width <= plan->state_bit_count - state->bitOffset &&
+            root.bit_width <= plan->state_bit_count - state->bitOffset;
+        bool generatedBatchRoot =
+            generatedRoot && root.bit_width == 256 &&
             context->staticNBARootHasFanout[index] == 0;
         context->nativeScheduleGeneratedBatchEligible &= generatedBatchRoot;
-        if (generatedBatchRoot)
+        if (generatedRoot)
           context->nativeScheduleGeneratedNBAOffsets[index] = state->bitOffset;
         size_t words = static_cast<size_t>((root.bit_width + 63) / 64);
         StaticNBAAccumulator accumulator;
@@ -2316,9 +2505,21 @@ bool hasGeneratedNBAStages(
 }
 
 void markStaticNBAAccumulatorPending(obelisk_rt_context *context,
+                                     uint32_t rootIndex,
                                      StaticNBAAccumulator &accumulator) {
   accumulator.valid = true;
   context->staticNBAAccumulatorsPending = true;
+  const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
+  if (plan && plan->nba_dirty_roots && rootIndex < plan->nba_root_count) {
+    uint32_t word = rootIndex / 64;
+    if (word < plan->nba_dirty_word_count) {
+      plan->nba_dirty_roots[word] |= uint64_t{1} << (rootIndex % 64);
+      uint32_t summaryWord = word / 64;
+      if (plan->nba_dirty_summary &&
+          summaryWord < plan->nba_dirty_summary_word_count)
+        plan->nba_dirty_summary[summaryWord] |= uint64_t{1} << (word % 64);
+    }
+  }
 }
 
 void refreshStaticNBAAccumulatorsPending(obelisk_rt_context *context) {
@@ -2483,7 +2684,7 @@ schedulerNBA(obelisk_rt_context *context, uint8_t *valuePlane,
         accumulator.unknownPlane = unknownPlane;
         accumulator.planeBitCount = planeBitCount;
         accumulator.execRegion = update.execRegion;
-        markStaticNBAAccumulatorPending(context, accumulator);
+        markStaticNBAAccumulatorPending(context, staticRoot, accumulator);
         bool packedStage =
             bitWidth <= 64 && offset >= 0 &&
             static_cast<uint64_t>(offset) <= root.bit_width &&
@@ -2724,7 +2925,7 @@ static obelisk_rt_status stageStaticNBAPacked(
   accumulator.unknownPlane = unknownPlane;
   accumulator.planeBitCount = planeBitCount;
   accumulator.execRegion = execRegion;
-  markStaticNBAAccumulatorPending(context, accumulator);
+  markStaticNBAAccumulatorPending(context, rootIndex, accumulator);
 
   uint64_t sourceMask = packedWidthMask(bitWidth);
   value &= sourceMask;
@@ -2770,9 +2971,11 @@ static obelisk_rt_status materializeGeneratedNBAAccumulatorUnlocked(
       root.generated_accumulator;
   if (!generated || !hasGeneratedNBAStages(*generated))
     return OBELISK_RT_OK;
-  std::optional<uint64_t> stageCount = countGeneratedNBAStages(*generated);
+  std::optional<uint64_t> stageCount =
+      root.bit_width <= OBELISK_RT_SCALAR_NBA_MAX_BITS
+          ? std::optional<uint64_t>{1}
+          : countGeneratedNBAStages(*generated);
   if (!stageCount || generated->exec_region != execRegion ||
-      root.bit_width <= OBELISK_RT_SCALAR_NBA_MAX_BITS ||
       root.bit_width > OBELISK_RT_GENERATED_NBA_MAX_BITS)
     return OBELISK_RT_INVALID_DESIGN;
   StaticNBAAccumulator &accumulator = context->staticNBAAccumulators[rootIndex];
@@ -2783,13 +2986,18 @@ static obelisk_rt_status materializeGeneratedNBAAccumulatorUnlocked(
     if (context->nextSchedulerSequence == 0)
       return OBELISK_RT_OUT_OF_RESOURCES;
     accumulator.valuePlane = plan->state_value;
-    accumulator.unknownPlane = nullptr;
+    accumulator.unknownPlane =
+        root.bit_width <= OBELISK_RT_SCALAR_NBA_MAX_BITS
+            ? plan->state_unknown
+            : nullptr;
     accumulator.planeBitCount = plan->state_bit_count;
     accumulator.execRegion = execRegion;
     accumulator.sequence = context->nextSchedulerSequence++;
-    markStaticNBAAccumulatorPending(context, accumulator);
+    markStaticNBAAccumulatorPending(context, rootIndex, accumulator);
   } else if (accumulator.execRegion != execRegion ||
              accumulator.valuePlane != plan->state_value ||
+             (root.bit_width <= OBELISK_RT_SCALAR_NBA_MAX_BITS &&
+              accumulator.unknownPlane != plan->state_unknown) ||
              accumulator.planeBitCount != plan->state_bit_count) {
     return OBELISK_RT_INVALID_LIFECYCLE;
   }
@@ -2852,7 +3060,7 @@ extern "C" void obelisk_rt_v1_static_nba_stage_wide(
     accumulator.planeBitCount = plan->state_bit_count;
     accumulator.execRegion = execRegion;
     accumulator.sequence = context->nextSchedulerSequence++;
-    markStaticNBAAccumulatorPending(context, accumulator);
+    markStaticNBAAccumulatorPending(context, rootIndex, accumulator);
   }
   uint64_t sourceMask = packedWidthMask(bitWidth);
   value &= sourceMask;
@@ -3132,44 +3340,75 @@ extern "C" void obelisk_rt_v1_scheduler_static_transition(
     context->schedulerStatus = OBELISK_RT_LAYOUT_MISMATCH;
     return;
   }
-  uint64_t oldZero = ~oldUnknown & ~oldValue & widthMask;
-  uint64_t oldOne = ~oldUnknown & oldValue & widthMask;
-  uint64_t newZero = ~newUnknown & ~newValue & widthMask;
-  uint64_t newOne = ~newUnknown & newValue & widthMask;
-  uint64_t posedge = ((oldZero & ~newZero) | (oldUnknown & newOne)) & widthMask;
-  uint64_t negedge = ((oldOne & ~newOne) | (oldUnknown & newZero)) & widthMask;
-
+  uint8_t edgeKinds = 0;
   if (staticState < context->nativeScheduleStaticStateFanoutEdges.size()) {
-    uint8_t edgeKinds =
-        context->nativeScheduleStaticStateFanoutEdges[staticState];
-    uint64_t observed = 0;
-    if ((edgeKinds & (uint8_t{1} << OBELISK_RT_WAIT_EDGE_CHANGE)) != 0)
-      observed |= changed;
-    if ((edgeKinds & (uint8_t{1} << OBELISK_RT_WAIT_EDGE_POSEDGE)) != 0)
-      observed |= posedge;
-    if ((edgeKinds & (uint8_t{1} << OBELISK_RT_WAIT_EDGE_NEGEDGE)) != 0)
-      observed |= negedge;
-    if ((edgeKinds & (uint8_t{1} << OBELISK_RT_WAIT_EDGE_BOTH)) != 0)
-      observed |= posedge | negedge;
-    if (observed == 0) {
+    edgeKinds = context->nativeScheduleStaticStateFanoutEdges[staticState];
+    if (edgeKinds == 0) {
       if (++context->schedulerEpoch == 0)
         context->schedulerEpoch = 1;
       return;
     }
+  }
+  uint8_t posedgeKinds =
+      (uint8_t{1} << OBELISK_RT_WAIT_EDGE_POSEDGE) |
+      (uint8_t{1} << OBELISK_RT_WAIT_EDGE_BOTH);
+  uint8_t negedgeKinds =
+      (uint8_t{1} << OBELISK_RT_WAIT_EDGE_NEGEDGE) |
+      (uint8_t{1} << OBELISK_RT_WAIT_EDGE_BOTH);
+  uint64_t posedge = 0;
+  uint64_t negedge = 0;
+  if ((edgeKinds & (posedgeKinds | negedgeKinds)) != 0) {
+    uint64_t oldZero = ~oldUnknown & ~oldValue & widthMask;
+    uint64_t oldOne = ~oldUnknown & oldValue & widthMask;
+    uint64_t newZero = ~newUnknown & ~newValue & widthMask;
+    uint64_t newOne = ~newUnknown & newValue & widthMask;
+    if ((edgeKinds & posedgeKinds) != 0)
+      posedge =
+          ((oldZero & ~newZero) | (oldUnknown & newOne)) & widthMask;
+    if ((edgeKinds & negedgeKinds) != 0)
+      negedge =
+          ((oldOne & ~newOne) | (oldUnknown & newZero)) & widthMask;
+  }
+  uint64_t observedEdges = 0;
+  if ((edgeKinds & (uint8_t{1} << OBELISK_RT_WAIT_EDGE_CHANGE)) != 0)
+    observedEdges |= changed;
+  if ((edgeKinds & posedgeKinds) != 0)
+    observedEdges |= posedge;
+  if ((edgeKinds & negedgeKinds) != 0)
+    observedEdges |= negedge;
+  if (observedEdges == 0) {
+    if (++context->schedulerEpoch == 0)
+      context->schedulerEpoch = 1;
+    return;
   }
 
   const obelisk_rt_static_fanout_entry *begin =
       context->nativeScheduleFanoutEntries;
   const obelisk_rt_static_fanout_entry *end =
       begin + context->nativeScheduleFanoutEntryCount;
-  auto first =
-      std::lower_bound(begin, end, staticState,
-                       [](const obelisk_rt_static_fanout_entry &entry,
-                          uint32_t id) { return entry.static_state < id; });
+  auto first = end;
+  auto last = end;
+  if (staticState < context->nativeScheduleFanoutRanges.size()) {
+    auto [firstIndex, lastIndex] =
+        context->nativeScheduleFanoutRanges[staticState];
+    if (firstIndex <= lastIndex &&
+        lastIndex <= context->nativeScheduleFanoutEntryCount) {
+      first = begin + firstIndex;
+      last = begin + lastIndex;
+    }
+  } else {
+    first = std::lower_bound(
+        begin, end, staticState,
+        [](const obelisk_rt_static_fanout_entry &entry, uint32_t id) {
+          return entry.static_state < id;
+        });
+    last = first;
+    while (last != end && last->static_state == staticState)
+      ++last;
+  }
   bool published = false;
   uint64_t publishedEnd = lowBit + bitWidth;
-  for (auto entry = first; entry != end && entry->static_state == staticState;
-       ++entry) {
+  for (auto entry = first; entry != last; ++entry) {
     ++context->signalDiagnostics.aotFanoutEntries;
     uint64_t overlapLow = std::max(lowBit, entry->low_bit);
     uint64_t overlapHigh =
@@ -3227,12 +3466,7 @@ extern "C" void obelisk_rt_v1_scheduler_static_transition(
       published = true;
     }
     scheduled.signalTriggered = true;
-    uint64_t fanoutIndex = static_cast<uint64_t>(entry - begin);
-    if (fanoutIndex >= context->nativeScheduleFanoutNodes.size()) {
-      context->schedulerStatus = OBELISK_RT_INVALID_CONTINUATION;
-      return;
-    }
-    uint32_t node = context->nativeScheduleFanoutNodes[fanoutIndex];
+    uint32_t node = entry->compute_node;
     if (node >= context->nativeScheduleNodes.size() ||
         node / 64 >= context->nativeScheduleReadyNodes.size()) {
       context->schedulerStatus = OBELISK_RT_INVALID_CONTINUATION;
@@ -3481,7 +3715,19 @@ bool staticOverrideRange(obelisk_rt_context *context, uint64_t handle,
 bool obelisk_rt_publish_native_signal_transition_unlocked(
     obelisk_rt_context *context, uint64_t stableID, uint64_t bitWidth,
     const uint8_t *changed, const uint8_t *posedge, const uint8_t *negedge,
-    const uint8_t *newValue, const uint8_t *newUnknown) {
+    const uint8_t *newValue, const uint8_t *newUnknown,
+    bool indexedExternalDeposit) {
+  uint64_t sequence = 0;
+  if (indexedExternalDeposit &&
+      publishStaticAOTSignalTransitionUnlocked(
+          context, stableID, bitWidth, changed, posedge, negedge, &sequence,
+          true)) {
+    obelisk_rt_invalidate_signal_snapshots_unlocked(context, stableID,
+                                                    bitWidth);
+    if (++context->schedulerEpoch == 0)
+      context->schedulerEpoch = 1;
+    return context->schedulerStatus == OBELISK_RT_OK;
+  }
   return publishNativeSignalTransitionUnlocked(context, stableID, bitWidth,
                                                changed, posedge, negedge,
                                                newValue, newUnknown);
@@ -4266,6 +4512,77 @@ obelisk_rt_status tryCommitGeneratedNBA256Unlocked(obelisk_rt_context *context,
   return OBELISK_RT_OK;
 }
 
+obelisk_rt_status tryCommitGeneratedNBAScalarUnlocked(
+    obelisk_rt_context *context, uint32_t rootIndex, uint32_t barrierRegion,
+    bool &changed, bool &handled, bool trustedStaticFanout = false) {
+  handled = false;
+  if (rootIndex >= context->nativeScheduleNBARootCount ||
+      rootIndex >= context->staticNBAAccumulators.size() ||
+      rootIndex >= context->staticNBASlowRoots.size())
+    return OBELISK_RT_OK;
+  const obelisk_rt_static_nba_root &root =
+      context->nativeScheduleNBARoots[rootIndex];
+  StaticNBAAccumulator &accumulator = context->staticNBAAccumulators[rootIndex];
+  obelisk_rt_generated_nba_accumulator_256 *generated =
+      root.generated_accumulator;
+  if (!generated || !hasGeneratedNBAStages(*generated) || accumulator.valid ||
+      context->staticNBASlowRoots[rootIndex] != 0 || root.bit_width > 64 ||
+      (!trustedStaticFanout && nativeStaticRootDirty(context, root.static_state)) ||
+      generated->exec_region != barrierRegion ||
+      (!trustedStaticFanout &&
+       (activeNativeAOTContext != context || !canUseStaticAOTFanout(context))))
+    return OBELISK_RT_OK;
+  // A scalar record represents one final root update regardless of its bit
+  // width. Unlike the 256-bit lane form, its mask need not consist of full
+  // 32-bit lanes.
+  constexpr uint64_t stageCount = 1;
+  const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
+  uint64_t stateOffset =
+      rootIndex < context->nativeScheduleGeneratedNBAOffsets.size()
+          ? context->nativeScheduleGeneratedNBAOffsets[rootIndex]
+          : UINT64_MAX;
+  if (!plan || stateOffset == UINT64_MAX ||
+      stateOffset > plan->state_bit_count ||
+      root.bit_width > plan->state_bit_count - stateOffset)
+    return OBELISK_RT_OK;
+  uint64_t widthMask = packedWidthMask(root.bit_width);
+  uint64_t writeMask = generated->write_mask[0] & widthMask;
+  auto loadOverrideMask = [&](const std::vector<uint64_t> &plane) {
+    return plane.empty()
+               ? uint64_t{0}
+               : loadPackedBytes(
+                     reinterpret_cast<const uint8_t *>(plane.data()),
+                     stateOffset, root.bit_width);
+  };
+  writeMask &= ~(loadOverrideMask(context->forceMask) |
+                 loadOverrideMask(context->assignMask));
+  uint64_t oldValue = loadPackedBytes(plan->state_value, stateOffset,
+                                      root.bit_width);
+  uint64_t oldUnknown = loadPackedBytes(plan->state_unknown, stateOffset,
+                                        root.bit_width);
+  uint64_t newValue =
+      (oldValue & ~writeMask) | (generated->value[0] & writeMask);
+  uint64_t newUnknown =
+      (oldUnknown & ~writeMask) | (generated->unknown[0] & writeMask);
+  storePackedBytes(plan->state_value, stateOffset, root.bit_width,
+                   newValue);
+  storePackedBytes(plan->state_unknown, stateOffset, root.bit_width,
+                   newUnknown);
+  bool rootChanged =
+      ((oldValue ^ newValue) | (oldUnknown ^ newUnknown)) != 0;
+  changed |= rootChanged;
+  context->signalDiagnostics.aotNBAStages += stageCount;
+  generated->write_mask[0] = 0;
+  generated->valid = 0;
+  ++context->signalDiagnostics.aotNBACommits;
+  handled = true;
+  if (rootChanged)
+    obelisk_rt_v1_scheduler_static_transition(
+        context, root.static_state, 0, root.bit_width, oldValue, oldUnknown,
+        newValue, newUnknown);
+  return context->schedulerStatus;
+}
+
 obelisk_rt_status commitStaticNBARootUnlocked(obelisk_rt_context *context,
                                               uint32_t rootIndex,
                                               uint32_t barrierRegion,
@@ -4286,6 +4603,10 @@ obelisk_rt_status commitStaticNBARootUnlocked(obelisk_rt_context *context,
     return OBELISK_RT_OK;
   if (allowGeneratedFast) {
     bool generatedHandled = false;
+    if (obelisk_rt_status status = tryCommitGeneratedNBAScalarUnlocked(
+            context, rootIndex, barrierRegion, changed, generatedHandled);
+        status != OBELISK_RT_OK || generatedHandled)
+      return status;
     if (obelisk_rt_status status = tryCommitGeneratedNBA256Unlocked(
             context, rootIndex, barrierRegion, changed, generatedHandled);
         status != OBELISK_RT_OK || generatedHandled)
@@ -4542,23 +4863,81 @@ obelisk_rt_status commitStaticNBARootRangeUnlocked(obelisk_rt_context *context,
                                                    uint32_t rootCount,
                                                    uint32_t barrierRegion,
                                                    bool &changed) {
+  const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
+  bool indexed = plan && plan->nba_dirty_roots && plan->nba_dirty_summary &&
+                 rootCount <= plan->nba_root_count;
+  bool trustedStaticFanout =
+      activeNativeAOTContext == context && canUseStaticAOTFanout(context);
 #if defined(__x86_64__) || defined(_M_X64)
-  if (tryCommitGeneratedNBA256BatchUnlocked(context, rootCount, barrierRegion,
-                                            changed))
+  if (!indexed && tryCommitGeneratedNBA256BatchUnlocked(
+                      context, rootCount, barrierRegion, changed))
     return OBELISK_RT_OK;
 #endif
-  for (uint32_t root = 0; root != rootCount; ++root) {
+  auto commitRoot = [&](uint32_t root) -> obelisk_rt_status {
     bool generatedHandled = false;
+    if (obelisk_rt_status status = tryCommitGeneratedNBAScalarUnlocked(
+            context, root, barrierRegion, changed, generatedHandled,
+            trustedStaticFanout);
+        status != OBELISK_RT_OK)
+      return status;
+    if (generatedHandled)
+      return OBELISK_RT_OK;
     if (obelisk_rt_status status = tryCommitGeneratedNBA256Unlocked(
             context, root, barrierRegion, changed, generatedHandled);
         status != OBELISK_RT_OK)
       return status;
     if (generatedHandled)
-      continue;
-    if (obelisk_rt_status status = commitStaticNBARootUnlocked(
-            context, root, barrierRegion, changed, false);
-        status != OBELISK_RT_OK)
-      return status;
+      return OBELISK_RT_OK;
+    return commitStaticNBARootUnlocked(context, root, barrierRegion, changed,
+                                       false);
+  };
+  if (!indexed) {
+    for (uint32_t root = 0; root != rootCount; ++root)
+      if (obelisk_rt_status status = commitRoot(root);
+          status != OBELISK_RT_OK)
+        return status;
+    return OBELISK_RT_OK;
+  }
+
+  // Traverse the compiler-owned bitmap like a tiny ordered radix index. The
+  // summary level skips empty 64-root leaf pages; roots within a page retain
+  // compute-graph order. A root stays indexed when it targets a later event
+  // region and is removed only after all of its pending forms are consumed.
+  for (uint32_t summaryIndex = 0;
+       summaryIndex != plan->nba_dirty_summary_word_count; ++summaryIndex) {
+    uint64_t summary = plan->nba_dirty_summary[summaryIndex];
+    while (summary != 0) {
+      uint32_t summaryBit = static_cast<uint32_t>(__builtin_ctzll(summary));
+      uint32_t leafIndex = summaryIndex * 64 + summaryBit;
+      if (leafIndex >= plan->nba_dirty_word_count)
+        break;
+      uint64_t roots = plan->nba_dirty_roots[leafIndex];
+      while (roots != 0) {
+        uint32_t rootBit = static_cast<uint32_t>(__builtin_ctzll(roots));
+        uint32_t root = leafIndex * 64 + rootBit;
+        if (root >= rootCount)
+          break;
+        if (obelisk_rt_status status = commitRoot(root);
+            status != OBELISK_RT_OK)
+          return status;
+        const obelisk_rt_static_nba_root &rootPlan =
+            context->nativeScheduleNBARoots[root];
+        bool generatedPending = rootPlan.generated_accumulator &&
+                                hasGeneratedNBAStages(
+                                    *rootPlan.generated_accumulator);
+        bool accumulatorPending =
+            root < context->staticNBAAccumulators.size() &&
+            context->staticNBAAccumulators[root].valid;
+        uint64_t rootMask = uint64_t{1} << rootBit;
+        if (!generatedPending && !accumulatorPending)
+          plan->nba_dirty_roots[leafIndex] &= ~rootMask;
+        roots &= roots - 1;
+      }
+      uint64_t leafMask = uint64_t{1} << summaryBit;
+      if (plan->nba_dirty_roots[leafIndex] == 0)
+        plan->nba_dirty_summary[summaryIndex] &= ~leafMask;
+      summary &= summary - 1;
+    }
   }
   return OBELISK_RT_OK;
 }
@@ -6003,9 +6382,12 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
             return context->schedulerStatus;
           }
           context->nativeScheduleExternalWritePending = false;
-          for (uint32_t id : context->nativeScheduleTransientDirtyRoots)
-            if (id < context->nativeScheduleTransientDirtyMask.size())
-              context->nativeScheduleTransientDirtyMask[id] = 0;
+          std::fill(context->nativeScheduleTransientDirtyMask.begin(),
+                    context->nativeScheduleTransientDirtyMask.end(),
+                    uint64_t{0});
+          std::fill(context->nativeScheduleTransientDirtySummary.begin(),
+                    context->nativeScheduleTransientDirtySummary.end(),
+                    uint64_t{0});
           context->nativeScheduleTransientDirtyRoots.clear();
           context->nativeScheduleDirtyRootsPresent =
               !context->nativeSchedulePersistentDirtyRoots.empty();
@@ -6515,16 +6897,12 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
     bool guardedSpecialization = plan->specialization_fast != nullptr;
     bool specializationFast =
         !guardedSpecialization || *plan->specialization_fast != 0;
-    bool requireBytecode =
-        context->execution && (context->execution->flags &
-                               OBELISK_RT_EXECUTION_REQUIRE_BYTECODE) != 0;
     // A generated native fragment with a clean specialization guard and no
     // bytecode-only continuation is the common static-schedule case. Avoid
     // searching continuation metadata or dirty-root dependencies for it; the
     // run-level guard has already established the same exclusion held by this
     // mutex for the complete AOT invocation.
     bool cleanGeneratedNative = generatedActions && specializationFast &&
-                                !requireBytecode &&
                                 scheduled.bytecodeContinuations.empty();
     if (!cleanGeneratedNative) {
       bool bytecodeFragment = std::binary_search(
@@ -6542,7 +6920,7 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
           nativeAOTNeedsSpecializationHandoverUnlocked(context, actorSlot);
       bool needsBytecode =
           !nativeRootBootstrap &&
-          (requireBytecode || bytecodeFragment || specializationHandover);
+          (bytecodeFragment || specializationHandover);
       if (needsBytecode) {
         if ((selected->descriptor->available_tiers &
              OBELISK_RT_TIER_MASK_BYTECODE) == 0)
@@ -7498,6 +7876,7 @@ void obelisk_rt_release_native_schedule_plan(
   context->nativeScheduleNodes.clear();
   context->nativeScheduleActorNodes.clear();
   context->nativeScheduleFanoutNodes.clear();
+  context->nativeScheduleFanoutRanges.clear();
   context->nativeScheduleReadyNodes.clear();
   context->nativeScheduleDeadlines.clear();
   context->nativeScheduleDeadlineHeap.clear();
@@ -7519,6 +7898,8 @@ void obelisk_rt_release_native_schedule_plan(
   context->nativeSchedulePersistentDirtyRoots.clear();
   context->nativeScheduleTransientDirtyMask.clear();
   context->nativeSchedulePersistentDirtyMask.clear();
+  context->nativeScheduleTransientDirtySummary.clear();
+  context->nativeSchedulePersistentDirtySummary.clear();
   context->nativeScheduleDirtyRootsPresent = false;
   context->nativeScheduleAVX2 = false;
   context->nativeScheduleGuardedFanoutActive = false;
@@ -7543,19 +7924,12 @@ void obelisk_rt_aot_external_write_range_unlocked(obelisk_rt_context *context,
                                                   bool persistent) {
   if (!context || bitWidth == 0)
     return;
-  auto &dirty = persistent ? context->nativeSchedulePersistentDirtyRoots
-                           : context->nativeScheduleTransientDirtyRoots;
-  auto &dirtyMask = persistent ? context->nativeSchedulePersistentDirtyMask
-                               : context->nativeScheduleTransientDirtyMask;
   __int128 dirtyEnd = static_cast<__int128>(bitOffset) + bitWidth;
   for (const auto &[id, state] : context->nativeStaticStates)
     if (static_cast<__int128>(state.bitOffset) < dirtyEnd &&
         static_cast<__int128>(bitOffset) <
             static_cast<__int128>(state.bitOffset) + state.bitWidth) {
-      dirty.insert(id);
-      if (id < dirtyMask.size())
-        dirtyMask[id] = 1;
-      context->nativeScheduleDirtyRootsPresent = true;
+      markNativeDirtyRootUnlocked(context, id, persistent);
     }
   obelisk_rt_aot_external_write_unlocked(context);
 }
@@ -7572,15 +7946,8 @@ void obelisk_rt_aot_external_write_handle_unlocked(obelisk_rt_context *context,
                                                  persistent);
     return;
   }
-  auto &dirty = persistent ? context->nativeSchedulePersistentDirtyRoots
-                           : context->nativeScheduleTransientDirtyRoots;
-  auto &dirtyMask = persistent ? context->nativeSchedulePersistentDirtyMask
-                               : context->nativeScheduleTransientDirtyMask;
   auto mark = [&](uint32_t id) {
-    dirty.insert(id);
-    if (id < dirtyMask.size())
-      dirtyMask[id] = 1;
-    context->nativeScheduleDirtyRootsPresent = true;
+    markNativeDirtyRootUnlocked(context, id, persistent);
   };
 
   uint32_t selectedID = 0;
@@ -7678,9 +8045,7 @@ void obelisk_rt_aot_release_range_unlocked(obelisk_rt_context *context,
           context->schedulerStatus = OBELISK_RT_LAYOUT_MISMATCH;
         continue;
       }
-      context->nativeSchedulePersistentDirtyRoots.erase(id);
-      if (id < context->nativeSchedulePersistentDirtyMask.size())
-        context->nativeSchedulePersistentDirtyMask[id] = 0;
+      clearNativeDirtyRootUnlocked(context, id, true);
     }
   context->nativeScheduleDirtyRootsPresent =
       !context->nativeScheduleTransientDirtyRoots.empty() ||
@@ -7698,10 +8063,12 @@ extern "C" uint32_t obelisk_rt_v1_static_specialization_guard(
       (flags & ~(OBELISK_RT_STATIC_ROOT_READ | OBELISK_RT_STATIC_ROOT_WRITE)) !=
           0)
     return 0;
-  auto dirty = [&](const std::vector<uint8_t> &mask,
+  auto dirty = [&](const std::vector<uint64_t> &mask,
                    const std::unordered_set<uint32_t> &sparse) {
-    return staticState < mask.size() ? mask[staticState] != 0
-                                     : sparse.find(staticState) != sparse.end();
+    uint64_t word = staticState / 64;
+    return word < mask.size()
+               ? (mask[word] & (uint64_t{1} << (staticState % 64))) != 0
+               : sparse.find(staticState) != sparse.end();
   };
   auto record = [&](bool fast) {
     if (!context->signalDiagnosticsEnabled)

@@ -33,10 +33,25 @@ LogicalResult makeNativeAOTPlan(
   Type i64 = builder.getI64Type();
   ArrayRef<obelisk_rt_static_nba_root> nbaRoots = staticNBAPlan.roots;
   ArrayRef<obelisk_rt_static_nba_site> nbaSites = staticNBAPlan.sites;
+  SmallVector<obelisk_rt_static_fanout_entry> indexedFanoutEntries;
+  if (staticFanoutPlan.exact) {
+    indexedFanoutEntries.assign(staticFanoutPlan.entries.begin(),
+                                staticFanoutPlan.entries.end());
+    for (obelisk_rt_static_fanout_entry &entry : indexedFanoutEntries) {
+      auto node = llvm::find_if(executableNodes, [&](const auto &candidate) {
+        return candidate.actor_slot == entry.actor_slot &&
+               candidate.continuation == entry.continuation;
+      });
+      if (node == executableNodes.end())
+        return module.emitError(
+            "static fanout has no indexed compute fragment");
+      entry.compute_node =
+          static_cast<uint32_t>(node - executableNodes.begin());
+      entry.reserved = 0;
+    }
+  }
   ArrayRef<obelisk_rt_static_fanout_entry> fanoutEntries =
-      staticFanoutPlan.exact
-          ? ArrayRef<obelisk_rt_static_fanout_entry>(staticFanoutPlan.entries)
-          : ArrayRef<obelisk_rt_static_fanout_entry>{};
+      indexedFanoutEntries;
   // Static time/region control and exact actor fanout are independent of VPI
   // reads. Writable VPI hands dirty roots and the affected event slot to the
   // existing guarded state/control paths; the exact dependency table remains
@@ -66,6 +81,10 @@ LogicalResult makeNativeAOTPlan(
   constexpr StringLiteral nodesName = "__obelisk_aot_schedule_nodes_v1";
   constexpr StringLiteral nbaRootsName = "__obelisk_aot_nba_roots_v1";
   constexpr StringLiteral nbaSitesName = "__obelisk_aot_nba_sites_v1";
+  constexpr StringLiteral nbaDirtyRootsName =
+      "__obelisk_aot_nba_dirty_roots_v1";
+  constexpr StringLiteral nbaDirtySummaryName =
+      "__obelisk_aot_nba_dirty_summary_v1";
   constexpr StringLiteral fanoutName = "__obelisk_aot_static_fanout_v1";
   constexpr StringLiteral actorRootsName =
       "__obelisk_aot_static_actor_roots_v1";
@@ -157,6 +176,36 @@ LogicalResult makeNativeAOTPlan(
           return roots;
         });
   }
+  uint32_t nbaDirtyWordCount =
+      static_cast<uint32_t>((nbaRoots.size() + 63) / 64);
+  uint32_t nbaDirtySummaryWordCount = (nbaDirtyWordCount + 63) / 64;
+  if (nbaDirtyWordCount != 0) {
+    Type dirtyType = LLVM::LLVMArrayType::get(i64, nbaDirtyWordCount);
+    builder.setInsertionPointToStart(module.getBody());
+    auto dirty = LLVM::GlobalOp::create(
+        builder, location, dirtyType, false, LLVM::Linkage::Internal,
+        nbaDirtyRootsName, Attribute{}, 8);
+    Block *dirtyInitializer = new Block;
+    dirty.getInitializerRegion().push_back(dirtyInitializer);
+    builder.setInsertionPointToStart(dirtyInitializer);
+    LLVM::ReturnOp::create(
+        builder, location,
+        LLVM::ZeroOp::create(builder, location, dirtyType));
+  }
+  if (nbaDirtySummaryWordCount != 0) {
+    Type summaryType =
+        LLVM::LLVMArrayType::get(i64, nbaDirtySummaryWordCount);
+    builder.setInsertionPointToStart(module.getBody());
+    auto summary = LLVM::GlobalOp::create(
+        builder, location, summaryType, false, LLVM::Linkage::Internal,
+        nbaDirtySummaryName, Attribute{}, 8);
+    Block *summaryInitializer = new Block;
+    summary.getInitializerRegion().push_back(summaryInitializer);
+    builder.setInsertionPointToStart(summaryInitializer);
+    LLVM::ReturnOp::create(
+        builder, location,
+        LLVM::ZeroOp::create(builder, location, summaryType));
+  }
   Type nbaSiteType = LLVM::LLVMStructType::getLiteral(context, {i64, i32, i32});
   if (!nbaSites.empty()) {
     Type sitesType = LLVM::LLVMArrayType::get(nbaSiteType, nbaSites.size());
@@ -185,8 +234,8 @@ LogicalResult makeNativeAOTPlan(
           return sites;
         });
   }
-  Type fanoutType =
-      LLVM::LLVMStructType::getLiteral(context, {i32, i32, i32, i32, i64, i64});
+  Type fanoutType = LLVM::LLVMStructType::getLiteral(
+      context, {i32, i32, i32, i32, i32, i32, i64, i64});
   if (!fanoutEntries.empty()) {
     Type entriesType =
         LLVM::LLVMArrayType::get(fanoutType, fanoutEntries.size());
@@ -215,12 +264,22 @@ LogicalResult makeNativeAOTPlan(
                 llvmConstant(initializerBuilder, location, i32, entry.edge), 3);
             value = insertValue(
                 initializerBuilder, location, value,
-                llvmConstant(initializerBuilder, location, i64, entry.low_bit),
+                llvmConstant(initializerBuilder, location, i32,
+                             entry.compute_node),
                 4);
+            value = insertValue(
+                initializerBuilder, location, value,
+                llvmConstant(initializerBuilder, location, i32,
+                             entry.reserved),
+                5);
+            value = insertValue(
+                initializerBuilder, location, value,
+                llvmConstant(initializerBuilder, location, i64, entry.low_bit),
+                6);
             value = insertValue(initializerBuilder, location, value,
                                 llvmConstant(initializerBuilder, location, i64,
                                              entry.bit_width),
-                                5);
+                                7);
             entries = LLVM::InsertValueOp::create(
                 initializerBuilder, location, entries, value,
                 ArrayRef<int64_t>{static_cast<int64_t>(index)});
@@ -336,7 +395,8 @@ LogicalResult makeNativeAOTPlan(
       context,
       {i32, i64,     pointer, i64,     i32,     i32,     pointer, pointer,
        i64, pointer, pointer, pointer, pointer, i32,     i32,     pointer,
-       i64, pointer, i64,     pointer, i64,     pointer, pointer});
+       i64, pointer, i64,     pointer, i64,     pointer, pointer, pointer,
+       i32, i32,     pointer, i32,     i32});
   makeConstantGlobal(
       module, location, planType, planName, LLVM::Linkage::Internal, 8,
       [&](OpBuilder &initializerBuilder) {
@@ -492,8 +552,42 @@ LogicalResult makeNativeAOTPlan(
                       .getResult()
                 : LLVM::ZeroOp::create(initializerBuilder, location, pointer)
                       .getResult();
+        value = insertValue(initializerBuilder, location, value,
+                            specializationFast, 22);
+        Value dirtyRoots =
+            nbaDirtyWordCount == 0
+                ? LLVM::ZeroOp::create(initializerBuilder, location, pointer)
+                      .getResult()
+                : LLVM::AddressOfOp::create(initializerBuilder, location,
+                                            pointer, nbaDirtyRootsName)
+                      .getResult();
+        value = insertValue(initializerBuilder, location, value, dirtyRoots,
+                            23);
+        value = insertValue(
+            initializerBuilder, location, value,
+            llvmConstant(initializerBuilder, location, i32,
+                         nbaDirtyWordCount),
+            24);
+        value = insertValue(initializerBuilder, location, value,
+                            llvmConstant(initializerBuilder, location, i32, 0),
+                            25);
+        Value dirtySummary =
+            nbaDirtySummaryWordCount == 0
+                ? LLVM::ZeroOp::create(initializerBuilder, location, pointer)
+                      .getResult()
+                : LLVM::AddressOfOp::create(initializerBuilder, location,
+                                            pointer, nbaDirtySummaryName)
+                      .getResult();
+        value = insertValue(initializerBuilder, location, value, dirtySummary,
+                            26);
+        value = insertValue(
+            initializerBuilder, location, value,
+            llvmConstant(initializerBuilder, location, i32,
+                         nbaDirtySummaryWordCount),
+            27);
         return insertValue(initializerBuilder, location, value,
-                           specializationFast, 22);
+                           llvmConstant(initializerBuilder, location, i32, 0),
+                           28);
       });
   if (fullyStatic)
     getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_run_aot_nodes",

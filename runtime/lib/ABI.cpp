@@ -429,19 +429,21 @@ ABI_SIZE_ALIGN(obelisk_rt_static_nba_site, 16, 8);
 ABI_OFFSET(obelisk_rt_static_nba_site, site, 0);
 ABI_OFFSET(obelisk_rt_static_nba_site, root, 8);
 ABI_OFFSET(obelisk_rt_static_nba_site, storage, 12);
-ABI_SIZE_ALIGN(obelisk_rt_static_fanout_entry, 32, 8);
+ABI_SIZE_ALIGN(obelisk_rt_static_fanout_entry, 40, 8);
 ABI_OFFSET(obelisk_rt_static_fanout_entry, static_state, 0);
 ABI_OFFSET(obelisk_rt_static_fanout_entry, actor_slot, 4);
 ABI_OFFSET(obelisk_rt_static_fanout_entry, continuation, 8);
 ABI_OFFSET(obelisk_rt_static_fanout_entry, edge, 12);
-ABI_OFFSET(obelisk_rt_static_fanout_entry, low_bit, 16);
-ABI_OFFSET(obelisk_rt_static_fanout_entry, bit_width, 24);
+ABI_OFFSET(obelisk_rt_static_fanout_entry, compute_node, 16);
+ABI_OFFSET(obelisk_rt_static_fanout_entry, reserved, 20);
+ABI_OFFSET(obelisk_rt_static_fanout_entry, low_bit, 24);
+ABI_OFFSET(obelisk_rt_static_fanout_entry, bit_width, 32);
 ABI_SIZE_ALIGN(obelisk_rt_static_actor_root, 16, 4);
 ABI_OFFSET(obelisk_rt_static_actor_root, actor_slot, 0);
 ABI_OFFSET(obelisk_rt_static_actor_root, static_state, 4);
 ABI_OFFSET(obelisk_rt_static_actor_root, flags, 8);
 ABI_OFFSET(obelisk_rt_static_actor_root, reserved, 12);
-ABI_SIZE_ALIGN(obelisk_rt_native_schedule_plan, 168, 8);
+ABI_SIZE_ALIGN(obelisk_rt_native_schedule_plan, 200, 8);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, size, 0);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, graph_layout_checksum, 8);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, mutable_state, 16);
@@ -465,6 +467,12 @@ ABI_OFFSET(obelisk_rt_native_schedule_plan, actor_roots, 136);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, actor_root_count, 144);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, nba_commit, 152);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, specialization_fast, 160);
+ABI_OFFSET(obelisk_rt_native_schedule_plan, nba_dirty_roots, 168);
+ABI_OFFSET(obelisk_rt_native_schedule_plan, nba_dirty_word_count, 176);
+ABI_OFFSET(obelisk_rt_native_schedule_plan, nba_dirty_reserved, 180);
+ABI_OFFSET(obelisk_rt_native_schedule_plan, nba_dirty_summary, 184);
+ABI_OFFSET(obelisk_rt_native_schedule_plan, nba_dirty_summary_word_count, 192);
+ABI_OFFSET(obelisk_rt_native_schedule_plan, nba_dirty_summary_reserved, 196);
 
 #undef ABI_OFFSET
 #undef ABI_SIZE_ALIGN

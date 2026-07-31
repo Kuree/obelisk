@@ -237,7 +237,9 @@ public:
       notifySignal(rewriter, op.getLoc(), publication.handle, 1,
                    publication.oldValue, publication.oldUnknown,
                    publication.value,
-                   publication.fourState ? publication.unknown : Value{});
+                   publication.fourState ? publication.unknown : Value{},
+                   resolveDirectStaticStateRange(publication.handle, 1,
+                                                 &layout));
     (void)changed;
     rewriter.eraseOp(op);
     return success();

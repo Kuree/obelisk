@@ -35,13 +35,17 @@ mutable state block by two contexts.
 
 Actor scheduling and actor execution tier are independent. Consequently
 `--execution-tier=bytecode --native-scheduler=aot` uses the same static actor
-inventory and ordering as native fragments. Writable VPI deposits
-conservatively select bytecode for bytecode-capable static actors until the
-current time slot reaches quiescence; native execution resumes only at that
-boundary. Other unsupported fragments are selected by their generated
-continuation table while supported actors remain on the AOT schedule. A
-runtime action that invalidates the installed plan still uses a validated
-transactional snapshot and permanently deoptimizes to the generic path.
+inventory and ordering as native fragments. An immediate writable VPI deposit
+whose canonical root/range has exact static fanout synchronizes the four-state
+planes and directly marks the indexed AOT compute nodes ready. It does not enter
+bytecode merely because the executable contains a bytecode fallback. Ambiguous
+or dynamic writes, active observers or conditional waits, force/release, and
+other specialization-invalidating mutations conservatively stabilize through
+bytecode before returning to an indexed AOT boundary. Other unsupported
+fragments are selected by their generated continuation table while supported
+actors remain on the AOT schedule. A runtime action that invalidates the
+installed plan still uses a validated transactional snapshot and permanently
+deoptimizes to the generic path.
 
 `-c` always emits a conventional native ELF relocatable, independent of the
 optimization level. Executable links select the runtime representation by

@@ -74,6 +74,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
   if (graph.getWorkers() != 1)
     rejectPlan("AOT scheduling requires one worker");
   ArrayAttr nodes = graph.getNodes();
+  DenseMap<Block *, sim::ComputeFragmentAttr> fragmentsByBlock;
   for (auto [index, attribute] : llvm::enumerate(nodes)) {
     if (auto fragment = dyn_cast<sim::ComputeFragmentAttr>(attribute)) {
       if (fragment.getId() != index)
@@ -85,7 +86,10 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
                    : nullptr;
       if (!function || !block)
         rejectPlan("compute graph references a stale function or block");
-      else if (fragment.getTier() != sim::ComputeTierKind::Native) {
+      else {
+        fragmentsByBlock.try_emplace(block, fragment);
+        if (fragment.getTier() == sim::ComputeTierKind::Native)
+          continue;
         result.reasons.emplace_back(
             "compute graph contains a bytecode-only fragment");
         auto &fragments = result.bytecodeFragments[function.getOperation()];
@@ -122,8 +126,12 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       StringRef reason;
       if (group.getSchedule() == sim::ComputeScheduleKind::ControlLoop)
         reason = "control-loop group requires bytecode scheduling";
+      // Native ready-node scheduling is itself a dirty-set fixpoint: a write
+      // that wakes an earlier-ranked member restarts the scan at that member.
+      // Convergence SCCs therefore need no bytecode handoff.  Control loops
+      // remain generic because progress is not driven solely by state change.
       else if (group.getSchedule() == sim::ComputeScheduleKind::Convergence)
-        reason = "convergence group requires bytecode scheduling";
+        continue;
       else if (group.getFragments().size() > 1)
         reason = "multi-member compute group requires bytecode scheduling";
       else
@@ -200,9 +208,39 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
                               "managed or automatic NBA destination");
       excludeBytecodeActor(operation);
     } else if (isa<sim::SimSuspendEdgeIffOp, sim::SimSuspendLevelOp,
-                   sim::SimSuspendAnyOp, sim::SimSuspendObserveOp>(operation)) {
+                   sim::SimSuspendObserveOp>(operation)) {
       requireBytecodeFragment(operation, "computed or conditional wait");
       excludeBytecodeActor(operation);
+    } else if (auto any = dyn_cast<sim::SimSuspendAnyOp>(operation)) {
+      // An explicit sensitivity list is a fixed direct wait when graph
+      // provenance resolved every watched range to a storage/net descriptor.
+      // Such waits use the same stable continuation and fanout records as the
+      // one-handle change/edge forms.
+      auto fragment = fragmentsByBlock.find(operation->getBlock());
+      bool fixed = any.getSiteAttr() && any.getSiteAttr().getId() != 0 &&
+                   any.getWatched().size() != 0 &&
+                   fragment != fragmentsByBlock.end();
+      unsigned watchCount = 0;
+      if (fixed)
+        for (Attribute effectAttribute : fragment->second.getEffects()) {
+          auto effect = cast<sim::ComputeEffectAttr>(effectAttribute);
+          if (effect.getEffect() != sim::ComputeEffectKind::Watch)
+            continue;
+          ++watchCount;
+          fixed &= effect.getTarget() == sim::ComputeTargetKind::Descriptor &&
+                   !effect.getDynamic() && !effect.getDeferred() &&
+                   effect.getWidth() != 0 &&
+                   (effect.getResource() ==
+                        sim::ComputeResourceKind::Storage ||
+                    effect.getResource() == sim::ComputeResourceKind::Net) &&
+                   effect.getTrigger() != sim::ComputeTriggerKind::None &&
+                   effect.getTrigger() != sim::ComputeTriggerKind::Event;
+        }
+      fixed &= watchCount != 0;
+      if (!fixed) {
+        requireBytecodeFragment(operation, "computed or conditional wait");
+        excludeBytecodeActor(operation);
+      }
     } else if (isa<sim::SimSuspendEventOp>(operation)) {
       requireBytecodeFragment(operation, "event wait requires dynamic state");
       excludeBytecodeActor(operation);

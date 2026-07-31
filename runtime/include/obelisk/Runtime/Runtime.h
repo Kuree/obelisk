@@ -1954,6 +1954,8 @@ typedef struct obelisk_rt_static_fanout_entry {
   uint32_t actor_slot;
   uint32_t continuation;
   obelisk_rt_wait_edge_kind edge;
+  uint32_t compute_node;
+  uint32_t reserved;
   uint64_t low_bit;
   uint64_t bit_width;
 } obelisk_rt_static_fanout_entry;
@@ -2011,6 +2013,14 @@ typedef struct obelisk_rt_native_schedule_plan {
   // the generated state planes are canonical for every root, and clears it
   // before handing any VPI write to the guarded per-root path.
   uint32_t *specialization_fast;
+  // Compiler-owned dirty-root bitmap. Generated fixed-site NBA staging sets
+  // one bit per root; the runtime clears committed bits at the barrier.
+  uint64_t *nba_dirty_roots;
+  uint32_t nba_dirty_word_count;
+  uint32_t nba_dirty_reserved;
+  uint64_t *nba_dirty_summary;
+  uint32_t nba_dirty_summary_word_count;
+  uint32_t nba_dirty_summary_reserved;
 } obelisk_rt_native_schedule_plan;
 
 // Serial generated-simulator scheduler. The scheduler owns an instance after

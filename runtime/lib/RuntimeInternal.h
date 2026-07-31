@@ -694,6 +694,7 @@ struct obelisk_rt_context {
       nativeScheduleActorNodes;
   std::vector<uint64_t> nativeScheduleReadyNodes;
   std::vector<uint32_t> nativeScheduleFanoutNodes;
+  std::vector<std::pair<uint64_t, uint64_t>> nativeScheduleFanoutRanges;
   uint32_t nativeScheduleMinimumActivatedNode = UINT32_MAX;
   std::vector<uint64_t> nativeScheduleDeadlines;
   std::vector<uint32_t> nativeScheduleDeadlineHeap;
@@ -705,8 +706,10 @@ struct obelisk_rt_context {
   bool nativeScheduleExternalWritePending = false;
   std::unordered_set<uint32_t> nativeScheduleTransientDirtyRoots;
   std::unordered_set<uint32_t> nativeSchedulePersistentDirtyRoots;
-  std::vector<uint8_t> nativeScheduleTransientDirtyMask;
-  std::vector<uint8_t> nativeSchedulePersistentDirtyMask;
+  std::vector<uint64_t> nativeScheduleTransientDirtyMask;
+  std::vector<uint64_t> nativeSchedulePersistentDirtyMask;
+  std::vector<uint64_t> nativeScheduleTransientDirtySummary;
+  std::vector<uint64_t> nativeSchedulePersistentDirtySummary;
   bool nativeScheduleDirtyRootsPresent = false;
   bool nativeScheduleAVX2 = false;
   bool nativeScheduleGuardedFanoutActive = false;
@@ -1125,7 +1128,8 @@ bool obelisk_rt_publish_signal_transition_batch_unlocked(
 bool obelisk_rt_publish_native_signal_transition_unlocked(
     obelisk_rt_context *context, uint64_t stableID, uint64_t bitWidth,
     const uint8_t *changed, const uint8_t *posedge, const uint8_t *negedge,
-    const uint8_t *newValue, const uint8_t *newUnknown);
+    const uint8_t *newValue, const uint8_t *newUnknown,
+    bool indexedExternalDeposit = false);
 bool obelisk_rt_latch_conditional_signal_waiters_unlocked(
     obelisk_rt_context *context, uint64_t stableID, uint32_t edges);
 bool obelisk_rt_latch_conditional_signal_range_unlocked(

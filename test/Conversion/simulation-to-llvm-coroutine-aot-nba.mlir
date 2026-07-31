@@ -44,7 +44,12 @@ module attributes {
 
 // CHECK-DAG: llvm.mlir.global internal constant @__obelisk_aot_nba_roots_v1
 // CHECK-DAG: llvm.mlir.global internal constant @__obelisk_aot_nba_sites_v1
+// CHECK-DAG: llvm.mlir.global internal @__obelisk_aot_nba_accumulator_0
+// CHECK-DAG: llvm.mlir.global internal @__obelisk_aot_nba_dirty_roots_v1
+// CHECK-DAG: llvm.mlir.global internal @__obelisk_aot_nba_dirty_summary_v1
 // CHECK-DAG: llvm.func @__obelisk_aot_static_nba_commit_v1
-// CHECK-DAG: llvm.call @obelisk_rt_v1_static_nba_claim
+// CHECK-DAG: llvm.mlir.addressof @__obelisk_aot_nba_accumulator_0
+// CHECK-DAG: llvm.store
 // CHECK-DAG: llvm.call @obelisk_rt_v1_static_nba_commit_roots
 // CHECK-DAG: llvm.call @obelisk_rt_v1_scheduler_run_aot_nodes
+// CHECK-NOT: llvm.call @obelisk_rt_v1_static_nba_claim

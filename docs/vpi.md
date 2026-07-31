@@ -41,6 +41,14 @@ stamped state offsets address the same canonical value and unknown planes used
 by native execution, bytecode execution, language force/assign, and net
 resolution. No separate VPI hierarchy or value copy is constructed at runtime.
 
+An immediate deposit with an exact canonical storage/root mapping also reuses
+the generated static fanout index. After updating both four-state planes, the
+runtime computes change and edge masks and marks the fanout entries' compute
+nodes directly, with the packed ready bits suppressing duplicate wakes. This
+skips bytecode stabilization when no observer, conditional wait, force, or
+dirty specialization state is active. Deposits without an exact mapping and
+force/release operations retain the guarded bytecode handoff.
+
 Callbacks, delayed writes, system task/function registration, strengths,
 trireg behavior, and waveform dumping are not implemented. Registration calls
 made from a startup table produce a clear unsupported-startup failure rather

@@ -195,6 +195,8 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
       site = suspend.getSiteAttr();
     else if (auto suspend = dyn_cast<sim::SimSuspendEdgeOp>(terminator))
       site = suspend.getSiteAttr();
+    else if (auto suspend = dyn_cast<sim::SimSuspendAnyOp>(terminator))
+      site = suspend.getSiteAttr();
     else {
       disableExactFanout();
       continue;
@@ -255,7 +257,8 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
         continue;
       }
       plan.entries.push_back({decoded.id, actor->second, site.getId(), edge,
-                              effect.getLow(), effect.getWidth()});
+                              UINT32_MAX, 0, effect.getLow(),
+                              effect.getWidth()});
     }
   }
   llvm::sort(plan.entries, [](const auto &lhs, const auto &rhs) {

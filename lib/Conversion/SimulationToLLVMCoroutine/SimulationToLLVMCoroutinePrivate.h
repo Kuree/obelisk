@@ -241,7 +241,8 @@ mlir::Value storeStatePlane(
     mlir::Value guardedPermission = {}, bool assumeClean = false,
     bool trackChange = true);
 void notifySignal(
-    mlir::OpBuilder &builder, mlir::Location location, mlir::Value handle,
+    mlir::ConversionPatternRewriter &builder, mlir::Location location,
+    mlir::Value handle,
     uint64_t width, mlir::Value oldValue, mlir::Value oldUnknown,
     mlir::Value newValue, mlir::Value newUnknown,
     std::optional<DirectStaticStateRange> directRange = std::nullopt);

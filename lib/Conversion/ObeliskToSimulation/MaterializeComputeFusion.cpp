@@ -1063,6 +1063,24 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
   design->removeAttr(sim::metadata::staticBodyFusion);
   if (!changed)
     return;
+  // Body fusion changes call ownership, blocks, and continuation ordinals.
+  // Invalidate only metadata derived from that executable CFG before the
+  // pipeline performs its late inline round and rebuilds the graph. Immutable
+  // hierarchy/code-unit declarations and descriptor observability remain the
+  // identity layer, analogous to debug metadata surviving machine inlining.
+  design.walk([&](Operation *operation) {
+    if (auto function = dyn_cast<sim::SimFuncOp>(operation)) {
+      function.removeEffectSummaryAttr();
+      function.removeFragmentAbiAttr();
+    }
+    SmallVector<StringAttr> derivedAttributes;
+    for (NamedAttribute named : operation->getAttrs())
+      if (isa<sim::ContinuationSiteAttr, sim::TimingSiteAttr, sim::NBASiteAttr,
+              sim::EventSiteAttr>(named.getValue()))
+        derivedAttributes.push_back(named.getName());
+    for (StringAttr name : derivedAttributes)
+      operation->removeAttr(name);
+  });
   design->removeAttr(
       sim::SimDesignOp::getComputeGraphAttrName(design->getName()));
 }

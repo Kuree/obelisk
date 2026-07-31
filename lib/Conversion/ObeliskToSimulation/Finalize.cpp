@@ -264,6 +264,24 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
     designManager.addPass(
         createObeliskSimFuseComputeFragmentsPass(std::move(bodyFusionOptions)));
     designManager.addPass(createObeliskSimMaterializeComputeFusionPass());
+    // The first inliner runs before graph construction. Body materialization
+    // then creates new hot callers and new specialization opportunities, so
+    // run the same identity-preserving simulation inliner once more before
+    // freezing the final graph. Non-private callable symbols remain present;
+    // process, hierarchy, descriptor, and VPI identities are not code bodies.
+    ObeliskSimInlinePassOptions fusedInlineOptions;
+    fusedInlineOptions.optLevel = optLevel;
+    if (optLevel >= 3) {
+      fusedInlineOptions.tinyCost = 64;
+      fusedInlineOptions.specializationCost = 192;
+      fusedInlineOptions.callerGrowthPercent = 100;
+      fusedInlineOptions.callerGrowthConstant = 256;
+      fusedInlineOptions.designGrowthPercent = 10;
+      fusedInlineOptions.designGrowthConstant = 1024;
+      fusedInlineOptions.maxIterations = 2;
+    }
+    designManager.addPass(
+        createObeliskSimInlinePass(std::move(fusedInlineOptions)));
     ObeliskSimBuildComputeGraphPassOptions fusedGraphOptions;
     fusedGraphOptions.workers = workers;
     fusedGraphOptions.vpi = vpiMode.str();

@@ -440,6 +440,16 @@ zero-time call already executes on its caller's worker. It is profitable when
 it exposes descriptor constants, refines aliases, removes state, or enables a
 local-resource fast path.
 
+Compute-body materialization invalidates only derived fragment summaries,
+compiled sites, and graph metadata, then invokes the same simulation-aware
+inliner once more before the final graph rebuild. The late O3 policy admits
+tiny callees through weighted cost 64 and descriptor/constant specialization
+candidates through cost 192, with a two-iteration limit and bounded caller and
+whole-design growth. Inlining changes executable ownership, not identity:
+code-unit and hierarchy declarations, descriptor IDs, source locations, and
+VPI database records remain independently addressable, in the same way debug
+metadata survives machine-level inlining.
+
 ### Derived compute graph and generated schedules
 
 The current planner materializes the typed graph, proven exact ranges,
@@ -471,6 +481,16 @@ abstraction, not a claim that all IEEE 1800 event regions are executable. Broad
 language support must preserve every semantic region explicitly or prove that
 folding it into one of these buckets is equivalent.
 
+The generated event schedule is indexed by canonical storage root and exact
+packed range. Each static fanout entry names its compute-node ordinal directly;
+publication therefore sets the node's ready bit without searching an actor's
+continuation table. Roots map to contiguous fanout ranges, while the ready set
+is a packed hierarchy traversed with bit-scan/trailing-zero operations. The leaf
+bit is the unit of compute-fragment selection. Wider scalar or vector loads are
+an implementation choice for the target, not a change in scheduling semantics.
+Duplicate activation is suppressed by the ready bit, and node ordinals retain
+compute-graph order.
+
 Every NBA site already receives an explicit staging-policy annotation; the
 annotation does not allocate its storage. Proven single-shot sites select fixed
 slots. Repeated immediate assignments to a concrete root select a future
@@ -483,6 +503,15 @@ adding once an analysis can prove a multiplicity bound; until then it is
 deliberately absent rather than declared and never selected. Native lowering
 will materialize the selected storage and ordered commit code. Dynamic
 destinations will carry direct descriptor, index, and mask fields.
+
+Generated fixed-site NBA accumulators use a two-level dirty-root index. Leaf
+words select roots in graph order and summary words skip empty leaf pages; the
+runtime uses target bit-scan intrinsics rather than scanning every NBA
+root. Staging marks both levels, and commit clears a root only after all of its
+pending event-region forms have been consumed. The same hierarchical shape is
+used for bytecode-to-AOT handoff: dynamic execution reports precise dirty roots
+in packed leaf and summary words, and actor/root dependencies limit handoff to
+affected compiled fragments.
 
 Timing sites likewise carry compiled policy metadata today. Constant delays
 select calendar sites, nonconstant delays select deadline slots, and
@@ -503,11 +532,27 @@ externally introduced events may still use the generic frontier.
 The compiler and runtime implement the lockstep fragment descriptor/action ABI,
 native fragment emission, and a checked typed-register bytecode interpreter.
 The encoder builds one deterministic pointer-free bytecode and design-database
-image for the complete supported executable boundary. Native and bytecode
+image for the supported dynamic fallback boundary. Native and bytecode
 fragments dispatch through the same scheduler entry point, use the same process
-frames and stable continuation IDs, and call the same runtime services. The
-driver currently selects native or bytecode execution for the complete design;
-per-fragment tier selection and mixed-tier scheduling remain future work.
+frames and stable continuation IDs, and call the same runtime services.
+
+Bytecode is a deoptimization and stabilization tier, not a second owner of the
+static schedule. Proven convergence groups, coverage sampling and queries, and
+other closed-world compute effects remain compiled AOT fragments. Coverage
+schemas and counters stay in canonical runtime data, but there is no bytecode
+"coverage group" scheduling unit. Bytecode handles a continuation or external
+mutation whose destination or control cannot be mapped to the generated graph;
+after it reaches a stable indexed boundary, dirty roots reactivate the matching
+AOT compute fragments.
+
+An external deposit to a canonical root can avoid bytecode stabilization when
+the compiler emitted exact fanout entries for the written range and no dynamic
+observer, conditional wait, force, or other invalidating state is active. The
+deposit first synchronizes the canonical value and unknown planes, derives
+four-state change/edge masks, and sets the indexed compute-node bits. An
+unindexed or ambiguous write, force/release transition, or mutation that can
+invalidate specialization takes the guarded bytecode path. Merely embedding a
+bytecode fallback does not force an otherwise exact deposit through it.
 
 This ABI is a build-internal contract, not a backward-compatible distribution
 boundary. The compiler, generated native objects, generated bytecode and

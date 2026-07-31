@@ -306,8 +306,7 @@ buildNativeStaticNBAPlan(ModuleOp module, const NativeStateLayout &stateLayout,
     plan.roots.push_back({commit.getId(), decoded.id,
                           static_cast<uint64_t>(bound->width), nullptr});
     plan.generatedAccumulators.emplace_back();
-    if (bound->width > OBELISK_RT_SCALAR_NBA_MAX_BITS &&
-        bound->width <= OBELISK_RT_GENERATED_NBA_MAX_BITS)
+    if (bound->width <= OBELISK_RT_GENERATED_NBA_MAX_BITS)
       plan.generatedAccumulators.back() =
           ("__obelisk_aot_nba_accumulator_" + Twine(root)).str();
     auto appendSites = [&](DenseI64ArrayAttr ids, uint32_t storage) {

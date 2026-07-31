@@ -48,4 +48,6 @@ endmodule
 // SPECIALIZATION-OFF-NOT: @__obelisk_aot_nba_roots_v1
 // SPECIALIZATION-OFF: call i32 @obelisk_rt_v1_scheduler_nba
 // SPECIALIZATION-ON: @__obelisk_aot_nba_roots_v1
-// SPECIALIZATION-ON: call i32 @obelisk_rt_v1_static_nba_claim
+// SPECIALIZATION-ON: @__obelisk_aot_nba_dirty_roots_v1
+// SPECIALIZATION-ON: @__obelisk_aot_nba_dirty_summary_v1
+// SPECIALIZATION-ON-NOT: call i32 @obelisk_rt_v1_static_nba_claim

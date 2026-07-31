@@ -71,10 +71,12 @@ public:
           isa<LLVM::LLVMPointerType>(adaptor.getValue().front().getType())));
     if (packedStaticStage) {
       bool assumeClean = op->hasAttr(assumeCleanSpecializationAttr);
+      StringRef generatedAccumulator =
+          staticRoot->second < staticPlan->generatedAccumulators.size()
+              ? staticPlan->generatedAccumulators[staticRoot->second]
+              : StringRef{};
       bool useGuardedClaim =
-          !assumeClean &&
-          (guardedClaims ||
-           staticPlan->roots[staticRoot->second].bit_width <= 64);
+          !assumeClean && (guardedClaims || generatedAccumulator.empty());
       auto widen = [&](Value value) {
         if (isa<LLVM::LLVMPointerType>(value.getType()))
           value = LLVM::LoadOp::create(
@@ -90,10 +92,6 @@ public:
       if (adaptor.getValue().size() == 2)
         unknown = widen(adaptor.getValue()[1]);
       Value value = widen(adaptor.getValue().front());
-      StringRef generatedAccumulator =
-          staticRoot->second < staticPlan->generatedAccumulators.size()
-              ? staticPlan->generatedAccumulators[staticRoot->second]
-              : StringRef{};
       sim::SimFuncOp function = op->getParentOfType<sim::SimFuncOp>();
       uint32_t homeRegion =
           function ? getRuntimeEventRegion(function.getHomeRegion())
@@ -102,32 +100,64 @@ public:
                                       homeRegion == OBELISK_RT_REGION_REACTIVE
                                   ? homeRegion + 2
                                   : UINT32_MAX;
+      uint64_t rootWidth = staticPlan->roots[staticRoot->second].bit_width;
+      bool directScalarStage = !generatedAccumulator.empty() &&
+                               rootWidth <= 64 && decoded.offset == 0 &&
+                               *width == rootWidth;
+      bool directLaneStage = !generatedAccumulator.empty() && *width == 32 &&
+                             adaptor.getValue().size() == 1 &&
+                             (decoded.offset & 31) == 0;
       bool directGeneratedStage =
-          !generatedAccumulator.empty() && *width == 32 &&
-          adaptor.getValue().size() == 1 && (decoded.offset & 31) == 0 &&
-          commitRegion != UINT32_MAX;
+          commitRegion != UINT32_MAX && (directScalarStage || directLaneStage);
       auto emitDirectGeneratedStage = [&] {
         Value base = LLVM::AddressOfOp::create(rewriter, location, pointer,
                                                generatedAccumulator);
-        uint64_t laneOffset = static_cast<uint64_t>(decoded.offset / 8);
-        Value laneValue = LLVM::TruncOp::create(rewriter, location, i32, value);
-        LLVM::StoreOp::create(
-            rewriter, location, laneValue,
-            byteGEP(rewriter, location, base,
-                    offsetof(obelisk_rt_generated_nba_accumulator_256, value) +
-                        laneOffset),
-            4);
-        // This direct form is restricted to two-state values. The generated
-        // record is zero-initialized and no other path writes its unknown
-        // lanes, so repeatedly storing zero here only adds hot-path traffic.
-        LLVM::StoreOp::create(
-            rewriter, location,
-            llvmConstant(rewriter, location, i32, UINT32_MAX),
-            byteGEP(
-                rewriter, location, base,
-                offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask) +
-                    laneOffset),
-            4);
+        if (directScalarStage) {
+          LLVM::StoreOp::create(
+              rewriter, location, value,
+              byteGEP(rewriter, location, base,
+                      offsetof(obelisk_rt_generated_nba_accumulator_256,
+                               value)),
+              8);
+          LLVM::StoreOp::create(
+              rewriter, location, unknown,
+              byteGEP(rewriter, location, base,
+                      offsetof(obelisk_rt_generated_nba_accumulator_256,
+                               unknown)),
+              8);
+          uint64_t mask = rootWidth == 64
+                              ? UINT64_MAX
+                              : (uint64_t{1} << rootWidth) - 1;
+          LLVM::StoreOp::create(
+              rewriter, location,
+              llvmConstant(rewriter, location, i64, mask),
+              byteGEP(rewriter, location, base,
+                      offsetof(obelisk_rt_generated_nba_accumulator_256,
+                               write_mask)),
+              8);
+        } else {
+          uint64_t laneOffset = static_cast<uint64_t>(decoded.offset / 8);
+          Value laneValue =
+              LLVM::TruncOp::create(rewriter, location, i32, value);
+          LLVM::StoreOp::create(
+              rewriter, location, laneValue,
+              byteGEP(
+                  rewriter, location, base,
+                  offsetof(obelisk_rt_generated_nba_accumulator_256, value) +
+                      laneOffset),
+              4);
+          // This lane form is restricted to two-state values. The generated
+          // record is zero-initialized and no other path writes its unknown
+          // lanes, so repeatedly storing zero here only adds hot-path traffic.
+          LLVM::StoreOp::create(
+              rewriter, location,
+              llvmConstant(rewriter, location, i32, UINT32_MAX),
+              byteGEP(rewriter, location, base,
+                      offsetof(obelisk_rt_generated_nba_accumulator_256,
+                               write_mask) +
+                          laneOffset),
+              4);
+        }
         LLVM::StoreOp::create(
             rewriter, location, llvmConstant(rewriter, location, i32, 1),
             byteGEP(rewriter, location, base,
@@ -140,6 +170,34 @@ public:
                     offsetof(obelisk_rt_generated_nba_accumulator_256,
                              exec_region)),
             4);
+        Value dirtyBase = LLVM::AddressOfOp::create(
+            rewriter, location, pointer,
+            "__obelisk_aot_nba_dirty_roots_v1");
+        Value dirtyWord = byteGEP(
+            rewriter, location, dirtyBase,
+            static_cast<uint64_t>(staticRoot->second / 64) * sizeof(uint64_t));
+        Value previous =
+            LLVM::LoadOp::create(rewriter, location, i64, dirtyWord, 8);
+        Value marked = LLVM::OrOp::create(
+            rewriter, location, previous,
+            llvmConstant(rewriter, location, i64,
+                         uint64_t{1} << (staticRoot->second % 64)));
+        LLVM::StoreOp::create(rewriter, location, marked, dirtyWord, 8);
+        Value summaryBase = LLVM::AddressOfOp::create(
+            rewriter, location, pointer,
+            "__obelisk_aot_nba_dirty_summary_v1");
+        uint32_t dirtyWordIndex = staticRoot->second / 64;
+        Value summaryWord = byteGEP(
+            rewriter, location, summaryBase,
+            static_cast<uint64_t>(dirtyWordIndex / 64) * sizeof(uint64_t));
+        Value previousSummary =
+            LLVM::LoadOp::create(rewriter, location, i64, summaryWord, 8);
+        Value markedSummary = LLVM::OrOp::create(
+            rewriter, location, previousSummary,
+            llvmConstant(rewriter, location, i64,
+                         uint64_t{1} << (dirtyWordIndex % 64)));
+        LLVM::StoreOp::create(rewriter, location, markedSummary, summaryWord,
+                              8);
       };
       if (!useGuardedClaim && directGeneratedStage) {
         emitDirectGeneratedStage();

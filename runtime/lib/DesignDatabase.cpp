@@ -1377,7 +1377,7 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
         if (!obelisk_rt_publish_native_signal_transition_unlocked(
                 context, signalBase, width, changedBytes.data(),
                 posedgeBytes.data(), negedgeBytes.data(), valueBytes.data(),
-                unknownBytes.data()))
+                unknownBytes.data(), synchronized))
           return context->schedulerStatus;
         stateChanged = true;
       }
@@ -1447,7 +1447,7 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
         if (!obelisk_rt_publish_native_signal_transition_unlocked(
                 context, signalBase, width, wideTransitions->changed(),
                 wideTransitions->posedge(), wideTransitions->negedge(),
-                publishedValue, publishedUnknown))
+                publishedValue, publishedUnknown, synchronized))
           return context->schedulerStatus;
       }
     }

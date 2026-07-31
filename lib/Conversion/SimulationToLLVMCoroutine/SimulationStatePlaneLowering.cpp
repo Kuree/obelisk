@@ -18,7 +18,8 @@ namespace obelisk {
 
 namespace detail {
 
-void notifySignal(OpBuilder &builder, Location location, Value handle,
+void notifySignal(ConversionPatternRewriter &builder, Location location,
+                  Value handle,
                   uint64_t width, Value oldValue, Value oldUnknown,
                   Value newValue, Value newUnknown,
                   std::optional<DirectStaticStateRange> directRange) {
@@ -36,6 +37,29 @@ void notifySignal(OpBuilder &builder, Location location, Value handle,
         return value;
       return LLVM::ZExtOp::create(builder, location, i64, value);
     };
+    Value oldValueScalar = scalar(oldValue);
+    Value oldUnknownScalar = scalar(oldUnknown);
+    Value newValueScalar = scalar(newValue);
+    Value newUnknownScalar = scalar(newUnknown);
+    Value changed = arith::OrIOp::create(
+        builder, location,
+        arith::XOrIOp::create(builder, location, oldValueScalar,
+                              newValueScalar),
+        arith::XOrIOp::create(builder, location, oldUnknownScalar,
+                              newUnknownScalar));
+    Value unchanged = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, changed,
+        llvmConstant(builder, location, i64, uint64_t{0}));
+    Block *head = builder.getInsertionBlock();
+    Block *continuation =
+        builder.splitBlock(head, builder.getInsertionPoint());
+    Region *region = head->getParent();
+    Block *publish = builder.createBlock(region, continuation->getIterator());
+    recordStaticSpecializationCFGBlocks(builder, head, 2);
+    builder.setInsertionPointToEnd(head);
+    cf::CondBranchOp::create(builder, location, unchanged, continuation,
+                             ValueRange{}, publish, ValueRange{});
+    builder.setInsertionPointToEnd(publish);
     LLVM::CallOp::create(
         builder, location, TypeRange{},
         SymbolRefAttr::get(builder.getContext(),
@@ -44,8 +68,10 @@ void notifySignal(OpBuilder &builder, Location location, Value handle,
             context,
             llvmConstant(builder, location, i32, directRange->staticID),
             llvmConstant(builder, location, i64, directRange->localOffset),
-            llvmConstant(builder, location, i64, width), scalar(oldValue),
-            scalar(oldUnknown), scalar(newValue), scalar(newUnknown)});
+            llvmConstant(builder, location, i64, width), oldValueScalar,
+            oldUnknownScalar, newValueScalar, newUnknownScalar});
+    cf::BranchOp::create(builder, location, continuation);
+    builder.setInsertionPointToStart(continuation);
     return;
   }
   auto save = [&](Value value) {
