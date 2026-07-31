@@ -666,10 +666,6 @@ LogicalResult StaticSpecializationAttr::verify(
              << "static-specialization root array has an invalid element";
     if (!rootByDescriptor.try_emplace(root.getDescriptor(), root).second)
       return emitError() << "static-specialization root is duplicated";
-    if (root.getWidth() > maxPackedWidth &&
-        (root.getDirect() || root.getGuarded()))
-      return emitError()
-             << "direct static-specialization root exceeds the width policy";
   }
 
   llvm::SmallDenseSet<std::pair<Attribute, uint64_t>, 16> dependencies;

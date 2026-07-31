@@ -74,7 +74,7 @@ public:
       return failure();
     storeStatePlane(rewriter, op.getLoc(), adaptor.getDriver().front(),
                     adaptor.getValue().front(), "__obelisk_state_value",
-                    layout.bitCount);
+                    layout.bitCount, &layout);
     IntegerType i1 = rewriter.getI1Type();
     auto boolean = [&](bool value) {
       return arith::ConstantOp::create(rewriter, op.getLoc(), i1,
@@ -83,11 +83,11 @@ public:
     if (adaptor.getValue().size() == 2) {
       storeStatePlane(rewriter, op.getLoc(), adaptor.getDriver().front(),
                       adaptor.getValue()[1], "__obelisk_state_unknown",
-                      layout.bitCount);
+                      layout.bitCount, &layout);
     } else {
       storeStatePlane(rewriter, op.getLoc(), adaptor.getDriver().front(),
                       boolean(false), "__obelisk_state_unknown",
-                      layout.bitCount);
+                      layout.bitCount, &layout);
     }
     Value changed = boolean(false);
     std::optional<uint64_t> affectedNet;
@@ -144,10 +144,12 @@ public:
                     driver.handleID, static_cast<int32_t>(member.offset))));
             Value driverValue =
                 loadStatePlane(rewriter, op.getLoc(), handle, i1,
-                               "__obelisk_state_value", false, layout.bitCount);
+                               "__obelisk_state_value", false, layout.bitCount,
+                               &layout);
             Value driverUnknown = loadStatePlane(rewriter, op.getLoc(), handle,
                                                  i1, "__obelisk_state_unknown",
-                                                 true, layout.bitCount);
+                                                 true, layout.bitCount,
+                                                 &layout);
             Value currentZ = arith::AndIOp::create(
                 rewriter, op.getLoc(), resolvedUnknown, resolvedValue);
             Value driverZ = arith::AndIOp::create(rewriter, op.getLoc(),
@@ -196,10 +198,12 @@ public:
                   memberNet->handleID, static_cast<int32_t>(member.offset))));
           Value oldResolvedValue =
               loadStatePlane(rewriter, op.getLoc(), netHandle, i1,
-                             "__obelisk_state_value", false, layout.bitCount);
+                             "__obelisk_state_value", false, layout.bitCount,
+                             &layout);
           Value oldResolvedUnknown =
               loadStatePlane(rewriter, op.getLoc(), netHandle, i1,
-                             "__obelisk_state_unknown", true, layout.bitCount);
+                             "__obelisk_state_unknown", true, layout.bitCount,
+                             &layout);
           Value publishValue = resolvedValue;
           Value publishUnknown = resolvedUnknown;
           if (!memberNet->fourState) {
@@ -222,12 +226,12 @@ public:
           rewriter, op.getLoc(), changed,
           storeStatePlane(rewriter, op.getLoc(), publication.handle,
                           publication.value, "__obelisk_state_value",
-                          layout.bitCount));
+                          layout.bitCount, &layout));
       changed = arith::OrIOp::create(
           rewriter, op.getLoc(), changed,
           storeStatePlane(rewriter, op.getLoc(), publication.handle,
                           publication.unknown, "__obelisk_state_unknown",
-                          layout.bitCount));
+                          layout.bitCount, &layout));
     }
     for (const Publication &publication : publications)
       notifySignal(rewriter, op.getLoc(), publication.handle, 1,

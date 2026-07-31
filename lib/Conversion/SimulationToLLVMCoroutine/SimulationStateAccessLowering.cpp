@@ -193,8 +193,10 @@ private:
 class NetReadConversion final : public OpConversionPattern<sim::SimNetReadOp> {
 public:
   NetReadConversion(const TypeConverter &converter, MLIRContext *context,
-                    uint64_t stateBitCount)
-      : OpConversionPattern(converter, context), stateBitCount(stateBitCount) {}
+                    uint64_t stateBitCount,
+                    const NativeStateLayout *directLayout)
+      : OpConversionPattern(converter, context), stateBitCount(stateBitCount),
+        directLayout(directLayout) {}
 
   LogicalResult
   matchAndRewrite(sim::SimNetReadOp op, OneToNOpAdaptor adaptor,
@@ -206,11 +208,13 @@ public:
     IntegerType plane = rewriter.getIntegerType(*width);
     SmallVector<Value> converted{
         loadStatePlane(rewriter, op.getLoc(), adaptor.getNet().front(), plane,
-                       "__obelisk_state_value", false, stateBitCount)};
+                       "__obelisk_state_value", false, stateBitCount,
+                       directLayout)};
     if (containsLogic(resultType))
       converted.push_back(
           loadStatePlane(rewriter, op.getLoc(), adaptor.getNet().front(), plane,
-                         "__obelisk_state_unknown", true, stateBitCount));
+                         "__obelisk_state_unknown", true, stateBitCount,
+                         directLayout));
     SmallVector<ValueRange> replacements{ValueRange(converted)};
     rewriter.replaceOpWithMultiple(op, replacements);
     return success();
@@ -218,6 +222,7 @@ public:
 
 private:
   uint64_t stateBitCount;
+  const NativeStateLayout *directLayout;
 };
 
 } // namespace
@@ -228,7 +233,7 @@ void populateStateReadWriteToLLVMConversionPatterns(
   patterns.add<RefLoadConversion, RefStoreConversion>(
       converter, patterns.getContext(), stateBitCount, directLayout);
   patterns.add<NetReadConversion>(converter, patterns.getContext(),
-                                  stateBitCount);
+                                  stateBitCount, directLayout);
 }
 
 } // namespace obelisk::detail

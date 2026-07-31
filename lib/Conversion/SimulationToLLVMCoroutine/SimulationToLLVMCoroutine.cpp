@@ -105,6 +105,29 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   });
   analysis::SimulationVPIAnalysis vpi =
       analysis::SimulationVPIAnalysis::compute(metadataDesign);
+  // Resolved nets and driver contributions occupy the same canonical native
+  // planes as storage.  With no external writer their fixed handles are
+  // always safe to address directly; publication and resolution still flow
+  // through the ordinary scheduler boundaries.
+  bool hasLanguageOverride = false;
+  module.walk([&](Operation *operation) {
+    hasLanguageOverride |=
+        isa<sim::SimOverrideOp, sim::SimReleaseOverrideOp>(operation);
+  });
+  if (vpi.getMode() == sim::ComputeVPIMode::Off && !hasLanguageOverride) {
+    auto authorizeFixedHandles = [&](const auto &descriptors) {
+      for (const auto &[descriptor, handle] : descriptors) {
+        (void)descriptor;
+        obelisk_rt_stable_handle_v1 decoded{};
+        if (obelisk_rt_stable_handle_decode(handle, &decoded) &&
+            decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC &&
+            decoded.offset == 0)
+          stateLayout->directHandles.insert(decoded.id);
+      }
+    };
+    authorizeFixedHandles(stateLayout->nets);
+    authorizeFixedHandles(stateLayout->drivers);
+  }
   if (staticSuperstep &&
       (!metadataDesign ||
        staticSuperstep.getSourceGraph() !=
@@ -122,9 +145,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     for (const auto &[descriptor, root] : analyzed->getRoots()) {
       if (!root.getDirect() && !root.getGuarded() && !root.getNba())
         continue;
-      if (root.getWidth() == 0 ||
-          ((root.getDirect() || root.getGuarded()) &&
-           root.getWidth() > staticSpecialization.getMaxPackedWidth()))
+      if (root.getWidth() == 0)
         return module.emitError(
             "native lowering rejected invalid static-specialization root");
       auto handle = stateLayout->storage.find(descriptor);
@@ -209,9 +230,16 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   });
   if (analyzed.wasInterrupted())
     return failure();
+  // Fixed root-spawn captures are useful independently of scheduler
+  // selection: replacing a proven-unique storage capture with its context
+  // lookup exposes a constant stable handle to direct-state lowering.  The
+  // AOT analysis also records dynamic/duplicate actors, so the same proof is
+  // safe for the generic scheduler.
+  aotEligibility = analysis::NativeAOTAnalysis::compute(module);
   if (nativeScheduler != sim::NativeSchedulerMode::Generic) {
-    aotEligibility = analysis::NativeAOTAnalysis::compute(module);
-    useAOT = aotEligibility.isEligible();
+    useAOT = aotEligibility.isEligible() &&
+             (nativeScheduler == sim::NativeSchedulerMode::AOT ||
+              aotEligibility.isAOTCostEffective());
     if (nativeScheduler == sim::NativeSchedulerMode::AOT &&
         !aotEligibility.isFullyEligible()) {
       InFlightDiagnostic diagnostic =
@@ -245,7 +273,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     }
     cleanSuperstep = true;
   }
-  if (useAOT && failed(specializeNativeAOTCaptures(module, aotEligibility)))
+  if (aotEligibility.isEligible() &&
+      failed(specializeNativeAOTCaptures(module, aotEligibility)))
     return failure();
   bool staticControl = false;
   bool staticFanout = false;
@@ -255,6 +284,21 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   NativeStaticNBAPlan staticNBAPlan;
   NativeStaticFanoutPlan staticFanoutPlan;
   SmallVector<obelisk_rt_static_actor_root> staticActorRoots;
+  // Direct static state is an addressing capability, not a scheduler
+  // capability.  The specialization analysis has already proved each root's
+  // fixed descriptor, width, and native-plane offset.  Make those facts
+  // available to generic and hybrid lowering as well; dynamic handles still
+  // use the validating runtime helpers and writable VPI roots retain their
+  // generated guards.
+  // Read-only VPI still publishes the runtime-owned planes to plugins. Until
+  // those planes are the generated code's canonical storage, keep reads and
+  // writes on the coherent helper path in that mode. Full VPI uses guarded
+  // specialization, while language force/release likewise requires helpers.
+  directStaticState = staticSpecialization && vpi.hasComputeGraph() &&
+                      vpi.getMode() != sim::ComputeVPIMode::Read &&
+                      !hasLanguageOverride &&
+                      (!stateLayout->directHandles.empty() ||
+                       !stateLayout->guardedHandles.empty());
   if (useAOT && aotEligibility.isFullyEligible()) {
     staticControl = vpi.hasComputeGraph();
     staticFanoutMetadata = vpi.hasComputeGraph();
@@ -262,9 +306,6 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     // roots or invalidate the closed-world waiter inventory. It therefore
     // uses the fully static fanout schedule just like VPI-off.
     staticFanout = vpi.preservesStaticDependencies();
-    directStaticState = staticSpecialization && vpi.hasComputeGraph() &&
-                        (!stateLayout->directHandles.empty() ||
-                         !stateLayout->guardedHandles.empty());
     staticNBA = staticSpecialization && !stateLayout->nbaHandles.empty();
   }
   if (staticControl) {
@@ -396,8 +437,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
           staticNBAPlan.roots, *stateLayout)))
     return failure();
 
-  bool enableDirectStaticState =
-      staticSpecialization && useAOT && aotEligibility.isFullyEligible();
+  bool enableDirectStaticState = directStaticState;
   if (failed(lowerPackedSimulationOperations(
           module, dataLayout, *stateLayout, enableDirectStaticState,
           staticNBA ? &staticNBAPlan : nullptr, vpi.allowsWrite())))

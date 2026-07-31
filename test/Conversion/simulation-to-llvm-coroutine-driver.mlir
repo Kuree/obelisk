@@ -27,8 +27,12 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @drive
-// CHECK: llvm.call @obelisk_rt_v1_native_state_store_plane
-// CHECK: llvm.call @obelisk_rt_v1_native_state_load_plane
-// CHECK: llvm.call @obelisk_rt_v1_native_state_store_plane
+// CHECK-NOT: llvm.call @obelisk_rt_v1_native_state_load_plane
+// CHECK-NOT: llvm.call @obelisk_rt_v1_native_state_store_plane
+// CHECK: llvm.mlir.addressof @__obelisk_state_value
+// CHECK: llvm.load
+// CHECK: llvm.store
+// CHECK: llvm.mlir.addressof @__obelisk_state_unknown
+// CHECK: llvm.store
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_signal_transition
 // CHECK-NOT: obelisk_sim.driver.drive

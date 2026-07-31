@@ -110,18 +110,24 @@ void ObeliskSimSpecializeStaticStateNBAPass::runOnOperation() {
   for (sim::SimStorageDeclOp storage :
        design.getBody().front().getOps<sim::SimStorageDeclOp>()) {
     storages.push_back(storage);
-    std::optional<unsigned> width = sim::getPackedWidth(storage.getType());
     std::optional<unsigned> storageWidth =
         analysis::getSimulationStorageBitWidth(storage.getType());
     if (storageWidth)
       storageRootWidths.try_emplace(storage.getId(), *storageWidth);
-    bool supported = width && *width != 0 && *width <= maxPackedWidth &&
+    // The policy limits one generated packed access, not the containing
+    // storage root.  Fixed slices of a wide register file still have constant
+    // offsets and are independently eligible for direct plane access.
+    SmallVector<uint64_t, 2> managedRoots;
+    bool supported = storageWidth && *storageWidth != 0 &&
+                     sim::getManagedHandleOffsets(storage.getType(),
+                                                  managedRoots) &&
+                     managedRoots.empty() &&
                      !isa<FloatType>(storage.getType());
     if (supported)
       stateEligible.insert(storage.getId());
     else if (missedRemarks)
       storage.emitRemark("direct static state specialization requires a fixed "
-                         "packed integer or logic root within the width limit");
+                         "packed integer or logic root");
   }
 
   llvm::SmallDenseSet<uint64_t, 16> nbaEligible;

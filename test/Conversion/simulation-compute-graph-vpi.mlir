@@ -24,14 +24,15 @@ module {
     // FULL: obelisk_sim.storage.decl 0 {{.*}}observability = 2
     // READ-SPEC: obelisk_sim.static_specialization<version = 1, maxPackedWidth = 64
     // READ-SPEC-SAME: static_state_root<descriptor = 0, width = 8, direct = true, guarded = false, nba = true>
-    // READ-SPEC-SAME: static_state_root<descriptor = 1, width = 256, direct = false, guarded = false, nba = true>
+    // READ-SPEC-SAME: static_state_root<descriptor = 1, width = 256, direct = true, guarded = false, nba = true>
     // READ-SPEC-SAME: static_state_root<descriptor = 2, width = 8, direct = false, guarded = true, nba = false>
     // READ-SPEC-SAME: static_actor_root<function = @once, descriptor = 0, read = false, write = true>
     // READ-SPEC-SAME: static_actor_root<function = @repeats, descriptor = 0, read = false, write = true>
+    // READ-SPEC-SAME: static_actor_root<function = @wide, descriptor = 1, read = false, write = true>
     // READ-SPEC-SAME: nbaRoots = [0, 1]
     // FULL-SPEC: obelisk_sim.static_specialization<version = 1, maxPackedWidth = 64
     // FULL-SPEC-SAME: static_state_root<descriptor = 0, width = 8, direct = false, guarded = true, nba = true>
-    // FULL-SPEC-SAME: static_state_root<descriptor = 1, width = 256, direct = false, guarded = false, nba = true>
+    // FULL-SPEC-SAME: static_state_root<descriptor = 1, width = 256, direct = false, guarded = true, nba = true>
     // FULL-SPEC-SAME: static_state_root<descriptor = 2, width = 8, direct = false, guarded = true, nba = false>
     // FULL-SPEC-SAME: nbaRoots = [0, 1]
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<8> design

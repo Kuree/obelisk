@@ -12,6 +12,7 @@
 #include "mlir/IR/IRMapping.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringMap.h"
 
 using namespace mlir;
 
@@ -20,6 +21,7 @@ namespace obelisk::detail {
 LogicalResult
 specializeNativeAOTCaptures(ModuleOp module,
                             const analysis::NativeAOTAnalysis &eligibility) {
+  (void)eligibility;
   sim::SimFuncOp root;
   module.walk([&](sim::SimFuncOp function) {
     if (function.getEntryKind() == sim::EntryKind::RootInitializer)
@@ -29,13 +31,22 @@ specializeNativeAOTCaptures(ModuleOp module,
     return module.emitError(
         "cannot specialize AOT captures without a root initializer");
 
+  // Capture addressing is independent of scheduler eligibility.  A callee
+  // with exactly one whole-design spawn has the same fixed context object on
+  // every activation even when conditional waits or control loops keep that
+  // actor on the generic scheduler.  Duplicate or dynamic spawns remain on
+  // ordinary frame captures.
+  llvm::StringMap<unsigned> spawnCounts;
+  module.walk([&](sim::SimSpawnOp spawn) {
+    ++spawnCounts[spawn.getCallee()];
+  });
+
   WalkResult specialized = root.walk([&](sim::SimSpawnOp spawn) {
     sim::SimDesignOp design = spawn->getParentOfType<sim::SimDesignOp>();
     sim::SimFuncOp target =
         design ? design.lookupSymbol<sim::SimFuncOp>(spawn.getCallee())
                : nullptr;
-    if (!target ||
-        !eligibility.getActorSlots().contains(target.getOperation()))
+    if (!target || spawnCounts.lookup(spawn.getCallee()) != 1)
       return WalkResult::advance();
     Block &entry = target.getBody().front();
     if (spawn.getNumOperands() != entry.getNumArguments()) {

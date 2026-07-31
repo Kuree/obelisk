@@ -66,7 +66,7 @@ void notifySignal(OpBuilder &builder, Location location, Value handle,
 std::optional<DirectStaticStateRange>
 resolveDirectStaticStateRange(Value handle, unsigned width,
                               const NativeStateLayout *layout) {
-  if (!layout || width == 0 || width > 64)
+  if (!layout || width == 0)
     return std::nullopt;
   std::optional<uint64_t> value = resolveCFGConstantInteger(handle);
   if (!value)
