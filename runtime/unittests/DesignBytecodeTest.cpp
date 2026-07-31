@@ -10,6 +10,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -1841,19 +1842,22 @@ TEST(DesignBytecode, BytecodeComputedObserverWakesOnlyForAffectedSignal) {
   context->scheduledDesignTaskIndices.emplace(taskID, 0);
   context->pendingDesignComputedWaiters.push_back(taskID);
 
-  ASSERT_TRUE(obelisk_rt_evaluate_design_observers_unlocked(
-      context, OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL, 128, 1));
-  EXPECT_EQ(context->pendingDesignComputedWaiters,
-            std::vector<uint64_t>({taskID}));
-  EXPECT_FALSE(context->scheduledDesignTasks.front().signalTriggered);
+  {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    ASSERT_TRUE(obelisk_rt_evaluate_design_observers_unlocked(
+        context, OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL, 128, 1));
+    EXPECT_EQ(context->pendingDesignComputedWaiters,
+              std::vector<uint64_t>({taskID}));
+    EXPECT_FALSE(context->scheduledDesignTasks.front().signalTriggered);
 
-  uint64_t selectionGeneration = context->schedulerSelectionGeneration;
-  ASSERT_TRUE(obelisk_rt_evaluate_design_observers_unlocked(
-      context, OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL, 0, dependencyWidth));
-  EXPECT_TRUE(context->pendingDesignComputedWaiters.empty());
-  EXPECT_TRUE(context->scheduledDesignTasks.front().signalTriggered);
-  EXPECT_EQ(context->designPollCandidates.count(taskID), 1u);
-  EXPECT_NE(context->schedulerSelectionGeneration, selectionGeneration);
+    uint64_t selectionGeneration = context->schedulerSelectionGeneration;
+    ASSERT_TRUE(obelisk_rt_evaluate_design_observers_unlocked(
+        context, OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL, 0, dependencyWidth));
+    EXPECT_TRUE(context->pendingDesignComputedWaiters.empty());
+    EXPECT_TRUE(context->scheduledDesignTasks.front().signalTriggered);
+    EXPECT_EQ(context->designPollCandidates.count(taskID), 1u);
+    EXPECT_NE(context->schedulerSelectionGeneration, selectionGeneration);
+  }
   obelisk_rt_v1_context_destroy(context);
 }
 
