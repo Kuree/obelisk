@@ -11,6 +11,7 @@
 #include <cstring>
 #include <deque>
 #include <limits>
+#include <new>
 #include <optional>
 #include <unordered_map>
 #include <vector>
@@ -2041,3 +2042,88 @@ bool loadValidatedImage(const obelisk_rt_design_bytecode_entry_v1 &entry,
 }
 
 } // namespace obelisk::designbytecode
+
+using namespace obelisk::designbytecode;
+
+static bool matchesActivationBytecodeInventory(
+    const obelisk_rt_execution_descriptor_v1 &execution, const Image &image) {
+  for (uint64_t index = 0; index != execution.activation_count; ++index) {
+    const obelisk_rt_activation_descriptor_v1 &activation =
+        execution.activations[index];
+    if ((activation.flags & OBELISK_RT_ACTIVATION_HAS_BYTECODE) == 0)
+      continue;
+    if (activation.bytecode_function >= image.functionCount)
+      return false;
+    Function function = functionAt(image, activation.bytecode_function);
+    if (function.id != activation.code_unit_id ||
+        (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
+        function.resultCount != 0)
+      return false;
+  }
+  for (uint64_t index = 0; index != execution.observer_count; ++index) {
+    const obelisk_rt_observer_descriptor_v1 &observer =
+        execution.observers[index];
+    if (observer.bytecode_function == OBELISK_RT_OBSERVER_NO_BYTECODE)
+      continue;
+    if (observer.bytecode_function >= image.functionCount)
+      return false;
+    Function function = functionAt(image, observer.bytecode_function);
+    if (function.id != observer.code_unit_id ||
+        (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) != 0 ||
+        function.resultCount != 1 ||
+        function.argumentCount != observer.capture_count + 1)
+      return false;
+    Layout result = layoutAt(image, function, function.argumentCount);
+    bool fourState = (observer.flags & OBELISK_RT_OBSERVER_FOUR_STATE) != 0;
+    uint32_t expectedKind = (observer.flags & OBELISK_RT_OBSERVER_REAL32) != 0
+                                ? OBELISK_RT_DBREG_REAL32
+                            : (observer.flags & OBELISK_RT_OBSERVER_REAL64) != 0
+                                ? OBELISK_RT_DBREG_REAL64
+                            : fourState ? OBELISK_RT_DBREG_LOGIC
+                                        : OBELISK_RT_DBREG_BITS;
+    if (layoutAt(image, function, 0).kind != OBELISK_RT_DBREG_HANDLE ||
+        layoutAt(image, function, 0).size != 32 ||
+        result.width != observer.result_width || result.kind != expectedKind)
+      return false;
+    for (uint32_t capture = 0; capture != observer.capture_count; ++capture)
+      if (layoutAt(image, function, capture + 1).kind !=
+              OBELISK_RT_DBREG_HANDLE ||
+          layoutAt(image, function, capture + 1).size != 32)
+        return false;
+  }
+  return true;
+}
+
+bool obelisk_rt_validate_activation_bytecode_inventory(
+    const obelisk_rt_execution_descriptor_v1 &execution) noexcept {
+  if ((execution.flags & OBELISK_RT_EXECUTION_HAS_BYTECODE) == 0)
+    return true;
+  try {
+    obelisk_rt_design_bytecode_entry_v1 entry{&execution, 0, 0};
+    Image image;
+    return parseImage(entry, image) && validateImage(image) &&
+           matchesActivationBytecodeInventory(execution, image);
+  } catch (...) {
+    return false;
+  }
+}
+
+obelisk_rt_status obelisk_rt_validate_design_bytecode(
+    const obelisk_rt_design_bytecode_entry_v1 &entry, uint64_t *outScratchSize,
+    uint64_t *outScratchAlignment) noexcept {
+  try {
+    Image image;
+    if (!parseImage(entry, image) || !validateImage(image))
+      return OBELISK_RT_INVALID_BYTECODE;
+    Function function = functionAt(image, entry.function);
+    if (outScratchSize)
+      *outScratchSize = function.scratchSize;
+    if (outScratchAlignment)
+      *outScratchAlignment = function.scratchAlignment;
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_INVALID_BYTECODE;
+  }
+}
