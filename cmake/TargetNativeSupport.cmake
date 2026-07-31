@@ -162,8 +162,8 @@ foreach(source ABI Bytecode Containers Coverage DesignBytecode
                DesignBytecodeLogic DesignBytecodeNets DesignBytecodeObservers
                DesignBytecodeRoots DesignDatabase DPI
                FileIO Format ManagedHeap Process
-               ProcessAllocation ProcessObservers ProcessValidation Random
-               Runtime VPI)
+               ProcessAllocation ProcessObservers ProcessSignals
+               ProcessValidation Random Runtime VPI)
   set(object "${_obelisk_target_runtime_dir}/${source}.o")
   set(lto_object "${_obelisk_target_runtime_dir}/${source}.bc")
   list(APPEND _obelisk_target_runtime_objects "${object}")
