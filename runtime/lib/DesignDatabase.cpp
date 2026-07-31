@@ -10,6 +10,7 @@
 #include <mutex>
 #include <new>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -73,23 +74,7 @@ uint64_t checksum(const uint8_t *data, uint64_t size) {
   return hash;
 }
 
-struct Database {
-  const uint8_t *data = nullptr;
-  uint64_t size = 0;
-  uint32_t profile = 0;
-  uint64_t root = 0;
-  uint64_t scopes = 0;
-  uint64_t scopeCount = 0;
-  uint64_t objects = 0;
-  uint64_t objectCount = 0;
-  uint64_t types = 0;
-  uint64_t typeCount = 0;
-  uint64_t strings = 0;
-  uint64_t stringSize = 0;
-  uint64_t index = 0;
-  uint64_t indexCount = 0;
-  uint64_t stateBitCount = 0;
-};
+using Database = DesignDatabaseCache;
 
 bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
                  Database &database) {
@@ -575,11 +560,14 @@ bool validateDatabaseImpl(const Database &database) {
 // Reflection entry points have a C ABI. Keep allocator failures and malformed
 // graph corner cases from unwinding through callers that cannot catch C++
 // exceptions; design_validate retains its explicit outer guard as well.
-bool validateDatabase(const Database &database) noexcept {
+obelisk_rt_status validateDatabase(const Database &database) noexcept {
   try {
-    return validateDatabaseImpl(database);
+    return validateDatabaseImpl(database) ? OBELISK_RT_OK
+                                          : OBELISK_RT_INVALID_DESIGN;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
   } catch (...) {
-    return false;
+    return OBELISK_RT_INVALID_DESIGN;
   }
 }
 
@@ -622,74 +610,116 @@ uint32_t transitionEdges(bool oldValue, bool oldUnknown, bool newValue,
   return result;
 }
 
-} // namespace
+struct RegisteredDatabase {
+  Database database;
+  size_t contextCount = 0;
+};
 
-bool obelisk_rt_checked_design_record(
-    const obelisk_rt_execution_descriptor_v1 *execution, uint64_t offset,
-    const uint8_t *&record, uint32_t &kind) noexcept {
-  try {
-    Database database;
-    return parseHeader(execution, database) && validateDatabase(database) &&
-           getRecord(database, offset, record, kind);
-  } catch (...) {
-    return false;
-  }
+// Descriptor-only reflection calls can share validation with a live context,
+// but the descriptor ABI has no cache slot or standalone lifetime token.
+// Retain views only while contexts establish that the immutable descriptor and
+// image are alive, and remove the final reference during context destruction.
+struct DatabaseRegistry {
+  std::mutex mutex;
+  std::unordered_map<const obelisk_rt_execution_descriptor_v1 *,
+                     RegisteredDatabase>
+      databases;
+};
+
+DatabaseRegistry &databaseRegistry() {
+  static DatabaseRegistry registry;
+  return registry;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_design_validate(
-    const obelisk_rt_execution_descriptor_v1 *execution) {
+bool matchesExecution(
+    const Database &database,
+    const obelisk_rt_execution_descriptor_v1 *execution) noexcept {
+  return execution && database.validated &&
+         database.data == execution->design_database &&
+         database.size == execution->design_database_size &&
+         database.stateBitCount == execution->state_bit_count;
+}
+
+bool sameDatabase(const Database &left, const Database &right) noexcept {
+  return left.data == right.data && left.size == right.size &&
+         left.profile == right.profile && left.root == right.root &&
+         left.scopes == right.scopes && left.scopeCount == right.scopeCount &&
+         left.objects == right.objects &&
+         left.objectCount == right.objectCount && left.types == right.types &&
+         left.typeCount == right.typeCount && left.strings == right.strings &&
+         left.stringSize == right.stringSize && left.index == right.index &&
+         left.indexCount == right.indexCount &&
+         left.stateBitCount == right.stateBitCount &&
+         left.validated == right.validated;
+}
+
+bool registeredDatabase(const obelisk_rt_execution_descriptor_v1 *execution,
+                        Database &database) {
+  if (!execution)
+    return false;
+  DatabaseRegistry &registry = databaseRegistry();
+  std::lock_guard<std::mutex> lock(registry.mutex);
+  auto found = registry.databases.find(execution);
+  if (found == registry.databases.end() ||
+      !matchesExecution(found->second.database, execution))
+    return false;
+  database = found->second.database;
+  return true;
+}
+
+obelisk_rt_status
+loadValidatedDatabase(const obelisk_rt_execution_descriptor_v1 *execution,
+                      Database &database) noexcept {
   try {
-    Database database;
-    return parseHeader(execution, database) && validateDatabase(database)
-               ? OBELISK_RT_OK
-               : OBELISK_RT_INVALID_DESIGN;
+    if (registeredDatabase(execution, database))
+      return OBELISK_RT_OK;
   } catch (const std::bad_alloc &) {
     return OBELISK_RT_OUT_OF_MEMORY;
   } catch (...) {
     return OBELISK_RT_INVALID_DESIGN;
   }
+  if (!parseHeader(execution, database))
+    return OBELISK_RT_INVALID_DESIGN;
+  return validateDatabase(database);
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_design_root(const obelisk_rt_execution_descriptor_v1 *execution,
-                          obelisk_rt_design_cursor_v1 *outCursor) {
-  if (!outCursor)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  Database database;
-  if (!parseHeader(execution, database) || !validateDatabase(database))
-    return OBELISK_RT_INVALID_DESIGN;
+obelisk_rt_status mapInvalidDatabase(obelisk_rt_status status,
+                                     obelisk_rt_status invalidStatus) noexcept {
+  return status == OBELISK_RT_INVALID_DESIGN ? invalidStatus : status;
+}
+
+const Database *cachedDatabase(const obelisk_rt_context *context) {
+  if (!context ||
+      !matchesExecution(context->designDatabase, context->execution))
+    return nullptr;
+  return &context->designDatabase;
+}
+
+obelisk_rt_status designRoot(const Database &database,
+                             obelisk_rt_design_cursor_v1 *outCursor) {
   outCursor->offset = database.root;
   return OBELISK_RT_OK;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_design_child(const obelisk_rt_execution_descriptor_v1 *execution,
-                           obelisk_rt_design_cursor_v1 cursor,
-                           obelisk_rt_design_cursor_v1 *outCursor) {
-  if (!outCursor)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  Database database;
+obelisk_rt_status designChild(const Database &database,
+                              obelisk_rt_design_cursor_v1 cursor,
+                              obelisk_rt_design_cursor_v1 *outCursor) {
   const uint8_t *record;
   uint32_t kind;
-  if (!parseHeader(execution, database) || !validateDatabase(database) ||
-      !getRecord(database, cursor.offset, record, kind) ||
+  if (!getRecord(database, cursor.offset, record, kind) ||
       kind != OBELISK_RT_DESIGN_RECORD_SCOPE)
     return OBELISK_RT_INVALID_HANDLE;
   outCursor->offset = read64(record + 24);
   return outCursor->offset == 0 ? OBELISK_RT_EOF : OBELISK_RT_OK;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_design_child_at(
-    const obelisk_rt_execution_descriptor_v1 *execution,
-    obelisk_rt_design_cursor_v1 cursor, uint64_t index,
-    obelisk_rt_design_cursor_v1 *outCursor) {
-  if (!outCursor)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  Database database;
+obelisk_rt_status designChildAt(const Database &database,
+                                obelisk_rt_design_cursor_v1 cursor,
+                                uint64_t index,
+                                obelisk_rt_design_cursor_v1 *outCursor) {
   const uint8_t *record;
   uint32_t kind;
-  if (!parseHeader(execution, database) || !validateDatabase(database) ||
-      !getRecord(database, cursor.offset, record, kind) ||
+  if (!getRecord(database, cursor.offset, record, kind) ||
       kind != OBELISK_RT_DESIGN_RECORD_SCOPE)
     return OBELISK_RT_INVALID_HANDLE;
   uint64_t child = read64(record + 24);
@@ -705,32 +735,21 @@ extern "C" obelisk_rt_status obelisk_rt_v1_design_child_at(
   return child == 0 ? OBELISK_RT_EOF : OBELISK_RT_OK;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_design_sibling(
-    const obelisk_rt_execution_descriptor_v1 *execution,
-    obelisk_rt_design_cursor_v1 cursor,
-    obelisk_rt_design_cursor_v1 *outCursor) {
-  if (!outCursor)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  Database database;
+obelisk_rt_status designSibling(const Database &database,
+                                obelisk_rt_design_cursor_v1 cursor,
+                                obelisk_rt_design_cursor_v1 *outCursor) {
   const uint8_t *record;
   uint32_t kind;
-  if (!parseHeader(execution, database) || !validateDatabase(database) ||
-      !getRecord(database, cursor.offset, record, kind) ||
+  if (!getRecord(database, cursor.offset, record, kind) ||
       kind == OBELISK_RT_DESIGN_RECORD_TYPE)
     return OBELISK_RT_INVALID_HANDLE;
   outCursor->offset = nextOffset(record, kind);
   return outCursor->offset == 0 ? OBELISK_RT_EOF : OBELISK_RT_OK;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_design_lookup(const obelisk_rt_execution_descriptor_v1 *execution,
-                            const uint8_t *name, uint64_t nameSize,
-                            obelisk_rt_design_cursor_v1 *outCursor) {
-  if (!outCursor || (nameSize != 0 && !name))
-    return OBELISK_RT_INVALID_ARGUMENT;
-  Database database;
-  if (!parseHeader(execution, database) || !validateDatabase(database))
-    return OBELISK_RT_INVALID_DESIGN;
+obelisk_rt_status designLookup(const Database &database, const uint8_t *name,
+                               uint64_t nameSize,
+                               obelisk_rt_design_cursor_v1 *outCursor) {
   uint64_t wantedHash = nameHash(name, nameSize);
   uint64_t low = 0, high = database.indexCount;
   while (low != high) {
@@ -759,17 +778,12 @@ obelisk_rt_v1_design_lookup(const obelisk_rt_execution_descriptor_v1 *execution,
   return OBELISK_RT_INVALID_HANDLE;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_design_info(const obelisk_rt_execution_descriptor_v1 *execution,
-                          obelisk_rt_design_cursor_v1 cursor,
-                          obelisk_rt_design_info_v1 *outInfo) {
-  if (!outInfo)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  Database database;
+obelisk_rt_status designInfo(const Database &database,
+                             obelisk_rt_design_cursor_v1 cursor,
+                             obelisk_rt_design_info_v1 *outInfo) {
   const uint8_t *record;
   uint32_t kind;
-  if (!parseHeader(execution, database) || !validateDatabase(database) ||
-      !getRecord(database, cursor.offset, record, kind) ||
+  if (!getRecord(database, cursor.offset, record, kind) ||
       kind == OBELISK_RT_DESIGN_RECORD_TYPE)
     return OBELISK_RT_INVALID_HANDLE;
   *outInfo = {};
@@ -785,17 +799,12 @@ obelisk_rt_v1_design_info(const obelisk_rt_execution_descriptor_v1 *execution,
   return OBELISK_RT_OK;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_design_type_info(
-    const obelisk_rt_execution_descriptor_v1 *execution,
-    obelisk_rt_design_cursor_v1 cursor,
-    obelisk_rt_design_type_info_v1 *outInfo) {
-  if (!outInfo)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  Database database;
+obelisk_rt_status designTypeInfo(const Database &database,
+                                 obelisk_rt_design_cursor_v1 cursor,
+                                 obelisk_rt_design_type_info_v1 *outInfo) {
   const uint8_t *record;
   uint32_t recordKind;
-  if (!parseHeader(execution, database) || !validateDatabase(database) ||
-      !getRecord(database, cursor.offset, record, recordKind) ||
+  if (!getRecord(database, cursor.offset, record, recordKind) ||
       recordKind != OBELISK_RT_DESIGN_RECORD_TYPE)
     return OBELISK_RT_INVALID_HANDLE;
   uint32_t encoded = read32(record + 4);
@@ -816,17 +825,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_design_type_info(
   return OBELISK_RT_OK;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_design_type_child(
-    const obelisk_rt_execution_descriptor_v1 *execution,
-    obelisk_rt_design_cursor_v1 cursor, uint64_t index,
-    obelisk_rt_design_cursor_v1 *outCursor) {
-  if (!outCursor)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  Database database;
+obelisk_rt_status designTypeChild(const Database &database,
+                                  obelisk_rt_design_cursor_v1 cursor,
+                                  uint64_t index,
+                                  obelisk_rt_design_cursor_v1 *outCursor) {
   const uint8_t *record;
   uint32_t recordKind;
-  if (!parseHeader(execution, database) || !validateDatabase(database) ||
-      !getRecord(database, cursor.offset, record, recordKind) ||
+  if (!getRecord(database, cursor.offset, record, recordKind) ||
       recordKind != OBELISK_RT_DESIGN_RECORD_TYPE)
     return OBELISK_RT_INVALID_HANDLE;
   uint64_t count = read64(record + 48);
@@ -843,18 +848,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_design_type_child(
   return OBELISK_RT_OK;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_design_name(const obelisk_rt_execution_descriptor_v1 *execution,
-                          obelisk_rt_design_cursor_v1 cursor,
-                          const uint8_t **outData, uint64_t *outSize) {
-  if (!outData || !outSize)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  Database database;
+obelisk_rt_status designName(const Database &database,
+                             obelisk_rt_design_cursor_v1 cursor,
+                             const uint8_t **outData, uint64_t *outSize) {
   const uint8_t *record;
   uint32_t kind;
   std::string_view name;
-  if (!parseHeader(execution, database) || !validateDatabase(database) ||
-      !getRecord(database, cursor.offset, record, kind) ||
+  if (!getRecord(database, cursor.offset, record, kind) ||
       !getString(
           database,
           read64(record + (kind == OBELISK_RT_DESIGN_RECORD_TYPE ? 72 : 40)),
@@ -865,6 +865,306 @@ obelisk_rt_v1_design_name(const obelisk_rt_execution_descriptor_v1 *execution,
   return OBELISK_RT_OK;
 }
 
+} // namespace
+
+obelisk_rt_status obelisk_rt_initialize_design_database(
+    const obelisk_rt_execution_descriptor_v1 *execution,
+    DesignDatabaseCache &cache) noexcept {
+  if (!execution)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  try {
+    Database database;
+    obelisk_rt_status status = loadValidatedDatabase(execution, database);
+    if (status != OBELISK_RT_OK)
+      return status;
+    database.validated = true;
+    cache = database;
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_INVALID_DESIGN;
+  }
+}
+
+obelisk_rt_status obelisk_rt_register_design_database(
+    const obelisk_rt_execution_descriptor_v1 *execution,
+    const DesignDatabaseCache &cache) noexcept {
+  if (!matchesExecution(cache, execution))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  try {
+    DatabaseRegistry &registry = databaseRegistry();
+    std::lock_guard<std::mutex> lock(registry.mutex);
+    auto [entry, inserted] = registry.databases.try_emplace(execution);
+    if (inserted)
+      entry->second.database = cache;
+    else if (!sameDatabase(entry->second.database, cache))
+      return OBELISK_RT_INVALID_DESIGN;
+    if (entry->second.contextCount == std::numeric_limits<size_t>::max()) {
+      if (inserted)
+        registry.databases.erase(entry);
+      return OBELISK_RT_OUT_OF_RESOURCES;
+    }
+    ++entry->second.contextCount;
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_INVALID_DESIGN;
+  }
+}
+
+void obelisk_rt_unregister_design_database(
+    const obelisk_rt_execution_descriptor_v1 *execution) noexcept {
+  if (!execution)
+    return;
+  try {
+    DatabaseRegistry &registry = databaseRegistry();
+    std::lock_guard<std::mutex> lock(registry.mutex);
+    auto found = registry.databases.find(execution);
+    if (found == registry.databases.end())
+      return;
+    if (found->second.contextCount > 1) {
+      --found->second.contextCount;
+      return;
+    }
+    registry.databases.erase(found);
+  } catch (...) {
+    // Context teardown cannot recover from a registry synchronization failure.
+  }
+}
+
+obelisk_rt_status
+obelisk_rt_cached_design_root(const obelisk_rt_context *context,
+                              obelisk_rt_design_cursor_v1 *outCursor) noexcept {
+  if (!outCursor)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const Database *database = cachedDatabase(context);
+  return database ? designRoot(*database, outCursor)
+                  : OBELISK_RT_INVALID_DESIGN;
+}
+
+obelisk_rt_status obelisk_rt_cached_design_child(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+    obelisk_rt_design_cursor_v1 *outCursor) noexcept {
+  if (!outCursor)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const Database *database = cachedDatabase(context);
+  return database ? designChild(*database, cursor, outCursor)
+                  : OBELISK_RT_INVALID_HANDLE;
+}
+
+obelisk_rt_status obelisk_rt_cached_design_child_at(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+    uint64_t index, obelisk_rt_design_cursor_v1 *outCursor) noexcept {
+  if (!outCursor)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const Database *database = cachedDatabase(context);
+  return database ? designChildAt(*database, cursor, index, outCursor)
+                  : OBELISK_RT_INVALID_HANDLE;
+}
+
+obelisk_rt_status obelisk_rt_cached_design_sibling(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+    obelisk_rt_design_cursor_v1 *outCursor) noexcept {
+  if (!outCursor)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const Database *database = cachedDatabase(context);
+  return database ? designSibling(*database, cursor, outCursor)
+                  : OBELISK_RT_INVALID_HANDLE;
+}
+
+obelisk_rt_status obelisk_rt_cached_design_lookup(
+    const obelisk_rt_context *context, const uint8_t *name, uint64_t nameSize,
+    obelisk_rt_design_cursor_v1 *outCursor) noexcept {
+  if (!outCursor || (nameSize != 0 && !name))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const Database *database = cachedDatabase(context);
+  return database ? designLookup(*database, name, nameSize, outCursor)
+                  : OBELISK_RT_INVALID_DESIGN;
+}
+
+obelisk_rt_status
+obelisk_rt_cached_design_info(const obelisk_rt_context *context,
+                              obelisk_rt_design_cursor_v1 cursor,
+                              obelisk_rt_design_info_v1 *outInfo) noexcept {
+  if (!outInfo)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const Database *database = cachedDatabase(context);
+  return database ? designInfo(*database, cursor, outInfo)
+                  : OBELISK_RT_INVALID_HANDLE;
+}
+
+obelisk_rt_status obelisk_rt_cached_design_type_info(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+    obelisk_rt_design_type_info_v1 *outInfo) noexcept {
+  if (!outInfo)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const Database *database = cachedDatabase(context);
+  return database ? designTypeInfo(*database, cursor, outInfo)
+                  : OBELISK_RT_INVALID_HANDLE;
+}
+
+obelisk_rt_status obelisk_rt_cached_design_type_child(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+    uint64_t index, obelisk_rt_design_cursor_v1 *outCursor) noexcept {
+  if (!outCursor)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const Database *database = cachedDatabase(context);
+  return database ? designTypeChild(*database, cursor, index, outCursor)
+                  : OBELISK_RT_INVALID_HANDLE;
+}
+
+obelisk_rt_status obelisk_rt_cached_design_name(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+    const uint8_t **outData, uint64_t *outSize) noexcept {
+  if (!outData || !outSize)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const Database *database = cachedDatabase(context);
+  return database ? designName(*database, cursor, outData, outSize)
+                  : OBELISK_RT_INVALID_HANDLE;
+}
+
+bool obelisk_rt_checked_design_record(
+    const obelisk_rt_execution_descriptor_v1 *execution, uint64_t offset,
+    const uint8_t *&record, uint32_t &kind) noexcept {
+  try {
+    Database database;
+    return loadValidatedDatabase(execution, database) == OBELISK_RT_OK &&
+           getRecord(database, offset, record, kind);
+  } catch (...) {
+    return false;
+  }
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_design_validate(
+    const obelisk_rt_execution_descriptor_v1 *execution) {
+  try {
+    Database database;
+    return loadValidatedDatabase(execution, database);
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_INVALID_DESIGN;
+  }
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_design_root(const obelisk_rt_execution_descriptor_v1 *execution,
+                          obelisk_rt_design_cursor_v1 *outCursor) {
+  if (!outCursor)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  Database database;
+  obelisk_rt_status status = loadValidatedDatabase(execution, database);
+  if (status != OBELISK_RT_OK)
+    return status;
+  return designRoot(database, outCursor);
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_design_child(const obelisk_rt_execution_descriptor_v1 *execution,
+                           obelisk_rt_design_cursor_v1 cursor,
+                           obelisk_rt_design_cursor_v1 *outCursor) {
+  if (!outCursor)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  Database database;
+  obelisk_rt_status status = loadValidatedDatabase(execution, database);
+  if (status != OBELISK_RT_OK)
+    return mapInvalidDatabase(status, OBELISK_RT_INVALID_HANDLE);
+  return designChild(database, cursor, outCursor);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_design_child_at(
+    const obelisk_rt_execution_descriptor_v1 *execution,
+    obelisk_rt_design_cursor_v1 cursor, uint64_t index,
+    obelisk_rt_design_cursor_v1 *outCursor) {
+  if (!outCursor)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  Database database;
+  obelisk_rt_status status = loadValidatedDatabase(execution, database);
+  if (status != OBELISK_RT_OK)
+    return mapInvalidDatabase(status, OBELISK_RT_INVALID_HANDLE);
+  return designChildAt(database, cursor, index, outCursor);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_design_sibling(
+    const obelisk_rt_execution_descriptor_v1 *execution,
+    obelisk_rt_design_cursor_v1 cursor,
+    obelisk_rt_design_cursor_v1 *outCursor) {
+  if (!outCursor)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  Database database;
+  obelisk_rt_status status = loadValidatedDatabase(execution, database);
+  if (status != OBELISK_RT_OK)
+    return mapInvalidDatabase(status, OBELISK_RT_INVALID_HANDLE);
+  return designSibling(database, cursor, outCursor);
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_design_lookup(const obelisk_rt_execution_descriptor_v1 *execution,
+                            const uint8_t *name, uint64_t nameSize,
+                            obelisk_rt_design_cursor_v1 *outCursor) {
+  if (!outCursor || (nameSize != 0 && !name))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  Database database;
+  obelisk_rt_status status = loadValidatedDatabase(execution, database);
+  if (status != OBELISK_RT_OK)
+    return status;
+  return designLookup(database, name, nameSize, outCursor);
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_design_info(const obelisk_rt_execution_descriptor_v1 *execution,
+                          obelisk_rt_design_cursor_v1 cursor,
+                          obelisk_rt_design_info_v1 *outInfo) {
+  if (!outInfo)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  Database database;
+  obelisk_rt_status status = loadValidatedDatabase(execution, database);
+  if (status != OBELISK_RT_OK)
+    return mapInvalidDatabase(status, OBELISK_RT_INVALID_HANDLE);
+  return designInfo(database, cursor, outInfo);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_design_type_info(
+    const obelisk_rt_execution_descriptor_v1 *execution,
+    obelisk_rt_design_cursor_v1 cursor,
+    obelisk_rt_design_type_info_v1 *outInfo) {
+  if (!outInfo)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  Database database;
+  obelisk_rt_status status = loadValidatedDatabase(execution, database);
+  if (status != OBELISK_RT_OK)
+    return mapInvalidDatabase(status, OBELISK_RT_INVALID_HANDLE);
+  return designTypeInfo(database, cursor, outInfo);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_design_type_child(
+    const obelisk_rt_execution_descriptor_v1 *execution,
+    obelisk_rt_design_cursor_v1 cursor, uint64_t index,
+    obelisk_rt_design_cursor_v1 *outCursor) {
+  if (!outCursor)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  Database database;
+  obelisk_rt_status status = loadValidatedDatabase(execution, database);
+  if (status != OBELISK_RT_OK)
+    return mapInvalidDatabase(status, OBELISK_RT_INVALID_HANDLE);
+  return designTypeChild(database, cursor, index, outCursor);
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_design_name(const obelisk_rt_execution_descriptor_v1 *execution,
+                          obelisk_rt_design_cursor_v1 cursor,
+                          const uint8_t **outData, uint64_t *outSize) {
+  if (!outData || !outSize)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  Database database;
+  obelisk_rt_status status = loadValidatedDatabase(execution, database);
+  if (status != OBELISK_RT_OK)
+    return mapInvalidDatabase(status, OBELISK_RT_INVALID_HANDLE);
+  return designName(database, cursor, outData, outSize);
+}
+
 static obelisk_rt_status accessState(obelisk_rt_context *context,
                                      obelisk_rt_design_cursor_v1 cursor,
                                      uint64_t *value, uint64_t *unknown,
@@ -873,12 +1173,10 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
   if (!context || !value || bitWidth == 0 || !context->execution)
     return OBELISK_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  Database database;
+  const Database *database = cachedDatabase(context);
   const uint8_t *record;
   uint32_t kind;
-  if (!parseHeader(context->execution, database) ||
-      !validateDatabase(database) ||
-      !getRecord(database, cursor.offset, record, kind) ||
+  if (!database || !getRecord(*database, cursor.offset, record, kind) ||
       kind < OBELISK_RT_DESIGN_RECORD_STORAGE ||
       kind > OBELISK_RT_DESIGN_RECORD_DRIVER)
     return OBELISK_RT_INVALID_HANDLE;
@@ -892,7 +1190,7 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
       width > context->execution->state_bit_count - stateOffset)
     return OBELISK_RT_INVALID_HANDLE;
   uint64_t limbs = (width + 63) / 64;
-  const uint8_t *typeRecord = database.data + read64(record + 48);
+  const uint8_t *typeRecord = database->data + read64(record + 48);
   bool fourState =
       ((read32(typeRecord + 4) >> 8) & OBELISK_RT_DESIGN_TYPE_FOUR_STATE) != 0;
   if (write && !overrideForce && kind == OBELISK_RT_DESIGN_RECORD_NET) {
@@ -1050,12 +1348,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_design_force(
     const uint64_t *value, const uint64_t *unknown, uint64_t bitWidth) {
   if (!context || !value || bitWidth == 0 || !context->execution)
     return OBELISK_RT_INVALID_ARGUMENT;
-  Database database;
+  const Database *database = cachedDatabase(context);
   const uint8_t *record;
   uint32_t kind;
-  if (!parseHeader(context->execution, database) ||
-      !validateDatabase(database) ||
-      !getRecord(database, cursor.offset, record, kind) ||
+  if (!database || !getRecord(*database, cursor.offset, record, kind) ||
       (kind != OBELISK_RT_DESIGN_RECORD_STORAGE &&
        kind != OBELISK_RT_DESIGN_RECORD_NET) ||
       (read32(record + 4) & OBELISK_RT_DESIGN_CAP_WRITE) == 0 ||
@@ -1101,12 +1397,10 @@ obelisk_rt_v1_design_release(obelisk_rt_context *context,
                              obelisk_rt_design_cursor_v1 cursor) {
   if (!context || !context->execution)
     return OBELISK_RT_INVALID_ARGUMENT;
-  Database database;
+  const Database *database = cachedDatabase(context);
   const uint8_t *record;
   uint32_t kind;
-  if (!parseHeader(context->execution, database) ||
-      !validateDatabase(database) ||
-      !getRecord(database, cursor.offset, record, kind) ||
+  if (!database || !getRecord(*database, cursor.offset, record, kind) ||
       (kind != OBELISK_RT_DESIGN_RECORD_STORAGE &&
        kind != OBELISK_RT_DESIGN_RECORD_NET) ||
       (read32(record + 4) & OBELISK_RT_DESIGN_CAP_WRITE) == 0)

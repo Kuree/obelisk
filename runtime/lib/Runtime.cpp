@@ -182,6 +182,8 @@ void obelisk_rt_report_signal_diagnostics_unlocked(
 }
 
 obelisk_rt_context::~obelisk_rt_context() {
+  if (designDatabaseRegistered)
+    obelisk_rt_unregister_design_database(execution);
   obelisk_rt_report_signal_diagnostics_unlocked(this);
   obelisk_rt_release_native_schedule_plan(this);
   threadErrors.erase(this);
@@ -530,6 +532,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_context_create_for_design(
     return OBELISK_RT_INVALID_ARGUMENT;
   *outContext = nullptr;
   try {
+    DesignDatabaseCache designDatabase;
     if (execution) {
       constexpr uint32_t validFlags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
                                       OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
@@ -552,17 +555,19 @@ extern "C" obelisk_rt_status obelisk_rt_v1_context_create_for_design(
           !validObserverInventory(*execution) ||
           !obelisk_rt_validate_activation_bytecode_inventory(*execution))
         return OBELISK_RT_INVALID_DESIGN;
+      if ((execution->flags & OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE) == 0 &&
+          (execution->design_database || execution->design_database_size != 0))
+        return OBELISK_RT_INVALID_DESIGN;
       if ((execution->flags & OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE) != 0) {
-        obelisk_rt_status status = obelisk_rt_v1_design_validate(execution);
+        obelisk_rt_status status =
+            obelisk_rt_initialize_design_database(execution, designDatabase);
         if (status != OBELISK_RT_OK)
           return status;
-      } else if (execution->design_database ||
-                 execution->design_database_size != 0) {
-        return OBELISK_RT_INVALID_DESIGN;
       }
     }
     auto *context = new obelisk_rt_context();
     context->execution = execution;
+    context->designDatabase = designDatabase;
     if (execution) {
       obelisk_rt_status status =
           obelisk_rt_initialize_dpi_scopes(context, execution);
@@ -589,6 +594,15 @@ extern "C" obelisk_rt_status obelisk_rt_v1_context_create_for_design(
         delete context;
         return status;
       }
+    }
+    if (context->designDatabase.validated) {
+      obelisk_rt_status status = obelisk_rt_register_design_database(
+          context->execution, context->designDatabase);
+      if (status != OBELISK_RT_OK) {
+        delete context;
+        return status;
+      }
+      context->designDatabaseRegistered = true;
     }
     *outContext = context;
     return OBELISK_RT_OK;

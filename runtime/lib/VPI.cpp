@@ -39,10 +39,14 @@ struct __vpiHandle {
   bool alive = true;
   bool iterator = false;
   obelisk_rt_design_cursor_v1 cursor{};
+  bool hasInfo = false;
+  obelisk_rt_design_info_v1 info{};
   std::vector<obelisk_rt_design_cursor_v1> items;
   size_t next = 0;
   std::string scratch;
   std::vector<s_vpi_vecval> vectorScratch;
+  std::vector<uint64_t> valueScratch;
+  std::vector<uint64_t> unknownScratch;
   void *userData = nullptr;
 };
 
@@ -90,8 +94,7 @@ __vpiHandle *validate(vpiHandle opaque, bool iterator = false) {
   return handle;
 }
 
-vpiHandle keepHandle(VPIState *state,
-                     std::unique_ptr<__vpiHandle> handle) {
+vpiHandle keepHandle(VPIState *state, std::unique_ptr<__vpiHandle> handle) {
   __vpiHandle *result = handle.get();
   state->handles.try_emplace(result, std::move(handle));
   return reinterpret_cast<vpiHandle>(result);
@@ -113,12 +116,16 @@ vpiHandle makeHandle(VPIState *state, obelisk_rt_design_cursor_v1 cursor) {
 }
 
 bool infoFor(__vpiHandle *handle, obelisk_rt_design_info_v1 &info) {
-  obelisk_rt_status status = obelisk_rt_v1_design_info(
-      handle->owner->context->execution, handle->cursor, &info);
-  if (status != OBELISK_RT_OK) {
-    setError(handle->owner, "design metadata lookup failed");
-    return false;
+  if (!handle->hasInfo) {
+    obelisk_rt_status status = obelisk_rt_cached_design_info(
+        handle->owner->context, handle->cursor, &handle->info);
+    if (status != OBELISK_RT_OK) {
+      setError(handle->owner, "design metadata lookup failed");
+      return false;
+    }
+    handle->hasInfo = true;
   }
+  info = handle->info;
   return true;
 }
 
@@ -146,8 +153,8 @@ bool matchesType(uint32_t kind, int requested) {
 bool nameFor(__vpiHandle *handle, std::string &name) {
   const uint8_t *data = nullptr;
   uint64_t size = 0;
-  obelisk_rt_status status = obelisk_rt_v1_design_name(
-      handle->owner->context->execution, handle->cursor, &data, &size);
+  obelisk_rt_status status = obelisk_rt_cached_design_name(
+      handle->owner->context, handle->cursor, &data, &size);
   if (status != OBELISK_RT_OK) {
     setError(handle->owner, "design name lookup failed");
     return false;
@@ -164,14 +171,12 @@ bool nameFor(__vpiHandle *handle, std::string &name) {
 
 bool lookup(VPIState *state, const std::string &name,
             obelisk_rt_design_cursor_v1 &cursor) {
-  return obelisk_rt_v1_design_lookup(
-             state->context->execution,
-             reinterpret_cast<const uint8_t *>(name.data()), name.size(),
-             &cursor) == OBELISK_RT_OK;
+  return obelisk_rt_cached_design_lookup(
+             state->context, reinterpret_cast<const uint8_t *>(name.data()),
+             name.size(), &cursor) == OBELISK_RT_OK;
 }
 
-bool readValue(__vpiHandle *handle, obelisk_rt_design_info_v1 &info,
-               std::vector<uint64_t> &value, std::vector<uint64_t> &unknown) {
+bool readValue(__vpiHandle *handle, obelisk_rt_design_info_v1 &info) {
   if (!infoFor(handle, info) || info.bit_width == 0 ||
       info.kind == OBELISK_RT_DESIGN_RECORD_DRIVER) {
     setError(handle->owner,
@@ -180,15 +185,15 @@ bool readValue(__vpiHandle *handle, obelisk_rt_design_info_v1 &info,
   }
   try {
     size_t limbs = static_cast<size_t>((info.bit_width + 63) / 64);
-    value.assign(limbs, 0);
-    unknown.assign(limbs, 0);
+    handle->valueScratch.assign(limbs, 0);
+    handle->unknownScratch.assign(limbs, 0);
   } catch (...) {
     setError(handle->owner, "VPI value buffer is out of memory", vpiSystem);
     return false;
   }
-  obelisk_rt_status status =
-      obelisk_rt_v1_design_read(handle->owner->context, handle->cursor,
-                                value.data(), unknown.data(), info.bit_width);
+  obelisk_rt_status status = obelisk_rt_v1_design_read(
+      handle->owner->context, handle->cursor, handle->valueScratch.data(),
+      handle->unknownScratch.data(), info.bit_width);
   if (status != OBELISK_RT_OK) {
     setError(handle->owner, "VPI design read failed");
     return false;
@@ -385,8 +390,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_name(PLI_BYTE8 *name,
   std::string requested(name);
   if (requested == "$root" || requested == "\\$root ") {
     obelisk_rt_design_cursor_v1 root{};
-    return obelisk_rt_v1_design_root(state->context->execution, &root) ==
-                   OBELISK_RT_OK
+    return obelisk_rt_cached_design_root(state->context, &root) == OBELISK_RT_OK
                ? makeHandle(state, root)
                : nullptr;
   }
@@ -422,7 +426,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
   size_t separator = fullName.rfind('.');
   if (separator == std::string::npos) {
     obelisk_rt_design_cursor_v1 root{};
-    if (obelisk_rt_v1_design_root(handle->owner->context->execution, &root) !=
+    if (obelisk_rt_cached_design_root(handle->owner->context, &root) !=
         OBELISK_RT_OK)
       return nullptr;
     return makeHandle(handle->owner, root);
@@ -445,23 +449,22 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
     if (!handle)
       return nullptr;
     parent = handle->cursor;
-  } else if (obelisk_rt_v1_design_root(state->context->execution, &parent) !=
+  } else if (obelisk_rt_cached_design_root(state->context, &parent) !=
              OBELISK_RT_OK) {
     return nullptr;
   }
   std::vector<obelisk_rt_design_cursor_v1> items;
   obelisk_rt_design_cursor_v1 cursor{};
   obelisk_rt_status status =
-      obelisk_rt_v1_design_child(state->context->execution, parent, &cursor);
+      obelisk_rt_cached_design_child(state->context, parent, &cursor);
   while (status == OBELISK_RT_OK) {
     obelisk_rt_design_info_v1 info{};
-    if (obelisk_rt_v1_design_info(state->context->execution, cursor, &info) !=
+    if (obelisk_rt_cached_design_info(state->context, cursor, &info) !=
         OBELISK_RT_OK)
       return nullptr;
     if (matchesType(info.kind, type))
       items.push_back(cursor);
-    status = obelisk_rt_v1_design_sibling(state->context->execution, cursor,
-                                          &cursor);
+    status = obelisk_rt_cached_design_sibling(state->context, cursor, &cursor);
   }
   if (status != OBELISK_RT_EOF || items.empty())
     return nullptr;
@@ -533,10 +536,10 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
   if (!handle || !destination)
     return;
   obelisk_rt_design_info_v1 info{};
-  std::vector<uint64_t> value;
-  std::vector<uint64_t> unknown;
-  if (!readValue(handle, info, value, unknown))
+  if (!readValue(handle, info))
     return;
+  const std::vector<uint64_t> &value = handle->valueScratch;
+  const std::vector<uint64_t> &unknown = handle->unknownScratch;
   switch (destination->format) {
   case vpiVectorVal: {
     if (!destination->value.vector) {

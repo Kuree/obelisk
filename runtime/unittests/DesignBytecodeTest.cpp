@@ -1116,7 +1116,7 @@ std::vector<uint8_t> makeDatabase(bool writable = true) {
   put32(bytes, 12, 0);
   put32(bytes, 16,
         OBELISK_RT_DESIGN_PROFILE_READ |
-                           (writable ? OBELISK_RT_DESIGN_PROFILE_WRITE : 0));
+            (writable ? OBELISK_RT_DESIGN_PROFILE_WRITE : 0));
   put32(bytes, 20, 128);
   put64(bytes, 24, bytes.size());
   put64(bytes, 40, scopeOffset);
@@ -1174,7 +1174,7 @@ std::vector<uint8_t> makeDatabase(bool writable = true) {
             [](const Entry &left, const Entry &right) {
               return std::tie(left.hash, left.name) <
                      std::tie(right.hash, right.name);
-  });
+            });
   for (size_t entry = 0; entry != index.size(); ++entry) {
     put64(bytes, indexOffset + entry * 24, index[entry].hash);
     put64(bytes, indexOffset + entry * 24 + 8, index[entry].name);
@@ -1243,7 +1243,7 @@ std::vector<uint8_t> makeCodeUnitDatabase() {
             [](const Entry &left, const Entry &right) {
               return std::tie(left.hash, left.name) <
                      std::tie(right.hash, right.name);
-  });
+            });
   for (size_t entry = 0; entry != index.size(); ++entry) {
     put64(bytes, indexOffset + entry * 24, index[entry].hash);
     put64(bytes, indexOffset + entry * 24 + 8, index[entry].name);
@@ -1346,7 +1346,7 @@ std::vector<uint8_t> makeAggregateDatabase() {
             [](const Entry &left, const Entry &right) {
               return std::tie(left.hash, left.name) <
                      std::tie(right.hash, right.name);
-  });
+            });
   for (size_t entry = 0; entry != index.size(); ++entry) {
     put64(bytes, indexOffset + entry * 24, index[entry].hash);
     put64(bytes, indexOffset + entry * 24 + 8, index[entry].name);
@@ -1420,11 +1420,11 @@ TEST(DesignBytecode, FailInstructionAcceptsFatalStatus) {
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(
       obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   obelisk_rt_process_instance_v1 *instance = nullptr;
   ASSERT_EQ(
       obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   obelisk_rt_fragment_action_v1 action{};
   EXPECT_EQ(obelisk_rt_v1_process_instance_execute(
                 instance, context, OBELISK_RT_TIER_BYTECODE, &action),
@@ -1534,7 +1534,7 @@ TEST(DesignBytecode, RejectsMalformedActivationBytecodeInventory) {
 
   EXPECT_EQ(
       obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-            OBELISK_RT_INVALID_DESIGN);
+      OBELISK_RT_INVALID_DESIGN);
   EXPECT_EQ(context, nullptr);
 
   activation.bytecode_function = 0;
@@ -1715,13 +1715,13 @@ TEST(DesignBytecode, RejectsNonPackedObserverResultLayout) {
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(
       create(bytecode, observer, execution, OBELISK_RT_DBREG_BITS, &context),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   obelisk_rt_v1_context_destroy(context);
 
   context = nullptr;
   EXPECT_EQ(
       create(bytecode, observer, execution, OBELISK_RT_DBREG_HANDLE, &context),
-            OBELISK_RT_INVALID_DESIGN);
+      OBELISK_RT_INVALID_DESIGN);
   EXPECT_EQ(context, nullptr);
 }
 
@@ -1856,11 +1856,11 @@ TEST(DesignBytecode, ExecutesArbitraryWidthLogicInSharedScratch) {
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(
       obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   obelisk_rt_process_instance_v1 *instance = nullptr;
   ASSERT_EQ(
       obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   obelisk_rt_fragment_action_v1 action{};
   ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
                 instance, context, OBELISK_RT_TIER_BYTECODE, &action),
@@ -1899,11 +1899,11 @@ TEST(DesignBytecode, ExecutesRegisteredImportedZeroTimeCall) {
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(
       obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   obelisk_rt_process_instance_v1 *instance = nullptr;
   ASSERT_EQ(
       obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   obelisk_rt_fragment_action_v1 action{};
   EXPECT_EQ(obelisk_rt_v1_process_instance_execute(
                 instance, context, OBELISK_RT_TIER_BYTECODE, &action),
@@ -1913,14 +1913,14 @@ TEST(DesignBytecode, ExecutesRegisteredImportedZeroTimeCall) {
 
   ASSERT_EQ(
       obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   ImportObservation observation;
   ASSERT_EQ(obelisk_rt_v1_context_register_import(context, importID,
                                                   importedLogic, &observation),
             OBELISK_RT_OK);
   ASSERT_EQ(
       obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
                 instance, context, OBELISK_RT_TIER_BYTECODE, &action),
             OBELISK_RT_OK);
@@ -1956,11 +1956,11 @@ TEST(DesignBytecode, SchedulerCommitsDelayedNBAAndDeferredEvent) {
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(
       obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   obelisk_rt_process_instance_v1 *instance = nullptr;
   ASSERT_EQ(
       obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, instance, 0), OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
 
@@ -2079,7 +2079,7 @@ TEST(DesignBytecode, ResolvesFourStateDriversFromInitialHighImpedance) {
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(
       obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   obelisk_rt_design_cursor_v1 net{};
   ASSERT_EQ(obelisk_rt_v1_design_lookup(
                 &fixture.execution,
@@ -2088,7 +2088,7 @@ TEST(DesignBytecode, ResolvesFourStateDriversFromInitialHighImpedance) {
   std::array<uint64_t, 2> value{}, unknown{};
   ASSERT_EQ(
       obelisk_rt_v1_design_read(context, net, value.data(), unknown.data(), 65),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   EXPECT_EQ(value[0], UINT64_MAX);
   EXPECT_EQ(value[1], 1u);
   EXPECT_EQ(unknown[0], UINT64_MAX);
@@ -2097,14 +2097,14 @@ TEST(DesignBytecode, ResolvesFourStateDriversFromInitialHighImpedance) {
   obelisk_rt_process_instance_v1 *instance = nullptr;
   ASSERT_EQ(
       obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   obelisk_rt_fragment_action_v1 action{};
   ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
                 instance, context, OBELISK_RT_TIER_BYTECODE, &action),
             OBELISK_RT_OK);
   ASSERT_EQ(
       obelisk_rt_v1_design_read(context, net, value.data(), unknown.data(), 65),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   EXPECT_EQ(value[0] & UINT64_C(0xff), UINT64_C(0xa5));
   EXPECT_EQ(unknown[0] & UINT64_C(0xff), UINT64_C(0x04));
   EXPECT_EQ(value[0] >> 8, UINT64_C(0x00ffffffffffffff));
@@ -2137,7 +2137,7 @@ TEST(DesignBytecode, ResolvesDriversAcrossLogicalNetAliases) {
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(
       obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   obelisk_rt_design_cursor_v1 alias{};
   ASSERT_EQ(obelisk_rt_v1_design_lookup(
                 &fixture.execution,
@@ -2146,7 +2146,7 @@ TEST(DesignBytecode, ResolvesDriversAcrossLogicalNetAliases) {
   obelisk_rt_process_instance_v1 *instance = nullptr;
   ASSERT_EQ(
       obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   obelisk_rt_fragment_action_v1 action{};
   ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
                 instance, context, OBELISK_RT_TIER_BYTECODE, &action),
@@ -2175,7 +2175,7 @@ TEST(DesignBytecode, AcceptsDisjointUWireDriverComponents) {
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(
       obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   obelisk_rt_v1_context_destroy(context);
 }
 
@@ -2364,11 +2364,11 @@ TEST(DesignBytecode, VPIIntrinsicsTraverseAndAccessLiveState) {
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(
       obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   obelisk_rt_process_instance_v1 *instance = nullptr;
   ASSERT_EQ(
       obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   obelisk_rt_fragment_action_v1 action{};
   ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
                 instance, context, OBELISK_RT_TIER_BYTECODE, &action),
@@ -2393,11 +2393,11 @@ TEST(DesignBytecode, VPIIntrinsicsTraverseAndAccessLiveState) {
   std::array<uint8_t, 9> dummy{}, automaticValue{}, automaticUnknown{};
   ASSERT_EQ(obelisk_rt_v1_native_state_load_plane(context, dummy.data(), 65,
                                                   automatic, 65, 0, 0,
-                automaticValue.data()),
+                                                  automaticValue.data()),
             OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_native_state_load_plane(context, dummy.data(), 65,
                                                   automatic, 65, 1, 0,
-                automaticUnknown.data()),
+                                                  automaticUnknown.data()),
             OBELISK_RT_OK);
   EXPECT_EQ(automaticValue[0], 0xf0);
   EXPECT_EQ(automaticValue[8], 1u);
@@ -2416,11 +2416,11 @@ TEST(DesignBytecode, AutomaticViewsPreservePartialDirectAndNBASelections) {
     obelisk_rt_context *context = nullptr;
     ASSERT_EQ(
         obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-              OBELISK_RT_OK);
+        OBELISK_RT_OK);
     obelisk_rt_process_instance_v1 *instance = nullptr;
     ASSERT_EQ(
         obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-              OBELISK_RT_OK);
+        OBELISK_RT_OK);
     obelisk_rt_fragment_action_v1 action{};
     ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
                   instance, context, OBELISK_RT_TIER_BYTECODE, &action),
@@ -2430,7 +2430,7 @@ TEST(DesignBytecode, AutomaticViewsPreservePartialDirectAndNBASelections) {
     uint64_t frameSize = 0;
     ASSERT_EQ(
         obelisk_rt_v1_process_instance_frame(instance, &frame, &frameSize),
-              OBELISK_RT_OK);
+        OBELISK_RT_OK);
     ASSERT_EQ(frameSize, 32u);
     std::array<uint64_t, 2> value{}, unknown{};
     if (nba) {
@@ -2472,7 +2472,7 @@ TEST(DesignBytecode,
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(
       obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   std::array<uint8_t, 9> initial{};
   uint64_t automatic = UINT64_MAX;
   ASSERT_EQ(obelisk_rt_v1_native_state_alloc(context, 65, initial.data(),
@@ -2485,12 +2485,12 @@ TEST(DesignBytecode,
     obelisk_rt_process_instance_v1 *instance = nullptr;
     ASSERT_EQ(
         obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-              OBELISK_RT_OK);
+        OBELISK_RT_OK);
     void *frame = nullptr;
     uint64_t frameSize = 0;
     ASSERT_EQ(
         obelisk_rt_v1_process_instance_frame(instance, &frame, &frameSize),
-              OBELISK_RT_OK);
+        OBELISK_RT_OK);
     ASSERT_EQ(frameSize, 32u);
     std::memcpy(frame, &selected, sizeof(selected));
     obelisk_rt_fragment_action_v1 action{};
@@ -2519,7 +2519,7 @@ TEST(DesignBytecode, NativeStaticHandlesRemainBoundedAcrossBytecodeFrames) {
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(
       obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 65),
             OBELISK_RT_OK);
   uint64_t root = obelisk_rt_v1_native_state_static_handle(1);
@@ -2530,7 +2530,7 @@ TEST(DesignBytecode, NativeStaticHandlesRemainBoundedAcrossBytecodeFrames) {
   uint8_t changed = 0;
   ASSERT_EQ(obelisk_rt_v1_native_state_store_plane(context, globalValue.data(),
                                                    65, root, 65, 0, ones.data(),
-                &changed),
+                                                   &changed),
             OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_native_state_store_plane(
                 context, globalUnknown.data(), 65, root, 65, 1, zeros.data(),
@@ -2545,12 +2545,12 @@ TEST(DesignBytecode, NativeStaticHandlesRemainBoundedAcrossBytecodeFrames) {
     obelisk_rt_process_instance_v1 *instance = nullptr;
     ASSERT_EQ(
         obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-              OBELISK_RT_OK);
+        OBELISK_RT_OK);
     void *frame = nullptr;
     uint64_t frameSize = 0;
     ASSERT_EQ(
         obelisk_rt_v1_process_instance_frame(instance, &frame, &frameSize),
-              OBELISK_RT_OK);
+        OBELISK_RT_OK);
     ASSERT_EQ(frameSize, 32u);
     std::memcpy(frame, &selected, sizeof(selected));
     obelisk_rt_fragment_action_v1 action{};
@@ -2579,7 +2579,7 @@ TEST(DesignBytecode, StaticHandleOffsetIDStoreAndFrameRoundTrip) {
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(
       obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 65),
             OBELISK_RT_OK);
   uint64_t root = obelisk_rt_v1_native_state_static_handle(1);
@@ -2590,17 +2590,17 @@ TEST(DesignBytecode, StaticHandleOffsetIDStoreAndFrameRoundTrip) {
   uint8_t changed = 0;
   ASSERT_EQ(obelisk_rt_v1_native_state_store_plane(context, initial.data(), 65,
                                                    root, 65, 0, initial.data(),
-                &changed),
+                                                   &changed),
             OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_native_state_store_plane(context, unknown.data(), 65,
                                                    root, 65, 1, unknown.data(),
-                &changed),
+                                                   &changed),
             OBELISK_RT_OK);
 
   obelisk_rt_process_instance_v1 *instance = nullptr;
   ASSERT_EQ(
       obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   void *frame = nullptr;
   uint64_t frameSize = 0;
   ASSERT_EQ(obelisk_rt_v1_process_instance_frame(instance, &frame, &frameSize),
@@ -2635,14 +2635,14 @@ TEST(DesignBytecode, StaticHandleNBARemainsBoundedAndApplies) {
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(
       obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 65),
             OBELISK_RT_OK);
   uint64_t root = obelisk_rt_v1_native_state_static_handle(1);
   obelisk_rt_process_instance_v1 *instance = nullptr;
   ASSERT_EQ(
       obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   void *frame = nullptr;
   uint64_t frameSize = 0;
   ASSERT_EQ(obelisk_rt_v1_process_instance_frame(instance, &frame, &frameSize),
@@ -2935,7 +2935,7 @@ TEST(DesignBytecode, MixedTierSchedulerUsesRegionRankAndInsertionKey) {
   std::array<uint8_t, 9> initial{};
   ASSERT_EQ(obelisk_rt_v1_native_state_alloc(context, 65, initial.data(),
                                              initial.data(),
-                &mixedTierObservedHandle),
+                                             &mixedTierObservedHandle),
             OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_native_state_retain(context, mixedTierObservedHandle),
             OBELISK_RT_OK);
@@ -2988,7 +2988,7 @@ TEST(DesignBytecode, MixedTierSchedulerUsesRegionRankAndInsertionKey) {
   EXPECT_EQ(value[0], 0xf0);
   ASSERT_EQ(
       obelisk_rt_v1_native_state_release(context, mixedTierObservedHandle, 0),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   obelisk_rt_v1_context_destroy(context);
   mixedTierObservedHandle = UINT64_MAX;
 }
@@ -3003,7 +3003,7 @@ TEST(DesignBytecode, RejectsNonCanonicalTablesAndUncallableFunctions) {
     obelisk_rt_context *context = nullptr;
     EXPECT_EQ(
         obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-              OBELISK_RT_INVALID_DESIGN);
+        OBELISK_RT_INVALID_DESIGN);
     EXPECT_EQ(context, nullptr);
   };
 
@@ -3246,7 +3246,7 @@ TEST(DesignBytecode, NativeAndBytecodeShareCanonicalDesignState) {
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(
       obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   obelisk_rt_design_cursor_v1 object{};
   ASSERT_EQ(obelisk_rt_v1_design_lookup(
                 &fixture.execution,
@@ -3336,11 +3336,11 @@ TEST(DesignDatabase, TraversesLooksUpAndAccessesLiveState) {
   obelisk_rt_design_cursor_v1 indexed{};
   ASSERT_EQ(
       obelisk_rt_v1_design_child_at(&fixture.execution, root, 0, &indexed),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   EXPECT_EQ(indexed.offset, object.offset);
   EXPECT_EQ(
       obelisk_rt_v1_design_child_at(&fixture.execution, root, 1, &indexed),
-            OBELISK_RT_EOF);
+      OBELISK_RT_EOF);
   obelisk_rt_design_type_info_v1 typeInfo{};
   ASSERT_EQ(obelisk_rt_v1_design_type_info(&fixture.execution,
                                            {info.type_offset}, &typeInfo),
@@ -3361,12 +3361,12 @@ TEST(DesignDatabase, TraversesLooksUpAndAccessesLiveState) {
             OBELISK_RT_OK);
   EXPECT_EQ(
       std::string_view(reinterpret_cast<const char *>(typeName), typeNameSize),
-            "logic");
+      "logic");
 
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(
       obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   std::array<uint64_t, 2> value{{UINT64_C(0x123456789abcdef0), 1}};
   std::array<uint64_t, 2> unknown{{UINT64_C(0x30), 0}};
   ASSERT_EQ(obelisk_rt_v1_design_write(context, found, value.data(),
@@ -3379,6 +3379,35 @@ TEST(DesignDatabase, TraversesLooksUpAndAccessesLiveState) {
   EXPECT_EQ(readValue, value);
   EXPECT_EQ(readUnknown, unknown);
   obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(DesignDatabase, ValidatedCacheTracksContextLifetime) {
+  Fixture fixture;
+  obelisk_rt_context *first = nullptr;
+  obelisk_rt_context *second = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&fixture.execution, &first),
+            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &second),
+      OBELISK_RT_OK);
+
+  constexpr std::string_view name = "top.value";
+  obelisk_rt_design_cursor_v1 found{};
+  ASSERT_EQ(obelisk_rt_v1_design_lookup(
+                &fixture.execution,
+                reinterpret_cast<const uint8_t *>(name.data()), name.size(),
+                &found),
+            OBELISK_RT_OK);
+
+  obelisk_rt_v1_context_destroy(first);
+  ASSERT_EQ(obelisk_rt_v1_design_validate(&fixture.execution), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(second);
+
+  // The final context must remove the registered view. A subsequent checked
+  // call must inspect the image rather than accepting stale validated state.
+  fixture.database[192 + 16] ^= 1;
+  EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
+            OBELISK_RT_INVALID_DESIGN);
 }
 
 TEST(DesignDatabase, TraversesStableProcessAndFunctionRecords) {
@@ -3398,7 +3427,7 @@ TEST(DesignDatabase, TraversesStableProcessAndFunctionRecords) {
             OBELISK_RT_OK);
   ASSERT_EQ(
       obelisk_rt_v1_design_sibling(&fixture.execution, process, &function),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   EXPECT_EQ(obelisk_rt_v1_design_sibling(&fixture.execution, function, &root),
             OBELISK_RT_EOF);
 
@@ -3475,7 +3504,7 @@ TEST(DesignDatabase, TraversesRecursiveAggregateTypesAndRejectsCycles) {
   obelisk_rt_design_type_info_v1 fieldInfo{};
   ASSERT_EQ(
       obelisk_rt_v1_design_type_info(&fixture.execution, field, &fieldInfo),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   EXPECT_EQ(fieldInfo.kind, OBELISK_RT_DESIGN_TYPE_FIELD);
   EXPECT_EQ(fieldInfo.ordinal, 0u);
   EXPECT_EQ(fieldInfo.packed_offset, 0u);
@@ -3484,7 +3513,7 @@ TEST(DesignDatabase, TraversesRecursiveAggregateTypesAndRejectsCycles) {
   uint64_t nameSize = 0;
   ASSERT_EQ(
       obelisk_rt_v1_design_name(&fixture.execution, field, &name, &nameSize),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   EXPECT_EQ(std::string_view(reinterpret_cast<const char *>(name), nameSize),
             "value");
   obelisk_rt_design_type_info_v1 scalarInfo{};
@@ -3532,7 +3561,7 @@ TEST(DesignDatabase, RejectsCorruptionAndUnauthorizedWrites) {
   obelisk_rt_context *context = nullptr;
   EXPECT_EQ(
       obelisk_rt_v1_context_create_for_design(&corrupt.execution, &context),
-            OBELISK_RT_INVALID_DESIGN);
+      OBELISK_RT_INVALID_DESIGN);
   EXPECT_EQ(context, nullptr);
 
   Fixture outOfBounds;
@@ -3546,7 +3575,7 @@ TEST(DesignDatabase, RejectsCorruptionAndUnauthorizedWrites) {
   put64(twoState.database, 32, imageChecksum(twoState.database));
   ASSERT_EQ(
       obelisk_rt_v1_context_create_for_design(&twoState.execution, &context),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   obelisk_rt_design_cursor_v1 twoStateObject{};
   ASSERT_EQ(obelisk_rt_v1_design_lookup(
                 &twoState.execution,
@@ -3557,7 +3586,7 @@ TEST(DesignDatabase, RejectsCorruptionAndUnauthorizedWrites) {
   std::array<uint64_t, 2> ignoredUnknown{{UINT64_MAX, 1}};
   ASSERT_EQ(obelisk_rt_v1_design_write(context, twoStateObject,
                                        twoStateValue.data(),
-                ignoredUnknown.data(), 65),
+                                       ignoredUnknown.data(), 65),
             OBELISK_RT_OK);
   std::array<uint64_t, 2> readValue{}, readUnknown{{UINT64_MAX, UINT64_MAX}};
   ASSERT_EQ(obelisk_rt_v1_design_read(context, twoStateObject, readValue.data(),
@@ -3577,7 +3606,7 @@ TEST(DesignDatabase, RejectsCorruptionAndUnauthorizedWrites) {
                              OBELISK_RT_EXECUTION_VPI_READ;
   ASSERT_EQ(
       obelisk_rt_v1_context_create_for_design(&readOnly.execution, &context),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   obelisk_rt_design_cursor_v1 object{};
   ASSERT_EQ(obelisk_rt_v1_design_lookup(
                 &readOnly.execution,
@@ -3586,7 +3615,7 @@ TEST(DesignDatabase, RejectsCorruptionAndUnauthorizedWrites) {
   std::array<uint64_t, 2> value{};
   EXPECT_EQ(
       obelisk_rt_v1_design_write(context, object, value.data(), nullptr, 65),
-            OBELISK_RT_PERMISSION_DENIED);
+      OBELISK_RT_PERMISSION_DENIED);
   obelisk_rt_v1_context_destroy(context);
 }
 

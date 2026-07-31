@@ -2377,8 +2377,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if (!context || !context->execution)
       return OBELISK_RT_INVALID_ARGUMENT;
     obelisk_rt_design_cursor_v1 cursor{};
-    obelisk_rt_status status =
-        obelisk_rt_v1_design_root(context->execution, &cursor);
+    obelisk_rt_status status = obelisk_rt_cached_design_root(context, &cursor);
     if (!writeScalar(image, frame, outputRegister(0), cursor.offset))
       return OBELISK_RT_INVALID_BYTECODE;
     return finishVPI(1, status);
@@ -2392,8 +2391,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       return OBELISK_RT_INVALID_BYTECODE;
     obelisk_rt_status status =
         signature.id == OBELISK_RT_INTRINSIC_V1_VPI_CHILD
-            ? obelisk_rt_v1_design_child(context->execution, cursor, &result)
-            : obelisk_rt_v1_design_sibling(context->execution, cursor, &result);
+            ? obelisk_rt_cached_design_child(context, cursor, &result)
+            : obelisk_rt_cached_design_sibling(context, cursor, &result);
     if (!writeScalar(image, frame, outputRegister(0), result.offset))
       return OBELISK_RT_INVALID_BYTECODE;
     return finishVPI(1, status);
@@ -2408,10 +2407,10 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       return OBELISK_RT_INVALID_BYTECODE;
     obelisk_rt_status status =
         signature.id == OBELISK_RT_INTRINSIC_V1_VPI_CHILD_AT
-            ? obelisk_rt_v1_design_child_at(context->execution, cursor, *index,
-                                            &result)
-            : obelisk_rt_v1_design_type_child(context->execution, cursor,
-                                              *index, &result);
+            ? obelisk_rt_cached_design_child_at(context, cursor, *index,
+                                                &result)
+            : obelisk_rt_cached_design_type_child(context, cursor, *index,
+                                                  &result);
     if (!writeScalar(image, frame, outputRegister(0), result.offset))
       return OBELISK_RT_INVALID_BYTECODE;
     return finishVPI(1, status);
@@ -2423,8 +2422,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if (!name)
       return OBELISK_RT_INVALID_BYTECODE;
     obelisk_rt_design_cursor_v1 cursor{};
-    obelisk_rt_status status = obelisk_rt_v1_design_lookup(
-        context->execution, name->data, name->size, &cursor);
+    obelisk_rt_status status = obelisk_rt_cached_design_lookup(
+        context, name->data, name->size, &cursor);
     if (!writeScalar(image, frame, outputRegister(0), cursor.offset))
       return OBELISK_RT_INVALID_BYTECODE;
     return finishVPI(1, status);
@@ -2437,7 +2436,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       return OBELISK_RT_INVALID_BYTECODE;
     obelisk_rt_design_info_v1 info{};
     obelisk_rt_status status =
-        obelisk_rt_v1_design_info(context->execution, cursor, &info);
+        obelisk_rt_cached_design_info(context, cursor, &info);
     std::array<uint64_t, 7> outputs{info.kind,
                                     info.capabilities,
                                     info.handle.id,
@@ -2459,7 +2458,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     const uint8_t *data = nullptr;
     uint64_t size = 0, offset = 0;
     obelisk_rt_status status =
-        obelisk_rt_v1_design_name(context->execution, cursor, &data, &size);
+        obelisk_rt_cached_design_name(context, cursor, &data, &size);
     if (status == OBELISK_RT_OK) {
       const uint8_t *begin = context->execution->design_database;
       uint64_t databaseSize = context->execution->design_database_size;
@@ -2485,7 +2484,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       return OBELISK_RT_INVALID_BYTECODE;
     obelisk_rt_design_type_info_v1 info{};
     obelisk_rt_status status =
-        obelisk_rt_v1_design_type_info(context->execution, cursor, &info);
+        obelisk_rt_cached_design_type_info(context, cursor, &info);
     std::array<uint64_t, 11> outputs{info.kind,
                                      info.flags,
                                      info.bit_width,

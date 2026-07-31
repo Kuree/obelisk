@@ -616,6 +616,29 @@ struct NetAliasCache {
   std::vector<NetAliasRange> drivers;
 };
 
+// Decoded view of the immutable reflection image. Context creation validates
+// the complete image before publishing this cache; context-owned consumers can
+// therefore perform constant-time structural checks without re-checksumming or
+// re-walking the design on every query.
+struct DesignDatabaseCache {
+  const uint8_t *data = nullptr;
+  uint64_t size = 0;
+  uint32_t profile = 0;
+  uint64_t root = 0;
+  uint64_t scopes = 0;
+  uint64_t scopeCount = 0;
+  uint64_t objects = 0;
+  uint64_t objectCount = 0;
+  uint64_t types = 0;
+  uint64_t typeCount = 0;
+  uint64_t strings = 0;
+  uint64_t stringSize = 0;
+  uint64_t index = 0;
+  uint64_t indexCount = 0;
+  uint64_t stateBitCount = 0;
+  bool validated = false;
+};
+
 struct CoverageTypeState {
   std::vector<uint32_t> coverpointBins;
   std::vector<uint64_t> instances;
@@ -775,6 +798,8 @@ struct obelisk_rt_context {
   // Built once from the immutable execution image and shared by net
   // resolution, force/release, deposits, and reflection connectivity checks.
   NetAliasCache netAliases;
+  DesignDatabaseCache designDatabase;
+  bool designDatabaseRegistered = false;
   void *vpiState = nullptr;
   std::unordered_map<uint64_t, const obelisk_rt_class_descriptor_v1 *>
       managedClasses;
@@ -1123,5 +1148,43 @@ obelisk_rt_status obelisk_rt_release_design_nets(obelisk_rt_context *context,
 bool obelisk_rt_checked_design_record(
     const obelisk_rt_execution_descriptor_v1 *execution, uint64_t offset,
     const uint8_t *&record, uint32_t &kind) noexcept;
+
+obelisk_rt_status obelisk_rt_initialize_design_database(
+    const obelisk_rt_execution_descriptor_v1 *execution,
+    DesignDatabaseCache &cache) noexcept;
+obelisk_rt_status obelisk_rt_register_design_database(
+    const obelisk_rt_execution_descriptor_v1 *execution,
+    const DesignDatabaseCache &cache) noexcept;
+void obelisk_rt_unregister_design_database(
+    const obelisk_rt_execution_descriptor_v1 *execution) noexcept;
+obelisk_rt_status
+obelisk_rt_cached_design_root(const obelisk_rt_context *context,
+                              obelisk_rt_design_cursor_v1 *outCursor) noexcept;
+obelisk_rt_status
+obelisk_rt_cached_design_child(const obelisk_rt_context *context,
+                               obelisk_rt_design_cursor_v1 cursor,
+                               obelisk_rt_design_cursor_v1 *outCursor) noexcept;
+obelisk_rt_status obelisk_rt_cached_design_child_at(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+    uint64_t index, obelisk_rt_design_cursor_v1 *outCursor) noexcept;
+obelisk_rt_status obelisk_rt_cached_design_sibling(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+    obelisk_rt_design_cursor_v1 *outCursor) noexcept;
+obelisk_rt_status obelisk_rt_cached_design_lookup(
+    const obelisk_rt_context *context, const uint8_t *name, uint64_t nameSize,
+    obelisk_rt_design_cursor_v1 *outCursor) noexcept;
+obelisk_rt_status
+obelisk_rt_cached_design_info(const obelisk_rt_context *context,
+                              obelisk_rt_design_cursor_v1 cursor,
+                              obelisk_rt_design_info_v1 *outInfo) noexcept;
+obelisk_rt_status obelisk_rt_cached_design_type_info(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+    obelisk_rt_design_type_info_v1 *outInfo) noexcept;
+obelisk_rt_status obelisk_rt_cached_design_type_child(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+    uint64_t index, obelisk_rt_design_cursor_v1 *outCursor) noexcept;
+obelisk_rt_status obelisk_rt_cached_design_name(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+    const uint8_t **outData, uint64_t *outSize) noexcept;
 
 #endif // OBELISK_RUNTIME_LIB_RUNTIMEINTERNAL_H
