@@ -1010,6 +1010,14 @@ private:
                 builder.getI64IntegerAttr(getFemtoseconds(scale.precision)));
     }
 
+    if constexpr (std::same_as<T, slang::ast::InstanceBodySymbol>) {
+      slang::TimeScale scale = node.getTimeScale().value_or(slang::TimeScale{});
+      attrs.set("time_unit_fs",
+                builder.getI64IntegerAttr(getFemtoseconds(scale.base)));
+      attrs.set("time_precision_fs",
+                builder.getI64IntegerAttr(getFemtoseconds(scale.precision)));
+    }
+
     if constexpr (std::same_as<T, slang::ast::PrimitiveInstanceSymbol>) {
       attrs.set("primitive_name",
                 builder.getStringAttr(node.primitiveType.name));

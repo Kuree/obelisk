@@ -77,18 +77,32 @@ module {
           obelisk.sv.statement.empty attributes {node_id = 9 : i64} {
           }
         }
+        // A scope without code units still retains its elaborated time scale.
+        obelisk.sv.symbol.instance_body attributes {
+          hierarchical_name = "top.empty",
+          name = "empty",
+          node_id = 10 : i64,
+          sym_name = "s10.empty",
+          time_precision_fs = 1000 : i64,
+          time_unit_fs = 1000000 : i64
+        } {
+        }
       }
     }
   }
 }
 
 // CHECK: obelisk_sim.scope.decl 0
-// CHECK-SAME: dpi_precision_femtoseconds = 1000000000
-// CHECK-SAME: dpi_unit_femtoseconds = 1000000000
+// CHECK-SAME: dpi_precision_femtoseconds = 1000
+// CHECK-SAME: dpi_unit_femtoseconds = 1000
 // CHECK: obelisk_sim.scope.decl 1
 // CHECK-SAME: hierarchy "top"
 // CHECK-SAME: dpi_precision_femtoseconds = 1000000000
 // CHECK-SAME: dpi_unit_femtoseconds = 1000000000000
+// CHECK: obelisk_sim.scope.decl 2 parent 1
+// CHECK-SAME: hierarchy "top.empty"
+// CHECK-SAME: dpi_precision_femtoseconds = 1000
+// CHECK-SAME: dpi_unit_femtoseconds = 1000000
 // CHECK-LABEL: obelisk_sim.func private @unit_0(
 // CHECK: %[[TEXT:.*]] = obelisk_sim.bytes.constant "Time scale of (top) is 1ms / 1us"
 // CHECK: obelisk_sim.display {{.*}}(%[[TEXT]])

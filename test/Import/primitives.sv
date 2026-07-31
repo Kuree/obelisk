@@ -19,3 +19,5 @@ endmodule
 // SLANG-DAG: slang.symbol.primitive_instance attributes {{.*}}primitive_name = "bufif0"{{.*}}unsupported_strength = "Pull,Strong"
 // OBELISK-DAG: obelisk.sv.symbol.primitive_instance attributes {{.*}}primitive_name = "bufif0"{{.*}}unsupported_delay = "#5 "
 // OBELISK-DAG: obelisk.sv.symbol.primitive_instance attributes {{.*}}primitive_name = "bufif0"{{.*}}unsupported_strength = "Pull,Strong"
+// SLANG-DAG: slang.symbol.instance_body attributes {{.*}}time_precision_fs = 1000 : i64{{.*}}time_unit_fs = 1000000 : i64
+// OBELISK-DAG: obelisk.sv.symbol.instance_body attributes {{.*}}time_precision_fs = 1000 : i64{{.*}}time_unit_fs = 1000000 : i64

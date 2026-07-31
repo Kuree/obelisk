@@ -186,6 +186,38 @@ void ObeliskSimPreparePass::runOnOperation() {
   assignPathIDs(staticPaths, "obelisk_sim.static_site_id");
 
   uint64_t designPrecisionFs = std::numeric_limits<uint64_t>::max();
+  auto accumulateTimeScale = [&](Operation *source, StringRef kind) {
+    auto timeUnit = source->getAttrOfType<IntegerAttr>("time_unit_fs");
+    auto timePrecision =
+        source->getAttrOfType<IntegerAttr>("time_precision_fs");
+    if (static_cast<bool>(timeUnit) != static_cast<bool>(timePrecision)) {
+      emitError(getSemanticLocation(source))
+          << kind << " has an incomplete elaborated time scale";
+      invalid = true;
+      return;
+    }
+    if (!timeUnit)
+      return;
+    std::optional<uint64_t> unitFsValue = getUnsigned64(timeUnit);
+    std::optional<uint64_t> precisionFsValue = getUnsigned64(timePrecision);
+    if (!unitFsValue || !precisionFsValue) {
+      emitError(getSemanticLocation(source))
+          << "elaborated time scale does not fit an unsigned 64-bit value";
+      invalid = true;
+      return;
+    }
+    uint64_t unitFs = *unitFsValue;
+    uint64_t precisionFs = *precisionFsValue;
+    if (unitFs == 0 || precisionFs == 0 || unitFs < precisionFs ||
+        unitFs % precisionFs != 0) {
+      emitError(getSemanticLocation(source))
+          << "invalid elaborated time scale " << unitFs << "fs/" << precisionFs
+          << "fs";
+      invalid = true;
+      return;
+    }
+    designPrecisionFs = std::min(designPrecisionFs, precisionFs);
+  };
   for (Operation *unit : sourceUnits) {
     if (auto assignment =
             dyn_cast<semantic::SVContinuousAssignSymbolOp>(unit)) {
@@ -217,39 +249,15 @@ void ObeliskSimPreparePass::runOnOperation() {
         invalid = true;
       }
     }
-    auto timeUnit = unit->getAttrOfType<IntegerAttr>("time_unit_fs");
-    auto timePrecision = unit->getAttrOfType<IntegerAttr>("time_precision_fs");
-    if (static_cast<bool>(timeUnit) != static_cast<bool>(timePrecision)) {
-      emitError(getSemanticLocation(unit))
-          << "code unit has an incomplete elaborated time scale";
-      invalid = true;
-      continue;
-    }
     // Synthetic code units do not carry an elaborated time scale. They must
     // not introduce a 1ns precision into a design whose actual declarations
     // use a different precision.
-    if (!timeUnit)
-      continue;
-    std::optional<uint64_t> unitFsValue = getUnsigned64(timeUnit);
-    std::optional<uint64_t> precisionFsValue = getUnsigned64(timePrecision);
-    if (!unitFsValue || !precisionFsValue) {
-      emitError(getSemanticLocation(unit))
-          << "elaborated time scale does not fit an unsigned 64-bit value";
-      invalid = true;
-      continue;
-    }
-    uint64_t unitFs = *unitFsValue;
-    uint64_t precisionFs = *precisionFsValue;
-    if (unitFs == 0 || precisionFs == 0 || unitFs < precisionFs ||
-        unitFs % precisionFs != 0) {
-      emitError(getSemanticLocation(unit))
-          << "invalid elaborated time scale " << unitFs << "fs/" << precisionFs
-          << "fs";
-      invalid = true;
-      continue;
-    }
-    designPrecisionFs = std::min(designPrecisionFs, precisionFs);
+    accumulateTimeScale(unit, "code unit");
   }
+  semanticRoot->walk<WalkOrder::PreOrder>(
+      [&](semantic::SVInstanceBodySymbolOp body) {
+        accumulateTimeScale(body, "simulation scope");
+      });
   if (designPrecisionFs == std::numeric_limits<uint64_t>::max())
     designPrecisionFs = 1'000'000;
   if (designPrecisionFs >

@@ -349,6 +349,7 @@ FailureOr<PreparedScopeDeclarations> materializeScopeDeclarations(
     semantic::SVRootSymbolOp semanticRoot, ArrayRef<Operation *> units,
     uint64_t designPrecisionFemtoseconds, OpBuilder &builder) {
   PreparedScopeDeclarations result;
+  bool invalid = false;
   uint64_t nextScopeId = 0;
   result.ids[semanticRoot] = nextScopeId;
   result.declarations.push_back(sim::SimScopeDeclOp::create(
@@ -363,14 +364,50 @@ FailureOr<PreparedScopeDeclarations> materializeScopeDeclarations(
         uint64_t parentId = parent ? result.ids.lookup(parent) : 0;
         uint64_t id = nextScopeId++;
         result.ids[body] = id;
-        result.declarations.push_back(sim::SimScopeDeclOp::create(
+        sim::SimScopeDeclOp declaration = sim::SimScopeDeclOp::create(
             builder, getSemanticLocation(body), id,
             builder.getI64IntegerAttr(parentId),
             builder.getStringAttr(getHierarchyName(body)),
-            builder.getStringAttr(getDebugName(body))));
+            builder.getStringAttr(getDebugName(body)));
+        result.declarations.push_back(declaration);
+        auto unitAttr = body->getAttrOfType<IntegerAttr>("time_unit_fs");
+        auto precisionAttr =
+            body->getAttrOfType<IntegerAttr>("time_precision_fs");
+        if (bool(unitAttr) != bool(precisionAttr)) {
+          emitError(getSemanticLocation(body))
+              << "elaborated scope time scale must specify both unit and "
+                 "precision";
+          invalid = true;
+          return;
+        }
+        if (!unitAttr)
+          return;
+        APInt unit = unitAttr.getValue();
+        APInt precision = precisionAttr.getValue();
+        if (unit.isNegative() || precision.isNegative() ||
+            unit.getActiveBits() > 64 || precision.getActiveBits() > 64) {
+          emitError(getSemanticLocation(body))
+              << "elaborated scope time scale does not fit an unsigned "
+                 "64-bit value";
+          invalid = true;
+          return;
+        }
+        uint64_t unitFs = unit.getZExtValue();
+        uint64_t precisionFs = precision.getZExtValue();
+        if (unitFs == 0 || precisionFs == 0 || unitFs < precisionFs ||
+            unitFs % precisionFs != 0) {
+          emitError(getSemanticLocation(body))
+              << "invalid elaborated scope time scale " << unitFs << "fs/"
+              << precisionFs << "fs";
+          invalid = true;
+          return;
+        }
+        declaration->setAttr("dpi_unit_femtoseconds",
+                             builder.getI64IntegerAttr(unitFs));
+        declaration->setAttr("dpi_precision_femtoseconds",
+                             builder.getI64IntegerAttr(precisionFs));
       });
 
-  bool invalid = false;
   for (Operation *unit : units) {
     uint64_t scopeID = result.lookup(unit);
     if (scopeID >= result.declarations.size())
@@ -413,14 +450,22 @@ FailureOr<PreparedScopeDeclarations> materializeScopeDeclarations(
                          builder.getI64IntegerAttr(precisionFs));
   }
   for (sim::SimScopeDeclOp declaration : result.declarations) {
+    sim::SimScopeDeclOp parent;
+    if (auto parentID = declaration.getParent();
+        parentID && *parentID < result.declarations.size())
+      parent = result.declarations[*parentID];
+    auto inherited = [&](StringRef name) -> IntegerAttr {
+      if (parent)
+        if (auto value = parent->getAttrOfType<IntegerAttr>(name))
+          return value;
+      return builder.getI64IntegerAttr(designPrecisionFemtoseconds);
+    };
     if (!declaration->hasAttr("dpi_unit_femtoseconds"))
-      declaration->setAttr(
-          "dpi_unit_femtoseconds",
-          builder.getI64IntegerAttr(designPrecisionFemtoseconds));
+      declaration->setAttr("dpi_unit_femtoseconds",
+                           inherited("dpi_unit_femtoseconds"));
     if (!declaration->hasAttr("dpi_precision_femtoseconds"))
-      declaration->setAttr(
-          "dpi_precision_femtoseconds",
-          builder.getI64IntegerAttr(designPrecisionFemtoseconds));
+      declaration->setAttr("dpi_precision_femtoseconds",
+                           inherited("dpi_precision_femtoseconds"));
   }
   if (invalid)
     return failure();
