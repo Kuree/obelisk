@@ -3,12 +3,14 @@
 #include "../lib/RuntimeInternal.h"
 #include "obelisk/Runtime/Runtime.h"
 
+#include "vpi_user.h"
 #include "gtest/gtest.h"
 
 #include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <string>
 #include <string_view>
 #include <tuple>
 #include <vector>
@@ -1989,6 +1991,175 @@ TEST(DesignBytecode, AcceptsDisjointUWireDriverComponents) {
   ASSERT_EQ(
       obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
             OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, StartupRequiresAnObservableDesignAndOwnsOneContext) {
+  EXPECT_EQ(obelisk_rt_v1_vpi_startup(nullptr, nullptr, 0),
+            OBELISK_RT_INVALID_ARGUMENT);
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0),
+            OBELISK_RT_PERMISSION_DENIED);
+  obelisk_rt_v1_context_destroy(context);
+
+  Fixture fixture;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 1),
+            OBELISK_RT_INVALID_ARGUMENT);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0),
+            OBELISK_RT_INVALID_ARGUMENT);
+  obelisk_rt_v1_vpi_shutdown(context);
+
+  char rootName[] = "$root";
+  EXPECT_EQ(vpi_handle_by_name(rootName, nullptr), nullptr);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, TraversesReflectionAndTracksHandleState) {
+  Fixture fixture;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+
+  char rootName[] = "$root";
+  char valueName[] = "value";
+  char absoluteName[] = "$root.top.value";
+  vpiHandle root = vpi_handle_by_name(rootName, nullptr);
+  ASSERT_NE(root, nullptr);
+  vpiHandle value = vpi_handle_by_name(valueName, root);
+  ASSERT_NE(value, nullptr);
+  vpiHandle absolute = vpi_handle_by_name(absoluteName, root);
+  ASSERT_NE(absolute, nullptr);
+  vpiHandle scope = vpi_handle(vpiScope, value);
+  ASSERT_NE(scope, nullptr);
+
+  EXPECT_EQ(vpi_get(vpiType, root), vpiModule);
+  EXPECT_EQ(vpi_get(vpiSize, root), 0);
+  EXPECT_STREQ(vpi_get_str(vpiName, root), "top");
+  EXPECT_EQ(vpi_get64(vpiType, value), vpiReg);
+  EXPECT_EQ(vpi_get(vpiSize, value), 65);
+  EXPECT_STREQ(vpi_get_str(vpiName, value), "value");
+  EXPECT_STREQ(vpi_get_str(vpiFullName, value), "top.value");
+  EXPECT_EQ(vpi_compare_objects(value, absolute), 1);
+  EXPECT_EQ(vpi_compare_objects(root, scope), 1);
+
+  vpiHandle iterator = vpi_iterate(vpiReg, root);
+  ASSERT_NE(iterator, nullptr);
+  vpiHandle scanned = vpi_scan(iterator);
+  ASSERT_NE(scanned, nullptr);
+  EXPECT_EQ(vpi_compare_objects(value, scanned), 1);
+  EXPECT_EQ(vpi_scan(iterator), nullptr);
+
+  int userData = 42;
+  EXPECT_EQ(vpi_put_userdata(value, &userData), 1);
+  EXPECT_EQ(vpi_get_userdata(value), &userData);
+  EXPECT_EQ(vpi_get(999, value), vpiUndefined);
+  s_vpi_error_info error{};
+  EXPECT_EQ(vpi_chk_error(&error), vpiNotice);
+  EXPECT_STREQ(error.product, "Obelisk");
+  EXPECT_STREQ(error.code, "OBELISK_VPI");
+  EXPECT_EQ(vpi_chk_error(&error), 0);
+
+  EXPECT_EQ(vpi_release_handle(scanned), 1);
+  EXPECT_EQ(vpi_release_handle(scanned), 0);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  EXPECT_EQ(vpi_free_object(absolute), 1);
+  EXPECT_EQ(vpi_release_handle(scope), 1);
+  EXPECT_EQ(vpi_release_handle(value), 1);
+  EXPECT_EQ(vpi_release_handle(root), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, ConvertsValuesAndEnforcesMutationCapabilities) {
+  Fixture fixture;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+
+  char objectName[] = "top.value";
+  vpiHandle object = vpi_handle_by_name(objectName, nullptr);
+  ASSERT_NE(object, nullptr);
+
+  s_vpi_value value{};
+  value.format = vpiIntVal;
+  value.value.integer = -1;
+  EXPECT_EQ(vpi_put_value(object, &value, nullptr, vpiNoDelay), nullptr);
+  value.value.integer = 0;
+  vpi_get_value(object, &value);
+  EXPECT_EQ(value.value.integer, -1);
+
+  value = {};
+  value.format = vpiVectorVal;
+  vpi_get_value(object, &value);
+  ASSERT_NE(value.value.vector, nullptr);
+  EXPECT_EQ(value.value.vector[0].aval, UINT32_MAX);
+  EXPECT_EQ(value.value.vector[0].bval, 0u);
+
+  value = {};
+  value.format = vpiScalarVal;
+  value.value.scalar = vpiX;
+  vpi_put_value(object, &value, nullptr, vpiNoDelay);
+  value.value.scalar = vpi0;
+  vpi_get_value(object, &value);
+  EXPECT_EQ(value.value.scalar, vpiX);
+
+  char binary[] = "1_0xz?";
+  value = {};
+  value.format = vpiBinStrVal;
+  value.value.str = binary;
+  vpi_put_value(object, &value, nullptr, vpiForceFlag);
+  value.value.str = nullptr;
+  vpi_get_value(object, &value);
+  ASSERT_NE(value.value.str, nullptr);
+  std::string formatted(value.value.str);
+  ASSERT_GE(formatted.size(), 5u);
+  EXPECT_EQ(formatted.substr(formatted.size() - 5), "10xzz");
+  vpi_put_value(object, nullptr, nullptr, vpiReleaseFlag);
+
+  char invalidBinary[] = "2";
+  value.value.str = invalidBinary;
+  vpi_put_value(object, &value, nullptr, vpiNoDelay);
+  s_vpi_error_info error{};
+  EXPECT_EQ(vpi_chk_error(&error), vpiError);
+  EXPECT_STREQ(error.message, "invalid binary digit in VPI write");
+  vpi_put_value(object, &value, nullptr, 2);
+  EXPECT_EQ(vpi_chk_error(&error), vpiError);
+
+  s_vpi_vlog_info info{};
+  EXPECT_EQ(vpi_get_vlog_info(&info), 1);
+  EXPECT_STREQ(info.product, "Obelisk");
+  EXPECT_STREQ(info.version, "0.1");
+  EXPECT_EQ(vpi_get_vlog_info(nullptr), 0);
+  EXPECT_EQ(vpi_release_handle(object), 1);
+  obelisk_rt_v1_context_destroy(context);
+
+  Fixture readOnly;
+  readOnly.database = makeDatabase(false);
+  readOnly.execution.design_database = readOnly.database.data();
+  readOnly.execution.design_database_size = readOnly.database.size();
+  readOnly.execution.flags &= ~OBELISK_RT_EXECUTION_VPI_WRITE;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&readOnly.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  object = vpi_handle_by_name(objectName, nullptr);
+  ASSERT_NE(object, nullptr);
+  value = {};
+  value.format = vpiIntVal;
+  value.value.integer = 7;
+  vpi_put_value(object, &value, nullptr, vpiNoDelay);
+  EXPECT_EQ(vpi_chk_error(&error), vpiError);
+  EXPECT_STREQ(error.message, "VPI mutation requires --vpi=full");
+  EXPECT_EQ(vpi_release_handle(object), 1);
   obelisk_rt_v1_context_destroy(context);
 }
 

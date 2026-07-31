@@ -30,6 +30,9 @@ target_link_libraries(ObeliskRuntimeTests PRIVATE
   obelisk_rt
   GTest::gtest_main
 )
+target_include_directories(ObeliskRuntimeTests SYSTEM PRIVATE
+  ${OBELISK_SLANG_SOURCE_DIR}/external/ieee1800
+)
 target_compile_features(ObeliskRuntimeTests PRIVATE cxx_std_17)
 set_target_properties(ObeliskRuntimeTests PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
