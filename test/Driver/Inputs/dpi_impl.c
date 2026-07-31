@@ -31,6 +31,10 @@ int32_t dpi_unused(int32_t value) {
   return value;
 }
 
+void dpi_void(int32_t value, int32_t *doubled) {
+  *doubled = value * 2;
+}
+
 int dpi_logic_inout(svLogicVecVal *value) {
   memset(value, 0, 3 * sizeof(*value));
   value[0].aval = 12;

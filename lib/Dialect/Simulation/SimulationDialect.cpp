@@ -3558,13 +3558,9 @@ LogicalResult SimDPICallOp::verify() {
   }
 
   uint64_t outputCursor = logicalInputs;
-  if (!getIsTask()) {
-    if (outputCursor >= signature.size() ||
-        signature[outputCursor].getDirection() != DPIArgumentDirection::Result)
-      return emitOpError(
-          "a DPI function signature must place its result first");
+  if (!getIsTask() && outputCursor < signature.size() &&
+      signature[outputCursor].getDirection() == DPIArgumentDirection::Result)
     ++outputCursor;
-  }
   for (uint64_t index = 0; index != logicalInputs; ++index) {
     DPIABIAttr input = signature[index];
     if (input.getDirection() == DPIArgumentDirection::Result)
@@ -3581,6 +3577,14 @@ LogicalResult SimDPICallOp::verify() {
         output.getIsSigned() != input.getIsSigned())
       return emitOpError("DPI formal copy-out must match its input ABI entry");
   }
+  if (!getIsTask() &&
+      llvm::any_of(ArrayRef<DPIABIAttr>(signature).drop_front(outputCursor),
+                   [](DPIABIAttr abi) {
+                     return abi.getDirection() ==
+                            DPIArgumentDirection::Result;
+                   }))
+    return emitOpError(
+        "a DPI function signature must place its result first");
   if (outputCursor != signature.size())
     return emitOpError("DPI signature has excess result entries");
 

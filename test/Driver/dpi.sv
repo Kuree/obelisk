@@ -62,6 +62,8 @@ module dpi_driver;
                                          output bit [32:0] destination);
   import "DPI-C" function int dpi_unused(input int value);
   import "DPI-C" task dpi_logic_inout(inout logic [64:0] value);
+  import "DPI-C" function void dpi_void(input int value,
+                                         output int doubled);
   int result;
   longint scalar_result;
   int output_value;
@@ -69,6 +71,7 @@ module dpi_driver;
   logic [64:0] source;
   bit [32:0] destination;
   logic [64:0] vector_value;
+  int void_output;
 
   initial begin
     result = add(7);
@@ -78,15 +81,18 @@ module dpi_driver;
     dpi_update(source, destination);
     vector_value = {1'b1, 60'b0, 4'b0zx1};
     dpi_logic_inout(vector_value);
+    dpi_void(21, void_output);
     if (vector_value === {1'b0, 60'b0, 4'b1xz0})
       $display("vector-ok");
     $display("%0d %0d %0d %0d %h", result, scalar_result,
              output_value, inout_value, destination);
+    $display("void=%0d", void_output);
   end
 endmodule
 
 // OUTPUT: vector-ok
 // OUTPUT: 12 10 40 7 100000000
+// OUTPUT: void=42
 // EXPORTS-DAG: svGetScope
 // EXPORTS-DAG: svGetNameFromScope
 // NO-SONAME: Library runpath: [/
@@ -103,3 +109,4 @@ endmodule
 // MISSING-DAG: undefined symbol: dpi_update
 // MISSING-DAG: undefined symbol: dpi_unused
 // MISSING-DAG: undefined symbol: dpi_logic_inout
+// MISSING-DAG: undefined symbol: dpi_void

@@ -1899,11 +1899,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
 
       uint64_t outputCursor = logicalInputs;
       bool task = (importSite.flags & OBELISK_RT_IMPORT_TASK) != 0;
-      if (!task) {
-        if (outputCursor >= entryCount || entry(outputCursor).direction != 3)
-          return OBELISK_RT_INVALID_BYTECODE;
+      if (!task && outputCursor < entryCount &&
+          entry(outputCursor).direction == 3)
         ++outputCursor;
-      }
       for (uint32_t index = 0; index != logicalInputs; ++index) {
         ABIEntry input = entry(index);
         if (input.direction == 0)

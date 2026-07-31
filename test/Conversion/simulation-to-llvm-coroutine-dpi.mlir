@@ -19,6 +19,16 @@ module attributes {
       obelisk_sim.dpi_logical_inputs = 1 : i32
     }
     obelisk_sim.code_unit.decl 2 in 0 function hierarchy "dpi.call"
+    obelisk_sim.code_unit.decl 3 in 0 function hierarchy "dpi.notify" {
+      obelisk_sim.dpi_abi_signature = [
+        #obelisk_sim.dpi_abi<kind = int, direction = input, width = 32,
+                              fourState = false, isSigned = true>
+      ],
+      obelisk_sim.dpi_c_identifier = "notify",
+      obelisk_sim.dpi_import,
+      obelisk_sim.dpi_import_id = 18 : i32,
+      obelisk_sim.dpi_logical_inputs = 1 : i32
+    }
 
     obelisk_sim.func @call(
         %context: !obelisk_sim.context
@@ -40,13 +50,30 @@ module attributes {
             source_file = "dpi.mlir",
             source_line = 12 : i32
           } : (i32) -> (i32, !obelisk_rt.status)
+      %void_status = obelisk_sim.dpi.call "notify" id 18 scope 0
+          context %context : !obelisk_sim.context(%value) {
+            abi_signature = [
+              #obelisk_sim.dpi_abi<kind = int, direction = input, width = 32,
+                                    fourState = false, isSigned = true>
+            ],
+            is_context = false,
+            is_pure = false,
+            is_task = false,
+            source_column = 4 : i32,
+            source_file = "dpi.mlir",
+            source_line = 13 : i32
+          } : (i32) -> !obelisk_rt.status
       obelisk_sim.return
     }
   }
 }
 
-// CHECK-DAG: llvm.func @c_add(i32) -> i32
+// CHECK-DAG: llvm.func @notify(i32)
 // CHECK-DAG: llvm.func @obelisk_rt_v1_import_call
+// CHECK-LABEL: llvm.func internal @__obelisk_dpi_thunk_18(
+// CHECK: llvm.call @notify
+// CHECK: llvm.return
+// CHECK: llvm.func @c_add(i32) -> i32
 // CHECK-LABEL: llvm.func internal @__obelisk_dpi_thunk_17(
 // CHECK: llvm.call @c_add
 // CHECK: llvm.return

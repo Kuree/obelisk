@@ -809,8 +809,8 @@ void ObeliskSimPreparePass::runOnOperation() {
               resultType = normalizeSemanticType(
                   semanticResultType, getSemanticLocation(unit.source));
           }
-          bool voidResult = !dpiImport && isa_and_nonnull<semantic::VoidType>(
-                                              semanticResultType);
+          bool voidResult =
+              isa_and_nonnull<semantic::VoidType>(semanticResultType);
           isVoidFunction = voidResult;
           if (!voidResult && failed(resultType)) {
             invalid = true;
@@ -823,7 +823,7 @@ void ObeliskSimPreparePass::runOnOperation() {
             invalid = true;
             continue;
           }
-          if (dpiImport &&
+          if (dpiImport && !voidResult &&
               (!semanticResultType ||
                failed(getDPIABIKind(semanticResultType,
                                     getSemanticLocation(unit.source))))) {
@@ -992,7 +992,7 @@ void ObeliskSimPreparePass::runOnOperation() {
           emitError(getSemanticLocation(unit.source))
               << "DPI function has no resolved result signature";
           invalid = true;
-        } else {
+        } else if (!isa<semantic::VoidType>(sourceSignature.getResult(0))) {
           FailureOr<sim::DPIABIAttr> result = makeABI(
               sourceSignature.getResult(0), sim::DPIArgumentDirection::Result,
               getSemanticLocation(unit.source));

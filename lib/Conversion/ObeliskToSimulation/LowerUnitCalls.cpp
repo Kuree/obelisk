@@ -839,7 +839,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     Value runtimeContext = operands.front();
     operands.erase(operands.begin());
     SmallVector<Attribute> signature(dpiOperandABI);
-    if (!dpiTask) {
+    if (hasFunctionResult) {
       Type resultType = callResultTypes.front();
       std::optional<unsigned> width = sim::getPackedWidth(resultType);
       if (!width)

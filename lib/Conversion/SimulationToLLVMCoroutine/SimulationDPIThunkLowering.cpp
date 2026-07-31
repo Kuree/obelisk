@@ -281,11 +281,13 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
 
   SmallVector<Value> cArguments;
   SmallVector<DPIWriteback> writebacks;
-  uint64_t outputCursor = spec.isTask ? 0 : 1;
+  bool hasFunctionResult =
+      !spec.isTask && logicalOutputs != 0 &&
+      abi[logicalInputs].direction ==
+          static_cast<uint32_t>(sim::DPIArgumentDirection::Result);
+  uint64_t outputCursor = hasFunctionResult ? 1 : 0;
   Value packedFunctionResult;
-  if (!spec.isTask) {
-    if (logicalOutputs == 0)
-      return spec.operation->emitError("DPI function has no result ABI entry");
+  if (hasFunctionResult) {
     const DPIOperandABI &resultABI = abi[logicalInputs];
     if (isDPIVector(resultABI.category)) {
       packedFunctionResult = makeVectorBuffer(0, resultABI, false);
@@ -320,7 +322,8 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
   Type cResultType = voidType;
   if (spec.isTask)
     cResultType = i32;
-  else if (!isDPIVector(abi[logicalInputs].category)) {
+  else if (hasFunctionResult &&
+           !isDPIVector(abi[logicalInputs].category)) {
     cResultType = dpiScalarType(context, abi[logicalInputs].category);
     if (!cResultType)
       return spec.operation->emitError(
@@ -346,7 +349,7 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
   auto call = LLVM::CallOp::create(builder, location, callResults,
                                    SymbolRefAttr::get(cFunction), cArguments);
 
-  if (!spec.isTask && !isDPIVector(abi[logicalInputs].category)) {
+  if (hasFunctionResult && !isDPIVector(abi[logicalInputs].category)) {
     Value result = call.getResult();
     const DPIOperandABI &resultABI = abi[logicalInputs];
     Value outputValue = planePointer(outputs, 0, false);

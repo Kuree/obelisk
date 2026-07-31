@@ -22,6 +22,12 @@ module {
           obelisk.sv.symbol.formal_argument attributes {direction = 2 : i32, hierarchical_name = "dpi_imports.update.destination", name = "destination", node_id = 11 : i64, semantic_type = !obelisk.ranged_packed_array<32 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>, sym_name = "s9.destination"} {
           }
         }
+        obelisk.sv.symbol.subroutine attributes {dpi_c_identifier = "notify", hierarchical_name = "dpi_imports.notify", is_dpi_import, name = "notify", node_id = 100 : i64, semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>) -> !obelisk.void, false>, subroutine_kind = 0 : i32, sym_name = "s100.notify", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.list attributes {node_id = 101 : i64} {
+          }
+          obelisk.sv.symbol.formal_argument attributes {direction = 0 : i32, hierarchical_name = "dpi_imports.notify.value", name = "value", node_id = 102 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s101.value"} {
+          }
+        }
         obelisk.sv.symbol.variable attributes {hierarchical_name = "dpi_imports.result", lifetime = 1 : i32, name = "result", node_id = 12 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s10.result"} {
         }
         obelisk.sv.symbol.variable attributes {hierarchical_name = "dpi_imports.source", lifetime = 1 : i32, name = "source", node_id = 13 : i64, semantic_type = !obelisk.ranged_packed_array<64 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s11.source"} {
@@ -53,6 +59,12 @@ module {
                   }
                 }
               }
+              obelisk.sv.statement.expression_statement attributes {node_id = 103 : i64} {
+                obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "notify", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_super_class = false, is_system_call = false, node_id = 104 : i64, referenced_path = "dpi_imports.notify", referenced_symbol = @s1.$root::@s3.dpi_imports::@s4.dpi_imports::@s100.notify, semantic_type = !obelisk.void, subroutine_kind = 0 : i32} {
+                  obelisk.sv.expression.integer_literal attributes {constant_value = "9", node_id = 105 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                  }
+                }
+              }
             }
           }
         }
@@ -75,5 +87,10 @@ module {
 // CHECK-SAME: width = 33
 // CHECK-SAME: is_context = true
 // CHECK-SAME: is_task = true
+// CHECK-NEXT: obelisk_sim.status.check
+// CHECK: obelisk_sim.dpi.call "notify" id {{-?[0-9]+}} scope 1
+// CHECK-SAME: kind = int
+// CHECK-SAME: direction = input
+// CHECK-NOT: direction = result
 // CHECK-NEXT: obelisk_sim.status.check
 // CHECK-NOT: obelisk.sv.
