@@ -228,6 +228,7 @@ native_members = [
     "ProcessAllocation.o",
     "ProcessObservers.o",
     "ProcessSignals.o",
+    "ProcessState.o",
     "ProcessValidation.o",
     "Random.o",
     "Runtime.o",
