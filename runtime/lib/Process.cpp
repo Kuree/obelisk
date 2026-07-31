@@ -276,12 +276,26 @@ bool importNativeStatePlanesUnlocked(obelisk_rt_context *context,
     return false;
   std::fill(context->stateValue.begin(), context->stateValue.end(), 0);
   std::fill(context->stateUnknown.begin(), context->stateUnknown.end(), 0);
+#if (defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) ||  \
+    defined(_WIN32)
+  size_t byteCount = static_cast<size_t>((bitCount + 7) / 8);
+  if (byteCount != 0) {
+    std::memcpy(context->stateValue.data(), value, byteCount);
+    std::memcpy(context->stateUnknown.data(), unknown, byteCount);
+  }
+#else
   for (uint64_t bit = 0; bit != bitCount; ++bit) {
     uint64_t mask = uint64_t{1} << (bit % 64);
     if (byteBit(value, bit))
       context->stateValue[bit / 64] |= mask;
     if (byteBit(unknown, bit))
       context->stateUnknown[bit / 64] |= mask;
+  }
+#endif
+  if (bitCount % 64 != 0 && !context->stateValue.empty()) {
+    uint64_t mask = (uint64_t{1} << (bitCount % 64)) - 1;
+    context->stateValue.back() &= mask;
+    context->stateUnknown.back() &= mask;
   }
   return true;
 }
@@ -292,6 +306,18 @@ bool exportNativeStatePlanesUnlocked(const obelisk_rt_context *context,
   if (!validNativeStatePlanesUnlocked(context, value, unknown, bitCount))
     return false;
   size_t byteCount = static_cast<size_t>((bitCount + 7) / 8);
+#if (defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) ||  \
+    defined(_WIN32)
+  if (byteCount != 0) {
+    std::memcpy(value, context->stateValue.data(), byteCount);
+    std::memcpy(unknown, context->stateUnknown.data(), byteCount);
+    if (bitCount % 8 != 0) {
+      uint8_t mask = static_cast<uint8_t>((1u << (bitCount % 8)) - 1);
+      value[byteCount - 1] &= mask;
+      unknown[byteCount - 1] &= mask;
+    }
+  }
+#else
   std::fill_n(value, byteCount, uint8_t{0});
   std::fill_n(unknown, byteCount, uint8_t{0});
   for (uint64_t bit = 0; bit != bitCount; ++bit) {
@@ -299,6 +325,7 @@ bool exportNativeStatePlanesUnlocked(const obelisk_rt_context *context,
     setByteBit(value, bit, (context->stateValue[bit / 64] & mask) != 0);
     setByteBit(unknown, bit, (context->stateUnknown[bit / 64] & mask) != 0);
   }
+#endif
   return true;
 }
 

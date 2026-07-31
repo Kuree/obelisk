@@ -44,10 +44,16 @@ std::optional<uint64_t> readScalar(const Image &image, const Frame &frame,
        layout.kind != OBELISK_RT_DBREG_LOGIC) ||
       layout.width > 64)
     return std::nullopt;
-  Logic value = readLogic(frame.data, layout);
-  if (anyUnknown(value))
-    return std::nullopt;
-  return value.value[0];
+  uint64_t value = 0;
+  std::memcpy(&value, frame.data + layout.offset,
+              static_cast<size_t>(std::min<uint64_t>(layout.size, 8)));
+  if (layout.kind == OBELISK_RT_DBREG_LOGIC) {
+    uint64_t unknown = 0;
+    std::memcpy(&unknown, frame.data + layout.offset + 8, sizeof(unknown));
+    if (unknown != 0)
+      return std::nullopt;
+  }
+  return value & finalMask(layout.width);
 }
 
 bool writeScalar(const Image &image, Frame &frame, uint32_t reg,
@@ -59,10 +65,22 @@ bool writeScalar(const Image &image, Frame &frame, uint32_t reg,
        layout.kind != OBELISK_RT_DBREG_LOGIC) ||
       layout.width > 64)
     return false;
-  Logic result{layout.width, layout.kind == OBELISK_RT_DBREG_LOGIC,
-               LimbVector(1, value), LimbVector(1)};
-  writeLogic(frame.data, layout, result);
+  value &= finalMask(layout.width);
+  std::memcpy(frame.data + layout.offset, &value,
+              static_cast<size_t>(std::min<uint64_t>(layout.size, 8)));
+  if (layout.kind == OBELISK_RT_DBREG_LOGIC)
+    std::memset(frame.data + layout.offset + 8, 0, 8);
   return true;
+}
+
+uint64_t extractScalarBits(const LimbVector &plane, uint64_t first,
+                           uint64_t width) {
+  size_t word = static_cast<size_t>(first / 64);
+  unsigned shift = static_cast<unsigned>(first % 64);
+  uint64_t result = plane[word] >> shift;
+  if (shift != 0 && word + 1 < plane.size())
+    result |= plane[word + 1] << (64 - shift);
+  return result & finalMask(width);
 }
 
 bool packBytes(const Image &image, Frame &frame, uint32_t reg,
@@ -1464,13 +1482,37 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                           : static_cast<uint64_t>(selectedStart);
       if (stable == UINT64_MAX)
         return OBELISK_RT_INVALID_HANDLE;
+      uint64_t selectedWidth = static_cast<uint64_t>(last - first);
+      if (staticSiteID != UINT64_MAX && !stringValue && !managedValue &&
+          boundedStatic && selectedWidth <= 64 && context->nativeSchedulePlan &&
+          !context->nativeScheduleDeoptimized) {
+        uint64_t packedValue = extractScalarBits(
+            value.value, static_cast<uint64_t>(first), selectedWidth);
+        uint64_t packedUnknown =
+            value.fourState
+                ? extractScalarBits(value.unknown, static_cast<uint64_t>(first),
+                                    selectedWidth)
+                : 0;
+        uint8_t *valuePlane =
+            reinterpret_cast<uint8_t *>(context->stateValue.data());
+        uint8_t *unknownPlane =
+            value.fourState
+                ? reinterpret_cast<uint8_t *>(context->stateUnknown.data())
+                : nullptr;
+        return obelisk_rt_v1_scheduler_static_nba(
+            context, staticSiteID, valuePlane, unknownPlane,
+            context->execution->state_bit_count, stable, selectedWidth,
+            reinterpret_cast<const uint8_t *>(&packedValue),
+            value.fourState ? reinterpret_cast<const uint8_t *>(&packedUnknown)
+                            : nullptr);
+      }
       ScheduledNBA update;
       update.valuePlane = nullptr;
       update.unknownPlane = nullptr;
       update.planeBitCount = automatic ? static_cast<uint64_t>(end)
                                        : context->execution->state_bit_count;
       update.bitOffset = stable;
-      update.bitWidth = static_cast<uint64_t>(last - first);
+      update.bitWidth = selectedWidth;
       update.stringValue = stringValue;
       update.managedValue = managedValue;
       update.rootedString = rootedString;

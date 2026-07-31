@@ -230,7 +230,7 @@ void releaseDesignTaskOwnedStatesUnlocked(obelisk_rt_context *context,
 struct ExecutionState {
   static constexpr size_t kMaxFrameCount = 1026;
   uint32_t callDepth = 0;
-  std::array<Frame *, kMaxFrameCount> frames{};
+  std::array<Frame *, kMaxFrameCount> frames;
 };
 
 bool copyRegister(const Image &image, const Frame &source, uint32_t sourceIndex,
@@ -245,6 +245,41 @@ bool copyRegister(const Image &image, const Frame &source, uint32_t sourceIndex,
     return false;
   std::memmove(destination.data + destinationLayout.offset,
                source.data + sourceLayout.offset, sourceLayout.size);
+  return true;
+}
+
+bool readKnownScalar(const Image &image, const Frame &frame, uint32_t reg,
+                     uint64_t &value) {
+  Layout layout = layoutAt(image, frame.function, reg);
+  if ((layout.kind != OBELISK_RT_DBREG_BITS &&
+       layout.kind != OBELISK_RT_DBREG_LOGIC) ||
+      layout.width == 0 || layout.width > 64)
+    return false;
+  value = 0;
+  std::memcpy(&value, frame.data + layout.offset,
+              static_cast<size_t>(std::min<uint64_t>(layout.size, 8)));
+  if (layout.kind == OBELISK_RT_DBREG_LOGIC) {
+    uint64_t unknown = 0;
+    std::memcpy(&unknown, frame.data + layout.offset + 8, sizeof(unknown));
+    if (unknown != 0)
+      return false;
+  }
+  value &= finalMask(layout.width);
+  return true;
+}
+
+bool writeKnownScalar(const Image &image, Frame &frame, uint32_t reg,
+                      uint64_t value) {
+  Layout layout = layoutAt(image, frame.function, reg);
+  if ((layout.kind != OBELISK_RT_DBREG_BITS &&
+       layout.kind != OBELISK_RT_DBREG_LOGIC) ||
+      layout.width == 0 || layout.width > 64)
+    return false;
+  value &= finalMask(layout.width);
+  std::memcpy(frame.data + layout.offset, &value,
+              static_cast<size_t>(std::min<uint64_t>(layout.size, 8)));
+  if (layout.kind == OBELISK_RT_DBREG_LOGIC)
+    std::memset(frame.data + layout.offset + 8, 0, 8);
   return true;
 }
 
@@ -360,8 +395,20 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       if ((destination.kind == OBELISK_RT_DBREG_BITS ||
            destination.kind == OBELISK_RT_DBREG_LOGIC) &&
           destination.width % 64 != 0) {
-        Logic normalized = readLogic(frame.data, destination);
-        writeLogic(frame.data, destination, normalized);
+        uint64_t limbs = limbCount(destination.width);
+        uint64_t last = 0;
+        uint64_t lastOffset = destination.offset + (limbs - 1) * 8;
+        std::memcpy(&last, frame.data + lastOffset, sizeof(last));
+        last &= finalMask(destination.width);
+        std::memcpy(frame.data + lastOffset, &last, sizeof(last));
+        if (destination.kind == OBELISK_RT_DBREG_LOGIC) {
+          uint64_t unknownOffset = destination.offset + limbs * 8;
+          std::memcpy(&last, frame.data + unknownOffset + (limbs - 1) * 8,
+                      sizeof(last));
+          last &= finalMask(destination.width);
+          std::memcpy(frame.data + unknownOffset + (limbs - 1) * 8, &last,
+                      sizeof(last));
+        }
       }
       break;
     }
@@ -441,21 +488,47 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
     }
     case OBELISK_RT_DB_AND:
     case OBELISK_RT_DB_OR:
-    case OBELISK_RT_DB_XOR:
+    case OBELISK_RT_DB_XOR: {
+      uint64_t left = 0, right = 0;
+      if (readKnownScalar(image, frame, instruction.source0, left) &&
+          readKnownScalar(image, frame, instruction.source1, right)) {
+        uint64_t result = instruction.opcode == OBELISK_RT_DB_AND ? left & right
+                          : instruction.opcode == OBELISK_RT_DB_OR
+                              ? left | right
+                              : left ^ right;
+        if (writeKnownScalar(image, frame, instruction.destination, result))
+          break;
+      }
       write(instruction.destination,
             bitwise(read(instruction.source0), read(instruction.source1),
                     instruction.opcode));
       break;
+    }
     case OBELISK_RT_DB_ADD:
-    case OBELISK_RT_DB_SUB:
+    case OBELISK_RT_DB_SUB: {
+      uint64_t left = 0, right = 0;
+      if (readKnownScalar(image, frame, instruction.source0, left) &&
+          readKnownScalar(image, frame, instruction.source1, right) &&
+          writeKnownScalar(image, frame, instruction.destination,
+                           instruction.opcode == OBELISK_RT_DB_SUB
+                               ? left - right
+                               : left + right))
+        break;
       write(instruction.destination,
             add(read(instruction.source0), read(instruction.source1),
                 instruction.opcode == OBELISK_RT_DB_SUB));
       break;
-    case OBELISK_RT_DB_MUL:
+    }
+    case OBELISK_RT_DB_MUL: {
+      uint64_t left = 0, right = 0;
+      if (readKnownScalar(image, frame, instruction.source0, left) &&
+          readKnownScalar(image, frame, instruction.source1, right) &&
+          writeKnownScalar(image, frame, instruction.destination, left * right))
+        break;
       write(instruction.destination,
             multiply(read(instruction.source0), read(instruction.source1)));
       break;
+    }
     case OBELISK_RT_DB_FADD:
     case OBELISK_RT_DB_FSUB:
     case OBELISK_RT_DB_FMUL:
@@ -573,11 +646,34 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
     }
     case OBELISK_RT_DB_SHL:
     case OBELISK_RT_DB_LSHR:
-    case OBELISK_RT_DB_ASHR:
+    case OBELISK_RT_DB_ASHR: {
+      uint64_t input = 0, amount = 0;
+      Layout inputLayout = layout(instruction.source0);
+      if (readKnownScalar(image, frame, instruction.source0, input) &&
+          readKnownScalar(image, frame, instruction.source1, amount)) {
+        uint64_t result = 0;
+        if (instruction.opcode == OBELISK_RT_DB_SHL) {
+          result = amount < inputLayout.width ? input << amount : 0;
+        } else if (instruction.opcode == OBELISK_RT_DB_LSHR) {
+          result = amount < inputLayout.width ? input >> amount : 0;
+        } else {
+          bool sign = ((input >> (inputLayout.width - 1)) & 1) != 0;
+          if (amount >= inputLayout.width) {
+            result = sign ? finalMask(inputLayout.width) : 0;
+          } else {
+            result = input >> amount;
+            if (sign && amount != 0)
+              result |= UINT64_MAX << (inputLayout.width - amount);
+          }
+        }
+        if (writeKnownScalar(image, frame, instruction.destination, result))
+          break;
+      }
       write(instruction.destination,
             shift(read(instruction.source0), read(instruction.source1),
                   instruction.opcode));
       break;
+    }
     case OBELISK_RT_DB_COMPARE: {
       Logic left = read(instruction.source0), right = read(instruction.source1);
       bool deterministic = instruction.flags == OBELISK_RT_DB_CMP_CASE_EQ ||
@@ -1379,7 +1475,7 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       if (local) {
         uint32_t frameID = (handleKind >> 16) & UINT32_C(0x7fff);
         uint32_t registerIndex = handleKind & UINT32_C(0xffff);
-        if (frameID >= state.frames.size() || !state.frames[frameID] ||
+        if (frameID == 0 || frameID > state.callDepth + 1 ||
             !validRegister(state.frames[frameID]->function, registerIndex))
           return OBELISK_RT_INVALID_HANDLE;
         localFrame = state.frames[frameID];
@@ -1882,7 +1978,6 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       if (!copyMap(image, frame, callee, instruction.source1,
                    instruction.source2, context)) {
         --state.callDepth;
-        state.frames[callee.id] = nullptr;
         return OBELISK_RT_INVALID_BYTECODE;
       }
       obelisk_rt_status status =
@@ -1891,7 +1986,6 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
                           budget, action, state, pendingActivation,
                           instruction.auxiliary, instruction.immediate, &frame);
       --state.callDepth;
-      state.frames[callee.id] = nullptr;
       if (status != OBELISK_RT_OK)
         return status;
       break;
@@ -1937,7 +2031,6 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       if (!copyMap(image, frame, callee, instruction.source1,
                    instruction.source2, context)) {
         --state.callDepth;
-        state.frames[callee.id] = nullptr;
         return OBELISK_RT_INVALID_BYTECODE;
       }
       status = executeFunction(
@@ -1945,7 +2038,6 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
           calleeFunction.firstInstruction, budget, action, state,
           pendingActivation, instruction.auxiliary, instruction.flags, &frame);
       --state.callDepth;
-      state.frames[callee.id] = nullptr;
       if (status != OBELISK_RT_OK)
         return status;
       break;
