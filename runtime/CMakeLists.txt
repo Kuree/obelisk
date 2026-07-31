@@ -19,6 +19,7 @@ add_library(obelisk_rt STATIC
   lib/Coverage.cpp
   lib/Process.cpp
   lib/ProcessAllocation.cpp
+  lib/ProcessObservers.cpp
   lib/ProcessValidation.cpp
   lib/Random.cpp
   lib/Runtime.cpp

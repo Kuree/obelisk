@@ -226,6 +226,7 @@ native_members = [
     "ManagedHeap.o",
     "Process.o",
     "ProcessAllocation.o",
+    "ProcessObservers.o",
     "ProcessValidation.o",
     "Random.o",
     "Runtime.o",
