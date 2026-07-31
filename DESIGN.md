@@ -506,12 +506,13 @@ destinations will carry direct descriptor, index, and mask fields.
 
 Generated fixed-site NBA accumulators use a two-level dirty-root index. Leaf
 words select roots in graph order and summary words skip empty leaf pages; the
-runtime uses target bit-scan intrinsics rather than scanning every NBA
-root. Staging marks both levels, and commit clears a root only after all of its
-pending event-region forms have been consumed. The same hierarchical shape is
-used for bytecode-to-AOT handoff: dynamic execution reports precise dirty roots
-in packed leaf and summary words, and actor/root dependencies limit handoff to
-affected compiled fragments.
+runtime uses target bit-scan intrinsics for both next-barrier selection and
+ordered commit rather than scanning every NBA root. Staging marks both levels,
+and commit clears a root only after all of its pending event-region forms have
+been consumed. The same hierarchical shape is used for bytecode-to-AOT
+handoff: dynamic execution reports precise dirty roots in packed leaf and
+summary words, and actor/root dependencies limit handoff to affected compiled
+fragments.
 
 Timing sites likewise carry compiled policy metadata today. Constant delays
 select calendar sites, nonconstant delays select deadline slots, and

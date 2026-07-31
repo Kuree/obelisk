@@ -248,6 +248,13 @@ obelisk_rt_status aotCommitOneNBARoot(void *, obelisk_rt_context *context,
                                                outChanged);
 }
 
+obelisk_rt_status aotCommitAllNBARoots(void *, obelisk_rt_context *context,
+                                      uint32_t barrierRegion,
+                                      uint32_t *outChanged) {
+  return obelisk_rt_v1_static_nba_commit_roots(
+      context, context->nativeScheduleNBARootCount, barrierRegion, outChanged);
+}
+
 obelisk_rt_status runGuardedNBAOrdering(AOTTestState *state,
                                         obelisk_rt_context *context) {
   if (!state || !state->generatedNBA || !context ||
@@ -2530,6 +2537,68 @@ TEST(Scheduler, GeneratedNBADirtyHierarchySkipsEmptyLeafPages) {
                 context, rootCount, OBELISK_RT_REGION_NBA, &changed),
             OBELISK_RT_OK);
   EXPECT_EQ(changed, 1u);
+  EXPECT_EQ(valuePlane[8] & 1, 1u);
+  EXPECT_EQ(dirtyRoots[0], 0u);
+  EXPECT_EQ(dirtyRoots[1], 0u);
+  EXPECT_EQ(dirtySummary[0], 0u);
+  EXPECT_EQ(context->signalDiagnostics.aotNBACommits, 1u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, AOTControlSelectsNBABarrierFromDirtyHierarchy) {
+  constexpr uint32_t rootCount = 65;
+  AOTTestState state;
+  std::array<obelisk_rt_generated_nba_accumulator_256, rootCount> generated{};
+  std::array<obelisk_rt_static_nba_root, rootCount> roots{};
+  for (uint32_t root = 0; root != rootCount; ++root)
+    roots[root] = {root, root + 1, 1, &generated[root]};
+  std::array<uint8_t, 9> valuePlane{};
+  std::array<uint8_t, 9> unknownPlane{};
+  std::array<uint64_t, 2> dirtyRoots{0, 1};
+  std::array<uint64_t, 1> dirtySummary{uint64_t{1} << 1};
+  obelisk_rt_native_schedule_plan plan = makeAOTPlan(state, 1);
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
+               OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL |
+               OBELISK_RT_NATIVE_SCHEDULE_STATIC_NBA;
+  plan.state_value = valuePlane.data();
+  plan.state_unknown = unknownPlane.data();
+  plan.state_bit_count = rootCount;
+  plan.nba_roots = roots.data();
+  plan.nba_root_count = rootCount;
+  plan.nba_dirty_roots = dirtyRoots.data();
+  plan.nba_dirty_word_count = dirtyRoots.size();
+  plan.nba_dirty_summary = dirtySummary.data();
+  plan.nba_dirty_summary_word_count = dirtySummary.size();
+  plan.nba_commit = aotCommitAllNBARoots;
+  plan.run = aotRunWaitNodes;
+
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = rootCount;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  for (uint32_t root = 0; root != rootCount; ++root)
+    ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, root + 1,
+                                                         root, 1),
+              OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+
+  generated[64].value[0] = 1;
+  generated[64].write_mask[0] = 1;
+  generated[64].valid = 1;
+  generated[64].exec_region = OBELISK_RT_REGION_NBA;
+  SchedulerFixture fixture(1);
+  fixture.descriptor.execution = &execution;
+  schedulerWaitKind = OBELISK_RT_SUSPEND_DELAY;
+  schedulerResumeCount = 0;
+  schedulerOrder.clear();
+  ASSERT_EQ(
+      obelisk_rt_v1_scheduler_add_aot(context, makeSchedulerInstance(fixture),
+                                      0, 0, 0, nullptr, nullptr, 0, nullptr, 0),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot(context), OBELISK_RT_OK);
+  EXPECT_EQ(schedulerResumeCount, 1u);
   EXPECT_EQ(valuePlane[8] & 1, 1u);
   EXPECT_EQ(dirtyRoots[0], 0u);
   EXPECT_EQ(dirtyRoots[1], 0u);
