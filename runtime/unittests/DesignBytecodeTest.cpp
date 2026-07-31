@@ -1532,16 +1532,53 @@ TEST(DesignBytecode, RejectsMalformedActivationBytecodeInventory) {
   fixture.execution.activations = &activation;
   fixture.execution.activation_count = 1;
 
+#ifdef OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS
+  testing::internal::CaptureStderr();
+#endif
   EXPECT_EQ(
       obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
       OBELISK_RT_INVALID_DESIGN);
+#ifdef OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS
+  EXPECT_NE(testing::internal::GetCapturedStderr().find(
+                "activation bytecode function is out of range"),
+            std::string::npos);
+#endif
   EXPECT_EQ(context, nullptr);
 
   activation.bytecode_function = 0;
   activation.code_unit_id = 2;
+#ifdef OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS
+  testing::internal::CaptureStderr();
+#endif
   EXPECT_EQ(
       obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
       OBELISK_RT_INVALID_DESIGN);
+#ifdef OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS
+  EXPECT_NE(testing::internal::GetCapturedStderr().find(
+                "activation descriptor does not match bytecode function"),
+            std::string::npos);
+#endif
+  EXPECT_EQ(context, nullptr);
+}
+
+TEST(DesignBytecode, ReportsMalformedImageReason) {
+  Fixture fixture;
+  fixture.bytecode[0] ^= 1;
+
+#ifdef OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS
+  testing::internal::CaptureStderr();
+#endif
+  obelisk_rt_context *context = nullptr;
+  EXPECT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_INVALID_DESIGN);
+#ifdef OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS
+  const std::string diagnostic = testing::internal::GetCapturedStderr();
+  EXPECT_NE(diagnostic.find("invalid bytecode header identity, size, or "
+                            "checksum"),
+            std::string::npos);
+  EXPECT_NE(diagnostic.find("DesignBytecodeImage.cpp:"), std::string::npos);
+#endif
   EXPECT_EQ(context, nullptr);
 }
 
@@ -3158,8 +3195,8 @@ TEST(DesignBytecode, InitializationBitsetsCoverWordBoundariesAndCFGJoins) {
     fixture.entry = {&fixture.execution, 0, 0};
     uint64_t scratchSize = 0;
     uint64_t scratchAlignment = 0;
-    return obelisk_rt_validate_design_bytecode(
-        fixture.entry, nullptr, &scratchSize, &scratchAlignment);
+    return obelisk_rt_validate_design_bytecode(fixture.entry, nullptr,
+                                               &scratchSize, &scratchAlignment);
   };
 
   EXPECT_EQ(validate(makeInitializationBoundaryBytecode(false)), OBELISK_RT_OK);
@@ -3176,8 +3213,8 @@ TEST(DesignBytecode, ValidatesComparisonResultDomains) {
     fixture.execution.checksum = imageChecksum(fixture.bytecode);
     uint64_t scratchSize = 0;
     uint64_t scratchAlignment = 0;
-    return obelisk_rt_validate_design_bytecode(
-        fixture.entry, nullptr, &scratchSize, &scratchAlignment);
+    return obelisk_rt_validate_design_bytecode(fixture.entry, nullptr,
+                                               &scratchSize, &scratchAlignment);
   };
 
   EXPECT_EQ(validate(OBELISK_RT_DBREG_LOGIC, OBELISK_RT_DB_CMP_WILD_EQ),
@@ -3214,8 +3251,8 @@ TEST(DesignBytecode, ValidatesManagedAggregateExtractionBounds) {
     fixture.execution.checksum = imageChecksum(fixture.bytecode);
     uint64_t scratchSize = 0;
     uint64_t scratchAlignment = 0;
-    return obelisk_rt_validate_design_bytecode(
-        fixture.entry, nullptr, &scratchSize, &scratchAlignment);
+    return obelisk_rt_validate_design_bytecode(fixture.entry, nullptr,
+                                               &scratchSize, &scratchAlignment);
   };
 
   EXPECT_EQ(validate(64), OBELISK_RT_OK);

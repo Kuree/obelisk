@@ -32,6 +32,39 @@ constexpr uint64_t kContinuationSize = 24;
 constexpr uint64_t kIntrinsicSize = 16;
 constexpr uint64_t kConnectivitySize = 32;
 
+static bool rejectImage(unsigned line, const char *reason,
+                        uint64_t functionIndex = UINT64_MAX,
+                        uint64_t pc = UINT64_MAX,
+                        uint32_t opcode = UINT32_MAX) {
+#ifdef OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS
+  if (functionIndex == UINT64_MAX) {
+    std::fprintf(stderr,
+                 "obelisk-bytecode-validation: rejected image: %s "
+                 "(DesignBytecodeImage.cpp:%u)\n",
+                 reason, line);
+  } else if (pc == UINT64_MAX) {
+    std::fprintf(stderr,
+                 "obelisk-bytecode-validation: rejected image: %s; "
+                 "function=%llu (DesignBytecodeImage.cpp:%u)\n",
+                 reason, static_cast<unsigned long long>(functionIndex), line);
+  } else {
+    std::fprintf(stderr,
+                 "obelisk-bytecode-validation: rejected image: %s; "
+                 "function=%llu pc=%llu opcode=%u "
+                 "(DesignBytecodeImage.cpp:%u)\n",
+                 reason, static_cast<unsigned long long>(functionIndex),
+                 static_cast<unsigned long long>(pc), opcode, line);
+  }
+#else
+  (void)line;
+  (void)reason;
+  (void)functionIndex;
+  (void)pc;
+  (void)opcode;
+#endif
+  return false;
+}
+
 uint16_t read16(const uint8_t *data) {
   return uint16_t{data[0]} |
          static_cast<uint16_t>(static_cast<uint16_t>(data[1]) << 8);
@@ -88,7 +121,7 @@ bool decodeImageHeader(const obelisk_rt_design_bytecode_entry_v1 &entry,
       (execution->flags & OBELISK_RT_EXECUTION_HAS_BYTECODE) == 0 ||
       !execution->bytecode ||
       execution->bytecode_size < OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE)
-    return false;
+    return rejectImage(__LINE__, "invalid execution bytecode descriptor");
   const uint8_t *data = execution->bytecode;
   image = {data,
            execution->bytecode_size,
@@ -113,8 +146,9 @@ bool decodeImageHeader(const obelisk_rt_design_bytecode_entry_v1 &entry,
            read64(data + offsetof(BytecodeHeader, connectivity_offset)),
            read64(data + offsetof(BytecodeHeader, connectivity_count)),
            execution->state_bit_count};
-  return image.functionCount <= UINT32_MAX &&
-         entry.function < image.functionCount;
+  if (image.functionCount > UINT32_MAX || entry.function >= image.functionCount)
+    return rejectImage(__LINE__, "bytecode function index is out of range");
+  return true;
 }
 
 bool parseImage(const obelisk_rt_design_bytecode_entry_v1 &entry,
@@ -136,7 +170,8 @@ bool parseImage(const obelisk_rt_design_bytecode_entry_v1 &entry,
           execution->checksum ||
       read64(data + offsetof(BytecodeHeader, checksum)) !=
           imageChecksum(data, execution->bytecode_size))
-    return false;
+    return rejectImage(__LINE__,
+                       "invalid bytecode header identity, size, or checksum");
   if (read32(data + offsetof(BytecodeHeader, flags)) != 0 ||
       read64(data + offsetof(BytecodeHeader, tail_reserved)) != 0 ||
       !validRange(image.functions, image.functionCount, kFunctionSize,
@@ -156,7 +191,8 @@ bool parseImage(const obelisk_rt_design_bytecode_entry_v1 &entry,
                   image.size) ||
       !validRange(image.connectivity, image.connectivityCount,
                   kConnectivitySize, image.size))
-    return false;
+    return rejectImage(
+        __LINE__, "invalid bytecode header flags, ranges, or reserved data");
   uint64_t cursor = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
   auto canonicalTable = [&](uint64_t offset, uint64_t count, uint64_t stride) {
     if (cursor > UINT64_MAX - 7)
@@ -170,21 +206,21 @@ bool parseImage(const obelisk_rt_design_bytecode_entry_v1 &entry,
     cursor = offset + count * stride;
     return true;
   };
-  return canonicalTable(image.functions, image.functionCount, kFunctionSize) &&
-         canonicalTable(image.layouts, image.layoutCount, kLayoutSize) &&
-         canonicalTable(image.code, image.instructionCount, kInstructionSize) &&
-         canonicalTable(image.operands, image.operandCount, kOperandSize) &&
-         canonicalTable(image.constants, image.constantSize, 1) &&
-         canonicalTable(image.continuations, image.continuationCount,
-                        kContinuationSize) &&
-         canonicalTable(image.intrinsics, image.intrinsicCount,
-                        kIntrinsicSize) &&
-         canonicalTable(image.sites, image.siteCount, kIntrinsicSize) &&
-         canonicalTable(image.stateDescriptors, image.stateDescriptorCount,
-                        32) &&
-         canonicalTable(image.connectivity, image.connectivityCount,
-                        kConnectivitySize) &&
-         cursor == image.size;
+  if (!canonicalTable(image.functions, image.functionCount, kFunctionSize) ||
+      !canonicalTable(image.layouts, image.layoutCount, kLayoutSize) ||
+      !canonicalTable(image.code, image.instructionCount, kInstructionSize) ||
+      !canonicalTable(image.operands, image.operandCount, kOperandSize) ||
+      !canonicalTable(image.constants, image.constantSize, 1) ||
+      !canonicalTable(image.continuations, image.continuationCount,
+                      kContinuationSize) ||
+      !canonicalTable(image.intrinsics, image.intrinsicCount, kIntrinsicSize) ||
+      !canonicalTable(image.sites, image.siteCount, kIntrinsicSize) ||
+      !canonicalTable(image.stateDescriptors, image.stateDescriptorCount, 32) ||
+      !canonicalTable(image.connectivity, image.connectivityCount,
+                      kConnectivitySize) ||
+      cursor != image.size)
+    return rejectImage(__LINE__, "noncanonical bytecode table layout");
+  return true;
 }
 
 Function functionAt(const Image &image, uint32_t index) {
@@ -1204,34 +1240,7 @@ bool validateImage(const Image &image) {
   auto reject = [](unsigned line, const char *reason,
                    uint64_t functionIndex = UINT64_MAX,
                    uint64_t pc = UINT64_MAX, uint32_t opcode = UINT32_MAX) {
-#ifdef OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS
-    if (functionIndex == UINT64_MAX) {
-      std::fprintf(stderr,
-                   "obelisk-bytecode-validation: rejected image: %s "
-                   "(DesignBytecodeImage.cpp:%u)\n",
-                   reason, line);
-    } else if (pc == UINT64_MAX) {
-      std::fprintf(stderr,
-                   "obelisk-bytecode-validation: rejected image: %s; "
-                   "function=%llu (DesignBytecodeImage.cpp:%u)\n",
-                   reason, static_cast<unsigned long long>(functionIndex),
-                   line);
-    } else {
-      std::fprintf(stderr,
-                   "obelisk-bytecode-validation: rejected image: %s; "
-                   "function=%llu pc=%llu opcode=%u "
-                   "(DesignBytecodeImage.cpp:%u)\n",
-                   reason, static_cast<unsigned long long>(functionIndex),
-                   static_cast<unsigned long long>(pc), opcode, line);
-    }
-#else
-    (void)line;
-    (void)reason;
-    (void)functionIndex;
-    (void)pc;
-    (void)opcode;
-#endif
-    return false;
+    return rejectImage(line, reason, functionIndex, pc, opcode);
   };
 
   // State capture validation indexes argument layouts. Prove those ranges
@@ -2173,7 +2182,8 @@ bool loadValidatedImage(const obelisk_rt_design_bytecode_entry_v1 &entry,
         cached.size != entry.execution->bytecode_size ||
         cached.stateBitCount != entry.execution->state_bit_count ||
         entry.function >= cached.functionCount)
-      return false;
+      return rejectImage(__LINE__,
+                         "cached bytecode image does not match entry");
     image = cached;
     return true;
   }
@@ -2192,12 +2202,14 @@ static bool matchesActivationBytecodeInventory(
     if ((activation.flags & OBELISK_RT_ACTIVATION_HAS_BYTECODE) == 0)
       continue;
     if (activation.bytecode_function >= image.functionCount)
-      return false;
+      return rejectImage(__LINE__,
+                         "activation bytecode function is out of range");
     Function function = functionAt(image, activation.bytecode_function);
     if (function.id != activation.code_unit_id ||
         (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
         function.resultCount != 0)
-      return false;
+      return rejectImage(
+          __LINE__, "activation descriptor does not match bytecode function");
   }
   for (uint64_t index = 0; index != execution.observer_count; ++index) {
     const obelisk_rt_observer_descriptor_v1 &observer =
@@ -2205,13 +2217,15 @@ static bool matchesActivationBytecodeInventory(
     if (observer.bytecode_function == OBELISK_RT_OBSERVER_NO_BYTECODE)
       continue;
     if (observer.bytecode_function >= image.functionCount)
-      return false;
+      return rejectImage(__LINE__,
+                         "observer bytecode function is out of range");
     Function function = functionAt(image, observer.bytecode_function);
     if (function.id != observer.code_unit_id ||
         (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) != 0 ||
         function.resultCount != 1 ||
         function.argumentCount != observer.capture_count + 1)
-      return false;
+      return rejectImage(
+          __LINE__, "observer descriptor does not match bytecode function");
     Layout result = layoutAt(image, function, function.argumentCount);
     bool fourState = (observer.flags & OBELISK_RT_OBSERVER_FOUR_STATE) != 0;
     uint32_t expectedKind = (observer.flags & OBELISK_RT_OBSERVER_REAL32) != 0
@@ -2223,12 +2237,14 @@ static bool matchesActivationBytecodeInventory(
     if (layoutAt(image, function, 0).kind != OBELISK_RT_DBREG_HANDLE ||
         layoutAt(image, function, 0).size != 32 ||
         result.width != observer.result_width || result.kind != expectedKind)
-      return false;
+      return rejectImage(__LINE__,
+                         "observer layout does not match bytecode function");
     for (uint32_t capture = 0; capture != observer.capture_count; ++capture)
       if (layoutAt(image, function, capture + 1).kind !=
               OBELISK_RT_DBREG_HANDLE ||
           layoutAt(image, function, capture + 1).size != 32)
-        return false;
+        return rejectImage(__LINE__,
+                           "observer capture layout is not a 32-bit handle");
   }
   return true;
 }
@@ -2249,6 +2265,7 @@ obelisk_rt_status obelisk_rt_initialize_design_bytecode_image(
   } catch (const std::bad_alloc &) {
     return OBELISK_RT_OUT_OF_MEMORY;
   } catch (...) {
+    rejectImage(__LINE__, "exception while validating bytecode image");
     return OBELISK_RT_INVALID_DESIGN;
   }
 }
@@ -2270,6 +2287,7 @@ obelisk_rt_status obelisk_rt_validate_design_bytecode(
   } catch (const std::bad_alloc &) {
     return OBELISK_RT_OUT_OF_MEMORY;
   } catch (...) {
+    rejectImage(__LINE__, "exception while loading bytecode image");
     return OBELISK_RT_INVALID_BYTECODE;
   }
 }

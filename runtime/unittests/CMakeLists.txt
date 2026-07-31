@@ -35,6 +35,10 @@ target_include_directories(ObeliskRuntimeTests SYSTEM PRIVATE
   ${OBELISK_SLANG_SOURCE_DIR}/external/ieee1800
 )
 target_compile_features(ObeliskRuntimeTests PRIVATE cxx_std_17)
+if(OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS)
+  target_compile_definitions(ObeliskRuntimeTests PRIVATE
+    OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS=1)
+endif()
 set_target_properties(ObeliskRuntimeTests PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
 )
