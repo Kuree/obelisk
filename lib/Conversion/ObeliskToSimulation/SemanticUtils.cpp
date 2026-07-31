@@ -46,9 +46,10 @@ bool isSemanticOp(Operation *op) {
 }
 
 bool isCodeUnit(Operation *op) {
-  return isa<semantic::SVProceduralBlockSymbolOp,
-             semantic::SVContinuousAssignSymbolOp,
-             semantic::SVSubroutineSymbolOp>(op);
+  return isa<
+      semantic::SVProceduralBlockSymbolOp, semantic::SVContinuousAssignSymbolOp,
+      semantic::SVPrimitiveInstanceSymbolOp, semantic::SVSubroutineSymbolOp>(
+      op);
 }
 
 Location getSemanticLocation(Operation *op) {

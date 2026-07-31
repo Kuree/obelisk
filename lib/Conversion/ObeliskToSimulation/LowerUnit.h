@@ -173,6 +173,9 @@ private:
   ::mlir::LogicalResult
   lowerSequence(::mlir::ArrayRef<::mlir::Operation *> operations);
   ::mlir::LogicalResult
+  lowerPrimitive(::mlir::StringRef name,
+                 ::mlir::ArrayRef<::mlir::Operation *> operations);
+  ::mlir::LogicalResult
   lowerImmediateAssertion(semantic::SVImmediateAssertionStatementOp op);
   void emitDefaultAssertionFailure(::mlir::Location location);
   ::mlir::LogicalResult emitRuntimeFatal(::mlir::Location location,

@@ -66,6 +66,17 @@ module {
             }
           }
         }
+        // Synthetic units without elaborated time attributes inherit the
+        // scope scale and must not force the old 1ns fallback.
+        obelisk.sv.symbol.procedural_block attributes {
+          hierarchical_name = "top",
+          node_id = 8 : i64,
+          procedure_kind = 0 : i32,
+          sym_name = "s8"
+        } {
+          obelisk.sv.statement.empty attributes {node_id = 9 : i64} {
+          }
+        }
       }
     }
   }

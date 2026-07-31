@@ -14,8 +14,10 @@ module {
     obelisk_sim.code_unit.decl 9000010 in 0 observer hierarchy "test.threading.observer.9000010"
     obelisk_sim.code_unit.decl 9000011 in 0 initial hierarchy "test.threading.observer_lifetime.9000011"
     obelisk_sim.code_unit.decl 9000012 in 0 initial hierarchy "test.threading.observer_nondominating_capture.9000012"
+    obelisk_sim.code_unit.decl 9000013 in 0 always hierarchy "test.threading.loop_constant_expression.9000013"
     obelisk_sim.scope.decl 0
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<8> design
+    obelisk_sim.storage.decl 1 in 0 : !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>> design
 
     obelisk_sim.func private @observer(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %ref: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 2 : i32}) -> i1 attributes {entry_kind = 14 : i32, code_unit_id = 9000010 : i64} {
       %value = obelisk_sim.ref.load %ref : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
@@ -178,6 +180,27 @@ module {
     ^resume:
       obelisk_sim.display %ctx to %fd(%message) newline = true radix = 10 flags = [0] : !obelisk_sim.bytes
       obelisk_sim.return
+    }
+
+    // A suspension operand derived from a constant is still ordinary SSA.
+    // When the continuation loops back to the suspending block, merge the
+    // restored value with the entry value instead of reusing cleared scratch.
+    // CHECK-LABEL: obelisk_sim.func @loop_constant_expression
+    // CHECK: %[[DERIVED:.*]] = obelisk_sim.packed.unflatten
+    // CHECK: cf.br ^[[WAIT:.*]](%[[DERIVED]] : !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>)
+    // CHECK: ^[[WAIT]](%[[CURRENT:.*]]: !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>):
+    // CHECK: obelisk_sim.suspend.change %{{.*}} to ^[[BODY:.*]](%[[CURRENT]] : !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>)
+    // CHECK: ^[[BODY]](%[[RESTORED:.*]]: !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>):
+    // CHECK: cf.br ^[[WAIT]](%[[RESTORED]] : !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>)
+    obelisk_sim.func @loop_constant_expression(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %ref: !obelisk_sim.ref<!obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64}) attributes {entry_kind = 3 : i32, code_unit_id = 9000013 : i64} {
+      %bits = obelisk_sim.logic.constant 1 : i8, 0 : i8 : !obelisk_sim.logic<8>
+      %derived = obelisk_sim.packed.unflatten %bits : (!obelisk_sim.logic<8>) -> !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>
+      cf.br ^wait
+    ^wait:
+      obelisk_sim.suspend.change %ref to ^body : !obelisk_sim.ref<!obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>>
+    ^body:
+      obelisk_sim.ref.store %derived to %ref : !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>, !obelisk_sim.ref<!obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>>
+      cf.br ^wait
     }
 
     // A value restored on one path must continue through a downstream merge.

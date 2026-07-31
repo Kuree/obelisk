@@ -144,6 +144,15 @@ public:
     Block &entry = function.getBody().front();
     DenseMap<Block *, DenseMap<Value, BlockArgument>> threadedValues;
     DenseMap<Value, Value> threadedRoots;
+    DenseMap<Block *, DenseSet<Value>> suspensionReentryRoots;
+    auto markSuspensionReentry = [&](Operation *suspension, Block *continuation,
+                                     Value root) {
+      for (Block *predecessor : suspension->getBlock()->getPredecessors())
+        if (dominance.dominates(continuation, predecessor)) {
+          suspensionReentryRoots[suspension->getBlock()].insert(root);
+          break;
+        }
+    };
 
     // Lowering may have already made some values explicit on a suspension
     // edge. Record those lanes before discovering additional live values.
@@ -168,6 +177,7 @@ public:
         Value root = threadedRoots.lookup(value);
         if (!root)
           root = value;
+        markSuspensionReentry(suspension, continuation, root);
         threadedValues[continuation].try_emplace(root, argument);
         threadedRoots.try_emplace(argument, root);
         value.replaceUsesWithIf(argument, [&](OpOperand &use) {
@@ -244,6 +254,7 @@ public:
         Value root = threadedRoots.lookup(value);
         if (!root)
           root = value;
+        markSuspensionReentry(suspension, continuation, root);
         threadedValues[continuation].try_emplace(root, threaded);
         threadedRoots.try_emplace(threaded, root);
         for (IncomingEdge &incoming : incomingEdges)
@@ -279,7 +290,7 @@ public:
             Value root = threadedRoots.lookup(value);
             if (!root)
               root = value;
-            bool suspensionLive = threadedRoots.count(value) != 0;
+            bool suspensionLive = suspensionReentryRoots[&block].contains(root);
             for (Block *predecessor : block.getPredecessors())
               suspensionLive |= threadedValues[predecessor].count(root) != 0;
             if (suspensionLive)

@@ -405,7 +405,8 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
   };
   for (Operation *unit : sourceUnits) {
     bool continuous =
-        isa<semantic::SVContinuousAssignSymbolOp, semantic::SVNetSymbolOp>(
+        isa<semantic::SVContinuousAssignSymbolOp,
+            semantic::SVPrimitiveInstanceSymbolOp, semantic::SVNetSymbolOp>(
             unit);
     auto connection = dyn_cast<semantic::SVPortConnectionOp>(unit);
     if (!continuous && !connection)
@@ -456,6 +457,22 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
       }
       sinks.push_back({target->second, 0, *width, getHierarchyName(net).str(),
                        std::nullopt});
+    } else if (isa<semantic::SVPrimitiveInstanceSymbolOp>(unit)) {
+      for (Operation *root : getChildren(unit)) {
+        auto assignment = dyn_cast<semantic::SVAssignmentExpressionOp>(root);
+        if (!assignment)
+          break;
+        SmallVector<Operation *> children = getChildren(assignment);
+        if (children.empty()) {
+          emitError(getSemanticLocation(unit))
+              << "primitive output has no resolved assignment lvalue";
+          invalid = true;
+          break;
+        }
+        collectDriverRuns(children.front(), sinks);
+      }
+      if (invalid)
+        continue;
     } else {
       Operation *assignmentRoot = nullptr;
       if (connection) {

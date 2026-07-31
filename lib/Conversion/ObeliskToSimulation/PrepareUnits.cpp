@@ -60,7 +60,8 @@ static FailureOr<sim::EntryKind> getEntryKind(Operation *op) {
         << "non-static inout and ref port connections cannot be spawned";
     return failure();
   }
-  if (isa<semantic::SVContinuousAssignSymbolOp>(op))
+  if (isa<semantic::SVContinuousAssignSymbolOp,
+          semantic::SVPrimitiveInstanceSymbolOp>(op))
     return sim::EntryKind::Continuous;
   if (auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(op))
     return !subroutine.getIsDpiImport().value_or(false) &&

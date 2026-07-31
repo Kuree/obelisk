@@ -999,6 +999,7 @@ private:
 
     if constexpr (std::same_as<T, slang::ast::ProceduralBlockSymbol> ||
                   std::same_as<T, slang::ast::ContinuousAssignSymbol> ||
+                  std::same_as<T, slang::ast::PrimitiveInstanceSymbol> ||
                   std::same_as<T, slang::ast::SubroutineSymbol>) {
       slang::TimeScale scale;
       if (const slang::ast::Scope *scope = node.getParentScope())
@@ -1008,6 +1009,10 @@ private:
       attrs.set("time_precision_fs",
                 builder.getI64IntegerAttr(getFemtoseconds(scale.precision)));
     }
+
+    if constexpr (std::same_as<T, slang::ast::PrimitiveInstanceSymbol>)
+      attrs.set("primitive_name",
+                builder.getStringAttr(node.primitiveType.name));
 
     if constexpr (std::derived_from<T, slang::ast::VariableSymbol>) {
       SET_OP_ATTR(Lifetime,

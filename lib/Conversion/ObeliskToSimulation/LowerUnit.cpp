@@ -1408,6 +1408,134 @@ LogicalResult UnitLowering::lowerSequence(ArrayRef<Operation *> operations) {
       return failure();
   return success();
 }
+
+LogicalResult UnitLowering::lowerPrimitive(StringRef name,
+                                           ArrayRef<Operation *> operations) {
+  Location location = function.getLoc();
+  SmallVector<Operation *> outputs;
+  size_t inputStart = 0;
+  while (inputStart < operations.size()) {
+    auto assignment =
+        dyn_cast<semantic::SVAssignmentExpressionOp>(operations[inputStart]);
+    if (!assignment)
+      break;
+    SmallVector<Operation *> children = getChildren(assignment);
+    if (children.empty())
+      return emitError(getSemanticLocation(assignment))
+             << "primitive output has no assignment lvalue";
+    outputs.push_back(children.front());
+    ++inputStart;
+  }
+  if (outputs.empty())
+    return emitError(location) << "primitive has no output";
+
+  bool multipleOutputs = name == "buf" || name == "not";
+  if (!multipleOutputs && outputs.size() != 1)
+    return emitError(location)
+           << "primitive '" << name << "' requires exactly one output";
+  ArrayRef<Operation *> inputs = operations.drop_front(inputStart);
+  FailureOr<Type> outputType = getNormalizedSemanticType(outputs.front());
+  if (failed(outputType))
+    return failure();
+  Type scalarType = sim::getPackedScalarType(*outputType);
+  auto logicType = dyn_cast_or_null<sim::LogicType>(scalarType);
+  if (!logicType)
+    return emitError(location)
+           << "primitive output is not four-state packed data";
+
+  auto lowerInput = [&](Operation *input,
+                        Type target = Type{}) -> FailureOr<Value> {
+    FailureOr<Value> lowered = lowerExpression(input);
+    if (failed(lowered))
+      return failure();
+    FailureOr<Value> converted =
+        convert(*lowered, target ? target : *outputType, isSignedNode(input),
+                getSemanticLocation(input));
+    if (failed(converted))
+      return failure();
+    FailureOr<Value> scalar =
+        toPackedScalar(*converted, getSemanticLocation(input));
+    if (failed(scalar))
+      return failure();
+    return toLogic(*scalar, getSemanticLocation(input));
+  };
+
+  Value result;
+  if (name == "and" || name == "nand" || name == "or" || name == "nor" ||
+      name == "xor" || name == "xnor") {
+    if (inputs.empty())
+      return emitError(location)
+             << "primitive '" << name << "' requires at least one input";
+    FailureOr<Value> first = lowerInput(inputs.front());
+    if (failed(first))
+      return failure();
+    result = *first;
+    sim::BinaryKind kind =
+        (name == "and" || name == "nand") ? sim::BinaryKind::And
+        : (name == "or" || name == "nor") ? sim::BinaryKind::Or
+                                          : sim::BinaryKind::Xor;
+    for (Operation *input : inputs.drop_front()) {
+      FailureOr<Value> next = lowerInput(input);
+      if (failed(next))
+        return failure();
+      result = sim::SimLogicBinaryOp::create(builder, location, logicType, kind,
+                                             result, *next);
+    }
+    if (name == "nand" || name == "nor" || name == "xnor")
+      result = sim::SimLogicUnaryOp::create(builder, location, logicType,
+                                            sim::UnaryKind::BitNot, result);
+  } else if (name == "buf" || name == "not") {
+    if (inputs.size() != 1)
+      return emitError(location)
+             << "primitive '" << name << "' requires exactly one input";
+    FailureOr<Value> input = lowerInput(inputs.front());
+    if (failed(input))
+      return failure();
+    result = *input;
+    if (name == "not")
+      result = sim::SimLogicUnaryOp::create(builder, location, logicType,
+                                            sim::UnaryKind::BitNot, result);
+  } else if (name == "bufif0" || name == "bufif1" || name == "notif0" ||
+             name == "notif1") {
+    if (inputs.size() != 2)
+      return emitError(location)
+             << "primitive '" << name << "' requires data and control inputs";
+    FailureOr<Value> data = lowerInput(inputs[0]);
+    FailureOr<Value> control =
+        lowerInput(inputs[1], sim::LogicType::get(function.getContext(), 1));
+    if (failed(data) || failed(control))
+      return failure();
+    Value driven = *data;
+    if (name.starts_with("not"))
+      driven = sim::SimLogicUnaryOp::create(builder, location, logicType,
+                                            sim::UnaryKind::BitNot, driven);
+    auto planeType =
+        IntegerType::get(function.getContext(), logicType.getWidth());
+    APInt highZ = APInt::getAllOnes(logicType.getWidth());
+    Value disabled = sim::SimLogicConstantOp::create(
+        builder, location, logicType, builder.getIntegerAttr(planeType, highZ),
+        builder.getIntegerAttr(planeType, highZ));
+    bool activeHigh = name.ends_with("1");
+    result =
+        activeHigh
+            ? Value(sim::SimLogicMuxOp::create(builder, location, logicType,
+                                               *control, driven, disabled))
+            : Value(sim::SimLogicMuxOp::create(builder, location, logicType,
+                                               *control, disabled, driven));
+  } else {
+    return emitError(location)
+           << "unsupported built-in primitive '" << name << "'";
+  }
+
+  FailureOr<Value> converted = convert(result, *outputType, false, location);
+  if (failed(converted))
+    return failure();
+  for (Operation *output : outputs)
+    if (failed(writeLValue(output, *converted, false, false,
+                           getSemanticLocation(output))))
+      return failure();
+  return success();
+}
 LogicalResult UnitLowering::lowerStatement(Operation *op) {
   SmallVector<Operation *> children = getChildren(op);
   Location location = getSemanticLocation(op);
@@ -1826,7 +1954,10 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     emitBranch(loopHeader);
     setCurrent(loopHeader);
   }
-  if (failed(lowerSequence(roots)))
+  auto primitive =
+      function->getAttrOfType<StringAttr>("obelisk_sim.primitive_name");
+  if (failed(primitive ? lowerPrimitive(primitive.getValue(), roots)
+                       : lowerSequence(roots)))
     return failure();
   if (!current->empty() && current->back().hasTrait<OpTrait::IsTerminator>())
     return success();

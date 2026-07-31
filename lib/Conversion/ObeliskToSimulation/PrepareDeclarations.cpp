@@ -375,18 +375,27 @@ FailureOr<PreparedScopeDeclarations> materializeScopeDeclarations(
     uint64_t scopeID = result.lookup(unit);
     if (scopeID >= result.declarations.size())
       continue;
-    uint64_t unitFs = 1'000'000;
-    uint64_t precisionFs = 1'000'000;
-    if (auto attr = unit->getAttrOfType<IntegerAttr>("time_unit_fs"))
-      unitFs = attr.getValue().getZExtValue();
-    if (auto attr = unit->getAttrOfType<IntegerAttr>("time_precision_fs"))
-      precisionFs = attr.getValue().getZExtValue();
+    auto unitAttr = unit->getAttrOfType<IntegerAttr>("time_unit_fs");
+    auto precisionAttr = unit->getAttrOfType<IntegerAttr>("time_precision_fs");
+    if (bool(unitAttr) != bool(precisionAttr)) {
+      emitError(getSemanticLocation(unit))
+          << "elaborated time scale must specify both unit and precision";
+      invalid = true;
+      continue;
+    }
+    // Synthetic units inherit their containing scope's time scale. Leaving
+    // both fields unset here lets a real elaborated declaration establish it,
+    // independent of traversal order.
+    if (!unitAttr && !precisionAttr)
+      continue;
+    uint64_t unitFs = unitAttr.getValue().getZExtValue();
+    uint64_t precisionFs = precisionAttr.getValue().getZExtValue();
     sim::SimScopeDeclOp declaration = result.declarations[scopeID];
     if (auto existing =
             declaration->getAttrOfType<IntegerAttr>("dpi_unit_femtoseconds");
         existing && existing.getValue().getZExtValue() != unitFs) {
       emitError(getSemanticLocation(unit))
-          << "DPI declaration scope has inconsistent time units";
+          << "simulation scope has inconsistent time units";
       invalid = true;
       continue;
     }
@@ -394,7 +403,7 @@ FailureOr<PreparedScopeDeclarations> materializeScopeDeclarations(
             "dpi_precision_femtoseconds");
         existing && existing.getValue().getZExtValue() != precisionFs) {
       emitError(getSemanticLocation(unit))
-          << "DPI declaration scope has inconsistent time precisions";
+          << "simulation scope has inconsistent time precisions";
       invalid = true;
       continue;
     }

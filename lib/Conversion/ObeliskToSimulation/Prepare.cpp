@@ -210,11 +210,13 @@ void ObeliskSimPreparePass::runOnOperation() {
       invalid = true;
       continue;
     }
-    std::optional<uint64_t> unitFsValue =
-        timeUnit ? getUnsigned64(timeUnit) : std::optional<uint64_t>(1'000'000);
-    std::optional<uint64_t> precisionFsValue =
-        timePrecision ? getUnsigned64(timePrecision)
-                      : std::optional<uint64_t>(1'000'000);
+    // Synthetic code units do not carry an elaborated time scale. They must
+    // not introduce a 1ns precision into a design whose actual declarations
+    // use a different precision.
+    if (!timeUnit)
+      continue;
+    std::optional<uint64_t> unitFsValue = getUnsigned64(timeUnit);
+    std::optional<uint64_t> precisionFsValue = getUnsigned64(timePrecision);
     if (!unitFsValue || !precisionFsValue) {
       emitError(getSemanticLocation(unit))
           << "elaborated time scale does not fit an unsigned 64-bit value";
@@ -861,8 +863,19 @@ void ObeliskSimPreparePass::runOnOperation() {
     FunctionType type = FunctionType::get(context, inputs, results);
     NamedAttribute bindingAttr =
         builder.getNamedAttr(bindingsAttrName, builder.getArrayAttr(bindings));
-    uint64_t timeUnitFs = 1'000'000;
-    uint64_t timePrecisionFs = 1'000'000;
+    uint64_t timeUnitFs = designPrecisionFs;
+    uint64_t timePrecisionFs = designPrecisionFs;
+    uint64_t scopeID = getScopeId(unit.source);
+    if (scopeID < scopes->declarations.size()) {
+      sim::SimScopeDeclOp scope = scopes->declarations[scopeID];
+      timeUnitFs = scope->getAttrOfType<IntegerAttr>("dpi_unit_femtoseconds")
+                       .getValue()
+                       .getZExtValue();
+      timePrecisionFs =
+          scope->getAttrOfType<IntegerAttr>("dpi_precision_femtoseconds")
+              .getValue()
+              .getZExtValue();
+    }
     if (auto attr = unit.source->getAttrOfType<IntegerAttr>("time_unit_fs")) {
       std::optional<uint64_t> value = getUnsigned64(attr);
       if (!value) {
@@ -1046,6 +1059,10 @@ void ObeliskSimPreparePass::runOnOperation() {
     if (isa<semantic::SVPortConnectionOp>(unit.source))
       functionAttrs.push_back(
           builder.getNamedAttr("internal", builder.getUnitAttr()));
+    if (auto primitive =
+            unit.source->getAttrOfType<StringAttr>("primitive_name"))
+      functionAttrs.push_back(
+          builder.getNamedAttr("obelisk_sim.primitive_name", primitive));
     StringRef hierarchy = isa<semantic::SVPortConnectionOp>(unit.source)
                               ? getHierarchyName(unit.source->getParentOp())
                               : getHierarchyName(unit.source);
