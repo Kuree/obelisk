@@ -6,6 +6,8 @@ project(obelisk
   LANGUAGES C CXX)
 
 option(OBELISK_INCLUDE_TESTS "Build the Obelisk test suites" ON)
+option(OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS
+  "Report failed bytecode image validation checks" OFF)
 
 #===------------------------------------------------------------------------===
 # Toolchain: a CMake-managed prebuilt LLVM + MLIR release SDK.

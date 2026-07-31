@@ -157,6 +157,11 @@ file(GLOB_RECURSE _obelisk_target_runtime_headers CONFIGURE_DEPENDS
   "${_obelisk_runtime_source_dir}/lib/*.h")
 set(_obelisk_target_runtime_objects)
 set(_obelisk_target_runtime_lto_objects)
+set(_obelisk_target_runtime_definitions)
+if(OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS)
+  list(APPEND _obelisk_target_runtime_definitions
+    -DOBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS=1)
+endif()
 foreach(source ABI Bytecode Containers Coverage DesignBytecode
                DesignBytecodeImage DesignBytecodeIntrinsics
                DesignBytecodeLogic DesignBytecodeNets DesignBytecodeObservers
@@ -176,6 +181,7 @@ foreach(source ABI Bytecode Containers Coverage DesignBytecode
       --target=${OBELISK_TARGET_TRIPLE}
       --sysroot=${OBELISK_TARGET_SYSROOT}
       -std=c++17 -O3 -fPIC -fvisibility=hidden
+      ${_obelisk_target_runtime_definitions}
       -ffunction-sections -fdata-sections
       "-ffile-prefix-map=${_obelisk_runtime_source_dir}=/obelisk/runtime"
       "-fmacro-prefix-map=${_obelisk_runtime_source_dir}=/obelisk/runtime"
@@ -190,6 +196,7 @@ foreach(source ABI Bytecode Containers Coverage DesignBytecode
       --target=${OBELISK_TARGET_TRIPLE}
       --sysroot=${OBELISK_TARGET_SYSROOT}
       -std=c++17 -O3 -flto=full -funified-lto -fPIC -fvisibility=hidden
+      ${_obelisk_target_runtime_definitions}
       -ffunction-sections -fdata-sections
       "-ffile-prefix-map=${_obelisk_runtime_source_dir}=/obelisk/runtime"
       "-fmacro-prefix-map=${_obelisk_runtime_source_dir}=/obelisk/runtime"

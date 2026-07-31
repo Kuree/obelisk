@@ -39,6 +39,10 @@ target_include_directories(obelisk_rt
 
 target_compile_features(obelisk_rt PUBLIC cxx_std_17)
 target_link_libraries(obelisk_rt PUBLIC Threads::Threads)
+if(OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS)
+  target_compile_definitions(obelisk_rt PRIVATE
+    OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS=1)
+endif()
 set_target_properties(obelisk_rt PROPERTIES
   OUTPUT_NAME obelisk_rt
   POSITION_INDEPENDENT_CODE ON
