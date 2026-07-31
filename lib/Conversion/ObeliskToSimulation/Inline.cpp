@@ -8,6 +8,7 @@
 #include "mlir/Analysis/CallGraph.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Pass/PassManager.h"
@@ -117,6 +118,9 @@ public:
 private:
   Statistic considered{this, "considered", "direct calls considered"};
   Statistic inlined{this, "inlined", "calls selected and inlined"};
+  Statistic emptyTasksEliminated{
+      this, "empty-tasks-eliminated",
+      "effect-free task transfers replaced by direct continuations"};
   Statistic legalityRejected{this, "legality-rejected",
                              "calls rejected by simulation legality"};
   Statistic unprofitable{this, "unprofitable",
@@ -133,6 +137,32 @@ void ObeliskSimInlinePass::runOnOperation() {
   }
   if (optLevel == 0)
     return;
+
+  // A task call is a scheduler boundary, so MLIR's ordinary call inliner does
+  // not see it.  An empty task has no activation state or effects to preserve:
+  // transfer directly to the caller continuation before compute-graph
+  // construction.  This also keeps harmless assertion stubs from forcing an
+  // otherwise native actor through bytecode scheduling.
+  SymbolTable symbols(design);
+  SmallVector<sim::SimTaskCallOp> emptyTaskCalls;
+  design.walk([&](sim::SimTaskCallOp call) {
+    sim::SimFuncOp callee = symbols.lookup<sim::SimFuncOp>(call.getCallee());
+    if (!callee || callee.isExternal() ||
+        callee.getEntryKind() != sim::EntryKind::Task ||
+        callee.getBody().getBlocks().size() != 1)
+      return;
+    Block &entry = callee.getBody().front();
+    if (entry.getOperations().size() == 1 &&
+        isa<sim::SimReturnOp>(entry.getTerminator()))
+      emptyTaskCalls.push_back(call);
+  });
+  for (sim::SimTaskCallOp call : emptyTaskCalls) {
+    OpBuilder builder(call);
+    cf::BranchOp::create(builder, call.getLoc(), call.getContinuation(),
+                         call.getContinuationOperands());
+    call.erase();
+    ++emptyTasksEliminated;
+  }
 
   InlinePreset preset = getPreset(optLevel);
   auto overrideValue = [](int64_t option, uint64_t &value) {
