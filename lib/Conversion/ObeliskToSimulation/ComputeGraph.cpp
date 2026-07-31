@@ -143,6 +143,42 @@ bool effectLess(const ComputeEffect &lhs, const ComputeEffect &rhs) {
 void normalizeEffects(SmallVectorImpl<ComputeEffect> &effects) {
   llvm::sort(effects, effectLess);
   effects.erase(std::unique(effects.begin(), effects.end()), effects.end());
+  if (effects.size() < 2)
+    return;
+
+  // The frontend commonly lowers packed assignments into one operation per
+  // bit.  Keep source ordering where it matters (NBA journals and triggers),
+  // but represent ordinary dependency/publication effects as maximal ranges.
+  // Graph aliasing is range based, so this preserves all conflicts while
+  // avoiding 32 or 64 copies of the same edge and downstream fanout work.
+  auto compatible = [](const ComputeEffect &left,
+                       const ComputeEffect &right) {
+    const DescriptorProvenance &lhs = left.target;
+    const DescriptorProvenance &rhs = right.target;
+    return left.kind == right.kind &&
+           left.kind != sim::ComputeEffectKind::NBA &&
+           left.kind != sim::ComputeEffectKind::Trigger &&
+           left.trigger == right.trigger && left.deferred == right.deferred &&
+           lhs.resource == rhs.resource && lhs.descriptor == rhs.descriptor &&
+           lhs.formal == rhs.formal && lhs.rootWidth == rhs.rootWidth &&
+           !lhs.dynamic && !rhs.dynamic && lhs.width != 0 && rhs.width != 0 &&
+           lhs.low <= std::numeric_limits<uint64_t>::max() - lhs.width &&
+           rhs.low <= std::numeric_limits<uint64_t>::max() - rhs.width &&
+           rhs.low <= lhs.low + lhs.width;
+  };
+  SmallVector<ComputeEffect> coalesced;
+  coalesced.reserve(effects.size());
+  for (const ComputeEffect &effect : effects) {
+    if (!coalesced.empty() && compatible(coalesced.back(), effect)) {
+      DescriptorProvenance &range = coalesced.back().target;
+      uint64_t end = std::max(range.low + range.width,
+                              effect.target.low + effect.target.width);
+      range.width = end - range.low;
+      continue;
+    }
+    coalesced.push_back(effect);
+  }
+  effects.assign(coalesced.begin(), coalesced.end());
 }
 
 /// Effects that publish a new value in the active region. NBA staging and
