@@ -7398,7 +7398,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_run_aot_nodes(
         uint64_t after = ready & afterMask;
         if (after != 0)
           selectedNode = static_cast<uint32_t>(__builtin_ctzll(after));
-        readyBeforeCursor = (ready & ~afterMask) != 0;
+        else
+          readyBeforeCursor = (ready & ~afterMask) != 0;
       } else {
         uint32_t cursorWord = nodeCursor / 64;
         uint32_t cursorBit = nodeCursor % 64;
@@ -7414,16 +7415,21 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_run_aot_nodes(
               wordIndex * 64 + static_cast<uint32_t>(__builtin_ctzll(word));
           break;
         }
-        for (uint32_t wordIndex = 0;
-             wordIndex <= cursorWord &&
-             wordIndex < context->nativeScheduleReadyNodes.size();
-             ++wordIndex) {
-          uint64_t word = context->nativeScheduleReadyNodes[wordIndex];
-          if (wordIndex == cursorWord && cursorBit != 0)
-            word &= (uint64_t{1} << cursorBit) - 1;
-          if (word != 0) {
-            readyBeforeCursor = true;
-            break;
+        // A lower-order ready node matters only after this pass exhausts the
+        // suffix at or above nodeCursor. Do not rescan the already-visited
+        // prefix for every selected fragment in a coarse graph pass.
+        if (selectedNode == UINT32_MAX) {
+          for (uint32_t wordIndex = 0;
+               wordIndex <= cursorWord &&
+               wordIndex < context->nativeScheduleReadyNodes.size();
+               ++wordIndex) {
+            uint64_t word = context->nativeScheduleReadyNodes[wordIndex];
+            if (wordIndex == cursorWord && cursorBit != 0)
+              word &= (uint64_t{1} << cursorBit) - 1;
+            if (word != 0) {
+              readyBeforeCursor = true;
+              break;
+            }
           }
         }
       }
