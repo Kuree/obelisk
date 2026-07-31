@@ -83,11 +83,37 @@ public:
     std::optional<DirectStaticStateRange> directRange =
         resolveDirectStaticStateRange(adaptor.getReference().front(), *width,
                                       directLayout);
+    bool needsNotification = true;
+    // Exact fanout proves that an absent root has no language-level waiter.
+    // Direct roots are also immune to external writes (VPI-off/read), while a
+    // guarded VPI-full root may elide observers only in its clean fast body.
+    if (directLayout && directLayout->transitionHandlesExact)
+      if (directRange && (assumeClean || !directRange->guarded))
+        needsNotification =
+            directLayout->transitionHandles.contains(directRange->staticID);
     Value guardedPermission;
     if (directRange && directRange->guarded && !assumeClean)
       guardedPermission = staticSpecializationGuard(
           rewriter, op.getLoc(), directRange->staticID,
           OBELISK_RT_STATIC_ROOT_READ | OBELISK_RT_STATIC_ROOT_WRITE);
+    Value storedValue = adaptor.getValue().front();
+    if (isa<FloatType>(valueType))
+      storedValue =
+          arith::BitcastOp::create(rewriter, op.getLoc(), plane, storedValue);
+    if (!needsNotification) {
+      (void)storeStatePlane(
+          rewriter, op.getLoc(), adaptor.getReference().front(), storedValue,
+          "__obelisk_state_value", stateBitCount, directLayout,
+          guardedPermission, assumeClean, /*trackChange=*/false);
+      if (adaptor.getValue().size() == 2)
+        (void)storeStatePlane(
+            rewriter, op.getLoc(), adaptor.getReference().front(),
+            adaptor.getValue()[1], "__obelisk_state_unknown", stateBitCount,
+            directLayout, guardedPermission, assumeClean,
+            /*trackChange=*/false);
+      rewriter.eraseOp(op);
+      return success();
+    }
     Value oldValue =
         loadStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
                        plane, "__obelisk_state_value", false, stateBitCount,
@@ -98,10 +124,6 @@ public:
           loadStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
                          plane, "__obelisk_state_unknown", true, stateBitCount,
                          directLayout, guardedPermission, assumeClean);
-    Value storedValue = adaptor.getValue().front();
-    if (isa<FloatType>(valueType))
-      storedValue =
-          arith::BitcastOp::create(rewriter, op.getLoc(), plane, storedValue);
     Value notificationValue = storedValue;
     if (isa<sim::StringType>(valueType)) {
       Value comparison =
@@ -129,18 +151,6 @@ public:
                           stateBitCount, directLayout, guardedPermission,
                           assumeClean));
     (void)changed;
-    bool needsNotification = true;
-    // Exact fanout proves that an absent root has no language-level waiter.
-    // Direct roots are also immune to external writes (VPI-off/read), while a
-    // guarded VPI-full root may elide observers only in its clean fast body.
-    if (directLayout && directLayout->transitionHandlesExact)
-      if (directRange && (assumeClean || !directRange->guarded))
-        needsNotification =
-            directLayout->transitionHandles.contains(directRange->staticID);
-    if (!needsNotification) {
-      rewriter.eraseOp(op);
-      return success();
-    }
     if (isa<FloatType>(valueType)) {
       Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
       auto save = [&](Value value) {

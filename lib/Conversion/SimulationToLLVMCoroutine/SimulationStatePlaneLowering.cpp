@@ -134,7 +134,8 @@ Value extractDirectPackedPlane(OpBuilder &builder, Location location,
 }
 
 Value storeDirectPackedPlane(OpBuilder &builder, Location location, Value input,
-                             StringRef globalName, uint64_t bitOffset) {
+                             StringRef globalName, uint64_t bitOffset,
+                             bool trackChange) {
   IntegerType inputType = cast<IntegerType>(input.getType());
   DirectPackedPlane plane = loadDirectPackedPlane(
       builder, location, globalName, bitOffset, inputType.getWidth());
@@ -165,6 +166,8 @@ Value storeDirectPackedPlane(OpBuilder &builder, Location location, Value input,
       builder, location, preserved,
       arith::AndIOp::create(builder, location, extended, mask));
   LLVM::StoreOp::create(builder, location, updated, plane.address, 1);
+  if (!trackChange)
+    return llvmConstant(builder, location, builder.getI1Type(), 0);
   Value old = extractDirectPackedPlane(builder, location, plane, inputType);
   return arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne, old,
                                input);
@@ -256,13 +259,14 @@ Value storeStatePlane(ConversionPatternRewriter &rewriter, Location location,
                       Value handle, Value input, StringRef globalName,
                       uint64_t stateBitCount,
                       const NativeStateLayout *directLayout,
-                      Value guardedPermission, bool assumeClean) {
+                      Value guardedPermission, bool assumeClean,
+                      bool trackChange) {
   IntegerType inputType = cast<IntegerType>(input.getType());
   std::optional<DirectStaticStateRange> range =
       resolveDirectStaticStateRange(handle, inputType.getWidth(), directLayout);
   if (range && (!range->guarded || assumeClean))
     return storeDirectPackedPlane(rewriter, location, input, globalName,
-                                  range->offset);
+                                  range->offset, trackChange);
 
   auto emitGeneric = [&]() -> Value {
     Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
@@ -321,8 +325,8 @@ Value storeStatePlane(ConversionPatternRewriter &rewriter, Location location,
                                           genericBlock, ValueRange{}));
 
   rewriter.setInsertionPointToEnd(directBlock);
-  Value directChanged = storeDirectPackedPlane(rewriter, location, input,
-                                               globalName, range->offset);
+  Value directChanged = storeDirectPackedPlane(
+      rewriter, location, input, globalName, range->offset, trackChange);
   cf::BranchOp::create(rewriter, location, continuation,
                        ValueRange{directChanged});
 

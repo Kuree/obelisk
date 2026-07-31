@@ -238,7 +238,8 @@ mlir::Value storeStatePlane(
     mlir::ConversionPatternRewriter &rewriter, mlir::Location location,
     mlir::Value handle, mlir::Value input, llvm::StringRef globalName,
     uint64_t stateBitCount, const NativeStateLayout *directLayout = nullptr,
-    mlir::Value guardedPermission = {}, bool assumeClean = false);
+    mlir::Value guardedPermission = {}, bool assumeClean = false,
+    bool trackChange = true);
 void notifySignal(
     mlir::OpBuilder &builder, mlir::Location location, mlir::Value handle,
     uint64_t width, mlir::Value oldValue, mlir::Value oldUnknown,

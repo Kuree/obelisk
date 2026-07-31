@@ -4,11 +4,13 @@
 #include "obelisk/Runtime/StableHash.h"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstring>
 #include <limits>
 #include <mutex>
 #include <new>
+#include <optional>
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
@@ -1165,6 +1167,60 @@ obelisk_rt_v1_design_name(const obelisk_rt_execution_descriptor_v1 *execution,
   return designName(database, cursor, outData, outSize);
 }
 
+uint64_t packedMask(uint64_t width) {
+  return width == 64 ? UINT64_MAX : (uint64_t{1} << width) - 1;
+}
+
+uint64_t loadPackedState(const std::vector<uint64_t> &plane, uint64_t offset,
+                         uint64_t width) {
+  size_t word = static_cast<size_t>(offset / 64);
+  unsigned shift = static_cast<unsigned>(offset % 64);
+  uint64_t result = plane[word] >> shift;
+  if (shift != 0 && width > 64 - shift)
+    result |= plane[word + 1] << (64 - shift);
+  return result & packedMask(width);
+}
+
+uint64_t loadPackedBytes(const uint8_t *plane, uint64_t offset,
+                         uint64_t width) {
+  size_t firstByte = static_cast<size_t>(offset / 8);
+  unsigned shift = static_cast<unsigned>(offset % 8);
+  size_t byteCount = static_cast<size_t>((shift + width + 7) / 8);
+  unsigned __int128 bits = 0;
+  for (size_t byte = 0; byte != byteCount; ++byte)
+    bits |= static_cast<unsigned __int128>(plane[firstByte + byte])
+            << (byte * 8);
+  return static_cast<uint64_t>(bits >> shift) & packedMask(width);
+}
+
+void storePackedState(std::vector<uint64_t> &plane, uint64_t offset,
+                      uint64_t width, uint64_t value) {
+  size_t word = static_cast<size_t>(offset / 64);
+  unsigned shift = static_cast<unsigned>(offset % 64);
+  uint64_t mask = packedMask(width);
+  value &= mask;
+  uint64_t lowMask = mask << shift;
+  plane[word] = (plane[word] & ~lowMask) | (value << shift);
+  if (shift != 0 && width > 64 - shift) {
+    unsigned lowBits = 64 - shift;
+    uint64_t highMask = mask >> lowBits;
+    plane[word + 1] = (plane[word + 1] & ~highMask) | (value >> lowBits);
+  }
+}
+
+void storePackedBytes(uint8_t *bytes, uint64_t value) {
+  for (unsigned byte = 0; byte != 8; ++byte)
+    bytes[byte] = static_cast<uint8_t>(value >> (byte * 8));
+}
+
+void setPackedByte(uint8_t *bytes, uint64_t bit, bool value) {
+  uint8_t mask = static_cast<uint8_t>(1u << (bit % 8));
+  if (value)
+    bytes[bit / 8] |= mask;
+  else
+    bytes[bit / 8] &= static_cast<uint8_t>(~mask);
+}
+
 static obelisk_rt_status accessState(obelisk_rt_context *context,
                                      obelisk_rt_design_cursor_v1 cursor,
                                      uint64_t *value, uint64_t *unknown,
@@ -1203,19 +1259,32 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
     if (connected)
       return OBELISK_RT_PERMISSION_DENIED;
   }
-  std::vector<std::pair<uint64_t, uint32_t>> transitions;
-  uint64_t signalBase = UINT64_MAX;
-  if (write) {
+  std::optional<PackedSignalTransitionBuffer> wideTransitions;
+  constexpr size_t inlinePublishedBytes = 32;
+  std::array<uint8_t, inlinePublishedBytes * 2> inlinePublishedPlanes;
+  std::vector<uint8_t> overflowPublishedPlanes;
+  uint8_t *publishedPlanes = nullptr;
+  if (write && width > 64) {
     try {
-      transitions.reserve(static_cast<size_t>(width));
+      wideTransitions.emplace(width);
+      size_t bytes = static_cast<size_t>((width + 7) / 8);
+      if (bytes <= inlinePublishedBytes) {
+        std::fill_n(inlinePublishedPlanes.data(), bytes * 2, uint8_t{0});
+        publishedPlanes = inlinePublishedPlanes.data();
+      } else {
+        overflowPublishedPlanes.assign(bytes * 2, 0);
+        publishedPlanes = overflowPublishedPlanes.data();
+      }
     } catch (const std::bad_alloc &) {
       return OBELISK_RT_OUT_OF_MEMORY;
     } catch (...) {
       return OBELISK_RT_INVALID_DESIGN;
     }
   }
+  bool stateChanged = false;
   {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    uint64_t signalBase = UINT64_MAX;
     if (write) {
       signalBase = obelisk_rt_canonical_state_handle_unlocked(
           context, stateOffset, width);
@@ -1230,82 +1299,158 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
         !context->nativeScheduleDeoptimized &&
         plan->state_bit_count == context->execution->state_bit_count &&
         plan->state_value && plan->state_unknown) {
-      bool dirty = false;
-      __int128 accessEnd = static_cast<__int128>(stateOffset) + width;
-      for (const auto &[id, state] : context->nativeStaticStates)
-        if (static_cast<__int128>(state.bitOffset) < accessEnd &&
-            static_cast<__int128>(stateOffset) <
-                static_cast<__int128>(state.bitOffset) + state.bitWidth &&
-            (context->nativeScheduleTransientDirtyRoots.find(id) !=
-                 context->nativeScheduleTransientDirtyRoots.end() ||
-             context->nativeSchedulePersistentDirtyRoots.find(id) !=
-                 context->nativeSchedulePersistentDirtyRoots.end())) {
-          dirty = true;
-          break;
-        }
+      bool dirty = context->nativeScheduleDirtyRootsPresent;
+      if (dirty) {
+        dirty = false;
+        __int128 accessEnd = static_cast<__int128>(stateOffset) + width;
+        for (const auto &[id, state] : context->nativeStaticStates)
+          if (static_cast<__int128>(state.bitOffset) < accessEnd &&
+              static_cast<__int128>(stateOffset) <
+                  static_cast<__int128>(state.bitOffset) + state.bitWidth &&
+              (context->nativeScheduleTransientDirtyRoots.find(id) !=
+                   context->nativeScheduleTransientDirtyRoots.end() ||
+               context->nativeSchedulePersistentDirtyRoots.find(id) !=
+                   context->nativeSchedulePersistentDirtyRoots.end())) {
+            dirty = true;
+            break;
+          }
+      }
       if (!dirty) {
         canonicalValuePlane = plan->state_value;
         canonicalUnknownPlane = plan->state_unknown;
       }
     }
-    for (uint64_t bit = 0; bit != width; ++bit) {
-      uint64_t sourceLimb = bit / 64;
-      uint64_t sourceMask = uint64_t{1} << (bit % 64);
-      uint64_t absolute = stateOffset + bit;
-      uint64_t stateMask = uint64_t{1} << (absolute % 64);
-      uint64_t &stateValue = context->stateValue[absolute / 64];
-      uint64_t &stateUnknown = context->stateUnknown[absolute / 64];
-      if (write) {
-        bool forced = absolute / 64 < context->forceMask.size() &&
-                      (context->forceMask[absolute / 64] & stateMask) != 0;
-        bool assigned = absolute / 64 < context->assignMask.size() &&
-                        (context->assignMask[absolute / 64] & stateMask) != 0;
-        if ((forced || assigned) && !overrideForce)
-          continue;
-        bool oldValue = (stateValue & stateMask) != 0;
-        bool oldUnknown = (stateUnknown & stateMask) != 0;
-        bool newValue = (value[sourceLimb] & sourceMask) != 0;
-        bool newUnknown =
-            fourState && unknown && (unknown[sourceLimb] & sourceMask) != 0;
-        stateValue =
-            newValue ? stateValue | stateMask : stateValue & ~stateMask;
-        stateUnknown =
-            newUnknown ? stateUnknown | stateMask : stateUnknown & ~stateMask;
-        uint32_t edges =
-            transitionEdges(oldValue, oldUnknown, newValue, newUnknown);
-        if (edges != 0) {
-          uint64_t signal = obelisk_rt_v1_native_handle_offset(
-              signalBase, static_cast<int64_t>(bit));
-          if (signal == UINT64_MAX)
-            return OBELISK_RT_INVALID_HANDLE;
-          transitions.push_back({signal, edges});
+    if (!write && width <= 64) {
+      value[0] = canonicalValuePlane
+                     ? loadPackedBytes(canonicalValuePlane, stateOffset, width)
+                     : loadPackedState(context->stateValue, stateOffset, width);
+      if (unknown)
+        unknown[0] = fourState ? (canonicalUnknownPlane
+                                      ? loadPackedBytes(canonicalUnknownPlane,
+                                                        stateOffset, width)
+                                      : loadPackedState(context->stateUnknown,
+                                                        stateOffset, width))
+                               : 0;
+      return OBELISK_RT_OK;
+    }
+    if (write && width <= 64) {
+      uint64_t mask = packedMask(width);
+      uint64_t oldValue =
+          loadPackedState(context->stateValue, stateOffset, width);
+      uint64_t oldUnknown =
+          loadPackedState(context->stateUnknown, stateOffset, width);
+      uint64_t blocked = 0;
+      if (!overrideForce) {
+        if (!context->forceMask.empty())
+          blocked |= loadPackedState(context->forceMask, stateOffset, width);
+        if (!context->assignMask.empty())
+          blocked |= loadPackedState(context->assignMask, stateOffset, width);
+      }
+      uint64_t writable = mask & ~blocked;
+      uint64_t newValue = (oldValue & ~writable) | (value[0] & writable);
+      uint64_t inputUnknown = fourState && unknown ? unknown[0] : 0;
+      uint64_t newUnknown =
+          (oldUnknown & ~writable) | (inputUnknown & writable);
+      uint64_t changed = (oldValue ^ newValue) | (oldUnknown ^ newUnknown);
+      if (changed != 0) {
+        uint64_t oldZero = ~oldUnknown & ~oldValue & mask;
+        uint64_t oldOne = ~oldUnknown & oldValue & mask;
+        uint64_t newZero = ~newUnknown & ~newValue & mask;
+        uint64_t newOne = ~newUnknown & newValue & mask;
+        uint64_t posedge =
+            ((oldZero & ~newZero) | (oldUnknown & newOne)) & mask;
+        uint64_t negedge = ((oldOne & ~newOne) | (oldUnknown & newZero)) & mask;
+        std::array<uint8_t, 8> changedBytes{}, posedgeBytes{}, negedgeBytes{};
+        std::array<uint8_t, 8> valueBytes{}, unknownBytes{};
+        storePackedBytes(changedBytes.data(), changed);
+        storePackedBytes(posedgeBytes.data(), posedge);
+        storePackedBytes(negedgeBytes.data(), negedge);
+        storePackedBytes(valueBytes.data(), newValue);
+        storePackedBytes(unknownBytes.data(), newUnknown);
+        storePackedState(context->stateValue, stateOffset, width, newValue);
+        storePackedState(context->stateUnknown, stateOffset, width, newUnknown);
+        bool synchronized = obelisk_rt_aot_external_deposit_unlocked(
+            context, signalBase, stateOffset, width);
+        if (!synchronized)
+          obelisk_rt_aot_external_write_handle_unlocked(
+              context, signalBase, stateOffset, width, false);
+        if (!obelisk_rt_publish_native_signal_transition_unlocked(
+                context, signalBase, width, changedBytes.data(),
+                posedgeBytes.data(), negedgeBytes.data(), valueBytes.data(),
+                unknownBytes.data()))
+          return context->schedulerStatus;
+        stateChanged = true;
+      }
+    } else {
+      size_t publishedBytes = static_cast<size_t>((width + 7) / 8);
+      uint8_t *publishedValue =
+          write ? publishedPlanes : static_cast<uint8_t *>(nullptr);
+      uint8_t *publishedUnknown = write ? publishedPlanes + publishedBytes
+                                        : static_cast<uint8_t *>(nullptr);
+      for (uint64_t bit = 0; bit != width; ++bit) {
+        uint64_t sourceLimb = bit / 64;
+        uint64_t sourceMask = uint64_t{1} << (bit % 64);
+        uint64_t absolute = stateOffset + bit;
+        uint64_t stateMask = uint64_t{1} << (absolute % 64);
+        uint64_t &stateValue = context->stateValue[absolute / 64];
+        uint64_t &stateUnknown = context->stateUnknown[absolute / 64];
+        if (write) {
+          bool forced = absolute / 64 < context->forceMask.size() &&
+                        (context->forceMask[absolute / 64] & stateMask) != 0;
+          bool assigned = absolute / 64 < context->assignMask.size() &&
+                          (context->assignMask[absolute / 64] & stateMask) != 0;
+          if ((forced || assigned) && !overrideForce)
+            continue;
+          bool oldValue = (stateValue & stateMask) != 0;
+          bool oldUnknown = (stateUnknown & stateMask) != 0;
+          bool newValue = (value[sourceLimb] & sourceMask) != 0;
+          bool newUnknown =
+              fourState && unknown && (unknown[sourceLimb] & sourceMask) != 0;
+          stateValue =
+              newValue ? stateValue | stateMask : stateValue & ~stateMask;
+          stateUnknown =
+              newUnknown ? stateUnknown | stateMask : stateUnknown & ~stateMask;
+          uint32_t edges =
+              transitionEdges(oldValue, oldUnknown, newValue, newUnknown);
+          if (edges != 0) {
+            wideTransitions->record(bit, edges);
+            stateChanged = true;
+          }
+          setPackedByte(publishedValue, bit, newValue);
+          setPackedByte(publishedUnknown, bit, newUnknown);
+        } else {
+          bool readValue =
+              canonicalValuePlane
+                  ? ((canonicalValuePlane[absolute / 8] >> (absolute % 8)) &
+                     1) != 0
+                  : (stateValue & stateMask) != 0;
+          bool readUnknown =
+              canonicalUnknownPlane
+                  ? ((canonicalUnknownPlane[absolute / 8] >> (absolute % 8)) &
+                     1) != 0
+                  : (stateUnknown & stateMask) != 0;
+          value[sourceLimb] =
+              (value[sourceLimb] & ~sourceMask) | (readValue ? sourceMask : 0);
+          if (unknown && fourState)
+            unknown[sourceLimb] = (unknown[sourceLimb] & ~sourceMask) |
+                                  (readUnknown ? sourceMask : 0);
+          else if (unknown)
+            unknown[sourceLimb] &= ~sourceMask;
         }
-      } else {
-        bool readValue =
-            canonicalValuePlane
-                ? ((canonicalValuePlane[absolute / 8] >> (absolute % 8)) & 1) !=
-                      0
-                : (stateValue & stateMask) != 0;
-        bool readUnknown =
-            canonicalUnknownPlane
-                ? ((canonicalUnknownPlane[absolute / 8] >> (absolute % 8)) &
-                   1) != 0
-                : (stateUnknown & stateMask) != 0;
-        value[sourceLimb] =
-            (value[sourceLimb] & ~sourceMask) | (readValue ? sourceMask : 0);
-        if (unknown && fourState)
-          unknown[sourceLimb] = (unknown[sourceLimb] & ~sourceMask) |
-                                (readUnknown ? sourceMask : 0);
-        else if (unknown)
-          unknown[sourceLimb] &= ~sourceMask;
+      }
+      if (write && stateChanged) {
+        bool synchronized = obelisk_rt_aot_external_deposit_unlocked(
+            context, signalBase, stateOffset, width);
+        if (!synchronized)
+          obelisk_rt_aot_external_write_handle_unlocked(
+              context, signalBase, stateOffset, width, false);
+        if (!obelisk_rt_publish_native_signal_transition_unlocked(
+                context, signalBase, width, wideTransitions->changed(),
+                wideTransitions->posedge(), wideTransitions->negedge(),
+                publishedValue, publishedUnknown))
+          return context->schedulerStatus;
       }
     }
-    if (write && !transitions.empty())
-      obelisk_rt_invalidate_signal_snapshots_unlocked(context, signalBase,
-                                                      width);
-    if (write && !transitions.empty())
-      obelisk_rt_aot_external_write_range_unlocked(context, stateOffset, width,
-                                                   false);
   }
   if (!write && width % 64 != 0) {
     uint64_t mask = (uint64_t{1} << (width % 64)) - 1;
@@ -1313,19 +1458,9 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
     if (unknown)
       unknown[limbs - 1] &= mask;
   }
-  if (write) {
-    for (auto [signal, edges] : transitions)
-      obelisk_rt_v1_scheduler_signal(context, signal, 1, edges);
-    if (!transitions.empty()) {
-      std::lock_guard<std::recursive_mutex> lock(context->mutex);
-      if (!obelisk_rt_notify_observer_signal_unlocked(context, stateOffset,
-                                                      width))
-        return context->schedulerStatus;
-    }
-    if (kind == OBELISK_RT_DESIGN_RECORD_DRIVER)
-      return obelisk_rt_resolve_design_drivers(context, stateOffset,
-                                               stateOffset + width);
-  }
+  if (write && kind == OBELISK_RT_DESIGN_RECORD_DRIVER)
+    return obelisk_rt_resolve_design_drivers(context, stateOffset,
+                                             stateOffset + width);
   return OBELISK_RT_OK;
 }
 

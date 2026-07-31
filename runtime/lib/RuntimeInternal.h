@@ -358,6 +358,13 @@ struct NativeStaticState {
   uint64_t bitWidth = 0;
 };
 
+struct NativeStaticStateRange {
+  uint64_t bitOffset = 0;
+  uint64_t bitEnd = 0;
+  uint64_t prefixEnd = 0;
+  uint32_t id = 0;
+};
+
 struct ScheduledNBA {
   uint64_t sequence = 0;
   uint64_t dueTime = 0;
@@ -536,10 +543,9 @@ struct SignalSubscriptionDiagnostics {
   uint64_t aotFallbacks = 0;
 };
 
-// Three packed edge planes with allocation-free storage for the common
-// <=64-bit signal. Keeping edge identity per bit lets range publication batch
-// map lookups without conflating a posedge on one bit with a negedge on
-// another.
+// Three packed edge planes with allocation-free storage for common signals up
+// to 256 bits. Keeping edge identity per bit lets range publication batch map
+// lookups without conflating a posedge on one bit with a negedge on another.
 class PackedSignalTransitionBuffer {
 public:
   explicit PackedSignalTransitionBuffer(uint64_t bitWidth)
@@ -564,7 +570,7 @@ public:
   uint8_t *negedge() { return storage() + byteCount * 2; }
 
 private:
-  static constexpr uint64_t kInlineBytes = 8;
+  static constexpr uint64_t kInlineBytes = 32;
 
   static void set(uint8_t *plane, uint64_t bit) {
     plane[bit / 8] |= static_cast<uint8_t>(1u << (bit % 8));
@@ -678,6 +684,7 @@ struct obelisk_rt_context {
   uint64_t nativeScheduleFanoutEntryCount = 0;
   const obelisk_rt_static_actor_root *nativeScheduleActorRoots = nullptr;
   uint64_t nativeScheduleActorRootCount = 0;
+  std::vector<std::pair<uint64_t, uint64_t>> nativeScheduleActorRootRanges;
   std::vector<uint32_t> nativeScheduleNBASiteIndex;
   std::vector<obelisk_rt_process_instance_v1 *> nativeScheduleActors;
   std::vector<uint64_t> nativeScheduleActorTokens;
@@ -709,6 +716,10 @@ struct obelisk_rt_context {
   bool nativeScheduleControlOnly = false;
   std::unordered_map<uint64_t, size_t> scheduledProcessIndices;
   std::unordered_set<uint64_t> nativePollCandidates;
+  // Lazy min-heap of (wake time, process token). Stale entries are discarded
+  // when queried after a process resumes, changes wait kind, or terminates.
+  std::vector<std::pair<uint64_t, uint64_t>> scheduledProcessDelayHeap;
+  bool scheduledFinalProcessPresent = false;
   std::unordered_map<uint64_t, SignalValueSnapshot> signalValueSnapshots;
   std::unordered_map<SignalSubscriptionBucketKey,
                      std::vector<SignalSubscriptionBucketEntry>,
@@ -724,11 +735,14 @@ struct obelisk_rt_context {
   SignalSubscriptionDiagnostics signalDiagnostics;
   std::vector<ScheduledNBA> scheduledNBAs;
   std::vector<StaticNBAAccumulator> staticNBAAccumulators;
+  bool staticNBAAccumulatorsPending = false;
   std::vector<uint8_t> staticNBASlowRoots;
+  bool staticNBASlowRootsPresent = false;
   std::vector<uint8_t> staticNBARootHasFanout;
   std::vector<uint8_t> nativeScheduleGeneratedNBAStageCounts;
   std::vector<uint64_t> nativeScheduleGeneratedNBAOffsets;
   bool nativeScheduleGeneratedBatchEligible = false;
+  bool nativeScheduleHasGeneratedNBAAccumulators = false;
   std::vector<ScheduledManagedNBA> scheduledManagedNBAs;
   std::vector<ScheduledDesignNBA> scheduledDesignNBAs;
   std::vector<ScheduledDesignEvent> scheduledDesignEvents;
@@ -766,6 +780,9 @@ struct obelisk_rt_context {
   std::unordered_map<uint64_t, std::unordered_set<uint64_t>>
       deferredImmediateSites;
   std::unordered_map<uint32_t, NativeStaticState> nativeStaticStates;
+  // Lazily sorted interval index for reflection/VPI range lookups.
+  mutable std::vector<NativeStaticStateRange> nativeStaticStateRanges;
+  mutable bool nativeStaticStateRangesValid = false;
   std::vector<NativeStaticState> nativeScheduleStaticStateIndex;
   std::vector<uint8_t> nativeScheduleStaticStateFanoutEdges;
   std::unordered_map<uint32_t, NativeAutomaticState> nativeAutomaticStates;
@@ -987,6 +1004,15 @@ void obelisk_rt_aot_external_write_range_unlocked(obelisk_rt_context *context,
                                                   uint64_t bitOffset,
                                                   uint64_t bitWidth,
                                                   bool persistent);
+void obelisk_rt_aot_external_write_handle_unlocked(obelisk_rt_context *context,
+                                                   uint64_t stableID,
+                                                   uint64_t bitOffset,
+                                                   uint64_t bitWidth,
+                                                   bool persistent);
+bool obelisk_rt_aot_external_deposit_unlocked(obelisk_rt_context *context,
+                                              uint64_t stableID,
+                                              uint64_t bitOffset,
+                                              uint64_t bitWidth);
 void obelisk_rt_aot_release_range_unlocked(obelisk_rt_context *context,
                                            uint64_t bitOffset,
                                            uint64_t bitWidth);
@@ -1096,6 +1122,10 @@ bool obelisk_rt_publish_signal_transition_batch_unlocked(
     obelisk_rt_context *context, uint64_t stableID, uint64_t bitWidth,
     const uint8_t *changed, const uint8_t *posedge, const uint8_t *negedge,
     uint64_t edgeBitOffset = 0, uint64_t *outSequence = nullptr);
+bool obelisk_rt_publish_native_signal_transition_unlocked(
+    obelisk_rt_context *context, uint64_t stableID, uint64_t bitWidth,
+    const uint8_t *changed, const uint8_t *posedge, const uint8_t *negedge,
+    const uint8_t *newValue, const uint8_t *newUnknown);
 bool obelisk_rt_latch_conditional_signal_waiters_unlocked(
     obelisk_rt_context *context, uint64_t stableID, uint32_t edges);
 bool obelisk_rt_latch_conditional_signal_range_unlocked(

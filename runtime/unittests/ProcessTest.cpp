@@ -277,6 +277,7 @@ obelisk_rt_status runSpecializationFastRearm(AOTTestState *state,
       context->staticNBASlowRoots.empty())
     return OBELISK_RT_INVALID_ARGUMENT;
   context->staticNBASlowRoots[0] = 1;
+  context->staticNBASlowRootsPresent = true;
   *context->nativeSchedulePlan->specialization_fast = 0;
   obelisk_rt_status status = obelisk_rt_v1_scheduler_run(context);
   state->observedSpecializationAfterSlot =
@@ -1413,6 +1414,85 @@ TEST(Scheduler, StaticSpecializationGuardsIntersectOnlyDirtyRoots) {
   EXPECT_EQ(obelisk_rt_v1_static_specialization_guard(
                 context, 1, 2, OBELISK_RT_STATIC_ROOT_WRITE),
             1u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, StaticStateRangeIndexPreservesCanonicalHandleSemantics) {
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 512;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 9, 400, 8),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 7, 100, 300),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 3, 120, 64),
+            OBELISK_RT_OK);
+
+  obelisk_rt_stable_handle_v1 decoded{};
+  uint64_t handle = obelisk_rt_canonical_state_handle_unlocked(context, 130, 4);
+  ASSERT_TRUE(obelisk_rt_stable_handle_decode(handle, &decoded));
+  EXPECT_EQ(decoded.kind, OBELISK_RT_STABLE_HANDLE_STATIC);
+  EXPECT_EQ(decoded.id, 3u);
+  EXPECT_EQ(decoded.offset, 10);
+  EXPECT_TRUE(context->nativeStaticStateRangesValid);
+
+  // Registering another range invalidates the lazy index. The lowest static
+  // ID remains the canonical choice when multiple roots contain a range.
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 2, 128, 8),
+            OBELISK_RT_OK);
+  EXPECT_FALSE(context->nativeStaticStateRangesValid);
+  handle = obelisk_rt_canonical_state_handle_unlocked(context, 130, 4);
+  ASSERT_TRUE(obelisk_rt_stable_handle_decode(handle, &decoded));
+  EXPECT_EQ(decoded.kind, OBELISK_RT_STABLE_HANDLE_STATIC);
+  EXPECT_EQ(decoded.id, 2u);
+  EXPECT_EQ(decoded.offset, 2);
+
+  handle = obelisk_rt_canonical_state_handle_unlocked(context, 450, 4);
+  ASSERT_TRUE(obelisk_rt_stable_handle_decode(handle, &decoded));
+  EXPECT_EQ(decoded.kind, OBELISK_RT_STABLE_HANDLE_GLOBAL);
+  EXPECT_EQ(decoded.offset, 450);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, ExternalDepositTouchesOnlyIntersectingStaticRoots) {
+  AOTTestState state;
+  std::array<uint8_t, 2> valuePlane{};
+  std::array<uint8_t, 2> unknownPlane{};
+  obelisk_rt_native_schedule_plan plan = makeAOTPlan(state);
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE;
+  plan.state_value = valuePlane.data();
+  plan.state_unknown = unknownPlane.data();
+  plan.state_bit_count = 16;
+
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 16;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 8),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 2, 8, 8),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 3, 4, 8),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+
+  uint64_t handle = obelisk_rt_canonical_state_handle_unlocked(context, 8, 4);
+  context->stateValue[0] = UINT64_C(0x0ab0);
+  ASSERT_TRUE(obelisk_rt_aot_external_deposit_unlocked(context, handle, 8, 4));
+  EXPECT_EQ(valuePlane[0], 0xb0);
+  EXPECT_EQ(valuePlane[1] & 0x0f, 0x0a);
+  EXPECT_FALSE(context->nativeScheduleDirtyRootsPresent);
+
+  obelisk_rt_aot_external_write_handle_unlocked(context, handle, 8, 4, false);
+  EXPECT_EQ(context->nativeScheduleTransientDirtyRoots.count(1), 0u);
+  EXPECT_EQ(context->nativeScheduleTransientDirtyRoots.count(2), 1u);
+  EXPECT_EQ(context->nativeScheduleTransientDirtyRoots.count(3), 1u);
   obelisk_rt_v1_context_destroy(context);
 }
 

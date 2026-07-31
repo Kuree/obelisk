@@ -627,15 +627,17 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_put_value(vpiHandle opaque,
     setError(handle->owner, "delayed VPI writes are not supported");
     return nullptr;
   }
-  std::vector<uint64_t> value, unknown;
-  if (!decodeValue(handle, source, info.bit_width, value, unknown))
+  if (!decodeValue(handle, source, info.bit_width, handle->valueScratch,
+                   handle->unknownScratch))
     return nullptr;
   obelisk_rt_status status =
       flags == vpiForceFlag
-          ? obelisk_rt_v1_design_force(context, handle->cursor, value.data(),
-                                       unknown.data(), info.bit_width)
-          : obelisk_rt_v1_design_write(context, handle->cursor, value.data(),
-                                       unknown.data(), info.bit_width);
+          ? obelisk_rt_v1_design_force(
+                context, handle->cursor, handle->valueScratch.data(),
+                handle->unknownScratch.data(), info.bit_width)
+          : obelisk_rt_v1_design_write(
+                context, handle->cursor, handle->valueScratch.data(),
+                handle->unknownScratch.data(), info.bit_width);
   if (status != OBELISK_RT_OK)
     setError(handle->owner, "VPI write failed");
   return nullptr;

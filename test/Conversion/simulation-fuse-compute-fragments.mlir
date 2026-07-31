@@ -9,6 +9,8 @@
 // RUN: FileCheck %s --check-prefix=MATERIALIZED < %t/materialized.mlir
 // RUN: obelisk -O3 -emit-sim %t/fused-ssa.sv -o %t/fused-ssa.mlir
 // RUN: FileCheck %s --check-prefix=FUSED-SSA < %t/fused-ssa.mlir
+// RUN: obelisk -O3 --vpi=read -emit-sim %t/fused-ssa.sv -o %t/fused-ssa-read.mlir
+// RUN: FileCheck %s --check-prefix=READ-FUSED-SSA < %t/fused-ssa-read.mlir
 // RUN: obelisk -O0 --native-scheduler=generic %t/fused-ssa.sv -o %t/fused-ssa.unfused
 // RUN: obelisk -O3 --native-scheduler=generic %t/fused-ssa.sv -o %t/fused-ssa.fused
 // RUN: %t/fused-ssa.unfused > %t/fused-ssa.unfused.out
@@ -114,6 +116,8 @@
 // FUSED-SSA: arith.select
 // FUSED-SSA-NOT: obelisk_sim.termination.requested
 // FUSED-SSA-NOT: obelisk_sim.ref.store
+// READ-FUSED-SSA: obelisk_sim.func private @__obelisk_fused_
+// READ-FUSED-SSA-COUNT-2: obelisk_sim.ref.store
 // FOUR-STATE: obelisk_sim.func private @__obelisk_fused_
 // FOUR-STATE-COUNT-2: obelisk_sim.ref.store
 // CALLEE-WRITE-IR: obelisk_sim.func private @__obelisk_fused_

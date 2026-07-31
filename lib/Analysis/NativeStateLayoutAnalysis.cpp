@@ -36,11 +36,20 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
     SmallVector<uint64_t, 2> managedRootOffsets;
     if (!sim::getManagedHandleOffsets(type, managedRootOffsets))
       return failure();
-    if (!managedRootOffsets.empty()) {
+    // Keep byte-sized roots byte-aligned. Besides avoiding cross-byte packed
+    // loads and masks for ordinary scalar state, this lets read-only VPI retain
+    // a canonical value with one plain store. Sub-byte roots remain densely
+    // packed, and managed roots retain their stronger word alignment.
+    uint64_t alignment = 1;
+    if (!managedRootOffsets.empty())
+      alignment = 64;
+    else if (*width >= 8)
+      alignment = 8;
+    if (alignment != 1) {
       if (layout.bitCount >
-          std::numeric_limits<uint64_t>::max() - uint64_t{63})
+          std::numeric_limits<uint64_t>::max() - (alignment - 1))
         return failure();
-      layout.bitCount = llvm::alignTo(layout.bitCount, uint64_t{64});
+      layout.bitCount = llvm::alignTo(layout.bitCount, alignment);
     }
     offset = layout.bitCount;
     if (layout.bitCount > std::numeric_limits<uint64_t>::max() - *width)

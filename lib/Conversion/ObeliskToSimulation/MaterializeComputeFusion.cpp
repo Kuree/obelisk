@@ -52,7 +52,7 @@ private:
       "equivalent stable branch conditions shared across fused actors"};
   Statistic promotedPrivateStores{
       this, "promoted-private-stores",
-      "private static temporaries promoted to fused-activation SSA"};
+      "private static temporary loads forwarded from fused-activation SSA"};
 };
 
 struct BodyFusionCandidate {
@@ -401,9 +401,12 @@ uint64_t promotePrivateStaticTemporaries(sim::SimDesignOp design,
         rootStores.size() != 1 || rootLoads->second.empty() ||
         accessedElsewhere.contains(descriptor) ||
         unsupportedUses.contains(descriptor) ||
-        declaration->second.getLifetime() != sim::Lifetime::Static ||
-        declaration->second.getObservability() !=
-            sim::ComputeObservabilityKind::Invisible)
+        declaration->second.getLifetime() != sim::Lifetime::Static)
+      continue;
+    std::optional<sim::ComputeObservabilityKind> observability =
+        declaration->second.getObservability();
+    if (!observability ||
+        *observability == sim::ComputeObservabilityKind::ExternallyWritable)
       continue;
     sim::SimRefStoreOp store = rootStores.front();
     Value rootReference = store.getReference();
@@ -528,11 +531,17 @@ uint64_t promotePrivateStaticTemporaries(sim::SimDesignOp design,
       load.getResult().replaceAllUsesWith(replacement);
       load.erase();
     }
-    store.erase();
-    for (Value reference : llvm::reverse(family))
-      if (Operation *definition = reference.getDefiningOp();
-          definition && definition->use_empty())
-        definition->erase();
+    // Read-only VPI must observe the last procedural value at a safe point, so
+    // retain its one canonical store while forwarding all intra-activation
+    // loads from the dominating SSA value. Invisible state can discard both
+    // the store and the now-dead reference-view family.
+    if (*observability == sim::ComputeObservabilityKind::Invisible) {
+      store.erase();
+      for (Value reference : llvm::reverse(family))
+        if (Operation *definition = reference.getDefiningOp();
+            definition && definition->use_empty())
+          definition->erase();
+    }
     if (flattened.use_empty())
       flattened.getDefiningOp()->erase();
     ++promoted;

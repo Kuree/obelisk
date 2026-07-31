@@ -8,6 +8,7 @@
 #include <cstring>
 #include <limits>
 #include <new>
+#include <tuple>
 #include <vector>
 
 namespace {
@@ -80,14 +81,59 @@ obelisk_rt_canonical_state_handle_unlocked(const obelisk_rt_context *context,
     return UINT64_MAX;
   uint32_t selectedID = UINT32_MAX;
   uint64_t selectedOffset = 0;
-  for (const auto &[id, state] : context->nativeStaticStates) {
-    if (state.bitOffset > bitOffset ||
-        bitOffset - state.bitOffset > state.bitWidth ||
-        bitWidth > state.bitWidth - (bitOffset - state.bitOffset) ||
-        id >= selectedID)
-      continue;
-    selectedID = id;
-    selectedOffset = bitOffset - state.bitOffset;
+  if (!context->nativeStaticStateRangesValid) {
+    try {
+      std::vector<NativeStaticStateRange> ranges;
+      ranges.reserve(context->nativeStaticStates.size());
+      for (const auto &[id, state] : context->nativeStaticStates)
+        ranges.push_back(
+            {state.bitOffset, state.bitOffset + state.bitWidth, 0, id});
+      std::sort(ranges.begin(), ranges.end(),
+                [](const NativeStaticStateRange &left,
+                   const NativeStaticStateRange &right) {
+                  return std::tie(left.bitOffset, left.id) <
+                         std::tie(right.bitOffset, right.id);
+                });
+      uint64_t prefixEnd = 0;
+      for (NativeStaticStateRange &range : ranges) {
+        prefixEnd = std::max(prefixEnd, range.bitEnd);
+        range.prefixEnd = prefixEnd;
+      }
+      context->nativeStaticStateRanges = std::move(ranges);
+      context->nativeStaticStateRangesValid = true;
+    } catch (...) {
+      // This lookup is noexcept and has always had an allocation-free linear
+      // implementation. Preserve that fallback if building the cache fails.
+    }
+  }
+  if (context->nativeStaticStateRangesValid) {
+    uint64_t bitEnd = bitOffset + bitWidth;
+    const auto &ranges = context->nativeStaticStateRanges;
+    auto upper = std::upper_bound(
+        ranges.begin(), ranges.end(), bitOffset,
+        [](uint64_t offset, const NativeStaticStateRange &range) {
+          return offset < range.bitOffset;
+        });
+    size_t index = static_cast<size_t>(upper - ranges.begin());
+    while (index != 0) {
+      const NativeStaticStateRange &range = ranges[--index];
+      if (range.bitEnd >= bitEnd && range.id < selectedID) {
+        selectedID = range.id;
+        selectedOffset = bitOffset - range.bitOffset;
+      }
+      if (index == 0 || ranges[index - 1].prefixEnd < bitEnd)
+        break;
+    }
+  } else {
+    for (const auto &[id, state] : context->nativeStaticStates) {
+      if (state.bitOffset > bitOffset ||
+          bitOffset - state.bitOffset > state.bitWidth ||
+          bitWidth > state.bitWidth - (bitOffset - state.bitOffset) ||
+          id >= selectedID)
+        continue;
+      selectedID = id;
+      selectedOffset = bitOffset - state.bitOffset;
+    }
   }
   if (selectedID != UINT32_MAX) {
     if (selectedOffset > static_cast<uint64_t>(INT64_MAX))
