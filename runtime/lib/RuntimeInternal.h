@@ -1103,6 +1103,12 @@ obelisk_rt_status
 obelisk_rt_native_state_alloc_managed(obelisk_rt_context *context,
                                       obelisk_rt_object_v1 *value,
                                       uint64_t *outHandle);
+// Normalize a flat design-plane range to the stable identity used by native
+// waits and publications. The caller holds context->mutex.
+uint64_t
+obelisk_rt_canonical_state_handle_unlocked(const obelisk_rt_context *context,
+                                           uint64_t bitOffset,
+                                           uint64_t bitWidth) noexcept;
 void obelisk_rt_invalidate_signal_snapshots_unlocked(
     obelisk_rt_context *context, uint64_t bitOffset, uint64_t bitWidth);
 

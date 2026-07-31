@@ -72,6 +72,36 @@ obelisk_rt_status publishNativeAutomaticState(obelisk_rt_context *context,
 
 } // namespace
 
+uint64_t
+obelisk_rt_canonical_state_handle_unlocked(const obelisk_rt_context *context,
+                                           uint64_t bitOffset,
+                                           uint64_t bitWidth) noexcept {
+  if (!context || bitWidth == 0 || bitOffset > UINT64_MAX - bitWidth)
+    return UINT64_MAX;
+  uint32_t selectedID = UINT32_MAX;
+  uint64_t selectedOffset = 0;
+  for (const auto &[id, state] : context->nativeStaticStates) {
+    if (state.bitOffset > bitOffset ||
+        bitOffset - state.bitOffset > state.bitWidth ||
+        bitWidth > state.bitWidth - (bitOffset - state.bitOffset) ||
+        id >= selectedID)
+      continue;
+    selectedID = id;
+    selectedOffset = bitOffset - state.bitOffset;
+  }
+  if (selectedID != UINT32_MAX) {
+    if (selectedOffset > static_cast<uint64_t>(INT64_MAX))
+      return UINT64_MAX;
+    return obelisk_rt_stable_handle_encode(
+        OBELISK_RT_STABLE_HANDLE_STATIC, selectedID,
+        static_cast<int64_t>(selectedOffset));
+  }
+  if (bitOffset > static_cast<uint64_t>(INT64_MAX))
+    return UINT64_MAX;
+  return obelisk_rt_stable_handle_encode(OBELISK_RT_STABLE_HANDLE_GLOBAL, 0,
+                                         static_cast<int64_t>(bitOffset));
+}
+
 extern "C" uint64_t obelisk_rt_v1_native_state_static_handle(uint32_t id) {
   return obelisk_rt_stable_handle_encode(OBELISK_RT_STABLE_HANDLE_STATIC, id,
                                          0);

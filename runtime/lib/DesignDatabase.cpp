@@ -906,6 +906,7 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
       return OBELISK_RT_PERMISSION_DENIED;
   }
   std::vector<std::pair<uint64_t, uint32_t>> transitions;
+  uint64_t signalBase = UINT64_MAX;
   if (write) {
     try {
       transitions.reserve(static_cast<size_t>(width));
@@ -917,6 +918,12 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
   }
   {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    if (write) {
+      signalBase = obelisk_rt_canonical_state_handle_unlocked(
+          context, stateOffset, width);
+      if (signalBase == UINT64_MAX)
+        return OBELISK_RT_INVALID_HANDLE;
+    }
     const uint8_t *canonicalValuePlane = nullptr;
     const uint8_t *canonicalUnknownPlane = nullptr;
     const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
@@ -968,8 +975,13 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
             newUnknown ? stateUnknown | stateMask : stateUnknown & ~stateMask;
         uint32_t edges =
             transitionEdges(oldValue, oldUnknown, newValue, newUnknown);
-        if (edges != 0)
-          transitions.push_back({absolute, edges});
+        if (edges != 0) {
+          uint64_t signal = obelisk_rt_v1_native_handle_offset(
+              signalBase, static_cast<int64_t>(bit));
+          if (signal == UINT64_MAX)
+            return OBELISK_RT_INVALID_HANDLE;
+          transitions.push_back({signal, edges});
+        }
       } else {
         bool readValue =
             canonicalValuePlane
@@ -991,7 +1003,7 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
       }
     }
     if (write && !transitions.empty())
-      obelisk_rt_invalidate_signal_snapshots_unlocked(context, stateOffset,
+      obelisk_rt_invalidate_signal_snapshots_unlocked(context, signalBase,
                                                       width);
     if (write && !transitions.empty())
       obelisk_rt_aot_external_write_range_unlocked(context, stateOffset, width,
@@ -1004,8 +1016,8 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
       unknown[limbs - 1] &= mask;
   }
   if (write) {
-    for (auto [absolute, edges] : transitions)
-      obelisk_rt_v1_scheduler_signal(context, absolute, 1, edges);
+    for (auto [signal, edges] : transitions)
+      obelisk_rt_v1_scheduler_signal(context, signal, 1, edges);
     if (!transitions.empty()) {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
       if (!obelisk_rt_notify_observer_signal_unlocked(context, stateOffset,
@@ -1112,8 +1124,13 @@ obelisk_rt_v1_design_release(obelisk_rt_context *context,
   } catch (const std::bad_alloc &) {
     return OBELISK_RT_OUT_OF_MEMORY;
   }
+  uint64_t signalBase = UINT64_MAX;
   {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    signalBase = obelisk_rt_canonical_state_handle_unlocked(
+        context, stateOffset, bitWidth);
+    if (signalBase == UINT64_MAX)
+      return OBELISK_RT_INVALID_HANDLE;
     for (uint64_t bit = 0; bit != bitWidth; ++bit) {
       uint64_t absolute = stateOffset + bit;
       uint64_t limb = absolute / 64;
@@ -1135,12 +1152,17 @@ obelisk_rt_v1_design_release(obelisk_rt_context *context,
                                           : context->stateUnknown[limb] & ~mask;
         uint32_t edges =
             transitionEdges(oldValue, oldUnknown, newValue, newUnknown);
-        if (edges)
-          transitions.push_back({absolute, edges});
+        if (edges) {
+          uint64_t signal = obelisk_rt_v1_native_handle_offset(
+              signalBase, static_cast<int64_t>(bit));
+          if (signal == UINT64_MAX)
+            return OBELISK_RT_INVALID_HANDLE;
+          transitions.push_back({signal, edges});
+        }
       }
     }
     if (!transitions.empty())
-      obelisk_rt_invalidate_signal_snapshots_unlocked(context, stateOffset,
+      obelisk_rt_invalidate_signal_snapshots_unlocked(context, signalBase,
                                                       bitWidth);
     if (!transitions.empty())
       obelisk_rt_aot_external_write_unlocked(context);
@@ -1149,8 +1171,8 @@ obelisk_rt_v1_design_release(obelisk_rt_context *context,
   // A variable retains the forced value. A net is immediately republished
   // from its current driver slots (and becomes Z when the component is
   // undriven).
-  for (auto [absolute, edges] : transitions)
-    obelisk_rt_v1_scheduler_signal(context, absolute, 1, edges);
+  for (auto [signal, edges] : transitions)
+    obelisk_rt_v1_scheduler_signal(context, signal, 1, edges);
   if (!transitions.empty()) {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     if (!obelisk_rt_notify_observer_signal_unlocked(context, stateOffset,

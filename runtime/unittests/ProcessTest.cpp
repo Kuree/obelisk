@@ -195,6 +195,7 @@ uint32_t schedulerWaitWidth;
 uint64_t schedulerWaitOffset;
 uint64_t schedulerWaitDelay;
 unsigned schedulerResumeCount;
+unsigned schedulerDestroyCount;
 std::vector<uint64_t> schedulerOrder;
 
 struct AOTTestState {
@@ -390,6 +391,7 @@ obelisk_rt_status schedulerExecute(obelisk_rt_process_instance_v1 *instance) {
 }
 
 void schedulerDestroy(obelisk_rt_process_instance_v1 *instance) {
+  ++schedulerDestroyCount;
   instance->native_handle = nullptr;
 }
 
@@ -1877,16 +1879,81 @@ TEST(Scheduler, AOTExternalWriteTemporarilySelectsBytecodeActors) {
     obelisk_rt_aot_external_write_unlocked(context);
   }
   EXPECT_TRUE(context->nativeScheduleExternalWritePending);
-  EXPECT_EQ(instance->tier, OBELISK_RT_TIER_BYTECODE);
+  EXPECT_EQ(instance->tier, 0u);
   schedulerResumeCount = 0;
   ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot(context), OBELISK_RT_OK);
   EXPECT_FALSE(context->nativeScheduleExternalWritePending);
-  EXPECT_EQ(instance->tier, OBELISK_RT_TIER_NATIVE);
+  EXPECT_EQ(instance->tier, OBELISK_RT_TIER_BYTECODE);
   EXPECT_EQ(schedulerResumeCount, 0u);
   obelisk_rt_v1_scheduler_signal(
       context, 17, 8, OBELISK_RT_SIGNAL_CHANGE | OBELISK_RT_SIGNAL_NEGEDGE);
   ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot(context), OBELISK_RT_OK);
   EXPECT_EQ(schedulerResumeCount, 1u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, AOTExternalWriteDefersTierTransitionUntilExecution) {
+  AOTTestState state;
+  obelisk_rt_native_schedule_plan plan = makeAOTPlan(state, 1);
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+
+  SchedulerFixture fixture(34);
+  std::vector<uint8_t> code;
+  appendInstruction(code, OBELISK_RT_BC_CONST, OBELISK_RT_BC_TYPE_U64, 0, 0, 0,
+                    0);
+  appendInstruction(code, OBELISK_RT_BC_SUSPEND, OBELISK_RT_BC_TYPE_NONE, 0,
+                    OBELISK_RT_SUSPEND_EDGE, 0, 1);
+  appendInstruction(code, OBELISK_RT_BC_TERMINATE, OBELISK_RT_BC_TYPE_NONE, 0,
+                    0, 0, 0);
+  std::array<obelisk_rt_bytecode_entry_v1, 2> entries{{{0, 0}, {1, 2}}};
+  obelisk_rt_bytecode_v1 bytecode{code.data(),
+                                  code.size(),
+                                  entries.data(),
+                                  static_cast<uint32_t>(entries.size()),
+                                  1,
+                                  fixture.layout.frame_size,
+                                  nullptr,
+                                  nullptr,
+                                  0,
+                                  nullptr,
+                                  0,
+                                  0,
+                                  nullptr,
+                                  0};
+  fixture.descriptor.available_tiers =
+      OBELISK_RT_TIER_MASK_NATIVE | OBELISK_RT_TIER_MASK_BYTECODE;
+  fixture.descriptor.bytecode = &bytecode;
+  schedulerWaitKind = OBELISK_RT_SUSPEND_EDGE;
+  schedulerWaitEdge = OBELISK_RT_WAIT_EDGE_CHANGE;
+  schedulerWaitHandle = 17;
+  schedulerWaitWidth = 8;
+  schedulerDestroyCount = 0;
+  obelisk_rt_process_instance_v1 *instance = makeSchedulerInstance(fixture);
+  ASSERT_NE(instance, nullptr);
+  obelisk_rt_fragment_action_v1 action{};
+  ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
+                instance, context, OBELISK_RT_TIER_NATIVE, &action),
+            OBELISK_RT_OK);
+  ASSERT_NE(instance->native_handle, nullptr);
+  ASSERT_EQ(instance->tier, OBELISK_RT_TIER_NATIVE);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add_aot(context, instance, 0, 0, 0, nullptr,
+                                            nullptr, 0, nullptr, 0),
+            OBELISK_RT_OK);
+
+  {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    obelisk_rt_aot_external_write_unlocked(context);
+  }
+  EXPECT_EQ(instance->tier, OBELISK_RT_TIER_NATIVE);
+  EXPECT_NE(instance->native_handle, nullptr);
+  EXPECT_EQ(schedulerDestroyCount, 0u);
+
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot(context), OBELISK_RT_OK);
+  EXPECT_EQ(instance->tier, OBELISK_RT_TIER_BYTECODE);
+  EXPECT_EQ(instance->native_handle, nullptr);
+  EXPECT_EQ(schedulerDestroyCount, 1u);
   obelisk_rt_v1_context_destroy(context);
 }
 

@@ -1435,6 +1435,7 @@ TEST(DesignBytecode, FailInstructionAcceptsFatalStatus) {
 }
 
 uint32_t designWriteObserverCalls = 0;
+uint32_t designWriteDirectExecutions = 0;
 
 obelisk_rt_status designWriteObserverEvaluator(obelisk_rt_context *,
                                                const uint64_t *, uint32_t,
@@ -1472,6 +1473,25 @@ designWriteWaitExecute(obelisk_rt_process_instance_v1 *instance) {
 }
 
 void designWriteWaitDestroy(obelisk_rt_process_instance_v1 *) {}
+
+obelisk_rt_status
+designWriteDirectExecute(obelisk_rt_process_instance_v1 *instance) {
+  if (!instance || !instance->action)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ++designWriteDirectExecutions;
+  if (instance->continuation == 0) {
+    *instance->action = {OBELISK_RT_FRAGMENT_SUSPEND,
+                         OBELISK_RT_SUSPEND_CHANGE,
+                         1,
+                         OBELISK_RT_ACTION_FRAME_WAIT_RECORD,
+                         0,
+                         48};
+  } else {
+    *instance->action = {
+        OBELISK_RT_FRAGMENT_TERMINATE, OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
+  }
+  return OBELISK_RT_OK;
+}
 
 void populateDesignWriteWait(void *frame) {
   std::memset(frame, 0, 176);
@@ -1598,6 +1618,76 @@ TEST(DesignBytecode, DesignWritePublishesToComputedObservers) {
             OBELISK_RT_OK);
   EXPECT_EQ(designWriteObserverCalls, 1u);
   EXPECT_TRUE(context->signalValueSnapshots.empty());
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(DesignBytecode, DesignWritePublishesCanonicalStaticSignalIdentity) {
+  Fixture fixture;
+  obelisk_rt_frame_field_v1 field{
+      OBELISK_RT_FRAME_WAIT, OBELISK_RT_FRAME_FIELD_FLAGS_NONE, 0, 48, 8, 0};
+  std::array<uint32_t, 2> continuations{{0, 1}};
+  obelisk_rt_frame_layout_v1 layout{OBELISK_RT_VERSION,
+                                    0,
+                                    48,
+                                    8,
+                                    &field,
+                                    1,
+                                    static_cast<uint32_t>(continuations.size()),
+                                    continuations.data(),
+                                    0};
+  layout.checksum = frameChecksum(layout);
+  obelisk_rt_process_descriptor_v1 process{
+      {OBELISK_RT_DESCRIPTOR_PROCESS, 0, 84},
+      OBELISK_RT_VERSION,
+      0,
+      OBELISK_RT_TIER_MASK_NATIVE,
+      0,
+      &layout,
+      designWriteWaitRequirements,
+      designWriteDirectExecute,
+      designWriteWaitDestroy,
+      nullptr,
+      &fixture.execution,
+      nullptr};
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 65),
+            OBELISK_RT_OK);
+  obelisk_rt_process_instance_v1 *instance = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_process_instance_create(&process, &instance),
+            OBELISK_RT_OK);
+  void *frame = nullptr;
+  uint64_t frameSize = 0;
+  ASSERT_EQ(obelisk_rt_v1_process_instance_frame(instance, &frame, &frameSize),
+            OBELISK_RT_OK);
+  ASSERT_EQ(frameSize, 48u);
+  auto *wait = static_cast<obelisk_rt_wait_record_v1 *>(frame);
+  auto *entry = reinterpret_cast<obelisk_rt_wait_entry_v1 *>(wait + 1);
+  *wait = {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_CHANGE, 0, 1, 0, 0};
+  *entry = {obelisk_rt_v1_native_state_static_handle(1),
+            OBELISK_RT_WAIT_EDGE_CHANGE, 65};
+  designWriteDirectExecutions = 0;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, instance, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  ASSERT_EQ(designWriteDirectExecutions, 1u);
+
+  static constexpr std::string_view name = "top.value";
+  obelisk_rt_design_cursor_v1 cursor{};
+  ASSERT_EQ(obelisk_rt_v1_design_lookup(
+                &fixture.execution,
+                reinterpret_cast<const uint8_t *>(name.data()), name.size(),
+                &cursor),
+            OBELISK_RT_OK);
+  std::array<uint64_t, 2> value{{1, 0}};
+  std::array<uint64_t, 2> unknown{};
+  ASSERT_EQ(obelisk_rt_v1_design_write(context, cursor, value.data(),
+                                       unknown.data(), 65),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(designWriteDirectExecutions, 2u);
   obelisk_rt_v1_context_destroy(context);
 }
 

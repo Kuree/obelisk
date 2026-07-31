@@ -115,22 +115,21 @@ bool publishNetBits(obelisk_rt_context *context, const NetAliasCache &cache,
   routed.reserve(publications.size());
   for (size_t index = 0; index != publications.size(); ++index) {
     const NetPublication &publication = publications[index];
-    uint64_t signalHandle = publication.destination;
+    uint64_t signalHandle = obelisk_rt_canonical_state_handle_unlocked(
+        context, publication.destination, 1);
+    if (signalHandle == UINT64_MAX)
+      return false;
     uint64_t publicationHandle = publication.destination;
     uint64_t publicationWidth = 1;
-    uint32_t chosenID = UINT32_MAX;
-    for (const auto &[id, state] : context->nativeStaticStates)
-      if (publication.destination >= state.bitOffset &&
-          publication.destination < state.bitOffset + state.bitWidth &&
-          id < chosenID) {
-        chosenID = id;
-        signalHandle = encodeStaticHandle(
-            id,
-            static_cast<int64_t>(publication.destination - state.bitOffset));
-        publicationHandle = encodeStaticHandle(id, 0);
-        publicationWidth = state.bitWidth;
-      }
-    if (chosenID == UINT32_MAX)
+    uint32_t staticID = 0;
+    int64_t staticOffset = 0;
+    if (decodeStaticHandle(signalHandle, staticID, staticOffset)) {
+      auto state = context->nativeStaticStates.find(staticID);
+      if (state == context->nativeStaticStates.end())
+        return false;
+      publicationHandle = encodeStaticHandle(staticID, 0);
+      publicationWidth = state->second.bitWidth;
+    } else {
       for (const NetAliasRange &net : cache.nets)
         if (publication.destination >= net.valueOffset &&
             publication.destination < net.valueOffset + net.width) {
@@ -138,6 +137,7 @@ bool publishNetBits(obelisk_rt_context *context, const NetAliasCache &cache,
           publicationWidth = net.width;
           break;
         }
+    }
     obelisk_rt_invalidate_signal_snapshots_unlocked(context, signalHandle, 1);
     routed.push_back({publicationHandle, publicationWidth, signalHandle, index,
                       publication.oldValue != publication.value ||

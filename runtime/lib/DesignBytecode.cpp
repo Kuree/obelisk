@@ -818,16 +818,18 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
         // state is registered, use its stable identity so mixed-tier waits and
         // publications name the same object.
         std::lock_guard<std::recursive_mutex> lock(context->mutex);
-        for (const auto &[id, state] : context->nativeStaticStates) {
-          if (state.bitOffset != static_cast<uint64_t>(begin) ||
-              state.bitWidth != width)
-            continue;
-          base = encodeStaticHandle(id, 0);
-          if (base == UINT64_MAX)
+        uint64_t canonical = obelisk_rt_canonical_state_handle_unlocked(
+            context, static_cast<uint64_t>(begin), width);
+        uint32_t id = 0;
+        int64_t offset = 0;
+        if (decodeStaticHandle(canonical, id, offset) && offset == 0) {
+          auto state = context->nativeStaticStates.find(id);
+          if (state == context->nativeStaticStates.end() ||
+              state->second.bitWidth != width)
             return OBELISK_RT_INVALID_HANDLE;
+          base = canonical;
           begin = 0;
           end = static_cast<int64_t>(width);
-          break;
         }
       }
       std::memcpy(address, &kind, sizeof(kind));

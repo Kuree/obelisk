@@ -1517,6 +1517,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_process_instance_execute(
       return status;
   }
 
+  // `tier` records the executor that owns the shared frame tail, not a future
+  // scheduling preference. Perform every transition here so native coroutine
+  // state is destroyed before bytecode can reuse that storage.
   if (instance->tier != 0 && instance->tier != requestedTier &&
       instance->tier == OBELISK_RT_TIER_NATIVE && instance->native_handle) {
     instance->descriptor->native_destroy(instance);
@@ -2128,15 +2131,6 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_aot(
         context->nativeScheduleActors[actorSlot] = instance;
         context->nativeScheduleActorTokens[actorSlot] = actorToken;
         context->nativeScheduleActorIndices[actorSlot] = index->second;
-        bool nativeRootBootstrap =
-            actorSlot == 0 &&
-            (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_ROOT_SLOT_ZERO) != 0;
-        if (!nativeRootBootstrap &&
-            context->nativeScheduleExternalWritePending &&
-            nativeAOTActorDirty(context, actorSlot) &&
-            (instance->descriptor->available_tiers &
-             OBELISK_RT_TIER_MASK_BYTECODE) != 0)
-          instance->tier = OBELISK_RT_TIER_BYTECODE;
         if (!markNativeAOTActorReadyUnlocked(context, actorSlot))
           status = OBELISK_RT_INVALID_CONTINUATION;
         else
@@ -5881,9 +5875,6 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
       if (!selected && !context->schedulerRunningFinals) {
         std::fill(context->staticNBASlowRoots.begin(),
                   context->staticNBASlowRoots.end(), uint8_t{0});
-        // Writable VPI deposits temporarily select bytecode for affected
-        // bytecode-capable static actors. Re-enter native execution only after
-        // the current slot is quiescent, never between fragments or regions.
         if (context->nativeScheduleExternalWritePending) {
           if (context->nativeSchedulePlan->state_bit_count != 0 &&
               !reconcileNativeDirtyRootsToPlanesUnlocked(
@@ -5891,12 +5882,6 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
             context->schedulerStatus = OBELISK_RT_LAYOUT_MISMATCH;
             return context->schedulerStatus;
           }
-          for (obelisk_rt_process_instance_v1 *actor :
-               context->nativeScheduleActors)
-            if (actor && actor->lifecycle != OBELISK_RT_PROCESS_TERMINATED &&
-                (actor->descriptor->available_tiers &
-                 OBELISK_RT_TIER_MASK_NATIVE) != 0)
-              actor->tier = OBELISK_RT_TIER_NATIVE;
           context->nativeScheduleExternalWritePending = false;
           context->nativeScheduleTransientDirtyRoots.clear();
           std::fill(context->nativeScheduleTransientDirtyMask.begin(),
@@ -7414,18 +7399,6 @@ void obelisk_rt_aot_external_write_unlocked(obelisk_rt_context *context) {
   if (context->nativeSchedulePlan->specialization_fast)
     *context->nativeSchedulePlan->specialization_fast = 0;
   context->nativeScheduleExternalWritePending = true;
-  for (uint32_t slot = 0; slot != context->nativeScheduleActors.size();
-       ++slot) {
-    obelisk_rt_process_instance_v1 *actor = context->nativeScheduleActors[slot];
-    bool nativeRootBootstrap =
-        slot == 0 && (context->nativeSchedulePlan->flags &
-                      OBELISK_RT_NATIVE_SCHEDULE_ROOT_SLOT_ZERO) != 0;
-    if (!nativeRootBootstrap && nativeAOTActorDirty(context, slot) && actor &&
-        actor->lifecycle != OBELISK_RT_PROCESS_TERMINATED &&
-        (actor->descriptor->available_tiers & OBELISK_RT_TIER_MASK_BYTECODE) !=
-            0)
-      actor->tier = OBELISK_RT_TIER_BYTECODE;
-  }
 }
 
 void obelisk_rt_aot_external_write_range_unlocked(obelisk_rt_context *context,
