@@ -202,6 +202,21 @@ void ObeliskSimPreparePass::runOnOperation() {
         invalid = true;
       }
     }
+    if (auto primitive =
+            dyn_cast<semantic::SVPrimitiveInstanceSymbolOp>(unit)) {
+      if (primitive.getUnsupportedStrength()) {
+        emitError(getSemanticLocation(unit))
+            << "primitive strengths are not supported: "
+            << *primitive.getUnsupportedStrength();
+        invalid = true;
+      }
+      if (primitive.getUnsupportedDelay()) {
+        emitError(getSemanticLocation(unit))
+            << "primitive delays are not supported: "
+            << *primitive.getUnsupportedDelay();
+        invalid = true;
+      }
+    }
     auto timeUnit = unit->getAttrOfType<IntegerAttr>("time_unit_fs");
     auto timePrecision = unit->getAttrOfType<IntegerAttr>("time_precision_fs");
     if (static_cast<bool>(timeUnit) != static_cast<bool>(timePrecision)) {

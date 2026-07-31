@@ -1010,9 +1010,33 @@ private:
                 builder.getI64IntegerAttr(getFemtoseconds(scale.precision)));
     }
 
-    if constexpr (std::same_as<T, slang::ast::PrimitiveInstanceSymbol>)
+    if constexpr (std::same_as<T, slang::ast::PrimitiveInstanceSymbol>) {
       attrs.set("primitive_name",
                 builder.getStringAttr(node.primitiveType.name));
+      auto [strength0, strength1] = node.getDriveStrength();
+      if (strength0 || strength1) {
+        std::string spelling;
+        if (strength0)
+          spelling += slang::ast::toString(*strength0);
+        spelling += ',';
+        if (strength1)
+          spelling += slang::ast::toString(*strength1);
+        SET_OP_ATTR(UnsupportedStrength, builder.getStringAttr(spelling));
+      }
+      if (const slang::ast::TimingControl *delay = node.getDelay()) {
+        slang::SourceRange range = getSourceRange(*delay);
+        if (range.start().valid() && range.end().valid() &&
+            range.start().buffer() == range.end().buffer()) {
+          std::string_view buffer =
+              sourceManager.getSourceText(range.start().buffer());
+          size_t begin = range.start().offset();
+          size_t end = range.end().offset();
+          if (begin <= end && end < buffer.size())
+            SET_OP_ATTR(UnsupportedDelay, builder.getStringAttr(buffer.substr(
+                                              begin, end - begin + 1)));
+        }
+      }
+    }
 
     if constexpr (std::derived_from<T, slang::ast::VariableSymbol>) {
       SET_OP_ATTR(Lifetime,

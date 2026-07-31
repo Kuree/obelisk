@@ -284,6 +284,12 @@ class SlangContinuousAssignASTNodeOp<string mnemonic>
         OptionalAttr<StrAttr>:$unsupported_delay
       )>;
 
+class SlangPrimitiveInstanceASTNodeOp<string mnemonic>
+    : SlangSymbolASTNodeOp<mnemonic, [], (ins
+        OptionalAttr<StrAttr>:$unsupported_strength,
+        OptionalAttr<StrAttr>:$unsupported_delay
+      )>;
+
 class SlangNetSymbolASTNodeOp<string mnemonic>
     : SlangSymbolASTNodeOp<mnemonic, [], (ins
         SlangNetKind:$net_kind,

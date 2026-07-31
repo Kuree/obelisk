@@ -278,6 +278,12 @@ class ObeliskContinuousAssignASTNodeOp<string mnemonic>
         OptionalAttr<StrAttr>:$unsupported_delay
       )>;
 
+class ObeliskPrimitiveInstanceASTNodeOp<string mnemonic>
+    : ObeliskSymbolASTNodeOp<mnemonic, [], (ins
+        OptionalAttr<StrAttr>:$unsupported_strength,
+        OptionalAttr<StrAttr>:$unsupported_delay
+      )>;
+
 class ObeliskNetSymbolASTNodeOp<string mnemonic>
     : ObeliskSymbolASTNodeOp<mnemonic, [], (ins
         ObeliskSVNetKind:$net_kind,
