@@ -19,62 +19,6 @@ bool appendSignalEvent(obelisk_rt_context *context, uint64_t bitOffset,
       evaluateComputedObservers);
 }
 
-bool rangesOverlap(uint64_t left, uint64_t leftWidth, uint64_t right,
-                   uint64_t rightWidth) {
-  uint32_t leftID = 0, rightID = 0;
-  int64_t leftOffset = 0, rightOffset = 0;
-  bool leftAutomatic = decodeAutomaticHandle(left, leftID, leftOffset);
-  bool rightAutomatic = decodeAutomaticHandle(right, rightID, rightOffset);
-  if (leftAutomatic != rightAutomatic || (leftAutomatic && leftID != rightID))
-    return false;
-  if (!leftAutomatic) {
-    bool leftStatic = decodeStaticHandle(left, leftID, leftOffset);
-    bool rightStatic = decodeStaticHandle(right, rightID, rightOffset);
-    if (leftStatic != rightStatic || (leftStatic && leftID != rightID))
-      return false;
-    if (!leftStatic && (!decodeGlobalHandle(left, leftOffset) ||
-                        !decodeGlobalHandle(right, rightOffset)))
-      return false;
-  }
-  __int128 leftEnd = static_cast<__int128>(leftOffset) + leftWidth;
-  __int128 rightEnd = static_cast<__int128>(rightOffset) + rightWidth;
-  return leftWidth != 0 && rightWidth != 0 &&
-         static_cast<__int128>(leftOffset) < rightEnd &&
-         static_cast<__int128>(rightOffset) < leftEnd;
-}
-
-bool signalEdgeMatches(uint32_t requested, uint32_t observed) {
-  switch (requested) {
-  case OBELISK_RT_WAIT_EDGE_CHANGE:
-    return (observed & OBELISK_RT_SIGNAL_CHANGE) != 0;
-  case OBELISK_RT_WAIT_EDGE_POSEDGE:
-    return (observed & OBELISK_RT_SIGNAL_POSEDGE) != 0;
-  case OBELISK_RT_WAIT_EDGE_NEGEDGE:
-    return (observed & OBELISK_RT_SIGNAL_NEGEDGE) != 0;
-  case OBELISK_RT_WAIT_EDGE_BOTH:
-    return (observed &
-            (OBELISK_RT_SIGNAL_POSEDGE | OBELISK_RT_SIGNAL_NEGEDGE)) != 0;
-  default:
-    return false;
-  }
-}
-
-uint32_t transitionEdges(bool oldValue, bool oldUnknown, bool newValue,
-                         bool newUnknown) {
-  if (oldValue == newValue && oldUnknown == newUnknown)
-    return 0;
-  uint32_t result = OBELISK_RT_SIGNAL_CHANGE;
-  bool oldZero = !oldUnknown && !oldValue;
-  bool oldOne = !oldUnknown && oldValue;
-  bool newZero = !newUnknown && !newValue;
-  bool newOne = !newUnknown && newValue;
-  if ((oldZero && !newZero) || (oldUnknown && newOne))
-    result |= OBELISK_RT_SIGNAL_POSEDGE;
-  if ((oldOne && !newOne) || (oldUnknown && newZero))
-    result |= OBELISK_RT_SIGNAL_NEGEDGE;
-  return result;
-}
-
 NetAliasCache *getNetAliasCache(const Image &image,
                                 obelisk_rt_context *context) {
   if (context->netAliases.execution == context->execution)

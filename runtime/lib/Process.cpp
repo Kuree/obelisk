@@ -3,6 +3,7 @@
 #include "ProcessAllocation.h"
 #include "ProcessValidation.h"
 #include "RuntimeInternal.h"
+#include "SignalSemantics.h"
 #include "obelisk/Runtime/StableHandle.h"
 #include "obelisk/Runtime/StableHash.h"
 
@@ -24,6 +25,7 @@
 namespace {
 
 using namespace obelisk::process;
+using namespace obelisk::runtime;
 
 constexpr uint64_t kNativeLogicalProcessTag =
     OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG;
@@ -369,38 +371,6 @@ waitEntries(const obelisk_rt_wait_record_v1 *wait) {
   return reinterpret_cast<const obelisk_rt_wait_entry_v1 *>(wait + 1);
 }
 
-bool signalEdgeMatches(uint32_t requested, uint32_t observed) {
-  switch (requested) {
-  case OBELISK_RT_WAIT_EDGE_CHANGE:
-    return (observed & OBELISK_RT_SIGNAL_CHANGE) != 0;
-  case OBELISK_RT_WAIT_EDGE_POSEDGE:
-    return (observed & OBELISK_RT_SIGNAL_POSEDGE) != 0;
-  case OBELISK_RT_WAIT_EDGE_NEGEDGE:
-    return (observed & OBELISK_RT_SIGNAL_NEGEDGE) != 0;
-  case OBELISK_RT_WAIT_EDGE_BOTH:
-    return (observed &
-            (OBELISK_RT_SIGNAL_POSEDGE | OBELISK_RT_SIGNAL_NEGEDGE)) != 0;
-  default:
-    return false;
-  }
-}
-
-uint32_t transitionEdges(bool oldValue, bool oldUnknown, bool newValue,
-                         bool newUnknown) {
-  if (oldValue == newValue && oldUnknown == newUnknown)
-    return 0;
-  uint32_t result = OBELISK_RT_SIGNAL_CHANGE;
-  bool oldZero = !oldUnknown && !oldValue;
-  bool oldOne = !oldUnknown && oldValue;
-  bool newZero = !newUnknown && !newValue;
-  bool newOne = !newUnknown && newValue;
-  if ((oldZero && !newZero) || (oldUnknown && newOne))
-    result |= OBELISK_RT_SIGNAL_POSEDGE;
-  if ((oldOne && !newOne) || (oldUnknown && newZero))
-    result |= OBELISK_RT_SIGNAL_NEGEDGE;
-  return result;
-}
-
 bool decodeNativeAutomatic(uint64_t handle, uint32_t &id, int64_t &offset) {
   obelisk_rt_stable_handle_v1 decoded;
   if (!obelisk_rt_stable_handle_decode(handle, &decoded) ||
@@ -468,30 +438,6 @@ bool addHandleOffset(int64_t base, uint64_t offset, int64_t &result) {
 
 uint64_t nativeHandleOffset(uint64_t handle, int64_t amount) {
   return obelisk_rt_stable_handle_offset(handle, amount);
-}
-
-bool nativeRangesOverlap(uint64_t lhsHandle, uint64_t lhsWidth,
-                         uint64_t rhsHandle, uint64_t rhsWidth) {
-  uint32_t lhsID = 0, rhsID = 0;
-  int64_t lhs = 0, rhs = 0;
-  bool lhsAutomatic = decodeNativeAutomatic(lhsHandle, lhsID, lhs);
-  bool rhsAutomatic = decodeNativeAutomatic(rhsHandle, rhsID, rhs);
-  if (lhsAutomatic != rhsAutomatic || (lhsAutomatic && lhsID != rhsID))
-    return false;
-  if (!lhsAutomatic) {
-    bool lhsStatic = decodeNativeStatic(lhsHandle, lhsID, lhs);
-    bool rhsStatic = decodeNativeStatic(rhsHandle, rhsID, rhs);
-    if (lhsStatic != rhsStatic || (lhsStatic && lhsID != rhsID))
-      return false;
-    if (!lhsStatic && (!decodeNativeGlobal(lhsHandle, lhs) ||
-                       !decodeNativeGlobal(rhsHandle, rhs)))
-      return false;
-  }
-  __int128 lhsEnd = static_cast<__int128>(lhs) + lhsWidth;
-  __int128 rhsEnd = static_cast<__int128>(rhs) + rhsWidth;
-  return lhsWidth != 0 && rhsWidth != 0 &&
-         static_cast<__int128>(lhs) < rhsEnd &&
-         static_cast<__int128>(rhs) < lhsEnd;
 }
 
 void releaseOwnedNativeStates(obelisk_rt_context *context,
@@ -870,7 +816,7 @@ void obelisk_rt_invalidate_signal_snapshots_unlocked(
   }
   for (auto snapshot = context->signalValueSnapshots.begin();
        snapshot != context->signalValueSnapshots.end();)
-    if (nativeRangesOverlap(snapshot->first, 1, bitOffset, bitWidth))
+    if (rangesOverlap(snapshot->first, 1, bitOffset, bitWidth))
       snapshot = context->signalValueSnapshots.erase(snapshot);
     else
       ++snapshot;
@@ -1117,8 +1063,8 @@ bool evaluateNativeComputedWaiters(obelisk_rt_context *context,
           continue;
         if (dependencyKind == OBELISK_RT_OBSERVER_DEPENDENCY_EVENT
                 ? dependency.stable_id == publishedHandle
-                : nativeRangesOverlap(dependency.stable_id, dependency.width,
-                                      publishedHandle, publishedWidth))
+                : rangesOverlap(dependency.stable_id, dependency.width,
+                                publishedHandle, publishedWidth))
           return true;
       }
       return false;
@@ -1561,9 +1507,8 @@ bool publishSignalOccurrenceUnlocked(obelisk_rt_context *context,
               static_cast<__int128>(subscribedOffset) + subscription->bitWidth >
                   publishedOffset;
         } else {
-          overlaps =
-              nativeRangesOverlap(subscription->stableID,
-                                  subscription->bitWidth, stableID, bitWidth);
+          overlaps = rangesOverlap(subscription->stableID,
+                                   subscription->bitWidth, stableID, bitWidth);
         }
         if (!overlaps)
           continue;
@@ -2336,14 +2281,14 @@ bool latchConditionalSignalWaitersImpl(obelisk_rt_context *context,
       return;
     const obelisk_rt_wait_entry_v1 *entries = waitEntries(wait);
     if (wait->flags == OBELISK_RT_WAIT_LEVEL_TRUE && wait->count == 1) {
-      if (nativeRangesOverlap(entries[0].stable_id, entries[0].reserved,
-                              bitOffset, 1))
+      if (rangesOverlap(entries[0].stable_id, entries[0].reserved, bitOffset,
+                        1))
         latched = levelTrue(entries[0]);
       return;
     }
     if (wait->flags != OBELISK_RT_WAIT_EDGE_IFF || wait->count != 2 ||
-        !nativeRangesOverlap(entries[0].stable_id, entries[0].reserved,
-                             bitOffset, 1) ||
+        !rangesOverlap(entries[0].stable_id, entries[0].reserved, bitOffset,
+                       1) ||
         !signalEdgeMatches(entries[0].edge, edges))
       return;
     latched = levelTrue(entries[1]);

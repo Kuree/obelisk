@@ -4,6 +4,7 @@
 #define OBELISK_RUNTIME_LIB_DESIGNBYTECODENETS_H
 
 #include "DesignBytecodeImage.h"
+#include "SignalSemantics.h"
 
 #include <cstdint>
 #include <vector>
@@ -13,6 +14,10 @@ struct obelisk_rt_context;
 
 namespace obelisk::designbytecode {
 
+using obelisk::runtime::rangesOverlap;
+using obelisk::runtime::signalEdgeMatches;
+using obelisk::runtime::transitionEdges;
+
 struct NetPublication {
   uint64_t destination;
   bool oldValue;
@@ -21,11 +26,6 @@ struct NetPublication {
   bool unknown;
 };
 
-bool rangesOverlap(uint64_t left, uint64_t leftWidth, uint64_t right,
-                   uint64_t rightWidth);
-bool signalEdgeMatches(uint32_t requested, uint32_t observed);
-uint32_t transitionEdges(bool oldValue, bool oldUnknown, bool newValue,
-                         bool newUnknown);
 NetAliasCache *getNetAliasCache(const Image &image,
                                 obelisk_rt_context *context);
 bool publishNetBits(obelisk_rt_context *context, const NetAliasCache &cache,
