@@ -7136,8 +7136,16 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_run_aot_nodes(
 
 extern "C" obelisk_rt_status
 obelisk_rt_v1_scheduler_run(obelisk_rt_context *context) {
+  if (!context)
+    return OBELISK_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
   try {
+    // One scheduler invocation is one serialized runtime transaction.  Hold
+    // the context mutex across the generated/native execution scope so nested
+    // state, fanout, and NBA helpers do not repeatedly acquire the recursive
+    // lock.  Evaluator callbacks use ContextCallbackUnlock and therefore keep
+    // the existing reentrancy contract while arbitrary user code runs.
+    NativeAOTMutexScope schedulerLock(context);
     return runScheduler(context);
   } catch (const std::bad_alloc &) {
     obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_OUT_OF_MEMORY);
