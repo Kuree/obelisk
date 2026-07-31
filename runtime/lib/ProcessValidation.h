@@ -7,6 +7,8 @@
 
 #include <cstdint>
 
+struct ScheduledProcess;
+
 namespace obelisk::process {
 
 constexpr uint64_t kWaitHeaderSize = sizeof(obelisk_rt_wait_record_v1);
@@ -22,6 +24,12 @@ obelisk_rt_status
 validateDescriptor(const obelisk_rt_process_descriptor_v1 &descriptor,
                    uint64_t &nativeSize, uint64_t &nativeAlignment,
                    uint64_t &scratchOffset, uint64_t &scratchSize);
+obelisk_rt_status validateAction(obelisk_rt_process_instance_v1 &instance,
+                                 obelisk_rt_fragment_action_v1 &action,
+                                 bool bytecode);
+const obelisk_rt_wait_record_v1 *currentWait(const ScheduledProcess &process);
+const obelisk_rt_wait_entry_v1 *
+waitEntries(const obelisk_rt_wait_record_v1 *wait);
 const obelisk_rt_observer_descriptor_v1 *
 findObserverDescriptor(const obelisk_rt_execution_descriptor_v1 *execution,
                        uint64_t codeUnitID);

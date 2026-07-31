@@ -227,6 +227,215 @@ findObserverDescriptor(const obelisk_rt_execution_descriptor_v1 *execution,
              : nullptr;
 }
 
+obelisk_rt_status
+validateComputedWait(obelisk_rt_process_instance_v1 &instance,
+                     const obelisk_rt_fragment_action_v1 &action) {
+  if (action.auxiliary < sizeof(obelisk_rt_computed_wait_record_v1))
+    return OBELISK_RT_INVALID_FRAME;
+  const auto *wait =
+      reinterpret_cast<const obelisk_rt_computed_wait_record_v1 *>(
+          static_cast<const uint8_t *>(instance.frame) + action.payload);
+  return obelisk_rt_validate_computed_wait_record(
+             instance.descriptor->execution, wait, action.auxiliary)
+             ? OBELISK_RT_OK
+             : OBELISK_RT_INVALID_FRAME;
+}
+
+obelisk_rt_status validateWait(obelisk_rt_process_instance_v1 &instance,
+                               obelisk_rt_fragment_action_v1 &action,
+                               bool allowLegacyBytecode) {
+  const obelisk_rt_frame_layout_v1 &layout = *instance.descriptor->frame_layout;
+  const obelisk_rt_frame_field_v1 *field =
+      findWaitField(layout, action.payload);
+  if (!field)
+    return OBELISK_RT_INVALID_FRAME;
+  if (allowLegacyBytecode && action.flags == 0) {
+    action.flags = OBELISK_RT_ACTION_FRAME_WAIT_RECORD;
+    action.auxiliary = field->size;
+  }
+  constexpr uint32_t resumeFlags = OBELISK_RT_ACTION_RESUME_REGION_VALID |
+                                   OBELISK_RT_ACTION_RESUME_REGION_MASK;
+  uint32_t resumeRegion =
+      (action.flags & OBELISK_RT_ACTION_RESUME_REGION_MASK) >>
+      OBELISK_RT_ACTION_RESUME_REGION_SHIFT;
+  uint64_t end;
+  if ((action.flags & ~resumeFlags) != OBELISK_RT_ACTION_FRAME_WAIT_RECORD ||
+      ((action.flags & OBELISK_RT_ACTION_RESUME_REGION_MASK) != 0 &&
+       (action.flags & OBELISK_RT_ACTION_RESUME_REGION_VALID) == 0) ||
+      ((action.flags & OBELISK_RT_ACTION_RESUME_REGION_VALID) != 0 &&
+       !obelisk_rt_is_process_home_region(resumeRegion)) ||
+      action.auxiliary != field->size ||
+      addOverflow(action.payload, action.auxiliary, end) ||
+      end > instance.frame_size || action.payload % field->alignment != 0)
+    return OBELISK_RT_INVALID_FRAME;
+  if (action.suspend_kind == OBELISK_RT_SUSPEND_OBSERVER)
+    return validateComputedWait(instance, action);
+  const auto *wait = reinterpret_cast<const obelisk_rt_wait_record_v1 *>(
+      static_cast<const uint8_t *>(instance.frame) + action.payload);
+  uint64_t entriesSize;
+  uint64_t required;
+  if (uint64_t{wait->count} >
+          (std::numeric_limits<uint64_t>::max() - kWaitHeaderSize) /
+              kWaitEntrySize ||
+      (entriesSize = uint64_t{wait->count} * kWaitEntrySize,
+       addOverflow(kWaitHeaderSize, entriesSize, required)) ||
+      wait->version != OBELISK_RT_VERSION ||
+      wait->kind != action.suspend_kind || required > action.auxiliary)
+    return OBELISK_RT_INVALID_FRAME;
+
+  const auto *entries = reinterpret_cast<const obelisk_rt_wait_entry_v1 *>(
+      reinterpret_cast<const uint8_t *>(wait) + kWaitHeaderSize);
+  auto validEdge = [](obelisk_rt_wait_edge_kind edge) {
+    return edge >= OBELISK_RT_WAIT_EDGE_CHANGE &&
+           edge <= OBELISK_RT_WAIT_EDGE_BOTH;
+  };
+  auto validSignalHandle = [](uint64_t stableID) {
+    obelisk_rt_stable_handle_v1 decoded;
+    return obelisk_rt_stable_handle_decode(stableID, &decoded);
+  };
+  auto entriesMatch = [&](bool requireEdge, obelisk_rt_wait_edge_kind exactEdge,
+                          bool requireSignalHandle = false) {
+    for (uint32_t index = 0; index != wait->count; ++index) {
+      const obelisk_rt_wait_entry_v1 &entry = entries[index];
+      if (requireSignalHandle && !validSignalHandle(entry.stable_id))
+        return false;
+      if (requireEdge ? entry.reserved == 0 : entry.reserved != 0)
+        return false;
+      if (requireEdge ? (exactEdge == OBELISK_RT_WAIT_EDGE_NONE
+                             ? !validEdge(entry.edge)
+                             : entry.edge != exactEdge)
+                      : entry.edge != OBELISK_RT_WAIT_EDGE_NONE)
+        return false;
+    }
+    return true;
+  };
+  bool valid = false;
+  switch (wait->kind) {
+  case OBELISK_RT_SUSPEND_DELAY:
+    valid = wait->flags == 0 && wait->count == 0 && wait->auxiliary == 0;
+    break;
+  case OBELISK_RT_SUSPEND_CHANGE:
+    valid = (wait->flags == 0 || wait->flags == OBELISK_RT_WAIT_LEVEL_TRUE) &&
+            wait->count == 1 && wait->payload == 0 && wait->auxiliary == 0 &&
+            entriesMatch(true, OBELISK_RT_WAIT_EDGE_CHANGE, true);
+    break;
+  case OBELISK_RT_SUSPEND_EDGE:
+    if (wait->flags == OBELISK_RT_WAIT_EDGE_IFF)
+      valid = wait->count == 2 && wait->payload == 0 && wait->auxiliary == 0 &&
+              validEdge(entries[0].edge) && entries[0].reserved != 0 &&
+              entries[1].edge == OBELISK_RT_WAIT_EDGE_NONE &&
+              entries[1].reserved != 0 &&
+              validSignalHandle(entries[0].stable_id) &&
+              validSignalHandle(entries[1].stable_id);
+    else
+      valid = wait->flags == 0 && wait->count == 1 && wait->payload == 0 &&
+              wait->auxiliary == 0 &&
+              entriesMatch(true, OBELISK_RT_WAIT_EDGE_NONE, true);
+    break;
+  case OBELISK_RT_SUSPEND_EVENT:
+  case OBELISK_RT_SUSPEND_AWAIT:
+    valid = wait->flags == 0 && wait->count == 1 && wait->payload == 0 &&
+            wait->auxiliary == 0 && entriesMatch(false, 0);
+    break;
+  case OBELISK_RT_SUSPEND_JOIN:
+    valid = wait->flags <= 1 && wait->count != 0 && wait->payload == 0 &&
+            wait->auxiliary == 0 && entriesMatch(false, 0);
+    break;
+  case OBELISK_RT_SUSPEND_FOREVER:
+  case OBELISK_RT_SUSPEND_CHILDREN:
+    valid = wait->flags == 0 && wait->count == 0 && wait->payload == 0 &&
+            wait->auxiliary == 0;
+    break;
+  case OBELISK_RT_SUSPEND_FRONTIER:
+    valid = wait->flags == 0 && wait->count != 0 && wait->payload == 0 &&
+            wait->auxiliary == 0 && entriesMatch(false, 0);
+    break;
+  default:
+    break;
+  }
+  // `suspend.any` shares the EDGE action kind and is distinguished by more
+  // than one per-watcher edge entry.
+  if (wait->kind == OBELISK_RT_SUSPEND_EDGE && wait->count > 1 &&
+      wait->flags == 0)
+    valid = wait->payload == 0 && wait->auxiliary == 0 &&
+            entriesMatch(true, OBELISK_RT_WAIT_EDGE_NONE, true);
+  return valid ? OBELISK_RT_OK : OBELISK_RT_INVALID_FRAME;
+}
+
+obelisk_rt_status validateAction(obelisk_rt_process_instance_v1 &instance,
+                                 obelisk_rt_fragment_action_v1 &action,
+                                 bool bytecode) {
+  const obelisk_rt_frame_layout_v1 &layout = *instance.descriptor->frame_layout;
+  switch (action.kind) {
+  case OBELISK_RT_FRAGMENT_CONTINUE:
+    if (action.flags != 0 || action.suspend_kind != OBELISK_RT_SUSPEND_NONE ||
+        action.payload != 0 || action.auxiliary != 0)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    break;
+  case OBELISK_RT_FRAGMENT_SUSPEND: {
+    if (action.suspend_kind < OBELISK_RT_SUSPEND_DELAY ||
+        action.suspend_kind > OBELISK_RT_SUSPEND_OBSERVER)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    obelisk_rt_status status = validateWait(instance, action, bytecode);
+    if (status != OBELISK_RT_OK)
+      return status;
+    break;
+  }
+  case OBELISK_RT_FRAGMENT_TERMINATE:
+    if (action.flags != 0 || action.suspend_kind != OBELISK_RT_SUSPEND_NONE ||
+        action.continuation != 0 || action.payload != 0 ||
+        action.auxiliary != 0)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    return OBELISK_RT_OK;
+  case OBELISK_RT_FRAGMENT_TASK_CALL:
+    if (action.flags != 0 || action.suspend_kind != OBELISK_RT_SUSPEND_NONE ||
+        action.continuation == 0 || action.payload == 0 ||
+        action.auxiliary != 0)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    break;
+  default:
+    return OBELISK_RT_INVALID_ARGUMENT;
+  }
+  return validContinuation(layout, action.continuation)
+             ? OBELISK_RT_OK
+             : OBELISK_RT_INVALID_CONTINUATION;
+}
+
+const obelisk_rt_wait_record_v1 *currentWait(const ScheduledProcess &process) {
+  if (!process.instance || !process.instance->descriptor ||
+      !process.instance->descriptor->frame_layout || !process.instance->frame)
+    return nullptr;
+  const obelisk_rt_frame_layout_v1 &layout =
+      *process.instance->descriptor->frame_layout;
+  if (process.waitSize != 0) {
+    const obelisk_rt_frame_field_v1 *field =
+        findWaitField(layout, process.waitOffset);
+    if (!field || field->size != process.waitSize ||
+        process.waitOffset > process.instance->frame_size ||
+        process.waitSize > process.instance->frame_size - process.waitOffset)
+      return nullptr;
+    return reinterpret_cast<const obelisk_rt_wait_record_v1 *>(
+        static_cast<const uint8_t *>(process.instance->frame) +
+        process.waitOffset);
+  }
+  for (uint32_t index = 0; index != layout.field_count; ++index) {
+    const obelisk_rt_frame_field_v1 &field = layout.fields[index];
+    if (field.kind != OBELISK_RT_FRAME_WAIT ||
+        field.size < sizeof(obelisk_rt_wait_record_v1) ||
+        field.offset > process.instance->frame_size ||
+        field.size > process.instance->frame_size - field.offset)
+      continue;
+    return reinterpret_cast<const obelisk_rt_wait_record_v1 *>(
+        static_cast<const uint8_t *>(process.instance->frame) + field.offset);
+  }
+  return nullptr;
+}
+
+const obelisk_rt_wait_entry_v1 *
+waitEntries(const obelisk_rt_wait_record_v1 *wait) {
+  return reinterpret_cast<const obelisk_rt_wait_entry_v1 *>(wait + 1);
+}
+
 } // namespace obelisk::process
 
 using namespace obelisk::process;
