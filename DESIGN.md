@@ -529,6 +529,17 @@ dynamic handles, gaps, and wider ranges remain explicit boundaries. The VPI
 database and stable handles continue to identify the original roots and bit
 offsets; packing changes only the generated notification granularity.
 
+The existing four-state value-domain analysis also computes an inductive
+known-state domain for canonical storage and resolved-net roots. It begins with
+candidate roots assumed known, propagates those assumptions through SSA, CFG,
+and direct call boundaries, rejects every root with a reachable write that may
+restore X/Z, and repeats until the root set reaches a fixed point. This proof
+does not change unconditional value facts: generated code may consume it only
+behind an unknown-plane guard. Multiply-driven whole nets and connected nets
+whose contribution ranges are not yet distinguished are rejected
+conservatively. Consequently initial X behavior stays canonical, while reset
+can establish the guarded invariant used by a later value-only kernel version.
+
 Within a clean scalar NBA barrier, exact fanout entries with the same root
 range and edge predicate are compiled as one trigger group. The generated
 callback evaluates that predicate once and ORs the group's constant

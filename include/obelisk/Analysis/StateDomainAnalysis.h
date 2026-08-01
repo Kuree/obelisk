@@ -14,6 +14,7 @@
 #include "mlir/Support/LLVM.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 
 #include <utility>
@@ -57,6 +58,7 @@ enum class StateDomainReason {
   DivisionDivisor,
   CaseComparison,
   AbsorbingConstant,
+  InductiveRootRead,
   RefLoad,
   NetRead,
   CallResult,
@@ -68,6 +70,19 @@ enum class StateDomainReason {
 struct StateDomainFact {
   StateDomain domain = StateDomain::Bottom;
   StateDomainReason reason = StateDomainReason::Unresolved;
+};
+
+/// One canonical design-state root whose known-state invariant is inductive.
+/// The root may begin as X/Z; clients must guard its unknown plane before
+/// specializing a kernel, and must invalidate that specialization across
+/// external mutation.
+struct InductiveStateRoot {
+  sim::ComputeResourceKind resource = sim::ComputeResourceKind::Unknown;
+  uint64_t descriptor = 0;
+
+  bool operator==(const InductiveStateRoot &other) const {
+    return resource == other.resource && descriptor == other.descriptor;
+  }
 };
 
 llvm::StringRef stringifyStateDomain(StateDomain domain);
@@ -83,13 +98,20 @@ public:
 
   StateDomainFact get(mlir::Value value) const;
   bool isTwoState(mlir::Value value) const;
+  bool isInductivelyTwoState(sim::ComputeResourceKind resource,
+                             uint64_t descriptor) const;
+  mlir::ArrayRef<InductiveStateRoot> getInductiveRoots() const {
+    return inductiveRoots;
+  }
 
 private:
   explicit StateDomainAnalysis(
-      llvm::DenseMap<mlir::Value, StateDomainFact> facts)
-      : facts(std::move(facts)) {}
+      llvm::DenseMap<mlir::Value, StateDomainFact> facts,
+      llvm::SmallVector<InductiveStateRoot> inductiveRoots)
+      : facts(std::move(facts)), inductiveRoots(std::move(inductiveRoots)) {}
 
   llvm::DenseMap<mlir::Value, StateDomainFact> facts;
+  llvm::SmallVector<InductiveStateRoot> inductiveRoots;
 };
 
 } // namespace obelisk

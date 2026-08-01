@@ -71,6 +71,16 @@ private:
   static void printDesign(obelisk::sim::SimDesignOp design,
                           const obelisk::StateDomainAnalysis &analysis) {
     llvm::errs() << "state-domain @" << design.getSymName() << "\n";
+    for (const obelisk::InductiveStateRoot &root :
+         analysis.getInductiveRoots()) {
+      StringRef resource = "unknown";
+      if (root.resource == obelisk::sim::ComputeResourceKind::Storage)
+        resource = "storage";
+      else if (root.resource == obelisk::sim::ComputeResourceKind::Net)
+        resource = "net";
+      llvm::errs() << "root " << resource << " " << root.descriptor
+                   << ": inductive-two-state\n";
+    }
     SmallVector<obelisk::sim::SimFuncOp> functions(
         design.getBody().front().getOps<obelisk::sim::SimFuncOp>());
     llvm::sort(functions, [](auto lhs, auto rhs) {
