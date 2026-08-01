@@ -47,6 +47,68 @@ actors remain on the AOT schedule. A runtime action that invalidates the
 installed plan still uses a validated transactional snapshot and permanently
 deoptimizes to the generic path.
 
+## Generated graph-region evaluation
+
+The long-term AOT execution unit is a generated graph region, not a runtime
+actor queue with a coarser scanning policy. The compiler partitions the
+verified compute graph into input-combinational, Active/derived-trigger, and
+NBA/commit regions, then orders each acyclic region into a straight-line
+kernel. Convergence components become generated dirty-mask fixpoint loops.
+Control loops, dynamic waits, and unsupported operations remain explicit
+native-coroutine or bytecode boundaries.
+
+Every resumable compute fragment keeps a stable fine bit. A coarse kernel owns
+an ordered range of those bits and accepts a ready mask at entry. An acyclic
+kernel tests each member bit, executes the selected body directly, forwards
+state through SSA, and accumulates downstream member bits locally. It publishes
+only final changed ranges when it reaches a kernel or event-region boundary.
+This removes scheduler round trips without weakening event semantics: the fine
+bits remain the canonical fracture points for duplicate-wake suppression,
+bytecode-to-AOT return, exact VPI deposits, and future worker-lane placement.
+
+Kernel dirtiness is an explicit generated value, not an accidental scheduler
+side effect. A normal SystemVerilog process is insensitive while its body is
+executing, so a union wait cannot detect transitions produced by that same
+coarse body. Each generated drive or store therefore returns its exact changed
+range; the kernel ORs those results into member dirty words and iterates until
+the local mask is empty. This also records transient changes that later return
+to their old value, which a before/after state comparison would miss. Only
+boundary bits become scheduler activations after the local fixpoint. A coarse
+actor that merely executes several bodies and then installs a union wait is
+not a graph-region kernel and is not a legal optimization.
+
+Generated AOT bodies and fallback bodies may share outlined implementation
+until the late inliner decides that duplicating a hot body is profitable. Code
+unit, hierarchy, source, and VPI identities are separate immutable metadata,
+analogous to debug identities surviving LLVM inlining; inlining a body never
+removes its database identity. Coverage expressions are compiled into their
+own generated counters and updates and do not define a bytecode scheduling
+group.
+
+Bytecode is used to stabilize only unsupported control or mutation. When
+bytecode reaches a supported continuation, it transfers its exact fine ready
+bits to the owning generated kernel and returns to AOT. Likewise, an immediate
+VPI deposit with exact static fanout maps the written descriptor range directly
+to fine bits and can enter the smallest affected AOT kernel without first
+running bytecode. Ambiguous writes, conditional observers, and force/release
+retain the conservative stabilization path.
+
+Dirty indexing is hierarchical only when sparsity justifies it. Leaf words are
+64-bit masks so x86 can select the next member with a single
+count-trailing-zero instruction; 128-bit scalar masks require two dependent
+halves, and SIMD does not improve first-set-bit selection. Optional summary
+words index nonempty leaf pages for large graphs and sparse external/bytecode
+ingress. Small hot native regions keep a flat leaf array, avoiding summary
+maintenance on every internal transition. The compiler selects the
+representation from kernel size and estimated ingress density rather than
+imposing one layout globally.
+
+Kernel materialization runs after the first verified compute graph and before
+the final graph rebuild. It is followed by the simulation inliner, SROA,
+mem2reg, canonicalization, CSE, simulation SCCP, and symbol DCE. The compute
+graph is then rebuilt and verified once from the executable CFG; metadata-only
+kernel grouping is not considered a runtime optimization.
+
 `-c` always emits a conventional native ELF relocatable, independent of the
 optimization level. Executable links select the runtime representation by
 optimization level:
