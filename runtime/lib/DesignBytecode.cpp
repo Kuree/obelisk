@@ -1170,14 +1170,38 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
           transferSize > canonicalFrameSize - instruction.immediate)
         return OBELISK_RT_INVALID_FRAME;
       if (value.kind != OBELISK_RT_DBREG_HANDLE) {
+        // A four-state register keeps its value and unknown planes one limb
+        // stride apart, while the canonical frame packs the two planes at the
+        // target ABI size of the value type. Transfer each plane on its own
+        // instead of copying one contiguous run: for every logic value
+        // narrower than a limb the planes do not line up, and a single copy
+        // silently drops the unknown plane, turning x and z into 0 across a
+        // suspension.
+        uint64_t registerPlane =
+            value.kind == OBELISK_RT_DBREG_LOGIC
+                ? limbCount(value.width) * sizeof(uint64_t)
+                : 0;
+        uint64_t framePlane = registerPlane != 0 ? transferSize / 2
+                                                 : transferSize;
+        if (registerPlane != 0 &&
+            (transferSize % 2 != 0 || framePlane > registerPlane))
+          return OBELISK_RT_INVALID_FRAME;
         if (instruction.opcode == OBELISK_RT_DB_LOAD_FRAME) {
           if (transferSize != value.size)
             std::memset(frame.data + value.offset, 0, value.size);
           std::memcpy(frame.data + value.offset,
-                      canonicalFrame + instruction.immediate, transferSize);
-        } else
+                      canonicalFrame + instruction.immediate, framePlane);
+          if (registerPlane != 0)
+            std::memcpy(frame.data + value.offset + registerPlane,
+                        canonicalFrame + instruction.immediate + framePlane,
+                        framePlane);
+        } else {
           std::memcpy(canonicalFrame + instruction.immediate,
-                      frame.data + value.offset, transferSize);
+                      frame.data + value.offset, framePlane);
+          if (registerPlane != 0)
+            std::memcpy(canonicalFrame + instruction.immediate + framePlane,
+                        frame.data + value.offset + registerPlane, framePlane);
+        }
         break;
       }
       if (instruction.opcode == OBELISK_RT_DB_LOAD_FRAME) {

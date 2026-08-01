@@ -1889,6 +1889,14 @@ bool validateImage(const Image &image) {
                    instruction.auxiliary > value.size) {
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
+        } else if (value.kind == OBELISK_RT_DBREG_LOGIC &&
+                   instruction.auxiliary % 2 != 0) {
+          // A four-state transfer always names both canonical frame planes,
+          // so its size is the value plane size doubled. An odd size cannot
+          // describe one, and would truncate the unknown plane.
+          return reject(__LINE__,
+                        "four-state frame transfer is not a plane pair",
+                        functionIndex, pc, instruction.opcode);
         }
         break;
       }
