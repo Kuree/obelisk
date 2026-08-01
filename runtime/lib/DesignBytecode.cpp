@@ -1489,6 +1489,7 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       } else if (!context) {
         return OBELISK_RT_INVALID_ARGUMENT;
       }
+      bool changed = false;
       {
         std::unique_lock<std::recursive_mutex> lock;
         if (!local)
@@ -1551,7 +1552,6 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
             context->forceMask.assign(limbs, 0);
           }
         }
-        bool changed = false;
         bool equalStringContents = false;
         if (valueLayout.kind == OBELISK_RT_DBREG_STRING && !isLoad) {
           if (isOverride || local ||
@@ -1806,6 +1806,12 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
         if (!local && changed && !realNotified &&
             ++context->schedulerEpoch == 0)
           context->schedulerEpoch = 1;
+      }
+      if (instruction.opcode == OBELISK_RT_DB_STORE_STATE &&
+          instruction.flags == OBELISK_RT_DB_STORE_STATE_CHANGED) {
+        Logic changedValue{1, false, LimbVector(1), LimbVector(1)};
+        setBit(changedValue.value, 0, changed);
+        write(instruction.destination, changedValue);
       }
       if (local && instruction.opcode == OBELISK_RT_DB_STORE_STATE)
         writeLogic(localFrame->data, localLayout, localValue);

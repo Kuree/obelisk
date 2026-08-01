@@ -560,6 +560,10 @@ enum {
   OBELISK_RT_DB_FPOW = 53
 };
 
+// StoreState writes its exact post-resolution transition predicate to the
+// destination i1 register when this flag is set.
+#define OBELISK_RT_DB_STORE_STATE_CHANGED UINT16_C(1)
+
 typedef uint16_t obelisk_rt_design_extract_kind;
 enum {
   OBELISK_RT_DB_EXTRACT_ZERO_EXTEND = 0,

@@ -1050,6 +1050,11 @@ bool validateInitialization(const Image &image, const Function &function,
       if (!defineDestination())
         return false;
       break;
+    case OBELISK_RT_DB_STORE_STATE:
+      if (instruction.flags == OBELISK_RT_DB_STORE_STATE_CHANGED &&
+          !defineDestination())
+        return false;
+      break;
     case OBELISK_RT_DB_JUMP:
       if (!defineMap(state, instruction.source0, instruction.source1) ||
           !merge(instruction.immediate, state))
@@ -1956,7 +1961,12 @@ bool validateImage(const Image &image) {
                         functionIndex, pc, instruction.opcode);
         break;
       case OBELISK_RT_DB_STORE_STATE:
-        if (instruction.flags || instruction.destination ||
+        if (instruction.flags > OBELISK_RT_DB_STORE_STATE_CHANGED ||
+            (instruction.flags == OBELISK_RT_DB_STORE_STATE_CHANGED
+                 ? (!reg(instruction.destination) ||
+                    layoutAt(image, function, instruction.destination).width !=
+                        1)
+                 : instruction.destination != 0) ||
             instruction.source2 || instruction.auxiliary ||
             instruction.immediate || !reg(instruction.source0) ||
             (!numeric(instruction.source1) && !floating(instruction.source1) &&

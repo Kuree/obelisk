@@ -98,6 +98,12 @@ Encoder::encodeStateOperation(FunctionPlan &plan, Operation *operation) {
           reg(plan, op.getValue())});
     return success();
   }
+  if (auto op = dyn_cast<sim::SimDriverDriveChangedOp>(operation)) {
+    emit({StoreState, OBELISK_RT_DB_STORE_STATE_CHANGED,
+          reg(plan, op.getChanged()), reg(plan, op.getDriver()),
+          reg(plan, op.getValue())});
+    return success();
+  }
   return std::nullopt;
 }
 
