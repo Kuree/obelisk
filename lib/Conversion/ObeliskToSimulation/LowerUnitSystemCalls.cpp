@@ -2,6 +2,8 @@
 
 #include "LowerUnit.h"
 
+#include "obelisk/Runtime/Runtime.h"
+
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 
@@ -144,9 +146,29 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     return convertResult(value);
   }
 
-  if (name == "$dist_uniform") {
-    if (children.size() != 3) {
-      emitError(location) << "$dist_uniform requires exactly three arguments";
+  // IEEE 1800 20.15. Every $dist_* function leads with an inout seed and is
+  // followed by one or two shape parameters. The seed is used to reseed the
+  // active stream and then receives the draw, so repeated calls threading the
+  // same variable walk a sequence rather than repeating one value.
+  std::optional<uint32_t> distribution =
+      llvm::StringSwitch<std::optional<uint32_t>>(name)
+          .Case("$dist_uniform", OBELISK_RT_DISTRIBUTION_UNIFORM)
+          .Case("$dist_normal", OBELISK_RT_DISTRIBUTION_NORMAL)
+          .Case("$dist_exponential", OBELISK_RT_DISTRIBUTION_EXPONENTIAL)
+          .Case("$dist_poisson", OBELISK_RT_DISTRIBUTION_POISSON)
+          .Case("$dist_chi_square", OBELISK_RT_DISTRIBUTION_CHI_SQUARE)
+          .Case("$dist_t", OBELISK_RT_DISTRIBUTION_T)
+          .Case("$dist_erlang", OBELISK_RT_DISTRIBUTION_ERLANG)
+          .Default(std::nullopt);
+  if (distribution) {
+    bool twoParameters =
+        *distribution == OBELISK_RT_DISTRIBUTION_UNIFORM ||
+        *distribution == OBELISK_RT_DISTRIBUTION_NORMAL ||
+        *distribution == OBELISK_RT_DISTRIBUTION_ERLANG;
+    size_t expected = twoParameters ? 3 : 2;
+    if (children.size() != expected) {
+      emitError(location)
+          << name << " requires exactly " << expected << " arguments";
       return failure();
     }
     Operation *seed = children[0];
@@ -158,7 +180,7 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     FailureOr<Value> seedDestination = lowerExpression(seed, true);
     if (failed(seedDestination)) {
       emitError(getSemanticLocation(seed))
-          << "$dist_uniform seed must be a writable integral variable";
+          << name << " seed must be a writable integral variable";
       return failure();
     }
     FailureOr<Value> seedValue =
@@ -173,24 +195,18 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
         arith::ExtUIOp::create(builder, location, i64, *seed32);
     sim::SimRandomSeedOp::create(builder, location, context, extendedSeed);
 
-    FailureOr<Value> first32 = lowerInteger(children[1], i32);
-    FailureOr<Value> second32 = lowerInteger(children[2], i32);
-    if (failed(first32) || failed(second32))
+    FailureOr<Value> first = lowerInteger(children[1], i32);
+    if (failed(first))
       return failure();
-    Value first = arith::ExtSIOp::create(builder, location, i64, *first32);
-    Value second = arith::ExtSIOp::create(builder, location, i64, *second32);
-    Value firstBelow = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::slt, first, second);
-    Value low =
-        arith::SelectOp::create(builder, location, firstBelow, first, second);
-    Value high =
-        arith::SelectOp::create(builder, location, firstBelow, second, first);
-    Value extent = arith::SubIOp::create(builder, location, high, low);
-    extent = arith::AddIOp::create(builder, location, extent, constant(i64, 1));
-    Value draw = sim::SimRandomBoundedOp::create(builder, location, i64,
-                                                 context, extent);
-    Value value = arith::AddIOp::create(builder, location, low, draw);
-    value = arith::TruncIOp::create(builder, location, i32, value);
+    Value second = constant(i32, 0);
+    if (twoParameters) {
+      FailureOr<Value> lowered = lowerInteger(children[2], i32);
+      if (failed(lowered))
+        return failure();
+      second = *lowered;
+    }
+    Value value = sim::SimRandomDistributionOp::create(
+        builder, location, i32, context, *distribution, *first, second);
 
     Type destinationType = getReferenceElementType(*seedDestination);
     FailureOr<Value> updated = convert(value, destinationType, true, location);
@@ -645,11 +661,18 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
   bool fileCall =
       llvm::StringSwitch<bool>(name)
           .Cases({"$fopen", "$fclose", "$fflush", "$fgetc", "$ungetc", "$fgets",
-                  "$fread", "$feof", "$fseek", "$ftell", "$rewind"},
+                  "$fread", "$feof", "$ferror", "$fseek", "$ftell", "$rewind",
+                  "$timeformat"},
                  true)
           .Default(false);
   if (fileCall)
     return lowerFileSystemCall(op);
+
+  if (name == "$test$plusargs" || name == "$value$plusargs")
+    return lowerPlusargSystemCall(op);
+
+  if (name == "$sscanf" || name == "$fscanf")
+    return lowerScanSystemCall(op);
 
   unsupported(op) << " (unsupported system call " << name << ")";
   return failure();

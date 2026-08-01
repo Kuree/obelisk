@@ -360,9 +360,9 @@ module {
 // CHECK-DAG: %[[READ_MODE:.*]] = obelisk_sim.bytes.constant "rb"
 // CHECK-DAG: obelisk_sim.bytes.constant "value="
 // CHECK-DAG: %[[ALL_FILES:.*]] = arith.constant 0 : i32
-// CHECK: obelisk_sim.display {{.*}} to %[[STDOUT]](%[[FORMAT]], {{.*}}) newline = true radix = 10 flags = [0, 0] {library_cell = "work.system_io", scope = "system_io", time_multiplier = 1000 : i64}
-// CHECK: obelisk_sim.display {{.*}} newline = true radix = 10 flags = [0, 2, 0] {library_cell = "work.system_io", scope = "system_io", time_multiplier = 1000 : i64}
-// CHECK: obelisk_sim.display {{.*}} newline = true radix = 10 flags = [0, 1] {library_cell = "work.system_io", scope = "system_io.named", time_multiplier = 1000 : i64}
+// CHECK: obelisk_sim.display {{.*}} to %[[STDOUT]](%[[FORMAT]], {{.*}}) newline = true radix = 10 flags = [0, 0] {library_cell = "work.system_io", scope = "system_io", time_multiplier = 1000 : i64, time_precision = -12 : i32}
+// CHECK: obelisk_sim.display {{.*}} newline = true radix = 10 flags = [0, 2, 0] {library_cell = "work.system_io", scope = "system_io", time_multiplier = 1000 : i64, time_precision = -12 : i32}
+// CHECK: obelisk_sim.display {{.*}} newline = true radix = 10 flags = [0, 1] {library_cell = "work.system_io", scope = "system_io.named", time_multiplier = 1000 : i64, time_precision = -12 : i32}
 // CHECK: obelisk_sim.display {{.*}} newline = true radix = 2
 // CHECK: obelisk_sim.display {{.*}} newline = true radix = 8
 // CHECK: obelisk_sim.display {{.*}} newline = true radix = 16

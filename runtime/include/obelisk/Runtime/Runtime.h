@@ -637,6 +637,7 @@ typedef uint32_t obelisk_rt_intrinsic_id;
 enum {
   OBELISK_RT_INTRINSIC_V1_FORMAT = UINT32_C(0x00010001),
   OBELISK_RT_INTRINSIC_V1_DISPLAY = UINT32_C(0x00010002),
+  OBELISK_RT_INTRINSIC_V1_TIME_FORMAT = UINT32_C(0x00010003),
   OBELISK_RT_INTRINSIC_V1_FILE_BASE = UINT32_C(0x00010100),
   OBELISK_RT_INTRINSIC_V1_FILE_OPEN_MCD = UINT32_C(0x00010100),
   OBELISK_RT_INTRINSIC_V1_FILE_OPEN = UINT32_C(0x00010101),
@@ -653,6 +654,9 @@ enum {
   OBELISK_RT_INTRINSIC_V1_FILE_OPEN_STRING_MCD = UINT32_C(0x0001010c),
   OBELISK_RT_INTRINSIC_V1_FILE_OPEN_STRING = UINT32_C(0x0001010d),
   OBELISK_RT_INTRINSIC_V1_FILE_GETLINE_STRING = UINT32_C(0x0001010e),
+  OBELISK_RT_INTRINSIC_V1_FILE_ERROR_STRING = UINT32_C(0x0001010f),
+  OBELISK_RT_INTRINSIC_V1_PLUSARG_TEST = UINT32_C(0x00010110),
+  OBELISK_RT_INTRINSIC_V1_PLUSARG_VALUE = UINT32_C(0x00010111),
   OBELISK_RT_INTRINSIC_V1_SPAWN = UINT32_C(0x00010200),
   OBELISK_RT_INTRINSIC_V1_NBA = UINT32_C(0x00010201),
   // Statically planned NBA. The final i64 input is the NBASiteAttr identity;
@@ -720,6 +724,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_STRING_PARSE_REAL = UINT32_C(0x0001042c),
   OBELISK_RT_INTRINSIC_V1_STRING_FORMAT_INTEGER = UINT32_C(0x0001042d),
   OBELISK_RT_INTRINSIC_V1_STRING_FORMAT_REAL = UINT32_C(0x0001042e),
+  OBELISK_RT_INTRINSIC_V1_STRING_SCAN_FIELD = UINT32_C(0x0001042f),
   OBELISK_RT_INTRINSIC_V1_CONTAINER_SIZE = UINT32_C(0x00010430),
   OBELISK_RT_INTRINSIC_V1_CONTAINER_CREATE_LIKE = UINT32_C(0x00010431),
   OBELISK_RT_INTRINSIC_V1_CONTAINER_READ = UINT32_C(0x00010432),
@@ -742,6 +747,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_RANDOM_SET_STATE = UINT32_C(0x00010443),
   OBELISK_RT_INTRINSIC_V1_QUEUE_DELETE = UINT32_C(0x00010444),
   OBELISK_RT_INTRINSIC_V1_QUEUE_INSERT = UINT32_C(0x00010445),
+  OBELISK_RT_INTRINSIC_V1_RANDOM_DISTRIBUTION = UINT32_C(0x00010446),
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_CREATE = UINT32_C(0x00010450),
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_ENABLED = UINT32_C(0x00010451),
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_SAMPLE_ENABLED = UINT32_C(0x00010452),
@@ -1565,6 +1571,16 @@ int32_t obelisk_rt_v1_string_compare_insensitive(obelisk_rt_string_v1 left,
 obelisk_rt_status obelisk_rt_v1_string_case_convert(
     obelisk_rt_gc_lane_v1 *lane, obelisk_rt_string_v1 string, uint32_t to_upper,
     obelisk_rt_string_v1 *out_string);
+// One $sscanf/$fscanf conversion. `prefix` is the format text preceding the
+// conversion: whitespace in it matches any run of input whitespace including
+// none, and every other character must match exactly. `specifier` is the
+// conversion letter, whose field is returned as text for the caller to parse.
+// `out_ok` is zero when the prefix failed to match or the field was empty, in
+// which case the cursor does not advance.
+obelisk_rt_status obelisk_rt_v1_string_scan_field(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_string_v1 input, uint32_t cursor,
+    const char *prefix, uint64_t prefix_size, uint32_t specifier,
+    obelisk_rt_string_v1 *out_field, uint32_t *out_cursor, uint32_t *out_ok);
 obelisk_rt_status
 obelisk_rt_v1_string_parse_integer(obelisk_rt_string_v1 string, uint32_t radix,
                                    uint64_t *out_value);
@@ -2370,11 +2386,28 @@ typedef struct obelisk_rt_format_env_v1 {
   const char *library_cell;
   uint64_t library_cell_size;
   uint32_t time_width;
-  uint32_t reserved;
+  // Decimal exponent, in seconds, of one design-precision tick. %t needs it to
+  // rescale when $timeformat has overridden the display units.
+  int32_t time_precision;
   const char *time_suffix;
   uint64_t time_suffix_size;
   uint64_t time_multiplier;
 } obelisk_rt_format_env_v1;
+
+// $dist_* distribution selector. UNIFORM takes (start, end), NORMAL takes
+// (mean, standard deviation), ERLANG takes (k, mean), and the rest take a
+// single parameter: a mean for EXPONENTIAL and POISSON, degrees of freedom
+// for CHI_SQUARE and T.
+typedef uint32_t obelisk_rt_distribution;
+enum {
+  OBELISK_RT_DISTRIBUTION_UNIFORM = 0,
+  OBELISK_RT_DISTRIBUTION_NORMAL = 1,
+  OBELISK_RT_DISTRIBUTION_EXPONENTIAL = 2,
+  OBELISK_RT_DISTRIBUTION_POISSON = 3,
+  OBELISK_RT_DISTRIBUTION_CHI_SQUARE = 4,
+  OBELISK_RT_DISTRIBUTION_T = 5,
+  OBELISK_RT_DISTRIBUTION_ERLANG = 6
+};
 
 typedef uint32_t obelisk_rt_seek_origin;
 enum {
@@ -2437,6 +2470,15 @@ obelisk_rt_status obelisk_rt_v1_random_seed(obelisk_rt_context *context,
 obelisk_rt_status obelisk_rt_v1_random_bounded(obelisk_rt_context *context,
                                                uint64_t bound,
                                                uint64_t *out_value);
+// $dist_* draws (IEEE 1800 20.15). `first` and `second` carry the
+// distribution's parameters in source order; distributions taking one
+// parameter ignore `second`. Every draw consumes the context's active random
+// stream, which the caller seeds from the source-level seed variable.
+obelisk_rt_status
+obelisk_rt_v1_random_distribution(obelisk_rt_context *context,
+                                  obelisk_rt_distribution distribution,
+                                  int32_t first, int32_t second,
+                                  int32_t *out_value);
 obelisk_rt_status
 obelisk_rt_v1_random_get_state(obelisk_rt_context *context,
                                obelisk_rt_random_state_v1 *out_state);
@@ -2480,6 +2522,16 @@ obelisk_rt_v1_format(obelisk_rt_context *context, const char *format,
                      uint64_t argument_count,
                      const obelisk_rt_format_env_v1 *environment,
                      obelisk_rt_buffer_v1 *out_buffer);
+// $timeformat (IEEE 1800 20.4.2). `units` is the decimal exponent in seconds
+// of the unit %t reports in; `fraction_digits` and `width` are its precision
+// and minimum field width, the latter covering the suffix too. The override
+// applies to every later %t in the design.
+obelisk_rt_status obelisk_rt_v1_time_format(obelisk_rt_context *context,
+                                            int32_t units,
+                                            uint32_t fraction_digits,
+                                            const char *suffix,
+                                            uint64_t suffix_size,
+                                            uint32_t width);
 obelisk_rt_status
 obelisk_rt_v1_display(obelisk_rt_context *context, uint32_t descriptor,
                       uint32_t append_newline, obelisk_rt_radix default_radix,
@@ -2538,6 +2590,27 @@ obelisk_rt_status obelisk_rt_v1_file_error(obelisk_rt_context *context,
                                            uint32_t descriptor,
                                            int32_t *out_error_code,
                                            obelisk_rt_buffer_v1 *out_message);
+// $ferror form: the message lands in a managed string instead of a buffer the
+// caller has to release. A descriptor with no pending error yields code zero
+// and an empty string.
+obelisk_rt_status obelisk_rt_v1_file_error_string(
+    obelisk_rt_context *context, obelisk_rt_gc_lane_v1 *lane,
+    uint32_t descriptor, obelisk_rt_string_v1 *out_message,
+    int32_t *out_error_code);
+// Command-line plusargs. Arguments introduced by '+' are recorded by
+// configure_argv with that prefix stripped; both queries match the caller's
+// text as a prefix of a recorded argument, taking the first that matches.
+// value() additionally returns the matched argument's remaining text, which
+// the caller converts according to the format specifier it stripped off.
+obelisk_rt_status obelisk_rt_v1_plusarg_test(obelisk_rt_context *context,
+                                             obelisk_rt_string_v1 name,
+                                             uint32_t *out_found);
+obelisk_rt_status obelisk_rt_v1_plusarg_value(obelisk_rt_context *context,
+                                              obelisk_rt_gc_lane_v1 *lane,
+                                              obelisk_rt_string_v1 prefix,
+                                              obelisk_rt_string_v1 *out_tail,
+                                              uint32_t *out_found);
+
 obelisk_rt_status obelisk_rt_v1_file_seek(obelisk_rt_context *context,
                                           uint32_t descriptor, int64_t offset,
                                           obelisk_rt_seek_origin origin);

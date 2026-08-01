@@ -4,6 +4,7 @@
 #include "obelisk/Runtime/StableHash.h"
 
 #include <algorithm>
+#include <cctype>
 #include <charconv>
 #include <cmath>
 #include <cstring>
@@ -1299,6 +1300,117 @@ extern "C" obelisk_rt_status obelisk_rt_v1_string_case_convert(
   } catch (const std::bad_alloc &) {
     return OBELISK_RT_OUT_OF_MEMORY;
   }
+}
+
+namespace {
+
+// Scanning skips NUL along with whitespace: converting a packed variable to a
+// string left-pads it with NUL bytes, and those are padding rather than input.
+bool scanSpace(char character) {
+  return character == ' ' || character == '\t' || character == '\n' ||
+         character == '\r' || character == '\f' || character == '\v' ||
+         character == '\0';
+}
+
+bool scanDigit(char character, uint32_t radix) {
+  unsigned char value = static_cast<unsigned char>(character);
+  if (character == '_')
+    return true;
+  uint32_t digit = value >= '0' && value <= '9'   ? value - '0'
+                   : value >= 'a' && value <= 'f' ? value - 'a' + 10
+                   : value >= 'A' && value <= 'F' ? value - 'A' + 10
+                                                  : 0xffffffffu;
+  return digit < radix;
+}
+
+// The span the conversion letter claims, starting at `index`, or an empty
+// span when nothing matched. Every conversion but %c first skips whitespace.
+uint64_t scanFieldExtent(const StringView &view, uint64_t &index,
+                         uint32_t specifier) {
+  char letter = static_cast<char>(
+      std::tolower(static_cast<unsigned char>(specifier)));
+  if (letter == 'c')
+    return index < view.size ? 1 : 0;
+  while (index < view.size && scanSpace(view.bytes[index]))
+    ++index;
+  uint64_t start = index;
+  if (letter == 's') {
+    while (index < view.size && !scanSpace(view.bytes[index]))
+      ++index;
+    return index - start;
+  }
+  if (index < view.size &&
+      (view.bytes[index] == '+' || view.bytes[index] == '-'))
+    ++index;
+  if (letter == 'e' || letter == 'f' || letter == 'g') {
+    while (index < view.size && (scanDigit(view.bytes[index], 10) ||
+                                 view.bytes[index] == '.'))
+      ++index;
+    if (index < view.size &&
+        (view.bytes[index] == 'e' || view.bytes[index] == 'E')) {
+      uint64_t exponent = index + 1;
+      if (exponent < view.size &&
+          (view.bytes[exponent] == '+' || view.bytes[exponent] == '-'))
+        ++exponent;
+      if (exponent < view.size && scanDigit(view.bytes[exponent], 10)) {
+        index = exponent;
+        while (index < view.size && scanDigit(view.bytes[index], 10))
+          ++index;
+      }
+    }
+  } else {
+    uint32_t radix = letter == 'b'   ? 2
+                     : letter == 'o' ? 8
+                     : letter == 'd' ? 10
+                                     : 16;
+    while (index < view.size && scanDigit(view.bytes[index], radix))
+      ++index;
+  }
+  // A lone sign is not a field.
+  return index == start || (index == start + 1 &&
+                            (view.bytes[start] == '+' ||
+                             view.bytes[start] == '-'))
+             ? (index = start, 0)
+             : index - start;
+}
+
+} // namespace
+
+extern "C" obelisk_rt_status obelisk_rt_v1_string_scan_field(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_string_v1 input, uint32_t cursor,
+    const char *prefix, uint64_t prefixSize, uint32_t specifier,
+    obelisk_rt_string_v1 *outField, uint32_t *outCursor, uint32_t *outOk) {
+  if (!outField || !outCursor || !outOk || (!prefix && prefixSize != 0))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outField = 0;
+  *outCursor = cursor;
+  *outOk = 0;
+  StringView view;
+  obelisk_rt_status status = readString(input, view);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (cursor > view.size)
+    return OBELISK_RT_OK;
+  uint64_t index = cursor;
+  for (uint64_t position = 0; position != prefixSize; ++position) {
+    if (scanSpace(prefix[position])) {
+      while (index < view.size && scanSpace(view.bytes[index]))
+        ++index;
+      continue;
+    }
+    if (index >= view.size || view.bytes[index] != prefix[position])
+      return OBELISK_RT_OK;
+    ++index;
+  }
+  uint64_t extent = scanFieldExtent(view, index, specifier);
+  if (extent == 0)
+    return OBELISK_RT_OK;
+  status = createString(lane, view.bytes + index - extent, extent, outField);
+  if (status != OBELISK_RT_OK)
+    return status;
+  *outCursor = static_cast<uint32_t>(index);
+  *outOk = 1;
+  return OBELISK_RT_OK;
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_string_parse_integer(

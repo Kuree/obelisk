@@ -235,6 +235,9 @@ void declareNativeRuntimeABI(ModuleOp module) {
                             managedPointer, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_random_bounded", managedI32,
                            {managedPointer, managedI64, managedPointer});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_random_distribution", managedI32,
+      {managedPointer, managedI32, managedI32, managedI32, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_random_next", managedI32,
                            {managedPointer, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_random_seed", managedI32,
@@ -391,6 +394,20 @@ void declareNativeRuntimeABI(ModuleOp module) {
                            managedI32,
                            {managedPointer, managedPointer, managedI32,
                             managedPointer, managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_file_error_string",
+                           managedI32,
+                           {managedPointer, managedPointer, managedI32,
+                            managedPointer, managedPointer});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_string_scan_field", managedI32,
+      {managedPointer, managedI64, managedI32, managedPointer, managedI64,
+       managedI32, managedPointer, managedPointer, managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_plusarg_test", managedI32,
+                           {managedPointer, managedI64, managedPointer});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_plusarg_value", managedI32,
+      {managedPointer, managedPointer, managedI64, managedPointer,
+       managedPointer});
 }
 
 } // namespace obelisk::detail

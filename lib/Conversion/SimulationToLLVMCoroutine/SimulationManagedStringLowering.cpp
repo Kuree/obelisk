@@ -348,12 +348,155 @@ public:
   }
 };
 
-class StringFileGetlineConversion final
-    : public OpConversionPattern<sim::SimFileGetlineStringOp> {
+class StringScanFieldConversion final
+    : public OpConversionPattern<sim::SimStringScanFieldOp> {
 public:
   using OpConversionPattern::OpConversionPattern;
   LogicalResult
-  matchAndRewrite(sim::SimFileGetlineStringOp op, OneToNOpAdaptor adaptor,
+  matchAndRewrite(sim::SimStringScanFieldOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    ModuleOp module = op->getParentOfType<ModuleOp>();
+    if (!module)
+      return failure();
+    Type i64 = rewriter.getI64Type();
+    Type i32 = rewriter.getI32Type();
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    StringRef prefix = op.getPrefix();
+    Value prefixData = LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer);
+    if (!prefix.empty()) {
+      std::string name;
+      for (uint64_t suffix = 0;; ++suffix) {
+        name = ("__obelisk_scan_prefix." + Twine(suffix)).str();
+        if (!module.lookupSymbol(name))
+          break;
+      }
+      prefixData = LLVM::AddressOfOp::create(
+          rewriter, op.getLoc(),
+          makeByteArrayGlobal(module, op.getLoc(), name, prefix));
+    }
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    Value fieldOutput = entryAlloca(rewriter, op.getLoc(), i64, 1, 8);
+    Value cursorOutput = entryAlloca(rewriter, op.getLoc(), i32, 1, 4);
+    Value okOutput = entryAlloca(rewriter, op.getLoc(), i32, 1, 4);
+    LLVM::StoreOp::create(rewriter, op.getLoc(),
+                          LLVM::ZeroOp::create(rewriter, op.getLoc(), i64),
+                          fieldOutput, 8);
+    for (Value output : {cursorOutput, okOutput})
+      LLVM::StoreOp::create(rewriter, op.getLoc(),
+                            LLVM::ZeroOp::create(rewriter, op.getLoc(), i32),
+                            output, 4);
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_string_scan_field"),
+            ValueRange{lane, adaptor.getInput().front(),
+                       adaptor.getCursor().front(), prefixData,
+                       llvmConstant(rewriter, op.getLoc(), i64, prefix.size()),
+                       llvmConstant(rewriter, op.getLoc(), i32,
+                                    op.getSpecifier()),
+                       fieldOutput, cursorOutput, okOutput})
+            .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    rewriter.replaceOp(
+        op, ValueRange{
+                LLVM::LoadOp::create(rewriter, op.getLoc(), i64, fieldOutput, 8),
+                LLVM::LoadOp::create(rewriter, op.getLoc(), i32, cursorOutput,
+                                     4),
+                LLVM::LoadOp::create(rewriter, op.getLoc(), i32, okOutput, 4)});
+    return success();
+  }
+};
+
+class PlusargTestConversion final
+    : public OpConversionPattern<sim::SimPlusargTestOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimPlusargTestOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    (void)lane;
+    Type i32 = rewriter.getI32Type();
+    Value output = entryAlloca(rewriter, op.getLoc(), i32, 1, 4);
+    LLVM::StoreOp::create(rewriter, op.getLoc(),
+                          LLVM::ZeroOp::create(rewriter, op.getLoc(), i32),
+                          output, 4);
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_plusarg_test"),
+            ValueRange{context, adaptor.getName().front(), output})
+            .getResult();
+    Value found = LLVM::LoadOp::create(rewriter, op.getLoc(), i32, output, 4);
+    Value ok = arith::CmpIOp::create(
+        rewriter, op.getLoc(), arith::CmpIPredicate::eq, status,
+        llvmConstant(rewriter, op.getLoc(), i32, 0));
+    rewriter.replaceOp(
+        op, arith::SelectOp::create(
+                rewriter, op.getLoc(), ok, found,
+                LLVM::ZeroOp::create(rewriter, op.getLoc(), i32)));
+    return success();
+  }
+};
+
+class PlusargValueConversion final
+    : public OpConversionPattern<sim::SimPlusargValueOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimPlusargValueOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    Type i64 = rewriter.getI64Type();
+    Type i32 = rewriter.getI32Type();
+    Value tailOutput = entryAlloca(rewriter, op.getLoc(), i64, 1, 8);
+    Value foundOutput = entryAlloca(rewriter, op.getLoc(), i32, 1, 4);
+    LLVM::StoreOp::create(rewriter, op.getLoc(),
+                          LLVM::ZeroOp::create(rewriter, op.getLoc(), i64),
+                          tailOutput, 8);
+    LLVM::StoreOp::create(rewriter, op.getLoc(),
+                          LLVM::ZeroOp::create(rewriter, op.getLoc(), i32),
+                          foundOutput, 4);
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_plusarg_value"),
+            ValueRange{context, lane, adaptor.getPrefix().front(), tailOutput,
+                       foundOutput})
+            .getResult();
+    Value ok = arith::CmpIOp::create(
+        rewriter, op.getLoc(), arith::CmpIPredicate::eq, status,
+        llvmConstant(rewriter, op.getLoc(), i32, 0));
+    Value tail = LLVM::LoadOp::create(rewriter, op.getLoc(), i64, tailOutput, 8);
+    Value found =
+        LLVM::LoadOp::create(rewriter, op.getLoc(), i32, foundOutput, 4);
+    rewriter.replaceOp(
+        op, ValueRange{arith::SelectOp::create(
+                           rewriter, op.getLoc(), ok, tail,
+                           LLVM::ZeroOp::create(rewriter, op.getLoc(), i64)),
+                       arith::SelectOp::create(
+                           rewriter, op.getLoc(), ok, found,
+                           LLVM::ZeroOp::create(rewriter, op.getLoc(), i32))});
+    return success();
+  }
+};
+
+// File queries that yield a managed string plus an i32 companion: the runtime
+// entry point takes the descriptor and two output pointers, and both results
+// fall back to zero when the call reports failure.
+template <typename Op>
+class StringFileQueryConversion final : public OpConversionPattern<Op> {
+public:
+  StringFileQueryConversion(const TypeConverter &converter,
+                            MLIRContext *context, StringRef symbol)
+      : OpConversionPattern<Op>(converter, context), symbol(symbol) {}
+
+  LogicalResult
+  matchAndRewrite(Op op, typename OpConversionPattern<Op>::OneToNOpAdaptor
+                             adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
     Type i64 = rewriter.getI64Type();
@@ -369,8 +512,7 @@ public:
     Value status =
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{i32},
-            SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_file_getline_string"),
+            SymbolRefAttr::get(rewriter.getContext(), symbol),
             ValueRange{context, lane, adaptor.getDescriptor().front(),
                        stringOutput, countOutput})
             .getResult();
@@ -390,6 +532,9 @@ public:
                            LLVM::ZeroOp::create(rewriter, op.getLoc(), i32))});
     return success();
   }
+
+private:
+  std::string symbol;
 };
 
 template <typename Op>
@@ -440,11 +585,16 @@ void populateManagedStringToLLVMConversionPatterns(
   patterns.add<StringLiteralConversion, StringFromPackedConversion,
                StringToPackedConversion, StringConcatConversion,
                StringLengthConversion, StringGetcConversion,
-               StringCompareConversion, StringFileGetlineConversion>(
-      converter, context);
+               StringCompareConversion, StringScanFieldConversion,
+               PlusargTestConversion,
+               PlusargValueConversion>(converter, context);
   patterns.add<StringFileOpenConversion<sim::SimFileOpenStringMCDOp>,
                StringFileOpenConversion<sim::SimFileOpenStringOp>>(
       converter, context);
+  patterns.add<StringFileQueryConversion<sim::SimFileGetlineStringOp>>(
+      converter, context, "obelisk_rt_v1_file_getline_string");
+  patterns.add<StringFileQueryConversion<sim::SimFileErrorStringOp>>(
+      converter, context, "obelisk_rt_v1_file_error_string");
   patterns.add<StringAllocatingCallConversion<sim::SimStringRepeatOp>>(
       converter, context, "obelisk_rt_v1_string_repeat");
   patterns.add<StringAllocatingCallConversion<sim::SimStringPutcOp>>(

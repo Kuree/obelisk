@@ -628,6 +628,11 @@ bool validIntrinsic(const Image &image, const Function &function,
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && twoStateBits(input(0), 64) &&
            twoStateBits(output(0), 64);
+  case OBELISK_RT_INTRINSIC_V1_RANDOM_DISTRIBUTION:
+    return signature.flags == 0 && site.inputCount == 3 &&
+           site.outputCount == 1 && twoStateBits(input(0), 64) &&
+           twoStateBits(input(1), 32) && twoStateBits(input(2), 32) &&
+           twoStateBits(output(0), 32);
   case OBELISK_RT_INTRINSIC_V1_RANDOM_NEXT:
     return signature.flags == 0 && site.inputCount == 0 &&
            site.outputCount == 1 && twoStateBits(output(0), 64);
@@ -871,7 +876,23 @@ bool validIntrinsic(const Image &image, const Function &function,
   case OBELISK_RT_INTRINSIC_V1_FILE_OPEN_STRING:
     return site.inputCount == 2 && site.outputCount == 1 && string(input(0)) &&
            string(input(1)) && bits(output(0), 32);
+  case OBELISK_RT_INTRINSIC_V1_TIME_FORMAT:
+    return site.inputCount == 4 && site.outputCount == 0 &&
+           bits(input(0), 32) && bits(input(1), 32) && bytes(input(2)) &&
+           bits(input(3), 32);
+  case OBELISK_RT_INTRINSIC_V1_STRING_SCAN_FIELD:
+    return signature.flags == 0 && site.inputCount == 4 &&
+           site.outputCount == 3 && string(input(0)) && bits(input(1), 32) &&
+           bytes(input(2)) && bits(input(3), 64) && string(output(0)) &&
+           bits(output(1), 32) && bits(output(2), 32);
+  case OBELISK_RT_INTRINSIC_V1_PLUSARG_TEST:
+    return site.inputCount == 1 && site.outputCount == 1 && string(input(0)) &&
+           bits(output(0), 32);
+  case OBELISK_RT_INTRINSIC_V1_PLUSARG_VALUE:
+    return site.inputCount == 1 && site.outputCount == 2 && string(input(0)) &&
+           string(output(0)) && bits(output(1), 32);
   case OBELISK_RT_INTRINSIC_V1_FILE_GETLINE_STRING:
+  case OBELISK_RT_INTRINSIC_V1_FILE_ERROR_STRING:
     return site.inputCount == 1 && site.outputCount == 2 &&
            bits(input(0), 32) && string(output(0)) && bits(output(1), 32);
   case OBELISK_RT_INTRINSIC_V1_FILE_CLOSE:

@@ -33,7 +33,10 @@ bool managedOperationMayCollect(Operation *operation) {
       sim::SimStringConcatOp, sim::SimStringRepeatOp, sim::SimStringPutcOp,
       sim::SimStringSubstrOp, sim::SimStringCaseConvertOp,
       sim::SimStringFormatIntegerOp, sim::SimStringFormatRealOp,
-      sim::SimFileGetlineStringOp, sim::SimCallOp, sim::SimClassDirectCallOp,
+      sim::SimStringScanFieldOp,
+      sim::SimFileGetlineStringOp, sim::SimFileErrorStringOp,
+      sim::SimPlusargValueOp, sim::SimCallOp,
+      sim::SimClassDirectCallOp,
       sim::SimClassVirtualCallOp, sim::SimDPICallOp>(operation);
 }
 

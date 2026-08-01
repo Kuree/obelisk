@@ -131,7 +131,8 @@ UnitLowering::lowerDisplaySystemCall(semantic::SVCallExpressionOp op) {
     Value descriptor = constant(i32, 1);
     sim::SimDisplayOp::create(builder, location, context, descriptor, item,
                               true, 10, ArrayRef<int32_t>{0}, targetPath,
-                              StringAttr{}, builder.getI64IntegerAttr(1));
+                              StringAttr{}, builder.getI64IntegerAttr(1),
+                              IntegerAttr{});
     return dummyTaskResult();
   }
 
@@ -363,12 +364,25 @@ UnitLowering::lowerDisplaySystemCall(semantic::SVCallExpressionOp op) {
       op.emitError("display call has no elaborated lexical scope");
       return failure();
     }
+    // %t rescales against the design's precision when $timeformat has changed
+    // the display units, so the site carries that precision as a decimal
+    // exponent in seconds.
+    IntegerAttr timePrecision;
+    if (auto design = function->getParentOfType<sim::SimDesignOp>()) {
+      if (IntegerAttr precisionFs = design.getTimePrecisionFsAttr()) {
+        int32_t exponent = -15;
+        for (uint64_t scale = precisionFs.getValue().getZExtValue();
+             scale > 1; scale /= 10)
+          ++exponent;
+        timePrecision = builder.getI32IntegerAttr(exponent);
+      }
+    }
     if (display->fatal)
       sim::SimFatalOp::create(builder, location, context, verbosity);
     sim::SimDisplayOp::create(builder, location, context, descriptor, items,
                               display->newline, display->radix, flags,
                               lexicalScope, op.getSystemLibraryCellAttr(),
-                              timeMultiplier);
+                              timeMultiplier, timePrecision);
     if (display->fatal) {
       if (failed(emitFunctionReturn(location, std::nullopt, false)))
         return failure();

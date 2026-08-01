@@ -39,6 +39,12 @@ constexpr uint32_t kIntrinsicFileOpenString =
     OBELISK_RT_INTRINSIC_V1_FILE_OPEN_STRING;
 constexpr uint32_t kIntrinsicFileGetlineString =
     OBELISK_RT_INTRINSIC_V1_FILE_GETLINE_STRING;
+constexpr uint32_t kIntrinsicFileErrorString =
+    OBELISK_RT_INTRINSIC_V1_FILE_ERROR_STRING;
+constexpr uint32_t kIntrinsicTimeFormat = OBELISK_RT_INTRINSIC_V1_TIME_FORMAT;
+constexpr uint32_t kIntrinsicPlusargTest = OBELISK_RT_INTRINSIC_V1_PLUSARG_TEST;
+constexpr uint32_t kIntrinsicPlusargValue =
+    OBELISK_RT_INTRINSIC_V1_PLUSARG_VALUE;
 constexpr uint32_t kIntrinsicFileClose = OBELISK_RT_INTRINSIC_V1_FILE_CLOSE;
 constexpr uint32_t kIntrinsicFileFlush = OBELISK_RT_INTRINSIC_V1_FILE_FLUSH;
 constexpr uint32_t kIntrinsicFileGetc = OBELISK_RT_INTRINSIC_V1_FILE_GETC;
@@ -141,6 +147,8 @@ constexpr uint32_t kIntrinsicStringCompare =
     OBELISK_RT_INTRINSIC_V1_STRING_COMPARE;
 constexpr uint32_t kIntrinsicStringCaseConvert =
     OBELISK_RT_INTRINSIC_V1_STRING_CASE_CONVERT;
+constexpr uint32_t kIntrinsicStringScanField =
+    OBELISK_RT_INTRINSIC_V1_STRING_SCAN_FIELD;
 constexpr uint32_t kIntrinsicStringParseInteger =
     OBELISK_RT_INTRINSIC_V1_STRING_PARSE_INTEGER;
 constexpr uint32_t kIntrinsicStringParseReal =
@@ -165,6 +173,8 @@ constexpr uint32_t kIntrinsicContainerDelete =
     OBELISK_RT_INTRINSIC_V1_CONTAINER_DELETE;
 constexpr uint32_t kIntrinsicRandomBounded =
     OBELISK_RT_INTRINSIC_V1_RANDOM_BOUNDED;
+constexpr uint32_t kIntrinsicRandomDistribution =
+    OBELISK_RT_INTRINSIC_V1_RANDOM_DISTRIBUTION;
 constexpr uint32_t kIntrinsicRandomNext = OBELISK_RT_INTRINSIC_V1_RANDOM_NEXT;
 constexpr uint32_t kIntrinsicRandomSeed = OBELISK_RT_INTRINSIC_V1_RANDOM_SEED;
 constexpr uint32_t kIntrinsicQueueDelete = OBELISK_RT_INTRINSIC_V1_QUEUE_DELETE;

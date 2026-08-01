@@ -94,6 +94,7 @@ def RTFormatEnvironmentOp : RTOp<"format.environment", [
   let arguments = (ins DefaultValuedAttr<StrAttr, "\"\"">:$scope,
                        DefaultValuedAttr<StrAttr, "\"\"">:$library_cell,
                        DefaultValuedAttr<I32Attr, "0">:$time_width,
+                       DefaultValuedAttr<I32Attr, "0">:$time_precision,
                        DefaultValuedAttr<StrAttr, "\"\"">:$time_suffix,
                        DefaultValuedAttr<I64Attr, "1">:$time_multiplier);
   let results = (outs RTFormatEnvironmentType:$result);
@@ -209,6 +210,16 @@ def RTDisplayOp : RTOp<"display", [
                        I1:$append_newline, RTArgumentArrayType:$items,
                        RTFormatEnvironmentType:$environment,
                        RTRadix:$default_radix);
+  let results = (outs RTStatusType:$status);
+}
+
+def RTTimeFormatOp : RTOp<"time.format", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>,
+                 MemWrite<RTIOResource>]>
+]> {
+  let arguments = (ins RTContextType:$context, I32:$units,
+                       I32:$fraction_digits, RTByteSpanType:$suffix,
+                       I32:$width);
   let results = (outs RTStatusType:$status);
 }
 

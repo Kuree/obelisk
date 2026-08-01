@@ -16,6 +16,17 @@
 
 namespace {
 
+// Snapshot of the context's $timeformat override, taken under the context lock
+// so a concurrent $timeformat cannot tear the suffix out from under %t.
+struct TimeOverride {
+  bool active = false;
+  // Decimal exponent, in seconds, of the unit %t reports in.
+  int32_t units = 0;
+  uint32_t fractionDigits = 0;
+  uint32_t width = 20;
+  std::string suffix;
+};
+
 struct FormatOptions {
   std::optional<uint32_t> width;
   std::optional<uint32_t> precision;
@@ -442,10 +453,48 @@ std::string scalarPattern(const obelisk_rt_arg_v1 &argument) {
   return {};
 }
 
+TimeOverride snapshotTimeFormat(obelisk_rt_context *context) {
+  TimeOverride result;
+  std::lock_guard<std::recursive_mutex> lock(context->mutex);
+  if (!context->timeFormat.active)
+    return result;
+  result.active = true;
+  result.units = context->timeFormat.units;
+  result.fractionDigits = context->timeFormat.fractionDigits;
+  result.width = context->timeFormat.width;
+  result.suffix = context->timeFormat.suffix;
+  return result;
+}
+
+// Render a time in the units $timeformat selected. `ticks` counts design
+// precision units, whose own magnitude comes from the format environment, so
+// the two exponents give the factor between them.
+obelisk_rt_status formatOverriddenTime(std::string &output, long double ticks,
+                                       int32_t precisionExponent,
+                                       const TimeOverride &timeFormat) {
+  long double scaled =
+      ticks * std::pow(10.0L, static_cast<long double>(
+                                  precisionExponent - timeFormat.units));
+  char buffer[512];
+  int length =
+      std::snprintf(buffer, sizeof(buffer), "%.*Lf",
+                    static_cast<int>(timeFormat.fractionDigits), scaled);
+  if (length < 0 || static_cast<size_t>(length) >= sizeof(buffer))
+    return OBELISK_RT_ARGUMENT_MISMATCH;
+  std::string rendered(buffer, static_cast<size_t>(length));
+  rendered += timeFormat.suffix;
+  // IEEE gives the minimum width for the whole field, suffix included.
+  if (rendered.size() < timeFormat.width)
+    output.append(timeFormat.width - rendered.size(), ' ');
+  output += rendered;
+  return OBELISK_RT_OK;
+}
+
 obelisk_rt_status formatArgument(std::string &output,
                                  const obelisk_rt_arg_v1 &argument,
                                  char specifier, const FormatOptions &options,
-                                 const obelisk_rt_format_env_v1 *environment) {
+                                 const obelisk_rt_format_env_v1 *environment,
+                                 const TimeOverride &timeFormat) {
   char spec =
       static_cast<char>(std::tolower(static_cast<unsigned char>(specifier)));
   LogicView view;
@@ -518,6 +567,25 @@ obelisk_rt_status formatArgument(std::string &output,
     uint64_t multiplier = environment && environment->time_multiplier
                               ? environment->time_multiplier
                               : 1;
+    // An executed $timeformat replaces the width, units, and suffix the site
+    // was compiled with. Values carrying unknown bits have no numeric
+    // rendering, so those keep the default path's x-fill.
+    if (timeFormat.active) {
+      std::optional<long double> ticks;
+      if (argument.kind == OBELISK_RT_ARG_REAL && argument.data) {
+        double value = *static_cast<const double *>(argument.data);
+        if (std::isfinite(value))
+          ticks = static_cast<long double>(value) *
+                  static_cast<long double>(multiplier);
+      } else if (getLogicView(argument, view) && !decimalUnknown(view)) {
+        ticks = static_cast<long double>(logicToDouble(view)) *
+                static_cast<long double>(multiplier);
+      }
+      if (ticks)
+        return formatOverriddenTime(
+            output, *ticks, environment ? environment->time_precision : 0,
+            timeFormat);
+    }
     obelisk_rt_status status;
     if (argument.kind == OBELISK_RT_ARG_REAL && argument.data) {
       double value = *static_cast<const double *>(argument.data);
@@ -597,6 +665,7 @@ obelisk_rt_status formatSequence(std::string &output, std::string_view format,
                                  uint64_t argumentCount,
                                  uint64_t &argumentIndex,
                                  const obelisk_rt_format_env_v1 *environment,
+                                 const TimeOverride &timeFormat,
                                  std::string &error) {
   for (size_t position = 0; position < format.size();) {
     if (format[position] != '%') {
@@ -705,8 +774,9 @@ obelisk_rt_status formatSequence(std::string &output, std::string_view format,
       error = "not enough arguments for format string";
       return OBELISK_RT_ARGUMENT_MISMATCH;
     }
-    obelisk_rt_status status = formatArgument(
-        output, arguments[argumentIndex++], specifier, options, environment);
+    obelisk_rt_status status =
+        formatArgument(output, arguments[argumentIndex++], specifier, options,
+                       environment, timeFormat);
     if (status != OBELISK_RT_OK) {
       error = status == OBELISK_RT_ARGUMENT_MISMATCH
                   ? "argument type does not match format specifier"
@@ -742,6 +812,7 @@ obelisk_rt_status buildDisplay(std::string &output, obelisk_rt_radix radix,
                                const obelisk_rt_arg_v1 *items,
                                uint64_t itemCount,
                                const obelisk_rt_format_env_v1 *environment,
+                               const TimeOverride &timeFormat,
                                std::string &error) {
   if (radix != OBELISK_RT_RADIX_BINARY && radix != OBELISK_RT_RADIX_OCTAL &&
       radix != OBELISK_RT_RADIX_DECIMAL && radix != OBELISK_RT_RADIX_HEX) {
@@ -768,7 +839,7 @@ obelisk_rt_status buildDisplay(std::string &output, obelisk_rt_radix radix,
       }
       obelisk_rt_status status = formatSequence(
           output, std::string_view(bytes, static_cast<size_t>(size)),
-          items, itemCount, index, environment, error);
+          items, itemCount, index, environment, timeFormat, error);
       if (status != OBELISK_RT_OK)
         return status;
       continue;
@@ -779,7 +850,7 @@ obelisk_rt_status buildDisplay(std::string &output, obelisk_rt_radix radix,
       return OBELISK_RT_ARGUMENT_MISMATCH;
     }
     obelisk_rt_status status =
-        formatArgument(output, item, specifier, {}, environment);
+        formatArgument(output, item, specifier, {}, environment, timeFormat);
     if (status != OBELISK_RT_OK) {
       error = "failed to format display item";
       return status;
@@ -806,9 +877,10 @@ obelisk_rt_v1_format(obelisk_rt_context *context, const char *format,
     std::string output;
     std::string error;
     uint64_t index = 0;
+    TimeOverride timeFormat = snapshotTimeFormat(context);
     obelisk_rt_status status = formatSequence(
         output, std::string_view(format ? format : "", formatSize), arguments,
-        argumentCount, index, environment, error);
+        argumentCount, index, environment, timeFormat, error);
     if (status == OBELISK_RT_OK && index != argumentCount) {
       status = OBELISK_RT_ARGUMENT_MISMATCH;
       error = "too many arguments for format string";
@@ -818,6 +890,27 @@ obelisk_rt_v1_format(obelisk_rt_context *context, const char *format,
       return status;
     }
     return makeBuffer(output, outBuffer);
+  });
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_time_format(obelisk_rt_context *context, int32_t units,
+                          uint32_t fractionDigits, const char *suffix,
+                          uint64_t suffixSize, uint32_t width) {
+  // The buffer %t renders through is fixed, so a precision that could not fit
+  // is rejected rather than silently truncated.
+  if (!context || !validBytes(suffix, suffixSize) || fractionDigits > 128 ||
+      suffixSize > std::numeric_limits<size_t>::max())
+    return OBELISK_RT_INVALID_ARGUMENT;
+  return guarded(context, [&] {
+    std::string text(suffix ? suffix : "", static_cast<size_t>(suffixSize));
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    context->timeFormat.active = true;
+    context->timeFormat.units = units;
+    context->timeFormat.fractionDigits = fractionDigits;
+    context->timeFormat.width = width;
+    context->timeFormat.suffix = std::move(text);
+    return OBELISK_RT_OK;
   });
 }
 
@@ -842,8 +935,9 @@ obelisk_rt_v1_display(obelisk_rt_context *context, uint32_t descriptor,
     }
     std::string output;
     std::string error;
-    obelisk_rt_status status = buildDisplay(output, defaultRadix, items,
-                                            itemCount, environment, error);
+    TimeOverride timeFormat = snapshotTimeFormat(context);
+    obelisk_rt_status status = buildDisplay(
+        output, defaultRadix, items, itemCount, environment, timeFormat, error);
     if (status != OBELISK_RT_OK) {
       setLastError(context, std::move(error));
       return status;

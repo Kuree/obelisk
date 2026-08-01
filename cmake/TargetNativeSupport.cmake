@@ -166,7 +166,7 @@ foreach(source ABI Bytecode Containers Coverage DesignBytecode
                DesignBytecodeImage DesignBytecodeIntrinsics
                DesignBytecodeLogic DesignBytecodeNets DesignBytecodeObservers
                DesignBytecodeRoots DesignDatabase DPI
-               FileIO Format ManagedHeap Process
+               FileIO Format ManagedHeap Plusargs Process
                ProcessAllocation ProcessObservers ProcessSignals
                ProcessState ProcessValidation Random Runtime VPI)
   set(object "${_obelisk_target_runtime_dir}/${source}.o")

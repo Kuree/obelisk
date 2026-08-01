@@ -251,6 +251,7 @@ LogicalResult Encoder::encodeDisplay(FunctionPlan &plan, sim::SimDisplayOp op) {
   append64(metadata, scope.size());
   append64(metadata, library.size());
   append64(metadata, op.getTimeMultiplier().value_or(1));
+  append32(metadata, static_cast<uint32_t>(op.getTimePrecision().value_or(0)));
   for (int32_t flag : op.getItemFlags())
     append32(metadata, static_cast<uint32_t>(flag));
   llvm::append_range(metadata, scope.bytes());
@@ -332,7 +333,10 @@ bool Encoder::mayCollect(Operation *operation) {
       sim::SimStringConcatOp, sim::SimStringRepeatOp, sim::SimStringPutcOp,
       sim::SimStringSubstrOp, sim::SimStringCaseConvertOp,
       sim::SimStringFormatIntegerOp, sim::SimStringFormatRealOp,
-      sim::SimFileGetlineStringOp, sim::SimCallOp, sim::SimClassDirectCallOp,
+      sim::SimStringScanFieldOp,
+      sim::SimFileGetlineStringOp, sim::SimFileErrorStringOp,
+      sim::SimPlusargValueOp, sim::SimCallOp,
+      sim::SimClassDirectCallOp,
       sim::SimClassVirtualCallOp, sim::SimDPICallOp>(operation);
 }
 

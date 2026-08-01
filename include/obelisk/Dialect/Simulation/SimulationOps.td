@@ -481,6 +481,20 @@ def SimRandomBoundedOp : SimOp<"random.bounded", [
   let results = (outs I64:$result);
 }
 
+def SimRandomDistributionOp : SimOp<"random.distribution", [
+    MemoryEffects<[MemRead<SimRNGResource>, MemWrite<SimRNGResource>]>
+  ]> {
+  let summary = "draw a $dist_* variate from the active process stream";
+  let description = [{
+    `distribution` selects the shape as an `obelisk_rt_distribution` value.
+    `first` and `second` carry the distribution's parameters in source order;
+    distributions taking a single parameter ignore `second`.
+  }];
+  let arguments = (ins SimContextType:$context, I32Attr:$distribution,
+                       I32:$first, I32:$second);
+  let results = (outs I32:$result);
+}
+
 def SimRandomSeedOp : SimOp<"random.seed", [
     MemoryEffects<[MemWrite<SimRNGResource>]>
   ]> {
@@ -665,6 +679,21 @@ def SimStringCaseConvertOp
   let assemblyFormat = [{
     $input `to_upper` `=` $to_upper attr-dict
   }];
+}
+
+def SimStringScanFieldOp : SimOp<"string.scan_field", [
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "take one $sscanf conversion's field out of a string";
+  let description = [{
+    `prefix` is the format text before the conversion: whitespace in it
+    matches any run of input whitespace including none, and every other
+    character must match exactly. `ok` is zero when the prefix did not match
+    or the field was empty, and `next_cursor` then repeats `cursor`.
+  }];
+  let arguments = (ins SimStringType:$input, I32:$cursor, StrAttr:$prefix,
+                       I32Attr:$specifier);
+  let results = (outs SimStringType:$field, I32:$next_cursor, I32:$ok);
 }
 
 def SimStringParseIntegerOp : SimOp<"string.parse_integer", [Pure]> {
@@ -1274,12 +1303,26 @@ def SimDisplayOp : SimOp<"display", [
                        DenseI32ArrayAttr:$item_flags,
                        OptionalAttr<StrAttr>:$scope,
                        OptionalAttr<StrAttr>:$library_cell,
-                       OptionalAttr<I64Attr>:$time_multiplier);
+                       OptionalAttr<I64Attr>:$time_multiplier,
+                       OptionalAttr<I32Attr>:$time_precision);
   let assemblyFormat = [{$context `to` $descriptor `(` $items `)`
     `newline` `=` $append_newline `radix` `=` $default_radix
     `flags` `=` $item_flags attr-dict
     `:` type($items)}];
   let hasVerifier = 1;
+}
+
+def SimTimeFormatOp : SimOp<"time.format", [
+  MemoryEffects<[MemWrite<SimIOResource>]>
+]> {
+  let summary = "install the design-wide %t display format";
+  let description = [{
+    `units` is the decimal exponent in seconds of the unit `%t` reports in.
+    `width` is a minimum field width covering the rendered suffix.
+  }];
+  let arguments = (ins SimContextType:$context, I32:$units,
+                       I32:$fraction_digits, SimBytesType:$suffix,
+                       I32:$width);
 }
 
 class SimFileOp<string mnemonic, dag fileArgs, dag fileResults,
@@ -1337,6 +1380,29 @@ def SimFileGetlineStringOp : SimFileOp<"file.getline_string",
     [MemRead<SimIOResource>, MemWrite<SimIOResource>,
      MemRead<SimHeapResource>, MemWrite<SimHeapResource>]> {
   let summary = "read one complete line into a managed string";
+}
+
+def SimPlusargTestOp : SimFileOp<"plusarg.test",
+    (ins SimContextType:$context, SimStringType:$name),
+    (outs I32:$found),
+    [MemRead<SimIOResource>, MemRead<SimHeapResource>]> {
+  let summary = "report whether a command-line plusarg starts with a prefix";
+}
+
+def SimPlusargValueOp : SimFileOp<"plusarg.value",
+    (ins SimContextType:$context, SimStringType:$prefix),
+    (outs SimStringType:$tail, I32:$found),
+    [MemRead<SimIOResource>, MemRead<SimHeapResource>,
+     MemWrite<SimHeapResource>]> {
+  let summary = "return the text following a matched command-line plusarg";
+}
+
+def SimFileErrorStringOp : SimFileOp<"file.error_string",
+    (ins SimContextType:$context, I32:$descriptor),
+    (outs SimStringType:$message, I32:$code),
+    [MemRead<SimIOResource>, MemRead<SimHeapResource>,
+     MemWrite<SimHeapResource>]> {
+  let summary = "read a descriptor's pending error code and message";
 }
 
 def SimFileReadPackedOp : SimFileOp<"file.read_packed",

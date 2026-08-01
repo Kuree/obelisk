@@ -109,6 +109,26 @@ public:
   }
 };
 
+class TimeFormatConversion final
+    : public SimIOConversion<sim::SimTimeFormatOp> {
+public:
+  using SimIOConversion::SimIOConversion;
+
+  LogicalResult
+  matchAndRewrite(sim::SimTimeFormatOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    Value status = runtime::RTTimeFormatOp::create(
+        rewriter, loc, runtime::StatusType::get(rewriter.getContext()),
+        runtimeContext(rewriter, loc, adaptor.getContext().front()),
+        adaptor.getUnits().front(), adaptor.getFractionDigits().front(),
+        adaptor.getSuffix().front(), adaptor.getWidth().front());
+    sim::SimStatusCheckOp::create(rewriter, loc, status);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 class DisplayConversion final : public SimIOConversion<sim::SimDisplayOp> {
 public:
   using SimIOConversion::SimIOConversion;
@@ -183,7 +203,8 @@ public:
     Value environment = runtime::RTFormatEnvironmentOp::create(
         rewriter, loc,
         runtime::FormatEnvironmentType::get(rewriter.getContext()),
-        scope, op.getLibraryCell().value_or(""), 0, "",
+        scope, op.getLibraryCell().value_or(""), 0,
+        op.getTimePrecision().value_or(0), "",
         op.getTimeMultiplier().value_or(1));
     Value newline = iConstant(rewriter, loc, rewriter.getI1Type(),
                               op.getAppendNewline() ? 1 : 0);
@@ -508,7 +529,8 @@ public:
 
     ConversionTarget target(context);
     target.addIllegalOp<
-        sim::SimBytesConstantOp, sim::SimFinishOp, sim::SimStopOp,
+        sim::SimBytesConstantOp, sim::SimTimeFormatOp, sim::SimFinishOp,
+        sim::SimStopOp,
         sim::SimFatalOp, sim::SimTerminationRequestedOp, sim::SimTimeNowOp,
         sim::SimDisplayOp, sim::SimFileOpenMCDOp, sim::SimFileOpenOp,
         sim::SimFileCloseOp, sim::SimFileFlushOp, sim::SimFileGetcOp,
@@ -536,7 +558,8 @@ public:
 void populateSimulationToRuntimePatterns(const TypeConverter &converter,
                                          RewritePatternSet &patterns) {
   MLIRContext *context = patterns.getContext();
-  patterns.add<BytesConstantConversion, DisplayConversion, GetcConversion,
+  patterns.add<BytesConstantConversion, TimeFormatConversion,
+               DisplayConversion, GetcConversion,
                UngetcConversion, GetlineConversion, ReadPackedConversion,
                EofConversion, SeekConversion, TellConversion>(converter,
                                                                context);

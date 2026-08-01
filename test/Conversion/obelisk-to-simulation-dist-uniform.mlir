@@ -5,9 +5,9 @@
 // CHECK: %[[SEED_BITS:.*]] = obelisk_sim.logic.to_bits %[[SEED_LOGIC]]
 // CHECK: %[[SEED:.*]] = arith.extui %[[SEED_BITS]] : i32 to i64
 // CHECK: obelisk_sim.random.seed {{.*}}, %[[SEED]]
-// CHECK: %[[EXTENT:.*]] = arith.constant {{.*}} 101 : i64
-// CHECK: %[[DRAW:.*]] = obelisk_sim.random.bounded {{.*}}, %[[EXTENT]]
-// CHECK: %[[RESULT:.*]] = arith.trunci %[[DRAW]] : i64 to i32
+// CHECK: %[[HIGH:.*]] = arith.constant {{.*}} 100 : i32
+// CHECK: %[[LOW:.*]] = arith.constant {{.*}} 0 : i32
+// CHECK: %[[RESULT:.*]] = obelisk_sim.random.distribution {{.*}}, %[[LOW]], %[[HIGH]] {distribution = 0 : i32}
 // CHECK: %[[UPDATED:.*]] = obelisk_sim.logic.from_bits %[[RESULT]]
 // CHECK: obelisk_sim.ref.store %[[UPDATED]]
 // CHECK: obelisk_sim.display {{.*}}({{.*}}, %[[RESULT]])

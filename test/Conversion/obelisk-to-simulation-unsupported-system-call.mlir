@@ -15,7 +15,7 @@ module {
             obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 8 : i64, semantic_type = !obelisk.integral<32, true, true, 31 : 0, integer>} {
               obelisk.sv.expression.named_value attributes {node_id = 9 : i64, referenced_path = "unsupported_system_call.value", referenced_symbol = @s1.$root::@s3.unsupported_system_call::@s4.unsupported_system_call::@s5.value, semantic_type = !obelisk.integral<32, true, true, 31 : 0, integer>} {
               }
-              obelisk.sv.expression.call attributes {argument_count = 3 : i64, callee_name = "$fscanf", constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0, 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = true, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 10 : i64, semantic_type = !obelisk.integral<32, true, true, 31 : 0, integer>, subroutine_kind = 0 : i32, system_library_cell = "work.unsupported_system_call", system_scope_path = "unsupported_system_call", system_scope_symbol = @s1.$root::@s3.unsupported_system_call::@s4.unsupported_system_call} {
+              obelisk.sv.expression.call attributes {argument_count = 3 : i64, callee_name = "$dumpvars", constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0, 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = true, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 10 : i64, semantic_type = !obelisk.integral<32, true, true, 31 : 0, integer>, subroutine_kind = 0 : i32, system_library_cell = "work.unsupported_system_call", system_scope_path = "unsupported_system_call", system_scope_symbol = @s1.$root::@s3.unsupported_system_call::@s4.unsupported_system_call} {
                 obelisk.sv.expression.named_value attributes {node_id = 11 : i64, referenced_path = "unsupported_system_call.value", referenced_symbol = @s1.$root::@s3.unsupported_system_call::@s4.unsupported_system_call::@s5.value, semantic_type = !obelisk.integral<32, true, true, 31 : 0, integer>} {
                 }
                 obelisk.sv.expression.string_literal attributes {constant_value = "%0d", node_id = 12 : i64, semantic_type = !obelisk.ranged_packed_array<23 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
@@ -36,4 +36,4 @@ module {
 }
 
 // CHECK: unsupported semantic node in the first simulation slice
-// CHECK-SAME: unsupported system call $fscanf
+// CHECK-SAME: unsupported system call $dumpvars

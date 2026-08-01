@@ -30,6 +30,7 @@ enum class RuntimeSignature {
   SchedulerTime,
   Format,
   Display,
+  TimeFormat,
   FileOpenMCD,
   FileOpen,
   FileDescriptorStatus,

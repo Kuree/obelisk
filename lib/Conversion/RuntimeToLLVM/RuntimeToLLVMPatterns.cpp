@@ -61,6 +61,9 @@ LLVM::LLVMFunctionType getFunctionType(runtime::RuntimeCall call,
     arguments = {abi.pointer, abi.i32, abi.i32,    abi.i32,
                  abi.pointer, abi.i64, abi.pointer};
     break;
+  case runtime::RuntimeSignature::TimeFormat:
+    arguments = {abi.pointer, abi.i32, abi.i32, abi.pointer, abi.i64, abi.i32};
+    break;
   case runtime::RuntimeSignature::FileOpenMCD:
     arguments = {abi.pointer, abi.pointer, abi.i64, abi.pointer};
     break;
@@ -586,6 +589,11 @@ public:
           rewriter, location, environment,
           llvmIntegerConstant(rewriter, location, abi.i32, op.getTimeWidth()),
           4);
+      environment = insertStructValue(
+          rewriter, location, environment,
+          llvmIntegerConstant(rewriter, location, abi.i32,
+                              op.getTimePrecision()),
+          5);
       environment =
           insertStructValue(rewriter, location, environment, suffix->first, 6);
       environment =
@@ -759,6 +767,11 @@ public:
       auto [itemData, itemCount] = span(operands[3]);
       return replaceStatus({operands[0], operands[1], newline, radix, itemData,
                             itemCount, operands[4]});
+    }
+    case runtime::RuntimeCall::TimeFormat: {
+      auto [suffixData, suffixSize] = span(operands[3]);
+      return replaceStatus({operands[0], operands[1], operands[2], suffixData,
+                            suffixSize, operands[4]});
     }
     case runtime::RuntimeCall::FileOpenMCD: {
       auto [pathData, pathSize] = span(operands[1]);

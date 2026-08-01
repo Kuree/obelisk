@@ -1253,7 +1253,8 @@ LogicalResult UnitLowering::emitRuntimeFatal(Location location,
       function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
   sim::SimDisplayOp::create(
       builder, location, context, descriptor, ValueRange{item}, true, 10,
-      builder.getDenseI32ArrayAttr({0}), scope, StringAttr{}, timeMultiplier);
+      builder.getDenseI32ArrayAttr({0}), scope, StringAttr{}, timeMultiplier,
+      IntegerAttr{});
   Value verbosity = arith::ConstantOp::create(
       builder, location, builder.getI32Type(), builder.getI32IntegerAttr(1));
   sim::SimFatalOp::create(builder, location, context, verbosity);

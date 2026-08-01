@@ -292,7 +292,7 @@ ABI_OFFSET(obelisk_rt_format_env_v1, scope_size, 8);
 ABI_OFFSET(obelisk_rt_format_env_v1, library_cell, 16);
 ABI_OFFSET(obelisk_rt_format_env_v1, library_cell_size, 24);
 ABI_OFFSET(obelisk_rt_format_env_v1, time_width, 32);
-ABI_OFFSET(obelisk_rt_format_env_v1, reserved, 36);
+ABI_OFFSET(obelisk_rt_format_env_v1, time_precision, 36);
 ABI_OFFSET(obelisk_rt_format_env_v1, time_suffix, 40);
 ABI_OFFSET(obelisk_rt_format_env_v1, time_suffix_size, 48);
 ABI_OFFSET(obelisk_rt_format_env_v1, time_multiplier, 56);

@@ -475,6 +475,10 @@ obelisk_rt_v1_context_configure_argv(obelisk_rt_context *context, int argc,
     if (!argv[index])
       return OBELISK_RT_INVALID_ARGUMENT;
     std::string_view argument(argv[index]);
+    if (!argument.empty() && argument.front() == '+') {
+      context->plusargs.emplace_back(argument.substr(1));
+      continue;
+    }
     constexpr std::string_view prefix = "--seed=";
     if (argument.substr(0, prefix.size()) != prefix)
       continue;

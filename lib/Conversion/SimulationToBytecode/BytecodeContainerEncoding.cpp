@@ -56,6 +56,13 @@ Encoder::encodeContainerOperation(FunctionPlan &plan, Operation *operation) {
   if (auto op = dyn_cast<sim::SimRandomBoundedOp>(operation))
     return emitIntrinsic(plan, kIntrinsicRandomBounded, {op.getBound()},
                          {op.getResult()});
+  if (auto op = dyn_cast<sim::SimRandomDistributionOp>(operation)) {
+    uint32_t distribution = emitU64Constant(plan, op.getDistribution());
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicRandomDistribution,
+        {distribution, reg(plan, op.getFirst()), reg(plan, op.getSecond())},
+        {reg(plan, op.getResult())});
+  }
   if (auto op = dyn_cast<sim::SimContainerReadOp>(operation))
     return emitIntrinsic(plan, kIntrinsicContainerRead,
                          {op.getContainer(), op.getIndex()}, {op.getResult()});

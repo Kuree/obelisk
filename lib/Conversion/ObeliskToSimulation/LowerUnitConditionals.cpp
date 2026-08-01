@@ -43,7 +43,8 @@ void UnitLowering::emitDefaultAssertionFailure(Location location) {
       function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
   sim::SimDisplayOp::create(
       builder, location, context, descriptor, ValueRange{item}, true, 10,
-      builder.getDenseI32ArrayAttr({0}), scope, StringAttr{}, timeMultiplier);
+      builder.getDenseI32ArrayAttr({0}), scope, StringAttr{}, timeMultiplier,
+      IntegerAttr{});
 }
 
 LogicalResult UnitLowering::lowerImmediateAssertion(
@@ -677,7 +678,7 @@ void UnitLowering::emitQualifierWarning(
   sim::SimDisplayOp::create(
       builder, location, function.getBody().front().getArgument(0), descriptor,
       ValueRange{text}, true, 10, ArrayRef<int32_t>{0}, scope, StringAttr{},
-      multiplier);
+      multiplier, IntegerAttr{});
 }
 
 FailureOr<Value>

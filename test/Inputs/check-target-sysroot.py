@@ -224,6 +224,7 @@ native_members = [
     "FileIO.o",
     "Format.o",
     "ManagedHeap.o",
+    "Plusargs.o",
     "Process.o",
     "ProcessAllocation.o",
     "ProcessObservers.o",

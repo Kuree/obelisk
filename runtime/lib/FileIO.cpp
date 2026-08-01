@@ -513,6 +513,29 @@ obelisk_rt_v1_file_error(obelisk_rt_context *context, uint32_t descriptor,
   });
 }
 
+extern "C" obelisk_rt_status obelisk_rt_v1_file_error_string(
+    obelisk_rt_context *context, obelisk_rt_gc_lane_v1 *lane,
+    uint32_t descriptor, obelisk_rt_string_v1 *outMessage,
+    int32_t *outErrorCode) {
+  if (!outMessage || !outErrorCode)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outMessage = 0;
+  *outErrorCode = 0;
+  obelisk_rt_buffer_v1 message{};
+  int32_t code = 0;
+  obelisk_rt_status status =
+      obelisk_rt_v1_file_error(context, descriptor, &code, &message);
+  if (status != OBELISK_RT_OK)
+    return status;
+  status = obelisk_rt_v1_string_create(
+      lane, reinterpret_cast<const char *>(message.data), message.size,
+      outMessage);
+  if (status == OBELISK_RT_OK)
+    *outErrorCode = code;
+  obelisk_rt_v1_buffer_release(&message);
+  return status;
+}
+
 extern "C" obelisk_rt_status
 obelisk_rt_v1_file_seek(obelisk_rt_context *context, uint32_t descriptor,
                         int64_t offset, obelisk_rt_seek_origin origin) {

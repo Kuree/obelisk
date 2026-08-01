@@ -673,6 +673,21 @@ struct obelisk_rt_context {
   std::vector<FileEntry> files;
   std::vector<uint32_t> freeFiles;
   std::vector<uint32_t> freeMCDs;
+  // Command-line arguments introduced by '+', stored without that prefix in
+  // the order they were given. $test$plusargs and $value$plusargs match
+  // against these.
+  std::vector<std::string> plusargs;
+  // $timeformat override for %t. Until one is executed the format env's own
+  // width, multiplier, and suffix govern, which is the design-precision
+  // integer form IEEE specifies as the default.
+  struct TimeFormatState {
+    bool active = false;
+    // Decimal exponent, in seconds, of the unit %t reports in.
+    int32_t units = 0;
+    uint32_t fractionDigits = 0;
+    uint32_t width = 20;
+    std::string suffix;
+  } timeFormat;
   std::shared_ptr<const uint8_t> errorLifetime;
   std::vector<ScheduledProcess> scheduledProcesses;
   const obelisk_rt_native_schedule_plan *nativeSchedulePlan = nullptr;

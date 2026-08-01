@@ -190,6 +190,74 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
     return convertResult(result);
   }
 
+  if (name == "$timeformat") {
+    // IEEE 1800 20.4.2 gives every argument a default, and calling with none
+    // restores them all.
+    if (children.size() > 4) {
+      emitError(location) << "$timeformat accepts at most four arguments";
+      return failure();
+    }
+    auto argument = [&](size_t index, int64_t fallback) -> FailureOr<Value> {
+      if (index >= children.size() ||
+          isa<semantic::SVEmptyArgumentExpressionOp>(children[index]))
+        return constant(i32, fallback);
+      return lowerInteger(children[index], i32);
+    };
+    FailureOr<Value> units = argument(0, -9);
+    FailureOr<Value> fractionDigits = argument(1, 0);
+    FailureOr<Value> width = argument(3, 20);
+    if (failed(units) || failed(fractionDigits) || failed(width))
+      return failure();
+    Value suffix;
+    if (children.size() > 2 &&
+        !isa<semantic::SVEmptyArgumentExpressionOp>(children[2])) {
+      FailureOr<Value> lowered = lowerBytes(children[2]);
+      if (failed(lowered))
+        return failure();
+      suffix = *lowered;
+    } else {
+      suffix = sim::SimBytesConstantOp::create(builder, location, "");
+    }
+    sim::SimTimeFormatOp::create(builder, location, context, *units,
+                                 *fractionDigits, suffix, *width);
+    return dummyTaskResult();
+  }
+
+  if (name == "$ferror") {
+    if (children.size() != 2) {
+      emitError(location) << "$ferror requires a descriptor and a string "
+                             "destination";
+      return failure();
+    }
+    FailureOr<Value> descriptor = lowerInteger(children[0], i32);
+    if (failed(descriptor))
+      return failure();
+    Operation *actual = children[1];
+    if (auto assignment =
+            dyn_cast<semantic::SVAssignmentExpressionOp>(actual)) {
+      SmallVector<Operation *> outputChildren = getChildren(assignment);
+      if (outputChildren.size() == 2 &&
+          isa<semantic::SVEmptyArgumentExpressionOp>(outputChildren[1]))
+        actual = outputChildren.front();
+    }
+    FailureOr<Value> destination = lowerExpression(actual, true);
+    if (failed(destination))
+      return failure();
+    auto reference = dyn_cast<sim::RefType>((*destination).getType());
+    if (!reference || !isa<sim::StringType>(reference.getElementType())) {
+      emitError(getSemanticLocation(actual))
+          << "$ferror destination must be a string variable";
+      return failure();
+    }
+    auto query = sim::SimFileErrorStringOp::create(
+        builder, location,
+        TypeRange{sim::StringType::get(function.getContext()), i32}, context,
+        *descriptor);
+    sim::SimRefStoreOp::create(builder, location, query.getMessage(),
+                               *destination);
+    return convertResult(query.getCode());
+  }
+
   if (name == "$fgets" || name == "$fread") {
     if (children.size() != 2) {
       emitError(location)

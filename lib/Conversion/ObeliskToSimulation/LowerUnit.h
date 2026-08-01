@@ -162,6 +162,10 @@ private:
   ::mlir::FailureOr<::mlir::Value>
   lowerFileSystemCall(semantic::SVCallExpressionOp op);
   ::mlir::FailureOr<::mlir::Value>
+  lowerPlusargSystemCall(semantic::SVCallExpressionOp op);
+  ::mlir::FailureOr<::mlir::Value>
+  lowerScanSystemCall(semantic::SVCallExpressionOp op);
+  ::mlir::FailureOr<::mlir::Value>
   lowerRealConversionSystemCall(semantic::SVCallExpressionOp op);
   ::mlir::FailureOr<::mlir::Value>
   lowerRealMathSystemCall(semantic::SVCallExpressionOp op);

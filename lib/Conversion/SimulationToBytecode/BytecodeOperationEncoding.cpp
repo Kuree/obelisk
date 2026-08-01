@@ -118,6 +118,20 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
   if (auto op = dyn_cast<sim::SimFileGetlineStringOp>(operation))
     return emitIntrinsic(plan, kIntrinsicFileGetlineString,
                          {op.getDescriptor()}, {op.getData(), op.getCount()});
+  if (auto op = dyn_cast<sim::SimTimeFormatOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicTimeFormat,
+                         {op.getUnits(), op.getFractionDigits(),
+                          op.getSuffix(), op.getWidth()},
+                         {});
+  if (auto op = dyn_cast<sim::SimPlusargTestOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicPlusargTest, {op.getName()},
+                         {op.getFound()});
+  if (auto op = dyn_cast<sim::SimPlusargValueOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicPlusargValue, {op.getPrefix()},
+                         {op.getTail(), op.getFound()});
+  if (auto op = dyn_cast<sim::SimFileErrorStringOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicFileErrorString, {op.getDescriptor()},
+                         {op.getMessage(), op.getCode()});
   if (auto op = dyn_cast<sim::SimFileCloseOp>(operation))
     return emitIntrinsic(plan, kIntrinsicFileClose, {op.getDescriptor()}, {});
   if (auto op = dyn_cast<sim::SimFileFlushOp>(operation))
