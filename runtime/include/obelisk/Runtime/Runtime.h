@@ -2196,6 +2196,12 @@ void obelisk_rt_v1_scheduler_static_transition(
     obelisk_rt_context *context, uint32_t static_state, uint64_t low_bit,
     uint64_t bit_width, uint64_t old_value, uint64_t old_unknown,
     uint64_t new_value, uint64_t new_unknown);
+// Activate a compiler-grouped set of exact static-fanout compute nodes. This
+// is an internal clean-transaction leaf; dynamic/VPI handoff continues to use
+// ordinary scalar transition publication.
+void obelisk_rt_v1_scheduler_activate_static_nodes(
+    obelisk_rt_context *context, const uint64_t *node_words,
+    uint32_t word_count);
 void obelisk_rt_v1_scheduler_real_transition(obelisk_rt_context *context,
                                              uint64_t bit_offset,
                                              uint32_t bit_width,

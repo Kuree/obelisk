@@ -423,6 +423,32 @@ LogicalResult makeNativeAOTPlan(
                             directlyCommittedByWord[word], 8);
     }
 
+  bool generateGroupedFanout = llvm::any_of(
+      scalarRootsByWord, [&](ArrayRef<uint32_t> roots) {
+        return llvm::any_of(roots, [&](uint32_t rootIndex) {
+          return llvm::any_of(
+              fanoutEntries,
+              [&](const obelisk_rt_static_fanout_entry &entry) {
+                return entry.static_state == nbaRoots[rootIndex].static_state;
+              });
+        });
+      });
+  uint32_t activationWordCount =
+      generateGroupedFanout
+          ? static_cast<uint32_t>((executableNodes.size() + 63) / 64)
+          : 0;
+  Value activatedNodes;
+  if (generateGroupedFanout) {
+    activatedNodes =
+        entryAlloca(builder, location, i64, activationWordCount, 8);
+    for (uint32_t word = 0; word != activationWordCount; ++word)
+      LLVM::StoreOp::create(
+          builder, location, llvmConstant(builder, location, i64, 0),
+          byteGEP(builder, location, activatedNodes,
+                  uint64_t{word} * sizeof(uint64_t)),
+          8);
+  }
+
   Value directGuard =
       LLVM::CallOp::create(
           builder, location, TypeRange{i32},
@@ -684,38 +710,129 @@ LogicalResult makeNativeAOTPlan(
               builder, location, count,
               llvmConstant(builder, location, i32, uint32_t{1})),
           committedCount, 4);
-      bool hasStaticFanout = llvm::any_of(
-          fanoutEntries, [&](const obelisk_rt_static_fanout_entry &entry) {
-            return entry.static_state == root.static_state;
-          });
-      if (!hasStaticFanout) {
-        cf::BranchOp::create(builder, location, afterRoot);
-        rootBlock = afterRoot;
-        continue;
+      struct TriggerGroup {
+        uint32_t edge;
+        uint64_t mask;
+        SmallVector<uint64_t> nodes;
+      };
+      SmallVector<TriggerGroup> groups;
+      for (const obelisk_rt_static_fanout_entry &entry : fanoutEntries) {
+        if (entry.static_state != root.static_state ||
+            entry.low_bit >= root.bit_width)
+          continue;
+        uint64_t high = std::min<uint64_t>(
+            root.bit_width, entry.low_bit + entry.bit_width);
+        if (entry.low_bit >= high)
+          continue;
+        uint64_t mask = scalarMask(high - entry.low_bit) << entry.low_bit;
+        auto group = llvm::find_if(groups, [&](const TriggerGroup &candidate) {
+          return candidate.edge == entry.edge && candidate.mask == mask;
+        });
+        if (group == groups.end()) {
+          groups.push_back({entry.edge, mask,
+                            SmallVector<uint64_t>(activationWordCount, 0)});
+          group = std::prev(groups.end());
+        }
+        group->nodes[entry.compute_node / 64] |=
+            uint64_t{1} << (entry.compute_node % 64);
       }
-      Block *publish = new Block;
-      nbaCommit.getBody().getBlocks().insert(Region::iterator(afterRoot),
-                                             publish);
-      cf::CondBranchOp::create(builder, location, rootChanged, publish,
-                               ValueRange{}, afterRoot, ValueRange{});
-      builder.setInsertionPointToStart(publish);
-      LLVM::CallOp::create(
-          builder, location, TypeRange{},
-          SymbolRefAttr::get(
-              context, "obelisk_rt_v1_scheduler_static_transition"),
-          ValueRange{nbaCommitEntry->getArgument(1),
-                     llvmConstant(builder, location, i32, root.static_state),
-                     llvmConstant(builder, location, i64, 0),
-                     llvmConstant(builder, location, i64, root.bit_width),
-                     oldValue, oldUnknown, newValue, newUnknown});
+      if (!groups.empty()) {
+        Value widthMask = llvmConstant(builder, location, i64,
+                                       scalarMask(root.bit_width));
+        auto invert = [&](Value value) {
+          return arith::XOrIOp::create(
+                     builder, location, value,
+                     llvmConstant(builder, location, i64, UINT64_MAX))
+              .getResult();
+        };
+        Value oldKnown = arith::AndIOp::create(
+            builder, location, invert(oldUnknown), widthMask);
+        Value newKnown = arith::AndIOp::create(
+            builder, location, invert(newUnknown), widthMask);
+        Value oldZero = arith::AndIOp::create(builder, location, oldKnown,
+                                              invert(oldValue));
+        Value oldOne = arith::AndIOp::create(builder, location, oldKnown,
+                                             oldValue);
+        Value newZero = arith::AndIOp::create(builder, location, newKnown,
+                                              invert(newValue));
+        Value newOne = arith::AndIOp::create(builder, location, newKnown,
+                                             newValue);
+        Value posedge = arith::AndIOp::create(
+            builder, location,
+            arith::OrIOp::create(
+                builder, location,
+                arith::AndIOp::create(builder, location, oldZero,
+                                       invert(newZero)),
+                arith::AndIOp::create(builder, location, oldUnknown, newOne)),
+            widthMask);
+        Value negedge = arith::AndIOp::create(
+            builder, location,
+            arith::OrIOp::create(
+                builder, location,
+                arith::AndIOp::create(builder, location, oldOne,
+                                       invert(newOne)),
+                arith::AndIOp::create(builder, location, oldUnknown, newZero)),
+            widthMask);
+        for (const TriggerGroup &group : groups) {
+          Value observed = changed;
+          switch (group.edge) {
+          case OBELISK_RT_WAIT_EDGE_POSEDGE:
+            observed = posedge;
+            break;
+          case OBELISK_RT_WAIT_EDGE_NEGEDGE:
+            observed = negedge;
+            break;
+          case OBELISK_RT_WAIT_EDGE_BOTH:
+            observed = arith::OrIOp::create(builder, location, posedge,
+                                             negedge);
+            break;
+          default:
+            break;
+          }
+          Value triggered = arith::CmpIOp::create(
+              builder, location, arith::CmpIPredicate::ne,
+              arith::AndIOp::create(
+                  builder, location, observed,
+                  llvmConstant(builder, location, i64, group.mask)),
+              llvmConstant(builder, location, i64, 0));
+          for (auto [activationWord, nodeMask] :
+               llvm::enumerate(group.nodes)) {
+            if (nodeMask == 0)
+              continue;
+            Value address = byteGEP(
+                builder, location, activatedNodes,
+                uint64_t{activationWord} * sizeof(uint64_t));
+            Value active = LLVM::LoadOp::create(builder, location, i64,
+                                                address, 8);
+            Value selected = arith::SelectOp::create(
+                builder, location, triggered,
+                llvmConstant(builder, location, i64, nodeMask),
+                llvmConstant(builder, location, i64, 0));
+            LLVM::StoreOp::create(
+                builder, location,
+                arith::OrIOp::create(builder, location, active, selected),
+                address, 8);
+          }
+        }
+      }
       cf::BranchOp::create(builder, location, afterRoot);
       rootBlock = afterRoot;
     }
   }
 
   builder.setInsertionPointToStart(genericNBACommit);
-  Value dirtyBase = LLVM::AddressOfOp::create(
-      builder, location, pointer, nbaDirtyRootsName);
+  if (generateGroupedFanout)
+    LLVM::CallOp::create(
+        builder, location, TypeRange{},
+        SymbolRefAttr::get(
+            context, "obelisk_rt_v1_scheduler_activate_static_nodes"),
+        ValueRange{nbaCommitEntry->getArgument(1), activatedNodes,
+                   llvmConstant(builder, location, i32,
+                                activationWordCount)});
+  Value dirtyBase;
+  if (nbaDirtyWordCount != 0)
+    dirtyBase = LLVM::AddressOfOp::create(builder, location, pointer,
+                                          nbaDirtyRootsName);
   for (uint32_t word = 0; word != nbaDirtyWordCount; ++word) {
     if (!directlyCommittedByWord[word])
       continue;
@@ -966,6 +1083,9 @@ LogicalResult makeNativeAOTPlan(
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_static_nba_account_generated_commits",
       LLVM::LLVMVoidType::get(context), {pointer, i32});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_scheduler_activate_static_nodes",
+      LLVM::LLVMVoidType::get(context), {pointer, pointer, i32});
   return success();
 }
 

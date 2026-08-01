@@ -891,6 +891,8 @@ ABI_FUNCTION(obelisk_rt_v1_scheduler_signal_transition,
 ABI_FUNCTION(obelisk_rt_v1_scheduler_static_transition,
              void (*)(obelisk_rt_context *, uint32_t, uint64_t, uint64_t,
                       uint64_t, uint64_t, uint64_t, uint64_t));
+ABI_FUNCTION(obelisk_rt_v1_scheduler_activate_static_nodes,
+             void (*)(obelisk_rt_context *, const uint64_t *, uint32_t));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_real_transition,
              void (*)(obelisk_rt_context *, uint64_t, uint32_t, const void *,
                       const void *));

@@ -3480,6 +3480,83 @@ extern "C" void obelisk_rt_v1_scheduler_static_transition(
     context->schedulerEpoch = 1;
 }
 
+extern "C" void obelisk_rt_v1_scheduler_activate_static_nodes(
+    obelisk_rt_context *context, const uint64_t *nodeWords,
+    uint32_t wordCount) {
+  if (!context || !nodeWords)
+    return;
+  if (!context->nativeSchedulePlan ||
+      wordCount != context->nativeScheduleReadyNodes.size()) {
+    context->schedulerStatus = OBELISK_RT_INVALID_LIFECYCLE;
+    return;
+  }
+  bool hasNodes = false;
+  for (uint32_t word = 0; word != wordCount; ++word)
+    hasNodes |= nodeWords[word] != 0;
+  if (!hasNodes)
+    return;
+  if (activeNativeAOTContext != context ||
+      !canUseStaticAOTFanout(context) ||
+      (context->nativeSchedulePlan->flags &
+       OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP) == 0 ||
+      context->nativeScheduleReadyNodes.empty()) {
+    context->schedulerStatus = OBELISK_RT_INVALID_LIFECYCLE;
+    return;
+  }
+
+  bool published = false;
+  for (uint32_t word = 0; word != wordCount; ++word) {
+    uint64_t nodes = nodeWords[word];
+    while (nodes != 0) {
+      uint32_t bit = static_cast<uint32_t>(__builtin_ctzll(nodes));
+      uint32_t node = word * 64 + bit;
+      nodes &= nodes - 1;
+      if (node >= context->nativeScheduleNodes.size()) {
+        context->schedulerStatus = OBELISK_RT_INVALID_CONTINUATION;
+        return;
+      }
+      const obelisk_rt_native_schedule_node &entry =
+          context->nativeScheduleNodes[node];
+      if (entry.actor_slot >= context->nativeScheduleActors.size()) {
+        context->schedulerStatus = OBELISK_RT_INVALID_CONTINUATION;
+        return;
+      }
+      obelisk_rt_process_instance_v1 *actor =
+          context->nativeScheduleActors[entry.actor_slot];
+      if (!actor || actor->continuation != entry.continuation)
+        continue;
+      size_t index = context->nativeScheduleActorIndices[entry.actor_slot];
+      if (index >= context->scheduledProcesses.size()) {
+        context->schedulerStatus = OBELISK_RT_INVALID_LIFECYCLE;
+        return;
+      }
+      ScheduledProcess &scheduled = context->scheduledProcesses[index];
+      if (scheduled.instance != actor || !scheduled.started ||
+          scheduled.signalTriggered ||
+          (scheduled.suspendKind != OBELISK_RT_SUSPEND_CHANGE &&
+           scheduled.suspendKind != OBELISK_RT_SUSPEND_EDGE))
+        continue;
+      scheduled.signalTriggered = true;
+      context->nativeScheduleReadyNodes[word] |= uint64_t{1} << bit;
+      context->nativeScheduleMinimumActivatedNode =
+          std::min(context->nativeScheduleMinimumActivatedNode, node);
+      ++context->signalDiagnostics.aotFanoutEntries;
+      published = true;
+    }
+  }
+  if (!published)
+    return;
+  if (context->nextSchedulerSequence == 0) {
+    context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
+    return;
+  }
+  ++context->nextSchedulerSequence;
+  if (context->signalDiagnosticsEnabled)
+    ++context->signalDiagnostics.publications;
+  if (++context->schedulerEpoch == 0)
+    context->schedulerEpoch = 1;
+}
+
 extern "C" void obelisk_rt_v1_scheduler_real_transition(
     obelisk_rt_context *context, uint64_t bitOffset, uint32_t bitWidth,
     const void *oldValue, const void *newValue) {

@@ -325,6 +325,18 @@ obelisk_rt_status aotRunOneNodeThenFallback(void *opaque,
   return status == OBELISK_RT_OK ? OBELISK_RT_TIER_UNAVAILABLE : status;
 }
 
+obelisk_rt_status runGroupedStaticActivationNodes(AOTTestState *,
+                                                  obelisk_rt_context *context) {
+  constexpr obelisk_rt_native_schedule_node nodes[] = {
+      {0, 0, UINT32_MAX},
+      {1, 0, UINT32_MAX},
+      {0, 1, UINT32_MAX},
+      {1, 1, UINT32_MAX},
+  };
+  return obelisk_rt_v1_scheduler_run_aot_nodes(context, nodes,
+                                               std::size(nodes));
+}
+
 obelisk_rt_status aotSnapshot(void *opaque, obelisk_rt_context *context,
                               obelisk_rt_aot_deopt_snapshot *snapshot) {
   auto *state = static_cast<AOTTestState *>(opaque);
@@ -412,6 +424,47 @@ obelisk_rt_status schedulerExecute(obelisk_rt_process_instance_v1 *instance) {
   *instance->action = {
       OBELISK_RT_FRAGMENT_SUSPEND,         schedulerWaitKind,   1,
       OBELISK_RT_ACTION_FRAME_WAIT_RECORD, schedulerWaitOffset, 48};
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status
+groupedStaticActivationExecute(obelisk_rt_process_instance_v1 *instance) {
+  if (!instance || !instance->context || !instance->action)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  instance->native_handle = instance;
+  uint64_t id = instance->descriptor->handle.id;
+  if (instance->continuation != 0) {
+    schedulerOrder.push_back(id);
+    if (id == 90) {
+      const uint64_t nodes[] = {uint64_t{1} << 3};
+      // The second publication must leave one ready bit and one resume.
+      obelisk_rt_v1_scheduler_activate_static_nodes(instance->context, nodes,
+                                                    std::size(nodes));
+      obelisk_rt_v1_scheduler_activate_static_nodes(instance->context, nodes,
+                                                    std::size(nodes));
+    } else {
+      ++schedulerResumeCount;
+    }
+    *instance->action = {
+        OBELISK_RT_FRAGMENT_TERMINATE, OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
+    return OBELISK_RT_OK;
+  }
+
+  auto *wait = reinterpret_cast<obelisk_rt_wait_record_v1 *>(instance->frame);
+  if (id == 90) {
+    *wait = {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_DELAY, 0, 0, 1, 0};
+  } else {
+    auto *entry = reinterpret_cast<obelisk_rt_wait_entry_v1 *>(wait + 1);
+    *wait = {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_CHANGE, 0, 1, 0, 0};
+    *entry = {1, OBELISK_RT_WAIT_EDGE_CHANGE, 1};
+  }
+  *instance->action = {
+      OBELISK_RT_FRAGMENT_SUSPEND,
+      id == 90 ? OBELISK_RT_SUSPEND_DELAY : OBELISK_RT_SUSPEND_CHANGE,
+      1,
+      OBELISK_RT_ACTION_FRAME_WAIT_RECORD,
+      0,
+      48};
   return OBELISK_RT_OK;
 }
 
@@ -1323,6 +1376,47 @@ TEST(Scheduler, AOTCleanSuperstepDirectNodeCallUsesLockedGenericPath) {
       OBELISK_RT_OK);
   EXPECT_EQ(schedulerOrder, (std::vector<uint64_t>{100}));
   EXPECT_EQ(state.actors[0], nullptr);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, AOTGroupedStaticActivationSuppressesDuplicateWake) {
+  AOTTestState state;
+  state.runHook = runGroupedStaticActivationNodes;
+  obelisk_rt_native_schedule_plan plan = makeAOTPlan(state, 2);
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP |
+               OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
+               OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL |
+               OBELISK_RT_NATIVE_SCHEDULE_GENERATED_ACTIONS |
+               OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT;
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+
+  SchedulerFixture source(90);
+  SchedulerFixture target(91);
+  source.descriptor.execution = &execution;
+  target.descriptor.execution = &execution;
+  source.descriptor.native_execute = groupedStaticActivationExecute;
+  target.descriptor.native_execute = groupedStaticActivationExecute;
+  schedulerOrder.clear();
+  schedulerResumeCount = 0;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add_aot(
+                context, makeSchedulerInstance(source), 0, 0, 0, nullptr,
+                nullptr, 0, nullptr, 0),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add_aot(
+                context, makeSchedulerInstance(target), 0, 1, 0, nullptr,
+                nullptr, 0, nullptr, 0),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot(context), OBELISK_RT_OK);
+  EXPECT_EQ(schedulerOrder, (std::vector<uint64_t>{90, 91}));
+  EXPECT_EQ(schedulerResumeCount, 1u);
+  EXPECT_EQ(context->signalDiagnostics.aotFanoutEntries, 1u);
+  EXPECT_EQ(state.actors[0], nullptr);
+  EXPECT_EQ(state.actors[1], nullptr);
   obelisk_rt_v1_context_destroy(context);
 }
 

@@ -16,6 +16,7 @@ module attributes {
     obelisk_sim.scope.decl 0
     obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "aot_nba.root"
     obelisk_sim.code_unit.decl 2 in 0 initial hierarchy "aot_nba.process"
+    obelisk_sim.code_unit.decl 3 in 0 always hierarchy "aot_nba.watcher"
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<8> design
     // Keep an eight-byte addressable tail after the scalar root. Direct
     // generated commits use one unaligned 64-bit word plus an optional ninth
@@ -28,6 +29,9 @@ module attributes {
       %storage = obelisk_sim.context.storage %ctx[0] :
           !obelisk_sim.ref<!obelisk_sim.logic<8>>
       %process = obelisk_sim.spawn @process(%ctx, %storage) :
+          !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<8>>
+          -> !obelisk_sim.process
+      %watcher = obelisk_sim.spawn @watcher(%ctx, %storage) :
           !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<8>>
           -> !obelisk_sim.process
       obelisk_sim.return
@@ -45,6 +49,21 @@ module attributes {
           (!obelisk_sim.logic<8>,
            !obelisk_sim.ref<!obelisk_sim.logic<8>>) -> ()
       obelisk_sim.return
+    }
+
+    obelisk_sim.func @watcher(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %source: !obelisk_sim.ref<!obelisk_sim.logic<8>>
+            {obelisk_sim.capture_kind = 3 : i32,
+             obelisk_sim.descriptor_id = 0 : i64})
+        attributes {entry_kind = 3 : i32, code_unit_id = 3 : i64} {
+      cf.br ^wait
+    ^wait:
+      obelisk_sim.suspend.change %source to ^resume
+          {site = #obelisk_sim.continuation<id = 1>} :
+          !obelisk_sim.ref<!obelisk_sim.logic<8>>
+    ^resume:
+      cf.br ^wait
     }
   }
 }
@@ -67,6 +86,8 @@ module attributes {
 // DIRECT: llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
 // DIRECT: llvm.load
 // DIRECT: llvm.store
+// DIRECT: llvm.select
+// DIRECT: llvm.call @obelisk_rt_v1_scheduler_activate_static_nodes
 // DIRECT: llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
 // DIRECT: llvm.xor
 // DIRECT: llvm.and

@@ -521,6 +521,18 @@ an implementation choice for the target, not a change in scheduling semantics.
 Duplicate activation is suppressed by the ready bit, and node ordinals retain
 compute-graph order.
 
+Within a clean scalar NBA barrier, exact fanout entries with the same root
+range and edge predicate are compiled as one trigger group. The generated
+callback evaluates that predicate once and ORs the group's constant
+compute-node masks into a barrier-local ready set. One guarded runtime handoff
+then validates the current continuations, preserves the `signalTriggered`
+latch, suppresses duplicate wakes, and merges the set into the canonical ready
+hierarchy. This is the first executable use of coarse graph regions: fine node
+bits remain the fracture and bytecode/VPI handoff boundary, while the normal
+closed-world path avoids one runtime transition walk per committed root. The
+same lane-partitionable mask representation is suitable for generated worker
+regions later.
+
 Every NBA site already receives an explicit staging-policy annotation; the
 annotation does not allocate its storage. Proven single-shot sites select fixed
 slots. Repeated immediate assignments to a concrete root select a future
