@@ -542,6 +542,10 @@ behind an unknown-plane guard. Multiply-driven whole nets and connected nets
 whose contribution ranges are not yet distinguished are rejected
 conservatively. Consequently initial X behavior stays canonical, while reset
 can establish the guarded invariant used by a later value-only kernel version.
+The inductive root fixed point is requested explicitly: compute-graph,
+bytecode-register, and native local-value clients consume the same analysis's
+unconditional facts without paying for roots they discard. Kernel versioning,
+diagnostics, and the analysis test surface request the complete root proof.
 
 Within a clean scalar NBA barrier, exact fanout entries with the same root
 range and edge predicate are compiled as one trigger group. The generated

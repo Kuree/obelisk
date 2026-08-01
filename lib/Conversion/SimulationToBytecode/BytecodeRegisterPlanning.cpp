@@ -22,7 +22,7 @@ namespace obelisk::bytecode {
 FailureOr<llvm::DenseSet<Value>>
 planTwoStateRegisters(sim::SimDesignOp design) {
   FailureOr<StateDomainAnalysis> analysis =
-      StateDomainAnalysis::compute(design);
+      StateDomainAnalysis::compute(design, /*proveInductiveRoots=*/false);
   if (failed(analysis))
     return failure();
 

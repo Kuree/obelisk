@@ -838,10 +838,18 @@ StateDomainFact getValueFact(const DenseMap<Value, StateDomainFact> &facts,
 }
 
 FailureOr<StateDomainAnalysis>
-StateDomainAnalysis::compute(sim::SimDesignOp design) {
+StateDomainAnalysis::compute(sim::SimDesignOp design,
+                             bool proveInductiveRoots) {
   if (design.getBody().empty()) {
     design.emitOpError("cannot analyze a design with no body");
     return failure();
+  }
+  if (!proveInductiveRoots) {
+    FailureOr<DenseMap<Value, StateDomainFact>> facts =
+        computeValueFacts(design, RootSet{});
+    if (failed(facts))
+      return failure();
+    return StateDomainAnalysis(std::move(*facts), {});
   }
   RootSet candidates;
   DenseMap<uint64_t, unsigned> netDriverCounts;

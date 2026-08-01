@@ -63,7 +63,7 @@ LogicalResult lowerPackedSimulationOperations(
   DenseSet<Operation *> nativeTwoStateOperations;
   WalkResult stateDomainsComputed = module.walk([&](sim::SimDesignOp design) {
     FailureOr<StateDomainAnalysis> stateDomains =
-        StateDomainAnalysis::compute(design);
+        StateDomainAnalysis::compute(design, /*proveInductiveRoots=*/false);
     if (failed(stateDomains))
       return WalkResult::interrupt();
     for (sim::SimFuncOp function :

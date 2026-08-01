@@ -94,7 +94,12 @@ llvm::StringRef stringifyStateDomainReason(StateDomainReason reason);
 /// for the lifetime of this object. Recompute the analysis after mutating IR.
 class StateDomainAnalysis {
 public:
-  static mlir::FailureOr<StateDomainAnalysis> compute(sim::SimDesignOp design);
+  /// Compute unconditional SSA facts and, when requested, the more expensive
+  /// guarded fixed point over canonical storage roots. Value-only lowering
+  /// clients should pass false; kernel-versioning and diagnostics retain the
+  /// default complete proof.
+  static mlir::FailureOr<StateDomainAnalysis>
+  compute(sim::SimDesignOp design, bool proveInductiveRoots = true);
 
   StateDomainFact get(mlir::Value value) const;
   bool isTwoState(mlir::Value value) const;
