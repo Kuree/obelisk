@@ -514,12 +514,15 @@ and scheduler boundaries rather than introducing a competing graph.
 The generated event schedule is indexed by canonical storage root and exact
 packed range. Each static fanout entry names its compute-node ordinal directly;
 publication therefore sets the node's ready bit without searching an actor's
-continuation table. Roots map to contiguous fanout ranges, while the ready set
-is a packed hierarchy traversed with bit-scan/trailing-zero operations. The leaf
-bit is the unit of compute-fragment selection. Wider scalar or vector loads are
-an implementation choice for the target, not a change in scheduling semantics.
-Duplicate activation is suppressed by the ready bit, and node ordinals retain
-compute-graph order.
+continuation table. Roots map to contiguous fanout ranges, while the fine ready
+set remains a short packed leaf vector traversed with bit-scan/trailing-zero
+operations. A measured summary-tree experiment regressed the current PicoRV
+schedule because it has only three leaf words; hierarchical masks are retained
+for sparse NBA and dirty-root selection, where they skip substantial work. The
+fine ready bit is the unit of compute-fragment selection and VPI fracture.
+Wider scalar or vector loads are an implementation choice for the target, not
+a change in scheduling semantics. Duplicate activation is suppressed by the
+ready bit, and node ordinals retain compute-graph order.
 
 Resolved vector drives retain atomic store-before-notify publication, but
 adjacent direct bits of the same canonical root are packed into target-sized
@@ -551,6 +554,16 @@ bits remain the fracture and bytecode/VPI handoff boundary, while the normal
 closed-world path avoids one runtime transition walk per committed root. The
 same lane-partitionable mask representation is suitable for generated worker
 regions later.
+
+The trusted clean-superstep executor also omits lifecycle operations whose
+preconditions are already established by the static schedule. Signal waits and
+due delays have no live deadline after becoming ready, so resuspending on a
+signal or continuing does not probe the deadline heap. Empty disable/control
+membership vectors remain actor-owned instead of being moved through the
+context on every activation; nonempty memberships and memberships created by
+an activation still take the general transfer path. These are runtime boundary
+elisions, not weaker validation: dirty, bytecode, VPI, force/release, task-call,
+and unsupported-action paths retain the transactional executor.
 
 Every NBA site already receives an explicit staging-policy annotation; the
 annotation does not allocate its storage. Proven single-shot sites select fixed

@@ -6878,7 +6878,12 @@ obelisk_rt_status executeTrustedAOTNode(obelisk_rt_context *context,
     context->activeHomeRegion = scheduled.homeRegion;
     context->activeExecRegion = scheduled.queuedRegion;
     context->activeLogicalProcessToken = kNativeLogicalProcessTag | token;
-    context->activeControls = std::move(scheduled.controls);
+    // Static RTL actors almost never own disable/control memberships. Avoid
+    // rotating three-word vector storage through the context on every fine
+    // graph activation; if an execution creates a membership, the post-call
+    // path below still transfers it back to the actor normally.
+    if (!scheduled.controls.empty())
+      context->activeControls = std::move(scheduled.controls);
   }
 
   obelisk_rt_fragment_action_v1 action{};
@@ -6888,7 +6893,7 @@ obelisk_rt_status executeTrustedAOTNode(obelisk_rt_context *context,
   bool actorValid =
       selectedIndex < context->scheduledProcesses.size() &&
       context->scheduledProcesses[selectedIndex].instance == selected;
-  if (actorValid)
+  if (actorValid && !context->activeControls.empty())
     context->scheduledProcesses[selectedIndex].controls =
         std::move(context->activeControls);
   context->activeControls.clear();
@@ -6951,7 +6956,9 @@ obelisk_rt_status executeTrustedAOTNode(obelisk_rt_context *context,
         setNativeAOTDeadlineUnlocked(context, actorSlot, scheduled.wakeTime);
       }
     } else {
-      removeNativeAOTDeadlineUnlocked(context, actorSlot);
+      // A signal-wait actor has no deadline. If this activation followed a
+      // delay, markDueNativeAOTDeadlinesUnlocked removed its heap entry before
+      // making the actor ready.
       scheduled.signalLatch.reset();
     }
     break;
@@ -6963,7 +6970,6 @@ obelisk_rt_status executeTrustedAOTNode(obelisk_rt_context *context,
     scheduled.signalTriggered = false;
     scheduled.urgent = false;
     scheduled.queuedRegion = scheduled.homeRegion;
-    removeNativeAOTDeadlineUnlocked(context, actorSlot);
     if (!markNativeAOTActorReadyUnlocked(context, actorSlot))
       return OBELISK_RT_INVALID_CONTINUATION;
     break;
