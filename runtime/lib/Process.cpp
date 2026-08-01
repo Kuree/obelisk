@@ -7474,6 +7474,131 @@ private:
   obelisk_rt_context *context;
 };
 
+// The clean generated schedule owns the context mutex for its complete run.
+// Keep its ready-worklist loop separate from the hybrid implementation so the
+// hot path does not repeatedly construct recursive-lock guards or retain the
+// generic actor/control branches. Fine node bits remain canonical fracture
+// points for an indexed external write or later bytecode handoff.
+obelisk_rt_status runTrustedAOTNodesUnlocked(obelisk_rt_context *context) {
+  if (!context || activeNativeAOTContext != context ||
+      lockedNativeAOTContext != context || !context->nativeSchedulePlan)
+    return OBELISK_RT_INVALID_LIFECYCLE;
+
+  uint32_t nodeCursor = 0;
+  bool passProgress = false;
+  for (;;) {
+    uint32_t selectedNode = UINT32_MAX;
+    bool readyBeforeCursor = false;
+    uint32_t cursorWord = nodeCursor / 64;
+    uint32_t cursorBit = nodeCursor % 64;
+    for (uint32_t wordIndex = cursorWord;
+         wordIndex < context->nativeScheduleReadyNodes.size(); ++wordIndex) {
+      uint64_t word = context->nativeScheduleReadyNodes[wordIndex];
+      if (wordIndex == cursorWord && cursorBit != 0)
+        word &= UINT64_MAX << cursorBit;
+      if (word == 0)
+        continue;
+      selectedNode =
+          wordIndex * 64 + static_cast<uint32_t>(__builtin_ctzll(word));
+      break;
+    }
+    if (selectedNode == UINT32_MAX)
+      for (uint32_t wordIndex = 0;
+           wordIndex <= cursorWord &&
+           wordIndex < context->nativeScheduleReadyNodes.size();
+           ++wordIndex) {
+        uint64_t word = context->nativeScheduleReadyNodes[wordIndex];
+        if (wordIndex == cursorWord && cursorBit != 0)
+          word &= (uint64_t{1} << cursorBit) - 1;
+        if (word != 0) {
+          readyBeforeCursor = true;
+          break;
+        }
+      }
+
+    if (selectedNode != UINT32_MAX) {
+      const obelisk_rt_native_schedule_node &node =
+          context->nativeScheduleNodes[selectedNode];
+      if (node.actor_slot >= context->nativeScheduleActors.size() ||
+          !context->nativeScheduleActors[node.actor_slot] ||
+          context->nativeScheduleActors[node.actor_slot]->continuation !=
+              node.continuation)
+        return OBELISK_RT_INVALID_CONTINUATION;
+      clearNativeAOTNodeReadyUnlocked(context, selectedNode);
+
+      uint32_t lastNode = selectedNode;
+      bool restartBeforeCursor = false;
+      for (;;) {
+        const obelisk_rt_native_schedule_node &selected =
+            context->nativeScheduleNodes[lastNode];
+        context->nativeScheduleMinimumActivatedNode = UINT32_MAX;
+        obelisk_rt_status status =
+            executeTrustedAOTNode(context, selected.actor_slot);
+        if (status != OBELISK_RT_OK)
+          return status;
+        passProgress = true;
+
+        uint32_t nextNode = lastNode + 1;
+        restartBeforeCursor =
+            context->nativeScheduleMinimumActivatedNode < nextNode;
+        bool fuseNext = false;
+        if (!restartBeforeCursor && selected.fusion_group != UINT32_MAX &&
+            nextNode < context->nativeScheduleNodes.size()) {
+          const obelisk_rt_native_schedule_node &next =
+              context->nativeScheduleNodes[nextNode];
+          uint64_t mask = uint64_t{1} << (nextNode % 64);
+          fuseNext =
+              next.fusion_group == selected.fusion_group &&
+              (context->nativeScheduleReadyNodes[nextNode / 64] & mask) != 0 &&
+              next.actor_slot < context->nativeScheduleActors.size() &&
+              context->nativeScheduleActors[next.actor_slot] &&
+              context->nativeScheduleActors[next.actor_slot]->continuation ==
+                  next.continuation;
+          if (fuseNext)
+            clearNativeAOTNodeReadyUnlocked(context, nextNode);
+        }
+        if (!fuseNext)
+          break;
+        lastNode = nextNode;
+      }
+      nodeCursor = restartBeforeCursor ? 0 : lastNode + 1;
+      continue;
+    }
+
+    if (passProgress)
+      ++context->signalDiagnostics.aotRegionPasses;
+    if (readyBeforeCursor) {
+      nodeCursor = 0;
+      passProgress = false;
+      continue;
+    }
+
+    uint64_t previousProgress = context->schedulerSlotProgress;
+    uint64_t previousTime = context->schedulerTime;
+    bool previousFinals = context->schedulerRunningFinals;
+    obelisk_rt_status status = runStaticAOTControlStep(context);
+    if (status == OBELISK_RT_TIER_UNAVAILABLE) {
+      NativeScheduleStepScope step(context, UINT32_MAX, true);
+      status = runScheduler(context);
+      if (status == OBELISK_RT_OK &&
+          !markDueNativeAOTDeadlinesUnlocked(context))
+        return OBELISK_RT_INVALID_CONTINUATION;
+    }
+    if (context->schedulerRunningFinals != previousFinals) {
+      obelisk_rt_status refresh = refreshNativeAOTReadyPhaseUnlocked(context);
+      if (refresh != OBELISK_RT_OK)
+        return refresh;
+    }
+    bool controlProgress = context->schedulerSlotProgress != previousProgress ||
+                           context->schedulerTime != previousTime ||
+                           context->schedulerRunningFinals != previousFinals;
+    if (status != OBELISK_RT_OK || !controlProgress)
+      return status;
+    nodeCursor = 0;
+    passProgress = false;
+  }
+}
+
 } // namespace
 
 extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_run_aot_nodes(
@@ -7503,6 +7628,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_run_aot_nodes(
         nativeStaticSpecializationEnvironmentClean(context) &&
         (!plan->specialization_fast || *plan->specialization_fast != 0);
   }
+
+  if (trustedSuperstep)
+    return runTrustedAOTNodesUnlocked(context);
 
   uint32_t nodeCursor = 0;
   bool passProgress = false;
@@ -7575,9 +7703,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_run_aot_nodes(
           context->nativeScheduleMinimumActivatedNode = UINT32_MAX;
         }
         obelisk_rt_status status =
-            trustedSuperstep
-                ? executeTrustedAOTNode(context, selected.actor_slot)
-                : executeAOTNode(context, selected.actor_slot);
+            executeAOTNode(context, selected.actor_slot);
         if (status != OBELISK_RT_OK)
           return status;
         passProgress = true;
@@ -7590,8 +7716,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_run_aot_nodes(
               context->nativeScheduleMinimumActivatedNode < nextNode;
           if (!restartBeforeCursor && selected.fusion_group != UINT32_MAX &&
               nextNode < context->nativeScheduleNodes.size() &&
-              (trustedSuperstep ||
-               !context->nativeSchedulePlan->specialization_fast ||
+              (!context->nativeSchedulePlan->specialization_fast ||
                *context->nativeSchedulePlan->specialization_fast != 0)) {
             const obelisk_rt_native_schedule_node &next =
                 context->nativeScheduleNodes[nextNode];

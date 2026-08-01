@@ -569,6 +569,16 @@ an activation still take the general transfer path. These are runtime boundary
 elisions, not weaker validation: dirty, bytecode, VPI, force/release, task-call,
 and unsupported-action paths retain the transactional executor.
 
+The certified clean schedule also has a dedicated compact ready-worklist
+driver. The scheduler-owned transaction and context mutex cover its complete
+execution, so selection, fine-bit clearing, adjacent fusion, and static-control
+progress operate directly on the canonical AOT vectors without reconstructing
+recursive lock guards or retaining hybrid actor branches at every fragment.
+The ordinary driver remains the handoff oracle and is selected whenever the
+clean guard is absent. Fine node bits, continuation checks, and the fallback
+snapshot are unchanged, so VPI and bytecode can still fracture a coarse region
+at its indexed compute fragment.
+
 Every NBA site already receives an explicit staging-policy annotation; the
 annotation does not allocate its storage. Proven single-shot sites select fixed
 slots. Repeated immediate assignments to a concrete root select a future
