@@ -488,6 +488,17 @@ five buckets are the current backend abstraction, not a claim that all IEEE
 semantic region explicitly or prove that folding it into one of these buckets
 is equivalent.
 
+A single-worker schedule may execute as one clean native transaction when its
+actor inventory is fixed, every fragment is native, every sensitivity is an
+exact descriptor range, and native lowering proves complete static control and
+fanout. Exact sensitivities include both storage and resolved-net descriptors.
+A statically indexed convergence group remains eligible: its ready-node bits
+are the generated fixpoint worklist. Control-loop groups and dynamic or
+deferred sensitivities remain transaction boundaries. VPI writes,
+force/release, and bytecode mutation invalidate the clean guard and hand the
+same fine-fragment identities back to stabilization before native execution
+resumes.
+
 The first executable coarsening step reuses compute-body fusion rather than
 adding a second inliner. It clones adjacent same-trigger native bodies into one
 function before LLVM lowering, including CFG block arguments, while retaining

@@ -56,7 +56,6 @@ void ObeliskSimPlanStaticSuperstepPass::runOnOperation() {
         if (effect.getEffect() != sim::ComputeEffectKind::Watch)
           continue;
         bool exact =
-            effect.getResource() == sim::ComputeResourceKind::Storage &&
             effect.getTarget() == sim::ComputeTargetKind::Descriptor &&
             !effect.getDynamic() && !effect.getDeferred() &&
             effect.getWidth() != 0 &&
@@ -82,9 +81,14 @@ void ObeliskSimPlanStaticSuperstepPass::runOnOperation() {
     auto region = cast<sim::ComputeRegionAttr>(regionAttribute);
     for (Attribute groupAttribute : region.getGroups()) {
       auto group = cast<sim::ComputeGroupAttr>(groupAttribute);
-      if (group.getSchedule() != sim::ComputeScheduleKind::Acyclic ||
-          group.getFragments().size() != 1)
-        reject("dynamic or multi-member compute group");
+      // A convergence group is still a closed, statically indexed native
+      // schedule. The AOT ready-node bitset performs its fixpoint iteration;
+      // neither multiple members nor a back edge requires bytecode or an
+      // externally mutable event queue. Only a control-loop group has a
+      // scheduler-dependent boundary that the clean transaction cannot
+      // certify.
+      if (group.getSchedule() == sim::ComputeScheduleKind::ControlLoop)
+        reject("control-loop compute group");
     }
   }
 
