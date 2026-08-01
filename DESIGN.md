@@ -548,7 +548,9 @@ For a qualified clean native transaction, the backend expands scalar
 accumulator commits directly into the generated barrier callback. Compile-time
 root groups index the existing dirty leaf words, and each selected accumulator
 blends its final value, unknown, and part-select write mask into the canonical
-state planes before publishing one final packed transition. This is generated
+state planes before publishing one final packed transition when the exact
+fanout table contains an observer of that root. An unobserved root has no event
+queue consumer, so its transition call is omitted statically. This is generated
 commit code, not a coverage group or a second state representation. A single
 entry guard rejects direct commit after VPI writes, force/release, bytecode
 mutation, or any other specialization invalidation. The validating generic

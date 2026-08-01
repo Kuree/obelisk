@@ -684,6 +684,15 @@ LogicalResult makeNativeAOTPlan(
               builder, location, count,
               llvmConstant(builder, location, i32, uint32_t{1})),
           committedCount, 4);
+      bool hasStaticFanout = llvm::any_of(
+          fanoutEntries, [&](const obelisk_rt_static_fanout_entry &entry) {
+            return entry.static_state == root.static_state;
+          });
+      if (!hasStaticFanout) {
+        cf::BranchOp::create(builder, location, afterRoot);
+        rootBlock = afterRoot;
+        continue;
+      }
       Block *publish = new Block;
       nbaCommit.getBody().getBlocks().insert(Region::iterator(afterRoot),
                                              publish);

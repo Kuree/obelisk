@@ -3,7 +3,7 @@
 // RUN:   | FileCheck %s --implicit-check-not=obelisk_sim.nba.enqueue
 // RUN: obelisk-opt %s \
 // RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
-// RUN:   | FileCheck %s --check-prefix=DIRECT
+// RUN:   | FileCheck %s --check-prefix=DIRECT --implicit-check-not='llvm.call @obelisk_rt_v1_scheduler_static_transition'
 
 // Exercise AOT NBA planning and materialization from hand-authored simulation
 // IR. Driver option parsing is deliberately outside this pass test.
@@ -67,7 +67,6 @@ module attributes {
 // DIRECT: llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
 // DIRECT: llvm.load
 // DIRECT: llvm.store
-// DIRECT: llvm.call @obelisk_rt_v1_scheduler_static_transition
 // DIRECT: llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
 // DIRECT: llvm.xor
 // DIRECT: llvm.and
