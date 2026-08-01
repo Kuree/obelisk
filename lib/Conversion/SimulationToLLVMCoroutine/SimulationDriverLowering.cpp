@@ -100,6 +100,7 @@ public:
       Value value;
       Value unknown;
       bool fourState;
+      std::optional<DirectStaticStateRange> directRange;
     };
     SmallVector<Publication> publications;
     SmallVector<std::pair<uint64_t, uint64_t>> resolvedComponents;
@@ -212,9 +213,10 @@ public:
                                         boolean(false), resolvedValue);
             publishUnknown = boolean(false);
           }
-          publications.push_back({netHandle, oldResolvedValue,
-                                  oldResolvedUnknown, publishValue,
-                                  publishUnknown, memberNet->fourState});
+          publications.push_back(
+              {netHandle, oldResolvedValue, oldResolvedUnknown, publishValue,
+               publishUnknown, memberNet->fourState,
+               resolveDirectStaticStateRange(netHandle, 1, &layout)});
         }
       }
     }
@@ -233,13 +235,58 @@ public:
                           publication.unknown, "__obelisk_state_unknown",
                           layout.bitCount, &layout));
     }
-    for (const Publication &publication : publications)
-      notifySignal(rewriter, op.getLoc(), publication.handle, 1,
-                   publication.oldValue, publication.oldUnknown,
-                   publication.value,
-                   publication.fourState ? publication.unknown : Value{},
-                   resolveDirectStaticStateRange(publication.handle, 1,
-                                                 &layout));
+    auto packBits = [&](ArrayRef<Publication> run,
+                        Value Publication::*member) {
+      Value packed = llvmConstant(rewriter, op.getLoc(),
+                                  rewriter.getI64Type(), uint64_t{0});
+      for (auto [bit, publication] : llvm::enumerate(run)) {
+        Value extended = LLVM::ZExtOp::create(
+            rewriter, op.getLoc(), rewriter.getI64Type(),
+            publication.*member);
+        if (bit != 0)
+          extended = arith::ShLIOp::create(
+              rewriter, op.getLoc(), extended,
+              llvmConstant(rewriter, op.getLoc(), rewriter.getI64Type(),
+                           bit));
+        packed = arith::OrIOp::create(rewriter, op.getLoc(), packed, extended);
+      }
+      return packed;
+    };
+    for (size_t begin = 0; begin < publications.size();) {
+      size_t end = begin + 1;
+      const std::optional<DirectStaticStateRange> &firstRange =
+          publications[begin].directRange;
+      if (firstRange) {
+        while (end < publications.size() && end - begin < 64) {
+          const std::optional<DirectStaticStateRange> &nextRange =
+              publications[end].directRange;
+          uint64_t relativeOffset = end - begin;
+          if (!nextRange || nextRange->staticID != firstRange->staticID ||
+              nextRange->guarded != firstRange->guarded ||
+              nextRange->offset != firstRange->offset + relativeOffset ||
+              nextRange->localOffset !=
+                  firstRange->localOffset + relativeOffset)
+            break;
+          ++end;
+        }
+      }
+      ArrayRef<Publication> run(publications.data() + begin, end - begin);
+      if (run.size() == 1) {
+        const Publication &publication = run.front();
+        notifySignal(rewriter, op.getLoc(), publication.handle, 1,
+                     publication.oldValue, publication.oldUnknown,
+                     publication.value,
+                     publication.fourState ? publication.unknown : Value{},
+                     publication.directRange);
+      } else {
+        notifySignal(rewriter, op.getLoc(), run.front().handle, run.size(),
+                     packBits(run, &Publication::oldValue),
+                     packBits(run, &Publication::oldUnknown),
+                     packBits(run, &Publication::value),
+                     packBits(run, &Publication::unknown), firstRange);
+      }
+      begin = end;
+    }
     (void)changed;
     rewriter.eraseOp(op);
     return success();

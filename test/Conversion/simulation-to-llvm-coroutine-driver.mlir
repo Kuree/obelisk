@@ -35,6 +35,9 @@ module attributes {
 // CHECK: llvm.mlir.addressof @__obelisk_state_unknown
 // CHECK: llvm.store
 // CHECK: llvm.cond_br
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK: %[[ROOT:.*]] = llvm.mlir.constant(1 : i32) : i32
+// CHECK: %[[OFFSET:.*]] = llvm.mlir.constant(0 : i64) : i64
+// CHECK: %[[WIDTH:.*]] = llvm.mlir.constant(2 : i64) : i64
+// CHECK-COUNT-1: llvm.call @obelisk_rt_v1_scheduler_static_transition({{.*}}, %[[ROOT]], %[[OFFSET]], %[[WIDTH]], {{.*}})
 // CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_signal_transition
 // CHECK-NOT: obelisk_sim.driver.drive

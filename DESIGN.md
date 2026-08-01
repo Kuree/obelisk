@@ -521,6 +521,14 @@ an implementation choice for the target, not a change in scheduling semantics.
 Duplicate activation is suppressed by the ready bit, and node ordinals retain
 compute-graph order.
 
+Resolved vector drives retain atomic store-before-notify publication, but
+adjacent direct bits of the same canonical root are packed into target-sized
+transitions (currently up to 64 bits). This makes change and edge masks one
+runtime operation instead of one operation per bit, while disconnected aliases,
+dynamic handles, gaps, and wider ranges remain explicit boundaries. The VPI
+database and stable handles continue to identify the original roots and bit
+offsets; packing changes only the generated notification granularity.
+
 Within a clean scalar NBA barrier, exact fanout entries with the same root
 range and edge predicate are compiled as one trigger group. The generated
 callback evaluates that predicate once and ORs the group's constant
