@@ -205,8 +205,8 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
       bool adjacent =
           previousOrder && previousEntryOrder &&
           candidate.order == static_cast<uint64_t>(*previousOrder) + 1 &&
-          candidate.entryOrder ==
-              static_cast<uint64_t>(*previousEntryOrder) + 1;
+          (bodyFusion || candidate.entryOrder ==
+                             static_cast<uint64_t>(*previousEntryOrder) + 1);
       if ((!fragments.empty() && !adjacent) ||
           functions.contains(candidate.function))
         flush();

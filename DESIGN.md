@@ -488,6 +488,18 @@ five buckets are the current backend abstraction, not a claim that all IEEE
 semantic region explicitly or prove that folding it into one of these buckets
 is equivalent.
 
+The first executable coarsening step reuses compute-body fusion rather than
+adding a second inliner. It clones adjacent same-trigger native bodies into one
+function before LLVM lowering, including CFG block arguments, while retaining
+the original code-unit and hierarchy declarations as the identity layer. Pure
+root-entry preambles may be separated by unrelated spawns because they are
+folded into the fused actor without observable work. An outgoing Active wake is
+allowed only from the final cloned body: the fused actor then returns directly
+to the scheduler, whereas a wake from an earlier body could require an external
+actor to run between kernel members. General macro-task lowering will replace
+this deliberately narrow actor fusion, but it uses the same fine fragment IDs
+and scheduler boundaries rather than introducing a competing graph.
+
 The generated event schedule is indexed by canonical storage root and exact
 packed range. Each static fanout entry names its compute-node ordinal directly;
 publication therefore sets the node's ready bit without searching an actor's

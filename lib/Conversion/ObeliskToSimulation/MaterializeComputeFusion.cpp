@@ -109,8 +109,7 @@ bool collectBodyBlocks(BodyFusionCandidate &candidate) {
     Block *block = pending.pop_back_val();
     if (block == candidate.wait || !visited.insert(block).second)
       continue;
-    if (block == &candidate.function.getBody().front() ||
-        block->getNumArguments() != 0)
+    if (block == &candidate.function.getBody().front())
       return false;
     candidate.bodyBlocks.push_back(block);
     Operation *terminator = block->getTerminator();
@@ -797,9 +796,13 @@ FailureOr<sim::SimFuncOp> materializeFusion(
   });
 
   // A body that publishes an Active-region sensitivity can make another actor
-  // runnable between two members. Keep those processes separate until the
-  // graph proves that no fused body can introduce such an activation.
+  // runnable between two members. The verified schedule is precise enough to
+  // retain the fusion only when it is published by the final member. That
+  // activation is observed after the fused actor returns to the scheduler;
+  // publication by an earlier member could require an external actor to run
+  // before the next member and remains a hard boundary.
   llvm::SmallDenseSet<uint32_t> candidateFragments;
+  llvm::SmallDenseSet<uint32_t> finalCandidateFragments;
   llvm::SmallDenseSet<StringAttr> candidateFunctions;
   for (BodyFusionCandidate &candidate : candidates)
     candidateFunctions.insert(candidate.function.getSymNameAttr());
@@ -811,24 +814,31 @@ FailureOr<sim::SimFuncOp> materializeFusion(
     if (fragment.getTier() != sim::ComputeTierKind::Native)
       return failure();
     candidateFragments.insert(static_cast<uint32_t>(index));
+    if (fragment.getFunction().getAttr() ==
+        candidates.back().function.getSymNameAttr())
+      finalCandidateFragments.insert(static_cast<uint32_t>(index));
   }
   for (Attribute attribute : graph.getEdges()) {
     auto edge = cast<sim::ComputeEdgeAttr>(attribute);
-    if (candidateFragments.contains(edge.getSource()) &&
-        (edge.getKind() == sim::ComputeEdgeKind::Sensitivity ||
-         edge.getKind() == sim::ComputeEdgeKind::Spawn))
+    if (!candidateFragments.contains(edge.getSource()) ||
+        (edge.getKind() != sim::ComputeEdgeKind::Sensitivity &&
+         edge.getKind() != sim::ComputeEdgeKind::Spawn) ||
+        candidateFragments.contains(edge.getTarget()))
+      continue;
+    if (!finalCandidateFragments.contains(edge.getSource()))
       return failure();
   }
 
   // Fusing two actors makes their bodies indivisible. They must therefore be
-  // adjacent in the complete deterministic Active schedule, not merely among
-  // actors sharing this sensitivity: another sensitivity can become ready in
-  // the same slot and occupy an intervening schedule rank.
+  // adjacent in the complete deterministic Active resume schedule, not merely
+  // among actors sharing this sensitivity: another sensitivity can become
+  // ready in the same slot and occupy an intervening schedule rank. Their root
+  // spawn entries need not be adjacent because eligibility proved every entry
+  // preamble pure; the fused actor executes those preambles before registering
+  // the common wait and therefore introduces no initial-region effect.
   for (auto [index, candidate] : llvm::enumerate(candidates)) {
     if (candidate.resumeOrder !=
-            static_cast<uint64_t>(candidates.front().resumeOrder) + index ||
-        candidate.entryOrder !=
-            static_cast<uint64_t>(candidates.front().entryOrder) + index)
+        static_cast<uint64_t>(candidates.front().resumeOrder) + index)
       return failure();
   }
 
@@ -906,6 +916,11 @@ FailureOr<sim::SimFuncOp> materializeFusion(
       Block *cloned = new Block;
       fused.getBody().push_back(cloned);
       mapping->map(source, cloned);
+      for (BlockArgument argument : source->getArguments()) {
+        BlockArgument clonedArgument =
+            cloned->addArgument(argument.getType(), argument.getLoc());
+        mapping->map(argument, clonedArgument);
+      }
       clonedBlocks[candidateIndex][source] = cloned;
     }
     mappings.push_back(std::move(mapping));
