@@ -5,6 +5,8 @@
 
 #include "obelisk/Runtime/Runtime.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -379,7 +381,315 @@ LogicalResult makeNativeAOTPlan(
       LLVM::LLVMFunctionType::get(i32, {pointer, pointer, i32, pointer},
                                   false));
   Block *nbaCommitEntry = nbaCommit.addEntryBlock(builder);
+  Block *genericNBACommit = new Block;
+  nbaCommit.getBody().push_back(genericNBACommit);
   builder.setInsertionPointToStart(nbaCommitEntry);
+  Value committedCount = entryAlloca(builder, location, i32, 1, 4);
+  LLVM::StoreOp::create(builder, location,
+                        llvmConstant(builder, location, i32, 0),
+                        committedCount, 4);
+
+  bool generateScalarCommits = cleanSuperstepEnabled && enableDirectState &&
+                               !guardedSpecializationEnabled &&
+                               staticNBAPlan.generatedOffsets.size() ==
+                                   nbaRoots.size();
+  SmallVector<SmallVector<uint32_t>> scalarRootsByWord(nbaDirtyWordCount);
+  uint64_t planeBytes = (stateLayout.bitCount + 7) / 8;
+  if (generateScalarCommits)
+    for (auto [rootIndex, root, accumulator, offset] : llvm::enumerate(
+             nbaRoots, staticNBAPlan.generatedAccumulators,
+             staticNBAPlan.generatedOffsets)) {
+      uint64_t firstByte = offset / 8;
+      uint64_t shift = offset % 8;
+      bool crossesWord = root.bit_width > 64 - shift;
+      bool addressable = root.bit_width != 0 && root.bit_width <= 64 &&
+                         !accumulator.empty() && firstByte + 8 <= planeBytes &&
+                         (!crossesWord || firstByte + 9 <= planeBytes);
+      if (addressable)
+        scalarRootsByWord[rootIndex / 64].push_back(
+            static_cast<uint32_t>(rootIndex));
+    }
+
+  Value directGuard =
+      LLVM::CallOp::create(
+          builder, location, TypeRange{i32},
+          SymbolRefAttr::get(context,
+                             "obelisk_rt_v1_static_nba_direct_commit_guard"),
+          ValueRange{nbaCommitEntry->getArgument(1)})
+          .getResult();
+  Value directEnabled = arith::CmpIOp::create(
+      builder, location, arith::CmpIPredicate::ne, directGuard,
+      llvmConstant(builder, location, i32, 0));
+  Value stateValue = LLVM::AddressOfOp::create(
+      builder, location, pointer, "__obelisk_state_value");
+  Value stateUnknown = LLVM::AddressOfOp::create(
+      builder, location, pointer, "__obelisk_state_unknown");
+
+  SmallVector<Block *> wordBlocks(nbaDirtyWordCount);
+  for (uint32_t word = 0; word != nbaDirtyWordCount; ++word)
+    if (!scalarRootsByWord[word].empty()) {
+      wordBlocks[word] = new Block;
+      nbaCommit.getBody().getBlocks().insert(
+          Region::iterator(genericNBACommit), wordBlocks[word]);
+    }
+  Block *firstWord = genericNBACommit;
+  for (Block *block : wordBlocks)
+    if (block) {
+      firstWord = block;
+      break;
+    }
+  cf::CondBranchOp::create(builder, location, directEnabled, firstWord,
+                           ValueRange{}, genericNBACommit, ValueRange{});
+
+  auto nextWordAfter = [&](uint32_t current) -> Block * {
+    for (uint32_t word = current + 1; word != nbaDirtyWordCount; ++word)
+      if (wordBlocks[word])
+        return wordBlocks[word];
+    return genericNBACommit;
+  };
+  auto scalarMask = [](uint64_t width) {
+    return width == 64 ? UINT64_MAX : (uint64_t{1} << width) - 1;
+  };
+  auto loadRoot = [&](Value plane, uint64_t offset, uint64_t width) {
+    uint64_t firstByte = offset / 8;
+    uint64_t shift = offset % 8;
+    Value low = LLVM::LoadOp::create(
+        builder, location, i64,
+        byteGEP(builder, location, plane, firstByte), 1);
+    Value value = low;
+    if (shift != 0)
+      value = arith::ShRUIOp::create(
+          builder, location, value,
+          llvmConstant(builder, location, i64, shift));
+    if (width > 64 - shift) {
+      Value high = LLVM::LoadOp::create(
+          builder, location, builder.getI8Type(),
+          byteGEP(builder, location, plane, firstByte + 8), 1);
+      high = LLVM::ZExtOp::create(builder, location, i64, high);
+      high = arith::ShLIOp::create(
+          builder, location, high,
+          llvmConstant(builder, location, i64, 64 - shift));
+      value = arith::OrIOp::create(builder, location, value, high);
+    }
+    return arith::AndIOp::create(
+               builder, location, value,
+               llvmConstant(builder, location, i64, scalarMask(width)))
+        .getResult();
+  };
+  auto storeRoot = [&](Value plane, uint64_t offset, uint64_t width,
+                       Value value) {
+    uint64_t firstByte = offset / 8;
+    uint64_t shift = offset % 8;
+    Value address = byteGEP(builder, location, plane, firstByte);
+    Value oldLow = LLVM::LoadOp::create(builder, location, i64, address, 1);
+    uint64_t lowMask = scalarMask(width) << shift;
+    Value cleared = arith::AndIOp::create(
+        builder, location, oldLow,
+        llvmConstant(builder, location, i64, ~lowMask));
+    Value positioned = value;
+    if (shift != 0)
+      positioned = arith::ShLIOp::create(
+          builder, location, positioned,
+          llvmConstant(builder, location, i64, shift));
+    positioned = arith::AndIOp::create(
+        builder, location, positioned,
+        llvmConstant(builder, location, i64, lowMask));
+    LLVM::StoreOp::create(
+        builder, location,
+        arith::OrIOp::create(builder, location, cleared, positioned), address,
+        1);
+    if (width <= 64 - shift)
+      return;
+    uint64_t highWidth = width - (64 - shift);
+    uint8_t highMask = static_cast<uint8_t>((uint16_t{1} << highWidth) - 1);
+    Value highAddress = byteGEP(builder, location, plane, firstByte + 8);
+    Value oldHigh = LLVM::LoadOp::create(builder, location,
+                                         builder.getI8Type(), highAddress, 1);
+    Value highValue = arith::ShRUIOp::create(
+        builder, location, value,
+        llvmConstant(builder, location, i64, 64 - shift));
+    highValue = LLVM::TruncOp::create(builder, location, builder.getI8Type(),
+                                      highValue);
+    Value newHigh = arith::OrIOp::create(
+        builder, location,
+        arith::AndIOp::create(
+            builder, location, oldHigh,
+            llvmConstant(builder, location, builder.getI8Type(),
+                         static_cast<uint8_t>(~highMask))),
+        arith::AndIOp::create(
+            builder, location, highValue,
+            llvmConstant(builder, location, builder.getI8Type(), highMask)));
+    LLVM::StoreOp::create(builder, location, newHigh, highAddress, 1);
+  };
+
+  for (uint32_t word = 0; word != nbaDirtyWordCount; ++word) {
+    if (!wordBlocks[word])
+      continue;
+    builder.setInsertionPointToStart(wordBlocks[word]);
+    Value dirtyBase = LLVM::AddressOfOp::create(
+        builder, location, pointer, nbaDirtyRootsName);
+    Value dirty = LLVM::LoadOp::create(
+        builder, location, i64,
+        byteGEP(builder, location, dirtyBase,
+                uint64_t{word} * sizeof(uint64_t)),
+        8);
+    Value wordEmpty = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, dirty,
+        llvmConstant(builder, location, i64, 0));
+    Block *next = nextWordAfter(word);
+    Block *firstRoot = new Block;
+    nbaCommit.getBody().getBlocks().insert(Region::iterator(next), firstRoot);
+    cf::CondBranchOp::create(builder, location, wordEmpty, next, ValueRange{},
+                             firstRoot, ValueRange{});
+
+    Block *rootBlock = firstRoot;
+    for (auto [position, rootIndex] :
+         llvm::enumerate(scalarRootsByWord[word])) {
+      const obelisk_rt_static_nba_root &root = nbaRoots[rootIndex];
+      uint64_t offset = staticNBAPlan.generatedOffsets[rootIndex];
+      StringRef accumulator =
+          staticNBAPlan.generatedAccumulators[rootIndex];
+      Block *afterRoot = position + 1 == scalarRootsByWord[word].size()
+                             ? next
+                             : new Block;
+      if (afterRoot != next)
+        nbaCommit.getBody().getBlocks().insert(Region::iterator(next),
+                                               afterRoot);
+      Block *commitRoot = new Block;
+      nbaCommit.getBody().getBlocks().insert(Region::iterator(afterRoot),
+                                             commitRoot);
+      builder.setInsertionPointToStart(rootBlock);
+      Value selected = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne,
+          arith::AndIOp::create(
+              builder, location, dirty,
+              llvmConstant(builder, location, i64,
+                           uint64_t{1} << (rootIndex % 64))),
+          llvmConstant(builder, location, i64, 0));
+      Value accumulatorBase = LLVM::AddressOfOp::create(
+          builder, location, pointer, accumulator);
+      Value valid = LLVM::LoadOp::create(
+          builder, location, i32,
+          byteGEP(builder, location, accumulatorBase,
+                  offsetof(obelisk_rt_generated_nba_accumulator_256, valid)),
+          4);
+      Value region = LLVM::LoadOp::create(
+          builder, location, i32,
+          byteGEP(
+              builder, location, accumulatorBase,
+              offsetof(obelisk_rt_generated_nba_accumulator_256, exec_region)),
+          4);
+      Value validRoot = arith::AndIOp::create(
+          builder, location, selected,
+          arith::AndIOp::create(
+              builder, location,
+              arith::CmpIOp::create(
+                  builder, location, arith::CmpIPredicate::ne, valid,
+                  llvmConstant(builder, location, i32, 0)),
+              arith::CmpIOp::create(
+                  builder, location, arith::CmpIPredicate::eq, region,
+                  nbaCommitEntry->getArgument(2))));
+      cf::CondBranchOp::create(builder, location, validRoot, commitRoot,
+                               ValueRange{}, afterRoot, ValueRange{});
+
+      builder.setInsertionPointToStart(commitRoot);
+      Value stagedValue = LLVM::LoadOp::create(
+          builder, location, i64,
+          byteGEP(builder, location, accumulatorBase,
+                  offsetof(obelisk_rt_generated_nba_accumulator_256, value)),
+          8);
+      Value stagedUnknown = LLVM::LoadOp::create(
+          builder, location, i64,
+          byteGEP(builder, location, accumulatorBase,
+                  offsetof(obelisk_rt_generated_nba_accumulator_256, unknown)),
+          8);
+      Value writeMask = LLVM::LoadOp::create(
+          builder, location, i64,
+          byteGEP(
+              builder, location, accumulatorBase,
+              offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask)),
+          8);
+      writeMask = arith::AndIOp::create(
+          builder, location, writeMask,
+          llvmConstant(builder, location, i64, scalarMask(root.bit_width)));
+      Value oldValue = loadRoot(stateValue, offset, root.bit_width);
+      Value oldUnknown = loadRoot(stateUnknown, offset, root.bit_width);
+      Value inverseMask = arith::XOrIOp::create(
+          builder, location, writeMask,
+          llvmConstant(builder, location, i64, UINT64_MAX));
+      Value newValue = arith::OrIOp::create(
+          builder, location,
+          arith::AndIOp::create(builder, location, oldValue, inverseMask),
+          arith::AndIOp::create(builder, location, stagedValue, writeMask));
+      Value newUnknown = arith::OrIOp::create(
+          builder, location,
+          arith::AndIOp::create(builder, location, oldUnknown, inverseMask),
+          arith::AndIOp::create(builder, location, stagedUnknown, writeMask));
+      storeRoot(stateValue, offset, root.bit_width, newValue);
+      storeRoot(stateUnknown, offset, root.bit_width, newUnknown);
+      LLVM::StoreOp::create(builder, location,
+                            llvmConstant(builder, location, i64, 0),
+                            byteGEP(builder, location, accumulatorBase,
+                                    offsetof(
+                                        obelisk_rt_generated_nba_accumulator_256,
+                                        write_mask)),
+                            8);
+      LLVM::StoreOp::create(
+          builder, location, llvmConstant(builder, location, i32, 0),
+          byteGEP(builder, location, accumulatorBase,
+                  offsetof(obelisk_rt_generated_nba_accumulator_256, valid)),
+          4);
+      Value changed = arith::OrIOp::create(
+          builder, location,
+          arith::XOrIOp::create(builder, location, oldValue, newValue),
+          arith::XOrIOp::create(builder, location, oldUnknown, newUnknown));
+      Value rootChanged = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne, changed,
+          llvmConstant(builder, location, i64, 0));
+      Value priorChanged = LLVM::LoadOp::create(
+          builder, location, i32, nbaCommitEntry->getArgument(3), 4);
+      Value changedI32 = LLVM::ZExtOp::create(builder, location, i32,
+                                              rootChanged);
+      LLVM::StoreOp::create(
+          builder, location,
+          arith::OrIOp::create(builder, location, priorChanged, changedI32),
+          nbaCommitEntry->getArgument(3), 4);
+      Value count = LLVM::LoadOp::create(builder, location, i32,
+                                         committedCount, 4);
+      LLVM::StoreOp::create(
+          builder, location,
+          arith::AddIOp::create(
+              builder, location, count,
+              llvmConstant(builder, location, i32, uint32_t{1})),
+          committedCount, 4);
+      Block *publish = new Block;
+      nbaCommit.getBody().getBlocks().insert(Region::iterator(afterRoot),
+                                             publish);
+      cf::CondBranchOp::create(builder, location, rootChanged, publish,
+                               ValueRange{}, afterRoot, ValueRange{});
+      builder.setInsertionPointToStart(publish);
+      LLVM::CallOp::create(
+          builder, location, TypeRange{},
+          SymbolRefAttr::get(
+              context, "obelisk_rt_v1_scheduler_static_transition"),
+          ValueRange{nbaCommitEntry->getArgument(1),
+                     llvmConstant(builder, location, i32, root.static_state),
+                     llvmConstant(builder, location, i64, 0),
+                     llvmConstant(builder, location, i64, root.bit_width),
+                     oldValue, oldUnknown, newValue, newUnknown});
+      cf::BranchOp::create(builder, location, afterRoot);
+      rootBlock = afterRoot;
+    }
+  }
+
+  builder.setInsertionPointToStart(genericNBACommit);
+  Value directCount = LLVM::LoadOp::create(builder, location, i32,
+                                           committedCount, 4);
+  LLVM::CallOp::create(
+      builder, location, TypeRange{},
+      SymbolRefAttr::get(
+          context, "obelisk_rt_v1_static_nba_account_generated_commits"),
+      ValueRange{nbaCommitEntry->getArgument(1), directCount});
   Value nbaCommitStatus =
       LLVM::CallOp::create(
           builder, location, TypeRange{i32},
@@ -601,6 +911,11 @@ LogicalResult makeNativeAOTPlan(
                            {pointer, i32, i32, pointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_static_nba_commit_roots", i32,
                            {pointer, i32, i32, pointer});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_static_nba_direct_commit_guard", i32, {pointer});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_static_nba_account_generated_commits",
+      LLVM::LLVMVoidType::get(context), {pointer, i32});
   return success();
 }
 

@@ -241,7 +241,8 @@ LogicalResult markCleanStaticNBAsInGuardedBodies(
 LogicalResult
 materializeGeneratedNBAAccumulators(ModuleOp module,
                                     const NativeStaticNBAPlan &plan) {
-  if (plan.generatedAccumulators.size() != plan.roots.size())
+  if (plan.generatedAccumulators.size() != plan.roots.size() ||
+      plan.generatedOffsets.size() != plan.roots.size())
     return module.emitError("generated NBA accumulator plan is malformed");
   OpBuilder builder(module.getContext());
   Location location = module.getLoc();
@@ -306,6 +307,7 @@ buildNativeStaticNBAPlan(ModuleOp module, const NativeStateLayout &stateLayout,
     plan.roots.push_back({commit.getId(), decoded.id,
                           static_cast<uint64_t>(bound->width), nullptr});
     plan.generatedAccumulators.emplace_back();
+    plan.generatedOffsets.push_back(bound->offset);
     if (bound->width <= OBELISK_RT_GENERATED_NBA_MAX_BITS)
       plan.generatedAccumulators.back() =
           ("__obelisk_aot_nba_accumulator_" + Twine(root)).str();

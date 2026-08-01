@@ -28,6 +28,9 @@ struct NativeStaticNBAPlan {
   llvm::SmallVector<obelisk_rt_static_nba_site> sites;
   llvm::DenseMap<uint64_t, uint32_t> siteRoots;
   llvm::SmallVector<std::string> generatedAccumulators;
+  // Canonical state-plane bit offset for each root. This is revision-coupled
+  // lowering metadata, not a second state allocation.
+  llvm::SmallVector<uint64_t> generatedOffsets;
 };
 
 void populateNBAToLLVMConversionPatterns(mlir::RewritePatternSet &patterns,

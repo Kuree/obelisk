@@ -544,6 +544,18 @@ handoff: dynamic execution reports precise dirty roots in packed leaf and
 summary words, and actor/root dependencies limit handoff to affected compiled
 fragments.
 
+For a qualified clean native transaction, the backend expands scalar
+accumulator commits directly into the generated barrier callback. Compile-time
+root groups index the existing dirty leaf words, and each selected accumulator
+blends its final value, unknown, and part-select write mask into the canonical
+state planes before publishing one final packed transition. This is generated
+commit code, not a coverage group or a second state representation. A single
+entry guard rejects direct commit after VPI writes, force/release, bytecode
+mutation, or any other specialization invalidation. The validating generic
+commit remains the continuation of the callback: it consumes unsupported wide
+or boundary roots and provides the deoptimized path without changing VPI
+database identities.
+
 Timing sites likewise carry compiled policy metadata today. Constant delays
 select calendar sites, nonconstant delays select deadline slots, and
 delayed NBAs select delayed-NBA timing sites. The native backend must still

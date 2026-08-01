@@ -4874,6 +4874,21 @@ obelisk_rt_status commitStaticNBARootRangeUnlocked(obelisk_rt_context *context,
     return OBELISK_RT_OK;
 #endif
   auto commitRoot = [&](uint32_t root) -> obelisk_rt_status {
+    // A generated callback may already have consumed the root while leaving
+    // its dirty bit for this canonical index owner to clear. Avoid descending
+    // through all three commit variants merely to rediscover that neither
+    // accumulator has pending state.
+    if (root >= context->nativeScheduleNBARootCount ||
+        root >= context->staticNBAAccumulators.size())
+      return OBELISK_RT_INVALID_DESIGN;
+    const obelisk_rt_static_nba_root &rootPlan =
+        context->nativeScheduleNBARoots[root];
+    bool generatedPending = rootPlan.generated_accumulator &&
+                            hasGeneratedNBAStages(
+                                *rootPlan.generated_accumulator);
+    bool accumulatorPending = context->staticNBAAccumulators[root].valid;
+    if (!generatedPending && !accumulatorPending)
+      return OBELISK_RT_OK;
     bool generatedHandled = false;
     if (obelisk_rt_status status = tryCommitGeneratedNBAScalarUnlocked(
             context, root, barrierRegion, changed, generatedHandled,
@@ -4989,6 +5004,28 @@ extern "C" obelisk_rt_status obelisk_rt_v1_static_nba_commit_roots(
       context, rootCount, barrierRegion, changed);
   *outChanged = changed ? 1u : 0u;
   return status;
+}
+
+extern "C" uint32_t obelisk_rt_v1_static_nba_direct_commit_guard(
+    obelisk_rt_context *context) {
+  if (!context || activeNativeAOTContext != context ||
+      lockedNativeAOTContext != context || !context->nativeSchedulePlan)
+    return 0;
+  const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
+  return (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP) != 0 &&
+         canUseStaticAOTFanout(context) &&
+         !context->nativeScheduleExternalWritePending &&
+         !context->nativeScheduleDirtyRootsPresent &&
+         nativeStaticSpecializationEnvironmentClean(context) &&
+         (!plan->specialization_fast || *plan->specialization_fast != 0);
+}
+
+extern "C" void obelisk_rt_v1_static_nba_account_generated_commits(
+    obelisk_rt_context *context, uint32_t count) {
+  if (!context || count == 0)
+    return;
+  context->signalDiagnostics.aotNBAStages += count;
+  context->signalDiagnostics.aotNBACommits += count;
 }
 
 bool canCommitInlineNativeNBABarrierUnlocked(obelisk_rt_context *context,

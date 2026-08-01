@@ -2152,6 +2152,16 @@ obelisk_rt_v1_static_nba_commit_root(obelisk_rt_context *context, uint32_t root,
 obelisk_rt_status obelisk_rt_v1_static_nba_commit_roots(
     obelisk_rt_context *context, uint32_t root_count, uint32_t barrier_region,
     uint32_t *out_changed);
+// Generated clean-superstep NBA commit code checks this once per barrier.
+// A false result retains the validating generic commit path for VPI,
+// force/release, bytecode mutation, and transactional handoff.
+uint32_t
+obelisk_rt_v1_static_nba_direct_commit_guard(obelisk_rt_context *context);
+// Account for scalar accumulators committed directly by one generated
+// callback. Keeping this batched preserves diagnostics without a call per
+// root.
+void obelisk_rt_v1_static_nba_account_generated_commits(
+    obelisk_rt_context *context, uint32_t count);
 // Schedule one whole managed string word. The queued word remains a precise
 // tagged root through commit, and equal byte contents do not publish a signal
 // transition even when the immutable handles differ.
