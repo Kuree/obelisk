@@ -454,10 +454,11 @@ metadata survives machine-level inlining.
 
 The current planner materializes the typed graph, proven exact ranges,
 conservatively widened dynamic ranges, fixed site IDs, and event-region SCC
-plans described below. Direct region code, commit code, the dynamic frontier,
-coarsening, and worker lanes are target-backend behavior and remain to be
-lowered. The graph is a typed fragment-dependency graph, not an actor/resource
-graph with descriptors as nodes:
+plans described below. A graph-region materialization pass now derives stable
+macro-task records and worker-lane placement from that verified graph. Direct
+region code, commit code, and the dynamic frontier remain target-backend
+behavior to be lowered. The graph is a typed fragment-dependency graph, not an
+actor/resource graph with descriptors as nodes:
 
 - current process CFG blocks are fragment nodes, and future outlining and
   coarsening may replace them with maximal optimized fragments;
@@ -471,15 +472,21 @@ graph with descriptors as nodes:
 - CFG continuation, spawn, sensitivity, event-region, and required source-order
   relationships are dependency edges.
 
-Static operation costs and activation estimates will seed graph coarsening.
-Acyclic event-region components will lower to direct topological calls. Cyclic
-zero-time components will lower to convergence loops that compare only
-descriptor ranges on a feedback cut. Active, NBA, observed, reactive, and
-postponed planning buckets are already explicit even when a supported design
-has no nodes in one of them. These five buckets are the current backend
-abstraction, not a claim that all IEEE 1800 event regions are executable. Broad
-language support must preserve every semantic region explicitly or prove that
-folding it into one of these buckets is equivalent.
+The first coarsener merges adjacent lowering-ready acyclic schedule groups
+under a bounded static operation-cost threshold. Native fragments and generated
+static NBA/event commit nodes are lowering-ready; control-loop groups and every
+transition to dynamic or bytecode execution remain explicit kernel boundaries.
+Each macro task retains the ordered fine-fragment IDs from which it was formed,
+so VPI lookup, deoptimization, and bytecode-to-AOT handoff do not depend on
+duplicating or renumbering process identities. Acyclic event-region
+components will lower to direct topological calls. Cyclic zero-time components
+will lower to convergence loops that compare only descriptor ranges on a
+feedback cut. Active, NBA, observed, reactive, and postponed planning buckets
+are explicit even when a supported design has no nodes in one of them. These
+five buckets are the current backend abstraction, not a claim that all IEEE
+1800 event regions are executable. Broad language support must preserve every
+semantic region explicitly or prove that folding it into one of these buckets
+is equivalent.
 
 The generated event schedule is indexed by canonical storage root and exact
 packed range. Each static fanout entry names its compute-node ordinal directly;
@@ -521,12 +528,18 @@ generate those calendar paths and slots. Only semantically unbounded or
 externally introduced behavior will execute through the generic runtime
 frontier.
 
-After coarsening, the compiler will assign macro tasks to persistent worker
-lanes and emit their epoch and barrier dependencies. Closed-world RTL will have
-no runtime graph follower, per-task queue, owner queue, or work stealing. The
-runtime will only create and join persistent workers; generated lane functions
-will own the normal RTL schedule. Complex dynamic testbench services and
-externally introduced events may still use the generic frontier.
+The materialization pass assigns whole lowering-ready macro tasks to persistent
+worker lanes with deterministic largest-cost-first balancing; it never splits a
+macro task merely to improve the balance. This is a placement contract for the
+subsequent generated-driver lowering, not a reason for the fine scheduler to
+reinterpret fragment fusion. An experiment that mapped macro-task IDs onto the
+existing adjacent-ready dispatcher was performance-neutral and is not part of
+the implementation. Generated lane functions will add explicit epoch and
+barrier dependencies. Closed-world RTL will have no runtime graph follower,
+per-task queue, owner queue, or work stealing. The runtime will only create and
+join persistent workers; generated lane functions will own the normal RTL
+schedule. Complex dynamic testbench services and externally introduced events
+may still use the generic frontier.
 
 ### Dual AOT and bytecode execution
 
@@ -910,9 +923,12 @@ run time, is preferable to a silent coercion.
 
 ### Compiler-guided IPO, coarsening, and placement
 
-No solver-backed IPO, graph coarsening, or topology-aware placement is
-implemented yet. The current lane annotation is a deterministic greedy balance
-of per-fragment static operation costs.
+No solver-backed IPO or topology-aware placement is implemented yet. The first
+graph-region coarsener performs bounded adjacent acyclic merging and assigns
+whole lowering-ready kernels with deterministic largest-cost-first balancing.
+It deliberately preserves the fine graph beneath each kernel. The cost model
+and solver described below will refine those boundaries and placements rather
+than replace that stable coarse/fine representation.
 
 An Obelisk-owned solver interface may use Z3 directly to select among legal
 compiler-generated choices. Z3 types do not cross that interface, and the
@@ -1038,12 +1054,15 @@ The implementation roadmap is:
   `scf` and `vector` used only when profitable as temporary compiler IR.
 - ~~Build and independently verify deterministic dependency, SCC, feedback-cut,
   five-bucket region, and preliminary cost-balanced lane metadata.~~
+- ~~Materialize bounded acyclic macro tasks from verified region groups, retain
+  their fine-fragment identities, preserve convergence/control-loop and dynamic
+  handoff boundaries, and place whole kernels on deterministic worker lanes.~~
 - ~~Complete IEEE event-region lowering for the currently supported language:
   execute Active/Inactive/NBA/Observed/Reactive/Re-Inactive/Re-NBA/Postponed
   with explicit process homes, region barriers, a Preponed slot hook, and
-  Postponed `$strobe`/`$monitor` services.~~ Coarsen the graph into macro tasks
-  and generate direct acyclic and convergence drivers; assertions and clocking
-  blocks will populate the reserved Observed/Preponed hooks.
+  Postponed `$strobe`/`$monitor` services.~~ Generate direct acyclic and
+  convergence drivers from the materialized macro tasks; assertions and
+  clocking blocks will populate the reserved Observed/Preponed hooks.
 - Represent parallel regions in MLIR and lower them to fixed persistent lane
   functions with generated epoch and barrier dependencies.
 - ~~Implement the static runtime's shared native/bytecode fragment ABI and

@@ -184,6 +184,20 @@ def SimComputeFusionAttr : SimAttr<"ComputeFusion", "fusion"> {
   let genVerifyDecl = 1;
 }
 
+def SimComputeKernelAttr : SimAttr<"ComputeKernel", "kernel"> {
+  let parameters = (ins
+    "uint32_t":$id,
+    EnumParameter<SimComputeRegionKind>:$region,
+    EnumParameter<SimComputeScheduleKind>:$schedule,
+    "uint32_t":$lane,
+    "uint64_t":$cost,
+    "bool":$loweringReady,
+    "::mlir::DenseI64ArrayAttr":$fragments
+  );
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
 def SimComputeRegionAttr : SimAttr<"ComputeRegion", "region"> {
   let parameters = (ins
     EnumParameter<SimComputeRegionKind>:$kind,

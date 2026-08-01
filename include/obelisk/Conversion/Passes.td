@@ -215,6 +215,27 @@ def ObeliskSimVerifyComputeGraphPass
   }];
 }
 
+def ObeliskSimMaterializeGraphRegionsPass
+    : Pass<"obelisk-sim-materialize-graph-regions",
+           "obelisk::sim::SimDesignOp"> {
+  let summary = "Materialize verified compute regions as coarse native kernels";
+  let description = [{
+    Coarsens adjacent acyclic groups into deterministic macro tasks while
+    retaining their fine compute-fragment IDs as bytecode, VPI, and
+    deoptimization boundaries. Convergence and control-loop groups remain
+    explicit kernel boundaries. Whole kernels receive greedy worker-lane
+    placement so later native lowering can generate persistent lane functions
+    without repartitioning semantic fragments.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect"
+  ];
+  let options = [
+    Option<"maxAcyclicCost", "max-acyclic-cost", "uint64_t", "4096",
+           "Maximum static cost of one merged acyclic kernel">
+  ];
+}
+
 def ObeliskSimSpecializeStaticStateNBAPass
     : Pass<"obelisk-sim-specialize-static-state-nba",
            "obelisk::sim::SimDesignOp"> {

@@ -583,6 +583,28 @@ ComputeFusionAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
 }
 
 LogicalResult
+ComputeKernelAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                          uint32_t id, ComputeRegionKind region,
+                          ComputeScheduleKind schedule, uint32_t lane,
+                          uint64_t cost, bool loweringReady,
+                          DenseI64ArrayAttr fragments) {
+  (void)id;
+  (void)region;
+  (void)lane;
+  (void)cost;
+  if (!fragments || fragments.empty())
+    return emitError() << "compute kernel must contain fragments";
+  llvm::SmallDenseSet<int64_t> unique;
+  for (int64_t fragment : fragments.asArrayRef())
+    if (fragment < 0 || !unique.insert(fragment).second)
+      return emitError()
+             << "compute kernel has an invalid or duplicate fragment";
+  if (loweringReady && schedule == ComputeScheduleKind::ControlLoop)
+    return emitError() << "control-loop kernel cannot be lowering-ready";
+  return success();
+}
+
+LogicalResult
 ComputeRegionAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
                           ComputeRegionKind kind, ArrayAttr groups) {
   if (!groups || llvm::any_of(groups, [](Attribute attr) {

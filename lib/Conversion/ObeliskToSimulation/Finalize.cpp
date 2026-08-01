@@ -288,6 +288,7 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
     designManager.addPass(
         createObeliskSimBuildComputeGraphPass(std::move(fusedGraphOptions)));
     designManager.addPass(createObeliskSimVerifyComputeGraphPass());
+    designManager.addPass(createObeliskSimMaterializeGraphRegionsPass());
     designManager.addPass(createObeliskSimFuseComputeFragmentsPass());
   }
   bool specialize = staticSpecialization == "on" ||
