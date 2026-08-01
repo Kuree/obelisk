@@ -66,6 +66,18 @@ This removes scheduler round trips without weakening event semantics: the fine
 bits remain the canonical fracture points for duplicate-wake suppression,
 bytecode-to-AOT return, exact VPI deposits, and future worker-lane placement.
 
+State ownership is defined at those boundaries. Stable descriptors and the
+VPI database identify logical objects; they do not force every intermediate
+assignment through a byte-addressed runtime plane. At kernel entry, generated
+code loads required value/unknown live-ins from the coherent safe-point layout.
+Within the clean transaction, SSA values are authoritative. The completed
+direct region form writes each final live-out once and publishes its exact
+changed range; the current first form coalesces repeated writes to one
+boundary accumulator stage per root. Bytecode, force/release, tracing,
+reentrant calls, and ambiguous VPI operations are explicit
+materialization/deoptimization boundaries. No permanent generated shadow
+array is permitted.
+
 Kernel dirtiness is an explicit generated value, not an accidental scheduler
 side effect. A normal SystemVerilog process is insensitive while its body is
 executing, so a union wait cannot detect transitions produced by that same
@@ -118,6 +130,13 @@ the final graph rebuild. It is followed by the simulation inliner, SROA,
 mem2reg, canonicalization, CSE, simulation SCCP, and symbol DCE. The compute
 graph is then rebuilt and verified once from the executable CFG; metadata-only
 kernel grouping is not considered a runtime optimization.
+
+The hybrid native pipeline freezes the bytecode image and VPI database before
+applying native-only region-state rewrites. Consequently a late pass may
+eliminate overwritten AOT NBA stages or form an SSA next-state epilogue while
+the original fallback semantics remain encoded under the same function,
+continuation, descriptor, hierarchy, and code-unit identities. Falling back is
+a tier transfer at a safe point, not execution of partially rewritten bytecode.
 
 `-c` always emits a conventional native ELF relocatable, independent of the
 optimization level. Executable links select the runtime representation by

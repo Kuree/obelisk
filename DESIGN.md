@@ -297,6 +297,16 @@ to opaque LLVM-dialect pointers and loads, stores, and GEPs, and attaches proven
 alias and invariant metadata there. Target sizes and alignment come from the
 selected data layout, never from the host compiler's `sizeof`.
 
+The descriptor is the canonical identity; a permanently loaded byte array is
+not the canonical execution form. At a scheduler safe point, every materialized
+descriptor has one coherent four-state value in the runtime state layout. A
+clean generated region may load its live-ins once, carry current and next state
+in SSA (including a value-only guarded version), and materialize only its final
+live-outs at the next event-region, bytecode, force, tracing, or external-call
+boundary. This is one logical state representation with explicit
+materialization points, not a shadow generated-state array. Dynamic handles and
+unproven accesses continue to use the validated runtime access path.
+
 The MemRef dialect is not used. Materialized simulator state uses the `ptr`
 dialect after layout, while dynamic services use typed runtime handles and
 calls.
@@ -580,43 +590,47 @@ snapshot are unchanged, so VPI and bytecode can still fracture a coarse region
 at its indexed compute fragment.
 
 Every NBA site already receives an explicit staging-policy annotation; the
-annotation does not allocate its storage. Proven single-shot sites select fixed
-slots. Repeated immediate assignments to a concrete root select a future
-value/unknown/mask accumulator with change and edge masks. Repeated delayed,
-externally introduced, or dynamically rooted work selects the future dynamic
-frontier. Unrestricted writable VPI also prevents repeated sites from selecting
-the root accumulator because it may rewrite a root between staging and commit;
-proven single-shot sites may still select fixed slots. A finite journal is worth
-adding once an analysis can prove a multiplicity bound; until then it is
-deliberately absent rather than declared and never selected. Native lowering
-will materialize the selected storage and ordered commit code. Dynamic
-destinations will carry direct descriptor, index, and mask fields.
+annotation does not require one runtime record per source assignment. Proven
+single-shot fallback sites select fixed slots. Repeated immediate assignments
+to a concrete root select logical value/unknown/mask accumulator semantics;
+inside a clean generated region those semantics are represented as SSA
+next-state and one boundary epilogue, while unsupported or fractured execution
+uses the materialized accumulator. Repeated delayed, externally introduced, or
+dynamically rooted work selects the future dynamic frontier. Unrestricted
+writable VPI also prevents an unguarded region from retaining a root in SSA
+across an external safe point. A finite journal is worth adding once an
+analysis can prove a multiplicity bound; until then it is deliberately absent
+rather than declared and never selected. Dynamic destinations carry direct
+descriptor, index, and mask fields.
 
-Generated fixed-site NBA accumulators use a two-level dirty-root index. Leaf
-words select roots in graph order and summary words skip empty leaf pages; the
-runtime uses target bit-scan intrinsics for both next-barrier selection and
-ordered commit rather than scanning every NBA root. Staging marks both levels,
-and commit clears a root only after all of its pending event-region forms have
-been consumed. The same hierarchical shape is used for bytecode-to-AOT
-handoff: dynamic execution reports precise dirty roots in packed leaf and
-summary words, and actor/root dependencies limit handoff to affected compiled
-fragments.
+Materialized fixed-site NBA accumulators use a two-level dirty-root index.
+Leaf words select roots in graph order and summary words skip empty leaf pages;
+the runtime uses target bit-scan intrinsics for both next-barrier selection and
+ordered commit rather than scanning every NBA root. Fallback staging marks both
+levels, and commit clears a root only after all of its pending event-region
+forms have been consumed. Clean generated-region assignments do not maintain
+this hierarchy per statement. The implemented first form coalesces repeated
+writes into one boundary accumulator stage per root; the final direct form
+will emit the changed-root mask once from the region epilogue. The same
+hierarchical shape is used for sparse bytecode-to-AOT and VPI ingress, where
+dynamic execution reports precise dirty roots and actor/root dependencies
+limit handoff to affected compiled fragments.
 
-For a qualified clean native transaction, the backend expands scalar
-accumulator commits directly into the generated barrier callback. Compile-time
-root groups index the existing dirty leaf words, and each selected accumulator
-blends its final value, unknown, and part-select write mask into the canonical
-state planes before publishing one final packed transition when the exact
-fanout table contains an observer of that root. An unobserved root has no event
-queue consumer, so its transition call is omitted statically. This is generated
-commit code, not a coverage group or a second state representation. A single
-entry guard rejects direct commit after VPI writes, force/release, bytecode
+For a qualified clean native transaction, the current backend expands scalar
+materialized-accumulator commits directly into the generated barrier callback.
+Compile-time root groups index the existing dirty leaf words, and each selected
+accumulator blends its final value, unknown, and part-select write mask into the
+safe-point state planes before publishing one final packed transition when the
+exact fanout table contains an observer of that root. The future direct
+next-state region form removes even that internal accumulator round trip: it
+forwards writes in SSA and feeds the same publication epilogue directly. An
+unobserved root has no event queue consumer, so its transition call is omitted
+statically. Neither form is a coverage group or a second persistent state
+representation. A single
+entry guard rejects the clean form after VPI writes, force/release, bytecode
 mutation, or any other specialization invalidation. The validating generic
-commit remains the continuation of the callback. Directly consumed roots are
-cleared from their existing dirty leaf word before that handoff, while
-unsupported wide, boundary, or later-region roots remain indexed. The generic
-path therefore handles only work that remains and provides deoptimization
-without changing VPI database identities.
+commit remains the handoff path for unsupported wide, boundary, or later-region
+roots without changing VPI database identities.
 
 Timing sites likewise carry compiled policy metadata today. Constant delays
 select calendar sites, nonconstant delays select deadline slots, and
@@ -902,8 +916,9 @@ VPI full
 
 The current runtime implements startup-table discovery and invocation plus the
 hierarchical/scoped backdoor subset described in `docs/vpi.md`. Read mode
-supports traversal and immediate reads. Full mode additionally supports
-immediate deposits, force, and release through the canonical state planes.
+supports traversal and immediate reads at safe points. Full mode additionally
+supports immediate deposits, force, and release through the descriptor's
+materialized four-state safe-point value.
 Callbacks, delayed writes, system-task dispatch, strengths, and waveform
 registration remain future work.
 

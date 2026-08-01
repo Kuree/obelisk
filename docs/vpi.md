@@ -37,11 +37,14 @@ deterministically.
 
 Traversal uses the design database encoded into the final simulator. Scope,
 module, net, and packed-storage handles wrap validated database cursors; their
-stamped state offsets address the same canonical value and unknown planes used
-by native execution, bytecode execution, language force/assign, and net
-resolution. No separate VPI hierarchy or value copy is constructed at runtime.
+stamped state offsets address the descriptor's coherent four-state value at a
+scheduler safe point. Bytecode execution, language force/assign, net
+resolution, and native region entry/exit use that same materialization layout.
+A clean generated region may retain the value in SSA between safe points; it
+must materialize before VPI can run. No separate VPI hierarchy or persistent
+VPI value copy is constructed at runtime.
 
-An immediate deposit with an exact canonical storage/root mapping also reuses
+An immediate deposit with an exact descriptor/root mapping also reuses
 the generated static fanout index. After updating both four-state planes, the
 runtime computes change and edge masks and marks the fanout entries' compute
 nodes directly, with the packed ready bits suppressing duplicate wakes. This

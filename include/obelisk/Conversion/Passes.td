@@ -318,6 +318,22 @@ def ObeliskSimMaterializeComputeFusionPass
   ];
 }
 
+def ObeliskSimOptimizeNativeRegionsPass
+    : Pass<"obelisk-sim-optimize-native-regions", "mlir::ModuleOp"> {
+  let summary = "Forward generated native-region next state through SSA";
+  let description = [{
+    Runs after the hybrid bytecode image has been frozen and before native
+    lowering. For a bounded acyclic generated activation, forwards each eligible
+    immediate root-accumulator assignment through CFG block arguments and
+    emits at most one stage for that root in the wait-boundary epilogue. Fixed
+    slots, delayed work, dynamic frontiers, mixed part-select roots, and
+    convergence SCCs remain explicit.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect"
+  ];
+}
+
 def ObeliskSimFinalizePass
     : Pass<"obelisk-sim-finalize", "mlir::ModuleOp"> {
   let summary = "Remove semantic IR and verify the executable simulation boundary";

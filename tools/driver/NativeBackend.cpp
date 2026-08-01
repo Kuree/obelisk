@@ -241,6 +241,12 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
     options.requireBytecode = bytecode;
     manager.addPass(createEncodeObeliskSimToBytecodePass(options));
   }
+  // Native region bodies may diverge from their already-frozen bytecode
+  // fallback after this point. Keep the generic scheduler as an untouched
+  // oracle and apply AOT-only next-state rewrites only when the hybrid image
+  // provides the deoptimization implementation.
+  if (needsHybridBytecode)
+    manager.addPass(createObeliskSimOptimizeNativeRegionsPass());
   manager.addPass(createConvertObeliskSimProcessesToLLVMCoroutinesPass());
   if (failed(manager.run(module)))
     return failure();

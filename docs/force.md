@@ -22,7 +22,10 @@ published assigned value. Variable release retains the forced value when no
 assign is active, while net release recomputes the affected connected component
 from current drivers and produces Z when it is undriven.
 
-Native and bytecode execution use the same canonical masks and publication
-ordering. The compiler emits the encoded execution/design image whenever these
-operations occur, even when VPI is disabled, so stamped native state offsets
-are checked against the runtime layout.
+Native and bytecode execution use the same override masks and publication
+ordering at scheduler safe points. A clean native region may keep an unforced
+value in SSA only while no force/release operation can run; force and release
+are materialization and specialization-invalidation boundaries. The compiler
+emits the encoded execution/design image whenever these operations occur, even
+when VPI is disabled, so stamped native state offsets are checked against the
+runtime layout.

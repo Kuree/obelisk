@@ -53,6 +53,10 @@ inline constexpr llvm::StringLiteral staticSuperstep =
 /// accesses may use the actor-boundary clean-specialization proof.
 inline constexpr llvm::StringLiteral nativeGuardedSpecializationBody =
     "obelisk.native.guarded_specialization_body";
+/// Marks an AOT region body whose bytecode fallback may be frozen before
+/// native-only next-state and publication rewrites consume the annotation.
+inline constexpr llvm::StringLiteral nativeRegionBody =
+    "obelisk.native.region_body";
 
 inline bool isKnownBoundary(llvm::StringRef name) {
   return name == captureKind || name == descriptorId ||

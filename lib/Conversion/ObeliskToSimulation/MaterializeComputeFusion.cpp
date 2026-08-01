@@ -696,6 +696,7 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
         fragment.getFunction().getValue());
     auto spawns = spawnsByCallee.find(fragment.getFunction().getAttr());
     if (!function || function.getEntryKind() != sim::EntryKind::Continuous ||
+        !isComputeBodyFusionEligible(function) ||
         function.getBody().getBlocks().size() != 2 ||
         spawns == spawnsByCallee.end() || spawns->second.size() != 1)
       return failure();
@@ -714,6 +715,19 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
         !isa<sim::SimSuspendChangeOp, sim::SimSuspendAnyOp>(suspend) ||
         suspend->getSuccessor(0) != &body || !changeWait ||
         resume == resumeTargets.end())
+      return failure();
+    // The local dirty mask must observe every immediate publication made by
+    // the body. Plain and changed driver drives have an exact transition
+    // result, but ref stores and transitive calls currently do not. Keep those
+    // operations at an explicit kernel boundary until region lowering can
+    // return their changed ranges as SSA values. Otherwise an internal store
+    // or a drive in a callee can fail to select a fused downstream consumer.
+    bool hasUntrackedPublication = false;
+    function.walk([&](Operation *operation) {
+      hasUntrackedPublication |=
+          isa<sim::SimRefStoreOp, sim::SimCallOp>(operation);
+    });
+    if (hasUntrackedPublication)
       return failure();
     candidates.push_back({function, spawns->second.front(), &body, suspend,
                           {}, member, resume->second});
@@ -770,6 +784,7 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
       FunctionType::get(design.getContext(), inputTypes, TypeRange{}),
       sim::EntryKind::Continuous, attributes, argumentAttrs);
   SymbolTable::setSymbolVisibility(kernel, SymbolTable::Visibility::Private);
+  kernel->setAttr(sim::metadata::nativeRegionBody, builder.getUnitAttr());
   Block &entry = kernel.getBody().front();
   Block *body = new Block;
   BlockArgument initialize =
@@ -925,7 +940,10 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
         changed = arith::OrIOp::create(builder, drive.getLoc(), changed,
                                        transition);
       } else {
-        builder.clone(operation, *mapping);
+        Operation *cloned = builder.clone(operation, *mapping);
+        if (auto drive = dyn_cast<sim::SimDriverDriveChangedOp>(cloned))
+          changed = arith::OrIOp::create(builder, drive.getLoc(), changed,
+                                         drive.getChanged());
       }
     }
     Value nextValue = currentMask;
@@ -1213,6 +1231,7 @@ FailureOr<sim::SimFuncOp> materializeFusion(
       FunctionType::get(design.getContext(), inputTypes, TypeRange{}),
       first.getEntryKind(), fusedAttributes, argumentAttrs);
   SymbolTable::setSymbolVisibility(fused, SymbolTable::Visibility::Private);
+  fused->setAttr(sim::metadata::nativeRegionBody, builder.getUnitAttr());
   // This closed-world fused activation cannot call foreign code or suspend
   // while its body is running. Mark it so native lowering can prove which NBA
   // sites are safe in the clean body selected by AOT actor dispatch.

@@ -22,6 +22,7 @@ add_mlir_library(ObeliskSimulationToLLVMCoroutine
   SimulationManagedStringLowering.cpp
   SimulationNBALowering.cpp
   SimulationNBAPlanning.cpp
+  SimulationNativeRegionOptimization.cpp
   SimulationObserverLowering.cpp
   SimulationOverrideLowering.cpp
   SimulationPackedLowering.cpp
