@@ -365,6 +365,10 @@ SmallVector<ComputeEffect> collectDirectEffects(const FunctionInfo &info,
           appendEffect(info, sim::ComputeEffectKind::Drive, op.getDriver(),
                        effects);
         })
+        .Case<sim::SimDriverDriveChangedOp>([&](auto op) {
+          appendEffect(info, sim::ComputeEffectKind::Drive, op.getDriver(),
+                       effects);
+        })
         .Case<sim::SimNBAEnqueueOp>([&](auto op) {
           appendEffect(info, sim::ComputeEffectKind::NBA, op.getDestination(),
                        effects, sim::ComputeTriggerKind::None,

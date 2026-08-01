@@ -11,6 +11,8 @@
 
 #include "llvm/ADT/STLExtras.h"
 
+#include <type_traits>
+
 using namespace mlir;
 
 namespace obelisk::detail {
@@ -60,15 +62,18 @@ std::optional<uint64_t> getStaticDriverID(Value value) {
   return std::nullopt;
 }
 
-class DriverDriveConversion final
-    : public OpConversionPattern<sim::SimDriverDriveOp> {
+template <typename DriveOp>
+class DriverDriveConversion final : public OpConversionPattern<DriveOp> {
 public:
+  using Base = OpConversionPattern<DriveOp>;
+  using OneToNOpAdaptor = typename Base::OneToNOpAdaptor;
+
   DriverDriveConversion(const TypeConverter &converter, MLIRContext *context,
                         const NativeStateLayout &layout)
-      : OpConversionPattern(converter, context), layout(layout) {}
+      : Base(converter, context), layout(layout) {}
 
   LogicalResult
-  matchAndRewrite(sim::SimDriverDriveOp op, OneToNOpAdaptor adaptor,
+  matchAndRewrite(DriveOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     if (adaptor.getDriver().size() != 1 || adaptor.getValue().empty())
       return failure();
@@ -91,7 +96,8 @@ public:
     }
     Value changed = boolean(false);
     std::optional<uint64_t> affectedNet;
-    if (auto netID = op->getAttrOfType<IntegerAttr>("obelisk.native.net_id"))
+    if (auto netID =
+            op->template getAttrOfType<IntegerAttr>("obelisk.native.net_id"))
       affectedNet = netID.getInt();
     struct Publication {
       Value handle;
@@ -287,8 +293,10 @@ public:
       }
       begin = end;
     }
-    (void)changed;
-    rewriter.eraseOp(op);
+    if constexpr (std::is_same_v<DriveOp, sim::SimDriverDriveChangedOp>)
+      rewriter.replaceOp(op, changed);
+    else
+      rewriter.eraseOp(op);
     return success();
   }
 
@@ -300,7 +308,7 @@ private:
 
 void annotateStaticDriverNets(ModuleOp module,
                               const NativeStateLayout &layout) {
-  module.walk([&](sim::SimDriverDriveOp drive) {
+  auto annotate = [&](auto drive) {
     std::optional<uint64_t> driverID = getStaticDriverID(drive.getDriver());
     if (!driverID)
       return;
@@ -312,13 +320,18 @@ void annotateStaticDriverNets(ModuleOp module,
                                       driver.netId));
       return;
     }
-  });
+  };
+  module.walk([&](sim::SimDriverDriveOp drive) { annotate(drive); });
+  module.walk(
+      [&](sim::SimDriverDriveChangedOp drive) { annotate(drive); });
 }
 
 void populateDriverToLLVMConversionPatterns(RewritePatternSet &patterns,
                                             TypeConverter &converter,
                                             const NativeStateLayout &layout) {
-  patterns.add<DriverDriveConversion>(converter, patterns.getContext(), layout);
+  patterns.add<DriverDriveConversion<sim::SimDriverDriveOp>,
+               DriverDriveConversion<sim::SimDriverDriveChangedOp>>(
+      converter, patterns.getContext(), layout);
 }
 
 } // namespace obelisk::detail

@@ -910,6 +910,10 @@ StateDomainAnalysis::compute(sim::SimDesignOp design,
         } else if (auto drive = dyn_cast<sim::SimDriverDriveOp>(operation)) {
           destination = drive.getDriver();
           value = drive.getValue();
+        } else if (auto drive =
+                       dyn_cast<sim::SimDriverDriveChangedOp>(operation)) {
+          destination = drive.getDriver();
+          value = drive.getValue();
         } else {
           return;
         }

@@ -164,7 +164,8 @@ LogicalResult verifyPostponedReadOnly(SimFuncOp root) {
         return WalkResult::skip();
       if (isa<SimManagedStoreOp, SimManagedNBAEnqueueOp,
               SimReferencePathNBAEnqueueOp, SimArgumentRefStoreOp,
-              SimRefStoreOp, SimDriverDriveOp, SimNBAEnqueueOp, SimSpawnOp,
+              SimRefStoreOp, SimDriverDriveOp, SimDriverDriveChangedOp,
+              SimNBAEnqueueOp, SimSpawnOp,
               SimEventTriggerOp, SimSuspendDelayOp, SimTaskCallOp>(operation)) {
         operation->emitOpError(
             "is not permitted in a read-only postponed code unit");

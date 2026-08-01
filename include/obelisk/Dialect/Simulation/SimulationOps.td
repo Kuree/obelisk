@@ -1793,6 +1793,22 @@ def SimDriverDriveOp : SimOp<"driver.drive", [
   let assemblyFormat = "$driver `=` $value attr-dict `:` qualified(type($driver)) `,` type($value)";
 }
 
+def SimDriverDriveChangedOp : SimOp<"driver.drive_changed", [
+    MemoryEffects<[MemWrite<SimNetResource>]>,
+    SimDriverElementMatches<"driver", "value">
+  ]> {
+  let summary = "drive a net and return whether its resolved value changed";
+  let description = [{
+    This internal operation is the transition-producing form used by generated
+    graph-region kernels. The result is true when any value or unknown-plane
+    bit in the affected resolved net changes. Ordinary process bodies retain
+    `driver.drive`; bytecode fallback bodies do not depend on this result.
+  }];
+  let arguments = (ins SimDriverType:$driver, AnyType:$value);
+  let results = (outs I1:$changed);
+  let assemblyFormat = "$driver `=` $value attr-dict `:` qualified(type($driver)) `,` type($value)";
+}
+
 def SimDriverExtractOp : SimOp<"driver.extract", [Pure, ViewLikeOpInterface]> {
   let arguments = (ins SimDriverType:$input, I64Attr:$low_bit);
   let results = (outs SimDriverType:$result);

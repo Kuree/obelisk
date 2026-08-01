@@ -7,6 +7,7 @@ module attributes {
   obelisk_sim.design @driver_lowering {
     obelisk_sim.scope.decl 0
     obelisk_sim.code_unit.decl 1 in 0 function hierarchy "driver_lowering.drive"
+    obelisk_sim.code_unit.decl 2 in 0 function hierarchy "driver_lowering.drive_changed"
     obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<2> design
     obelisk_sim.driver.decl 0 in 0 drives 0 :
         !obelisk_sim.logic<2> design
@@ -22,6 +23,19 @@ module attributes {
           !obelisk_sim.driver<!obelisk_sim.logic<2>>,
           !obelisk_sim.logic<2>
       obelisk_sim.return
+    }
+
+    obelisk_sim.func @drive_changed(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> i1
+        attributes {entry_kind = 8 : i32, code_unit_id = 2 : i64} {
+      %driver = obelisk_sim.context.driver %ctx[0] :
+          !obelisk_sim.driver<!obelisk_sim.logic<2>>
+      %value = obelisk_sim.logic.constant 1 : i2, 0 : i2 :
+          !obelisk_sim.logic<2>
+      %changed = obelisk_sim.driver.drive_changed %driver = %value :
+          !obelisk_sim.driver<!obelisk_sim.logic<2>>,
+          !obelisk_sim.logic<2>
+      obelisk_sim.return %changed : i1
     }
   }
 }
@@ -41,3 +55,8 @@ module attributes {
 // CHECK-COUNT-1: llvm.call @obelisk_rt_v1_scheduler_static_transition({{.*}}, %[[ROOT]], %[[OFFSET]], %[[WIDTH]], {{.*}})
 // CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_signal_transition
 // CHECK-NOT: obelisk_sim.driver.drive
+
+// CHECK-LABEL: llvm.func @drive_changed
+// CHECK: llvm.or
+// CHECK: llvm.return %{{.*}} : i1
+// CHECK-NOT: obelisk_sim.driver.drive_changed

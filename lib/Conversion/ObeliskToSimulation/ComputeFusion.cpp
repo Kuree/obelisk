@@ -140,7 +140,7 @@ bool isComputeBodyFusionEligibleImpl(
     }
 
     if (isa<sim::SimRefLoadOp, sim::SimRefStoreOp, sim::SimNetReadOp,
-            sim::SimDriverDriveOp>(operation)) {
+            sim::SimDriverDriveOp, sim::SimDriverDriveChangedOp>(operation)) {
       eligible = hasOnlyStaticDigitalValues(operation) &&
                  hasConcreteHandleValues(operation, provenance);
       return;
