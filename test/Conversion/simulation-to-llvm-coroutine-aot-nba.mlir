@@ -68,5 +68,9 @@ module attributes {
 // DIRECT: llvm.load
 // DIRECT: llvm.store
 // DIRECT: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// DIRECT: llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
+// DIRECT: llvm.xor
+// DIRECT: llvm.and
+// DIRECT: llvm.store
 // DIRECT: llvm.call @obelisk_rt_v1_static_nba_account_generated_commits
 // DIRECT: llvm.call @obelisk_rt_v1_static_nba_commit_roots

@@ -410,6 +410,19 @@ LogicalResult makeNativeAOTPlan(
             static_cast<uint32_t>(rootIndex));
     }
 
+  // Record roots actually consumed by the direct path. The generic
+  // continuation still owns the canonical dirty hierarchy, but need not
+  // rediscover that every generated accumulator in a leaf was cleared.
+  SmallVector<Value> directlyCommittedByWord(nbaDirtyWordCount);
+  for (uint32_t word = 0; word != nbaDirtyWordCount; ++word)
+    if (!scalarRootsByWord[word].empty()) {
+      directlyCommittedByWord[word] =
+          entryAlloca(builder, location, i64, 1, 8);
+      LLVM::StoreOp::create(builder, location,
+                            llvmConstant(builder, location, i64, 0),
+                            directlyCommittedByWord[word], 8);
+    }
+
   Value directGuard =
       LLVM::CallOp::create(
           builder, location, TypeRange{i32},
@@ -639,6 +652,15 @@ LogicalResult makeNativeAOTPlan(
           byteGEP(builder, location, accumulatorBase,
                   offsetof(obelisk_rt_generated_nba_accumulator_256, valid)),
           4);
+      Value directlyCommitted = LLVM::LoadOp::create(
+          builder, location, i64, directlyCommittedByWord[word], 8);
+      LLVM::StoreOp::create(
+          builder, location,
+          arith::OrIOp::create(
+              builder, location, directlyCommitted,
+              llvmConstant(builder, location, i64,
+                           uint64_t{1} << (rootIndex % 64))),
+          directlyCommittedByWord[word], 8);
       Value changed = arith::OrIOp::create(
           builder, location,
           arith::XOrIOp::create(builder, location, oldValue, newValue),
@@ -683,6 +705,25 @@ LogicalResult makeNativeAOTPlan(
   }
 
   builder.setInsertionPointToStart(genericNBACommit);
+  Value dirtyBase = LLVM::AddressOfOp::create(
+      builder, location, pointer, nbaDirtyRootsName);
+  for (uint32_t word = 0; word != nbaDirtyWordCount; ++word) {
+    if (!directlyCommittedByWord[word])
+      continue;
+    Value dirtyAddress = byteGEP(builder, location, dirtyBase,
+                                 uint64_t{word} * sizeof(uint64_t));
+    Value dirty = LLVM::LoadOp::create(builder, location, i64, dirtyAddress, 8);
+    Value committed = LLVM::LoadOp::create(
+        builder, location, i64, directlyCommittedByWord[word], 8);
+    LLVM::StoreOp::create(
+        builder, location,
+        arith::AndIOp::create(
+            builder, location, dirty,
+            arith::XOrIOp::create(
+                builder, location, committed,
+                llvmConstant(builder, location, i64, UINT64_MAX))),
+        dirtyAddress, 8);
+  }
   Value directCount = LLVM::LoadOp::create(builder, location, i32,
                                            committedCount, 4);
   LLVM::CallOp::create(

@@ -552,9 +552,11 @@ state planes before publishing one final packed transition. This is generated
 commit code, not a coverage group or a second state representation. A single
 entry guard rejects direct commit after VPI writes, force/release, bytecode
 mutation, or any other specialization invalidation. The validating generic
-commit remains the continuation of the callback: it consumes unsupported wide
-or boundary roots and provides the deoptimized path without changing VPI
-database identities.
+commit remains the continuation of the callback. Directly consumed roots are
+cleared from their existing dirty leaf word before that handoff, while
+unsupported wide, boundary, or later-region roots remain indexed. The generic
+path therefore handles only work that remains and provides deoptimization
+without changing VPI database identities.
 
 Timing sites likewise carry compiled policy metadata today. Constant delays
 select calendar sites, nonconstant delays select deadline slots, and
