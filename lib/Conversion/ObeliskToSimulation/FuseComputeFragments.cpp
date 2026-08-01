@@ -6,6 +6,8 @@
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
 
@@ -46,6 +48,30 @@ struct FusionCandidate {
   uint32_t entryOrder;
   Operation *function;
 };
+
+bool isStraightLineContinuous(sim::SimFuncOp function) {
+  if (!function || function.getEntryKind() != sim::EntryKind::Continuous ||
+      function.getBody().getBlocks().size() != 2 ||
+      !isComputeBodyFusionEligible(function))
+    return false;
+  Block &entry = function.getBody().front();
+  Block &body = function.getBody().back();
+  auto branch = dyn_cast<cf::BranchOp>(entry.getTerminator());
+  if (!branch || branch.getDest() != &body ||
+      !branch.getDestOperands().empty() || body.getNumArguments() != 0)
+    return false;
+  Operation *terminator = body.getTerminator();
+  if (auto change = dyn_cast<sim::SimSuspendChangeOp>(terminator))
+    return change.getContinuation() == &body &&
+           change.getContinuationOperands().empty();
+  if (auto any = dyn_cast<sim::SimSuspendAnyOp>(terminator))
+    return any.getContinuation() == &body &&
+           any.getContinuationOperands().empty() &&
+           llvm::all_of(any.getEdges(), [](int32_t edge) {
+             return edge == static_cast<int32_t>(sim::EdgeKind::Change);
+           });
+  return false;
+}
 
 void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
   sim::SimDesignOp design = getOperation();
@@ -216,6 +242,37 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
       previousEntryOrder = candidate.entryOrder;
     }
     flush();
+  }
+  if (bodyFusion) {
+    SmallVector<int64_t> continuous;
+    llvm::SmallDenseSet<Operation *> seen;
+    for (auto [index, attribute] : llvm::enumerate(nodes)) {
+      auto fragment = dyn_cast<sim::ComputeFragmentAttr>(attribute);
+      if (!fragment || fragment.getTier() != sim::ComputeTierKind::Native ||
+          (fragment.getAction() != sim::ComputeActionKind::SuspendChange &&
+           fragment.getAction() != sim::ComputeActionKind::SuspendAny))
+        continue;
+      sim::SimFuncOp function = design.lookupSymbol<sim::SimFuncOp>(
+          fragment.getFunction().getValue());
+      if (!isStraightLineContinuous(function) ||
+          !seen.insert(function.getOperation()).second)
+        continue;
+      auto resume = resumeTargets.find(static_cast<int64_t>(index));
+      if (resume == resumeTargets.end() ||
+          !acyclicActive.contains(resume->second))
+        continue;
+      continuous.push_back(static_cast<int64_t>(index));
+    }
+    llvm::sort(continuous, [&](int64_t lhs, int64_t rhs) {
+      return std::tie(scheduleOrder[resumeTargets.lookup(lhs)], lhs) <
+             std::tie(scheduleOrder[resumeTargets.lookup(rhs)], rhs);
+    });
+    if (continuous.size() >= 2) {
+      fusions.push_back(sim::ComputeFusionAttr::get(
+          design.getContext(), id++,
+          DenseI64ArrayAttr::get(design.getContext(), continuous)));
+      ++plannedFusions;
+    }
   }
   if (!fusions.empty())
     design->setAttr(metadataName, ArrayAttr::get(design.getContext(), fusions));

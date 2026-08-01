@@ -77,6 +77,16 @@ boundary bits become scheduler activations after the local fixpoint. A coarse
 actor that merely executes several bodies and then installs a union wait is
 not a graph-region kernel and is not a legal optimization.
 
+The first executable form specializes straight-line continuous regions of at
+most 64 members. It snapshots every fixed change sensitivity in the coroutine
+frame, reconstructs the fine member mask with four-state case comparisons on
+wake, and tests one `i64` bit per member. Exact resolved-drive transitions OR
+only later graph successors into that mask, so an acyclic region needs one
+topologically ordered forward pass. The union wait is only the wake transport;
+it does not select work. Initial activation sets every member bit. Edge waits,
+backward dependencies, and regions larger than one leaf word remain unfused
+until their generated mask forms are available.
+
 Generated AOT bodies and fallback bodies may share outlined implementation
 until the late inliner decides that duplicating a hot body is profitable. Code
 unit, hierarchy, source, and VPI identities are separate immutable metadata,

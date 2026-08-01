@@ -666,6 +666,326 @@ uint64_t shareStableBranchConditions(sim::SimFuncOp function,
   return shared;
 }
 
+FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
+    sim::SimDesignOp design, sim::ComputeFusionAttr fusion,
+    sim::ComputeGraphAttr graph,
+    const DenseMap<StringAttr, SmallVector<sim::SimSpawnOp>> &spawnsByCallee) {
+  struct Candidate {
+    sim::SimFuncOp function;
+    sim::SimSpawnOp spawn;
+    Block *body;
+    Operation *suspend;
+    SmallVector<unsigned> fusedArguments;
+    int64_t fragment;
+    int64_t resumeTarget;
+  };
+  DenseMap<int64_t, int64_t> resumeTargets;
+  for (Attribute attribute : graph.getEdges()) {
+    auto edge = cast<sim::ComputeEdgeAttr>(attribute);
+    if (edge.getKind() == sim::ComputeEdgeKind::Resume)
+      resumeTargets.try_emplace(edge.getSource(), edge.getTarget());
+  }
+  SmallVector<Candidate> candidates;
+  for (int64_t member : fusion.getFragments().asArrayRef()) {
+    if (member < 0 || static_cast<uint64_t>(member) >= graph.getNodes().size())
+      return failure();
+    auto fragment = dyn_cast<sim::ComputeFragmentAttr>(graph.getNodes()[member]);
+    if (!fragment)
+      return failure();
+    sim::SimFuncOp function = design.lookupSymbol<sim::SimFuncOp>(
+        fragment.getFunction().getValue());
+    auto spawns = spawnsByCallee.find(fragment.getFunction().getAttr());
+    if (!function || function.getEntryKind() != sim::EntryKind::Continuous ||
+        function.getBody().getBlocks().size() != 2 ||
+        spawns == spawnsByCallee.end() || spawns->second.size() != 1)
+      return failure();
+    Block &entry = function.getBody().front();
+    Block &body = function.getBody().back();
+    auto branch = dyn_cast<cf::BranchOp>(entry.getTerminator());
+    Operation *suspend = body.getTerminator();
+    auto resume = resumeTargets.find(member);
+    bool changeWait = isa<sim::SimSuspendChangeOp>(suspend);
+    if (auto any = dyn_cast<sim::SimSuspendAnyOp>(suspend))
+      changeWait = llvm::all_of(any.getEdges(), [](int32_t edge) {
+        return edge == static_cast<int32_t>(sim::EdgeKind::Change);
+      });
+    if (!branch || branch.getDest() != &body ||
+        !branch.getDestOperands().empty() || body.getNumArguments() != 0 ||
+        !isa<sim::SimSuspendChangeOp, sim::SimSuspendAnyOp>(suspend) ||
+        suspend->getSuccessor(0) != &body || !changeWait ||
+        resume == resumeTargets.end())
+      return failure();
+    candidates.push_back({function, spawns->second.front(), &body, suspend,
+                          {}, member, resume->second});
+  }
+  if (candidates.size() < 2 || candidates.size() > 64)
+    return failure();
+
+  SmallVector<Value> operands;
+  SmallVector<Type> inputTypes;
+  SmallVector<DictionaryAttr> argumentAttrs;
+  DenseMap<Value, unsigned> operandIndices;
+  sim::SimSpawnOp insertionSpawn = candidates.front().spawn;
+  for (Candidate &candidate : candidates) {
+    if (candidate.spawn->getBlock() != insertionSpawn->getBlock())
+      return failure();
+    if (insertionSpawn->isBeforeInBlock(candidate.spawn))
+      insertionSpawn = candidate.spawn;
+    Block &entry = candidate.function.getBody().front();
+    for (auto [argument, operand] :
+         llvm::zip_equal(entry.getArguments(), candidate.spawn.getOperands())) {
+      auto [found, inserted] =
+          operandIndices.try_emplace(operand, operands.size());
+      unsigned index = found->second;
+      DictionaryAttr attrs =
+          candidate.function.getArgAttrDict(argument.getArgNumber());
+      if (inserted) {
+        operands.push_back(operand);
+        inputTypes.push_back(argument.getType());
+        argumentAttrs.push_back(attrs);
+      } else if (inputTypes[index] != argument.getType() ||
+                 argumentAttrs[index] != attrs) {
+        return failure();
+      }
+      candidate.fusedArguments.push_back(index);
+    }
+  }
+
+  OpBuilder builder = OpBuilder::atBlockEnd(&design.getBody().front());
+  SmallString<40> name;
+  ("__obelisk_region_kernel_" + Twine(fusion.getId())).toVector(name);
+  unsigned symbolCounter = 0;
+  name = SymbolTable::generateSymbolName<40>(
+      name,
+      [&](StringRef candidate) {
+        return SymbolTable::lookupSymbolIn(design, candidate) != nullptr;
+      },
+      symbolCounter);
+  sim::SimFuncOp first = candidates.front().function;
+  SmallVector<NamedAttribute> attributes;
+  if (IntegerAttr codeUnit = first.getCodeUnitIdAttr())
+    attributes.emplace_back(first.getCodeUnitIdAttrName(), codeUnit);
+  sim::SimFuncOp kernel = sim::SimFuncOp::create(
+      builder, first.getLoc(), name,
+      FunctionType::get(design.getContext(), inputTypes, TypeRange{}),
+      sim::EntryKind::Continuous, attributes, argumentAttrs);
+  SymbolTable::setSymbolVisibility(kernel, SymbolTable::Visibility::Private);
+  Block &entry = kernel.getBody().front();
+  Block *body = new Block;
+  BlockArgument initialize =
+      body->addArgument(builder.getI1Type(), kernel.getLoc());
+  Block *wait = new Block;
+  kernel.getBody().push_back(body);
+  kernel.getBody().push_back(wait);
+
+  SmallVector<std::unique_ptr<IRMapping>> mappings;
+  builder.setInsertionPointToStart(&entry);
+  for (Candidate &candidate : candidates) {
+    auto mapping = std::make_unique<IRMapping>();
+    for (auto [argument, index] : llvm::zip_equal(
+             candidate.function.getBody().front().getArguments(),
+             candidate.fusedArguments))
+      mapping->map(argument, entry.getArgument(index));
+    for (Operation &operation :
+         candidate.function.getBody().front().without_terminator())
+      builder.clone(operation, *mapping);
+    mappings.push_back(std::move(mapping));
+  }
+  struct Watch {
+    Value handle;
+    BlockArgument previous;
+    unsigned candidate;
+  };
+  auto loadWatched = [&](OpBuilder &builder, Location location,
+                         Value handle) -> Value {
+    Value value;
+    if (auto reference = dyn_cast<sim::RefType>(handle.getType()))
+      value = sim::SimRefLoadOp::create(builder, location,
+                                        reference.getElementType(), handle);
+    else if (auto net = dyn_cast<sim::NetType>(handle.getType()))
+      value = sim::SimNetReadOp::create(builder, location,
+                                        net.getElementType(), handle);
+    else
+      return {};
+    Type scalarType = sim::getPackedScalarType(value.getType());
+    if (!scalarType)
+      return {};
+    if (value.getType() != scalarType)
+      value = sim::SimPackedFlattenOp::create(builder, location, scalarType,
+                                              value);
+    return value;
+  };
+
+  SmallVector<Watch> watchSnapshots;
+  SmallVector<Value> entryOperands;
+  Value initial = arith::ConstantOp::create(builder, kernel.getLoc(),
+                                            builder.getI1Type(),
+                                            builder.getBoolAttr(true));
+  entryOperands.push_back(initial);
+  for (auto [candidateIndex, pair] :
+       llvm::enumerate(llvm::zip_equal(candidates, mappings))) {
+    auto &[candidate, mapping] = pair;
+    SmallVector<Value> handles;
+    if (auto change = dyn_cast<sim::SimSuspendChangeOp>(candidate.suspend))
+      handles.push_back(mapping->lookup(change.getWatched()));
+    else
+      llvm::append_range(
+          handles, llvm::map_range(
+                       cast<sim::SimSuspendAnyOp>(candidate.suspend).getWatched(),
+                       [&](Value value) { return mapping->lookup(value); }));
+    for (Value handle : handles) {
+      Value snapshot = loadWatched(builder, kernel.getLoc(), handle);
+      if (!snapshot)
+        return failure();
+      BlockArgument previous =
+          body->addArgument(snapshot.getType(), kernel.getLoc());
+      watchSnapshots.push_back(
+          {handle, previous, static_cast<unsigned>(candidateIndex)});
+      entryOperands.push_back(snapshot);
+    }
+  }
+  cf::BranchOp::create(builder, kernel.getLoc(), body, entryOperands);
+
+  builder.setInsertionPointToStart(body);
+  Type maskType = builder.getI64Type();
+  Value dirty = arith::ConstantOp::create(
+      builder, kernel.getLoc(), maskType, builder.getI64IntegerAttr(0));
+  for (const Watch &watch : watchSnapshots) {
+    Value current = loadWatched(builder, kernel.getLoc(), watch.handle);
+    Value equal = sim::SimLogicCompareOp::create(
+        builder, kernel.getLoc(), builder.getI1Type(),
+        sim::CompareKind::CaseEq, current, watch.previous);
+    Value changed = arith::XOrIOp::create(
+        builder, kernel.getLoc(), equal,
+        arith::ConstantOp::create(builder, kernel.getLoc(),
+                                  builder.getI1Type(),
+                                  builder.getBoolAttr(true)));
+    Value bit = arith::ConstantOp::create(
+        builder, kernel.getLoc(), maskType,
+        builder.getI64IntegerAttr(uint64_t{1} << watch.candidate));
+    Value selected = arith::SelectOp::create(builder, kernel.getLoc(), changed,
+                                             bit, dirty);
+    dirty = arith::OrIOp::create(builder, kernel.getLoc(), dirty, selected);
+  }
+  Value allDirty = arith::ConstantOp::create(
+      builder, kernel.getLoc(), maskType,
+      builder.getI64IntegerAttr(candidates.size() == 64
+                                    ? UINT64_MAX
+                                    : (uint64_t{1} << candidates.size()) - 1));
+  dirty = arith::SelectOp::create(builder, kernel.getLoc(), initialize,
+                                  allDirty, dirty);
+
+  SmallVector<uint64_t> downstreamMasks(candidates.size(), 0);
+  for (Attribute attribute : graph.getEdges()) {
+    auto edge = cast<sim::ComputeEdgeAttr>(attribute);
+    if (edge.getKind() != sim::ComputeEdgeKind::Sensitivity)
+      continue;
+    for (auto [sourceIndex, source] : llvm::enumerate(candidates)) {
+      if (edge.getSource() != source.resumeTarget)
+        continue;
+      for (auto [targetIndex, target] : llvm::enumerate(candidates))
+        if (edge.getTarget() == target.fragment && targetIndex > sourceIndex)
+          downstreamMasks[sourceIndex] |= uint64_t{1} << targetIndex;
+    }
+  }
+
+  Value currentMask = dirty;
+  Block *test = body;
+  for (auto [candidateIndex, pair] :
+       llvm::enumerate(llvm::zip_equal(candidates, mappings))) {
+    auto &[candidate, mapping] = pair;
+    builder.setInsertionPointToEnd(test);
+    Value bit = arith::ConstantOp::create(
+        builder, kernel.getLoc(), maskType,
+        builder.getI64IntegerAttr(uint64_t{1} << candidateIndex));
+    Value selectedBits = arith::AndIOp::create(builder, kernel.getLoc(),
+                                               currentMask, bit);
+    Value selected = arith::CmpIOp::create(
+        builder, kernel.getLoc(), arith::CmpIPredicate::ne, selectedBits,
+        arith::ConstantOp::create(builder, kernel.getLoc(), maskType,
+                                  builder.getI64IntegerAttr(0)));
+    Block *execute = new Block;
+    Block *next = new Block;
+    BlockArgument nextMask =
+        next->addArgument(maskType, kernel.getLoc());
+    kernel.getBody().push_back(execute);
+    kernel.getBody().push_back(next);
+    cf::CondBranchOp::create(builder, kernel.getLoc(), selected, execute,
+                             ValueRange{}, next, ValueRange{currentMask});
+
+    builder.setInsertionPointToStart(execute);
+    Value changed = arith::ConstantOp::create(
+        builder, kernel.getLoc(), builder.getI1Type(),
+        builder.getBoolAttr(false));
+    for (Operation &operation : candidate.body->without_terminator()) {
+      if (auto drive = dyn_cast<sim::SimDriverDriveOp>(operation)) {
+        Value transition = sim::SimDriverDriveChangedOp::create(
+            builder, drive.getLoc(), mapping->lookup(drive.getDriver()),
+            mapping->lookup(drive.getValue()));
+        changed = arith::OrIOp::create(builder, drive.getLoc(), changed,
+                                       transition);
+      } else {
+        builder.clone(operation, *mapping);
+      }
+    }
+    Value nextValue = currentMask;
+    if (downstreamMasks[candidateIndex] != 0) {
+      Value downstream = arith::ConstantOp::create(
+          builder, kernel.getLoc(), maskType,
+          builder.getI64IntegerAttr(downstreamMasks[candidateIndex]));
+      Value propagated = arith::OrIOp::create(builder, kernel.getLoc(),
+                                              currentMask, downstream);
+      nextValue = arith::SelectOp::create(builder, kernel.getLoc(), changed,
+                                          propagated, currentMask);
+    }
+    cf::BranchOp::create(builder, kernel.getLoc(), next,
+                         ValueRange{nextValue});
+    test = next;
+    currentMask = nextMask;
+  }
+  builder.setInsertionPointToEnd(test);
+  cf::BranchOp::create(builder, kernel.getLoc(), wait);
+
+  SmallVector<Value> watched;
+  SmallVector<int32_t> edges;
+  for (auto [candidate, mapping] : llvm::zip_equal(candidates, mappings)) {
+    if (auto change = dyn_cast<sim::SimSuspendChangeOp>(candidate.suspend)) {
+      watched.push_back(mapping->lookup(change.getWatched()));
+      edges.push_back(static_cast<int32_t>(sim::EdgeKind::Change));
+    } else {
+      auto any = cast<sim::SimSuspendAnyOp>(candidate.suspend);
+      for (auto [value, edge] : llvm::zip_equal(any.getWatched(), any.getEdges())) {
+        watched.push_back(mapping->lookup(value));
+        edges.push_back(edge);
+      }
+    }
+  }
+  builder.setInsertionPointToStart(wait);
+  Value resumed = arith::ConstantOp::create(
+      builder, kernel.getLoc(), builder.getI1Type(), builder.getBoolAttr(false));
+  SmallVector<Value> waitOperands(watched);
+  waitOperands.push_back(resumed);
+  for (const Watch &watch : watchSnapshots) {
+    Value snapshot = loadWatched(builder, kernel.getLoc(), watch.handle);
+    if (!snapshot)
+      return failure();
+    waitOperands.push_back(snapshot);
+  }
+  sim::SimSuspendAnyOp::create(
+      builder, kernel.getLoc(), waitOperands,
+      builder.getDenseI32ArrayAttr(edges), sim::ContinuationSiteAttr{},
+      sim::EventRegionAttr{}, body);
+
+  builder.setInsertionPoint(insertionSpawn);
+  sim::SimSpawnOp::create(builder, kernel.getLoc(), kernel.getSymNameAttr(),
+                          operands, ArrayAttr{}, ArrayAttr{});
+  for (Candidate &candidate : candidates)
+    candidate.spawn.erase();
+  for (Candidate &candidate : candidates)
+    candidate.function.erase();
+  return kernel;
+}
+
 FailureOr<sim::SimFuncOp> materializeFusion(
     sim::SimDesignOp design, sim::ComputeFusionAttr fusion,
     sim::ComputeGraphAttr graph,
@@ -1065,6 +1385,9 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
     FailureOr<sim::SimFuncOp> fused = materializeFusion(
         design, fusion, graph, scheduleOrder, spawnsByCallee, removedPolls,
         convertedNBAs, sharedConditions, promotedStores);
+    if (failed(fused))
+      fused = materializeStraightLineKernel(design, fusion, graph,
+                                            spawnsByCallee);
     changed |= succeeded(fused);
     if (succeeded(fused))
       ++materializedFusions;
