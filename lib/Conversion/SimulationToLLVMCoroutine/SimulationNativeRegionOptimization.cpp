@@ -306,9 +306,11 @@ bool forwardRegionNextState(sim::SimFuncOp function, uint64_t &rootCount,
       branch.erase();
       continue;
     }
-    auto branch = dyn_cast<cf::CondBranchOp>(terminator);
-    if (!branch)
-      return false;
+    // Every terminator was proven to be one of the two branch forms before
+    // this rewrite began. Bailing out here would leave the erased enqueues
+    // without their replacement epilogue, so this is an invariant, not a
+    // rejection point.
+    auto branch = cast<cf::CondBranchOp>(terminator);
     SmallVector<Value> trueOperands(branch.getTrueDestOperands());
     SmallVector<Value> falseOperands(branch.getFalseDestOperands());
     auto appendState = [&](Block *destination, SmallVectorImpl<Value> &values) {
@@ -360,17 +362,20 @@ bool forwardRegionNextState(sim::SimFuncOp function, uint64_t &rootCount,
     if (auto branch = dyn_cast<cf::BranchOp>(terminator)) {
       cf::BranchOp::create(builder, branch.getLoc(), test);
     } else {
+      // The epilogue chain takes no arguments. Wait-block operands are held
+      // in `waitOperands` and re-supplied on the branch that finally reaches
+      // the wait block; only the other edge keeps its own operands here.
       auto conditional = cast<cf::CondBranchOp>(terminator);
-      Block *trueDest = conditional.getTrueDest() == wait
-                            ? test
-                            : conditional.getTrueDest();
-      Block *falseDest = conditional.getFalseDest() == wait
-                             ? test
-                             : conditional.getFalseDest();
-      cf::CondBranchOp::create(
-          builder, conditional.getLoc(), conditional.getCondition(), trueDest,
-          conditional.getTrueDestOperands(), falseDest,
-          conditional.getFalseDestOperands());
+      bool trueExits = conditional.getTrueDest() == wait;
+      Block *trueDest = trueExits ? test : conditional.getTrueDest();
+      Block *falseDest = trueExits ? conditional.getFalseDest() : test;
+      ValueRange trueOperands = trueExits ? ValueRange{}
+                                          : conditional.getTrueDestOperands();
+      ValueRange falseOperands = trueExits ? conditional.getFalseDestOperands()
+                                           : ValueRange{};
+      cf::CondBranchOp::create(builder, conditional.getLoc(),
+                               conditional.getCondition(), trueDest,
+                               trueOperands, falseDest, falseOperands);
     }
     terminator->erase();
     for (auto [rootIndex, root] : llvm::enumerate(roots)) {

@@ -785,6 +785,13 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
       sim::EntryKind::Continuous, attributes, argumentAttrs);
   SymbolTable::setSymbolVisibility(kernel, SymbolTable::Visibility::Private);
   kernel->setAttr(sim::metadata::nativeRegionBody, builder.getUnitAttr());
+  // The kernel is built incrementally, so any later rejection must remove the
+  // partially populated symbol again. Leaving it behind would publish a
+  // terminator-less function to a caller that only checks for success.
+  auto bail = [&]() -> FailureOr<sim::SimFuncOp> {
+    kernel.erase();
+    return failure();
+  };
   Block &entry = kernel.getBody().front();
   Block *body = new Block;
   BlockArgument initialize =
@@ -851,7 +858,7 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     for (Value handle : handles) {
       Value snapshot = loadWatched(builder, kernel.getLoc(), handle);
       if (!snapshot)
-        return failure();
+        return bail();
       BlockArgument previous =
           body->addArgument(snapshot.getType(), kernel.getLoc());
       watchSnapshots.push_back(
@@ -867,6 +874,8 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
       builder, kernel.getLoc(), maskType, builder.getI64IntegerAttr(0));
   for (const Watch &watch : watchSnapshots) {
     Value current = loadWatched(builder, kernel.getLoc(), watch.handle);
+    if (!current)
+      return bail();
     Value equal = sim::SimLogicCompareOp::create(
         builder, kernel.getLoc(), builder.getI1Type(),
         sim::CompareKind::CaseEq, current, watch.previous);
@@ -890,6 +899,12 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
   dirty = arith::SelectOp::create(builder, kernel.getLoc(), initialize,
                                   allDirty, dirty);
 
+  // One pass over the members must settle every internal sensitivity edge:
+  // the snapshots taken at the wait boundary already observe the publications
+  // this kernel performed, so a consumer that is not reactivated through the
+  // mask is never woken for them again. That holds only while every internal
+  // edge runs forward, which the topological SCC schedule guarantees. Reject
+  // the fusion rather than silently dropping a backward edge.
   SmallVector<uint64_t> downstreamMasks(candidates.size(), 0);
   for (Attribute attribute : graph.getEdges()) {
     auto edge = cast<sim::ComputeEdgeAttr>(attribute);
@@ -898,9 +913,13 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     for (auto [sourceIndex, source] : llvm::enumerate(candidates)) {
       if (edge.getSource() != source.resumeTarget)
         continue;
-      for (auto [targetIndex, target] : llvm::enumerate(candidates))
-        if (edge.getTarget() == target.fragment && targetIndex > sourceIndex)
-          downstreamMasks[sourceIndex] |= uint64_t{1} << targetIndex;
+      for (auto [targetIndex, target] : llvm::enumerate(candidates)) {
+        if (edge.getTarget() != target.fragment)
+          continue;
+        if (targetIndex <= sourceIndex)
+          return bail();
+        downstreamMasks[sourceIndex] |= uint64_t{1} << targetIndex;
+      }
     }
   }
 
@@ -986,7 +1005,7 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
   for (const Watch &watch : watchSnapshots) {
     Value snapshot = loadWatched(builder, kernel.getLoc(), watch.handle);
     if (!snapshot)
-      return failure();
+      return bail();
     waitOperands.push_back(snapshot);
   }
   sim::SimSuspendAnyOp::create(
