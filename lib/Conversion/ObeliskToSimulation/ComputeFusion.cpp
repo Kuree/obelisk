@@ -10,6 +10,8 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/ScopeExit.h"
+#include "llvm/Support/raw_ostream.h"
 
 using namespace mlir;
 

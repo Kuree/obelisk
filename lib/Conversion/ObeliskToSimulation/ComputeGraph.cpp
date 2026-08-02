@@ -151,8 +151,7 @@ void normalizeEffects(SmallVectorImpl<ComputeEffect> &effects) {
   // but represent ordinary dependency/publication effects as maximal ranges.
   // Graph aliasing is range based, so this preserves all conflicts while
   // avoiding 32 or 64 copies of the same edge and downstream fanout work.
-  auto compatible = [](const ComputeEffect &left,
-                       const ComputeEffect &right) {
+  auto compatible = [](const ComputeEffect &left, const ComputeEffect &right) {
     const DescriptorProvenance &lhs = left.target;
     const DescriptorProvenance &rhs = right.target;
     return left.kind == right.kind &&
@@ -750,7 +749,7 @@ bool fragmentIsTwoState(const StateDomainAnalysis &stateDomains, Block &block) {
   };
   for (BlockArgument argument : block.getArguments())
     if (containsFourStateLeaf(argument.getType()) &&
-        !stateDomains.isTwoState(argument))
+        !stateDomains.isTwoStateWithInductiveRoots(argument))
       return false;
   // Only the suspension terminator gets to pass an unproven value along: it
   // merely forwards the frame, and the resuming fragment proves it there. Any
@@ -770,11 +769,11 @@ bool fragmentIsTwoState(const StateDomainAnalysis &stateDomains, Block &block) {
     for (Value operand : operation.getOperands())
       if (!forwarded.contains(operand) &&
           containsFourStateLeaf(operand.getType()) &&
-          !stateDomains.isTwoState(operand))
+          !stateDomains.isTwoStateWithInductiveRoots(operand))
         return false;
     for (Value result : operation.getResults())
       if (containsFourStateLeaf(result.getType()) &&
-          !stateDomains.isTwoState(result))
+          !stateDomains.isTwoStateWithInductiveRoots(result))
         return false;
   }
   return true;
@@ -1456,6 +1455,33 @@ LogicalResult ComputeGraphBuilder::buildSites(ComputeGraphResult &result) {
 }
 
 FailureOr<ArrayAttr> ComputeGraphBuilder::buildRegions() {
+  // Sensitivity edges terminate at the suspension that owns the watch, while
+  // the work activated by that edge starts at the suspension's resume
+  // continuation.  Resume edges themselves are intentionally not scheduling
+  // edges: including them would turn every repeating process into a
+  // procedural cycle.  Project only settling-process sensitivity through the
+  // suspension so cross-process combinational feedback is visible to SCC
+  // planning without changing the executable graph or clocked-process
+  // semantics.
+  SmallVector<sim::ComputeEdgeAttr> schedulingEdges(edges.begin(), edges.end());
+  DenseMap<uint32_t, SmallVector<uint32_t>> resumeContinuations;
+  for (sim::ComputeEdgeAttr edge : edges)
+    if (edge.getKind() == sim::ComputeEdgeKind::Resume)
+      resumeContinuations[edge.getSource()].push_back(edge.getTarget());
+  for (sim::ComputeEdgeAttr edge : edges) {
+    if (edge.getKind() != sim::ComputeEdgeKind::Sensitivity ||
+        !isSettlingEntryKind(
+            fragments[edge.getSource()].function.getEntryKind()) ||
+        !isSettlingEntryKind(
+            fragments[edge.getTarget()].function.getEntryKind()))
+      continue;
+    for (uint32_t continuation : resumeContinuations[edge.getTarget()])
+      schedulingEdges.push_back(sim::ComputeEdgeAttr::get(
+          design.getContext(), edge.getSource(), continuation,
+          sim::ComputeEdgeKind::Sensitivity, edge.getResource()));
+  }
+  normalizeEdges(schedulingEdges);
+
   auto plan =
       [&](sim::ComputeRegionKind kind,
           ArrayRef<SmallVector<uint32_t>> groups) -> FailureOr<Attribute> {
@@ -1464,7 +1490,7 @@ FailureOr<ArrayAttr> ComputeGraphBuilder::buildRegions() {
       SmallVector<int64_t> ids(group.begin(), group.end());
       bool cyclic = group.size() > 1;
       if (!cyclic)
-        cyclic = llvm::any_of(edges, [&](sim::ComputeEdgeAttr edge) {
+        cyclic = llvm::any_of(schedulingEdges, [&](sim::ComputeEdgeAttr edge) {
           return isSchedulingEdge(edge.getKind()) &&
                  edge.getSource() == group.front() &&
                  edge.getTarget() == group.front();
@@ -1472,13 +1498,13 @@ FailureOr<ArrayAttr> ComputeGraphBuilder::buildRegions() {
       sim::ComputeScheduleKind schedule = sim::ComputeScheduleKind::Acyclic;
       SmallVector<Attribute> feedback;
       if (cyclic) {
-        if (hasProceduralControlCycle(group, edges)) {
+        if (hasProceduralControlCycle(group, schedulingEdges)) {
           schedule = sim::ComputeScheduleKind::ControlLoop;
         } else {
           schedule = sim::ComputeScheduleKind::Convergence;
           DenseSet<uint32_t> members(group.begin(), group.end());
           llvm::SmallDenseSet<Attribute> unique;
-          for (sim::ComputeEdgeAttr edge : edges)
+          for (sim::ComputeEdgeAttr edge : schedulingEdges)
             if (members.contains(edge.getSource()) &&
                 members.contains(edge.getTarget()) &&
                 edge.getKind() == sim::ComputeEdgeKind::Sensitivity &&
@@ -1530,13 +1556,13 @@ FailureOr<ArrayAttr> ComputeGraphBuilder::buildRegions() {
     return isSettlingEntryKind(fragments[id].function.getEntryKind()) ? 0u : 1u;
   };
   SmallVector<SmallVector<uint32_t>> activeGroups =
-      computeSCCSchedule(activeIds, edges, activePriority);
+      computeSCCSchedule(activeIds, schedulingEdges, activePriority);
   SmallVector<SmallVector<uint32_t>> observedGroups =
-      computeSCCSchedule(observedIds, edges);
+      computeSCCSchedule(observedIds, schedulingEdges);
   SmallVector<SmallVector<uint32_t>> reactiveGroups =
-      computeSCCSchedule(reactiveIds, edges);
+      computeSCCSchedule(reactiveIds, schedulingEdges);
   SmallVector<SmallVector<uint32_t>> ordinaryPostponedGroups =
-      computeSCCSchedule(postponedIds, edges);
+      computeSCCSchedule(postponedIds, schedulingEdges);
   llvm::append_range(ordinaryPostponedGroups, postponedGroups);
   std::pair<sim::ComputeRegionKind, ArrayRef<SmallVector<uint32_t>>> plans[] = {
       {sim::ComputeRegionKind::Active, activeGroups},
@@ -1619,8 +1645,7 @@ FailureOr<ComputeGraphResult> ComputeGraphBuilder::derive() {
       analysis::SimulationVPIAnalysis::forMode(options.vpi).getObservability();
   result.graph = sim::ComputeGraphAttr::get(
       design.getContext(), sim::metadata::schemaVersion, options.vpi,
-      options.workers,
-      builder.getArrayAttr(nodes),
+      options.workers, builder.getArrayAttr(nodes),
       builder.getArrayAttr(SmallVector<Attribute>(edges.begin(), edges.end())),
       *regions);
   if (failed(validateComputeGraphStructure(design, result.graph)))
@@ -1818,7 +1843,7 @@ LogicalResult validateComputeGraphStructure(sim::SimDesignOp design,
 FailureOr<ComputeGraphResult> deriveComputeGraph(sim::SimDesignOp design,
                                                  ComputeGraphOptions options) {
   FailureOr<StateDomainAnalysis> stateDomains =
-      StateDomainAnalysis::compute(design, /*proveInductiveRoots=*/false);
+      StateDomainAnalysis::compute(design, /*proveInductiveRoots=*/true);
   if (failed(stateDomains))
     return failure();
   return ComputeGraphBuilder(design, options, *stateDomains).derive();

@@ -84,6 +84,7 @@ struct DirectStaticStateRange {
   bool guarded;
 };
 
+
 using ReferenceArgumentMap =
     llvm::DenseMap<mlir::Operation *, mlir::SmallVector<unsigned>>;
 
@@ -207,7 +208,8 @@ void populateSchedulerToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
 void populateStateReadWriteToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter,
-    uint64_t stateBitCount, const NativeStateLayout *directLayout);
+    uint64_t stateBitCount, const NativeStateLayout *directLayout,
+    bool experimentalTwoState);
 void annotateStaticDriverNets(mlir::ModuleOp module,
                               const NativeStateLayout &layout);
 void populateDriverToLLVMConversionPatterns(mlir::RewritePatternSet &patterns,
@@ -274,7 +276,7 @@ mlir::LogicalResult prepareManagedLowering(mlir::ModuleOp module,
                                            const llvm::DataLayout &dataLayout);
 mlir::LogicalResult makeSchedulerMain(mlir::ModuleOp module,
                                       const NativeStateLayout &stateLayout,
-                                      bool useAOT);
+                                      bool useAOT, bool directEval);
 void declareNativeRuntimeABI(mlir::ModuleOp module);
 mlir::FailureOr<NativeStateLayout>
 buildNativeStateLayout(mlir::ModuleOp module);

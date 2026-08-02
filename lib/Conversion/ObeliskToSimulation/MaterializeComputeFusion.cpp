@@ -73,6 +73,7 @@ struct BodyFusionCandidate {
   SmallVector<Operation *> entryPreamble;
   SmallVector<Block *> bodyBlocks;
   SmallVector<unsigned> fusedArguments;
+  SmallVector<Value> threadedEntryValues;
 };
 
 bool isSupportedEntryKind(sim::EntryKind kind) {
@@ -81,6 +82,11 @@ bool isSupportedEntryKind(sim::EntryKind kind) {
 
 bool isTypedDirectWait(Operation *operation) {
   return isa<sim::SimSuspendChangeOp, sim::SimSuspendEdgeOp>(operation);
+}
+
+bool isEvalDirectWait(Operation *operation) {
+  return isTypedDirectWait(operation) ||
+         isa<sim::SimSuspendAnyOp, sim::SimSuspendObserveOp>(operation);
 }
 
 bool isTypedSuspend(Operation *operation) {
@@ -92,10 +98,267 @@ bool isTypedSuspend(Operation *operation) {
              sim::SimSuspendJoinOp, sim::SimSuspendChildrenOp>(operation);
 }
 
-bool hasOnlyPureEntryPreamble(sim::SimFuncOp function, Block *wait) {
+/// Build an AOT-only, non-suspending activation body while the original CFG
+/// and its typed wait are still intact.  The original actor remains the
+/// coroutine/fallback identity.  This is deliberately broad in eval mode: it
+/// is the experiment's Verilator-shaped executable body, not a production
+/// profitability decision.
+LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
+                                            sim::SimFuncOp function) {
+  if (function.isExternal() || function->hasAttr("obelisk.eval.body") ||
+      function->hasAttr("obelisk.eval.borrowed_captures"))
+    return success();
+  bool portMethod = function.getEntryKind() == sim::EntryKind::PortInput ||
+                    function.getEntryKind() == sim::EntryKind::PortOutput;
+  if (!isSupportedEntryKind(function.getEntryKind()) &&
+      function.getEntryKind() != sim::EntryKind::Continuous && !portMethod)
+    return success();
+  bool hasBoundary = false;
+  function.walk([&](Operation *operation) {
+    hasBoundary |=
+        isa<sim::SimFinishOp, sim::SimStopOp, sim::SimFatalOp,
+            sim::SimTerminationRequestedOp, sim::SimDisplayOp>(operation);
+  });
+  if (hasBoundary)
+    return success();
+
+  Block *wait = nullptr;
+  unsigned suspensionCount = 0;
+  function.walk([&](Operation *operation) {
+    if (!isTypedSuspend(operation))
+      return;
+    ++suspensionCount;
+    if (isEvalDirectWait(operation))
+      wait = operation->getBlock();
+  });
+  if (suspensionCount != 1 || !wait || wait->getTerminator() == nullptr ||
+      !isEvalDirectWait(wait->getTerminator()) || wait->getNumSuccessors() != 1)
+    return success();
+
+  Block *activation = wait->getSuccessor(0);
+  Block &sourceEntry = function.getBody().front();
+  SmallVector<Block *> preambleBlocks;
+  llvm::SmallPtrSet<Block *, 8> preambleSeen;
+  Block *preamble = &sourceEntry;
+  while (preamble != wait && preamble != activation) {
+    if (!preambleSeen.insert(preamble).second)
+      return success();
+    auto branch = dyn_cast<cf::BranchOp>(preamble->getTerminator());
+    if (!branch || branch.getDest()->getNumArguments() !=
+                       branch.getDestOperands().size()) {
+      return success();
+    }
+    preambleBlocks.push_back(preamble);
+    preamble = branch.getDest();
+  }
+  bool startsAtActivation = preamble == activation;
+
+  SmallString<48> evalBase;
+  (function.getSymName() + ".__obelisk_eval_body").toVector(evalBase);
+  unsigned evalCounter = 0;
+  SmallString<48> evalName = SymbolTable::generateSymbolName<48>(
+      evalBase,
+      [&](StringRef candidate) {
+        return SymbolTable::lookupSymbolIn(design, candidate) != nullptr;
+      },
+      evalCounter);
+  OpBuilder builder = OpBuilder::atBlockEnd(&design.getBody().front());
+  llvm::SmallDenseSet<uint64_t, 32> usedCodeUnits;
+  for (sim::SimCodeUnitDeclOp declaration :
+       design.getBody().front().getOps<sim::SimCodeUnitDeclOp>())
+    usedCodeUnits.insert(declaration.getId());
+  uint64_t evalCodeUnit = 1;
+  while (usedCodeUnits.contains(evalCodeUnit))
+    ++evalCodeUnit;
+  sim::SimCodeUnitDeclOp::create(
+      builder, function.getLoc(), evalCodeUnit, uint64_t{0},
+      sim::EntryKind::Function, builder.getStringAttr(evalName),
+      builder.getStringAttr("experimental native eval body"),
+      builder.getUnitAttr());
+  SmallVector<NamedAttribute> evalAttributes{builder.getNamedAttr(
+      "code_unit_id", builder.getI64IntegerAttr(evalCodeUnit))};
+  SmallVector<DictionaryAttr> argumentAttrs;
+  for (BlockArgument argument : sourceEntry.getArguments())
+    argumentAttrs.push_back(function.getArgAttrDict(argument.getArgNumber()));
+  sim::SimFuncOp evalBody = sim::SimFuncOp::create(
+      builder, function.getLoc(), evalName,
+      FunctionType::get(design.getContext(),
+                        function.getFunctionType().getInputs(), TypeRange{}),
+      sim::EntryKind::Function, evalAttributes, argumentAttrs);
+  evalBody->setAttr("obelisk.eval.borrowed_captures", builder.getUnitAttr());
+  evalBody->setAttr("obelisk.eval.raw_captures", builder.getUnitAttr());
+  SymbolTable::setSymbolVisibility(evalBody, SymbolTable::Visibility::Private);
+
+  IRMapping mapping;
+  Block &evalEntry = evalBody.getBody().front();
+  for (auto [source, destination] :
+       llvm::zip_equal(sourceEntry.getArguments(), evalEntry.getArguments()))
+    mapping.map(source, destination);
+  builder.setInsertionPointToStart(&evalEntry);
+  SmallVector<Value> activationEntryOperands;
+  for (Block *source : preambleBlocks) {
+    for (Operation &operation : source->without_terminator())
+      builder.clone(operation, mapping);
+    auto branch = cast<cf::BranchOp>(source->getTerminator());
+    if (startsAtActivation && branch.getDest() == activation) {
+      for (Value value : branch.getDestOperands())
+        activationEntryOperands.push_back(mapping.lookup(value));
+    } else {
+      for (auto [argument, value] : llvm::zip_equal(
+               branch.getDest()->getArguments(), branch.getDestOperands()))
+        mapping.map(argument, mapping.lookup(value));
+    }
+  }
+  bool cloneTerminalWait =
+      function.getEntryKind() == sim::EntryKind::Continuous || portMethod;
+  SmallVector<Block *> activationBlocks;
+  SmallVector<Block *> pending{activation};
+  llvm::SmallPtrSet<Block *, 32> seen;
+  while (!pending.empty()) {
+    Block *source = pending.pop_back_val();
+    if ((!cloneTerminalWait && source == wait) || source == &sourceEntry ||
+        !seen.insert(source).second)
+      continue;
+    activationBlocks.push_back(source);
+    // The suspension block is part of the activation: continuous assignments
+    // commonly compute and drive their result immediately before suspend.any.
+    // Clone those operations below, but do not follow the resume edge back
+    // into the next activation.
+    if (source == wait)
+      continue;
+    for (Block *successor : source->getSuccessors())
+      pending.push_back(successor);
+  }
+  if (activationBlocks.empty()) {
+    evalBody.erase();
+    return success();
+  }
+  for (Block *source : activationBlocks) {
+    Block *destination = new Block;
+    evalBody.getBody().push_back(destination);
+    mapping.map(source, destination);
+    for (BlockArgument argument : source->getArguments())
+      mapping.map(argument, destination->addArgument(argument.getType(),
+                                                     argument.getLoc()));
+  }
+
+  SmallVector<Value> entryOperands;
+  if (startsAtActivation) {
+    entryOperands = std::move(activationEntryOperands);
+  } else {
+    auto forwarded = cast<BranchOpInterface>(wait->getTerminator())
+                         .getSuccessorOperands(0)
+                         .getForwardedOperands();
+    for (Value value : forwarded)
+      entryOperands.push_back(mapping.lookup(value));
+  }
+  if (!startsAtActivation && !cloneTerminalWait)
+    for (Operation &operation : wait->without_terminator())
+      builder.clone(operation, mapping);
+  builder.setInsertionPointToEnd(&evalEntry);
+  cf::BranchOp::create(builder, function.getLoc(), mapping.lookup(activation),
+                       entryOperands);
+
+  bool supported = true;
+  for (Block *source : activationBlocks) {
+    builder.setInsertionPointToEnd(mapping.lookup(source));
+    for (Operation &operation : *source) {
+      if (isTypedSuspend(&operation) && &operation != source->getTerminator()) {
+        supported = false;
+        break;
+      }
+      if (&operation == source->getTerminator()) {
+        if (isTypedSuspend(&operation)) {
+          sim::SimReturnOp::create(builder, operation.getLoc(), ValueRange{});
+          continue;
+        }
+        if (auto branch = dyn_cast<cf::BranchOp>(operation);
+            branch && branch.getDest() == wait) {
+          if (!cloneTerminalWait) {
+            sim::SimReturnOp::create(builder, branch.getLoc(), ValueRange{});
+            continue;
+          }
+          SmallVector<Value> operands;
+          for (Value value : branch.getDestOperands())
+            operands.push_back(mapping.lookup(value));
+          cf::BranchOp::create(builder, branch.getLoc(), mapping.lookup(wait),
+                               operands);
+          continue;
+        }
+        if (auto branch = dyn_cast<cf::CondBranchOp>(operation)) {
+          bool trueWait = branch.getTrueDest() == wait;
+          bool falseWait = branch.getFalseDest() == wait;
+          if (trueWait || falseWait) {
+            if (!cloneTerminalWait) {
+              if (trueWait && falseWait) {
+                sim::SimReturnOp::create(builder, branch.getLoc(),
+                                         ValueRange{});
+                continue;
+              }
+              Block *returnBlock = new Block;
+              evalBody.getBody().push_back(returnBlock);
+              OpBuilder returnBuilder = OpBuilder::atBlockEnd(returnBlock);
+              sim::SimReturnOp::create(returnBuilder, branch.getLoc(),
+                                       ValueRange{});
+              SmallVector<Value> trueOperands;
+              SmallVector<Value> falseOperands;
+              for (Value value : branch.getTrueDestOperands())
+                trueOperands.push_back(mapping.lookup(value));
+              for (Value value : branch.getFalseDestOperands())
+                falseOperands.push_back(mapping.lookup(value));
+              cf::CondBranchOp::create(
+                  builder, branch.getLoc(),
+                  mapping.lookup(branch.getCondition()),
+                  trueWait ? returnBlock : mapping.lookup(branch.getTrueDest()),
+                  trueWait ? ValueRange{} : ValueRange{trueOperands},
+                  falseWait ? returnBlock
+                            : mapping.lookup(branch.getFalseDest()),
+                  falseWait ? ValueRange{} : ValueRange{falseOperands});
+              continue;
+            }
+            SmallVector<Value> trueOperands;
+            SmallVector<Value> falseOperands;
+            for (Value value : branch.getTrueDestOperands())
+              trueOperands.push_back(mapping.lookup(value));
+            for (Value value : branch.getFalseDestOperands())
+              falseOperands.push_back(mapping.lookup(value));
+            cf::CondBranchOp::create(
+                builder, branch.getLoc(), mapping.lookup(branch.getCondition()),
+                trueWait ? mapping.lookup(wait)
+                         : mapping.lookup(branch.getTrueDest()),
+                ValueRange{trueOperands},
+                falseWait ? mapping.lookup(wait)
+                          : mapping.lookup(branch.getFalseDest()),
+                ValueRange{falseOperands});
+            continue;
+          }
+        }
+        if (llvm::is_contained(operation.getSuccessors(), wait)) {
+          supported = false;
+          break;
+        }
+      }
+      builder.clone(operation, mapping);
+    }
+    if (!supported)
+      break;
+  }
+  if (!supported) {
+    evalBody.erase();
+    return success();
+  }
+  function->setAttr("obelisk.eval.body",
+                    FlatSymbolRefAttr::get(evalBody.getSymNameAttr()));
+  return success();
+}
+
+bool hasOnlyPureEntryPreamble(sim::SimFuncOp function, Block *wait,
+                              bool allowThreadedValues = false) {
   Block &entry = function.getBody().front();
   auto branch = dyn_cast<cf::BranchOp>(entry.getTerminator());
-  if (!branch || branch.getDest() != wait || !branch.getDestOperands().empty())
+  if (!branch || branch.getDest() != wait ||
+      branch.getDestOperands().size() != wait->getNumArguments() ||
+      (!allowThreadedValues && !branch.getDestOperands().empty()))
     return false;
   return llvm::all_of(entry.without_terminator(), [](Operation &operation) {
     return isMemoryEffectFree(&operation);
@@ -138,6 +401,8 @@ void collectLiveEntryPreamble(BodyFusionCandidate &candidate) {
   Block &entry = candidate.function.getBody().front();
   llvm::SmallPtrSet<Operation *, 16> needed;
   SmallVector<Value> pending;
+  pending.append(candidate.threadedEntryValues.begin(),
+                 candidate.threadedEntryValues.end());
   pending.append(candidate.wait->getTerminator()->operand_begin(),
                  candidate.wait->getTerminator()->operand_end());
   for (Block *block : candidate.bodyBlocks)
@@ -689,11 +954,12 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
   for (int64_t member : fusion.getFragments().asArrayRef()) {
     if (member < 0 || static_cast<uint64_t>(member) >= graph.getNodes().size())
       return failure();
-    auto fragment = dyn_cast<sim::ComputeFragmentAttr>(graph.getNodes()[member]);
+    auto fragment =
+        dyn_cast<sim::ComputeFragmentAttr>(graph.getNodes()[member]);
     if (!fragment)
       return failure();
-    sim::SimFuncOp function = design.lookupSymbol<sim::SimFuncOp>(
-        fragment.getFunction().getValue());
+    sim::SimFuncOp function =
+        design.lookupSymbol<sim::SimFuncOp>(fragment.getFunction().getValue());
     auto spawns = spawnsByCallee.find(fragment.getFunction().getAttr());
     if (!function || function.getEntryKind() != sim::EntryKind::Continuous ||
         !isComputeBodyFusionEligible(function) ||
@@ -729,8 +995,13 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     });
     if (hasUntrackedPublication)
       return failure();
-    candidates.push_back({function, spawns->second.front(), &body, suspend,
-                          {}, member, resume->second});
+    candidates.push_back({function,
+                          spawns->second.front(),
+                          &body,
+                          suspend,
+                          {},
+                          member,
+                          resume->second});
   }
   if (candidates.size() < 2 || candidates.size() > 64)
     return failure();
@@ -804,9 +1075,9 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
   builder.setInsertionPointToStart(&entry);
   for (Candidate &candidate : candidates) {
     auto mapping = std::make_unique<IRMapping>();
-    for (auto [argument, index] : llvm::zip_equal(
-             candidate.function.getBody().front().getArguments(),
-             candidate.fusedArguments))
+    for (auto [argument, index] :
+         llvm::zip_equal(candidate.function.getBody().front().getArguments(),
+                         candidate.fusedArguments))
       mapping->map(argument, entry.getArgument(index));
     for (Operation &operation :
          candidate.function.getBody().front().without_terminator())
@@ -825,24 +1096,23 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
       value = sim::SimRefLoadOp::create(builder, location,
                                         reference.getElementType(), handle);
     else if (auto net = dyn_cast<sim::NetType>(handle.getType()))
-      value = sim::SimNetReadOp::create(builder, location,
-                                        net.getElementType(), handle);
+      value = sim::SimNetReadOp::create(builder, location, net.getElementType(),
+                                        handle);
     else
       return {};
     Type scalarType = sim::getPackedScalarType(value.getType());
     if (!scalarType)
       return {};
     if (value.getType() != scalarType)
-      value = sim::SimPackedFlattenOp::create(builder, location, scalarType,
-                                              value);
+      value =
+          sim::SimPackedFlattenOp::create(builder, location, scalarType, value);
     return value;
   };
 
   SmallVector<Watch> watchSnapshots;
   SmallVector<Value> entryOperands;
-  Value initial = arith::ConstantOp::create(builder, kernel.getLoc(),
-                                            builder.getI1Type(),
-                                            builder.getBoolAttr(true));
+  Value initial = arith::ConstantOp::create(
+      builder, kernel.getLoc(), builder.getI1Type(), builder.getBoolAttr(true));
   entryOperands.push_back(initial);
   for (auto [candidateIndex, pair] :
        llvm::enumerate(llvm::zip_equal(candidates, mappings))) {
@@ -852,9 +1122,10 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
       handles.push_back(mapping->lookup(change.getWatched()));
     else
       llvm::append_range(
-          handles, llvm::map_range(
-                       cast<sim::SimSuspendAnyOp>(candidate.suspend).getWatched(),
-                       [&](Value value) { return mapping->lookup(value); }));
+          handles,
+          llvm::map_range(
+              cast<sim::SimSuspendAnyOp>(candidate.suspend).getWatched(),
+              [&](Value value) { return mapping->lookup(value); }));
     for (Value handle : handles) {
       Value snapshot = loadWatched(builder, kernel.getLoc(), handle);
       if (!snapshot)
@@ -870,25 +1141,24 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
 
   builder.setInsertionPointToStart(body);
   Type maskType = builder.getI64Type();
-  Value dirty = arith::ConstantOp::create(
-      builder, kernel.getLoc(), maskType, builder.getI64IntegerAttr(0));
+  Value dirty = arith::ConstantOp::create(builder, kernel.getLoc(), maskType,
+                                          builder.getI64IntegerAttr(0));
   for (const Watch &watch : watchSnapshots) {
     Value current = loadWatched(builder, kernel.getLoc(), watch.handle);
     if (!current)
       return bail();
     Value equal = sim::SimLogicCompareOp::create(
-        builder, kernel.getLoc(), builder.getI1Type(),
-        sim::CompareKind::CaseEq, current, watch.previous);
+        builder, kernel.getLoc(), builder.getI1Type(), sim::CompareKind::CaseEq,
+        current, watch.previous);
     Value changed = arith::XOrIOp::create(
         builder, kernel.getLoc(), equal,
-        arith::ConstantOp::create(builder, kernel.getLoc(),
-                                  builder.getI1Type(),
+        arith::ConstantOp::create(builder, kernel.getLoc(), builder.getI1Type(),
                                   builder.getBoolAttr(true)));
     Value bit = arith::ConstantOp::create(
         builder, kernel.getLoc(), maskType,
         builder.getI64IntegerAttr(uint64_t{1} << watch.candidate));
-    Value selected = arith::SelectOp::create(builder, kernel.getLoc(), changed,
-                                             bit, dirty);
+    Value selected =
+        arith::SelectOp::create(builder, kernel.getLoc(), changed, bit, dirty);
     dirty = arith::OrIOp::create(builder, kernel.getLoc(), dirty, selected);
   }
   Value allDirty = arith::ConstantOp::create(
@@ -932,32 +1202,31 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     Value bit = arith::ConstantOp::create(
         builder, kernel.getLoc(), maskType,
         builder.getI64IntegerAttr(uint64_t{1} << candidateIndex));
-    Value selectedBits = arith::AndIOp::create(builder, kernel.getLoc(),
-                                               currentMask, bit);
+    Value selectedBits =
+        arith::AndIOp::create(builder, kernel.getLoc(), currentMask, bit);
     Value selected = arith::CmpIOp::create(
         builder, kernel.getLoc(), arith::CmpIPredicate::ne, selectedBits,
         arith::ConstantOp::create(builder, kernel.getLoc(), maskType,
                                   builder.getI64IntegerAttr(0)));
     Block *execute = new Block;
     Block *next = new Block;
-    BlockArgument nextMask =
-        next->addArgument(maskType, kernel.getLoc());
+    BlockArgument nextMask = next->addArgument(maskType, kernel.getLoc());
     kernel.getBody().push_back(execute);
     kernel.getBody().push_back(next);
     cf::CondBranchOp::create(builder, kernel.getLoc(), selected, execute,
                              ValueRange{}, next, ValueRange{currentMask});
 
     builder.setInsertionPointToStart(execute);
-    Value changed = arith::ConstantOp::create(
-        builder, kernel.getLoc(), builder.getI1Type(),
-        builder.getBoolAttr(false));
+    Value changed =
+        arith::ConstantOp::create(builder, kernel.getLoc(), builder.getI1Type(),
+                                  builder.getBoolAttr(false));
     for (Operation &operation : candidate.body->without_terminator()) {
       if (auto drive = dyn_cast<sim::SimDriverDriveOp>(operation)) {
         Value transition = sim::SimDriverDriveChangedOp::create(
             builder, drive.getLoc(), mapping->lookup(drive.getDriver()),
             mapping->lookup(drive.getValue()));
-        changed = arith::OrIOp::create(builder, drive.getLoc(), changed,
-                                       transition);
+        changed =
+            arith::OrIOp::create(builder, drive.getLoc(), changed, transition);
       } else {
         Operation *cloned = builder.clone(operation, *mapping);
         if (auto drive = dyn_cast<sim::SimDriverDriveChangedOp>(cloned))
@@ -975,8 +1244,7 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
       nextValue = arith::SelectOp::create(builder, kernel.getLoc(), changed,
                                           propagated, currentMask);
     }
-    cf::BranchOp::create(builder, kernel.getLoc(), next,
-                         ValueRange{nextValue});
+    cf::BranchOp::create(builder, kernel.getLoc(), next, ValueRange{nextValue});
     test = next;
     currentMask = nextMask;
   }
@@ -991,15 +1259,17 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
       edges.push_back(static_cast<int32_t>(sim::EdgeKind::Change));
     } else {
       auto any = cast<sim::SimSuspendAnyOp>(candidate.suspend);
-      for (auto [value, edge] : llvm::zip_equal(any.getWatched(), any.getEdges())) {
+      for (auto [value, edge] :
+           llvm::zip_equal(any.getWatched(), any.getEdges())) {
         watched.push_back(mapping->lookup(value));
         edges.push_back(edge);
       }
     }
   }
   builder.setInsertionPointToStart(wait);
-  Value resumed = arith::ConstantOp::create(
-      builder, kernel.getLoc(), builder.getI1Type(), builder.getBoolAttr(false));
+  Value resumed =
+      arith::ConstantOp::create(builder, kernel.getLoc(), builder.getI1Type(),
+                                builder.getBoolAttr(false));
   SmallVector<Value> waitOperands(watched);
   waitOperands.push_back(resumed);
   for (const Watch &watch : watchSnapshots) {
@@ -1008,10 +1278,10 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
       return bail();
     waitOperands.push_back(snapshot);
   }
-  sim::SimSuspendAnyOp::create(
-      builder, kernel.getLoc(), waitOperands,
-      builder.getDenseI32ArrayAttr(edges), sim::ContinuationSiteAttr{},
-      sim::EventRegionAttr{}, body);
+  sim::SimSuspendAnyOp::create(builder, kernel.getLoc(), waitOperands,
+                               builder.getDenseI32ArrayAttr(edges),
+                               sim::ContinuationSiteAttr{},
+                               sim::EventRegionAttr{}, body);
 
   builder.setInsertionPoint(insertionSpawn);
   sim::SimSpawnOp::create(builder, kernel.getLoc(), kernel.getSymNameAttr(),
@@ -1030,6 +1300,14 @@ FailureOr<sim::SimFuncOp> materializeFusion(
     const DenseMap<StringAttr, SmallVector<sim::SimSpawnOp>> &spawnsByCallee,
     uint64_t &eliminatedTerminationPolls, uint64_t &ifConvertedNBAs,
     uint64_t &sharedStableConditions, uint64_t &promotedPrivateStores) {
+  auto scheduler = design->getParentOfType<ModuleOp>()
+                       ->getAttrOfType<sim::NativeSchedulerModeAttr>(
+                           "obelisk.native_scheduler");
+  bool evalBodyFusion =
+      scheduler && scheduler.getValue() == sim::NativeSchedulerMode::Eval;
+  auto rejectEval = [&](StringRef) -> FailureOr<sim::SimFuncOp> {
+    return failure();
+  };
   DenseMap<uint32_t, uint32_t> resumeTargets;
   for (Attribute attribute : graph.getEdges()) {
     auto edge = cast<sim::ComputeEdgeAttr>(attribute);
@@ -1059,18 +1337,18 @@ FailureOr<sim::SimFuncOp> materializeFusion(
                              static_cast<uint32_t>(order));
   }
 
-  SmallVector<BodyFusionCandidate> candidates;
+  SmallVector<BodyFusionCandidate, 4> candidates;
   sim::ComputeEffectAttr commonSensitivity;
   for (int64_t member : fusion.getFragments().asArrayRef()) {
     if (member < 0 || static_cast<uint64_t>(member) >= graph.getNodes().size())
-      return failure();
+      return rejectEval("invalid member");
     auto fragment = dyn_cast<sim::ComputeFragmentAttr>(
         graph.getNodes()[static_cast<size_t>(member)]);
     if (!fragment)
-      return failure();
+      return rejectEval("member is not a fragment");
     sim::ComputeEffectAttr sensitivity = getDirectSensitivity(fragment);
     if (!sensitivity || (commonSensitivity && sensitivity != commonSensitivity))
-      return failure();
+      return rejectEval("sensitivity mismatch");
     commonSensitivity = sensitivity;
     sim::SimFuncOp function =
         design.lookupSymbol<sim::SimFuncOp>(fragment.getFunction().getValue());
@@ -1088,7 +1366,7 @@ FailureOr<sim::SimFuncOp> materializeFusion(
         spawningFunction.getEntryKind() != sim::EntryKind::RootInitializer ||
         !spawns->second.front()->getResult(0).use_empty() ||
         resume == resumeTargets.end())
-      return failure();
+      return rejectEval("actor/spawn/resume eligibility");
 
     Block *wait = nullptr;
     uint32_t blockIndex = 0;
@@ -1099,36 +1377,47 @@ FailureOr<sim::SimFuncOp> materializeFusion(
       }
     }
     if (!wait || !wait->without_terminator().empty() ||
-        wait->getNumArguments() != 0 ||
+        (!evalBodyFusion && wait->getNumArguments() != 0) ||
         !isTypedDirectWait(wait->getTerminator()) ||
         wait->getNumSuccessors() != 1 ||
-        wait->getSuccessor(0)->getNumArguments() != 0 ||
-        !hasOnlyPureEntryPreamble(function, wait))
-      return failure();
+        (!evalBodyFusion && wait->getSuccessor(0)->getNumArguments() != 0) ||
+        !hasOnlyPureEntryPreamble(function, wait, evalBodyFusion)) {
+      return rejectEval("wait shape");
+    }
     unsigned suspensionCount = 0;
     function.walk([&](Operation *operation) {
       suspensionCount += isTypedSuspend(operation);
     });
     if (suspensionCount != 1)
-      return failure();
+      return rejectEval("multiple suspensions");
 
     BodyFusionCandidate candidate;
     candidate.function = function;
     candidate.spawn = spawns->second.front();
     candidate.wait = wait;
     candidate.body = wait->getSuccessor(0);
+    if (evalBodyFusion) {
+      auto entryBranch = cast<cf::BranchOp>(
+          candidate.function.getBody().front().getTerminator());
+      candidate.threadedEntryValues.append(
+          entryBranch.getDestOperands().begin(),
+          entryBranch.getDestOperands().end());
+      if (candidate.threadedEntryValues.size() != wait->getNumArguments() ||
+          candidate.body->getNumArguments() != wait->getNumArguments())
+        return rejectEval("threaded wait/body arity mismatch");
+    }
     candidate.resumeTarget = resume->second;
     auto functionEntry = entryOrder.find(function.getSymNameAttr());
     if (functionEntry == entryOrder.end())
-      return failure();
+      return rejectEval("missing entry order");
     candidate.entryOrder = functionEntry->second;
     if (!collectBodyBlocks(candidate) || !hasOnlyTerminationReturns(candidate))
-      return failure();
+      return rejectEval("body reachability/return shape");
     collectLiveEntryPreamble(candidate);
     candidates.push_back(std::move(candidate));
   }
   if (candidates.size() < 2)
-    return failure();
+    return rejectEval("too few candidates");
   SmallVector<uint32_t> readyTargets =
       getComputeFusionReadyTargets(graph, commonSensitivity);
   llvm::erase_if(readyTargets, [&](uint32_t target) {
@@ -1145,7 +1434,7 @@ FailureOr<sim::SimFuncOp> materializeFusion(
   for (BodyFusionCandidate &candidate : candidates) {
     auto order = readyOrder.find(candidate.resumeTarget);
     if (order == readyOrder.end())
-      return failure();
+      return rejectEval("missing ready order");
     candidate.resumeOrder = order->second;
   }
   llvm::sort(candidates, [](const auto &lhs, const auto &rhs) {
@@ -1169,7 +1458,7 @@ FailureOr<sim::SimFuncOp> materializeFusion(
         !candidateFunctions.contains(fragment.getFunction().getAttr()))
       continue;
     if (fragment.getTier() != sim::ComputeTierKind::Native)
-      return failure();
+      return rejectEval("non-native member fragment");
     candidateFragments.insert(static_cast<uint32_t>(index));
     if (fragment.getFunction().getAttr() ==
         candidates.back().function.getSymNameAttr())
@@ -1182,8 +1471,8 @@ FailureOr<sim::SimFuncOp> materializeFusion(
          edge.getKind() != sim::ComputeEdgeKind::Spawn) ||
         candidateFragments.contains(edge.getTarget()))
       continue;
-    if (!finalCandidateFragments.contains(edge.getSource()))
-      return failure();
+    if (!evalBodyFusion && !finalCandidateFragments.contains(edge.getSource()))
+      return rejectEval("external publication ordering");
   }
 
   // Fusing two actors makes their bodies indivisible. They must therefore be
@@ -1194,9 +1483,10 @@ FailureOr<sim::SimFuncOp> materializeFusion(
   // preamble pure; the fused actor executes those preambles before registering
   // the common wait and therefore introduces no initial-region effect.
   for (auto [index, candidate] : llvm::enumerate(candidates)) {
-    if (candidate.resumeOrder !=
-        static_cast<uint64_t>(candidates.front().resumeOrder) + index)
-      return failure();
+    if (!evalBodyFusion &&
+        candidate.resumeOrder !=
+            static_cast<uint64_t>(candidates.front().resumeOrder) + index)
+      return rejectEval("non-adjacent resume order");
   }
 
   SmallVector<Value> operands;
@@ -1206,12 +1496,12 @@ FailureOr<sim::SimFuncOp> materializeFusion(
   sim::SimSpawnOp insertionSpawn = candidates.front().spawn;
   for (BodyFusionCandidate &candidate : candidates) {
     if (candidate.spawn->getBlock() != insertionSpawn->getBlock())
-      return failure();
+      return rejectEval("spawns in different blocks");
     if (insertionSpawn->isBeforeInBlock(candidate.spawn))
       insertionSpawn = candidate.spawn;
     Block &entry = candidate.function.getBody().front();
     if (entry.getNumArguments() != candidate.spawn.getNumOperands())
-      return failure();
+      return rejectEval("spawn arity mismatch");
     for (auto [argument, operand] :
          llvm::zip_equal(entry.getArguments(), candidate.spawn.getOperands())) {
       auto [found, inserted] =
@@ -1225,7 +1515,7 @@ FailureOr<sim::SimFuncOp> materializeFusion(
         argumentAttrs.push_back(attrs);
       } else if (inputTypes[index] != argument.getType() ||
                  argumentAttrs[index] != attrs) {
-        return failure();
+        return rejectEval("incompatible shared capture");
       }
       candidate.fusedArguments.push_back(index);
     }
@@ -1274,6 +1564,11 @@ FailureOr<sim::SimFuncOp> materializeFusion(
       Block *cloned = new Block;
       fused.getBody().push_back(cloned);
       mapping->map(source, cloned);
+      if (evalBodyFusion && source == candidate.body &&
+          !candidate.threadedEntryValues.empty()) {
+        clonedBlocks[candidateIndex][source] = cloned;
+        continue;
+      }
       for (BlockArgument argument : source->getArguments()) {
         BlockArgument clonedArgument =
             cloned->addArgument(argument.getType(), argument.getLoc());
@@ -1283,11 +1578,14 @@ FailureOr<sim::SimFuncOp> materializeFusion(
     }
     mappings.push_back(std::move(mapping));
   }
+  SmallVector<Block *> nextBlocks;
+  nextBlocks.reserve(candidates.size());
   for (auto [index, candidate] : llvm::enumerate(candidates)) {
     Block *next =
         index + 1 == candidates.size()
             ? wait
             : clonedBlocks[index + 1].lookup(candidates[index + 1].body);
+    nextBlocks.push_back(next);
     mappings[index]->map(candidate.wait, next);
   }
 
@@ -1295,16 +1593,40 @@ FailureOr<sim::SimFuncOp> materializeFusion(
   for (auto [candidate, mapping] : llvm::zip_equal(candidates, mappings))
     for (Operation *operation : candidate.entryPreamble)
       builder.clone(*operation, *mapping);
+  if (evalBodyFusion) {
+    for (auto [candidate, mapping] : llvm::zip_equal(candidates, mappings)) {
+      for (auto [argument, value] : llvm::zip_equal(
+               candidate.wait->getArguments(), candidate.threadedEntryValues))
+        mapping->map(argument, mapping->lookup(value));
+      auto forwarded = cast<BranchOpInterface>(candidate.wait->getTerminator())
+                           .getSuccessorOperands(0)
+                           .getForwardedOperands();
+      for (auto [argument, value] :
+           llvm::zip_equal(candidate.body->getArguments(), forwarded))
+        mapping->map(argument, mapping->lookup(value));
+    }
+  }
   cf::BranchOp::create(builder, fused.getLoc(), wait);
 
   builder.setInsertionPointToStart(wait);
   builder.clone(*candidates.front().wait->getTerminator(), *mappings.front());
-  for (auto [candidate, mapping] : llvm::zip_equal(candidates, mappings)) {
+  for (auto [candidateIndex, pair] :
+       llvm::enumerate(llvm::zip_equal(candidates, mappings))) {
+    auto &[candidate, mapping] = pair;
     for (Block *source : candidate.bodyBlocks) {
       Block *destination = mapping->lookup(source);
       builder.setInsertionPointToEnd(destination);
-      for (Operation &operation : *source)
+      for (Operation &operation : *source) {
+        if (evalBodyFusion) {
+          if (auto branch = dyn_cast<cf::BranchOp>(operation);
+              branch && branch.getDest() == candidate.wait) {
+            cf::BranchOp::create(builder, branch.getLoc(),
+                                 nextBlocks[candidateIndex]);
+            continue;
+          }
+        }
         builder.clone(operation, *mapping);
+      }
     }
   }
 
@@ -1382,6 +1704,140 @@ FailureOr<sim::SimFuncOp> materializeFusion(
       current.erase();
   }
 
+  if (evalBodyFusion) {
+    SmallString<40> evalBase;
+    (fused.getSymName() + ".__obelisk_eval_body").toVector(evalBase);
+    unsigned evalCounter = 0;
+    SmallString<40> evalName = SymbolTable::generateSymbolName<40>(
+        evalBase,
+        [&](StringRef candidate) {
+          return SymbolTable::lookupSymbolIn(design, candidate) != nullptr;
+        },
+        evalCounter);
+    builder.setInsertionPointToEnd(&design.getBody().front());
+    llvm::SmallDenseSet<uint64_t, 32> usedCodeUnits;
+    for (sim::SimCodeUnitDeclOp declaration :
+         design.getBody().front().getOps<sim::SimCodeUnitDeclOp>())
+      usedCodeUnits.insert(declaration.getId());
+    uint64_t evalCodeUnit = 1;
+    while (usedCodeUnits.contains(evalCodeUnit))
+      ++evalCodeUnit;
+    sim::SimCodeUnitDeclOp::create(
+        builder, fused.getLoc(), evalCodeUnit, uint64_t{0},
+        sim::EntryKind::Function, builder.getStringAttr(evalName),
+        builder.getStringAttr("experimental native eval body"),
+        builder.getUnitAttr());
+    SmallVector<NamedAttribute> evalAttributes{builder.getNamedAttr(
+        "code_unit_id", builder.getI64IntegerAttr(evalCodeUnit))};
+    sim::SimFuncOp evalBody = sim::SimFuncOp::create(
+        builder, fused.getLoc(), evalName,
+        FunctionType::get(design.getContext(), inputTypes, TypeRange{}),
+        sim::EntryKind::Function, evalAttributes, argumentAttrs);
+    evalBody->setAttr("obelisk.eval.borrowed_captures", builder.getUnitAttr());
+    evalBody->setAttr("obelisk.eval.raw_captures", builder.getUnitAttr());
+    SymbolTable::setSymbolVisibility(evalBody,
+                                     SymbolTable::Visibility::Private);
+
+    IRMapping evalMapping;
+    Block &evalEntry = evalBody.getBody().front();
+    for (auto [source, destination] : llvm::zip_equal(
+             fused.getBody().front().getArguments(), evalEntry.getArguments()))
+      evalMapping.map(source, destination);
+    builder.setInsertionPointToStart(&evalEntry);
+    for (Operation &operation : fused.getBody().front().without_terminator())
+      builder.clone(operation, evalMapping);
+
+    Block *activation = wait->getSuccessor(0);
+    SmallVector<Block *> activationBlocks;
+    SmallVector<Block *> pending{activation};
+    llvm::SmallPtrSet<Block *, 32> seen;
+    while (!pending.empty()) {
+      Block *source = pending.pop_back_val();
+      if (source == wait || !seen.insert(source).second)
+        continue;
+      activationBlocks.push_back(source);
+      for (Block *successor : source->getSuccessors())
+        if (successor != wait)
+          pending.push_back(successor);
+    }
+    for (Block *source : activationBlocks) {
+      Block *destination = new Block;
+      evalBody.getBody().push_back(destination);
+      evalMapping.map(source, destination);
+      for (BlockArgument argument : source->getArguments())
+        evalMapping.map(argument, destination->addArgument(argument.getType(),
+                                                           argument.getLoc()));
+    }
+    builder.setInsertionPointToEnd(&evalEntry);
+    auto forwarded = cast<BranchOpInterface>(wait->getTerminator())
+                         .getSuccessorOperands(0)
+                         .getForwardedOperands();
+    SmallVector<Value> entryOperands;
+    for (Value value : forwarded)
+      entryOperands.push_back(evalMapping.lookup(value));
+    cf::BranchOp::create(builder, fused.getLoc(),
+                         evalMapping.lookup(activation), entryOperands);
+
+    bool cloneSupported = true;
+    for (Block *source : activationBlocks) {
+      builder.setInsertionPointToEnd(evalMapping.lookup(source));
+      for (Operation &operation : *source) {
+        if (&operation == source->getTerminator()) {
+          if (auto branch = dyn_cast<cf::BranchOp>(operation);
+              branch && branch.getDest() == wait) {
+            sim::SimReturnOp::create(builder, branch.getLoc(), ValueRange{});
+            continue;
+          }
+          if (auto branch = dyn_cast<cf::CondBranchOp>(operation)) {
+            bool trueWait = branch.getTrueDest() == wait;
+            bool falseWait = branch.getFalseDest() == wait;
+            if (trueWait || falseWait) {
+              if (trueWait && falseWait) {
+                sim::SimReturnOp::create(builder, branch.getLoc(),
+                                         ValueRange{});
+                continue;
+              }
+              Block *returnBlock = new Block;
+              evalBody.getBody().push_back(returnBlock);
+              OpBuilder returnBuilder = OpBuilder::atBlockEnd(returnBlock);
+              sim::SimReturnOp::create(returnBuilder, branch.getLoc(),
+                                       ValueRange{});
+              SmallVector<Value> trueOperands;
+              SmallVector<Value> falseOperands;
+              for (Value value : branch.getTrueDestOperands())
+                trueOperands.push_back(evalMapping.lookup(value));
+              for (Value value : branch.getFalseDestOperands())
+                falseOperands.push_back(evalMapping.lookup(value));
+              cf::CondBranchOp::create(
+                  builder, branch.getLoc(),
+                  evalMapping.lookup(branch.getCondition()),
+                  trueWait ? returnBlock
+                           : evalMapping.lookup(branch.getTrueDest()),
+                  trueWait ? ValueRange{} : ValueRange{trueOperands},
+                  falseWait ? returnBlock
+                            : evalMapping.lookup(branch.getFalseDest()),
+                  falseWait ? ValueRange{} : ValueRange{falseOperands});
+              continue;
+            }
+          }
+          if (llvm::is_contained(operation.getSuccessors(), wait)) {
+            cloneSupported = false;
+            break;
+          }
+        }
+        builder.clone(operation, evalMapping);
+      }
+      if (!cloneSupported)
+        break;
+    }
+    if (!cloneSupported) {
+      evalBody.erase();
+    } else {
+      fused->setAttr("obelisk.eval.body",
+                     FlatSymbolRefAttr::get(evalBody.getSymNameAttr()));
+    }
+  }
+
   return fused;
 }
 
@@ -1390,6 +1846,25 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
   ArrayAttr fusions =
       design->getAttrOfType<ArrayAttr>(sim::metadata::staticBodyFusion);
   sim::ComputeGraphAttr graph = design.getComputeGraphAttr();
+  auto scheduler = design->getParentOfType<ModuleOp>()
+                       ->getAttrOfType<sim::NativeSchedulerModeAttr>(
+                           "obelisk.native_scheduler");
+  bool evalScheduler =
+      scheduler && scheduler.getValue() == sim::NativeSchedulerMode::Eval;
+  if ((!fusions || !graph || graph.getWorkers() != 1) && evalScheduler) {
+    // Standalone activation cloning is not conditional on finding a profitable
+    // multi-actor fusion.  Keeping it behind the fusion-inventory early return
+    // made explicit eval plans depend on an unrelated optimization decision.
+    SmallVector<sim::SimFuncOp> actors;
+    for (sim::SimFuncOp function :
+         design.getBody().front().getOps<sim::SimFuncOp>())
+      actors.push_back(function);
+    for (sim::SimFuncOp function : actors)
+      if (failed(materializeStandaloneEvalBody(design, function))) {
+        signalPassFailure();
+        return;
+      }
+  }
   if (!fusions || !graph || graph.getWorkers() != 1)
     return;
 
@@ -1424,13 +1899,36 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
         design, fusion, graph, scheduleOrder, spawnsByCallee, removedPolls,
         convertedNBAs, sharedConditions, promotedStores);
     if (failed(fused))
-      fused = materializeStraightLineKernel(design, fusion, graph,
-                                            spawnsByCallee);
+      fused =
+          materializeStraightLineKernel(design, fusion, graph, spawnsByCallee);
     changed |= succeeded(fused);
     if (succeeded(fused))
       ++materializedFusions;
     else
       ++rejectedFusions;
+  }
+  // The eval scheduler is a deliberately closed generated-model experiment.
+  // Materialize every eligible actor body: selectively retaining coroutine
+  // actors here recreates the fine-grained runtime dispatch that this mode is
+  // intended to measure without.
+  if (scheduler && scheduler.getValue() == sim::NativeSchedulerMode::Eval) {
+    SmallVector<sim::SimFuncOp> actors;
+    for (sim::SimFuncOp function :
+         design.getBody().front().getOps<sim::SimFuncOp>())
+      actors.push_back(function);
+    for (sim::SimFuncOp function : actors) {
+      StringRef name = function.getSymName();
+      bool generatedRegionKernel = name.starts_with("__obelisk_region_kernel_");
+      if (!generatedRegionKernel) {
+        uint64_t unit = 0;
+        if (!name.consume_front("unit_") || name.getAsInteger(10, unit))
+          continue;
+      }
+      if (failed(materializeStandaloneEvalBody(design, function))) {
+        signalPassFailure();
+        return;
+      }
+    }
   }
   eliminatedTerminationPolls += removedPolls;
   ifConvertedNBAs += convertedNBAs;

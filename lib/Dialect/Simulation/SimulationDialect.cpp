@@ -1,7 +1,7 @@
 //===- SimulationDialect.cpp - Executable simulation dialect ------------===//
 
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
+#include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/StableHash.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -42,12 +42,11 @@ using namespace mlir;
 namespace obelisk::sim {
 
 bool isSuspensionOp(Operation *operation) {
-  return isa<
-      SimSuspendDelayOp, SimSuspendChangeOp, SimSuspendEdgeOp,
-      SimSuspendEdgeIffOp, SimSuspendLevelOp, SimSuspendAnyOp,
-      SimSuspendEventOp, SimSuspendForeverOp, SimSuspendAwaitOp,
-      SimSuspendJoinOp, SimSuspendChildrenOp, SimSuspendObserveOp,
-      SimTaskCallOp>(operation);
+  return isa<SimSuspendDelayOp, SimSuspendChangeOp, SimSuspendEdgeOp,
+             SimSuspendEdgeIffOp, SimSuspendLevelOp, SimSuspendAnyOp,
+             SimSuspendEventOp, SimSuspendForeverOp, SimSuspendAwaitOp,
+             SimSuspendJoinOp, SimSuspendChildrenOp, SimSuspendObserveOp,
+             SimTaskCallOp>(operation);
 }
 
 uint32_t getWaitEntryCount(Operation *operation) {
@@ -165,8 +164,8 @@ LogicalResult verifyPostponedReadOnly(SimFuncOp root) {
       if (isa<SimManagedStoreOp, SimManagedNBAEnqueueOp,
               SimReferencePathNBAEnqueueOp, SimArgumentRefStoreOp,
               SimRefStoreOp, SimDriverDriveOp, SimDriverDriveChangedOp,
-              SimNBAEnqueueOp, SimSpawnOp,
-              SimEventTriggerOp, SimSuspendDelayOp, SimTaskCallOp>(operation)) {
+              SimNBAEnqueueOp, SimSpawnOp, SimEventTriggerOp, SimSuspendDelayOp,
+              SimTaskCallOp>(operation)) {
         operation->emitOpError(
             "is not permitted in a read-only postponed code unit");
         return WalkResult::interrupt();
@@ -583,12 +582,10 @@ ComputeFusionAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
   return success();
 }
 
-LogicalResult
-ComputeKernelAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
-                          uint32_t id, ComputeRegionKind region,
-                          ComputeScheduleKind schedule, uint32_t lane,
-                          uint64_t cost, bool loweringReady,
-                          DenseI64ArrayAttr fragments) {
+LogicalResult ComputeKernelAttr::verify(
+    llvm::function_ref<InFlightDiagnostic()> emitError, uint32_t id,
+    ComputeRegionKind region, ComputeScheduleKind schedule, uint32_t lane,
+    uint64_t cost, bool loweringReady, DenseI64ArrayAttr fragments) {
   (void)id;
   (void)region;
   (void)lane;
@@ -602,6 +599,220 @@ ComputeKernelAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
              << "compute kernel has an invalid or duplicate fragment";
   if (loweringReady && schedule == ComputeScheduleKind::ControlLoop)
     return emitError() << "control-loop kernel cannot be lowering-ready";
+  return success();
+}
+
+LogicalResult
+PhysicalTriggerAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                            ComputeResourceKind resource, uint64_t descriptor,
+                            uint64_t low, uint64_t width,
+                            ComputeTriggerKind edge) {
+  (void)descriptor;
+  if (resource != ComputeResourceKind::Storage &&
+      resource != ComputeResourceKind::Net)
+    return emitError() << "physical trigger requires storage or net state";
+  if (width == 0 || low > UINT64_MAX - width)
+    return emitError() << "physical trigger has an invalid packed range";
+  if (edge != ComputeTriggerKind::Change &&
+      edge != ComputeTriggerKind::Posedge &&
+      edge != ComputeTriggerKind::Negedge && edge != ComputeTriggerKind::Both)
+    return emitError() << "physical trigger requires an exact edge kind";
+  return success();
+}
+
+LogicalResult
+TriggerGroupAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                         uint32_t id, PhysicalTriggerAttr key) {
+  (void)id;
+  if (!key)
+    return emitError() << "trigger group has no physical key";
+  return success();
+}
+
+LogicalResult
+InductiveRootAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                          ComputeResourceKind resource, uint64_t descriptor) {
+  (void)descriptor;
+  if (resource != ComputeResourceKind::Storage &&
+      resource != ComputeResourceKind::Net)
+    return emitError() << "inductive root requires storage or net state";
+  return success();
+}
+
+LogicalResult ScheduledKernelAttr::verify(
+    llvm::function_ref<InFlightDiagnostic()> emitError, uint32_t id,
+    uint32_t owner, uint32_t readyBit, SchedulerTierKind tier,
+    ComputeRegionKind region, ComputeScheduleKind schedule, bool shared,
+    bool loweringReady, bool twoStateEligible, ArrayAttr promotionRoots,
+    DenseI64ArrayAttr fragments) {
+  (void)id;
+  (void)owner;
+  (void)readyBit;
+  (void)region;
+  (void)shared;
+  if (!fragments || fragments.empty())
+    return emitError() << "scheduled kernel must retain original fragments";
+  llvm::SmallDenseSet<int64_t> unique;
+  for (int64_t fragment : fragments.asArrayRef())
+    if (fragment < 0 || !unique.insert(fragment).second)
+      return emitError()
+             << "scheduled kernel has an invalid or duplicate fragment";
+  if (tier == SchedulerTierKind::Tier1 &&
+      schedule != ComputeScheduleKind::Acyclic)
+    return emitError() << "Tier-1 kernel must be acyclic";
+  if (tier == SchedulerTierKind::Tier2 &&
+      schedule == ComputeScheduleKind::ControlLoop)
+    return emitError() << "control loops require Tier 3";
+  if (tier == SchedulerTierKind::Tier3 && loweringReady)
+    return emitError() << "Tier-3 kernel cannot be lowering-ready";
+  if (tier != SchedulerTierKind::Tier3 && !loweringReady)
+    return emitError() << "generated kernel must be lowering-ready";
+  if (twoStateEligible && (tier != SchedulerTierKind::Tier1 || !loweringReady))
+    return emitError()
+           << "only lowering-ready Tier-1 kernels may have two-state bodies";
+  if (!promotionRoots)
+    return emitError() << "scheduled kernel has no promotion-root inventory";
+  llvm::SmallDenseSet<Attribute, 8> roots;
+  for (Attribute root : promotionRoots)
+    if (!isa<InductiveRootAttr>(root) || !roots.insert(root).second)
+      return emitError() << "promotion-root inventory is invalid or duplicated";
+  if (!twoStateEligible && !promotionRoots.empty())
+    return emitError()
+           << "kernel without a two-state body cannot have promotion roots";
+  return success();
+}
+
+LogicalResult
+SchedulerIngressAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                             uint32_t trigger, uint32_t owner,
+                             uint32_t readyBit, uint32_t fragment) {
+  (void)emitError;
+  (void)trigger;
+  (void)owner;
+  (void)readyBit;
+  (void)fragment;
+  return success();
+}
+
+LogicalResult
+ScheduledRootAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                          ComputeResourceKind resource, uint64_t descriptor,
+                          uint64_t low, uint64_t width, uint32_t owner,
+                          SchedulerTierKind tier) {
+  (void)descriptor;
+  (void)owner;
+  (void)tier;
+  if (resource != ComputeResourceKind::Storage &&
+      resource != ComputeResourceKind::Net)
+    return emitError() << "scheduled root requires storage or net state";
+  if (width == 0 || low > UINT64_MAX - width)
+    return emitError() << "scheduled root has an invalid packed range";
+  return success();
+}
+
+LogicalResult
+ClockKeyAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                     ComputeResourceKind resource, uint64_t descriptor,
+                     uint64_t low, uint64_t width, ComputeTriggerKind edge) {
+  (void)descriptor;
+  if (resource != ComputeResourceKind::Storage &&
+      resource != ComputeResourceKind::Net)
+    return emitError() << "clock key requires storage or net state";
+  if (width == 0 || low > UINT64_MAX - width)
+    return emitError() << "clock key has an invalid packed range";
+  if (edge != ComputeTriggerKind::Change &&
+      edge != ComputeTriggerKind::Posedge &&
+      edge != ComputeTriggerKind::Negedge &&
+      edge != ComputeTriggerKind::Both)
+    return emitError() << "clock key requires an exact change or edge kind";
+  return success();
+}
+
+LogicalResult
+ClockKernelAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                        uint32_t id, ClockKeyAttr key) {
+  (void)id;
+  if (!key)
+    return emitError() << "clock kernel has no physical key";
+  return success();
+}
+
+LogicalResult MergedFragmentAttr::verify(
+    llvm::function_ref<InFlightDiagnostic()> emitError, uint32_t id,
+    uint32_t owner, uint32_t bit, bool shared, bool loweringReady,
+    DenseI64ArrayAttr fragments) {
+  (void)id;
+  (void)owner;
+  (void)bit;
+  (void)shared;
+  (void)loweringReady;
+  if (!fragments || fragments.empty())
+    return emitError() << "merged fragment must retain original fragments";
+  llvm::SmallDenseSet<int64_t> unique;
+  for (int64_t fragment : fragments.asArrayRef())
+    if (fragment < 0 || !unique.insert(fragment).second)
+      return emitError()
+             << "merged fragment has an invalid or duplicate original ID";
+  return success();
+}
+
+LogicalResult
+KernelIngressAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                          uint32_t clock, uint32_t owner, uint32_t bit,
+                          uint32_t fragment) {
+  (void)clock;
+  (void)owner;
+  (void)bit;
+  (void)fragment;
+  return success();
+}
+
+LogicalResult ClockKernelPlanAttr::verify(
+    llvm::function_ref<InFlightDiagnostic()> emitError, uint32_t version,
+    ComputeGraphAttr sourceGraph, uint32_t ownerCount, ArrayAttr clocks,
+    ArrayAttr mergedFragments, ArrayAttr ingress) {
+  if (version != metadata::schemaVersion || !sourceGraph)
+    return emitError() << "invalid clock-kernel plan version or source graph";
+  if (!clocks || !mergedFragments || !ingress)
+    return emitError() << "clock-kernel plan inventory is absent";
+  if (ownerCount < clocks.size())
+    return emitError() << "clock-kernel plan has fewer owners than clocks";
+
+  llvm::SmallDenseSet<Attribute, 16> keys;
+  for (auto [index, attribute] : llvm::enumerate(clocks)) {
+    auto clock = dyn_cast<ClockKernelAttr>(attribute);
+    if (!clock || clock.getId() != index || !keys.insert(clock.getKey()).second)
+      return emitError() << "clock-kernel inventory is invalid or duplicated";
+  }
+
+  llvm::SmallDenseSet<std::pair<uint32_t, uint32_t>, 16> ownerBits;
+  llvm::SmallDenseSet<int64_t, 32> originalFragments;
+  for (auto [index, attribute] : llvm::enumerate(mergedFragments)) {
+    auto merged = dyn_cast<MergedFragmentAttr>(attribute);
+    if (!merged || merged.getId() != index || merged.getOwner() >= ownerCount ||
+        !ownerBits.insert({merged.getOwner(), merged.getBit()}).second)
+      return emitError() << "merged-fragment ownership is invalid or duplicated";
+    if (merged.getShared() != (merged.getOwner() >= clocks.size()))
+      return emitError() << "merged-fragment shared ownership is inconsistent";
+    for (int64_t fragment : merged.getFragments().asArrayRef())
+      if (static_cast<uint64_t>(fragment) >= sourceGraph.getNodes().size() ||
+          !originalFragments.insert(fragment).second)
+        return emitError()
+               << "original fragment has no unique merged-fragment owner";
+  }
+  if (originalFragments.size() != sourceGraph.getNodes().size())
+    return emitError() << "clock-kernel plan does not own every graph node";
+
+  llvm::SmallDenseSet<std::pair<uint32_t, uint32_t>, 16> ingressKeys;
+  for (Attribute attribute : ingress) {
+    auto mapping = dyn_cast<KernelIngressAttr>(attribute);
+    if (!mapping || mapping.getClock() >= clocks.size() ||
+        mapping.getOwner() >= ownerCount ||
+        !ownerBits.contains({mapping.getOwner(), mapping.getBit()}) ||
+        mapping.getFragment() >= sourceGraph.getNodes().size() ||
+        !ingressKeys.insert({mapping.getClock(), mapping.getFragment()}).second)
+      return emitError() << "clock-kernel ingress mapping is invalid or duplicated";
+  }
   return success();
 }
 
@@ -646,6 +857,71 @@ ComputeGraphAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
   return success();
 }
 
+LogicalResult ThreeTierScheduleAttr::verify(
+    llvm::function_ref<InFlightDiagnostic()> emitError, uint32_t version,
+    ComputeGraphAttr sourceGraph, uint32_t ownerCount, ArrayAttr triggers,
+    ArrayAttr kernels, ArrayAttr roots, ArrayAttr ingress) {
+  if (version != metadata::schemaVersion || !sourceGraph)
+    return emitError() << "invalid three-tier schedule version or source graph";
+  if (!triggers || !kernels || !roots || !ingress)
+    return emitError() << "three-tier schedule inventory is absent";
+  if (ownerCount < triggers.size())
+    return emitError() << "three-tier schedule has fewer owners than triggers";
+
+  llvm::SmallDenseSet<Attribute, 16> keys;
+  for (auto [index, attribute] : llvm::enumerate(triggers)) {
+    auto trigger = dyn_cast<TriggerGroupAttr>(attribute);
+    if (!trigger || trigger.getId() != index ||
+        !keys.insert(trigger.getKey()).second)
+      return emitError() << "trigger-group inventory is invalid or duplicated";
+  }
+
+  llvm::SmallDenseSet<std::pair<uint32_t, uint32_t>, 16> ownerBits;
+  llvm::SmallDenseSet<int64_t, 32> originalFragments;
+  for (auto [index, attribute] : llvm::enumerate(kernels)) {
+    auto kernel = dyn_cast<ScheduledKernelAttr>(attribute);
+    if (!kernel || kernel.getId() != index || kernel.getOwner() >= ownerCount ||
+        !ownerBits.insert({kernel.getOwner(), kernel.getReadyBit()}).second)
+      return emitError() << "kernel ownership is invalid or duplicated";
+    if (kernel.getShared() != (kernel.getOwner() >= triggers.size()))
+      return emitError() << "kernel shared ownership is inconsistent";
+    if (!kernel.getShared() && kernel.getTier() != SchedulerTierKind::Tier1)
+      return emitError() << "physical-trigger owners must remain in Tier 1";
+    for (int64_t fragment : kernel.getFragments().asArrayRef())
+      if (static_cast<uint64_t>(fragment) >= sourceGraph.getNodes().size() ||
+          !originalFragments.insert(fragment).second)
+        return emitError() << "graph node has no unique scheduled-kernel owner";
+  }
+  if (originalFragments.size() != sourceGraph.getNodes().size())
+    return emitError() << "three-tier schedule does not own every graph node";
+
+  llvm::SmallDenseSet<
+      std::tuple<ComputeResourceKind, uint64_t, uint64_t, uint64_t>, 16>
+      rootKeys;
+  for (Attribute attribute : roots) {
+    auto root = dyn_cast<ScheduledRootAttr>(attribute);
+    if (!root || root.getOwner() >= ownerCount ||
+        !rootKeys
+             .insert({root.getResource(), root.getDescriptor(), root.getLow(),
+                      root.getWidth()})
+             .second)
+      return emitError() << "scheduled-root ownership is invalid or duplicated";
+  }
+
+  llvm::SmallDenseSet<std::pair<uint32_t, uint32_t>, 16> ingressKeys;
+  for (Attribute attribute : ingress) {
+    auto mapping = dyn_cast<SchedulerIngressAttr>(attribute);
+    if (!mapping || mapping.getTrigger() >= triggers.size() ||
+        mapping.getOwner() >= ownerCount ||
+        !ownerBits.contains({mapping.getOwner(), mapping.getReadyBit()}) ||
+        mapping.getFragment() >= sourceGraph.getNodes().size() ||
+        !ingressKeys.insert({mapping.getTrigger(), mapping.getFragment()})
+             .second)
+      return emitError() << "scheduler ingress is invalid or duplicated";
+  }
+  return success();
+}
+
 LogicalResult
 StaticStateRootAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
                             uint64_t descriptor, uint32_t width, bool direct,
@@ -675,8 +951,7 @@ LogicalResult StaticSpecializationAttr::verify(
     uint32_t maxPackedWidth, ComputeGraphAttr sourceGraph, ArrayAttr roots,
     ArrayAttr actorRoots, DenseI64ArrayAttr nbaRoots) {
   if (version != metadata::schemaVersion || maxPackedWidth == 0 ||
-      maxPackedWidth > metadata::maxDirectStaticStateBits ||
-      !sourceGraph)
+      maxPackedWidth > metadata::maxDirectStaticStateBits || !sourceGraph)
     return emitError() << "invalid static-specialization version or width";
   if (!roots || !actorRoots || !nbaRoots)
     return emitError() << "static-specialization inventory is absent";
@@ -725,9 +1000,10 @@ LogicalResult StaticSpecializationAttr::verify(
   return success();
 }
 
-LogicalResult StaticSuperstepAttr::verify(
-    llvm::function_ref<InFlightDiagnostic()> emitError, uint32_t version,
-    ComputeGraphAttr sourceGraph, ArrayAttr actors) {
+LogicalResult
+StaticSuperstepAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                            uint32_t version, ComputeGraphAttr sourceGraph,
+                            ArrayAttr actors) {
   if (version != metadata::schemaVersion || !sourceGraph ||
       sourceGraph.getWorkers() != 1)
     return emitError() << "invalid static-superstep version or worker count";
@@ -1484,8 +1760,7 @@ LogicalResult SimAssocCreateOp::verify() {
   } else {
     std::optional<unsigned> width = getPackedWidth(key);
     if (!width || *width == 0 || *width > 64 ||
-        (getKeyKind() != 1 && getKeyKind() != 2) ||
-        getKeyWidth() != *width)
+        (getKeyKind() != 1 && getKeyKind() != 2) || getKeyWidth() != *width)
       return emitOpError("integral key metadata is inconsistent");
   }
   return success();
@@ -1641,9 +1916,9 @@ FrozenConstantAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
 
   Type scalar = getPackedScalarType(type);
   if (!scalar)
-    return emitError()
-           << "frozen constant type must be floating or a fixed packed value, got "
-           << type;
+    return emitError() << "frozen constant type must be floating or a fixed "
+                          "packed value, got "
+                       << type;
   std::optional<unsigned> width = getPackedWidth(scalar);
   auto planes = dyn_cast<ArrayAttr>(value);
   if (!width || !planes || planes.size() != 2)
@@ -2044,9 +2319,9 @@ ClassHandleType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
   return success();
 }
 
-LogicalResult CovergroupHandleType::verify(
-    llvm::function_ref<InFlightDiagnostic()> emitError,
-    SymbolRefAttr covergroupName) {
+LogicalResult
+CovergroupHandleType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                             SymbolRefAttr covergroupName) {
   if (!covergroupName || covergroupName.getRootReference().empty())
     return emitError() << "covergroup handle requires a declaration symbol";
   return success();
@@ -2185,10 +2460,9 @@ LogicalResult SimDriverDeclOp::verify() {
 
 static SimCovergroupDeclOp lookupCovergroup(Operation *operation,
                                             SymbolRefAttr symbol) {
-  return symbol
-             ? SymbolTable::lookupNearestSymbolFrom<SimCovergroupDeclOp>(
-                   operation, symbol)
-             : SimCovergroupDeclOp{};
+  return symbol ? SymbolTable::lookupNearestSymbolFrom<SimCovergroupDeclOp>(
+                      operation, symbol)
+                : SimCovergroupDeclOp{};
 }
 
 static LogicalResult verifyCovergroupHandle(Operation *operation,
@@ -2231,23 +2505,22 @@ LogicalResult SimCovergroupSampleEnabledOp::verify() {
 }
 
 LogicalResult SimCovergroupBinHitOp::verify() {
-  SimCovergroupDeclOp declaration = lookupCovergroup(
-      *this, getHandle().getType().getCovergroupName());
+  SimCovergroupDeclOp declaration =
+      lookupCovergroup(*this, getHandle().getType().getCovergroupName());
   if (!declaration)
     return emitOpError("handle type references an unknown declaration");
   uint64_t coverpoint = getCoverpoint();
   if (coverpoint >= declaration.getCoverpointBins().size())
     return emitOpError("coverpoint index is outside the declaration");
   uint64_t bin = getBin();
-  if (bin >=
-      static_cast<uint64_t>(declaration.getCoverpointBins()[coverpoint]))
+  if (bin >= static_cast<uint64_t>(declaration.getCoverpointBins()[coverpoint]))
     return emitOpError("bin index is outside the selected coverpoint");
   return success();
 }
 
 LogicalResult SimCovergroupSampleOp::verify() {
-  SimCovergroupDeclOp declaration = lookupCovergroup(
-      *this, getHandle().getType().getCovergroupName());
+  SimCovergroupDeclOp declaration =
+      lookupCovergroup(*this, getHandle().getType().getCovergroupName());
   if (!declaration)
     return emitOpError(
         "handle type references an unknown covergroup declaration");
@@ -2687,25 +2960,30 @@ LogicalResult SimDesignOp::verifyRegions() {
           uint32_t flags, uint64_t valueSize, uint64_t alignment,
           uint64_t bitWidth, ArrayRef<int64_t> traceOffsets,
           ArrayRef<int32_t> traceKinds) -> WalkResult {
-        ElementShape shape{type, kind, flags, valueSize, alignment, bitWidth,
-                           SmallVector<int64_t, 2>(traceOffsets),
-                           SmallVector<int32_t, 2>(traceKinds)};
-        auto [found, inserted] = elementShapes.try_emplace(typeId, shape);
-        if (!inserted && (found->second.type != shape.type ||
-                          found->second.kind != shape.kind ||
-                          found->second.flags != shape.flags ||
-                          found->second.valueSize != shape.valueSize ||
-                          found->second.alignment != shape.alignment ||
-                          found->second.bitWidth != shape.bitWidth ||
-                          found->second.traceOffsets != shape.traceOffsets ||
-                          found->second.traceKinds != shape.traceKinds)) {
-          operation->emitOpError()
-              << "element type ID " << typeId
-              << " conflicts with another container descriptor in the design";
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      };
+    ElementShape shape{type,
+                       kind,
+                       flags,
+                       valueSize,
+                       alignment,
+                       bitWidth,
+                       SmallVector<int64_t, 2>(traceOffsets),
+                       SmallVector<int32_t, 2>(traceKinds)};
+    auto [found, inserted] = elementShapes.try_emplace(typeId, shape);
+    if (!inserted &&
+        (found->second.type != shape.type || found->second.kind != shape.kind ||
+         found->second.flags != shape.flags ||
+         found->second.valueSize != shape.valueSize ||
+         found->second.alignment != shape.alignment ||
+         found->second.bitWidth != shape.bitWidth ||
+         found->second.traceOffsets != shape.traceOffsets ||
+         found->second.traceKinds != shape.traceKinds)) {
+      operation->emitOpError()
+          << "element type ID " << typeId
+          << " conflicts with another container descriptor in the design";
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  };
   WalkResult descriptors = walk([&](Operation *operation) {
     if (auto create = dyn_cast<SimContainerCreateOp>(operation))
       return recordElementShape(
@@ -2716,13 +2994,13 @@ LogicalResult SimDesignOp::verifyRegions() {
           create.getValueSize(), create.getAlignment(), create.getBitWidth(),
           create.getTraceOffsets(), create.getTraceKinds());
     if (auto create = dyn_cast<SimAssocCreateOp>(operation))
-      return recordElementShape(
-          operation, create.getTypeId(),
-          create.getResult().getType().getElementType(),
-          static_cast<uint32_t>(create.getElementKind()),
-          static_cast<uint32_t>(create.getElementFlags()),
-          create.getValueSize(), create.getAlignment(), create.getBitWidth(),
-          create.getTraceOffsets(), create.getTraceKinds());
+      return recordElementShape(operation, create.getTypeId(),
+                                create.getResult().getType().getElementType(),
+                                static_cast<uint32_t>(create.getElementKind()),
+                                static_cast<uint32_t>(create.getElementFlags()),
+                                create.getValueSize(), create.getAlignment(),
+                                create.getBitWidth(), create.getTraceOffsets(),
+                                create.getTraceKinds());
     return WalkResult::advance();
   });
   if (descriptors.wasInterrupted())
@@ -3599,11 +3877,9 @@ LogicalResult SimDPICallOp::verify() {
   if (!getIsTask() &&
       llvm::any_of(ArrayRef<DPIABIAttr>(signature).drop_front(outputCursor),
                    [](DPIABIAttr abi) {
-                     return abi.getDirection() ==
-                            DPIArgumentDirection::Result;
+                     return abi.getDirection() == DPIArgumentDirection::Result;
                    }))
-    return emitOpError(
-        "a DPI function signature must place its result first");
+    return emitOpError("a DPI function signature must place its result first");
   if (outputCursor != signature.size())
     return emitOpError("DPI signature has excess result entries");
 
@@ -4926,15 +5202,14 @@ OpFoldResult SimLogicCompareOp::fold(FoldAdaptor adaptor) {
   }
   if (getKind() == CompareKind::Eq || getKind() == CompareKind::Ne) {
     APInt knownMask = ~(lhs->unknown | rhs->unknown);
-    bool knownMismatch =
-        !((lhs->value ^ rhs->value) & knownMask).isZero();
+    bool knownMismatch = !((lhs->value ^ rhs->value) & knownMask).isZero();
     if (knownMismatch)
-      return getLogicAttribute(
-          getContext(), getLogicBoolean(getKind() == CompareKind::Ne));
+      return getLogicAttribute(getContext(),
+                               getLogicBoolean(getKind() == CompareKind::Ne));
     if (!lhs->unknown.isZero() || !rhs->unknown.isZero())
       return getLogicAttribute(getContext(), getLogicBoolean(false, true));
-    return getLogicAttribute(
-        getContext(), getLogicBoolean(getKind() == CompareKind::Eq));
+    return getLogicAttribute(getContext(),
+                             getLogicBoolean(getKind() == CompareKind::Eq));
   }
   if (!lhs->unknown.isZero() || !rhs->unknown.isZero())
     return getLogicAttribute(getContext(), getLogicBoolean(false, true));
@@ -6338,8 +6613,8 @@ LogicalResult SimDisplayOp::verify() {
     if (itemIndex == getItems().size())
       return emitOpError("item flags require more display operands");
     Value item = getItems()[itemIndex++];
-    if (!isa<BytesType, StringType, DynamicArrayType, QueueType,
-             AssocArrayType, IntegerType, LogicType>(item.getType()) &&
+    if (!isa<BytesType, StringType, DynamicArrayType, QueueType, AssocArrayType,
+             IntegerType, LogicType>(item.getType()) &&
         !item.getType().isF64())
       return emitOpError(
           "items must be literal bytes, packed integers, or f64 reals; "
@@ -6358,7 +6633,8 @@ LogicalResult SimDisplayOp::verify() {
     if (isa<BytesType>(item.getType()) && flags != 0)
       return emitOpError("literal byte items cannot be signed");
     if (isa<StringType>(item.getType()) && flags != 8)
-      return emitOpError("managed string display items require the string flag");
+      return emitOpError(
+          "managed string display items require the string flag");
     if (isa<DynamicArrayType, QueueType, AssocArrayType>(item.getType()) &&
         flags != 16)
       return emitOpError(

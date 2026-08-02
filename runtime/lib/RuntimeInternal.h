@@ -533,6 +533,7 @@ struct SignalSubscriptionDiagnostics {
   uint64_t schedulerIterations = 0;
   uint64_t fallbackRescans = 0;
   uint64_t aotNodeExecutions = 0;
+  uint64_t aotActorExecutions[64] = {};
   uint64_t aotRegionPasses = 0;
   uint64_t aotFanoutEntries = 0;
   uint64_t aotNBAStages = 0;
@@ -711,6 +712,8 @@ struct obelisk_rt_context {
   std::vector<uint32_t> nativeScheduleFanoutNodes;
   std::vector<std::pair<uint64_t, uint64_t>> nativeScheduleFanoutRanges;
   uint32_t nativeScheduleMinimumActivatedNode = UINT32_MAX;
+  bool nativeScheduleClockIngressPending = false;
+  uint32_t nativeScheduleDirectActorSlot = UINT32_MAX;
   std::vector<uint64_t> nativeScheduleDeadlines;
   std::vector<uint32_t> nativeScheduleDeadlineHeap;
   std::vector<uint32_t> nativeScheduleDeadlinePositions;

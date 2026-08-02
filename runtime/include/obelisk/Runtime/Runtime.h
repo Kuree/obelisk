@@ -1895,6 +1895,9 @@ void obelisk_rt_v1_vpi_shutdown(obelisk_rt_context *context);
 // runtime may omit per-actor handover checks; an unexpected action requests a
 // transactional transfer to the generic scheduler.
 #define OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP UINT32_C(512)
+// Experimental closed-world eval loop: exact static transitions feed the
+// generated trigger masks instead of re-entering the actor worklist.
+#define OBELISK_RT_NATIVE_SCHEDULE_EVAL UINT32_C(1024)
 
 typedef struct obelisk_rt_aot_deopt_actor {
   uint32_t slot;
@@ -1978,7 +1981,39 @@ typedef struct obelisk_rt_static_fanout_entry {
   uint32_t reserved;
   uint64_t low_bit;
   uint64_t bit_width;
+  // Generated clock-kernel target. `compute_node` remains the exact generic
+  // fallback identity; native ingress uses this owner/bit pair directly.
+  uint32_t kernel;
+  uint32_t merged_bit;
 } obelisk_rt_static_fanout_entry;
+
+typedef struct obelisk_rt_native_clock_kernel {
+  uint32_t static_state;
+  obelisk_rt_wait_edge_kind edge;
+  uint64_t low_bit;
+  uint64_t bit_width;
+  uint64_t *ingress_mask;
+  uint32_t ingress_word_count;
+  uint32_t reserved;
+  // Compiler-owned permanent-method eligibility. The runtime seeds a bit
+  // once the fallback actor reaches the corresponding typed wait; generated
+  // eval/NBA code consumes it without inspecting coroutine state.
+  uint64_t *active_mask;
+} obelisk_rt_native_clock_kernel;
+
+#define OBELISK_RT_MERGED_FRAGMENT_SHARED UINT32_C(1)
+#define OBELISK_RT_MERGED_FRAGMENT_FALLBACK UINT32_C(2)
+typedef struct obelisk_rt_native_merged_fragment {
+  uint32_t actor_slot;
+  uint32_t continuation;
+  uint32_t kernel;
+  uint32_t bit;
+  uint32_t compute_node;
+  uint32_t flags;
+  // Private generated body for clean native execution. A null pointer keeps
+  // this stable ingress as an explicit fine-scheduler fallback boundary.
+  obelisk_rt_status (*execute)(obelisk_rt_context *context);
+} obelisk_rt_native_merged_fragment;
 
 #define OBELISK_RT_STATIC_ROOT_READ UINT32_C(1)
 #define OBELISK_RT_STATIC_ROOT_WRITE UINT32_C(2)
@@ -2004,6 +2039,8 @@ typedef obelisk_rt_status (*obelisk_rt_native_schedule_snapshot)(
 typedef obelisk_rt_status (*obelisk_rt_native_schedule_nba_commit)(
     void *mutable_state, obelisk_rt_context *context, uint32_t barrier_region,
     uint32_t *out_changed);
+typedef obelisk_rt_status (*obelisk_rt_native_timeslot_coordinator)(
+    void *mutable_state, obelisk_rt_context *context);
 
 typedef struct obelisk_rt_native_schedule_plan {
   uint32_t size;
@@ -2041,6 +2078,12 @@ typedef struct obelisk_rt_native_schedule_plan {
   uint64_t *nba_dirty_summary;
   uint32_t nba_dirty_summary_word_count;
   uint32_t nba_dirty_summary_reserved;
+  const obelisk_rt_native_clock_kernel *clock_kernels;
+  uint32_t clock_kernel_count;
+  uint32_t clock_kernel_reserved;
+  const obelisk_rt_native_merged_fragment *merged_fragments;
+  uint64_t merged_fragment_count;
+  obelisk_rt_native_timeslot_coordinator timeslot_coordinator;
 } obelisk_rt_native_schedule_plan;
 
 // Serial generated-simulator scheduler. The scheduler owns an instance after
@@ -2063,6 +2106,26 @@ obelisk_rt_status obelisk_rt_v1_scheduler_add_planned(
     const uint32_t *ranks, uint32_t continuation_count);
 obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
     obelisk_rt_context *context, const obelisk_rt_native_schedule_plan *plan);
+// OR one stable merged-fragment bit into a generated kernel's ingress.  The
+// operation is idempotent until the generated coordinator drains the mask.
+obelisk_rt_status obelisk_rt_v1_scheduler_activate_clock_kernel(
+    obelisk_rt_context *context, uint32_t kernel, uint32_t merged_bit);
+// Execute all clock masks accumulated in the current time slot.  A generated
+// coordinator owns the shared-kernel drain and the single NBA/fanout epilogue.
+obelisk_rt_status obelisk_rt_v1_scheduler_run_clock_coordinator(
+    obelisk_rt_context *context);
+// Enter/leave one compiler-proven clean fragment without resuming its
+// coroutine. The actor remains suspended at the same stable continuation so a
+// transactional fallback can use the original frame immediately.
+obelisk_rt_status obelisk_rt_v1_scheduler_direct_fragment_enter(
+    obelisk_rt_context *context, uint32_t actor_slot, uint32_t continuation,
+    obelisk_rt_process_instance_v1 **out_instance);
+obelisk_rt_status obelisk_rt_v1_scheduler_direct_fragment_leave(
+    obelisk_rt_context *context, uint32_t actor_slot);
+// Experimental eval-mode entry: execute one statically bound actor directly
+// inside the scheduler-owned clean transaction.
+obelisk_rt_status obelisk_rt_v1_scheduler_execute_aot_actor(
+    obelisk_rt_context *context, uint32_t actor_slot);
 obelisk_rt_status obelisk_rt_v1_scheduler_add_aot(
     obelisk_rt_context *context, obelisk_rt_process_instance_v1 *instance,
     uint32_t flags, uint32_t actor_slot, uint32_t initial_rank,

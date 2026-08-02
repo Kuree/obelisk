@@ -1532,6 +1532,26 @@ bool publishStaticAOTSignalTransitionUnlocked(
         ++context->signalDiagnostics.publications;
       published = true;
     }
+    bool useClockIngress =
+        context->nativeSchedulePlan &&
+        context->nativeSchedulePlan->clock_kernel_count != 0;
+    if (useClockIngress) {
+      if (entry->kernel >=
+              context->nativeSchedulePlan->clock_kernel_count ||
+          entry->merged_bit / 64 >=
+              context->nativeSchedulePlan
+                  ->clock_kernels[entry->kernel]
+                  .ingress_word_count) {
+        context->schedulerStatus = OBELISK_RT_INVALID_CONTINUATION;
+        return true;
+      }
+      obelisk_rt_native_clock_kernel kernel =
+          context->nativeSchedulePlan->clock_kernels[entry->kernel];
+      kernel.ingress_mask[entry->merged_bit / 64] |=
+          uint64_t{1} << (entry->merged_bit % 64);
+      context->nativeScheduleClockIngressPending = true;
+      continue;
+    }
     scheduled.signalTriggered = true;
     uint32_t node = entry->compute_node;
     if (node >= context->nativeScheduleNodes.size() ||
@@ -1985,6 +2005,17 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
   bool actorRootTableValid =
       (plan->actor_root_count == 0 && plan->actor_roots == nullptr) ||
       (plan->actor_root_count != 0 && plan->actor_roots != nullptr);
+  bool clockKernelTableValid =
+      plan->clock_kernel_reserved == 0 &&
+      ((plan->clock_kernel_count == 0 && plan->clock_kernels == nullptr &&
+        plan->merged_fragment_count == 0 &&
+        plan->merged_fragments == nullptr &&
+        plan->timeslot_coordinator == nullptr) ||
+       (plan->clock_kernel_count != 0 && plan->clock_kernels != nullptr &&
+        plan->merged_fragment_count != 0 &&
+        plan->merged_fragments != nullptr &&
+        plan->timeslot_coordinator != nullptr)) &&
+      plan->merged_fragment_count <= std::numeric_limits<size_t>::max();
   bool nbaCommitValid =
       ((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_STATIC_NBA) != 0) ==
       (plan->nba_commit != nullptr);
@@ -2018,6 +2049,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
            cleanSuperstepRequirements &&
        (plan->flags & (OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT |
                        OBELISK_RT_NATIVE_SCHEDULE_GUARDED_FANOUT)) != 0);
+  bool evalSchedulerValid =
+      (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_EVAL) == 0 ||
+      ((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP) != 0 &&
+       plan->clock_kernel_count != 0 && plan->timeslot_coordinator);
   bool statePlanesValid =
       plan->state_bit_count == 0
           ? plan->state_value == nullptr && plan->state_unknown == nullptr
@@ -2025,8 +2060,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
   if (!plan->mutable_state || plan->mutable_state_size == 0 ||
       plan->actor_capacity == 0 || !actorStorageFits || !statePlanesValid ||
       !nbaTablesValid || !fanoutTableValid || !actorRootTableValid ||
+      !clockKernelTableValid ||
       !nbaCommitValid || !nbaDirtyRootsValid || !specializationFastValid ||
-      !cleanSuperstepValid ||
+      !cleanSuperstepValid || !evalSchedulerValid ||
       (plan->flags & ~(OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
                        OBELISK_RT_NATIVE_SCHEDULE_ROOT_SLOT_ZERO |
                        OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL |
@@ -2036,7 +2072,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
                        OBELISK_RT_NATIVE_SCHEDULE_GENERATED_ACTIONS |
                        OBELISK_RT_NATIVE_SCHEDULE_GUARDED_FANOUT |
                        OBELISK_RT_NATIVE_SCHEDULE_GUARDED_SPECIALIZATION |
-                       OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP)) != 0 ||
+                       OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP |
+                       OBELISK_RT_NATIVE_SCHEDULE_EVAL)) != 0 ||
       !plan->bind || !plan->run || !plan->fallback_snapshot)
     return OBELISK_RT_INVALID_ARGUMENT;
   const obelisk_rt_static_nba_root *nbaRoots = plan->nba_roots;
@@ -2047,6 +2084,11 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
   uint64_t fanoutEntryCount = plan->fanout_entry_count;
   const obelisk_rt_static_actor_root *actorRoots = plan->actor_roots;
   uint64_t actorRootCount = plan->actor_root_count;
+  const obelisk_rt_native_clock_kernel *clockKernels = plan->clock_kernels;
+  uint32_t clockKernelCount = plan->clock_kernel_count;
+  const obelisk_rt_native_merged_fragment *mergedFragments =
+      plan->merged_fragments;
+  uint64_t mergedFragmentCount = plan->merged_fragment_count;
   for (uint32_t index = 0; index != nbaRootCount; ++index) {
     const obelisk_rt_static_nba_root &root = nbaRoots[index];
     if (root.static_state == 0 || root.bit_width == 0 ||
@@ -2071,17 +2113,67 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
     const obelisk_rt_static_fanout_entry &entry = fanoutEntries[index];
     if (entry.static_state == 0 || entry.actor_slot >= plan->actor_capacity ||
         entry.continuation == 0 || entry.bit_width == 0 ||
-        entry.compute_node == UINT32_MAX || entry.reserved != 0 ||
+        entry.compute_node == UINT32_MAX ||
+        (entry.reserved != 0 &&
+         (((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_EVAL) == 0) ||
+          entry.reserved > 2)) ||
         entry.low_bit > UINT64_MAX - entry.bit_width ||
         entry.edge < OBELISK_RT_WAIT_EDGE_CHANGE ||
         entry.edge > OBELISK_RT_WAIT_EDGE_BOTH ||
-        (index != 0 && std::tuple{fanoutEntries[index - 1].static_state,
-                                  fanoutEntries[index - 1].low_bit,
-                                  fanoutEntries[index - 1].actor_slot,
-                                  fanoutEntries[index - 1].continuation} >=
-                           std::tuple{entry.static_state, entry.low_bit,
-                                      entry.actor_slot, entry.continuation}))
+        (clockKernelCount != 0 &&
+         (entry.kernel >= clockKernelCount ||
+          entry.merged_bit / 64 >=
+              clockKernels[entry.kernel].ingress_word_count)) ||
+        (index != 0 &&
+         std::tuple{fanoutEntries[index - 1].static_state,
+                    fanoutEntries[index - 1].low_bit,
+                    fanoutEntries[index - 1].bit_width,
+                    fanoutEntries[index - 1].edge,
+                    fanoutEntries[index - 1].actor_slot,
+                    fanoutEntries[index - 1].continuation} >=
+             std::tuple{entry.static_state, entry.low_bit, entry.bit_width,
+                        entry.edge, entry.actor_slot, entry.continuation}))
       return OBELISK_RT_INVALID_ARGUMENT;
+  }
+  for (uint32_t index = 0; index != clockKernelCount; ++index) {
+    const obelisk_rt_native_clock_kernel &kernel = clockKernels[index];
+    if (kernel.static_state == 0 || kernel.bit_width == 0 ||
+        kernel.low_bit > UINT64_MAX - kernel.bit_width ||
+        kernel.edge < OBELISK_RT_WAIT_EDGE_CHANGE ||
+        kernel.edge > OBELISK_RT_WAIT_EDGE_BOTH || !kernel.ingress_mask ||
+        kernel.ingress_word_count == 0 || kernel.reserved != 0 ||
+        (((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_EVAL) != 0) &&
+         !kernel.active_mask))
+      return OBELISK_RT_INVALID_ARGUMENT;
+    for (uint32_t previous = 0; previous != index; ++previous) {
+      const obelisk_rt_native_clock_kernel &other = clockKernels[previous];
+      if (std::tuple{other.static_state, other.low_bit, other.bit_width,
+                     other.edge} >=
+          std::tuple{kernel.static_state, kernel.low_bit, kernel.bit_width,
+                     kernel.edge})
+        return OBELISK_RT_INVALID_ARGUMENT;
+    }
+  }
+  for (uint64_t index = 0; index != mergedFragmentCount; ++index) {
+    const obelisk_rt_native_merged_fragment &merged = mergedFragments[index];
+    bool directFragmentValid =
+        !merged.execute ||
+        (merged.kernel < clockKernelCount && merged.continuation != 0 &&
+         (merged.flags & OBELISK_RT_MERGED_FRAGMENT_FALLBACK) == 0 &&
+         (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP) != 0);
+    if (merged.actor_slot >= plan->actor_capacity ||
+        merged.compute_node == UINT32_MAX ||
+        !directFragmentValid ||
+        (merged.flags & ~(OBELISK_RT_MERGED_FRAGMENT_SHARED |
+                          OBELISK_RT_MERGED_FRAGMENT_FALLBACK)) != 0 ||
+        (merged.kernel < clockKernelCount &&
+         merged.bit / 64 >=
+             clockKernels[merged.kernel].ingress_word_count))
+      return OBELISK_RT_INVALID_ARGUMENT;
+    for (uint64_t previous = 0; previous != index; ++previous)
+      if (mergedFragments[previous].kernel == merged.kernel &&
+          mergedFragments[previous].bit == merged.bit)
+        return OBELISK_RT_INVALID_ARGUMENT;
   }
   for (uint64_t index = 0; index != actorRootCount; ++index) {
     const obelisk_rt_static_actor_root &entry = actorRoots[index];
@@ -2125,6 +2217,19 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
           findNativeStaticState(context, entry.static_state);
       if (!state || entry.low_bit > state->bitWidth ||
           entry.bit_width > state->bitWidth - entry.low_bit)
+        return OBELISK_RT_LAYOUT_MISMATCH;
+      if (clockKernelCount != 0 && entry.kernel != UINT32_MAX &&
+          (entry.kernel >= clockKernelCount ||
+           entry.merged_bit / 64 >=
+               clockKernels[entry.kernel].ingress_word_count))
+        return OBELISK_RT_LAYOUT_MISMATCH;
+    }
+    for (uint32_t index = 0; index != clockKernelCount; ++index) {
+      const obelisk_rt_native_clock_kernel &kernel = clockKernels[index];
+      const NativeStaticState *state =
+          findNativeStaticState(context, kernel.static_state);
+      if (!state || kernel.low_bit > state->bitWidth ||
+          kernel.bit_width > state->bitWidth - kernel.low_bit)
         return OBELISK_RT_LAYOUT_MISMATCH;
     }
     {
@@ -2288,6 +2393,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
     context->nativeScheduleFanoutEntryCount = fanoutEntryCount;
     context->nativeScheduleActorRoots = actorRoots;
     context->nativeScheduleActorRootCount = actorRootCount;
+    context->nativeScheduleClockIngressPending = false;
+    context->nativeScheduleDirectActorSlot = UINT32_MAX;
     context->nativeScheduleDeoptimized = false;
     return OBELISK_RT_OK;
   } catch (const std::bad_alloc &) {
@@ -2295,6 +2402,136 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
   } catch (...) {
     return OBELISK_RT_INVALID_ARGUMENT;
   }
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_activate_clock_kernel(
+    obelisk_rt_context *context, uint32_t kernel, uint32_t mergedBit) {
+  if (!context)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  try {
+    ContextMutexLock lock(context);
+    const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
+    if (!plan)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    if (kernel >= plan->clock_kernel_count)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    const obelisk_rt_native_clock_kernel &record = plan->clock_kernels[kernel];
+    uint32_t word = mergedBit / 64;
+    if (word >= record.ingress_word_count)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    // The scheduler mutex makes this a serial OR today.  The ABI deliberately
+    // exposes leaf words so a later lane implementation can make the same
+    // operation atomic without changing stable merged-bit identities.
+    record.ingress_mask[word] |= uint64_t{1} << (mergedBit % 64);
+    context->nativeScheduleClockIngressPending = true;
+    return OBELISK_RT_OK;
+  } catch (...) {
+    return OBELISK_RT_INVALID_ARGUMENT;
+  }
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_scheduler_run_clock_coordinator(obelisk_rt_context *context) {
+  if (!context)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  obelisk_rt_native_schedule_run run = nullptr;
+  obelisk_rt_native_timeslot_coordinator coordinator = nullptr;
+  void *mutableState = nullptr;
+  bool hasDirectFragments = false;
+  try {
+    {
+      ContextMutexLock lock(context);
+      const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
+      if (!plan || !plan->timeslot_coordinator || !plan->run)
+        return OBELISK_RT_INVALID_LIFECYCLE;
+      run = plan->run;
+      coordinator = plan->timeslot_coordinator;
+      mutableState = plan->mutable_state;
+      for (uint64_t index = 0; index != plan->merged_fragment_count; ++index)
+        hasDirectFragments |= plan->merged_fragments[index].execute != nullptr;
+    }
+    // Generated coordinators call scheduler services and therefore acquire
+    // the context mutex themselves.  Never retain it across this boundary.
+    // Legacy/metadata-only plans use the coordinator as their complete
+    // external-deposit handoff. A plan with executable fragments must enter
+    // through `run`, which establishes the trusted transaction before the
+    // generated coordinator calls clean bodies.
+    return hasDirectFragments ? run(mutableState, context)
+                              : coordinator(mutableState, context);
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_INVALID_ARGUMENT;
+  }
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_direct_fragment_enter(
+    obelisk_rt_context *context, uint32_t actorSlot, uint32_t continuation,
+    obelisk_rt_process_instance_v1 **outInstance) {
+  if (!context || !outInstance)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outInstance = nullptr;
+  if (activeNativeAOTContext != context || lockedNativeAOTContext != context ||
+      context->nativeScheduleDirectActorSlot != UINT32_MAX ||
+      context->activeNativeProcess ||
+      actorSlot >= context->nativeScheduleActors.size())
+    return OBELISK_RT_INVALID_LIFECYCLE;
+  obelisk_rt_process_instance_v1 *actor =
+      context->nativeScheduleActors[actorSlot];
+  size_t index = context->nativeScheduleActorIndices[actorSlot];
+  if (!actor || actor->continuation != continuation ||
+      index >= context->scheduledProcesses.size())
+    return OBELISK_RT_INVALID_CONTINUATION;
+  ScheduledProcess &scheduled = context->scheduledProcesses[index];
+  if (scheduled.instance != actor || !scheduled.started ||
+      scheduled.aotActorSlot != actorSlot || scheduled.signalTriggered ||
+      !scheduled.controls.empty() ||
+      (scheduled.suspendKind != OBELISK_RT_SUSPEND_CHANGE &&
+       scheduled.suspendKind != OBELISK_RT_SUSPEND_EDGE &&
+       scheduled.suspendKind != OBELISK_RT_SUSPEND_OBSERVER))
+    return OBELISK_RT_INVALID_LIFECYCLE;
+  scheduled.signalTriggered = true;
+  actor->context = context;
+  actor->lifecycle = OBELISK_RT_PROCESS_EXECUTING;
+  context->nativeScheduleDirectActorSlot = actorSlot;
+  context->activeNativeProcess = actor;
+  context->activeHomeRegion = scheduled.homeRegion;
+  context->activeExecRegion = scheduled.queuedRegion;
+  context->activeLogicalProcessToken =
+      kNativeLogicalProcessTag | scheduled.token;
+  *outInstance = actor;
+  return OBELISK_RT_OK;
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_direct_fragment_leave(
+    obelisk_rt_context *context, uint32_t actorSlot) {
+  if (!context || activeNativeAOTContext != context ||
+      lockedNativeAOTContext != context ||
+      context->nativeScheduleDirectActorSlot != actorSlot ||
+      actorSlot >= context->nativeScheduleActors.size())
+    return OBELISK_RT_INVALID_LIFECYCLE;
+  obelisk_rt_process_instance_v1 *actor =
+      context->nativeScheduleActors[actorSlot];
+  size_t index = context->nativeScheduleActorIndices[actorSlot];
+  if (!actor || context->activeNativeProcess != actor ||
+      index >= context->scheduledProcesses.size())
+    return OBELISK_RT_INVALID_LIFECYCLE;
+  ScheduledProcess &scheduled = context->scheduledProcesses[index];
+  actor->context = nullptr;
+  actor->lifecycle = OBELISK_RT_PROCESS_SUSPENDED;
+  scheduled.signalTriggered = false;
+  context->nativeScheduleDirectActorSlot = UINT32_MAX;
+  context->activeNativeProcess = nullptr;
+  context->activeHomeRegion = UINT32_MAX;
+  context->activeExecRegion = UINT32_MAX;
+  context->activeLogicalProcessToken = 0;
+  if (context->schedulerSlotProgress == (UINT64_C(1) << 20)) {
+    context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
+    return context->schedulerStatus;
+  }
+  ++context->schedulerSlotProgress;
+  ++context->signalDiagnostics.aotNodeExecutions;
+  return OBELISK_RT_OK;
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_aot(
@@ -3333,18 +3570,24 @@ extern "C" void obelisk_rt_v1_scheduler_static_transition(
         reinterpret_cast<const uint8_t *>(&newUnknown));
     return;
   }
+  bool evalFast = context->nativeSchedulePlan &&
+                  (context->nativeSchedulePlan->flags &
+                   OBELISK_RT_NATIVE_SCHEDULE_EVAL) != 0;
 
-  const NativeStaticState *state = findNativeStaticState(context, staticState);
-  if (!state || lowBit > state->bitWidth ||
-      bitWidth > state->bitWidth - lowBit) {
-    context->schedulerStatus = OBELISK_RT_LAYOUT_MISMATCH;
-    return;
+  if (!evalFast) {
+    const NativeStaticState *state =
+        findNativeStaticState(context, staticState);
+    if (!state || lowBit > state->bitWidth ||
+        bitWidth > state->bitWidth - lowBit) {
+      context->schedulerStatus = OBELISK_RT_LAYOUT_MISMATCH;
+      return;
+    }
   }
   uint8_t edgeKinds = 0;
   if (staticState < context->nativeScheduleStaticStateFanoutEdges.size()) {
     edgeKinds = context->nativeScheduleStaticStateFanoutEdges[staticState];
     if (edgeKinds == 0) {
-      if (++context->schedulerEpoch == 0)
+      if (!evalFast && ++context->schedulerEpoch == 0)
         context->schedulerEpoch = 1;
       return;
     }
@@ -3377,7 +3620,7 @@ extern "C" void obelisk_rt_v1_scheduler_static_transition(
   if ((edgeKinds & negedgeKinds) != 0)
     observedEdges |= negedge;
   if (observedEdges == 0) {
-    if (++context->schedulerEpoch == 0)
+    if (!evalFast && ++context->schedulerEpoch == 0)
       context->schedulerEpoch = 1;
     return;
   }
@@ -3409,7 +3652,8 @@ extern "C" void obelisk_rt_v1_scheduler_static_transition(
   bool published = false;
   uint64_t publishedEnd = lowBit + bitWidth;
   for (auto entry = first; entry != last; ++entry) {
-    ++context->signalDiagnostics.aotFanoutEntries;
+    if (!evalFast || context->signalDiagnosticsEnabled)
+      ++context->signalDiagnostics.aotFanoutEntries;
     uint64_t overlapLow = std::max(lowBit, entry->low_bit);
     uint64_t overlapHigh =
         std::min(publishedEnd, entry->low_bit + entry->bit_width);
@@ -3436,6 +3680,27 @@ extern "C" void obelisk_rt_v1_scheduler_static_transition(
     if ((observed & overlapMask) == 0)
       continue;
 
+    // A generated eval body with one static wait is a permanently active
+    // model method, not a coroutine continuation.  Its fanout record is
+    // marked by the compiler, so publish its dirty bit without consulting the
+    // generic actor/suspension tables.  Unsupported records retain the old
+    // lifecycle path below.
+    bool directMethod = evalFast && entry->reserved != 0;
+    uint32_t directWord = entry->merged_bit / 64;
+    uint64_t directMask = uint64_t{1} << (entry->merged_bit % 64);
+    const obelisk_rt_native_clock_kernel *directKernel =
+        directMethod && entry->kernel <
+                            context->nativeSchedulePlan->clock_kernel_count
+            ? &context->nativeSchedulePlan->clock_kernels[entry->kernel]
+            : nullptr;
+    if (directKernel && directWord < directKernel->ingress_word_count) {
+      const obelisk_rt_native_clock_kernel &kernel = *directKernel;
+      kernel.ingress_mask[entry->merged_bit / 64] |=
+          uint64_t{1} << (entry->merged_bit % 64);
+      context->nativeScheduleClockIngressPending = true;
+      continue;
+    }
+
     uint32_t slot = entry->actor_slot;
     if (slot >= context->nativeScheduleActors.size()) {
       context->schedulerStatus = OBELISK_RT_INVALID_LIFECYCLE;
@@ -3455,7 +3720,15 @@ extern "C" void obelisk_rt_v1_scheduler_static_transition(
         (scheduled.suspendKind != OBELISK_RT_SUSPEND_CHANGE &&
          scheduled.suspendKind != OBELISK_RT_SUSPEND_EDGE))
       continue;
-    if (!published) {
+    if (directMethod) {
+      if (!directKernel || !directKernel->active_mask ||
+          directWord >= directKernel->ingress_word_count) {
+        context->schedulerStatus = OBELISK_RT_INVALID_CONTINUATION;
+        return;
+      }
+      directKernel->active_mask[directWord] |= directMask;
+    }
+    if (!evalFast && !published) {
       if (context->nextSchedulerSequence == 0) {
         context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
         return;
@@ -3464,6 +3737,23 @@ extern "C" void obelisk_rt_v1_scheduler_static_transition(
       if (context->signalDiagnosticsEnabled)
         ++context->signalDiagnostics.publications;
       published = true;
+    }
+    if (evalFast && directMethod) {
+      if (entry->kernel >=
+              context->nativeSchedulePlan->clock_kernel_count ||
+          entry->merged_bit / 64 >=
+              context->nativeSchedulePlan
+                  ->clock_kernels[entry->kernel]
+                  .ingress_word_count) {
+        context->schedulerStatus = OBELISK_RT_INVALID_CONTINUATION;
+        return;
+      }
+      obelisk_rt_native_clock_kernel kernel =
+          context->nativeSchedulePlan->clock_kernels[entry->kernel];
+      kernel.ingress_mask[entry->merged_bit / 64] |=
+          uint64_t{1} << (entry->merged_bit % 64);
+      context->nativeScheduleClockIngressPending = true;
+      continue;
     }
     scheduled.signalTriggered = true;
     uint32_t node = entry->compute_node;
@@ -3476,7 +3766,7 @@ extern "C" void obelisk_rt_v1_scheduler_static_transition(
     context->nativeScheduleMinimumActivatedNode =
         std::min(context->nativeScheduleMinimumActivatedNode, node);
   }
-  if (++context->schedulerEpoch == 0)
+  if (!evalFast && ++context->schedulerEpoch == 0)
     context->schedulerEpoch = 1;
 }
 
@@ -3495,8 +3785,10 @@ extern "C" void obelisk_rt_v1_scheduler_activate_static_nodes(
     hasNodes |= nodeWords[word] != 0;
   if (!hasNodes)
     return;
-  if (activeNativeAOTContext != context ||
-      !canUseStaticAOTFanout(context) ||
+  if ((activeNativeAOTContext != context &&
+       !canUseIndexedExternalAOTFanout(context)) ||
+      (!canUseStaticAOTFanout(context) &&
+       !canUseIndexedExternalAOTFanout(context)) ||
       (context->nativeSchedulePlan->flags &
        OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP) == 0 ||
       context->nativeScheduleReadyNodes.empty()) {
@@ -6859,6 +7151,8 @@ obelisk_rt_status executeTrustedAOTNode(obelisk_rt_context *context,
   if (!context->nativeSchedulePlan ||
       actorSlot >= context->nativeScheduleActors.size())
     return OBELISK_RT_INVALID_LIFECYCLE;
+  if (context->signalDiagnosticsEnabled && actorSlot < 64)
+    ++context->signalDiagnostics.aotActorExecutions[actorSlot];
   obelisk_rt_process_instance_v1 *selected =
       context->nativeScheduleActors[actorSlot];
   uint64_t token = context->nativeScheduleActorTokens[actorSlot];
@@ -7487,6 +7781,21 @@ obelisk_rt_status runTrustedAOTNodesUnlocked(obelisk_rt_context *context) {
   uint32_t nodeCursor = 0;
   bool passProgress = false;
   for (;;) {
+    if (context->nativeScheduleClockIngressPending) {
+      obelisk_rt_native_timeslot_coordinator coordinator =
+          context->nativeSchedulePlan->timeslot_coordinator;
+      if (!coordinator)
+        return OBELISK_RT_INVALID_LIFECYCLE;
+      context->nativeScheduleClockIngressPending = false;
+      obelisk_rt_status status = coordinator(
+          context->nativeSchedulePlan->mutable_state, context);
+      if (status != OBELISK_RT_OK)
+        return status;
+      // A direct body may publish a lower graph-order ingress while this pass
+      // is in flight. Restart selection so the next generated drain observes
+      // it before any later fine fallback node.
+      nodeCursor = 0;
+    }
     uint32_t selectedNode = UINT32_MAX;
     bool readyBeforeCursor = false;
     uint32_t cursorWord = nodeCursor / 64;
@@ -7600,6 +7909,14 @@ obelisk_rt_status runTrustedAOTNodesUnlocked(obelisk_rt_context *context) {
 }
 
 } // namespace
+
+extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_execute_aot_actor(
+    obelisk_rt_context *context, uint32_t actorSlot) {
+  if (!context || activeNativeAOTContext != context ||
+      lockedNativeAOTContext != context)
+    return OBELISK_RT_INVALID_LIFECYCLE;
+  return executeTrustedAOTNode(context, actorSlot);
+}
 
 extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_run_aot_nodes(
     obelisk_rt_context *context, const obelisk_rt_native_schedule_node *nodes,
@@ -8194,6 +8511,8 @@ void obelisk_rt_release_native_schedule_plan(
   context->nativeScheduleSingleStep = false;
   context->nativeScheduleForcedExecuted = false;
   context->nativeScheduleControlOnly = false;
+  context->nativeScheduleClockIngressPending = false;
+  context->nativeScheduleDirectActorSlot = UINT32_MAX;
 }
 
 void obelisk_rt_aot_external_write_unlocked(obelisk_rt_context *context) {

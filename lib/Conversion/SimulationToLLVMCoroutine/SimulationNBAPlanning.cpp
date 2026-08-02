@@ -3,6 +3,7 @@
 #include "SimulationNBALowering.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
 
+#include "obelisk/Conversion/SimulationRuntime.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Runtime/StableHandle.h"
 
@@ -242,7 +243,8 @@ LogicalResult
 materializeGeneratedNBAAccumulators(ModuleOp module,
                                     const NativeStaticNBAPlan &plan) {
   if (plan.generatedAccumulators.size() != plan.roots.size() ||
-      plan.generatedOffsets.size() != plan.roots.size())
+      plan.generatedOffsets.size() != plan.roots.size() ||
+      plan.generatedCommitRegions.size() != plan.roots.size())
     return module.emitError("generated NBA accumulator plan is malformed");
   OpBuilder builder(module.getContext());
   Location location = module.getLoc();
@@ -308,6 +310,7 @@ buildNativeStaticNBAPlan(ModuleOp module, const NativeStateLayout &stateLayout,
                           static_cast<uint64_t>(bound->width), nullptr});
     plan.generatedAccumulators.emplace_back();
     plan.generatedOffsets.push_back(bound->offset);
+    plan.generatedCommitRegions.push_back(UINT32_MAX);
     if (bound->width <= OBELISK_RT_GENERATED_NBA_MAX_BITS)
       plan.generatedAccumulators.back() =
           ("__obelisk_aot_nba_accumulator_" + Twine(root)).str();
@@ -337,6 +340,54 @@ buildNativeStaticNBAPlan(ModuleOp module, const NativeStateLayout &stateLayout,
            failure();
   for (const obelisk_rt_static_nba_site &site : plan.sites)
     plan.siteRoots.try_emplace(site.site, site.root);
+
+  // Prove the subset for which a dirty bit is also a complete generated-stage
+  // validity proof.  This is deliberately whole-root: part selects and roots
+  // shared between event regions keep the existing accumulator field checks.
+  SmallVector<bool> eligible(plan.roots.size(), true);
+  SmallVector<bool> seen(plan.roots.size(), false);
+  module.walk([&](sim::SimNBAEnqueueOp enqueue) {
+    sim::NBASiteAttr site = enqueue.getSiteAttr();
+    auto mapped =
+        site ? plan.siteRoots.find(site.getId()) : plan.siteRoots.end();
+    if (mapped == plan.siteRoots.end())
+      return;
+    uint32_t rootIndex = mapped->second;
+    const obelisk_rt_static_nba_root &root = plan.roots[rootIndex];
+    seen[rootIndex] = true;
+    std::optional<unsigned> width =
+        nativeStateWidth(enqueue.getValue().getType());
+    DenseSet<Value> active;
+    std::optional<StaticNBADestination> destination =
+        resolveStaticNBADestination(enqueue.getDestination(), stateLayout,
+                                    active);
+    sim::SimFuncOp function = enqueue->getParentOfType<sim::SimFuncOp>();
+    uint32_t homeRegion =
+        function ? getRuntimeEventRegion(function.getHomeRegion()) : UINT32_MAX;
+    uint32_t commitRegion = homeRegion == OBELISK_RT_REGION_ACTIVE ||
+                                    homeRegion == OBELISK_RT_REGION_REACTIVE
+                                ? homeRegion + 2
+                                : UINT32_MAX;
+    bool direct =
+        width && *width == root.bit_width && root.bit_width <= 64 &&
+        destination && destination->staticID == root.static_state &&
+        destination->offset == 0 && !enqueue.getDelay() && site &&
+        !site.getTiming() &&
+        site.getStorage() != sim::ComputeNBAStorageKind::DynamicFrontier &&
+        commitRegion != UINT32_MAX;
+    if (!direct) {
+      eligible[rootIndex] = false;
+      return;
+    }
+    uint32_t &plannedRegion = plan.generatedCommitRegions[rootIndex];
+    if (plannedRegion == UINT32_MAX)
+      plannedRegion = commitRegion;
+    else if (plannedRegion != commitRegion)
+      eligible[rootIndex] = false;
+  });
+  for (uint32_t root = 0; root != plan.roots.size(); ++root)
+    if (!eligible[root] || !seen[root])
+      plan.generatedCommitRegions[root] = UINT32_MAX;
   return plan;
 }
 

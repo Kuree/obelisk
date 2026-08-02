@@ -103,6 +103,10 @@ public:
 
   StateDomainFact get(mlir::Value value) const;
   bool isTwoState(mlir::Value value) const;
+  /// Query the guarded fact used by a versioned native kernel after it has
+  /// established that every root in its inductive closure is known.
+  StateDomainFact getWithInductiveRoots(mlir::Value value) const;
+  bool isTwoStateWithInductiveRoots(mlir::Value value) const;
   bool isInductivelyTwoState(sim::ComputeResourceKind resource,
                              uint64_t descriptor) const;
   mlir::ArrayRef<InductiveStateRoot> getInductiveRoots() const {
@@ -112,10 +116,13 @@ public:
 private:
   explicit StateDomainAnalysis(
       llvm::DenseMap<mlir::Value, StateDomainFact> facts,
+      llvm::DenseMap<mlir::Value, StateDomainFact> guardedFacts,
       llvm::SmallVector<InductiveStateRoot> inductiveRoots)
-      : facts(std::move(facts)), inductiveRoots(std::move(inductiveRoots)) {}
+      : facts(std::move(facts)), guardedFacts(std::move(guardedFacts)),
+        inductiveRoots(std::move(inductiveRoots)) {}
 
   llvm::DenseMap<mlir::Value, StateDomainFact> facts;
+  llvm::DenseMap<mlir::Value, StateDomainFact> guardedFacts;
   llvm::SmallVector<InductiveStateRoot> inductiveRoots;
 };
 

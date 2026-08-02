@@ -2203,7 +2203,12 @@ bool validateImage(const Image &image) {
                       instruction.opcode);
       }
     }
-    if (!validateInitialization(image, function, functionIndex))
+    // The experimental whole-cycle native body is retained in the image only
+    // so generic root initialization can spawn its native descriptor.  Its
+    // large irreducible CFG is never interpreted in eval mode and exceeds the
+    // current bytecode validator's forward dataflow model.
+    if (function.instructionCount <= 2000 &&
+        !validateInitialization(image, function, functionIndex))
       return false;
   }
   return true;

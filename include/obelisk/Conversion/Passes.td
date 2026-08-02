@@ -225,7 +225,10 @@ def ObeliskSimMaterializeGraphRegionsPass
     deoptimization boundaries. Convergence and control-loop groups remain
     explicit kernel boundaries. Whole kernels receive greedy worker-lane
     placement so later native lowering can generate persistent lane functions
-    without repartitioning semantic fragments.
+    without repartitioning semantic fragments. The pass also freezes exact
+    physical-trigger groups, exclusive owner/ready-bit identities, Tier 1/2/3
+    ownership, mixed-tier root barriers, and inductive two-state promotion
+    closures for native lowering.
   }];
   let dependentDialects = [
     "obelisk::sim::ObeliskSimulationDialect"

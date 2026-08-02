@@ -408,6 +408,10 @@ bool forwardRegionNextState(sim::SimFuncOp function, uint64_t &rootCount,
 }
 
 void ObeliskSimOptimizeNativeRegionsPass::runOnOperation() {
+  auto scheduler = getOperation()->getAttrOfType<sim::NativeSchedulerModeAttr>(
+      "obelisk.native_scheduler");
+  bool evalScheduler =
+      scheduler && scheduler.getValue() == sim::NativeSchedulerMode::Eval;
   SmallVector<sim::SimFuncOp> regions;
   getOperation().walk([&](sim::SimFuncOp function) {
     if (function->hasAttr(sim::metadata::nativeRegionBody))
@@ -417,7 +421,8 @@ void ObeliskSimOptimizeNativeRegionsPass::runOnOperation() {
   for (sim::SimFuncOp function : regions) {
     // Consume the marker here. No later lowering is permitted to infer a
     // semantic property merely from the generated symbol name.
-    function->removeAttr(sim::metadata::nativeRegionBody);
+    if (!evalScheduler)
+      function->removeAttr(sim::metadata::nativeRegionBody);
     uint64_t roots = 0;
     uint64_t stages = 0;
     if (!forwardRegionNextState(function, roots, stages))

@@ -126,13 +126,12 @@ bool updateBoundary(StateDomainFact &current, StateDomainFact contribution,
 }
 
 bool isSuspensionTerminator(Operation *op) {
-  return isa<sim::SimSuspendDelayOp, sim::SimSuspendChangeOp,
-             sim::SimSuspendEdgeOp, sim::SimSuspendEdgeIffOp,
-             sim::SimSuspendLevelOp, sim::SimSuspendAnyOp,
-             sim::SimSuspendEventOp, sim::SimSuspendForeverOp,
-             sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp,
-             sim::SimSuspendChildrenOp, sim::SimSuspendObserveOp,
-             sim::SimTaskCallOp>(op);
+  return isa<
+      sim::SimSuspendDelayOp, sim::SimSuspendChangeOp, sim::SimSuspendEdgeOp,
+      sim::SimSuspendEdgeIffOp, sim::SimSuspendLevelOp, sim::SimSuspendAnyOp,
+      sim::SimSuspendEventOp, sim::SimSuspendForeverOp, sim::SimSuspendAwaitOp,
+      sim::SimSuspendJoinOp, sim::SimSuspendChildrenOp,
+      sim::SimSuspendObserveOp, sim::SimTaskCallOp>(op);
 }
 
 std::optional<APInt> getConstantInteger(Value value) {
@@ -179,10 +178,10 @@ bool hasInRangeConstantIndex(sim::SimLogicDynExtractOp op) {
   return low <= inputWidth && resultWidth <= inputWidth - low;
 }
 
-StateDomainFact transferOperation(
-    Operation *op, const DenseMap<Value, StateDomainFact> &facts,
-    const analysis::DescriptorProvenanceMap &provenance,
-    const RootSet &assumedKnownRoots) {
+StateDomainFact
+transferOperation(Operation *op, const DenseMap<Value, StateDomainFact> &facts,
+                  const analysis::DescriptorProvenanceMap &provenance,
+                  const RootSet &assumedKnownRoots) {
   if (auto constant = dyn_cast<sim::SimLogicConstantOp>(op))
     return constant.getUnknown().isZero()
                ? twoState(StateDomainReason::LogicConstant)
@@ -192,16 +191,16 @@ StateDomainFact transferOperation(
   if (auto load = dyn_cast<sim::SimRefLoadOp>(op)) {
     auto root = provenance.find(load.getReference());
     if (root != provenance.end() && root->second.descriptor &&
-        assumedKnownRoots.contains(getRootKey(root->second.resource,
-                                              *root->second.descriptor)))
+        assumedKnownRoots.contains(
+            getRootKey(root->second.resource, *root->second.descriptor)))
       return twoState(StateDomainReason::InductiveRootRead);
     return mayFourState(StateDomainReason::RefLoad);
   }
   if (auto read = dyn_cast<sim::SimNetReadOp>(op)) {
     auto root = provenance.find(read.getNet());
     if (root != provenance.end() && root->second.descriptor &&
-        assumedKnownRoots.contains(getRootKey(root->second.resource,
-                                              *root->second.descriptor)))
+        assumedKnownRoots.contains(
+            getRootKey(root->second.resource, *root->second.descriptor)))
       return twoState(StateDomainReason::InductiveRootRead);
     return mayFourState(StateDomainReason::NetRead);
   }
@@ -604,8 +603,7 @@ StringRef stringifyStateDomainReason(StateDomainReason reason) {
 }
 
 FailureOr<DenseMap<Value, StateDomainFact>>
-computeValueFacts(sim::SimDesignOp design,
-                  const RootSet &assumedKnownRoots) {
+computeValueFacts(sim::SimDesignOp design, const RootSet &assumedKnownRoots) {
   if (design.getBody().empty()) {
     design.emitOpError("cannot analyze a design with no body");
     return failure();
@@ -637,8 +635,7 @@ computeValueFacts(sim::SimDesignOp design,
       if (auto call = dyn_cast<sim::SimCallOp>(invocation.operation))
         callee = symbolTables.lookupNearestSymbolFrom<sim::SimFuncOp>(
             invocation.operation, call.getCalleeAttr());
-      else if (auto task =
-                   dyn_cast<sim::SimTaskCallOp>(invocation.operation))
+      else if (auto task = dyn_cast<sim::SimTaskCallOp>(invocation.operation))
         callee = symbolTables.lookupNearestSymbolFrom<sim::SimFuncOp>(
             invocation.operation, task.getCalleeAttr());
       else if (auto spawn = dyn_cast<sim::SimSpawnOp>(invocation.operation))
@@ -849,15 +846,16 @@ StateDomainAnalysis::compute(sim::SimDesignOp design,
         computeValueFacts(design, RootSet{});
     if (failed(facts))
       return failure();
-    return StateDomainAnalysis(std::move(*facts), {});
+    DenseMap<Value, StateDomainFact> guarded = *facts;
+    return StateDomainAnalysis(std::move(*facts), std::move(guarded), {});
   }
   RootSet candidates;
   DenseMap<uint64_t, unsigned> netDriverCounts;
   for (Operation &operation : design.getBody().front()) {
     if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation)) {
       if (isLogic(storage.getType()))
-        candidates.insert(getRootKey(sim::ComputeResourceKind::Storage,
-                                     storage.getId()));
+        candidates.insert(
+            getRootKey(sim::ComputeResourceKind::Storage, storage.getId()));
       continue;
     }
     if (auto net = dyn_cast<sim::SimNetDeclOp>(operation)) {
@@ -880,10 +878,10 @@ StateDomainAnalysis::compute(sim::SimDesignOp design,
   // conflicting contribution that arrives through the alias component.
   for (sim::SimNetConnectDeclOp connection :
        design.getBody().front().getOps<sim::SimNetConnectDeclOp>()) {
-    candidates.erase(getRootKey(sim::ComputeResourceKind::Net,
-                                connection.getLhsNetId()));
-    candidates.erase(getRootKey(sim::ComputeResourceKind::Net,
-                                connection.getRhsNetId()));
+    candidates.erase(
+        getRootKey(sim::ComputeResourceKind::Net, connection.getLhsNetId()));
+    candidates.erase(
+        getRootKey(sim::ComputeResourceKind::Net, connection.getRhsNetId()));
   }
 
   DenseMap<Value, StateDomainFact> facts;
@@ -941,6 +939,8 @@ StateDomainAnalysis::compute(sim::SimDesignOp design,
       candidates.erase(root);
   }
 
+  DenseMap<Value, StateDomainFact> guardedFacts = facts;
+
   // Keep the longstanding value facts unconditional. The inductive root set
   // is a separate guarded capability: consumers may assume it only after
   // checking the corresponding unknown planes at a kernel boundary.
@@ -959,7 +959,8 @@ StateDomainAnalysis::compute(sim::SimDesignOp design,
     return std::tie(lhs.resource, lhs.descriptor) <
            std::tie(rhs.resource, rhs.descriptor);
   });
-  return StateDomainAnalysis(std::move(facts), std::move(inductiveRoots));
+  return StateDomainAnalysis(std::move(facts), std::move(guardedFacts),
+                             std::move(inductiveRoots));
 }
 
 StateDomainFact StateDomainAnalysis::get(Value value) const {
@@ -973,6 +974,20 @@ StateDomainFact StateDomainAnalysis::get(Value value) const {
 
 bool StateDomainAnalysis::isTwoState(Value value) const {
   return get(value).domain == StateDomain::TwoState;
+}
+
+StateDomainFact StateDomainAnalysis::getWithInductiveRoots(Value value) const {
+  auto found = guardedFacts.find(value);
+  if (found != guardedFacts.end() &&
+      found->second.domain != StateDomain::Bottom)
+    return found->second;
+  if (!isLogic(value.getType()))
+    return twoState(StateDomainReason::NonLogic);
+  return mayFourState(StateDomainReason::Unresolved);
+}
+
+bool StateDomainAnalysis::isTwoStateWithInductiveRoots(Value value) const {
+  return getWithInductiveRoots(value).domain == StateDomain::TwoState;
 }
 
 bool StateDomainAnalysis::isInductivelyTwoState(

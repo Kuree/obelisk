@@ -179,6 +179,11 @@ void obelisk_rt_report_signal_diagnostics_unlocked(
       static_cast<unsigned long long>(
           context->signalDiagnostics.aotDeadlineHighWater),
       static_cast<unsigned long long>(context->signalDiagnostics.aotFallbacks));
+  for (unsigned slot = 0; slot != 64; ++slot)
+    if (context->signalDiagnostics.aotActorExecutions[slot] != 0)
+      std::fprintf(stderr, "obelisk-aot-actor slot=%u executions=%llu\n", slot,
+                   static_cast<unsigned long long>(
+                       context->signalDiagnostics.aotActorExecutions[slot]));
 }
 
 obelisk_rt_context::~obelisk_rt_context() {

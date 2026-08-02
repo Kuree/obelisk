@@ -11,9 +11,9 @@ namespace obelisk::detail {
 mlir::LogicalResult lowerPackedSimulationOperations(
     mlir::ModuleOp module, const llvm::DataLayout &dataLayout,
     const NativeStateLayout &stateLayout, bool enableDirectStaticState,
-    const NativeStaticNBAPlan *staticNBAPlan, bool vpiAllowsWrite);
+    const NativeStaticNBAPlan *staticNBAPlan, bool vpiAllowsWrite,
+    bool experimentalTwoState);
 
 } // namespace obelisk::detail
 
 #endif // OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONPACKEDLOWERING_H
-

@@ -217,5 +217,158 @@ makePlainNativeWrappers(ModuleOp module, func::FuncOp body, StringRef baseName,
   return success();
 }
 
-} // namespace obelisk::detail
+LogicalResult makeDirectFragmentWrapper(
+    ModuleOp module, sim::SimFuncOp body, sim::SimFuncOp actor,
+    StringRef wrapperName, uint32_t actorSlot, uint32_t continuation,
+    const SimulationProcessFrameAnalysis &analysis) {
+  OpBuilder builder(module.getContext());
+  builder.setInsertionPointToEnd(module.getBody());
+  Location location = body.getLoc();
+  MLIRContext *context = module.getContext();
+  Type pointer = LLVM::LLVMPointerType::get(context);
+  Type i32 = builder.getI32Type();
 
+  auto wrapper = LLVM::LLVMFuncOp::create(
+      builder, location, wrapperName,
+      LLVM::LLVMFunctionType::get(i32, {pointer}, false));
+  Block *entry = wrapper.addEntryBlock(builder);
+  if (body->hasAttr("obelisk.eval.raw_captures")) {
+    wrapper->setAttr(
+        "passthrough",
+        builder.getArrayAttr({builder.getStringAttr("alwaysinline")}));
+    builder.setInsertionPointToStart(entry);
+    Value currentContext = LLVM::AddressOfOp::create(
+        builder, location, pointer, "__obelisk_current_context");
+    LLVM::StoreOp::create(builder, location, entry->getArgument(0),
+                          currentContext, 8);
+    SmallVector<Value> arguments;
+    for (Type input : body.getFunctionType().getInputs()) {
+      Type converted = convertProcessType(input, context);
+      arguments.push_back(
+          LLVM::PoisonOp::create(builder, location, converted));
+    }
+    func::CallOp::create(builder, location, body.getSymName(), TypeRange{},
+                         arguments);
+    LLVM::ReturnOp::create(
+        builder, location,
+        llvmConstant(builder, location, i32, OBELISK_RT_OK));
+    return success();
+  }
+  Block *invoke = new Block;
+  Block *failed = new Block;
+  wrapper.getBody().push_back(invoke);
+  wrapper.getBody().push_back(failed);
+  builder.setInsertionPointToStart(entry);
+  Value instanceAddress = entryAlloca(builder, location, pointer, 1, 8);
+  Value enterStatus =
+      LLVM::CallOp::create(
+          builder, location, TypeRange{i32},
+          SymbolRefAttr::get(
+              context, "obelisk_rt_v1_scheduler_direct_fragment_enter"),
+          ValueRange{entry->getArgument(0),
+                     llvmConstant(builder, location, i32, actorSlot),
+                     llvmConstant(builder, location, i32, continuation),
+                     instanceAddress})
+          .getResult();
+  Value entered = arith::CmpIOp::create(
+      builder, location, arith::CmpIPredicate::eq, enterStatus,
+      llvmConstant(builder, location, i32, OBELISK_RT_OK));
+  cf::CondBranchOp::create(builder, location, entered, invoke, ValueRange{},
+                           failed, ValueRange{});
+
+  builder.setInsertionPointToStart(failed);
+  LLVM::ReturnOp::create(builder, location, enterStatus);
+
+  builder.setInsertionPointToStart(invoke);
+  Value instance =
+      LLVM::LoadOp::create(builder, location, pointer, instanceAddress, 8);
+  Value currentContext = LLVM::AddressOfOp::create(
+      builder, location, pointer, "__obelisk_current_context");
+  LLVM::StoreOp::create(builder, location, entry->getArgument(0),
+                        currentContext, 8);
+  Value frame =
+      loadAt(builder, location, instance, kInstanceFrameOffset, pointer, 8);
+  SmallVector<Value> arguments;
+  size_t physicalArgument = 0;
+  Block &actorEntry = actor.getBody().front();
+  for (const ProcessFrameValue &slot : analysis.getEntryCaptureLayout()) {
+    if (!slot.hasValueStorage()) {
+      arguments.push_back(entry->getArgument(0));
+      ++physicalArgument;
+      continue;
+    }
+    if (physicalArgument >= actorEntry.getNumArguments())
+      return actor.emitError("direct fragment capture layout is truncated");
+    Type valueType =
+        convertProcessType(actorEntry.getArgument(physicalArgument++).getType(),
+                           context);
+    arguments.push_back(loadAt(builder, location, frame, slot.valueOffset,
+                               valueType, slot.alignment));
+    if (slot.hasSecondaryStorage()) {
+      if (physicalArgument >= actorEntry.getNumArguments())
+        return actor.emitError(
+            "direct fragment secondary capture layout is truncated");
+      Type secondaryType = convertProcessType(
+          actorEntry.getArgument(physicalArgument++).getType(), context);
+      arguments.push_back(loadAt(builder, location, frame,
+                                 slot.getSecondaryOffset(), secondaryType,
+                                 slot.alignment));
+    }
+  }
+  if (physicalArgument != actorEntry.getNumArguments())
+    return actor.emitError(
+        "direct fragment capture layout disagrees with actor entry");
+  if (arguments.size() != body.getFunctionType().getNumInputs()) {
+    const ProcessSuspension *selected = nullptr;
+    for (const ProcessSuspension &suspension : analysis.getSuspensions())
+      if (suspension.continuationID == continuation) {
+        selected = &suspension;
+        break;
+      }
+    if (!selected)
+      return actor.emitError("direct fragment continuation is unknown");
+    physicalArgument = 0;
+    for (const ProcessFrameValue &slot :
+         analysis.getContinuationLayout(continuation)) {
+      if (physicalArgument >= selected->continuation->getNumArguments())
+        return actor.emitError(
+            "direct fragment continuation layout is truncated");
+      Type valueType = convertProcessType(
+          selected->continuation->getArgument(physicalArgument++).getType(),
+          context);
+      arguments.push_back(loadAt(builder, location, frame, slot.valueOffset,
+                                 valueType, slot.alignment));
+      if (slot.hasSecondaryStorage()) {
+        if (physicalArgument >= selected->continuation->getNumArguments())
+          return actor.emitError(
+              "direct fragment continuation secondary layout is truncated");
+        Type secondaryType = convertProcessType(
+            selected->continuation->getArgument(physicalArgument++).getType(),
+            context);
+        arguments.push_back(loadAt(builder, location, frame,
+                                   slot.getSecondaryOffset(), secondaryType,
+                                   slot.alignment));
+      }
+    }
+    if (physicalArgument != selected->continuation->getNumArguments())
+      return actor.emitError(
+          "direct fragment continuation layout disagrees with actor entry");
+  }
+  if (arguments.size() != body.getFunctionType().getNumInputs())
+    return actor.emitError(
+        "direct fragment continuation layout disagrees with body entry");
+  func::CallOp::create(builder, location, body.getSymName(), TypeRange{},
+                       arguments);
+  Value leaveStatus =
+      LLVM::CallOp::create(
+          builder, location, TypeRange{i32},
+          SymbolRefAttr::get(
+              context, "obelisk_rt_v1_scheduler_direct_fragment_leave"),
+          ValueRange{entry->getArgument(0),
+                     llvmConstant(builder, location, i32, actorSlot)})
+          .getResult();
+  LLVM::ReturnOp::create(builder, location, leaveStatus);
+  return success();
+}
+
+} // namespace obelisk::detail

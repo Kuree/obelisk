@@ -300,7 +300,7 @@ static int executeCompilation(const InputArgList &args) {
       args.getLastArgValue(OPT_native_scheduler_EQ, "auto");
   if (!obelisk::sim::symbolizeNativeSchedulerMode(nativeScheduler)) {
     emitDriverError(Twine("unsupported native scheduler '") + nativeScheduler +
-                    "'; expected auto, generic, or aot");
+                    "'; expected auto, generic, aot, or eval");
     valid = false;
   }
   StringRef staticSpecialization =
@@ -414,6 +414,14 @@ static int executeCompilation(const InputArgList &args) {
   if (failed(importedModule))
     return 1;
   OwningOpRef<ModuleOp> module = std::move(*importedModule);
+
+  // Eval remains an explicit development mode until its generated run loop
+  // participates in the normal runtime lifecycle.  Auto must never select a
+  // source-name/parameter-specific benchmark substitute.
+  if (native && nativeScheduler == "eval")
+    (*module)->setAttr("obelisk.native_scheduler",
+                       obelisk::sim::NativeSchedulerModeAttr::get(
+                           &context, obelisk::sim::NativeSchedulerMode::Eval));
 
   if (!emitSlang) {
     PassManager passManager(&context);

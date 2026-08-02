@@ -19,6 +19,8 @@
 // RUN: %t.native > %t.native.out
 // RUN: %t.bytecode > %t.bytecode.out
 // RUN: diff -u %t.native.out %t.bytecode.out
+// RUN: not obelisk -O0 --native-scheduler=eval -emit-llvm %s -o %t.eval.ll \
+// RUN:   2>&1 | FileCheck %s --check-prefix=EVAL-DIAG
 
 module native_aot_scheduler;
   bit clock;
@@ -51,3 +53,4 @@ endmodule
 // SPECIALIZATION-ON: @__obelisk_aot_nba_dirty_roots_v1
 // SPECIALIZATION-ON: @__obelisk_aot_nba_dirty_summary_v1
 // SPECIALIZATION-ON-NOT: call i32 @obelisk_rt_v1_static_nba_claim
+// EVAL-DIAG: native eval is unavailable until generated run_until participates in the runtime lifecycle

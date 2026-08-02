@@ -198,6 +198,141 @@ def SimComputeKernelAttr : SimAttr<"ComputeKernel", "kernel"> {
   let genVerifyDecl = 1;
 }
 
+// A physical trigger is independent of process identity.  Descriptor IDs are
+// already canonical within a frozen design, so this tuple distinguishes exact
+// packed ranges and edge senses without duplicating shared downstream cones.
+def SimPhysicalTriggerAttr : SimAttr<"PhysicalTrigger", "physical_trigger"> {
+  let parameters = (ins
+    EnumParameter<SimComputeResourceKind>:$resource,
+    "uint64_t":$descriptor,
+    "uint64_t":$low,
+    "uint64_t":$width,
+    EnumParameter<SimComputeTriggerKind>:$edge
+  );
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimTriggerGroupAttr : SimAttr<"TriggerGroup", "trigger_group"> {
+  let parameters = (ins
+    "uint32_t":$id,
+    SimPhysicalTriggerAttr:$key
+  );
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimInductiveRootAttr : SimAttr<"InductiveRoot", "inductive_root"> {
+  let parameters = (ins
+    EnumParameter<SimComputeResourceKind>:$resource,
+    "uint64_t":$descriptor
+  );
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+// Every final merged fragment has one owner and one stable ready bit.  Shared
+// means that the owner is not a physical-trigger owner (multi-clock cones,
+// convergence SCCs, and bytecode islands are examples).  Tier-1 candidates
+// always have a four-state body; twoStateEligible requests a second body and
+// one promotion-dirty latch for the complete owner closure.
+def SimScheduledKernelAttr : SimAttr<"ScheduledKernel", "scheduled_kernel"> {
+  let parameters = (ins
+    "uint32_t":$id,
+    "uint32_t":$owner,
+    "uint32_t":$readyBit,
+    EnumParameter<SimSchedulerTierKind>:$tier,
+    EnumParameter<SimComputeRegionKind>:$region,
+    EnumParameter<SimComputeScheduleKind>:$schedule,
+    "bool":$shared,
+    "bool":$loweringReady,
+    "bool":$twoStateEligible,
+    "::mlir::ArrayAttr":$promotionRoots,
+    "::mlir::DenseI64ArrayAttr":$fragments
+  );
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimSchedulerIngressAttr : SimAttr<"SchedulerIngress", "scheduler_ingress"> {
+  let parameters = (ins
+    "uint32_t":$trigger,
+    "uint32_t":$owner,
+    "uint32_t":$readyBit,
+    "uint32_t":$fragment
+  );
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+// A root with writers in more than one execution tier receives a separate
+// barrier owner.  The owner tier is the least-static writer tier and therefore
+// preserves ordering without cloning the root into multiple schedulers.
+def SimScheduledRootAttr : SimAttr<"ScheduledRoot", "scheduled_root"> {
+  let parameters = (ins
+    EnumParameter<SimComputeResourceKind>:$resource,
+    "uint64_t":$descriptor,
+    "uint64_t":$low,
+    "uint64_t":$width,
+    "uint32_t":$owner,
+    EnumParameter<SimSchedulerTierKind>:$tier
+  );
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+// A physical clock key is deliberately independent of process identity.  The
+// native backend resolves descriptor aliases to the same static-state ID when
+// it materializes the revision-coupled runtime plan; this persistent form
+// records the exact descriptor/range/edge proof made by the compute graph.
+def SimClockKeyAttr : SimAttr<"ClockKey", "clock_key"> {
+  let parameters = (ins
+    EnumParameter<SimComputeResourceKind>:$resource,
+    "uint64_t":$descriptor,
+    "uint64_t":$low,
+    "uint64_t":$width,
+    EnumParameter<SimComputeTriggerKind>:$edge
+  );
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimClockKernelAttr : SimAttr<"ClockKernel", "clock_kernel"> {
+  let parameters = (ins
+    "uint32_t":$id,
+    SimClockKeyAttr:$key
+  );
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+// `owner` names either a clock kernel (owner < clock count) or an exclusively
+// owned shared/fallback kernel.  `bit` is stable within that owner and is the
+// native ready-mask identity; original graph IDs remain in `fragments`.
+def SimMergedFragmentAttr : SimAttr<"MergedFragment", "merged_fragment"> {
+  let parameters = (ins
+    "uint32_t":$id,
+    "uint32_t":$owner,
+    "uint32_t":$bit,
+    "bool":$shared,
+    "bool":$loweringReady,
+    "::mlir::DenseI64ArrayAttr":$fragments
+  );
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimKernelIngressAttr : SimAttr<"KernelIngress", "kernel_ingress"> {
+  let parameters = (ins
+    "uint32_t":$clock,
+    "uint32_t":$owner,
+    "uint32_t":$bit,
+    "uint32_t":$fragment
+  );
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
 def SimComputeRegionAttr : SimAttr<"ComputeRegion", "region"> {
   let parameters = (ins
     EnumParameter<SimComputeRegionKind>:$kind,
@@ -215,6 +350,36 @@ def SimComputeGraphAttr : SimAttr<"ComputeGraph", "graph"> {
     "::mlir::ArrayAttr":$nodes,
     "::mlir::ArrayAttr":$edges,
     "::mlir::ArrayAttr":$regions
+  );
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimThreeTierScheduleAttr
+    : SimAttr<"ThreeTierSchedule", "three_tier_schedule"> {
+  let summary = "exclusive physical-trigger and fine-kernel ownership plan";
+  let parameters = (ins
+    "uint32_t":$version,
+    SimComputeGraphAttr:$sourceGraph,
+    "uint32_t":$ownerCount,
+    "::mlir::ArrayAttr":$triggers,
+    "::mlir::ArrayAttr":$kernels,
+    "::mlir::ArrayAttr":$roots,
+    "::mlir::ArrayAttr":$ingress
+  );
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimClockKernelPlanAttr : SimAttr<"ClockKernelPlan", "clock_kernel_plan"> {
+  let summary = "stable clock-keyed native-kernel ownership plan";
+  let parameters = (ins
+    "uint32_t":$version,
+    SimComputeGraphAttr:$sourceGraph,
+    "uint32_t":$ownerCount,
+    "::mlir::ArrayAttr":$clocks,
+    "::mlir::ArrayAttr":$mergedFragments,
+    "::mlir::ArrayAttr":$ingress
   );
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;

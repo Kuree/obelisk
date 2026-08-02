@@ -141,4 +141,3 @@ LogicalResult lowerOrdinaryFunction(sim::SimFuncOp function) {
 }
 
 } // namespace obelisk::detail
-

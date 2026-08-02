@@ -62,8 +62,8 @@ def execution_tier_EQ : Joined<["--"], "execution-tier=">,
   Values<"native,bytecode">,
   HelpText<"Select generated simulator execution tier (default: native)">;
 def native_scheduler_EQ : Joined<["--"], "native-scheduler=">,
-  Group<Compilation_Group>, MetaVarName<"<auto|generic|aot>">,
-  Values<"auto,generic,aot">,
+  Group<Compilation_Group>, MetaVarName<"<auto|generic|aot|eval>">,
+  Values<"auto,generic,aot,eval">,
   HelpText<"Select native scheduler generation (default: hybrid auto)">;
 def static_specialization_EQ : Joined<["--"], "static-specialization=">,
   Group<Compilation_Group>, MetaVarName<"<auto|off|on>">,

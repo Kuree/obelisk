@@ -37,10 +37,12 @@ def SimNativeSchedulerGeneric
     : I32EnumAttrCase<"Generic", 1, "generic">;
 def SimNativeSchedulerAOT
     : I32EnumAttrCase<"AOT", 2, "aot">;
+def SimNativeSchedulerEval
+    : I32EnumAttrCase<"Eval", 3, "eval">;
 def SimNativeSchedulerMode
     : I32EnumAttr<"NativeSchedulerMode", "native scheduling policy", [
         SimNativeSchedulerAuto, SimNativeSchedulerGeneric,
-        SimNativeSchedulerAOT
+        SimNativeSchedulerAOT, SimNativeSchedulerEval
       ]> {
   let cppNamespace = "::obelisk::sim";
 }
@@ -439,6 +441,20 @@ def SimComputeTierGenerated : I32EnumAttrCase<"Generated", 2, "generated">;
 def SimComputeTierKind
     : I32EnumAttr<"ComputeTierKind", "fragment implementation tier", [
         SimComputeTierNative, SimComputeTierBytecode, SimComputeTierGenerated
+      ]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
+// Execution ownership is separate from implementation provenance.  A native
+// fragment may belong to a coarse clock kernel (Tier 1), a fine generated
+// convergence kernel (Tier 2), or a bytecode island (Tier 3) when surrounding
+// semantics require the generic scheduler.
+def SimSchedulerTier1 : I32EnumAttrCase<"Tier1", 1, "tier1">;
+def SimSchedulerTier2 : I32EnumAttrCase<"Tier2", 2, "tier2">;
+def SimSchedulerTier3 : I32EnumAttrCase<"Tier3", 3, "tier3">;
+def SimSchedulerTierKind
+    : I32EnumAttr<"SchedulerTierKind", "generated scheduler ownership tier", [
+        SimSchedulerTier1, SimSchedulerTier2, SimSchedulerTier3
       ]> {
   let cppNamespace = "::obelisk::sim";
 }

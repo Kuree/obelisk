@@ -429,7 +429,7 @@ ABI_SIZE_ALIGN(obelisk_rt_static_nba_site, 16, 8);
 ABI_OFFSET(obelisk_rt_static_nba_site, site, 0);
 ABI_OFFSET(obelisk_rt_static_nba_site, root, 8);
 ABI_OFFSET(obelisk_rt_static_nba_site, storage, 12);
-ABI_SIZE_ALIGN(obelisk_rt_static_fanout_entry, 40, 8);
+ABI_SIZE_ALIGN(obelisk_rt_static_fanout_entry, 48, 8);
 ABI_OFFSET(obelisk_rt_static_fanout_entry, static_state, 0);
 ABI_OFFSET(obelisk_rt_static_fanout_entry, actor_slot, 4);
 ABI_OFFSET(obelisk_rt_static_fanout_entry, continuation, 8);
@@ -438,12 +438,31 @@ ABI_OFFSET(obelisk_rt_static_fanout_entry, compute_node, 16);
 ABI_OFFSET(obelisk_rt_static_fanout_entry, reserved, 20);
 ABI_OFFSET(obelisk_rt_static_fanout_entry, low_bit, 24);
 ABI_OFFSET(obelisk_rt_static_fanout_entry, bit_width, 32);
+ABI_OFFSET(obelisk_rt_static_fanout_entry, kernel, 40);
+ABI_OFFSET(obelisk_rt_static_fanout_entry, merged_bit, 44);
+ABI_SIZE_ALIGN(obelisk_rt_native_clock_kernel, 48, 8);
+ABI_OFFSET(obelisk_rt_native_clock_kernel, static_state, 0);
+ABI_OFFSET(obelisk_rt_native_clock_kernel, edge, 4);
+ABI_OFFSET(obelisk_rt_native_clock_kernel, low_bit, 8);
+ABI_OFFSET(obelisk_rt_native_clock_kernel, bit_width, 16);
+ABI_OFFSET(obelisk_rt_native_clock_kernel, ingress_mask, 24);
+ABI_OFFSET(obelisk_rt_native_clock_kernel, ingress_word_count, 32);
+ABI_OFFSET(obelisk_rt_native_clock_kernel, reserved, 36);
+ABI_OFFSET(obelisk_rt_native_clock_kernel, active_mask, 40);
+ABI_SIZE_ALIGN(obelisk_rt_native_merged_fragment, 32, 8);
+ABI_OFFSET(obelisk_rt_native_merged_fragment, actor_slot, 0);
+ABI_OFFSET(obelisk_rt_native_merged_fragment, continuation, 4);
+ABI_OFFSET(obelisk_rt_native_merged_fragment, kernel, 8);
+ABI_OFFSET(obelisk_rt_native_merged_fragment, bit, 12);
+ABI_OFFSET(obelisk_rt_native_merged_fragment, compute_node, 16);
+ABI_OFFSET(obelisk_rt_native_merged_fragment, flags, 20);
+ABI_OFFSET(obelisk_rt_native_merged_fragment, execute, 24);
 ABI_SIZE_ALIGN(obelisk_rt_static_actor_root, 16, 4);
 ABI_OFFSET(obelisk_rt_static_actor_root, actor_slot, 0);
 ABI_OFFSET(obelisk_rt_static_actor_root, static_state, 4);
 ABI_OFFSET(obelisk_rt_static_actor_root, flags, 8);
 ABI_OFFSET(obelisk_rt_static_actor_root, reserved, 12);
-ABI_SIZE_ALIGN(obelisk_rt_native_schedule_plan, 200, 8);
+ABI_SIZE_ALIGN(obelisk_rt_native_schedule_plan, 240, 8);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, size, 0);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, graph_layout_checksum, 8);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, mutable_state, 16);
@@ -473,6 +492,12 @@ ABI_OFFSET(obelisk_rt_native_schedule_plan, nba_dirty_reserved, 180);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, nba_dirty_summary, 184);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, nba_dirty_summary_word_count, 192);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, nba_dirty_summary_reserved, 196);
+ABI_OFFSET(obelisk_rt_native_schedule_plan, clock_kernels, 200);
+ABI_OFFSET(obelisk_rt_native_schedule_plan, clock_kernel_count, 208);
+ABI_OFFSET(obelisk_rt_native_schedule_plan, clock_kernel_reserved, 212);
+ABI_OFFSET(obelisk_rt_native_schedule_plan, merged_fragments, 216);
+ABI_OFFSET(obelisk_rt_native_schedule_plan, merged_fragment_count, 224);
+ABI_OFFSET(obelisk_rt_native_schedule_plan, timeslot_coordinator, 232);
 
 #undef ABI_OFFSET
 #undef ABI_SIZE_ALIGN
@@ -835,6 +860,18 @@ ABI_FUNCTION(obelisk_rt_v1_scheduler_add_planned,
 ABI_FUNCTION(obelisk_rt_v1_scheduler_install_aot,
              obelisk_rt_status (*)(obelisk_rt_context *,
                                    const obelisk_rt_native_schedule_plan *));
+ABI_FUNCTION(obelisk_rt_v1_scheduler_activate_clock_kernel,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint32_t,
+                                   uint32_t));
+ABI_FUNCTION(obelisk_rt_v1_scheduler_run_clock_coordinator,
+             obelisk_rt_status (*)(obelisk_rt_context *));
+ABI_FUNCTION(obelisk_rt_v1_scheduler_direct_fragment_enter,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint32_t, uint32_t,
+                                   obelisk_rt_process_instance_v1 **));
+ABI_FUNCTION(obelisk_rt_v1_scheduler_direct_fragment_leave,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint32_t));
+ABI_FUNCTION(obelisk_rt_v1_scheduler_execute_aot_actor,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint32_t));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_add_aot,
              obelisk_rt_status (*)(obelisk_rt_context *,
                                    obelisk_rt_process_instance_v1 *, uint32_t,

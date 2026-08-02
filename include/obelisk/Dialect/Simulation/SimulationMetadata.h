@@ -45,6 +45,8 @@ inline constexpr llvm::StringLiteral staticBodyFusion =
 inline constexpr llvm::StringLiteral staticFusion = "obelisk_sim.static_fusion";
 inline constexpr llvm::StringLiteral computeKernels =
     "obelisk_sim.compute_kernels";
+inline constexpr llvm::StringLiteral threeTierSchedule =
+    "obelisk_sim.three_tier_schedule";
 inline constexpr llvm::StringLiteral staticSpecialization =
     "obelisk_sim.static_specialization";
 inline constexpr llvm::StringLiteral staticSuperstep =
@@ -69,7 +71,7 @@ inline bool isKnownOperation(llvm::StringRef name) {
   return isKnownBoundary(name) || name == bindings || name == delayScale ||
          name == delayQuantum || name == hierarchicalName || name == lowered ||
          name == staticBodyFusion || name == staticFusion ||
-         name == computeKernels ||
+         name == computeKernels || name == threeTierSchedule ||
          name == staticSpecialization || name == staticSuperstep;
 }
 

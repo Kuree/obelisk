@@ -2,13 +2,14 @@
 
 #include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
 
-#include "SimulationToLLVMCoroutinePrivate.h"
 #include "SimulationAOTPlanning.h"
 #include "SimulationNBALowering.h"
 #include "SimulationPackedLowering.h"
 #include "SimulationProcessActivationLowering.h"
 #include "SimulationProcessCoroutineLowering.h"
 #include "SimulationProcessFunctionLowering.h"
+#include "SimulationProcessWrapperLowering.h"
+#include "SimulationToLLVMCoroutinePrivate.h"
 
 #include "obelisk/Analysis/NativeAOTAnalysis.h"
 #include "obelisk/Analysis/SimulationScheduleAnalysis.h"
@@ -28,11 +29,16 @@
 #include "mlir/Conversion/MathToLLVM/MathToLLVM.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/IRMapping.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Verifier.h"
+#include "llvm/ADT/DenseSet.h"
+
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
 
@@ -54,10 +60,12 @@ namespace obelisk {
 namespace {
 
 using detail::assumeCleanSpecializationAttr;
+using detail::buildNativePeriodicClockPlan;
+using detail::buildNativeStateLayout;
 using detail::buildNativeStaticActorRootPlan;
 using detail::buildNativeStaticFanoutPlan;
 using detail::buildNativeStaticNBAPlan;
-using detail::buildNativeStateLayout;
+using detail::buildNativeThreeTierPlan;
 using detail::convertProcessType;
 using detail::declareNativeRuntimeABI;
 using detail::insertAutomaticOwnerReleases;
@@ -66,25 +74,238 @@ using detail::lowerOrdinaryFunction;
 using detail::lowerPackedSimulationOperations;
 using detail::lowerPlainNativeProcess;
 using detail::lowerSuspendableProcess;
-using detail::materializeNativeSchedulerGlobals;
+using detail::makeDirectFragmentWrapper;
+using detail::makeNativeAOTPlanLegacy;
+using detail::makeNativeEvalPlan;
 using detail::makeProcessActivationHelper;
 using detail::makeProcessSpawnHelper;
 using detail::makeSchedulerMain;
 using detail::makeStatePlane;
 using detail::markCleanStaticNBAsInGuardedBodies;
-using detail::makeNativeAOTPlan;
-using detail::materializeManagedMethodThunks;
 using detail::materializeGeneratedNBAAccumulators;
+using detail::materializeManagedMethodThunks;
 using detail::materializeNativeObserverThunks;
+using detail::materializeNativePeriodicClockPlan;
+using detail::materializeNativeSchedulerGlobals;
+using detail::materializeNativeThreeTierPlan;
+using detail::NativeDirectFragment;
+using detail::NativePeriodicClock;
 using detail::NativeSchedulePlan;
 using detail::NativeStateLayout;
 using detail::NativeStaticFanoutPlan;
 using detail::NativeStaticNBAPlan;
+using detail::NativeThreeTierPlan;
 using detail::populateContextRuntimeToLLVMConversionPattern;
 using detail::prepareManagedLowering;
 using detail::specializeNativeAOTCaptures;
 using detail::threadProcessStateThroughCFG;
 using detail::validateProcessABI;
+
+FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
+    ModuleOp module, sim::SimDesignOp design,
+    const analysis::NativeAOTAnalysis &eligibility,
+    const llvm::MapVector<
+        Operation *, std::unique_ptr<SimulationProcessFrameAnalysis>> &analyses,
+    const DenseMap<Operation *, SmallVector<uint32_t>> &bytecodeContinuations,
+    bool enabled) {
+  SmallVector<NativeDirectFragment> result;
+  struct PendingEvalWrapper {
+    sim::SimFuncOp body;
+    sim::SimFuncOp actor;
+    std::string wrapper;
+    uint32_t actorSlot;
+    uint32_t continuation;
+    const SimulationProcessFrameAnalysis *analysis;
+  };
+  SmallVector<PendingEvalWrapper> pendingEvalWrappers;
+  if (!enabled || !design)
+    return result;
+  MLIRContext *context = module.getContext();
+  for (const auto &entry : analyses) {
+    auto actor = dyn_cast_if_present<sim::SimFuncOp>(entry.first);
+    auto actorSlot = eligibility.getActorSlots().find(entry.first);
+    if (!actor || actorSlot == eligibility.getActorSlots().end() ||
+        (!actor->hasAttr(sim::metadata::nativeRegionBody) &&
+         !actor->hasAttr("obelisk.eval.body")))
+      continue;
+    if (auto evalBodyRef =
+            actor->getAttrOfType<FlatSymbolRefAttr>("obelisk.eval.body")) {
+      sim::SimFuncOp evalBody =
+          design.lookupSymbol<sim::SimFuncOp>(evalBodyRef.getValue());
+      if (!evalBody)
+        return actor.emitOpError("references a missing eval body");
+      llvm::SmallDenseSet<uint32_t, 4> materializedContinuations;
+      for (const ProcessSuspension &suspension :
+           entry.second->getSuspensions()) {
+        if (!materializedContinuations.insert(suspension.continuationID).second)
+          continue;
+        SmallString<96> wrapperName;
+        (Twine("__obelisk_direct_fragment_") + Twine(actorSlot->second) + "_" +
+         Twine(suspension.continuationID))
+            .toVector(wrapperName);
+        std::string wrapper = (Twine(wrapperName) + ".__obelisk_execute").str();
+        pendingEvalWrappers.push_back(
+            {evalBody, actor, std::move(wrapper), actorSlot->second,
+             suspension.continuationID, entry.second.get()});
+        // The eval body represents the complete activation after the physical
+        // clock wait.  One direct entry is sufficient for the ceiling
+        // experiment; other continuations retain their ordinary fallback.
+        break;
+      }
+      continue;
+    }
+    if (entry.second->getSuspensions().size() != 1)
+      continue;
+    for (const ProcessSuspension &suspension : entry.second->getSuspensions()) {
+      if (!isa<sim::SimSuspendChangeOp, sim::SimSuspendEdgeOp>(
+              suspension.operation) ||
+          suspension.continuation->getNumArguments() != 0)
+        continue;
+      auto bytecode = bytecodeContinuations.find(entry.first);
+      if (bytecode != bytecodeContinuations.end() &&
+          llvm::is_contained(bytecode->second, suspension.continuationID))
+        continue;
+
+      Block *start = suspension.continuation;
+      auto isTerminalWait = [&](Block *block) {
+        Operation *terminator = block->getTerminator();
+        sim::ContinuationSiteAttr site;
+        if (auto suspend = dyn_cast<sim::SimSuspendChangeOp>(terminator))
+          site = suspend.getSiteAttr();
+        else if (auto suspend = dyn_cast<sim::SimSuspendEdgeOp>(terminator))
+          site = suspend.getSiteAttr();
+        return site && site.getId() == suspension.continuationID;
+      };
+      SmallVector<Block *> blocks;
+      SmallVector<Block *> pending{start};
+      DenseSet<Block *> seen;
+      bool supported = true;
+      while (!pending.empty() && supported) {
+        Block *block = pending.pop_back_val();
+        if (!seen.insert(block).second)
+          continue;
+        if (block == &actor.getBody().front() ||
+            block->getParent() != &actor.getBody()) {
+          supported = false;
+          break;
+        }
+        bool terminalWait = isTerminalWait(block);
+        for (Operation &operation : *block)
+          if ((sim::isSuspensionOp(&operation) && !terminalWait) ||
+              isa<sim::SimReturnOp, sim::SimTerminationRequestedOp,
+                  sim::SimStatusCheckOp>(operation)) {
+            supported = false;
+            break;
+          }
+        if (!supported)
+          break;
+        blocks.push_back(block);
+        if (terminalWait)
+          continue;
+        Operation *terminator = block->getTerminator();
+        if (!isa<cf::BranchOp, cf::CondBranchOp>(terminator)) {
+          supported = false;
+          break;
+        }
+        for (Block *successor : terminator->getSuccessors()) {
+          pending.push_back(successor);
+        }
+      }
+      // The experimental eval scheduler deliberately clones the complete
+      // acyclic activation CFG.  Its purpose is to measure the ceiling of a
+      // Verilator-shaped whole-cycle evaluator, so imposing the production
+      // code-size profitability cap here would leave the main clocked body in
+      // the fine actor dispatcher and invalidate the experiment.
+      if (!supported || blocks.empty())
+        continue;
+
+      DenseSet<Block *> blockSet(blocks.begin(), blocks.end());
+      for (Block *block : blocks)
+        for (Operation &operation : *block)
+          for (Value operand : operation.getOperands()) {
+            Block *definition = operand.getParentBlock();
+            bool entryArgument = isa<BlockArgument>(operand) &&
+                                 definition == &actor.getBody().front();
+            if (!entryArgument && !blockSet.contains(definition)) {
+              supported = false;
+              break;
+            }
+          }
+      if (!supported)
+        continue;
+
+      SmallString<96> bodyName;
+      (Twine("__obelisk_direct_fragment_") + Twine(actorSlot->second) + "_" +
+       Twine(suspension.continuationID))
+          .toVector(bodyName);
+      unsigned collision = 0;
+      bodyName = SymbolTable::generateSymbolName<96>(
+          bodyName,
+          [&](StringRef name) {
+            return SymbolTable::lookupSymbolIn(design, name) != nullptr;
+          },
+          collision);
+      SmallVector<DictionaryAttr> argumentAttrs;
+      for (BlockArgument argument : actor.getBody().front().getArguments())
+        argumentAttrs.push_back(actor.getArgAttrDict(argument.getArgNumber()));
+      OpBuilder builder = OpBuilder::atBlockEnd(&design.getBody().front());
+      sim::SimFuncOp body = sim::SimFuncOp::create(
+          builder, actor.getLoc(), bodyName,
+          FunctionType::get(context, actor.getFunctionType().getInputs(),
+                            TypeRange{}),
+          sim::EntryKind::Function, ArrayRef<NamedAttribute>{}, argumentAttrs);
+      body->setAttr("obelisk.eval.borrowed_captures", UnitAttr::get(context));
+      SymbolTable::setSymbolVisibility(body, SymbolTable::Visibility::Private);
+      IRMapping mapping;
+      for (auto [source, destination] :
+           llvm::zip_equal(actor.getBody().front().getArguments(),
+                           body.getBody().front().getArguments()))
+        mapping.map(source, destination);
+      for (Block *source : blocks) {
+        Block *destination = new Block;
+        body.getBody().push_back(destination);
+        mapping.map(source, destination);
+        for (BlockArgument argument : source->getArguments()) {
+          BlockArgument mapped =
+              destination->addArgument(argument.getType(), argument.getLoc());
+          mapping.map(argument, mapped);
+        }
+      }
+      builder.setInsertionPointToEnd(&body.getBody().front());
+      cf::BranchOp::create(builder, actor.getLoc(), mapping.lookup(start));
+      for (Block *source : blocks) {
+        builder.setInsertionPointToEnd(mapping.lookup(source));
+        for (Operation &operation : *source) {
+          if (isTerminalWait(source) && &operation == source->getTerminator())
+            sim::SimReturnOp::create(builder, operation.getLoc(), ValueRange{});
+          else
+            builder.clone(operation, mapping);
+        }
+      }
+
+      std::string wrapper = (Twine(bodyName) + ".__obelisk_execute").str();
+      if (failed(makeDirectFragmentWrapper(
+              module, body, actor, wrapper, actorSlot->second,
+              suspension.continuationID, *entry.second)))
+        return failure();
+      result.push_back(
+          {actorSlot->second, suspension.continuationID, std::move(wrapper)});
+    }
+  }
+  // Adding LLVM wrapper operations while walking the process-analysis map can
+  // invalidate MLIR's internal symbol/cache state once enough eval bodies are
+  // present.  Materialize them in a second phase after every actor decision is
+  // complete.
+  for (PendingEvalWrapper &pending : pendingEvalWrappers) {
+    if (failed(makeDirectFragmentWrapper(
+            module, pending.body, pending.actor, pending.wrapper,
+            pending.actorSlot, pending.continuation, *pending.analysis)))
+      return failure();
+    result.push_back(
+        {pending.actorSlot, pending.continuation, std::move(pending.wrapper)});
+  }
+  return result;
+}
 
 LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     ModuleOp module, const llvm::DataLayout &dataLayout) {
@@ -129,9 +350,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     authorizeFixedHandles(stateLayout->drivers);
   }
   if (staticSuperstep &&
-      (!metadataDesign ||
-       staticSuperstep.getSourceGraph() !=
-           metadataDesign.getComputeGraphAttr()))
+      (!metadataDesign || staticSuperstep.getSourceGraph() !=
+                              metadataDesign.getComputeGraphAttr()))
     return module.emitError(
         "native lowering rejected stale static-superstep metadata");
   if (metadataDesign) {
@@ -184,6 +404,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     nativeScheduler = mode.getValue();
   analysis::NativeAOTAnalysis aotEligibility;
   bool useAOT = false;
+  bool evalScheduler = nativeScheduler == sim::NativeSchedulerMode::Eval;
   DenseMap<Operation *, SmallVector<uint32_t>> aotBytecodeContinuations;
   uint64_t stateBytes = (stateLayout->bitCount + 7) / 8;
   makeStatePlane(module, "__obelisk_state_value", stateBytes, false,
@@ -196,10 +417,9 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       analyses;
   WalkResult analyzed = module.walk([&](sim::SimFuncOp function) {
     bool suspendable = false;
-    function.walk(
-        [&](Operation *operation) {
-          suspendable |= sim::isSuspensionOp(operation);
-        });
+    function.walk([&](Operation *operation) {
+      suspendable |= sim::isSuspensionOp(operation);
+    });
     bool process = function.getEntryKind() != sim::EntryKind::Function &&
                    function.getEntryKind() != sim::EntryKind::Observer;
     if (failed(insertAutomaticOwnerReleases(function)))
@@ -237,11 +457,11 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   // safe for the generic scheduler.
   aotEligibility = analysis::NativeAOTAnalysis::compute(module);
   if (nativeScheduler != sim::NativeSchedulerMode::Generic) {
+    bool forcedAOT =
+        nativeScheduler == sim::NativeSchedulerMode::AOT || evalScheduler;
     useAOT = aotEligibility.isEligible() &&
-             (nativeScheduler == sim::NativeSchedulerMode::AOT ||
-              aotEligibility.isAOTCostEffective());
-    if (nativeScheduler == sim::NativeSchedulerMode::AOT &&
-        !aotEligibility.isFullyEligible()) {
+             (forcedAOT || aotEligibility.isAOTCostEffective());
+    if (forcedAOT && !aotEligibility.isFullyEligible()) {
       InFlightDiagnostic diagnostic =
           module.emitError("design is ineligible for native AOT scheduling: ");
       if (aotEligibility.getReasons().empty())
@@ -283,6 +503,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   bool staticNBA = false;
   NativeStaticNBAPlan staticNBAPlan;
   NativeStaticFanoutPlan staticFanoutPlan;
+  SmallVector<NativePeriodicClock> periodicClocks;
+  NativeThreeTierPlan threeTierPlan;
   SmallVector<obelisk_rt_static_actor_root> staticActorRoots;
   // Direct static state is an addressing capability, not a scheduler
   // capability.  The specialization analysis has already proved each root's
@@ -356,6 +578,16 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
         stateLayout->transitionHandles.insert(entry.static_state);
     }
   }
+  if (useAOT) {
+    FailureOr<SmallVector<NativePeriodicClock>> clocks =
+        buildNativePeriodicClockPlan(module, *stateLayout,
+                                     aotEligibility.getActorSlots());
+    if (failed(clocks))
+      return failure();
+    periodicClocks = std::move(*clocks);
+    if (failed(materializeNativePeriodicClockPlan(module, periodicClocks)))
+      return failure();
+  }
   if (staticSpecialization && useAOT) {
     FailureOr<SmallVector<obelisk_rt_static_actor_root>> dependencies =
         buildNativeStaticActorRootPlan(module, *stateLayout,
@@ -363,6 +595,13 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     if (failed(dependencies))
       return failure();
     staticActorRoots = std::move(*dependencies);
+  }
+  if (useAOT) {
+    FailureOr<NativeThreeTierPlan> planned =
+        buildNativeThreeTierPlan(module, *stateLayout);
+    if (failed(planned))
+      return failure();
+    threeTierPlan = std::move(*planned);
   }
   FailureOr<analysis::SimulationScheduleAnalysis> scheduleRanks =
       analysis::SimulationScheduleAnalysis::compute(module);
@@ -373,8 +612,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       auto function = dyn_cast_if_present<sim::SimFuncOp>(entry.first);
       if (!function)
         return failure();
-      auto bytecode =
-          aotEligibility.getBytecodeFragments().find(entry.first);
+      auto bytecode = aotEligibility.getBytecodeFragments().find(entry.first);
       if (bytecode == aotEligibility.getBytecodeFragments().end())
         continue;
       SmallPtrSet<Block *, 8> bytecodeBlocks(bytecode->second.begin(),
@@ -440,7 +678,21 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   bool enableDirectStaticState = directStaticState;
   if (failed(lowerPackedSimulationOperations(
           module, dataLayout, *stateLayout, enableDirectStaticState,
-          staticNBA ? &staticNBAPlan : nullptr, vpi.allowsWrite())))
+          staticNBA ? &staticNBAPlan : nullptr, vpi.allowsWrite(),
+          evalScheduler)))
+    return failure();
+
+  FailureOr<SmallVector<NativeDirectFragment>> directFragments =
+      materializeDirectFragments(
+          module, metadataDesign, aotEligibility, analyses,
+          aotBytecodeContinuations,
+          // Direct activation clones remain slower on the paired PicoRV
+          // workload even after the generated NBA epilogue improvements.
+          // Keep the ABI available, but require a future profitability model
+          // before materializing these bodies in auto mode.
+          evalScheduler && cleanSuperstep && staticFanout &&
+              !guardedAOTSpecialization);
+  if (failed(directFragments))
     return failure();
 
   DenseMap<std::pair<uint32_t, uint32_t>, uint32_t> aotFusionGroups;
@@ -517,8 +769,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     if (!function)
       return failure();
     NativeSchedulePlan schedule;
-    schedule.initialRank =
-        scheduleRanks->getEntryRank(entry.first).value_or(0);
+    schedule.initialRank = scheduleRanks->getEntryRank(entry.first).value_or(0);
     if (useAOT) {
       auto slot = aotEligibility.getActorSlots().find(entry.first);
       if (slot != aotEligibility.getActorSlots().end())
@@ -561,6 +812,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       return failure();
   }
   if (useAOT) {
+    if (failed(materializeNativeThreeTierPlan(module, threeTierPlan)))
+      return failure();
     llvm::SmallDenseSet<uint32_t, 16> entrySlots;
     for (auto [rank, slot, continuation, fusionGroup] : rankedAOTNodes) {
       (void)rank;
@@ -590,15 +843,24 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                  function.getEntryKind() == sim::EntryKind::RootInitializer &&
                  entry.second == 0;
         });
-    if (failed(makeNativeAOTPlan(
-            module, aotEligibility.getActorSlots().size(), executableNodes,
-            *stateLayout, staticNBAPlan, staticFanoutPlan, staticActorRoots,
-            directStaticState, staticNBA, staticControl, staticFanout,
-            cleanSuperstep, aotEligibility.isFullyEligible(), rootSlotZero,
-            vpi)))
+    if (evalScheduler) {
+      if (failed(makeNativeEvalPlan(
+              module, aotEligibility.getActorSlots().size(), executableNodes,
+              *stateLayout, staticNBAPlan, staticFanoutPlan, staticActorRoots,
+              *directFragments, periodicClocks, directStaticState, staticNBA,
+              staticControl, staticFanout, cleanSuperstep, true,
+              aotEligibility.isFullyEligible(), rootSlotZero, vpi)))
+        return failure();
+    } else if (failed(makeNativeAOTPlanLegacy(
+                   module, aotEligibility.getActorSlots().size(),
+                   executableNodes, *stateLayout, staticNBAPlan,
+                   staticFanoutPlan, staticActorRoots, directStaticState,
+                   staticNBA, staticControl, staticFanout, cleanSuperstep,
+                   aotEligibility.isFullyEligible(), rootSlotZero, vpi))) {
       return failure();
+    }
   }
-  if (failed(makeSchedulerMain(module, *stateLayout, useAOT)))
+  if (failed(makeSchedulerMain(module, *stateLayout, useAOT, evalScheduler)))
     return failure();
 
   SmallVector<sim::SimFuncOp> ordinary;

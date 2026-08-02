@@ -75,6 +75,11 @@ bool isStraightLineContinuous(sim::SimFuncOp function) {
 
 void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
   sim::SimDesignOp design = getOperation();
+  auto scheduler = design->getParentOfType<ModuleOp>()->getAttrOfType<
+      sim::NativeSchedulerModeAttr>("obelisk.native_scheduler");
+  bool evalBodyFusion =
+      bodyFusion && scheduler &&
+      scheduler.getValue() == sim::NativeSchedulerMode::Eval;
   StringRef metadataName = bodyFusion ? sim::metadata::staticBodyFusion
                                       : sim::metadata::staticFusion;
   design->removeAttr(metadataName);
@@ -233,7 +238,7 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
           candidate.order == static_cast<uint64_t>(*previousOrder) + 1 &&
           (bodyFusion || candidate.entryOrder ==
                              static_cast<uint64_t>(*previousEntryOrder) + 1);
-      if ((!fragments.empty() && !adjacent) ||
+      if ((!fragments.empty() && !adjacent && !evalBodyFusion) ||
           functions.contains(candidate.function))
         flush();
       fragments.push_back(candidate.fragment);

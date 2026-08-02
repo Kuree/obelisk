@@ -7,6 +7,7 @@
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/StableHandle.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Transforms/DialectConversion.h"
@@ -24,10 +25,11 @@ public:
   ImmediateNBAConversion(const TypeConverter &converter, MLIRContext *context,
                          uint64_t stateBitCount,
                          const NativeStaticNBAPlan *staticPlan,
-                         bool staticSitesEnabled, bool guardedClaims)
+                         bool staticSitesEnabled, bool guardedClaims,
+                         bool evalCeiling)
       : OpConversionPattern(converter, context), stateBitCount(stateBitCount),
         staticPlan(staticPlan), staticSitesEnabled(staticSitesEnabled),
-        guardedClaims(guardedClaims) {}
+        guardedClaims(guardedClaims), evalCeiling(evalCeiling) {}
 
   LogicalResult
   matchAndRewrite(sim::SimNBAEnqueueOp op, OneToNOpAdaptor adaptor,
@@ -101,40 +103,67 @@ public:
                                   ? homeRegion + 2
                                   : UINT32_MAX;
       uint64_t rootWidth = staticPlan->roots[staticRoot->second].bit_width;
-      bool directScalarStage = !generatedAccumulator.empty() &&
-                               rootWidth <= 64 && decoded.offset == 0 &&
-                               *width == rootWidth;
       bool directLaneStage = !generatedAccumulator.empty() && *width == 32 &&
                              adaptor.getValue().size() == 1 &&
                              (decoded.offset & 31) == 0;
+      bool directPartialScalarStage = !generatedAccumulator.empty() &&
+                                      rootWidth <= 64;
       bool directGeneratedStage =
-          commitRegion != UINT32_MAX && (directScalarStage || directLaneStage);
+          commitRegion != UINT32_MAX &&
+          (directPartialScalarStage || directLaneStage);
       auto emitDirectGeneratedStage = [&] {
+        bool fixedEvalStage =
+            evalCeiling && staticRoot->second <
+                               staticPlan->generatedCommitRegions.size() &&
+            staticPlan->generatedCommitRegions[staticRoot->second] !=
+                UINT32_MAX;
         Value base = LLVM::AddressOfOp::create(rewriter, location, pointer,
                                                generatedAccumulator);
-        if (directScalarStage) {
-          LLVM::StoreOp::create(
-              rewriter, location, value,
-              byteGEP(rewriter, location, base,
-                      offsetof(obelisk_rt_generated_nba_accumulator_256,
-                               value)),
-              8);
-          LLVM::StoreOp::create(
-              rewriter, location, unknown,
-              byteGEP(rewriter, location, base,
-                      offsetof(obelisk_rt_generated_nba_accumulator_256,
-                               unknown)),
-              8);
-          uint64_t mask = rootWidth == 64
-                              ? UINT64_MAX
-                              : (uint64_t{1} << rootWidth) - 1;
-          LLVM::StoreOp::create(
-              rewriter, location,
-              llvmConstant(rewriter, location, i64, mask),
-              byteGEP(rewriter, location, base,
-                      offsetof(obelisk_rt_generated_nba_accumulator_256,
-                               write_mask)),
-              8);
+        if (directPartialScalarStage) {
+          uint64_t sourceMask = *width == 64
+                                    ? UINT64_MAX
+                                    : (uint64_t{1} << *width) - 1;
+          uint64_t mask = sourceMask << decoded.offset;
+          auto mergeField = [&](size_t fieldOffset, Value fieldValue) {
+            Value address = byteGEP(rewriter, location, base, fieldOffset);
+            Value old = LLVM::LoadOp::create(rewriter, location, i64,
+                                              address, 8);
+            Value positioned = fieldValue;
+            if (decoded.offset != 0)
+              positioned = arith::ShLIOp::create(
+                  rewriter, location, positioned,
+                  llvmConstant(rewriter, location, i64, decoded.offset));
+            Value merged = arith::OrIOp::create(
+                rewriter, location,
+                arith::AndIOp::create(
+                    rewriter, location, old,
+                    llvmConstant(rewriter, location, i64, ~mask)),
+                arith::AndIOp::create(
+                    rewriter, location, positioned,
+                    llvmConstant(rewriter, location, i64, mask)));
+            LLVM::StoreOp::create(rewriter, location, merged, address, 8);
+          };
+          mergeField(offsetof(obelisk_rt_generated_nba_accumulator_256,
+                              value),
+                     value);
+          if (!evalCeiling)
+            mergeField(offsetof(obelisk_rt_generated_nba_accumulator_256,
+                                unknown),
+                       unknown);
+          if (!fixedEvalStage) {
+            Value maskAddress = byteGEP(
+                rewriter, location, base,
+                offsetof(obelisk_rt_generated_nba_accumulator_256,
+                         write_mask));
+            Value oldMask = LLVM::LoadOp::create(rewriter, location, i64,
+                                                  maskAddress, 8);
+            LLVM::StoreOp::create(
+                rewriter, location,
+                arith::OrIOp::create(
+                    rewriter, location, oldMask,
+                    llvmConstant(rewriter, location, i64, mask)),
+                maskAddress, 8);
+          }
         } else {
           uint64_t laneOffset = static_cast<uint64_t>(decoded.offset / 8);
           Value laneValue =
@@ -158,18 +187,21 @@ public:
                           laneOffset),
               4);
         }
-        LLVM::StoreOp::create(
-            rewriter, location, llvmConstant(rewriter, location, i32, 1),
-            byteGEP(rewriter, location, base,
-                    offsetof(obelisk_rt_generated_nba_accumulator_256, valid)),
-            4);
-        LLVM::StoreOp::create(
-            rewriter, location,
-            llvmConstant(rewriter, location, i32, commitRegion),
-            byteGEP(rewriter, location, base,
-                    offsetof(obelisk_rt_generated_nba_accumulator_256,
-                             exec_region)),
-            4);
+        if (!fixedEvalStage) {
+          LLVM::StoreOp::create(
+              rewriter, location, llvmConstant(rewriter, location, i32, 1),
+              byteGEP(
+                  rewriter, location, base,
+                  offsetof(obelisk_rt_generated_nba_accumulator_256, valid)),
+              4);
+          LLVM::StoreOp::create(
+              rewriter, location,
+              llvmConstant(rewriter, location, i32, commitRegion),
+              byteGEP(rewriter, location, base,
+                      offsetof(obelisk_rt_generated_nba_accumulator_256,
+                               exec_region)),
+              4);
+        }
         Value dirtyBase = LLVM::AddressOfOp::create(
             rewriter, location, pointer,
             "__obelisk_aot_nba_dirty_roots_v1");
@@ -183,21 +215,23 @@ public:
             llvmConstant(rewriter, location, i64,
                          uint64_t{1} << (staticRoot->second % 64)));
         LLVM::StoreOp::create(rewriter, location, marked, dirtyWord, 8);
-        Value summaryBase = LLVM::AddressOfOp::create(
-            rewriter, location, pointer,
-            "__obelisk_aot_nba_dirty_summary_v1");
-        uint32_t dirtyWordIndex = staticRoot->second / 64;
-        Value summaryWord = byteGEP(
-            rewriter, location, summaryBase,
-            static_cast<uint64_t>(dirtyWordIndex / 64) * sizeof(uint64_t));
-        Value previousSummary =
-            LLVM::LoadOp::create(rewriter, location, i64, summaryWord, 8);
-        Value markedSummary = LLVM::OrOp::create(
-            rewriter, location, previousSummary,
-            llvmConstant(rewriter, location, i64,
-                         uint64_t{1} << (dirtyWordIndex % 64)));
-        LLVM::StoreOp::create(rewriter, location, markedSummary, summaryWord,
-                              8);
+        if (!evalCeiling) {
+          Value summaryBase = LLVM::AddressOfOp::create(
+              rewriter, location, pointer,
+              "__obelisk_aot_nba_dirty_summary_v1");
+          uint32_t dirtyWordIndex = staticRoot->second / 64;
+          Value summaryWord = byteGEP(
+              rewriter, location, summaryBase,
+              static_cast<uint64_t>(dirtyWordIndex / 64) * sizeof(uint64_t));
+          Value previousSummary =
+              LLVM::LoadOp::create(rewriter, location, i64, summaryWord, 8);
+          Value markedSummary = LLVM::OrOp::create(
+              rewriter, location, previousSummary,
+              llvmConstant(rewriter, location, i64,
+                           uint64_t{1} << (dirtyWordIndex % 64)));
+          LLVM::StoreOp::create(rewriter, location, markedSummary, summaryWord,
+                                8);
+        }
       };
       if (!useGuardedClaim && directGeneratedStage) {
         emitDirectGeneratedStage();
@@ -388,6 +422,7 @@ private:
   const NativeStaticNBAPlan *staticPlan;
   bool staticSitesEnabled;
   bool guardedClaims;
+  bool evalCeiling;
 };
 
 } // namespace
@@ -397,10 +432,12 @@ void populateNBAToLLVMConversionPatterns(RewritePatternSet &patterns,
                                          uint64_t stateBitCount,
                                          const NativeStaticNBAPlan *staticPlan,
                                          bool staticSitesEnabled,
-                                         bool guardedClaims) {
+                                         bool guardedClaims,
+                                         bool evalCeiling) {
   patterns.add<ImmediateNBAConversion>(converter, patterns.getContext(),
                                        stateBitCount, staticPlan,
-                                       staticSitesEnabled, guardedClaims);
+                                       staticSitesEnabled, guardedClaims,
+                                       evalCeiling);
 }
 
 } // namespace obelisk::detail

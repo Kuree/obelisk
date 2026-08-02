@@ -498,6 +498,49 @@ five buckets are the current backend abstraction, not a claim that all IEEE
 semantic region explicitly or prove that folding it into one of these buckets
 is equivalent.
 
+The same final-region pass freezes a revision-coupled three-tier ownership
+plan. Physical trigger groups are currently keyed by resource/descriptor,
+packed range, and exact change/edge sense; source actor identity is not part of
+the key. Native lowering canonicalizes storage identities, but full alias
+canonicalization during region planning remains required. Every merged kernel
+receives exactly one owner and one stable ready
+bit. A single-trigger acyclic native kernel uses the trigger owner. Multi-clock
+or triggerless cones, convergence SCCs, control loops, and bytecode islands use
+exclusive shared owners and are never cloned into several clock functions.
+Writable descriptors are partitioned at exact packed-range boundaries; an
+overlapping interval with writers in several tiers moves to a shared owner at
+the least-static writer tier. Tier 1 is acyclic generated clock/eval work,
+Tier 2 is a generated local
+dirty-mask convergence algorithm, and Tier 3 is the existing bytecode boundary
+for dynamic or unsupported control.
+
+Native lowering validates that plan against the native state layout and emits
+the following helper ABI. These helpers are not yet reachable from the
+installed AOT run function; until that integration is complete, auto uses the
+lifecycle-correct AOT/generic coordinator. Each
+structurally eligible Tier-1 kernel records its complete inductive root closure
+and gets independent mutable promotion-dirty and selected-variant state. A
+masked generated scanner reads only that closure's canonical unknown-plane
+bits. Its cached selector scans initially and after invalidation, while the
+selected hot body needs no promotion test. Invalidation selects four-state
+immediately; a later quiescent scan may select two-state again. Tier-2
+convergence helpers take one ingress dirty mask, return immediately when it is
+zero, evaluate only selected SCC members through a generated callback, carry
+downstream publications across sweeps, and continue until the local dirty set
+is empty. The direct Tier-1 wrapper calls this helper without any
+`obelisk_rt_*` edge or arbitrary iteration count. The current generated ABI is
+one word: SCCs or owner ready bits beyond 64 stay on the fine native/runtime
+owner and receive an explicit fallback marker in lowered IR instead of being
+silently truncated.
+
+Constant-calendar periodic clocks are recognized structurally as a pure
+one-bit fixed-state toggle recurrence. The plan records stable actor and
+continuation fallback identity, canonical state offset/ID, and half-period,
+sorted independently of source names. Multiple clocks remain on the canonical
+AOT scheduler, which preserves same-time process rank and NBA ordering. A
+generated multi-clock `run_until` calendar is still required before eval can
+be selected automatically.
+
 A single-worker schedule may execute as one clean native transaction when its
 actor inventory is fixed, every fragment is native, every sensitivity is an
 exact descriptor range, and native lowering proves complete static control and
@@ -533,6 +576,36 @@ fine ready bit is the unit of compute-fragment selection and VPI fracture.
 Wider scalar or vector loads are an implementation choice for the target, not
 a change in scheduling semantics. Duplicate activation is suppressed by the
 ready bit, and node ordinals retain compute-graph order.
+
+The clock-kernel handoff adds a second, revision-coupled identity beside that
+fallback ordinal. Graph-region materialization records exact descriptor/range/
+edge keys, assigns every merged fragment one stable `(owner, bit)`, and gives a
+multi-clock or unsupported fragment an exclusive shared owner. At native
+materialization time logical aliases are resolved through the static-state
+layout, so equal physical roots share one clock record while posedge and
+negedge remain distinct. Static fanout records retain the original actor,
+continuation, and compute-node fields for snapshots, plus their generated
+`(kernel, merged-bit)` ingress target.
+
+Each generated clock record owns packed 64-bit ingress leaf words. Exact
+external deposits update the canonical value and unknown planes, compute the
+four-state change/edge masks once, and OR matching merged bits into those
+words. A generated time-slot coordinator clears all ingress before entering a
+reentrant runtime service and coalesces duplicate targets. The ABI can attach
+a private ordinary function to an eligible acyclic change/edge continuation,
+while the original actor stays suspended at the same continuation as an exact
+fallback snapshot. Materialization is profitability-gated: the initial clone
+experiment regressed the paired PicoRV workload, so `auto` currently leaves
+those execute pointers null and translates merged bits to the original
+fine-node identity. Direct bodies must remain disabled until their generated
+NBA/fanout epilogue beats the existing AOT worklist in paired measurements.
+
+The trusted AOT transaction drains newly published clock ingress before its
+single shared NBA/fanout barrier. The coordinator is emitted only for a fully
+certified clean superstep; guarded, hybrid, force/release, conditional, and
+unsupported paths continue through the unchanged transactional scheduler.
+Clock keys, merged bits, VPI records, and deoptimization identities therefore
+remain stable across direct and fallback execution.
 
 Resolved vector drives retain atomic store-before-notify publication, but
 adjacent direct bits of the same canonical root are packed into target-sized

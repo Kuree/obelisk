@@ -53,7 +53,8 @@ bool hasNoLogic(Operation *operation) {
 LogicalResult lowerPackedSimulationOperations(
     ModuleOp module, const llvm::DataLayout &dataLayout,
     const NativeStateLayout &stateLayout, bool enableDirectStaticState,
-    const NativeStaticNBAPlan *staticNBAPlan, bool vpiAllowsWrite) {
+    const NativeStaticNBAPlan *staticNBAPlan, bool vpiAllowsWrite,
+    bool experimentalTwoState) {
   MLIRContext *context = module.getContext();
   // Consume the whole-design X/Z proof in the AOT path after suspension
   // threading has reached its final SSA shape. Signatures and canonical frames
@@ -73,12 +74,12 @@ LogicalResult lowerPackedSimulationOperations(
       for (Block &block : function.getBody()) {
         for (BlockArgument argument : block.getArguments())
           if (isa<sim::LogicType>(argument.getType()) &&
-              stateDomains->isTwoState(argument))
+              (experimentalTwoState || stateDomains->isTwoState(argument)))
             nativeTwoStateValues.insert(argument);
         for (Operation &operation : block)
           for (Value result : operation.getResults())
             if (isa<sim::LogicType>(result.getType()) &&
-                stateDomains->isTwoState(result))
+                (experimentalTwoState || stateDomains->isTwoState(result)))
               nativeTwoStateValues.insert(result);
       }
     }
@@ -144,7 +145,8 @@ LogicalResult lowerPackedSimulationOperations(
     // transfer one retained reference per argument, so its return must not
     // consume captured automatic state. The waiting activation owns that
     // state across suspension and releases it on resumption or cancellation.
-    if (function.getEntryKind() == sim::EntryKind::Observer)
+    if (function.getEntryKind() == sim::EntryKind::Observer ||
+        function->hasAttr("obelisk.eval.borrowed_captures"))
       return WalkResult::advance();
     unsigned physical = 0;
     for (BlockArgument argument : function.getBody().front().getArguments()) {
@@ -187,7 +189,8 @@ LogicalResult lowerPackedSimulationOperations(
   populateSchedulerToLLVMConversionPatterns(packedPatterns, packedConverter);
   populateStateReadWriteToLLVMConversionPatterns(
       packedPatterns, packedConverter, stateLayout.bitCount,
-      enableDirectStaticState ? &stateLayout : nullptr);
+      enableDirectStaticState ? &stateLayout : nullptr,
+      experimentalTwoState);
   populateOverrideToLLVMConversionPatterns(packedPatterns, packedConverter,
                                            stateLayout.bitCount);
   populateManagedToLLVMConversionPatterns(
@@ -196,7 +199,8 @@ LogicalResult lowerPackedSimulationOperations(
                                          stateLayout);
   populateNBAToLLVMConversionPatterns(
       packedPatterns, packedConverter, stateLayout.bitCount,
-      staticNBAPlan, staticNBAPlan != nullptr, vpiAllowsWrite);
+      staticNBAPlan, staticNBAPlan != nullptr, vpiAllowsWrite,
+      experimentalTwoState);
   ConversionTarget packedTarget(*context);
   packedTarget.addIllegalOp<
       sim::SimBytesConstantOp, sim::SimFinishOp, sim::SimStopOp,

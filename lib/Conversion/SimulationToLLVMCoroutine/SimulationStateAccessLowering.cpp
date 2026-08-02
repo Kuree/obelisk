@@ -18,9 +18,10 @@ class RefLoadConversion final : public OpConversionPattern<sim::SimRefLoadOp> {
 public:
   RefLoadConversion(const TypeConverter &converter, MLIRContext *context,
                     uint64_t stateBitCount,
-                    const NativeStateLayout *directLayout)
+                    const NativeStateLayout *directLayout,
+                    bool experimentalTwoState)
       : OpConversionPattern(converter, context), stateBitCount(stateBitCount),
-        directLayout(directLayout) {}
+        directLayout(directLayout), experimentalTwoState(experimentalTwoState) {}
 
   LogicalResult
   matchAndRewrite(sim::SimRefLoadOp op, OneToNOpAdaptor adaptor,
@@ -45,11 +46,16 @@ public:
       value =
           arith::BitcastOp::create(rewriter, op.getLoc(), resultType, value);
     SmallVector<Value> converted{value};
-    if (containsLogic(resultType))
-      converted.push_back(
-          loadStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
-                         plane, "__obelisk_state_unknown", true, stateBitCount,
-                         directLayout, guardedPermission, assumeClean));
+    if (containsLogic(resultType)) {
+      Value unknown = experimentalTwoState
+                          ? llvmConstant(rewriter, op.getLoc(), plane, 0)
+                          : loadStatePlane(
+                                rewriter, op.getLoc(),
+                                adaptor.getReference().front(), plane,
+                                "__obelisk_state_unknown", true, stateBitCount,
+                                directLayout, guardedPermission, assumeClean);
+      converted.push_back(unknown);
+    }
     SmallVector<ValueRange> replacements{ValueRange(converted)};
     rewriter.replaceOpWithMultiple(op, replacements);
     return success();
@@ -58,6 +64,7 @@ public:
 private:
   uint64_t stateBitCount;
   const NativeStateLayout *directLayout;
+  bool experimentalTwoState;
 };
 
 class RefStoreConversion final
@@ -65,9 +72,10 @@ class RefStoreConversion final
 public:
   RefStoreConversion(const TypeConverter &converter, MLIRContext *context,
                      uint64_t stateBitCount,
-                     const NativeStateLayout *directLayout)
+                     const NativeStateLayout *directLayout,
+                     bool experimentalTwoState)
       : OpConversionPattern(converter, context), stateBitCount(stateBitCount),
-        directLayout(directLayout) {}
+        directLayout(directLayout), experimentalTwoState(experimentalTwoState) {}
 
   LogicalResult
   matchAndRewrite(sim::SimRefStoreOp op, OneToNOpAdaptor adaptor,
@@ -105,7 +113,7 @@ public:
           rewriter, op.getLoc(), adaptor.getReference().front(), storedValue,
           "__obelisk_state_value", stateBitCount, directLayout,
           guardedPermission, assumeClean, /*trackChange=*/false);
-      if (adaptor.getValue().size() == 2)
+      if (adaptor.getValue().size() == 2 && !experimentalTwoState)
         (void)storeStatePlane(
             rewriter, op.getLoc(), adaptor.getReference().front(),
             adaptor.getValue()[1], "__obelisk_state_unknown", stateBitCount,
@@ -120,10 +128,13 @@ public:
                        directLayout, guardedPermission, assumeClean);
     Value oldUnknown;
     if (containsLogic(valueType))
-      oldUnknown =
-          loadStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
-                         plane, "__obelisk_state_unknown", true, stateBitCount,
-                         directLayout, guardedPermission, assumeClean);
+      oldUnknown = experimentalTwoState
+                       ? llvmConstant(rewriter, op.getLoc(), plane, 0)
+                       : loadStatePlane(
+                             rewriter, op.getLoc(),
+                             adaptor.getReference().front(), plane,
+                             "__obelisk_state_unknown", true, stateBitCount,
+                             directLayout, guardedPermission, assumeClean);
     Value notificationValue = storedValue;
     if (isa<sim::StringType>(valueType)) {
       Value comparison =
@@ -143,7 +154,7 @@ public:
         storeStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
                         storedValue, "__obelisk_state_value", stateBitCount,
                         directLayout, guardedPermission, assumeClean);
-    if (adaptor.getValue().size() == 2)
+    if (adaptor.getValue().size() == 2 && !experimentalTwoState)
       changed = arith::OrIOp::create(
           rewriter, op.getLoc(), changed,
           storeStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
@@ -174,8 +185,9 @@ public:
     } else {
       notifySignal(rewriter, op.getLoc(), adaptor.getReference().front(),
                    *width, oldValue, oldUnknown, notificationValue,
-                   adaptor.getValue().size() == 2 ? adaptor.getValue()[1]
-                                                  : Value{},
+                   adaptor.getValue().size() == 2 && !experimentalTwoState
+                       ? adaptor.getValue()[1]
+                       : Value{},
                    directRange && (assumeClean || !directRange->guarded) &&
                            directLayout && directLayout->transitionHandlesExact
                        ? directRange
@@ -188,15 +200,17 @@ public:
 private:
   uint64_t stateBitCount;
   const NativeStateLayout *directLayout;
+  bool experimentalTwoState;
 };
 
 class NetReadConversion final : public OpConversionPattern<sim::SimNetReadOp> {
 public:
   NetReadConversion(const TypeConverter &converter, MLIRContext *context,
                     uint64_t stateBitCount,
-                    const NativeStateLayout *directLayout)
+                    const NativeStateLayout *directLayout,
+                    bool experimentalTwoState)
       : OpConversionPattern(converter, context), stateBitCount(stateBitCount),
-        directLayout(directLayout) {}
+        directLayout(directLayout), experimentalTwoState(experimentalTwoState) {}
 
   LogicalResult
   matchAndRewrite(sim::SimNetReadOp op, OneToNOpAdaptor adaptor,
@@ -210,11 +224,15 @@ public:
         loadStatePlane(rewriter, op.getLoc(), adaptor.getNet().front(), plane,
                        "__obelisk_state_value", false, stateBitCount,
                        directLayout)};
-    if (containsLogic(resultType))
-      converted.push_back(
-          loadStatePlane(rewriter, op.getLoc(), adaptor.getNet().front(), plane,
-                         "__obelisk_state_unknown", true, stateBitCount,
-                         directLayout));
+    if (containsLogic(resultType)) {
+      Value unknown = experimentalTwoState
+                          ? llvmConstant(rewriter, op.getLoc(), plane, 0)
+                          : loadStatePlane(
+                                rewriter, op.getLoc(), adaptor.getNet().front(),
+                                plane, "__obelisk_state_unknown", true,
+                                stateBitCount, directLayout);
+      converted.push_back(unknown);
+    }
     SmallVector<ValueRange> replacements{ValueRange(converted)};
     rewriter.replaceOpWithMultiple(op, replacements);
     return success();
@@ -223,17 +241,21 @@ public:
 private:
   uint64_t stateBitCount;
   const NativeStateLayout *directLayout;
+  bool experimentalTwoState;
 };
 
 } // namespace
 
 void populateStateReadWriteToLLVMConversionPatterns(
     RewritePatternSet &patterns, TypeConverter &converter,
-    uint64_t stateBitCount, const NativeStateLayout *directLayout) {
+    uint64_t stateBitCount, const NativeStateLayout *directLayout,
+    bool experimentalTwoState) {
   patterns.add<RefLoadConversion, RefStoreConversion>(
-      converter, patterns.getContext(), stateBitCount, directLayout);
+      converter, patterns.getContext(), stateBitCount, directLayout,
+      experimentalTwoState);
   patterns.add<NetReadConversion>(converter, patterns.getContext(),
-                                  stateBitCount, directLayout);
+                                  stateBitCount, directLayout,
+                                  experimentalTwoState);
 }
 
 } // namespace obelisk::detail

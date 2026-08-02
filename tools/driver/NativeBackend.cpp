@@ -225,14 +225,15 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
       hasLanguageOverride = true;
   });
   requiresStateSync = vpi != "off" || hasLanguageOverride;
-  module->setAttr(
-      "obelisk.native_scheduler",
-      obelisk::sim::NativeSchedulerModeAttr::get(module.getContext(),
-                                                 nativeScheduler));
+  module->setAttr("obelisk.native_scheduler",
+                  obelisk::sim::NativeSchedulerModeAttr::get(
+                      module.getContext(), nativeScheduler));
   // Hybrid AOT keeps bytecode available as the canonical implementation for
   // fragments that cannot be scheduled statically and for writable VPI
   // transition stages. The shared process frame lets those fragments return
   // to native execution at a continuation boundary without copying state.
+  bool evalScheduler =
+      nativeScheduler == obelisk::sim::NativeSchedulerMode::Eval;
   bool needsHybridBytecode =
       nativeScheduler != obelisk::sim::NativeSchedulerMode::Generic;
   if (bytecode || needsHybridBytecode || vpi != "off" || hasLanguageOverride) {
@@ -245,7 +246,7 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
   // fallback after this point. Keep the generic scheduler as an untouched
   // oracle and apply AOT-only next-state rewrites only when the hybrid image
   // provides the deoptimization implementation.
-  if (needsHybridBytecode)
+  if (needsHybridBytecode || evalScheduler)
     manager.addPass(createObeliskSimOptimizeNativeRegionsPass());
   manager.addPass(createConvertObeliskSimProcessesToLLVMCoroutinesPass());
   if (failed(manager.run(module)))
@@ -770,6 +771,11 @@ LogicalResult emitNativeOutput(ModuleOp module,
       obelisk::sim::symbolizeNativeSchedulerMode(options.nativeScheduler);
   if (!nativeScheduler) {
     errs() << "obelisk: error: invalid native scheduler mode\n";
+    return failure();
+  }
+  if (*nativeScheduler == obelisk::sim::NativeSchedulerMode::Eval) {
+    errs() << "obelisk: error: native eval is unavailable until generated "
+              "run_until participates in the runtime lifecycle\n";
     return failure();
   }
   // Decide auto before bytecode materialization.  Coroutine lowering also

@@ -18,21 +18,22 @@ module {
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<8> design
 
     // Graph nodes are ordered by function symbol, so @also_consumes is first.
-    // Its middle fragment both stores and forwards the same unproven value.
-    // The store has no result, so only the operand check can see it: the
-    // exemption must not leak from the terminator to the rest of the block.
+    // Its middle fragment both stores and forwards the same value. The root is
+    // inductively two-state: when it is known, every writer preserves that
+    // property. This is kernel eligibility, not a claim that startup is
+    // already known; a four-state variant remains available until promotion.
     // CHECK: function = @also_consumes, block = 1
-    // CHECK-SAME: twoState = false
+    // CHECK-SAME: twoState = true
 
-    // A loaded value is unproven, so the block that loads it is four-state,
-    // and so is the block that receives it as an argument. The fragment in
-    // between only passes it along, and is two-state.
+    // The same inductive-root assumption flows through loads and block
+    // arguments, making the whole forwarding chain eligible for a promoted
+    // two-state kernel.
     // CHECK: function = @forwards_only, block = 0
-    // CHECK-SAME: twoState = false
+    // CHECK-SAME: twoState = true
     // CHECK: function = @forwards_only, block = 1
     // CHECK-SAME: twoState = true
     // CHECK: function = @forwards_only, block = 2
-    // CHECK-SAME: twoState = false
+    // CHECK-SAME: twoState = true
     // Direct call results and spawned value captures now use the whole-design
     // state-domain solution rather than being rejected by a local heuristic.
     // CHECK: function = @interproc_caller, block = 0

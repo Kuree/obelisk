@@ -31,6 +31,11 @@ struct NativeStaticNBAPlan {
   // Canonical state-plane bit offset for each root. This is revision-coupled
   // lowering metadata, not a second state allocation.
   llvm::SmallVector<uint64_t> generatedOffsets;
+  // Fixed NBA event region for roots whose every reachable site is a direct,
+  // full-width scalar stage. UINT32_MAX denotes a mixed or unsupported root.
+  // The generated commit uses this proof to avoid reloading fields that each
+  // stage just wrote; fallback-visible accumulator storage remains unchanged.
+  llvm::SmallVector<uint32_t> generatedCommitRegions;
 };
 
 void populateNBAToLLVMConversionPatterns(mlir::RewritePatternSet &patterns,
@@ -38,7 +43,8 @@ void populateNBAToLLVMConversionPatterns(mlir::RewritePatternSet &patterns,
                                          uint64_t stateBitCount,
                                          const NativeStaticNBAPlan *staticPlan,
                                          bool staticSitesEnabled,
-                                         bool guardedClaims);
+                                         bool guardedClaims,
+                                         bool evalCeiling);
 mlir::FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
     mlir::ModuleOp module, const NativeStateLayout &stateLayout,
     mlir::ArrayRef<sim::ComputeNBACommitAttr> orderedCommits, bool enabled);

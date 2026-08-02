@@ -1282,6 +1282,7 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
     }
   }
   bool stateChanged = false;
+  bool runClockCoordinator = false;
   {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     uint64_t signalBase = UINT64_MAX;
@@ -1369,8 +1370,12 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
         storePackedBytes(unknownBytes.data(), newUnknown);
         storePackedState(context->stateValue, stateOffset, width, newValue);
         storePackedState(context->stateUnknown, stateOffset, width, newUnknown);
-        bool synchronized = obelisk_rt_aot_external_deposit_unlocked(
-            context, signalBase, stateOffset, width);
+        // Force/release changes the persistent override state and must retain
+        // the transactional generic handoff. Only an exact deposit may enter
+        // the generated clock coordinator directly.
+        bool synchronized =
+            !overrideForce && obelisk_rt_aot_external_deposit_unlocked(
+                                  context, signalBase, stateOffset, width);
         if (!synchronized)
           obelisk_rt_aot_external_write_handle_unlocked(
               context, signalBase, stateOffset, width, false);
@@ -1379,6 +1384,9 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
                 posedgeBytes.data(), negedgeBytes.data(), valueBytes.data(),
                 unknownBytes.data(), synchronized))
           return context->schedulerStatus;
+        runClockCoordinator |=
+            synchronized && context->nativeSchedulePlan &&
+            context->nativeSchedulePlan->clock_kernel_count != 0;
         stateChanged = true;
       }
     } else {
@@ -1439,8 +1447,9 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
         }
       }
       if (write && stateChanged) {
-        bool synchronized = obelisk_rt_aot_external_deposit_unlocked(
-            context, signalBase, stateOffset, width);
+        bool synchronized =
+            !overrideForce && obelisk_rt_aot_external_deposit_unlocked(
+                                  context, signalBase, stateOffset, width);
         if (!synchronized)
           obelisk_rt_aot_external_write_handle_unlocked(
               context, signalBase, stateOffset, width, false);
@@ -1449,6 +1458,9 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
                 wideTransitions->posedge(), wideTransitions->negedge(),
                 publishedValue, publishedUnknown, synchronized))
           return context->schedulerStatus;
+        runClockCoordinator |=
+            synchronized && context->nativeSchedulePlan &&
+            context->nativeSchedulePlan->clock_kernel_count != 0;
       }
     }
   }
@@ -1457,6 +1469,12 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
     value[limbs - 1] &= mask;
     if (unknown)
       unknown[limbs - 1] &= mask;
+  }
+  if (runClockCoordinator) {
+    obelisk_rt_status status =
+        obelisk_rt_v1_scheduler_run_clock_coordinator(context);
+    if (status != OBELISK_RT_OK)
+      return status;
   }
   if (write && kind == OBELISK_RT_DESIGN_RECORD_DRIVER)
     return obelisk_rt_resolve_design_drivers(context, stateOffset,

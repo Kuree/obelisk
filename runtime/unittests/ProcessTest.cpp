@@ -349,6 +349,31 @@ obelisk_rt_status aotSnapshot(void *opaque, obelisk_rt_context *context,
   return status;
 }
 
+uint64_t *clockCoordinatorIngress = nullptr;
+uint32_t clockCoordinatorWords = 0;
+uint32_t clockCoordinatorCalls = 0;
+
+obelisk_rt_status clockCoordinator(void *, obelisk_rt_context *context) {
+  if (!context || !clockCoordinatorIngress)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ++clockCoordinatorCalls;
+  std::fill_n(clockCoordinatorIngress, clockCoordinatorWords, uint64_t{0});
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status clockWaitCoordinator(void *opaque,
+                                       obelisk_rt_context *context) {
+  if (!context || !clockCoordinatorIngress || clockCoordinatorWords != 1)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  uint64_t ready = (clockCoordinatorIngress[0] & 1) != 0 ? uint64_t{2} : 0;
+  clockCoordinatorIngress[0] = 0;
+  ++clockCoordinatorCalls;
+  obelisk_rt_v1_scheduler_activate_static_nodes(context, &ready, 1);
+  if (context->schedulerStatus != OBELISK_RT_OK)
+    return context->schedulerStatus;
+  return aotRunWaitNodes(opaque, context);
+}
+
 obelisk_rt_native_schedule_plan makeAOTPlan(AOTTestState &state,
                                             uint32_t actors = 2) {
   return {sizeof(obelisk_rt_native_schedule_plan),
@@ -1299,6 +1324,54 @@ TEST(Scheduler, AOTPlanInstallBindRunAndExclusiveMutableState) {
   obelisk_rt_v1_context_destroy(second);
 }
 
+TEST(Scheduler, AOTClockKernelIngressSuppressesDuplicateBits) {
+  AOTTestState state;
+  uint64_t ingress[2] = {};
+  const obelisk_rt_native_clock_kernel clocks[] = {
+      {1, OBELISK_RT_WAIT_EDGE_POSEDGE, 0, 1, ingress, 2, 0},
+  };
+  const obelisk_rt_native_merged_fragment merged[] = {
+      {0, 0, 0, 65, 0, 0},
+  };
+  obelisk_rt_native_schedule_plan plan = makeAOTPlan(state, 1);
+  plan.clock_kernels = clocks;
+  plan.clock_kernel_count = std::size(clocks);
+  plan.merged_fragments = merged;
+  plan.merged_fragment_count = std::size(merged);
+  plan.timeslot_coordinator = clockCoordinator;
+
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 1;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 1),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
+            OBELISK_RT_OK);
+
+  ASSERT_EQ(obelisk_rt_v1_scheduler_activate_clock_kernel(context, 0, 65),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_activate_clock_kernel(context, 0, 65),
+            OBELISK_RT_OK);
+  EXPECT_EQ(ingress[0], 0u);
+  EXPECT_EQ(ingress[1], 2u);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_activate_clock_kernel(context, 0, 128),
+            OBELISK_RT_INVALID_ARGUMENT);
+
+  clockCoordinatorIngress = ingress;
+  clockCoordinatorWords = std::size(ingress);
+  clockCoordinatorCalls = 0;
+  EXPECT_EQ(obelisk_rt_v1_scheduler_run_clock_coordinator(context),
+            OBELISK_RT_OK);
+  EXPECT_EQ(clockCoordinatorCalls, 1u);
+  EXPECT_EQ(ingress[0], 0u);
+  EXPECT_EQ(ingress[1], 0u);
+  clockCoordinatorIngress = nullptr;
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, AOTCleanSuperstepRequiresACompleteStaticPlan) {
   AOTTestState state;
   obelisk_rt_native_schedule_plan plan = makeAOTPlan(state);
@@ -1887,17 +1960,31 @@ TEST(Scheduler, IndexedExternalDepositResumesFourStateAOTWithoutBytecode) {
   };
   uint8_t valuePlane = 0;
   uint8_t unknownPlane = 0;
+  uint64_t ingress = 0;
+  const obelisk_rt_native_clock_kernel clocks[] = {
+      {1, OBELISK_RT_WAIT_EDGE_CHANGE, 0, 1, &ingress, 1, 0},
+  };
+  const obelisk_rt_native_merged_fragment merged[] = {
+      {0, 1, 0, 0, 1, 0},
+  };
   obelisk_rt_native_schedule_plan plan = makeAOTPlan(state, 1);
   plan.flags = OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
                OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE |
+               OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL |
                OBELISK_RT_NATIVE_SCHEDULE_GENERATED_ACTIONS |
-               OBELISK_RT_NATIVE_SCHEDULE_GUARDED_FANOUT;
+               OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT |
+               OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP;
   plan.state_value = &valuePlane;
   plan.state_unknown = &unknownPlane;
   plan.state_bit_count = 1;
   plan.fanout_entries = fanout;
   plan.fanout_entry_count = std::size(fanout);
   plan.run = aotRunWaitNodes;
+  plan.clock_kernels = clocks;
+  plan.clock_kernel_count = std::size(clocks);
+  plan.merged_fragments = merged;
+  plan.merged_fragment_count = std::size(merged);
+  plan.timeslot_coordinator = clockWaitCoordinator;
 
   obelisk_rt_execution_descriptor_v1 execution{};
   execution.version = OBELISK_RT_VERSION;
@@ -1939,9 +2026,17 @@ TEST(Scheduler, IndexedExternalDepositResumesFourStateAOTWithoutBytecode) {
   ASSERT_TRUE(obelisk_rt_publish_native_signal_transition_unlocked(
       context, root, 1, &changed, &posedge, &negedge, &newValue, &newUnknown,
       true));
+  EXPECT_EQ(ingress, 1u);
   EXPECT_FALSE(context->nativeScheduleExternalWritePending);
   EXPECT_FALSE(context->nativeScheduleDirtyRootsPresent);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot(context), OBELISK_RT_OK);
+  clockCoordinatorIngress = &ingress;
+  clockCoordinatorWords = 1;
+  clockCoordinatorCalls = 0;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run_clock_coordinator(context),
+            OBELISK_RT_OK);
+  EXPECT_EQ(clockCoordinatorCalls, 1u);
+  EXPECT_EQ(ingress, 0u);
+  clockCoordinatorIngress = nullptr;
   EXPECT_EQ(schedulerResumeCount, 1u);
   EXPECT_EQ(context->signalDiagnostics.aotFallbacks, 0u);
   obelisk_rt_v1_context_destroy(context);
