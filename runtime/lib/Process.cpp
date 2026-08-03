@@ -1434,10 +1434,11 @@ bool staticAOTFanoutRangeHasConsumer(const obelisk_rt_context *context,
       });
 }
 
-bool publishStaticAOTSignalTransitionUnlocked(
+template <bool UseClockIngress>
+bool publishStaticAOTSignalTransitionUnlockedImpl(
     obelisk_rt_context *context, uint64_t stableID, uint64_t bitWidth,
     const uint8_t *changed, const uint8_t *posedge, const uint8_t *negedge,
-    uint64_t *outSequence, bool indexedExternalDeposit = false) {
+    uint64_t *outSequence, bool indexedExternalDeposit) {
   if (outSequence)
     *outSequence = 0;
   if (!(indexedExternalDeposit ? canUseIndexedExternalAOTFanout(context)
@@ -1532,10 +1533,7 @@ bool publishStaticAOTSignalTransitionUnlocked(
         ++context->signalDiagnostics.publications;
       published = true;
     }
-    bool useClockIngress =
-        context->nativeSchedulePlan &&
-        context->nativeSchedulePlan->clock_kernel_count != 0;
-    if (useClockIngress) {
+    if constexpr (UseClockIngress) {
       if (entry->kernel >=
               context->nativeSchedulePlan->clock_kernel_count ||
           entry->merged_bit / 64 >=
@@ -1568,6 +1566,22 @@ bool publishStaticAOTSignalTransitionUnlocked(
         std::min(context->nativeScheduleMinimumActivatedNode, node);
   }
   return true;
+}
+
+bool publishStaticAOTSignalTransitionUnlocked(
+    obelisk_rt_context *context, uint64_t stableID, uint64_t bitWidth,
+    const uint8_t *changed, const uint8_t *posedge, const uint8_t *negedge,
+    uint64_t *outSequence, bool indexedExternalDeposit = false) {
+  bool useClockIngress =
+      context && context->nativeSchedulePlan &&
+      context->nativeSchedulePlan->clock_kernel_count != 0;
+  return useClockIngress
+             ? publishStaticAOTSignalTransitionUnlockedImpl<true>(
+                   context, stableID, bitWidth, changed, posedge, negedge,
+                   outSequence, indexedExternalDeposit)
+             : publishStaticAOTSignalTransitionUnlockedImpl<false>(
+                   context, stableID, bitWidth, changed, posedge, negedge,
+                   outSequence, indexedExternalDeposit);
 }
 
 bool publishSignalTransitionBatchImpl(
@@ -3570,24 +3584,17 @@ extern "C" void obelisk_rt_v1_scheduler_static_transition(
         reinterpret_cast<const uint8_t *>(&newUnknown));
     return;
   }
-  bool evalFast = context->nativeSchedulePlan &&
-                  (context->nativeSchedulePlan->flags &
-                   OBELISK_RT_NATIVE_SCHEDULE_EVAL) != 0;
-
-  if (!evalFast) {
-    const NativeStaticState *state =
-        findNativeStaticState(context, staticState);
-    if (!state || lowBit > state->bitWidth ||
-        bitWidth > state->bitWidth - lowBit) {
-      context->schedulerStatus = OBELISK_RT_LAYOUT_MISMATCH;
-      return;
-    }
+  const NativeStaticState *state = findNativeStaticState(context, staticState);
+  if (!state || lowBit > state->bitWidth ||
+      bitWidth > state->bitWidth - lowBit) {
+    context->schedulerStatus = OBELISK_RT_LAYOUT_MISMATCH;
+    return;
   }
   uint8_t edgeKinds = 0;
   if (staticState < context->nativeScheduleStaticStateFanoutEdges.size()) {
     edgeKinds = context->nativeScheduleStaticStateFanoutEdges[staticState];
     if (edgeKinds == 0) {
-      if (!evalFast && ++context->schedulerEpoch == 0)
+      if (++context->schedulerEpoch == 0)
         context->schedulerEpoch = 1;
       return;
     }
@@ -3620,7 +3627,7 @@ extern "C" void obelisk_rt_v1_scheduler_static_transition(
   if ((edgeKinds & negedgeKinds) != 0)
     observedEdges |= negedge;
   if (observedEdges == 0) {
-    if (!evalFast && ++context->schedulerEpoch == 0)
+    if (++context->schedulerEpoch == 0)
       context->schedulerEpoch = 1;
     return;
   }
@@ -3652,8 +3659,7 @@ extern "C" void obelisk_rt_v1_scheduler_static_transition(
   bool published = false;
   uint64_t publishedEnd = lowBit + bitWidth;
   for (auto entry = first; entry != last; ++entry) {
-    if (!evalFast || context->signalDiagnosticsEnabled)
-      ++context->signalDiagnostics.aotFanoutEntries;
+    ++context->signalDiagnostics.aotFanoutEntries;
     uint64_t overlapLow = std::max(lowBit, entry->low_bit);
     uint64_t overlapHigh =
         std::min(publishedEnd, entry->low_bit + entry->bit_width);
@@ -3680,27 +3686,6 @@ extern "C" void obelisk_rt_v1_scheduler_static_transition(
     if ((observed & overlapMask) == 0)
       continue;
 
-    // A generated eval body with one static wait is a permanently active
-    // model method, not a coroutine continuation.  Its fanout record is
-    // marked by the compiler, so publish its dirty bit without consulting the
-    // generic actor/suspension tables.  Unsupported records retain the old
-    // lifecycle path below.
-    bool directMethod = evalFast && entry->reserved != 0;
-    uint32_t directWord = entry->merged_bit / 64;
-    uint64_t directMask = uint64_t{1} << (entry->merged_bit % 64);
-    const obelisk_rt_native_clock_kernel *directKernel =
-        directMethod && entry->kernel <
-                            context->nativeSchedulePlan->clock_kernel_count
-            ? &context->nativeSchedulePlan->clock_kernels[entry->kernel]
-            : nullptr;
-    if (directKernel && directWord < directKernel->ingress_word_count) {
-      const obelisk_rt_native_clock_kernel &kernel = *directKernel;
-      kernel.ingress_mask[entry->merged_bit / 64] |=
-          uint64_t{1} << (entry->merged_bit % 64);
-      context->nativeScheduleClockIngressPending = true;
-      continue;
-    }
-
     uint32_t slot = entry->actor_slot;
     if (slot >= context->nativeScheduleActors.size()) {
       context->schedulerStatus = OBELISK_RT_INVALID_LIFECYCLE;
@@ -3720,15 +3705,7 @@ extern "C" void obelisk_rt_v1_scheduler_static_transition(
         (scheduled.suspendKind != OBELISK_RT_SUSPEND_CHANGE &&
          scheduled.suspendKind != OBELISK_RT_SUSPEND_EDGE))
       continue;
-    if (directMethod) {
-      if (!directKernel || !directKernel->active_mask ||
-          directWord >= directKernel->ingress_word_count) {
-        context->schedulerStatus = OBELISK_RT_INVALID_CONTINUATION;
-        return;
-      }
-      directKernel->active_mask[directWord] |= directMask;
-    }
-    if (!evalFast && !published) {
+    if (!published) {
       if (context->nextSchedulerSequence == 0) {
         context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
         return;
@@ -3737,23 +3714,6 @@ extern "C" void obelisk_rt_v1_scheduler_static_transition(
       if (context->signalDiagnosticsEnabled)
         ++context->signalDiagnostics.publications;
       published = true;
-    }
-    if (evalFast && directMethod) {
-      if (entry->kernel >=
-              context->nativeSchedulePlan->clock_kernel_count ||
-          entry->merged_bit / 64 >=
-              context->nativeSchedulePlan
-                  ->clock_kernels[entry->kernel]
-                  .ingress_word_count) {
-        context->schedulerStatus = OBELISK_RT_INVALID_CONTINUATION;
-        return;
-      }
-      obelisk_rt_native_clock_kernel kernel =
-          context->nativeSchedulePlan->clock_kernels[entry->kernel];
-      kernel.ingress_mask[entry->merged_bit / 64] |=
-          uint64_t{1} << (entry->merged_bit % 64);
-      context->nativeScheduleClockIngressPending = true;
-      continue;
     }
     scheduled.signalTriggered = true;
     uint32_t node = entry->compute_node;
@@ -3766,7 +3726,7 @@ extern "C" void obelisk_rt_v1_scheduler_static_transition(
     context->nativeScheduleMinimumActivatedNode =
         std::min(context->nativeScheduleMinimumActivatedNode, node);
   }
-  if (!evalFast && ++context->schedulerEpoch == 0)
+  if (++context->schedulerEpoch == 0)
     context->schedulerEpoch = 1;
 }
 
@@ -7773,6 +7733,7 @@ private:
 // hot path does not repeatedly construct recursive-lock guards or retain the
 // generic actor/control branches. Fine node bits remain canonical fracture
 // points for an indexed external write or later bytecode handoff.
+template <bool RunClockCoordinator>
 obelisk_rt_status runTrustedAOTNodesUnlocked(obelisk_rt_context *context) {
   if (!context || activeNativeAOTContext != context ||
       lockedNativeAOTContext != context || !context->nativeSchedulePlan)
@@ -7781,20 +7742,22 @@ obelisk_rt_status runTrustedAOTNodesUnlocked(obelisk_rt_context *context) {
   uint32_t nodeCursor = 0;
   bool passProgress = false;
   for (;;) {
-    if (context->nativeScheduleClockIngressPending) {
-      obelisk_rt_native_timeslot_coordinator coordinator =
-          context->nativeSchedulePlan->timeslot_coordinator;
-      if (!coordinator)
-        return OBELISK_RT_INVALID_LIFECYCLE;
-      context->nativeScheduleClockIngressPending = false;
-      obelisk_rt_status status = coordinator(
-          context->nativeSchedulePlan->mutable_state, context);
-      if (status != OBELISK_RT_OK)
-        return status;
-      // A direct body may publish a lower graph-order ingress while this pass
-      // is in flight. Restart selection so the next generated drain observes
-      // it before any later fine fallback node.
-      nodeCursor = 0;
+    if constexpr (RunClockCoordinator) {
+      if (context->nativeScheduleClockIngressPending) {
+        obelisk_rt_native_timeslot_coordinator coordinator =
+            context->nativeSchedulePlan->timeslot_coordinator;
+        if (!coordinator)
+          return OBELISK_RT_INVALID_LIFECYCLE;
+        context->nativeScheduleClockIngressPending = false;
+        obelisk_rt_status status = coordinator(
+            context->nativeSchedulePlan->mutable_state, context);
+        if (status != OBELISK_RT_OK)
+          return status;
+        // A direct body may publish a lower graph-order ingress while this
+        // pass is in flight. Restart selection so the next generated drain
+        // observes it before any later fine fallback node.
+        nodeCursor = 0;
+      }
     }
     uint32_t selectedNode = UINT32_MAX;
     bool readyBeforeCursor = false;
@@ -7946,8 +7909,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_run_aot_nodes(
         (!plan->specialization_fast || *plan->specialization_fast != 0);
   }
 
-  if (trustedSuperstep)
-    return runTrustedAOTNodesUnlocked(context);
+  if (trustedSuperstep) {
+    bool hasClockCoordinator =
+        context->nativeSchedulePlan->clock_kernel_count != 0;
+    return hasClockCoordinator ? runTrustedAOTNodesUnlocked<true>(context)
+                               : runTrustedAOTNodesUnlocked<false>(context);
+  }
 
   uint32_t nodeCursor = 0;
   bool passProgress = false;
