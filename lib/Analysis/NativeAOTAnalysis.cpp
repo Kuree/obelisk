@@ -260,6 +260,11 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     }
   });
   module.walk([&](Operation *operation) {
+    bool hasRealValue =
+        llvm::any_of(operation->getOperandTypes(),
+                     [](Type type) { return isa<FloatType>(type); }) ||
+        llvm::any_of(operation->getResultTypes(),
+                     [](Type type) { return isa<FloatType>(type); });
     if (isa<sim::SimStopOp, sim::SimFatalOp>(operation)) {
       result.reasons.emplace_back(
           "fatal or stop control requires generic ordering");
@@ -337,6 +342,17 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       if (!operation->getAttrOfType<sim::ContinuationSiteAttr>("site"))
         requireBytecodeFragment(operation,
                                 "continuation-site metadata is missing");
+    }
+    // Real-valued publications use IEEE comparison semantics, including a
+    // NaN self-assignment being observable. The generated direct-wait path
+    // currently models only packed value/unknown planes, so it cannot own a
+    // real-reactive continuation without losing the runtime publication. Keep
+    // the complete containing actor in Tier 3 until real transition records
+    // are part of the native schedule ABI.
+    if (hasRealValue) {
+      requireBytecodeFragment(operation,
+                              "real-valued reactive state requires bytecode");
+      excludeBytecodeActor(operation);
     }
     if (llvm::any_of(operation->getOperandTypes(), isManagedType) ||
         llvm::any_of(operation->getResultTypes(), isManagedType)) {

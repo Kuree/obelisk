@@ -361,6 +361,9 @@ obelisk_rt_status aotRunOneNode(void *opaque, obelisk_rt_context *context) {
 
 obelisk_rt_status runAOTNodes(AOTTestState *state,
                               obelisk_rt_context *context) {
+  if (!state)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ++state->runCalls;
   return aotRunNodes(state, context);
 }
 
@@ -2445,12 +2448,18 @@ TEST(Scheduler, AOTExternalWriteReturnsToFourStateAtCleanBoundary) {
   // that handback.
   EXPECT_EQ(schedulerPromotionReadyCount, 1u);
 
+  // An ordinary Tier-1 invocation does not rescan an unchanged unknown
+  // plane. Only a new transient write invalidates the promotion boundary.
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot(context), OBELISK_RT_OK);
+  EXPECT_EQ(state.runCalls, 2u);
+  EXPECT_EQ(schedulerPromotionReadyCount, 1u);
+
   {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     obelisk_rt_aot_external_write_unlocked(context);
   }
   ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot(context), OBELISK_RT_OK);
-  EXPECT_EQ(state.runCalls, 2u);
+  EXPECT_EQ(state.runCalls, 3u);
   EXPECT_EQ(schedulerPromotionReadyCount, 2u);
   obelisk_rt_v1_context_destroy(context);
 }
@@ -2639,7 +2648,6 @@ TEST(Scheduler, AOTNativeCheckpointRunsBytecodeIslandAndReturnsToNative) {
   EXPECT_EQ(context->scheduledProcesses.front().signalSubscriptions.front()
                 ->stableID,
             16u);
-
   // Exercise the real signal subscription and AOT ready-bit routing on the
   // Tier-3 return continuation instead of mutating scheduler internals.
   obelisk_rt_v1_scheduler_signal(

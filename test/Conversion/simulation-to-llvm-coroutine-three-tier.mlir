@@ -2,6 +2,10 @@
 // RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-materialize-graph-regions,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s
 
+// This is a lowering fixture for the direct convergence materializer. The
+// production schedule does not install these helpers yet; keeping the fixture
+// makes that boundary explicit while checking that its local call graph stays
+// runtime-free.
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
@@ -29,8 +33,7 @@ module attributes {
               width = 8, dynamic = false, deferred = false, trigger = none>,
             #obelisk_sim.effect<effect = write, resource = storage,
               target = descriptor, descriptor = 0, formal = 0, low = 0,
-              width = 8, dynamic = false, deferred = false,
-              trigger = none>]>,
+              width = 8, dynamic = false, deferred = false, trigger = none>]>,
         #obelisk_sim.fragment<id = 3, function = @root, block = 0,
           region = active, action = terminate, tier = native, cost = 1,
           lane = 0, twoState = true, effects = []>],
@@ -86,9 +89,6 @@ module attributes {
   }
 }
 
-// An inactive direct SCC is one ingress comparison and branch. An active SCC
-// evaluates only selected members, carries publications across sweeps, and has
-// no iteration counter or runtime call. Tier 1 calls the subkernel directly.
 // CHECK-LABEL: llvm.func @__obelisk_tier2_converge_v1_
 // CHECK-NOT: llvm.call @obelisk_rt_
 // CHECK: llvm.cond_br
@@ -102,9 +102,6 @@ module attributes {
 // CHECK-NOT: llvm.call @obelisk_rt_
 // CHECK: llvm.call @__obelisk_tier2_converge_v1_
 // CHECK: llvm.return
-// Four-state and two-state bodies are separately selectable and contain no
-// promotion guard. The slot-local eval step selects once before calling the
-// body and invokes Tier 2 directly, without a named runtime call.
 // CHECK-LABEL: llvm.func @__obelisk_tier1_eval_four_state_v1_
 // CHECK-NOT: __obelisk_tier1_selected_variant
 // CHECK: llvm.call %{{.*}}

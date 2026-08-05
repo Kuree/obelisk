@@ -233,6 +233,13 @@ LogicalResult makeDirectFragmentWrapper(
   auto wrapper = LLVM::LLVMFuncOp::create(
       builder, location, wrapperName,
       LLVM::LLVMFunctionType::get(i32, {pointer}, false));
+  if (body->hasAttr("obelisk.eval.inductive_two_state") ||
+      body->hasAttr("obelisk.eval.selected_two_state") ||
+      body->hasAttr("obelisk.eval.four_state_source"))
+    wrapper->setAttr("obelisk.eval.two_state_variant", builder.getUnitAttr());
+  if (body->hasAttr("obelisk.eval.path_guarded_two_state"))
+    wrapper->setAttr("obelisk.eval.path_guarded_two_state",
+                     builder.getUnitAttr());
   bool mayTerminate = false;
   llvm::SmallPtrSet<Operation *, 8> visited;
   auto design = body->getParentOfType<sim::SimDesignOp>();
@@ -262,8 +269,13 @@ LogicalResult makeDirectFragmentWrapper(
   };
   inspect(body);
   inspect(actor);
-  if (mayTerminate)
+  if (mayTerminate) {
     wrapper->setAttr("obelisk.eval.may_terminate", builder.getUnitAttr());
+    if (body->hasAttr("obelisk.eval.inherited_two_state_checkpoint") ||
+        actor->hasAttr("obelisk.eval.inherited_two_state_checkpoint"))
+      wrapper->setAttr("obelisk.eval.checkpoint_safe",
+                       builder.getUnitAttr());
+  }
   Block *entry = wrapper.addEntryBlock(builder);
   if (body->hasAttr("obelisk.eval.raw_captures")) {
     if (!mayTerminate)

@@ -100,25 +100,7 @@ LogicalResult makeNativeEvalPlan(
   SmallVector<std::string> mergedTwoStateExecutors;
   SmallVector<SmallVector<NativePromotionRange>> mergedPromotionRanges;
   SmallVector<unsigned> periodicClosureRecords;
-  auto findExclusiveFusionOwner = [&](uint32_t group) {
-    auto best = directFragments.end();
-    size_t bestExtent = 0;
-    bool ambiguous = false;
-    for (auto candidate = directFragments.begin();
-         candidate != directFragments.end(); ++candidate) {
-      if (candidate->fusionGroup != group)
-        continue;
-      size_t extent = candidate->fragmentIDs.size();
-      if (best == directFragments.end() || extent > bestExtent) {
-        best = candidate;
-        bestExtent = extent;
-        ambiguous = false;
-      } else if (extent == bestExtent && candidate->wrapper != best->wrapper) {
-        ambiguous = true;
-      }
-    }
-    return ambiguous ? directFragments.end() : best;
-  };
+  SmallVector<unsigned> periodicEntryRecords;
   struct DynamicEvalNBA {
     uint32_t rootIndex;
     uint64_t site;
@@ -213,9 +195,6 @@ LogicalResult makeNativeEvalPlan(
                 }) != 1)
           return module.emitError(
               "stable eval source owner maps to multiple generated bodies");
-        if (direct == directFragments.end() &&
-            executable.fusion_group != UINT32_MAX)
-          direct = findExclusiveFusionOwner(executable.fusion_group);
         if (direct == directFragments.end())
           direct =
               llvm::find_if(directFragments, [&](const auto &candidate) {
@@ -251,6 +230,30 @@ LogicalResult makeNativeEvalPlan(
                 ambiguous = false;
               } else if (candidate->fragmentIDs.size() == bestSize)
                 ambiguous = true;
+            }
+            direct = ambiguous ? directFragments.end() : best;
+          }
+        }
+        if (direct == directFragments.end()) {
+          auto fragments = staticFanoutPlan.fragments.find(
+              {executable.actor_slot, executable.continuation});
+          if (fragments != staticFanoutPlan.fragments.end()) {
+            auto best = directFragments.end();
+            bool ambiguous = false;
+            for (auto candidate = directFragments.begin();
+                 candidate != directFragments.end(); ++candidate) {
+              if (fragments->second.empty() ||
+                  !llvm::all_of(fragments->second, [&](uint32_t fragment) {
+                    return llvm::is_contained(candidate->ownershipAnchors,
+                                              fragment);
+                  }))
+                continue;
+              if (best != directFragments.end() &&
+                  best->wrapper != candidate->wrapper) {
+                ambiguous = true;
+                break;
+              }
+              best = candidate;
             }
             direct = ambiguous ? directFragments.end() : best;
           }
@@ -320,11 +323,6 @@ LogicalResult makeNativeEvalPlan(
               return candidate.actorSlot == executable.actor_slot &&
                      candidate.continuation == executable.continuation;
             });
-        if (direct == directFragments.end() &&
-            executable.fusion_group != UINT32_MAX)
-          direct = llvm::find_if(directFragments, [&](const auto &candidate) {
-            return candidate.fusionGroup == executable.fusion_group;
-          });
         mergedFragments.push_back(
             {executable.actor_slot, executable.continuation, entry.kernel,
              entry.merged_bit, entry.compute_node, 0, nullptr});
@@ -394,11 +392,11 @@ LogicalResult makeNativeEvalPlan(
     fanoutEntries = indexedFanoutEntries;
   }
   // Promotion is a property of the periodic execution closure, not of every
-  // four-state object in the design.  Seed the closure from every physical
-  // periodic trigger (including proven port aliases), then follow the frozen
-  // compute graph through sensitivity, NBA, and convergence edges.  Dormant
-  // asynchronous owners remain outside this scan and are handled by the
-  // runtime handoff/invalidation path.
+  // four-state object in the design. Seed the closure from every physical
+  // periodic trigger (including proven port aliases), then follow exact
+  // activation edges, preserving packed ranges across root-specific NBA
+  // commit nodes. Dormant asynchronous owners remain outside this scan and
+  // are handled by the runtime handoff/invalidation path.
   if (evalScheduler && !mergedFragments.empty() && computeGraph) {
     llvm::SmallDenseSet<unsigned, 32> closure;
     auto clockTouches = [&](const NativePeriodicClock &clock,
@@ -430,7 +428,10 @@ LogicalResult makeNativeEvalPlan(
         closure.insert(entry.merged_bit);
     }
     const llvm::SmallDenseSet<unsigned, 32> periodicSeeds = closure;
+    periodicEntryRecords.assign(periodicSeeds.begin(), periodicSeeds.end());
+    llvm::sort(periodicEntryRecords);
     llvm::DenseMap<uint32_t, unsigned> fragmentOwners;
+    SmallVector<SmallVector<uint32_t>> ownerFragments(mergedFragments.size());
     llvm::SmallDenseSet<uint32_t, 16> ambiguousFragments;
     for (auto [recordIndex, executor] : llvm::enumerate(mergedExecutors)) {
       if (executor.empty())
@@ -440,7 +441,15 @@ LogicalResult makeNativeEvalPlan(
       });
       if (direct == directFragments.end())
         continue;
-      for (uint32_t fragment : direct->fragmentIDs) {
+      SmallVector<uint32_t> ownedFragments;
+      llvm::append_range(ownedFragments, direct->fragmentIDs);
+      llvm::append_range(ownedFragments, direct->ownershipAnchors);
+      llvm::sort(ownedFragments);
+      ownedFragments.erase(
+          std::unique(ownedFragments.begin(), ownedFragments.end()),
+          ownedFragments.end());
+      for (uint32_t fragment : ownedFragments) {
+        ownerFragments[recordIndex].push_back(fragment);
         auto [found, inserted] = fragmentOwners.try_emplace(fragment,
                                                             recordIndex);
         if (!inserted && found->second != recordIndex)
@@ -450,18 +459,55 @@ LogicalResult makeNativeEvalPlan(
     for (uint32_t fragment : ambiguousFragments)
       fragmentOwners.erase(fragment);
 
+    llvm::SmallDenseSet<uint32_t, 64> reachableNodes;
+    for (unsigned owner : closure)
+      for (uint32_t fragment : ownerFragments[owner])
+        reachableNodes.insert(fragment);
+    auto rangesOverlap = [](sim::ComputeEffectAttr lhs,
+                            sim::ComputeEffectAttr rhs) {
+      if (!lhs || !rhs || lhs.getResource() != rhs.getResource() ||
+          lhs.getTarget() != rhs.getTarget() ||
+          lhs.getDescriptor() != rhs.getDescriptor() ||
+          lhs.getFormal() != rhs.getFormal() || lhs.getWidth() == 0 ||
+          rhs.getWidth() == 0)
+        return false;
+      return lhs.getLow() < rhs.getLow() + rhs.getWidth() &&
+             rhs.getLow() < lhs.getLow() + lhs.getWidth();
+    };
+    auto reachOwner = [&](uint32_t fragment) {
+      auto target = fragmentOwners.find(fragment);
+      if (target == fragmentOwners.end())
+        return false;
+      if (!closure.insert(target->second).second)
+        return false;
+      for (uint32_t owned : ownerFragments[target->second])
+        reachableNodes.insert(owned);
+      return true;
+    };
     bool changed;
     do {
       changed = false;
       for (Attribute attribute : computeGraph.getEdges()) {
         auto edge = cast<sim::ComputeEdgeAttr>(attribute);
-        auto source = fragmentOwners.find(edge.getSource());
-        if (source == fragmentOwners.end() ||
-            !closure.contains(source->second))
+        if (!reachableNodes.contains(edge.getSource()))
           continue;
-        if (auto target = fragmentOwners.find(edge.getTarget());
-            target != fragmentOwners.end())
-          changed |= closure.insert(target->second).second;
+        if (edge.getKind() == sim::ComputeEdgeKind::Sensitivity ||
+            edge.getKind() == sim::ComputeEdgeKind::Resume) {
+          changed |= reachableNodes.insert(edge.getTarget()).second;
+          changed |= reachOwner(edge.getTarget());
+          continue;
+        }
+        if (edge.getKind() != sim::ComputeEdgeKind::NBAStage)
+          continue;
+        for (Attribute candidate : computeGraph.getEdges()) {
+          auto activation = cast<sim::ComputeEdgeAttr>(candidate);
+          if (activation.getKind() != sim::ComputeEdgeKind::NBAActivate ||
+              activation.getSource() != edge.getTarget() ||
+              !rangesOverlap(edge.getResource(), activation.getResource()))
+            continue;
+          changed |= reachableNodes.insert(activation.getTarget()).second;
+          changed |= reachOwner(activation.getTarget());
+        }
       }
     } while (changed);
 
@@ -678,6 +724,8 @@ LogicalResult makeNativeEvalPlan(
       "__obelisk_eval_fast_coordinator_v1";
   constexpr StringLiteral evalTwoStateCoordinatorName =
       "__obelisk_eval_fast_coordinator_two_state_v1";
+  constexpr StringLiteral evalSteadyTwoStateCoordinatorName =
+      "__obelisk_eval_steady_two_state_coordinator_v1";
   constexpr StringLiteral evalPeriodicTwoStateCoordinatorName =
       "__obelisk_eval_periodic_two_state_coordinator_v1";
   constexpr StringLiteral evalHybridCoordinatorName =
@@ -688,6 +736,8 @@ LogicalResult makeNativeEvalPlan(
       "__obelisk_eval_step_four_state_nba_roots_v1";
   constexpr StringLiteral evalFastNBALatchedName =
       "__obelisk_eval_fast_nba_latched_v1";
+  constexpr StringLiteral evalFastNBARootsName =
+      "__obelisk_eval_fast_nba_roots_v1";
   constexpr StringLiteral periodicTerminationName =
       "__obelisk_periodic_termination_v1";
   constexpr StringLiteral promotionReadyName =
@@ -696,6 +746,8 @@ LogicalResult makeNativeEvalPlan(
       "__obelisk_eval_promotion_latched_v1";
   constexpr StringLiteral periodicPromotionLatchedName =
       "__obelisk_eval_periodic_promotion_latched_v1";
+  constexpr StringLiteral periodicEntryPromotionLatchedName =
+      "__obelisk_eval_periodic_entry_promotion_latched_v1";
   constexpr StringLiteral periodicPromotionReadyName =
       "__obelisk_eval_periodic_promotion_ready_v1";
   constexpr StringLiteral promotionKernelLatchedName =
@@ -709,7 +761,9 @@ LogicalResult makeNativeEvalPlan(
   constexpr StringLiteral planName = "__obelisk_aot_schedule_plan_v1";
   SmallVector<std::string> promotionKernelReadyNames(mergedFragments.size());
   bool periodicPromotionComplete = false;
+  bool periodicPromotionHasPathGuards = false;
   uint64_t periodicPromotionMask = 0;
+  bool periodicEntryPromotionComplete = false;
 
   builder.setInsertionPointToStart(module.getBody());
   auto state = LLVM::GlobalOp::create(builder, location, stateType, false,
@@ -757,6 +811,16 @@ LogicalResult makeNativeEvalPlan(
       LLVM::ReturnOp::create(
           builder, location,
           LLVM::ZeroOp::create(builder, location, taintType));
+      builder.setInsertionPointToStart(module.getBody());
+      auto fastRoots = LLVM::GlobalOp::create(
+          builder, location, taintType, false, LLVM::Linkage::Internal,
+          evalFastNBARootsName, Attribute{}, 8);
+      Block *fastRootsInitializer = new Block;
+      fastRoots.getInitializerRegion().push_back(fastRootsInitializer);
+      builder.setInsertionPointToStart(fastRootsInitializer);
+      LLVM::ReturnOp::create(
+          builder, location,
+          LLVM::ZeroOp::create(builder, location, taintType));
     }
     builder.setInsertionPointToStart(module.getBody());
     auto promotionLatched = LLVM::GlobalOp::create(
@@ -768,6 +832,11 @@ LogicalResult makeNativeEvalPlan(
     auto periodicPromotionLatched = LLVM::GlobalOp::create(
         builder, location, builder.getI8Type(), false,
         LLVM::Linkage::Internal, periodicPromotionLatchedName,
+        builder.getI8IntegerAttr(0), 1);
+    builder.setInsertionPointToStart(module.getBody());
+    auto periodicEntryPromotionLatched = LLVM::GlobalOp::create(
+        builder, location, builder.getI8Type(), false,
+        LLVM::Linkage::Internal, periodicEntryPromotionLatchedName,
         builder.getI8IntegerAttr(0), 1);
 
     Type kernelLatchType =
@@ -800,7 +869,10 @@ LogicalResult makeNativeEvalPlan(
     // on their four-state route.
     for (auto [index, twoStateExecutor] :
          llvm::enumerate(mergedTwoStateExecutors)) {
-      if (twoStateExecutor.empty())
+      // The current generated dispatcher and promotion ABI use one ready
+      // word. Owners outside that word remain on the runtime/fallback route;
+      // never form a C++ shift for them while emitting the compact hot path.
+      if (twoStateExecutor.empty() || mergedFragments[index].bit >= 64)
         continue;
       std::string readyName =
           (Twine("__obelisk_eval_kernel_promotion_ready_v1_") + Twine(index))
@@ -837,8 +909,7 @@ LogicalResult makeNativeEvalPlan(
       builder.setInsertionPointToStart(readyScan);
       Value unknown = LLVM::AddressOfOp::create(
           builder, location, pointer, "__obelisk_state_unknown");
-      Value anyUnknown = llvmConstant(builder, location,
-                                      builder.getI8Type(), 0);
+      llvm::SmallDenseMap<uint64_t, uint8_t, 16> scanByteMasks;
       for (const NativePromotionRange &range : mergedPromotionRanges[index]) {
         if (range.bitWidth == 0 || range.bitOffset > stateLayout.bitCount ||
             range.bitWidth > stateLayout.bitCount - range.bitOffset)
@@ -855,25 +926,36 @@ LogicalResult makeNativeEvalPlan(
           if (byte + 1 == lastByte && lastBit % 8 != 0)
             mask &= static_cast<uint8_t>(
                 (uint16_t{1} << (lastBit % 8)) - 1);
-          Value bits = LLVM::LoadOp::create(
-              builder, location, builder.getI8Type(),
-              byteGEP(builder, location, unknown, byte), 1);
-          if (mask != UINT8_MAX)
-            bits = arith::AndIOp::create(
-                builder, location, bits,
-                llvmConstant(builder, location, builder.getI8Type(), mask));
-          anyUnknown =
-              arith::OrIOp::create(builder, location, anyUnknown, bits);
+          scanByteMasks[byte] |= mask;
         }
       }
-      Value known = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::eq, anyUnknown,
-          llvmConstant(builder, location, builder.getI8Type(), 0));
+      SmallVector<std::pair<uint64_t, uint8_t>> orderedScanBytes(
+          scanByteMasks.begin(), scanByteMasks.end());
+      llvm::sort(orderedScanBytes, [](const auto &lhs, const auto &rhs) {
+        return lhs.first < rhs.first;
+      });
+      Block *readyUnknown = new Block;
+      ready.getBody().push_back(readyUnknown);
+      for (auto [byte, mask] : orderedScanBytes) {
+        Value bits = LLVM::LoadOp::create(
+            builder, location, builder.getI8Type(),
+            byteGEP(builder, location, unknown, byte), 1);
+        if (mask != UINT8_MAX)
+          bits = arith::AndIOp::create(
+              builder, location, bits,
+              llvmConstant(builder, location, builder.getI8Type(), mask));
+        Value byteUnknown = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::ne, bits,
+            llvmConstant(builder, location, builder.getI8Type(), 0));
+        Block *nextByte = new Block;
+        ready.getBody().push_back(nextByte);
+        cf::CondBranchOp::create(builder, location, byteUnknown, readyUnknown,
+                                 ValueRange{}, nextByte, ValueRange{});
+        builder.setInsertionPointToStart(nextByte);
+      }
       LLVM::StoreOp::create(
           builder, location,
-          arith::SelectOp::create(
-              builder, location, known,
-              llvmConstant(builder, location, builder.getI8Type(), 1), latch),
+          llvmConstant(builder, location, builder.getI8Type(), 1),
           latchAddress, 1);
       Value pendingAddress = LLVM::AddressOfOp::create(
           builder, location, pointer, promotionPendingMask.getSymName());
@@ -884,19 +966,23 @@ LogicalResult makeNativeEvalPlan(
           llvmConstant(builder, location, i64,
                        ~(uint64_t{1} << mergedFragments[index].bit)));
       LLVM::StoreOp::create(
-          builder, location,
-          arith::SelectOp::create(builder, location, known, clearedPending,
-                                  pending),
+          builder, location, clearedPending,
           pendingAddress, 8);
-      LLVM::ReturnOp::create(builder, location, known);
+      LLVM::ReturnOp::create(
+          builder, location,
+          llvmConstant(builder, location, builder.getI1Type(), 1));
+      builder.setInsertionPointToStart(readyUnknown);
+      LLVM::ReturnOp::create(
+          builder, location,
+          llvmConstant(builder, location, builder.getI1Type(), 0));
     }
 
     // A periodic transaction may use the guard-free Tier-1 coordinator only
     // after every owner in its exact graph closure has selected a two-state
-    // body.  This scan runs at the quiescent boundary after the transient
-    // hybrid coordinator, rather than on every clock edge.  Owners outside
-    // the closure cannot block promotion and asynchronous intervention clears
-    // the latch before generated execution resumes.
+    // body. Per-owner scans run only when the hybrid coordinator selects that
+    // owner; this aggregate quiescent-boundary check is a constant-time mask
+    // test. Owners outside the closure cannot block promotion, and asynchronous
+    // intervention clears the latch before generated execution resumes.
     periodicPromotionComplete = !periodicClosureRecords.empty();
     periodicPromotionMask = 0;
     for (unsigned recordIndex : periodicClosureRecords) {
@@ -907,8 +993,31 @@ LogicalResult makeNativeEvalPlan(
         periodicPromotionComplete = false;
         break;
       }
+      auto executor = module.lookupSymbol<LLVM::LLVMFuncOp>(
+          mergedTwoStateExecutors[recordIndex]);
+      if (executor &&
+          executor->hasAttr("obelisk.eval.path_guarded_two_state")) {
+        // This owner contributes a stable guarded route rather than an
+        // unconditional two-state invariant.  It can still participate in the
+        // periodic certificate provided the coordinator observes its exact-CFG
+        // rejection before choosing the NBA barrier.
+        periodicPromotionHasPathGuards = true;
+        periodicPromotionMask |=
+            uint64_t{1} << mergedFragments[recordIndex].bit;
+        continue;
+      }
       periodicPromotionMask |=
           uint64_t{1} << mergedFragments[recordIndex].bit;
+    }
+    periodicEntryPromotionComplete = !periodicEntryRecords.empty();
+    for (unsigned recordIndex : periodicEntryRecords) {
+      if (recordIndex >= mergedFragments.size() ||
+          mergedFragments[recordIndex].bit >= 64 ||
+          mergedTwoStateExecutors[recordIndex].empty() ||
+          promotionKernelReadyNames[recordIndex].empty()) {
+        periodicEntryPromotionComplete = false;
+        break;
+      }
     }
     builder.setInsertionPointToEnd(module.getBody());
     auto periodicPromotionReady = LLVM::LLVMFuncOp::create(
@@ -940,22 +1049,13 @@ LogicalResult makeNativeEvalPlan(
     builder.setInsertionPointToStart(periodicReadyScan);
     Value periodicKnown = llvmConstant(
         builder, location, builder.getI1Type(), periodicPromotionComplete);
+    Value periodicEntryKnown = llvmConstant(
+        builder, location, builder.getI1Type(),
+        periodicEntryPromotionComplete);
     if (periodicPromotionComplete) {
-      // Force the one-time initial scan for closure members that have not yet
-      // become ready.  Subsequent calls are constant-time for latched owners;
-      // a runtime invalidation resets all of them transactionally.
-      for (unsigned recordIndex : periodicClosureRecords) {
-        Value ownerKnown = LLVM::CallOp::create(
-                               builder, location,
-                               TypeRange{builder.getI1Type()},
-                               SymbolRefAttr::get(
-                                   context,
-                                   promotionKernelReadyNames[recordIndex]),
-                               ValueRange{})
-                               .getResult();
-        periodicKnown = arith::AndIOp::create(builder, location,
-                                              periodicKnown, ownerKnown);
-      }
+      // Owners clear their own bits only when selected in the hybrid path.
+      // Dormant unknown owners therefore prevent guard-free full-closure
+      // promotion without forcing an unknown-plane scan on every clock edge.
       Value periodicPending = LLVM::LoadOp::create(
           builder, location, i64,
           LLVM::AddressOfOp::create(builder, location, pointer,
@@ -970,6 +1070,54 @@ LogicalResult makeNativeEvalPlan(
       periodicKnown = arith::AndIOp::create(builder, location, periodicKnown,
                                             noPeriodicPending);
     }
+    // The guarded steady coordinator carries a local four-/two-state route for
+    // every structurally covered entry owner.  Entering it therefore requires
+    // coverage, not that every entry owner has already promoted.  Each selected
+    // pending owner retains its four-state body until its own masked scan
+    // succeeds; owners outside the exact periodic closure still take the
+    // explicit local hybrid fallback.
+    Value periodicEntryLatchAddress = LLVM::AddressOfOp::create(
+        builder, location, pointer,
+        periodicEntryPromotionLatched.getSymName());
+    Value periodicEntryLatch = LLVM::LoadOp::create(
+        builder, location, builder.getI8Type(), periodicEntryLatchAddress, 1);
+    LLVM::StoreOp::create(
+        builder, location,
+        arith::SelectOp::create(
+            builder, location, periodicEntryKnown,
+            llvmConstant(builder, location, builder.getI8Type(), 1),
+            periodicEntryLatch),
+        periodicEntryLatchAddress, 1);
+    // The entry promotion is observed only after the hybrid coordinator has
+    // committed and reached quiescence. Its transient four-state accounting
+    // belongs to that completed slot; clear it once here so the steady route
+    // starts with canonical two-state NBA selection without a per-edge reset.
+    Value stepFallbackAddress = LLVM::AddressOfOp::create(
+        builder, location, pointer, evalStepFourStateFallbackName);
+    Value stepFallback = LLVM::LoadOp::create(
+        builder, location, builder.getI8Type(), stepFallbackAddress, 1);
+    LLVM::StoreOp::create(
+        builder, location,
+        arith::SelectOp::create(
+            builder, location, periodicEntryKnown,
+            llvmConstant(builder, location, builder.getI8Type(), 0),
+            stepFallback),
+        stepFallbackAddress, 1);
+    if (nbaTaintWordCount != 0) {
+      Value taint = LLVM::AddressOfOp::create(
+          builder, location, pointer, evalStepFourStateNBARootsName);
+      for (uint32_t word = 0; word != nbaTaintWordCount; ++word) {
+        Value address = byteGEP(builder, location, taint,
+                                uint64_t{word} * sizeof(uint64_t));
+        Value old = LLVM::LoadOp::create(builder, location, i64, address, 8);
+        LLVM::StoreOp::create(
+            builder, location,
+            arith::SelectOp::create(
+                builder, location, periodicEntryKnown,
+                llvmConstant(builder, location, i64, 0), old),
+            address, 8);
+      }
+    }
     LLVM::StoreOp::create(
         builder, location,
         arith::SelectOp::create(
@@ -977,9 +1125,9 @@ LogicalResult makeNativeEvalPlan(
             llvmConstant(builder, location, builder.getI8Type(), 1),
             periodicLatch),
         periodicLatchAddress, 1);
-    // Every staged root reachable from the periodic closure is known at this
-    // quiescent boundary. The specialized steady coordinator can therefore
-    // use the value-plane-only NBA barrier immediately on its next edge.
+    // Only the complete closure proof establishes the invariant required by
+    // the value-plane-only NBA barrier.  The guarded entry route still uses
+    // the canonical/four-state selection until that stronger proof succeeds.
     Value fastNBALatchAddress = LLVM::AddressOfOp::create(
         builder, location, pointer, evalFastNBALatchedName);
     Value fastNBALatch = LLVM::LoadOp::create(
@@ -1046,6 +1194,11 @@ LogicalResult makeNativeEvalPlan(
         builder, location, promotionInvalidateName,
         LLVM::LLVMFunctionType::get(LLVM::LLVMVoidType::get(context), {},
                                     false));
+    promotionInvalidate->setAttr(
+        "passthrough",
+        builder.getArrayAttr(
+            {builder.getStringAttr("noinline"),
+             builder.getStringAttr("cold")}));
     Block *invalidateEntry = promotionInvalidate.addEntryBlock(builder);
     builder.setInsertionPointToStart(invalidateEntry);
     LLVM::StoreOp::create(
@@ -1059,6 +1212,13 @@ LogicalResult makeNativeEvalPlan(
         llvmConstant(builder, location, builder.getI8Type(), 0),
         LLVM::AddressOfOp::create(builder, location, pointer,
                                   periodicPromotionLatched.getSymName()),
+        1);
+    LLVM::StoreOp::create(
+        builder, location,
+        llvmConstant(builder, location, builder.getI8Type(), 0),
+        LLVM::AddressOfOp::create(
+            builder, location, pointer,
+            periodicEntryPromotionLatched.getSymName()),
         1);
     LLVM::MemsetOp::create(
         builder, location,
@@ -1079,6 +1239,15 @@ LogicalResult makeNativeEvalPlan(
         LLVM::AddressOfOp::create(builder, location, pointer,
                                   evalFastNBALatchedName),
         1);
+    if (nbaTaintWordCount != 0)
+      LLVM::MemsetOp::create(
+          builder, location,
+          LLVM::AddressOfOp::create(builder, location, pointer,
+                                    evalFastNBARootsName),
+          llvmConstant(builder, location, builder.getI8Type(), 0),
+          llvmConstant(builder, location, i64,
+                       uint64_t{nbaTaintWordCount} * sizeof(uint64_t)),
+          /*isVolatile=*/false);
     LLVM::ReturnOp::create(builder, location, ValueRange{});
 
     // The runtime calls this only while its transient fine scheduler is
@@ -1664,7 +1833,6 @@ LogicalResult makeNativeEvalPlan(
             "runtime-free eval has multiple ordered dynamic NBA sites for "
             "one root"),
                failure();
-
   }
   Type clockKernelType = LLVM::LLVMStructType::getLiteral(
       context, {i32, i32, i64, i64, pointer, i32, i32, pointer});
@@ -2351,10 +2519,10 @@ LogicalResult makeNativeEvalPlan(
     cf::BranchOp::create(builder, location, dispatchStep);
 
     builder.setInsertionPointToStart(dispatchStep);
-    // Promotion is latched for the exact periodic graph closure at a
-    // quiescent hybrid boundary. Unrelated dormant owners may retain X
-    // forever without keeping this transaction in Tier 2. Once set, this one
-    // load is the only variant selection outside the guard-free Tier-1 body.
+    // Promotion is selected in two monotonic stages. Once the physical clock
+    // entry owners are known, a compact steady coordinator guards the whole
+    // ready mask against still-pending downstream owners. Once the exact
+    // closure is known, the final trusted coordinator drops that guard too.
     Value periodicPromoted = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::ne,
         LLVM::LoadOp::create(
@@ -2363,10 +2531,24 @@ LogicalResult makeNativeEvalPlan(
                                       periodicPromotionLatchedName),
             1),
         llvmConstant(builder, location, builder.getI8Type(), 0));
-    Value dispatchTwoState =
+    Value periodicEntryPromoted = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ne,
+        LLVM::LoadOp::create(
+            builder, location, builder.getI8Type(),
+            LLVM::AddressOfOp::create(
+                builder, location, pointer,
+                periodicEntryPromotionLatchedName),
+            1),
+        llvmConstant(builder, location, builder.getI8Type(), 0));
+    Value dispatchTrustedTwoState =
         forcedTwoState
             ? llvmConstant(builder, location, builder.getI1Type(), 1)
             : periodicPromoted;
+    Value dispatchTwoState =
+        forcedTwoState
+            ? llvmConstant(builder, location, builder.getI1Type(), 1)
+            : arith::OrIOp::create(builder, location, periodicPromoted,
+                                   periodicEntryPromoted);
     Value stepFourStateFallback = LLVM::AddressOfOp::create(
         builder, location, pointer, evalStepFourStateFallbackName);
     auto resetStepFourStateTracking = [&] {
@@ -2420,7 +2602,7 @@ LogicalResult makeNativeEvalPlan(
       // four-state bookkeeping. This makes the post-promotion hot CFG match
       // the original straight-line ceiling evaluator while preserving the
       // independent per-instance promotion checks in the cold prefix.
-      cf::CondBranchOp::create(builder, location, dispatchTwoState,
+      cf::CondBranchOp::create(builder, location, dispatchTrustedTwoState,
                                executeDirectTwoState, ValueRange{},
                                prepareDirectHybrid, ValueRange{});
       builder.setInsertionPointToStart(prepareDirectHybrid);
@@ -2660,20 +2842,28 @@ LogicalResult makeNativeEvalPlan(
 
     builder.setInsertionPointToStart(executeStep);
     // The hybrid coordinator drains the transient four-state prefix and
-    // independently latches owners as their closures become known. Once the
-    // exact periodic graph closure is fully promoted, route the whole closed
-    // superstep to a guard-free two-state coordinator. Owners outside that
-    // closure can only become ready after a runtime handoff, which invalidates
-    // this selection before generated execution resumes.
+    // independently latches owners as their closures become known. The steady
+    // coordinator then runs two-state owners directly, but returns locally to
+    // the hybrid path if any ready owner is still pending. Only a full exact-
+    // closure proof selects the final guard-free coordinator and compact NBA
+    // barrier.
     Block *executeHybridCoordinator = new Block;
-    Block *executeTwoStateCoordinator = new Block;
+    Block *selectSteadyCoordinator = new Block;
+    Block *executeSteadyCoordinator = new Block;
+    Block *executeTrustedCoordinator = new Block;
     Block *executeCoordinatorJoin = new Block;
     executeCoordinatorJoin->addArgument(i32, location);
     run.getBody().push_back(executeHybridCoordinator);
-    run.getBody().push_back(executeTwoStateCoordinator);
+    run.getBody().push_back(selectSteadyCoordinator);
+    run.getBody().push_back(executeSteadyCoordinator);
+    run.getBody().push_back(executeTrustedCoordinator);
     run.getBody().push_back(executeCoordinatorJoin);
+    cf::CondBranchOp::create(builder, location, dispatchTrustedTwoState,
+                             executeTrustedCoordinator, ValueRange{},
+                             selectSteadyCoordinator, ValueRange{});
+    builder.setInsertionPointToStart(selectSteadyCoordinator);
     cf::CondBranchOp::create(builder, location, dispatchTwoState,
-                             executeTwoStateCoordinator, ValueRange{},
+                             executeSteadyCoordinator, ValueRange{},
                              executeHybridCoordinator, ValueRange{});
     builder.setInsertionPointToStart(executeHybridCoordinator);
     Value hybridStatus =
@@ -2683,21 +2873,79 @@ LogicalResult makeNativeEvalPlan(
             ValueRange{runEntry->getArgument(0), runEntry->getArgument(1)})
             .getResult();
     // The coordinator returns only at its local fixpoint (or on an exit that
-    // immediately hands back to the runtime).  Scan the exact periodic
-    // closure here once; successful promotion changes routing on the next
+    // immediately hands back to the runtime). Check the exact periodic
+    // closure mask here; successful promotion changes routing on the next
     // edge and removes all per-owner promotion guards from the hot loop.
+    Block *scanHybridPromotion = new Block;
+    run.getBody().push_back(scanHybridPromotion);
+    Value hybridOK = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, hybridStatus,
+        llvmConstant(builder, location, i32, OBELISK_RT_OK));
+    cf::CondBranchOp::create(builder, location, hybridOK, scanHybridPromotion,
+                             ValueRange{}, executeCoordinatorJoin,
+                             ValueRange{hybridStatus});
+    builder.setInsertionPointToStart(scanHybridPromotion);
     (void)LLVM::CallOp::create(
         builder, location, TypeRange{builder.getI1Type()},
-        SymbolRefAttr::get(context, periodicPromotionReadyName),
-        ValueRange{});
+        SymbolRefAttr::get(context, periodicPromotionReadyName), ValueRange{});
     cf::BranchOp::create(builder, location, executeCoordinatorJoin,
                          ValueRange{hybridStatus});
-    builder.setInsertionPointToStart(executeTwoStateCoordinator);
+
+    builder.setInsertionPointToStart(executeSteadyCoordinator);
+    Value steadyGuardFallback = entryAlloca(
+        builder, location, builder.getI1Type(), 1, 1);
+    LLVM::StoreOp::create(
+        builder, location,
+        llvmConstant(builder, location, builder.getI1Type(), 0),
+        steadyGuardFallback, 1);
+    Value steadyStatus =
+        LLVM::CallOp::create(
+            builder, location, TypeRange{i32},
+            SymbolRefAttr::get(context, evalSteadyTwoStateCoordinatorName),
+            ValueRange{runEntry->getArgument(0), runEntry->getArgument(1),
+                       preparedTerminationAddress, steadyGuardFallback})
+            .getResult();
+    Block *fallbackHybridCoordinator = new Block;
+    Block *steadyJoin = new Block;
+    steadyJoin->addArgument(i32, location);
+    run.getBody().push_back(fallbackHybridCoordinator);
+    run.getBody().push_back(steadyJoin);
+    Value guardRejected = LLVM::LoadOp::create(
+        builder, location, builder.getI1Type(), steadyGuardFallback, 1);
+    cf::CondBranchOp::create(builder, location, guardRejected,
+                             fallbackHybridCoordinator, ValueRange{},
+                             steadyJoin, ValueRange{steadyStatus});
+    builder.setInsertionPointToStart(fallbackHybridCoordinator);
+    Value fallbackHybridStatus =
+        LLVM::CallOp::create(
+            builder, location, TypeRange{i32},
+            SymbolRefAttr::get(context, evalHybridCoordinatorName),
+            ValueRange{runEntry->getArgument(0), runEntry->getArgument(1)})
+            .getResult();
+    Block *scanFallbackPromotion = new Block;
+    run.getBody().push_back(scanFallbackPromotion);
+    Value fallbackHybridOK = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, fallbackHybridStatus,
+        llvmConstant(builder, location, i32, OBELISK_RT_OK));
+    cf::CondBranchOp::create(builder, location, fallbackHybridOK,
+                             scanFallbackPromotion, ValueRange{}, steadyJoin,
+                             ValueRange{fallbackHybridStatus});
+    builder.setInsertionPointToStart(scanFallbackPromotion);
+    (void)LLVM::CallOp::create(
+        builder, location, TypeRange{builder.getI1Type()},
+        SymbolRefAttr::get(context, periodicPromotionReadyName), ValueRange{});
+    cf::BranchOp::create(builder, location, steadyJoin,
+                         ValueRange{fallbackHybridStatus});
+    builder.setInsertionPointToStart(steadyJoin);
+    cf::BranchOp::create(builder, location, executeCoordinatorJoin,
+                         ValueRange{steadyJoin->getArgument(0)});
+
+    builder.setInsertionPointToStart(executeTrustedCoordinator);
     SmallVector<Value> twoStateCoordinatorArguments{
         runEntry->getArgument(0), runEntry->getArgument(1)};
     if (periodicPromotionComplete)
       twoStateCoordinatorArguments.push_back(preparedTerminationAddress);
-    Value twoStateStatus =
+    Value trustedStatus =
         LLVM::CallOp::create(
             builder, location, TypeRange{i32},
             SymbolRefAttr::get(
@@ -2707,7 +2955,7 @@ LogicalResult makeNativeEvalPlan(
             twoStateCoordinatorArguments)
             .getResult();
     cf::BranchOp::create(builder, location, executeCoordinatorJoin,
-                         ValueRange{twoStateStatus});
+                         ValueRange{trustedStatus});
     builder.setInsertionPointToStart(executeCoordinatorJoin);
     Value stepStatus = executeCoordinatorJoin->getArgument(0);
     Value stepOK = arith::CmpIOp::create(
@@ -3097,12 +3345,30 @@ LogicalResult makeNativeEvalPlan(
     }
   }
 
+  bool generatedEvalHasPathGuards = llvm::any_of(
+      mergedTwoStateExecutors, [&](const std::string &name) {
+        auto function = name.empty()
+                            ? LLVM::LLVMFuncOp{}
+                            : module.lookupSymbol<LLVM::LLVMFuncOp>(name);
+        return function &&
+               function->hasAttr("obelisk.eval.path_guarded_two_state");
+      });
+
+  // Keep the exceptional unknown-NBA drain out of coordinators that are
+  // intentionally inlined into run_until. Otherwise each promoted variant
+  // duplicates the complete four-state coordinator on a cold edge and
+  // needlessly expands the instruction working set of the periodic loop.
+  constexpr StringLiteral evalFourStateNBAHandoffName =
+      "__obelisk_eval_four_state_nba_handoff_v1";
+
   auto makeFastCoordinator =
       [&](StringRef functionName, ArrayRef<std::string> executors,
           bool promotedCoordinator,
           bool hybridCoordinator = false,
           uint64_t allowedOwnerMask = UINT64_MAX,
-          bool trustedTwoState = false) -> LogicalResult {
+          bool trustedTwoState = false,
+          bool guardPendingOwners = false,
+          bool observePathFallback = false) -> LogicalResult {
     if (!evalScheduler || clockKernels.empty() || mergedFragments.empty() ||
         mergedFragments.size() > 64 ||
         executors.size() != mergedFragments.size())
@@ -3123,19 +3389,38 @@ LogicalResult makeNativeEvalPlan(
     SmallVector<Type> coordinatorArguments{pointer, pointer};
     if (trustedTwoState)
       coordinatorArguments.push_back(pointer);
+    if (guardPendingOwners)
+      coordinatorArguments.push_back(pointer);
     auto fastCoordinator = LLVM::LLVMFuncOp::create(
         builder, location, functionName,
         LLVM::LLVMFunctionType::get(i32, coordinatorArguments, false));
-    fastCoordinator->setAttr(
-        "passthrough",
-        builder.getArrayAttr({builder.getStringAttr(
-            hybridCoordinator ? "noinline" : "alwaysinline")}));
+    if (promotedCoordinator && !hybridCoordinator)
+      fastCoordinator->setAttr("obelisk.eval.two_state_variant",
+                               builder.getUnitAttr());
+    if (trustedTwoState && !guardPendingOwners)
+      fastCoordinator->setAttr("obelisk.eval.trusted_two_state_coordinator",
+                               builder.getUnitAttr());
+    fastCoordinator->setAttr("obelisk.eval.call_closure_root",
+                             builder.getUnitAttr());
+    // Hybrid coordinators are module-instance scheduling bodies.  Leave them
+    // to normal LLVM profitability so the periodic run loop can inline a
+    // profitable model while large generated bodies remain out of line.  An
+    // explicit noinline boundary prevented loop/state simplification and was
+    // the largest remaining difference from the ceiling prototype.
+    bool observesFourStateFallback =
+        hybridCoordinator || guardPendingOwners || observePathFallback;
+    if (!hybridCoordinator &&
+        !(trustedTwoState && !observesFourStateFallback))
+      fastCoordinator->setAttr(
+          "passthrough",
+          builder.getArrayAttr({builder.getStringAttr("alwaysinline")}));
     Block *fastEntry = fastCoordinator.addEntryBlock(builder);
     Block *dispatch = new Block;
     Block *commit = new Block;
     Block *afterCommit = new Block;
     Block *complete = new Block;
     Block *stopped = new Block;
+    Block *guardRejected = guardPendingOwners ? new Block : nullptr;
     Block *failed = new Block;
     failed->addArgument(i32, location);
     fastCoordinator.getBody().push_back(dispatch);
@@ -3143,16 +3428,25 @@ LogicalResult makeNativeEvalPlan(
     fastCoordinator.getBody().push_back(afterCommit);
     fastCoordinator.getBody().push_back(complete);
     fastCoordinator.getBody().push_back(stopped);
+    if (guardRejected)
+      fastCoordinator.getBody().push_back(guardRejected);
     fastCoordinator.getBody().push_back(failed);
     builder.setInsertionPointToStart(fastEntry);
+    if (guardPendingOwners) {
+      unsigned guardArgument = trustedTwoState ? 3 : 2;
+      LLVM::StoreOp::create(
+          builder, location,
+          llvmConstant(builder, location, builder.getI1Type(), 0),
+          fastEntry->getArgument(guardArgument), 1);
+    }
     Value changed = entryAlloca(builder, location, i32, 1, 4);
     Value fourStateFallback = entryAlloca(builder, location,
                                           builder.getI1Type(), 1, 1);
     LLVM::StoreOp::create(
         builder, location,
-        trustedTwoState
+        (trustedTwoState && !observesFourStateFallback)
             ? llvmConstant(builder, location, builder.getI1Type(), 0)
-            : (promotedCoordinator || hybridCoordinator)
+            : (promotedCoordinator || hybridCoordinator || guardPendingOwners)
             ? arith::CmpIOp::create(
                   builder, location, arith::CmpIPredicate::ne,
                   LLVM::LoadOp::create(
@@ -3224,7 +3518,29 @@ LogicalResult makeNativeEvalPlan(
         LLVM::CountTrailingZerosOp::create(builder, location, i64, ready, true);
     Value selectedMask = arith::ShLIOp::create(
         builder, location, llvmConstant(builder, location, i64, 1), bit);
+    Block *switchBlock = select;
+    if (guardPendingOwners) {
+      // Preserve the global ready-bit order while draining the maximal native
+      // prefix.  An uncovered owner later in the set must not force already
+      // ordered, covered owners back through the hybrid coordinator.
+      Value unsafeSelected = arith::AndIOp::create(
+          builder, location, selectedMask,
+          llvmConstant(builder, location, i64, ~allowedOwnerMask));
+      Value selectedIsUnsafe = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne, unsafeSelected,
+          llvmConstant(builder, location, i64, 0));
+      switchBlock = new Block;
+      fastCoordinator.getBody().push_back(switchBlock);
+      cf::CondBranchOp::create(builder, location, selectedIsUnsafe,
+                               guardRejected, ValueRange{}, switchBlock,
+                               ValueRange{});
+      builder.setInsertionPointToStart(switchBlock);
+    }
     Value selectedPromotionPending;
+    // The trusted steady coordinator has already crossed its quiescent
+    // promotion boundary.  Its path-guarded executors perform their own exact
+    // CFG check, while every other executor is directly two-state.  Only the
+    // transitional hybrid coordinator needs per-owner promotion scans here.
     if (hybridCoordinator) {
       Value pending = LLVM::LoadOp::create(
           builder, location, i64,
@@ -3296,7 +3612,10 @@ LogicalResult makeNativeEvalPlan(
         Value fourStateStatus =
             LLVM::CallOp::create(
                 builder, location, TypeRange{i32},
-                SymbolRefAttr::get(context, executors[recordIndex]),
+                SymbolRefAttr::get(
+                    context, hybridCoordinator
+                                 ? executors[recordIndex]
+                                 : mergedExecutors[recordIndex]),
                 ValueRange{fastEntry->getArgument(1)})
                 .getResult();
         cf::BranchOp::create(builder, location, executeJoin,
@@ -3327,13 +3646,22 @@ LogicalResult makeNativeEvalPlan(
           builder, location, arith::CmpIPredicate::eq, executeStatus,
           llvmConstant(builder, location, i32, OBELISK_RT_OK));
       auto executor = module.lookupSymbol<LLVM::LLVMFuncOp>(
-          executors[recordIndex]);
+          guardPendingOwners ? mergedExecutors[recordIndex]
+                             : executors[recordIndex]);
       auto twoStateExecutor = module.lookupSymbol<LLVM::LLVMFuncOp>(
           mergedTwoStateExecutors[recordIndex]);
       bool mayTerminate =
           (executor && executor->hasAttr("obelisk.eval.may_terminate")) ||
           (twoStateExecutor &&
            twoStateExecutor->hasAttr("obelisk.eval.may_terminate"));
+      bool infallible =
+          executor && executor->hasAttr("obelisk.eval.infallible") &&
+          (!twoStateExecutor ||
+           twoStateExecutor->hasAttr("obelisk.eval.infallible"));
+      if (infallible && !mayTerminate) {
+        cf::BranchOp::create(builder, location, dispatch);
+        continue;
+      }
       if (!mayTerminate) {
         cf::CondBranchOp::create(builder, location, executeOK, dispatch,
                                  ValueRange{}, failed,
@@ -3383,18 +3711,37 @@ LogicalResult makeNativeEvalPlan(
       cf::CondBranchOp::create(builder, location, stopping, stopped,
                                ValueRange{}, dispatch, ValueRange{});
     }
-    builder.setInsertionPointToEnd(select);
+    builder.setInsertionPointToEnd(switchBlock);
     LLVM::SwitchOp::create(builder, location, bit, stopped, ValueRange{}, cases,
                            destinations, destinationOperands,
                            ArrayRef<int32_t>{});
 
     builder.setInsertionPointToStart(commit);
+    if (observesFourStateFallback) {
+      // A path dispatcher can reject after coordinator entry.  Observe that
+      // rejection at the barrier so its four-state staging is never committed
+      // by the compact value-plane-only path.
+      Value dispatcherFallback = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne,
+          LLVM::LoadOp::create(
+              builder, location, builder.getI8Type(),
+              LLVM::AddressOfOp::create(builder, location, pointer,
+                                        evalStepFourStateFallbackName),
+              1),
+          llvmConstant(builder, location, builder.getI8Type(), 0));
+      Value priorFallback = LLVM::LoadOp::create(
+          builder, location, builder.getI1Type(), fourStateFallback, 1);
+      LLVM::StoreOp::create(
+          builder, location,
+          arith::OrIOp::create(builder, location, priorFallback,
+                               dispatcherFallback),
+          fourStateFallback, 1);
+    }
     if (coordinatorHasConvergence) {
-      // A convergence SCC is locally interruptible while active. Consolidate
-      // the external termination observation at the common pre-NBA boundary
-      // instead of reloading the immutable control pointer after every SCC
-      // owner. This preserves the same no-commit-on-stop boundary while the
-      // normal Tier-1 -> Tier-2 path pays one poll per settled transaction.
+      // Poll once per settled Tier-2 transaction. A future direct SCC
+      // subkernel can move this observation onto its true local backedge; a
+      // coordinator-side poll after the subkernel returns cannot interrupt an
+      // oscillation and only adds work for every convergence owner.
       Block *commitBody = new Block;
       Block *loadTermination = trustedTwoState ? nullptr : new Block;
       fastCoordinator.getBody().push_back(commitBody);
@@ -3419,27 +3766,27 @@ LogicalResult makeNativeEvalPlan(
                                  ValueRange{}, commitBody, ValueRange{});
         builder.setInsertionPointToStart(commitBody);
       } else {
-      Value noTerminationAddress = LLVM::ICmpOp::create(
-          builder, location, LLVM::ICmpPredicate::eq, terminationAddress,
-          LLVM::ZeroOp::create(builder, location, pointer));
-      cf::CondBranchOp::create(builder, location, noTerminationAddress,
-                               commitBody, ValueRange{}, loadTermination,
-                               ValueRange{});
-      builder.setInsertionPointToStart(loadTermination);
-      Value termination = LLVM::LoadOp::create(
-          builder, location, i32, terminationAddress, 4);
-      Value stopping = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::ne, termination,
-          llvmConstant(builder, location, i32, 0));
-      cf::CondBranchOp::create(builder, location, stopping, stopped,
-                               ValueRange{}, commitBody, ValueRange{});
-      builder.setInsertionPointToStart(commitBody);
+        Value noTerminationAddress = LLVM::ICmpOp::create(
+            builder, location, LLVM::ICmpPredicate::eq, terminationAddress,
+            LLVM::ZeroOp::create(builder, location, pointer));
+        cf::CondBranchOp::create(builder, location, noTerminationAddress,
+                                 commitBody, ValueRange{}, loadTermination,
+                                 ValueRange{});
+        builder.setInsertionPointToStart(loadTermination);
+        Value termination = LLVM::LoadOp::create(
+            builder, location, i32, terminationAddress, 4);
+        Value stopping = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::ne, termination,
+            llvmConstant(builder, location, i32, 0));
+        cf::CondBranchOp::create(builder, location, stopping, stopped,
+                                 ValueRange{}, commitBody, ValueRange{});
+        builder.setInsertionPointToStart(commitBody);
       }
     }
     LLVM::StoreOp::create(builder, location,
                           llvmConstant(builder, location, i32, 0), changed, 4);
     Value commitStatus;
-    if (trustedTwoState) {
+    if (trustedTwoState && !observesFourStateFallback) {
       auto fastTwoStateCall = LLVM::CallOp::create(
           builder, location, TypeRange{i32},
           SymbolRefAttr::get(context, nbaCommitName),
@@ -3462,14 +3809,12 @@ LogicalResult makeNativeEvalPlan(
       Block *fourStateCommit = new Block;
       Block *checkFallbackNBA = new Block;
       Block *checkCanonicalNBA = new Block;
-      Block *clearFastNBA = new Block;
       Block *selectFastNBA = new Block;
       Block *latchFastNBA = new Block;
       Block *commitJoin = new Block;
       commitJoin->addArgument(i32, location);
       fastCoordinator.getBody().push_back(checkFallbackNBA);
       fastCoordinator.getBody().push_back(checkCanonicalNBA);
-      fastCoordinator.getBody().push_back(clearFastNBA);
       fastCoordinator.getBody().push_back(selectFastNBA);
       fastCoordinator.getBody().push_back(latchFastNBA);
       fastCoordinator.getBody().push_back(fastTwoStateCommit);
@@ -3479,16 +3824,31 @@ LogicalResult makeNativeEvalPlan(
       Value usedFallback = LLVM::LoadOp::create(
           builder, location, builder.getI1Type(), fourStateFallback, 1);
       cf::CondBranchOp::create(builder, location, usedFallback,
-                               clearFastNBA, ValueRange{}, selectFastNBA,
+                               checkFallbackNBA, ValueRange{}, selectFastNBA,
                                ValueRange{});
-      builder.setInsertionPointToStart(clearFastNBA);
-      LLVM::StoreOp::create(
-          builder, location,
-          llvmConstant(builder, location, builder.getI8Type(), 0),
-          LLVM::AddressOfOp::create(builder, location, pointer,
-                                    evalFastNBALatchedName),
-          1);
-      cf::BranchOp::create(builder, location, checkFallbackNBA);
+      auto markCurrentDirtyRootsFast = [&] {
+        if (nbaTaintWordCount == 0)
+          return;
+        Value dirtyBase = LLVM::AddressOfOp::create(
+            builder, location, pointer, nbaDirtyRootsName);
+        Value fastRootsBase = LLVM::AddressOfOp::create(
+            builder, location, pointer, evalFastNBARootsName);
+        for (uint32_t word = 0; word != nbaTaintWordCount; ++word) {
+          Value dirty = LLVM::LoadOp::create(
+              builder, location, i64,
+              byteGEP(builder, location, dirtyBase,
+                      uint64_t{word} * sizeof(uint64_t)),
+              8);
+          Value fastAddress = byteGEP(builder, location, fastRootsBase,
+                                      uint64_t{word} * sizeof(uint64_t));
+          Value fastRoots = LLVM::LoadOp::create(builder, location, i64,
+                                                 fastAddress, 8);
+          LLVM::StoreOp::create(
+              builder, location,
+              arith::OrIOp::create(builder, location, fastRoots, dirty),
+              fastAddress, 8);
+        }
+      };
       builder.setInsertionPointToStart(selectFastNBA);
       Value fastNBALatched = arith::CmpIOp::create(
           builder, location, arith::CmpIPredicate::ne,
@@ -3498,10 +3858,52 @@ LogicalResult makeNativeEvalPlan(
                                         evalFastNBALatchedName),
               1),
           llvmConstant(builder, location, builder.getI8Type(), 0));
+      if (nbaTaintWordCount != 0) {
+        Value dirtyBase = LLVM::AddressOfOp::create(
+            builder, location, pointer, nbaDirtyRootsName);
+        Value fastRootsBase = LLVM::AddressOfOp::create(
+            builder, location, pointer, evalFastNBARootsName);
+        Value missingFastRoot = llvmConstant(
+            builder, location, builder.getI1Type(), 0);
+        for (uint32_t word = 0; word != nbaTaintWordCount; ++word) {
+          Value dirty = LLVM::LoadOp::create(
+              builder, location, i64,
+              byteGEP(builder, location, dirtyBase,
+                      uint64_t{word} * sizeof(uint64_t)),
+              8);
+          Value fastRoots = LLVM::LoadOp::create(
+              builder, location, i64,
+              byteGEP(builder, location, fastRootsBase,
+                      uint64_t{word} * sizeof(uint64_t)),
+              8);
+          Value missing = arith::AndIOp::create(
+              builder, location, dirty,
+              arith::XOrIOp::create(
+                  builder, location, fastRoots,
+                  llvmConstant(builder, location, i64, UINT64_MAX)));
+          missingFastRoot = arith::OrIOp::create(
+              builder, location, missingFastRoot,
+              arith::CmpIOp::create(
+                  builder, location, arith::CmpIPredicate::ne, missing,
+                  llvmConstant(builder, location, i64, 0)));
+        }
+        fastNBALatched = arith::OrIOp::create(
+            builder, location, fastNBALatched,
+            arith::XOrIOp::create(
+                builder, location, missingFastRoot,
+                llvmConstant(builder, location, builder.getI1Type(), 1)));
+      }
       cf::CondBranchOp::create(builder, location, fastNBALatched,
                                fastTwoStateCommit, ValueRange{},
                                checkCanonicalNBA, ValueRange{});
       builder.setInsertionPointToStart(checkFallbackNBA);
+      // A four-state owner may stage only known values. If its dirty roots have
+      // zero canonical and staged unknown bits, rejoin the ordinary handoff:
+      // canonicalize all dirty roots once if needed, latch the compact barrier
+      // at that quiescent boundary, and keep it selected on later clocks. This
+      // prevents an X-valued monitor closure from downgrading unrelated DUT
+      // registers forever while retaining the four-state barrier for a
+      // genuinely unknown write.
       Value fallbackNBAKnown = LLVM::CallOp::create(
                                    builder, location,
                                    TypeRange{builder.getI1Type()},
@@ -3509,12 +3911,12 @@ LogicalResult makeNativeEvalPlan(
                                    ValueRange{
                                        llvmConstant(builder, location, i32, 2),
                                        llvmConstant(builder, location,
-                                                    builder.getI1Type(), 0),
+                                                    builder.getI1Type(), 1),
                                        llvmConstant(builder, location,
                                                     builder.getI1Type(), 1)})
                                    .getResult();
       cf::CondBranchOp::create(builder, location, fallbackNBAKnown,
-                               canonicalTwoStateCommit, ValueRange{},
+                               selectFastNBA, ValueRange{},
                                fourStateCommit, ValueRange{});
       builder.setInsertionPointToStart(checkCanonicalNBA);
       Value canonicalNBAKnown = LLVM::CallOp::create(
@@ -3532,12 +3934,7 @@ LogicalResult makeNativeEvalPlan(
                                latchFastNBA, ValueRange{},
                                canonicalTwoStateCommit, ValueRange{});
       builder.setInsertionPointToStart(latchFastNBA);
-      LLVM::StoreOp::create(
-          builder, location,
-          llvmConstant(builder, location, builder.getI8Type(), 1),
-          LLVM::AddressOfOp::create(builder, location, pointer,
-                                    evalFastNBALatchedName),
-          1);
+      markCurrentDirtyRootsFast();
       cf::BranchOp::create(builder, location, fastTwoStateCommit);
       builder.setInsertionPointToStart(fastTwoStateCommit);
       auto fastTwoStateCall = LLVM::CallOp::create(
@@ -3550,6 +3947,7 @@ LogicalResult makeNativeEvalPlan(
       cf::BranchOp::create(builder, location, commitJoin,
                            ValueRange{fastTwoStateCall.getResult()});
       builder.setInsertionPointToStart(canonicalTwoStateCommit);
+      markCurrentDirtyRootsFast();
       auto canonicalTwoStateCall = LLVM::CallOp::create(
           builder, location, TypeRange{i32},
           SymbolRefAttr::get(context, nbaCommitName),
@@ -3560,15 +3958,13 @@ LogicalResult makeNativeEvalPlan(
       cf::BranchOp::create(builder, location, commitJoin,
                            ValueRange{canonicalTwoStateCall.getResult()});
       builder.setInsertionPointToStart(fourStateCommit);
-      auto fourStateCall = LLVM::CallOp::create(
+      Value fourStateStatus = LLVM::CallOp::create(
           builder, location, TypeRange{i32},
-          SymbolRefAttr::get(context, nbaCommitName),
+          SymbolRefAttr::get(context, evalFourStateNBAHandoffName),
           ValueRange{fastEntry->getArgument(0), fastEntry->getArgument(1),
-                     llvmConstant(builder, location, i32, 2), changed});
-      fourStateCall->setAttr("obelisk.eval.keep_four_state_nba",
-                             builder.getUnitAttr());
-      cf::BranchOp::create(builder, location, commitJoin,
-                           ValueRange{fourStateCall.getResult()});
+                     changed})
+          .getResult();
+      LLVM::ReturnOp::create(builder, location, fourStateStatus);
       builder.setInsertionPointToStart(commitJoin);
       commitStatus = commitJoin->getArgument(0);
     }
@@ -3591,6 +3987,17 @@ LogicalResult makeNativeEvalPlan(
     LLVM::ReturnOp::create(builder, location,
                            llvmConstant(builder, location, i32,
                                         OBELISK_RT_TIER_UNAVAILABLE));
+    if (guardRejected) {
+      builder.setInsertionPointToStart(guardRejected);
+      unsigned guardArgument = trustedTwoState ? 3 : 2;
+      LLVM::StoreOp::create(
+          builder, location,
+          llvmConstant(builder, location, builder.getI1Type(), 1),
+          fastEntry->getArgument(guardArgument), 1);
+      LLVM::ReturnOp::create(builder, location,
+                             llvmConstant(builder, location, i32,
+                                          OBELISK_RT_TIER_UNAVAILABLE));
+    }
     builder.setInsertionPointToStart(failed);
     LLVM::ReturnOp::create(builder, location, failed->getArgument(0));
     return success();
@@ -3603,18 +4010,131 @@ LogicalResult makeNativeEvalPlan(
                                  /*promotedCoordinator=*/false)) ||
       failed(makeFastCoordinator(evalTwoStateCoordinatorName,
                                  twoStateExecutors,
-                                 /*promotedCoordinator=*/true)) ||
+                                 /*promotedCoordinator=*/true,
+                                 /*hybridCoordinator=*/false,
+                                 /*allowedOwnerMask=*/UINT64_MAX,
+                                 /*trustedTwoState=*/false,
+                                 /*guardPendingOwners=*/false,
+                                 /*observePathFallback=*/
+                                     generatedEvalHasPathGuards)) ||
+      failed(makeFastCoordinator(evalSteadyTwoStateCoordinatorName,
+                                 twoStateExecutors,
+                                 /*promotedCoordinator=*/true,
+                                 /*hybridCoordinator=*/false,
+                                 /*allowedOwnerMask=*/periodicPromotionMask,
+                                 /*trustedTwoState=*/true,
+                                 /*guardPendingOwners=*/true,
+                                 /*observePathFallback=*/
+                                     generatedEvalHasPathGuards)) ||
       (periodicPromotionComplete &&
        failed(makeFastCoordinator(evalPeriodicTwoStateCoordinatorName,
                                   twoStateExecutors,
                                   /*promotedCoordinator=*/true,
                                   /*hybridCoordinator=*/false,
-                                  /*allowedOwnerMask=*/UINT64_MAX,
-                                  /*trustedTwoState=*/true))) ||
+                                  /*allowedOwnerMask=*/periodicPromotionMask,
+                                  /*trustedTwoState=*/true,
+                                  /*guardPendingOwners=*/false,
+                                  /*observePathFallback=*/
+                                      periodicPromotionHasPathGuards))) ||
       failed(makeFastCoordinator(evalHybridCoordinatorName, mergedExecutors,
                                  /*promotedCoordinator=*/false,
                                  /*hybridCoordinator=*/true)))
     return failure();
+
+  // Emit the complete exceptional transaction after every coordinator.  A
+  // genuinely unknown NBA must invalidate the persistent two-state routes
+  // and settle its post-NBA fanout in four-state mode, but keeping those
+  // blocks in each coordinator perturbs register allocation in the periodic
+  // hot loop even when the edge is never taken.
+  builder.setInsertionPointToEnd(module.getBody());
+  auto evalFourStateNBAHandoff = LLVM::LLVMFuncOp::create(
+      builder, location, evalFourStateNBAHandoffName,
+      LLVM::LLVMFunctionType::get(i32, {pointer, pointer, pointer}, false));
+  evalFourStateNBAHandoff->setAttr(
+      "passthrough",
+      builder.getArrayAttr(
+          {builder.getStringAttr("noinline"), builder.getStringAttr("cold")}));
+  Block *handoffEntry = evalFourStateNBAHandoff.addEntryBlock(builder);
+  Block *afterCommit = new Block;
+  Block *complete = new Block;
+  Block *settle = new Block;
+  evalFourStateNBAHandoff.getBody().push_back(afterCommit);
+  evalFourStateNBAHandoff.getBody().push_back(complete);
+  evalFourStateNBAHandoff.getBody().push_back(settle);
+  builder.setInsertionPointToStart(handoffEntry);
+  LLVM::StoreOp::create(
+      builder, location,
+      llvmConstant(builder, location, builder.getI8Type(), 0),
+      LLVM::AddressOfOp::create(builder, location, pointer,
+                                evalFastNBALatchedName),
+      1);
+  if (nbaTaintWordCount != 0) {
+    Value taintBase = LLVM::AddressOfOp::create(
+        builder, location, pointer, evalStepFourStateNBARootsName);
+    Value fastRootsBase = LLVM::AddressOfOp::create(
+        builder, location, pointer, evalFastNBARootsName);
+    for (uint32_t word = 0; word != nbaTaintWordCount; ++word) {
+      Value taint = LLVM::LoadOp::create(
+          builder, location, i64,
+          byteGEP(builder, location, taintBase,
+                  uint64_t{word} * sizeof(uint64_t)),
+          8);
+      Value fastAddress = byteGEP(builder, location, fastRootsBase,
+                                  uint64_t{word} * sizeof(uint64_t));
+      Value fastRoots =
+          LLVM::LoadOp::create(builder, location, i64, fastAddress, 8);
+      LLVM::StoreOp::create(
+          builder, location,
+          arith::AndIOp::create(
+              builder, location, fastRoots,
+              arith::XOrIOp::create(
+                  builder, location, taint,
+                  llvmConstant(builder, location, i64, UINT64_MAX))),
+          fastAddress, 8);
+    }
+  }
+  auto fourStateCall = LLVM::CallOp::create(
+      builder, location, TypeRange{i32},
+      SymbolRefAttr::get(context, nbaCommitName),
+      ValueRange{handoffEntry->getArgument(0), handoffEntry->getArgument(1),
+                 llvmConstant(builder, location, i32, 2),
+                 handoffEntry->getArgument(2)});
+  fourStateCall->setAttr("obelisk.eval.keep_four_state_nba",
+                         builder.getUnitAttr());
+  Value commitOK = arith::CmpIOp::create(
+      builder, location, arith::CmpIPredicate::eq, fourStateCall.getResult(),
+      llvmConstant(builder, location, i32, OBELISK_RT_OK));
+  cf::CondBranchOp::create(builder, location, commitOK, afterCommit,
+                           ValueRange{}, complete, ValueRange{});
+  builder.setInsertionPointToStart(afterCommit);
+  LLVM::CallOp::create(
+      builder, location, TypeRange{},
+      SymbolRefAttr::get(context, promotionInvalidateName), ValueRange{});
+  Value postNBAReady = llvmConstant(builder, location, i64, 0);
+  for (const GeneratedClockKernel &kernel : clockKernels) {
+    Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
+                                              kernel.ingressName);
+    postNBAReady = arith::OrIOp::create(
+        builder, location, postNBAReady,
+        LLVM::LoadOp::create(builder, location, i64, ingress, 8));
+    if (evalScheduler)
+      break;
+  }
+  Value postNBAEmpty = arith::CmpIOp::create(
+      builder, location, arith::CmpIPredicate::eq, postNBAReady,
+      llvmConstant(builder, location, i64, 0));
+  cf::CondBranchOp::create(builder, location, postNBAEmpty, complete,
+                           ValueRange{}, settle, ValueRange{});
+  builder.setInsertionPointToStart(settle);
+  Value settleStatus = LLVM::CallOp::create(
+                           builder, location, TypeRange{i32},
+                           SymbolRefAttr::get(context, evalCoordinatorName),
+                           ValueRange{handoffEntry->getArgument(0),
+                                      handoffEntry->getArgument(1)})
+                           .getResult();
+  LLVM::ReturnOp::create(builder, location, settleStatus);
+  builder.setInsertionPointToStart(complete);
+  LLVM::ReturnOp::create(builder, location, fourStateCall.getResult());
 
   builder.setInsertionPointToEnd(module.getBody());
   auto snapshot = LLVM::LLVMFuncOp::create(
@@ -3669,7 +4189,6 @@ LogicalResult makeNativeEvalPlan(
         scalarRootsByWord[rootIndex / 64].push_back(
             static_cast<uint32_t>(rootIndex));
     }
-
   // Record roots actually consumed by the direct path. The generic
   // continuation still owns the canonical dirty hierarchy, but need not
   // rediscover that every generated accumulator in a leaf was cleared.

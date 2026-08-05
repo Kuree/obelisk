@@ -39,6 +39,7 @@
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Verifier.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
 
@@ -47,6 +48,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/Support/Error.h"
 
@@ -507,6 +509,10 @@ LogicalResult materializeEvalTwoStateVariants(
               design.lookupSymbol<sim::SimFuncOp>(call.getCallee());
           if (!callee || !routeEligibleSources.contains(callee.getOperation()))
             return;
+          // A checkpoint callee owns its own guarded route and promotion
+          // closure. Pulling its dormant-path ranges into every caller would
+          // couple otherwise independent module instances and prevent the
+          // caller from ever reaching its two-state entry.
           if (callee->hasAttr(
                   "obelisk.eval.inherited_two_state_checkpoint"))
             return;
@@ -569,6 +575,9 @@ LogicalResult materializeEvalTwoStateVariants(
   uint64_t nextCodeUnit = 1;
   llvm::StringMap<std::string> variantNames;
   SmallVector<sim::SimFuncOp> variants;
+  DenseMap<Operation *, Operation *> variantDeclarations;
+  llvm::StringSet<> unsupportedVariantSources;
+  SmallVector<Attribute> pathProbeRoutes;
   auto allocateCodeUnit = [&] {
     while (usedCodeUnits.contains(nextCodeUnit))
       ++nextCodeUnit;
@@ -576,10 +585,192 @@ LogicalResult materializeEvalTwoStateVariants(
     return nextCodeUnit++;
   };
 
+  // Build a side-effect-free entry predicate while the Simulation CFG still
+  // preserves source short-circuiting.  A whole-owner range scan is necessarily
+  // path insensitive: an X input on an untaken branch would otherwise keep the
+  // owner in its four-state body forever.  The predicate follows the activation
+  // CFG and rejects the two-state edge only when a four-state load that is
+  // actually reached contains X/Z. Restrict this first implementation to
+  // reads, fixed NBA staging, and cold checkpoints. Blocking publications and
+  // calls need a real dry-run state overlay because their four-state fallback
+  // could otherwise expose X/Z before the combined NBA boundary.
+  auto materializePathKnownProbe =
+      [&](sim::SimFuncOp source, StringRef name,
+          uint64_t codeUnit) -> FailureOr<sim::SimFuncOp> {
+    bool supported = true;
+    source.walk([&](Operation *operation) {
+      if (!supported)
+        return;
+      if (operation == source.getOperation())
+        return;
+      if (isa<sim::SimRefStoreOp, sim::SimDriverDriveOp>(operation)) {
+        supported = false;
+        return;
+      }
+      if (isa<sim::SimRefLoadOp, sim::SimNetReadOp, sim::SimReturnOp,
+              sim::SimNBAEnqueueOp,
+              sim::SimDisplayOp, sim::SimFinishOp, sim::SimStopOp,
+              sim::SimFatalOp, sim::SimTerminationRequestedOp,
+              sim::SimStatusCheckOp, cf::BranchOp, cf::CondBranchOp>(operation))
+        return;
+      if (isa<sim::SimCallOp>(operation) ||
+          !isMemoryEffectFree(operation)) {
+        supported = false;
+      }
+    });
+    if (!supported)
+      return sim::SimFuncOp{};
+
+    SmallVector<DictionaryAttr> argumentAttrs;
+    for (BlockArgument argument : source.getBody().front().getArguments())
+      argumentAttrs.push_back(source.getArgAttrDict(argument.getArgNumber()));
+    SmallVector<NamedAttribute> attributes{builder.getNamedAttr(
+        "code_unit_id", builder.getI64IntegerAttr(codeUnit))};
+    builder.setInsertionPointToEnd(&design.getBody().front());
+    sim::SimFuncOp probe = sim::SimFuncOp::create(
+        builder, source.getLoc(), name,
+        FunctionType::get(module.getContext(),
+                          source.getFunctionType().getInputs(),
+                          TypeRange{builder.getI1Type()}),
+        sim::EntryKind::Function, attributes, argumentAttrs);
+    probe->setAttr("obelisk.eval.borrowed_captures", builder.getUnitAttr());
+    probe->setAttr("obelisk.eval.path_known_predicate", builder.getUnitAttr());
+    SymbolTable::setSymbolVisibility(probe, SymbolTable::Visibility::Private);
+
+    IRMapping mapping;
+    Block &sourceEntry = source.getBody().front();
+    Block &probeEntry = probe.getBody().front();
+    mapping.map(&sourceEntry, &probeEntry);
+    for (auto [from, to] :
+         llvm::zip_equal(sourceEntry.getArguments(), probeEntry.getArguments()))
+      mapping.map(from, to);
+    for (Block &sourceBlock : llvm::drop_begin(source.getBody())) {
+      Block *probeBlock = new Block;
+      probe.getBody().push_back(probeBlock);
+      mapping.map(&sourceBlock, probeBlock);
+      for (BlockArgument argument : sourceBlock.getArguments())
+        mapping.map(argument, probeBlock->addArgument(argument.getType(),
+                                                       argument.getLoc()));
+    }
+    for (Block &sourceBlock : source.getBody()) {
+      builder.setInsertionPointToEnd(mapping.lookup(&sourceBlock));
+      for (Operation &operation : sourceBlock)
+        builder.clone(operation, mapping);
+    }
+
+    llvm::SmallPtrSet<Block *, 4> checkpointBlocks;
+    llvm::MapVector<Block *, Location> checkpoints;
+    probe.walk([&](Operation *operation) {
+      if (isa<sim::SimDisplayOp, sim::SimFinishOp, sim::SimStopOp,
+              sim::SimFatalOp, sim::SimTerminationRequestedOp,
+              sim::SimStatusCheckOp>(operation)) {
+        Block *block = operation->getBlock();
+        checkpoints.try_emplace(block, operation->getLoc());
+      }
+    });
+    for (auto [block, location] : checkpoints) {
+      checkpointBlocks.insert(block);
+      block->clear();
+      builder.setInsertionPointToEnd(block);
+      Value unavailable = arith::ConstantOp::create(
+          builder, location, builder.getI1Type(), builder.getBoolAttr(false));
+      sim::SimReturnOp::create(builder, location, unavailable);
+    }
+
+    llvm::SmallPtrSet<Block *, 16> reachable;
+    SmallVector<Block *> pending{&probe.getBody().front()};
+    while (!pending.empty()) {
+      Block *block = pending.pop_back_val();
+      if (!reachable.insert(block).second || block->empty())
+        continue;
+      for (Block *successor : block->getTerminator()->getSuccessors())
+        pending.push_back(successor);
+    }
+    SmallVector<Block *> unreachable;
+    for (Block &block : probe.getBody())
+      if (!reachable.contains(&block))
+        unreachable.push_back(&block);
+    for (Block *block : unreachable)
+      block->dropAllDefinedValueUses();
+    for (Block *block : unreachable)
+      block->dropAllReferences();
+    for (Block *block : unreachable)
+      block->erase();
+
+    SmallVector<Operation *> publications;
+    probe.walk([&](Operation *operation) {
+      if (isa<sim::SimNBAEnqueueOp, sim::SimRefStoreOp,
+              sim::SimDriverDriveOp>(operation))
+        publications.push_back(operation);
+    });
+    for (Operation *publication : publications)
+      publication->erase();
+
+    SmallVector<sim::SimReturnOp> returns;
+    probe.walk([&](sim::SimReturnOp returnOp) {
+      if (!checkpointBlocks.contains(returnOp->getBlock()))
+        returns.push_back(returnOp);
+    });
+    for (sim::SimReturnOp returnOp : returns) {
+      builder.setInsertionPoint(returnOp);
+      Value available = arith::ConstantOp::create(
+          builder, returnOp.getLoc(), builder.getI1Type(),
+          builder.getBoolAttr(true));
+      sim::SimReturnOp::create(builder, returnOp.getLoc(), available);
+      returnOp.erase();
+    }
+
+    Block *failureBlock = new Block;
+    probe.getBody().push_back(failureBlock);
+    builder.setInsertionPointToStart(failureBlock);
+    Value unavailable = arith::ConstantOp::create(
+        builder, source.getLoc(), builder.getI1Type(),
+        builder.getBoolAttr(false));
+    sim::SimReturnOp::create(builder, source.getLoc(), unavailable);
+
+    SmallVector<Value> loadedValues;
+    probe.walk([&](Operation *operation) {
+      if (auto load = dyn_cast<sim::SimRefLoadOp>(operation))
+        loadedValues.push_back(load.getResult());
+      else if (auto read = dyn_cast<sim::SimNetReadOp>(operation))
+        loadedValues.push_back(read.getResult());
+    });
+    for (Value loaded : loadedValues) {
+      std::optional<unsigned> width = detail::nativeStateWidth(loaded.getType());
+      if (!width || !detail::containsLogic(loaded.getType())) {
+        probe.emitError("path-known probe has an unsupported state load");
+        probe.erase();
+        return failure();
+      }
+      Operation *load = loaded.getDefiningOp();
+      builder.setInsertionPointAfter(load);
+      auto logicType = sim::LogicType::get(module.getContext(), *width);
+      Value flattened = loaded;
+      if (loaded.getType() != logicType)
+        flattened = sim::SimPackedFlattenOp::create(
+            builder, load->getLoc(), logicType, loaded);
+      Type bitsType = builder.getIntegerType(*width);
+      Value bits = sim::SimLogicToBitsOp::create(
+          builder, load->getLoc(), bitsType, flattened);
+      Value roundTrip = sim::SimLogicFromBitsOp::create(
+          builder, load->getLoc(), logicType, bits);
+      Value known = sim::SimLogicCompareOp::create(
+          builder, load->getLoc(), builder.getI1Type(),
+          sim::CompareKind::CaseEq, flattened, roundTrip);
+      Block *sourceBlock = load->getBlock();
+      Block *continuation = sourceBlock->splitBlock(builder.getInsertionPoint());
+      builder.setInsertionPointToEnd(sourceBlock);
+      cf::CondBranchOp::create(builder, load->getLoc(), known, continuation,
+                               ValueRange{}, failureBlock, ValueRange{});
+    }
+    return probe;
+  };
+
   for (sim::SimFuncOp source : sources) {
     if (!forceTwoState &&
         !variantEligibleSources.contains(source.getOperation()))
       continue;
+    builder.setInsertionPointToEnd(&design.getBody().front());
     SmallString<96> base;
     (source.getSymName() + ".__obelisk_two_state").toVector(base);
     unsigned counter = 0;
@@ -600,12 +791,12 @@ LogicalResult materializeEvalTwoStateVariants(
                failure();
       sourceScope = scope->second;
     }
-    sim::SimCodeUnitDeclOp::create(
+    sim::SimCodeUnitDeclOp variantDeclaration = sim::SimCodeUnitDeclOp::create(
         builder, source.getLoc(), codeUnit, sourceScope,
         sim::EntryKind::Function, builder.getStringAttr(name),
         builder.getStringAttr("inductively two-state native eval body"),
         builder.getUnitAttr());
-    Operation *cloned = builder.clone(*source.getOperation());
+    Operation *cloned = source->clone();
     auto variant = cast<sim::SimFuncOp>(cloned);
     variant.setSymName(name);
     variant->setAttr("code_unit_id", builder.getI64IntegerAttr(codeUnit));
@@ -615,11 +806,98 @@ LogicalResult materializeEvalTwoStateVariants(
                                             source.getSymName()));
     SymbolTable::setSymbolVisibility(variant,
                                      SymbolTable::Visibility::Private);
+    SymbolTable(design).insert(cloned, design.getBody().front().end());
     source->setAttr("obelisk.eval.two_state_variant",
                     FlatSymbolRefAttr::get(module.getContext(), name));
+    if (source->hasAttr("obelisk.eval.inherited_two_state_checkpoint")) {
+      SmallString<112> probeName;
+      (source.getSymName() + ".__obelisk_path_known").toVector(probeName);
+      unsigned probeCounter = 0;
+      probeName = SymbolTable::generateSymbolName<112>(
+          probeName,
+          [&](StringRef candidate) {
+            return SymbolTable::lookupSymbolIn(design, candidate) != nullptr;
+          },
+          probeCounter);
+      uint64_t probeCodeUnit = allocateCodeUnit();
+      FailureOr<sim::SimFuncOp> probe = materializePathKnownProbe(
+          source, probeName, probeCodeUnit);
+      if (failed(probe))
+        return failure();
+      if (!*probe) {
+        // An empty owner-level range is sound only when a path predicate
+        // guards every activation.  If that predicate needs an unsupported
+        // dry-run overlay, retain the canonical four-state route instead of
+        // advertising a vacuously promotable two-state variant.
+        unsupportedVariantSources.insert(source.getSymName());
+        source->removeAttr("obelisk.eval.two_state_variant");
+        variant.erase();
+        variantDeclaration.erase();
+        continue;
+      } else {
+        builder.setInsertionPointToEnd(&design.getBody().front());
+        sim::SimCodeUnitDeclOp::create(
+            builder, source.getLoc(), probeCodeUnit, sourceScope,
+            sim::EntryKind::Function, builder.getStringAttr(probeName),
+            builder.getStringAttr("path-sensitive two-state entry predicate"),
+            builder.getUnitAttr());
+        variant->setAttr(
+            "obelisk.eval.path_known_probe",
+            FlatSymbolRefAttr::get(module.getContext(), probeName));
+        variant->setAttr("obelisk.eval.path_guarded_two_state",
+                         builder.getUnitAttr());
+        pathProbeRoutes.push_back(builder.getDictionaryAttr(
+            {builder.getNamedAttr("two_state",
+                                  FlatSymbolRefAttr::get(module.getContext(),
+                                                         name)),
+             builder.getNamedAttr("probe",
+                                  FlatSymbolRefAttr::get(module.getContext(),
+                                                         probeName))}));
+      }
+    }
     variantNames[source.getSymName()] = name.str().str();
     variants.push_back(variant);
+    variantDeclarations[variant.getOperation()] =
+        variantDeclaration.getOperation();
   }
+
+  // Reject callers transitively as well.  Their cloned calls would otherwise
+  // remain bound to an unsupported four-state checkpoint leaf after the
+  // caller itself had entered a nominally two-state closure.
+  bool removedUnsupportedCaller;
+  do {
+    removedUnsupportedCaller = false;
+    SmallVector<sim::SimFuncOp> retained;
+    for (sim::SimFuncOp variant : variants) {
+      auto sourceRef = variant->getAttrOfType<FlatSymbolRefAttr>(
+          "obelisk.eval.four_state_source");
+      sim::SimFuncOp source =
+          sourceRef ? design.lookupSymbol<sim::SimFuncOp>(sourceRef)
+                    : sim::SimFuncOp{};
+      bool unsupported = !source;
+      if (source)
+        source.walk([&](sim::SimCallOp call) {
+          unsupported |= unsupportedVariantSources.contains(call.getCallee());
+        });
+      if (!unsupported) {
+        retained.push_back(variant);
+        continue;
+      }
+      removedUnsupportedCaller = true;
+      if (source) {
+        unsupportedVariantSources.insert(source.getSymName());
+        source->removeAttr("obelisk.eval.two_state_variant");
+        variantNames.erase(source.getSymName());
+      }
+      if (Operation *declaration = variantDeclarations.lookup(
+              variant.getOperation()))
+        declaration->erase();
+      variantDeclarations.erase(variant.getOperation());
+      variant.erase();
+    }
+    variants = std::move(retained);
+  } while (removedUnsupportedCaller);
+
   for (sim::SimFuncOp variant : variants)
     variant.walk([&](sim::SimCallOp call) {
       auto replacement = variantNames.find(call.getCallee());
@@ -627,6 +905,9 @@ LogicalResult materializeEvalTwoStateVariants(
         call.setCalleeAttr(FlatSymbolRefAttr::get(module.getContext(),
                                                   replacement->second));
     });
+  if (!pathProbeRoutes.empty())
+    module->setAttr("obelisk.eval.path_probe_routes",
+                    builder.getArrayAttr(pathProbeRoutes));
   return success();
 }
 
@@ -635,27 +916,44 @@ LogicalResult verifyGeneratedEvalCallClosures(ModuleOp module) {
     return success();
   constexpr StringLiteral allowedCalleesAttr =
       "obelisk.eval.allowed_callees";
-  SmallVector<LLVM::LLVMFuncOp> pending;
-  llvm::SmallPtrSet<Operation *, 32> visited;
+  auto isColdCheckpointRuntime = [](StringRef callee) {
+    return callee == "obelisk_rt_v1_scheduler_finish" ||
+           callee == "obelisk_rt_v1_scheduler_fatal" ||
+           callee == "obelisk_rt_v1_scheduler_termination_requested" ||
+           callee == "obelisk_rt_v1_display";
+  };
+  struct ClosureWorkItem {
+    LLVM::LLVMFuncOp function;
+    bool checkpointSafe;
+  };
+  SmallVector<ClosureWorkItem> pending;
+  DenseMap<Operation *, unsigned> visitedModes;
   for (LLVM::LLVMFuncOp function : module.getOps<LLVM::LLVMFuncOp>()) {
-    StringRef name = function.getSymName();
-    bool generatedHot =
-        name.starts_with("__obelisk_eval_fast_coordinator") ||
-        name.starts_with("__obelisk_eval_periodic_two_state_coordinator") ||
-        name.starts_with("__obelisk_tier1_eval_") ||
-        name.starts_with("__obelisk_tier2_converge_");
-    if (!generatedHot)
+    if (!function->hasAttr("obelisk.eval.call_closure_root"))
       continue;
-    pending.push_back(function);
+    pending.push_back({function, false});
   }
   while (!pending.empty()) {
-    LLVM::LLVMFuncOp function = pending.pop_back_val();
-    if (!visited.insert(function.getOperation()).second)
+    ClosureWorkItem item = pending.pop_back_val();
+    LLVM::LLVMFuncOp function = item.function;
+    unsigned mode = item.checkpointSafe ? 2u : 1u;
+    unsigned &visited = visitedModes[function.getOperation()];
+    if ((visited & mode) != 0)
       continue;
+    visited |= mode;
     WalkResult result = function.walk([&](LLVM::CallOp call) {
       SmallVector<FlatSymbolRefAttr> targets;
       if (std::optional<StringRef> callee = call.getCallee()) {
         if (callee->starts_with("obelisk_rt_")) {
+          // Checkpoint-safe bodies are proven separately while still in the
+          // Simulation dialect. Their runtime calls are cold synchronization
+          // exits (display/finish/fatal/termination query), not Tier-1/Tier-2
+          // scheduling
+          // edges. Keep traversing may-terminate wrappers and their callees,
+          // but admit this narrowly classified boundary instead of restoring
+          // the old blanket exemption for every may-terminate function.
+          if (item.checkpointSafe && isColdCheckpointRuntime(*callee))
+            return WalkResult::advance();
           call.emitError("generated eval hot closure calls runtime symbol ")
               << *callee << " in " << function.getSymName();
           return WalkResult::interrupt();
@@ -673,17 +971,10 @@ LogicalResult verifyGeneratedEvalCallClosures(ModuleOp module) {
           targets.push_back(target);
         }
       } else {
-        // The three-tier planning ABI deliberately models fragment execution
-        // as a callback.  It is not installed in the production periodic hot
-        // coordinator; every emitted production route below carries an exact
-        // allowed-callee set and is checked transitively.
-        if (!function.getSymName().starts_with("__obelisk_tier")) {
-          call.emitError(
-              "generated eval indirect call has no closed target set in ")
-              << function.getSymName();
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
+        call.emitError(
+            "generated eval indirect call has no closed target set in ")
+            << function.getSymName();
+        return WalkResult::interrupt();
       }
       for (FlatSymbolRefAttr target : targets) {
         if (target.getValue().starts_with("obelisk_rt_")) {
@@ -692,14 +983,26 @@ LogicalResult verifyGeneratedEvalCallClosures(ModuleOp module) {
               << target.getValue();
           return WalkResult::interrupt();
         }
-        if (LLVM::LLVMFuncOp callee =
-                module.lookupSymbol<LLVM::LLVMFuncOp>(target.getValue())) {
-          // Checkpoint-capable owners stay on the coordinator path and retain
-          // its status/termination edge.  They are not part of the closed
-          // direct Tier-1/Tier-2 call graph proved by this verifier.
-          if (!callee->hasAttr("obelisk.eval.may_terminate"))
-            pending.push_back(callee);
+        LLVM::LLVMFuncOp callee =
+            module.lookupSymbol<LLVM::LLVMFuncOp>(target.getValue());
+        if (!callee) {
+          if (!target.getValue().starts_with("llvm.")) {
+            call.emitError("generated eval hot closure calls unresolved "
+                           "external symbol ")
+                << target.getValue();
+            return WalkResult::interrupt();
+          }
+          continue;
         }
+        if (callee.isExternal() &&
+            !callee.getSymName().starts_with("llvm.")) {
+          call.emitError("generated eval hot closure calls external symbol ")
+              << callee.getSymName();
+          return WalkResult::interrupt();
+        }
+        pending.push_back(
+            {callee, item.checkpointSafe ||
+                         callee->hasAttr("obelisk.eval.checkpoint_safe")});
       }
       return WalkResult::advance();
     });
@@ -1079,6 +1382,12 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
             {static_cast<uint64_t>(values[index]),
              static_cast<uint64_t>(values[index + 1])});
       }
+      // A path-guarded body revalidates the exact Simulation CFG on every
+      // activation.  Its owner-level promotion latch therefore records the
+      // stable guarded route, not the path-insensitive union of dormant reads.
+      if (pending.twoStateBody->hasAttr(
+              "obelisk.eval.path_guarded_two_state"))
+        localPromotionRanges.clear();
     }
     SmallVector<std::pair<uint32_t, uint32_t>> sourceOwners;
     if (auto owners = pending.actor->getAttrOfType<ArrayAttr>(
@@ -1122,6 +1431,22 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
       sourceOwners.erase(std::unique(sourceOwners.begin(), sourceOwners.end()),
                          sourceOwners.end());
     }
+    SmallVector<uint32_t> ownershipAnchors;
+    if (auto anchors = pending.actor->getAttrOfType<DenseI64ArrayAttr>(
+            "obelisk.eval.ownership_anchors")) {
+      for (int64_t anchor : anchors.asArrayRef()) {
+        if (anchor < 0 || static_cast<uint64_t>(anchor) > UINT32_MAX)
+          return pending.actor.emitOpError(
+              "has an invalid eval ownership anchor");
+        ownershipAnchors.push_back(static_cast<uint32_t>(anchor));
+      }
+      llvm::sort(ownershipAnchors);
+      if (std::adjacent_find(ownershipAnchors.begin(),
+                             ownershipAnchors.end()) !=
+          ownershipAnchors.end())
+        return pending.actor.emitOpError(
+            "has duplicate eval ownership anchors");
+    }
     result.push_back({pending.actorSlot, pending.continuation,
                       std::move(pending.wrapper),
                       std::move(pending.twoStateWrapper),
@@ -1130,7 +1455,8 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
                           : std::string{},
                       std::move(sourceOwners),
                       std::move(pending.fragmentIDs),
-                      {}, std::move(localPromotionRanges), UINT32_MAX,
+                      std::move(ownershipAnchors),
+                      std::move(localPromotionRanges), UINT32_MAX,
                       initialActivation});
   }
   return result;
@@ -1521,6 +1847,19 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
           module, metadataDesign, *stateLayout, evalScheduler,
           evalPromotionRanges)))
     return failure();
+
+  // Direct fragment extraction can end immediately before an observer
+  // suspension, leaving its binding token unused in the generated eval body.
+  // Observer tokens intentionally lower only together with a suspension; do
+  // not ask dialect conversion to manufacture an invalid integer-typed
+  // observer.bind for these dead fragments.
+  SmallVector<sim::SimObserverBindOp> deadObserverBindings;
+  module.walk([&](sim::SimObserverBindOp binding) {
+    if (binding.getResult().use_empty())
+      deadObserverBindings.push_back(binding);
+  });
+  for (sim::SimObserverBindOp binding : deadObserverBindings)
+    binding.erase();
 
   bool enableDirectStaticState = directStaticState;
   if (failed(lowerPackedSimulationOperations(
@@ -2002,14 +2341,37 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
 }
 
 LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
+  llvm::StringMap<std::string> pathKnownProbes;
+  if (ArrayAttr mappings = module->getAttrOfType<ArrayAttr>(
+          "obelisk.eval.path_probe_routes")) {
+    for (Attribute mappingAttr : mappings) {
+      auto mapping = dyn_cast<DictionaryAttr>(mappingAttr);
+      auto twoState = mapping
+                          ? mapping.getAs<FlatSymbolRefAttr>("two_state")
+                          : FlatSymbolRefAttr{};
+      auto probe = mapping ? mapping.getAs<FlatSymbolRefAttr>("probe")
+                           : FlatSymbolRefAttr{};
+      if (!twoState || !probe)
+        return module.emitError("has malformed eval path-probe route"),
+               failure();
+      pathKnownProbes[twoState.getValue()] = probe.getValue().str();
+    }
+    module->removeAttr("obelisk.eval.path_probe_routes");
+  }
   struct Route {
     LLVM::LLVMFuncOp fourState;
     LLVM::LLVMFuncOp twoState;
+    LLVM::LLVMFuncOp pathKnownProbe;
+    LLVM::LLVMFuncOp dispatcher;
+    LLVM::LLVMFuncOp fourStateFallback;
     DenseI64ArrayAttr ranges;
     bool independentEntry = false;
     std::string globalName;
+    std::string dispatcherName;
+    std::string fourStateFallbackName;
   };
   SmallVector<Route> routes;
+  bool routeError = false;
   module.walk([&](LLVM::LLVMFuncOp function) {
     auto source = function->getAttrOfType<FlatSymbolRefAttr>(
         "obelisk.eval.four_state_source");
@@ -2021,13 +2383,33 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
         module.lookupSymbol<LLVM::LLVMFuncOp>(source.getValue());
     if (!fourState || fourState.getFunctionType() != function.getFunctionType())
       return;
+    LLVM::LLVMFuncOp pathKnownProbe;
+    auto probeName = pathKnownProbes.find(function.getSymName());
+    if (probeName != pathKnownProbes.end()) {
+      pathKnownProbe =
+          module.lookupSymbol<LLVM::LLVMFuncOp>(probeName->second);
+      if (!pathKnownProbe) {
+        function.emitError("has no lowered path-known probe ")
+            << probeName->second;
+        routeError = true;
+        return;
+      }
+    }
+    size_t routeIndex = routes.size();
     routes.push_back(
-        {fourState, function, ranges,
+        {fourState, function, pathKnownProbe, {}, {}, ranges,
          function->hasAttr("obelisk.eval.conditionally_two_state"),
          (Twine("__obelisk_eval_function_route_v1_") +
-          Twine(routes.size()))
+          Twine(routeIndex))
+             .str(),
+         (Twine("__obelisk_eval_path_dispatch_v1_") + Twine(routeIndex))
+             .str(),
+         (Twine("__obelisk_eval_four_state_fallback_v1_") +
+          Twine(routeIndex))
              .str()});
   });
+  if (routeError)
+    return failure();
   if (routes.empty())
     return success();
 
@@ -2048,7 +2430,127 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
   OpBuilder builder(context);
   Type pointer = LLVM::LLVMPointerType::get(context);
   Type i8 = builder.getI8Type();
+  constexpr StringLiteral routePromotionDirtyName =
+      "__obelisk_eval_route_promotion_dirty_v1";
+  constexpr StringLiteral routePromotionScanName =
+      "__obelisk_eval_route_promotion_scan_v1";
+  constexpr StringLiteral routePromotionBoundaryName =
+      "__obelisk_eval_route_promotion_boundary_v1";
+  builder.setInsertionPointToStart(module.getBody());
+  LLVM::GlobalOp::create(builder, module.getLoc(), i8, false,
+                         LLVM::Linkage::Internal, routePromotionDirtyName,
+                         builder.getI8IntegerAttr(1), 1);
   for (Route &route : routes) {
+    if (route.pathKnownProbe) {
+      auto probeType = route.pathKnownProbe.getFunctionType();
+      auto bodyType = route.fourState.getFunctionType();
+      if (probeType.getParams() != bodyType.getParams() ||
+          probeType.getReturnType() != builder.getI1Type())
+        return route.pathKnownProbe.emitError(
+            "path-known probe ABI does not match its eval body");
+      builder.setInsertionPointToEnd(module.getBody());
+      route.dispatcher = LLVM::LLVMFuncOp::create(
+          builder, route.twoState.getLoc(), route.dispatcherName, bodyType);
+      route.dispatcher.setPrivate();
+      Block *entry = route.dispatcher.addEntryBlock(builder);
+      Block *twoState = new Block;
+      Block *fourState = new Block;
+      route.dispatcher.getBody().push_back(twoState);
+      route.dispatcher.getBody().push_back(fourState);
+      builder.setInsertionPointToStart(entry);
+      SmallVector<Value> arguments(entry->getArguments());
+      Value known = LLVM::CallOp::create(
+                        builder, route.twoState.getLoc(),
+                        route.pathKnownProbe, arguments)
+                        .getResult();
+      LLVM::CondBrOp::create(builder, route.twoState.getLoc(), known, twoState,
+                             fourState);
+      auto emitTailCall = [&](Block *block, LLVM::LLVMFuncOp callee,
+                              bool fourStateFallback) {
+        builder.setInsertionPointToStart(block);
+        if (fourStateFallback) {
+          // The predicate has proven that this body has no blocking
+          // publication. Record the local four-state route before executing
+          // it so the shared NBA barrier preserves its staged unknown plane.
+          if (auto fallback = module.lookupSymbol<LLVM::GlobalOp>(
+                  "__obelisk_eval_step_four_state_fallback_v1"))
+            LLVM::StoreOp::create(
+                builder, route.fourState.getLoc(),
+                detail::llvmConstant(builder, route.fourState.getLoc(), i8,
+                                     1),
+                LLVM::AddressOfOp::create(builder, route.fourState.getLoc(),
+                                          pointer, fallback.getSymName()),
+                1);
+          if (auto latched = module.lookupSymbol<LLVM::GlobalOp>(
+                  "__obelisk_eval_fast_nba_latched_v1"))
+            LLVM::StoreOp::create(
+                builder, route.fourState.getLoc(),
+                detail::llvmConstant(builder, route.fourState.getLoc(), i8,
+                                     0),
+                LLVM::AddressOfOp::create(builder, route.fourState.getLoc(),
+                                          pointer, latched.getSymName()),
+                1);
+          if (auto fastRoots = module.lookupSymbol<LLVM::GlobalOp>(
+                  "__obelisk_eval_fast_nba_roots_v1"))
+            LLVM::StoreOp::create(
+                builder, route.fourState.getLoc(),
+                LLVM::ZeroOp::create(builder, route.fourState.getLoc(),
+                                     fastRoots.getGlobalType()),
+                LLVM::AddressOfOp::create(builder, route.fourState.getLoc(),
+                                          pointer, fastRoots.getSymName()),
+                8);
+        }
+        LLVM::CallOp call = LLVM::CallOp::create(
+            builder, route.twoState.getLoc(), callee, arguments);
+        LLVM::ReturnOp::create(builder, route.twoState.getLoc(),
+                               call.getResults());
+      };
+      emitTailCall(twoState, route.twoState, false);
+      emitTailCall(fourState, route.fourState, true);
+    } else {
+      // Indirect route selection must report a four-state leaf to the shared
+      // NBA barrier. Point the cold route at a wrapper that records the
+      // fallback before entering the model body; promotion replaces the
+      // route with the two-state body directly, so the hot edge stays clean.
+      auto bodyType = route.fourState.getFunctionType();
+      builder.setInsertionPointToEnd(module.getBody());
+      route.fourStateFallback = LLVM::LLVMFuncOp::create(
+          builder, route.fourState.getLoc(), route.fourStateFallbackName,
+          bodyType);
+      route.fourStateFallback.setPrivate();
+      Block *entry = route.fourStateFallback.addEntryBlock(builder);
+      builder.setInsertionPointToStart(entry);
+      if (auto fallback = module.lookupSymbol<LLVM::GlobalOp>(
+              "__obelisk_eval_step_four_state_fallback_v1"))
+        LLVM::StoreOp::create(
+            builder, route.fourState.getLoc(),
+            detail::llvmConstant(builder, route.fourState.getLoc(), i8, 1),
+            LLVM::AddressOfOp::create(builder, route.fourState.getLoc(),
+                                      pointer, fallback.getSymName()),
+            1);
+      if (auto latched = module.lookupSymbol<LLVM::GlobalOp>(
+              "__obelisk_eval_fast_nba_latched_v1"))
+        LLVM::StoreOp::create(
+            builder, route.fourState.getLoc(),
+            detail::llvmConstant(builder, route.fourState.getLoc(), i8, 0),
+            LLVM::AddressOfOp::create(builder, route.fourState.getLoc(),
+                                      pointer, latched.getSymName()),
+            1);
+      if (auto fastRoots = module.lookupSymbol<LLVM::GlobalOp>(
+              "__obelisk_eval_fast_nba_roots_v1"))
+        LLVM::StoreOp::create(
+            builder, route.fourState.getLoc(),
+            LLVM::ZeroOp::create(builder, route.fourState.getLoc(),
+                                 fastRoots.getGlobalType()),
+            LLVM::AddressOfOp::create(builder, route.fourState.getLoc(),
+                                      pointer, fastRoots.getSymName()),
+            8);
+      SmallVector<Value> arguments(entry->getArguments());
+      LLVM::CallOp call = LLVM::CallOp::create(
+          builder, route.fourState.getLoc(), route.fourState, arguments);
+      LLVM::ReturnOp::create(builder, route.fourState.getLoc(),
+                             call.getResults());
+    }
     builder.setInsertionPointToStart(module.getBody());
     auto global = LLVM::GlobalOp::create(
         builder, route.twoState.getLoc(), pointer, false,
@@ -2066,10 +2568,15 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
     // body before that call; replace it with the proven boundary selection
     // only after the drain reaches quiescence.
     builder.setInsertionPoint(prepare);
+    StringRef fallback = route.dispatcher
+                             ? route.dispatcher.getSymName()
+                         : route.fourStateFallback
+                             ? route.fourStateFallback.getSymName()
+                             : route.fourState.getSymName();
     LLVM::StoreOp::create(
         builder, route.twoState.getLoc(),
         LLVM::AddressOfOp::create(builder, route.twoState.getLoc(), pointer,
-                                  route.fourState.getSymName()),
+                                  fallback),
         LLVM::AddressOfOp::create(builder, route.twoState.getLoc(), pointer,
                                   route.globalName),
         8);
@@ -2119,12 +2626,170 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
         LLVM::AddressOfOp::create(builder, location, pointer,
                                   route.twoState.getSymName()),
         LLVM::AddressOfOp::create(builder, location, pointer,
-                                  route.fourState.getSymName()));
+                                  fallback));
     LLVM::StoreOp::create(
         builder, location, selected,
         LLVM::AddressOfOp::create(builder, location, pointer,
                                   route.globalName),
         8);
+  }
+
+  // Canonical and four-state NBA barriers are the generated synchronous
+  // boundaries that can establish a new known invariant. Mark their route
+  // closure dirty once; the successful coordinator return below performs the
+  // scan after the combined NBA barrier and post-NBA fanout have quiesced.
+  SmallVector<LLVM::CallOp> transitionNBACalls;
+  module.walk([&](LLVM::CallOp call) {
+    if (call->hasAttr("obelisk.eval.use_canonical_two_state_nba") ||
+        call->hasAttr("obelisk.eval.keep_four_state_nba"))
+      transitionNBACalls.push_back(call);
+  });
+  for (LLVM::CallOp call : transitionNBACalls) {
+    builder.setInsertionPointAfter(call);
+    LLVM::StoreOp::create(
+        builder, call.getLoc(),
+        detail::llvmConstant(builder, call.getLoc(), i8, 1),
+        LLVM::AddressOfOp::create(builder, call.getLoc(), pointer,
+                                  routePromotionDirtyName),
+        1);
+  }
+
+  // Keep the potentially large masked scan out of line. Its tiny boundary
+  // wrapper is inlined into generated coordinators, so a clean clock pays no
+  // call and no per-route promotion guards.
+  builder.setInsertionPointToEnd(module.getBody());
+  auto routePromotionScan = LLVM::LLVMFuncOp::create(
+      builder, module.getLoc(), routePromotionScanName,
+      LLVM::LLVMFunctionType::get(LLVM::LLVMVoidType::get(context), {},
+                                  false));
+  routePromotionScan->setAttr(
+      "passthrough",
+      builder.getArrayAttr(
+          {builder.getStringAttr("noinline"), builder.getStringAttr("cold")}));
+  Block *routeScanEntry = routePromotionScan.addEntryBlock(builder);
+  builder.setInsertionPointToStart(routeScanEntry);
+  LLVM::StoreOp::create(
+      builder, module.getLoc(),
+      detail::llvmConstant(builder, module.getLoc(), i8, 0),
+      LLVM::AddressOfOp::create(builder, module.getLoc(), pointer,
+                                routePromotionDirtyName),
+      1);
+  for (Route &route : routes) {
+    if (route.pathKnownProbe ||
+        (route.ranges.empty() && !route.independentEntry))
+      continue;
+    Location location = route.twoState.getLoc();
+    Value unknown = LLVM::AddressOfOp::create(
+        builder, location, pointer, "__obelisk_state_unknown");
+    Value anyUnknown = detail::llvmConstant(builder, location, i8, 0);
+    ArrayRef<int64_t> encoded = route.ranges.asArrayRef();
+    for (size_t index = 0; index != encoded.size(); index += 2) {
+      uint64_t bitOffset = static_cast<uint64_t>(encoded[index]);
+      uint64_t bitWidth = static_cast<uint64_t>(encoded[index + 1]);
+      uint64_t firstByte = bitOffset / 8;
+      uint64_t lastBit = bitOffset + bitWidth;
+      uint64_t lastByte = (lastBit + 7) / 8;
+      for (uint64_t byte = firstByte; byte != lastByte; ++byte) {
+        uint8_t mask = UINT8_MAX;
+        if (byte == firstByte && bitOffset % 8 != 0)
+          mask &= static_cast<uint8_t>(UINT8_MAX << (bitOffset % 8));
+        if (byte + 1 == lastByte && lastBit % 8 != 0)
+          mask &= static_cast<uint8_t>(
+              (uint16_t{1} << (lastBit % 8)) - 1);
+        Value bits = LLVM::LoadOp::create(
+            builder, location, i8,
+            detail::byteGEP(builder, location, unknown, byte), 1);
+        if (mask != UINT8_MAX)
+          bits = LLVM::AndOp::create(
+              builder, location, bits,
+              detail::llvmConstant(builder, location, i8, mask));
+        anyUnknown =
+            LLVM::OrOp::create(builder, location, anyUnknown, bits);
+      }
+    }
+    Value known = encoded.empty()
+                      ? detail::llvmConstant(builder, location,
+                                             builder.getI1Type(), true)
+                      : LLVM::ICmpOp::create(
+                            builder, location, LLVM::ICmpPredicate::eq,
+                            anyUnknown,
+                            detail::llvmConstant(builder, location, i8, 0));
+    StringRef fallback = route.dispatcher
+                             ? route.dispatcher.getSymName()
+                         : route.fourStateFallback
+                             ? route.fourStateFallback.getSymName()
+                             : route.fourState.getSymName();
+    Value selected = LLVM::SelectOp::create(
+        builder, location, known,
+        LLVM::AddressOfOp::create(builder, location, pointer,
+                                  route.twoState.getSymName()),
+        LLVM::AddressOfOp::create(builder, location, pointer, fallback));
+    LLVM::StoreOp::create(
+        builder, location, selected,
+        LLVM::AddressOfOp::create(builder, location, pointer,
+                                  route.globalName),
+        8);
+  }
+  LLVM::ReturnOp::create(builder, module.getLoc(), ValueRange{});
+
+  builder.setInsertionPointToEnd(module.getBody());
+  Type i32 = builder.getI32Type();
+  auto routePromotionBoundary = LLVM::LLVMFuncOp::create(
+      builder, module.getLoc(), routePromotionBoundaryName,
+      LLVM::LLVMFunctionType::get(i32, {i32}, false));
+  routePromotionBoundary->setAttr(
+      "passthrough",
+      builder.getArrayAttr({builder.getStringAttr("alwaysinline")}));
+  Block *boundaryEntry = routePromotionBoundary.addEntryBlock(builder);
+  Block *boundaryScan = new Block;
+  Block *boundaryReturn = new Block;
+  routePromotionBoundary.getBody().push_back(boundaryScan);
+  routePromotionBoundary.getBody().push_back(boundaryReturn);
+  builder.setInsertionPointToStart(boundaryEntry);
+  Value statusOK = LLVM::ICmpOp::create(
+      builder, module.getLoc(), LLVM::ICmpPredicate::eq,
+      boundaryEntry->getArgument(0),
+      detail::llvmConstant(builder, module.getLoc(), i32, OBELISK_RT_OK));
+  Value dirty = LLVM::LoadOp::create(
+      builder, module.getLoc(), i8,
+      LLVM::AddressOfOp::create(builder, module.getLoc(), pointer,
+                                routePromotionDirtyName),
+      1);
+  Value isDirty = LLVM::ICmpOp::create(
+      builder, module.getLoc(), LLVM::ICmpPredicate::ne, dirty,
+      detail::llvmConstant(builder, module.getLoc(), i8, 0));
+  LLVM::CondBrOp::create(
+      builder, module.getLoc(),
+      LLVM::AndOp::create(builder, module.getLoc(), statusOK, isDirty),
+      boundaryScan, boundaryReturn);
+  builder.setInsertionPointToStart(boundaryScan);
+  LLVM::CallOp::create(builder, module.getLoc(), routePromotionScan,
+                       ValueRange{});
+  LLVM::BrOp::create(builder, module.getLoc(), ValueRange{}, boundaryReturn);
+  builder.setInsertionPointToStart(boundaryReturn);
+  LLVM::ReturnOp::create(builder, module.getLoc(),
+                         boundaryEntry->getArgument(0));
+
+  llvm::SmallDenseSet<StringRef, 8> coordinatorNames{
+      "__obelisk_eval_fast_coordinator_v1",
+      "__obelisk_eval_fast_coordinator_two_state_v1",
+      "__obelisk_eval_steady_two_state_coordinator_v1",
+      "__obelisk_eval_periodic_two_state_coordinator_v1",
+      "__obelisk_eval_fast_coordinator_hybrid_v1"};
+  SmallVector<LLVM::CallOp> coordinatorCalls;
+  run.walk([&](LLVM::CallOp call) {
+    if (call.getNumResults() == 1 && call.getCallee() &&
+        coordinatorNames.contains(*call.getCallee()))
+      coordinatorCalls.push_back(call);
+  });
+  for (LLVM::CallOp call : coordinatorCalls) {
+    builder.setInsertionPointAfter(call);
+    auto boundaryCall = LLVM::CallOp::create(
+        builder, call.getLoc(), routePromotionBoundary,
+        ValueRange{call.getResult()});
+    for (OpOperand &use : llvm::make_early_inc_range(call.getResult().getUses()))
+      if (use.getOwner() != boundaryCall.getOperation())
+        use.set(boundaryCall.getResult());
   }
 
   llvm::StringMap<Route *> routesByFunction;
@@ -2144,15 +2809,27 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
         [&](LLVM::ReturnOp returnOp) { returns.push_back(returnOp); });
     for (LLVM::ReturnOp returnOp : returns) {
       builder.setInsertionPoint(returnOp);
-      for (Route &route : routes)
+      LLVM::StoreOp::create(
+          builder, returnOp.getLoc(),
+          detail::llvmConstant(builder, returnOp.getLoc(), i8, 1),
+          LLVM::AddressOfOp::create(builder, returnOp.getLoc(), pointer,
+                                    routePromotionDirtyName),
+          1);
+      for (Route &route : routes) {
+        StringRef fallback = route.dispatcher
+                                 ? route.dispatcher.getSymName()
+                             : route.fourStateFallback
+                                 ? route.fourStateFallback.getSymName()
+                                 : route.fourState.getSymName();
         LLVM::StoreOp::create(
             builder, returnOp.getLoc(),
             LLVM::AddressOfOp::create(
                 builder, returnOp.getLoc(), pointer,
-                route.fourState.getSymName()),
+                fallback),
             LLVM::AddressOfOp::create(builder, returnOp.getLoc(), pointer,
                                       route.globalName),
             8);
+      }
     }
   }
 
@@ -2230,6 +2907,59 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
     }
   }
 
+  // Specialize only the wrappers reached from a trusted, post-promotion
+  // coordinator. Transient/hybrid execution must retain mutable route edges,
+  // but sharing those wrappers with the steady coordinator prevents LLVM from
+  // seeing the direct per-instance call graph and blocks normal inlining.
+  // Cloning the small wrapper boundary keeps the body itself shared while
+  // making the quiescent certificate explicit in the IR.
+  SmallVector<LLVM::CallOp> trustedWrapperCalls;
+  module.walk([&](LLVM::LLVMFuncOp function) {
+    if (!function->hasAttr("obelisk.eval.trusted_two_state_coordinator"))
+      return;
+    function.walk([&](LLVM::CallOp call) {
+      if (!call.getCallee())
+        return;
+      LLVM::LLVMFuncOp callee =
+          module.lookupSymbol<LLVM::LLVMFuncOp>(*call.getCallee());
+      if (callee &&
+          callee->getAttrOfType<UnitAttr>("obelisk.eval.two_state_variant"))
+        trustedWrapperCalls.push_back(call);
+    });
+  });
+  llvm::DenseMap<Operation *, LLVM::LLVMFuncOp> trustedWrapperClones;
+  for (LLVM::CallOp call : trustedWrapperCalls) {
+    LLVM::LLVMFuncOp wrapper =
+        module.lookupSymbol<LLVM::LLVMFuncOp>(*call.getCallee());
+    LLVM::LLVMFuncOp &clone =
+        trustedWrapperClones[wrapper.getOperation()];
+    if (!clone) {
+      bool recursive = false;
+      wrapper.walk([&](LLVM::CallOp nested) {
+        recursive |= nested.getCallee() &&
+                     *nested.getCallee() == wrapper.getSymName();
+      });
+      if (recursive)
+        return wrapper.emitError(
+            "cannot specialize a recursive trusted eval wrapper");
+      SmallString<128> base(wrapper.getSymName());
+      base.append(".__obelisk_trusted");
+      unsigned suffix = 0;
+      SmallString<128> name(base);
+      while (module.lookupSymbol<LLVM::LLVMFuncOp>(name)) {
+        name = base;
+        (Twine("_") + Twine(++suffix)).toVector(name);
+      }
+      Operation *detached = wrapper->clone();
+      clone = cast<LLVM::LLVMFuncOp>(detached);
+      clone.setSymName(name);
+      clone->setAttr("obelisk.eval.trusted_two_state_closure",
+                     builder.getUnitAttr());
+      SymbolTable(module).insert(detached);
+    }
+    call.setCallee(clone.getSymName());
+  }
+
   SmallVector<LLVM::CallOp> calls;
   module.walk([&](LLVM::CallOp call) {
     if (call.getCallee() && routesByFunction.contains(*call.getCallee()))
@@ -2238,34 +2968,20 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
   for (LLVM::CallOp call : calls) {
     Route &route = *routesByFunction.lookup(*call.getCallee());
     LLVM::LLVMFuncOp caller = call->getParentOfType<LLVM::LLVMFuncOp>();
-    bool selectedVariant =
-        caller && caller->hasAttr("obelisk.eval.four_state_source");
-    bool promotedClosure =
+    if (caller &&
+        (caller == route.dispatcher || caller == route.fourStateFallback))
+      continue;
+    bool selectedTwoStateClosure =
         caller &&
-        (caller.getSymName() ==
-             "__obelisk_eval_fast_coordinator_two_state_v1" ||
-         caller.getSymName() ==
-             "__obelisk_eval_periodic_two_state_coordinator_v1" ||
-         caller.getSymName().ends_with(".two_state") || selectedVariant);
-    bool locallySelectedRoute =
-        caller && caller.getSymName().ends_with(".two_state") &&
-        route.independentEntry && !route.ranges.empty();
-    if (promotedClosure && !locallySelectedRoute) {
+        (caller->hasAttr("obelisk.eval.four_state_source") ||
+         caller->hasAttr("obelisk.eval.trusted_two_state_closure"));
+    if (selectedTwoStateClosure && !route.dispatcher) {
       // The outer coordinator has already established the quiescent
-      // owner boundary, including nested raw-capture bodies. Preserve that
-      // proof as a direct edge so LLVM can inline across module instances.
-      // Empty ordinary helpers retain the four-state ABI because their
-      // unknown values may be supplied by the caller.  A checkpoint-capable
-      // instance is different: its generated two-state owner wrapper is the
-      // quiescent boundary proof, while display/finish remain cold exits from
-      // that body.  Preserve that proof through the wrapper-to-instance edge.
-      bool checkpointOwnerBoundary =
-          caller && caller.getSymName().ends_with(".two_state") &&
-          route.ranges.empty();
-      bool useTwoState = selectedVariant || !route.ranges.empty() ||
-                         route.independentEntry || checkpointOwnerBoundary;
-      call.setCallee(useTwoState ? route.twoState.getSymName()
-                                : route.fourState.getSymName());
+      // owner boundary. Preserve a direct edge so LLVM can inline across
+      // module instances, but retain a nested owner's path predicate: the
+      // outer closure certificate deliberately excludes ranges owned by that
+      // independently guarded checkpoint.
+      call.setCallee(route.twoState.getSymName());
       continue;
     }
     builder.setInsertionPoint(call);
@@ -2280,9 +2996,18 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
         builder, call.getLoc(), route.fourState.getFunctionType(), operands);
     replacement->setAttr(
         "obelisk.eval.allowed_callees",
-        builder.getArrayAttr(
-            {FlatSymbolRefAttr::get(context, route.fourState.getSymName()),
-             FlatSymbolRefAttr::get(context, route.twoState.getSymName())}));
+        builder.getArrayAttr([&] {
+          SmallVector<Attribute> allowed{
+              FlatSymbolRefAttr::get(context, route.fourState.getSymName()),
+              FlatSymbolRefAttr::get(context, route.twoState.getSymName())};
+          if (route.dispatcher)
+            allowed.push_back(FlatSymbolRefAttr::get(
+                context, route.dispatcher.getSymName()));
+          if (route.fourStateFallback)
+            allowed.push_back(FlatSymbolRefAttr::get(
+                context, route.fourStateFallback.getSymName()));
+          return allowed;
+        }()));
     call.replaceAllUsesWith(replacement.getResults());
     call.erase();
   }
@@ -2310,8 +3035,8 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
   module.walk([&](LLVM::LLVMFuncOp function) {
     bool twoState =
         function->hasAttr("obelisk.eval.four_state_source") ||
-        function.getSymName().ends_with(".two_state") ||
-        function.getSymName().contains(".__obelisk_two_state");
+        function->hasAttr("obelisk.eval.two_state_variant") ||
+        function->hasAttr("obelisk.eval.selected_two_state");
     if (!twoState)
       return;
     function.walk([&](Operation *operation) {
@@ -2345,9 +3070,7 @@ LogicalResult materializeEvalTwoStateNBACommit(ModuleOp module) {
       "__obelisk_aot_static_nba_commit_two_state_fast_v1";
   LLVM::LLVMFuncOp source =
       module.lookupSymbol<LLVM::LLVMFuncOp>(fourStateName);
-  LLVM::LLVMFuncOp coordinator = module.lookupSymbol<LLVM::LLVMFuncOp>(
-      "__obelisk_eval_fast_coordinator_two_state_v1");
-  if (!source || !coordinator)
+  if (!source)
     return success();
 
   OpBuilder builder(source);
@@ -2377,10 +3100,12 @@ LogicalResult materializeEvalTwoStateNBACommit(ModuleOp module) {
   auto fastClone =
       cast<LLVM::LLVMFuncOp>(builder.clone(*clone.getOperation()));
   fastClone.setSymName(fastTwoStateName);
-  fastClone->setAttr(
-      "passthrough",
-      ArrayAttr::get(module.getContext(),
-                     {StringAttr::get(module.getContext(), "alwaysinline")}));
+  // This compact value-plane-only barrier is part of the Tier-1 slot
+  // coordinator, not a model-instance body or a handoff boundary.  Inline it
+  // so LLVM can fold the fixed ready/dirty masks across the periodic loop.
+  // Keep the canonical and four-state barriers out of line below: those are
+  // cold transition paths and would otherwise inflate the hot coordinator.
+  fastClone->removeAttr("passthrough");
   // The full four-state and canonicalizing two-state barriers are handoff
   // paths.  Keep them out of the promoted coordinator so their unknown-plane
   // bookkeeping does not inflate register pressure and instruction layout in
@@ -2420,35 +3145,58 @@ LogicalResult materializeEvalTwoStateNBACommit(ModuleOp module) {
   }
   for (LLVM::StoreOp store : canonicalUnknownStores)
     store.erase();
-  coordinator.walk([&](LLVM::CallOp call) {
-    if (call.getCallee() && *call.getCallee() == fourStateName &&
-        !call->hasAttr("obelisk.eval.keep_four_state_nba"))
+  // Specialization is carried entirely by call-site intent.  Validate and
+  // consume the phase-local markers so a renamed or newly outlined
+  // coordinator cannot silently retain the wrong NBA implementation.
+  WalkResult rewrite = module.walk([&](LLVM::CallOp call) {
+    bool useFast = call->hasAttr("obelisk.eval.use_fast_two_state_nba");
+    bool useCanonical =
+        call->hasAttr("obelisk.eval.use_canonical_two_state_nba");
+    bool keepFourState =
+        call->hasAttr("obelisk.eval.keep_four_state_nba");
+    unsigned intents = useFast + useCanonical + keepFourState;
+    if (intents == 0)
+      return WalkResult::advance();
+    if (intents != 1)
+      return call.emitError("NBA call has conflicting specialization intents"),
+             WalkResult::interrupt();
+    std::optional<StringRef> callee = call.getCallee();
+    if (!callee)
+      return call.emitError("NBA specialization requires a direct call"),
+             WalkResult::interrupt();
+    bool expectedSource = *callee == fourStateName;
+    bool expectedCanonical = *callee == twoStateName;
+    bool expectedFast = *callee == fastTwoStateName;
+    if (useFast) {
+      if (!expectedSource && !expectedCanonical && !expectedFast)
+        return call.emitError("fast two-state NBA intent is attached to an "
+                              "unrelated callee"),
+               WalkResult::interrupt();
       call.setCallee(fastTwoStateName);
+      call->removeAttr("obelisk.eval.use_fast_two_state_nba");
+      return WalkResult::advance();
+    }
+    if (useCanonical) {
+      if (!expectedSource && !expectedCanonical && !expectedFast)
+        return call.emitError("canonical two-state NBA intent is attached to "
+                              "an unrelated callee"),
+               WalkResult::interrupt();
+      call.setCallee(twoStateName);
+      call->removeAttr("obelisk.eval.use_canonical_two_state_nba");
+      return WalkResult::advance();
+    }
+    if (!expectedSource)
+      return call.emitError("four-state NBA intent is attached to an "
+                            "unrelated callee"),
+             WalkResult::interrupt();
+    call->removeAttr("obelisk.eval.keep_four_state_nba");
+    return WalkResult::advance();
   });
-  if (LLVM::LLVMFuncOp periodicCoordinator =
-          module.lookupSymbol<LLVM::LLVMFuncOp>(
-              "__obelisk_eval_periodic_two_state_coordinator_v1"))
-    periodicCoordinator.walk([&](LLVM::CallOp call) {
-      if (call.getCallee() && *call.getCallee() == fourStateName &&
-          call->hasAttr("obelisk.eval.use_fast_two_state_nba")) {
-        call.setCallee(fastTwoStateName);
-        call->removeAttr("obelisk.eval.use_fast_two_state_nba");
-      }
-    });
-  if (LLVM::LLVMFuncOp hybrid = module.lookupSymbol<LLVM::LLVMFuncOp>(
-          "__obelisk_eval_fast_coordinator_hybrid_v1"))
-    hybrid.walk([&](LLVM::CallOp call) {
-      if (call.getCallee() && *call.getCallee() == fourStateName &&
-          call->hasAttr("obelisk.eval.use_fast_two_state_nba")) {
-        call.setCallee(fastTwoStateName);
-        call->removeAttr("obelisk.eval.use_fast_two_state_nba");
-      } else if (call.getCallee() && *call.getCallee() == fourStateName &&
-                 call->hasAttr(
-                     "obelisk.eval.use_canonical_two_state_nba")) {
-        call.setCallee(twoStateName);
-        call->removeAttr("obelisk.eval.use_canonical_two_state_nba");
-      }
-    });
+  if (rewrite.wasInterrupted())
+    return failure();
+  source.walk([](LLVM::LoadOp load) {
+    load->removeAttr("obelisk.eval.two_state_zero_unknown");
+  });
   return success();
 }
 

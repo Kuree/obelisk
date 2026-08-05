@@ -240,7 +240,7 @@ module {
 // CHECK-LABEL: func @joiner
 // CHECK-NEXT:   bb0.op1.result0: two-state (logic-constant)
 // CHECK-NEXT:   bb0.op2.result0: may-four-state (unknown-constant)
-// CHECK-NEXT:   bb1.arg0: may-four-state (cfg-join)
+// CHECK-NEXT:   bb1.arg0: two-state (cfg-join)
 // CHECK-LABEL: func @loop
 // CHECK-NEXT:   bb0.arg1: two-state (call-actual)
 // CHECK-NEXT:   bb1.arg0: two-state (cfg-join)
@@ -253,8 +253,8 @@ module {
 // CHECK-NEXT:   bb0.op1.result0: two-state (logic-from-bits)
 // CHECK-NEXT:   bb0.op2.result0: may-four-state (call-result)
 // CHECK-NEXT:   bb0.op3.result0: may-four-state (unsupported-producer)
-// CHECK-NEXT:   bb1.op0.result0: may-four-state (unknown-constant)
-// CHECK-NEXT:   bb1.op1.result0: may-four-state (call-result)
+// CHECK-NEXT:   bb1.op0.result0: two-state (infeasible-cfg)
+// CHECK-NEXT:   bb1.op1.result0: two-state (infeasible-cfg)
 // CHECK-LABEL: func @nested_known
 // CHECK-NEXT:   bb0.arg1: may-four-state (function-entry)
 // CHECK-NEXT:   bb0.op0.result0: may-four-state (logic-resize)

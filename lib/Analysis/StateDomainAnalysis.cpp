@@ -871,21 +871,29 @@ computeValueFacts(sim::SimDesignOp design, const RootSet &assumedKnownRoots) {
   // symbols and opaque uses can introduce values from outside the analyzed
   // invocation graph.
   SmallVector<char> hasNonCallUse(functions.size(), false);
-  std::optional<SymbolTable::UseRange> uses =
-      SymbolTable::getSymbolUses(design);
-  if (!uses) {
-    llvm::fill(hasNonCallUse, true);
-  } else {
-    // Query the symbol table once for the whole design. Asking for uses of
-    // every function separately performs a complete attribute walk each time;
-    // an outlined RTL instance therefore turned this closed-world check into
-    // O(functions * design-size) compile time.
+  // Scan each function body once. Asking for uses of every function symbol
+  // from the enclosing design performs a complete design walk per symbol,
+  // while asking from the design itself deliberately stops at nested symbol
+  // boundaries and misses references attached to or nested in SimFuncOp.
+  // The per-body scans remain linear in the total IR size.
+  for (const FunctionSummary &summary : summaries) {
+    sim::SimFuncOp scope = summary.function;
+    std::optional<SymbolTable::UseRange> uses =
+        SymbolTable::getSymbolUses(scope);
+    if (!uses) {
+      llvm::fill(hasNonCallUse, true);
+      break;
+    }
     for (const SymbolTable::SymbolUse &use : *uses) {
       Operation *user = use.getUser();
       SymbolRefAttr reference = use.getSymbolRef();
+      // Functions in a simulation design are direct symbols of that design.
+      // Resolve against the owning symbol table: lookup-nearest from an
+      // attribute attached to the symbol operation itself can skip that
+      // operation's sibling symbols and incorrectly classify opaque uses as
+      // absent.
       sim::SimFuncOp function =
-          symbolTables.lookupNearestSymbolFrom<sim::SimFuncOp>(user,
-                                                                reference);
+          design.lookupSymbol<sim::SimFuncOp>(reference.getRootReference());
       if (!function)
         continue;
       auto found = functionIndex.find(function.getOperation());

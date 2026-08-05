@@ -5,9 +5,6 @@
 // RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s --check-prefix=DIRECT --implicit-check-not='llvm.call @obelisk_rt_v1_scheduler_static_transition'
 // RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
-// RUN:   | FileCheck %s --check-prefix=THREE-TIER
-// RUN: obelisk-opt %s \
 // RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s --check-prefix=PERIODIC
 // RUN: sed 's/obelisk.native_scheduler = 2/obelisk.native_scheduler = 3/' %s \
@@ -19,7 +16,6 @@
 // RUN:   2>&1 | FileCheck %s --check-prefix=PERIODIC-ANALYSIS
 
 // PERIODIC-ANALYSIS: native-aot eligible=true fully=true selected=true periodic=true
-
 // Exercise AOT NBA planning and materialization from hand-authored simulation
 // IR. Driver option parsing is deliberately outside this pass test.
 module attributes {
@@ -180,32 +176,18 @@ module attributes {
 // DIRECT: llvm.call @obelisk_rt_v1_static_nba_account_generated_commits
 // DIRECT: llvm.call @obelisk_rt_v1_static_nba_commit_roots
 
-// Every candidate owns one independent dirty/route byte. The scanner and its
-// direct callers are generated code and have no runtime ABI calls.
-// THREE-TIER-DAG: llvm.mlir.global internal @__obelisk_tier1_promotion_dirty_v1
-// THREE-TIER-DAG: llvm.mlir.global internal @__obelisk_tier1_selected_variant_v1
-// THREE-TIER-DAG: llvm.mlir.global internal constant @__obelisk_tier1_promotion_hooks_v1
-// THREE-TIER-LABEL: llvm.func @__obelisk_tier1_scan_unknown_v1
-// THREE-TIER-NOT: llvm.call @obelisk_rt_
-// THREE-TIER: llvm.load
-// THREE-TIER: llvm.cond_br
-// THREE-TIER: llvm.return
-// THREE-TIER-LABEL: llvm.func @__obelisk_tier1_try_promote_v1_0
-// THREE-TIER-NOT: llvm.call @obelisk_rt_
-// THREE-TIER: llvm.cond_br
-// THREE-TIER: llvm.call @__obelisk_tier1_scan_unknown_v1
-// THREE-TIER: llvm.store
-// THREE-TIER: llvm.return
-// THREE-TIER-LABEL: llvm.func @__obelisk_tier1_invalidate_v1_0
-// THREE-TIER-NOT: llvm.call @obelisk_rt_
-// THREE-TIER: llvm.store
-// THREE-TIER: llvm.store
-// THREE-TIER: llvm.return
-// THREE-TIER-LABEL: llvm.func @__obelisk_tier1_try_promote_v1_1
 // A stale four-state staged unknown plane must not leak through promotion.
 // The transitional two-state barrier clears canonical unknown bits once; the
 // steady fast clone has no canonical unknown-plane memory access.  Both use a
 // zero staged unknown value.
+// NBA specialization follows call-site intent across generated coordinator
+// variants; lowering consumes the marker attributes instead of keying on
+// coordinator symbol names.
+// TWO-STATE-NOT: obelisk.eval.use_fast_two_state_nba
+// TWO-STATE-NOT: obelisk.eval.use_canonical_two_state_nba
+// TWO-STATE-LABEL: llvm.func @__obelisk_eval_fast_coordinator_hybrid_v1
+// TWO-STATE: llvm.call @__obelisk_aot_static_nba_commit_two_state_fast_v1
+// TWO-STATE: llvm.call @__obelisk_aot_static_nba_commit_two_state_v1
 // TWO-STATE-LABEL: llvm.func internal @__obelisk_aot_static_nba_commit_two_state_v1
 // TWO-STATE: %[[CANON_UNKNOWN:.*]] = llvm.mlir.addressof @__obelisk_state_unknown
 // TWO-STATE: %[[CANON_ACC:.*]] = llvm.mlir.addressof @__obelisk_aot_nba_accumulator_0

@@ -110,6 +110,12 @@ LogicalResult lowerOrdinaryFunction(sim::SimFuncOp function) {
       function->getAttr("obelisk.eval.four_state_source");
   Attribute evalPromotionRanges =
       function->getAttr("obelisk.eval.local_promotion_ranges");
+  Attribute evalConditionallyTwoState =
+      function->getAttr("obelisk.eval.conditionally_two_state");
+  Attribute evalPathKnownProbe =
+      function->getAttr("obelisk.eval.path_known_probe");
+  Attribute evalPathKnownPredicate =
+      function->getAttr("obelisk.eval.path_known_predicate");
   function.getContext()->getOrLoadDialect<func::FuncDialect>();
   OpBuilder builder(function.getContext());
   builder.setInsertionPoint(function);
@@ -130,6 +136,15 @@ LogicalResult lowerOrdinaryFunction(sim::SimFuncOp function) {
   if (evalPromotionRanges)
     replacement->setAttr("obelisk.eval.local_promotion_ranges",
                          evalPromotionRanges);
+  if (evalConditionallyTwoState)
+    replacement->setAttr("obelisk.eval.conditionally_two_state",
+                         evalConditionallyTwoState);
+  if (evalPathKnownProbe)
+    replacement->setAttr("obelisk.eval.path_known_probe",
+                         evalPathKnownProbe);
+  if (evalPathKnownPredicate)
+    replacement->setAttr("obelisk.eval.path_known_predicate",
+                         evalPathKnownPredicate);
   replacement.getBody().takeBody(function.getBody());
   function.erase();
   for (Block &block : replacement.getBody())

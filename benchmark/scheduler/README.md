@@ -30,15 +30,15 @@ driver does not expose a third, independent design-task-only tier switch.
 
 `gated_scc.sv` is an FPGA/CGRA-shaped mixed-tier microbenchmark. A clocked
 controller and accumulator surround two gated monotone combinational equations
-that form one convergence SCC. The generated schedule keeps the controller in
-Tier 1 and emits a direct Tier-2 dirty-mask subkernel whose inactive ingress is
-one branch; disabling the gate settles the SCC to zero. Build both
+that form one convergence SCC; disabling the gate settles the SCC to zero.
+Build both
 `--native-scheduler=auto` and `--native-scheduler=generic` as the correctness
-oracle, then compare the single `GATED_SCC` result line. `-emit-llvm` exposes
-the planned `__obelisk_tier1_eval_step_v1` to
-`__obelisk_tier2_converge_v1_*` helper edge. The installed schedule does not
-yet call that helper; this benchmark therefore remains a semantic and codegen
-fixture, not evidence of hot-path Tier-2 reachability.
+oracle, then compare the single `GATED_SCC` result line. This fixture is not
+currently eligible for the installed eval schedule: `auto` uses the generic
+handoff and an explicit `eval` request reports the missing generated owner.
+The disconnected Tier-2 materializer remains as a planning/codegen fixture,
+and its standalone MLIR checks are explicitly labeled as materializer-only so
+those helper symbols are not mistaken for evidence of installed reachability.
 This benchmark intentionally has no Verilator step.
 
 For a quick local comparison:

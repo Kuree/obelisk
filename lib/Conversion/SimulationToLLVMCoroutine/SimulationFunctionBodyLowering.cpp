@@ -7,6 +7,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/WalkPatternRewriteDriver.h"
 
 using namespace mlir;
@@ -90,15 +91,30 @@ lowerNativeFunctionBody(Operation *root, NativeReturnLowering returnLowering,
   patterns.add<NativeSpawnPattern>(root->getContext());
   if (returnLowering != NativeReturnLowering::None)
     patterns.add<NativeReturnPattern>(root->getContext(), returnLowering);
-  walkAndApplyPatterns(root, FrozenRewritePatternSet(std::move(patterns)));
+  FrozenRewritePatternSet frozenPatterns(std::move(patterns));
+  if (root->hasAttr("obelisk.eval.path_known_predicate")) {
+    if (failed(applyPatternsGreedily(root, frozenPatterns)))
+      return root->emitError("native function-body rewrite failed");
+  } else {
+    // The native process frame analysis refers to the original CFG. Avoid the
+    // region simplification performed by the greedy driver for those bodies.
+    walkAndApplyPatterns(root, frozenPatterns);
+  }
+  Operation *illegalOperation = nullptr;
   WalkResult leftovers = root->walk([&](Operation *operation) {
     bool illegal = isa<sim::SimCallOp, sim::SimSpawnOp>(operation) ||
                    (returnLowering != NativeReturnLowering::None &&
                     isa<sim::SimReturnOp>(operation));
+    if (illegal)
+      illegalOperation = operation;
     return illegal ? WalkResult::interrupt() : WalkResult::advance();
   });
   if (leftovers.wasInterrupted())
-    return root->emitError("native function-body rewrite left an illegal op");
+    return illegalOperation->emitError()
+           << "native function-body rewrite left illegal operation '"
+           << illegalOperation->getName() << "' in '"
+           << SymbolTable::getSymbolName(root).getValue()
+           << "'";
   return success();
 }
 
