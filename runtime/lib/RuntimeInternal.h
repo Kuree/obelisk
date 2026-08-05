@@ -1121,6 +1121,15 @@ obelisk_rt_status obelisk_rt_execute_design_observer(
     uint64_t *value, uint64_t *unknown, uint32_t limbCount) noexcept;
 obelisk_rt_status
 obelisk_rt_initialize_design_state(obelisk_rt_context *context) noexcept;
+
+// Generated process spawns are already bound to a validated context. Reuse
+// its immutable design-bytecode image while retaining the public standalone
+// creation entry point for descriptors without a context.
+extern "C" obelisk_rt_status
+obelisk_rt_v1_process_instance_create_for_context(
+    obelisk_rt_context *context,
+    const obelisk_rt_process_descriptor_v1 *descriptor,
+    obelisk_rt_process_instance_v1 **outInstance);
 obelisk_rt_status obelisk_rt_resolve_design_drivers(obelisk_rt_context *context,
                                                     uint64_t begin,
                                                     uint64_t end) noexcept;

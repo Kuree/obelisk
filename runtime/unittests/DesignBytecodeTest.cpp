@@ -1405,6 +1405,51 @@ struct Fixture {
   }
 };
 
+TEST(DesignBytecode, ContextBoundProcessCreationReusesValidatedDesign) {
+  Fixture fixture;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+
+  obelisk_rt_process_instance_v1 *instance = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_process_instance_create_for_context(
+                context, &fixture.descriptor, &instance),
+            OBELISK_RT_OK);
+  ASSERT_NE(instance, nullptr);
+  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
+
+  Fixture otherDesign;
+  instance = reinterpret_cast<obelisk_rt_process_instance_v1 *>(uintptr_t{1});
+  EXPECT_EQ(obelisk_rt_v1_process_instance_create_for_context(
+                context, &otherDesign.descriptor, &instance),
+            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(instance, nullptr);
+
+  fixture.entry.reserved = 1;
+  instance = reinterpret_cast<obelisk_rt_process_instance_v1 *>(uintptr_t{1});
+  EXPECT_EQ(obelisk_rt_v1_process_instance_create_for_context(
+                context, &fixture.descriptor, &instance),
+            OBELISK_RT_INVALID_BYTECODE);
+  EXPECT_EQ(instance, nullptr);
+  fixture.entry.reserved = 0;
+
+  fixture.entry.function = 1;
+  instance = reinterpret_cast<obelisk_rt_process_instance_v1 *>(uintptr_t{1});
+  EXPECT_EQ(obelisk_rt_v1_process_instance_create_for_context(
+                context, &fixture.descriptor, &instance),
+            OBELISK_RT_INVALID_BYTECODE);
+  EXPECT_EQ(instance, nullptr);
+  fixture.entry.function = 0;
+
+  instance = reinterpret_cast<obelisk_rt_process_instance_v1 *>(uintptr_t{1});
+  EXPECT_EQ(obelisk_rt_v1_process_instance_create_for_context(
+                nullptr, &fixture.descriptor, &instance),
+            OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(instance, nullptr);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(DesignBytecode, FailInstructionAcceptsFatalStatus) {
   Fixture fixture;
   const size_t layoutOffset = get64(fixture.bytecode, 56);

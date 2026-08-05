@@ -2216,6 +2216,8 @@ bool validateImage(const Image &image) {
 
 bool loadValidatedImage(const obelisk_rt_design_bytecode_entry_v1 &entry,
                         obelisk_rt_context *context, Image &image) {
+  if (entry.reserved != 0)
+    return rejectImage(__LINE__, "bytecode entry reserved field is nonzero");
   // Context creation validates the complete inventory and immutable bytecode
   // image before publishing the context. Standalone entries retain full
   // checksum and structural validation.

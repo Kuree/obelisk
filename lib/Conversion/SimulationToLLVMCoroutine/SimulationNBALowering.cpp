@@ -43,8 +43,18 @@ public:
     Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
     Type i32 = rewriter.getI32Type();
     Type i64 = rewriter.getI64Type();
-    bool twoStateEval =
+    sim::SimFuncOp function = op->getParentOfType<sim::SimFuncOp>();
+    bool inductiveTwoStateAccess =
         op->hasAttr("obelisk.eval.inductive_two_state_access");
+    // Selected eval bodies execute only after their complete closure crosses
+    // a known quiescent boundary, so they can use fixed root/region metadata.
+    // That function-level fact does not prove exclusive ownership of an NBA
+    // accumulator, however: a coincident four-state writer may have staged X
+    // first. Only the per-access root proof may omit the zero unknown-plane
+    // overwrite needed to preserve last-writer semantics.
+    bool compactEvalMetadata =
+        inductiveTwoStateAccess ||
+        (function && function->hasAttr("obelisk.eval.selected_two_state"));
 
     sim::NBASiteAttr site = op.getSiteAttr();
     auto staticRoot =
@@ -96,7 +106,6 @@ public:
       if (adaptor.getValue().size() == 2)
         unknown = widen(adaptor.getValue()[1]);
       Value value = widen(adaptor.getValue().front());
-      sim::SimFuncOp function = op->getParentOfType<sim::SimFuncOp>();
       uint32_t homeRegion =
           function ? getRuntimeEventRegion(function.getHomeRegion())
                    : UINT32_MAX;
@@ -115,7 +124,7 @@ public:
           (directPartialScalarStage || directLaneStage);
       auto emitDirectGeneratedStage = [&] {
         bool fixedRegionEvalStage =
-            twoStateEval && staticRoot->second <
+            compactEvalMetadata && staticRoot->second <
                                staticPlan->generatedCommitRegions.size() &&
             staticPlan->generatedCommitRegions[staticRoot->second] !=
                 UINT32_MAX;
@@ -146,7 +155,7 @@ public:
                 rewriter, location, positioned,
                 llvmConstant(rewriter, location, i64, mask));
             Value merged = masked;
-            if (!twoStateEval || fixedWriteMask == 0) {
+            if (!compactEvalMetadata || fixedWriteMask == 0) {
               Value old = LLVM::LoadOp::create(rewriter, location, i64,
                                                 address, 8);
               merged = arith::OrIOp::create(
@@ -161,11 +170,11 @@ public:
           mergeField(offsetof(obelisk_rt_generated_nba_accumulator_256,
                               value),
                      value);
-          if (!twoStateEval)
+          if (!inductiveTwoStateAccess)
             mergeField(offsetof(obelisk_rt_generated_nba_accumulator_256,
                                 unknown),
                        unknown);
-          if (!twoStateEval ||
+          if (!compactEvalMetadata ||
               (!fullRootEvalStage && fixedWriteMask == 0)) {
             Value maskAddress = byteGEP(
                 rewriter, location, base,
@@ -202,6 +211,16 @@ public:
                                write_mask) +
                           laneOffset),
               4);
+          if (!inductiveTwoStateAccess)
+            LLVM::StoreOp::create(
+                rewriter, location,
+                llvmConstant(rewriter, location, i32, 0),
+                byteGEP(
+                    rewriter, location, base,
+                    offsetof(obelisk_rt_generated_nba_accumulator_256,
+                             unknown) +
+                        laneOffset),
+                4);
         }
         if (!fixedRegionEvalStage) {
           LLVM::StoreOp::create(
@@ -231,7 +250,7 @@ public:
             llvmConstant(rewriter, location, i64,
                          uint64_t{1} << (staticRoot->second % 64)));
         LLVM::StoreOp::create(rewriter, location, marked, dirtyWord, 8);
-        if (!twoStateEval) {
+        if (!compactEvalMetadata) {
           Value summaryBase = LLVM::AddressOfOp::create(
               rewriter, location, pointer,
               "__obelisk_aot_nba_dirty_summary_v1");

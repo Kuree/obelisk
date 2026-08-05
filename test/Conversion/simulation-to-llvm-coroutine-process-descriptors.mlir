@@ -7,6 +7,7 @@ module attributes {
   obelisk_sim.design @process_descriptors {
     obelisk_sim.scope.decl 0
     obelisk_sim.code_unit.decl 42 in 0 initial hierarchy "process_descriptors.process"
+    obelisk_sim.code_unit.decl 43 in 0 task hierarchy "process_descriptors.task"
 
     obelisk_sim.func @process(
         %ctx: !obelisk_sim.context
@@ -16,6 +17,13 @@ module attributes {
       %delay = obelisk_sim.time.constant 1
       obelisk_sim.suspend.delay %delay to ^resume(%capture : i16)
     ^resume(%value: i16):
+      obelisk_sim.return
+    }
+
+    obelisk_sim.func @task(
+        %ctx: !obelisk_sim.context
+            {obelisk_sim.capture_kind = 0 : i32})
+        attributes {code_unit_id = 43 : i64, entry_kind = 12 : i32} {
       obelisk_sim.return
     }
   }
@@ -38,3 +46,6 @@ module attributes {
 // CHECK-SAME: alignment = 4 : i64
 // CHECK: llvm.mlir.global internal constant @process.__obelisk_frame_fields
 // CHECK-SAME: alignment = 8 : i64
+// CHECK-LABEL: llvm.func @task.__obelisk_activate(
+// CHECK-SAME: %[[TASK_CTX:.*]]: !llvm.ptr)
+// CHECK: llvm.call @obelisk_rt_v1_process_instance_create_for_context(%[[TASK_CTX]], {{.*}}, {{.*}})

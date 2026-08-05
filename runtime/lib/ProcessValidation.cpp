@@ -138,6 +138,7 @@ validateLayout(const obelisk_rt_process_descriptor_v1 &descriptor) {
 
 obelisk_rt_status
 validateDescriptor(const obelisk_rt_process_descriptor_v1 &descriptor,
+                   obelisk_rt_context *context,
                    uint64_t &nativeSize, uint64_t &nativeAlignment,
                    uint64_t &scratchOffset, uint64_t &scratchSize) {
   obelisk_rt_status status = validateLayout(descriptor);
@@ -185,7 +186,7 @@ validateDescriptor(const obelisk_rt_process_descriptor_v1 &descriptor,
         return OBELISK_RT_TIER_UNAVAILABLE;
       uint64_t bytecodeAlignment = 1;
       status = obelisk_rt_validate_design_bytecode(*descriptor.design_bytecode,
-                                                   nullptr, &bytecodeSize,
+                                                   context, &bytecodeSize,
                                                    &bytecodeAlignment);
       if (status != OBELISK_RT_OK)
         return status;

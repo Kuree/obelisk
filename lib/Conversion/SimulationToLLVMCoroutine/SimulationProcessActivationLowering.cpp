@@ -63,8 +63,10 @@ makeProcessActivationHelper(ModuleOp module, sim::SimFuncOp function,
   Value status =
       LLVM::CallOp::create(
           builder, location, TypeRange{i32},
-          SymbolRefAttr::get(context, "obelisk_rt_v1_process_instance_create"),
-          ValueRange{descriptor, outInstance})
+          SymbolRefAttr::get(
+              context,
+              "obelisk_rt_v1_process_instance_create_for_context"),
+          ValueRange{entry->getArgument(0), descriptor, outInstance})
           .getResult();
   Value succeeded =
       arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq, status,
@@ -196,8 +198,9 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
       (function.getSymName() + ".__obelisk_process_descriptor").str());
   auto create = LLVM::CallOp::create(
       builder, location, TypeRange{i32},
-      SymbolRefAttr::get(context, "obelisk_rt_v1_process_instance_create"),
-      ValueRange{descriptor, outInstance});
+      SymbolRefAttr::get(context,
+                         "obelisk_rt_v1_process_instance_create_for_context"),
+      ValueRange{entry->getArgument(0), descriptor, outInstance});
   Value createSucceeded = arith::CmpIOp::create(
       builder, location, arith::CmpIPredicate::eq, create.getResult(),
       llvmConstant(builder, location, i32, 0));
@@ -308,8 +311,9 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
           .getResult();
   LLVM::ReturnOp::create(builder, location, token);
 
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_process_instance_create", i32,
-                           {pointer, pointer});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_process_instance_create_for_context", i32,
+      {pointer, pointer, pointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_add_planned", i32,
                            {pointer, pointer, i32, i32, pointer, pointer, i32});
   getOrDeclareLLVMFunction(

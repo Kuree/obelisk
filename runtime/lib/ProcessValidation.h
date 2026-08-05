@@ -22,6 +22,7 @@ const obelisk_rt_frame_field_v1 *
 findWaitField(const obelisk_rt_frame_layout_v1 &layout, uint64_t offset);
 obelisk_rt_status
 validateDescriptor(const obelisk_rt_process_descriptor_v1 &descriptor,
+                   obelisk_rt_context *context,
                    uint64_t &nativeSize, uint64_t &nativeAlignment,
                    uint64_t &scratchOffset, uint64_t &scratchSize);
 obelisk_rt_status validateAction(obelisk_rt_process_instance_v1 &instance,

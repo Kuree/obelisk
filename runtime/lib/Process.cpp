@@ -1684,7 +1684,8 @@ bool obelisk_rt_publish_signal_occurrence_unlocked(obelisk_rt_context *context,
       outSequence);
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_process_instance_create(
+static obelisk_rt_status createProcessInstance(
+    obelisk_rt_context *context,
     const obelisk_rt_process_descriptor_v1 *descriptor,
     obelisk_rt_process_instance_v1 **outInstance) {
   if (!outInstance)
@@ -1697,8 +1698,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_process_instance_create(
   uint64_t nativeAlignment;
   uint64_t scratchOffset;
   uint64_t scratchSize;
+  if (context && descriptor->execution &&
+      context->execution != descriptor->execution)
+    return OBELISK_RT_INVALID_DESIGN;
   obelisk_rt_status status = validateDescriptor(
-      *descriptor, nativeSize, nativeAlignment, scratchOffset, scratchSize);
+      *descriptor, context, nativeSize, nativeAlignment, scratchOffset,
+      scratchSize);
   if (status != OBELISK_RT_OK)
     return status;
 
@@ -1748,6 +1753,25 @@ extern "C" obelisk_rt_status obelisk_rt_v1_process_instance_create(
           static_cast<size_t>(allocationAlignment), nullptr};
   *outInstance = instance;
   return OBELISK_RT_OK;
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_process_instance_create(
+    const obelisk_rt_process_descriptor_v1 *descriptor,
+    obelisk_rt_process_instance_v1 **outInstance) {
+  return createProcessInstance(nullptr, descriptor, outInstance);
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_process_instance_create_for_context(
+    obelisk_rt_context *context,
+    const obelisk_rt_process_descriptor_v1 *descriptor,
+    obelisk_rt_process_instance_v1 **outInstance) {
+  if (!context) {
+    if (outInstance)
+      *outInstance = nullptr;
+    return OBELISK_RT_INVALID_ARGUMENT;
+  }
+  return createProcessInstance(context, descriptor, outInstance);
 }
 
 extern "C" obelisk_rt_status
