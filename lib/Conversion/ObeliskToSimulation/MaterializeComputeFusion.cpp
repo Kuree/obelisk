@@ -29,6 +29,13 @@ namespace obelisk {
 
 namespace {
 
+bool useEvalBodyFusion(sim::SimDesignOp design) {
+  ModuleOp module = design->getParentOfType<ModuleOp>();
+  auto scheduler = module->getAttrOfType<sim::NativeSchedulerModeAttr>(
+      "obelisk.native_scheduler");
+  return scheduler && scheduler.getValue() == sim::NativeSchedulerMode::Eval;
+}
+
 class ObeliskSimMaterializeComputeFusionPass final
     : public impl::ObeliskSimMaterializeComputeFusionPassBase<
           ObeliskSimMaterializeComputeFusionPass> {
@@ -64,6 +71,7 @@ private:
 
 struct BodyFusionCandidate {
   sim::SimFuncOp function;
+  uint64_t instanceScope = 0;
   sim::SimSpawnOp spawn;
   Block *wait = nullptr;
   Block *body = nullptr;
@@ -75,6 +83,18 @@ struct BodyFusionCandidate {
   SmallVector<unsigned> fusedArguments;
   SmallVector<Value> threadedEntryValues;
 };
+
+std::optional<uint64_t> getCodeUnitScope(sim::SimDesignOp design,
+                                         sim::SimFuncOp function) {
+  std::optional<uint64_t> codeUnit = function.getCodeUnitId();
+  if (!codeUnit)
+    return std::nullopt;
+  for (sim::SimCodeUnitDeclOp declaration :
+       design.getBody().front().getOps<sim::SimCodeUnitDeclOp>())
+    if (declaration.getId() == *codeUnit)
+      return declaration.getScopeId();
+  return std::nullopt;
+}
 
 bool isSupportedEntryKind(sim::EntryKind kind) {
   return kind == sim::EntryKind::Always || kind == sim::EntryKind::AlwaysFF;
@@ -110,18 +130,14 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
     return success();
   bool portMethod = function.getEntryKind() == sim::EntryKind::PortInput ||
                     function.getEntryKind() == sim::EntryKind::PortOutput;
+  bool eventDrivenInitial =
+      function.getEntryKind() == sim::EntryKind::Initial;
+  bool generatedRegionBody =
+      function->hasAttr(sim::metadata::nativeRegionBody);
   if (!isSupportedEntryKind(function.getEntryKind()) &&
-      function.getEntryKind() != sim::EntryKind::Continuous && !portMethod)
+      function.getEntryKind() != sim::EntryKind::Continuous && !portMethod &&
+      !eventDrivenInitial && !generatedRegionBody)
     return success();
-  bool hasBoundary = false;
-  function.walk([&](Operation *operation) {
-    hasBoundary |=
-        isa<sim::SimFinishOp, sim::SimStopOp, sim::SimFatalOp,
-            sim::SimTerminationRequestedOp, sim::SimDisplayOp>(operation);
-  });
-  if (hasBoundary)
-    return success();
-
   Block *wait = nullptr;
   unsigned suspensionCount = 0;
   function.walk([&](Operation *operation) {
@@ -170,8 +186,9 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
   uint64_t evalCodeUnit = 1;
   while (usedCodeUnits.contains(evalCodeUnit))
     ++evalCodeUnit;
+  uint64_t evalScope = getCodeUnitScope(design, function).value_or(0);
   sim::SimCodeUnitDeclOp::create(
-      builder, function.getLoc(), evalCodeUnit, uint64_t{0},
+      builder, function.getLoc(), evalCodeUnit, evalScope,
       sim::EntryKind::Function, builder.getStringAttr(evalName),
       builder.getStringAttr("experimental native eval body"),
       builder.getUnitAttr());
@@ -187,6 +204,27 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
       sim::EntryKind::Function, evalAttributes, argumentAttrs);
   evalBody->setAttr("obelisk.eval.borrowed_captures", builder.getUnitAttr());
   evalBody->setAttr("obelisk.eval.raw_captures", builder.getUnitAttr());
+  sim::ContinuationSiteAttr activationSite;
+  if (auto suspend = dyn_cast<sim::SimSuspendChangeOp>(wait->getTerminator()))
+    activationSite = suspend.getSiteAttr();
+  else if (auto suspend =
+               dyn_cast<sim::SimSuspendEdgeOp>(wait->getTerminator()))
+    activationSite = suspend.getSiteAttr();
+  else if (auto suspend =
+               dyn_cast<sim::SimSuspendAnyOp>(wait->getTerminator()))
+    activationSite = suspend.getSiteAttr();
+  else if (auto suspend =
+               dyn_cast<sim::SimSuspendObserveOp>(wait->getTerminator()))
+    activationSite = suspend.getSiteAttr();
+  if (!activationSite || activationSite.getId() == 0) {
+    evalBody.erase();
+    return success();
+  }
+  evalBody->setAttr("obelisk.eval.continuation",
+                    builder.getI32IntegerAttr(activationSite.getId()));
+  if (sim::FragmentABIAttr abi = function.getFragmentAbiAttr())
+    function->setAttr("obelisk.eval.source_fragments",
+                      abi.getFragments());
   SymbolTable::setSymbolVisibility(evalBody, SymbolTable::Visibility::Private);
 
   IRMapping mapping;
@@ -1300,11 +1338,7 @@ FailureOr<sim::SimFuncOp> materializeFusion(
     const DenseMap<StringAttr, SmallVector<sim::SimSpawnOp>> &spawnsByCallee,
     uint64_t &eliminatedTerminationPolls, uint64_t &ifConvertedNBAs,
     uint64_t &sharedStableConditions, uint64_t &promotedPrivateStores) {
-  auto scheduler = design->getParentOfType<ModuleOp>()
-                       ->getAttrOfType<sim::NativeSchedulerModeAttr>(
-                           "obelisk.native_scheduler");
-  bool evalBodyFusion =
-      scheduler && scheduler.getValue() == sim::NativeSchedulerMode::Eval;
+  bool evalBodyFusion = useEvalBodyFusion(design);
   auto rejectEval = [&](StringRef) -> FailureOr<sim::SimFuncOp> {
     return failure();
   };
@@ -1393,6 +1427,7 @@ FailureOr<sim::SimFuncOp> materializeFusion(
 
     BodyFusionCandidate candidate;
     candidate.function = function;
+    candidate.instanceScope = getCodeUnitScope(design, function).value_or(0);
     candidate.spawn = spawns->second.front();
     candidate.wait = wait;
     candidate.body = wait->getSuccessor(0);
@@ -1440,6 +1475,18 @@ FailureOr<sim::SimFuncOp> materializeFusion(
   llvm::sort(candidates, [](const auto &lhs, const auto &rhs) {
     return lhs.resumeOrder < rhs.resumeOrder;
   });
+
+  if (evalBodyFusion) {
+    uint64_t instanceScope = candidates.front().instanceScope;
+    sim::EventRegion homeRegion = candidates.front().function.getHomeRegion();
+    sim::ExecutionDomain domain = candidates.front().function.getDomain();
+    if (llvm::any_of(candidates, [&](BodyFusionCandidate &candidate) {
+          return candidate.instanceScope != instanceScope ||
+                 candidate.function.getHomeRegion() != homeRegion ||
+                 candidate.function.getDomain() != domain;
+        }))
+      return rejectEval("members cross an elaborated instance or domain");
+  }
 
   // A body that publishes an Active-region sensitivity can make another actor
   // runnable between two members. The verified schedule is precise enough to
@@ -1541,6 +1588,57 @@ FailureOr<sim::SimFuncOp> materializeFusion(
       first.getEntryKind(), fusedAttributes, argumentAttrs);
   SymbolTable::setSymbolVisibility(fused, SymbolTable::Visibility::Private);
   fused->setAttr(sim::metadata::nativeRegionBody, builder.getUnitAttr());
+  // Preserve the pre-fusion physical fragment inventory as an ownership
+  // certificate for native eval planning. Rebuilding the compute graph gives
+  // the fused function fresh fragment IDs, but clock fanout was planned from
+  // the source actors and must be mapped without actor-name heuristics.
+  SmallVector<int64_t> sourceFragments;
+  for (BodyFusionCandidate &candidate : candidates)
+    if (sim::FragmentABIAttr abi = candidate.function.getFragmentAbiAttr())
+      llvm::append_range(sourceFragments, abi.getFragments().asArrayRef());
+  llvm::sort(sourceFragments);
+  sourceFragments.erase(
+      std::unique(sourceFragments.begin(), sourceFragments.end()),
+      sourceFragments.end());
+  if (!sourceFragments.empty())
+    fused->setAttr("obelisk.eval.source_fragments",
+                   builder.getDenseI64ArrayAttr(sourceFragments));
+  SmallVector<Attribute> sourceOwners;
+  sourceOwners.reserve(candidates.size());
+  for (BodyFusionCandidate &candidate : candidates) {
+    sim::ContinuationSiteAttr site;
+    if (auto suspend =
+            dyn_cast<sim::SimSuspendChangeOp>(candidate.wait->getTerminator()))
+      site = suspend.getSiteAttr();
+    else if (auto suspend =
+                 dyn_cast<sim::SimSuspendEdgeOp>(candidate.wait->getTerminator()))
+      site = suspend.getSiteAttr();
+    if (!site)
+      return rejectEval("source owner has no stable continuation");
+    // Eval-body fusion operates on private activation clones. Recover the
+    // source coroutine that owns the clone so the ownership certificate uses
+    // its stable code-unit identity, which survives graph rebuilding and
+    // symbol renaming.
+    sim::SimFuncOp sourceFunction = candidate.function;
+    for (sim::SimFuncOp function :
+         design.getBody().front().getOps<sim::SimFuncOp>())
+      if (auto evalBody =
+              function->getAttrOfType<FlatSymbolRefAttr>("obelisk.eval.body");
+          evalBody && evalBody.getValue() == candidate.function.getSymName()) {
+        sourceFunction = function;
+        break;
+      }
+    IntegerAttr codeUnit = sourceFunction.getCodeUnitIdAttr();
+    if (!codeUnit)
+      return rejectEval("source owner has no stable code unit");
+    sourceOwners.push_back(builder.getDictionaryAttr(
+        {builder.getNamedAttr("code_unit", codeUnit),
+         builder.getNamedAttr("continuation",
+                              builder.getI32IntegerAttr(site.getId()))}));
+  }
+  fused->setAttr("obelisk.eval.source_owners",
+                 builder.getArrayAttr(sourceOwners));
+  fused->setAttr("obelisk.eval.ownership_anchors", fusion.getFragments());
   // This closed-world fused activation cannot call foreign code or suspend
   // while its body is running. Mark it so native lowering can prove which NBA
   // sites are safe in the clean body selected by AOT actor dispatch.
@@ -1722,8 +1820,9 @@ FailureOr<sim::SimFuncOp> materializeFusion(
     uint64_t evalCodeUnit = 1;
     while (usedCodeUnits.contains(evalCodeUnit))
       ++evalCodeUnit;
+    uint64_t evalScope = candidates.front().instanceScope;
     sim::SimCodeUnitDeclOp::create(
-        builder, fused.getLoc(), evalCodeUnit, uint64_t{0},
+        builder, fused.getLoc(), evalCodeUnit, evalScope,
         sim::EntryKind::Function, builder.getStringAttr(evalName),
         builder.getStringAttr("experimental native eval body"),
         builder.getUnitAttr());
@@ -1735,11 +1834,38 @@ FailureOr<sim::SimFuncOp> materializeFusion(
         sim::EntryKind::Function, evalAttributes, argumentAttrs);
     evalBody->setAttr("obelisk.eval.borrowed_captures", builder.getUnitAttr());
     evalBody->setAttr("obelisk.eval.raw_captures", builder.getUnitAttr());
+    evalBody->setAttr("obelisk.eval.instance_coordinator", builder.getUnitAttr());
+    sim::ContinuationSiteAttr activationSite;
+    if (auto suspend = dyn_cast<sim::SimSuspendChangeOp>(wait->getTerminator()))
+      activationSite = suspend.getSiteAttr();
+    else if (auto suspend =
+                 dyn_cast<sim::SimSuspendEdgeOp>(wait->getTerminator()))
+      activationSite = suspend.getSiteAttr();
+    else if (auto suspend =
+                 dyn_cast<sim::SimSuspendAnyOp>(wait->getTerminator()))
+      activationSite = suspend.getSiteAttr();
+    else if (auto suspend =
+                 dyn_cast<sim::SimSuspendObserveOp>(wait->getTerminator()))
+      activationSite = suspend.getSiteAttr();
+    if (!activationSite || activationSite.getId() == 0) {
+      evalBody.erase();
+      return fused;
+    }
+    // The source suspension may be erased by later fusion and CFG cleanup.
+    // Carry its stable identity on the generated body so native scheduling
+    // never has to retain or dereference transformation-owned operations.
+    evalBody->setAttr("obelisk.eval.continuation",
+                      builder.getI32IntegerAttr(activationSite.getId()));
     SymbolTable::setSymbolVisibility(evalBody,
                                      SymbolTable::Visibility::Private);
 
-    IRMapping evalMapping;
+    // The fusion plan is partitioned by elaborated instance.  Clone the
+    // instance's scheduled activation bodies into one owner so the native
+    // backend can optimize across process boundaries just as it can across
+    // ordinary inlined module methods.  Large helpers within those bodies
+    // remain subject to the normal inliner profitability model.
     Block &evalEntry = evalBody.getBody().front();
+    IRMapping evalMapping;
     for (auto [source, destination] : llvm::zip_equal(
              fused.getBody().front().getArguments(), evalEntry.getArguments()))
       evalMapping.map(source, destination);
@@ -1846,11 +1972,7 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
   ArrayAttr fusions =
       design->getAttrOfType<ArrayAttr>(sim::metadata::staticBodyFusion);
   sim::ComputeGraphAttr graph = design.getComputeGraphAttr();
-  auto scheduler = design->getParentOfType<ModuleOp>()
-                       ->getAttrOfType<sim::NativeSchedulerModeAttr>(
-                           "obelisk.native_scheduler");
-  bool evalScheduler =
-      scheduler && scheduler.getValue() == sim::NativeSchedulerMode::Eval;
+  bool evalScheduler = useEvalBodyFusion(design);
   if ((!fusions || !graph || graph.getWorkers() != 1) && evalScheduler) {
     // Standalone activation cloning is not conditional on finding a profitable
     // multi-actor fusion.  Keeping it behind the fusion-inventory early return
@@ -1898,7 +2020,12 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
     FailureOr<sim::SimFuncOp> fused = materializeFusion(
         design, fusion, graph, scheduleOrder, spawnsByCallee, removedPolls,
         convertedNBAs, sharedConditions, promotedStores);
-    if (failed(fused))
+    // The model-wide eval coordinator already owns a fine dirty bit for each
+    // original activation. Replacing several of those bodies with a second
+    // snapshot-and-mask dispatcher adds redundant work to the hot loop and
+    // obscures the original fragment ownership. Keep straight-line region
+    // fusion for the actor scheduler, where it removes dispatch overhead.
+    if (failed(fused) && !evalScheduler)
       fused =
           materializeStraightLineKernel(design, fusion, graph, spawnsByCallee);
     changed |= succeeded(fused);
@@ -1911,19 +2038,15 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
   // Materialize every eligible actor body: selectively retaining coroutine
   // actors here recreates the fine-grained runtime dispatch that this mode is
   // intended to measure without.
-  if (scheduler && scheduler.getValue() == sim::NativeSchedulerMode::Eval) {
+  if (evalScheduler) {
     SmallVector<sim::SimFuncOp> actors;
     for (sim::SimFuncOp function :
          design.getBody().front().getOps<sim::SimFuncOp>())
       actors.push_back(function);
     for (sim::SimFuncOp function : actors) {
-      StringRef name = function.getSymName();
-      bool generatedRegionKernel = name.starts_with("__obelisk_region_kernel_");
-      if (!generatedRegionKernel) {
-        uint64_t unit = 0;
-        if (!name.consume_front("unit_") || name.getAsInteger(10, unit))
-          continue;
-      }
+      // Eligibility is entirely structural. Symbol spelling is an identity
+      // and debugging concern; generated bodies must not depend on the
+      // frontend's current `unit_N` naming convention.
       if (failed(materializeStandaloneEvalBody(design, function))) {
         signalPassFailure();
         return;

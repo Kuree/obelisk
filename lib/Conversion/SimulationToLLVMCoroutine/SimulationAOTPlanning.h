@@ -20,7 +20,14 @@ struct NativeStateLayout;
 
 struct NativeStaticFanoutPlan {
   llvm::SmallVector<obelisk_rt_static_fanout_entry> entries;
+  llvm::DenseMap<std::pair<uint32_t, uint32_t>, llvm::SmallVector<uint32_t>>
+      fragments;
   bool exact = false;
+};
+
+struct NativePromotionRange {
+  uint64_t bitOffset = 0;
+  uint64_t bitWidth = 0;
 };
 
 /// A private AOT-only implementation of one stable actor continuation.  The
@@ -30,11 +37,20 @@ struct NativeDirectFragment {
   uint32_t actorSlot;
   uint32_t continuation;
   std::string wrapper;
-};
-
-struct NativePromotionRange {
-  uint64_t bitOffset = 0;
-  uint64_t bitWidth = 0;
+  std::string twoStateWrapper;
+  std::string twoStateBody;
+  /// Stable pre-fusion actor/continuation identities exclusively represented
+  /// by this generated body.
+  llvm::SmallVector<std::pair<uint32_t, uint32_t>, 0> sourceOwners;
+  llvm::SmallVector<uint32_t, 0> fragmentIDs;
+  // Pre-fusion suspension fragments exclusively represented by this body.
+  // These stable physical anchors map source fanout to a fused executor
+  // without relying on actor names or transformed continuation ordinals.
+  llvm::SmallVector<uint32_t, 0> ownershipAnchors;
+  llvm::SmallVector<NativePromotionRange, 0> promotionRanges;
+  uint32_t fusionGroup = UINT32_MAX;
+  bool initialActivation = false;
+  bool tier2Convergence = false;
 };
 
 struct NativeThreeTierKernelPlan {
@@ -43,6 +59,7 @@ struct NativeThreeTierKernelPlan {
   uint32_t readyBit = 0;
   sim::SchedulerTierKind tier = sim::SchedulerTierKind::Tier3;
   sim::ComputeScheduleKind schedule = sim::ComputeScheduleKind::Acyclic;
+  bool loweringReady = false;
   uint32_t memberCount = 0;
   llvm::SmallVector<uint32_t> memberIDs;
   bool twoStateEligible = false;
@@ -51,6 +68,7 @@ struct NativeThreeTierKernelPlan {
 
 struct NativeThreeTierPlan {
   uint32_t ownerCount = 0;
+  sim::ComputeGraphAttr sourceGraph;
   llvm::SmallVector<NativeThreeTierKernelPlan> kernels;
 };
 
@@ -63,6 +81,19 @@ struct NativePeriodicClock {
   uint32_t staticState = 0;
   uint64_t bitOffset = 0;
   uint64_t halfPeriod = 0;
+};
+
+/// A proven one-bit, single-driver port projection of a periodic source.  The
+/// generated loop updates both canonical driver and resolved-net planes and
+/// seeds the target fanout directly, avoiding a forwarding actor per edge.
+struct NativePeriodicAlias {
+  uint32_t sourceStaticState = 0;
+  uint32_t forwardingActorSlot = 0;
+  uint32_t forwardingContinuation = 0;
+  uint32_t targetStaticState = 0;
+  uint64_t sourceBitOffset = 0;
+  uint64_t targetBitOffset = 0;
+  uint64_t driverBitOffset = 0;
 };
 
 mlir::LogicalResult
@@ -83,6 +114,11 @@ mlir::FailureOr<llvm::SmallVector<NativePeriodicClock>>
 buildNativePeriodicClockPlan(
     mlir::ModuleOp module, const NativeStateLayout &stateLayout,
     const llvm::DenseMap<mlir::Operation *, uint32_t> &actorSlots);
+mlir::FailureOr<llvm::SmallVector<NativePeriodicAlias>>
+buildNativePeriodicAliasPlan(
+    mlir::ModuleOp module, const NativeStateLayout &stateLayout,
+    const llvm::DenseMap<mlir::Operation *, uint32_t> &actorSlots,
+    mlir::ArrayRef<NativePeriodicClock> periodicClocks);
 mlir::LogicalResult materializeNativePeriodicClockPlan(
     mlir::ModuleOp module, mlir::ArrayRef<NativePeriodicClock> periodicClocks);
 mlir::LogicalResult
@@ -106,7 +142,11 @@ mlir::LogicalResult makeNativeEvalPlan(
     const NativeStaticFanoutPlan &staticFanoutPlan,
     mlir::ArrayRef<obelisk_rt_static_actor_root> actorRoots,
     mlir::ArrayRef<NativeDirectFragment> directFragments,
-    mlir::ArrayRef<NativePeriodicClock> periodicClocks, bool enableDirectState,
+    sim::ComputeGraphAttr computeGraph,
+    mlir::ArrayRef<NativePeriodicClock> periodicClocks,
+    mlir::ArrayRef<NativePeriodicAlias> periodicAliases,
+    mlir::ArrayRef<NativePromotionRange> evalPromotionRanges,
+    bool enableDirectState,
     bool enableStaticNBA, bool enableStaticControl, bool enableStaticFanout,
     bool enableCleanSuperstep, bool evalScheduler, bool fullyStatic,
     bool rootSlotZero, const analysis::SimulationVPIAnalysis &vpi);

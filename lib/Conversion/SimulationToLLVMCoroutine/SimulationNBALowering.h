@@ -31,11 +31,16 @@ struct NativeStaticNBAPlan {
   // Canonical state-plane bit offset for each root. This is revision-coupled
   // lowering metadata, not a second state allocation.
   llvm::SmallVector<uint64_t> generatedOffsets;
-  // Fixed NBA event region for roots whose every reachable site is a direct,
-  // full-width scalar stage. UINT32_MAX denotes a mixed or unsupported root.
-  // The generated commit uses this proof to avoid reloading fields that each
-  // stage just wrote; fallback-visible accumulator storage remains unchanged.
+  // Fixed NBA event region for roots whose every reachable site is a direct
+  // scalar stage in the same region. UINT32_MAX denotes a mixed or unsupported
+  // root. Region and full-root coverage are separate proofs: fixed partial
+  // writes still require a write mask but not valid/region bookkeeping.
   llvm::SmallVector<uint32_t> generatedCommitRegions;
+  llvm::SmallVector<bool> generatedFullRootStages;
+  // Nonzero when every reachable direct scalar enqueue writes the same fixed
+  // root mask. The accumulator value can then be overwritten instead of
+  // read-modify-written; repeated activations retain normal last-write wins.
+  llvm::SmallVector<uint64_t> generatedFixedWriteMasks;
 };
 
 void populateNBAToLLVMConversionPatterns(mlir::RewritePatternSet &patterns,

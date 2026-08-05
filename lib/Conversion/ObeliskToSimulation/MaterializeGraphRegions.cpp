@@ -253,6 +253,7 @@ void ObeliskSimMaterializeGraphRegionsPass::runOnOperation() {
                    pending.schedule == sim::ComputeScheduleKind::Acyclic &&
                    current.schedule == sim::ComputeScheduleKind::Acyclic &&
                    pending.tier == current.tier &&
+                   pending.twoStateEligible == current.twoStateEligible &&
                    pending.triggers == current.triggers &&
                    current.cost <= maxAcyclicCost &&
                    pending.cost <= maxAcyclicCost - current.cost;

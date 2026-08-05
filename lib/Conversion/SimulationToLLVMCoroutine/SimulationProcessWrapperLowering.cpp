@@ -10,6 +10,8 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 
+#include "llvm/ADT/SmallPtrSet.h"
+
 using namespace mlir;
 
 namespace obelisk::detail {
@@ -231,27 +233,65 @@ LogicalResult makeDirectFragmentWrapper(
   auto wrapper = LLVM::LLVMFuncOp::create(
       builder, location, wrapperName,
       LLVM::LLVMFunctionType::get(i32, {pointer}, false));
+  bool mayTerminate = false;
+  llvm::SmallPtrSet<Operation *, 8> visited;
+  auto design = body->getParentOfType<sim::SimDesignOp>();
+  std::function<void(sim::SimFuncOp)> inspect = [&](sim::SimFuncOp function) {
+    if (!function || !visited.insert(function.getOperation()).second)
+      return;
+    function.walk([&](Operation *operation) {
+      // Direct-fragment materialization runs after Simulation-to-Runtime
+      // conversion, so checkpoint-producing operations may already have
+      // crossed the typed runtime dialect boundary.  Treat any such operation
+      // conservatively: a generated hot owner must have a closed, runtime-free
+      // call graph before it can bypass coordinator status handling.
+      mayTerminate |=
+          operation->getName().getDialectNamespace() == "obelisk_rt";
+      mayTerminate |=
+          isa<sim::SimFinishOp, sim::SimStopOp, sim::SimFatalOp,
+              sim::SimTerminationRequestedOp, sim::SimStatusCheckOp,
+              sim::SimDisplayOp, sim::SimFileOpenMCDOp, sim::SimFileOpenOp,
+              sim::SimFileCloseOp, sim::SimFileFlushOp, sim::SimFileGetcOp,
+              sim::SimFileUngetcOp, sim::SimFileGetlineOp,
+              sim::SimFileReadPackedOp, sim::SimFileEofOp,
+              sim::SimFileSeekOp, sim::SimFileTellOp,
+              sim::SimFileRewindOp>(operation);
+      if (auto call = dyn_cast<sim::SimCallOp>(operation))
+        inspect(design.lookupSymbol<sim::SimFuncOp>(call.getCallee()));
+    });
+  };
+  inspect(body);
+  inspect(actor);
+  if (mayTerminate)
+    wrapper->setAttr("obelisk.eval.may_terminate", builder.getUnitAttr());
   Block *entry = wrapper.addEntryBlock(builder);
   if (body->hasAttr("obelisk.eval.raw_captures")) {
+    if (!mayTerminate)
+      wrapper->setAttr("obelisk.eval.infallible", builder.getUnitAttr());
     wrapper->setAttr(
         "passthrough",
         builder.getArrayAttr({builder.getStringAttr("alwaysinline")}));
     builder.setInsertionPointToStart(entry);
-    Value currentContext = LLVM::AddressOfOp::create(
-        builder, location, pointer, "__obelisk_current_context");
-    LLVM::StoreOp::create(builder, location, entry->getArgument(0),
-                          currentContext, 8);
     SmallVector<Value> arguments;
     for (Type input : body.getFunctionType().getInputs()) {
       Type converted = convertProcessType(input, context);
       arguments.push_back(
-          LLVM::PoisonOp::create(builder, location, converted));
+          isa<sim::ContextType>(input)
+              ? entry->getArgument(0)
+              : LLVM::PoisonOp::create(builder, location, converted)
+                    .getResult());
     }
-    func::CallOp::create(builder, location, body.getSymName(), TypeRange{},
-                         arguments);
+    bool returnsStatus = false;
+    body.walk([&](sim::SimStatusCheckOp) { returnsStatus = true; });
+    auto call = func::CallOp::create(
+        builder, location, body.getSymName(),
+        returnsStatus ? TypeRange{i32} : TypeRange{}, arguments);
+    call->setAttr("obelisk.eval.direct_call", builder.getUnitAttr());
     LLVM::ReturnOp::create(
         builder, location,
-        llvmConstant(builder, location, i32, OBELISK_RT_OK));
+        returnsStatus
+            ? call.getResult(0)
+            : llvmConstant(builder, location, i32, OBELISK_RT_OK));
     return success();
   }
   Block *invoke = new Block;

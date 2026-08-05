@@ -36,6 +36,8 @@ public:
                  << " fully=" << (analysis.isFullyEligible() ? "true" : "false")
                  << " selected="
                  << (analysis.isAOTCostEffective() ? "true" : "false")
+                 << " periodic="
+                 << (analysis.hasPeriodicClockCandidate() ? "true" : "false")
                  << " cost=" << analysis.getNativeGraphCost() << "/"
                  << analysis.getTotalGraphCost()
                  << "\n";

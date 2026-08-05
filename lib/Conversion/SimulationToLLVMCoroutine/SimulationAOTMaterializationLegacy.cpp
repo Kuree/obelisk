@@ -874,7 +874,7 @@ LogicalResult makeNativeAOTPlanLegacy(
        i64, pointer, pointer, pointer, pointer, i32,     i32,     pointer,
        i64, pointer, i64,     pointer, i64,     pointer, pointer, pointer,
        i32, i32,     pointer, i32,     i32,     pointer, i32,     i32,
-       pointer, i64, pointer});
+       pointer, i64, pointer, pointer, pointer});
   makeConstantGlobal(
       module, location, planType, planName, LLVM::Linkage::Internal, 8,
       [&](OpBuilder &initializerBuilder) {

@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
@@ -795,7 +796,13 @@ bool publishSignalOccurrenceUnlocked(obelisk_rt_context *context,
     *outSequence = sequence;
   if (context->signalDiagnosticsEnabled)
     ++context->signalDiagnostics.publications;
-  bool fullyStaticAOT = context->nativeSchedulePlan &&
+  // A direct native wait is polled by the generated schedule only while that
+  // schedule owns execution.  During a transient fine-scheduler handoff the
+  // same subscription must seed the runtime candidate set instead; otherwise
+  // a force/assign that survives the current slot can strand every subsequent
+  // edge-triggered actor while the fine scheduler advances time.
+  bool fullyStaticAOT = !context->nativeScheduleStopAtCleanBoundary &&
+                        context->nativeSchedulePlan &&
                         !context->nativeScheduleDeoptimized &&
                         (context->nativeSchedulePlan->flags &
                          OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC) != 0;
@@ -979,6 +986,18 @@ bool nativeStaticSpecializationEnvironmentClean(
          context->designConditionalSignalWaiters.empty();
 }
 
+bool nativeAOTTransientBoundaryClean(const obelisk_rt_context *context) {
+  if (!context || context->nativeScheduleExternalWritePending ||
+      context->nativeScheduleDirtyRootsPresent)
+    return false;
+  auto anyOverride = [](const std::vector<uint64_t> &mask) {
+    return std::any_of(mask.begin(), mask.end(),
+                       [](uint64_t word) { return word != 0; });
+  };
+  return !anyOverride(context->forceMask) &&
+         !anyOverride(context->assignMask);
+}
+
 bool canUseStaticAOTFanout(const obelisk_rt_context *context) {
   const obelisk_rt_native_schedule_plan *plan =
       context ? context->nativeSchedulePlan : nullptr;
@@ -1076,6 +1095,13 @@ void invalidateNativeStaticSpecializationFastUnlocked(
   if (!plan || !plan->specialization_fast)
     return;
   *plan->specialization_fast = 0;
+}
+
+void invalidateNativeTwoStatePromotionUnlocked(obelisk_rt_context *context) {
+  const obelisk_rt_native_schedule_plan *plan =
+      context ? context->nativeSchedulePlan : nullptr;
+  if (plan && plan->promotion_invalidate)
+    plan->promotion_invalidate();
 }
 
 void refreshNativeStaticSpecializationFastUnlocked(
@@ -1455,6 +1481,23 @@ bool publishStaticAOTSignalTransitionUnlockedImpl(
   if (!staticAOTFanoutRangeHasConsumer(context, staticID, publishedLow,
                                        bitWidth))
     return true;
+  // Metadata-only clock plans predate executable generated fragments.  Their
+  // coordinator is nevertheless the owner of external-deposit ingress, so
+  // retain that routing while using the ownership marker for hybrid plans.
+  // This scan is confined to the asynchronous publication path and therefore
+  // does not add work to the generated periodic loop.
+  bool metadataOnlyClockCoordinator = false;
+  if constexpr (UseClockIngress) {
+    const obelisk_rt_native_schedule_plan *plan =
+        context->nativeSchedulePlan;
+    metadataOnlyClockCoordinator =
+        plan->merged_fragment_count != 0 &&
+        std::none_of(plan->merged_fragments,
+                     plan->merged_fragments + plan->merged_fragment_count,
+                     [](const obelisk_rt_native_merged_fragment &fragment) {
+                       return fragment.execute != nullptr;
+                     });
+  }
   bool published = false;
   const obelisk_rt_static_fanout_entry *begin =
       context->nativeScheduleFanoutEntries;
@@ -1534,21 +1577,23 @@ bool publishStaticAOTSignalTransitionUnlockedImpl(
       published = true;
     }
     if constexpr (UseClockIngress) {
-      if (entry->kernel >=
-              context->nativeSchedulePlan->clock_kernel_count ||
-          entry->merged_bit / 64 >=
-              context->nativeSchedulePlan
-                  ->clock_kernels[entry->kernel]
-                  .ingress_word_count) {
-        context->schedulerStatus = OBELISK_RT_INVALID_CONTINUATION;
-        return true;
+      if (entry->reserved == 1 || metadataOnlyClockCoordinator) {
+        if (entry->kernel >=
+                context->nativeSchedulePlan->clock_kernel_count ||
+            entry->merged_bit / 64 >=
+                context->nativeSchedulePlan
+                    ->clock_kernels[entry->kernel]
+                    .ingress_word_count) {
+          context->schedulerStatus = OBELISK_RT_INVALID_CONTINUATION;
+          return true;
+        }
+        obelisk_rt_native_clock_kernel kernel =
+            context->nativeSchedulePlan->clock_kernels[entry->kernel];
+        kernel.ingress_mask[entry->merged_bit / 64] |=
+            uint64_t{1} << (entry->merged_bit % 64);
+        context->nativeScheduleClockIngressPending = true;
+        continue;
       }
-      obelisk_rt_native_clock_kernel kernel =
-          context->nativeSchedulePlan->clock_kernels[entry->kernel];
-      kernel.ingress_mask[entry->merged_bit / 64] |=
-          uint64_t{1} << (entry->merged_bit % 64);
-      context->nativeScheduleClockIngressPending = true;
-      continue;
     }
     scheduled.signalTriggered = true;
     uint32_t node = entry->compute_node;
@@ -1959,6 +2004,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_planned(
     process.insertionSequence = context->nextProcessInsertionSequence++;
     process.observedEpoch = context->schedulerEpoch;
     process.phase = phase;
+    process.initialProcess =
+        (flags & OBELISK_RT_SCHEDULE_INITIAL) != 0;
     context->scheduledFinalProcessPresent |= phase == 1;
     process.homeRegion = homeRegion;
     process.queuedRegion = homeRegion;
@@ -2066,7 +2113,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
   bool evalSchedulerValid =
       (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_EVAL) == 0 ||
       ((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP) != 0 &&
-       plan->clock_kernel_count != 0 && plan->timeslot_coordinator);
+       plan->clock_kernel_count != 0 && plan->timeslot_coordinator &&
+       plan->promotion_invalidate && plan->promotion_ready);
   bool statePlanesValid =
       plan->state_bit_count == 0
           ? plan->state_value == nullptr && plan->state_unknown == nullptr
@@ -2208,8 +2256,18 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
     ContextMutexLock lock(context);
     if (context->nativeSchedulePlan || !context->scheduledProcesses.empty() ||
         !context->scheduledDesignTasks.empty() ||
-        context->activeNativeProcess || context->designTaskExecuting)
+        context->activeNativeProcess || context->designTaskExecuting) {
+      if (context->signalDiagnosticsEnabled)
+        std::fprintf(stderr,
+                     "obelisk-aot-install-reject plan=%u processes=%zu "
+                     "tasks=%zu active=%u design=%u\n",
+                     context->nativeSchedulePlan != nullptr,
+                     context->scheduledProcesses.size(),
+                     context->scheduledDesignTasks.size(),
+                     context->activeNativeProcess != nullptr,
+                     context->designTaskExecuting);
       return OBELISK_RT_INVALID_LIFECYCLE;
+    }
     if (context->execution && context->execution->checksum != 0 &&
         plan->graph_layout_checksum != context->execution->checksum)
       return OBELISK_RT_LAYOUT_MISMATCH;
@@ -2248,8 +2306,11 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
     }
     {
       std::lock_guard<std::mutex> registryLock(nativeScheduleRegistryMutex);
-      if (!installedNativeScheduleStates.insert(plan->mutable_state).second)
+      if (!installedNativeScheduleStates.insert(plan->mutable_state).second) {
+        if (context->signalDiagnosticsEnabled)
+          std::fprintf(stderr, "obelisk-aot-install-reject duplicate-state\n");
         return OBELISK_RT_INVALID_LIFECYCLE;
+      }
     }
     if (plan->state_bit_count != 0 &&
         !importNativeStatePlanesUnlocked(context, plan->state_value,
@@ -2396,6 +2457,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
       installedNativeScheduleStates.erase(plan->mutable_state);
       throw;
     }
+    // Generated promotion state is storage owned by the plan image, not by a
+    // runtime context.  A plan may therefore be installed again after the
+    // previous context is destroyed.  Reset its latch and all selected routes
+    // before making the plan visible to this fresh context.
+    if (plan->promotion_invalidate)
+      plan->promotion_invalidate();
     context->nativeSchedulePlan = plan;
     if (plan->specialization_fast)
       *plan->specialization_fast = 0;
@@ -4501,6 +4568,7 @@ obelisk_rt_v1_scheduler_finish(obelisk_rt_context *context,
   try {
     ContextMutexLock lock(context);
     context->schedulerFinishRequested = true;
+    context->nativePeriodicTerminationRequested = 1;
     context->schedulerFinishVerbosity = verbosity;
     return OBELISK_RT_OK;
   } catch (const std::bad_alloc &) {
@@ -4518,6 +4586,7 @@ obelisk_rt_v1_scheduler_fatal(obelisk_rt_context *context, uint32_t verbosity) {
   try {
     ContextMutexLock lock(context);
     context->schedulerFinishRequested = true;
+    context->nativePeriodicTerminationRequested = 1;
     context->schedulerFinishVerbosity = verbosity;
     context->schedulerFinishStatus = OBELISK_RT_FATAL;
     return OBELISK_RT_OK;
@@ -5504,7 +5573,9 @@ commitInlineNativeNBABarrierUnlocked(obelisk_rt_context *context,
   return OBELISK_RT_OK;
 }
 
-obelisk_rt_status runStaticAOTControlStep(obelisk_rt_context *context) {
+obelisk_rt_status runStaticAOTControlStep(obelisk_rt_context *context,
+                                          bool allowTimeAdvance = true,
+                                          bool allowRuntimeTasks = false) {
   ContextMutexLock lock(context);
   if (!context->nativeSchedulePlan ||
       (context->nativeSchedulePlan->flags &
@@ -5529,7 +5600,7 @@ obelisk_rt_status runStaticAOTControlStep(obelisk_rt_context *context) {
   if (!context->scheduledManagedNBAs.empty() ||
       !context->scheduledDesignNBAs.empty() ||
       !context->scheduledDesignEvents.empty() ||
-      !context->scheduledDesignTasks.empty() ||
+      (!allowRuntimeTasks && !context->scheduledDesignTasks.empty()) ||
       context->nativeScheduleExternalWritePending)
     return OBELISK_RT_TIER_UNAVAILABLE;
 
@@ -5609,6 +5680,8 @@ obelisk_rt_status runStaticAOTControlStep(obelisk_rt_context *context) {
   }
 
   if (!context->schedulerRunningFinals) {
+    if (!allowTimeAdvance)
+      return OBELISK_RT_OK;
     if (!context->nativeScheduleDeadlineHeap.empty()) {
       uint32_t slot = context->nativeScheduleDeadlineHeap.front();
       context->schedulerTime = context->nativeScheduleDeadlines[slot];
@@ -5646,6 +5719,34 @@ obelisk_rt_status runStaticAOTControlStep(obelisk_rt_context *context) {
     }
   }
   return context->schedulerFinishStatus;
+}
+
+uint32_t nextDueNBABarrierRegionUnlocked(const obelisk_rt_context *context,
+                                         bool includeGenerated = true) {
+  uint32_t barrierRegion = UINT32_MAX;
+  auto considerBarrier = [&](const auto &entries) {
+    for (const auto &entry : entries)
+      if (entry.dueTime <= context->schedulerTime)
+        barrierRegion = std::min(barrierRegion, entry.execRegion);
+  };
+  considerBarrier(context->scheduledNBAs);
+  considerBarrier(context->scheduledManagedNBAs);
+  considerBarrier(context->scheduledDesignNBAs);
+  considerBarrier(context->scheduledDesignEvents);
+  if (context->staticNBAAccumulatorsPending)
+    for (const StaticNBAAccumulator &accumulator :
+         context->staticNBAAccumulators)
+      if (accumulator.valid)
+        barrierRegion = std::min(barrierRegion, accumulator.execRegion);
+  if (includeGenerated && context->nativeScheduleHasGeneratedNBAAccumulators)
+    for (uint32_t root = 0; root != context->nativeScheduleNBARootCount;
+         ++root) {
+      const obelisk_rt_generated_nba_accumulator_256 *generated =
+          context->nativeScheduleNBARoots[root].generated_accumulator;
+      if (generated && hasGeneratedNBAStages(*generated))
+        barrierRegion = std::min(barrierRegion, generated->exec_region);
+    }
+  return barrierRegion;
 }
 
 uint32_t nativeAOTContinuationRank(const ScheduledProcess &scheduled,
@@ -5893,32 +5994,14 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
             context->nativeScheduleActorTokens[slot] == 0)
           return OBELISK_RT_INVALID_LIFECYCLE;
         considerNativeToken(context->nativeScheduleActorTokens[slot]);
+      } else if (context->nativeScheduleProcessFilterActive) {
+        if (context->nativeScheduleForcedProcessToken != 0)
+          considerNativeToken(context->nativeScheduleForcedProcessToken);
       } else if (!context->nativeScheduleControlOnly) {
         for (uint64_t token : context->nativePollCandidates)
           considerNativeToken(token);
       }
-      auto considerBarrier = [&](const auto &entries) {
-        for (const auto &entry : entries)
-          if (entry.dueTime <= context->schedulerTime)
-            barrierRegion = std::min(barrierRegion, entry.execRegion);
-      };
-      considerBarrier(context->scheduledNBAs);
-      considerBarrier(context->scheduledManagedNBAs);
-      considerBarrier(context->scheduledDesignNBAs);
-      considerBarrier(context->scheduledDesignEvents);
-      if (context->staticNBAAccumulatorsPending)
-        for (const StaticNBAAccumulator &accumulator :
-             context->staticNBAAccumulators)
-          if (accumulator.valid)
-            barrierRegion = std::min(barrierRegion, accumulator.execRegion);
-      if (context->nativeScheduleHasGeneratedNBAAccumulators)
-        for (uint32_t root = 0; root != context->nativeScheduleNBARootCount;
-             ++root) {
-          const obelisk_rt_generated_nba_accumulator_256 *generated =
-              context->nativeScheduleNBARoots[root].generated_accumulator;
-          if (generated && hasGeneratedNBAStages(*generated))
-            barrierRegion = std::min(barrierRegion, generated->exec_region);
-        }
+      barrierRegion = nextDueNBABarrierRegionUnlocked(context);
     }
     uint32_t maximumRegion = nativeRegion;
     uint32_t maximumRank = nativeRank;
@@ -6027,6 +6110,12 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         context->schedulerCursor = (selectedIndex + 1) % processCount;
         ScheduledProcess &candidate =
             context->scheduledProcesses[selectedIndex];
+        if (candidate.aotActorSlot != UINT32_MAX) {
+          uint32_t node = findNativeAOTNodeUnlocked(
+              context, candidate.aotActorSlot, candidate.instance->continuation);
+          if (node != UINT32_MAX)
+            clearNativeAOTNodeReadyUnlocked(context, node);
+        }
         obelisk_rt_unregister_signal_wait_unlocked(
             context, candidate.signalSubscriptions, candidate.token, false);
         context->nativePollCandidates.erase(candidate.token);
@@ -6795,6 +6884,22 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
               !context->nativeSchedulePersistentDirtyRoots.empty();
         }
         refreshNativeStaticSpecializationFastUnlocked(context);
+        // Runtime intervention only needs to reach a canonical, quiescent
+        // boundary before returning control.  Whether that state is
+        // two-state is a generated-kernel routing decision: persistent X/Z
+        // must re-enter the four-state Tier-1 variant instead of trapping the
+        // whole model in the fine scheduler.
+        if (context->nativeScheduleStopAtCleanBoundary &&
+            nativeAOTTransientBoundaryClean(context)) {
+          context->nativeScheduleCleanBoundaryReached = true;
+          return context->schedulerFinishStatus;
+        }
+        // A control-only arbitration step is bounded by the generated node
+        // selected by its caller. If no earlier design task or NBA exists,
+        // return without consuming the next calendar entry so that caller
+        // can execute that node directly.
+        if (context->nativeScheduleControlOnly)
+          return context->schedulerFinishStatus;
         std::optional<uint64_t> nextTime;
         auto considerTime = [&](uint64_t candidate) {
           if (candidate > context->schedulerTime &&
@@ -6881,14 +6986,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           scheduled.bytecodeContinuations.end(), selected->continuation);
       tier =
           bytecodeFragment ? OBELISK_RT_TIER_BYTECODE : OBELISK_RT_TIER_NATIVE;
-      // A writable VPI transition keeps all affected static actors on
-      // bytecode until the event slot reaches a quiescent boundary.
-      if (context->nativeScheduleExternalWritePending &&
-          (scheduled.aotActorSlot == UINT32_MAX ||
-           nativeAOTActorDirty(context, scheduled.aotActorSlot)) &&
-          (selected->descriptor->available_tiers &
-           OBELISK_RT_TIER_MASK_BYTECODE) != 0)
-        tier = OBELISK_RT_TIER_BYTECODE;
+      // External writes fracture the fused Tier-1 schedule, but supported
+      // fragments remain native while the fine scheduler converges them.
+      // Only an explicitly bytecode-only continuation enters Tier 3.
     }
     if (tier != OBELISK_RT_TIER_NATIVE && tier != OBELISK_RT_TIER_BYTECODE)
       tier =
@@ -7085,6 +7185,13 @@ obelisk_rt_status executeStaticNativeAOT(
     status = validateAction(*instance, action, false);
   instance->status = status;
   if (status != OBELISK_RT_OK) {
+    if (status == OBELISK_RT_AOT_CHECKPOINT) {
+      // A generated branch checkpoint is a tier boundary, not a failed native
+      // fragment. Preserve its frame and native resources so executeAOTNode
+      // can run the same continuation in bytecode transactionally.
+      instance->lifecycle = OBELISK_RT_PROCESS_SUSPENDED;
+      return status;
+    }
     if (instance->native_handle) {
       instance->descriptor->native_destroy(instance);
       if (instance->native_handle)
@@ -7356,6 +7463,11 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
   generatedActions &= tier == OBELISK_RT_TIER_NATIVE;
   if (tier == OBELISK_RT_TIER_BYTECODE) {
     ContextMutexLock lock(context);
+    // Tier 3 may introduce X/Z through operations that do not cross the
+    // external-write hook. Invalidate before executing it so the next
+    // quiescent generated dispatch rescans canonical unknown planes instead
+    // of reusing a stale two-state selection.
+    invalidateNativeTwoStatePromotionUnlocked(context);
     const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
     bool synchronized = plan && plan->state_bit_count == 0;
     if (plan && plan->state_bit_count != 0) {
@@ -7375,6 +7487,37 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
                                           generatedActions)
                  : obelisk_rt_v1_process_instance_execute(selected, context,
                                                           tier, &action);
+  }
+  // A generated branch checkpoint deliberately leaves the callback or other
+  // unsupported operation outside the Tier-1/Tier-2 call graph. Resume that
+  // same continuation in bytecode, then map its returned action back onto the
+  // existing actor ready bit instead of deoptimizing the complete schedule.
+  if (status == OBELISK_RT_AOT_CHECKPOINT && tier == OBELISK_RT_TIER_NATIVE &&
+      (selected->descriptor->available_tiers &
+       OBELISK_RT_TIER_MASK_BYTECODE) != 0) {
+    {
+      ContextMutexLock lock(context);
+      const obelisk_rt_native_schedule_plan *plan =
+          context->nativeSchedulePlan;
+      if (!plan ||
+          (plan->state_bit_count != 0 &&
+           !importNativeStatePlanesUnlocked(context, plan->state_value,
+                                            plan->state_unknown,
+                                            plan->state_bit_count)))
+        status = OBELISK_RT_LAYOUT_MISMATCH;
+      else
+        status = OBELISK_RT_OK;
+    }
+    if (status == OBELISK_RT_OK) {
+      {
+        ContextMutexLock lock(context);
+        invalidateNativeTwoStatePromotionUnlocked(context);
+      }
+      tier = OBELISK_RT_TIER_BYTECODE;
+      generatedActions = false;
+      status = obelisk_rt_v1_process_instance_execute(
+          selected, context, tier, &action);
+    }
   }
   if (tier == OBELISK_RT_TIER_BYTECODE) {
     ContextMutexLock lock(context);
@@ -7699,13 +7842,16 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
 class NativeScheduleStepScope {
 public:
   NativeScheduleStepScope(obelisk_rt_context *context, uint32_t actorSlot,
-                          bool controlOnly)
+                          bool controlOnly, bool processFilterActive = false,
+                          uint64_t processToken = 0)
       : context(context) {
     ContextMutexLock lock(context);
     context->nativeScheduleForcedSlot = actorSlot;
     context->nativeScheduleSingleStep = true;
     context->nativeScheduleForcedExecuted = false;
     context->nativeScheduleControlOnly = controlOnly;
+    context->nativeScheduleProcessFilterActive = processFilterActive;
+    context->nativeScheduleForcedProcessToken = processToken;
   }
 
   NativeScheduleStepScope(const NativeScheduleStepScope &) = delete;
@@ -7717,11 +7863,66 @@ public:
     context->nativeScheduleSingleStep = false;
     context->nativeScheduleForcedExecuted = false;
     context->nativeScheduleControlOnly = false;
+    context->nativeScheduleProcessFilterActive = false;
+    context->nativeScheduleForcedProcessToken = 0;
   }
 
   bool executed() const {
     ContextMutexLock lock(context);
     return context->nativeScheduleForcedExecuted;
+  }
+
+private:
+  obelisk_rt_context *context;
+};
+
+class NativeScheduleDesignTaskScope {
+public:
+  NativeScheduleDesignTaskScope(obelisk_rt_context *context, uint64_t task)
+      : context(context) {
+    ContextMutexLock lock(context);
+    context->nativeScheduleDesignTaskFilterActive = true;
+    context->nativeScheduleForcedDesignTask = task;
+  }
+
+  NativeScheduleDesignTaskScope(const NativeScheduleDesignTaskScope &) =
+      delete;
+  NativeScheduleDesignTaskScope &
+  operator=(const NativeScheduleDesignTaskScope &) = delete;
+
+  ~NativeScheduleDesignTaskScope() {
+    ContextMutexLock lock(context);
+    context->nativeScheduleDesignTaskFilterActive = false;
+    context->nativeScheduleForcedDesignTask = 0;
+  }
+
+private:
+  obelisk_rt_context *context;
+};
+
+// Lets the fine scheduler own as many event slots as an asynchronous
+// intervention requires, but returns as soon as force/assign and dirty-root
+// state are reconciled at a quiescent boundary. This is a transient Tier-2/3
+// handoff, not a permanent AOT deoptimization.
+class NativeScheduleCleanBoundaryScope {
+public:
+  explicit NativeScheduleCleanBoundaryScope(obelisk_rt_context *context)
+      : context(context) {
+    ContextMutexLock lock(context);
+    context->nativeScheduleStopAtCleanBoundary = true;
+    context->nativeScheduleCleanBoundaryReached = false;
+  }
+  NativeScheduleCleanBoundaryScope(const NativeScheduleCleanBoundaryScope &) =
+      delete;
+  NativeScheduleCleanBoundaryScope &
+  operator=(const NativeScheduleCleanBoundaryScope &) = delete;
+  ~NativeScheduleCleanBoundaryScope() {
+    ContextMutexLock lock(context);
+    context->nativeScheduleStopAtCleanBoundary = false;
+  }
+  bool reached() const {
+    ContextMutexLock lock(context);
+    return context->nativeScheduleCleanBoundaryReached;
   }
 
 private:
@@ -7871,7 +8072,850 @@ obelisk_rt_status runTrustedAOTNodesUnlocked(obelisk_rt_context *context) {
   }
 }
 
+// Cold bootstrap for generated run_until. It executes the same trusted actor
+// nodes and NBA barriers as the ordinary AOT loop, but deliberately stops at
+// time-zero quiescence instead of advancing the calendar heap.
+obelisk_rt_status drainNativeAOTCurrentSlotUnlocked(
+    obelisk_rt_context *context, bool allowBytecode = false) {
+  if (!context || activeNativeAOTContext != context ||
+      lockedNativeAOTContext != context || !context->nativeSchedulePlan)
+    return OBELISK_RT_INVALID_LIFECYCLE;
+  for (;;) {
+    if (context->nativeScheduleClockIngressPending) {
+      auto coordinator = context->nativeSchedulePlan->timeslot_coordinator;
+      if (!coordinator)
+        return OBELISK_RT_INVALID_LIFECYCLE;
+      context->nativeScheduleClockIngressPending = false;
+      obelisk_rt_status status = coordinator(
+          context->nativeSchedulePlan->mutable_state, context);
+      if (status != OBELISK_RT_OK)
+        return status;
+      continue;
+    }
+
+    uint32_t selectedNode = UINT32_MAX;
+    for (uint32_t word = 0; word != context->nativeScheduleReadyNodes.size();
+         ++word) {
+      uint64_t ready = context->nativeScheduleReadyNodes[word];
+      if (ready == 0)
+        continue;
+      selectedNode = word * 64 + static_cast<uint32_t>(__builtin_ctzll(ready));
+      break;
+    }
+    uint32_t nodeRegion = UINT32_MAX;
+    uint32_t nodeRank = UINT32_MAX;
+    uint64_t nodeInsertionSequence = UINT64_MAX;
+    if (selectedNode != UINT32_MAX) {
+      if (selectedNode >= context->nativeScheduleNodes.size())
+        return OBELISK_RT_INVALID_CONTINUATION;
+      const obelisk_rt_native_schedule_node &node =
+          context->nativeScheduleNodes[selectedNode];
+      if (node.actor_slot >= context->nativeScheduleActors.size() ||
+          !context->nativeScheduleActors[node.actor_slot] ||
+          context->nativeScheduleActors[node.actor_slot]->continuation !=
+              node.continuation)
+        return OBELISK_RT_INVALID_CONTINUATION;
+      size_t processIndex = context->nativeScheduleActorIndices[node.actor_slot];
+      if (processIndex >= context->scheduledProcesses.size())
+        return OBELISK_RT_INVALID_LIFECYCLE;
+      const ScheduledProcess &scheduled =
+          context->scheduledProcesses[processIndex];
+      if (!scheduled.instance || scheduled.aotActorSlot != node.actor_slot)
+        return OBELISK_RT_INVALID_LIFECYCLE;
+      nodeRegion = scheduled.urgent ? 0 : scheduled.queuedRegion;
+      nodeRank = scheduled.urgent ? 0 : scheduled.scheduleRank;
+      nodeInsertionSequence =
+          scheduled.urgent ? 0 : scheduled.insertionSequence;
+    }
+
+    using SchedulerKey = std::tuple<uint32_t, uint32_t, uint64_t>;
+    SchedulerKey nodeKey{nodeRegion, nodeRank, nodeInsertionSequence};
+    SchedulerKey runtimeProcessKey{UINT32_MAX, UINT32_MAX, UINT64_MAX};
+    uint64_t runtimeProcessToken = 0;
+    size_t urgentDistance = SIZE_MAX;
+    size_t processCount = context->scheduledProcesses.size();
+    for (size_t index = 0; index != processCount; ++index) {
+      const ScheduledProcess &candidate = context->scheduledProcesses[index];
+      if (!candidate.instance || candidate.aotActorSlot != UINT32_MAX ||
+          context->nativePollCandidates.find(candidate.token) ==
+              context->nativePollCandidates.end() ||
+          candidate.phase != (context->schedulerRunningFinals ? 1u : 0u) ||
+          !nativeProcessReady(*context, candidate, false))
+        continue;
+      if (candidate.urgent) {
+        size_t distance =
+            processCount == 0
+                ? 0
+                : (index + processCount -
+                   context->schedulerCursor % processCount) %
+                      processCount;
+        if (distance < urgentDistance) {
+          urgentDistance = distance;
+          runtimeProcessKey = SchedulerKey{0, 0, 0};
+          runtimeProcessToken = candidate.token;
+        }
+        continue;
+      }
+      if (urgentDistance != SIZE_MAX)
+        continue;
+      SchedulerKey key{candidate.queuedRegion, candidate.scheduleRank,
+                       candidate.insertionSequence};
+      if (key < runtimeProcessKey) {
+        runtimeProcessKey = key;
+        runtimeProcessToken = candidate.token;
+      }
+    }
+    uint32_t barrierRegion = context->schedulerRunningFinals
+                                 ? UINT32_MAX
+                                 : nextDueNBABarrierRegionUnlocked(
+                                       context, /*includeGenerated=*/false);
+    SchedulerKey barrierKey =
+        barrierRegion == UINT32_MAX
+            ? SchedulerKey{UINT32_MAX, UINT32_MAX, UINT64_MAX}
+            : SchedulerKey{barrierRegion, 0, 0};
+    SchedulerKey runtimeKey = std::min(runtimeProcessKey, barrierKey);
+    SchedulerKey runtimeUpperBound = std::min(nodeKey, runtimeKey);
+
+    if (allowBytecode) {
+      // At a runtime checkpoint, arbitrate one design task only when its
+      // scheduler key precedes both the next generated native node and any
+      // same-slot generic process or NBA/control barrier.
+      bool designProgress = false;
+      obelisk_rt_status status = obelisk_rt_run_one_design_task(
+          context, std::get<0>(runtimeUpperBound),
+          std::get<1>(runtimeUpperBound), std::get<2>(runtimeUpperBound),
+          &designProgress);
+      if (status != OBELISK_RT_OK)
+        return status;
+      if (designProgress) {
+        if (context->schedulerSlotProgress == (UINT64_C(1) << 20)) {
+          context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
+          return context->schedulerStatus;
+        }
+        ++context->schedulerSlotProgress;
+        continue;
+      }
+    }
+
+    if (allowBytecode && runtimeKey < nodeKey) {
+      // Execute exactly one same-slot runtime action. Filtering the process
+      // inventory preserves direct ownership of generated actors, while the
+      // generic scheduler still applies its normal ordering between the
+      // selected non-AOT process and all due NBA/event barriers. Because
+      // runtimeKey is known runnable at schedulerTime, this single step cannot
+      // advance the calendar.
+      uint64_t previousTime = context->schedulerTime;
+      if (runtimeProcessToken == 0 &&
+          (context->nativeSchedulePlan->flags &
+           OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL) != 0) {
+        obelisk_rt_status status =
+            runStaticAOTControlStep(context, false, true);
+        if (status == OBELISK_RT_OK)
+          continue;
+        if (status != OBELISK_RT_TIER_UNAVAILABLE)
+          return status;
+      }
+      NativeScheduleStepScope step(context, UINT32_MAX, false,
+                                   /*processFilterActive=*/true,
+                                   runtimeProcessToken);
+      obelisk_rt_status status = runScheduler(context);
+      if (status != OBELISK_RT_OK)
+        return status;
+      if (context->schedulerTime != previousTime)
+        return OBELISK_RT_INVALID_LIFECYCLE;
+      continue;
+    }
+
+    if (selectedNode != UINT32_MAX) {
+      const obelisk_rt_native_schedule_node &node =
+          context->nativeScheduleNodes[selectedNode];
+      clearNativeAOTNodeReadyUnlocked(context, selectedNode);
+      context->nativeScheduleMinimumActivatedNode = UINT32_MAX;
+      obelisk_rt_status status =
+          allowBytecode ? executeAOTNode(context, node.actor_slot)
+                        : executeTrustedAOTNode(context, node.actor_slot);
+      if (status != OBELISK_RT_OK)
+        return status;
+      continue;
+    }
+
+    if (allowBytecode)
+      return OBELISK_RT_OK;
+
+    uint64_t progress = context->schedulerSlotProgress;
+    obelisk_rt_status status =
+        runStaticAOTControlStep(context, false, allowBytecode);
+    if (status != OBELISK_RT_OK)
+      return status;
+    if (context->schedulerSlotProgress == progress)
+      return OBELISK_RT_OK;
+  }
+}
+
 } // namespace
+
+extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
+    obelisk_rt_context *context, const obelisk_rt_native_schedule_node *nodes,
+    uint32_t nodeCount, const obelisk_rt_native_periodic_clock_v1 *clocks,
+    uint32_t clockCount, const obelisk_rt_native_periodic_alias_v1 *aliases,
+    uint32_t aliasCount, uint64_t *nextEdges,
+    obelisk_rt_native_periodic_control_v1 *outControl) {
+  if (!context || !nodes || nodeCount == 0 || !clocks || clockCount == 0 ||
+      (aliasCount != 0 && !aliases) || !nextEdges || !outControl ||
+      activeNativeAOTContext != context ||
+      lockedNativeAOTContext != context)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  try {
+    obelisk_rt_status status =
+        initializeNativeAOTNodesUnlocked(context, nodes, nodeCount);
+    if (status != OBELISK_RT_OK)
+      return status;
+    status = drainNativeAOTCurrentSlotUnlocked(context);
+    if (status != OBELISK_RT_OK)
+      return status;
+    // Tier-3 initialization and finite synchronous stimulus must reach a
+    // quiescent handoff before generated run_until takes ownership of the
+    // periodic sources.  Execute one trusted generic action at a time while a
+    // non-AOT process is runnable or subscribed to one of those sources.  A
+    // persistent bytecode clock consumer remains a correctness fallback; a
+    // finite consumer (for example a reset sequence) naturally disappears
+    // after its last edge and pays only this cold-prefix cost.
+    auto subscriptionTouchesClock = [&](const SignalSubscription &subscription) {
+      uint32_t staticID = 0;
+      int64_t offset = 0;
+      if (!decodeNativeStatic(subscription.stableID, staticID, offset) ||
+          offset < 0)
+        return false;
+      const NativeStaticState *state = findNativeStaticState(context, staticID);
+      if (!state)
+        return false;
+      uint64_t begin = state->bitOffset + static_cast<uint64_t>(offset);
+      uint64_t width = std::max<uint64_t>(subscription.bitWidth, 1);
+      uint64_t end =
+          width > UINT64_MAX - begin ? UINT64_MAX : begin + width;
+      for (uint32_t index = 0; index != clockCount; ++index)
+        if (clocks[index].bit_offset >= begin &&
+            clocks[index].bit_offset < end)
+          return true;
+      for (uint32_t index = 0; index != aliasCount; ++index)
+        if (aliases[index].target_static_state == staticID &&
+            aliases[index].target_bit_offset >= begin &&
+            aliases[index].target_bit_offset < end)
+          return true;
+      return false;
+    };
+    auto hasGeneratedPeriodicOwner = [&](uint32_t actorSlot,
+                                         uint32_t continuation,
+                                         const SignalSubscription &subscription) {
+      if (actorSlot == UINT32_MAX)
+        return false;
+      uint32_t staticID = 0;
+      int64_t offset = 0;
+      if (!decodeNativeStatic(subscription.stableID, staticID, offset) ||
+          offset < 0)
+        return false;
+      uint64_t subscriptionLow = static_cast<uint64_t>(offset);
+      uint64_t subscriptionWidth =
+          std::max<uint64_t>(subscription.bitWidth, 1);
+      for (uint64_t index = 0;
+           index != context->nativeScheduleFanoutEntryCount; ++index) {
+        const auto &entry = context->nativeScheduleFanoutEntries[index];
+        if (entry.reserved == 0 || entry.actor_slot != actorSlot ||
+            entry.continuation != continuation ||
+            entry.static_state != staticID || entry.bit_width == 0)
+          continue;
+        uint64_t entryEnd = entry.low_bit + entry.bit_width;
+        uint64_t subscriptionEnd = subscriptionLow + subscriptionWidth;
+        if (entry.low_bit < subscriptionEnd && subscriptionLow < entryEnd)
+          return true;
+      }
+      return false;
+    };
+    auto hasTier3PeriodicWork = [&] {
+      ContextMutexLock lock(context);
+      for (const ScheduledProcess &scheduled : context->scheduledProcesses) {
+        if (!scheduled.instance || scheduled.phase != 0)
+          continue;
+        if (!scheduled.started ||
+            scheduled.suspendKind == OBELISK_RT_SUSPEND_NONE) {
+          if (context->signalDiagnosticsEnabled)
+            std::fprintf(stderr,
+                         "obelisk-periodic-bootstrap=runnable actor=%u "
+                         "continuation=%u initial=%u started=%u suspend=%u\n",
+                         scheduled.aotActorSlot,
+                         scheduled.instance->continuation,
+                         scheduled.initialProcess, scheduled.started,
+                         scheduled.suspendKind);
+          return true;
+        }
+        for (const auto &subscription : scheduled.signalSubscriptions)
+          if (subscription && subscriptionTouchesClock(*subscription) &&
+              !hasGeneratedPeriodicOwner(scheduled.aotActorSlot,
+                                         scheduled.instance->continuation,
+                                         *subscription)) {
+            if (context->signalDiagnosticsEnabled)
+              std::fprintf(stderr,
+                           "obelisk-periodic-bootstrap=subscription actor=%u "
+                           "continuation=%u initial=%u\n",
+                           scheduled.aotActorSlot,
+                           scheduled.instance->continuation,
+                           scheduled.initialProcess);
+            return true;
+          }
+      }
+      for (const ScheduledDesignTask &task : context->scheduledDesignTasks) {
+        if (task.terminated || task.phase != 0)
+          continue;
+        if (!task.started || task.suspendKind == OBELISK_RT_SUSPEND_NONE)
+          return true;
+        for (const auto &subscription : task.signalSubscriptions)
+          if (subscription && subscriptionTouchesClock(*subscription))
+            return true;
+      }
+      return false;
+    };
+    constexpr uint32_t maxPeriodicBootstrapSteps = 4096;
+    uint32_t periodicBootstrapSteps = 0;
+    while (hasTier3PeriodicWork()) {
+      if (periodicBootstrapSteps++ == maxPeriodicBootstrapSteps) {
+        if (context->signalDiagnosticsEnabled)
+          std::fprintf(stderr, "obelisk-periodic-reject=tier3-bootstrap\n");
+        return OBELISK_RT_TIER_UNAVAILABLE;
+      }
+      NativeScheduleStepScope step(context, UINT32_MAX, false);
+      status = runScheduler(context);
+      if (status != OBELISK_RT_OK)
+        return status;
+      status = drainNativeAOTCurrentSlotUnlocked(context, true);
+      if (status != OBELISK_RT_OK)
+        return status;
+      if (context->schedulerFinishRequested)
+        break;
+    }
+
+    auto periodicFanoutMatches = [&](const obelisk_rt_static_fanout_entry &entry,
+                                     const obelisk_rt_native_periodic_clock_v1 &clock) {
+      if (entry.static_state != clock.static_state || entry.bit_width == 0)
+        return false;
+      const NativeStaticState *state =
+          findNativeStaticState(context, clock.static_state);
+      if (!state || clock.bit_offset < state->bitOffset ||
+          clock.bit_offset - state->bitOffset >= state->bitWidth)
+        return false;
+      uint64_t localBit = clock.bit_offset - state->bitOffset;
+      return entry.low_bit <= localBit &&
+             localBit - entry.low_bit < entry.bit_width;
+    };
+    auto aliasTargetFanoutMatches = [
+        &](const obelisk_rt_static_fanout_entry &entry,
+           const obelisk_rt_native_periodic_alias_v1 &alias) {
+      if (entry.static_state != alias.target_static_state ||
+          entry.bit_width == 0)
+        return false;
+      const NativeStaticState *state =
+          findNativeStaticState(context, alias.target_static_state);
+      if (!state || alias.target_bit_offset < state->bitOffset ||
+          alias.target_bit_offset - state->bitOffset >= state->bitWidth)
+        return false;
+      uint64_t localBit = alias.target_bit_offset - state->bitOffset;
+      return entry.low_bit <= localBit &&
+             localBit - entry.low_bit < entry.bit_width;
+    };
+    auto isLiveFanout =
+        [&](const obelisk_rt_static_fanout_entry &entry) {
+          if (entry.actor_slot >= context->nativeScheduleActors.size() ||
+              entry.actor_slot >= context->nativeScheduleActorIndices.size())
+            return false;
+          obelisk_rt_process_instance_v1 *actor =
+              context->nativeScheduleActors[entry.actor_slot];
+          if (!actor || actor->continuation != entry.continuation)
+            return false;
+          size_t processIndex =
+              context->nativeScheduleActorIndices[entry.actor_slot];
+          if (processIndex >= context->scheduledProcesses.size())
+            return false;
+          const ScheduledProcess &scheduled =
+              context->scheduledProcesses[processIndex];
+          return scheduled.instance == actor && scheduled.started &&
+                 scheduled.phase == 0 && !scheduled.signalTriggered &&
+                 actor->lifecycle == OBELISK_RT_PROCESS_SUSPENDED &&
+                 (scheduled.suspendKind == OBELISK_RT_SUSPEND_CHANGE ||
+                  scheduled.suspendKind == OBELISK_RT_SUSPEND_EDGE ||
+                  scheduled.suspendKind == OBELISK_RT_SUSPEND_OBSERVER);
+        };
+    auto missingPeriodicFanoutActive = [&] {
+      for (uint64_t index = 0;
+           index != context->nativeScheduleFanoutEntryCount; ++index) {
+        const auto &entry = context->nativeScheduleFanoutEntries[index];
+        // A generated owner remains generated even when its source process is
+        // classified as an initial process (always/always_comb use that
+        // lifecycle flag too). Finite unsupported stimulus has reserved == 0
+        // and remains runtime-owned until its continuation terminates.
+        if (entry.reserved != 0)
+          continue;
+        bool periodic = false;
+        for (uint32_t clockIndex = 0; clockIndex != clockCount; ++clockIndex)
+          periodic |= periodicFanoutMatches(entry, clocks[clockIndex]);
+        for (uint32_t aliasIndex = 0; aliasIndex != aliasCount; ++aliasIndex)
+          periodic |= aliasTargetFanoutMatches(entry, aliases[aliasIndex]);
+        if (!periodic ||
+            entry.actor_slot >= context->nativeScheduleActors.size())
+          continue;
+        obelisk_rt_process_instance_v1 *actor =
+            context->nativeScheduleActors[entry.actor_slot];
+        if (actor && actor->continuation == entry.continuation &&
+            isLiveFanout(entry)) {
+          if (context->signalDiagnosticsEnabled)
+            std::fprintf(stderr,
+                         "obelisk-periodic-bootstrap=fanout actor=%u "
+                         "continuation=%u initial=%u reserved=%u\n",
+                         entry.actor_slot, entry.continuation,
+                         1u, entry.reserved);
+          return true;
+        }
+      }
+      return false;
+    };
+    while (missingPeriodicFanoutActive()) {
+      if (periodicBootstrapSteps++ == maxPeriodicBootstrapSteps) {
+        if (context->signalDiagnosticsEnabled)
+          std::fprintf(stderr, "obelisk-periodic-reject=fanout-bootstrap\n");
+        return OBELISK_RT_TIER_UNAVAILABLE;
+      }
+      uint64_t nextTime = UINT64_MAX;
+      for (uint32_t clockIndex = 0; clockIndex != clockCount; ++clockIndex) {
+        size_t processIndex =
+            context->nativeScheduleActorIndices[clocks[clockIndex].actor_slot];
+        if (processIndex >= context->scheduledProcesses.size())
+          return OBELISK_RT_INVALID_CONTINUATION;
+        nextTime = std::min(nextTime,
+                            context->scheduledProcesses[processIndex].wakeTime);
+      }
+      if (nextTime == UINT64_MAX || nextTime <= context->schedulerTime)
+        return OBELISK_RT_INVALID_CONTINUATION;
+      context->schedulerTime = nextTime;
+      status = runPreponedHooks(context);
+      if (status != OBELISK_RT_OK)
+        return status;
+      context->schedulerPreponedTime = nextTime;
+      context->schedulerSlotProgress = 0;
+
+      struct MissingActivation {
+        uint32_t node;
+        uint32_t actor;
+        uint32_t continuation;
+      };
+      std::vector<MissingActivation> activated;
+      for (uint32_t clockIndex = 0; clockIndex != clockCount; ++clockIndex) {
+        const auto &clock = clocks[clockIndex];
+        size_t clockProcessIndex =
+            context->nativeScheduleActorIndices[clock.actor_slot];
+        ScheduledProcess &clockProcess =
+            context->scheduledProcesses[clockProcessIndex];
+        if (clockProcess.wakeTime != nextTime)
+          continue;
+        uint8_t *values = context->nativeSchedulePlan->state_value;
+        uint8_t *unknown = context->nativeSchedulePlan->state_unknown;
+        if (!values || !unknown)
+          return OBELISK_RT_LAYOUT_MISMATCH;
+        uint8_t mask = uint8_t{1} << (clock.bit_offset % 8);
+        bool rising = (values[clock.bit_offset / 8] & mask) == 0;
+        values[clock.bit_offset / 8] ^= mask;
+        unknown[clock.bit_offset / 8] &= static_cast<uint8_t>(~mask);
+        if (clock.half_period > UINT64_MAX - clockProcess.wakeTime)
+          return OBELISK_RT_OUT_OF_RESOURCES;
+        clockProcess.wakeTime += clock.half_period;
+        setNativeAOTDeadlineUnlocked(context, clock.actor_slot,
+                                     clockProcess.wakeTime);
+
+        auto queueFanout = [&](const obelisk_rt_static_fanout_entry &entry)
+            -> obelisk_rt_status {
+          bool edgeMatches =
+              entry.edge == OBELISK_RT_WAIT_EDGE_CHANGE ||
+              entry.edge == OBELISK_RT_WAIT_EDGE_BOTH ||
+              (rising && entry.edge == OBELISK_RT_WAIT_EDGE_POSEDGE) ||
+              (!rising && entry.edge == OBELISK_RT_WAIT_EDGE_NEGEDGE);
+          if (!edgeMatches || entry.actor_slot >=
+                                  context->nativeScheduleActors.size() ||
+              entry.kernel >=
+                  context->nativeSchedulePlan->clock_kernel_count)
+            return OBELISK_RT_OK;
+          if (entry.reserved == 1) {
+            const auto &kernel =
+                context->nativeSchedulePlan->clock_kernels[entry.kernel];
+            if (entry.merged_bit / 64 >= kernel.ingress_word_count)
+              return OBELISK_RT_INVALID_CONTINUATION;
+            kernel.ingress_mask[entry.merged_bit / 64] |=
+                uint64_t{1} << (entry.merged_bit % 64);
+            context->nativeScheduleClockIngressPending = true;
+            return OBELISK_RT_OK;
+          }
+          obelisk_rt_process_instance_v1 *actor =
+              context->nativeScheduleActors[entry.actor_slot];
+          // A finite framed process makes the whole periodic slot a runtime
+          // transaction.  Run every live actor in event order, then let the
+          // generated coordinator drain publications and the shared NBA
+          // barrier.  Mixing a runtime reset continuation with generated
+          // clocked actors in the same slot can expose a partially reset
+          // four-state model at the eventual handoff.
+          if (actor && actor->continuation == entry.continuation &&
+              isLiveFanout(entry)) {
+            if (std::find_if(activated.begin(), activated.end(),
+                             [&](const MissingActivation &candidate) {
+                               return candidate.actor == entry.actor_slot &&
+                                      candidate.continuation ==
+                                          entry.continuation;
+                             }) == activated.end())
+              activated.push_back(
+                  {entry.compute_node, entry.actor_slot, entry.continuation});
+            return OBELISK_RT_OK;
+          }
+          return OBELISK_RT_OK;
+        };
+        for (uint64_t index = 0;
+             index != context->nativeScheduleFanoutEntryCount; ++index) {
+          const auto &entry = context->nativeScheduleFanoutEntries[index];
+          if (!periodicFanoutMatches(entry, clock))
+            continue;
+          bool forwardingAlias = false;
+          for (uint32_t aliasIndex = 0; aliasIndex != aliasCount;
+               ++aliasIndex) {
+            const auto &alias = aliases[aliasIndex];
+            forwardingAlias |=
+                alias.source_static_state == clock.static_state &&
+                alias.source_bit_offset == clock.bit_offset &&
+                alias.forwarding_actor_slot == entry.actor_slot &&
+                alias.forwarding_continuation == entry.continuation;
+          }
+          if (forwardingAlias)
+            continue;
+          status = queueFanout(entry);
+          if (status != OBELISK_RT_OK)
+            return status;
+        }
+        for (uint32_t aliasIndex = 0; aliasIndex != aliasCount; ++aliasIndex) {
+          const auto &alias = aliases[aliasIndex];
+          if (alias.source_static_state != clock.static_state ||
+              alias.source_bit_offset != clock.bit_offset)
+            continue;
+          auto writeKnownBit = [&](uint64_t bitOffset) {
+            uint8_t aliasMask = uint8_t{1} << (bitOffset % 8);
+            if (rising)
+              values[bitOffset / 8] |= aliasMask;
+            else
+              values[bitOffset / 8] &= static_cast<uint8_t>(~aliasMask);
+            unknown[bitOffset / 8] &= static_cast<uint8_t>(~aliasMask);
+          };
+          writeKnownBit(alias.driver_bit_offset);
+          writeKnownBit(alias.target_bit_offset);
+          for (uint64_t index = 0;
+               index != context->nativeScheduleFanoutEntryCount; ++index) {
+            const auto &entry = context->nativeScheduleFanoutEntries[index];
+            if (!aliasTargetFanoutMatches(entry, alias))
+              continue;
+            status = queueFanout(entry);
+            if (status != OBELISK_RT_OK)
+              return status;
+          }
+        }
+      }
+      std::sort(activated.begin(), activated.end(),
+                [](const MissingActivation &lhs,
+                   const MissingActivation &rhs) {
+        return std::tuple{lhs.node, lhs.actor, lhs.continuation} <
+               std::tuple{rhs.node, rhs.actor, rhs.continuation};
+      });
+      for (const MissingActivation &activation : activated) {
+        size_t processIndex =
+            context->nativeScheduleActorIndices[activation.actor];
+        if (processIndex >= context->scheduledProcesses.size())
+          return OBELISK_RT_INVALID_CONTINUATION;
+        context->scheduledProcesses[processIndex].signalTriggered = true;
+        if (context->signalDiagnosticsEnabled)
+          std::fprintf(stderr,
+                       "obelisk-periodic-debug=before-actor time=%llu actor=%u "
+                       "ingress=%u nba=%u\n",
+                       static_cast<unsigned long long>(context->schedulerTime),
+                       activation.actor,
+                       context->nativeScheduleClockIngressPending ? 1u : 0u,
+                       context->staticNBAAccumulatorsPending ? 1u : 0u);
+        NativeScheduleStepScope step(context, activation.actor, false);
+        status = runScheduler(context);
+        if (context->signalDiagnosticsEnabled)
+          std::fprintf(stderr,
+                       "obelisk-periodic-debug=after-actor time=%llu actor=%u "
+                       "status=%u executed=%u ingress=%u nba=%u\n",
+                       static_cast<unsigned long long>(context->schedulerTime),
+                       activation.actor, static_cast<unsigned>(status),
+                       step.executed() ? 1u : 0u,
+                       context->nativeScheduleClockIngressPending ? 1u : 0u,
+                       context->staticNBAAccumulatorsPending ? 1u : 0u);
+        if (status != OBELISK_RT_OK || !step.executed())
+          return status != OBELISK_RT_OK ? status
+                                         : OBELISK_RT_INVALID_CONTINUATION;
+      }
+      // An unsupported cold-prefix activation may stage into a generated NBA
+      // accumulator without publishing direct ingress.  It still participates
+      // in the same slot-wide NBA barrier before the next periodic edge.
+      if (!activated.empty())
+        context->nativeScheduleClockIngressPending = true;
+      if (context->signalDiagnosticsEnabled)
+        std::fprintf(stderr,
+                     "obelisk-periodic-debug=before-drain time=%llu ingress=%u "
+                     "nba=%u\n",
+                     static_cast<unsigned long long>(context->schedulerTime),
+                     context->nativeScheduleClockIngressPending ? 1u : 0u,
+                     context->staticNBAAccumulatorsPending ? 1u : 0u);
+      status = drainNativeAOTCurrentSlotUnlocked(context);
+      if (context->signalDiagnosticsEnabled)
+        std::fprintf(stderr,
+                     "obelisk-periodic-debug=after-drain time=%llu status=%u "
+                     "ingress=%u nba=%u\n",
+                     static_cast<unsigned long long>(context->schedulerTime),
+                     static_cast<unsigned>(status),
+                     context->nativeScheduleClockIngressPending ? 1u : 0u,
+                     context->staticNBAAccumulatorsPending ? 1u : 0u);
+      if (status != OBELISK_RT_OK)
+        return status;
+    }
+
+    auto anyOverride = [](const std::vector<uint64_t> &mask) {
+      return std::any_of(mask.begin(), mask.end(),
+                         [](uint64_t word) { return word != 0; });
+    };
+    // Check cleanliness only after the finite Tier-3/bootstrap prefix has
+    // drained. Initialization and transient deposits legitimately enter with
+    // dirty roots and reconcile above; persistent force/assign state must keep
+    // the model on the mask-aware scheduler until release.
+    std::unordered_set<uint32_t> generatedWritableStates;
+    generatedWritableStates.reserve(
+        context->nativeSchedulePlan->merged_fragment_count +
+        context->nativeScheduleNBARootCount);
+    std::unordered_set<uint32_t> generatedActors;
+    generatedActors.reserve(
+        context->nativeSchedulePlan->merged_fragment_count);
+    if (context->signalDiagnosticsEnabled)
+      std::fprintf(stderr,
+                   "obelisk-periodic-debug=ownership-counts merged=%llu "
+                   "actor-roots=%llu nba-roots=%u fanout=%llu\n",
+                   static_cast<unsigned long long>(
+                       context->nativeSchedulePlan->merged_fragment_count),
+                   static_cast<unsigned long long>(
+                       context->nativeScheduleActorRootCount),
+                   context->nativeScheduleNBARootCount,
+                   static_cast<unsigned long long>(
+                       context->nativeScheduleFanoutEntryCount));
+    for (uint64_t index = 0;
+         index != context->nativeSchedulePlan->merged_fragment_count;
+         ++index) {
+      const obelisk_rt_native_merged_fragment &fragment =
+          context->nativeSchedulePlan->merged_fragments[index];
+      if (fragment.execute)
+        generatedActors.insert(fragment.actor_slot);
+    }
+    for (uint64_t index = 0;
+         index != context->nativeScheduleActorRootCount; ++index) {
+      const obelisk_rt_static_actor_root &root =
+          context->nativeScheduleActorRoots[index];
+      if ((root.flags & OBELISK_RT_STATIC_ROOT_WRITE) != 0 &&
+          generatedActors.find(root.actor_slot) != generatedActors.end())
+        generatedWritableStates.insert(root.static_state);
+    }
+    for (uint32_t index = 0;
+         index != context->nativeScheduleNBARootCount; ++index)
+      generatedWritableStates.insert(
+          context->nativeScheduleNBARoots[index].static_state);
+    if (context->signalDiagnosticsEnabled)
+      std::fprintf(stderr,
+                   "obelisk-periodic-debug=ownership-ready actors=%zu "
+                   "states=%zu\n",
+                   generatedActors.size(), generatedWritableStates.size());
+    auto generatedWritesState = [&](uint32_t staticState) {
+      return generatedWritableStates.find(staticState) !=
+             generatedWritableStates.end();
+    };
+    // Delayed Tier-3 work is compatible with run_until: the earliest runtime
+    // deadline below becomes a branch-only checkpoint.  Reject only state
+    // that invalidates direct access, callback inventories that require a
+    // runtime publication, or a live runtime subscription that can actually
+    // be reached by the generated closure.  Requiring scheduledDesignTasks to
+    // be empty here incorrectly rejects ordinary timeout processes.
+    if (context->nativeScheduleExternalWritePending ||
+        context->nativeScheduleDirtyRootsPresent ||
+        anyOverride(context->forceMask) || anyOverride(context->assignMask) ||
+        (context->execution && context->execution->observer_count != 0) ||
+        !context->nativeConditionalSignalWaiters.empty() ||
+        !context->designConditionalSignalWaiters.empty())
+      {
+        if (context->signalDiagnosticsEnabled)
+          std::fprintf(stderr, "obelisk-periodic-reject=dirty-environment\n");
+        return OBELISK_RT_TIER_UNAVAILABLE;
+      }
+    auto subscriptionReadsGeneratedState =
+        [&](const SignalSubscription &subscription) {
+          uint32_t staticID = 0;
+          int64_t offset = 0;
+          return decodeNativeStatic(subscription.stableID, staticID, offset) &&
+                 offset >= 0 && generatedWritesState(staticID);
+        };
+    for (const ScheduledProcess &scheduled : context->scheduledProcesses) {
+      if (!scheduled.instance || scheduled.phase != 0 ||
+          scheduled.aotActorSlot != UINT32_MAX)
+        continue;
+      for (const auto &subscription : scheduled.signalSubscriptions)
+        if (subscription && subscriptionReadsGeneratedState(*subscription))
+          {
+            if (context->signalDiagnosticsEnabled)
+              std::fprintf(stderr,
+                           "obelisk-periodic-reject=process-subscription\n");
+            return OBELISK_RT_TIER_UNAVAILABLE;
+          }
+    }
+    for (const ScheduledDesignTask &task : context->scheduledDesignTasks) {
+      if (task.terminated || task.phase != 0)
+        continue;
+      for (const auto &subscription : task.signalSubscriptions)
+        if (subscription && subscriptionReadsGeneratedState(*subscription))
+          {
+            if (context->signalDiagnosticsEnabled)
+              std::fprintf(stderr,
+                           "obelisk-periodic-reject=task-subscription\n");
+            return OBELISK_RT_TIER_UNAVAILABLE;
+          }
+    }
+    // A direct publication has no runtime subscriber scan.  Reject only an
+    // unsupported live waiter whose source is actually writable by the
+    // generated closure; dormant fanout on runtime-only state cannot be
+    // reached while run_until owns the calendar and must not pessimize it.
+    for (uint64_t index = 0;
+         index != context->nativeScheduleFanoutEntryCount; ++index) {
+      const auto &entry = context->nativeScheduleFanoutEntries[index];
+      if (entry.reserved != 0 || !generatedWritesState(entry.static_state) ||
+          entry.actor_slot >= context->nativeScheduleActors.size())
+        continue;
+      obelisk_rt_process_instance_v1 *actor =
+          context->nativeScheduleActors[entry.actor_slot];
+      if (actor && actor->continuation == entry.continuation)
+        {
+          if (context->signalDiagnosticsEnabled)
+            std::fprintf(stderr, "obelisk-periodic-reject=live-fanout\n");
+          return OBELISK_RT_TIER_UNAVAILABLE;
+        }
+    }
+
+    std::vector<uint8_t> claimed(context->nativeScheduleActors.size(), 0);
+    std::vector<size_t> claimedProcessIndices;
+    claimedProcessIndices.reserve(clockCount);
+    for (uint32_t index = 0; index != clockCount; ++index) {
+      const auto &clock = clocks[index];
+      if (clock.reserved != 0 || clock.half_period == 0 ||
+          clock.actor_slot >= context->nativeScheduleActors.size() ||
+          claimed[clock.actor_slot])
+        return OBELISK_RT_INVALID_ARGUMENT;
+      claimed[clock.actor_slot] = 1;
+      size_t processIndex = context->nativeScheduleActorIndices[clock.actor_slot];
+      if (processIndex >= context->scheduledProcesses.size())
+        return OBELISK_RT_INVALID_LIFECYCLE;
+      ScheduledProcess &scheduled = context->scheduledProcesses[processIndex];
+      obelisk_rt_process_instance_v1 *instance =
+          context->nativeScheduleActors[clock.actor_slot];
+      const NativeStaticState *state =
+          findNativeStaticState(context, clock.static_state);
+      if (!instance || scheduled.instance != instance || !scheduled.started ||
+          scheduled.suspendKind != OBELISK_RT_SUSPEND_DELAY ||
+          instance->continuation != clock.continuation || !state ||
+          clock.bit_offset < state->bitOffset ||
+          clock.bit_offset - state->bitOffset >= state->bitWidth ||
+          !context->nativeSchedulePlan->state_unknown ||
+          (context->nativeSchedulePlan
+               ->state_unknown[clock.bit_offset / 8] &
+           (uint8_t{1} << (clock.bit_offset % 8))) != 0 ||
+          scheduled.wakeTime < context->schedulerTime ||
+          (scheduled.wakeTime > context->schedulerTime &&
+           scheduled.wakeTime - context->schedulerTime > clock.half_period))
+        return OBELISK_RT_INVALID_CONTINUATION;
+      nextEdges[index] = scheduled.wakeTime;
+      claimedProcessIndices.push_back(processIndex);
+      removeNativeAOTDeadlineUnlocked(context, clock.actor_slot);
+    }
+    context->nativePeriodicClockActorSlots.clear();
+    context->nativePeriodicClockActorSlots.reserve(clockCount);
+    for (uint32_t index = 0; index != clockCount; ++index)
+      context->nativePeriodicClockActorSlots.push_back(
+          clocks[index].actor_slot);
+    context->nativePeriodicTerminationRequested =
+        context->schedulerFinishRequested ? 1u : 0u;
+    outControl->scheduler_time = &context->schedulerTime;
+    outControl->termination_requested =
+        &context->nativePeriodicTerminationRequested;
+    uint64_t nextRuntimeDeadline = UINT64_MAX;
+    auto considerDeadline = [&](uint64_t candidate) {
+      if (candidate > context->schedulerTime)
+        nextRuntimeDeadline = std::min(nextRuntimeDeadline, candidate);
+    };
+    for (size_t index = 0; index != context->scheduledProcesses.size();
+         ++index) {
+      if (std::find(claimedProcessIndices.begin(), claimedProcessIndices.end(),
+                    index) != claimedProcessIndices.end())
+        continue;
+      const ScheduledProcess &scheduled = context->scheduledProcesses[index];
+      if (scheduled.instance && scheduled.phase == 0 && scheduled.started &&
+          scheduled.suspendKind == OBELISK_RT_SUSPEND_DELAY)
+        considerDeadline(scheduled.wakeTime);
+    }
+    for (const ScheduledDesignTask &task : context->scheduledDesignTasks)
+      if (!task.terminated && task.phase == 0 && task.started &&
+          task.suspendKind == OBELISK_RT_SUSPEND_DELAY)
+        considerDeadline(task.wakeTime);
+    for (const ScheduledDesignNBA &update : context->scheduledDesignNBAs)
+      considerDeadline(update.dueTime);
+    for (const ScheduledNBA &update : context->scheduledNBAs)
+      considerDeadline(update.dueTime);
+    for (const ScheduledManagedNBA &update : context->scheduledManagedNBAs)
+      considerDeadline(update.dueTime);
+    for (const ScheduledDesignEvent &event : context->scheduledDesignEvents)
+      considerDeadline(event.dueTime);
+    outControl->next_runtime_deadline = nextRuntimeDeadline;
+    context->nativePeriodicRuntimeDeadline = nextRuntimeDeadline;
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_INVALID_DESIGN;
+  }
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_handoff_periodic_aot(
+    obelisk_rt_context *context,
+    const obelisk_rt_native_periodic_clock_v1 *clocks, uint32_t clockCount,
+    const uint64_t *nextEdges) {
+  if (!context || !clocks || clockCount == 0 || !nextEdges ||
+      activeNativeAOTContext != context || lockedNativeAOTContext != context)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  try {
+    for (uint32_t index = 0; index != clockCount; ++index) {
+      const auto &clock = clocks[index];
+      if (clock.actor_slot >= context->nativeScheduleActors.size())
+        return OBELISK_RT_INVALID_ARGUMENT;
+      size_t processIndex = context->nativeScheduleActorIndices[clock.actor_slot];
+      if (processIndex >= context->scheduledProcesses.size())
+        return OBELISK_RT_INVALID_LIFECYCLE;
+      ScheduledProcess &scheduled = context->scheduledProcesses[processIndex];
+      if (!scheduled.instance ||
+          scheduled.suspendKind != OBELISK_RT_SUSPEND_DELAY ||
+          scheduled.instance->continuation != clock.continuation ||
+          nextEdges[index] <= context->schedulerTime)
+        return OBELISK_RT_INVALID_CONTINUATION;
+      scheduled.wakeTime = nextEdges[index];
+      setNativeAOTDeadlineUnlocked(context, clock.actor_slot, nextEdges[index]);
+    }
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_INVALID_DESIGN;
+  }
+}
 
 extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_execute_aot_actor(
     obelisk_rt_context *context, uint32_t actorSlot) {
@@ -8248,7 +9292,76 @@ obelisk_rt_v1_scheduler_run_aot(obelisk_rt_context *context) {
     context->nativeScheduleGuardedFanoutActive = guardedFanout;
     context->nativeScheduleRunning = true;
   }
-  obelisk_rt_status status;
+  auto needsTransientHandoff = [&] {
+    ContextMutexLock lock(context);
+    auto anyOverride = [](const std::vector<uint64_t> &mask) {
+      return std::any_of(mask.begin(), mask.end(),
+                         [](uint64_t word) { return word != 0; });
+    };
+    return context->nativeScheduleExternalWritePending ||
+           context->nativeScheduleDirtyRootsPresent ||
+           anyOverride(context->forceMask) || anyOverride(context->assignMask);
+  };
+  auto runTransientHandoff = [&](bool &reachedBoundary) {
+    {
+      ContextMutexLock lock(context);
+      if (plan->state_bit_count != 0 &&
+          (!reconcileNativeDirtyRootsToPlanesUnlocked(context, plan) ||
+           !importNativeStatePlanesUnlocked(context, plan->state_value,
+                                            plan->state_unknown,
+                                            plan->state_bit_count)))
+        return OBELISK_RT_LAYOUT_MISMATCH;
+      context->nativeScheduleRunning = true;
+    }
+    obelisk_rt_status transientStatus = OBELISK_RT_OK;
+    {
+      NativeAOTContextScope aotScope(context);
+      NativeAOTMutexScope mutexScope(context);
+      NativeScheduleCleanBoundaryScope boundaryScope(context);
+      transientStatus = runScheduler(context);
+      reachedBoundary = boundaryScope.reached();
+    }
+    {
+      ContextMutexLock lock(context);
+      if (plan->state_bit_count != 0 &&
+          !exportNativeStatePlanesUnlocked(context, plan->state_value,
+                                           plan->state_unknown,
+                                           plan->state_bit_count) &&
+          transientStatus == OBELISK_RT_OK)
+        transientStatus = OBELISK_RT_LAYOUT_MISMATCH;
+      // The fine scheduler has reached a canonical quiescent handback. Let the
+      // generated plan perform its one promotion scan now, after canonical
+      // export and before its Tier-1 entry is invoked again. Promotion is a
+      // routing choice, so a false result does not delay the handback.
+      if (transientStatus == OBELISK_RT_OK && reachedBoundary &&
+          plan->promotion_ready)
+        (void)plan->promotion_ready();
+      context->nativeScheduleRunning = false;
+    }
+    return transientStatus;
+  };
+
+retryNativeSchedule:;
+  obelisk_rt_status status = OBELISK_RT_OK;
+  if (needsTransientHandoff()) {
+    bool reachedBoundary = false;
+    status = runTransientHandoff(reachedBoundary);
+    if (status != OBELISK_RT_OK || !reachedBoundary)
+      return status;
+    {
+      ContextMutexLock lock(context);
+      guardedFanout =
+          (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_GUARDED_FANOUT) != 0 &&
+          !context->nativeScheduleDirtyRootsPresent;
+      specializationFast =
+          plan->specialization_fast &&
+          nativeStaticSpecializationEnvironmentClean(context);
+      if (plan->specialization_fast)
+        *plan->specialization_fast = specializationFast ? 1 : 0;
+      context->nativeScheduleGuardedFanoutActive = guardedFanout;
+      context->nativeScheduleRunning = true;
+    }
+  }
   {
     NativeAOTContextScope aotScope(context);
     auto invoke = [&] {
@@ -8286,6 +9399,151 @@ obelisk_rt_v1_scheduler_run_aot(obelisk_rt_context *context) {
     }
     context->nativeScheduleRunning = false;
   }
+  if (status == OBELISK_RT_AOT_CHECKPOINT ||
+      status == OBELISK_RT_AOT_TIMED_CHECKPOINT) {
+    bool timedCheckpoint = status == OBELISK_RT_AOT_TIMED_CHECKPOINT;
+    status = OBELISK_RT_OK;
+    uint64_t checkpointProgressBefore = 0;
+    uint64_t checkpointTimeBefore = 0;
+    {
+      ContextMutexLock lock(context);
+      if (plan->state_bit_count != 0 &&
+          (!reconcileNativeDirtyRootsToPlanesUnlocked(context, plan) ||
+           !importNativeStatePlanesUnlocked(context, plan->state_value,
+                                            plan->state_unknown,
+                                            plan->state_bit_count)))
+        return OBELISK_RT_LAYOUT_MISMATCH;
+      // run_until has already advanced schedulerTime to the checkpoint. Make
+      // framed AOT continuations due at that exact time visible before the
+      // one-step runtime action. Without this refresh an unsupported timed
+      // continuation is absent from the generic poll index, so the step can
+      // advance to the next periodic clock and retry the same checkpoint
+      // forever (most visibly with two independent generated clocks).
+      if (!markDueNativeAOTDeadlinesUnlocked(context))
+        return OBELISK_RT_INVALID_CONTINUATION;
+      checkpointProgressBefore = context->schedulerSlotProgress;
+      checkpointTimeBefore = context->schedulerTime;
+    }
+    // run_until stops on the last periodic edge preceding the runtime
+    // deadline. Advance directly to that proven checkpoint and execute only
+    // continuations due there. Polling all generic design evaluators would
+    // duplicate Tier-1 ownership and can recreate the preceding slot forever.
+    bool finishing = false;
+    {
+      NativeAOTContextScope aotScope(context);
+      NativeAOTMutexScope mutexScope(context);
+      if (!timedCheckpoint) {
+        NativeScheduleStepScope step(context, UINT32_MAX, false);
+        status = runScheduler(context);
+        if (status == OBELISK_RT_OK && plan->state_bit_count != 0) {
+          ContextMutexLock lock(context);
+          if (!exportNativeStatePlanesUnlocked(
+                  context, plan->state_value, plan->state_unknown,
+                  plan->state_bit_count))
+            status = OBELISK_RT_LAYOUT_MISMATCH;
+        }
+        goto checkpointDone;
+      }
+      {
+        ContextMutexLock lock(context);
+        uint64_t deadline = context->nativePeriodicRuntimeDeadline;
+        if (deadline == UINT64_MAX || deadline <= context->schedulerTime)
+          status = OBELISK_RT_TIER_UNAVAILABLE;
+        else {
+          context->schedulerTime = deadline;
+          status = runPreponedHooks(context);
+          if (status == OBELISK_RT_OK) {
+            context->schedulerPreponedTime = deadline;
+            context->schedulerSlotProgress = 0;
+            if (context->staticNBASlowRootsPresent) {
+              std::fill(context->staticNBASlowRoots.begin(),
+                        context->staticNBASlowRoots.end(), uint8_t{0});
+              context->staticNBASlowRootsPresent = false;
+            }
+            refreshNativeStaticSpecializationFastUnlocked(context);
+          }
+        }
+      }
+      if (status != OBELISK_RT_OK)
+        goto checkpointDone;
+      {
+        ContextMutexLock lock(context);
+        // handoff_periodic_aot restored every detached clock deadline so a
+        // non-checkpoint exit remains transactionally complete. At an exact
+        // runtime/clock tie, reserve those sources for the generated loop:
+        // Tier 2 drains only genuine runtime work and run_until then observes
+        // nextEdges == schedulerTime and executes the coincident edge.
+        for (uint32_t actorSlot : context->nativePeriodicClockActorSlots)
+          removeNativeAOTDeadlineUnlocked(context, actorSlot);
+        if (!markDueNativeAOTDeadlinesUnlocked(context))
+          return OBELISK_RT_INVALID_CONTINUATION;
+      }
+      // Drain the checkpoint slot with generic ordering arbitration around
+      // direct generated Tier-2 nodes. Future calendar entries remain owned
+      // by run_until.
+      status = drainNativeAOTCurrentSlotUnlocked(context, true);
+      if (status != OBELISK_RT_OK)
+        return status;
+      {
+        ContextMutexLock lock(context);
+        finishing = context->schedulerFinishRequested;
+      }
+      if (finishing) {
+        // Finish/final callbacks are an enabled synchronization checkpoint,
+        // not evidence that the generated schedule is invalid. Run them on
+        // the runtime side and return without snapshot deoptimization.
+        status = runScheduler(context);
+        if (status != OBELISK_RT_OK)
+          return status;
+      }
+      {
+        ContextMutexLock lock(context);
+        if (plan->state_bit_count != 0 &&
+            !exportNativeStatePlanesUnlocked(context, plan->state_value,
+                                             plan->state_unknown,
+                                             plan->state_bit_count))
+          return OBELISK_RT_LAYOUT_MISMATCH;
+      }
+    }
+  checkpointDone:
+    if (status != OBELISK_RT_OK && status != OBELISK_RT_TIER_UNAVAILABLE)
+      return status;
+    if (finishing && status == OBELISK_RT_OK)
+      return status;
+    bool checkpointProgress = false;
+    {
+      ContextMutexLock lock(context);
+      checkpointProgress =
+          status == OBELISK_RT_OK &&
+          (context->schedulerSlotProgress != checkpointProgressBefore ||
+           context->schedulerTime != checkpointTimeBefore ||
+           context->schedulerFinishRequested);
+      if (!checkpointProgress) {
+        // A checkpointed continuation that is not directly runnable by either
+        // current-slot drain must deopt transactionally. Retrying run_until
+        // without observable progress would rediscover the same deadline.
+        status = OBELISK_RT_TIER_UNAVAILABLE;
+      }
+      guardedFanout =
+          (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_GUARDED_FANOUT) != 0 &&
+          !context->nativeScheduleExternalWritePending &&
+          !context->nativeScheduleDirtyRootsPresent;
+      specializationFast =
+          plan->specialization_fast &&
+          !context->nativeScheduleExternalWritePending &&
+          !context->nativeScheduleDirtyRootsPresent &&
+          nativeStaticSpecializationEnvironmentClean(context);
+      if (plan->specialization_fast)
+        *plan->specialization_fast = specializationFast ? 1 : 0;
+      context->nativeScheduleGuardedFanoutActive =
+          checkpointProgress ? guardedFanout : false;
+      context->nativeScheduleRunning = checkpointProgress;
+    }
+    if (checkpointProgress)
+      goto retryNativeSchedule;
+  }
+  if (status == OBELISK_RT_TIER_UNAVAILABLE && needsTransientHandoff())
+    goto retryNativeSchedule;
   if (status != OBELISK_RT_TIER_UNAVAILABLE)
     return status;
 
@@ -8417,6 +9675,8 @@ void obelisk_rt_release_native_schedule_plan(
   try {
     if (context->nativeSchedulePlan->specialization_fast)
       *context->nativeSchedulePlan->specialization_fast = 0;
+    if (context->nativeSchedulePlan->promotion_invalidate)
+      context->nativeSchedulePlan->promotion_invalidate();
     for (uint32_t root = 0; root != context->nativeScheduleNBARootCount; ++root)
       if (context->nativeScheduleNBARoots[root].generated_accumulator)
         *context->nativeScheduleNBARoots[root].generated_accumulator = {};
@@ -8478,6 +9738,14 @@ void obelisk_rt_release_native_schedule_plan(
   context->nativeScheduleSingleStep = false;
   context->nativeScheduleForcedExecuted = false;
   context->nativeScheduleControlOnly = false;
+  context->nativeScheduleProcessFilterActive = false;
+  context->nativeScheduleForcedProcessToken = 0;
+  context->nativeScheduleStopAtCleanBoundary = false;
+  context->nativeScheduleCleanBoundaryReached = false;
+  context->nativeScheduleDesignTaskFilterActive = false;
+  context->nativeScheduleForcedDesignTask = 0;
+  context->nativePeriodicRuntimeDeadline = UINT64_MAX;
+  context->nativePeriodicClockActorSlots.clear();
   context->nativeScheduleClockIngressPending = false;
   context->nativeScheduleDirectActorSlot = UINT32_MAX;
 }
@@ -8488,6 +9756,7 @@ void obelisk_rt_aot_external_write_unlocked(obelisk_rt_context *context) {
     return;
   if (context->nativeSchedulePlan->specialization_fast)
     *context->nativeSchedulePlan->specialization_fast = 0;
+  invalidateNativeTwoStatePromotionUnlocked(context);
   context->nativeScheduleExternalWritePending = true;
 }
 
@@ -8588,12 +9857,21 @@ bool obelisk_rt_aot_external_deposit_unlocked(obelisk_rt_context *context,
     }
     return true;
   };
-  return visitRoots([&](uint32_t id) {
-           return !nativeStaticRootDirty(context, id);
-         }) &&
-         visitRoots([&](uint32_t id) {
-           return reconcileNativeRootToPlanesUnlocked(context, plan, id);
-         });
+  bool synchronized =
+      visitRoots([&](uint32_t id) {
+        return !nativeStaticRootDirty(context, id);
+      }) &&
+      visitRoots([&](uint32_t id) {
+        return reconcileNativeRootToPlanesUnlocked(context, plan, id);
+      });
+  if (!synchronized)
+    return false;
+  for (uint64_t bit = bitOffset; bit != bitEnd; ++bit)
+    if (byteBit(plan->state_unknown, bit)) {
+      invalidateNativeTwoStatePromotionUnlocked(context);
+      break;
+    }
+  return true;
 }
 
 void obelisk_rt_aot_release_range_unlocked(obelisk_rt_context *context,

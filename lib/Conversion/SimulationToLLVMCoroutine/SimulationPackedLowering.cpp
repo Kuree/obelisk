@@ -2,6 +2,7 @@
 
 #include "SimulationPackedLowering.h"
 
+#include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Analysis/StateDomainAnalysis.h"
 #include "obelisk/Conversion/RuntimeToLLVM.h"
 #include "obelisk/Conversion/SimulationToRuntime.h"
@@ -20,6 +21,9 @@ using namespace mlir;
 namespace obelisk::detail {
 
 namespace {
+
+constexpr StringLiteral inductiveTwoStateAccessAttr =
+    "obelisk.eval.inductive_two_state_access";
 
 LogicalResult convertNativeAggregateType(Type type,
                                          SmallVectorImpl<Type> &results) {
@@ -64,23 +68,81 @@ LogicalResult lowerPackedSimulationOperations(
   DenseSet<Operation *> nativeTwoStateOperations;
   WalkResult stateDomainsComputed = module.walk([&](sim::SimDesignOp design) {
     FailureOr<StateDomainAnalysis> stateDomains =
-        StateDomainAnalysis::compute(design, /*proveInductiveRoots=*/false);
-    if (failed(stateDomains))
+        StateDomainAnalysis::compute(design, /*proveInductiveRoots=*/true);
+    FailureOr<StateDomainAnalysis> knownStateDomains =
+        StateDomainAnalysis::computeAssumingKnownState(design);
+    if (failed(stateDomains) || failed(knownStateDomains))
       return WalkResult::interrupt();
     for (sim::SimFuncOp function :
          design.getBody().front().getOps<sim::SimFuncOp>()) {
       if (function.isExternal())
         continue;
+      bool guardedTwoState =
+          function->hasAttr("obelisk.eval.inductive_two_state");
+      bool conditionalTwoState =
+          function->hasAttr("obelisk.eval.conditionally_two_state");
+      const StateDomainAnalysis &guardedDomains =
+          conditionalTwoState ? *knownStateDomains : *stateDomains;
+      auto isTwoState = [&](Value value) {
+        return experimentalTwoState ||
+               (guardedTwoState
+                    ? guardedDomains.isTwoStateWithInductiveRoots(value)
+                    : stateDomains->isTwoState(value));
+      };
+      analysis::DescriptorProvenanceMap provenance =
+          analysis::deriveDescriptorProvenance(function);
+      auto isPromotableAccess = [&](Value handle, Value result) {
+        if (!guardedDomains.isTwoStateWithInductiveRoots(result))
+          return false;
+        auto root = provenance.find(handle);
+        return root != provenance.end() && root->second.descriptor &&
+               !root->second.dynamic && root->second.width != 0 &&
+               guardedDomains.isInductivelyTwoState(root->second.resource,
+                                                     *root->second.descriptor);
+      };
       for (Block &block : function.getBody()) {
         for (BlockArgument argument : block.getArguments())
-          if (isa<sim::LogicType>(argument.getType()) &&
-              (experimentalTwoState || stateDomains->isTwoState(argument)))
+          if (isa<sim::LogicType>(argument.getType()) && isTwoState(argument))
             nativeTwoStateValues.insert(argument);
-        for (Operation &operation : block)
+        for (Operation &operation : block) {
           for (Value result : operation.getResults())
-            if (isa<sim::LogicType>(result.getType()) &&
-                (experimentalTwoState || stateDomains->isTwoState(result)))
+            if (isa<sim::LogicType>(result.getType()) && isTwoState(result))
               nativeTwoStateValues.insert(result);
+          if (!guardedTwoState)
+            continue;
+          if (auto load = dyn_cast<sim::SimRefLoadOp>(operation)) {
+            if (isPromotableAccess(load.getReference(), load.getResult()))
+              operation.setAttr(inductiveTwoStateAccessAttr,
+                                UnitAttr::get(context));
+            continue;
+          }
+          if (auto read = dyn_cast<sim::SimNetReadOp>(operation)) {
+            if (isPromotableAccess(read.getNet(), read.getResult()))
+              operation.setAttr(inductiveTwoStateAccessAttr,
+                                UnitAttr::get(context));
+            continue;
+          }
+          Value destination;
+          Value stored;
+          if (auto store = dyn_cast<sim::SimRefStoreOp>(operation)) {
+            destination = store.getReference();
+            stored = store.getValue();
+          } else if (auto nba = dyn_cast<sim::SimNBAEnqueueOp>(operation)) {
+            destination = nba.getDestination();
+            stored = nba.getValue();
+          }
+          if (!destination ||
+              !guardedDomains.isTwoStateWithInductiveRoots(stored))
+            continue;
+          auto root = provenance.find(destination);
+          if (root == provenance.end() || !root->second.descriptor ||
+              root->second.dynamic ||
+              !guardedDomains.isInductivelyTwoState(root->second.resource,
+                                                     *root->second.descriptor))
+            continue;
+          operation.setAttr(inductiveTwoStateAccessAttr,
+                            UnitAttr::get(context));
+        }
       }
     }
     return WalkResult::advance();

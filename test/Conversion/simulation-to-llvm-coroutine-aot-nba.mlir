@@ -10,6 +10,15 @@
 // RUN: obelisk-opt %s \
 // RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s --check-prefix=PERIODIC
+// RUN: sed 's/obelisk.native_scheduler = 2/obelisk.native_scheduler = 3/' %s \
+// RUN:   | obelisk-opt - \
+// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN:   | FileCheck %s --check-prefix=TWO-STATE
+// RUN: obelisk-opt %s -o /dev/null \
+// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' \
+// RUN:   2>&1 | FileCheck %s --check-prefix=PERIODIC-ANALYSIS
+
+// PERIODIC-ANALYSIS: native-aot eligible=true fully=true selected=true periodic=true
 
 // Exercise AOT NBA planning and materialization from hand-authored simulation
 // IR. Driver option parsing is deliberately outside this pass test.
@@ -193,3 +202,22 @@ module attributes {
 // THREE-TIER: llvm.store
 // THREE-TIER: llvm.return
 // THREE-TIER-LABEL: llvm.func @__obelisk_tier1_try_promote_v1_1
+// A stale four-state staged unknown plane must not leak through promotion.
+// The transitional two-state barrier clears canonical unknown bits once; the
+// steady fast clone has no canonical unknown-plane memory access.  Both use a
+// zero staged unknown value.
+// TWO-STATE-LABEL: llvm.func internal @__obelisk_aot_static_nba_commit_two_state_v1
+// TWO-STATE: %[[CANON_UNKNOWN:.*]] = llvm.mlir.addressof @__obelisk_state_unknown
+// TWO-STATE: %[[CANON_ACC:.*]] = llvm.mlir.addressof @__obelisk_aot_nba_accumulator_0
+// TWO-STATE: llvm.getelementptr %[[CANON_ACC]][32]
+// TWO-STATE-NEXT: {{.*}} = llvm.mlir.zero : i64
+// TWO-STATE: llvm.getelementptr %[[CANON_UNKNOWN]]
+// TWO-STATE-LABEL: llvm.func internal @__obelisk_aot_static_nba_commit_two_state_fast_v1
+// TWO-STATE: %[[FAST_UNKNOWN:.*]] = llvm.mlir.addressof @__obelisk_state_unknown
+// TWO-STATE: %[[FAST_ACC:.*]] = llvm.mlir.addressof @__obelisk_aot_nba_accumulator_0
+// TWO-STATE: llvm.getelementptr %[[FAST_ACC]][32]
+// TWO-STATE-NEXT: {{.*}} = llvm.mlir.zero : i64
+// TWO-STATE: %[[FAST_UNKNOWN_ADDR:.*]] = llvm.getelementptr %[[FAST_UNKNOWN]]
+// TWO-STATE-NOT: llvm.load %[[FAST_UNKNOWN_ADDR]]
+// TWO-STATE-NOT: llvm.store {{.*}}, %[[FAST_UNKNOWN_ADDR]]
+// TWO-STATE: llvm.return

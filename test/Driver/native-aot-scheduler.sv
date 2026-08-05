@@ -53,4 +53,4 @@ endmodule
 // SPECIALIZATION-ON: @__obelisk_aot_nba_dirty_roots_v1
 // SPECIALIZATION-ON: @__obelisk_aot_nba_dirty_summary_v1
 // SPECIALIZATION-ON-NOT: call i32 @obelisk_rt_v1_static_nba_claim
-// EVAL-DIAG: native eval is unavailable until generated run_until participates in the runtime lifecycle
+// EVAL-DIAG: cannot materialize generated eval loop: clocks=0

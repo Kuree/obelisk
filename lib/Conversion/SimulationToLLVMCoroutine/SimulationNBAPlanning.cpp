@@ -244,7 +244,9 @@ materializeGeneratedNBAAccumulators(ModuleOp module,
                                     const NativeStaticNBAPlan &plan) {
   if (plan.generatedAccumulators.size() != plan.roots.size() ||
       plan.generatedOffsets.size() != plan.roots.size() ||
-      plan.generatedCommitRegions.size() != plan.roots.size())
+      plan.generatedCommitRegions.size() != plan.roots.size() ||
+      plan.generatedFullRootStages.size() != plan.roots.size() ||
+      plan.generatedFixedWriteMasks.size() != plan.roots.size())
     return module.emitError("generated NBA accumulator plan is malformed");
   OpBuilder builder(module.getContext());
   Location location = module.getLoc();
@@ -265,6 +267,7 @@ materializeGeneratedNBAAccumulators(ModuleOp module,
     LLVM::ReturnOp::create(
         builder, location,
         LLVM::ZeroOp::create(builder, location, storageType));
+
   }
   return success();
 }
@@ -311,6 +314,8 @@ buildNativeStaticNBAPlan(ModuleOp module, const NativeStateLayout &stateLayout,
     plan.generatedAccumulators.emplace_back();
     plan.generatedOffsets.push_back(bound->offset);
     plan.generatedCommitRegions.push_back(UINT32_MAX);
+    plan.generatedFullRootStages.push_back(false);
+    plan.generatedFixedWriteMasks.push_back(0);
     if (bound->width <= OBELISK_RT_GENERATED_NBA_MAX_BITS)
       plan.generatedAccumulators.back() =
           ("__obelisk_aot_nba_accumulator_" + Twine(root)).str();
@@ -342,9 +347,12 @@ buildNativeStaticNBAPlan(ModuleOp module, const NativeStateLayout &stateLayout,
     plan.siteRoots.try_emplace(site.site, site.root);
 
   // Prove the subset for which a dirty bit is also a complete generated-stage
-  // validity proof.  This is deliberately whole-root: part selects and roots
-  // shared between event regions keep the existing accumulator field checks.
+  // validity proof. Fixed part-selects retain a write mask; roots shared
+  // between event regions keep the existing accumulator field checks.
   SmallVector<bool> eligible(plan.roots.size(), true);
+  SmallVector<bool> fullRoot(plan.roots.size(), true);
+  SmallVector<bool> fixedMask(plan.roots.size(), true);
+  SmallVector<uint64_t> writeMasks(plan.roots.size(), 0);
   SmallVector<bool> seen(plan.roots.size(), false);
   module.walk([&](sim::SimNBAEnqueueOp enqueue) {
     sim::NBASiteAttr site = enqueue.getSiteAttr();
@@ -369,16 +377,28 @@ buildNativeStaticNBAPlan(ModuleOp module, const NativeStateLayout &stateLayout,
                                 ? homeRegion + 2
                                 : UINT32_MAX;
     bool direct =
-        width && *width == root.bit_width && root.bit_width <= 64 &&
-        destination && destination->staticID == root.static_state &&
-        destination->offset == 0 && !enqueue.getDelay() && site &&
-        !site.getTiming() &&
+        width && root.bit_width <= 64 && destination &&
+        *width <= root.bit_width && destination->offset <= root.bit_width &&
+        *width <= root.bit_width -
+                      destination->offset &&
+        destination->staticID == root.static_state && !enqueue.getDelay() &&
+        site && !site.getTiming() &&
         site.getStorage() != sim::ComputeNBAStorageKind::DynamicFrontier &&
         commitRegion != UINT32_MAX;
     if (!direct) {
       eligible[rootIndex] = false;
+      fullRoot[rootIndex] = false;
       return;
     }
+    if (*width != root.bit_width || destination->offset != 0)
+      fullRoot[rootIndex] = false;
+    uint64_t sourceMask = *width == 64 ? UINT64_MAX
+                                      : (uint64_t{1} << *width) - 1;
+    uint64_t writeMask = sourceMask << destination->offset;
+    if (writeMasks[rootIndex] == 0)
+      writeMasks[rootIndex] = writeMask;
+    else if (writeMasks[rootIndex] != writeMask)
+      fixedMask[rootIndex] = false;
     uint32_t &plannedRegion = plan.generatedCommitRegions[rootIndex];
     if (plannedRegion == UINT32_MAX)
       plannedRegion = commitRegion;
@@ -386,8 +406,15 @@ buildNativeStaticNBAPlan(ModuleOp module, const NativeStateLayout &stateLayout,
       eligible[rootIndex] = false;
   });
   for (uint32_t root = 0; root != plan.roots.size(); ++root)
-    if (!eligible[root] || !seen[root])
+    if (!eligible[root] || !seen[root]) {
       plan.generatedCommitRegions[root] = UINT32_MAX;
+      plan.generatedFullRootStages[root] = false;
+      plan.generatedFixedWriteMasks[root] = 0;
+    } else {
+      plan.generatedFullRootStages[root] = fullRoot[root];
+      plan.generatedFixedWriteMasks[root] =
+          fixedMask[root] ? writeMasks[root] : 0;
+    }
   return plan;
 }
 

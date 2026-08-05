@@ -37,6 +37,7 @@ enum class StateDomainReason {
   CallActual,
   SpawnActual,
   CFGJoin,
+  InfeasibleCFG,
   Continuation,
   LogicConstant,
   UnknownConstant,
@@ -53,6 +54,7 @@ enum class StateDomainReason {
   LogicReplicate,
   LogicExtract,
   LogicInsert,
+  PackedView,
   DynamicExtract,
   DynamicExtractIndex,
   DivisionDivisor,
@@ -100,6 +102,14 @@ public:
   /// default complete proof.
   static mlir::FailureOr<StateDomainAnalysis>
   compute(sim::SimDesignOp design, bool proveInductiveRoots = true);
+
+  /// Compute conditional facts under the boundary assumption that every
+  /// canonical logic storage/net root is currently known.  Unlike compute(),
+  /// this does not claim that those roots are globally inductive: clients must
+  /// separately prove that the selected kernel writes only known values and
+  /// must invalidate the specialization across asynchronous mutation.
+  static mlir::FailureOr<StateDomainAnalysis>
+  computeAssumingKnownState(sim::SimDesignOp design);
 
   StateDomainFact get(mlir::Value value) const;
   bool isTwoState(mlir::Value value) const;

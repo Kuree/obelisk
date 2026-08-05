@@ -415,13 +415,20 @@ static int executeCompilation(const InputArgList &args) {
     return 1;
   OwningOpRef<ModuleOp> module = std::move(*importedModule);
 
-  // Eval remains an explicit development mode until its generated run loop
-  // participates in the normal runtime lifecycle.  Auto must never select a
-  // source-name/parameter-specific benchmark substitute.
-  if (native && nativeScheduler == "eval")
+  if (native) {
+    obelisk::sim::NativeSchedulerMode pipelineScheduler =
+        *obelisk::sim::symbolizeNativeSchedulerMode(nativeScheduler);
+    if (pipelineScheduler == obelisk::sim::NativeSchedulerMode::Auto) {
+      (*module)->setAttr("obelisk.native_scheduler.auto_requested",
+                         UnitAttr::get(&context));
+      pipelineScheduler = executionTier == "bytecode"
+                              ? obelisk::sim::NativeSchedulerMode::Generic
+                              : obelisk::sim::NativeSchedulerMode::Eval;
+    }
     (*module)->setAttr("obelisk.native_scheduler",
                        obelisk::sim::NativeSchedulerModeAttr::get(
-                           &context, obelisk::sim::NativeSchedulerMode::Eval));
+                           &context, pipelineScheduler));
+  }
 
   if (!emitSlang) {
     PassManager passManager(&context);

@@ -3,6 +3,8 @@
 #include "obelisk/Analysis/StateDomainAnalysis.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Threading.h"
@@ -281,6 +283,12 @@ transferOperation(Operation *op, const DenseMap<Value, StateDomainFact> &facts,
       .Case<sim::SimLogicInsertOp>([&](auto) {
         return combineOperands(op, facts, StateDomainReason::LogicInsert);
       })
+      // Flatten and unflatten are representation-only views of the same
+      // packed value.  They neither synthesize nor discard unknown bits, so
+      // their state domain is exactly the domain of the input value.
+      .Case<sim::SimPackedFlattenOp, sim::SimPackedUnflattenOp>([&](auto) {
+        return combineOperands(op, facts, StateDomainReason::PackedView);
+      })
       .Default([&](Operation *) {
         return mayFourState(StateDomainReason::UnsupportedProducer);
       });
@@ -301,6 +309,8 @@ ValueRange getInvocationOperands(Operation *operation) {
 struct IncomingSummary {
   Value value;
   StateDomainReason reason = StateDomainReason::CFGJoin;
+  Operation *terminator = nullptr;
+  unsigned successorIndex = 0;
 };
 
 struct BlockArgumentSummary {
@@ -381,7 +391,7 @@ FunctionSummary buildSummary(sim::SimFuncOp function) {
                                        : StateDomainReason::UnsupportedProducer;
         summary.blockArguments[found->second].incoming.push_back(
             {incoming && isLogic(incoming.getType()) ? incoming : Value(),
-             reason});
+             reason, terminator, successorIndex});
       }
     }
   }
@@ -402,6 +412,7 @@ FunctionSummary buildSummary(sim::SimFuncOp function) {
 struct LocalFacts {
   DenseMap<Value, StateDomainFact> values;
   SmallVector<StateDomainFact> results;
+  DenseSet<Block *> reachable;
 };
 
 bool shouldTrackResult(Operation *operation, Value result) {
@@ -441,6 +452,122 @@ LocalFacts initializeLocalFacts(const FunctionSummary &summary) {
   return local;
 }
 
+std::optional<bool>
+getProvableCondition(Value value,
+                     const DenseMap<Value, StateDomainFact> &facts,
+                     DenseSet<Value> &active,
+                     DenseMap<Value, std::optional<bool>> &memo) {
+  auto cached = memo.find(value);
+  if (cached != memo.end())
+    return cached->second;
+  if (!active.insert(value).second)
+    return std::nullopt;
+  auto done = [&](std::optional<bool> result) {
+    active.erase(value);
+    memo.try_emplace(value, result);
+    return result;
+  };
+
+  APInt constant;
+  if (matchPattern(value, m_ConstantInt(&constant)) && constant.getBitWidth() == 1)
+    return done(!constant.isZero());
+
+  if (auto argument = dyn_cast<BlockArgument>(value)) {
+    std::optional<bool> result;
+    bool sawIncoming = false;
+    for (Block *predecessor : argument.getOwner()->getPredecessors()) {
+      auto branch =
+          dyn_cast<BranchOpInterface>(predecessor->getTerminator());
+      if (!branch)
+        return done(std::nullopt);
+      for (unsigned successor = 0;
+           successor != predecessor->getNumSuccessors(); ++successor) {
+        if (predecessor->getSuccessor(successor) != argument.getOwner())
+          continue;
+        SuccessorOperands operands =
+            branch.getSuccessorOperands(successor);
+        if (argument.getArgNumber() >= operands.size() ||
+            operands.isOperandProduced(argument.getArgNumber()))
+          return done(std::nullopt);
+        std::optional<bool> incoming = getProvableCondition(
+            operands[argument.getArgNumber()], facts, active, memo);
+        if (!incoming || (result && *result != *incoming))
+          return done(std::nullopt);
+        result = incoming;
+        sawIncoming = true;
+      }
+    }
+    return done(sawIncoming ? result : std::nullopt);
+  }
+
+  if (auto xorOp = value.getDefiningOp<arith::XOrIOp>()) {
+    APInt rhs;
+    if (matchPattern(xorOp.getRhs(), m_ConstantInt(&rhs)) &&
+        rhs.getBitWidth() == 1) {
+      std::optional<bool> lhs =
+          getProvableCondition(xorOp.getLhs(), facts, active, memo);
+      return done(lhs ? std::optional<bool>(*lhs != !rhs.isZero())
+                      : std::nullopt);
+    }
+  }
+  if (auto andOp = value.getDefiningOp<arith::AndIOp>()) {
+    std::optional<bool> lhs =
+        getProvableCondition(andOp.getLhs(), facts, active, memo);
+    std::optional<bool> rhs =
+        getProvableCondition(andOp.getRhs(), facts, active, memo);
+    if ((lhs && !*lhs) || (rhs && !*rhs))
+      return done(false);
+    if (lhs && rhs)
+      return done(*lhs && *rhs);
+  }
+  if (auto orOp = value.getDefiningOp<arith::OrIOp>()) {
+    std::optional<bool> lhs =
+        getProvableCondition(orOp.getLhs(), facts, active, memo);
+    std::optional<bool> rhs =
+        getProvableCondition(orOp.getRhs(), facts, active, memo);
+    if ((lhs && *lhs) || (rhs && *rhs))
+      return done(true);
+    if (lhs && rhs)
+      return done(*lhs || *rhs);
+  }
+  if (auto compare = value.getDefiningOp<sim::SimLogicCompareOp>()) {
+    bool equality = compare.getKind() == sim::CompareKind::CaseEq;
+    bool inequality = compare.getKind() == sim::CompareKind::CaseNe;
+    if (equality || inequality) {
+      auto isKnownRoundTrip = [&](Value original, Value roundTrip) {
+        auto fromBits = roundTrip.getDefiningOp<sim::SimLogicFromBitsOp>();
+        auto toBits = fromBits
+                          ? fromBits.getInput()
+                                .getDefiningOp<sim::SimLogicToBitsOp>()
+                          : sim::SimLogicToBitsOp{};
+        auto fact = facts.find(original);
+        return toBits && toBits.getInput() == original &&
+               fact != facts.end() &&
+               fact->second.domain == StateDomain::TwoState;
+      };
+      if (isKnownRoundTrip(compare.getLhs(), compare.getRhs()) ||
+          isKnownRoundTrip(compare.getRhs(), compare.getLhs()))
+        return done(equality);
+    }
+  }
+  return done(std::nullopt);
+}
+
+bool isProvablyDeadSuccessor(
+    Operation *terminator, unsigned successorIndex,
+    const DenseMap<Value, StateDomainFact> &proofFacts,
+    DenseMap<Value, std::optional<bool>> &memo) {
+  auto branch = dyn_cast_or_null<cf::CondBranchOp>(terminator);
+  if (!branch)
+    return false;
+  DenseSet<Value> active;
+  std::optional<bool> condition =
+      getProvableCondition(branch.getCondition(), proofFacts, active, memo);
+  if (!condition)
+    return false;
+  return successorIndex != (*condition ? 0u : 1u);
+}
+
 void propagateFunction(const FunctionSummary &summary,
                        ArrayRef<StateDomainFact> formalBoundaries,
                        ArrayRef<SmallVector<StateDomainFact>> resultBoundaries,
@@ -457,14 +584,43 @@ void propagateFunction(const FunctionSummary &summary,
       updateFact(local.values, argument,
                  formalBoundaries[argument.getArgNumber()]);
 
-  while (true) {
-    bool changed = false;
+  auto solveValues = [&](const DenseMap<Value, StateDomainFact> *proofFacts) {
+    DenseSet<Block *> reachable;
+    DenseMap<Value, std::optional<bool>> conditionMemo;
+    if (proofFacts) {
+      SmallVector<Block *> worklist{&entry};
+      reachable.insert(&entry);
+      while (!worklist.empty()) {
+        Block *block = worklist.pop_back_val();
+        if (block->empty())
+          continue;
+        Operation *terminator = block->getTerminator();
+        for (unsigned successor = 0;
+             successor != terminator->getNumSuccessors(); ++successor) {
+          if (isProvablyDeadSuccessor(terminator, successor, *proofFacts,
+                                      conditionMemo))
+            continue;
+          Block *target = terminator->getSuccessor(successor);
+          if (reachable.insert(target).second)
+            worklist.push_back(target);
+        }
+      }
+      local.reachable = reachable;
+    }
+    while (true) {
+      bool changed = false;
     for (const BlockArgumentSummary &argument : summary.blockArguments) {
       StateDomainFact joined = bottomFact();
       if (argument.incoming.empty()) {
         joined = mayFourState(StateDomainReason::UnsupportedProducer);
       } else {
         for (const IncomingSummary &incoming : argument.incoming) {
+          if (proofFacts &&
+              (!reachable.contains(incoming.terminator->getBlock()) ||
+               isProvablyDeadSuccessor(incoming.terminator,
+                                       incoming.successorIndex, *proofFacts,
+                                       conditionMemo)))
+            continue;
           StateDomainFact contribution =
               incoming.value
                   ? lookupLocalFact(local.values, incoming.value)
@@ -502,7 +658,27 @@ void propagateFunction(const FunctionSummary &summary,
     }
     if (!changed)
       break;
-  }
+    }
+  };
+
+  solveValues(nullptr);
+
+  // Four-state lowering frequently represents `cond ? known : X` with an
+  // explicit branch that is unreachable once the condition's inductive roots
+  // are known.  The first solve establishes those domain facts.  A fresh
+  // second solve may then ignore only edges whose i1 condition is structurally
+  // proven constant by the two-state round-trip identity.  Restarting from
+  // bottom is necessary because the ordinary domain lattice intentionally
+  // never refines MayFourState downward.
+  DenseMap<Value, StateDomainFact> proofFacts = local.values;
+  LocalFacts pruned = initializeLocalFacts(summary);
+  std::swap(local.values, pruned.values);
+  for (BlockArgument argument : entry.getArguments())
+    if (isLogic(argument.getType()) &&
+        argument.getArgNumber() < formalBoundaries.size())
+      updateFact(local.values, argument,
+                 formalBoundaries[argument.getArgNumber()]);
+  solveValues(&proofFacts);
 
   for (sim::SimReturnOp returnOp : summary.returns)
     for (auto [index, operand] : llvm::enumerate(returnOp.getOperands())) {
@@ -542,6 +718,8 @@ StringRef stringifyStateDomainReason(StateDomainReason reason) {
     return "spawn-actual";
   case StateDomainReason::CFGJoin:
     return "cfg-join";
+  case StateDomainReason::InfeasibleCFG:
+    return "infeasible-cfg";
   case StateDomainReason::Continuation:
     return "continuation";
   case StateDomainReason::LogicConstant:
@@ -574,6 +752,8 @@ StringRef stringifyStateDomainReason(StateDomainReason reason) {
     return "logic-extract";
   case StateDomainReason::LogicInsert:
     return "logic-insert";
+  case StateDomainReason::PackedView:
+    return "packed-view";
   case StateDomainReason::DynamicExtract:
     return "dynamic-extract";
   case StateDomainReason::DynamicExtractIndex:
@@ -691,16 +871,27 @@ computeValueFacts(sim::SimDesignOp design, const RootSet &assumedKnownRoots) {
   // symbols and opaque uses can introduce values from outside the analyzed
   // invocation graph.
   SmallVector<char> hasNonCallUse(functions.size(), false);
-  for (auto [index, function] : llvm::enumerate(functions)) {
-    std::optional<SymbolTable::UseRange> uses =
-        SymbolTable::getSymbolUses(function, design);
-    if (!uses) {
-      hasNonCallUse[index] = true;
-      continue;
-    }
+  std::optional<SymbolTable::UseRange> uses =
+      SymbolTable::getSymbolUses(design);
+  if (!uses) {
+    llvm::fill(hasNonCallUse, true);
+  } else {
+    // Query the symbol table once for the whole design. Asking for uses of
+    // every function separately performs a complete attribute walk each time;
+    // an outlined RTL instance therefore turned this closed-world check into
+    // O(functions * design-size) compile time.
     for (const SymbolTable::SymbolUse &use : *uses) {
       Operation *user = use.getUser();
       SymbolRefAttr reference = use.getSymbolRef();
+      sim::SimFuncOp function =
+          symbolTables.lookupNearestSymbolFrom<sim::SimFuncOp>(user,
+                                                                reference);
+      if (!function)
+        continue;
+      auto found = functionIndex.find(function.getOperation());
+      if (found == functionIndex.end())
+        continue;
+      unsigned index = found->second;
       bool direct = false;
       if (auto call = dyn_cast<sim::SimCallOp>(user))
         direct = call.getCalleeAttr() == reference;
@@ -713,7 +904,6 @@ computeValueFacts(sim::SimDesignOp design, const RootSet &assumedKnownRoots) {
           countSymbolReferences(user, reference) == 1)
         continue;
       hasNonCallUse[index] = true;
-      break;
     }
   }
 
@@ -807,6 +997,9 @@ computeValueFacts(sim::SimDesignOp design, const RootSet &assumedKnownRoots) {
   DenseMap<Value, StateDomainFact> facts;
   for (LocalFacts &local : finalLocals)
     for (auto [value, fact] : local.values) {
+      if (!local.reachable.empty() &&
+          !local.reachable.contains(value.getParentBlock()))
+        fact = twoState(StateDomainReason::InfeasibleCFG);
       resolveBottom(fact);
       facts.try_emplace(value, fact);
     }
@@ -851,6 +1044,10 @@ StateDomainAnalysis::compute(sim::SimDesignOp design,
   }
   RootSet candidates;
   DenseMap<uint64_t, unsigned> netDriverCounts;
+  DenseMap<uint64_t, uint64_t> netWidths;
+  DenseMap<uint64_t, bool> netHasFullDriver;
+  DenseMap<uint64_t, SmallVector<uint64_t>> connectedNets;
+  DenseSet<uint64_t> partialConnections;
   for (Operation &operation : design.getBody().front()) {
     if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation)) {
       if (isLogic(storage.getType()))
@@ -859,29 +1056,74 @@ StateDomainAnalysis::compute(sim::SimDesignOp design,
       continue;
     }
     if (auto net = dyn_cast<sim::SimNetDeclOp>(operation)) {
-      if (isLogic(net.getType()))
+      if (isLogic(net.getType())) {
         candidates.insert(
             getRootKey(sim::ComputeResourceKind::Net, net.getId()));
+        if (std::optional<uint64_t> width =
+                sim::getProvenanceSpan(net.getType()))
+          netWidths[net.getId()] = *width;
+        connectedNets[net.getId()];
+      }
       continue;
     }
-    if (auto driver = dyn_cast<sim::SimDriverDeclOp>(operation))
+    if (auto driver = dyn_cast<sim::SimDriverDeclOp>(operation)) {
       ++netDriverCounts[driver.getNetId()];
+      std::optional<uint64_t> width = sim::getProvenanceSpan(driver.getType());
+      uint64_t low = driver.getDrivenLowAttr()
+                         ? driver.getDrivenLowAttr().getValue().getZExtValue()
+                         : 0;
+      uint64_t drivenWidth =
+          driver.getDrivenWidthAttr()
+              ? driver.getDrivenWidthAttr().getValue().getZExtValue()
+              : width.value_or(0);
+      netHasFullDriver[driver.getNetId()] =
+          width && low == 0 && drivenWidth == *width;
+    }
   }
-  // A resolved net with several contributions may produce X from conflicting
-  // known values. A later range-aware proof can retain disjoint drivers; the
-  // whole-root domain deliberately rejects the ambiguous case.
-  for (auto [net, count] : netDriverCounts)
-    if (count > 1)
-      candidates.erase(getRootKey(sim::ComputeResourceKind::Net, net));
-  // Whole-root facts do not yet distinguish independently driven ranges in a
-  // connected topology. Reject both endpoints rather than overlooking a
-  // conflicting contribution that arrives through the alias component.
+  // Full-width net connections form one resolved value.  A component with
+  // exactly one full-width driver cannot create X from resolution and is a
+  // valid guarded two-state root.  Multiple drivers can conflict, and partial
+  // connections can leave Z bits, so the whole-root proof rejects those
+  // components conservatively.  This retains ordinary one-driver port aliases
+  // instead of poisoning the entire transitive state closure.
   for (sim::SimNetConnectDeclOp connection :
        design.getBody().front().getOps<sim::SimNetConnectDeclOp>()) {
-    candidates.erase(
-        getRootKey(sim::ComputeResourceKind::Net, connection.getLhsNetId()));
-    candidates.erase(
-        getRootKey(sim::ComputeResourceKind::Net, connection.getRhsNetId()));
+    uint64_t lhs = connection.getLhsNetId();
+    uint64_t rhs = connection.getRhsNetId();
+    connectedNets[lhs].push_back(rhs);
+    connectedNets[rhs].push_back(lhs);
+    auto lhsWidth = netWidths.find(lhs);
+    auto rhsWidth = netWidths.find(rhs);
+    if (lhsWidth == netWidths.end() || rhsWidth == netWidths.end() ||
+        connection.getLhsOffset() != 0 || connection.getRhsOffset() != 0 ||
+        connection.getWidth() != lhsWidth->second ||
+        connection.getWidth() != rhsWidth->second) {
+      partialConnections.insert(lhs);
+      partialConnections.insert(rhs);
+    }
+  }
+  DenseSet<uint64_t> visitedNets;
+  for (auto [net, unused] : connectedNets) {
+    if (!visitedNets.insert(net).second)
+      continue;
+    SmallVector<uint64_t> component{net};
+    bool partial = false;
+    uint64_t driverCount = 0;
+    bool fullDriver = false;
+    for (size_t index = 0; index != component.size(); ++index) {
+      uint64_t member = component[index];
+      partial |= partialConnections.contains(member);
+      driverCount += netDriverCounts.lookup(member);
+      fullDriver |= netHasFullDriver.lookup(member);
+      for (uint64_t neighbor : connectedNets.lookup(member))
+        if (visitedNets.insert(neighbor).second)
+          component.push_back(neighbor);
+    }
+    if (!partial && driverCount == 1 && fullDriver)
+      continue;
+    for (uint64_t member : component)
+      candidates.erase(
+          getRootKey(sim::ComputeResourceKind::Net, member));
   }
 
   DenseMap<Value, StateDomainFact> facts;
@@ -961,6 +1203,46 @@ StateDomainAnalysis::compute(sim::SimDesignOp design,
   });
   return StateDomainAnalysis(std::move(facts), std::move(guardedFacts),
                              std::move(inductiveRoots));
+}
+
+FailureOr<StateDomainAnalysis>
+StateDomainAnalysis::computeAssumingKnownState(sim::SimDesignOp design) {
+  if (design.getBody().empty()) {
+    design.emitOpError("cannot analyze a design with no body");
+    return failure();
+  }
+  RootSet assumedKnown;
+  for (Operation &operation : design.getBody().front()) {
+    if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation)) {
+      if (isLogic(storage.getType()))
+        assumedKnown.insert(
+            getRootKey(sim::ComputeResourceKind::Storage, storage.getId()));
+      continue;
+    }
+    if (auto net = dyn_cast<sim::SimNetDeclOp>(operation))
+      if (isLogic(net.getType()))
+        assumedKnown.insert(
+            getRootKey(sim::ComputeResourceKind::Net, net.getId()));
+  }
+  FailureOr<DenseMap<Value, StateDomainFact>> guarded =
+      computeValueFacts(design, assumedKnown);
+  if (failed(guarded))
+    return failure();
+  FailureOr<DenseMap<Value, StateDomainFact>> unconditional =
+      computeValueFacts(design, RootSet{});
+  if (failed(unconditional))
+    return failure();
+  SmallVector<InductiveStateRoot> roots;
+  roots.reserve(assumedKnown.size());
+  for (RootKey root : assumedKnown)
+    roots.push_back(
+        {static_cast<sim::ComputeResourceKind>(root.first), root.second});
+  llvm::sort(roots, [](const auto &lhs, const auto &rhs) {
+    return std::tie(lhs.resource, lhs.descriptor) <
+           std::tie(rhs.resource, rhs.descriptor);
+  });
+  return StateDomainAnalysis(std::move(*unconditional), std::move(*guarded),
+                             std::move(roots));
 }
 
 StateDomainFact StateDomainAnalysis::get(Value value) const {

@@ -255,7 +255,8 @@ inline bool obelisk_rt_is_mutable_home_region(uint32_t region) {
 inline bool obelisk_rt_decode_schedule_flags(uint32_t flags, uint32_t &phase,
                                              uint32_t &homeRegion) {
   constexpr uint32_t known =
-      OBELISK_RT_SCHEDULE_FINAL | OBELISK_RT_SCHEDULE_HOME_MASK;
+      OBELISK_RT_SCHEDULE_FINAL | OBELISK_RT_SCHEDULE_HOME_MASK |
+      OBELISK_RT_SCHEDULE_INITIAL;
   if ((flags & ~known) != 0)
     return false;
   phase = (flags & OBELISK_RT_SCHEDULE_FINAL) != 0 ? 1u : 0u;
@@ -328,6 +329,7 @@ struct ScheduledProcess {
   bool started = false;
   bool urgent = false;
   bool signalTriggered = false;
+  bool initialProcess = false;
 };
 
 struct SignalValueSnapshot {
@@ -735,6 +737,14 @@ struct obelisk_rt_context {
   bool nativeScheduleSingleStep = false;
   bool nativeScheduleForcedExecuted = false;
   bool nativeScheduleControlOnly = false;
+  bool nativeScheduleProcessFilterActive = false;
+  uint64_t nativeScheduleForcedProcessToken = 0;
+  bool nativeScheduleStopAtCleanBoundary = false;
+  bool nativeScheduleCleanBoundaryReached = false;
+  bool nativeScheduleDesignTaskFilterActive = false;
+  uint64_t nativeScheduleForcedDesignTask = 0;
+  uint64_t nativePeriodicRuntimeDeadline = UINT64_MAX;
+  std::vector<uint32_t> nativePeriodicClockActorSlots;
   std::unordered_map<uint64_t, size_t> scheduledProcessIndices;
   std::unordered_set<uint64_t> nativePollCandidates;
   // Lazy min-heap of (wake time, process token). Stale entries are discarded
@@ -818,6 +828,9 @@ struct obelisk_rt_context {
   uint64_t schedulerSlotProgress = 0;
   bool schedulerRunningFinals = false;
   bool schedulerFinishRequested = false;
+  // Mirrored as a full word for generated code. The address is handed out
+  // only while the native scheduler owns the context transaction.
+  uint32_t nativePeriodicTerminationRequested = 0;
   uint32_t schedulerFinishVerbosity = 0;
   obelisk_rt_status schedulerFinishStatus = OBELISK_RT_OK;
   obelisk_rt_status schedulerStatus = OBELISK_RT_OK;

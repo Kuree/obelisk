@@ -462,7 +462,7 @@ ABI_OFFSET(obelisk_rt_static_actor_root, actor_slot, 0);
 ABI_OFFSET(obelisk_rt_static_actor_root, static_state, 4);
 ABI_OFFSET(obelisk_rt_static_actor_root, flags, 8);
 ABI_OFFSET(obelisk_rt_static_actor_root, reserved, 12);
-ABI_SIZE_ALIGN(obelisk_rt_native_schedule_plan, 240, 8);
+ABI_SIZE_ALIGN(obelisk_rt_native_schedule_plan, 256, 8);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, size, 0);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, graph_layout_checksum, 8);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, mutable_state, 16);
@@ -498,6 +498,8 @@ ABI_OFFSET(obelisk_rt_native_schedule_plan, clock_kernel_reserved, 212);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, merged_fragments, 216);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, merged_fragment_count, 224);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, timeslot_coordinator, 232);
+ABI_OFFSET(obelisk_rt_native_schedule_plan, promotion_invalidate, 240);
+ABI_OFFSET(obelisk_rt_native_schedule_plan, promotion_ready, 248);
 
 #undef ABI_OFFSET
 #undef ABI_SIZE_ALIGN
@@ -519,6 +521,8 @@ static_assert(OBELISK_RT_STEP_LIMIT == 10);
 static_assert(OBELISK_RT_LAYOUT_MISMATCH == 11);
 static_assert(OBELISK_RT_INVALID_CONTINUATION == 12);
 static_assert(OBELISK_RT_TIER_UNAVAILABLE == 13);
+static_assert(OBELISK_RT_AOT_CHECKPOINT == 20);
+static_assert(OBELISK_RT_AOT_TIMED_CHECKPOINT == 21);
 static_assert(OBELISK_RT_INVALID_LIFECYCLE == 14);
 static_assert(OBELISK_RT_INVALID_FRAME == 15);
 static_assert(OBELISK_RT_INVALID_DESIGN == 16);
@@ -882,6 +886,18 @@ ABI_FUNCTION(obelisk_rt_v1_scheduler_run_aot_nodes,
              obelisk_rt_status (*)(obelisk_rt_context *,
                                    const obelisk_rt_native_schedule_node *,
                                    uint32_t));
+ABI_FUNCTION(
+    obelisk_rt_v1_scheduler_prepare_periodic_aot,
+    obelisk_rt_status (*)(obelisk_rt_context *,
+                          const obelisk_rt_native_schedule_node *, uint32_t,
+                          const obelisk_rt_native_periodic_clock_v1 *, uint32_t,
+                          const obelisk_rt_native_periodic_alias_v1 *, uint32_t,
+                          uint64_t *, obelisk_rt_native_periodic_control_v1 *));
+ABI_FUNCTION(obelisk_rt_v1_scheduler_handoff_periodic_aot,
+             obelisk_rt_status (*)(
+                 obelisk_rt_context *,
+                 const obelisk_rt_native_periodic_clock_v1 *, uint32_t,
+                 const uint64_t *));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_snapshot_aot,
              obelisk_rt_status (*)(obelisk_rt_context *,
                                    obelisk_rt_aot_deopt_snapshot *));

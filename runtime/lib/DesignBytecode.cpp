@@ -3012,6 +3012,9 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
       uint32_t selectedRank = UINT32_MAX;
       uint64_t selectedInsertionSequence = UINT64_MAX;
       for (uint64_t candidateID : context->designPollCandidates) {
+        if (context->nativeScheduleDesignTaskFilterActive &&
+            candidateID != context->nativeScheduleForcedDesignTask)
+          continue;
         auto indexed = context->scheduledDesignTaskIndices.find(candidateID);
         if (indexed == context->scheduledDesignTaskIndices.end() ||
             indexed->second >= context->scheduledDesignTasks.size())

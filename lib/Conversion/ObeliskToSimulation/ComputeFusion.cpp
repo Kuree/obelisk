@@ -125,9 +125,8 @@ bool isComputeBodyFusionEligibleImpl(
     }
 
     if (auto display = dyn_cast<sim::SimDisplayOp>(operation)) {
-      // A display's scope and formatting identity are explicit attributes.
-      // With only immutable bytes and static digital arguments it neither
-      // consults actor-local state nor touches a managed heap object.
+      // Static formatting stays on a cold branch of the fused activation; it
+      // is not executed by the ordinary clock path.
       eligible = display.getScopeAttr() &&
                  hasOnlyStaticDigitalValues(display) &&
                  hasConcreteHandleValues(display, provenance);

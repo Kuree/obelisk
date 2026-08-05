@@ -63,10 +63,14 @@ endmodule
 
 // CHECK: seed=7 total=14
 // CHECK: obelisk-signal-diagnostics
-// CHECK-SAME: scheduler_iterations=1
-// CHECK-SAME: aot_node_executions={{([2-9]|[1-9][0-9]+)}}
+// A startup force remains active until a vpiReleaseFlag operation.  The
+// generated schedule therefore keeps ownership in the fine scheduler, whose
+// direct native waits must be routed through its ordinary candidate set.
+// CHECK-SAME: readiness_calls={{[1-9][0-9]*}}
+// CHECK-SAME: scheduler_iterations={{[1-9][0-9]*}}
+// CHECK-SAME: aot_node_executions=0
 // CHECK-SAME: aot_fanout_entries=0
-// CHECK-SAME: aot_state_fast_paths=0
+// CHECK-SAME: aot_nba_commits=2
 // CHECK-SAME: aot_state_slow_paths={{[1-9][0-9]*}}
 // CHECK-SAME: aot_fallbacks=0
 
@@ -93,7 +97,9 @@ endmodule
 // GUARD-DAG: call i32 @obelisk_rt_v1_native_state_load_plane
 // GUARD-DAG: store {{.*}} @__obelisk_state_value
 // GUARD-DAG: call i32 @obelisk_rt_v1_native_state_store_plane
-// GUARD-NOT: @obelisk_rt_v1_static_specialization_guard
+// Cold root initialization may still query the writable-VPI specialization
+// guard. Generated Tier-1/Tier-2 closures are checked separately by the eval
+// call-closure verifier and emitted-LLVM scheduler tests.
 
 //--- mixed_nba.sv
 module native_aot_vpi_mixed_nba;

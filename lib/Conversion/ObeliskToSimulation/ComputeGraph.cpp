@@ -1457,9 +1457,9 @@ LogicalResult ComputeGraphBuilder::buildSites(ComputeGraphResult &result) {
 FailureOr<ArrayAttr> ComputeGraphBuilder::buildRegions() {
   // Sensitivity edges terminate at the suspension that owns the watch, while
   // the work activated by that edge starts at the suspension's resume
-  // continuation.  Resume edges themselves are intentionally not scheduling
+  // continuation. Resume edges themselves are intentionally not scheduling
   // edges: including them would turn every repeating process into a
-  // procedural cycle.  Project only settling-process sensitivity through the
+  // procedural cycle. Project only settling-process sensitivity through the
   // suspension so cross-process combinational feedback is visible to SCC
   // planning without changing the executable graph or clocked-process
   // semantics.

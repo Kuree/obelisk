@@ -363,6 +363,21 @@ addVPIStartupLifecycle(llvm::Module &module, StringRef vpi,
     errs() << "obelisk: error: generated native state planes disagree\n";
     return failure();
   }
+  llvm::GlobalVariable *execution =
+      module.getNamedGlobal("__obelisk_execution_descriptor_v1");
+  auto *executionInitializer =
+      execution ? dyn_cast<llvm::ConstantStruct>(execution->getInitializer())
+                : nullptr;
+  auto *stateBitCount =
+      executionInitializer && executionInitializer->getNumOperands() > 7
+          ? dyn_cast<llvm::ConstantInt>(executionInitializer->getOperand(7))
+          : nullptr;
+  if (!stateBitCount ||
+      stateBitCount->getZExtValue() > valueArray->getNumElements() * 8) {
+    errs() << "obelisk: error: execution descriptor disagrees with generated "
+              "native state planes\n";
+    return failure();
+  }
   if (requiresStateSync) {
     llvm::FunctionCallee sync = module.getOrInsertFunction(
         "obelisk_rt_v1_native_state_sync",
@@ -371,7 +386,7 @@ addVPIStartupLifecycle(llvm::Module &module, StringRef vpi,
     llvm::Value *syncStatus = beforeSpawn.CreateCall(
         sync,
         {runtimeContext, stateValue, stateUnknown,
-         llvm::ConstantInt::get(i64, valueArray->getNumElements() * 8)},
+         llvm::ConstantInt::get(i64, stateBitCount->getZExtValue())},
         "obelisk.state.sync");
     beforeSpawn.CreateCall(fail, {runtimeContext, syncStatus});
   }
@@ -773,24 +788,22 @@ LogicalResult emitNativeOutput(ModuleOp module,
     errs() << "obelisk: error: invalid native scheduler mode\n";
     return failure();
   }
-  if (*nativeScheduler == obelisk::sim::NativeSchedulerMode::Eval) {
-    errs() << "obelisk: error: native eval is unavailable until generated "
-              "run_until participates in the runtime lifecycle\n";
-    return failure();
-  }
-  // Decide auto before bytecode materialization.  Coroutine lowering also
-  // validates the plan, but waiting until then leaves hybrid bytecode entries
-  // on every descriptor even when the selected scheduler is generic.  Those
-  // entries can make an otherwise native-only design hand hot continuations
-  // to the interpreter.  The compute graph is final at this backend boundary,
-  // so use the same general cost analysis here and compile a rejected auto
-  // plan exactly like an explicit generic request.
+  // Reject unprofitable auto candidates before bytecode materialization.  A
+  // profitable candidate remains Auto: coroutine lowering has the physical
+  // state layout, exact fanout, and direct fragments needed to decide whether
+  // the generated periodic eval form is actually materializable.  Converting
+  // Auto to Eval here would incorrectly make that later proof mandatory for
+  // ordinary non-periodic designs.
   if (*nativeScheduler == obelisk::sim::NativeSchedulerMode::Auto &&
       !options.bytecode) {
     obelisk::analysis::NativeAOTAnalysis aot =
         obelisk::analysis::NativeAOTAnalysis::compute(module);
     if (!aot.isEligible() || !aot.isAOTCostEffective())
       *nativeScheduler = obelisk::sim::NativeSchedulerMode::Generic;
+    // A structural periodic candidate is only a cheap pipeline-shaping hint.
+    // Keep Auto through coroutine lowering, where physical aliases, exact
+    // fanout, and direct-fragment coverage can be proved together. A false
+    // positive must remain eligible for the generic/AOT fallback.
   }
   if (failed(lowerToLLVM(module, *targetMachine, options.bytecode, options.vpi,
                          *nativeScheduler, requiresStateSync)))

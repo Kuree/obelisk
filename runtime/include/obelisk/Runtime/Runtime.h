@@ -58,6 +58,14 @@ typedef int32_t obelisk_rt_status;
 #define OBELISK_RT_PERMISSION_DENIED INT32_C(17)
 #define OBELISK_RT_DPI_DISABLE_UNSUPPORTED INT32_C(18)
 #define OBELISK_RT_FATAL INT32_C(19)
+// Generated run_until reached an enabled runtime synchronization boundary.
+// Unlike TIER_UNAVAILABLE, this is a resumable handoff and must not deopt the
+// native schedule permanently.
+#define OBELISK_RT_AOT_CHECKPOINT INT32_C(20)
+// Generated run_until stopped before a proven future runtime deadline. The
+// runtime advances to that deadline, drains the slot, and resumes the saved
+// periodic phase. Same-slot branch checkpoints continue to use 20.
+#define OBELISK_RT_AOT_TIMED_CHECKPOINT INT32_C(21)
 
 // Managed SystemVerilog value ABI. Object handles are nullable pointers into
 // the context-owned, non-moving heap. Collector and synchronization metadata
@@ -307,6 +315,7 @@ enum {
   (UINT32_C(7) << OBELISK_RT_SCHEDULE_HOME_SHIFT)
 #define OBELISK_RT_SCHEDULE_HOME(region)                                       \
   ((uint32_t)(region) << OBELISK_RT_SCHEDULE_HOME_SHIFT)
+#define OBELISK_RT_SCHEDULE_INITIAL (UINT32_C(1) << 4)
 
 // Serialized design-bytecode function flags. Process functions encode their
 // canonical frame size shifted left by one. Bits 60-62 encode the executable
@@ -1938,6 +1947,37 @@ typedef struct obelisk_rt_native_schedule_node {
   uint32_t fusion_group;
 } obelisk_rt_native_schedule_node;
 
+// Revision-coupled description of a structurally proven free-running clock.
+// Generated run_until code uses the returned control pointers directly while
+// it owns the scheduler transaction; no runtime call is needed per edge.
+typedef struct obelisk_rt_native_periodic_clock_v1 {
+  uint32_t actor_slot;
+  uint32_t continuation;
+  uint32_t static_state;
+  uint32_t reserved;
+  uint64_t bit_offset;
+  uint64_t half_period;
+} obelisk_rt_native_periodic_clock_v1;
+
+// Proven one-bit projection of a periodic source through a single-driver
+// port/net alias.  Bootstrap and generated run_until use the same physical
+// mapping so finite reset processes observe the identical clock history.
+typedef struct obelisk_rt_native_periodic_alias_v1 {
+  uint32_t source_static_state;
+  uint32_t forwarding_actor_slot;
+  uint32_t forwarding_continuation;
+  uint32_t target_static_state;
+  uint64_t source_bit_offset;
+  uint64_t target_bit_offset;
+  uint64_t driver_bit_offset;
+} obelisk_rt_native_periodic_alias_v1;
+
+typedef struct obelisk_rt_native_periodic_control_v1 {
+  uint64_t *scheduler_time;
+  uint32_t *termination_requested;
+  uint64_t next_runtime_deadline;
+} obelisk_rt_native_periodic_control_v1;
+
 typedef uint32_t obelisk_rt_static_nba_storage;
 enum {
   OBELISK_RT_STATIC_NBA_FIXED_SLOT = 0,
@@ -2041,6 +2081,8 @@ typedef obelisk_rt_status (*obelisk_rt_native_schedule_nba_commit)(
     uint32_t *out_changed);
 typedef obelisk_rt_status (*obelisk_rt_native_timeslot_coordinator)(
     void *mutable_state, obelisk_rt_context *context);
+typedef void (*obelisk_rt_native_promotion_invalidate)(void);
+typedef uint32_t (*obelisk_rt_native_promotion_ready)(void);
 
 typedef struct obelisk_rt_native_schedule_plan {
   uint32_t size;
@@ -2084,6 +2126,14 @@ typedef struct obelisk_rt_native_schedule_plan {
   const obelisk_rt_native_merged_fragment *merged_fragments;
   uint64_t merged_fragment_count;
   obelisk_rt_native_timeslot_coordinator timeslot_coordinator;
+  // Cold-path invalidation for the generated two-state closure. External
+  // X/Z writes and transactional fine-scheduler handoffs clear the selected
+  // variant here; the generated coordinator rescans only after quiescence.
+  obelisk_rt_native_promotion_invalidate promotion_invalidate;
+  // Cold query used only by a transient Tier-2 transaction. It returns one
+  // after the candidate closure's canonical unknown plane is clear, allowing
+  // the runtime to hand control directly to the two-state Tier-1 route.
+  obelisk_rt_native_promotion_ready promotion_ready;
 } obelisk_rt_native_schedule_plan;
 
 // Serial generated-simulator scheduler. The scheduler owns an instance after
@@ -2135,6 +2185,21 @@ obelisk_rt_status obelisk_rt_v1_scheduler_add_aot(
 obelisk_rt_status obelisk_rt_v1_scheduler_run_aot_nodes(
     obelisk_rt_context *context, const obelisk_rt_native_schedule_node *nodes,
     uint32_t node_count);
+// Drain time zero to quiescence, validate the proven periodic actors against
+// their actual coroutine state, and detach only those deadlines for generated
+// run_until ownership. `next_edges` has one element per clock.
+obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
+    obelisk_rt_context *context, const obelisk_rt_native_schedule_node *nodes,
+    uint32_t node_count,
+    const obelisk_rt_native_periodic_clock_v1 *clocks, uint32_t clock_count,
+    const obelisk_rt_native_periodic_alias_v1 *aliases, uint32_t alias_count,
+    uint64_t *next_edges, obelisk_rt_native_periodic_control_v1 *out_control);
+// Restore detached periodic actors before the generated coordinator returns a
+// Tier-2/3 boundary to the runtime.
+obelisk_rt_status obelisk_rt_v1_scheduler_handoff_periodic_aot(
+    obelisk_rt_context *context,
+    const obelisk_rt_native_periodic_clock_v1 *clocks, uint32_t clock_count,
+    const uint64_t *next_edges);
 // Materialize the runtime-owned hybrid scheduler records at an AOT region
 // boundary. Returned pointers remain context-owned until scheduler mutation.
 obelisk_rt_status obelisk_rt_v1_scheduler_snapshot_aot(

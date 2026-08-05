@@ -47,6 +47,7 @@ struct FusionCandidate {
   uint32_t order;
   uint32_t entryOrder;
   Operation *function;
+  uint64_t instanceScope;
 };
 
 bool isStraightLineContinuous(sim::SimFuncOp function) {
@@ -75,8 +76,9 @@ bool isStraightLineContinuous(sim::SimFuncOp function) {
 
 void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
   sim::SimDesignOp design = getOperation();
-  auto scheduler = design->getParentOfType<ModuleOp>()->getAttrOfType<
-      sim::NativeSchedulerModeAttr>("obelisk.native_scheduler");
+  ModuleOp module = design->getParentOfType<ModuleOp>();
+  auto scheduler = module->getAttrOfType<sim::NativeSchedulerModeAttr>(
+      "obelisk.native_scheduler");
   bool evalBodyFusion =
       bodyFusion && scheduler &&
       scheduler.getValue() == sim::NativeSchedulerMode::Eval;
@@ -136,7 +138,22 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
                              static_cast<uint32_t>(order));
   }
 
-  llvm::MapVector<Attribute, SmallVector<FusionCandidate>> bySensitivity;
+  DenseMap<uint64_t, uint64_t> codeUnitScopes;
+  for (sim::SimCodeUnitDeclOp declaration :
+       design.getBody().front().getOps<sim::SimCodeUnitDeclOp>())
+    codeUnitScopes.try_emplace(declaration.getId(), declaration.getScopeId());
+  auto getInstanceScope = [&](sim::SimFuncOp function) -> std::optional<uint64_t> {
+    std::optional<uint64_t> codeUnit = function.getCodeUnitId();
+    if (!codeUnit)
+      return std::nullopt;
+    auto scope = codeUnitScopes.find(*codeUnit);
+    if (scope == codeUnitScopes.end())
+      return std::nullopt;
+    return scope->second;
+  };
+
+  using FusionKey = std::pair<Attribute, uint64_t>;
+  llvm::MapVector<FusionKey, SmallVector<FusionCandidate>> bySensitivity;
   for (auto [index, attribute] : llvm::enumerate(nodes)) {
     auto fragment = dyn_cast<sim::ComputeFragmentAttr>(attribute);
     if (!fragment || fragment.getId() != index ||
@@ -180,15 +197,21 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
     auto functionEntry = entryOrder.find(function.getOperation());
     if (functionEntry == entryOrder.end())
       continue;
+    std::optional<uint64_t> instanceScope = getInstanceScope(function);
+    if (evalBodyFusion && !instanceScope) {
+      ++rejectedActors;
+      continue;
+    }
 
-    bySensitivity[sensitivity].push_back(
+    bySensitivity[{sensitivity, evalBodyFusion ? *instanceScope : 0}].push_back(
         {static_cast<int64_t>(index), resume->second, 0, functionEntry->second,
-         function.getOperation()});
+         function.getOperation(), evalBodyFusion ? *instanceScope : 0});
   }
 
   SmallVector<Attribute> fusions;
   uint32_t id = 0;
-  for (auto &[sensitivity, candidates] : bySensitivity) {
+  for (auto &[key, candidates] : bySensitivity) {
+    Attribute sensitivity = key.first;
     if (candidates.size() < 2)
       continue;
     SmallVector<uint32_t> readyTargets = getComputeFusionReadyTargets(
@@ -249,7 +272,7 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
     flush();
   }
   if (bodyFusion) {
-    SmallVector<int64_t> continuous;
+    llvm::MapVector<uint64_t, SmallVector<int64_t>> continuousByScope;
     llvm::SmallDenseSet<Operation *> seen;
     for (auto [index, attribute] : llvm::enumerate(nodes)) {
       auto fragment = dyn_cast<sim::ComputeFragmentAttr>(attribute);
@@ -262,21 +285,30 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
       if (!isStraightLineContinuous(function) ||
           !seen.insert(function.getOperation()).second)
         continue;
+      std::optional<uint64_t> instanceScope = getInstanceScope(function);
+      if (evalBodyFusion && !instanceScope) {
+        ++rejectedActors;
+        continue;
+      }
       auto resume = resumeTargets.find(static_cast<int64_t>(index));
       if (resume == resumeTargets.end() ||
           !acyclicActive.contains(resume->second))
         continue;
-      continuous.push_back(static_cast<int64_t>(index));
+      continuousByScope[evalBodyFusion ? *instanceScope : 0].push_back(
+          static_cast<int64_t>(index));
     }
-    llvm::sort(continuous, [&](int64_t lhs, int64_t rhs) {
-      return std::tie(scheduleOrder[resumeTargets.lookup(lhs)], lhs) <
-             std::tie(scheduleOrder[resumeTargets.lookup(rhs)], rhs);
-    });
-    if (continuous.size() >= 2) {
-      fusions.push_back(sim::ComputeFusionAttr::get(
-          design.getContext(), id++,
-          DenseI64ArrayAttr::get(design.getContext(), continuous)));
-      ++plannedFusions;
+    for (auto &[scope, continuous] : continuousByScope) {
+      (void)scope;
+      llvm::sort(continuous, [&](int64_t lhs, int64_t rhs) {
+        return std::tie(scheduleOrder[resumeTargets.lookup(lhs)], lhs) <
+               std::tie(scheduleOrder[resumeTargets.lookup(rhs)], rhs);
+      });
+      if (continuous.size() >= 2) {
+        fusions.push_back(sim::ComputeFusionAttr::get(
+            design.getContext(), id++,
+            DenseI64ArrayAttr::get(design.getContext(), continuous)));
+        ++plannedFusions;
+      }
     }
   }
   if (!fusions.empty())

@@ -105,6 +105,10 @@ def ObeliskSimSCCPPass
     "mlir::arith::ArithDialect",
     "mlir::cf::ControlFlowDialect"
   ];
+  let options = [
+    Option<"vpi", "vpi", "std::string", "\"off\"",
+           "VPI observability mode: off, read, or full">
+  ];
 }
 
 def ObeliskSimEliminateDeadCapturesPass

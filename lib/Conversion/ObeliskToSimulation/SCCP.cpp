@@ -1,6 +1,7 @@
 //===- SCCP.cpp - Threaded interprocedural simulation SCCP ---------------===//
 
 #include "obelisk/Conversion/ObeliskToSimulation.h"
+#include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
@@ -15,6 +16,7 @@
 #include "mlir/Transforms/FoldUtils.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 
@@ -105,9 +107,34 @@ struct SiteObservation {
   SmallVector<BoundaryFact> operands;
 };
 
+struct DriveObservation {
+  uint64_t net = 0;
+  BoundaryFact value;
+};
+
 struct FunctionObservation {
   SmallVector<SiteObservation> sites;
+  SmallVector<DriveObservation> drives;
 };
+
+static void addNetSeeds(sim::SimFuncOp function,
+                        const DenseMap<uint64_t, BoundaryFact> &netFacts,
+                        DenseMap<Value, BoundaryFact> &seeds) {
+  if (netFacts.empty())
+    return;
+  analysis::DescriptorProvenanceMap provenance =
+      analysis::deriveDescriptorProvenance(function);
+  function.walk([&](sim::SimNetReadOp read) {
+    auto found = provenance.find(read.getNet());
+    if (found == provenance.end() || !found->second.descriptor ||
+        found->second.dynamic || found->second.low != 0 ||
+        found->second.width != found->second.rootWidth)
+      return;
+    auto fact = netFacts.find(*found->second.descriptor);
+    if (fact != netFacts.end())
+      seeds.try_emplace(read.getResult(), fact->second);
+  });
+}
 
 ValueRange getBoundaryOperands(Operation *operation) {
   if (auto task = dyn_cast<sim::SimTaskCallOp>(operation))
@@ -156,6 +183,7 @@ static void addBoundarySeeds(ArrayRef<FunctionInfo> functions,
 
 static LogicalResult analyzeFunction(ArrayRef<FunctionInfo> functions,
                                      unsigned functionIndex,
+                                     const DenseMap<uint64_t, BoundaryFact> &netFacts,
                                      FunctionObservation &observation) {
   const FunctionInfo &info = functions[functionIndex];
   sim::SimFuncOp function = info.function;
@@ -164,6 +192,7 @@ static LogicalResult analyzeFunction(ArrayRef<FunctionInfo> functions,
 
   DenseMap<Value, BoundaryFact> seeds;
   addBoundarySeeds(functions, functionIndex, seeds);
+  addNetSeeds(function, netFacts, seeds);
 
   DataFlowConfig config;
   config.setInterprocedural(false);
@@ -190,6 +219,31 @@ static LogicalResult analyzeFunction(ArrayRef<FunctionInfo> functions,
         result.operands.push_back(getFact(solver, operand));
     }
   }
+
+  analysis::DescriptorProvenanceMap provenance =
+      analysis::deriveDescriptorProvenance(function);
+  function.walk([&](Operation *operation) {
+    if (!isa<sim::SimDriverDriveOp, sim::SimDriverDriveChangedOp>(operation) ||
+        !isExecutable(solver, operation))
+      return;
+    Value driver;
+    Value value;
+    if (auto drive = dyn_cast<sim::SimDriverDriveOp>(operation)) {
+      driver = drive.getDriver();
+      value = drive.getValue();
+    } else {
+      auto changedDrive = cast<sim::SimDriverDriveChangedOp>(operation);
+      driver = changedDrive.getDriver();
+      value = changedDrive.getValue();
+    }
+    auto found = provenance.find(driver);
+    if (found == provenance.end() || !found->second.descriptor ||
+        found->second.dynamic || found->second.low != 0 ||
+        found->second.width != found->second.rootWidth)
+      return;
+    observation.drives.push_back(
+        {*found->second.descriptor, getFact(solver, value)});
+  });
   return success();
 }
 
@@ -260,7 +314,8 @@ static void rewriteFunction(DataFlowSolver &solver, sim::SimFuncOp function) {
 }
 
 static LogicalResult solveAndRewriteFunction(ArrayRef<FunctionInfo> functions,
-                                             unsigned functionIndex) {
+                                             unsigned functionIndex,
+                                             const DenseMap<uint64_t, BoundaryFact> &netFacts) {
   const FunctionInfo &info = functions[functionIndex];
   sim::SimFuncOp function = info.function;
   if (function.isExternal())
@@ -268,6 +323,7 @@ static LogicalResult solveAndRewriteFunction(ArrayRef<FunctionInfo> functions,
 
   DenseMap<Value, BoundaryFact> seeds;
   addBoundarySeeds(functions, functionIndex, seeds);
+  addNetSeeds(function, netFacts, seeds);
   DataFlowConfig config;
   config.setInterprocedural(false);
   DataFlowSolver solver(config);
@@ -282,6 +338,7 @@ static LogicalResult solveAndRewriteFunction(ArrayRef<FunctionInfo> functions,
 class ObeliskSimSCCPPass
     : public impl::ObeliskSimSCCPPassBase<ObeliskSimSCCPPass> {
 public:
+  using Base::Base;
   void runOnOperation() override;
 };
 
@@ -420,8 +477,9 @@ void ObeliskSimSCCPPass::runOnOperation() {
     if (failed(failableParallelForEach(
             design.getContext(), wave, [&](unsigned functionIndex) {
               auto observation = std::make_unique<FunctionObservation>();
-              if (failed(
-                      analyzeFunction(functions, functionIndex, *observation)))
+              static const DenseMap<uint64_t, BoundaryFact> noNetFacts;
+              if (failed(analyzeFunction(functions, functionIndex, noNetFacts,
+                                         *observation)))
                 return failure();
               observations[functionIndex] = std::move(observation);
               return success();
@@ -473,9 +531,165 @@ void ObeliskSimSCCPPass::runOnOperation() {
         result = getUnknownFact();
   }
 
+  // Resolved nets are ordinary scheduler state, so most reads are not SCCP
+  // boundaries.  A narrow exception is an invisible, full-width connected
+  // component with exactly one full-width driver and one exact value at every
+  // executable drive site.  Such a component is immutable after its
+  // continuous assignment initializes, and seeding its reads lets local SCCP
+  // erase configuration-disabled RTL before compute-graph fusion.  Writable
+  // VPI and language overrides deliberately disable this specialization.
+  DenseMap<uint64_t, BoundaryFact> netFacts;
+  if (vpi == "off") {
+    struct NetInfo {
+      Type type;
+      uint64_t width = 0;
+      bool visible = false;
+    };
+    DenseMap<uint64_t, NetInfo> nets;
+    DenseMap<uint64_t, SmallVector<uint64_t>> connections;
+    DenseMap<uint64_t, unsigned> driverCounts;
+    DenseMap<uint64_t, bool> hasFullDriver;
+    DenseSet<uint64_t> invalid;
+    bool hasOverride = false;
+
+    for (Operation &operation : design.getBody().front()) {
+      if (auto net = dyn_cast<sim::SimNetDeclOp>(operation)) {
+        std::optional<uint64_t> width = sim::getProvenanceSpan(net.getType());
+        if (!width)
+          continue;
+        bool visible = net.getObservability() &&
+                       *net.getObservability() !=
+                           sim::ComputeObservabilityKind::Invisible;
+        nets[net.getId()] = {net.getType(), *width, visible};
+        connections[net.getId()];
+        continue;
+      }
+      if (auto driver = dyn_cast<sim::SimDriverDeclOp>(operation)) {
+        ++driverCounts[driver.getNetId()];
+        auto net = nets.find(driver.getNetId());
+        std::optional<uint64_t> width =
+            sim::getProvenanceSpan(driver.getType());
+        uint64_t low = driver.getDrivenLowAttr()
+                           ? driver.getDrivenLowAttr().getValue().getZExtValue()
+                           : 0;
+        uint64_t drivenWidth =
+            driver.getDrivenWidthAttr()
+                ? driver.getDrivenWidthAttr().getValue().getZExtValue()
+                : width.value_or(0);
+        hasFullDriver[driver.getNetId()] =
+            net != nets.end() && width && driver.getType() == net->second.type &&
+            low == 0 && drivenWidth == net->second.width;
+      }
+    }
+    for (sim::SimNetConnectDeclOp connection :
+         design.getBody().front().getOps<sim::SimNetConnectDeclOp>()) {
+      uint64_t lhs = connection.getLhsNetId();
+      uint64_t rhs = connection.getRhsNetId();
+      connections[lhs].push_back(rhs);
+      connections[rhs].push_back(lhs);
+      auto lhsInfo = nets.find(lhs);
+      auto rhsInfo = nets.find(rhs);
+      if (lhsInfo == nets.end() || rhsInfo == nets.end() ||
+          lhsInfo->second.type != rhsInfo->second.type ||
+          connection.getLhsOffset() != 0 || connection.getRhsOffset() != 0 ||
+          connection.getWidth() != lhsInfo->second.width ||
+          connection.getWidth() != rhsInfo->second.width ||
+          connection.getRhsReversed()) {
+        invalid.insert(lhs);
+        invalid.insert(rhs);
+      }
+    }
+    design.walk([&](Operation *operation) {
+      hasOverride |= isa<sim::SimOverrideOp, sim::SimReleaseOverrideOp>(operation);
+    });
+
+    DenseMap<uint64_t, SmallVector<uint64_t>> components;
+    DenseMap<uint64_t, uint64_t> representatives;
+    DenseSet<uint64_t> visited;
+    if (!hasOverride) {
+      for (auto [root, unused] : connections) {
+        if (!visited.insert(root).second)
+          continue;
+        SmallVector<uint64_t> members{root};
+        uint64_t representative = root;
+        bool eligible = true;
+        unsigned drivers = 0;
+        bool fullDriver = false;
+        for (size_t index = 0; index != members.size(); ++index) {
+          uint64_t member = members[index];
+          representative = std::min(representative, member);
+          auto info = nets.find(member);
+          eligible &= info != nets.end() && !info->second.visible &&
+                      !invalid.contains(member);
+          drivers += driverCounts.lookup(member);
+          fullDriver |= hasFullDriver.lookup(member);
+          for (uint64_t neighbor : connections.lookup(member))
+            if (visited.insert(neighbor).second)
+              members.push_back(neighbor);
+        }
+        eligible &= drivers == 1 && fullDriver;
+        if (!eligible)
+          continue;
+        components[representative] = members;
+        for (uint64_t member : members)
+          representatives[member] = representative;
+      }
+    }
+
+    // Exact constants can expose another exact constant one net downstream.
+    // Grow the facts monotonically until a wave discovers nothing new.
+    while (!components.empty()) {
+      std::vector<std::unique_ptr<FunctionObservation>> observations(
+          functions.size());
+      if (failed(failableParallelForEach(
+              design.getContext(), deterministicOrder, [&](unsigned index) {
+                auto observation = std::make_unique<FunctionObservation>();
+                if (failed(analyzeFunction(functions, index, netFacts,
+                                           *observation)))
+                  return failure();
+                observations[index] = std::move(observation);
+                return success();
+              }))) {
+        signalPassFailure();
+        return;
+      }
+
+      DenseMap<uint64_t, BoundaryFact> componentFacts;
+      DenseSet<uint64_t> observedComponents;
+      for (const auto &observation : observations) {
+        if (!observation)
+          continue;
+        for (const DriveObservation &drive : observation->drives) {
+          auto representative = representatives.find(drive.net);
+          if (representative == representatives.end())
+            continue;
+          observedComponents.insert(representative->second);
+          auto [fact, inserted] = componentFacts.try_emplace(
+              representative->second, drive.value);
+          if (!inserted)
+            mergeFact(fact->second, drive.value);
+        }
+      }
+
+      bool changed = false;
+      for (auto [representative, members] : components) {
+        auto fact = componentFacts.find(representative);
+        if (fact == componentFacts.end() ||
+            !observedComponents.contains(representative) ||
+            fact->second.isUninitialized() ||
+            !fact->second.getConstantValue())
+          continue;
+        for (uint64_t member : members)
+          changed |= netFacts.try_emplace(member, fact->second).second;
+      }
+      if (!changed)
+        break;
+    }
+  }
+
   if (failed(failableParallelForEach(
           design.getContext(), deterministicOrder, [&](unsigned index) {
-            return solveAndRewriteFunction(functions, index);
+            return solveAndRewriteFunction(functions, index, netFacts);
           })))
     signalPassFailure();
 }

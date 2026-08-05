@@ -212,7 +212,10 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
   // symbol pruning before graph construction so its nested references can
   // never become stale.
   designManager.addPass(createSymbolDCEPass());
-  designManager.addPass(createObeliskSimSCCPPass());
+  ObeliskSimSCCPPassOptions firstSCCPOptions;
+  firstSCCPOptions.vpi = vpiMode.str();
+  designManager.addPass(
+      createObeliskSimSCCPPass(std::move(firstSCCPOptions)));
   {
     OpPassManager &functionManager = designManager.nest<sim::SimFuncOp>();
     functionManager.addPass(createCanonicalizerPass());
@@ -229,7 +232,10 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
     functionManager.addPass(createCanonicalizerPass());
     functionManager.addPass(createCSEPass());
   }
-  designManager.addPass(createObeliskSimSCCPPass());
+  ObeliskSimSCCPPassOptions secondSCCPOptions;
+  secondSCCPOptions.vpi = vpiMode.str();
+  designManager.addPass(
+      createObeliskSimSCCPPass(std::move(secondSCCPOptions)));
   {
     OpPassManager &functionManager = designManager.nest<sim::SimFuncOp>();
     functionManager.addPass(createCanonicalizerPass());

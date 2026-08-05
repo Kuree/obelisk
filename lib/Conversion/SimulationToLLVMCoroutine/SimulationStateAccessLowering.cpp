@@ -14,6 +14,12 @@ using namespace mlir;
 namespace obelisk::detail {
 namespace {
 
+bool useTwoStateSpecialization(Operation *operation, bool moduleWide) {
+  if (moduleWide)
+    return true;
+  return operation->hasAttr("obelisk.eval.inductive_two_state_access");
+}
+
 class RefLoadConversion final : public OpConversionPattern<sim::SimRefLoadOp> {
 public:
   RefLoadConversion(const TypeConverter &converter, MLIRContext *context,
@@ -27,6 +33,7 @@ public:
   matchAndRewrite(sim::SimRefLoadOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     Type resultType = op.getResult().getType();
+    bool twoState = useTwoStateSpecialization(op, experimentalTwoState);
     std::optional<unsigned> width = nativeStateWidth(resultType);
     if (!width || adaptor.getReference().size() != 1)
       return failure();
@@ -47,7 +54,7 @@ public:
           arith::BitcastOp::create(rewriter, op.getLoc(), resultType, value);
     SmallVector<Value> converted{value};
     if (containsLogic(resultType)) {
-      Value unknown = experimentalTwoState
+      Value unknown = twoState
                           ? llvmConstant(rewriter, op.getLoc(), plane, 0)
                           : loadStatePlane(
                                 rewriter, op.getLoc(),
@@ -83,6 +90,7 @@ public:
     if (adaptor.getReference().size() != 1 || adaptor.getValue().empty())
       return failure();
     Type valueType = op.getValue().getType();
+    bool twoState = useTwoStateSpecialization(op, experimentalTwoState);
     std::optional<unsigned> width = nativeStateWidth(valueType);
     if (!width)
       return failure();
@@ -113,7 +121,7 @@ public:
           rewriter, op.getLoc(), adaptor.getReference().front(), storedValue,
           "__obelisk_state_value", stateBitCount, directLayout,
           guardedPermission, assumeClean, /*trackChange=*/false);
-      if (adaptor.getValue().size() == 2 && !experimentalTwoState)
+      if (adaptor.getValue().size() == 2 && !twoState)
         (void)storeStatePlane(
             rewriter, op.getLoc(), adaptor.getReference().front(),
             adaptor.getValue()[1], "__obelisk_state_unknown", stateBitCount,
@@ -128,7 +136,7 @@ public:
                        directLayout, guardedPermission, assumeClean);
     Value oldUnknown;
     if (containsLogic(valueType))
-      oldUnknown = experimentalTwoState
+      oldUnknown = twoState
                        ? llvmConstant(rewriter, op.getLoc(), plane, 0)
                        : loadStatePlane(
                              rewriter, op.getLoc(),
@@ -154,7 +162,7 @@ public:
         storeStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
                         storedValue, "__obelisk_state_value", stateBitCount,
                         directLayout, guardedPermission, assumeClean);
-    if (adaptor.getValue().size() == 2 && !experimentalTwoState)
+    if (adaptor.getValue().size() == 2 && !twoState)
       changed = arith::OrIOp::create(
           rewriter, op.getLoc(), changed,
           storeStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
@@ -185,7 +193,7 @@ public:
     } else {
       notifySignal(rewriter, op.getLoc(), adaptor.getReference().front(),
                    *width, oldValue, oldUnknown, notificationValue,
-                   adaptor.getValue().size() == 2 && !experimentalTwoState
+                   adaptor.getValue().size() == 2 && !twoState
                        ? adaptor.getValue()[1]
                        : Value{},
                    directRange && (assumeClean || !directRange->guarded) &&
@@ -216,6 +224,7 @@ public:
   matchAndRewrite(sim::SimNetReadOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     Type resultType = op.getResult().getType();
+    bool twoState = useTwoStateSpecialization(op, experimentalTwoState);
     std::optional<unsigned> width = nativeStateWidth(resultType);
     if (!width || adaptor.getNet().size() != 1)
       return failure();
@@ -225,7 +234,7 @@ public:
                        "__obelisk_state_value", false, stateBitCount,
                        directLayout)};
     if (containsLogic(resultType)) {
-      Value unknown = experimentalTwoState
+      Value unknown = twoState
                           ? llvmConstant(rewriter, op.getLoc(), plane, 0)
                           : loadStatePlane(
                                 rewriter, op.getLoc(), adaptor.getNet().front(),

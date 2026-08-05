@@ -33,6 +33,7 @@ public:
   bool isEligible() const { return eligible; }
   bool isFullyEligible() const { return fullyEligible; }
   bool isAOTCostEffective() const { return aotCostEffective; }
+  bool hasPeriodicClockCandidate() const { return periodicClockCandidate; }
   uint64_t getTotalGraphCost() const { return totalGraphCost; }
   uint64_t getNativeGraphCost() const { return nativeGraphCost; }
   mlir::ArrayRef<std::string> getReasons() const { return reasons; }
@@ -49,6 +50,7 @@ private:
   bool eligible = false;
   bool fullyEligible = false;
   bool aotCostEffective = false;
+  bool periodicClockCandidate = false;
   uint64_t totalGraphCost = 0;
   uint64_t nativeGraphCost = 0;
   mlir::SmallVector<std::string> reasons;

@@ -39,20 +39,7 @@ LogicalResult makeSchedulerMain(ModuleOp module,
       LLVM::LLVMFunctionType::get(i32, {i32, pointer}, false));
   Block *entry = main.addEntryBlock(builder);
   builder.setInsertionPointToStart(entry);
-  if (directEval) {
-    // The eval ceiling is a self-contained generated program.  Do not create
-    // a runtime context or enter the coroutine scheduler merely to reach its
-    // native loop.
-    Value none = LLVM::ZeroOp::create(builder, location, pointer);
-    Value status =
-        LLVM::CallOp::create(
-            builder, location, TypeRange{i32},
-            SymbolRefAttr::get(context, "__obelisk_aot_schedule_run_v1"),
-            ValueRange{none, none})
-            .getResult();
-    LLVM::ReturnOp::create(builder, location, status);
-    return success();
-  }
+  (void)directEval;
   Block *ready = new Block;
   Block *failed = new Block;
   main.getBody().push_back(ready);

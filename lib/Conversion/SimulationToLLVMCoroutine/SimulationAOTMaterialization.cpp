@@ -4,12 +4,14 @@
 #include "SimulationToLLVMCoroutinePrivate.h"
 
 #include "obelisk/Runtime/Runtime.h"
+#include "obelisk/Runtime/StableHandle.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include <numeric>
 
 using namespace mlir;
 
@@ -23,18 +25,44 @@ LogicalResult makeNativeEvalPlan(
     const NativeStaticFanoutPlan &staticFanoutPlan,
     ArrayRef<obelisk_rt_static_actor_root> actorRoots,
     ArrayRef<NativeDirectFragment> directFragments,
-    ArrayRef<NativePeriodicClock> periodicClocks, bool enableDirectState,
+    sim::ComputeGraphAttr computeGraph,
+    ArrayRef<NativePeriodicClock> periodicClocks,
+    ArrayRef<NativePeriodicAlias> periodicAliases,
+    ArrayRef<NativePromotionRange> evalPromotionRanges, bool enableDirectState,
     bool enableStaticNBA, bool enableStaticControl, bool enableStaticFanout,
     bool enableCleanSuperstep, bool evalScheduler, bool fullyStatic,
     bool rootSlotZero, const analysis::SimulationVPIAnalysis &vpi) {
   if (actorCount == 0 || executableNodes.empty())
     return module.emitError("AOT schedule has no executable actor nodes");
+  if (evalScheduler)
+    module->setAttr("obelisk.eval.generated", UnitAttr::get(module.getContext()));
   MLIRContext *context = module.getContext();
   OpBuilder builder(context);
   Location location = module.getLoc();
   Type pointer = LLVM::LLVMPointerType::get(context);
   Type i32 = builder.getI32Type();
   Type i64 = builder.getI64Type();
+  SmallVector<NativePromotionRange> promotionRanges(evalPromotionRanges);
+  bool promotionRangesComplete = true;
+  if (evalScheduler) {
+    // Remaining unknown-plane loads belong to deliberately four-state-local
+    // computations.  Promotion guards exactly the source accesses whose
+    // unknown planes the selected variant suppresses; treating surviving
+    // implementation loads as additional preconditions recreates a
+    // whole-model scan and prevents independent promotion in the presence of
+    // dormant X state.
+    llvm::sort(promotionRanges, [](const auto &lhs, const auto &rhs) {
+      return std::tie(lhs.bitOffset, lhs.bitWidth) <
+             std::tie(rhs.bitOffset, rhs.bitWidth);
+    });
+    promotionRanges.erase(
+        std::unique(promotionRanges.begin(), promotionRanges.end(),
+                    [](const auto &lhs, const auto &rhs) {
+                      return lhs.bitOffset == rhs.bitOffset &&
+                             lhs.bitWidth == rhs.bitWidth;
+                    }),
+        promotionRanges.end());
+  }
   ArrayRef<obelisk_rt_static_nba_root> nbaRoots = staticNBAPlan.roots;
   ArrayRef<obelisk_rt_static_nba_site> nbaSites = staticNBAPlan.sites;
   SmallVector<obelisk_rt_static_fanout_entry> indexedFanoutEntries;
@@ -69,6 +97,28 @@ LogicalResult makeNativeEvalPlan(
   SmallVector<GeneratedClockKernel> clockKernels;
   SmallVector<obelisk_rt_native_merged_fragment> mergedFragments;
   SmallVector<std::string> mergedExecutors;
+  SmallVector<std::string> mergedTwoStateExecutors;
+  SmallVector<SmallVector<NativePromotionRange>> mergedPromotionRanges;
+  SmallVector<unsigned> periodicClosureRecords;
+  auto findExclusiveFusionOwner = [&](uint32_t group) {
+    auto best = directFragments.end();
+    size_t bestExtent = 0;
+    bool ambiguous = false;
+    for (auto candidate = directFragments.begin();
+         candidate != directFragments.end(); ++candidate) {
+      if (candidate->fusionGroup != group)
+        continue;
+      size_t extent = candidate->fragmentIDs.size();
+      if (best == directFragments.end() || extent > bestExtent) {
+        best = candidate;
+        bestExtent = extent;
+        ambiguous = false;
+      } else if (extent == bestExtent && candidate->wrapper != best->wrapper) {
+        ambiguous = true;
+      }
+    }
+    return ambiguous ? directFragments.end() : best;
+  };
   struct DynamicEvalNBA {
     uint32_t rootIndex;
     uint64_t site;
@@ -95,18 +145,12 @@ LogicalResult makeNativeEvalPlan(
                                      return lhs.key() == rhs.key();
                                    }),
                        clockKernels.end());
-    // The experimental eval scheduler uses one model-wide ready mask.  The
-    // fanout table still performs exact state/range/edge tests, but all of
-    // those tests target a body bit in the same mask, just like Verilator's
-    // global active trigger vector.
-    if (evalScheduler && !clockKernels.empty()) {
-      GeneratedClockKernel evalKernel = clockKernels.front();
-      clockKernels.clear();
-      clockKernels.push_back(std::move(evalKernel));
-    }
     for (auto [index, kernel] : llvm::enumerate(clockKernels))
       kernel.ingressName =
-          (Twine("__obelisk_aot_clock_ingress_v1_") + Twine(index)).str();
+          evalScheduler
+              ? "__obelisk_aot_model_ingress_v1"
+              : (Twine("__obelisk_aot_clock_ingress_v1_") + Twine(index))
+                    .str();
     for (auto [index, kernel] : llvm::enumerate(clockKernels))
       kernel.activeName =
           (Twine("__obelisk_aot_model_active_v1_") + Twine(index)).str();
@@ -114,32 +158,143 @@ LogicalResult makeNativeEvalPlan(
     for (obelisk_rt_static_fanout_entry &entry : indexedFanoutEntries) {
       if (evalScheduler) {
         const auto &executable = executableNodes[entry.compute_node];
-        auto merged =
-            llvm::find_if(mergedFragments, [&](const auto &candidate) {
+        auto owner = llvm::lower_bound(
+            clockKernels,
+            std::tuple{entry.static_state, entry.low_bit, entry.bit_width,
+                       static_cast<uint32_t>(entry.edge)},
+            [](const GeneratedClockKernel &kernel, const auto &key) {
+              return kernel.key() < key;
+            });
+        if (owner == clockKernels.end() ||
+            owner->key() !=
+                std::tuple{entry.static_state, entry.low_bit, entry.bit_width,
+                           static_cast<uint32_t>(entry.edge)})
+          return module.emitError("could not index generated eval trigger"),
+                 failure();
+        entry.kernel = static_cast<uint32_t>(owner - clockKernels.begin());
+        bool forwardingAlias = llvm::any_of(
+            periodicAliases, [&](const NativePeriodicAlias &alias) {
+              if (alias.sourceStaticState != entry.static_state ||
+                  alias.forwardingActorSlot != executable.actor_slot ||
+                  alias.forwardingContinuation != executable.continuation)
+                return false;
+              auto bound = llvm::find_if(
+                  stateLayout.bounds, [&](const auto &candidate) {
+                    return candidate.handleID == entry.static_state;
+                  });
+              if (bound == stateLayout.bounds.end() ||
+                  alias.sourceBitOffset < bound->offset)
+                return false;
+              uint64_t localBit = alias.sourceBitOffset - bound->offset;
+              return entry.low_bit <= localBit &&
+                     localBit - entry.low_bit < entry.bit_width;
+            });
+        if (forwardingAlias) {
+          // run_until mirrors this proven continuous clock alias before
+          // seeding target fanout. The forwarding process has no independent
+          // activation body and therefore must not consume a merged-ready bit.
+          entry.reserved = 2;
+          entry.merged_bit = 0;
+          continue;
+        }
+        auto direct = llvm::find_if(
+            directFragments, [&](const NativeDirectFragment &candidate) {
+              return llvm::is_contained(
+                  candidate.sourceOwners,
+                  std::pair{executable.actor_slot, executable.continuation});
+            });
+        if (direct != directFragments.end() &&
+            llvm::count_if(
+                directFragments, [&](const NativeDirectFragment &candidate) {
+                  return llvm::is_contained(
+                      candidate.sourceOwners,
+                      std::pair{executable.actor_slot,
+                                executable.continuation});
+                }) != 1)
+          return module.emitError(
+              "stable eval source owner maps to multiple generated bodies");
+        if (direct == directFragments.end() &&
+            executable.fusion_group != UINT32_MAX)
+          direct = findExclusiveFusionOwner(executable.fusion_group);
+        if (direct == directFragments.end())
+          direct =
+              llvm::find_if(directFragments, [&](const auto &candidate) {
+                return candidate.actorSlot == executable.actor_slot &&
+                       candidate.continuation == executable.continuation;
+              });
+        if (direct == directFragments.end()) {
+          auto fragments = staticFanoutPlan.fragments.find(
+              {executable.actor_slot, executable.continuation});
+          if (fragments != staticFanoutPlan.fragments.end() &&
+              !fragments->second.empty()) {
+            auto best = directFragments.end();
+            size_t bestSize = SIZE_MAX;
+            bool ambiguous = false;
+            for (auto candidate = directFragments.begin();
+                 candidate != directFragments.end(); ++candidate) {
+              // Continuation IDs can be rebuilt after the static fanout plan,
+              // but current-epoch fragment containment within the same actor
+              // still identifies the exact activation body.  Cross-actor
+              // fusion requires an explicit fusion-group certificate below;
+              // numeric fragment containment is not one.
+              if (candidate->actorSlot != executable.actor_slot)
+                continue;
+              if (!llvm::all_of(fragments->second, [&](uint32_t fragment) {
+                    return llvm::is_contained(candidate->fragmentIDs,
+                                              fragment);
+                  }))
+                continue;
+              if (best == directFragments.end() ||
+                  candidate->fragmentIDs.size() < bestSize) {
+                best = candidate;
+                bestSize = candidate->fragmentIDs.size();
+                ambiguous = false;
+              } else if (candidate->fragmentIDs.size() == bestSize)
+                ambiguous = true;
+            }
+            direct = ambiguous ? directFragments.end() : best;
+          }
+        }
+        auto merged = llvm::find_if(
+            mergedFragments, [&](const auto &candidate) {
+              size_t index = static_cast<size_t>(&candidate -
+                                                 mergedFragments.data());
+              if (direct != directFragments.end())
+                return index < mergedExecutors.size() &&
+                       mergedExecutors[index] == direct->wrapper;
               return candidate.actor_slot == executable.actor_slot &&
                      candidate.continuation == executable.continuation;
             });
-        entry.kernel = 0;
         if (merged != mergedFragments.end()) {
           entry.merged_bit = merged->bit;
           size_t mergedIndex =
               static_cast<size_t>(merged - mergedFragments.begin());
           entry.reserved = !mergedExecutors[mergedIndex].empty() ? 1u : 0u;
+          merged->compute_node =
+              std::min(merged->compute_node, entry.compute_node);
           continue;
         }
         entry.merged_bit = static_cast<uint32_t>(mergedFragments.size());
-        clockKernels.front().computeNodes.push_back(entry.compute_node);
-        auto direct =
-            llvm::find_if(directFragments, [&](const auto &candidate) {
-              return candidate.actorSlot == executable.actor_slot &&
-                     candidate.continuation == executable.continuation;
-            });
+        owner->computeNodes.push_back(entry.compute_node);
         entry.reserved = direct != directFragments.end() ? 1u : 0u;
-        mergedFragments.push_back({executable.actor_slot,
-                                   executable.continuation, 0, entry.merged_bit,
-                                   entry.compute_node, 0, nullptr});
+        uint32_t ownerActor = direct != directFragments.end()
+                                  ? direct->actorSlot
+                                  : executable.actor_slot;
+        uint32_t ownerContinuation =
+            direct != directFragments.end() ? direct->continuation
+                                            : executable.continuation;
+        mergedFragments.push_back(
+            {ownerActor, ownerContinuation, entry.kernel,
+             entry.merged_bit, entry.compute_node, 0, nullptr});
         mergedExecutors.push_back(
             direct != directFragments.end() ? direct->wrapper : std::string{});
+        mergedTwoStateExecutors.push_back(
+            direct != directFragments.end() ? direct->twoStateWrapper
+                                            : std::string{});
+        mergedPromotionRanges.emplace_back();
+        if (direct != directFragments.end())
+          llvm::append_range(mergedPromotionRanges.back(),
+                             direct->promotionRanges);
         continue;
       }
       auto found = llvm::lower_bound(
@@ -165,24 +320,300 @@ LogicalResult makeNativeEvalPlan(
               return candidate.actorSlot == executable.actor_slot &&
                      candidate.continuation == executable.continuation;
             });
+        if (direct == directFragments.end() &&
+            executable.fusion_group != UINT32_MAX)
+          direct = llvm::find_if(directFragments, [&](const auto &candidate) {
+            return candidate.fusionGroup == executable.fusion_group;
+          });
         mergedFragments.push_back(
             {executable.actor_slot, executable.continuation, entry.kernel,
              entry.merged_bit, entry.compute_node, 0, nullptr});
         mergedExecutors.push_back(
             direct != directFragments.end() ? direct->wrapper
-            : evalScheduler                 ? ((executable.actor_slot <= 51)
-                                                   ? (Twine("__obelisk_eval_actor_") +
-                                      Twine(executable.actor_slot))
-                                         .str()
-                                                   : std::string{})
                                             : std::string{});
+        mergedTwoStateExecutors.push_back(
+            direct != directFragments.end() ? direct->twoStateWrapper
+                                            : std::string{});
+        mergedPromotionRanges.emplace_back();
+        if (direct != directFragments.end())
+          llvm::append_range(mergedPromotionRanges.back(),
+                             direct->promotionRanges);
       } else {
         entry.merged_bit =
             static_cast<uint32_t>(node - found->computeNodes.begin());
       }
     }
+    if (evalScheduler && !mergedFragments.empty()) {
+      SmallVector<unsigned> order(mergedFragments.size());
+      std::iota(order.begin(), order.end(), 0u);
+      llvm::sort(order, [&](unsigned lhs, unsigned rhs) {
+        const auto &left = mergedFragments[lhs];
+        const auto &right = mergedFragments[rhs];
+        return std::tuple{left.compute_node, left.actor_slot,
+                          left.continuation} <
+               std::tuple{right.compute_node, right.actor_slot,
+                          right.continuation};
+      });
+      SmallVector<uint32_t> remap(mergedFragments.size());
+      SmallVector<obelisk_rt_native_merged_fragment> rankedFragments;
+      SmallVector<std::string> rankedExecutors;
+      SmallVector<std::string> rankedTwoStateExecutors;
+      SmallVector<SmallVector<NativePromotionRange>> rankedPromotionRanges;
+      rankedFragments.reserve(order.size());
+      rankedExecutors.reserve(order.size());
+      rankedTwoStateExecutors.reserve(order.size());
+      rankedPromotionRanges.reserve(order.size());
+      for (auto [rank, oldIndex] : llvm::enumerate(order)) {
+        remap[oldIndex] = static_cast<uint32_t>(rank);
+        auto fragment = mergedFragments[oldIndex];
+        fragment.bit = static_cast<uint32_t>(rank);
+        rankedFragments.push_back(fragment);
+        rankedExecutors.push_back(std::move(mergedExecutors[oldIndex]));
+        rankedTwoStateExecutors.push_back(
+            std::move(mergedTwoStateExecutors[oldIndex]));
+        rankedPromotionRanges.push_back(
+            std::move(mergedPromotionRanges[oldIndex]));
+      }
+      mergedFragments = std::move(rankedFragments);
+      mergedExecutors = std::move(rankedExecutors);
+      mergedTwoStateExecutors = std::move(rankedTwoStateExecutors);
+      mergedPromotionRanges = std::move(rankedPromotionRanges);
+      for (auto &entry : indexedFanoutEntries)
+        if (entry.reserved != 2)
+          entry.merged_bit = remap[entry.merged_bit];
+    }
+    for (const NativeDirectFragment &direct : directFragments)
+      if (direct.tier2Convergence)
+        for (StringRef name : {StringRef(direct.wrapper),
+                               StringRef(direct.twoStateWrapper)})
+          if (!name.empty())
+            if (auto function =
+                    module.lookupSymbol<LLVM::LLVMFuncOp>(name))
+              function->setAttr("obelisk.eval.tier2_convergence",
+                                UnitAttr::get(context));
     fanoutEntries = indexedFanoutEntries;
   }
+  // Promotion is a property of the periodic execution closure, not of every
+  // four-state object in the design.  Seed the closure from every physical
+  // periodic trigger (including proven port aliases), then follow the frozen
+  // compute graph through sensitivity, NBA, and convergence edges.  Dormant
+  // asynchronous owners remain outside this scan and are handled by the
+  // runtime handoff/invalidation path.
+  if (evalScheduler && !mergedFragments.empty() && computeGraph) {
+    llvm::SmallDenseSet<unsigned, 32> closure;
+    auto clockTouches = [&](const NativePeriodicClock &clock,
+                            const obelisk_rt_static_fanout_entry &entry) {
+      if (entry.static_state != clock.staticState || entry.bit_width == 0)
+        return false;
+      auto bound = llvm::find_if(stateLayout.bounds, [&](const auto &candidate) {
+        return candidate.handleID == clock.staticState;
+      });
+      if (bound == stateLayout.bounds.end() ||
+          clock.bitOffset < bound->offset ||
+          clock.bitOffset - bound->offset >= bound->width)
+        return false;
+      uint64_t bit = clock.bitOffset - bound->offset;
+      return entry.low_bit <= bit && bit - entry.low_bit < entry.bit_width;
+    };
+    for (const auto &entry : fanoutEntries) {
+      if (entry.reserved == 0 || entry.reserved == 2 ||
+          entry.merged_bit >= mergedFragments.size())
+        continue;
+      bool periodic = llvm::any_of(periodicClocks, [&](const auto &clock) {
+        return clockTouches(clock, entry);
+      });
+      periodic |= llvm::any_of(periodicAliases, [&](const auto &alias) {
+        return entry.static_state == alias.targetStaticState &&
+               entry.low_bit == 0 && entry.bit_width != 0;
+      });
+      if (periodic)
+        closure.insert(entry.merged_bit);
+    }
+    const llvm::SmallDenseSet<unsigned, 32> periodicSeeds = closure;
+    llvm::DenseMap<uint32_t, unsigned> fragmentOwners;
+    llvm::SmallDenseSet<uint32_t, 16> ambiguousFragments;
+    for (auto [recordIndex, executor] : llvm::enumerate(mergedExecutors)) {
+      if (executor.empty())
+        continue;
+      auto direct = llvm::find_if(directFragments, [&](const auto &candidate) {
+        return candidate.wrapper == executor;
+      });
+      if (direct == directFragments.end())
+        continue;
+      for (uint32_t fragment : direct->fragmentIDs) {
+        auto [found, inserted] = fragmentOwners.try_emplace(fragment,
+                                                            recordIndex);
+        if (!inserted && found->second != recordIndex)
+          ambiguousFragments.insert(fragment);
+      }
+    }
+    for (uint32_t fragment : ambiguousFragments)
+      fragmentOwners.erase(fragment);
+
+    bool changed;
+    do {
+      changed = false;
+      for (Attribute attribute : computeGraph.getEdges()) {
+        auto edge = cast<sim::ComputeEdgeAttr>(attribute);
+        auto source = fragmentOwners.find(edge.getSource());
+        if (source == fragmentOwners.end() ||
+            !closure.contains(source->second))
+          continue;
+        if (auto target = fragmentOwners.find(edge.getTarget());
+            target != fragmentOwners.end())
+          changed |= closure.insert(target->second).second;
+      }
+    } while (changed);
+
+    periodicClosureRecords.assign(closure.begin(), closure.end());
+    llvm::sort(periodicClosureRecords);
+
+    SmallVector<NativePromotionRange> periodicRanges;
+    // Entry owners select the outer periodic variant. Downstream owners retain
+    // independent promotion latches in the transient coordinator.
+    for (unsigned recordIndex : periodicSeeds) {
+      if (recordIndex >= mergedExecutors.size())
+        continue;
+      auto direct = llvm::find_if(directFragments, [&](const auto &candidate) {
+        return candidate.wrapper == mergedExecutors[recordIndex];
+      });
+      if (direct != directFragments.end())
+        llvm::append_range(periodicRanges, direct->promotionRanges);
+    }
+    if (!periodicRanges.empty()) {
+      llvm::sort(periodicRanges, [](const auto &lhs, const auto &rhs) {
+        return std::tie(lhs.bitOffset, lhs.bitWidth) <
+               std::tie(rhs.bitOffset, rhs.bitWidth);
+      });
+      periodicRanges.erase(
+          std::unique(periodicRanges.begin(), periodicRanges.end(),
+                      [](const auto &lhs, const auto &rhs) {
+                        return lhs.bitOffset == rhs.bitOffset &&
+                               lhs.bitWidth == rhs.bitWidth;
+                      }),
+          periodicRanges.end());
+      promotionRanges = std::move(periodicRanges);
+    }
+  }
+  // A four-state owner only taints the common NBA barrier when its activation
+  // can reach an NBA staging fragment before that barrier.  Read-only
+  // observers (including termination/checkpoint monitors) may remain on a
+  // four-state route without forcing every fixed root through unknown-plane
+  // merge and edge detection.  Compute this property on physical graph
+  // fragments, then project it onto exclusive generated owners.  Reverse
+  // sensitivity closure handles an upstream four-state writer waking a later
+  // NBA producer; control/conflict ordering alone does not carry data and must
+  // not create false taint.
+  uint32_t nbaTaintWordCount = static_cast<uint32_t>((nbaRoots.size() + 63) / 64);
+  SmallVector<SmallVector<uint64_t>> recordNBATaintMasks(
+      mergedFragments.size(), SmallVector<uint64_t>(nbaTaintWordCount, 0));
+  llvm::SmallDenseSet<unsigned, 32> nbaTaintedRecords;
+  if (evalScheduler && !mergedFragments.empty()) {
+    auto fillAllRoots = [&](MutableArrayRef<uint64_t> mask) {
+      llvm::fill(mask, UINT64_MAX);
+      if (!mask.empty() && (nbaRoots.size() & 63) != 0)
+        mask.back() = (uint64_t{1} << (nbaRoots.size() & 63)) - 1;
+    };
+    if (!computeGraph) {
+      for (unsigned index = 0; index != mergedFragments.size(); ++index) {
+        fillAllRoots(recordNBATaintMasks[index]);
+        nbaTaintedRecords.insert(index);
+      }
+    } else {
+      llvm::DenseMap<uint32_t, SmallVector<uint64_t>> fragmentNBARoots;
+      for (Attribute attribute : computeGraph.getNodes()) {
+        auto fragment = dyn_cast<sim::ComputeFragmentAttr>(attribute);
+        if (!fragment)
+          continue;
+        auto &mask = fragmentNBARoots[fragment.getId()];
+        mask.resize(nbaTaintWordCount, 0);
+        for (Attribute raw : fragment.getEffects()) {
+          auto effect = cast<sim::ComputeEffectAttr>(raw);
+          if (effect.getEffect() != sim::ComputeEffectKind::NBA)
+            continue;
+          auto handle = stateLayout.storage.find(effect.getDescriptor());
+          obelisk_rt_stable_handle_v1 decoded{};
+          if (handle == stateLayout.storage.end() ||
+              !obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
+              decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC) {
+            fillAllRoots(mask);
+            continue;
+          }
+          auto root = llvm::find_if(nbaRoots, [&](const auto &candidate) {
+            return candidate.static_state == decoded.id;
+          });
+          if (root == nbaRoots.end()) {
+            fillAllRoots(mask);
+            continue;
+          }
+          size_t rootIndex = static_cast<size_t>(root - nbaRoots.begin());
+          mask[rootIndex / 64] |= uint64_t{1} << (rootIndex % 64);
+        }
+      }
+      bool changed;
+      do {
+        changed = false;
+        for (Attribute attribute : computeGraph.getEdges()) {
+          auto edge = cast<sim::ComputeEdgeAttr>(attribute);
+          if (edge.getKind() != sim::ComputeEdgeKind::Sensitivity &&
+              edge.getKind() != sim::ComputeEdgeKind::Resume &&
+              edge.getKind() != sim::ComputeEdgeKind::Spawn)
+            continue;
+          auto target = fragmentNBARoots.find(edge.getTarget());
+          if (target == fragmentNBARoots.end())
+            continue;
+          auto &source = fragmentNBARoots[edge.getSource()];
+          source.resize(nbaTaintWordCount, 0);
+          for (uint32_t word = 0; word != nbaTaintWordCount; ++word) {
+            uint64_t merged = source[word] | target->second[word];
+            changed |= merged != source[word];
+            source[word] = merged;
+          }
+        }
+      } while (changed);
+      for (auto [recordIndex, executor] : llvm::enumerate(mergedExecutors)) {
+        auto direct = llvm::find_if(directFragments, [&](const auto &candidate) {
+          return candidate.wrapper == executor;
+        });
+        if (direct == directFragments.end()) {
+          fillAllRoots(recordNBATaintMasks[recordIndex]);
+          nbaTaintedRecords.insert(static_cast<unsigned>(recordIndex));
+          continue;
+        }
+        for (uint32_t fragment : direct->fragmentIDs)
+          if (auto roots = fragmentNBARoots.find(fragment);
+              roots != fragmentNBARoots.end())
+            for (uint32_t word = 0; word != nbaTaintWordCount; ++word)
+              recordNBATaintMasks[recordIndex][word] |= roots->second[word];
+        if (llvm::any_of(recordNBATaintMasks[recordIndex],
+                         [](uint64_t word) { return word != 0; }))
+          nbaTaintedRecords.insert(static_cast<unsigned>(recordIndex));
+      }
+    }
+  }
+  auto ownerMayTaintNBA = [&](unsigned recordIndex) {
+    return nbaTaintedRecords.contains(recordIndex);
+  };
+  auto markOwnerNBATaint = [&](unsigned recordIndex) {
+    if (!ownerMayTaintNBA(recordIndex) || nbaTaintWordCount == 0)
+      return;
+    Value taintBase = LLVM::AddressOfOp::create(
+        builder, location, pointer,
+        "__obelisk_eval_step_four_state_nba_roots_v1");
+    for (uint32_t word = 0; word != nbaTaintWordCount; ++word) {
+      uint64_t mask = recordNBATaintMasks[recordIndex][word];
+      if (mask == 0)
+        continue;
+      Value address = byteGEP(builder, location, taintBase,
+                              uint64_t{word} * sizeof(uint64_t));
+      Value old = LLVM::LoadOp::create(builder, location, i64, address, 8);
+      LLVM::StoreOp::create(
+          builder, location,
+          arith::OrIOp::create(builder, location, old,
+                               llvmConstant(builder, location, i64, mask)),
+          address, 8);
+    }
+  };
   // Static time/region control and exact actor fanout are independent of VPI
   // reads. Writable VPI hands dirty roots and the affected event slot to the
   // existing guarded state/control paths; the exact dependency table remains
@@ -204,6 +635,8 @@ LogicalResult makeNativeEvalPlan(
     clockKernels.clear();
     mergedFragments.clear();
     mergedExecutors.clear();
+    mergedTwoStateExecutors.clear();
+    mergedPromotionRanges.clear();
     for (obelisk_rt_static_fanout_entry &entry : indexedFanoutEntries) {
       entry.kernel = 0;
       entry.merged_bit = 0;
@@ -238,11 +671,45 @@ LogicalResult makeNativeEvalPlan(
   constexpr StringLiteral runName = "__obelisk_aot_schedule_run_v1";
   constexpr StringLiteral snapshotName = "__obelisk_aot_schedule_snapshot_v1";
   constexpr StringLiteral nbaCommitName = "__obelisk_aot_static_nba_commit_v1";
+  constexpr StringLiteral nbaKnownName = "__obelisk_eval_nba_known_v1";
   constexpr StringLiteral coordinatorName =
       "__obelisk_aot_timeslot_coordinator_v1";
   constexpr StringLiteral evalCoordinatorName =
       "__obelisk_eval_fast_coordinator_v1";
+  constexpr StringLiteral evalTwoStateCoordinatorName =
+      "__obelisk_eval_fast_coordinator_two_state_v1";
+  constexpr StringLiteral evalPeriodicTwoStateCoordinatorName =
+      "__obelisk_eval_periodic_two_state_coordinator_v1";
+  constexpr StringLiteral evalHybridCoordinatorName =
+      "__obelisk_eval_fast_coordinator_hybrid_v1";
+  constexpr StringLiteral evalStepFourStateFallbackName =
+      "__obelisk_eval_step_four_state_fallback_v1";
+  constexpr StringLiteral evalStepFourStateNBARootsName =
+      "__obelisk_eval_step_four_state_nba_roots_v1";
+  constexpr StringLiteral evalFastNBALatchedName =
+      "__obelisk_eval_fast_nba_latched_v1";
+  constexpr StringLiteral periodicTerminationName =
+      "__obelisk_periodic_termination_v1";
+  constexpr StringLiteral promotionReadyName =
+      "__obelisk_eval_promotion_ready_v1";
+  constexpr StringLiteral promotionLatchedName =
+      "__obelisk_eval_promotion_latched_v1";
+  constexpr StringLiteral periodicPromotionLatchedName =
+      "__obelisk_eval_periodic_promotion_latched_v1";
+  constexpr StringLiteral periodicPromotionReadyName =
+      "__obelisk_eval_periodic_promotion_ready_v1";
+  constexpr StringLiteral promotionKernelLatchedName =
+      "__obelisk_eval_kernel_promotion_latched_v1";
+  constexpr StringLiteral promotionPendingMaskName =
+      "__obelisk_eval_promotion_pending_mask_v1";
+  constexpr StringLiteral promotionInvalidateName =
+      "__obelisk_eval_promotion_invalidate_v1";
+  constexpr StringLiteral promotionQueryName =
+      "__obelisk_eval_promotion_query_v1";
   constexpr StringLiteral planName = "__obelisk_aot_schedule_plan_v1";
+  SmallVector<std::string> promotionKernelReadyNames(mergedFragments.size());
+  bool periodicPromotionComplete = false;
+  uint64_t periodicPromotionMask = 0;
 
   builder.setInsertionPointToStart(module.getBody());
   auto state = LLVM::GlobalOp::create(builder, location, stateType, false,
@@ -253,6 +720,385 @@ LogicalResult makeNativeEvalPlan(
   builder.setInsertionPointToStart(initializer);
   LLVM::ReturnOp::create(builder, location,
                          LLVM::ZeroOp::create(builder, location, stateType));
+
+  builder.setInsertionPointToStart(module.getBody());
+  auto periodicTermination = LLVM::GlobalOp::create(
+      builder, location, pointer, false, LLVM::Linkage::Internal,
+      periodicTerminationName, Attribute{}, 8);
+  Block *periodicTerminationInitializer = new Block;
+  periodicTermination.getInitializerRegion().push_back(
+      periodicTerminationInitializer);
+  builder.setInsertionPointToStart(periodicTerminationInitializer);
+  LLVM::ReturnOp::create(
+      builder, location,
+      LLVM::ZeroOp::create(builder, location, pointer));
+
+  if (evalScheduler) {
+    builder.setInsertionPointToStart(module.getBody());
+    (void)LLVM::GlobalOp::create(
+        builder, location, builder.getI8Type(), false,
+        LLVM::Linkage::Internal, evalStepFourStateFallbackName,
+        builder.getI8IntegerAttr(0), 1);
+    builder.setInsertionPointToStart(module.getBody());
+    (void)LLVM::GlobalOp::create(
+        builder, location, builder.getI8Type(), false,
+        LLVM::Linkage::Internal, evalFastNBALatchedName,
+        builder.getI8IntegerAttr(0), 1);
+    if (nbaTaintWordCount != 0) {
+      Type taintType =
+          LLVM::LLVMArrayType::get(i64, nbaTaintWordCount);
+      builder.setInsertionPointToStart(module.getBody());
+      auto taint = LLVM::GlobalOp::create(
+          builder, location, taintType, false, LLVM::Linkage::Internal,
+          evalStepFourStateNBARootsName, Attribute{}, 8);
+      Block *initializer = new Block;
+      taint.getInitializerRegion().push_back(initializer);
+      builder.setInsertionPointToStart(initializer);
+      LLVM::ReturnOp::create(
+          builder, location,
+          LLVM::ZeroOp::create(builder, location, taintType));
+    }
+    builder.setInsertionPointToStart(module.getBody());
+    auto promotionLatched = LLVM::GlobalOp::create(
+        builder, location, builder.getI8Type(), false,
+        LLVM::Linkage::Internal, promotionLatchedName,
+        builder.getI8IntegerAttr(0), 1);
+
+    builder.setInsertionPointToStart(module.getBody());
+    auto periodicPromotionLatched = LLVM::GlobalOp::create(
+        builder, location, builder.getI8Type(), false,
+        LLVM::Linkage::Internal, periodicPromotionLatchedName,
+        builder.getI8IntegerAttr(0), 1);
+
+    Type kernelLatchType =
+        LLVM::LLVMArrayType::get(builder.getI8Type(), mergedFragments.size());
+    builder.setInsertionPointToStart(module.getBody());
+    auto promotionKernelLatched = LLVM::GlobalOp::create(
+        builder, location, kernelLatchType, false, LLVM::Linkage::Internal,
+        promotionKernelLatchedName, Attribute{}, 1);
+    Block *kernelLatchInitializer = new Block;
+    promotionKernelLatched.getInitializerRegion().push_back(
+        kernelLatchInitializer);
+    builder.setInsertionPointToStart(kernelLatchInitializer);
+    LLVM::ReturnOp::create(
+        builder, location,
+        LLVM::ZeroOp::create(builder, location, kernelLatchType));
+
+    uint64_t initialPromotionPendingMask = 0;
+    for (auto [index, executor] : llvm::enumerate(mergedTwoStateExecutors))
+      if (!executor.empty() && mergedFragments[index].bit < 64)
+        initialPromotionPendingMask |=
+            uint64_t{1} << mergedFragments[index].bit;
+    builder.setInsertionPointToStart(module.getBody());
+    auto promotionPendingMask = LLVM::GlobalOp::create(
+        builder, location, i64, false, LLVM::Linkage::Internal,
+        promotionPendingMaskName,
+        builder.getI64IntegerAttr(initialPromotionPendingMask), 8);
+
+    // Scan an outlined owner's exact canonical closure independently. A
+    // dormant X-valued instance therefore cannot keep unrelated clock owners
+    // on their four-state route.
+    for (auto [index, twoStateExecutor] :
+         llvm::enumerate(mergedTwoStateExecutors)) {
+      if (twoStateExecutor.empty())
+        continue;
+      std::string readyName =
+          (Twine("__obelisk_eval_kernel_promotion_ready_v1_") + Twine(index))
+              .str();
+      promotionKernelReadyNames[index] = readyName;
+      builder.setInsertionPointToEnd(module.getBody());
+      auto ready = LLVM::LLVMFuncOp::create(
+          builder, location, readyName,
+          LLVM::LLVMFunctionType::get(builder.getI1Type(), {}, false));
+      ready->setAttr(
+          "passthrough",
+          builder.getArrayAttr({builder.getStringAttr("alwaysinline")}));
+      Block *readyEntry = ready.addEntryBlock(builder);
+      Block *readyScan = new Block;
+      Block *readyLatched = new Block;
+      ready.getBody().push_back(readyScan);
+      ready.getBody().push_back(readyLatched);
+      builder.setInsertionPointToStart(readyEntry);
+      Value latches = LLVM::AddressOfOp::create(
+          builder, location, pointer, promotionKernelLatched.getSymName());
+      Value latchAddress = byteGEP(builder, location, latches, index);
+      Value latch = LLVM::LoadOp::create(
+          builder, location, builder.getI8Type(), latchAddress, 1);
+      Value isLatched = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne, latch,
+          llvmConstant(builder, location, builder.getI8Type(), 0));
+      cf::CondBranchOp::create(builder, location, isLatched, readyLatched,
+                               ValueRange{}, readyScan, ValueRange{});
+      builder.setInsertionPointToStart(readyLatched);
+      LLVM::ReturnOp::create(
+          builder, location,
+          llvmConstant(builder, location, builder.getI1Type(), 1));
+
+      builder.setInsertionPointToStart(readyScan);
+      Value unknown = LLVM::AddressOfOp::create(
+          builder, location, pointer, "__obelisk_state_unknown");
+      Value anyUnknown = llvmConstant(builder, location,
+                                      builder.getI8Type(), 0);
+      for (const NativePromotionRange &range : mergedPromotionRanges[index]) {
+        if (range.bitWidth == 0 || range.bitOffset > stateLayout.bitCount ||
+            range.bitWidth > stateLayout.bitCount - range.bitOffset)
+          return module.emitError(
+              "kernel promotion range exceeds native state");
+        uint64_t firstByte = range.bitOffset / 8;
+        uint64_t lastBit = range.bitOffset + range.bitWidth;
+        uint64_t lastByte = (lastBit + 7) / 8;
+        for (uint64_t byte = firstByte; byte != lastByte; ++byte) {
+          uint8_t mask = UINT8_MAX;
+          if (byte == firstByte && range.bitOffset % 8 != 0)
+            mask &= static_cast<uint8_t>(UINT8_MAX
+                                         << (range.bitOffset % 8));
+          if (byte + 1 == lastByte && lastBit % 8 != 0)
+            mask &= static_cast<uint8_t>(
+                (uint16_t{1} << (lastBit % 8)) - 1);
+          Value bits = LLVM::LoadOp::create(
+              builder, location, builder.getI8Type(),
+              byteGEP(builder, location, unknown, byte), 1);
+          if (mask != UINT8_MAX)
+            bits = arith::AndIOp::create(
+                builder, location, bits,
+                llvmConstant(builder, location, builder.getI8Type(), mask));
+          anyUnknown =
+              arith::OrIOp::create(builder, location, anyUnknown, bits);
+        }
+      }
+      Value known = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq, anyUnknown,
+          llvmConstant(builder, location, builder.getI8Type(), 0));
+      LLVM::StoreOp::create(
+          builder, location,
+          arith::SelectOp::create(
+              builder, location, known,
+              llvmConstant(builder, location, builder.getI8Type(), 1), latch),
+          latchAddress, 1);
+      Value pendingAddress = LLVM::AddressOfOp::create(
+          builder, location, pointer, promotionPendingMask.getSymName());
+      Value pending =
+          LLVM::LoadOp::create(builder, location, i64, pendingAddress, 8);
+      Value clearedPending = arith::AndIOp::create(
+          builder, location, pending,
+          llvmConstant(builder, location, i64,
+                       ~(uint64_t{1} << mergedFragments[index].bit)));
+      LLVM::StoreOp::create(
+          builder, location,
+          arith::SelectOp::create(builder, location, known, clearedPending,
+                                  pending),
+          pendingAddress, 8);
+      LLVM::ReturnOp::create(builder, location, known);
+    }
+
+    // A periodic transaction may use the guard-free Tier-1 coordinator only
+    // after every owner in its exact graph closure has selected a two-state
+    // body.  This scan runs at the quiescent boundary after the transient
+    // hybrid coordinator, rather than on every clock edge.  Owners outside
+    // the closure cannot block promotion and asynchronous intervention clears
+    // the latch before generated execution resumes.
+    periodicPromotionComplete = !periodicClosureRecords.empty();
+    periodicPromotionMask = 0;
+    for (unsigned recordIndex : periodicClosureRecords) {
+      if (recordIndex >= mergedFragments.size() ||
+          mergedFragments[recordIndex].bit >= 64 ||
+          mergedTwoStateExecutors[recordIndex].empty() ||
+          promotionKernelReadyNames[recordIndex].empty()) {
+        periodicPromotionComplete = false;
+        break;
+      }
+      periodicPromotionMask |=
+          uint64_t{1} << mergedFragments[recordIndex].bit;
+    }
+    builder.setInsertionPointToEnd(module.getBody());
+    auto periodicPromotionReady = LLVM::LLVMFuncOp::create(
+        builder, location, periodicPromotionReadyName,
+        LLVM::LLVMFunctionType::get(builder.getI1Type(), {}, false));
+    periodicPromotionReady->setAttr(
+        "passthrough",
+        builder.getArrayAttr({builder.getStringAttr("noinline")}));
+    Block *periodicReadyEntry = periodicPromotionReady.addEntryBlock(builder);
+    Block *periodicReadyScan = new Block;
+    Block *periodicAlreadyKnown = new Block;
+    periodicPromotionReady.getBody().push_back(periodicReadyScan);
+    periodicPromotionReady.getBody().push_back(periodicAlreadyKnown);
+    builder.setInsertionPointToStart(periodicReadyEntry);
+    Value periodicLatchAddress = LLVM::AddressOfOp::create(
+        builder, location, pointer, periodicPromotionLatched.getSymName());
+    Value periodicLatch = LLVM::LoadOp::create(
+        builder, location, builder.getI8Type(), periodicLatchAddress, 1);
+    Value periodicIsLatched = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ne, periodicLatch,
+        llvmConstant(builder, location, builder.getI8Type(), 0));
+    cf::CondBranchOp::create(builder, location, periodicIsLatched,
+                             periodicAlreadyKnown, ValueRange{},
+                             periodicReadyScan, ValueRange{});
+    builder.setInsertionPointToStart(periodicAlreadyKnown);
+    LLVM::ReturnOp::create(
+        builder, location,
+        llvmConstant(builder, location, builder.getI1Type(), 1));
+    builder.setInsertionPointToStart(periodicReadyScan);
+    Value periodicKnown = llvmConstant(
+        builder, location, builder.getI1Type(), periodicPromotionComplete);
+    if (periodicPromotionComplete) {
+      // Force the one-time initial scan for closure members that have not yet
+      // become ready.  Subsequent calls are constant-time for latched owners;
+      // a runtime invalidation resets all of them transactionally.
+      for (unsigned recordIndex : periodicClosureRecords) {
+        Value ownerKnown = LLVM::CallOp::create(
+                               builder, location,
+                               TypeRange{builder.getI1Type()},
+                               SymbolRefAttr::get(
+                                   context,
+                                   promotionKernelReadyNames[recordIndex]),
+                               ValueRange{})
+                               .getResult();
+        periodicKnown = arith::AndIOp::create(builder, location,
+                                              periodicKnown, ownerKnown);
+      }
+      Value periodicPending = LLVM::LoadOp::create(
+          builder, location, i64,
+          LLVM::AddressOfOp::create(builder, location, pointer,
+                                    promotionPendingMask.getSymName()),
+          8);
+      Value noPeriodicPending = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq,
+          arith::AndIOp::create(
+              builder, location, periodicPending,
+              llvmConstant(builder, location, i64, periodicPromotionMask)),
+          llvmConstant(builder, location, i64, 0));
+      periodicKnown = arith::AndIOp::create(builder, location, periodicKnown,
+                                            noPeriodicPending);
+    }
+    LLVM::StoreOp::create(
+        builder, location,
+        arith::SelectOp::create(
+            builder, location, periodicKnown,
+            llvmConstant(builder, location, builder.getI8Type(), 1),
+            periodicLatch),
+        periodicLatchAddress, 1);
+    // Every staged root reachable from the periodic closure is known at this
+    // quiescent boundary. The specialized steady coordinator can therefore
+    // use the value-plane-only NBA barrier immediately on its next edge.
+    Value fastNBALatchAddress = LLVM::AddressOfOp::create(
+        builder, location, pointer, evalFastNBALatchedName);
+    Value fastNBALatch = LLVM::LoadOp::create(
+        builder, location, builder.getI8Type(), fastNBALatchAddress, 1);
+    LLVM::StoreOp::create(
+        builder, location,
+        arith::SelectOp::create(
+            builder, location, periodicKnown,
+            llvmConstant(builder, location, builder.getI8Type(), 1),
+            fastNBALatch),
+        fastNBALatchAddress, 1);
+    LLVM::ReturnOp::create(builder, location, periodicKnown);
+
+    builder.setInsertionPointToEnd(module.getBody());
+    auto promotionReady = LLVM::LLVMFuncOp::create(
+        builder, location, promotionReadyName,
+        LLVM::LLVMFunctionType::get(builder.getI1Type(), {}, false));
+    promotionReady->setAttr(
+        "passthrough",
+        builder.getArrayAttr({builder.getStringAttr("alwaysinline")}));
+    Block *entry = promotionReady.addEntryBlock(builder);
+    Block *scan = new Block;
+    Block *alreadyKnown = new Block;
+    promotionReady.getBody().push_back(scan);
+    promotionReady.getBody().push_back(alreadyKnown);
+    builder.setInsertionPointToStart(entry);
+    Value latchedAddress = LLVM::AddressOfOp::create(
+        builder, location, pointer, promotionLatched.getSymName());
+    Value latched = LLVM::LoadOp::create(
+        builder, location, builder.getI8Type(), latchedAddress, 1);
+    Value isLatched = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ne, latched,
+        llvmConstant(builder, location, builder.getI8Type(), 0));
+    cf::CondBranchOp::create(builder, location, isLatched, alreadyKnown,
+                             ValueRange{}, scan, ValueRange{});
+
+    builder.setInsertionPointToStart(alreadyKnown);
+    LLVM::ReturnOp::create(
+        builder, location,
+        llvmConstant(builder, location, builder.getI1Type(), 1));
+
+    builder.setInsertionPointToStart(scan);
+    Value pending = LLVM::LoadOp::create(
+        builder, location, i64,
+        LLVM::AddressOfOp::create(builder, location, pointer,
+                                  promotionPendingMask.getSymName()),
+        8);
+    Value known = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, pending,
+        llvmConstant(builder, location, i64, 0));
+    LLVM::StoreOp::create(
+        builder, location,
+        arith::SelectOp::create(
+            builder, location, known,
+            llvmConstant(builder, location, builder.getI8Type(), 1), latched),
+        latchedAddress, 1);
+    LLVM::ReturnOp::create(builder, location, known);
+
+    // Runtime intervention invalidates the selected two-state closure without
+    // scanning it. The next quiescent generated dispatch performs the single
+    // masked unknown-plane scan and selects the appropriate variant again.
+    builder.setInsertionPointToEnd(module.getBody());
+    auto promotionInvalidate = LLVM::LLVMFuncOp::create(
+        builder, location, promotionInvalidateName,
+        LLVM::LLVMFunctionType::get(LLVM::LLVMVoidType::get(context), {},
+                                    false));
+    Block *invalidateEntry = promotionInvalidate.addEntryBlock(builder);
+    builder.setInsertionPointToStart(invalidateEntry);
+    LLVM::StoreOp::create(
+        builder, location,
+        llvmConstant(builder, location, builder.getI8Type(), 0),
+        LLVM::AddressOfOp::create(builder, location, pointer,
+                                  promotionLatched.getSymName()),
+        1);
+    LLVM::StoreOp::create(
+        builder, location,
+        llvmConstant(builder, location, builder.getI8Type(), 0),
+        LLVM::AddressOfOp::create(builder, location, pointer,
+                                  periodicPromotionLatched.getSymName()),
+        1);
+    LLVM::MemsetOp::create(
+        builder, location,
+        LLVM::AddressOfOp::create(builder, location, pointer,
+                                  promotionKernelLatched.getSymName()),
+        llvmConstant(builder, location, builder.getI8Type(), 0),
+        llvmConstant(builder, location, i64, mergedFragments.size()),
+        /*isVolatile=*/false);
+    LLVM::StoreOp::create(
+        builder, location,
+        llvmConstant(builder, location, i64, initialPromotionPendingMask),
+        LLVM::AddressOfOp::create(builder, location, pointer,
+                                  promotionPendingMask.getSymName()),
+        8);
+    LLVM::StoreOp::create(
+        builder, location,
+        llvmConstant(builder, location, builder.getI8Type(), 0),
+        LLVM::AddressOfOp::create(builder, location, pointer,
+                                  evalFastNBALatchedName),
+        1);
+    LLVM::ReturnOp::create(builder, location, ValueRange{});
+
+    // The runtime calls this only while its transient fine scheduler is
+    // quiescent. Keep the internal i1 promotion predicate convenient for the
+    // generated coordinator and expose an ABI-sized result in the plan.
+    builder.setInsertionPointToEnd(module.getBody());
+    auto promotionQuery = LLVM::LLVMFuncOp::create(
+        builder, location, promotionQueryName,
+        LLVM::LLVMFunctionType::get(i32, {}, false));
+    Block *queryEntry = promotionQuery.addEntryBlock(builder);
+    builder.setInsertionPointToStart(queryEntry);
+    Value queryReady =
+        LLVM::CallOp::create(builder, location, TypeRange{builder.getI1Type()},
+                             SymbolRefAttr::get(context, promotionReadyName),
+                             ValueRange{})
+            .getResult();
+    LLVM::ReturnOp::create(
+        builder, location,
+        arith::ExtUIOp::create(builder, location, i32, queryReady));
+  }
 
   Type nodeType = LLVM::LLVMStructType::getLiteral(context, {i32, i32, i32});
   Type nodesType = LLVM::LLVMArrayType::get(nodeType, executableNodes.size());
@@ -441,20 +1287,27 @@ LogicalResult makeNativeEvalPlan(
           return entries;
         });
   }
+  auto ingressWordCount = [&](const GeneratedClockKernel &kernel) {
+    size_t bits =
+        evalScheduler ? mergedFragments.size() : kernel.computeNodes.size();
+    return static_cast<uint32_t>((bits + 63) / 64);
+  };
   builder.setInsertionPointToStart(module.getBody());
+  llvm::SmallDenseSet<StringRef, 4> emittedIngress;
   for (const GeneratedClockKernel &kernel : clockKernels) {
-    uint32_t words =
-        static_cast<uint32_t>((kernel.computeNodes.size() + 63) / 64);
+    uint32_t words = ingressWordCount(kernel);
     Type ingressType = LLVM::LLVMArrayType::get(i64, words);
-    auto ingress = LLVM::GlobalOp::create(builder, location, ingressType, false,
-                                          LLVM::Linkage::Internal,
-                                          kernel.ingressName, Attribute{}, 8);
-    Block *initializer = new Block;
-    ingress.getInitializerRegion().push_back(initializer);
-    OpBuilder initializerBuilder = OpBuilder::atBlockBegin(initializer);
-    LLVM::ReturnOp::create(
-        initializerBuilder, location,
-        LLVM::ZeroOp::create(initializerBuilder, location, ingressType));
+    if (emittedIngress.insert(kernel.ingressName).second) {
+      auto ingress = LLVM::GlobalOp::create(
+          builder, location, ingressType, false, LLVM::Linkage::Internal,
+          kernel.ingressName, Attribute{}, 8);
+      Block *initializer = new Block;
+      ingress.getInitializerRegion().push_back(initializer);
+      OpBuilder initializerBuilder = OpBuilder::atBlockBegin(initializer);
+      LLVM::ReturnOp::create(
+          initializerBuilder, location,
+          LLVM::ZeroOp::create(initializerBuilder, location, ingressType));
+    }
     auto active = LLVM::GlobalOp::create(builder, location, ingressType, false,
                                          LLVM::Linkage::Internal,
                                          kernel.activeName, Attribute{}, 8);
@@ -472,14 +1325,20 @@ LogicalResult makeNativeEvalPlan(
   // runtime callback remains on this path; records without a generated body
   // are intentionally outside the experiment.
   if (evalScheduler && !clockKernels.empty()) {
-    SmallVector<LLVM::CallOp> transitions;
+    auto isGeneratedEvalBody = [](sim::SimFuncOp function) {
+      return function->hasAttr("obelisk.eval.raw_captures") ||
+             function->hasAttr("obelisk.eval.selected_two_state");
+    };
+    SmallVector<std::pair<LLVM::CallOp, bool>> transitions;
     module.walk([&](sim::SimFuncOp function) {
-      if (!function->hasAttr("obelisk.eval.raw_captures"))
+      if (!isGeneratedEvalBody(function))
         return;
+      bool periodicTwoState =
+          function->hasAttr("obelisk.eval.selected_two_state");
       function.walk([&](LLVM::CallOp call) {
         if (call.getCallee() &&
             *call.getCallee() == "obelisk_rt_v1_scheduler_static_transition")
-          transitions.push_back(call);
+          transitions.push_back({call, periodicTwoState});
       });
     });
     auto constantU64 = [](Value value) -> std::optional<uint64_t> {
@@ -493,7 +1352,7 @@ LogicalResult makeNativeEvalPlan(
     auto packedMask = [](uint64_t width) {
       return width >= 64 ? UINT64_MAX : (uint64_t{1} << width) - 1;
     };
-    for (LLVM::CallOp call : transitions) {
+    for (auto [call, periodicTwoState] : transitions) {
       ValueRange arguments = call.getArgOperands();
       if (arguments.size() != 8)
         return call.emitError("malformed static transition ABI"), failure();
@@ -515,6 +1374,52 @@ LogicalResult makeNativeEvalPlan(
                                 newValue),
           arith::XOrIOp::create(transitionBuilder, call.getLoc(), oldUnknown,
                                 newUnknown));
+      struct MergedPublication {
+        uint32_t bit;
+        uint64_t changeMask = 0;
+        uint64_t posedgeMask = 0;
+        uint64_t negedgeMask = 0;
+      };
+      SmallVector<MergedPublication, 4> publications;
+      uint64_t rangeEnd = *lowBit + *bitWidth;
+      for (const obelisk_rt_static_fanout_entry &entry : fanoutEntries) {
+        if (entry.reserved != 1 || entry.static_state != *staticState ||
+            entry.kernel >= clockKernels.size() || entry.merged_bit >= 64)
+          continue;
+        if (periodicTwoState && !periodicClosureRecords.empty() &&
+            !llvm::is_contained(periodicClosureRecords,
+                                static_cast<unsigned>(entry.merged_bit)))
+          continue;
+        uint64_t overlapLow = std::max(*lowBit, entry.low_bit);
+        uint64_t overlapHigh =
+            std::min(rangeEnd, entry.low_bit + entry.bit_width);
+        if (overlapLow >= overlapHigh)
+          continue;
+        uint64_t overlapMask = packedMask(overlapHigh - overlapLow)
+                               << (overlapLow - *lowBit);
+        auto publication = llvm::find_if(
+            publications, [&](const MergedPublication &candidate) {
+              return candidate.bit == entry.merged_bit;
+            });
+        if (publication == publications.end()) {
+          publications.push_back({entry.merged_bit});
+          publication = std::prev(publications.end());
+        }
+        if (entry.edge == OBELISK_RT_WAIT_EDGE_POSEDGE)
+          publication->posedgeMask |= overlapMask;
+        else if (entry.edge == OBELISK_RT_WAIT_EDGE_NEGEDGE)
+          publication->negedgeMask |= overlapMask;
+        else if (entry.edge == OBELISK_RT_WAIT_EDGE_BOTH) {
+          publication->posedgeMask |= overlapMask;
+          publication->negedgeMask |= overlapMask;
+        } else {
+          publication->changeMask |= overlapMask;
+        }
+      }
+      if (publications.empty()) {
+        call.erase();
+        continue;
+      }
       Value widthMask = llvmConstant(transitionBuilder, call.getLoc(), i64,
                                      packedMask(*bitWidth));
       auto invert = [&](Value value) {
@@ -524,74 +1429,78 @@ LogicalResult makeNativeEvalPlan(
                                                   UINT64_MAX))
             .getResult();
       };
-      Value oldKnown = arith::AndIOp::create(transitionBuilder, call.getLoc(),
-                                             invert(oldUnknown), widthMask);
-      Value newKnown = arith::AndIOp::create(transitionBuilder, call.getLoc(),
-                                             invert(newUnknown), widthMask);
-      Value oldZero = arith::AndIOp::create(transitionBuilder, call.getLoc(),
-                                            oldKnown, invert(oldValue));
-      Value oldOne = arith::AndIOp::create(transitionBuilder, call.getLoc(),
-                                           oldKnown, oldValue);
-      Value newZero = arith::AndIOp::create(transitionBuilder, call.getLoc(),
-                                            newKnown, invert(newValue));
-      Value newOne = arith::AndIOp::create(transitionBuilder, call.getLoc(),
-                                           newKnown, newValue);
-      Value posedge = arith::AndIOp::create(
-          transitionBuilder, call.getLoc(),
-          arith::OrIOp::create(
+      bool needsPosedge = llvm::any_of(publications, [](const auto &entry) {
+        return entry.posedgeMask != 0;
+      });
+      bool needsNegedge = llvm::any_of(publications, [](const auto &entry) {
+        return entry.negedgeMask != 0;
+      });
+      Value posedge;
+      Value negedge;
+      if (needsPosedge || needsNegedge) {
+        Value oldKnown = arith::AndIOp::create(
+            transitionBuilder, call.getLoc(), invert(oldUnknown), widthMask);
+        Value newKnown = arith::AndIOp::create(
+            transitionBuilder, call.getLoc(), invert(newUnknown), widthMask);
+        Value oldZero = arith::AndIOp::create(
+            transitionBuilder, call.getLoc(), oldKnown, invert(oldValue));
+        Value oldOne = arith::AndIOp::create(
+            transitionBuilder, call.getLoc(), oldKnown, oldValue);
+        Value newZero = arith::AndIOp::create(
+            transitionBuilder, call.getLoc(), newKnown, invert(newValue));
+        Value newOne = arith::AndIOp::create(
+            transitionBuilder, call.getLoc(), newKnown, newValue);
+        if (needsPosedge)
+          posedge = arith::AndIOp::create(
               transitionBuilder, call.getLoc(),
-              arith::AndIOp::create(transitionBuilder, call.getLoc(), oldZero,
-                                    invert(newZero)),
-              arith::AndIOp::create(transitionBuilder, call.getLoc(),
-                                    oldUnknown, newOne)),
-          widthMask);
-      Value negedge = arith::AndIOp::create(
-          transitionBuilder, call.getLoc(),
-          arith::OrIOp::create(
+              arith::OrIOp::create(
+                  transitionBuilder, call.getLoc(),
+                  arith::AndIOp::create(transitionBuilder, call.getLoc(),
+                                        oldZero, invert(newZero)),
+                  arith::AndIOp::create(transitionBuilder, call.getLoc(),
+                                        oldUnknown, newOne)),
+              widthMask);
+        if (needsNegedge)
+          negedge = arith::AndIOp::create(
               transitionBuilder, call.getLoc(),
-              arith::AndIOp::create(transitionBuilder, call.getLoc(), oldOne,
-                                    invert(newOne)),
-              arith::AndIOp::create(transitionBuilder, call.getLoc(),
-                                    oldUnknown, newZero)),
-          widthMask);
-      uint64_t rangeEnd = *lowBit + *bitWidth;
-      for (const obelisk_rt_static_fanout_entry &entry : fanoutEntries) {
-        if (entry.reserved == 0 || entry.static_state != *staticState ||
-            entry.kernel >= clockKernels.size())
-          continue;
-        uint64_t overlapLow = std::max(*lowBit, entry.low_bit);
-        uint64_t overlapHigh =
-            std::min(rangeEnd, entry.low_bit + entry.bit_width);
-        if (overlapLow >= overlapHigh)
-          continue;
-        Value observed = changed;
-        if (entry.edge == OBELISK_RT_WAIT_EDGE_POSEDGE)
-          observed = posedge;
-        else if (entry.edge == OBELISK_RT_WAIT_EDGE_NEGEDGE)
-          observed = negedge;
-        else if (entry.edge == OBELISK_RT_WAIT_EDGE_BOTH)
+              arith::OrIOp::create(
+                  transitionBuilder, call.getLoc(),
+                  arith::AndIOp::create(transitionBuilder, call.getLoc(),
+                                        oldOne, invert(newOne)),
+                  arith::AndIOp::create(transitionBuilder, call.getLoc(),
+                                        oldUnknown, newZero)),
+              widthMask);
+      }
+      for (const MergedPublication &publication : publications) {
+        Value observed = llvmConstant(transitionBuilder, call.getLoc(), i64, 0);
+        auto addObserved = [&](Value edges, uint64_t mask) {
+          if (mask == 0)
+            return;
+          Value masked = arith::AndIOp::create(
+              transitionBuilder, call.getLoc(), edges,
+              llvmConstant(transitionBuilder, call.getLoc(), i64, mask));
           observed = arith::OrIOp::create(transitionBuilder, call.getLoc(),
-                                          posedge, negedge);
-        uint64_t overlapMask = packedMask(overlapHigh - overlapLow)
-                               << (overlapLow - *lowBit);
+                                          observed, masked);
+        };
+        addObserved(changed, publication.changeMask);
+        addObserved(posedge, publication.posedgeMask);
+        addObserved(negedge, publication.negedgeMask);
         Value triggered = arith::CmpIOp::create(
             transitionBuilder, call.getLoc(), arith::CmpIPredicate::ne,
-            arith::AndIOp::create(transitionBuilder, call.getLoc(), observed,
-                                  llvmConstant(transitionBuilder, call.getLoc(),
-                                               i64, overlapMask)),
+            observed,
             llvmConstant(transitionBuilder, call.getLoc(), i64, 0));
-        const auto &kernel = clockKernels[entry.kernel];
         Value ingress = LLVM::AddressOfOp::create(
-            transitionBuilder, call.getLoc(), pointer, kernel.ingressName);
+            transitionBuilder, call.getLoc(), pointer,
+            clockKernels.front().ingressName);
         Value address =
             byteGEP(transitionBuilder, call.getLoc(), ingress,
-                    uint64_t{entry.merged_bit / 64} * sizeof(uint64_t));
+                    uint64_t{publication.bit / 64} * sizeof(uint64_t));
         Value previous = LLVM::LoadOp::create(transitionBuilder, call.getLoc(),
                                               i64, address, 8);
         Value selected = arith::SelectOp::create(
             transitionBuilder, call.getLoc(), triggered,
             llvmConstant(transitionBuilder, call.getLoc(), i64,
-                         uint64_t{1} << (entry.merged_bit % 64)),
+                         uint64_t{1} << (publication.bit % 64)),
             llvmConstant(transitionBuilder, call.getLoc(), i64, 0));
         LLVM::StoreOp::create(transitionBuilder, call.getLoc(),
                               arith::OrIOp::create(transitionBuilder,
@@ -606,19 +1515,20 @@ LogicalResult makeNativeEvalPlan(
     // latch. This is the common register-file shape: the clock body records
     // offset/value locally and the generated NBA epilogue publishes it after
     // the activation returns, without constructing a runtime NBA object.
-    SmallVector<LLVM::CallOp> runtimeEscapes;
+    SmallVector<std::pair<LLVM::CallOp, bool>> runtimeEscapes;
     module.walk([&](sim::SimFuncOp function) {
-      if (!function->hasAttr("obelisk.eval.raw_captures"))
+      if (!isGeneratedEvalBody(function))
         return;
+      bool twoState = function->hasAttr("obelisk.eval.selected_two_state");
       function.walk([&](LLVM::CallOp call) {
         if (!call.getCallee())
           return;
         if (*call.getCallee() == "obelisk_rt_v1_scheduler_static_nba" ||
             *call.getCallee() == "obelisk_rt_v1_scheduler_fail")
-          runtimeEscapes.push_back(call);
+          runtimeEscapes.push_back({call, twoState});
       });
     });
-    for (LLVM::CallOp call : runtimeEscapes) {
+    for (auto [call, twoState] : runtimeEscapes) {
       LLVM::CallOp handleOffsetToErase;
       arith::SelectOp handleSelectToErase;
       if (call.getCallee() &&
@@ -639,6 +1549,8 @@ LogicalResult makeNativeEvalPlan(
         bool dynamicRoot =
             site && width && *width != 0 && *width <= 64 &&
             root != staticNBAPlan.siteRoots.end() &&
+            root->second < staticNBAPlan.roots.size() &&
+            *width <= staticNBAPlan.roots[root->second].bit_width &&
             root->second < staticNBAPlan.generatedOffsets.size() &&
             offsetCall && offsetCall.getCallee() &&
             *offsetCall.getCallee() == "obelisk_rt_v1_native_handle_offset" &&
@@ -702,8 +1614,19 @@ LogicalResult makeNativeEvalPlan(
                 : LLVM::ZExtOp::create(nbaBuilder, call.getLoc(), i64, staged)
                       .getResult();
         storeGlobal(existing->valueName, staged64, 8);
-        storeGlobal(existing->unknownName,
-                    llvmConstant(nbaBuilder, call.getLoc(), i64, 0), 8);
+        Value stagedUnknown64 =
+            llvmConstant(nbaBuilder, call.getLoc(), i64, 0);
+        if (!twoState) {
+          Value stagedUnknown = LLVM::LoadOp::create(
+              nbaBuilder, call.getLoc(), valueType, arguments[8], 1);
+          stagedUnknown64 =
+              *width == 64
+                  ? stagedUnknown
+                  : LLVM::ZExtOp::create(nbaBuilder, call.getLoc(), i64,
+                                         stagedUnknown)
+                        .getResult();
+        }
+        storeGlobal(existing->unknownName, stagedUnknown64, 8);
         storeGlobal(existing->validName,
                     llvmConstant(nbaBuilder, call.getLoc(), i32, 1), 4);
       }
@@ -723,7 +1646,7 @@ LogicalResult makeNativeEvalPlan(
     }
     SmallVector<LLVM::CallOp> deadHandleOffsets;
     module.walk([&](sim::SimFuncOp function) {
-      if (!function->hasAttr("obelisk.eval.raw_captures"))
+      if (!isGeneratedEvalBody(function))
         return;
       function.walk([&](LLVM::CallOp call) {
         if (call.getCallee() &&
@@ -734,46 +1657,14 @@ LogicalResult makeNativeEvalPlan(
     });
     for (LLVM::CallOp call : deadHandleOffsets)
       call.erase();
+    llvm::SmallDenseSet<uint32_t, 8> dynamicRoots;
+    for (const DynamicEvalNBA &entry : dynamicEvalNBAs)
+      if (!dynamicRoots.insert(entry.rootIndex).second)
+        return module.emitError(
+            "runtime-free eval has multiple ordered dynamic NBA sites for "
+            "one root"),
+               failure();
 
-    // Ceiling mode is intentionally two-state.  Remove the unknown-plane
-    // traffic from generated RTL bodies so the experiment measures the same
-    // scalar execution shape as a Verilator model, not the cost of Obelisk's
-    // compatibility state representation.
-    auto isUnknownPlaneAddress = [](Value address) {
-      while (address) {
-        if (auto global = address.getDefiningOp<LLVM::AddressOfOp>())
-          return global.getGlobalName() == "__obelisk_state_unknown";
-        if (auto gep = address.getDefiningOp<LLVM::GEPOp>()) {
-          address = gep.getBase();
-          continue;
-        }
-        return false;
-      }
-      return false;
-    };
-    SmallVector<LLVM::LoadOp> unknownLoads;
-    SmallVector<LLVM::StoreOp> unknownStores;
-    module.walk([&](sim::SimFuncOp function) {
-      if (!function->hasAttr("obelisk.eval.raw_captures"))
-        return;
-      function.walk([&](Operation *operation) {
-        if (auto load = dyn_cast<LLVM::LoadOp>(operation);
-            load && isUnknownPlaneAddress(load.getAddr()))
-          unknownLoads.push_back(load);
-        else if (auto store = dyn_cast<LLVM::StoreOp>(operation);
-                 store && isUnknownPlaneAddress(store.getAddr()))
-          unknownStores.push_back(store);
-      });
-    });
-    for (LLVM::LoadOp load : unknownLoads) {
-      OpBuilder loadBuilder(load);
-      load.replaceAllUsesWith(LLVM::ZeroOp::create(loadBuilder, load.getLoc(),
-                                                   load.getResult().getType())
-                                  .getResult());
-      load.erase();
-    }
-    for (LLVM::StoreOp store : unknownStores)
-      store.erase();
   }
   Type clockKernelType = LLVM::LLVMStructType::getLiteral(
       context, {i32, i32, i64, i64, pointer, i32, i32, pointer});
@@ -812,7 +1703,7 @@ LogicalResult makeNativeEvalPlan(
             value = insertValue(
                 initializerBuilder, location, value,
                 llvmConstant(initializerBuilder, location, i32,
-                             (kernel.computeNodes.size() + 63) / 64),
+                             ingressWordCount(kernel)),
                 5);
             value = insertValue(initializerBuilder, location, value,
                                 LLVM::AddressOfOp::create(initializerBuilder,
@@ -897,6 +1788,53 @@ LogicalResult makeNativeEvalPlan(
         });
   }
 
+  constexpr StringLiteral periodicAliasesName =
+      "__obelisk_periodic_alias_plan_v1";
+  Type periodicAliasType = LLVM::LLVMStructType::getLiteral(
+      context, {i32, i32, i32, i32, i64, i64, i64});
+  if (!periodicAliases.empty()) {
+    Type aliasesType =
+        LLVM::LLVMArrayType::get(periodicAliasType, periodicAliases.size());
+    makeConstantGlobal(
+        module, location, aliasesType, periodicAliasesName,
+        LLVM::Linkage::Internal, 8, [&](OpBuilder &initializerBuilder) {
+          Value aliases =
+              LLVM::ZeroOp::create(initializerBuilder, location, aliasesType);
+          for (auto [index, alias] : llvm::enumerate(periodicAliases)) {
+            Value value = LLVM::ZeroOp::create(initializerBuilder, location,
+                                               periodicAliasType);
+            const uint32_t fields[] = {
+                alias.sourceStaticState, alias.forwardingActorSlot,
+                alias.forwardingContinuation, alias.targetStaticState};
+            for (unsigned field = 0; field != std::size(fields); ++field)
+              value = insertValue(
+                  initializerBuilder, location, value,
+                  llvmConstant(initializerBuilder, location, i32,
+                               fields[field]),
+                  field);
+            value = insertValue(
+                initializerBuilder, location, value,
+                llvmConstant(initializerBuilder, location, i64,
+                             alias.sourceBitOffset),
+                4);
+            value = insertValue(
+                initializerBuilder, location, value,
+                llvmConstant(initializerBuilder, location, i64,
+                             alias.targetBitOffset),
+                5);
+            value = insertValue(
+                initializerBuilder, location, value,
+                llvmConstant(initializerBuilder, location, i64,
+                             alias.driverBitOffset),
+                6);
+            aliases = LLVM::InsertValueOp::create(
+                initializerBuilder, location, aliases, value,
+                ArrayRef<int64_t>{static_cast<int64_t>(index)});
+          }
+          return aliases;
+        });
+  }
+
   builder.setInsertionPointToEnd(module.getBody());
   auto bind = LLVM::LLVMFuncOp::create(
       builder, location, bindName,
@@ -920,292 +1858,1019 @@ LogicalResult makeNativeEvalPlan(
       LLVM::LLVMFunctionType::get(i32, {pointer, pointer}, false));
   Block *runEntry = run.addEntryBlock(builder);
   builder.setInsertionPointToStart(runEntry);
-  struct EvalHarnessSignal {
-    uint64_t offset;
-    uint32_t staticState;
-  };
-  std::optional<EvalHarnessSignal> evalClock;
-  std::optional<EvalHarnessSignal> evalReset;
-  std::optional<uint64_t> evalCpuregsOffset;
-  std::optional<uint64_t> evalTrapOffset;
-  std::optional<uint64_t> evalMemReadyOffset;
-  std::optional<EvalHarnessSignal> evalUutClock;
-  if (evalScheduler) {
-    // Periodic clocks are discovered from executable structure, not HDL
-    // hierarchy.  The current closed eval experiment can consume exactly one;
-    // auto remains on the lifecycle-correct scheduler for multi-clock models
-    // until run_until is wired.  Rejecting here is preferable to silently
-    // collapsing all clock kernels onto clockKernels.front().
-    if (periodicClocks.size() != 1)
-      return module.emitError(
-          "explicit eval currently requires exactly one structurally proven "
-          "periodic clock; multi-clock designs use auto/AOT");
-    evalClock = EvalHarnessSignal{periodicClocks.front().bitOffset,
-                                  periodicClocks.front().staticState};
-    module.walk([&](sim::SimStorageDeclOp declaration) {
-      auto hierarchy = declaration.getHierarchicalName();
-      if (!hierarchy ||
-          (*hierarchy != "top.resetn" && *hierarchy != "top.uut.cpuregs"))
-        return;
-      auto offset = stateLayout.storageOffsets.find(declaration.getId());
-      if (offset == stateLayout.storageOffsets.end())
-        return;
-      if (*hierarchy == "top.uut.cpuregs") {
-        evalCpuregsOffset = offset->second;
-        return;
+  bool generatedEvalLoop =
+      evalScheduler && !periodicClocks.empty() && !clockKernels.empty() &&
+      !mergedFragments.empty() && mergedFragments.size() <= 64 &&
+      promotionRangesComplete &&
+      mergedExecutors.size() == mergedFragments.size() &&
+      mergedTwoStateExecutors.size() == mergedFragments.size();
+  if (evalScheduler && !generatedEvalLoop) {
+    auto firstEmpty = llvm::find_if(
+        mergedExecutors,
+        [](const std::string &name) { return name.empty(); });
+    auto diagnostic = module.emitError();
+    diagnostic
+        << "cannot materialize generated eval loop: clocks="
+        << periodicClocks.size()
+        << " kernels=" << clockKernels.size()
+        << " fragments=" << mergedFragments.size()
+        << " executors=" << mergedTwoStateExecutors.size()
+        << " promotion-complete=" << promotionRangesComplete
+        << " empty-executors="
+        << llvm::count_if(mergedExecutors,
+                          [](const std::string &name) { return name.empty(); });
+    if (firstEmpty != mergedExecutors.end()) {
+      size_t index = static_cast<size_t>(firstEmpty -
+                                         mergedExecutors.begin());
+      diagnostic << " first-empty-actor=" << mergedFragments[index].actor_slot
+                 << " continuation=" << mergedFragments[index].continuation;
+      if (auto planned = staticFanoutPlan.fragments.find(
+              {mergedFragments[index].actor_slot,
+               mergedFragments[index].continuation});
+          planned != staticFanoutPlan.fragments.end()) {
+        diagnostic << " planned-fragments=";
+        for (uint32_t fragment : planned->second)
+          diagnostic << fragment << ",";
+        diagnostic << " intersecting-direct=";
+        for (const NativeDirectFragment &candidate : directFragments)
+          if (llvm::any_of(planned->second, [&](uint32_t fragment) {
+                return llvm::is_contained(candidate.fragmentIDs, fragment);
+              })) {
+            diagnostic << "[" << candidate.actorSlot << ":"
+                       << candidate.continuation << ":";
+            for (uint32_t fragment : candidate.fragmentIDs)
+              diagnostic << fragment << ",";
+            diagnostic << " anchors=";
+            for (uint32_t fragment : candidate.ownershipAnchors)
+              diagnostic << fragment << ",";
+            diagnostic << "]";
+          }
       }
-      auto bound = llvm::find_if(stateLayout.bounds, [&](const auto &entry) {
-        return entry.offset == offset->second && entry.width == 1;
-      });
-      if (bound == stateLayout.bounds.end())
-        return;
-      EvalHarnessSignal signal{offset->second, bound->handleID};
-      evalReset = signal;
-    });
-    module.walk([&](sim::SimNetDeclOp declaration) {
-      auto hierarchy = declaration.getHierarchicalName();
-      if (!hierarchy ||
-          (*hierarchy != "top.trap" && *hierarchy != "top.mem_ready" &&
-           *hierarchy != "top.uut.clk"))
-        return;
-      auto offset = stateLayout.netOffsets.find(declaration.getId());
-      if (offset == stateLayout.netOffsets.end())
-        return;
-      if (*hierarchy == "top.trap")
-        evalTrapOffset = offset->second;
-      else if (*hierarchy == "top.mem_ready")
-        evalMemReadyOffset = offset->second;
-      else {
-        auto net =
-            llvm::find_if(stateLayout.netLayouts, [&](const auto &entry) {
-              return entry.id == declaration.getId();
-            });
-        if (net != stateLayout.netLayouts.end())
-          evalUutClock = EvalHarnessSignal{offset->second, net->handleID};
-      }
-    });
-  }
-  bool generatedEvalLoop = evalClock && evalReset && evalCpuregsOffset &&
-                           evalTrapOffset && evalUutClock &&
-                           !clockKernels.empty() && !mergedFragments.empty() &&
-                           mergedFragments.size() <= 64;
-  if (generatedEvalLoop) {
-    uint32_t ingressWords =
-        static_cast<uint32_t>((mergedFragments.size() + 63) / 64);
-    auto fanoutMask = [&](uint32_t staticState, bool rising) {
-      SmallVector<uint64_t> words(ingressWords, 0);
-      for (const obelisk_rt_static_fanout_entry &fanout : fanoutEntries) {
-        if (fanout.reserved == 0 || fanout.static_state != staticState ||
-            fanout.low_bit != 0 || fanout.bit_width == 0)
-          continue;
-        bool triggered =
-            fanout.edge == OBELISK_RT_WAIT_EDGE_CHANGE ||
-            fanout.edge == OBELISK_RT_WAIT_EDGE_BOTH ||
-            (rising && fanout.edge == OBELISK_RT_WAIT_EDGE_POSEDGE) ||
-            (!rising && fanout.edge == OBELISK_RT_WAIT_EDGE_NEGEDGE);
-        if (triggered)
-          words[fanout.merged_bit / 64] |= uint64_t{1}
-                                           << (fanout.merged_bit % 64);
-      }
-      return words;
-    };
-    SmallVector<uint64_t> resetRise = fanoutMask(evalReset->staticState, true);
-    SmallVector<std::string> posedgeExecutors;
-    for (const obelisk_rt_static_fanout_entry &fanout : fanoutEntries) {
-      if (fanout.reserved == 0 ||
-          fanout.static_state != evalUutClock->staticState ||
-          (fanout.edge != OBELISK_RT_WAIT_EDGE_POSEDGE &&
-           fanout.edge != OBELISK_RT_WAIT_EDGE_BOTH) ||
-          fanout.merged_bit >= mergedExecutors.size() ||
-          mergedExecutors[fanout.merged_bit].empty())
-        continue;
-      StringRef execute = mergedExecutors[fanout.merged_bit];
-      if (!llvm::is_contained(posedgeExecutors, execute))
-        posedgeExecutors.push_back(execute.str());
+      for (const NativeDirectFragment &direct : directFragments)
+        if (direct.actorSlot == mergedFragments[index].actor_slot) {
+          diagnostic << " direct-continuation=" << direct.continuation
+                     << " direct-fragments=" << direct.fragmentIDs.size()
+                     << " direct-ranges=" << direct.promotionRanges.size()
+                     << " direct-two-state=" << !direct.twoStateWrapper.empty();
+          for (uint32_t fragment : direct.fragmentIDs)
+            diagnostic << " fragment=" << fragment;
+        }
+      diagnostic << " available-direct=";
+      for (const NativeDirectFragment &direct : directFragments)
+        diagnostic << "[" << direct.actorSlot << ":" << direct.continuation
+                   << ":" << direct.fusionGroup << ":"
+                   << !direct.twoStateWrapper.empty() << "]";
     }
-    Value stateValue = LLVM::AddressOfOp::create(builder, location, pointer,
-                                                 "__obelisk_state_value");
-    Value positiveEdges = entryAlloca(builder, location, i64, 1, 8);
-    LLVM::StoreOp::create(builder, location,
-                          llvmConstant(builder, location, i64, 0),
-                          positiveEdges, 8);
-    auto storeBit = [&](uint64_t offset, bool set) {
-      Value address = byteGEP(builder, location, stateValue, offset / 8);
-      Value old = LLVM::LoadOp::create(builder, location, builder.getI8Type(),
-                                       address, 1);
-      uint8_t mask = uint8_t{1} << (offset % 8);
-      Value value =
-          set ? arith::OrIOp::create(
-                    builder, location, old,
-                    llvmConstant(builder, location, builder.getI8Type(), mask))
-                    .getResult()
-              : arith::AndIOp::create(builder, location, old,
-                                      llvmConstant(builder, location,
-                                                   builder.getI8Type(),
-                                                   static_cast<uint8_t>(~mask)))
-                    .getResult();
-      LLVM::StoreOp::create(builder, location, value, address, 1);
+    return failure();
+  }
+  if (generatedEvalLoop) {
+    // One model-wide ready bit owns each direct fragment. Physical trigger
+    // groups remain distinct and merely OR into that shared model mask, so a
+    // fragment reached by coincident clocks executes once before the common
+    // NBA barrier.
+    SmallVector<SmallVector<std::pair<uint64_t, uint64_t>>> clockMasks(
+        periodicClocks.size(),
+        SmallVector<std::pair<uint64_t, uint64_t>>(clockKernels.size(),
+                                                   {0, 0}));
+    SmallVector<SmallVector<std::pair<uint64_t, uint64_t>>> clockDirectMasks(
+        periodicClocks.size(),
+        SmallVector<std::pair<uint64_t, uint64_t>>(clockKernels.size(),
+                                                   {0, 0}));
+    auto canDispatchClockOwnerDirectly = [&](uint32_t bit) {
+      auto record = llvm::find_if(mergedFragments, [&](const auto &candidate) {
+        return candidate.bit == bit;
+      });
+      if (record == mergedFragments.end())
+        return false;
+      size_t index = static_cast<size_t>(record - mergedFragments.begin());
+      if (mergedExecutors[index].empty())
+        return false;
+      LLVM::LLVMFuncOp executor = module.lookupSymbol<LLVM::LLVMFuncOp>(
+          mergedExecutors[index]);
+      // Keep checkpoint-producing owners in the coordinator so its existing
+      // termination check remains the sole exit from the closed hot loop.
+      return executor && executor->hasAttr("obelisk.eval.infallible") &&
+             !executor->hasAttr("obelisk.eval.may_terminate");
     };
-    storeBit(evalClock->offset, false);
-    storeBit(evalUutClock->offset, false);
-    storeBit(evalReset->offset, false);
-    storeBit(*evalTrapOffset, false);
-    if (evalMemReadyOffset)
-      storeBit(*evalMemReadyOffset, true);
-    auto enqueue = [&](ArrayRef<uint64_t> words) {
+    auto clockTouchesFanout = [&](const NativePeriodicClock &clock,
+                                  const obelisk_rt_static_fanout_entry &fanout) {
+      if (fanout.static_state != clock.staticState || fanout.bit_width == 0)
+        return false;
+      auto bound = llvm::find_if(stateLayout.bounds, [&](const auto &candidate) {
+        return candidate.handleID == clock.staticState;
+      });
+      if (bound == stateLayout.bounds.end() ||
+          clock.bitOffset < bound->offset ||
+          clock.bitOffset - bound->offset >= bound->width)
+        return false;
+      uint64_t localBit = clock.bitOffset - bound->offset;
+      return fanout.low_bit <= localBit &&
+             localBit - fanout.low_bit < fanout.bit_width;
+    };
+    for (auto [clockIndex, clock] : llvm::enumerate(periodicClocks))
+      for (const obelisk_rt_static_fanout_entry &fanout : fanoutEntries) {
+        if (fanout.reserved == 0 ||
+            !clockTouchesFanout(clock, fanout) ||
+            fanout.kernel >= clockKernels.size() ||
+            fanout.merged_bit >= 64)
+          continue;
+        if (llvm::any_of(periodicAliases, [&](const NativePeriodicAlias &alias) {
+              return alias.sourceStaticState == clock.staticState &&
+                     alias.sourceBitOffset == clock.bitOffset &&
+                     alias.forwardingActorSlot == fanout.actor_slot &&
+                     alias.forwardingContinuation == fanout.continuation;
+            }))
+          continue;
+        uint64_t bit = uint64_t{1} << fanout.merged_bit;
+        auto &masks = canDispatchClockOwnerDirectly(fanout.merged_bit)
+                          ? clockDirectMasks[clockIndex][fanout.kernel]
+                          : clockMasks[clockIndex][fanout.kernel];
+        auto &[rising, falling] = masks;
+        if (fanout.edge == OBELISK_RT_WAIT_EDGE_CHANGE ||
+            fanout.edge == OBELISK_RT_WAIT_EDGE_BOTH ||
+            fanout.edge == OBELISK_RT_WAIT_EDGE_POSEDGE)
+          rising |= bit;
+        if (fanout.edge == OBELISK_RT_WAIT_EDGE_CHANGE ||
+            fanout.edge == OBELISK_RT_WAIT_EDGE_BOTH ||
+            fanout.edge == OBELISK_RT_WAIT_EDGE_NEGEDGE)
+          falling |= bit;
+      }
+    for (const NativePeriodicAlias &alias : periodicAliases) {
+      auto clock = llvm::find_if(periodicClocks, [&](const auto &candidate) {
+        return candidate.staticState == alias.sourceStaticState &&
+               candidate.bitOffset == alias.sourceBitOffset;
+      });
+      if (clock == periodicClocks.end())
+        continue;
+      size_t clockIndex = static_cast<size_t>(clock - periodicClocks.begin());
+      for (const obelisk_rt_static_fanout_entry &fanout : fanoutEntries) {
+        if (fanout.reserved == 0 ||
+            (fanout.actor_slot == alias.forwardingActorSlot &&
+             fanout.continuation == alias.forwardingContinuation) ||
+            fanout.static_state != alias.targetStaticState ||
+            fanout.low_bit != 0 || fanout.bit_width == 0 ||
+            fanout.kernel >= clockKernels.size() || fanout.merged_bit >= 64)
+          continue;
+        uint64_t bit = uint64_t{1} << fanout.merged_bit;
+        auto &masks = canDispatchClockOwnerDirectly(fanout.merged_bit)
+                          ? clockDirectMasks[clockIndex][fanout.kernel]
+                          : clockMasks[clockIndex][fanout.kernel];
+        auto &[rising, falling] = masks;
+        if (fanout.edge == OBELISK_RT_WAIT_EDGE_CHANGE ||
+            fanout.edge == OBELISK_RT_WAIT_EDGE_BOTH ||
+            fanout.edge == OBELISK_RT_WAIT_EDGE_POSEDGE)
+          rising |= bit;
+        if (fanout.edge == OBELISK_RT_WAIT_EDGE_CHANGE ||
+            fanout.edge == OBELISK_RT_WAIT_EDGE_BOTH ||
+            fanout.edge == OBELISK_RT_WAIT_EDGE_NEGEDGE)
+          falling |= bit;
+      }
+    }
+
+    Value nextEdges = entryAlloca(builder, location, i64,
+                                  periodicClocks.size(), 8);
+    Type controlType = LLVM::LLVMStructType::getLiteral(
+        context, {pointer, pointer, i64});
+    Value control = entryAlloca(builder, location, controlType, 1, 8);
+    Value nodes = LLVM::AddressOfOp::create(builder, location, pointer,
+                                            nodesName);
+    Value clocks = LLVM::AddressOfOp::create(
+        builder, location, pointer, "__obelisk_periodic_clock_plan_v1");
+    Value aliases =
+        periodicAliases.empty()
+            ? LLVM::ZeroOp::create(builder, location, pointer).getResult()
+            : LLVM::AddressOfOp::create(builder, location, pointer,
+                                        periodicAliasesName)
+                  .getResult();
+    Value prepareStatus =
+        LLVM::CallOp::create(
+            builder, location, TypeRange{i32},
+            SymbolRefAttr::get(
+                context, "obelisk_rt_v1_scheduler_prepare_periodic_aot"),
+            ValueRange{runEntry->getArgument(1), nodes,
+                       llvmConstant(builder, location, i32,
+                                    executableNodes.size()),
+                       clocks,
+                       llvmConstant(builder, location, i32,
+                                    periodicClocks.size()),
+                       aliases,
+                       llvmConstant(builder, location, i32,
+                                    periodicAliases.size()),
+                       nextEdges, control})
+            .getResult();
+    Value prepared = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, prepareStatus,
+        llvmConstant(builder, location, i32, OBELISK_RT_OK));
+
+    Block *preparedEntry = new Block;
+    Block *promote = new Block;
+    Block *loop = new Block;
+    Block *step = new Block;
+    Block *dispatchStep = new Block;
+    Block *executeStep = new Block;
+    Block *silentFall = nullptr;
+    Block *advanceSilentFall = nullptr;
+    Block *afterStep = new Block;
+    Block *handoff = new Block;
+    Block *failed = new Block;
+    run.getBody().push_back(preparedEntry);
+    run.getBody().push_back(promote);
+    run.getBody().push_back(loop);
+    run.getBody().push_back(step);
+    run.getBody().push_back(dispatchStep);
+    run.getBody().push_back(executeStep);
+    uint64_t directOwnerMask = 0;
+    for (const auto &clock : clockDirectMasks)
+      for (const auto &[rising, falling] : clock)
+        directOwnerMask |= rising | falling;
+    SmallVector<unsigned> directOwnerRecords;
+    for (auto [index, record] : llvm::enumerate(mergedFragments))
+      if (record.bit < 64 &&
+          (directOwnerMask & (uint64_t{1} << record.bit)) != 0)
+        directOwnerRecords.push_back(static_cast<unsigned>(index));
+    bool canCompressSilentFall =
+        periodicClocks.size() == 1 &&
+        llvm::all_of(clockMasks.front(), [](const auto &masks) {
+          return masks.second == 0;
+        }) &&
+        llvm::all_of(clockDirectMasks.front(), [](const auto &masks) {
+          return masks.second == 0;
+        });
+    if (canCompressSilentFall) {
+      silentFall = new Block;
+      advanceSilentFall = new Block;
+      run.getBody().push_back(silentFall);
+      run.getBody().push_back(advanceSilentFall);
+    }
+    run.getBody().push_back(afterStep);
+    run.getBody().push_back(handoff);
+    run.getBody().push_back(failed);
+    afterStep->addArgument(i32, location);
+    handoff->addArgument(i32, location);
+    cf::CondBranchOp::create(builder, location, prepared, preparedEntry,
+                             ValueRange{}, failed, ValueRange{prepareStatus});
+
+    builder.setInsertionPointToStart(preparedEntry);
+    bool forcedTwoState = module->hasAttr("obelisk.eval.force_two_state");
+    if (forcedTwoState)
+      LLVM::MemsetOp::create(
+          builder, location,
+          LLVM::AddressOfOp::create(builder, location, pointer,
+                                    "__obelisk_state_unknown"),
+          llvmConstant(builder, location, builder.getI8Type(), 0),
+          llvmConstant(builder, location, i64,
+                       (stateLayout.bitCount + 7) / 8),
+          /*isVolatile=*/false);
+    Value preparedTerminationAddress =
+        loadAt(builder, location, control, 8, pointer, 8);
+    // The runtime is not re-entered while this generated transaction runs, so
+    // its control addresses and deadline are immutable until handoff. Capture
+    // them once outside the hot loop; direct bodies have no runtime escape
+    // through which a new timed callback could be installed.
+    Value preparedTimeAddress =
+        loadAt(builder, location, control, 0, pointer, 8);
+    Value preparedDeadline =
+        loadAt(builder, location, control, 16, i64, 8);
+    Value terminationSlot = LLVM::AddressOfOp::create(
+        builder, location, pointer, periodicTerminationName);
+    LLVM::StoreOp::create(builder, location, preparedTerminationAddress,
+                          terminationSlot, 8);
+    Value preparedTermination = LLVM::LoadOp::create(
+        builder, location, i32, preparedTerminationAddress, 4);
+    Value alreadyStopping = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ne, preparedTermination,
+        llvmConstant(builder, location, i32, 0));
+    Value enterHotLoop = arith::XOrIOp::create(
+        builder, location, alreadyStopping,
+        llvmConstant(builder, location, builder.getI1Type(), 1));
+    cf::CondBranchOp::create(
+        builder, location, enterHotLoop, promote, ValueRange{}, handoff,
+        ValueRange{llvmConstant(builder, location, i32,
+                                OBELISK_RT_AOT_CHECKPOINT)});
+
+    builder.setInsertionPointToStart(promote);
+    // Synthetic region kernels do not have a source coroutine whose initial
+    // activation can run during bootstrap. Seed exactly those combinational
+    // owners once; clocked and ordinary always-process bodies were already
+    // evaluated by the generic time-zero drain and must not be replayed.
+    uint64_t initialMask = 0;
+    for (auto [index, executor] : llvm::enumerate(mergedExecutors)) {
+      auto direct = llvm::find_if(directFragments, [&](const auto &candidate) {
+        return candidate.wrapper == executor;
+      });
+      if (mergedFragments[index].bit < 64 &&
+          direct != directFragments.end() && direct->initialActivation)
+        initialMask |= uint64_t{1} << mergedFragments[index].bit;
+    }
+    if (initialMask != 0) {
       Value ingress = LLVM::AddressOfOp::create(
           builder, location, pointer, clockKernels.front().ingressName);
-      for (auto [word, mask] : llvm::enumerate(words)) {
-        if (mask == 0)
+      Value pending = LLVM::LoadOp::create(builder, location, i64, ingress, 8);
+      LLVM::StoreOp::create(
+          builder, location,
+          arith::OrIOp::create(
+              builder, location, pending,
+              llvmConstant(builder, location, i64, initialMask)),
+          ingress, 8);
+      // Re-establish combinational quiescence before the first generated
+      // clock edge. The runtime cold prefix may end immediately after a
+      // clocked reset continuation; deferring these level-sensitive owners
+      // until the first edge lets clocked logic sample stale canonical nets.
+      Value initialStatus =
+          LLVM::CallOp::create(
+              builder, location, TypeRange{i32},
+              SymbolRefAttr::get(context, evalCoordinatorName),
+              ValueRange{runEntry->getArgument(0), runEntry->getArgument(1)})
+              .getResult();
+      Value initialized = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq, initialStatus,
+          llvmConstant(builder, location, i32, OBELISK_RT_OK));
+      cf::CondBranchOp::create(builder, location, initialized, loop,
+                               ValueRange{}, failed,
+                               ValueRange{initialStatus});
+    } else {
+      cf::BranchOp::create(builder, location, loop);
+    }
+
+    builder.setInsertionPointToStart(loop);
+    Value nextTime = LLVM::LoadOp::create(builder, location, i64, nextEdges, 8);
+    for (uint32_t index = 1; index != periodicClocks.size(); ++index) {
+      Value candidate = LLVM::LoadOp::create(
+          builder, location, i64,
+          byteGEP(builder, location, nextEdges,
+                  uint64_t{index} * sizeof(uint64_t)),
+          8);
+      Value earlier = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ult, candidate, nextTime);
+      nextTime = arith::SelectOp::create(builder, location, earlier, candidate,
+                                         nextTime);
+    }
+    Value runtimeDue = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ule, preparedDeadline,
+        nextTime);
+    step->addArgument(i64, location);
+    cf::CondBranchOp::create(
+        builder, location, runtimeDue, handoff,
+        ValueRange{llvmConstant(builder, location, i32,
+                                OBELISK_RT_AOT_TIMED_CHECKPOINT)},
+        step, ValueRange{nextTime});
+
+    builder.setInsertionPointToStart(step);
+    LLVM::StoreOp::create(builder, location, step->getArgument(0),
+                          preparedTimeAddress, 8);
+    Value hasIngress = llvmConstant(builder, location, builder.getI1Type(), 0);
+    Value directReady = llvmConstant(builder, location, i64, 0);
+    Value stateValue = LLVM::AddressOfOp::create(builder, location, pointer,
+                                                 "__obelisk_state_value");
+    for (auto [clockIndex, clock] : llvm::enumerate(periodicClocks)) {
+      Value edgeAddress = byteGEP(builder, location, nextEdges,
+                                  uint64_t{clockIndex} * sizeof(uint64_t));
+      Value edge = LLVM::LoadOp::create(builder, location, i64, edgeAddress, 8);
+      // With one periodic source, nextTime is this source's edge by
+      // construction. Materialize that proof as a constant so canonicalize
+      // and LLVM can remove the otherwise redundant due/select chain. The
+      // general equality-based path remains for coincident multi-clock edges.
+      Value due;
+      if (periodicClocks.size() == 1)
+        due = llvmConstant(builder, location, builder.getI1Type(), 1);
+      else
+        due = arith::CmpIOp::create(builder, location,
+                                    arith::CmpIPredicate::eq, edge,
+                                    step->getArgument(0));
+      Value noOverflow = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ule, edge,
+          llvmConstant(builder, location, i64,
+                       UINT64_MAX - clock.halfPeriod));
+      Value advancedCandidate = arith::AddIOp::create(
+          builder, location, edge,
+          llvmConstant(builder, location, i64, clock.halfPeriod));
+      Value advanced = arith::SelectOp::create(
+          builder, location, noOverflow, advancedCandidate,
+          llvmConstant(builder, location, i64, UINT64_MAX));
+      LLVM::StoreOp::create(
+          builder, location,
+          arith::SelectOp::create(builder, location, due, advanced, edge),
+          edgeAddress, 8);
+
+      Value byteAddress =
+          byteGEP(builder, location, stateValue, clock.bitOffset / 8);
+      Value oldByte = LLVM::LoadOp::create(builder, location,
+                                           builder.getI8Type(), byteAddress, 1);
+      uint8_t bitMask = uint8_t{1} << (clock.bitOffset % 8);
+      Value oldSet = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne,
+          arith::AndIOp::create(
+              builder, location, oldByte,
+              llvmConstant(builder, location, builder.getI8Type(), bitMask)),
+          llvmConstant(builder, location, builder.getI8Type(), 0));
+      Value toggled = arith::XOrIOp::create(
+          builder, location, oldByte,
+          llvmConstant(builder, location, builder.getI8Type(), bitMask));
+      LLVM::StoreOp::create(
+          builder, location,
+          arith::SelectOp::create(builder, location, due, toggled, oldByte),
+          byteAddress, 1);
+
+      for (const NativePeriodicAlias &alias : periodicAliases) {
+        if (alias.sourceStaticState != clock.staticState ||
+            alias.sourceBitOffset != clock.bitOffset)
           continue;
-        Value address = byteGEP(builder, location, ingress,
-                                uint64_t{word} * sizeof(uint64_t));
-        Value old = LLVM::LoadOp::create(builder, location, i64, address, 8);
+        // The forwarding driver's canonical plane is not consumed inside the
+        // closed generated loop. Keep the resolved net current for model
+        // reads, and reconstruct the driver at a runtime/checkpoint handoff.
+        // This avoids maintaining a checkpoint-only projection per edge.
+        for (uint64_t bitOffset : {alias.targetBitOffset}) {
+          Value aliasAddress =
+              byteGEP(builder, location, stateValue, bitOffset / 8);
+          Value aliasOld = LLVM::LoadOp::create(
+              builder, location, builder.getI8Type(), aliasAddress, 1);
+          uint8_t aliasMask = uint8_t{1} << (bitOffset % 8);
+          Value aliasValue = arith::SelectOp::create(
+              builder, location, oldSet,
+              arith::AndIOp::create(
+                  builder, location, aliasOld,
+                  llvmConstant(builder, location, builder.getI8Type(),
+                               static_cast<uint8_t>(~aliasMask))),
+              arith::OrIOp::create(
+                  builder, location, aliasOld,
+                  llvmConstant(builder, location, builder.getI8Type(),
+                               aliasMask)));
+          LLVM::StoreOp::create(
+              builder, location,
+              arith::SelectOp::create(builder, location, due, aliasValue,
+                                      aliasOld),
+              aliasAddress, 1);
+        }
+      }
+
+      for (auto [kernelIndex, kernel] : llvm::enumerate(clockKernels)) {
+        auto [riseMask, fallMask] = clockMasks[clockIndex][kernelIndex];
+        if (riseMask == 0 && fallMask == 0)
+          continue;
+        Value edgeMask = arith::SelectOp::create(
+            builder, location, oldSet,
+            llvmConstant(builder, location, i64, fallMask),
+            llvmConstant(builder, location, i64, riseMask));
+        Value selected = arith::SelectOp::create(
+            builder, location, due, edgeMask,
+            llvmConstant(builder, location, i64, 0));
+        hasIngress = arith::OrIOp::create(
+            builder, location, hasIngress,
+            arith::CmpIOp::create(
+                builder, location, arith::CmpIPredicate::ne, selected,
+                llvmConstant(builder, location, i64, 0)));
+        Value ingress = LLVM::AddressOfOp::create(
+            builder, location, pointer, kernel.ingressName);
+        Value pending = LLVM::LoadOp::create(builder, location, i64, ingress, 8);
         LLVM::StoreOp::create(
             builder, location,
-            arith::OrIOp::create(builder, location, old,
-                                 llvmConstant(builder, location, i64, mask)),
-            address, 8);
+            arith::OrIOp::create(builder, location, pending, selected), ingress,
+            8);
       }
-    };
-    auto callCoordinator = [&] {
-      return LLVM::CallOp::create(
-                 builder, location, TypeRange{i32},
-                 SymbolRefAttr::get(context, evalCoordinatorName),
-                 ValueRange{runEntry->getArgument(0), runEntry->getArgument(1)})
-          .getResult();
-    };
-
-    Block *initialEval = new Block;
-    Block *posedge = new Block;
-    Block *afterPosedge = new Block;
-    Block *releaseReset = new Block;
-    Block *checkTrap = new Block;
-    Block *negedge = new Block;
-    Block *complete = new Block;
-    Block *failed = new Block;
-    run.getBody().push_back(initialEval);
-    run.getBody().push_back(posedge);
-    run.getBody().push_back(afterPosedge);
-    run.getBody().push_back(releaseReset);
-    run.getBody().push_back(checkTrap);
-    run.getBody().push_back(negedge);
-    run.getBody().push_back(complete);
-    run.getBody().push_back(failed);
-    cf::BranchOp::create(builder, location, initialEval);
-
-    builder.setInsertionPointToStart(initialEval);
-    SmallVector<uint64_t> initialMask(ingressWords, UINT64_MAX);
-    if (mergedFragments.size() % 64 != 0)
-      initialMask.back() = (uint64_t{1} << (mergedFragments.size() % 64)) - 1;
-    enqueue(initialMask);
-    Value initialStatus = callCoordinator();
-    Value initialOK = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::eq, initialStatus,
-        llvmConstant(builder, location, i32, OBELISK_RT_OK));
-    cf::CondBranchOp::create(builder, location, initialOK, posedge,
-                             ValueRange{}, failed, ValueRange{initialStatus});
-
-    builder.setInsertionPointToStart(posedge);
-    storeBit(evalClock->offset, true);
-    storeBit(evalUutClock->offset, true);
-    Value executorsOK = llvmConstant(builder, location, builder.getI1Type(), 1);
-    for (StringRef execute : posedgeExecutors) {
-      Value status = LLVM::CallOp::create(builder, location, TypeRange{i32},
-                                          SymbolRefAttr::get(context, execute),
-                                          ValueRange{runEntry->getArgument(1)})
-                         .getResult();
-      executorsOK = arith::AndIOp::create(
-          builder, location, executorsOK,
-          arith::CmpIOp::create(
-              builder, location, arith::CmpIPredicate::eq, status,
-              llvmConstant(builder, location, i32, OBELISK_RT_OK)));
+      for (auto [kernelIndex, kernel] : llvm::enumerate(clockKernels)) {
+        auto [riseMask, fallMask] =
+            clockDirectMasks[clockIndex][kernelIndex];
+        if (riseMask == 0 && fallMask == 0)
+          continue;
+        Value edgeMask = arith::SelectOp::create(
+            builder, location, oldSet,
+            llvmConstant(builder, location, i64, fallMask),
+            llvmConstant(builder, location, i64, riseMask));
+        Value selected = arith::SelectOp::create(
+            builder, location, due, edgeMask,
+            llvmConstant(builder, location, i64, 0));
+        directReady =
+            arith::OrIOp::create(builder, location, directReady, selected);
+        hasIngress = arith::OrIOp::create(
+            builder, location, hasIngress,
+            arith::CmpIOp::create(
+                builder, location, arith::CmpIPredicate::ne, selected,
+                llvmConstant(builder, location, i64, 0)));
+      }
     }
-    Value riseStatus = callCoordinator();
-    Value riseOK = arith::AndIOp::create(
-        builder, location, executorsOK,
-        arith::CmpIOp::create(
-            builder, location, arith::CmpIPredicate::eq, riseStatus,
-            llvmConstant(builder, location, i32, OBELISK_RT_OK)));
-    Value riseFailure = arith::SelectOp::create(
-        builder, location, executorsOK, riseStatus,
-        llvmConstant(builder, location, i32, OBELISK_RT_INVALID_DESIGN));
-    cf::CondBranchOp::create(builder, location, riseOK, afterPosedge,
-                             ValueRange{}, failed, ValueRange{riseFailure});
+    cf::BranchOp::create(builder, location, dispatchStep);
 
-    builder.setInsertionPointToStart(afterPosedge);
-    Value edges =
-        LLVM::LoadOp::create(builder, location, i64, positiveEdges, 8);
-    Value nextEdges = arith::AddIOp::create(
-        builder, location, edges, llvmConstant(builder, location, i64, 1));
-    LLVM::StoreOp::create(builder, location, nextEdges, positiveEdges, 8);
-    Value release = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::eq, nextEdges,
-        llvmConstant(builder, location, i64, 5));
-    cf::CondBranchOp::create(builder, location, release, releaseReset,
-                             ValueRange{}, checkTrap, ValueRange{});
-
-    builder.setInsertionPointToStart(releaseReset);
-    storeBit(evalReset->offset, true);
-    enqueue(resetRise);
-    Value resetStatus = callCoordinator();
-    Value resetOK = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::eq, resetStatus,
-        llvmConstant(builder, location, i32, OBELISK_RT_OK));
-    cf::CondBranchOp::create(builder, location, resetOK, checkTrap,
-                             ValueRange{}, failed, ValueRange{resetStatus});
-
-    builder.setInsertionPointToStart(checkTrap);
-    Value trapAddress =
-        byteGEP(builder, location, stateValue, *evalTrapOffset / 8);
-    Value trapByte = LLVM::LoadOp::create(builder, location,
-                                          builder.getI8Type(), trapAddress, 1);
-    Value trapMask = arith::AndIOp::create(
-        builder, location, trapByte,
-        llvmConstant(builder, location, builder.getI8Type(),
-                     uint8_t{1} << (*evalTrapOffset % 8)));
-    Value trapped = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::ne, trapMask,
+    builder.setInsertionPointToStart(dispatchStep);
+    // Promotion is latched for the exact periodic graph closure at a
+    // quiescent hybrid boundary. Unrelated dormant owners may retain X
+    // forever without keeping this transaction in Tier 2. Once set, this one
+    // load is the only variant selection outside the guard-free Tier-1 body.
+    Value periodicPromoted = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ne,
+        LLVM::LoadOp::create(
+            builder, location, builder.getI8Type(),
+            LLVM::AddressOfOp::create(builder, location, pointer,
+                                      periodicPromotionLatchedName),
+            1),
         llvmConstant(builder, location, builder.getI8Type(), 0));
-    cf::CondBranchOp::create(builder, location, trapped, complete, ValueRange{},
-                             negedge, ValueRange{});
+    Value dispatchTwoState =
+        forcedTwoState
+            ? llvmConstant(builder, location, builder.getI1Type(), 1)
+            : periodicPromoted;
+    Value stepFourStateFallback = LLVM::AddressOfOp::create(
+        builder, location, pointer, evalStepFourStateFallbackName);
+    auto resetStepFourStateTracking = [&] {
+      LLVM::StoreOp::create(
+          builder, location,
+          llvmConstant(builder, location, builder.getI8Type(), 0),
+          stepFourStateFallback, 1);
+      if (nbaTaintWordCount == 0)
+        return;
+      Value taint = LLVM::AddressOfOp::create(
+          builder, location, pointer, evalStepFourStateNBARootsName);
+      for (uint32_t word = 0; word != nbaTaintWordCount; ++word)
+        LLVM::StoreOp::create(
+            builder, location, llvmConstant(builder, location, i64, 0),
+            byteGEP(builder, location, taint,
+                    uint64_t{word} * sizeof(uint64_t)),
+            8);
+    };
+    // The compressed single-clock path below has a structurally separate
+    // trusted two-state block. Keep transient four-state accounting out of
+    // that block entirely; it is initialized only when routing through the
+    // hybrid prefix. General coincident-clock dispatch still shares one
+    // coordinator entry, so retain its common initialization here.
+    if (!canCompressSilentFall || directOwnerRecords.empty())
+      resetStepFourStateTracking();
+    // Clock-edge owners are already quiescent with respect to the preceding
+    // slot, so invoke them directly and reserve the cttz coordinator for the
+    // publications they produce. This is the compact dispatch shape of the
+    // original ceiling evaluator, generalized to a bitset so coincident
+    // clocks execute a shared owner exactly once.
+    if (canCompressSilentFall && !directOwnerRecords.empty()) {
+      // The only generated step is now the rising phase of one proven
+      // periodic source. Its direct owner set is a compile-time constant, so
+      // outline the fully promoted path as a straight-line instance sequence.
+      // The transient prefix selects each instance independently.
+      Block *prepareDirectHybrid = new Block;
+      Block *executeDirectHybrid = new Block;
+      Block *executeDirectTwoState = new Block;
+      Block *afterDirectSequence = new Block;
+      run.getBody().push_back(prepareDirectHybrid);
+      run.getBody().push_back(executeDirectHybrid);
+      run.getBody().push_back(executeDirectTwoState);
+      run.getBody().push_back(afterDirectSequence);
+      uint64_t directPromotionMask = 0;
+      for (unsigned recordIndex : directOwnerRecords)
+        if (!mergedTwoStateExecutors[recordIndex].empty() &&
+            mergedFragments[recordIndex].bit < 64)
+          directPromotionMask |=
+              uint64_t{1} << mergedFragments[recordIndex].bit;
+      // Select the steady variant before touching any transient promotion or
+      // four-state bookkeeping. This makes the post-promotion hot CFG match
+      // the original straight-line ceiling evaluator while preserving the
+      // independent per-instance promotion checks in the cold prefix.
+      cf::CondBranchOp::create(builder, location, dispatchTwoState,
+                               executeDirectTwoState, ValueRange{},
+                               prepareDirectHybrid, ValueRange{});
+      builder.setInsertionPointToStart(prepareDirectHybrid);
+      resetStepFourStateTracking();
+      Value directPending = LLVM::LoadOp::create(
+          builder, location, i64,
+          LLVM::AddressOfOp::create(builder, location, pointer,
+                                    promotionPendingMaskName),
+          8);
+      Value directOwnersPromoted = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq,
+          arith::AndIOp::create(
+              builder, location, directPending,
+              llvmConstant(builder, location, i64, directPromotionMask)),
+          llvmConstant(builder, location, i64, 0));
+      cf::CondBranchOp::create(builder, location, directOwnersPromoted,
+                               executeDirectTwoState, ValueRange{},
+                               executeDirectHybrid, ValueRange{});
+      auto clearDirectOwner = [&](unsigned recordIndex) {
+          // Preserve coordinator fixpoint semantics between owners.  A
+          // preceding owner may republish an earlier clock owner; clearing
+          // the whole initial mask after the sequence would erase that
+          // required retrigger.  Clear only the owner just executed, exactly
+          // where the bitset coordinator would consume it.
+          uint64_t inverse =
+              ~(uint64_t{1} << mergedFragments[recordIndex].bit);
+          for (const GeneratedClockKernel &kernel : clockKernels) {
+            Value ingress = LLVM::AddressOfOp::create(
+                builder, location, pointer, kernel.ingressName);
+            Value queued =
+                LLVM::LoadOp::create(builder, location, i64, ingress, 8);
+            LLVM::StoreOp::create(
+                builder, location,
+                arith::AndIOp::create(
+                    builder, location, queued,
+                    llvmConstant(builder, location, i64, inverse)),
+                ingress, 8);
+          }
+      };
+      builder.setInsertionPointToStart(executeDirectTwoState);
+      for (unsigned recordIndex : directOwnerRecords) {
+        if (mergedTwoStateExecutors[recordIndex].empty()) {
+          LLVM::StoreOp::create(
+              builder, location,
+              llvmConstant(builder, location, builder.getI8Type(), 1),
+              stepFourStateFallback, 1);
+          if (ownerMayTaintNBA(recordIndex))
+            markOwnerNBATaint(recordIndex);
+        }
+        StringRef executor = mergedTwoStateExecutors[recordIndex].empty()
+                                 ? StringRef(mergedExecutors[recordIndex])
+                                 : StringRef(
+                                       mergedTwoStateExecutors[recordIndex]);
+        (void)LLVM::CallOp::create(
+            builder, location, TypeRange{i32},
+            SymbolRefAttr::get(context, executor),
+            ValueRange{runEntry->getArgument(1)});
+        clearDirectOwner(recordIndex);
+      }
+      cf::BranchOp::create(builder, location, afterDirectSequence);
 
-    builder.setInsertionPointToStart(negedge);
-    storeBit(evalClock->offset, false);
-    storeBit(evalUutClock->offset, false);
-    cf::BranchOp::create(builder, location, posedge);
+      Block *hybridCursor = executeDirectHybrid;
+      for (unsigned recordIndex : directOwnerRecords) {
+        builder.setInsertionPointToStart(hybridCursor);
+        if (promotionKernelReadyNames[recordIndex].empty()) {
+          LLVM::StoreOp::create(
+              builder, location,
+              llvmConstant(builder, location, builder.getI8Type(), 1),
+              stepFourStateFallback, 1);
+          if (ownerMayTaintNBA(recordIndex))
+            markOwnerNBATaint(recordIndex);
+          (void)LLVM::CallOp::create(
+              builder, location, TypeRange{i32},
+              SymbolRefAttr::get(context, mergedExecutors[recordIndex]),
+              ValueRange{runEntry->getArgument(1)});
+          clearDirectOwner(recordIndex);
+          continue;
+        }
+        Block *executeFourState = new Block;
+        Block *executeTwoState = new Block;
+        Block *nextOwner = new Block;
+        run.getBody().push_back(executeFourState);
+        run.getBody().push_back(executeTwoState);
+        run.getBody().push_back(nextOwner);
+        Value kernelReady = LLVM::CallOp::create(
+                                builder, location,
+                                TypeRange{builder.getI1Type()},
+                                SymbolRefAttr::get(
+                                    context,
+                                    promotionKernelReadyNames[recordIndex]),
+                                ValueRange{})
+                                .getResult();
+        cf::CondBranchOp::create(builder, location, kernelReady,
+                                 executeTwoState, ValueRange{},
+                                 executeFourState, ValueRange{});
+        builder.setInsertionPointToStart(executeFourState);
+        LLVM::StoreOp::create(
+            builder, location,
+            llvmConstant(builder, location, builder.getI8Type(), 1),
+            stepFourStateFallback, 1);
+        if (ownerMayTaintNBA(recordIndex))
+          markOwnerNBATaint(recordIndex);
+        (void)LLVM::CallOp::create(
+            builder, location, TypeRange{i32},
+            SymbolRefAttr::get(context, mergedExecutors[recordIndex]),
+            ValueRange{runEntry->getArgument(1)});
+        clearDirectOwner(recordIndex);
+        cf::BranchOp::create(builder, location, nextOwner);
+        builder.setInsertionPointToStart(executeTwoState);
+        (void)LLVM::CallOp::create(
+            builder, location, TypeRange{i32},
+            SymbolRefAttr::get(context,
+                               mergedTwoStateExecutors[recordIndex]),
+            ValueRange{runEntry->getArgument(1)});
+        clearDirectOwner(recordIndex);
+        cf::BranchOp::create(builder, location, nextOwner);
+        hybridCursor = nextOwner;
+      }
+      builder.setInsertionPointToStart(hybridCursor);
+      cf::BranchOp::create(builder, location, afterDirectSequence);
+      builder.setInsertionPointToStart(afterDirectSequence);
+    }
+    if (!canCompressSilentFall)
+      for (unsigned recordIndex : directOwnerRecords) {
+      const auto &record = mergedFragments[recordIndex];
+      Value selected = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne,
+          arith::AndIOp::create(
+              builder, location, directReady,
+              llvmConstant(builder, location, i64,
+                           uint64_t{1} << record.bit)),
+          llvmConstant(builder, location, i64, 0));
+      Block *executeDirect = new Block;
+      Block *nextDirect = new Block;
+      run.getBody().push_back(executeDirect);
+      run.getBody().push_back(nextDirect);
+      cf::CondBranchOp::create(builder, location, selected, executeDirect,
+                               ValueRange{}, nextDirect, ValueRange{});
+      builder.setInsertionPointToStart(executeDirect);
+      StringRef fourState = mergedExecutors[recordIndex];
+      StringRef twoState = mergedTwoStateExecutors[recordIndex];
+      if (!twoState.empty() && twoState != fourState) {
+        Block *executeFourState = new Block;
+        Block *executeTwoState = new Block;
+        Block *afterExecute = new Block;
+        run.getBody().push_back(executeFourState);
+        run.getBody().push_back(executeTwoState);
+        run.getBody().push_back(afterExecute);
+        Value kernelReady =
+            LLVM::CallOp::create(
+                builder, location, TypeRange{builder.getI1Type()},
+                SymbolRefAttr::get(context,
+                                   promotionKernelReadyNames[recordIndex]),
+                ValueRange{})
+                .getResult();
+        cf::CondBranchOp::create(builder, location, kernelReady,
+                                 executeTwoState, ValueRange{},
+                                 executeFourState, ValueRange{});
+        builder.setInsertionPointToStart(executeFourState);
+        LLVM::StoreOp::create(
+            builder, location,
+            llvmConstant(builder, location, builder.getI8Type(), 1),
+            stepFourStateFallback, 1);
+        if (ownerMayTaintNBA(recordIndex))
+          markOwnerNBATaint(recordIndex);
+        Value fourStateStatus =
+            LLVM::CallOp::create(
+                builder, location, TypeRange{i32},
+                SymbolRefAttr::get(context, fourState),
+                ValueRange{runEntry->getArgument(1)})
+                .getResult();
+        Value fourStateOK = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::eq, fourStateStatus,
+            llvmConstant(builder, location, i32, OBELISK_RT_OK));
+        cf::CondBranchOp::create(builder, location, fourStateOK, afterExecute,
+                                 ValueRange{}, afterStep,
+                                 ValueRange{fourStateStatus});
+        builder.setInsertionPointToStart(executeTwoState);
+        Value twoStateStatus =
+            LLVM::CallOp::create(
+                builder, location, TypeRange{i32},
+                SymbolRefAttr::get(context, twoState),
+                ValueRange{runEntry->getArgument(1)})
+                .getResult();
+        Value twoStateOK = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::eq, twoStateStatus,
+            llvmConstant(builder, location, i32, OBELISK_RT_OK));
+        cf::CondBranchOp::create(builder, location, twoStateOK, afterExecute,
+                                 ValueRange{}, afterStep,
+                                 ValueRange{twoStateStatus});
+        builder.setInsertionPointToStart(afterExecute);
+      } else {
+        LLVM::StoreOp::create(
+            builder, location,
+            llvmConstant(builder, location, builder.getI8Type(), 1),
+            stepFourStateFallback, 1);
+        if (ownerMayTaintNBA(recordIndex))
+          markOwnerNBATaint(recordIndex);
+        Value directStatus =
+            LLVM::CallOp::create(
+                builder, location, TypeRange{i32},
+                SymbolRefAttr::get(context, fourState),
+                ValueRange{runEntry->getArgument(1)})
+                .getResult();
+        Value directOK = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::eq, directStatus,
+            llvmConstant(builder, location, i32, OBELISK_RT_OK));
+        Block *afterExecute = new Block;
+        run.getBody().push_back(afterExecute);
+        cf::CondBranchOp::create(builder, location, directOK, afterExecute,
+                                 ValueRange{}, afterStep,
+                                 ValueRange{directStatus});
+        builder.setInsertionPointToStart(afterExecute);
+      }
+      // Match coordinator execution semantics: an implicit combinational
+      // sensitivity cannot retrigger the owner that is currently executing.
+      // Fused clock/combinational bodies commonly publish one of their own
+      // roots, so leaving this bit queued would execute the whole clock body a
+      // second time in the fixpoint scan.
+      for (const GeneratedClockKernel &kernel : clockKernels) {
+        Value ingress = LLVM::AddressOfOp::create(
+            builder, location, pointer, kernel.ingressName);
+        Value queued = LLVM::LoadOp::create(builder, location, i64, ingress, 8);
+        LLVM::StoreOp::create(
+            builder, location,
+            arith::AndIOp::create(
+                builder, location, queued,
+                llvmConstant(builder, location, i64,
+                             ~(uint64_t{1} << record.bit))),
+            ingress, 8);
+      }
+      cf::BranchOp::create(builder, location, nextDirect);
+      builder.setInsertionPointToStart(nextDirect);
+      }
+    cf::CondBranchOp::create(builder, location, hasIngress, executeStep,
+                             ValueRange{}, loop, ValueRange{});
 
-    builder.setInsertionPointToStart(complete);
-    Value x1 = LLVM::LoadOp::create(
-        builder, location, i32,
-        byteGEP(builder, location, stateValue, *evalCpuregsOffset / 8 + 4), 1);
-    Value signatureOK = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::eq, x1,
-        llvmConstant(builder, location, i32, UINT32_C(0x6a5a2920)));
-    Value completedEdges =
-        LLVM::LoadOp::create(builder, location, i64, positiveEdges, 8);
-    Value cycleCount =
-        arith::SubIOp::create(builder, location, completedEdges,
-                              llvmConstant(builder, location, i64, 5));
-    Value cycleCountOK = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::eq, cycleCount,
-        llvmConstant(builder, location, i64, UINT64_C(11000021)));
-    Value resultOK =
-        arith::AndIOp::create(builder, location, signatureOK, cycleCountOK);
+    builder.setInsertionPointToStart(executeStep);
+    // The hybrid coordinator drains the transient four-state prefix and
+    // independently latches owners as their closures become known. Once the
+    // exact periodic graph closure is fully promoted, route the whole closed
+    // superstep to a guard-free two-state coordinator. Owners outside that
+    // closure can only become ready after a runtime handoff, which invalidates
+    // this selection before generated execution resumes.
+    Block *executeHybridCoordinator = new Block;
+    Block *executeTwoStateCoordinator = new Block;
+    Block *executeCoordinatorJoin = new Block;
+    executeCoordinatorJoin->addArgument(i32, location);
+    run.getBody().push_back(executeHybridCoordinator);
+    run.getBody().push_back(executeTwoStateCoordinator);
+    run.getBody().push_back(executeCoordinatorJoin);
+    cf::CondBranchOp::create(builder, location, dispatchTwoState,
+                             executeTwoStateCoordinator, ValueRange{},
+                             executeHybridCoordinator, ValueRange{});
+    builder.setInsertionPointToStart(executeHybridCoordinator);
+    Value hybridStatus =
+        LLVM::CallOp::create(
+            builder, location, TypeRange{i32},
+            SymbolRefAttr::get(context, evalHybridCoordinatorName),
+            ValueRange{runEntry->getArgument(0), runEntry->getArgument(1)})
+            .getResult();
+    // The coordinator returns only at its local fixpoint (or on an exit that
+    // immediately hands back to the runtime).  Scan the exact periodic
+    // closure here once; successful promotion changes routing on the next
+    // edge and removes all per-owner promotion guards from the hot loop.
+    (void)LLVM::CallOp::create(
+        builder, location, TypeRange{builder.getI1Type()},
+        SymbolRefAttr::get(context, periodicPromotionReadyName),
+        ValueRange{});
+    cf::BranchOp::create(builder, location, executeCoordinatorJoin,
+                         ValueRange{hybridStatus});
+    builder.setInsertionPointToStart(executeTwoStateCoordinator);
+    SmallVector<Value> twoStateCoordinatorArguments{
+        runEntry->getArgument(0), runEntry->getArgument(1)};
+    if (periodicPromotionComplete)
+      twoStateCoordinatorArguments.push_back(preparedTerminationAddress);
+    Value twoStateStatus =
+        LLVM::CallOp::create(
+            builder, location, TypeRange{i32},
+            SymbolRefAttr::get(
+                context, periodicPromotionComplete
+                             ? evalPeriodicTwoStateCoordinatorName
+                             : evalTwoStateCoordinatorName),
+            twoStateCoordinatorArguments)
+            .getResult();
+    cf::BranchOp::create(builder, location, executeCoordinatorJoin,
+                         ValueRange{twoStateStatus});
+    builder.setInsertionPointToStart(executeCoordinatorJoin);
+    Value stepStatus = executeCoordinatorJoin->getArgument(0);
+    Value stepOK = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, stepStatus,
+        llvmConstant(builder, location, i32, OBELISK_RT_OK));
+    cf::CondBranchOp::create(
+        builder, location, stepOK,
+        canCompressSilentFall ? silentFall : loop, ValueRange{}, afterStep,
+        ValueRange{stepStatus});
+
+    if (canCompressSilentFall) {
+      // A falling phase with no physical fanout is not an event region. It may
+      // be compressed into the generated run_until loop provided no runtime
+      // deadline occurs at or before that edge. This is the general form of
+      // the cheap negedge in the original parity-ceiling loop.
+      builder.setInsertionPointToStart(silentFall);
+      Value fallTime = LLVM::LoadOp::create(builder, location, i64, nextEdges,
+                                            8);
+      Value runtimeAtFall = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ule, preparedDeadline,
+          fallTime);
+      cf::CondBranchOp::create(
+          builder, location, runtimeAtFall, handoff,
+          ValueRange{llvmConstant(builder, location, i32,
+                                  OBELISK_RT_AOT_TIMED_CHECKPOINT)},
+          advanceSilentFall, ValueRange{});
+
+      builder.setInsertionPointToStart(advanceSilentFall);
+      const NativePeriodicClock &clock = periodicClocks.front();
+      Value sourceAddress = byteGEP(builder, location, stateValue,
+                                    clock.bitOffset / 8);
+      Value source = LLVM::LoadOp::create(builder, location,
+                                          builder.getI8Type(), sourceAddress,
+                                          1);
+      uint8_t sourceMask = uint8_t{1} << (clock.bitOffset % 8);
+      LLVM::StoreOp::create(
+          builder, location,
+          arith::AndIOp::create(
+              builder, location, source,
+              llvmConstant(builder, location, builder.getI8Type(),
+                           static_cast<uint8_t>(~sourceMask))),
+          sourceAddress, 1);
+      for (const NativePeriodicAlias &alias : periodicAliases) {
+        if (alias.sourceStaticState != clock.staticState ||
+            alias.sourceBitOffset != clock.bitOffset)
+          continue;
+        for (uint64_t bitOffset : {alias.targetBitOffset}) {
+          Value address =
+              byteGEP(builder, location, stateValue, bitOffset / 8);
+          Value old = LLVM::LoadOp::create(builder, location,
+                                           builder.getI8Type(), address, 1);
+          uint8_t mask = uint8_t{1} << (bitOffset % 8);
+          LLVM::StoreOp::create(
+              builder, location,
+              arith::AndIOp::create(
+                  builder, location, old,
+                  llvmConstant(builder, location, builder.getI8Type(),
+                               static_cast<uint8_t>(~mask))),
+              address, 1);
+        }
+      }
+      Value noOverflow = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ule, fallTime,
+          llvmConstant(builder, location, i64,
+                       UINT64_MAX - clock.halfPeriod));
+      Value nextRiseCandidate = arith::AddIOp::create(
+          builder, location, fallTime,
+          llvmConstant(builder, location, i64, clock.halfPeriod));
+      Value nextRise = arith::SelectOp::create(
+          builder, location, noOverflow, nextRiseCandidate,
+          llvmConstant(builder, location, i64, UINT64_MAX));
+      LLVM::StoreOp::create(builder, location, nextRise, nextEdges, 8);
+      cf::BranchOp::create(builder, location, loop);
+    }
+
+    builder.setInsertionPointToStart(afterStep);
+    // prepare_periodic_aot detaches the runtime clock deadlines.  Once that
+    // succeeds every generated exit, including TierUnavailable and fatal body
+    // statuses, must restore them before returning to the runtime.
+    cf::BranchOp::create(builder, location, handoff,
+                         ValueRange{afterStep->getArgument(0)});
+
+    builder.setInsertionPointToStart(handoff);
+    // Direct periodic forwarding elides checkpoint-only driver writes in the
+    // hot loop. Reconstruct both canonical planes before runtime callbacks or
+    // asynchronous Tier-2 intervention can observe them.
+    Value stateUnknown = LLVM::AddressOfOp::create(
+        builder, location, pointer, "__obelisk_state_unknown");
+    Value handoffState = LLVM::AddressOfOp::create(
+        builder, location, pointer, "__obelisk_state_value");
+    for (const NativePeriodicAlias &alias : periodicAliases) {
+      auto source = llvm::find_if(periodicClocks, [&](const auto &clock) {
+        return clock.staticState == alias.sourceStaticState &&
+               clock.bitOffset == alias.sourceBitOffset;
+      });
+      if (source == periodicClocks.end())
+        continue;
+      Value sourceAddress = byteGEP(builder, location, handoffState,
+                                    source->bitOffset / 8);
+      Value sourceByte = LLVM::LoadOp::create(
+          builder, location, builder.getI8Type(), sourceAddress, 1);
+      uint8_t sourceMask = uint8_t{1} << (source->bitOffset % 8);
+      Value sourceSet = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne,
+          arith::AndIOp::create(
+              builder, location, sourceByte,
+              llvmConstant(builder, location, builder.getI8Type(),
+                           sourceMask)),
+          llvmConstant(builder, location, builder.getI8Type(), 0));
+      Value driverAddress = byteGEP(builder, location, handoffState,
+                                    alias.driverBitOffset / 8);
+      Value driverByte = LLVM::LoadOp::create(
+          builder, location, builder.getI8Type(), driverAddress, 1);
+      uint8_t driverMask = uint8_t{1} << (alias.driverBitOffset % 8);
+      Value driverValue = arith::SelectOp::create(
+          builder, location, sourceSet,
+          arith::OrIOp::create(
+              builder, location, driverByte,
+              llvmConstant(builder, location, builder.getI8Type(),
+                           driverMask)),
+          arith::AndIOp::create(
+              builder, location, driverByte,
+              llvmConstant(builder, location, builder.getI8Type(),
+                           static_cast<uint8_t>(~driverMask))));
+      LLVM::StoreOp::create(builder, location, driverValue, driverAddress, 1);
+      Value driverUnknownAddress = byteGEP(
+          builder, location, stateUnknown, alias.driverBitOffset / 8);
+      Value driverUnknown = LLVM::LoadOp::create(
+          builder, location, builder.getI8Type(), driverUnknownAddress, 1);
+      LLVM::StoreOp::create(
+          builder, location,
+          arith::AndIOp::create(
+              builder, location, driverUnknown,
+              llvmConstant(builder, location, builder.getI8Type(),
+                           static_cast<uint8_t>(~driverMask))),
+          driverUnknownAddress, 1);
+    }
+    Value handoffStatus =
+        LLVM::CallOp::create(
+            builder, location, TypeRange{i32},
+            SymbolRefAttr::get(
+                context, "obelisk_rt_v1_scheduler_handoff_periodic_aot"),
+            ValueRange{runEntry->getArgument(1), clocks,
+                       llvmConstant(builder, location, i32,
+                                    periodicClocks.size()),
+                       nextEdges})
+            .getResult();
+    Value handoffOK = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, handoffStatus,
+        llvmConstant(builder, location, i32, OBELISK_RT_OK));
     LLVM::ReturnOp::create(
         builder, location,
         arith::SelectOp::create(
-            builder, location, resultOK,
-            llvmConstant(builder, location, i32, OBELISK_RT_OK),
-            llvmConstant(builder, location, i32, OBELISK_RT_INVALID_DESIGN)));
+            builder, location, handoffOK,
+            handoff->getArgument(0),
+            handoffStatus));
+
     failed->addArgument(i32, location);
     builder.setInsertionPointToStart(failed);
     LLVM::ReturnOp::create(builder, location, failed->getArgument(0));
   } else {
-    // The eval-ceiling experiment deliberately has no coroutine or runtime
-    // scheduler fallback.  If the design cannot be expressed as the generated
-    // direct loop above, reject it instead of silently measuring the legacy
-    // architecture.
+    // Explicit eval is a proof/debug mode. Never silently measure the generic
+    // scheduler when its direct run_until prerequisites are incomplete.
     LLVM::ReturnOp::create(
         builder, location,
         llvmConstant(builder, location, i32, OBELISK_RT_INVALID_DESIGN));
@@ -1363,8 +3028,7 @@ LogicalResult makeNativeEvalPlan(
       for (const GeneratedClockKernel &kernel : clockKernels) {
         Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
                                                   kernel.ingressName);
-        uint32_t words =
-            static_cast<uint32_t>((kernel.computeNodes.size() + 63) / 64);
+        uint32_t words = ingressWordCount(kernel);
         for (uint32_t word = 0; word != words; ++word) {
           Value address = byteGEP(builder, location, ingress,
                                   uint64_t{word} * sizeof(uint64_t));
@@ -1408,8 +3072,7 @@ LogicalResult makeNativeEvalPlan(
       for (const GeneratedClockKernel &kernel : clockKernels) {
         Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
                                                   kernel.ingressName);
-        uint32_t words =
-            static_cast<uint32_t>((kernel.computeNodes.size() + 63) / 64);
+        uint32_t words = ingressWordCount(kernel);
         for (uint32_t word = 0; word != words; ++word)
           postCommitPending = arith::OrIOp::create(
               builder, location, postCommitPending,
@@ -1434,31 +3097,120 @@ LogicalResult makeNativeEvalPlan(
     }
   }
 
-  if (evalScheduler && !clockKernels.empty() && !mergedFragments.empty() &&
-      mergedFragments.size() <= 64) {
+  auto makeFastCoordinator =
+      [&](StringRef functionName, ArrayRef<std::string> executors,
+          bool promotedCoordinator,
+          bool hybridCoordinator = false,
+          uint64_t allowedOwnerMask = UINT64_MAX,
+          bool trustedTwoState = false) -> LogicalResult {
+    if (!evalScheduler || clockKernels.empty() || mergedFragments.empty() ||
+        mergedFragments.size() > 64 ||
+        executors.size() != mergedFragments.size())
+      return success();
+    bool coordinatorHasConvergence = false;
+    for (auto [recordIndex, record] : llvm::enumerate(mergedFragments)) {
+      if (record.bit >= 64 ||
+          (allowedOwnerMask & (uint64_t{1} << record.bit)) == 0)
+        continue;
+      for (StringRef name : {StringRef(executors[recordIndex]),
+                             StringRef(mergedTwoStateExecutors[recordIndex])})
+        if (!name.empty())
+          if (auto function = module.lookupSymbol<LLVM::LLVMFuncOp>(name))
+            coordinatorHasConvergence |=
+                function->hasAttr("obelisk.eval.tier2_convergence");
+    }
     builder.setInsertionPointToEnd(module.getBody());
+    SmallVector<Type> coordinatorArguments{pointer, pointer};
+    if (trustedTwoState)
+      coordinatorArguments.push_back(pointer);
     auto fastCoordinator = LLVM::LLVMFuncOp::create(
-        builder, location, evalCoordinatorName,
-        LLVM::LLVMFunctionType::get(i32, {pointer, pointer}, false));
+        builder, location, functionName,
+        LLVM::LLVMFunctionType::get(i32, coordinatorArguments, false));
     fastCoordinator->setAttr(
         "passthrough",
-        builder.getArrayAttr({builder.getStringAttr("alwaysinline")}));
+        builder.getArrayAttr({builder.getStringAttr(
+            hybridCoordinator ? "noinline" : "alwaysinline")}));
     Block *fastEntry = fastCoordinator.addEntryBlock(builder);
     Block *dispatch = new Block;
     Block *commit = new Block;
     Block *afterCommit = new Block;
     Block *complete = new Block;
+    Block *stopped = new Block;
+    Block *failed = new Block;
+    failed->addArgument(i32, location);
     fastCoordinator.getBody().push_back(dispatch);
     fastCoordinator.getBody().push_back(commit);
     fastCoordinator.getBody().push_back(afterCommit);
     fastCoordinator.getBody().push_back(complete);
+    fastCoordinator.getBody().push_back(stopped);
+    fastCoordinator.getBody().push_back(failed);
     builder.setInsertionPointToStart(fastEntry);
     Value changed = entryAlloca(builder, location, i32, 1, 4);
-    Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
-                                              clockKernels.front().ingressName);
+    Value fourStateFallback = entryAlloca(builder, location,
+                                          builder.getI1Type(), 1, 1);
+    LLVM::StoreOp::create(
+        builder, location,
+        trustedTwoState
+            ? llvmConstant(builder, location, builder.getI1Type(), 0)
+            : (promotedCoordinator || hybridCoordinator)
+            ? arith::CmpIOp::create(
+                  builder, location, arith::CmpIPredicate::ne,
+                  LLVM::LoadOp::create(
+                      builder, location, builder.getI8Type(),
+                      LLVM::AddressOfOp::create(
+                          builder, location, pointer,
+                          evalStepFourStateFallbackName),
+                      1),
+                  llvmConstant(builder, location, builder.getI8Type(), 0))
+                  .getResult()
+            : llvmConstant(builder, location, builder.getI1Type(), 0),
+        fourStateFallback, 1);
+    auto combinedIngress = [&] {
+      if (evalScheduler) {
+        Value ingress = LLVM::AddressOfOp::create(
+            builder, location, pointer, clockKernels.front().ingressName);
+        return LLVM::LoadOp::create(builder, location, i64, ingress, 8)
+            .getResult();
+      }
+      Value combined = llvmConstant(builder, location, i64, 0);
+      for (const GeneratedClockKernel &kernel : clockKernels) {
+        Value ingress = LLVM::AddressOfOp::create(
+            builder, location, pointer, kernel.ingressName);
+        combined = arith::OrIOp::create(
+            builder, location, combined,
+            LLVM::LoadOp::create(builder, location, i64, ingress, 8));
+      }
+      return combined;
+    };
+    auto clearIngressMask = [&](Value mask) {
+      Value inverse = arith::XOrIOp::create(
+          builder, location, mask,
+          llvmConstant(builder, location, i64, UINT64_MAX));
+      if (evalScheduler) {
+        Value ingress = LLVM::AddressOfOp::create(
+            builder, location, pointer, clockKernels.front().ingressName);
+        Value queued =
+            LLVM::LoadOp::create(builder, location, i64, ingress, 8);
+        LLVM::StoreOp::create(
+            builder, location,
+            arith::AndIOp::create(builder, location, queued, inverse), ingress,
+            8);
+        return;
+      }
+      for (const GeneratedClockKernel &kernel : clockKernels) {
+        Value ingress = LLVM::AddressOfOp::create(
+            builder, location, pointer, kernel.ingressName);
+        Value queued =
+            LLVM::LoadOp::create(builder, location, i64, ingress, 8);
+        LLVM::StoreOp::create(
+            builder, location,
+            arith::AndIOp::create(builder, location, queued, inverse), ingress,
+            8);
+      }
+    };
     cf::BranchOp::create(builder, location, dispatch);
     builder.setInsertionPointToStart(dispatch);
-    Value ready = LLVM::LoadOp::create(builder, location, i64, ingress, 8);
+    Value ready = combinedIngress();
     Value empty =
         arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
                               ready, llvmConstant(builder, location, i64, 0));
@@ -1470,16 +3222,27 @@ LogicalResult makeNativeEvalPlan(
     builder.setInsertionPointToStart(select);
     Value bit =
         LLVM::CountTrailingZerosOp::create(builder, location, i64, ready, true);
-    Value remaining = arith::AndIOp::create(
-        builder, location, ready,
-        arith::SubIOp::create(builder, location, ready,
-                              llvmConstant(builder, location, i64, 1)));
-    LLVM::StoreOp::create(builder, location, remaining, ingress, 8);
+    Value selectedMask = arith::ShLIOp::create(
+        builder, location, llvmConstant(builder, location, i64, 1), bit);
+    Value selectedPromotionPending;
+    if (hybridCoordinator) {
+      Value pending = LLVM::LoadOp::create(
+          builder, location, i64,
+          LLVM::AddressOfOp::create(builder, location, pointer,
+                                    promotionPendingMaskName),
+          8);
+      selectedPromotionPending = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne,
+          arith::AndIOp::create(builder, location, pending, selectedMask),
+          llvmConstant(builder, location, i64, 0));
+    }
     SmallVector<APInt> cases;
     SmallVector<Block *> destinations;
     SmallVector<ValueRange> destinationOperands;
     for (auto [recordIndex, record] : llvm::enumerate(mergedFragments)) {
-      if (record.bit >= 64 || mergedExecutors[recordIndex].empty())
+      if (record.bit >= 64 || executors[recordIndex].empty())
+        continue;
+      if ((allowedOwnerMask & (uint64_t{1} << record.bit)) == 0)
         continue;
       Block *execute = new Block;
       fastCoordinator.getBody().push_back(execute);
@@ -1487,47 +3250,336 @@ LogicalResult makeNativeEvalPlan(
       destinations.push_back(execute);
       destinationOperands.push_back(ValueRange{});
       builder.setInsertionPointToStart(execute);
-      (void)LLVM::CallOp::create(
-          builder, location, TypeRange{i32},
-          SymbolRefAttr::get(context, mergedExecutors[recordIndex]),
-          ValueRange{fastEntry->getArgument(1)});
-      Value published =
-          LLVM::LoadOp::create(builder, location, i64, ingress, 8);
-      LLVM::StoreOp::create(
-          builder, location,
-          arith::AndIOp::create(builder, location, published,
-                                llvmConstant(builder, location, i64,
-                                             ~(uint64_t{1} << record.bit))),
-          ingress, 8);
-      cf::BranchOp::create(builder, location, dispatch);
+      if ((promotedCoordinator || hybridCoordinator) &&
+          mergedTwoStateExecutors[recordIndex].empty()) {
+        LLVM::StoreOp::create(
+            builder, location,
+            llvmConstant(builder, location, builder.getI1Type(), 1),
+            fourStateFallback, 1);
+        if (ownerMayTaintNBA(recordIndex))
+          markOwnerNBATaint(recordIndex);
+      }
+      Value executeStatus;
+      if (hybridCoordinator &&
+          !mergedTwoStateExecutors[recordIndex].empty() &&
+          !promotionKernelReadyNames[recordIndex].empty()) {
+        Block *checkPromotion = new Block;
+        Block *executeFourState = new Block;
+        Block *executeTwoState = new Block;
+        Block *executeJoin = new Block;
+        executeJoin->addArgument(i32, location);
+        fastCoordinator.getBody().push_back(checkPromotion);
+        fastCoordinator.getBody().push_back(executeFourState);
+        fastCoordinator.getBody().push_back(executeTwoState);
+        fastCoordinator.getBody().push_back(executeJoin);
+        cf::CondBranchOp::create(builder, location,
+                                 selectedPromotionPending, checkPromotion,
+                                 ValueRange{}, executeTwoState, ValueRange{});
+        builder.setInsertionPointToStart(checkPromotion);
+        Value kernelReady =
+            LLVM::CallOp::create(
+                builder, location, TypeRange{builder.getI1Type()},
+                SymbolRefAttr::get(
+                    context, promotionKernelReadyNames[recordIndex]),
+                ValueRange{})
+                .getResult();
+        cf::CondBranchOp::create(builder, location, kernelReady,
+                                 executeTwoState, ValueRange{},
+                                 executeFourState, ValueRange{});
+        builder.setInsertionPointToStart(executeFourState);
+        LLVM::StoreOp::create(
+            builder, location,
+            llvmConstant(builder, location, builder.getI1Type(), 1),
+            fourStateFallback, 1);
+        if (ownerMayTaintNBA(recordIndex))
+          markOwnerNBATaint(recordIndex);
+        Value fourStateStatus =
+            LLVM::CallOp::create(
+                builder, location, TypeRange{i32},
+                SymbolRefAttr::get(context, executors[recordIndex]),
+                ValueRange{fastEntry->getArgument(1)})
+                .getResult();
+        cf::BranchOp::create(builder, location, executeJoin,
+                             ValueRange{fourStateStatus});
+        builder.setInsertionPointToStart(executeTwoState);
+        Value twoStateStatus =
+            LLVM::CallOp::create(
+                builder, location, TypeRange{i32},
+                SymbolRefAttr::get(
+                    context, mergedTwoStateExecutors[recordIndex]),
+                ValueRange{fastEntry->getArgument(1)})
+                .getResult();
+        cf::BranchOp::create(builder, location, executeJoin,
+                             ValueRange{twoStateStatus});
+        builder.setInsertionPointToStart(executeJoin);
+        executeStatus = executeJoin->getArgument(0);
+      } else {
+        executeStatus =
+            LLVM::CallOp::create(
+                builder, location, TypeRange{i32},
+                SymbolRefAttr::get(context, executors[recordIndex]),
+                ValueRange{fastEntry->getArgument(1)})
+                .getResult();
+      }
+      clearIngressMask(llvmConstant(builder, location, i64,
+                                    uint64_t{1} << record.bit));
+      Value executeOK = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq, executeStatus,
+          llvmConstant(builder, location, i32, OBELISK_RT_OK));
+      auto executor = module.lookupSymbol<LLVM::LLVMFuncOp>(
+          executors[recordIndex]);
+      auto twoStateExecutor = module.lookupSymbol<LLVM::LLVMFuncOp>(
+          mergedTwoStateExecutors[recordIndex]);
+      bool mayTerminate =
+          (executor && executor->hasAttr("obelisk.eval.may_terminate")) ||
+          (twoStateExecutor &&
+           twoStateExecutor->hasAttr("obelisk.eval.may_terminate"));
+      if (!mayTerminate) {
+        cf::CondBranchOp::create(builder, location, executeOK, dispatch,
+                                 ValueRange{}, failed,
+                                 ValueRange{executeStatus});
+        continue;
+      }
+      Block *checkTermination = new Block;
+      Block *loadTermination = trustedTwoState ? nullptr : new Block;
+      fastCoordinator.getBody().push_back(checkTermination);
+      if (loadTermination)
+        fastCoordinator.getBody().push_back(loadTermination);
+      cf::CondBranchOp::create(builder, location, executeOK, checkTermination,
+                               ValueRange{}, failed,
+                               ValueRange{executeStatus});
+      builder.setInsertionPointToStart(checkTermination);
+      Value terminationAddress = trustedTwoState
+                                     ? fastEntry->getArgument(2)
+                                     : LLVM::LoadOp::create(
+                                           builder, location, pointer,
+                                           LLVM::AddressOfOp::create(
+                                               builder, location, pointer,
+                                               periodicTerminationName),
+                                           8)
+                                           .getResult();
+      if (trustedTwoState) {
+        Value termination = LLVM::LoadOp::create(
+            builder, location, i32, terminationAddress, 4);
+        Value stopping = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::ne, termination,
+            llvmConstant(builder, location, i32, 0));
+        cf::CondBranchOp::create(builder, location, stopping, stopped,
+                                 ValueRange{}, dispatch, ValueRange{});
+        continue;
+      }
+      Value noTerminationAddress = LLVM::ICmpOp::create(
+          builder, location, LLVM::ICmpPredicate::eq, terminationAddress,
+          LLVM::ZeroOp::create(builder, location, pointer));
+      cf::CondBranchOp::create(builder, location, noTerminationAddress,
+                               dispatch, ValueRange{}, loadTermination,
+                               ValueRange{});
+      builder.setInsertionPointToStart(loadTermination);
+      Value termination = LLVM::LoadOp::create(
+          builder, location, i32, terminationAddress, 4);
+      Value stopping = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne, termination,
+          llvmConstant(builder, location, i32, 0));
+      cf::CondBranchOp::create(builder, location, stopping, stopped,
+                               ValueRange{}, dispatch, ValueRange{});
     }
     builder.setInsertionPointToEnd(select);
-    LLVM::SwitchOp::create(builder, location, bit, dispatch, ValueRange{},
-                           cases, destinations, destinationOperands,
+    LLVM::SwitchOp::create(builder, location, bit, stopped, ValueRange{}, cases,
+                           destinations, destinationOperands,
                            ArrayRef<int32_t>{});
 
     builder.setInsertionPointToStart(commit);
+    if (coordinatorHasConvergence) {
+      // A convergence SCC is locally interruptible while active. Consolidate
+      // the external termination observation at the common pre-NBA boundary
+      // instead of reloading the immutable control pointer after every SCC
+      // owner. This preserves the same no-commit-on-stop boundary while the
+      // normal Tier-1 -> Tier-2 path pays one poll per settled transaction.
+      Block *commitBody = new Block;
+      Block *loadTermination = trustedTwoState ? nullptr : new Block;
+      fastCoordinator.getBody().push_back(commitBody);
+      if (loadTermination)
+        fastCoordinator.getBody().push_back(loadTermination);
+      Value terminationAddress =
+          trustedTwoState
+              ? fastEntry->getArgument(2)
+              : LLVM::LoadOp::create(
+                    builder, location, pointer,
+                    LLVM::AddressOfOp::create(
+                        builder, location, pointer, periodicTerminationName),
+                    8)
+                    .getResult();
+      if (trustedTwoState) {
+        Value termination = LLVM::LoadOp::create(
+            builder, location, i32, terminationAddress, 4);
+        Value stopping = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::ne, termination,
+            llvmConstant(builder, location, i32, 0));
+        cf::CondBranchOp::create(builder, location, stopping, stopped,
+                                 ValueRange{}, commitBody, ValueRange{});
+        builder.setInsertionPointToStart(commitBody);
+      } else {
+      Value noTerminationAddress = LLVM::ICmpOp::create(
+          builder, location, LLVM::ICmpPredicate::eq, terminationAddress,
+          LLVM::ZeroOp::create(builder, location, pointer));
+      cf::CondBranchOp::create(builder, location, noTerminationAddress,
+                               commitBody, ValueRange{}, loadTermination,
+                               ValueRange{});
+      builder.setInsertionPointToStart(loadTermination);
+      Value termination = LLVM::LoadOp::create(
+          builder, location, i32, terminationAddress, 4);
+      Value stopping = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne, termination,
+          llvmConstant(builder, location, i32, 0));
+      cf::CondBranchOp::create(builder, location, stopping, stopped,
+                               ValueRange{}, commitBody, ValueRange{});
+      builder.setInsertionPointToStart(commitBody);
+      }
+    }
     LLVM::StoreOp::create(builder, location,
                           llvmConstant(builder, location, i32, 0), changed, 4);
-    Value commitStatus =
-        LLVM::CallOp::create(
-            builder, location, TypeRange{i32},
-            SymbolRefAttr::get(context, nbaCommitName),
-            ValueRange{fastEntry->getArgument(0), fastEntry->getArgument(1),
-                       llvmConstant(builder, location, i32, 2), changed})
-            .getResult();
+    Value commitStatus;
+    if (trustedTwoState) {
+      auto fastTwoStateCall = LLVM::CallOp::create(
+          builder, location, TypeRange{i32},
+          SymbolRefAttr::get(context, nbaCommitName),
+          ValueRange{fastEntry->getArgument(0), fastEntry->getArgument(1),
+                     llvmConstant(builder, location, i32, 2), changed});
+      fastTwoStateCall->setAttr("obelisk.eval.use_fast_two_state_nba",
+                                builder.getUnitAttr());
+      commitStatus = fastTwoStateCall.getResult();
+    } else if (!promotedCoordinator && !hybridCoordinator) {
+      commitStatus =
+          LLVM::CallOp::create(
+              builder, location, TypeRange{i32},
+              SymbolRefAttr::get(context, nbaCommitName),
+              ValueRange{fastEntry->getArgument(0), fastEntry->getArgument(1),
+                         llvmConstant(builder, location, i32, 2), changed})
+              .getResult();
+    } else {
+      Block *fastTwoStateCommit = new Block;
+      Block *canonicalTwoStateCommit = new Block;
+      Block *fourStateCommit = new Block;
+      Block *checkFallbackNBA = new Block;
+      Block *checkCanonicalNBA = new Block;
+      Block *clearFastNBA = new Block;
+      Block *selectFastNBA = new Block;
+      Block *latchFastNBA = new Block;
+      Block *commitJoin = new Block;
+      commitJoin->addArgument(i32, location);
+      fastCoordinator.getBody().push_back(checkFallbackNBA);
+      fastCoordinator.getBody().push_back(checkCanonicalNBA);
+      fastCoordinator.getBody().push_back(clearFastNBA);
+      fastCoordinator.getBody().push_back(selectFastNBA);
+      fastCoordinator.getBody().push_back(latchFastNBA);
+      fastCoordinator.getBody().push_back(fastTwoStateCommit);
+      fastCoordinator.getBody().push_back(canonicalTwoStateCommit);
+      fastCoordinator.getBody().push_back(fourStateCommit);
+      fastCoordinator.getBody().push_back(commitJoin);
+      Value usedFallback = LLVM::LoadOp::create(
+          builder, location, builder.getI1Type(), fourStateFallback, 1);
+      cf::CondBranchOp::create(builder, location, usedFallback,
+                               clearFastNBA, ValueRange{}, selectFastNBA,
+                               ValueRange{});
+      builder.setInsertionPointToStart(clearFastNBA);
+      LLVM::StoreOp::create(
+          builder, location,
+          llvmConstant(builder, location, builder.getI8Type(), 0),
+          LLVM::AddressOfOp::create(builder, location, pointer,
+                                    evalFastNBALatchedName),
+          1);
+      cf::BranchOp::create(builder, location, checkFallbackNBA);
+      builder.setInsertionPointToStart(selectFastNBA);
+      Value fastNBALatched = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne,
+          LLVM::LoadOp::create(
+              builder, location, builder.getI8Type(),
+              LLVM::AddressOfOp::create(builder, location, pointer,
+                                        evalFastNBALatchedName),
+              1),
+          llvmConstant(builder, location, builder.getI8Type(), 0));
+      cf::CondBranchOp::create(builder, location, fastNBALatched,
+                               fastTwoStateCommit, ValueRange{},
+                               checkCanonicalNBA, ValueRange{});
+      builder.setInsertionPointToStart(checkFallbackNBA);
+      Value fallbackNBAKnown = LLVM::CallOp::create(
+                                   builder, location,
+                                   TypeRange{builder.getI1Type()},
+                                   SymbolRefAttr::get(context, nbaKnownName),
+                                   ValueRange{
+                                       llvmConstant(builder, location, i32, 2),
+                                       llvmConstant(builder, location,
+                                                    builder.getI1Type(), 0),
+                                       llvmConstant(builder, location,
+                                                    builder.getI1Type(), 1)})
+                                   .getResult();
+      cf::CondBranchOp::create(builder, location, fallbackNBAKnown,
+                               canonicalTwoStateCommit, ValueRange{},
+                               fourStateCommit, ValueRange{});
+      builder.setInsertionPointToStart(checkCanonicalNBA);
+      Value canonicalNBAKnown = LLVM::CallOp::create(
+                                    builder, location,
+                                    TypeRange{builder.getI1Type()},
+                                    SymbolRefAttr::get(context, nbaKnownName),
+                                    ValueRange{
+                                        llvmConstant(builder, location, i32, 2),
+                                        llvmConstant(builder, location,
+                                                     builder.getI1Type(), 1),
+                                        llvmConstant(builder, location,
+                                                     builder.getI1Type(), 0)})
+                                    .getResult();
+      cf::CondBranchOp::create(builder, location, canonicalNBAKnown,
+                               latchFastNBA, ValueRange{},
+                               canonicalTwoStateCommit, ValueRange{});
+      builder.setInsertionPointToStart(latchFastNBA);
+      LLVM::StoreOp::create(
+          builder, location,
+          llvmConstant(builder, location, builder.getI8Type(), 1),
+          LLVM::AddressOfOp::create(builder, location, pointer,
+                                    evalFastNBALatchedName),
+          1);
+      cf::BranchOp::create(builder, location, fastTwoStateCommit);
+      builder.setInsertionPointToStart(fastTwoStateCommit);
+      auto fastTwoStateCall = LLVM::CallOp::create(
+          builder, location, TypeRange{i32},
+          SymbolRefAttr::get(context, nbaCommitName),
+          ValueRange{fastEntry->getArgument(0), fastEntry->getArgument(1),
+                     llvmConstant(builder, location, i32, 2), changed});
+      fastTwoStateCall->setAttr("obelisk.eval.use_fast_two_state_nba",
+                                builder.getUnitAttr());
+      cf::BranchOp::create(builder, location, commitJoin,
+                           ValueRange{fastTwoStateCall.getResult()});
+      builder.setInsertionPointToStart(canonicalTwoStateCommit);
+      auto canonicalTwoStateCall = LLVM::CallOp::create(
+          builder, location, TypeRange{i32},
+          SymbolRefAttr::get(context, nbaCommitName),
+          ValueRange{fastEntry->getArgument(0), fastEntry->getArgument(1),
+                     llvmConstant(builder, location, i32, 2), changed});
+      canonicalTwoStateCall->setAttr(
+          "obelisk.eval.use_canonical_two_state_nba", builder.getUnitAttr());
+      cf::BranchOp::create(builder, location, commitJoin,
+                           ValueRange{canonicalTwoStateCall.getResult()});
+      builder.setInsertionPointToStart(fourStateCommit);
+      auto fourStateCall = LLVM::CallOp::create(
+          builder, location, TypeRange{i32},
+          SymbolRefAttr::get(context, nbaCommitName),
+          ValueRange{fastEntry->getArgument(0), fastEntry->getArgument(1),
+                     llvmConstant(builder, location, i32, 2), changed});
+      fourStateCall->setAttr("obelisk.eval.keep_four_state_nba",
+                             builder.getUnitAttr());
+      cf::BranchOp::create(builder, location, commitJoin,
+                           ValueRange{fourStateCall.getResult()});
+      builder.setInsertionPointToStart(commitJoin);
+      commitStatus = commitJoin->getArgument(0);
+    }
     Value commitOK = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq, commitStatus,
         llvmConstant(builder, location, i32, OBELISK_RT_OK));
-    Block *failed = new Block;
-    failed->addArgument(i32, location);
-    fastCoordinator.getBody().push_back(failed);
     cf::CondBranchOp::create(builder, location, commitOK, afterCommit,
                              ValueRange{}, failed, ValueRange{commitStatus});
 
     builder.setInsertionPointToStart(afterCommit);
-    Value postNBAReady =
-        LLVM::LoadOp::create(builder, location, i64, ingress, 8);
+    Value postNBAReady = combinedIngress();
     Value postNBAEmpty = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq, postNBAReady,
         llvmConstant(builder, location, i64, 0));
@@ -1535,9 +3587,34 @@ LogicalResult makeNativeEvalPlan(
                              ValueRange{}, dispatch, ValueRange{});
     builder.setInsertionPointToStart(complete);
     LLVM::ReturnOp::create(builder, location, commitStatus);
+    builder.setInsertionPointToStart(stopped);
+    LLVM::ReturnOp::create(builder, location,
+                           llvmConstant(builder, location, i32,
+                                        OBELISK_RT_TIER_UNAVAILABLE));
     builder.setInsertionPointToStart(failed);
     LLVM::ReturnOp::create(builder, location, failed->getArgument(0));
-  }
+    return success();
+  };
+  SmallVector<std::string> twoStateExecutors(mergedTwoStateExecutors);
+  for (auto [index, name] : llvm::enumerate(twoStateExecutors))
+    if (name.empty())
+      name = mergedExecutors[index];
+  if (failed(makeFastCoordinator(evalCoordinatorName, mergedExecutors,
+                                 /*promotedCoordinator=*/false)) ||
+      failed(makeFastCoordinator(evalTwoStateCoordinatorName,
+                                 twoStateExecutors,
+                                 /*promotedCoordinator=*/true)) ||
+      (periodicPromotionComplete &&
+       failed(makeFastCoordinator(evalPeriodicTwoStateCoordinatorName,
+                                  twoStateExecutors,
+                                  /*promotedCoordinator=*/true,
+                                  /*hybridCoordinator=*/false,
+                                  /*allowedOwnerMask=*/UINT64_MAX,
+                                  /*trustedTwoState=*/true))) ||
+      failed(makeFastCoordinator(evalHybridCoordinatorName, mergedExecutors,
+                                 /*promotedCoordinator=*/false,
+                                 /*hybridCoordinator=*/true)))
+    return failure();
 
   builder.setInsertionPointToEnd(module.getBody());
   auto snapshot = LLVM::LLVMFuncOp::create(
@@ -1545,11 +3622,14 @@ LogicalResult makeNativeEvalPlan(
       LLVM::LLVMFunctionType::get(i32, {pointer, pointer, pointer}, false));
   Block *snapshotEntry = snapshot.addEntryBlock(builder);
   builder.setInsertionPointToStart(snapshotEntry);
-  // Snapshotting is part of the transactional runtime handoff.  This ceiling
-  // path intentionally has no such handoff.
-  LLVM::ReturnOp::create(
-      builder, location,
-      llvmConstant(builder, location, i32, OBELISK_RT_INVALID_DESIGN));
+  Value snapshotStatus =
+      LLVM::CallOp::create(
+          builder, location, TypeRange{i32},
+          SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_snapshot_aot"),
+          ValueRange{snapshotEntry->getArgument(1),
+                     snapshotEntry->getArgument(2)})
+          .getResult();
+  LLVM::ReturnOp::create(builder, location, snapshotStatus);
 
   builder.setInsertionPointToEnd(module.getBody());
   auto nbaCommit = LLVM::LLVMFuncOp::create(
@@ -1574,7 +3654,7 @@ LogicalResult makeNativeEvalPlan(
       !guardedSpecializationEnabled &&
       staticNBAPlan.generatedOffsets.size() == nbaRoots.size();
   SmallVector<SmallVector<uint32_t>> scalarRootsByWord(nbaDirtyWordCount);
-  uint64_t planeBytes = (stateLayout.bitCount + 7) / 8;
+  uint64_t planeBytes = (stateLayout.bitCount + 7) / 8 + sizeof(uint64_t);
   if (generateScalarCommits)
     for (auto [rootIndex, root, accumulator, offset] :
          llvm::enumerate(nbaRoots, staticNBAPlan.generatedAccumulators,
@@ -1669,6 +3749,8 @@ LogicalResult makeNativeEvalPlan(
                                                "__obelisk_state_value");
   Value stateUnknown = LLVM::AddressOfOp::create(builder, location, pointer,
                                                  "__obelisk_state_unknown");
+  bool forcedTwoStateEval =
+      evalScheduler && module->hasAttr("obelisk.eval.force_two_state");
   for (const DynamicEvalNBA &entry : dynamicEvalNBAs) {
     Value validAddress =
         LLVM::AddressOfOp::create(builder, location, pointer, entry.validName);
@@ -1680,8 +3762,18 @@ LogicalResult makeNativeEvalPlan(
         builder, location, i64,
         LLVM::AddressOfOp::create(builder, location, pointer, entry.offsetName),
         8);
+    Value maximumOffset = llvmConstant(
+        builder, location, i64,
+        staticNBAPlan.roots[entry.rootIndex].bit_width - entry.width);
+    Value inBounds = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ule, dynamicBit,
+        maximumOffset);
+    Value safeDynamicBit = arith::SelectOp::create(
+        builder, location, inBounds, dynamicBit,
+        llvmConstant(builder, location, i64, 0));
     Value dynamicByte = arith::ShRUIOp::create(
-        builder, location, dynamicBit, llvmConstant(builder, location, i64, 3));
+        builder, location, safeDynamicBit,
+        llvmConstant(builder, location, i64, 3));
     Value byteOffset = arith::AddIOp::create(
         builder, location, dynamicByte,
         llvmConstant(builder, location, i64,
@@ -1691,41 +3783,128 @@ LogicalResult makeNativeEvalPlan(
                                  builder.getI8Type(), plane,
                                  ValueRange{byteOffset});
     };
-    IntegerType valueType = IntegerType::get(context, entry.width);
+    active = arith::AndIOp::create(builder, location, active, inBounds);
+    Value bitInByte = arith::AndIOp::create(
+        builder, location, safeDynamicBit,
+        llvmConstant(builder, location, i64, uint64_t{7}));
+    Block *dynamicJoin = nullptr;
+    if ((entry.width & 7) == 0) {
+      Block *aligned = new Block;
+      Block *unaligned = new Block;
+      dynamicJoin = new Block;
+      auto beforeGeneric = Region::iterator(genericNBACommit);
+      nbaCommit.getBody().getBlocks().insert(beforeGeneric, aligned);
+      beforeGeneric = Region::iterator(genericNBACommit);
+      nbaCommit.getBody().getBlocks().insert(beforeGeneric, unaligned);
+      beforeGeneric = Region::iterator(genericNBACommit);
+      nbaCommit.getBody().getBlocks().insert(beforeGeneric, dynamicJoin);
+      Value byteAligned = arith::CmpIOp::create(
+                              builder, location, arith::CmpIPredicate::eq,
+                              bitInByte,
+                              llvmConstant(builder, location, i64, 0))
+                              .getResult();
+      cf::CondBranchOp::create(builder, location, byteAligned, aligned,
+                               ValueRange{}, unaligned, ValueRange{});
+
+      builder.setInsertionPointToStart(aligned);
+      IntegerType alignedType = IntegerType::get(context, entry.width);
+      auto commitAlignedPlane = [&](Value plane, StringRef stagedName) {
+        Value address = planeAddress(plane);
+        Value old = LLVM::LoadOp::create(builder, location, alignedType,
+                                         address, 1);
+        Value staged64 = LLVM::LoadOp::create(
+            builder, location, i64,
+            LLVM::AddressOfOp::create(builder, location, pointer, stagedName),
+            8);
+        Value staged = resizeNativeInteger(builder, location, staged64,
+                                           alignedType);
+        LLVM::StoreOp::create(
+            builder, location,
+            arith::SelectOp::create(builder, location, active, staged, old),
+            address, 1);
+      };
+      commitAlignedPlane(stateValue, entry.valueName);
+      if (!forcedTwoStateEval)
+        commitAlignedPlane(stateUnknown, entry.unknownName);
+      cf::BranchOp::create(builder, location, dynamicJoin);
+      builder.setInsertionPointToStart(unaligned);
+    }
+    // Load the exact byte window touched by an unaligned field. The state
+    // planes carry an eight-byte guard, so a <=64-bit field can safely use its
+    // width+7-bit window at the final root while the dynamic mask preserves
+    // adjacent roots sharing those bytes.
+    // LLVM stores an odd-width integer using its byte-rounded storage size.
+    // The padding bits are not represented by the SSA value and therefore
+    // cannot participate in the merge below.  Use an explicitly byte-sized
+    // window so an unaligned dynamic field cannot clear the first bit of the
+    // adjacent packed element (for example an i39 store for a 32-bit field
+    // at bit offset 32 would otherwise overwrite bit 39).
+    uint64_t windowWidth = llvm::alignTo(entry.width + 7, uint64_t{8});
+    IntegerType windowType = IntegerType::get(context, windowWidth);
+    Value windowShift = resizeNativeInteger(builder, location, bitInByte,
+                                            windowType);
+    uint64_t fieldMask = entry.width == 64
+                             ? UINT64_MAX
+                             : (uint64_t{1} << entry.width) - 1;
+    Value unshiftedMask =
+        llvmConstant(builder, location, windowType, fieldMask);
+    Value shiftedMask = arith::ShLIOp::create(builder, location,
+                                              unshiftedMask, windowShift);
     Value valueAddress = planeAddress(stateValue);
-    Value oldValue =
-        LLVM::LoadOp::create(builder, location, valueType, valueAddress, 1);
+    Value oldValue = LLVM::LoadOp::create(builder, location, windowType,
+                                          valueAddress, 1);
     Value staged64 = LLVM::LoadOp::create(
         builder, location, i64,
         LLVM::AddressOfOp::create(builder, location, pointer, entry.valueName),
         8);
-    Value stagedValue =
-        entry.width == 64
-            ? staged64
-            : LLVM::TruncOp::create(builder, location, valueType, staged64)
-                  .getResult();
+    Value stagedValue = resizeNativeInteger(builder, location, staged64,
+                                            windowType);
+    stagedValue = arith::ShLIOp::create(
+        builder, location,
+        arith::AndIOp::create(builder, location, stagedValue, unshiftedMask),
+        windowShift);
+    Value mergedValue = arith::XOrIOp::create(
+        builder, location, oldValue,
+        arith::AndIOp::create(
+            builder, location,
+            arith::XOrIOp::create(builder, location, oldValue, stagedValue),
+            shiftedMask));
     LLVM::StoreOp::create(builder, location,
                           arith::SelectOp::create(builder, location, active,
-                                                  stagedValue, oldValue),
+                                                  mergedValue, oldValue),
                           valueAddress, 1);
-    if (!evalScheduler) {
+    if (!forcedTwoStateEval) {
       Value unknownAddress = planeAddress(stateUnknown);
-      Value oldUnknown =
-          LLVM::LoadOp::create(builder, location, valueType, unknownAddress, 1);
+      Value oldUnknown = LLVM::LoadOp::create(builder, location, windowType,
+                                              unknownAddress, 1);
       Value stagedUnknown64 = LLVM::LoadOp::create(
           builder, location, i64,
           LLVM::AddressOfOp::create(builder, location, pointer,
                                     entry.unknownName),
           8);
-      Value stagedUnknown =
-          entry.width == 64 ? stagedUnknown64
-                            : LLVM::TruncOp::create(builder, location,
-                                                    valueType, stagedUnknown64)
-                                  .getResult();
-      LLVM::StoreOp::create(builder, location,
-                            arith::SelectOp::create(builder, location, active,
-                                                    stagedUnknown, oldUnknown),
-                            unknownAddress, 1);
+      Value stagedUnknown = resizeNativeInteger(builder, location,
+                                                stagedUnknown64, windowType);
+      stagedUnknown = arith::ShLIOp::create(
+          builder, location,
+          arith::AndIOp::create(builder, location, stagedUnknown,
+                                unshiftedMask),
+          windowShift);
+      Value mergedUnknown = arith::XOrIOp::create(
+          builder, location, oldUnknown,
+          arith::AndIOp::create(
+              builder, location,
+              arith::XOrIOp::create(builder, location, oldUnknown,
+                                    stagedUnknown),
+              shiftedMask));
+      LLVM::StoreOp::create(
+          builder, location,
+          arith::SelectOp::create(builder, location, active, mergedUnknown,
+                                  oldUnknown),
+          unknownAddress, 1);
+    }
+    if (dynamicJoin) {
+      cf::BranchOp::create(builder, location, dynamicJoin);
+      builder.setInsertionPointToStart(dynamicJoin);
     }
     LLVM::StoreOp::create(builder, location,
                           llvmConstant(builder, location, i32, 0), validAddress,
@@ -1810,8 +3989,8 @@ LogicalResult makeNativeEvalPlan(
     uint64_t highWidth = width - (64 - shift);
     uint8_t highMask = static_cast<uint8_t>((uint16_t{1} << highWidth) - 1);
     Value highAddress = byteGEP(builder, location, plane, firstByte + 8);
-    Value oldHigh = LLVM::LoadOp::create(builder, location, builder.getI8Type(),
-                                         highAddress, 1);
+    Value oldHigh = LLVM::LoadOp::create(builder, location,
+                                         builder.getI8Type(), highAddress, 1);
     Value highValue = arith::ShRUIOp::create(
         builder, location, value,
         llvmConstant(builder, location, i64, 64 - shift));
@@ -1863,7 +4042,14 @@ LogicalResult makeNativeEvalPlan(
       uint64_t offset = staticNBAPlan.generatedOffsets[rootIndex];
       uint32_t fixedCommitRegion =
           staticNBAPlan.generatedCommitRegions[rootIndex];
-      bool fixedScalarStage = fixedCommitRegion != UINT32_MAX;
+      bool fixedRegionStage = fixedCommitRegion != UINT32_MAX;
+      bool fullRootStage =
+          rootIndex < staticNBAPlan.generatedFullRootStages.size() &&
+          staticNBAPlan.generatedFullRootStages[rootIndex];
+      uint64_t fixedWriteMask =
+          rootIndex < staticNBAPlan.generatedFixedWriteMasks.size()
+              ? staticNBAPlan.generatedFixedWriteMasks[rootIndex]
+              : 0;
       StringRef accumulator = staticNBAPlan.generatedAccumulators[rootIndex];
       Block *afterRoot =
           position + 1 == scalarRootsByWord[word].size() ? next : new Block;
@@ -1874,16 +4060,18 @@ LogicalResult makeNativeEvalPlan(
       nbaCommit.getBody().getBlocks().insert(Region::iterator(afterRoot),
                                              commitRoot);
       builder.setInsertionPointToStart(rootBlock);
-      Value selected = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::ne,
-          arith::AndIOp::create(builder, location, dirty,
-                                llvmConstant(builder, location, i64,
-                                             uint64_t{1} << (rootIndex % 64))),
-          llvmConstant(builder, location, i64, 0));
+      // Extract the one-bit predicate directly. On x86 this gives instruction
+      // selection a `bt`/shift-immediate shape for upper-half roots instead of
+      // materializing a 64-bit mask in a register at every barrier.
+      Value selected = arith::TruncIOp::create(
+          builder, location, builder.getI1Type(),
+          arith::ShRUIOp::create(
+              builder, location, dirty,
+              llvmConstant(builder, location, i64, rootIndex % 64)));
       Value accumulatorBase =
           LLVM::AddressOfOp::create(builder, location, pointer, accumulator);
       Value regionMatches;
-      if (fixedScalarStage) {
+      if (fixedRegionStage) {
         regionMatches = arith::CmpIOp::create(
             builder, location, arith::CmpIPredicate::eq,
             nbaCommitEntry->getArgument(2),
@@ -1919,14 +4107,27 @@ LogicalResult makeNativeEvalPlan(
           byteGEP(builder, location, accumulatorBase,
                   offsetof(obelisk_rt_generated_nba_accumulator_256, value)),
           8);
-      Value stagedUnknown = LLVM::LoadOp::create(
-          builder, location, i64,
-          byteGEP(builder, location, accumulatorBase,
-                  offsetof(obelisk_rt_generated_nba_accumulator_256, unknown)),
-          8);
+      Value stagedUnknown;
+      if (forcedTwoStateEval) {
+        stagedUnknown = llvmConstant(builder, location, i64, 0);
+      } else {
+        auto load = LLVM::LoadOp::create(
+            builder, location, i64,
+            byteGEP(builder, location, accumulatorBase,
+                    offsetof(obelisk_rt_generated_nba_accumulator_256,
+                             unknown)),
+            8);
+        // The later two-state commit clone must zero both canonical unknown
+        // loads and staged accumulator unknown data left by an earlier
+        // four-state slot. Mark this semantic role explicitly instead of
+        // reverse-engineering a byte GEP after LLVM lowering.
+        load->setAttr("obelisk.eval.two_state_zero_unknown",
+                      UnitAttr::get(context));
+        stagedUnknown = load;
+      }
       Value writeMask =
-          fixedScalarStage
-              ? llvmConstant(builder, location, i64, scalarMask(root.bit_width))
+          fixedWriteMask != 0
+              ? llvmConstant(builder, location, i64, fixedWriteMask)
               : arith::AndIOp::create(
                     builder, location,
                     LLVM::LoadOp::create(
@@ -1940,7 +4141,7 @@ LogicalResult makeNativeEvalPlan(
                                  scalarMask(root.bit_width)))
                     .getResult();
       Value oldValue = loadRoot(stateValue, offset, root.bit_width);
-      Value oldUnknown = evalScheduler
+      Value oldUnknown = forcedTwoStateEval
                              ? llvmConstant(builder, location, i64, 0)
                              : loadRoot(stateUnknown, offset, root.bit_width);
       Value inverseMask = arith::XOrIOp::create(
@@ -1951,18 +4152,19 @@ LogicalResult makeNativeEvalPlan(
           arith::AndIOp::create(builder, location, oldValue, inverseMask),
           arith::AndIOp::create(builder, location, stagedValue, writeMask));
       Value newUnknown =
-          evalScheduler ? llvmConstant(builder, location, i64, 0)
-                        : arith::OrIOp::create(
-                              builder, location,
-                              arith::AndIOp::create(builder, location,
-                                                    oldUnknown, inverseMask),
-                              arith::AndIOp::create(builder, location,
-                                                    stagedUnknown, writeMask))
-                              .getResult();
+          forcedTwoStateEval
+              ? llvmConstant(builder, location, i64, 0)
+              : arith::OrIOp::create(
+                    builder, location,
+                    arith::AndIOp::create(builder, location, oldUnknown,
+                                          inverseMask),
+                    arith::AndIOp::create(builder, location, stagedUnknown,
+                                          writeMask))
+                    .getResult();
       storeRoot(stateValue, offset, root.bit_width, newValue);
-      if (!evalScheduler)
+      if (!forcedTwoStateEval)
         storeRoot(stateUnknown, offset, root.bit_width, newUnknown);
-      if (!evalScheduler || !fixedScalarStage) {
+      if (!evalScheduler || (fixedWriteMask == 0 && !fullRootStage)) {
         LLVM::StoreOp::create(
             builder, location, llvmConstant(builder, location, i64, 0),
             byteGEP(
@@ -2035,7 +4237,8 @@ LogicalResult makeNativeEvalPlan(
                SmallVector<uint64_t>(directActivationWordCount, 0)});
           group = std::prev(groups.end());
         }
-        if (evalScheduler && entry.reserved != 0 &&
+        if (evalScheduler && entry.reserved == 1 &&
+            entry.merged_bit < directActivationWordCount * 64 &&
             directActivationWordCount != 0)
           group->direct[entry.merged_bit / 64] |= uint64_t{1}
                                                   << (entry.merged_bit % 64);
@@ -2267,12 +4470,206 @@ LogicalResult makeNativeEvalPlan(
     LLVM::ReturnOp::create(builder, location, nbaCommitStatus);
   }
 
+  if (evalScheduler) {
+    // A four-state owner does not necessarily stage an unknown NBA value.  A
+    // common example is a checkpoint-capable monitor incrementing a known
+    // cycle counter.  Before selecting the expensive four-state barrier, scan
+    // only dirty fixed roots and prove that the overwritten canonical and
+    // staged unknown bits are zero.  This is a quiescent handoff test, not a
+    // persistent shadow state: the canonical planes remain authoritative.
+    builder.setInsertionPointToEnd(module.getBody());
+    auto nbaKnown = LLVM::LLVMFuncOp::create(
+        builder, location, nbaKnownName,
+        LLVM::LLVMFunctionType::get(
+            builder.getI1Type(),
+            {i32, builder.getI1Type(), builder.getI1Type()}, false));
+    nbaKnown.setLinkage(LLVM::Linkage::Internal);
+    Block *knownEntry = nbaKnown.addEntryBlock(builder);
+    Block *knownTrue = new Block;
+    Block *knownFalse = new Block;
+    nbaKnown.getBody().push_back(knownTrue);
+    nbaKnown.getBody().push_back(knownFalse);
+    builder.setInsertionPointToStart(knownTrue);
+    LLVM::ReturnOp::create(
+        builder, location,
+        llvmConstant(builder, location, builder.getI1Type(), 1));
+    builder.setInsertionPointToStart(knownFalse);
+    LLVM::ReturnOp::create(
+        builder, location,
+        llvmConstant(builder, location, builder.getI1Type(), 0));
+
+    builder.setInsertionPointToStart(knownEntry);
+    Block *wordCursor = knownEntry;
+    if (!dynamicEvalNBAs.empty()) {
+      Value dynamicActive =
+          llvmConstant(builder, location, builder.getI1Type(), 0);
+      for (const DynamicEvalNBA &entry : dynamicEvalNBAs) {
+        Value valid = LLVM::LoadOp::create(
+            builder, location, i32,
+            LLVM::AddressOfOp::create(builder, location, pointer,
+                                      entry.validName),
+            4);
+        dynamicActive = arith::OrIOp::create(
+            builder, location, dynamicActive,
+            arith::CmpIOp::create(
+                builder, location, arith::CmpIPredicate::ne, valid,
+                llvmConstant(builder, location, i32, 0)));
+      }
+      wordCursor = new Block;
+      nbaKnown.getBody().getBlocks().insert(Region::iterator(knownTrue),
+                                            wordCursor);
+      cf::CondBranchOp::create(builder, location, dynamicActive, knownFalse,
+                               ValueRange{}, wordCursor, ValueRange{});
+    }
+
+    for (uint32_t word = 0; word != nbaDirtyWordCount; ++word) {
+      if (scalarRootsByWord[word].empty())
+        continue;
+      builder.setInsertionPointToStart(wordCursor);
+      Value knownDirtyBase = LLVM::AddressOfOp::create(
+          builder, location, pointer, nbaDirtyRootsName);
+      Value dirty = LLVM::LoadOp::create(
+          builder, location, i64,
+          byteGEP(builder, location, knownDirtyBase,
+                  uint64_t{word} * sizeof(uint64_t)),
+          8);
+      Value taintBase = LLVM::AddressOfOp::create(
+          builder, location, pointer, evalStepFourStateNBARootsName);
+      Value taintedRoots = LLVM::LoadOp::create(
+          builder, location, i64,
+          byteGEP(builder, location, taintBase,
+                  uint64_t{word} * sizeof(uint64_t)),
+          8);
+      taintedRoots = arith::SelectOp::create(
+          builder, location, knownEntry->getArgument(1),
+          llvmConstant(builder, location, i64, UINT64_MAX), taintedRoots);
+      dirty = arith::AndIOp::create(builder, location, dirty, taintedRoots);
+      uint64_t supportedMask = 0;
+      for (uint32_t rootIndex : scalarRootsByWord[word])
+        supportedMask |= uint64_t{1} << (rootIndex % 64);
+      Value unsupported = arith::AndIOp::create(
+          builder, location, dirty,
+          llvmConstant(builder, location, i64, ~supportedMask));
+      Value hasUnsupported = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne, unsupported,
+          llvmConstant(builder, location, i64, 0));
+      Block *rootCursor = new Block;
+      nbaKnown.getBody().getBlocks().insert(Region::iterator(knownTrue),
+                                            rootCursor);
+      cf::CondBranchOp::create(builder, location, hasUnsupported, knownFalse,
+                               ValueRange{}, rootCursor, ValueRange{});
+
+      for (uint32_t rootIndex : scalarRootsByWord[word]) {
+        const obelisk_rt_static_nba_root &root = nbaRoots[rootIndex];
+        StringRef accumulator = staticNBAPlan.generatedAccumulators[rootIndex];
+        uint32_t fixedCommitRegion =
+            staticNBAPlan.generatedCommitRegions[rootIndex];
+        uint64_t fixedWriteMask =
+            rootIndex < staticNBAPlan.generatedFixedWriteMasks.size()
+                ? staticNBAPlan.generatedFixedWriteMasks[rootIndex]
+                : 0;
+        builder.setInsertionPointToStart(rootCursor);
+        Value selected = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::ne,
+            arith::AndIOp::create(
+                builder, location, dirty,
+                llvmConstant(builder, location, i64,
+                             uint64_t{1} << (rootIndex % 64))),
+            llvmConstant(builder, location, i64, 0));
+        Value accumulatorBase = LLVM::AddressOfOp::create(
+            builder, location, pointer, accumulator);
+        Value regionMatches;
+        if (fixedCommitRegion != UINT32_MAX) {
+          regionMatches = arith::CmpIOp::create(
+              builder, location, arith::CmpIPredicate::eq,
+              knownEntry->getArgument(0),
+              llvmConstant(builder, location, i32, fixedCommitRegion));
+        } else {
+          Value valid = LLVM::LoadOp::create(
+              builder, location, i32,
+              byteGEP(builder, location, accumulatorBase,
+                      offsetof(obelisk_rt_generated_nba_accumulator_256,
+                               valid)),
+              4);
+          Value region = LLVM::LoadOp::create(
+              builder, location, i32,
+              byteGEP(builder, location, accumulatorBase,
+                      offsetof(obelisk_rt_generated_nba_accumulator_256,
+                               exec_region)),
+              4);
+          regionMatches = arith::AndIOp::create(
+              builder, location,
+              arith::CmpIOp::create(
+                  builder, location, arith::CmpIPredicate::ne, valid,
+                  llvmConstant(builder, location, i32, 0)),
+              arith::CmpIOp::create(builder, location,
+                                    arith::CmpIPredicate::eq, region,
+                                    knownEntry->getArgument(0)));
+        }
+        Value inspectRoot = arith::AndIOp::create(builder, location, selected,
+                                                   regionMatches);
+        Block *inspect = new Block;
+        Block *nextRoot = new Block;
+        nbaKnown.getBody().getBlocks().insert(Region::iterator(knownTrue),
+                                              inspect);
+        nbaKnown.getBody().getBlocks().insert(Region::iterator(knownTrue),
+                                              nextRoot);
+        cf::CondBranchOp::create(builder, location, inspectRoot, inspect,
+                                 ValueRange{}, nextRoot, ValueRange{});
+
+        builder.setInsertionPointToStart(inspect);
+        Value writeMask =
+            fixedWriteMask != 0
+                ? llvmConstant(builder, location, i64, fixedWriteMask)
+                : arith::AndIOp::create(
+                      builder, location,
+                      LLVM::LoadOp::create(
+                          builder, location, i64,
+                          byteGEP(
+                              builder, location, accumulatorBase,
+                              offsetof(obelisk_rt_generated_nba_accumulator_256,
+                                       write_mask)),
+                          8),
+                      llvmConstant(builder, location, i64,
+                                   scalarMask(root.bit_width)))
+                      .getResult();
+        Value stagedUnknown = LLVM::LoadOp::create(
+            builder, location, i64,
+            byteGEP(builder, location, accumulatorBase,
+                    offsetof(obelisk_rt_generated_nba_accumulator_256,
+                             unknown)),
+            8);
+        stagedUnknown = arith::SelectOp::create(
+            builder, location, knownEntry->getArgument(2), stagedUnknown,
+            llvmConstant(builder, location, i64, 0));
+        Value oldUnknown = loadRoot(
+            LLVM::AddressOfOp::create(builder, location, pointer,
+                                      "__obelisk_state_unknown"),
+            staticNBAPlan.generatedOffsets[rootIndex], root.bit_width);
+        Value relevantUnknown = arith::AndIOp::create(
+            builder, location,
+            arith::OrIOp::create(builder, location, stagedUnknown, oldUnknown),
+            writeMask);
+        Value hasUnknown = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::ne, relevantUnknown,
+            llvmConstant(builder, location, i64, 0));
+        cf::CondBranchOp::create(builder, location, hasUnknown, knownFalse,
+                                 ValueRange{}, nextRoot, ValueRange{});
+        rootCursor = nextRoot;
+      }
+      wordCursor = rootCursor;
+    }
+    builder.setInsertionPointToStart(wordCursor);
+    cf::BranchOp::create(builder, location, knownTrue);
+  }
+
   auto planType = LLVM::LLVMStructType::getLiteral(
       context, {i32,     i64,     pointer, i64,     i32,     i32,     pointer,
                 pointer, i64,     pointer, pointer, pointer, pointer, i32,
                 i32,     pointer, i64,     pointer, i64,     pointer, i64,
                 pointer, pointer, pointer, i32,     i32,     pointer, i32,
-                i32,     pointer, i32,     i32,     pointer, i64,     pointer});
+                i32,     pointer, i32,     i32,     pointer, i64,     pointer,
+                pointer, pointer});
   makeConstantGlobal(
       module, location, planType, planName, LLVM::Linkage::Internal, 8,
       [&](OpBuilder &initializerBuilder) {
@@ -2500,8 +4897,26 @@ LogicalResult makeNativeEvalPlan(
                       initializerBuilder, location, pointer,
                       evalScheduler ? evalCoordinatorName : coordinatorName)
                       .getResult();
+        value = insertValue(initializerBuilder, location, value,
+                            coordinatorAddress, 34);
+        Value promotionInvalidateAddress =
+            evalScheduler
+                ? LLVM::AddressOfOp::create(initializerBuilder, location,
+                                            pointer, promotionInvalidateName)
+                      .getResult()
+                : LLVM::ZeroOp::create(initializerBuilder, location, pointer)
+                      .getResult();
+        value = insertValue(initializerBuilder, location, value,
+                            promotionInvalidateAddress, 35);
+        Value promotionQueryAddress =
+            evalScheduler
+                ? LLVM::AddressOfOp::create(initializerBuilder, location,
+                                            pointer, promotionQueryName)
+                      .getResult()
+                : LLVM::ZeroOp::create(initializerBuilder, location, pointer)
+                      .getResult();
         return insertValue(initializerBuilder, location, value,
-                           coordinatorAddress, 34);
+                           promotionQueryAddress, 36);
       });
   if (!evalScheduler) {
     if (fullyStatic)
@@ -2510,9 +4925,15 @@ LogicalResult makeNativeEvalPlan(
     else
       getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_run", i32,
                                {pointer});
-    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_snapshot_aot",
-                             i32, {pointer, pointer});
   }
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_snapshot_aot", i32,
+                           {pointer, pointer});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_scheduler_prepare_periodic_aot", i32,
+      {pointer, pointer, i32, pointer, i32, pointer, i32, pointer, pointer});
+  getOrDeclareLLVMFunction(module,
+                           "obelisk_rt_v1_scheduler_handoff_periodic_aot", i32,
+                           {pointer, pointer, i32, pointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_static_nba_commit_root", i32,
                            {pointer, i32, i32, pointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_static_nba_commit_roots", i32,

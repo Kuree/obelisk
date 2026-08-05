@@ -88,6 +88,9 @@ lowerPlainNativeProcess(sim::SimFuncOp function,
 LogicalResult lowerOrdinaryFunction(sim::SimFuncOp function) {
   if (failed(lowerSimulationTimeOperations(function)))
     return failure();
+  bool privateSymbol =
+      SymbolTable::getSymbolVisibility(function) ==
+      SymbolTable::Visibility::Private;
   Location location = function.getLoc();
   std::string symbolName = function.getSymName().str();
   FunctionType functionType = function.getFunctionType();
@@ -103,6 +106,10 @@ LogicalResult lowerOrdinaryFunction(sim::SimFuncOp function) {
       function->getAttrOfType<IntegerAttr>("obelisk_sim.observer_width");
   auto observerFourState =
       function->getAttrOfType<BoolAttr>("obelisk_sim.observer_four_state");
+  Attribute evalFourStateSource =
+      function->getAttr("obelisk.eval.four_state_source");
+  Attribute evalPromotionRanges =
+      function->getAttr("obelisk.eval.local_promotion_ranges");
   function.getContext()->getOrLoadDialect<func::FuncDialect>();
   OpBuilder builder(function.getContext());
   builder.setInsertionPoint(function);
@@ -111,10 +118,18 @@ LogicalResult lowerOrdinaryFunction(sim::SimFuncOp function) {
                            TypeAttr::get(FunctionType::get(
                                function.getContext(), inputTypes, resultTypes)),
                            StringAttr{}, ArrayAttr{}, ArrayAttr{}, UnitAttr{});
+  if (privateSymbol)
+    replacement.setPrivate();
   replacement->setAttr("obelisk.entry_kind",
                        builder.getI32IntegerAttr(entryKind));
   replacement->setAttr("obelisk.native_scratch_size",
                        builder.getI64IntegerAttr(0));
+  if (evalFourStateSource)
+    replacement->setAttr("obelisk.eval.four_state_source",
+                         evalFourStateSource);
+  if (evalPromotionRanges)
+    replacement->setAttr("obelisk.eval.local_promotion_ranges",
+                         evalPromotionRanges);
   replacement.getBody().takeBody(function.getBody());
   function.erase();
   for (Block &block : replacement.getBody())

@@ -6,6 +6,9 @@
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 
@@ -61,6 +64,71 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     if (auto function = operation->getParentOfType<sim::SimFuncOp>())
       bytecodeActors.insert(function.getOperation());
   };
+
+  // Backend selection needs to distinguish arbitrary calendar delays from a
+  // free-running clock before physical state layout exists.  This is a
+  // conservative structural prefilter; native lowering repeats the proof,
+  // resolves the exact packed bit, checks all effects, and rejects duplicate
+  // drivers before generated run-until is materialized.
+  module.walk([&](sim::SimFuncOp function) {
+    if (result.periodicClockCandidate || function.isExternal() ||
+        function.getBody().empty())
+      return;
+    SmallVector<sim::SimSuspendDelayOp> delays;
+    SmallVector<sim::SimRefLoadOp> loads;
+    SmallVector<sim::SimRefStoreOp> stores;
+    SmallVector<sim::SimLogicUnaryOp> unaries;
+    SmallVector<arith::XOrIOp> xors;
+    function.walk([&](Operation *operation) {
+      if (auto op = dyn_cast<sim::SimSuspendDelayOp>(operation))
+        delays.push_back(op);
+      else if (auto op = dyn_cast<sim::SimRefLoadOp>(operation))
+        loads.push_back(op);
+      else if (auto op = dyn_cast<sim::SimRefStoreOp>(operation))
+        stores.push_back(op);
+      else if (auto op = dyn_cast<sim::SimLogicUnaryOp>(operation))
+        unaries.push_back(op);
+      else if (auto op = dyn_cast<arith::XOrIOp>(operation))
+        xors.push_back(op);
+    });
+    if (delays.size() != 1 || loads.size() != 1 || stores.size() != 1 ||
+        unaries.size() + xors.size() != 1)
+      return;
+    sim::SimSuspendDelayOp delay = delays.front();
+    auto period = delay.getDelay().getDefiningOp<sim::SimTimeConstantOp>();
+    if (!period || period.getValue() == 0 || !delay.getTimingAttr() ||
+        delay.getTimingAttr().getKind() != sim::ComputeTimingKind::Calendar ||
+        !delay.getContinuationOperands().empty())
+      return;
+    sim::SimRefLoadOp load = loads.front();
+    sim::SimRefStoreOp store = stores.front();
+    Operation *toggle = unaries.empty() ? xors.front().getOperation()
+                                        : unaries.front().getOperation();
+    if (store.getValue().getDefiningOp() != toggle ||
+        load.getReference() != store.getReference())
+      return;
+    if (!unaries.empty() &&
+        (unaries.front().getKind() != sim::UnaryKind::BitNot ||
+         unaries.front().getInput() != load.getResult()))
+      return;
+    if (!xors.empty()) {
+      arith::XOrIOp xorOp = xors.front();
+      Value other = xorOp.getLhs() == load.getResult() ? xorOp.getRhs()
+                    : xorOp.getRhs() == load.getResult() ? xorOp.getLhs()
+                                                         : Value{};
+      auto one = other ? other.getDefiningOp<arith::ConstantOp>() : nullptr;
+      auto integer = one ? dyn_cast<IntegerAttr>(one.getValue()) : IntegerAttr{};
+      if (!integer || integer.getValue().getBitWidth() != 1 ||
+          !integer.getValue().isOne())
+        return;
+    }
+    Block *wait = delay->getBlock();
+    Block *body = delay.getContinuation();
+    auto back = dyn_cast<cf::BranchOp>(body->getTerminator());
+    result.periodicClockCandidate =
+        back && back.getDest() == wait && wait->getNumSuccessors() == 1 &&
+        wait->getSuccessor(0) == body;
+  });
 
   sim::SimDesignOp design;
   module.walk([&](sim::SimDesignOp candidate) { design = candidate; });

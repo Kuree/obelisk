@@ -242,6 +242,9 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
   uint32_t scheduleFlags = OBELISK_RT_SCHEDULE_HOME(homeRegion) |
                            (function.getEntryKind() == sim::EntryKind::Final
                                 ? OBELISK_RT_SCHEDULE_FINAL
+                                : 0) |
+                           (function.getEntryKind() == sim::EntryKind::Initial
+                                ? OBELISK_RT_SCHEDULE_INITIAL
                                 : 0);
   Value null = LLVM::ZeroOp::create(builder, location, pointer);
   Value continuationAddress = null;

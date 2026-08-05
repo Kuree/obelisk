@@ -676,6 +676,10 @@ extern "C" const char *obelisk_rt_v1_status_string(obelisk_rt_status status) {
     return "invalid process continuation";
   case OBELISK_RT_TIER_UNAVAILABLE:
     return "requested process tier unavailable";
+  case OBELISK_RT_AOT_CHECKPOINT:
+    return "native scheduler synchronization checkpoint";
+  case OBELISK_RT_AOT_TIMED_CHECKPOINT:
+    return "native scheduler timed synchronization checkpoint";
   case OBELISK_RT_INVALID_LIFECYCLE:
     return "invalid process lifecycle transition";
   case OBELISK_RT_INVALID_FRAME:

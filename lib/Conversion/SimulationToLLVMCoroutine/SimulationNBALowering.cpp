@@ -43,6 +43,8 @@ public:
     Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
     Type i32 = rewriter.getI32Type();
     Type i64 = rewriter.getI64Type();
+    bool twoStateEval =
+        op->hasAttr("obelisk.eval.inductive_two_state_access");
 
     sim::NBASiteAttr site = op.getSiteAttr();
     auto staticRoot =
@@ -112,11 +114,20 @@ public:
           commitRegion != UINT32_MAX &&
           (directPartialScalarStage || directLaneStage);
       auto emitDirectGeneratedStage = [&] {
-        bool fixedEvalStage =
-            evalCeiling && staticRoot->second <
+        bool fixedRegionEvalStage =
+            twoStateEval && staticRoot->second <
                                staticPlan->generatedCommitRegions.size() &&
             staticPlan->generatedCommitRegions[staticRoot->second] !=
                 UINT32_MAX;
+        bool fullRootEvalStage =
+            fixedRegionEvalStage && staticRoot->second <
+                                        staticPlan->generatedFullRootStages.size() &&
+            staticPlan->generatedFullRootStages[staticRoot->second];
+        uint64_t fixedWriteMask =
+            staticRoot->second <
+                    staticPlan->generatedFixedWriteMasks.size()
+                ? staticPlan->generatedFixedWriteMasks[staticRoot->second]
+                : 0;
         Value base = LLVM::AddressOfOp::create(rewriter, location, pointer,
                                                generatedAccumulator);
         if (directPartialScalarStage) {
@@ -126,31 +137,36 @@ public:
           uint64_t mask = sourceMask << decoded.offset;
           auto mergeField = [&](size_t fieldOffset, Value fieldValue) {
             Value address = byteGEP(rewriter, location, base, fieldOffset);
-            Value old = LLVM::LoadOp::create(rewriter, location, i64,
-                                              address, 8);
             Value positioned = fieldValue;
             if (decoded.offset != 0)
               positioned = arith::ShLIOp::create(
                   rewriter, location, positioned,
                   llvmConstant(rewriter, location, i64, decoded.offset));
-            Value merged = arith::OrIOp::create(
-                rewriter, location,
-                arith::AndIOp::create(
-                    rewriter, location, old,
-                    llvmConstant(rewriter, location, i64, ~mask)),
-                arith::AndIOp::create(
-                    rewriter, location, positioned,
-                    llvmConstant(rewriter, location, i64, mask)));
+            Value masked = arith::AndIOp::create(
+                rewriter, location, positioned,
+                llvmConstant(rewriter, location, i64, mask));
+            Value merged = masked;
+            if (!twoStateEval || fixedWriteMask == 0) {
+              Value old = LLVM::LoadOp::create(rewriter, location, i64,
+                                                address, 8);
+              merged = arith::OrIOp::create(
+                  rewriter, location,
+                  arith::AndIOp::create(
+                      rewriter, location, old,
+                      llvmConstant(rewriter, location, i64, ~mask)),
+                  masked);
+            }
             LLVM::StoreOp::create(rewriter, location, merged, address, 8);
           };
           mergeField(offsetof(obelisk_rt_generated_nba_accumulator_256,
                               value),
                      value);
-          if (!evalCeiling)
+          if (!twoStateEval)
             mergeField(offsetof(obelisk_rt_generated_nba_accumulator_256,
                                 unknown),
                        unknown);
-          if (!fixedEvalStage) {
+          if (!twoStateEval ||
+              (!fullRootEvalStage && fixedWriteMask == 0)) {
             Value maskAddress = byteGEP(
                 rewriter, location, base,
                 offsetof(obelisk_rt_generated_nba_accumulator_256,
@@ -187,7 +203,7 @@ public:
                           laneOffset),
               4);
         }
-        if (!fixedEvalStage) {
+        if (!fixedRegionEvalStage) {
           LLVM::StoreOp::create(
               rewriter, location, llvmConstant(rewriter, location, i32, 1),
               byteGEP(
@@ -215,7 +231,7 @@ public:
             llvmConstant(rewriter, location, i64,
                          uint64_t{1} << (staticRoot->second % 64)));
         LLVM::StoreOp::create(rewriter, location, marked, dirtyWord, 8);
-        if (!evalCeiling) {
+        if (!twoStateEval) {
           Value summaryBase = LLVM::AddressOfOp::create(
               rewriter, location, pointer,
               "__obelisk_aot_nba_dirty_summary_v1");

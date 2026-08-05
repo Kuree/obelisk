@@ -5,6 +5,8 @@
   #obelisk_sim.field<name = "bits", type = i8, ordinal = 1, packedOffset = 0>
 ]>
 
+!packed = !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>
+
 module {
   obelisk_sim.design @aggregate_domain {
     obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.aggregate_domain.rules.9000001"
@@ -17,6 +19,8 @@ module {
       %record = obelisk_sim.aggregate.construct %known, %bits : (!obelisk_sim.logic<8>, i8) -> !record
       %default = obelisk_sim.aggregate.default : !record
       %field = obelisk_sim.aggregate.extract %record[0] : (!record) -> !obelisk_sim.logic<8>
+      %packed = obelisk_sim.packed.unflatten %known : (!obelisk_sim.logic<8>) -> !packed
+      %flattened = obelisk_sim.packed.flatten %packed : (!packed) -> !obelisk_sim.logic<8>
       obelisk_sim.return
     }
   }
@@ -28,3 +32,5 @@ module {
 // CHECK-NEXT: bb0.op{{[0-9]+}}.result0: may-four-state (unsupported-producer)
 // CHECK-NEXT: bb0.op{{[0-9]+}}.result0: may-four-state (unsupported-producer)
 // CHECK-NEXT: bb0.op{{[0-9]+}}.result0: may-four-state (unsupported-producer)
+// CHECK-NEXT: bb0.op{{[0-9]+}}.result0: two-state (packed-view)
+// CHECK-NEXT: bb0.op{{[0-9]+}}.result0: two-state (packed-view)

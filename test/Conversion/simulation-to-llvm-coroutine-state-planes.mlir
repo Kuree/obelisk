@@ -21,7 +21,9 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.mlir.global internal @__obelisk_state_unknown()
-// CHECK: %[[UZERO:.*]] = llvm.mlir.zero : !llvm.array<4 x i8>
+// Generated scalar accesses may use an unaligned word at the final root, so
+// the canonical 32-bit plane carries one private 8-byte guard word.
+// CHECK: %[[UZERO:.*]] = llvm.mlir.zero : !llvm.array<12 x i8>
 // CHECK: %[[UFF1:.*]] = llvm.mlir.constant(-1 : i8) : i8
 // CHECK: %[[BYTE1:.*]] = llvm.insertvalue %[[UFF1]], %[[UZERO]][1]
 // CHECK: %[[UFF2:.*]] = llvm.mlir.constant(-1 : i8) : i8
@@ -31,7 +33,7 @@ module attributes {
 // CHECK: llvm.return %[[BYTE3]]
 
 // CHECK-LABEL: llvm.mlir.global internal @__obelisk_state_value()
-// CHECK: %[[ZERO:.*]] = llvm.mlir.zero : !llvm.array<4 x i8>
+// CHECK: %[[ZERO:.*]] = llvm.mlir.zero : !llvm.array<12 x i8>
 // CHECK: %[[VFF:.*]] = llvm.mlir.constant(-1 : i8) : i8
 // CHECK: %[[VBYTE2:.*]] = llvm.insertvalue %[[VFF]], %[[ZERO]][2]
 // CHECK: %[[V0F:.*]] = llvm.mlir.constant(15 : i8) : i8

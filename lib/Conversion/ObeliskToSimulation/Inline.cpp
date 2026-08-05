@@ -315,6 +315,15 @@ void ObeliskSimInlinePass::runOnOperation() {
     uint64_t callerLimit =
         growthLimit(callerBaselines.lookup(caller.getOperation()),
                     preset.callerGrowthPercent, preset.callerGrowthConstant);
+    // An instance coordinator starts as a short call list, so a percentage of
+    // its syntactic baseline is not a meaningful growth budget.  Individual
+    // callees have already passed the normal tiny/specialization threshold;
+    // allow a bounded instance body to form while leaving genuinely large RTL
+    // processes outlined.
+    if (caller->hasAttr("obelisk.eval.instance_coordinator"))
+      callerLimit = std::max(
+          callerLimit,
+          addSaturating(callerBaselines.lookup(caller.getOperation()), 4096));
     uint64_t designLimit =
         growthLimit(designBaseline, preset.designGrowthPercent,
                     preset.designGrowthConstant);
