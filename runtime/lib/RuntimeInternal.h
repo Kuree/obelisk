@@ -716,6 +716,10 @@ struct obelisk_rt_context {
   uint32_t nativeScheduleMinimumActivatedNode = UINT32_MAX;
   bool nativeScheduleClockIngressPending = false;
   uint32_t nativeScheduleDirectActorSlot = UINT32_MAX;
+  uint32_t nativeScheduleCheckpointActorSlot = UINT32_MAX;
+  uint32_t nativeScheduleCheckpointContinuation = 0;
+  obelisk_rt_native_checkpoint_callback nativeScheduleCheckpointCallback =
+      nullptr;
   std::vector<uint64_t> nativeScheduleDeadlines;
   std::vector<uint32_t> nativeScheduleDeadlineHeap;
   std::vector<uint32_t> nativeScheduleDeadlinePositions;

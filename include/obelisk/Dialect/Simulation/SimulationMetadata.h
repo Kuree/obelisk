@@ -60,6 +60,34 @@ inline constexpr llvm::StringLiteral nativeGuardedSpecializationBody =
 inline constexpr llvm::StringLiteral nativeRegionBody =
     "obelisk.native.region_body";
 
+// Revision-coupled eval facts shared by planning and LLVM materialization.
+// These affect scheduling correctness and must not drift as ad-hoc strings
+// between producer and consumer modules.
+inline constexpr llvm::StringLiteral evalTier2Convergence =
+    "obelisk.eval.tier2_convergence";
+inline constexpr llvm::StringLiteral evalMayTerminate =
+    "obelisk.eval.may_terminate";
+inline constexpr llvm::StringLiteral evalInfallible = "obelisk.eval.infallible";
+/// A status-returning owner whose nonzero result is a fractured cold
+/// checkpoint. The periodic prefix may call it directly when it checks that
+/// status before running any downstream owner.
+inline constexpr llvm::StringLiteral evalCheckpointSafe =
+    "obelisk.eval.checkpoint_safe";
+inline constexpr llvm::StringLiteral evalTwoStateVariant =
+    "obelisk.eval.two_state_variant";
+inline constexpr llvm::StringLiteral evalPathGuardedTwoState =
+    "obelisk.eval.path_guarded_two_state";
+inline constexpr llvm::StringLiteral evalCallClosureRoot =
+    "obelisk.eval.call_closure_root";
+inline constexpr llvm::StringLiteral evalTrustedTwoStateCoordinator =
+    "obelisk.eval.trusted_two_state_coordinator";
+inline constexpr llvm::StringLiteral evalCheckpointRoutes =
+    "obelisk.eval.checkpoint_routes";
+/// Producer certificate for a generated region activation that reconstructs
+/// actor-side continuation arguments from canonical state on every entry.
+inline constexpr llvm::StringLiteral evalReconstructsContinuationArgs =
+    "obelisk.eval.reconstructs_continuation_args";
+
 inline bool isKnownBoundary(llvm::StringRef name) {
   return name == captureKind || name == descriptorId ||
          name == descriptorRootType || name == descriptorLow ||

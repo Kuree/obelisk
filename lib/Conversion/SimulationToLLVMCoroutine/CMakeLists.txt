@@ -1,8 +1,10 @@
 add_mlir_library(ObeliskSimulationToLLVMCoroutine
   SimulationABIValidation.cpp
   SimulationAggregateLowering.cpp
+  SimulationAOTCoordinatorMaterialization.cpp
   SimulationAOTMaterialization.cpp
   SimulationAOTMaterializationLegacy.cpp
+  SimulationAOTEvalAnalysis.cpp
   SimulationAOTPlanning.cpp
   SimulationControlLowering.cpp
   SimulationDPILowering.cpp
@@ -39,7 +41,6 @@ add_mlir_library(ObeliskSimulationToLLVMCoroutine
   SimulationSchedulerLowering.cpp
   SimulationSchedulerMainLowering.cpp
   SimulationStaticSpecializationLowering.cpp
-  SimulationThreeTierMaterialization.cpp
   SimulationStateAccessLowering.cpp
   SimulationStatePlaneLowering.cpp
   SimulationStatePlaneMaterialization.cpp

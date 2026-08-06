@@ -198,6 +198,9 @@ unsigned schedulerResumeCount;
 unsigned schedulerDestroyCount;
 std::vector<uint64_t> schedulerOrder;
 unsigned schedulerCheckpointCount;
+unsigned generatedCheckpointCallbackCount;
+obelisk_rt_status invalidGeneratedCheckpointStatus;
+obelisk_rt_status validGeneratedCheckpointStatus;
 unsigned schedulerPromotionInvalidationCount;
 unsigned schedulerPromotionReadyCount;
 bool schedulerPromotionReadyValue;
@@ -338,6 +341,37 @@ obelisk_rt_status aotRunNodes(void *opaque, obelisk_rt_context *context) {
   constexpr obelisk_rt_native_schedule_node nodes[] = {{0, 0}, {0, 1}};
   return obelisk_rt_v1_scheduler_run_aot_nodes(context, nodes,
                                                std::size(nodes));
+}
+
+obelisk_rt_status generatedCheckpointCallback(obelisk_rt_context *context) {
+  if (!context)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ++generatedCheckpointCallbackCount;
+  if (generatedCheckpointCallbackCount == 1) {
+    obelisk_rt_status status = obelisk_rt_v1_scheduler_queue_aot_checkpoint(
+        context, 0, 1, generatedCheckpointCallback);
+    return status == OBELISK_RT_OK ? OBELISK_RT_AOT_GENERATED_CHECKPOINT
+                                   : status;
+  }
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status runGeneratedCheckpoint(AOTTestState *state,
+                                         obelisk_rt_context *context) {
+  if (!state || !context)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ++state->runCalls;
+  if (state->runCalls != 1)
+    return OBELISK_RT_OK;
+  invalidGeneratedCheckpointStatus =
+      obelisk_rt_v1_scheduler_queue_aot_checkpoint(
+          context, 0, 2, generatedCheckpointCallback);
+  validGeneratedCheckpointStatus =
+      obelisk_rt_v1_scheduler_queue_aot_checkpoint(
+          context, 0, 1, generatedCheckpointCallback);
+  return validGeneratedCheckpointStatus == OBELISK_RT_OK
+             ? OBELISK_RT_AOT_CHECKPOINT
+             : validGeneratedCheckpointStatus;
 }
 
 obelisk_rt_status aotRunWaitNodes(void *opaque, obelisk_rt_context *context) {
@@ -1414,6 +1448,46 @@ TEST(Scheduler, AOTCheckpointRunsOneRuntimeActionAndReentersNatively) {
   EXPECT_EQ(schedulerOrder, (std::vector<uint64_t>{321}));
   EXPECT_FALSE(context->nativeScheduleDeoptimized);
   EXPECT_EQ(context->signalDiagnostics.aotFallbacks, 0u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, GeneratedCheckpointValidatesAndConsumesExactContinuation) {
+  AOTTestState state;
+  state.runHook = runGeneratedCheckpoint;
+  obelisk_rt_native_schedule_plan plan = makeAOTPlan(state, 1);
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
+               OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
+            OBELISK_RT_OK);
+
+  SchedulerFixture fixture(22);
+  schedulerWaitKind = OBELISK_RT_SUSPEND_CHANGE;
+  schedulerWaitEdge = OBELISK_RT_WAIT_EDGE_CHANGE;
+  schedulerWaitHandle = 17;
+  schedulerWaitWidth = 1;
+  schedulerWaitOffset = 0;
+  generatedCheckpointCallbackCount = 0;
+  invalidGeneratedCheckpointStatus = OBELISK_RT_OK;
+  validGeneratedCheckpointStatus = OBELISK_RT_INVALID_CONTINUATION;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add_aot(
+                context, makeSchedulerInstance(fixture), 0, 0, 0, nullptr,
+                nullptr, 0, nullptr, 0),
+            OBELISK_RT_OK);
+  // Establish the source wait before the generated transaction takes direct
+  // ownership of continuation 1.
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot(context), OBELISK_RT_OK);
+  EXPECT_EQ(invalidGeneratedCheckpointStatus,
+            OBELISK_RT_INVALID_CONTINUATION);
+  EXPECT_EQ(validGeneratedCheckpointStatus, OBELISK_RT_OK);
+  EXPECT_EQ(generatedCheckpointCallbackCount, 2u);
+  EXPECT_EQ(state.runCalls, 2u);
+  EXPECT_EQ(context->nativeScheduleCheckpointActorSlot, UINT32_MAX);
+  EXPECT_EQ(context->nativeScheduleCheckpointContinuation, 0u);
+  EXPECT_EQ(context->nativeScheduleCheckpointCallback, nullptr);
   obelisk_rt_v1_context_destroy(context);
 }
 

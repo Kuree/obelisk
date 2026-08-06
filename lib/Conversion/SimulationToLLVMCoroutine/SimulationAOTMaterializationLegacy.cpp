@@ -52,8 +52,7 @@ LogicalResult makeNativeAOTPlanLegacy(
       entry.reserved = 0;
     }
   }
-  ArrayRef<obelisk_rt_static_fanout_entry> fanoutEntries =
-      indexedFanoutEntries;
+  ArrayRef<obelisk_rt_static_fanout_entry> fanoutEntries = indexedFanoutEntries;
   // Static time/region control and exact actor fanout are independent of VPI
   // reads. Writable VPI hands dirty roots and the affected event slot to the
   // existing guarded state/control paths; the exact dependency table remains
@@ -184,23 +183,21 @@ LogicalResult makeNativeAOTPlanLegacy(
   if (nbaDirtyWordCount != 0) {
     Type dirtyType = LLVM::LLVMArrayType::get(i64, nbaDirtyWordCount);
     builder.setInsertionPointToStart(module.getBody());
-    auto dirty = LLVM::GlobalOp::create(
-        builder, location, dirtyType, false, LLVM::Linkage::Internal,
-        nbaDirtyRootsName, Attribute{}, 8);
+    auto dirty = LLVM::GlobalOp::create(builder, location, dirtyType, false,
+                                        LLVM::Linkage::Internal,
+                                        nbaDirtyRootsName, Attribute{}, 8);
     Block *dirtyInitializer = new Block;
     dirty.getInitializerRegion().push_back(dirtyInitializer);
     builder.setInsertionPointToStart(dirtyInitializer);
-    LLVM::ReturnOp::create(
-        builder, location,
-        LLVM::ZeroOp::create(builder, location, dirtyType));
+    LLVM::ReturnOp::create(builder, location,
+                           LLVM::ZeroOp::create(builder, location, dirtyType));
   }
   if (nbaDirtySummaryWordCount != 0) {
-    Type summaryType =
-        LLVM::LLVMArrayType::get(i64, nbaDirtySummaryWordCount);
+    Type summaryType = LLVM::LLVMArrayType::get(i64, nbaDirtySummaryWordCount);
     builder.setInsertionPointToStart(module.getBody());
-    auto summary = LLVM::GlobalOp::create(
-        builder, location, summaryType, false, LLVM::Linkage::Internal,
-        nbaDirtySummaryName, Attribute{}, 8);
+    auto summary = LLVM::GlobalOp::create(builder, location, summaryType, false,
+                                          LLVM::Linkage::Internal,
+                                          nbaDirtySummaryName, Attribute{}, 8);
     Block *summaryInitializer = new Block;
     summary.getInitializerRegion().push_back(summaryInitializer);
     builder.setInsertionPointToStart(summaryInitializer);
@@ -264,15 +261,13 @@ LogicalResult makeNativeAOTPlanLegacy(
             value = insertValue(
                 initializerBuilder, location, value,
                 llvmConstant(initializerBuilder, location, i32, entry.edge), 3);
+            value = insertValue(initializerBuilder, location, value,
+                                llvmConstant(initializerBuilder, location, i32,
+                                             entry.compute_node),
+                                4);
             value = insertValue(
                 initializerBuilder, location, value,
-                llvmConstant(initializerBuilder, location, i32,
-                             entry.compute_node),
-                4);
-            value = insertValue(
-                initializerBuilder, location, value,
-                llvmConstant(initializerBuilder, location, i32,
-                             entry.reserved),
+                llvmConstant(initializerBuilder, location, i32, entry.reserved),
                 5);
             value = insertValue(
                 initializerBuilder, location, value,
@@ -386,19 +381,19 @@ LogicalResult makeNativeAOTPlanLegacy(
   builder.setInsertionPointToStart(nbaCommitEntry);
   Value committedCount = entryAlloca(builder, location, i32, 1, 4);
   LLVM::StoreOp::create(builder, location,
-                        llvmConstant(builder, location, i32, 0),
-                        committedCount, 4);
+                        llvmConstant(builder, location, i32, 0), committedCount,
+                        4);
 
-  bool generateScalarCommits = cleanSuperstepEnabled && enableDirectState &&
-                               !guardedSpecializationEnabled &&
-                               staticNBAPlan.generatedOffsets.size() ==
-                                   nbaRoots.size();
+  bool generateScalarCommits =
+      cleanSuperstepEnabled && enableDirectState &&
+      !guardedSpecializationEnabled &&
+      staticNBAPlan.generatedOffsets.size() == nbaRoots.size();
   SmallVector<SmallVector<uint32_t>> scalarRootsByWord(nbaDirtyWordCount);
   uint64_t planeBytes = (stateLayout.bitCount + 7) / 8;
   if (generateScalarCommits)
-    for (auto [rootIndex, root, accumulator, offset] : llvm::enumerate(
-             nbaRoots, staticNBAPlan.generatedAccumulators,
-             staticNBAPlan.generatedOffsets)) {
+    for (auto [rootIndex, root, accumulator, offset] :
+         llvm::enumerate(nbaRoots, staticNBAPlan.generatedAccumulators,
+                         staticNBAPlan.generatedOffsets)) {
       uint64_t firstByte = offset / 8;
       uint64_t shift = offset % 8;
       bool crossesWord = root.bit_width > 64 - shift;
@@ -416,19 +411,17 @@ LogicalResult makeNativeAOTPlanLegacy(
   SmallVector<Value> directlyCommittedByWord(nbaDirtyWordCount);
   for (uint32_t word = 0; word != nbaDirtyWordCount; ++word)
     if (!scalarRootsByWord[word].empty()) {
-      directlyCommittedByWord[word] =
-          entryAlloca(builder, location, i64, 1, 8);
+      directlyCommittedByWord[word] = entryAlloca(builder, location, i64, 1, 8);
       LLVM::StoreOp::create(builder, location,
                             llvmConstant(builder, location, i64, 0),
                             directlyCommittedByWord[word], 8);
     }
 
-  bool generateGroupedFanout = llvm::any_of(
-      scalarRootsByWord, [&](ArrayRef<uint32_t> roots) {
+  bool generateGroupedFanout =
+      llvm::any_of(scalarRootsByWord, [&](ArrayRef<uint32_t> roots) {
         return llvm::any_of(roots, [&](uint32_t rootIndex) {
           return llvm::any_of(
-              fanoutEntries,
-              [&](const obelisk_rt_static_fanout_entry &entry) {
+              fanoutEntries, [&](const obelisk_rt_static_fanout_entry &entry) {
                 return entry.static_state == nbaRoots[rootIndex].static_state;
               });
         });
@@ -442,11 +435,11 @@ LogicalResult makeNativeAOTPlanLegacy(
     activatedNodes =
         entryAlloca(builder, location, i64, activationWordCount, 8);
     for (uint32_t word = 0; word != activationWordCount; ++word)
-      LLVM::StoreOp::create(
-          builder, location, llvmConstant(builder, location, i64, 0),
-          byteGEP(builder, location, activatedNodes,
-                  uint64_t{word} * sizeof(uint64_t)),
-          8);
+      LLVM::StoreOp::create(builder, location,
+                            llvmConstant(builder, location, i64, 0),
+                            byteGEP(builder, location, activatedNodes,
+                                    uint64_t{word} * sizeof(uint64_t)),
+                            8);
   }
 
   Value directGuard =
@@ -459,17 +452,17 @@ LogicalResult makeNativeAOTPlanLegacy(
   Value directEnabled = arith::CmpIOp::create(
       builder, location, arith::CmpIPredicate::ne, directGuard,
       llvmConstant(builder, location, i32, 0));
-  Value stateValue = LLVM::AddressOfOp::create(
-      builder, location, pointer, "__obelisk_state_value");
-  Value stateUnknown = LLVM::AddressOfOp::create(
-      builder, location, pointer, "__obelisk_state_unknown");
+  Value stateValue = LLVM::AddressOfOp::create(builder, location, pointer,
+                                               "__obelisk_state_value");
+  Value stateUnknown = LLVM::AddressOfOp::create(builder, location, pointer,
+                                                 "__obelisk_state_unknown");
 
   SmallVector<Block *> wordBlocks(nbaDirtyWordCount);
   for (uint32_t word = 0; word != nbaDirtyWordCount; ++word)
     if (!scalarRootsByWord[word].empty()) {
       wordBlocks[word] = new Block;
-      nbaCommit.getBody().getBlocks().insert(
-          Region::iterator(genericNBACommit), wordBlocks[word]);
+      nbaCommit.getBody().getBlocks().insert(Region::iterator(genericNBACommit),
+                                             wordBlocks[word]);
     }
   Block *firstWord = genericNBACommit;
   for (Block *block : wordBlocks)
@@ -492,14 +485,14 @@ LogicalResult makeNativeAOTPlanLegacy(
   auto loadRoot = [&](Value plane, uint64_t offset, uint64_t width) {
     uint64_t firstByte = offset / 8;
     uint64_t shift = offset % 8;
-    Value low = LLVM::LoadOp::create(
-        builder, location, i64,
-        byteGEP(builder, location, plane, firstByte), 1);
+    Value low =
+        LLVM::LoadOp::create(builder, location, i64,
+                             byteGEP(builder, location, plane, firstByte), 1);
     Value value = low;
     if (shift != 0)
-      value = arith::ShRUIOp::create(
-          builder, location, value,
-          llvmConstant(builder, location, i64, shift));
+      value =
+          arith::ShRUIOp::create(builder, location, value,
+                                 llvmConstant(builder, location, i64, shift));
     if (width > 64 - shift) {
       Value high = LLVM::LoadOp::create(
           builder, location, builder.getI8Type(),
@@ -522,17 +515,17 @@ LogicalResult makeNativeAOTPlanLegacy(
     Value address = byteGEP(builder, location, plane, firstByte);
     Value oldLow = LLVM::LoadOp::create(builder, location, i64, address, 1);
     uint64_t lowMask = scalarMask(width) << shift;
-    Value cleared = arith::AndIOp::create(
-        builder, location, oldLow,
-        llvmConstant(builder, location, i64, ~lowMask));
+    Value cleared =
+        arith::AndIOp::create(builder, location, oldLow,
+                              llvmConstant(builder, location, i64, ~lowMask));
     Value positioned = value;
     if (shift != 0)
-      positioned = arith::ShLIOp::create(
-          builder, location, positioned,
-          llvmConstant(builder, location, i64, shift));
-    positioned = arith::AndIOp::create(
-        builder, location, positioned,
-        llvmConstant(builder, location, i64, lowMask));
+      positioned =
+          arith::ShLIOp::create(builder, location, positioned,
+                                llvmConstant(builder, location, i64, shift));
+    positioned =
+        arith::AndIOp::create(builder, location, positioned,
+                              llvmConstant(builder, location, i64, lowMask));
     LLVM::StoreOp::create(
         builder, location,
         arith::OrIOp::create(builder, location, cleared, positioned), address,
@@ -542,8 +535,8 @@ LogicalResult makeNativeAOTPlanLegacy(
     uint64_t highWidth = width - (64 - shift);
     uint8_t highMask = static_cast<uint8_t>((uint16_t{1} << highWidth) - 1);
     Value highAddress = byteGEP(builder, location, plane, firstByte + 8);
-    Value oldHigh = LLVM::LoadOp::create(builder, location,
-                                         builder.getI8Type(), highAddress, 1);
+    Value oldHigh = LLVM::LoadOp::create(builder, location, builder.getI8Type(),
+                                         highAddress, 1);
     Value highValue = arith::ShRUIOp::create(
         builder, location, value,
         llvmConstant(builder, location, i64, 64 - shift));
@@ -551,10 +544,10 @@ LogicalResult makeNativeAOTPlanLegacy(
                                       highValue);
     Value newHigh = arith::OrIOp::create(
         builder, location,
-        arith::AndIOp::create(
-            builder, location, oldHigh,
-            llvmConstant(builder, location, builder.getI8Type(),
-                         static_cast<uint8_t>(~highMask))),
+        arith::AndIOp::create(builder, location, oldHigh,
+                              llvmConstant(builder, location,
+                                           builder.getI8Type(),
+                                           static_cast<uint8_t>(~highMask))),
         arith::AndIOp::create(
             builder, location, highValue,
             llvmConstant(builder, location, builder.getI8Type(), highMask)));
@@ -565,16 +558,16 @@ LogicalResult makeNativeAOTPlanLegacy(
     if (!wordBlocks[word])
       continue;
     builder.setInsertionPointToStart(wordBlocks[word]);
-    Value dirtyBase = LLVM::AddressOfOp::create(
-        builder, location, pointer, nbaDirtyRootsName);
-    Value dirty = LLVM::LoadOp::create(
-        builder, location, i64,
-        byteGEP(builder, location, dirtyBase,
-                uint64_t{word} * sizeof(uint64_t)),
-        8);
-    Value wordEmpty = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::eq, dirty,
-        llvmConstant(builder, location, i64, 0));
+    Value dirtyBase = LLVM::AddressOfOp::create(builder, location, pointer,
+                                                nbaDirtyRootsName);
+    Value dirty =
+        LLVM::LoadOp::create(builder, location, i64,
+                             byteGEP(builder, location, dirtyBase,
+                                     uint64_t{word} * sizeof(uint64_t)),
+                             8);
+    Value wordEmpty =
+        arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                              dirty, llvmConstant(builder, location, i64, 0));
     Block *next = nextWordAfter(word);
     Block *firstRoot = new Block;
     nbaCommit.getBody().getBlocks().insert(Region::iterator(next), firstRoot);
@@ -586,11 +579,9 @@ LogicalResult makeNativeAOTPlanLegacy(
          llvm::enumerate(scalarRootsByWord[word])) {
       const obelisk_rt_static_nba_root &root = nbaRoots[rootIndex];
       uint64_t offset = staticNBAPlan.generatedOffsets[rootIndex];
-      StringRef accumulator =
-          staticNBAPlan.generatedAccumulators[rootIndex];
-      Block *afterRoot = position + 1 == scalarRootsByWord[word].size()
-                             ? next
-                             : new Block;
+      StringRef accumulator = staticNBAPlan.generatedAccumulators[rootIndex];
+      Block *afterRoot =
+          position + 1 == scalarRootsByWord[word].size() ? next : new Block;
       if (afterRoot != next)
         nbaCommit.getBody().getBlocks().insert(Region::iterator(next),
                                                afterRoot);
@@ -600,13 +591,12 @@ LogicalResult makeNativeAOTPlanLegacy(
       builder.setInsertionPointToStart(rootBlock);
       Value selected = arith::CmpIOp::create(
           builder, location, arith::CmpIPredicate::ne,
-          arith::AndIOp::create(
-              builder, location, dirty,
-              llvmConstant(builder, location, i64,
-                           uint64_t{1} << (rootIndex % 64))),
+          arith::AndIOp::create(builder, location, dirty,
+                                llvmConstant(builder, location, i64,
+                                             uint64_t{1} << (rootIndex % 64))),
           llvmConstant(builder, location, i64, 0));
-      Value accumulatorBase = LLVM::AddressOfOp::create(
-          builder, location, pointer, accumulator);
+      Value accumulatorBase =
+          LLVM::AddressOfOp::create(builder, location, pointer, accumulator);
       Value valid = LLVM::LoadOp::create(
           builder, location, i32,
           byteGEP(builder, location, accumulatorBase,
@@ -622,12 +612,11 @@ LogicalResult makeNativeAOTPlanLegacy(
           builder, location, selected,
           arith::AndIOp::create(
               builder, location,
-              arith::CmpIOp::create(
-                  builder, location, arith::CmpIPredicate::ne, valid,
-                  llvmConstant(builder, location, i32, 0)),
-              arith::CmpIOp::create(
-                  builder, location, arith::CmpIPredicate::eq, region,
-                  nbaCommitEntry->getArgument(2))));
+              arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                                    valid,
+                                    llvmConstant(builder, location, i32, 0)),
+              arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                    region, nbaCommitEntry->getArgument(2))));
       cf::CondBranchOp::create(builder, location, validRoot, commitRoot,
                                ValueRange{}, afterRoot, ValueRange{});
 
@@ -666,13 +655,12 @@ LogicalResult makeNativeAOTPlanLegacy(
           arith::AndIOp::create(builder, location, stagedUnknown, writeMask));
       storeRoot(stateValue, offset, root.bit_width, newValue);
       storeRoot(stateUnknown, offset, root.bit_width, newUnknown);
-      LLVM::StoreOp::create(builder, location,
-                            llvmConstant(builder, location, i64, 0),
-                            byteGEP(builder, location, accumulatorBase,
-                                    offsetof(
-                                        obelisk_rt_generated_nba_accumulator_256,
-                                        write_mask)),
-                            8);
+      LLVM::StoreOp::create(
+          builder, location, llvmConstant(builder, location, i64, 0),
+          byteGEP(
+              builder, location, accumulatorBase,
+              offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask)),
+          8);
       LLVM::StoreOp::create(
           builder, location, llvmConstant(builder, location, i32, 0),
           byteGEP(builder, location, accumulatorBase,
@@ -682,10 +670,9 @@ LogicalResult makeNativeAOTPlanLegacy(
           builder, location, i64, directlyCommittedByWord[word], 8);
       LLVM::StoreOp::create(
           builder, location,
-          arith::OrIOp::create(
-              builder, location, directlyCommitted,
-              llvmConstant(builder, location, i64,
-                           uint64_t{1} << (rootIndex % 64))),
+          arith::OrIOp::create(builder, location, directlyCommitted,
+                               llvmConstant(builder, location, i64,
+                                            uint64_t{1} << (rootIndex % 64))),
           directlyCommittedByWord[word], 8);
       Value changed = arith::OrIOp::create(
           builder, location,
@@ -696,14 +683,14 @@ LogicalResult makeNativeAOTPlanLegacy(
           llvmConstant(builder, location, i64, 0));
       Value priorChanged = LLVM::LoadOp::create(
           builder, location, i32, nbaCommitEntry->getArgument(3), 4);
-      Value changedI32 = LLVM::ZExtOp::create(builder, location, i32,
-                                              rootChanged);
+      Value changedI32 =
+          LLVM::ZExtOp::create(builder, location, i32, rootChanged);
       LLVM::StoreOp::create(
           builder, location,
           arith::OrIOp::create(builder, location, priorChanged, changedI32),
           nbaCommitEntry->getArgument(3), 4);
-      Value count = LLVM::LoadOp::create(builder, location, i32,
-                                         committedCount, 4);
+      Value count =
+          LLVM::LoadOp::create(builder, location, i32, committedCount, 4);
       LLVM::StoreOp::create(
           builder, location,
           arith::AddIOp::create(
@@ -720,8 +707,8 @@ LogicalResult makeNativeAOTPlanLegacy(
         if (entry.static_state != root.static_state ||
             entry.low_bit >= root.bit_width)
           continue;
-        uint64_t high = std::min<uint64_t>(
-            root.bit_width, entry.low_bit + entry.bit_width);
+        uint64_t high =
+            std::min<uint64_t>(root.bit_width, entry.low_bit + entry.bit_width);
         if (entry.low_bit >= high)
           continue;
         uint64_t mask = scalarMask(high - entry.low_bit) << entry.low_bit;
@@ -733,36 +720,36 @@ LogicalResult makeNativeAOTPlanLegacy(
                             SmallVector<uint64_t>(activationWordCount, 0)});
           group = std::prev(groups.end());
         }
-        group->nodes[entry.compute_node / 64] |=
-            uint64_t{1} << (entry.compute_node % 64);
+        group->nodes[entry.compute_node / 64] |= uint64_t{1}
+                                                 << (entry.compute_node % 64);
       }
       if (!groups.empty()) {
-        Value widthMask = llvmConstant(builder, location, i64,
-                                       scalarMask(root.bit_width));
+        Value widthMask =
+            llvmConstant(builder, location, i64, scalarMask(root.bit_width));
         auto invert = [&](Value value) {
           return arith::XOrIOp::create(
                      builder, location, value,
                      llvmConstant(builder, location, i64, UINT64_MAX))
               .getResult();
         };
-        Value oldKnown = arith::AndIOp::create(
-            builder, location, invert(oldUnknown), widthMask);
-        Value newKnown = arith::AndIOp::create(
-            builder, location, invert(newUnknown), widthMask);
+        Value oldKnown = arith::AndIOp::create(builder, location,
+                                               invert(oldUnknown), widthMask);
+        Value newKnown = arith::AndIOp::create(builder, location,
+                                               invert(newUnknown), widthMask);
         Value oldZero = arith::AndIOp::create(builder, location, oldKnown,
                                               invert(oldValue));
-        Value oldOne = arith::AndIOp::create(builder, location, oldKnown,
-                                             oldValue);
+        Value oldOne =
+            arith::AndIOp::create(builder, location, oldKnown, oldValue);
         Value newZero = arith::AndIOp::create(builder, location, newKnown,
                                               invert(newValue));
-        Value newOne = arith::AndIOp::create(builder, location, newKnown,
-                                             newValue);
+        Value newOne =
+            arith::AndIOp::create(builder, location, newKnown, newValue);
         Value posedge = arith::AndIOp::create(
             builder, location,
             arith::OrIOp::create(
                 builder, location,
                 arith::AndIOp::create(builder, location, oldZero,
-                                       invert(newZero)),
+                                      invert(newZero)),
                 arith::AndIOp::create(builder, location, oldUnknown, newOne)),
             widthMask);
         Value negedge = arith::AndIOp::create(
@@ -770,7 +757,7 @@ LogicalResult makeNativeAOTPlanLegacy(
             arith::OrIOp::create(
                 builder, location,
                 arith::AndIOp::create(builder, location, oldOne,
-                                       invert(newOne)),
+                                      invert(newOne)),
                 arith::AndIOp::create(builder, location, oldUnknown, newZero)),
             widthMask);
         for (const TriggerGroup &group : groups) {
@@ -783,8 +770,8 @@ LogicalResult makeNativeAOTPlanLegacy(
             observed = negedge;
             break;
           case OBELISK_RT_WAIT_EDGE_BOTH:
-            observed = arith::OrIOp::create(builder, location, posedge,
-                                             negedge);
+            observed =
+                arith::OrIOp::create(builder, location, posedge, negedge);
             break;
           default:
             break;
@@ -795,15 +782,14 @@ LogicalResult makeNativeAOTPlanLegacy(
                   builder, location, observed,
                   llvmConstant(builder, location, i64, group.mask)),
               llvmConstant(builder, location, i64, 0));
-          for (auto [activationWord, nodeMask] :
-               llvm::enumerate(group.nodes)) {
+          for (auto [activationWord, nodeMask] : llvm::enumerate(group.nodes)) {
             if (nodeMask == 0)
               continue;
-            Value address = byteGEP(
-                builder, location, activatedNodes,
-                uint64_t{activationWord} * sizeof(uint64_t));
-            Value active = LLVM::LoadOp::create(builder, location, i64,
-                                                address, 8);
+            Value address =
+                byteGEP(builder, location, activatedNodes,
+                        uint64_t{activationWord} * sizeof(uint64_t));
+            Value active =
+                LLVM::LoadOp::create(builder, location, i64, address, 8);
             Value selected = arith::SelectOp::create(
                 builder, location, triggered,
                 llvmConstant(builder, location, i64, nodeMask),
@@ -824,11 +810,10 @@ LogicalResult makeNativeAOTPlanLegacy(
   if (generateGroupedFanout)
     LLVM::CallOp::create(
         builder, location, TypeRange{},
-        SymbolRefAttr::get(
-            context, "obelisk_rt_v1_scheduler_activate_static_nodes"),
+        SymbolRefAttr::get(context,
+                           "obelisk_rt_v1_scheduler_activate_static_nodes"),
         ValueRange{nbaCommitEntry->getArgument(1), activatedNodes,
-                   llvmConstant(builder, location, i32,
-                                activationWordCount)});
+                   llvmConstant(builder, location, i32, activationWordCount)});
   Value dirtyBase;
   if (nbaDirtyWordCount != 0)
     dirtyBase = LLVM::AddressOfOp::create(builder, location, pointer,
@@ -839,8 +824,8 @@ LogicalResult makeNativeAOTPlanLegacy(
     Value dirtyAddress = byteGEP(builder, location, dirtyBase,
                                  uint64_t{word} * sizeof(uint64_t));
     Value dirty = LLVM::LoadOp::create(builder, location, i64, dirtyAddress, 8);
-    Value committed = LLVM::LoadOp::create(
-        builder, location, i64, directlyCommittedByWord[word], 8);
+    Value committed = LLVM::LoadOp::create(builder, location, i64,
+                                           directlyCommittedByWord[word], 8);
     LLVM::StoreOp::create(
         builder, location,
         arith::AndIOp::create(
@@ -850,12 +835,12 @@ LogicalResult makeNativeAOTPlanLegacy(
                 llvmConstant(builder, location, i64, UINT64_MAX))),
         dirtyAddress, 8);
   }
-  Value directCount = LLVM::LoadOp::create(builder, location, i32,
-                                           committedCount, 4);
+  Value directCount =
+      LLVM::LoadOp::create(builder, location, i32, committedCount, 4);
   LLVM::CallOp::create(
       builder, location, TypeRange{},
-      SymbolRefAttr::get(
-          context, "obelisk_rt_v1_static_nba_account_generated_commits"),
+      SymbolRefAttr::get(context,
+                         "obelisk_rt_v1_static_nba_account_generated_commits"),
       ValueRange{nbaCommitEntry->getArgument(1), directCount});
   Value nbaCommitStatus =
       LLVM::CallOp::create(
@@ -868,13 +853,7 @@ LogicalResult makeNativeAOTPlanLegacy(
           .getResult();
   LLVM::ReturnOp::create(builder, location, nbaCommitStatus);
 
-  auto planType = LLVM::LLVMStructType::getLiteral(
-      context,
-      {i32, i64,     pointer, i64,     i32,     i32,     pointer, pointer,
-       i64, pointer, pointer, pointer, pointer, i32,     i32,     pointer,
-       i64, pointer, i64,     pointer, i64,     pointer, pointer, pointer,
-       i32, i32,     pointer, i32,     i32,     pointer, i32,     i32,
-       pointer, i64, pointer, pointer, pointer});
+  auto planType = getNativeSchedulePlanLLVMType(context);
   makeConstantGlobal(
       module, location, planType, planName, LLVM::Linkage::Internal, 8,
       [&](OpBuilder &initializerBuilder) {
@@ -884,23 +863,24 @@ LogicalResult makeNativeAOTPlanLegacy(
             insertValue(initializerBuilder, location, value,
                         llvmConstant(initializerBuilder, location, i32,
                                      sizeof(obelisk_rt_native_schedule_plan)),
-                        0);
+                        NativeSchedulePlanField::Size);
         value = insertValue(initializerBuilder, location, value,
                             llvmConstant(initializerBuilder, location, i64,
                                          graphLayoutChecksum),
-                            1);
+                            NativeSchedulePlanField::GraphLayoutChecksum);
         value =
             insertValue(initializerBuilder, location, value,
                         LLVM::AddressOfOp::create(initializerBuilder, location,
                                                   pointer, stateName),
-                        2);
+                        NativeSchedulePlanField::MutableState);
         value = insertValue(initializerBuilder, location, value,
                             llvmConstant(initializerBuilder, location, i64,
                                          uint64_t{actorCount} * sizeof(void *)),
-                            3);
+                            NativeSchedulePlanField::MutableStateSize);
         value = insertValue(
             initializerBuilder, location, value,
-            llvmConstant(initializerBuilder, location, i32, actorCount), 4);
+            llvmConstant(initializerBuilder, location, i32, actorCount),
+            NativeSchedulePlanField::ActorCapacity);
         value = insertValue(
             initializerBuilder, location, value,
             llvmConstant(
@@ -929,35 +909,35 @@ LogicalResult makeNativeAOTPlanLegacy(
                     (cleanSuperstepEnabled
                          ? OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP
                          : 0)),
-            5);
+            NativeSchedulePlanField::Flags);
         value = insertValue(initializerBuilder, location, value,
                             LLVM::AddressOfOp::create(initializerBuilder,
                                                       location, pointer,
                                                       "__obelisk_state_value"),
-                            6);
+                            NativeSchedulePlanField::StateValue);
         value = insertValue(
             initializerBuilder, location, value,
             LLVM::AddressOfOp::create(initializerBuilder, location, pointer,
                                       "__obelisk_state_unknown"),
-            7);
+            NativeSchedulePlanField::StateUnknown);
         value = insertValue(initializerBuilder, location, value,
                             llvmConstant(initializerBuilder, location, i64,
                                          stateLayout.bitCount),
-                            8);
+                            NativeSchedulePlanField::StateBitCount);
         value =
             insertValue(initializerBuilder, location, value,
                         LLVM::AddressOfOp::create(initializerBuilder, location,
                                                   pointer, bindName),
-                        9);
+                        NativeSchedulePlanField::Bind);
         value = insertValue(initializerBuilder, location, value,
                             LLVM::AddressOfOp::create(
                                 initializerBuilder, location, pointer, runName),
-                            10);
+                            NativeSchedulePlanField::Run);
         value =
             insertValue(initializerBuilder, location, value,
                         LLVM::AddressOfOp::create(initializerBuilder, location,
                                                   pointer, snapshotName),
-                        11);
+                        NativeSchedulePlanField::FallbackSnapshot);
         Value rootsAddress =
             nbaRoots.empty()
                 ? LLVM::ZeroOp::create(initializerBuilder, location, pointer)
@@ -965,15 +945,15 @@ LogicalResult makeNativeAOTPlanLegacy(
                 : LLVM::AddressOfOp::create(initializerBuilder, location,
                                             pointer, nbaRootsName)
                       .getResult();
-        value =
-            insertValue(initializerBuilder, location, value, rootsAddress, 12);
+        value = insertValue(initializerBuilder, location, value, rootsAddress,
+                            NativeSchedulePlanField::NBARoots);
         value = insertValue(
             initializerBuilder, location, value,
             llvmConstant(initializerBuilder, location, i32, nbaRoots.size()),
-            13);
-        value =
-            insertValue(initializerBuilder, location, value,
-                        llvmConstant(initializerBuilder, location, i32, 0), 14);
+            NativeSchedulePlanField::NBARootCount);
+        value = insertValue(initializerBuilder, location, value,
+                            llvmConstant(initializerBuilder, location, i32, 0),
+                            NativeSchedulePlanField::Reserved0);
         Value sitesAddress =
             nbaSites.empty()
                 ? LLVM::ZeroOp::create(initializerBuilder, location, pointer)
@@ -981,12 +961,12 @@ LogicalResult makeNativeAOTPlanLegacy(
                 : LLVM::AddressOfOp::create(initializerBuilder, location,
                                             pointer, nbaSitesName)
                       .getResult();
-        value =
-            insertValue(initializerBuilder, location, value, sitesAddress, 15);
+        value = insertValue(initializerBuilder, location, value, sitesAddress,
+                            NativeSchedulePlanField::NBASites);
         value = insertValue(
             initializerBuilder, location, value,
             llvmConstant(initializerBuilder, location, i64, nbaSites.size()),
-            16);
+            NativeSchedulePlanField::NBASiteCount);
         Value fanoutAddress =
             fanoutEntries.empty()
                 ? LLVM::ZeroOp::create(initializerBuilder, location, pointer)
@@ -994,12 +974,12 @@ LogicalResult makeNativeAOTPlanLegacy(
                 : LLVM::AddressOfOp::create(initializerBuilder, location,
                                             pointer, fanoutName)
                       .getResult();
-        value =
-            insertValue(initializerBuilder, location, value, fanoutAddress, 17);
+        value = insertValue(initializerBuilder, location, value, fanoutAddress,
+                            NativeSchedulePlanField::FanoutEntries);
         value = insertValue(initializerBuilder, location, value,
                             llvmConstant(initializerBuilder, location, i64,
                                          fanoutEntries.size()),
-                            18);
+                            NativeSchedulePlanField::FanoutEntryCount);
         Value actorRootsAddress =
             actorRoots.empty()
                 ? LLVM::ZeroOp::create(initializerBuilder, location, pointer)
@@ -1007,12 +987,13 @@ LogicalResult makeNativeAOTPlanLegacy(
                 : LLVM::AddressOfOp::create(initializerBuilder, location,
                                             pointer, actorRootsName)
                       .getResult();
-        value = insertValue(initializerBuilder, location, value,
-                            actorRootsAddress, 19);
+        value =
+            insertValue(initializerBuilder, location, value, actorRootsAddress,
+                        NativeSchedulePlanField::ActorRoots);
         value = insertValue(
             initializerBuilder, location, value,
             llvmConstant(initializerBuilder, location, i64, actorRoots.size()),
-            20);
+            NativeSchedulePlanField::ActorRootCount);
         Value commitAddress =
             enableStaticNBA
                 ? LLVM::AddressOfOp::create(initializerBuilder, location,
@@ -1020,8 +1001,8 @@ LogicalResult makeNativeAOTPlanLegacy(
                       .getResult()
                 : LLVM::ZeroOp::create(initializerBuilder, location, pointer)
                       .getResult();
-        value =
-            insertValue(initializerBuilder, location, value, commitAddress, 21);
+        value = insertValue(initializerBuilder, location, value, commitAddress,
+                            NativeSchedulePlanField::NBACommit);
         Value specializationFast =
             guardedSpecializationEnabled
                 ? LLVM::AddressOfOp::create(
@@ -1030,8 +1011,9 @@ LogicalResult makeNativeAOTPlanLegacy(
                       .getResult()
                 : LLVM::ZeroOp::create(initializerBuilder, location, pointer)
                       .getResult();
-        value = insertValue(initializerBuilder, location, value,
-                            specializationFast, 22);
+        value =
+            insertValue(initializerBuilder, location, value, specializationFast,
+                        NativeSchedulePlanField::SpecializationFast);
         Value dirtyRoots =
             nbaDirtyWordCount == 0
                 ? LLVM::ZeroOp::create(initializerBuilder, location, pointer)
@@ -1040,15 +1022,14 @@ LogicalResult makeNativeAOTPlanLegacy(
                                             pointer, nbaDirtyRootsName)
                       .getResult();
         value = insertValue(initializerBuilder, location, value, dirtyRoots,
-                            23);
+                            NativeSchedulePlanField::NBADirtyRoots);
         value = insertValue(
             initializerBuilder, location, value,
-            llvmConstant(initializerBuilder, location, i32,
-                         nbaDirtyWordCount),
-            24);
+            llvmConstant(initializerBuilder, location, i32, nbaDirtyWordCount),
+            NativeSchedulePlanField::NBADirtyWordCount);
         value = insertValue(initializerBuilder, location, value,
                             llvmConstant(initializerBuilder, location, i32, 0),
-                            25);
+                            NativeSchedulePlanField::Reserved1);
         Value dirtySummary =
             nbaDirtySummaryWordCount == 0
                 ? LLVM::ZeroOp::create(initializerBuilder, location, pointer)
@@ -1057,15 +1038,14 @@ LogicalResult makeNativeAOTPlanLegacy(
                                             pointer, nbaDirtySummaryName)
                       .getResult();
         value = insertValue(initializerBuilder, location, value, dirtySummary,
-                            26);
-        value = insertValue(
-            initializerBuilder, location, value,
-            llvmConstant(initializerBuilder, location, i32,
-                         nbaDirtySummaryWordCount),
-            27);
+                            NativeSchedulePlanField::NBADirtySummary);
+        value = insertValue(initializerBuilder, location, value,
+                            llvmConstant(initializerBuilder, location, i32,
+                                         nbaDirtySummaryWordCount),
+                            NativeSchedulePlanField::NBADirtySummaryWordCount);
         return insertValue(initializerBuilder, location, value,
                            llvmConstant(initializerBuilder, location, i32, 0),
-                           28);
+                           NativeSchedulePlanField::Reserved2);
       });
   if (fullyStatic)
     getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_run_aot_nodes",
@@ -1081,9 +1061,9 @@ LogicalResult makeNativeAOTPlanLegacy(
                            {pointer, i32, i32, pointer});
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_static_nba_direct_commit_guard", i32, {pointer});
-  getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_static_nba_account_generated_commits",
-      LLVM::LLVMVoidType::get(context), {pointer, i32});
+  getOrDeclareLLVMFunction(module,
+                           "obelisk_rt_v1_static_nba_account_generated_commits",
+                           LLVM::LLVMVoidType::get(context), {pointer, i32});
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_scheduler_activate_static_nodes",
       LLVM::LLVMVoidType::get(context), {pointer, pointer, i32});

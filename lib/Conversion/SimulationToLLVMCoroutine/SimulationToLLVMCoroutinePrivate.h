@@ -40,7 +40,7 @@ class SimulationProcessFrameAnalysis;
 namespace obelisk::sim {
 class AssocArrayType;
 class SimFuncOp;
-}
+} // namespace obelisk::sim
 
 namespace obelisk::detail {
 
@@ -52,6 +52,16 @@ inline constexpr llvm::StringLiteral managedRootRangePushCheckAttr =
     "obelisk.managed_root_range_push_check";
 inline constexpr llvm::StringLiteral assumeCleanSpecializationAttr =
     "obelisk.native.assume_clean_specialization";
+inline constexpr llvm::StringLiteral evalCheckpointActorName =
+    "__obelisk_eval_checkpoint_actor_v1";
+inline constexpr llvm::StringLiteral evalCheckpointContinuationName =
+    "__obelisk_eval_checkpoint_continuation_v1";
+inline constexpr llvm::StringLiteral evalCheckpointCallbackName =
+    "__obelisk_eval_checkpoint_callback_v1";
+inline constexpr llvm::StringLiteral evalCheckpointMutableStateName =
+    "__obelisk_eval_checkpoint_mutable_state_v1";
+inline constexpr llvm::StringLiteral evalHybridCoordinatorName =
+    "__obelisk_eval_fast_coordinator_hybrid_v1";
 
 enum class NativeReturnLowering {
   None,
@@ -84,6 +94,51 @@ struct DirectStaticStateRange {
   bool guarded;
 };
 
+/// Compiler-side field indices for obelisk_rt_native_schedule_plan. Keep all
+/// LLVM literal construction and aggregate access tied to one named layout.
+enum class NativeSchedulePlanField : int64_t {
+  Size = 0,
+  GraphLayoutChecksum,
+  MutableState,
+  MutableStateSize,
+  ActorCapacity,
+  Flags,
+  StateValue,
+  StateUnknown,
+  StateBitCount,
+  Bind,
+  Run,
+  FallbackSnapshot,
+  NBARoots,
+  NBARootCount,
+  Reserved0,
+  NBASites,
+  NBASiteCount,
+  FanoutEntries,
+  FanoutEntryCount,
+  ActorRoots,
+  ActorRootCount,
+  NBACommit,
+  SpecializationFast,
+  NBADirtyRoots,
+  NBADirtyWordCount,
+  Reserved1,
+  NBADirtySummary,
+  NBADirtySummaryWordCount,
+  Reserved2,
+  ClockKernels,
+  ClockKernelCount,
+  Reserved3,
+  MergedFragments,
+  MergedFragmentCount,
+  TimeslotCoordinator,
+  PromotionInvalidate,
+  PromotionReady,
+  Count,
+};
+
+mlir::LLVM::LLVMStructType
+getNativeSchedulePlanLLVMType(mlir::MLIRContext *context);
 
 using ReferenceArgumentMap =
     llvm::DenseMap<mlir::Operation *, mlir::SmallVector<unsigned>>;
@@ -122,6 +177,9 @@ SignedI64Index resizeSignedIndexToI64(mlir::OpBuilder &builder,
 mlir::Value insertValue(mlir::OpBuilder &builder, mlir::Location location,
                         mlir::Value aggregate, mlir::Value element,
                         int64_t index);
+mlir::Value insertValue(mlir::OpBuilder &builder, mlir::Location location,
+                        mlir::Value aggregate, mlir::Value element,
+                        NativeSchedulePlanField field);
 void emitNativeStateRetain(mlir::OpBuilder &builder, mlir::Location location,
                            mlir::Value handle);
 mlir::Operation *reportManagedStatus(mlir::OpBuilder &builder,
@@ -137,8 +195,8 @@ mlir::Value makeNativeAssocKey(mlir::OpBuilder &builder,
                                mlir::Location location,
                                sim::AssocArrayType array,
                                mlir::ValueRange values);
-mlir::Value zeroNativeValue(mlir::OpBuilder &builder,
-                            mlir::Location location, mlir::Type type);
+mlir::Value zeroNativeValue(mlir::OpBuilder &builder, mlir::Location location,
+                            mlir::Type type);
 
 std::string managedClassDescriptorName(mlir::SymbolRefAttr className);
 std::string managedMethodThunkName(llvm::StringRef methodName);
@@ -199,9 +257,9 @@ void populateNativeHandleConversionPatterns(
     const llvm::DenseMap<uint64_t, uint64_t> &storageHandles,
     const llvm::DenseMap<uint64_t, uint64_t> &netHandles,
     const llvm::DenseMap<uint64_t, uint64_t> &driverHandles);
-void populateOverrideToLLVMConversionPatterns(
-    mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter,
-    uint64_t stateBitCount);
+void populateOverrideToLLVMConversionPatterns(mlir::RewritePatternSet &patterns,
+                                              mlir::TypeConverter &converter,
+                                              uint64_t stateBitCount);
 void populateReferenceLifetimeToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
 void populateSchedulerToLLVMConversionPatterns(
@@ -220,33 +278,35 @@ void markLikelyTrue(mlir::cf::CondBranchOp branch);
 void recordStaticSpecializationCFGBlocks(
     mlir::ConversionPatternRewriter &rewriter, mlir::Block *head,
     unsigned newBlockCount);
-mlir::Value staticSpecializationGuard(
-    mlir::ConversionPatternRewriter &rewriter, mlir::Location location,
-    uint32_t staticID, uint32_t flags);
-mlir::Value staticNBASpecializationGuard(
-    mlir::ConversionPatternRewriter &rewriter, mlir::Location location,
-    uint32_t rootIndex);
+mlir::Value staticSpecializationGuard(mlir::ConversionPatternRewriter &rewriter,
+                                      mlir::Location location,
+                                      uint32_t staticID, uint32_t flags);
+mlir::Value
+staticNBASpecializationGuard(mlir::ConversionPatternRewriter &rewriter,
+                             mlir::Location location, uint32_t rootIndex);
 std::optional<DirectStaticStateRange>
 resolveDirectStaticStateRange(mlir::Value handle, unsigned width,
                               const NativeStateLayout *layout);
 std::optional<uint64_t> resolveCFGConstantInteger(mlir::Value value);
-mlir::Value loadStatePlane(
-    mlir::ConversionPatternRewriter &rewriter, mlir::Location location,
-    mlir::Value handle, mlir::IntegerType resultType,
-    llvm::StringRef globalName, bool unknownFallback, uint64_t stateBitCount,
-    const NativeStateLayout *directLayout = nullptr,
-    mlir::Value guardedPermission = {}, bool assumeClean = false);
-mlir::Value storeStatePlane(
-    mlir::ConversionPatternRewriter &rewriter, mlir::Location location,
-    mlir::Value handle, mlir::Value input, llvm::StringRef globalName,
-    uint64_t stateBitCount, const NativeStateLayout *directLayout = nullptr,
-    mlir::Value guardedPermission = {}, bool assumeClean = false,
-    bool trackChange = true);
+mlir::Value loadStatePlane(mlir::ConversionPatternRewriter &rewriter,
+                           mlir::Location location, mlir::Value handle,
+                           mlir::IntegerType resultType,
+                           llvm::StringRef globalName, bool unknownFallback,
+                           uint64_t stateBitCount,
+                           const NativeStateLayout *directLayout = nullptr,
+                           mlir::Value guardedPermission = {},
+                           bool assumeClean = false);
+mlir::Value storeStatePlane(mlir::ConversionPatternRewriter &rewriter,
+                            mlir::Location location, mlir::Value handle,
+                            mlir::Value input, llvm::StringRef globalName,
+                            uint64_t stateBitCount,
+                            const NativeStateLayout *directLayout = nullptr,
+                            mlir::Value guardedPermission = {},
+                            bool assumeClean = false, bool trackChange = true);
 void notifySignal(
     mlir::ConversionPatternRewriter &builder, mlir::Location location,
-    mlir::Value handle,
-    uint64_t width, mlir::Value oldValue, mlir::Value oldUnknown,
-    mlir::Value newValue, mlir::Value newUnknown,
+    mlir::Value handle, uint64_t width, mlir::Value oldValue,
+    mlir::Value oldUnknown, mlir::Value newValue, mlir::Value newUnknown,
     std::optional<DirectStaticStateRange> directRange = std::nullopt);
 mlir::LogicalResult
 insertAutomaticOwnerReleases(obelisk::sim::SimFuncOp function);
@@ -280,9 +340,9 @@ mlir::LogicalResult makeSchedulerMain(mlir::ModuleOp module,
 void declareNativeRuntimeABI(mlir::ModuleOp module);
 mlir::FailureOr<NativeStateLayout>
 buildNativeStateLayout(mlir::ModuleOp module);
-mlir::LLVM::GlobalOp makeStatePlane(
-    mlir::ModuleOp module, llvm::StringRef name, uint64_t bytes, bool unknown,
-    const NativeStateLayout &layout);
+mlir::LLVM::GlobalOp makeStatePlane(mlir::ModuleOp module, llvm::StringRef name,
+                                    uint64_t bytes, bool unknown,
+                                    const NativeStateLayout &layout);
 
 } // namespace obelisk::detail
 

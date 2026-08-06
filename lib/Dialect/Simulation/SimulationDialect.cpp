@@ -15,6 +15,7 @@
 #include "mlir/Interfaces/FunctionImplementation.h"
 #include "mlir/Transforms/InliningUtils.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallSet.h"
@@ -24,6 +25,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <optional>
 
 using namespace mlir;
 
@@ -419,6 +421,8 @@ LogicalResult ComputeEffectAttr::verify(
     return emitError() << "unknown effect must not claim a concrete range";
   if (resource != ComputeResourceKind::Unknown && width == 0)
     return emitError() << "concrete effect has zero width";
+  if (width != 0 && low > UINT64_MAX - width)
+    return emitError() << "effect packed range overflows";
   bool watches = effect == ComputeEffectKind::Watch;
   if (watches != (trigger != ComputeTriggerKind::None))
     return emitError() << "watch effects require exactly one trigger kind";
@@ -722,8 +726,7 @@ ClockKeyAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
     return emitError() << "clock key has an invalid packed range";
   if (edge != ComputeTriggerKind::Change &&
       edge != ComputeTriggerKind::Posedge &&
-      edge != ComputeTriggerKind::Negedge &&
-      edge != ComputeTriggerKind::Both)
+      edge != ComputeTriggerKind::Negedge && edge != ComputeTriggerKind::Both)
     return emitError() << "clock key requires an exact change or edge kind";
   return success();
 }
@@ -737,10 +740,11 @@ ClockKernelAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
   return success();
 }
 
-LogicalResult MergedFragmentAttr::verify(
-    llvm::function_ref<InFlightDiagnostic()> emitError, uint32_t id,
-    uint32_t owner, uint32_t bit, bool shared, bool loweringReady,
-    DenseI64ArrayAttr fragments) {
+LogicalResult
+MergedFragmentAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                           uint32_t id, uint32_t owner, uint32_t bit,
+                           bool shared, bool loweringReady,
+                           DenseI64ArrayAttr fragments) {
   (void)id;
   (void)owner;
   (void)bit;
@@ -767,10 +771,11 @@ KernelIngressAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
   return success();
 }
 
-LogicalResult ClockKernelPlanAttr::verify(
-    llvm::function_ref<InFlightDiagnostic()> emitError, uint32_t version,
-    ComputeGraphAttr sourceGraph, uint32_t ownerCount, ArrayAttr clocks,
-    ArrayAttr mergedFragments, ArrayAttr ingress) {
+LogicalResult
+ClockKernelPlanAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                            uint32_t version, ComputeGraphAttr sourceGraph,
+                            uint32_t ownerCount, ArrayAttr clocks,
+                            ArrayAttr mergedFragments, ArrayAttr ingress) {
   if (version != metadata::schemaVersion || !sourceGraph)
     return emitError() << "invalid clock-kernel plan version or source graph";
   if (!clocks || !mergedFragments || !ingress)
@@ -791,7 +796,8 @@ LogicalResult ClockKernelPlanAttr::verify(
     auto merged = dyn_cast<MergedFragmentAttr>(attribute);
     if (!merged || merged.getId() != index || merged.getOwner() >= ownerCount ||
         !ownerBits.insert({merged.getOwner(), merged.getBit()}).second)
-      return emitError() << "merged-fragment ownership is invalid or duplicated";
+      return emitError()
+             << "merged-fragment ownership is invalid or duplicated";
     if (merged.getShared() != (merged.getOwner() >= clocks.size()))
       return emitError() << "merged-fragment shared ownership is inconsistent";
     for (int64_t fragment : merged.getFragments().asArrayRef())
@@ -811,7 +817,8 @@ LogicalResult ClockKernelPlanAttr::verify(
         !ownerBits.contains({mapping.getOwner(), mapping.getBit()}) ||
         mapping.getFragment() >= sourceGraph.getNodes().size() ||
         !ingressKeys.insert({mapping.getClock(), mapping.getFragment()}).second)
-      return emitError() << "clock-kernel ingress mapping is invalid or duplicated";
+      return emitError()
+             << "clock-kernel ingress mapping is invalid or duplicated";
   }
   return success();
 }
@@ -878,6 +885,9 @@ LogicalResult ThreeTierScheduleAttr::verify(
 
   llvm::SmallDenseSet<std::pair<uint32_t, uint32_t>, 16> ownerBits;
   llvm::SmallDenseSet<int64_t, 32> originalFragments;
+  llvm::DenseMap<uint32_t, std::pair<uint32_t, uint32_t>> fragmentOwners;
+  llvm::DenseMap<uint32_t, ScheduledKernelAttr> fragmentKernels;
+  uint32_t nextSharedOwner = static_cast<uint32_t>(triggers.size());
   for (auto [index, attribute] : llvm::enumerate(kernels)) {
     auto kernel = dyn_cast<ScheduledKernelAttr>(attribute);
     if (!kernel || kernel.getId() != index || kernel.getOwner() >= ownerCount ||
@@ -885,12 +895,18 @@ LogicalResult ThreeTierScheduleAttr::verify(
       return emitError() << "kernel ownership is invalid or duplicated";
     if (kernel.getShared() != (kernel.getOwner() >= triggers.size()))
       return emitError() << "kernel shared ownership is inconsistent";
+    if (kernel.getShared() && kernel.getOwner() != nextSharedOwner++)
+      return emitError() << "shared kernel owners are not canonical";
     if (!kernel.getShared() && kernel.getTier() != SchedulerTierKind::Tier1)
       return emitError() << "physical-trigger owners must remain in Tier 1";
-    for (int64_t fragment : kernel.getFragments().asArrayRef())
+    for (int64_t fragment : kernel.getFragments().asArrayRef()) {
       if (static_cast<uint64_t>(fragment) >= sourceGraph.getNodes().size() ||
           !originalFragments.insert(fragment).second)
         return emitError() << "graph node has no unique scheduled-kernel owner";
+      fragmentOwners.try_emplace(static_cast<uint32_t>(fragment),
+                                 kernel.getOwner(), kernel.getReadyBit());
+      fragmentKernels.try_emplace(static_cast<uint32_t>(fragment), kernel);
+    }
   }
   if (originalFragments.size() != sourceGraph.getNodes().size())
     return emitError() << "three-tier schedule does not own every graph node";
@@ -898,6 +914,7 @@ LogicalResult ThreeTierScheduleAttr::verify(
   llvm::SmallDenseSet<
       std::tuple<ComputeResourceKind, uint64_t, uint64_t, uint64_t>, 16>
       rootKeys;
+  SmallVector<ScheduledRootAttr> scheduledRoots;
   for (Attribute attribute : roots) {
     auto root = dyn_cast<ScheduledRootAttr>(attribute);
     if (!root || root.getOwner() >= ownerCount ||
@@ -906,19 +923,182 @@ LogicalResult ThreeTierScheduleAttr::verify(
                       root.getWidth()})
              .second)
       return emitError() << "scheduled-root ownership is invalid or duplicated";
+    scheduledRoots.push_back(root);
+  }
+
+  struct ScheduledWriter {
+    ComputeResourceKind resource;
+    uint64_t descriptor;
+    uint64_t low;
+    uint64_t high;
+    uint32_t kernel;
+    uint32_t owner;
+    SchedulerTierKind tier;
+  };
+  SmallVector<ScheduledWriter> writers;
+  auto recordWriter = [&](uint32_t fragmentID, ComputeEffectAttr effect) {
+    if (!effect || effect.getTarget() != ComputeTargetKind::Descriptor ||
+        effect.getDynamic() || effect.getWidth() == 0 ||
+        (effect.getResource() != ComputeResourceKind::Storage &&
+         effect.getResource() != ComputeResourceKind::Net) ||
+        (effect.getEffect() != ComputeEffectKind::Write &&
+         effect.getEffect() != ComputeEffectKind::Drive &&
+         effect.getEffect() != ComputeEffectKind::NBA))
+      return;
+    auto kernel = fragmentKernels.find(fragmentID);
+    if (kernel == fragmentKernels.end())
+      return;
+    writers.push_back({effect.getResource(), effect.getDescriptor(),
+                       effect.getLow(), effect.getLow() + effect.getWidth(),
+                       kernel->second.getId(), kernel->second.getOwner(),
+                       kernel->second.getTier()});
+  };
+  for (auto [fragmentID, node] : llvm::enumerate(sourceGraph.getNodes())) {
+    if (auto fragment = dyn_cast<ComputeFragmentAttr>(node))
+      for (Attribute effect : fragment.getEffects())
+        recordWriter(static_cast<uint32_t>(fragmentID),
+                     cast<ComputeEffectAttr>(effect));
+    else if (auto commit = dyn_cast<ComputeNBACommitAttr>(node))
+      recordWriter(static_cast<uint32_t>(fragmentID), commit.getEffect());
+  }
+  llvm::sort(scheduledRoots, [](ScheduledRootAttr lhs, ScheduledRootAttr rhs) {
+    return std::tuple(lhs.getResource(), lhs.getDescriptor(), lhs.getLow(),
+                      lhs.getWidth()) <
+           std::tuple(rhs.getResource(), rhs.getDescriptor(), rhs.getLow(),
+                      rhs.getWidth());
+  });
+  using DescriptorKey = std::pair<ComputeResourceKind, uint64_t>;
+  std::map<DescriptorKey, std::map<std::vector<uint32_t>, uint32_t>>
+      barrierOwners;
+  uint32_t nextBarrierOwner = nextSharedOwner;
+  for (ScheduledRootAttr root : scheduledRoots) {
+    uint64_t high = root.getLow() + root.getWidth();
+    SmallVector<const ScheduledWriter *> overlapping;
+    for (const ScheduledWriter &writer : writers)
+      if (writer.resource == root.getResource() &&
+          writer.descriptor == root.getDescriptor() && writer.low < high &&
+          root.getLow() < writer.high)
+        overlapping.push_back(&writer);
+    if (overlapping.empty() ||
+        llvm::any_of(overlapping, [&](const ScheduledWriter *writer) {
+          return writer->low > root.getLow() || writer->high < high;
+        }))
+      return emitError()
+             << "scheduled root crosses or lacks an exact writer partition";
+    SchedulerTierKind tier = overlapping.front()->tier;
+    uint32_t commonOwner = overlapping.front()->owner;
+    bool common = true;
+    SmallVector<uint32_t> writerKernels;
+    writerKernels.push_back(overlapping.front()->kernel);
+    for (const ScheduledWriter *writer : ArrayRef(overlapping).drop_front()) {
+      if (static_cast<uint32_t>(writer->tier) > static_cast<uint32_t>(tier))
+        tier = writer->tier;
+      common &= writer->owner == commonOwner;
+      writerKernels.push_back(writer->kernel);
+    }
+    uint32_t expectedOwner = commonOwner;
+    if (!common) {
+      llvm::sort(writerKernels);
+      writerKernels.erase(
+          std::unique(writerKernels.begin(), writerKernels.end()),
+          writerKernels.end());
+      std::vector<uint32_t> writerKey(writerKernels.begin(),
+                                      writerKernels.end());
+      auto &descriptorOwners =
+          barrierOwners[{root.getResource(), root.getDescriptor()}];
+      auto [barrier, inserted] =
+          descriptorOwners.try_emplace(std::move(writerKey), nextBarrierOwner);
+      if (inserted)
+        ++nextBarrierOwner;
+      expectedOwner = barrier->second;
+    }
+    if (root.getTier() != tier || root.getOwner() != expectedOwner)
+      return emitError()
+             << "scheduled-root owner or tier disagrees with writers";
+  }
+  if (nextBarrierOwner != ownerCount)
+    return emitError() << "three-tier owner inventory is not canonical";
+  for (const ScheduledWriter &writer : writers) {
+    SmallVector<std::pair<uint64_t, uint64_t>> coverage;
+    for (ScheduledRootAttr root : scheduledRoots)
+      if (root.getResource() == writer.resource &&
+          root.getDescriptor() == writer.descriptor &&
+          root.getLow() < writer.high &&
+          writer.low < root.getLow() + root.getWidth())
+        coverage.push_back({root.getLow(), root.getLow() + root.getWidth()});
+    llvm::sort(coverage);
+    uint64_t cursor = writer.low;
+    for (auto [low, high] : coverage) {
+      if (low > cursor)
+        break;
+      cursor = std::max(cursor, high);
+    }
+    if (cursor < writer.high)
+      return emitError() << "scheduled roots do not cover every writer range";
+  }
+
+  auto isPhysicalWatch = [](ComputeEffectAttr effect) {
+    return effect.getEffect() == ComputeEffectKind::Watch &&
+           effect.getTarget() == ComputeTargetKind::Descriptor &&
+           !effect.getDynamic() && !effect.getDeferred() &&
+           effect.getWidth() != 0 &&
+           (effect.getResource() == ComputeResourceKind::Storage ||
+            effect.getResource() == ComputeResourceKind::Net) &&
+           (effect.getTrigger() == ComputeTriggerKind::Change ||
+            effect.getTrigger() == ComputeTriggerKind::Posedge ||
+            effect.getTrigger() == ComputeTriggerKind::Negedge ||
+            effect.getTrigger() == ComputeTriggerKind::Both);
+  };
+  auto findTrigger = [&](ComputeEffectAttr effect) -> std::optional<uint32_t> {
+    for (auto [index, attribute] : llvm::enumerate(triggers)) {
+      auto key = cast<TriggerGroupAttr>(attribute).getKey();
+      if (key.getResource() == effect.getResource() &&
+          key.getDescriptor() == effect.getDescriptor() &&
+          key.getLow() == effect.getLow() &&
+          key.getWidth() == effect.getWidth() &&
+          key.getEdge() == effect.getTrigger())
+        return static_cast<uint32_t>(index);
+    }
+    return std::nullopt;
+  };
+
+  llvm::SmallDenseSet<std::pair<uint32_t, uint32_t>, 16> requiredIngress;
+  for (auto [fragmentID, node] : llvm::enumerate(sourceGraph.getNodes())) {
+    auto fragment = dyn_cast<ComputeFragmentAttr>(node);
+    if (!fragment)
+      continue;
+    for (Attribute effectAttribute : fragment.getEffects()) {
+      auto effect = cast<ComputeEffectAttr>(effectAttribute);
+      if (!isPhysicalWatch(effect))
+        continue;
+      std::optional<uint32_t> trigger = findTrigger(effect);
+      if (!trigger)
+        return emitError()
+               << "physical watch is absent from the trigger inventory";
+      requiredIngress.insert({*trigger, static_cast<uint32_t>(fragmentID)});
+    }
   }
 
   llvm::SmallDenseSet<std::pair<uint32_t, uint32_t>, 16> ingressKeys;
   for (Attribute attribute : ingress) {
     auto mapping = dyn_cast<SchedulerIngressAttr>(attribute);
+    auto owner = mapping ? fragmentOwners.find(mapping.getFragment())
+                         : fragmentOwners.end();
     if (!mapping || mapping.getTrigger() >= triggers.size() ||
         mapping.getOwner() >= ownerCount ||
         !ownerBits.contains({mapping.getOwner(), mapping.getReadyBit()}) ||
         mapping.getFragment() >= sourceGraph.getNodes().size() ||
+        owner == fragmentOwners.end() ||
+        owner->second != std::pair(mapping.getOwner(), mapping.getReadyBit()) ||
+        !requiredIngress.contains(
+            {mapping.getTrigger(), mapping.getFragment()}) ||
         !ingressKeys.insert({mapping.getTrigger(), mapping.getFragment()})
              .second)
       return emitError() << "scheduler ingress is invalid or duplicated";
   }
+  if (ingressKeys.size() != requiredIngress.size())
+    return emitError()
+           << "scheduler ingress does not cover every physical watch";
   return success();
 }
 

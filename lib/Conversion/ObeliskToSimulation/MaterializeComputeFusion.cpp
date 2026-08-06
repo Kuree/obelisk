@@ -190,7 +190,7 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
   sim::SimCodeUnitDeclOp::create(
       builder, function.getLoc(), evalCodeUnit, evalScope,
       sim::EntryKind::Function, builder.getStringAttr(evalName),
-      builder.getStringAttr("experimental native eval body"),
+      builder.getStringAttr("generated native eval body"),
       builder.getUnitAttr());
   SmallVector<NamedAttribute> evalAttributes{builder.getNamedAttr(
       "code_unit_id", builder.getI64IntegerAttr(evalCodeUnit))};
@@ -204,6 +204,10 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
       sim::EntryKind::Function, evalAttributes, argumentAttrs);
   evalBody->setAttr("obelisk.eval.borrowed_captures", builder.getUnitAttr());
   evalBody->setAttr("obelisk.eval.raw_captures", builder.getUnitAttr());
+  if (Attribute owners = function->getAttr("obelisk.eval.source_owners"))
+    evalBody->setAttr("obelisk.eval.source_owners", owners);
+  if (Attribute group = function->getAttr("obelisk.eval.fusion_group"))
+    evalBody->setAttr("obelisk.eval.fusion_group", group);
   sim::ContinuationSiteAttr activationSite;
   if (auto suspend = dyn_cast<sim::SimSuspendChangeOp>(wait->getTerminator()))
     activationSite = suspend.getSiteAttr();
@@ -222,9 +226,17 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
   }
   evalBody->setAttr("obelisk.eval.continuation",
                     builder.getI32IntegerAttr(activationSite.getId()));
-  if (sim::FragmentABIAttr abi = function.getFragmentAbiAttr())
-    function->setAttr("obelisk.eval.source_fragments",
-                      abi.getFragments());
+  // Carry a typed source identity from the first eval-body clone onward.
+  // Later body/module-instance fusion can then combine continuations without
+  // preserving graph-generation-specific fragment ordinals.
+  if (IntegerAttr codeUnit = function.getCodeUnitIdAttr())
+    evalBody->setAttr(
+        "obelisk.eval.source_owners",
+        builder.getArrayAttr({builder.getDictionaryAttr(
+            {builder.getNamedAttr("code_unit", codeUnit),
+             builder.getNamedAttr(
+                 "continuation",
+                 builder.getI32IntegerAttr(activationSite.getId()))})}));
   SymbolTable::setSymbolVisibility(evalBody, SymbolTable::Visibility::Private);
 
   IRMapping mapping;
@@ -1094,6 +1106,39 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
       sim::EntryKind::Continuous, attributes, argumentAttrs);
   SymbolTable::setSymbolVisibility(kernel, SymbolTable::Visibility::Private);
   kernel->setAttr(sim::metadata::nativeRegionBody, builder.getUnitAttr());
+  kernel->setAttr(sim::metadata::evalReconstructsContinuationArgs,
+                  builder.getUnitAttr());
+  kernel->setAttr("obelisk.eval.fusion_group",
+                  builder.getI32IntegerAttr(fusion.getId()));
+  SmallVector<Attribute> sourceOwners;
+  sourceOwners.reserve(candidates.size());
+  for (Candidate &candidate : candidates) {
+    sim::ContinuationSiteAttr site;
+    if (auto suspend = dyn_cast<sim::SimSuspendChangeOp>(candidate.suspend))
+      site = suspend.getSiteAttr();
+    else if (auto suspend = dyn_cast<sim::SimSuspendAnyOp>(candidate.suspend))
+      site = suspend.getSiteAttr();
+    sim::SimFuncOp sourceFunction = candidate.function;
+    for (sim::SimFuncOp function :
+         design.getBody().front().getOps<sim::SimFuncOp>())
+      if (auto evalBody =
+              function->getAttrOfType<FlatSymbolRefAttr>("obelisk.eval.body");
+          evalBody && evalBody.getValue() == candidate.function.getSymName()) {
+        sourceFunction = function;
+        break;
+      }
+    IntegerAttr codeUnit = sourceFunction.getCodeUnitIdAttr();
+    if (!site || !codeUnit) {
+      kernel.erase();
+      return failure();
+    }
+    sourceOwners.push_back(builder.getDictionaryAttr(
+        {builder.getNamedAttr("code_unit", codeUnit),
+         builder.getNamedAttr("continuation",
+                              builder.getI32IntegerAttr(site.getId()))}));
+  }
+  kernel->setAttr("obelisk.eval.source_owners",
+                  builder.getArrayAttr(sourceOwners));
   // The kernel is built incrementally, so any later rejection must remove the
   // partially populated symbol again. Leaving it behind would publish a
   // terminator-less function to a caller that only checks for success.
@@ -1588,21 +1633,13 @@ FailureOr<sim::SimFuncOp> materializeFusion(
       first.getEntryKind(), fusedAttributes, argumentAttrs);
   SymbolTable::setSymbolVisibility(fused, SymbolTable::Visibility::Private);
   fused->setAttr(sim::metadata::nativeRegionBody, builder.getUnitAttr());
-  // Preserve the pre-fusion physical fragment inventory as an ownership
-  // certificate for native eval planning. Rebuilding the compute graph gives
-  // the fused function fresh fragment IDs, but clock fanout was planned from
-  // the source actors and must be mapped without actor-name heuristics.
-  SmallVector<int64_t> sourceFragments;
-  for (BodyFusionCandidate &candidate : candidates)
-    if (sim::FragmentABIAttr abi = candidate.function.getFragmentAbiAttr())
-      llvm::append_range(sourceFragments, abi.getFragments().asArrayRef());
-  llvm::sort(sourceFragments);
-  sourceFragments.erase(
-      std::unique(sourceFragments.begin(), sourceFragments.end()),
-      sourceFragments.end());
-  if (!sourceFragments.empty())
-    fused->setAttr("obelisk.eval.source_fragments",
-                   builder.getDenseI64ArrayAttr(sourceFragments));
+  fused->setAttr(sim::metadata::evalReconstructsContinuationArgs,
+                 builder.getUnitAttr());
+  fused->setAttr("obelisk.eval.fusion_group",
+                 builder.getI32IntegerAttr(fusion.getId()));
+  // Preserve typed source identities across graph rebuilding. Native eval
+  // lowering resolves these actor continuations into the new graph's fragment
+  // inventory; it never compares the old fragment ordinals directly.
   SmallVector<Attribute> sourceOwners;
   sourceOwners.reserve(candidates.size());
   for (BodyFusionCandidate &candidate : candidates) {
@@ -1615,10 +1652,6 @@ FailureOr<sim::SimFuncOp> materializeFusion(
       site = suspend.getSiteAttr();
     if (!site)
       return rejectEval("source owner has no stable continuation");
-    // Eval-body fusion operates on private activation clones. Recover the
-    // source coroutine that owns the clone so the ownership certificate uses
-    // its stable code-unit identity, which survives graph rebuilding and
-    // symbol renaming.
     sim::SimFuncOp sourceFunction = candidate.function;
     for (sim::SimFuncOp function :
          design.getBody().front().getOps<sim::SimFuncOp>())
@@ -1638,7 +1671,6 @@ FailureOr<sim::SimFuncOp> materializeFusion(
   }
   fused->setAttr("obelisk.eval.source_owners",
                  builder.getArrayAttr(sourceOwners));
-  fused->setAttr("obelisk.eval.ownership_anchors", fusion.getFragments());
   // This closed-world fused activation cannot call foreign code or suspend
   // while its body is running. Mark it so native lowering can prove which NBA
   // sites are safe in the clean body selected by AOT actor dispatch.
@@ -1824,7 +1856,7 @@ FailureOr<sim::SimFuncOp> materializeFusion(
     sim::SimCodeUnitDeclOp::create(
         builder, fused.getLoc(), evalCodeUnit, evalScope,
         sim::EntryKind::Function, builder.getStringAttr(evalName),
-        builder.getStringAttr("experimental native eval body"),
+        builder.getStringAttr("generated native eval body"),
         builder.getUnitAttr());
     SmallVector<NamedAttribute> evalAttributes{builder.getNamedAttr(
         "code_unit_id", builder.getI64IntegerAttr(evalCodeUnit))};
@@ -1835,6 +1867,10 @@ FailureOr<sim::SimFuncOp> materializeFusion(
     evalBody->setAttr("obelisk.eval.borrowed_captures", builder.getUnitAttr());
     evalBody->setAttr("obelisk.eval.raw_captures", builder.getUnitAttr());
     evalBody->setAttr("obelisk.eval.instance_coordinator", builder.getUnitAttr());
+    evalBody->setAttr("obelisk.eval.fusion_group",
+                      fused->getAttr("obelisk.eval.fusion_group"));
+    evalBody->setAttr("obelisk.eval.source_owners",
+                      fused->getAttr("obelisk.eval.source_owners"));
     sim::ContinuationSiteAttr activationSite;
     if (auto suspend = dyn_cast<sim::SimSuspendChangeOp>(wait->getTerminator()))
       activationSite = suspend.getSiteAttr();

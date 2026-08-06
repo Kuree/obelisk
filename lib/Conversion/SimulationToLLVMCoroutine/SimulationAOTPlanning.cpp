@@ -61,9 +61,9 @@ FailureOr<SmallVector<NativePeriodicClock>> buildNativePeriodicClockPlan(
       return WalkResult::advance();
     sim::SimRefLoadOp load = loads.front();
     sim::SimRefStoreOp store = stores.front();
-    Operation *toggleOperation =
-        unaries.empty() ? xors.front().getOperation()
-                        : unaries.front().getOperation();
+    Operation *toggleOperation = unaries.empty()
+                                     ? xors.front().getOperation()
+                                     : unaries.front().getOperation();
     if (store.getValue().getDefiningOp() != toggleOperation ||
         load.getReference() != store.getReference())
       return WalkResult::advance();
@@ -79,7 +79,8 @@ FailureOr<SmallVector<NativePeriodicClock>> buildNativePeriodicClockPlan(
       else
         return WalkResult::advance();
       auto one = other.getDefiningOp<arith::ConstantOp>();
-      auto integer = one ? dyn_cast<IntegerAttr>(one.getValue()) : IntegerAttr{};
+      auto integer =
+          one ? dyn_cast<IntegerAttr>(one.getValue()) : IntegerAttr{};
       if (!integer || integer.getValue().getBitWidth() != 1 ||
           !integer.getValue().isOne())
         return WalkResult::advance();
@@ -91,24 +92,22 @@ FailureOr<SmallVector<NativePeriodicClock>> buildNativePeriodicClockPlan(
     uint64_t localBitOffset = 0;
     while (auto view =
                physicalReference.getDefiningOp<sim::SimRefSubelementOp>()) {
-      Type type = cast<sim::RefType>(view.getInput().getType()).getElementType();
+      Type type =
+          cast<sim::RefType>(view.getInput().getType()).getElementType();
       for (int64_t index : view.getIndices()) {
         if (index < 0)
           return WalkResult::advance();
         auto child = sim::getAggregateProvenanceSubelement(
             type, static_cast<unsigned>(index));
-        if (!child ||
-            child->first > UINT64_MAX - localBitOffset)
+        if (!child || child->first > UINT64_MAX - localBitOffset)
           return WalkResult::advance();
         localBitOffset += child->first;
-        type = sim::getAggregateElementType(type,
-                                            static_cast<unsigned>(index));
+        type = sim::getAggregateElementType(type, static_cast<unsigned>(index));
       }
       physicalReference = view.getInput();
     }
     auto reference = dyn_cast<BlockArgument>(physicalReference);
-    auto storage =
-        physicalReference.getDefiningOp<sim::SimContextStorageOp>();
+    auto storage = physicalReference.getDefiningOp<sim::SimContextStorageOp>();
     if ((!reference || reference.getOwner() != &function.getBody().front()) &&
         !storage)
       return WalkResult::advance();
@@ -143,8 +142,7 @@ FailureOr<SmallVector<NativePeriodicClock>> buildNativePeriodicClockPlan(
                arith::ConstantOp>(operation))
         toggleOperations.push_back(&operation);
     if (toggleOperations.size() != 3 || toggleOperations[0] != load ||
-        toggleOperations[1] != toggleOperation ||
-        toggleOperations[2] != store)
+        toggleOperations[1] != toggleOperation || toggleOperations[2] != store)
       return WalkResult::advance();
     bool unsupported = false;
     function.walk([&](Operation *operation) {
@@ -187,8 +185,8 @@ FailureOr<SmallVector<NativePeriodicClock>> buildNativePeriodicClockPlan(
     if (!site || site.getId() == 0)
       return delay.emitOpError("periodic clock wait has no continuation ID"),
              WalkResult::interrupt();
-    clocks.push_back({actor->second, site.getId(), bound->handleID,
-                      bitOffset, period.getValue()});
+    clocks.push_back({actor->second, site.getId(), bound->handleID, bitOffset,
+                      period.getValue()});
     return WalkResult::advance();
   });
   if (result.wasInterrupted())
@@ -209,10 +207,11 @@ FailureOr<SmallVector<NativePeriodicClock>> buildNativePeriodicClockPlan(
   return clocks;
 }
 
-FailureOr<SmallVector<NativePeriodicAlias>> buildNativePeriodicAliasPlan(
-    ModuleOp module, const NativeStateLayout &stateLayout,
-    const DenseMap<Operation *, uint32_t> &actorSlots,
-    ArrayRef<NativePeriodicClock> periodicClocks) {
+FailureOr<SmallVector<NativePeriodicAlias>>
+buildNativePeriodicAliasPlan(ModuleOp module,
+                             const NativeStateLayout &stateLayout,
+                             const DenseMap<Operation *, uint32_t> &actorSlots,
+                             ArrayRef<NativePeriodicClock> periodicClocks) {
   SmallVector<NativePeriodicAlias> aliases;
   if (periodicClocks.empty())
     return aliases;
@@ -236,8 +235,7 @@ FailureOr<SmallVector<NativePeriodicAlias>> buildNativePeriodicAliasPlan(
         return lookup.getId();
     return std::nullopt;
   };
-  auto decodeStaticRoot = [&](uint64_t handle)
-      -> std::optional<uint32_t> {
+  auto decodeStaticRoot = [&](uint64_t handle) -> std::optional<uint32_t> {
     obelisk_rt_stable_handle_v1 decoded{};
     if (!obelisk_rt_stable_handle_decode(handle, &decoded) ||
         decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC || decoded.offset != 0)
@@ -279,7 +277,8 @@ FailureOr<SmallVector<NativePeriodicAlias>> buildNativePeriodicAliasPlan(
     uint64_t sourceLocalBitOffset = 0;
     while (auto view =
                sourceReference.getDefiningOp<sim::SimRefSubelementOp>()) {
-      Type type = cast<sim::RefType>(view.getInput().getType()).getElementType();
+      Type type =
+          cast<sim::RefType>(view.getInput().getType()).getElementType();
       for (int64_t index : view.getIndices()) {
         if (index < 0) {
           unsupported = true;
@@ -292,8 +291,7 @@ FailureOr<SmallVector<NativePeriodicAlias>> buildNativePeriodicAliasPlan(
           break;
         }
         sourceLocalBitOffset += child->first;
-        type = sim::getAggregateElementType(type,
-                                            static_cast<unsigned>(index));
+        type = sim::getAggregateElementType(type, static_cast<unsigned>(index));
       }
       if (unsupported)
         break;
@@ -315,13 +313,12 @@ FailureOr<SmallVector<NativePeriodicAlias>> buildNativePeriodicAliasPlan(
     if (!sourceDescriptor || !driverDescriptor)
       return WalkResult::advance();
     auto sourceHandle = stateLayout.storage.find(*sourceDescriptor);
-    auto sourceRootOffset =
-        stateLayout.storageOffsets.find(*sourceDescriptor);
+    auto sourceRootOffset = stateLayout.storageOffsets.find(*sourceDescriptor);
     auto driverOffset = stateLayout.driverOffsets.find(*driverDescriptor);
-    auto driver = llvm::find_if(stateLayout.driverLayouts,
-                                [&](const auto &candidate) {
-                                  return candidate.id == *driverDescriptor;
-                                });
+    auto driver =
+        llvm::find_if(stateLayout.driverLayouts, [&](const auto &candidate) {
+          return candidate.id == *driverDescriptor;
+        });
     if (sourceHandle == stateLayout.storage.end() ||
         sourceRootOffset == stateLayout.storageOffsets.end() ||
         sourceLocalBitOffset > UINT64_MAX - sourceRootOffset->second ||
@@ -350,17 +347,17 @@ FailureOr<SmallVector<NativePeriodicAlias>> buildNativePeriodicAliasPlan(
           return candidate.netId == driver->netId;
         }) != 1)
       return WalkResult::advance();
-    auto net = llvm::find_if(stateLayout.netLayouts, [&](const auto &candidate) {
-      return candidate.id == driver->netId;
-    });
+    auto net =
+        llvm::find_if(stateLayout.netLayouts, [&](const auto &candidate) {
+          return candidate.id == driver->netId;
+        });
     auto netHandle = stateLayout.nets.find(driver->netId);
     auto netOffset = stateLayout.netOffsets.find(driver->netId);
     if (net == stateLayout.netLayouts.end() || net->width != 1 ||
         netHandle == stateLayout.nets.end() ||
         netOffset == stateLayout.netOffsets.end())
       return WalkResult::advance();
-    std::optional<uint32_t> targetStatic =
-        decodeStaticRoot(netHandle->second);
+    std::optional<uint32_t> targetStatic = decodeStaticRoot(netHandle->second);
     auto site = wait.getSiteAttr();
     if (!targetStatic || !site || site.getId() == 0)
       return WalkResult::advance();
@@ -368,35 +365,31 @@ FailureOr<SmallVector<NativePeriodicAlias>> buildNativePeriodicAliasPlan(
     aliases.push_back({*sourceStatic, actor->second, site.getId(),
                        *targetStatic,
                        sourceRootOffset->second + sourceLocalBitOffset,
-                       netOffset->second,
-                       driverOffset->second});
+                       netOffset->second, driverOffset->second});
     return WalkResult::advance();
   });
   if (walked.wasInterrupted())
     return failure();
   llvm::sort(aliases, [](const NativePeriodicAlias &lhs,
-                        const NativePeriodicAlias &rhs) {
+                         const NativePeriodicAlias &rhs) {
     return std::tie(lhs.sourceStaticState, lhs.sourceBitOffset,
-                    lhs.forwardingActorSlot,
-                    lhs.forwardingContinuation, lhs.targetStaticState) <
+                    lhs.forwardingActorSlot, lhs.forwardingContinuation,
+                    lhs.targetStaticState) <
            std::tie(rhs.sourceStaticState, rhs.sourceBitOffset,
-                    rhs.forwardingActorSlot,
-                    rhs.forwardingContinuation, rhs.targetStaticState);
+                    rhs.forwardingActorSlot, rhs.forwardingContinuation,
+                    rhs.targetStaticState);
   });
-  aliases.erase(std::unique(aliases.begin(), aliases.end(),
-                            [](const auto &lhs, const auto &rhs) {
-                              return lhs.sourceStaticState ==
-                                         rhs.sourceStaticState &&
-                                     lhs.sourceBitOffset ==
-                                         rhs.sourceBitOffset &&
-                                     lhs.forwardingActorSlot ==
-                                         rhs.forwardingActorSlot &&
-                                     lhs.forwardingContinuation ==
-                                         rhs.forwardingContinuation &&
-                                     lhs.targetStaticState ==
-                                         rhs.targetStaticState;
-                            }),
-                aliases.end());
+  aliases.erase(
+      std::unique(aliases.begin(), aliases.end(),
+                  [](const auto &lhs, const auto &rhs) {
+                    return lhs.sourceStaticState == rhs.sourceStaticState &&
+                           lhs.sourceBitOffset == rhs.sourceBitOffset &&
+                           lhs.forwardingActorSlot == rhs.forwardingActorSlot &&
+                           lhs.forwardingContinuation ==
+                               rhs.forwardingContinuation &&
+                           lhs.targetStaticState == rhs.targetStaticState;
+                  }),
+      aliases.end());
   return aliases;
 }
 
@@ -944,6 +937,99 @@ buildNativeThreeTierPlan(ModuleOp module,
                     }),
         planned.promotionRanges.end());
     result.kernels.push_back(std::move(planned));
+  }
+  for (Attribute attribute : schedule.getIngress()) {
+    auto ingress = cast<sim::SchedulerIngressAttr>(attribute);
+    result.ingress.push_back(
+        {ingress.getFragment(), ingress.getOwner(), ingress.getReadyBit()});
+  }
+  return result;
+}
+
+FailureOr<NativeEvalOwnershipPlan>
+buildNativeEvalOwnershipPlan(ModuleOp module,
+                             const NativeStateLayout &stateLayout,
+                             const NativeStaticFanoutPlan &fanoutPlan,
+                             ArrayRef<NativeDirectFragment> directFragments,
+                             ArrayRef<NativePeriodicAlias> periodicAliases) {
+  NativeEvalOwnershipPlan result;
+  result.fanoutOwners.reserve(fanoutPlan.entries.size());
+
+  auto isPeriodicAlias = [&](const obelisk_rt_static_fanout_entry &entry) {
+    return llvm::any_of(periodicAliases, [&](const NativePeriodicAlias &alias) {
+      if (alias.sourceStaticState != entry.static_state ||
+          alias.forwardingActorSlot != entry.actor_slot ||
+          alias.forwardingContinuation != entry.continuation)
+        return false;
+      auto bound =
+          llvm::find_if(stateLayout.bounds, [&](const auto &candidate) {
+            return candidate.handleID == entry.static_state;
+          });
+      if (bound == stateLayout.bounds.end() ||
+          alias.sourceBitOffset < bound->offset)
+        return false;
+      uint64_t localBit = alias.sourceBitOffset - bound->offset;
+      return entry.low_bit <= localBit &&
+             localBit - entry.low_bit < entry.bit_width;
+    });
+  };
+
+  auto fragmentsFor = [&](const obelisk_rt_static_fanout_entry &entry) {
+    auto fragments =
+        fanoutPlan.fragments.find({entry.actor_slot, entry.continuation});
+    return fragments == fanoutPlan.fragments.end()
+               ? ArrayRef<uint32_t>{}
+               : ArrayRef<uint32_t>(fragments->second);
+  };
+  auto ownsFragment = [](const NativeDirectFragment &candidate,
+                         uint32_t fragment) {
+    return llvm::is_contained(candidate.fragmentIDs, fragment);
+  };
+
+  for (const obelisk_rt_static_fanout_entry &entry : fanoutPlan.entries) {
+    if (isPeriodicAlias(entry)) {
+      result.fanoutOwners.push_back(
+          {NativeEvalFanoutOwnerKind::PeriodicAlias, UINT32_MAX});
+      continue;
+    }
+
+    ArrayRef<uint32_t> plannedFragments = fragmentsFor(entry);
+    if (plannedFragments.empty()) {
+      result.fanoutOwners.emplace_back();
+      continue;
+    }
+    std::optional<unsigned> direct;
+    for (auto [index, candidate] : llvm::enumerate(directFragments)) {
+      bool exactPhysicalOwner =
+          candidate.actorSlot == entry.actor_slot &&
+          candidate.continuation == entry.continuation;
+      bool graphCertificate =
+          llvm::all_of(plannedFragments, [&](uint32_t fragment) {
+            return ownsFragment(candidate, fragment);
+          });
+      // The compute graph is already elaborated per module instance, and its
+      // fragment IDs are the stable physical identity used by fanout. Require
+      // complete graph coverage and a unique candidate. Process/code-unit
+      // identities are deliberately not required here: legal body fusion may
+      // erase or combine those source symbols and renumber continuations.
+      // Unfused bodies retain their exact physical actor/continuation.  Body
+      // fusion may erase that identity, in which case complete coverage in
+      // the current compute-graph generation is the only accepted fallback.
+      // Neither path compares ordinals from FragmentABI or an older graph.
+      if (!exactPhysicalOwner && !graphCertificate)
+        continue;
+      if (direct && *direct != index)
+        return module.emitError(
+                   "typed scheduler owner maps to multiple generated bodies"),
+               failure();
+      direct = static_cast<unsigned>(index);
+    }
+    if (!direct) {
+      result.fanoutOwners.emplace_back();
+      continue;
+    }
+    result.fanoutOwners.push_back(
+        {NativeEvalFanoutOwnerKind::Direct, static_cast<uint32_t>(*direct)});
   }
   return result;
 }

@@ -66,6 +66,10 @@ typedef int32_t obelisk_rt_status;
 // runtime advances to that deadline, drains the slot, and resumes the saved
 // periodic phase. Same-slot branch checkpoints continue to use 20.
 #define OBELISK_RT_AOT_TIMED_CHECKPOINT INT32_C(21)
+// Internal generated-branch handoff. The generated run loop consumes this
+// status into an exact callback transaction before returning ordinary status
+// 20 to the runtime scheduler.
+#define OBELISK_RT_AOT_GENERATED_CHECKPOINT INT32_C(22)
 
 // Managed SystemVerilog value ABI. Object handles are nullable pointers into
 // the context-owned, non-moving heap. Collector and synchronization metadata
@@ -2012,6 +2016,13 @@ typedef struct obelisk_rt_static_nba_site {
   obelisk_rt_static_nba_storage storage;
 } obelisk_rt_static_nba_site;
 
+// Internal routing encoded in static_fanout_entry::reserved for eval plans.
+// Generic plans require RUNTIME. The names keep the revision-coupled compiler
+// and runtime ABI from assigning independent meanings to numeric literals.
+#define OBELISK_RT_FANOUT_RUNTIME UINT32_C(0)
+#define OBELISK_RT_FANOUT_DIRECT UINT32_C(1)
+#define OBELISK_RT_FANOUT_PERIODIC_ALIAS UINT32_C(2)
+
 typedef struct obelisk_rt_static_fanout_entry {
   uint32_t static_state;
   uint32_t actor_slot;
@@ -2083,6 +2094,8 @@ typedef obelisk_rt_status (*obelisk_rt_native_timeslot_coordinator)(
     void *mutable_state, obelisk_rt_context *context);
 typedef void (*obelisk_rt_native_promotion_invalidate)(void);
 typedef uint32_t (*obelisk_rt_native_promotion_ready)(void);
+typedef obelisk_rt_status (*obelisk_rt_native_checkpoint_callback)(
+    obelisk_rt_context *context);
 
 typedef struct obelisk_rt_native_schedule_plan {
   uint32_t size;
@@ -2176,6 +2189,12 @@ obelisk_rt_status obelisk_rt_v1_scheduler_direct_fragment_leave(
 // inside the scheduler-owned clean transaction.
 obelisk_rt_status obelisk_rt_v1_scheduler_execute_aot_actor(
     obelisk_rt_context *context, uint32_t actor_slot);
+// Publish one exact cold continuation after the generated coordinator
+// returns. The callback is invoked outside the hot Tier-1/Tier-2 call graph;
+// its generated thunk resumes the same slot's ready-mask/NBA transaction.
+obelisk_rt_status obelisk_rt_v1_scheduler_queue_aot_checkpoint(
+    obelisk_rt_context *context, uint32_t actor_slot, uint32_t continuation,
+    obelisk_rt_native_checkpoint_callback callback);
 obelisk_rt_status obelisk_rt_v1_scheduler_add_aot(
     obelisk_rt_context *context, obelisk_rt_process_instance_v1 *instance,
     uint32_t flags, uint32_t actor_slot, uint32_t initial_rank,

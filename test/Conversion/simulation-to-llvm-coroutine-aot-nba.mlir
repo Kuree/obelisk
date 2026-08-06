@@ -9,17 +9,17 @@
 // RUN:   | FileCheck %s --check-prefix=PERIODIC
 // RUN: sed 's/obelisk.native_scheduler = 2/obelisk.native_scheduler = 3/' %s \
 // RUN:   | obelisk-opt - \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s --check-prefix=TWO-STATE
 // RUN: sed -e 's/obelisk.native_scheduler = 2/obelisk.native_scheduler = 3/' \
 // RUN:   -e 's/attributes {entry_kind = 1 : i32/attributes {obelisk.eval.inductive_two_state, entry_kind = 1 : i32/' %s \
 // RUN:   | obelisk-opt - \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s --check-prefix=TWO-STATE-STAGE
 // RUN: sed -e 's/obelisk.native_scheduler = 2/obelisk.native_scheduler = 3/' \
 // RUN:   -e 's/attributes {entry_kind = 1 : i32/attributes {obelisk.eval.selected_two_state, entry_kind = 1 : i32/' %s \
 // RUN:   | obelisk-opt - \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s --check-prefix=SELECTED-STAGE
 // RUN: obelisk-opt %s -o /dev/null \
 // RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' \
@@ -203,6 +203,10 @@ module attributes {
 // TWO-STATE-SAME: %[[SPAWN_CTX:.*]]: !llvm.ptr)
 // TWO-STATE: llvm.call @obelisk_rt_v1_process_instance_create_for_context(%[[SPAWN_CTX]], {{.*}}, {{.*}})
 // TWO-STATE-LABEL: llvm.func @__obelisk_eval_fast_coordinator_hybrid_v1
+// TWO-STATE: %[[DIRTY_ROOTS:.*]] = llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
+// TWO-STATE: llvm.load {{.*}} : !llvm.ptr -> i64
+// TWO-STATE: llvm.icmp "ne" {{.*}} : i64
+// TWO-STATE: llvm.cond_br
 // TWO-STATE: llvm.call @__obelisk_aot_static_nba_commit_two_state_fast_v1
 // TWO-STATE: llvm.call @__obelisk_aot_static_nba_commit_two_state_v1
 // TWO-STATE-LABEL: llvm.func internal @__obelisk_aot_static_nba_commit_two_state_v1

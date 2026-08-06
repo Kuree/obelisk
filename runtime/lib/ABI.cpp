@@ -523,6 +523,7 @@ static_assert(OBELISK_RT_INVALID_CONTINUATION == 12);
 static_assert(OBELISK_RT_TIER_UNAVAILABLE == 13);
 static_assert(OBELISK_RT_AOT_CHECKPOINT == 20);
 static_assert(OBELISK_RT_AOT_TIMED_CHECKPOINT == 21);
+static_assert(OBELISK_RT_AOT_GENERATED_CHECKPOINT == 22);
 static_assert(OBELISK_RT_INVALID_LIFECYCLE == 14);
 static_assert(OBELISK_RT_INVALID_FRAME == 15);
 static_assert(OBELISK_RT_INVALID_DESIGN == 16);
@@ -876,6 +877,10 @@ ABI_FUNCTION(obelisk_rt_v1_scheduler_direct_fragment_leave,
              obelisk_rt_status (*)(obelisk_rt_context *, uint32_t));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_execute_aot_actor,
              obelisk_rt_status (*)(obelisk_rt_context *, uint32_t));
+ABI_FUNCTION(obelisk_rt_v1_scheduler_queue_aot_checkpoint,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint32_t,
+                                   uint32_t,
+                                   obelisk_rt_native_checkpoint_callback));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_add_aot,
              obelisk_rt_status (*)(obelisk_rt_context *,
                                    obelisk_rt_process_instance_v1 *, uint32_t,

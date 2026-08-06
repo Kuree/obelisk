@@ -19,6 +19,21 @@ using namespace mlir;
 
 namespace obelisk::detail {
 
+LLVM::LLVMStructType getNativeSchedulePlanLLVMType(MLIRContext *context) {
+  OpBuilder builder(context);
+  Type pointer = LLVM::LLVMPointerType::get(context);
+  Type i32 = builder.getI32Type();
+  Type i64 = builder.getI64Type();
+  SmallVector<Type> fields{
+      i32,     i64,     pointer, i64,     i32,     i32,     pointer, pointer,
+      i64,     pointer, pointer, pointer, pointer, i32,     i32,     pointer,
+      i64,     pointer, i64,     pointer, i64,     pointer, pointer, pointer,
+      i32,     i32,     pointer, i32,     i32,     pointer, i32,     i32,
+      pointer, i64,     pointer, pointer, pointer};
+  assert(fields.size() == static_cast<size_t>(NativeSchedulePlanField::Count));
+  return LLVM::LLVMStructType::getLiteral(context, fields);
+}
+
 std::optional<uint64_t> resolveCFGConstantInteger(Value value,
                                                   DenseSet<Value> &active) {
   if (auto constant = value.getDefiningOp<arith::ConstantOp>())
@@ -70,9 +85,7 @@ bool alignUp(uint64_t value, uint64_t alignment, uint64_t &result) {
   return true;
 }
 
-bool containsLogic(Type type) {
-  return analysis::containsFourStateLogic(type);
-}
+bool containsLogic(Type type) { return analysis::containsFourStateLogic(type); }
 
 std::optional<unsigned> nativeStateWidth(Type type) {
   return analysis::getSimulationStorageBitWidth(type);
@@ -206,6 +219,12 @@ Value insertValue(OpBuilder &builder, Location location, Value aggregate,
                   Value element, int64_t index) {
   return LLVM::InsertValueOp::create(builder, location, aggregate, element,
                                      ArrayRef<int64_t>{index});
+}
+
+Value insertValue(OpBuilder &builder, Location location, Value aggregate,
+                  Value element, NativeSchedulePlanField field) {
+  return insertValue(builder, location, aggregate, element,
+                     static_cast<int64_t>(field));
 }
 
 void emitNativeStateRetain(OpBuilder &builder, Location location,

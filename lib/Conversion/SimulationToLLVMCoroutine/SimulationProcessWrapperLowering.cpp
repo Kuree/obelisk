@@ -4,6 +4,7 @@
 #include "SimulationProcessRuntimeABI.h"
 
 #include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
+#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Runtime/Runtime.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -236,9 +237,9 @@ LogicalResult makeDirectFragmentWrapper(
   if (body->hasAttr("obelisk.eval.inductive_two_state") ||
       body->hasAttr("obelisk.eval.selected_two_state") ||
       body->hasAttr("obelisk.eval.four_state_source"))
-    wrapper->setAttr("obelisk.eval.two_state_variant", builder.getUnitAttr());
-  if (body->hasAttr("obelisk.eval.path_guarded_two_state"))
-    wrapper->setAttr("obelisk.eval.path_guarded_two_state",
+    wrapper->setAttr(sim::metadata::evalTwoStateVariant, builder.getUnitAttr());
+  if (body->hasAttr(sim::metadata::evalPathGuardedTwoState))
+    wrapper->setAttr(sim::metadata::evalPathGuardedTwoState,
                      builder.getUnitAttr());
   bool mayTerminate = false;
   llvm::SmallPtrSet<Operation *, 8> visited;
@@ -270,16 +271,16 @@ LogicalResult makeDirectFragmentWrapper(
   inspect(body);
   inspect(actor);
   if (mayTerminate) {
-    wrapper->setAttr("obelisk.eval.may_terminate", builder.getUnitAttr());
+    wrapper->setAttr(sim::metadata::evalMayTerminate, builder.getUnitAttr());
     if (body->hasAttr("obelisk.eval.inherited_two_state_checkpoint") ||
         actor->hasAttr("obelisk.eval.inherited_two_state_checkpoint"))
-      wrapper->setAttr("obelisk.eval.checkpoint_safe",
+      wrapper->setAttr(sim::metadata::evalCheckpointSafe,
                        builder.getUnitAttr());
   }
   Block *entry = wrapper.addEntryBlock(builder);
   if (body->hasAttr("obelisk.eval.raw_captures")) {
     if (!mayTerminate)
-      wrapper->setAttr("obelisk.eval.infallible", builder.getUnitAttr());
+      wrapper->setAttr(sim::metadata::evalInfallible, builder.getUnitAttr());
     wrapper->setAttr(
         "passthrough",
         builder.getArrayAttr({builder.getStringAttr("alwaysinline")}));

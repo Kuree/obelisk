@@ -872,6 +872,8 @@ TEST(RuntimeABI, ReportsEveryStatusAndReleasesBuffersIdempotently) {
        "native scheduler synchronization checkpoint"},
       {OBELISK_RT_AOT_TIMED_CHECKPOINT,
        "native scheduler timed synchronization checkpoint"},
+      {OBELISK_RT_AOT_GENERATED_CHECKPOINT,
+       "generated native scheduler branch checkpoint"},
       {OBELISK_RT_INVALID_LIFECYCLE, "invalid process lifecycle transition"},
       {OBELISK_RT_INVALID_FRAME, "invalid process frame record"},
       {OBELISK_RT_INVALID_DESIGN, "invalid design metadata"},
