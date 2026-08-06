@@ -77,6 +77,11 @@ inline constexpr llvm::StringLiteral evalTwoStateVariant =
     "obelisk.eval.two_state_variant";
 inline constexpr llvm::StringLiteral evalPathGuardedTwoState =
     "obelisk.eval.path_guarded_two_state";
+/// A path-guarded owner whose complete persistent state closure is known-
+/// preserving. Once its recorded promotion ranges are known, the dispatcher
+/// only needs to retain the checkpoint-path probe.
+inline constexpr llvm::StringLiteral evalPathGuardedKnownPreserving =
+    "obelisk.eval.path_guarded_known_preserving";
 inline constexpr llvm::StringLiteral evalCallClosureRoot =
     "obelisk.eval.call_closure_root";
 inline constexpr llvm::StringLiteral evalTrustedTwoStateCoordinator =

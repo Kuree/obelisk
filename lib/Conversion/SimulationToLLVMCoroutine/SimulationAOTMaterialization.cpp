@@ -198,6 +198,8 @@ LogicalResult makeNativeEvalPlan(
       "__obelisk_eval_periodic_promotion_latched_v1";
   constexpr StringLiteral periodicEntryPromotionLatchedName =
       "__obelisk_eval_periodic_entry_promotion_latched_v1";
+  constexpr StringLiteral periodicPromotionScannedName =
+      "__obelisk_eval_periodic_promotion_scanned_v1";
   constexpr StringLiteral periodicPromotionReadyName =
       "__obelisk_eval_periodic_promotion_ready_v1";
   constexpr StringLiteral promotionKernelLatchedName =
@@ -212,7 +214,9 @@ LogicalResult makeNativeEvalPlan(
   SmallVector<std::string> promotionKernelReadyNames(mergedFragments.size());
   bool periodicPromotionComplete = false;
   uint64_t periodicPromotionMask = 0;
+  uint64_t pathGuardedOwnerMask = 0;
   bool periodicEntryPromotionComplete = false;
+  uint64_t periodicEntryPromotionMask = 0;
 
   // Path-sensitive generated owners publish an exact cold continuation here
   // before returning AOT_GENERATED_CHECKPOINT. The periodic handoff consumes
@@ -309,6 +313,10 @@ LogicalResult makeNativeEvalPlan(
   auto periodicEntryPromotionLatched = LLVM::GlobalOp::create(
       builder, location, builder.getI8Type(), false, LLVM::Linkage::Internal,
       periodicEntryPromotionLatchedName, builder.getI8IntegerAttr(0), 1);
+  builder.setInsertionPointToStart(module.getBody());
+  auto periodicPromotionScanned = LLVM::GlobalOp::create(
+      builder, location, builder.getI8Type(), false, LLVM::Linkage::Internal,
+      periodicPromotionScannedName, builder.getI8IntegerAttr(0), 1);
 
   Type kernelLatchType =
       LLVM::LLVMArrayType::get(builder.getI8Type(), mergedFragments.size());
@@ -443,10 +451,11 @@ LogicalResult makeNativeEvalPlan(
 
   // A periodic transaction may use the guard-free Tier-1 coordinator only
   // after every owner in its exact graph closure has selected a two-state
-  // body. Per-owner scans run only when the hybrid coordinator selects that
-  // owner; this aggregate quiescent-boundary check is a constant-time mask
-  // test. Owners outside the closure cannot block promotion, and asynchronous
-  // intervention clears the latch before generated execution resumes.
+  // body. The closure is scanned once at the first quiescent boundary; after
+  // that, the hybrid coordinator scans only a selected pending owner and this
+  // aggregate check is a constant-time mask test. Owners outside the closure
+  // cannot block promotion, and asynchronous intervention clears the latch
+  // before generated execution resumes.
   periodicPromotionComplete = !periodicClosureRecords.empty();
   periodicPromotionMask = 0;
   for (unsigned recordIndex : periodicClosureRecords) {
@@ -460,10 +469,14 @@ LogicalResult makeNativeEvalPlan(
     auto executor = module.lookupSymbol<LLVM::LLVMFuncOp>(
         mergedTwoStateExecutors[recordIndex]);
     if (executor && executor->hasAttr(sim::metadata::evalPathGuardedTwoState)) {
-      // This owner contributes a stable guarded route rather than an
-      // unconditional two-state invariant.  It can still participate in the
-      // periodic certificate provided the coordinator observes its exact-CFG
-      // rejection before choosing the NBA barrier.
+      // The checkpoint-path probe alone proves control flow, not the data
+      // unknown plane. Only a known-preserving owner with an explicit range
+      // scan may contribute to the guard-free whole-closure certificate.
+      if (!executor->hasAttr(
+              sim::metadata::evalPathGuardedKnownPreserving))
+        periodicPromotionComplete = false;
+      pathGuardedOwnerMask |=
+          uint64_t{1} << mergedFragments[recordIndex].bit;
       periodicPromotionMask |= uint64_t{1} << mergedFragments[recordIndex].bit;
       continue;
     }
@@ -478,6 +491,8 @@ LogicalResult makeNativeEvalPlan(
       periodicEntryPromotionComplete = false;
       break;
     }
+    periodicEntryPromotionMask |=
+        uint64_t{1} << mergedFragments[recordIndex].bit;
   }
   builder.setInsertionPointToEnd(module.getBody());
   auto periodicPromotionReady = LLVM::LLVMFuncOp::create(
@@ -487,8 +502,12 @@ LogicalResult makeNativeEvalPlan(
       "passthrough", builder.getArrayAttr({builder.getStringAttr("noinline")}));
   Block *periodicReadyEntry = periodicPromotionReady.addEntryBlock(builder);
   Block *periodicReadyScan = new Block;
+  Block *periodicReadyInitialScan = new Block;
+  Block *periodicReadyCheck = new Block;
   Block *periodicAlreadyKnown = new Block;
   periodicPromotionReady.getBody().push_back(periodicReadyScan);
+  periodicPromotionReady.getBody().push_back(periodicReadyInitialScan);
+  periodicPromotionReady.getBody().push_back(periodicReadyCheck);
   periodicPromotionReady.getBody().push_back(periodicAlreadyKnown);
   builder.setInsertionPointToStart(periodicReadyEntry);
   Value periodicLatchAddress = LLVM::AddressOfOp::create(
@@ -506,19 +525,52 @@ LogicalResult makeNativeEvalPlan(
       builder, location,
       llvmConstant(builder, location, builder.getI1Type(), 1));
   builder.setInsertionPointToStart(periodicReadyScan);
+  Value periodicScanLatchAddress = LLVM::AddressOfOp::create(
+      builder, location, pointer, periodicPromotionScanned.getSymName());
+  Value periodicScanLatch = LLVM::LoadOp::create(
+      builder, location, builder.getI8Type(), periodicScanLatchAddress, 1);
+  Value periodicWasScanned = arith::CmpIOp::create(
+      builder, location, arith::CmpIPredicate::ne, periodicScanLatch,
+      llvmConstant(builder, location, builder.getI8Type(), 0));
+  cf::CondBranchOp::create(builder, location, periodicWasScanned,
+                           periodicReadyCheck, ValueRange{},
+                           periodicReadyInitialScan, ValueRange{});
+
+  // Scan every owner in the exact periodic closure once at the first
+  // quiescent boundary. Afterwards, still-pending owners are scanned only
+  // when the guarded coordinator selects them. This both lets dormant known
+  // owners graduate and avoids an unknown-plane walk on every clock edge.
+  builder.setInsertionPointToStart(periodicReadyInitialScan);
+  for (unsigned recordIndex : periodicClosureRecords) {
+    if (recordIndex >= promotionKernelReadyNames.size() ||
+        promotionKernelReadyNames[recordIndex].empty())
+      continue;
+    (void)LLVM::CallOp::create(
+        builder, location, TypeRange{builder.getI1Type()},
+        SymbolRefAttr::get(context, promotionKernelReadyNames[recordIndex]),
+        ValueRange{});
+  }
+  LLVM::StoreOp::create(
+      builder, location,
+      llvmConstant(builder, location, builder.getI8Type(), 1),
+      LLVM::AddressOfOp::create(builder, location, pointer,
+                                periodicPromotionScanned.getSymName()),
+      1);
+  cf::BranchOp::create(builder, location, periodicReadyCheck);
+
+  builder.setInsertionPointToStart(periodicReadyCheck);
   Value periodicKnown = llvmConstant(builder, location, builder.getI1Type(),
                                      periodicPromotionComplete);
   Value periodicEntryKnown = llvmConstant(
       builder, location, builder.getI1Type(), periodicEntryPromotionComplete);
-  if (periodicPromotionComplete) {
-    // Owners clear their own bits only when selected in the hybrid path.
-    // Dormant unknown owners therefore prevent guard-free full-closure
-    // promotion without forcing an unknown-plane scan on every clock edge.
-    Value periodicPending = LLVM::LoadOp::create(
+  Value periodicPending;
+  if (periodicPromotionComplete || periodicEntryPromotionComplete)
+    periodicPending = LLVM::LoadOp::create(
         builder, location, i64,
         LLVM::AddressOfOp::create(builder, location, pointer,
                                   promotionPendingMask.getSymName()),
         8);
+  if (periodicPromotionComplete) {
     Value noPeriodicPending = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq,
         arith::AndIOp::create(
@@ -528,12 +580,22 @@ LogicalResult makeNativeEvalPlan(
     periodicKnown = arith::AndIOp::create(builder, location, periodicKnown,
                                           noPeriodicPending);
   }
-  // The guarded steady coordinator carries a local four-/two-state route for
-  // every structurally covered entry owner.  Entering it therefore requires
-  // coverage, not that every entry owner has already promoted.  Each selected
-  // pending owner retains its four-state body until its own masked scan
-  // succeeds; owners outside the exact periodic closure still take the
-  // explicit local hybrid fallback.
+  if (periodicEntryPromotionComplete) {
+    Value noEntryPending = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq,
+        arith::AndIOp::create(
+            builder, location, periodicPending,
+            llvmConstant(builder, location, i64,
+                         periodicEntryPromotionMask &
+                             ~pathGuardedOwnerMask)),
+        llvmConstant(builder, location, i64, 0));
+    periodicEntryKnown = arith::AndIOp::create(
+        builder, location, periodicEntryKnown, noEntryPending);
+  }
+  // Enter the guarded steady coordinator only after all periodic entry owners
+  // have promoted. Downstream owners retain independent pending bits: a ready
+  // pending owner returns to the hybrid path for its masked scan, while owners
+  // outside the exact periodic closure take the same explicit fallback.
   Value periodicEntryLatchAddress = LLVM::AddressOfOp::create(
       builder, location, pointer, periodicEntryPromotionLatched.getSymName());
   Value periodicEntryLatch = LLVM::LoadOp::create(
@@ -671,6 +733,12 @@ LogicalResult makeNativeEvalPlan(
       llvmConstant(builder, location, builder.getI8Type(), 0),
       LLVM::AddressOfOp::create(builder, location, pointer,
                                 periodicEntryPromotionLatched.getSymName()),
+      1);
+  LLVM::StoreOp::create(
+      builder, location,
+      llvmConstant(builder, location, builder.getI8Type(), 0),
+      LLVM::AddressOfOp::create(builder, location, pointer,
+                                periodicPromotionScanned.getSymName()),
       1);
   LLVM::MemsetOp::create(
       builder, location,
@@ -2089,7 +2157,8 @@ LogicalResult makeNativeEvalPlan(
           builder, location, arith::CmpIPredicate::eq,
           arith::AndIOp::create(
               builder, location, directPending,
-              llvmConstant(builder, location, i64, directPromotionMask)),
+              llvmConstant(builder, location, i64,
+                           directPromotionMask & ~pathGuardedOwnerMask)),
           llvmConstant(builder, location, i64, 0));
       cf::CondBranchOp::create(builder, location, directOwnersPromoted,
                                executeDirectTwoState, ValueRange{},
@@ -2761,13 +2830,16 @@ LogicalResult makeNativeEvalPlan(
   auto makeFastCoordinator =
       [&](StringRef functionName, ArrayRef<std::string> executors,
           bool promotedCoordinator, bool hybridCoordinator = false,
-          uint64_t allowedOwnerMask = UINT64_MAX, bool trustedTwoState = false,
+          uint64_t allowedOwnerMask = UINT64_MAX,
+          uint64_t pendingGuardMask = UINT64_MAX,
+          bool trustedTwoState = false,
           bool guardPendingOwners = false, bool observePathFallback = false) {
         return materializeNativeEvalCoordinator(
             module, coordinatorPlan, functionName, executors,
             {/*promoted=*/promotedCoordinator,
              /*hybrid=*/hybridCoordinator,
              /*allowedOwnerMask=*/allowedOwnerMask,
+             /*pendingGuardMask=*/pendingGuardMask,
              /*trustedTwoState=*/trustedTwoState,
              /*guardPendingOwners=*/guardPendingOwners,
              /*observePathFallback=*/observePathFallback});
@@ -2782,6 +2854,7 @@ LogicalResult makeNativeEvalPlan(
                                  /*promotedCoordinator=*/true,
                                  /*hybridCoordinator=*/false,
                                  /*allowedOwnerMask=*/UINT64_MAX,
+                                 /*pendingGuardMask=*/UINT64_MAX,
                                  /*trustedTwoState=*/false,
                                  /*guardPendingOwners=*/false,
                                  /*observePathFallback=*/
@@ -2791,6 +2864,7 @@ LogicalResult makeNativeEvalPlan(
                                  /*promotedCoordinator=*/true,
                                  /*hybridCoordinator=*/false,
                                  /*allowedOwnerMask=*/periodicPromotionMask,
+                                 /*pendingGuardMask=*/~pathGuardedOwnerMask,
                                  /*trustedTwoState=*/true,
                                  /*guardPendingOwners=*/true,
                                  /*observePathFallback=*/
@@ -2801,6 +2875,7 @@ LogicalResult makeNativeEvalPlan(
                                   /*promotedCoordinator=*/true,
                                   /*hybridCoordinator=*/false,
                                   /*allowedOwnerMask=*/periodicPromotionMask,
+                                  /*pendingGuardMask=*/UINT64_MAX,
                                   /*trustedTwoState=*/true,
                                   /*guardPendingOwners=*/false,
                                   // A promoted path-guarded owner uses its

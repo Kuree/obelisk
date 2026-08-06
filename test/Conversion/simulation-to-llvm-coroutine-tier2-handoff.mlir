@@ -180,6 +180,7 @@ module attributes {
 }
 
 // CHECK-NOT: llvm.func @__obelisk_direct_fragment_3_3
+// CHECK-DAG: llvm.mlir.global internal @__obelisk_eval_periodic_promotion_scanned_v1
 // CHECK-LABEL: llvm.func @loop.__obelisk_eval_body_0(
 // CHECK: llvm.xor
 // CHECK: llvm.store
@@ -190,6 +191,20 @@ module attributes {
 // CHECK-SAME: attributes {
 // CHECK-SAME: obelisk.eval.tier2_convergence
 // CHECK-NOT: llvm.call @obelisk_rt_
+// The first quiescent boundary scans the exact periodic closure once. Later
+// boundaries test only the pending mask; asynchronous invalidation clears the
+// scan latch and makes the next boundary rescan.
+// CHECK-LABEL: llvm.func @__obelisk_eval_periodic_promotion_ready_v1
+// CHECK: llvm.mlir.addressof @__obelisk_eval_periodic_promotion_scanned_v1
+// CHECK: llvm.cond_br
+// CHECK: llvm.call @__obelisk_eval_kernel_promotion_ready_v1_0
+// CHECK: llvm.store {{.*}}, {{.*}} : i8, !llvm.ptr
+// CHECK: llvm.mlir.addressof @__obelisk_eval_promotion_pending_mask_v1
+// CHECK: llvm.load
+// CHECK-LABEL: llvm.func @__obelisk_eval_promotion_invalidate_v1
+// CHECK: %[[SCAN_LATCH:.*]] = llvm.mlir.addressof @__obelisk_eval_periodic_promotion_scanned_v1
+// CHECK: %[[SCAN_ZERO:.*]] = llvm.mlir.constant(0 : i8)
+// CHECK: llvm.store %[[SCAN_ZERO]], %[[SCAN_LATCH]]
 // CHECK-LABEL: llvm.func @__obelisk_aot_schedule_run_v1
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
 // CHECK-LABEL: llvm.func @__obelisk_eval_fast_coordinator_v1
@@ -205,6 +220,19 @@ module attributes {
 // CHECK: llvm.cond_br
 // CHECK-NOT: llvm.call @obelisk_rt_
 // CHECK-LABEL: llvm.func @__obelisk_eval_fast_coordinator_two_state_v1
+// A pending SCC owner exits to the hybrid path. Once that owner is known, the
+// accepted steady path calls a statically specialized wrapper rather than its
+// mutable promotion route.
+// CHECK-LABEL: llvm.func @__obelisk_eval_steady_two_state_coordinator_v1
+// CHECK-SAME: obelisk.eval.trusted_two_state_coordinator
+// CHECK: llvm.mlir.addressof @__obelisk_eval_promotion_pending_mask_v1
+// CHECK: llvm.load
+// CHECK: llvm.or
+// CHECK: "llvm.intr.cttz"
+// CHECK: llvm.and
+// CHECK: llvm.cond_br
+// CHECK-NOT: llvm.mlir.addressof @__obelisk_eval_function_route_v1_
+// CHECK: llvm.call @__obelisk_direct_fragment_1_1.__obelisk_execute.two_state.__obelisk_trusted
 // LIVE-ARG: eval exact owner miss: actor=3 continuation=3 function=reset
 // LIVE-ARG-SAME: candidates=
 // UNCERTIFIED-REGION: a Tier-2 SCC has no direct eval owner

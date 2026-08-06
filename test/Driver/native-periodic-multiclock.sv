@@ -98,14 +98,14 @@ endmodule
 // LLVM: ret i1 true
 // LLVM: store i8 1, ptr @__obelisk_eval_kernel_promotion_latched_v1
 
-// The aggregate boundary observes only owner-ready bits. Dormant owners are
-// never rescanned on every physical edge; selected owners clear their own bit
-// in the transient hybrid coordinator.
+// The aggregate boundary scans the exact closure once, then observes only
+// owner-ready bits. Dormant owners are not rescanned on every physical edge;
+// selected pending owners clear their own bit in the hybrid coordinator.
 // LLVM-LABEL: define {{.*}}i1 @__obelisk_eval_periodic_promotion_ready_v1
-// LLVM-NOT: call {{.*}}@__obelisk_eval_kernel_promotion_ready_v1_
+// LLVM: load i{{1|8}}, ptr @__obelisk_eval_periodic_promotion_scanned_v1
 // LLVM: load i64, ptr @__obelisk_eval_promotion_pending_mask_v1
 // LLVM: icmp eq i64
-// LLVM: store i1 {{.*}}, ptr @__obelisk_eval_periodic_entry_promotion_latched_v1
+// LLVM: store i8 {{.*}}, ptr @__obelisk_eval_periodic_entry_promotion_latched_v1
 // LLVM: ret i1
 
 // Promotion invalidation is a cold generated store. It contains no runtime
@@ -114,7 +114,7 @@ endmodule
 // LLVM-NOT: call {{.*}}@obelisk_rt_
 // LLVM: store i8 {{.*}}, ptr @__obelisk_eval_promotion_latched_v1
 // LLVM: store i8 {{.*}}, ptr @__obelisk_eval_periodic_promotion_latched_v1
-// LLVM: store i1 {{.*}}, ptr @__obelisk_eval_periodic_entry_promotion_latched_v1
+// LLVM: store i8 {{.*}}, ptr @__obelisk_eval_periodic_entry_promotion_latched_v1
 // LLVM: call void @llvm.memset{{.*}}@__obelisk_eval_kernel_promotion_latched_v1
 // LLVM: store i64 127, ptr @__obelisk_eval_promotion_pending_mask_v1
 // LLVM: store i8 {{.*}}, ptr @__obelisk_eval_fast_nba_latched_v1

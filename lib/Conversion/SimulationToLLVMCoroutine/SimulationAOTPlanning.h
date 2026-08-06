@@ -126,6 +126,10 @@ struct NativeEvalCoordinatorOptions {
   bool promoted = false;
   bool hybrid = false;
   uint64_t allowedOwnerMask = UINT64_MAX;
+  /// Pending bits that require a return to the hybrid coordinator. Owners
+  /// with an intrinsic path dispatcher may remain pending for the stronger
+  /// whole-closure certificate without blocking owner-local steady routing.
+  uint64_t pendingGuardMask = UINT64_MAX;
   bool trustedTwoState = false;
   bool guardPendingOwners = false;
   bool observePathFallback = false;

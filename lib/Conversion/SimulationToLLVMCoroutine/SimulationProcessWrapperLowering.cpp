@@ -241,6 +241,9 @@ LogicalResult makeDirectFragmentWrapper(
   if (body->hasAttr(sim::metadata::evalPathGuardedTwoState))
     wrapper->setAttr(sim::metadata::evalPathGuardedTwoState,
                      builder.getUnitAttr());
+  if (body->hasAttr(sim::metadata::evalPathGuardedKnownPreserving))
+    wrapper->setAttr(sim::metadata::evalPathGuardedKnownPreserving,
+                     builder.getUnitAttr());
   bool mayTerminate = false;
   llvm::SmallPtrSet<Operation *, 8> visited;
   auto design = body->getParentOfType<sim::SimDesignOp>();

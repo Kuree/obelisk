@@ -51,6 +51,7 @@ LogicalResult materializeNativeEvalCoordinator(
   bool promotedCoordinator = options.promoted;
   bool hybridCoordinator = options.hybrid;
   uint64_t allowedOwnerMask = options.allowedOwnerMask;
+  uint64_t pendingGuardMask = options.pendingGuardMask;
   bool trustedTwoState = options.trustedTwoState;
   bool guardPendingOwners = options.guardPendingOwners;
   bool observePathFallback = options.observePathFallback;
@@ -100,7 +101,11 @@ LogicalResult materializeNativeEvalCoordinator(
   if (promotedCoordinator && !hybridCoordinator)
     fastCoordinator->setAttr(sim::metadata::evalTwoStateVariant,
                              builder.getUnitAttr());
-  if (trustedTwoState && !guardPendingOwners)
+  // A guarded steady coordinator proves the same owner-local invariant after
+  // rejecting a selected pending owner. Mark it as a trusted call-closure
+  // root too, so wrapper specialization can replace mutable route pointers
+  // with direct two-state edges on the accepted path.
+  if (trustedTwoState)
     fastCoordinator->setAttr(sim::metadata::evalTrustedTwoStateCoordinator,
                              builder.getUnitAttr());
   fastCoordinator->setAttr(sim::metadata::evalCallClosureRoot,
@@ -161,6 +166,25 @@ LogicalResult materializeNativeEvalCoordinator(
                 .getResult()
           : llvmConstant(builder, location, builder.getI1Type(), 0),
       fourStateFallback, 1);
+  // Pending ownership cannot change while the guarded steady coordinator is
+  // executing: a pending selection returns to the hybrid caller, and accepted
+  // direct bodies contain no runtime handoff. Hoist the mask load out of the
+  // local dirty-mask fixpoint instead of reloading it for every ready owner.
+  Value guardedPromotionPending;
+  Value guardedUnsafeOwnerMask;
+  if (guardPendingOwners) {
+    guardedPromotionPending = LLVM::LoadOp::create(
+        builder, location, i64,
+        LLVM::AddressOfOp::create(builder, location, pointer,
+                                  promotionPendingMaskName),
+        8);
+    guardedUnsafeOwnerMask = arith::OrIOp::create(
+        builder, location,
+        arith::AndIOp::create(
+            builder, location, guardedPromotionPending,
+            llvmConstant(builder, location, i64, pendingGuardMask)),
+        llvmConstant(builder, location, i64, ~allowedOwnerMask));
+  }
   auto combinedIngress = [&] {
     Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
                                               clockKernels.front().ingressName);
@@ -193,14 +217,20 @@ LogicalResult materializeNativeEvalCoordinator(
       LLVM::CountTrailingZerosOp::create(builder, location, i64, ready, true);
   Value selectedMask = arith::ShLIOp::create(
       builder, location, llvmConstant(builder, location, i64, 1), bit);
+  Value promotionPending;
+  if (hybridCoordinator)
+    promotionPending = LLVM::LoadOp::create(
+        builder, location, i64,
+        LLVM::AddressOfOp::create(builder, location, pointer,
+                                  promotionPendingMaskName),
+        8);
   Block *switchBlock = select;
   if (guardPendingOwners) {
     // Preserve the global ready-bit order while draining the maximal native
     // prefix.  An uncovered owner later in the set must not force already
     // ordered, covered owners back through the hybrid coordinator.
     Value unsafeSelected = arith::AndIOp::create(
-        builder, location, selectedMask,
-        llvmConstant(builder, location, i64, ~allowedOwnerMask));
+        builder, location, selectedMask, guardedUnsafeOwnerMask);
     Value selectedIsUnsafe = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::ne, unsafeSelected,
         llvmConstant(builder, location, i64, 0));
@@ -216,14 +246,10 @@ LogicalResult materializeNativeEvalCoordinator(
   // CFG check, while every other executor is directly two-state.  Only the
   // transitional hybrid coordinator needs per-owner promotion scans here.
   if (hybridCoordinator) {
-    Value pending = LLVM::LoadOp::create(
-        builder, location, i64,
-        LLVM::AddressOfOp::create(builder, location, pointer,
-                                  promotionPendingMaskName),
-        8);
     selectedPromotionPending = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::ne,
-        arith::AndIOp::create(builder, location, pending, selectedMask),
+        arith::AndIOp::create(builder, location, promotionPending,
+                              selectedMask),
         llvmConstant(builder, location, i64, 0));
   }
   SmallVector<APInt> cases;

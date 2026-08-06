@@ -263,6 +263,19 @@ LogicalResult materializeEvalTwoStateVariants(
       bool preserving = true;
       bool runtimeFree = true;
       bool checkpointSafe = true;
+      // A checkpoint probe intercepts the activation before the original body
+      // executes any operation in a block containing an unconditional cold
+      // exit. State touched solely in that block belongs to the Tier-3
+      // transaction and must not pollute the generated path's promotion
+      // closure. Branch predicates leading to the block remain in their
+      // predecessor and are still analyzed normally.
+      llvm::SmallPtrSet<Block *, 4> coldCheckpointBlocks;
+      source.walk([&](Operation *operation) {
+        if (isa<sim::SimFinishOp, sim::SimStopOp, sim::SimFatalOp,
+                sim::SimTerminationRequestedOp, sim::SimStatusCheckOp,
+                sim::SimDisplayOp>(operation))
+          coldCheckpointBlocks.insert(operation->getBlock());
+      });
       source.walk([&](Operation *operation) {
         if (operation->getName().getDialectNamespace() == "obelisk_rt") {
           preserving = false;
@@ -291,6 +304,8 @@ LogicalResult materializeEvalTwoStateVariants(
           checkpointSafe = false;
           return;
         }
+        if (coldCheckpointBlocks.contains(operation->getBlock()))
+          return;
         if (auto load = dyn_cast<sim::SimRefLoadOp>(operation)) {
           if (domains->isTwoStateWithInductiveRoots(load.getResult())) {
             auto found = provenance.find(load.getReference());
@@ -440,7 +455,12 @@ LogicalResult materializeEvalTwoStateVariants(
       SmallVector<PhysicalRange> orderedRanges(closureRanges.begin(),
                                                closureRanges.end());
       llvm::sort(orderedRanges);
-      if (!closureRuntimeFree)
+      // A checkpoint-safe body can still contribute a whole-owner promotion
+      // proof when all of its generated paths preserve known state. Keep the
+      // union of its persistent ranges for that proof; the runtime leaf is
+      // fractured before generated execution and is not part of the state
+      // closure. Owners without this inductive fact retain path-local probes.
+      if (!closureRuntimeFree && !closureKnownPreserving)
         orderedRanges.clear();
       SmallVector<int64_t> encoded;
       for (auto [offset, width] : orderedRanges) {
@@ -455,6 +475,9 @@ LogicalResult materializeEvalTwoStateVariants(
       }
       if (!closureRuntimeFree)
         source->setAttr("obelisk.eval.inherited_two_state_checkpoint",
+                        UnitAttr::get(module.getContext()));
+      if (!closureRuntimeFree && closureKnownPreserving)
+        source->setAttr(sim::metadata::evalPathGuardedKnownPreserving,
                         UnitAttr::get(module.getContext()));
       if (closureKnownPreserving || !orderedRanges.empty() ||
           !closureRuntimeFree)
@@ -1568,10 +1591,14 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
             {static_cast<uint64_t>(values[index]),
              static_cast<uint64_t>(values[index + 1])});
       }
-      // A path-guarded body revalidates the exact Simulation CFG on every
-      // activation.  Its owner-level promotion latch therefore records the
-      // stable guarded route, not the path-insensitive union of dormant reads.
-      if (pending.twoStateBody->hasAttr(sim::metadata::evalPathGuardedTwoState))
+      // An uncertified path-guarded body revalidates both its exact CFG and
+      // known state on every activation. A known-preserving guarded body keeps
+      // the complete range union above, allowing its owner bit to graduate
+      // once without weakening the checkpoint-path guard.
+      if (pending.twoStateBody->hasAttr(
+              sim::metadata::evalPathGuardedTwoState) &&
+          !pending.twoStateBody->hasAttr(
+              sim::metadata::evalPathGuardedKnownPreserving))
         localPromotionRanges.clear();
     }
     SmallVector<std::pair<uint32_t, uint32_t>> sourceOwners;

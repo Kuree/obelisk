@@ -106,6 +106,31 @@ module attributes {
   }
 }
 
+// The whole-closure certificate scans the exact canonical unknown-plane
+// range before clearing this owner's pending bit.
+// CHECK-LABEL: llvm.func @__obelisk_eval_kernel_promotion_ready_v1_0
+// CHECK: %[[UNKNOWN:.*]] = llvm.mlir.addressof @__obelisk_state_unknown
+// CHECK: %[[UNKNOWN_BYTE:.*]] = llvm.load
+// CHECK: %[[RANGE_MASK:.*]] = llvm.mlir.constant(6 : i8)
+// CHECK: llvm.and %[[UNKNOWN_BYTE]], %[[RANGE_MASK]]
+// A guarded owner has a separate full-closure certificate. While that
+// stronger certificate remains pending, its exact path dispatcher is already
+// a safe steady route and must not bounce the owner through Tier 2 every slot.
+// CHECK-LABEL: llvm.func @__obelisk_eval_steady_two_state_coordinator_v1
+// CHECK: %[[PENDING_ADDR:.*]] = llvm.mlir.addressof @__obelisk_eval_promotion_pending_mask_v1
+// CHECK: %[[PENDING:.*]] = llvm.load %[[PENDING_ADDR]]
+// CHECK: %[[ALLOWED_MASK:.*]] = llvm.mlir.constant(-2 : i64)
+// CHECK: %[[GUARD_MASK:.*]] = llvm.mlir.constant(-2 : i64)
+// CHECK: %[[ROUTE_PENDING:.*]] = llvm.and %[[PENDING]], %[[GUARD_MASK]]
+// CHECK: llvm.or %[[ROUTE_PENDING]], %[[ALLOWED_MASK]]
+// Once the stronger certificate succeeds, the guard-free coordinator keeps a
+// direct trusted-wrapper edge; the wrapper still retains the Tier-3
+// checkpoint path dispatcher.
+// CHECK-LABEL: llvm.func @__obelisk_eval_periodic_two_state_coordinator_v1
+// CHECK-SAME: obelisk.eval.trusted_two_state_coordinator
+// CHECK: llvm.call @__obelisk_direct_fragment_{{[0-9]+}}_{{[0-9]+}}.__obelisk_execute.two_state.__obelisk_trusted
+// CHECK-NOT: llvm.call @obelisk_rt_
+// CHECK-LABEL: llvm.func @__obelisk_eval_fast_coordinator_hybrid_v1
 // CHECK-LABEL: llvm.func @__obelisk_eval_checkpoint_body_v1_0(
 // CHECK: llvm.call @obelisk_rt_v1_display
 // CHECK-LABEL: llvm.func @__obelisk_eval_four_state_fallback_v1_0(
@@ -121,8 +146,17 @@ module attributes {
 // CHECK: llvm.call @__obelisk_eval_checkpoint_body_v1_0
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_queue_aot_checkpoint
 // CHECK-LABEL: llvm.func @__obelisk_eval_path_dispatch_v1_0(
+// CHECK: llvm.mlir.addressof @__obelisk_eval_periodic_promotion_latched_v1
+// CHECK: llvm.load
+// CHECK: llvm.cond_br {{.*}}, ^[[PROMOTED:bb[0-9]+]], ^[[TRANSIENT:bb[0-9]+]]
+// CHECK: ^[[TRANSIENT]]:
+// CHECK: llvm.call @guarded.__obelisk_eval_body_0.__obelisk_path_known_0
+// CHECK: ^[[PROMOTED]]:
+// CHECK: llvm.call @guarded.__obelisk_eval_body_0.__obelisk_checkpoint_path_0
 // CHECK: llvm.mlir.addressof @__obelisk_eval_checkpoint_callback_v1
 // CHECK: llvm.mlir.addressof @__obelisk_eval_four_state_fallback_v1_0
 // CHECK-NOT: llvm.call @obelisk_rt_
-// CHECK-LABEL: llvm.func @__obelisk_direct_fragment_{{[0-9]+}}_{{[0-9]+}}.__obelisk_execute
+// CHECK-LABEL: llvm.func @__obelisk_direct_fragment_{{[0-9]+}}_{{[0-9]+}}.__obelisk_execute.two_state.__obelisk_trusted
 // CHECK-SAME: obelisk.eval.checkpoint_safe
+// CHECK-SAME: obelisk.eval.path_guarded_known_preserving
+// CHECK: llvm.call @__obelisk_eval_path_dispatch_v1_0
