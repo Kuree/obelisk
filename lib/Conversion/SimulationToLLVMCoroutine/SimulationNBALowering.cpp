@@ -4,6 +4,7 @@
 #include "SimulationToLLVMCoroutinePrivate.h"
 
 #include "obelisk/Conversion/SimulationRuntime.h"
+#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/StableHandle.h"
 
@@ -54,7 +55,7 @@ public:
     // overwrite needed to preserve last-writer semantics.
     bool compactEvalMetadata =
         inductiveTwoStateAccess ||
-        (function && function->hasAttr("obelisk.eval.selected_two_state"));
+        op->hasAttr(sim::metadata::evalCompactNBAMetadata);
 
     sim::NBASiteAttr site = op.getSiteAttr();
     auto staticRoot =

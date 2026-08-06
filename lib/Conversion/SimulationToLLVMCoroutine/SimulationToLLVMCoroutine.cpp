@@ -111,6 +111,21 @@ using detail::specializeNativeAOTCaptures;
 using detail::threadProcessStateThroughCFG;
 using detail::validateProcessABI;
 
+/// Preserve the compact-NBA conversion proof on the operation that consumes
+/// it. Function and NBA conversion patterns may run in either order, so the
+/// NBA lowering must not depend on its parent function still being present.
+static void annotateCompactNBAMetadata(ModuleOp module) {
+  MLIRContext *context = module.getContext();
+  module.walk([&](sim::SimFuncOp function) {
+    if (!function->hasAttr("obelisk.eval.selected_two_state"))
+      return;
+    function.walk([&](sim::SimNBAEnqueueOp nba) {
+      nba->setAttr(sim::metadata::evalCompactNBAMetadata,
+                   UnitAttr::get(context));
+    });
+  });
+}
+
 LogicalResult materializeEvalTwoStateVariants(
     ModuleOp module, sim::SimDesignOp design,
     const detail::NativeStateLayout &stateLayout, bool enabled) {
@@ -863,6 +878,10 @@ LogicalResult materializeEvalTwoStateVariants(
     variant->setAttr(
         "obelisk.eval.four_state_source",
         FlatSymbolRefAttr::get(module.getContext(), source.getSymName()));
+    variant.walk([&](sim::SimNBAEnqueueOp nba) {
+      nba->setAttr(sim::metadata::evalCompactNBAMetadata,
+                   UnitAttr::get(module.getContext()));
+    });
     SymbolTable::setSymbolVisibility(variant, SymbolTable::Visibility::Private);
     SymbolTable(design).insert(cloned, design.getBody().front().end());
     source->setAttr(sim::metadata::evalTwoStateVariant,
@@ -2138,6 +2157,11 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   if (invalidPreLowerFusion)
     return failure();
 
+  // Preserve explicitly selected-body NBA facts before packed conversion can
+  // replace their containing function. Generated variants receive the same
+  // operation-local certificate when they are created above.
+  annotateCompactNBAMetadata(module);
+
   bool enableDirectStaticState = directStaticState;
   if (failed(lowerPackedSimulationOperations(
           module, dataLayout, *stateLayout, enableDirectStaticState,
@@ -2472,6 +2496,10 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
         selected->setAttr("obelisk.eval.selected_two_state",
                           UnitAttr::get(context));
     }
+    // Carry the selected-owner proof on the operation that consumes it.
+    // Function conversion and NBA conversion are intentionally free to run in
+    // either order, so an NBA pattern cannot safely inspect its parent op.
+    annotateCompactNBAMetadata(module);
   }
   for (NativeDirectFragment &direct : *directFragments) {
     uint32_t physicalGroup =

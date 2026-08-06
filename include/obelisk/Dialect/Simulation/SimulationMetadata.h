@@ -87,6 +87,12 @@ inline constexpr llvm::StringLiteral evalCheckpointRoutes =
 /// actor-side continuation arguments from canonical state on every entry.
 inline constexpr llvm::StringLiteral evalReconstructsContinuationArgs =
     "obelisk.eval.reconstructs_continuation_args";
+/// Per-NBA conversion certificate that the selected generated owner may use
+/// its fixed root/region metadata.  Attach this before dialect conversion;
+/// conversion patterns must not rediscover the fact from a parent function
+/// that another pattern may already have replaced.
+inline constexpr llvm::StringLiteral evalCompactNBAMetadata =
+    "obelisk.eval.compact_nba_metadata";
 
 inline bool isKnownBoundary(llvm::StringRef name) {
   return name == captureKind || name == descriptorId ||
