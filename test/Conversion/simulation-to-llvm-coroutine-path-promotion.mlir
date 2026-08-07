@@ -153,5 +153,5 @@ module attributes {
   }
 }
 
-// ERROR: an eval owner reaches a runtime leaf on every activation
+// ERROR: an eval owner keeps an unguarded runtime leaf
 // ERROR-SAME: in guarded_blocking

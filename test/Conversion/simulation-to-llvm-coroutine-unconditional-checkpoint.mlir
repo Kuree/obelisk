@@ -121,4 +121,4 @@ module attributes {
 // CHECK: llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
 // CHECK: llvm.call @obelisk_rt_v1_display
 
-// EVAL-DIAG: an eval owner reaches a runtime leaf on every activation
+// EVAL-DIAG: an eval owner keeps an unguarded runtime leaf

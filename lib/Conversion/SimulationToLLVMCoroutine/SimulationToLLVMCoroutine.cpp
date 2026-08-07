@@ -2274,16 +2274,23 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   // ordinal lookups.
   for (const auto &[sourceOwner, fragments] : staticFanoutPlan.fragments) {
     uint32_t sourceGroup = UINT32_MAX;
+    // A partially covered owner shares one fragment with a fused body while
+    // keeping the rest outside it. The group belongs to that fragment, not to
+    // the owner, and claiming it would contradict the owner's body
+    // certificate.
+    bool coversEveryFragment = true;
     for (uint32_t fragment : fragments) {
       auto group = fragmentFusionGroups.find(fragment);
-      if (group == fragmentFusionGroups.end())
+      if (group == fragmentFusionGroups.end()) {
+        coversEveryFragment = false;
         continue;
+      }
       if (sourceGroup != UINT32_MAX && sourceGroup != group->second)
         return module.emitError(
             "one physical fanout owner crosses multiple fusion groups");
       sourceGroup = group->second;
     }
-    if (sourceGroup != UINT32_MAX) {
+    if (sourceGroup != UINT32_MAX && coversEveryFragment) {
       auto [entry, inserted] =
           aotFusionGroups.try_emplace(sourceOwner, sourceGroup);
       if (!inserted && entry->second != sourceGroup)
@@ -2382,12 +2389,10 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     }
   }
 
-  // An owner that reaches a runtime leaf on every activation has no generated
-  // path to guard.  Its canonical four-state body keeps the runtime call
-  // inline, so admitting it to the generated closure would either trip the
-  // closure verifier or, worse, reduce the activation to a bare checkpoint
-  // publication that drops the body's NBA staging.  Decline the generated
-  // scheduler instead; the owner is genuinely runtime-owned.
+  // A declined owner keeps its four-state body, so the runtime call stays
+  // inline. Admitting it to the generated closure would trip the closure
+  // verifier, or reduce the activation to a bare checkpoint publication that
+  // drops the body's NBA staging.
   if (evalScheduler) {
     std::string unsupportedCheckpointOwner;
     for (const NativeDirectFragment &direct : *directFragments) {
@@ -2399,7 +2404,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       if (!owner)
         continue;
       unsupportedCheckpointOwner =
-          "an eval owner reaches a runtime leaf on every activation in " +
+          "an eval owner keeps an unguarded runtime leaf in " +
           owner.getValue().str();
       break;
     }
