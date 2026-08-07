@@ -278,6 +278,65 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
       solver.pop();
       return queryResult;
     };
+
+    // Collapse top-level direct variable equalities into equivalence classes.
+    // Each non-canonical field can then be copied from the lowest-offset field
+    // in its class. Prove the complete extracted relation once more against the
+    // SMT formula before exposing it to lowering; unknown remains conservative.
+    std::vector<size_t> parents(smt->variables.size());
+    for (size_t index = 0; index != parents.size(); ++index)
+      parents[index] = index;
+    auto findRoot = [&](size_t index) {
+      while (parents[index] != index) {
+        parents[index] = parents[parents[index]];
+        index = parents[index];
+      }
+      return index;
+    };
+    auto variableIndex = [&](const SMTVariable &candidate) {
+      auto found = std::find_if(smt->variables.begin(), smt->variables.end(),
+                                [&](const SMTVariable &variable) {
+                                  return variable.offset == candidate.offset &&
+                                         variable.width == candidate.width;
+                                });
+      return static_cast<size_t>(found - smt->variables.begin());
+    };
+    for (const SMTVariableEquality &equality : smt->directEqualities) {
+      size_t lhs = variableIndex(equality.lhs);
+      size_t rhs = variableIndex(equality.rhs);
+      if (lhs == smt->variables.size() || rhs == smt->variables.size())
+        continue;
+      lhs = findRoot(lhs);
+      rhs = findRoot(rhs);
+      if (lhs == rhs)
+        continue;
+      if (smt->variables[rhs].offset < smt->variables[lhs].offset)
+        std::swap(lhs, rhs);
+      parents[rhs] = lhs;
+    }
+
+    z3::expr aliasViolation = context.bool_val(false);
+    bool translatedAliases = true;
+    for (size_t index = 0; index != parents.size(); ++index) {
+      size_t source = findRoot(index);
+      if (source == index)
+        continue;
+      const SMTVariable &targetVariable = smt->variables[index];
+      const SMTVariable &sourceVariable = smt->variables[source];
+      std::optional<z3::expr> target = shim.translate(targetVariable.bits);
+      std::optional<z3::expr> sourceBits = shim.translate(sourceVariable.bits);
+      if (!target || !sourceBits) {
+        translatedAliases = false;
+        break;
+      }
+      aliasViolation = aliasViolation || (*target != *sourceBits);
+      analysis.aliases.push_back(
+          {targetVariable.offset, sourceVariable.offset, targetVariable.width});
+    }
+    if (!translatedAliases ||
+        (!analysis.aliases.empty() && checkWith(aliasViolation) != z3::unsat))
+      analysis.aliases.clear();
+
     for (const SMTVariable &variable : smt->variables) {
       std::optional<z3::expr> bits = shim.translate(variable.bits);
       if (!bits)
@@ -335,11 +394,11 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
             {variable.offset, variable.width, minimum, maximum});
     }
 
-    // The bounds above already prove hard => proposal. Prove the reverse
-    // implication as one final query; exact proposals can bypass both the
-    // generated checker and the runtime fallback.
+    // The bounds and aliases above already prove hard => proposal. Prove the
+    // reverse implication as one final query; exact proposals can bypass both
+    // the generated checker and the runtime fallback.
     z3::expr proposal = context.bool_val(true);
-    bool translatedDomains = true;
+    bool translatedProposal = true;
     for (const RandomVariableDomain &domain : analysis.domains) {
       auto found = std::find_if(smt->variables.begin(), smt->variables.end(),
                                 [&](const SMTVariable &variable) {
@@ -347,19 +406,44 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
                                          variable.width == domain.width;
                                 });
       if (found == smt->variables.end()) {
-        translatedDomains = false;
+        translatedProposal = false;
         break;
       }
       std::optional<z3::expr> bits = shim.translate(found->bits);
       if (!bits) {
-        translatedDomains = false;
+        translatedProposal = false;
         break;
       }
       proposal = proposal &&
                  z3::uge(*bits, context.bv_val(domain.lower, domain.width)) &&
                  z3::ule(*bits, context.bv_val(domain.upper, domain.width));
     }
-    if (translatedDomains && checkWith(proposal && !*hard) == z3::unsat)
+    for (const RandomVariableAlias &alias : analysis.aliases) {
+      auto target =
+          std::find_if(smt->variables.begin(), smt->variables.end(),
+                       [&](const SMTVariable &variable) {
+                         return variable.offset == alias.targetOffset &&
+                                variable.width == alias.width;
+                       });
+      auto source =
+          std::find_if(smt->variables.begin(), smt->variables.end(),
+                       [&](const SMTVariable &variable) {
+                         return variable.offset == alias.sourceOffset &&
+                                variable.width == alias.width;
+                       });
+      if (target == smt->variables.end() || source == smt->variables.end()) {
+        translatedProposal = false;
+        break;
+      }
+      std::optional<z3::expr> targetBits = shim.translate(target->bits);
+      std::optional<z3::expr> sourceBits = shim.translate(source->bits);
+      if (!targetBits || !sourceBits) {
+        translatedProposal = false;
+        break;
+      }
+      proposal = proposal && (*targetBits == *sourceBits);
+    }
+    if (translatedProposal && checkWith(proposal && !*hard) == z3::unsat)
       analysis.proposalExact = true;
   } catch (...) {
   }

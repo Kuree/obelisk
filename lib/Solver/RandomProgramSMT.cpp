@@ -45,6 +45,8 @@ uint64_t read64(const uint8_t *bytes) {
 struct StackValue {
   mlir::Value bits;
   unsigned width;
+  std::optional<SMTVariable> directVariable;
+  std::optional<SMTVariableEquality> directEquality;
 };
 
 mlir::Value constant(mlir::OpBuilder &builder, mlir::Location location,
@@ -85,12 +87,14 @@ mlir::Value truth(mlir::OpBuilder &builder, mlir::Location location,
       constant(builder, location, 0, value.width));
 }
 
-StackValue booleanValue(mlir::OpBuilder &builder, mlir::Location location,
-                        mlir::Value predicate) {
+StackValue
+booleanValue(mlir::OpBuilder &builder, mlir::Location location,
+             mlir::Value predicate,
+             std::optional<SMTVariableEquality> directEquality = std::nullopt) {
   return {mlir::smt::IteOp::create(builder, location, predicate,
                                    constant(builder, location, 1, 1),
                                    constant(builder, location, 0, 1)),
-          1};
+          1, std::nullopt, std::move(directEquality)};
 }
 
 bool isUnary(uint8_t opcode) {
@@ -177,7 +181,8 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
         return std::nullopt;
       mlir::Value bits = mlir::smt::ExtractOp::create(
           builder, location, bitVectorType(width), operand, assignment);
-      stack.push_back({bits, width});
+      stack.push_back(
+          {bits, width, SMTVariable{operand, width, bits}, std::nullopt});
       auto found = std::find_if(
           result.variables.begin(), result.variables.end(),
           [&](const SMTVariable &variable) {
@@ -204,9 +209,12 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
         opcode == OBELISK_RT_RANDOM_END_SOFT_V1) {
       if (width != 1 || stack.size() != 1)
         return std::nullopt;
-      if (opcode == OBELISK_RT_RANDOM_END_HARD_V1)
+      if (opcode == OBELISK_RT_RANDOM_END_HARD_V1) {
         hard = mlir::smt::AndOp::create(builder, location, hard,
                                         truth(builder, location, stack.back()));
+        if (stack.back().directEquality)
+          result.directEqualities.push_back(*stack.back().directEquality);
+      }
       sawHard |= opcode == OBELISK_RT_RANDOM_END_HARD_V1;
       sawSoft |= opcode == OBELISK_RT_RANDOM_END_SOFT_V1;
       stack.clear();
@@ -349,7 +357,14 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
         break;
       }
       }
-      stack.push_back(booleanValue(builder, location, predicate));
+      std::optional<SMTVariableEquality> directEquality;
+      if (opcode == OBELISK_RT_RANDOM_EQ_V1 && lhs.width == rhs.width &&
+          lhs.directVariable && rhs.directVariable &&
+          lhs.directVariable->offset != rhs.directVariable->offset)
+        directEquality =
+            SMTVariableEquality{*lhs.directVariable, *rhs.directVariable};
+      stack.push_back(booleanValue(builder, location, predicate,
+                                   std::move(directEquality)));
       continue;
     }
     if (opcode >= OBELISK_RT_RANDOM_LOGICAL_AND_V1) {

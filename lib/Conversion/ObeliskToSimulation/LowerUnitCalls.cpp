@@ -1561,6 +1561,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     uint64_t cardinality;
   };
   SmallVector<ProposalDomain> proposalDomains;
+  struct ProposalAlias {
+    uint32_t targetOffset;
+    uint32_t sourceOffset;
+    unsigned width;
+  };
+  SmallVector<ProposalAlias> proposalAliases;
   uint32_t propertyOffset = 0;
   for (const Property &property : planned) {
     auto found = llvm::find_if(analysis.domains,
@@ -1586,7 +1592,33 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     propertyOffset += property.width;
   }
 
-  auto narrowAssignment = [&](Value rawAssignment) {
+  auto isPropertyField = [&](uint32_t offset, uint32_t width) {
+    uint32_t currentOffset = 0;
+    for (const Property &property : planned) {
+      if (currentOffset == offset && property.width == width)
+        return true;
+      currentOffset += property.width;
+    }
+    return false;
+  };
+  for (const solver::RandomVariableAlias &alias : analysis.aliases) {
+    bool sourceIsTarget = llvm::any_of(
+        analysis.aliases, [&](const solver::RandomVariableAlias &other) {
+          return other.targetOffset == alias.sourceOffset;
+        });
+    unsigned targetCount = llvm::count_if(
+        analysis.aliases, [&](const solver::RandomVariableAlias &other) {
+          return other.targetOffset == alias.targetOffset;
+        });
+    if (alias.targetOffset != alias.sourceOffset &&
+        isPropertyField(alias.targetOffset, alias.width) &&
+        isPropertyField(alias.sourceOffset, alias.width) && !sourceIsTarget &&
+        targetCount == 1)
+      proposalAliases.push_back(
+          {alias.targetOffset, alias.sourceOffset, alias.width});
+  }
+
+  auto materializeProposal = [&](Value rawAssignment) {
     Value assignment = rawAssignment;
     for (const ProposalDomain &domain : proposalDomains) {
       Value fieldBits = rawAssignment;
@@ -1611,10 +1643,41 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
                                 constant64(~fieldMask)),
           fieldBits);
     }
+    SmallVector<std::tuple<uint32_t, unsigned, Value>> aliasSources;
+    for (const ProposalAlias &alias : proposalAliases) {
+      uint64_t valueMask =
+          alias.width == 64 ? UINT64_MAX : (uint64_t{1} << alias.width) - 1;
+      auto cachedSource = llvm::find_if(aliasSources, [&](const auto &source) {
+        return std::get<0>(source) == alias.sourceOffset &&
+               std::get<1>(source) == alias.width;
+      });
+      Value sourceBits;
+      if (cachedSource != aliasSources.end()) {
+        sourceBits = std::get<2>(*cachedSource);
+      } else {
+        sourceBits = assignment;
+        if (alias.sourceOffset != 0)
+          sourceBits = arith::ShRUIOp::create(builder, location, sourceBits,
+                                              constant64(alias.sourceOffset));
+        sourceBits = arith::AndIOp::create(builder, location, sourceBits,
+                                           constant64(valueMask));
+        aliasSources.emplace_back(alias.sourceOffset, alias.width, sourceBits);
+      }
+      if (alias.targetOffset != 0)
+        sourceBits = arith::ShLIOp::create(builder, location, sourceBits,
+                                           constant64(alias.targetOffset));
+      uint64_t targetMask = valueMask << alias.targetOffset;
+      assignment = arith::OrIOp::create(
+          builder, location,
+          arith::AndIOp::create(builder, location, assignment,
+                                constant64(~targetMask)),
+          sourceBits);
+    }
     return assignment;
   };
   bool exactProposal = analysis.proposalExact && !hasSoftConstraint &&
-                       proposalDomains.size() == analysis.domains.size();
+                       proposalDomains.size() == analysis.domains.size() &&
+                       proposalAliases.size() == analysis.aliases.size();
 
   Block *dispatchBlock = current;
   Block *loop = addBlock();
@@ -1651,7 +1714,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   };
 
   setCurrent(loop);
-  Value assignment = narrowAssignment(counter);
+  Value assignment = materializeProposal(counter);
   FailureOr<SmallVector<Value>> candidates = materializeCandidates(assignment);
   if (failed(candidates))
     return failure();

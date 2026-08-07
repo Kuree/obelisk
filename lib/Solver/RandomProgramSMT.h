@@ -20,6 +20,11 @@ struct SMTVariable {
   mlir::Value bits;
 };
 
+struct SMTVariableEquality {
+  SMTVariable lhs;
+  SMTVariable rhs;
+};
+
 /// Owns a temporary, verified SMT-dialect module. The context must outlive the
 /// module and all values retained from it, hence the declaration order.
 struct RandomProgramSMT {
@@ -28,6 +33,7 @@ struct RandomProgramSMT {
   mlir::smt::SolverOp solver;
   mlir::Value hard;
   std::vector<SMTVariable> variables;
+  std::vector<SMTVariableEquality> directEqualities;
 };
 
 std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
