@@ -2,6 +2,9 @@
 
 #include "LowerUnit.h"
 
+#include "obelisk/Runtime/Runtime.h"
+#include "obelisk/Solver/ConstraintSolver.h"
+
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 
@@ -9,6 +12,8 @@
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringSet.h"
 
+#include <functional>
+#include <limits>
 #include <optional>
 #include <tuple>
 
@@ -1147,32 +1152,345 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     });
   }
 
+  struct EncodedInstruction {
+    uint8_t opcode;
+    uint8_t width;
+    uint8_t flags = 0;
+    uint32_t operand = 0;
+    uint64_t immediate = 0;
+  };
+  SmallVector<EncodedInstruction> programInstructions;
+  SmallVector<Value> programCaptures;
+  auto instruction = [&](uint8_t opcode, unsigned width, bool isSigned = false,
+                         uint32_t operand = 0, uint64_t immediate = 0) {
+    programInstructions.push_back(
+        {opcode, static_cast<uint8_t>(width),
+         static_cast<uint8_t>(isSigned ? OBELISK_RT_RANDOM_INSTRUCTION_SIGNED
+                                       : 0),
+         operand, immediate});
+  };
+  auto expressionWidth = [&](Operation *expression) -> FailureOr<unsigned> {
+    FailureOr<Type> type = getNormalizedSemanticType(expression);
+    std::optional<unsigned> width =
+        succeeded(type) ? sim::getPackedWidth(*type) : std::nullopt;
+    if (!width || *width == 0 || *width > 64) {
+      emitError(getSemanticLocation(expression))
+          << "runtime random constraint values must be packed and no wider "
+             "than 64 bits";
+      return failure();
+    }
+    return *width;
+  };
+  auto dependsOnCandidate = [&](Operation *expression) {
+    bool dependent = false;
+    expression->walk([&](Operation *nested) {
+      dependent |= nested->hasAttr(randomVariableAttrName);
+    });
+    return dependent;
+  };
+  auto emitLiteral = [&](bool value) {
+    instruction(OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, false, 0, value);
+  };
+  std::function<LogicalResult(Operation *)> emitProgramExpression;
+  emitProgramExpression = [&](Operation *expression) -> LogicalResult {
+    FailureOr<unsigned> width = expressionWidth(expression);
+    if (failed(width))
+      return failure();
+    if (auto variable =
+            expression->getAttrOfType<IntegerAttr>(randomVariableAttrName)) {
+      APInt indexValue = variable.getValue();
+      if (indexValue.isNegative() || indexValue.getActiveBits() > 64 ||
+          indexValue.getZExtValue() >= planned.size()) {
+        emitError(getSemanticLocation(expression))
+            << "random constraint variable index is malformed";
+        return failure();
+      }
+      unsigned index = static_cast<unsigned>(indexValue.getZExtValue());
+      uint32_t offset = 0;
+      for (unsigned current = 0; current != index; ++current)
+        offset += planned[current].width;
+      instruction(OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, planned[index].width,
+                  planned[index].isSigned, offset);
+      return success();
+    }
+    if (std::optional<StringRef> spelling = getConstantSpelling(expression)) {
+      FailureOr<ParsedConstant> parsed =
+          parseSVInteger(*spelling, *width, getSemanticLocation(expression));
+      if (failed(parsed) || !parsed->unknown.isZero()) {
+        emitError(getSemanticLocation(expression))
+            << "four-state constants are not executable in the runtime "
+               "random solver";
+        return failure();
+      }
+      instruction(OBELISK_RT_RANDOM_PUSH_LITERAL_V1, *width,
+                  isSignedNode(expression), 0, parsed->value.getZExtValue());
+      return success();
+    }
+    if (!dependsOnCandidate(expression)) {
+      FailureOr<Value> value = lowerExpression(expression);
+      FailureOr<Value> scalar =
+          succeeded(value)
+              ? toPackedScalar(*value, getSemanticLocation(expression))
+              : FailureOr<Value>(failure());
+      if (failed(scalar) || !isa<IntegerType>((*scalar).getType())) {
+        emitError(getSemanticLocation(expression))
+            << "four-state and non-integral runtime constraint captures are "
+               "not executable yet";
+        return failure();
+      }
+      FailureOr<Value> extended =
+          convert(*scalar, builder.getI64Type(), false,
+                  getSemanticLocation(expression), false);
+      if (failed(extended))
+        return failure();
+      uint32_t capture = static_cast<uint32_t>(programCaptures.size());
+      programCaptures.push_back(*extended);
+      instruction(OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, *width,
+                  isSignedNode(expression), capture);
+      return success();
+    }
+
+    SmallVector<Operation *> nested = getChildren(expression);
+    if (isa<semantic::SVConversionExpressionOp>(expression)) {
+      if (nested.size() != 1 || failed(emitProgramExpression(nested.front())))
+        return failure();
+      instruction(OBELISK_RT_RANDOM_CAST_V1, *width,
+                  isSignedNode(nested.front()));
+      return success();
+    }
+    if (auto unary = dyn_cast<semantic::SVUnaryExpressionOp>(expression)) {
+      if (nested.size() != 1 || failed(emitProgramExpression(nested.front())))
+        return failure();
+      uint8_t opcode = 0;
+      using Unary = semantic::SVUnaryOperator;
+      switch (unary.getOperatorKind()) {
+      case Unary::Plus:
+        opcode = OBELISK_RT_RANDOM_POS_V1;
+        break;
+      case Unary::Minus:
+        opcode = OBELISK_RT_RANDOM_NEG_V1;
+        break;
+      case Unary::BitwiseNot:
+        opcode = OBELISK_RT_RANDOM_BIT_NOT_V1;
+        break;
+      case Unary::BitwiseAnd:
+        opcode = OBELISK_RT_RANDOM_REDUCE_AND_V1;
+        break;
+      case Unary::BitwiseOr:
+        opcode = OBELISK_RT_RANDOM_REDUCE_OR_V1;
+        break;
+      case Unary::BitwiseXor:
+        opcode = OBELISK_RT_RANDOM_REDUCE_XOR_V1;
+        break;
+      case Unary::BitwiseNand:
+        opcode = OBELISK_RT_RANDOM_REDUCE_NAND_V1;
+        break;
+      case Unary::BitwiseNor:
+        opcode = OBELISK_RT_RANDOM_REDUCE_NOR_V1;
+        break;
+      case Unary::BitwiseXnor:
+        opcode = OBELISK_RT_RANDOM_REDUCE_XNOR_V1;
+        break;
+      case Unary::LogicalNot:
+        opcode = OBELISK_RT_RANDOM_LOGICAL_NOT_V1;
+        break;
+      default:
+        return failure();
+      }
+      instruction(opcode, *width, isSignedNode(expression));
+      return success();
+    }
+    if (auto binary = dyn_cast<semantic::SVBinaryExpressionOp>(expression)) {
+      if (nested.size() != 2 || failed(emitProgramExpression(nested[0])) ||
+          failed(emitProgramExpression(nested[1])))
+        return failure();
+      uint8_t opcode = 0;
+      bool signedOperation = isSignedNode(nested.front());
+      using Binary = semantic::SVBinaryOperator;
+      switch (binary.getOperatorKind()) {
+      case Binary::Add:
+        opcode = OBELISK_RT_RANDOM_ADD_V1;
+        break;
+      case Binary::Subtract:
+        opcode = OBELISK_RT_RANDOM_SUB_V1;
+        break;
+      case Binary::Multiply:
+        opcode = OBELISK_RT_RANDOM_MUL_V1;
+        break;
+      case Binary::BinaryAnd:
+        opcode = OBELISK_RT_RANDOM_BIT_AND_V1;
+        break;
+      case Binary::BinaryOr:
+        opcode = OBELISK_RT_RANDOM_BIT_OR_V1;
+        break;
+      case Binary::BinaryXor:
+        opcode = OBELISK_RT_RANDOM_BIT_XOR_V1;
+        break;
+      case Binary::BinaryXnor:
+        opcode = OBELISK_RT_RANDOM_BIT_XNOR_V1;
+        break;
+      case Binary::Equality:
+      case Binary::CaseEquality:
+      case Binary::WildcardEquality:
+        opcode = OBELISK_RT_RANDOM_EQ_V1;
+        break;
+      case Binary::Inequality:
+      case Binary::CaseInequality:
+      case Binary::WildcardInequality:
+        opcode = OBELISK_RT_RANDOM_NE_V1;
+        break;
+      case Binary::GreaterThanEqual:
+        opcode = OBELISK_RT_RANDOM_GE_V1;
+        break;
+      case Binary::GreaterThan:
+        opcode = OBELISK_RT_RANDOM_GT_V1;
+        break;
+      case Binary::LessThanEqual:
+        opcode = OBELISK_RT_RANDOM_LE_V1;
+        break;
+      case Binary::LessThan:
+        opcode = OBELISK_RT_RANDOM_LT_V1;
+        break;
+      case Binary::LogicalAnd:
+        opcode = OBELISK_RT_RANDOM_LOGICAL_AND_V1;
+        break;
+      case Binary::LogicalOr:
+        opcode = OBELISK_RT_RANDOM_LOGICAL_OR_V1;
+        break;
+      case Binary::LogicalImplication:
+        opcode = OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1;
+        break;
+      case Binary::LogicalEquivalence:
+        opcode = OBELISK_RT_RANDOM_LOGICAL_EQUIV_V1;
+        break;
+      default:
+        emitError(getSemanticLocation(expression))
+            << "operator is not encoded by the runtime random solver";
+        return failure();
+      }
+      instruction(opcode, *width, signedOperation);
+      return success();
+    }
+    if (isa<semantic::SVConditionalExpressionOp>(expression)) {
+      if (nested.size() != 3 || failed(emitProgramExpression(nested[0])) ||
+          failed(emitProgramExpression(nested[1])) ||
+          failed(emitProgramExpression(nested[2])))
+        return failure();
+      instruction(OBELISK_RT_RANDOM_SELECT_V1, *width,
+                  isSignedNode(expression));
+      return success();
+    }
+    if (isa<semantic::SVInsideExpressionOp>(expression)) {
+      if (nested.size() < 2)
+        return failure();
+      bool first = true;
+      for (Operation *item : ArrayRef(nested).drop_front()) {
+        if (auto range = dyn_cast<semantic::SVValueRangeExpressionOp>(item)) {
+          SmallVector<Operation *> endpoints = getChildren(range);
+          if (endpoints.size() != 2 ||
+              failed(emitProgramExpression(nested.front())) ||
+              failed(emitProgramExpression(endpoints[0])))
+            return failure();
+          instruction(OBELISK_RT_RANDOM_GE_V1, 1, isSignedNode(nested.front()));
+          if (failed(emitProgramExpression(nested.front())) ||
+              failed(emitProgramExpression(endpoints[1])))
+            return failure();
+          instruction(OBELISK_RT_RANDOM_LE_V1, 1, isSignedNode(nested.front()));
+          instruction(OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1);
+        } else {
+          if (failed(emitProgramExpression(nested.front())) ||
+              failed(emitProgramExpression(item)))
+            return failure();
+          instruction(OBELISK_RT_RANDOM_EQ_V1, 1, isSignedNode(nested.front()));
+        }
+        if (!first)
+          instruction(OBELISK_RT_RANDOM_LOGICAL_OR_V1, 1);
+        first = false;
+      }
+      return success();
+    }
+    emitError(getSemanticLocation(expression))
+        << "candidate-dependent expression is not encoded by the runtime "
+           "random solver: "
+        << expression->getName();
+    return failure();
+  };
+
+  std::function<LogicalResult(Operation *)> emitProgramConstraint;
+  emitProgramConstraint = [&](Operation *constraint) -> LogicalResult {
+    SmallVector<Operation *> nested = getChildren(constraint);
+    if (isa<semantic::SVConstraintListOp>(constraint)) {
+      if (nested.empty()) {
+        emitLiteral(true);
+        return success();
+      }
+      if (failed(emitProgramConstraint(nested.front())))
+        return failure();
+      for (Operation *item : ArrayRef(nested).drop_front()) {
+        if (failed(emitProgramConstraint(item)))
+          return failure();
+        instruction(OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1);
+      }
+      return success();
+    }
+    if (isa<semantic::SVExpressionConstraintOp>(constraint))
+      return nested.size() == 1 ? emitProgramExpression(nested.front())
+                                : failure();
+    if (isa<semantic::SVImplicationConstraintOp>(constraint)) {
+      if (nested.size() != 2 || failed(emitProgramExpression(nested[0])) ||
+          failed(emitProgramConstraint(nested[1])))
+        return failure();
+      instruction(OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1, 1);
+      return success();
+    }
+    if (auto conditional =
+            dyn_cast<semantic::SVConditionalConstraintOp>(constraint)) {
+      if (nested.size() != (conditional.getHasElse() ? 3u : 2u) ||
+          failed(emitProgramExpression(nested[0])) ||
+          failed(emitProgramConstraint(nested[1])))
+        return failure();
+      if (conditional.getHasElse()) {
+        if (failed(emitProgramConstraint(nested[2])))
+          return failure();
+      } else {
+        emitLiteral(true);
+      }
+      instruction(OBELISK_RT_RANDOM_SELECT_V1, 1);
+      return success();
+    }
+    if (isa<semantic::SVUniquenessConstraintOp>(constraint)) {
+      bool first = true;
+      for (size_t left = 0; left != nested.size(); ++left)
+        for (size_t right = left + 1; right != nested.size(); ++right) {
+          if (failed(emitProgramExpression(nested[left])) ||
+              failed(emitProgramExpression(nested[right])))
+            return failure();
+          instruction(OBELISK_RT_RANDOM_NE_V1, 1, isSignedNode(nested[left]));
+          if (!first)
+            instruction(OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1);
+          first = false;
+        }
+      if (first)
+        emitLiteral(true);
+      return success();
+    }
+    emitError(getSemanticLocation(constraint))
+        << "constraint is not encoded by the runtime random solver: "
+        << constraint->getName();
+    return failure();
+  };
+
+  Block *dispatchBlock = current;
   Block *loop = addBlock();
   Block *advance = addBlock();
-  Block *exhaustedBlock = hasSoftConstraint ? addBlock() : nullptr;
+  Block *fallbackBlock = addBlock();
   Block *commit = addBlock();
   Block *failedBlock = addBlock();
   Block *done = addBlock();
   Value counter = loop->addArgument(i64, location);
-  Value fallbackCounter;
-  Value hasFallback;
-  Value commitCounter;
-  if (hasSoftConstraint) {
-    fallbackCounter = loop->addArgument(i64, location);
-    hasFallback = loop->addArgument(builder.getI1Type(), location);
-    commitCounter = commit->addArgument(i64, location);
-  }
+  Value attempt = loop->addArgument(i64, location);
+  Value commitCounter = commit->addArgument(i64, location);
   Value doneResult = done->addArgument(builder.getI1Type(), location);
-  Value falseValue;
-  if (hasSoftConstraint) {
-    falseValue = arith::ConstantOp::create(
-        builder, location, builder.getI1Type(), builder.getBoolAttr(false));
-    cf::BranchOp::create(builder, location, loop,
-                         ValueRange{start, start, falseValue});
-  } else {
-    cf::BranchOp::create(builder, location, loop, ValueRange{start});
-  }
-
   auto materializeCandidates =
       [&](Value assignment) -> FailureOr<SmallVector<Value>> {
     SmallVector<Value> candidates;
@@ -1366,58 +1684,129 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
           ? arith::AndIOp::create(builder, location, satisfied, softSatisfied)
                 .getResult()
           : satisfied;
-  if (hasSoftConstraint)
-    cf::CondBranchOp::create(builder, location, preferred, commit,
-                             ValueRange{counter}, advance, ValueRange{});
-  else
-    cf::CondBranchOp::create(builder, location, preferred, commit, ValueRange{},
-                             advance, ValueRange{});
+  cf::CondBranchOp::create(builder, location, preferred, commit,
+                           ValueRange{counter}, advance, ValueRange{});
 
   setCurrent(advance);
-  Value nextFallback;
-  Value nextHasFallback;
-  if (hasSoftConstraint) {
-    Value noFallback = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::eq, hasFallback, falseValue);
-    Value captureFallback =
-        arith::AndIOp::create(builder, location, satisfied, noFallback);
-    nextFallback = arith::SelectOp::create(builder, location, captureFallback,
-                                           counter, fallbackCounter);
-    nextHasFallback =
-        arith::OrIOp::create(builder, location, hasFallback, satisfied);
-  }
   Value next = arith::AndIOp::create(
       builder, location,
       arith::AddIOp::create(builder, location, counter, constant64(1)), mask);
-  Value exhausted = arith::CmpIOp::create(
+  Value nextAttempt =
+      arith::AddIOp::create(builder, location, attempt, constant64(1));
+  Value domainExhausted = arith::CmpIOp::create(
       builder, location, arith::CmpIPredicate::eq, next, start);
-  if (hasSoftConstraint)
-    cf::CondBranchOp::create(builder, location, exhausted, exhaustedBlock,
-                             ValueRange{}, loop,
-                             ValueRange{next, nextFallback, nextHasFallback});
-  else
-    cf::CondBranchOp::create(builder, location, exhausted, failedBlock,
-                             ValueRange{}, loop, ValueRange{next});
+  Value samplerExhausted =
+      arith::CmpIOp::create(builder, location, arith::CmpIPredicate::uge,
+                            nextAttempt, constant64(64));
+  Value exhausted = arith::OrIOp::create(builder, location, domainExhausted,
+                                         samplerExhausted);
+  cf::CondBranchOp::create(builder, location, exhausted, fallbackBlock,
+                           ValueRange{}, loop, ValueRange{next, nextAttempt});
 
-  if (hasSoftConstraint) {
-    setCurrent(exhaustedBlock);
-    cf::CondBranchOp::create(builder, location, nextHasFallback, commit,
-                             ValueRange{nextFallback}, failedBlock,
+  setCurrent(fallbackBlock);
+  Value fallbackSavedThis = thisObject;
+  SmallVector<Value> fallbackSavedCandidates =
+      std::move(randomizeCandidateValues);
+  llvm::scope_exit restoreFallbackBindings([&] {
+    thisObject = fallbackSavedThis;
+    randomizeCandidateValues = std::move(fallbackSavedCandidates);
+  });
+  thisObject = receiver;
+  bool emittedHard = false;
+  bool emittedSoft = false;
+  for (auto [index, root] : llvm::enumerate(children)) {
+    if (index == receiverIndex)
+      continue;
+    SmallVector<Operation *> items = isa<semantic::SVConstraintListOp>(root)
+                                         ? getChildren(root)
+                                         : SmallVector<Operation *>{root};
+    for (Operation *item : items) {
+      bool soft = false;
+      if (auto expression = dyn_cast<semantic::SVExpressionConstraintOp>(item))
+        soft = expression.getIsSoft();
+      if (failed(emitProgramConstraint(item)))
+        return failure();
+      instruction(soft ? OBELISK_RT_RANDOM_END_SOFT_V1
+                       : OBELISK_RT_RANDOM_END_HARD_V1,
+                  1);
+      emittedSoft |= soft;
+      emittedHard |= !soft;
+    }
+  }
+  if (!emittedHard) {
+    emitLiteral(true);
+    instruction(OBELISK_RT_RANDOM_END_HARD_V1, 1);
+  }
+  thisObject = fallbackSavedThis;
+  randomizeCandidateValues = std::move(fallbackSavedCandidates);
+  restoreFallbackBindings.release();
+
+  SmallVector<uint8_t> program;
+  auto append16 = [&](uint16_t value) {
+    program.push_back(static_cast<uint8_t>(value));
+    program.push_back(static_cast<uint8_t>(value >> 8));
+  };
+  auto append32 = [&](uint32_t value) {
+    for (unsigned index = 0; index != 4; ++index)
+      program.push_back(static_cast<uint8_t>(value >> (index * 8)));
+  };
+  auto append64 = [&](uint64_t value) {
+    for (unsigned index = 0; index != 8; ++index)
+      program.push_back(static_cast<uint8_t>(value >> (index * 8)));
+  };
+  append32(OBELISK_RT_RANDOM_PROGRAM_MAGIC);
+  append16(OBELISK_RT_RANDOM_PROGRAM_VERSION);
+  append16(OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE);
+  append32(static_cast<uint32_t>(totalWidth));
+  append32(static_cast<uint32_t>(programInstructions.size()));
+  append32(static_cast<uint32_t>(programCaptures.size()));
+  append32(emittedSoft ? OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT : 0);
+  for (const EncodedInstruction &encoded : programInstructions) {
+    program.push_back(encoded.opcode);
+    program.push_back(encoded.width);
+    program.push_back(encoded.flags);
+    program.push_back(0);
+    append32(encoded.operand);
+    append64(encoded.immediate);
+  }
+  uint64_t fallbackAttempts =
+      totalWidth <= 20 ? (uint64_t{1} << totalWidth) : (uint64_t{1} << 20);
+  solver::RandomProgramAnalysis analysis =
+      solver::analyzeRandomProgram(program.data(), program.size());
+  if (analysis.satisfiability == solver::Satisfiability::Unsatisfiable) {
+    emitWarning(location)
+        << "randomize hard constraints are statically unsatisfiable ("
+        << analysis.backend << ")";
+    cf::BranchOp::create(builder, location, failedBlock, ValueRange{});
+  } else {
+    auto fallback = sim::SimRandomSolveOp::create(
+        builder, location, function.getBody().front().getArgument(0), next,
+        constant64(fallbackAttempts), programCaptures,
+        builder.getStringAttr(StringRef(
+            reinterpret_cast<const char *>(program.data()), program.size())));
+    cf::CondBranchOp::create(builder, location, fallback.getSuccess(), commit,
+                             ValueRange{fallback.getAssignment()}, failedBlock,
                              ValueRange{});
   }
 
+  // Static UNSAT is known for every possible runtime capture value. Bypass
+  // both generated sampling tiers instead of spending their deterministic
+  // rejection budgets on a constraint set the compiler has already proved
+  // impossible. The object stream draw above remains observable, matching the
+  // state transition of an attempted randomize call.
+  setCurrent(dispatchBlock);
+  if (analysis.satisfiability == solver::Satisfiability::Unsatisfiable)
+    cf::BranchOp::create(builder, location, failedBlock, ValueRange{});
+  else
+    cf::BranchOp::create(builder, location, loop,
+                         ValueRange{start, constant64(0)});
+
   setCurrent(commit);
-  SmallVector<Value> rematerializedCandidates;
-  ArrayRef<Value> committedCandidates = *candidates;
-  if (hasSoftConstraint) {
-    FailureOr<SmallVector<Value>> values = materializeCandidates(commitCounter);
-    if (failed(values))
-      return failure();
-    rematerializedCandidates = std::move(*values);
-    committedCandidates = rematerializedCandidates;
-  }
-  for (auto [property, candidate] :
-       llvm::zip_equal(planned, committedCandidates))
+  FailureOr<SmallVector<Value>> committed =
+      materializeCandidates(commitCounter);
+  if (failed(committed))
+    return failure();
+  for (auto [property, candidate] : llvm::zip_equal(planned, *committed))
     sim::SimManagedStoreOp::create(builder, location, candidate,
                                    property.reference);
   Value success = arith::ConstantOp::create(

@@ -63,6 +63,20 @@ Encoder::encodeContainerOperation(FunctionPlan &plan, Operation *operation) {
         {distribution, reg(plan, op.getFirst()), reg(plan, op.getSecond())},
         {reg(plan, op.getResult())});
   }
+  if (auto op = dyn_cast<sim::SimRandomSolveOp>(operation)) {
+    StringRef program = op.getProgram();
+    SmallVector<uint32_t> inputs{
+        emitBytesConstant(
+            plan,
+            ArrayRef<uint8_t>(reinterpret_cast<const uint8_t *>(program.data()),
+                              program.size())),
+        reg(plan, op.getStart()), reg(plan, op.getMaxAttempts())};
+    for (Value capture : op.getCaptures())
+      inputs.push_back(reg(plan, capture));
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicRandomSolve, inputs,
+        {reg(plan, op.getAssignment()), reg(plan, op.getSuccess())});
+  }
   if (auto op = dyn_cast<sim::SimContainerReadOp>(operation))
     return emitIntrinsic(plan, kIntrinsicContainerRead,
                          {op.getContainer(), op.getIndex()}, {op.getResult()});

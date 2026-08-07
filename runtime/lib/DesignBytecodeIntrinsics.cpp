@@ -636,6 +636,30 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     return seed ? obelisk_rt_v1_random_seed(context, *seed)
                 : OBELISK_RT_INVALID_BYTECODE;
   }
+  case OBELISK_RT_INTRINSIC_V1_RANDOM_SOLVE: {
+    std::optional<ByteSpan> program = bytes(0);
+    auto start = scalar(1), maxAttempts = scalar(2);
+    if (!program || !start || !maxAttempts)
+      return OBELISK_RT_INVALID_BYTECODE;
+    std::vector<uint64_t> captures;
+    captures.reserve(site.inputCount - 3);
+    for (uint32_t index = 3; index != site.inputCount; ++index) {
+      auto capture = scalar(index);
+      if (!capture)
+        return OBELISK_RT_INVALID_BYTECODE;
+      captures.push_back(*capture);
+    }
+    uint64_t assignment = 0;
+    uint32_t success = 0;
+    obelisk_rt_status status = obelisk_rt_v1_random_solve(
+        context, program->data, program->size, *start, *maxAttempts,
+        captures.data(), captures.size(), &assignment, &success);
+    if (status != OBELISK_RT_OK ||
+        !writeScalar(image, frame, outputRegister(0), assignment) ||
+        !writeScalar(image, frame, outputRegister(1), success))
+      return status == OBELISK_RT_OK ? OBELISK_RT_INVALID_BYTECODE : status;
+    return OBELISK_RT_OK;
+  }
   case OBELISK_RT_INTRINSIC_V1_COVERGROUP_CREATE: {
     auto type = scalar(0);
     if (!type || site.inputCount < 2)

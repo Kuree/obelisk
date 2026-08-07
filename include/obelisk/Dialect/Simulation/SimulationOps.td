@@ -495,6 +495,20 @@ def SimRandomDistributionOp : SimOp<"random.distribution", [
   let results = (outs I32:$result);
 }
 
+def SimRandomSolveOp : SimOp<"random.solve", [
+    MemoryEffects<[MemRead<SimRNGResource>]>
+  ]> {
+  let summary = "execute a compiler-produced residual random constraint plan";
+  let arguments = (ins SimContextType:$context, I64:$start,
+                       I64:$max_attempts, Variadic<I64>:$captures,
+                       StrAttr:$program);
+  let results = (outs I64:$assignment, I1:$success);
+  let assemblyFormat = [{
+    $context `from` $start `limit` $max_attempts `captures` `(` $captures `)`
+    $program attr-dict `:` type($context)
+  }];
+}
+
 def SimRandomSeedOp : SimOp<"random.seed", [
     MemoryEffects<[MemWrite<SimRNGResource>]>
   ]> {

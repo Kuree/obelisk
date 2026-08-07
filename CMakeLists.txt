@@ -8,6 +8,10 @@ project(obelisk
 option(OBELISK_INCLUDE_TESTS "Build the Obelisk test suites" ON)
 option(OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS
   "Report failed bytecode image validation checks" OFF)
+option(OBELISK_ENABLE_Z3
+  "Use compiler-side Z3 analysis for constrained-random planning" ON)
+set(OBELISK_Z3_SOURCE_DIR "" CACHE PATH
+  "Extracted Z3 source tree used instead of the pinned archive")
 
 # Op definitions generated from the SystemVerilog AST inventory dominate the
 # build's critical path when one translation unit compiles a whole dialect.
@@ -179,6 +183,86 @@ set(OBELISK_SLANG_SOURCE_DIR "" CACHE PATH
     "Extracted slang v${OBELISK_SLANG_VERSION} source tree (offline builds)")
 
 include(FetchContent)
+
+# Z3 is a host-side compiler dependency only. Build a pinned static library
+# from source so the compiler does not inherit the glibc floor of Z3's release
+# binaries, and keep the runtime dependency-free. The source override supports
+# fully offline builds without weakening the archive checksum path.
+if(OBELISK_ENABLE_Z3)
+  include(ExternalProject)
+  set(OBELISK_Z3_VERSION "4.13.4")
+  set(OBELISK_Z3_ARCHIVE_SHA256
+      "4071977e66e9f3d239b7b098ceddfe62ffdf3c71e345e9524a4a5001d1f4adf3")
+  set(_obelisk_z3_install "${CMAKE_BINARY_DIR}/z3-${OBELISK_Z3_VERSION}")
+  set(_obelisk_z3_cmake_args
+      -DCMAKE_BUILD_TYPE=Release
+      -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>
+      -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+      -DZ3_BUILD_LIBZ3_SHARED=OFF
+      -DZ3_BUILD_EXECUTABLE=OFF
+      -DZ3_BUILD_TEST_EXECUTABLES=OFF
+      -DZ3_ENABLE_EXAMPLE_TARGETS=OFF
+      -DZ3_BUILD_DOCUMENTATION=OFF
+      -DZ3_BUILD_PYTHON_BINDINGS=OFF
+      -DZ3_BUILD_DOTNET_BINDINGS=OFF
+      -DZ3_BUILD_JAVA_BINDINGS=OFF
+      -DZ3_BUILD_JULIA_BINDINGS=OFF
+      -DZ3_INCLUDE_GIT_HASH=OFF
+      -DZ3_INCLUDE_GIT_DESCRIBE=OFF
+      -DZ3_LINK_TIME_OPTIMIZATION=OFF
+      -DZ3_SINGLE_THREADED=ON
+      -DZ3_POLLING_TIMER=ON)
+  # Preserve cross-compilation, including Emscripten, across the isolated
+  # nested configure. Z3's single-threaded polling mode avoids timer threads
+  # and does not require a pthread-enabled WebAssembly runtime.
+  if(CMAKE_TOOLCHAIN_FILE)
+    list(APPEND _obelisk_z3_cmake_args
+      "-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}")
+  endif()
+  if(CMAKE_CXX_COMPILER_TARGET)
+    list(APPEND _obelisk_z3_cmake_args
+      "-DCMAKE_CXX_COMPILER_TARGET=${CMAKE_CXX_COMPILER_TARGET}")
+  endif()
+  if(OBELISK_Z3_SOURCE_DIR)
+    file(STRINGS "${OBELISK_Z3_SOURCE_DIR}/CMakeLists.txt"
+      _obelisk_z3_project_line
+      REGEX "^project\\(Z3 VERSION ${OBELISK_Z3_VERSION}\\.0 LANGUAGES CXX\\)$")
+    if(NOT _obelisk_z3_project_line)
+      message(FATAL_ERROR
+        "OBELISK_Z3_SOURCE_DIR must contain Z3 ${OBELISK_Z3_VERSION}")
+    endif()
+    ExternalProject_Add(obelisk_z3_project
+      SOURCE_DIR "${OBELISK_Z3_SOURCE_DIR}"
+      DOWNLOAD_COMMAND ""
+      EXCLUDE_FROM_ALL TRUE
+      CMAKE_ARGS ${_obelisk_z3_cmake_args}
+      INSTALL_DIR "${_obelisk_z3_install}"
+      BUILD_BYPRODUCTS "${_obelisk_z3_install}/lib/libz3.a")
+  else()
+    ExternalProject_Add(obelisk_z3_project
+      URL "https://github.com/Z3Prover/z3/archive/refs/tags/z3-${OBELISK_Z3_VERSION}.tar.gz"
+      URL_HASH "SHA256=${OBELISK_Z3_ARCHIVE_SHA256}"
+      DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+      EXCLUDE_FROM_ALL TRUE
+      CMAKE_ARGS ${_obelisk_z3_cmake_args}
+      INSTALL_DIR "${_obelisk_z3_install}"
+      BUILD_BYPRODUCTS "${_obelisk_z3_install}/lib/libz3.a")
+  endif()
+  file(MAKE_DIRECTORY "${_obelisk_z3_install}/include")
+  add_library(ObeliskZ3 STATIC IMPORTED GLOBAL)
+  set_target_properties(ObeliskZ3 PROPERTIES
+    IMPORTED_LOCATION "${_obelisk_z3_install}/lib/libz3.a"
+    INTERFACE_INCLUDE_DIRECTORIES "${_obelisk_z3_install}/include")
+  if(EMSCRIPTEN)
+    # Match Z3's own Emscripten consumer requirements. The solver uses C++
+    # exceptions internally and benefits from a growable compiler heap.
+    target_link_options(ObeliskZ3 INTERFACE
+      "SHELL:-s DISABLE_EXCEPTION_CATCHING=0"
+      "SHELL:-s ALLOW_MEMORY_GROWTH=1")
+  endif()
+  add_dependencies(ObeliskZ3 obelisk_z3_project)
+  message(STATUS "Building compiler-only Z3 ${OBELISK_Z3_VERSION} from source")
+endif()
 
 # slang v11.0 declares these dependencies by git tag. Declare checksummed
 # release archives first (FetchContent's first declaration wins) so Obelisk's

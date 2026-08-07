@@ -639,6 +639,15 @@ bool validIntrinsic(const Image &image, const Function &function,
   case OBELISK_RT_INTRINSIC_V1_RANDOM_SEED:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 0 && twoStateBits(input(0), 64);
+  case OBELISK_RT_INTRINSIC_V1_RANDOM_SOLVE:
+    if (signature.flags != 0 || site.inputCount < 3 || site.outputCount != 2 ||
+        !bytes(input(0)) || !twoStateBits(output(0), 64) ||
+        !twoStateBits(output(1), 1))
+      return false;
+    for (uint32_t index = 1; index != site.inputCount; ++index)
+      if (!twoStateBits(input(index), 64))
+        return false;
+    return true;
   case OBELISK_RT_INTRINSIC_V1_COVERGROUP_CREATE:
     if (signature.flags != 0 || site.inputCount < 2 || site.outputCount != 1 ||
         !twoStateBits(output(0), 64))

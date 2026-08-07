@@ -25,6 +25,7 @@ add_library(obelisk_rt STATIC
   lib/ProcessValidation.cpp
   lib/Plusargs.cpp
   lib/Random.cpp
+  lib/RandSolve.cpp
   lib/Runtime.cpp
   lib/VPI.cpp
 )

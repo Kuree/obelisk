@@ -761,6 +761,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_QUEUE_DELETE = UINT32_C(0x00010444),
   OBELISK_RT_INTRINSIC_V1_QUEUE_INSERT = UINT32_C(0x00010445),
   OBELISK_RT_INTRINSIC_V1_RANDOM_DISTRIBUTION = UINT32_C(0x00010446),
+  OBELISK_RT_INTRINSIC_V1_RANDOM_SOLVE = UINT32_C(0x00010447),
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_CREATE = UINT32_C(0x00010450),
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_ENABLED = UINT32_C(0x00010451),
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_SAMPLE_ENABLED = UINT32_C(0x00010452),
@@ -2571,6 +2572,54 @@ typedef struct obelisk_rt_random_state_v1 {
   uint64_t increment;
 } obelisk_rt_random_state_v1;
 
+// Versioned stack program executed by the constrained-random fallback. The
+// byte representation is explicitly little-endian and does not use these C
+// types as an in-memory wire format. The 24-byte header is followed by
+// instruction_count fixed-width 16-byte instructions.
+#define OBELISK_RT_RANDOM_PROGRAM_MAGIC UINT32_C(0x3152444f)
+#define OBELISK_RT_RANDOM_PROGRAM_VERSION UINT16_C(1)
+#define OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE UINT16_C(24)
+#define OBELISK_RT_RANDOM_INSTRUCTION_SIZE UINT16_C(16)
+#define OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT UINT32_C(1)
+#define OBELISK_RT_RANDOM_INSTRUCTION_SIGNED UINT8_C(1)
+
+typedef enum obelisk_rt_random_opcode_v1 {
+  OBELISK_RT_RANDOM_PUSH_VARIABLE_V1 = 1,
+  OBELISK_RT_RANDOM_PUSH_CAPTURE_V1 = 2,
+  OBELISK_RT_RANDOM_CAST_V1 = 3,
+  OBELISK_RT_RANDOM_POS_V1 = 4,
+  OBELISK_RT_RANDOM_NEG_V1 = 5,
+  OBELISK_RT_RANDOM_BIT_NOT_V1 = 6,
+  OBELISK_RT_RANDOM_REDUCE_AND_V1 = 7,
+  OBELISK_RT_RANDOM_REDUCE_OR_V1 = 8,
+  OBELISK_RT_RANDOM_REDUCE_XOR_V1 = 9,
+  OBELISK_RT_RANDOM_REDUCE_NAND_V1 = 10,
+  OBELISK_RT_RANDOM_REDUCE_NOR_V1 = 11,
+  OBELISK_RT_RANDOM_REDUCE_XNOR_V1 = 12,
+  OBELISK_RT_RANDOM_LOGICAL_NOT_V1 = 13,
+  OBELISK_RT_RANDOM_ADD_V1 = 14,
+  OBELISK_RT_RANDOM_SUB_V1 = 15,
+  OBELISK_RT_RANDOM_MUL_V1 = 16,
+  OBELISK_RT_RANDOM_BIT_AND_V1 = 17,
+  OBELISK_RT_RANDOM_BIT_OR_V1 = 18,
+  OBELISK_RT_RANDOM_BIT_XOR_V1 = 19,
+  OBELISK_RT_RANDOM_BIT_XNOR_V1 = 20,
+  OBELISK_RT_RANDOM_EQ_V1 = 21,
+  OBELISK_RT_RANDOM_NE_V1 = 22,
+  OBELISK_RT_RANDOM_GE_V1 = 23,
+  OBELISK_RT_RANDOM_GT_V1 = 24,
+  OBELISK_RT_RANDOM_LE_V1 = 25,
+  OBELISK_RT_RANDOM_LT_V1 = 26,
+  OBELISK_RT_RANDOM_LOGICAL_AND_V1 = 27,
+  OBELISK_RT_RANDOM_LOGICAL_OR_V1 = 28,
+  OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1 = 29,
+  OBELISK_RT_RANDOM_LOGICAL_EQUIV_V1 = 30,
+  OBELISK_RT_RANDOM_SELECT_V1 = 31,
+  OBELISK_RT_RANDOM_END_HARD_V1 = 32,
+  OBELISK_RT_RANDOM_END_SOFT_V1 = 33,
+  OBELISK_RT_RANDOM_PUSH_LITERAL_V1 = 34
+} obelisk_rt_random_opcode_v1;
+
 // Context and error handling. Operations on one live context may be called
 // concurrently; last_error is isolated per calling thread. The caller must
 // keep the context alive until all operations finish and must not race destroy
@@ -2626,6 +2675,14 @@ obelisk_rt_v1_random_distribution(obelisk_rt_context *context,
                                   obelisk_rt_distribution distribution,
                                   int32_t first, int32_t second,
                                   int32_t *out_value);
+// Execute a compiler-produced residual constraint program. `start` selects
+// the first aggregate assignment and `max_attempts` is a deterministic work
+// bound. A successful solve writes both outputs. Exhaustion is reported by
+// out_success == 0 and is not a runtime API error.
+obelisk_rt_status obelisk_rt_v1_random_solve(
+    obelisk_rt_context *context, const uint8_t *program, uint64_t program_size,
+    uint64_t start, uint64_t max_attempts, const uint64_t *captures,
+    uint64_t capture_count, uint64_t *out_assignment, uint32_t *out_success);
 obelisk_rt_status
 obelisk_rt_v1_random_get_state(obelisk_rt_context *context,
                                obelisk_rt_random_state_v1 *out_state);

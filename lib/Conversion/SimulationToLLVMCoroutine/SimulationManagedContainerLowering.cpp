@@ -9,7 +9,9 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Transforms/DialectConversion.h"
 
+#include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringExtras.h"
 
 #include <cstdint>
 
@@ -378,6 +380,66 @@ public:
   }
 };
 
+class RandomSolveConversion final
+    : public OpConversionPattern<sim::SimRandomSolveOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimRandomSolveOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getContext().size() != 1 || adaptor.getStart().size() != 1 ||
+        adaptor.getMaxAttempts().size() != 1)
+      return failure();
+    SmallVector<Value> captures = flatten(adaptor.getCaptures());
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Type i32 = rewriter.getI32Type();
+    Type i64 = rewriter.getI64Type();
+    StringRef program = op.getProgram();
+    ModuleOp module = op->getParentOfType<ModuleOp>();
+    std::string name = "__obelisk_random_program_" +
+                       llvm::utohexstr(llvm::hash_value(program));
+    LLVM::GlobalOp global = module.lookupSymbol<LLVM::GlobalOp>(name);
+    if (!global)
+      global = makeByteArrayGlobal(module, op.getLoc(), name, program);
+    Value programAddress =
+        LLVM::AddressOfOp::create(rewriter, op.getLoc(), global);
+
+    Value captureAddress = LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer);
+    if (!captures.empty()) {
+      captureAddress =
+          entryAlloca(rewriter, op.getLoc(), i64, captures.size(), 8);
+      for (auto [index, capture] : llvm::enumerate(captures))
+        LLVM::StoreOp::create(
+            rewriter, op.getLoc(), capture,
+            byteGEP(rewriter, op.getLoc(), captureAddress, index * 8), 8);
+    }
+    Value assignment = entryAlloca(rewriter, op.getLoc(), i64, 1, 8);
+    Value successStorage = entryAlloca(rewriter, op.getLoc(), i32, 1, 4);
+    Value context = adaptor.getContext().front();
+    auto c64 = [&](uint64_t value) {
+      return llvmConstant(rewriter, op.getLoc(), i64, value);
+    };
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_random_solve"),
+            ValueRange{context, programAddress, c64(program.size()),
+                       adaptor.getStart().front(),
+                       adaptor.getMaxAttempts().front(), captureAddress,
+                       c64(captures.size()), assignment, successStorage})
+            .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    Value result =
+        LLVM::LoadOp::create(rewriter, op.getLoc(), i64, assignment, 8);
+    Value successValue = LLVM::TruncOp::create(
+        rewriter, op.getLoc(), rewriter.getI1Type(),
+        LLVM::LoadOp::create(rewriter, op.getLoc(), i32, successStorage, 4));
+    rewriter.replaceOp(op, ValueRange{result, successValue});
+    return success();
+  }
+};
+
 class ContainerReadConversion final
     : public OpConversionPattern<sim::SimContainerReadOp> {
 public:
@@ -479,8 +541,8 @@ void populateManagedContainerToLLVMConversionPatterns(
       ContainerDeleteConversion, QueueDeleteConversion,
       QueueInsertConversion, ContainerReadConversion,
       ContainerWriteConversion, RandomNextConversion, RandomSeedConversion,
-      RandomBoundedConversion, RandomDistributionConversion>(converter,
-                                                              context);
+      RandomBoundedConversion, RandomDistributionConversion,
+      RandomSolveConversion>(converter, context);
   populateManagedAssociativeToLLVMConversionPatterns(patterns, converter);
 }
 

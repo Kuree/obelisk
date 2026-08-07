@@ -77,3 +77,6 @@ llvm_config.add_tool_substitutions(
 if config.enable_real_uvm_tests:
     config.available_features.add("real-uvm")
     config.substitutions.append(("%uvm", config.real_uvm_dir))
+
+if config.enable_z3:
+    config.available_features.add("z3")

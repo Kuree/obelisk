@@ -300,7 +300,7 @@ LogicalResult lowerPackedSimulationOperations(
       sim::SimAssocReadOp, sim::SimAssocWriteOp, sim::SimAssocExistsOp,
       sim::SimAssocDeleteOp, sim::SimAssocSetDefaultOp, sim::SimAssocTraverseOp,
       sim::SimRandomNextOp, sim::SimRandomSeedOp, sim::SimRandomBoundedOp,
-      sim::SimRandomDistributionOp,
+      sim::SimRandomDistributionOp, sim::SimRandomSolveOp,
       sim::SimStringLiteralOp, sim::SimStringFromPackedOp,
       sim::SimStringToPackedOp, sim::SimStringConcatOp, sim::SimStringRepeatOp,
       sim::SimStringLengthOp, sim::SimStringGetcOp, sim::SimStringPutcOp,

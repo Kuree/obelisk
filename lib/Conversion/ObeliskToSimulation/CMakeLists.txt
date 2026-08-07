@@ -49,6 +49,7 @@ add_mlir_library(ObeliskToSimulation
   ObeliskIR
   ObeliskSimulationAnalysis
   ObeliskSimulationIR
+  ObeliskSolver
   MLIRAnalysis
   MLIRArithDialect
   MLIRControlFlowDialect

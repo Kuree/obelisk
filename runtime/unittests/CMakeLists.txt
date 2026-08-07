@@ -23,6 +23,7 @@ add_executable(ObeliskRuntimeTests
   ContainerTest.cpp
   CoverageTest.cpp
   DesignBytecodeTest.cpp
+  RandSolveTest.cpp
   RuntimeControlTest.cpp
   RuntimeTest.cpp
   $<TARGET_OBJECTS:ObeliskRuntimeCAPISmoke>
