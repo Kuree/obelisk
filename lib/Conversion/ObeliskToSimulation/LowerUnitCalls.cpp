@@ -1567,6 +1567,13 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     unsigned width;
   };
   SmallVector<ProposalAlias> proposalAliases;
+  struct ProposalDefinition {
+    uint32_t targetOffset;
+    unsigned width;
+    uint32_t expressionBegin;
+    uint32_t expressionEnd;
+  };
+  SmallVector<ProposalDefinition> proposalDefinitions;
   uint32_t propertyOffset = 0;
   for (const Property &property : planned) {
     auto found = llvm::find_if(analysis.domains,
@@ -1618,7 +1625,74 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
           {alias.targetOffset, alias.sourceOffset, alias.width});
   }
 
-  auto materializeProposal = [&](Value rawAssignment) {
+  auto isDefinitionUnary = [](uint8_t opcode) {
+    return opcode == OBELISK_RT_RANDOM_CAST_V1 ||
+           opcode == OBELISK_RT_RANDOM_POS_V1 ||
+           opcode == OBELISK_RT_RANDOM_NEG_V1 ||
+           opcode == OBELISK_RT_RANDOM_BIT_NOT_V1;
+  };
+  auto isDefinitionBinary = [](uint8_t opcode) {
+    return opcode >= OBELISK_RT_RANDOM_ADD_V1 &&
+           opcode <= OBELISK_RT_RANDOM_BIT_XNOR_V1;
+  };
+  for (const solver::RandomVariableDefinition &definition :
+       analysis.definitions) {
+    if (!isPropertyField(definition.targetOffset, definition.width) ||
+        definition.expressionBegin >= definition.expressionEnd ||
+        definition.expressionEnd > programInstructions.size())
+      continue;
+    SmallVector<unsigned> widths;
+    bool supported = true;
+    for (const EncodedInstruction &encoded :
+         llvm::ArrayRef(programInstructions)
+             .slice(definition.expressionBegin,
+                    definition.expressionEnd - definition.expressionBegin)) {
+      if (encoded.opcode == OBELISK_RT_RANDOM_PUSH_VARIABLE_V1) {
+        uint64_t variableEnd =
+            static_cast<uint64_t>(encoded.operand) + encoded.width;
+        uint64_t targetEnd =
+            static_cast<uint64_t>(definition.targetOffset) + definition.width;
+        bool overlapsTarget = encoded.operand < targetEnd &&
+                              definition.targetOffset < variableEnd;
+        if (overlapsTarget || encoded.operand >= totalWidth ||
+            encoded.width > totalWidth - encoded.operand) {
+          supported = false;
+          break;
+        }
+        widths.push_back(encoded.width);
+      } else if (encoded.opcode == OBELISK_RT_RANDOM_PUSH_CAPTURE_V1) {
+        if (encoded.operand >= programCaptures.size()) {
+          supported = false;
+          break;
+        }
+        widths.push_back(encoded.width);
+      } else if (encoded.opcode == OBELISK_RT_RANDOM_PUSH_LITERAL_V1) {
+        widths.push_back(encoded.width);
+      } else if (isDefinitionUnary(encoded.opcode)) {
+        if (widths.empty()) {
+          supported = false;
+          break;
+        }
+        widths.back() = encoded.width;
+      } else if (isDefinitionBinary(encoded.opcode)) {
+        if (widths.size() < 2) {
+          supported = false;
+          break;
+        }
+        widths.pop_back();
+        widths.back() = encoded.width;
+      } else {
+        supported = false;
+        break;
+      }
+    }
+    if (supported && widths.size() == 1 && widths.front() == definition.width)
+      proposalDefinitions.push_back({definition.targetOffset, definition.width,
+                                     definition.expressionBegin,
+                                     definition.expressionEnd});
+  }
+
+  auto materializeProposal = [&](Value rawAssignment) -> FailureOr<Value> {
     Value assignment = rawAssignment;
     for (const ProposalDomain &domain : proposalDomains) {
       Value fieldBits = rawAssignment;
@@ -1641,6 +1715,134 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
           builder, location,
           arith::AndIOp::create(builder, location, assignment,
                                 constant64(~fieldMask)),
+          fieldBits);
+    }
+    struct DefinitionValue {
+      Value bits;
+      unsigned width;
+    };
+    auto maskDefinitionValue = [&](Value bits, unsigned width) {
+      if (width == 64)
+        return bits;
+      return arith::AndIOp::create(builder, location, bits,
+                                   constant64((uint64_t{1} << width) - 1))
+          .getResult();
+    };
+    auto resizeDefinitionValue = [&](DefinitionValue input, unsigned width,
+                                     bool signExtend) {
+      Value bits = input.bits;
+      if (input.width < width && signExtend) {
+        unsigned shift = 64 - input.width;
+        bits =
+            arith::ShLIOp::create(builder, location, bits, constant64(shift));
+        bits =
+            arith::ShRSIOp::create(builder, location, bits, constant64(shift));
+      }
+      return maskDefinitionValue(bits, width);
+    };
+    for (const ProposalDefinition &definition : proposalDefinitions) {
+      SmallVector<DefinitionValue> stack;
+      for (const EncodedInstruction &encoded :
+           llvm::ArrayRef(programInstructions)
+               .slice(definition.expressionBegin,
+                      definition.expressionEnd - definition.expressionBegin)) {
+        bool signedOperation =
+            (encoded.flags & OBELISK_RT_RANDOM_INSTRUCTION_SIGNED) != 0;
+        if (encoded.opcode == OBELISK_RT_RANDOM_PUSH_VARIABLE_V1) {
+          Value bits = assignment;
+          if (encoded.operand != 0)
+            bits = arith::ShRUIOp::create(builder, location, bits,
+                                          constant64(encoded.operand));
+          stack.push_back(
+              {maskDefinitionValue(bits, encoded.width), encoded.width});
+          continue;
+        }
+        if (encoded.opcode == OBELISK_RT_RANDOM_PUSH_CAPTURE_V1) {
+          stack.push_back({maskDefinitionValue(programCaptures[encoded.operand],
+                                               encoded.width),
+                           encoded.width});
+          continue;
+        }
+        if (encoded.opcode == OBELISK_RT_RANDOM_PUSH_LITERAL_V1) {
+          stack.push_back({maskDefinitionValue(constant64(encoded.immediate),
+                                               encoded.width),
+                           encoded.width});
+          continue;
+        }
+        if (isDefinitionUnary(encoded.opcode)) {
+          if (stack.empty())
+            return failure();
+          DefinitionValue input = stack.pop_back_val();
+          Value bits =
+              resizeDefinitionValue(input, encoded.width, signedOperation);
+          if (encoded.opcode == OBELISK_RT_RANDOM_NEG_V1)
+            bits =
+                arith::SubIOp::create(builder, location, constant64(0), bits);
+          else if (encoded.opcode == OBELISK_RT_RANDOM_BIT_NOT_V1)
+            bits = arith::XOrIOp::create(
+                builder, location, bits,
+                constant64(encoded.width == 64
+                               ? UINT64_MAX
+                               : (uint64_t{1} << encoded.width) - 1));
+          stack.push_back(
+              {maskDefinitionValue(bits, encoded.width), encoded.width});
+          continue;
+        }
+        if (!isDefinitionBinary(encoded.opcode) || stack.size() < 2)
+          return failure();
+        DefinitionValue rhs = stack.pop_back_val();
+        DefinitionValue lhs = stack.pop_back_val();
+        Value left = resizeDefinitionValue(lhs, encoded.width, signedOperation);
+        Value right =
+            resizeDefinitionValue(rhs, encoded.width, signedOperation);
+        Value bits;
+        switch (encoded.opcode) {
+        case OBELISK_RT_RANDOM_ADD_V1:
+          bits = arith::AddIOp::create(builder, location, left, right);
+          break;
+        case OBELISK_RT_RANDOM_SUB_V1:
+          bits = arith::SubIOp::create(builder, location, left, right);
+          break;
+        case OBELISK_RT_RANDOM_MUL_V1:
+          bits = arith::MulIOp::create(builder, location, left, right);
+          break;
+        case OBELISK_RT_RANDOM_BIT_AND_V1:
+          bits = arith::AndIOp::create(builder, location, left, right);
+          break;
+        case OBELISK_RT_RANDOM_BIT_OR_V1:
+          bits = arith::OrIOp::create(builder, location, left, right);
+          break;
+        case OBELISK_RT_RANDOM_BIT_XOR_V1:
+          bits = arith::XOrIOp::create(builder, location, left, right);
+          break;
+        case OBELISK_RT_RANDOM_BIT_XNOR_V1:
+          bits = arith::XOrIOp::create(builder, location, left, right);
+          bits = arith::XOrIOp::create(
+              builder, location, bits,
+              constant64(encoded.width == 64
+                             ? UINT64_MAX
+                             : (uint64_t{1} << encoded.width) - 1));
+          break;
+        default:
+          return failure();
+        }
+        stack.push_back(
+            {maskDefinitionValue(bits, encoded.width), encoded.width});
+      }
+      if (stack.size() != 1 || stack.back().width != definition.width)
+        return failure();
+      uint64_t valueMask = definition.width == 64
+                               ? UINT64_MAX
+                               : (uint64_t{1} << definition.width) - 1;
+      Value fieldBits = stack.back().bits;
+      if (definition.targetOffset != 0)
+        fieldBits = arith::ShLIOp::create(builder, location, fieldBits,
+                                          constant64(definition.targetOffset));
+      uint64_t targetMask = valueMask << definition.targetOffset;
+      assignment = arith::OrIOp::create(
+          builder, location,
+          arith::AndIOp::create(builder, location, assignment,
+                                constant64(~targetMask)),
           fieldBits);
     }
     SmallVector<std::tuple<uint32_t, unsigned, Value>> aliasSources;
@@ -1675,9 +1877,11 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     }
     return assignment;
   };
-  bool exactProposal = analysis.proposalExact && !hasSoftConstraint &&
-                       proposalDomains.size() == analysis.domains.size() &&
-                       proposalAliases.size() == analysis.aliases.size();
+  bool exactProposal =
+      analysis.proposalExact && !hasSoftConstraint &&
+      proposalDomains.size() == analysis.domains.size() &&
+      proposalAliases.size() == analysis.aliases.size() &&
+      proposalDefinitions.size() == analysis.definitions.size();
 
   Block *dispatchBlock = current;
   Block *loop = addBlock();
@@ -1714,7 +1918,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   };
 
   setCurrent(loop);
-  Value assignment = materializeProposal(counter);
+  FailureOr<Value> proposal = materializeProposal(counter);
+  if (failed(proposal))
+    return failure();
+  Value assignment = *proposal;
   FailureOr<SmallVector<Value>> candidates = materializeCandidates(assignment);
   if (failed(candidates))
     return failure();

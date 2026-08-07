@@ -337,6 +337,27 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
         (!analysis.aliases.empty() && checkWith(aliasViolation) != z3::unsat))
       analysis.aliases.clear();
 
+    // General definitions need dependency scheduling when combined with alias
+    // classes or with one another. This first definition chunk deliberately
+    // selects one independent expression only; later planning can topologically
+    // order a larger definition graph without changing the public encoding.
+    if (analysis.aliases.empty()) {
+      for (const SMTVariableDefinition &definition : smt->directDefinitions) {
+        std::optional<z3::expr> target = shim.translate(definition.target.bits);
+        std::optional<z3::expr> expression =
+            shim.translate(definition.expression);
+        if (!target || !expression ||
+            definition.expressionBegin >= definition.expressionEnd)
+          continue;
+        if (checkWith(*target != *expression) != z3::unsat)
+          continue;
+        analysis.definitions.push_back(
+            {definition.target.offset, definition.target.width,
+             definition.expressionBegin, definition.expressionEnd});
+        break;
+      }
+    }
+
     for (const SMTVariable &variable : smt->variables) {
       std::optional<z3::expr> bits = shim.translate(variable.bits);
       if (!bits)
@@ -442,6 +463,27 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
         break;
       }
       proposal = proposal && (*targetBits == *sourceBits);
+    }
+    for (const RandomVariableDefinition &definition : analysis.definitions) {
+      auto found = std::find_if(
+          smt->directDefinitions.begin(), smt->directDefinitions.end(),
+          [&](const SMTVariableDefinition &candidate) {
+            return candidate.target.offset == definition.targetOffset &&
+                   candidate.target.width == definition.width &&
+                   candidate.expressionBegin == definition.expressionBegin &&
+                   candidate.expressionEnd == definition.expressionEnd;
+          });
+      if (found == smt->directDefinitions.end()) {
+        translatedProposal = false;
+        break;
+      }
+      std::optional<z3::expr> targetBits = shim.translate(found->target.bits);
+      std::optional<z3::expr> expression = shim.translate(found->expression);
+      if (!targetBits || !expression) {
+        translatedProposal = false;
+        break;
+      }
+      proposal = proposal && (*targetBits == *expression);
     }
     if (translatedProposal && checkWith(proposal && !*hard) == z3::unsat)
       analysis.proposalExact = true;

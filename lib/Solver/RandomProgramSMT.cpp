@@ -12,9 +12,11 @@
 #include "mlir/IR/Verifier.h"
 
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/SmallPtrSet.h"
 
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <string>
 #include <utility>
@@ -47,6 +49,8 @@ struct StackValue {
   unsigned width;
   std::optional<SMTVariable> directVariable;
   std::optional<SMTVariableEquality> directEquality;
+  uint32_t instructionBegin = 0;
+  std::optional<SMTVariableDefinition> directDefinition;
 };
 
 mlir::Value constant(mlir::OpBuilder &builder, mlir::Location location,
@@ -87,14 +91,45 @@ mlir::Value truth(mlir::OpBuilder &builder, mlir::Location location,
       constant(builder, location, 0, value.width));
 }
 
-StackValue
-booleanValue(mlir::OpBuilder &builder, mlir::Location location,
-             mlir::Value predicate,
-             std::optional<SMTVariableEquality> directEquality = std::nullopt) {
+StackValue booleanValue(
+    mlir::OpBuilder &builder, mlir::Location location, mlir::Value predicate,
+    uint32_t instructionBegin,
+    std::optional<SMTVariableEquality> directEquality = std::nullopt,
+    std::optional<SMTVariableDefinition> directDefinition = std::nullopt) {
   return {mlir::smt::IteOp::create(builder, location, predicate,
                                    constant(builder, location, 1, 1),
                                    constant(builder, location, 0, 1)),
-          1, std::nullopt, std::move(directEquality)};
+          1,
+          std::nullopt,
+          std::move(directEquality),
+          instructionBegin,
+          std::move(directDefinition)};
+}
+
+bool containsVariable(mlir::Value expression, const SMTVariable &variable) {
+  auto target = mlir::dyn_cast_or_null<mlir::smt::ExtractOp>(
+      variable.bits.getDefiningOp());
+  if (!target)
+    return true;
+  llvm::SmallPtrSet<mlir::Operation *, 16> visited;
+  std::function<bool(mlir::Value)> visit = [&](mlir::Value value) {
+    mlir::Operation *operation = value.getDefiningOp();
+    if (!operation || !visited.insert(operation).second)
+      return false;
+    if (auto extract = mlir::dyn_cast<mlir::smt::ExtractOp>(operation)) {
+      unsigned width =
+          mlir::cast<mlir::smt::BitVectorType>(value.getType()).getWidth();
+      uint64_t low = extract.getLowBit();
+      uint64_t high = low + width;
+      uint64_t targetLow = target.getLowBit();
+      uint64_t targetHigh = targetLow + variable.width;
+      if (extract.getInput() == target.getInput() && low < targetHigh &&
+          targetLow < high)
+        return true;
+    }
+    return llvm::any_of(operation->getOperands(), visit);
+  };
+  return visit(expression);
 }
 
 bool isUnary(uint8_t opcode) {
@@ -181,8 +216,8 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
         return std::nullopt;
       mlir::Value bits = mlir::smt::ExtractOp::create(
           builder, location, bitVectorType(width), operand, assignment);
-      stack.push_back(
-          {bits, width, SMTVariable{operand, width, bits}, std::nullopt});
+      stack.push_back({bits, width, SMTVariable{operand, width, bits},
+                       std::nullopt, index});
       auto found = std::find_if(
           result.variables.begin(), result.variables.end(),
           [&](const SMTVariable &variable) {
@@ -198,11 +233,12 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       stack.push_back(
           {mlir::smt::ExtractOp::create(builder, location, bitVectorType(width),
                                         0, captures[operand]),
-           width});
+           width, std::nullopt, std::nullopt, index});
       continue;
     }
     if (opcode == OBELISK_RT_RANDOM_PUSH_LITERAL_V1) {
-      stack.push_back({constant(builder, location, immediate, width), width});
+      stack.push_back({constant(builder, location, immediate, width), width,
+                       std::nullopt, std::nullopt, index});
       continue;
     }
     if (opcode == OBELISK_RT_RANDOM_END_HARD_V1 ||
@@ -214,6 +250,8 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
                                         truth(builder, location, stack.back()));
         if (stack.back().directEquality)
           result.directEqualities.push_back(*stack.back().directEquality);
+        if (stack.back().directDefinition)
+          result.directDefinitions.push_back(*stack.back().directDefinition);
       }
       sawHard |= opcode == OBELISK_RT_RANDOM_END_HARD_V1;
       sawSoft |= opcode == OBELISK_RT_RANDOM_END_SOFT_V1;
@@ -234,7 +272,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
                builder, location, truth(builder, location, condition),
                resize(builder, location, trueValue, width, signedOperation),
                resize(builder, location, falseValue, width, signedOperation)),
-           width});
+           width, std::nullopt, std::nullopt, condition.instructionBegin});
       continue;
     }
     if (isUnary(opcode)) {
@@ -246,21 +284,22 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       case OBELISK_RT_RANDOM_CAST_V1:
       case OBELISK_RT_RANDOM_POS_V1:
         stack.push_back(
-            {resize(builder, location, input, width, signedOperation), width});
+            {resize(builder, location, input, width, signedOperation), width,
+             std::nullopt, std::nullopt, input.instructionBegin});
         break;
       case OBELISK_RT_RANDOM_NEG_V1:
         stack.push_back(
             {mlir::smt::BVNegOp::create(
                  builder, location,
                  resize(builder, location, input, width, signedOperation)),
-             width});
+             width, std::nullopt, std::nullopt, input.instructionBegin});
         break;
       case OBELISK_RT_RANDOM_BIT_NOT_V1:
         stack.push_back(
             {mlir::smt::BVNotOp::create(
                  builder, location,
                  resize(builder, location, input, width, signedOperation)),
-             width});
+             width, std::nullopt, std::nullopt, input.instructionBegin});
         break;
       case OBELISK_RT_RANDOM_REDUCE_AND_V1:
         stack.push_back(booleanValue(
@@ -268,11 +307,13 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
             mlir::smt::EqOp::create(
                 builder, location, input.bits,
                 mlir::smt::BVConstantOp::create(
-                    builder, location, llvm::APInt::getAllOnes(input.width)))));
+                    builder, location, llvm::APInt::getAllOnes(input.width))),
+            input.instructionBegin));
         break;
       case OBELISK_RT_RANDOM_REDUCE_OR_V1:
-        stack.push_back(
-            booleanValue(builder, location, truth(builder, location, input)));
+        stack.push_back(booleanValue(builder, location,
+                                     truth(builder, location, input),
+                                     input.instructionBegin));
         break;
       case OBELISK_RT_RANDOM_REDUCE_XOR_V1:
       case OBELISK_RT_RANDOM_REDUCE_XNOR_V1: {
@@ -288,7 +329,8 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
         }
         if (opcode == OBELISK_RT_RANDOM_REDUCE_XNOR_V1)
           parity = mlir::smt::NotOp::create(builder, location, parity);
-        stack.push_back(booleanValue(builder, location, parity));
+        stack.push_back(
+            booleanValue(builder, location, parity, input.instructionBegin));
         break;
       }
       case OBELISK_RT_RANDOM_REDUCE_NAND_V1:
@@ -297,14 +339,16 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
             mlir::smt::DistinctOp::create(
                 builder, location, input.bits,
                 mlir::smt::BVConstantOp::create(
-                    builder, location, llvm::APInt::getAllOnes(input.width)))));
+                    builder, location, llvm::APInt::getAllOnes(input.width))),
+            input.instructionBegin));
         break;
       case OBELISK_RT_RANDOM_REDUCE_NOR_V1:
       case OBELISK_RT_RANDOM_LOGICAL_NOT_V1:
         stack.push_back(booleanValue(
             builder, location,
             mlir::smt::NotOp::create(builder, location,
-                                     truth(builder, location, input))));
+                                     truth(builder, location, input)),
+            input.instructionBegin));
         break;
       default:
         return std::nullopt;
@@ -358,13 +402,26 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       }
       }
       std::optional<SMTVariableEquality> directEquality;
+      std::optional<SMTVariableDefinition> directDefinition;
       if (opcode == OBELISK_RT_RANDOM_EQ_V1 && lhs.width == rhs.width &&
           lhs.directVariable && rhs.directVariable &&
           lhs.directVariable->offset != rhs.directVariable->offset)
         directEquality =
             SMTVariableEquality{*lhs.directVariable, *rhs.directVariable};
-      stack.push_back(booleanValue(builder, location, predicate,
-                                   std::move(directEquality)));
+      if (opcode == OBELISK_RT_RANDOM_EQ_V1 && lhs.width == rhs.width &&
+          lhs.directVariable && !rhs.directVariable &&
+          !containsVariable(rhs.bits, *lhs.directVariable))
+        directDefinition = SMTVariableDefinition{*lhs.directVariable, rhs.bits,
+                                                 rhs.instructionBegin, index};
+      else if (opcode == OBELISK_RT_RANDOM_EQ_V1 && lhs.width == rhs.width &&
+               rhs.directVariable && !lhs.directVariable &&
+               !containsVariable(lhs.bits, *rhs.directVariable))
+        directDefinition =
+            SMTVariableDefinition{*rhs.directVariable, lhs.bits,
+                                  lhs.instructionBegin, rhs.instructionBegin};
+      stack.push_back(
+          booleanValue(builder, location, predicate, lhs.instructionBegin,
+                       std::move(directEquality), std::move(directDefinition)));
       continue;
     }
     if (opcode >= OBELISK_RT_RANDOM_LOGICAL_AND_V1) {
@@ -388,7 +445,8 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       default:
         return std::nullopt;
       }
-      stack.push_back(booleanValue(builder, location, predicate));
+      stack.push_back(
+          booleanValue(builder, location, predicate, lhs.instructionBegin));
       continue;
     }
     mlir::Value left = resize(builder, location, lhs, width, signedOperation);
@@ -423,7 +481,8 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
     default:
       return std::nullopt;
     }
-    stack.push_back({bits, width});
+    stack.push_back(
+        {bits, width, std::nullopt, std::nullopt, lhs.instructionBegin});
   }
 
   bool encodedSoft = (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT) != 0;

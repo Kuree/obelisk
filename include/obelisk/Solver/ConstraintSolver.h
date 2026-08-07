@@ -29,13 +29,24 @@ struct RandomVariableAlias {
   uint32_t width = 0;
 };
 
+/// A compile-time-proven assignment of one serialized random variable from a
+/// contiguous RPN expression in the analyzed runtime program. Instruction
+/// indices exclude the program header and `expressionEnd` is exclusive.
+struct RandomVariableDefinition {
+  uint32_t targetOffset = 0;
+  uint32_t width = 0;
+  uint32_t expressionBegin = 0;
+  uint32_t expressionEnd = 0;
+};
+
 struct RandomProgramAnalysis {
   Satisfiability satisfiability = Satisfiability::Unknown;
   const char *backend = "heuristic";
   std::vector<RandomVariableDomain> domains;
   std::vector<RandomVariableAlias> aliases;
-  /// True only when the domain and alias proposal (with full domains for
-  /// omitted variables) is equivalent to the hard constraint formula.
+  std::vector<RandomVariableDefinition> definitions;
+  /// True only when the domain, alias, and definition proposal (with full
+  /// domains for omitted variables) is equivalent to the hard formula.
   bool proposalExact = false;
 };
 
@@ -43,9 +54,9 @@ struct RandomProgramAnalysis {
 /// remain free bit-vector variables, so an Unsatisfiable result proves that no
 /// runtime capture values can make the hard constraints satisfiable. Reported
 /// variable domains conservatively enclose the projection of all hard
-/// solutions, including every possible runtime capture value. Aliases are
-/// equalities implied by every hard solution. The API deliberately exposes no
-/// Z3 types.
+/// solutions, including every possible runtime capture value. Aliases and
+/// definitions are equalities implied by every hard solution. The API
+/// deliberately exposes no Z3 types.
 RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
                                            size_t programSize,
                                            uint64_t resourceLimit = 100000);
