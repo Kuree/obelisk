@@ -244,6 +244,10 @@ LogicalResult makeDirectFragmentWrapper(
   if (body->hasAttr(sim::metadata::evalPathGuardedKnownPreserving))
     wrapper->setAttr(sim::metadata::evalPathGuardedKnownPreserving,
                      builder.getUnitAttr());
+  if (auto unsupportedOwner = body->getAttrOfType<StringAttr>(
+          sim::metadata::evalUnsupportedCheckpointOwner))
+    wrapper->setAttr(sim::metadata::evalUnsupportedCheckpointOwner,
+                     unsupportedOwner);
   bool mayTerminate = false;
   llvm::SmallPtrSet<Operation *, 8> visited;
   auto design = body->getParentOfType<sim::SimDesignOp>();

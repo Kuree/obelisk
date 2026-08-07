@@ -723,6 +723,23 @@ LogicalResult materializeEvalTwoStateVariants(
     for (Block *block : unreachable)
       block->erase();
 
+    // A path-guarded route is only meaningful when some activation stays in
+    // the generated closure. If every reachable exit is a checkpoint block,
+    // the probe degenerates to the constant checkpoint answer: the dispatcher
+    // would replace the whole activation with a bare checkpoint publication,
+    // dropping the NBA staging that precedes the cold leaf and the edge
+    // qualification that selected the activation. Decline the owner so it
+    // keeps its canonical four-state route.
+    bool hasGeneratedExit = false;
+    probe.walk([&](sim::SimReturnOp returnOp) {
+      if (!checkpointBlocks.contains(returnOp->getBlock()))
+        hasGeneratedExit = true;
+    });
+    if (!hasGeneratedExit) {
+      probe.erase();
+      return sim::SimFuncOp{};
+    }
+
     SmallVector<Operation *> publications;
     probe.walk([&](Operation *operation) {
       if (isa<sim::SimNBAEnqueueOp, sim::SimRefStoreOp, sim::SimDriverDriveOp,
@@ -786,10 +803,13 @@ LogicalResult materializeEvalTwoStateVariants(
       for (Value loaded : blockLoads) {
         std::optional<unsigned> width =
             detail::nativeStateWidth(loaded.getType());
+        // A load whose type has no native logic width cannot be probed for
+        // known state. That is a limit of this predicate, not an invalid
+        // design: decline the owner so it keeps its canonical four-state
+        // route instead of failing an otherwise legal compilation.
         if (!width || !detail::containsLogic(loaded.getType())) {
-          probe.emitError("path-known probe has an unsupported state load");
           probe.erase();
-          return failure();
+          return sim::SimFuncOp{};
         }
         Operation *load = loaded.getDefiningOp();
         builder.setInsertionPointAfter(load);
@@ -927,10 +947,16 @@ LogicalResult materializeEvalTwoStateVariants(
       if (!*probe) {
         // An empty owner-level range is sound only when a path predicate
         // guards every activation.  If that predicate needs an unsupported
-        // dry-run overlay, retain the canonical four-state route instead of
-        // advertising a vacuously promotable two-state variant.
+        // dry-run overlay, or if it proves that no activation stays in the
+        // generated closure, retain the canonical four-state route instead of
+        // advertising a vacuously promotable two-state variant.  That route
+        // keeps the runtime leaf inline, so the owner can no longer belong to
+        // a generated eval closure; record it for the scheduler decision.
         unsupportedVariantSources.insert(source.getSymName());
         source->removeAttr(sim::metadata::evalTwoStateVariant);
+        source->removeAttr("obelisk.eval.inherited_two_state_checkpoint");
+        source->setAttr(sim::metadata::evalUnsupportedCheckpointOwner,
+                        builder.getStringAttr(source.getSymName()));
         variant.erase();
         variantDeclaration.erase();
         continue;
@@ -2353,6 +2379,36 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       direct.fragmentIDs.erase(
           std::unique(direct.fragmentIDs.begin(), direct.fragmentIDs.end()),
           direct.fragmentIDs.end());
+    }
+  }
+
+  // An owner that reaches a runtime leaf on every activation has no generated
+  // path to guard.  Its canonical four-state body keeps the runtime call
+  // inline, so admitting it to the generated closure would either trip the
+  // closure verifier or, worse, reduce the activation to a bare checkpoint
+  // publication that drops the body's NBA staging.  Decline the generated
+  // scheduler instead; the owner is genuinely runtime-owned.
+  if (evalScheduler) {
+    std::string unsupportedCheckpointOwner;
+    for (const NativeDirectFragment &direct : *directFragments) {
+      auto wrapper = module.lookupSymbol<LLVM::LLVMFuncOp>(direct.wrapper);
+      if (!wrapper)
+        continue;
+      auto owner = wrapper->getAttrOfType<StringAttr>(
+          sim::metadata::evalUnsupportedCheckpointOwner);
+      if (!owner)
+        continue;
+      unsupportedCheckpointOwner =
+          "an eval owner reaches a runtime leaf on every activation in " +
+          owner.getValue().str();
+      break;
+    }
+    if (!unsupportedCheckpointOwner.empty()) {
+      if (nativeScheduler != sim::NativeSchedulerMode::Auto)
+        return module.emitError(unsupportedCheckpointOwner), failure();
+      module.emitRemark("generated eval disabled: ")
+          << unsupportedCheckpointOwner;
+      evalScheduler = false;
     }
   }
 

@@ -82,6 +82,11 @@ inline constexpr llvm::StringLiteral evalPathGuardedTwoState =
 /// only needs to retain the checkpoint-path probe.
 inline constexpr llvm::StringLiteral evalPathGuardedKnownPreserving =
     "obelisk.eval.path_guarded_known_preserving";
+/// An owner that reaches a runtime leaf on every activation, so no path
+/// predicate can keep it inside the generated closure. Its canonical
+/// four-state body calls the runtime inline and must stay runtime-owned.
+inline constexpr llvm::StringLiteral evalUnsupportedCheckpointOwner =
+    "obelisk.eval.unsupported_checkpoint_owner";
 inline constexpr llvm::StringLiteral evalCallClosureRoot =
     "obelisk.eval.call_closure_root";
 inline constexpr llvm::StringLiteral evalTrustedTwoStateCoordinator =

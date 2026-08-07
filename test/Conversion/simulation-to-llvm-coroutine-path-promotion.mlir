@@ -6,6 +6,11 @@
 // part of the generated call closure. Until that leaf has an explicit Tier-3
 // return route, forced eval rejects the model instead of hiding a runtime call
 // behind the cold side of an indirect dispatcher.
+//
+// `guarded_blocking` publishes with a blocking store on its fast path, which
+// the path predicate cannot model, so the owner is declined and keeps the
+// canonical four-state body that calls the runtime inline. That is diagnosed
+// at the scheduler decision, before the owner can enter a generated closure.
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
@@ -148,5 +153,5 @@ module attributes {
   }
 }
 
-// ERROR: generated eval hot closure calls runtime symbol obelisk_rt_v1_display
-// ERROR-SAME: in guarded_blocking.__obelisk_eval_body_0
+// ERROR: an eval owner reaches a runtime leaf on every activation
+// ERROR-SAME: in guarded_blocking
