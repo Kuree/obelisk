@@ -1,15 +1,21 @@
+//===- SolverZ3.cpp - Execute MLIR SMT formulas with Z3 -------*- C++ -*-===//
+
 #include "obelisk/Solver/ConstraintSolver.h"
 
 #ifdef OBELISK_ENABLE_Z3
 
-#include "obelisk/Runtime/Runtime.h"
+#include "RandomProgramSMT.h"
+
+#include "mlir/Dialect/SMT/IR/SMTOps.h"
+
+#include "llvm/ADT/DenseMap.h"
 
 #include "z3++.h"
 
 #include <algorithm>
 #include <climits>
 #include <cstdint>
-#include <limits>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -17,83 +23,217 @@
 namespace obelisk::solver {
 namespace {
 
-uint16_t read16(const uint8_t *bytes) {
-  return static_cast<uint16_t>(bytes[0]) |
-         (static_cast<uint16_t>(bytes[1]) << 8);
-}
+/// The MLIR SMT dialect intentionally does not select or link a solver. This
+/// shim is the single backend boundary that evaluates its bit-vector DAG with
+/// the pinned in-process Z3 API.
+class Z3SMTShim {
+public:
+  explicit Z3SMTShim(z3::context &context) : context(context) {}
 
-uint32_t read32(const uint8_t *bytes) {
-  return static_cast<uint32_t>(bytes[0]) |
-         (static_cast<uint32_t>(bytes[1]) << 8) |
-         (static_cast<uint32_t>(bytes[2]) << 16) |
-         (static_cast<uint32_t>(bytes[3]) << 24);
-}
+  std::optional<z3::expr> translate(mlir::Value value) {
+    auto cached = expressions.find(value);
+    if (cached != expressions.end())
+      return values[cached->second];
+    mlir::Operation *operation = value.getDefiningOp();
+    if (!operation)
+      return std::nullopt;
 
-uint64_t read64(const uint8_t *bytes) {
-  uint64_t value = 0;
-  for (unsigned index = 0; index != 8; ++index)
-    value |= static_cast<uint64_t>(bytes[index]) << (index * 8);
-  return value;
-}
+    std::optional<z3::expr> result;
+    if (auto op = mlir::dyn_cast<mlir::smt::DeclareFunOp>(operation)) {
+      std::string name = op.getNamePrefix().value_or("value").str() + "_" +
+                         std::to_string(declarationIndex++);
+      if (mlir::isa<mlir::smt::BoolType>(value.getType()))
+        result = context.bool_const(name.c_str());
+      else if (auto type =
+                   mlir::dyn_cast<mlir::smt::BitVectorType>(value.getType()))
+        result = context.bv_const(name.c_str(), type.getWidth());
+    } else if (auto op = mlir::dyn_cast<mlir::smt::BoolConstantOp>(operation)) {
+      result = context.bool_val(op.getValue());
+    } else if (auto op = mlir::dyn_cast<mlir::smt::BVConstantOp>(operation)) {
+      llvm::APInt bits = op.getValue().getValue();
+      result = context.bv_val(bits.getZExtValue(), bits.getBitWidth());
+    } else if (auto op = mlir::dyn_cast<mlir::smt::ExtractOp>(operation)) {
+      if (auto input = translate(op.getInput())) {
+        unsigned width =
+            mlir::cast<mlir::smt::BitVectorType>(value.getType()).getWidth();
+        result = input->extract(op.getLowBit() + width - 1, op.getLowBit());
+      }
+    } else if (auto op = mlir::dyn_cast<mlir::smt::RepeatOp>(operation)) {
+      if (auto input = translate(op.getInput()))
+        result = input->repeat(op.getCount());
+    } else if (auto op = mlir::dyn_cast<mlir::smt::ConcatOp>(operation)) {
+      result = translateBinary(
+          op.getLhs(), op.getRhs(),
+          [](z3::expr lhs, z3::expr rhs) { return z3::concat(lhs, rhs); });
+    } else if (auto op = mlir::dyn_cast<mlir::smt::BVNegOp>(operation)) {
+      if (auto input = translate(op.getInput()))
+        result = -*input;
+    } else if (auto op = mlir::dyn_cast<mlir::smt::BVNotOp>(operation)) {
+      if (auto input = translate(op.getInput()))
+        result = ~*input;
+    } else if (auto op = mlir::dyn_cast<mlir::smt::BVAddOp>(operation)) {
+      result =
+          translateBinary(op.getLhs(), op.getRhs(),
+                          [](z3::expr lhs, z3::expr rhs) { return lhs + rhs; });
+    } else if (auto op = mlir::dyn_cast<mlir::smt::BVMulOp>(operation)) {
+      result =
+          translateBinary(op.getLhs(), op.getRhs(),
+                          [](z3::expr lhs, z3::expr rhs) { return lhs * rhs; });
+    } else if (auto op = mlir::dyn_cast<mlir::smt::BVAndOp>(operation)) {
+      result =
+          translateBinary(op.getLhs(), op.getRhs(),
+                          [](z3::expr lhs, z3::expr rhs) { return lhs & rhs; });
+    } else if (auto op = mlir::dyn_cast<mlir::smt::BVOrOp>(operation)) {
+      result =
+          translateBinary(op.getLhs(), op.getRhs(),
+                          [](z3::expr lhs, z3::expr rhs) { return lhs | rhs; });
+    } else if (auto op = mlir::dyn_cast<mlir::smt::BVXOrOp>(operation)) {
+      result =
+          translateBinary(op.getLhs(), op.getRhs(),
+                          [](z3::expr lhs, z3::expr rhs) { return lhs ^ rhs; });
+    } else if (auto op = mlir::dyn_cast<mlir::smt::EqOp>(operation)) {
+      result = translateComparison(op.getInputs(), true);
+    } else if (auto op = mlir::dyn_cast<mlir::smt::DistinctOp>(operation)) {
+      result = translateComparison(op.getInputs(), false);
+    } else if (auto op = mlir::dyn_cast<mlir::smt::IteOp>(operation)) {
+      auto condition = translate(op.getCond());
+      auto thenValue = translate(op.getThenValue());
+      auto elseValue = translate(op.getElseValue());
+      if (condition && thenValue && elseValue)
+        result = z3::ite(*condition, *thenValue, *elseValue);
+    } else if (auto op = mlir::dyn_cast<mlir::smt::NotOp>(operation)) {
+      if (auto input = translate(op.getInput()))
+        result = !*input;
+    } else if (auto op = mlir::dyn_cast<mlir::smt::AndOp>(operation)) {
+      result = translateBooleanRange(op.getInputs(), true);
+    } else if (auto op = mlir::dyn_cast<mlir::smt::OrOp>(operation)) {
+      result = translateBooleanRange(op.getInputs(), false);
+    } else if (auto op = mlir::dyn_cast<mlir::smt::XOrOp>(operation)) {
+      result = translateBooleanXor(op.getInputs());
+    } else if (auto op = mlir::dyn_cast<mlir::smt::ImpliesOp>(operation)) {
+      result = translateBinary(
+          op.getLhs(), op.getRhs(),
+          [](z3::expr lhs, z3::expr rhs) { return z3::implies(lhs, rhs); });
+    } else if (auto op = mlir::dyn_cast<mlir::smt::BVCmpOp>(operation)) {
+      auto lhs = translate(op.getLhs());
+      auto rhs = translate(op.getRhs());
+      if (lhs && rhs) {
+        switch (op.getPred()) {
+        case mlir::smt::BVCmpPredicate::slt:
+          result = z3::slt(*lhs, *rhs);
+          break;
+        case mlir::smt::BVCmpPredicate::sle:
+          result = z3::sle(*lhs, *rhs);
+          break;
+        case mlir::smt::BVCmpPredicate::sgt:
+          result = z3::sgt(*lhs, *rhs);
+          break;
+        case mlir::smt::BVCmpPredicate::sge:
+          result = z3::sge(*lhs, *rhs);
+          break;
+        case mlir::smt::BVCmpPredicate::ult:
+          result = z3::ult(*lhs, *rhs);
+          break;
+        case mlir::smt::BVCmpPredicate::ule:
+          result = z3::ule(*lhs, *rhs);
+          break;
+        case mlir::smt::BVCmpPredicate::ugt:
+          result = z3::ugt(*lhs, *rhs);
+          break;
+        case mlir::smt::BVCmpPredicate::uge:
+          result = z3::uge(*lhs, *rhs);
+          break;
+        }
+      }
+    }
+    if (!result)
+      return std::nullopt;
+    expressions[value] = values.size();
+    values.push_back(*result);
+    return result;
+  }
 
-struct StackValue {
-  StackValue(z3::expr bits, unsigned width)
-      : bits(std::move(bits)), width(width) {}
-  z3::expr bits;
-  unsigned width;
+private:
+  template <typename Fn>
+  std::optional<z3::expr> translateBinary(mlir::Value lhs, mlir::Value rhs,
+                                          Fn &&combine) {
+    auto left = translate(lhs);
+    auto right = translate(rhs);
+    if (!left || !right)
+      return std::nullopt;
+    return combine(*left, *right);
+  }
+
+  std::optional<z3::expr> translateComparison(mlir::ValueRange inputs,
+                                              bool equal) {
+    if (inputs.size() < 2)
+      return std::nullopt;
+    z3::expr result = context.bool_val(true);
+    if (equal) {
+      auto previous = translate(inputs.front());
+      if (!previous)
+        return std::nullopt;
+      for (mlir::Value input : inputs.drop_front()) {
+        auto current = translate(input);
+        if (!current)
+          return std::nullopt;
+        result = result && (*previous == *current);
+        previous = std::move(current);
+      }
+      return result;
+    }
+    for (size_t left = 0; left != inputs.size(); ++left)
+      for (size_t right = left + 1; right != inputs.size(); ++right) {
+        auto lhs = translate(inputs[left]);
+        auto rhs = translate(inputs[right]);
+        if (!lhs || !rhs)
+          return std::nullopt;
+        result = result && (*lhs != *rhs);
+      }
+    return result;
+  }
+
+  std::optional<z3::expr> translateBooleanRange(mlir::ValueRange inputs,
+                                                bool conjunction) {
+    z3::expr result = context.bool_val(conjunction);
+    for (mlir::Value input : inputs) {
+      auto current = translate(input);
+      if (!current)
+        return std::nullopt;
+      result = conjunction ? result && *current : result || *current;
+    }
+    return result;
+  }
+
+  std::optional<z3::expr> translateBooleanXor(mlir::ValueRange inputs) {
+    if (inputs.size() < 2)
+      return std::nullopt;
+    z3::expr result = context.bool_val(false);
+    for (mlir::Value input : inputs) {
+      auto current = translate(input);
+      if (!current)
+        return std::nullopt;
+      result = result != *current;
+    }
+    return result;
+  }
+
+  z3::context &context;
+  llvm::DenseMap<mlir::Value, size_t> expressions;
+  std::vector<z3::expr> values;
+  unsigned declarationIndex = 0;
 };
-
-z3::expr resize(StackValue value, unsigned width, bool signExtend) {
-  if (value.width == width)
-    return value.bits;
-  if (value.width > width)
-    return value.bits.extract(width - 1, 0);
-  return signExtend ? z3::sext(value.bits, width - value.width)
-                    : z3::zext(value.bits, width - value.width);
-}
-
-z3::expr truth(const StackValue &value) {
-  return value.bits != value.bits.ctx().bv_val(0, value.width);
-}
-
-StackValue booleanValue(z3::expr predicate) {
-  z3::context &context = predicate.ctx();
-  return {z3::ite(predicate, context.bv_val(1, 1), context.bv_val(0, 1)), 1};
-}
-
-bool isUnary(uint8_t opcode) {
-  return opcode >= OBELISK_RT_RANDOM_CAST_V1 &&
-         opcode <= OBELISK_RT_RANDOM_LOGICAL_NOT_V1;
-}
-
-bool isBinary(uint8_t opcode) {
-  return opcode >= OBELISK_RT_RANDOM_ADD_V1 &&
-         opcode <= OBELISK_RT_RANDOM_LOGICAL_EQUIV_V1;
-}
 
 } // namespace
 
 RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
                                            size_t programSize,
                                            uint64_t resourceLimit) {
-  RandomProgramAnalysis analysis{Satisfiability::Unknown, "z3-4.13.4"};
-  if (!program || programSize < OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE ||
-      read32(program) != OBELISK_RT_RANDOM_PROGRAM_MAGIC ||
-      read16(program + 4) != OBELISK_RT_RANDOM_PROGRAM_VERSION ||
-      read16(program + 6) != OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE)
-    return analysis;
-  uint32_t aggregateWidth = read32(program + 8);
-  uint32_t instructionCount = read32(program + 12);
-  uint32_t captureCount = read32(program + 16);
-  uint32_t programFlags = read32(program + 20);
-  if (aggregateWidth > 64 ||
-      (programFlags & ~OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT) != 0 ||
-      instructionCount > (std::numeric_limits<size_t>::max() -
-                          OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE) /
-                             OBELISK_RT_RANDOM_INSTRUCTION_SIZE ||
-      programSize != OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE +
-                         static_cast<size_t>(instructionCount) *
-                             OBELISK_RT_RANDOM_INSTRUCTION_SIZE)
+  RandomProgramAnalysis analysis;
+  analysis.backend = "z3-4.13.4";
+  std::optional<RandomProgramSMT> smt =
+      buildRandomProgramSMT(program, programSize);
+  if (!smt)
     return analysis;
 
   // Z3 uses exceptions internally even though the rest of Obelisk follows
@@ -101,220 +241,9 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
   // translation unit and converted into conservative Unknown results.
   try {
     z3::context context;
-    z3::expr assignment = context.bv_const(
-        "assignment", aggregateWidth == 0 ? 1 : aggregateWidth);
-    std::vector<z3::expr> captures;
-    captures.reserve(captureCount);
-    for (uint32_t index = 0; index != captureCount; ++index)
-      captures.push_back(
-          context.bv_const(("capture_" + std::to_string(index)).c_str(), 64));
-    std::vector<StackValue> stack;
-    stack.reserve(instructionCount);
-    z3::expr hard = context.bool_val(true);
-    bool sawHard = false;
-    bool sawSoft = false;
-    const uint8_t *cursor = program + OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE;
-    for (uint32_t index = 0; index != instructionCount; ++index) {
-      uint8_t opcode = cursor[0];
-      unsigned width = cursor[1];
-      uint8_t flags = cursor[2];
-      uint8_t reserved = cursor[3];
-      uint32_t operand = read32(cursor + 4);
-      uint64_t immediate = read64(cursor + 8);
-      cursor += OBELISK_RT_RANDOM_INSTRUCTION_SIZE;
-      if (width == 0 || width > 64 || reserved != 0 ||
-          (flags & ~OBELISK_RT_RANDOM_INSTRUCTION_SIGNED) != 0)
-        return analysis;
-      bool signedOperation =
-          (flags & OBELISK_RT_RANDOM_INSTRUCTION_SIGNED) != 0;
-      if (opcode == OBELISK_RT_RANDOM_PUSH_VARIABLE_V1) {
-        if (aggregateWidth == 0 || operand >= aggregateWidth ||
-            width > aggregateWidth - operand)
-          return analysis;
-        stack.emplace_back(assignment.extract(operand + width - 1, operand),
-                           width);
-        continue;
-      }
-      if (opcode == OBELISK_RT_RANDOM_PUSH_CAPTURE_V1) {
-        if (operand >= captures.size())
-          return analysis;
-        stack.emplace_back(captures[operand].extract(width - 1, 0), width);
-        continue;
-      }
-      if (opcode == OBELISK_RT_RANDOM_PUSH_LITERAL_V1) {
-        stack.emplace_back(context.bv_val(immediate, width), width);
-        continue;
-      }
-      if (opcode == OBELISK_RT_RANDOM_END_HARD_V1 ||
-          opcode == OBELISK_RT_RANDOM_END_SOFT_V1) {
-        if (width != 1 || stack.size() != 1)
-          return analysis;
-        if (opcode == OBELISK_RT_RANDOM_END_HARD_V1)
-          hard = hard && truth(stack.back());
-        sawHard |= opcode == OBELISK_RT_RANDOM_END_HARD_V1;
-        sawSoft |= opcode == OBELISK_RT_RANDOM_END_SOFT_V1;
-        stack.clear();
-        continue;
-      }
-      if (opcode == OBELISK_RT_RANDOM_SELECT_V1) {
-        if (stack.size() < 3)
-          return analysis;
-        StackValue falseValue = std::move(stack.back());
-        stack.pop_back();
-        StackValue trueValue = std::move(stack.back());
-        stack.pop_back();
-        StackValue condition = std::move(stack.back());
-        stack.pop_back();
-        stack.emplace_back(
-            z3::ite(truth(condition),
-                    resize(std::move(trueValue), width, signedOperation),
-                    resize(std::move(falseValue), width, signedOperation)),
-            width);
-        continue;
-      }
-      if (isUnary(opcode)) {
-        if (stack.empty())
-          return analysis;
-        StackValue input = std::move(stack.back());
-        stack.pop_back();
-        switch (opcode) {
-        case OBELISK_RT_RANDOM_CAST_V1:
-        case OBELISK_RT_RANDOM_POS_V1:
-          stack.emplace_back(resize(std::move(input), width, signedOperation),
-                             width);
-          break;
-        case OBELISK_RT_RANDOM_NEG_V1:
-          stack.emplace_back(-resize(std::move(input), width, signedOperation),
-                             width);
-          break;
-        case OBELISK_RT_RANDOM_BIT_NOT_V1:
-          stack.emplace_back(~resize(std::move(input), width, signedOperation),
-                             width);
-          break;
-        case OBELISK_RT_RANDOM_REDUCE_AND_V1:
-          stack.push_back(booleanValue(
-              input.bits == context.bv_val(UINT64_MAX, input.width)));
-          break;
-        case OBELISK_RT_RANDOM_REDUCE_OR_V1:
-          stack.push_back(booleanValue(truth(input)));
-          break;
-        case OBELISK_RT_RANDOM_REDUCE_XOR_V1:
-        case OBELISK_RT_RANDOM_REDUCE_XNOR_V1: {
-          z3::expr parity = context.bool_val(false);
-          for (unsigned bit = 0; bit != input.width; ++bit)
-            parity = parity !=
-                     (input.bits.extract(bit, bit) == context.bv_val(1, 1));
-          if (opcode == OBELISK_RT_RANDOM_REDUCE_XNOR_V1)
-            parity = !parity;
-          stack.push_back(booleanValue(parity));
-          break;
-        }
-        case OBELISK_RT_RANDOM_REDUCE_NAND_V1:
-          stack.push_back(booleanValue(
-              input.bits != context.bv_val(UINT64_MAX, input.width)));
-          break;
-        case OBELISK_RT_RANDOM_REDUCE_NOR_V1:
-        case OBELISK_RT_RANDOM_LOGICAL_NOT_V1:
-          stack.push_back(booleanValue(!truth(input)));
-          break;
-        default:
-          return analysis;
-        }
-        continue;
-      }
-      if (!isBinary(opcode) || stack.size() < 2)
-        return analysis;
-      StackValue rhs = std::move(stack.back());
-      stack.pop_back();
-      StackValue lhs = std::move(stack.back());
-      stack.pop_back();
-      if (opcode >= OBELISK_RT_RANDOM_EQ_V1 &&
-          opcode <= OBELISK_RT_RANDOM_LT_V1) {
-        unsigned compareWidth = std::max(lhs.width, rhs.width);
-        z3::expr left = resize(std::move(lhs), compareWidth, signedOperation);
-        z3::expr right = resize(std::move(rhs), compareWidth, signedOperation);
-        z3::expr predicate = context.bool_val(false);
-        switch (opcode) {
-        case OBELISK_RT_RANDOM_EQ_V1:
-          predicate = left == right;
-          break;
-        case OBELISK_RT_RANDOM_NE_V1:
-          predicate = left != right;
-          break;
-        case OBELISK_RT_RANDOM_GE_V1:
-          predicate =
-              signedOperation ? z3::sge(left, right) : z3::uge(left, right);
-          break;
-        case OBELISK_RT_RANDOM_GT_V1:
-          predicate =
-              signedOperation ? z3::sgt(left, right) : z3::ugt(left, right);
-          break;
-        case OBELISK_RT_RANDOM_LE_V1:
-          predicate =
-              signedOperation ? z3::sle(left, right) : z3::ule(left, right);
-          break;
-        case OBELISK_RT_RANDOM_LT_V1:
-          predicate =
-              signedOperation ? z3::slt(left, right) : z3::ult(left, right);
-          break;
-        default:
-          break;
-        }
-        stack.push_back(booleanValue(predicate));
-        continue;
-      }
-      if (opcode >= OBELISK_RT_RANDOM_LOGICAL_AND_V1) {
-        z3::expr left = truth(lhs), right = truth(rhs);
-        z3::expr predicate = context.bool_val(false);
-        switch (opcode) {
-        case OBELISK_RT_RANDOM_LOGICAL_AND_V1:
-          predicate = left && right;
-          break;
-        case OBELISK_RT_RANDOM_LOGICAL_OR_V1:
-          predicate = left || right;
-          break;
-        case OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1:
-          predicate = z3::implies(left, right);
-          break;
-        case OBELISK_RT_RANDOM_LOGICAL_EQUIV_V1:
-          predicate = left == right;
-          break;
-        default:
-          return analysis;
-        }
-        stack.push_back(booleanValue(predicate));
-        continue;
-      }
-      z3::expr left = resize(std::move(lhs), width, signedOperation);
-      z3::expr right = resize(std::move(rhs), width, signedOperation);
-      switch (opcode) {
-      case OBELISK_RT_RANDOM_ADD_V1:
-        stack.emplace_back(left + right, width);
-        break;
-      case OBELISK_RT_RANDOM_SUB_V1:
-        stack.emplace_back(left - right, width);
-        break;
-      case OBELISK_RT_RANDOM_MUL_V1:
-        stack.emplace_back(left * right, width);
-        break;
-      case OBELISK_RT_RANDOM_BIT_AND_V1:
-        stack.emplace_back(left & right, width);
-        break;
-      case OBELISK_RT_RANDOM_BIT_OR_V1:
-        stack.emplace_back(left | right, width);
-        break;
-      case OBELISK_RT_RANDOM_BIT_XOR_V1:
-        stack.emplace_back(left ^ right, width);
-        break;
-      case OBELISK_RT_RANDOM_BIT_XNOR_V1:
-        stack.emplace_back(~(left ^ right), width);
-        break;
-      default:
-        return analysis;
-      }
-    }
-    bool encodedSoft = (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT) != 0;
-    if (!stack.empty() || !sawHard || sawSoft != encodedSoft)
+    Z3SMTShim shim(context);
+    std::optional<z3::expr> hard = shim.translate(smt->hard);
+    if (!hard)
       return analysis;
     z3::solver solver(context);
     z3::params parameters(context);
@@ -322,8 +251,9 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
     parameters.set("rlimit", static_cast<unsigned>(
                                  std::min<uint64_t>(resourceLimit, UINT_MAX)));
     solver.set(parameters);
-    solver.add(hard);
-    switch (solver.check()) {
+    solver.add(*hard);
+    z3::check_result result = solver.check();
+    switch (result) {
     case z3::sat:
       analysis.satisfiability = Satisfiability::Satisfiable;
       break;
@@ -333,6 +263,104 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
     case z3::unknown:
       break;
     }
+    if (result != z3::sat)
+      return analysis;
+
+    // Bound each serialized variable independently. Captures remain free in
+    // every query, so these are conservative bounds on the projection of all
+    // solutions for all possible runtime capture values. An unknown query
+    // abandons only that variable's optional narrowing plan.
+    z3::model witness = solver.get_model();
+    auto checkWith = [&](const z3::expr &predicate) {
+      solver.push();
+      solver.add(predicate);
+      z3::check_result queryResult = solver.check();
+      solver.pop();
+      return queryResult;
+    };
+    for (const SMTVariable &variable : smt->variables) {
+      std::optional<z3::expr> bits = shim.translate(variable.bits);
+      if (!bits)
+        continue;
+      uint64_t modelValue = 0;
+      z3::expr evaluated = witness.eval(*bits, true);
+      if (!evaluated.is_numeral_u64(modelValue))
+        continue;
+
+      uint64_t lower = 0;
+      uint64_t upper = modelValue;
+      bool complete = true;
+      while (lower < upper) {
+        uint64_t midpoint = lower + ((upper - lower) >> 1);
+        z3::check_result query =
+            checkWith(z3::ule(*bits, context.bv_val(midpoint, variable.width)));
+        if (query == z3::sat)
+          upper = midpoint;
+        else if (query == z3::unsat)
+          lower = midpoint + 1;
+        else {
+          complete = false;
+          break;
+        }
+      }
+      if (!complete)
+        continue;
+      uint64_t minimum = lower;
+
+      lower = modelValue;
+      upper = variable.width == 64 ? UINT64_MAX
+                                   : (uint64_t{1} << variable.width) - 1;
+      while (lower < upper) {
+        uint64_t distance = upper - lower;
+        uint64_t midpoint = lower + (distance >> 1) + (distance & 1);
+        z3::check_result query =
+            checkWith(z3::uge(*bits, context.bv_val(midpoint, variable.width)));
+        if (query == z3::sat)
+          lower = midpoint;
+        else if (query == z3::unsat)
+          upper = midpoint - 1;
+        else {
+          complete = false;
+          break;
+        }
+      }
+      if (!complete)
+        continue;
+      uint64_t maximum = lower;
+      uint64_t fullMaximum = variable.width == 64
+                                 ? UINT64_MAX
+                                 : (uint64_t{1} << variable.width) - 1;
+      if (minimum != 0 || maximum != fullMaximum)
+        analysis.domains.push_back(
+            {variable.offset, variable.width, minimum, maximum});
+    }
+
+    // The bounds above already prove hard => proposal. Prove the reverse
+    // implication as one final query; exact proposals can bypass both the
+    // generated checker and the runtime fallback.
+    z3::expr proposal = context.bool_val(true);
+    bool translatedDomains = true;
+    for (const RandomVariableDomain &domain : analysis.domains) {
+      auto found = std::find_if(smt->variables.begin(), smt->variables.end(),
+                                [&](const SMTVariable &variable) {
+                                  return variable.offset == domain.offset &&
+                                         variable.width == domain.width;
+                                });
+      if (found == smt->variables.end()) {
+        translatedDomains = false;
+        break;
+      }
+      std::optional<z3::expr> bits = shim.translate(found->bits);
+      if (!bits) {
+        translatedDomains = false;
+        break;
+      }
+      proposal = proposal &&
+                 z3::uge(*bits, context.bv_val(domain.lower, domain.width)) &&
+                 z3::ule(*bits, context.bv_val(domain.upper, domain.width));
+    }
+    if (translatedDomains && checkWith(proposal && !*hard) == z3::unsat)
+      analysis.proposalExact = true;
   } catch (...) {
   }
   return analysis;

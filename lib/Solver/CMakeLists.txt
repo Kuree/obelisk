@@ -1,3 +1,10 @@
+set(OBELISK_SOLVER_SOURCES
+  RandomProgramSMT.cpp
+  SolverHeuristic.cpp
+  SolverZ3.cpp
+)
+set(OBELISK_SOLVER_LIBS MLIRSupport)
+
 if(OBELISK_ENABLE_Z3)
   # add_mlir_library compiles through an internal object target. Define the
   # backend before creating it so both implementation translation units select
@@ -6,14 +13,14 @@ if(OBELISK_ENABLE_Z3)
   # Z3's public C++ header predates LLVM's suggest-override policy.
   set_source_files_properties(SolverZ3.cpp PROPERTIES
     COMPILE_OPTIONS "-fexceptions;-Wno-suggest-override")
+  list(APPEND OBELISK_SOLVER_LIBS MLIRIR MLIRSMT)
 endif()
 
 add_mlir_library(ObeliskSolver
-  SolverHeuristic.cpp
-  SolverZ3.cpp
+  ${OBELISK_SOLVER_SOURCES}
 
   LINK_LIBS PUBLIC
-  MLIRSupport
+  ${OBELISK_SOLVER_LIBS}
 )
 
 target_include_directories(ObeliskSolver PRIVATE

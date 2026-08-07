@@ -1480,6 +1480,142 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     return failure();
   };
 
+  // Encode and analyze the fallback program before synthesizing the tier-0
+  // CFG. Candidate-independent captures are materialized once in the dispatch
+  // block and shared with the runtime fallback. Keeping the analysis here also
+  // lets the generated proposal consume conservative compiler-side domains.
+  Value programSavedThis = thisObject;
+  SmallVector<Value> programSavedCandidates =
+      std::move(randomizeCandidateValues);
+  llvm::scope_exit restoreProgramBindings([&] {
+    thisObject = programSavedThis;
+    randomizeCandidateValues = std::move(programSavedCandidates);
+  });
+  thisObject = receiver;
+  bool emittedHard = false;
+  bool emittedSoft = false;
+  for (auto [index, root] : llvm::enumerate(children)) {
+    if (index == receiverIndex)
+      continue;
+    SmallVector<Operation *> items = isa<semantic::SVConstraintListOp>(root)
+                                         ? getChildren(root)
+                                         : SmallVector<Operation *>{root};
+    for (Operation *item : items) {
+      bool soft = false;
+      if (auto expression = dyn_cast<semantic::SVExpressionConstraintOp>(item))
+        soft = expression.getIsSoft();
+      if (failed(emitProgramConstraint(item)))
+        return failure();
+      instruction(soft ? OBELISK_RT_RANDOM_END_SOFT_V1
+                       : OBELISK_RT_RANDOM_END_HARD_V1,
+                  1);
+      emittedSoft |= soft;
+      emittedHard |= !soft;
+    }
+  }
+  if (!emittedHard) {
+    emitLiteral(true);
+    instruction(OBELISK_RT_RANDOM_END_HARD_V1, 1);
+  }
+  thisObject = programSavedThis;
+  randomizeCandidateValues = std::move(programSavedCandidates);
+  restoreProgramBindings.release();
+
+  SmallVector<uint8_t> program;
+  auto append16 = [&](uint16_t value) {
+    program.push_back(static_cast<uint8_t>(value));
+    program.push_back(static_cast<uint8_t>(value >> 8));
+  };
+  auto append32 = [&](uint32_t value) {
+    for (unsigned index = 0; index != 4; ++index)
+      program.push_back(static_cast<uint8_t>(value >> (index * 8)));
+  };
+  auto append64 = [&](uint64_t value) {
+    for (unsigned index = 0; index != 8; ++index)
+      program.push_back(static_cast<uint8_t>(value >> (index * 8)));
+  };
+  append32(OBELISK_RT_RANDOM_PROGRAM_MAGIC);
+  append16(OBELISK_RT_RANDOM_PROGRAM_VERSION);
+  append16(OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE);
+  append32(static_cast<uint32_t>(totalWidth));
+  append32(static_cast<uint32_t>(programInstructions.size()));
+  append32(static_cast<uint32_t>(programCaptures.size()));
+  append32(emittedSoft ? OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT : 0);
+  for (const EncodedInstruction &encoded : programInstructions) {
+    program.push_back(encoded.opcode);
+    program.push_back(encoded.width);
+    program.push_back(encoded.flags);
+    program.push_back(0);
+    append32(encoded.operand);
+    append64(encoded.immediate);
+  }
+  uint64_t fallbackAttempts =
+      totalWidth <= 20 ? (uint64_t{1} << totalWidth) : (uint64_t{1} << 20);
+  solver::RandomProgramAnalysis analysis =
+      solver::analyzeRandomProgram(program.data(), program.size());
+
+  struct ProposalDomain {
+    uint32_t offset;
+    unsigned width;
+    uint64_t lower;
+    uint64_t cardinality;
+  };
+  SmallVector<ProposalDomain> proposalDomains;
+  uint32_t propertyOffset = 0;
+  for (const Property &property : planned) {
+    auto found = llvm::find_if(analysis.domains,
+                               [&](const solver::RandomVariableDomain &domain) {
+                                 return domain.offset == propertyOffset &&
+                                        domain.width == property.width;
+                               });
+    if (found != analysis.domains.end() && found->lower <= found->upper) {
+      uint64_t fullMaximum = property.width == 64
+                                 ? UINT64_MAX
+                                 : (uint64_t{1} << property.width) - 1;
+      uint64_t distance = found->upper - found->lower;
+      uint64_t cardinality = distance + 1;
+      // A power-of-two interval can be drawn without modulo bias by retaining
+      // the corresponding low bits of the field's random proposal. Other
+      // sound intervals remain available to later sampler-plan work while the
+      // checker and runtime fallback preserve completeness today.
+      if (found->upper <= fullMaximum && cardinality != 0 &&
+          (cardinality & (cardinality - 1)) == 0)
+        proposalDomains.push_back(
+            {propertyOffset, property.width, found->lower, cardinality});
+    }
+    propertyOffset += property.width;
+  }
+
+  auto narrowAssignment = [&](Value rawAssignment) {
+    Value assignment = rawAssignment;
+    for (const ProposalDomain &domain : proposalDomains) {
+      Value fieldBits = rawAssignment;
+      if (domain.offset != 0)
+        fieldBits = arith::ShRUIOp::create(builder, location, fieldBits,
+                                           constant64(domain.offset));
+      fieldBits = arith::AndIOp::create(builder, location, fieldBits,
+                                        constant64(domain.cardinality - 1));
+      if (domain.lower != 0)
+        fieldBits = arith::AddIOp::create(builder, location, fieldBits,
+                                          constant64(domain.lower));
+      if (domain.offset != 0)
+        fieldBits = arith::ShLIOp::create(builder, location, fieldBits,
+                                          constant64(domain.offset));
+      uint64_t fieldMask = domain.width == 64
+                               ? UINT64_MAX
+                               : ((uint64_t{1} << domain.width) - 1)
+                                     << domain.offset;
+      assignment = arith::OrIOp::create(
+          builder, location,
+          arith::AndIOp::create(builder, location, assignment,
+                                constant64(~fieldMask)),
+          fieldBits);
+    }
+    return assignment;
+  };
+  bool exactProposal = analysis.proposalExact && !hasSoftConstraint &&
+                       proposalDomains.size() == analysis.domains.size();
+
   Block *dispatchBlock = current;
   Block *loop = addBlock();
   Block *advance = addBlock();
@@ -1515,177 +1651,183 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   };
 
   setCurrent(loop);
-  FailureOr<SmallVector<Value>> candidates = materializeCandidates(counter);
+  Value assignment = narrowAssignment(counter);
+  FailureOr<SmallVector<Value>> candidates = materializeCandidates(assignment);
   if (failed(candidates))
     return failure();
 
-  Value savedThis = thisObject;
-  SmallVector<Value> savedCandidates = std::move(randomizeCandidateValues);
-  llvm::scope_exit restoreBindings([&] {
-    thisObject = savedThis;
-    randomizeCandidateValues = std::move(savedCandidates);
-  });
-  thisObject = receiver;
-  randomizeCandidateValues = *candidates;
+  if (exactProposal) {
+    cf::BranchOp::create(builder, location, commit, ValueRange{assignment});
+  } else {
+    Value savedThis = thisObject;
+    SmallVector<Value> savedCandidates = std::move(randomizeCandidateValues);
+    llvm::scope_exit restoreBindings([&] {
+      thisObject = savedThis;
+      randomizeCandidateValues = std::move(savedCandidates);
+    });
+    thisObject = receiver;
+    randomizeCandidateValues = *candidates;
 
-  Value softSatisfied;
-  if (hasSoftConstraint)
-    softSatisfied = arith::ConstantOp::create(
-        builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+    Value softSatisfied;
+    if (hasSoftConstraint)
+      softSatisfied = arith::ConstantOp::create(
+          builder, location, builder.getI1Type(), builder.getBoolAttr(true));
 
-  std::function<FailureOr<Value>(Operation *)> lowerConstraint =
-      [&](Operation *constraint) -> FailureOr<Value> {
-    SmallVector<Operation *> nested = getChildren(constraint);
-    if (isa<semantic::SVConstraintListOp>(constraint)) {
-      Value result = arith::ConstantOp::create(
-          builder, getSemanticLocation(constraint), builder.getI1Type(),
-          builder.getBoolAttr(true));
-      for (Operation *item : nested) {
-        FailureOr<Value> itemResult = lowerConstraint(item);
-        if (failed(itemResult))
-          return failure();
-        result = arith::AndIOp::create(builder, getSemanticLocation(item),
-                                       result, *itemResult);
-      }
-      return result;
-    }
-    if (auto expression =
-            dyn_cast<semantic::SVExpressionConstraintOp>(constraint)) {
-      if (nested.size() != 1) {
-        emitError(getSemanticLocation(constraint))
-            << "expression constraint does not contain one predicate";
-        return failure();
-      }
-      FailureOr<Value> value = lowerExpression(nested.front());
-      if (failed(value))
-        return failure();
-      FailureOr<Value> predicate =
-          truthValue(*value, getSemanticLocation(constraint));
-      if (failed(predicate))
-        return failure();
-      if (!expression.getIsSoft())
-        return *predicate;
-      softSatisfied = arith::AndIOp::create(
-          builder, getSemanticLocation(constraint), softSatisfied, *predicate);
-      return arith::ConstantOp::create(builder, getSemanticLocation(constraint),
-                                       builder.getI1Type(),
-                                       builder.getBoolAttr(true))
-          .getResult();
-    }
-    if (isa<semantic::SVImplicationConstraintOp>(constraint)) {
-      if (nested.size() != 2) {
-        emitError(getSemanticLocation(constraint))
-            << "implication constraint does not contain a predicate and body";
-        return failure();
-      }
-      FailureOr<Value> predicateValue = lowerExpression(nested.front());
-      FailureOr<Value> body = lowerConstraint(nested.back());
-      if (failed(predicateValue) || failed(body))
-        return failure();
-      FailureOr<Value> predicate =
-          truthValue(*predicateValue, getSemanticLocation(nested.front()));
-      if (failed(predicate))
-        return failure();
-      Value falseValue = arith::ConstantOp::create(
-          builder, getSemanticLocation(constraint), builder.getI1Type(),
-          builder.getBoolAttr(false));
-      Value notPredicate = arith::CmpIOp::create(
-          builder, getSemanticLocation(constraint), arith::CmpIPredicate::eq,
-          *predicate, falseValue);
-      return arith::OrIOp::create(builder, getSemanticLocation(constraint),
-                                  notPredicate, *body)
-          .getResult();
-    }
-    if (auto conditional =
-            dyn_cast<semantic::SVConditionalConstraintOp>(constraint)) {
-      size_t expected = conditional.getHasElse() ? 3 : 2;
-      if (nested.size() != expected) {
-        emitError(getSemanticLocation(constraint))
-            << "conditional constraint has inconsistent branch inventory";
-        return failure();
-      }
-      FailureOr<Value> predicateValue = lowerExpression(nested[0]);
-      FailureOr<Value> thenValue = lowerConstraint(nested[1]);
-      if (failed(predicateValue) || failed(thenValue))
-        return failure();
-      FailureOr<Value> predicate =
-          truthValue(*predicateValue, getSemanticLocation(nested[0]));
-      if (failed(predicate))
-        return failure();
-      Value elseValue;
-      if (conditional.getHasElse()) {
-        FailureOr<Value> loweredElse = lowerConstraint(nested[2]);
-        if (failed(loweredElse))
-          return failure();
-        elseValue = *loweredElse;
-      } else {
-        elseValue = arith::ConstantOp::create(
+    std::function<FailureOr<Value>(Operation *)> lowerConstraint =
+        [&](Operation *constraint) -> FailureOr<Value> {
+      SmallVector<Operation *> nested = getChildren(constraint);
+      if (isa<semantic::SVConstraintListOp>(constraint)) {
+        Value result = arith::ConstantOp::create(
             builder, getSemanticLocation(constraint), builder.getI1Type(),
             builder.getBoolAttr(true));
+        for (Operation *item : nested) {
+          FailureOr<Value> itemResult = lowerConstraint(item);
+          if (failed(itemResult))
+            return failure();
+          result = arith::AndIOp::create(builder, getSemanticLocation(item),
+                                         result, *itemResult);
+        }
+        return result;
       }
-      return arith::SelectOp::create(builder, getSemanticLocation(constraint),
-                                     *predicate, *thenValue, elseValue)
-          .getResult();
-    }
-    if (isa<semantic::SVUniquenessConstraintOp>(constraint)) {
-      SmallVector<Value> values;
-      for (Operation *item : nested) {
-        FailureOr<Value> value = lowerExpression(item);
+      if (auto expression =
+              dyn_cast<semantic::SVExpressionConstraintOp>(constraint)) {
+        if (nested.size() != 1) {
+          emitError(getSemanticLocation(constraint))
+              << "expression constraint does not contain one predicate";
+          return failure();
+        }
+        FailureOr<Value> value = lowerExpression(nested.front());
         if (failed(value))
           return failure();
-        values.push_back(*value);
+        FailureOr<Value> predicate =
+            truthValue(*value, getSemanticLocation(constraint));
+        if (failed(predicate))
+          return failure();
+        if (!expression.getIsSoft())
+          return *predicate;
+        softSatisfied =
+            arith::AndIOp::create(builder, getSemanticLocation(constraint),
+                                  softSatisfied, *predicate);
+        return arith::ConstantOp::create(
+                   builder, getSemanticLocation(constraint),
+                   builder.getI1Type(), builder.getBoolAttr(true))
+            .getResult();
       }
-      Value result = arith::ConstantOp::create(
-          builder, getSemanticLocation(constraint), builder.getI1Type(),
-          builder.getBoolAttr(true));
-      for (size_t left = 0; left < values.size(); ++left)
-        for (size_t right = left + 1; right < values.size(); ++right) {
-          if (values[left].getType() != values[right].getType()) {
-            emitError(getSemanticLocation(constraint))
-                << "uniqueness operands do not have one normalized type";
-            return failure();
-          }
-          FailureOr<Value> equal = conditionalEqual(
-              values[left], values[right], values[left].getType(),
-              getSemanticLocation(constraint), true);
-          if (failed(equal))
-            return failure();
-          Value falseValue = arith::ConstantOp::create(
-              builder, getSemanticLocation(constraint), builder.getI1Type(),
-              builder.getBoolAttr(false));
-          Value distinct = arith::CmpIOp::create(
-              builder, getSemanticLocation(constraint),
-              arith::CmpIPredicate::eq, *equal, falseValue);
-          result = arith::AndIOp::create(
-              builder, getSemanticLocation(constraint), result, distinct);
+      if (isa<semantic::SVImplicationConstraintOp>(constraint)) {
+        if (nested.size() != 2) {
+          emitError(getSemanticLocation(constraint))
+              << "implication constraint does not contain a predicate and body";
+          return failure();
         }
-      return result;
-    }
-    emitError(getSemanticLocation(constraint))
-        << "unsupported executable constraint node " << constraint->getName();
-    return failure();
-  };
-
-  Value satisfied = arith::ConstantOp::create(
-      builder, location, builder.getI1Type(), builder.getBoolAttr(true));
-  for (auto [index, constraint] : llvm::enumerate(children)) {
-    if (index == receiverIndex)
-      continue;
-    FailureOr<Value> value = lowerConstraint(constraint);
-    if (failed(value))
+        FailureOr<Value> predicateValue = lowerExpression(nested.front());
+        FailureOr<Value> body = lowerConstraint(nested.back());
+        if (failed(predicateValue) || failed(body))
+          return failure();
+        FailureOr<Value> predicate =
+            truthValue(*predicateValue, getSemanticLocation(nested.front()));
+        if (failed(predicate))
+          return failure();
+        Value falseValue = arith::ConstantOp::create(
+            builder, getSemanticLocation(constraint), builder.getI1Type(),
+            builder.getBoolAttr(false));
+        Value notPredicate = arith::CmpIOp::create(
+            builder, getSemanticLocation(constraint), arith::CmpIPredicate::eq,
+            *predicate, falseValue);
+        return arith::OrIOp::create(builder, getSemanticLocation(constraint),
+                                    notPredicate, *body)
+            .getResult();
+      }
+      if (auto conditional =
+              dyn_cast<semantic::SVConditionalConstraintOp>(constraint)) {
+        size_t expected = conditional.getHasElse() ? 3 : 2;
+        if (nested.size() != expected) {
+          emitError(getSemanticLocation(constraint))
+              << "conditional constraint has inconsistent branch inventory";
+          return failure();
+        }
+        FailureOr<Value> predicateValue = lowerExpression(nested[0]);
+        FailureOr<Value> thenValue = lowerConstraint(nested[1]);
+        if (failed(predicateValue) || failed(thenValue))
+          return failure();
+        FailureOr<Value> predicate =
+            truthValue(*predicateValue, getSemanticLocation(nested[0]));
+        if (failed(predicate))
+          return failure();
+        Value elseValue;
+        if (conditional.getHasElse()) {
+          FailureOr<Value> loweredElse = lowerConstraint(nested[2]);
+          if (failed(loweredElse))
+            return failure();
+          elseValue = *loweredElse;
+        } else {
+          elseValue = arith::ConstantOp::create(
+              builder, getSemanticLocation(constraint), builder.getI1Type(),
+              builder.getBoolAttr(true));
+        }
+        return arith::SelectOp::create(builder, getSemanticLocation(constraint),
+                                       *predicate, *thenValue, elseValue)
+            .getResult();
+      }
+      if (isa<semantic::SVUniquenessConstraintOp>(constraint)) {
+        SmallVector<Value> values;
+        for (Operation *item : nested) {
+          FailureOr<Value> value = lowerExpression(item);
+          if (failed(value))
+            return failure();
+          values.push_back(*value);
+        }
+        Value result = arith::ConstantOp::create(
+            builder, getSemanticLocation(constraint), builder.getI1Type(),
+            builder.getBoolAttr(true));
+        for (size_t left = 0; left < values.size(); ++left)
+          for (size_t right = left + 1; right < values.size(); ++right) {
+            if (values[left].getType() != values[right].getType()) {
+              emitError(getSemanticLocation(constraint))
+                  << "uniqueness operands do not have one normalized type";
+              return failure();
+            }
+            FailureOr<Value> equal = conditionalEqual(
+                values[left], values[right], values[left].getType(),
+                getSemanticLocation(constraint), true);
+            if (failed(equal))
+              return failure();
+            Value falseValue = arith::ConstantOp::create(
+                builder, getSemanticLocation(constraint), builder.getI1Type(),
+                builder.getBoolAttr(false));
+            Value distinct = arith::CmpIOp::create(
+                builder, getSemanticLocation(constraint),
+                arith::CmpIPredicate::eq, *equal, falseValue);
+            result = arith::AndIOp::create(
+                builder, getSemanticLocation(constraint), result, distinct);
+          }
+        return result;
+      }
+      emitError(getSemanticLocation(constraint))
+          << "unsupported executable constraint node " << constraint->getName();
       return failure();
-    satisfied = arith::AndIOp::create(builder, location, satisfied, *value);
+    };
+
+    Value satisfied = arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+    for (auto [index, constraint] : llvm::enumerate(children)) {
+      if (index == receiverIndex)
+        continue;
+      FailureOr<Value> value = lowerConstraint(constraint);
+      if (failed(value))
+        return failure();
+      satisfied = arith::AndIOp::create(builder, location, satisfied, *value);
+    }
+    thisObject = savedThis;
+    randomizeCandidateValues = std::move(savedCandidates);
+    restoreBindings.release();
+    Value preferred =
+        hasSoftConstraint
+            ? arith::AndIOp::create(builder, location, satisfied, softSatisfied)
+                  .getResult()
+            : satisfied;
+    cf::CondBranchOp::create(builder, location, preferred, commit,
+                             ValueRange{assignment}, advance, ValueRange{});
   }
-  thisObject = savedThis;
-  randomizeCandidateValues = std::move(savedCandidates);
-  restoreBindings.release();
-  Value preferred =
-      hasSoftConstraint
-          ? arith::AndIOp::create(builder, location, satisfied, softSatisfied)
-                .getResult()
-          : satisfied;
-  cf::CondBranchOp::create(builder, location, preferred, commit,
-                           ValueRange{counter}, advance, ValueRange{});
 
   setCurrent(advance);
   Value next = arith::AndIOp::create(
@@ -1704,79 +1846,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
                            ValueRange{}, loop, ValueRange{next, nextAttempt});
 
   setCurrent(fallbackBlock);
-  Value fallbackSavedThis = thisObject;
-  SmallVector<Value> fallbackSavedCandidates =
-      std::move(randomizeCandidateValues);
-  llvm::scope_exit restoreFallbackBindings([&] {
-    thisObject = fallbackSavedThis;
-    randomizeCandidateValues = std::move(fallbackSavedCandidates);
-  });
-  thisObject = receiver;
-  bool emittedHard = false;
-  bool emittedSoft = false;
-  for (auto [index, root] : llvm::enumerate(children)) {
-    if (index == receiverIndex)
-      continue;
-    SmallVector<Operation *> items = isa<semantic::SVConstraintListOp>(root)
-                                         ? getChildren(root)
-                                         : SmallVector<Operation *>{root};
-    for (Operation *item : items) {
-      bool soft = false;
-      if (auto expression = dyn_cast<semantic::SVExpressionConstraintOp>(item))
-        soft = expression.getIsSoft();
-      if (failed(emitProgramConstraint(item)))
-        return failure();
-      instruction(soft ? OBELISK_RT_RANDOM_END_SOFT_V1
-                       : OBELISK_RT_RANDOM_END_HARD_V1,
-                  1);
-      emittedSoft |= soft;
-      emittedHard |= !soft;
-    }
-  }
-  if (!emittedHard) {
-    emitLiteral(true);
-    instruction(OBELISK_RT_RANDOM_END_HARD_V1, 1);
-  }
-  thisObject = fallbackSavedThis;
-  randomizeCandidateValues = std::move(fallbackSavedCandidates);
-  restoreFallbackBindings.release();
-
-  SmallVector<uint8_t> program;
-  auto append16 = [&](uint16_t value) {
-    program.push_back(static_cast<uint8_t>(value));
-    program.push_back(static_cast<uint8_t>(value >> 8));
-  };
-  auto append32 = [&](uint32_t value) {
-    for (unsigned index = 0; index != 4; ++index)
-      program.push_back(static_cast<uint8_t>(value >> (index * 8)));
-  };
-  auto append64 = [&](uint64_t value) {
-    for (unsigned index = 0; index != 8; ++index)
-      program.push_back(static_cast<uint8_t>(value >> (index * 8)));
-  };
-  append32(OBELISK_RT_RANDOM_PROGRAM_MAGIC);
-  append16(OBELISK_RT_RANDOM_PROGRAM_VERSION);
-  append16(OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE);
-  append32(static_cast<uint32_t>(totalWidth));
-  append32(static_cast<uint32_t>(programInstructions.size()));
-  append32(static_cast<uint32_t>(programCaptures.size()));
-  append32(emittedSoft ? OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT : 0);
-  for (const EncodedInstruction &encoded : programInstructions) {
-    program.push_back(encoded.opcode);
-    program.push_back(encoded.width);
-    program.push_back(encoded.flags);
-    program.push_back(0);
-    append32(encoded.operand);
-    append64(encoded.immediate);
-  }
-  uint64_t fallbackAttempts =
-      totalWidth <= 20 ? (uint64_t{1} << totalWidth) : (uint64_t{1} << 20);
-  solver::RandomProgramAnalysis analysis =
-      solver::analyzeRandomProgram(program.data(), program.size());
   if (analysis.satisfiability == solver::Satisfiability::Unsatisfiable) {
     emitWarning(location)
         << "randomize hard constraints are statically unsatisfiable ("
         << analysis.backend << ")";
+    cf::BranchOp::create(builder, location, failedBlock, ValueRange{});
+  } else if (exactProposal) {
     cf::BranchOp::create(builder, location, failedBlock, ValueRange{});
   } else {
     auto fallback = sim::SimRandomSolveOp::create(
