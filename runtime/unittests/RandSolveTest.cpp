@@ -104,6 +104,48 @@ TEST_F(RandSolveTest, PreservesFixedWidthSignedArithmetic) {
   EXPECT_EQ(assignment, 7u);
 }
 
+TEST_F(RandSolveTest, ResizesSignedOperandsBeforeEvaluation) {
+  // Candidate one is true only when width-changing operators sign-extend their
+  // inputs before evaluating, matching the compiler's SMT and MLIR paths.
+  std::vector<uint8_t> bytes = program(
+      1, 0,
+      {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1},
+       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 0},
+       {OBELISK_RT_RANDOM_SELECT_V1, 4, OBELISK_RT_RANDOM_INSTRUCTION_SIGNED},
+       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 15},
+       {OBELISK_RT_RANDOM_EQ_V1, 1},
+       {OBELISK_RT_RANDOM_END_HARD_V1, 1},
+       {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1},
+       {OBELISK_RT_RANDOM_POS_V1, 4, OBELISK_RT_RANDOM_INSTRUCTION_SIGNED},
+       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 15},
+       {OBELISK_RT_RANDOM_EQ_V1, 1},
+       {OBELISK_RT_RANDOM_END_HARD_V1, 1},
+       {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1},
+       {OBELISK_RT_RANDOM_NEG_V1, 4, OBELISK_RT_RANDOM_INSTRUCTION_SIGNED},
+       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 1},
+       {OBELISK_RT_RANDOM_EQ_V1, 1},
+       {OBELISK_RT_RANDOM_END_HARD_V1, 1},
+       {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1},
+       {OBELISK_RT_RANDOM_BIT_NOT_V1, 4, OBELISK_RT_RANDOM_INSTRUCTION_SIGNED},
+       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0},
+       {OBELISK_RT_RANDOM_EQ_V1, 1},
+       {OBELISK_RT_RANDOM_END_HARD_V1, 1},
+       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 3},
+       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 2},
+       {OBELISK_RT_RANDOM_MUL_V1, 4, OBELISK_RT_RANDOM_INSTRUCTION_SIGNED},
+       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 2},
+       {OBELISK_RT_RANDOM_EQ_V1, 1},
+       {OBELISK_RT_RANDOM_END_HARD_V1, 1}});
+  uint64_t assignment = 0;
+  uint32_t success = 0;
+  EXPECT_EQ(obelisk_rt_v1_random_solve(context, bytes.data(), bytes.size(), 0,
+                                       2, nullptr, 0, &assignment, &success),
+            OBELISK_RT_OK);
+  EXPECT_EQ(success, 1u);
+  EXPECT_EQ(assignment, 1u);
+}
+
 TEST_F(RandSolveTest, PrefersSoftSolution) {
   std::vector<uint8_t> bytes =
       program(4, 2,

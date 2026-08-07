@@ -1626,14 +1626,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   }
 
   auto isDefinitionUnary = [](uint8_t opcode) {
-    return opcode == OBELISK_RT_RANDOM_CAST_V1 ||
-           opcode == OBELISK_RT_RANDOM_POS_V1 ||
-           opcode == OBELISK_RT_RANDOM_NEG_V1 ||
-           opcode == OBELISK_RT_RANDOM_BIT_NOT_V1;
+    return opcode >= OBELISK_RT_RANDOM_CAST_V1 &&
+           opcode <= OBELISK_RT_RANDOM_LOGICAL_NOT_V1;
   };
   auto isDefinitionBinary = [](uint8_t opcode) {
     return opcode >= OBELISK_RT_RANDOM_ADD_V1 &&
-           opcode <= OBELISK_RT_RANDOM_BIT_XNOR_V1;
+           opcode <= OBELISK_RT_RANDOM_LOGICAL_EQUIV_V1;
   };
   for (const solver::RandomVariableDefinition &definition :
        analysis.definitions) {
@@ -1679,6 +1677,14 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
           supported = false;
           break;
         }
+        widths.pop_back();
+        widths.back() = encoded.width;
+      } else if (encoded.opcode == OBELISK_RT_RANDOM_SELECT_V1) {
+        if (widths.size() < 3) {
+          supported = false;
+          break;
+        }
+        widths.pop_back();
         widths.pop_back();
         widths.back() = encoded.width;
       } else {
@@ -1740,6 +1746,16 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
       }
       return maskDefinitionValue(bits, width);
     };
+    auto definitionTruth = [&](Value bits) {
+      return arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                                   bits, constant64(0))
+          .getResult();
+    };
+    auto definitionBooleanBits = [&](Value condition) {
+      return arith::ExtUIOp::create(builder, location, builder.getI64Type(),
+                                    condition)
+          .getResult();
+    };
     for (const ProposalDefinition &definition : proposalDefinitions) {
       SmallVector<DefinitionValue> stack;
       for (const EncodedInstruction &encoded :
@@ -1769,12 +1785,28 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
                            encoded.width});
           continue;
         }
+        if (encoded.opcode == OBELISK_RT_RANDOM_SELECT_V1) {
+          if (stack.size() < 3)
+            return failure();
+          DefinitionValue falseValue = stack.pop_back_val();
+          DefinitionValue trueValue = stack.pop_back_val();
+          DefinitionValue condition = stack.pop_back_val();
+          Value bits = arith::SelectOp::create(
+              builder, location, definitionTruth(condition.bits),
+              resizeDefinitionValue(trueValue, encoded.width, signedOperation),
+              resizeDefinitionValue(falseValue, encoded.width,
+                                    signedOperation));
+          stack.push_back(
+              {maskDefinitionValue(bits, encoded.width), encoded.width});
+          continue;
+        }
         if (isDefinitionUnary(encoded.opcode)) {
           if (stack.empty())
             return failure();
           DefinitionValue input = stack.pop_back_val();
-          Value bits =
-              resizeDefinitionValue(input, encoded.width, signedOperation);
+          Value bits = input.bits;
+          if (encoded.opcode <= OBELISK_RT_RANDOM_BIT_NOT_V1)
+            bits = resizeDefinitionValue(input, encoded.width, signedOperation);
           if (encoded.opcode == OBELISK_RT_RANDOM_NEG_V1)
             bits =
                 arith::SubIOp::create(builder, location, constant64(0), bits);
@@ -1784,6 +1816,40 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
                 constant64(encoded.width == 64
                                ? UINT64_MAX
                                : (uint64_t{1} << encoded.width) - 1));
+          else if (encoded.opcode == OBELISK_RT_RANDOM_REDUCE_AND_V1 ||
+                   encoded.opcode == OBELISK_RT_RANDOM_REDUCE_NAND_V1) {
+            Value allOnes = constant64(input.width == 64
+                                           ? UINT64_MAX
+                                           : (uint64_t{1} << input.width) - 1);
+            arith::CmpIPredicate predicate =
+                encoded.opcode == OBELISK_RT_RANDOM_REDUCE_AND_V1
+                    ? arith::CmpIPredicate::eq
+                    : arith::CmpIPredicate::ne;
+            bits = definitionBooleanBits(arith::CmpIOp::create(
+                builder, location, predicate, input.bits, allOnes));
+          } else if (encoded.opcode == OBELISK_RT_RANDOM_REDUCE_OR_V1) {
+            bits = definitionBooleanBits(definitionTruth(input.bits));
+          } else if (encoded.opcode == OBELISK_RT_RANDOM_REDUCE_XOR_V1 ||
+                     encoded.opcode == OBELISK_RT_RANDOM_REDUCE_XNOR_V1) {
+            bits = constant64(0);
+            for (unsigned bit = 0; bit != input.width; ++bit) {
+              Value current = input.bits;
+              if (bit != 0)
+                current = arith::ShRUIOp::create(builder, location, current,
+                                                 constant64(bit));
+              current = arith::AndIOp::create(builder, location, current,
+                                              constant64(1));
+              bits = arith::XOrIOp::create(builder, location, bits, current);
+            }
+            if (encoded.opcode == OBELISK_RT_RANDOM_REDUCE_XNOR_V1)
+              bits =
+                  arith::XOrIOp::create(builder, location, bits, constant64(1));
+          } else if (encoded.opcode == OBELISK_RT_RANDOM_REDUCE_NOR_V1 ||
+                     encoded.opcode == OBELISK_RT_RANDOM_LOGICAL_NOT_V1) {
+            bits = definitionBooleanBits(arith::CmpIOp::create(
+                builder, location, arith::CmpIPredicate::eq, input.bits,
+                constant64(0)));
+          }
           stack.push_back(
               {maskDefinitionValue(bits, encoded.width), encoded.width});
           continue;
@@ -1792,9 +1858,18 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
           return failure();
         DefinitionValue rhs = stack.pop_back_val();
         DefinitionValue lhs = stack.pop_back_val();
-        Value left = resizeDefinitionValue(lhs, encoded.width, signedOperation);
+        bool logical = encoded.opcode >= OBELISK_RT_RANDOM_LOGICAL_AND_V1;
+        unsigned operandWidth =
+            encoded.opcode >= OBELISK_RT_RANDOM_EQ_V1 &&
+                    encoded.opcode <= OBELISK_RT_RANDOM_LT_V1
+                ? std::max(lhs.width, rhs.width)
+                : encoded.width;
+        Value left =
+            logical ? lhs.bits
+                    : resizeDefinitionValue(lhs, operandWidth, signedOperation);
         Value right =
-            resizeDefinitionValue(rhs, encoded.width, signedOperation);
+            logical ? rhs.bits
+                    : resizeDefinitionValue(rhs, operandWidth, signedOperation);
         Value bits;
         switch (encoded.opcode) {
         case OBELISK_RT_RANDOM_ADD_V1:
@@ -1823,6 +1898,70 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
                              ? UINT64_MAX
                              : (uint64_t{1} << encoded.width) - 1));
           break;
+        case OBELISK_RT_RANDOM_EQ_V1:
+        case OBELISK_RT_RANDOM_NE_V1:
+        case OBELISK_RT_RANDOM_GE_V1:
+        case OBELISK_RT_RANDOM_GT_V1:
+        case OBELISK_RT_RANDOM_LE_V1:
+        case OBELISK_RT_RANDOM_LT_V1: {
+          arith::CmpIPredicate predicate;
+          switch (encoded.opcode) {
+          case OBELISK_RT_RANDOM_EQ_V1:
+            predicate = arith::CmpIPredicate::eq;
+            break;
+          case OBELISK_RT_RANDOM_NE_V1:
+            predicate = arith::CmpIPredicate::ne;
+            break;
+          case OBELISK_RT_RANDOM_GE_V1:
+            predicate = signedOperation ? arith::CmpIPredicate::sge
+                                        : arith::CmpIPredicate::uge;
+            break;
+          case OBELISK_RT_RANDOM_GT_V1:
+            predicate = signedOperation ? arith::CmpIPredicate::sgt
+                                        : arith::CmpIPredicate::ugt;
+            break;
+          case OBELISK_RT_RANDOM_LE_V1:
+            predicate = signedOperation ? arith::CmpIPredicate::sle
+                                        : arith::CmpIPredicate::ule;
+            break;
+          case OBELISK_RT_RANDOM_LT_V1:
+            predicate = signedOperation ? arith::CmpIPredicate::slt
+                                        : arith::CmpIPredicate::ult;
+            break;
+          default:
+            return failure();
+          }
+          bits = definitionBooleanBits(
+              arith::CmpIOp::create(builder, location, predicate, left, right));
+          break;
+        }
+        case OBELISK_RT_RANDOM_LOGICAL_AND_V1:
+        case OBELISK_RT_RANDOM_LOGICAL_OR_V1:
+        case OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1:
+        case OBELISK_RT_RANDOM_LOGICAL_EQUIV_V1: {
+          Value leftTruth = definitionTruth(lhs.bits);
+          Value rightTruth = definitionTruth(rhs.bits);
+          Value predicate;
+          if (encoded.opcode == OBELISK_RT_RANDOM_LOGICAL_AND_V1)
+            predicate =
+                arith::AndIOp::create(builder, location, leftTruth, rightTruth);
+          else if (encoded.opcode == OBELISK_RT_RANDOM_LOGICAL_OR_V1)
+            predicate =
+                arith::OrIOp::create(builder, location, leftTruth, rightTruth);
+          else if (encoded.opcode == OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1) {
+            Value leftFalse = arith::CmpIOp::create(builder, location,
+                                                    arith::CmpIPredicate::eq,
+                                                    lhs.bits, constant64(0));
+            predicate =
+                arith::OrIOp::create(builder, location, leftFalse, rightTruth);
+          } else {
+            predicate = arith::CmpIOp::create(builder, location,
+                                              arith::CmpIPredicate::eq,
+                                              leftTruth, rightTruth);
+          }
+          bits = definitionBooleanBits(predicate);
+          break;
+        }
         default:
           return failure();
         }
@@ -1877,8 +2016,23 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     }
     return assignment;
   };
+  bool overwritesProposalDomain =
+      llvm::any_of(proposalDomains, [&](const ProposalDomain &domain) {
+        bool definitionTarget = llvm::any_of(
+            proposalDefinitions, [&](const ProposalDefinition &definition) {
+              return definition.targetOffset == domain.offset &&
+                     definition.width == domain.width;
+            });
+        bool aliasTarget =
+            llvm::any_of(proposalAliases, [&](const ProposalAlias &alias) {
+              return alias.targetOffset == domain.offset &&
+                     alias.width == domain.width;
+            });
+        return definitionTarget || aliasTarget;
+      });
   bool exactProposal =
       analysis.proposalExact && !hasSoftConstraint &&
+      !overwritesProposalDomain &&
       proposalDomains.size() == analysis.domains.size() &&
       proposalAliases.size() == analysis.aliases.size() &&
       proposalDefinitions.size() == analysis.definitions.size();

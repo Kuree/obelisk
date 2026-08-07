@@ -190,7 +190,12 @@ bool evaluate(const std::vector<Instruction> &instructions,
       stack.pop_back();
       Value condition = stack.back();
       stack.pop_back();
-      push(condition.bits != 0 ? trueValue.bits : falseValue.bits,
+      Value selected = condition.bits != 0 ? trueValue : falseValue;
+      bool isSigned =
+          (instruction.flags & OBELISK_RT_RANDOM_INSTRUCTION_SIGNED) != 0;
+      push(isSigned
+               ? extendSigned(selected.bits, selected.width, instruction.width)
+               : normalize(selected.bits, instruction.width),
            instruction.width);
       continue;
     }
@@ -200,17 +205,22 @@ bool evaluate(const std::vector<Instruction> &instructions,
       uint64_t result = input.bits;
       switch (instruction.opcode) {
       case OBELISK_RT_RANDOM_CAST_V1:
+      case OBELISK_RT_RANDOM_POS_V1:
         result = (instruction.flags & OBELISK_RT_RANDOM_INSTRUCTION_SIGNED)
                      ? extendSigned(input.bits, input.width, instruction.width)
                      : normalize(input.bits, instruction.width);
         break;
-      case OBELISK_RT_RANDOM_POS_V1:
-        break;
       case OBELISK_RT_RANDOM_NEG_V1:
-        result = uint64_t{0} - input.bits;
+        result = uint64_t{0} -
+                 ((instruction.flags & OBELISK_RT_RANDOM_INSTRUCTION_SIGNED)
+                      ? extendSigned(input.bits, input.width, instruction.width)
+                      : normalize(input.bits, instruction.width));
         break;
       case OBELISK_RT_RANDOM_BIT_NOT_V1:
-        result = ~input.bits;
+        result =
+            ~((instruction.flags & OBELISK_RT_RANDOM_INSTRUCTION_SIGNED)
+                  ? extendSigned(input.bits, input.width, instruction.width)
+                  : normalize(input.bits, instruction.width));
         break;
       case OBELISK_RT_RANDOM_REDUCE_AND_V1:
         result = normalize(input.bits, input.width) == widthMask(input.width);
@@ -245,27 +255,35 @@ bool evaluate(const std::vector<Instruction> &instructions,
     Value lhs = stack.back();
     stack.pop_back();
     uint64_t result = 0;
+    bool isSigned =
+        (instruction.flags & OBELISK_RT_RANDOM_INSTRUCTION_SIGNED) != 0;
+    uint64_t left = isSigned
+                        ? extendSigned(lhs.bits, lhs.width, instruction.width)
+                        : normalize(lhs.bits, instruction.width);
+    uint64_t right = isSigned
+                         ? extendSigned(rhs.bits, rhs.width, instruction.width)
+                         : normalize(rhs.bits, instruction.width);
     switch (instruction.opcode) {
     case OBELISK_RT_RANDOM_ADD_V1:
-      result = lhs.bits + rhs.bits;
+      result = left + right;
       break;
     case OBELISK_RT_RANDOM_SUB_V1:
-      result = lhs.bits - rhs.bits;
+      result = left - right;
       break;
     case OBELISK_RT_RANDOM_MUL_V1:
-      result = lhs.bits * rhs.bits;
+      result = left * right;
       break;
     case OBELISK_RT_RANDOM_BIT_AND_V1:
-      result = lhs.bits & rhs.bits;
+      result = left & right;
       break;
     case OBELISK_RT_RANDOM_BIT_OR_V1:
-      result = lhs.bits | rhs.bits;
+      result = left | right;
       break;
     case OBELISK_RT_RANDOM_BIT_XOR_V1:
-      result = lhs.bits ^ rhs.bits;
+      result = left ^ right;
       break;
     case OBELISK_RT_RANDOM_BIT_XNOR_V1:
-      result = ~(lhs.bits ^ rhs.bits);
+      result = ~(left ^ right);
       break;
     case OBELISK_RT_RANDOM_EQ_V1:
     case OBELISK_RT_RANDOM_NE_V1:
@@ -273,10 +291,7 @@ bool evaluate(const std::vector<Instruction> &instructions,
     case OBELISK_RT_RANDOM_GT_V1:
     case OBELISK_RT_RANDOM_LE_V1:
     case OBELISK_RT_RANDOM_LT_V1:
-      result = compare(
-          lhs, rhs,
-          (instruction.flags & OBELISK_RT_RANDOM_INSTRUCTION_SIGNED) != 0,
-          instruction.opcode);
+      result = compare(lhs, rhs, isSigned, instruction.opcode);
       break;
     case OBELISK_RT_RANDOM_LOGICAL_AND_V1:
       result = lhs.bits != 0 && rhs.bits != 0;
