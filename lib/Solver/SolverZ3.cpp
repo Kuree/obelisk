@@ -337,12 +337,21 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
         (!analysis.aliases.empty() && checkWith(aliasViolation) != z3::unsat))
       analysis.aliases.clear();
 
-    // General definitions need dependency scheduling when combined with alias
-    // classes or with one another. This first definition chunk deliberately
-    // selects one independent expression only; later planning can topologically
-    // order a larger definition graph without changing the public encoding.
+    // Select one deterministic definition per target, prove each extraction,
+    // then emit the acyclic portion in dependency order. Definitions left in a
+    // cycle remain ordinary checker/runtime constraints. Combining definition
+    // targets with alias classes is kept conservative for now.
     if (analysis.aliases.empty()) {
+      std::vector<const SMTVariableDefinition *> definitions;
       for (const SMTVariableDefinition &definition : smt->directDefinitions) {
+        if (std::any_of(definitions.begin(), definitions.end(),
+                        [&](const SMTVariableDefinition *selected) {
+                          return selected->target.offset ==
+                                     definition.target.offset &&
+                                 selected->target.width ==
+                                     definition.target.width;
+                        }))
+          continue;
         std::optional<z3::expr> target = shim.translate(definition.target.bits);
         std::optional<z3::expr> expression =
             shim.translate(definition.expression);
@@ -351,10 +360,47 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
           continue;
         if (checkWith(*target != *expression) != z3::unsat)
           continue;
+        definitions.push_back(&definition);
+      }
+
+      std::vector<std::vector<size_t>> dependents(definitions.size());
+      std::vector<unsigned> indegrees(definitions.size());
+      for (size_t index = 0; index != definitions.size(); ++index) {
+        for (const SMTVariable &dependency : definitions[index]->dependencies) {
+          auto found = std::find_if(
+              definitions.begin(), definitions.end(),
+              [&](const SMTVariableDefinition *candidate) {
+                return candidate->target.offset == dependency.offset &&
+                       candidate->target.width == dependency.width;
+              });
+          if (found == definitions.end())
+            continue;
+          size_t dependencyIndex = found - definitions.begin();
+          if (dependencyIndex == index ||
+              std::find(dependents[dependencyIndex].begin(),
+                        dependents[dependencyIndex].end(),
+                        index) != dependents[dependencyIndex].end())
+            continue;
+          dependents[dependencyIndex].push_back(index);
+          ++indegrees[index];
+        }
+      }
+
+      std::vector<bool> emitted(definitions.size());
+      for (size_t count = 0; count != definitions.size(); ++count) {
+        size_t index = 0;
+        while (index != definitions.size() &&
+               (emitted[index] || indegrees[index] != 0))
+          ++index;
+        if (index == definitions.size())
+          break;
+        emitted[index] = true;
+        const SMTVariableDefinition &definition = *definitions[index];
         analysis.definitions.push_back(
             {definition.target.offset, definition.target.width,
              definition.expressionBegin, definition.expressionEnd});
-        break;
+        for (size_t dependent : dependents[index])
+          --indegrees[dependent];
       }
     }
 

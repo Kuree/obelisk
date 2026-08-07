@@ -30,6 +30,7 @@ struct SMTVariableDefinition {
   mlir::Value expression;
   uint32_t expressionBegin;
   uint32_t expressionEnd;
+  std::vector<SMTVariable> dependencies;
 };
 
 /// Owns a temporary, verified SMT-dialect module. The context must outlive the

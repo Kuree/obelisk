@@ -489,6 +489,10 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
   if (!stack.empty() || !sawHard || sawSoft != encodedSoft)
     return std::nullopt;
   result.hard = hard;
+  for (SMTVariableDefinition &definition : result.directDefinitions)
+    for (const SMTVariable &variable : result.variables)
+      if (containsVariable(definition.expression, variable))
+        definition.dependencies.push_back(variable);
   mlir::smt::AssertOp::create(builder, location, hard);
   mlir::smt::YieldOp::create(builder, location);
   if (mlir::failed(mlir::verify(*result.module)))
