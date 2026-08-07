@@ -1138,33 +1138,68 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
       builder, location, i64, builder.getIntegerAttr(i64, domainMask));
   start = arith::AndIOp::create(builder, location, start, mask);
 
+  bool hasSoftConstraint = false;
+  for (auto [index, child] : llvm::enumerate(children)) {
+    if (index == receiverIndex)
+      continue;
+    child->walk([&](semantic::SVExpressionConstraintOp expression) {
+      hasSoftConstraint |= expression.getIsSoft();
+    });
+  }
+
   Block *loop = addBlock();
   Block *advance = addBlock();
+  Block *exhaustedBlock = hasSoftConstraint ? addBlock() : nullptr;
   Block *commit = addBlock();
   Block *failedBlock = addBlock();
   Block *done = addBlock();
   Value counter = loop->addArgument(i64, location);
+  Value fallbackCounter;
+  Value hasFallback;
+  Value commitCounter;
+  if (hasSoftConstraint) {
+    fallbackCounter = loop->addArgument(i64, location);
+    hasFallback = loop->addArgument(builder.getI1Type(), location);
+    commitCounter = commit->addArgument(i64, location);
+  }
   Value doneResult = done->addArgument(builder.getI1Type(), location);
-  cf::BranchOp::create(builder, location, loop, ValueRange{start});
+  Value falseValue;
+  if (hasSoftConstraint) {
+    falseValue = arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(false));
+    cf::BranchOp::create(builder, location, loop,
+                         ValueRange{start, start, falseValue});
+  } else {
+    cf::BranchOp::create(builder, location, loop, ValueRange{start});
+  }
+
+  auto materializeCandidates =
+      [&](Value assignment) -> FailureOr<SmallVector<Value>> {
+    SmallVector<Value> candidates;
+    uint64_t offset = 0;
+    for (const Property &property : planned) {
+      Value bits = assignment;
+      if (offset != 0)
+        bits =
+            arith::ShRUIOp::create(builder, location, bits, constant64(offset));
+      Type integerType =
+          IntegerType::get(function.getContext(), property.width);
+      if (property.width != 64)
+        bits = arith::TruncIOp::create(builder, location, integerType, bits);
+      FailureOr<Value> converted =
+          convert(bits, property.type, false, location, property.isSigned);
+      if (failed(converted))
+        return failure();
+      candidates.push_back(*converted);
+      offset += property.width;
+    }
+    return candidates;
+  };
 
   setCurrent(loop);
-  SmallVector<Value> candidates;
-  uint64_t offset = 0;
-  for (const Property &property : planned) {
-    Value bits = counter;
-    if (offset != 0)
-      bits =
-          arith::ShRUIOp::create(builder, location, bits, constant64(offset));
-    Type integerType = IntegerType::get(function.getContext(), property.width);
-    if (property.width != 64)
-      bits = arith::TruncIOp::create(builder, location, integerType, bits);
-    FailureOr<Value> converted =
-        convert(bits, property.type, false, location, property.isSigned);
-    if (failed(converted))
-      return failure();
-    candidates.push_back(*converted);
-    offset += property.width;
-  }
+  FailureOr<SmallVector<Value>> candidates = materializeCandidates(counter);
+  if (failed(candidates))
+    return failure();
 
   Value savedThis = thisObject;
   SmallVector<Value> savedCandidates = std::move(randomizeCandidateValues);
@@ -1173,7 +1208,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     randomizeCandidateValues = std::move(savedCandidates);
   });
   thisObject = receiver;
-  randomizeCandidateValues = candidates;
+  randomizeCandidateValues = *candidates;
+
+  Value softSatisfied;
+  if (hasSoftConstraint)
+    softSatisfied = arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(true));
 
   std::function<FailureOr<Value>(Operation *)> lowerConstraint =
       [&](Operation *constraint) -> FailureOr<Value> {
@@ -1191,16 +1231,28 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
       }
       return result;
     }
-    if (isa<semantic::SVExpressionConstraintOp>(constraint)) {
+    if (auto expression =
+            dyn_cast<semantic::SVExpressionConstraintOp>(constraint)) {
       if (nested.size() != 1) {
         emitError(getSemanticLocation(constraint))
             << "expression constraint does not contain one predicate";
         return failure();
       }
       FailureOr<Value> value = lowerExpression(nested.front());
-      return failed(value)
-                 ? FailureOr<Value>(failure())
-                 : truthValue(*value, getSemanticLocation(constraint));
+      if (failed(value))
+        return failure();
+      FailureOr<Value> predicate =
+          truthValue(*value, getSemanticLocation(constraint));
+      if (failed(predicate))
+        return failure();
+      if (!expression.getIsSoft())
+        return *predicate;
+      softSatisfied = arith::AndIOp::create(
+          builder, getSemanticLocation(constraint), softSatisfied, *predicate);
+      return arith::ConstantOp::create(builder, getSemanticLocation(constraint),
+                                       builder.getI1Type(),
+                                       builder.getBoolAttr(true))
+          .getResult();
     }
     if (isa<semantic::SVImplicationConstraintOp>(constraint)) {
       if (nested.size() != 2) {
@@ -1309,20 +1361,63 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   thisObject = savedThis;
   randomizeCandidateValues = std::move(savedCandidates);
   restoreBindings.release();
-  cf::CondBranchOp::create(builder, location, satisfied, commit, ValueRange{},
-                           advance, ValueRange{});
+  Value preferred =
+      hasSoftConstraint
+          ? arith::AndIOp::create(builder, location, satisfied, softSatisfied)
+                .getResult()
+          : satisfied;
+  if (hasSoftConstraint)
+    cf::CondBranchOp::create(builder, location, preferred, commit,
+                             ValueRange{counter}, advance, ValueRange{});
+  else
+    cf::CondBranchOp::create(builder, location, preferred, commit, ValueRange{},
+                             advance, ValueRange{});
 
   setCurrent(advance);
+  Value nextFallback;
+  Value nextHasFallback;
+  if (hasSoftConstraint) {
+    Value noFallback = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, hasFallback, falseValue);
+    Value captureFallback =
+        arith::AndIOp::create(builder, location, satisfied, noFallback);
+    nextFallback = arith::SelectOp::create(builder, location, captureFallback,
+                                           counter, fallbackCounter);
+    nextHasFallback =
+        arith::OrIOp::create(builder, location, hasFallback, satisfied);
+  }
   Value next = arith::AndIOp::create(
       builder, location,
       arith::AddIOp::create(builder, location, counter, constant64(1)), mask);
   Value exhausted = arith::CmpIOp::create(
       builder, location, arith::CmpIPredicate::eq, next, start);
-  cf::CondBranchOp::create(builder, location, exhausted, failedBlock,
-                           ValueRange{}, loop, ValueRange{next});
+  if (hasSoftConstraint)
+    cf::CondBranchOp::create(builder, location, exhausted, exhaustedBlock,
+                             ValueRange{}, loop,
+                             ValueRange{next, nextFallback, nextHasFallback});
+  else
+    cf::CondBranchOp::create(builder, location, exhausted, failedBlock,
+                             ValueRange{}, loop, ValueRange{next});
+
+  if (hasSoftConstraint) {
+    setCurrent(exhaustedBlock);
+    cf::CondBranchOp::create(builder, location, nextHasFallback, commit,
+                             ValueRange{nextFallback}, failedBlock,
+                             ValueRange{});
+  }
 
   setCurrent(commit);
-  for (auto [property, candidate] : llvm::zip_equal(planned, candidates))
+  SmallVector<Value> rematerializedCandidates;
+  ArrayRef<Value> committedCandidates = *candidates;
+  if (hasSoftConstraint) {
+    FailureOr<SmallVector<Value>> values = materializeCandidates(commitCounter);
+    if (failed(values))
+      return failure();
+    rematerializedCandidates = std::move(*values);
+    committedCandidates = rematerializedCandidates;
+  }
+  for (auto [property, candidate] :
+       llvm::zip_equal(planned, committedCandidates))
     sim::SimManagedStoreOp::create(builder, location, candidate,
                                    property.reference);
   Value success = arith::ConstantOp::create(

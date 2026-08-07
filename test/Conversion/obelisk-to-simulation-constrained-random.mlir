@@ -16,7 +16,7 @@ module {
         }
         obelisk.sv.symbol.constraint_block attributes {hierarchical_name = "constrained::bounds", name = "bounds", node_id = 5 : i64, sym_name = "s5.bounds", this_variable_path = "constrained::bounds.this", this_variable_symbol = @s1.$root::@s2::@s3.constrained::@s5.bounds::@s6.this} {
           obelisk.sv.constraint.list attributes {item_count = 1 : i64, node_id = 6 : i64} {
-            obelisk.sv.constraint.expression attributes {is_soft = false, node_id = 7 : i64} {
+            obelisk.sv.constraint.expression attributes {is_soft = true, node_id = 7 : i64} {
               obelisk.sv.expression.binary_op attributes {node_id = 8 : i64, operator_kind = 14 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
                 obelisk.sv.expression.named_value attributes {node_id = 9 : i64, referenced_path = "constrained::value", referenced_symbol = @s1.$root::@s2::@s3.constrained::@s4.value, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                 }
@@ -160,8 +160,9 @@ module {
 }
 
 // The randomize call lowers to a compiler-owned finite-domain search. The
-// object stream chooses the first assignment, the loop tests hard constraints,
-// and the rand property is stored only on the successful commit edge.
+// object stream chooses the first assignment, the loop tests hard constraints
+// and one soft preference, and the rand property is stored only on the
+// preferred or hard-fallback commit edge.
 // CHECK: obelisk_sim.class.decl
 // CHECK: obelisk_sim.class.field {{.*}}debug_name = "value"
 // CHECK: obelisk_sim.class.field {{.*}}debug_name = "__obelisk_rng_state"
@@ -172,7 +173,7 @@ module {
 // CHECK: arith.muli
 // CHECK: obelisk_sim.managed.store
 // CHECK: cf.br ^[[SEARCH:[a-zA-Z0-9_]+]]
-// CHECK: ^[[SEARCH]]({{.*}}: i64):
+// CHECK: ^[[SEARCH]]({{.*}}: i64, {{.*}}: i64, {{.*}}: i1):
 // CHECK: arith.cmpi slt
 // CHECK: arith.ori
 // CHECK: arith.cmpi sgt
@@ -182,10 +183,13 @@ module {
 // CHECK: arith.cmpi sge
 // CHECK: arith.cmpi sle
 // CHECK: obelisk_sim.ref.load %[[LIMIT_ARG]]
-// CHECK: cf.cond_br {{.*}}, ^[[COMMIT:[a-zA-Z0-9_]+]], ^[[ADVANCE:[a-zA-Z0-9_]+]]
+// CHECK: cf.cond_br {{.*}}, ^[[COMMIT:[a-zA-Z0-9_]+]]({{.*}}), ^[[ADVANCE:[a-zA-Z0-9_]+]]
 // CHECK: ^[[ADVANCE]]:
-// CHECK: cf.cond_br {{.*}}, ^[[DONE:[a-zA-Z0-9_]+]], ^[[SEARCH]]
-// CHECK: ^[[COMMIT]]:
+// CHECK: arith.select
+// CHECK: cf.cond_br {{.*}}, ^[[EXHAUSTED:[a-zA-Z0-9_]+]], ^[[SEARCH]]
+// CHECK: ^[[EXHAUSTED]]:
+// CHECK: cf.cond_br {{.*}}, ^[[COMMIT]]({{.*}}), ^[[DONE:[a-zA-Z0-9_]+]]
+// CHECK: ^[[COMMIT]]({{.*}}: i64):
 // CHECK: obelisk_sim.managed.store
 // CHECK: cf.br ^[[DONE]]
 // CHECK: ^[[DONE]]:
@@ -194,7 +198,8 @@ module {
 
 // UNSUPPORTED-DAG: error: randc properties are not executable yet
 // UNSUPPORTED-DAG: error: rand enum and tagged-union domains are not executable yet
-// UNSUPPORTED-DAG: error: soft constraints are not executable yet
+// UNSUPPORTED-DAG: error: at most one soft constraint is executable per randomization plan
+// UNSUPPORTED-DAG: error: soft constraints must be direct items of a top-level constraint list
 // UNSUPPORTED-DAG: error: constraint form is outside the executable hard-expression boundary: obelisk.sv.constraint.solve_before
 // UNSUPPORTED-DAG: error: user pre_randomize and post_randomize hooks are not executable yet
 // UNSUPPORTED-DAG: error: constraint expression is outside the total side-effect-free executable boundary: obelisk.sv.expression.assignment
@@ -213,9 +218,17 @@ module {
         obelisk.sv.symbol.class_property attributes {hierarchical_name = "unsupported::enum_value", name = "enum_value", node_id = 132 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.enum<"E", !obelisk.integral<32, true, false, 31 : 0, int>>, sym_name = "s132.enum_value"} {
         }
         obelisk.sv.symbol.constraint_block attributes {hierarchical_name = "unsupported::rules", name = "rules", node_id = 105 : i64, sym_name = "s105.rules", this_variable_path = "unsupported::rules.this", this_variable_symbol = @s101.$root::@s102::@s103.unsupported::@s105.rules::@s106.this} {
-          obelisk.sv.constraint.list attributes {item_count = 4 : i64, node_id = 110 : i64} {
+          obelisk.sv.constraint.list attributes {item_count = 5 : i64, node_id = 110 : i64} {
             obelisk.sv.constraint.expression attributes {is_soft = true, node_id = 111 : i64} {
               obelisk.sv.expression.integer_literal attributes {constant_value = "1", node_id = 112 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
+              }
+            }
+            obelisk.sv.constraint.implication attributes {node_id = 136 : i64} {
+              obelisk.sv.expression.integer_literal attributes {constant_value = "1", node_id = 137 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
+              }
+              obelisk.sv.constraint.expression attributes {is_soft = true, node_id = 138 : i64} {
+                obelisk.sv.expression.integer_literal attributes {constant_value = "0", node_id = 139 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
+                }
               }
             }
             obelisk.sv.constraint.solve_before attributes {after_count = 1 : i64, node_id = 113 : i64, solve_count = 1 : i64} {

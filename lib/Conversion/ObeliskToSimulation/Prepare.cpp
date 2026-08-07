@@ -648,14 +648,25 @@ void ObeliskSimPreparePass::runOnOperation() {
       totalWidth += property.width;
     }
 
+    unsigned softConstraintCount = 0;
     for (Operation *root : constraintRoots) {
       root->walk([&](Operation *nested) {
         if (auto expression =
                 dyn_cast<semantic::SVExpressionConstraintOp>(nested)) {
           if (expression.getIsSoft()) {
-            emitError(getSemanticLocation(expression))
-                << "soft constraints are not executable yet";
-            invalid = true;
+            ++softConstraintCount;
+            if (nested->getParentOp() != root) {
+              emitError(getSemanticLocation(expression))
+                  << "soft constraints must be direct items of a top-level "
+                     "constraint list";
+              invalid = true;
+            }
+            if (softConstraintCount == 2) {
+              emitError(getSemanticLocation(expression))
+                  << "at most one soft constraint is executable per "
+                     "randomization plan";
+              invalid = true;
+            }
           }
           return;
         }

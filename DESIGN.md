@@ -1209,8 +1209,8 @@ The implementation roadmap is:
   and inline `with` constraints to pointer-free SSA, searches at most 64
   aggregate random bits completely, and commits class fields transactionally
   in native and bytecode execution. The remaining gate is dynamic mode masks,
-  `randc`,
-  soft and distribution semantics, solve ordering, randomization hooks,
+  `randc`, multiple-soft priority and distribution semantics, solve ordering,
+  randomization hooks,
   enum/tagged domains, constraint-function purity contracts,
   wider/decomposed plans, and compiler-only Z3 planning. The exact current
   boundary is recorded in `docs/randomization-support.md`.
