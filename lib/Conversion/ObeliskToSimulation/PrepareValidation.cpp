@@ -47,7 +47,16 @@ bool isInsideCovergroup(Operation *op) {
 bool isSupportedClassDeclaration(Operation *op) {
   return isa<semantic::SVClassTypeOp, semantic::SVGenericClassDefSymbolOp,
              semantic::SVMethodPrototypeSymbolOp,
-             semantic::SVClassPropertySymbolOp>(op);
+             semantic::SVClassPropertySymbolOp,
+             semantic::SVConstraintBlockSymbolOp>(op);
+}
+
+bool isSupportedConstraintNode(Operation *op) {
+  return isa<
+      semantic::SVConstraintListOp, semantic::SVExpressionConstraintOp,
+      semantic::SVImplicationConstraintOp, semantic::SVConditionalConstraintOp,
+      semantic::SVUniquenessConstraintOp, semantic::SVDisableSoftConstraintOp,
+      semantic::SVSolveBeforeConstraintOp, semantic::SVForeachConstraintOp>(op);
 }
 
 bool isSupportedAssertionNode(Operation *op) {
@@ -163,7 +172,8 @@ FailureOr<ValidatedSemanticDesign> validateSemanticDesign(ModuleOp module) {
       return;
     if ((op->hasTrait<OpTrait::SemanticDeclarativeNode>() &&
          !isSupportedClassDeclaration(op) && !isSupportedAssertionNode(op) &&
-         !isCoverageNode(op) && !isInsideCovergroup(op)) ||
+         !isSupportedConstraintNode(op) && !isCoverageNode(op) &&
+         !isInsideCovergroup(op)) ||
         isDeclarativeLeafNode(op)) {
       emitError(getSemanticLocation(op))
           << "unsupported semantic construct in the first simulation slice: "

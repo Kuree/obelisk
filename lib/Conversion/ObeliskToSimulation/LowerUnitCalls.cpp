@@ -6,6 +6,7 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringSet.h"
 
 #include <optional>
@@ -26,6 +27,8 @@ bool isWeakReferenceCall(semantic::SVCallExpressionOp op) {
 FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
+  if (op->hasAttr(randomizeAttrName))
+    return lowerRandomize(op);
   StringRef covergroupMethod = op.getCalleeName();
   if ((covergroupMethod == "sample" || covergroupMethod == "start" ||
        covergroupMethod == "stop" || covergroupMethod == "get_inst_coverage" ||
@@ -965,6 +968,377 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   return arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                    builder.getBoolAttr(false))
       .getResult();
+}
+
+FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
+  Location location = getSemanticLocation(op);
+  SmallVector<Operation *> children = getChildren(op);
+  auto properties = op->getAttrOfType<ArrayAttr>(randomPropertiesAttrName);
+  auto totalWidthAttr =
+      op->getAttrOfType<IntegerAttr>(randomTotalWidthAttrName);
+  auto receiverIndexAttr =
+      op->getAttrOfType<IntegerAttr>(randomReceiverIndexAttrName);
+  if (children.empty() || !properties || !totalWidthAttr ||
+      !receiverIndexAttr) {
+    emitError(location) << "randomize call has no frozen constraint plan";
+    return failure();
+  }
+  APInt receiverIndexValue = receiverIndexAttr.getValue();
+  APInt totalWidthValue = totalWidthAttr.getValue();
+  if (receiverIndexValue.isNegative() ||
+      receiverIndexValue.getActiveBits() > 64 || totalWidthValue.isNegative() ||
+      totalWidthValue.getActiveBits() > 64 ||
+      receiverIndexValue.getZExtValue() >= children.size()) {
+    emitError(location) << "randomize call has malformed constraint metadata";
+    return failure();
+  }
+  unsigned receiverIndex =
+      static_cast<unsigned>(receiverIndexValue.getZExtValue());
+  uint64_t totalWidth = totalWidthValue.getZExtValue();
+  if (totalWidth > 64) {
+    emitError(location) << "randomize plan exceeds 64 aggregate rand bits";
+    return failure();
+  }
+
+  FailureOr<Value> loweredReceiver = lowerExpression(children[receiverIndex]);
+  auto objectType =
+      succeeded(loweredReceiver)
+          ? dyn_cast<sim::ClassHandleType>((*loweredReceiver).getType())
+          : sim::ClassHandleType{};
+  if (failed(loweredReceiver) || !objectType)
+    return failure();
+  Value receiver = *loweredReceiver;
+
+  struct Property {
+    Type type;
+    unsigned width;
+    bool isSigned;
+    Value reference;
+  };
+  SmallVector<Property> planned;
+  uint64_t plannedWidth = 0;
+  for (Attribute propertyAttr : properties) {
+    auto property = dyn_cast<DictionaryAttr>(propertyAttr);
+    auto field = property ? property.getAs<FlatSymbolRefAttr>("field")
+                          : FlatSymbolRefAttr{};
+    auto typeAttr = property ? property.getAs<TypeAttr>("type") : TypeAttr{};
+    auto widthAttr =
+        property ? property.getAs<IntegerAttr>("width") : IntegerAttr{};
+    auto signedAttr =
+        property ? property.getAs<BoolAttr>("is_signed") : BoolAttr{};
+    if (!field || !typeAttr || !widthAttr || !signedAttr ||
+        widthAttr.getValue().isZero() || widthAttr.getValue().isNegative() ||
+        widthAttr.getValue().getActiveBits() > 64) {
+      emitError(location) << "randomize property plan is malformed";
+      return failure();
+    }
+    uint64_t width = widthAttr.getValue().getZExtValue();
+    if (width > 64 - plannedWidth) {
+      emitError(location) << "randomize property plan exceeds 64 bits";
+      return failure();
+    }
+    Type type = typeAttr.getValue();
+    std::optional<unsigned> typeWidth = sim::getPackedWidth(type);
+    if (!typeWidth || *typeWidth != width) {
+      emitError(location) << "randomize property type width is inconsistent";
+      return failure();
+    }
+    Type referenceType = sim::ManagedRefType::get(function.getContext(), type,
+                                                  objectType.getClassName());
+    Value reference = sim::SimClassFieldRefOp::create(
+        builder, location, referenceType, receiver, field);
+    planned.push_back(
+        {type, static_cast<unsigned>(width), signedAttr.getValue(), reference});
+    plannedWidth += width;
+  }
+  if (plannedWidth != totalWidth) {
+    emitError(location) << "randomize property plan width is inconsistent";
+    return failure();
+  }
+
+  sim::SimClassDeclOp declaration =
+      SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+          function, objectType.getClassName());
+  while (declaration &&
+         !declaration->hasAttr("obelisk_sim.random_state_field")) {
+    if (!declaration.getBaseAttr())
+      break;
+    declaration = SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+        function, declaration.getBaseAttr());
+  }
+  auto stateField = declaration ? declaration->getAttrOfType<FlatSymbolRefAttr>(
+                                      "obelisk_sim.random_state_field")
+                                : FlatSymbolRefAttr{};
+  auto incrementField = declaration
+                            ? declaration->getAttrOfType<FlatSymbolRefAttr>(
+                                  "obelisk_sim.random_increment_field")
+                            : FlatSymbolRefAttr{};
+  if (!declaration || !stateField || !incrementField) {
+    emitError(location) << "randomize receiver has no object-local stream";
+    return failure();
+  }
+  Type i64 = builder.getI64Type();
+  Type randomReferenceType = sim::ManagedRefType::get(
+      function.getContext(), i64, objectType.getClassName());
+  Value stateReference = sim::SimClassFieldRefOp::create(
+      builder, location, randomReferenceType, receiver, stateField);
+  Value incrementReference = sim::SimClassFieldRefOp::create(
+      builder, location, randomReferenceType, receiver, incrementField);
+  Value state =
+      sim::SimManagedLoadOp::create(builder, location, i64, stateReference);
+  Value increment =
+      sim::SimManagedLoadOp::create(builder, location, i64, incrementReference);
+
+  auto constant64 = [&](uint64_t value) -> Value {
+    return arith::ConstantOp::create(
+        builder, location, i64, builder.getIntegerAttr(i64, APInt(64, value)));
+  };
+  auto next32 = [&](Value &streamState) -> Value {
+    Value old = streamState;
+    streamState = arith::AddIOp::create(
+        builder, location,
+        arith::MulIOp::create(builder, location, old,
+                              constant64(UINT64_C(6364136223846793005))),
+        increment);
+    Value xored = arith::XOrIOp::create(
+        builder, location,
+        arith::ShRUIOp::create(builder, location, old, constant64(18)), old);
+    Value shifted =
+        arith::ShRUIOp::create(builder, location, xored, constant64(27));
+    Type i32 = builder.getI32Type();
+    Value bits = arith::TruncIOp::create(builder, location, i32, shifted);
+    Value rotation = arith::TruncIOp::create(
+        builder, location, i32,
+        arith::ShRUIOp::create(builder, location, old, constant64(59)));
+    Value zero32 = arith::ConstantOp::create(builder, location, i32,
+                                             builder.getI32IntegerAttr(0));
+    Value thirtyOne = arith::ConstantOp::create(builder, location, i32,
+                                                builder.getI32IntegerAttr(31));
+    Value leftAmount = arith::AndIOp::create(
+        builder, location,
+        arith::SubIOp::create(builder, location, zero32, rotation), thirtyOne);
+    return arith::OrIOp::create(
+        builder, location,
+        arith::ShRUIOp::create(builder, location, bits, rotation),
+        arith::ShLIOp::create(builder, location, bits, leftAmount));
+  };
+  Value high = next32(state);
+  Value low = next32(state);
+  Value start = arith::OrIOp::create(
+      builder, location,
+      arith::ShLIOp::create(
+          builder, location,
+          arith::ExtUIOp::create(builder, location, i64, high), constant64(32)),
+      arith::ExtUIOp::create(builder, location, i64, low));
+  sim::SimManagedStoreOp::create(builder, location, state, stateReference);
+
+  APInt domainMask = totalWidth == 64 ? APInt::getAllOnes(64)
+                                      : APInt::getLowBitsSet(64, totalWidth);
+  Value mask = arith::ConstantOp::create(
+      builder, location, i64, builder.getIntegerAttr(i64, domainMask));
+  start = arith::AndIOp::create(builder, location, start, mask);
+
+  Block *loop = addBlock();
+  Block *advance = addBlock();
+  Block *commit = addBlock();
+  Block *failedBlock = addBlock();
+  Block *done = addBlock();
+  Value counter = loop->addArgument(i64, location);
+  Value doneResult = done->addArgument(builder.getI1Type(), location);
+  cf::BranchOp::create(builder, location, loop, ValueRange{start});
+
+  setCurrent(loop);
+  SmallVector<Value> candidates;
+  uint64_t offset = 0;
+  for (const Property &property : planned) {
+    Value bits = counter;
+    if (offset != 0)
+      bits =
+          arith::ShRUIOp::create(builder, location, bits, constant64(offset));
+    Type integerType = IntegerType::get(function.getContext(), property.width);
+    if (property.width != 64)
+      bits = arith::TruncIOp::create(builder, location, integerType, bits);
+    FailureOr<Value> converted =
+        convert(bits, property.type, false, location, property.isSigned);
+    if (failed(converted))
+      return failure();
+    candidates.push_back(*converted);
+    offset += property.width;
+  }
+
+  Value savedThis = thisObject;
+  SmallVector<Value> savedCandidates = std::move(randomizeCandidateValues);
+  llvm::scope_exit restoreBindings([&] {
+    thisObject = savedThis;
+    randomizeCandidateValues = std::move(savedCandidates);
+  });
+  thisObject = receiver;
+  randomizeCandidateValues = candidates;
+
+  std::function<FailureOr<Value>(Operation *)> lowerConstraint =
+      [&](Operation *constraint) -> FailureOr<Value> {
+    SmallVector<Operation *> nested = getChildren(constraint);
+    if (isa<semantic::SVConstraintListOp>(constraint)) {
+      Value result = arith::ConstantOp::create(
+          builder, getSemanticLocation(constraint), builder.getI1Type(),
+          builder.getBoolAttr(true));
+      for (Operation *item : nested) {
+        FailureOr<Value> itemResult = lowerConstraint(item);
+        if (failed(itemResult))
+          return failure();
+        result = arith::AndIOp::create(builder, getSemanticLocation(item),
+                                       result, *itemResult);
+      }
+      return result;
+    }
+    if (isa<semantic::SVExpressionConstraintOp>(constraint)) {
+      if (nested.size() != 1) {
+        emitError(getSemanticLocation(constraint))
+            << "expression constraint does not contain one predicate";
+        return failure();
+      }
+      FailureOr<Value> value = lowerExpression(nested.front());
+      return failed(value)
+                 ? FailureOr<Value>(failure())
+                 : truthValue(*value, getSemanticLocation(constraint));
+    }
+    if (isa<semantic::SVImplicationConstraintOp>(constraint)) {
+      if (nested.size() != 2) {
+        emitError(getSemanticLocation(constraint))
+            << "implication constraint does not contain a predicate and body";
+        return failure();
+      }
+      FailureOr<Value> predicateValue = lowerExpression(nested.front());
+      FailureOr<Value> body = lowerConstraint(nested.back());
+      if (failed(predicateValue) || failed(body))
+        return failure();
+      FailureOr<Value> predicate =
+          truthValue(*predicateValue, getSemanticLocation(nested.front()));
+      if (failed(predicate))
+        return failure();
+      Value falseValue = arith::ConstantOp::create(
+          builder, getSemanticLocation(constraint), builder.getI1Type(),
+          builder.getBoolAttr(false));
+      Value notPredicate = arith::CmpIOp::create(
+          builder, getSemanticLocation(constraint), arith::CmpIPredicate::eq,
+          *predicate, falseValue);
+      return arith::OrIOp::create(builder, getSemanticLocation(constraint),
+                                  notPredicate, *body)
+          .getResult();
+    }
+    if (auto conditional =
+            dyn_cast<semantic::SVConditionalConstraintOp>(constraint)) {
+      size_t expected = conditional.getHasElse() ? 3 : 2;
+      if (nested.size() != expected) {
+        emitError(getSemanticLocation(constraint))
+            << "conditional constraint has inconsistent branch inventory";
+        return failure();
+      }
+      FailureOr<Value> predicateValue = lowerExpression(nested[0]);
+      FailureOr<Value> thenValue = lowerConstraint(nested[1]);
+      if (failed(predicateValue) || failed(thenValue))
+        return failure();
+      FailureOr<Value> predicate =
+          truthValue(*predicateValue, getSemanticLocation(nested[0]));
+      if (failed(predicate))
+        return failure();
+      Value elseValue;
+      if (conditional.getHasElse()) {
+        FailureOr<Value> loweredElse = lowerConstraint(nested[2]);
+        if (failed(loweredElse))
+          return failure();
+        elseValue = *loweredElse;
+      } else {
+        elseValue = arith::ConstantOp::create(
+            builder, getSemanticLocation(constraint), builder.getI1Type(),
+            builder.getBoolAttr(true));
+      }
+      return arith::SelectOp::create(builder, getSemanticLocation(constraint),
+                                     *predicate, *thenValue, elseValue)
+          .getResult();
+    }
+    if (isa<semantic::SVUniquenessConstraintOp>(constraint)) {
+      SmallVector<Value> values;
+      for (Operation *item : nested) {
+        FailureOr<Value> value = lowerExpression(item);
+        if (failed(value))
+          return failure();
+        values.push_back(*value);
+      }
+      Value result = arith::ConstantOp::create(
+          builder, getSemanticLocation(constraint), builder.getI1Type(),
+          builder.getBoolAttr(true));
+      for (size_t left = 0; left < values.size(); ++left)
+        for (size_t right = left + 1; right < values.size(); ++right) {
+          if (values[left].getType() != values[right].getType()) {
+            emitError(getSemanticLocation(constraint))
+                << "uniqueness operands do not have one normalized type";
+            return failure();
+          }
+          FailureOr<Value> equal = conditionalEqual(
+              values[left], values[right], values[left].getType(),
+              getSemanticLocation(constraint), true);
+          if (failed(equal))
+            return failure();
+          Value falseValue = arith::ConstantOp::create(
+              builder, getSemanticLocation(constraint), builder.getI1Type(),
+              builder.getBoolAttr(false));
+          Value distinct = arith::CmpIOp::create(
+              builder, getSemanticLocation(constraint),
+              arith::CmpIPredicate::eq, *equal, falseValue);
+          result = arith::AndIOp::create(
+              builder, getSemanticLocation(constraint), result, distinct);
+        }
+      return result;
+    }
+    emitError(getSemanticLocation(constraint))
+        << "unsupported executable constraint node " << constraint->getName();
+    return failure();
+  };
+
+  Value satisfied = arith::ConstantOp::create(
+      builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+  for (auto [index, constraint] : llvm::enumerate(children)) {
+    if (index == receiverIndex)
+      continue;
+    FailureOr<Value> value = lowerConstraint(constraint);
+    if (failed(value))
+      return failure();
+    satisfied = arith::AndIOp::create(builder, location, satisfied, *value);
+  }
+  thisObject = savedThis;
+  randomizeCandidateValues = std::move(savedCandidates);
+  restoreBindings.release();
+  cf::CondBranchOp::create(builder, location, satisfied, commit, ValueRange{},
+                           advance, ValueRange{});
+
+  setCurrent(advance);
+  Value next = arith::AndIOp::create(
+      builder, location,
+      arith::AddIOp::create(builder, location, counter, constant64(1)), mask);
+  Value exhausted = arith::CmpIOp::create(
+      builder, location, arith::CmpIPredicate::eq, next, start);
+  cf::CondBranchOp::create(builder, location, exhausted, failedBlock,
+                           ValueRange{}, loop, ValueRange{next});
+
+  setCurrent(commit);
+  for (auto [property, candidate] : llvm::zip_equal(planned, candidates))
+    sim::SimManagedStoreOp::create(builder, location, candidate,
+                                   property.reference);
+  Value success = arith::ConstantOp::create(
+      builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+  cf::BranchOp::create(builder, location, done, ValueRange{success});
+
+  setCurrent(failedBlock);
+  Value noSolution = arith::ConstantOp::create(
+      builder, location, builder.getI1Type(), builder.getBoolAttr(false));
+  cf::BranchOp::create(builder, location, done, ValueRange{noSolution});
+
+  setCurrent(done);
+  FailureOr<Type> resultType = getNormalizedSemanticType(op);
+  if (failed(resultType))
+    return failure();
+  return convert(doneResult, *resultType, false, location);
 }
 
 FailureOr<Value>

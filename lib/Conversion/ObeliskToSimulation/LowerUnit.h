@@ -154,6 +154,8 @@ private:
   ::mlir::FailureOr<::mlir::Value>
   lowerNewClass(semantic::SVNewClassExpressionOp op);
   ::mlir::FailureOr<::mlir::Value>
+  lowerRandomize(semantic::SVCallExpressionOp op);
+  ::mlir::FailureOr<::mlir::Value>
   lowerSystemCall(semantic::SVCallExpressionOp op);
   ::mlir::FailureOr<::mlir::Value>
   lowerArrayQuerySystemCall(semantic::SVCallExpressionOp op);
@@ -300,6 +302,7 @@ private:
   ::mlir::Value expressionPlaceholder;
   ::mlir::Value unboundedPlaceholder;
   ::mlir::Value lvalueReferencePlaceholder;
+  ::mlir::SmallVector<::mlir::Value> randomizeCandidateValues;
   std::string returnPath;
   ::mlir::SmallVector<std::string> copyOutPaths;
   struct LoopTargets {

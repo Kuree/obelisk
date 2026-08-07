@@ -1262,6 +1262,17 @@ LogicalResult UnitLowering::emitRuntimeFatal(Location location,
 }
 
 FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
+  if (auto variable = op->getAttrOfType<IntegerAttr>(randomVariableAttrName)) {
+    const APInt &indexValue = variable.getValue();
+    if (lvalue || indexValue.isNegative() || indexValue.getActiveBits() > 64 ||
+        indexValue.getZExtValue() >= randomizeCandidateValues.size()) {
+      emitError(getSemanticLocation(op))
+          << "randomization candidate binding is invalid";
+      return failure();
+    }
+    uint64_t index = indexValue.getZExtValue();
+    return randomizeCandidateValues[index];
+  }
   if (isa<semantic::SVEmptyArgumentExpressionOp>(op)) {
     if (expressionPlaceholder)
       return expressionPlaceholder;

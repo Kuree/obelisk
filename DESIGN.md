@@ -1203,11 +1203,17 @@ The implementation roadmap is:
   precise non-moving collection, and `std::weak_reference` in native and
   bytecode execution.~~
 - Complete constrained randomization. Hierarchical PCG process streams,
-  system random functions, and inline object-stream layout/lifecycle are
-  implemented. The remaining gate is the compiler-owned formula/plan model,
-  transactional snapshot/commit, pointer-free program encoding, complete
-  runtime fallback, and compiler-only Z3 planning. The exact current boundary
-  is recorded in `docs/randomization-support.md`.
+  system random functions, inline object-stream layout/lifecycle, and the
+  first complete finite-domain class-randomization slice are implemented. The
+  executable slice compiles total, side-effect-free hard integral constraints
+  and inline `with` constraints to pointer-free SSA, searches at most 64
+  aggregate random bits completely, and commits class fields transactionally
+  in native and bytecode execution. The remaining gate is dynamic mode masks,
+  `randc`,
+  soft and distribution semantics, solve ordering, randomization hooks,
+  enum/tagged domains, constraint-function purity contracts,
+  wider/decomposed plans, and compiler-only Z3 planning. The exact current
+  boundary is recorded in `docs/randomization-support.md`.
 - Extend executable lowering across the remaining broad UVM gate: complete
   the remaining dynamic-array and queue surface, mailboxes, semaphores,
   synchronization, concurrent assertions, advanced and event-driven functional

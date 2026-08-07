@@ -130,6 +130,16 @@ inline constexpr ::mlir::StringLiteral observerResultAttrName =
     "obelisk_sim.observer_result";
 inline constexpr ::mlir::StringLiteral observerEventPrimaryAttrName =
     "obelisk_sim.event_primary";
+inline constexpr ::mlir::StringLiteral randomizeAttrName =
+    "obelisk_sim.randomize";
+inline constexpr ::mlir::StringLiteral randomReceiverIndexAttrName =
+    "obelisk_sim.random_receiver_index";
+inline constexpr ::mlir::StringLiteral randomPropertiesAttrName =
+    "obelisk_sim.random_properties";
+inline constexpr ::mlir::StringLiteral randomTotalWidthAttrName =
+    "obelisk_sim.random_total_width";
+inline constexpr ::mlir::StringLiteral randomVariableAttrName =
+    "obelisk_sim.random_variable";
 
 /// Result representation frozen by prepare for computed timing observers.
 /// Keep this strongly typed at both ends of the private pass boundary so a

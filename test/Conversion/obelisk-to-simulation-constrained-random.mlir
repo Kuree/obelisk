@@ -1,0 +1,270 @@
+// RUN: %split-file %s %t
+// RUN: obelisk-opt %t/success.mlir '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
+// RUN: not obelisk-opt %t/unsupported.mlir '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=UNSUPPORTED
+
+//--- success.mlir
+
+module {
+  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "unsupported_constraint", name = "unsupported_constraint", node_id = 0 : i64, sym_name = "s0.unsupported_constraint"} {
+  }
+  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
+    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+      obelisk.sv.symbol.variable attributes {hierarchical_name = "limit", lifetime = 1 : i32, name = "limit", node_id = 75 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s24.limit"} {
+      }
+      obelisk.sv.type.class_type attributes {bitstream_width = 32 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "constrained", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "constrained", node_id = 3 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.constrained>, sym_name = "s3.constrained", this_variable_path = "constrained::this", this_variable_symbol = @s1.$root::@s2::@s3.constrained::@s21.this} {
+        obelisk.sv.symbol.class_property attributes {hierarchical_name = "constrained::value", name = "value", node_id = 4 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s4.value"} {
+        }
+        obelisk.sv.symbol.constraint_block attributes {hierarchical_name = "constrained::bounds", name = "bounds", node_id = 5 : i64, sym_name = "s5.bounds", this_variable_path = "constrained::bounds.this", this_variable_symbol = @s1.$root::@s2::@s3.constrained::@s5.bounds::@s6.this} {
+          obelisk.sv.constraint.list attributes {item_count = 1 : i64, node_id = 6 : i64} {
+            obelisk.sv.constraint.expression attributes {is_soft = false, node_id = 7 : i64} {
+              obelisk.sv.expression.binary_op attributes {node_id = 8 : i64, operator_kind = 14 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
+                obelisk.sv.expression.named_value attributes {node_id = 9 : i64, referenced_path = "constrained::value", referenced_symbol = @s1.$root::@s2::@s3.constrained::@s4.value, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                }
+                obelisk.sv.expression.named_value attributes {node_id = 10 : i64, referenced_path = "limit", referenced_symbol = @s1.$root::@s2::@s24.limit, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                }
+              }
+            }
+          }
+          obelisk.sv.symbol.variable attributes {hierarchical_name = "constrained::bounds.this", is_compiler_generated, is_const, name = "this", node_id = 11 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.constrained>, sym_name = "s6.this"} {
+          }
+        }
+        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "constrained::randomize", is_builtin, is_declared_virtual, is_randomize, is_virtual, name = "randomize", node_id = 12 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.integral<32, true, false, 31 : 0, int>, false>, subroutine_kind = 0 : i32, sym_name = "s7.randomize", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.list attributes {node_id = 13 : i64} {
+          }
+        }
+        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "constrained::pre_randomize", is_builtin, name = "pre_randomize", node_id = 14 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>, subroutine_kind = 0 : i32, sym_name = "s8.pre_randomize", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.list attributes {node_id = 15 : i64} {
+          }
+        }
+        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "constrained::post_randomize", is_builtin, name = "post_randomize", node_id = 16 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>, subroutine_kind = 0 : i32, sym_name = "s9.post_randomize", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.list attributes {node_id = 17 : i64} {
+          }
+        }
+        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "constrained::get_randstate", is_builtin, name = "get_randstate", node_id = 18 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.string, false>, subroutine_kind = 0 : i32, sym_name = "s10.get_randstate", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.list attributes {node_id = 19 : i64} {
+          }
+        }
+        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "constrained::set_randstate", is_builtin, name = "set_randstate", node_id = 20 : i64, semantic_type = !obelisk.subroutine<(!obelisk.string) -> !obelisk.void, false>, subroutine_kind = 0 : i32, sym_name = "s11.set_randstate", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.list attributes {node_id = 21 : i64} {
+          }
+          obelisk.sv.symbol.formal_argument attributes {direction = 0 : i32, hierarchical_name = "constrained::set_randstate.state", name = "state", node_id = 22 : i64, semantic_type = !obelisk.string, sym_name = "s12.state"} {
+          }
+        }
+        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "constrained::srandom", is_builtin, name = "srandom", node_id = 23 : i64, semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>) -> !obelisk.void, false>, subroutine_kind = 0 : i32, sym_name = "s13.srandom", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.list attributes {node_id = 24 : i64} {
+          }
+          obelisk.sv.symbol.formal_argument attributes {direction = 0 : i32, hierarchical_name = "constrained::srandom.seed", name = "seed", node_id = 25 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s14.seed"} {
+          }
+        }
+        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "constrained::rand_mode", is_builtin, name = "rand_mode", node_id = 26 : i64, semantic_type = !obelisk.subroutine<(!obelisk.integral<1, false, false, 0 : 0, bit>) -> !obelisk.void, false>, subroutine_kind = 0 : i32, sym_name = "s15.rand_mode", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.list attributes {node_id = 27 : i64} {
+          }
+          obelisk.sv.symbol.formal_argument attributes {direction = 0 : i32, hierarchical_name = "constrained::rand_mode.on_ff", name = "on_ff", node_id = 28 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>, sym_name = "s16.on_ff"} {
+          }
+        }
+        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "constrained::constraint_mode", is_builtin, name = "constraint_mode", node_id = 29 : i64, semantic_type = !obelisk.subroutine<(!obelisk.integral<1, false, false, 0 : 0, bit>) -> !obelisk.void, false>, subroutine_kind = 0 : i32, sym_name = "s17.constraint_mode", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.list attributes {node_id = 30 : i64} {
+          }
+          obelisk.sv.symbol.formal_argument attributes {direction = 0 : i32, hierarchical_name = "constrained::constraint_mode.on_ff", name = "on_ff", node_id = 31 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>, sym_name = "s18.on_ff"} {
+          }
+        }
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "constrained::this", is_compiler_generated, is_const, name = "this", node_id = 34 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.constrained>, sym_name = "s21.this"} {
+        }
+      }
+    }
+    obelisk.sv.symbol.instance attributes {hierarchical_name = "unsupported_constraint", is_uninstantiated = false, name = "unsupported_constraint", node_id = 32 : i64, referenced_path = "unsupported_constraint", referenced_symbol = @s0.unsupported_constraint, sym_name = "s19.unsupported_constraint"} {
+      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "unsupported_constraint", name = "unsupported_constraint", node_id = 33 : i64, sym_name = "s20.unsupported_constraint"} {
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "unsupported_constraint.object", lifetime = 1 : i32, name = "object", node_id = 35 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.constrained>, sym_name = "s22.object"} {
+          obelisk.sv.expression.new_class attributes {is_super_class = false, node_id = 36 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.constrained>} {
+          }
+        }
+        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "unsupported_constraint", node_id = 37 : i64, procedure_kind = 0 : i32, sym_name = "s23", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.expression_statement attributes {node_id = 38 : i64} {
+            obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "randomize", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = true, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 39 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, subroutine_kind = 0 : i32, system_library_cell = "work.unsupported_constraint", system_scope_path = "unsupported_constraint", system_scope_symbol = @s1.$root::@s19.unsupported_constraint::@s20.unsupported_constraint} {
+              obelisk.sv.constraint.list attributes {item_count = 5 : i64, node_id = 41 : i64} {
+                obelisk.sv.constraint.expression attributes {is_soft = false, node_id = 42 : i64} {
+                  obelisk.sv.expression.binary_op attributes {node_id = 43 : i64, operator_kind = 16 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
+                    obelisk.sv.expression.named_value attributes {node_id = 44 : i64, referenced_path = "constrained::value", referenced_symbol = @s1.$root::@s2::@s3.constrained::@s4.value, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                    }
+                    obelisk.sv.expression.integer_literal attributes {constant_value = "4", node_id = 45 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                    }
+                  }
+                }
+                obelisk.sv.constraint.implication attributes {node_id = 46 : i64} {
+                  obelisk.sv.expression.binary_op attributes {node_id = 47 : i64, operator_kind = 9 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
+                    obelisk.sv.expression.named_value attributes {node_id = 48 : i64, referenced_path = "constrained::value", referenced_symbol = @s1.$root::@s2::@s3.constrained::@s4.value, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                    }
+                    obelisk.sv.expression.integer_literal attributes {constant_value = "1", node_id = 49 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                    }
+                  }
+                  obelisk.sv.constraint.expression attributes {is_soft = false, node_id = 50 : i64} {
+                    obelisk.sv.expression.binary_op attributes {node_id = 51 : i64, operator_kind = 16 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
+                      obelisk.sv.expression.named_value attributes {node_id = 52 : i64, referenced_path = "constrained::value", referenced_symbol = @s1.$root::@s2::@s3.constrained::@s4.value, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                      }
+                      obelisk.sv.expression.integer_literal attributes {constant_value = "4", node_id = 53 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                      }
+                    }
+                  }
+                }
+                obelisk.sv.constraint.conditional attributes {has_else = true, node_id = 54 : i64} {
+                  obelisk.sv.expression.binary_op attributes {node_id = 55 : i64, operator_kind = 9 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
+                    obelisk.sv.expression.named_value attributes {node_id = 56 : i64, referenced_path = "constrained::value", referenced_symbol = @s1.$root::@s2::@s3.constrained::@s4.value, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                    }
+                    obelisk.sv.expression.integer_literal attributes {constant_value = "2", node_id = 57 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                    }
+                  }
+                  obelisk.sv.constraint.expression attributes {is_soft = false, node_id = 58 : i64} {
+                    obelisk.sv.expression.binary_op attributes {node_id = 59 : i64, operator_kind = 16 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
+                      obelisk.sv.expression.named_value attributes {node_id = 60 : i64, referenced_path = "constrained::value", referenced_symbol = @s1.$root::@s2::@s3.constrained::@s4.value, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                      }
+                      obelisk.sv.expression.integer_literal attributes {constant_value = "4", node_id = 61 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                      }
+                    }
+                  }
+                  obelisk.sv.constraint.expression attributes {is_soft = false, node_id = 62 : i64} {
+                    obelisk.sv.expression.binary_op attributes {node_id = 63 : i64, operator_kind = 14 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
+                      obelisk.sv.expression.named_value attributes {node_id = 64 : i64, referenced_path = "constrained::value", referenced_symbol = @s1.$root::@s2::@s3.constrained::@s4.value, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                      }
+                      obelisk.sv.expression.integer_literal attributes {constant_value = "0", node_id = 65 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                      }
+                    }
+                  }
+                }
+                obelisk.sv.constraint.uniqueness attributes {item_count = 2 : i64, node_id = 66 : i64} {
+                  obelisk.sv.expression.named_value attributes {node_id = 67 : i64, referenced_path = "constrained::value", referenced_symbol = @s1.$root::@s2::@s3.constrained::@s4.value, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                  }
+                  obelisk.sv.expression.integer_literal attributes {constant_value = "4", node_id = 68 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                  }
+                }
+                obelisk.sv.constraint.expression attributes {is_soft = false, node_id = 69 : i64} {
+                  obelisk.sv.expression.inside attributes {item_count = 1 : i64, node_id = 70 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                    obelisk.sv.expression.named_value attributes {node_id = 71 : i64, referenced_path = "constrained::value", referenced_symbol = @s1.$root::@s2::@s3.constrained::@s4.value, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                    }
+                    obelisk.sv.expression.value_range attributes {node_id = 72 : i64, range_kind = 0 : i32, semantic_type = !obelisk.void} {
+                      obelisk.sv.expression.integer_literal attributes {constant_value = "1", node_id = 73 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                      }
+                      obelisk.sv.expression.integer_literal attributes {constant_value = "3", node_id = 74 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                      }
+                    }
+                  }
+                }
+              }
+              obelisk.sv.expression.named_value attributes {node_id = 40 : i64, referenced_path = "unsupported_constraint.object", referenced_symbol = @s1.$root::@s19.unsupported_constraint::@s20.unsupported_constraint::@s22.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.constrained>} {
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// The randomize call lowers to a compiler-owned finite-domain search. The
+// object stream chooses the first assignment, the loop tests hard constraints,
+// and the rand property is stored only on the successful commit edge.
+// CHECK: obelisk_sim.class.decl
+// CHECK: obelisk_sim.class.field {{.*}}debug_name = "value"
+// CHECK: obelisk_sim.class.field {{.*}}debug_name = "__obelisk_rng_state"
+// CHECK: obelisk_sim.class.field {{.*}}debug_name = "__obelisk_rng_increment"
+// CHECK: obelisk_sim.func private @unit_1({{.*}}%[[LIMIT_ARG:arg[0-9]+]]: !obelisk_sim.ref<i32>
+// CHECK: obelisk_sim.class.field_ref
+// CHECK: obelisk_sim.managed.load
+// CHECK: arith.muli
+// CHECK: obelisk_sim.managed.store
+// CHECK: cf.br ^[[SEARCH:[a-zA-Z0-9_]+]]
+// CHECK: ^[[SEARCH]]({{.*}}: i64):
+// CHECK: arith.cmpi slt
+// CHECK: arith.ori
+// CHECK: arith.cmpi sgt
+// CHECK: arith.select
+// CHECK: arith.cmpi eq
+// CHECK: arith.cmpi eq
+// CHECK: arith.cmpi sge
+// CHECK: arith.cmpi sle
+// CHECK: obelisk_sim.ref.load %[[LIMIT_ARG]]
+// CHECK: cf.cond_br {{.*}}, ^[[COMMIT:[a-zA-Z0-9_]+]], ^[[ADVANCE:[a-zA-Z0-9_]+]]
+// CHECK: ^[[ADVANCE]]:
+// CHECK: cf.cond_br {{.*}}, ^[[DONE:[a-zA-Z0-9_]+]], ^[[SEARCH]]
+// CHECK: ^[[COMMIT]]:
+// CHECK: obelisk_sim.managed.store
+// CHECK: cf.br ^[[DONE]]
+// CHECK: ^[[DONE]]:
+// CHECK-NOT: obelisk_sim.managed.store
+// CHECK-NOT: obelisk.sv.
+
+// UNSUPPORTED-DAG: error: randc properties are not executable yet
+// UNSUPPORTED-DAG: error: rand enum and tagged-union domains are not executable yet
+// UNSUPPORTED-DAG: error: soft constraints are not executable yet
+// UNSUPPORTED-DAG: error: constraint form is outside the executable hard-expression boundary: obelisk.sv.constraint.solve_before
+// UNSUPPORTED-DAG: error: user pre_randomize and post_randomize hooks are not executable yet
+// UNSUPPORTED-DAG: error: constraint expression is outside the total side-effect-free executable boundary: obelisk.sv.expression.assignment
+// UNSUPPORTED-DAG: error: constraint expression is outside the total side-effect-free executable boundary: obelisk.sv.expression.unary_op
+
+//--- unsupported.mlir
+
+module {
+  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 100 : i64, sym_name = "s100.top"} {
+  }
+  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 101 : i64, sym_name = "s101.$root"} {
+    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 102 : i64, sym_name = "s102"} {
+      obelisk.sv.type.class_type attributes {bitstream_width = 64 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "unsupported", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "unsupported", node_id = 103 : i64, semantic_type = !obelisk.class_handle<@s101.$root::@s102::@s103.unsupported>, sym_name = "s103.unsupported", this_variable_path = "unsupported::this", this_variable_symbol = @s101.$root::@s102::@s103.unsupported::@s108.this} {
+        obelisk.sv.symbol.class_property attributes {hierarchical_name = "unsupported::value", name = "value", node_id = 104 : i64, rand_mode = 2 : i32, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s104.value"} {
+        }
+        obelisk.sv.symbol.class_property attributes {hierarchical_name = "unsupported::enum_value", name = "enum_value", node_id = 132 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.enum<"E", !obelisk.integral<32, true, false, 31 : 0, int>>, sym_name = "s132.enum_value"} {
+        }
+        obelisk.sv.symbol.constraint_block attributes {hierarchical_name = "unsupported::rules", name = "rules", node_id = 105 : i64, sym_name = "s105.rules", this_variable_path = "unsupported::rules.this", this_variable_symbol = @s101.$root::@s102::@s103.unsupported::@s105.rules::@s106.this} {
+          obelisk.sv.constraint.list attributes {item_count = 4 : i64, node_id = 110 : i64} {
+            obelisk.sv.constraint.expression attributes {is_soft = true, node_id = 111 : i64} {
+              obelisk.sv.expression.integer_literal attributes {constant_value = "1", node_id = 112 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
+              }
+            }
+            obelisk.sv.constraint.solve_before attributes {after_count = 1 : i64, node_id = 113 : i64, solve_count = 1 : i64} {
+              obelisk.sv.expression.named_value attributes {node_id = 114 : i64, referenced_path = "unsupported::value", referenced_symbol = @s101.$root::@s102::@s103.unsupported::@s104.value, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+              }
+              obelisk.sv.expression.named_value attributes {node_id = 115 : i64, referenced_path = "unsupported::value", referenced_symbol = @s101.$root::@s102::@s103.unsupported::@s104.value, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+              }
+            }
+            obelisk.sv.constraint.expression attributes {is_soft = false, node_id = 116 : i64} {
+              obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 117 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
+                obelisk.sv.expression.named_value attributes {node_id = 118 : i64, referenced_path = "unsupported::value", referenced_symbol = @s101.$root::@s102::@s103.unsupported::@s104.value, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                }
+                obelisk.sv.expression.integer_literal attributes {constant_value = "0", node_id = 119 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                }
+              }
+            }
+            obelisk.sv.constraint.expression attributes {is_soft = false, node_id = 133 : i64} {
+              obelisk.sv.expression.unary_op attributes {node_id = 134 : i64, operator_kind = 10 : i32, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                obelisk.sv.expression.named_value attributes {node_id = 135 : i64, referenced_path = "unsupported::value", referenced_symbol = @s101.$root::@s102::@s103.unsupported::@s104.value, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                }
+              }
+            }
+          }
+          obelisk.sv.symbol.variable attributes {hierarchical_name = "unsupported::rules.this", is_compiler_generated, is_const, name = "this", node_id = 120 : i64, semantic_type = !obelisk.class_handle<@s101.$root::@s102::@s103.unsupported>, sym_name = "s106.this"} {
+          }
+        }
+        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "unsupported::pre_randomize", is_pre_post_randomize, name = "pre_randomize", node_id = 121 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>, subroutine_kind = 0 : i32, sym_name = "s107.pre_randomize", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.list attributes {node_id = 122 : i64} {
+          }
+        }
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "unsupported::this", is_compiler_generated, is_const, name = "this", node_id = 123 : i64, semantic_type = !obelisk.class_handle<@s101.$root::@s102::@s103.unsupported>, sym_name = "s108.this"} {
+        }
+      }
+    }
+    obelisk.sv.symbol.instance attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 124 : i64, referenced_path = "top", referenced_symbol = @s100.top, sym_name = "s109.top"} {
+      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top", name = "top", node_id = 125 : i64, sym_name = "s110.top"} {
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.object", lifetime = 1 : i32, name = "object", node_id = 126 : i64, semantic_type = !obelisk.class_handle<@s101.$root::@s102::@s103.unsupported>, sym_name = "s111.object"} {
+          obelisk.sv.expression.new_class attributes {is_super_class = false, node_id = 127 : i64, semantic_type = !obelisk.class_handle<@s101.$root::@s102::@s103.unsupported>} {
+          }
+        }
+        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 128 : i64, procedure_kind = 0 : i32, sym_name = "s112", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.expression_statement attributes {node_id = 129 : i64} {
+            obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "randomize", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 130 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, subroutine_kind = 0 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s101.$root::@s109.top::@s110.top} {
+              obelisk.sv.expression.named_value attributes {node_id = 131 : i64, referenced_path = "top.object", referenced_symbol = @s101.$root::@s109.top::@s110.top::@s111.object, semantic_type = !obelisk.class_handle<@s101.$root::@s102::@s103.unsupported>} {
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

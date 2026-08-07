@@ -27,6 +27,7 @@
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -66,6 +67,121 @@ static semantic::SVClassTypeOp getOwningClass(Operation *member) {
     if (auto classType = dyn_cast<semantic::SVClassTypeOp>(parent))
       return classType;
   return {};
+}
+
+/// Return whether assigning arbitrary packed bits would violate the source
+/// domain. Enum values require an enumerator inventory, and tagged unions
+/// require a coordinated tag/payload choice; neither is represented by the
+/// initial finite-domain bit-vector plan.
+static bool hasUnsupportedRandomDomain(Type type) {
+  if (isa<semantic::EnumType>(type))
+    return true;
+  if (auto array = dyn_cast<semantic::RangedPackedArrayType>(type))
+    return hasUnsupportedRandomDomain(array.getElementType());
+  if (auto array = dyn_cast<semantic::PackedArrayType>(type))
+    return hasUnsupportedRandomDomain(array.getElementType());
+  if (auto aggregate = dyn_cast<semantic::SourceAggregateType>(type)) {
+    if (aggregate.getIsTagged())
+      return true;
+    for (Attribute fieldAttr : aggregate.getFields()) {
+      auto field = dyn_cast<DictionaryAttr>(fieldAttr);
+      auto fieldType = field ? field.getAs<TypeAttr>("type") : TypeAttr{};
+      if (!fieldType || hasUnsupportedRandomDomain(fieldType.getValue()))
+        return true;
+    }
+    return false;
+  }
+  auto dictionaryHasUnsupportedDomain = [&](DictionaryAttr fields) {
+    for (NamedAttribute field : fields) {
+      auto fieldType = dyn_cast<TypeAttr>(field.getValue());
+      if (!fieldType || hasUnsupportedRandomDomain(fieldType.getValue()))
+        return true;
+    }
+    return false;
+  };
+  if (auto aggregate = dyn_cast<semantic::PackedStructType>(type))
+    return dictionaryHasUnsupportedDomain(aggregate.getFields());
+  if (auto aggregate = dyn_cast<semantic::PackedUnionType>(type))
+    return dictionaryHasUnsupportedDomain(aggregate.getFields());
+  return false;
+}
+
+/// Constraint branches are evaluated eagerly while building the candidate
+/// predicate. Keep that legal by admitting only expression nodes that are
+/// intrinsically total and side-effect-free. Function calls and assignments
+/// need a separately modeled solver-function contract before they can enter a
+/// plan; division, shifts, and power need candidate-safe semantics that do not
+/// introduce poison during the exhaustive search.
+static bool isSupportedRandomConstraintExpression(Operation *op) {
+  if (auto unary = dyn_cast<semantic::SVUnaryExpressionOp>(op)) {
+    using Unary = semantic::SVUnaryOperator;
+    switch (unary.getOperatorKind()) {
+    case Unary::Plus:
+    case Unary::Minus:
+    case Unary::BitwiseNot:
+    case Unary::BitwiseAnd:
+    case Unary::BitwiseOr:
+    case Unary::BitwiseXor:
+    case Unary::BitwiseNand:
+    case Unary::BitwiseNor:
+    case Unary::BitwiseXnor:
+    case Unary::LogicalNot:
+      return true;
+    case Unary::Preincrement:
+    case Unary::Predecrement:
+    case Unary::Postincrement:
+    case Unary::Postdecrement:
+      return false;
+    }
+    llvm_unreachable("unhandled SystemVerilog unary operator");
+  }
+  if (auto binary = dyn_cast<semantic::SVBinaryExpressionOp>(op)) {
+    using Binary = semantic::SVBinaryOperator;
+    switch (binary.getOperatorKind()) {
+    case Binary::Add:
+    case Binary::Subtract:
+    case Binary::Multiply:
+    case Binary::BinaryAnd:
+    case Binary::BinaryOr:
+    case Binary::BinaryXor:
+    case Binary::BinaryXnor:
+    case Binary::Equality:
+    case Binary::Inequality:
+    case Binary::CaseEquality:
+    case Binary::CaseInequality:
+    case Binary::GreaterThanEqual:
+    case Binary::GreaterThan:
+    case Binary::LessThanEqual:
+    case Binary::LessThan:
+    case Binary::WildcardEquality:
+    case Binary::WildcardInequality:
+    case Binary::LogicalAnd:
+    case Binary::LogicalOr:
+    case Binary::LogicalImplication:
+    case Binary::LogicalEquivalence:
+      return true;
+    case Binary::Divide:
+    case Binary::Mod:
+    case Binary::LogicalShiftLeft:
+    case Binary::LogicalShiftRight:
+    case Binary::ArithmeticShiftLeft:
+    case Binary::ArithmeticShiftRight:
+    case Binary::Power:
+      return false;
+    }
+    llvm_unreachable("unhandled SystemVerilog binary operator");
+  }
+  return isa<
+      semantic::SVNamedValueExpressionOp,
+      semantic::SVHierarchicalValueExpressionOp, semantic::SVIntegerLiteralOp,
+      semantic::SVUnbasedUnsizedIntegerLiteralOp,
+      semantic::SVUnboundedLiteralOp, semantic::SVConversionExpressionOp,
+      semantic::SVConditionalExpressionOp,
+      semantic::SVConcatenationExpressionOp,
+      semantic::SVReplicationExpressionOp,
+      semantic::SVElementSelectExpressionOp,
+      semantic::SVRangeSelectExpressionOp, semantic::SVMemberAccessExpressionOp,
+      semantic::SVInsideExpressionOp, semantic::SVValueRangeExpressionOp>(op);
 }
 
 static bool isProgramCodeUnit(Operation *op) {
@@ -352,38 +468,6 @@ void ObeliskSimPreparePass::runOnOperation() {
     return preparedUnits->resolveDirectCallee(call, semanticSymbols);
   };
 
-  FailureOr<PreparedCaptures> preparedCaptures = analyzeCodeUnitCaptures(
-      *preparedUnits, descriptors, semanticSymbols, classSources);
-  if (failed(preparedCaptures))
-    return abort();
-  auto &unitCaptures = preparedCaptures->descriptors;
-  auto &unitReadCaptures = preparedCaptures->readDescriptors;
-  auto &unitLocals = preparedCaptures->locals;
-  auto &unitConstants = preparedCaptures->constants;
-  auto &observerLocalCaptures = preparedCaptures->observerLocals;
-  auto &observerReadLocals = preparedCaptures->observerReadLocals;
-  auto &indirectRefTasks = preparedCaptures->indirectRefTasks;
-
-  for (PreparedUnit &unit : units) {
-    if (unit.entryKind == sim::EntryKind::Observer) {
-      SmallVector<Attribute> captures;
-      SmallVector<Attribute> dependencies;
-      for (auto &capture : unitCaptures[unit.source]) {
-        captures.push_back(builder.getStringAttr(capture.first));
-        if (unitReadCaptures[unit.source].contains(capture.first))
-          dependencies.push_back(builder.getStringAttr(capture.first));
-      }
-      for (const PreparedLocal &local : observerLocalCaptures[unit.source]) {
-        captures.push_back(builder.getStringAttr(local.path));
-        if (observerReadLocals[unit.source].contains(local.path))
-          dependencies.push_back(builder.getStringAttr(local.path));
-      }
-      unit.source->setAttr("obelisk_sim.observer_captures",
-                           builder.getArrayAttr(captures));
-      unit.source->setAttr("obelisk_sim.observer_dependencies",
-                           builder.getArrayAttr(dependencies));
-    }
-  }
   // Create the root shell first. Its body is filled after all process shells
   // exist, so every spawn uses an immutable precomputed flat name.
   SmallVector<DictionaryAttr> rootArgAttrs{
@@ -402,7 +486,311 @@ void ObeliskSimPreparePass::runOnOperation() {
       builder, module.getLoc(), "__obelisk_root", rootType,
       sim::EntryKind::RootInitializer, rootAttrs, rootArgAttrs);
 
+  // Freeze object randomization into each call before its semantic class and
+  // constraint declarations are erased. The unit-lowering pass is isolated,
+  // so the cloned constraint expressions and this compact field inventory are
+  // its complete compiler-owned randomization plan.
+  auto freezeRandomizeContract =
+      [&](semantic::SVCallExpressionOp call) -> bool {
+    if (!call.getIsSystemCall() || call.getCalleeName() != "randomize")
+      return false;
+    if (call->hasAttr(randomizeAttrName))
+      return true;
+    SmallVector<Operation *> callChildren = getChildren(call);
+    if (callChildren.empty())
+      return false;
+    bool hasInlineConstraints = call.getHasInlineConstraints();
+    unsigned receiverIndex = hasInlineConstraints ? callChildren.size() - 1 : 0;
+    auto receiverTypeAttr =
+        callChildren[receiverIndex]->getAttrOfType<TypeAttr>("semantic_type");
+    auto receiverType =
+        receiverTypeAttr
+            ? dyn_cast<semantic::ClassHandleType>(receiverTypeAttr.getValue())
+            : semantic::ClassHandleType{};
+    if (!receiverType)
+      return false;
+
+    auto foundClass =
+        semanticClasses.find(receiverType.getClassName().getLeafReference());
+    if (foundClass == semanticClasses.end()) {
+      emitError(getSemanticLocation(call))
+          << "randomize receiver class does not resolve";
+      invalid = true;
+      return true;
+    }
+    SmallVector<semantic::SVClassTypeOp> hierarchy;
+    llvm::SmallPtrSet<Operation *, 8> visiting;
+    std::function<LogicalResult(semantic::SVClassTypeOp)> collectHierarchy =
+        [&](semantic::SVClassTypeOp classType) -> LogicalResult {
+      if (!visiting.insert(classType).second)
+        return classType.emitError("randomization class hierarchy is cyclic");
+      if (std::optional<Type> baseType = classType.getBaseClass()) {
+        auto baseHandle = dyn_cast<semantic::ClassHandleType>(*baseType);
+        auto base = baseHandle
+                        ? semanticClasses.find(
+                              baseHandle.getClassName().getLeafReference())
+                        : semanticClasses.end();
+        if (base == semanticClasses.end()) {
+          emitError(getSemanticLocation(classType))
+              << "randomization cannot resolve the base class";
+          return failure();
+        }
+        if (failed(collectHierarchy(base->second)))
+          return failure();
+      }
+      hierarchy.push_back(classType);
+      return success();
+    };
+    if (failed(collectHierarchy(foundClass->second))) {
+      invalid = true;
+      return true;
+    }
+
+    struct RandomProperty {
+      Operation *source;
+      FlatSymbolRefAttr field;
+      Type type;
+      uint64_t width;
+      bool isSigned;
+    };
+    SmallVector<RandomProperty> properties;
+    SmallVector<Operation *> constraintRoots;
+    SmallVector<semantic::SVConstraintBlockSymbolOp> classConstraints;
+    llvm::StringMap<unsigned> namedConstraintIndices;
+    if (hasInlineConstraints)
+      for (auto [index, child] : llvm::enumerate(callChildren))
+        if (index != receiverIndex && isa<semantic::SVConstraintListOp>(child))
+          constraintRoots.push_back(child);
+    for (semantic::SVClassTypeOp classType : hierarchy) {
+      for (Operation *member : getChildren(classType)) {
+        if (semantic::SVSubroutineSymbolOp method = getClassMethod(member);
+            method && method.getIsPrePostRandomize().value_or(false) &&
+            !method.getIsBuiltin().value_or(false)) {
+          emitError(getSemanticLocation(method))
+              << "user pre_randomize and post_randomize hooks are not "
+                 "executable yet";
+          invalid = true;
+          continue;
+        }
+        if (auto property =
+                dyn_cast<semantic::SVClassPropertySymbolOp>(member)) {
+          if (property.getLifetime() == semantic::SVVariableLifetime::Static ||
+              property.getRandMode() == semantic::SVRandMode::None)
+            continue;
+          if (property.getRandMode() == semantic::SVRandMode::RandC) {
+            emitError(getSemanticLocation(property))
+                << "randc properties are not executable yet";
+            invalid = true;
+            continue;
+          }
+          FailureOr<Type> type = getNormalizedSemanticType(property);
+          FlatSymbolRefAttr field = classFieldSymbols.lookup(property);
+          if (failed(type)) {
+            invalid = true;
+            continue;
+          }
+          std::optional<unsigned> width = sim::getPackedWidth(*type);
+          if (!width || *width == 0 || *width > 64 || !field) {
+            emitError(getSemanticLocation(property))
+                << "random properties must be packed integral values no "
+                   "wider than 64 bits";
+            invalid = true;
+            continue;
+          }
+          std::optional<Type> semanticPropertyType = property.getSemanticType();
+          if (!semanticPropertyType ||
+              hasUnsupportedRandomDomain(*semanticPropertyType)) {
+            emitError(getSemanticLocation(property))
+                << "rand enum and tagged-union domains are not executable yet";
+            invalid = true;
+            continue;
+          }
+          properties.push_back({property, field, *type, *width,
+                                isSignedSemanticType(*semanticPropertyType)});
+          continue;
+        }
+        auto constraint = dyn_cast<semantic::SVConstraintBlockSymbolOp>(member);
+        if (!constraint)
+          continue;
+        if (std::optional<StringRef> name = constraint.getName()) {
+          auto [entry, inserted] = namedConstraintIndices.try_emplace(
+              *name, static_cast<unsigned>(classConstraints.size()));
+          if (!inserted) {
+            classConstraints[entry->second] = constraint;
+            continue;
+          }
+        }
+        classConstraints.push_back(constraint);
+      }
+    }
+    for (semantic::SVConstraintBlockSymbolOp constraint : classConstraints) {
+      if (constraint.getIsExtern().value_or(false) ||
+          constraint.getIsPure().value_or(false)) {
+        emitError(getSemanticLocation(constraint))
+            << "extern and pure constraint blocks are not executable yet";
+        invalid = true;
+        continue;
+      }
+      for (Operation *child : getChildren(constraint))
+        if (isa<semantic::SVConstraintListOp>(child))
+          constraintRoots.push_back(child);
+    }
+
+    uint64_t totalWidth = 0;
+    for (const RandomProperty &property : properties) {
+      if (property.width > 64 - totalWidth) {
+        emitError(getSemanticLocation(call))
+            << "the executable exhaustive randomization boundary is 64 "
+               "aggregate rand bits";
+        invalid = true;
+        return true;
+      }
+      totalWidth += property.width;
+    }
+
+    for (Operation *root : constraintRoots) {
+      root->walk([&](Operation *nested) {
+        if (auto expression =
+                dyn_cast<semantic::SVExpressionConstraintOp>(nested)) {
+          if (expression.getIsSoft()) {
+            emitError(getSemanticLocation(expression))
+                << "soft constraints are not executable yet";
+            invalid = true;
+          }
+          return;
+        }
+        if (isa<semantic::SVConstraintListOp,
+                semantic::SVImplicationConstraintOp,
+                semantic::SVConditionalConstraintOp,
+                semantic::SVUniquenessConstraintOp>(nested))
+          return;
+        if (nested->hasTrait<OpTrait::SemanticDeclarativeNode>() &&
+            !isa<semantic::SVExpressionConstraintOp>(nested)) {
+          emitError(getSemanticLocation(nested))
+              << "constraint form is outside the executable hard-expression "
+                 "boundary: "
+              << nested->getName();
+          invalid = true;
+          return;
+        }
+        if (nested->hasTrait<OpTrait::SemanticASTNode>() &&
+            !isSupportedRandomConstraintExpression(nested)) {
+          emitError(getSemanticLocation(nested))
+              << "constraint expression is outside the total side-effect-free "
+                 "executable boundary: "
+              << nested->getName();
+          invalid = true;
+        }
+      });
+    }
+
+    SmallVector<Attribute> propertyAttrs;
+    llvm::DenseMap<Operation *, unsigned> randomIndices;
+    for (auto [index, property] : llvm::enumerate(properties)) {
+      randomIndices[property.source] = index;
+      propertyAttrs.push_back(builder.getDictionaryAttr({
+          builder.getNamedAttr("field", property.field),
+          builder.getNamedAttr("type", TypeAttr::get(property.type)),
+          builder.getNamedAttr("width",
+                               builder.getI64IntegerAttr(property.width)),
+          builder.getNamedAttr("is_signed",
+                               builder.getBoolAttr(property.isSigned)),
+      }));
+    }
+    call->setAttr(randomizeAttrName, builder.getUnitAttr());
+    call->setAttr(randomReceiverIndexAttrName,
+                  builder.getI32IntegerAttr(receiverIndex));
+    call->setAttr(randomPropertiesAttrName,
+                  builder.getArrayAttr(propertyAttrs));
+    call->setAttr(randomTotalWidthAttrName,
+                  builder.getI64IntegerAttr(totalWidth));
+
+    auto annotateConstraint = [&](Operation *constraint) {
+      constraint->walk([&](Operation *nested) {
+        auto reference =
+            nested->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+        if (!reference)
+          return;
+        auto symbol = semanticSymbols.find(reference.getLeafReference());
+        if (symbol == semanticSymbols.end())
+          return;
+        if (auto field = classFieldSymbols.find(symbol->second);
+            field != classFieldSymbols.end())
+          nested->setAttr("obelisk_sim.class_field", field->second);
+        if (auto index = randomIndices.find(symbol->second);
+            index != randomIndices.end())
+          nested->setAttr(randomVariableAttrName,
+                          builder.getI32IntegerAttr(index->second));
+        if (isa<semantic::SVParameterSymbolOp, semantic::SVEnumValueSymbolOp,
+                semantic::SVSpecparamSymbolOp>(symbol->second))
+          if (auto constant =
+                  symbol->second->getAttrOfType<StringAttr>("constant_value"))
+            nested->setAttr("obelisk_sim.constant_value", constant);
+      });
+    };
+    for (auto [index, child] : llvm::enumerate(callChildren))
+      if (index != receiverIndex && isa<semantic::SVConstraintListOp>(child))
+        annotateConstraint(child);
+
+    OpBuilder constraintBuilder =
+        OpBuilder::atBlockEnd(&call->getRegion(0).front());
+    for (Operation *root : constraintRoots) {
+      if (llvm::is_contained(callChildren, root))
+        continue;
+      Operation *cloned = constraintBuilder.clone(*root);
+      annotateConstraint(cloned);
+    }
+    return true;
+  };
+
+  // The capture inventory must see class constraints after they have been
+  // cloned into their calling code unit. In particular, package and design
+  // variables referenced by a class constraint are ordinary unit captures.
+  SmallVector<semantic::SVCallExpressionOp> semanticCalls;
+  semanticRoot->walk([&](semantic::SVCallExpressionOp call) {
+    semanticCalls.push_back(call);
+  });
+  for (semantic::SVCallExpressionOp call : semanticCalls)
+    freezeRandomizeContract(call);
+  if (invalid)
+    return abort();
+
+  FailureOr<PreparedCaptures> preparedCaptures = analyzeCodeUnitCaptures(
+      *preparedUnits, descriptors, semanticSymbols, classSources);
+  if (failed(preparedCaptures))
+    return abort();
+  auto &unitCaptures = preparedCaptures->descriptors;
+  auto &unitReadCaptures = preparedCaptures->readDescriptors;
+  auto &unitLocals = preparedCaptures->locals;
+  auto &unitConstants = preparedCaptures->constants;
+  auto &observerLocalCaptures = preparedCaptures->observerLocals;
+  auto &observerReadLocals = preparedCaptures->observerReadLocals;
+  auto &indirectRefTasks = preparedCaptures->indirectRefTasks;
+
+  for (PreparedUnit &unit : units) {
+    if (unit.entryKind != sim::EntryKind::Observer)
+      continue;
+    SmallVector<Attribute> captures;
+    SmallVector<Attribute> dependencies;
+    for (auto &capture : unitCaptures[unit.source]) {
+      captures.push_back(builder.getStringAttr(capture.first));
+      if (unitReadCaptures[unit.source].contains(capture.first))
+        dependencies.push_back(builder.getStringAttr(capture.first));
+    }
+    for (const PreparedLocal &local : observerLocalCaptures[unit.source]) {
+      captures.push_back(builder.getStringAttr(local.path));
+      if (observerReadLocals[unit.source].contains(local.path))
+        dependencies.push_back(builder.getStringAttr(local.path));
+    }
+    unit.source->setAttr("obelisk_sim.observer_captures",
+                         builder.getArrayAttr(captures));
+    unit.source->setAttr("obelisk_sim.observer_dependencies",
+                         builder.getArrayAttr(dependencies));
+  }
+
   auto freezeCallContract = [&](semantic::SVCallExpressionOp call) {
+    if (freezeRandomizeContract(call))
+      return;
     Operation *targetSource = resolveDirectCallee(call);
     if (!targetSource)
       return;
