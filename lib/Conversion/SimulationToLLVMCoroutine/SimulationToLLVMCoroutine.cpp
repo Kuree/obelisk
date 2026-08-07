@@ -620,6 +620,17 @@ LogicalResult materializeEvalTwoStateVariants(
   // reads, fixed NBA staging, and cold checkpoints. The cold route resumes the
   // same generated slot coordinator, so staged NBA and downstream fixpoint
   // work still reach the one combined barrier exactly once.
+  // A net whose handle was not authorized as directly addressable — VPI
+  // observability and language overrides both withdraw that authorization —
+  // materializes through a runtime plane accessor. A probe reading it would
+  // carry that call into the generated closure, so those owners keep their
+  // canonical route instead.
+  bool netsDirectlyAddressable =
+      llvm::all_of(stateLayout.nets, [&](const auto &entry) {
+        obelisk_rt_stable_handle_v1 decoded{};
+        return obelisk_rt_stable_handle_decode(entry.second, &decoded) &&
+               stateLayout.directHandles.contains(decoded.id);
+      });
   auto materializePathKnownProbe =
       [&](sim::SimFuncOp source, StringRef name,
           uint64_t codeUnit,
@@ -630,6 +641,10 @@ LogicalResult materializeEvalTwoStateVariants(
         return;
       if (operation == source.getOperation())
         return;
+      if (!netsDirectlyAddressable && isa<sim::SimNetReadOp>(operation)) {
+        supported = false;
+        return;
+      }
       if (isa<sim::SimRefStoreOp, sim::SimDriverDriveOp,
               sim::SimDriverDriveChangedOp>(operation)) {
         supported = false;
