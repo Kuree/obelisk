@@ -1,5 +1,9 @@
 add_mlir_library(ObeliskSimulationIR
   SimulationDialect.cpp
+  SimulationOpDefs0.cpp
+  SimulationOpDefs1.cpp
+  SimulationOpDefs2.cpp
+  SimulationOpDefs3.cpp
 
   DEPENDS
   ObeliskSimulationDialectIncGen

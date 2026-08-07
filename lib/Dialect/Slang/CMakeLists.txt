@@ -1,5 +1,9 @@
 add_mlir_library(ObeliskSlangIR
   SlangDialect.cpp
+  SlangOpDefs0.cpp
+  SlangOpDefs1.cpp
+  SlangOpDefs2.cpp
+  SlangOpDefs3.cpp
 
   DEPENDS
   SlangDialectIncGen

@@ -18,8 +18,7 @@ using namespace mlir;
 #define GET_TYPEDEF_CLASSES
 #include "obelisk/Dialect/Slang/SlangTypes.cpp.inc"
 
-#define GET_OP_CLASSES
-#include "obelisk/Dialect/Slang/SlangOps.cpp.inc"
+// The op definitions are compiled by the SlangOpDefs*.cpp shards.
 
 namespace obelisk::slangir {
 
@@ -65,10 +64,9 @@ void SlangDialect::initialize() {
 #include "obelisk/Dialect/Slang/SlangTypes.cpp.inc"
       >();
 
-  addOperations<
-#define GET_OP_LIST
-#include "obelisk/Dialect/Slang/SlangOps.cpp.inc"
-      >();
+  // Registration for the sharded op definitions. Each shard registers its
+  // own slice, so no translation unit sees every op class.
+  registerSlangDialectOperations(this);
 }
 
 LogicalResult

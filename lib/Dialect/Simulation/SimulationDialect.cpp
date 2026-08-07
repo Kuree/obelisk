@@ -38,8 +38,7 @@ using namespace mlir;
 #define GET_TYPEDEF_CLASSES
 #include "obelisk/Dialect/Simulation/SimulationTypes.cpp.inc"
 
-#define GET_OP_CLASSES
-#include "obelisk/Dialect/Simulation/SimulationOps.cpp.inc"
+// The op definitions are compiled by the SimulationOpDefs*.cpp shards.
 
 namespace obelisk::sim {
 
@@ -330,10 +329,9 @@ void ObeliskSimulationDialect::initialize() {
 #define GET_TYPEDEF_LIST
 #include "obelisk/Dialect/Simulation/SimulationTypes.cpp.inc"
       >();
-  addOperations<
-#define GET_OP_LIST
-#include "obelisk/Dialect/Simulation/SimulationOps.cpp.inc"
-      >();
+  // Registration for the sharded op definitions. Each shard registers its
+  // own slice, so no translation unit sees every op class.
+  registerObeliskSimulationDialectOperations(this);
 }
 
 Operation *ObeliskSimulationDialect::materializeConstant(OpBuilder &builder,

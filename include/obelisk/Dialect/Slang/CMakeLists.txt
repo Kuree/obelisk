@@ -22,8 +22,14 @@ mlir_tablegen(SlangTypes.cpp.inc -gen-typedef-defs -typedefs-dialect=slang)
 add_public_tablegen_target(SlangTypesIncGen)
 
 set(LLVM_TARGET_DEFINITIONS "${_slang_ops_td}")
-mlir_tablegen(SlangOps.h.inc -gen-op-decls)
-mlir_tablegen(SlangOps.cpp.inc -gen-op-defs)
+# The AST node inventory generates hundreds of op classes. Sharding emits
+# their definitions in slices that compile as parallel translation units,
+# plus the registerSlangDialectOperations hook the dialect calls instead of
+# expanding a GET_OP_LIST.
+mlir_tablegen(SlangOps.h.inc -gen-op-decls
+              --op-shard-count=${OBELISK_OP_SHARD_COUNT})
+mlir_tablegen(SlangOpDefs.cpp.inc -gen-op-defs
+              --op-shard-count=${OBELISK_OP_SHARD_COUNT})
 add_public_tablegen_target(SlangOpsIncGen)
 
 add_custom_target(check-slang-ast-inventory

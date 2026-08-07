@@ -24,8 +24,14 @@ mlir_tablegen(ObeliskOps.cpp.inc -gen-op-defs)
 add_public_tablegen_target(ObeliskOpsIncGen)
 
 set(LLVM_TARGET_DEFINITIONS "${_obelisk_ast_ops_td}")
-mlir_tablegen(ObeliskASTOps.h.inc -gen-op-decls)
-mlir_tablegen(ObeliskASTOps.cpp.inc -gen-op-defs)
+# The AST node inventory generates hundreds of op classes. Sharding emits
+# their definitions in slices that compile as parallel translation units,
+# plus the registerObeliskDialectOperations hook the dialect calls instead of
+# expanding a GET_OP_LIST.
+mlir_tablegen(ObeliskASTOps.h.inc -gen-op-decls
+              --op-shard-count=${OBELISK_OP_SHARD_COUNT})
+mlir_tablegen(ObeliskASTOpDefs.cpp.inc -gen-op-defs
+              --op-shard-count=${OBELISK_OP_SHARD_COUNT})
 add_public_tablegen_target(ObeliskASTOpsIncGen)
 
 set(LLVM_TARGET_DEFINITIONS ObeliskDialect.td)

@@ -18,8 +18,13 @@ mlir_tablegen(SimulationTypes.cpp.inc -gen-typedef-defs
 add_public_tablegen_target(ObeliskSimulationTypesIncGen)
 
 set(LLVM_TARGET_DEFINITIONS SimulationOps.td)
-mlir_tablegen(SimulationOps.h.inc -gen-op-decls)
-mlir_tablegen(SimulationOps.cpp.inc -gen-op-defs)
+# Sharding emits the op definitions in slices that compile as parallel
+# translation units, plus the registerObeliskSimulationDialectOperations hook the
+# dialect calls instead of expanding a GET_OP_LIST.
+mlir_tablegen(SimulationOps.h.inc -gen-op-decls
+              --op-shard-count=${OBELISK_OP_SHARD_COUNT})
+mlir_tablegen(SimulationOpDefs.cpp.inc -gen-op-defs
+              --op-shard-count=${OBELISK_OP_SHARD_COUNT})
 add_public_tablegen_target(ObeliskSimulationOpsIncGen)
 
 set(LLVM_TARGET_DEFINITIONS SimulationDialect.td)

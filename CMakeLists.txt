@@ -9,6 +9,12 @@ option(OBELISK_INCLUDE_TESTS "Build the Obelisk test suites" ON)
 option(OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS
   "Report failed bytecode image validation checks" OFF)
 
+# Op definitions generated from the SystemVerilog AST inventory dominate the
+# build's critical path when one translation unit compiles a whole dialect.
+# TableGen splits them into this many shards, each its own translation unit.
+set(OBELISK_OP_SHARD_COUNT "4" CACHE STRING
+  "Translation units used for each dialect's generated op definitions")
+
 #===------------------------------------------------------------------------===
 # Toolchain: a CMake-managed prebuilt LLVM + MLIR release SDK.
 #

@@ -23,8 +23,8 @@ using namespace mlir;
 #define GET_OP_CLASSES
 #include "obelisk/Dialect/Obelisk/ObeliskOps.cpp.inc"
 
-#define GET_OP_CLASSES
-#include "obelisk/Dialect/Obelisk/ObeliskASTOps.cpp.inc"
+// The AST op definitions are compiled by the ObeliskASTOpDefs*.cpp shards.
+// Only their GET_OP_LIST registration is expanded below.
 
 namespace obelisk::ir {
 
@@ -65,10 +65,9 @@ void ObeliskDialect::initialize() {
 #include "obelisk/Dialect/Obelisk/ObeliskOps.cpp.inc"
       >();
 
-  addOperations<
-#define GET_OP_LIST
-#include "obelisk/Dialect/Obelisk/ObeliskASTOps.cpp.inc"
-      >();
+  // Registration for the sharded AST op definitions. Each shard registers its
+  // own slice, so no translation unit sees every op class.
+  registerObeliskDialectOperations(this);
 }
 
 LogicalResult
