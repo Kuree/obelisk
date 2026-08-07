@@ -1676,6 +1676,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
       proposalAliases.push_back(
           {alias.targetOffset, alias.sourceOffset, alias.width});
   }
+  auto canonicalProposalField = [&](uint32_t offset, unsigned width) {
+    auto alias = llvm::find_if(proposalAliases, [&](const ProposalAlias &item) {
+      return item.targetOffset == offset && item.width == width;
+    });
+    return alias == proposalAliases.end() ? offset : alias->sourceOffset;
+  };
 
   auto isDefinitionUnary = [](uint8_t opcode) {
     return opcode >= OBELISK_RT_RANDOM_CAST_V1 &&
@@ -1700,14 +1706,16 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
              .slice(definition.expressionBegin,
                     definition.expressionEnd - definition.expressionBegin)) {
       if (encoded.opcode == OBELISK_RT_RANDOM_PUSH_VARIABLE_V1) {
+        uint32_t sourceOffset =
+            canonicalProposalField(encoded.operand, encoded.width);
         uint64_t variableEnd =
-            static_cast<uint64_t>(encoded.operand) + encoded.width;
+            static_cast<uint64_t>(sourceOffset) + encoded.width;
         uint64_t targetEnd =
             static_cast<uint64_t>(definition.targetOffset) + definition.width;
-        bool overlapsTarget = encoded.operand < targetEnd &&
-                              definition.targetOffset < variableEnd;
-        if (overlapsTarget || encoded.operand >= totalWidth ||
-            encoded.width > totalWidth - encoded.operand) {
+        bool overlapsTarget =
+            sourceOffset < targetEnd && definition.targetOffset < variableEnd;
+        if (overlapsTarget || sourceOffset >= totalWidth ||
+            encoded.width > totalWidth - sourceOffset) {
           supported = false;
           break;
         }
@@ -1819,10 +1827,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
         bool signedOperation =
             (encoded.flags & OBELISK_RT_RANDOM_INSTRUCTION_SIGNED) != 0;
         if (encoded.opcode == OBELISK_RT_RANDOM_PUSH_VARIABLE_V1) {
+          uint32_t sourceOffset =
+              canonicalProposalField(encoded.operand, encoded.width);
           Value bits = assignment;
-          if (encoded.operand != 0)
+          if (sourceOffset != 0)
             bits = arith::ShRUIOp::create(builder, location, bits,
-                                          constant64(encoded.operand));
+                                          constant64(sourceOffset));
           stack.push_back(
               {maskDefinitionValue(bits, encoded.width), encoded.width});
           continue;

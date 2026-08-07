@@ -308,9 +308,9 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
     };
 
     // Collapse top-level direct variable equalities into equivalence classes.
-    // Each non-canonical field can then be copied from the lowest-offset field
-    // in its class. Prove the complete extracted relation once more against the
-    // SMT formula before exposing it to lowering; unknown remains conservative.
+    // Each non-canonical field can then be copied from one representative.
+    // Prove the complete extracted relation once more against the SMT formula
+    // before exposing it to lowering; unknown remains conservative.
     std::vector<size_t> parents(smt->variables.size());
     for (size_t index = 0; index != parents.size(); ++index)
       parents[index] = index;
@@ -343,10 +343,57 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
       parents[rhs] = lhs;
     }
 
+    // Select one deterministic, separately proven definition per target.
+    // Alias classes that contain exactly one such target use it as their
+    // representative, allowing a definition to feed every equal field.
+    std::vector<const SMTVariableDefinition *> definitions;
+    for (const SMTVariableDefinition &definition : smt->directDefinitions) {
+      if (std::any_of(definitions.begin(), definitions.end(),
+                      [&](const SMTVariableDefinition *selected) {
+                        return selected->target.offset ==
+                                   definition.target.offset &&
+                               selected->target.width ==
+                                   definition.target.width;
+                      }))
+        continue;
+      std::optional<z3::expr> target = shim.translate(definition.target.bits);
+      std::optional<z3::expr> expression =
+          shim.translate(definition.expression);
+      if (!target || !expression ||
+          definition.expressionBegin >= definition.expressionEnd)
+        continue;
+      if (checkWith(*target != *expression) != z3::unsat)
+        continue;
+      definitions.push_back(&definition);
+    }
+
+    std::vector<unsigned> classDefinitionCounts(parents.size());
+    std::vector<size_t> definitionTargetIndices(definitions.size());
+    for (size_t index = 0; index != definitions.size(); ++index) {
+      size_t target = variableIndex(definitions[index]->target);
+      definitionTargetIndices[index] = target;
+      if (target != smt->variables.size())
+        ++classDefinitionCounts[findRoot(target)];
+    }
+    std::vector<std::optional<size_t>> classDefinitions(parents.size());
+    std::vector<size_t> representatives(parents.size());
+    for (size_t index = 0; index != parents.size(); ++index)
+      representatives[index] = findRoot(index);
+    for (size_t index = 0; index != definitions.size(); ++index) {
+      size_t target = definitionTargetIndices[index];
+      if (target == smt->variables.size())
+        continue;
+      size_t root = findRoot(target);
+      if (classDefinitionCounts[root] == 1) {
+        classDefinitions[root] = index;
+        representatives[root] = target;
+      }
+    }
+
     z3::expr aliasViolation = context.bool_val(false);
     bool translatedAliases = true;
     for (size_t index = 0; index != parents.size(); ++index) {
-      size_t source = findRoot(index);
+      size_t source = representatives[findRoot(index)];
       if (source == index)
         continue;
       const SMTVariable &targetVariable = smt->variables[index];
@@ -361,75 +408,82 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
       analysis.aliases.push_back(
           {targetVariable.offset, sourceVariable.offset, targetVariable.width});
     }
-    if (!translatedAliases ||
-        (!analysis.aliases.empty() && checkWith(aliasViolation) != z3::unsat))
+    bool validAliases =
+        translatedAliases &&
+        (analysis.aliases.empty() || checkWith(aliasViolation) == z3::unsat);
+    if (!validAliases) {
       analysis.aliases.clear();
-
-    // Select one deterministic definition per target, prove each extraction,
-    // then emit the acyclic portion in dependency order. Definitions left in a
-    // cycle remain ordinary checker/runtime constraints. Combining definition
-    // targets with alias classes is kept conservative for now.
-    if (analysis.aliases.empty()) {
-      std::vector<const SMTVariableDefinition *> definitions;
-      for (const SMTVariableDefinition &definition : smt->directDefinitions) {
-        if (std::any_of(definitions.begin(), definitions.end(),
-                        [&](const SMTVariableDefinition *selected) {
-                          return selected->target.offset ==
-                                     definition.target.offset &&
-                                 selected->target.width ==
-                                     definition.target.width;
-                        }))
-          continue;
-        std::optional<z3::expr> target = shim.translate(definition.target.bits);
-        std::optional<z3::expr> expression =
-            shim.translate(definition.expression);
-        if (!target || !expression ||
-            definition.expressionBegin >= definition.expressionEnd)
-          continue;
-        if (checkWith(*target != *expression) != z3::unsat)
-          continue;
-        definitions.push_back(&definition);
+      // Do not let an unexposed alias relation influence the definition plan.
+      // Restore singleton classes so independent definitions can still be
+      // scheduled exactly as they would be without any direct equalities.
+      std::fill(classDefinitionCounts.begin(), classDefinitionCounts.end(), 0);
+      std::fill(classDefinitions.begin(), classDefinitions.end(), std::nullopt);
+      for (size_t index = 0; index != parents.size(); ++index) {
+        parents[index] = index;
+        representatives[index] = index;
       }
-
-      std::vector<std::vector<size_t>> dependents(definitions.size());
-      std::vector<unsigned> indegrees(definitions.size());
       for (size_t index = 0; index != definitions.size(); ++index) {
-        for (const SMTVariable &dependency : definitions[index]->dependencies) {
-          auto found = std::find_if(
-              definitions.begin(), definitions.end(),
-              [&](const SMTVariableDefinition *candidate) {
-                return candidate->target.offset == dependency.offset &&
-                       candidate->target.width == dependency.width;
-              });
-          if (found == definitions.end())
-            continue;
-          size_t dependencyIndex = found - definitions.begin();
-          if (dependencyIndex == index ||
-              std::find(dependents[dependencyIndex].begin(),
-                        dependents[dependencyIndex].end(),
-                        index) != dependents[dependencyIndex].end())
-            continue;
-          dependents[dependencyIndex].push_back(index);
-          ++indegrees[index];
-        }
+        size_t target = definitionTargetIndices[index];
+        if (target == smt->variables.size())
+          continue;
+        ++classDefinitionCounts[target];
+        classDefinitions[target] = index;
       }
+    }
 
-      std::vector<bool> emitted(definitions.size());
-      for (size_t count = 0; count != definitions.size(); ++count) {
-        size_t index = 0;
-        while (index != definitions.size() &&
-               (emitted[index] || indegrees[index] != 0))
-          ++index;
-        if (index == definitions.size())
-          break;
-        emitted[index] = true;
-        const SMTVariableDefinition &definition = *definitions[index];
-        analysis.definitions.push_back(
-            {definition.target.offset, definition.target.width,
-             definition.expressionBegin, definition.expressionEnd});
-        for (size_t dependent : dependents[index])
-          --indegrees[dependent];
+    // Definitions depend on the representative of every alias class they
+    // read. Topologically order the acyclic portion; a definition that reads
+    // another member of its own class is a semantic self-cycle and remains on
+    // the checker/runtime path.
+    std::vector<std::vector<size_t>> dependents(definitions.size());
+    std::vector<unsigned> indegrees(definitions.size());
+    std::vector<bool> eligible(definitions.size());
+    std::vector<bool> selfDependent(definitions.size());
+    for (size_t index = 0; index != definitions.size(); ++index) {
+      size_t target = definitionTargetIndices[index];
+      if (target == smt->variables.size())
+        continue;
+      size_t targetRoot = findRoot(target);
+      eligible[index] = classDefinitionCounts[targetRoot] == 1;
+      if (!eligible[index])
+        continue;
+      for (const SMTVariable &dependency : definitions[index]->dependencies) {
+        size_t dependencyVariable = variableIndex(dependency);
+        if (dependencyVariable == smt->variables.size())
+          continue;
+        size_t dependencyRoot = findRoot(dependencyVariable);
+        if (dependencyRoot == targetRoot) {
+          selfDependent[index] = true;
+          continue;
+        }
+        std::optional<size_t> dependencyDefinition =
+            classDefinitions[dependencyRoot];
+        if (!dependencyDefinition || *dependencyDefinition == index ||
+            std::find(dependents[*dependencyDefinition].begin(),
+                      dependents[*dependencyDefinition].end(),
+                      index) != dependents[*dependencyDefinition].end())
+          continue;
+        dependents[*dependencyDefinition].push_back(index);
+        ++indegrees[index];
       }
+    }
+
+    std::vector<bool> emitted(definitions.size());
+    for (size_t count = 0; count != definitions.size(); ++count) {
+      size_t index = 0;
+      while (index != definitions.size() &&
+             (emitted[index] || !eligible[index] || selfDependent[index] ||
+              indegrees[index] != 0))
+        ++index;
+      if (index == definitions.size())
+        break;
+      emitted[index] = true;
+      const SMTVariableDefinition &definition = *definitions[index];
+      analysis.definitions.push_back(
+          {definition.target.offset, definition.target.width,
+           definition.expressionBegin, definition.expressionEnd});
+      for (size_t dependent : dependents[index])
+        --indegrees[dependent];
     }
 
     for (const SMTVariable &variable : smt->variables) {
