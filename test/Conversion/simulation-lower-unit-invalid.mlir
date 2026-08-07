@@ -4,6 +4,7 @@
 // pass coverage and intentionally does not involve the SystemVerilog driver.
 
 !bit8 = !obelisk.integral<8, false, false, 7 : 0, bit>
+!signed8 = !obelisk.integral<8, true, false, 7 : 0, bit>
 !logic8 = !obelisk.integral<8, false, true, 7 : 0, logic>
 
 module {
@@ -41,9 +42,9 @@ module {
                   node_id = 6 : i64, referenced_path = "top.result",
                   referenced_symbol = @result, semantic_type = !bit8} {
               }
-              obelisk.sv.expression.integer_literal attributes {
-                  node_id = 7 : i64, constant_value = "2",
-                  semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+              obelisk.sv.expression.named_value attributes {
+                  node_id = 7 : i64, referenced_path = "top.result",
+                  referenced_symbol = @result, semantic_type = !signed8} {
               }
             }
           }
@@ -55,4 +56,4 @@ module {
 }
 
 // CHECK: unsupported semantic node in the first simulation slice
-// CHECK-SAME: binary operator
+// CHECK-SAME: signed dynamic or negative integral power

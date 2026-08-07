@@ -1317,6 +1317,27 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
       case Binary::Multiply:
         opcode = OBELISK_RT_RANDOM_MUL_V1;
         break;
+      case Binary::Divide:
+      case Binary::Mod: {
+        FailureOr<unsigned> divisorWidth = expressionWidth(nested[1]);
+        std::optional<StringRef> spelling = getConstantSpelling(nested[1]);
+        FailureOr<ParsedConstant> divisor =
+            succeeded(divisorWidth) && spelling
+                ? parseSVInteger(*spelling, *divisorWidth,
+                                 getSemanticLocation(nested[1]))
+                : FailureOr<ParsedConstant>(failure());
+        if (failed(divisor) || !divisor->unknown.isZero() ||
+            divisor->value.isZero()) {
+          emitError(getSemanticLocation(expression))
+              << "runtime random division and modulo require a statically "
+                 "nonzero divisor";
+          return failure();
+        }
+        opcode = binary.getOperatorKind() == Binary::Divide
+                     ? OBELISK_RT_RANDOM_DIV_V1
+                     : OBELISK_RT_RANDOM_MOD_V1;
+        break;
+      }
       case Binary::BinaryAnd:
         opcode = OBELISK_RT_RANDOM_BIT_AND_V1;
         break;
@@ -1362,6 +1383,37 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
         break;
       case Binary::LogicalEquivalence:
         opcode = OBELISK_RT_RANDOM_LOGICAL_EQUIV_V1;
+        break;
+      case Binary::LogicalShiftLeft:
+      case Binary::ArithmeticShiftLeft:
+        opcode = OBELISK_RT_RANDOM_SHIFT_LEFT_V1;
+        break;
+      case Binary::LogicalShiftRight:
+        opcode = OBELISK_RT_RANDOM_SHIFT_RIGHT_V1;
+        break;
+      case Binary::ArithmeticShiftRight:
+        opcode = isSignedNode(nested[0])
+                     ? OBELISK_RT_RANDOM_SHIFT_RIGHT_ARITH_V1
+                     : OBELISK_RT_RANDOM_SHIFT_RIGHT_V1;
+        break;
+      case Binary::Power:
+        if (isSignedNode(nested[1])) {
+          FailureOr<unsigned> exponentWidth = expressionWidth(nested[1]);
+          std::optional<StringRef> spelling = getConstantSpelling(nested[1]);
+          FailureOr<ParsedConstant> exponent =
+              succeeded(exponentWidth) && spelling
+                  ? parseSVInteger(*spelling, *exponentWidth,
+                                   getSemanticLocation(nested[1]))
+                  : FailureOr<ParsedConstant>(failure());
+          if (failed(exponent) || !exponent->unknown.isZero() ||
+              exponent->value.isNegative()) {
+            emitError(getSemanticLocation(expression))
+                << "runtime random integral power requires an unsigned or "
+                   "statically nonnegative exponent";
+            return failure();
+          }
+        }
+        opcode = OBELISK_RT_RANDOM_POWER_V1;
         break;
       default:
         emitError(getSemanticLocation(expression))
@@ -1630,8 +1682,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
            opcode <= OBELISK_RT_RANDOM_LOGICAL_NOT_V1;
   };
   auto isDefinitionBinary = [](uint8_t opcode) {
-    return opcode >= OBELISK_RT_RANDOM_ADD_V1 &&
-           opcode <= OBELISK_RT_RANDOM_LOGICAL_EQUIV_V1;
+    return (opcode >= OBELISK_RT_RANDOM_ADD_V1 &&
+            opcode <= OBELISK_RT_RANDOM_LOGICAL_EQUIV_V1) ||
+           (opcode >= OBELISK_RT_RANDOM_DIV_V1 &&
+            opcode <= OBELISK_RT_RANDOM_POWER_V1);
   };
   for (const solver::RandomVariableDefinition &definition :
        analysis.definitions) {
@@ -1858,7 +1912,74 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
           return failure();
         DefinitionValue rhs = stack.pop_back_val();
         DefinitionValue lhs = stack.pop_back_val();
-        bool logical = encoded.opcode >= OBELISK_RT_RANDOM_LOGICAL_AND_V1;
+        if (encoded.opcode == OBELISK_RT_RANDOM_SHIFT_LEFT_V1 ||
+            encoded.opcode == OBELISK_RT_RANDOM_SHIFT_RIGHT_V1 ||
+            encoded.opcode == OBELISK_RT_RANDOM_SHIFT_RIGHT_ARITH_V1) {
+          bool arithmeticRight =
+              encoded.opcode == OBELISK_RT_RANDOM_SHIFT_RIGHT_ARITH_V1;
+          Value left = resizeDefinitionValue(
+              lhs, arithmeticRight ? 64 : encoded.width, arithmeticRight);
+          Value oversized = arith::CmpIOp::create(
+              builder, location, arith::CmpIPredicate::uge, rhs.bits,
+              constant64(encoded.width));
+          Value safeAmount = arith::SelectOp::create(
+              builder, location, oversized, constant64(0), rhs.bits);
+          Value shifted;
+          if (encoded.opcode == OBELISK_RT_RANDOM_SHIFT_LEFT_V1)
+            shifted =
+                arith::ShLIOp::create(builder, location, left, safeAmount);
+          else if (arithmeticRight)
+            shifted =
+                arith::ShRSIOp::create(builder, location, left, safeAmount);
+          else
+            shifted =
+                arith::ShRUIOp::create(builder, location, left, safeAmount);
+          Value oversizedResult = constant64(0);
+          if (arithmeticRight) {
+            Value negative = arith::CmpIOp::create(builder, location,
+                                                   arith::CmpIPredicate::slt,
+                                                   left, constant64(0));
+            oversizedResult = arith::SelectOp::create(
+                builder, location, negative,
+                constant64(encoded.width == 64
+                               ? UINT64_MAX
+                               : (uint64_t{1} << encoded.width) - 1),
+                constant64(0));
+          }
+          Value bits = arith::SelectOp::create(builder, location, oversized,
+                                               oversizedResult, shifted);
+          stack.push_back(
+              {maskDefinitionValue(bits, encoded.width), encoded.width});
+          continue;
+        }
+        if (encoded.opcode == OBELISK_RT_RANDOM_POWER_V1) {
+          Value base =
+              resizeDefinitionValue(lhs, encoded.width, signedOperation);
+          Value bits = constant64(1);
+          for (unsigned bit = 0; bit != rhs.width; ++bit) {
+            Value exponentBit = rhs.bits;
+            if (bit != 0)
+              exponentBit = arith::ShRUIOp::create(
+                  builder, location, exponentBit, constant64(bit));
+            exponentBit = arith::AndIOp::create(builder, location, exponentBit,
+                                                constant64(1));
+            Value multiplied =
+                arith::MulIOp::create(builder, location, bits, base);
+            multiplied = maskDefinitionValue(multiplied, encoded.width);
+            bits = arith::SelectOp::create(builder, location,
+                                           definitionTruth(exponentBit),
+                                           multiplied, bits);
+            if (bit + 1 != rhs.width)
+              base = maskDefinitionValue(
+                  arith::MulIOp::create(builder, location, base, base),
+                  encoded.width);
+          }
+          stack.push_back(
+              {maskDefinitionValue(bits, encoded.width), encoded.width});
+          continue;
+        }
+        bool logical = encoded.opcode >= OBELISK_RT_RANDOM_LOGICAL_AND_V1 &&
+                       encoded.opcode <= OBELISK_RT_RANDOM_LOGICAL_EQUIV_V1;
         unsigned operandWidth =
             encoded.opcode >= OBELISK_RT_RANDOM_EQ_V1 &&
                     encoded.opcode <= OBELISK_RT_RANDOM_LT_V1
@@ -1880,6 +2001,40 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
           break;
         case OBELISK_RT_RANDOM_MUL_V1:
           bits = arith::MulIOp::create(builder, location, left, right);
+          break;
+        case OBELISK_RT_RANDOM_DIV_V1:
+        case OBELISK_RT_RANDOM_MOD_V1:
+          if (signedOperation) {
+            Value signedLeft =
+                resizeDefinitionValue({left, operandWidth}, 64, true);
+            Value signedRight =
+                resizeDefinitionValue({right, operandWidth}, 64, true);
+            Value overflow = arith::AndIOp::create(
+                builder, location,
+                arith::CmpIOp::create(builder, location,
+                                      arith::CmpIPredicate::eq, signedLeft,
+                                      constant64(uint64_t{1} << 63)),
+                arith::CmpIOp::create(builder, location,
+                                      arith::CmpIPredicate::eq, signedRight,
+                                      constant64(UINT64_MAX)));
+            Value safeRight = arith::SelectOp::create(
+                builder, location, overflow, constant64(1), signedRight);
+            if (encoded.opcode == OBELISK_RT_RANDOM_DIV_V1) {
+              Value quotient = arith::DivSIOp::create(builder, location,
+                                                      signedLeft, safeRight);
+              bits = arith::SelectOp::create(builder, location, overflow,
+                                             signedLeft, quotient);
+            } else {
+              Value remainder = arith::RemSIOp::create(builder, location,
+                                                       signedLeft, safeRight);
+              bits = arith::SelectOp::create(builder, location, overflow,
+                                             constant64(0), remainder);
+            }
+          } else if (encoded.opcode == OBELISK_RT_RANDOM_DIV_V1) {
+            bits = arith::DivUIOp::create(builder, location, left, right);
+          } else {
+            bits = arith::RemUIOp::create(builder, location, left, right);
+          }
           break;
         case OBELISK_RT_RANDOM_BIT_AND_V1:
           bits = arith::AndIOp::create(builder, location, left, right);
@@ -1904,6 +2059,14 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
         case OBELISK_RT_RANDOM_GT_V1:
         case OBELISK_RT_RANDOM_LE_V1:
         case OBELISK_RT_RANDOM_LT_V1: {
+          Value comparedLeft = left;
+          Value comparedRight = right;
+          if (signedOperation && encoded.opcode >= OBELISK_RT_RANDOM_GE_V1) {
+            comparedLeft =
+                resizeDefinitionValue({left, operandWidth}, 64, true);
+            comparedRight =
+                resizeDefinitionValue({right, operandWidth}, 64, true);
+          }
           arith::CmpIPredicate predicate;
           switch (encoded.opcode) {
           case OBELISK_RT_RANDOM_EQ_V1:
@@ -1931,8 +2094,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
           default:
             return failure();
           }
-          bits = definitionBooleanBits(
-              arith::CmpIOp::create(builder, location, predicate, left, right));
+          bits = definitionBooleanBits(arith::CmpIOp::create(
+              builder, location, predicate, comparedLeft, comparedRight));
           break;
         }
         case OBELISK_RT_RANDOM_LOGICAL_AND_V1:

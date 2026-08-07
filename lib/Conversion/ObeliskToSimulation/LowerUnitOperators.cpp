@@ -618,6 +618,16 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
   rhs = *scalarRhs;
   bool signedOp = isSignedNode(children.front());
 
+  // Integral power always produces a four-state result. Normalize its base to
+  // that result plane even when the source operand was two-state so the
+  // expansion below also serves generated constraint checkers.
+  if (kind == Binary::Power && isa<sim::LogicType>(scalarResultType) &&
+      !isa<sim::LogicType>((*lhs).getType())) {
+    lhs = convert(*lhs, scalarResultType, signedOp, location);
+    if (failed(lhs))
+      return failure();
+  }
+
   if (isa<sim::LogicType>((*lhs).getType())) {
     std::optional<sim::CompareKind> compare;
     switch (kind) {
@@ -670,7 +680,7 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
       shift = sim::ShiftKind::Right;
       break;
     case Binary::ArithmeticShiftRight:
-      shift = sim::ShiftKind::RightArith;
+      shift = signedOp ? sim::ShiftKind::RightArith : sim::ShiftKind::Right;
       break;
     default:
       break;
@@ -679,6 +689,88 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
       Value shifted = sim::SimLogicShiftOp::create(
           builder, location, (*lhs).getType(), *shift, *lhs, *rhs);
       return convert(shifted, *resultType, signedOp, location);
+    }
+
+    if (kind == Binary::Power) {
+      if (isSignedNode(children[1])) {
+        std::optional<unsigned> width = sim::getPackedWidth((*rhs).getType());
+        std::optional<StringRef> spelling = getConstantSpelling(children[1]);
+        FailureOr<ParsedConstant> exponent =
+            width && spelling ? parseSVInteger(*spelling, *width,
+                                               getSemanticLocation(children[1]))
+                              : FailureOr<ParsedConstant>(failure());
+        if (failed(exponent) || !exponent->unknown.isZero() ||
+            exponent->value.isNegative()) {
+          unsupported(op) << " (signed dynamic or negative integral power)";
+          return failure();
+        }
+      }
+      auto logicType = cast<sim::LogicType>((*lhs).getType());
+      auto planeType = builder.getIntegerType(logicType.getWidth());
+      Type predicateType = sim::LogicType::get(function.getContext(), 1);
+      auto logicConstant = [&](const APInt &bits,
+                               const APInt &unknown) -> Value {
+        return sim::SimLogicConstantOp::create(
+            builder, location, logicType,
+            builder.getIntegerAttr(planeType, bits),
+            builder.getIntegerAttr(planeType, unknown));
+      };
+      Value value = logicConstant(APInt(logicType.getWidth(), 1),
+                                  APInt(logicType.getWidth(), 0));
+      Value base = *lhs;
+      unsigned exponentWidth;
+      if (auto type = dyn_cast<sim::LogicType>((*rhs).getType()))
+        exponentWidth = type.getWidth();
+      else
+        exponentWidth = cast<IntegerType>((*rhs).getType()).getWidth();
+      for (unsigned bit = 0; bit != exponentWidth; ++bit) {
+        Value condition;
+        if (isa<sim::LogicType>((*rhs).getType())) {
+          condition = sim::SimLogicExtractOp::create(builder, location,
+                                                     predicateType, *rhs, bit);
+        } else {
+          auto integerType = cast<IntegerType>((*rhs).getType());
+          Value bitValue = *rhs;
+          if (bit != 0) {
+            Value amount = arith::ConstantOp::create(
+                builder, location, integerType,
+                builder.getIntegerAttr(integerType, bit));
+            bitValue =
+                arith::ShRUIOp::create(builder, location, bitValue, amount);
+          }
+          if (integerType.getWidth() != 1)
+            bitValue = arith::TruncIOp::create(builder, location,
+                                               builder.getI1Type(), bitValue);
+          condition = sim::SimLogicFromBitsOp::create(builder, location,
+                                                      predicateType, bitValue);
+        }
+        Value multiplied = sim::SimLogicBinaryOp::create(
+            builder, location, logicType, sim::BinaryKind::Mul, value, base);
+        value = sim::SimLogicMuxOp::create(builder, location, logicType,
+                                           condition, multiplied, value);
+        if (bit + 1 != exponentWidth)
+          base = sim::SimLogicBinaryOp::create(
+              builder, location, logicType, sim::BinaryKind::Mul, base, base);
+      }
+      Value lhsKnown = sim::SimLogicCompareOp::create(
+          builder, location, predicateType, sim::CompareKind::Eq, *lhs, *lhs);
+      Value rhsKnown;
+      if (isa<sim::LogicType>((*rhs).getType()))
+        rhsKnown = sim::SimLogicCompareOp::create(
+            builder, location, predicateType, sim::CompareKind::Eq, *rhs, *rhs);
+      else
+        rhsKnown = sim::SimLogicConstantOp::create(
+            builder, location, predicateType,
+            builder.getIntegerAttr(builder.getI1Type(), 1),
+            builder.getIntegerAttr(builder.getI1Type(), 0));
+      Value known = sim::SimLogicLogicalOp::create(
+          builder, location, predicateType, sim::LogicalKind::And, lhsKnown,
+          rhsKnown);
+      Value allUnknown = logicConstant(APInt(logicType.getWidth(), 0),
+                                       APInt::getAllOnes(logicType.getWidth()));
+      value = sim::SimLogicMuxOp::create(builder, location, logicType, known,
+                                         value, allUnknown);
+      return convert(value, *resultType, signedOp, location);
     }
 
     sim::BinaryKind binary;
@@ -792,15 +884,48 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
   case Binary::ArithmeticShiftLeft:
   case Binary::LogicalShiftRight:
   case Binary::ArithmeticShiftRight: {
-    FailureOr<Value> amount = convert(*rhs, (*lhs).getType(), false, location);
-    if (failed(amount))
+    auto lhsType = cast<IntegerType>((*lhs).getType());
+    auto rhsType = cast<IntegerType>((*rhs).getType());
+    unsigned operationWidth = std::max(lhsType.getWidth(), rhsType.getWidth());
+    auto operationType = builder.getIntegerType(operationWidth);
+    bool arithmeticRight = kind == Binary::ArithmeticShiftRight && signedOp;
+    FailureOr<Value> input =
+        convert(*lhs, operationType, arithmeticRight, location);
+    FailureOr<Value> amount = convert(*rhs, operationType, false, location);
+    if (failed(input) || failed(amount))
       return failure();
+    Value zero =
+        arith::ConstantOp::create(builder, location, operationType,
+                                  builder.getIntegerAttr(operationType, 0));
+    Value width = arith::ConstantOp::create(
+        builder, location, operationType,
+        builder.getIntegerAttr(operationType, lhsType.getWidth()));
+    Value oversized = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::uge, *amount, width);
+    Value safeAmount =
+        arith::SelectOp::create(builder, location, oversized, zero, *amount);
+    Value shifted;
     if (kind == Binary::LogicalShiftLeft || kind == Binary::ArithmeticShiftLeft)
-      value = arith::ShLIOp::create(builder, location, *lhs, *amount);
-    else if (kind == Binary::LogicalShiftRight)
-      value = arith::ShRUIOp::create(builder, location, *lhs, *amount);
+      shifted = arith::ShLIOp::create(builder, location, *input, safeAmount);
+    else if (!arithmeticRight)
+      shifted = arith::ShRUIOp::create(builder, location, *input, safeAmount);
     else
-      value = arith::ShRSIOp::create(builder, location, *lhs, *amount);
+      shifted = arith::ShRSIOp::create(builder, location, *input, safeAmount);
+    Value oversizedValue = zero;
+    if (arithmeticRight) {
+      Value negative = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::slt, *input, zero);
+      Value allOnes = arith::ConstantOp::create(
+          builder, location, operationType,
+          builder.getIntegerAttr(operationType,
+                                 APInt::getAllOnes(operationWidth)));
+      oversizedValue =
+          arith::SelectOp::create(builder, location, negative, allOnes, zero);
+    }
+    value = arith::SelectOp::create(builder, location, oversized,
+                                    oversizedValue, shifted);
+    if (operationType != lhsType)
+      value = arith::TruncIOp::create(builder, location, lhsType, value);
     break;
   }
   default:

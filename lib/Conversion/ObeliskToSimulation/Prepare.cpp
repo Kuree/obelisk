@@ -110,8 +110,9 @@ static bool hasUnsupportedRandomDomain(Type type) {
 /// predicate. Keep that legal by admitting only expression nodes that are
 /// intrinsically total and side-effect-free. Function calls and assignments
 /// need a separately modeled solver-function contract before they can enter a
-/// plan; division, shifts, and power need candidate-safe semantics that do not
-/// introduce poison during the exhaustive search.
+/// plan. Partial arithmetic is admitted here only so the encoder can apply its
+/// operand-sensitive legality checks; shifts have total lowering that cannot
+/// introduce poison during exhaustive search.
 static bool isSupportedRandomConstraintExpression(Operation *op) {
   if (auto unary = dyn_cast<semantic::SVUnaryExpressionOp>(op)) {
     using Unary = semantic::SVUnaryOperator;
@@ -159,7 +160,6 @@ static bool isSupportedRandomConstraintExpression(Operation *op) {
     case Binary::LogicalOr:
     case Binary::LogicalImplication:
     case Binary::LogicalEquivalence:
-      return true;
     case Binary::Divide:
     case Binary::Mod:
     case Binary::LogicalShiftLeft:
@@ -167,7 +167,7 @@ static bool isSupportedRandomConstraintExpression(Operation *op) {
     case Binary::ArithmeticShiftLeft:
     case Binary::ArithmeticShiftRight:
     case Binary::Power:
-      return false;
+      return true;
     }
     llvm_unreachable("unhandled SystemVerilog binary operator");
   }

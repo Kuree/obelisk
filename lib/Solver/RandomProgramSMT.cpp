@@ -138,8 +138,10 @@ bool isUnary(uint8_t opcode) {
 }
 
 bool isBinary(uint8_t opcode) {
-  return opcode >= OBELISK_RT_RANDOM_ADD_V1 &&
-         opcode <= OBELISK_RT_RANDOM_LOGICAL_EQUIV_V1;
+  return (opcode >= OBELISK_RT_RANDOM_ADD_V1 &&
+          opcode <= OBELISK_RT_RANDOM_LOGICAL_EQUIV_V1) ||
+         (opcode >= OBELISK_RT_RANDOM_DIV_V1 &&
+          opcode <= OBELISK_RT_RANDOM_POWER_V1);
 }
 
 } // namespace
@@ -285,7 +287,8 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       case OBELISK_RT_RANDOM_POS_V1:
         stack.push_back(
             {resize(builder, location, input, width, signedOperation), width,
-             std::nullopt, std::nullopt, input.instructionBegin});
+             width == input.width ? input.directVariable : std::nullopt,
+             std::nullopt, input.instructionBegin});
         break;
       case OBELISK_RT_RANDOM_NEG_V1:
         stack.push_back(
@@ -424,7 +427,8 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
                        std::move(directEquality), std::move(directDefinition)));
       continue;
     }
-    if (opcode >= OBELISK_RT_RANDOM_LOGICAL_AND_V1) {
+    if (opcode >= OBELISK_RT_RANDOM_LOGICAL_AND_V1 &&
+        opcode <= OBELISK_RT_RANDOM_LOGICAL_EQUIV_V1) {
       mlir::Value left = truth(builder, location, lhs);
       mlir::Value right = truth(builder, location, rhs);
       mlir::Value predicate;
@@ -449,6 +453,52 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
           booleanValue(builder, location, predicate, lhs.instructionBegin));
       continue;
     }
+    if (opcode == OBELISK_RT_RANDOM_SHIFT_LEFT_V1 ||
+        opcode == OBELISK_RT_RANDOM_SHIFT_RIGHT_V1 ||
+        opcode == OBELISK_RT_RANDOM_SHIFT_RIGHT_ARITH_V1) {
+      unsigned operationWidth = std::max<unsigned>(width, rhs.width);
+      StackValue resizedLhs{
+          resize(builder, location, lhs, operationWidth,
+                 opcode == OBELISK_RT_RANDOM_SHIFT_RIGHT_ARITH_V1),
+          operationWidth};
+      StackValue resizedRhs{
+          resize(builder, location, rhs, operationWidth, false),
+          operationWidth};
+      mlir::Value shifted;
+      if (opcode == OBELISK_RT_RANDOM_SHIFT_LEFT_V1)
+        shifted = mlir::smt::BVShlOp::create(builder, location, resizedLhs.bits,
+                                             resizedRhs.bits);
+      else if (opcode == OBELISK_RT_RANDOM_SHIFT_RIGHT_V1)
+        shifted = mlir::smt::BVLShrOp::create(builder, location,
+                                              resizedLhs.bits, resizedRhs.bits);
+      else
+        shifted = mlir::smt::BVAShrOp::create(builder, location,
+                                              resizedLhs.bits, resizedRhs.bits);
+      stack.push_back(
+          {resize(builder, location, {shifted, operationWidth}, width, false),
+           width, std::nullopt, std::nullopt, lhs.instructionBegin});
+      continue;
+    }
+    if (opcode == OBELISK_RT_RANDOM_POWER_V1) {
+      mlir::Value base = resize(builder, location, lhs, width, signedOperation);
+      mlir::Value result = constant(builder, location, 1, width);
+      for (unsigned bit = 0; bit != rhs.width; ++bit) {
+        mlir::Value exponentBit = mlir::smt::ExtractOp::create(
+            builder, location, bitVectorType(1), bit, rhs.bits);
+        mlir::Value selected =
+            mlir::smt::BVMulOp::create(builder, location, result, base);
+        result = mlir::smt::IteOp::create(
+            builder, location,
+            mlir::smt::EqOp::create(builder, location, exponentBit,
+                                    constant(builder, location, 1, 1)),
+            selected, result);
+        if (bit + 1 != rhs.width)
+          base = mlir::smt::BVMulOp::create(builder, location, base, base);
+      }
+      stack.push_back(
+          {result, width, std::nullopt, std::nullopt, lhs.instructionBegin});
+      continue;
+    }
     mlir::Value left = resize(builder, location, lhs, width, signedOperation);
     mlir::Value right = resize(builder, location, rhs, width, signedOperation);
     mlir::Value bits;
@@ -463,6 +513,20 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       break;
     case OBELISK_RT_RANDOM_MUL_V1:
       bits = mlir::smt::BVMulOp::create(builder, location, left, right);
+      break;
+    case OBELISK_RT_RANDOM_DIV_V1:
+      bits = signedOperation
+                 ? mlir::Value(mlir::smt::BVSDivOp::create(builder, location,
+                                                           left, right))
+                 : mlir::Value(mlir::smt::BVUDivOp::create(builder, location,
+                                                           left, right));
+      break;
+    case OBELISK_RT_RANDOM_MOD_V1:
+      bits = signedOperation
+                 ? mlir::Value(mlir::smt::BVSRemOp::create(builder, location,
+                                                           left, right))
+                 : mlir::Value(mlir::smt::BVURemOp::create(builder, location,
+                                                           left, right));
       break;
     case OBELISK_RT_RANDOM_BIT_AND_V1:
       bits = mlir::smt::BVAndOp::create(builder, location, left, right);

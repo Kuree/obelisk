@@ -307,6 +307,19 @@ module {
 // DEFINITION: arith.shli
 // DEFINITION: arith.cmpi ne
 // DEFINITION: arith.select
+// Definition expressions use total fixed-width arithmetic in the generated
+// proposal. The guarded shift amount avoids arith shift poison, and power is
+// expanded into modular multiplication rather than left for the runtime.
+// DEFINITION: arith.divui
+// DEFINITION: arith.cmpi uge
+// DEFINITION: arith.select
+// DEFINITION: arith.shli
+// DEFINITION: arith.select
+// DEFINITION: arith.remui
+// DEFINITION: arith.muli
+// DEFINITION: arith.muli
+// DEFINITION: arith.shrui
+// DEFINITION: arith.select
 // DEFINITION-NOT: obelisk_sim.random.solve
 // DEFINITION: obelisk_sim.managed.store
 // DEFINITION: obelisk_sim.managed.store
@@ -628,7 +641,7 @@ module {
         obelisk.sv.symbol.class_property attributes {hierarchical_name = "C::op", name = "op", node_id = 94 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>, sym_name = "s29.op"} {
         }
         obelisk.sv.symbol.constraint_block attributes {hierarchical_name = "C::defined", name = "defined", node_id = 5 : i64, sym_name = "s5.defined", this_variable_path = "C::defined.this", this_variable_symbol = @s1.$root::@s2::@s3.C::@s5.defined::@s6.this} {
-          obelisk.sv.constraint.list attributes {item_count = 4 : i64, node_id = 6 : i64} {
+          obelisk.sv.constraint.list attributes {item_count = 5 : i64, node_id = 6 : i64} {
             obelisk.sv.constraint.expression attributes {is_soft = false, node_id = 7 : i64} {
               obelisk.sv.expression.binary_op attributes {node_id = 8 : i64, operator_kind = 9 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
                 obelisk.sv.expression.named_value attributes {node_id = 9 : i64, referenced_path = "C::x", referenced_symbol = @s1.$root::@s2::@s3.C::@s4.x, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
@@ -675,6 +688,42 @@ module {
                   obelisk.sv.expression.named_value attributes {node_id = 68 : i64, referenced_path = "C::y", referenced_symbol = @s1.$root::@s2::@s3.C::@s25.y, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
                   }
                   obelisk.sv.expression.named_value attributes {node_id = 69 : i64, referenced_path = "C::z", referenced_symbol = @s1.$root::@s2::@s3.C::@s26.z, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                  }
+                }
+              }
+            }
+            obelisk.sv.constraint.expression attributes {is_soft = false, node_id = 104 : i64} {
+              obelisk.sv.expression.binary_op attributes {node_id = 105 : i64, operator_kind = 9 : i32, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                obelisk.sv.expression.conversion attributes {node_id = 106 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                  obelisk.sv.expression.named_value attributes {node_id = 121 : i64, referenced_path = "C::op", referenced_symbol = @s1.$root::@s2::@s3.C::@s29.op, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
+                  }
+                }
+                obelisk.sv.expression.binary_op attributes {node_id = 107 : i64, operator_kind = 9 : i32, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                  obelisk.sv.expression.binary_op attributes {node_id = 108 : i64, operator_kind = 4 : i32, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
+                    obelisk.sv.expression.binary_op attributes {node_id = 109 : i64, operator_kind = 23 : i32, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
+                      obelisk.sv.expression.binary_op attributes {node_id = 110 : i64, operator_kind = 3 : i32, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
+                        obelisk.sv.expression.conversion attributes {node_id = 111 : i64, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
+                          obelisk.sv.expression.named_value attributes {node_id = 120 : i64, referenced_path = "C::x", referenced_symbol = @s1.$root::@s2::@s3.C::@s4.x, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                          }
+                        }
+                        obelisk.sv.expression.integer_literal attributes {constant_value = "3", node_id = 112 : i64, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
+                        }
+                      }
+                      obelisk.sv.expression.named_value attributes {node_id = 113 : i64, referenced_path = "C::z", referenced_symbol = @s1.$root::@s2::@s3.C::@s26.z, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                      }
+                    }
+                    obelisk.sv.expression.integer_literal attributes {constant_value = "3", node_id = 114 : i64, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
+                    }
+                  }
+                  obelisk.sv.expression.binary_op attributes {node_id = 115 : i64, operator_kind = 24 : i32, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
+                    obelisk.sv.expression.binary_op attributes {node_id = 116 : i64, operator_kind = 27 : i32, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
+                      obelisk.sv.expression.named_value attributes {node_id = 117 : i64, referenced_path = "C::y", referenced_symbol = @s1.$root::@s2::@s3.C::@s25.y, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                      }
+                      obelisk.sv.expression.integer_literal attributes {constant_value = "3", node_id = 118 : i64, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                      }
+                    }
+                    obelisk.sv.expression.named_value attributes {node_id = 119 : i64, referenced_path = "C::z", referenced_symbol = @s1.$root::@s2::@s3.C::@s26.z, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                    }
                   }
                 }
               }

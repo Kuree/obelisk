@@ -66,8 +66,30 @@ bool isUnary(uint8_t opcode) {
 }
 
 bool isBinary(uint8_t opcode) {
-  return opcode >= OBELISK_RT_RANDOM_ADD_V1 &&
-         opcode <= OBELISK_RT_RANDOM_LOGICAL_EQUIV_V1;
+  return (opcode >= OBELISK_RT_RANDOM_ADD_V1 &&
+          opcode <= OBELISK_RT_RANDOM_LOGICAL_EQUIV_V1) ||
+         (opcode >= OBELISK_RT_RANDOM_DIV_V1 &&
+          opcode <= OBELISK_RT_RANDOM_POWER_V1);
+}
+
+uint64_t signedMagnitude(uint64_t value, unsigned width) {
+  value = normalize(value, width);
+  return ((value >> (width - 1)) & 1) != 0
+             ? normalize(uint64_t{0} - value, width)
+             : value;
+}
+
+uint64_t power(uint64_t base, uint64_t exponent, unsigned width) {
+  uint64_t result = 1;
+  base = normalize(base, width);
+  while (exponent != 0) {
+    if ((exponent & 1) != 0)
+      result = normalize(result * base, width);
+    exponent >>= 1;
+    if (exponent != 0)
+      base = normalize(base * base, width);
+  }
+  return normalize(result, width);
 }
 
 bool validateInstruction(const Instruction &instruction,
@@ -284,6 +306,53 @@ bool evaluate(const std::vector<Instruction> &instructions,
       break;
     case OBELISK_RT_RANDOM_BIT_XNOR_V1:
       result = ~(left ^ right);
+      break;
+    case OBELISK_RT_RANDOM_DIV_V1:
+    case OBELISK_RT_RANDOM_MOD_V1:
+      if (right == 0)
+        return false;
+      if (isSigned) {
+        bool leftNegative = ((left >> (instruction.width - 1)) & 1) != 0;
+        bool rightNegative = ((right >> (instruction.width - 1)) & 1) != 0;
+        uint64_t leftMagnitude = signedMagnitude(left, instruction.width);
+        uint64_t rightMagnitude = signedMagnitude(right, instruction.width);
+        if (instruction.opcode == OBELISK_RT_RANDOM_DIV_V1) {
+          result = leftMagnitude / rightMagnitude;
+          if (leftNegative != rightNegative)
+            result = uint64_t{0} - result;
+        } else {
+          result = leftMagnitude % rightMagnitude;
+          if (leftNegative)
+            result = uint64_t{0} - result;
+        }
+      } else if (instruction.opcode == OBELISK_RT_RANDOM_DIV_V1) {
+        result = left / right;
+      } else {
+        result = left % right;
+      }
+      break;
+    case OBELISK_RT_RANDOM_SHIFT_LEFT_V1:
+      result = rhs.bits >= instruction.width ? 0 : left << rhs.bits;
+      break;
+    case OBELISK_RT_RANDOM_SHIFT_RIGHT_V1:
+      result = rhs.bits >= instruction.width ? 0 : left >> rhs.bits;
+      break;
+    case OBELISK_RT_RANDOM_SHIFT_RIGHT_ARITH_V1:
+      if (rhs.bits >= instruction.width) {
+        result = ((left >> (instruction.width - 1)) & 1) != 0
+                     ? widthMask(instruction.width)
+                     : 0;
+      } else if (rhs.bits == 0) {
+        result = left;
+      } else {
+        result = left >> rhs.bits;
+        if (((left >> (instruction.width - 1)) & 1) != 0)
+          result |= widthMask(instruction.width)
+                    << (instruction.width - rhs.bits);
+      }
+      break;
+    case OBELISK_RT_RANDOM_POWER_V1:
+      result = power(left, rhs.bits, instruction.width);
       break;
     case OBELISK_RT_RANDOM_EQ_V1:
     case OBELISK_RT_RANDOM_NE_V1:

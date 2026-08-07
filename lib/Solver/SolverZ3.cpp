@@ -79,6 +79,34 @@ public:
       result =
           translateBinary(op.getLhs(), op.getRhs(),
                           [](z3::expr lhs, z3::expr rhs) { return lhs * rhs; });
+    } else if (auto op = mlir::dyn_cast<mlir::smt::BVSDivOp>(operation)) {
+      result =
+          translateBinary(op.getLhs(), op.getRhs(),
+                          [](z3::expr lhs, z3::expr rhs) { return lhs / rhs; });
+    } else if (auto op = mlir::dyn_cast<mlir::smt::BVUDivOp>(operation)) {
+      result = translateBinary(
+          op.getLhs(), op.getRhs(),
+          [](z3::expr lhs, z3::expr rhs) { return z3::udiv(lhs, rhs); });
+    } else if (auto op = mlir::dyn_cast<mlir::smt::BVSRemOp>(operation)) {
+      result = translateBinary(
+          op.getLhs(), op.getRhs(),
+          [](z3::expr lhs, z3::expr rhs) { return z3::srem(lhs, rhs); });
+    } else if (auto op = mlir::dyn_cast<mlir::smt::BVURemOp>(operation)) {
+      result = translateBinary(
+          op.getLhs(), op.getRhs(),
+          [](z3::expr lhs, z3::expr rhs) { return z3::urem(lhs, rhs); });
+    } else if (auto op = mlir::dyn_cast<mlir::smt::BVShlOp>(operation)) {
+      result = translateBinary(
+          op.getLhs(), op.getRhs(),
+          [](z3::expr lhs, z3::expr rhs) { return z3::shl(lhs, rhs); });
+    } else if (auto op = mlir::dyn_cast<mlir::smt::BVLShrOp>(operation)) {
+      result = translateBinary(
+          op.getLhs(), op.getRhs(),
+          [](z3::expr lhs, z3::expr rhs) { return z3::lshr(lhs, rhs); });
+    } else if (auto op = mlir::dyn_cast<mlir::smt::BVAShrOp>(operation)) {
+      result = translateBinary(
+          op.getLhs(), op.getRhs(),
+          [](z3::expr lhs, z3::expr rhs) { return z3::ashr(lhs, rhs); });
     } else if (auto op = mlir::dyn_cast<mlir::smt::BVAndOp>(operation)) {
       result =
           translateBinary(op.getLhs(), op.getRhs(),
