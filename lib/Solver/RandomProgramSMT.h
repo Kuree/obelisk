@@ -39,6 +39,8 @@ struct RandomProgramSMT {
   std::unique_ptr<mlir::MLIRContext> context;
   mlir::OwningOpRef<mlir::ModuleOp> module;
   mlir::smt::SolverOp solver;
+  mlir::Value assignment;
+  std::vector<mlir::Value> captures;
   mlir::Value hard;
   std::vector<SMTVariable> variables;
   std::vector<SMTVariableEquality> directEqualities;

@@ -42,11 +42,16 @@ struct RandomVariableDefinition {
 struct RandomProgramAnalysis {
   Satisfiability satisfiability = Satisfiability::Unknown;
   const char *backend = "heuristic";
+  /// A complete, deterministically ordered table of aggregate assignments
+  /// satisfying the hard formula. The table is exposed only when it has a
+  /// power-of-two size, so generated code can index it without modulo bias.
+  std::vector<uint64_t> assignmentTable;
   std::vector<RandomVariableDomain> domains;
   std::vector<RandomVariableAlias> aliases;
   std::vector<RandomVariableDefinition> definitions;
-  /// True only when the domain, alias, and definition proposal (with full
-  /// domains for omitted variables) is equivalent to the hard formula.
+  /// True only when either the assignment table or the domain, alias, and
+  /// definition proposal (with full domains for omitted variables) is
+  /// equivalent to the hard formula.
   bool proposalExact = false;
 };
 
@@ -55,8 +60,9 @@ struct RandomProgramAnalysis {
 /// runtime capture values can make the hard constraints satisfiable. Reported
 /// variable domains conservatively enclose the projection of all hard
 /// solutions, including every possible runtime capture value. Aliases and
-/// definitions are equalities implied by every hard solution. The API
-/// deliberately exposes no Z3 types.
+/// definitions are equalities implied by every hard solution. Assignment
+/// tables contain every hard solution and are emitted only for capture-free
+/// programs. The API deliberately exposes no Z3 types.
 RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
                                            size_t programSize,
                                            uint64_t resourceLimit = 100000);

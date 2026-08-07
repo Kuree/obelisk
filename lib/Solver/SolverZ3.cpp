@@ -279,6 +279,7 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
     parameters.set("rlimit", static_cast<unsigned>(
                                  std::min<uint64_t>(resourceLimit, UINT_MAX)));
     solver.set(parameters);
+    solver.push();
     solver.add(*hard);
     z3::check_result result = solver.check();
     switch (result) {
@@ -613,8 +614,69 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
       }
       proposal = proposal && (*targetBits == *expression);
     }
+    // All preceding implication queries intentionally run under `hard`.
+    // Remove that assertion for the reverse implication: retaining it would
+    // make `proposal && !hard` vacuously unsatisfiable.
+    solver.pop();
     if (translatedProposal && checkWith(proposal && !*hard) == z3::unsat)
       analysis.proposalExact = true;
+
+    // If structural planning was not exact, fully enumerate small capture-free
+    // formulas. A complete power-of-two solution table is an unbiased
+    // correlated sampler: generated code indexes it with random low bits and
+    // needs neither a checker nor runtime solving. Keep the table deliberately
+    // small to bound both compile time and IR size.
+    constexpr unsigned maxAssignmentWidth = 12;
+    constexpr size_t maxAssignmentTableSize = 16;
+    auto assignmentType =
+        mlir::dyn_cast<mlir::smt::BitVectorType>(smt->assignment.getType());
+    if (!analysis.proposalExact && smt->captures.empty() && assignmentType &&
+        assignmentType.getWidth() <= maxAssignmentWidth) {
+      z3::context enumerationContext;
+      Z3SMTShim enumerationShim(enumerationContext);
+      std::optional<z3::expr> enumerationHard =
+          enumerationShim.translate(smt->hard);
+      std::optional<z3::expr> assignment =
+          enumerationShim.translate(smt->assignment);
+      if (enumerationHard && assignment) {
+        z3::solver enumerator(enumerationContext);
+        z3::params enumerationParameters(enumerationContext);
+        enumerationParameters.set("random_seed", 0u);
+        enumerationParameters.set(
+            "rlimit",
+            static_cast<unsigned>(std::min<uint64_t>(resourceLimit, UINT_MAX)));
+        enumerator.set(enumerationParameters);
+        enumerator.add(*enumerationHard);
+        std::vector<uint64_t> assignments;
+        bool complete = false;
+        while (assignments.size() <= maxAssignmentTableSize) {
+          z3::check_result enumerationResult = enumerator.check();
+          if (enumerationResult == z3::unsat) {
+            complete = true;
+            break;
+          }
+          if (enumerationResult != z3::sat ||
+              assignments.size() == maxAssignmentTableSize)
+            break;
+          uint64_t value = 0;
+          z3::expr evaluated = enumerator.get_model().eval(*assignment, true);
+          if (!evaluated.is_numeral_u64(value))
+            break;
+          assignments.push_back(value);
+          enumerator.add(*assignment != enumerationContext.bv_val(
+                                            value, assignmentType.getWidth()));
+        }
+        if (complete && !assignments.empty() &&
+            (assignments.size() & (assignments.size() - 1)) == 0) {
+          std::sort(assignments.begin(), assignments.end());
+          analysis.assignmentTable = std::move(assignments);
+          analysis.domains.clear();
+          analysis.aliases.clear();
+          analysis.definitions.clear();
+          analysis.proposalExact = true;
+        }
+      }
+    }
   } catch (...) {
   }
   return analysis;

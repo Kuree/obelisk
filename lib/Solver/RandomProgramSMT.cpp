@@ -552,6 +552,8 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
   bool encodedSoft = (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT) != 0;
   if (!stack.empty() || !sawHard || sawSoft != encodedSoft)
     return std::nullopt;
+  result.assignment = assignment;
+  result.captures = std::move(captures);
   result.hard = hard;
   for (SMTVariableDefinition &definition : result.directDefinitions)
     for (const SMTVariable &variable : result.variables)

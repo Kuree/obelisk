@@ -1606,6 +1606,22 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   solver::RandomProgramAnalysis analysis =
       solver::analyzeRandomProgram(program.data(), program.size());
 
+  SmallVector<uint64_t> proposalAssignments;
+  constexpr size_t maxMaterializedAssignmentTableSize = 16;
+  uint64_t aggregateMask =
+      totalWidth == 64 ? UINT64_MAX : (uint64_t{1} << totalWidth) - 1;
+  bool validAssignmentTable =
+      !analysis.assignmentTable.empty() &&
+      analysis.assignmentTable.size() <= maxMaterializedAssignmentTableSize &&
+      (analysis.assignmentTable.size() &
+       (analysis.assignmentTable.size() - 1)) == 0 &&
+      llvm::all_of(analysis.assignmentTable, [&](uint64_t assignment) {
+        return (assignment & ~aggregateMask) == 0;
+      });
+  if (validAssignmentTable)
+    proposalAssignments.append(analysis.assignmentTable.begin(),
+                               analysis.assignmentTable.end());
+
   struct ProposalDomain {
     uint32_t offset;
     unsigned width;
@@ -1761,6 +1777,24 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   }
 
   auto materializeProposal = [&](Value rawAssignment) -> FailureOr<Value> {
+    if (!proposalAssignments.empty()) {
+      Value assignment = constant64(proposalAssignments.front());
+      if (proposalAssignments.size() == 1)
+        return assignment;
+      Value index =
+          arith::AndIOp::create(builder, location, rawAssignment,
+                                constant64(proposalAssignments.size() - 1));
+      for (auto [tableIndex, tableAssignment] :
+           llvm::enumerate(llvm::drop_begin(proposalAssignments))) {
+        Value selected =
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                  index, constant64(tableIndex + 1));
+        assignment =
+            arith::SelectOp::create(builder, location, selected,
+                                    constant64(tableAssignment), assignment);
+      }
+      return assignment;
+    }
     Value assignment = rawAssignment;
     for (const ProposalDomain &domain : proposalDomains) {
       Value fieldBits = rawAssignment;
@@ -2203,12 +2237,16 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
             });
         return definitionTarget || aliasTarget;
       });
-  bool exactProposal =
-      analysis.proposalExact && !hasSoftConstraint &&
-      !overwritesProposalDomain &&
-      proposalDomains.size() == analysis.domains.size() &&
-      proposalAliases.size() == analysis.aliases.size() &&
-      proposalDefinitions.size() == analysis.definitions.size();
+  bool tableProposal = !analysis.assignmentTable.empty();
+  bool materializesCompleteProposal =
+      tableProposal
+          ? proposalAssignments.size() == analysis.assignmentTable.size()
+          : proposalDomains.size() == analysis.domains.size() &&
+                proposalAliases.size() == analysis.aliases.size() &&
+                proposalDefinitions.size() == analysis.definitions.size();
+  bool exactProposal = analysis.proposalExact && !hasSoftConstraint &&
+                       !overwritesProposalDomain &&
+                       materializesCompleteProposal;
 
   Block *dispatchBlock = current;
   Block *loop = addBlock();
