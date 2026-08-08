@@ -734,10 +734,13 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
       }
 
       std::vector<RandomAssignmentTable> componentTables;
-      bool completePlan = true;
+      z3::expr composedProposal = context.bool_val(true);
+      bool sawConstrainedComponent = false;
+      bool allConstrainedComponentsComplete = true;
       for (size_t root = 0; root != componentVariables.size(); ++root) {
         if (componentConstraints[root].empty())
           continue;
+        sawConstrainedComponent = true;
         unsigned componentWidth = 0;
         uint64_t componentMask = 0;
         for (size_t variableNumber : componentVariables[root]) {
@@ -749,37 +752,42 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
           componentMask |= valueMask << variable.offset;
         }
         if (componentWidth > maxAssignmentWidth) {
-          completePlan = false;
-          break;
+          allConstrainedComponentsComplete = false;
+          continue;
         }
 
         z3::context enumerationContext;
         Z3SMTShim enumerationShim(enumerationContext);
         z3::expr componentHard = enumerationContext.bool_val(true);
+        bool translatedComponent = true;
         for (const SMTHardConstraint *constraint : componentConstraints[root]) {
           std::optional<z3::expr> translated =
               enumerationShim.translate(constraint->expression);
           if (!translated) {
-            completePlan = false;
+            translatedComponent = false;
             break;
           }
           componentHard = componentHard && *translated;
         }
-        if (!completePlan)
-          break;
+        if (!translatedComponent) {
+          allConstrainedComponentsComplete = false;
+          continue;
+        }
 
         std::vector<z3::expr> componentBits;
         for (size_t variableNumber : componentVariables[root]) {
           std::optional<z3::expr> translated =
               enumerationShim.translate(smt->variables[variableNumber].bits);
           if (!translated) {
-            completePlan = false;
+            translatedComponent = false;
             break;
           }
           componentBits.push_back(*translated);
         }
-        if (!completePlan)
-          break;
+        if (!translatedComponent) {
+          allConstrainedComponentsComplete = false;
+          continue;
+        }
 
         z3::solver enumerator(enumerationContext);
         z3::params enumerationParameters(enumerationContext);
@@ -810,7 +818,7 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
             uint64_t value = 0;
             z3::expr evaluated = model.eval(bits, true);
             if (!evaluated.is_numeral_u64(value)) {
-              completePlan = false;
+              translatedComponent = false;
               break;
             }
             assignment |= value << variable.offset;
@@ -818,65 +826,97 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
                 different ||
                 (bits != enumerationContext.bv_val(value, variable.width));
           }
-          if (!completePlan)
+          if (!translatedComponent)
             break;
           table.assignments.push_back(assignment);
           enumerator.add(different);
         }
-        if (!completePlan || !complete || table.assignments.empty()) {
-          completePlan = false;
-          break;
+        if (!translatedComponent || !complete || table.assignments.empty()) {
+          allConstrainedComponentsComplete = false;
+          continue;
         }
         std::sort(table.assignments.begin(), table.assignments.end());
-        componentTables.push_back(std::move(table));
-      }
-      // Verify the composition itself rather than trusting only the graph
-      // decomposition. This catches any missed dependency conservatively and
-      // maintains the same proof boundary as structural proposals.
-      z3::expr componentProposal = context.bool_val(true);
-      bool translatedComponentProposal =
-          completePlan && !componentTables.empty();
-      for (const RandomAssignmentTable &table : componentTables) {
+
+        // Prove each table against its own component formula before retaining
+        // it. If dependency discovery missed a cross-component value, the
+        // free value remains in the original formula and this equivalence
+        // fails.
+        z3::expr originalComponentHard = context.bool_val(true);
+        bool translatedTable = true;
+        for (const SMTHardConstraint *constraint : componentConstraints[root]) {
+          std::optional<z3::expr> translated =
+              shim.translate(constraint->expression);
+          if (!translated) {
+            translatedTable = false;
+            break;
+          }
+          originalComponentHard = originalComponentHard && *translated;
+        }
         z3::expr tableProposal = context.bool_val(false);
         for (uint64_t assignment : table.assignments) {
           z3::expr row = context.bool_val(true);
-          for (const SMTVariable &variable : smt->variables) {
+          for (size_t variableNumber : componentVariables[root]) {
+            const SMTVariable &variable = smt->variables[variableNumber];
             uint64_t valueMask = variable.width == 64
                                      ? UINT64_MAX
                                      : (uint64_t{1} << variable.width) - 1;
-            uint64_t aggregateVariableMask = valueMask << variable.offset;
-            if ((table.mask & aggregateVariableMask) == 0)
-              continue;
-            if ((table.mask & aggregateVariableMask) != aggregateVariableMask) {
-              translatedComponentProposal = false;
-              break;
-            }
             std::optional<z3::expr> bits = shim.translate(variable.bits);
             if (!bits) {
-              translatedComponentProposal = false;
+              translatedTable = false;
               break;
             }
             uint64_t value = (assignment >> variable.offset) & valueMask;
             row = row && (*bits == context.bv_val(value, variable.width));
           }
-          if (!translatedComponentProposal)
+          if (!translatedTable)
             break;
           tableProposal = tableProposal || row;
         }
-        if (!translatedComponentProposal)
-          break;
-        componentProposal = componentProposal && tableProposal;
+        bool equivalentTable =
+            translatedTable &&
+            checkWith(originalComponentHard && !tableProposal) == z3::unsat &&
+            checkWith(tableProposal && !originalComponentHard) == z3::unsat;
+        if (!equivalentTable) {
+          allConstrainedComponentsComplete = false;
+          continue;
+        }
+        composedProposal = composedProposal && tableProposal;
+        componentTables.push_back(std::move(table));
       }
-      bool equivalentComponentProposal =
-          translatedComponentProposal &&
-          checkWith(*hard && !componentProposal) == z3::unsat &&
-          checkWith(componentProposal && !*hard) == z3::unsat;
-      if (equivalentComponentProposal) {
+
+      if (!componentTables.empty()) {
         analysis.assignmentTables = std::move(componentTables);
-        analysis.domains.clear();
-        analysis.aliases.clear();
-        analysis.definitions.clear();
-        analysis.proposalExact = true;
+        uint64_t tableMask = 0;
+        for (const RandomAssignmentTable &table : analysis.assignmentTables)
+          tableMask |= table.mask;
+        auto variableMask = [](uint32_t offset, uint32_t width) {
+          uint64_t mask = width == 64 ? UINT64_MAX : (uint64_t{1} << width) - 1;
+          return mask << offset;
+        };
+        llvm::erase_if(analysis.domains, [&](const RandomVariableDomain &item) {
+          return (variableMask(item.offset, item.width) & tableMask) != 0;
+        });
+        llvm::erase_if(analysis.aliases, [&](const RandomVariableAlias &item) {
+          return ((variableMask(item.targetOffset, item.width) |
+                   variableMask(item.sourceOffset, item.width)) &
+                  tableMask) != 0;
+        });
+        llvm::erase_if(analysis.definitions,
+                       [&](const RandomVariableDefinition &item) {
+                         return (variableMask(item.targetOffset, item.width) &
+                                 tableMask) != 0;
+                       });
+
+        bool equivalentCompleteProposal =
+            sawConstrainedComponent && allConstrainedComponentsComplete &&
+            checkWith(*hard && !composedProposal) == z3::unsat &&
+            checkWith(composedProposal && !*hard) == z3::unsat;
+        if (equivalentCompleteProposal) {
+          analysis.domains.clear();
+          analysis.aliases.clear();
+          analysis.definitions.clear();
+          analysis.proposalExact = true;
+        }
       }
     }
   } catch (...) {
