@@ -1685,16 +1685,17 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     Value sampledIndex;
   };
   SmallVector<ProposalDomain> proposalDomains;
-  struct ProposalCaptureBound {
+  struct ProposalCaptureDomain {
     uint32_t offset;
     unsigned width;
-    uint32_t captureIndex;
-    bool isLower;
+    std::optional<uint32_t> lowerCapture;
+    std::optional<uint32_t> upperCapture;
     Value lower;
     Value cardinality;
     Value sampledIndex;
   };
-  SmallVector<ProposalCaptureBound> proposalCaptureBounds;
+  SmallVector<ProposalCaptureDomain> proposalCaptureDomains;
+  size_t materializedCaptureBounds = 0;
   struct ProposalAlias {
     uint32_t targetOffset;
     uint32_t sourceOffset;
@@ -1749,19 +1750,27 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
                                   [&](const ProposalDomain &domain) {
                                     return domain.offset == bound.offset &&
                                            domain.width == bound.width;
-                                  }) ||
-                     llvm::any_of(proposalCaptureBounds,
-                                  [&](const ProposalCaptureBound &selected) {
-                                    return selected.offset == bound.offset &&
-                                           selected.width == bound.width;
                                   });
-    if (!conflicts) {
-      bool isLower =
-          bound.kind == solver::RandomCaptureBoundKind::LowerInclusive;
-      proposalCaptureBounds.push_back({bound.offset, bound.width,
-                                       bound.captureIndex, isLower,
-                                       {}, {}, {}});
+    if (conflicts)
+      continue;
+    auto found = llvm::find_if(
+        proposalCaptureDomains, [&](const ProposalCaptureDomain &selected) {
+          return selected.offset == bound.offset &&
+                 selected.width == bound.width;
+        });
+    if (found == proposalCaptureDomains.end()) {
+      proposalCaptureDomains.push_back(
+          {bound.offset, bound.width, std::nullopt, std::nullopt, {}, {}, {}});
+      found = std::prev(proposalCaptureDomains.end());
     }
+    std::optional<uint32_t> &capture =
+        bound.kind == solver::RandomCaptureBoundKind::LowerInclusive
+            ? found->lowerCapture
+            : found->upperCapture;
+    if (capture)
+      continue;
+    capture = bound.captureIndex;
+    ++materializedCaptureBounds;
   }
   for (const solver::RandomVariableAlias &alias : analysis.aliases) {
     bool sourceIsTarget = llvm::any_of(
@@ -1943,7 +1952,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
                                 constant64(~fieldMask)),
           fieldBits);
     }
-    for (const ProposalCaptureBound &bound : proposalCaptureBounds) {
+    for (const ProposalCaptureDomain &bound : proposalCaptureDomains) {
       // The unbiased starting index is advanced cyclically for residual
       // checker retries, exactly as for constant non-power-of-two domains.
       Value step = arith::RemUIOp::create(builder, location, attempt,
@@ -2390,8 +2399,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
             });
         return definitionTarget || aliasTarget;
       }) ||
-      llvm::any_of(proposalCaptureBounds,
-                   [&](const ProposalCaptureBound &bound) {
+      llvm::any_of(proposalCaptureDomains,
+                   [&](const ProposalCaptureDomain &bound) {
                      bool definitionTarget = llvm::any_of(
                          proposalDefinitions,
                          [&](const ProposalDefinition &definition) {
@@ -2414,13 +2423,11 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
           ? proposalAssignmentTables.size() ==
                     analysis.assignmentTables.size() &&
                 proposalDomains.size() == analysis.domains.size() &&
-                proposalCaptureBounds.size() ==
-                    analysis.captureBounds.size() &&
+                materializedCaptureBounds == analysis.captureBounds.size() &&
                 proposalAliases.size() == analysis.aliases.size() &&
                 proposalDefinitions.size() == analysis.definitions.size()
           : proposalDomains.size() == analysis.domains.size() &&
-                proposalCaptureBounds.size() ==
-                    analysis.captureBounds.size() &&
+                materializedCaptureBounds == analysis.captureBounds.size() &&
                 proposalAliases.size() == analysis.aliases.size() &&
                 proposalDefinitions.size() == analysis.definitions.size();
   bool exactProposal = analysis.proposalExact && !hasSoftConstraint &&
@@ -2499,6 +2506,47 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     return boundedIndex;
   };
 
+  Value captureBoundsValid;
+  for (ProposalCaptureDomain &domain : proposalCaptureDomains) {
+    uint64_t valueMask = (uint64_t{1} << domain.width) - 1;
+    auto captureValue = [&](uint32_t index) {
+      return arith::AndIOp::create(builder, location, programCaptures[index],
+                                   constant64(valueMask))
+          .getResult();
+    };
+    domain.lower = domain.lowerCapture ? captureValue(*domain.lowerCapture)
+                                       : constant64(0);
+    Value upper = domain.upperCapture
+                      ? captureValue(*domain.upperCapture)
+                      : constant64(valueMask);
+    if (domain.lowerCapture && domain.upperCapture) {
+      Value valid = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ule, domain.lower, upper);
+      captureBoundsValid =
+          captureBoundsValid
+              ? arith::AndIOp::create(builder, location, captureBoundsValid,
+                                      valid)
+                    .getResult()
+              : valid;
+    }
+    domain.cardinality = arith::AddIOp::create(
+        builder, location,
+        arith::SubIOp::create(builder, location, upper, domain.lower),
+        constant64(1));
+  }
+
+  Block *invalidCaptureBoundsBlock = nullptr;
+  Value invalidCaptureBoundsState;
+  if (captureBoundsValid) {
+    invalidCaptureBoundsState = state;
+    Block *validCaptureBoundsBlock = addBlock();
+    invalidCaptureBoundsBlock = addBlock();
+    cf::CondBranchOp::create(builder, location, captureBoundsValid,
+                             validCaptureBoundsBlock, ValueRange{},
+                             invalidCaptureBoundsBlock, ValueRange{});
+    setCurrent(validCaptureBoundsBlock);
+  }
+
   if (validAssignmentTable && !powerOfTwoAssignmentTable)
     start = sampleBoundedIndex(proposalAssignments.size(), randomDraw);
 
@@ -2521,20 +2569,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     Value draw = next64(state);
     domain.sampledIndex = sampleBoundedIndex(domain.cardinality, draw);
   }
-  for (ProposalCaptureBound &bound : proposalCaptureBounds) {
-    uint64_t valueMask = (uint64_t{1} << bound.width) - 1;
-    Value capture = arith::AndIOp::create(
-        builder, location, programCaptures[bound.captureIndex],
-        constant64(valueMask));
-    if (bound.isLower) {
-      bound.lower = capture;
-      bound.cardinality = arith::SubIOp::create(
-          builder, location, constant64(uint64_t{1} << bound.width), capture);
-    } else {
-      bound.lower = constant64(0);
-      bound.cardinality = arith::AddIOp::create(builder, location, capture,
-                                                constant64(1));
-    }
+  for (ProposalCaptureDomain &bound : proposalCaptureDomains) {
     Value draw = next64(state);
     bound.sampledIndex =
         sampleDynamicBoundedIndex(bound.cardinality, draw);
@@ -2552,6 +2587,14 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   Value attempt = loop->addArgument(i64, location);
   Value commitCounter = commit->addArgument(i64, location);
   Value doneResult = done->addArgument(builder.getI1Type(), location);
+
+  if (invalidCaptureBoundsBlock) {
+    setCurrent(invalidCaptureBoundsBlock);
+    sim::SimManagedStoreOp::create(builder, location,
+                                   invalidCaptureBoundsState, stateReference);
+    cf::BranchOp::create(builder, location, failedBlock, ValueRange{});
+  }
+
   auto materializeCandidates =
       [&](Value assignment) -> FailureOr<SmallVector<Value>> {
     SmallVector<Value> candidates;

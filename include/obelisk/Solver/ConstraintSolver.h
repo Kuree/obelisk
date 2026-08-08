@@ -23,7 +23,8 @@ struct RandomVariableDomain {
 
 /// A Z3-verified inclusive bound whose value is read from a serialized runtime
 /// capture. Generated proposals evaluate the capture once and sample the
-/// resulting interval without consulting a runtime solver.
+/// resulting interval without consulting a runtime solver. One lower and one
+/// upper bound for the same field may be combined into an intersected domain.
 enum class RandomCaptureBoundKind { LowerInclusive, UpperInclusive };
 
 struct RandomVariableCaptureBound {

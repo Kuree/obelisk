@@ -546,11 +546,16 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
             {variable.offset, variable.width, minimum, maximum});
     }
 
-    // Preserve one direct inclusive capture bound per otherwise independently
-    // sampled field. The decoder only records exact unsigned comparisons, and
-    // this implication proof keeps malformed or unexpectedly transformed SMT
-    // shapes from crossing the solver API boundary.
+    // Preserve at most one direct inclusive capture bound in each direction
+    // per otherwise independently sampled field. The decoder only records
+    // exact unsigned comparisons, and this implication proof keeps malformed
+    // or unexpectedly transformed SMT shapes from crossing the solver API
+    // boundary.
     for (const SMTVariableCaptureBound &bound : smt->directCaptureBounds) {
+      RandomCaptureBoundKind kind =
+          bound.kind == SMTCaptureBoundKind::LowerInclusive
+              ? RandomCaptureBoundKind::LowerInclusive
+              : RandomCaptureBoundKind::UpperInclusive;
       bool conflicts = llvm::any_of(
                            analysis.domains,
                            [&](const RandomVariableDomain &domain) {
@@ -561,7 +566,8 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
                            analysis.captureBounds,
                            [&](const RandomVariableCaptureBound &selected) {
                              return selected.offset == bound.target.offset &&
-                                    selected.width == bound.target.width;
+                                    selected.width == bound.target.width &&
+                                    selected.kind == kind;
                            }) ||
                        llvm::any_of(
                            analysis.aliases,
@@ -583,10 +589,7 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
       if (!predicate || checkWith(!*predicate) != z3::unsat)
         continue;
       analysis.captureBounds.push_back(
-          {bound.target.offset, bound.target.width, bound.captureIndex,
-           bound.kind == SMTCaptureBoundKind::LowerInclusive
-               ? RandomCaptureBoundKind::LowerInclusive
-               : RandomCaptureBoundKind::UpperInclusive});
+          {bound.target.offset, bound.target.width, bound.captureIndex, kind});
     }
 
     // The bounds and aliases above already prove hard => proposal. Prove the

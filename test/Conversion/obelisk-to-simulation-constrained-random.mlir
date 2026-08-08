@@ -337,19 +337,30 @@ module {
 // DOMAIN-RESIDUAL: obelisk_sim.random.solve
 
 // Z3 proves the direct runtime bounds equivalent to the hard formula. The
-// generated samplers compute cardinalities limit + 1 and 16 - limit, perform
-// unbiased dynamic rejection sampling, and commit without checker/solver calls.
+// generated samplers compute cardinalities limit + 1, 16 - limit, and
+// high - low + 1. An empty intersected range fails before any modulo, while a
+// valid range uses unbiased dynamic sampling without checker/solver calls.
 // CAPTURE-DOMAIN-LABEL: obelisk_sim.func private @unit_1
 // CAPTURE-DOMAIN: obelisk_sim.ref.load
 // CAPTURE-DOMAIN: arith.andi {{.*}}, {{.*}} : i64
 // CAPTURE-DOMAIN: %[[CARDINALITY:.*]] = arith.addi {{.*}}, {{.*}} : i64
+// CAPTURE-DOMAIN: arith.subi %{{c16_i64.*}}, {{.*}} : i64
+// CAPTURE-DOMAIN: %[[RANGE_VALID:.*]] = arith.cmpi ule
+// CAPTURE-DOMAIN: arith.subi
+// CAPTURE-DOMAIN: arith.addi
+// CAPTURE-DOMAIN: cf.cond_br %[[RANGE_VALID]], ^[[RANGE_SAMPLE:bb[0-9]+]], ^[[RANGE_EMPTY:bb[0-9]+]]
+// CAPTURE-DOMAIN: ^[[RANGE_SAMPLE]]:
+// CAPTURE-DOMAIN: cf.br
+// CAPTURE-DOMAIN: ^[[RANGE_EMPTY]]:
+// CAPTURE-DOMAIN: obelisk_sim.managed.store {{.*}} : i64
+// CAPTURE-DOMAIN: cf.br ^[[RANGE_DONE:bb[0-9]+]]
 // CAPTURE-DOMAIN: arith.remui {{.*}}, %[[CARDINALITY]] : i64
 // CAPTURE-DOMAIN: arith.cmpi ult
-// CAPTURE-DOMAIN: arith.subi %{{c16_i64.*}}, {{.*}} : i64
 // CAPTURE-DOMAIN: arith.remui {{.*}}, %[[CARDINALITY]] : i64
 // CAPTURE-DOMAIN-NOT: arith.cmpi ule
 // CAPTURE-DOMAIN-NOT: obelisk_sim.random.solve
 // CAPTURE-DOMAIN: obelisk_sim.managed.store
+// CAPTURE-DOMAIN: ^[[RANGE_DONE]]:
 
 // CAPTURE-DOMAIN-FALLBACK-LABEL: obelisk_sim.func private @unit_1
 // CAPTURE-DOMAIN-FALLBACK: arith.cmpi ule
@@ -1287,13 +1298,19 @@ module {
     obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
       obelisk.sv.symbol.variable attributes {hierarchical_name = "limit", lifetime = 1 : i32, name = "limit", node_id = 26 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>, sym_name = "s15.limit"} {
       }
-      obelisk.sv.type.class_type attributes {bitstream_width = 8 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "C", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "C", node_id = 3 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, sym_name = "s3.C", this_variable_path = "C::this", this_variable_symbol = @s1.$root::@s2::@s3.C::@s10.this} {
+      obelisk.sv.symbol.variable attributes {hierarchical_name = "low", lifetime = 1 : i32, name = "low", node_id = 33 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>, sym_name = "s17.low"} {
+      }
+      obelisk.sv.symbol.variable attributes {hierarchical_name = "high", lifetime = 1 : i32, name = "high", node_id = 34 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>, sym_name = "s18.high"} {
+      }
+      obelisk.sv.type.class_type attributes {bitstream_width = 12 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "C", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "C", node_id = 3 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, sym_name = "s3.C", this_variable_path = "C::this", this_variable_symbol = @s1.$root::@s2::@s3.C::@s10.this} {
         obelisk.sv.symbol.class_property attributes {hierarchical_name = "C::value", name = "value", node_id = 4 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>, sym_name = "s4.value"} {
         }
         obelisk.sv.symbol.class_property attributes {hierarchical_name = "C::high", name = "high", node_id = 28 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>, sym_name = "s16.high"} {
         }
+        obelisk.sv.symbol.class_property attributes {hierarchical_name = "C::range", name = "range", node_id = 35 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>, sym_name = "s19.range"} {
+        }
         obelisk.sv.symbol.constraint_block attributes {hierarchical_name = "C::bounded", name = "bounded", node_id = 5 : i64, sym_name = "s5.bounded", this_variable_path = "C::bounded.this", this_variable_symbol = @s1.$root::@s2::@s3.C::@s5.bounded::@s6.this} {
-          obelisk.sv.constraint.list attributes {item_count = 2 : i64, node_id = 6 : i64} {
+          obelisk.sv.constraint.list attributes {item_count = 4 : i64, node_id = 6 : i64} {
             obelisk.sv.constraint.expression attributes {is_soft = false, node_id = 7 : i64} {
               obelisk.sv.expression.binary_op attributes {node_id = 8 : i64, operator_kind = 15 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
                 obelisk.sv.expression.named_value attributes {node_id = 9 : i64, referenced_path = "C::value", referenced_symbol = @s1.$root::@s2::@s3.C::@s4.value, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
@@ -1307,6 +1324,22 @@ module {
                 obelisk.sv.expression.named_value attributes {node_id = 31 : i64, referenced_path = "C::high", referenced_symbol = @s1.$root::@s2::@s3.C::@s16.high, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
                 }
                 obelisk.sv.expression.named_value attributes {node_id = 32 : i64, referenced_path = "limit", referenced_symbol = @s1.$root::@s2::@s15.limit, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                }
+              }
+            }
+            obelisk.sv.constraint.expression attributes {is_soft = false, node_id = 36 : i64} {
+              obelisk.sv.expression.binary_op attributes {node_id = 37 : i64, operator_kind = 13 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
+                obelisk.sv.expression.named_value attributes {node_id = 38 : i64, referenced_path = "C::range", referenced_symbol = @s1.$root::@s2::@s3.C::@s19.range, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                }
+                obelisk.sv.expression.named_value attributes {node_id = 39 : i64, referenced_path = "low", referenced_symbol = @s1.$root::@s2::@s17.low, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                }
+              }
+            }
+            obelisk.sv.constraint.expression attributes {is_soft = false, node_id = 40 : i64} {
+              obelisk.sv.expression.binary_op attributes {node_id = 41 : i64, operator_kind = 15 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
+                obelisk.sv.expression.named_value attributes {node_id = 42 : i64, referenced_path = "C::range", referenced_symbol = @s1.$root::@s2::@s3.C::@s19.range, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                }
+                obelisk.sv.expression.named_value attributes {node_id = 43 : i64, referenced_path = "high", referenced_symbol = @s1.$root::@s2::@s18.high, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
                 }
               }
             }
