@@ -39,6 +39,14 @@ struct RandomVariableDefinition {
   uint32_t expressionEnd = 0;
 };
 
+/// A complete table for one independent connected component of the hard
+/// formula. Assignments use aggregate bit positions and have no bits outside
+/// `mask`; variables outside the mask remain independently sampleable.
+struct RandomAssignmentTable {
+  uint64_t mask = 0;
+  std::vector<uint64_t> assignments;
+};
+
 struct RandomProgramAnalysis {
   Satisfiability satisfiability = Satisfiability::Unknown;
   const char *backend = "heuristic";
@@ -46,12 +54,15 @@ struct RandomProgramAnalysis {
   /// satisfying the hard formula. Generated code is responsible for choosing
   /// an unbiased index for arbitrary table cardinalities.
   std::vector<uint64_t> assignmentTable;
+  /// Complete tables for independent hard-constraint components. Components
+  /// are deterministically ordered and their masks never overlap.
+  std::vector<RandomAssignmentTable> assignmentTables;
   std::vector<RandomVariableDomain> domains;
   std::vector<RandomVariableAlias> aliases;
   std::vector<RandomVariableDefinition> definitions;
-  /// True only when either the assignment table or the domain, alias, and
-  /// definition proposal (with full domains for omitted variables) is
-  /// equivalent to the hard formula.
+  /// True only when either the global/component assignment tables or the
+  /// domain, alias, and definition proposal (with full domains for omitted
+  /// variables) is equivalent to the hard formula.
   bool proposalExact = false;
 };
 
@@ -61,8 +72,9 @@ struct RandomProgramAnalysis {
 /// variable domains conservatively enclose the projection of all hard
 /// solutions, including every possible runtime capture value. Aliases and
 /// definitions are equalities implied by every hard solution. Assignment
-/// tables contain every hard solution and are emitted only for capture-free
-/// programs. The API deliberately exposes no Z3 types.
+/// tables contain every hard solution, either globally or independently per
+/// connected component, and are emitted only for capture-free programs. The
+/// API deliberately exposes no Z3 types.
 RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
                                            size_t programSize,
                                            uint64_t resourceLimit = 100000);

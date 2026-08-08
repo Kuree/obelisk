@@ -248,8 +248,9 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       if (width != 1 || stack.size() != 1)
         return std::nullopt;
       if (opcode == OBELISK_RT_RANDOM_END_HARD_V1) {
-        hard = mlir::smt::AndOp::create(builder, location, hard,
-                                        truth(builder, location, stack.back()));
+        mlir::Value constraint = truth(builder, location, stack.back());
+        hard = mlir::smt::AndOp::create(builder, location, hard, constraint);
+        result.hardConstraints.push_back({constraint, {}});
         if (stack.back().directEquality)
           result.directEqualities.push_back(*stack.back().directEquality);
         if (stack.back().directDefinition)
@@ -555,6 +556,10 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
   result.assignment = assignment;
   result.captures = std::move(captures);
   result.hard = hard;
+  for (SMTHardConstraint &constraint : result.hardConstraints)
+    for (const SMTVariable &variable : result.variables)
+      if (containsVariable(constraint.expression, variable))
+        constraint.dependencies.push_back(variable);
   for (SMTVariableDefinition &definition : result.directDefinitions)
     for (const SMTVariable &variable : result.variables)
       if (containsVariable(definition.expression, variable))

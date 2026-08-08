@@ -1614,7 +1614,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   uint64_t aggregateMask =
       totalWidth == 64 ? UINT64_MAX : (uint64_t{1} << totalWidth) - 1;
   bool validAssignmentTable =
-      !analysis.assignmentTable.empty() &&
+      analysis.assignmentTables.empty() && !analysis.assignmentTable.empty() &&
       analysis.assignmentTable.size() <= maxMaterializedAssignmentTableSize &&
       llvm::all_of(analysis.assignmentTable, [&](uint64_t assignment) {
         return (assignment & ~aggregateMask) == 0;
@@ -1625,6 +1625,56 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   if (validAssignmentTable)
     proposalAssignments.append(analysis.assignmentTable.begin(),
                                analysis.assignmentTable.end());
+
+  struct ProposalAssignmentTable {
+    uint64_t mask;
+    SmallVector<uint64_t> assignments;
+  };
+  SmallVector<ProposalAssignmentTable> proposalAssignmentTables;
+  uint64_t proposalAssignmentTableMask = 0;
+  auto coversWholeProperties = [&](uint64_t tableMask) {
+    uint64_t offset = 0;
+    for (const Property &property : planned) {
+      uint64_t valueMask = property.width == 64
+                               ? UINT64_MAX
+                               : (uint64_t{1} << property.width) - 1;
+      uint64_t propertyMask = valueMask << offset;
+      uint64_t overlap = tableMask & propertyMask;
+      if (overlap != 0 && overlap != propertyMask)
+        return false;
+      offset += property.width;
+    }
+    return true;
+  };
+  // Component tables are sampled once and then held while the residual
+  // proposal advances. A soft preference must instead be able to visit every
+  // hard-legal table row, so retain the existing checker/fallback path there.
+  bool validAssignmentTables = analysis.assignmentTable.empty() &&
+                               !hasSoftConstraint &&
+                               !analysis.assignmentTables.empty();
+  for (const solver::RandomAssignmentTable &table : analysis.assignmentTables) {
+    bool valid =
+        table.mask != 0 && (table.mask & ~aggregateMask) == 0 &&
+        coversWholeProperties(table.mask) &&
+        (table.mask & proposalAssignmentTableMask) == 0 &&
+        !table.assignments.empty() &&
+        table.assignments.size() <= maxMaterializedAssignmentTableSize &&
+        llvm::all_of(table.assignments, [&](uint64_t assignment) {
+          return (assignment & ~table.mask) == 0;
+        });
+    if (!valid) {
+      validAssignmentTables = false;
+      break;
+    }
+    proposalAssignmentTableMask |= table.mask;
+    proposalAssignmentTables.push_back(
+        {table.mask, SmallVector<uint64_t>(table.assignments.begin(),
+                                           table.assignments.end())});
+  }
+  if (!validAssignmentTables) {
+    proposalAssignmentTables.clear();
+    proposalAssignmentTableMask = 0;
+  }
 
   struct ProposalDomain {
     uint32_t offset;
@@ -1780,11 +1830,24 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
                                      definition.expressionEnd});
   }
 
+  auto selectAssignmentTable = [&](ArrayRef<uint64_t> assignments,
+                                   Value index) -> Value {
+    Value assignment = constant64(assignments.front());
+    for (auto [tableIndex, tableAssignment] :
+         llvm::enumerate(llvm::drop_begin(assignments))) {
+      Value selected =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                index, constant64(tableIndex + 1));
+      assignment = arith::SelectOp::create(
+          builder, location, selected, constant64(tableAssignment), assignment);
+    }
+    return assignment;
+  };
+  Value sampledComponentAssignment;
   auto materializeProposal = [&](Value rawAssignment) -> FailureOr<Value> {
     if (!proposalAssignments.empty()) {
-      Value assignment = constant64(proposalAssignments.front());
       if (proposalAssignments.size() == 1)
-        return assignment;
+        return constant64(proposalAssignments.front());
       Value index =
           powerOfTwoAssignmentTable
               ? arith::AndIOp::create(
@@ -1794,18 +1857,15 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
               : arith::RemUIOp::create(builder, location, rawAssignment,
                                        constant64(proposalAssignments.size()))
                     .getResult();
-      for (auto [tableIndex, tableAssignment] :
-           llvm::enumerate(llvm::drop_begin(proposalAssignments))) {
-        Value selected =
-            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
-                                  index, constant64(tableIndex + 1));
-        assignment =
-            arith::SelectOp::create(builder, location, selected,
-                                    constant64(tableAssignment), assignment);
-      }
-      return assignment;
+      return selectAssignmentTable(proposalAssignments, index);
     }
     Value assignment = rawAssignment;
+    if (sampledComponentAssignment)
+      assignment = arith::OrIOp::create(
+          builder, location,
+          arith::AndIOp::create(builder, location, assignment,
+                                constant64(~proposalAssignmentTableMask)),
+          sampledComponentAssignment);
     for (const ProposalDomain &domain : proposalDomains) {
       Value fieldBits = rawAssignment;
       if (domain.offset != 0)
@@ -2248,9 +2308,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
         return definitionTarget || aliasTarget;
       });
   bool tableProposal = !analysis.assignmentTable.empty();
+  bool componentTableProposal = !analysis.assignmentTables.empty();
   bool materializesCompleteProposal =
       tableProposal
           ? proposalAssignments.size() == analysis.assignmentTable.size()
+      : componentTableProposal
+          ? proposalAssignmentTables.size() == analysis.assignmentTables.size()
           : proposalDomains.size() == analysis.domains.size() &&
                 proposalAliases.size() == analysis.aliases.size() &&
                 proposalDefinitions.size() == analysis.definitions.size();
@@ -2258,8 +2321,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
                        !overwritesProposalDomain &&
                        materializesCompleteProposal;
 
-  if (validAssignmentTable && !powerOfTwoAssignmentTable) {
-    uint64_t cardinality = proposalAssignments.size();
+  auto sampleTableIndex = [&](uint64_t cardinality, Value draw) -> Value {
+    if ((cardinality & (cardinality - 1)) == 0)
+      return arith::AndIOp::create(builder, location, draw,
+                                   constant64(cardinality - 1));
     uint64_t remainder = ((UINT64_MAX % cardinality) + 1) % cardinality;
     uint64_t limit = UINT64_MAX - (remainder - 1);
     Block *boundedLoop = addBlock();
@@ -2270,7 +2335,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     Value boundedIndex = boundedDone->addArgument(i64, location);
 
     cf::BranchOp::create(builder, location, boundedLoop,
-                         ValueRange{state, randomDraw});
+                         ValueRange{state, draw});
     setCurrent(boundedLoop);
     Value index = arith::RemUIOp::create(builder, location, boundedDraw,
                                          constant64(cardinality));
@@ -2285,7 +2350,24 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
 
     setCurrent(boundedDone);
     state = finalState;
-    start = boundedIndex;
+    return boundedIndex;
+  };
+
+  if (validAssignmentTable && !powerOfTwoAssignmentTable)
+    start = sampleTableIndex(proposalAssignments.size(), randomDraw);
+
+  if (validAssignmentTables) {
+    sampledComponentAssignment = constant64(0);
+    for (const ProposalAssignmentTable &table : proposalAssignmentTables) {
+      Value index = constant64(0);
+      if (table.assignments.size() != 1) {
+        Value draw = next64(state);
+        index = sampleTableIndex(table.assignments.size(), draw);
+      }
+      Value selected = selectAssignmentTable(table.assignments, index);
+      sampledComponentAssignment = arith::OrIOp::create(
+          builder, location, sampledComponentAssignment, selected);
+    }
   }
   sim::SimManagedStoreOp::create(builder, location, state, stateReference);
 

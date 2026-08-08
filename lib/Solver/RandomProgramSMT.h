@@ -33,6 +33,11 @@ struct SMTVariableDefinition {
   std::vector<SMTVariable> dependencies;
 };
 
+struct SMTHardConstraint {
+  mlir::Value expression;
+  std::vector<SMTVariable> dependencies;
+};
+
 /// Owns a temporary, verified SMT-dialect module. The context must outlive the
 /// module and all values retained from it, hence the declaration order.
 struct RandomProgramSMT {
@@ -43,6 +48,7 @@ struct RandomProgramSMT {
   std::vector<mlir::Value> captures;
   mlir::Value hard;
   std::vector<SMTVariable> variables;
+  std::vector<SMTHardConstraint> hardConstraints;
   std::vector<SMTVariableEquality> directEqualities;
   std::vector<SMTVariableDefinition> directDefinitions;
 };
