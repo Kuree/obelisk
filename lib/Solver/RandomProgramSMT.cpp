@@ -444,9 +444,9 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
             SMTVariableDefinition{*rhs.directVariable, lhs.bits,
                                   lhs.instructionBegin, rhs.instructionBegin};
 
-      // Inclusive unsigned comparisons against one direct capture always
-      // describe a non-empty interval for widths below 64. Retain that shape
-      // so lowering can evaluate the bound once and sample it directly.
+      // Direct unsigned comparisons against one capture describe a runtime
+      // interval for widths below 64. Retain that shape so lowering can
+      // normalize strict endpoints and sample the interval directly.
       auto directCaptureIndex = [&](const StackValue &value)
           -> std::optional<uint32_t> {
         auto extract = mlir::dyn_cast_or_null<mlir::smt::ExtractOp>(
@@ -460,23 +460,47 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       };
       if (!signedOperation && lhs.width == rhs.width && lhs.width < 64 &&
           (opcode == OBELISK_RT_RANDOM_GE_V1 ||
-           opcode == OBELISK_RT_RANDOM_LE_V1)) {
+           opcode == OBELISK_RT_RANDOM_GT_V1 ||
+           opcode == OBELISK_RT_RANDOM_LE_V1 ||
+           opcode == OBELISK_RT_RANDOM_LT_V1)) {
         std::optional<uint32_t> lhsCapture = directCaptureIndex(lhs);
         std::optional<uint32_t> rhsCapture = directCaptureIndex(rhs);
         if (lhs.directVariable && rhsCapture) {
+          SMTCaptureBoundKind kind;
+          switch (opcode) {
+          case OBELISK_RT_RANDOM_GE_V1:
+            kind = SMTCaptureBoundKind::LowerInclusive;
+            break;
+          case OBELISK_RT_RANDOM_GT_V1:
+            kind = SMTCaptureBoundKind::LowerExclusive;
+            break;
+          case OBELISK_RT_RANDOM_LE_V1:
+            kind = SMTCaptureBoundKind::UpperInclusive;
+            break;
+          default:
+            kind = SMTCaptureBoundKind::UpperExclusive;
+            break;
+          }
           directCaptureBound = SMTVariableCaptureBound{
-              *lhs.directVariable, *rhsCapture,
-              opcode == OBELISK_RT_RANDOM_GE_V1
-                  ? SMTCaptureBoundKind::LowerInclusive
-                  : SMTCaptureBoundKind::UpperInclusive,
-              predicate};
+              *lhs.directVariable, *rhsCapture, kind, predicate};
         } else if (rhs.directVariable && lhsCapture) {
+          SMTCaptureBoundKind kind;
+          switch (opcode) {
+          case OBELISK_RT_RANDOM_LE_V1:
+            kind = SMTCaptureBoundKind::LowerInclusive;
+            break;
+          case OBELISK_RT_RANDOM_LT_V1:
+            kind = SMTCaptureBoundKind::LowerExclusive;
+            break;
+          case OBELISK_RT_RANDOM_GE_V1:
+            kind = SMTCaptureBoundKind::UpperInclusive;
+            break;
+          default:
+            kind = SMTCaptureBoundKind::UpperExclusive;
+            break;
+          }
           directCaptureBound = SMTVariableCaptureBound{
-              *rhs.directVariable, *lhsCapture,
-              opcode == OBELISK_RT_RANDOM_LE_V1
-                  ? SMTCaptureBoundKind::LowerInclusive
-                  : SMTCaptureBoundKind::UpperInclusive,
-              predicate};
+              *rhs.directVariable, *lhsCapture, kind, predicate};
         }
       }
       stack.push_back(

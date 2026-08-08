@@ -25,7 +25,12 @@ struct SMTVariableEquality {
   SMTVariable rhs;
 };
 
-enum class SMTCaptureBoundKind { LowerInclusive, UpperInclusive };
+enum class SMTCaptureBoundKind {
+  LowerInclusive,
+  LowerExclusive,
+  UpperInclusive,
+  UpperExclusive,
+};
 
 struct SMTVariableCaptureBound {
   SMTVariable target;

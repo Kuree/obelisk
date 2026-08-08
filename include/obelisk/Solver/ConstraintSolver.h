@@ -25,7 +25,12 @@ struct RandomVariableDomain {
 /// capture. Generated proposals evaluate the capture once and sample the
 /// resulting interval without consulting a runtime solver. One lower and one
 /// upper bound for the same field may be combined into an intersected domain.
-enum class RandomCaptureBoundKind { LowerInclusive, UpperInclusive };
+enum class RandomCaptureBoundKind {
+  LowerInclusive,
+  LowerExclusive,
+  UpperInclusive,
+  UpperExclusive,
+};
 
 struct RandomVariableCaptureBound {
   uint32_t offset = 0;

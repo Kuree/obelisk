@@ -11,6 +11,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/ErrorHandling.h"
 
 #include "z3++.h"
 
@@ -546,28 +547,37 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
             {variable.offset, variable.width, minimum, maximum});
     }
 
-    // Preserve at most one direct inclusive capture bound in each direction
-    // per otherwise independently sampled field. The decoder only records
-    // exact unsigned comparisons, and this implication proof keeps malformed
-    // or unexpectedly transformed SMT shapes from crossing the solver API
+    // Preserve at most one direct capture bound in each direction per
+    // otherwise independently sampled field. The decoder only records exact
+    // unsigned comparisons, and this implication proof keeps malformed or
+    // unexpectedly transformed SMT shapes from crossing the solver API
     // boundary.
+    auto isLowerCaptureBound = [](RandomCaptureBoundKind kind) {
+      return kind == RandomCaptureBoundKind::LowerInclusive ||
+             kind == RandomCaptureBoundKind::LowerExclusive;
+    };
+    auto convertCaptureBoundKind = [](SMTCaptureBoundKind kind) {
+      switch (kind) {
+      case SMTCaptureBoundKind::LowerInclusive:
+        return RandomCaptureBoundKind::LowerInclusive;
+      case SMTCaptureBoundKind::LowerExclusive:
+        return RandomCaptureBoundKind::LowerExclusive;
+      case SMTCaptureBoundKind::UpperInclusive:
+        return RandomCaptureBoundKind::UpperInclusive;
+      case SMTCaptureBoundKind::UpperExclusive:
+        return RandomCaptureBoundKind::UpperExclusive;
+      }
+      llvm_unreachable("unknown SMT capture bound kind");
+    };
     for (const SMTVariableCaptureBound &bound : smt->directCaptureBounds) {
-      RandomCaptureBoundKind kind =
-          bound.kind == SMTCaptureBoundKind::LowerInclusive
-              ? RandomCaptureBoundKind::LowerInclusive
-              : RandomCaptureBoundKind::UpperInclusive;
+      RandomCaptureBoundKind kind = convertCaptureBoundKind(bound.kind);
       bool conflicts = llvm::any_of(
-                           analysis.domains,
-                           [&](const RandomVariableDomain &domain) {
-                             return domain.offset == bound.target.offset &&
-                                    domain.width == bound.target.width;
-                           }) ||
-                       llvm::any_of(
                            analysis.captureBounds,
                            [&](const RandomVariableCaptureBound &selected) {
                              return selected.offset == bound.target.offset &&
                                     selected.width == bound.target.width &&
-                                    selected.kind == kind;
+                                    isLowerCaptureBound(selected.kind) ==
+                                        isLowerCaptureBound(kind);
                            }) ||
                        llvm::any_of(
                            analysis.aliases,
@@ -637,10 +647,20 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
       }
       z3::expr captureBits =
           capture->extract(bound.width - 1, 0);
-      proposal = proposal &&
-                 (bound.kind == RandomCaptureBoundKind::LowerInclusive
-                      ? z3::uge(*bits, captureBits)
-                      : z3::ule(*bits, captureBits));
+      switch (bound.kind) {
+      case RandomCaptureBoundKind::LowerInclusive:
+        proposal = proposal && z3::uge(*bits, captureBits);
+        break;
+      case RandomCaptureBoundKind::LowerExclusive:
+        proposal = proposal && z3::ugt(*bits, captureBits);
+        break;
+      case RandomCaptureBoundKind::UpperInclusive:
+        proposal = proposal && z3::ule(*bits, captureBits);
+        break;
+      case RandomCaptureBoundKind::UpperExclusive:
+        proposal = proposal && z3::ult(*bits, captureBits);
+        break;
+      }
     }
     for (const RandomVariableAlias &alias : analysis.aliases) {
       auto target =
