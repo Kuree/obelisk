@@ -683,8 +683,7 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
     // variable connectivity graph from each top-level hard constraint, then
     // enumerate every constrained component separately. Unconstrained
     // variables remain free in the generated proposal.
-    if (!analysis.proposalExact && smt->captures.empty() &&
-        !smt->variables.empty()) {
+    if (!analysis.proposalExact && !smt->variables.empty()) {
       std::vector<size_t> componentParents(smt->variables.size());
       for (size_t index = 0; index != componentParents.size(); ++index)
         componentParents[index] = index;
@@ -736,11 +735,21 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
       std::vector<RandomAssignmentTable> componentTables;
       z3::expr composedProposal = context.bool_val(true);
       bool sawConstrainedComponent = false;
-      bool allConstrainedComponentsComplete = true;
+      bool allConstrainedComponentsComplete = llvm::none_of(
+          smt->hardConstraints, [](const SMTHardConstraint &constraint) {
+            return constraint.dependencies.empty() && constraint.hasCapture;
+          });
       for (size_t root = 0; root != componentVariables.size(); ++root) {
         if (componentConstraints[root].empty())
           continue;
         sawConstrainedComponent = true;
+        if (llvm::any_of(componentConstraints[root],
+                         [](const SMTHardConstraint *constraint) {
+                           return constraint->hasCapture;
+                         })) {
+          allConstrainedComponentsComplete = false;
+          continue;
+        }
         unsigned componentWidth = 0;
         uint64_t componentMask = 0;
         for (size_t variableNumber : componentVariables[root]) {

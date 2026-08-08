@@ -132,6 +132,19 @@ bool containsVariable(mlir::Value expression, const SMTVariable &variable) {
   return visit(expression);
 }
 
+bool containsValue(mlir::Value expression, mlir::Value target) {
+  llvm::SmallPtrSet<mlir::Operation *, 16> visited;
+  std::function<bool(mlir::Value)> visit = [&](mlir::Value value) {
+    if (value == target)
+      return true;
+    mlir::Operation *operation = value.getDefiningOp();
+    if (!operation || !visited.insert(operation).second)
+      return false;
+    return llvm::any_of(operation->getOperands(), visit);
+  };
+  return visit(expression);
+}
+
 bool isUnary(uint8_t opcode) {
   return opcode >= OBELISK_RT_RANDOM_CAST_V1 &&
          opcode <= OBELISK_RT_RANDOM_LOGICAL_NOT_V1;
@@ -250,7 +263,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       if (opcode == OBELISK_RT_RANDOM_END_HARD_V1) {
         mlir::Value constraint = truth(builder, location, stack.back());
         hard = mlir::smt::AndOp::create(builder, location, hard, constraint);
-        result.hardConstraints.push_back({constraint, {}});
+        result.hardConstraints.push_back({constraint, {}, false});
         if (stack.back().directEquality)
           result.directEqualities.push_back(*stack.back().directEquality);
         if (stack.back().directDefinition)
@@ -556,10 +569,15 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
   result.assignment = assignment;
   result.captures = std::move(captures);
   result.hard = hard;
-  for (SMTHardConstraint &constraint : result.hardConstraints)
+  for (SMTHardConstraint &constraint : result.hardConstraints) {
     for (const SMTVariable &variable : result.variables)
       if (containsVariable(constraint.expression, variable))
         constraint.dependencies.push_back(variable);
+    constraint.hasCapture =
+        llvm::any_of(result.captures, [&](mlir::Value capture) {
+          return containsValue(constraint.expression, capture);
+        });
+  }
   for (SMTVariableDefinition &definition : result.directDefinitions)
     for (const SMTVariable &variable : result.variables)
       if (containsVariable(definition.expression, variable))

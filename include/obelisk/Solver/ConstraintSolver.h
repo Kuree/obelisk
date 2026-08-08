@@ -73,8 +73,8 @@ struct RandomProgramAnalysis {
 /// solutions, including every possible runtime capture value. Aliases and
 /// definitions are equalities implied by every hard solution. Assignment
 /// tables contain every hard solution, either globally or independently per
-/// connected component, and are emitted only for capture-free programs. The
-/// API deliberately exposes no Z3 types.
+/// capture-free connected component. Capture-dependent components remain on
+/// the checker/runtime path. The API deliberately exposes no Z3 types.
 RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
                                            size_t programSize,
                                            uint64_t resourceLimit = 100000);

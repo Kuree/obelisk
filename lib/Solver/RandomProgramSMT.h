@@ -36,6 +36,7 @@ struct SMTVariableDefinition {
 struct SMTHardConstraint {
   mlir::Value expression;
   std::vector<SMTVariable> dependencies;
+  bool hasCapture = false;
 };
 
 /// Owns a temporary, verified SMT-dialect module. The context must outlive the
