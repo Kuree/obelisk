@@ -754,6 +754,112 @@ void ObeliskSimPreparePass::runOnOperation() {
     return true;
   };
 
+  // Preserve the distinction between the class-wide rand_mode builtin and a
+  // property rand_mode builtin while the semantic declarations still exist.
+  // The latter also needs the property's stable base-first randomization-plan
+  // index; the unit pass sees only lowered class fields after preparation.
+  auto freezeRandModeContract = [&](semantic::SVCallExpressionOp call) -> bool {
+    if (call.getCalleeName() != "rand_mode")
+      return false;
+    if (call->hasAttr(randomModeAttrName))
+      return true;
+
+    SmallVector<Operation *> callChildren = getChildren(call);
+    if (callChildren.empty())
+      return false;
+    if (!call.getIsSystemCall()) {
+      auto reference = call->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+      auto symbol = reference
+                        ? semanticSymbols.find(reference.getLeafReference())
+                        : semanticSymbols.end();
+      auto target =
+          symbol != semanticSymbols.end()
+              ? dyn_cast<semantic::SVSubroutineSymbolOp>(symbol->second)
+              : semantic::SVSubroutineSymbolOp{};
+      if (!target || !target.getIsBuiltin().value_or(false) ||
+          target.getName().value_or("") != "rand_mode" ||
+          !getOwningClass(target))
+        return false;
+      call->setAttr(randomModeAttrName, builder.getUnitAttr());
+      return true;
+    }
+
+    auto member =
+        dyn_cast<semantic::SVMemberAccessExpressionOp>(callChildren.front());
+    auto reference =
+        member ? member->getAttrOfType<SymbolRefAttr>("referenced_symbol")
+               : SymbolRefAttr{};
+    auto symbol = reference ? semanticSymbols.find(reference.getLeafReference())
+                            : semanticSymbols.end();
+    auto property =
+        symbol != semanticSymbols.end()
+            ? dyn_cast<semantic::SVClassPropertySymbolOp>(symbol->second)
+            : semantic::SVClassPropertySymbolOp{};
+    if (!property ||
+        property.getLifetime() == semantic::SVVariableLifetime::Static ||
+        property.getRandMode() == semantic::SVRandMode::None)
+      return false;
+
+    auto owner =
+        dyn_cast_or_null<semantic::SVClassTypeOp>(property->getParentOp());
+    if (!owner)
+      return false;
+    SmallVector<semantic::SVClassTypeOp> hierarchy;
+    llvm::SmallPtrSet<Operation *, 8> visiting;
+    std::function<LogicalResult(semantic::SVClassTypeOp)> collectHierarchy =
+        [&](semantic::SVClassTypeOp classType) -> LogicalResult {
+      if (!visiting.insert(classType).second)
+        return classType.emitError("randomization class hierarchy is cyclic");
+      if (std::optional<Type> baseType = classType.getBaseClass()) {
+        auto baseHandle = dyn_cast<semantic::ClassHandleType>(*baseType);
+        auto base = baseHandle
+                        ? semanticClasses.find(
+                              baseHandle.getClassName().getLeafReference())
+                        : semanticClasses.end();
+        if (base == semanticClasses.end())
+          return classType.emitError("rand_mode cannot resolve the base class");
+        if (failed(collectHierarchy(base->second)))
+          return failure();
+      }
+      hierarchy.push_back(classType);
+      return success();
+    };
+    if (failed(collectHierarchy(owner))) {
+      invalid = true;
+      return true;
+    }
+
+    unsigned propertyIndex = 0;
+    bool found = false;
+    for (semantic::SVClassTypeOp classType : hierarchy) {
+      for (Operation *classMember : getChildren(classType)) {
+        auto candidate =
+            dyn_cast<semantic::SVClassPropertySymbolOp>(classMember);
+        if (!candidate ||
+            candidate.getLifetime() == semantic::SVVariableLifetime::Static ||
+            candidate.getRandMode() == semantic::SVRandMode::None)
+          continue;
+        if (candidate == property) {
+          found = true;
+          break;
+        }
+        ++propertyIndex;
+      }
+      if (found)
+        break;
+    }
+    if (!found || propertyIndex >= 64) {
+      emitError(getSemanticLocation(call))
+          << "property rand_mode exceeds the 64-property executable boundary";
+      invalid = true;
+      return true;
+    }
+    call->setAttr(randomModeAttrName, builder.getUnitAttr());
+    call->setAttr(randomModePropertyAttrName,
+                  builder.getI32IntegerAttr(propertyIndex));
+    return true;
+  };
+
   // The capture inventory must see class constraints after they have been
   // cloned into their calling code unit. In particular, package and design
   // variables referenced by a class constraint are ordinary unit captures.
@@ -762,7 +868,8 @@ void ObeliskSimPreparePass::runOnOperation() {
     semanticCalls.push_back(call);
   });
   for (semantic::SVCallExpressionOp call : semanticCalls)
-    freezeRandomizeContract(call);
+    if (!freezeRandModeContract(call))
+      freezeRandomizeContract(call);
   if (invalid)
     return abort();
 
@@ -800,6 +907,8 @@ void ObeliskSimPreparePass::runOnOperation() {
   }
 
   auto freezeCallContract = [&](semantic::SVCallExpressionOp call) {
+    if (freezeRandModeContract(call))
+      return;
     if (freezeRandomizeContract(call))
       return;
     Operation *targetSource = resolveDirectCallee(call);

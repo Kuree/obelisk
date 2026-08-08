@@ -134,6 +134,10 @@ inline constexpr ::mlir::StringLiteral randomizeAttrName =
     "obelisk_sim.randomize";
 inline constexpr ::mlir::StringLiteral randomReceiverIndexAttrName =
     "obelisk_sim.random_receiver_index";
+inline constexpr ::mlir::StringLiteral randomModeAttrName =
+    "obelisk_sim.rand_mode";
+inline constexpr ::mlir::StringLiteral randomModePropertyAttrName =
+    "obelisk_sim.rand_mode_property";
 inline constexpr ::mlir::StringLiteral randomPropertiesAttrName =
     "obelisk_sim.random_properties";
 inline constexpr ::mlir::StringLiteral randomTotalWidthAttrName =

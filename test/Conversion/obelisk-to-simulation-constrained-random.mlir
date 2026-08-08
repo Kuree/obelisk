@@ -181,7 +181,9 @@ module {
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "unsupported_constraint", node_id = 37 : i64, procedure_kind = 0 : i32, sym_name = "s23", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.expression_statement attributes {node_id = 200 : i64} {
             obelisk.sv.expression.call attributes {argument_count = 2 : i64, callee_name = "rand_mode", constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 201 : i64, semantic_type = !obelisk.void, subroutine_kind = 0 : i32, system_library_cell = "work.unsupported_constraint", system_scope_path = "unsupported_constraint", system_scope_symbol = @s1.$root::@s19.unsupported_constraint::@s20.unsupported_constraint} {
-              obelisk.sv.expression.named_value attributes {node_id = 202 : i64, referenced_path = "unsupported_constraint.object", referenced_symbol = @s1.$root::@s19.unsupported_constraint::@s20.unsupported_constraint::@s22.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.constrained>} {
+              obelisk.sv.expression.member_access attributes {node_id = 202 : i64, referenced_path = "constrained::value", referenced_symbol = @s1.$root::@s2::@s3.constrained::@s4.value, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                obelisk.sv.expression.named_value attributes {node_id = 213 : i64, referenced_path = "unsupported_constraint.object", referenced_symbol = @s1.$root::@s19.unsupported_constraint::@s20.unsupported_constraint::@s22.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.constrained>} {
+                }
               }
               obelisk.sv.expression.integer_literal attributes {constant_value = "0", node_id = 203 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
               }
@@ -192,13 +194,15 @@ module {
               obelisk.sv.expression.named_value attributes {node_id = 206 : i64, referenced_path = "limit", referenced_symbol = @s1.$root::@s2::@s24.limit, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
               }
               obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "rand_mode", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 211 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, subroutine_kind = 0 : i32, system_library_cell = "work.unsupported_constraint", system_scope_path = "unsupported_constraint", system_scope_symbol = @s1.$root::@s19.unsupported_constraint::@s20.unsupported_constraint} {
-                obelisk.sv.expression.named_value attributes {node_id = 212 : i64, referenced_path = "unsupported_constraint.object", referenced_symbol = @s1.$root::@s19.unsupported_constraint::@s20.unsupported_constraint::@s22.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.constrained>} {
+                obelisk.sv.expression.member_access attributes {node_id = 212 : i64, referenced_path = "constrained::value", referenced_symbol = @s1.$root::@s2::@s3.constrained::@s4.value, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                  obelisk.sv.expression.named_value attributes {node_id = 214 : i64, referenced_path = "unsupported_constraint.object", referenced_symbol = @s1.$root::@s19.unsupported_constraint::@s20.unsupported_constraint::@s22.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.constrained>} {
+                  }
                 }
               }
             }
           }
           obelisk.sv.statement.expression_statement attributes {node_id = 207 : i64} {
-            obelisk.sv.expression.call attributes {argument_count = 2 : i64, callee_name = "rand_mode", constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 208 : i64, semantic_type = !obelisk.void, subroutine_kind = 0 : i32, system_library_cell = "work.unsupported_constraint", system_scope_path = "unsupported_constraint", system_scope_symbol = @s1.$root::@s19.unsupported_constraint::@s20.unsupported_constraint} {
+            obelisk.sv.expression.call attributes {argument_count = 2 : i64, callee_name = "rand_mode", constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = true, is_super_class = false, is_system_call = false, node_id = 208 : i64, referenced_path = "constrained::rand_mode", referenced_symbol = @s1.$root::@s2::@s3.constrained::@s15.rand_mode, semantic_type = !obelisk.void, subroutine_kind = 0 : i32} {
               obelisk.sv.expression.named_value attributes {node_id = 209 : i64, referenced_path = "unsupported_constraint.object", referenced_symbol = @s1.$root::@s19.unsupported_constraint::@s20.unsupported_constraint::@s22.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.constrained>} {
               }
               obelisk.sv.expression.integer_literal attributes {constant_value = "1", node_id = 210 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
@@ -295,23 +299,25 @@ module {
 // CHECK: obelisk_sim.class.field {{.*}}debug_name = "__obelisk_rand_mode"
 // CHECK: obelisk_sim.func private @unit_1({{.*}}%[[LIMIT_ARG:arg[0-9]+]]: !obelisk_sim.ref<i32>
 // CHECK: obelisk_sim.class.field_ref {{.*}}[@{{.*}}__obelisk_rand_mode]
-// CHECK: obelisk_sim.managed.store %{{c1_i64.*}}
+// CHECK: %[[OLD_MODE:.*]] = obelisk_sim.managed.load
+// CHECK: %[[DISABLED_MODE:.*]] = arith.ori %[[OLD_MODE]], %{{c1_i64.*}} : i64
+// CHECK: obelisk_sim.managed.store %[[DISABLED_MODE]]
 // CHECK: obelisk_sim.class.field_ref {{.*}}[@{{.*}}__obelisk_rand_mode]
 // CHECK: %[[MODE:.*]] = obelisk_sim.managed.load
-// CHECK: %[[MODE_ENABLED:.*]] = arith.cmpi eq, %[[MODE]], %{{c0_i64.*}} : i64
+// CHECK: %[[PROPERTY_MODE:.*]] = arith.andi %[[MODE]], %{{c1_i64.*}} : i64
+// CHECK: %[[MODE_ENABLED:.*]] = arith.cmpi eq, %[[PROPERTY_MODE]], %{{c0_i64.*}} : i64
 // CHECK: arith.extui %[[MODE_ENABLED]] : i1 to i32
 // CHECK: obelisk_sim.ref.store {{.*}} to %[[LIMIT_ARG]]
 // CHECK: obelisk_sim.class.field_ref {{.*}}[@{{.*}}__obelisk_rand_mode]
 // CHECK: obelisk_sim.managed.store %{{c0_i64.*}}
 // CHECK: obelisk_sim.class.field_ref
 // CHECK: obelisk_sim.managed.load
-// CHECK: %[[RAND_ENABLED:.*]] = arith.cmpi eq
-// CHECK: cf.cond_br %[[RAND_ENABLED]], ^[[RAND_SAMPLE:bb[0-9]+]], ^[[RAND_DISABLED:bb[0-9]+]]
-// CHECK: ^[[RAND_SAMPLE]]:
+// CHECK: %[[RELEVANT_MODE:.*]] = arith.andi
+// CHECK: %[[ALL_DISABLED:.*]] = arith.cmpi eq, %[[RELEVANT_MODE]], %{{c1_i64.*}} : i64
+// CHECK: arith.select
+// CHECK: cf.cond_br %[[ALL_DISABLED]]
 // CHECK: arith.muli
 // CHECK: obelisk_sim.managed.store
-// CHECK: cf.br ^[[SEARCH:[a-zA-Z0-9_]+]]
-// CHECK: ^[[SEARCH]]({{.*}}: i64, {{.*}}: i64):
 // CHECK: arith.cmpi slt
 // CHECK: arith.ori
 // CHECK: arith.cmpi sgt
@@ -321,18 +327,13 @@ module {
 // CHECK: arith.cmpi sge
 // CHECK: arith.cmpi sle
 // CHECK: obelisk_sim.ref.load %[[LIMIT_ARG]]
-// CHECK: cf.cond_br {{.*}}, ^[[COMMIT:[a-zA-Z0-9_]+]]({{.*}}), ^[[ADVANCE:[a-zA-Z0-9_]+]]
-// CHECK: ^[[ADVANCE]]:
+// CHECK: cf.cond_br
 // CHECK: arith.cmpi uge
-// CHECK: cf.cond_br {{.*}}, ^[[EXHAUSTED:[a-zA-Z0-9_]+]], ^[[SEARCH]]
-// CHECK: ^[[EXHAUSTED]]:
-// CHECK: obelisk_sim.random.solve
-// CHECK: cf.cond_br {{.*}}, ^[[COMMIT]]({{.*}}), ^[[RAND_DISABLED]]
-// CHECK: ^[[COMMIT]]({{.*}}: i64):
+// CHECK: obelisk_sim.random.solve {{.*}} mutable
+// CHECK: cf.cond_br
+// CHECK: arith.trunci
+// CHECK: cf.cond_br
 // CHECK: obelisk_sim.managed.store
-// CHECK: cf.br ^[[RAND_DISABLED]]
-// CHECK: ^[[RAND_DISABLED]]:
-// CHECK-NOT: obelisk_sim.managed.store
 // CHECK-NOT: obelisk.sv.
 
 // UNSUPPORTED-DAG: error: randc properties are not executable yet
@@ -349,30 +350,31 @@ module {
 
 // A Z3-proven power-of-two domain is folded without modulo bias into the
 // generated proposal. Z3 also proves that the proposal implies the hard
-// formula, so generated code commits directly without a checker or fallback.
+// formula, so the all-enabled path commits directly. A cold masked fallback is
+// retained for property-specific rand_mode changes made at runtime.
 // DOMAIN-LABEL: obelisk_sim.func private @unit_1
 // DOMAIN: ^bb2:
 // DOMAIN: %[[RAW:.*]] = arith.andi {{.*}}, {{.*}} : i64
 // DOMAIN: obelisk_sim.managed.store
-// DOMAIN: %[[LOW:.*]] = arith.andi %[[RAW]], {{.*}} : i64
+// DOMAIN: %[[LOW:.*]] = arith.andi %[[COUNTER:.*]], {{.*}} : i64
 // DOMAIN: %[[VALUE:.*]] = arith.addi %[[LOW]], {{.*}} : i64
-// DOMAIN: %[[REST:.*]] = arith.andi %[[RAW]], {{.*}} : i64
+// DOMAIN: %[[REST:.*]] = arith.andi %[[COUNTER]], {{.*}} : i64
 // DOMAIN: %[[ASSIGNMENT:.*]] = arith.ori %[[REST]], %[[VALUE]] : i64
-// DOMAIN-NOT: arith.cmpi
-// DOMAIN-NOT: obelisk_sim.random.solve
-// DOMAIN: arith.trunci %[[ASSIGNMENT]] : i64 to i4
+// DOMAIN: obelisk_sim.random.solve {{.*}} mutable
+// DOMAIN: arith.trunci {{.*}} : i64 to i4
 // DOMAIN: obelisk_sim.managed.store
 
 // A ten-value interval uses an unbiased 64-bit bounded draw. Retry proposals
-// advance cyclically with overflow-safe modular addition, and the exact Z3
-// domain commits without the checker or runtime solver.
+// advance cyclically with overflow-safe modular addition. The exact Z3 domain
+// commits directly when all properties are enabled; partial modes retain a
+// masked runtime solver path.
 // DOMAIN-BOUNDED-LABEL: obelisk_sim.func private @unit_1
 // DOMAIN-BOUNDED: arith.constant 10 : i64
 // DOMAIN-BOUNDED: arith.remui {{.*}}, {{.*}} : i64
 // DOMAIN-BOUNDED: arith.cmpi ult
 // DOMAIN-BOUNDED: %[[WRAPS:.*]] = arith.cmpi uge
 // DOMAIN-BOUNDED: arith.select %[[WRAPS]]
-// DOMAIN-BOUNDED-NOT: obelisk_sim.random.solve
+// DOMAIN-BOUNDED: obelisk_sim.random.solve {{.*}} mutable
 // DOMAIN-BOUNDED: arith.trunci {{.*}} : i64 to i4
 // DOMAIN-BOUNDED: obelisk_sim.managed.store
 
@@ -393,8 +395,9 @@ module {
 // generated samplers compute cardinalities limit + 1, 16 - limit,
 // high - low + 1, and high - low - 1. Strict endpoints are normalized only
 // after checking their individual overflow edges. Any empty intersected range
-// fails before modulo; valid ranges use unbiased dynamic sampling without
-// checker/solver calls.
+// fails before modulo; valid ranges use unbiased dynamic sampling. The
+// all-enabled path bypasses checking, while partial modes retain a masked
+// solver path.
 // CAPTURE-DOMAIN-LABEL: obelisk_sim.func private @unit_1
 // CAPTURE-DOMAIN: obelisk_sim.ref.load
 // CAPTURE-DOMAIN: arith.andi {{.*}}, {{.*}} : i64
@@ -417,8 +420,8 @@ module {
 // CAPTURE-DOMAIN: arith.addi
 // CAPTURE-DOMAIN: cf.cond_br %[[ALL_VALID]], ^[[RANGE_SAMPLE:bb[0-9]+]], ^[[RANGE_EMPTY:bb[0-9]+]]
 // CAPTURE-DOMAIN: ^[[RANGE_SAMPLE]]:
-// CAPTURE-DOMAIN: %[[FULL_CARDINALITY:.*]] = arith.cmpi eq, %[[CARDINALITY]], %{{c0_i64.*}} : i64
-// CAPTURE-DOMAIN: %[[SAFE_CARDINALITY:.*]] = arith.select %[[FULL_CARDINALITY]], %{{c1_i64.*}}, %[[CARDINALITY]] : i64
+// CAPTURE-DOMAIN: %[[FULL_CARDINALITY:.*]] = arith.cmpi eq, %[[SAMPLE_CARDINALITY:.*]], %{{c0_i64.*}} : i64
+// CAPTURE-DOMAIN: %[[SAFE_CARDINALITY:.*]] = arith.select %[[FULL_CARDINALITY]], %{{c1_i64.*}}, %[[SAMPLE_CARDINALITY]] : i64
 // CAPTURE-DOMAIN: arith.remui {{.*}}, %[[SAFE_CARDINALITY]] : i64
 // CAPTURE-DOMAIN: cf.br
 // CAPTURE-DOMAIN: ^[[RANGE_EMPTY]]:
@@ -427,9 +430,8 @@ module {
 // CAPTURE-DOMAIN: arith.remui {{.*}}, %[[SAFE_CARDINALITY]] : i64
 // CAPTURE-DOMAIN: arith.cmpi ult
 // CAPTURE-DOMAIN-NOT: arith.cmpi ule
-// CAPTURE-DOMAIN-NOT: obelisk_sim.random.solve
+// CAPTURE-DOMAIN: obelisk_sim.random.solve {{.*}} mutable
 // CAPTURE-DOMAIN: obelisk_sim.managed.store
-// CAPTURE-DOMAIN: ^[[RANGE_DONE]]:
 
 // CAPTURE-DOMAIN-FALLBACK-LABEL: obelisk_sim.func private @unit_1
 // CAPTURE-DOMAIN-FALLBACK: arith.cmpi ule
@@ -457,7 +459,7 @@ module {
 // CAPTURE-DOMAIN-64: obelisk_sim.managed.store
 // CAPTURE-DOMAIN-64: arith.remui {{.*}}, %[[SAFE]] : i64
 // CAPTURE-DOMAIN-64: arith.select %[[FULL]]
-// CAPTURE-DOMAIN-64-NOT: obelisk_sim.random.solve
+// CAPTURE-DOMAIN-64: obelisk_sim.random.solve {{.*}} mutable
 
 // CAPTURE-DOMAIN-64-FALLBACK-LABEL: obelisk_sim.func private @unit_1
 // CAPTURE-DOMAIN-64-FALLBACK: arith.cmpi uge
@@ -478,10 +480,7 @@ module {
 // CAPTURE-DOMAIN-SIGNED: arith.andi
 // CAPTURE-DOMAIN-SIGNED: cf.cond_br {{.*}}, ^[[SAMPLE:bb[0-9]+]], ^[[EMPTY:bb[0-9]+]]
 // CAPTURE-DOMAIN-SIGNED: ^[[SAMPLE]]:
-// CAPTURE-DOMAIN-SIGNED-NOT: obelisk_sim.random.solve
-// CAPTURE-DOMAIN-SIGNED: ^[[EMPTY]]:
-// CAPTURE-DOMAIN-SIGNED: obelisk_sim.managed.store {{.*}} : i64
-// CAPTURE-DOMAIN-SIGNED-COUNT-2: arith.xori {{.*}}, %{{c8_i64.*}} : i64
+// CAPTURE-DOMAIN-SIGNED: obelisk_sim.random.solve {{.*}} mutable
 
 // CAPTURE-DOMAIN-SIGNED-FALLBACK-LABEL: obelisk_sim.func private @unit_1
 // CAPTURE-DOMAIN-SIGNED-FALLBACK: arith.cmpi sge
@@ -492,19 +491,19 @@ module {
 
 // The even-value constraint has eight correlated solutions. Z3 enumerates
 // the complete sorted table, and generated MLIR indexes it with three random
-// bits, producing every legal assignment uniformly without checking or
-// runtime solving.
+// bits, producing every legal assignment uniformly on the all-enabled path.
+// Partial modes retain masked checking and runtime solving.
 // TABLE-LABEL: obelisk_sim.func private @unit_1
 // TABLE: ^bb1:
 // TABLE: %[[RAW:.*]] = arith.andi {{.*}}, {{.*}} : i64
 // TABLE: obelisk_sim.managed.store
-// TABLE: %[[INDEX:.*]] = arith.andi %[[RAW]], {{.*}} : i64
+// TABLE: %[[INDEX:.*]] = arith.andi %[[COUNTER:.*]], {{.*}} : i64
 // TABLE: %[[IS_ONE:.*]] = arith.cmpi eq, %[[INDEX]], {{.*}} : i64
 // TABLE: %[[SELECT_ONE:.*]] = arith.select %[[IS_ONE]], {{.*}}, {{.*}} : i64
 // TABLE-COUNT-5: arith.select
 // TABLE: %[[ASSIGNMENT:.*]] = arith.select
-// TABLE-NOT: obelisk_sim.random.solve
-// TABLE: arith.trunci %[[ASSIGNMENT]] : i64 to i4
+// TABLE: obelisk_sim.random.solve {{.*}} mutable
+// TABLE: arith.trunci {{.*}} : i64 to i4
 // TABLE: obelisk_sim.managed.store
 
 // TABLE-FALLBACK-LABEL: obelisk_sim.func private @unit_1
@@ -523,19 +522,20 @@ module {
 // TABLE-BOUNDED: cf.cond_br %[[ACCEPTED]], ^[[SELECT:[a-zA-Z0-9_]+]](%[[STATE]], %[[INDEX]] : i64, i64), ^[[BOUNDED]]
 // TABLE-BOUNDED: ^[[SELECT]](%[[FINAL_STATE:.*]]: i64, %[[BOUNDED_INDEX:.*]]: i64):
 // TABLE-BOUNDED: obelisk_sim.managed.store %[[FINAL_STATE]]
-// TABLE-BOUNDED: arith.remui %[[BOUNDED_INDEX]], {{.*}} : i64
+// TABLE-BOUNDED: arith.remui {{.*}}, {{.*}} : i64
 // TABLE-BOUNDED: arith.select
 // TABLE-BOUNDED: arith.select
-// TABLE-BOUNDED-NOT: obelisk_sim.random.solve
+// TABLE-BOUNDED: obelisk_sim.random.solve {{.*}} mutable
 // TABLE-BOUNDED: obelisk_sim.managed.store
 
 // Two independent four-bit constraints have 225 aggregate solutions, beyond
 // the global table cap. Component planning emits two independent 15-entry
-// tables and two unbiased object-stream draws, then commits without checking.
+// tables and two unbiased object-stream draws, then commits directly when all
+// properties are enabled.
 // COMPONENTS-LABEL: obelisk_sim.func private @unit_1
 // COMPONENTS-COUNT-2: arith.cmpi ult
 // COMPONENTS-COUNT-14: arith.select
-// COMPONENTS-NOT: obelisk_sim.random.solve
+// COMPONENTS: obelisk_sim.random.solve {{.*}} mutable
 // COMPONENTS: arith.trunci {{.*}} : i64 to i4
 // COMPONENTS: arith.trunci {{.*}} : i64 to i4
 // COMPONENTS: obelisk_sim.managed.store
@@ -550,7 +550,7 @@ module {
 // COMPONENT-CORRELATED-LABEL: obelisk_sim.func private @unit_1
 // COMPONENT-CORRELATED-COUNT-1: arith.cmpi ult
 // COMPONENT-CORRELATED-COUNT-14: arith.select
-// COMPONENT-CORRELATED-NOT: obelisk_sim.random.solve
+// COMPONENT-CORRELATED: obelisk_sim.random.solve {{.*}} mutable
 // COMPONENT-CORRELATED-COUNT-2: arith.trunci {{.*}} : i64 to i4
 // COMPONENT-CORRELATED: arith.trunci {{.*}} : i64 to i8
 // COMPONENT-CORRELATED-COUNT-3: obelisk_sim.managed.store
@@ -559,23 +559,26 @@ module {
 // continues to the later independent three-solution component, materializes
 // that table, and retains checker/runtime solving for the oversized component.
 // COMPONENT-PARTIAL-LABEL: obelisk_sim.func private @unit_1
+// COMPONENT-PARTIAL: arith.ori {{.*}}, %{{c2_i64.*}} : i64
+// COMPONENT-PARTIAL: obelisk_sim.managed.store
+// COMPONENT-PARTIAL: arith.select {{.*}}, %{{c31_i64.*}}, %{{c0_i64.*}} : i64
+// COMPONENT-PARTIAL: arith.select {{.*}}, %{{c96_i64.*}}, %{{c0_i64.*}} : i64
 // COMPONENT-PARTIAL: arith.cmpi ult
 // COMPONENT-PARTIAL-COUNT-2: arith.select
 // COMPONENT-PARTIAL-COUNT-2: arith.cmpi ne
-// COMPONENT-PARTIAL: obelisk_sim.random.solve
+// COMPONENT-PARTIAL: obelisk_sim.random.solve {{.*}} mutable
 
 // The capture-dependent y component becomes a parameterized interval, while
 // the independent three-solution x component becomes a compile-time table.
-// Their whole-formula proof is exact, so the composed sampler commits directly.
+// Their whole-formula proof is exact, so the all-enabled composed sampler
+// commits directly while partial modes retain the masked fallback.
 // COMPONENT-CAPTURE-LABEL: obelisk_sim.func private @unit_1
 // COMPONENT-CAPTURE: arith.cmpi ult
 // COMPONENT-CAPTURE-COUNT-2: arith.select
 // COMPONENT-CAPTURE: arith.remui
 // COMPONENT-CAPTURE: arith.cmpi ult
 // COMPONENT-CAPTURE: arith.select
-// COMPONENT-CAPTURE-NOT: arith.cmpi ne
-// COMPONENT-CAPTURE-NOT: arith.cmpi ule
-// COMPONENT-CAPTURE-NOT: obelisk_sim.random.solve
+// COMPONENT-CAPTURE: obelisk_sim.random.solve {{.*}} mutable
 // COMPONENT-CAPTURE: obelisk_sim.managed.store
 
 // A 31-value solution set exceeds the bounded compile-time table cap. It stays
@@ -588,15 +591,14 @@ module {
 // ALIAS: ^bb2:
 // ALIAS: %[[RAW:.*]] = arith.andi {{.*}}, {{.*}} : i64
 // ALIAS: obelisk_sim.managed.store
-// ALIAS: %[[X:.*]] = arith.andi %[[RAW]], {{.*}} : i64
+// ALIAS: %[[X:.*]] = arith.andi %[[COUNTER:.*]], {{.*}} : i64
 // ALIAS: %[[Y:.*]] = arith.shli %[[X]], {{.*}} : i64
-// ALIAS: %[[REST:.*]] = arith.andi %[[RAW]], {{.*}} : i64
+// ALIAS: %[[REST:.*]] = arith.andi %[[COUNTER]], {{.*}} : i64
 // ALIAS: %[[XY:.*]] = arith.ori %[[REST]], %[[Y]] : i64
 // ALIAS: %[[Z:.*]] = arith.shli %[[X]], {{.*}} : i64
 // ALIAS: %[[REST_Z:.*]] = arith.andi %[[XY]], {{.*}} : i64
 // ALIAS: %[[ASSIGNMENT:.*]] = arith.ori %[[REST_Z]], %[[Z]] : i64
-// ALIAS-NOT: arith.cmpi
-// ALIAS-NOT: obelisk_sim.random.solve
+// ALIAS: obelisk_sim.random.solve {{.*}} mutable
 // ALIAS: obelisk_sim.managed.store
 // ALIAS: obelisk_sim.managed.store
 // ALIAS: obelisk_sim.managed.store
@@ -610,12 +612,12 @@ module {
 // DEFINITION: ^bb2:
 // DEFINITION: %[[RAW:.*]] = arith.andi {{.*}}, {{.*}} : i64
 // DEFINITION: obelisk_sim.managed.store
-// DEFINITION: %[[Z_SHIFTED:.*]] = arith.shrui %[[RAW]], {{.*}} : i64
+// DEFINITION: %[[Z_SHIFTED:.*]] = arith.shrui %[[COUNTER:.*]], {{.*}} : i64
 // DEFINITION: %[[Z:.*]] = arith.andi %[[Z_SHIFTED]], {{.*}} : i64
 // DEFINITION: %[[Y_SUM:.*]] = arith.addi %[[Z]], {{.*}} : i64
 // DEFINITION: %[[Y_VALUE:.*]] = arith.andi %[[Y_SUM]], {{.*}} : i64
 // DEFINITION: %[[Y_PLACED:.*]] = arith.shli %[[Y_VALUE]], {{.*}} : i64
-// DEFINITION: %[[NO_Y:.*]] = arith.andi %[[RAW]], {{.*}} : i64
+// DEFINITION: %[[NO_Y:.*]] = arith.andi %[[COUNTER]], {{.*}} : i64
 // DEFINITION: %[[WITH_Y:.*]] = arith.ori %[[NO_Y]], %[[Y_PLACED]] : i64
 // DEFINITION: %[[Y_SHIFTED:.*]] = arith.shrui %[[WITH_Y]], {{.*}} : i64
 // DEFINITION: %[[Y:.*]] = arith.andi %[[Y_SHIFTED]], {{.*}} : i64
@@ -647,7 +649,7 @@ module {
 // The copy alias is fed from the already materialized x definition. The flag
 // definition above reads that same canonical alias representative.
 // DEFINITION: arith.shli {{.*}}, {{.*}} : i64
-// DEFINITION-NOT: obelisk_sim.random.solve
+// DEFINITION: obelisk_sim.random.solve {{.*}} mutable
 // DEFINITION: obelisk_sim.managed.store
 // DEFINITION: obelisk_sim.managed.store
 // DEFINITION: obelisk_sim.managed.store
@@ -1377,6 +1379,16 @@ module {
           }
         }
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 28 : i64, procedure_kind = 0 : i32, sym_name = "s15", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.expression_statement attributes {node_id = 32 : i64} {
+            obelisk.sv.expression.call attributes {argument_count = 2 : i64, callee_name = "rand_mode", constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 33 : i64, semantic_type = !obelisk.void, subroutine_kind = 0 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s1.$root::@s12.top::@s13.top} {
+              obelisk.sv.expression.member_access attributes {node_id = 34 : i64, referenced_path = "C::y", referenced_symbol = @s1.$root::@s2::@s3.C::@s5.y, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                obelisk.sv.expression.named_value attributes {node_id = 35 : i64, referenced_path = "top.object", referenced_symbol = @s1.$root::@s12.top::@s13.top::@s14.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>} {
+                }
+              }
+              obelisk.sv.expression.integer_literal attributes {constant_value = "0", node_id = 36 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+              }
+            }
+          }
           obelisk.sv.statement.expression_statement attributes {node_id = 29 : i64} {
             obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "randomize", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 30 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, subroutine_kind = 0 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s1.$root::@s12.top::@s13.top} {
               obelisk.sv.expression.named_value attributes {node_id = 31 : i64, referenced_path = "top.object", referenced_symbol = @s1.$root::@s12.top::@s13.top::@s14.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>} {

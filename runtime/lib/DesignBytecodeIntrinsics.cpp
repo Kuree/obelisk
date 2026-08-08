@@ -638,12 +638,12 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
   }
   case OBELISK_RT_INTRINSIC_V1_RANDOM_SOLVE: {
     std::optional<ByteSpan> program = bytes(0);
-    auto start = scalar(1), maxAttempts = scalar(2);
-    if (!program || !start || !maxAttempts)
+    auto start = scalar(1), mutableMask = scalar(2), maxAttempts = scalar(3);
+    if (!program || !start || !mutableMask || !maxAttempts)
       return OBELISK_RT_INVALID_BYTECODE;
     std::vector<uint64_t> captures;
-    captures.reserve(site.inputCount - 3);
-    for (uint32_t index = 3; index != site.inputCount; ++index) {
+    captures.reserve(site.inputCount - 4);
+    for (uint32_t index = 4; index != site.inputCount; ++index) {
       auto capture = scalar(index);
       if (!capture)
         return OBELISK_RT_INVALID_BYTECODE;
@@ -651,9 +651,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     }
     uint64_t assignment = 0;
     uint32_t success = 0;
-    obelisk_rt_status status = obelisk_rt_v1_random_solve(
-        context, program->data, program->size, *start, *maxAttempts,
-        captures.data(), captures.size(), &assignment, &success);
+    obelisk_rt_status status = obelisk_rt_v1_random_solve_masked(
+        context, program->data, program->size, *start, *mutableMask,
+        *maxAttempts, captures.data(), captures.size(), &assignment, &success);
     if (status != OBELISK_RT_OK ||
         !writeScalar(image, frame, outputRegister(0), assignment) ||
         !writeScalar(image, frame, outputRegister(1), success))

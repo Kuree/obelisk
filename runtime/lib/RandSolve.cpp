@@ -52,6 +52,43 @@ uint64_t normalize(uint64_t value, unsigned width) {
   return value & widthMask(width);
 }
 
+uint64_t compressBits(uint64_t value, uint64_t mask) {
+  uint64_t compressed = 0;
+  unsigned output = 0;
+  for (unsigned input = 0; input != 64; ++input) {
+    uint64_t bit = uint64_t{1} << input;
+    if ((mask & bit) == 0)
+      continue;
+    if ((value & bit) != 0)
+      compressed |= uint64_t{1} << output;
+    ++output;
+  }
+  return compressed;
+}
+
+uint64_t expandBits(uint64_t value, uint64_t mask) {
+  uint64_t expanded = 0;
+  unsigned input = 0;
+  for (unsigned output = 0; output != 64; ++output) {
+    uint64_t bit = uint64_t{1} << output;
+    if ((mask & bit) == 0)
+      continue;
+    if ((value & (uint64_t{1} << input)) != 0)
+      expanded |= bit;
+    ++input;
+  }
+  return expanded;
+}
+
+unsigned countBits(uint64_t value) {
+  unsigned count = 0;
+  while (value != 0) {
+    value &= value - 1;
+    ++count;
+  }
+  return count;
+}
+
 uint64_t extendSigned(uint64_t value, unsigned sourceWidth,
                       unsigned targetWidth) {
   value = normalize(value, sourceWidth);
@@ -384,10 +421,11 @@ bool evaluate(const std::vector<Instruction> &instructions,
 
 } // namespace
 
-extern "C" obelisk_rt_status obelisk_rt_v1_random_solve(
+extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_masked(
     obelisk_rt_context *context, const uint8_t *program, uint64_t programSize,
-    uint64_t start, uint64_t maxAttempts, const uint64_t *captures,
-    uint64_t captureCount, uint64_t *outAssignment, uint32_t *outSuccess) {
+    uint64_t start, uint64_t mutableMask, uint64_t maxAttempts,
+    const uint64_t *captures, uint64_t captureCount, uint64_t *outAssignment,
+    uint32_t *outSuccess) {
   if (!context || !program || !outAssignment || !outSuccess ||
       (captureCount != 0 && !captures) ||
       programSize < OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE)
@@ -430,13 +468,16 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve(
       return OBELISK_RT_INVALID_ARGUMENT;
 
     uint64_t mask = widthMask(aggregateWidth);
-    uint64_t domain = aggregateWidth == 64
-                          ? std::numeric_limits<uint64_t>::max()
-                          : uint64_t{1} << aggregateWidth;
+    mutableMask &= mask;
+    unsigned mutableWidth = countBits(mutableMask);
+    uint64_t domain = mutableWidth == 64 ? std::numeric_limits<uint64_t>::max()
+                                         : uint64_t{1} << mutableWidth;
     uint64_t attempts =
-        aggregateWidth == 64 ? maxAttempts : std::min(maxAttempts, domain);
-    bool complete = aggregateWidth != 64 && attempts == domain;
-    uint64_t candidate = start & mask;
+        mutableWidth == 64 ? maxAttempts : std::min(maxAttempts, domain);
+    bool complete = mutableWidth != 64 && attempts == domain;
+    uint64_t fixed = (start & mask) & ~mutableMask;
+    uint64_t candidateIndex = compressBits(start, mutableMask);
+    uint64_t candidate = fixed | expandBits(candidateIndex, mutableMask);
     uint64_t hardFallback = 0;
     bool hasHardFallback = false;
     std::vector<Value> stack;
@@ -454,7 +495,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve(
         hardFallback = candidate;
         hasHardFallback = true;
       }
-      candidate = (candidate + 1) & mask;
+      candidateIndex = (candidateIndex + 1) & widthMask(mutableWidth);
+      candidate = fixed | expandBits(candidateIndex, mutableMask);
     }
     // A soft constraint may be dropped only after a complete finite-domain
     // traversal proves that no preferred solution exists.
@@ -468,4 +510,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve(
   } catch (...) {
     return OBELISK_RT_INVALID_ARGUMENT;
   }
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_random_solve(
+    obelisk_rt_context *context, const uint8_t *program, uint64_t programSize,
+    uint64_t start, uint64_t maxAttempts, const uint64_t *captures,
+    uint64_t captureCount, uint64_t *outAssignment, uint32_t *outSuccess) {
+  return obelisk_rt_v1_random_solve_masked(
+      context, program, programSize, start, UINT64_MAX, maxAttempts, captures,
+      captureCount, outAssignment, outSuccess);
 }

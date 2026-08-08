@@ -70,7 +70,8 @@ Encoder::encodeContainerOperation(FunctionPlan &plan, Operation *operation) {
             plan,
             ArrayRef<uint8_t>(reinterpret_cast<const uint8_t *>(program.data()),
                               program.size())),
-        reg(plan, op.getStart()), reg(plan, op.getMaxAttempts())};
+        reg(plan, op.getStart()), reg(plan, op.getMutableMask()),
+        reg(plan, op.getMaxAttempts())};
     for (Value capture : op.getCaptures())
       inputs.push_back(reg(plan, capture));
     return emitIntrinsicRegisters(
