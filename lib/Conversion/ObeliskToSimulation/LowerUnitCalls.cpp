@@ -1681,6 +1681,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     unsigned width;
     uint64_t lower;
     uint64_t cardinality;
+    bool powerOfTwo;
+    Value sampledIndex;
   };
   SmallVector<ProposalDomain> proposalDomains;
   struct ProposalAlias {
@@ -1709,14 +1711,13 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
                                  : (uint64_t{1} << property.width) - 1;
       uint64_t distance = found->upper - found->lower;
       uint64_t cardinality = distance + 1;
-      // A power-of-two interval can be drawn without modulo bias by retaining
-      // the corresponding low bits of the field's random proposal. Other
-      // sound intervals remain available to later sampler-plan work while the
-      // checker and runtime fallback preserve completeness today.
-      if (found->upper <= fullMaximum && cardinality != 0 &&
-          (cardinality & (cardinality - 1)) == 0)
-        proposalDomains.push_back(
-            {propertyOffset, property.width, found->lower, cardinality});
+      if (found->upper <= fullMaximum && cardinality != 0)
+        proposalDomains.push_back({propertyOffset,
+                                   property.width,
+                                   found->lower,
+                                   cardinality,
+                                   (cardinality & (cardinality - 1)) == 0,
+                                   {}});
     }
     propertyOffset += property.width;
   }
@@ -1844,7 +1845,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     return assignment;
   };
   Value sampledComponentAssignment;
-  auto materializeProposal = [&](Value rawAssignment) -> FailureOr<Value> {
+  auto materializeProposal = [&](Value rawAssignment,
+                                 Value attempt) -> FailureOr<Value> {
     if (!proposalAssignments.empty()) {
       if (proposalAssignments.size() == 1)
         return constant64(proposalAssignments.front());
@@ -1867,12 +1869,32 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
                                 constant64(~proposalAssignmentTableMask)),
           sampledComponentAssignment);
     for (const ProposalDomain &domain : proposalDomains) {
-      Value fieldBits = rawAssignment;
-      if (domain.offset != 0)
-        fieldBits = arith::ShRUIOp::create(builder, location, fieldBits,
-                                           constant64(domain.offset));
-      fieldBits = arith::AndIOp::create(builder, location, fieldBits,
-                                        constant64(domain.cardinality - 1));
+      Value fieldBits;
+      if (domain.powerOfTwo) {
+        fieldBits = rawAssignment;
+        if (domain.offset != 0)
+          fieldBits = arith::ShRUIOp::create(builder, location, fieldBits,
+                                             constant64(domain.offset));
+        fieldBits = arith::AndIOp::create(builder, location, fieldBits,
+                                          constant64(domain.cardinality - 1));
+      } else {
+        // Advance the independently unbiased starting index without unsigned
+        // overflow. This visits every interval value cyclically when the
+        // generated checker requests retries.
+        Value step = arith::RemUIOp::create(builder, location, attempt,
+                                            constant64(domain.cardinality));
+        Value threshold = arith::SubIOp::create(
+            builder, location, constant64(domain.cardinality), step);
+        Value wraps =
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::uge,
+                                  domain.sampledIndex, threshold);
+        Value linear =
+            arith::AddIOp::create(builder, location, domain.sampledIndex, step);
+        Value wrapped = arith::SubIOp::create(builder, location,
+                                              domain.sampledIndex, threshold);
+        fieldBits =
+            arith::SelectOp::create(builder, location, wraps, wrapped, linear);
+      }
       if (domain.lower != 0)
         fieldBits = arith::AddIOp::create(builder, location, fieldBits,
                                           constant64(domain.lower));
@@ -2321,7 +2343,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
                        !overwritesProposalDomain &&
                        materializesCompleteProposal;
 
-  auto sampleTableIndex = [&](uint64_t cardinality, Value draw) -> Value {
+  auto sampleBoundedIndex = [&](uint64_t cardinality, Value draw) -> Value {
     if ((cardinality & (cardinality - 1)) == 0)
       return arith::AndIOp::create(builder, location, draw,
                                    constant64(cardinality - 1));
@@ -2354,7 +2376,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   };
 
   if (validAssignmentTable && !powerOfTwoAssignmentTable)
-    start = sampleTableIndex(proposalAssignments.size(), randomDraw);
+    start = sampleBoundedIndex(proposalAssignments.size(), randomDraw);
 
   if (validAssignmentTables) {
     sampledComponentAssignment = constant64(0);
@@ -2362,12 +2384,18 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
       Value index = constant64(0);
       if (table.assignments.size() != 1) {
         Value draw = next64(state);
-        index = sampleTableIndex(table.assignments.size(), draw);
+        index = sampleBoundedIndex(table.assignments.size(), draw);
       }
       Value selected = selectAssignmentTable(table.assignments, index);
       sampledComponentAssignment = arith::OrIOp::create(
           builder, location, sampledComponentAssignment, selected);
     }
+  }
+  for (ProposalDomain &domain : proposalDomains) {
+    if (domain.powerOfTwo)
+      continue;
+    Value draw = next64(state);
+    domain.sampledIndex = sampleBoundedIndex(domain.cardinality, draw);
   }
   sim::SimManagedStoreOp::create(builder, location, state, stateReference);
 
@@ -2406,7 +2434,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   };
 
   setCurrent(loop);
-  FailureOr<Value> proposal = materializeProposal(counter);
+  FailureOr<Value> proposal = materializeProposal(counter, attempt);
   if (failed(proposal))
     return failure();
   Value assignment = *proposal;
