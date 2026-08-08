@@ -25,6 +25,15 @@ struct SMTVariableEquality {
   SMTVariable rhs;
 };
 
+enum class SMTCaptureBoundKind { LowerInclusive, UpperInclusive };
+
+struct SMTVariableCaptureBound {
+  SMTVariable target;
+  uint32_t captureIndex;
+  SMTCaptureBoundKind kind;
+  mlir::Value predicate;
+};
+
 struct SMTVariableDefinition {
   SMTVariable target;
   mlir::Value expression;
@@ -50,6 +59,7 @@ struct RandomProgramSMT {
   mlir::Value hard;
   std::vector<SMTVariable> variables;
   std::vector<SMTHardConstraint> hardConstraints;
+  std::vector<SMTVariableCaptureBound> directCaptureBounds;
   std::vector<SMTVariableEquality> directEqualities;
   std::vector<SMTVariableDefinition> directDefinitions;
 };

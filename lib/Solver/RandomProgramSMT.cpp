@@ -51,6 +51,7 @@ struct StackValue {
   std::optional<SMTVariableEquality> directEquality;
   uint32_t instructionBegin = 0;
   std::optional<SMTVariableDefinition> directDefinition;
+  std::optional<SMTVariableCaptureBound> directCaptureBound;
 };
 
 mlir::Value constant(mlir::OpBuilder &builder, mlir::Location location,
@@ -95,7 +96,8 @@ StackValue booleanValue(
     mlir::OpBuilder &builder, mlir::Location location, mlir::Value predicate,
     uint32_t instructionBegin,
     std::optional<SMTVariableEquality> directEquality = std::nullopt,
-    std::optional<SMTVariableDefinition> directDefinition = std::nullopt) {
+    std::optional<SMTVariableDefinition> directDefinition = std::nullopt,
+    std::optional<SMTVariableCaptureBound> directCaptureBound = std::nullopt) {
   return {mlir::smt::IteOp::create(builder, location, predicate,
                                    constant(builder, location, 1, 1),
                                    constant(builder, location, 0, 1)),
@@ -103,7 +105,8 @@ StackValue booleanValue(
           std::nullopt,
           std::move(directEquality),
           instructionBegin,
-          std::move(directDefinition)};
+          std::move(directDefinition),
+          std::move(directCaptureBound)};
 }
 
 bool containsVariable(mlir::Value expression, const SMTVariable &variable) {
@@ -268,6 +271,9 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
           result.directEqualities.push_back(*stack.back().directEquality);
         if (stack.back().directDefinition)
           result.directDefinitions.push_back(*stack.back().directDefinition);
+        if (stack.back().directCaptureBound)
+          result.directCaptureBounds.push_back(
+              *stack.back().directCaptureBound);
       }
       sawHard |= opcode == OBELISK_RT_RANDOM_END_HARD_V1;
       sawSoft |= opcode == OBELISK_RT_RANDOM_END_SOFT_V1;
@@ -420,6 +426,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       }
       std::optional<SMTVariableEquality> directEquality;
       std::optional<SMTVariableDefinition> directDefinition;
+      std::optional<SMTVariableCaptureBound> directCaptureBound;
       if (opcode == OBELISK_RT_RANDOM_EQ_V1 && lhs.width == rhs.width &&
           lhs.directVariable && rhs.directVariable &&
           lhs.directVariable->offset != rhs.directVariable->offset)
@@ -436,9 +443,46 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
         directDefinition =
             SMTVariableDefinition{*rhs.directVariable, lhs.bits,
                                   lhs.instructionBegin, rhs.instructionBegin};
+
+      // Inclusive unsigned comparisons against one direct capture always
+      // describe a non-empty interval for widths below 64. Retain that shape
+      // so lowering can evaluate the bound once and sample it directly.
+      auto directCaptureIndex = [&](const StackValue &value)
+          -> std::optional<uint32_t> {
+        auto extract = mlir::dyn_cast_or_null<mlir::smt::ExtractOp>(
+            value.bits.getDefiningOp());
+        if (!extract || extract.getLowBit() != 0)
+          return std::nullopt;
+        auto found = llvm::find(captures, extract.getInput());
+        if (found == captures.end())
+          return std::nullopt;
+        return static_cast<uint32_t>(found - captures.begin());
+      };
+      if (!signedOperation && lhs.width == rhs.width && lhs.width < 64 &&
+          (opcode == OBELISK_RT_RANDOM_GE_V1 ||
+           opcode == OBELISK_RT_RANDOM_LE_V1)) {
+        std::optional<uint32_t> lhsCapture = directCaptureIndex(lhs);
+        std::optional<uint32_t> rhsCapture = directCaptureIndex(rhs);
+        if (lhs.directVariable && rhsCapture) {
+          directCaptureBound = SMTVariableCaptureBound{
+              *lhs.directVariable, *rhsCapture,
+              opcode == OBELISK_RT_RANDOM_GE_V1
+                  ? SMTCaptureBoundKind::LowerInclusive
+                  : SMTCaptureBoundKind::UpperInclusive,
+              predicate};
+        } else if (rhs.directVariable && lhsCapture) {
+          directCaptureBound = SMTVariableCaptureBound{
+              *rhs.directVariable, *lhsCapture,
+              opcode == OBELISK_RT_RANDOM_LE_V1
+                  ? SMTCaptureBoundKind::LowerInclusive
+                  : SMTCaptureBoundKind::UpperInclusive,
+              predicate};
+        }
+      }
       stack.push_back(
           booleanValue(builder, location, predicate, lhs.instructionBegin,
-                       std::move(directEquality), std::move(directDefinition)));
+                       std::move(directEquality), std::move(directDefinition),
+                       std::move(directCaptureBound)));
       continue;
     }
     if (opcode >= OBELISK_RT_RANDOM_LOGICAL_AND_V1 &&

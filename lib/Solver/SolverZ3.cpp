@@ -546,6 +546,49 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
             {variable.offset, variable.width, minimum, maximum});
     }
 
+    // Preserve one direct inclusive capture bound per otherwise independently
+    // sampled field. The decoder only records exact unsigned comparisons, and
+    // this implication proof keeps malformed or unexpectedly transformed SMT
+    // shapes from crossing the solver API boundary.
+    for (const SMTVariableCaptureBound &bound : smt->directCaptureBounds) {
+      bool conflicts = llvm::any_of(
+                           analysis.domains,
+                           [&](const RandomVariableDomain &domain) {
+                             return domain.offset == bound.target.offset &&
+                                    domain.width == bound.target.width;
+                           }) ||
+                       llvm::any_of(
+                           analysis.captureBounds,
+                           [&](const RandomVariableCaptureBound &selected) {
+                             return selected.offset == bound.target.offset &&
+                                    selected.width == bound.target.width;
+                           }) ||
+                       llvm::any_of(
+                           analysis.aliases,
+                           [&](const RandomVariableAlias &alias) {
+                             return (alias.targetOffset == bound.target.offset ||
+                                     alias.sourceOffset == bound.target.offset) &&
+                                    alias.width == bound.target.width;
+                           }) ||
+                       llvm::any_of(
+                           analysis.definitions,
+                           [&](const RandomVariableDefinition &definition) {
+                             return definition.targetOffset ==
+                                        bound.target.offset &&
+                                    definition.width == bound.target.width;
+                           });
+      if (conflicts || bound.captureIndex >= smt->captures.size())
+        continue;
+      std::optional<z3::expr> predicate = shim.translate(bound.predicate);
+      if (!predicate || checkWith(!*predicate) != z3::unsat)
+        continue;
+      analysis.captureBounds.push_back(
+          {bound.target.offset, bound.target.width, bound.captureIndex,
+           bound.kind == SMTCaptureBoundKind::LowerInclusive
+               ? RandomCaptureBoundKind::LowerInclusive
+               : RandomCaptureBoundKind::UpperInclusive});
+    }
+
     // The bounds and aliases above already prove hard => proposal. Prove the
     // reverse implication as one final query; exact proposals can bypass both
     // the generated checker and the runtime fallback.
@@ -569,6 +612,32 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
       proposal = proposal &&
                  z3::uge(*bits, context.bv_val(domain.lower, domain.width)) &&
                  z3::ule(*bits, context.bv_val(domain.upper, domain.width));
+    }
+    for (const RandomVariableCaptureBound &bound : analysis.captureBounds) {
+      auto found = std::find_if(
+          smt->variables.begin(), smt->variables.end(),
+          [&](const SMTVariable &variable) {
+            return variable.offset == bound.offset &&
+                   variable.width == bound.width;
+          });
+      if (found == smt->variables.end() ||
+          bound.captureIndex >= smt->captures.size()) {
+        translatedProposal = false;
+        break;
+      }
+      std::optional<z3::expr> bits = shim.translate(found->bits);
+      std::optional<z3::expr> capture =
+          shim.translate(smt->captures[bound.captureIndex]);
+      if (!bits || !capture) {
+        translatedProposal = false;
+        break;
+      }
+      z3::expr captureBits =
+          capture->extract(bound.width - 1, 0);
+      proposal = proposal &&
+                 (bound.kind == RandomCaptureBoundKind::LowerInclusive
+                      ? z3::uge(*bits, captureBits)
+                      : z3::ule(*bits, captureBits));
     }
     for (const RandomVariableAlias &alias : analysis.aliases) {
       auto target =
@@ -733,12 +802,13 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
       }
 
       std::vector<RandomAssignmentTable> componentTables;
-      z3::expr composedProposal = context.bool_val(true);
+      // Compose component tables with the structural proposal already proven
+      // to contain every solution. This lets a capture-dependent interval or
+      // definition coexist with independent capture-free tables; the final
+      // whole-formula equivalence query remains the authority for exactness.
+      z3::expr composedProposal = proposal;
       bool sawConstrainedComponent = false;
-      bool allConstrainedComponentsComplete = llvm::none_of(
-          smt->hardConstraints, [](const SMTHardConstraint &constraint) {
-            return constraint.dependencies.empty() && constraint.hasCapture;
-          });
+      bool allConstrainedComponentsComplete = true;
       for (size_t root = 0; root != componentVariables.size(); ++root) {
         if (componentConstraints[root].empty())
           continue;
@@ -746,10 +816,8 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
         if (llvm::any_of(componentConstraints[root],
                          [](const SMTHardConstraint *constraint) {
                            return constraint->hasCapture;
-                         })) {
-          allConstrainedComponentsComplete = false;
+                         }))
           continue;
-        }
         unsigned componentWidth = 0;
         uint64_t componentMask = 0;
         for (size_t variableNumber : componentVariables[root]) {
@@ -920,12 +988,8 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
             sawConstrainedComponent && allConstrainedComponentsComplete &&
             checkWith(*hard && !composedProposal) == z3::unsat &&
             checkWith(composedProposal && !*hard) == z3::unsat;
-        if (equivalentCompleteProposal) {
-          analysis.domains.clear();
-          analysis.aliases.clear();
-          analysis.definitions.clear();
+        if (equivalentCompleteProposal)
           analysis.proposalExact = true;
-        }
       }
     }
   } catch (...) {

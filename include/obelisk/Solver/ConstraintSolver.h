@@ -21,6 +21,18 @@ struct RandomVariableDomain {
   uint64_t upper = 0;
 };
 
+/// A Z3-verified inclusive bound whose value is read from a serialized runtime
+/// capture. Generated proposals evaluate the capture once and sample the
+/// resulting interval without consulting a runtime solver.
+enum class RandomCaptureBoundKind { LowerInclusive, UpperInclusive };
+
+struct RandomVariableCaptureBound {
+  uint32_t offset = 0;
+  uint32_t width = 0;
+  uint32_t captureIndex = 0;
+  RandomCaptureBoundKind kind = RandomCaptureBoundKind::UpperInclusive;
+};
+
 /// A compile-time-proven equality between two serialized random variables.
 /// Generated proposals sample `sourceOffset` and copy it to `targetOffset`.
 struct RandomVariableAlias {
@@ -58,11 +70,12 @@ struct RandomProgramAnalysis {
   /// are deterministically ordered and their masks never overlap.
   std::vector<RandomAssignmentTable> assignmentTables;
   std::vector<RandomVariableDomain> domains;
+  std::vector<RandomVariableCaptureBound> captureBounds;
   std::vector<RandomVariableAlias> aliases;
   std::vector<RandomVariableDefinition> definitions;
   /// True only when either the global/component assignment tables or the
-  /// domain, alias, and definition proposal (with full domains for omitted
-  /// variables) is equivalent to the hard formula.
+  /// domain, capture-bound, alias, and definition proposal (with full domains
+  /// for omitted variables) is equivalent to the hard formula.
   bool proposalExact = false;
 };
 
@@ -70,11 +83,12 @@ struct RandomProgramAnalysis {
 /// remain free bit-vector variables, so an Unsatisfiable result proves that no
 /// runtime capture values can make the hard constraints satisfiable. Reported
 /// variable domains conservatively enclose the projection of all hard
-/// solutions, including every possible runtime capture value. Aliases and
-/// definitions are equalities implied by every hard solution. Assignment
-/// tables contain every hard solution, either globally or independently per
-/// capture-free connected component. Capture-dependent components remain on
-/// the checker/runtime path. The API deliberately exposes no Z3 types.
+/// solutions, including every possible runtime capture value. Capture bounds,
+/// aliases, and definitions are relations implied by every hard solution.
+/// Assignment tables contain every hard solution, either globally or
+/// independently per capture-free connected component. Capture-dependent
+/// components remain on the checker/runtime path unless a structural proposal
+/// covers them exactly. The API deliberately exposes no Z3 types.
 RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
                                            size_t programSize,
                                            uint64_t resourceLimit = 100000);
