@@ -1127,21 +1127,24 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
         arith::ShRUIOp::create(builder, location, bits, rotation),
         arith::ShLIOp::create(builder, location, bits, leftAmount));
   };
-  Value high = next32(state);
-  Value low = next32(state);
-  Value start = arith::OrIOp::create(
-      builder, location,
-      arith::ShLIOp::create(
-          builder, location,
-          arith::ExtUIOp::create(builder, location, i64, high), constant64(32)),
-      arith::ExtUIOp::create(builder, location, i64, low));
-  sim::SimManagedStoreOp::create(builder, location, state, stateReference);
+  auto next64 = [&](Value &streamState) -> Value {
+    Value high = next32(streamState);
+    Value low = next32(streamState);
+    return arith::OrIOp::create(
+        builder, location,
+        arith::ShLIOp::create(
+            builder, location,
+            arith::ExtUIOp::create(builder, location, i64, high),
+            constant64(32)),
+        arith::ExtUIOp::create(builder, location, i64, low));
+  };
+  Value randomDraw = next64(state);
 
   APInt domainMask = totalWidth == 64 ? APInt::getAllOnes(64)
                                       : APInt::getLowBitsSet(64, totalWidth);
   Value mask = arith::ConstantOp::create(
       builder, location, i64, builder.getIntegerAttr(i64, domainMask));
-  start = arith::AndIOp::create(builder, location, start, mask);
+  Value start = arith::AndIOp::create(builder, location, randomDraw, mask);
 
   bool hasSoftConstraint = false;
   for (auto [index, child] : llvm::enumerate(children)) {
@@ -1613,11 +1616,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   bool validAssignmentTable =
       !analysis.assignmentTable.empty() &&
       analysis.assignmentTable.size() <= maxMaterializedAssignmentTableSize &&
-      (analysis.assignmentTable.size() &
-       (analysis.assignmentTable.size() - 1)) == 0 &&
       llvm::all_of(analysis.assignmentTable, [&](uint64_t assignment) {
         return (assignment & ~aggregateMask) == 0;
       });
+  bool powerOfTwoAssignmentTable =
+      validAssignmentTable && (analysis.assignmentTable.size() &
+                               (analysis.assignmentTable.size() - 1)) == 0;
   if (validAssignmentTable)
     proposalAssignments.append(analysis.assignmentTable.begin(),
                                analysis.assignmentTable.end());
@@ -1782,8 +1786,14 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
       if (proposalAssignments.size() == 1)
         return assignment;
       Value index =
-          arith::AndIOp::create(builder, location, rawAssignment,
-                                constant64(proposalAssignments.size() - 1));
+          powerOfTwoAssignmentTable
+              ? arith::AndIOp::create(
+                    builder, location, rawAssignment,
+                    constant64(proposalAssignments.size() - 1))
+                    .getResult()
+              : arith::RemUIOp::create(builder, location, rawAssignment,
+                                       constant64(proposalAssignments.size()))
+                    .getResult();
       for (auto [tableIndex, tableAssignment] :
            llvm::enumerate(llvm::drop_begin(proposalAssignments))) {
         Value selected =
@@ -2247,6 +2257,37 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   bool exactProposal = analysis.proposalExact && !hasSoftConstraint &&
                        !overwritesProposalDomain &&
                        materializesCompleteProposal;
+
+  if (validAssignmentTable && !powerOfTwoAssignmentTable) {
+    uint64_t cardinality = proposalAssignments.size();
+    uint64_t remainder = ((UINT64_MAX % cardinality) + 1) % cardinality;
+    uint64_t limit = UINT64_MAX - (remainder - 1);
+    Block *boundedLoop = addBlock();
+    Block *boundedDone = addBlock();
+    Value boundedState = boundedLoop->addArgument(i64, location);
+    Value boundedDraw = boundedLoop->addArgument(i64, location);
+    Value finalState = boundedDone->addArgument(i64, location);
+    Value boundedIndex = boundedDone->addArgument(i64, location);
+
+    cf::BranchOp::create(builder, location, boundedLoop,
+                         ValueRange{state, randomDraw});
+    setCurrent(boundedLoop);
+    Value index = arith::RemUIOp::create(builder, location, boundedDraw,
+                                         constant64(cardinality));
+    Value accepted =
+        arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ult,
+                              boundedDraw, constant64(limit));
+    Value retryState = boundedState;
+    Value retryDraw = next64(retryState);
+    cf::CondBranchOp::create(builder, location, accepted, boundedDone,
+                             ValueRange{boundedState, index}, boundedLoop,
+                             ValueRange{retryState, retryDraw});
+
+    setCurrent(boundedDone);
+    state = finalState;
+    start = boundedIndex;
+  }
+  sim::SimManagedStoreOp::create(builder, location, state, stateReference);
 
   Block *dispatchBlock = current;
   Block *loop = addBlock();

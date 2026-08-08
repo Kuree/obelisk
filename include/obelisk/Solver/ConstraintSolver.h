@@ -43,8 +43,8 @@ struct RandomProgramAnalysis {
   Satisfiability satisfiability = Satisfiability::Unknown;
   const char *backend = "heuristic";
   /// A complete, deterministically ordered table of aggregate assignments
-  /// satisfying the hard formula. The table is exposed only when it has a
-  /// power-of-two size, so generated code can index it without modulo bias.
+  /// satisfying the hard formula. Generated code is responsible for choosing
+  /// an unbiased index for arbitrary table cardinalities.
   std::vector<uint64_t> assignmentTable;
   std::vector<RandomVariableDomain> domains;
   std::vector<RandomVariableAlias> aliases;

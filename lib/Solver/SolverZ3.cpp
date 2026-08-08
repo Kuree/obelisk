@@ -622,10 +622,9 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
       analysis.proposalExact = true;
 
     // If structural planning was not exact, fully enumerate small capture-free
-    // formulas. A complete power-of-two solution table is an unbiased
-    // correlated sampler: generated code indexes it with random low bits and
-    // needs neither a checker nor runtime solving. Keep the table deliberately
-    // small to bound both compile time and IR size.
+    // formulas. A complete solution table lets generated code sample correlated
+    // assignments directly and needs neither a checker nor runtime solving.
+    // Keep the table deliberately small to bound both compile time and IR size.
     constexpr unsigned maxAssignmentWidth = 12;
     constexpr size_t maxAssignmentTableSize = 16;
     auto assignmentType =
@@ -666,8 +665,7 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
           enumerator.add(*assignment != enumerationContext.bv_val(
                                             value, assignmentType.getWidth()));
         }
-        if (complete && !assignments.empty() &&
-            (assignments.size() & (assignments.size() - 1)) == 0) {
+        if (complete && !assignments.empty()) {
           std::sort(assignments.begin(), assignments.end());
           analysis.assignmentTable = std::move(assignments);
           analysis.domains.clear();
