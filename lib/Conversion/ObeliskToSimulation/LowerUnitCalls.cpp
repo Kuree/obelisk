@@ -1692,6 +1692,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     std::optional<uint32_t> upperCapture;
     bool lowerExclusive;
     bool upperExclusive;
+    bool isSigned;
     std::optional<uint64_t> staticLower;
     std::optional<uint64_t> staticUpper;
     Value lower;
@@ -1758,11 +1759,16 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
           return selected.offset == bound.offset &&
                  selected.width == bound.width;
         });
+    if (found != proposalCaptureDomains.end() &&
+        found->isSigned != bound.isSigned)
+      continue;
     if (found == proposalCaptureDomains.end()) {
       auto staticDomain = llvm::find_if(
           proposalDomains, [&](const ProposalDomain &domain) {
             return domain.offset == bound.offset && domain.width == bound.width;
           });
+      if (bound.isSigned && staticDomain != proposalDomains.end())
+        continue;
       std::optional<uint64_t> staticLower;
       std::optional<uint64_t> staticUpper;
       if (staticDomain != proposalDomains.end()) {
@@ -1772,7 +1778,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
       }
       proposalCaptureDomains.push_back(
           {bound.offset, bound.width, std::nullopt, std::nullopt, false, false,
-           staticLower, staticUpper, {}, {}, {}});
+           bound.isSigned, staticLower, staticUpper, {}, {}, {}});
       found = std::prev(proposalCaptureDomains.end());
     }
     bool lower = bound.kind == solver::RandomCaptureBoundKind::LowerInclusive ||
@@ -1996,6 +2002,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
                                                 wrapped, linear);
       fieldBits = arith::AddIOp::create(builder, location, fieldBits,
                                         bound.lower);
+      if (bound.isSigned)
+        fieldBits = arith::XOrIOp::create(
+            builder, location, fieldBits,
+            constant64(uint64_t{1} << (bound.width - 1)));
       if (bound.offset != 0)
         fieldBits = arith::ShLIOp::create(builder, location, fieldBits,
                                           constant64(bound.offset));
@@ -2555,9 +2565,14 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
                              ? UINT64_MAX
                              : (uint64_t{1} << domain.width) - 1;
     auto captureValue = [&](uint32_t index) {
-      return arith::AndIOp::create(builder, location, programCaptures[index],
-                                   constant64(valueMask))
-          .getResult();
+      Value value = arith::AndIOp::create(builder, location,
+                                          programCaptures[index],
+                                          constant64(valueMask));
+      if (domain.isSigned)
+        value = arith::XOrIOp::create(
+            builder, location, value,
+            constant64(uint64_t{1} << (domain.width - 1)));
+      return value;
     };
     domain.lower = constant64(domain.staticLower.value_or(0));
     Value upper = constant64(domain.staticUpper.value_or(valueMask));

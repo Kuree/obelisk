@@ -549,7 +549,7 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
 
     // Preserve at most one direct capture bound in each direction per
     // otherwise independently sampled field. The decoder only records exact
-    // unsigned comparisons, and this implication proof keeps malformed or
+    // comparisons, and this implication proof keeps malformed or
     // unexpectedly transformed SMT shapes from crossing the solver API
     // boundary.
     auto isLowerCaptureBound = [](RandomCaptureBoundKind kind) {
@@ -571,35 +571,41 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
     };
     for (const SMTVariableCaptureBound &bound : smt->directCaptureBounds) {
       RandomCaptureBoundKind kind = convertCaptureBoundKind(bound.kind);
-      bool conflicts = llvm::any_of(
-                           analysis.captureBounds,
-                           [&](const RandomVariableCaptureBound &selected) {
-                             return selected.offset == bound.target.offset &&
-                                    selected.width == bound.target.width &&
-                                    isLowerCaptureBound(selected.kind) ==
-                                        isLowerCaptureBound(kind);
-                           }) ||
-                       llvm::any_of(
-                           analysis.aliases,
-                           [&](const RandomVariableAlias &alias) {
-                             return (alias.targetOffset == bound.target.offset ||
-                                     alias.sourceOffset == bound.target.offset) &&
-                                    alias.width == bound.target.width;
-                           }) ||
-                       llvm::any_of(
-                           analysis.definitions,
-                           [&](const RandomVariableDefinition &definition) {
-                             return definition.targetOffset ==
-                                        bound.target.offset &&
-                                    definition.width == bound.target.width;
-                           });
+      bool conflicts =
+          (bound.isSigned &&
+           llvm::any_of(analysis.domains,
+                        [&](const RandomVariableDomain &domain) {
+                          return domain.offset == bound.target.offset &&
+                                 domain.width == bound.target.width;
+                        })) ||
+          llvm::any_of(analysis.captureBounds,
+                       [&](const RandomVariableCaptureBound &selected) {
+                         return selected.offset == bound.target.offset &&
+                                selected.width == bound.target.width &&
+                                (selected.isSigned != bound.isSigned ||
+                                 isLowerCaptureBound(selected.kind) ==
+                                     isLowerCaptureBound(kind));
+                       }) ||
+          llvm::any_of(analysis.aliases,
+                       [&](const RandomVariableAlias &alias) {
+                         return (alias.targetOffset == bound.target.offset ||
+                                 alias.sourceOffset == bound.target.offset) &&
+                                alias.width == bound.target.width;
+                       }) ||
+          llvm::any_of(analysis.definitions,
+                       [&](const RandomVariableDefinition &definition) {
+                         return definition.targetOffset ==
+                                    bound.target.offset &&
+                                definition.width == bound.target.width;
+                       });
       if (conflicts || bound.captureIndex >= smt->captures.size())
         continue;
       std::optional<z3::expr> predicate = shim.translate(bound.predicate);
       if (!predicate || checkWith(!*predicate) != z3::unsat)
         continue;
-      analysis.captureBounds.push_back(
-          {bound.target.offset, bound.target.width, bound.captureIndex, kind});
+      analysis.captureBounds.push_back({bound.target.offset, bound.target.width,
+                                        bound.captureIndex, kind,
+                                        bound.isSigned});
     }
 
     // The bounds and aliases above already prove hard => proposal. Prove the
@@ -627,12 +633,11 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
                  z3::ule(*bits, context.bv_val(domain.upper, domain.width));
     }
     for (const RandomVariableCaptureBound &bound : analysis.captureBounds) {
-      auto found = std::find_if(
-          smt->variables.begin(), smt->variables.end(),
-          [&](const SMTVariable &variable) {
-            return variable.offset == bound.offset &&
-                   variable.width == bound.width;
-          });
+      auto found = std::find_if(smt->variables.begin(), smt->variables.end(),
+                                [&](const SMTVariable &variable) {
+                                  return variable.offset == bound.offset &&
+                                         variable.width == bound.width;
+                                });
       if (found == smt->variables.end() ||
           bound.captureIndex >= smt->captures.size()) {
         translatedProposal = false;
@@ -645,20 +650,23 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
         translatedProposal = false;
         break;
       }
-      z3::expr captureBits =
-          capture->extract(bound.width - 1, 0);
+      z3::expr captureBits = capture->extract(bound.width - 1, 0);
       switch (bound.kind) {
       case RandomCaptureBoundKind::LowerInclusive:
-        proposal = proposal && z3::uge(*bits, captureBits);
+        proposal = proposal && (bound.isSigned ? z3::sge(*bits, captureBits)
+                                               : z3::uge(*bits, captureBits));
         break;
       case RandomCaptureBoundKind::LowerExclusive:
-        proposal = proposal && z3::ugt(*bits, captureBits);
+        proposal = proposal && (bound.isSigned ? z3::sgt(*bits, captureBits)
+                                               : z3::ugt(*bits, captureBits));
         break;
       case RandomCaptureBoundKind::UpperInclusive:
-        proposal = proposal && z3::ule(*bits, captureBits);
+        proposal = proposal && (bound.isSigned ? z3::sle(*bits, captureBits)
+                                               : z3::ule(*bits, captureBits));
         break;
       case RandomCaptureBoundKind::UpperExclusive:
-        proposal = proposal && z3::ult(*bits, captureBits);
+        proposal = proposal && (bound.isSigned ? z3::slt(*bits, captureBits)
+                                               : z3::ult(*bits, captureBits));
         break;
       }
     }

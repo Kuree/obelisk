@@ -444,9 +444,9 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
             SMTVariableDefinition{*rhs.directVariable, lhs.bits,
                                   lhs.instructionBegin, rhs.instructionBegin};
 
-      // Direct unsigned comparisons against one capture describe a runtime
-      // interval for widths up to 64. Retain that shape so lowering can
-      // normalize strict endpoints and sample the interval directly.
+      // Direct comparisons against one capture describe a runtime interval
+      // for widths up to 64. Retain that shape so lowering can normalize
+      // strict endpoints and signed coordinates, then sample it directly.
       auto directCaptureIndex = [&](const StackValue &value)
           -> std::optional<uint32_t> {
         auto extract = mlir::dyn_cast_or_null<mlir::smt::ExtractOp>(
@@ -458,7 +458,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
           return std::nullopt;
         return static_cast<uint32_t>(found - captures.begin());
       };
-      if (!signedOperation && lhs.width == rhs.width && lhs.width <= 64 &&
+      if (lhs.width == rhs.width && lhs.width <= 64 &&
           (opcode == OBELISK_RT_RANDOM_GE_V1 ||
            opcode == OBELISK_RT_RANDOM_GT_V1 ||
            opcode == OBELISK_RT_RANDOM_LE_V1 ||
@@ -482,7 +482,8 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
             break;
           }
           directCaptureBound = SMTVariableCaptureBound{
-              *lhs.directVariable, *rhsCapture, kind, predicate};
+              *lhs.directVariable, *rhsCapture, kind, signedOperation,
+              predicate};
         } else if (rhs.directVariable && lhsCapture) {
           SMTCaptureBoundKind kind;
           switch (opcode) {
@@ -500,7 +501,8 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
             break;
           }
           directCaptureBound = SMTVariableCaptureBound{
-              *rhs.directVariable, *lhsCapture, kind, predicate};
+              *rhs.directVariable, *lhsCapture, kind, signedOperation,
+              predicate};
         }
       }
       stack.push_back(

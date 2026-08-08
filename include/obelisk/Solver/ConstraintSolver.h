@@ -21,10 +21,10 @@ struct RandomVariableDomain {
   uint64_t upper = 0;
 };
 
-/// A Z3-verified inclusive bound whose value is read from a serialized runtime
-/// capture. Generated proposals evaluate the capture once and sample the
-/// resulting interval without consulting a runtime solver. One lower and one
-/// upper bound for the same field may be combined into an intersected domain.
+/// A Z3-verified bound whose value is read from a serialized runtime capture.
+/// Generated proposals evaluate the capture once and sample the resulting
+/// signed or unsigned interval without consulting a runtime solver. One lower
+/// and one upper bound of the same signedness may form an intersected domain.
 enum class RandomCaptureBoundKind {
   LowerInclusive,
   LowerExclusive,
@@ -37,6 +37,7 @@ struct RandomVariableCaptureBound {
   uint32_t width = 0;
   uint32_t captureIndex = 0;
   RandomCaptureBoundKind kind = RandomCaptureBoundKind::UpperInclusive;
+  bool isSigned = false;
 };
 
 /// A compile-time-proven equality between two serialized random variables.

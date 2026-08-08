@@ -36,6 +36,7 @@ struct SMTVariableCaptureBound {
   SMTVariable target;
   uint32_t captureIndex;
   SMTCaptureBoundKind kind;
+  bool isSigned;
   mlir::Value predicate;
 };
 
