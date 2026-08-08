@@ -1748,7 +1748,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   };
   for (const solver::RandomVariableCaptureBound &bound :
        analysis.captureBounds) {
-    bool conflicts = bound.width == 0 || bound.width >= 64 ||
+    bool conflicts = bound.width == 0 || bound.width > 64 ||
                      bound.captureIndex >= programCaptures.size() ||
                      !isPropertyField(bound.offset, bound.width);
     if (conflicts)
@@ -1973,8 +1973,16 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     for (const ProposalCaptureDomain &bound : proposalCaptureDomains) {
       // The unbiased starting index is advanced cyclically for residual
       // checker retries, exactly as for constant non-power-of-two domains.
-      Value step = arith::RemUIOp::create(builder, location, attempt,
-                                          bound.cardinality);
+      Value fullCardinality = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq, bound.cardinality,
+          constant64(0));
+      Value safeCardinality = arith::SelectOp::create(
+          builder, location, fullCardinality, constant64(1),
+          bound.cardinality);
+      Value reducedStep = arith::RemUIOp::create(
+          builder, location, attempt, safeCardinality);
+      Value step = arith::SelectOp::create(
+          builder, location, fullCardinality, attempt, reducedStep);
       Value threshold = arith::SubIOp::create(builder, location,
                                               bound.cardinality, step);
       Value wraps = arith::CmpIOp::create(builder, location,
@@ -1992,7 +2000,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
         fieldBits = arith::ShLIOp::create(builder, location, fieldBits,
                                           constant64(bound.offset));
       uint64_t fieldMask =
-          ((uint64_t{1} << bound.width) - 1) << bound.offset;
+          bound.width == 64
+              ? UINT64_MAX
+              : ((uint64_t{1} << bound.width) - 1) << bound.offset;
       assignment = arith::OrIOp::create(
           builder, location,
           arith::AndIOp::create(builder, location, assignment,
@@ -2485,13 +2495,19 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   };
 
   auto sampleDynamicBoundedIndex = [&](Value cardinality, Value draw) -> Value {
-    // `cardinality` is nonzero by construction. Rejecting values at or above
-    // the unsigned limit removes the short tail of modulo buckets. A zero
-    // rejection size denotes a divisor of 2^64 and accepts every draw.
+    // A zero cardinality represents the full 2^64-element domain. Use one as
+    // a safe modulo divisor in that case, then select the original draw as the
+    // index. Otherwise, rejecting values at or above the unsigned limit
+    // removes the short tail of modulo buckets.
+    Value fullCardinality = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, cardinality,
+        constant64(0));
+    Value safeCardinality = arith::SelectOp::create(
+        builder, location, fullCardinality, constant64(1), cardinality);
     Value negativeCardinality = arith::SubIOp::create(
-        builder, location, constant64(0), cardinality);
+        builder, location, constant64(0), safeCardinality);
     Value rejectionSize = arith::RemUIOp::create(
-        builder, location, negativeCardinality, cardinality);
+        builder, location, negativeCardinality, safeCardinality);
     Value limit = arith::SubIOp::create(builder, location, constant64(0),
                                         rejectionSize);
     Value acceptsAll = arith::CmpIOp::create(
@@ -2507,8 +2523,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     cf::BranchOp::create(builder, location, boundedLoop,
                          ValueRange{state, draw});
     setCurrent(boundedLoop);
-    Value index = arith::RemUIOp::create(builder, location, boundedDraw,
-                                         cardinality);
+    Value reducedIndex = arith::RemUIOp::create(
+        builder, location, boundedDraw, safeCardinality);
+    Value index = arith::SelectOp::create(
+        builder, location, fullCardinality, boundedDraw, reducedIndex);
     Value belowLimit = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::ult, boundedDraw, limit);
     Value accepted =
@@ -2533,7 +2551,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
             : valid;
   };
   for (ProposalCaptureDomain &domain : proposalCaptureDomains) {
-    uint64_t valueMask = (uint64_t{1} << domain.width) - 1;
+    uint64_t valueMask = domain.width == 64
+                             ? UINT64_MAX
+                             : (uint64_t{1} << domain.width) - 1;
     auto captureValue = [&](uint32_t index) {
       return arith::AndIOp::create(builder, location, programCaptures[index],
                                    constant64(valueMask))

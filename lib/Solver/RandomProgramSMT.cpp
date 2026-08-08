@@ -445,7 +445,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
                                   lhs.instructionBegin, rhs.instructionBegin};
 
       // Direct unsigned comparisons against one capture describe a runtime
-      // interval for widths below 64. Retain that shape so lowering can
+      // interval for widths up to 64. Retain that shape so lowering can
       // normalize strict endpoints and sample the interval directly.
       auto directCaptureIndex = [&](const StackValue &value)
           -> std::optional<uint32_t> {
@@ -458,7 +458,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
           return std::nullopt;
         return static_cast<uint32_t>(found - captures.begin());
       };
-      if (!signedOperation && lhs.width == rhs.width && lhs.width < 64 &&
+      if (!signedOperation && lhs.width == rhs.width && lhs.width <= 64 &&
           (opcode == OBELISK_RT_RANDOM_GE_V1 ||
            opcode == OBELISK_RT_RANDOM_GT_V1 ||
            opcode == OBELISK_RT_RANDOM_LE_V1 ||
