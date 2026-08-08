@@ -69,6 +69,75 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     associativeBuiltin =
         succeeded(receiverType) && isa<sim::AssocArrayType>(*receiverType);
   }
+  if (op.getIsSystemCall() && op.getCalleeName() == "rand_mode") {
+    if (children.empty() || children.size() > 2) {
+      emitError(location)
+          << "class-wide rand_mode expects a receiver and optional on/off "
+             "argument";
+      return failure();
+    }
+    FailureOr<Value> loweredReceiver = lowerExpression(children.front());
+    auto objectType =
+        succeeded(loweredReceiver)
+            ? dyn_cast<sim::ClassHandleType>((*loweredReceiver).getType())
+            : sim::ClassHandleType{};
+    if (failed(loweredReceiver) || !objectType) {
+      emitError(location)
+          << "property-specific rand_mode is not executable yet";
+      return failure();
+    }
+    sim::SimClassDeclOp declaration =
+        SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+            function, objectType.getClassName());
+    while (declaration &&
+           !declaration->hasAttr("obelisk_sim.random_mode_field")) {
+      if (!declaration.getBaseAttr())
+        break;
+      declaration = SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+          function, declaration.getBaseAttr());
+    }
+    auto modeField = declaration
+                         ? declaration->getAttrOfType<FlatSymbolRefAttr>(
+                               "obelisk_sim.random_mode_field")
+                         : FlatSymbolRefAttr{};
+    if (!declaration || !modeField) {
+      emitError(location) << "rand_mode receiver has no mode state";
+      return failure();
+    }
+    Type i64 = builder.getI64Type();
+    Type referenceType = sim::ManagedRefType::get(function.getContext(), i64,
+                                                  objectType.getClassName());
+    Value reference = sim::SimClassFieldRefOp::create(
+        builder, location, referenceType, *loweredReceiver, modeField);
+    if (children.size() == 2) {
+      FailureOr<Value> argument = lowerExpression(children.back());
+      FailureOr<Value> enabled = succeeded(argument)
+                                     ? truthValue(*argument, location)
+                                     : FailureOr<Value>(failure());
+      if (failed(enabled))
+        return failure();
+      Value zero = arith::ConstantOp::create(builder, location, i64,
+                                             builder.getI64IntegerAttr(0));
+      Value disabled = arith::ConstantOp::create(builder, location, i64,
+                                                 builder.getI64IntegerAttr(1));
+      Value mode =
+          arith::SelectOp::create(builder, location, *enabled, zero, disabled);
+      sim::SimManagedStoreOp::create(builder, location, mode, reference);
+      return arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                       builder.getBoolAttr(false))
+          .getResult();
+    }
+    Value mode =
+        sim::SimManagedLoadOp::create(builder, location, i64, reference);
+    Value zero = arith::ConstantOp::create(builder, location, i64,
+                                           builder.getI64IntegerAttr(0));
+    Value enabled = arith::CmpIOp::create(builder, location,
+                                          arith::CmpIPredicate::eq, mode, zero);
+    FailureOr<Type> resultType = getNormalizedSemanticType(op);
+    if (failed(resultType))
+      return failure();
+    return convert(enabled, *resultType, false, location);
+  }
   if (op.getIsSystemCall() && !stringBuiltin && !containerBuiltin &&
       !associativeBuiltin)
     return lowerSystemCall(op);
@@ -1078,8 +1147,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
                             ? declaration->getAttrOfType<FlatSymbolRefAttr>(
                                   "obelisk_sim.random_increment_field")
                             : FlatSymbolRefAttr{};
-  if (!declaration || !stateField || !incrementField) {
-    emitError(location) << "randomize receiver has no object-local stream";
+  auto modeField = declaration ? declaration->getAttrOfType<FlatSymbolRefAttr>(
+                                     "obelisk_sim.random_mode_field")
+                               : FlatSymbolRefAttr{};
+  if (!declaration || !stateField || !incrementField || !modeField) {
+    emitError(location)
+        << "randomize receiver has no object-local stream or mode state";
     return failure();
   }
   Type i64 = builder.getI64Type();
@@ -1089,15 +1162,27 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
       builder, location, randomReferenceType, receiver, stateField);
   Value incrementReference = sim::SimClassFieldRefOp::create(
       builder, location, randomReferenceType, receiver, incrementField);
+  Value modeReference = sim::SimClassFieldRefOp::create(
+      builder, location, randomReferenceType, receiver, modeField);
   Value state =
       sim::SimManagedLoadOp::create(builder, location, i64, stateReference);
   Value increment =
       sim::SimManagedLoadOp::create(builder, location, i64, incrementReference);
+  Value mode =
+      sim::SimManagedLoadOp::create(builder, location, i64, modeReference);
 
   auto constant64 = [&](uint64_t value) -> Value {
     return arith::ConstantOp::create(
         builder, location, i64, builder.getIntegerAttr(i64, APInt(64, value)));
   };
+  Value randomizationEnabled = arith::CmpIOp::create(
+      builder, location, arith::CmpIPredicate::eq, mode, constant64(0));
+  Block *disabledCheckBlock = addBlock();
+  Block *enabledSamplingBlock = addBlock();
+  cf::CondBranchOp::create(builder, location, randomizationEnabled,
+                           enabledSamplingBlock, ValueRange{},
+                           disabledCheckBlock, ValueRange{});
+  setCurrent(enabledSamplingBlock);
   auto next32 = [&](Value &streamState) -> Value {
     Value old = streamState;
     streamState = arith::AddIOp::create(
@@ -1754,17 +1839,17 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
                      !isPropertyField(bound.offset, bound.width);
     if (conflicts)
       continue;
-    auto found = llvm::find_if(
-        proposalCaptureDomains, [&](const ProposalCaptureDomain &selected) {
-          return selected.offset == bound.offset &&
-                 selected.width == bound.width;
-        });
+    auto found = llvm::find_if(proposalCaptureDomains,
+                               [&](const ProposalCaptureDomain &selected) {
+                                 return selected.offset == bound.offset &&
+                                        selected.width == bound.width;
+                               });
     if (found != proposalCaptureDomains.end() &&
         found->isSigned != bound.isSigned)
       continue;
     if (found == proposalCaptureDomains.end()) {
-      auto staticDomain = llvm::find_if(
-          proposalDomains, [&](const ProposalDomain &domain) {
+      auto staticDomain =
+          llvm::find_if(proposalDomains, [&](const ProposalDomain &domain) {
             return domain.offset == bound.offset && domain.width == bound.width;
           });
       if (bound.isSigned && staticDomain != proposalDomains.end())
@@ -1776,9 +1861,18 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
         staticUpper = staticDomain->lower + staticDomain->cardinality - 1;
         proposalDomains.erase(staticDomain);
       }
-      proposalCaptureDomains.push_back(
-          {bound.offset, bound.width, std::nullopt, std::nullopt, false, false,
-           bound.isSigned, staticLower, staticUpper, {}, {}, {}});
+      proposalCaptureDomains.push_back({bound.offset,
+                                        bound.width,
+                                        std::nullopt,
+                                        std::nullopt,
+                                        false,
+                                        false,
+                                        bound.isSigned,
+                                        staticLower,
+                                        staticUpper,
+                                        {},
+                                        {},
+                                        {}});
       found = std::prev(proposalCaptureDomains.end());
     }
     bool lower = bound.kind == solver::RandomCaptureBoundKind::LowerInclusive ||
@@ -1979,40 +2073,39 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     for (const ProposalCaptureDomain &bound : proposalCaptureDomains) {
       // The unbiased starting index is advanced cyclically for residual
       // checker retries, exactly as for constant non-power-of-two domains.
-      Value fullCardinality = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::eq, bound.cardinality,
-          constant64(0));
+      Value fullCardinality =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                bound.cardinality, constant64(0));
       Value safeCardinality = arith::SelectOp::create(
-          builder, location, fullCardinality, constant64(1),
-          bound.cardinality);
-      Value reducedStep = arith::RemUIOp::create(
-          builder, location, attempt, safeCardinality);
-      Value step = arith::SelectOp::create(
-          builder, location, fullCardinality, attempt, reducedStep);
-      Value threshold = arith::SubIOp::create(builder, location,
-                                              bound.cardinality, step);
-      Value wraps = arith::CmpIOp::create(builder, location,
-                                          arith::CmpIPredicate::uge,
-                                          bound.sampledIndex, threshold);
-      Value linear = arith::AddIOp::create(builder, location,
-                                           bound.sampledIndex, step);
+          builder, location, fullCardinality, constant64(1), bound.cardinality);
+      Value reducedStep =
+          arith::RemUIOp::create(builder, location, attempt, safeCardinality);
+      Value step = arith::SelectOp::create(builder, location, fullCardinality,
+                                           attempt, reducedStep);
+      Value threshold =
+          arith::SubIOp::create(builder, location, bound.cardinality, step);
+      Value wraps =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::uge,
+                                bound.sampledIndex, threshold);
+      Value linear =
+          arith::AddIOp::create(builder, location, bound.sampledIndex, step);
       Value wrapped = arith::SubIOp::create(builder, location,
                                             bound.sampledIndex, threshold);
-      Value fieldBits = arith::SelectOp::create(builder, location, wraps,
-                                                wrapped, linear);
-      fieldBits = arith::AddIOp::create(builder, location, fieldBits,
-                                        bound.lower);
+      Value fieldBits =
+          arith::SelectOp::create(builder, location, wraps, wrapped, linear);
+      fieldBits =
+          arith::AddIOp::create(builder, location, fieldBits, bound.lower);
       if (bound.isSigned)
-        fieldBits = arith::XOrIOp::create(
-            builder, location, fieldBits,
-            constant64(uint64_t{1} << (bound.width - 1)));
+        fieldBits =
+            arith::XOrIOp::create(builder, location, fieldBits,
+                                  constant64(uint64_t{1} << (bound.width - 1)));
       if (bound.offset != 0)
         fieldBits = arith::ShLIOp::create(builder, location, fieldBits,
                                           constant64(bound.offset));
-      uint64_t fieldMask =
-          bound.width == 64
-              ? UINT64_MAX
-              : ((uint64_t{1} << bound.width) - 1) << bound.offset;
+      uint64_t fieldMask = bound.width == 64
+                               ? UINT64_MAX
+                               : ((uint64_t{1} << bound.width) - 1)
+                                     << bound.offset;
       assignment = arith::OrIOp::create(
           builder, location,
           arith::AndIOp::create(builder, location, assignment,
@@ -2424,34 +2517,35 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     return assignment;
   };
   bool overwritesProposalDomain =
-      llvm::any_of(proposalDomains, [&](const ProposalDomain &domain) {
-        bool definitionTarget = llvm::any_of(
-            proposalDefinitions, [&](const ProposalDefinition &definition) {
-              return definition.targetOffset == domain.offset &&
-                     definition.width == domain.width;
-            });
-        bool aliasTarget =
-            llvm::any_of(proposalAliases, [&](const ProposalAlias &alias) {
-              return alias.targetOffset == domain.offset &&
-                     alias.width == domain.width;
-            });
-        return definitionTarget || aliasTarget;
-      }) ||
-      llvm::any_of(proposalCaptureDomains,
-                   [&](const ProposalCaptureDomain &bound) {
-                     bool definitionTarget = llvm::any_of(
-                         proposalDefinitions,
-                         [&](const ProposalDefinition &definition) {
-                           return definition.targetOffset == bound.offset &&
-                                  definition.width == bound.width;
-                         });
-                     bool aliasTarget = llvm::any_of(
-                         proposalAliases, [&](const ProposalAlias &alias) {
-                           return alias.targetOffset == bound.offset &&
-                                  alias.width == bound.width;
-                         });
-                     return definitionTarget || aliasTarget;
-                   });
+      llvm::any_of(
+          proposalDomains,
+          [&](const ProposalDomain &domain) {
+            bool definitionTarget = llvm::any_of(
+                proposalDefinitions, [&](const ProposalDefinition &definition) {
+                  return definition.targetOffset == domain.offset &&
+                         definition.width == domain.width;
+                });
+            bool aliasTarget =
+                llvm::any_of(proposalAliases, [&](const ProposalAlias &alias) {
+                  return alias.targetOffset == domain.offset &&
+                         alias.width == domain.width;
+                });
+            return definitionTarget || aliasTarget;
+          }) ||
+      llvm::any_of(
+          proposalCaptureDomains, [&](const ProposalCaptureDomain &bound) {
+            bool definitionTarget = llvm::any_of(
+                proposalDefinitions, [&](const ProposalDefinition &definition) {
+                  return definition.targetOffset == bound.offset &&
+                         definition.width == bound.width;
+                });
+            bool aliasTarget =
+                llvm::any_of(proposalAliases, [&](const ProposalAlias &alias) {
+                  return alias.targetOffset == bound.offset &&
+                         alias.width == bound.width;
+                });
+            return definitionTarget || aliasTarget;
+          });
   bool tableProposal = !analysis.assignmentTable.empty();
   bool componentTableProposal = !analysis.assignmentTables.empty();
   bool materializesCompleteProposal =
@@ -2509,20 +2603,20 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     // a safe modulo divisor in that case, then select the original draw as the
     // index. Otherwise, rejecting values at or above the unsigned limit
     // removes the short tail of modulo buckets.
-    Value fullCardinality = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::eq, cardinality,
-        constant64(0));
+    Value fullCardinality =
+        arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                              cardinality, constant64(0));
     Value safeCardinality = arith::SelectOp::create(
         builder, location, fullCardinality, constant64(1), cardinality);
     Value negativeCardinality = arith::SubIOp::create(
         builder, location, constant64(0), safeCardinality);
     Value rejectionSize = arith::RemUIOp::create(
         builder, location, negativeCardinality, safeCardinality);
-    Value limit = arith::SubIOp::create(builder, location, constant64(0),
-                                        rejectionSize);
-    Value acceptsAll = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::eq, rejectionSize,
-        constant64(0));
+    Value limit =
+        arith::SubIOp::create(builder, location, constant64(0), rejectionSize);
+    Value acceptsAll =
+        arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                              rejectionSize, constant64(0));
     Block *boundedLoop = addBlock();
     Block *boundedDone = addBlock();
     Value boundedState = boundedLoop->addArgument(i64, location);
@@ -2533,10 +2627,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     cf::BranchOp::create(builder, location, boundedLoop,
                          ValueRange{state, draw});
     setCurrent(boundedLoop);
-    Value reducedIndex = arith::RemUIOp::create(
-        builder, location, boundedDraw, safeCardinality);
-    Value index = arith::SelectOp::create(
-        builder, location, fullCardinality, boundedDraw, reducedIndex);
+    Value reducedIndex =
+        arith::RemUIOp::create(builder, location, boundedDraw, safeCardinality);
+    Value index = arith::SelectOp::create(builder, location, fullCardinality,
+                                          boundedDraw, reducedIndex);
     Value belowLimit = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::ult, boundedDraw, limit);
     Value accepted =
@@ -2554,20 +2648,18 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
 
   Value captureBoundsValid;
   auto requireValidCaptureBounds = [&](Value valid) {
-    captureBoundsValid =
-        captureBoundsValid
-            ? arith::AndIOp::create(builder, location, captureBoundsValid, valid)
-                  .getResult()
-            : valid;
+    captureBoundsValid = captureBoundsValid
+                             ? arith::AndIOp::create(builder, location,
+                                                     captureBoundsValid, valid)
+                                   .getResult()
+                             : valid;
   };
   for (ProposalCaptureDomain &domain : proposalCaptureDomains) {
-    uint64_t valueMask = domain.width == 64
-                             ? UINT64_MAX
-                             : (uint64_t{1} << domain.width) - 1;
+    uint64_t valueMask =
+        domain.width == 64 ? UINT64_MAX : (uint64_t{1} << domain.width) - 1;
     auto captureValue = [&](uint32_t index) {
-      Value value = arith::AndIOp::create(builder, location,
-                                          programCaptures[index],
-                                          constant64(valueMask));
+      Value value = arith::AndIOp::create(
+          builder, location, programCaptures[index], constant64(valueMask));
       if (domain.isSigned)
         value = arith::XOrIOp::create(
             builder, location, value,
@@ -2579,32 +2671,31 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     if (domain.lowerCapture) {
       Value capturedLower = captureValue(*domain.lowerCapture);
       if (domain.lowerExclusive) {
-        requireValidCaptureBounds(arith::CmpIOp::create(
-            builder, location, arith::CmpIPredicate::ne, capturedLower,
-            constant64(valueMask)));
+        requireValidCaptureBounds(
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                                  capturedLower, constant64(valueMask)));
         capturedLower = arith::AddIOp::create(builder, location, capturedLower,
                                               constant64(1));
       }
       domain.lower = domain.staticLower
                          ? arith::MaxUIOp::create(builder, location,
-                                                 domain.lower, capturedLower)
+                                                  domain.lower, capturedLower)
                                .getResult()
                          : capturedLower;
     }
     if (domain.upperCapture) {
       Value capturedUpper = captureValue(*domain.upperCapture);
       if (domain.upperExclusive) {
-        requireValidCaptureBounds(arith::CmpIOp::create(
-            builder, location, arith::CmpIPredicate::ne, capturedUpper,
-            constant64(0)));
+        requireValidCaptureBounds(
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                                  capturedUpper, constant64(0)));
         capturedUpper = arith::SubIOp::create(builder, location, capturedUpper,
                                               constant64(1));
       }
-      upper = domain.staticUpper
-                  ? arith::MinUIOp::create(builder, location, upper,
-                                           capturedUpper)
-                        .getResult()
-                  : capturedUpper;
+      upper = domain.staticUpper ? arith::MinUIOp::create(builder, location,
+                                                          upper, capturedUpper)
+                                       .getResult()
+                                 : capturedUpper;
     }
     if ((domain.lowerCapture && domain.upperCapture) || domain.staticLower ||
         domain.staticUpper) {
@@ -2653,8 +2744,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   }
   for (ProposalCaptureDomain &bound : proposalCaptureDomains) {
     Value draw = next64(state);
-    bound.sampledIndex =
-        sampleDynamicBoundedIndex(bound.cardinality, draw);
+    bound.sampledIndex = sampleDynamicBoundedIndex(bound.cardinality, draw);
   }
   sim::SimManagedStoreOp::create(builder, location, state, stateReference);
 
@@ -2672,8 +2762,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
 
   if (invalidCaptureBoundsBlock) {
     setCurrent(invalidCaptureBoundsBlock);
-    sim::SimManagedStoreOp::create(builder, location,
-                                   invalidCaptureBoundsState, stateReference);
+    sim::SimManagedStoreOp::create(builder, location, invalidCaptureBoundsState,
+                                   stateReference);
     cf::BranchOp::create(builder, location, failedBlock, ValueRange{});
   }
 
@@ -2700,18 +2790,16 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     return candidates;
   };
 
-  setCurrent(loop);
-  FailureOr<Value> proposal = materializeProposal(counter, attempt);
-  if (failed(proposal))
-    return failure();
-  Value assignment = *proposal;
-  FailureOr<SmallVector<Value>> candidates = materializeCandidates(assignment);
-  if (failed(candidates))
-    return failure();
-
-  if (exactProposal) {
-    cf::BranchOp::create(builder, location, commit, ValueRange{assignment});
-  } else {
+  struct ConstraintCheck {
+    Value hard;
+    Value preferred;
+  };
+  auto materializeConstraintCheck =
+      [&](Value assignment) -> FailureOr<ConstraintCheck> {
+    FailureOr<SmallVector<Value>> candidates =
+        materializeCandidates(assignment);
+    if (failed(candidates))
+      return failure();
     Value savedThis = thisObject;
     SmallVector<Value> savedCandidates = std::move(randomizeCandidateValues);
     llvm::scope_exit restoreBindings([&] {
@@ -2878,10 +2966,58 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
             ? arith::AndIOp::create(builder, location, satisfied, softSatisfied)
                   .getResult()
             : satisfied;
-    cf::CondBranchOp::create(builder, location, preferred, commit,
+    return ConstraintCheck{satisfied, preferred};
+  };
+
+  setCurrent(disabledCheckBlock);
+  Value currentAssignment = constant64(0);
+  uint64_t currentOffset = 0;
+  for (const Property &property : planned) {
+    Value current = sim::SimManagedLoadOp::create(
+        builder, location, property.type, property.reference);
+    FailureOr<Value> scalar = toPackedScalar(current, location);
+    FailureOr<Value> extended =
+        succeeded(scalar)
+            ? convert(*scalar, i64, property.isSigned, location, false)
+            : FailureOr<Value>(failure());
+    if (failed(extended))
+      return failure();
+    Value bits = *extended;
+    uint64_t valueMask =
+        property.width == 64 ? UINT64_MAX : (uint64_t{1} << property.width) - 1;
+    bits =
+        arith::AndIOp::create(builder, location, bits, constant64(valueMask));
+    if (currentOffset != 0)
+      bits = arith::ShLIOp::create(builder, location, bits,
+                                   constant64(currentOffset));
+    currentAssignment =
+        arith::OrIOp::create(builder, location, currentAssignment, bits);
+    currentOffset += property.width;
+  }
+  FailureOr<ConstraintCheck> disabledCheck =
+      materializeConstraintCheck(currentAssignment);
+  if (failed(disabledCheck))
+    return failure();
+  Value disabledSuccess = arith::ConstantOp::create(
+      builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+  cf::CondBranchOp::create(builder, location, disabledCheck->hard, done,
+                           ValueRange{disabledSuccess}, failedBlock,
+                           ValueRange{});
+
+  setCurrent(loop);
+  FailureOr<Value> proposal = materializeProposal(counter, attempt);
+  if (failed(proposal))
+    return failure();
+  Value assignment = *proposal;
+  if (exactProposal) {
+    cf::BranchOp::create(builder, location, commit, ValueRange{assignment});
+  } else {
+    FailureOr<ConstraintCheck> check = materializeConstraintCheck(assignment);
+    if (failed(check))
+      return failure();
+    cf::CondBranchOp::create(builder, location, check->preferred, commit,
                              ValueRange{assignment}, advance, ValueRange{});
   }
-
   setCurrent(advance);
   Value next = arith::AndIOp::create(
       builder, location,

@@ -11,8 +11,8 @@
 
 #include "mlir/IR/SymbolTable.h"
 
-#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/Twine.h"
 
 #include <functional>
@@ -247,6 +247,9 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
       declaration->setAttr(
           "obelisk_sim.random_increment_field",
           addRandomField("__obelisk_rng_increment", "__obelisk_rng_increment"));
+      declaration->setAttr(
+          "obelisk_sim.random_mode_field",
+          addRandomField("__obelisk_rand_mode", "__obelisk_rand_mode"));
     }
   }
 
@@ -261,10 +264,9 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
     uint64_t nextSlot = 0;
     if (std::optional<Type> baseType = classType.getBaseClass()) {
       auto baseHandle = dyn_cast<semantic::ClassHandleType>(*baseType);
-      auto base = baseHandle
-                      ? result.semanticClasses.find(
-                            baseHandle.getClassName().getLeafReference())
-                      : result.semanticClasses.end();
+      auto base = baseHandle ? result.semanticClasses.find(
+                                   baseHandle.getClassName().getLeafReference())
+                             : result.semanticClasses.end();
       if (base == result.semanticClasses.end() ||
           failed(assignVirtualSlots(base->second)))
         return failure();
@@ -275,10 +277,9 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
       auto method = getClassMethod(child);
       if (!method || method.getIsBuiltin().value_or(false))
         continue;
-      std::string methodName =
-          (result.symbols.lookup(classType).getValue() + "_method_" +
-           llvm::Twine(methodOrdinal++))
-              .str();
+      std::string methodName = (result.symbols.lookup(classType).getValue() +
+                                "_method_" + llvm::Twine(methodOrdinal++))
+                                   .str();
       result.methodSymbols[method] =
           FlatSymbolRefAttr::get(context, methodName);
       if (!method.getIsVirtual().value_or(false))
@@ -337,8 +338,7 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
   return result;
 }
 
-uint64_t
-PreparedScopeDeclarations::lookup(Operation *operation) const {
+uint64_t PreparedScopeDeclarations::lookup(Operation *operation) const {
   for (Operation *cursor = operation; cursor; cursor = cursor->getParentOp())
     if (auto found = ids.find(cursor); found != ids.end())
       return found->second;

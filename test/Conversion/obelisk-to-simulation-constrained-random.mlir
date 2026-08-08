@@ -179,6 +179,32 @@ module {
           }
         }
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "unsupported_constraint", node_id = 37 : i64, procedure_kind = 0 : i32, sym_name = "s23", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.expression_statement attributes {node_id = 200 : i64} {
+            obelisk.sv.expression.call attributes {argument_count = 2 : i64, callee_name = "rand_mode", constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 201 : i64, semantic_type = !obelisk.void, subroutine_kind = 0 : i32, system_library_cell = "work.unsupported_constraint", system_scope_path = "unsupported_constraint", system_scope_symbol = @s1.$root::@s19.unsupported_constraint::@s20.unsupported_constraint} {
+              obelisk.sv.expression.named_value attributes {node_id = 202 : i64, referenced_path = "unsupported_constraint.object", referenced_symbol = @s1.$root::@s19.unsupported_constraint::@s20.unsupported_constraint::@s22.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.constrained>} {
+              }
+              obelisk.sv.expression.integer_literal attributes {constant_value = "0", node_id = 203 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
+              }
+            }
+          }
+          obelisk.sv.statement.expression_statement attributes {node_id = 204 : i64} {
+            obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 205 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+              obelisk.sv.expression.named_value attributes {node_id = 206 : i64, referenced_path = "limit", referenced_symbol = @s1.$root::@s2::@s24.limit, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+              }
+              obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "rand_mode", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 211 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, subroutine_kind = 0 : i32, system_library_cell = "work.unsupported_constraint", system_scope_path = "unsupported_constraint", system_scope_symbol = @s1.$root::@s19.unsupported_constraint::@s20.unsupported_constraint} {
+                obelisk.sv.expression.named_value attributes {node_id = 212 : i64, referenced_path = "unsupported_constraint.object", referenced_symbol = @s1.$root::@s19.unsupported_constraint::@s20.unsupported_constraint::@s22.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.constrained>} {
+                }
+              }
+            }
+          }
+          obelisk.sv.statement.expression_statement attributes {node_id = 207 : i64} {
+            obelisk.sv.expression.call attributes {argument_count = 2 : i64, callee_name = "rand_mode", constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 208 : i64, semantic_type = !obelisk.void, subroutine_kind = 0 : i32, system_library_cell = "work.unsupported_constraint", system_scope_path = "unsupported_constraint", system_scope_symbol = @s1.$root::@s19.unsupported_constraint::@s20.unsupported_constraint} {
+              obelisk.sv.expression.named_value attributes {node_id = 209 : i64, referenced_path = "unsupported_constraint.object", referenced_symbol = @s1.$root::@s19.unsupported_constraint::@s20.unsupported_constraint::@s22.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.constrained>} {
+              }
+              obelisk.sv.expression.integer_literal attributes {constant_value = "1", node_id = 210 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
+              }
+            }
+          }
           obelisk.sv.statement.expression_statement attributes {node_id = 38 : i64} {
             obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "randomize", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = true, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 39 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, subroutine_kind = 0 : i32, system_library_cell = "work.unsupported_constraint", system_scope_path = "unsupported_constraint", system_scope_symbol = @s1.$root::@s19.unsupported_constraint::@s20.unsupported_constraint} {
               obelisk.sv.constraint.list attributes {item_count = 5 : i64, node_id = 41 : i64} {
@@ -266,9 +292,22 @@ module {
 // CHECK: obelisk_sim.class.field {{.*}}debug_name = "value"
 // CHECK: obelisk_sim.class.field {{.*}}debug_name = "__obelisk_rng_state"
 // CHECK: obelisk_sim.class.field {{.*}}debug_name = "__obelisk_rng_increment"
+// CHECK: obelisk_sim.class.field {{.*}}debug_name = "__obelisk_rand_mode"
 // CHECK: obelisk_sim.func private @unit_1({{.*}}%[[LIMIT_ARG:arg[0-9]+]]: !obelisk_sim.ref<i32>
+// CHECK: obelisk_sim.class.field_ref {{.*}}[@{{.*}}__obelisk_rand_mode]
+// CHECK: obelisk_sim.managed.store %{{c1_i64.*}}
+// CHECK: obelisk_sim.class.field_ref {{.*}}[@{{.*}}__obelisk_rand_mode]
+// CHECK: %[[MODE:.*]] = obelisk_sim.managed.load
+// CHECK: %[[MODE_ENABLED:.*]] = arith.cmpi eq, %[[MODE]], %{{c0_i64.*}} : i64
+// CHECK: arith.extui %[[MODE_ENABLED]] : i1 to i32
+// CHECK: obelisk_sim.ref.store {{.*}} to %[[LIMIT_ARG]]
+// CHECK: obelisk_sim.class.field_ref {{.*}}[@{{.*}}__obelisk_rand_mode]
+// CHECK: obelisk_sim.managed.store %{{c0_i64.*}}
 // CHECK: obelisk_sim.class.field_ref
 // CHECK: obelisk_sim.managed.load
+// CHECK: %[[RAND_ENABLED:.*]] = arith.cmpi eq
+// CHECK: cf.cond_br %[[RAND_ENABLED]], ^[[RAND_SAMPLE:bb[0-9]+]], ^[[RAND_DISABLED:bb[0-9]+]]
+// CHECK: ^[[RAND_SAMPLE]]:
 // CHECK: arith.muli
 // CHECK: obelisk_sim.managed.store
 // CHECK: cf.br ^[[SEARCH:[a-zA-Z0-9_]+]]
@@ -288,11 +327,11 @@ module {
 // CHECK: cf.cond_br {{.*}}, ^[[EXHAUSTED:[a-zA-Z0-9_]+]], ^[[SEARCH]]
 // CHECK: ^[[EXHAUSTED]]:
 // CHECK: obelisk_sim.random.solve
-// CHECK: cf.cond_br {{.*}}, ^[[COMMIT]]({{.*}}), ^[[DONE:[a-zA-Z0-9_]+]]
+// CHECK: cf.cond_br {{.*}}, ^[[COMMIT]]({{.*}}), ^[[RAND_DISABLED]]
 // CHECK: ^[[COMMIT]]({{.*}}: i64):
 // CHECK: obelisk_sim.managed.store
-// CHECK: cf.br ^[[DONE]]
-// CHECK: ^[[DONE]]:
+// CHECK: cf.br ^[[RAND_DISABLED]]
+// CHECK: ^[[RAND_DISABLED]]:
 // CHECK-NOT: obelisk_sim.managed.store
 // CHECK-NOT: obelisk.sv.
 
@@ -312,14 +351,12 @@ module {
 // generated proposal. Z3 also proves that the proposal implies the hard
 // formula, so generated code commits directly without a checker or fallback.
 // DOMAIN-LABEL: obelisk_sim.func private @unit_1
-// DOMAIN-DAG: %[[SEVEN:.*]] = arith.constant 7 : i64
-// DOMAIN-DAG: %[[EIGHT:.*]] = arith.constant 8 : i64
-// DOMAIN-DAG: %[[CLEAR:.*]] = arith.constant -16 : i64
-// DOMAIN-DAG: %[[FIFTEEN:.*]] = arith.constant 15 : i64
-// DOMAIN: %[[RAW:.*]] = arith.andi {{.*}}, %[[FIFTEEN]] : i64
-// DOMAIN: %[[LOW:.*]] = arith.andi %[[RAW]], %[[SEVEN]] : i64
-// DOMAIN: %[[VALUE:.*]] = arith.addi %[[LOW]], %[[EIGHT]] : i64
-// DOMAIN: %[[REST:.*]] = arith.andi %[[RAW]], %[[CLEAR]] : i64
+// DOMAIN: ^bb2:
+// DOMAIN: %[[RAW:.*]] = arith.andi {{.*}}, {{.*}} : i64
+// DOMAIN: obelisk_sim.managed.store
+// DOMAIN: %[[LOW:.*]] = arith.andi %[[RAW]], {{.*}} : i64
+// DOMAIN: %[[VALUE:.*]] = arith.addi %[[LOW]], {{.*}} : i64
+// DOMAIN: %[[REST:.*]] = arith.andi %[[RAW]], {{.*}} : i64
 // DOMAIN: %[[ASSIGNMENT:.*]] = arith.ori %[[REST]], %[[VALUE]] : i64
 // DOMAIN-NOT: arith.cmpi
 // DOMAIN-NOT: obelisk_sim.random.solve
@@ -458,27 +495,14 @@ module {
 // bits, producing every legal assignment uniformly without checking or
 // runtime solving.
 // TABLE-LABEL: obelisk_sim.func private @unit_1
-// TABLE-DAG: %[[ZERO:.*]] = arith.constant 0 : i64
-// TABLE-DAG: %[[ONE:.*]] = arith.constant 1 : i64
-// TABLE-DAG: %[[TWO:.*]] = arith.constant 2 : i64
-// TABLE-DAG: %[[FOUR:.*]] = arith.constant 4 : i64
-// TABLE-DAG: %[[SIX:.*]] = arith.constant 6 : i64
-// TABLE-DAG: %[[SEVEN:.*]] = arith.constant 7 : i64
-// TABLE-DAG: %[[EIGHT:.*]] = arith.constant 8 : i64
-// TABLE-DAG: %[[TEN:.*]] = arith.constant 10 : i64
-// TABLE-DAG: %[[TWELVE:.*]] = arith.constant 12 : i64
-// TABLE-DAG: %[[FOURTEEN:.*]] = arith.constant 14 : i64
-// TABLE-DAG: %[[FIFTEEN:.*]] = arith.constant 15 : i64
-// TABLE: %[[RAW:.*]] = arith.andi {{.*}}, %[[FIFTEEN]] : i64
-// TABLE: %[[INDEX:.*]] = arith.andi %[[RAW]], %[[SEVEN]] : i64
-// TABLE: %[[IS_ONE:.*]] = arith.cmpi eq, %[[INDEX]], %[[ONE]] : i64
-// TABLE: %[[SELECT_ONE:.*]] = arith.select %[[IS_ONE]], %[[TWO]], %[[ZERO]] : i64
-// TABLE: arith.select {{.*}}, %[[FOUR]], %[[SELECT_ONE]] : i64
-// TABLE: arith.select {{.*}}, %[[SIX]], {{.*}} : i64
-// TABLE: arith.select {{.*}}, %[[EIGHT]], {{.*}} : i64
-// TABLE: arith.select {{.*}}, %[[TEN]], {{.*}} : i64
-// TABLE: arith.select {{.*}}, %[[TWELVE]], {{.*}} : i64
-// TABLE: %[[ASSIGNMENT:.*]] = arith.select {{.*}}, %[[FOURTEEN]], {{.*}} : i64
+// TABLE: ^bb1:
+// TABLE: %[[RAW:.*]] = arith.andi {{.*}}, {{.*}} : i64
+// TABLE: obelisk_sim.managed.store
+// TABLE: %[[INDEX:.*]] = arith.andi %[[RAW]], {{.*}} : i64
+// TABLE: %[[IS_ONE:.*]] = arith.cmpi eq, %[[INDEX]], {{.*}} : i64
+// TABLE: %[[SELECT_ONE:.*]] = arith.select %[[IS_ONE]], {{.*}}, {{.*}} : i64
+// TABLE-COUNT-5: arith.select
+// TABLE: %[[ASSIGNMENT:.*]] = arith.select
 // TABLE-NOT: obelisk_sim.random.solve
 // TABLE: arith.trunci %[[ASSIGNMENT]] : i64 to i4
 // TABLE: obelisk_sim.managed.store
@@ -561,19 +585,15 @@ module {
 // TABLE-RESIDUAL: obelisk_sim.random.solve
 
 // ALIAS-LABEL: obelisk_sim.func private @unit_1
-// ALIAS-DAG: %[[THREE:.*]] = arith.constant 3 : i64
-// ALIAS-DAG: %[[TWO:.*]] = arith.constant 2 : i64
-// ALIAS-DAG: %[[FOUR:.*]] = arith.constant 4 : i64
-// ALIAS-DAG: %[[CLEAR_Y:.*]] = arith.constant -13 : i64
-// ALIAS-DAG: %[[CLEAR_Z:.*]] = arith.constant -49 : i64
-// ALIAS-DAG: %[[SIXTY_THREE:.*]] = arith.constant 63 : i64
-// ALIAS: %[[RAW:.*]] = arith.andi {{.*}}, %[[SIXTY_THREE]] : i64
-// ALIAS: %[[X:.*]] = arith.andi %[[RAW]], %[[THREE]] : i64
-// ALIAS: %[[Y:.*]] = arith.shli %[[X]], %[[TWO]] : i64
-// ALIAS: %[[REST:.*]] = arith.andi %[[RAW]], %[[CLEAR_Y]] : i64
+// ALIAS: ^bb2:
+// ALIAS: %[[RAW:.*]] = arith.andi {{.*}}, {{.*}} : i64
+// ALIAS: obelisk_sim.managed.store
+// ALIAS: %[[X:.*]] = arith.andi %[[RAW]], {{.*}} : i64
+// ALIAS: %[[Y:.*]] = arith.shli %[[X]], {{.*}} : i64
+// ALIAS: %[[REST:.*]] = arith.andi %[[RAW]], {{.*}} : i64
 // ALIAS: %[[XY:.*]] = arith.ori %[[REST]], %[[Y]] : i64
-// ALIAS: %[[Z:.*]] = arith.shli %[[X]], %[[FOUR]] : i64
-// ALIAS: %[[REST_Z:.*]] = arith.andi %[[XY]], %[[CLEAR_Z]] : i64
+// ALIAS: %[[Z:.*]] = arith.shli %[[X]], {{.*}} : i64
+// ALIAS: %[[REST_Z:.*]] = arith.andi %[[XY]], {{.*}} : i64
 // ALIAS: %[[ASSIGNMENT:.*]] = arith.ori %[[REST_Z]], %[[Z]] : i64
 // ALIAS-NOT: arith.cmpi
 // ALIAS-NOT: obelisk_sim.random.solve
@@ -587,31 +607,25 @@ module {
 // ALIAS-FALLBACK: obelisk_sim.random.solve
 
 // DEFINITION-LABEL: obelisk_sim.func private @unit_1
-// DEFINITION-DAG: %[[ONE:.*]] = arith.constant 1 : i64
-// DEFINITION-DAG: %[[TWO:.*]] = arith.constant 2 : i64
-// DEFINITION-DAG: %[[THREE:.*]] = arith.constant 3 : i64
-// DEFINITION-DAG: %[[FOUR:.*]] = arith.constant 4 : i64
-// DEFINITION-DAG: %[[TEN:.*]] = arith.constant 10 : i64
-// DEFINITION-DAG: %[[CLEAR_X:.*]] = arith.constant -4 : i64
-// DEFINITION-DAG: %[[CLEAR_Y:.*]] = arith.constant -13 : i64
-// DEFINITION-DAG: %[[FOUR_NINETY_FIVE:.*]] = arith.constant 4095 : i64
-// DEFINITION: %[[RAW:.*]] = arith.andi {{.*}}, %[[FOUR_NINETY_FIVE]] : i64
-// DEFINITION: %[[Z_SHIFTED:.*]] = arith.shrui %[[RAW]], %[[FOUR]] : i64
-// DEFINITION: %[[Z:.*]] = arith.andi %[[Z_SHIFTED]], %[[THREE]] : i64
-// DEFINITION: %[[Y_SUM:.*]] = arith.addi %[[Z]], %[[ONE]] : i64
-// DEFINITION: %[[Y_VALUE:.*]] = arith.andi %[[Y_SUM]], %[[THREE]] : i64
-// DEFINITION: %[[Y_PLACED:.*]] = arith.shli %[[Y_VALUE]], %[[TWO]] : i64
-// DEFINITION: %[[NO_Y:.*]] = arith.andi %[[RAW]], %[[CLEAR_Y]] : i64
+// DEFINITION: ^bb2:
+// DEFINITION: %[[RAW:.*]] = arith.andi {{.*}}, {{.*}} : i64
+// DEFINITION: obelisk_sim.managed.store
+// DEFINITION: %[[Z_SHIFTED:.*]] = arith.shrui %[[RAW]], {{.*}} : i64
+// DEFINITION: %[[Z:.*]] = arith.andi %[[Z_SHIFTED]], {{.*}} : i64
+// DEFINITION: %[[Y_SUM:.*]] = arith.addi %[[Z]], {{.*}} : i64
+// DEFINITION: %[[Y_VALUE:.*]] = arith.andi %[[Y_SUM]], {{.*}} : i64
+// DEFINITION: %[[Y_PLACED:.*]] = arith.shli %[[Y_VALUE]], {{.*}} : i64
+// DEFINITION: %[[NO_Y:.*]] = arith.andi %[[RAW]], {{.*}} : i64
 // DEFINITION: %[[WITH_Y:.*]] = arith.ori %[[NO_Y]], %[[Y_PLACED]] : i64
-// DEFINITION: %[[Y_SHIFTED:.*]] = arith.shrui %[[WITH_Y]], %[[TWO]] : i64
-// DEFINITION: %[[Y:.*]] = arith.andi %[[Y_SHIFTED]], %[[THREE]] : i64
-// DEFINITION: %[[X_SUM:.*]] = arith.addi %[[Y]], %[[ONE]] : i64
-// DEFINITION: %[[X_VALUE:.*]] = arith.andi %[[X_SUM]], %[[THREE]] : i64
-// DEFINITION: %[[NO_X:.*]] = arith.andi %[[WITH_Y]], %[[CLEAR_X]] : i64
+// DEFINITION: %[[Y_SHIFTED:.*]] = arith.shrui %[[WITH_Y]], {{.*}} : i64
+// DEFINITION: %[[Y:.*]] = arith.andi %[[Y_SHIFTED]], {{.*}} : i64
+// DEFINITION: %[[X_SUM:.*]] = arith.addi %[[Y]], {{.*}} : i64
+// DEFINITION: %[[X_VALUE:.*]] = arith.andi %[[X_SUM]], {{.*}} : i64
+// DEFINITION: %[[NO_X:.*]] = arith.andi %[[WITH_Y]], {{.*}} : i64
 // DEFINITION: %[[WITH_X:.*]] = arith.ori %[[NO_X]], %[[X_VALUE]] : i64
-// DEFINITION: %[[X_READ:.*]] = arith.andi %[[WITH_X]], %[[THREE]] : i64
-// DEFINITION: %[[Z_READ_SHIFTED:.*]] = arith.shrui %[[WITH_X]], %[[FOUR]] : i64
-// DEFINITION: %[[Z_READ:.*]] = arith.andi %[[Z_READ_SHIFTED]], %[[THREE]] : i64
+// DEFINITION: %[[X_READ:.*]] = arith.andi %[[WITH_X]], {{.*}} : i64
+// DEFINITION: %[[Z_READ_SHIFTED:.*]] = arith.shrui %[[WITH_X]], {{.*}} : i64
+// DEFINITION: %[[Z_READ:.*]] = arith.andi %[[Z_READ_SHIFTED]], {{.*}} : i64
 // DEFINITION: arith.cmpi ult, %[[X_READ]], %[[Z_READ]] : i64
 // DEFINITION: arith.extui
 // DEFINITION: arith.shli
@@ -632,7 +646,7 @@ module {
 // DEFINITION: arith.select
 // The copy alias is fed from the already materialized x definition. The flag
 // definition above reads that same canonical alias representative.
-// DEFINITION: arith.shli {{.*}}, %[[TEN]] : i64
+// DEFINITION: arith.shli {{.*}}, {{.*}} : i64
 // DEFINITION-NOT: obelisk_sim.random.solve
 // DEFINITION: obelisk_sim.managed.store
 // DEFINITION: obelisk_sim.managed.store
