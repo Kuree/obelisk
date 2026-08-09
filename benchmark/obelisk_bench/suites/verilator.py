@@ -36,10 +36,34 @@ SIM_TIME = 1100  # matches driver.py's default; the shell runs `while ($time < N
 
 EXPECTED_ERROR = re.compile(r"_(bad|unsup|fail\d*)$")
 MODULE_T = re.compile(r"^\s*module\s+t\b", re.MULTILINE)
-# driver.py's input detector: an `input [type] name` line inside module t.
-INPUT_DECL = re.compile(r"^\s*input\s*(?:logic|bit|reg|wire)?\s*([A-Za-z0-9_]+)")
-STOP_SCANNING = re.compile(r"^\s*(function|task|endmodule)")
+# `clocking` joins driver.py's list because a clocking block's `input` lines sit
+# at the start of a line just as a non-ANSI port declaration does.
+STOP_SCANNING = re.compile(r"^\s*(function|task|clocking|endmodule)")
 MODULE_T_LINE = re.compile(r"^\s*module\s+t\b")
+
+# Port-declaration scanning. driver.py takes the first identifier after an
+# optional `logic|bit|reg|wire`, which misreads anything else in that slot:
+# `input signed [64:0] i_x` yields "signed" and `input addr_t aw_addr` yields
+# the type. Wiring those names produces a shell that cannot compile, so the
+# declaration is tokenized instead of pattern-matched.
+COMMENT = re.compile(r"//.*|/\*.*?\*/", re.DOTALL)
+# A macro invocation trailing a port (`input clk `PUBLIC_FLAT_RD,`) otherwise
+# reads as a user-defined type followed by the name.
+MACRO = re.compile(r"`[A-Za-z_][A-Za-z0-9_$]*")
+INPUT_KEYWORD = re.compile(r"\binput\b")
+INPUT_LINE = re.compile(r"^\s*input\b")
+DIRECTION_KEYWORD = re.compile(r"\b(?:input|output|inout|ref)\b")
+DIMENSION = re.compile(r"\[[^\]]*\]")
+DECLARATION_END = re.compile(r"[;)]")
+TOKEN = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*|,")
+# Keywords that may sit between `input` and the port name.
+PORT_TYPE_WORDS = frozenset({
+    "automatic", "bit", "byte", "chandle", "const", "event", "int", "integer",
+    "logic", "longint", "real", "realtime", "reg", "shortint", "shortreal",
+    "signed", "static", "string", "supply0", "supply1", "time", "tri", "tri0",
+    "tri1", "triand", "trior", "unsigned", "uwire", "var", "wand", "wire",
+    "wor",
+})
 
 
 def _test_dir(root: Path) -> Path:
@@ -85,24 +109,62 @@ def select(root: Path, args) -> list[Path]:
     return selected
 
 
+def declaration_names(declaration: str) -> list[str]:
+    """Return the port names one `input ...` declaration introduces.
+
+    `declaration` is the text following the `input` keyword. Packed and
+    unpacked dimensions drop out, then type and signing keywords; a bare
+    identifier still standing ahead of another one is a user-defined type
+    (`input addr_t aw_addr`), leaving the comma-separated names.
+    """
+    declaration = MACRO.sub(" ", declaration)
+    declaration = DECLARATION_END.split(declaration, maxsplit=1)[0]
+    declaration = DIRECTION_KEYWORD.split(declaration, maxsplit=1)[0]
+    tokens = TOKEN.findall(DIMENSION.sub(" ", declaration))
+    while tokens and tokens[0] in PORT_TYPE_WORDS:
+        tokens.pop(0)
+    if len(tokens) >= 2 and tokens[0] != "," and tokens[1] != ",":
+        tokens.pop(0)
+    return [token for token in tokens if token != ","]
+
+
 def detect_inputs(top_text: str) -> list[str]:
-    """Return module t's input signal names, mirroring driver.py's _read_inputs_v.
+    """Return module t's input signal names, as driver.py's _read_inputs_v does.
 
     Only inputs of the last-seen `module t` count, and only those before its
-    first function/task/endmodule — enough to find `clk`/`fastclk`.
+    first function/task/clocking/endmodule — enough to find `clk`/`fastclk`.
+    Two departures from driver.py: the reset happens before the line is scanned,
+    so a header carrying its own ports (`module t (input clk);`) keeps them; and
+    the stop line is checked first, so the formal arguments of a declaration
+    like `task automatic step(input string label);` are not read as ports.
     """
     inputs: dict[str, None] = {}
     scanning = True
+    heading = False
     for line in top_text.splitlines():
-        if scanning:
-            match = INPUT_DECL.match(line)
-            if match:
-                inputs[match.group(1)] = None
-            if STOP_SCANNING.match(line):
-                scanning = False
         if MODULE_T_LINE.match(line):
             inputs = {}       # module t has precedence over earlier modules
             scanning = True
+            heading = True
+        if STOP_SCANNING.match(line):
+            scanning = False
+        if not scanning:
+            continue
+        text = COMMENT.sub(" ", line)
+        # An ANSI header declares ports mid-line, so it is scanned in full. In
+        # the body only a line that opens with `input` is a port declaration —
+        # elsewhere the keyword introduces the formals of an import or a
+        # declaration this scan never reached the head of.
+        if heading:
+            starts = [keyword.end() for keyword in INPUT_KEYWORD.finditer(text)]
+        else:
+            opening = INPUT_LINE.match(text)
+            starts = [opening.end()] if opening else []
+        for start in starts:
+            for name in declaration_names(text[start:]):
+                inputs[name] = None
+        if heading and ";" in text:
+            heading = False
     return list(inputs)
 
 
@@ -124,17 +186,18 @@ def make_top_shell(inputs: list[str]) -> str:
     if "clk" in inputs:
         lines.append("        clk = 0;")
     lines.append("        #10;")
-    if "fastclk" in inputs:
-        lines.append("        fastclk = 1;")
-    if "clk" in inputs:
-        lines.append("        clk = 1;")
     lines.append(f"        while ($time < {SIM_TIME}) begin")
-    for i in range(6):
-        lines.append("          #1;")
+    # driver.py's main loop: five sub-steps of one time unit, `fastclk` toggling
+    # on each and `clk` on the first, so `clk` has a period of 10. Toggling on a
+    # sixth sub-step instead stretches the period to 12 and costs the run ~19 of
+    # its 110 posedges — enough that a testbench finishing at `cyc == 99` never
+    # gets there and exits silently.
+    for i in range(5):
         if "fastclk" in inputs:
             lines.append("          fastclk = !fastclk;")
-        if i == 4 and "clk" in inputs:
+        if i == 0 and "clk" in inputs:
             lines.append("          clk = !clk;")
+        lines.append("          #1;")
     lines.append("        end")
     lines.append("    end")
     lines.append("endmodule")
