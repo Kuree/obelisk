@@ -635,6 +635,34 @@ void UnitLowering::recordSensitivity(Value value) {
     sensitivity.insert(value);
 }
 
+void UnitLowering::recordImplicitWrite(Value value) {
+  if (!observedWrites)
+    return;
+  // Match a write through a constant or dynamic view with reads of the
+  // captured declaration-level reference.
+  while (value) {
+    if (auto extract = value.getDefiningOp<sim::SimRefExtractOp>()) {
+      value = extract.getInput();
+      continue;
+    }
+    if (auto extract = value.getDefiningOp<sim::SimRefDynExtractOp>()) {
+      value = extract.getInput();
+      continue;
+    }
+    if (auto extract = value.getDefiningOp<sim::SimRefSubelementOp>()) {
+      value = extract.getInput();
+      continue;
+    }
+    if (auto extract = value.getDefiningOp<sim::SimRefArrayElementOp>()) {
+      value = extract.getInput();
+      continue;
+    }
+    break;
+  }
+  if (value && isa<sim::RefType>(value.getType()))
+    observedWrites->insert(value);
+}
+
 FailureOr<Value> UnitLowering::bindObserver(Operation *expression) {
   Location location = getSemanticLocation(expression);
   auto evaluator =
@@ -2072,17 +2100,21 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   auto primitive =
       function->getAttrOfType<StringAttr>("obelisk_sim.primitive_name");
   llvm::SetVector<Value> startupWildcardDependencies;
+  llvm::SetVector<Value> startupWildcardWrites;
+  llvm::SetVector<Value> *savedWrites = observedWrites;
   LogicalResult lowered = success();
   if (primitive) {
     lowered = lowerPrimitive(primitive.getValue(), roots);
   } else if (startupWildcardStatement) {
     llvm::SetVector<Value> *saved = observedDependencies;
     observedDependencies = &startupWildcardDependencies;
+    observedWrites = &startupWildcardWrites;
     lowered = lowerStatement(startupWildcardStatement);
     observedDependencies = saved;
   } else {
     lowered = lowerSequence(roots);
   }
+  observedWrites = savedWrites;
   if (failed(lowered))
     return failure();
   if (!current->empty() && current->back().hasTrait<OpTrait::IsTerminator>())
@@ -2123,6 +2155,11 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   }
 
   if (startupWildcardStatement) {
+    // A blocking write happens before the process reaches its implicit wait.
+    // It cannot wake that wait, so do not publish a static self-sensitivity
+    // edge for a value that the same evaluation writes.
+    for (Value written : startupWildcardWrites)
+      startupWildcardDependencies.remove(written);
     if (startupWildcardDependencies.empty()) {
       unsupported(roots.front())
           << " (@* controlled statement has no readable dependency)";

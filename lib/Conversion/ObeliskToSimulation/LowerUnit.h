@@ -283,6 +283,7 @@ private:
   void emitBranch(::mlir::Block *destination);
   void emitControlLeaves(size_t first, ::mlir::Location location);
   ::mlir::InFlightDiagnostic unsupported(::mlir::Operation *op);
+  void recordImplicitWrite(::mlir::Value value);
 
   static bool isSignedNode(::mlir::Operation *op) {
     if (auto isSigned = op->getAttrOfType<::mlir::BoolAttr>("is_signed"))
@@ -306,6 +307,7 @@ private:
   ::mlir::Value taskControlActivation;
   ::llvm::SetVector<::mlir::Value> sensitivity;
   ::llvm::SetVector<::mlir::Value> *observedDependencies = nullptr;
+  ::llvm::SetVector<::mlir::Value> *observedWrites = nullptr;
   ::mlir::Value expressionPlaceholder;
   ::mlir::Value unboundedPlaceholder;
   ::mlir::Value lvalueReferencePlaceholder;
