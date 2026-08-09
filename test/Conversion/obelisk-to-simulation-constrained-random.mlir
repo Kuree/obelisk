@@ -686,9 +686,13 @@ module {
 // A relation merges x and y into one component while an unconstrained
 // eight-bit property remains outside it. The aggregate is too wide for global
 // enumeration, but the connected component still becomes one exact table.
+// `solve x before y` turns that component table into a layered branch tree;
+// all ordered properties are covered without materializing the Cartesian
+// product with z.
 // COMPONENT-CORRELATED-LABEL: obelisk_sim.func private @unit_1
 // COMPONENT-CORRELATED-COUNT-1: arith.cmpi ult
-// COMPONENT-CORRELATED-COUNT-14: arith.select
+// COMPONENT-CORRELATED: ^bb5
+// COMPONENT-CORRELATED-COUNT-14: cf.cond_br
 // COMPONENT-CORRELATED: obelisk_sim.random.solve {{.*}} mutable
 // COMPONENT-CORRELATED-COUNT-2: arith.trunci {{.*}} : i64 to i4
 // COMPONENT-CORRELATED: arith.trunci {{.*}} : i64 to i8
@@ -1397,7 +1401,7 @@ module {
         obelisk.sv.symbol.class_property attributes {hierarchical_name = "C::z", name = "z", node_id = 6 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>, sym_name = "s6.z"} {
         }
         obelisk.sv.symbol.constraint_block attributes {hierarchical_name = "C::correlated", name = "correlated", node_id = 7 : i64, sym_name = "s7.correlated", this_variable_path = "C::correlated.this", this_variable_symbol = @s1.$root::@s2::@s3.C::@s7.correlated::@s8.this} {
-          obelisk.sv.constraint.list attributes {item_count = 3 : i64, node_id = 8 : i64} {
+          obelisk.sv.constraint.list attributes {item_count = 4 : i64, node_id = 8 : i64} {
             obelisk.sv.constraint.expression attributes {is_soft = false, node_id = 9 : i64} {
               obelisk.sv.expression.binary_op attributes {node_id = 10 : i64, operator_kind = 10 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
                 obelisk.sv.expression.named_value attributes {node_id = 11 : i64, referenced_path = "C::x", referenced_symbol = @s1.$root::@s2::@s3.C::@s4.x, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
@@ -1420,6 +1424,12 @@ module {
                 }
                 obelisk.sv.expression.named_value attributes {node_id = 20 : i64, referenced_path = "C::y", referenced_symbol = @s1.$root::@s2::@s3.C::@s5.y, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
                 }
+              }
+            }
+            obelisk.sv.constraint.solve_before attributes {after_count = 1 : i64, node_id = 37 : i64, solve_count = 1 : i64} {
+              obelisk.sv.expression.named_value attributes {node_id = 38 : i64, referenced_path = "C::x", referenced_symbol = @s1.$root::@s2::@s3.C::@s4.x, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+              }
+              obelisk.sv.expression.named_value attributes {node_id = 39 : i64, referenced_path = "C::y", referenced_symbol = @s1.$root::@s2::@s3.C::@s5.y, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
               }
             }
           }

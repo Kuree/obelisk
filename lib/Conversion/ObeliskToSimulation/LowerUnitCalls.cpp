@@ -2136,65 +2136,58 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   };
   SmallVector<SolveBeforeTableNode> solveBeforeTableNodes;
   std::optional<unsigned> solveBeforeTableRoot;
+  SmallVector<uint64_t> solveBeforeLayerMasks;
+  std::function<unsigned(ArrayRef<uint64_t>, unsigned)> buildSolveBeforeTable;
   if (hasSolveBefore) {
     if (hasSoftConstraint) {
       emitError(location)
           << "solve before with soft constraints is not executable yet";
       return failure();
     }
-    if (!validAssignmentTable &&
-        analysis.satisfiability != solver::Satisfiability::Unsatisfiable) {
-      emitError(location)
-          << "solve before currently requires a complete compile-time "
-             "solution table";
-      return failure();
-    }
-    if (validAssignmentTable) {
-      SmallVector<uint64_t> layerMasks;
-      for (ArrayRef<unsigned> layer : solveBeforeLayers) {
-        uint64_t mask = 0;
-        uint64_t offset = 0;
-        for (auto [propertyIndex, property] : llvm::enumerate(planned)) {
-          uint64_t valueMask = property.width == 64
-                                   ? UINT64_MAX
-                                   : (uint64_t{1} << property.width) - 1;
-          if (llvm::is_contained(layer, propertyIndex))
-            mask |= valueMask << offset;
-          offset += property.width;
-        }
-        layerMasks.push_back(mask);
+    for (ArrayRef<unsigned> layer : solveBeforeLayers) {
+      uint64_t mask = 0;
+      uint64_t offset = 0;
+      for (auto [propertyIndex, property] : llvm::enumerate(planned)) {
+        uint64_t valueMask = property.width == 64
+                                 ? UINT64_MAX
+                                 : (uint64_t{1} << property.width) - 1;
+        if (llvm::is_contained(layer, propertyIndex))
+          mask |= valueMask << offset;
+        offset += property.width;
       }
-      std::function<unsigned(ArrayRef<uint64_t>, unsigned)> buildTable =
-          [&](ArrayRef<uint64_t> rows, unsigned layer) -> unsigned {
-        unsigned node = solveBeforeTableNodes.size();
-        solveBeforeTableNodes.emplace_back();
-        if (layer == layerMasks.size()) {
-          solveBeforeTableNodes[node].assignments.append(rows.begin(),
-                                                         rows.end());
-          return node;
-        }
-        SmallVector<std::pair<uint64_t, SmallVector<uint64_t>>> groups;
-        for (uint64_t row : rows) {
-          uint64_t key = row & layerMasks[layer];
-          auto group = llvm::find_if(
-              groups, [&](const auto &entry) { return entry.first == key; });
-          if (group == groups.end()) {
-            groups.emplace_back(key, SmallVector<uint64_t>{});
-            group = std::prev(groups.end());
-          }
-          group->second.push_back(row);
-        }
-        llvm::sort(groups, [](const auto &lhs, const auto &rhs) {
-          return lhs.first < rhs.first;
-        });
-        SmallVector<unsigned> children;
-        for (const auto &group : groups)
-          children.push_back(buildTable(group.second, layer + 1));
-        solveBeforeTableNodes[node].children = std::move(children);
-        return node;
-      };
-      solveBeforeTableRoot = buildTable(proposalAssignments, 0);
+      solveBeforeLayerMasks.push_back(mask);
     }
+    buildSolveBeforeTable = [&](ArrayRef<uint64_t> rows,
+                                unsigned layer) -> unsigned {
+      unsigned node = solveBeforeTableNodes.size();
+      solveBeforeTableNodes.emplace_back();
+      if (layer == solveBeforeLayerMasks.size()) {
+        solveBeforeTableNodes[node].assignments.append(rows.begin(),
+                                                       rows.end());
+        return node;
+      }
+      SmallVector<std::pair<uint64_t, SmallVector<uint64_t>>> groups;
+      for (uint64_t row : rows) {
+        uint64_t key = row & solveBeforeLayerMasks[layer];
+        auto group = llvm::find_if(
+            groups, [&](const auto &entry) { return entry.first == key; });
+        if (group == groups.end()) {
+          groups.emplace_back(key, SmallVector<uint64_t>{});
+          group = std::prev(groups.end());
+        }
+        group->second.push_back(row);
+      }
+      llvm::sort(groups, [](const auto &lhs, const auto &rhs) {
+        return lhs.first < rhs.first;
+      });
+      SmallVector<unsigned> children;
+      for (const auto &group : groups)
+        children.push_back(buildSolveBeforeTable(group.second, layer + 1));
+      solveBeforeTableNodes[node].children = std::move(children);
+      return node;
+    };
+    if (validAssignmentTable)
+      solveBeforeTableRoot = buildSolveBeforeTable(proposalAssignments, 0);
   }
 
   struct ProposalAssignmentTable {
@@ -2245,6 +2238,23 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   if (!validAssignmentTables) {
     proposalAssignmentTables.clear();
     proposalAssignmentTableMask = 0;
+  }
+  SmallVector<unsigned> solveBeforeComponentTableRoots;
+  if (hasSolveBefore && !solveBeforeTableRoot &&
+      analysis.satisfiability != solver::Satisfiability::Unsatisfiable) {
+    uint64_t orderedPropertyMask = 0;
+    for (uint64_t layerMask : solveBeforeLayerMasks)
+      orderedPropertyMask |= layerMask;
+    if (!validAssignmentTables ||
+        (orderedPropertyMask & ~proposalAssignmentTableMask) != 0) {
+      emitError(location)
+          << "solve before currently requires complete compile-time solution "
+             "tables covering every ordered property";
+      return failure();
+    }
+    for (const ProposalAssignmentTable &table : proposalAssignmentTables)
+      solveBeforeComponentTableRoots.push_back(
+          buildSolveBeforeTable(table.assignments, 0));
   }
 
   struct ProposalDomain {
@@ -3223,9 +3233,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     setCurrent(validCaptureBoundsBlock);
   }
 
-  if (solveBeforeTableRoot) {
-    std::function<Value(unsigned, std::optional<Value>)> sampleSolveTable =
-        [&](unsigned nodeIndex, std::optional<Value> availableDraw) -> Value {
+  std::function<Value(unsigned, std::optional<Value>)> sampleSolveTable;
+  if (solveBeforeTableRoot || !solveBeforeComponentTableRoots.empty()) {
+    sampleSolveTable = [&](unsigned nodeIndex,
+                           std::optional<Value> availableDraw) -> Value {
       const SolveBeforeTableNode &node = solveBeforeTableNodes[nodeIndex];
       if (node.children.empty()) {
         if (node.assignments.size() == 1)
@@ -3269,6 +3280,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
       state = mergedState;
       return mergedAssignment;
     };
+  }
+  if (solveBeforeTableRoot) {
     sampledSolveBeforeAssignment =
         sampleSolveTable(*solveBeforeTableRoot, randomDraw);
   }
@@ -3279,15 +3292,23 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
 
   if (validAssignmentTables) {
     sampledComponentAssignment = constant64(0);
-    for (const ProposalAssignmentTable &table : proposalAssignmentTables) {
-      Value index = constant64(0);
-      if (table.assignments.size() != 1) {
-        Value draw = next64(state);
-        index = sampleBoundedIndex(table.assignments.size(), draw);
+    if (!solveBeforeComponentTableRoots.empty()) {
+      for (unsigned root : solveBeforeComponentTableRoots) {
+        Value selected = sampleSolveTable(root, std::nullopt);
+        sampledComponentAssignment = arith::OrIOp::create(
+            builder, location, sampledComponentAssignment, selected);
       }
-      Value selected = selectAssignmentTable(table.assignments, index);
-      sampledComponentAssignment = arith::OrIOp::create(
-          builder, location, sampledComponentAssignment, selected);
+    } else {
+      for (const ProposalAssignmentTable &table : proposalAssignmentTables) {
+        Value index = constant64(0);
+        if (table.assignments.size() != 1) {
+          Value draw = next64(state);
+          index = sampleBoundedIndex(table.assignments.size(), draw);
+        }
+        Value selected = selectAssignmentTable(table.assignments, index);
+        sampledComponentAssignment = arith::OrIOp::create(
+            builder, location, sampledComponentAssignment, selected);
+      }
     }
   }
   for (ProposalDomain &domain : proposalDomains) {

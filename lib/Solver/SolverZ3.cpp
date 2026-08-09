@@ -724,10 +724,11 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
     if (translatedProposal && checkWith(proposal && !*hard) == z3::unsat)
       analysis.proposalExact = true;
 
-    // If structural planning was not exact, fully enumerate small capture-free
-    // formulas. A complete solution table lets generated code sample correlated
-    // assignments directly and needs neither a checker nor runtime solving.
-    // Keep the table deliberately small to bound both compile time and IR size.
+    // Fully enumerate small capture-free formulas when structural planning was
+    // not exact or the client needs the joint conditional distribution. A
+    // complete solution table lets generated code sample correlated assignments
+    // directly and needs neither a checker nor runtime solving. Keep the table
+    // deliberately small to bound both compile time and IR size.
     constexpr unsigned maxAssignmentWidth = 12;
     constexpr size_t maxAssignmentTableSize = 16;
     auto assignmentType =
@@ -785,7 +786,9 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
     // variable connectivity graph from each top-level hard constraint, then
     // enumerate every constrained component separately. Unconstrained
     // variables remain free in the generated proposal.
-    if (!analysis.proposalExact && !smt->variables.empty()) {
+    if (analysis.assignmentTable.empty() &&
+        (!analysis.proposalExact || preferGlobalAssignmentTable) &&
+        !smt->variables.empty()) {
       std::vector<size_t> componentParents(smt->variables.size());
       for (size_t index = 0; index != componentParents.size(); ++index)
         componentParents[index] = index;
