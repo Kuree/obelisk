@@ -1,6 +1,9 @@
 // RUN: %split-file %s %t
 // RUN: obelisk-opt %t/lifecycle.mlir '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 
+// IEEE 1800-2017 18.6.2 and 18.11.1 require randomize(null) to invoke
+// pre_randomize(), check the current values, and invoke post_randomize() only
+// when that check succeeds. It remains a checker: no RNG or property stores.
 // CHECK-DAG: obelisk_sim.func private @[[BASE_PRE:unit_[0-9]+]]{{.*}}obelisk_sim.hierarchical_name = "Base::pre_randomize"
 // CHECK-DAG: obelisk_sim.func private @[[BASE_POST:unit_[0-9]+]]{{.*}}obelisk_sim.hierarchical_name = "Base::post_randomize"
 // CHECK-DAG: obelisk_sim.func private @[[DERIVED_PRE:unit_[0-9]+]]{{.*}}obelisk_sim.hierarchical_name = "Derived::pre_randomize"
@@ -34,10 +37,10 @@
 // CHECK-NEXT: %[[IS_INTERFACE_IMPL:.*]] = obelisk_sim.class.is_instance %[[INTERFACE_OBJECT]] is @__obelisk_class_s11_Derived
 // CHECK: ^[[CHECKER_DERIVED:bb[0-9]+]]:
 // CHECK-NEXT: %[[CHECKER_CAST:.*]] = obelisk_sim.class.cast
+// CHECK-NEXT: obelisk_sim.class.direct_call @[[DERIVED_PRE]] %[[CHECKER_CAST]]()
 // CHECK-NEXT: obelisk_sim.class.field_ref %[[CHECKER_CAST]][@__obelisk_class_s3_Base_field_0]
 // CHECK-NEXT: obelisk_sim.class.field_ref %[[CHECKER_CAST]][@__obelisk_class_s11_Derived_field_0]
 // CHECK-NEXT: obelisk_sim.class.field_ref %[[CHECKER_CAST]][@__obelisk_class_s3_Base_field___obelisk_constraint_mode]
-// CHECK-NOT: obelisk_sim.class.direct_call
 // CHECK-NOT: obelisk_sim.random.solve
 // CHECK-NOT: __obelisk_rng
 // CHECK-NOT: __obelisk_rand_mode
@@ -46,18 +49,23 @@
 // CHECK: arith.cmpi eq
 // CHECK: arith.cmpi ult
 // CHECK: arith.andi
-// CHECK: cf.br ^[[CHECKER_DONE]]
+// CHECK: cf.cond_br
 // CHECK: ^[[CHECKER_BASE_TEST:bb[0-9]+]]:
 // CHECK: obelisk_sim.class.is_instance
+// CHECK: ^[[CHECKER_DERIVED_POST:bb[0-9]+]]:
+// CHECK: %[[CHECKER_POST_CAST:.*]] = obelisk_sim.class.cast %[[CHECKER_CAST]]
+// CHECK-NEXT: obelisk_sim.class.direct_call @[[BASE_POST]] %[[CHECKER_POST_CAST]]()
 // CHECK: ^[[CHECKER_BASE:bb[0-9]+]]:
-// CHECK-NEXT: obelisk_sim.class.field_ref %{{.*}}[@__obelisk_class_s3_Base_field_0]
+// CHECK-NEXT: obelisk_sim.class.direct_call @[[BASE_PRE]] %[[CHECKER_BASE_OBJECT:[^( ]+]]({{.*}})
+// CHECK-NEXT: obelisk_sim.class.field_ref %[[CHECKER_BASE_OBJECT]][@__obelisk_class_s3_Base_field_0]
 // CHECK-NEXT: obelisk_sim.class.field_ref %{{.*}}[@__obelisk_class_s3_Base_field___obelisk_constraint_mode]
-// CHECK-NOT: obelisk_sim.class.direct_call
 // CHECK-NOT: obelisk_sim.random.solve
 // CHECK-NOT: __obelisk_rng
 // CHECK-NOT: __obelisk_rand_mode
 // CHECK-NOT: __obelisk_randc
 // CHECK-NOT: obelisk_sim.managed.store
+// CHECK: cf.cond_br
+// CHECK: obelisk_sim.class.direct_call @[[BASE_POST]] %[[CHECKER_BASE_OBJECT]]()
 // CHECK: cf.br ^[[CHECKER_DONE]]
 // CHECK: ^[[INTERFACE_DONE:bb[0-9]+]]({{.*}}: i32):
 // CHECK: obelisk_sim.return

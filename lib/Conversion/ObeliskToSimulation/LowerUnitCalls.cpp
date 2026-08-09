@@ -1464,8 +1464,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                       hookReceiver, arguments);
     return success();
   };
-  if (!checkerOnly &&
-      failed(callLifecycleHook(
+  if (failed(callLifecycleHook(
           randomPreHookAttrName, randomPreHookOwnerAttrName,
           randomPreHookCapturesAttrName, randomPreHookReadCapturesAttrName)))
     return failure();
@@ -6172,8 +6171,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   cf::BranchOp::create(builder, location, postBlock);
 
   setCurrent(postBlock);
-  if (!checkerOnly &&
-      failed(callLifecycleHook(randomPostHookAttrName,
+  if (failed(callLifecycleHook(randomPostHookAttrName,
                                randomPostHookOwnerAttrName,
                                randomPostHookCapturesAttrName,
                                randomPostHookReadCapturesAttrName)))
