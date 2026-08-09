@@ -2,14 +2,16 @@
 // RUN: obelisk --std=1800-2023 -O0 --execution-tier=bytecode %s -o %t.o0.bytecode
 // RUN: obelisk --std=1800-2023 -O3 %s -o %t.o3.native
 // RUN: obelisk --std=1800-2023 -O3 --execution-tier=bytecode %s -o %t.o3.bytecode
-// RUN: not obelisk --std=1800-2023 -O3 --native-scheduler=aot %s -o %t.o3.aot 2>&1 | FileCheck %s --check-prefix=AOT
+// RUN: obelisk --std=1800-2023 -O3 --native-scheduler=aot %s -o %t.o3.aot
 // RUN: %t.o0.native > %t.o0.native.out
 // RUN: %t.o0.bytecode > %t.o0.bytecode.out
 // RUN: %t.o3.native > %t.o3.native.out
 // RUN: %t.o3.bytecode > %t.o3.bytecode.out
+// RUN: %t.o3.aot > %t.o3.aot.out
 // RUN: diff -u %t.o0.native.out %t.o0.bytecode.out
 // RUN: diff -u %t.o0.native.out %t.o3.native.out
 // RUN: diff -u %t.o0.native.out %t.o3.bytecode.out
+// RUN: diff -u %t.o0.native.out %t.o3.aot.out
 // RUN: FileCheck %s < %t.o0.native.out
 // RUN: obelisk --std=1800-2023 -emit-obelisk %s -o %t.obelisk.mlir
 // RUN: obelisk-opt %t.obelisk.mlir --pass-pipeline='builtin.module(obelisk-sim-prepare,obelisk_sim.design(obelisk_sim.func(obelisk-sim-lower-unit)))' | FileCheck %s --check-prefix=SIM --implicit-check-not=obelisk_sim.control.enter --implicit-check-not=obelisk_sim.detached_controls
@@ -70,7 +72,6 @@ module native_concurrent_sva;
 endmodule
 
 // CHECK: restrict monitors completed
-// AOT: design is ineligible for native AOT scheduling: non-Active process scheduling requires generic ordering
 // SIM-DAG: obelisk_sim.assert.sampled_read
 // SIM-DAG: obelisk_sim.assertion_path = "native_concurrent_sva.labeled_delay"
 // SIM-DAG: obelisk_sim.assertion_target_id = {{[0-9]+}} : i64

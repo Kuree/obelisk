@@ -253,11 +253,12 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       result.reasons.emplace_back("task, await, or join control is present");
       dynamicActors.insert(function.getOperation());
     }
-    if (function.getHomeRegion() != sim::EventRegion::Active) {
-      result.reasons.emplace_back(
-          "non-Active process scheduling requires generic ordering");
-      bytecodeActors.insert(function.getOperation());
-    }
+    // Statically bound actors retain their semantic home region in the
+    // scheduler record.  Native ready nodes are ranked from the region-ordered
+    // compute graph, while hybrid arbitration compares queuedRegion before
+    // rank and insertion sequence.  Observed, Reactive, and Postponed actors
+    // therefore need no generic-only exclusion merely because they are not
+    // Active.
   });
   module.walk([&](Operation *operation) {
     bool hasRealValue =
