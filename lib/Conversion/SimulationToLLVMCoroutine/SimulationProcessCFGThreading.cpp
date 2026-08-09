@@ -8,6 +8,7 @@
 #include "mlir/Pass/Pass.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SetVector.h"
 
 using namespace mlir;
@@ -169,7 +170,14 @@ LogicalResult threadProcessStateThroughCFG(sim::SimFuncOp function) {
         for (OpOperand *use : uses)
           use->set(argument);
 
+        // Block::getPredecessors() visits predecessor edges, so a cond_br with
+        // both destinations equal yields the same block twice. Update every
+        // successor edge during one visit to each predecessor; otherwise each
+        // edge receives the threaded operand twice.
+        llvm::SmallPtrSet<Block *, 4> seenPredecessors;
         for (Block *predecessor : block.getPredecessors()) {
+          if (!seenPredecessors.insert(predecessor).second)
+            continue;
           auto branch =
               dyn_cast<BranchOpInterface>(predecessor->getTerminator());
           if (!branch)

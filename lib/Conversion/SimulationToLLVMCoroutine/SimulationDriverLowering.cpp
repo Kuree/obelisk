@@ -77,28 +77,109 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     if (adaptor.getDriver().size() != 1 || adaptor.getValue().empty())
       return failure();
+    Value driveValue = adaptor.getValue().front();
+    IntegerType driveType = cast<IntegerType>(driveValue.getType());
+    auto integerConstant = [&](const APInt &value) {
+      return arith::ConstantOp::create(
+          rewriter, op.getLoc(), driveType,
+          rewriter.getIntegerAttr(driveType, value));
+    };
+    Value driveUnknown =
+        adaptor.getValue().size() == 2
+            ? adaptor.getValue()[1]
+            : integerConstant(APInt::getZero(driveType.getWidth()));
     storeStatePlane(rewriter, op.getLoc(), adaptor.getDriver().front(),
-                    adaptor.getValue().front(), "__obelisk_state_value",
-                    layout.bitCount, &layout);
+                    driveValue, "__obelisk_state_value", layout.bitCount,
+                    &layout);
+    storeStatePlane(rewriter, op.getLoc(), adaptor.getDriver().front(),
+                    driveUnknown, "__obelisk_state_unknown", layout.bitCount,
+                    &layout);
     IntegerType i1 = rewriter.getI1Type();
     auto boolean = [&](bool value) {
       return arith::ConstantOp::create(rewriter, op.getLoc(), i1,
                                        rewriter.getBoolAttr(value));
     };
-    if (adaptor.getValue().size() == 2) {
-      storeStatePlane(rewriter, op.getLoc(), adaptor.getDriver().front(),
-                      adaptor.getValue()[1], "__obelisk_state_unknown",
-                      layout.bitCount, &layout);
-    } else {
-      storeStatePlane(rewriter, op.getLoc(), adaptor.getDriver().front(),
-                      boolean(false), "__obelisk_state_unknown",
-                      layout.bitCount, &layout);
-    }
     Value changed = boolean(false);
     std::optional<uint64_t> affectedNet;
     if (auto netID =
             op->template getAttrOfType<IntegerAttr>("obelisk.native.net_id"))
       affectedNet = netID.getInt();
+
+    // A full-width drive into an isolated net with one driver needs no
+    // bitwise resolution: the resolved value is the driver value. Keep this
+    // vector-shaped through LLVM lowering so very wide constants do not turn
+    // into millions of scalar loads, selects, and stores.
+    const NativeStateLayout::Net *bulkNet = nullptr;
+    if (op.getDriver()
+            .template getDefiningOp<sim::SimContextDriverOp>()) {
+      std::optional<uint64_t> driverID = getStaticDriverID(op.getDriver());
+      auto driver = driverID
+                        ? llvm::find_if(layout.driverLayouts,
+                                        [&](const auto &candidate) {
+                                          return candidate.id == *driverID;
+                                        })
+                        : layout.driverLayouts.end();
+      if (driver != layout.driverLayouts.end()) {
+        auto net = llvm::find_if(layout.netLayouts, [&](const auto &candidate) {
+          return candidate.id == driver->netId;
+        });
+        bool onlyDriver =
+            llvm::count_if(layout.driverLayouts, [&](const auto &candidate) {
+              return candidate.netId == driver->netId;
+            }) == 1;
+        bool connected = llvm::any_of(
+            layout.connectivityCanonical, [&](const auto &entry) {
+              return entry.first.first == driver->netId;
+            });
+        if (net != layout.netLayouts.end() && onlyDriver && !connected &&
+            driver->drivenLow == 0 && driver->drivenWidth == driver->width &&
+            driver->width == net->width &&
+            driveType.getWidth() == net->width)
+          bulkNet = &*net;
+      }
+    }
+    if (bulkNet) {
+      Value netHandle = arith::ConstantOp::create(
+          rewriter, op.getLoc(), rewriter.getI64Type(),
+          rewriter.getI64IntegerAttr(
+              encodeNativeStaticHandle(bulkNet->handleID)));
+      Value oldValue = loadStatePlane(
+          rewriter, op.getLoc(), netHandle, driveType,
+          "__obelisk_state_value", false, layout.bitCount, &layout);
+      Value oldUnknown = loadStatePlane(
+          rewriter, op.getLoc(), netHandle, driveType,
+          "__obelisk_state_unknown", true, layout.bitCount, &layout);
+      Value publishValue = driveValue;
+      Value publishUnknown = driveUnknown;
+      if (!bulkNet->fourState) {
+        Value allOnes =
+            integerConstant(APInt::getAllOnes(driveType.getWidth()));
+        publishValue = arith::AndIOp::create(
+            rewriter, op.getLoc(), driveValue,
+            arith::XOrIOp::create(rewriter, op.getLoc(), driveUnknown,
+                                  allOnes));
+        publishUnknown = integerConstant(APInt::getZero(driveType.getWidth()));
+      }
+      Value valueChanged = storeStatePlane(
+          rewriter, op.getLoc(), netHandle, publishValue,
+          "__obelisk_state_value", layout.bitCount, &layout);
+      Value unknownChanged = storeStatePlane(
+          rewriter, op.getLoc(), netHandle, publishUnknown,
+          "__obelisk_state_unknown", layout.bitCount, &layout);
+      changed = arith::OrIOp::create(rewriter, op.getLoc(), valueChanged,
+                                    unknownChanged);
+      notifySignal(rewriter, op.getLoc(), netHandle, bulkNet->width, oldValue,
+                   oldUnknown, publishValue,
+                   bulkNet->fourState ? publishUnknown : Value{},
+                   resolveDirectStaticStateRange(netHandle, bulkNet->width,
+                                                 &layout));
+      if constexpr (std::is_same_v<DriveOp, sim::SimDriverDriveChangedOp>)
+        rewriter.replaceOp(op, changed);
+      else
+        rewriter.eraseOp(op);
+      return success();
+    }
+
     struct Publication {
       Value handle;
       Value oldValue;

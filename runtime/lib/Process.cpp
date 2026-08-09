@@ -4412,6 +4412,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
       maskPadding();
       return OBELISK_RT_OK;
     }
+    bool readGlobalPlane = !canonical || isStaticControlAOT(context);
     for (uint64_t bit = 0; bit != bitWidth; ++bit) {
       int64_t coordinate = 0;
       if (addHandleOffset(globalOffset, bit, coordinate) && coordinate >= 0 &&
@@ -4419,9 +4420,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
         uint64_t source = rootOffset + static_cast<uint64_t>(coordinate);
         setByteBit(
             outValue, bit,
-            canonical
-                ? (((*canonicalPlane)[source / 64] >> (source % 64)) & 1) != 0
-                : byteBit(globalPlane, source));
+            readGlobalPlane
+                ? byteBit(globalPlane, source)
+                : (((*canonicalPlane)[source / 64] >> (source % 64)) & 1) != 0);
       }
     }
     maskPadding();

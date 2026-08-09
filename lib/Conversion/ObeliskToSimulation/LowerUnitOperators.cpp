@@ -1573,15 +1573,33 @@ FailureOr<Value> UnitLowering::lowerConditionalExpression(
   Operation *trueExpression = children[conditionChildren];
   Operation *falseExpression = children[conditionChildren + 1];
 
+  // An unknown condition has to merge both arm values, but each arm is lowered
+  // exactly once and the ambiguous path routes through the same blocks. Giving
+  // the ambiguous case its own copy of both arms doubles the work per nesting
+  // level, so a chain of N conditionals costs 2^N.
   Block *trueBlock = addBlock();
   Block *falseBlock = addBlock();
   Block *ambiguousBlock = addBlock();
   Block *mergeBlock = addBlock();
   Type predicateType = sim::LogicType::get(function.getContext(), 1);
+  Type i1Type = builder.getI1Type();
+  // trueBlock(ambiguous), falseBlock(trueArmValue, ambiguous). The saved true
+  // value is only meaningful when the ambiguous flag is set.
+  trueBlock->addArgument(i1Type, location);
+  falseBlock->addArgument(*resultType, location);
+  falseBlock->addArgument(i1Type, location);
+  ambiguousBlock->addArgument(*resultType, location);
+  ambiguousBlock->addArgument(*resultType, location);
   mergeBlock->addArgument(*resultType, location);
 
   Value sawUnknown = arith::ConstantOp::create(
       builder, location, builder.getI1Type(), builder.getBoolAttr(false));
+  // Placeholder for the true-arm slot on the paths that never evaluate it.
+  Value unusedArm = createDefaultValue(builder, location, *resultType);
+  if (!unusedArm)
+    return failure();
+  Value notAmbiguous = arith::ConstantOp::create(
+      builder, location, i1Type, builder.getBoolAttr(false));
   size_t childIndex = 0;
   for (size_t conditionIndex = 0; conditionIndex < op.getConditionCount();
        ++conditionIndex) {
@@ -1632,13 +1650,15 @@ FailureOr<Value> UnitLowering::lowerConditionalExpression(
 
     Block *nonFalse = addBlock();
     cf::CondBranchOp::create(builder, getSemanticLocation(expression), isFalse,
-                             falseBlock, ValueRange{}, nonFalse, ValueRange{});
+                             falseBlock, ValueRange{unusedArm, notAmbiguous},
+                             nonFalse, ValueRange{});
     setCurrent(nonFalse);
     if (conditionIndex + 1 != op.getConditionCount())
       continue;
-    cf::CondBranchOp::create(builder, getSemanticLocation(expression),
-                             sawUnknown, ambiguousBlock, ValueRange{},
-                             trueBlock, ValueRange{});
+    // Both the known-true and the ambiguous case start by evaluating the true
+    // arm; the flag decides whether the false arm follows and merges.
+    cf::BranchOp::create(builder, getSemanticLocation(expression), trueBlock,
+                         ValueRange{sawUnknown});
   }
 
   auto lowerArm = [&](Operation *expression) -> FailureOr<Value> {
@@ -1658,28 +1678,29 @@ FailureOr<Value> UnitLowering::lowerConditionalExpression(
   FailureOr<Value> trueResult = lowerArm(trueExpression);
   if (failed(trueResult))
     return failure();
-  cf::BranchOp::create(builder, getSemanticLocation(trueExpression), mergeBlock,
-                       ValueRange{*trueResult});
+  // Known-true takes this value; ambiguous carries it into the false arm.
+  cf::CondBranchOp::create(builder, getSemanticLocation(trueExpression),
+                           trueBlock->getArgument(0), falseBlock,
+                           ValueRange{*trueResult, trueBlock->getArgument(0)},
+                           mergeBlock, ValueRange{*trueResult});
 
   setCurrent(falseBlock);
   FailureOr<Value> falseResult = lowerArm(falseExpression);
   if (failed(falseResult))
     return failure();
-  cf::BranchOp::create(builder, getSemanticLocation(falseExpression),
-                       mergeBlock, ValueRange{*falseResult});
+  cf::CondBranchOp::create(
+      builder, getSemanticLocation(falseExpression), falseBlock->getArgument(1),
+      ambiguousBlock, ValueRange{falseBlock->getArgument(0), *falseResult},
+      mergeBlock, ValueRange{*falseResult});
 
   setCurrent(ambiguousBlock);
-  FailureOr<Value> ambiguousTrue = lowerArm(trueExpression);
-  FailureOr<Value> ambiguousFalse = lowerArm(falseExpression);
-  if (failed(ambiguousTrue) || failed(ambiguousFalse))
-    return failure();
   Type i1 = builder.getI1Type();
   Value ambiguousCondition = sim::SimLogicConstantOp::create(
       builder, location, predicateType, builder.getIntegerAttr(i1, 0),
       builder.getIntegerAttr(i1, 1));
-  FailureOr<Value> merged =
-      mergeConditionalValues(ambiguousCondition, *ambiguousTrue,
-                             *ambiguousFalse, *resultType, location);
+  FailureOr<Value> merged = mergeConditionalValues(
+      ambiguousCondition, ambiguousBlock->getArgument(0),
+      ambiguousBlock->getArgument(1), *resultType, location);
   if (failed(merged))
     return failure();
   cf::BranchOp::create(builder, location, mergeBlock, ValueRange{*merged});
