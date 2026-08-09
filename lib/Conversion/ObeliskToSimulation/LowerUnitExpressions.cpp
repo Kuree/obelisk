@@ -1324,6 +1324,16 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
     unsupported(op) << " (selection input type)";
     return failure();
   }
+  unsigned elementWidth = 1;
+  if (auto array = dyn_cast<sim::PackedArrayType>(sourceValueType)) {
+    std::optional<unsigned> width = sim::getPackedWidth(array.getElementType());
+    if (!width || *width == 0) {
+      unsupported(op) << " (selection element type)";
+      return failure();
+    }
+    elementWidth = *width;
+  }
+  unsigned scaleBits = APInt(64, elementWidth - 1).getActiveBits();
 
   // Selection offsets are signless bitvectors in the target IR, so normalize
   // source indices in a type wide enough that signed values, declared bounds,
@@ -1337,11 +1347,12 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
       return failure();
     }
     std::optional<unsigned> width = sim::getPackedWidth(scalarType);
-    if (!width || *width > std::numeric_limits<unsigned>::max() - 2) {
+    if (!width ||
+        *width > std::numeric_limits<unsigned>::max() - 2 - scaleBits) {
       emitError(location) << "selection index is too wide to normalize";
       return failure();
     }
-    unsigned arithmeticWidth = std::max(*width, 64u) + 2;
+    unsigned arithmeticWidth = std::max(*width, 64u) + 2 + scaleBits;
     if (isa<sim::LogicType>(scalarType))
       return sim::LogicType::get(function.getContext(), arithmeticWidth);
     if (isa<IntegerType>(scalarType))
@@ -1376,14 +1387,22 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
     return sim::SimLogicBinaryOp::create(builder, location, lhs.getType(),
                                          sim::BinaryKind::Sub, lhs, rhs);
   };
+  auto multiply = [&](Value lhs, Value rhs) -> Value {
+    if (isa<IntegerType>(lhs.getType()))
+      return arith::MulIOp::create(builder, location, lhs, rhs);
+    return sim::SimLogicBinaryOp::create(builder, location, lhs.getType(),
+                                         sim::BinaryKind::Mul, lhs, rhs);
+  };
 
-  // Known source bounds and literals are 64-bit, and 66 signed bits hold the
-  // exact difference of any unsigned 64-bit index and signed 64-bit boundary.
-  constexpr unsigned constantOffsetWidth = 66;
+  // Known source bounds and literals are 64-bit. Two signed guard bits hold
+  // their exact difference, and scaleBits prevents the packed-element stride
+  // from wrapping the resulting flat bit offset.
+  unsigned constantOffsetWidth = 66 + scaleBits;
   auto sourceOffset = [&](const APInt &index) -> APInt {
     APInt boundary(constantOffsetWidth, static_cast<uint64_t>(sourceRight),
                    true);
-    return descending ? index - boundary : boundary - index;
+    APInt ordinal = descending ? index - boundary : boundary - index;
+    return ordinal * APInt(constantOffsetWidth, elementWidth);
   };
   auto extendLiteral = [&](const ParsedConstant &literal, Operation *source,
                            Type sourceType) -> APInt {
@@ -1443,8 +1462,9 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
              selectionKind == semantic::SVRangeSelectionKind::IndexedDown) ||
             (!descending &&
              selectionKind == semantic::SVRangeSelectionKind::IndexedUp);
-        if (baseNamesHighBit && *resultWidth > 1)
-          *knownLow -= APInt(constantOffsetWidth, *resultWidth - 1);
+        if (baseNamesHighBit && *resultWidth > elementWidth)
+          *knownLow -=
+              APInt(constantOffsetWidth, *resultWidth - elementWidth);
       }
     }
     bool inRange =
@@ -1490,13 +1510,17 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
       dynamicLow = descending ? subtract(dynamicLow, boundary)
                               : subtract(boundary, dynamicLow);
     }
+    if (elementWidth > 1) {
+      Value scale = createKnownOffset(elementWidth);
+      dynamicLow = multiply(dynamicLow, scale);
+    }
     bool baseNamesHighBit =
         (descending &&
          selectionKind == semantic::SVRangeSelectionKind::IndexedDown) ||
         (!descending &&
          selectionKind == semantic::SVRangeSelectionKind::IndexedUp);
-    if (baseNamesHighBit && *resultWidth > 1) {
-      Value adjustment = createKnownOffset(*resultWidth - 1);
+    if (baseNamesHighBit && *resultWidth > elementWidth) {
+      Value adjustment = createKnownOffset(*resultWidth - elementWidth);
       dynamicLow = subtract(dynamicLow, adjustment);
     }
   }

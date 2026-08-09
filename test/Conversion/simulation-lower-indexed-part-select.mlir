@@ -11,6 +11,9 @@
 !descending_slice = !obelisk.ranged_packed_array<6 : 4 x !bit>
 !ascending = !obelisk.ranged_packed_array<0 : 7 x !bit>
 !ascending_slice = !obelisk.ranged_packed_array<3 : 5 x !bit>
+!pair = !obelisk.ranged_packed_array<1 : 0 x !bit>
+!nested = !obelisk.ranged_packed_array<2 : 0 x !pair>
+!nested_slice = !obelisk.ranged_packed_array<2 : 1 x !pair>
 
 module {
   obelisk_sim.design @indexed_part_select {
@@ -23,6 +26,10 @@ module {
     obelisk_sim.storage.decl 1 in 0 :
         !obelisk_sim.packed_array<0 : 7 x i1>
         design hierarchy "top.ascending"
+    obelisk_sim.storage.decl 2 in 0 :
+        !obelisk_sim.packed_array<2 : 0 x !obelisk_sim.packed_array<1 : 0 x i1>>
+        design hierarchy "top.nested"
+    obelisk_sim.storage.decl 3 in 0 : i32 design hierarchy "top.index"
 
     // CHECK-LABEL: obelisk_sim.func @unit
     // CHECK: %[[ONES:.*]] = arith.constant -1 : i3
@@ -42,6 +49,18 @@ module {
     // CHECK: %[[PACKED3:.*]] = obelisk_sim.packed.unflatten
     // CHECK: %[[ASC_DOWN:.*]] = obelisk_sim.ref.extract %arg2 from 2
     // CHECK: obelisk_sim.ref.store %[[PACKED3]] to %[[ASC_DOWN]]
+    // CHECK: %[[PACKED4:.*]] = obelisk_sim.packed.unflatten
+    // CHECK: %[[NESTED_DOWN:.*]] = obelisk_sim.ref.extract %arg3 from 2
+    // CHECK-SAME: !obelisk_sim.ref<!obelisk_sim.packed_array<2 : 0 x !obelisk_sim.packed_array<1 : 0 x i1>>>
+    // CHECK-SAME: !obelisk_sim.ref<!obelisk_sim.packed_array<2 : 1 x !obelisk_sim.packed_array<1 : 0 x i1>>>
+    // CHECK: obelisk_sim.ref.store %[[PACKED4]] to %[[NESTED_DOWN]]
+    // CHECK: %[[INDEX:.*]] = obelisk_sim.ref.load %arg4
+    // CHECK: %[[WIDE_INDEX:.*]] = arith.extsi %[[INDEX]] : i32 to i67
+    // CHECK: %[[SCALE:.*]] = arith.constant 2 : i67
+    // CHECK: %[[SCALED:.*]] = arith.muli %[[WIDE_INDEX]], %[[SCALE]]
+    // CHECK: %[[ADJUSTMENT:.*]] = arith.constant 2 : i67
+    // CHECK: %[[LOW:.*]] = arith.subi %[[SCALED]], %[[ADJUSTMENT]]
+    // CHECK: obelisk_sim.bits.dyn_extract {{.*}} from %[[LOW]]
     obelisk_sim.func @unit(
         %ctx: !obelisk_sim.context
             {obelisk_sim.capture_kind = 0 : i32},
@@ -50,13 +69,23 @@ module {
              obelisk_sim.descriptor_id = 0 : i64},
         %ascending: !obelisk_sim.ref<!obelisk_sim.packed_array<0 : 7 x i1>>
             {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 1 : i64})
+             obelisk_sim.descriptor_id = 1 : i64},
+        %nested: !obelisk_sim.ref<!obelisk_sim.packed_array<2 : 0 x !obelisk_sim.packed_array<1 : 0 x i1>>>
+            {obelisk_sim.capture_kind = 3 : i32,
+             obelisk_sim.descriptor_id = 2 : i64},
+        %index: !obelisk_sim.ref<i32>
+            {obelisk_sim.capture_kind = 3 : i32,
+             obelisk_sim.descriptor_id = 3 : i64})
         attributes {
           entry_kind = 1 : i32,
           obelisk_sim.bindings = [
             #obelisk_sim.argument_binding<path = "top.descending", argument = 1,
                 kind = direct, copyOut = false>,
             #obelisk_sim.argument_binding<path = "top.ascending", argument = 2,
+                kind = direct, copyOut = false>,
+            #obelisk_sim.argument_binding<path = "top.nested", argument = 3,
+                kind = direct, copyOut = false>,
+            #obelisk_sim.argument_binding<path = "top.index", argument = 4,
                 kind = direct, copyOut = false>
           ],
           code_unit_id = 9500001 : i64
@@ -166,6 +195,74 @@ module {
           obelisk.sv.expression.integer_literal attributes {
               node_id = 28 : i64, constant_value = "3'b111",
               semantic_type = !ascending_slice} {
+          }
+        }
+      }
+      obelisk.sv.statement.expression_statement attributes {node_id = 29 : i64} {
+        obelisk.sv.expression.assignment attributes {
+            node_id = 30 : i64, assignment_kind = 0 : i32,
+            semantic_type = !nested_slice} {
+          obelisk.sv.expression.range_select attributes {
+              node_id = 31 : i64, selection_kind = 2 : i32,
+              semantic_type = !nested_slice} {
+            obelisk.sv.expression.named_value attributes {
+                node_id = 32 : i64, referenced_path = "top.nested",
+                referenced_symbol = @nested,
+                semantic_type = !nested} {
+            }
+            obelisk.sv.expression.integer_literal attributes {
+                node_id = 33 : i64, constant_value = "2",
+                semantic_type = !int} {
+            }
+            obelisk.sv.expression.integer_literal attributes {
+                node_id = 34 : i64, constant_value = "2",
+                semantic_type = !int} {
+            }
+          }
+          obelisk.sv.expression.integer_literal attributes {
+              node_id = 35 : i64, constant_value = "4'b1111",
+              semantic_type = !nested_slice} {
+          }
+        }
+      }
+      obelisk.sv.statement.expression_statement attributes {node_id = 36 : i64} {
+        obelisk.sv.expression.assignment attributes {
+            node_id = 37 : i64, assignment_kind = 0 : i32,
+            semantic_type = !nested_slice} {
+          obelisk.sv.expression.range_select attributes {
+              node_id = 38 : i64, selection_kind = 2 : i32,
+              semantic_type = !nested_slice} {
+            obelisk.sv.expression.named_value attributes {
+                node_id = 39 : i64, referenced_path = "top.nested",
+                referenced_symbol = @nested,
+                semantic_type = !nested} {
+            }
+            obelisk.sv.expression.integer_literal attributes {
+                node_id = 40 : i64, constant_value = "2",
+                semantic_type = !int} {
+            }
+            obelisk.sv.expression.integer_literal attributes {
+                node_id = 41 : i64, constant_value = "2",
+                semantic_type = !int} {
+            }
+          }
+          obelisk.sv.expression.range_select attributes {
+              node_id = 42 : i64, selection_kind = 2 : i32,
+              semantic_type = !nested_slice} {
+            obelisk.sv.expression.named_value attributes {
+                node_id = 43 : i64, referenced_path = "top.nested",
+                referenced_symbol = @nested,
+                semantic_type = !nested} {
+            }
+            obelisk.sv.expression.named_value attributes {
+                node_id = 44 : i64, referenced_path = "top.index",
+                referenced_symbol = @index,
+                semantic_type = !int} {
+            }
+            obelisk.sv.expression.integer_literal attributes {
+                node_id = 45 : i64, constant_value = "2",
+                semantic_type = !int} {
+            }
           }
         }
       }
