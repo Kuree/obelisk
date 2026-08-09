@@ -252,7 +252,7 @@ module {
       }
     }
     slang.expression.integer_literal attributes {
-      constant_value = "42", node_id = 30 : i64,
+      constant_value = "42", is_declared_unsized = true, node_id = 30 : i64,
       semantic_type = !slang.integral<32, true, false, 31 : 0, int>
     } {
     }
@@ -400,7 +400,7 @@ module {
 // CHECK-SAME: has_condition = false
 // CHECK-SAME: initializer_count = 0 : i64
 // CHECK-SAME: step_count = 0 : i64
-// CHECK: obelisk.sv.expression.integer_literal attributes {constant_value = "42"
+// CHECK: obelisk.sv.expression.integer_literal attributes {constant_value = "42", is_declared_unsized = true
 // CHECK: obelisk.sv.expression.conditional_op
 // CHECK-SAME: condition_count = 2 : i64
 // CHECK-SAME: condition_pattern_flags = array<i64: 1, 0>

@@ -393,7 +393,10 @@ class SlangStructuredAssignmentPatternASTNodeOp<string mnemonic>
 }
 
 class SlangConstantExpressionASTNodeOp<string mnemonic>
-    : SlangExpressionASTNodeOp<mnemonic, (ins StrAttr:$constant_value)>;
+    : SlangExpressionASTNodeOp<mnemonic, (ins
+        StrAttr:$constant_value,
+        OptionalAttr<BoolAttr>:$is_declared_unsized
+      )>;
 
 class SlangTimeLiteralASTNodeOp<string mnemonic>
     : SlangExpressionASTNodeOp<mnemonic,

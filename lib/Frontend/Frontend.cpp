@@ -1190,6 +1190,10 @@ private:
       SET_OP_ATTR(ConstantValue, builder.getStringAttr(node.getValue()));
     }
 
+    if constexpr (std::same_as<T, slang::ast::IntegerLiteral>)
+      if (node.isDeclaredUnsized)
+        SET_OP_ATTR(IsDeclaredUnsized, builder.getBoolAttr(true));
+
     if constexpr (std::same_as<
                       T, slang::ast::StructuredAssignmentPatternExpression>) {
       SET_OP_ATTR(MemberSetterCount,

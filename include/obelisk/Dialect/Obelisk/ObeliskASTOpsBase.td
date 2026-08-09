@@ -385,7 +385,10 @@ class ObeliskStructuredAssignmentPatternASTNodeOp<string mnemonic>
 }
 
 class ObeliskConstantExpressionASTNodeOp<string mnemonic>
-    : ObeliskExpressionASTNodeOp<mnemonic, (ins StrAttr:$constant_value)>;
+    : ObeliskExpressionASTNodeOp<mnemonic, (ins
+        StrAttr:$constant_value,
+        OptionalAttr<BoolAttr>:$is_declared_unsized
+      )>;
 
 class ObeliskTimeLiteralASTNodeOp<string mnemonic>
     : ObeliskExpressionASTNodeOp<mnemonic,
