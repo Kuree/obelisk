@@ -15,11 +15,18 @@ module native_assertions;
   logic value = 0;
   logic unknown_value = 1'bx;
   logic action_result = 1;
+  logic unknown_action_result = 0;
 
   task automatic capture_action(ref logic destination,
                                 input logic sampled);
     destination = sampled;
     $display("mutating-action=%0d", sampled);
+  endtask
+
+  task automatic capture_unknown_action(ref logic destination,
+                                        input logic sampled);
+    $display("captured-unknown=%b", sampled);
+    capture_action(destination, sampled);
   endtask
 
   initial begin
@@ -45,11 +52,17 @@ module native_assertions;
     end
     assert #0 (value) $display("wrong"); else
       capture_action(action_result, value);
+    assert #0 (1'b0) $display("wrong"); else
+      capture_unknown_action(unknown_action_result, unknown_value);
+    unknown_value = 0;
     value = 1;
     repeat (2)
       assert final (value) $display("final-pass"); else
         $display("wrong");
-    #1 $display("action-result=%0d", action_result);
+    #1 begin
+      $display("action-result=%0d", action_result);
+      $display("unknown-action-result=%b", unknown_action_result);
+    end
     $finish;
   end
 endmodule
@@ -70,6 +83,9 @@ endmodule
 // Output arguments remain live references while the input argument is the
 // value captured when the report was queued.
 // CHECK-COUNT-1: mutating-action=0
-// CHECK-COUNT-1: action-result=0
+// CHECK-COUNT-1: captured-unknown=x
+// CHECK-COUNT-1: mutating-action=x
 // CHECK-COUNT-1: final-pass
+// CHECK-COUNT-1: action-result=0
+// CHECK-COUNT-1: unknown-action-result=x
 // CHECK-NOT: wrong

@@ -2220,10 +2220,19 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
         }
         std::memcpy(activation.frame.data() + capture.valueOffset,
                     frame.data + source.offset, capture.planeSize);
-        if (capture.unknownOffset != UINT64_MAX)
+        if (capture.unknownOffset != UINT64_MAX) {
+          // Four-state bytecode registers place their unknown plane after a
+          // whole-limb value plane. The canonical activation frame may use a
+          // smaller target-ABI plane, so do not derive the source stride from
+          // the capture size.
+          uint64_t sourcePlane =
+              source.kind == OBELISK_RT_DBREG_LOGIC
+                  ? limbCount(source.width) * sizeof(uint64_t)
+                  : capture.planeSize;
           std::memcpy(activation.frame.data() + capture.unknownOffset,
-                      frame.data + source.offset + capture.planeSize,
+                      frame.data + source.offset + sourcePlane,
                       capture.planeSize);
+        }
       }
       if (copied != callee.argumentCount)
         return OBELISK_RT_INVALID_BYTECODE;

@@ -1374,13 +1374,26 @@ bool validateImage(const Image &image) {
         return reject(__LINE__,
                       "process argument capture exceeds the canonical frame",
                       functionIndex);
-      if (layout.kind == OBELISK_RT_DBREG_LOGIC ||
-          layout.kind == OBELISK_RT_DBREG_MANAGED_REF) {
-        if (capture.planeSize * 2 != layout.size ||
+      if (layout.kind == OBELISK_RT_DBREG_LOGIC) {
+        // Bytecode registers round each logic plane up to whole 64-bit limbs,
+        // while the canonical process frame uses the target ABI allocation
+        // size (for example, one byte per plane for logic<1>). Accept that
+        // narrower representation as long as it contains every semantic bit.
+        uint64_t registerPlane = layout.size / 2;
+        uint64_t requiredPlane = (uint64_t{layout.width} + 7) / 8;
+        if ((layout.size & 1) != 0 || capture.planeSize < requiredPlane ||
+            capture.planeSize > registerPlane ||
             capture.unknownOffset != capture.valueOffset + capture.planeSize ||
             capture.unknownOffset > canonicalSize ||
             capture.planeSize > canonicalSize - capture.unknownOffset)
           return reject(__LINE__, "invalid four-state capture plane layout",
+                        functionIndex);
+      } else if (layout.kind == OBELISK_RT_DBREG_MANAGED_REF) {
+        if (capture.planeSize * 2 != layout.size ||
+            capture.unknownOffset != capture.valueOffset + capture.planeSize ||
+            capture.unknownOffset > canonicalSize ||
+            capture.planeSize > canonicalSize - capture.unknownOffset)
+          return reject(__LINE__, "invalid managed-reference capture layout",
                         functionIndex);
       } else if (capture.unknownOffset != UINT64_MAX ||
                  ((layout.kind == OBELISK_RT_DBREG_HANDLE)

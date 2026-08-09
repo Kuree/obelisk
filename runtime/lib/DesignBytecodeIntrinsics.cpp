@@ -1499,10 +1499,17 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       }
       std::memcpy(task.frame.data() + capture.valueOffset,
                   frame.data + source.offset, capture.planeSize);
-      if (capture.unknownOffset != UINT64_MAX)
+      if (capture.unknownOffset != UINT64_MAX) {
+        // Four-state registers use whole-limb planes, while the canonical
+        // activation frame may use a smaller target-ABI plane.
+        uint64_t sourcePlane =
+            source.kind == OBELISK_RT_DBREG_LOGIC
+                ? limbCount(source.width) * sizeof(uint64_t)
+                : capture.planeSize;
         std::memcpy(task.frame.data() + capture.unknownOffset,
-                    frame.data + source.offset + capture.planeSize,
+                    frame.data + source.offset + sourcePlane,
                     capture.planeSize);
+      }
     }
     if (copied != callee.argumentCount)
       return OBELISK_RT_INVALID_BYTECODE;
