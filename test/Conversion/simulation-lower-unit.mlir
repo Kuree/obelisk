@@ -18,6 +18,7 @@ module {
     obelisk_sim.code_unit.decl 9000004 in 0 initial hierarchy "test.units.unit_3.9000004"
     obelisk_sim.code_unit.decl 9000005 in 0 function hierarchy "test.units.compare.9000005"
     obelisk_sim.code_unit.decl 9000006 in 0 initial hierarchy "test.units.compound.9000006"
+    obelisk_sim.code_unit.decl 9000007 in 0 always_latch hierarchy "test.units.latch.9000007"
     obelisk_sim.scope.decl 0
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<8> design hierarchy "top.a"
     obelisk_sim.storage.decl 1 in 0 : !obelisk_sim.logic<8> design hierarchy "top.b"
@@ -80,7 +81,10 @@ module {
     // CHECK: cf.br ^[[HDR:.*]]
     // CHECK: ^[[HDR]]:
     // CHECK: %[[V:.*]] = obelisk_sim.ref.load %arg1
-    // CHECK: obelisk_sim.ref.store %[[V]] to %arg2
+    // An always_comb publication remains an active driver beneath force, so
+    // release can reveal its latest value without waiting for another input
+    // transition.
+    // CHECK: obelisk_sim.ref.store %[[V]] to %arg2 {obelisk_sim.continuous_store}
     // CHECK: obelisk_sim.suspend.change %arg1 to ^[[HDR]]
     obelisk_sim.func @unit_1(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
@@ -96,6 +100,32 @@ module {
           obelisk.sv.expression.named_value attributes {node_id = 22 : i64, referenced_path = "top.b", referenced_symbol = @b, semantic_type = !logic8} {
           }
           obelisk.sv.expression.named_value attributes {node_id = 23 : i64, referenced_path = "top.a", referenced_symbol = @a, semantic_type = !logic8} {
+          }
+        }
+      }
+      obelisk_sim.return
+    }
+
+    // always_latch has the same persistent procedural-continuous publication
+    // semantics as always_comb, while still suspending on its read set.
+    // CHECK-LABEL: obelisk_sim.func @latch
+    // CHECK: %[[LATCH_V:.*]] = obelisk_sim.ref.load %arg1
+    // CHECK: obelisk_sim.ref.store %[[LATCH_V]] to %arg2 {obelisk_sim.continuous_store}
+    // CHECK: obelisk_sim.suspend.change %arg1
+    obelisk_sim.func @latch(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %a: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64},
+        %b: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64})
+        attributes {entry_kind = 6 : i32, obelisk_sim.delay_scale = 1 : i64,
+                    obelisk_sim.bindings = [
+                      #obelisk_sim.argument_binding<path = "top.a", argument = 1, kind = direct, copyOut = false>,
+                      #obelisk_sim.argument_binding<path = "top.b", argument = 2, kind = direct, copyOut = false>],
+                    code_unit_id = 9000007 : i64} {
+      obelisk.sv.statement.expression_statement attributes {node_id = 70 : i64} {
+        obelisk.sv.expression.assignment attributes {node_id = 71 : i64, assignment_kind = 0 : i32, semantic_type = !logic8} {
+          obelisk.sv.expression.named_value attributes {node_id = 72 : i64, referenced_path = "top.b", referenced_symbol = @b, semantic_type = !logic8} {
+          }
+          obelisk.sv.expression.named_value attributes {node_id = 73 : i64, referenced_path = "top.a", referenced_symbol = @a, semantic_type = !logic8} {
           }
         }
       }
