@@ -1358,6 +1358,16 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
     FailureOr<Type> target = getNormalizedSemanticType(op);
     if (failed(target))
       return failure();
+    // A string literal's packed representation is only an intermediate
+    // expression type. Preserve the literal byte payload when an explicit
+    // semantic conversion gives it string context. In particular, Slang
+    // represents the empty literal as an 8-bit zero value; converting that
+    // packed value would create a one-byte NUL string instead of an empty
+    // string.
+    if (isa<sim::StringType>(*target) &&
+        isa<semantic::SVStringLiteralOp>(children.front()))
+      return lowerStringLiteralValue(builder, children.front(), *target,
+                                     getSemanticLocation(op));
     if (isa<semantic::SVNullLiteralOp>(children.front())) {
       if (isa<sim::ClassHandleType>(*target))
         return sim::SimClassNullOp::create(builder, getSemanticLocation(op),
