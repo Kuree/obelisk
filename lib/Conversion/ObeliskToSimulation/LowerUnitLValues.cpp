@@ -287,6 +287,11 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
   }
   captured.reference = *reference;
   captured.type = elementType;
+  if (auto slice = (*reference).getDefiningOp<sim::SimRefDynExtractOp>()) {
+    captured.kind = CapturedLValue::Kind::PackedDynamicSlice;
+    captured.reference = slice.getInput();
+    captured.index = slice.getLowBit();
+  }
   return captured;
 }
 
@@ -296,6 +301,12 @@ UnitLowering::loadCapturedLValue(const CapturedLValue &destination,
   switch (destination.kind) {
   case CapturedLValue::Kind::Reference:
     return loadReference(destination.reference, location);
+  case CapturedLValue::Kind::PackedDynamicSlice: {
+    Type selected = sim::RefType::get(function.getContext(), destination.type);
+    Value reference = sim::SimRefDynExtractOp::create(
+        builder, location, selected, destination.reference, destination.index);
+    return loadReference(reference, location);
+  }
   case CapturedLValue::Kind::ContainerElement:
     return sim::SimContainerReadOp::create(builder, location, destination.type,
                                            destination.container,
@@ -436,6 +447,8 @@ bool UnitLowering::haveSameCapturedStorage(const CapturedLValue &lhs,
            lhsField.getObject() == rhsField.getObject() &&
            lhsField.getFieldAttr() == rhsField.getFieldAttr();
   }
+  case CapturedLValue::Kind::PackedDynamicSlice:
+    return false;
   case CapturedLValue::Kind::AggregateElement:
     return lhs.ordinal == rhs.ordinal && lhs.children.size() == 1 &&
            rhs.children.size() == 1 &&
@@ -538,6 +551,157 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
     } else {
       return failure();
     }
+    return success();
+  }
+  case CapturedLValue::Kind::PackedDynamicSlice: {
+    FailureOr<Value> converted =
+        convert(value, destination.type, sourceSigned, location,
+                isSignedNode(destination.semanticNode));
+    FailureOr<Value> scalar = succeeded(converted)
+                                  ? toPackedScalar(*converted, location)
+                                  : FailureOr<Value>(failure());
+    auto baseReference =
+        dyn_cast<sim::RefType>(destination.reference.getType());
+    std::optional<unsigned> baseWidth =
+        baseReference ? sim::getPackedWidth(baseReference.getElementType())
+                      : std::nullopt;
+    std::optional<unsigned> resultWidth = sim::getPackedWidth(destination.type);
+    if (failed(converted) || failed(scalar) || !baseWidth || !resultWidth)
+      return failure();
+    const unsigned baseBitWidth = baseWidth.value();
+    const unsigned selectedBitWidth = resultWidth.value();
+    if (selectedBitWidth == 0 || selectedBitWidth > baseBitWidth)
+      return failure();
+
+    // A dynamic packed reference cannot by itself carry its declaration
+    // boundary when its stable handle is global. Split partial overlaps into
+    // clipped, in-range references. The surviving lvalue is rebased to the
+    // low bits of the replacement, matching indexed part-select assignment
+    // behavior at either declaration boundary. Sliced NBAs remain narrow and
+    // therefore compose with other sliced NBAs.
+    Value low = destination.index;
+    Value known = arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+    if (auto logic = dyn_cast<sim::LogicType>(low.getType())) {
+      auto bitsType = builder.getIntegerType(logic.getWidth());
+      Value bits =
+          sim::SimLogicToBitsOp::create(builder, location, bitsType, low);
+      Value roundTrip =
+          sim::SimLogicFromBitsOp::create(builder, location, logic, bits);
+      known = sim::SimLogicCompareOp::create(
+          builder, location, builder.getI1Type(), sim::CompareKind::CaseEq, low,
+          roundTrip);
+      low = bits;
+    }
+    auto lowType = dyn_cast<IntegerType>(low.getType());
+    if (!lowType)
+      return failure();
+
+    auto constant = [&](int64_t value) -> Value {
+      return arith::ConstantOp::create(
+          builder, location, lowType,
+          builder.getIntegerAttr(
+              lowType,
+              APInt(lowType.getWidth(), static_cast<uint64_t>(value), true)));
+    };
+    auto branchToResume = [&](Block *resume) {
+      if (current->empty() ||
+          !current->back().hasTrait<OpTrait::IsTerminator>())
+        cf::BranchOp::create(builder, location, resume);
+    };
+    auto writePart = [&](unsigned baseLow, unsigned width) -> LogicalResult {
+      Value replacement;
+      Type replacementType;
+      if (auto logic = dyn_cast<sim::LogicType>((*scalar).getType())) {
+        replacementType = sim::LogicType::get(function.getContext(), width);
+        replacement = sim::SimLogicExtractOp::create(
+            builder, location, replacementType, *scalar,
+            builder.getI64IntegerAttr(0));
+      } else if (auto integer = dyn_cast<IntegerType>((*scalar).getType())) {
+        replacementType = builder.getIntegerType(width);
+        replacement = replacementType == integer
+                          ? *scalar
+                          : Value(arith::TruncIOp::create(
+                                builder, location, replacementType, *scalar));
+      } else {
+        return failure();
+      }
+      Type referenceType =
+          sim::RefType::get(function.getContext(), replacementType);
+      Value reference = sim::SimRefExtractOp::create(
+          builder, location, referenceType, destination.reference,
+          builder.getI64IntegerAttr(baseLow));
+      CapturedLValue part;
+      part.semanticNode = destination.semanticNode;
+      part.type = replacementType;
+      part.reference = reference;
+      return writeCapturedLValue(part, replacement, false, nonblocking,
+                                 location, delay);
+    };
+
+    Block *dispatch = addBlock();
+    Block *resume = addBlock();
+    cf::CondBranchOp::create(builder, location, known, dispatch, ValueRange{},
+                             resume, ValueRange{});
+    setCurrent(dispatch);
+    Value nonnegative = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::sge, low, constant(0));
+    Value atMostFull = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::sle, low,
+        constant(static_cast<int64_t>(baseBitWidth - selectedBitWidth)));
+    Value fullyInRange =
+        arith::AndIOp::create(builder, location, nonnegative, atMostFull);
+    Block *full = addBlock();
+    Block *partial = addBlock();
+    cf::CondBranchOp::create(builder, location, fullyInRange, full,
+                             ValueRange{}, partial, ValueRange{});
+
+    setCurrent(full);
+    Type selectedType =
+        sim::RefType::get(function.getContext(), destination.type);
+    CapturedLValue selected;
+    selected.semanticNode = destination.semanticNode;
+    selected.type = destination.type;
+    selected.reference = sim::SimRefDynExtractOp::create(
+        builder, location, selectedType, destination.reference,
+        destination.index);
+    if (failed(writeCapturedLValue(selected, *converted, false, nonblocking,
+                                   location, delay)))
+      return failure();
+    branchToResume(resume);
+
+    setCurrent(partial);
+    for (unsigned clipped = 1; clipped < selectedBitWidth; ++clipped) {
+      Value matches =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                low, constant(-static_cast<int64_t>(clipped)));
+      Block *write = addBlock();
+      Block *next = addBlock();
+      cf::CondBranchOp::create(builder, location, matches, write, ValueRange{},
+                               next, ValueRange{});
+      setCurrent(write);
+      if (failed(writePart(/*baseLow=*/0, selectedBitWidth - clipped)))
+        return failure();
+      branchToResume(resume);
+      setCurrent(next);
+    }
+    for (unsigned overlap = 1; overlap < selectedBitWidth; ++overlap) {
+      unsigned selectedLow = baseBitWidth - overlap;
+      Value matches = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq, low,
+          constant(static_cast<int64_t>(selectedLow)));
+      Block *write = addBlock();
+      Block *next = addBlock();
+      cf::CondBranchOp::create(builder, location, matches, write, ValueRange{},
+                               next, ValueRange{});
+      setCurrent(write);
+      if (failed(writePart(selectedLow, overlap)))
+        return failure();
+      branchToResume(resume);
+      setCurrent(next);
+    }
+    branchToResume(resume);
+    setCurrent(resume);
     return success();
   }
   case CapturedLValue::Kind::ContainerElement: {
@@ -761,7 +925,8 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
 
 void UnitLowering::appendCapturedValues(const CapturedLValue &destination,
                                         SmallVectorImpl<Value> &values) {
-  if (destination.kind == CapturedLValue::Kind::Reference)
+  if (destination.kind == CapturedLValue::Kind::Reference ||
+      destination.kind == CapturedLValue::Kind::PackedDynamicSlice)
     values.push_back(destination.reference);
   for (const CapturedLValue &child : destination.children)
     appendCapturedValues(child, values);
@@ -769,7 +934,8 @@ void UnitLowering::appendCapturedValues(const CapturedLValue &destination,
       destination.kind == CapturedLValue::Kind::AssociativeElement) {
     values.push_back(destination.container);
     values.push_back(destination.index);
-  } else if (destination.kind == CapturedLValue::Kind::StringCharacter) {
+  } else if (destination.kind == CapturedLValue::Kind::StringCharacter ||
+             destination.kind == CapturedLValue::Kind::PackedDynamicSlice) {
     values.push_back(destination.index);
   }
 }
@@ -777,7 +943,8 @@ void UnitLowering::appendCapturedValues(const CapturedLValue &destination,
 LogicalResult UnitLowering::replaceCapturedValues(CapturedLValue &destination,
                                                   ValueRange values,
                                                   unsigned &next) {
-  if (destination.kind == CapturedLValue::Kind::Reference) {
+  if (destination.kind == CapturedLValue::Kind::Reference ||
+      destination.kind == CapturedLValue::Kind::PackedDynamicSlice) {
     if (next >= values.size())
       return failure();
     destination.reference = values[next++];
@@ -792,7 +959,8 @@ LogicalResult UnitLowering::replaceCapturedValues(CapturedLValue &destination,
       return failure();
     destination.container = values[next++];
     destination.index = values[next++];
-  } else if (destination.kind == CapturedLValue::Kind::StringCharacter) {
+  } else if (destination.kind == CapturedLValue::Kind::StringCharacter ||
+             destination.kind == CapturedLValue::Kind::PackedDynamicSlice) {
     if (next >= values.size())
       return failure();
     destination.index = values[next++];

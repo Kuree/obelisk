@@ -48,6 +48,7 @@ private:
   struct CapturedLValue {
     enum class Kind {
       Reference,
+      PackedDynamicSlice,
       ContainerElement,
       AssociativeElement,
       AggregateElement,
