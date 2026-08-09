@@ -450,7 +450,8 @@ FailureOr<Value> UnitLowering::lowerReplication(Operation *op) {
     return failure();
   }
   input = *scalarInput;
-  if (!count->unknown.isZero() || count->value.isZero()) {
+  if (!count->unknown.isZero() || count->value.isZero() ||
+      count->value.isNegative()) {
     emitError(location) << "replication count must be a known positive value";
     return failure();
   }

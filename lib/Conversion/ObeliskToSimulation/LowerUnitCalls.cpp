@@ -3110,10 +3110,109 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       instruction(opcode, *width, signedOperation);
       return success();
     }
-    if (isa<semantic::SVConditionalExpressionOp>(expression)) {
-      if (nested.size() != 3 || failed(emitProgramExpression(nested[0])) ||
-          failed(emitProgramExpression(nested[1])) ||
-          failed(emitProgramExpression(nested[2])))
+    if (isa<semantic::SVConcatenationExpressionOp>(expression)) {
+      if (nested.empty()) {
+        emitError(getSemanticLocation(expression))
+            << "runtime random concatenation cannot be empty";
+        return failure();
+      }
+      SmallVector<unsigned> inputWidths;
+      uint64_t combinedWidth = 0;
+      for (Operation *input : nested) {
+        FailureOr<unsigned> inputWidth = expressionWidth(input);
+        if (failed(inputWidth) ||
+            combinedWidth > std::numeric_limits<unsigned>::max() -
+                                *inputWidth)
+          return failure();
+        combinedWidth += *inputWidth;
+        inputWidths.push_back(*inputWidth);
+      }
+      if (combinedWidth != *width) {
+        emitError(getSemanticLocation(expression))
+            << "runtime random concatenation width is inconsistent";
+        return failure();
+      }
+      if (failed(emitProgramExpression(nested.front())))
+        return failure();
+      unsigned materializedWidth = inputWidths.front();
+      for (auto [input, inputWidth] :
+           llvm::zip_equal(ArrayRef(nested).drop_front(),
+                           ArrayRef(inputWidths).drop_front())) {
+        materializedWidth += inputWidth;
+        instruction(OBELISK_RT_RANDOM_CAST_V1, materializedWidth,
+                    /*isSigned=*/false);
+        literalInstruction(materializedWidth, /*isSigned=*/false,
+                           APInt(materializedWidth, inputWidth));
+        instruction(OBELISK_RT_RANDOM_SHIFT_LEFT_V1, materializedWidth,
+                    /*isSigned=*/false);
+        if (failed(emitProgramExpression(input)))
+          return failure();
+        instruction(OBELISK_RT_RANDOM_BIT_OR_V1, materializedWidth,
+                    /*isSigned=*/false);
+      }
+      if (nested.size() == 1)
+        instruction(OBELISK_RT_RANDOM_CAST_V1, *width,
+                    /*isSigned=*/false);
+      return success();
+    }
+    if (isa<semantic::SVReplicationExpressionOp>(expression)) {
+      if (nested.size() != 2) {
+        emitError(getSemanticLocation(expression))
+            << "runtime random replication has malformed operands";
+        return failure();
+      }
+      FailureOr<unsigned> countWidth = expressionWidth(nested[0]);
+      FailureOr<unsigned> inputWidth = expressionWidth(nested[1]);
+      std::optional<StringRef> spelling = getConstantSpelling(nested[0]);
+      FailureOr<ParsedConstant> count =
+          succeeded(countWidth) && spelling
+              ? parseSVInteger(*spelling, *countWidth,
+                               getSemanticLocation(nested[0]))
+              : FailureOr<ParsedConstant>(failure());
+      if (failed(count) || !count->unknown.isZero() || count->value.isZero() ||
+          count->value.isNegative() || failed(inputWidth)) {
+        emitError(getSemanticLocation(expression))
+            << "runtime random replication requires a known positive count";
+        return failure();
+      }
+      uint64_t repetitions = count->value.getZExtValue();
+      if (repetitions > std::numeric_limits<unsigned>::max() / *inputWidth ||
+          repetitions * *inputWidth != *width) {
+        emitError(getSemanticLocation(expression))
+            << "runtime random replication width is inconsistent";
+        return failure();
+      }
+      if (failed(emitProgramExpression(nested[1])))
+        return failure();
+      APInt multiplier = APInt::getZero(*width);
+      for (uint64_t index = 0; index != repetitions; ++index)
+        multiplier.setBit(static_cast<unsigned>(index * *inputWidth));
+      literalInstruction(*width, /*isSigned=*/false, multiplier);
+      instruction(OBELISK_RT_RANDOM_MUL_V1, *width, /*isSigned=*/false);
+      return success();
+    }
+    if (auto conditional =
+            dyn_cast<semantic::SVConditionalExpressionOp>(expression)) {
+      ArrayRef<int64_t> patternFlags = conditional.getConditionPatternFlags();
+      uint64_t conditionCount = conditional.getConditionCount();
+      if (conditionCount == 0 || patternFlags.size() != conditionCount ||
+          llvm::any_of(patternFlags, [](int64_t flag) { return flag != 0; }) ||
+          nested.size() != conditionCount + 2) {
+        emitError(getSemanticLocation(expression))
+            << "runtime random conditional requires one or more "
+               "non-pattern conditions";
+        return failure();
+      }
+      if (failed(emitProgramExpression(nested.front())))
+        return failure();
+      for (Operation *condition :
+           ArrayRef(nested).slice(1, conditionCount - 1)) {
+        if (failed(emitProgramExpression(condition)))
+          return failure();
+        instruction(OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1);
+      }
+      if (failed(emitProgramExpression(nested[conditionCount])) ||
+          failed(emitProgramExpression(nested[conditionCount + 1])))
         return failure();
       instruction(OBELISK_RT_RANDOM_SELECT_V1, *width,
                   isSignedNode(expression));

@@ -165,6 +165,39 @@ TEST_F(RandSolveTest, SolvesHardConstraintWithDynamicCapture) {
   EXPECT_EQ(assignment, 7u);
 }
 
+TEST_F(RandSolveTest, ExecutesConcatenationAndReplicationEncoding) {
+  // The compiler encodes {x, 2'b01} as an unsigned widen/shift/or sequence
+  // and {2{x}} as multiplication by the non-overlapping placement mask 5.
+  // Exercise those exact residual-program shapes end to end.
+  std::vector<uint8_t> bytes = program(
+      10, 0,
+      {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4, 0, 2},
+       {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2, 0, 0},
+       {OBELISK_RT_RANDOM_CAST_V1, 4},
+       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 2},
+       {OBELISK_RT_RANDOM_SHIFT_LEFT_V1, 4},
+       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 1},
+       {OBELISK_RT_RANDOM_BIT_OR_V1, 4},
+       {OBELISK_RT_RANDOM_EQ_V1, 1},
+       {OBELISK_RT_RANDOM_END_HARD_V1, 1},
+       {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4, 0, 6},
+       {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2, 0, 0},
+       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 5},
+       {OBELISK_RT_RANDOM_MUL_V1, 4},
+       {OBELISK_RT_RANDOM_EQ_V1, 1},
+       {OBELISK_RT_RANDOM_END_HARD_V1, 1}});
+  uint64_t assignment = 0;
+  uint32_t success = 0;
+  EXPECT_EQ(obelisk_rt_v1_random_solve(context, bytes.data(), bytes.size(), 0,
+                                       1024, nullptr, 0, &assignment,
+                                       &success),
+            OBELISK_RT_OK);
+  ASSERT_EQ(success, 1u);
+  uint64_t x = assignment & 3;
+  EXPECT_EQ((assignment >> 2) & 15, (x << 2) | 1);
+  EXPECT_EQ((assignment >> 6) & 15, x * 5);
+}
+
 TEST_F(RandSolveTest, TraversesSparseFiniteDomainInsteadOfUnderlyingBits) {
   std::vector<uint8_t> bytes = program(
       32, 0,
