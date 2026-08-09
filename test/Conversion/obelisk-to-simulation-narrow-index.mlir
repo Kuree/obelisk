@@ -87,7 +87,8 @@ module {
 
 // CHECK: %[[UNSIGNED_RAW:.*]] = obelisk_sim.ref.load {{.*}} -> !obelisk_sim.logic<1>
 // CHECK: %[[UNSIGNED:.*]] = obelisk_sim.logic.resize %[[UNSIGNED_RAW]] signed = false : !obelisk_sim.logic<1> -> !obelisk_sim.logic<65>
-// CHECK: obelisk_sim.array.extract_dynamic {{.*}}[%[[UNSIGNED]]]
+// CHECK: %[[UNSIGNED_ELEMENT:.*]] = obelisk_sim.ref.array_element {{.*}}[%[[UNSIGNED]]]
+// CHECK: obelisk_sim.ref.load %[[UNSIGNED_ELEMENT]]
 
 // CHECK: %[[PART_RAW:.*]] = obelisk_sim.ref.load {{.*}} -> !obelisk_sim.logic<1>
 // CHECK: %[[PART_INDEX:.*]] = obelisk_sim.logic.resize %[[PART_RAW]] signed = false : !obelisk_sim.logic<1> -> !obelisk_sim.logic<66>
@@ -96,9 +97,11 @@ module {
 
 // CHECK: %[[SIGNED_RAW:.*]] = obelisk_sim.ref.load {{.*}} -> !obelisk_sim.logic<1>
 // CHECK: %[[SIGNED:.*]] = obelisk_sim.logic.resize %[[SIGNED_RAW]] signed = true : !obelisk_sim.logic<1> -> !obelisk_sim.logic<65>
-// CHECK: obelisk_sim.array.extract_dynamic {{.*}}[%[[SIGNED]]]
+// CHECK: %[[SIGNED_ELEMENT:.*]] = obelisk_sim.ref.array_element {{.*}}[%[[SIGNED]]]
+// CHECK: obelisk_sim.ref.load %[[SIGNED_ELEMENT]]
 
 // CHECK: %[[BIT_RAW:.*]] = obelisk_sim.ref.load {{.*}} -> i1
 // CHECK: %[[BIT_INDEX:.*]] = arith.extui %[[BIT_RAW]] : i1 to i65
-// CHECK: obelisk_sim.array.extract_dynamic {{.*}}[%[[BIT_INDEX]]]
+// CHECK: %[[BIT_INDEX_ELEMENT:.*]] = obelisk_sim.ref.array_element {{.*}}[%[[BIT_INDEX]]]
+// CHECK: obelisk_sim.ref.load %[[BIT_INDEX_ELEMENT]]
 // CHECK-NOT: obelisk.sv.

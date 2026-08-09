@@ -1393,8 +1393,21 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
         if (isOverride)
           return OBELISK_RT_INVALID_HANDLE;
         if (descriptorKind != OBELISK_RT_DESCRIPTOR_STORAGE ||
-            valueLayout.width != 64 || start < 0 || start % 64 != 0 ||
-            end - start < 64 || local)
+            valueLayout.width != 64 || local)
+          return OBELISK_RT_INVALID_HANDLE;
+        // A view whose window falls outside the storage denotes no storage --
+        // an out-of-range dynamic array element, say. The load then yields the
+        // element default and the store is dropped, which is what the packed
+        // path below does per bit. Misalignment stays an error: no view can
+        // produce it, so it would mean a malformed image.
+        if (start == kInvalidHandleStart || start < 0 || end - start < 64) {
+          if (isLoad) {
+            obelisk_rt_object_v1 *none = nullptr;
+            std::memcpy(frame.data + valueLayout.offset, &none, sizeof(none));
+          }
+          break;
+        }
+        if (start % 64 != 0)
           return OBELISK_RT_INVALID_HANDLE;
         obelisk_rt_object_v1 *managed = nullptr;
         obelisk_rt_object_v1 *previous = nullptr;

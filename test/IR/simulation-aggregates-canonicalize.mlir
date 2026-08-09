@@ -241,3 +241,31 @@ func.func @scalar_inverse(%bits: i16) -> i16 {
   %copy = obelisk_sim.packed.flatten %packed : (!packed) -> i16
   return %copy : i16
 }
+
+// A dynamic read of a loaded array addresses the element instead, so a large
+// array never becomes a multi-kilobit value indexed by a full-width shift.
+// CHECK-LABEL: func.func @dynamic_extract_through_reference
+// CHECK-NOT: obelisk_sim.ref.load %arg0
+// CHECK: %[[ELEMENT:.*]] = obelisk_sim.ref.array_element %arg0[%arg1]
+// CHECK: %[[VALUE:.*]] = obelisk_sim.ref.load %[[ELEMENT]]
+// CHECK: return %[[VALUE]] : i8
+func.func @dynamic_extract_through_reference(
+    %reference: !obelisk_sim.ref<!array>, %index: i32) -> i8 {
+  %array = obelisk_sim.ref.load %reference : !obelisk_sim.ref<!array> -> !array
+  %value = obelisk_sim.array.extract_dynamic %array[%index] : (!array, i32) -> i8
+  return %value : i8
+}
+
+// The narrow read may not sink past a store: it would observe a newer value
+// than the wide load did.
+// CHECK-LABEL: func.func @dynamic_extract_keeps_store_order
+// CHECK: obelisk_sim.ref.load %arg0
+// CHECK: obelisk_sim.ref.store
+// CHECK: obelisk_sim.array.extract_dynamic
+func.func @dynamic_extract_keeps_store_order(
+    %reference: !obelisk_sim.ref<!array>, %index: i32, %replacement: !array) -> i8 {
+  %array = obelisk_sim.ref.load %reference : !obelisk_sim.ref<!array> -> !array
+  obelisk_sim.ref.store %replacement to %reference : !array, !obelisk_sim.ref<!array>
+  %value = obelisk_sim.array.extract_dynamic %array[%index] : (!array, i32) -> i8
+  return %value : i8
+}

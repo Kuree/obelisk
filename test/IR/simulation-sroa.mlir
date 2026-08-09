@@ -207,10 +207,12 @@ module {
     }
 
     // A pure dynamic read of a loaded value also blocks that array's SROA.
+    // Canonicalization turns the read into the reference form, so this matches
+    // @dynamic_ref_blocks_array above; the array still must not be destructured.
     // CHECK-LABEL: obelisk_sim.func @dynamic_value_blocks_array
     // CHECK: obelisk_sim.ref.alloc {{.*}} : !obelisk_sim.unpacked_array<0 : 63 x i8> -> !obelisk_sim.ref<!obelisk_sim.unpacked_array<0 : 63 x i8>>
-    // CHECK: obelisk_sim.ref.load {{.*}} -> !obelisk_sim.unpacked_array<0 : 63 x i8>
-    // CHECK: obelisk_sim.array.extract_dynamic
+    // CHECK: %[[ELEMENT:.*]] = obelisk_sim.ref.array_element
+    // CHECK: obelisk_sim.ref.load %[[ELEMENT]]
     obelisk_sim.func @dynamic_value_blocks_array(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %index: i64 {obelisk_sim.capture_kind = 2 : i32}) -> i8
@@ -226,7 +228,7 @@ module {
     // CHECK-LABEL: obelisk_sim.func @dynamic_value_safe_enclosing
     // CHECK-NOT: !obelisk_sim.ref<!obelisk_sim.unpacked_struct
     // CHECK: obelisk_sim.ref.alloc {{.*}} : !obelisk_sim.unpacked_array<0 : 63 x i8> -> !obelisk_sim.ref<!obelisk_sim.unpacked_array<0 : 63 x i8>>
-    // CHECK: obelisk_sim.array.extract_dynamic
+    // CHECK: obelisk_sim.ref.array_element
     obelisk_sim.func @dynamic_value_safe_enclosing(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %index: i64 {obelisk_sim.capture_kind = 2 : i32}) -> i8

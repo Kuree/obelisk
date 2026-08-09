@@ -8,6 +8,7 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
@@ -6238,6 +6239,53 @@ struct ConstantArrayExtract final : OpRewritePattern<SimArrayDynExtractOp> {
   }
 };
 
+// Conservatively true unless the operation is known not to write memory. An
+// operation with regions or without the effect interface is assumed to write.
+static bool mayWriteMemory(Operation *op) {
+  if (isMemoryEffectFree(op))
+    return false;
+  if (op->getNumRegions() != 0)
+    return true;
+  auto interface = dyn_cast<MemoryEffectOpInterface>(op);
+  if (!interface)
+    return true;
+  return interface.hasEffect<MemoryEffects::Write>() ||
+         interface.hasEffect<MemoryEffects::Free>();
+}
+
+// Read one element through the reference instead of loading the whole array
+// and selecting out of the loaded value, mirroring what SimplifyAggregateExtract
+// does for a constant ordinal. Without this a dynamically indexed read of a
+// large array becomes a multi-kilobit SSA value and a full-width shift, which
+// is quadratic to analyze and needlessly slow to run.
+struct DynamicArrayExtractThroughReference final
+    : OpRewritePattern<SimArrayDynExtractOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimArrayDynExtractOp op,
+                                PatternRewriter &rewriter) const override {
+    auto load = op.getInput().getDefiningOp<SimRefLoadOp>();
+    if (!load)
+      return failure();
+    // The index is usually computed after the wide load, so the narrow read is
+    // built here rather than in the load's place. Sinking a read past other
+    // reads is fine; anything that may write could make it observe a newer
+    // value than the load did.
+    if (load->getBlock() != op->getBlock())
+      return failure();
+    for (Operation *between = load->getNextNode(); between != op;
+         between = between->getNextNode())
+      if (!between || mayWriteMemory(between))
+        return failure();
+    Type refType = RefType::get(op.getContext(), op.getResult().getType());
+    auto view = SimRefArrayElementOp::create(
+        rewriter, op.getLoc(), refType, load.getReference(), op.getIndex());
+    rewriter.replaceOpWithNewOp<SimRefLoadOp>(op, op.getResult().getType(),
+                                              view.getResult());
+    return success();
+  }
+};
+
 template <typename DynamicOp, typename StaticOp>
 struct ConstantArrayView final : OpRewritePattern<DynamicOp> {
   using OpRewritePattern<DynamicOp>::OpRewritePattern;
@@ -6310,7 +6358,8 @@ void SimAggregateInsertOp::getCanonicalizationPatterns(
 
 void SimArrayDynExtractOp::getCanonicalizationPatterns(
     RewritePatternSet &results, MLIRContext *context) {
-  results.add<ConstantArrayExtract>(context);
+  results.add<ConstantArrayExtract, DynamicArrayExtractThroughReference>(
+      context);
 }
 
 void SimUnionConstructOp::getCanonicalizationPatterns(RewritePatternSet &,

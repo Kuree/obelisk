@@ -481,7 +481,10 @@ module {
 // CHECK: obelisk_sim.ref.subelement {{.*}}{{\[\[1\]\]}} : !obelisk_sim.ref<!obelisk_sim.unpacked_array<3 : 1
 // CHECK: %[[DYNAMIC_WRITE:.*]] = obelisk_sim.ref.array_element
 // CHECK: obelisk_sim.ref.store {{.*}} to %[[DYNAMIC_WRITE]]
-// CHECK: obelisk_sim.array.extract_dynamic
+// A dynamic element read addresses the element instead of loading the whole
+// array and selecting out of the loaded value.
+// CHECK: %[[DYNAMIC_READ:.*]] = obelisk_sim.ref.array_element
+// CHECK: obelisk_sim.ref.load %[[DYNAMIC_READ]]
 // Ascending range [-1:1] maps source indices -1 and 1 to ordinals 0 and 2.
 // CHECK: obelisk_sim.ref.subelement {{.*}}{{\[\[0\]\]}} : !obelisk_sim.ref<!obelisk_sim.unpacked_array<-1 : 1
 // CHECK: obelisk_sim.ref.subelement {{.*}}{{\[\[2\]\]}} : !obelisk_sim.ref<!obelisk_sim.unpacked_array<-1 : 1

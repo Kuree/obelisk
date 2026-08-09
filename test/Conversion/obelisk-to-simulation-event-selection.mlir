@@ -42,5 +42,6 @@ module {
 // CHECK: obelisk_sim.suspend.observe
 // CHECK-SAME: conditions 0 edges [0] indices [-1]
 // CHECK: obelisk_sim.func private @observer_
-// CHECK: obelisk_sim.array.extract_dynamic
+// CHECK: %[[ELEMENT:.*]] = obelisk_sim.ref.array_element
+// CHECK: obelisk_sim.ref.load %[[ELEMENT]]
 // CHECK-NOT: obelisk.sv.
