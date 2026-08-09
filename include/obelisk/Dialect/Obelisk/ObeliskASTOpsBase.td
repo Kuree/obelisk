@@ -20,6 +20,10 @@ def ObeliskVerifyRepetitionMetadata
     : NativeOpTrait<"VerifyRepetitionMetadata">;
 def ObeliskVerifySequenceRangeMetadata
     : NativeOpTrait<"VerifySequenceRangeMetadata">;
+def ObeliskVerifyAssertionDeclarationMetadata
+    : NativeOpTrait<"VerifyAssertionDeclarationMetadata">;
+def ObeliskVerifyAssertionInvocationMetadata
+    : NativeOpTrait<"VerifyAssertionInvocationMetadata">;
 
 class ObeliskASTNodeOp<string mnemonic, list<Trait> traits = [],
                        dag semanticArgs = (ins)>
@@ -202,6 +206,29 @@ class ObeliskClockVarASTNodeOp<string mnemonic>
         BoolAttr:$has_output_delay
       )>;
 
+class ObeliskClockingBlockASTNodeOp<string mnemonic>
+    : ObeliskSymbolTableASTNodeOp<mnemonic, (ins
+        BoolAttr:$is_default,
+        BoolAttr:$is_global
+      )>;
+
+class ObeliskAssertionPortASTNodeOp<string mnemonic>
+    : ObeliskSymbolASTNodeOp<mnemonic, [ObeliskSemanticDeclarativeNode], (ins
+        OptionalAttr<ObeliskSVArgumentDirection>:$direction,
+        BoolAttr:$has_default_value,
+        BoolAttr:$is_local_variable
+      )>;
+
+class ObeliskAssertionDeclarationASTNodeOp<string mnemonic>
+    : ObeliskSymbolTableASTNodeOp<mnemonic, (ins
+        I64Attr:$port_count,
+        SymbolRefArrayAttr:$port_symbols,
+        StrArrayAttr:$port_paths,
+        BoolAttr:$has_default_instance,
+        OptionalAttr<SymbolRefAttr>:$default_clocking_symbol,
+        OptionalAttr<StrAttr>:$default_clocking_path
+      ), [ObeliskVerifyAssertionDeclarationMetadata]>;
+
 class ObeliskLocalAssertionVarASTNodeOp<string mnemonic>
     : ObeliskVariableSymbolASTNodeOp<mnemonic, (ins
         OptionalAttr<SymbolRefAttr>:$formal_port_symbol,
@@ -370,9 +397,26 @@ class ObeliskCoverageBinASTNodeOp<string mnemonic>
         I64Attr:$transition_set_count
       )>;
 
-class ObeliskExpressionASTNodeOp<string mnemonic, dag expressionArgs = (ins)>
-    : ObeliskASTNodeOp<mnemonic, [],
+class ObeliskExpressionASTNodeOp<string mnemonic, dag expressionArgs = (ins),
+                                 list<Trait> traits = []>
+    : ObeliskASTNodeOp<mnemonic, traits,
         !con((ins TypeAttr:$semantic_type), expressionArgs)>;
+
+class ObeliskAssertionInstanceExpressionASTNodeOp<string mnemonic>
+    : ObeliskExpressionASTNodeOp<mnemonic, (ins
+        SymbolRefAttr:$referenced_symbol,
+        StrAttr:$referenced_path,
+        I64Attr:$argument_count,
+        SymbolRefArrayAttr:$argument_formal_symbols,
+        StrArrayAttr:$argument_formal_paths,
+        DenseI64ArrayAttr:$argument_kinds,
+        I64Attr:$local_variable_count,
+        SymbolRefArrayAttr:$local_variable_symbols,
+        StrArrayAttr:$local_variable_paths,
+        DenseI64ArrayAttr:$local_variable_has_initializer,
+        BoolAttr:$is_recursive_property,
+        BoolAttr:$has_expanded_body
+      ), [ObeliskVerifyAssertionInvocationMetadata]>;
 
 class ObeliskStructuredAssignmentPatternASTNodeOp<string mnemonic>
     : ObeliskExpressionASTNodeOp<mnemonic, (ins
@@ -574,7 +618,10 @@ class ObeliskConcurrentAssertionStatementASTNodeOp<string mnemonic>
     : ObeliskASTNodeOp<mnemonic, [ObeliskSemanticDeclarativeNode], (ins
         ObeliskSVAssertionKind:$assertion_kind,
         BoolAttr:$has_pass_action,
-        BoolAttr:$has_fail_action
+        BoolAttr:$has_fail_action,
+        OptionalAttr<SymbolRefAttr>:$default_clocking_symbol,
+        OptionalAttr<StrAttr>:$default_clocking_path,
+        BoolAttr:$has_default_disable
       )>;
 
 class ObeliskProceduralAssignStatementASTNodeOp<string mnemonic>

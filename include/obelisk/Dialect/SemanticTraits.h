@@ -238,6 +238,55 @@ public:
   }
 };
 
+/// Checks the parallel arrays that describe a sequence or property signature.
+template <typename ConcreteType>
+class VerifyAssertionDeclarationMetadata
+    : public TraitBase<ConcreteType, VerifyAssertionDeclarationMetadata> {
+public:
+  static LogicalResult verifyTrait(Operation *op) {
+    ConcreteType concrete = cast<ConcreteType>(op);
+    size_t count = concrete.getPortCount();
+    if (concrete.getPortSymbols().size() != count ||
+        concrete.getPortPaths().size() != count)
+      return op->emitOpError()
+             << "requires port metadata arrays to match port_count";
+    return success();
+  }
+};
+
+/// Checks the parallel arrays that describe an expanded assertion invocation.
+template <typename ConcreteType>
+class VerifyAssertionInvocationMetadata
+    : public TraitBase<ConcreteType, VerifyAssertionInvocationMetadata> {
+public:
+  static LogicalResult verifyTrait(Operation *op) {
+    ConcreteType concrete = cast<ConcreteType>(op);
+    size_t argumentCount = concrete.getArgumentCount();
+    if (concrete.getArgumentFormalSymbols().size() != argumentCount ||
+        concrete.getArgumentFormalPaths().size() != argumentCount ||
+        concrete.getArgumentKinds().size() != argumentCount)
+      return op->emitOpError()
+             << "requires argument metadata arrays to match argument_count";
+
+    size_t localCount = concrete.getLocalVariableCount();
+    if (concrete.getLocalVariableSymbols().size() != localCount ||
+        concrete.getLocalVariablePaths().size() != localCount ||
+        concrete.getLocalVariableHasInitializer().size() != localCount)
+      return op->emitOpError()
+             << "requires local variable metadata arrays to match "
+                "local_variable_count";
+
+    for (int64_t kind : concrete.getArgumentKinds())
+      if (kind < 0 || kind > 2)
+        return op->emitOpError()
+               << "has invalid assertion actual argument kind " << kind;
+    if (concrete.getIsRecursiveProperty() && concrete.getHasExpandedBody())
+      return op->emitOpError()
+             << "cannot expand the body of a recursive property placeholder";
+    return success();
+  }
+};
+
 } // namespace mlir::OpTrait
 
 #endif // OBELISK_DIALECT_SEMANTICTRAITS_H

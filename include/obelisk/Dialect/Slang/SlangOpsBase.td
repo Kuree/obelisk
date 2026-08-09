@@ -19,6 +19,10 @@ def SlangVerifyRepetitionMetadata
     : NativeOpTrait<"VerifyRepetitionMetadata">;
 def SlangVerifySequenceRangeMetadata
     : NativeOpTrait<"VerifySequenceRangeMetadata">;
+def SlangVerifyAssertionDeclarationMetadata
+    : NativeOpTrait<"VerifyAssertionDeclarationMetadata">;
+def SlangVerifyAssertionInvocationMetadata
+    : NativeOpTrait<"VerifyAssertionInvocationMetadata">;
 
 // Only provenance is common to every semantic node. Category and kind data is
 // declared by the narrower schemas below so malformed operations are rejected
@@ -202,6 +206,29 @@ class SlangClockVarASTNodeOp<string mnemonic>
         BoolAttr:$has_output_delay
       )>;
 
+class SlangClockingBlockASTNodeOp<string mnemonic>
+    : SlangSymbolTableASTNodeOp<mnemonic, (ins
+        BoolAttr:$is_default,
+        BoolAttr:$is_global
+      )>;
+
+class SlangAssertionPortASTNodeOp<string mnemonic>
+    : SlangSymbolASTNodeOp<mnemonic, [SlangSemanticDeclarativeNode], (ins
+        OptionalAttr<SlangArgumentDirection>:$direction,
+        BoolAttr:$has_default_value,
+        BoolAttr:$is_local_variable
+      )>;
+
+class SlangAssertionDeclarationASTNodeOp<string mnemonic>
+    : SlangSymbolTableASTNodeOp<mnemonic, (ins
+        I64Attr:$port_count,
+        SymbolRefArrayAttr:$port_symbols,
+        StrArrayAttr:$port_paths,
+        BoolAttr:$has_default_instance,
+        OptionalAttr<SymbolRefAttr>:$default_clocking_symbol,
+        OptionalAttr<StrAttr>:$default_clocking_path
+      ), [SlangVerifyAssertionDeclarationMetadata]>;
+
 class SlangLocalAssertionVarASTNodeOp<string mnemonic>
     : SlangVariableSymbolASTNodeOp<mnemonic, (ins
         OptionalAttr<SymbolRefAttr>:$formal_port_symbol,
@@ -378,9 +405,26 @@ class SlangCoverageBinASTNodeOp<string mnemonic>
         I64Attr:$transition_set_count
       )>;
 
-class SlangExpressionASTNodeOp<string mnemonic, dag expressionArgs = (ins)>
-    : SlangASTNodeOp<mnemonic, [],
+class SlangExpressionASTNodeOp<string mnemonic, dag expressionArgs = (ins),
+                               list<Trait> traits = []>
+    : SlangASTNodeOp<mnemonic, traits,
         !con((ins TypeAttr:$semantic_type), expressionArgs)>;
+
+class SlangAssertionInstanceExpressionASTNodeOp<string mnemonic>
+    : SlangExpressionASTNodeOp<mnemonic, (ins
+        SymbolRefAttr:$referenced_symbol,
+        StrAttr:$referenced_path,
+        I64Attr:$argument_count,
+        SymbolRefArrayAttr:$argument_formal_symbols,
+        StrArrayAttr:$argument_formal_paths,
+        DenseI64ArrayAttr:$argument_kinds,
+        I64Attr:$local_variable_count,
+        SymbolRefArrayAttr:$local_variable_symbols,
+        StrArrayAttr:$local_variable_paths,
+        DenseI64ArrayAttr:$local_variable_has_initializer,
+        BoolAttr:$is_recursive_property,
+        BoolAttr:$has_expanded_body
+      ), [SlangVerifyAssertionInvocationMetadata]>;
 
 class SlangStructuredAssignmentPatternASTNodeOp<string mnemonic>
     : SlangExpressionASTNodeOp<mnemonic, (ins
@@ -582,7 +626,10 @@ class SlangConcurrentAssertionStatementASTNodeOp<string mnemonic>
     : SlangASTNodeOp<mnemonic, [SlangSemanticDeclarativeNode], (ins
         SlangAssertionKind:$assertion_kind,
         BoolAttr:$has_pass_action,
-        BoolAttr:$has_fail_action
+        BoolAttr:$has_fail_action,
+        OptionalAttr<SymbolRefAttr>:$default_clocking_symbol,
+        OptionalAttr<StrAttr>:$default_clocking_path,
+        BoolAttr:$has_default_disable
       )>;
 
 class SlangProceduralAssignStatementASTNodeOp<string mnemonic>

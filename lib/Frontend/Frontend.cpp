@@ -711,8 +711,10 @@ class SlangASTImporter
                                     slang::ast::VisitFlags::AllGood |
                                         slang::ast::VisitFlags::Bad> {
 public:
-  SlangASTImporter(ModuleOp module, const slang::SourceManager &sourceManager)
+  SlangASTImporter(ModuleOp module, const slang::SourceManager &sourceManager,
+                   const slang::ast::Compilation &compilation)
       : builder(module.getContext()), sourceManager(sourceManager),
+        compilation(compilation),
         typeConverter(module.getContext(),
                       [this](const slang::ast::Symbol &symbol) {
                         return getSemanticSymbolReference(symbol);
@@ -795,6 +797,29 @@ public:
       pending.operation->setAttr(
           pending.attributeName,
           SymbolRefAttr::get(builder.getContext(), targetPath.front(), nested));
+    }
+    for (const PendingReferenceArray &pending : pendingReferenceArrays) {
+      SmallVector<Attribute> references;
+      references.reserve(pending.targets.size());
+      for (const slang::ast::Symbol *symbol : pending.targets) {
+        auto target = emittedSymbolPaths.find(symbol);
+        if (target == emittedSymbolPaths.end()) {
+          pending.operation->emitError()
+              << "referenced slang symbol was not imported: "
+              << getSymbolPath(*symbol);
+          sawInvalidNode = true;
+          continue;
+        }
+        ArrayRef<std::string> targetPath = target->second;
+        SmallVector<FlatSymbolRefAttr> nested;
+        for (StringRef component : targetPath.drop_front())
+          nested.push_back(
+              FlatSymbolRefAttr::get(builder.getContext(), component));
+        references.push_back(SymbolRefAttr::get(
+            builder.getContext(), targetPath.front(), nested));
+      }
+      pending.operation->setAttr(pending.attributeName,
+                                 builder.getArrayAttr(references));
     }
     return success(!sawInvalidNode);
   }
@@ -1026,6 +1051,37 @@ private:
     setSymbolReference(attrs, symbol,
                        Op::getReferencedSymbolAttrName(operationName),
                        Op::getReferencedPathAttrName(operationName));
+  }
+
+  const slang::ast::Scope *getCurrentScope() const {
+    return currentScopes.empty() ? nullptr : currentScopes.back();
+  }
+
+  const slang::ast::Expression *getCurrentDefaultDisable() const {
+    if (const slang::ast::Scope *scope = getCurrentScope())
+      return compilation.getDefaultDisable(*scope);
+    return nullptr;
+  }
+
+  template <typename Op>
+  void addDefaultClocking(NamedAttrList &attrs,
+                          const slang::ast::Scope *scope) {
+    if (!scope)
+      return;
+    if (const slang::ast::Symbol *clocking =
+            compilation.getDefaultClocking(*scope)) {
+      OperationName operationName(Op::getOperationName(), builder.getContext());
+      setSymbolReference(attrs, *clocking,
+                         Op::getDefaultClockingSymbolAttrName(operationName),
+                         Op::getDefaultClockingPathAttrName(operationName));
+    }
+  }
+
+  template <typename Node>
+  static bool canMakeDefaultAssertionInstance(const Node &node) {
+    return std::ranges::all_of(node.ports, [](const auto *port) {
+      return port->defaultValueSyntax != nullptr;
+    });
   }
 
   void setSymbolReference(NamedAttrList &attrs,
@@ -1628,6 +1684,37 @@ private:
                   builder.getBoolAttr(node.inputSkew.delay != nullptr));
       SET_OP_ATTR(HasOutputDelay,
                   builder.getBoolAttr(node.outputSkew.delay != nullptr));
+    } else if constexpr (std::same_as<T,
+                                      slang::ast::ClockingBlockSymbol>) {
+      SET_OP_ATTR(IsDefault, builder.getBoolAttr(node.isDefault));
+      SET_OP_ATTR(IsGlobal, builder.getBoolAttr(node.isGlobal));
+    } else if constexpr (std::same_as<T,
+                                      slang::ast::AssertionPortSymbol>) {
+      if (node.direction)
+        SET_OP_ATTR(Direction,
+                    slangir::ArgumentDirectionAttr::get(
+                        builder.getContext(), convertEnum(*node.direction)));
+      SET_OP_ATTR(HasDefaultValue,
+                  builder.getBoolAttr(node.defaultValueSyntax != nullptr));
+      SET_OP_ATTR(IsLocalVariable, builder.getBoolAttr(node.isLocalVar()));
+    } else if constexpr (std::same_as<T, slang::ast::SequenceSymbol> ||
+                         std::same_as<T, slang::ast::PropertySymbol>) {
+      SmallVector<Attribute> portSymbols;
+      SmallVector<Attribute> portPaths;
+      for (const slang::ast::AssertionPortSymbol *port : node.ports) {
+        portSymbols.push_back(getSemanticSymbolReference(*port));
+        portPaths.push_back(builder.getStringAttr(getSymbolPath(*port)));
+      }
+      SET_OP_ATTR(PortCount, builder.getI64IntegerAttr(node.ports.size()));
+      SET_OP_ATTR(PortSymbols, builder.getArrayAttr(portSymbols));
+      SET_OP_ATTR(PortPaths, builder.getArrayAttr(portPaths));
+      SmallVector<const slang::ast::Symbol *> ports(node.ports.begin(),
+                                                     node.ports.end());
+      currentPendingReferenceArrays.push_back(
+          {std::move(ports), Op::getPortSymbolsAttrName(operationName)});
+      SET_OP_ATTR(HasDefaultInstance,
+                  builder.getBoolAttr(canMakeDefaultAssertionInstance(node)));
+      addDefaultClocking<Op>(attrs, node.getParentScope());
     } else if constexpr (std::same_as<T, slang::ast::LocalAssertionVarSymbol>) {
       if (node.formalPort)
         setSymbolReference(attrs, *node.formalPort,
@@ -1875,6 +1962,9 @@ private:
                       builder.getContext(), convertEnum(node.assertionKind)));
       SET_OP_ATTR(HasPassAction, builder.getBoolAttr(node.ifTrue != nullptr));
       SET_OP_ATTR(HasFailAction, builder.getBoolAttr(node.ifFalse != nullptr));
+      addDefaultClocking<Op>(attrs, getCurrentScope());
+      SET_OP_ATTR(HasDefaultDisable,
+                  builder.getBoolAttr(getCurrentDefaultDisable() != nullptr));
     } else if constexpr (std::same_as<T,
                                       slang::ast::ProceduralAssignStatement>) {
       SET_OP_ATTR(IsForce, builder.getBoolAttr(node.isForce));
@@ -1940,7 +2030,61 @@ private:
       SET_OP_ATTR(LoopDimensions, builder.getArrayAttr(dimensions));
     }
 
-    if constexpr (std::same_as<T, slang::ast::SimpleAssertionExpr>) {
+    if constexpr (std::same_as<T,
+                                  slang::ast::AssertionInstanceExpression>) {
+      setReferencedSymbol<Op>(attrs, node.symbol);
+      SmallVector<Attribute> formalSymbols;
+      SmallVector<Attribute> formalPaths;
+      SmallVector<int64_t> argumentKinds;
+      for (const auto &[formal, actual] : node.arguments) {
+        formalSymbols.push_back(getSemanticSymbolReference(*formal));
+        formalPaths.push_back(builder.getStringAttr(getSymbolPath(*formal)));
+        argumentKinds.push_back(
+            std::holds_alternative<const slang::ast::Expression *>(actual)
+                ? 0
+                : std::holds_alternative<const slang::ast::AssertionExpr *>(
+                      actual)
+                      ? 1
+                      : 2);
+      }
+      SmallVector<Attribute> localSymbols;
+      SmallVector<Attribute> localPaths;
+      SmallVector<int64_t> localHasInitializer;
+      for (const slang::ast::LocalAssertionVarSymbol *local : node.localVars) {
+        localSymbols.push_back(getSemanticSymbolReference(*local));
+        localPaths.push_back(builder.getStringAttr(getSymbolPath(*local)));
+        localHasInitializer.push_back(local->getInitializer() != nullptr);
+      }
+      SET_OP_ATTR(ArgumentCount,
+                  builder.getI64IntegerAttr(node.arguments.size()));
+      SET_OP_ATTR(ArgumentFormalSymbols, builder.getArrayAttr(formalSymbols));
+      SET_OP_ATTR(ArgumentFormalPaths, builder.getArrayAttr(formalPaths));
+      SET_OP_ATTR(ArgumentKinds, builder.getDenseI64ArrayAttr(argumentKinds));
+      SET_OP_ATTR(LocalVariableCount,
+                  builder.getI64IntegerAttr(node.localVars.size()));
+      SET_OP_ATTR(LocalVariableSymbols, builder.getArrayAttr(localSymbols));
+      SET_OP_ATTR(LocalVariablePaths, builder.getArrayAttr(localPaths));
+      SET_OP_ATTR(LocalVariableHasInitializer,
+                  builder.getDenseI64ArrayAttr(localHasInitializer));
+      SET_OP_ATTR(IsRecursiveProperty,
+                  builder.getBoolAttr(node.isRecursiveProperty));
+      SET_OP_ATTR(HasExpandedBody,
+                  builder.getBoolAttr(!node.isRecursiveProperty));
+      SmallVector<const slang::ast::Symbol *> formals;
+      formals.reserve(node.arguments.size());
+      for (const auto &[formal, actual] : node.arguments) {
+        (void)actual;
+        formals.push_back(formal);
+      }
+      currentPendingReferenceArrays.push_back(
+          {std::move(formals),
+           Op::getArgumentFormalSymbolsAttrName(operationName)});
+      SmallVector<const slang::ast::Symbol *> locals(node.localVars.begin(),
+                                                      node.localVars.end());
+      currentPendingReferenceArrays.push_back(
+          {std::move(locals),
+           Op::getLocalVariableSymbolsAttrName(operationName)});
+    } else if constexpr (std::same_as<T, slang::ast::SimpleAssertionExpr>) {
       SET_OP_ATTR(IsNull, builder.getBoolAttr(node.isNullExpr));
       addRepetition<Op>(attrs, node.repetition);
     } else if constexpr (std::same_as<T, slang::ast::SequenceConcatExpr>) {
@@ -2070,6 +2214,7 @@ private:
     if constexpr (std::derived_from<Node, slang::ast::Expression>)
       attrs.set("is_signed", builder.getBoolAttr(isEffectivelySigned(node)));
     currentPendingReferences.clear();
+    currentPendingReferenceArrays.clear();
     addSpecificAttributes<Op>(node, attrs);
 #undef SET_OP_ATTR
 
@@ -2085,10 +2230,15 @@ private:
     for (const PendingReferenceSeed &pending : currentPendingReferences)
       pendingReferences.push_back(
           {operation, pending.target, pending.attributeName});
+    for (PendingReferenceArraySeed &pending : currentPendingReferenceArrays)
+      pendingReferenceArrays.push_back(
+          {operation, std::move(pending.targets), pending.attributeName});
 
     OpBuilder::InsertionGuard guard{builder};
     builder.setInsertionPointToStart(&body);
     using T = std::remove_cvref_t<Node>;
+    if constexpr (std::derived_from<Node, slang::ast::Scope>)
+      currentScopes.push_back(&node);
     if constexpr (std::same_as<T, slang::ast::ClassType>) {
       this->visitDefault(node);
       if (const auto *baseConstructorCall = node.getBaseConstructorCall())
@@ -2114,6 +2264,27 @@ private:
       if (node.outputSkew.delay &&
           node.outputSkew.delay != node.inputSkew.delay)
         node.outputSkew.delay->visit(*this);
+    } else if constexpr (std::same_as<T, slang::ast::SequenceSymbol> ||
+                         std::same_as<T, slang::ast::PropertySymbol>) {
+      this->visitDefault(node);
+      if (canMakeDefaultAssertionInstance(node))
+        slang::ast::AssertionInstanceExpression::makeDefault(node).visit(*this);
+    } else if constexpr (std::same_as<
+                             T, slang::ast::AssertionInstanceExpression>) {
+      if (!node.isRecursiveProperty)
+        node.body.visit(*this);
+      for (const auto &[formal, actual] : node.arguments) {
+        (void)formal;
+        std::visit([&](const auto *value) { value->visit(*this); }, actual);
+      }
+      for (const slang::ast::LocalAssertionVarSymbol *local : node.localVars)
+        if (const slang::ast::Expression *initializer = local->getInitializer())
+          initializer->visit(*this);
+    } else if constexpr (std::same_as<
+                             T, slang::ast::ConcurrentAssertionStatement>) {
+      if (const slang::ast::Expression *disable = getCurrentDefaultDisable())
+        disable->visit(*this);
+      this->visitDefault(node);
     } else if constexpr (std::same_as<T, slang::ast::BlockEventListControl>) {
       for (const auto &event : node.events)
         if (event.target)
@@ -2142,6 +2313,8 @@ private:
     } else {
       this->visitDefault(node);
     }
+    if constexpr (std::derived_from<Node, slang::ast::Scope>)
+      currentScopes.pop_back();
     if constexpr (std::derived_from<Node, slang::ast::Symbol>)
       currentSymbolPath.pop_back();
   }
@@ -2348,8 +2521,20 @@ private:
     StringAttr attributeName;
   };
 
+  struct PendingReferenceArray {
+    Operation *operation;
+    SmallVector<const slang::ast::Symbol *, 4> targets;
+    StringAttr attributeName;
+  };
+
+  struct PendingReferenceArraySeed {
+    SmallVector<const slang::ast::Symbol *, 4> targets;
+    StringAttr attributeName;
+  };
+
   OpBuilder builder;
   const slang::SourceManager &sourceManager;
+  const slang::ast::Compilation &compilation;
   SlangTypeConverter typeConverter;
   llvm::DenseMap<const slang::ast::Symbol *, std::string> anonymousSymbolPaths;
   llvm::DenseMap<const slang::ast::Symbol *, StringAttr> internalSymbolNames;
@@ -2358,9 +2543,12 @@ private:
   llvm::DenseMap<const slang::ast::Symbol *, Operation *>
       emittedSymbolOperations;
   SmallVector<std::string, 8> currentSymbolPath;
+  SmallVector<const slang::ast::Scope *, 8> currentScopes;
   SmallVector<PendingReference, 0> pendingReferences;
+  SmallVector<PendingReferenceArray, 0> pendingReferenceArrays;
   SmallVector<const slang::ast::Symbol *, 0> semanticDependencies;
   SmallVector<PendingReferenceSeed, 2> currentPendingReferences;
+  SmallVector<PendingReferenceArraySeed, 2> currentPendingReferenceArrays;
   int64_t nextNodeId = 0;
   uint64_t nextAnonymousSymbolId = 0;
   uint64_t nextInternalSymbolId = 0;
@@ -2491,7 +2679,7 @@ importSystemVerilog(ArrayRef<std::string> inputFilenames, MLIRContext &context,
     return failure();
 
   OwningOpRef<ModuleOp> module(ModuleOp::create(UnknownLoc::get(&context)));
-  SlangASTImporter importer(*module, driver.sourceManager);
+  SlangASTImporter importer(*module, driver.sourceManager, *compilation);
   // Definitions are kept in Compilation's deterministic definition map and
   // are not children of RootSymbol. Import them explicitly so modules,
   // interfaces, programs, and primitives remain represented even when they
