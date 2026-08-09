@@ -343,6 +343,32 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
     return mergeBlock->getArgument(0);
   }
 
+  // Slang makes the common integral type of a binary expression explicit by
+  // wrapping its operands in conversion nodes.  The common signedness governs
+  // widening in this context: once either operand makes the operation
+  // unsigned, a narrower signed operand is zero-extended.  Ordinary assignment
+  // conversions, in contrast, extend according to the source signedness.
+  // Lower direct integral operand conversions here so the two contexts remain
+  // distinct.
+  auto lowerOperand = [&](Operation *operand) -> FailureOr<Value> {
+    auto conversion = dyn_cast<semantic::SVConversionExpressionOp>(operand);
+    SmallVector<Operation *> conversionChildren =
+        conversion ? getChildren(conversion) : SmallVector<Operation *>{};
+    if (!conversion || conversionChildren.size() != 1)
+      return lowerExpression(operand);
+    FailureOr<Type> target = getNormalizedSemanticType(operand);
+    if (failed(target) || !sim::getPackedScalarType(*target))
+      return lowerExpression(operand);
+    FailureOr<Value> input = lowerExpression(conversionChildren.front());
+    if (failed(input))
+      return failure();
+    bool signedConversion = sim::getPackedScalarType((*input).getType())
+                                ? isSignedNode(operand)
+                                : isSignedNode(conversionChildren.front());
+    return convert(*input, *target, signedConversion,
+                   getSemanticLocation(operand), isSignedNode(operand));
+  };
+
   FailureOr<Value> lhs = failure();
   FailureOr<Value> rhs = failure();
   if (isa<semantic::SVNullLiteralOp>(children[0])) {
@@ -366,8 +392,8 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
                   .getResult();
     }
   } else {
-    lhs = lowerExpression(children[0]);
-    rhs = lowerExpression(children[1]);
+    lhs = lowerOperand(children[0]);
+    rhs = lowerOperand(children[1]);
   }
   if (failed(lhs) || failed(rhs))
     return failure();
