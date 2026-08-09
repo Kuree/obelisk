@@ -72,6 +72,12 @@ template <typename Value> std::string formatConstant(const Value &value) {
   return value.toString(slang::SVInt::MAX_BITS, /*exactUnknowns=*/true);
 }
 
+std::string formatConstant(const slang::ConstantValue &value) {
+  if (value.isString())
+    return value.str();
+  return value.toString(slang::SVInt::MAX_BITS, /*exactUnknowns=*/true);
+}
+
 const slang::ast::Type &unwrapTypeAliases(const slang::ast::Type &type) {
   const slang::ast::Type *current = &type;
   while (current->kind == slang::ast::SymbolKind::TypeAlias)
