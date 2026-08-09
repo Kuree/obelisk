@@ -240,13 +240,16 @@ FailureOr<Value> UnitLowering::lowerUnary(semantic::SVUnaryExpressionOp op) {
             builder.getIntegerAttr((*input).getType(), 0)),
         *input);
     break;
-  case semantic::SVUnaryOperator::BitwiseNot:
+  case semantic::SVUnaryOperator::BitwiseNot: {
+    auto integerType = cast<IntegerType>((*input).getType());
     value = arith::XOrIOp::create(
         builder, location, *input,
         arith::ConstantOp::create(
-            builder, location, (*input).getType(),
-            builder.getIntegerAttr((*input).getType(), -1)));
+            builder, location, integerType,
+            builder.getIntegerAttr(
+                integerType, APInt::getAllOnes(integerType.getWidth()))));
     break;
+  }
   case semantic::SVUnaryOperator::LogicalNot: {
     FailureOr<Value> truth = truthValue(*input, location);
     if (failed(truth))
