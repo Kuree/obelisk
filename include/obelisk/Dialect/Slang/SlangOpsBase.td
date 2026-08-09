@@ -23,6 +23,10 @@ def SlangVerifyAssertionDeclarationMetadata
     : NativeOpTrait<"VerifyAssertionDeclarationMetadata">;
 def SlangVerifyAssertionInvocationMetadata
     : NativeOpTrait<"VerifyAssertionInvocationMetadata">;
+def SlangVerifyCheckerInstanceMetadata
+    : NativeOpTrait<"VerifyCheckerInstanceMetadata">;
+def SlangVerifyProceduralCheckerMetadata
+    : NativeOpTrait<"VerifyProceduralCheckerMetadata">;
 
 // Only provenance is common to every semantic node. Category and kind data is
 // declared by the narrower schemas below so malformed operations are rejected
@@ -233,6 +237,38 @@ class SlangLocalAssertionVarASTNodeOp<string mnemonic>
     : SlangVariableSymbolASTNodeOp<mnemonic, (ins
         OptionalAttr<SymbolRefAttr>:$formal_port_symbol,
         OptionalAttr<StrAttr>:$formal_port_path
+      )>;
+
+class SlangCheckerDeclarationASTNodeOp<string mnemonic>
+    : SlangSymbolTableASTNodeOp<mnemonic, (ins
+        I64Attr:$port_count,
+        SymbolRefArrayAttr:$port_symbols,
+        StrArrayAttr:$port_paths
+      ), [SlangVerifyAssertionDeclarationMetadata]>;
+
+class SlangCheckerInstanceASTNodeOp<string mnemonic>
+    : SlangSymbolTableASTNodeOp<mnemonic, (ins
+        SymbolRefAttr:$referenced_checker_symbol,
+        StrAttr:$referenced_checker_path,
+        I64Attr:$connection_count,
+        SymbolRefArrayAttr:$connection_formal_symbols,
+        StrArrayAttr:$connection_formal_paths,
+        DenseI64ArrayAttr:$connection_actual_kinds,
+        DenseI64ArrayAttr:$connection_has_actual,
+        DenseI64ArrayAttr:$connection_has_output_initial,
+        DenseI64ArrayAttr:$connection_attribute_counts,
+        BoolAttr:$is_procedural
+      ), [SlangVerifyCheckerInstanceMetadata]>;
+
+class SlangCheckerInstanceBodyASTNodeOp<string mnemonic>
+    : SlangSymbolTableASTNodeOp<mnemonic, (ins
+        SymbolRefAttr:$referenced_checker_symbol,
+        StrAttr:$referenced_checker_path,
+        SymbolRefAttr:$parent_instance_symbol,
+        StrAttr:$parent_instance_path,
+        I64Attr:$instance_depth,
+        I64Attr:$instance_flags,
+        BoolAttr:$is_procedural
       )>;
 
 class SlangFieldASTNodeOp<string mnemonic>
@@ -631,6 +667,14 @@ class SlangConcurrentAssertionStatementASTNodeOp<string mnemonic>
         OptionalAttr<SymbolRefAttr>:$default_clocking_symbol,
         OptionalAttr<StrAttr>:$default_clocking_path,
         BoolAttr:$has_default_disable
+      )>;
+
+class SlangProceduralCheckerStatementASTNodeOp<string mnemonic>
+    : SlangASTNodeOp<mnemonic,
+      [SlangSemanticDeclarativeNode, SlangVerifyProceduralCheckerMetadata], (ins
+        I64Attr:$instance_count,
+        SymbolRefArrayAttr:$instance_symbols,
+        StrArrayAttr:$instance_paths
       )>;
 
 class SlangProceduralAssignStatementASTNodeOp<string mnemonic>

@@ -287,6 +287,65 @@ public:
   }
 };
 
+/// Checks the resolved formal / actual metadata on an elaborated checker
+/// instance. Actual kind uses the same expression / assertion / timing
+/// encoding as sequence and property invocations.
+template <typename ConcreteType>
+class VerifyCheckerInstanceMetadata
+    : public TraitBase<ConcreteType, VerifyCheckerInstanceMetadata> {
+public:
+  static LogicalResult verifyTrait(Operation *op) {
+    ConcreteType concrete = cast<ConcreteType>(op);
+    size_t count = concrete.getConnectionCount();
+    if (concrete.getConnectionFormalSymbols().size() != count ||
+        concrete.getConnectionFormalPaths().size() != count ||
+        concrete.getConnectionActualKinds().size() != count ||
+        concrete.getConnectionHasActual().size() != count ||
+        concrete.getConnectionHasOutputInitial().size() != count ||
+        concrete.getConnectionAttributeCounts().size() != count)
+      return op->emitOpError()
+             << "requires connection metadata arrays to match "
+                "connection_count";
+
+    for (int64_t kind : concrete.getConnectionActualKinds())
+      if (kind < 0 || kind > 2)
+        return op->emitOpError()
+               << "has invalid checker actual argument kind " << kind;
+    for (int64_t present : concrete.getConnectionHasActual())
+      if (present < 0 || present > 1)
+        return op->emitOpError()
+               << "requires connection_has_actual entries to be boolean";
+    for (int64_t present : concrete.getConnectionHasOutputInitial())
+      if (present < 0 || present > 1)
+        return op->emitOpError()
+               << "requires connection_has_output_initial entries to be "
+                  "boolean";
+    for (int64_t attributeCount : concrete.getConnectionAttributeCounts())
+      if (attributeCount < 0)
+        return op->emitOpError()
+               << "requires nonnegative connection attribute counts";
+    return success();
+  }
+};
+
+/// Checks the identities attached to a procedural checker instantiation
+/// statement. The elaborated checker symbols themselves remain ordinary
+/// symbol-table children of the surrounding procedural scope.
+template <typename ConcreteType>
+class VerifyProceduralCheckerMetadata
+    : public TraitBase<ConcreteType, VerifyProceduralCheckerMetadata> {
+public:
+  static LogicalResult verifyTrait(Operation *op) {
+    ConcreteType concrete = cast<ConcreteType>(op);
+    size_t count = concrete.getInstanceCount();
+    if (concrete.getInstanceSymbols().size() != count ||
+        concrete.getInstancePaths().size() != count)
+      return op->emitOpError()
+             << "requires instance metadata arrays to match instance_count";
+    return success();
+  }
+};
+
 } // namespace mlir::OpTrait
 
 #endif // OBELISK_DIALECT_SEMANTICTRAITS_H

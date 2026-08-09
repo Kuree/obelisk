@@ -12,6 +12,34 @@ module {
 // -----
 
 module {
+  // expected-error @+1 {{requires connection metadata arrays to match connection_count}}
+  slang.symbol.checker_instance attributes {
+    connection_actual_kinds = array<i64: 0>,
+    connection_attribute_counts = array<i64: 0>, connection_count = 2 : i64,
+    connection_formal_paths = ["formal"],
+    connection_formal_symbols = [@formal],
+    connection_has_actual = array<i64: 1>,
+    connection_has_output_initial = array<i64: 0>, is_procedural = false,
+    node_id = 0 : i64, referenced_checker_path = "checker",
+    referenced_checker_symbol = @checker, sym_name = "instance"
+  } {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{requires instance metadata arrays to match instance_count}}
+  slang.statement.procedural_checker attributes {
+    instance_count = 1 : i64, instance_paths = [], instance_symbols = [],
+    node_id = 0 : i64
+  } {
+  }
+}
+
+// -----
+
+module {
   // expected-error @+1 {{malformed conditional-expression child inventory}}
   slang.expression.conditional_op attributes {
     condition_count = 1 : i64,

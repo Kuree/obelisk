@@ -24,6 +24,10 @@ def ObeliskVerifyAssertionDeclarationMetadata
     : NativeOpTrait<"VerifyAssertionDeclarationMetadata">;
 def ObeliskVerifyAssertionInvocationMetadata
     : NativeOpTrait<"VerifyAssertionInvocationMetadata">;
+def ObeliskVerifyCheckerInstanceMetadata
+    : NativeOpTrait<"VerifyCheckerInstanceMetadata">;
+def ObeliskVerifyProceduralCheckerMetadata
+    : NativeOpTrait<"VerifyProceduralCheckerMetadata">;
 
 class ObeliskASTNodeOp<string mnemonic, list<Trait> traits = [],
                        dag semanticArgs = (ins)>
@@ -233,6 +237,38 @@ class ObeliskLocalAssertionVarASTNodeOp<string mnemonic>
     : ObeliskVariableSymbolASTNodeOp<mnemonic, (ins
         OptionalAttr<SymbolRefAttr>:$formal_port_symbol,
         OptionalAttr<StrAttr>:$formal_port_path
+      )>;
+
+class ObeliskCheckerDeclarationASTNodeOp<string mnemonic>
+    : ObeliskSymbolTableASTNodeOp<mnemonic, (ins
+        I64Attr:$port_count,
+        SymbolRefArrayAttr:$port_symbols,
+        StrArrayAttr:$port_paths
+      ), [ObeliskVerifyAssertionDeclarationMetadata]>;
+
+class ObeliskCheckerInstanceASTNodeOp<string mnemonic>
+    : ObeliskSymbolTableASTNodeOp<mnemonic, (ins
+        SymbolRefAttr:$referenced_checker_symbol,
+        StrAttr:$referenced_checker_path,
+        I64Attr:$connection_count,
+        SymbolRefArrayAttr:$connection_formal_symbols,
+        StrArrayAttr:$connection_formal_paths,
+        DenseI64ArrayAttr:$connection_actual_kinds,
+        DenseI64ArrayAttr:$connection_has_actual,
+        DenseI64ArrayAttr:$connection_has_output_initial,
+        DenseI64ArrayAttr:$connection_attribute_counts,
+        BoolAttr:$is_procedural
+      ), [ObeliskVerifyCheckerInstanceMetadata]>;
+
+class ObeliskCheckerInstanceBodyASTNodeOp<string mnemonic>
+    : ObeliskSymbolTableASTNodeOp<mnemonic, (ins
+        SymbolRefAttr:$referenced_checker_symbol,
+        StrAttr:$referenced_checker_path,
+        SymbolRefAttr:$parent_instance_symbol,
+        StrAttr:$parent_instance_path,
+        I64Attr:$instance_depth,
+        I64Attr:$instance_flags,
+        BoolAttr:$is_procedural
       )>;
 
 class ObeliskFieldASTNodeOp<string mnemonic>
@@ -623,6 +659,15 @@ class ObeliskConcurrentAssertionStatementASTNodeOp<string mnemonic>
         OptionalAttr<SymbolRefAttr>:$default_clocking_symbol,
         OptionalAttr<StrAttr>:$default_clocking_path,
         BoolAttr:$has_default_disable
+      )>;
+
+class ObeliskProceduralCheckerStatementASTNodeOp<string mnemonic>
+    : ObeliskASTNodeOp<mnemonic,
+      [ObeliskSemanticDeclarativeNode,
+       ObeliskVerifyProceduralCheckerMetadata], (ins
+        I64Attr:$instance_count,
+        SymbolRefArrayAttr:$instance_symbols,
+        StrArrayAttr:$instance_paths
       )>;
 
 class ObeliskProceduralAssignStatementASTNodeOp<string mnemonic>

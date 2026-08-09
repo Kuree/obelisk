@@ -1715,6 +1715,91 @@ private:
       SET_OP_ATTR(HasDefaultInstance,
                   builder.getBoolAttr(canMakeDefaultAssertionInstance(node)));
       addDefaultClocking<Op>(attrs, node.getParentScope());
+    } else if constexpr (std::same_as<T, slang::ast::CheckerSymbol>) {
+      SmallVector<Attribute> portSymbols;
+      SmallVector<Attribute> portPaths;
+      SmallVector<const slang::ast::Symbol *> ports;
+      portSymbols.reserve(node.ports.size());
+      portPaths.reserve(node.ports.size());
+      ports.reserve(node.ports.size());
+      for (const slang::ast::AssertionPortSymbol *port : node.ports) {
+        portSymbols.push_back(getSemanticSymbolReference(*port));
+        portPaths.push_back(builder.getStringAttr(getSymbolPath(*port)));
+        ports.push_back(port);
+      }
+      SET_OP_ATTR(PortCount, builder.getI64IntegerAttr(node.ports.size()));
+      SET_OP_ATTR(PortSymbols, builder.getArrayAttr(portSymbols));
+      SET_OP_ATTR(PortPaths, builder.getArrayAttr(portPaths));
+      currentPendingReferenceArrays.push_back(
+          {std::move(ports), Op::getPortSymbolsAttrName(operationName)});
+    } else if constexpr (std::same_as<T, slang::ast::CheckerInstanceSymbol>) {
+      setSymbolReference(attrs, node.body.checker,
+                         Op::getReferencedCheckerSymbolAttrName(operationName),
+                         Op::getReferencedCheckerPathAttrName(operationName));
+
+      SmallVector<Attribute> formalSymbols;
+      SmallVector<Attribute> formalPaths;
+      SmallVector<int64_t> actualKinds;
+      SmallVector<int64_t> hasActual;
+      SmallVector<int64_t> hasOutputInitial;
+      SmallVector<int64_t> attributeCounts;
+      SmallVector<const slang::ast::Symbol *> formals;
+      auto connections = node.getPortConnections();
+      formalSymbols.reserve(connections.size());
+      formalPaths.reserve(connections.size());
+      actualKinds.reserve(connections.size());
+      hasActual.reserve(connections.size());
+      hasOutputInitial.reserve(connections.size());
+      attributeCounts.reserve(connections.size());
+      formals.reserve(connections.size());
+      for (const slang::ast::CheckerInstanceSymbol::Connection &connection :
+           connections) {
+        formalSymbols.push_back(getSemanticSymbolReference(connection.formal));
+        formalPaths.push_back(
+            builder.getStringAttr(getSymbolPath(connection.formal)));
+        formals.push_back(&connection.formal);
+        int64_t actualKind = 2;
+        if (std::holds_alternative<const slang::ast::Expression *>(
+                connection.actual))
+          actualKind = 0;
+        else if (std::holds_alternative<const slang::ast::AssertionExpr *>(
+                     connection.actual))
+          actualKind = 1;
+        actualKinds.push_back(actualKind);
+        hasActual.push_back(
+            std::visit([](const auto *actual) { return actual != nullptr; },
+                       connection.actual));
+        hasOutputInitial.push_back(connection.getOutputInitialExpr() !=
+                                   nullptr);
+        attributeCounts.push_back(connection.attributes.size());
+      }
+      SET_OP_ATTR(ConnectionCount,
+                  builder.getI64IntegerAttr(connections.size()));
+      SET_OP_ATTR(ConnectionFormalSymbols, builder.getArrayAttr(formalSymbols));
+      SET_OP_ATTR(ConnectionFormalPaths, builder.getArrayAttr(formalPaths));
+      SET_OP_ATTR(ConnectionActualKinds,
+                  builder.getDenseI64ArrayAttr(actualKinds));
+      SET_OP_ATTR(ConnectionHasActual, builder.getDenseI64ArrayAttr(hasActual));
+      SET_OP_ATTR(ConnectionHasOutputInitial,
+                  builder.getDenseI64ArrayAttr(hasOutputInitial));
+      SET_OP_ATTR(ConnectionAttributeCounts,
+                  builder.getDenseI64ArrayAttr(attributeCounts));
+      SET_OP_ATTR(IsProcedural, builder.getBoolAttr(node.body.isProcedural));
+      currentPendingReferenceArrays.push_back(
+          {std::move(formals),
+           Op::getConnectionFormalSymbolsAttrName(operationName)});
+    } else if constexpr (std::same_as<T,
+                                      slang::ast::CheckerInstanceBodySymbol>) {
+      setSymbolReference(attrs, node.checker,
+                         Op::getReferencedCheckerSymbolAttrName(operationName),
+                         Op::getReferencedCheckerPathAttrName(operationName));
+      assert(node.parentInstance && "checker body has no parent instance");
+      setSymbolReference(attrs, *node.parentInstance,
+                         Op::getParentInstanceSymbolAttrName(operationName),
+                         Op::getParentInstancePathAttrName(operationName));
+      SET_OP_ATTR(InstanceDepth, builder.getI64IntegerAttr(node.instanceDepth));
+      SET_OP_ATTR(InstanceFlags, builder.getI64IntegerAttr(node.flags.bits()));
+      SET_OP_ATTR(IsProcedural, builder.getBoolAttr(node.isProcedural));
     } else if constexpr (std::same_as<T, slang::ast::LocalAssertionVarSymbol>) {
       if (node.formalPort)
         setSymbolReference(attrs, *node.formalPort,
@@ -1965,6 +2050,27 @@ private:
       addDefaultClocking<Op>(attrs, getCurrentScope());
       SET_OP_ATTR(HasDefaultDisable,
                   builder.getBoolAttr(getCurrentDefaultDisable() != nullptr));
+    } else if constexpr (std::same_as<T,
+                                      slang::ast::ProceduralCheckerStatement>) {
+      SmallVector<Attribute> instanceSymbols;
+      SmallVector<Attribute> instancePaths;
+      SmallVector<const slang::ast::Symbol *> instances;
+      instanceSymbols.reserve(node.instances.size());
+      instancePaths.reserve(node.instances.size());
+      instances.reserve(node.instances.size());
+      for (const slang::ast::Symbol *instance : node.instances) {
+        instanceSymbols.push_back(getSemanticSymbolReference(*instance));
+        instancePaths.push_back(
+            builder.getStringAttr(getSymbolPath(*instance)));
+        instances.push_back(instance);
+      }
+      SET_OP_ATTR(InstanceCount,
+                  builder.getI64IntegerAttr(node.instances.size()));
+      SET_OP_ATTR(InstanceSymbols, builder.getArrayAttr(instanceSymbols));
+      SET_OP_ATTR(InstancePaths, builder.getArrayAttr(instancePaths));
+      currentPendingReferenceArrays.push_back(
+          {std::move(instances),
+           Op::getInstanceSymbolsAttrName(operationName)});
     } else if constexpr (std::same_as<T,
                                       slang::ast::ProceduralAssignStatement>) {
       SET_OP_ATTR(IsForce, builder.getBoolAttr(node.isForce));
