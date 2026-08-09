@@ -36,6 +36,9 @@ config.substitutions.append(
 )
 config.substitutions.append(("%source_root", config.obelisk_source_root))
 config.substitutions.append(("%llvm_dist", config.obelisk_llvm_dist))
+config.substitutions.append(
+    ("%runtime_archive", config.obelisk_runtime_archive)
+)
 config.substitutions.append(("%cmake", config.cmake_executable))
 split_file = next(
     (
