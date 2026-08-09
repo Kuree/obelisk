@@ -1978,6 +1978,9 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     return failure();
   setCurrent(&function.getBody().front());
   sim::EntryKind entryKind = function.getEntryKind();
+  continuousStore = entryKind == sim::EntryKind::Continuous ||
+                    entryKind == sim::EntryKind::PortInput ||
+                    entryKind == sim::EntryKind::PortOutput;
   if (entryKind == sim::EntryKind::Observer) {
     if (roots.size() != 1) {
       function.emitError("observer entry requires one expression root");

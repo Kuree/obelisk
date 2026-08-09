@@ -309,6 +309,7 @@ private:
   ::mlir::Value expressionPlaceholder;
   ::mlir::Value unboundedPlaceholder;
   ::mlir::Value lvalueReferencePlaceholder;
+  bool continuousStore = false;
   ::mlir::SmallVector<::mlir::Value> randomizeCandidateValues;
   std::string returnPath;
   ::mlir::SmallVector<std::string> copyOutPaths;

@@ -1314,6 +1314,9 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       bool isOverride = instruction.opcode == OBELISK_RT_DB_OVERRIDE_STATE;
       bool isAssignOverride =
           isOverride && instruction.flags == OBELISK_RT_DB_OVERRIDE_ASSIGN;
+      bool isContinuous =
+          !isLoad && !isOverride &&
+          (instruction.flags & OBELISK_RT_DB_STORE_STATE_CONTINUOUS) != 0;
       if (!isLoad && context &&
           context->activeExecRegion == OBELISK_RT_REGION_POSTPONED)
         return OBELISK_RT_INVALID_LIFECYCLE;
@@ -1589,6 +1592,13 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
             context->forceMask.assign(limbs, 0);
           }
         }
+        if (isContinuous && !local && !automatic &&
+            context->continuousMask.empty()) {
+          size_t limbs = context->stateValue.size();
+          context->continuousMask.assign(limbs, 0);
+          context->continuousValue.assign(limbs, 0);
+          context->continuousUnknown.assign(limbs, 0);
+        }
         bool equalStringContents = false;
         if (valueLayout.kind == OBELISK_RT_DBREG_STRING && !isLoad) {
           if (isOverride || local ||
@@ -1687,6 +1697,13 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
             bool assigned =
                 storageBit / 64 < context->assignMask.size() &&
                 (context->assignMask[storageBit / 64] & forceMask) != 0;
+            bool newValue = bit(value.value, bitIndex);
+            bool newUnknown = bit(value.unknown, bitIndex);
+            if (isContinuous && !local && !automatic) {
+              setBit(context->continuousValue, storageBit, newValue);
+              setBit(context->continuousUnknown, storageBit, newUnknown);
+              context->continuousMask[storageBit / 64] |= forceMask;
+            }
             if (!isOverride && !local && !automatic && (forced || assigned))
               continue;
             bool oldValue = automatic
@@ -1697,8 +1714,6 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
                 automatic ? automaticBit(automaticState->unknown, absolute)
                 : local   ? bit(localValue.unknown, storageBit)
                           : bit(context->stateUnknown, storageBit);
-            bool newValue = bit(value.value, bitIndex);
-            bool newUnknown = bit(value.unknown, bitIndex);
             if (realValue)
               setBit(oldReal.value, bitIndex, oldValue);
             if (isOverride) {
@@ -1845,7 +1860,7 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
           context->schedulerEpoch = 1;
       }
       if (instruction.opcode == OBELISK_RT_DB_STORE_STATE &&
-          instruction.flags == OBELISK_RT_DB_STORE_STATE_CHANGED) {
+          (instruction.flags & OBELISK_RT_DB_STORE_STATE_CHANGED) != 0) {
         Logic changedValue{1, false, LimbVector(1), LimbVector(1)};
         setBit(changedValue.value, 0, changed);
         write(instruction.destination, changedValue);
@@ -1928,14 +1943,24 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
           } else {
             if (limb < context->forceMask.size())
               context->forceMask[limb] &= ~mask;
-            if (descriptorKind == OBELISK_RT_DESCRIPTOR_STORAGE &&
-                limb < context->assignMask.size() &&
-                (context->assignMask[limb] & mask) != 0) {
+          }
+          bool forced = limb < context->forceMask.size() &&
+                        (context->forceMask[limb] & mask) != 0;
+          bool assigned = limb < context->assignMask.size() &&
+                          (context->assignMask[limb] & mask) != 0;
+          bool retained = limb < context->continuousMask.size() &&
+                          (context->continuousMask[limb] & mask) != 0;
+          if (descriptorKind == OBELISK_RT_DESCRIPTOR_STORAGE && !forced &&
+              (assigned || retained)) {
+            if (assigned) {
               newValue = bit(context->assignValue, storageBit);
               newUnknown = bit(context->assignUnknown, storageBit);
-              setBit(context->stateValue, storageBit, newValue);
-              setBit(context->stateUnknown, storageBit, newUnknown);
+            } else {
+              newValue = bit(context->continuousValue, storageBit);
+              newUnknown = bit(context->continuousUnknown, storageBit);
             }
+            setBit(context->stateValue, storageBit, newValue);
+            setBit(context->stateUnknown, storageBit, newUnknown);
           }
           if (oldValue != newValue || oldUnknown != newUnknown) {
             int64_t coordinate = start + static_cast<int64_t>(bitIndex);

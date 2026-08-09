@@ -16,6 +16,9 @@ using namespace mlir;
 namespace obelisk::simlowering {
 namespace {
 
+constexpr StringLiteral continuousStoreAttrName =
+    "obelisk_sim.continuous_store";
+
 Operation *getSingleRegionRoot(Region &region) {
   if (region.empty() || region.front().empty())
     return nullptr;
@@ -523,9 +526,12 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
         sim::SimNBAEnqueueOp::create(builder, location, published,
                                      destination.reference, delay,
                                      sim::NBASiteAttr{});
-      else
-        sim::SimRefStoreOp::create(builder, location, published,
-                                   destination.reference);
+      else {
+        auto store = sim::SimRefStoreOp::create(
+            builder, location, published, destination.reference);
+        if (continuousStore)
+          store->setAttr(continuousStoreAttrName, builder.getUnitAttr());
+      }
     } else if (isa<sim::ArgumentRefType>(referenceType)) {
       if (nonblocking) {
         emitError(location)
@@ -1190,9 +1196,12 @@ UnitLowering::lowerPortConnection(semantic::SVPortConnectionOp op) {
         convert(source, elementType, sourceSigned, location);
     if (failed(converted))
       return failure();
-    if (isa<sim::RefType>(destination.getType()))
-      sim::SimRefStoreOp::create(builder, location, *converted, destination);
-    else
+    if (isa<sim::RefType>(destination.getType())) {
+      auto store = sim::SimRefStoreOp::create(builder, location, *converted,
+                                               destination);
+      if (continuousStore)
+        store->setAttr(continuousStoreAttrName, builder.getUnitAttr());
+    } else
       sim::SimDriverDriveOp::create(builder, location, destination, *converted);
     return success();
   };

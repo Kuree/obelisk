@@ -1096,7 +1096,7 @@ bool validateInitialization(const Image &image, const Function &function,
         return false;
       break;
     case OBELISK_RT_DB_STORE_STATE:
-      if (instruction.flags == OBELISK_RT_DB_STORE_STATE_CHANGED &&
+      if ((instruction.flags & OBELISK_RT_DB_STORE_STATE_CHANGED) != 0 &&
           !defineDestination())
         return false;
       break;
@@ -2026,12 +2026,17 @@ bool validateImage(const Image &image) {
                         functionIndex, pc, instruction.opcode);
         break;
       case OBELISK_RT_DB_STORE_STATE:
-        if (instruction.flags > OBELISK_RT_DB_STORE_STATE_CHANGED ||
-            (instruction.flags == OBELISK_RT_DB_STORE_STATE_CHANGED
+        if ((instruction.flags &
+             ~(OBELISK_RT_DB_STORE_STATE_CHANGED |
+               OBELISK_RT_DB_STORE_STATE_CONTINUOUS)) != 0 ||
+            ((instruction.flags & OBELISK_RT_DB_STORE_STATE_CHANGED) != 0
                  ? (!reg(instruction.destination) ||
                     layoutAt(image, function, instruction.destination).width !=
                         1)
                  : instruction.destination != 0) ||
+            ((instruction.flags & OBELISK_RT_DB_STORE_STATE_CONTINUOUS) != 0 &&
+             !numeric(instruction.source1) &&
+             !floating(instruction.source1)) ||
             instruction.source2 || instruction.auxiliary ||
             instruction.immediate || !reg(instruction.source0) ||
             (!numeric(instruction.source1) && !floating(instruction.source1) &&

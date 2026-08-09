@@ -14,6 +14,9 @@ using namespace mlir;
 namespace obelisk::detail {
 namespace {
 
+constexpr StringLiteral continuousStoreAttrName =
+    "obelisk_sim.continuous_store";
+
 bool useTwoStateSpecialization(Operation *operation, bool moduleWide) {
   if (moduleWide)
     return true;
@@ -96,6 +99,12 @@ public:
       return failure();
     IntegerType plane = rewriter.getIntegerType(*width);
     bool assumeClean = op->hasAttr(assumeCleanSpecializationAttr);
+    sim::SimFuncOp function = op->getParentOfType<sim::SimFuncOp>();
+    sim::EntryKind entryKind = function.getEntryKind();
+    bool continuous = op->hasAttr(continuousStoreAttrName) ||
+                      entryKind == sim::EntryKind::Continuous ||
+                      entryKind == sim::EntryKind::PortInput ||
+                      entryKind == sim::EntryKind::PortOutput;
     std::optional<DirectStaticStateRange> directRange =
         resolveDirectStaticStateRange(adaptor.getReference().front(), *width,
                                       directLayout);
@@ -120,13 +129,13 @@ public:
       (void)storeStatePlane(
           rewriter, op.getLoc(), adaptor.getReference().front(), storedValue,
           "__obelisk_state_value", stateBitCount, directLayout,
-          guardedPermission, assumeClean, /*trackChange=*/false);
+          guardedPermission, assumeClean, /*trackChange=*/false, continuous);
       if (adaptor.getValue().size() == 2 && !twoState)
         (void)storeStatePlane(
             rewriter, op.getLoc(), adaptor.getReference().front(),
             adaptor.getValue()[1], "__obelisk_state_unknown", stateBitCount,
             directLayout, guardedPermission, assumeClean,
-            /*trackChange=*/false);
+            /*trackChange=*/false, continuous);
       rewriter.eraseOp(op);
       return success();
     }
@@ -144,6 +153,9 @@ public:
                              "__obelisk_state_unknown", true, stateBitCount,
                              directLayout, guardedPermission, assumeClean);
     Value notificationValue = storedValue;
+    Value notificationUnknown = adaptor.getValue().size() == 2 && !twoState
+                                    ? adaptor.getValue()[1]
+                                    : Value{};
     if (isa<sim::StringType>(valueType)) {
       Value comparison =
           LLVM::CallOp::create(
@@ -161,15 +173,34 @@ public:
     Value changed =
         storeStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
                         storedValue, "__obelisk_state_value", stateBitCount,
-                        directLayout, guardedPermission, assumeClean);
+                        directLayout, guardedPermission, assumeClean,
+                        /*trackChange=*/true, continuous);
     if (adaptor.getValue().size() == 2 && !twoState)
       changed = arith::OrIOp::create(
           rewriter, op.getLoc(), changed,
           storeStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
                           adaptor.getValue()[1], "__obelisk_state_unknown",
                           stateBitCount, directLayout, guardedPermission,
-                          assumeClean));
+                          assumeClean, /*trackChange=*/true, continuous));
     (void)changed;
+    // A masked continuous publication updates only its retained driver value.
+    // Observe the canonical planes after the store so force / assign cannot
+    // publish a transition to the hidden value before release.
+    if (continuous) {
+      notificationValue = loadStatePlane(
+          rewriter, op.getLoc(), adaptor.getReference().front(), plane,
+          "__obelisk_state_value", false, stateBitCount, directLayout,
+          guardedPermission, assumeClean);
+      if (containsLogic(valueType))
+        notificationUnknown =
+            twoState
+                ? llvmConstant(rewriter, op.getLoc(), plane, 0)
+                : loadStatePlane(rewriter, op.getLoc(),
+                                 adaptor.getReference().front(), plane,
+                                 "__obelisk_state_unknown", true,
+                                 stateBitCount, directLayout,
+                                 guardedPermission, assumeClean);
+    }
     if (isa<FloatType>(valueType)) {
       Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
       auto save = [&](Value value) {
@@ -189,13 +220,11 @@ public:
           ValueRange{runtimeContext, adaptor.getReference().front(),
                      llvmConstant(rewriter, op.getLoc(), rewriter.getI32Type(),
                                   *width),
-                     save(oldValue), save(storedValue)});
+                     save(oldValue), save(notificationValue)});
     } else {
       notifySignal(rewriter, op.getLoc(), adaptor.getReference().front(),
                    *width, oldValue, oldUnknown, notificationValue,
-                   adaptor.getValue().size() == 2 && !twoState
-                       ? adaptor.getValue()[1]
-                       : Value{},
+                   notificationUnknown,
                    directRange && (assumeClean || !directRange->guarded) &&
                            directLayout && directLayout->transitionHandlesExact
                        ? directRange

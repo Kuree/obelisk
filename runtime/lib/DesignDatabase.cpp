@@ -1584,13 +1584,20 @@ obelisk_rt_v1_design_release(obelisk_rt_context *context,
       uint64_t mask = uint64_t{1} << (absolute % 64);
       if (limb < context->forceMask.size())
         context->forceMask[limb] &= ~mask;
+      bool assigned = limb < context->assignMask.size() &&
+                      (context->assignMask[limb] & mask) != 0;
+      bool retained = limb < context->continuousMask.size() &&
+                      (context->continuousMask[limb] & mask) != 0;
       if (kind == OBELISK_RT_DESIGN_RECORD_STORAGE &&
-          limb < context->assignMask.size() &&
-          (context->assignMask[limb] & mask) != 0) {
+          (assigned || retained)) {
         bool oldValue = (context->stateValue[limb] & mask) != 0;
         bool oldUnknown = (context->stateUnknown[limb] & mask) != 0;
-        bool newValue = (context->assignValue[limb] & mask) != 0;
-        bool newUnknown = (context->assignUnknown[limb] & mask) != 0;
+        bool newValue = assigned
+                            ? (context->assignValue[limb] & mask) != 0
+                            : (context->continuousValue[limb] & mask) != 0;
+        bool newUnknown = assigned
+                              ? (context->assignUnknown[limb] & mask) != 0
+                              : (context->continuousUnknown[limb] & mask) != 0;
         context->stateValue[limb] = newValue
                                         ? context->stateValue[limb] | mask
                                         : context->stateValue[limb] & ~mask;
@@ -1615,9 +1622,8 @@ obelisk_rt_v1_design_release(obelisk_rt_context *context,
       obelisk_rt_aot_external_write_unlocked(context);
     obelisk_rt_aot_release_range_unlocked(context, stateOffset, bitWidth);
   }
-  // A variable retains the forced value. A net is immediately republished
-  // from its current driver slots (and becomes Z when the component is
-  // undriven).
+  // A procedural variable retains the forced value. Continuously driven
+  // storage and nets immediately reveal their retained driver state.
   for (auto [signal, edges] : transitions)
     obelisk_rt_v1_scheduler_signal(context, signal, 1, edges);
   if (!transitions.empty()) {

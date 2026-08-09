@@ -87,6 +87,7 @@ module {
 // CHECK-DAG: obelisk_sim.code_unit.decl {{[0-9]+}} in {{[0-9]+}} port_output hierarchy "supported_port_connections.child.$port_connection_1"{{.*}}{internal}
 // CHECK-DAG: entry_kind = 9 : i32{{.*}}internal
 // CHECK-DAG: entry_kind = 10 : i32{{.*}}internal
+// CHECK-DAG: obelisk_sim.continuous_store
 // CHECK-DAG: #obelisk_sim.effect<effect = write, resource = storage{{.*}}low = 0, width = 2
 // CHECK-DAG: #obelisk_sim.effect<effect = write, resource = storage{{.*}}low = 6, width = 2
 // CHECK-NOT: obelisk.sv.

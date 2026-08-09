@@ -1014,6 +1014,10 @@ ABI_FUNCTION(obelisk_rt_v1_native_state_store_plane,
              obelisk_rt_status (*)(obelisk_rt_context *, uint8_t *, uint64_t,
                                    uint64_t, uint64_t, uint32_t,
                                    const uint8_t *, uint8_t *));
+ABI_FUNCTION(obelisk_rt_v1_native_state_store_continuous_plane,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint8_t *, uint64_t,
+                                   uint64_t, uint64_t, uint32_t,
+                                   const uint8_t *, uint8_t *));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_notify, void (*)(obelisk_rt_context *));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_run,
              obelisk_rt_status (*)(obelisk_rt_context *));

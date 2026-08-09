@@ -286,11 +286,11 @@ Value storeStatePlane(ConversionPatternRewriter &rewriter, Location location,
                       uint64_t stateBitCount,
                       const NativeStateLayout *directLayout,
                       Value guardedPermission, bool assumeClean,
-                      bool trackChange) {
+                      bool trackChange, bool continuous) {
   IntegerType inputType = cast<IntegerType>(input.getType());
   std::optional<DirectStaticStateRange> range =
       resolveDirectStaticStateRange(handle, inputType.getWidth(), directLayout);
-  if (range && (!range->guarded || assumeClean))
+  if (!continuous && range && (!range->guarded || assumeClean))
     return storeDirectPackedPlane(rewriter, location, input, globalName,
                                   range->offset, trackChange);
 
@@ -312,8 +312,11 @@ Value storeStatePlane(ConversionPatternRewriter &rewriter, Location location,
         LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
     LLVM::CallOp::create(
         rewriter, location, TypeRange{i32},
-        SymbolRefAttr::get(rewriter.getContext(),
-                           "obelisk_rt_v1_native_state_store_plane"),
+        SymbolRefAttr::get(
+            rewriter.getContext(),
+            continuous
+                ? "obelisk_rt_v1_native_state_store_continuous_plane"
+                : "obelisk_rt_v1_native_state_store_plane"),
         ValueRange{
             context, base, llvmConstant(rewriter, location, i64, stateBitCount),
             handle, llvmConstant(rewriter, location, i64, inputType.getWidth()),
@@ -326,7 +329,7 @@ Value storeStatePlane(ConversionPatternRewriter &rewriter, Location location,
                                  changedByte,
                                  llvmConstant(rewriter, location, i8, 0));
   };
-  if (!range || !range->guarded)
+  if (continuous || !range || !range->guarded)
     return emitGeneric();
 
   Block *head = rewriter.getInsertionBlock();

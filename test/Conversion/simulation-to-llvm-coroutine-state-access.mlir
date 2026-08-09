@@ -24,6 +24,9 @@ module attributes {
       obelisk_sim.ref.store %value to %ref :
           !obelisk_sim.logic<8>,
           !obelisk_sim.ref<!obelisk_sim.logic<8>>
+      obelisk_sim.ref.store %value to %ref {obelisk_sim.continuous_store} :
+          !obelisk_sim.logic<8>,
+          !obelisk_sim.ref<!obelisk_sim.logic<8>>
       %net_value = obelisk_sim.net.read %net :
           !obelisk_sim.net<!obelisk_sim.logic<8>> ->
           !obelisk_sim.logic<8>
@@ -37,5 +40,6 @@ module attributes {
 // CHECK-COUNT-2: llvm.call @obelisk_rt_v1_native_state_store_plane
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_signal_transition
 // CHECK-COUNT-2: llvm.call @obelisk_rt_v1_native_state_load_plane
+// CHECK-COUNT-2: llvm.call @obelisk_rt_v1_native_state_store_continuous_plane
 // CHECK-NOT: obelisk_sim.ref.
 // CHECK-NOT: obelisk_sim.net.read

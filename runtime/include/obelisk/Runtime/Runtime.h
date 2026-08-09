@@ -576,6 +576,9 @@ enum {
 // StoreState writes its exact post-resolution transition predicate to the
 // destination i1 register when this flag is set.
 #define OBELISK_RT_DB_STORE_STATE_CHANGED UINT16_C(1)
+// Preserve the latest continuous publication beneath force / procedural
+// assign so releasing the override can immediately reveal its driver.
+#define OBELISK_RT_DB_STORE_STATE_CONTINUOUS UINT16_C(2)
 
 typedef uint16_t obelisk_rt_design_extract_kind;
 enum {
@@ -2446,6 +2449,10 @@ obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
     uint64_t global_bit_count, uint64_t handle, uint64_t bit_width,
     uint32_t unknown_plane, uint32_t fallback, uint8_t *out_value);
 obelisk_rt_status obelisk_rt_v1_native_state_store_plane(
+    obelisk_rt_context *context, uint8_t *global_plane,
+    uint64_t global_bit_count, uint64_t handle, uint64_t bit_width,
+    uint32_t unknown_plane, const uint8_t *value, uint8_t *out_changed);
+obelisk_rt_status obelisk_rt_v1_native_state_store_continuous_plane(
     obelisk_rt_context *context, uint8_t *global_plane,
     uint64_t global_bit_count, uint64_t handle, uint64_t bit_width,
     uint32_t unknown_plane, const uint8_t *value, uint8_t *out_changed);

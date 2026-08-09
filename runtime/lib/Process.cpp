@@ -4301,20 +4301,30 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_release_override(
         } else {
           if (limb < context->forceMask.size())
             context->forceMask[limb] &= ~mask;
-          if (limb < context->assignMask.size() &&
-              (context->assignMask[limb] & mask) != 0) {
+        }
+        bool forced = limb < context->forceMask.size() &&
+                      (context->forceMask[limb] & mask) != 0;
+        bool assigned = limb < context->assignMask.size() &&
+                        (context->assignMask[limb] & mask) != 0;
+        bool retained = limb < context->continuousMask.size() &&
+                        (context->continuousMask[limb] & mask) != 0;
+        if (!forced && (assigned || retained)) {
+          if (assigned) {
             nextV = (context->assignValue[limb] & mask) != 0;
             nextU = (context->assignUnknown[limb] & mask) != 0;
-            context->stateValue[limb] = nextV
-                                            ? context->stateValue[limb] | mask
-                                            : context->stateValue[limb] & ~mask;
-            context->stateUnknown[limb] =
-                nextU ? context->stateUnknown[limb] | mask
-                      : context->stateUnknown[limb] & ~mask;
-            setByteBit(globalValue, destination, nextV);
-            setByteBit(globalUnknown, destination, nextU);
-            changed |= oldV != nextV || oldU != nextU;
+          } else {
+            nextV = (context->continuousValue[limb] & mask) != 0;
+            nextU = (context->continuousUnknown[limb] & mask) != 0;
           }
+          context->stateValue[limb] = nextV
+                                          ? context->stateValue[limb] | mask
+                                          : context->stateValue[limb] & ~mask;
+          context->stateUnknown[limb] =
+              nextU ? context->stateUnknown[limb] | mask
+                    : context->stateUnknown[limb] & ~mask;
+          setByteBit(globalValue, destination, nextV);
+          setByteBit(globalUnknown, destination, nextU);
+          changed |= oldV != nextV || oldU != nextU;
         }
         setByteBit(publishedValue.data(), bit, nextV);
         setByteBit(publishedUnknown.data(), bit, nextU);
@@ -4436,10 +4446,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
   }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_native_state_store_plane(
+static obelisk_rt_status nativeStateStorePlane(
     obelisk_rt_context *context, uint8_t *globalPlane, uint64_t globalBitCount,
     uint64_t handle, uint64_t bitWidth, uint32_t unknownPlane,
-    const uint8_t *value, uint8_t *outChanged) {
+    const uint8_t *value, uint8_t *outChanged, bool continuous) {
   if (!context || !globalPlane || !value || !outChanged || bitWidth == 0 ||
       bitWidth > UINT64_MAX - 7 || unknownPlane > 1)
     return OBELISK_RT_INVALID_ARGUMENT;
@@ -4509,6 +4519,11 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_store_plane(
           unknownPlane ? &context->stateUnknown : &context->stateValue;
       if (canonicalPlane->size() != (globalBitCount + 63) / 64)
         return OBELISK_RT_INVALID_DESIGN;
+      if (continuous && context->continuousMask.empty()) {
+        context->continuousMask.assign(canonicalPlane->size(), 0);
+        context->continuousValue.assign(canonicalPlane->size(), 0);
+        context->continuousUnknown.assign(canonicalPlane->size(), 0);
+      }
     }
     if (canonical && bitWidth <= 64 && globalOffset >= 0 &&
         static_cast<uint64_t>(globalOffset) <= rootWidth &&
@@ -4519,11 +4534,19 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_store_plane(
            loadPackedBits(context->forceMask, destination, bitWidth) != 0) ||
           (!context->assignMask.empty() &&
            loadPackedBits(context->assignMask, destination, bitWidth) != 0);
+      uint64_t next = 0;
+      for (uint64_t byte = 0; byte != byteCount; ++byte)
+        next |= uint64_t{value[byte]} << (byte * 8);
+      next &= packedWidthMask(bitWidth);
+      if (continuous) {
+        std::vector<uint64_t> &retained =
+            unknownPlane ? context->continuousUnknown
+                         : context->continuousValue;
+        storePackedBits(retained, destination, bitWidth, next);
+        storePackedBits(context->continuousMask, destination, bitWidth,
+                        packedWidthMask(bitWidth));
+      }
       if (!masked) {
-        uint64_t next = 0;
-        for (uint64_t byte = 0; byte != byteCount; ++byte)
-          next |= uint64_t{value[byte]} << (byte * 8);
-        next &= packedWidthMask(bitWidth);
         uint64_t old =
             isStaticControlAOT(context)
                 ? loadPackedBytes(globalPlane, destination, bitWidth)
@@ -4547,6 +4570,16 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_store_plane(
       bool assigned =
           destination / 64 < context->assignMask.size() &&
           (context->assignMask[destination / 64] & destinationMask) != 0;
+      bool next = byteBit(value, bit);
+      if (canonical && continuous) {
+        std::vector<uint64_t> &retained =
+            unknownPlane ? context->continuousUnknown
+                         : context->continuousValue;
+        uint64_t &retainedLimb = retained[destination / 64];
+        retainedLimb = next ? retainedLimb | destinationMask
+                            : retainedLimb & ~destinationMask;
+        context->continuousMask[destination / 64] |= destinationMask;
+      }
       if (canonical && (forced || assigned))
         continue;
       bool old =
@@ -4554,7 +4587,6 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_store_plane(
               ? (((*canonicalPlane)[destination / 64] >> (destination % 64)) &
                  1) != 0
               : byteBit(globalPlane, destination);
-      bool next = byteBit(value, bit);
       *outChanged |= old != next;
       setByteBit(globalPlane, destination, next);
       if (canonical) {
@@ -4571,6 +4603,25 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_store_plane(
     obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
     return OBELISK_RT_INVALID_ARGUMENT;
   }
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_native_state_store_plane(
+    obelisk_rt_context *context, uint8_t *globalPlane, uint64_t globalBitCount,
+    uint64_t handle, uint64_t bitWidth, uint32_t unknownPlane,
+    const uint8_t *value, uint8_t *outChanged) {
+  return nativeStateStorePlane(context, globalPlane, globalBitCount, handle,
+                               bitWidth, unknownPlane, value, outChanged,
+                               false);
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_native_state_store_continuous_plane(
+    obelisk_rt_context *context, uint8_t *globalPlane, uint64_t globalBitCount,
+    uint64_t handle, uint64_t bitWidth, uint32_t unknownPlane,
+    const uint8_t *value, uint8_t *outChanged) {
+  return nativeStateStorePlane(context, globalPlane, globalBitCount, handle,
+                               bitWidth, unknownPlane, value, outChanged,
+                               true);
 }
 
 extern "C" void obelisk_rt_v1_scheduler_notify(obelisk_rt_context *context) {

@@ -851,6 +851,12 @@ struct obelisk_rt_context {
   std::vector<uint64_t> assignMask;
   std::vector<uint64_t> assignValue;
   std::vector<uint64_t> assignUnknown;
+  // Latest values published by continuous assignments to variable storage.
+  // Unlike procedural writes, these remain active beneath force / assign and
+  // are republished as soon as the higher-priority override is released.
+  std::vector<uint64_t> continuousMask;
+  std::vector<uint64_t> continuousValue;
+  std::vector<uint64_t> continuousUnknown;
   // Built once from the immutable execution image and shared by net
   // resolution, force/release, deposits, and reflection connectivity checks.
   NetAliasCache netAliases;

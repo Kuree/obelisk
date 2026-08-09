@@ -64,6 +64,9 @@ module attributes {
           : !obelisk_sim.logic<64> -> !obelisk_sim.logic<65>
       %storage = obelisk_sim.context.storage %ctx[0]
           : !obelisk_sim.ref<!obelisk_sim.logic<65>>
+      obelisk_sim.ref.store %extended to %storage
+          {obelisk_sim.continuous_store} : !obelisk_sim.logic<65>,
+          !obelisk_sim.ref<!obelisk_sim.logic<65>>
       obelisk_sim.override %storage = %extended assign true
           : !obelisk_sim.ref<!obelisk_sim.logic<65>>, !obelisk_sim.logic<65>
       obelisk_sim.release_override %storage assign true
