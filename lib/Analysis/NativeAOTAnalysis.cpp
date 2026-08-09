@@ -266,9 +266,14 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
         llvm::any_of(operation->getResultTypes(),
                      [](Type type) { return isa<FloatType>(type); });
     if (isa<sim::SimStopOp, sim::SimFatalOp>(operation)) {
-      result.reasons.emplace_back(
-          "fatal or stop control requires generic ordering");
-      excludeBytecodeActor(operation);
+      // Termination is scheduler-global control, not a local bytecode
+      // boundary. A hybrid plan can execute an excluded actor through the
+      // generic scheduler, but termination can return from the coordinator
+      // before the generic region barrier drains updates queued by that
+      // actor. Keep the complete design under the generic scheduler so
+      // termination observes the same ordered region state as the process
+      // that requested it.
+      rejectPlan("fatal or stop control requires generic ordering");
     } else if (isa<sim::SimDPICallOp>(operation)) {
       requireBytecodeFragment(operation, "DPI reentrancy is present");
       excludeBytecodeActor(operation);
