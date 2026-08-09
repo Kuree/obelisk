@@ -12,6 +12,7 @@
 #include "mlir/IR/Verifier.h"
 
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 
 #include <algorithm>
@@ -174,14 +175,85 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
   uint32_t captureCount = read32(program + 16);
   uint32_t programFlags = read32(program + 20);
   if (aggregateWidth > 64 ||
-      (programFlags & ~OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT) != 0 ||
+      (programFlags & ~(OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT |
+                        OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE)) != 0 ||
       instructionCount > (std::numeric_limits<size_t>::max() -
                           OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE) /
-                             OBELISK_RT_RANDOM_INSTRUCTION_SIZE ||
-      programSize != OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE +
-                         static_cast<size_t>(instructionCount) *
                              OBELISK_RT_RANDOM_INSTRUCTION_SIZE)
     return std::nullopt;
+  size_t instructionBytes = static_cast<size_t>(instructionCount) *
+                            OBELISK_RT_RANDOM_INSTRUCTION_SIZE;
+  size_t expectedSize =
+      OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE + instructionBytes;
+  bool hasSolveBefore =
+      (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE) != 0;
+  uint32_t solveEdgeCount = 0;
+  size_t solveEdgesOffset = 0;
+  if (hasSolveBefore) {
+    if (expectedSize > std::numeric_limits<size_t>::max() -
+                           OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE ||
+        programSize < expectedSize + OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE)
+      return std::nullopt;
+    solveEdgeCount = read32(program + expectedSize);
+    solveEdgesOffset = expectedSize + OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE;
+    if (solveEdgeCount == 0 ||
+        solveEdgeCount >
+            (std::numeric_limits<size_t>::max() - solveEdgesOffset) /
+                OBELISK_RT_RANDOM_SOLVE_EDGE_SIZE)
+      return std::nullopt;
+    expectedSize = solveEdgesOffset + static_cast<size_t>(solveEdgeCount) *
+                                          OBELISK_RT_RANDOM_SOLVE_EDGE_SIZE;
+  }
+  if (programSize != expectedSize)
+    return std::nullopt;
+
+  if (hasSolveBefore) {
+    uint64_t aggregateMask =
+        aggregateWidth == 64 ? UINT64_MAX : (uint64_t{1} << aggregateWidth) - 1;
+    std::vector<uint64_t> propertyMasks;
+    std::vector<std::pair<uint64_t, uint64_t>> solveEdges;
+    const uint8_t *edge = program + solveEdgesOffset;
+    for (uint32_t index = 0; index != solveEdgeCount; ++index) {
+      uint64_t beforeMask = read64(edge);
+      uint64_t afterMask = read64(edge + 8);
+      uint32_t constraintBlock = read32(edge + 16);
+      uint32_t reserved = read32(edge + 20);
+      edge += OBELISK_RT_RANDOM_SOLVE_EDGE_SIZE;
+      if (beforeMask == 0 || afterMask == 0 ||
+          (beforeMask & ~aggregateMask) != 0 ||
+          (afterMask & ~aggregateMask) != 0 || (beforeMask & afterMask) != 0 ||
+          reserved != 0 ||
+          (constraintBlock != OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
+           constraintBlock >= 64))
+        return std::nullopt;
+      for (uint64_t propertyMask : {beforeMask, afterMask}) {
+        for (uint64_t existing : propertyMasks)
+          if (existing != propertyMask && (existing & propertyMask) != 0)
+            return std::nullopt;
+        if (!llvm::is_contained(propertyMasks, propertyMask))
+          propertyMasks.push_back(propertyMask);
+      }
+      solveEdges.emplace_back(beforeMask, afterMask);
+    }
+
+    std::vector<uint64_t> remaining = propertyMasks;
+    while (!remaining.empty()) {
+      std::vector<uint64_t> layer;
+      for (uint64_t propertyMask : remaining) {
+        bool hasPredecessor = llvm::any_of(solveEdges, [&](const auto &edge) {
+          return edge.second == propertyMask &&
+                 llvm::is_contained(remaining, edge.first);
+        });
+        if (!hasPredecessor)
+          layer.push_back(propertyMask);
+      }
+      if (layer.empty())
+        return std::nullopt;
+      llvm::erase_if(remaining, [&](uint64_t propertyMask) {
+        return llvm::is_contained(layer, propertyMask);
+      });
+    }
+  }
 
   RandomProgramSMT result;
   result.context = std::make_unique<mlir::MLIRContext>();

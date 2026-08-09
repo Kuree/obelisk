@@ -177,6 +177,8 @@ constexpr uint32_t kIntrinsicRandomBounded =
 constexpr uint32_t kIntrinsicRandomDistribution =
     OBELISK_RT_INTRINSIC_V1_RANDOM_DISTRIBUTION;
 constexpr uint32_t kIntrinsicRandomSolve = OBELISK_RT_INTRINSIC_V1_RANDOM_SOLVE;
+constexpr uint32_t kIntrinsicRandomSolveState =
+    OBELISK_RT_INTRINSIC_V1_RANDOM_SOLVE_STATE;
 constexpr uint32_t kIntrinsicRandomNext = OBELISK_RT_INTRINSIC_V1_RANDOM_NEXT;
 constexpr uint32_t kIntrinsicRandomSeed = OBELISK_RT_INTRINSIC_V1_RANDOM_SEED;
 constexpr uint32_t kIntrinsicQueueDelete = OBELISK_RT_INTRINSIC_V1_QUEUE_DELETE;

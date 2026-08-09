@@ -640,9 +640,18 @@ bool validIntrinsic(const Image &image, const Function &function,
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 0 && twoStateBits(input(0), 64);
   case OBELISK_RT_INTRINSIC_V1_RANDOM_SOLVE:
-    if (signature.flags != 0 || site.inputCount < 3 || site.outputCount != 2 ||
+    if (signature.flags != 0 || site.inputCount < 5 || site.outputCount != 2 ||
         !bytes(input(0)) || !twoStateBits(output(0), 64) ||
         !twoStateBits(output(1), 1))
+      return false;
+    for (uint32_t index = 1; index != site.inputCount; ++index)
+      if (!twoStateBits(input(index), 64))
+        return false;
+    return true;
+  case OBELISK_RT_INTRINSIC_V1_RANDOM_SOLVE_STATE:
+    if (signature.flags != 0 || site.inputCount < 7 || site.outputCount != 3 ||
+        !bytes(input(0)) || !twoStateBits(output(0), 64) ||
+        !twoStateBits(output(1), 1) || !twoStateBits(output(2), 64))
       return false;
     for (uint32_t index = 1; index != site.inputCount; ++index)
       if (!twoStateBits(input(index), 64))

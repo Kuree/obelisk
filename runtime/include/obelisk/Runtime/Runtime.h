@@ -763,6 +763,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_QUEUE_INSERT = UINT32_C(0x00010445),
   OBELISK_RT_INTRINSIC_V1_RANDOM_DISTRIBUTION = UINT32_C(0x00010446),
   OBELISK_RT_INTRINSIC_V1_RANDOM_SOLVE = UINT32_C(0x00010447),
+  OBELISK_RT_INTRINSIC_V1_RANDOM_SOLVE_STATE = UINT32_C(0x00010448),
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_CREATE = UINT32_C(0x00010450),
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_ENABLED = UINT32_C(0x00010451),
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_SAMPLE_ENABLED = UINT32_C(0x00010452),
@@ -2585,12 +2586,19 @@ typedef struct obelisk_rt_random_state_v1 {
 // instruction_count fixed-width 16-byte instructions. END instructions use
 // operand as the disabled constraint-block bit (or the unmasked sentinel).
 // END_SOFT uses immediate as a contiguous, zero-based priority where larger
-// values have higher priority; END_HARD requires an immediate of zero.
+// values have higher priority; END_HARD requires an immediate of zero. When
+// HAS_SOLVE_BEFORE is set, the instructions are followed by a little-endian
+// u32 edge count and fixed-width 24-byte edge records. Each record contains a
+// u64 before-property mask, a u64 after-property mask, a u32 constraint-block
+// bit (or the unmasked sentinel), and a zero u32 reserved field.
 #define OBELISK_RT_RANDOM_PROGRAM_MAGIC UINT32_C(0x3152444f)
 #define OBELISK_RT_RANDOM_PROGRAM_VERSION UINT16_C(1)
 #define OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE UINT16_C(24)
 #define OBELISK_RT_RANDOM_INSTRUCTION_SIZE UINT16_C(16)
 #define OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT UINT32_C(1)
+#define OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE UINT32_C(2)
+#define OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE UINT16_C(4)
+#define OBELISK_RT_RANDOM_SOLVE_EDGE_SIZE UINT16_C(24)
 #define OBELISK_RT_RANDOM_INSTRUCTION_SIGNED UINT8_C(1)
 #define OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 UINT32_MAX
 
@@ -2714,6 +2722,17 @@ obelisk_rt_status obelisk_rt_v1_random_solve_modes(
     uint64_t start, uint64_t mutable_mask, uint64_t constraint_mask,
     uint64_t max_attempts, const uint64_t *captures, uint64_t capture_count,
     uint64_t *out_assignment, uint32_t *out_success);
+// Stateful form used by object randomization. Ordered fallback sampling draws
+// unbiased bounded indices from the supplied PCG stream and returns its
+// advanced state. Non-ordered programs leave the state unchanged. The
+// increment must be odd. Stateless solve entry points reject programs with an
+// active solve-before edge because they cannot preserve its distribution.
+obelisk_rt_status obelisk_rt_v1_random_solve_modes_state(
+    obelisk_rt_context *context, const uint8_t *program, uint64_t program_size,
+    uint64_t start, uint64_t mutable_mask, uint64_t constraint_mask,
+    uint64_t max_attempts, uint64_t rng_state, uint64_t rng_increment,
+    const uint64_t *captures, uint64_t capture_count, uint64_t *out_assignment,
+    uint32_t *out_success, uint64_t *out_rng_state);
 obelisk_rt_status
 obelisk_rt_v1_random_get_state(obelisk_rt_context *context,
                                obelisk_rt_random_state_v1 *out_state);

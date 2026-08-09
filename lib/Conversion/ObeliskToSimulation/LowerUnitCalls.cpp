@@ -1491,7 +1491,17 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   }
 
   SmallVector<SmallVector<unsigned>> solveBeforeLayers;
-  SmallVector<std::pair<unsigned, unsigned>> solveBeforeEdges;
+  struct SolveBeforeEdge {
+    unsigned before;
+    unsigned after;
+    uint32_t constraintBlock;
+
+    bool operator==(const SolveBeforeEdge &other) const {
+      return before == other.before && after == other.after &&
+             constraintBlock == other.constraintBlock;
+    }
+  };
+  SmallVector<SolveBeforeEdge> solveBeforeEdges;
   bool hasSolveBefore = false;
   auto randomPropertyIndex = [&](Operation *expression) -> FailureOr<unsigned> {
     auto indexAttr =
@@ -1508,6 +1518,18 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   for (auto [index, root] : llvm::enumerate(children)) {
     if (index == receiverIndex)
       continue;
+    uint32_t solveConstraintBlock = OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1;
+    if (auto block =
+            root->getAttrOfType<IntegerAttr>(randomConstraintBlockAttrName)) {
+      APInt value = block.getValue();
+      if (value.isNegative() || value.getActiveBits() > 64 ||
+          value.getZExtValue() >= constraintCount) {
+        emitError(getSemanticLocation(root))
+            << "random constraint block index is malformed";
+        return failure();
+      }
+      solveConstraintBlock = static_cast<uint32_t>(value.getZExtValue());
+    }
     WalkResult result =
         root->walk([&](semantic::SVSolveBeforeConstraintOp solve) {
           hasSolveBefore = true;
@@ -1549,7 +1571,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
                     << "solve before cannot order a property before itself";
                 return WalkResult::interrupt();
               }
-              std::pair<unsigned, unsigned> edge{lhs, rhs};
+              SolveBeforeEdge edge{lhs, rhs, solveConstraintBlock};
               if (!llvm::is_contained(solveBeforeEdges, edge))
                 solveBeforeEdges.push_back(edge);
             }
@@ -1561,9 +1583,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   if (hasSolveBefore) {
     SmallVector<bool> involved(planned.size(), false);
     SmallVector<bool> emitted(planned.size(), false);
-    for (auto [before, after] : solveBeforeEdges) {
-      involved[before] = true;
-      involved[after] = true;
+    for (const SolveBeforeEdge &edge : solveBeforeEdges) {
+      involved[edge.before] = true;
+      involved[edge.after] = true;
     }
     size_t remaining = llvm::count(involved, true);
     while (remaining != 0) {
@@ -1573,7 +1595,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
           continue;
         bool hasPredecessor =
             llvm::any_of(solveBeforeEdges, [&](const auto &edge) {
-              return edge.second == property && !emitted[edge.first];
+              return edge.after == property && !emitted[edge.before];
             });
         if (!hasPredecessor)
           layer.push_back(property);
@@ -2098,7 +2120,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   append32(static_cast<uint32_t>(totalWidth));
   append32(static_cast<uint32_t>(programInstructions.size()));
   append32(static_cast<uint32_t>(programCaptures.size()));
-  append32(emittedSoft ? OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT : 0);
+  uint32_t programFlags = emittedSoft ? OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT : 0;
+  if (hasSolveBefore)
+    programFlags |= OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE;
+  append32(programFlags);
   for (const EncodedInstruction &encoded : programInstructions) {
     program.push_back(encoded.opcode);
     program.push_back(encoded.width);
@@ -2106,6 +2131,24 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     program.push_back(0);
     append32(encoded.operand);
     append64(encoded.immediate);
+  }
+  if (hasSolveBefore) {
+    append32(static_cast<uint32_t>(solveBeforeEdges.size()));
+    SmallVector<uint64_t> propertyMasks;
+    uint64_t offset = 0;
+    for (const Property &property : planned) {
+      uint64_t valueMask = property.width == 64
+                               ? UINT64_MAX
+                               : (uint64_t{1} << property.width) - 1;
+      propertyMasks.push_back(valueMask << offset);
+      offset += property.width;
+    }
+    for (const SolveBeforeEdge &edge : solveBeforeEdges) {
+      append64(propertyMasks[edge.before]);
+      append64(propertyMasks[edge.after]);
+      append32(edge.constraintBlock);
+      append32(0);
+    }
   }
   uint64_t fallbackAttempts =
       totalWidth <= 20 ? (uint64_t{1} << totalWidth) : (uint64_t{1} << 20);
@@ -2139,11 +2182,6 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   SmallVector<uint64_t> solveBeforeLayerMasks;
   std::function<unsigned(ArrayRef<uint64_t>, unsigned)> buildSolveBeforeTable;
   if (hasSolveBefore) {
-    if (hasSoftConstraint) {
-      emitError(location)
-          << "solve before with soft constraints is not executable yet";
-      return failure();
-    }
     for (ArrayRef<unsigned> layer : solveBeforeLayers) {
       uint64_t mask = 0;
       uint64_t offset = 0;
@@ -2186,7 +2224,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
       solveBeforeTableNodes[node].children = std::move(children);
       return node;
     };
-    if (validAssignmentTable)
+    if (validAssignmentTable && !hasSoftConstraint)
       solveBeforeTableRoot = buildSolveBeforeTable(proposalAssignments, 0);
   }
 
@@ -2386,6 +2424,70 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
       proposalAliases.push_back(
           {alias.targetOffset, alias.sourceOffset, alias.width});
   }
+  if (hasSolveBefore && !proposalAliases.empty()) {
+    auto solveLayerForField = [&](uint32_t fieldOffset, unsigned fieldWidth) {
+      uint32_t offset = 0;
+      for (auto [propertyIndex, property] : llvm::enumerate(planned)) {
+        if (offset == fieldOffset && property.width == fieldWidth) {
+          for (auto [layerIndex, layer] : llvm::enumerate(solveBeforeLayers))
+            if (llvm::is_contained(layer, propertyIndex))
+              return static_cast<unsigned>(layerIndex);
+          break;
+        }
+        offset += property.width;
+      }
+      return static_cast<unsigned>(solveBeforeLayers.size());
+    };
+    SmallVector<ProposalAlias> orientedAliases;
+    SmallVector<bool> consumed(proposalAliases.size(), false);
+    for (unsigned index = 0; index != proposalAliases.size(); ++index) {
+      if (consumed[index])
+        continue;
+      const ProposalAlias &first = proposalAliases[index];
+      SmallVector<uint32_t> members{first.sourceOffset};
+      for (unsigned other = index; other != proposalAliases.size(); ++other) {
+        const ProposalAlias &alias = proposalAliases[other];
+        if (alias.sourceOffset != first.sourceOffset ||
+            alias.width != first.width)
+          continue;
+        consumed[other] = true;
+        members.push_back(alias.targetOffset);
+      }
+      bool hasDefinition = llvm::any_of(
+          analysis.definitions,
+          [&](const solver::RandomVariableDefinition &definition) {
+            return definition.width == first.width &&
+                   llvm::is_contained(members, definition.targetOffset);
+          });
+      uint32_t source = first.sourceOffset;
+      if (!hasDefinition)
+        source = *llvm::min_element(members, [&](uint32_t lhs, uint32_t rhs) {
+          return std::pair(solveLayerForField(lhs, first.width), lhs) <
+                 std::pair(solveLayerForField(rhs, first.width), rhs);
+        });
+      for (uint32_t member : members)
+        if (member != source)
+          orientedAliases.push_back({member, source, first.width});
+    }
+    proposalAliases = std::move(orientedAliases);
+  }
+  llvm::erase_if(proposalDomains, [&](const ProposalDomain &domain) {
+    auto alias =
+        llvm::find_if(proposalAliases, [&](const ProposalAlias &candidate) {
+          return candidate.targetOffset == domain.offset &&
+                 candidate.width == domain.width;
+        });
+    if (alias == proposalAliases.end())
+      return false;
+    auto sourceDomain =
+        llvm::find_if(proposalDomains, [&](const ProposalDomain &candidate) {
+          return candidate.offset == alias->sourceOffset &&
+                 candidate.width == alias->width;
+        });
+    return sourceDomain != proposalDomains.end() &&
+           sourceDomain->lower == domain.lower &&
+           sourceDomain->cardinality == domain.cardinality;
+  });
   auto canonicalProposalField = [&](uint32_t offset, unsigned width) {
     auto alias = llvm::find_if(proposalAliases, [&](const ProposalAlias &item) {
       return item.targetOffset == offset && item.width == width;
@@ -3008,12 +3110,23 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
                   return definition.targetOffset == domain.offset &&
                          definition.width == domain.width;
                 });
-            bool aliasTarget =
-                llvm::any_of(proposalAliases, [&](const ProposalAlias &alias) {
-                  return alias.targetOffset == domain.offset &&
-                         alias.width == domain.width;
+            auto alias = llvm::find_if(
+                proposalAliases, [&](const ProposalAlias &candidate) {
+                  return candidate.targetOffset == domain.offset &&
+                         candidate.width == domain.width;
                 });
-            return definitionTarget || aliasTarget;
+            if (alias == proposalAliases.end())
+              return definitionTarget;
+            auto sourceDomain = llvm::find_if(
+                proposalDomains, [&](const ProposalDomain &candidate) {
+                  return candidate.offset == alias->sourceOffset &&
+                         candidate.width == alias->width;
+                });
+            bool sameAliasDomain =
+                sourceDomain != proposalDomains.end() &&
+                sourceDomain->lower == domain.lower &&
+                sourceDomain->cardinality == domain.cardinality;
+            return definitionTarget || !sameAliasDomain;
           }) ||
       llvm::any_of(
           proposalCaptureDomains, [&](const ProposalCaptureDomain &bound) {
@@ -3121,6 +3234,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     return true;
   };
 
+  bool solveBeforeRequiresRuntime = hasSolveBefore && hasSoftConstraint;
   if (hasSolveBefore && !solveBeforeTableRoot &&
       analysis.satisfiability != solver::Satisfiability::Unsatisfiable) {
     uint64_t orderedPropertyMask = 0;
@@ -3130,33 +3244,47 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     uint64_t uncoveredOrderedMask =
         orderedPropertyMask & ~proposalAssignmentTableMask;
     if (uncoveredOrderedMask != 0) {
-      bool unresolvedComponentCrossesLayers =
-          llvm::any_of(analysis.constraintComponentMasks,
-                       [&](uint64_t componentMask) {
-                         if ((componentMask & ~proposalAssignmentTableMask) ==
-                             0)
-                           return false;
-                         return llvm::count_if(
-                                    solveBeforeLayerMasks,
-                                    [&](uint64_t layerMask) {
-                                      return (componentMask & layerMask) != 0;
-                                    }) > 1;
-                       });
-      bool validStructuralOrder =
-          !unresolvedComponentCrossesLayers ||
-          structuralProposalFollowsSolveOrder();
+      bool unresolvedComponentCrossesLayers = llvm::any_of(
+          analysis.constraintComponentMasks, [&](uint64_t componentMask) {
+            if ((componentMask & ~proposalAssignmentTableMask) == 0)
+              return false;
+            return llvm::count_if(solveBeforeLayerMasks,
+                                  [&](uint64_t layerMask) {
+                                    return (componentMask & layerMask) != 0;
+                                  }) > 1;
+          });
+      bool validStructuralOrder = !unresolvedComponentCrossesLayers ||
+                                  structuralProposalFollowsSolveOrder();
       if (!exactProposal || !analysis.hasConstraintComponentPartition ||
-          !validStructuralOrder) {
-        emitError(location)
-            << "solve before currently requires complete compile-time "
-               "solution tables or an exact structurally ordered proposal";
-        return failure();
-      }
+          !validStructuralOrder)
+        solveBeforeRequiresRuntime = true;
     }
-    if (validAssignmentTables)
+    if (!solveBeforeRequiresRuntime && validAssignmentTables)
       for (const ProposalAssignmentTable &table : proposalAssignmentTables)
         solveBeforeComponentTableRoots.push_back(
             buildSolveBeforeTable(table.assignments, 0));
+  }
+
+  if (solveBeforeRequiresRuntime && totalWidth > 20) {
+    emitError(location)
+        << "solve before residual fallback requires exhaustive traversal of "
+           "at most 20 aggregate random bits; compile-time planning could not "
+           "preserve the ordered distribution for "
+        << totalWidth << " bits";
+    return failure();
+  }
+
+  // An ordered residual solve must start from the single aggregate draw and
+  // evaluate the original formula. Do not speculatively consume draws for a
+  // compile-time proposal that this path cannot use, or reject a dynamic
+  // capture bound before the residual solver sees the complete relation.
+  if (solveBeforeRequiresRuntime) {
+    solveBeforeTableRoot.reset();
+    solveBeforeComponentTableRoots.clear();
+    validAssignmentTable = false;
+    validAssignmentTables = false;
+    proposalDomains.clear();
+    proposalCaptureDomains.clear();
   }
 
   // The compiler plan is proven for the all-enabled constraint set. If a
@@ -3168,7 +3296,11 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   Value modeState = state;
   Block *modeSamplingDispatchBlock = addBlock();
   Block *plannedSamplingBlock = addBlock();
-  cf::CondBranchOp::create(builder, location, allConstraintsEnabled,
+  Value usePlannedSampling = allConstraintsEnabled;
+  if (hasSolveBefore)
+    usePlannedSampling = arith::AndIOp::create(
+        builder, location, usePlannedSampling, randomizationEnabled);
+  cf::CondBranchOp::create(builder, location, usePlannedSampling,
                            plannedSamplingBlock, ValueRange{},
                            modeSamplingDispatchBlock, ValueRange{});
   setCurrent(plannedSamplingBlock);
@@ -3429,8 +3561,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   Block *done = addBlock();
   Value counter = loop->addArgument(i64, location);
   Value attempt = loop->addArgument(i64, location);
+  Value fallbackStart = fallbackBlock->addArgument(i64, location);
   Value modeCounter = modeLoop->addArgument(i64, location);
   Value modeAttempt = modeLoop->addArgument(i64, location);
+  Value modeFallbackStart = modeFallbackBlock->addArgument(i64, location);
   Value commitCounter = commit->addArgument(i64, location);
   Value doneResult = done->addArgument(builder.getI1Type(), location);
 
@@ -3804,7 +3938,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   Value exhausted = arith::OrIOp::create(builder, location, domainExhausted,
                                          samplerExhausted);
   cf::CondBranchOp::create(builder, location, exhausted, fallbackBlock,
-                           ValueRange{}, loop, ValueRange{next, nextAttempt});
+                           ValueRange{next}, loop,
+                           ValueRange{next, nextAttempt});
 
   setCurrent(fallbackBlock);
   if (analysis.satisfiability == solver::Satisfiability::Unsatisfiable) {
@@ -3814,11 +3949,13 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     cf::BranchOp::create(builder, location, failedBlock, ValueRange{});
   } else {
     auto fallback = sim::SimRandomSolveOp::create(
-        builder, location, function.getBody().front().getArgument(0), next,
-        mutableMask, relevantConstraintMode, constant64(fallbackAttempts),
-        programCaptures,
+        builder, location, function.getBody().front().getArgument(0),
+        fallbackStart, mutableMask, relevantConstraintMode,
+        constant64(fallbackAttempts), state, increment, programCaptures,
         builder.getStringAttr(StringRef(
             reinterpret_cast<const char *>(program.data()), program.size())));
+    sim::SimManagedStoreOp::create(builder, location,
+                                   fallback.getNextRngState(), stateReference);
     cf::CondBranchOp::create(builder, location, fallback.getSuccess(), commit,
                              ValueRange{fallback.getAssignment()}, failedBlock,
                              ValueRange{});
@@ -3826,8 +3963,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
 
   setCurrent(modeSamplingDispatchBlock);
   sim::SimManagedStoreOp::create(builder, location, modeState, stateReference);
-  cf::BranchOp::create(builder, location, modeLoop,
-                       ValueRange{modeStart, constant64(0)});
+  if (hasSolveBefore)
+    cf::BranchOp::create(builder, location, modeFallbackBlock,
+                         ValueRange{modeStart});
+  else
+    cf::BranchOp::create(builder, location, modeLoop,
+                         ValueRange{modeStart, constant64(0)});
 
   setCurrent(modeLoop);
   FailureOr<ConstraintCheck> modeCheck =
@@ -3843,25 +3984,27 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
       arith::AddIOp::create(builder, location, modeAttempt, constant64(1));
   Value modeDomainExhausted = arith::CmpIOp::create(
       builder, location, arith::CmpIPredicate::eq, modeNext, modeStart);
-  Value modeSamplerExhausted = arith::CmpIOp::create(
-      builder, location, arith::CmpIPredicate::uge, modeNextAttempt,
-      constant64(64));
+  Value modeSamplerExhausted =
+      arith::CmpIOp::create(builder, location, arith::CmpIPredicate::uge,
+                            modeNextAttempt, constant64(64));
   Value modeExhausted = arith::OrIOp::create(
       builder, location, modeDomainExhausted, modeSamplerExhausted);
-  cf::CondBranchOp::create(builder, location, modeExhausted,
-                           modeFallbackBlock, ValueRange{}, modeLoop,
+  cf::CondBranchOp::create(builder, location, modeExhausted, modeFallbackBlock,
+                           ValueRange{modeNext}, modeLoop,
                            ValueRange{modeNext, modeNextAttempt});
 
   setCurrent(modeFallbackBlock);
   auto modeFallback = sim::SimRandomSolveOp::create(
-      builder, location, function.getBody().front().getArgument(0), modeNext,
-      mutableMask, relevantConstraintMode, constant64(fallbackAttempts),
-      programCaptures,
+      builder, location, function.getBody().front().getArgument(0),
+      modeFallbackStart, mutableMask, relevantConstraintMode,
+      constant64(fallbackAttempts), modeState, increment, programCaptures,
       builder.getStringAttr(StringRef(
           reinterpret_cast<const char *>(program.data()), program.size())));
-  cf::CondBranchOp::create(
-      builder, location, modeFallback.getSuccess(), commit,
-      ValueRange{modeFallback.getAssignment()}, failedBlock, ValueRange{});
+  sim::SimManagedStoreOp::create(
+      builder, location, modeFallback.getNextRngState(), stateReference);
+  cf::CondBranchOp::create(builder, location, modeFallback.getSuccess(), commit,
+                           ValueRange{modeFallback.getAssignment()},
+                           failedBlock, ValueRange{});
 
   // Static UNSAT is known for every possible runtime capture value when all
   // constraint blocks are enabled. Bypass planned sampling instead of spending
@@ -3872,6 +4015,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   setCurrent(dispatchBlock);
   if (analysis.satisfiability == solver::Satisfiability::Unsatisfiable)
     cf::BranchOp::create(builder, location, failedBlock, ValueRange{});
+  else if (solveBeforeRequiresRuntime)
+    cf::BranchOp::create(builder, location, fallbackBlock, ValueRange{start});
   else
     cf::BranchOp::create(builder, location, loop,
                          ValueRange{start, constant64(0)});

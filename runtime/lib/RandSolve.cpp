@@ -19,6 +19,12 @@ struct Instruction {
   uint64_t immediate;
 };
 
+struct SolveBeforeEdge {
+  uint64_t beforeMask;
+  uint64_t afterMask;
+  uint32_t constraintBlock;
+};
+
 struct Value {
   uint64_t bits;
   unsigned width;
@@ -87,6 +93,58 @@ unsigned countBits(uint64_t value) {
     ++count;
   }
   return count;
+}
+
+bool constraintEnabled(uint32_t constraintBlock, uint64_t constraintMask) {
+  return constraintBlock == OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 ||
+         ((constraintMask >> constraintBlock) & 1) == 0;
+}
+
+bool buildSolveBeforeLayers(const std::vector<SolveBeforeEdge> &edges,
+                            uint64_t mutableMask, uint64_t constraintMask,
+                            std::vector<uint64_t> &layers) {
+  std::vector<uint64_t> nodes;
+  for (const SolveBeforeEdge &edge : edges) {
+    if (!constraintEnabled(edge.constraintBlock, constraintMask))
+      continue;
+    uint64_t before = edge.beforeMask & mutableMask;
+    uint64_t after = edge.afterMask & mutableMask;
+    if (before == 0 || after == 0)
+      continue;
+    if (std::find(nodes.begin(), nodes.end(), before) == nodes.end())
+      nodes.push_back(before);
+    if (std::find(nodes.begin(), nodes.end(), after) == nodes.end())
+      nodes.push_back(after);
+  }
+
+  layers.clear();
+  while (!nodes.empty()) {
+    uint64_t layer = 0;
+    for (uint64_t node : nodes) {
+      bool hasPredecessor = false;
+      for (const SolveBeforeEdge &edge : edges) {
+        if (!constraintEnabled(edge.constraintBlock, constraintMask) ||
+            (edge.afterMask & mutableMask) != node)
+          continue;
+        uint64_t before = edge.beforeMask & mutableMask;
+        if (before != 0 &&
+            std::find(nodes.begin(), nodes.end(), before) != nodes.end()) {
+          hasPredecessor = true;
+          break;
+        }
+      }
+      if (!hasPredecessor)
+        layer |= node;
+    }
+    if (layer == 0)
+      return false;
+    layers.push_back(layer);
+    nodes.erase(
+        std::remove_if(nodes.begin(), nodes.end(),
+                       [&](uint64_t node) { return (node & layer) != 0; }),
+        nodes.end());
+  }
+  return true;
 }
 
 uint64_t extendSigned(uint64_t value, unsigned sourceWidth,
@@ -434,14 +492,17 @@ bool evaluate(const std::vector<Instruction> &instructions,
 
 } // namespace
 
-extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_modes(
-    obelisk_rt_context *context, const uint8_t *program, uint64_t programSize,
-    uint64_t start, uint64_t mutableMask, uint64_t constraintMask,
-    uint64_t maxAttempts, const uint64_t *captures, uint64_t captureCount,
-    uint64_t *outAssignment, uint32_t *outSuccess) {
+static obelisk_rt_status
+randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
+                     uint64_t programSize, uint64_t start, uint64_t mutableMask,
+                     uint64_t constraintMask, uint64_t maxAttempts,
+                     const uint64_t *captures, uint64_t captureCount,
+                     uint64_t *outAssignment, uint32_t *outSuccess,
+                     obelisk_rt_random_state_v1 *randomState) {
   if (!context || !program || !outAssignment || !outSuccess ||
       (captureCount != 0 && !captures) ||
-      programSize < OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE)
+      programSize < OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE ||
+      programSize > std::numeric_limits<size_t>::max())
     return OBELISK_RT_INVALID_ARGUMENT;
   *outAssignment = 0;
   *outSuccess = 0;
@@ -454,10 +515,24 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_modes(
   uint32_t encodedCaptures = read32(program + 16);
   uint32_t programFlags = read32(program + 20);
   if (aggregateWidth > 64 || encodedCaptures != captureCount ||
-      (programFlags & ~OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT) != 0 ||
-      programSize != OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE +
-                         static_cast<uint64_t>(instructionCount) *
-                             OBELISK_RT_RANDOM_INSTRUCTION_SIZE)
+      (programFlags & ~(OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT |
+                        OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE)) != 0)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  uint64_t instructionEnd = OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE +
+                            static_cast<uint64_t>(instructionCount) *
+                                OBELISK_RT_RANDOM_INSTRUCTION_SIZE;
+  bool encodedSolveBefore =
+      (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE) != 0;
+  uint32_t solveEdgeCount = 0;
+  if (encodedSolveBefore) {
+    if (programSize < instructionEnd + OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    solveEdgeCount = read32(program + instructionEnd);
+    instructionEnd += OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE +
+                      static_cast<uint64_t>(solveEdgeCount) *
+                          OBELISK_RT_RANDOM_SOLVE_EDGE_SIZE;
+  }
+  if (programSize != instructionEnd)
     return OBELISK_RT_INVALID_ARGUMENT;
 
   try {
@@ -491,8 +566,59 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_modes(
         softPriorities != expectedSoftPriorities)
       return OBELISK_RT_INVALID_ARGUMENT;
 
+    std::vector<SolveBeforeEdge> solveEdges;
+    solveEdges.reserve(solveEdgeCount);
+    if (encodedSolveBefore) {
+      cursor = program + OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE +
+               static_cast<uint64_t>(instructionCount) *
+                   OBELISK_RT_RANDOM_INSTRUCTION_SIZE +
+               OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE;
+      uint64_t aggregateMask = widthMask(aggregateWidth);
+      std::vector<uint64_t> propertyMasks;
+      for (uint32_t index = 0; index != solveEdgeCount; ++index) {
+        SolveBeforeEdge edge{read64(cursor), read64(cursor + 8),
+                             read32(cursor + 16)};
+        uint32_t reserved = read32(cursor + 20);
+        cursor += OBELISK_RT_RANDOM_SOLVE_EDGE_SIZE;
+        if (edge.beforeMask == 0 || edge.afterMask == 0 ||
+            (edge.beforeMask & ~aggregateMask) != 0 ||
+            (edge.afterMask & ~aggregateMask) != 0 ||
+            (edge.beforeMask & edge.afterMask) != 0 || reserved != 0 ||
+            (edge.constraintBlock != OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
+             edge.constraintBlock >= 64))
+          return OBELISK_RT_INVALID_ARGUMENT;
+        for (uint64_t propertyMask : {edge.beforeMask, edge.afterMask}) {
+          for (uint64_t existing : propertyMasks)
+            if (existing != propertyMask && (existing & propertyMask) != 0)
+              return OBELISK_RT_INVALID_ARGUMENT;
+          if (std::find(propertyMasks.begin(), propertyMasks.end(),
+                        propertyMask) == propertyMasks.end())
+            propertyMasks.push_back(propertyMask);
+        }
+        solveEdges.push_back(edge);
+      }
+      std::vector<uint64_t> validationLayers;
+      if (solveEdges.empty() ||
+          !buildSolveBeforeLayers(solveEdges, aggregateMask, 0,
+                                  validationLayers))
+        return OBELISK_RT_INVALID_ARGUMENT;
+    }
+
     uint64_t mask = widthMask(aggregateWidth);
     mutableMask &= mask;
+    std::vector<uint64_t> solveLayers;
+    bool activeSolveBefore = false;
+    if (encodedSolveBefore) {
+      if (!buildSolveBeforeLayers(solveEdges, mutableMask, constraintMask,
+                                  solveLayers))
+        return OBELISK_RT_INVALID_ARGUMENT;
+      activeSolveBefore = !solveLayers.empty();
+      // A stateless entry point cannot make exact non-power-of-two choices
+      // for the conditional solve-order distribution. Compiler-generated
+      // object randomization always uses the stateful entry point.
+      if (activeSolveBefore && !randomState)
+        return OBELISK_RT_INVALID_ARGUMENT;
+    }
     unsigned mutableWidth = countBits(mutableMask);
     uint64_t domain = mutableWidth == 64 ? std::numeric_limits<uint64_t>::max()
                                          : uint64_t{1} << mutableWidth;
@@ -506,30 +632,42 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_modes(
     bool hasHardFallback = false;
     std::vector<uint8_t> bestSoft(softCount, 0);
     std::vector<uint8_t> soft(softCount, 1);
+    std::vector<uint64_t> solveCandidates;
     std::vector<Value> stack;
     stack.reserve(maxDepth);
+    auto compareSoft = [&](const std::vector<uint8_t> &lhs,
+                           const std::vector<uint8_t> &rhs) {
+      for (unsigned priority = softCount; priority != 0; --priority) {
+        if (lhs[priority - 1] == rhs[priority - 1])
+          continue;
+        return lhs[priority - 1] > rhs[priority - 1] ? 1 : -1;
+      }
+      return 0;
+    };
     for (uint64_t attempt = 0; attempt != attempts; ++attempt) {
       bool hard = false;
       if (!evaluate(instructions, stack, candidate, constraintMask, captures,
                     hard, soft))
         return OBELISK_RT_INVALID_ARGUMENT;
-      bool satisfiesAllSoft =
-          std::all_of(soft.begin(), soft.end(),
-                      [](uint8_t value) { return value != 0; });
-      if (hard && (!encodedSoft || satisfiesAllSoft)) {
+      bool satisfiesAllSoft = std::all_of(
+          soft.begin(), soft.end(), [](uint8_t value) { return value != 0; });
+      if (!activeSolveBefore && hard && (!encodedSoft || satisfiesAllSoft)) {
         *outAssignment = candidate;
         *outSuccess = 1;
         return OBELISK_RT_OK;
       }
-      if (hard) {
-        bool better = !hasHardFallback;
-        for (unsigned priority = softCount; !better && priority != 0;
-             --priority) {
-          if (soft[priority - 1] == bestSoft[priority - 1])
-            continue;
-          better = soft[priority - 1] > bestSoft[priority - 1];
-          break;
+      if (hard && activeSolveBefore) {
+        int comparison =
+            solveCandidates.empty() ? 1 : compareSoft(soft, bestSoft);
+        if (!encodedSoft || comparison >= 0) {
+          if (encodedSoft && comparison > 0) {
+            solveCandidates.clear();
+            bestSoft = soft;
+          }
+          solveCandidates.push_back(candidate);
         }
+      } else if (hard) {
+        bool better = !hasHardFallback || compareSoft(soft, bestSoft) > 0;
         if (better) {
           hardFallback = candidate;
           bestSoft = soft;
@@ -538,6 +676,51 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_modes(
       }
       candidateIndex = (candidateIndex + 1) & widthMask(mutableWidth);
       candidate = fixed | expandBits(candidateIndex, mutableMask);
+    }
+    if (activeSolveBefore) {
+      // Conditional solve-order probabilities require the complete enabled
+      // finite domain. Returning exhaustion for a larger bounded search is
+      // preferable to silently changing the source-level distribution.
+      if (!complete || solveCandidates.empty())
+        return OBELISK_RT_OK;
+
+      auto chooseIndex = [&](uint64_t bound,
+                             uint64_t &index) -> obelisk_rt_status {
+        if (bound == 1) {
+          index = 0;
+          return OBELISK_RT_OK;
+        }
+        return obelisk_rt_v1_random_state_bounded(randomState, bound, &index);
+      };
+      for (uint64_t layerMask : solveLayers) {
+        std::vector<uint64_t> values;
+        values.reserve(solveCandidates.size());
+        for (uint64_t assignment : solveCandidates)
+          values.push_back(assignment & layerMask);
+        std::sort(values.begin(), values.end());
+        values.erase(std::unique(values.begin(), values.end()), values.end());
+        uint64_t selectedIndex = 0;
+        obelisk_rt_status status = chooseIndex(values.size(), selectedIndex);
+        if (status != OBELISK_RT_OK)
+          return status;
+        uint64_t selected = values[selectedIndex];
+        solveCandidates.erase(
+            std::remove_if(solveCandidates.begin(), solveCandidates.end(),
+                           [&](uint64_t assignment) {
+                             return (assignment & layerMask) != selected;
+                           }),
+            solveCandidates.end());
+      }
+
+      std::sort(solveCandidates.begin(), solveCandidates.end());
+      uint64_t selectedIndex = 0;
+      obelisk_rt_status status =
+          chooseIndex(solveCandidates.size(), selectedIndex);
+      if (status != OBELISK_RT_OK)
+        return status;
+      *outAssignment = solveCandidates[selectedIndex];
+      *outSuccess = 1;
+      return OBELISK_RT_OK;
     }
     // Soft constraints are dropped only after a complete finite-domain
     // traversal proves the lexicographically best enabled priority set.
@@ -551,6 +734,37 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_modes(
   } catch (...) {
     return OBELISK_RT_INVALID_ARGUMENT;
   }
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_modes(
+    obelisk_rt_context *context, const uint8_t *program, uint64_t programSize,
+    uint64_t start, uint64_t mutableMask, uint64_t constraintMask,
+    uint64_t maxAttempts, const uint64_t *captures, uint64_t captureCount,
+    uint64_t *outAssignment, uint32_t *outSuccess) {
+  return randomSolveModesImpl(context, program, programSize, start, mutableMask,
+                              constraintMask, maxAttempts, captures,
+                              captureCount, outAssignment, outSuccess, nullptr);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_modes_state(
+    obelisk_rt_context *context, const uint8_t *program, uint64_t programSize,
+    uint64_t start, uint64_t mutableMask, uint64_t constraintMask,
+    uint64_t maxAttempts, uint64_t rngState, uint64_t rngIncrement,
+    const uint64_t *captures, uint64_t captureCount, uint64_t *outAssignment,
+    uint32_t *outSuccess, uint64_t *outRngState) {
+  if (!outRngState)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outRngState = rngState;
+  if ((rngIncrement & 1) == 0)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  obelisk_rt_random_state_v1 randomState{rngState, rngIncrement};
+  obelisk_rt_status status =
+      randomSolveModesImpl(context, program, programSize, start, mutableMask,
+                           constraintMask, maxAttempts, captures, captureCount,
+                           outAssignment, outSuccess, &randomState);
+  if (status == OBELISK_RT_OK)
+    *outRngState = randomState.state;
+  return status;
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_masked(

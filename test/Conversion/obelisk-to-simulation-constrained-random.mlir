@@ -58,9 +58,25 @@
 // RUN:     | FileCheck %s --check-prefix=SOLVE-BEFORE-DEFINITION \
 // RUN: %}
 // RUN: %if z3 %{ \
-// RUN:   not obelisk-opt %t/solve-before-definition-reverse.mlir '--lower-obelisk-to-sim=opt-level=0' 2>&1 \
+// RUN:   obelisk-opt %t/solve-before-definition-reverse.mlir '--lower-obelisk-to-sim=opt-level=0' \
 // RUN:     | FileCheck %s --check-prefix=SOLVE-BEFORE-DEFINITION-REVERSE \
 // RUN: %}
+// RUN: %if z3 %{ \
+// RUN:   obelisk-opt %t/solve-before-definition-reverse.mlir '--lower-obelisk-to-sim=opt-level=0' \
+// RUN:     --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN:     | FileCheck %s --check-prefix=SOLVE-BEFORE-NATIVE \
+// RUN: %}
+// RUN: %if z3 %{ \
+// RUN:   obelisk-opt %t/solve-before-definition-reverse.mlir '--lower-obelisk-to-sim=opt-level=0' \
+// RUN:     '--encode-obelisk-sim-to-bytecode=vpi=off' -o /dev/null \
+// RUN: %}
+// RUN: %if z3 %{ \
+// RUN:   obelisk-opt %t/solve-before-soft.mlir '--lower-obelisk-to-sim=opt-level=0' \
+// RUN:     | FileCheck %s --check-prefix=SOLVE-BEFORE-SOFT \
+// RUN: %}
+// RUN: not obelisk-opt %t/solve-before-residual-wide.mlir \
+// RUN:   '--lower-obelisk-to-sim=opt-level=0' 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=SOLVE-BEFORE-WIDE
 // RUN: %if !z3 %{ \
 // RUN:   obelisk-opt %t/table.mlir '--lower-obelisk-to-sim=opt-level=0' \
 // RUN:     | FileCheck %s --check-prefix=TABLE-FALLBACK \
@@ -326,6 +342,73 @@ module {
                 }
               }
               obelisk.sv.expression.named_value attributes {node_id = 40 : i64, referenced_path = "unsupported_constraint.object", referenced_symbol = @s1.$root::@s19.unsupported_constraint::@s20.unsupported_constraint::@s22.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.constrained>} {
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+//--- solve-before-residual-wide.mlir
+
+module {
+  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {
+  }
+  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
+    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+      obelisk.sv.type.class_type attributes {bitstream_width = 21 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "C", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "C", node_id = 3 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, sym_name = "s3.C", this_variable_path = "C::this", this_variable_symbol = @s1.$root::@s2::@s3.C::@s11.this} {
+        obelisk.sv.symbol.class_property attributes {hierarchical_name = "C::x", name = "x", node_id = 4 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.ranged_packed_array<9 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>, sym_name = "s4.x"} {
+        }
+        obelisk.sv.symbol.class_property attributes {hierarchical_name = "C::y", name = "y", node_id = 5 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.ranged_packed_array<10 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>, sym_name = "s5.y"} {
+        }
+        obelisk.sv.symbol.constraint_block attributes {hierarchical_name = "C::ordered", name = "ordered", node_id = 6 : i64, sym_name = "s6.ordered", this_variable_path = "C::ordered.this", this_variable_symbol = @s1.$root::@s2::@s3.C::@s6.ordered::@s7.this} {
+          obelisk.sv.constraint.list attributes {item_count = 2 : i64, node_id = 7 : i64} {
+            obelisk.sv.constraint.expression attributes {is_soft = true, node_id = 8 : i64} {
+              obelisk.sv.expression.binary_op attributes {node_id = 9 : i64, operator_kind = 9 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
+                obelisk.sv.expression.named_value attributes {node_id = 10 : i64, referenced_path = "C::x", referenced_symbol = @s1.$root::@s2::@s3.C::@s4.x, semantic_type = !obelisk.ranged_packed_array<9 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                }
+                obelisk.sv.expression.integer_literal attributes {constant_value = "0", node_id = 11 : i64, semantic_type = !obelisk.ranged_packed_array<9 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                }
+              }
+            }
+            obelisk.sv.constraint.solve_before attributes {after_count = 1 : i64, node_id = 12 : i64, solve_count = 1 : i64} {
+              obelisk.sv.expression.named_value attributes {node_id = 13 : i64, referenced_path = "C::x", referenced_symbol = @s1.$root::@s2::@s3.C::@s4.x, semantic_type = !obelisk.ranged_packed_array<9 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+              }
+              obelisk.sv.expression.named_value attributes {node_id = 14 : i64, referenced_path = "C::y", referenced_symbol = @s1.$root::@s2::@s3.C::@s5.y, semantic_type = !obelisk.ranged_packed_array<10 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+              }
+            }
+          }
+          obelisk.sv.symbol.variable attributes {hierarchical_name = "C::ordered.this", is_compiler_generated, is_const, name = "this", node_id = 15 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, sym_name = "s7.this"} {
+          }
+        }
+        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "C::randomize", is_builtin, is_declared_virtual, is_randomize, is_virtual, name = "randomize", node_id = 16 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.integral<32, true, false, 31 : 0, int>, false>, subroutine_kind = 0 : i32, sym_name = "s8.randomize", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.list attributes {node_id = 17 : i64} {
+          }
+        }
+        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "C::pre_randomize", is_builtin, name = "pre_randomize", node_id = 18 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>, subroutine_kind = 0 : i32, sym_name = "s9.pre_randomize", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.list attributes {node_id = 19 : i64} {
+          }
+        }
+        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "C::post_randomize", is_builtin, name = "post_randomize", node_id = 20 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>, subroutine_kind = 0 : i32, sym_name = "s10.post_randomize", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.list attributes {node_id = 21 : i64} {
+          }
+        }
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "C::this", is_compiler_generated, is_const, name = "this", node_id = 22 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, sym_name = "s11.this"} {
+        }
+      }
+    }
+    obelisk.sv.symbol.instance attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 23 : i64, referenced_path = "top", referenced_symbol = @s0.top, sym_name = "s12.top"} {
+      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top", name = "top", node_id = 24 : i64, sym_name = "s13.top", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.object", lifetime = 1 : i32, name = "object", node_id = 25 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, sym_name = "s14.object"} {
+          obelisk.sv.expression.new_class attributes {is_super_class = false, node_id = 26 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>} {
+          }
+        }
+        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 27 : i64, procedure_kind = 0 : i32, sym_name = "s15", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.expression_statement attributes {node_id = 28 : i64} {
+            obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "randomize", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 29 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, subroutine_kind = 0 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s1.$root::@s12.top::@s13.top} {
+              obelisk.sv.expression.named_value attributes {node_id = 30 : i64, referenced_path = "top.object", referenced_symbol = @s1.$root::@s12.top::@s13.top::@s14.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>} {
               }
             }
           }
@@ -650,6 +733,19 @@ module {
 // a second random bit only down the two-row child. The all-enabled path commits
 // the selected row directly; masked modes retain the runtime fallback.
 // SOLVE-BEFORE-LABEL: obelisk_sim.func private @unit_1
+// A compile-time solve table is valid only when every property and constraint
+// block is enabled. Any partial rand_mode or constraint_mode mask branches to
+// the residual ordered solver.
+// SOLVE-BEFORE: %[[PROPERTY_MODE_REF:.*]] = obelisk_sim.class.field_ref {{.*}}__obelisk_rand_mode
+// SOLVE-BEFORE: %[[CONSTRAINT_MODE_REF:.*]] = obelisk_sim.class.field_ref {{.*}}__obelisk_constraint_mode
+// SOLVE-BEFORE: %[[PROPERTY_MODES:.*]] = obelisk_sim.managed.load %[[PROPERTY_MODE_REF]]
+// SOLVE-BEFORE: %[[CONSTRAINT_MODES:.*]] = obelisk_sim.managed.load %[[CONSTRAINT_MODE_REF]]
+// SOLVE-BEFORE: %[[RELEVANT_PROPERTY_MODES:.*]] = arith.andi %[[PROPERTY_MODES]], {{.*}} : i64
+// SOLVE-BEFORE: %[[ALL_PROPERTIES_ENABLED:.*]] = arith.cmpi eq, %[[RELEVANT_PROPERTY_MODES]], {{.*}} : i64
+// SOLVE-BEFORE: %[[RELEVANT_CONSTRAINT_MODES:.*]] = arith.andi %[[CONSTRAINT_MODES]], {{.*}} : i64
+// SOLVE-BEFORE: %[[ALL_CONSTRAINTS_ENABLED:.*]] = arith.cmpi eq, %[[RELEVANT_CONSTRAINT_MODES]], {{.*}} : i64
+// SOLVE-BEFORE: %[[USE_COMPILE_PLAN:.*]] = arith.andi %[[ALL_CONSTRAINTS_ENABLED]], %[[ALL_PROPERTIES_ENABLED]] : i1
+// SOLVE-BEFORE: cf.cond_br %[[USE_COMPILE_PLAN]]
 // SOLVE-BEFORE: ^bb3:
 // SOLVE-BEFORE: %[[FIRST_INDEX:.*]] = arith.andi {{.*}}, {{.*}} : i64
 // SOLVE-BEFORE: %[[FIRST_ZERO:.*]] = arith.cmpi eq, %[[FIRST_INDEX]], {{.*}} : i64
@@ -749,8 +845,25 @@ module {
 // SOLVE-BEFORE-DEFINITION: obelisk_sim.managed.store
 
 // A structural plan that would compute an earlier solve layer from a later one
-// must remain rejected when no complete table can preserve the distribution.
-// SOLVE-BEFORE-DEFINITION-REVERSE: error: solve before currently requires complete compile-time solution tables or an exact structurally ordered proposal
+// cannot preserve the requested distribution. It bypasses generic tier-0
+// rejection and uses the solve-order metadata in the residual runtime plan.
+// SOLVE-BEFORE-DEFINITION-REVERSE-LABEL: obelisk_sim.func private @unit_1
+// SOLVE-BEFORE-DEFINITION-REVERSE: obelisk_sim.managed.store %[[SOLVE_STATE:.*]] to
+// SOLVE-BEFORE-DEFINITION-REVERSE: %{{.*}}, %{{.*}}, %[[SOLVED_STATE:.*]] = obelisk_sim.random.solve {{.*}} state %[[SOLVE_STATE]] increment
+// SOLVE-BEFORE-DEFINITION-REVERSE-NEXT: obelisk_sim.managed.store %[[SOLVED_STATE]]
+
+// Native lowering passes both state words to the stateful ABI and reloads all
+// three outputs. The bytecode RUN above independently verifies that the same
+// three-result operation is accepted by its intrinsic encoder.
+// SOLVE-BEFORE-NATIVE: llvm.call @obelisk_rt_v1_random_solve_modes_state
+
+// Soft preferences require complete best-priority selection before applying
+// the conditional solve order, so this otherwise structural forward definition
+// deliberately uses the ordered residual program.
+// SOLVE-BEFORE-SOFT-LABEL: obelisk_sim.func private @unit_1
+// SOLVE-BEFORE-SOFT: obelisk_sim.random.solve
+
+// SOLVE-BEFORE-WIDE: error: solve before residual fallback requires exhaustive traversal of at most 20 aggregate random bits
 
 // A 31-value solution set exceeds the bounded compile-time table cap. It stays
 // on the checker/runtime path and guards the structural reverse implication.
@@ -759,16 +872,16 @@ module {
 // TABLE-RESIDUAL: obelisk_sim.random.solve
 
 // ALIAS-LABEL: obelisk_sim.func private @unit_1
-// ALIAS: ^bb2:
 // ALIAS: %[[RAW:.*]] = arith.andi {{.*}}, {{.*}} : i64
 // ALIAS: obelisk_sim.managed.store
-// ALIAS: %[[X:.*]] = arith.andi %[[COUNTER:.*]], {{.*}} : i64
-// ALIAS: %[[Y:.*]] = arith.shli %[[X]], {{.*}} : i64
-// ALIAS: %[[REST:.*]] = arith.andi %[[COUNTER]], {{.*}} : i64
-// ALIAS: %[[XY:.*]] = arith.ori %[[REST]], %[[Y]] : i64
-// ALIAS: %[[Z:.*]] = arith.shli %[[X]], {{.*}} : i64
-// ALIAS: %[[REST_Z:.*]] = arith.andi %[[XY]], {{.*}} : i64
-// ALIAS: %[[ASSIGNMENT:.*]] = arith.ori %[[REST_Z]], %[[Z]] : i64
+// `solve y before x` makes y the canonical representative of the alias class.
+// ALIAS: %[[Y_SHIFTED:.*]] = arith.shrui %[[COUNTER:.*]], {{.*}} : i64
+// ALIAS: %[[Y:.*]] = arith.andi %[[Y_SHIFTED]], {{.*}} : i64
+// ALIAS: %[[NO_X:.*]] = arith.andi %[[COUNTER]], {{.*}} : i64
+// ALIAS: %[[WITH_X:.*]] = arith.ori %[[NO_X]], %[[Y]] : i64
+// ALIAS: %[[Z:.*]] = arith.shli %[[Y]], {{.*}} : i64
+// ALIAS: %[[NO_Z:.*]] = arith.andi %[[WITH_X]], {{.*}} : i64
+// ALIAS: %[[ASSIGNMENT:.*]] = arith.ori %[[NO_Z]], %[[Z]] : i64
 // ALIAS: obelisk_sim.random.solve {{.*}} mutable
 // ALIAS: obelisk_sim.managed.store
 // ALIAS: obelisk_sim.managed.store
@@ -1921,29 +2034,35 @@ module {
   }
   obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
     obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
-      obelisk.sv.type.class_type attributes {bitstream_width = 6 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "C", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "C", node_id = 3 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, sym_name = "s3.C", this_variable_path = "C::this", this_variable_symbol = @s1.$root::@s2::@s3.C::@s24.this} {
-        obelisk.sv.symbol.class_property attributes {hierarchical_name = "C::x", name = "x", node_id = 4 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>, sym_name = "s4.x"} {
+      obelisk.sv.type.class_type attributes {bitstream_width = 15 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "C", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "C", node_id = 3 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, sym_name = "s3.C", this_variable_path = "C::this", this_variable_symbol = @s1.$root::@s2::@s3.C::@s24.this} {
+        obelisk.sv.symbol.class_property attributes {hierarchical_name = "C::x", name = "x", node_id = 4 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.ranged_packed_array<4 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>, sym_name = "s4.x"} {
         }
-        obelisk.sv.symbol.class_property attributes {hierarchical_name = "C::y", name = "y", node_id = 44 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>, sym_name = "s25.y"} {
+        obelisk.sv.symbol.class_property attributes {hierarchical_name = "C::y", name = "y", node_id = 44 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.ranged_packed_array<4 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>, sym_name = "s25.y"} {
         }
-        obelisk.sv.symbol.class_property attributes {hierarchical_name = "C::z", name = "z", node_id = 45 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>, sym_name = "s26.z"} {
+        obelisk.sv.symbol.class_property attributes {hierarchical_name = "C::z", name = "z", node_id = 45 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.ranged_packed_array<4 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>, sym_name = "s26.z"} {
         }
         obelisk.sv.symbol.constraint_block attributes {hierarchical_name = "C::same", name = "same", node_id = 5 : i64, sym_name = "s5.same", this_variable_path = "C::same.this", this_variable_symbol = @s1.$root::@s2::@s3.C::@s5.same::@s6.this} {
-          obelisk.sv.constraint.list attributes {item_count = 2 : i64, node_id = 6 : i64} {
+          obelisk.sv.constraint.list attributes {item_count = 3 : i64, node_id = 6 : i64} {
             obelisk.sv.constraint.expression attributes {is_soft = false, node_id = 7 : i64} {
               obelisk.sv.expression.binary_op attributes {node_id = 8 : i64, operator_kind = 9 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
-                obelisk.sv.expression.named_value attributes {node_id = 9 : i64, referenced_path = "C::x", referenced_symbol = @s1.$root::@s2::@s3.C::@s4.x, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                obelisk.sv.expression.named_value attributes {node_id = 9 : i64, referenced_path = "C::x", referenced_symbol = @s1.$root::@s2::@s3.C::@s4.x, semantic_type = !obelisk.ranged_packed_array<4 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
                 }
-                obelisk.sv.expression.named_value attributes {node_id = 10 : i64, referenced_path = "C::y", referenced_symbol = @s1.$root::@s2::@s3.C::@s25.y, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                obelisk.sv.expression.named_value attributes {node_id = 10 : i64, referenced_path = "C::y", referenced_symbol = @s1.$root::@s2::@s3.C::@s25.y, semantic_type = !obelisk.ranged_packed_array<4 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
                 }
               }
             }
             obelisk.sv.constraint.expression attributes {is_soft = false, node_id = 46 : i64} {
               obelisk.sv.expression.binary_op attributes {node_id = 47 : i64, operator_kind = 9 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
-                obelisk.sv.expression.named_value attributes {node_id = 48 : i64, referenced_path = "C::y", referenced_symbol = @s1.$root::@s2::@s3.C::@s25.y, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                obelisk.sv.expression.named_value attributes {node_id = 48 : i64, referenced_path = "C::y", referenced_symbol = @s1.$root::@s2::@s3.C::@s25.y, semantic_type = !obelisk.ranged_packed_array<4 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
                 }
-                obelisk.sv.expression.named_value attributes {node_id = 49 : i64, referenced_path = "C::z", referenced_symbol = @s1.$root::@s2::@s3.C::@s26.z, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                obelisk.sv.expression.named_value attributes {node_id = 49 : i64, referenced_path = "C::z", referenced_symbol = @s1.$root::@s2::@s3.C::@s26.z, semantic_type = !obelisk.ranged_packed_array<4 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
                 }
+                }
+              }
+            obelisk.sv.constraint.solve_before attributes {after_count = 1 : i64, node_id = 50 : i64, solve_count = 1 : i64} {
+              obelisk.sv.expression.named_value attributes {node_id = 51 : i64, referenced_path = "C::y", referenced_symbol = @s1.$root::@s2::@s3.C::@s25.y, semantic_type = !obelisk.ranged_packed_array<4 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+              }
+              obelisk.sv.expression.named_value attributes {node_id = 52 : i64, referenced_path = "C::x", referenced_symbol = @s1.$root::@s2::@s3.C::@s4.x, semantic_type = !obelisk.ranged_packed_array<4 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
               }
             }
           }
@@ -2317,7 +2436,10 @@ module {
 
 //--- solve-before-definition-reverse.mlir
 
-module {
+module attributes {
+  llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
+  llvm.target_triple = "x86_64-unknown-linux-gnu"
+} {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {
   }
   obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
@@ -2345,6 +2467,85 @@ module {
               obelisk.sv.expression.named_value attributes {node_id = 15 : i64, referenced_path = "C::y", referenced_symbol = @s1.$root::@s2::@s3.C::@s5.y, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
               }
               obelisk.sv.expression.named_value attributes {node_id = 16 : i64, referenced_path = "C::x", referenced_symbol = @s1.$root::@s2::@s3.C::@s4.x, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+              }
+            }
+          }
+          obelisk.sv.symbol.variable attributes {hierarchical_name = "C::ordered.this", is_compiler_generated, is_const, name = "this", node_id = 17 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, sym_name = "s7.this"} {
+          }
+        }
+        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "C::randomize", is_builtin, is_declared_virtual, is_randomize, is_virtual, name = "randomize", node_id = 18 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.integral<32, true, false, 31 : 0, int>, false>, subroutine_kind = 0 : i32, sym_name = "s8.randomize", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.list attributes {node_id = 19 : i64} {
+          }
+        }
+        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "C::pre_randomize", is_builtin, name = "pre_randomize", node_id = 20 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>, subroutine_kind = 0 : i32, sym_name = "s9.pre_randomize", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.list attributes {node_id = 21 : i64} {
+          }
+        }
+        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "C::post_randomize", is_builtin, name = "post_randomize", node_id = 22 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>, subroutine_kind = 0 : i32, sym_name = "s10.post_randomize", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.list attributes {node_id = 23 : i64} {
+          }
+        }
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "C::this", is_compiler_generated, is_const, name = "this", node_id = 24 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, sym_name = "s11.this"} {
+        }
+      }
+    }
+    obelisk.sv.symbol.instance attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 25 : i64, referenced_path = "top", referenced_symbol = @s0.top, sym_name = "s12.top"} {
+      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top", name = "top", node_id = 26 : i64, sym_name = "s13.top", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.object", lifetime = 1 : i32, name = "object", node_id = 27 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, sym_name = "s14.object"} {
+          obelisk.sv.expression.new_class attributes {is_super_class = false, node_id = 28 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>} {
+          }
+        }
+        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 29 : i64, procedure_kind = 0 : i32, sym_name = "s15", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.expression_statement attributes {node_id = 30 : i64} {
+            obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "randomize", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 31 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, subroutine_kind = 0 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s1.$root::@s12.top::@s13.top} {
+              obelisk.sv.expression.named_value attributes {node_id = 32 : i64, referenced_path = "top.object", referenced_symbol = @s1.$root::@s12.top::@s13.top::@s14.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>} {
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+//--- solve-before-soft.mlir
+
+module {
+  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {
+  }
+  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
+    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+      obelisk.sv.type.class_type attributes {bitstream_width = 16 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "C", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "C", node_id = 3 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, sym_name = "s3.C", this_variable_path = "C::this", this_variable_symbol = @s1.$root::@s2::@s3.C::@s11.this} {
+        obelisk.sv.symbol.class_property attributes {hierarchical_name = "C::x", name = "x", node_id = 4 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>, sym_name = "s4.x"} {
+        }
+        obelisk.sv.symbol.class_property attributes {hierarchical_name = "C::y", name = "y", node_id = 5 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>, sym_name = "s5.y"} {
+        }
+        obelisk.sv.symbol.constraint_block attributes {hierarchical_name = "C::ordered", name = "ordered", node_id = 6 : i64, sym_name = "s6.ordered", this_variable_path = "C::ordered.this", this_variable_symbol = @s1.$root::@s2::@s3.C::@s6.ordered::@s7.this} {
+          obelisk.sv.constraint.list attributes {item_count = 3 : i64, node_id = 7 : i64} {
+            obelisk.sv.constraint.expression attributes {is_soft = false, node_id = 8 : i64} {
+              obelisk.sv.expression.binary_op attributes {node_id = 9 : i64, operator_kind = 9 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
+                obelisk.sv.expression.named_value attributes {node_id = 10 : i64, referenced_path = "C::y", referenced_symbol = @s1.$root::@s2::@s3.C::@s5.y, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                }
+                obelisk.sv.expression.binary_op attributes {node_id = 11 : i64, operator_kind = 0 : i32, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                  obelisk.sv.expression.named_value attributes {node_id = 12 : i64, referenced_path = "C::x", referenced_symbol = @s1.$root::@s2::@s3.C::@s4.x, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                  }
+                  obelisk.sv.expression.integer_literal attributes {constant_value = "1", node_id = 13 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                  }
+                }
+              }
+            }
+            obelisk.sv.constraint.expression attributes {is_soft = true, node_id = 33 : i64} {
+              obelisk.sv.expression.binary_op attributes {node_id = 34 : i64, operator_kind = 9 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
+                obelisk.sv.expression.named_value attributes {node_id = 35 : i64, referenced_path = "C::x", referenced_symbol = @s1.$root::@s2::@s3.C::@s4.x, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                }
+                obelisk.sv.expression.integer_literal attributes {constant_value = "0", node_id = 36 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                }
+              }
+            }
+            obelisk.sv.constraint.solve_before attributes {after_count = 1 : i64, node_id = 14 : i64, solve_count = 1 : i64} {
+              obelisk.sv.expression.named_value attributes {node_id = 15 : i64, referenced_path = "C::x", referenced_symbol = @s1.$root::@s2::@s3.C::@s4.x, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+              }
+              obelisk.sv.expression.named_value attributes {node_id = 16 : i64, referenced_path = "C::y", referenced_symbol = @s1.$root::@s2::@s3.C::@s5.y, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
               }
             }
           }
