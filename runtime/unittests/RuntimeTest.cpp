@@ -2970,12 +2970,16 @@ TEST(RuntimeFragmentTest, BytecodeServiceStatusPropagatesMissingContext) {
 
 constexpr uint64_t kNodeLinkOffset = sizeof(void *);
 constexpr uint64_t kNodeValueOffset = sizeof(void *) * 2;
+constexpr uint64_t kDerivedExtraOffset = sizeof(void *) * 3;
 
 const obelisk_rt_trace_entry_v1 nodeTraceEntry{
     kNodeLinkOffset, 0, 1, OBELISK_RT_TRACE_STRONG,
     OBELISK_RT_MANAGED_SLOT_CLASS, nullptr};
 const obelisk_rt_trace_layout_v1 nodeTraceLayout{
     OBELISK_RT_VERSION, 0, sizeof(void *) * 3, alignof(void *),
+    &nodeTraceEntry,    1};
+const obelisk_rt_trace_layout_v1 derivedTraceLayout{
+    OBELISK_RT_VERSION, 0, sizeof(void *) * 4, alignof(void *),
     &nodeTraceEntry,    1};
 
 obelisk_rt_status nodeValueMethod(obelisk_rt_context *context,
@@ -3040,12 +3044,12 @@ const obelisk_rt_class_descriptor_v1 derivedDescriptor{
     OBELISK_RT_VERSION,
     OBELISK_RT_CLASS_FINAL,
     2,
-    sizeof(void *) * 3,
+    sizeof(void *) * 4,
     alignof(void *),
     &nodeDescriptor,
     nullptr,
     0,
-    &nodeTraceLayout,
+    &derivedTraceLayout,
     derivedMethods,
     std::size(derivedMethods),
     derivedName,
@@ -3347,13 +3351,17 @@ TEST_F(ManagedHeapTest, AccessesFourStatePlanesAtomicallyAcrossThreads) {
   EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &root), OBELISK_RT_OK);
 }
 
-TEST_F(ManagedHeapTest, DispatchesOverridesAndShallowCopiesStaticType) {
+TEST_F(ManagedHeapTest, DispatchesOverridesAndShallowCopiesDynamicType) {
   obelisk_rt_object_v1 *object = nullptr;
   ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &derivedDescriptor, &object),
             OBELISK_RT_OK);
   const uint64_t value = 23;
+  const uint64_t extra = 99;
   ASSERT_EQ(obelisk_rt_v1_object_write(object, kNodeValueOffset, &value,
                                        sizeof(value)),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_write(object, kDerivedExtraOffset, &extra,
+                                       sizeof(extra)),
             OBELISK_RT_OK);
   EXPECT_TRUE(obelisk_rt_v1_object_is_instance(object, &derivedDescriptor));
   EXPECT_TRUE(obelisk_rt_v1_object_is_instance(object, &nodeDescriptor));
@@ -3372,11 +3380,16 @@ TEST_F(ManagedHeapTest, DispatchesOverridesAndShallowCopiesStaticType) {
       obelisk_rt_v1_object_shallow_copy(lane, &nodeDescriptor, object, &copy),
       OBELISK_RT_OK);
   EXPECT_TRUE(obelisk_rt_v1_object_is_instance(copy, &nodeDescriptor));
-  EXPECT_FALSE(obelisk_rt_v1_object_is_instance(copy, &derivedDescriptor));
+  EXPECT_TRUE(obelisk_rt_v1_object_is_instance(copy, &derivedDescriptor));
   ASSERT_EQ(obelisk_rt_v1_method_invoke(lane, copy, 0, 42, nullptr, 0, &result,
                                         sizeof(result)),
             OBELISK_RT_OK);
-  EXPECT_EQ(result, 23u);
+  EXPECT_EQ(result, 123u);
+  result = 0;
+  ASSERT_EQ(obelisk_rt_v1_object_read(copy, kDerivedExtraOffset, &result,
+                                      sizeof(result)),
+            OBELISK_RT_OK);
+  EXPECT_EQ(result, extra);
   EXPECT_NE(obelisk_rt_v1_object_id(object), obelisk_rt_v1_object_id(copy));
 
   obelisk_rt_object_v1 *castResult = nullptr;
@@ -3386,7 +3399,7 @@ TEST_F(ManagedHeapTest, DispatchesOverridesAndShallowCopiesStaticType) {
   castResult = object;
   ASSERT_EQ(obelisk_rt_v1_object_cast(copy, &derivedDescriptor, &castResult),
             OBELISK_RT_OK);
-  EXPECT_EQ(castResult, nullptr);
+  EXPECT_EQ(castResult, copy);
   castResult = object;
   ASSERT_EQ(obelisk_rt_v1_object_cast(nullptr, &derivedDescriptor, &castResult),
             OBELISK_RT_OK);

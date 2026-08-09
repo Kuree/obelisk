@@ -2107,13 +2107,16 @@ extern "C" obelisk_rt_status obelisk_rt_v1_object_shallow_copy(
       !obelisk_rt_v1_object_is_instance(source, staticDescriptor))
     return OBELISK_RT_INVALID_ARGUMENT;
   ObjectMetadata *sourceMetadata = metadataFor(source);
-  if (!sourceMetadata || sourceMetadata->heap != lane->heap)
+  if (!sourceMetadata || sourceMetadata->heap != lane->heap ||
+      !sourceMetadata->descriptor)
     return OBELISK_RT_INVALID_HANDLE;
+  const obelisk_rt_class_descriptor_v1 *dynamicDescriptor =
+      sourceMetadata->descriptor;
   obelisk_rt_gc_root_v1 sourceRoot{};
   obelisk_rt_status status = lane->heap->pushRoot(lane, &sourceRoot, &source);
   if (status != OBELISK_RT_OK)
     return status;
-  status = lane->heap->allocate(lane, staticDescriptor, outObject);
+  status = lane->heap->allocate(lane, dynamicDescriptor, outObject);
   if (status != OBELISK_RT_OK) {
     (void)lane->heap->popRoot(lane, &sourceRoot);
     return status;
@@ -2121,7 +2124,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_object_shallow_copy(
   ObjectLock lock(sourceMetadata);
   std::memcpy(reinterpret_cast<uint8_t *>(*outObject) + sizeof(void *),
               reinterpret_cast<const uint8_t *>(source) + sizeof(void *),
-              staticDescriptor->instance_size - sizeof(void *));
+              dynamicDescriptor->instance_size - sizeof(void *));
   return lane->heap->popRoot(lane, &sourceRoot);
 }
 

@@ -772,7 +772,7 @@ def SimClassAllocOp : SimOp<"class.alloc", [
 def SimClassCopyOp : SimOp<"class.copy", [
     MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
   ]> {
-  let summary = "allocate a static-type SystemVerilog shallow class copy";
+  let summary = "allocate a dynamic-type SystemVerilog shallow class copy";
   let arguments = (ins SimContextType:$context, SimClassHandleType:$source);
   let results = (outs SimClassHandleType:$result);
   let assemblyFormat = [{

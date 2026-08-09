@@ -55,6 +55,11 @@ module attributes {
       %base = obelisk_sim.class.cast %object :
         !obelisk_sim.class_handle<@Derived> to
         !obelisk_sim.class_handle<@Base>
+      // The runtime copy preserves the dynamic Derived type even though this
+      // source and result are statically Base handles.
+      %polymorphic_copy = obelisk_sim.class.copy %ctx, %base :
+        !obelisk_sim.context, !obelisk_sim.class_handle<@Base> ->
+        !obelisk_sim.class_handle<@Base>
       %field = obelisk_sim.class.field_ref %base[@Base_value] :
         !obelisk_sim.class_handle<@Base> ->
         !obelisk_sim.managed_ref<i64, @Base>
@@ -84,6 +89,7 @@ module attributes {
 // CHECK: llvm.call @obelisk_rt_v1_object_shallow_copy
 // CHECK: llvm.call @obelisk_rt_v1_object_is_instance
 // CHECK: llvm.call @obelisk_rt_v1_object_cast
+// CHECK: llvm.call @obelisk_rt_v1_object_shallow_copy
 // CHECK: llvm.call @obelisk_rt_v1_object_write
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_managed_nba
 // CHECK: llvm.call @base_get

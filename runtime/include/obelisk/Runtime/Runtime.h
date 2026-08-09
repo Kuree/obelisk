@@ -1476,6 +1476,8 @@ obelisk_rt_status
 obelisk_rt_v1_object_allocate(obelisk_rt_gc_lane_v1 *lane,
                               const obelisk_rt_class_descriptor_v1 *descriptor,
                               obelisk_rt_object_v1 **out_object);
+// Validate the source against its static handle type, then allocate and copy
+// its complete dynamic class, preserving virtual dispatch and derived fields.
 obelisk_rt_status obelisk_rt_v1_object_shallow_copy(
     obelisk_rt_gc_lane_v1 *lane,
     const obelisk_rt_class_descriptor_v1 *static_descriptor,
