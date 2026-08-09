@@ -170,4 +170,33 @@ TEST(RuntimeDeferredAssertion, LabeledDisableCancelsOnlyThatAssertion) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(RuntimeDeferredAssertion, AssertionControlOffKillAndOn) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  context->activeLogicalProcessToken = 41;
+
+  uint64_t survivesOff =
+      obelisk_rt_v1_deferred_enqueue_for_assertion(context, 101, 801);
+  ASSERT_NE(survivesOff, 0u);
+  EXPECT_EQ(obelisk_rt_v1_assertion_control(context, 4, 801), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_assertion_enabled(context, 801), 0u);
+  EXPECT_EQ(obelisk_rt_v1_deferred_mature(context, survivesOff), 1u);
+
+  EXPECT_EQ(obelisk_rt_v1_assertion_control(context, 3, 801), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_assertion_enabled(context, 801), 1u);
+  uint64_t killed =
+      obelisk_rt_v1_deferred_enqueue_for_assertion(context, 102, 801);
+  uint64_t unrelated =
+      obelisk_rt_v1_deferred_enqueue_for_assertion(context, 103, 802);
+  ASSERT_NE(killed, 0u);
+  ASSERT_NE(unrelated, 0u);
+  EXPECT_EQ(obelisk_rt_v1_assertion_control(context, 5, 801), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_assertion_enabled(context, 801), 0u);
+  EXPECT_EQ(obelisk_rt_v1_deferred_mature(context, killed), 0u);
+  EXPECT_EQ(obelisk_rt_v1_deferred_mature(context, unrelated), 1u);
+  EXPECT_EQ(obelisk_rt_v1_assertion_control(context, 2, 801),
+            OBELISK_RT_INVALID_ARGUMENT);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 } // namespace

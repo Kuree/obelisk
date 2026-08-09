@@ -46,6 +46,25 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     return constant(builder.getI1Type(), 0);
   };
 
+  if (name == "$asserton" || name == "$assertoff" || name == "$assertkill" ||
+      name == "$assertcontrol") {
+    auto action =
+        op->getAttrOfType<IntegerAttr>("obelisk_sim.assertion_control_action");
+    auto targets = op->getAttrOfType<DenseI64ArrayAttr>(
+        "obelisk_sim.assertion_control_ids");
+    if (!action || !targets) {
+      emitError(location) << name
+                          << " has no prepared assertion-control selection";
+      return failure();
+    }
+    for (int64_t target : targets.asArrayRef())
+      sim::SimAssertionControlOp::create(
+          builder, location, context,
+          builder.getI32IntegerAttr(static_cast<int32_t>(action.getInt())),
+          builder.getI64IntegerAttr(target));
+    return dummyTaskResult();
+  }
+
   bool realConversion =
       llvm::StringSwitch<bool>(name)
           .Cases({"$itor", "$rtoi", "$bitstoreal", "$realtobits",

@@ -84,6 +84,10 @@ constexpr uint32_t kIntrinsicDeferredEnqueue =
     OBELISK_RT_INTRINSIC_V1_DEFERRED_ENQUEUE;
 constexpr uint32_t kIntrinsicDeferredMature =
     OBELISK_RT_INTRINSIC_V1_DEFERRED_MATURE;
+constexpr uint32_t kIntrinsicAssertionControl =
+    OBELISK_RT_INTRINSIC_V1_ASSERTION_CONTROL;
+constexpr uint32_t kIntrinsicAssertionEnabled =
+    OBELISK_RT_INTRINSIC_V1_ASSERTION_ENABLED;
 constexpr uint32_t kIntrinsicMonitorRegister =
     OBELISK_RT_INTRINSIC_V1_MONITOR_REGISTER;
 constexpr uint32_t kIntrinsicMonitorControl =

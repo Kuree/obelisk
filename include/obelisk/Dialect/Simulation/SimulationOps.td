@@ -1632,6 +1632,32 @@ def SimDeferredMatureOp : SimOp<"assert.deferred_mature", [
   let hasVerifier = 1;
 }
 
+def SimAssertionControlOp : SimOp<"assert.control", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>,
+                   MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "change the enabled state of one assertion identity";
+  let description = [{
+    Apply IEEE assertion control On (3), Off (4), or Kill (5) to one
+    compiler-resolved assertion identity. Off preserves existing attempts and
+    deferred reports. Kill additionally cancels pending deferred reports.
+  }];
+  let arguments = (ins SimContextType:$context, I32Attr:$action,
+                       I64Attr:$assertion_id);
+  let assemblyFormat = "$context `action` $action `assertion` $assertion_id attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimAssertionEnabledOp : SimOp<"assert.enabled", [
+    MemoryEffects<[MemRead<SimSchedulerResource>]>
+  ]> {
+  let summary = "test whether one assertion may start a new attempt";
+  let arguments = (ins SimContextType:$context, I64Attr:$assertion_id);
+  let results = (outs I1:$enabled);
+  let assemblyFormat = "$context `assertion` $assertion_id attr-dict";
+  let hasVerifier = 1;
+}
+
 def SimMonitorRegisterOp : SimOp<"monitor.register", [
     MemoryEffects<[MemWrite<SimSchedulerResource>,
                    MemWrite<SimProcessResource>]>

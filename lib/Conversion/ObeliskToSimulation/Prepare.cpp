@@ -271,6 +271,298 @@ void ObeliskSimPreparePass::runOnOperation() {
   assignPathIDs(controlPaths, "obelisk_sim.control_target_id");
   assignPathIDs(staticPaths, "obelisk_sim.static_site_id");
 
+  struct AssertionInventoryEntry {
+    Operation *operation = nullptr;
+    std::string path;
+    std::string scope;
+    uint64_t id = 0;
+    uint32_t scopeDepth = 0;
+    uint32_t assertionType = 0;
+    uint32_t directiveType = 0;
+    bool supported = false;
+  };
+  SmallVector<AssertionInventoryEntry> assertionInventory;
+  llvm::StringMap<uint32_t> instanceScopeDepths;
+  semanticRoot->walk([&](semantic::SVInstanceBodySymbolOp body) {
+    auto path = body->getAttrOfType<StringAttr>("hierarchical_name");
+    if (!path)
+      return;
+    uint32_t depth = 0;
+    for (Operation *parent = body; parent; parent = parent->getParentOp())
+      depth += isa<semantic::SVInstanceBodySymbolOp>(parent);
+    instanceScopeDepths[path.getValue()] = depth;
+  });
+
+  auto enclosingInstance =
+      [&](Operation *operation) -> semantic::SVInstanceBodySymbolOp {
+    return operation
+               ? operation->getParentOfType<semantic::SVInstanceBodySymbolOp>()
+               : semantic::SVInstanceBodySymbolOp{};
+  };
+  auto assertionPath = [&](Operation *operation, StringRef scope) {
+    if (auto block = dyn_cast_or_null<semantic::SVBlockStatementOp>(
+            operation ? operation->getParentOp() : nullptr)) {
+      SmallVector<Operation *> contents = getChildren(block);
+      if (contents.size() == 1 && contents.front() == operation)
+        if (auto path = block.getBlockPathAttr())
+          return path.getValue().str();
+    }
+    auto node = operation ? operation->getAttrOfType<IntegerAttr>("node_id")
+                          : IntegerAttr{};
+    return (Twine(scope) + ".$assert$" +
+            Twine(node ? node.getValue().getZExtValue() : 0))
+        .str();
+  };
+  auto directiveMask = [](semantic::SVAssertionKind kind) -> uint32_t {
+    switch (kind) {
+    case semantic::SVAssertionKind::Assert:
+      return 1;
+    case semantic::SVAssertionKind::CoverProperty:
+    case semantic::SVAssertionKind::CoverSequence:
+      return 2;
+    case semantic::SVAssertionKind::Assume:
+    case semantic::SVAssertionKind::Restrict:
+      return 4;
+    case semantic::SVAssertionKind::Expect:
+      return 1;
+    }
+    llvm_unreachable("unhandled assertion directive kind");
+  };
+
+  semanticRoot->walk([&](semantic::SVImmediateAssertionStatementOp assertion) {
+    semantic::SVInstanceBodySymbolOp body = enclosingInstance(assertion);
+    auto scopeAttr = body ? body->getAttrOfType<StringAttr>("hierarchical_name")
+                          : StringAttr{};
+    std::string scope = scopeAttr ? scopeAttr.getValue().str() : std::string{};
+    uint32_t type =
+        assertion.getIsDeferred() ? (assertion.getIsFinal() ? 8u : 4u) : 2u;
+    assertionInventory.push_back(
+        {assertion, assertionPath(assertion, scope), scope, 0,
+         instanceScopeDepths.lookup(scope), type,
+         directiveMask(assertion.getAssertionKind()), true});
+  });
+  semanticRoot->walk([&](semantic::SVConcurrentAssertionStatementOp assertion) {
+    semantic::SVInstanceBodySymbolOp body = enclosingInstance(assertion);
+    auto scopeAttr = body ? body->getAttrOfType<StringAttr>("hierarchical_name")
+                          : StringAttr{};
+    std::string scope = scopeAttr ? scopeAttr.getValue().str() : std::string{};
+    uint32_t type =
+        assertion.getAssertionKind() == semantic::SVAssertionKind::Expect ? 16u
+                                                                          : 1u;
+    assertionInventory.push_back(
+        {assertion, assertionPath(assertion, scope), scope, 0,
+         instanceScopeDepths.lookup(scope), type,
+         directiveMask(assertion.getAssertionKind()), false});
+  });
+
+  llvm::sort(assertionInventory, [](const AssertionInventoryEntry &left,
+                                    const AssertionInventoryEntry &right) {
+    return left.path < right.path;
+  });
+  uint64_t nextAssertionID = controlPaths.size() + 1;
+  for (AssertionInventoryEntry &entry : assertionInventory) {
+    if (!entry.supported)
+      continue;
+    if (auto block = dyn_cast_or_null<semantic::SVBlockStatementOp>(
+            entry.operation->getParentOp()))
+      if (auto target = block->getAttrOfType<IntegerAttr>(
+              "obelisk_sim.control_target_id"))
+        entry.id = target.getValue().getZExtValue();
+    if (entry.id == 0)
+      entry.id = nextAssertionID++;
+  }
+
+  auto literalControlValue = [&](Operation *argument,
+                                 StringRef role) -> std::optional<uint64_t> {
+    auto spelling = argument
+                        ? argument->getAttrOfType<StringAttr>("constant_value")
+                        : StringAttr{};
+    FailureOr<ParsedConstant> parsed =
+        spelling ? parseSVInteger(spelling.getValue(), 64,
+                                  getSemanticLocation(argument))
+                 : FailureOr<ParsedConstant>(failure());
+    if (failed(parsed) || !parsed->unknown.isZero()) {
+      emitError(getSemanticLocation(argument))
+          << "assertion-control " << role << " must be a fixed integer literal";
+      invalid = true;
+      return std::nullopt;
+    }
+    return parsed->value.getZExtValue();
+  };
+
+  semanticRoot->walk([&](semantic::SVCallExpressionOp call) {
+    StringRef name = call.getCalleeName();
+    bool shorthand =
+        name == "$asserton" || name == "$assertoff" || name == "$assertkill";
+    if (!shorthand && name != "$assertcontrol")
+      return;
+    SmallVector<Operation *> arguments = getChildren(call);
+    uint32_t action = name == "$asserton"     ? 3
+                      : name == "$assertoff"  ? 4
+                      : name == "$assertkill" ? 5
+                                              : 0;
+    uint64_t assertionTypes = 15;
+    uint64_t directiveTypes = 7;
+    uint64_t levels = 0;
+    size_t firstSelector = 0;
+    bool selectCurrentScope = false;
+    if (shorthand) {
+      if (!arguments.empty()) {
+        std::optional<uint64_t> value =
+            literalControlValue(arguments.front(), "levels");
+        if (!value)
+          return;
+        levels = *value;
+        firstSelector = 1;
+        selectCurrentScope = arguments.size() == 1;
+      }
+    } else {
+      if (arguments.empty()) {
+        emitError(getSemanticLocation(call))
+            << "$assertcontrol requires a control type";
+        invalid = true;
+        return;
+      }
+      std::optional<uint64_t> value =
+          literalControlValue(arguments[0], "control type");
+      if (!value)
+        return;
+      if (*value < 3 || *value > 5) {
+        emitError(getSemanticLocation(arguments[0]))
+            << "$assertcontrol currently supports only On (3), Off (4), "
+               "and Kill (5)";
+        invalid = true;
+        return;
+      }
+      action = static_cast<uint32_t>(*value);
+      if (arguments.size() >= 2) {
+        value = literalControlValue(arguments[1], "assertion-type mask");
+        if (!value)
+          return;
+        assertionTypes = *value;
+      } else {
+        assertionTypes = 31;
+      }
+      if (arguments.size() >= 3) {
+        value = literalControlValue(arguments[2], "directive-type mask");
+        if (!value)
+          return;
+        directiveTypes = *value;
+      }
+      if (arguments.size() >= 4) {
+        value = literalControlValue(arguments[3], "levels");
+        if (!value)
+          return;
+        levels = *value;
+        firstSelector = 4;
+        selectCurrentScope = arguments.size() == 4;
+      } else {
+        firstSelector = arguments.size();
+      }
+    }
+    if ((assertionTypes & ~UINT64_C(31)) != 0 ||
+        (directiveTypes & ~UINT64_C(7)) != 0) {
+      emitError(getSemanticLocation(call))
+          << "assertion-control masks select unsupported unique, unique0, "
+             "priority, or directive kinds";
+      invalid = true;
+      return;
+    }
+    // On, Off, and Kill do not affect expect statements.
+    assertionTypes &= ~UINT64_C(16);
+
+    SmallVector<StringRef> selectors;
+    for (Operation *argument : ArrayRef(arguments).drop_front(firstSelector)) {
+      auto path = argument->getAttrOfType<StringAttr>("referenced_path");
+      if (!path) {
+        emitError(getSemanticLocation(argument))
+            << "assertion-control selectors must be resolved hierarchy or "
+               "assertion identifiers";
+        invalid = true;
+        return;
+      }
+      selectors.push_back(path.getValue());
+    }
+    if (selectCurrentScope) {
+      auto scope = call->getAttrOfType<StringAttr>("system_scope_path");
+      if (!scope || !instanceScopeDepths.contains(scope.getValue())) {
+        emitError(getSemanticLocation(call))
+            << "assertion-control levels-only form has no supported current "
+               "module-instance scope";
+        invalid = true;
+        return;
+      }
+      selectors.push_back(scope.getValue());
+    }
+    for (StringRef selector : selectors) {
+      bool assertion = llvm::any_of(assertionInventory,
+                                    [&](const AssertionInventoryEntry &entry) {
+                                      return entry.path == selector;
+                                    });
+      if (!assertion && !instanceScopeDepths.contains(selector)) {
+        emitError(getSemanticLocation(call))
+            << "assertion-control selector '" << selector
+            << "' is not an assertion or supported module-instance scope";
+        invalid = true;
+        return;
+      }
+    }
+
+    SmallVector<int64_t> selectedIDs;
+    SmallVector<std::pair<Operation *, uint64_t>> selectedAssertions;
+    for (const AssertionInventoryEntry &entry : assertionInventory) {
+      if ((entry.assertionType & assertionTypes) == 0 ||
+          (entry.directiveType & directiveTypes) == 0)
+        continue;
+      bool selected = selectors.empty();
+      for (StringRef selector : selectors) {
+        if (entry.path == selector) {
+          selected = true;
+          break;
+        }
+        auto scope = instanceScopeDepths.find(selector);
+        if (scope == instanceScopeDepths.end() ||
+            entry.scopeDepth < scope->second ||
+            !(entry.scope == selector ||
+              (StringRef(entry.scope).starts_with(selector) &&
+               StringRef(entry.scope)
+                   .drop_front(selector.size())
+                   .starts_with("."))))
+          continue;
+        uint64_t relativeDepth = entry.scopeDepth - scope->second;
+        if (levels == 0 || relativeDepth < levels) {
+          selected = true;
+          break;
+        }
+      }
+      if (!selected)
+        continue;
+      if (!entry.supported) {
+        emitError(getSemanticLocation(call))
+            << "assertion control selected concurrent assertion '" << entry.path
+            << "', but this slice supports immediate assertions only";
+        invalid = true;
+        return;
+      }
+      selectedIDs.push_back(static_cast<int64_t>(entry.id));
+      selectedAssertions.push_back({entry.operation, entry.id});
+    }
+    llvm::sort(selectedIDs);
+    selectedIDs.erase(std::unique(selectedIDs.begin(), selectedIDs.end()),
+                      selectedIDs.end());
+    call->setAttr("obelisk_sim.assertion_control_action",
+                  IntegerAttr::get(IntegerType::get(context, 32), action));
+    call->setAttr("obelisk_sim.assertion_control_ids",
+                  DenseI64ArrayAttr::get(context, selectedIDs));
+    for (auto [target, id] : selectedAssertions) {
+      target->setAttr(
+          "obelisk_sim.assertion_control_target_id",
+          IntegerAttr::get(IntegerType::get(context, 64), id));
+      target->setAttr("obelisk_sim.assertion_controlled",
+                      UnitAttr::get(context));
+    }
+  });
+
   uint64_t designPrecisionFs = std::numeric_limits<uint64_t>::max();
   auto accumulateTimeScale = [&](Operation *source, StringRef kind) {
     auto timeUnit = source->getAttrOfType<IntegerAttr>("time_unit_fs");

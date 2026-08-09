@@ -221,6 +221,58 @@ public:
   }
 };
 
+class AssertionControlConversion final
+    : public OpConversionPattern<sim::SimAssertionControlOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimAssertionControlOp operation, OneToNOpAdaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location location = operation.getLoc();
+    Value context = loadCurrentRuntimeContext(rewriter, location);
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_assertion_control"),
+            ValueRange{context,
+                       llvmConstant(rewriter, location, rewriter.getI32Type(),
+                                    operation.getAction()),
+                       llvmConstant(rewriter, location, rewriter.getI64Type(),
+                                    operation.getAssertionId())})
+            .getResult();
+    reportRuntimeControlStatus(rewriter, location, context, status);
+    rewriter.eraseOp(operation);
+    return success();
+  }
+};
+
+class AssertionEnabledConversion final
+    : public OpConversionPattern<sim::SimAssertionEnabledOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimAssertionEnabledOp operation, OneToNOpAdaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location location = operation.getLoc();
+    Value context = loadCurrentRuntimeContext(rewriter, location);
+    Value enabled =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_assertion_enabled"),
+            ValueRange{context,
+                       llvmConstant(rewriter, location, rewriter.getI64Type(),
+                                    operation.getAssertionId())})
+            .getResult();
+    rewriter.replaceOpWithNewOp<arith::TruncIOp>(operation,
+                                                 rewriter.getI1Type(), enabled);
+    return success();
+  }
+};
+
 class MonitorRegisterConversion final
     : public OpConversionPattern<sim::SimMonitorRegisterOp> {
 public:
@@ -307,8 +359,9 @@ void populateControlToLLVMConversionPatterns(RewritePatternSet &patterns,
       converter, context, "obelisk_rt_v1_static_once");
   patterns.add<OnceConversion<sim::SimDeferredOnceOp>>(
       converter, context, "obelisk_rt_v1_deferred_once");
-  patterns.add<DeferredEnqueueConversion, DeferredMatureConversion>(converter,
-                                                                    context);
+  patterns.add<DeferredEnqueueConversion, DeferredMatureConversion,
+               AssertionControlConversion, AssertionEnabledConversion>(
+      converter, context);
 }
 
 } // namespace obelisk::detail

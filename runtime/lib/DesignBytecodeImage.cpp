@@ -357,6 +357,7 @@ bool validIntrinsic(const Image &image, const Function &function,
       signature.id != OBELISK_RT_INTRINSIC_V1_CONTROL_ENTER &&
       signature.id != OBELISK_RT_INTRINSIC_V1_CONTROL_DISABLE &&
       signature.id != OBELISK_RT_INTRINSIC_V1_STATIC_ONCE &&
+      signature.id != OBELISK_RT_INTRINSIC_V1_ASSERTION_CONTROL &&
       signature.id != OBELISK_RT_INTRINSIC_V1_MONITOR_CONTROL &&
       signature.id != OBELISK_RT_INTRINSIC_V1_REAL_FROM_INTEGER &&
       signature.id != OBELISK_RT_INTRINSIC_V1_REAL_TO_INTEGER &&
@@ -514,6 +515,12 @@ bool validIntrinsic(const Image &image, const Function &function,
            (site.inputCount == 1 || bits(input(1), 64)) &&
            bits(output(0), 64);
   case OBELISK_RT_INTRINSIC_V1_DEFERRED_MATURE:
+    return signature.flags == 0 && site.inputCount == 1 &&
+           site.outputCount == 1 && bits(input(0), 64) && bits(output(0), 1);
+  case OBELISK_RT_INTRINSIC_V1_ASSERTION_CONTROL:
+    return signature.flags >= 3 && signature.flags <= 5 &&
+           site.inputCount == 1 && site.outputCount == 0 && bits(input(0), 64);
+  case OBELISK_RT_INTRINSIC_V1_ASSERTION_ENABLED:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && bits(input(0), 64) && bits(output(0), 1);
   case OBELISK_RT_INTRINSIC_V1_MONITOR_REGISTER:

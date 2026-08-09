@@ -844,6 +844,7 @@ struct obelisk_rt_context {
       latestDeferredImmediateReports;
   std::unordered_map<uint64_t, std::unordered_set<uint64_t>>
       deferredImmediateAssertionReports;
+  std::unordered_set<uint64_t> disabledAssertions;
   std::unordered_map<uint32_t, NativeStaticState> nativeStaticStates;
   // Lazily sorted interval index for reflection/VPI range lookups.
   mutable std::vector<NativeStaticStateRange> nativeStaticStateRanges;

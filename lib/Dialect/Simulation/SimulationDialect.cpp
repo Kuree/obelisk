@@ -4237,6 +4237,18 @@ LogicalResult SimDeferredMatureOp::verify() {
   return success();
 }
 
+LogicalResult SimAssertionControlOp::verify() {
+  if (getAction() < 3 || getAction() > 5)
+    return emitOpError("action must be On (3), Off (4), or Kill (5)");
+  return verifyPositive(*this, getAssertionIdAttr(),
+                        "assertion control target ID");
+}
+
+LogicalResult SimAssertionEnabledOp::verify() {
+  return verifyPositive(*this, getAssertionIdAttr(),
+                        "assertion control target ID");
+}
+
 LogicalResult SimContextStorageOp::verify() {
   return verifyNonnegative(*this, getIdAttr(), "storage ID");
 }

@@ -294,6 +294,7 @@ LogicalResult lowerPackedSimulationOperations(
       sim::SimDisableChildrenOp, sim::SimControlEnterOp, sim::SimControlLeaveOp,
       sim::SimControlDisableOp, sim::SimStaticOnceOp, sim::SimDeferredOnceOp,
       sim::SimDeferredEnqueueOp, sim::SimDeferredMatureOp,
+      sim::SimAssertionControlOp, sim::SimAssertionEnabledOp,
       sim::SimSampledReadOp, sim::SimSampledHistoryOp,
       sim::SimMonitorRegisterOp, sim::SimMonitorControlOp,
       sim::SimMonitorCurrentOp, sim::SimBitsDynExtractOp, sim::SimClassNullOp,

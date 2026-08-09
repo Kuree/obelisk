@@ -63,6 +63,25 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
     return failure();
   }
 
+  Block *controlMerge = nullptr;
+  if (!op->hasAttr("obelisk_sim.deferred_evaluator") &&
+      op->hasAttr("obelisk_sim.assertion_controlled")) {
+    auto assertionID = op->getAttrOfType<IntegerAttr>(
+        "obelisk_sim.assertion_control_target_id");
+    if (!assertionID || !assertionID.getValue().isStrictlyPositive()) {
+      emitError(location) << "immediate assertion has no prepared control ID";
+      return failure();
+    }
+    Value context = function.getBody().front().getArgument(0);
+    Value enabled = sim::SimAssertionEnabledOp::create(
+        builder, location, builder.getI1Type(), context, assertionID);
+    Block *evaluate = addBlock();
+    controlMerge = addBlock();
+    cf::CondBranchOp::create(builder, location, enabled, evaluate, ValueRange{},
+                             controlMerge, ValueRange{});
+    setCurrent(evaluate);
+  }
+
   if (op.getIsDeferred()) {
     auto nodeAttr = op->getAttrOfType<IntegerAttr>("node_id");
     uint64_t node = nodeAttr ? nodeAttr.getValue().getZExtValue() : 0;
@@ -249,6 +268,10 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
       return failure();
     emitBranch(merge);
     setCurrent(merge);
+    if (controlMerge) {
+      emitBranch(controlMerge);
+      setCurrent(controlMerge);
+    }
     return success();
   }
 
@@ -358,6 +381,10 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
   }
   emitBranch(mergeBlock);
   setCurrent(mergeBlock);
+  if (controlMerge) {
+    emitBranch(controlMerge);
+    setCurrent(controlMerge);
+  }
   return success();
 }
 

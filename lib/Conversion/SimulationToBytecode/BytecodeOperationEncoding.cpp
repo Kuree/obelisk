@@ -553,6 +553,16 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     return emitIntrinsicRegisters(plan, kIntrinsicDeferredMature,
                                   {reg(plan, op.getTicket())},
                                   {reg(plan, op.getCurrent())});
+  if (auto op = dyn_cast<sim::SimAssertionControlOp>(operation))
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicAssertionControl,
+        {emitU64Constant(plan, static_cast<uint64_t>(op.getAssertionId()))}, {},
+        static_cast<uint32_t>(op.getAction()));
+  if (auto op = dyn_cast<sim::SimAssertionEnabledOp>(operation))
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicAssertionEnabled,
+        {emitU64Constant(plan, static_cast<uint64_t>(op.getAssertionId()))},
+        {reg(plan, op.getEnabled())});
   if (auto op = dyn_cast<sim::SimMonitorRegisterOp>(operation))
     return emitIntrinsic(plan, kIntrinsicMonitorRegister, {op.getProcess()},
                          {});

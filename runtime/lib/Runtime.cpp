@@ -529,6 +529,44 @@ bool obelisk_rt_cancel_deferred_immediate_assertion_unlocked(
   return canceled;
 }
 
+extern "C" obelisk_rt_status
+obelisk_rt_v1_assertion_control(obelisk_rt_context *context, uint32_t action,
+                                uint64_t assertionID) {
+  if (!context || assertionID == 0 || action < 3 || action > 5)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  try {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    if (action == 3) {
+      context->disabledAssertions.erase(assertionID);
+      return OBELISK_RT_OK;
+    }
+    context->disabledAssertions.insert(assertionID);
+    if (action == 5)
+      obelisk_rt_cancel_deferred_immediate_assertion_unlocked(context,
+                                                              assertionID);
+    return OBELISK_RT_OK;
+  } catch (...) {
+    context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
+    return OBELISK_RT_OUT_OF_MEMORY;
+  }
+}
+
+extern "C" uint32_t obelisk_rt_v1_assertion_enabled(obelisk_rt_context *context,
+                                                    uint64_t assertionID) {
+  if (!context || assertionID == 0)
+    return 0;
+  try {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    return context->disabledAssertions.find(assertionID) ==
+                   context->disabledAssertions.end()
+               ? 1u
+               : 0u;
+  } catch (...) {
+    context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
+    return 0;
+  }
+}
+
 extern "C" uint64_t obelisk_rt_v1_deferred_enqueue_for_assertion(
     obelisk_rt_context *context, uint64_t siteID, uint64_t assertionID) {
   if (!context || siteID == 0)
