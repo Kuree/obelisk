@@ -1353,6 +1353,16 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
         << "lvalue-reference placeholder has no resolved value";
     return failure();
   }
+  if (op->hasAttr(staticNetConstantAttrName) &&
+      isa<semantic::SVNamedValueExpressionOp,
+          semantic::SVHierarchicalValueExpressionOp>(op)) {
+    if (lvalue) {
+      emitError(getSemanticLocation(op))
+          << "constant named value is not an lvalue";
+      return failure();
+    }
+    return lowerLiteral(op);
+  }
   if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(op))
     return lowerNamedValue(named, lvalue);
   if (auto hierarchical =

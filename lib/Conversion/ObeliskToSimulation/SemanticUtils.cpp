@@ -80,6 +80,9 @@ std::optional<StringRef> getConstantSpelling(Operation *operation) {
   if (auto constant =
           operation->getAttrOfType<StringAttr>("obelisk_sim.constant_value"))
     return constant.getValue();
+  if (auto constant =
+          operation->getAttrOfType<StringAttr>(staticNetConstantAttrName))
+    return constant.getValue();
   return std::nullopt;
 }
 

@@ -122,6 +122,8 @@ inline constexpr ::mlir::StringLiteral calleeFormalsAttrName =
     "obelisk_sim.callee_formals";
 inline constexpr ::mlir::StringLiteral placeholderAttrName =
     "obelisk_sim.placeholder";
+inline constexpr ::mlir::StringLiteral staticNetConstantAttrName =
+    "obelisk_sim.static_net_constant";
 inline constexpr ::llvm::StringLiteral captureKindAttrName =
     sim::metadata::captureKind;
 inline constexpr ::llvm::StringLiteral descriptorIdAttrName =

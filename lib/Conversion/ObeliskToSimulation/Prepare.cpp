@@ -427,6 +427,42 @@ void ObeliskSimPreparePass::runOnOperation() {
     return abort();
   ContinuousDriverMap &continuousDrivers = *preparedNetTopology;
 
+  // Static variable initialization precedes process execution, but established
+  // simulators expose a declaration net's sole constant driver to those
+  // initializers. Record only literal, full-net, single-driver cases. Folding
+  // their reads preserves the continuous process itself, including its
+  // time-zero transition for procedural listeners.
+  llvm::DenseMap<uint64_t, unsigned> netDriverCounts;
+  for (const auto &entry : continuousDrivers)
+    for (const DriverInfo &driver : entry.second) {
+      auto target = descriptors.find(driver.path);
+      if (target != descriptors.end() &&
+          target->second.kind == DescriptorInfo::Kind::Net)
+        ++netDriverCounts[target->second.id];
+    }
+  llvm::DenseMap<Operation *, StringAttr> staticLiteralNets;
+  for (Operation *source : sourceUnits) {
+    auto net = dyn_cast<semantic::SVNetSymbolOp>(source);
+    if (!net)
+      continue;
+    SmallVector<Operation *> initializer = getChildren(net);
+    std::optional<StringRef> spelling =
+        initializer.size() == 1 ? getConstantSpelling(initializer.front())
+                                : std::nullopt;
+    auto target = descriptors.find(getHierarchyName(net));
+    auto drivers = continuousDrivers.find(net);
+    if (!spelling || target == descriptors.end() ||
+        target->second.kind != DescriptorInfo::Kind::Net ||
+        netDriverCounts.lookup(target->second.id) != 1 ||
+        drivers == continuousDrivers.end() || drivers->second.size() != 1)
+      continue;
+    std::optional<unsigned> width = sim::getPackedWidth(target->second.type);
+    const DriverInfo &driver = drivers->second.front();
+    if (!width || driver.drivenLow != 0 || driver.drivenWidth != *width)
+      continue;
+    staticLiteralNets.try_emplace(net, builder.getStringAttr(*spelling));
+  }
+
   FailureOr<PreparedUnits> preparedUnits = materializeCodeUnitDeclarations(
       module, semanticRoot, sourceUnits, semanticSymbols, *scopes, builder);
   if (failed(preparedUnits))
@@ -3302,6 +3338,13 @@ void ObeliskSimPreparePass::runOnOperation() {
                         builder.getI64IntegerAttr(ordinal));
       }
     });
+    auto propertyInitializer =
+        dyn_cast<semantic::SVClassPropertySymbolOp>(unit.source);
+    bool staticInitializer =
+        isa<semantic::SVVariableSymbolOp>(unit.source) ||
+        (propertyInitializer &&
+         propertyInitializer.getLifetime() ==
+             semantic::SVVariableLifetime::Static);
     unit.function.walk([&](Operation *nested) {
       if (auto call = dyn_cast<semantic::SVCallExpressionOp>(nested)) {
         freezeCallContract(call);
@@ -3312,6 +3355,10 @@ void ObeliskSimPreparePass::runOnOperation() {
             named.getReferencedSymbol().getLeafReference());
         if (symbol == semanticSymbols.end())
           return;
+        if (staticInitializer)
+          if (auto constant = staticLiteralNets.find(symbol->second);
+              constant != staticLiteralNets.end())
+            named->setAttr(staticNetConstantAttrName, constant->second);
         if (isa<semantic::SVParameterSymbolOp, semantic::SVEnumValueSymbolOp,
                 semantic::SVSpecparamSymbolOp>(symbol->second))
           if (auto constant =
@@ -3330,12 +3377,18 @@ void ObeliskSimPreparePass::runOnOperation() {
               dyn_cast<semantic::SVHierarchicalValueExpressionOp>(nested)) {
         auto symbol = semanticSymbols.find(
             hierarchical.getReferencedSymbol().getLeafReference());
-        if (symbol != semanticSymbols.end() &&
-            isa<semantic::SVParameterSymbolOp, semantic::SVEnumValueSymbolOp,
-                semantic::SVSpecparamSymbolOp>(symbol->second))
-          if (auto constant =
-                  symbol->second->getAttrOfType<StringAttr>("constant_value"))
-            hierarchical->setAttr("obelisk_sim.constant_value", constant);
+        if (symbol != semanticSymbols.end()) {
+          if (staticInitializer)
+            if (auto constant = staticLiteralNets.find(symbol->second);
+                constant != staticLiteralNets.end())
+              hierarchical->setAttr(staticNetConstantAttrName,
+                                    constant->second);
+          if (isa<semantic::SVParameterSymbolOp, semantic::SVEnumValueSymbolOp,
+                  semantic::SVSpecparamSymbolOp>(symbol->second))
+            if (auto constant = symbol->second->getAttrOfType<StringAttr>(
+                    "constant_value"))
+              hierarchical->setAttr("obelisk_sim.constant_value", constant);
+        }
         return;
       }
       if (auto member =
