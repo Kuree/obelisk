@@ -2907,14 +2907,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       return success();
     }
     SmallVector<Operation *> nested = getChildren(expression);
-    if (isa<semantic::SVConversionExpressionOp>(expression)) {
-      if (nested.size() != 1 || failed(emitProgramExpression(nested.front())))
-        return failure();
-      instruction(OBELISK_RT_RANDOM_CAST_V1, *width,
-                  isSignedNode(nested.front()));
-      return success();
-    }
-    if (!dependsOnCandidate(expression)) {
+    auto captureExpression = [&]() -> LogicalResult {
       FailureOr<Value> value = lowerExpression(expression);
       FailureOr<Value> scalar =
           succeeded(value)
@@ -2943,7 +2936,34 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       instruction(OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, *width,
                   isSignedNode(expression), capture);
       return success();
+    };
+    if (isa<semantic::SVConversionExpressionOp>(expression)) {
+      // Keep constant conversions structural so Z3 can fold them, but evaluate
+      // a conversion of runtime state once as a capture. This preserves the
+      // conversion's exact signed extension/truncation while exposing a direct
+      // capture endpoint to interval planning.
+      bool hasRuntimeInput = false;
+      expression->walk([&](Operation *nestedExpression) {
+        if (getConstantSpelling(nestedExpression) ||
+            nestedExpression->hasAttr(randomVariableAttrName) ||
+            nestedExpression->hasAttr(randomVariableBitOffsetAttrName))
+          return;
+        if (isa<semantic::SVNamedValueExpressionOp,
+                semantic::SVHierarchicalValueExpressionOp,
+                semantic::SVMemberAccessExpressionOp,
+                semantic::SVCallExpressionOp>(nestedExpression))
+          hasRuntimeInput = true;
+      });
+      if (!dependsOnCandidate(expression) && hasRuntimeInput)
+        return captureExpression();
+      if (nested.size() != 1 || failed(emitProgramExpression(nested.front())))
+        return failure();
+      instruction(OBELISK_RT_RANDOM_CAST_V1, *width,
+                  isSignedNode(nested.front()));
+      return success();
     }
+    if (!dependsOnCandidate(expression))
+      return captureExpression();
 
     if (auto unary = dyn_cast<semantic::SVUnaryExpressionOp>(expression)) {
       if (nested.size() != 1 || failed(emitProgramExpression(nested.front())))
