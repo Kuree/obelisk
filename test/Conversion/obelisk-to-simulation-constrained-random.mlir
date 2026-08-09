@@ -388,7 +388,6 @@ module {
 
 // UNSUPPORTED-DAG: error: randc properties are not executable yet
 // UNSUPPORTED-DAG: error: rand enum and tagged-union domains are not executable yet
-// UNSUPPORTED-DAG: error: soft constraints must be direct items of a top-level constraint list
 // UNSUPPORTED-DAG: error: constraint form is outside the executable hard-expression boundary: obelisk.sv.constraint.solve_before
 // UNSUPPORTED-DAG: error: user pre_randomize and post_randomize hooks are not executable yet
 // UNSUPPORTED-DAG: error: constraint expression is outside the total side-effect-free executable boundary: obelisk.sv.expression.assignment

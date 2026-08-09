@@ -704,12 +704,6 @@ void ObeliskSimPreparePass::runOnOperation() {
                 dyn_cast<semantic::SVExpressionConstraintOp>(nested)) {
           if (expression.getIsSoft()) {
             ++softConstraintCount;
-            if (nested->getParentOp() != root) {
-              emitError(getSemanticLocation(expression))
-                  << "soft constraints must be direct items of a top-level "
-                     "constraint list";
-              invalid = true;
-            }
           }
           return;
         }

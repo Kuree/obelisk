@@ -1806,29 +1806,38 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     return failure();
   };
 
-  std::function<LogicalResult(Operation *)> emitProgramConstraint;
-  emitProgramConstraint = [&](Operation *constraint) -> LogicalResult {
+  std::function<LogicalResult(Operation *, Operation *)> emitProgramConstraint;
+  emitProgramConstraint = [&](Operation *constraint,
+                              Operation *softTarget) -> LogicalResult {
     SmallVector<Operation *> nested = getChildren(constraint);
     if (isa<semantic::SVConstraintListOp>(constraint)) {
       if (nested.empty()) {
         emitLiteral(true);
         return success();
       }
-      if (failed(emitProgramConstraint(nested.front())))
+      if (failed(emitProgramConstraint(nested.front(), softTarget)))
         return failure();
       for (Operation *item : ArrayRef(nested).drop_front()) {
-        if (failed(emitProgramConstraint(item)))
+        if (failed(emitProgramConstraint(item, softTarget)))
           return failure();
         instruction(OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1);
       }
       return success();
     }
-    if (isa<semantic::SVExpressionConstraintOp>(constraint))
+    if (auto expression =
+            dyn_cast<semantic::SVExpressionConstraintOp>(constraint)) {
+      bool selected = softTarget ? softTarget == constraint
+                                 : !expression.getIsSoft();
+      if (!selected) {
+        emitLiteral(true);
+        return success();
+      }
       return nested.size() == 1 ? emitProgramExpression(nested.front())
                                 : failure();
+    }
     if (isa<semantic::SVImplicationConstraintOp>(constraint)) {
       if (nested.size() != 2 || failed(emitProgramExpression(nested[0])) ||
-          failed(emitProgramConstraint(nested[1])))
+          failed(emitProgramConstraint(nested[1], softTarget)))
         return failure();
       instruction(OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1, 1);
       return success();
@@ -1837,10 +1846,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
             dyn_cast<semantic::SVConditionalConstraintOp>(constraint)) {
       if (nested.size() != (conditional.getHasElse() ? 3u : 2u) ||
           failed(emitProgramExpression(nested[0])) ||
-          failed(emitProgramConstraint(nested[1])))
+          failed(emitProgramConstraint(nested[1], softTarget)))
         return failure();
       if (conditional.getHasElse()) {
-        if (failed(emitProgramConstraint(nested[2])))
+        if (failed(emitProgramConstraint(nested[2], softTarget)))
           return failure();
       } else {
         emitLiteral(true);
@@ -1849,6 +1858,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
       return success();
     }
     if (isa<semantic::SVUniquenessConstraintOp>(constraint)) {
+      if (softTarget) {
+        emitLiteral(true);
+        return success();
+      }
       bool first = true;
       for (size_t left = 0; left != nested.size(); ++left)
         for (size_t right = left + 1; right != nested.size(); ++right) {
@@ -1895,10 +1908,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
                                            ? getChildren(root)
                                            : SmallVector<Operation *>{root};
       for (Operation *item : items)
-        if (auto expression =
-                dyn_cast<semantic::SVExpressionConstraintOp>(item);
-            expression && expression.getIsSoft())
-          softPriorities[item] = nextSoftPriority++;
+        item->walk([&](semantic::SVExpressionConstraintOp expression) {
+          if (expression.getIsSoft())
+            softPriorities[expression] = nextSoftPriority++;
+        });
     }
   };
   // Later declarations have higher priority. Class constraints are frozen in
@@ -1925,17 +1938,33 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
                                          ? getChildren(root)
                                          : SmallVector<Operation *>{root};
     for (Operation *item : items) {
-      bool soft = false;
-      if (auto expression = dyn_cast<semantic::SVExpressionConstraintOp>(item))
-        soft = expression.getIsSoft();
-      if (failed(emitProgramConstraint(item)))
-        return failure();
-      instruction(soft ? OBELISK_RT_RANDOM_END_SOFT_V1
-                       : OBELISK_RT_RANDOM_END_HARD_V1,
-                  1, false, constraintBlock,
-                  soft ? softPriorities.lookup(item) : 0);
-      emittedSoft |= soft;
-      emittedHard |= !soft;
+      bool hasHard = false;
+      SmallVector<semantic::SVExpressionConstraintOp> softConstraints;
+      item->walk([&](Operation *nested) {
+        if (auto expression =
+                dyn_cast<semantic::SVExpressionConstraintOp>(nested)) {
+          if (expression.getIsSoft())
+            softConstraints.push_back(expression);
+          else
+            hasHard = true;
+        } else if (isa<semantic::SVUniquenessConstraintOp>(nested)) {
+          hasHard = true;
+        }
+      });
+      if (hasHard) {
+        if (failed(emitProgramConstraint(item, /*softTarget=*/nullptr)))
+          return failure();
+        instruction(OBELISK_RT_RANDOM_END_HARD_V1, 1, false,
+                    constraintBlock);
+        emittedHard = true;
+      }
+      for (semantic::SVExpressionConstraintOp soft : softConstraints) {
+        if (failed(emitProgramConstraint(item, soft)))
+          return failure();
+        instruction(OBELISK_RT_RANDOM_END_SOFT_V1, 1, false, constraintBlock,
+                    softPriorities.lookup(soft));
+        emittedSoft = true;
+      }
     }
   }
   if (!emittedHard) {
@@ -3119,15 +3148,16 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
       softSatisfied = arith::ConstantOp::create(
           builder, location, builder.getI1Type(), builder.getBoolAttr(true));
 
-    std::function<FailureOr<Value>(Operation *)> lowerConstraint =
-        [&](Operation *constraint) -> FailureOr<Value> {
+    std::function<FailureOr<Value>(Operation *, Operation *)> lowerConstraint =
+        [&](Operation *constraint,
+            Operation *softTarget) -> FailureOr<Value> {
       SmallVector<Operation *> nested = getChildren(constraint);
       if (isa<semantic::SVConstraintListOp>(constraint)) {
         Value result = arith::ConstantOp::create(
             builder, getSemanticLocation(constraint), builder.getI1Type(),
             builder.getBoolAttr(true));
         for (Operation *item : nested) {
-          FailureOr<Value> itemResult = lowerConstraint(item);
+          FailureOr<Value> itemResult = lowerConstraint(item, softTarget);
           if (failed(itemResult))
             return failure();
           result = arith::AndIOp::create(builder, getSemanticLocation(item),
@@ -3137,6 +3167,13 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
       }
       if (auto expression =
               dyn_cast<semantic::SVExpressionConstraintOp>(constraint)) {
+        bool selected = softTarget ? softTarget == constraint
+                                   : !expression.getIsSoft();
+        if (!selected)
+          return arith::ConstantOp::create(
+                     builder, getSemanticLocation(constraint),
+                     builder.getI1Type(), builder.getBoolAttr(true))
+              .getResult();
         if (nested.size() != 1) {
           emitError(getSemanticLocation(constraint))
               << "expression constraint does not contain one predicate";
@@ -3149,15 +3186,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
             truthValue(*value, getSemanticLocation(constraint));
         if (failed(predicate))
           return failure();
-        if (!expression.getIsSoft())
-          return *predicate;
-        softSatisfied =
-            arith::AndIOp::create(builder, getSemanticLocation(constraint),
-                                  softSatisfied, *predicate);
-        return arith::ConstantOp::create(
-                   builder, getSemanticLocation(constraint),
-                   builder.getI1Type(), builder.getBoolAttr(true))
-            .getResult();
+        return *predicate;
       }
       if (isa<semantic::SVImplicationConstraintOp>(constraint)) {
         if (nested.size() != 2) {
@@ -3166,7 +3195,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
           return failure();
         }
         FailureOr<Value> predicateValue = lowerExpression(nested.front());
-        FailureOr<Value> body = lowerConstraint(nested.back());
+        FailureOr<Value> body =
+            lowerConstraint(nested.back(), softTarget);
         if (failed(predicateValue) || failed(body))
           return failure();
         FailureOr<Value> predicate =
@@ -3192,7 +3222,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
           return failure();
         }
         FailureOr<Value> predicateValue = lowerExpression(nested[0]);
-        FailureOr<Value> thenValue = lowerConstraint(nested[1]);
+        FailureOr<Value> thenValue = lowerConstraint(nested[1], softTarget);
         if (failed(predicateValue) || failed(thenValue))
           return failure();
         FailureOr<Value> predicate =
@@ -3201,7 +3231,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
           return failure();
         Value elseValue;
         if (conditional.getHasElse()) {
-          FailureOr<Value> loweredElse = lowerConstraint(nested[2]);
+          FailureOr<Value> loweredElse =
+              lowerConstraint(nested[2], softTarget);
           if (failed(loweredElse))
             return failure();
           elseValue = *loweredElse;
@@ -3215,6 +3246,11 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
             .getResult();
       }
       if (isa<semantic::SVUniquenessConstraintOp>(constraint)) {
+        if (softTarget)
+          return arith::ConstantOp::create(
+                     builder, getSemanticLocation(constraint),
+                     builder.getI1Type(), builder.getBoolAttr(true))
+              .getResult();
         SmallVector<Value> values;
         for (Operation *item : nested) {
           FailureOr<Value> value = lowerExpression(item);
@@ -3258,10 +3294,36 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     for (auto [index, constraint] : llvm::enumerate(children)) {
       if (index == receiverIndex)
         continue;
-      Value previousSoft = softSatisfied;
-      FailureOr<Value> value = lowerConstraint(constraint);
-      if (failed(value))
+      bool hasHard = false;
+      SmallVector<semantic::SVExpressionConstraintOp> softConstraints;
+      constraint->walk([&](Operation *nested) {
+        if (auto expression =
+                dyn_cast<semantic::SVExpressionConstraintOp>(nested)) {
+          if (expression.getIsSoft())
+            softConstraints.push_back(expression);
+          else
+            hasHard = true;
+        } else if (isa<semantic::SVUniquenessConstraintOp>(nested)) {
+          hasHard = true;
+        }
+      });
+      FailureOr<Value> hard =
+          hasHard
+              ? lowerConstraint(constraint, /*softTarget=*/nullptr)
+              : FailureOr<Value>(arith::ConstantOp::create(
+                                     builder, getSemanticLocation(constraint),
+                                     builder.getI1Type(),
+                                     builder.getBoolAttr(true))
+                                     .getResult());
+      if (failed(hard))
         return failure();
+      SmallVector<Value> softValues;
+      for (semantic::SVExpressionConstraintOp soft : softConstraints) {
+        FailureOr<Value> value = lowerConstraint(constraint, soft);
+        if (failed(value))
+          return failure();
+        softValues.push_back(*value);
+      }
       if (auto block = constraint->getAttrOfType<IntegerAttr>(
               randomConstraintBlockAttrName)) {
         APInt blockIndex = block.getValue();
@@ -3280,14 +3342,17 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
             constant64(0));
         Value trueValue = arith::ConstantOp::create(
             builder, location, builder.getI1Type(), builder.getBoolAttr(true));
-        value = arith::SelectOp::create(builder, location, disabled, trueValue,
-                                        *value)
-                    .getResult();
-        if (hasSoftConstraint)
-          softSatisfied = arith::SelectOp::create(
-              builder, location, disabled, previousSoft, softSatisfied);
+        hard = arith::SelectOp::create(builder, location, disabled, trueValue,
+                                       *hard)
+                   .getResult();
+        for (Value &soft : softValues)
+          soft = arith::SelectOp::create(builder, location, disabled,
+                                         trueValue, soft);
       }
-      satisfied = arith::AndIOp::create(builder, location, satisfied, *value);
+      satisfied = arith::AndIOp::create(builder, location, satisfied, *hard);
+      for (Value soft : softValues)
+        softSatisfied = arith::AndIOp::create(builder, location, softSatisfied,
+                                              soft);
     }
     thisObject = savedThis;
     randomizeCandidateValues = std::move(savedCandidates);
