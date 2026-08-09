@@ -501,7 +501,7 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
                                                 bool nonblocking,
                                                 Location location,
                                                 Value delay) {
-  if (!nonblocking)
+  if (!nonblocking || observeNonblockingWrites)
     recordImplicitWrite(destination.reference);
   switch (destination.kind) {
   case CapturedLValue::Kind::Reference: {

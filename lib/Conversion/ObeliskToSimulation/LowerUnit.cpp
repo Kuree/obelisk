@@ -2101,7 +2101,15 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
       function->getAttrOfType<StringAttr>("obelisk_sim.primitive_name");
   llvm::SetVector<Value> startupWildcardDependencies;
   llvm::SetVector<Value> startupWildcardWrites;
+  llvm::SetVector<Value> implicitProcessWrites;
   llvm::SetVector<Value> *savedWrites = observedWrites;
+  bool excludesWrittenSensitivity =
+      entryKind == sim::EntryKind::AlwaysComb ||
+      entryKind == sim::EntryKind::AlwaysLatch;
+  if (excludesWrittenSensitivity) {
+    observedWrites = &implicitProcessWrites;
+    observeNonblockingWrites = true;
+  }
   LogicalResult lowered = success();
   if (primitive) {
     lowered = lowerPrimitive(primitive.getValue(), roots);
@@ -2191,6 +2199,10 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     cf::BranchOp::create(builder, function.getLoc(), loopHeader);
     return success();
   }
+  // IEEE 1800-2017 9.2.2.2.1 excludes any expression also written by an
+  // always_comb (and, by 9.2.2.3, always_latch) from implicit sensitivity.
+  for (Value written : implicitProcessWrites)
+    sensitivity.remove(written);
   if (sensitivity.empty()) {
     if (entryKind == sim::EntryKind::Continuous ||
         entryKind == sim::EntryKind::AlwaysComb ||
