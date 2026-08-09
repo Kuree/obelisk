@@ -2240,42 +2240,6 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     proposalAssignmentTableMask = 0;
   }
   SmallVector<unsigned> solveBeforeComponentTableRoots;
-  if (hasSolveBefore && !solveBeforeTableRoot &&
-      analysis.satisfiability != solver::Satisfiability::Unsatisfiable) {
-    uint64_t orderedPropertyMask = 0;
-    for (uint64_t layerMask : solveBeforeLayerMasks)
-      orderedPropertyMask |= layerMask;
-
-    uint64_t uncoveredOrderedMask =
-        orderedPropertyMask & ~proposalAssignmentTableMask;
-    if (uncoveredOrderedMask != 0) {
-      bool unresolvedComponentCrossesLayers =
-          llvm::any_of(analysis.constraintComponentMasks,
-                       [&](uint64_t componentMask) {
-                         if ((componentMask & ~proposalAssignmentTableMask) ==
-                             0)
-                           return false;
-                         return llvm::count_if(
-                                    solveBeforeLayerMasks,
-                                    [&](uint64_t layerMask) {
-                                      return (componentMask & layerMask) != 0;
-                                    }) > 1;
-                       });
-      if (!analysis.proposalExact ||
-          !analysis.hasConstraintComponentPartition ||
-          unresolvedComponentCrossesLayers) {
-        emitError(location)
-            << "solve before currently requires complete compile-time "
-               "solution tables for correlated solve layers or an exact "
-               "component-independent proposal";
-        return failure();
-      }
-    }
-    if (validAssignmentTables)
-      for (const ProposalAssignmentTable &table : proposalAssignmentTables)
-        solveBeforeComponentTableRoots.push_back(
-            buildSolveBeforeTable(table.assignments, 0));
-  }
 
   struct ProposalDomain {
     uint32_t offset;
@@ -3084,6 +3048,116 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   bool exactProposal = analysis.proposalExact && !hasSoftConstraint &&
                        !overwritesProposalDomain &&
                        materializesCompleteProposal;
+
+  auto structuralProposalFollowsSolveOrder = [&]() {
+    auto propertyIndexForField = [&](uint32_t fieldOffset,
+                                     unsigned fieldWidth)
+        -> std::optional<unsigned> {
+      uint32_t offset = 0;
+      for (auto [index, property] : llvm::enumerate(planned)) {
+        if (offset == fieldOffset && property.width == fieldWidth)
+          return index;
+        offset += property.width;
+      }
+      return std::nullopt;
+    };
+
+    SmallVector<uint64_t> dependencies(planned.size(), 0);
+    for (const ProposalAlias &alias : proposalAliases) {
+      std::optional<unsigned> target =
+          propertyIndexForField(alias.targetOffset, alias.width);
+      std::optional<unsigned> source =
+          propertyIndexForField(alias.sourceOffset, alias.width);
+      if (!target || !source)
+        return false;
+      dependencies[*target] |= uint64_t{1} << *source;
+    }
+    for (const ProposalDefinition &definition : proposalDefinitions) {
+      std::optional<unsigned> target =
+          propertyIndexForField(definition.targetOffset, definition.width);
+      if (!target)
+        return false;
+      for (const EncodedInstruction &encoded :
+           llvm::ArrayRef(programInstructions)
+               .slice(definition.expressionBegin,
+                      definition.expressionEnd - definition.expressionBegin)) {
+        if (encoded.opcode != OBELISK_RT_RANDOM_PUSH_VARIABLE_V1)
+          continue;
+        uint32_t sourceOffset =
+            canonicalProposalField(encoded.operand, encoded.width);
+        std::optional<unsigned> source =
+            propertyIndexForField(sourceOffset, encoded.width);
+        if (!source)
+          return false;
+        dependencies[*target] |= uint64_t{1} << *source;
+      }
+    }
+
+    // Compute transitive property dependencies so an unordered intermediate
+    // cannot hide a later-to-earlier solve dependency.
+    for (unsigned intermediate = 0; intermediate != planned.size();
+         ++intermediate) {
+      uint64_t intermediateBit = uint64_t{1} << intermediate;
+      for (uint64_t &propertyDependencies : dependencies)
+        if ((propertyDependencies & intermediateBit) != 0)
+          propertyDependencies |= dependencies[intermediate];
+    }
+
+    SmallVector<std::optional<unsigned>> propertyLayers(planned.size());
+    for (auto [layerIndex, layer] : llvm::enumerate(solveBeforeLayers))
+      for (unsigned property : layer)
+        propertyLayers[property] = layerIndex;
+    for (unsigned target = 0; target != planned.size(); ++target) {
+      if (!propertyLayers[target])
+        continue;
+      for (unsigned source = 0; source != planned.size(); ++source) {
+        if ((dependencies[target] & (uint64_t{1} << source)) == 0 ||
+            !propertyLayers[source])
+          continue;
+        if (*propertyLayers[source] > *propertyLayers[target])
+          return false;
+      }
+    }
+    return true;
+  };
+
+  if (hasSolveBefore && !solveBeforeTableRoot &&
+      analysis.satisfiability != solver::Satisfiability::Unsatisfiable) {
+    uint64_t orderedPropertyMask = 0;
+    for (uint64_t layerMask : solveBeforeLayerMasks)
+      orderedPropertyMask |= layerMask;
+
+    uint64_t uncoveredOrderedMask =
+        orderedPropertyMask & ~proposalAssignmentTableMask;
+    if (uncoveredOrderedMask != 0) {
+      bool unresolvedComponentCrossesLayers =
+          llvm::any_of(analysis.constraintComponentMasks,
+                       [&](uint64_t componentMask) {
+                         if ((componentMask & ~proposalAssignmentTableMask) ==
+                             0)
+                           return false;
+                         return llvm::count_if(
+                                    solveBeforeLayerMasks,
+                                    [&](uint64_t layerMask) {
+                                      return (componentMask & layerMask) != 0;
+                                    }) > 1;
+                       });
+      bool validStructuralOrder =
+          !unresolvedComponentCrossesLayers ||
+          structuralProposalFollowsSolveOrder();
+      if (!exactProposal || !analysis.hasConstraintComponentPartition ||
+          !validStructuralOrder) {
+        emitError(location)
+            << "solve before currently requires complete compile-time "
+               "solution tables or an exact structurally ordered proposal";
+        return failure();
+      }
+    }
+    if (validAssignmentTables)
+      for (const ProposalAssignmentTable &table : proposalAssignmentTables)
+        solveBeforeComponentTableRoots.push_back(
+            buildSolveBeforeTable(table.assignments, 0));
+  }
 
   // The compiler plan is proven for the all-enabled constraint set. If a
   // block is disabled at runtime, bypass plan-specific bounds, tables, and
