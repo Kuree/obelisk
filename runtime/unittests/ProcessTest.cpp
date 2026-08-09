@@ -2830,6 +2830,38 @@ TEST(Scheduler, CompactionPreservesCursorAcrossInterleavedDeadSlots) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, TerminatedJoinNoneParentsPreserveDescendantAncestry) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+
+  constexpr uint64_t tag = OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG;
+  auto live = reinterpret_cast<obelisk_rt_process_instance_v1 *>(
+      static_cast<uintptr_t>(1));
+  ScheduledProcess sibling;
+  sibling.instance = live;
+  sibling.token = 3;
+  sibling.parent = tag | 1;
+  ScheduledProcess nativeGrandchild;
+  nativeGrandchild.instance = live;
+  nativeGrandchild.token = 5;
+  nativeGrandchild.parent = tag | 4;
+  context->scheduledProcesses.push_back(std::move(sibling));
+  context->scheduledProcesses.push_back(std::move(nativeGrandchild));
+  ScheduledDesignTask designGrandchild;
+  designGrandchild.id = 7;
+  designGrandchild.parent = tag | 4;
+  context->scheduledDesignTasks.push_back(std::move(designGrandchild));
+
+  obelisk_rt_reparent_process_children_unlocked(context, tag | 4, tag | 2);
+
+  EXPECT_EQ(context->scheduledProcesses[0].parent, tag | 1);
+  EXPECT_EQ(context->scheduledProcesses[1].parent, tag | 2);
+  EXPECT_EQ(context->scheduledDesignTasks[0].parent, tag | 2);
+  context->scheduledProcesses.clear();
+  context->scheduledDesignTasks.clear();
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, AOTStaticNBASitesMergeAndCommitEachRootOnce) {
   AOTTestState state;
   const obelisk_rt_static_nba_root roots[] = {

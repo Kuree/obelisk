@@ -3428,6 +3428,8 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
           task.queuedRegion = task.homeRegion;
           currentFrameReleased = false;
         } else {
+          obelisk_rt_reparent_process_children_unlocked(context, task.id,
+                                                        task.parent);
           context->terminatedDesignTasks.insert(task.id);
           releaseDesignTaskOwnedStatesUnlocked(context, task.id);
           obelisk_rt_release_controls_unlocked(context, task.controls);

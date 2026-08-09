@@ -16,6 +16,20 @@ module {
               obelisk.sv.statement.block attributes {block_kind = 2 : i32, node_id = 9 : i64} {
                 obelisk.sv.statement.list attributes {node_id = 10 : i64} {
                   obelisk.sv.statement.block attributes {node_id = 11 : i64} {
+                    obelisk.sv.statement.block attributes {block_kind = 1 : i32, node_id = 28 : i64} {
+                      obelisk.sv.statement.list attributes {node_id = 29 : i64} {
+                        obelisk.sv.statement.block attributes {node_id = 30 : i64} {
+                          obelisk.sv.statement.timed attributes {node_id = 31 : i64} {
+                            obelisk.sv.timing.delay attributes {node_id = 32 : i64} {
+                              obelisk.sv.expression.integer_literal attributes {constant_value = "3", node_id = 33 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                              }
+                            }
+                            obelisk.sv.statement.empty attributes {node_id = 34 : i64} {
+                            }
+                          }
+                        }
+                      }
+                    }
                     obelisk.sv.statement.timed attributes {node_id = 12 : i64} {
                       obelisk.sv.timing.delay attributes {node_id = 13 : i64} {
                         obelisk.sv.expression.integer_literal attributes {constant_value = "1", node_id = 14 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
@@ -59,7 +73,7 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.code_unit.decl {{[0-9]+}} in {{[0-9]+}} fork hierarchy "supported_fork.{{.*}}.$fork.
+// CHECK-COUNT-3: obelisk_sim.code_unit.decl {{[0-9]+}} in {{[0-9]+}} fork hierarchy "supported_fork.{{.*}}.$fork.
 // CHECK: obelisk_sim.func private @{{.*}} attributes {{.*}}entry_kind = 13 : i32
 // CHECK: obelisk_sim.control.enter
 // CHECK: obelisk_sim.control.leave

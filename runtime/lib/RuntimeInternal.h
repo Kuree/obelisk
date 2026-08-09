@@ -1062,6 +1062,19 @@ void obelisk_rt_release_control_unlocked(obelisk_rt_context *context,
 void obelisk_rt_release_controls_unlocked(
     obelisk_rt_context *context, const std::vector<uint64_t> &controls);
 
+// A join_none branch may finish while processes spawned beneath it remain
+// live. Keep those descendants reachable from the surviving process tree so
+// a later wait fork or disable fork in the ancestor still sees them.
+inline void obelisk_rt_reparent_process_children_unlocked(
+    obelisk_rt_context *context, uint64_t parent, uint64_t replacement) {
+  for (ScheduledProcess &process : context->scheduledProcesses)
+    if (process.instance && process.parent == parent)
+      process.parent = replacement;
+  for (ScheduledDesignTask &task : context->scheduledDesignTasks)
+    if (!task.terminated && task.parent == parent)
+      task.parent = replacement;
+}
+
 obelisk_rt_status obelisk_rt_initialize_design_bytecode_image(
     const obelisk_rt_execution_descriptor_v1 &execution,
     obelisk::designbytecode::Image &image) noexcept;

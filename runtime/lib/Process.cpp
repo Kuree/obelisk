@@ -7093,6 +7093,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           destroy = true;
         } else {
           uint64_t token = scheduled.token;
+          obelisk_rt_reparent_process_children_unlocked(
+              context, kNativeLogicalProcessTag | token, scheduled.parent);
           context->terminatedNativeProcesses.insert(token);
           scheduled.instance = nullptr;
           ++context->schedulerDeadProcessCount;
@@ -7376,6 +7378,8 @@ obelisk_rt_status executeTrustedAOTNode(obelisk_rt_context *context,
         nullptr);
     if (status != OBELISK_RT_OK)
       return status;
+    obelisk_rt_reparent_process_children_unlocked(
+        context, kNativeLogicalProcessTag | token, scheduled.parent);
     context->terminatedNativeProcesses.insert(token);
     if (!scheduled.signalSubscriptions.empty())
       obelisk_rt_unregister_signal_wait_unlocked(
@@ -7699,6 +7703,9 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
           nullptr);
       if (status != OBELISK_RT_OK)
         return status;
+      obelisk_rt_reparent_process_children_unlocked(
+          context, kNativeLogicalProcessTag | scheduled.token,
+          scheduled.parent);
       context->terminatedNativeProcesses.insert(scheduled.token);
       obelisk_rt_unregister_signal_wait_unlocked(
           context, scheduled.signalSubscriptions, scheduled.token, false);
