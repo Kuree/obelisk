@@ -1261,6 +1261,30 @@ LogicalResult UnitLowering::emitRuntimeFatal(Location location,
   return emitFunctionReturn(location, std::nullopt, false);
 }
 
+// Slang represents context-determined integral conversions explicitly.  Their
+// target signedness controls widening (for example, a signed operand in a
+// common unsigned binary or case context must be zero-extended), unlike an
+// ordinary assignment conversion, which extends according to the source.
+FailureOr<Value>
+UnitLowering::lowerContextDeterminedExpression(Operation *op) {
+  auto conversion = dyn_cast<semantic::SVConversionExpressionOp>(op);
+  SmallVector<Operation *> children =
+      conversion ? getChildren(conversion) : SmallVector<Operation *>{};
+  if (!conversion || children.size() != 1)
+    return lowerExpression(op);
+  FailureOr<Type> target = getNormalizedSemanticType(op);
+  if (failed(target) || !sim::getPackedScalarType(*target))
+    return lowerExpression(op);
+  FailureOr<Value> input = lowerExpression(children.front());
+  if (failed(input))
+    return failure();
+  bool signedConversion = sim::getPackedScalarType((*input).getType())
+                              ? isSignedNode(op)
+                              : isSignedNode(children.front());
+  return convert(*input, *target, signedConversion, getSemanticLocation(op),
+                 isSignedNode(op));
+}
+
 FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
   if (auto variable = op->getAttrOfType<IntegerAttr>(randomVariableAttrName)) {
     const APInt &indexValue = variable.getValue();

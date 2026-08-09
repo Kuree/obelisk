@@ -69,6 +69,8 @@ private:
   ::mlir::FailureOr<::mlir::Value> lowerExpression(::mlir::Operation *op,
                                                    bool lvalue = false);
   ::mlir::FailureOr<::mlir::Value>
+  lowerContextDeterminedExpression(::mlir::Operation *op);
+  ::mlir::FailureOr<::mlir::Value>
   lowerNamedValue(semantic::SVNamedValueExpressionOp op, bool lvalue);
   ::mlir::FailureOr<::mlir::Value> lowerReferencedValue(::mlir::Operation *op,
                                                         ::mlir::StringRef path,

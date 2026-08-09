@@ -743,7 +743,7 @@ UnitLowering::lowerCaseLabel(Value selector, Type selectorType,
   };
 
   if (condition != semantic::SVCaseCondition::Inside) {
-    FailureOr<Value> candidate = lowerExpression(label);
+    FailureOr<Value> candidate = lowerContextDeterminedExpression(label);
     if (failed(candidate))
       return failure();
     sim::CompareKind logicKind = sim::CompareKind::CaseEq;
@@ -872,7 +872,8 @@ LogicalResult UnitLowering::lowerCase(semantic::SVCaseStatementOp op) {
       ArrayRef<Operation *>(children).slice(1, totalLabels);
   ArrayRef<Operation *> statements =
       ArrayRef<Operation *>(children).take_back(statementCount);
-  FailureOr<Value> selector = lowerExpression(children.front());
+  FailureOr<Value> selector =
+      lowerContextDeterminedExpression(children.front());
   if (failed(selector))
     return failure();
   if (!sim::getPackedScalarType((*selector).getType()) &&
