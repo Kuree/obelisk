@@ -95,10 +95,15 @@ struct RandomProgramAnalysis {
 /// Assignment tables contain every hard solution, either globally or
 /// independently per capture-free connected component. Capture-dependent
 /// components remain on the checker/runtime path unless a structural proposal
-/// covers them exactly. The API deliberately exposes no Z3 types.
-RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
-                                           size_t programSize,
-                                           uint64_t resourceLimit = 100000);
+/// covers them exactly. Setting `preferGlobalAssignmentTable` also attempts
+/// bounded global enumeration when a structural proposal is already exact;
+/// clients that need the joint conditional distribution, such as `solve
+/// before`, can request that stronger result. The API deliberately exposes no
+/// Z3 types.
+RandomProgramAnalysis
+analyzeRandomProgram(const uint8_t *program, size_t programSize,
+                     uint64_t resourceLimit = 100000,
+                     bool preferGlobalAssignmentTable = false);
 
 } // namespace obelisk::solver
 

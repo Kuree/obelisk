@@ -259,7 +259,8 @@ private:
 
 RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
                                            size_t programSize,
-                                           uint64_t resourceLimit) {
+                                           uint64_t resourceLimit,
+                                           bool preferGlobalAssignmentTable) {
   RandomProgramAnalysis analysis;
   analysis.backend = "z3-4.13.4";
   std::optional<RandomProgramSMT> smt =
@@ -731,7 +732,8 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
     constexpr size_t maxAssignmentTableSize = 16;
     auto assignmentType =
         mlir::dyn_cast<mlir::smt::BitVectorType>(smt->assignment.getType());
-    if (!analysis.proposalExact && smt->captures.empty() && assignmentType &&
+    if ((!analysis.proposalExact || preferGlobalAssignmentTable) &&
+        smt->captures.empty() && assignmentType &&
         assignmentType.getWidth() <= maxAssignmentWidth) {
       z3::context enumerationContext;
       Z3SMTShim enumerationShim(enumerationContext);

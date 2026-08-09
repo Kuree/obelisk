@@ -1490,6 +1490,105 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     });
   }
 
+  SmallVector<SmallVector<unsigned>> solveBeforeLayers;
+  SmallVector<std::pair<unsigned, unsigned>> solveBeforeEdges;
+  bool hasSolveBefore = false;
+  auto randomPropertyIndex = [&](Operation *expression) -> FailureOr<unsigned> {
+    auto indexAttr =
+        expression->getAttrOfType<IntegerAttr>(randomVariableAttrName);
+    if (!indexAttr || indexAttr.getValue().isNegative() ||
+        indexAttr.getValue().getActiveBits() > 64 ||
+        indexAttr.getValue().getZExtValue() >= planned.size()) {
+      emitError(getSemanticLocation(expression))
+          << "solve before currently requires direct rand properties";
+      return failure();
+    }
+    return static_cast<unsigned>(indexAttr.getValue().getZExtValue());
+  };
+  for (auto [index, root] : llvm::enumerate(children)) {
+    if (index == receiverIndex)
+      continue;
+    WalkResult result =
+        root->walk([&](semantic::SVSolveBeforeConstraintOp solve) {
+          hasSolveBefore = true;
+          auto solveCountAttr =
+              solve->getAttrOfType<IntegerAttr>("solve_count");
+          auto afterCountAttr =
+              solve->getAttrOfType<IntegerAttr>("after_count");
+          SmallVector<Operation *> operands = getChildren(solve);
+          if (!solveCountAttr || !afterCountAttr ||
+              solveCountAttr.getValue().isNegative() ||
+              afterCountAttr.getValue().isNegative() ||
+              solveCountAttr.getValue().getActiveBits() > 64 ||
+              afterCountAttr.getValue().getActiveBits() > 64) {
+            emitError(getSemanticLocation(solve))
+                << "solve before has malformed operand counts";
+            return WalkResult::interrupt();
+          }
+          uint64_t solveCount = solveCountAttr.getValue().getZExtValue();
+          uint64_t afterCount = afterCountAttr.getValue().getZExtValue();
+          if (solveCount == 0 || afterCount == 0 ||
+              solveCount > operands.size() ||
+              afterCount != operands.size() - solveCount) {
+            emitError(getSemanticLocation(solve))
+                << "solve before has inconsistent operand counts";
+            return WalkResult::interrupt();
+          }
+          SmallVector<unsigned> before;
+          SmallVector<unsigned> after;
+          for (auto [operandIndex, operand] : llvm::enumerate(operands)) {
+            FailureOr<unsigned> property = randomPropertyIndex(operand);
+            if (failed(property))
+              return WalkResult::interrupt();
+            (operandIndex < solveCount ? before : after).push_back(*property);
+          }
+          for (unsigned lhs : before)
+            for (unsigned rhs : after) {
+              if (lhs == rhs) {
+                emitError(getSemanticLocation(solve))
+                    << "solve before cannot order a property before itself";
+                return WalkResult::interrupt();
+              }
+              std::pair<unsigned, unsigned> edge{lhs, rhs};
+              if (!llvm::is_contained(solveBeforeEdges, edge))
+                solveBeforeEdges.push_back(edge);
+            }
+          return WalkResult::advance();
+        });
+    if (result.wasInterrupted())
+      return failure();
+  }
+  if (hasSolveBefore) {
+    SmallVector<bool> involved(planned.size(), false);
+    SmallVector<bool> emitted(planned.size(), false);
+    for (auto [before, after] : solveBeforeEdges) {
+      involved[before] = true;
+      involved[after] = true;
+    }
+    size_t remaining = llvm::count(involved, true);
+    while (remaining != 0) {
+      SmallVector<unsigned> layer;
+      for (unsigned property = 0; property != planned.size(); ++property) {
+        if (!involved[property] || emitted[property])
+          continue;
+        bool hasPredecessor =
+            llvm::any_of(solveBeforeEdges, [&](const auto &edge) {
+              return edge.second == property && !emitted[edge.first];
+            });
+        if (!hasPredecessor)
+          layer.push_back(property);
+      }
+      if (layer.empty()) {
+        emitError(location) << "solve before ordering contains a cycle";
+        return failure();
+      }
+      for (unsigned property : layer)
+        emitted[property] = true;
+      remaining -= layer.size();
+      solveBeforeLayers.push_back(std::move(layer));
+    }
+  }
+
   struct EncodedInstruction {
     uint8_t opcode;
     uint8_t width;
@@ -1564,6 +1663,14 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
                   isSignedNode(expression), 0, parsed->value.getZExtValue());
       return success();
     }
+    SmallVector<Operation *> nested = getChildren(expression);
+    if (isa<semantic::SVConversionExpressionOp>(expression)) {
+      if (nested.size() != 1 || failed(emitProgramExpression(nested.front())))
+        return failure();
+      instruction(OBELISK_RT_RANDOM_CAST_V1, *width,
+                  isSignedNode(nested.front()));
+      return success();
+    }
     if (!dependsOnCandidate(expression)) {
       FailureOr<Value> value = lowerExpression(expression);
       FailureOr<Value> scalar =
@@ -1588,14 +1695,6 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
       return success();
     }
 
-    SmallVector<Operation *> nested = getChildren(expression);
-    if (isa<semantic::SVConversionExpressionOp>(expression)) {
-      if (nested.size() != 1 || failed(emitProgramExpression(nested.front())))
-        return failure();
-      instruction(OBELISK_RT_RANDOM_CAST_V1, *width,
-                  isSignedNode(nested.front()));
-      return success();
-    }
     if (auto unary = dyn_cast<semantic::SVUnaryExpressionOp>(expression)) {
       if (nested.size() != 1 || failed(emitProgramExpression(nested.front())))
         return failure();
@@ -1824,6 +1923,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
       }
       return success();
     }
+    if (isa<semantic::SVSolveBeforeConstraintOp>(constraint)) {
+      emitLiteral(true);
+      return success();
+    }
     if (auto expression =
             dyn_cast<semantic::SVExpressionConstraintOp>(constraint)) {
       bool selected = softTarget ? softTarget == constraint
@@ -2006,8 +2109,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   }
   uint64_t fallbackAttempts =
       totalWidth <= 20 ? (uint64_t{1} << totalWidth) : (uint64_t{1} << 20);
-  solver::RandomProgramAnalysis analysis =
-      solver::analyzeRandomProgram(program.data(), program.size());
+  solver::RandomProgramAnalysis analysis = solver::analyzeRandomProgram(
+      program.data(), program.size(), /*resourceLimit=*/100000,
+      /*preferGlobalAssignmentTable=*/hasSolveBefore);
 
   SmallVector<uint64_t> proposalAssignments;
   constexpr size_t maxMaterializedAssignmentTableSize = 16;
@@ -2025,6 +2129,73 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   if (validAssignmentTable)
     proposalAssignments.append(analysis.assignmentTable.begin(),
                                analysis.assignmentTable.end());
+
+  struct SolveBeforeTableNode {
+    SmallVector<unsigned> children;
+    SmallVector<uint64_t> assignments;
+  };
+  SmallVector<SolveBeforeTableNode> solveBeforeTableNodes;
+  std::optional<unsigned> solveBeforeTableRoot;
+  if (hasSolveBefore) {
+    if (hasSoftConstraint) {
+      emitError(location)
+          << "solve before with soft constraints is not executable yet";
+      return failure();
+    }
+    if (!validAssignmentTable &&
+        analysis.satisfiability != solver::Satisfiability::Unsatisfiable) {
+      emitError(location)
+          << "solve before currently requires a complete compile-time "
+             "solution table";
+      return failure();
+    }
+    if (validAssignmentTable) {
+      SmallVector<uint64_t> layerMasks;
+      for (ArrayRef<unsigned> layer : solveBeforeLayers) {
+        uint64_t mask = 0;
+        uint64_t offset = 0;
+        for (auto [propertyIndex, property] : llvm::enumerate(planned)) {
+          uint64_t valueMask = property.width == 64
+                                   ? UINT64_MAX
+                                   : (uint64_t{1} << property.width) - 1;
+          if (llvm::is_contained(layer, propertyIndex))
+            mask |= valueMask << offset;
+          offset += property.width;
+        }
+        layerMasks.push_back(mask);
+      }
+      std::function<unsigned(ArrayRef<uint64_t>, unsigned)> buildTable =
+          [&](ArrayRef<uint64_t> rows, unsigned layer) -> unsigned {
+        unsigned node = solveBeforeTableNodes.size();
+        solveBeforeTableNodes.emplace_back();
+        if (layer == layerMasks.size()) {
+          solveBeforeTableNodes[node].assignments.append(rows.begin(),
+                                                         rows.end());
+          return node;
+        }
+        SmallVector<std::pair<uint64_t, SmallVector<uint64_t>>> groups;
+        for (uint64_t row : rows) {
+          uint64_t key = row & layerMasks[layer];
+          auto group = llvm::find_if(
+              groups, [&](const auto &entry) { return entry.first == key; });
+          if (group == groups.end()) {
+            groups.emplace_back(key, SmallVector<uint64_t>{});
+            group = std::prev(groups.end());
+          }
+          group->second.push_back(row);
+        }
+        llvm::sort(groups, [](const auto &lhs, const auto &rhs) {
+          return lhs.first < rhs.first;
+        });
+        SmallVector<unsigned> children;
+        for (const auto &group : groups)
+          children.push_back(buildTable(group.second, layer + 1));
+        solveBeforeTableNodes[node].children = std::move(children);
+        return node;
+      };
+      solveBeforeTableRoot = buildTable(proposalAssignments, 0);
+    }
+  }
 
   struct ProposalAssignmentTable {
     uint64_t mask;
@@ -2318,9 +2489,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     }
     return assignment;
   };
+  Value sampledSolveBeforeAssignment;
   Value sampledComponentAssignment;
   auto materializeProposal = [&](Value rawAssignment,
                                  Value attempt) -> FailureOr<Value> {
+    if (sampledSolveBeforeAssignment)
+      return sampledSolveBeforeAssignment;
     if (!proposalAssignments.empty()) {
       if (proposalAssignments.size() == 1)
         return constant64(proposalAssignments.front());
@@ -3049,7 +3223,58 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     setCurrent(validCaptureBoundsBlock);
   }
 
-  if (validAssignmentTable && !powerOfTwoAssignmentTable)
+  if (solveBeforeTableRoot) {
+    std::function<Value(unsigned, std::optional<Value>)> sampleSolveTable =
+        [&](unsigned nodeIndex, std::optional<Value> availableDraw) -> Value {
+      const SolveBeforeTableNode &node = solveBeforeTableNodes[nodeIndex];
+      if (node.children.empty()) {
+        if (node.assignments.size() == 1)
+          return constant64(node.assignments.front());
+        Value draw = availableDraw ? *availableDraw : next64(state);
+        Value index = sampleBoundedIndex(node.assignments.size(), draw);
+        return selectAssignmentTable(node.assignments, index);
+      }
+      if (node.children.size() == 1)
+        return sampleSolveTable(node.children.front(), availableDraw);
+
+      Value draw = availableDraw ? *availableDraw : next64(state);
+      Value index = sampleBoundedIndex(node.children.size(), draw);
+      Value branchState = state;
+      Block *merge = addBlock();
+      Value mergedState = merge->addArgument(i64, location);
+      Value mergedAssignment = merge->addArgument(i64, location);
+      SmallVector<Block *> branches;
+      for (size_t child = 0; child != node.children.size(); ++child)
+        branches.push_back(addBlock());
+
+      for (size_t child = 0; child + 1 != node.children.size(); ++child) {
+        Block *nextDispatch = addBlock();
+        Value selected =
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                  index, constant64(child));
+        cf::CondBranchOp::create(builder, location, selected, branches[child],
+                                 ValueRange{}, nextDispatch, ValueRange{});
+        setCurrent(nextDispatch);
+      }
+      cf::BranchOp::create(builder, location, branches.back(), ValueRange{});
+
+      for (auto [child, branch] : llvm::enumerate(branches)) {
+        setCurrent(branch);
+        state = branchState;
+        Value assignment = sampleSolveTable(node.children[child], std::nullopt);
+        cf::BranchOp::create(builder, location, merge,
+                             ValueRange{state, assignment});
+      }
+      setCurrent(merge);
+      state = mergedState;
+      return mergedAssignment;
+    };
+    sampledSolveBeforeAssignment =
+        sampleSolveTable(*solveBeforeTableRoot, randomDraw);
+  }
+
+  if (validAssignmentTable && !solveBeforeTableRoot &&
+      !powerOfTwoAssignmentTable)
     start = sampleBoundedIndex(proposalAssignments.size(), randomDraw);
 
   if (validAssignmentTables) {
@@ -3165,6 +3390,11 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
         }
         return result;
       }
+      if (isa<semantic::SVSolveBeforeConstraintOp>(constraint))
+        return arith::ConstantOp::create(
+                   builder, getSemanticLocation(constraint),
+                   builder.getI1Type(), builder.getBoolAttr(true))
+            .getResult();
       if (auto expression =
               dyn_cast<semantic::SVExpressionConstraintOp>(constraint)) {
         bool selected = softTarget ? softTarget == constraint

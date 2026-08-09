@@ -3,7 +3,8 @@
 namespace obelisk::solver {
 
 #ifndef OBELISK_ENABLE_Z3
-RandomProgramAnalysis analyzeRandomProgram(const uint8_t *, size_t, uint64_t) {
+RandomProgramAnalysis analyzeRandomProgram(const uint8_t *, size_t, uint64_t,
+                                           bool) {
   return {};
 }
 #endif

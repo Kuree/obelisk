@@ -707,6 +707,38 @@ void ObeliskSimPreparePass::runOnOperation() {
           }
           return;
         }
+        if (auto solve =
+                dyn_cast<semantic::SVSolveBeforeConstraintOp>(nested)) {
+          auto solveCount = solve->getAttrOfType<IntegerAttr>("solve_count");
+          auto afterCount = solve->getAttrOfType<IntegerAttr>("after_count");
+          SmallVector<Operation *> operands = getChildren(solve);
+          if (solveCount && afterCount && !solveCount.getValue().isNegative() &&
+              !afterCount.getValue().isNegative() &&
+              solveCount.getValue().getActiveBits() <= 64 &&
+              afterCount.getValue().getActiveBits() <= 64) {
+            uint64_t beforeSize = solveCount.getValue().getZExtValue();
+            uint64_t afterSize = afterCount.getValue().getZExtValue();
+            if (beforeSize <= operands.size() &&
+                afterSize == operands.size() - beforeSize) {
+              for (Operation *before :
+                   ArrayRef(operands).take_front(beforeSize))
+                for (Operation *after :
+                     ArrayRef(operands).drop_front(beforeSize)) {
+                  auto beforeSymbol =
+                      before->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+                  auto afterSymbol =
+                      after->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+                  if (beforeSymbol && beforeSymbol == afterSymbol) {
+                    emitError(getSemanticLocation(solve))
+                        << "solve before cannot order a property before itself";
+                    invalid = true;
+                    return;
+                  }
+                }
+            }
+          }
+          return;
+        }
         if (isa<semantic::SVConstraintListOp,
                 semantic::SVImplicationConstraintOp,
                 semantic::SVConditionalConstraintOp,
