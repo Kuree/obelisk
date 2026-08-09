@@ -146,10 +146,21 @@ module {
 // CHECK-SAME: !obelisk_sim.argument_ref<i32>
 // CHECK: obelisk_sim.argument_ref.store
 
-// An indexed queue actual becomes a persistent path watched through its owner.
+// An indexed queue actual first materializes null-as-empty storage. Publishing
+// the owned container before forming the path lets output/ref copyback append
+// to an initially empty queue.
 // CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK: obelisk_sim.argument_ref.from_ref
-// CHECK: %[[PATH:.*]] = obelisk_sim.reference_path.index
+// CHECK: %[[LOADED:.*]] = obelisk_sim.ref.load
+// CHECK: %[[NULL:.*]] = obelisk_sim.managed.is_null %[[LOADED]]
+// CHECK: cf.cond_br %[[NULL]]
+// CHECK: %[[EMPTY:.*]] = obelisk_sim.container.create
+// CHECK: cf.br {{.*}}(%[[EMPTY]]
+// CHECK: %[[MATERIALIZED:.*]]: !obelisk_sim.queue<i32, 0>
+// CHECK: %[[OWNED:.*]] = obelisk_sim.container.clone %[[MATERIALIZED]]
+// CHECK: obelisk_sim.ref.store %[[OWNED]]
+// CHECK: %[[PUBLISHED:.*]] = obelisk_sim.ref.load
+// CHECK: %[[OWNER_REF:.*]] = obelisk_sim.argument_ref.from_ref
+// CHECK: %[[PATH:.*]] = obelisk_sim.reference_path.index {{.*}}, %[[PUBLISHED]]{{.*}} watching %[[OWNER_REF]]
 // CHECK: %[[REF:.*]] = obelisk_sim.argument_ref.from_path %[[PATH]]
 // CHECK: obelisk_sim.task.call @unit_0({{.*}}, %[[REF]])
 // CHECK-SAME: !obelisk_sim.argument_ref<i32>

@@ -1131,8 +1131,10 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
 
   if (element && isa<sim::DynamicArrayType, sim::QueueType>(sourceValueType)) {
     Value container = *input;
-    if (isa<sim::RefType, sim::ManagedRefType, sim::ArgumentRefType>(
-            container.getType())) {
+    bool isReference =
+        isa<sim::RefType, sim::ManagedRefType, sim::ArgumentRefType>(
+            container.getType());
+    if (isReference) {
       FailureOr<Value> loaded = loadReference(container, location);
       if (failed(loaded))
         return failure();
@@ -1172,15 +1174,25 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
                  << "unbounded index requires a queue container",
              failure();
     if (lvalue) {
+      if (!isReference)
+        return emitError(location)
+                   << "container element lvalue has no owning storage",
+               failure();
+      FailureOr<Value> materialized =
+          ensureSequentialContainer(container, location);
+      if (failed(materialized) ||
+          failed(storeReference(*input, *materialized, location)))
+        return failure();
+      FailureOr<Value> published = loadReference(*input, location);
       Type pathType =
           sim::ReferencePathType::get(function.getContext(), *resultType);
       FailureOr<Value> ownerReference =
           toArgumentReference(*input, sourceValueType, location);
-      if (failed(ownerReference))
+      if (failed(published) || failed(ownerReference))
         return failure();
       return sim::SimReferencePathIndexOp::create(
                  builder, location, pathType,
-                 function.getBody().front().getArgument(0), container,
+                 function.getBody().front().getArgument(0), *published,
                  resolvedIndex, *ownerReference)
           .getResult();
     }
