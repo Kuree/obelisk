@@ -209,6 +209,36 @@ module {
               }
             }
           }
+          obelisk.sv.statement.expression_statement attributes {node_id = 215 : i64} {
+            obelisk.sv.expression.call attributes {argument_count = 2 : i64, callee_name = "constraint_mode", constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = true, is_super_class = false, is_system_call = false, node_id = 216 : i64, referenced_path = "constrained::constraint_mode", referenced_symbol = @s1.$root::@s2::@s3.constrained::@s17.constraint_mode, semantic_type = !obelisk.void, subroutine_kind = 0 : i32} {
+              obelisk.sv.expression.named_value attributes {node_id = 217 : i64, referenced_path = "unsupported_constraint.object", referenced_symbol = @s1.$root::@s19.unsupported_constraint::@s20.unsupported_constraint::@s22.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.constrained>} {
+              }
+              obelisk.sv.expression.integer_literal attributes {constant_value = "0", node_id = 218 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
+              }
+            }
+          }
+          obelisk.sv.statement.expression_statement attributes {node_id = 219 : i64} {
+            obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 220 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+              obelisk.sv.expression.named_value attributes {node_id = 221 : i64, referenced_path = "limit", referenced_symbol = @s1.$root::@s2::@s24.limit, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+              }
+              obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "constraint_mode", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 222 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, subroutine_kind = 0 : i32, system_library_cell = "work.unsupported_constraint", system_scope_path = "unsupported_constraint", system_scope_symbol = @s1.$root::@s19.unsupported_constraint::@s20.unsupported_constraint} {
+                obelisk.sv.expression.member_access attributes {node_id = 223 : i64, referenced_path = "constrained::bounds", referenced_symbol = @s1.$root::@s2::@s3.constrained::@s5.bounds, semantic_type = !obelisk.void} {
+                  obelisk.sv.expression.named_value attributes {node_id = 224 : i64, referenced_path = "unsupported_constraint.object", referenced_symbol = @s1.$root::@s19.unsupported_constraint::@s20.unsupported_constraint::@s22.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.constrained>} {
+                  }
+                }
+              }
+            }
+          }
+          obelisk.sv.statement.expression_statement attributes {node_id = 225 : i64} {
+            obelisk.sv.expression.call attributes {argument_count = 2 : i64, callee_name = "constraint_mode", constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 226 : i64, semantic_type = !obelisk.void, subroutine_kind = 0 : i32, system_library_cell = "work.unsupported_constraint", system_scope_path = "unsupported_constraint", system_scope_symbol = @s1.$root::@s19.unsupported_constraint::@s20.unsupported_constraint} {
+              obelisk.sv.expression.member_access attributes {node_id = 227 : i64, referenced_path = "constrained::bounds", referenced_symbol = @s1.$root::@s2::@s3.constrained::@s5.bounds, semantic_type = !obelisk.void} {
+                obelisk.sv.expression.named_value attributes {node_id = 228 : i64, referenced_path = "unsupported_constraint.object", referenced_symbol = @s1.$root::@s19.unsupported_constraint::@s20.unsupported_constraint::@s22.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.constrained>} {
+                }
+              }
+              obelisk.sv.expression.integer_literal attributes {constant_value = "1", node_id = 229 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
+              }
+            }
+          }
           obelisk.sv.statement.expression_statement attributes {node_id = 38 : i64} {
             obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "randomize", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = true, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 39 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, subroutine_kind = 0 : i32, system_library_cell = "work.unsupported_constraint", system_scope_path = "unsupported_constraint", system_scope_symbol = @s1.$root::@s19.unsupported_constraint::@s20.unsupported_constraint} {
               obelisk.sv.constraint.list attributes {item_count = 5 : i64, node_id = 41 : i64} {
@@ -297,6 +327,7 @@ module {
 // CHECK: obelisk_sim.class.field {{.*}}debug_name = "__obelisk_rng_state"
 // CHECK: obelisk_sim.class.field {{.*}}debug_name = "__obelisk_rng_increment"
 // CHECK: obelisk_sim.class.field {{.*}}debug_name = "__obelisk_rand_mode"
+// CHECK: obelisk_sim.class.field {{.*}}debug_name = "__obelisk_constraint_mode"
 // CHECK: obelisk_sim.func private @unit_1({{.*}}%[[LIMIT_ARG:arg[0-9]+]]: !obelisk_sim.ref<i32>
 // CHECK: obelisk_sim.class.field_ref {{.*}}[@{{.*}}__obelisk_rand_mode]
 // CHECK: %[[OLD_MODE:.*]] = obelisk_sim.managed.load
@@ -310,13 +341,28 @@ module {
 // CHECK: obelisk_sim.ref.store {{.*}} to %[[LIMIT_ARG]]
 // CHECK: obelisk_sim.class.field_ref {{.*}}[@{{.*}}__obelisk_rand_mode]
 // CHECK: obelisk_sim.managed.store %{{c0_i64.*}}
-// CHECK: obelisk_sim.class.field_ref
-// CHECK: obelisk_sim.managed.load
+// CHECK: obelisk_sim.class.field_ref {{.*}}[@{{.*}}__obelisk_constraint_mode]
+// CHECK: obelisk_sim.managed.store %{{c-1_i64.*}}
+// CHECK: obelisk_sim.class.field_ref {{.*}}[@{{.*}}__obelisk_constraint_mode]
+// CHECK: %[[BLOCK_MODES:.*]] = obelisk_sim.managed.load
+// CHECK: %[[BLOCK_MODE:.*]] = arith.andi %[[BLOCK_MODES]], %{{c1_i64.*}} : i64
+// CHECK: %[[BLOCK_ENABLED:.*]] = arith.cmpi eq, %[[BLOCK_MODE]], %{{c0_i64.*}} : i64
+// CHECK: arith.extui %[[BLOCK_ENABLED]] : i1 to i32
+// CHECK: obelisk_sim.ref.store {{.*}} to %[[LIMIT_ARG]]
+// CHECK: obelisk_sim.class.field_ref {{.*}}[@{{.*}}__obelisk_constraint_mode]
+// CHECK: %[[OLD_BLOCK_MODES:.*]] = obelisk_sim.managed.load
+// CHECK: %[[ENABLED_BLOCK_MODES:.*]] = arith.andi %[[OLD_BLOCK_MODES]], %{{c-2_i64.*}} : i64
+// CHECK: obelisk_sim.managed.store %[[ENABLED_BLOCK_MODES]]
+// CHECK: %[[LIVE_BLOCK_MODE_REF:.*]] = obelisk_sim.class.field_ref {{.*}}[@{{.*}}__obelisk_constraint_mode]
+// CHECK: %[[LIVE_BLOCK_MODES:.*]] = obelisk_sim.managed.load %[[LIVE_BLOCK_MODE_REF]]
 // CHECK: %[[RELEVANT_MODE:.*]] = arith.andi
 // CHECK: %[[ALL_DISABLED:.*]] = arith.cmpi eq, %[[RELEVANT_MODE]], %{{c1_i64.*}} : i64
+// CHECK: %[[RELEVANT_BLOCK_MODES:.*]] = arith.andi %[[LIVE_BLOCK_MODES]], %{{c1_i64.*}} : i64
+// CHECK: %[[ALL_BLOCKS_ENABLED:.*]] = arith.cmpi eq, %[[RELEVANT_BLOCK_MODES]], %{{c0_i64.*}} : i64
 // CHECK: arith.select
 // CHECK: cf.cond_br %[[ALL_DISABLED]]
 // CHECK: arith.muli
+// CHECK: cf.cond_br %[[ALL_BLOCKS_ENABLED]]
 // CHECK: obelisk_sim.managed.store
 // CHECK: arith.cmpi slt
 // CHECK: arith.ori
@@ -329,7 +375,7 @@ module {
 // CHECK: obelisk_sim.ref.load %[[LIMIT_ARG]]
 // CHECK: cf.cond_br
 // CHECK: arith.cmpi uge
-// CHECK: obelisk_sim.random.solve {{.*}} mutable
+// CHECK: obelisk_sim.random.solve {{.*}} mutable {{.*}} constraints %[[RELEVANT_BLOCK_MODES]]
 // CHECK: cf.cond_br
 // CHECK: arith.trunci
 // CHECK: cf.cond_br
@@ -346,7 +392,7 @@ module {
 // UNSUPPORTED-DAG: error: constraint expression is outside the total side-effect-free executable boundary: obelisk.sv.expression.unary_op
 
 // UNSAT: warning: randomize hard constraints are statically unsatisfiable (z3-4.13.4)
-// UNSAT-NOT: obelisk_sim.random.solve
+// UNSAT: obelisk_sim.random.solve {{.*}} constraints
 
 // A Z3-proven power-of-two domain is folded without modulo bias into the
 // generated proposal. Z3 also proves that the proposal implies the hard
@@ -513,15 +559,10 @@ module {
 // 64-bit object draw. Only UINT64_MAX is rejected, and retry PCG state is
 // committed only on that edge. The accepted uniform index selects 0, 2, or 3.
 // TABLE-BOUNDED-LABEL: obelisk_sim.func private @unit_1
-// TABLE-BOUNDED: cf.br ^[[BOUNDED:[a-zA-Z0-9_]+]]({{.*}}, {{.*}} : i64, i64)
-// TABLE-BOUNDED: ^[[BOUNDED]](%[[STATE:.*]]: i64, %[[DRAW:.*]]: i64):
-// TABLE-BOUNDED: %[[THREE:.*]] = arith.constant {{.*}}3 : i64
-// TABLE-BOUNDED: %[[INDEX:.*]] = arith.remui %[[DRAW]], %[[THREE]] : i64
-// TABLE-BOUNDED: %[[MAX:.*]] = arith.constant {{.*}}-1 : i64
-// TABLE-BOUNDED: %[[ACCEPTED:.*]] = arith.cmpi ult, %[[DRAW]], %[[MAX]] : i64
-// TABLE-BOUNDED: cf.cond_br %[[ACCEPTED]], ^[[SELECT:[a-zA-Z0-9_]+]](%[[STATE]], %[[INDEX]] : i64, i64), ^[[BOUNDED]]
-// TABLE-BOUNDED: ^[[SELECT]](%[[FINAL_STATE:.*]]: i64, %[[BOUNDED_INDEX:.*]]: i64):
-// TABLE-BOUNDED: obelisk_sim.managed.store %[[FINAL_STATE]]
+// TABLE-BOUNDED: %[[INDEX:.*]] = arith.remui {{.*}}, {{.*}} : i64
+// TABLE-BOUNDED: %[[ACCEPTED:.*]] = arith.cmpi ult
+// TABLE-BOUNDED: cf.cond_br %[[ACCEPTED]]
+// TABLE-BOUNDED: obelisk_sim.managed.store
 // TABLE-BOUNDED: arith.remui {{.*}}, {{.*}} : i64
 // TABLE-BOUNDED: arith.select
 // TABLE-BOUNDED: arith.select

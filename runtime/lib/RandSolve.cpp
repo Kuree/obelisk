@@ -153,7 +153,9 @@ bool validateInstruction(const Instruction &instruction,
     break;
   case OBELISK_RT_RANDOM_END_HARD_V1:
   case OBELISK_RT_RANDOM_END_SOFT_V1:
-    if (instruction.width != 1 || depth != 1)
+    if (instruction.width != 1 || depth != 1 ||
+        (instruction.operand != OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
+         instruction.operand >= 64))
       return false;
     depth = 0;
     sawHard |= instruction.opcode == OBELISK_RT_RANDOM_END_HARD_V1;
@@ -212,7 +214,8 @@ bool compare(Value lhs, Value rhs, bool isSigned, uint8_t opcode) {
 
 bool evaluate(const std::vector<Instruction> &instructions,
               std::vector<Value> &stack, uint64_t assignment,
-              const uint64_t *captures, bool &hard, bool &soft) {
+              uint64_t constraintMask, const uint64_t *captures, bool &hard,
+              bool &soft) {
   stack.clear();
   hard = true;
   soft = true;
@@ -236,6 +239,10 @@ bool evaluate(const std::vector<Instruction> &instructions,
         instruction.opcode == OBELISK_RT_RANDOM_END_SOFT_V1) {
       bool truth = stack.back().bits != 0;
       stack.pop_back();
+      bool enabled =
+          instruction.operand == OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 ||
+          ((constraintMask >> instruction.operand) & 1) == 0;
+      truth |= !enabled;
       if (instruction.opcode == OBELISK_RT_RANDOM_END_HARD_V1)
         hard &= truth;
       else
@@ -421,11 +428,11 @@ bool evaluate(const std::vector<Instruction> &instructions,
 
 } // namespace
 
-extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_masked(
+extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_modes(
     obelisk_rt_context *context, const uint8_t *program, uint64_t programSize,
-    uint64_t start, uint64_t mutableMask, uint64_t maxAttempts,
-    const uint64_t *captures, uint64_t captureCount, uint64_t *outAssignment,
-    uint32_t *outSuccess) {
+    uint64_t start, uint64_t mutableMask, uint64_t constraintMask,
+    uint64_t maxAttempts, const uint64_t *captures, uint64_t captureCount,
+    uint64_t *outAssignment, uint32_t *outSuccess) {
   if (!context || !program || !outAssignment || !outSuccess ||
       (captureCount != 0 && !captures) ||
       programSize < OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE)
@@ -484,7 +491,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_masked(
     stack.reserve(maxDepth);
     for (uint64_t attempt = 0; attempt != attempts; ++attempt) {
       bool hard = false, soft = false;
-      if (!evaluate(instructions, stack, candidate, captures, hard, soft))
+      if (!evaluate(instructions, stack, candidate, constraintMask, captures,
+                    hard, soft))
         return OBELISK_RT_INVALID_ARGUMENT;
       if (hard && (!encodedSoft || soft)) {
         *outAssignment = candidate;
@@ -510,6 +518,16 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_masked(
   } catch (...) {
     return OBELISK_RT_INVALID_ARGUMENT;
   }
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_masked(
+    obelisk_rt_context *context, const uint8_t *program, uint64_t programSize,
+    uint64_t start, uint64_t mutableMask, uint64_t maxAttempts,
+    const uint64_t *captures, uint64_t captureCount, uint64_t *outAssignment,
+    uint32_t *outSuccess) {
+  return obelisk_rt_v1_random_solve_modes(
+      context, program, programSize, start, mutableMask, 0, maxAttempts,
+      captures, captureCount, outAssignment, outSuccess);
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_random_solve(

@@ -2582,6 +2582,7 @@ typedef struct obelisk_rt_random_state_v1 {
 #define OBELISK_RT_RANDOM_INSTRUCTION_SIZE UINT16_C(16)
 #define OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT UINT32_C(1)
 #define OBELISK_RT_RANDOM_INSTRUCTION_SIGNED UINT8_C(1)
+#define OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 UINT32_MAX
 
 typedef enum obelisk_rt_random_opcode_v1 {
   OBELISK_RT_RANDOM_PUSH_VARIABLE_V1 = 1,
@@ -2696,6 +2697,13 @@ obelisk_rt_status obelisk_rt_v1_random_solve_masked(
     uint64_t start, uint64_t mutable_mask, uint64_t max_attempts,
     const uint64_t *captures, uint64_t capture_count, uint64_t *out_assignment,
     uint32_t *out_success);
+// As above, with a disabled-bit mask for compiler-assigned constraint blocks.
+// Program constraints marked as unmasked remain active.
+obelisk_rt_status obelisk_rt_v1_random_solve_modes(
+    obelisk_rt_context *context, const uint8_t *program, uint64_t program_size,
+    uint64_t start, uint64_t mutable_mask, uint64_t constraint_mask,
+    uint64_t max_attempts, const uint64_t *captures, uint64_t capture_count,
+    uint64_t *out_assignment, uint32_t *out_success);
 obelisk_rt_status
 obelisk_rt_v1_random_get_state(obelisk_rt_context *context,
                                obelisk_rt_random_state_v1 *out_state);

@@ -486,6 +486,66 @@ void ObeliskSimPreparePass::runOnOperation() {
       builder, module.getLoc(), "__obelisk_root", rootType,
       sim::EntryKind::RootInitializer, rootAttrs, rootArgAttrs);
 
+  auto collectClassHierarchy =
+      [&](semantic::SVClassTypeOp leaf,
+          SmallVectorImpl<semantic::SVClassTypeOp> &hierarchy,
+          StringRef purpose) -> LogicalResult {
+    llvm::SmallPtrSet<Operation *, 8> visiting;
+    std::function<LogicalResult(semantic::SVClassTypeOp)> collect =
+        [&](semantic::SVClassTypeOp classType) -> LogicalResult {
+      if (!visiting.insert(classType).second)
+        return classType.emitError("randomization class hierarchy is cyclic");
+      if (std::optional<Type> baseType = classType.getBaseClass()) {
+        auto baseHandle = dyn_cast<semantic::ClassHandleType>(*baseType);
+        auto base = baseHandle
+                        ? semanticClasses.find(
+                              baseHandle.getClassName().getLeafReference())
+                        : semanticClasses.end();
+        if (base == semanticClasses.end()) {
+          emitError(getSemanticLocation(classType))
+              << purpose << " cannot resolve the base class";
+          return failure();
+        }
+        if (failed(collect(base->second)))
+          return failure();
+      }
+      hierarchy.push_back(classType);
+      return success();
+    };
+    return collect(leaf);
+  };
+
+  using EffectiveConstraintGroup =
+      SmallVector<semantic::SVConstraintBlockSymbolOp, 2>;
+  auto collectEffectiveConstraints =
+      [&](ArrayRef<semantic::SVClassTypeOp> hierarchy,
+          SmallVectorImpl<EffectiveConstraintGroup> &groups) {
+    llvm::StringMap<unsigned> namedIndices;
+    for (semantic::SVClassTypeOp classType : hierarchy) {
+      for (Operation *member : getChildren(classType)) {
+        auto constraint =
+            dyn_cast<semantic::SVConstraintBlockSymbolOp>(member);
+        if (!constraint)
+          continue;
+        std::optional<StringRef> name = constraint.getName();
+        if (!name) {
+          groups.push_back({constraint});
+          continue;
+        }
+        auto [entry, inserted] = namedIndices.try_emplace(
+            *name, static_cast<unsigned>(groups.size()));
+        if (inserted) {
+          groups.push_back({constraint});
+          continue;
+        }
+        EffectiveConstraintGroup &group = groups[entry->second];
+        if (!constraint.getIsExtends().value_or(false))
+          group.clear();
+        group.push_back(constraint);
+      }
+    }
+  };
+
   // Freeze object randomization into each call before its semantic class and
   // constraint declarations are erased. The unit-lowering pass is isolated,
   // so the cloned constraint expressions and this compact field inventory are
@@ -519,29 +579,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       return true;
     }
     SmallVector<semantic::SVClassTypeOp> hierarchy;
-    llvm::SmallPtrSet<Operation *, 8> visiting;
-    std::function<LogicalResult(semantic::SVClassTypeOp)> collectHierarchy =
-        [&](semantic::SVClassTypeOp classType) -> LogicalResult {
-      if (!visiting.insert(classType).second)
-        return classType.emitError("randomization class hierarchy is cyclic");
-      if (std::optional<Type> baseType = classType.getBaseClass()) {
-        auto baseHandle = dyn_cast<semantic::ClassHandleType>(*baseType);
-        auto base = baseHandle
-                        ? semanticClasses.find(
-                              baseHandle.getClassName().getLeafReference())
-                        : semanticClasses.end();
-        if (base == semanticClasses.end()) {
-          emitError(getSemanticLocation(classType))
-              << "randomization cannot resolve the base class";
-          return failure();
-        }
-        if (failed(collectHierarchy(base->second)))
-          return failure();
-      }
-      hierarchy.push_back(classType);
-      return success();
-    };
-    if (failed(collectHierarchy(foundClass->second))) {
+    if (failed(collectClassHierarchy(foundClass->second, hierarchy,
+                                     "randomization"))) {
       invalid = true;
       return true;
     }
@@ -555,8 +594,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     };
     SmallVector<RandomProperty> properties;
     SmallVector<Operation *> constraintRoots;
-    SmallVector<semantic::SVConstraintBlockSymbolOp> classConstraints;
-    llvm::StringMap<unsigned> namedConstraintIndices;
+    SmallVector<EffectiveConstraintGroup> constraintGroups;
     if (hasInlineConstraints)
       for (auto [index, child] : llvm::enumerate(callChildren))
         if (index != receiverIndex && isa<semantic::SVConstraintListOp>(child))
@@ -609,31 +647,31 @@ void ObeliskSimPreparePass::runOnOperation() {
                                 isSignedSemanticType(*semanticPropertyType)});
           continue;
         }
-        auto constraint = dyn_cast<semantic::SVConstraintBlockSymbolOp>(member);
-        if (!constraint)
-          continue;
-        if (std::optional<StringRef> name = constraint.getName()) {
-          auto [entry, inserted] = namedConstraintIndices.try_emplace(
-              *name, static_cast<unsigned>(classConstraints.size()));
-          if (!inserted) {
-            classConstraints[entry->second] = constraint;
-            continue;
-          }
-        }
-        classConstraints.push_back(constraint);
       }
     }
-    for (semantic::SVConstraintBlockSymbolOp constraint : classConstraints) {
-      if (constraint.getIsExtern().value_or(false) ||
-          constraint.getIsPure().value_or(false)) {
-        emitError(getSemanticLocation(constraint))
-            << "extern and pure constraint blocks are not executable yet";
-        invalid = true;
-        continue;
+    collectEffectiveConstraints(hierarchy, constraintGroups);
+    if (constraintGroups.size() > 64) {
+      emitError(getSemanticLocation(call))
+          << "the executable constraint_mode boundary is 64 effective "
+             "constraint blocks";
+      invalid = true;
+      return true;
+    }
+    llvm::DenseMap<Operation *, unsigned> constraintIndices;
+    for (auto [index, group] : llvm::enumerate(constraintGroups)) {
+      for (semantic::SVConstraintBlockSymbolOp constraint : group) {
+        constraintIndices[constraint] = index;
+        if (constraint.getIsExtern().value_or(false) ||
+            constraint.getIsPure().value_or(false)) {
+          emitError(getSemanticLocation(constraint))
+              << "extern and pure constraint blocks are not executable yet";
+          invalid = true;
+          continue;
+        }
+        for (Operation *child : getChildren(constraint))
+          if (isa<semantic::SVConstraintListOp>(child))
+            constraintRoots.push_back(child);
       }
-      for (Operation *child : getChildren(constraint))
-        if (isa<semantic::SVConstraintListOp>(child))
-          constraintRoots.push_back(child);
     }
 
     uint64_t totalWidth = 0;
@@ -715,6 +753,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                   builder.getArrayAttr(propertyAttrs));
     call->setAttr(randomTotalWidthAttrName,
                   builder.getI64IntegerAttr(totalWidth));
+    call->setAttr(randomConstraintCountAttrName,
+                  builder.getI32IntegerAttr(constraintGroups.size()));
 
     auto annotateConstraint = [&](Operation *constraint) {
       constraint->walk([&](Operation *nested) {
@@ -749,6 +789,13 @@ void ObeliskSimPreparePass::runOnOperation() {
       if (llvm::is_contained(callChildren, root))
         continue;
       Operation *cloned = constraintBuilder.clone(*root);
+      auto constraint =
+          dyn_cast<semantic::SVConstraintBlockSymbolOp>(root->getParentOp());
+      if (constraint)
+        if (auto index = constraintIndices.find(constraint);
+            index != constraintIndices.end())
+          cloned->setAttr(randomConstraintBlockAttrName,
+                          builder.getI32IntegerAttr(index->second));
       annotateConstraint(cloned);
     }
     return true;
@@ -805,26 +852,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     if (!owner)
       return false;
     SmallVector<semantic::SVClassTypeOp> hierarchy;
-    llvm::SmallPtrSet<Operation *, 8> visiting;
-    std::function<LogicalResult(semantic::SVClassTypeOp)> collectHierarchy =
-        [&](semantic::SVClassTypeOp classType) -> LogicalResult {
-      if (!visiting.insert(classType).second)
-        return classType.emitError("randomization class hierarchy is cyclic");
-      if (std::optional<Type> baseType = classType.getBaseClass()) {
-        auto baseHandle = dyn_cast<semantic::ClassHandleType>(*baseType);
-        auto base = baseHandle
-                        ? semanticClasses.find(
-                              baseHandle.getClassName().getLeafReference())
-                        : semanticClasses.end();
-        if (base == semanticClasses.end())
-          return classType.emitError("rand_mode cannot resolve the base class");
-        if (failed(collectHierarchy(base->second)))
-          return failure();
-      }
-      hierarchy.push_back(classType);
-      return success();
-    };
-    if (failed(collectHierarchy(owner))) {
+    if (failed(collectClassHierarchy(owner, hierarchy, "rand_mode"))) {
       invalid = true;
       return true;
     }
@@ -860,6 +888,92 @@ void ObeliskSimPreparePass::runOnOperation() {
     return true;
   };
 
+  // A class-wide constraint_mode call is a builtin method, while a named
+  // constraint-block call is represented as a system call whose first child
+  // is a member access. Freeze both forms and assign named blocks the same
+  // base-first index used by the effective inherited constraint set.
+  auto freezeConstraintModeContract =
+      [&](semantic::SVCallExpressionOp call) -> bool {
+    if (call.getCalleeName() != "constraint_mode")
+      return false;
+    if (call->hasAttr(constraintModeAttrName))
+      return true;
+
+    SmallVector<Operation *> callChildren = getChildren(call);
+    if (callChildren.empty())
+      return false;
+    if (!call.getIsSystemCall()) {
+      auto reference = call->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+      auto symbol = reference
+                        ? semanticSymbols.find(reference.getLeafReference())
+                        : semanticSymbols.end();
+      auto target =
+          symbol != semanticSymbols.end()
+              ? dyn_cast<semantic::SVSubroutineSymbolOp>(symbol->second)
+              : semantic::SVSubroutineSymbolOp{};
+      if (!target || !target.getIsBuiltin().value_or(false) ||
+          target.getName().value_or("") != "constraint_mode" ||
+          !getOwningClass(target))
+        return false;
+      call->setAttr(constraintModeAttrName, builder.getUnitAttr());
+      return true;
+    }
+
+    auto member =
+        dyn_cast<semantic::SVMemberAccessExpressionOp>(callChildren.front());
+    auto reference =
+        member ? member->getAttrOfType<SymbolRefAttr>("referenced_symbol")
+               : SymbolRefAttr{};
+    auto symbol = reference ? semanticSymbols.find(reference.getLeafReference())
+                            : semanticSymbols.end();
+    auto constraint =
+        symbol != semanticSymbols.end()
+            ? dyn_cast<semantic::SVConstraintBlockSymbolOp>(symbol->second)
+            : semantic::SVConstraintBlockSymbolOp{};
+    auto owner = constraint ? dyn_cast_or_null<semantic::SVClassTypeOp>(
+                                  constraint->getParentOp())
+                            : semantic::SVClassTypeOp{};
+    if (!constraint || !owner)
+      return false;
+
+    SmallVector<semantic::SVClassTypeOp> hierarchy;
+    if (failed(
+            collectClassHierarchy(owner, hierarchy, "constraint_mode"))) {
+      invalid = true;
+      return true;
+    }
+    SmallVector<EffectiveConstraintGroup> groups;
+    collectEffectiveConstraints(hierarchy, groups);
+    if (groups.size() > 64) {
+      emitError(getSemanticLocation(call))
+          << "constraint_mode exceeds the 64-block executable boundary";
+      invalid = true;
+      return true;
+    }
+
+    std::optional<StringRef> targetName = constraint.getName();
+    std::optional<unsigned> constraintIndex;
+    for (auto [index, group] : llvm::enumerate(groups)) {
+      bool matches = llvm::is_contained(group, constraint);
+      if (!matches && targetName && !group.empty())
+        matches = group.front().getName() == targetName;
+      if (matches) {
+        constraintIndex = index;
+        break;
+      }
+    }
+    if (!constraintIndex) {
+      emitError(getSemanticLocation(call))
+          << "constraint_mode cannot resolve its effective constraint block";
+      invalid = true;
+      return true;
+    }
+    call->setAttr(constraintModeAttrName, builder.getUnitAttr());
+    call->setAttr(constraintModeBlockAttrName,
+                  builder.getI32IntegerAttr(*constraintIndex));
+    return true;
+  };
+
   // The capture inventory must see class constraints after they have been
   // cloned into their calling code unit. In particular, package and design
   // variables referenced by a class constraint are ordinary unit captures.
@@ -868,7 +982,8 @@ void ObeliskSimPreparePass::runOnOperation() {
     semanticCalls.push_back(call);
   });
   for (semantic::SVCallExpressionOp call : semanticCalls)
-    if (!freezeRandModeContract(call))
+    if (!freezeRandModeContract(call) &&
+        !freezeConstraintModeContract(call))
       freezeRandomizeContract(call);
   if (invalid)
     return abort();
@@ -908,6 +1023,8 @@ void ObeliskSimPreparePass::runOnOperation() {
 
   auto freezeCallContract = [&](semantic::SVCallExpressionOp call) {
     if (freezeRandModeContract(call))
+      return;
+    if (freezeConstraintModeContract(call))
       return;
     if (freezeRandomizeContract(call))
       return;

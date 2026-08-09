@@ -57,7 +57,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   bool containerBuiltin = false;
   bool associativeBuiltin = false;
   if (op.getIsSystemCall() && !op.getCalleeName().starts_with("$") &&
-      !children.empty()) {
+      !children.empty() && !op->hasAttr(randomModeAttrName) &&
+      !op->hasAttr(constraintModeAttrName)) {
     Operation *receiverNode =
         op.getHasIteratorExpression() ? children.back() : children.front();
     FailureOr<Type> receiverType = getNormalizedSemanticType(receiverNode);
@@ -182,6 +183,129 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
               builder.getIntegerAttr(i64, APInt(64, propertyBit))));
     Value enabled = arith::CmpIOp::create(builder, location,
                                           arith::CmpIPredicate::eq, mode, zero);
+    FailureOr<Type> resultType = getNormalizedSemanticType(op);
+    if (failed(resultType))
+      return failure();
+    return convert(enabled, *resultType, false, location);
+  }
+  if (op->hasAttr(constraintModeAttrName) ||
+      (op.getIsSystemCall() && op.getCalleeName() == "constraint_mode")) {
+    if (children.empty() || children.size() > 2) {
+      emitError(location)
+          << "constraint_mode expects a receiver and an optional block "
+             "query or on/off argument";
+      return failure();
+    }
+    auto blockIndexAttr =
+        op->getAttrOfType<IntegerAttr>(constraintModeBlockAttrName);
+    if (!blockIndexAttr && children.size() != 2) {
+      emitError(location)
+          << "class-wide constraint_mode requires an on/off argument";
+      return failure();
+    }
+    Operation *receiverNode = children.front();
+    if (blockIndexAttr) {
+      auto member =
+          dyn_cast<semantic::SVMemberAccessExpressionOp>(children.front());
+      SmallVector<Operation *> memberChildren =
+          member ? getChildren(member) : SmallVector<Operation *>{};
+      if (!member || memberChildren.size() != 1) {
+        emitError(location)
+            << "constraint-block constraint_mode has no object receiver";
+        return failure();
+      }
+      receiverNode = memberChildren.front();
+    }
+    FailureOr<Value> loweredReceiver = lowerExpression(receiverNode);
+    auto objectType =
+        succeeded(loweredReceiver)
+            ? dyn_cast<sim::ClassHandleType>((*loweredReceiver).getType())
+            : sim::ClassHandleType{};
+    if (failed(loweredReceiver) || !objectType) {
+      emitError(location) << "constraint_mode receiver is not a class object";
+      return failure();
+    }
+    sim::SimClassDeclOp declaration =
+        SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+            function, objectType.getClassName());
+    while (declaration &&
+           !declaration->hasAttr("obelisk_sim.constraint_mode_field")) {
+      if (!declaration.getBaseAttr())
+        break;
+      declaration = SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+          function, declaration.getBaseAttr());
+    }
+    auto modeField = declaration
+                         ? declaration->getAttrOfType<FlatSymbolRefAttr>(
+                               "obelisk_sim.constraint_mode_field")
+                         : FlatSymbolRefAttr{};
+    if (!declaration || !modeField) {
+      emitError(location) << "constraint_mode receiver has no mode state";
+      return failure();
+    }
+    Type i64 = builder.getI64Type();
+    Type referenceType = sim::ManagedRefType::get(function.getContext(), i64,
+                                                  objectType.getClassName());
+    Value reference = sim::SimClassFieldRefOp::create(
+        builder, location, referenceType, *loweredReceiver, modeField);
+    uint64_t blockBit = 0;
+    if (blockIndexAttr) {
+      APInt blockIndex = blockIndexAttr.getValue();
+      if (blockIndex.isNegative() || blockIndex.getActiveBits() > 64 ||
+          blockIndex.getZExtValue() >= 64) {
+        emitError(location) << "constraint_mode block index is malformed";
+        return failure();
+      }
+      blockBit = uint64_t{1} << blockIndex.getZExtValue();
+    }
+    if (children.size() == 2) {
+      FailureOr<Value> argument = lowerExpression(children.back());
+      FailureOr<Value> enabled = succeeded(argument)
+                                     ? truthValue(*argument, location)
+                                     : FailureOr<Value>(failure());
+      if (failed(enabled))
+        return failure();
+      Value zero = arith::ConstantOp::create(builder, location, i64,
+                                             builder.getI64IntegerAttr(0));
+      Value disabled = arith::ConstantOp::create(
+          builder, location, i64,
+          builder.getIntegerAttr(
+              i64, APInt(64, blockIndexAttr ? blockBit : UINT64_MAX)));
+      Value mode;
+      if (blockIndexAttr) {
+        Value oldMode =
+            sim::SimManagedLoadOp::create(builder, location, i64, reference);
+        Value bit = arith::ConstantOp::create(
+            builder, location, i64,
+            builder.getIntegerAttr(i64, APInt(64, blockBit)));
+        Value enabledMode = arith::AndIOp::create(
+            builder, location, oldMode,
+            arith::ConstantOp::create(
+                builder, location, i64,
+                builder.getIntegerAttr(i64, APInt(64, ~blockBit))));
+        Value disabledMode =
+            arith::OrIOp::create(builder, location, oldMode, bit);
+        mode = arith::SelectOp::create(builder, location, *enabled, enabledMode,
+                                       disabledMode);
+      } else {
+        mode = arith::SelectOp::create(builder, location, *enabled, zero,
+                                       disabled);
+      }
+      sim::SimManagedStoreOp::create(builder, location, mode, reference);
+      return arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                       builder.getBoolAttr(false))
+          .getResult();
+    }
+    Value mode =
+        sim::SimManagedLoadOp::create(builder, location, i64, reference);
+    Value bit = arith::ConstantOp::create(
+        builder, location, i64,
+        builder.getIntegerAttr(i64, APInt(64, blockBit)));
+    Value selected = arith::AndIOp::create(builder, location, mode, bit);
+    Value zero = arith::ConstantOp::create(builder, location, i64,
+                                           builder.getI64IntegerAttr(0));
+    Value enabled = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, selected, zero);
     FailureOr<Type> resultType = getNormalizedSemanticType(op);
     if (failed(resultType))
       return failure();
@@ -1101,16 +1225,21 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
       op->getAttrOfType<IntegerAttr>(randomTotalWidthAttrName);
   auto receiverIndexAttr =
       op->getAttrOfType<IntegerAttr>(randomReceiverIndexAttrName);
+  auto constraintCountAttr =
+      op->getAttrOfType<IntegerAttr>(randomConstraintCountAttrName);
   if (children.empty() || !properties || !totalWidthAttr ||
-      !receiverIndexAttr) {
+      !receiverIndexAttr || !constraintCountAttr) {
     emitError(location) << "randomize call has no frozen constraint plan";
     return failure();
   }
   APInt receiverIndexValue = receiverIndexAttr.getValue();
   APInt totalWidthValue = totalWidthAttr.getValue();
+  APInt constraintCountValue = constraintCountAttr.getValue();
   if (receiverIndexValue.isNegative() ||
       receiverIndexValue.getActiveBits() > 64 || totalWidthValue.isNegative() ||
       totalWidthValue.getActiveBits() > 64 ||
+      constraintCountValue.isNegative() ||
+      constraintCountValue.getActiveBits() > 64 ||
       receiverIndexValue.getZExtValue() >= children.size()) {
     emitError(location) << "randomize call has malformed constraint metadata";
     return failure();
@@ -1118,8 +1247,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   unsigned receiverIndex =
       static_cast<unsigned>(receiverIndexValue.getZExtValue());
   uint64_t totalWidth = totalWidthValue.getZExtValue();
-  if (totalWidth > 64) {
-    emitError(location) << "randomize plan exceeds 64 aggregate rand bits";
+  uint64_t constraintCount = constraintCountValue.getZExtValue();
+  if (totalWidth > 64 || constraintCount > 64) {
+    emitError(location)
+        << "randomize plan exceeds its 64-bit property or constraint boundary";
     return failure();
   }
 
@@ -1199,7 +1330,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   auto modeField = declaration ? declaration->getAttrOfType<FlatSymbolRefAttr>(
                                      "obelisk_sim.random_mode_field")
                                : FlatSymbolRefAttr{};
-  if (!declaration || !stateField || !incrementField || !modeField) {
+  auto constraintModeField =
+      declaration ? declaration->getAttrOfType<FlatSymbolRefAttr>(
+                        "obelisk_sim.constraint_mode_field")
+                  : FlatSymbolRefAttr{};
+  if (!declaration || !stateField || !incrementField || !modeField ||
+      !constraintModeField) {
     emitError(location)
         << "randomize receiver has no object-local stream or mode state";
     return failure();
@@ -1213,12 +1349,16 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
       builder, location, randomReferenceType, receiver, incrementField);
   Value modeReference = sim::SimClassFieldRefOp::create(
       builder, location, randomReferenceType, receiver, modeField);
+  Value constraintModeReference = sim::SimClassFieldRefOp::create(
+      builder, location, randomReferenceType, receiver, constraintModeField);
   Value state =
       sim::SimManagedLoadOp::create(builder, location, i64, stateReference);
   Value increment =
       sim::SimManagedLoadOp::create(builder, location, i64, incrementReference);
   Value mode =
       sim::SimManagedLoadOp::create(builder, location, i64, modeReference);
+  Value constraintMode = sim::SimManagedLoadOp::create(
+      builder, location, i64, constraintModeReference);
 
   auto constant64 = [&](uint64_t value) -> Value {
     return arith::ConstantOp::create(
@@ -1237,6 +1377,14 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   Value allPropertiesDisabled =
       arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
                             relevantMode, constant64(propertyModeMask));
+  uint64_t constraintModeMask =
+      constraintCount == 64 ? UINT64_MAX
+                            : (uint64_t{1} << constraintCount) - 1;
+  Value relevantConstraintMode = arith::AndIOp::create(
+      builder, location, constraintMode, constant64(constraintModeMask));
+  Value allConstraintsEnabled = arith::CmpIOp::create(
+      builder, location, arith::CmpIPredicate::eq, relevantConstraintMode,
+      constant64(0));
 
   Value currentAssignment = constant64(0);
   Value mutableMask = constant64(0);
@@ -1739,6 +1887,18 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   for (auto [index, root] : llvm::enumerate(children)) {
     if (index == receiverIndex)
       continue;
+    uint32_t constraintBlock = OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1;
+    if (auto block =
+            root->getAttrOfType<IntegerAttr>(randomConstraintBlockAttrName)) {
+      APInt value = block.getValue();
+      if (value.isNegative() || value.getActiveBits() > 64 ||
+          value.getZExtValue() >= constraintCount) {
+        emitError(getSemanticLocation(root))
+            << "random constraint block index is malformed";
+        return failure();
+      }
+      constraintBlock = static_cast<uint32_t>(value.getZExtValue());
+    }
     SmallVector<Operation *> items = isa<semantic::SVConstraintListOp>(root)
                                          ? getChildren(root)
                                          : SmallVector<Operation *>{root};
@@ -1750,14 +1910,15 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
         return failure();
       instruction(soft ? OBELISK_RT_RANDOM_END_SOFT_V1
                        : OBELISK_RT_RANDOM_END_HARD_V1,
-                  1);
+                  1, false, constraintBlock);
       emittedSoft |= soft;
       emittedHard |= !soft;
     }
   }
   if (!emittedHard) {
     emitLiteral(true);
-    instruction(OBELISK_RT_RANDOM_END_HARD_V1, 1);
+    instruction(OBELISK_RT_RANDOM_END_HARD_V1, 1, false,
+                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1);
   }
   thisObject = programSavedThis;
   randomizeCandidateValues = std::move(programSavedCandidates);
@@ -2668,6 +2829,20 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
                        !overwritesProposalDomain &&
                        materializesCompleteProposal;
 
+  // The compiler plan is proven for the all-enabled constraint set. If a
+  // block is disabled at runtime, bypass plan-specific bounds, tables, and
+  // extra draws; start a plain masked-domain search from the one object-stream
+  // draw already consumed above. This avoids accidentally retaining the
+  // distribution or failure conditions of a disabled constraint.
+  Value modeStart = start;
+  Value modeState = state;
+  Block *modeSamplingDispatchBlock = addBlock();
+  Block *plannedSamplingBlock = addBlock();
+  cf::CondBranchOp::create(builder, location, allConstraintsEnabled,
+                           plannedSamplingBlock, ValueRange{},
+                           modeSamplingDispatchBlock, ValueRange{});
+  setCurrent(plannedSamplingBlock);
+
   auto sampleBoundedIndex = [&](uint64_t cardinality, Value draw) -> Value {
     if ((cardinality & (cardinality - 1)) == 0)
       return arith::AndIOp::create(builder, location, draw,
@@ -2854,11 +3029,16 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   Block *loop = addBlock();
   Block *advance = addBlock();
   Block *fallbackBlock = addBlock();
+  Block *modeLoop = addBlock();
+  Block *modeAdvance = addBlock();
+  Block *modeFallbackBlock = addBlock();
   Block *commit = addBlock();
   Block *failedBlock = addBlock();
   Block *done = addBlock();
   Value counter = loop->addArgument(i64, location);
   Value attempt = loop->addArgument(i64, location);
+  Value modeCounter = modeLoop->addArgument(i64, location);
+  Value modeAttempt = modeLoop->addArgument(i64, location);
   Value commitCounter = commit->addArgument(i64, location);
   Value doneResult = done->addArgument(builder.getI1Type(), location);
 
@@ -3055,9 +3235,35 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     for (auto [index, constraint] : llvm::enumerate(children)) {
       if (index == receiverIndex)
         continue;
+      Value previousSoft = softSatisfied;
       FailureOr<Value> value = lowerConstraint(constraint);
       if (failed(value))
         return failure();
+      if (auto block = constraint->getAttrOfType<IntegerAttr>(
+              randomConstraintBlockAttrName)) {
+        APInt blockIndex = block.getValue();
+        if (blockIndex.isNegative() || blockIndex.getActiveBits() > 64 ||
+            blockIndex.getZExtValue() >= constraintCount) {
+          emitError(getSemanticLocation(constraint))
+              << "random constraint block index is malformed";
+          return failure();
+        }
+        uint64_t blockBit = uint64_t{1} << blockIndex.getZExtValue();
+        Value selected = arith::AndIOp::create(
+            builder, location, relevantConstraintMode,
+            constant64(blockBit));
+        Value disabled = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::ne, selected,
+            constant64(0));
+        Value trueValue = arith::ConstantOp::create(
+            builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+        value = arith::SelectOp::create(builder, location, disabled, trueValue,
+                                        *value)
+                    .getResult();
+        if (hasSoftConstraint)
+          softSatisfied = arith::SelectOp::create(
+              builder, location, disabled, previousSoft, softSatisfied);
+      }
       satisfied = arith::AndIOp::create(builder, location, satisfied, *value);
     }
     thisObject = savedThis;
@@ -3069,6 +3275,48 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
                   .getResult()
             : satisfied;
     return ConstraintCheck{satisfied, preferred};
+  };
+
+  auto advanceEnabledProperties = [&](Value current) {
+    Value next = current;
+    Value carry = arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+    uint64_t offset = 0;
+    for (auto [property, enabled] :
+         llvm::zip_equal(planned, propertyEnabled)) {
+      uint64_t valueMask = property.width == 64
+                               ? UINT64_MAX
+                               : (uint64_t{1} << property.width) - 1;
+      uint64_t aggregateMask = valueMask << offset;
+      Value aggregateMaskValue = constant64(aggregateMask);
+      Value field = arith::AndIOp::create(builder, location, current,
+                                          aggregateMaskValue);
+      Value wrapped = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq, field,
+          aggregateMaskValue);
+      Value incremented = arith::AndIOp::create(
+          builder, location,
+          arith::AddIOp::create(builder, location, field,
+                                constant64(uint64_t{1} << offset)),
+          aggregateMaskValue);
+      Value updated = arith::OrIOp::create(
+          builder, location,
+          arith::AndIOp::create(builder, location, next,
+                                constant64(~aggregateMask)),
+          incremented);
+      Value update =
+          arith::AndIOp::create(builder, location, carry, enabled);
+      next = arith::SelectOp::create(builder, location, update, updated, next);
+      Value disabled = arith::XOrIOp::create(
+          builder, location, enabled,
+          arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                    builder.getBoolAttr(true)));
+      Value propagate =
+          arith::OrIOp::create(builder, location, disabled, wrapped);
+      carry = arith::AndIOp::create(builder, location, carry, propagate);
+      offset += property.width;
+    }
+    return next;
   };
 
   setCurrent(disabledCheckBlock);
@@ -3112,40 +3360,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
                              ValueRange{assignment}, advance, ValueRange{});
   }
   setCurrent(advance);
-  Value next = counter;
-  Value carry = arith::ConstantOp::create(
-      builder, location, builder.getI1Type(), builder.getBoolAttr(true));
-  uint64_t nextOffset = 0;
-  for (auto [property, enabled] : llvm::zip_equal(planned, propertyEnabled)) {
-    uint64_t valueMask =
-        property.width == 64 ? UINT64_MAX : (uint64_t{1} << property.width) - 1;
-    uint64_t aggregateMask = valueMask << nextOffset;
-    Value aggregateMaskValue = constant64(aggregateMask);
-    Value field =
-        arith::AndIOp::create(builder, location, counter, aggregateMaskValue);
-    Value wrapped = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::eq, field, aggregateMaskValue);
-    Value incremented = arith::AndIOp::create(
-        builder, location,
-        arith::AddIOp::create(builder, location, field,
-                              constant64(uint64_t{1} << nextOffset)),
-        aggregateMaskValue);
-    Value updated =
-        arith::OrIOp::create(builder, location,
-                             arith::AndIOp::create(builder, location, next,
-                                                   constant64(~aggregateMask)),
-                             incremented);
-    Value update = arith::AndIOp::create(builder, location, carry, enabled);
-    next = arith::SelectOp::create(builder, location, update, updated, next);
-    Value disabled = arith::XOrIOp::create(
-        builder, location, enabled,
-        arith::ConstantOp::create(builder, location, builder.getI1Type(),
-                                  builder.getBoolAttr(true)));
-    Value propagate =
-        arith::OrIOp::create(builder, location, disabled, wrapped);
-    carry = arith::AndIOp::create(builder, location, carry, propagate);
-    nextOffset += property.width;
-  }
+  Value next = advanceEnabledProperties(counter);
   Value nextAttempt =
       arith::AddIOp::create(builder, location, attempt, constant64(1));
   Value domainExhausted = arith::CmpIOp::create(
@@ -3167,7 +3382,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   } else {
     auto fallback = sim::SimRandomSolveOp::create(
         builder, location, function.getBody().front().getArgument(0), next,
-        mutableMask, constant64(fallbackAttempts), programCaptures,
+        mutableMask, relevantConstraintMode, constant64(fallbackAttempts),
+        programCaptures,
         builder.getStringAttr(StringRef(
             reinterpret_cast<const char *>(program.data()), program.size())));
     cf::CondBranchOp::create(builder, location, fallback.getSuccess(), commit,
@@ -3175,11 +3391,51 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
                              ValueRange{});
   }
 
-  // Static UNSAT is known for every possible runtime capture value. Bypass
-  // both generated sampling tiers instead of spending their deterministic
-  // rejection budgets on a constraint set the compiler has already proved
-  // impossible. The object stream draw above remains observable, matching the
-  // state transition of an attempted randomize call.
+  setCurrent(modeSamplingDispatchBlock);
+  sim::SimManagedStoreOp::create(builder, location, modeState, stateReference);
+  cf::BranchOp::create(builder, location, modeLoop,
+                       ValueRange{modeStart, constant64(0)});
+
+  setCurrent(modeLoop);
+  FailureOr<ConstraintCheck> modeCheck =
+      materializeConstraintCheck(modeCounter);
+  if (failed(modeCheck))
+    return failure();
+  cf::CondBranchOp::create(builder, location, modeCheck->preferred, commit,
+                           ValueRange{modeCounter}, modeAdvance, ValueRange{});
+
+  setCurrent(modeAdvance);
+  Value modeNext = advanceEnabledProperties(modeCounter);
+  Value modeNextAttempt =
+      arith::AddIOp::create(builder, location, modeAttempt, constant64(1));
+  Value modeDomainExhausted = arith::CmpIOp::create(
+      builder, location, arith::CmpIPredicate::eq, modeNext, modeStart);
+  Value modeSamplerExhausted = arith::CmpIOp::create(
+      builder, location, arith::CmpIPredicate::uge, modeNextAttempt,
+      constant64(64));
+  Value modeExhausted = arith::OrIOp::create(
+      builder, location, modeDomainExhausted, modeSamplerExhausted);
+  cf::CondBranchOp::create(builder, location, modeExhausted,
+                           modeFallbackBlock, ValueRange{}, modeLoop,
+                           ValueRange{modeNext, modeNextAttempt});
+
+  setCurrent(modeFallbackBlock);
+  auto modeFallback = sim::SimRandomSolveOp::create(
+      builder, location, function.getBody().front().getArgument(0), modeNext,
+      mutableMask, relevantConstraintMode, constant64(fallbackAttempts),
+      programCaptures,
+      builder.getStringAttr(StringRef(
+          reinterpret_cast<const char *>(program.data()), program.size())));
+  cf::CondBranchOp::create(
+      builder, location, modeFallback.getSuccess(), commit,
+      ValueRange{modeFallback.getAssignment()}, failedBlock, ValueRange{});
+
+  // Static UNSAT is known for every possible runtime capture value when all
+  // constraint blocks are enabled. Bypass planned sampling instead of spending
+  // its deterministic rejection budget on a set the compiler has already
+  // proved impossible. A disabled block takes the separate live-mask path,
+  // where the reduced constraint set may be satisfiable. The object stream
+  // draw above remains observable in either case.
   setCurrent(dispatchBlock);
   if (analysis.satisfiability == solver::Satisfiability::Unsatisfiable)
     cf::BranchOp::create(builder, location, failedBlock, ValueRange{});

@@ -500,13 +500,15 @@ def SimRandomSolveOp : SimOp<"random.solve", [
   ]> {
   let summary = "execute a compiler-produced residual random constraint plan";
   let arguments = (ins SimContextType:$context, I64:$start,
-                       I64:$mutable_mask, I64:$max_attempts,
+                       I64:$mutable_mask, I64:$constraint_mask,
+                       I64:$max_attempts,
                        Variadic<I64>:$captures,
                        StrAttr:$program);
   let results = (outs I64:$assignment, I1:$success);
   let assemblyFormat = [{
-    $context `from` $start `mutable` $mutable_mask `limit` $max_attempts
-    `captures` `(` $captures `)` $program attr-dict `:` type($context)
+    $context `from` $start `mutable` $mutable_mask `constraints`
+    $constraint_mask `limit` $max_attempts `captures` `(` $captures `)`
+    $program attr-dict `:` type($context)
   }];
 }
 

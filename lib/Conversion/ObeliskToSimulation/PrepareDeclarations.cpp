@@ -250,6 +250,10 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
       declaration->setAttr(
           "obelisk_sim.random_mode_field",
           addRandomField("__obelisk_rand_mode", "__obelisk_rand_mode"));
+      declaration->setAttr(
+          "obelisk_sim.constraint_mode_field",
+          addRandomField("__obelisk_constraint_mode",
+                         "__obelisk_constraint_mode"));
     }
   }
 

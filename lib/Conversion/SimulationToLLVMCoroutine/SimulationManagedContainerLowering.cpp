@@ -389,6 +389,7 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     if (adaptor.getContext().size() != 1 || adaptor.getStart().size() != 1 ||
         adaptor.getMutableMask().size() != 1 ||
+        adaptor.getConstraintMask().size() != 1 ||
         adaptor.getMaxAttempts().size() != 1)
       return failure();
     SmallVector<Value> captures = flatten(adaptor.getCaptures());
@@ -424,10 +425,11 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_random_solve_masked"),
+                               "obelisk_rt_v1_random_solve_modes"),
             ValueRange{context, programAddress, c64(program.size()),
                        adaptor.getStart().front(),
                        adaptor.getMutableMask().front(),
+                       adaptor.getConstraintMask().front(),
                        adaptor.getMaxAttempts().front(), captureAddress,
                        c64(captures.size()), assignment, successStorage})
             .getResult();
