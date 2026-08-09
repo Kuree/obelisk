@@ -786,9 +786,12 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
     // variable connectivity graph from each top-level hard constraint, then
     // enumerate every constrained component separately. Unconstrained
     // variables remain free in the generated proposal.
-    if (analysis.assignmentTable.empty() &&
-        (!analysis.proposalExact || preferGlobalAssignmentTable) &&
-        !smt->variables.empty()) {
+    bool analyzeComponents =
+        analysis.assignmentTable.empty() &&
+        (!analysis.proposalExact || preferGlobalAssignmentTable);
+    if (analyzeComponents)
+      analysis.hasConstraintComponentPartition = true;
+    if (analyzeComponents && !smt->variables.empty()) {
       std::vector<size_t> componentParents(smt->variables.size());
       for (size_t index = 0; index != componentParents.size(); ++index)
         componentParents[index] = index;
@@ -835,6 +838,20 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
         if (variable != smt->variables.size())
           componentConstraints[findComponentRoot(variable)].push_back(
               &constraint);
+      }
+
+      for (size_t root = 0; root != componentVariables.size(); ++root) {
+        if (componentConstraints[root].empty())
+          continue;
+        uint64_t componentMask = 0;
+        for (size_t variableNumber : componentVariables[root]) {
+          const SMTVariable &variable = smt->variables[variableNumber];
+          uint64_t valueMask = variable.width == 64
+                                   ? UINT64_MAX
+                                   : (uint64_t{1} << variable.width) - 1;
+          componentMask |= valueMask << variable.offset;
+        }
+        analysis.constraintComponentMasks.push_back(componentMask);
       }
 
       std::vector<RandomAssignmentTable> componentTables;

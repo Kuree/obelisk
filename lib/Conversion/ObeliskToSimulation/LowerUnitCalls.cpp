@@ -2245,16 +2245,36 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     uint64_t orderedPropertyMask = 0;
     for (uint64_t layerMask : solveBeforeLayerMasks)
       orderedPropertyMask |= layerMask;
-    if (!validAssignmentTables ||
-        (orderedPropertyMask & ~proposalAssignmentTableMask) != 0) {
-      emitError(location)
-          << "solve before currently requires complete compile-time solution "
-             "tables covering every ordered property";
-      return failure();
+
+    uint64_t uncoveredOrderedMask =
+        orderedPropertyMask & ~proposalAssignmentTableMask;
+    if (uncoveredOrderedMask != 0) {
+      bool unresolvedComponentCrossesLayers =
+          llvm::any_of(analysis.constraintComponentMasks,
+                       [&](uint64_t componentMask) {
+                         if ((componentMask & ~proposalAssignmentTableMask) ==
+                             0)
+                           return false;
+                         return llvm::count_if(
+                                    solveBeforeLayerMasks,
+                                    [&](uint64_t layerMask) {
+                                      return (componentMask & layerMask) != 0;
+                                    }) > 1;
+                       });
+      if (!analysis.proposalExact ||
+          !analysis.hasConstraintComponentPartition ||
+          unresolvedComponentCrossesLayers) {
+        emitError(location)
+            << "solve before currently requires complete compile-time "
+               "solution tables for correlated solve layers or an exact "
+               "component-independent proposal";
+        return failure();
+      }
     }
-    for (const ProposalAssignmentTable &table : proposalAssignmentTables)
-      solveBeforeComponentTableRoots.push_back(
-          buildSolveBeforeTable(table.assignments, 0));
+    if (validAssignmentTables)
+      for (const ProposalAssignmentTable &table : proposalAssignmentTables)
+        solveBeforeComponentTableRoots.push_back(
+            buildSolveBeforeTable(table.assignments, 0));
   }
 
   struct ProposalDomain {

@@ -713,11 +713,16 @@ module {
 
 // The capture-dependent y component becomes a parameterized interval, while
 // the independent three-solution x component becomes a compile-time table.
-// Their whole-formula proof is exact, so the all-enabled composed sampler
-// commits directly while partial modes retain the masked fallback.
+// `solve x before y` needs no Cartesian-product table: the verified component
+// partition proves that the exact samplers are independent. The all-enabled
+// composed sampler commits directly while partial modes retain the masked
+// fallback.
 // COMPONENT-CAPTURE-LABEL: obelisk_sim.func private @unit_1
 // COMPONENT-CAPTURE: arith.cmpi ult
-// COMPONENT-CAPTURE-COUNT-2: arith.select
+// COMPONENT-CAPTURE: ^bb5
+// COMPONENT-CAPTURE: cf.cond_br
+// COMPONENT-CAPTURE: ^bb7
+// COMPONENT-CAPTURE: cf.cond_br
 // COMPONENT-CAPTURE: arith.remui
 // COMPONENT-CAPTURE: arith.cmpi ult
 // COMPONENT-CAPTURE: arith.select
@@ -1330,7 +1335,7 @@ module {
         obelisk.sv.symbol.class_property attributes {hierarchical_name = "C::y", name = "y", node_id = 5 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>, sym_name = "s5.y"} {
         }
         obelisk.sv.symbol.constraint_block attributes {hierarchical_name = "C::mixed", name = "mixed", node_id = 6 : i64, sym_name = "s6.mixed", this_variable_path = "C::mixed.this", this_variable_symbol = @s1.$root::@s2::@s3.C::@s6.mixed::@s7.this} {
-          obelisk.sv.constraint.list attributes {item_count = 2 : i64, node_id = 7 : i64} {
+          obelisk.sv.constraint.list attributes {item_count = 3 : i64, node_id = 7 : i64} {
             obelisk.sv.constraint.expression attributes {is_soft = false, node_id = 8 : i64} {
               obelisk.sv.expression.binary_op attributes {node_id = 9 : i64, operator_kind = 10 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
                 obelisk.sv.expression.named_value attributes {node_id = 10 : i64, referenced_path = "C::x", referenced_symbol = @s1.$root::@s2::@s3.C::@s4.x, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
@@ -1345,6 +1350,12 @@ module {
                 }
                 obelisk.sv.expression.named_value attributes {node_id = 15 : i64, referenced_path = "limit", referenced_symbol = @s1.$root::@s2::@s16.limit, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
                 }
+              }
+            }
+            obelisk.sv.constraint.solve_before attributes {after_count = 1 : i64, node_id = 33 : i64, solve_count = 1 : i64} {
+              obelisk.sv.expression.named_value attributes {node_id = 34 : i64, referenced_path = "C::x", referenced_symbol = @s1.$root::@s2::@s3.C::@s4.x, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+              }
+              obelisk.sv.expression.named_value attributes {node_id = 35 : i64, referenced_path = "C::y", referenced_symbol = @s1.$root::@s2::@s3.C::@s5.y, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
               }
             }
           }

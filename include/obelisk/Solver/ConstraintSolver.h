@@ -76,6 +76,16 @@ struct RandomProgramAnalysis {
   /// Complete tables for independent hard-constraint components. Components
   /// are deterministically ordered and their masks never overlap.
   std::vector<RandomAssignmentTable> assignmentTables;
+  /// Aggregate masks for the syntactic connected components of the hard
+  /// formula. Unconstrained variables are omitted and therefore form implicit
+  /// singleton components. The partition is conservative: a component may
+  /// contain independent variables, but random variables mentioned together
+  /// by a hard constraint never appear in separate masks.
+  std::vector<uint64_t> constraintComponentMasks;
+  /// True when `constraintComponentMasks` is a complete dependency partition.
+  /// A false value requires clients to conservatively assume that any random
+  /// variables may be coupled.
+  bool hasConstraintComponentPartition = false;
   std::vector<RandomVariableDomain> domains;
   std::vector<RandomVariableCaptureBound> captureBounds;
   std::vector<RandomVariableAlias> aliases;
@@ -95,11 +105,12 @@ struct RandomProgramAnalysis {
 /// Assignment tables contain every hard solution, either globally or
 /// independently per capture-free connected component. Capture-dependent
 /// components remain on the checker/runtime path unless a structural proposal
-/// covers them exactly. Setting `preferGlobalAssignmentTable` also attempts
-/// bounded global enumeration when a structural proposal is already exact;
-/// clients that need the joint conditional distribution, such as `solve
-/// before`, can request that stronger result. The API deliberately exposes no
-/// Z3 types.
+/// covers them exactly. The component-mask partition conservatively describes
+/// which random variables can affect one another. Setting
+/// `preferGlobalAssignmentTable` also attempts bounded global enumeration when
+/// a structural proposal is already exact; clients that need the joint
+/// conditional distribution, such as `solve before`, can request that stronger
+/// result. The API deliberately exposes no Z3 types.
 RandomProgramAnalysis
 analyzeRandomProgram(const uint8_t *program, size_t programSize,
                      uint64_t resourceLimit = 100000,
