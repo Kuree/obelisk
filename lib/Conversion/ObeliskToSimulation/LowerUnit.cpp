@@ -1745,12 +1745,9 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
     return success();
   if (auto assertion = dyn_cast<semantic::SVImmediateAssertionStatementOp>(op))
     return lowerImmediateAssertion(assertion);
-  if (isa<semantic::SVConcurrentAssertionStatementOp>(op)) {
-    emitError(location)
-        << "concurrent assertions require typed Preponed sampling and a "
-           "verified temporal monitor, which are not executable yet";
-    return failure();
-  }
+  if (auto assertion =
+          dyn_cast<semantic::SVConcurrentAssertionStatementOp>(op))
+    return lowerConcurrentAssertion(assertion);
   if (isa<semantic::SVExpressionStatementOp>(op)) {
     if (children.size() != 1) {
       unsupported(op) << " (expression statement arity)";

@@ -2284,6 +2284,16 @@ private:
                              T, slang::ast::ConcurrentAssertionStatement>) {
       if (const slang::ast::Expression *disable = getCurrentDefaultDisable())
         disable->visit(*this);
+      // Keep the resolved default clock event in the executable semantic
+      // subtree.  The symbol reference above preserves declaration identity,
+      // while this clone makes the event's signal references ordinary frozen
+      // code-unit captures.  Explicit assertion clocks still take precedence
+      // during monitor compilation.
+      if (const slang::ast::Scope *scope = getCurrentScope())
+        if (const slang::ast::Symbol *clocking =
+                compilation.getDefaultClocking(*scope))
+          clocking->as<slang::ast::ClockingBlockSymbol>().getEvent().visit(
+              *this);
       this->visitDefault(node);
     } else if constexpr (std::same_as<T, slang::ast::BlockEventListControl>) {
       for (const auto &event : node.events)

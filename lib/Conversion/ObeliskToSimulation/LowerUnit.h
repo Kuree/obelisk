@@ -187,6 +187,8 @@ private:
                  ::mlir::ArrayRef<::mlir::Operation *> operations);
   ::mlir::LogicalResult
   lowerImmediateAssertion(semantic::SVImmediateAssertionStatementOp op);
+  ::mlir::LogicalResult
+  lowerConcurrentAssertion(semantic::SVConcurrentAssertionStatementOp op);
   void emitDefaultAssertionFailure(::mlir::Location location);
   ::mlir::LogicalResult emitRuntimeFatal(::mlir::Location location,
                                          ::mlir::StringRef message);
@@ -314,6 +316,7 @@ private:
   ::mlir::Value unboundedPlaceholder;
   ::mlir::Value lvalueReferencePlaceholder;
   bool continuousStore = false;
+  bool sampleAssertionValues = false;
   ::mlir::SmallVector<::mlir::Value> randomizeCandidateValues;
   std::string returnPath;
   ::mlir::SmallVector<std::string> copyOutPaths;

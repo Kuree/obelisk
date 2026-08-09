@@ -1138,12 +1138,22 @@ LogicalResult UnitLowering::lowerFork(semantic::SVBlockStatementOp op) {
 
 LogicalResult UnitLowering::lowerBlock(semantic::SVBlockStatementOp op) {
   auto path = op.getBlockPathAttr();
+  SmallVector<Operation *> contents = getChildren(op);
   auto lowerContents = [&]() {
     if (op.getBlockKind() == semantic::SVStatementBlockKind::Sequential)
-      return lowerSequence(getChildren(op));
+      return lowerSequence(contents);
     return lowerFork(op);
   };
   if (!path)
+    return lowerContents();
+
+  // Slang represents a labeled concurrent assertion as a synthetic named
+  // statement block. The label names the assertion instance for assertion
+  // control; it is not a procedural `begin : name` activation and must not
+  // remain entered while the assertion monitor waits forever on its clock.
+  if (op.getBlockKind() == semantic::SVStatementBlockKind::Sequential &&
+      contents.size() == 1 &&
+      isa<semantic::SVConcurrentAssertionStatementOp>(contents.front()))
     return lowerContents();
 
   Location location = getSemanticLocation(op);

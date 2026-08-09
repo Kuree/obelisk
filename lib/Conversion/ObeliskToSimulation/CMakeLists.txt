@@ -11,6 +11,7 @@ add_mlir_library(ObeliskToSimulation
   LowerUnitArrayQuerySystemCalls.cpp
   LowerUnitCalls.cpp
   LowerUnitConditionals.cpp
+  LowerUnitConcurrent.cpp
   LowerUnitContainers.cpp
   LowerUnitControlFlow.cpp
   LowerUnitCovergroups.cpp

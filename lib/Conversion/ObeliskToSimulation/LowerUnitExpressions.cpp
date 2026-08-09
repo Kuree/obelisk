@@ -95,6 +95,13 @@ UnitLowering::lowerReferencedValue(Operation *op, StringRef path, bool lvalue) {
   // instead of escaping through a suspend operation.
   if (auto ref = dyn_cast<sim::RefType>(value.getType())) {
     recordSensitivity(value);
+    if (sampleAssertionValues) {
+      Value context = function.getBody().front().getArgument(0);
+      return sim::SimSampledReadOp::create(builder, location,
+                                           ref.getElementType(), context,
+                                           value)
+          .getResult();
+    }
     return sim::SimRefLoadOp::create(builder, location, ref.getElementType(),
                                      value)
         .getResult();
@@ -105,6 +112,13 @@ UnitLowering::lowerReferencedValue(Operation *op, StringRef path, bool lvalue) {
         .getResult();
   if (auto net = dyn_cast<sim::NetType>(value.getType())) {
     recordSensitivity(value);
+    if (sampleAssertionValues) {
+      Value context = function.getBody().front().getArgument(0);
+      return sim::SimSampledReadOp::create(builder, location,
+                                           net.getElementType(), context,
+                                           value)
+          .getResult();
+    }
     return sim::SimNetReadOp::create(builder, location, net.getElementType(),
                                      value)
         .getResult();

@@ -39,4 +39,4 @@ module {
   }
 }
 
-// CHECK: concurrent assertions require typed Preponed sampling and a verified temporal monitor
+// CHECK: observable concurrent assert/assume/cover/expect directives require ordered Observed-result and Reactive-report dispatch
