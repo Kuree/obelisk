@@ -285,6 +285,7 @@ def SVPortConnectionOp : Op<ObeliskDialect, "sv.port.connection", [
     BoolAttr:$is_net,
     BoolAttr:$is_ansi,
     BoolAttr:$actual_is_constant,
+    OptionalAttr<BoolAttr>:$unconnected_drive_value,
     ObeliskSVPortConnectionKind:$provenance,
     OptionalAttr<SymbolRefAttr>:$internal_symbol,
     OptionalAttr<StrAttr>:$internal_path,

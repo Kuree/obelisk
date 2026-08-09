@@ -1148,8 +1148,6 @@ UnitLowering::lowerPortConnection(semantic::SVPortConnectionOp op) {
   Location location = getSemanticLocation(op);
   Operation *internal = getSingleRegionRoot(op.getInternal());
   Operation *actual = getSingleRegionRoot(op.getActual());
-  if (!actual)
-    return success();
 
   auto loadPath = [&](StringRef path) -> FailureOr<Value> {
     Value handle = values.lookup(path);
@@ -1207,6 +1205,44 @@ UnitLowering::lowerPortConnection(semantic::SVPortConnectionOp op) {
       sim::SimDriverDriveOp::create(builder, location, destination, *converted);
     return success();
   };
+
+  if (!actual) {
+    std::optional<bool> pull = op.getUnconnectedDriveValue();
+    if (!pull || op.getDirection() != semantic::SVArgumentDirection::In)
+      return success();
+    FailureOr<Type> formalType =
+        normalizeSemanticType(op.getFormalType(), location);
+    if (failed(formalType))
+      return failure();
+    Type scalarType = sim::getPackedScalarType(*formalType);
+    std::optional<unsigned> width = sim::getPackedWidth(scalarType);
+    if (!scalarType || !width)
+      return emitError(location)
+                 << "`unconnected_drive requires a packed input port",
+             failure();
+    APInt bits = *pull ? APInt::getAllOnes(*width) : APInt(*width, 0);
+    Value source;
+    if (auto integer = dyn_cast<IntegerType>(scalarType))
+      source = arith::ConstantOp::create(
+          builder, location, integer, builder.getIntegerAttr(integer, bits));
+    else {
+      auto planeType = IntegerType::get(op->getContext(), *width);
+      source = sim::SimLogicConstantOp::create(
+          builder, location, scalarType,
+          builder.getIntegerAttr(planeType, bits),
+          builder.getIntegerAttr(planeType, APInt(*width, 0)));
+    }
+    if (source.getType() != *formalType)
+      source = sim::SimPackedUnflattenOp::create(builder, location, *formalType,
+                                                 source);
+    if (internal)
+      return writeLValue(internal, source, false, false, location);
+    StringRef internalPath = op.getInternalPath().value_or(StringRef{});
+    FailureOr<Value> destination = endpoint(internalPath, nullptr, true);
+    if (failed(destination))
+      return failure();
+    return write(*destination, source, false);
+  }
 
   StringRef internalPath = op.getInternalPath().value_or(StringRef{});
   if (op.getDirection() == semantic::SVArgumentDirection::In) {

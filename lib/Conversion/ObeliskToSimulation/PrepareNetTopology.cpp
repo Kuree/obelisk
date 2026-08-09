@@ -312,8 +312,11 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
       continue;
     }
     Operation *actual = getPortActualLValue(connection);
-    if (!actual)
+    if (!actual) {
+      if (connection.getUnconnectedDriveValue())
+        sourceUnits.push_back(connection);
       continue;
+    }
 
     SmallVector<NetRun> lhs, rhs;
     Operation *internalExpression =

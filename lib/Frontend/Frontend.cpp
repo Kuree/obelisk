@@ -2454,6 +2454,21 @@ private:
         slang::ast::EvalContext evalContext(instance);
         actualIsConstant = static_cast<bool>(actual->eval(evalContext));
       }
+      if (direction == slang::ast::ArgumentDirection::In &&
+          !connection->getExpression()) {
+        switch (instance.body.getDefinition().unconnectedDrive) {
+        case slang::ast::UnconnectedDrive::Pull0:
+          attrs.set("unconnected_drive_value", builder.getBoolAttr(false));
+          actualIsConstant = true;
+          break;
+        case slang::ast::UnconnectedDrive::Pull1:
+          attrs.set("unconnected_drive_value", builder.getBoolAttr(true));
+          actualIsConstant = true;
+          break;
+        case slang::ast::UnconnectedDrive::None:
+          break;
+        }
+      }
       attrs.set("actual_is_constant", builder.getBoolAttr(actualIsConstant));
       attrs.set("provenance", slangir::PortConnectionKindAttr::get(
                                   builder.getContext(),
