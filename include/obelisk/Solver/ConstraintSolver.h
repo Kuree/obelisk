@@ -78,11 +78,11 @@ struct RandomProgramAnalysis {
   /// Complete tables for independent hard-constraint components. Components
   /// are deterministically ordered and their masks never overlap.
   std::vector<RandomAssignmentTable> assignmentTables;
-  /// Aggregate masks for the syntactic connected components of the hard
+  /// Aggregate masks for the syntactic connected components of the analyzed
   /// formula. Unconstrained variables are omitted and therefore form implicit
   /// singleton components. The partition is conservative: a component may
   /// contain independent variables, but random variables mentioned together
-  /// by a hard constraint never appear in separate masks.
+  /// by one effective constraint never appear in separate masks.
   std::vector<llvm::APInt> constraintComponentMasks;
   /// True when `constraintComponentMasks` is a complete dependency partition.
   /// A false value requires clients to conservatively assume that any random
@@ -92,23 +92,30 @@ struct RandomProgramAnalysis {
   std::vector<RandomVariableCaptureBound> captureBounds;
   std::vector<RandomVariableAlias> aliases;
   std::vector<RandomVariableDefinition> definitions;
+  /// True when every soft priority was resolved into the analyzed formula.
+  /// This is currently possible only when runtime captures cannot change the
+  /// preferred satisfiable priority set.
+  bool softPreferencesResolved = false;
   /// True only when either the global/component assignment tables or the
   /// domain, capture-bound, alias, and definition proposal (with full domains
-  /// for omitted variables) is equivalent to the hard formula.
+  /// for omitted variables) is equivalent to the analyzed effective formula.
   bool proposalExact = false;
 };
 
 /// Analyze a versioned runtime random-constraint program. Dynamic captures
 /// remain free bit-vector variables, so an Unsatisfiable result proves that no
 /// runtime capture values can make the hard constraints satisfiable. Reported
-/// variable domains conservatively enclose the projection of all hard
-/// solutions, including every possible runtime capture value. Capture bounds,
-/// aliases, and definitions are relations implied by every hard solution.
-/// Assignment tables contain every hard solution, either globally or
-/// independently per capture-free connected component. Capture-dependent
-/// components remain on the checker/runtime path unless a structural proposal
-/// covers them exactly. The component-mask partition conservatively describes
-/// which random variables can affect one another. Setting
+/// Capture-free soft constraints are resolved in priority order; when that is
+/// possible, the effective formula below means the hard constraints plus the
+/// selected satisfiable preferences. Reported variable domains conservatively
+/// enclose the projection of all effective solutions, including every possible
+/// runtime capture value. Capture bounds, aliases, and definitions are
+/// relations implied by every effective solution. Assignment tables contain
+/// every effective solution, either globally or independently per capture-free
+/// connected component. Capture-dependent components remain on the
+/// checker/runtime path unless a structural proposal covers them exactly. The
+/// component-mask partition conservatively describes which random variables
+/// can affect one another. Setting
 /// `preferGlobalAssignmentTable` also attempts bounded global enumeration when
 /// a structural proposal is already exact; clients that need the joint
 /// conditional distribution, such as `solve before`, can request that stronger

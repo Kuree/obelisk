@@ -8,9 +8,15 @@
 // RUN:   %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
 // RUN: %t.exe --seed=1 | FileCheck %s --check-prefix=RUNTIME
 // RUN: %t.exe --execution-tier=bytecode --seed=1 | FileCheck %s --check-prefix=RUNTIME
+// REQUIRES: z3
 
-// RUNTIME: preferred 1 2
-// RUNTIME-NEXT: fallback 1 1
+// IEEE 1800-2017 18.5.14 requires the later soft range to override the earlier
+// conflicting soft equality and intersect the hard range. An incompatible
+// inline hard constraint instead discards the range preference. The 32-bit
+// property makes rejection from the full type domain impractical and therefore
+// exercises the compiler-derived preferred domain.
+// RUNTIME: preferred 1 10
+// RUNTIME-NEXT: fallback 1 12
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -20,25 +26,37 @@ module attributes {
   }
   obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
     obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
-      obelisk.sv.type.class_type attributes {bitstream_width = 2 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "soft_object", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "soft_object", node_id = 3 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.soft_object>, sym_name = "s3.soft_object", this_variable_path = "soft_object::this", this_variable_symbol = @s1.$root::@s2::@s3.soft_object::@s26.this} {
-        obelisk.sv.symbol.class_property attributes {hierarchical_name = "soft_object::value", name = "value", node_id = 4 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>, sym_name = "s4.value"} {
+      obelisk.sv.type.class_type attributes {bitstream_width = 32 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "soft_object", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "soft_object", node_id = 3 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.soft_object>, sym_name = "s3.soft_object", this_variable_path = "soft_object::this", this_variable_symbol = @s1.$root::@s2::@s3.soft_object::@s26.this} {
+        obelisk.sv.symbol.class_property attributes {hierarchical_name = "soft_object::value", name = "value", node_id = 4 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>, sym_name = "s4.value"} {
         }
         obelisk.sv.symbol.constraint_block attributes {hierarchical_name = "soft_object::legal", name = "legal", node_id = 5 : i64, sym_name = "s5.legal", this_variable_path = "soft_object::legal.this", this_variable_symbol = @s1.$root::@s2::@s3.soft_object::@s5.legal::@s6.this} {
-          obelisk.sv.constraint.list attributes {item_count = 1 : i64, node_id = 6 : i64} {
+          obelisk.sv.constraint.list attributes {item_count = 2 : i64, node_id = 6 : i64} {
             obelisk.sv.constraint.expression attributes {is_soft = false, node_id = 7 : i64} {
               obelisk.sv.expression.inside attributes {item_count = 1 : i64, node_id = 8 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                 obelisk.sv.expression.conversion attributes {node_id = 9 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
-                  obelisk.sv.expression.named_value attributes {node_id = 10 : i64, referenced_path = "soft_object::value", referenced_symbol = @s1.$root::@s2::@s3.soft_object::@s4.value, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                  obelisk.sv.expression.named_value attributes {node_id = 10 : i64, referenced_path = "soft_object::value", referenced_symbol = @s1.$root::@s2::@s3.soft_object::@s4.value, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
                   }
                 }
                 obelisk.sv.expression.value_range attributes {node_id = 11 : i64, range_kind = 0 : i32, semantic_type = !obelisk.void} {
                   obelisk.sv.expression.conversion attributes {node_id = 12 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
-                    obelisk.sv.expression.integer_literal attributes {constant_value = "1", node_id = 13 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                    obelisk.sv.expression.integer_literal attributes {constant_value = "5", node_id = 13 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                     }
                   }
                   obelisk.sv.expression.conversion attributes {node_id = 14 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
-                    obelisk.sv.expression.integer_literal attributes {constant_value = "2", node_id = 15 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                    obelisk.sv.expression.integer_literal attributes {constant_value = "15", node_id = 15 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                     }
+                  }
+                }
+              }
+            }
+            obelisk.sv.constraint.expression attributes {is_soft = true, node_id = 106 : i64} {
+              obelisk.sv.expression.binary_op attributes {node_id = 107 : i64, operator_kind = 9 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
+                obelisk.sv.expression.conversion attributes {node_id = 108 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                  obelisk.sv.expression.named_value attributes {node_id = 109 : i64, referenced_path = "soft_object::value", referenced_symbol = @s1.$root::@s2::@s3.soft_object::@s4.value, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                  }
+                }
+                obelisk.sv.expression.conversion attributes {node_id = 110 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                  obelisk.sv.expression.integer_literal attributes {constant_value = "12", node_id = 111 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                   }
                 }
               }
@@ -50,13 +68,19 @@ module attributes {
         obelisk.sv.symbol.constraint_block attributes {hierarchical_name = "soft_object::preferred", name = "preferred", node_id = 17 : i64, sym_name = "s7.preferred", this_variable_path = "soft_object::preferred.this", this_variable_symbol = @s1.$root::@s2::@s3.soft_object::@s7.preferred::@s8.this} {
           obelisk.sv.constraint.list attributes {item_count = 1 : i64, node_id = 18 : i64} {
             obelisk.sv.constraint.expression attributes {is_soft = true, node_id = 19 : i64} {
-              obelisk.sv.expression.binary_op attributes {node_id = 20 : i64, operator_kind = 9 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
+              obelisk.sv.expression.inside attributes {item_count = 1 : i64, node_id = 20 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                 obelisk.sv.expression.conversion attributes {node_id = 21 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
-                  obelisk.sv.expression.named_value attributes {node_id = 22 : i64, referenced_path = "soft_object::value", referenced_symbol = @s1.$root::@s2::@s3.soft_object::@s4.value, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                  obelisk.sv.expression.named_value attributes {node_id = 22 : i64, referenced_path = "soft_object::value", referenced_symbol = @s1.$root::@s2::@s3.soft_object::@s4.value, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
                   }
                 }
-                obelisk.sv.expression.conversion attributes {node_id = 23 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
-                  obelisk.sv.expression.integer_literal attributes {constant_value = "2", node_id = 24 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                obelisk.sv.expression.value_range attributes {node_id = 23 : i64, range_kind = 0 : i32, semantic_type = !obelisk.void} {
+                  obelisk.sv.expression.conversion attributes {node_id = 24 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                    obelisk.sv.expression.integer_literal attributes {constant_value = "1", node_id = 103 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                    }
+                  }
+                  obelisk.sv.expression.conversion attributes {node_id = 104 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                    obelisk.sv.expression.integer_literal attributes {constant_value = "10", node_id = 105 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                    }
                   }
                 }
               }
@@ -73,7 +97,7 @@ module attributes {
               obelisk.sv.constraint.expression attributes {is_soft = true, node_id = 86 : i64} {
                 obelisk.sv.expression.binary_op attributes {node_id = 87 : i64, operator_kind = 9 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
                   obelisk.sv.expression.conversion attributes {node_id = 88 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
-                    obelisk.sv.expression.named_value attributes {node_id = 89 : i64, referenced_path = "soft_object::value", referenced_symbol = @s1.$root::@s2::@s3.soft_object::@s4.value, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                    obelisk.sv.expression.named_value attributes {node_id = 89 : i64, referenced_path = "soft_object::value", referenced_symbol = @s1.$root::@s2::@s3.soft_object::@s4.value, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
                     }
                   }
                   obelisk.sv.expression.conversion attributes {node_id = 90 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
@@ -89,7 +113,7 @@ module attributes {
               obelisk.sv.constraint.expression attributes {is_soft = true, node_id = 97 : i64} {
                 obelisk.sv.expression.binary_op attributes {node_id = 98 : i64, operator_kind = 9 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
                   obelisk.sv.expression.conversion attributes {node_id = 99 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
-                    obelisk.sv.expression.named_value attributes {node_id = 100 : i64, referenced_path = "soft_object::value", referenced_symbol = @s1.$root::@s2::@s3.soft_object::@s4.value, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                    obelisk.sv.expression.named_value attributes {node_id = 100 : i64, referenced_path = "soft_object::value", referenced_symbol = @s1.$root::@s2::@s3.soft_object::@s4.value, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
                     }
                   }
                   obelisk.sv.expression.conversion attributes {node_id = 101 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
@@ -174,7 +198,7 @@ module attributes {
                   }
                   obelisk.sv.expression.named_value attributes {node_id = 62 : i64, referenced_path = "soft_runtime.result", referenced_symbol = @s1.$root::@s21.soft_runtime::@s22.soft_runtime::@s24.result, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                   }
-                  obelisk.sv.expression.member_access attributes {field_ordinal = 72 : i64, node_id = 63 : i64, packed_offset = 4294967296 : i64, referenced_path = "soft_object::value", referenced_symbol = @s1.$root::@s2::@s3.soft_object::@s4.value, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                  obelisk.sv.expression.member_access attributes {field_ordinal = 72 : i64, node_id = 63 : i64, packed_offset = 4294967296 : i64, referenced_path = "soft_object::value", referenced_symbol = @s1.$root::@s2::@s3.soft_object::@s4.value, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
                     obelisk.sv.expression.named_value attributes {node_id = 64 : i64, referenced_path = "soft_runtime.object", referenced_symbol = @s1.$root::@s21.soft_runtime::@s22.soft_runtime::@s23.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.soft_object>} {
                     }
                   }
@@ -189,11 +213,11 @@ module attributes {
                       obelisk.sv.constraint.expression attributes {is_soft = false, node_id = 70 : i64} {
                         obelisk.sv.expression.binary_op attributes {node_id = 71 : i64, operator_kind = 9 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
                           obelisk.sv.expression.conversion attributes {node_id = 72 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
-                            obelisk.sv.expression.named_value attributes {node_id = 73 : i64, referenced_path = "soft_object::value", referenced_symbol = @s1.$root::@s2::@s3.soft_object::@s4.value, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                            obelisk.sv.expression.named_value attributes {node_id = 73 : i64, referenced_path = "soft_object::value", referenced_symbol = @s1.$root::@s2::@s3.soft_object::@s4.value, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
                             }
                           }
                           obelisk.sv.expression.conversion attributes {node_id = 74 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
-                            obelisk.sv.expression.integer_literal attributes {constant_value = "1", node_id = 75 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                            obelisk.sv.expression.integer_literal attributes {constant_value = "12", node_id = 75 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                             }
                           }
                         }
@@ -210,7 +234,7 @@ module attributes {
                   }
                   obelisk.sv.expression.named_value attributes {node_id = 80 : i64, referenced_path = "soft_runtime.result", referenced_symbol = @s1.$root::@s21.soft_runtime::@s22.soft_runtime::@s24.result, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                   }
-                  obelisk.sv.expression.member_access attributes {field_ordinal = 72 : i64, node_id = 81 : i64, packed_offset = 4294967296 : i64, referenced_path = "soft_object::value", referenced_symbol = @s1.$root::@s2::@s3.soft_object::@s4.value, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                  obelisk.sv.expression.member_access attributes {field_ordinal = 72 : i64, node_id = 81 : i64, packed_offset = 4294967296 : i64, referenced_path = "soft_object::value", referenced_symbol = @s1.$root::@s2::@s3.soft_object::@s4.value, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
                     obelisk.sv.expression.named_value attributes {node_id = 82 : i64, referenced_path = "soft_runtime.object", referenced_symbol = @s1.$root::@s21.soft_runtime::@s22.soft_runtime::@s23.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.soft_object>} {
                     }
                   }

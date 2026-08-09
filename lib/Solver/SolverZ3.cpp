@@ -326,6 +326,65 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
     if (result != z3::sat)
       return analysis;
 
+    // Soft constraints are preferences ordered from low to high priority.
+    // Select the lexicographically best satisfiable set by retaining each
+    // preference when it is compatible with every already-selected higher
+    // priority. Discarded preferences add no negated constraint: they remain
+    // irrelevant exactly as required by IEEE 1800-2017 18.5.14.1.
+    std::vector<std::optional<z3::expr>> softExpressions(
+        smt->softConstraints.size());
+    std::vector<bool> selectedSoft(softExpressions.size());
+    z3::expr effective = *hard;
+    // A runtime capture can change which priority set is satisfiable. Leave
+    // those calls on the residual path instead of freezing a preference chosen
+    // for one existential capture value.
+    if (smt->captures.empty()) {
+      for (const SMTSoftConstraint &constraint : smt->softConstraints) {
+        if (constraint.priority >= softExpressions.size() ||
+            softExpressions[constraint.priority])
+          return analysis;
+        softExpressions[constraint.priority] =
+            shim.translate(constraint.expression);
+        if (!softExpressions[constraint.priority])
+          return analysis;
+      }
+      for (size_t priority = softExpressions.size(); priority != 0;
+           --priority) {
+        solver.push();
+        solver.add(*softExpressions[priority - 1]);
+        z3::check_result preferred = solver.check();
+        solver.pop();
+        if (preferred == z3::unknown)
+          return analysis;
+        if (preferred == z3::unsat)
+          continue;
+        solver.add(*softExpressions[priority - 1]);
+        effective = effective && *softExpressions[priority - 1];
+        selectedSoft[priority - 1] = true;
+      }
+      for (const SMTSoftConstraint &constraint : smt->softConstraints) {
+        if (!selectedSoft[constraint.priority])
+          continue;
+        smt->hardConstraints.push_back(
+            {constraint.expression, constraint.dependencies,
+             constraint.hasCapture});
+        if (constraint.directEquality)
+          smt->directEqualities.push_back(*constraint.directEquality);
+        if (constraint.directDefinition)
+          smt->directDefinitions.push_back(*constraint.directDefinition);
+        if (constraint.directCaptureBound)
+          smt->directCaptureBounds.push_back(*constraint.directCaptureBound);
+      }
+      analysis.softPreferencesResolved = !smt->softConstraints.empty();
+    }
+
+    // A preference probe followed by pop/add invalidates Z3's current model,
+    // including when the last priority was discarded as unsatisfiable. Check
+    // the selected formula once so range extraction below always starts from
+    // a valid witness for the effective preference set.
+    if (analysis.softPreferencesResolved && solver.check() != z3::sat)
+      return analysis;
+
     // Bound each serialized variable independently. Captures remain free in
     // every query, so these are conservative bounds on the projection of all
     // solutions for all possible runtime capture values. An unknown query
@@ -779,11 +838,12 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
       }
       proposal = proposal && (*targetBits == *expression);
     }
-    // All preceding implication queries intentionally run under `hard`.
+    // All preceding implication queries intentionally run under the effective
+    // hard-plus-selected-soft formula.
     // Remove that assertion for the reverse implication: retaining it would
     // make `proposal && !hard` vacuously unsatisfiable.
     solver.pop();
-    if (translatedProposal && checkWith(proposal && !*hard) == z3::unsat)
+    if (translatedProposal && checkWith(proposal && !effective) == z3::unsat)
       analysis.proposalExact = true;
 
     // Fully enumerate small capture-free formulas when structural planning was
@@ -807,6 +867,17 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
       Z3SMTShim enumerationShim(enumerationContext);
       std::optional<z3::expr> enumerationHard =
           enumerationShim.translate(smt->hard);
+      for (const SMTSoftConstraint &constraint : smt->softConstraints) {
+        if (!enumerationHard || !selectedSoft[constraint.priority])
+          continue;
+        std::optional<z3::expr> preferred =
+            enumerationShim.translate(constraint.expression);
+        if (!preferred) {
+          enumerationHard.reset();
+          break;
+        }
+        *enumerationHard = *enumerationHard && *preferred;
+      }
       std::optional<z3::expr> assignment =
           enumerationShim.translate(smt->assignment);
       if (enumerationHard && assignment) {
@@ -1120,8 +1191,8 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
 
         bool equivalentCompleteProposal =
             sawConstrainedComponent && allConstrainedComponentsComplete &&
-            checkWith(*hard && !composedProposal) == z3::unsat &&
-            checkWith(composedProposal && !*hard) == z3::unsat;
+            checkWith(effective && !composedProposal) == z3::unsat &&
+            checkWith(composedProposal && !effective) == z3::unsat;
         if (equivalentCompleteProposal)
           analysis.proposalExact = true;
       }

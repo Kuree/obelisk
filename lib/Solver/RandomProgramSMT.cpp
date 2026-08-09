@@ -625,8 +625,17 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
           result.directCaptureBounds.push_back(
               *stack.back().directCaptureBound);
       }
-      if (opcode == OBELISK_RT_RANDOM_END_SOFT_V1)
+      if (opcode == OBELISK_RT_RANDOM_END_SOFT_V1) {
+        result.softConstraints.push_back(
+            {truth(builder, location, stack.back()),
+             static_cast<unsigned>(immediate),
+             {},
+             false,
+             stack.back().directEquality,
+             stack.back().directDefinition,
+             stack.back().directCaptureBound});
         softPriorities |= uint64_t{1} << immediate;
+      }
       sawHard |= opcode == OBELISK_RT_RANDOM_END_HARD_V1;
       sawSoft |= opcode == OBELISK_RT_RANDOM_END_SOFT_V1;
       stack.clear();
@@ -1029,6 +1038,20 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
     for (const SMTVariable &variable : result.variables)
       if (containsVariable(constraint.expression, variable))
         constraint.dependencies.push_back(variable);
+    constraint.hasCapture =
+        llvm::any_of(result.captures, [&](mlir::Value capture) {
+          return containsValue(constraint.expression, capture);
+        });
+  }
+  for (SMTSoftConstraint &constraint : result.softConstraints) {
+    for (const SMTVariable &variable : result.variables)
+      if (containsVariable(constraint.expression, variable))
+        constraint.dependencies.push_back(variable);
+    if (constraint.directDefinition)
+      for (const SMTVariable &variable : result.variables)
+        if (containsVariable(constraint.directDefinition->expression,
+                             variable))
+          constraint.directDefinition->dependencies.push_back(variable);
     constraint.hasCapture =
         llvm::any_of(result.captures, [&](mlir::Value capture) {
           return containsValue(constraint.expression, capture);

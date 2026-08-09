@@ -83,9 +83,16 @@
 // RUN:   obelisk-opt %t/solve-before-soft.mlir '--lower-obelisk-to-sim=opt-level=0' \
 // RUN:     | FileCheck %s --check-prefix=SOLVE-BEFORE-SOFT \
 // RUN: %}
-// RUN: not obelisk-opt %t/solve-before-residual-wide.mlir \
-// RUN:   '--lower-obelisk-to-sim=opt-level=0' 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=SOLVE-BEFORE-WIDE
+// RUN: %if z3 %{ \
+// RUN:   obelisk-opt %t/solve-before-residual-wide.mlir \
+// RUN:     '--lower-obelisk-to-sim=opt-level=0' \
+// RUN:     | FileCheck %s --check-prefix=SOLVE-BEFORE-WIDE \
+// RUN: %}
+// RUN: %if !z3 %{ \
+// RUN:   not obelisk-opt %t/solve-before-residual-wide.mlir \
+// RUN:     '--lower-obelisk-to-sim=opt-level=0' 2>&1 \
+// RUN:     | FileCheck %s --check-prefix=SOLVE-BEFORE-WIDE-FALLBACK \
+// RUN: %}
 // RUN: %if !z3 %{ \
 // RUN:   obelisk-opt %t/table.mlir '--lower-obelisk-to-sim=opt-level=0' \
 // RUN:     | FileCheck %s --check-prefix=TABLE-FALLBACK \
@@ -874,13 +881,22 @@ module {
 // three-result operation is accepted by its intrinsic encoder.
 // SOLVE-BEFORE-NATIVE: llvm.call @obelisk_rt_v1_random_solve_modes_state
 
-// Soft preferences require complete best-priority selection before applying
-// the conditional solve order, so this otherwise structural forward definition
-// deliberately uses the ordered residual program.
+// Dynamic constraint modes retain an ordered residual fallback. When Z3 can
+// resolve the soft priorities, the all-enabled path may additionally use its
+// exact structural plan.
 // SOLVE-BEFORE-SOFT-LABEL: obelisk_sim.func private @unit_1
 // SOLVE-BEFORE-SOFT: obelisk_sim.random.solve
 
-// SOLVE-BEFORE-WIDE: error: solve before residual fallback requires exhaustive traversal of at most 2^20 semantic assignments
+// A capture-free soft equality is resolved before solve-order planning. The
+// exact all-enabled plan therefore remains executable even though the 21-bit
+// aggregate is too large for exhaustive residual traversal; dynamic mode paths
+// still retain the runtime fallback.
+// SOLVE-BEFORE-WIDE-LABEL: obelisk_sim.func private @unit_1
+// SOLVE-BEFORE-WIDE: obelisk_sim.random.solve
+// SOLVE-BEFORE-WIDE: arith.trunci {{.*}} : i64 to i10
+// SOLVE-BEFORE-WIDE: arith.trunci {{.*}} : i64 to i11
+// SOLVE-BEFORE-WIDE: obelisk_sim.managed.store
+// SOLVE-BEFORE-WIDE-FALLBACK: error: solve before residual fallback requires exhaustive traversal of at most 2^20 semantic assignments
 
 // A 31-value solution set exceeds the bounded compile-time table cap. It stays
 // on the checker/runtime path and guards the structural reverse implication.

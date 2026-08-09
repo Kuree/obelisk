@@ -54,6 +54,16 @@ struct SMTHardConstraint {
   bool hasCapture = false;
 };
 
+struct SMTSoftConstraint {
+  mlir::Value expression;
+  unsigned priority;
+  std::vector<SMTVariable> dependencies;
+  bool hasCapture = false;
+  std::optional<SMTVariableEquality> directEquality;
+  std::optional<SMTVariableDefinition> directDefinition;
+  std::optional<SMTVariableCaptureBound> directCaptureBound;
+};
+
 /// An exact semantic-domain predicate carried by the runtime program. These
 /// predicates are part of the hard formula, but are also retained separately
 /// so compile-time proposal analysis can reproduce the compiler-emitted finite
@@ -74,6 +84,7 @@ struct RandomProgramSMT {
   mlir::Value hard;
   std::vector<SMTVariable> variables;
   std::vector<SMTHardConstraint> hardConstraints;
+  std::vector<SMTSoftConstraint> softConstraints;
   std::vector<SMTFiniteDomain> finiteDomains;
   std::vector<SMTVariableCaptureBound> directCaptureBounds;
   std::vector<SMTVariableEquality> directEqualities;

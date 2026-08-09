@@ -3691,6 +3691,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   solver::RandomProgramAnalysis analysis = solver::analyzeRandomProgram(
       program.data(), program.size(), /*resourceLimit=*/100000,
       /*preferGlobalAssignmentTable=*/hasSolveBefore);
+  bool softProposalExact =
+      !hasSoftConstraint || analysis.softPreferencesResolved;
 
   SmallVector<APInt> proposalAssignments;
   constexpr size_t maxMaterializedAssignmentTableSize = 16;
@@ -3749,7 +3751,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       solveBeforeTableNodes[node].children = std::move(children);
       return node;
     };
-    if (validAssignmentTable && !hasSoftConstraint)
+    if (validAssignmentTable && softProposalExact)
       solveBeforeTableRoot = buildSolveBeforeTable(proposalAssignments, 0);
   }
 
@@ -3772,11 +3774,10 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     return true;
   };
   // Component tables are sampled once and then held while the residual
-  // proposal advances. A soft preference must instead be able to visit every
-  // hard-legal table row, so retain the existing checker/fallback path there.
+  // proposal advances. Use them for soft constraints only after the solver has
+  // incorporated the selected preference set into the analyzed formula.
   bool validAssignmentTables = analysis.assignmentTable.empty() &&
-                               distPlans.empty() &&
-                               !hasSoftConstraint &&
+                               distPlans.empty() && softProposalExact &&
                                !analysis.assignmentTables.empty();
   for (const solver::RandomAssignmentTable &table : analysis.assignmentTables) {
     APInt normalizedMask = table.mask.zextOrTrunc(assignmentWidth);
@@ -4789,7 +4790,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                 materializedCaptureBounds == analysis.captureBounds.size() &&
                 proposalAliases.size() == analysis.aliases.size() &&
                 proposalDefinitions.size() == analysis.definitions.size();
-  bool exactProposal = analysis.proposalExact && !hasSoftConstraint &&
+  bool exactProposal = analysis.proposalExact && softProposalExact &&
                        !hasRandC && distPlans.empty() &&
                        !overwritesProposalDomain &&
                        materializesCompleteProposal;
@@ -4811,7 +4812,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         });
   };
   bool closedDefinitionProposal =
-      analysis.proposalExact && !hasSoftConstraint && !hasRandC &&
+      analysis.proposalExact && softProposalExact && !hasRandC &&
       distPlans.empty() && materializesCompleteProposal &&
       !proposalDefinitions.empty() && proposalAliases.empty() &&
       proposalFiniteDomains.empty() && proposalCaptureDomains.empty() &&
@@ -4917,7 +4918,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     return true;
   };
 
-  bool solveBeforeRequiresRuntime = hasSolveBefore && hasSoftConstraint;
+  bool solveBeforeRequiresRuntime = hasSolveBefore && !softProposalExact;
   if (hasSolveBefore && !solveBeforeTableRoot &&
       analysis.satisfiability != solver::Satisfiability::Unsatisfiable) {
     uint64_t orderedPropertyMask = 0;
