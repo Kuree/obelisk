@@ -1103,19 +1103,21 @@ extern "C" obelisk_rt_status obelisk_rt_v1_string_from_packed(
   const auto *valueBytes = static_cast<const uint8_t *>(value);
   const auto *unknownBytes = static_cast<const uint8_t *>(unknown);
   try {
-    std::string bytes(static_cast<size_t>(byteCount), '\0');
+    std::string bytes;
+    bytes.reserve(static_cast<size_t>(byteCount));
     // Packed planes are little-endian. SystemVerilog strings enumerate the
-    // most-significant packed byte first.
+    // most-significant packed byte first and omit zero-valued bytes.
     for (uint64_t index = 0; index != byteCount; ++index) {
       uint64_t source = byteCount - index - 1;
       uint8_t byte = valueBytes[source];
       if (unknownBytes)
         byte &= static_cast<uint8_t>(~unknownBytes[source]);
-      bytes[static_cast<size_t>(index)] = static_cast<char>(byte);
+      if (index == 0 && (bitWidth & 7) != 0)
+        byte &= static_cast<uint8_t>((UINT32_C(1) << (bitWidth & 7)) - 1);
+      if (byte != 0)
+        bytes.push_back(static_cast<char>(byte));
     }
-    if ((bitWidth & 7) != 0)
-      bytes.front() &= static_cast<char>((UINT32_C(1) << (bitWidth & 7)) - 1);
-    return createString(lane, bytes.data(), byteCount, outString);
+    return createString(lane, bytes.data(), bytes.size(), outString);
   } catch (const std::bad_alloc &) {
     return OBELISK_RT_OUT_OF_MEMORY;
   } catch (const std::length_error &) {

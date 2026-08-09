@@ -195,19 +195,18 @@ TEST_F(ManagedValueTest, RepeatsAndConvertsPackedByteSequences) {
   uint64_t size = 0;
   ASSERT_EQ(obelisk_rt_v1_string_view(string, scratch, &bytes, &size),
             OBELISK_RT_OK);
-  ASSERT_EQ(size, 4u);
+  ASSERT_EQ(size, 3u);
   EXPECT_EQ(static_cast<uint8_t>(bytes[0]), 'A');
   EXPECT_EQ(static_cast<uint8_t>(bytes[1]), 'B');
-  EXPECT_EQ(static_cast<uint8_t>(bytes[2]), 0);
-  EXPECT_EQ(static_cast<uint8_t>(bytes[3]), 'D');
+  EXPECT_EQ(static_cast<uint8_t>(bytes[2]), 'D');
 
   obelisk_rt_string_v1 repeated = 0;
   ASSERT_EQ(obelisk_rt_v1_string_repeat(lane, string, 3, &repeated),
             OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_string_view(repeated, scratch, &bytes, &size),
             OBELISK_RT_OK);
-  ASSERT_EQ(size, 12u);
-  EXPECT_EQ(std::memcmp(bytes, "AB\0DAB\0DAB\0D", 12), 0);
+  ASSERT_EQ(size, 9u);
+  EXPECT_EQ(std::string(bytes, size), "ABDABDABD");
 
   uint8_t narrowed[3] = {0xff, 0xff, 0xff};
   uint8_t narrowedUnknown[3] = {0xff, 0xff, 0xff};
@@ -215,11 +214,27 @@ TEST_F(ManagedValueTest, RepeatsAndConvertsPackedByteSequences) {
                                            narrowedUnknown, 20),
             OBELISK_RT_OK);
   EXPECT_EQ(narrowed[0], 'D');
-  EXPECT_EQ(narrowed[1], 0);
-  EXPECT_EQ(narrowed[2], 2u);
+  EXPECT_EQ(narrowed[1], 'B');
+  EXPECT_EQ(narrowed[2], 1u);
   EXPECT_EQ(narrowedUnknown[0], 0u);
   EXPECT_EQ(narrowedUnknown[1], 0u);
   EXPECT_EQ(narrowedUnknown[2], 0u);
+
+  const uint8_t sparsePacked[] = {0, 'A', 0, 'B'};
+  obelisk_rt_string_v1 sparse = 0;
+  ASSERT_EQ(obelisk_rt_v1_string_from_packed(
+                lane, sparsePacked, nullptr, 32, &sparse),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_string_view(sparse, scratch, &bytes, &size),
+            OBELISK_RT_OK);
+  EXPECT_EQ(std::string(bytes, size), "BA");
+
+  const uint32_t zero = 0;
+  obelisk_rt_string_v1 convertedEmpty = UINT64_MAX;
+  ASSERT_EQ(obelisk_rt_v1_string_from_packed(lane, &zero, nullptr, 32,
+                                              &convertedEmpty),
+            OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_string_length(convertedEmpty), 0u);
 
   obelisk_rt_string_v1 empty = UINT64_MAX;
   EXPECT_EQ(obelisk_rt_v1_string_repeat(lane, string, 0, &empty),
