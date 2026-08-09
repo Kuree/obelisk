@@ -51,6 +51,22 @@ bool isSuspensionOp(Operation *operation) {
              SimTaskCallOp>(operation);
 }
 
+bool isStartupEntryKind(EntryKind kind) {
+  switch (kind) {
+  case EntryKind::Always:
+  case EntryKind::AlwaysComb:
+  case EntryKind::AlwaysFF:
+  case EntryKind::AlwaysLatch:
+  case EntryKind::Continuous:
+  case EntryKind::PortInput:
+  case EntryKind::PortOutput:
+  case EntryKind::PortInitialize:
+    return true;
+  default:
+    return false;
+  }
+}
+
 uint32_t getWaitEntryCount(Operation *operation) {
   return TypeSwitch<Operation *, uint32_t>(operation)
       .Case<SimSuspendChangeOp, SimSuspendLevelOp, SimSuspendEdgeOp,

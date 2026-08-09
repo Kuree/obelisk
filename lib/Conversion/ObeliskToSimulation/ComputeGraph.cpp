@@ -1246,22 +1246,10 @@ void ComputeGraphBuilder::buildControlEdges() {
         if (target.getBody().empty())
           continue;
         uint32_t entry = fragmentForBlock.lookup(&target.getBody().front());
-        switch (target.getEntryKind()) {
-        case sim::EntryKind::Always:
-        case sim::EntryKind::AlwaysComb:
-        case sim::EntryKind::AlwaysLatch:
-        case sim::EntryKind::AlwaysFF:
-        case sim::EntryKind::Continuous:
-        case sim::EntryKind::PortInput:
-        case sim::EntryKind::PortOutput:
-        case sim::EntryKind::PortInitialize:
+        if (sim::isStartupEntryKind(target.getEntryKind())) {
           startupEntries.push_back(entry);
-          break;
-        case sim::EntryKind::Initial:
+        } else if (target.getEntryKind() == sim::EntryKind::Initial) {
           initialEntries.push_back(entry);
-          break;
-        default:
-          break;
         }
       }
       for (uint32_t startup : startupEntries)
@@ -1470,7 +1458,9 @@ FailureOr<ArrayAttr> ComputeGraphBuilder::buildRegions() {
   // procedural cycle. Project only settling-process sensitivity through the
   // suspension so cross-process combinational feedback is visible to SCC
   // planning without changing the executable graph or clocked-process
-  // semantics.
+  // semantics. Settling publications must nevertheless precede every kind of
+  // resumed consumer: a procedural observer cannot run on one settled sibling
+  // while another sibling publication is still pending.
   SmallVector<sim::ComputeEdgeAttr> schedulingEdges(edges.begin(), edges.end());
   DenseMap<uint32_t, SmallVector<uint32_t>> resumeContinuations;
   for (sim::ComputeEdgeAttr edge : edges)
@@ -1479,9 +1469,7 @@ FailureOr<ArrayAttr> ComputeGraphBuilder::buildRegions() {
   for (sim::ComputeEdgeAttr edge : edges) {
     if (edge.getKind() != sim::ComputeEdgeKind::Sensitivity ||
         !isSettlingEntryKind(
-            fragments[edge.getSource()].function.getEntryKind()) ||
-        !isSettlingEntryKind(
-            fragments[edge.getTarget()].function.getEntryKind()))
+            fragments[edge.getSource()].function.getEntryKind()))
       continue;
     for (uint32_t continuation : resumeContinuations[edge.getTarget()])
       schedulingEdges.push_back(sim::ComputeEdgeAttr::get(

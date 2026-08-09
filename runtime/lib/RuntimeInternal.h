@@ -256,7 +256,7 @@ inline bool obelisk_rt_decode_schedule_flags(uint32_t flags, uint32_t &phase,
                                              uint32_t &homeRegion) {
   constexpr uint32_t known =
       OBELISK_RT_SCHEDULE_FINAL | OBELISK_RT_SCHEDULE_HOME_MASK |
-      OBELISK_RT_SCHEDULE_INITIAL;
+      OBELISK_RT_SCHEDULE_INITIAL | OBELISK_RT_SCHEDULE_STARTUP;
   if ((flags & ~known) != 0)
     return false;
   phase = (flags & OBELISK_RT_SCHEDULE_FINAL) != 0 ? 1u : 0u;
@@ -330,6 +330,7 @@ struct ScheduledProcess {
   bool urgent = false;
   bool signalTriggered = false;
   bool initialProcess = false;
+  bool startupProcess = false;
 };
 
 struct SignalValueSnapshot {
@@ -476,6 +477,7 @@ struct ScheduledDesignTask {
   bool urgent = false;
   bool terminated = false;
   bool signalTriggered = false;
+  bool startupProcess = false;
 };
 
 struct SignalSubscriptionBucketKey {
@@ -755,6 +757,8 @@ struct obelisk_rt_context {
   // when queried after a process resumes, changes wait kind, or terminates.
   std::vector<std::pair<uint64_t, uint64_t>> scheduledProcessDelayHeap;
   bool scheduledFinalProcessPresent = false;
+  std::unordered_set<uint64_t> unstartedActiveActors;
+  std::unordered_set<uint64_t> unstartedFinalActors;
   std::unordered_map<uint64_t, SignalValueSnapshot> signalValueSnapshots;
   std::unordered_map<SignalSubscriptionBucketKey,
                      std::vector<SignalSubscriptionBucketEntry>,
@@ -881,6 +885,58 @@ struct obelisk_rt_context {
   obelisk_rt_context();
   ~obelisk_rt_context();
 };
+
+inline std::unordered_set<uint64_t> &
+obelisk_rt_unstarted_actors(obelisk_rt_context *context, uint32_t phase) {
+  return phase == 0 ? context->unstartedActiveActors
+                    : context->unstartedFinalActors;
+}
+
+inline void obelisk_rt_register_unstarted_actor(obelisk_rt_context *context,
+                                                uint32_t phase,
+                                                uint64_t logicalToken) {
+  obelisk_rt_unstarted_actors(context, phase).insert(logicalToken);
+}
+
+inline void obelisk_rt_unregister_unstarted_actor(
+    obelisk_rt_context *context, uint32_t phase, uint64_t logicalToken) {
+  obelisk_rt_unstarted_actors(context, phase).erase(logicalToken);
+}
+
+inline bool obelisk_rt_unstarted_actor_pending(obelisk_rt_context *context,
+                                               uint32_t phase) {
+  auto &actors = obelisk_rt_unstarted_actors(context, phase);
+  while (!actors.empty()) {
+    auto actor = actors.begin();
+    uint64_t logicalToken = *actor;
+    bool pending = false;
+    if ((logicalToken & OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG) != 0) {
+      uint64_t token =
+          logicalToken & ~OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG;
+      auto indexed = context->scheduledProcessIndices.find(token);
+      if (indexed != context->scheduledProcessIndices.end() &&
+          indexed->second < context->scheduledProcesses.size()) {
+        const ScheduledProcess &process =
+            context->scheduledProcesses[indexed->second];
+        pending = process.instance && process.token == token &&
+                  process.phase == phase && !process.started;
+      }
+    } else {
+      auto indexed = context->scheduledDesignTaskIndices.find(logicalToken);
+      if (indexed != context->scheduledDesignTaskIndices.end() &&
+          indexed->second < context->scheduledDesignTasks.size()) {
+        const ScheduledDesignTask &task =
+            context->scheduledDesignTasks[indexed->second];
+        pending = !task.terminated && task.id == logicalToken &&
+                  task.phase == phase && !task.started;
+      }
+    }
+    if (pending)
+      return true;
+    actors.erase(actor);
+  }
+  return false;
+}
 
 inline bool
 obelisk_rt_has_conditional_signal_waiters(const obelisk_rt_context *context) {

@@ -170,8 +170,14 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
         callee.function.getEntryKind() == sim::EntryKind::Function)
       return op.emitOpError("spawn target is not a simulation process");
     SmallVector<Value> captures(op.getOperands());
+    if (found->second > OBELISK_RT_INTRINSIC_SPAWN_FUNCTION_MASK)
+      return op.emitOpError("spawn target index exceeds bytecode encoding");
+    uint32_t flags = found->second |
+                     (sim::isStartupEntryKind(callee.function.getEntryKind())
+                          ? OBELISK_RT_INTRINSIC_SPAWN_STARTUP
+                          : 0);
     return emitIntrinsic(plan, kIntrinsicSpawn, captures, {op.getProcess()},
-                         found->second);
+                         flags);
   }
   if (auto op = dyn_cast<sim::SimNBAEnqueueOp>(operation)) {
     SmallVector<Value> inputs{op.getValue(), op.getDestination()};

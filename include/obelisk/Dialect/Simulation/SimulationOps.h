@@ -84,6 +84,10 @@ materializeFrozenConstant(::mlir::OpBuilder &builder, ::mlir::Location location,
 /// Whether an operation transfers execution to a scheduler continuation.
 bool isSuspensionOp(::mlir::Operation *operation);
 
+/// Whether a process is startup infrastructure that must reach its first
+/// suspension or termination before ordinary initial actors begin.
+bool isStartupEntryKind(EntryKind kind);
+
 /// Number of ordinary wait entries required by a suspension operation.
 /// Computed-observer waits use their own variable-sized record.
 uint32_t getWaitEntryCount(::mlir::Operation *operation);

@@ -430,10 +430,12 @@ bool validIntrinsic(const Image &image, const Function &function,
   };
   switch (signature.id) {
   case OBELISK_RT_INTRINSIC_V1_SPAWN: {
-    if (signature.flags >= image.functionCount || site.outputCount != 1 ||
+    uint32_t calleeIndex =
+        signature.flags & OBELISK_RT_INTRINSIC_SPAWN_FUNCTION_MASK;
+    if (calleeIndex >= image.functionCount || site.outputCount != 1 ||
         !handle(output(0)))
       return false;
-    Function callee = functionAt(image, signature.flags);
+    Function callee = functionAt(image, calleeIndex);
     if ((callee.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
         site.inputCount != callee.argumentCount)
       return false;

@@ -1395,7 +1395,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
   case OBELISK_RT_INTRINSIC_V1_SPAWN: {
     if (!context)
       return OBELISK_RT_INVALID_ARGUMENT;
-    Function callee = functionAt(image, signature.flags);
+    uint32_t function =
+        signature.flags & OBELISK_RT_INTRINSIC_SPAWN_FUNCTION_MASK;
+    Function callee = functionAt(image, function);
     uint64_t canonicalSize =
         (callee.flags & OBELISK_RT_DESIGN_FUNCTION_FRAME_SIZE_MASK) >> 1;
     if (callee.scratchAlignment == 0 ||
@@ -1409,7 +1411,10 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     ScheduledDesignTask task;
     task.parent = context->activeLogicalProcessToken;
     obelisk_rt_random_split_unlocked(context, task.random);
-    task.function = signature.flags;
+    task.function = function;
+    task.startupProcess =
+        (signature.flags & OBELISK_RT_INTRINSIC_SPAWN_STARTUP) != 0;
+    task.urgent = task.startupProcess;
     task.scheduleRank = static_cast<uint32_t>(callee.initialScheduleRank);
     task.scratchOffset = scratchOffset;
     task.scratchSize = callee.scratchSize;
@@ -1419,7 +1424,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     std::unordered_map<uint32_t, uint64_t> retainedAutomaticStates;
     for (uint64_t index = 0; index != image.stateDescriptorCount; ++index) {
       CaptureRecord capture = captureAt(image, index);
-      if (capture.function != signature.flags)
+      if (capture.function != function)
         continue;
       ++copied;
       if (capture.valueOffset == UINT64_MAX)
@@ -1489,9 +1494,15 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           context->scheduledDesignTaskIndices[scheduledID] =
               context->scheduledDesignTasks.size() - 1;
           context->designPollCandidates.insert(scheduledID);
+          obelisk_rt_register_unstarted_actor(
+              context, context->scheduledDesignTasks.back().phase,
+              scheduledID);
         } catch (...) {
           context->scheduledDesignTaskIndices.erase(scheduledID);
           context->designPollCandidates.erase(scheduledID);
+          obelisk_rt_unregister_unstarted_actor(
+              context, context->scheduledDesignTasks.back().phase,
+              scheduledID);
           context->scheduledDesignTasks.pop_back();
           throw;
         }

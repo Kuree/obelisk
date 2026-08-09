@@ -2031,6 +2031,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_planned(
     process.phase = phase;
     process.initialProcess =
         (flags & OBELISK_RT_SCHEDULE_INITIAL) != 0;
+    process.startupProcess =
+        (flags & OBELISK_RT_SCHEDULE_STARTUP) != 0;
+    process.urgent = process.startupProcess;
     context->scheduledFinalProcessPresent |= phase == 1;
     process.homeRegion = homeRegion;
     process.queuedRegion = homeRegion;
@@ -2054,9 +2057,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_planned(
       context->scheduledProcessIndices[token] =
           context->scheduledProcesses.size() - 1;
       context->nativePollCandidates.insert(token);
+      obelisk_rt_register_unstarted_actor(
+          context, phase, kNativeLogicalProcessTag | token);
     } catch (...) {
       context->scheduledProcessIndices.erase(token);
       context->nativePollCandidates.erase(token);
+      obelisk_rt_unregister_unstarted_actor(
+          context, phase, kNativeLogicalProcessTag | token);
       context->scheduledProcesses.pop_back();
       throw;
     }
@@ -5870,6 +5877,7 @@ adoptScheduledSuspendUnlocked(obelisk_rt_context *context,
   scheduled.observedEpoch = context->schedulerEpoch;
   scheduled.waitGenerations.clear();
   scheduled.signalTriggered = false;
+  scheduled.startupProcess = false;
   scheduled.urgent = false;
   const obelisk_rt_wait_record_v1 *wait = currentWait(scheduled);
   if (!wait && action.suspend_kind != OBELISK_RT_SUSPEND_OBSERVER)
@@ -6027,6 +6035,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
       nativeScanEpoch = context->schedulerEpoch;
       nativeScanSelectionGeneration = context->schedulerSelectionGeneration;
       nativeScanInsertionSequence = context->nextProcessInsertionSequence;
+      uint32_t activePhase = context->schedulerRunningFinals ? 1u : 0u;
+      bool unstartedActorPending =
+          obelisk_rt_unstarted_actor_pending(context, activePhase);
       size_t nativeUrgentDistance = SIZE_MAX;
       bool forcedNativeNode = context->nativeScheduleForcedSlot != UINT32_MAX;
       auto considerNativeToken = [&](uint64_t token) {
@@ -6043,6 +6054,12 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           return;
         bool runnable =
             nativeProcessReady(*context, candidate, forcedNativeNode);
+        bool signalResume = candidate.signalTriggered ||
+                            (candidate.signalLatch &&
+                             candidate.signalLatch->triggered);
+        if (runnable && unstartedActorPending && signalResume &&
+            !candidate.urgent)
+          runnable = false;
         if (runnable && candidate.urgent) {
           size_t distance =
               nativeScanProcessCount == 0
@@ -6204,6 +6221,10 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         obelisk_rt_unregister_signal_wait_unlocked(
             context, candidate.signalSubscriptions, candidate.token, false);
         context->nativePollCandidates.erase(candidate.token);
+        if (!candidate.started)
+          obelisk_rt_unregister_unstarted_actor(
+              context, candidate.phase,
+              kNativeLogicalProcessTag | candidate.token);
         candidate.started = true;
         candidate.observedEpoch = context->schedulerEpoch;
       }
@@ -7320,6 +7341,9 @@ obelisk_rt_status executeTrustedAOTNode(obelisk_rt_context *context,
     if (scheduled.instance != selected || scheduled.token != token ||
         scheduled.aotActorSlot != actorSlot)
       return OBELISK_RT_INVALID_LIFECYCLE;
+    if (!scheduled.started)
+      obelisk_rt_unregister_unstarted_actor(
+          context, scheduled.phase, kNativeLogicalProcessTag | token);
     scheduled.started = true;
     scheduled.observedEpoch = context->schedulerEpoch;
     context->activeNativeProcess = selected;
@@ -7370,6 +7394,7 @@ obelisk_rt_status executeTrustedAOTNode(obelisk_rt_context *context,
     scheduled.waitSize = action.auxiliary;
     scheduled.observedEpoch = context->schedulerEpoch;
     scheduled.signalTriggered = false;
+    scheduled.startupProcess = false;
     scheduled.urgent = false;
     if (action.suspend_kind != OBELISK_RT_SUSPEND_DELAY &&
         action.suspend_kind != OBELISK_RT_SUSPEND_CHANGE &&
@@ -7416,7 +7441,7 @@ obelisk_rt_status executeTrustedAOTNode(obelisk_rt_context *context,
     scheduled.waitOffset = 0;
     scheduled.waitSize = 0;
     scheduled.signalTriggered = false;
-    scheduled.urgent = false;
+    scheduled.urgent = scheduled.startupProcess;
     scheduled.queuedRegion = scheduled.homeRegion;
     if (!markNativeAOTActorReadyUnlocked(context, actorSlot))
       return OBELISK_RT_INVALID_CONTINUATION;
@@ -7542,6 +7567,10 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
       }
     }
 
+    if (!scheduled.started)
+      obelisk_rt_unregister_unstarted_actor(
+          context, scheduled.phase,
+          kNativeLogicalProcessTag | scheduled.token);
     scheduled.started = true;
     scheduled.observedEpoch = context->schedulerEpoch;
     context->activeNativeProcess = selected;
@@ -7662,6 +7691,7 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
         updateNativeAOTContinuationRank(scheduled, action.continuation);
         scheduled.observedEpoch = context->schedulerEpoch;
         scheduled.signalTriggered = false;
+        scheduled.startupProcess = false;
         scheduled.urgent = false;
         if (!obelisk_rt_next_queued_region(
                 scheduled.homeRegion, action.suspend_kind, delay, action.flags,
@@ -7790,6 +7820,7 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
       scheduled.observedEpoch = context->schedulerEpoch;
       scheduled.waitGenerations.clear();
       scheduled.signalTriggered = false;
+      scheduled.startupProcess = false;
       scheduled.urgent = false;
       const auto *wait = reinterpret_cast<const obelisk_rt_wait_record_v1 *>(
           static_cast<const uint8_t *>(selected->frame) + action.payload);
@@ -7859,7 +7890,7 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
       scheduled.waitSize = 0;
       scheduled.waitGenerations.clear();
       scheduled.signalTriggered = false;
-      scheduled.urgent = false;
+      scheduled.urgent = scheduled.startupProcess;
       scheduled.queuedRegion = scheduled.homeRegion;
       break;
     case OBELISK_RT_FRAGMENT_TASK_CALL: {

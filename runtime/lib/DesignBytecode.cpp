@@ -3049,6 +3049,9 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
       uint32_t selectedRegion = UINT32_MAX;
       uint32_t selectedRank = UINT32_MAX;
       uint64_t selectedInsertionSequence = UINT64_MAX;
+      uint32_t activePhase = context->schedulerRunningFinals ? 1u : 0u;
+      bool unstartedActorPending =
+          obelisk_rt_unstarted_actor_pending(context, activePhase);
       for (uint64_t candidateID : context->designPollCandidates) {
         if (context->nativeScheduleDesignTaskFilterActive &&
             candidateID != context->nativeScheduleForcedDesignTask)
@@ -3139,6 +3142,9 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
                      iterator->suspendKind != OBELISK_RT_SUSPEND_CHILDREN &&
                      iterator->suspendKind != OBELISK_RT_SUSPEND_OBSERVER &&
                      iterator->observedEpoch != context->schedulerEpoch)));
+        if (runnable && unstartedActorPending && signalTriggered &&
+            !iterator->urgent)
+          runnable = false;
         auto key = std::tuple{iterator->queuedRegion, iterator->scheduleRank,
                               iterator->insertionSequence};
         auto selectedKey =
@@ -3174,6 +3180,8 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
       size_t selectedIndex =
           static_cast<size_t>(found - context->scheduledDesignTasks.begin());
       task = std::move(context->scheduledDesignTasks[selectedIndex]);
+      if (!task.started)
+        obelisk_rt_unregister_unstarted_actor(context, task.phase, task.id);
       obelisk_rt_unregister_signal_wait_unlocked(
           context, task.signalSubscriptions, task.id, true);
       context->designPollCandidates.erase(task.id);
@@ -3272,7 +3280,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
         task.waitSize = 0;
         task.waitGenerations.clear();
         task.signalTriggered = false;
-        task.urgent = false;
+        task.urgent = task.startupProcess;
         task.queuedRegion = task.homeRegion;
         break;
       case OBELISK_RT_FRAGMENT_SUSPEND: {
@@ -3303,6 +3311,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
           task.waitSize = computed->total_size;
           task.waitGenerations.clear();
           task.signalTriggered = false;
+          task.startupProcess = false;
           task.urgent = false;
           if (!obelisk_rt_next_queued_region(task.homeRegion,
                                              action.suspend_kind, 1,
@@ -3382,6 +3391,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
         task.waitSize = sizeof(obelisk_rt_wait_record_v1) + entries;
         task.waitGenerations.clear();
         task.signalTriggered = false;
+        task.startupProcess = false;
         task.urgent = false;
         if (!obelisk_rt_next_queued_region(task.homeRegion, action.suspend_kind,
                                            wait->payload, action.flags,
