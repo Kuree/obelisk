@@ -283,6 +283,8 @@ private:
   ::mlir::InFlightDiagnostic unsupported(::mlir::Operation *op);
 
   static bool isSignedNode(::mlir::Operation *op) {
+    if (auto isSigned = op->getAttrOfType<::mlir::BoolAttr>("is_signed"))
+      return isSigned.getValue();
     auto type = op->getAttrOfType<::mlir::TypeAttr>("semantic_type");
     return type && isSignedSemanticType(type.getValue());
   }

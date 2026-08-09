@@ -72,6 +72,79 @@ template <typename Value> std::string formatConstant(const Value &value) {
   return value.toString(slang::SVInt::MAX_BITS, /*exactUnknowns=*/true);
 }
 
+const slang::ast::Type &unwrapTypeAliases(const slang::ast::Type &type) {
+  const slang::ast::Type *current = &type;
+  while (current->kind == slang::ast::SymbolKind::TypeAlias)
+    current = &current->as<slang::ast::TypeAliasType>().targetType.getType();
+  return *current;
+}
+
+// Slang's canonical PackedArrayType inherits signedness from its element type.
+// That loses the distinction between an explicitly signed packed declaration
+// and an unsigned packed dimension wrapped around a signed typedef. Preserve
+// that distinction by following the non-canonical type graph, where typedef
+// boundaries remain visible.
+bool isWholeTypeSigned(const slang::ast::Type &sourceType) {
+  const slang::ast::Type &type = unwrapTypeAliases(sourceType);
+  if (type.kind != slang::ast::SymbolKind::PackedArrayType)
+    return type.isSigned();
+
+  const slang::ast::Type *element =
+      &type.as<slang::ast::PackedArrayType>().elementType;
+  while (element->kind == slang::ast::SymbolKind::PackedArrayType)
+    element = &element->as<slang::ast::PackedArrayType>().elementType;
+  if (element->kind == slang::ast::SymbolKind::TypeAlias)
+    return false;
+  return element->isSigned();
+}
+
+const slang::ast::Type *getDeclaredSelectionType(
+    const slang::ast::Expression &expression) {
+  using namespace slang::ast;
+  if (ValueExpressionBase::isKind(expression.kind))
+    return &expression.as<ValueExpressionBase>().symbol.getType();
+  if (expression.kind != ExpressionKind::ElementSelect)
+    return nullptr;
+
+  const auto &select = expression.as<ElementSelectExpression>();
+  const slang::ast::Type *valueType =
+      getDeclaredSelectionType(select.value());
+  if (!valueType)
+    return nullptr;
+  const slang::ast::Type &selectedType = unwrapTypeAliases(*valueType);
+  if (selectedType.kind == SymbolKind::PackedArrayType)
+    return &selectedType.as<PackedArrayType>().elementType;
+  if (selectedType.kind == SymbolKind::FixedSizeUnpackedArrayType)
+    return &selectedType.as<FixedSizeUnpackedArrayType>().elementType;
+  return nullptr;
+}
+
+bool isEffectivelySigned(const slang::ast::Expression &expression) {
+  using namespace slang::ast;
+  if (ValueExpressionBase::isKind(expression.kind))
+    return isWholeTypeSigned(expression.as<ValueExpressionBase>()
+                                 .symbol.getType());
+  if (expression.kind != ExpressionKind::ElementSelect)
+    return expression.type->isSigned();
+
+  const auto &select = expression.as<ElementSelectExpression>();
+  const slang::ast::Type *valueType =
+      getDeclaredSelectionType(select.value());
+  const slang::ast::Type *resultType =
+      getDeclaredSelectionType(expression);
+  if (!valueType || !resultType)
+    return expression.type->isSigned();
+
+  const slang::ast::Type &selectedType = unwrapTypeAliases(*valueType);
+  if (selectedType.kind == SymbolKind::PackedArrayType) {
+    // An individual packed element is unsigned unless its element type is a
+    // named type whose whole declaration is signed.
+    return resultType->kind == SymbolKind::TypeAlias &&
+           isWholeTypeSigned(*resultType);
+  }
+  return isWholeTypeSigned(*resultType);
+}
+
 uint64_t getFemtoseconds(slang::TimeScaleValue value) {
   uint64_t unit = 1;
   switch (value.unit) {
@@ -1960,6 +2033,8 @@ private:
             "semantic type produced for an operation without a type field");
       }
     }
+    if constexpr (std::derived_from<Node, slang::ast::Expression>)
+      attrs.set("is_signed", builder.getBoolAttr(isEffectivelySigned(node)));
     currentPendingReferences.clear();
     addSpecificAttributes<Op>(node, attrs);
 #undef SET_OP_ATTR
