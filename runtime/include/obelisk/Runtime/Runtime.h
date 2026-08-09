@@ -740,6 +740,8 @@ enum {
   OBELISK_RT_INTRINSIC_V1_ASSERTION_CONTROL = UINT32_C(0x0001021f),
   OBELISK_RT_INTRINSIC_V1_ASSERTION_ENABLED = UINT32_C(0x00010220),
   OBELISK_RT_INTRINSIC_V1_ASSERTION_ACTION_STATE = UINT32_C(0x00010221),
+  OBELISK_RT_INTRINSIC_V1_CLOCKED_SAMPLE_UPDATE = UINT32_C(0x00010222),
+  OBELISK_RT_INTRINSIC_V1_CLOCKED_SAMPLE_READ = UINT32_C(0x00010223),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC = UINT32_C(0x00010400),
@@ -2560,6 +2562,18 @@ obelisk_rt_status obelisk_rt_v1_sampled_history(
     uint64_t depth, uint32_t four_state, uint32_t gate,
     const uint8_t *current_value, const uint8_t *current_unknown,
     uint8_t *out_value, uint8_t *out_unknown);
+
+// Advance and read compiler-planned history shared by all call sites using an
+// explicit alternate clock. `depth` is the oldest retained age, so the ring
+// stores depth + 1 samples and age zero is the most recent enabled clock tick.
+obelisk_rt_status obelisk_rt_v1_clocked_sample_update(
+    obelisk_rt_context *context, uint64_t site_id, uint64_t bit_width,
+    uint64_t depth, uint32_t four_state, uint32_t gate,
+    const uint8_t *current_value, const uint8_t *current_unknown);
+obelisk_rt_status obelisk_rt_v1_clocked_sample_read(
+    obelisk_rt_context *context, uint64_t site_id, uint64_t bit_width,
+    uint64_t depth, uint64_t age, uint32_t four_state, uint8_t *out_value,
+    uint8_t *out_unknown);
 obelisk_rt_status obelisk_rt_v1_scheduler_run(obelisk_rt_context *context);
 obelisk_rt_status obelisk_rt_v1_scheduler_run_aot(obelisk_rt_context *context);
 

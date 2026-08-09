@@ -885,6 +885,7 @@ struct obelisk_rt_context {
   std::unordered_map<uint64_t,
                      std::unordered_map<uint64_t, SampledHistoryState>>
       sampledHistories;
+  std::unordered_map<uint64_t, SampledHistoryState> clockedSampleHistories;
   // Language and VPI force state is allocated on first use. A set bit masks
   // every ordinary publication to the corresponding canonical design bit.
   std::vector<uint64_t> forceMask;

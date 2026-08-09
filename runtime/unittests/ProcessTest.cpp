@@ -4815,6 +4815,48 @@ TEST(SampledValues, CapturesBoundNativePlanesWithoutWholeStateCopies) {
   obelisk_rt_v1_context_destroy(second);
 }
 
+TEST(SampledValues, SharesCompilerPlannedAlternateClockHistory) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  constexpr uint64_t site = UINT64_C(0x12345678);
+  uint8_t value = 0, unknown = 0, resultValue = 0, resultUnknown = 0;
+
+  // Missing ages have the sampled-value default. A disabled clock tick does
+  // not advance the shared ring.
+  ASSERT_EQ(obelisk_rt_v1_clocked_sample_read(
+                context, site, 4, 2, 0, 1, &resultValue, &resultUnknown),
+            OBELISK_RT_OK);
+  EXPECT_EQ(resultValue, UINT8_C(0x00));
+  EXPECT_EQ(resultUnknown, UINT8_C(0x0f));
+  value = UINT8_C(0x03);
+  ASSERT_EQ(obelisk_rt_v1_clocked_sample_update(context, site, 4, 2, 1, 0,
+                                                &value, &unknown),
+            OBELISK_RT_OK);
+
+  const uint8_t samples[] = {UINT8_C(0x0a), UINT8_C(0x04), UINT8_C(0x0c)};
+  const uint8_t unknowns[] = {UINT8_C(0x00), UINT8_C(0x01), UINT8_C(0x00)};
+  for (size_t index = 0; index != 3; ++index)
+    ASSERT_EQ(obelisk_rt_v1_clocked_sample_update(
+                  context, site, 4, 2, 1, 1, &samples[index], &unknowns[index]),
+              OBELISK_RT_OK);
+
+  const uint8_t expectedValues[] = {UINT8_C(0x0c), UINT8_C(0x04),
+                                    UINT8_C(0x0a)};
+  const uint8_t expectedUnknowns[] = {UINT8_C(0x00), UINT8_C(0x01),
+                                      UINT8_C(0x00)};
+  for (uint64_t age = 0; age != 3; ++age) {
+    ASSERT_EQ(obelisk_rt_v1_clocked_sample_read(
+                  context, site, 4, 2, age, 1, &resultValue, &resultUnknown),
+              OBELISK_RT_OK);
+    EXPECT_EQ(resultValue, expectedValues[age]);
+    EXPECT_EQ(resultUnknown, expectedUnknowns[age]);
+  }
+  EXPECT_EQ(obelisk_rt_v1_clocked_sample_read(
+                context, site, 4, 2, 3, 1, &resultValue, &resultUnknown),
+            OBELISK_RT_INVALID_ARGUMENT);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(SampledValues, SkipsSnapshotAllocationWithoutConsumers) {
   obelisk_rt_execution_descriptor_v1 execution{};
   execution.version = OBELISK_RT_VERSION;

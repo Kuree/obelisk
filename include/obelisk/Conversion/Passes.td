@@ -39,6 +39,15 @@ def ObeliskSimLowerUnitPass
   ];
 }
 
+def ObeliskSimMaterializeClockedSamplesPass
+    : Pass<"obelisk-sim-materialize-clocked-samples",
+           "obelisk::sim::SimDesignOp"> {
+  let summary = "Deduplicate and statically spawn alternate-clock samplers";
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect"
+  ];
+}
+
 def ObeliskSimThreadSuspensionPass
     : Pass<"obelisk-sim-thread-suspension", "obelisk::sim::SimFuncOp"> {
   let summary = "Thread promoted SSA state through suspension continuations";

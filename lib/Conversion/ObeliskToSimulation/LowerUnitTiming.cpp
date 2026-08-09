@@ -418,6 +418,14 @@ LogicalResult UnitLowering::lowerTiming(Operation *control,
                                         Operation *statement) {
   Location location = getSemanticLocation(control);
   SmallVector<Operation *> children = getChildren(control);
+  auto lowerControlledStatement =
+      [&](Operation *sampledClock) -> LogicalResult {
+    Operation *savedClock = activeSampledClock;
+    activeSampledClock = sampledClock;
+    LogicalResult result = lowerStatement(statement);
+    activeSampledClock = savedClock;
+    return result;
+  };
 
   if (isa<semantic::SVImplicitEventControlOp>(control)) {
     // The dependency set belongs to the controlled statement, including
@@ -429,7 +437,7 @@ LogicalResult UnitLowering::lowerTiming(Operation *control,
     llvm::SetVector<Value> dependencies;
     llvm::SetVector<Value> *saved = observedDependencies;
     observedDependencies = &dependencies;
-    LogicalResult result = lowerStatement(statement);
+    LogicalResult result = lowerControlledStatement(nullptr);
     observedDependencies = saved;
     if (failed(result))
       return failure();
@@ -466,7 +474,7 @@ LogicalResult UnitLowering::lowerTiming(Operation *control,
     Block *continuation = addBlock();
     if (failed(emitRepeatedEventSuspend(control, continuation)))
       return failure();
-    return lowerStatement(statement);
+    return lowerControlledStatement(nullptr);
   }
 
   Block *continuation = addBlock();
@@ -497,7 +505,8 @@ LogicalResult UnitLowering::lowerTiming(Operation *control,
     return failure();
   }
   setCurrent(continuation);
-  return lowerStatement(statement);
+  return lowerControlledStatement(
+      isa<semantic::SVSignalEventControlOp>(control) ? control : nullptr);
 }
 
 LogicalResult UnitLowering::lowerWait(semantic::SVWaitStatementOp op) {

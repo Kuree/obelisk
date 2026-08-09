@@ -361,7 +361,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         sim::SimRefLoadOp::create(builder, location, stateType, stateStorage);
 
   sampleAssertionValues = true;
-  llvm::scope_exit restoreSampling([&] { sampleAssertionValues = false; });
+  Operation *savedSampledClock = activeSampledClock;
+  activeSampledClock = clock;
+  llvm::scope_exit restoreSampling([&] {
+    sampleAssertionValues = false;
+    activeSampledClock = savedSampledClock;
+  });
 
   llvm::DenseMap<Operation *, Value> predicateCache;
   auto conditionalResult = [&](Value condition, bool passed) -> LogicalResult {

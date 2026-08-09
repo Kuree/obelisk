@@ -3351,9 +3351,12 @@ LogicalResult SimDesignOp::verifyRegions() {
   // this symbol table with a cached SymbolTableCollection.
   llvm::DenseMap<uint64_t, SimFuncOp> executableCodeUnits;
   for (SimFuncOp function : functions) {
+    bool pendingClockedSamplePlan = static_cast<bool>(
+        function->getAttrOfType<DictionaryAttr>(
+            "obelisk_sim.clocked_sample_plan"));
     if (!function.isExternal() &&
         function.getEntryKind() != EntryKind::RootInitializer &&
-        !function.getCodeUnitIdAttr())
+        !function.getCodeUnitIdAttr() && !pendingClockedSamplePlan)
       return function.emitOpError(
           "defined non-root function requires a code-unit ID");
     if (auto id = function.getCodeUnitId()) {
@@ -4217,6 +4220,28 @@ LogicalResult SimSampledHistoryOp::verify() {
   if (failed(verifyPositive(*this, getIdAttr(), "sample history site ID")) ||
       failed(verifyPositive(*this, getDepthAttr(), "sample history depth")))
     return failure();
+  return success();
+}
+
+LogicalResult SimClockedSampleUpdateOp::verify() {
+  if (!getPackedWidth(getCurrent().getType()))
+    return emitOpError("current value must have one packed type");
+  if (failed(verifyPositive(*this, getIdAttr(), "clocked sample site ID")) ||
+      failed(verifyPositive(*this, getDepthAttr(),
+                            "clocked sample history depth")))
+    return failure();
+  return success();
+}
+
+LogicalResult SimClockedSampleReadOp::verify() {
+  if (!getPackedWidth(getResult().getType()))
+    return emitOpError("result must have one packed type");
+  if (failed(verifyPositive(*this, getIdAttr(), "clocked sample site ID")) ||
+      failed(verifyPositive(*this, getDepthAttr(),
+                            "clocked sample history depth")))
+    return failure();
+  if (getAge() > getDepth())
+    return emitOpError("sample age must not exceed history depth");
   return success();
 }
 

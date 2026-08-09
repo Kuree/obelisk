@@ -1598,6 +1598,28 @@ def SimSampledHistoryOp : SimOp<"assert.sampled_history", [
   let hasVerifier = 1;
 }
 
+def SimClockedSampleUpdateOp : SimOp<"assert.clocked_sample_update", [
+    MemoryEffects<[MemRead<SimSchedulerResource>,
+                   MemWrite<SimSchedulerResource>]>
+  ]> {
+  let summary = "advance one compiler-planned alternate-clock sample ring";
+  let arguments = (ins SimContextType:$context, AnyType:$current, I1:$gate,
+                       I64Attr:$id, I64Attr:$depth);
+  let assemblyFormat = "$context `from` $current `gate` $gate `id` $id `depth` $depth attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+def SimClockedSampleReadOp : SimOp<"assert.clocked_sample_read", [
+    MemoryEffects<[MemRead<SimSchedulerResource>]>
+  ]> {
+  let summary = "read one age from a compiler-planned alternate-clock ring";
+  let arguments = (ins SimContextType:$context, I64Attr:$id, I64Attr:$depth,
+                       I64Attr:$age);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$context `id` $id `depth` $depth `age` $age attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
 def SimDeferredEnqueueOp : SimOp<"assert.deferred_enqueue", [
     MemoryEffects<[MemRead<SimSchedulerResource>,
                    MemWrite<SimSchedulerResource>,

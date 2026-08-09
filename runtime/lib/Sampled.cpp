@@ -251,3 +251,86 @@ extern "C" obelisk_rt_status obelisk_rt_v1_sampled_history(
     return OBELISK_RT_INVALID_DESIGN;
   }
 }
+
+extern "C" obelisk_rt_status obelisk_rt_v1_clocked_sample_update(
+    obelisk_rt_context *context, uint64_t siteID, uint64_t bitWidth,
+    uint64_t depth, uint32_t fourState, uint32_t gate,
+    const uint8_t *currentValue, const uint8_t *currentUnknown) {
+  size_t bytes = 0;
+  if (!context || siteID == 0 || depth == UINT64_MAX || fourState > 1 ||
+      gate > 1 || !currentValue || (fourState && !currentUnknown) ||
+      !checkedBytes(bitWidth, bytes) ||
+      depth + 1 > std::numeric_limits<size_t>::max() / bytes)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContextTransaction transaction(context);
+  try {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    uint64_t capacity = depth + 1;
+    SampledHistoryState &history = context->clockedSampleHistories[siteID];
+    if (history.bitWidth == 0) {
+      history.bitWidth = bitWidth;
+      history.depth = capacity;
+      history.value.assign(static_cast<size_t>(capacity) * bytes, 0);
+      history.unknown.assign(static_cast<size_t>(capacity) * bytes,
+                             fourState ? UINT8_MAX : 0);
+      if (bitWidth % 8 != 0 && fourState)
+        for (uint64_t index = 0; index != capacity; ++index)
+          history.unknown[index * bytes + bytes - 1] &=
+              static_cast<uint8_t>((1u << (bitWidth % 8)) - 1);
+    } else if (history.bitWidth != bitWidth || history.depth != capacity) {
+      return OBELISK_RT_LAYOUT_MISMATCH;
+    }
+    if (!gate)
+      return OBELISK_RT_OK;
+    std::memcpy(history.value.data() + history.next * bytes, currentValue,
+                bytes);
+    if (fourState)
+      std::memcpy(history.unknown.data() + history.next * bytes, currentUnknown,
+                  bytes);
+    else
+      std::memset(history.unknown.data() + history.next * bytes, 0, bytes);
+    history.next = (history.next + 1) % capacity;
+    if (history.count < capacity)
+      ++history.count;
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_INVALID_DESIGN;
+  }
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_clocked_sample_read(
+    obelisk_rt_context *context, uint64_t siteID, uint64_t bitWidth,
+    uint64_t depth, uint64_t age, uint32_t fourState, uint8_t *outValue,
+    uint8_t *outUnknown) {
+  size_t bytes = 0;
+  if (!context || siteID == 0 || depth == UINT64_MAX || age > depth ||
+      fourState > 1 || !outValue || !outUnknown ||
+      !checkedBytes(bitWidth, bytes))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContextTransaction transaction(context);
+  try {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    std::memset(outValue, 0, bytes);
+    std::memset(outUnknown, fourState ? UINT8_MAX : 0, bytes);
+    if (bitWidth % 8 != 0 && fourState)
+      outUnknown[bytes - 1] &=
+          static_cast<uint8_t>((1u << (bitWidth % 8)) - 1);
+    auto found = context->clockedSampleHistories.find(siteID);
+    if (found == context->clockedSampleHistories.end())
+      return OBELISK_RT_OK;
+    const SampledHistoryState &history = found->second;
+    uint64_t capacity = depth + 1;
+    if (history.bitWidth != bitWidth || history.depth != capacity)
+      return OBELISK_RT_LAYOUT_MISMATCH;
+    if (age >= history.count)
+      return OBELISK_RT_OK;
+    uint64_t index = (history.next + capacity - 1 - age) % capacity;
+    std::memcpy(outValue, history.value.data() + index * bytes, bytes);
+    std::memcpy(outUnknown, history.unknown.data() + index * bytes, bytes);
+    return OBELISK_RT_OK;
+  } catch (...) {
+    return OBELISK_RT_INVALID_DESIGN;
+  }
+}

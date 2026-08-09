@@ -2403,6 +2403,35 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       writeLogic(frame.data, output, previous);
     return status;
   }
+  case OBELISK_RT_INTRINSIC_V1_CLOCKED_SAMPLE_UPDATE: {
+    auto siteID = scalar(0), depth = scalar(1), gate = scalar(2);
+    if (!siteID || !depth || !gate || *gate > 1)
+      return OBELISK_RT_INVALID_BYTECODE;
+    Layout input = layoutAt(image, frame.function, inputRegister(3));
+    Logic current = readLogic(frame.data, input);
+    return obelisk_rt_v1_clocked_sample_update(
+        context, *siteID, current.width, *depth, current.fourState, *gate,
+        reinterpret_cast<const uint8_t *>(current.value.data()),
+        current.fourState
+            ? reinterpret_cast<const uint8_t *>(current.unknown.data())
+            : nullptr);
+  }
+  case OBELISK_RT_INTRINSIC_V1_CLOCKED_SAMPLE_READ: {
+    auto siteID = scalar(0), depth = scalar(1), age = scalar(2);
+    if (!siteID || !depth || !age)
+      return OBELISK_RT_INVALID_BYTECODE;
+    Layout output = layoutAt(image, frame.function, outputRegister(0));
+    Logic sampled{output.width, output.kind == OBELISK_RT_DBREG_LOGIC,
+                  LimbVector(limbCount(output.width)),
+                  LimbVector(limbCount(output.width))};
+    obelisk_rt_status status = obelisk_rt_v1_clocked_sample_read(
+        context, *siteID, sampled.width, *depth, *age, sampled.fourState,
+        reinterpret_cast<uint8_t *>(sampled.value.data()),
+        reinterpret_cast<uint8_t *>(sampled.unknown.data()));
+    if (status == OBELISK_RT_OK)
+      writeLogic(frame.data, output, sampled);
+    return status;
+  }
   case OBELISK_RT_INTRINSIC_V1_TIME_TO_REAL: {
     auto ticks = scalar(0);
     auto scale = scalar(1);

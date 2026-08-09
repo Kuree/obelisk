@@ -26,6 +26,10 @@ constexpr uint32_t kIntrinsicSampledRead =
     OBELISK_RT_INTRINSIC_V1_SAMPLED_READ;
 constexpr uint32_t kIntrinsicSampledHistory =
     OBELISK_RT_INTRINSIC_V1_SAMPLED_HISTORY;
+constexpr uint32_t kIntrinsicClockedSampleUpdate =
+    OBELISK_RT_INTRINSIC_V1_CLOCKED_SAMPLE_UPDATE;
+constexpr uint32_t kIntrinsicClockedSampleRead =
+    OBELISK_RT_INTRINSIC_V1_CLOCKED_SAMPLE_READ;
 constexpr uint32_t kIntrinsicTimeToReal = OBELISK_RT_INTRINSIC_V1_TIME_TO_REAL;
 constexpr uint32_t kIntrinsicTimeFromReal =
     OBELISK_RT_INTRINSIC_V1_TIME_FROM_REAL;

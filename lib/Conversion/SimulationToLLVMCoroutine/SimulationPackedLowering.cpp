@@ -111,8 +111,8 @@ LogicalResult lowerPackedSimulationOperations(
             // enough enabled clock ticks, even when live Active-region state
             // is inductively two-state.
             if (isa<sim::LogicType>(result.getType()) &&
-                !isa<sim::SimSampledReadOp, sim::SimSampledHistoryOp>(
-                    operation) &&
+                !isa<sim::SimSampledReadOp, sim::SimSampledHistoryOp,
+                     sim::SimClockedSampleReadOp>(operation) &&
                 isTwoState(result))
               nativeTwoStateValues.insert(result);
           if (!guardedTwoState)
@@ -297,6 +297,7 @@ LogicalResult lowerPackedSimulationOperations(
       sim::SimAssertionControlOp, sim::SimAssertionEnabledOp,
       sim::SimAssertionActionStateOp,
       sim::SimSampledReadOp, sim::SimSampledHistoryOp,
+      sim::SimClockedSampleUpdateOp, sim::SimClockedSampleReadOp,
       sim::SimMonitorRegisterOp, sim::SimMonitorControlOp,
       sim::SimMonitorCurrentOp, sim::SimBitsDynExtractOp, sim::SimClassNullOp,
       sim::SimCovergroupNullOp, sim::SimCovergroupCreateOp,

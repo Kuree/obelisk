@@ -161,6 +161,10 @@ private:
                  ::mlir::Value receiverOverride = {});
   ::mlir::FailureOr<::mlir::Value>
   lowerSystemCall(semantic::SVCallExpressionOp op);
+  ::mlir::FailureOr<::mlir::Value> lowerAlternateClockSample(
+      ::mlir::Operation *expression, ::mlir::Operation *gateExpression,
+      semantic::SVSignalEventControlOp clock, uint64_t depth, uint64_t age,
+      ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value>
   lowerArrayQuerySystemCall(semantic::SVCallExpressionOp op);
   ::mlir::FailureOr<::mlir::Value>
@@ -313,12 +317,19 @@ private:
   ::llvm::SetVector<::mlir::Value> *observedDependencies = nullptr;
   ::llvm::SetVector<::mlir::Value> *observedWrites = nullptr;
   ::mlir::Operation *topLevelWildcardControl = nullptr;
+  ::mlir::Operation *activeSampledClock = nullptr;
   bool observeNonblockingWrites = false;
   ::mlir::Value expressionPlaceholder;
   ::mlir::Value unboundedPlaceholder;
   ::mlir::Value lvalueReferencePlaceholder;
   bool continuousStore = false;
   bool sampleAssertionValues = false;
+  struct AlternateClockSamplePlan {
+    uint64_t id;
+    uint64_t depth;
+    ::mlir::Type type;
+  };
+  ::llvm::StringMap<AlternateClockSamplePlan> alternateClockSamplePlans;
   ::mlir::SmallVector<::mlir::Value> randomizeCandidateValues;
   std::string returnPath;
   ::mlir::SmallVector<std::string> copyOutPaths;

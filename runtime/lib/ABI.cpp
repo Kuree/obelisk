@@ -752,6 +752,14 @@ ABI_FUNCTION(obelisk_rt_v1_sampled_history,
                                    uint64_t, uint32_t, uint32_t,
                                    const uint8_t *, const uint8_t *, uint8_t *,
                                    uint8_t *));
+ABI_FUNCTION(obelisk_rt_v1_clocked_sample_update,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint64_t, uint64_t,
+                                   uint64_t, uint32_t, uint32_t,
+                                   const uint8_t *, const uint8_t *));
+ABI_FUNCTION(obelisk_rt_v1_clocked_sample_read,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint64_t, uint64_t,
+                                   uint64_t, uint64_t, uint32_t, uint8_t *,
+                                   uint8_t *));
 ABI_FUNCTION(obelisk_rt_v1_assertion_control,
              obelisk_rt_status (*)(obelisk_rt_context *, uint32_t, uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_assertion_enabled,
