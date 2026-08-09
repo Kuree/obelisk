@@ -33,7 +33,8 @@ bool isWeakReferenceCall(semantic::SVCallExpressionOp op) {
 FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
-  if (op->hasAttr(randomizeAttrName))
+  if (op->hasAttr(randomizeAttrName) ||
+      op->hasAttr(randomizeDispatchAttrName))
     return lowerRandomize(op);
   StringRef covergroupMethod = op.getCalleeName();
   if ((covergroupMethod == "sample" || covergroupMethod == "start" ||
@@ -1218,9 +1219,75 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       .getResult();
 }
 
-FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
+FailureOr<Value>
+UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
+                             Value receiverOverride) {
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
+  if (op->hasAttr(randomizeDispatchAttrName)) {
+    auto receiverIndexAttr =
+        op->getAttrOfType<IntegerAttr>(randomReceiverIndexAttrName);
+    FailureOr<Type> resultType = getNormalizedSemanticType(op);
+    if (!receiverIndexAttr || failed(resultType) ||
+        receiverIndexAttr.getValue().isNegative() ||
+        receiverIndexAttr.getValue().getActiveBits() > 64 ||
+        receiverIndexAttr.getValue().getZExtValue() >= children.size()) {
+      emitError(location) << "randomize dispatch has malformed metadata";
+      return failure();
+    }
+    unsigned receiverIndex =
+        static_cast<unsigned>(receiverIndexAttr.getValue().getZExtValue());
+    FailureOr<Value> loweredReceiver = receiverOverride
+                                           ? FailureOr<Value>(receiverOverride)
+                                           : lowerExpression(
+                                                 children[receiverIndex]);
+    if (failed(loweredReceiver) ||
+        !isa<sim::ClassHandleType>((*loweredReceiver).getType())) {
+      emitError(location) << "randomize dispatch receiver is not a class object";
+      return failure();
+    }
+
+    SmallVector<semantic::SVCallExpressionOp> alternatives;
+    for (Operation *child : children)
+      if (auto alternative = dyn_cast<semantic::SVCallExpressionOp>(child);
+          alternative &&
+          alternative->hasAttr(randomizePlanClassAttrName) &&
+          alternative->hasAttr(randomizeAttrName))
+        alternatives.push_back(alternative);
+
+    Block *done = addBlock();
+    Value doneResult = done->addArgument(*resultType, location);
+    for (semantic::SVCallExpressionOp alternative : alternatives) {
+      auto planClass = alternative->getAttrOfType<FlatSymbolRefAttr>(
+          randomizePlanClassAttrName);
+      if (!planClass) {
+        emitError(location) << "randomize alternative has no target class";
+        return failure();
+      }
+      Value matches = sim::SimClassIsInstanceOp::create(
+          builder, location, *loweredReceiver, planClass);
+      Block *selected = addBlock();
+      Block *next = addBlock();
+      cf::CondBranchOp::create(builder, location, matches, selected,
+                               ValueRange{}, next, ValueRange{});
+      setCurrent(selected);
+      FailureOr<Value> result = lowerRandomize(alternative, *loweredReceiver);
+      if (failed(result))
+        return failure();
+      cf::BranchOp::create(builder, location, done, ValueRange{*result});
+      setCurrent(next);
+    }
+    FailureOr<Value> noObject = convert(
+        arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                  builder.getBoolAttr(false)),
+        *resultType, false, location);
+    if (failed(noObject))
+      return failure();
+    cf::BranchOp::create(builder, location, done, ValueRange{*noObject});
+    setCurrent(done);
+    return doneResult;
+  }
+
   auto properties = op->getAttrOfType<ArrayAttr>(randomPropertiesAttrName);
   auto totalWidthAttr =
       op->getAttrOfType<IntegerAttr>(randomTotalWidthAttrName);
@@ -1255,7 +1322,23 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     return failure();
   }
 
-  FailureOr<Value> loweredReceiver = lowerExpression(children[receiverIndex]);
+  FailureOr<Value> loweredReceiver =
+      receiverOverride ? FailureOr<Value>(receiverOverride)
+                       : lowerExpression(children[receiverIndex]);
+  if (receiverOverride) {
+    auto planClass = op->getAttrOfType<FlatSymbolRefAttr>(
+        randomizePlanClassAttrName);
+    if (!planClass) {
+      emitError(location) << "randomize receiver override has no target class";
+      return failure();
+    }
+    Type targetType =
+        sim::ClassHandleType::get(function.getContext(), planClass);
+    if ((*loweredReceiver).getType() != targetType)
+      loweredReceiver = sim::SimClassCastOp::create(
+                            builder, location, targetType, *loweredReceiver)
+                            .getResult();
+  }
   auto objectType =
       succeeded(loweredReceiver)
           ? dyn_cast<sim::ClassHandleType>((*loweredReceiver).getType())
@@ -1263,6 +1346,50 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   if (failed(loweredReceiver) || !objectType)
     return failure();
   Value receiver = *loweredReceiver;
+
+  auto callLifecycleHook = [&](StringRef calleeAttr,
+                               StringRef ownerAttr, StringRef capturesAttr,
+                               StringRef readsAttr) -> LogicalResult {
+    auto callee = op->getAttrOfType<FlatSymbolRefAttr>(calleeAttr);
+    auto owner = op->getAttrOfType<FlatSymbolRefAttr>(ownerAttr);
+    if (static_cast<bool>(callee) != static_cast<bool>(owner)) {
+      emitError(location) << "randomize lifecycle hook metadata is incomplete";
+      return failure();
+    }
+    if (!callee)
+      return success();
+    Type ownerType = sim::ClassHandleType::get(function.getContext(), owner);
+    Value hookReceiver = receiver;
+    if (hookReceiver.getType() != ownerType)
+      hookReceiver = sim::SimClassCastOp::create(
+          builder, location, ownerType, hookReceiver);
+    llvm::StringSet<> readCaptures;
+    if (auto reads = op->getAttrOfType<ArrayAttr>(readsAttr))
+      for (Attribute read : reads)
+        readCaptures.insert(cast<StringAttr>(read).getValue());
+    SmallVector<Value> arguments;
+    if (auto captures = op->getAttrOfType<ArrayAttr>(capturesAttr))
+      for (Attribute captureAttr : captures) {
+        StringRef path = cast<StringAttr>(captureAttr).getValue();
+        Value capture = values.lookup(path);
+        if (!capture) {
+          emitError(location)
+              << "randomization hook capture has no local binding: " << path;
+          return failure();
+        }
+        if (readCaptures.contains(path))
+          recordSensitivity(capture);
+        arguments.push_back(capture);
+      }
+    sim::SimClassDirectCallOp::create(builder, location, TypeRange{}, callee,
+                                      hookReceiver, arguments);
+    return success();
+  };
+  if (failed(callLifecycleHook(randomPreHookAttrName,
+                               randomPreHookOwnerAttrName,
+                               randomPreHookCapturesAttrName,
+                               randomPreHookReadCapturesAttrName)))
+    return failure();
 
   struct Property {
     Type type;
@@ -1272,6 +1399,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     bool isRandC;
     Value randcKeyReference;
     Value randcPositionReference;
+    Value nextRandcKey;
+    Value nextRandcPosition;
   };
   SmallVector<Property> planned;
   uint64_t plannedWidth = 0;
@@ -1327,7 +1456,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     }
     planned.push_back({type, static_cast<unsigned>(width),
                        signedAttr.getValue(), reference, randcAttr.getValue(),
-                       randcKeyReference, randcPositionReference});
+                       randcKeyReference, randcPositionReference, {}, {}});
     plannedWidth += width;
   }
   if (plannedWidth != totalWidth) {
@@ -1484,12 +1613,14 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
       Block *mergeBlock = addBlock();
       Value mergedState = mergeBlock->addArgument(i64, location);
       Value mergedBits = mergeBlock->addArgument(i64, location);
+      Value mergedKey = mergeBlock->addArgument(i64, location);
+      Value mergedPosition = mergeBlock->addArgument(i64, location);
       cf::CondBranchOp::create(builder, location, enabled, enabledBlock,
                                ValueRange{}, disabledBlock, ValueRange{});
 
       setCurrent(disabledBlock);
       cf::BranchOp::create(builder, location, mergeBlock,
-                           ValueRange{state, bits});
+                           ValueRange{state, bits, constant64(0), constant64(0)});
 
       setCurrent(enabledBlock);
       Value key = sim::SimManagedLoadOp::create(
@@ -1516,17 +1647,15 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
       auto cycle = sim::SimRandomCycleNextOp::create(
           builder, location, cycleKey, position,
           builder.getI32IntegerAttr(property.width));
-      sim::SimManagedStoreOp::create(builder, location, cycleKey,
-                                     property.randcKeyReference);
-      sim::SimManagedStoreOp::create(builder, location,
-                                     cycle.getNextPosition(),
-                                     property.randcPositionReference);
       cf::BranchOp::create(builder, location, mergeBlock,
-                           ValueRange{cycleState, cycle.getValue()});
+                           ValueRange{cycleState, cycle.getValue(), cycleKey,
+                                      cycle.getNextPosition()});
 
       setCurrent(mergeBlock);
       state = mergedState;
       bits = mergedBits;
+      property.nextRandcKey = mergedKey;
+      property.nextRandcPosition = mergedPosition;
     }
     uint64_t aggregateMask = valueMask;
     if (currentOffset != 0) {
@@ -4297,6 +4426,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   Block *modeAdvance = addBlock();
   Block *modeFallbackBlock = addBlock();
   Block *commit = addBlock();
+  Block *postBlock = addBlock();
   Block *failedBlock = addBlock();
   Block *done = addBlock();
   Value counter = loop->addArgument(i64, location);
@@ -4705,11 +4835,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
       materializeConstraintCheck(currentAssignment);
   if (failed(disabledCheck))
     return failure();
-  Value disabledSuccess = arith::ConstantOp::create(
-      builder, location, builder.getI1Type(), builder.getBoolAttr(true));
-  cf::CondBranchOp::create(builder, location, disabledCheck->hard, done,
-                           ValueRange{disabledSuccess}, failedBlock,
-                           ValueRange{});
+  cf::CondBranchOp::create(builder, location, disabledCheck->hard, postBlock,
+                           ValueRange{}, failedBlock, ValueRange{});
 
   setCurrent(loop);
   FailureOr<Value> proposal = materializeProposal(counter, attempt);
@@ -4850,11 +4977,26 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     setCurrent(store);
     sim::SimManagedStoreOp::create(builder, location, candidate,
                                    property.reference);
+    if (property.isRandC) {
+      sim::SimManagedStoreOp::create(builder, location, property.nextRandcKey,
+                                     property.randcKeyReference);
+      sim::SimManagedStoreOp::create(builder, location,
+                                     property.nextRandcPosition,
+                                     property.randcPositionReference);
+    }
     cf::BranchOp::create(builder, location, nextProperty);
     setCurrent(nextProperty);
   }
   cf::BranchOp::create(builder, location, commitDone);
   setCurrent(commitDone);
+  cf::BranchOp::create(builder, location, postBlock);
+
+  setCurrent(postBlock);
+  if (failed(callLifecycleHook(randomPostHookAttrName,
+                               randomPostHookOwnerAttrName,
+                               randomPostHookCapturesAttrName,
+                               randomPostHookReadCapturesAttrName)))
+    return failure();
   Value success = arith::ConstantOp::create(
       builder, location, builder.getI1Type(), builder.getBoolAttr(true));
   cf::BranchOp::create(builder, location, done, ValueRange{success});

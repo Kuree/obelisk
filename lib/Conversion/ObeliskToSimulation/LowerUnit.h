@@ -157,7 +157,8 @@ private:
   ::mlir::FailureOr<::mlir::Value>
   lowerNewClass(semantic::SVNewClassExpressionOp op);
   ::mlir::FailureOr<::mlir::Value>
-  lowerRandomize(semantic::SVCallExpressionOp op);
+  lowerRandomize(semantic::SVCallExpressionOp op,
+                 ::mlir::Value receiverOverride = {});
   ::mlir::FailureOr<::mlir::Value>
   lowerSystemCall(semantic::SVCallExpressionOp op);
   ::mlir::FailureOr<::mlir::Value>

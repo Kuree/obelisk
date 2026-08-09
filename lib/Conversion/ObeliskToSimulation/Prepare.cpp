@@ -553,11 +553,13 @@ void ObeliskSimPreparePass::runOnOperation() {
   // constraint declarations are erased. The unit-lowering pass is isolated,
   // so the cloned constraint expressions and this compact field inventory are
   // its complete compiler-owned randomization plan.
-  auto freezeRandomizeContract =
+  std::function<bool(semantic::SVCallExpressionOp)> freezeRandomizeContract;
+  freezeRandomizeContract =
       [&](semantic::SVCallExpressionOp call) -> bool {
     if (!call.getIsSystemCall() || call.getCalleeName() != "randomize")
       return false;
-    if (call->hasAttr(randomizeAttrName))
+    if (call->hasAttr(randomizeAttrName) ||
+        call->hasAttr(randomizeDispatchAttrName))
       return true;
     SmallVector<Operation *> callChildren = getChildren(call);
     if (callChildren.empty())
@@ -575,12 +577,85 @@ void ObeliskSimPreparePass::runOnOperation() {
 
     auto foundClass =
         semanticClasses.find(receiverType.getClassName().getLeafReference());
+    if (auto plannedClass =
+            call->getAttrOfType<FlatSymbolRefAttr>(randomizePlanClassAttrName)) {
+      foundClass = semanticClasses.end();
+      for (semantic::SVClassTypeOp candidate : classSources)
+        if (classSymbols.lookup(candidate).getValue() ==
+            plannedClass.getValue()) {
+          foundClass = semanticClasses.find(
+              cast<semantic::ClassHandleType>(candidate.getSemanticType())
+                  .getClassName()
+                  .getLeafReference());
+          break;
+        }
+    }
     if (foundClass == semanticClasses.end()) {
       emitError(getSemanticLocation(call))
           << "randomize receiver class does not resolve";
       invalid = true;
       return true;
     }
+
+    // A randomize call uses the dynamic object's complete property and
+    // constraint set even though randomize itself is a builtin. Specialize a
+    // frozen plan for every concrete class that can inhabit the static handle,
+    // then select the exact plan once at the call site. Keeping the alternatives
+    // as nested semantic calls lets the ordinary capture analysis see their
+    // union and keeps all sampler generation in the isolated unit lowering.
+    if (!call->hasAttr(randomizePlanClassAttrName)) {
+      struct DynamicPlan {
+        semantic::SVClassTypeOp classType;
+        unsigned depth;
+      };
+      SmallVector<DynamicPlan> dynamicPlans;
+      for (semantic::SVClassTypeOp candidate : classSources) {
+        if (candidate.getIsAbstract() || candidate.getIsInterface())
+          continue;
+        SmallVector<semantic::SVClassTypeOp> candidateHierarchy;
+        if (failed(collectClassHierarchy(candidate, candidateHierarchy,
+                                         "randomization dispatch"))) {
+          invalid = true;
+          return true;
+        }
+        if (llvm::is_contained(candidateHierarchy, foundClass->second))
+          dynamicPlans.push_back(
+              {candidate, static_cast<unsigned>(candidateHierarchy.size())});
+      }
+      llvm::sort(dynamicPlans, [&](const DynamicPlan &lhs,
+                                   const DynamicPlan &rhs) {
+        if (lhs.depth != rhs.depth)
+          return lhs.depth > rhs.depth;
+        return classSymbols.lookup(lhs.classType).getValue() <
+               classSymbols.lookup(rhs.classType).getValue();
+      });
+      {
+        SmallVector<semantic::SVCallExpressionOp> alternatives;
+        alternatives.reserve(dynamicPlans.size());
+        // Clone every raw call before inserting any clone into the source call;
+        // otherwise later clones would recursively contain earlier plans.
+        for (const DynamicPlan &plan : dynamicPlans) {
+          auto alternative =
+              cast<semantic::SVCallExpressionOp>(call->clone());
+          alternative->setAttr(
+              randomizePlanClassAttrName,
+              FlatSymbolRefAttr::get(
+                  context, classSymbols.lookup(plan.classType).getValue()));
+          alternatives.push_back(alternative);
+        }
+        OpBuilder alternativeBuilder =
+            OpBuilder::atBlockEnd(&call->getRegion(0).front());
+        for (semantic::SVCallExpressionOp alternative : alternatives) {
+          alternativeBuilder.insert(alternative);
+          freezeRandomizeContract(alternative);
+        }
+        call->setAttr(randomizeDispatchAttrName, builder.getUnitAttr());
+        call->setAttr(randomReceiverIndexAttrName,
+                      builder.getI32IntegerAttr(receiverIndex));
+        return true;
+      }
+    }
+
     SmallVector<semantic::SVClassTypeOp> hierarchy;
     if (failed(collectClassHierarchy(foundClass->second, hierarchy,
                                      "randomization"))) {
@@ -601,6 +676,8 @@ void ObeliskSimPreparePass::runOnOperation() {
     SmallVector<RandomProperty> properties;
     SmallVector<Operation *> constraintRoots;
     SmallVector<EffectiveConstraintGroup> constraintGroups;
+    semantic::SVSubroutineSymbolOp preRandomizeHook;
+    semantic::SVSubroutineSymbolOp postRandomizeHook;
     if (hasInlineConstraints)
       for (auto [index, child] : llvm::enumerate(callChildren))
         if (index != receiverIndex && isa<semantic::SVConstraintListOp>(child))
@@ -610,10 +687,34 @@ void ObeliskSimPreparePass::runOnOperation() {
         if (semantic::SVSubroutineSymbolOp method = getClassMethod(member);
             method && method.getIsPrePostRandomize().value_or(false) &&
             !method.getIsBuiltin().value_or(false)) {
-          emitError(getSemanticLocation(method))
-              << "user pre_randomize and post_randomize hooks are not "
-                 "executable yet";
-          invalid = true;
+          StringRef name = method.getName().value_or("");
+          std::optional<Type> methodType = method.getSemanticType();
+          auto subroutineType =
+              methodType ? dyn_cast<semantic::SubroutineType>(*methodType)
+                         : semantic::SubroutineType{};
+          auto signature =
+              subroutineType
+                  ? dyn_cast<FunctionType>(subroutineType.getSignature())
+                  : FunctionType{};
+          if (method.getIsStatic().value_or(false) ||
+              method.getSubroutineKind() !=
+                  semantic::SVSubroutineKind::Function ||
+              !signature || signature.getNumInputs() != 0 ||
+              signature.getNumResults() != 1 ||
+              !isa<semantic::VoidType>(signature.getResult(0))) {
+            emitError(getSemanticLocation(method))
+                << "randomization hooks must be void instance functions "
+                   "without arguments";
+            invalid = true;
+          } else if (name == "pre_randomize") {
+            preRandomizeHook = method;
+          } else if (name == "post_randomize") {
+            postRandomizeHook = method;
+          } else {
+            emitError(getSemanticLocation(method))
+                << "unknown randomization lifecycle hook " << name;
+            invalid = true;
+          }
           continue;
         }
         if (auto property =
@@ -665,6 +766,35 @@ void ObeliskSimPreparePass::runOnOperation() {
         }
       }
     }
+    auto freezeHook = [&](semantic::SVSubroutineSymbolOp hook,
+                          StringRef calleeAttr,
+                          StringRef ownerAttr,
+                          StringRef sourceAttr) -> LogicalResult {
+      if (!hook)
+        return success();
+      auto callee = directCalleeNames.find(hook);
+      semantic::SVClassTypeOp owner = getOwningClass(hook);
+      StringAttr ownerSymbol = owner ? classSymbols.lookup(owner) : StringAttr{};
+      if (callee == directCalleeNames.end() || !ownerSymbol) {
+        emitError(getSemanticLocation(hook))
+            << "randomization hook has no executable class method";
+        return failure();
+      }
+      call->setAttr(calleeAttr,
+                    FlatSymbolRefAttr::get(context, callee->second));
+      call->setAttr(ownerAttr,
+                    FlatSymbolRefAttr::get(context, ownerSymbol.getValue()));
+      call->setAttr(sourceAttr,
+                    FlatSymbolRefAttr::get(context, hook.getSymName()));
+      return success();
+    };
+    if (failed(freezeHook(preRandomizeHook, randomPreHookAttrName,
+                          randomPreHookOwnerAttrName,
+                          randomPreHookSourceAttrName)) ||
+        failed(freezeHook(postRandomizeHook, randomPostHookAttrName,
+                          randomPostHookOwnerAttrName,
+                          randomPostHookSourceAttrName)))
+      invalid = true;
     collectEffectiveConstraints(hierarchy, constraintGroups);
     if (constraintGroups.size() > 64) {
       emitError(getSemanticLocation(call))
@@ -1082,13 +1212,48 @@ void ObeliskSimPreparePass::runOnOperation() {
                          builder.getArrayAttr(dependencies));
   }
 
+  auto freezeRandomizeHookCaptures =
+      [&](semantic::SVCallExpressionOp call) -> LogicalResult {
+    auto freeze = [&](StringRef sourceAttr, StringRef capturesAttr,
+                      StringRef readsAttr) -> LogicalResult {
+      auto source = call->getAttrOfType<FlatSymbolRefAttr>(sourceAttr);
+      if (!source)
+        return success();
+      auto found = semanticSymbols.find(source.getLeafReference());
+      if (found == semanticSymbols.end()) {
+        emitError(getSemanticLocation(call))
+            << "randomization hook source no longer resolves";
+        return failure();
+      }
+      SmallVector<Attribute> captures;
+      SmallVector<Attribute> reads;
+      for (const auto &capture : unitCaptures[found->second]) {
+        captures.push_back(builder.getStringAttr(capture.first));
+        if (unitReadCaptures[found->second].contains(capture.first))
+          reads.push_back(builder.getStringAttr(capture.first));
+      }
+      call->setAttr(capturesAttr, builder.getArrayAttr(captures));
+      call->setAttr(readsAttr, builder.getArrayAttr(reads));
+      return success();
+    };
+    return failure(failed(freeze(randomPreHookSourceAttrName,
+                                 randomPreHookCapturesAttrName,
+                                 randomPreHookReadCapturesAttrName)) ||
+                   failed(freeze(randomPostHookSourceAttrName,
+                                 randomPostHookCapturesAttrName,
+                                 randomPostHookReadCapturesAttrName)));
+  };
+
   auto freezeCallContract = [&](semantic::SVCallExpressionOp call) {
     if (freezeRandModeContract(call))
       return;
     if (freezeConstraintModeContract(call))
       return;
-    if (freezeRandomizeContract(call))
+    if (freezeRandomizeContract(call)) {
+      if (failed(freezeRandomizeHookCaptures(call)))
+        invalid = true;
       return;
+    }
     Operation *targetSource = resolveDirectCallee(call);
     if (!targetSource)
       return;

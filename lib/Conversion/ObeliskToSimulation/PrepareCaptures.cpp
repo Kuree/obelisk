@@ -254,6 +254,17 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       Operation *target = units.resolveDirectCallee(call, semanticSymbols);
       if (target && targets.insert(target).second)
         callEdges[unit.source].push_back(target);
+      auto addRandomizeHook = [&](StringRef attrName) {
+        auto reference = call->getAttrOfType<FlatSymbolRefAttr>(attrName);
+        auto hook = reference
+                        ? semanticSymbols.find(reference.getLeafReference())
+                        : semanticSymbols.end();
+        if (hook != semanticSymbols.end() &&
+            targets.insert(hook->second).second)
+          callEdges[unit.source].push_back(hook->second);
+      };
+      addRandomizeHook(randomPreHookSourceAttrName);
+      addRandomizeHook(randomPostHookSourceAttrName);
     });
   }
 

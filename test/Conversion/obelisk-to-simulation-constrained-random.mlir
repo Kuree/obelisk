@@ -558,7 +558,6 @@ module {
 
 // UNSUPPORTED-DAG: error: rand enum and tagged-union domains are not executable yet
 // UNSUPPORTED-DAG: error: solve before cannot order a property before itself
-// UNSUPPORTED-DAG: error: user pre_randomize and post_randomize hooks are not executable yet
 // UNSUPPORTED-DAG: error: constraint expression is outside the total side-effect-free executable boundary: obelisk.sv.expression.assignment
 // UNSUPPORTED-DAG: error: constraint expression is outside the total side-effect-free executable boundary: obelisk.sv.expression.unary_op
 
@@ -570,7 +569,6 @@ module {
 // formula, so the all-enabled path commits directly. A cold masked fallback is
 // retained for property-specific rand_mode changes made at runtime.
 // DOMAIN-LABEL: obelisk_sim.func private @unit_1
-// DOMAIN: ^bb2:
 // DOMAIN: %[[RAW:.*]] = arith.andi {{.*}}, {{.*}} : i64
 // DOMAIN: obelisk_sim.managed.store
 // DOMAIN: %[[LOW:.*]] = arith.andi %[[COUNTER:.*]], {{.*}} : i64
@@ -711,7 +709,6 @@ module {
 // bits, producing every legal assignment uniformly on the all-enabled path.
 // Partial modes retain masked checking and runtime solving.
 // TABLE-LABEL: obelisk_sim.func private @unit_1
-// TABLE: ^bb1:
 // TABLE: %[[RAW:.*]] = arith.andi {{.*}}, {{.*}} : i64
 // TABLE: obelisk_sim.managed.store
 // TABLE: %[[INDEX:.*]] = arith.andi %[[COUNTER:.*]], {{.*}} : i64
@@ -744,12 +741,12 @@ module {
 // SOLVE-BEFORE: %[[RELEVANT_CONSTRAINT_MODES:.*]] = arith.andi %[[CONSTRAINT_MODES]], {{.*}} : i64
 // SOLVE-BEFORE: %[[ALL_CONSTRAINTS_ENABLED:.*]] = arith.cmpi eq, %[[RELEVANT_CONSTRAINT_MODES]], {{.*}} : i64
 // SOLVE-BEFORE: %[[USE_COMPILE_PLAN:.*]] = arith.andi %[[ALL_CONSTRAINTS_ENABLED]], %[[ALL_PROPERTIES_ENABLED]] : i1
-// SOLVE-BEFORE: cf.cond_br %[[USE_COMPILE_PLAN]]
-// SOLVE-BEFORE: ^bb3:
+// SOLVE-BEFORE: cf.cond_br %[[USE_COMPILE_PLAN]], ^[[COMPILE_PLAN:bb[0-9]+]],
+// SOLVE-BEFORE: ^[[COMPILE_PLAN]]:
 // SOLVE-BEFORE: %[[FIRST_INDEX:.*]] = arith.andi {{.*}}, {{.*}} : i64
 // SOLVE-BEFORE: %[[FIRST_ZERO:.*]] = arith.cmpi eq, %[[FIRST_INDEX]], {{.*}} : i64
-// SOLVE-BEFORE: cf.cond_br %[[FIRST_ZERO]]
-// SOLVE-BEFORE: ^bb5:
+// SOLVE-BEFORE: cf.cond_br %[[FIRST_ZERO]], ^[[SECOND_DRAW:bb[0-9]+]],
+// SOLVE-BEFORE: ^[[SECOND_DRAW]]:
 // SOLVE-BEFORE: arith.muli
 // SOLVE-BEFORE: %[[SECOND_INDEX:.*]] = arith.andi {{.*}}, {{.*}} : i64
 // SOLVE-BEFORE: %[[SECOND_ZERO:.*]] = arith.cmpi eq, %[[SECOND_INDEX]], {{.*}} : i64
@@ -794,7 +791,6 @@ module {
 // product with z.
 // COMPONENT-CORRELATED-LABEL: obelisk_sim.func private @unit_1
 // COMPONENT-CORRELATED-COUNT-1: arith.cmpi ult
-// COMPONENT-CORRELATED: ^bb5
 // COMPONENT-CORRELATED-COUNT-14: cf.cond_br
 // COMPONENT-CORRELATED: obelisk_sim.random.solve {{.*}} mutable
 // COMPONENT-CORRELATED-COUNT-2: arith.trunci {{.*}} : i64 to i4
@@ -822,9 +818,7 @@ module {
 // fallback.
 // COMPONENT-CAPTURE-LABEL: obelisk_sim.func private @unit_1
 // COMPONENT-CAPTURE: arith.cmpi ult
-// COMPONENT-CAPTURE: ^bb5
 // COMPONENT-CAPTURE: cf.cond_br
-// COMPONENT-CAPTURE: ^bb7
 // COMPONENT-CAPTURE: cf.cond_br
 // COMPONENT-CAPTURE: arith.remui
 // COMPONENT-CAPTURE: arith.cmpi ult
@@ -892,7 +886,6 @@ module {
 // ALIAS-FALLBACK: obelisk_sim.random.solve
 
 // DEFINITION-LABEL: obelisk_sim.func private @unit_1
-// DEFINITION: ^bb2:
 // DEFINITION: %[[RAW:.*]] = arith.andi {{.*}}, {{.*}} : i64
 // DEFINITION: obelisk_sim.managed.store
 // DEFINITION: %[[Z_SHIFTED:.*]] = arith.shrui %[[COUNTER:.*]], {{.*}} : i64

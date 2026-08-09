@@ -30,8 +30,10 @@
 // RANDC: %[[KEY_VALUE:.*]] = obelisk_sim.managed.load %[[KEY_REF]]
 // RANDC: %[[POSITION_VALUE:.*]] = obelisk_sim.managed.load %[[POSITION_REF]]
 // RANDC: %[[NEXT_POSITION:.*]], %[[VALUE:.*]] = obelisk_sim.random.cycle_next {{.*}}, %[[POSITION_VALUE]] {width = 4 : i32}
-// RANDC: obelisk_sim.managed.store %[[NEXT_POSITION]] to %[[POSITION_REF]]
+// RANDC-NOT: obelisk_sim.managed.store {{.*}} to %[[POSITION_REF]]
 // RANDC: obelisk_sim.random.solve
+// RANDC: obelisk_sim.managed.store {{.*}} to %[[KEY_REF]]
+// RANDC-NEXT: obelisk_sim.managed.store {{.*}} to %[[POSITION_REF]]
 
 // RANDC-NATIVE: llvm.func @obelisk_rt_v1_random_cycle_next
 // RANDC-NATIVE: %[[CYCLE_STATUS:.*]] = llvm.call @obelisk_rt_v1_random_cycle_next

@@ -132,8 +132,32 @@ inline constexpr ::mlir::StringLiteral observerEventPrimaryAttrName =
     "obelisk_sim.event_primary";
 inline constexpr ::mlir::StringLiteral randomizeAttrName =
     "obelisk_sim.randomize";
+inline constexpr ::mlir::StringLiteral randomizeDispatchAttrName =
+    "obelisk_sim.randomize_dispatch";
+inline constexpr ::mlir::StringLiteral randomizePlanClassAttrName =
+    "obelisk_sim.randomize_plan_class";
 inline constexpr ::mlir::StringLiteral randomReceiverIndexAttrName =
     "obelisk_sim.random_receiver_index";
+inline constexpr ::mlir::StringLiteral randomPreHookAttrName =
+    "obelisk_sim.random_pre_hook";
+inline constexpr ::mlir::StringLiteral randomPreHookOwnerAttrName =
+    "obelisk_sim.random_pre_hook_owner";
+inline constexpr ::mlir::StringLiteral randomPreHookSourceAttrName =
+    "obelisk_sim.random_pre_hook_source";
+inline constexpr ::mlir::StringLiteral randomPreHookCapturesAttrName =
+    "obelisk_sim.random_pre_hook_captures";
+inline constexpr ::mlir::StringLiteral randomPreHookReadCapturesAttrName =
+    "obelisk_sim.random_pre_hook_read_captures";
+inline constexpr ::mlir::StringLiteral randomPostHookAttrName =
+    "obelisk_sim.random_post_hook";
+inline constexpr ::mlir::StringLiteral randomPostHookOwnerAttrName =
+    "obelisk_sim.random_post_hook_owner";
+inline constexpr ::mlir::StringLiteral randomPostHookSourceAttrName =
+    "obelisk_sim.random_post_hook_source";
+inline constexpr ::mlir::StringLiteral randomPostHookCapturesAttrName =
+    "obelisk_sim.random_post_hook_captures";
+inline constexpr ::mlir::StringLiteral randomPostHookReadCapturesAttrName =
+    "obelisk_sim.random_post_hook_read_captures";
 inline constexpr ::mlir::StringLiteral randomModeAttrName =
     "obelisk_sim.rand_mode";
 inline constexpr ::mlir::StringLiteral randomModePropertyAttrName =
