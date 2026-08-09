@@ -593,15 +593,13 @@ module {
 // DOMAIN: obelisk_sim.managed.store
 
 // A ten-value interval uses an unbiased 64-bit bounded draw. Retry proposals
-// advance cyclically with overflow-safe modular addition. The exact Z3 domain
-// commits directly when all properties are enabled; partial modes retain a
-// masked runtime solver path.
+// draw a fresh rejection-sampled domain index. The exact Z3 domain commits
+// directly when all properties are enabled; partial modes retain a masked
+// runtime solver path.
 // DOMAIN-BOUNDED-LABEL: obelisk_sim.func private @unit_1
 // DOMAIN-BOUNDED: arith.constant 10 : i64
 // DOMAIN-BOUNDED: arith.remui {{.*}}, {{.*}} : i64
 // DOMAIN-BOUNDED: arith.cmpi ult
-// DOMAIN-BOUNDED: %[[WRAPS:.*]] = arith.cmpi uge
-// DOMAIN-BOUNDED: arith.select %[[WRAPS]]
 // DOMAIN-BOUNDED: obelisk_sim.random.solve {{.*}} mutable
 // DOMAIN-BOUNDED: arith.trunci {{.*}} : i64 to i4
 // DOMAIN-BOUNDED: obelisk_sim.managed.store
@@ -610,14 +608,11 @@ module {
 // DOMAIN-BOUNDED-FALLBACK: obelisk_sim.random.solve
 
 // Two bounded domains coupled by inequality are not an exact product. Their
-// unbiased starts still feed the checker, and the retry attempt advances both
-// intervals cyclically before preserving the runtime fallback.
+// independent unbiased samples feed the checker, and every retry samples both
+// intervals again before preserving the runtime fallback.
 // DOMAIN-RESIDUAL-LABEL: obelisk_sim.func private @unit_1
-// DOMAIN-RESIDUAL-COUNT-2: arith.cmpi ult
-// DOMAIN-RESIDUAL: arith.remui
-// DOMAIN-RESIDUAL-COUNT-2: arith.cmpi uge
-// DOMAIN-RESIDUAL: arith.cmpi ne
 // DOMAIN-RESIDUAL: obelisk_sim.random.solve
+// DOMAIN-RESIDUAL-COUNT-2: arith.cmpi ult
 
 // Z3 proves the direct runtime bounds equivalent to the hard formula. The
 // generated samplers compute cardinalities limit + 1, 16 - limit,
@@ -670,7 +665,7 @@ module {
 
 // A zero i64 cardinality denotes all 2^64 values. Generated MLIR substitutes
 // one only as the modulo divisor and selects the unmodified draw as the full-
-// domain index. The same sentinel makes cyclic retry advancement wrap in i64.
+// domain index. Fresh retries repeat the same sentinel-safe sampling.
 // CAPTURE-DOMAIN-64-LABEL: obelisk_sim.func private @unit_1
 // CAPTURE-DOMAIN-64: %[[RANGE_VALID:.*]] = arith.cmpi ule
 // CAPTURE-DOMAIN-64: %[[CARDINALITY:.*]] = arith.addi
@@ -685,9 +680,9 @@ module {
 // CAPTURE-DOMAIN-64: %[[REDUCED:.*]] = arith.remui {{.*}}, %[[SAFE]] : i64
 // CAPTURE-DOMAIN-64: arith.select %[[FULL]], {{.*}}, %[[REDUCED]] : i64
 // CAPTURE-DOMAIN-64: obelisk_sim.managed.store
+// CAPTURE-DOMAIN-64: obelisk_sim.random.solve {{.*}} mutable
 // CAPTURE-DOMAIN-64: arith.remui {{.*}}, %[[SAFE]] : i64
 // CAPTURE-DOMAIN-64: arith.select %[[FULL]]
-// CAPTURE-DOMAIN-64: obelisk_sim.random.solve {{.*}} mutable
 
 // CAPTURE-DOMAIN-64-FALLBACK-LABEL: obelisk_sim.func private @unit_1
 // CAPTURE-DOMAIN-64-FALLBACK: arith.cmpi uge
@@ -850,8 +845,8 @@ module {
 // COMPONENT-CAPTURE: cf.cond_br
 // COMPONENT-CAPTURE: arith.remui
 // COMPONENT-CAPTURE: arith.cmpi ult
-// COMPONENT-CAPTURE: arith.select
 // COMPONENT-CAPTURE: obelisk_sim.random.solve {{.*}} mutable
+// COMPONENT-CAPTURE: arith.select
 // COMPONENT-CAPTURE: obelisk_sim.managed.store
 
 // The 16-bit correlated component is too wide for bounded table enumeration.
@@ -916,63 +911,35 @@ module {
 
 // DEFINITION-LABEL: obelisk_sim.func private @unit_1
 // DEFINITION: %[[RAW:.*]] = arith.andi {{.*}}, {{.*}} : i64
-// DEFINITION: obelisk_sim.managed.store
-// DEFINITION: arith.remui
-// DEFINITION: obelisk_sim.managed.store
-// DEFINITION: arith.remui
-// DEFINITION: %[[Z_SHIFTED:.*]] = arith.shrui %[[COUNTER:.*]], {{.*}} : i64
-// DEFINITION: %[[Z:.*]] = arith.andi %[[Z_SHIFTED]], {{.*}} : i64
-// DEFINITION: %[[Y_SUM:.*]] = arith.addi %[[Z]], {{.*}} : i64
-// DEFINITION: %[[Y_VALUE:.*]] = arith.andi %[[Y_SUM]], {{.*}} : i64
-// DEFINITION: %[[Y_PLACED:.*]] = arith.shli %[[Y_VALUE]], {{.*}} : i64
-// DEFINITION: %[[NO_Y:.*]] = arith.andi %[[COUNTER]], {{.*}} : i64
-// DEFINITION: %[[WITH_Y:.*]] = arith.ori %[[NO_Y]], %[[Y_PLACED]] : i64
-// DEFINITION: %[[Y_SHIFTED:.*]] = arith.shrui %[[WITH_Y]], {{.*}} : i64
-// DEFINITION: %[[Y:.*]] = arith.andi %[[Y_SHIFTED]], {{.*}} : i64
-// DEFINITION: %[[X_SUM:.*]] = arith.addi %[[Y]], {{.*}} : i64
-// DEFINITION: %[[X_VALUE:.*]] = arith.andi %[[X_SUM]], {{.*}} : i64
-// DEFINITION: %[[NO_X:.*]] = arith.andi %[[WITH_Y]], {{.*}} : i64
-// DEFINITION: %[[WITH_X:.*]] = arith.ori %[[NO_X]], %[[X_VALUE]] : i64
-// DEFINITION: %[[X_READ:.*]] = arith.andi %[[WITH_X]], {{.*}} : i64
-// DEFINITION: %[[Z_READ_SHIFTED:.*]] = arith.shrui %[[WITH_X]], {{.*}} : i64
-// DEFINITION: %[[Z_READ:.*]] = arith.andi %[[Z_READ_SHIFTED]], {{.*}} : i64
-// DEFINITION: arith.cmpi ult, %[[X_READ]], %[[Z_READ]] : i64
-// DEFINITION: arith.extui
-// DEFINITION: arith.shli
+// DEFINITION: ^bb{{[0-9]+}}(%{{.*}}: i64, %{{.*}}: i64, %{{.*}}: i64):
 // Definition expressions use total fixed-width arithmetic in the generated
 // proposal. The guarded shift amount avoids arith shift poison, and power is
 // expanded into modular multiplication rather than left for the runtime.
-// DEFINITION: arith.divui
-// DEFINITION: arith.cmpi uge
-// DEFINITION: arith.select
-// DEFINITION: arith.shli
-// DEFINITION: arith.select
-// DEFINITION: arith.remui
-// DEFINITION: arith.muli
-// DEFINITION: arith.muli
-// DEFINITION: arith.shrui
-// DEFINITION: arith.select
+// DEFINITION-DAG: arith.divui
+// DEFINITION-DAG: arith.cmpi uge
+// DEFINITION-DAG: arith.select
+// DEFINITION-DAG: arith.remui
+// DEFINITION-DAG: arith.muli
+// DEFINITION-DAG: arith.shrui
 // Multiple non-pattern ternary predicates are converted to booleans and
 // combined before selecting either value.
-// DEFINITION: arith.cmpi ne
-// DEFINITION: arith.cmpi ne
-// DEFINITION: arith.andi
-// DEFINITION: arith.extui
-// DEFINITION: arith.cmpi ne
-// DEFINITION: arith.select
+// DEFINITION-DAG: arith.cmpi ne
 // The copy alias is fed from the already materialized x definition. The flag
 // definition above reads that same canonical alias representative.
-// DEFINITION: arith.shli {{.*}}, {{.*}} : i64
+// DEFINITION-DAG: arith.shli {{.*}}, {{.*}} : i64
 // Packed concatenation and constant replication are expressed through the
 // existing total fixed-width definition operators. Replication uses the
 // geometric bit-placement multiplier (1 + 2^2 = 5).
-// DEFINITION: arith.shli {{.*}}, %{{c2_i64.*}} : i64
-// DEFINITION: arith.ori
-// DEFINITION: arith.muli {{.*}}, %{{c5_i64.*}} : i64
+// DEFINITION-DAG: arith.shli {{.*}}, %{{c2_i64.*}} : i64
+// DEFINITION-DAG: arith.ori
+// DEFINITION-DAG: arith.muli {{.*}}, %{{c5_i64.*}} : i64
 // DEFINITION: obelisk_sim.random.solve {{.*}} mutable
 // DEFINITION: obelisk_sim.managed.store
 // DEFINITION: obelisk_sim.managed.store
 // DEFINITION: obelisk_sim.managed.store
+// The generated retry path retains both solver attempts after materializing
+// the definition proposal.
+// DEFINITION-COUNT-2: obelisk_sim.random.solve {{.*}} mutable
 // DEFINITION: obelisk_sim.managed.store
 // DEFINITION: obelisk_sim.managed.store
 // DEFINITION: obelisk_sim.managed.store

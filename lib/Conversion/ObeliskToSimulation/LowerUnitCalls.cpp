@@ -3715,14 +3715,12 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     uint64_t lower;
     uint64_t cardinality;
     bool powerOfTwo;
-    Value sampledIndex;
   };
   SmallVector<ProposalDomain> proposalDomains;
   struct ProposalFiniteDomain {
     uint32_t offset;
     const Property *property;
     uint64_t cardinality;
-    Value sampledIndex;
   };
   SmallVector<ProposalFiniteDomain> proposalFiniteDomains;
   struct ProposalCaptureDomain {
@@ -3737,7 +3735,6 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     std::optional<uint64_t> staticUpper;
     Value lower;
     Value cardinality;
-    Value sampledIndex;
   };
   SmallVector<ProposalCaptureDomain> proposalCaptureDomains;
   size_t materializedCaptureBounds = 0;
@@ -3764,8 +3761,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           (proposalAssignmentTableMask & propertyMask) != propertyMask)
         proposalFiniteDomains.push_back({propertyOffset,
                                          &property,
-                                         propertyDomainCardinality(property),
-                                         {}});
+                                         propertyDomainCardinality(property)});
       propertyOffset += property.width;
       continue;
     }
@@ -3790,8 +3786,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                    property.width,
                                    lower,
                                    cardinality,
-                                   (cardinality & (cardinality - 1)) == 0,
-                                   {}});
+                                   (cardinality & (cardinality - 1)) == 0});
     }
     propertyOffset += property.width;
   }
@@ -3855,7 +3850,6 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                         bound.isSigned,
                                         staticLower,
                                         staticUpper,
-                                        {},
                                         {},
                                         {}});
       found = std::prev(proposalCaptureDomains.end());
@@ -4058,8 +4052,10 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   Value sampledComponentAssignment;
   Value sampledDistAssignment;
   APInt sampledDistMask = APInt::getZero(assignmentWidth);
-  auto materializeProposal = [&](Value rawAssignment,
-                                 Value attempt) -> FailureOr<Value> {
+  auto materializeProposal =
+      [&](Value rawAssignment,
+          ArrayRef<Value> sampledDomainIndices) -> FailureOr<Value> {
+    size_t sampledDomainIndex = 0;
     if (sampledSolveBeforeAssignment)
       return sampledSolveBeforeAssignment;
     if (!proposalAssignments.empty()) {
@@ -4096,22 +4092,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                           constantAssignment64(
                                               domain.cardinality - 1));
       } else {
-        // Advance the independently unbiased starting index without unsigned
-        // overflow. This visits every interval value cyclically when the
-        // generated checker requests retries.
-        Value step = arith::RemUIOp::create(builder, location, attempt,
-                                            constant64(domain.cardinality));
-        Value threshold = arith::SubIOp::create(
-            builder, location, constant64(domain.cardinality), step);
-        Value wraps =
-            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::uge,
-                                  domain.sampledIndex, threshold);
-        Value linear =
-            arith::AddIOp::create(builder, location, domain.sampledIndex, step);
-        Value wrapped = arith::SubIOp::create(builder, location,
-                                              domain.sampledIndex, threshold);
-        fieldBits =
-            arith::SelectOp::create(builder, location, wraps, wrapped, linear);
+        fieldBits = sampledDomainIndices[sampledDomainIndex++];
       }
       if (domain.lower != 0)
         fieldBits = arith::AddIOp::create(builder, location, fieldBits,
@@ -4131,27 +4112,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           fieldBits);
     }
     for (const ProposalFiniteDomain &domain : proposalFiniteDomains) {
-      Value step;
-      Value fieldIndex;
-      if (domain.cardinality == 0) {
-        step = attempt;
-        fieldIndex =
-            arith::AddIOp::create(builder, location, domain.sampledIndex, step);
-      } else {
-        step = arith::RemUIOp::create(builder, location, attempt,
-                                      constant64(domain.cardinality));
-        Value threshold = arith::SubIOp::create(
-            builder, location, constant64(domain.cardinality), step);
-        Value wraps =
-            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::uge,
-                                  domain.sampledIndex, threshold);
-        Value linear =
-            arith::AddIOp::create(builder, location, domain.sampledIndex, step);
-        Value wrapped = arith::SubIOp::create(builder, location,
-                                              domain.sampledIndex, threshold);
-        fieldIndex =
-            arith::SelectOp::create(builder, location, wraps, wrapped, linear);
-      }
+      Value fieldIndex = sampledDomainIndices[sampledDomainIndex++];
       Value fieldBits =
           materializePropertyDomainIndex(*domain.property, fieldIndex);
       if (fieldBits.getType() != assignmentType)
@@ -4170,28 +4131,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           fieldBits);
     }
     for (const ProposalCaptureDomain &bound : proposalCaptureDomains) {
-      // The unbiased starting index is advanced cyclically for residual
-      // checker retries, exactly as for constant non-power-of-two domains.
-      Value fullCardinality =
-          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
-                                bound.cardinality, constant64(0));
-      Value safeCardinality = arith::SelectOp::create(
-          builder, location, fullCardinality, constant64(1), bound.cardinality);
-      Value reducedStep =
-          arith::RemUIOp::create(builder, location, attempt, safeCardinality);
-      Value step = arith::SelectOp::create(builder, location, fullCardinality,
-                                           attempt, reducedStep);
-      Value threshold =
-          arith::SubIOp::create(builder, location, bound.cardinality, step);
-      Value wraps =
-          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::uge,
-                                bound.sampledIndex, threshold);
-      Value linear =
-          arith::AddIOp::create(builder, location, bound.sampledIndex, step);
-      Value wrapped = arith::SubIOp::create(builder, location,
-                                            bound.sampledIndex, threshold);
-      Value fieldBits =
-          arith::SelectOp::create(builder, location, wraps, wrapped, linear);
+      Value fieldBits = sampledDomainIndices[sampledDomainIndex++];
       fieldBits =
           arith::AddIOp::create(builder, location, fieldBits, bound.lower);
       if (bound.isSigned)
@@ -4212,6 +4152,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                 constantAssignment(~fieldMask)),
           fieldBits);
     }
+    assert(sampledDomainIndex == sampledDomainIndices.size() &&
+           "proposal domain sample count must match the materialized domains");
     struct DefinitionValue {
       Value bits;
       unsigned width;
@@ -4961,7 +4903,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                            modeSamplingDispatchBlock, ValueRange{});
   setCurrent(plannedSamplingBlock);
 
-  auto sampleBoundedIndex = [&](uint64_t cardinality, Value draw) -> Value {
+  auto sampleBoundedIndex = [&](uint64_t cardinality, Value draw,
+                                Value &streamState) -> Value {
     if ((cardinality & (cardinality - 1)) == 0)
       return arith::AndIOp::create(builder, location, draw,
                                    constant64(cardinality - 1));
@@ -4975,7 +4918,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     Value boundedIndex = boundedDone->addArgument(i64, location);
 
     cf::BranchOp::create(builder, location, boundedLoop,
-                         ValueRange{state, draw});
+                         ValueRange{streamState, draw});
     setCurrent(boundedLoop);
     Value index = arith::RemUIOp::create(builder, location, boundedDraw,
                                          constant64(cardinality));
@@ -4989,11 +4932,12 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                              ValueRange{retryState, retryDraw});
 
     setCurrent(boundedDone);
-    state = finalState;
+    streamState = finalState;
     return boundedIndex;
   };
 
-  auto sampleDynamicBoundedIndex = [&](Value cardinality, Value draw) -> Value {
+  auto sampleDynamicBoundedIndex = [&](Value cardinality, Value draw,
+                                       Value &streamState) -> Value {
     // A zero cardinality represents the full 2^64-element domain. Use one as
     // a safe modulo divisor in that case, then select the original draw as the
     // index. Otherwise, rejecting values at or above the unsigned limit
@@ -5020,7 +4964,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     Value boundedIndex = boundedDone->addArgument(i64, location);
 
     cf::BranchOp::create(builder, location, boundedLoop,
-                         ValueRange{state, draw});
+                         ValueRange{streamState, draw});
     setCurrent(boundedLoop);
     Value reducedIndex =
         arith::RemUIOp::create(builder, location, boundedDraw, safeCardinality);
@@ -5037,7 +4981,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                              ValueRange{retryState, retryDraw});
 
     setCurrent(boundedDone);
-    state = finalState;
+    streamState = finalState;
     return boundedIndex;
   };
 
@@ -5107,8 +5051,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   if (!materializedDistPlans.empty()) {
     sampledDistAssignment = constantAssignment64(0);
     for (const MaterializedDistPlan &materialized : materializedDistPlans) {
-      Value choice = sampleDynamicBoundedIndex(materialized.totalWeight,
-                                                next64(state));
+      Value choice = sampleDynamicBoundedIndex(
+          materialized.totalWeight, next64(state), state);
       const DistRangePlan *first = &materialized.plan->ranges.front();
       Value selectedLower = constant64(first->lower);
       Value selectedCardinality = constant64(first->cardinality);
@@ -5129,7 +5073,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       }
       Value field = arith::AddIOp::create(
           builder, location, selectedLower,
-          sampleDynamicBoundedIndex(selectedCardinality, next64(state)));
+          sampleDynamicBoundedIndex(selectedCardinality, next64(state),
+                                    state));
       const Property &property =
           planned[materialized.plan->propertyIndex];
       if (property.isSigned)
@@ -5239,14 +5184,15 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         if (node.assignments.size() == 1)
           return constantAssignment(node.assignments.front());
         Value draw = availableDraw ? *availableDraw : next64(state);
-        Value index = sampleBoundedIndex(node.assignments.size(), draw);
+        Value index =
+            sampleBoundedIndex(node.assignments.size(), draw, state);
         return selectAssignmentTable(node.assignments, index);
       }
       if (node.children.size() == 1)
         return sampleSolveTable(node.children.front(), availableDraw);
 
       Value draw = availableDraw ? *availableDraw : next64(state);
-      Value index = sampleBoundedIndex(node.children.size(), draw);
+      Value index = sampleBoundedIndex(node.children.size(), draw, state);
       Value branchState = state;
       Block *merge = addBlock();
       Value mergedState = merge->addArgument(i64, location);
@@ -5291,7 +5237,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             : arith::TruncIOp::create(builder, location, i64, randomDraw)
                   .getResult();
     Value boundedIndex =
-        sampleBoundedIndex(proposalAssignments.size(), tableDraw);
+        sampleBoundedIndex(proposalAssignments.size(), tableDraw, state);
     start = assignmentType == i64
                 ? boundedIndex
                 : arith::ExtUIOp::create(builder, location, assignmentType,
@@ -5312,7 +5258,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         Value index = constant64(0);
         if (table.assignments.size() != 1) {
           Value draw = next64(state);
-          index = sampleBoundedIndex(table.assignments.size(), draw);
+          index = sampleBoundedIndex(table.assignments.size(), draw, state);
         }
         Value selected = selectAssignmentTable(table.assignments, index);
         sampledComponentAssignment = arith::OrIOp::create(
@@ -5320,22 +5266,31 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       }
     }
   }
-  for (ProposalDomain &domain : proposalDomains) {
-    if (domain.powerOfTwo)
-      continue;
-    Value draw = next64(state);
-    domain.sampledIndex = sampleBoundedIndex(domain.cardinality, draw);
-  }
-  for (ProposalFiniteDomain &domain : proposalFiniteDomains) {
-    Value draw = next64(state);
-    domain.sampledIndex = domain.cardinality == 0
-                              ? draw
-                              : sampleBoundedIndex(domain.cardinality, draw);
-  }
-  for (ProposalCaptureDomain &bound : proposalCaptureDomains) {
-    Value draw = next64(state);
-    bound.sampledIndex = sampleDynamicBoundedIndex(bound.cardinality, draw);
-  }
+  auto sampleProposalDomainIndices = [&](Value &streamState) {
+    SmallVector<Value> sampledIndices;
+    for (const ProposalDomain &domain : proposalDomains) {
+      if (domain.powerOfTwo)
+        continue;
+      Value draw = next64(streamState);
+      sampledIndices.push_back(
+          sampleBoundedIndex(domain.cardinality, draw, streamState));
+    }
+    for (const ProposalFiniteDomain &domain : proposalFiniteDomains) {
+      Value draw = next64(streamState);
+      sampledIndices.push_back(
+          domain.cardinality == 0
+              ? draw
+              : sampleBoundedIndex(domain.cardinality, draw, streamState));
+    }
+    for (const ProposalCaptureDomain &bound : proposalCaptureDomains) {
+      Value draw = next64(streamState);
+      sampledIndices.push_back(sampleDynamicBoundedIndex(
+          bound.cardinality, draw, streamState));
+    }
+    return sampledIndices;
+  };
+  SmallVector<Value> sampledDomainIndices =
+      sampleProposalDomainIndices(state);
   sim::SimManagedStoreOp::create(builder, location, state, stateReference);
 
   Block *dispatchBlock = current;
@@ -5351,6 +5306,10 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   Block *done = addBlock();
   Value counter = loop->addArgument(assignmentType, location);
   Value attempt = loop->addArgument(i64, location);
+  SmallVector<Value> loopSampledDomainIndices;
+  loopSampledDomainIndices.reserve(sampledDomainIndices.size());
+  for (size_t index = 0; index != sampledDomainIndices.size(); ++index)
+    loopSampledDomainIndices.push_back(loop->addArgument(i64, location));
   Value fallbackStart = fallbackBlock->addArgument(assignmentType, location);
   Value modeCounter = modeLoop->addArgument(assignmentType, location);
   Value modeAttempt = modeLoop->addArgument(i64, location);
@@ -5743,7 +5702,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                            ValueRange{}, failedBlock, ValueRange{});
 
   setCurrent(loop);
-  FailureOr<Value> proposal = materializeProposal(counter, attempt);
+  FailureOr<Value> proposal =
+      materializeProposal(counter, loopSampledDomainIndices);
   if (failed(proposal))
     return failure();
   if (exactProposal) {
@@ -5776,12 +5736,15 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   // unchanged for the entire bounded sampling window.  Besides biasing the
   // accepted solutions, that makes a dense conditional constraint such as
   // `guard -> value == 0` spuriously fail whenever `guard` is packed above a
-  // wide value.  Draw a fresh aggregate proposal for every retry.  Rejection
-  // sampling from the uniform object stream preserves the required uniform
-  // distribution over accepted legal assignments.
+  // wide value.  Draw a fresh aggregate proposal and fresh independently
+  // sampled domain indices for every retry.  Rejection sampling from the
+  // uniform object stream preserves the required uniform distribution over
+  // accepted legal assignments.
   Value retryState = sim::SimManagedLoadOp::create(
       builder, location, i64, stateReference);
   Value next = nextAssignment(retryState);
+  SmallVector<Value> nextSampledDomainIndices =
+      sampleProposalDomainIndices(retryState);
   sim::SimManagedStoreOp::create(builder, location, retryState,
                                  stateReference);
   next = arith::OrIOp::create(
@@ -5793,9 +5756,10 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   Value exhausted =
       arith::CmpIOp::create(builder, location, arith::CmpIPredicate::uge,
                             nextAttempt, constant64(64));
+  SmallVector<Value> retryArguments{next, nextAttempt};
+  llvm::append_range(retryArguments, nextSampledDomainIndices);
   cf::CondBranchOp::create(builder, location, exhausted, fallbackBlock,
-                           ValueRange{next}, loop,
-                           ValueRange{next, nextAttempt});
+                           ValueRange{next}, loop, retryArguments);
 
   setCurrent(fallbackBlock);
   if (analysis.satisfiability == solver::Satisfiability::Unsatisfiable) {
@@ -5917,9 +5881,11 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     cf::BranchOp::create(builder, location, failedBlock, ValueRange{});
   else if (solveBeforeRequiresRuntime)
     cf::BranchOp::create(builder, location, fallbackBlock, ValueRange{start});
-  else
-    cf::BranchOp::create(builder, location, loop,
-                         ValueRange{start, constant64(0)});
+  else {
+    SmallVector<Value> initialArguments{start, constant64(0)};
+    llvm::append_range(initialArguments, sampledDomainIndices);
+    cf::BranchOp::create(builder, location, loop, initialArguments);
+  }
 
   setCurrent(commit);
   FailureOr<SmallVector<Value>> committed =
