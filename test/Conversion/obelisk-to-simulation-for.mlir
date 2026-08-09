@@ -1,4 +1,5 @@
-// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
+// RUN:   | FileCheck %s --implicit-check-not=obelisk_sim.static.once
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "simulation_for", name = "simulation_for", node_id = 0 : i64, sym_name = "s0.simulation_for"} {
@@ -9,6 +10,11 @@ module {
     obelisk.sv.symbol.instance attributes {hierarchical_name = "simulation_for", is_uninstantiated = false, name = "simulation_for", node_id = 3 : i64, referenced_path = "simulation_for", referenced_symbol = @s0.simulation_for, sym_name = "s3.simulation_for"} {
       obelisk.sv.symbol.instance_body attributes {hierarchical_name = "simulation_for", name = "simulation_for", node_id = 4 : i64, sym_name = "s4.simulation_for"} {
         obelisk.sv.symbol.variable attributes {hierarchical_name = "simulation_for.value", lifetime = 1 : i32, name = "value", node_id = 5 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s5.value"} {
+        }
+        // Unnamed for-init scopes do not contribute to the hierarchy string.
+        // Keep outer storage with the same path as the automatic loop variable
+        // below to ensure capture preparation follows the symbol reference.
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "simulation_for.i", lifetime = 1 : i32, name = "i", node_id = 1000 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s1000.i"} {
         }
         obelisk.sv.symbol.statement_block attributes {block_kind = 0 : i32, hierarchical_name = "simulation_for", node_id = 6 : i64, sym_name = "s6"} {
           obelisk.sv.symbol.variable attributes {hierarchical_name = "simulation_for.i", name = "i", node_id = 7 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s7.i"} {
@@ -86,7 +92,10 @@ module {
 }
 
 // CHECK: obelisk_sim.func
-// CHECK: arith.constant 2 : i32
+// CHECK: %[[INITIAL:.*]] = arith.constant 2 : i32
+// CHECK: cf.br ^[[LOOP:bb[0-9]+]](%[[INITIAL]] : i32)
+// CHECK: ^[[LOOP]](%[[LOCAL:.*]]: i32):
+// CHECK: arith.cmpi slt, %[[LOCAL]],
 // CHECK: cf.cond_br
 // CHECK: arith.addi
 // CHECK: cf.br

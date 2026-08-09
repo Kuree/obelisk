@@ -123,8 +123,26 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       if (unit.entryKind == sim::EntryKind::Function &&
           isa_and_nonnull<semantic::SVFormalArgumentSymbolOp>(referencedSymbol))
         return;
+      // Unnamed statement scopes are not part of Slang's hierarchical name,
+      // so an automatic local can have the same path string as design
+      // storage it shadows. Give the local binding a stable symbol-qualified
+      // path and freeze that path on every use before the unit is cloned.
+      // The descriptor retains the source hierarchy while lowerUnit can now
+      // distinguish the two bindings without consulting the symbol table.
+      bool automaticLocal =
+          referencedSymbol && isAutomaticLocalSymbol(referencedSymbol);
+      std::string localPath;
+      if (automaticLocal && descriptors.contains(path)) {
+        StringRef symbolPath = getHierarchyName(referencedSymbol);
+        localPath = (symbolPath.empty() ? path : symbolPath).str();
+        localPath += ".$local.";
+        localPath += reference.getLeafReference().getValue();
+        path = localPath;
+        nested->setAttr("referenced_path",
+                        StringAttr::get(nested->getContext(), path));
+      }
       auto descriptor = descriptors.find(path);
-      if (descriptor != descriptors.end()) {
+      if (descriptor != descriptors.end() && !automaticLocal) {
         if (seenPaths.insert(path).second)
           result.descriptors[unit.source].push_back(
               {path.str(), descriptor->second});
