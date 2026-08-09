@@ -19,9 +19,19 @@ module {
     // push_back appends at the current size.
     // CHECK: %[[BACK_SIZE:.*]] = obelisk_sim.container.size
     // CHECK: obelisk_sim.container.write {{.*}}, %[[BACK_SIZE]], {{.*}}
-    // push_front inserts at zero.
+    // Bounded push_front drops the last element when the queue is full before
+    // inserting at zero. This differs from an explicit insert on a full queue,
+    // which remains ignored by the runtime.
     // CHECK: %[[FRONT_VALUE:.*]] = arith.constant 5 : i32
-    // CHECK-NEXT: %[[FRONT_ZERO:.*]] = arith.constant 0 : i64
+    // CHECK-NEXT: %[[FRONT_SIZE:.*]] = obelisk_sim.container.size
+    // CHECK-NEXT: %[[CAPACITY:.*]] = arith.constant 2 : i64
+    // CHECK-NEXT: %[[FULL:.*]] = arith.cmpi uge, %[[FRONT_SIZE]], %[[CAPACITY]]
+    // CHECK-NEXT: cf.cond_br %[[FULL]]
+    // CHECK: %[[ONE:.*]] = arith.constant 1 : i64
+    // CHECK-NEXT: %[[LAST:.*]] = arith.subi %[[FRONT_SIZE]], %[[ONE]]
+    // CHECK-NEXT: obelisk_sim.queue.delete {{.*}}[%[[LAST]]]
+    // CHECK-NEXT: cf.br
+    // CHECK: %[[FRONT_ZERO:.*]] = arith.constant 0 : i64
     // CHECK-NEXT: obelisk_sim.queue.insert %[[FRONT_VALUE]] into {{.*}}[%[[FRONT_ZERO]]]
     // insert and indexed delete preserve the explicit source index.
     // CHECK: %[[INSERT_INDEX:.*]] = arith.constant 1 : i32

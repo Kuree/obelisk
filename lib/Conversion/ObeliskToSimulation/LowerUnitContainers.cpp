@@ -122,6 +122,28 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
             : FailureOr<Value>(failure());
     if (failed(converted))
       return failure();
+    if (queue.getBound()) {
+      Value size = sim::SimContainerSizeOp::create(
+          builder, location, builder.getI64Type(), *receiver);
+      Value capacity = arith::ConstantOp::create(
+          builder, location, builder.getI64Type(),
+          builder.getI64IntegerAttr(
+              static_cast<uint64_t>(queue.getBound()) + 1));
+      Value full = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::uge, size, capacity);
+      Block *trim = addBlock();
+      Block *insert = addBlock();
+      cf::CondBranchOp::create(builder, location, full, trim, ValueRange{},
+                               insert, ValueRange{});
+      setCurrent(trim);
+      Value one = arith::ConstantOp::create(
+          builder, location, builder.getI64Type(),
+          builder.getI64IntegerAttr(1));
+      Value last = arith::SubIOp::create(builder, location, size, one);
+      sim::SimQueueDeleteOp::create(builder, location, *receiver, last);
+      cf::BranchOp::create(builder, location, insert);
+      setCurrent(insert);
+    }
     Value zero = arith::ConstantOp::create(
         builder, location, builder.getI64Type(), builder.getI64IntegerAttr(0));
     sim::SimQueueInsertOp::create(builder, location, *receiver, zero,
