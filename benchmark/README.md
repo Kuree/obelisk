@@ -91,9 +91,15 @@ chapter in the **Area** column and has three counters:
 - **only** — tests where it is the *sole* blocker, so building it alone should
   carry them to simulation. This is the column to optimize.
 
-The `Unclassified long tail` row is compile-failing tests whose diagnostics match
-no rule yet — the honest measure of what the classifier still misses. Extend
-`RULES` in `classify.py` when a bucket there grows large enough to matter.
+Two kinds of row mark classifier gaps rather than described features. `unnamed
+construct <x>` / `unnamed type <x>` / `unnamed symbol <x>` are diagnostics that
+matched only the generic fallback rules, so the bucket is named after the
+construct mnemonic Obelisk printed — grouped and countable, but not yet given a
+feature name or an IEEE area. `Unclassified long tail` is what is left: compile
+failures whose diagnostics match no rule at all, typically a parse or
+elaboration message with no construct in it. Both are the honest measure of what
+the classifier still misses; promote a bucket by adding a named rule to `RULES`
+in `classify.py` when it grows large enough to matter.
 
 ## Adding a suite
 
