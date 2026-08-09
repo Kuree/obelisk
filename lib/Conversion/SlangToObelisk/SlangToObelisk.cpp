@@ -346,10 +346,24 @@ public:
       return rewriter.notifyMatchFailure(
           op, "invalid semantic sentinels have no Obelisk representation");
 
+    if constexpr (std::is_same_v<SourceOp,
+                                 slangir::GenerateBlockSymbolOp>) {
+      if (auto inactive =
+              op->template getAttrOfType<BoolAttr>("is_uninstantiated");
+          inactive && inactive.getValue()) {
+        rewriter.eraseOp(op);
+        return success();
+      }
+    }
+
     const auto &converter =
         *static_cast<const SlangTypeConverter *>(this->getTypeConverter());
     NamedAttrList attrs;
     for (NamedAttribute attr : op->getAttrs()) {
+      if constexpr (std::is_same_v<SourceOp,
+                                   slangir::GenerateBlockSymbolOp>)
+        if (attr.getName() == "is_uninstantiated")
+          continue;
       FailureOr<Attribute> converted =
           converter.convertAttribute(attr.getValue());
       if (failed(converted))

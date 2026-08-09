@@ -318,6 +318,26 @@ module {
       semantic_type = tensor<1x!slang.integral<1, false, true, 0 : 0, logic>>
     } {
     }
+    slang.symbol.generate_block attributes {
+      is_uninstantiated = false, node_id = 40 : i64, sym_name = "active_generate"
+    } {
+      slang.symbol.variable attributes {
+        lifetime = 0 : i32, node_id = 41 : i64, rand_mode = 0 : i32,
+        sym_name = "active_marker",
+        semantic_type = !slang.integral<1, false, false, 0 : 0, bit>
+      } {
+      }
+    }
+    slang.symbol.generate_block attributes {
+      is_uninstantiated = true, node_id = 42 : i64, sym_name = "inactive_generate"
+    } {
+      slang.symbol.variable attributes {
+        lifetime = 0 : i32, node_id = 43 : i64, rand_mode = 0 : i32,
+        sym_name = "inactive_marker",
+        semantic_type = !slang.integral<1, false, false, 0 : 0, bit>
+      } {
+      }
+    }
   }
 }
 
@@ -395,4 +415,9 @@ module {
 // CHECK: obelisk.sv.pattern.constant
 // CHECK: obelisk.sv.rand_seq.item
 // CHECK: tensor<1x!obelisk.integral<1, false, true, 0 : 0, logic>>
+// CHECK: obelisk.sv.symbol.generate_block
+// CHECK-SAME: sym_name = "active_generate"
+// CHECK: sym_name = "active_marker"
+// CHECK-NOT: inactive_generate
+// CHECK-NOT: inactive_marker
 // CHECK-NOT: slang.

@@ -1247,6 +1247,9 @@ private:
                       builder.getArrayAttr(restrictions));
         }
       }
+    } else if constexpr (std::same_as<T, slang::ast::GenerateBlockSymbol>) {
+      attrs.set("is_uninstantiated",
+                builder.getBoolAttr(node.isUninstantiated));
     } else if constexpr (std::same_as<T, slang::ast::InstanceSymbol>) {
       setReferencedSymbol<Op>(attrs, node.getDefinition());
       SET_OP_ATTR(IsUninstantiated,
