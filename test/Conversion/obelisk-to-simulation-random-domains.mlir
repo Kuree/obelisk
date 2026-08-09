@@ -32,9 +32,8 @@
 // TAGGED-DAG: arith.constant {{.*}} 16 : i64
 // TAGGED-DAG: arith.constant {{.*}} 63 : i64
 // TAGGED-DAG: arith.constant {{.*}} 32 : i64
-// TAGGED: obelisk_sim.random.solve
-// TAGGED-SAME: limit
-// TAGGED: obelisk_sim.packed.unflatten
+// TAGGED-DAG: obelisk_sim.random.solve {{.*}} limit
+// TAGGED-DAG: obelisk_sim.packed.unflatten
 
 // DIST: arith.constant {{.*}} 6 : i64
 // DIST: arith.constant {{.*}} 3 : i64

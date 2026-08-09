@@ -870,7 +870,8 @@ module {
 // rejection and uses the solve-order metadata in the residual runtime plan.
 // SOLVE-BEFORE-DEFINITION-REVERSE-LABEL: obelisk_sim.func private @unit_1
 // SOLVE-BEFORE-DEFINITION-REVERSE: obelisk_sim.managed.store %[[SOLVE_STATE:.*]] to
-// SOLVE-BEFORE-DEFINITION-REVERSE: %{{.*}}, %{{.*}}, %[[SOLVED_STATE:.*]] = obelisk_sim.random.solve {{.*}} state %[[SOLVE_STATE]] increment
+// SOLVE-BEFORE-DEFINITION-REVERSE: %[[FALLBACK_STATE:.*]] = obelisk_sim.managed.load
+// SOLVE-BEFORE-DEFINITION-REVERSE: %{{.*}}, %{{.*}}, %[[SOLVED_STATE:.*]] = obelisk_sim.random.solve {{.*}} state %[[FALLBACK_STATE]] increment
 // SOLVE-BEFORE-DEFINITION-REVERSE-NEXT: obelisk_sim.managed.store %[[SOLVED_STATE]]
 
 // Native lowering passes both state words to the stateful ABI and reloads all

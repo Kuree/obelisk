@@ -1841,25 +1841,6 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     }
     return result;
   };
-  auto compressStaticBits = [&](Value field, uint64_t inputMask) {
-    Value result = constant64(0);
-    unsigned outputBit = 0;
-    for (unsigned inputBit = 0; inputBit != 64; ++inputBit) {
-      if ((inputMask & (uint64_t{1} << inputBit)) == 0)
-        continue;
-      Value bit =
-          arith::AndIOp::create(builder, location,
-                                arith::ShRUIOp::create(builder, location, field,
-                                                       constant64(inputBit)),
-                                constant64(1));
-      if (outputBit != 0)
-        bit = arith::ShLIOp::create(builder, location, bit,
-                                    constant64(outputBit));
-      result = arith::OrIOp::create(builder, location, result, bit);
-      ++outputBit;
-    }
-    return result;
-  };
   auto materializePropertyDomainIndex = [&](const Property &property,
                                             Value index) {
     uint64_t valueMask =
@@ -1907,47 +1888,6 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     }
     return field;
   };
-  auto propertyDomainIndex = [&](const Property &property, Value field) {
-    uint64_t valueMask =
-        property.width == 64 ? UINT64_MAX : (uint64_t{1} << property.width) - 1;
-    uint64_t ordinaryMask = valueMask & ~propertyDomainMask(property);
-    unsigned ordinaryBits = countBits(ordinaryMask);
-    Value index = compressStaticBits(field, ordinaryMask);
-    uint64_t multiplier = ordinaryBits == 64 ? 0 : uint64_t{1} << ordinaryBits;
-    for (const PropertyDomain &domain : property.domains) {
-      Value local = field;
-      if (domain.offset != 0)
-        local = arith::ShRUIOp::create(builder, location, local,
-                                       constant64(domain.offset));
-      uint64_t domainMask =
-          domain.width == 64 ? UINT64_MAX : (uint64_t{1} << domain.width) - 1;
-      local = arith::AndIOp::create(builder, location, local,
-                                    constant64(domainMask));
-      Value groupIndex = constant64(0);
-      uint64_t base = 0;
-      for (const DomainPattern &pattern : domain.patterns) {
-        Value candidate =
-            arith::AddIOp::create(builder, location, constant64(base),
-                                  compressStaticBits(local, pattern.freeMask));
-        Value matches = arith::CmpIOp::create(
-            builder, location, arith::CmpIPredicate::eq,
-            arith::AndIOp::create(builder, location, local,
-                                  constant64(pattern.mask)),
-            constant64(pattern.value));
-        groupIndex = arith::SelectOp::create(builder, location, matches,
-                                             candidate, groupIndex);
-        base += pattern.cardinality;
-      }
-      Value contribution = groupIndex;
-      if (multiplier != 1)
-        contribution = arith::MulIOp::create(builder, location, contribution,
-                                             constant64(multiplier));
-      index = arith::AddIOp::create(builder, location, index, contribution);
-      multiplier *= domain.cardinality;
-    }
-    return index;
-  };
-
   Value currentAssignment = constantAssignment64(0);
   Value mutableMask = constantAssignment64(0);
   SmallVector<Value> propertyEnabled;
@@ -5794,77 +5734,6 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     return ConstraintCheck{satisfied, preferred};
   };
 
-  auto advanceEnabledProperties = [&](Value current) {
-    Value next = current;
-    Value carry = arith::ConstantOp::create(
-        builder, location, builder.getI1Type(), builder.getBoolAttr(true));
-    uint64_t offset = 0;
-    for (auto [property, enabled] :
-         llvm::zip_equal(planned, propertyEnabled)) {
-      APInt aggregateMask =
-          APInt::getLowBitsSet(assignmentWidth, property.width).shl(offset);
-      if (property.isRandC) {
-        offset += property.width;
-        continue;
-      }
-      Value aggregateMaskValue = constantAssignment(aggregateMask);
-      Value field =
-          arith::AndIOp::create(builder, location, current, aggregateMaskValue);
-      Value wrapped;
-      Value incremented;
-      if (property.domains.empty()) {
-        wrapped =
-            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
-                                  field, aggregateMaskValue);
-        incremented = arith::AndIOp::create(
-            builder, location,
-            arith::AddIOp::create(builder, location, field,
-                                  constantAssignment(APInt::getOneBitSet(
-                                      assignmentWidth, offset))),
-            aggregateMaskValue);
-      } else {
-        Value local = field;
-        if (offset != 0)
-          local = arith::ShRUIOp::create(builder, location, local,
-                                         constantAssignment64(offset));
-        if (local.getType() != i64)
-          local = arith::TruncIOp::create(builder, location, i64, local);
-        uint64_t cardinality = propertyDomainCardinality(property);
-        Value domainIndex = propertyDomainIndex(property, local);
-        wrapped =
-            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
-                                  domainIndex, constant64(cardinality - 1));
-        Value nextIndex = arith::SelectOp::create(
-            builder, location, wrapped, constant64(0),
-            arith::AddIOp::create(builder, location, domainIndex,
-                                  constant64(1)));
-        incremented = materializePropertyDomainIndex(property, nextIndex);
-        if (incremented.getType() != assignmentType)
-          incremented = arith::ExtUIOp::create(builder, location,
-                                               assignmentType, incremented);
-        if (offset != 0)
-          incremented = arith::ShLIOp::create(builder, location, incremented,
-                                              constantAssignment64(offset));
-      }
-      Value updated = arith::OrIOp::create(
-          builder, location,
-          arith::AndIOp::create(builder, location, next,
-                                constantAssignment(~aggregateMask)),
-          incremented);
-      Value update = arith::AndIOp::create(builder, location, carry, enabled);
-      next = arith::SelectOp::create(builder, location, update, updated, next);
-      Value disabled = arith::XOrIOp::create(
-          builder, location, enabled,
-          arith::ConstantOp::create(builder, location, builder.getI1Type(),
-                                    builder.getBoolAttr(true)));
-      Value propagate =
-          arith::OrIOp::create(builder, location, disabled, wrapped);
-      carry = arith::AndIOp::create(builder, location, carry, propagate);
-      offset += property.width;
-    }
-    return next;
-  };
-
   setCurrent(disabledCheckBlock);
   FailureOr<ConstraintCheck> disabledCheck =
       materializeConstraintCheck(currentAssignment);
@@ -5903,16 +5772,27 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                              ValueRange{assignment}, advance, ValueRange{});
   }
   setCurrent(advance);
-  Value next = advanceEnabledProperties(counter);
+  // Retrying adjacent aggregate assignments can leave a higher random field
+  // unchanged for the entire bounded sampling window.  Besides biasing the
+  // accepted solutions, that makes a dense conditional constraint such as
+  // `guard -> value == 0` spuriously fail whenever `guard` is packed above a
+  // wide value.  Draw a fresh aggregate proposal for every retry.  Rejection
+  // sampling from the uniform object stream preserves the required uniform
+  // distribution over accepted legal assignments.
+  Value retryState = sim::SimManagedLoadOp::create(
+      builder, location, i64, stateReference);
+  Value next = nextAssignment(retryState);
+  sim::SimManagedStoreOp::create(builder, location, retryState,
+                                 stateReference);
+  next = arith::OrIOp::create(
+      builder, location,
+      arith::AndIOp::create(builder, location, next, mutableMask),
+      fixedAssignment);
   Value nextAttempt =
       arith::AddIOp::create(builder, location, attempt, constant64(1));
-  Value domainExhausted = arith::CmpIOp::create(
-      builder, location, arith::CmpIPredicate::eq, next, start);
-  Value samplerExhausted =
+  Value exhausted =
       arith::CmpIOp::create(builder, location, arith::CmpIPredicate::uge,
                             nextAttempt, constant64(64));
-  Value exhausted = arith::OrIOp::create(builder, location, domainExhausted,
-                                         samplerExhausted);
   cf::CondBranchOp::create(builder, location, exhausted, fallbackBlock,
                            ValueRange{next}, loop,
                            ValueRange{next, nextAttempt});
@@ -5924,10 +5804,13 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         << analysis.backend << ")";
     cf::BranchOp::create(builder, location, failedBlock, ValueRange{});
   } else if (wideProgram) {
+    Value fallbackState = sim::SimManagedLoadOp::create(
+        builder, location, i64, stateReference);
     auto fallback = sim::SimRandomSolveWideOp::create(
         builder, location, function.getBody().front().getArgument(0),
         fallbackStart, mutableMask, relevantConstraintMode,
-        constant64(fallbackAttempts), state, increment, programCaptures,
+        constant64(fallbackAttempts), fallbackState, increment,
+        programCaptures,
         builder.getStringAttr(StringRef(
             reinterpret_cast<const char *>(program.data()), program.size())));
     sim::SimManagedStoreOp::create(builder, location,
@@ -5936,10 +5819,13 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                              ValueRange{fallback.getAssignment()}, failedBlock,
                              ValueRange{});
   } else {
+    Value fallbackState = sim::SimManagedLoadOp::create(
+        builder, location, i64, stateReference);
     auto fallback = sim::SimRandomSolveOp::create(
         builder, location, function.getBody().front().getArgument(0),
         fallbackStart, mutableMask, relevantConstraintMode,
-        constant64(fallbackAttempts), state, increment, programCaptures,
+        constant64(fallbackAttempts), fallbackState, increment,
+        programCaptures,
         builder.getStringAttr(StringRef(
             reinterpret_cast<const char *>(program.data()), program.size())));
     sim::SimManagedStoreOp::create(builder, location,
@@ -5967,26 +5853,33 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                            ValueRange{modeCounter}, modeAdvance, ValueRange{});
 
   setCurrent(modeAdvance);
-  Value modeNext = advanceEnabledProperties(modeCounter);
+  Value modeRetryState = sim::SimManagedLoadOp::create(
+      builder, location, i64, stateReference);
+  Value modeNext = nextAssignment(modeRetryState);
+  sim::SimManagedStoreOp::create(builder, location, modeRetryState,
+                                 stateReference);
+  modeNext = arith::OrIOp::create(
+      builder, location,
+      arith::AndIOp::create(builder, location, modeNext, mutableMask),
+      fixedAssignment);
   Value modeNextAttempt =
       arith::AddIOp::create(builder, location, modeAttempt, constant64(1));
-  Value modeDomainExhausted = arith::CmpIOp::create(
-      builder, location, arith::CmpIPredicate::eq, modeNext, modeStart);
-  Value modeSamplerExhausted =
+  Value modeExhausted =
       arith::CmpIOp::create(builder, location, arith::CmpIPredicate::uge,
                             modeNextAttempt, constant64(64));
-  Value modeExhausted = arith::OrIOp::create(
-      builder, location, modeDomainExhausted, modeSamplerExhausted);
   cf::CondBranchOp::create(builder, location, modeExhausted, modeFallbackBlock,
                            ValueRange{modeNext}, modeLoop,
                            ValueRange{modeNext, modeNextAttempt});
 
   setCurrent(modeFallbackBlock);
   if (wideProgram) {
+    Value fallbackState = sim::SimManagedLoadOp::create(
+        builder, location, i64, stateReference);
     auto modeFallback = sim::SimRandomSolveWideOp::create(
         builder, location, function.getBody().front().getArgument(0),
         modeFallbackStart, mutableMask, relevantConstraintMode,
-        constant64(fallbackAttempts), modeState, increment, programCaptures,
+        constant64(fallbackAttempts), fallbackState, increment,
+        programCaptures,
         builder.getStringAttr(StringRef(
             reinterpret_cast<const char *>(program.data()), program.size())));
     sim::SimManagedStoreOp::create(
@@ -5996,10 +5889,13 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                              ValueRange{modeFallback.getAssignment()},
                              failedBlock, ValueRange{});
   } else {
+    Value fallbackState = sim::SimManagedLoadOp::create(
+        builder, location, i64, stateReference);
     auto modeFallback = sim::SimRandomSolveOp::create(
         builder, location, function.getBody().front().getArgument(0),
         modeFallbackStart, mutableMask, relevantConstraintMode,
-        constant64(fallbackAttempts), modeState, increment, programCaptures,
+        constant64(fallbackAttempts), fallbackState, increment,
+        programCaptures,
         builder.getStringAttr(StringRef(
             reinterpret_cast<const char *>(program.data()), program.size())));
     sim::SimManagedStoreOp::create(
