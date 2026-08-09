@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <climits>
 #include <cstdint>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <utility>
@@ -25,6 +26,13 @@
 
 namespace obelisk::solver {
 namespace {
+
+/// Obelisk deliberately builds Z3 with Z3_SINGLE_THREADED so the compiler and
+/// its WebAssembly build do not acquire a pthread runtime dependency. That Z3
+/// configuration is explicitly non-thread-safe, while MLIR may lower isolated
+/// simulation units concurrently. Serialize every entry through the in-process
+/// shim; generated simulation code and the runtime remain fully parallel.
+static std::mutex z3Mutex;
 
 /// The MLIR SMT dialect intentionally does not select or link a solver. This
 /// shim is the single backend boundary that evaluates its bit-vector DAG with
@@ -267,6 +275,10 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
       buildRandomProgramSMT(program, programSize);
   if (!smt)
     return analysis;
+
+  // Decoding and SMT-dialect construction are independent compiler work. Only
+  // serialize the region that enters the non-thread-safe Z3 library.
+  std::lock_guard<std::mutex> lock(z3Mutex);
 
   // Z3 uses exceptions internally even though the rest of Obelisk follows
   // LLVM's no-exceptions convention. They are contained within this

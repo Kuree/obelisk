@@ -562,18 +562,50 @@ void ObeliskSimPreparePass::runOnOperation() {
         call->hasAttr(randomizeDispatchAttrName))
       return true;
     SmallVector<Operation *> callChildren = getChildren(call);
-    if (callChildren.empty())
-      return false;
+    uint64_t argumentCount = call.getArgumentCount();
     bool hasInlineConstraints = call.getHasInlineConstraints();
-    unsigned receiverIndex = hasInlineConstraints ? callChildren.size() - 1 : 0;
+    if (argumentCount == 0) {
+      emitError(getSemanticLocation(call))
+          << "std::randomize is outside the executable object-randomization "
+             "boundary";
+      invalid = true;
+      return true;
+    }
+    if (argumentCount > callChildren.size()) {
+      emitError(getSemanticLocation(call))
+          << "randomize call has malformed argument metadata";
+      invalid = true;
+      return true;
+    }
+    unsigned receiverIndex =
+        static_cast<unsigned>(callChildren.size() - argumentCount);
+    bool frozenChecker = call->hasAttr(randomizeCheckerOnlyAttrName);
+    bool checkerOnly =
+        frozenChecker ||
+        (argumentCount == 2 &&
+         isa<semantic::SVNullLiteralOp>(callChildren.back()));
     auto receiverTypeAttr =
         callChildren[receiverIndex]->getAttrOfType<TypeAttr>("semantic_type");
     auto receiverType =
         receiverTypeAttr
             ? dyn_cast<semantic::ClassHandleType>(receiverTypeAttr.getValue())
             : semantic::ClassHandleType{};
-    if (!receiverType)
-      return false;
+    if (!receiverType) {
+      emitError(getSemanticLocation(call))
+          << "std::randomize is outside the executable object-randomization "
+             "boundary";
+      invalid = true;
+      return true;
+    }
+    if (checkerOnly)
+      call->setAttr(randomizeCheckerOnlyAttrName, builder.getUnitAttr());
+    if (argumentCount != 1 && !checkerOnly) {
+      emitError(getSemanticLocation(call))
+          << "randomize property argument lists are outside the executable "
+             "object-randomization boundary";
+      invalid = true;
+      return true;
+    }
 
     auto foundClass =
         semanticClasses.find(receiverType.getClassName().getLeafReference());
@@ -618,7 +650,38 @@ void ObeliskSimPreparePass::runOnOperation() {
           invalid = true;
           return true;
         }
-        if (llvm::is_contained(candidateHierarchy, foundClass->second))
+        bool compatible = llvm::is_contained(candidateHierarchy,
+                                             foundClass->second);
+        if (!compatible && foundClass->second.getIsInterface()) {
+          StringRef targetInterface =
+              cast<semantic::ClassHandleType>(
+                  foundClass->second.getSemanticType())
+                  .getClassName()
+                  .getLeafReference();
+          // Slang records the transitive interface closure on the class that
+          // declares `implements`, but a derived class has an empty local
+          // interface list. Search its base hierarchy as well so an
+          // interface-typed handle can select plans for inherited
+          // implementations.
+          for (semantic::SVClassTypeOp hierarchyClass : candidateHierarchy) {
+            for (Attribute attribute :
+                 hierarchyClass.getImplementedInterfaces()) {
+              auto type = dyn_cast<TypeAttr>(attribute);
+              auto interface =
+                  type ? dyn_cast<semantic::ClassHandleType>(type.getValue())
+                       : semantic::ClassHandleType{};
+              if (interface &&
+                  interface.getClassName().getLeafReference() ==
+                      targetInterface) {
+                compatible = true;
+                break;
+              }
+            }
+            if (compatible)
+              break;
+          }
+        }
+        if (compatible)
           dynamicPlans.push_back(
               {candidate, static_cast<unsigned>(candidateHierarchy.size())});
       }
@@ -637,6 +700,26 @@ void ObeliskSimPreparePass::runOnOperation() {
         for (const DynamicPlan &plan : dynamicPlans) {
           auto alternative =
               cast<semantic::SVCallExpressionOp>(call->clone());
+          if (checkerOnly) {
+            SmallVector<Operation *> alternativeChildren =
+                getChildren(alternative);
+            if (!frozenChecker &&
+                (alternativeChildren.empty() ||
+                 !isa<semantic::SVNullLiteralOp>(
+                     alternativeChildren.back()))) {
+              emitError(getSemanticLocation(call))
+                  << "randomize(null) has malformed checker metadata";
+              invalid = true;
+              return true;
+            }
+            if (!frozenChecker) {
+              alternativeChildren.back()->erase();
+              alternative->setAttr("argument_count",
+                                   builder.getI64IntegerAttr(1));
+              alternative->setAttr("defaulted_arguments",
+                                   builder.getDenseI64ArrayAttr({0}));
+            }
+          }
           alternative->setAttr(
               randomizePlanClassAttrName,
               FlatSymbolRefAttr::get(

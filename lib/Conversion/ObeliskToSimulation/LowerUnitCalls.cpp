@@ -1316,6 +1316,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       static_cast<unsigned>(receiverIndexValue.getZExtValue());
   uint64_t totalWidth = totalWidthValue.getZExtValue();
   uint64_t constraintCount = constraintCountValue.getZExtValue();
+  bool checkerOnly = op->hasAttr(randomizeCheckerOnlyAttrName);
   if (totalWidth > 64 || constraintCount > 64) {
     emitError(location)
         << "randomize plan exceeds its 64-bit property or constraint boundary";
@@ -1385,7 +1386,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                       hookReceiver, arguments);
     return success();
   };
-  if (failed(callLifecycleHook(randomPreHookAttrName,
+  if (!checkerOnly &&
+      failed(callLifecycleHook(randomPreHookAttrName,
                                randomPreHookOwnerAttrName,
                                randomPreHookCapturesAttrName,
                                randomPreHookReadCapturesAttrName)))
@@ -1525,8 +1527,12 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       builder, location, i64, builder.getIntegerAttr(i64, domainMask));
   uint64_t propertyModeMask =
       planned.size() == 64 ? UINT64_MAX : (uint64_t{1} << planned.size()) - 1;
-  Value relevantMode = arith::AndIOp::create(builder, location, mode,
-                                             constant64(propertyModeMask));
+  Value relevantMode =
+      checkerOnly
+          ? constant64(propertyModeMask)
+          : arith::AndIOp::create(builder, location, mode,
+                                  constant64(propertyModeMask))
+                .getResult();
   Value randomizationEnabled = arith::CmpIOp::create(
       builder, location, arith::CmpIPredicate::eq, relevantMode, constant64(0));
   Value allPropertiesDisabled =
@@ -1604,8 +1610,14 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     Value propertyMode = arith::AndIOp::create(
         builder, location, relevantMode, constant64(uint64_t{1} << index));
     Value enabled =
-        arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
-                              propertyMode, constant64(0));
+        checkerOnly
+            ? arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                        builder.getBoolAttr(false))
+                  .getResult()
+            : arith::CmpIOp::create(builder, location,
+                                    arith::CmpIPredicate::eq, propertyMode,
+                                    constant64(0))
+                  .getResult();
     propertyEnabled.push_back(enabled);
     if (property.isRandC) {
       Block *enabledBlock = addBlock();
@@ -4992,7 +5004,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   cf::BranchOp::create(builder, location, postBlock);
 
   setCurrent(postBlock);
-  if (failed(callLifecycleHook(randomPostHookAttrName,
+  if (!checkerOnly &&
+      failed(callLifecycleHook(randomPostHookAttrName,
                                randomPostHookOwnerAttrName,
                                randomPostHookCapturesAttrName,
                                randomPostHookReadCapturesAttrName)))
