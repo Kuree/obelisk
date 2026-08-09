@@ -538,6 +538,14 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
       // implication proof below.
       if (overlapsFiniteDomain(variable))
         continue;
+      // The generated interval sampler is 64-bit shaped. Searching for exact
+      // min/max bounds above that width can require two solver queries per bit
+      // yet still cannot produce a directly materializable proposal. Leave
+      // wide variables to the bounded table enumeration below; sparse formulas
+      // can still be solved completely at compile time without width-linear
+      // bound discovery.
+      if (variable.width > 64)
+        continue;
       std::optional<z3::expr> bits = shim.translate(variable.bits);
       if (!bits)
         continue;
@@ -783,13 +791,18 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
     // complete solution table lets generated code sample correlated assignments
     // directly and needs neither a checker nor runtime solving. Keep the table
     // deliberately small to bound both compile time and IR size.
-    constexpr unsigned maxAssignmentWidth = 12;
+    // Enumeration is capped by both the row limit below and the solver rlimit,
+    // so bit-vector width does not need to approximate solution cardinality.
+    // Keeping a generous representation cap lets sparse 128/256-bit formulas
+    // become tiny exact tables instead of forcing runtime search merely because
+    // their legal values are far apart.
+    constexpr unsigned maxEnumeratedAssignmentWidth = 4096;
     constexpr size_t maxAssignmentTableSize = 16;
     auto assignmentType =
         mlir::dyn_cast<mlir::smt::BitVectorType>(smt->assignment.getType());
     if ((!analysis.proposalExact || preferGlobalAssignmentTable) &&
         smt->captures.empty() && assignmentType &&
-        assignmentType.getWidth() <= maxAssignmentWidth) {
+        assignmentType.getWidth() <= maxEnumeratedAssignmentWidth) {
       z3::context enumerationContext;
       Z3SMTShim enumerationShim(enumerationContext);
       std::optional<z3::expr> enumerationHard =
@@ -931,7 +944,7 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
                            return constraint->hasCapture;
                          }))
           continue;
-        unsigned componentWidth = 0;
+        uint64_t componentWidth = 0;
         unsigned assignmentWidth =
             mlir::cast<mlir::smt::BitVectorType>(smt->assignment.getType())
                 .getWidth();
@@ -943,7 +956,7 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
                                assignmentWidth, variable.width)
                                .shl(variable.offset);
         }
-        if (componentWidth > maxAssignmentWidth) {
+        if (componentWidth > maxEnumeratedAssignmentWidth) {
           allConstrainedComponentsComplete = false;
           continue;
         }

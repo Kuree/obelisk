@@ -4885,7 +4885,15 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   if (hasFiniteDomains && !distPlans.empty()) {
     usePlannedSampling = arith::ConstantOp::create(
         builder, location, builder.getI1Type(), builder.getBoolAttr(false));
-  } else if (hasSolveBefore || !distPlans.empty() || hasFiniteDomains) {
+  } else if (hasSolveBefore || !distPlans.empty() || hasFiniteDomains ||
+             validAssignmentTable || validAssignmentTables ||
+             !proposalDomains.empty() || !proposalFiniteDomains.empty() ||
+             !proposalCaptureDomains.empty() || !proposalAliases.empty() ||
+             !proposalDefinitions.empty()) {
+    // A compile-time proposal is checked as one aggregate assignment. With a
+    // partial rand_mode only the enabled fields would be committed, so the
+    // resulting object need not be the assignment that satisfied the check.
+    // Use the masked residual path unless every planned property is enabled.
     usePlannedSampling = arith::AndIOp::create(
         builder, location, usePlannedSampling, randomizationEnabled);
   }
@@ -5217,8 +5225,20 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   }
 
   if (validAssignmentTable && !solveBeforeTableRoot &&
-      !powerOfTwoAssignmentTable)
-    start = sampleBoundedIndex(proposalAssignments.size(), randomDraw);
+      !powerOfTwoAssignmentTable) {
+    Value tableDraw =
+        assignmentType == i64
+            ? randomDraw
+            : arith::TruncIOp::create(builder, location, i64, randomDraw)
+                  .getResult();
+    Value boundedIndex =
+        sampleBoundedIndex(proposalAssignments.size(), tableDraw);
+    start = assignmentType == i64
+                ? boundedIndex
+                : arith::ExtUIOp::create(builder, location, assignmentType,
+                                         boundedIndex)
+                      .getResult();
+  }
 
   if (validAssignmentTables) {
     sampledComponentAssignment = constantAssignment64(0);

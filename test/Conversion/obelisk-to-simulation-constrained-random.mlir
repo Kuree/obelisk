@@ -530,13 +530,15 @@ module {
 // CHECK: %[[LIVE_BLOCK_MODE_REF:.*]] = obelisk_sim.class.field_ref {{.*}}[@{{.*}}__obelisk_constraint_mode]
 // CHECK: %[[LIVE_BLOCK_MODES:.*]] = obelisk_sim.managed.load %[[LIVE_BLOCK_MODE_REF]]
 // CHECK: %[[RELEVANT_MODE:.*]] = arith.andi
+// CHECK: %[[ALL_PROPERTIES_ENABLED:.*]] = arith.cmpi eq, %[[RELEVANT_MODE]], %{{c0_i64.*}} : i64
 // CHECK: %[[ALL_DISABLED:.*]] = arith.cmpi eq, %[[RELEVANT_MODE]], %{{c1_i64.*}} : i64
 // CHECK: %[[RELEVANT_BLOCK_MODES:.*]] = arith.andi %[[LIVE_BLOCK_MODES]], %{{c1_i64.*}} : i64
 // CHECK: %[[ALL_BLOCKS_ENABLED:.*]] = arith.cmpi eq, %[[RELEVANT_BLOCK_MODES]], %{{c0_i64.*}} : i64
 // CHECK: arith.select
 // CHECK: cf.cond_br %[[ALL_DISABLED]]
 // CHECK: arith.muli
-// CHECK: cf.cond_br %[[ALL_BLOCKS_ENABLED]]
+// CHECK: %[[USE_PLAN:.*]] = arith.andi %[[ALL_BLOCKS_ENABLED]], %[[ALL_PROPERTIES_ENABLED]] : i1
+// CHECK: cf.cond_br %[[USE_PLAN]]
 // CHECK: obelisk_sim.managed.store
 // CHECK: arith.cmpi slt
 // CHECK: arith.ori
