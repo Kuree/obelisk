@@ -180,6 +180,10 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     uint32_t flags = found->second |
                      (startup
                           ? OBELISK_RT_INTRINSIC_SPAWN_STARTUP
+                          : 0) |
+                     (callee.function->hasAttr(
+                          "obelisk_sim.detached_controls")
+                          ? OBELISK_RT_INTRINSIC_SPAWN_DETACHED_CONTROLS
                           : 0);
     return emitIntrinsic(plan, kIntrinsicSpawn, captures, {op.getProcess()},
                          flags);

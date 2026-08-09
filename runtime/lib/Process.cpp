@@ -2036,9 +2036,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_planned(
       return OBELISK_RT_OUT_OF_RESOURCES;
     }
     process.token = context->nextNativeProcessToken++;
-    process.parent = context->activeLogicalProcessToken;
+    process.parent =
+        (flags & OBELISK_RT_SCHEDULE_DETACHED_CONTROLS) == 0
+            ? context->activeLogicalProcessToken
+            : 0;
     obelisk_rt_random_split_unlocked(context, process.random);
-    process.controls = context->activeControls;
+    if ((flags & OBELISK_RT_SCHEDULE_DETACHED_CONTROLS) == 0)
+      process.controls = context->activeControls;
     process.insertionSequence = context->nextProcessInsertionSequence++;
     process.observedEpoch = context->schedulerEpoch;
     process.phase = phase;
@@ -2070,8 +2074,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_planned(
       context->scheduledProcessIndices[token] =
           context->scheduledProcesses.size() - 1;
       context->nativePollCandidates.insert(token);
-      obelisk_rt_register_unstarted_actor(
-          context, phase, kNativeLogicalProcessTag | token);
+      if ((flags & OBELISK_RT_SCHEDULE_DETACHED_CONTROLS) == 0)
+        obelisk_rt_register_unstarted_actor(
+            context, phase, kNativeLogicalProcessTag | token);
     } catch (...) {
       context->scheduledProcessIndices.erase(token);
       context->nativePollCandidates.erase(token);
@@ -2625,6 +2630,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_direct_fragment_enter(
   context->activeExecRegion = scheduled.queuedRegion;
   context->activeLogicalProcessToken =
       kNativeLogicalProcessTag | scheduled.token;
+  obelisk_rt_flush_deferred_immediate_reports_unlocked(
+      context, context->activeLogicalProcessToken);
   *outInstance = actor;
   return OBELISK_RT_OK;
 }
@@ -6178,6 +6185,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
     }
     obelisk_rt_process_instance_v1 *selected = nullptr;
     size_t selectedIndex = 0;
+    bool selectedResuming = false;
     {
       ContextMutexLock lock(context);
       const size_t processCount = context->scheduledProcesses.size();
@@ -6277,6 +6285,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         }
         candidate.signalTriggered = false;
         context->nativePollCandidates.erase(candidate.token);
+        selectedResuming =
+            candidate.started &&
+            candidate.suspendKind != OBELISK_RT_SUSPEND_NONE;
         if (!candidate.started)
           obelisk_rt_unregister_unstarted_actor(
               context, candidate.phase,
@@ -7130,6 +7141,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
       context->activeLogicalProcessToken =
           kNativeLogicalProcessTag |
           context->scheduledProcesses[selectedIndex].token;
+      if (selectedResuming)
+        obelisk_rt_flush_deferred_immediate_reports_unlocked(
+            context, context->activeLogicalProcessToken);
       context->activeControls =
           std::move(context->scheduledProcesses[selectedIndex].controls);
     }
@@ -7406,6 +7420,8 @@ obelisk_rt_status executeTrustedAOTNode(obelisk_rt_context *context,
     if (scheduled.instance != selected || scheduled.token != token ||
         scheduled.aotActorSlot != actorSlot)
       return OBELISK_RT_INVALID_LIFECYCLE;
+    bool resuming =
+        scheduled.started && scheduled.suspendKind != OBELISK_RT_SUSPEND_NONE;
     if (!scheduled.started)
       obelisk_rt_unregister_unstarted_actor(
           context, scheduled.phase, kNativeLogicalProcessTag | token);
@@ -7415,6 +7431,9 @@ obelisk_rt_status executeTrustedAOTNode(obelisk_rt_context *context,
     context->activeHomeRegion = scheduled.homeRegion;
     context->activeExecRegion = scheduled.queuedRegion;
     context->activeLogicalProcessToken = kNativeLogicalProcessTag | token;
+    if (resuming)
+      obelisk_rt_flush_deferred_immediate_reports_unlocked(
+          context, context->activeLogicalProcessToken);
     // Static RTL actors almost never own disable/control memberships. Avoid
     // rotating three-word vector storage through the context on every fine
     // graph activation; if an execution creates a membership, the post-call
@@ -7632,6 +7651,8 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
       }
     }
 
+    bool resuming =
+        scheduled.started && scheduled.suspendKind != OBELISK_RT_SUSPEND_NONE;
     if (!scheduled.started)
       obelisk_rt_unregister_unstarted_actor(
           context, scheduled.phase,
@@ -7648,6 +7669,9 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
     context->activeExecRegion = scheduled.queuedRegion;
     context->activeLogicalProcessToken =
         kNativeLogicalProcessTag | scheduled.token;
+    if (resuming)
+      obelisk_rt_flush_deferred_immediate_reports_unlocked(
+          context, context->activeLogicalProcessToken);
     context->activeControls = std::move(scheduled.controls);
   }
 

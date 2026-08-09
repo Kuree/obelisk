@@ -1463,7 +1463,10 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         scratchOffset + callee.scratchSize > std::numeric_limits<size_t>::max())
       return OBELISK_RT_OUT_OF_MEMORY;
     ScheduledDesignTask task;
-    task.parent = context->activeLogicalProcessToken;
+    task.parent =
+        (signature.flags & OBELISK_RT_INTRINSIC_SPAWN_DETACHED_CONTROLS) == 0
+            ? context->activeLogicalProcessToken
+            : 0;
     obelisk_rt_random_split_unlocked(context, task.random);
     task.function = function;
     task.startupProcess =
@@ -1542,7 +1545,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
             task.phase = process.phase;
             break;
           }
-      task.controls = context->activeControls;
+      if ((signature.flags & OBELISK_RT_INTRINSIC_SPAWN_DETACHED_CONTROLS) ==
+          0)
+        task.controls = context->activeControls;
       task.insertionSequence = context->nextProcessInsertionSequence++;
       task.observedEpoch = context->schedulerEpoch;
       for (const auto &[automaticID, count] : retainedAutomaticStates)
@@ -1555,9 +1560,11 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           context->scheduledDesignTaskIndices[scheduledID] =
               context->scheduledDesignTasks.size() - 1;
           context->designPollCandidates.insert(scheduledID);
-          obelisk_rt_register_unstarted_actor(
-              context, context->scheduledDesignTasks.back().phase,
-              scheduledID);
+          if ((signature.flags &
+               OBELISK_RT_INTRINSIC_SPAWN_DETACHED_CONTROLS) == 0)
+            obelisk_rt_register_unstarted_actor(
+                context, context->scheduledDesignTasks.back().phase,
+                scheduledID);
         } catch (...) {
           context->scheduledDesignTaskIndices.erase(scheduledID);
           context->designPollCandidates.erase(scheduledID);

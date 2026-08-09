@@ -414,6 +414,21 @@ static void resetDeferredImmediateReportsForTime(obelisk_rt_context *context) {
   context->deferredImmediateTime = context->schedulerTime;
 }
 
+void obelisk_rt_flush_deferred_immediate_reports_unlocked(
+    obelisk_rt_context *context, uint64_t logicalProcess) {
+  if (!context || logicalProcess == 0)
+    return;
+  resetDeferredImmediateReportsForTime(context);
+  auto process = context->latestDeferredImmediateReports.find(logicalProcess);
+  if (process == context->latestDeferredImmediateReports.end())
+    return;
+  for (const auto &[site, ticket] : process->second) {
+    (void)site;
+    context->deferredImmediateReports.erase(ticket);
+  }
+  context->latestDeferredImmediateReports.erase(process);
+}
+
 extern "C" uint64_t obelisk_rt_v1_deferred_enqueue(obelisk_rt_context *context,
                                                    uint64_t siteID) {
   if (!context || siteID == 0)
@@ -426,11 +441,16 @@ extern "C" uint64_t obelisk_rt_v1_deferred_enqueue(obelisk_rt_context *context,
     uint64_t ticket = context->nextDeferredImmediateTicket++;
     if (ticket == 0)
       ticket = context->nextDeferredImmediateTicket++;
+    auto &sites =
+        context->latestDeferredImmediateReports
+            [context->activeLogicalProcessToken];
+    auto previous = sites.find(siteID);
+    if (previous != sites.end())
+      context->deferredImmediateReports.erase(previous->second);
     context->deferredImmediateReports.emplace(
         ticket, obelisk_rt_context::DeferredImmediateReport{
                     context->activeLogicalProcessToken, siteID});
-    context->latestDeferredImmediateReports[context->activeLogicalProcessToken]
-                                           [siteID] = ticket;
+    sites[siteID] = ticket;
     return ticket;
   } catch (...) {
     if (context)

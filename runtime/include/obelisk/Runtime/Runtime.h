@@ -322,11 +322,13 @@ enum {
   ((uint32_t)(region) << OBELISK_RT_SCHEDULE_HOME_SHIFT)
 #define OBELISK_RT_SCHEDULE_INITIAL (UINT32_C(1) << 4)
 #define OBELISK_RT_SCHEDULE_STARTUP (UINT32_C(1) << 5)
+#define OBELISK_RT_SCHEDULE_DETACHED_CONTROLS (UINT32_C(1) << 6)
 
-// The bytecode SPAWN intrinsic uses its high flag bit for the same startup
-// classification and the remaining bits for the callee function index.
+// The bytecode SPAWN intrinsic uses its two high flag bits for scheduler
+// classifications and the remaining bits for the callee function index.
 #define OBELISK_RT_INTRINSIC_SPAWN_STARTUP (UINT32_C(1) << 31)
-#define OBELISK_RT_INTRINSIC_SPAWN_FUNCTION_MASK UINT32_C(0x7fffffff)
+#define OBELISK_RT_INTRINSIC_SPAWN_DETACHED_CONTROLS (UINT32_C(1) << 30)
+#define OBELISK_RT_INTRINSIC_SPAWN_FUNCTION_MASK UINT32_C(0x3fffffff)
 
 // Serialized design-bytecode function flags. Process functions encode their
 // canonical frame size shifted left by one. Bits 60-62 encode the executable

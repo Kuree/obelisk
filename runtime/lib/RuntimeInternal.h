@@ -256,7 +256,8 @@ inline bool obelisk_rt_decode_schedule_flags(uint32_t flags, uint32_t &phase,
                                              uint32_t &homeRegion) {
   constexpr uint32_t known =
       OBELISK_RT_SCHEDULE_FINAL | OBELISK_RT_SCHEDULE_HOME_MASK |
-      OBELISK_RT_SCHEDULE_INITIAL | OBELISK_RT_SCHEDULE_STARTUP;
+      OBELISK_RT_SCHEDULE_INITIAL | OBELISK_RT_SCHEDULE_STARTUP |
+      OBELISK_RT_SCHEDULE_DETACHED_CONTROLS;
   if ((flags & ~known) != 0)
     return false;
   phase = (flags & OBELISK_RT_SCHEDULE_FINAL) != 0 ? 1u : 0u;
@@ -1194,6 +1195,11 @@ obelisk_rt_status makeBuffer(std::string_view source,
                              obelisk_rt_buffer_v1 *output);
 bool validBytes(const void *data, uint64_t size);
 std::string hostErrorMessage(int error);
+
+// Cancel every not-yet-matured deferred-immediate report owned by one
+// logical process. The caller must hold the context mutex.
+void obelisk_rt_flush_deferred_immediate_reports_unlocked(
+    obelisk_rt_context *context, uint64_t logicalProcess);
 
 obelisk_rt_status writeUnlocked(obelisk_rt_context *context,
                                 uint32_t descriptor, const void *data,

@@ -2903,6 +2903,13 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
         throw;
       }
 
+      // Clause 16.4 flushes reports when the outermost enclosing process
+      // scope is disabled. A canceled observer has no static exit edge and
+      // likewise cannot retain a pending report.
+      if (cancelCurrent || trim == 0)
+        obelisk_rt_flush_deferred_immediate_reports_unlocked(context,
+                                                             current);
+
       if (!cancelCurrent && trim != context->activeControls.size()) {
         for (size_t index = trim; index != context->activeControls.size();
              ++index)
@@ -2915,6 +2922,7 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
         if (!process.instance || (token == current && !cancelCurrent) ||
             !isTargetMember(process.controls))
           continue;
+        obelisk_rt_flush_deferred_immediate_reports_unlocked(context, token);
         nativeInstances.push_back(process.instance);
         nativeInstances.insert(nativeInstances.end(), process.callers.begin(),
                                process.callers.end());
@@ -2938,6 +2946,8 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
         if (task.terminated || (task.id == current && !cancelCurrent) ||
             !isTargetMember(task.controls))
           continue;
+        obelisk_rt_flush_deferred_immediate_reports_unlocked(context,
+                                                             task.id);
         designTasks.push_back({task.id, task.function, task.scratchOffset,
                                std::move(task.frame)});
         for (DesignActivation &caller : task.callers)
@@ -3212,6 +3222,8 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
       size_t selectedIndex =
           static_cast<size_t>(found - context->scheduledDesignTasks.begin());
       task = std::move(context->scheduledDesignTasks[selectedIndex]);
+      bool resuming =
+          task.started && task.suspendKind != OBELISK_RT_SUSPEND_NONE;
       if (!task.started)
         obelisk_rt_unregister_unstarted_actor(context, task.phase, task.id);
       // Keep a direct wait indexed while its task executes. The task may
@@ -3241,6 +3253,9 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
       context->activeHomeRegion = task.homeRegion;
       context->activeExecRegion = task.queuedRegion;
       context->activeLogicalProcessToken = task.id;
+      if (resuming)
+        obelisk_rt_flush_deferred_immediate_reports_unlocked(context,
+                                                             task.id);
       context->activeControls = std::move(task.controls);
     }
     obelisk_rt_design_bytecode_entry_v1 entry{context->execution, task.function,

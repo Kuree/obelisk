@@ -255,6 +255,9 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
                                 : 0) |
                            (startup
                                 ? OBELISK_RT_SCHEDULE_STARTUP
+                                : 0) |
+                           (function->hasAttr("obelisk_sim.detached_controls")
+                                ? OBELISK_RT_SCHEDULE_DETACHED_CONTROLS
                                 : 0);
   Value null = LLVM::ZeroOp::create(builder, location, pointer);
   Value continuationAddress = null;

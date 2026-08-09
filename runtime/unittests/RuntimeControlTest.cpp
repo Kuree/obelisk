@@ -110,4 +110,26 @@ TEST(RuntimeDeferredAssertion, LatestPerProcessReportMatures) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(RuntimeDeferredAssertion, FlushCancelsOnlyTheSelectedProcess) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+
+  context->activeLogicalProcessToken = 21;
+  uint64_t firstSite = obelisk_rt_v1_deferred_enqueue(context, 81);
+  uint64_t secondSite = obelisk_rt_v1_deferred_enqueue(context, 82);
+  context->activeLogicalProcessToken = 22;
+  uint64_t otherProcess = obelisk_rt_v1_deferred_enqueue(context, 81);
+  ASSERT_NE(firstSite, 0u);
+  ASSERT_NE(secondSite, 0u);
+  ASSERT_NE(otherProcess, 0u);
+
+  obelisk_rt_flush_deferred_immediate_reports_unlocked(context, 21);
+  EXPECT_EQ(obelisk_rt_v1_deferred_mature(context, firstSite), 0u);
+  EXPECT_EQ(obelisk_rt_v1_deferred_mature(context, secondSite), 0u);
+  EXPECT_EQ(obelisk_rt_v1_deferred_mature(context, otherProcess), 1u);
+  EXPECT_TRUE(context->deferredImmediateReports.empty());
+  EXPECT_TRUE(context->latestDeferredImmediateReports.empty());
+  obelisk_rt_v1_context_destroy(context);
+}
+
 } // namespace
