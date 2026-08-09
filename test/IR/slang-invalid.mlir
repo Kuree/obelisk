@@ -65,6 +65,22 @@ module {
 // -----
 
 module {
+  // expected-error @+1 {{assertion invocation inventory describes 2 children but body contains 0}}
+  slang.expression.assertion_instance attributes {
+    argument_count = 1 : i64, argument_formal_paths = ["formal"],
+    argument_formal_symbols = [@formal], argument_kinds = array<i64: 0>,
+    has_expanded_body = true, is_recursive_property = false,
+    local_variable_count = 0 : i64, local_variable_has_initializer = array<i64>,
+    local_variable_paths = [], local_variable_symbols = [], node_id = 0 : i64,
+    referenced_path = "property", referenced_symbol = @property,
+    semantic_type = !slang.property
+  } {
+  }
+}
+
+// -----
+
+module {
   // expected-error @+1 {{iterator loop_dimensions entry #0 requires symbol, nonempty path, and type}}
   slang.statement.foreach_loop attributes {
     loop_dimensions = [{

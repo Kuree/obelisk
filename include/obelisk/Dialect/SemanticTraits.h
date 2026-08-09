@@ -280,9 +280,34 @@ public:
       if (kind < 0 || kind > 2)
         return op->emitOpError()
                << "has invalid assertion actual argument kind " << kind;
+    size_t initializedLocals = 0;
+    for (int64_t hasInitializer : concrete.getLocalVariableHasInitializer()) {
+      if (hasInitializer != 0 && hasInitializer != 1)
+        return op->emitOpError()
+               << "has invalid local variable initializer flag "
+               << hasInitializer;
+      initializedLocals += hasInitializer != 0;
+    }
     if (concrete.getIsRecursiveProperty() && concrete.getHasExpandedBody())
       return op->emitOpError()
              << "cannot expand the body of a recursive property placeholder";
+
+    // Slang emits a substituted assertion body first, followed by one child
+    // for every actual (including a selected default), then the initializers
+    // of local assertion variables. Keep that contract explicit: bounded AOT
+    // consumers execute only the already-substituted first child and must not
+    // accidentally evaluate the metadata copies of actuals a second time.
+    size_t expectedChildren = argumentCount + initializedLocals +
+                              static_cast<size_t>(
+                                  concrete.getHasExpandedBody());
+    size_t actualChildren = 0;
+    if (op->getNumRegions() != 0 && !op->getRegion(0).empty())
+      actualChildren = op->getRegion(0).front().getOperations().size();
+    if (actualChildren != expectedChildren)
+      return op->emitOpError()
+             << "assertion invocation inventory describes "
+             << expectedChildren << " children but body contains "
+             << actualChildren;
     return success();
   }
 };

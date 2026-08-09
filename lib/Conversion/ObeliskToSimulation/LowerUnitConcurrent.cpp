@@ -30,15 +30,34 @@ struct FixedSequence {
   SmallVector<SmallVector<Operation *, 2>, 8> ages;
 };
 
+/// Return the substituted body of a nonrecursive assertion invocation. The
+/// remaining children are the source actual/default and local-initializer
+/// inventory retained for semantic tooling; they are deliberately not
+/// evaluated by the monitor compiler.
+static FailureOr<Operation *> getExpandedAssertionBody(
+    semantic::SVAssertionInstanceExpressionOp instance) {
+  if (instance.getIsRecursiveProperty() || !instance.getHasExpandedBody() ||
+      instance.getLocalVariableCount() != 0)
+    return failure();
+
+  size_t initializedLocals = llvm::count_if(
+      instance.getLocalVariableHasInitializer(),
+      [](int64_t hasInitializer) { return hasInitializer != 0; });
+  SmallVector<Operation *> children = getChildren(instance);
+  size_t expectedChildren =
+      1 + instance.getArgumentCount() + initializedLocals;
+  if (children.size() != expectedChildren)
+    return failure();
+  return children.front();
+}
+
 static FailureOr<FixedSequence> compileFixedSequence(Operation *operation) {
   if (auto instance =
           dyn_cast<semantic::SVAssertionInstanceExpressionOp>(operation)) {
-    SmallVector<Operation *> children = getChildren(instance);
-    if (instance.getIsRecursiveProperty() || !instance.getHasExpandedBody() ||
-        instance.getArgumentCount() != 0 ||
-        instance.getLocalVariableCount() != 0 || children.empty())
+    FailureOr<Operation *> body = getExpandedAssertionBody(instance);
+    if (failed(body))
       return failure();
-    return compileFixedSequence(children.front());
+    return compileFixedSequence(*body);
   }
 
   if (auto simple = dyn_cast<semantic::SVSimpleAssertionExprOp>(operation)) {
@@ -56,12 +75,23 @@ static FailureOr<FixedSequence> compileFixedSequence(Operation *operation) {
         return failure();
       repetitions = static_cast<uint64_t>(*simple.getRepetitionMin());
     }
-    if (repetitions > 63)
+    FixedSequence nested;
+    if (isa<semantic::SVAssertionInstanceExpressionOp>(children.front())) {
+      FailureOr<FixedSequence> compiled =
+          compileFixedSequence(children.front());
+      if (failed(compiled))
+        return failure();
+      nested = std::move(*compiled);
+    } else {
+      nested.ages.resize(1);
+      nested.ages.front().push_back(children.front());
+    }
+    if (nested.ages.empty() || repetitions > 63 / nested.ages.size())
       return failure();
     FixedSequence result;
-    result.ages.resize(repetitions);
-    for (auto &age : result.ages)
-      age.push_back(children.front());
+    result.ages.reserve(repetitions * nested.ages.size());
+    for (uint64_t index = 0; index < repetitions; ++index)
+      llvm::append_range(result.ages, nested.ages);
     return result;
   }
 
@@ -101,16 +131,26 @@ static FailureOr<FixedSequence> compileFixedSequence(Operation *operation) {
 }
 
 static Operation *unwrapAssertionInstance(Operation *operation) {
-  while (auto instance =
-             dyn_cast<semantic::SVAssertionInstanceExpressionOp>(operation)) {
-    SmallVector<Operation *> children = getChildren(instance);
-    if (instance.getIsRecursiveProperty() || !instance.getHasExpandedBody() ||
-        instance.getArgumentCount() != 0 ||
-        instance.getLocalVariableCount() != 0 || children.empty())
-      return nullptr;
-    operation = children.front();
+  while (true) {
+    if (auto instance =
+            dyn_cast<semantic::SVAssertionInstanceExpressionOp>(operation)) {
+      FailureOr<Operation *> body = getExpandedAssertionBody(instance);
+      if (failed(body))
+        return nullptr;
+      operation = *body;
+      continue;
+    }
+    auto simple = dyn_cast<semantic::SVSimpleAssertionExprOp>(operation);
+    SmallVector<Operation *> children = simple ? getChildren(simple)
+                                               : SmallVector<Operation *>{};
+    if (simple && !simple.getIsNull() && !simple.getHasRepetition() &&
+        children.size() == 1 &&
+        isa<semantic::SVAssertionInstanceExpressionOp>(children.front())) {
+      operation = children.front();
+      continue;
+    }
+    return operation;
   }
-  return operation;
 }
 
 } // namespace
@@ -173,8 +213,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
 
   Operation *property = unwrapAssertionInstance(children[prefix]);
   if (!property)
-    return op.emitError("recursive or parameterized assertion instances are "
-                        "not executable by the bounded AOT monitor"),
+    return op.emitError("recursive, local-variable, or malformed assertion "
+                        "instances are not executable by the bounded AOT "
+                        "monitor"),
            failure();
 
   Operation *clock = defaultClock;
