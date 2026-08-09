@@ -216,54 +216,174 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     return convertResult(value);
   }
 
+  auto sampledValue = [&](Operation *expression) -> FailureOr<Value> {
+    if (!isAddressableExpression(expression)) {
+      emitError(getSemanticLocation(expression))
+          << "sampled-value expressions currently require statically "
+             "addressable packed storage";
+      return failure();
+    }
+    FailureOr<Value> source = lowerExpression(expression, true);
+    if (failed(source))
+      return failure();
+    Type resultType;
+    if (auto ref = dyn_cast<sim::RefType>((*source).getType()))
+      resultType = ref.getElementType();
+    else if (auto net = dyn_cast<sim::NetType>((*source).getType()))
+      resultType = net.getElementType();
+    if (!resultType || !sim::getPackedWidth(resultType)) {
+      emitError(getSemanticLocation(expression))
+          << "sampled-value expressions currently require packed storage";
+      return failure();
+    }
+    return sim::SimSampledReadOp::create(builder, location, resultType,
+                                         context, *source)
+        .getResult();
+  };
+  auto sampledSiteID = [&]() {
+    auto nodeAttr = op->getAttrOfType<IntegerAttr>("node_id");
+    uint64_t node = nodeAttr ? nodeAttr.getValue().getZExtValue() : 0;
+    return stableCodeUnitID((function.getSymName() + ".$sampled." +
+                             Twine(node) + "." + Twine(name))
+                                .str());
+  };
+  auto sampledHistory = [&](Value current, Value gate,
+                            uint64_t depth) -> Value {
+    return sim::SimSampledHistoryOp::create(
+               builder, location, current.getType(), context, current, gate,
+               builder.getI64IntegerAttr(sampledSiteID()),
+               builder.getI64IntegerAttr(depth))
+        .getResult();
+  };
+
   if (name == "$sampled") {
     if (children.size() != 1) {
       emitError(location) << "$sampled requires exactly one argument";
       return failure();
     }
-    emitError(location)
-        << "$sampled requires concurrent assertion Preponed sampling, which "
-           "is not executable yet";
-    return failure();
+    FailureOr<Value> sampled = sampledValue(children.front());
+    return failed(sampled) ? FailureOr<Value>(failure())
+                           : convertResult(*sampled);
   }
 
-  if (name == "$past") {
-    if (children.empty() || children.size() > 4) {
-      emitError(location) << "$past requires one to four arguments";
+  bool historyFunction = name == "$past" || name == "$rose" ||
+                         name == "$fell" || name == "$stable" ||
+                         name == "$changed";
+  if (historyFunction) {
+    size_t maximum = name == "$past" ? 4 : 2;
+    if (children.empty() || children.size() > maximum) {
+      emitError(location) << name << " requires "
+                          << (name == "$past" ? "one to four" : "one or two")
+                          << " arguments";
       return failure();
     }
-    if (children.size() >= 2 && !getConstantSpelling(children[1])) {
-      emitError(getSemanticLocation(children[1]))
-          << "$past history depth must be a constant integer";
+    if ((name == "$past" && children.size() >= 4) ||
+        (name != "$past" && children.size() >= 2)) {
+      emitError(getSemanticLocation(children.back()))
+          << name << " alternate clock arguments require concurrent property "
+                     "clock binding, which is not executable yet";
       return failure();
     }
-    if (children.size() >= 3) {
-      emitError(getSemanticLocation(children[2]))
-          << "$past gating expressions are not supported";
-      return failure();
-    }
-    if (children.size() >= 4) {
-      emitError(getSemanticLocation(children[3]))
-          << "$past alternate clock arguments are not supported";
-      return failure();
-    }
-    emitError(location)
-        << "$past requires assertion-clock history, which is unavailable for "
-           "this operand";
-    return failure();
-  }
 
-  if (name == "$rose" || name == "$fell" || name == "$stable" ||
-      name == "$changed") {
-    if (children.size() != 1) {
-      emitError(location) << name << " requires exactly one argument";
-      return failure();
+    uint64_t depth = 1;
+    if (name == "$past" && children.size() >= 2) {
+      std::optional<StringRef> spelling = getConstantSpelling(children[1]);
+      if (!spelling) {
+        emitError(getSemanticLocation(children[1]))
+            << "$past history depth must be a constant positive integer";
+        return failure();
+      }
+      FailureOr<ParsedConstant> parsed =
+          parseSVInteger(*spelling, 64, getSemanticLocation(children[1]));
+      if (failed(parsed) || !parsed->unknown.isZero() ||
+          parsed->value.isZero() || parsed->value.isNegative()) {
+        emitError(getSemanticLocation(children[1]))
+            << "$past history depth must be a constant positive integer";
+        return failure();
+      }
+      depth = parsed->value.getZExtValue();
     }
-    emitError(location)
-        << name
-        << " requires assertion-clock history, which is unavailable for this "
-           "operand";
-    return failure();
+
+    FailureOr<Value> current = sampledValue(children.front());
+    if (failed(current))
+      return failure();
+    Value gate = constant(builder.getI1Type(), 1);
+    if (name == "$past" && children.size() >= 3) {
+      FailureOr<Value> sampledGate = sampledValue(children[2]);
+      if (failed(sampledGate))
+        return failure();
+      FailureOr<Value> truth =
+          truthValue(*sampledGate, getSemanticLocation(children[2]));
+      if (failed(truth))
+        return failure();
+      gate = *truth;
+    }
+    Value previous = sampledHistory(*current, gate, depth);
+    if (name == "$past")
+      return convertResult(previous);
+
+    FailureOr<Value> equal =
+        conditionalEqual(*current, previous, (*current).getType(), location,
+                         /*caseEquality=*/true);
+    if (failed(equal))
+      return failure();
+    if (name == "$stable")
+      return convertResult(*equal);
+    if (name == "$changed") {
+      Value one = constant(builder.getI1Type(), 1);
+      return convertResult(
+          arith::XOrIOp::create(builder, location, *equal, one));
+    }
+
+    FailureOr<Value> currentScalar = toPackedScalar(*current, location);
+    FailureOr<Value> previousScalar = toPackedScalar(previous, location);
+    if (failed(currentScalar) || failed(previousScalar))
+      return failure();
+    Value currentBit, previousBit;
+    if (auto logic = dyn_cast<sim::LogicType>((*currentScalar).getType())) {
+      Type bitType = sim::LogicType::get(function.getContext(), 1);
+      currentBit = sim::SimLogicExtractOp::create(builder, location, bitType,
+                                                  *currentScalar, 0);
+      previousBit = sim::SimLogicExtractOp::create(builder, location, bitType,
+                                                   *previousScalar, 0);
+      bool target = name == "$rose";
+      Value targetBit = sim::SimLogicConstantOp::create(
+          builder, location, bitType,
+          builder.getIntegerAttr(builder.getI1Type(), target ? 1 : 0),
+          builder.getIntegerAttr(builder.getI1Type(), 0));
+      Value currentIsTarget = sim::SimLogicCompareOp::create(
+          builder, location, builder.getI1Type(), sim::CompareKind::CaseEq,
+          currentBit, targetBit);
+      Value previousIsTarget = sim::SimLogicCompareOp::create(
+          builder, location, builder.getI1Type(), sim::CompareKind::CaseEq,
+          previousBit, targetBit);
+      Value notPrevious = arith::XOrIOp::create(
+          builder, location, previousIsTarget,
+          constant(builder.getI1Type(), 1));
+      return convertResult(arith::AndIOp::create(
+          builder, location, currentIsTarget, notPrevious));
+    }
+    auto integer = cast<IntegerType>((*currentScalar).getType());
+    auto bit = [&](Value value) -> Value {
+      if (integer.getWidth() == 1)
+        return value;
+      return arith::TruncIOp::create(builder, location, builder.getI1Type(),
+                                    value);
+    };
+    currentBit = bit(*currentScalar);
+    previousBit = bit(*previousScalar);
+    Value transition = name == "$rose"
+                           ? arith::AndIOp::create(
+                                 builder, location, currentBit,
+                                 arith::XOrIOp::create(
+                                     builder, location, previousBit,
+                                     constant(builder.getI1Type(), 1)))
+                           : arith::AndIOp::create(
+                                 builder, location, previousBit,
+                                 arith::XOrIOp::create(
+                                     builder, location, currentBit,
+                                     constant(builder.getI1Type(), 1)));
+    return convertResult(transition);
   }
 
   if (name == "$cast") {

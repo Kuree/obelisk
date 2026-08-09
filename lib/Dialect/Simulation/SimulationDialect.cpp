@@ -4199,7 +4199,28 @@ LogicalResult SimDeferredOnceOp::verify() {
   return verifyPositive(*this, getIdAttr(), "deferred assertion site ID");
 }
 
+LogicalResult SimSampledReadOp::verify() {
+  Type element;
+  if (auto ref = dyn_cast<RefType>(getSource().getType()))
+    element = ref.getElementType();
+  else if (auto net = dyn_cast<NetType>(getSource().getType()))
+    element = net.getElementType();
+  else
+    return emitOpError("source must be a storage or net reference");
+  if (element != getResult().getType() || !getPackedWidth(element))
+    return emitOpError("source element and result must have one packed type");
+  return success();
+}
 
+LogicalResult SimSampledHistoryOp::verify() {
+  if (getCurrent().getType() != getResult().getType() ||
+      !getPackedWidth(getCurrent().getType()))
+    return emitOpError("current and result must have one packed type");
+  if (failed(verifyPositive(*this, getIdAttr(), "sample history site ID")) ||
+      failed(verifyPositive(*this, getDepthAttr(), "sample history depth")))
+    return failure();
+  return success();
+}
 
 LogicalResult SimDeferredEnqueueOp::verify() {
   return verifyPositive(*this, getIdAttr(), "deferred assertion site ID");

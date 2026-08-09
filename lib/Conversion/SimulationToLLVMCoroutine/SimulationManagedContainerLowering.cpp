@@ -302,6 +302,115 @@ public:
   }
 };
 
+class SampledReadConversion final
+    : public OpConversionPattern<sim::SimSampledReadOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimSampledReadOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getContext().size() != 1 || adaptor.getSource().size() != 1)
+      return failure();
+    SmallVector<Type> types;
+    if (failed(getTypeConverter()->convertType(op.getResult().getType(),
+                                               types)) ||
+        types.empty() || types.size() > 2)
+      return failure();
+    auto plane = dyn_cast<IntegerType>(types.front());
+    if (!plane || (types.size() == 2 && types[1] != plane))
+      return failure();
+    Value value = entryAlloca(rewriter, op.getLoc(), plane, 1, 1);
+    Value unknown = entryAlloca(rewriter, op.getLoc(), plane, 1, 1);
+    Value status = LLVM::CallOp::create(
+                       rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+                       SymbolRefAttr::get(rewriter.getContext(),
+                                          "obelisk_rt_v1_sampled_read"),
+                       ValueRange{adaptor.getContext().front(),
+                                  adaptor.getSource().front(),
+                                  llvmConstant(rewriter, op.getLoc(),
+                                               rewriter.getI64Type(),
+                                               plane.getWidth()),
+                                  value, unknown})
+                       .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), adaptor.getContext().front(),
+                        status);
+    SmallVector<Value> results{
+        LLVM::LoadOp::create(rewriter, op.getLoc(), plane, value, 1)};
+    if (types.size() == 2)
+      results.push_back(
+          LLVM::LoadOp::create(rewriter, op.getLoc(), plane, unknown, 1));
+    rewriter.replaceOpWithMultiple(op, ArrayRef<SmallVector<Value>>{results});
+    return success();
+  }
+};
+
+class SampledHistoryConversion final
+    : public OpConversionPattern<sim::SimSampledHistoryOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimSampledHistoryOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getContext().size() != 1 || adaptor.getCurrent().empty() ||
+        adaptor.getCurrent().size() > 2 || adaptor.getGate().size() != 1)
+      return failure();
+    SmallVector<Type> resultTypes;
+    if (failed(getTypeConverter()->convertType(op.getResult().getType(),
+                                               resultTypes)) ||
+        resultTypes.empty() || resultTypes.size() > 2)
+      return failure();
+    auto plane = dyn_cast<IntegerType>(resultTypes.front());
+    if (!plane || adaptor.getCurrent().front().getType() != plane ||
+        (adaptor.getCurrent().size() == 2 &&
+         adaptor.getCurrent()[1].getType() != plane) ||
+        (resultTypes.size() == 2 && resultTypes[1] != plane))
+      return failure();
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Value null = LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer);
+    Value currentValue = entryAlloca(rewriter, op.getLoc(), plane, 1, 1);
+    LLVM::StoreOp::create(rewriter, op.getLoc(),
+                          adaptor.getCurrent().front(), currentValue, 1);
+    Value currentUnknown = null;
+    if (resultTypes.size() == 2) {
+      currentUnknown = entryAlloca(rewriter, op.getLoc(), plane, 1, 1);
+      Value unknown = adaptor.getCurrent().size() == 2
+                          ? adaptor.getCurrent()[1]
+                          : llvmConstant(rewriter, op.getLoc(), plane, 0);
+      LLVM::StoreOp::create(rewriter, op.getLoc(), unknown, currentUnknown, 1);
+    }
+    Value outputValue = entryAlloca(rewriter, op.getLoc(), plane, 1, 1);
+    Value outputUnknown = entryAlloca(rewriter, op.getLoc(), plane, 1, 1);
+    auto c32 = [&](uint32_t value) {
+      return llvmConstant(rewriter, op.getLoc(), rewriter.getI32Type(), value);
+    };
+    auto c64 = [&](uint64_t value) {
+      return llvmConstant(rewriter, op.getLoc(), rewriter.getI64Type(), value);
+    };
+    Value gate = LLVM::ZExtOp::create(rewriter, op.getLoc(),
+                                      rewriter.getI32Type(),
+                                      adaptor.getGate().front());
+    Value status = LLVM::CallOp::create(
+                       rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+                       SymbolRefAttr::get(rewriter.getContext(),
+                                          "obelisk_rt_v1_sampled_history"),
+                       ValueRange{adaptor.getContext().front(), c64(op.getId()),
+                                  c64(plane.getWidth()), c64(op.getDepth()),
+                                  c32(resultTypes.size() == 2), gate,
+                                  currentValue, currentUnknown, outputValue,
+                                  outputUnknown})
+                       .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), adaptor.getContext().front(),
+                        status);
+    SmallVector<Value> results{
+        LLVM::LoadOp::create(rewriter, op.getLoc(), plane, outputValue, 1)};
+    if (resultTypes.size() == 2)
+      results.push_back(LLVM::LoadOp::create(rewriter, op.getLoc(), plane,
+                                             outputUnknown, 1));
+    rewriter.replaceOpWithMultiple(op, ArrayRef<SmallVector<Value>>{results});
+    return success();
+  }
+};
+
 class RandomSeedConversion final
     : public OpConversionPattern<sim::SimRandomSeedOp> {
 public:
@@ -741,7 +850,8 @@ void populateManagedContainerToLLVMConversionPatterns(
       ContainerWriteConversion, RandomNextConversion, RandomSeedConversion,
       RandomBoundedConversion, RandomDistributionConversion,
       RandomCycleNextConversion, RandomSolveConversion>(converter, context);
-  patterns.add<RandomSolveWideConversion>(converter, context);
+  patterns.add<RandomSolveWideConversion, SampledReadConversion,
+               SampledHistoryConversion>(converter, context);
   populateManagedAssociativeToLLVMConversionPatterns(patterns, converter);
 }
 

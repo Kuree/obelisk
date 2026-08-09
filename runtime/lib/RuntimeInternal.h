@@ -662,6 +662,15 @@ struct CoverageInstanceState {
   std::vector<std::vector<uint64_t>> hits;
 };
 
+struct SampledHistoryState {
+  uint64_t bitWidth = 0;
+  uint64_t depth = 0;
+  uint64_t count = 0;
+  uint64_t next = 0;
+  std::vector<uint8_t> value;
+  std::vector<uint8_t> unknown;
+};
+
 struct obelisk_rt_context {
   // Mutable state is guarded separately from logical execution. Evaluator
   // callbacks release `mutex` while arbitrary user code runs, but retain the
@@ -858,6 +867,13 @@ struct obelisk_rt_context {
   // in the immutable reflection image.
   std::vector<uint64_t> stateValue;
   std::vector<uint64_t> stateUnknown;
+  // Canonical state captured once at entry to each time slot, before any
+  // Active-region work. Sampled-value reads never consult the live planes.
+  std::vector<uint64_t> preponedValue;
+  std::vector<uint64_t> preponedUnknown;
+  std::unordered_map<uint64_t,
+                     std::unordered_map<uint64_t, SampledHistoryState>>
+      sampledHistories;
   // Language and VPI force state is allocated on first use. A set bit masks
   // every ordinary publication to the corresponding canonical design bit.
   std::vector<uint64_t> forceMask;
@@ -894,6 +910,9 @@ struct obelisk_rt_context {
   obelisk_rt_context();
   ~obelisk_rt_context();
 };
+
+obelisk_rt_status
+obelisk_rt_capture_preponed_unlocked(obelisk_rt_context *context);
 
 inline std::unordered_set<uint64_t> &
 obelisk_rt_unstarted_actors(obelisk_rt_context *context, uint32_t phase) {

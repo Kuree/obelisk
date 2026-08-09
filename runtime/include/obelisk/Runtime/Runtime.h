@@ -712,6 +712,8 @@ enum {
   OBELISK_RT_INTRINSIC_V1_STOP = UINT32_C(0x0001021a),
   OBELISK_RT_INTRINSIC_V1_DEFERRED_ENQUEUE = UINT32_C(0x0001021b),
   OBELISK_RT_INTRINSIC_V1_DEFERRED_MATURE = UINT32_C(0x0001021c),
+  OBELISK_RT_INTRINSIC_V1_SAMPLED_READ = UINT32_C(0x0001021d),
+  OBELISK_RT_INTRINSIC_V1_SAMPLED_HISTORY = UINT32_C(0x0001021e),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC = UINT32_C(0x00010400),
@@ -2492,6 +2494,22 @@ obelisk_rt_status obelisk_rt_v1_scheduler_fatal(obelisk_rt_context *context,
 uint32_t
 obelisk_rt_v1_scheduler_termination_requested(obelisk_rt_context *context);
 uint64_t obelisk_rt_v1_scheduler_time(obelisk_rt_context *context);
+
+// Read one packed value from the once-per-time-slot Preponed snapshot. The
+// stable handle and width are compiler-resolved; automatic storage is rejected
+// because its lifetime is not part of the canonical design plane.
+obelisk_rt_status obelisk_rt_v1_sampled_read(
+    obelisk_rt_context *context, uint64_t stable_id, uint64_t bit_width,
+    uint8_t *out_value, uint8_t *out_unknown);
+
+// Return `depth` enabled invocations before `current`, then advance the
+// compiler-assigned ring when gate is true. Missing history has the IEEE
+// default sampled value (X for four-state, zero for two-state).
+obelisk_rt_status obelisk_rt_v1_sampled_history(
+    obelisk_rt_context *context, uint64_t site_id, uint64_t bit_width,
+    uint64_t depth, uint32_t four_state, uint32_t gate,
+    const uint8_t *current_value, const uint8_t *current_unknown,
+    uint8_t *out_value, uint8_t *out_unknown);
 obelisk_rt_status obelisk_rt_v1_scheduler_run(obelisk_rt_context *context);
 obelisk_rt_status obelisk_rt_v1_scheduler_run_aot(obelisk_rt_context *context);
 

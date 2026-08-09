@@ -4669,4 +4669,66 @@ TEST(ProcessInstance, RejectsMalformedWaitSemantics) {
   EXPECT_EQ(nativeDestroyCount, 11);
 }
 
+TEST(SampledValues, CapturesCanonicalPreponedPlane) {
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 16;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  context->stateValue[0] = UINT64_C(0x35a7);
+  context->stateUnknown[0] = UINT64_C(0x0104);
+  ASSERT_EQ(obelisk_rt_capture_preponed_unlocked(context), OBELISK_RT_OK);
+
+  // A later Active-region update must not affect the sampled result.
+  context->stateValue[0] = 0;
+  context->stateUnknown[0] = 0;
+  uint64_t handle = obelisk_rt_stable_handle_encode(
+      OBELISK_RT_STABLE_HANDLE_GLOBAL, 0, 3);
+  uint8_t value[2] = {};
+  uint8_t unknown[2] = {};
+  EXPECT_EQ(obelisk_rt_v1_sampled_read(context, handle, 10, value, unknown),
+            OBELISK_RT_OK);
+  EXPECT_EQ(value[0], UINT8_C(0xb4));
+  EXPECT_EQ(value[1], UINT8_C(0x02));
+  EXPECT_EQ(unknown[0], UINT8_C(0x20));
+  EXPECT_EQ(unknown[1], UINT8_C(0x00));
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(SampledValues, UsesBoundedGatedPerProcessHistory) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  context->activeLogicalProcessToken = 17;
+  uint8_t currentValue = 0;
+  uint8_t currentUnknown = 0;
+  uint8_t previousValue = 0;
+  uint8_t previousUnknown = 0;
+  auto sample = [&](uint8_t value, uint32_t gate) {
+    currentValue = value;
+    previousValue = previousUnknown = 0;
+    return obelisk_rt_v1_sampled_history(
+        context, 91, 4, 2, 1, gate, &currentValue, &currentUnknown,
+        &previousValue, &previousUnknown);
+  };
+
+  ASSERT_EQ(sample(1, 1), OBELISK_RT_OK);
+  EXPECT_EQ(previousUnknown, UINT8_C(0x0f));
+  ASSERT_EQ(sample(2, 1), OBELISK_RT_OK);
+  EXPECT_EQ(previousUnknown, UINT8_C(0x0f));
+  ASSERT_EQ(sample(3, 0), OBELISK_RT_OK);
+  EXPECT_EQ(previousValue, 1);
+  EXPECT_EQ(previousUnknown, 0);
+  ASSERT_EQ(sample(3, 1), OBELISK_RT_OK);
+  EXPECT_EQ(previousValue, 1);
+  ASSERT_EQ(sample(4, 1), OBELISK_RT_OK);
+  EXPECT_EQ(previousValue, 2);
+
+  // The same compiler site in another logical process owns another ring.
+  context->activeLogicalProcessToken = 18;
+  ASSERT_EQ(sample(9, 1), OBELISK_RT_OK);
+  EXPECT_EQ(previousUnknown, UINT8_C(0x0f));
+  obelisk_rt_v1_context_destroy(context);
+}
+
 } // namespace

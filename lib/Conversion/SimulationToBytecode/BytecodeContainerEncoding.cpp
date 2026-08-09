@@ -51,6 +51,16 @@ Encoder::encodeContainerOperation(FunctionPlan &plan, Operation *operation) {
                          {op.getQueue(), op.getIndex(), op.getValue()}, {});
   if (auto op = dyn_cast<sim::SimRandomNextOp>(operation))
     return emitIntrinsic(plan, kIntrinsicRandomNext, {}, {op.getResult()});
+  if (auto op = dyn_cast<sim::SimSampledReadOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicSampledRead, {op.getSource()},
+                         {op.getResult()});
+  if (auto op = dyn_cast<sim::SimSampledHistoryOp>(operation))
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicSampledHistory,
+        {emitU64Constant(plan, op.getId()),
+         emitU64Constant(plan, op.getDepth()), reg(plan, op.getGate()),
+         reg(plan, op.getCurrent())},
+        {reg(plan, op.getResult())});
   if (auto op = dyn_cast<sim::SimRandomSeedOp>(operation))
     return emitIntrinsic(plan, kIntrinsicRandomSeed, {op.getSeed()}, {});
   if (auto op = dyn_cast<sim::SimRandomBoundedOp>(operation))

@@ -735,6 +735,14 @@ ABI_FUNCTION(obelisk_rt_v1_random_state_next64,
 ABI_FUNCTION(obelisk_rt_v1_random_state_bounded,
              obelisk_rt_status (*)(obelisk_rt_random_state_v1 *, uint64_t,
                                    uint64_t *));
+ABI_FUNCTION(obelisk_rt_v1_sampled_read,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint64_t, uint64_t,
+                                   uint8_t *, uint8_t *));
+ABI_FUNCTION(obelisk_rt_v1_sampled_history,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint64_t, uint64_t,
+                                   uint64_t, uint32_t, uint32_t,
+                                   const uint8_t *, const uint8_t *, uint8_t *,
+                                   uint8_t *));
 ABI_FUNCTION(obelisk_rt_v1_context_create_for_design,
              obelisk_rt_status (*)(const obelisk_rt_execution_descriptor_v1 *,
                                    obelisk_rt_context **));

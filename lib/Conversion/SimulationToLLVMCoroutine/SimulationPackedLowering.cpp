@@ -106,7 +106,14 @@ LogicalResult lowerPackedSimulationOperations(
             nativeTwoStateValues.insert(argument);
         for (Operation &operation : block) {
           for (Value result : operation.getResults())
-            if (isa<sim::LogicType>(result.getType()) && isTwoState(result))
+            // Preponed snapshots retain the source's four-state domain, and a
+            // history value has an IEEE default of X before its ring contains
+            // enough enabled clock ticks, even when live Active-region state
+            // is inductively two-state.
+            if (isa<sim::LogicType>(result.getType()) &&
+                !isa<sim::SimSampledReadOp, sim::SimSampledHistoryOp>(
+                    operation) &&
+                isTwoState(result))
               nativeTwoStateValues.insert(result);
           if (!guardedTwoState)
             continue;
@@ -287,6 +294,7 @@ LogicalResult lowerPackedSimulationOperations(
       sim::SimDisableChildrenOp, sim::SimControlEnterOp, sim::SimControlLeaveOp,
       sim::SimControlDisableOp, sim::SimStaticOnceOp, sim::SimDeferredOnceOp,
       sim::SimDeferredEnqueueOp, sim::SimDeferredMatureOp,
+      sim::SimSampledReadOp, sim::SimSampledHistoryOp,
       sim::SimMonitorRegisterOp, sim::SimMonitorControlOp,
       sim::SimMonitorCurrentOp, sim::SimBitsDynExtractOp, sim::SimClassNullOp,
       sim::SimCovergroupNullOp, sim::SimCovergroupCreateOp,

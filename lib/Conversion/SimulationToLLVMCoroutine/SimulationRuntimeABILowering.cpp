@@ -254,6 +254,15 @@ void declareNativeRuntimeABI(ModuleOp module) {
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_random_seed", managedI32,
                            {managedPointer, managedI64});
   getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_sampled_read", managedI32,
+      {managedPointer, managedI64, managedI64, managedPointer,
+       managedPointer});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_sampled_history", managedI32,
+      {managedPointer, managedI64, managedI64, managedI64, managedI32,
+       managedI32, managedPointer, managedPointer, managedPointer,
+       managedPointer});
+  getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_random_solve_modes_state", managedI32,
       {managedPointer, managedPointer, managedI64, managedI64, managedI64,
        managedI64, managedI64, managedI64, managedI64, managedPointer,

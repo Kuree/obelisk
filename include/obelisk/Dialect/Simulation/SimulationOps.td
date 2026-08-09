@@ -1573,7 +1573,30 @@ def SimDeferredOnceOp : SimOp<"assert.deferred_once", [
   let hasVerifier = 1;
 }
 
+def SimSampledReadOp : SimOp<"assert.sampled_read", [
+    MemoryEffects<[MemRead<SimSchedulerResource>,
+                   MemRead<SimStorageResource>, MemRead<SimNetResource>]>
+  ]> {
+  let summary = "read a statically addressed value from the Preponed snapshot";
+  let arguments = (ins SimContextType:$context, AnyType:$source);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$context `from` $source attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
 
+def SimSampledHistoryOp : SimOp<"assert.sampled_history", [
+    MemoryEffects<[MemRead<SimSchedulerResource>,
+                   MemWrite<SimSchedulerResource>,
+                   MemRead<SimProcessResource>,
+                   MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "read and advance one compiler-assigned sampled-value ring";
+  let arguments = (ins SimContextType:$context, AnyType:$current, I1:$gate,
+                       I64Attr:$id, I64Attr:$depth);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$context `from` $current `gate` $gate `id` $id `depth` $depth attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
 
 def SimDeferredEnqueueOp : SimOp<"assert.deferred_enqueue", [
     MemoryEffects<[MemRead<SimSchedulerResource>,

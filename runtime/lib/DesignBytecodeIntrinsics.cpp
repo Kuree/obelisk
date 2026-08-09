@@ -2315,6 +2315,47 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     return sentinel(0, obelisk_rt_v1_scheduler_termination_requested(context));
   case OBELISK_RT_INTRINSIC_V1_TIME_NOW:
     return sentinel(0, obelisk_rt_v1_scheduler_time(context));
+  case OBELISK_RT_INTRINSIC_V1_SAMPLED_READ: {
+    Layout source = layoutAt(image, frame.function, inputRegister(0));
+    Layout output = layoutAt(image, frame.function, outputRegister(0));
+    if (source.kind != OBELISK_RT_DBREG_HANDLE)
+      return OBELISK_RT_INVALID_BYTECODE;
+    uint64_t stable = UINT64_MAX;
+    if (!encodeCanonicalHandle(frame.data + source.offset, stable))
+      return OBELISK_RT_INVALID_HANDLE;
+    Logic sampled{output.width, output.kind == OBELISK_RT_DBREG_LOGIC,
+                  LimbVector(limbCount(output.width)),
+                  LimbVector(limbCount(output.width))};
+    obelisk_rt_status status = obelisk_rt_v1_sampled_read(
+        context, stable, output.width,
+        reinterpret_cast<uint8_t *>(sampled.value.data()),
+        reinterpret_cast<uint8_t *>(sampled.unknown.data()));
+    if (status == OBELISK_RT_OK)
+      writeLogic(frame.data, output, sampled);
+    return status;
+  }
+  case OBELISK_RT_INTRINSIC_V1_SAMPLED_HISTORY: {
+    auto siteID = scalar(0), depth = scalar(1), gate = scalar(2);
+    if (!siteID || !depth || !gate || *gate > 1)
+      return OBELISK_RT_INVALID_BYTECODE;
+    Layout input = layoutAt(image, frame.function, inputRegister(3));
+    Layout output = layoutAt(image, frame.function, outputRegister(0));
+    Logic current = readLogic(frame.data, input);
+    Logic previous{output.width, output.kind == OBELISK_RT_DBREG_LOGIC,
+                   LimbVector(limbCount(output.width)),
+                   LimbVector(limbCount(output.width))};
+    obelisk_rt_status status = obelisk_rt_v1_sampled_history(
+        context, *siteID, current.width, *depth, current.fourState, *gate,
+        reinterpret_cast<const uint8_t *>(current.value.data()),
+        current.fourState
+            ? reinterpret_cast<const uint8_t *>(current.unknown.data())
+            : nullptr,
+        reinterpret_cast<uint8_t *>(previous.value.data()),
+        reinterpret_cast<uint8_t *>(previous.unknown.data()));
+    if (status == OBELISK_RT_OK)
+      writeLogic(frame.data, output, previous);
+    return status;
+  }
   case OBELISK_RT_INTRINSIC_V1_TIME_TO_REAL: {
     auto ticks = scalar(0);
     auto scale = scalar(1);

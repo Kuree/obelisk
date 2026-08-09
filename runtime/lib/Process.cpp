@@ -4729,8 +4729,8 @@ extern "C" uint64_t obelisk_rt_v1_scheduler_time(obelisk_rt_context *context) {
 // Preponed sampling is a once-per-time-slot service. There are no executable
 // samplers yet, but keeping the hook exact now prevents the assertion and
 // clocking milestones from having to rediscover the initial-time-zero edge.
-static obelisk_rt_status runPreponedHooks(obelisk_rt_context *) {
-  return OBELISK_RT_OK;
+static obelisk_rt_status runPreponedHooks(obelisk_rt_context *context) {
+  return obelisk_rt_capture_preponed_unlocked(context);
 }
 
 #if defined(__x86_64__) || defined(_M_X64)
