@@ -177,7 +177,8 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
   if (aggregateWidth > 64 ||
       (programFlags & ~(OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT |
                         OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
-                        OBELISK_RT_RANDOM_PROGRAM_HAS_DIST)) != 0 ||
+                        OBELISK_RT_RANDOM_PROGRAM_HAS_DIST |
+                        OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS)) != 0 ||
       instructionCount > (std::numeric_limits<size_t>::max() -
                           OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE) /
                              OBELISK_RT_RANDOM_INSTRUCTION_SIZE)
@@ -224,9 +225,29 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
             (std::numeric_limits<size_t>::max() - distRecordsOffset) /
                 OBELISK_RT_RANDOM_DIST_RECORD_SIZE)
       return std::nullopt;
-    expectedSize = distRecordsOffset +
-                   static_cast<size_t>(distRecordCount) *
-                       OBELISK_RT_RANDOM_DIST_RECORD_SIZE;
+    expectedSize = distRecordsOffset + static_cast<size_t>(distRecordCount) *
+                                           OBELISK_RT_RANDOM_DIST_RECORD_SIZE;
+  }
+  bool hasDomains = (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS) != 0;
+  uint32_t domainGroupCount = 0;
+  uint32_t domainRecordCount = 0;
+  size_t domainRecordsOffset = 0;
+  if (hasDomains) {
+    if (expectedSize > std::numeric_limits<size_t>::max() -
+                           OBELISK_RT_RANDOM_DOMAIN_HEADER_SIZE ||
+        programSize < expectedSize + OBELISK_RT_RANDOM_DOMAIN_HEADER_SIZE)
+      return std::nullopt;
+    domainGroupCount = read32(program + expectedSize);
+    domainRecordCount = read32(program + expectedSize + 4);
+    domainRecordsOffset = expectedSize + OBELISK_RT_RANDOM_DOMAIN_HEADER_SIZE;
+    if (domainGroupCount == 0 || domainRecordCount == 0 ||
+        domainRecordCount >
+            (std::numeric_limits<size_t>::max() - domainRecordsOffset) /
+                OBELISK_RT_RANDOM_DOMAIN_RECORD_SIZE)
+      return std::nullopt;
+    expectedSize =
+        domainRecordsOffset + static_cast<size_t>(domainRecordCount) *
+                                  OBELISK_RT_RANDOM_DOMAIN_RECORD_SIZE;
   }
   if (programSize != expectedSize)
     return std::nullopt;
@@ -329,6 +350,67 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
     if (llvm::any_of(groups,
                      [](const DistGroupInfo &info) { return !info.seen; }))
       return std::nullopt;
+  }
+
+  struct DomainPattern {
+    uint64_t mask;
+    uint64_t value;
+  };
+  struct DomainGroup {
+    bool seen = false;
+    uint32_t targetOffset = 0;
+    uint16_t width = 0;
+    std::vector<DomainPattern> patterns;
+  };
+  std::vector<DomainGroup> domainGroups(domainGroupCount);
+  if (hasDomains) {
+    const uint8_t *record = program + domainRecordsOffset;
+    for (uint32_t index = 0; index != domainRecordCount; ++index) {
+      uint32_t group = read32(record);
+      uint32_t targetOffset = read32(record + 4);
+      uint16_t width = read16(record + 8);
+      uint16_t reserved16 = read16(record + 10);
+      uint32_t reserved32 = read32(record + 12);
+      uint64_t mask = read64(record + 16);
+      uint64_t value = read64(record + 24);
+      record += OBELISK_RT_RANDOM_DOMAIN_RECORD_SIZE;
+      uint64_t fieldMask = width == 64  ? UINT64_MAX
+                           : width == 0 ? 0
+                                        : (uint64_t{1} << width) - 1;
+      if (group >= domainGroupCount || width == 0 || width > 64 ||
+          targetOffset > aggregateWidth ||
+          width > aggregateWidth - targetOffset || reserved16 != 0 ||
+          reserved32 != 0 || (mask & ~fieldMask) != 0 ||
+          (value & ~mask) != 0 || (width == 64 && mask == 0))
+        return std::nullopt;
+      DomainGroup &info = domainGroups[group];
+      if (info.seen &&
+          (info.targetOffset != targetOffset || info.width != width))
+        return std::nullopt;
+      info.seen = true;
+      info.targetOffset = targetOffset;
+      info.width = width;
+      for (const DomainPattern &other : info.patterns)
+        if (((value ^ other.value) & (mask & other.mask)) == 0)
+          return std::nullopt;
+      info.patterns.push_back({mask, value});
+    }
+    if (llvm::any_of(domainGroups,
+                     [](const DomainGroup &group) { return !group.seen; }))
+      return std::nullopt;
+    for (auto [index, group] : llvm::enumerate(domainGroups)) {
+      uint64_t groupMask =
+          (group.width == 64 ? UINT64_MAX : (uint64_t{1} << group.width) - 1)
+          << group.targetOffset;
+      for (const DomainGroup &other :
+           llvm::ArrayRef(domainGroups).drop_front(index + 1)) {
+        uint64_t otherMask =
+            (other.width == 64 ? UINT64_MAX : (uint64_t{1} << other.width) - 1)
+            << other.targetOffset;
+        if ((groupMask & otherMask) != 0)
+          return std::nullopt;
+      }
+    }
   }
 
   RandomProgramSMT result;
@@ -784,6 +866,34 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
   bool encodedSoft = (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT) != 0;
   if (!stack.empty() || !sawHard || sawSoft != encodedSoft)
     return std::nullopt;
+  for (const DomainGroup &group : domainGroups) {
+    mlir::Value field = mlir::smt::ExtractOp::create(
+        builder, location, bitVectorType(group.width), group.targetOffset,
+        assignment);
+    auto found = llvm::find_if(result.variables, [&](const SMTVariable &item) {
+      return item.offset == group.targetOffset && item.width == group.width;
+    });
+    if (found == result.variables.end()) {
+      result.variables.push_back({group.targetOffset, group.width, field});
+    } else {
+      field = found->bits;
+    }
+    mlir::Value member =
+        mlir::smt::BoolConstantOp::create(builder, location, false);
+    for (const DomainPattern &pattern : group.patterns) {
+      mlir::Value masked = mlir::smt::BVAndOp::create(
+          builder, location, field,
+          constant(builder, location, pattern.mask, group.width));
+      mlir::Value matches = mlir::smt::EqOp::create(
+          builder, location, masked,
+          constant(builder, location, pattern.value, group.width));
+      member = mlir::smt::OrOp::create(builder, location, member, matches);
+    }
+    hard = mlir::smt::AndOp::create(builder, location, hard, member);
+    result.hardConstraints.push_back({member, {}, false});
+    result.finiteDomains.push_back(
+        {{group.targetOffset, group.width, field}, member});
+  }
   result.assignment = assignment;
   result.captures = std::move(captures);
   result.hard = hard;

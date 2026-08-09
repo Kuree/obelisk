@@ -556,7 +556,7 @@ module {
 // CHECK: obelisk_sim.managed.store
 // CHECK-NOT: obelisk.sv.
 
-// UNSUPPORTED-DAG: error: rand enum and tagged-union domains are not executable yet
+// UNSUPPORTED-DAG: error: random enum domain has no declaration inventory
 // UNSUPPORTED-DAG: error: solve before cannot order a property before itself
 // UNSUPPORTED-DAG: error: constraint expression is outside the total side-effect-free executable boundary: obelisk.sv.expression.assignment
 // UNSUPPORTED-DAG: error: constraint expression is outside the total side-effect-free executable boundary: obelisk.sv.expression.unary_op
@@ -856,7 +856,7 @@ module {
 // SOLVE-BEFORE-SOFT-LABEL: obelisk_sim.func private @unit_1
 // SOLVE-BEFORE-SOFT: obelisk_sim.random.solve
 
-// SOLVE-BEFORE-WIDE: error: solve before residual fallback requires exhaustive traversal of at most 20 aggregate random bits
+// SOLVE-BEFORE-WIDE: error: solve before residual fallback requires exhaustive traversal of at most 2^20 semantic assignments
 
 // A 31-value solution set exceeds the bounded compile-time table cap. It stays
 // on the checker/runtime path and guards the structural reverse implication.

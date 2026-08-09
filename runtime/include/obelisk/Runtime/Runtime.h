@@ -2598,6 +2598,12 @@ typedef struct obelisk_rt_random_state_v1 {
 // record count, and fixed-width 48-byte weighted-range records. A record holds
 // group/block/target metadata, a biased lower bound and cardinality, an exact
 // integer normalization coefficient, and the capture containing its weight.
+// When HAS_DOMAINS is set, the preceding optional sections are followed by a
+// u32 group count, a u32 record count, and fixed-width 32-byte domain-pattern
+// records. Each group describes one complete, non-overlapping packed subfield.
+// Its disjoint records contain group/target metadata and a field-local
+// mask/value pair; values matching any pattern belong to the subfield's
+// semantic domain.
 #define OBELISK_RT_RANDOM_PROGRAM_MAGIC UINT32_C(0x3152444f)
 #define OBELISK_RT_RANDOM_PROGRAM_VERSION UINT16_C(1)
 #define OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE UINT16_C(24)
@@ -2605,12 +2611,15 @@ typedef struct obelisk_rt_random_state_v1 {
 #define OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT UINT32_C(1)
 #define OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE UINT32_C(2)
 #define OBELISK_RT_RANDOM_PROGRAM_HAS_DIST UINT32_C(4)
+#define OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS UINT32_C(8)
 #define OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE UINT16_C(4)
 #define OBELISK_RT_RANDOM_SOLVE_EDGE_SIZE UINT16_C(24)
 #define OBELISK_RT_RANDOM_DIST_HEADER_SIZE UINT16_C(8)
 #define OBELISK_RT_RANDOM_DIST_RECORD_SIZE UINT16_C(48)
 #define OBELISK_RT_RANDOM_DIST_WEIGHT_SIGNED UINT32_C(1)
 #define OBELISK_RT_RANDOM_DIST_TARGET_SIGNED UINT32_C(2)
+#define OBELISK_RT_RANDOM_DOMAIN_HEADER_SIZE UINT16_C(8)
+#define OBELISK_RT_RANDOM_DOMAIN_RECORD_SIZE UINT16_C(32)
 #define OBELISK_RT_RANDOM_INSTRUCTION_SIGNED UINT8_C(1)
 #define OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 UINT32_MAX
 

@@ -69,43 +69,6 @@ static semantic::SVClassTypeOp getOwningClass(Operation *member) {
   return {};
 }
 
-/// Return whether assigning arbitrary packed bits would violate the source
-/// domain. Enum values require an enumerator inventory, and tagged unions
-/// require a coordinated tag/payload choice; neither is represented by the
-/// initial finite-domain bit-vector plan.
-static bool hasUnsupportedRandomDomain(Type type) {
-  if (isa<semantic::EnumType>(type))
-    return true;
-  if (auto array = dyn_cast<semantic::RangedPackedArrayType>(type))
-    return hasUnsupportedRandomDomain(array.getElementType());
-  if (auto array = dyn_cast<semantic::PackedArrayType>(type))
-    return hasUnsupportedRandomDomain(array.getElementType());
-  if (auto aggregate = dyn_cast<semantic::SourceAggregateType>(type)) {
-    if (aggregate.getIsTagged())
-      return true;
-    for (Attribute fieldAttr : aggregate.getFields()) {
-      auto field = dyn_cast<DictionaryAttr>(fieldAttr);
-      auto fieldType = field ? field.getAs<TypeAttr>("type") : TypeAttr{};
-      if (!fieldType || hasUnsupportedRandomDomain(fieldType.getValue()))
-        return true;
-    }
-    return false;
-  }
-  auto dictionaryHasUnsupportedDomain = [&](DictionaryAttr fields) {
-    for (NamedAttribute field : fields) {
-      auto fieldType = dyn_cast<TypeAttr>(field.getValue());
-      if (!fieldType || hasUnsupportedRandomDomain(fieldType.getValue()))
-        return true;
-    }
-    return false;
-  };
-  if (auto aggregate = dyn_cast<semantic::PackedStructType>(type))
-    return dictionaryHasUnsupportedDomain(aggregate.getFields());
-  if (auto aggregate = dyn_cast<semantic::PackedUnionType>(type))
-    return dictionaryHasUnsupportedDomain(aggregate.getFields());
-  return false;
-}
-
 /// Constraint branches are evaluated eagerly while building the candidate
 /// predicate. Keep that legal by admitting only expression nodes that are
 /// intrinsically total and side-effect-free. Function calls and assignments
@@ -523,30 +486,288 @@ void ObeliskSimPreparePass::runOnOperation() {
   auto collectEffectiveConstraints =
       [&](ArrayRef<semantic::SVClassTypeOp> hierarchy,
           SmallVectorImpl<EffectiveConstraintGroup> &groups) {
-    llvm::StringMap<unsigned> namedIndices;
-    for (semantic::SVClassTypeOp classType : hierarchy) {
-      for (Operation *member : getChildren(classType)) {
-        auto constraint =
-            dyn_cast<semantic::SVConstraintBlockSymbolOp>(member);
-        if (!constraint)
-          continue;
-        std::optional<StringRef> name = constraint.getName();
-        if (!name) {
-          groups.push_back({constraint});
-          continue;
+        llvm::StringMap<unsigned> namedIndices;
+        for (semantic::SVClassTypeOp classType : hierarchy) {
+          for (Operation *member : getChildren(classType)) {
+            auto constraint =
+                dyn_cast<semantic::SVConstraintBlockSymbolOp>(member);
+            if (!constraint)
+              continue;
+            std::optional<StringRef> name = constraint.getName();
+            if (!name) {
+              groups.push_back({constraint});
+              continue;
+            }
+            auto [entry, inserted] = namedIndices.try_emplace(
+                *name, static_cast<unsigned>(groups.size()));
+            if (inserted) {
+              groups.push_back({constraint});
+              continue;
+            }
+            EffectiveConstraintGroup &group = groups[entry->second];
+            if (!constraint.getIsExtends().value_or(false))
+              group.clear();
+            group.push_back(constraint);
+          }
         }
-        auto [entry, inserted] = namedIndices.try_emplace(
-            *name, static_cast<unsigned>(groups.size()));
-        if (inserted) {
-          groups.push_back({constraint});
-          continue;
+      };
+
+  struct RandomDomainPattern {
+    uint64_t mask;
+    uint64_t value;
+  };
+  struct RandomSubdomain {
+    uint64_t offset;
+    uint64_t width;
+    SmallVector<RandomDomainPattern> patterns;
+  };
+  llvm::DenseMap<Type, semantic::SVEnumTypeOp> enumDeclarations;
+  semanticRoot.walk([&](semantic::SVEnumTypeOp enumeration) {
+    enumDeclarations.try_emplace(enumeration.getSemanticType(), enumeration);
+  });
+  llvm::DenseMap<Type, SmallVector<uint64_t>> enumValues;
+
+  auto widthMask = [](uint64_t width) {
+    return width == 64 ? UINT64_MAX : (uint64_t{1} << width) - 1;
+  };
+  constexpr size_t maxRandomDomainPatterns = 4096;
+  std::function<FailureOr<SmallVector<RandomDomainPattern>>(Type, Location)>
+      buildWholeDomain;
+  buildWholeDomain =
+      [&](Type type,
+          Location location) -> FailureOr<SmallVector<RandomDomainPattern>> {
+    std::optional<uint64_t> width = getSemanticBitstreamWidth(type);
+    if (!width || *width > 64)
+      return failure();
+    if (auto enumeration = dyn_cast<semantic::EnumType>(type)) {
+      auto found = enumValues.find(enumeration);
+      if (found == enumValues.end()) {
+        auto declaration = enumDeclarations.find(enumeration);
+        if (declaration == enumDeclarations.end() || !width || *width == 0) {
+          emitError(location)
+              << "random enum domain has no declaration inventory";
+          return failure();
         }
-        EffectiveConstraintGroup &group = groups[entry->second];
-        if (!constraint.getIsExtends().value_or(false))
-          group.clear();
-        group.push_back(constraint);
+        SmallVector<uint64_t> values;
+        for (Operation *child : getChildren(declaration->second)) {
+          auto value = dyn_cast<semantic::SVEnumValueSymbolOp>(child);
+          if (!value)
+            continue;
+          auto spelling = value->getAttrOfType<StringAttr>("constant_value");
+          FailureOr<ParsedConstant> parsed =
+              spelling ? parseSVInteger(spelling.getValue(), *width,
+                                        getSemanticLocation(value))
+                       : FailureOr<ParsedConstant>(failure());
+          if (failed(parsed) || !parsed->unknown.isZero()) {
+            emitError(getSemanticLocation(value))
+                << "random enum values must be fixed two-state constants";
+            return failure();
+          }
+          uint64_t bits = parsed->value.getZExtValue();
+          if (!llvm::is_contained(values, bits))
+            values.push_back(bits);
+        }
+        if (values.empty()) {
+          emitError(location) << "random enum domain has no values";
+          return failure();
+        }
+        llvm::sort(values);
+        found = enumValues.try_emplace(enumeration, std::move(values)).first;
       }
+      SmallVector<RandomDomainPattern> patterns;
+      uint64_t mask = widthMask(*width);
+      for (uint64_t value : found->second)
+        patterns.push_back({mask, value});
+      return patterns;
     }
+    auto combine = [&](SmallVector<RandomDomainPattern> &result,
+                       ArrayRef<RandomDomainPattern> nested,
+                       uint64_t offset) -> LogicalResult {
+      if (nested.size() != 0 &&
+          result.size() > maxRandomDomainPatterns / nested.size()) {
+        emitError(location) << "random finite-domain expansion exceeds "
+                            << maxRandomDomainPatterns << " patterns";
+        return failure();
+      }
+      SmallVector<RandomDomainPattern> combined;
+      combined.reserve(result.size() * nested.size());
+      for (const RandomDomainPattern &outer : result)
+        for (const RandomDomainPattern &inner : nested)
+          combined.push_back({outer.mask | (inner.mask << offset),
+                              outer.value | (inner.value << offset)});
+      result = std::move(combined);
+      return success();
+    };
+    auto arrayDomain =
+        [&](Type elementType,
+            uint64_t count) -> FailureOr<SmallVector<RandomDomainPattern>> {
+      std::optional<uint64_t> elementWidth =
+          getSemanticBitstreamWidth(elementType);
+      FailureOr<SmallVector<RandomDomainPattern>> element =
+          buildWholeDomain(elementType, location);
+      if (!elementWidth || *elementWidth == 0 || failed(element))
+        return failure();
+      SmallVector<RandomDomainPattern> result{{0, 0}};
+      for (uint64_t index = 0; index != count; ++index)
+        if (failed(combine(result, *element, index * *elementWidth)))
+          return failure();
+      return result;
+    };
+    if (auto array = dyn_cast<semantic::RangedPackedArrayType>(type)) {
+      std::optional<uint64_t> elementWidth =
+          getSemanticBitstreamWidth(array.getElementType());
+      if (!elementWidth || *elementWidth == 0 || *width % *elementWidth != 0)
+        return failure();
+      return arrayDomain(array.getElementType(), *width / *elementWidth);
+    }
+    if (auto array = dyn_cast<semantic::PackedArrayType>(type))
+      return arrayDomain(array.getElementType(), array.getSize());
+    if (auto aggregate = dyn_cast<semantic::SourceAggregateType>(type)) {
+      if (!aggregate.getIsPacked())
+        return failure();
+      if (aggregate.getIsUnion() && !aggregate.getIsTagged())
+        return SmallVector<RandomDomainPattern>{{0, 0}};
+      if (aggregate.getIsUnion()) {
+        uint64_t tagBits = aggregate.getTagBits();
+        if (tagBits == 0 || tagBits > *width)
+          return failure();
+        uint64_t payloadWidth = *width - tagBits;
+        SmallVector<RandomDomainPattern> result;
+        for (Attribute fieldAttr : aggregate.getFields()) {
+          auto field = dyn_cast<DictionaryAttr>(fieldAttr);
+          auto typeAttr = field ? field.getAs<TypeAttr>("type") : TypeAttr{};
+          auto ordinal =
+              field ? field.getAs<IntegerAttr>("ordinal") : IntegerAttr{};
+          if (!typeAttr || !ordinal || ordinal.getValue().isNegative() ||
+              ordinal.getValue().getActiveBits() > 64)
+            return failure();
+          uint64_t fieldOrdinal = ordinal.getValue().getZExtValue();
+          if (fieldOrdinal > widthMask(tagBits))
+            return failure();
+          Type fieldType = typeAttr.getValue();
+          uint64_t fieldWidth = 0;
+          SmallVector<RandomDomainPattern> fieldPatterns{{0, 0}};
+          if (!isa<semantic::VoidType>(fieldType)) {
+            std::optional<uint64_t> packedWidth =
+                getSemanticBitstreamWidth(fieldType);
+            FailureOr<SmallVector<RandomDomainPattern>> nested =
+                buildWholeDomain(fieldType, location);
+            if (!packedWidth || *packedWidth > payloadWidth || failed(nested))
+              return failure();
+            fieldWidth = *packedWidth;
+            fieldPatterns = std::move(*nested);
+          }
+          uint64_t paddingMask =
+              widthMask(payloadWidth) & ~widthMask(fieldWidth);
+          uint64_t tagMask = widthMask(tagBits) << payloadWidth;
+          uint64_t tagValue = fieldOrdinal << payloadWidth;
+          for (const RandomDomainPattern &pattern : fieldPatterns) {
+            result.push_back({pattern.mask | paddingMask | tagMask,
+                              pattern.value | tagValue});
+            if (result.size() > maxRandomDomainPatterns) {
+              emitError(location) << "random finite-domain expansion exceeds "
+                                  << maxRandomDomainPatterns << " patterns";
+              return failure();
+            }
+          }
+        }
+        return result;
+      }
+      SmallVector<RandomDomainPattern> result{{0, 0}};
+      for (Attribute fieldAttr : aggregate.getFields()) {
+        auto field = dyn_cast<DictionaryAttr>(fieldAttr);
+        auto typeAttr = field ? field.getAs<TypeAttr>("type") : TypeAttr{};
+        auto offset =
+            field ? field.getAs<IntegerAttr>("packed_offset") : IntegerAttr{};
+        if (!typeAttr || !offset || offset.getValue().isNegative() ||
+            offset.getValue().getActiveBits() > 64)
+          return failure();
+        std::optional<uint64_t> fieldWidth =
+            getSemanticBitstreamWidth(typeAttr.getValue());
+        uint64_t fieldOffset = offset.getValue().getZExtValue();
+        if (!fieldWidth || fieldOffset > *width ||
+            *fieldWidth > *width - fieldOffset)
+          return failure();
+        FailureOr<SmallVector<RandomDomainPattern>> nested =
+            buildWholeDomain(typeAttr.getValue(), location);
+        if (failed(nested) || failed(combine(result, *nested, fieldOffset)))
+          return failure();
+      }
+      return result;
+    }
+    return SmallVector<RandomDomainPattern>{{0, 0}};
+  };
+
+  std::function<LogicalResult(Type, uint64_t,
+                              SmallVectorImpl<RandomSubdomain> &, Location)>
+      collectRandomSubdomains;
+  collectRandomSubdomains = [&](Type type, uint64_t baseOffset,
+                                SmallVectorImpl<RandomSubdomain> &result,
+                                Location location) -> LogicalResult {
+    std::optional<uint64_t> width = getSemanticBitstreamWidth(type);
+    if (!width || *width == 0 || *width > 64 || baseOffset > 64 - *width)
+      return failure();
+    if (isa<semantic::EnumType>(type)) {
+      FailureOr<SmallVector<RandomDomainPattern>> patterns =
+          buildWholeDomain(type, location);
+      if (failed(patterns))
+        return failure();
+      result.push_back({baseOffset, *width, std::move(*patterns)});
+      return success();
+    }
+    if (auto array = dyn_cast<semantic::RangedPackedArrayType>(type)) {
+      std::optional<uint64_t> elementWidth =
+          getSemanticBitstreamWidth(array.getElementType());
+      if (!elementWidth || *elementWidth == 0 || *width % *elementWidth != 0)
+        return failure();
+      for (uint64_t index = 0; index != *width / *elementWidth; ++index)
+        if (failed(collectRandomSubdomains(array.getElementType(),
+                                           baseOffset + index * *elementWidth,
+                                           result, location)))
+          return failure();
+      return success();
+    }
+    if (auto array = dyn_cast<semantic::PackedArrayType>(type)) {
+      std::optional<uint64_t> elementWidth =
+          getSemanticBitstreamWidth(array.getElementType());
+      if (!elementWidth || *elementWidth == 0)
+        return failure();
+      for (uint64_t index = 0; index != array.getSize(); ++index)
+        if (failed(collectRandomSubdomains(array.getElementType(),
+                                           baseOffset + index * *elementWidth,
+                                           result, location)))
+          return failure();
+      return success();
+    }
+    if (auto aggregate = dyn_cast<semantic::SourceAggregateType>(type)) {
+      if (!aggregate.getIsPacked())
+        return failure();
+      if (aggregate.getIsUnion() && aggregate.getIsTagged()) {
+        FailureOr<SmallVector<RandomDomainPattern>> patterns =
+            buildWholeDomain(type, location);
+        if (failed(patterns))
+          return failure();
+        result.push_back({baseOffset, *width, std::move(*patterns)});
+        return success();
+      }
+      if (aggregate.getIsUnion())
+        return success();
+      for (Attribute fieldAttr : aggregate.getFields()) {
+        auto field = dyn_cast<DictionaryAttr>(fieldAttr);
+        auto typeAttr = field ? field.getAs<TypeAttr>("type") : TypeAttr{};
+        auto offset =
+            field ? field.getAs<IntegerAttr>("packed_offset") : IntegerAttr{};
+        if (!typeAttr || !offset || offset.getValue().isNegative() ||
+            offset.getValue().getActiveBits() > 64 ||
+            failed(collectRandomSubdomains(typeAttr.getValue(),
+                                           baseOffset +
+                                               offset.getValue().getZExtValue(),
+                                           result, location)))
+          return failure();
+      }
+      return success();
+    }
+    return success();
   };
 
   // Freeze object randomization into each call before its semantic class and
@@ -632,9 +853,10 @@ void ObeliskSimPreparePass::runOnOperation() {
     // A randomize call uses the dynamic object's complete property and
     // constraint set even though randomize itself is a builtin. Specialize a
     // frozen plan for every concrete class that can inhabit the static handle,
-    // then select the exact plan once at the call site. Keeping the alternatives
-    // as nested semantic calls lets the ordinary capture analysis see their
-    // union and keeps all sampler generation in the isolated unit lowering.
+    // then select the exact plan once at the call site. Keeping the
+    // alternatives as nested semantic calls lets the ordinary capture analysis
+    // see their union and keeps all sampler generation in the isolated unit
+    // lowering.
     if (!call->hasAttr(randomizePlanClassAttrName)) {
       struct DynamicPlan {
         semantic::SVClassTypeOp classType;
@@ -755,6 +977,7 @@ void ObeliskSimPreparePass::runOnOperation() {
       bool isRandC;
       FlatSymbolRefAttr randcKeyField;
       FlatSymbolRefAttr randcPositionField;
+      SmallVector<RandomSubdomain> domains;
     };
     SmallVector<RandomProperty> properties;
     SmallVector<Operation *> constraintRoots;
@@ -834,30 +1057,33 @@ void ObeliskSimPreparePass::runOnOperation() {
             continue;
           }
           std::optional<Type> semanticPropertyType = property.getSemanticType();
+          SmallVector<RandomSubdomain> domains;
           if (!semanticPropertyType ||
-              hasUnsupportedRandomDomain(*semanticPropertyType)) {
+              failed(collectRandomSubdomains(*semanticPropertyType, 0, domains,
+                                             getSemanticLocation(property)))) {
             emitError(getSemanticLocation(property))
-                << "rand enum and tagged-union domains are not executable yet";
+                << "random property has a finite domain that cannot be "
+                   "represented within the 64-bit executable boundary";
             invalid = true;
             continue;
           }
-          properties.push_back(
-              {property, field, *type, *width,
-               isSignedSemanticType(*semanticPropertyType), isRandC,
-               randcKeyField, randcPositionField});
+          properties.push_back({property, field, *type, *width,
+                                isSignedSemanticType(*semanticPropertyType),
+                                isRandC, randcKeyField, randcPositionField,
+                                std::move(domains)});
           continue;
         }
       }
     }
     auto freezeHook = [&](semantic::SVSubroutineSymbolOp hook,
-                          StringRef calleeAttr,
-                          StringRef ownerAttr,
+                          StringRef calleeAttr, StringRef ownerAttr,
                           StringRef sourceAttr) -> LogicalResult {
       if (!hook)
         return success();
       auto callee = directCalleeNames.find(hook);
       semantic::SVClassTypeOp owner = getOwningClass(hook);
-      StringAttr ownerSymbol = owner ? classSymbols.lookup(owner) : StringAttr{};
+      StringAttr ownerSymbol =
+          owner ? classSymbols.lookup(owner) : StringAttr{};
       if (callee == directCalleeNames.end() || !ownerSymbol) {
         emitError(getSemanticLocation(hook))
             << "randomization hook has no executable class method";
@@ -1015,8 +1241,33 @@ void ObeliskSimPreparePass::runOnOperation() {
       if (property.isRandC) {
         attributes.push_back(
             builder.getNamedAttr("randc_key_field", property.randcKeyField));
-        attributes.push_back(builder.getNamedAttr(
-            "randc_position_field", property.randcPositionField));
+        attributes.push_back(builder.getNamedAttr("randc_position_field",
+                                                  property.randcPositionField));
+      }
+      if (!property.domains.empty()) {
+        SmallVector<Attribute> domains;
+        for (const RandomSubdomain &domain : property.domains) {
+          SmallVector<Attribute> patterns;
+          for (const RandomDomainPattern &pattern : domain.patterns) {
+            patterns.push_back(builder.getDictionaryAttr({
+                builder.getNamedAttr(
+                    "mask", builder.getIntegerAttr(builder.getI64Type(),
+                                                   APInt(64, pattern.mask))),
+                builder.getNamedAttr(
+                    "value", builder.getIntegerAttr(builder.getI64Type(),
+                                                    APInt(64, pattern.value))),
+            }));
+          }
+          domains.push_back(builder.getDictionaryAttr({
+              builder.getNamedAttr("offset",
+                                   builder.getI64IntegerAttr(domain.offset)),
+              builder.getNamedAttr("width",
+                                   builder.getI64IntegerAttr(domain.width)),
+              builder.getNamedAttr("patterns", builder.getArrayAttr(patterns)),
+          }));
+        }
+        attributes.push_back(
+            builder.getNamedAttr("domains", builder.getArrayAttr(domains)));
       }
       propertyAttrs.push_back(builder.getDictionaryAttr(attributes));
     }

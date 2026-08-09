@@ -29,7 +29,8 @@
 // RANDC: %[[POSITION_REF:.*]] = obelisk_sim.class.field_ref {{.*}}[@[[POSITION]]]
 // RANDC: %[[KEY_VALUE:.*]] = obelisk_sim.managed.load %[[KEY_REF]]
 // RANDC: %[[POSITION_VALUE:.*]] = obelisk_sim.managed.load %[[POSITION_REF]]
-// RANDC: %[[NEXT_POSITION:.*]], %[[VALUE:.*]] = obelisk_sim.random.cycle_next {{.*}}, %[[POSITION_VALUE]] {width = 4 : i32}
+// RANDC: cf.br {{.*}}%[[POSITION_VALUE]]
+// RANDC: %[[NEXT_POSITION:.*]], %[[VALUE:.*]] = obelisk_sim.random.cycle_next {{.*}} {width = 4 : i32}
 // RANDC-NOT: obelisk_sim.managed.store {{.*}} to %[[POSITION_REF]]
 // RANDC: obelisk_sim.random.solve
 // RANDC: obelisk_sim.managed.store {{.*}} to %[[KEY_REF]]

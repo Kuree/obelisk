@@ -37,6 +37,23 @@ struct DistRange {
   uint32_t flags;
 };
 
+struct DomainPattern {
+  uint64_t mask;
+  uint64_t value;
+  uint64_t freeMask;
+  uint64_t cardinality;
+  bool fullCardinality;
+};
+
+struct DomainGroup {
+  uint32_t targetOffset;
+  uint16_t width;
+  uint64_t targetMask;
+  std::vector<DomainPattern> patterns;
+  uint64_t cardinality;
+  bool fullCardinality;
+};
+
 struct Value {
   uint64_t bits;
   unsigned width;
@@ -529,7 +546,8 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
   if (aggregateWidth > 64 || encodedCaptures != captureCount ||
       (programFlags & ~(OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT |
                         OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
-                        OBELISK_RT_RANDOM_PROGRAM_HAS_DIST)) != 0)
+                        OBELISK_RT_RANDOM_PROGRAM_HAS_DIST |
+                        OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS)) != 0)
     return OBELISK_RT_INVALID_ARGUMENT;
   uint64_t instructionEnd = OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE +
                             static_cast<uint64_t>(instructionCount) *
@@ -559,6 +577,27 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
     instructionEnd =
         distRecordsOffset + static_cast<uint64_t>(distRecordCount) *
                                 OBELISK_RT_RANDOM_DIST_RECORD_SIZE;
+  }
+  bool encodedDomains =
+      (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS) != 0;
+  uint32_t domainGroupCount = 0;
+  uint32_t domainRecordCount = 0;
+  uint64_t domainRecordsOffset = 0;
+  if (encodedDomains) {
+    if (instructionEnd >
+            UINT64_MAX - OBELISK_RT_RANDOM_DOMAIN_HEADER_SIZE ||
+        programSize < instructionEnd + OBELISK_RT_RANDOM_DOMAIN_HEADER_SIZE)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    domainGroupCount = read32(program + instructionEnd);
+    domainRecordCount = read32(program + instructionEnd + 4);
+    domainRecordsOffset = instructionEnd + OBELISK_RT_RANDOM_DOMAIN_HEADER_SIZE;
+    if (domainRecordCount >
+        (UINT64_MAX - domainRecordsOffset) /
+            OBELISK_RT_RANDOM_DOMAIN_RECORD_SIZE)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    instructionEnd =
+        domainRecordsOffset + static_cast<uint64_t>(domainRecordCount) *
+                                  OBELISK_RT_RANDOM_DOMAIN_RECORD_SIZE;
   }
   if (programSize != instructionEnd)
     return OBELISK_RT_INVALID_ARGUMENT;
@@ -686,6 +725,81 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
         return OBELISK_RT_INVALID_ARGUMENT;
     }
 
+    std::vector<DomainGroup> domainGroups;
+    uint64_t encodedDomainMask = 0;
+    if (encodedDomains) {
+      if (domainGroupCount == 0 || domainRecordCount == 0)
+        return OBELISK_RT_INVALID_ARGUMENT;
+      domainGroups.resize(domainGroupCount);
+      std::vector<uint8_t> seen(domainGroupCount, 0);
+      cursor = program + domainRecordsOffset;
+      for (uint32_t index = 0; index != domainRecordCount; ++index) {
+        uint32_t groupIndex = read32(cursor);
+        uint32_t targetOffset = read32(cursor + 4);
+        uint16_t width = read16(cursor + 8);
+        uint16_t reserved16 = read16(cursor + 10);
+        uint32_t reserved32 = read32(cursor + 12);
+        uint64_t patternMask = read64(cursor + 16);
+        uint64_t patternValue = read64(cursor + 24);
+        cursor += OBELISK_RT_RANDOM_DOMAIN_RECORD_SIZE;
+        uint64_t fieldMask = width == 64  ? UINT64_MAX
+                             : width == 0 ? 0
+                                          : (uint64_t{1} << width) - 1;
+        if (groupIndex >= domainGroupCount || width == 0 || width > 64 ||
+            targetOffset > aggregateWidth ||
+            width > aggregateWidth - targetOffset || reserved16 != 0 ||
+            reserved32 != 0 || (patternMask & ~fieldMask) != 0 ||
+            (patternValue & ~patternMask) != 0 ||
+            (width == 64 && patternMask == 0))
+          return OBELISK_RT_INVALID_ARGUMENT;
+        DomainGroup &group = domainGroups[groupIndex];
+        if (seen[groupIndex] &&
+            (group.targetOffset != targetOffset || group.width != width))
+          return OBELISK_RT_INVALID_ARGUMENT;
+        if (!seen[groupIndex]) {
+          seen[groupIndex] = 1;
+          group.targetOffset = targetOffset;
+          group.width = width;
+          group.targetMask = fieldMask << targetOffset;
+          if ((group.targetMask & encodedDomainMask) != 0)
+            return OBELISK_RT_INVALID_ARGUMENT;
+          encodedDomainMask |= group.targetMask;
+        }
+        for (const DomainPattern &other : group.patterns)
+          if (((patternValue ^ other.value) & (patternMask & other.mask)) == 0)
+            return OBELISK_RT_INVALID_ARGUMENT;
+        uint64_t freeMask = fieldMask & ~patternMask;
+        unsigned freeBits = countBits(freeMask);
+        bool fullCardinality = freeBits == 64;
+        uint64_t cardinality = fullCardinality ? 0 : uint64_t{1} << freeBits;
+        group.patterns.push_back({patternMask, patternValue, freeMask,
+                                  cardinality, fullCardinality});
+      }
+      if (std::any_of(seen.begin(), seen.end(),
+                      [](uint8_t value) { return value == 0; }))
+        return OBELISK_RT_INVALID_ARGUMENT;
+      for (DomainGroup &group : domainGroups) {
+        uint64_t cardinality = 0;
+        bool fullCardinality = false;
+        for (const DomainPattern &pattern : group.patterns) {
+          if (fullCardinality || pattern.fullCardinality)
+            return OBELISK_RT_INVALID_ARGUMENT;
+          uint64_t updated = 0;
+          bool overflow = __builtin_add_overflow(cardinality,
+                                                 pattern.cardinality, &updated);
+          if (overflow) {
+            if (updated != 0)
+              return OBELISK_RT_INVALID_ARGUMENT;
+            fullCardinality = true;
+          } else {
+            cardinality = updated;
+          }
+        }
+        group.cardinality = cardinality;
+        group.fullCardinality = fullCardinality;
+      }
+    }
+
     uint64_t mask = widthMask(aggregateWidth);
     mutableMask &= mask;
     std::vector<uint64_t> solveLayers;
@@ -715,15 +829,126 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
           if ((range.flags & OBELISK_RT_RANDOM_DIST_WEIGHT_SIGNED) != 0 &&
               (captures[range.weightCapture] & (uint64_t{1} << 63)) != 0)
             return OBELISK_RT_OK;
-    unsigned mutableWidth = countBits(mutableMask);
-    uint64_t domain = mutableWidth == 64 ? std::numeric_limits<uint64_t>::max()
-                                         : uint64_t{1} << mutableWidth;
+    uint64_t domainMutableMask = 0;
+    for (const DomainGroup &group : domainGroups) {
+      uint64_t overlap = mutableMask & group.targetMask;
+      if (overlap != 0 && overlap != group.targetMask)
+        return OBELISK_RT_INVALID_ARGUMENT;
+      if (overlap != 0)
+        domainMutableMask |= group.targetMask;
+      else {
+        uint64_t field = (start >> group.targetOffset) & widthMask(group.width);
+        bool legal =
+            std::any_of(group.patterns.begin(), group.patterns.end(),
+                        [&](const DomainPattern &pattern) {
+                          return (field & pattern.mask) == pattern.value;
+                        });
+        if (!legal)
+          return OBELISK_RT_OK;
+      }
+    }
+    uint64_t ordinaryMutableMask = mutableMask & ~domainMutableMask;
+    unsigned ordinaryMutableWidth = countBits(ordinaryMutableMask);
+    uint64_t logicalDomain =
+        ordinaryMutableWidth == 64 ? 0 : uint64_t{1} << ordinaryMutableWidth;
+    bool fullLogicalDomain = ordinaryMutableWidth == 64;
+    auto multiplyDomain = [&](uint64_t factor, bool fullFactor) -> bool {
+      if (fullLogicalDomain || fullFactor) {
+        if ((fullLogicalDomain && logicalDomain != 0) ||
+            (fullFactor && factor != 0))
+          return false;
+        fullLogicalDomain = true;
+        logicalDomain = 0;
+        return true;
+      }
+      uint64_t updated = 0;
+      bool overflow = __builtin_mul_overflow(logicalDomain, factor, &updated);
+      if (overflow) {
+        if (updated != 0)
+          return false;
+        fullLogicalDomain = true;
+        logicalDomain = 0;
+      } else {
+        logicalDomain = updated;
+      }
+      return true;
+    };
+    for (const DomainGroup &group : domainGroups)
+      if ((group.targetMask & mutableMask) != 0 &&
+          !multiplyDomain(group.cardinality, group.fullCardinality))
+        return OBELISK_RT_INVALID_ARGUMENT;
     uint64_t attempts =
-        mutableWidth == 64 ? maxAttempts : std::min(maxAttempts, domain);
-    bool complete = mutableWidth != 64 && attempts == domain;
-    uint64_t fixed = (start & mask) & ~mutableMask;
-    uint64_t candidateIndex = compressBits(start, mutableMask);
-    uint64_t candidate = fixed | expandBits(candidateIndex, mutableMask);
+        fullLogicalDomain ? maxAttempts : std::min(maxAttempts, logicalDomain);
+    bool complete = !fullLogicalDomain && attempts == logicalDomain;
+
+    auto groupIndexForField = [&](const DomainGroup &group, uint64_t field,
+                                  uint64_t &groupIndex) {
+      uint64_t base = 0;
+      for (const DomainPattern &pattern : group.patterns) {
+        if ((field & pattern.mask) == pattern.value) {
+          groupIndex = base + compressBits(field, pattern.freeMask);
+          return true;
+        }
+        base += pattern.cardinality;
+      }
+      return false;
+    };
+    uint64_t candidateIndex = compressBits(start, ordinaryMutableMask);
+    uint64_t multiplier =
+        ordinaryMutableWidth == 64 ? 0 : uint64_t{1} << ordinaryMutableWidth;
+    for (const DomainGroup &group : domainGroups) {
+      if ((group.targetMask & mutableMask) == 0)
+        continue;
+      uint64_t field = (start >> group.targetOffset) & widthMask(group.width);
+      uint64_t groupIndex = 0;
+      if (!groupIndexForField(group, field, groupIndex)) {
+        if (randomState && !group.fullCardinality) {
+          obelisk_rt_status status = obelisk_rt_v1_random_state_bounded(
+              randomState, group.cardinality, &groupIndex);
+          if (status != OBELISK_RT_OK)
+            return status;
+        } else {
+          groupIndex = group.fullCardinality
+                           ? field
+                           : compressBits(field, widthMask(group.width)) %
+                                 group.cardinality;
+        }
+      }
+      candidateIndex += multiplier * groupIndex;
+      multiplier *= group.cardinality;
+    }
+    auto materializeCandidate = [&](uint64_t index) {
+      uint64_t candidate = (start & mask) & ~mutableMask;
+      if (ordinaryMutableWidth == 64) {
+        candidate |= expandBits(index, ordinaryMutableMask);
+        return candidate;
+      }
+      uint64_t ordinaryRadix = uint64_t{1} << ordinaryMutableWidth;
+      candidate |= expandBits(index & (ordinaryRadix - 1), ordinaryMutableMask);
+      index >>= ordinaryMutableWidth;
+      for (const DomainGroup &group : domainGroups) {
+        if ((group.targetMask & mutableMask) == 0)
+          continue;
+        uint64_t groupIndex =
+            group.fullCardinality ? index : index % group.cardinality;
+        if (!group.fullCardinality)
+          index /= group.cardinality;
+        uint64_t base = 0;
+        uint64_t field = 0;
+        for (const DomainPattern &pattern : group.patterns) {
+          if (pattern.fullCardinality ||
+              groupIndex - base < pattern.cardinality) {
+            field =
+                pattern.value | expandBits(groupIndex - base, pattern.freeMask);
+            break;
+          }
+          base += pattern.cardinality;
+        }
+        candidate |= field << group.targetOffset;
+      }
+      return candidate;
+    };
+    uint64_t candidate = materializeCandidate(candidateIndex);
     uint64_t hardFallback = 0;
     bool hasHardFallback = false;
     std::vector<uint8_t> bestSoft(softCount, 0);
@@ -849,8 +1074,10 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
           hasHardFallback = true;
         }
       }
-      candidateIndex = (candidateIndex + 1) & widthMask(mutableWidth);
-      candidate = fixed | expandBits(candidateIndex, mutableMask);
+      ++candidateIndex;
+      if (!fullLogicalDomain && candidateIndex == logicalDomain)
+        candidateIndex = 0;
+      candidate = materializeCandidate(candidateIndex);
     }
     if (activeDist) {
       if (!complete || weightedCandidateGroups.empty())

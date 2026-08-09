@@ -1387,12 +1387,23 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     return success();
   };
   if (!checkerOnly &&
-      failed(callLifecycleHook(randomPreHookAttrName,
-                               randomPreHookOwnerAttrName,
-                               randomPreHookCapturesAttrName,
-                               randomPreHookReadCapturesAttrName)))
+      failed(callLifecycleHook(
+          randomPreHookAttrName, randomPreHookOwnerAttrName,
+          randomPreHookCapturesAttrName, randomPreHookReadCapturesAttrName)))
     return failure();
 
+  struct DomainPattern {
+    uint64_t mask;
+    uint64_t value;
+    uint64_t freeMask;
+    uint64_t cardinality;
+  };
+  struct PropertyDomain {
+    uint32_t offset;
+    unsigned width;
+    SmallVector<DomainPattern> patterns;
+    uint64_t cardinality;
+  };
   struct Property {
     Type type;
     unsigned width;
@@ -1403,6 +1414,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     Value randcPositionReference;
     Value nextRandcKey;
     Value nextRandcPosition;
+    SmallVector<PropertyDomain> domains;
   };
   SmallVector<Property> planned;
   uint64_t plannedWidth = 0;
@@ -1456,9 +1468,117 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       randcPositionReference = sim::SimClassFieldRefOp::create(
           builder, location, stateReferenceType, receiver, positionField);
     }
-    planned.push_back({type, static_cast<unsigned>(width),
-                       signedAttr.getValue(), reference, randcAttr.getValue(),
-                       randcKeyReference, randcPositionReference, {}, {}});
+    SmallVector<PropertyDomain> propertyDomains;
+    if (auto domains = property.getAs<ArrayAttr>("domains")) {
+      uint64_t coveredMask = 0;
+      for (Attribute domainAttr : domains) {
+        auto domain = dyn_cast<DictionaryAttr>(domainAttr);
+        auto offsetAttr =
+            domain ? domain.getAs<IntegerAttr>("offset") : IntegerAttr{};
+        auto domainWidthAttr =
+            domain ? domain.getAs<IntegerAttr>("width") : IntegerAttr{};
+        auto patternsAttr =
+            domain ? domain.getAs<ArrayAttr>("patterns") : ArrayAttr{};
+        if (!offsetAttr || !domainWidthAttr || !patternsAttr ||
+            patternsAttr.empty() || offsetAttr.getValue().isNegative() ||
+            domainWidthAttr.getValue().isNegative() ||
+            offsetAttr.getValue().getActiveBits() > 64 ||
+            domainWidthAttr.getValue().getActiveBits() > 64) {
+          emitError(location) << "randomize property domain is malformed";
+          return failure();
+        }
+        uint64_t domainOffset = offsetAttr.getValue().getZExtValue();
+        uint64_t domainWidth = domainWidthAttr.getValue().getZExtValue();
+        if (domainWidth == 0 || domainWidth > 64 || domainOffset > width ||
+            domainWidth > width - domainOffset) {
+          emitError(location) << "randomize property domain is out of range";
+          return failure();
+        }
+        uint64_t localMask =
+            domainWidth == 64 ? UINT64_MAX : (uint64_t{1} << domainWidth) - 1;
+        uint64_t shiftedMask = localMask << domainOffset;
+        if ((coveredMask & shiftedMask) != 0) {
+          emitError(location) << "randomize property domains overlap";
+          return failure();
+        }
+        coveredMask |= shiftedMask;
+        PropertyDomain propertyDomain{static_cast<uint32_t>(domainOffset),
+                                      static_cast<unsigned>(domainWidth),
+                                      {},
+                                      0};
+        bool fullCardinality = false;
+        for (Attribute patternAttr : patternsAttr) {
+          auto pattern = dyn_cast<DictionaryAttr>(patternAttr);
+          auto maskAttr =
+              pattern ? pattern.getAs<IntegerAttr>("mask") : IntegerAttr{};
+          auto valueAttr =
+              pattern ? pattern.getAs<IntegerAttr>("value") : IntegerAttr{};
+          if (!maskAttr || !valueAttr ||
+              maskAttr.getValue().getBitWidth() > 64 ||
+              valueAttr.getValue().getBitWidth() > 64) {
+            emitError(location)
+                << "randomize property domain pattern is malformed";
+            return failure();
+          }
+          uint64_t patternMask = maskAttr.getValue().getZExtValue();
+          uint64_t patternValue = valueAttr.getValue().getZExtValue();
+          if ((patternMask & ~localMask) != 0 ||
+              (patternValue & ~patternMask) != 0) {
+            emitError(location)
+                << "randomize property domain pattern is inconsistent";
+            return failure();
+          }
+          for (const DomainPattern &other : propertyDomain.patterns)
+            if (((patternValue ^ other.value) & (patternMask & other.mask)) ==
+                0) {
+              emitError(location)
+                  << "randomize property domain patterns overlap";
+              return failure();
+            }
+          uint64_t freeMask = localMask & ~patternMask;
+          unsigned freeBits = 0;
+          for (uint64_t bits = freeMask; bits != 0; bits &= bits - 1)
+            ++freeBits;
+          uint64_t patternCardinality =
+              freeBits == 64 ? 0 : uint64_t{1} << freeBits;
+          uint64_t updated = 0;
+          bool overflow = __builtin_add_overflow(propertyDomain.cardinality,
+                                                 patternCardinality, &updated);
+          if (fullCardinality || freeBits == 64 || (overflow && updated != 0)) {
+            emitError(location)
+                << "randomize property domain cardinality is malformed";
+            return failure();
+          }
+          if (overflow)
+            fullCardinality = true;
+          else
+            propertyDomain.cardinality = updated;
+          propertyDomain.patterns.push_back(
+              {patternMask, patternValue, freeMask, patternCardinality});
+        }
+        bool coversFullDomain =
+            fullCardinality ||
+            (domainWidth != 64 &&
+             propertyDomain.cardinality == (uint64_t{1} << domainWidth));
+        // A domain that covers every field encoding carries no semantic
+        // restriction. Treat its bits as ordinary packed bits instead of
+        // retaining a zero-cardinality radix that would later require an
+        // invalid division or remainder operation.
+        if (coversFullDomain)
+          continue;
+        propertyDomains.push_back(std::move(propertyDomain));
+      }
+    }
+    planned.push_back({type,
+                       static_cast<unsigned>(width),
+                       signedAttr.getValue(),
+                       reference,
+                       randcAttr.getValue(),
+                       randcKeyReference,
+                       randcPositionReference,
+                       {},
+                       {},
+                       std::move(propertyDomains)});
     plannedWidth += width;
   }
   if (plannedWidth != totalWidth) {
@@ -1587,6 +1707,194 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             constant64(32)),
         arith::ExtUIOp::create(builder, location, i64, low));
   };
+  auto countBits = [](uint64_t bits) {
+    unsigned count = 0;
+    for (; bits != 0; bits &= bits - 1)
+      ++count;
+    return count;
+  };
+  auto propertyDomainMask = [&](const Property &property) {
+    uint64_t result = 0;
+    for (const PropertyDomain &domain : property.domains) {
+      uint64_t mask =
+          domain.width == 64 ? UINT64_MAX : (uint64_t{1} << domain.width) - 1;
+      result |= mask << domain.offset;
+    }
+    return result;
+  };
+  auto propertyDomainCardinality = [&](const Property &property) {
+    uint64_t valueMask =
+        property.width == 64 ? UINT64_MAX : (uint64_t{1} << property.width) - 1;
+    unsigned ordinaryBits =
+        countBits(valueMask & ~propertyDomainMask(property));
+    uint64_t cardinality = ordinaryBits == 64 ? 0 : uint64_t{1} << ordinaryBits;
+    for (const PropertyDomain &domain : property.domains)
+      cardinality *= domain.cardinality;
+    return cardinality;
+  };
+  auto expandConstantBits = [](uint64_t index, uint64_t outputMask) {
+    uint64_t result = 0;
+    unsigned inputBit = 0;
+    for (unsigned outputBit = 0; outputBit != 64; ++outputBit) {
+      uint64_t output = uint64_t{1} << outputBit;
+      if ((outputMask & output) == 0)
+        continue;
+      if ((index & (uint64_t{1} << inputBit)) != 0)
+        result |= output;
+      ++inputBit;
+    }
+    return result;
+  };
+  auto materializeConstantPropertyDomainIndex = [&](const Property &property,
+                                                    uint64_t index) {
+    uint64_t valueMask =
+        property.width == 64 ? UINT64_MAX : (uint64_t{1} << property.width) - 1;
+    uint64_t ordinaryMask = valueMask & ~propertyDomainMask(property);
+    unsigned ordinaryBits = countBits(ordinaryMask);
+    uint64_t field = expandConstantBits(index, ordinaryMask);
+    uint64_t remaining = ordinaryBits == 0 ? index : index >> ordinaryBits;
+    for (const PropertyDomain &domain : property.domains) {
+      uint64_t groupIndex = remaining % domain.cardinality;
+      remaining /= domain.cardinality;
+      uint64_t base = 0;
+      for (const DomainPattern &pattern : domain.patterns) {
+        if (groupIndex - base < pattern.cardinality) {
+          uint64_t selected =
+              pattern.value |
+              expandConstantBits(groupIndex - base, pattern.freeMask);
+          field |= selected << domain.offset;
+          break;
+        }
+        base += pattern.cardinality;
+      }
+    }
+    return field;
+  };
+  auto expandStaticBits = [&](Value index, uint64_t outputMask) {
+    Value result = constant64(0);
+    unsigned inputBit = 0;
+    for (unsigned outputBit = 0; outputBit != 64; ++outputBit) {
+      if ((outputMask & (uint64_t{1} << outputBit)) == 0)
+        continue;
+      Value bit =
+          arith::AndIOp::create(builder, location,
+                                arith::ShRUIOp::create(builder, location, index,
+                                                       constant64(inputBit)),
+                                constant64(1));
+      if (outputBit != 0)
+        bit = arith::ShLIOp::create(builder, location, bit,
+                                    constant64(outputBit));
+      result = arith::OrIOp::create(builder, location, result, bit);
+      ++inputBit;
+    }
+    return result;
+  };
+  auto compressStaticBits = [&](Value field, uint64_t inputMask) {
+    Value result = constant64(0);
+    unsigned outputBit = 0;
+    for (unsigned inputBit = 0; inputBit != 64; ++inputBit) {
+      if ((inputMask & (uint64_t{1} << inputBit)) == 0)
+        continue;
+      Value bit =
+          arith::AndIOp::create(builder, location,
+                                arith::ShRUIOp::create(builder, location, field,
+                                                       constant64(inputBit)),
+                                constant64(1));
+      if (outputBit != 0)
+        bit = arith::ShLIOp::create(builder, location, bit,
+                                    constant64(outputBit));
+      result = arith::OrIOp::create(builder, location, result, bit);
+      ++outputBit;
+    }
+    return result;
+  };
+  auto materializePropertyDomainIndex = [&](const Property &property,
+                                            Value index) {
+    uint64_t valueMask =
+        property.width == 64 ? UINT64_MAX : (uint64_t{1} << property.width) - 1;
+    uint64_t ordinaryMask = valueMask & ~propertyDomainMask(property);
+    unsigned ordinaryBits = countBits(ordinaryMask);
+    Value field = expandStaticBits(index, ordinaryMask);
+    Value remaining = index;
+    if (ordinaryBits != 0)
+      remaining = arith::ShRUIOp::create(builder, location, remaining,
+                                         constant64(ordinaryBits));
+    for (const PropertyDomain &domain : property.domains) {
+      Value groupIndex = arith::RemUIOp::create(builder, location, remaining,
+                                                constant64(domain.cardinality));
+      remaining = arith::DivUIOp::create(builder, location, remaining,
+                                         constant64(domain.cardinality));
+      uint64_t lastBase = 0;
+      for (const DomainPattern &pattern : llvm::drop_end(domain.patterns))
+        lastBase += pattern.cardinality;
+      const DomainPattern &last = domain.patterns.back();
+      Value selected = arith::OrIOp::create(
+          builder, location, constant64(last.value),
+          expandStaticBits(arith::SubIOp::create(builder, location, groupIndex,
+                                                 constant64(lastBase)),
+                           last.freeMask));
+      uint64_t end = lastBase;
+      for (const DomainPattern &pattern :
+           llvm::reverse(ArrayRef(domain.patterns).drop_back())) {
+        end -= pattern.cardinality;
+        Value candidate = arith::OrIOp::create(
+            builder, location, constant64(pattern.value),
+            expandStaticBits(arith::SubIOp::create(builder, location,
+                                                   groupIndex, constant64(end)),
+                             pattern.freeMask));
+        Value use = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::ult, groupIndex,
+            constant64(end + pattern.cardinality));
+        selected = arith::SelectOp::create(builder, location, use, candidate,
+                                           selected);
+      }
+      if (domain.offset != 0)
+        selected = arith::ShLIOp::create(builder, location, selected,
+                                         constant64(domain.offset));
+      field = arith::OrIOp::create(builder, location, field, selected);
+    }
+    return field;
+  };
+  auto propertyDomainIndex = [&](const Property &property, Value field) {
+    uint64_t valueMask =
+        property.width == 64 ? UINT64_MAX : (uint64_t{1} << property.width) - 1;
+    uint64_t ordinaryMask = valueMask & ~propertyDomainMask(property);
+    unsigned ordinaryBits = countBits(ordinaryMask);
+    Value index = compressStaticBits(field, ordinaryMask);
+    uint64_t multiplier = ordinaryBits == 64 ? 0 : uint64_t{1} << ordinaryBits;
+    for (const PropertyDomain &domain : property.domains) {
+      Value local = field;
+      if (domain.offset != 0)
+        local = arith::ShRUIOp::create(builder, location, local,
+                                       constant64(domain.offset));
+      uint64_t domainMask =
+          domain.width == 64 ? UINT64_MAX : (uint64_t{1} << domain.width) - 1;
+      local = arith::AndIOp::create(builder, location, local,
+                                    constant64(domainMask));
+      Value groupIndex = constant64(0);
+      uint64_t base = 0;
+      for (const DomainPattern &pattern : domain.patterns) {
+        Value candidate =
+            arith::AddIOp::create(builder, location, constant64(base),
+                                  compressStaticBits(local, pattern.freeMask));
+        Value matches = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::eq,
+            arith::AndIOp::create(builder, location, local,
+                                  constant64(pattern.mask)),
+            constant64(pattern.value));
+        groupIndex = arith::SelectOp::create(builder, location, matches,
+                                             candidate, groupIndex);
+        base += pattern.cardinality;
+      }
+      Value contribution = groupIndex;
+      if (multiplier != 1)
+        contribution = arith::MulIOp::create(builder, location, contribution,
+                                             constant64(multiplier));
+      index = arith::AddIOp::create(builder, location, index, contribution);
+      multiplier *= domain.cardinality;
+    }
+    return index;
+  };
 
   Value currentAssignment = constant64(0);
   Value mutableMask = constant64(0);
@@ -1631,37 +1939,78 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                ValueRange{}, disabledBlock, ValueRange{});
 
       setCurrent(disabledBlock);
-      cf::BranchOp::create(builder, location, mergeBlock,
-                           ValueRange{state, bits, constant64(0), constant64(0)});
+      cf::BranchOp::create(
+          builder, location, mergeBlock,
+          ValueRange{state, bits, constant64(0), constant64(0)});
 
       setCurrent(enabledBlock);
-      Value key = sim::SimManagedLoadOp::create(
-          builder, location, i64, property.randcKeyReference);
+      Value key = sim::SimManagedLoadOp::create(builder, location, i64,
+                                                property.randcKeyReference);
       Value position = sim::SimManagedLoadOp::create(
           builder, location, i64, property.randcPositionReference);
-      Value needsRekey = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::eq, position, constant64(0));
-      Block *rekeyBlock = addBlock();
-      Block *cycleBlock = addBlock();
-      Value cycleKey = cycleBlock->addArgument(i64, location);
-      Value cycleState = cycleBlock->addArgument(i64, location);
-      cf::CondBranchOp::create(builder, location, needsRekey, rekeyBlock,
-                               ValueRange{}, cycleBlock,
-                               ValueRange{key, state});
+      uint64_t semanticCardinality = propertyDomainCardinality(property);
+      if (semanticCardinality == 0 ||
+          semanticCardinality > (uint64_t{1} << 32)) {
+        emitError(location)
+            << "randc semantic domains must contain at most 2^32 values";
+        return failure();
+      }
+      if (semanticCardinality == 1) {
+        Value value =
+            property.domains.empty()
+                ? constant64(0)
+                : materializePropertyDomainIndex(property, constant64(0));
+        cf::BranchOp::create(builder, location, mergeBlock,
+                             ValueRange{state, value, key, position});
+      } else {
+        unsigned cycleWidth = llvm::Log2_64_Ceil(semanticCardinality);
+        Block *cycleEntry = addBlock();
+        Value cycleState = cycleEntry->addArgument(i64, location);
+        Value cycleKey = cycleEntry->addArgument(i64, location);
+        Value cyclePosition = cycleEntry->addArgument(i64, location);
+        Block *rekeyBlock = addBlock();
+        Block *cycleBlock = addBlock();
+        Value activeState = cycleBlock->addArgument(i64, location);
+        Value activeKey = cycleBlock->addArgument(i64, location);
+        Value activePosition = cycleBlock->addArgument(i64, location);
+        cf::BranchOp::create(builder, location, cycleEntry,
+                             ValueRange{state, key, position});
 
-      setCurrent(rekeyBlock);
-      Value rekeyState = state;
-      Value newKey = next64(rekeyState);
-      cf::BranchOp::create(builder, location, cycleBlock,
-                           ValueRange{newKey, rekeyState});
+        setCurrent(cycleEntry);
+        Value needsRekey =
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                  cyclePosition, constant64(0));
+        cf::CondBranchOp::create(
+            builder, location, needsRekey, rekeyBlock,
+            ValueRange{cycleState, cycleKey, cyclePosition}, cycleBlock,
+            ValueRange{cycleState, cycleKey, cyclePosition});
 
-      setCurrent(cycleBlock);
-      auto cycle = sim::SimRandomCycleNextOp::create(
-          builder, location, cycleKey, position,
-          builder.getI32IntegerAttr(property.width));
-      cf::BranchOp::create(builder, location, mergeBlock,
-                           ValueRange{cycleState, cycle.getValue(), cycleKey,
-                                      cycle.getNextPosition()});
+        Value rekeyState = rekeyBlock->addArgument(i64, location);
+        rekeyBlock->addArgument(i64, location);
+        Value rekeyPosition = rekeyBlock->addArgument(i64, location);
+        setCurrent(rekeyBlock);
+        Value newKey = next64(rekeyState);
+        cf::BranchOp::create(builder, location, cycleBlock,
+                             ValueRange{rekeyState, newKey, rekeyPosition});
+
+        setCurrent(cycleBlock);
+        auto cycle = sim::SimRandomCycleNextOp::create(
+            builder, location, activeKey, activePosition,
+            builder.getI32IntegerAttr(cycleWidth));
+        Value valid = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::ult, cycle.getValue(),
+            constant64(semanticCardinality));
+        Value semanticValue =
+            property.domains.empty()
+                ? cycle.getValue()
+                : materializePropertyDomainIndex(property, cycle.getValue());
+        cf::CondBranchOp::create(
+            builder, location, valid, mergeBlock,
+            ValueRange{activeState, semanticValue, activeKey,
+                       cycle.getNextPosition()},
+            cycleEntry,
+            ValueRange{activeState, activeKey, cycle.getNextPosition()});
+      }
 
       setCurrent(mergeBlock);
       state = mergedState;
@@ -2072,13 +2421,16 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         Operation *weight;
         bool perRange;
         uint64_t denominator;
+        uint64_t selectionCardinality;
+        bool isDefault;
       };
       SmallVector<PendingRange> pending;
       SmallVector<std::pair<uint64_t, uint64_t>> explicitIntervals;
       auto appendItemRange = [&](const RawDistItem &item) -> LogicalResult {
         uint64_t lower = 0;
         uint64_t upper = 0;
-        if (auto range = dyn_cast<semantic::SVValueRangeExpressionOp>(item.value)) {
+        if (auto range =
+                dyn_cast<semantic::SVValueRangeExpressionOp>(item.value)) {
           SmallVector<Operation *> endpoints = getChildren(range);
           if (endpoints.size() != 2) {
             emitError(getSemanticLocation(item.value))
@@ -2098,14 +2450,14 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           lower = upper = *singleton;
         }
         uint64_t cardinality = upper - lower + 1;
-        if (cardinality == 0 && item.perRange) {
+        if (cardinality == 0 && item.perRange && property.domains.empty()) {
           emitError(getSemanticLocation(item.value))
               << "a per-range dist weight cannot span the complete 64-bit "
                  "domain";
           return failure();
         }
-        pending.push_back(
-            {lower, cardinality, item.weight, item.perRange, cardinality});
+        pending.push_back({lower, cardinality, item.weight, item.perRange,
+                           cardinality, cardinality, false});
         explicitIntervals.emplace_back(lower, upper);
         return success();
       };
@@ -2153,8 +2505,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             defaultCardinality = updated;
         }
         bool defaultPerRange = defaultWeightKind.getInt() != 0;
-        if (defaultPerRange && !complement.empty() &&
-            defaultCardinality == 0) {
+        if (defaultPerRange && property.domains.empty() &&
+            !complement.empty() && defaultCardinality == 0) {
           emitError(getSemanticLocation(defaultWeight))
               << "a per-range default dist weight cannot cover the complete "
                  "64-bit domain";
@@ -2163,8 +2515,46 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         for (auto interval : complement)
           pending.push_back({interval.first,
                              interval.second - interval.first + 1,
-                             defaultWeight, defaultPerRange,
-                             defaultCardinality});
+                             defaultWeight, defaultPerRange, defaultCardinality,
+                             interval.second - interval.first + 1, true});
+      }
+
+      if (!property.domains.empty()) {
+        constexpr uint64_t maxFiniteDistDomain = uint64_t{1} << 20;
+        uint64_t semanticCardinality = propertyDomainCardinality(property);
+        if (semanticCardinality == 0 ||
+            semanticCardinality > maxFiniteDistDomain) {
+          emitError(getSemanticLocation(expression))
+              << "dist over a finite semantic domain currently requires at "
+                 "most 2^20 property values";
+          return failure();
+        }
+        uint64_t defaultCardinality = 0;
+        for (PendingRange &range : pending) {
+          range.selectionCardinality = 0;
+          for (uint64_t index = 0; index != semanticCardinality; ++index) {
+            uint64_t candidate =
+                materializeConstantPropertyDomainIndex(property, index);
+            if (property.isSigned)
+              candidate ^= uint64_t{1} << (property.width - 1);
+            bool matches = range.cardinality == 0 ||
+                           (candidate >= range.lower &&
+                            candidate - range.lower < range.cardinality);
+            if (matches)
+              ++range.selectionCardinality;
+          }
+          if (range.isDefault)
+            defaultCardinality += range.selectionCardinality;
+        }
+        for (PendingRange &range : pending) {
+          if (!range.perRange)
+            continue;
+          range.denominator =
+              range.isDefault ? defaultCardinality : range.selectionCardinality;
+        }
+        llvm::erase_if(pending, [](const PendingRange &range) {
+          return range.selectionCardinality == 0;
+        });
       }
 
       uint64_t normalization = 1;
@@ -2238,17 +2628,17 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           return failure();
         uint64_t coefficient =
             range.perRange ? normalization / range.denominator : normalization;
-        if (range.cardinality == 0 ||
-            coefficient > UINT64_MAX / range.cardinality) {
+        if (range.selectionCardinality == 0 ||
+            coefficient > UINT64_MAX / range.selectionCardinality) {
           emitError(getSemanticLocation(expression))
               << "dist range selection mass exceeds 64 bits";
           return failure();
         }
-        uint64_t selectionCoefficient = coefficient * range.cardinality;
-        plan.ranges.push_back(
-            {range.lower, range.cardinality, coefficient,
-             selectionCoefficient, weight->first, weightSigned,
-             weight->second});
+        uint64_t selectionCoefficient =
+            coefficient * range.selectionCardinality;
+        plan.ranges.push_back({range.lower, range.cardinality, coefficient,
+                               selectionCoefficient, weight->first,
+                               weightSigned, weight->second});
       }
       if (plan.ranges.empty()) {
         emitError(getSemanticLocation(expression))
@@ -2828,6 +3218,11 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     programFlags |= OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE;
   if (!distPlans.empty())
     programFlags |= OBELISK_RT_RANDOM_PROGRAM_HAS_DIST;
+  bool hasFiniteDomains = llvm::any_of(planned, [](const Property &property) {
+    return !property.domains.empty();
+  });
+  if (hasFiniteDomains)
+    programFlags |= OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS;
   append32(programFlags);
   for (const EncodedInstruction &encoded : programInstructions) {
     program.push_back(encoded.opcode);
@@ -2872,17 +3267,63 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         append64(range.cardinality);
         append64(range.coefficient);
         append32(range.weightCapture);
-        uint32_t flags = range.weightSigned
-                             ? OBELISK_RT_RANDOM_DIST_WEIGHT_SIGNED
-                             : 0;
+        uint32_t flags =
+            range.weightSigned ? OBELISK_RT_RANDOM_DIST_WEIGHT_SIGNED : 0;
         if (planned[plan.propertyIndex].isSigned)
           flags |= OBELISK_RT_RANDOM_DIST_TARGET_SIGNED;
         append32(flags);
       }
     }
   }
-  uint64_t fallbackAttempts =
-      totalWidth <= 20 ? (uint64_t{1} << totalWidth) : (uint64_t{1} << 20);
+  if (hasFiniteDomains) {
+    uint32_t groupCount = 0;
+    uint32_t recordCount = 0;
+    for (const Property &property : planned) {
+      groupCount += static_cast<uint32_t>(property.domains.size());
+      for (const PropertyDomain &domain : property.domains)
+        recordCount += static_cast<uint32_t>(domain.patterns.size());
+    }
+    append32(groupCount);
+    append32(recordCount);
+    uint32_t group = 0;
+    uint32_t propertyOffset = 0;
+    for (const Property &property : planned) {
+      for (const PropertyDomain &domain : property.domains) {
+        for (const DomainPattern &pattern : domain.patterns) {
+          append32(group);
+          append32(propertyOffset + domain.offset);
+          append16(static_cast<uint16_t>(domain.width));
+          append16(0);
+          append32(0);
+          append64(pattern.mask);
+          append64(pattern.value);
+        }
+        ++group;
+      }
+      propertyOffset += property.width;
+    }
+  }
+  constexpr uint64_t maxFallbackAttempts = uint64_t{1} << 20;
+  uint64_t fallbackAttempts = 1;
+  bool completeFallbackDomain = true;
+  for (const Property &property : planned) {
+    if (property.isRandC)
+      continue;
+    uint64_t cardinality = propertyDomainCardinality(property);
+    if (cardinality == 0 || cardinality > maxFallbackAttempts ||
+        fallbackAttempts > maxFallbackAttempts / cardinality) {
+      fallbackAttempts = maxFallbackAttempts;
+      completeFallbackDomain = false;
+      break;
+    }
+    fallbackAttempts *= cardinality;
+  }
+  if (hasFiniteDomains && !distPlans.empty() && !completeFallbackDomain) {
+    emitError(location)
+        << "dist over a finite semantic domain currently requires exhaustive "
+           "fallback traversal of at most 2^20 aggregate assignments";
+    return failure();
+  }
   solver::RandomProgramAnalysis analysis = solver::analyzeRandomProgram(
       program.data(), program.size(), /*resourceLimit=*/100000,
       /*preferGlobalAssignmentTable=*/hasSolveBefore);
@@ -3021,6 +3462,13 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     Value sampledIndex;
   };
   SmallVector<ProposalDomain> proposalDomains;
+  struct ProposalFiniteDomain {
+    uint32_t offset;
+    const Property *property;
+    uint64_t cardinality;
+    Value sampledIndex;
+  };
+  SmallVector<ProposalFiniteDomain> proposalFiniteDomains;
   struct ProposalCaptureDomain {
     uint32_t offset;
     unsigned width;
@@ -3052,6 +3500,20 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   SmallVector<ProposalDefinition> proposalDefinitions;
   uint32_t propertyOffset = 0;
   for (const Property &property : planned) {
+    uint64_t propertyMask =
+        (property.width == 64 ? UINT64_MAX
+                              : (uint64_t{1} << property.width) - 1)
+        << propertyOffset;
+    if (!property.domains.empty()) {
+      if (!property.isRandC && !validAssignmentTable &&
+          (proposalAssignmentTableMask & propertyMask) != propertyMask)
+        proposalFiniteDomains.push_back({propertyOffset,
+                                         &property,
+                                         propertyDomainCardinality(property),
+                                         {}});
+      propertyOffset += property.width;
+      continue;
+    }
     auto found = llvm::find_if(analysis.domains,
                                [&](const solver::RandomVariableDomain &domain) {
                                  return domain.offset == propertyOffset &&
@@ -3400,6 +3862,43 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                ? UINT64_MAX
                                : ((uint64_t{1} << domain.width) - 1)
                                      << domain.offset;
+      assignment = arith::OrIOp::create(
+          builder, location,
+          arith::AndIOp::create(builder, location, assignment,
+                                constant64(~fieldMask)),
+          fieldBits);
+    }
+    for (const ProposalFiniteDomain &domain : proposalFiniteDomains) {
+      Value step;
+      Value fieldIndex;
+      if (domain.cardinality == 0) {
+        step = attempt;
+        fieldIndex =
+            arith::AddIOp::create(builder, location, domain.sampledIndex, step);
+      } else {
+        step = arith::RemUIOp::create(builder, location, attempt,
+                                      constant64(domain.cardinality));
+        Value threshold = arith::SubIOp::create(
+            builder, location, constant64(domain.cardinality), step);
+        Value wraps =
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::uge,
+                                  domain.sampledIndex, threshold);
+        Value linear =
+            arith::AddIOp::create(builder, location, domain.sampledIndex, step);
+        Value wrapped = arith::SubIOp::create(builder, location,
+                                              domain.sampledIndex, threshold);
+        fieldIndex =
+            arith::SelectOp::create(builder, location, wraps, wrapped, linear);
+      }
+      Value fieldBits =
+          materializePropertyDomainIndex(*domain.property, fieldIndex);
+      if (domain.offset != 0)
+        fieldBits = arith::ShLIOp::create(builder, location, fieldBits,
+                                          constant64(domain.offset));
+      uint64_t fieldMask = (domain.property->width == 64
+                                ? UINT64_MAX
+                                : (uint64_t{1} << domain.property->width) - 1)
+                           << domain.offset;
       assignment = arith::OrIOp::create(
           builder, location,
           arith::AndIOp::create(builder, location, assignment,
@@ -3858,33 +4357,47 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           sampledDistAssignment);
     return assignment;
   };
+  auto overwritesFiniteDomain = [&](const ProposalFiniteDomain &domain) {
+    bool definitionTarget = llvm::any_of(
+        proposalDefinitions, [&](const ProposalDefinition &definition) {
+          return definition.targetOffset == domain.offset &&
+                 definition.width == domain.property->width;
+        });
+    bool aliasTarget =
+        llvm::any_of(proposalAliases, [&](const ProposalAlias &alias) {
+          return alias.targetOffset == domain.offset &&
+                 alias.width == domain.property->width;
+        });
+    return definitionTarget || aliasTarget;
+  };
   bool overwritesProposalDomain =
-      llvm::any_of(
-          proposalDomains,
-          [&](const ProposalDomain &domain) {
-            bool definitionTarget = llvm::any_of(
-                proposalDefinitions, [&](const ProposalDefinition &definition) {
-                  return definition.targetOffset == domain.offset &&
-                         definition.width == domain.width;
-                });
-            auto alias = llvm::find_if(
-                proposalAliases, [&](const ProposalAlias &candidate) {
-                  return candidate.targetOffset == domain.offset &&
-                         candidate.width == domain.width;
-                });
-            if (alias == proposalAliases.end())
-              return definitionTarget;
-            auto sourceDomain = llvm::find_if(
-                proposalDomains, [&](const ProposalDomain &candidate) {
-                  return candidate.offset == alias->sourceOffset &&
-                         candidate.width == alias->width;
-                });
-            bool sameAliasDomain =
-                sourceDomain != proposalDomains.end() &&
-                sourceDomain->lower == domain.lower &&
-                sourceDomain->cardinality == domain.cardinality;
-            return definitionTarget || !sameAliasDomain;
-          }) ||
+      llvm::any_of(proposalDomains,
+                   [&](const ProposalDomain &domain) {
+                     bool definitionTarget = llvm::any_of(
+                         proposalDefinitions,
+                         [&](const ProposalDefinition &definition) {
+                           return definition.targetOffset == domain.offset &&
+                                  definition.width == domain.width;
+                         });
+                     auto alias = llvm::find_if(
+                         proposalAliases, [&](const ProposalAlias &candidate) {
+                           return candidate.targetOffset == domain.offset &&
+                                  candidate.width == domain.width;
+                         });
+                     if (alias == proposalAliases.end())
+                       return definitionTarget;
+                     auto sourceDomain = llvm::find_if(
+                         proposalDomains, [&](const ProposalDomain &candidate) {
+                           return candidate.offset == alias->sourceOffset &&
+                                  candidate.width == alias->width;
+                         });
+                     bool sameAliasDomain =
+                         sourceDomain != proposalDomains.end() &&
+                         sourceDomain->lower == domain.lower &&
+                         sourceDomain->cardinality == domain.cardinality;
+                     return definitionTarget || !sameAliasDomain;
+                   }) ||
+      llvm::any_of(proposalFiniteDomains, overwritesFiniteDomain) ||
       llvm::any_of(
           proposalCaptureDomains, [&](const ProposalCaptureDomain &bound) {
             bool definitionTarget = llvm::any_of(
@@ -4023,12 +4536,11 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             buildSolveBeforeTable(table.assignments, 0));
   }
 
-  if (solveBeforeRequiresRuntime && totalWidth > 20) {
+  if (solveBeforeRequiresRuntime && !completeFallbackDomain) {
     emitError(location)
         << "solve before residual fallback requires exhaustive traversal of "
-           "at most 20 aggregate random bits; compile-time planning could not "
-           "preserve the ordered distribution for "
-        << totalWidth << " bits";
+           "at most 2^20 semantic assignments; compile-time planning could "
+           "not preserve the ordered distribution";
     return failure();
   }
 
@@ -4066,9 +4578,13 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   Block *modeSamplingDispatchBlock = addBlock();
   Block *plannedSamplingBlock = addBlock();
   Value usePlannedSampling = allConstraintsEnabled;
-  if (hasSolveBefore || !distPlans.empty())
+  if (hasFiniteDomains && !distPlans.empty()) {
+    usePlannedSampling = arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(false));
+  } else if (hasSolveBefore || !distPlans.empty() || hasFiniteDomains) {
     usePlannedSampling = arith::AndIOp::create(
         builder, location, usePlannedSampling, randomizationEnabled);
+  }
   cf::CondBranchOp::create(builder, location, usePlannedSampling,
                            plannedSamplingBlock, ValueRange{},
                            modeSamplingDispatchBlock, ValueRange{});
@@ -4424,6 +4940,12 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     Value draw = next64(state);
     domain.sampledIndex = sampleBoundedIndex(domain.cardinality, draw);
   }
+  for (ProposalFiniteDomain &domain : proposalFiniteDomains) {
+    Value draw = next64(state);
+    domain.sampledIndex = domain.cardinality == 0
+                              ? draw
+                              : sampleBoundedIndex(domain.cardinality, draw);
+  }
   for (ProposalCaptureDomain &bound : proposalCaptureDomains) {
     Value draw = next64(state);
     bound.sampledIndex = sampleDynamicBoundedIndex(bound.cardinality, draw);
@@ -4722,6 +5244,32 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
 
     Value satisfied = arith::ConstantOp::create(
         builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+    uint64_t domainPropertyOffset = 0;
+    for (const Property &property : planned) {
+      for (const PropertyDomain &domain : property.domains) {
+        Value field = assignment;
+        uint64_t offset = domainPropertyOffset + domain.offset;
+        if (offset != 0)
+          field = arith::ShRUIOp::create(builder, location, field,
+                                         constant64(offset));
+        uint64_t fieldMask =
+            domain.width == 64 ? UINT64_MAX : (uint64_t{1} << domain.width) - 1;
+        field = arith::AndIOp::create(builder, location, field,
+                                      constant64(fieldMask));
+        Value member = arith::ConstantOp::create(
+            builder, location, builder.getI1Type(), builder.getBoolAttr(false));
+        for (const DomainPattern &pattern : domain.patterns) {
+          Value masked = arith::AndIOp::create(builder, location, field,
+                                               constant64(pattern.mask));
+          Value matches =
+              arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                    masked, constant64(pattern.value));
+          member = arith::OrIOp::create(builder, location, member, matches);
+        }
+        satisfied = arith::AndIOp::create(builder, location, satisfied, member);
+      }
+      domainPropertyOffset += property.width;
+    }
     for (auto [index, constraint] : llvm::enumerate(children)) {
       if (index == receiverIndex)
         continue;
@@ -4812,23 +5360,44 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         continue;
       }
       Value aggregateMaskValue = constant64(aggregateMask);
-      Value field = arith::AndIOp::create(builder, location, current,
-                                          aggregateMaskValue);
-      Value wrapped = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::eq, field,
-          aggregateMaskValue);
-      Value incremented = arith::AndIOp::create(
-          builder, location,
-          arith::AddIOp::create(builder, location, field,
-                                constant64(uint64_t{1} << offset)),
-          aggregateMaskValue);
+      Value field =
+          arith::AndIOp::create(builder, location, current, aggregateMaskValue);
+      Value wrapped;
+      Value incremented;
+      if (property.domains.empty()) {
+        wrapped =
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                  field, aggregateMaskValue);
+        incremented = arith::AndIOp::create(
+            builder, location,
+            arith::AddIOp::create(builder, location, field,
+                                  constant64(uint64_t{1} << offset)),
+            aggregateMaskValue);
+      } else {
+        Value local = field;
+        if (offset != 0)
+          local = arith::ShRUIOp::create(builder, location, local,
+                                         constant64(offset));
+        uint64_t cardinality = propertyDomainCardinality(property);
+        Value domainIndex = propertyDomainIndex(property, local);
+        wrapped =
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                  domainIndex, constant64(cardinality - 1));
+        Value nextIndex = arith::SelectOp::create(
+            builder, location, wrapped, constant64(0),
+            arith::AddIOp::create(builder, location, domainIndex,
+                                  constant64(1)));
+        incremented = materializePropertyDomainIndex(property, nextIndex);
+        if (offset != 0)
+          incremented = arith::ShLIOp::create(builder, location, incremented,
+                                              constant64(offset));
+      }
       Value updated = arith::OrIOp::create(
           builder, location,
           arith::AndIOp::create(builder, location, next,
                                 constant64(~aggregateMask)),
           incremented);
-      Value update =
-          arith::AndIOp::create(builder, location, carry, enabled);
+      Value update = arith::AndIOp::create(builder, location, carry, enabled);
       next = arith::SelectOp::create(builder, location, update, updated, next);
       Value disabled = arith::XOrIOp::create(
           builder, location, enabled,
@@ -4916,7 +5485,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
 
   setCurrent(modeSamplingDispatchBlock);
   sim::SimManagedStoreOp::create(builder, location, modeState, stateReference);
-  if (hasSolveBefore)
+  if (hasSolveBefore || hasFiniteDomains)
     cf::BranchOp::create(builder, location, modeFallbackBlock,
                          ValueRange{modeStart});
   else

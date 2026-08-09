@@ -503,7 +503,29 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
         --indegrees[dependent];
     }
 
+    auto overlapsFiniteDomain = [&](const SMTVariable &variable) {
+      uint64_t variableMask =
+          (variable.width == 64 ? UINT64_MAX
+                                : (uint64_t{1} << variable.width) - 1)
+          << variable.offset;
+      return llvm::any_of(smt->finiteDomains,
+                          [&](const SMTFiniteDomain &domain) {
+                            uint64_t domainMask =
+                                (domain.target.width == 64
+                                     ? UINT64_MAX
+                                     : (uint64_t{1} << domain.target.width) - 1)
+                                << domain.target.offset;
+                            return (variableMask & domainMask) != 0;
+                          });
+    };
     for (const SMTVariable &variable : smt->variables) {
+      // The generated finite-domain sampler reproduces these predicates
+      // exactly. An enclosing min/max interval is redundant for a pure domain
+      // and can make a sparse domain look inexact; constraints that further
+      // restrict an overlapping field remain protected by the final reverse
+      // implication proof below.
+      if (overlapsFiniteDomain(variable))
+        continue;
       std::optional<z3::expr> bits = shim.translate(variable.bits);
       if (!bits)
         continue;
@@ -585,6 +607,7 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
     for (const SMTVariableCaptureBound &bound : smt->directCaptureBounds) {
       RandomCaptureBoundKind kind = convertCaptureBoundKind(bound.kind);
       bool conflicts =
+          overlapsFiniteDomain(bound.target) ||
           (bound.isSigned &&
            llvm::any_of(analysis.domains,
                         [&](const RandomVariableDomain &domain) {
@@ -626,6 +649,14 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
     // the generated checker and the runtime fallback.
     z3::expr proposal = context.bool_val(true);
     bool translatedProposal = true;
+    for (const SMTFiniteDomain &domain : smt->finiteDomains) {
+      std::optional<z3::expr> predicate = shim.translate(domain.predicate);
+      if (!predicate) {
+        translatedProposal = false;
+        break;
+      }
+      proposal = proposal && *predicate;
+    }
     for (const RandomVariableDomain &domain : analysis.domains) {
       auto found = std::find_if(smt->variables.begin(), smt->variables.end(),
                                 [&](const SMTVariable &variable) {
