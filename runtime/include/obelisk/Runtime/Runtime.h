@@ -2575,7 +2575,10 @@ typedef struct obelisk_rt_random_state_v1 {
 // Versioned stack program executed by the constrained-random fallback. The
 // byte representation is explicitly little-endian and does not use these C
 // types as an in-memory wire format. The 24-byte header is followed by
-// instruction_count fixed-width 16-byte instructions.
+// instruction_count fixed-width 16-byte instructions. END instructions use
+// operand as the disabled constraint-block bit (or the unmasked sentinel).
+// END_SOFT uses immediate as a contiguous, zero-based priority where larger
+// values have higher priority; END_HARD requires an immediate of zero.
 #define OBELISK_RT_RANDOM_PROGRAM_MAGIC UINT32_C(0x3152444f)
 #define OBELISK_RT_RANDOM_PROGRAM_VERSION UINT16_C(1)
 #define OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE UINT16_C(24)

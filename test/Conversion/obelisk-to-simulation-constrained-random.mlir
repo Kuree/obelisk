@@ -115,13 +115,17 @@ module {
         obelisk.sv.symbol.class_property attributes {hierarchical_name = "constrained::value", name = "value", node_id = 4 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s4.value"} {
         }
         obelisk.sv.symbol.constraint_block attributes {hierarchical_name = "constrained::bounds", name = "bounds", node_id = 5 : i64, sym_name = "s5.bounds", this_variable_path = "constrained::bounds.this", this_variable_symbol = @s1.$root::@s2::@s3.constrained::@s5.bounds::@s6.this} {
-          obelisk.sv.constraint.list attributes {item_count = 1 : i64, node_id = 6 : i64} {
+          obelisk.sv.constraint.list attributes {item_count = 2 : i64, node_id = 6 : i64} {
             obelisk.sv.constraint.expression attributes {is_soft = true, node_id = 7 : i64} {
               obelisk.sv.expression.binary_op attributes {node_id = 8 : i64, operator_kind = 14 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
                 obelisk.sv.expression.named_value attributes {node_id = 9 : i64, referenced_path = "constrained::value", referenced_symbol = @s1.$root::@s2::@s3.constrained::@s4.value, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                 }
                 obelisk.sv.expression.named_value attributes {node_id = 10 : i64, referenced_path = "limit", referenced_symbol = @s1.$root::@s2::@s24.limit, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                 }
+              }
+            }
+            obelisk.sv.constraint.expression attributes {is_soft = true, node_id = 230 : i64} {
+              obelisk.sv.expression.integer_literal attributes {constant_value = "1", node_id = 231 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
               }
             }
           }
@@ -384,7 +388,6 @@ module {
 
 // UNSUPPORTED-DAG: error: randc properties are not executable yet
 // UNSUPPORTED-DAG: error: rand enum and tagged-union domains are not executable yet
-// UNSUPPORTED-DAG: error: at most one soft constraint is executable per randomization plan
 // UNSUPPORTED-DAG: error: soft constraints must be direct items of a top-level constraint list
 // UNSUPPORTED-DAG: error: constraint form is outside the executable hard-expression boundary: obelisk.sv.constraint.solve_before
 // UNSUPPORTED-DAG: error: user pre_randomize and post_randomize hooks are not executable yet

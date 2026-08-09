@@ -1884,6 +1884,28 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   thisObject = receiver;
   bool emittedHard = false;
   bool emittedSoft = false;
+  llvm::DenseMap<Operation *, uint64_t> softPriorities;
+  uint64_t nextSoftPriority = 0;
+  auto assignSoftPriorities = [&](bool inlineConstraints) {
+    for (auto [index, root] : llvm::enumerate(children)) {
+      if (index == receiverIndex ||
+          root->hasAttr(randomConstraintBlockAttrName) == inlineConstraints)
+        continue;
+      SmallVector<Operation *> items = isa<semantic::SVConstraintListOp>(root)
+                                           ? getChildren(root)
+                                           : SmallVector<Operation *>{root};
+      for (Operation *item : items)
+        if (auto expression =
+                dyn_cast<semantic::SVExpressionConstraintOp>(item);
+            expression && expression.getIsSoft())
+          softPriorities[item] = nextSoftPriority++;
+    }
+  };
+  // Later declarations have higher priority. Class constraints are frozen in
+  // base-to-derived declaration order, and every inline constraint has higher
+  // priority than the class constraints it augments.
+  assignSoftPriorities(/*inlineConstraints=*/false);
+  assignSoftPriorities(/*inlineConstraints=*/true);
   for (auto [index, root] : llvm::enumerate(children)) {
     if (index == receiverIndex)
       continue;
@@ -1910,7 +1932,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
         return failure();
       instruction(soft ? OBELISK_RT_RANDOM_END_SOFT_V1
                        : OBELISK_RT_RANDOM_END_HARD_V1,
-                  1, false, constraintBlock);
+                  1, false, constraintBlock,
+                  soft ? softPriorities.lookup(item) : 0);
       emittedSoft |= soft;
       emittedHard |= !soft;
     }

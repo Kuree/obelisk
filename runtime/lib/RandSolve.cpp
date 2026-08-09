@@ -132,7 +132,7 @@ uint64_t power(uint64_t base, uint64_t exponent, unsigned width) {
 bool validateInstruction(const Instruction &instruction,
                          uint32_t aggregateWidth, uint32_t captureCount,
                          size_t &depth, size_t &maxDepth, bool &sawHard,
-                         bool &sawSoft) {
+                         bool &sawSoft, uint64_t &softPriorities) {
   if (instruction.width == 0 || instruction.width > 64 ||
       (instruction.flags & ~OBELISK_RT_RANDOM_INSTRUCTION_SIGNED) != 0)
     return false;
@@ -155,8 +155,14 @@ bool validateInstruction(const Instruction &instruction,
   case OBELISK_RT_RANDOM_END_SOFT_V1:
     if (instruction.width != 1 || depth != 1 ||
         (instruction.operand != OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
-         instruction.operand >= 64))
+         instruction.operand >= 64) ||
+        (instruction.opcode == OBELISK_RT_RANDOM_END_HARD_V1 &&
+         instruction.immediate != 0) ||
+        (instruction.opcode == OBELISK_RT_RANDOM_END_SOFT_V1 &&
+         instruction.immediate >= 64))
       return false;
+    if (instruction.opcode == OBELISK_RT_RANDOM_END_SOFT_V1)
+      softPriorities |= uint64_t{1} << instruction.immediate;
     depth = 0;
     sawHard |= instruction.opcode == OBELISK_RT_RANDOM_END_HARD_V1;
     sawSoft |= instruction.opcode == OBELISK_RT_RANDOM_END_SOFT_V1;
@@ -215,10 +221,10 @@ bool compare(Value lhs, Value rhs, bool isSigned, uint8_t opcode) {
 bool evaluate(const std::vector<Instruction> &instructions,
               std::vector<Value> &stack, uint64_t assignment,
               uint64_t constraintMask, const uint64_t *captures, bool &hard,
-              bool &soft) {
+              std::vector<uint8_t> &soft) {
   stack.clear();
   hard = true;
-  soft = true;
+  std::fill(soft.begin(), soft.end(), uint8_t{1});
   for (const Instruction &instruction : instructions) {
     auto push = [&](uint64_t bits, unsigned width) {
       stack.push_back({normalize(bits, width), width});
@@ -246,7 +252,7 @@ bool evaluate(const std::vector<Instruction> &instructions,
       if (instruction.opcode == OBELISK_RT_RANDOM_END_HARD_V1)
         hard &= truth;
       else
-        soft &= truth;
+        soft[instruction.immediate] &= truth;
       continue;
     }
     if (instruction.opcode == OBELISK_RT_RANDOM_SELECT_V1) {
@@ -459,19 +465,30 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_modes(
     instructions.reserve(instructionCount);
     size_t depth = 0, maxDepth = 0;
     bool sawHard = false, sawSoft = false;
+    uint64_t softPriorities = 0;
     const uint8_t *cursor = program + OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE;
     for (uint32_t index = 0; index != instructionCount; ++index) {
       Instruction instruction{cursor[0], cursor[1], cursor[2],
                               read32(cursor + 4), read64(cursor + 8)};
       if (cursor[3] != 0 ||
           !validateInstruction(instruction, aggregateWidth, encodedCaptures,
-                               depth, maxDepth, sawHard, sawSoft))
+                               depth, maxDepth, sawHard, sawSoft,
+                               softPriorities))
         return OBELISK_RT_INVALID_ARGUMENT;
       instructions.push_back(instruction);
       cursor += OBELISK_RT_RANDOM_INSTRUCTION_SIZE;
     }
     bool encodedSoft = (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT) != 0;
-    if (depth != 0 || !sawHard || sawSoft != encodedSoft)
+    unsigned softCount = 0;
+    if (softPriorities != 0) {
+      softCount = 64;
+      while (((softPriorities >> (softCount - 1)) & 1) == 0)
+        --softCount;
+    }
+    uint64_t expectedSoftPriorities =
+        softCount == 64 ? UINT64_MAX : (uint64_t{1} << softCount) - 1;
+    if (depth != 0 || !sawHard || sawSoft != encodedSoft ||
+        softPriorities != expectedSoftPriorities)
       return OBELISK_RT_INVALID_ARGUMENT;
 
     uint64_t mask = widthMask(aggregateWidth);
@@ -487,27 +504,43 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_modes(
     uint64_t candidate = fixed | expandBits(candidateIndex, mutableMask);
     uint64_t hardFallback = 0;
     bool hasHardFallback = false;
+    std::vector<uint8_t> bestSoft(softCount, 0);
+    std::vector<uint8_t> soft(softCount, 1);
     std::vector<Value> stack;
     stack.reserve(maxDepth);
     for (uint64_t attempt = 0; attempt != attempts; ++attempt) {
-      bool hard = false, soft = false;
+      bool hard = false;
       if (!evaluate(instructions, stack, candidate, constraintMask, captures,
                     hard, soft))
         return OBELISK_RT_INVALID_ARGUMENT;
-      if (hard && (!encodedSoft || soft)) {
+      bool satisfiesAllSoft =
+          std::all_of(soft.begin(), soft.end(),
+                      [](uint8_t value) { return value != 0; });
+      if (hard && (!encodedSoft || satisfiesAllSoft)) {
         *outAssignment = candidate;
         *outSuccess = 1;
         return OBELISK_RT_OK;
       }
-      if (hard && !hasHardFallback) {
-        hardFallback = candidate;
-        hasHardFallback = true;
+      if (hard) {
+        bool better = !hasHardFallback;
+        for (unsigned priority = softCount; !better && priority != 0;
+             --priority) {
+          if (soft[priority - 1] == bestSoft[priority - 1])
+            continue;
+          better = soft[priority - 1] > bestSoft[priority - 1];
+          break;
+        }
+        if (better) {
+          hardFallback = candidate;
+          bestSoft = soft;
+          hasHardFallback = true;
+        }
       }
       candidateIndex = (candidateIndex + 1) & widthMask(mutableWidth);
       candidate = fixed | expandBits(candidateIndex, mutableMask);
     }
-    // A soft constraint may be dropped only after a complete finite-domain
-    // traversal proves that no preferred solution exists.
+    // Soft constraints are dropped only after a complete finite-domain
+    // traversal proves the lexicographically best enabled priority set.
     if (encodedSoft && complete && hasHardFallback) {
       *outAssignment = hardFallback;
       *outSuccess = 1;

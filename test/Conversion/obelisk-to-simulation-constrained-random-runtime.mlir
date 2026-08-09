@@ -9,7 +9,7 @@
 // RUN: %t.exe --seed=1 | FileCheck %s --check-prefix=RUNTIME
 // RUN: %t.exe --execution-tier=bytecode --seed=1 | FileCheck %s --check-prefix=RUNTIME
 
-// RUNTIME: preferred 1 2
+// RUNTIME: preferred 1 1
 // RUNTIME-NEXT: fallback 1 1
 
 module attributes {
@@ -63,6 +63,24 @@ module attributes {
             }
           }
           obelisk.sv.symbol.variable attributes {hierarchical_name = "soft_object::preferred.this", is_compiler_generated, is_const, name = "this", node_id = 25 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.soft_object>, sym_name = "s8.this"} {
+          }
+        }
+        obelisk.sv.symbol.constraint_block attributes {hierarchical_name = "soft_object::preferred_one", name = "preferred_one", node_id = 84 : i64, sym_name = "s27.preferred_one", this_variable_path = "soft_object::preferred_one.this", this_variable_symbol = @s1.$root::@s2::@s3.soft_object::@s27.preferred_one::@s28.this} {
+          obelisk.sv.constraint.list attributes {item_count = 1 : i64, node_id = 85 : i64} {
+            obelisk.sv.constraint.expression attributes {is_soft = true, node_id = 86 : i64} {
+              obelisk.sv.expression.binary_op attributes {node_id = 87 : i64, operator_kind = 9 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
+                obelisk.sv.expression.conversion attributes {node_id = 88 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                  obelisk.sv.expression.named_value attributes {node_id = 89 : i64, referenced_path = "soft_object::value", referenced_symbol = @s1.$root::@s2::@s3.soft_object::@s4.value, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                  }
+                }
+                obelisk.sv.expression.conversion attributes {node_id = 90 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                  obelisk.sv.expression.integer_literal attributes {constant_value = "1", node_id = 91 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                  }
+                }
+              }
+            }
+          }
+          obelisk.sv.symbol.variable attributes {hierarchical_name = "soft_object::preferred_one.this", is_compiler_generated, is_const, name = "this", node_id = 92 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.soft_object>, sym_name = "s28.this"} {
           }
         }
         obelisk.sv.symbol.subroutine attributes {hierarchical_name = "soft_object::randomize", is_builtin, is_declared_virtual, is_randomize, is_virtual, name = "randomize", node_id = 26 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.integral<32, true, false, 31 : 0, int>, false>, subroutine_kind = 0 : i32, sym_name = "s9.randomize", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {

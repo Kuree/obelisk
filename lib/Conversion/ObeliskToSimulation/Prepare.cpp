@@ -659,8 +659,19 @@ void ObeliskSimPreparePass::runOnOperation() {
     }
     llvm::DenseMap<Operation *, unsigned> constraintIndices;
     for (auto [index, group] : llvm::enumerate(constraintGroups)) {
-      for (semantic::SVConstraintBlockSymbolOp constraint : group) {
+      for (semantic::SVConstraintBlockSymbolOp constraint : group)
         constraintIndices[constraint] = index;
+    }
+    // Stable mode-bit order follows the first base declaration of each named
+    // block. Executable body and soft-priority order instead follow active
+    // source declaration order, with every derived declaration after all base
+    // declarations. Keep those two orderings deliberately separate.
+    for (semantic::SVClassTypeOp classType : hierarchy) {
+      for (Operation *member : getChildren(classType)) {
+        auto constraint =
+            dyn_cast<semantic::SVConstraintBlockSymbolOp>(member);
+        if (!constraint || !constraintIndices.contains(constraint))
+          continue;
         if (constraint.getIsExtern().value_or(false) ||
             constraint.getIsPure().value_or(false)) {
           emitError(getSemanticLocation(constraint))
@@ -699,12 +710,6 @@ void ObeliskSimPreparePass::runOnOperation() {
                      "constraint list";
               invalid = true;
             }
-            if (softConstraintCount == 2) {
-              emitError(getSemanticLocation(expression))
-                  << "at most one soft constraint is executable per "
-                     "randomization plan";
-              invalid = true;
-            }
           }
           return;
         }
@@ -731,6 +736,11 @@ void ObeliskSimPreparePass::runOnOperation() {
           invalid = true;
         }
       });
+    }
+    if (softConstraintCount > 64) {
+      emitError(getSemanticLocation(call))
+          << "the executable soft-constraint priority boundary is 64";
+      invalid = true;
     }
 
     SmallVector<Attribute> propertyAttrs;
