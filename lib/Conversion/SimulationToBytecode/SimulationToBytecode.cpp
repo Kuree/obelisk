@@ -42,6 +42,8 @@ constexpr uint32_t kExecutionVPIRead = OBELISK_RT_EXECUTION_VPI_READ;
 constexpr uint32_t kExecutionVPIWrite = OBELISK_RT_EXECUTION_VPI_WRITE;
 constexpr uint32_t kExecutionRequireBytecode =
     OBELISK_RT_EXECUTION_REQUIRE_BYTECODE;
+constexpr uint32_t kExecutionPreponedSnapshot =
+    OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT;
 constexpr uint32_t kDatabaseProfileRead = OBELISK_RT_DESIGN_PROFILE_READ;
 constexpr uint32_t kDatabaseProfileWrite = OBELISK_RT_DESIGN_PROFILE_WRITE;
 
@@ -77,6 +79,13 @@ FailureOr<EncodedSimulationDesign> Encoder::encode() {
   }
   result.stateBitCount = state.bits;
   result.executionFlags = kExecutionHasBytecode;
+  bool needsPreponedSnapshot = false;
+  design.walk([&](Operation *operation) {
+    needsPreponedSnapshot |=
+        isa<sim::SimSampledReadOp, sim::SimSampledHistoryOp>(operation);
+  });
+  if (needsPreponedSnapshot)
+    result.executionFlags |= kExecutionPreponedSnapshot;
   if (options.requireBytecode)
     result.executionFlags |= kExecutionRequireBytecode;
   if (profile != 0) {

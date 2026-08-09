@@ -63,6 +63,10 @@ obelisk_rt_status
 obelisk_rt_capture_preponed_unlocked(obelisk_rt_context *context) {
   if (!context)
     return OBELISK_RT_INVALID_ARGUMENT;
+  if (!context->execution ||
+      (context->execution->flags &
+       OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT) == 0)
+    return OBELISK_RT_OK;
   try {
     uint64_t bits = context->execution ? context->execution->state_bit_count : 0;
     size_t words = static_cast<size_t>((bits + 63) / 64);

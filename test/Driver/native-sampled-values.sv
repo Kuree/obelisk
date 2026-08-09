@@ -7,6 +7,7 @@
 // RUN: obelisk --std=1800-2023 -O3 --native-scheduler=aot %s -o %t.o3.aot
 // RUN: %t.o3.aot | FileCheck %s
 // RUN: obelisk --std=1800-2023 -O0 -emit-sim %s | FileCheck %s --check-prefix=SIM
+// RUN: obelisk --std=1800-2023 -O0 -emit-llvm %s | FileCheck %s --check-prefix=LLVM-FLAG
 
 module native_sampled_values;
   logic clk = 0;
@@ -78,3 +79,5 @@ endmodule
 // CHECK: SAMPLED PASS
 // SIM: obelisk_sim.assert.sampled_read
 // SIM: obelisk_sim.assert.sampled_history
+// LLVM-FLAG: @__obelisk_execution_descriptor_v1 = constant
+// LLVM-FLAG-SAME: { i32 1, i32 33,

@@ -294,6 +294,7 @@ typedef struct obelisk_rt_handle_v1 {
 #define OBELISK_RT_EXECUTION_VPI_READ (UINT32_C(1) << 2)
 #define OBELISK_RT_EXECUTION_VPI_WRITE (UINT32_C(1) << 3)
 #define OBELISK_RT_EXECUTION_REQUIRE_BYTECODE (UINT32_C(1) << 4)
+#define OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT (UINT32_C(1) << 5)
 
 // Executable event-region ordinals. The eight PLI callback regions remain
 // compiler-only until the callback ABI can populate them. Preponed is serviced

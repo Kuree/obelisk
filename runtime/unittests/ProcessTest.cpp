@@ -4704,6 +4704,7 @@ TEST(ProcessInstance, RejectsMalformedWaitSemantics) {
 TEST(SampledValues, CapturesCanonicalPreponedPlane) {
   obelisk_rt_execution_descriptor_v1 execution{};
   execution.version = OBELISK_RT_VERSION;
+  execution.flags = OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT;
   execution.state_bit_count = 16;
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
@@ -4725,6 +4726,28 @@ TEST(SampledValues, CapturesCanonicalPreponedPlane) {
   EXPECT_EQ(value[1], UINT8_C(0x02));
   EXPECT_EQ(unknown[0], UINT8_C(0x20));
   EXPECT_EQ(unknown[1], UINT8_C(0x00));
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(SampledValues, SkipsSnapshotAllocationWithoutConsumers) {
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 4096;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_TRUE(context->preponedValue.empty());
+  ASSERT_TRUE(context->preponedUnknown.empty());
+  ASSERT_EQ(context->preponedValue.capacity(), 0u);
+  ASSERT_EQ(context->preponedUnknown.capacity(), 0u);
+
+  context->stateValue.front() = UINT64_MAX;
+  context->stateUnknown.front() = UINT64_MAX;
+  EXPECT_EQ(obelisk_rt_capture_preponed_unlocked(context), OBELISK_RT_OK);
+  EXPECT_TRUE(context->preponedValue.empty());
+  EXPECT_TRUE(context->preponedUnknown.empty());
+  EXPECT_EQ(context->preponedValue.capacity(), 0u);
+  EXPECT_EQ(context->preponedUnknown.capacity(), 0u);
   obelisk_rt_v1_context_destroy(context);
 }
 

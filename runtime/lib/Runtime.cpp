@@ -613,7 +613,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_context_create_for_design(
                                       OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
                                       OBELISK_RT_EXECUTION_VPI_READ |
                                       OBELISK_RT_EXECUTION_VPI_WRITE |
-                                      OBELISK_RT_EXECUTION_REQUIRE_BYTECODE;
+                                      OBELISK_RT_EXECUTION_REQUIRE_BYTECODE |
+                                      OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT;
       if (execution->version != OBELISK_RT_VERSION ||
           execution->reserved != 0 || execution->dpi_reserved != 0 ||
           (execution->flags & ~validFlags) != 0 ||
