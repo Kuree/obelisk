@@ -1485,17 +1485,29 @@ bool validateImage(const Image &image) {
   // The serialized table is the unique maximal interval encoding of its
   // canonical scalar edges. Reject alternative spellings so malformed images
   // cannot hide duplicates in overlaps, swapped endpoints, or split runs.
+  auto withinNet = [](const CaptureRecord *net, uint64_t bit) {
+    return net && bit >= net->valueOffset &&
+           bit - net->valueOffset < net->planeSize;
+  };
   std::vector<ConnectivityRecord> canonicalRecords;
   for (size_t scalar = 0; scalar != scalarConnections.size();) {
     const ScalarConnection &first = scalarConnections[scalar];
     uint64_t width = 1;
     int direction = 0;
     size_t next = scalar + 1;
+    // A record must lie inside one net on each side, so a run stops at a net
+    // boundary even when the neighbouring edge continues the stride: two
+    // unrelated net pairs can sit adjacent in the state layout.
+    const CaptureRecord *lhsNet = containingNet(first.lhs, 1, false);
+    const CaptureRecord *rhsNet = containingNet(first.rhs, 1, false);
     while (next != scalarConnections.size()) {
       const ScalarConnection &candidate = scalarConnections[next];
       if (candidate.lhsResolution != first.lhsResolution ||
           candidate.rhsResolution != first.rhsResolution ||
           candidate.lhs != first.lhs + width)
+        break;
+      if (!withinNet(lhsNet, candidate.lhs) ||
+          !withinNet(rhsNet, candidate.rhs))
         break;
       int candidateDirection = 0;
       if (candidate.rhs == first.rhs + width)

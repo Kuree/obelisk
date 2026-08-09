@@ -163,8 +163,13 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
                                     driver.drivenWidth, net->resolution});
   }
 
+  // The net each endpoint belongs to travels with the resolutions: a run may
+  // only coalesce bits that stay inside the same pair of nets. Two unrelated
+  // net pairs can land adjacent in the state layout with matching stride, and
+  // merging across that boundary emits a record no net contains.
   using ScalarConnection =
-      std::pair<sim::NetResolutionKind, sim::NetResolutionKind>;
+      std::tuple<sim::NetResolutionKind, sim::NetResolutionKind, uint64_t,
+                 uint64_t>;
   std::map<std::pair<uint64_t, uint64_t>, ScalarConnection> scalarConnections;
   for (sim::SimNetConnectDeclOp connection :
        design.getBody().getOps<sim::SimNetConnectDeclOp>()) {
@@ -184,17 +189,20 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
                                            : connection.getRhsOffset() + bit);
       sim::NetResolutionKind lhsResolution = lhs->resolution;
       sim::NetResolutionKind rhsResolution = rhs->resolution;
+      uint64_t lhsNet = lhs->id, rhsNet = rhs->id;
       if (rhsBit < lhsBit) {
         std::swap(lhsBit, rhsBit);
         std::swap(lhsResolution, rhsResolution);
+        std::swap(lhsNet, rhsNet);
       }
       if (lhsBit == rhsBit)
         continue;
       auto [found, inserted] = scalarConnections.try_emplace(
           std::pair{lhsBit, rhsBit},
-          ScalarConnection{lhsResolution, rhsResolution});
+          ScalarConnection{lhsResolution, rhsResolution, lhsNet, rhsNet});
       if (!inserted &&
-          found->second != ScalarConnection{lhsResolution, rhsResolution})
+          found->second !=
+              ScalarConnection{lhsResolution, rhsResolution, lhsNet, rhsNet})
         return connection.emitOpError(
                    "has inconsistent duplicate scalar connectivity"),
                failure();
@@ -203,7 +211,7 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
   for (auto scalar = scalarConnections.begin();
        scalar != scalarConnections.end();) {
     auto [lhsOffset, rhsOffset] = scalar->first;
-    auto [lhsResolution, rhsResolution] = scalar->second;
+    auto [lhsResolution, rhsResolution, lhsNet, rhsNet] = scalar->second;
     uint64_t width = 1;
     int direction = 0;
     auto next = std::next(scalar);
