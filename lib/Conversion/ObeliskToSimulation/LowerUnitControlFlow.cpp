@@ -736,6 +736,11 @@ UnitLowering::lowerVariableDeclaration(semantic::SVVariableDeclStatementOp op) {
     Value destination = sim::SimRefAllocOp::create(
         builder, location,
         sim::RefType::get(function.getContext(), initial.getType()), initial);
+    // An automatic declaration executes on each entry to this statement.
+    // Keep that reset explicit so SSA promotion does not mistake the
+    // allocator's default value for a once-per-function initialization when
+    // this block is reentered after a suspension or through a loop backedge.
+    sim::SimRefStoreOp::create(builder, location, initial, destination);
     values[path] = destination;
     lvalues[path] = destination;
     if (aggregateMemberInitializers)

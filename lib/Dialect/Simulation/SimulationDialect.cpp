@@ -4373,7 +4373,36 @@ LogicalResult SimRefAllocOp::verify() {
   return success();
 }
 
+static bool isReenteredAllocation(SimRefAllocOp allocation) {
+  Block *block = allocation->getBlock();
+  return llvm::any_of(block->getPredecessors(), [&](Block *predecessor) {
+    return block->isReachable(predecessor);
+  });
+}
+
+static bool isResetBeforeFirstUse(SimRefAllocOp allocation) {
+  Value reference = allocation.getResult();
+  for (Operation *operation = allocation->getNextNode(); operation;
+       operation = operation->getNextNode()) {
+    bool usesReference =
+        llvm::any_of(reference.getUsers(), [&](Operation *user) {
+          return user == operation || operation->isProperAncestor(user);
+        });
+    if (!usesReference)
+      continue;
+    auto store = dyn_cast<SimRefStoreOp>(operation);
+    return store && store.getReference() == reference;
+  }
+  return false;
+}
+
 SmallVector<MemorySlot> SimRefAllocOp::getPromotableSlots() {
+  // The initial value belongs to each execution of ref.alloc, not merely to
+  // the first entry into its function. Generic mem2reg models an allocator as
+  // one definition. A cyclic allocation is therefore only safe to promote
+  // when an explicit store resets it before its first use on every reentry.
+  if (isReenteredAllocation(*this) && !isResetBeforeFirstUse(*this))
+    return {};
   return {{getResult(), getResult().getType().getElementType()}};
 }
 
@@ -4393,6 +4422,8 @@ static std::optional<unsigned> getUnionSelectedInitializer(Value value) {
 }
 
 SmallVector<DestructurableMemorySlot> SimRefAllocOp::getDestructurableSlots() {
+  if (isReenteredAllocation(*this) && !isResetBeforeFirstUse(*this))
+    return {};
   Type elementType = getResult().getType().getElementType();
   auto destructurable = dyn_cast<DestructurableTypeInterface>(elementType);
   if (!destructurable)
