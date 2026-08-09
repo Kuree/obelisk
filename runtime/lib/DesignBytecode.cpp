@@ -32,6 +32,26 @@ size_t checkedSizeSum(size_t lhs, size_t rhs) {
   return lhs + rhs;
 }
 
+bool hasSameDirectSignalWait(const ScheduledDesignTask &task,
+                             const obelisk_rt_wait_record_v1 *wait) {
+  if (!wait || !task.signalLatch ||
+      task.signalSubscriptions.size() != wait->count)
+    return false;
+  const auto *entries =
+      reinterpret_cast<const obelisk_rt_wait_entry_v1 *>(wait + 1);
+  for (uint32_t index = 0; index != wait->count; ++index) {
+    const SignalSubscription *subscription =
+        task.signalSubscriptions[index].get();
+    if (!subscription ||
+        subscription->stableID != entries[index].stable_id ||
+        subscription->bitWidth != entries[index].reserved ||
+        subscription->edge != entries[index].edge ||
+        subscription->target != SignalSubscription::DesignDirectWait)
+      return false;
+  }
+  return true;
+}
+
 class ScopedReusableByteBuffer {
 public:
   ScopedReusableByteBuffer(obelisk_rt_context *context, size_t size)
@@ -3182,8 +3202,15 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
       task = std::move(context->scheduledDesignTasks[selectedIndex]);
       if (!task.started)
         obelisk_rt_unregister_unstarted_actor(context, task.phase, task.id);
-      obelisk_rt_unregister_signal_wait_unlocked(
-          context, task.signalSubscriptions, task.id, true);
+      // Keep a direct wait indexed while its task executes. The task may
+      // change its own watched signal and then suspend on the same wait; the
+      // transition is the next occurrence, not part of the one being
+      // consumed now.
+      if (task.signalLatch) {
+        task.signalLatch->triggered = false;
+        task.signalLatch->affected = false;
+      }
+      task.signalTriggered = false;
       context->designPollCandidates.erase(task.id);
       context->scheduledDesignTaskIndices.erase(task.id);
       size_t lastIndex = context->scheduledDesignTasks.size() - 1;
@@ -3275,6 +3302,9 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
       task.observedEpoch = context->schedulerEpoch;
       switch (action.kind) {
       case OBELISK_RT_FRAGMENT_CONTINUE:
+        if (!task.signalSubscriptions.empty())
+          obelisk_rt_unregister_signal_wait_unlocked(
+              context, task.signalSubscriptions, task.id, true);
         task.suspendKind = OBELISK_RT_SUSPEND_NONE;
         task.waitOffset = 0;
         task.waitSize = 0;
@@ -3319,6 +3349,9 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
             finalizeStatus = OBELISK_RT_INVALID_BYTECODE;
             break;
           }
+          if (!task.signalSubscriptions.empty())
+            obelisk_rt_unregister_signal_wait_unlocked(
+                context, task.signalSubscriptions, task.id, true);
           if (!obelisk_rt_register_computed_signal_wait_unlocked(
                   context, computed, task.id, true, task.signalSubscriptions,
                   task.signalLatch))
@@ -3386,6 +3419,10 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
         }
         if (finalizeStatus != OBELISK_RT_OK)
           break;
+        bool sameSignalWait = signalWait && hasSameDirectSignalWait(task, wait);
+        if (!signalWait && !task.signalSubscriptions.empty())
+          obelisk_rt_unregister_signal_wait_unlocked(
+              context, task.signalSubscriptions, task.id, true);
         task.suspendKind = action.suspend_kind;
         task.waitOffset = action.payload;
         task.waitSize = sizeof(obelisk_rt_wait_record_v1) + entries;
@@ -3411,9 +3448,10 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
           task.wakeTime = wait->payload > UINT64_MAX - context->schedulerTime
                               ? UINT64_MAX
                               : context->schedulerTime + wait->payload;
-        if (signalWait && !obelisk_rt_register_signal_wait_unlocked(
-                              context, wait, task.signalSubscriptions,
-                              task.signalLatch, task.id, true))
+        if (signalWait && !sameSignalWait &&
+            !obelisk_rt_register_signal_wait_unlocked(
+                context, wait, task.signalSubscriptions, task.signalLatch,
+                task.id, true))
           finalizeStatus = context->schedulerStatus;
         break;
       }
@@ -3423,6 +3461,9 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
           break;
         }
         task.callers.reserve(checkedSizeSum(task.callers.size(), 1));
+        if (!task.signalSubscriptions.empty())
+          obelisk_rt_unregister_signal_wait_unlocked(
+              context, task.signalSubscriptions, task.id, true);
         task.callers.push_back({task.function, task.continuation,
                                 std::move(task.frame), task.scratchOffset,
                                 task.scratchSize, task.scheduleRank});
@@ -3444,6 +3485,9 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
         break;
       }
       case OBELISK_RT_FRAGMENT_TERMINATE:
+        if (!task.signalSubscriptions.empty())
+          obelisk_rt_unregister_signal_wait_unlocked(
+              context, task.signalSubscriptions, task.id, true);
         if (!task.callers.empty()) {
           DesignActivation caller = std::move(task.callers.back());
           task.callers.pop_back();

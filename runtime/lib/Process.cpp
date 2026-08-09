@@ -1531,7 +1531,7 @@ bool publishStaticAOTSignalTransitionUnlockedImpl(
       return true;
     }
     obelisk_rt_process_instance_v1 *actor = context->nativeScheduleActors[slot];
-    if (!actor || actor->continuation != entry->continuation)
+    if (!actor)
       continue;
     size_t index = context->nativeScheduleActorIndices[slot];
     if (index >= context->scheduledProcesses.size()) {
@@ -1539,8 +1539,12 @@ bool publishStaticAOTSignalTransitionUnlockedImpl(
       return true;
     }
     ScheduledProcess &scheduled = context->scheduledProcesses[index];
-    if (scheduled.instance != actor || !scheduled.started ||
-        scheduled.signalTriggered ||
+    bool activeSelf =
+        context->activeLogicalProcessToken ==
+        (kNativeLogicalProcessTag | scheduled.token);
+    if ((actor->continuation != entry->continuation && !activeSelf) ||
+        scheduled.instance != actor || !scheduled.started ||
+        (scheduled.signalTriggered && !activeSelf) ||
         (scheduled.suspendKind != OBELISK_RT_SUSPEND_CHANGE &&
          scheduled.suspendKind != OBELISK_RT_SUSPEND_EDGE))
       continue;
@@ -3791,7 +3795,7 @@ extern "C" void obelisk_rt_v1_scheduler_static_transition(
       return;
     }
     obelisk_rt_process_instance_v1 *actor = context->nativeScheduleActors[slot];
-    if (!actor || actor->continuation != entry->continuation)
+    if (!actor)
       continue;
     size_t index = context->nativeScheduleActorIndices[slot];
     if (index >= context->scheduledProcesses.size()) {
@@ -3799,8 +3803,12 @@ extern "C" void obelisk_rt_v1_scheduler_static_transition(
       return;
     }
     ScheduledProcess &scheduled = context->scheduledProcesses[index];
-    if (scheduled.instance != actor || !scheduled.started ||
-        scheduled.signalTriggered ||
+    bool activeSelf =
+        context->activeLogicalProcessToken ==
+        (kNativeLogicalProcessTag | scheduled.token);
+    if ((actor->continuation != entry->continuation && !activeSelf) ||
+        scheduled.instance != actor || !scheduled.started ||
+        (scheduled.signalTriggered && !activeSelf) ||
         (scheduled.suspendKind != OBELISK_RT_SUSPEND_CHANGE &&
          scheduled.suspendKind != OBELISK_RT_SUSPEND_EDGE))
       continue;
@@ -3874,7 +3882,7 @@ extern "C" void obelisk_rt_v1_scheduler_activate_static_nodes(
       }
       obelisk_rt_process_instance_v1 *actor =
           context->nativeScheduleActors[entry.actor_slot];
-      if (!actor || actor->continuation != entry.continuation)
+      if (!actor)
         continue;
       size_t index = context->nativeScheduleActorIndices[entry.actor_slot];
       if (index >= context->scheduledProcesses.size()) {
@@ -3882,8 +3890,12 @@ extern "C" void obelisk_rt_v1_scheduler_activate_static_nodes(
         return;
       }
       ScheduledProcess &scheduled = context->scheduledProcesses[index];
-      if (scheduled.instance != actor || !scheduled.started ||
-          scheduled.signalTriggered ||
+      bool activeSelf =
+          context->activeLogicalProcessToken ==
+          (kNativeLogicalProcessTag | scheduled.token);
+      if ((actor->continuation != entry.continuation && !activeSelf) ||
+          scheduled.instance != actor || !scheduled.started ||
+          (scheduled.signalTriggered && !activeSelf) ||
           (scheduled.suspendKind != OBELISK_RT_SUSPEND_CHANGE &&
            scheduled.suspendKind != OBELISK_RT_SUSPEND_EDGE))
         continue;
@@ -5866,10 +5878,28 @@ void updateNativeAOTContinuationRank(ScheduledProcess &scheduled,
   scheduled.scheduleRank = nativeAOTContinuationRank(scheduled, continuation);
 }
 
-obelisk_rt_status
-adoptScheduledSuspendUnlocked(obelisk_rt_context *context,
-                              ScheduledProcess &scheduled,
-                              const obelisk_rt_fragment_action_v1 &action) {
+bool hasSameDirectSignalWait(const ScheduledProcess &scheduled,
+                             const obelisk_rt_wait_record_v1 *wait) {
+  if (!wait || !scheduled.signalLatch ||
+      scheduled.signalSubscriptions.size() != wait->count)
+    return false;
+  const obelisk_rt_wait_entry_v1 *entries = waitEntries(wait);
+  for (uint32_t index = 0; index != wait->count; ++index) {
+    const SignalSubscription *subscription =
+        scheduled.signalSubscriptions[index].get();
+    if (!subscription ||
+        subscription->stableID != entries[index].stable_id ||
+        subscription->bitWidth != entries[index].reserved ||
+        subscription->edge != entries[index].edge ||
+        subscription->target != SignalSubscription::NativeDirectWait)
+      return false;
+  }
+  return true;
+}
+
+obelisk_rt_status adoptScheduledSuspendUnlocked(
+    obelisk_rt_context *context, ScheduledProcess &scheduled,
+    const obelisk_rt_fragment_action_v1 &action) {
   scheduled.suspendKind = action.suspend_kind;
   scheduled.waitOffset = action.payload;
   scheduled.waitSize = action.auxiliary;
@@ -5882,6 +5912,12 @@ adoptScheduledSuspendUnlocked(obelisk_rt_context *context,
   const obelisk_rt_wait_record_v1 *wait = currentWait(scheduled);
   if (!wait && action.suspend_kind != OBELISK_RT_SUSPEND_OBSERVER)
     return OBELISK_RT_INVALID_FRAME;
+  bool directSignalSuspend =
+      action.suspend_kind == OBELISK_RT_SUSPEND_CHANGE ||
+      action.suspend_kind == OBELISK_RT_SUSPEND_EDGE;
+  if (!directSignalSuspend && !scheduled.signalSubscriptions.empty())
+    obelisk_rt_unregister_signal_wait_unlocked(
+        context, scheduled.signalSubscriptions, scheduled.token, false);
   uint64_t delayPayload =
       action.suspend_kind == OBELISK_RT_SUSPEND_DELAY ? wait->payload : 1;
   if (!obelisk_rt_next_queued_region(scheduled.homeRegion, action.suspend_kind,
@@ -5908,8 +5944,8 @@ adoptScheduledSuspendUnlocked(obelisk_rt_context *context,
           context, computedWait(scheduled), scheduled.token, false,
           scheduled.signalSubscriptions, scheduled.signalLatch))
     return context->schedulerStatus;
-  if ((action.suspend_kind == OBELISK_RT_SUSPEND_CHANGE ||
-       action.suspend_kind == OBELISK_RT_SUSPEND_EDGE) &&
+  if (directSignalSuspend &&
+      !hasSameDirectSignalWait(scheduled, currentWait(scheduled)) &&
       !obelisk_rt_register_signal_wait_unlocked(
           context, currentWait(scheduled), scheduled.signalSubscriptions,
           scheduled.signalLatch, scheduled.token, false))
@@ -6218,8 +6254,16 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           if (node != UINT32_MAX)
             clearNativeAOTNodeReadyUnlocked(context, node);
         }
-        obelisk_rt_unregister_signal_wait_unlocked(
-            context, candidate.signalSubscriptions, candidate.token, false);
+        // Keep the wait indexed while its process executes. A process may
+        // update a signal in its own event expression and then suspend on the
+        // same wait again; retaining the subscription lets that transition
+        // latch the next activation instead of being lost between resume and
+        // re-arm. Consume only the occurrence that selected this activation.
+        if (candidate.signalLatch) {
+          candidate.signalLatch->triggered = false;
+          candidate.signalLatch->affected = false;
+        }
+        candidate.signalTriggered = false;
         context->nativePollCandidates.erase(candidate.token);
         if (!candidate.started)
           obelisk_rt_unregister_unstarted_actor(
@@ -7152,6 +7196,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         return OBELISK_RT_INVALID_LIFECYCLE;
       ScheduledProcess &scheduled = context->scheduledProcesses[selectedIndex];
       if (action.kind == OBELISK_RT_FRAGMENT_TERMINATE) {
+        if (!scheduled.signalSubscriptions.empty())
+          obelisk_rt_unregister_signal_wait_unlocked(
+              context, scheduled.signalSubscriptions, scheduled.token, false);
         if (!scheduled.callers.empty() && !context->schedulerFinishRequested) {
           scheduled.instance = scheduled.callers.back();
           scheduled.callers.pop_back();
@@ -7192,6 +7239,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         if (scheduled.callers.size() == std::numeric_limits<size_t>::max())
           return OBELISK_RT_OUT_OF_RESOURCES;
         scheduled.callers.reserve(scheduled.callers.size() + 1);
+        if (!scheduled.signalSubscriptions.empty())
+          obelisk_rt_unregister_signal_wait_unlocked(
+              context, scheduled.signalSubscriptions, scheduled.token, false);
         scheduled.callers.push_back(selected);
         scheduled.instance = callee;
         scheduled.suspendKind = OBELISK_RT_SUSPEND_NONE;
@@ -7203,6 +7253,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         scheduled.queuedRegion = scheduled.homeRegion;
         pendingCallee.release();
       } else {
+        if (!scheduled.signalSubscriptions.empty())
+          obelisk_rt_unregister_signal_wait_unlocked(
+              context, scheduled.signalSubscriptions, scheduled.token, false);
         scheduled.suspendKind = OBELISK_RT_SUSPEND_NONE;
         scheduled.waitOffset = 0;
         scheduled.waitSize = 0;
@@ -7571,6 +7624,11 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
       obelisk_rt_unregister_unstarted_actor(
           context, scheduled.phase,
           kNativeLogicalProcessTag | scheduled.token);
+    if (scheduled.signalLatch) {
+      scheduled.signalLatch->triggered = false;
+      scheduled.signalLatch->affected = false;
+    }
+    scheduled.signalTriggered = false;
     scheduled.started = true;
     scheduled.observedEpoch = context->schedulerEpoch;
     context->activeNativeProcess = selected;
@@ -7855,27 +7913,10 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
         wait = currentWait(scheduled);
         if (!wait)
           return OBELISK_RT_INVALID_FRAME;
-        const obelisk_rt_wait_entry_v1 *entries = waitEntries(wait);
-        bool sameStaticWait =
-            scheduled.signalLatch &&
-            scheduled.signalSubscriptions.size() == wait->count;
-        for (uint32_t index = 0; sameStaticWait && index != wait->count;
-             ++index) {
-          const SignalSubscription *subscription =
-              scheduled.signalSubscriptions[index].get();
-          sameStaticWait =
-              subscription &&
-              subscription->stableID == entries[index].stable_id &&
-              subscription->bitWidth == entries[index].reserved &&
-              subscription->edge == entries[index].edge &&
-              subscription->target == SignalSubscription::NativeDirectWait;
-        }
-        if (sameStaticWait) {
-          scheduled.signalLatch->triggered = false;
-          scheduled.signalLatch->affected = false;
-        } else if (!obelisk_rt_register_signal_wait_unlocked(
-                       context, wait, scheduled.signalSubscriptions,
-                       scheduled.signalLatch, scheduled.token, false)) {
+        if (!hasSameDirectSignalWait(scheduled, wait) &&
+            !obelisk_rt_register_signal_wait_unlocked(
+                context, wait, scheduled.signalSubscriptions,
+                scheduled.signalLatch, scheduled.token, false)) {
           return context->schedulerStatus;
         }
       }
@@ -7900,6 +7941,9 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
       if (scheduled.callers.size() == std::numeric_limits<size_t>::max())
         return OBELISK_RT_OUT_OF_RESOURCES;
       scheduled.callers.reserve(scheduled.callers.size() + 1);
+      if (!scheduled.signalSubscriptions.empty())
+        obelisk_rt_unregister_signal_wait_unlocked(
+            context, scheduled.signalSubscriptions, scheduled.token, false);
       status = context->nativeSchedulePlan->bind(
           context->nativeSchedulePlan->mutable_state, context, actorSlot,
           callee);

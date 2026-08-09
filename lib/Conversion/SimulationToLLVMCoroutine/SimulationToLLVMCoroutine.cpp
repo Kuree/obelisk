@@ -2440,6 +2440,55 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   // republication; the union of direct owners must still cover the SCC.
   if (evalScheduler) {
     std::string invalidConvergenceOwnership;
+
+    // Procedural event waits are not graph-level settling SCCs: projecting
+    // every sensitivity edge through its resume edge would make every
+    // repeating clocked process look cyclic. A direct executor nevertheless
+    // has to retain a publication that reactivates an earlier wait in that
+    // same executor. Detect that local feedback by following only the
+    // process-order/resume path from the watched suspension back to the
+    // publishing fragment. The generated coordinator will then consume the
+    // old ready bit before execution, allowing the new occurrence to remain
+    // queued for the next activation.
+    if (sim::ComputeGraphAttr graph = metadataDesign.getComputeGraphAttr()) {
+      SmallVector<SmallVector<uint32_t>> proceduralSuccessors(
+          graph.getNodes().size());
+      SmallVector<sim::ComputeEdgeAttr> sensitivityEdges;
+      for (Attribute attribute : graph.getEdges()) {
+        auto edge = cast<sim::ComputeEdgeAttr>(attribute);
+        if (edge.getKind() == sim::ComputeEdgeKind::ProcessOrder ||
+            edge.getKind() == sim::ComputeEdgeKind::Resume)
+          proceduralSuccessors[edge.getSource()].push_back(edge.getTarget());
+        else if (edge.getKind() == sim::ComputeEdgeKind::Sensitivity)
+          sensitivityEdges.push_back(edge);
+      }
+      for (NativeDirectFragment &direct : *directFragments) {
+        llvm::SmallDenseSet<uint32_t, 16> members(direct.fragmentIDs.begin(),
+                                                   direct.fragmentIDs.end());
+        for (sim::ComputeEdgeAttr sensitivity : sensitivityEdges) {
+          if (!members.contains(sensitivity.getSource()) ||
+              !members.contains(sensitivity.getTarget()))
+            continue;
+          SmallVector<uint32_t> pending{sensitivity.getTarget()};
+          llvm::SmallDenseSet<uint32_t, 16> visited;
+          while (!pending.empty()) {
+            uint32_t fragment = pending.pop_back_val();
+            if (!visited.insert(fragment).second)
+              continue;
+            if (fragment == sensitivity.getSource()) {
+              direct.tier2Convergence = true;
+              break;
+            }
+            for (uint32_t successor : proceduralSuccessors[fragment])
+              if (members.contains(successor))
+                pending.push_back(successor);
+          }
+          if (direct.tier2Convergence)
+            break;
+        }
+      }
+    }
+
     for (const NativeThreeTierKernelPlan &kernel : threeTierPlan.kernels) {
       if (kernel.tier != sim::SchedulerTierKind::Tier2 ||
           kernel.schedule != sim::ComputeScheduleKind::Convergence)
