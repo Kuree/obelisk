@@ -21,8 +21,8 @@
 // ENUM: arith.constant {{.*}} 1 : i64
 // ENUM: arith.constant {{.*}} 4 : i64
 // ENUM: arith.constant {{.*}} 9 : i64
-// ENUM: obelisk_sim.random.solve
-// ENUM-SAME: limit
+// ENUM: obelisk_sim.random.cycle_next
+// ENUM-NOT: obelisk_sim.random.solve
 
 // TAGGED: obelisk_sim.class.field
 // TAGGED-SAME: !obelisk_sim.packed_union

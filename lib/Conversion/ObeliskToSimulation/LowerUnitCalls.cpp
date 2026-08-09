@@ -5406,6 +5406,14 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   Block *postBlock = addBlock();
   Block *failedBlock = addBlock();
   Block *done = addBlock();
+  Block *singleRandCLoop = nullptr;
+  Block *singleRandCAdvance = nullptr;
+  Block *singleRandCCommit = nullptr;
+  if (!checkerOnly && planned.size() == 1 && planned.front().isRandC) {
+    singleRandCLoop = addBlock();
+    singleRandCAdvance = addBlock();
+    singleRandCCommit = addBlock();
+  }
   Value counter = loop->addArgument(assignmentType, location);
   Value attempt = loop->addArgument(i64, location);
   SmallVector<Value> loopSampledDomainIndices;
@@ -5795,6 +5803,142 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     return ConstraintCheck{satisfied, preferred};
   };
 
+  // A randc value is solved before ordinary random variables, but a value
+  // excluded by the active constraints is skipped rather than making the
+  // whole randomize call fail. For the single-property case there are no
+  // later random variables to solve, so walk the remainder of the keyed
+  // permutation directly. Count semantic values (rather than raw encoded
+  // positions) so enum holes do not consume the exhaustion budget.
+  //
+  // IEEE 1800-2017 18.4.2 requires a new permutation when none of the
+  // remaining values can satisfy the constraints. Trying one complete
+  // semantic domain also proves that a fixed active constraint set is
+  // unsatisfiable without looping forever.
+  if (singleRandCLoop) {
+    const Property &property = planned.front();
+    uint64_t semanticCardinality = propertyDomainCardinality(property);
+    Value randcCandidate =
+        singleRandCLoop->addArgument(assignmentType, location);
+    Value randcKey = singleRandCLoop->addArgument(i64, location);
+    Value randcPosition = singleRandCLoop->addArgument(i64, location);
+    Value randcRemaining = singleRandCLoop->addArgument(i64, location);
+    Value randcFreshCycle =
+        singleRandCLoop->addArgument(builder.getI1Type(), location);
+    Value advanceKey = singleRandCAdvance->addArgument(i64, location);
+    Value advancePosition =
+        singleRandCAdvance->addArgument(i64, location);
+    Value advanceRemaining =
+        singleRandCAdvance->addArgument(i64, location);
+    Value advanceFreshCycle =
+        singleRandCAdvance->addArgument(builder.getI1Type(), location);
+    Value commitCandidate =
+        singleRandCCommit->addArgument(assignmentType, location);
+    Value commitKey = singleRandCCommit->addArgument(i64, location);
+    Value commitPosition =
+        singleRandCCommit->addArgument(i64, location);
+
+    setCurrent(singleRandCLoop);
+    FailureOr<ConstraintCheck> randcCheck =
+        materializeConstraintCheck(randcCandidate);
+    if (failed(randcCheck))
+      return failure();
+    cf::CondBranchOp::create(
+        builder, location, randcCheck->preferred, singleRandCCommit,
+        ValueRange{randcCandidate, randcKey, randcPosition},
+        singleRandCAdvance,
+        ValueRange{randcKey, randcPosition, randcRemaining,
+                   randcFreshCycle});
+
+    setCurrent(singleRandCAdvance);
+    Value nextRemaining = arith::SubIOp::create(
+        builder, location, advanceRemaining, constant64(1));
+    if (semanticCardinality == 1) {
+      cf::BranchOp::create(builder, location, failedBlock, ValueRange{});
+    } else {
+      Value exhausted = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq, nextRemaining,
+          constant64(0));
+      exhausted = arith::AndIOp::create(builder, location, exhausted,
+                                        advanceFreshCycle);
+      Block *candidateEntry = addBlock();
+      Block *rekeyBlock = addBlock();
+      Block *cycleBlock = addBlock();
+      Value entryKey = candidateEntry->addArgument(i64, location);
+      Value entryPosition = candidateEntry->addArgument(i64, location);
+      Value entryRemaining = candidateEntry->addArgument(i64, location);
+      Value entryFreshCycle =
+          candidateEntry->addArgument(builder.getI1Type(), location);
+      Value activeKey = cycleBlock->addArgument(i64, location);
+      Value activePosition = cycleBlock->addArgument(i64, location);
+      Value activeRemaining = cycleBlock->addArgument(i64, location);
+      Value activeFreshCycle =
+          cycleBlock->addArgument(builder.getI1Type(), location);
+      cf::CondBranchOp::create(builder, location, exhausted, failedBlock,
+                               ValueRange{}, candidateEntry,
+                               ValueRange{advanceKey, advancePosition,
+                                          nextRemaining, advanceFreshCycle});
+
+      setCurrent(candidateEntry);
+      Value needsRekey = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq, entryPosition,
+          constant64(0));
+      cf::CondBranchOp::create(builder, location, needsRekey, rekeyBlock,
+                               ValueRange{}, cycleBlock,
+                               ValueRange{entryKey, entryPosition,
+                                          entryRemaining, entryFreshCycle});
+
+      setCurrent(rekeyBlock);
+      Value rekeyState = sim::SimManagedLoadOp::create(
+          builder, location, i64, stateReference);
+      Value newKey = next64(rekeyState);
+      sim::SimManagedStoreOp::create(builder, location, rekeyState,
+                                     stateReference);
+      cf::BranchOp::create(builder, location, cycleBlock,
+                           ValueRange{newKey, entryPosition,
+                                      constant64(semanticCardinality),
+                                      arith::ConstantOp::create(
+                                          builder, location,
+                                          builder.getI1Type(),
+                                          builder.getBoolAttr(true))});
+
+      setCurrent(cycleBlock);
+      unsigned cycleWidth = llvm::Log2_64_Ceil(semanticCardinality);
+      auto cycle = sim::SimRandomCycleNextOp::create(
+          builder, location, activeKey, activePosition,
+          builder.getI32IntegerAttr(cycleWidth));
+      Value valid = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ult, cycle.getValue(),
+          constant64(semanticCardinality));
+      Value semanticValue =
+          property.domains.empty()
+              ? cycle.getValue()
+              : materializePropertyDomainIndex(property, cycle.getValue());
+      if (assignmentType != i64)
+        semanticValue = arith::ExtUIOp::create(
+            builder, location, assignmentType, semanticValue);
+      cf::CondBranchOp::create(
+          builder, location, valid, singleRandCLoop,
+          ValueRange{semanticValue, activeKey, cycle.getNextPosition(),
+                     activeRemaining, activeFreshCycle},
+          candidateEntry,
+          ValueRange{activeKey, cycle.getNextPosition(), activeRemaining,
+                     activeFreshCycle});
+    }
+
+    setCurrent(singleRandCCommit);
+    FailureOr<SmallVector<Value>> candidates =
+        materializeCandidates(commitCandidate);
+    if (failed(candidates))
+      return failure();
+    sim::SimManagedStoreOp::create(builder, location, candidates->front(),
+                                   property.reference);
+    sim::SimManagedStoreOp::create(builder, location, commitKey,
+                                   property.randcKeyReference);
+    sim::SimManagedStoreOp::create(builder, location, commitPosition,
+                                   property.randcPositionReference);
+    cf::BranchOp::create(builder, location, postBlock);
+  }
+
   setCurrent(disabledCheckBlock);
   FailureOr<ConstraintCheck> disabledCheck =
       materializeConstraintCheck(currentAssignment);
@@ -5981,6 +6125,15 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   setCurrent(dispatchBlock);
   if (analysis.satisfiability == solver::Satisfiability::Unsatisfiable)
     cf::BranchOp::create(builder, location, failedBlock, ValueRange{});
+  else if (singleRandCLoop)
+    cf::BranchOp::create(
+        builder, location, singleRandCLoop,
+        ValueRange{fixedAssignment, planned.front().nextRandcKey,
+                   planned.front().nextRandcPosition,
+                   constant64(propertyDomainCardinality(planned.front())),
+                   arith::ConstantOp::create(builder, location,
+                                             builder.getI1Type(),
+                                             builder.getBoolAttr(false))});
   else if (solveBeforeRequiresRuntime)
     cf::BranchOp::create(builder, location, fallbackBlock, ValueRange{start});
   else {
