@@ -56,6 +56,34 @@ static bool isWriteOnlyReferenceUse(Operation *reference) {
   return false;
 }
 
+static bool isWrittenReferenceUse(Operation *reference) {
+  if (isa<semantic::SVVariableDeclStatementOp>(reference))
+    return !getChildren(reference).empty();
+  for (Operation *ancestor = reference->getParentOp(); ancestor;
+       ancestor = ancestor->getParentOp()) {
+    if (auto assignment =
+            dyn_cast<semantic::SVAssignmentExpressionOp>(ancestor)) {
+      SmallVector<Operation *> children = getChildren(assignment);
+      size_t destinationIndex = assignment.getHasTimingControl() ? 1u : 0u;
+      return destinationIndex < children.size() &&
+             containsNestedOperation(children[destinationIndex], reference) &&
+             isStorageBaseUse(children[destinationIndex], reference);
+    }
+    if (auto unary = dyn_cast<semantic::SVUnaryExpressionOp>(ancestor)) {
+      using Unary = semantic::SVUnaryOperator;
+      Unary kind = unary.getOperatorKind();
+      if (kind != Unary::Preincrement && kind != Unary::Predecrement &&
+          kind != Unary::Postincrement && kind != Unary::Postdecrement)
+        continue;
+      SmallVector<Operation *> children = getChildren(unary);
+      return children.size() == 1 &&
+             containsNestedOperation(children.front(), reference) &&
+             isStorageBaseUse(children.front(), reference);
+    }
+  }
+  return false;
+}
+
 static bool isFixedForeachCollectionUse(Operation *reference) {
   for (Operation *ancestor = reference->getParentOp(); ancestor;
        ancestor = ancestor->getParentOp()) {
@@ -85,6 +113,8 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
                         ArrayRef<semantic::SVClassTypeOp> classSources) {
   bool invalid = false;
   PreparedCaptures result;
+  llvm::DenseMap<Operation *, llvm::StringSet<>> subroutineLocalDescriptors;
+  llvm::DenseMap<Operation *, llvm::StringSet<>> writtenDescriptors;
 
   for (const PreparedUnit &unit : units.units) {
     llvm::StringSet<> seenPaths;
@@ -146,6 +176,13 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
         if (seenPaths.insert(path).second)
           result.descriptors[unit.source].push_back(
               {path.str(), descriptor->second});
+        if (referencedSymbol &&
+            isa<semantic::SVSubroutineSymbolOp>(unit.source) &&
+            referencedSymbol != unit.source &&
+            containsNestedOperation(unit.source, referencedSymbol))
+          subroutineLocalDescriptors[unit.source].insert(path);
+        if (isWrittenReferenceUse(nested))
+          writtenDescriptors[unit.source].insert(path);
         if (!isa<semantic::SVVariableDeclStatementOp>(nested) &&
             !isWriteOnlyReferenceUse(nested))
           result.readDescriptors[unit.source].insert(path);
@@ -246,6 +283,16 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
   }
   if (invalid)
     return failure();
+
+  // A subroutine-local static is part of the callee ABI, but a local that the
+  // callee itself writes is scratch state rather than a caller-visible input.
+  // Do not propagate it into an enclosing continuous or wildcard process's
+  // implicit sensitivity set; otherwise a read-modify-write loop variable can
+  // make the caller retrigger itself forever at the same simulation time.
+  for (const PreparedUnit &unit : units.units)
+    for (const auto &path : subroutineLocalDescriptors[unit.source])
+      if (writtenDescriptors[unit.source].contains(path.getKey()))
+        result.readDescriptors[unit.source].erase(path.getKey());
 
   llvm::DenseMap<Operation *, SmallVector<Operation *>> callEdges;
   for (const PreparedUnit &unit : units.units) {
