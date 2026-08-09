@@ -2046,6 +2046,23 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
                       entryKind == sim::EntryKind::Continuous ||
                       entryKind == sim::EntryKind::PortInput ||
                       entryKind == sim::EntryKind::PortOutput;
+
+  // A top-level `always @*` is a combinational process.  Evaluate its body
+  // once when the process starts, then wait for one of the values read by the
+  // body to change.  Waiting before the first evaluation can permanently miss
+  // the process when a two-state dependency's first assignment is equal to
+  // its default value.  An implicit event control nested in another procedure
+  // remains an ordinary wait-first timing control.
+  Operation *startupWildcardStatement = nullptr;
+  if (entryKind == sim::EntryKind::Always && roots.size() == 1) {
+    if (auto timed = dyn_cast<semantic::SVTimedStatementOp>(roots.front())) {
+      SmallVector<Operation *> children = getChildren(timed);
+      if (children.size() == 2 &&
+          isa<semantic::SVImplicitEventControlOp>(children.front()))
+        startupWildcardStatement = children.back();
+    }
+  }
+
   Block *loopHeader = nullptr;
   if (loopsForever) {
     loopHeader = addBlock();
@@ -2054,8 +2071,19 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   }
   auto primitive =
       function->getAttrOfType<StringAttr>("obelisk_sim.primitive_name");
-  if (failed(primitive ? lowerPrimitive(primitive.getValue(), roots)
-                       : lowerSequence(roots)))
+  llvm::SetVector<Value> startupWildcardDependencies;
+  LogicalResult lowered = success();
+  if (primitive) {
+    lowered = lowerPrimitive(primitive.getValue(), roots);
+  } else if (startupWildcardStatement) {
+    llvm::SetVector<Value> *saved = observedDependencies;
+    observedDependencies = &startupWildcardDependencies;
+    lowered = lowerStatement(startupWildcardStatement);
+    observedDependencies = saved;
+  } else {
+    lowered = lowerSequence(roots);
+  }
+  if (failed(lowered))
     return failure();
   if (!current->empty() && current->back().hasTrait<OpTrait::IsTerminator>())
     return success();
@@ -2091,6 +2119,28 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
         entryKind == sim::EntryKind::Task)
       return emitFunctionReturn(function.getLoc(), std::nullopt);
     sim::SimReturnOp::create(builder, function.getLoc(), ValueRange{});
+    return success();
+  }
+
+  if (startupWildcardStatement) {
+    if (startupWildcardDependencies.empty()) {
+      unsupported(roots.front())
+          << " (@* controlled statement has no readable dependency)";
+      return failure();
+    }
+    if (startupWildcardDependencies.size() == 1) {
+      sim::SimSuspendChangeOp::create(builder, function.getLoc(),
+                                      startupWildcardDependencies.front(),
+                                      ValueRange{}, sim::ContinuationSiteAttr{},
+                                      sim::EventRegionAttr{}, loopHeader);
+      return success();
+    }
+    SmallVector<int32_t> edges(startupWildcardDependencies.size(),
+                               static_cast<int32_t>(sim::EdgeKind::Change));
+    sim::SimSuspendAnyOp::create(
+        builder, function.getLoc(), startupWildcardDependencies.getArrayRef(),
+        builder.getDenseI32ArrayAttr(edges), sim::ContinuationSiteAttr{},
+        sim::EventRegionAttr{}, loopHeader);
     return success();
   }
 
