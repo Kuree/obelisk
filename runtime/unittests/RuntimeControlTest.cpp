@@ -132,4 +132,42 @@ TEST(RuntimeDeferredAssertion, FlushCancelsOnlyTheSelectedProcess) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(RuntimeDeferredAssertion, LabeledDisableCancelsOnlyThatAssertion) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+
+  context->activeLogicalProcessToken = 31;
+  uint64_t first = obelisk_rt_v1_deferred_enqueue_for_assertion(
+      context, 91, 701);
+  uint64_t unrelated = obelisk_rt_v1_deferred_enqueue_for_assertion(
+      context, 92, 702);
+  context->activeLogicalProcessToken = 32;
+  uint64_t otherProcess = obelisk_rt_v1_deferred_enqueue_for_assertion(
+      context, 91, 701);
+  ASSERT_NE(first, 0u);
+  ASSERT_NE(unrelated, 0u);
+  ASSERT_NE(otherProcess, 0u);
+
+  context->activeLogicalProcessToken = 31;
+  EXPECT_EQ(obelisk_rt_v1_control_disable(context, 701, 0, 0),
+            OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_deferred_mature(context, first), 0u);
+  EXPECT_EQ(obelisk_rt_v1_deferred_mature(context, otherProcess), 1u);
+  EXPECT_EQ(obelisk_rt_v1_deferred_mature(context, unrelated), 1u);
+
+  context->activeLogicalProcessToken = 31;
+  uint64_t hierarchicalFirst =
+      obelisk_rt_v1_deferred_enqueue_for_assertion(context, 93, 703);
+  context->activeLogicalProcessToken = 32;
+  uint64_t hierarchicalSecond =
+      obelisk_rt_v1_deferred_enqueue_for_assertion(context, 93, 703);
+  context->activeLogicalProcessToken = 33;
+  EXPECT_EQ(obelisk_rt_v1_control_disable(context, 703, 0, 1),
+            OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_deferred_mature(context, hierarchicalFirst), 0u);
+  EXPECT_EQ(obelisk_rt_v1_deferred_mature(context, hierarchicalSecond), 0u);
+  EXPECT_TRUE(context->deferredImmediateAssertionReports.empty());
+  obelisk_rt_v1_context_destroy(context);
+}
+
 } // namespace

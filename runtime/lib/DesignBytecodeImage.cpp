@@ -508,8 +508,11 @@ bool validIntrinsic(const Image &image, const Function &function,
            numeric(output(0)) && input(3)->kind == output(0)->kind &&
            input(3)->width == output(0)->width;
   case OBELISK_RT_INTRINSIC_V1_DEFERRED_ENQUEUE:
-    return signature.flags == 0 && site.inputCount == 1 &&
-           site.outputCount == 1 && bits(input(0), 64) && bits(output(0), 64);
+    return signature.flags == 0 &&
+           (site.inputCount == 1 || site.inputCount == 2) &&
+           site.outputCount == 1 && bits(input(0), 64) &&
+           (site.inputCount == 1 || bits(input(1), 64)) &&
+           bits(output(0), 64);
   case OBELISK_RT_INTRINSIC_V1_DEFERRED_MATURE:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && bits(input(0), 64) && bits(output(0), 1);

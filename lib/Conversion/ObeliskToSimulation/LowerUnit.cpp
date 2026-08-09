@@ -2011,6 +2011,17 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
 LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   if (invalidBindings)
     return failure();
+  for (Operation *root : roots)
+    root->walk([&](semantic::SVBlockStatementOp block) {
+      auto path = block.getBlockPathAttr();
+      auto targetID = block->getAttrOfType<IntegerAttr>(
+          "obelisk_sim.control_target_id");
+      SmallVector<Operation *> contents = getChildren(block);
+      if (path && targetID && contents.size() == 1 &&
+          isa<semantic::SVImmediateAssertionStatementOp>(contents.front()))
+        assertionControlIDs[path.getValue()] =
+            targetID.getValue().getZExtValue();
+    });
   setCurrent(&function.getBody().front());
   sim::EntryKind entryKind = function.getEntryKind();
   continuousStore = entryKind == sim::EntryKind::Continuous ||

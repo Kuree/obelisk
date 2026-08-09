@@ -1971,6 +1971,13 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     std::optional<uint64_t> siteID = scalar(0);
     if (!siteID || *siteID == 0)
       return OBELISK_RT_INVALID_BYTECODE;
+    if (site.inputCount == 2) {
+      std::optional<uint64_t> assertionID = scalar(1);
+      if (!assertionID || *assertionID == 0)
+        return OBELISK_RT_INVALID_BYTECODE;
+      return sentinel(0, obelisk_rt_v1_deferred_enqueue_for_assertion(
+                             context, *siteID, *assertionID));
+    }
     return sentinel(0, obelisk_rt_v1_deferred_enqueue(context, *siteID));
   }
   case OBELISK_RT_INTRINSIC_V1_DEFERRED_MATURE: {

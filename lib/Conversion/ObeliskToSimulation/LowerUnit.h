@@ -335,6 +335,7 @@ private:
   };
   ::mlir::SmallVector<ControlScope> controlScopes;
   ::llvm::StringMap<uint64_t> inheritedControlIDs;
+  ::llvm::StringMap<uint64_t> assertionControlIDs;
   uint64_t nextForkOrdinal = 0;
   uint64_t nextPostponedOrdinal = 0;
   bool invalidBindings = false;

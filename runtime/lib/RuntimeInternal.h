@@ -832,12 +832,15 @@ struct obelisk_rt_context {
   struct DeferredImmediateReport {
     uint64_t logicalProcess = 0;
     uint64_t site = 0;
+    uint64_t assertion = 0;
   };
   uint64_t nextDeferredImmediateTicket = 1;
   std::unordered_map<uint64_t, DeferredImmediateReport>
       deferredImmediateReports;
   std::unordered_map<uint64_t, std::unordered_map<uint64_t, uint64_t>>
       latestDeferredImmediateReports;
+  std::unordered_map<uint64_t, std::unordered_set<uint64_t>>
+      deferredImmediateAssertionReports;
   std::unordered_map<uint32_t, NativeStaticState> nativeStaticStates;
   // Lazily sorted interval index for reflection/VPI range lookups.
   mutable std::vector<NativeStaticStateRange> nativeStaticStateRanges;
@@ -1200,6 +1203,9 @@ std::string hostErrorMessage(int error);
 // logical process. The caller must hold the context mutex.
 void obelisk_rt_flush_deferred_immediate_reports_unlocked(
     obelisk_rt_context *context, uint64_t logicalProcess);
+bool obelisk_rt_cancel_deferred_immediate_assertion_unlocked(
+    obelisk_rt_context *context, uint64_t assertion,
+    uint64_t logicalProcess = 0);
 
 obelisk_rt_status writeUnlocked(obelisk_rt_context *context,
                                 uint32_t descriptor, const void *data,

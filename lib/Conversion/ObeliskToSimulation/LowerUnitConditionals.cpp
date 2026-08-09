@@ -85,8 +85,12 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
                              fail, ValueRange{});
 
     auto scheduleReport = [&](bool passed) -> LogicalResult {
-      Value ticket = sim::SimDeferredEnqueueOp::create(
+      auto enqueue = sim::SimDeferredEnqueueOp::create(
           builder, location, builder.getI64IntegerAttr(siteID));
+      if (auto targetID = op->getAttrOfType<IntegerAttr>(
+              "obelisk_sim.assertion_control_target_id"))
+        enqueue->setAttr("obelisk_sim.assertion_control_target_id", targetID);
+      Value ticket = enqueue;
 
       llvm::StringMap<Value> previousValues;
       llvm::StringSet<> newlyBoundValues;

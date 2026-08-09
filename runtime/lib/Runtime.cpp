@@ -411,7 +411,25 @@ static void resetDeferredImmediateReportsForTime(obelisk_rt_context *context) {
   context->deferredImmediateSites.clear();
   context->deferredImmediateReports.clear();
   context->latestDeferredImmediateReports.clear();
+  context->deferredImmediateAssertionReports.clear();
   context->deferredImmediateTime = context->schedulerTime;
+}
+
+static void eraseDeferredImmediateReportUnlocked(obelisk_rt_context *context,
+                                                 uint64_t ticket) {
+  auto report = context->deferredImmediateReports.find(ticket);
+  if (report == context->deferredImmediateReports.end())
+    return;
+  if (report->second.assertion != 0) {
+    auto assertion = context->deferredImmediateAssertionReports.find(
+        report->second.assertion);
+    if (assertion != context->deferredImmediateAssertionReports.end()) {
+      assertion->second.erase(ticket);
+      if (assertion->second.empty())
+        context->deferredImmediateAssertionReports.erase(assertion);
+    }
+  }
+  context->deferredImmediateReports.erase(report);
 }
 
 void obelisk_rt_flush_deferred_immediate_reports_unlocked(
@@ -424,13 +442,55 @@ void obelisk_rt_flush_deferred_immediate_reports_unlocked(
     return;
   for (const auto &[site, ticket] : process->second) {
     (void)site;
-    context->deferredImmediateReports.erase(ticket);
+    eraseDeferredImmediateReportUnlocked(context, ticket);
   }
   context->latestDeferredImmediateReports.erase(process);
 }
 
-extern "C" uint64_t obelisk_rt_v1_deferred_enqueue(obelisk_rt_context *context,
-                                                   uint64_t siteID) {
+bool obelisk_rt_cancel_deferred_immediate_assertion_unlocked(
+    obelisk_rt_context *context, uint64_t assertionID,
+    uint64_t logicalProcess) {
+  if (!context || assertionID == 0)
+    return false;
+  resetDeferredImmediateReportsForTime(context);
+  auto assertion =
+      context->deferredImmediateAssertionReports.find(assertionID);
+  if (assertion == context->deferredImmediateAssertionReports.end())
+    return false;
+  bool canceled = false;
+  for (auto iterator = assertion->second.begin();
+       iterator != assertion->second.end();) {
+    uint64_t ticket = *iterator;
+    auto report = context->deferredImmediateReports.find(ticket);
+    if (report == context->deferredImmediateReports.end()) {
+      iterator = assertion->second.erase(iterator);
+      continue;
+    }
+    if (logicalProcess != 0 &&
+        report->second.logicalProcess != logicalProcess) {
+      ++iterator;
+      continue;
+    }
+    auto process = context->latestDeferredImmediateReports.find(
+        report->second.logicalProcess);
+    if (process != context->latestDeferredImmediateReports.end()) {
+      auto site = process->second.find(report->second.site);
+      if (site != process->second.end() && site->second == ticket)
+        process->second.erase(site);
+      if (process->second.empty())
+        context->latestDeferredImmediateReports.erase(process);
+    }
+    context->deferredImmediateReports.erase(report);
+    iterator = assertion->second.erase(iterator);
+    canceled = true;
+  }
+  if (assertion->second.empty())
+    context->deferredImmediateAssertionReports.erase(assertion);
+  return canceled;
+}
+
+extern "C" uint64_t obelisk_rt_v1_deferred_enqueue_for_assertion(
+    obelisk_rt_context *context, uint64_t siteID, uint64_t assertionID) {
   if (!context || siteID == 0)
     return 0;
   try {
@@ -446,17 +506,24 @@ extern "C" uint64_t obelisk_rt_v1_deferred_enqueue(obelisk_rt_context *context,
             [context->activeLogicalProcessToken];
     auto previous = sites.find(siteID);
     if (previous != sites.end())
-      context->deferredImmediateReports.erase(previous->second);
+      eraseDeferredImmediateReportUnlocked(context, previous->second);
     context->deferredImmediateReports.emplace(
         ticket, obelisk_rt_context::DeferredImmediateReport{
-                    context->activeLogicalProcessToken, siteID});
+                    context->activeLogicalProcessToken, siteID, assertionID});
     sites[siteID] = ticket;
+    if (assertionID != 0)
+      context->deferredImmediateAssertionReports[assertionID].insert(ticket);
     return ticket;
   } catch (...) {
     if (context)
       context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
     return 0;
   }
+}
+
+extern "C" uint64_t obelisk_rt_v1_deferred_enqueue(obelisk_rt_context *context,
+                                                   uint64_t siteID) {
+  return obelisk_rt_v1_deferred_enqueue_for_assertion(context, siteID, 0);
 }
 
 extern "C" uint32_t obelisk_rt_v1_deferred_mature(obelisk_rt_context *context,
@@ -481,7 +548,7 @@ extern "C" uint32_t obelisk_rt_v1_deferred_mature(obelisk_rt_context *context,
           context->latestDeferredImmediateReports.erase(process);
       }
     }
-    context->deferredImmediateReports.erase(report);
+    eraseDeferredImmediateReportUnlocked(context, ticket);
     return current ? 1u : 0u;
   } catch (...) {
     if (context)

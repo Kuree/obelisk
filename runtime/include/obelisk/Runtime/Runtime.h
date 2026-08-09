@@ -2303,6 +2303,11 @@ uint32_t obelisk_rt_v1_deferred_once(obelisk_rt_context *context,
 // ticket. The returned nonzero ticket is opaque and context-local.
 uint64_t obelisk_rt_v1_deferred_enqueue(obelisk_rt_context *context,
                                         uint64_t site_id);
+// Site enqueue carrying the stable identity of a specifically labeled
+// assertion. A later disable of that assertion cancels every pending ticket
+// with the same assertion identity without flushing unrelated reports.
+uint64_t obelisk_rt_v1_deferred_enqueue_for_assertion(
+    obelisk_rt_context *context, uint64_t site_id, uint64_t assertion_id);
 // Consume a deferred report ticket and return one iff it is still the latest
 // report for its originating process and assertion site.
 uint32_t obelisk_rt_v1_deferred_mature(obelisk_rt_context *context,

@@ -540,10 +540,14 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
   if (auto op = dyn_cast<sim::SimDeferredEnqueueOp>(operation)) {
     if (op.getId() == 0)
       return op.emitOpError("deferred assertion ID must be positive");
+    SmallVector<uint32_t> inputs{
+        emitU64Constant(plan, static_cast<uint64_t>(op.getId()))};
+    if (auto assertionID = op->getAttrOfType<IntegerAttr>(
+            "obelisk_sim.assertion_control_target_id"))
+      inputs.push_back(emitU64Constant(
+          plan, assertionID.getValue().getZExtValue()));
     return emitIntrinsicRegisters(
-        plan, kIntrinsicDeferredEnqueue,
-        {emitU64Constant(plan, static_cast<uint64_t>(op.getId()))},
-        {reg(plan, op.getTicket())});
+        plan, kIntrinsicDeferredEnqueue, inputs, {reg(plan, op.getTicket())});
   }
   if (auto op = dyn_cast<sim::SimDeferredMatureOp>(operation))
     return emitIntrinsicRegisters(plan, kIntrinsicDeferredMature,

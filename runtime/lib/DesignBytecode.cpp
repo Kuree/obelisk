@@ -2816,6 +2816,14 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
           }
         }
       }
+      // A labeled assertion is a stable assertion identity rather than a
+      // live procedural control activation. Its report may therefore be
+      // pending even when no dynamic activation with this target remains.
+      obelisk_rt_cancel_deferred_immediate_assertion_unlocked(context,
+                                                              targetID,
+                                                              allActivations
+                                                                  ? 0
+                                                                  : current);
       if (targets.empty())
         return OBELISK_RT_OK;
       auto isTargetMember = [&](const std::vector<uint64_t> &controls) {

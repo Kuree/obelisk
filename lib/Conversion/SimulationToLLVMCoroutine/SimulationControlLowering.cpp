@@ -181,13 +181,20 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     Location location = operation.getLoc();
     Value context = loadCurrentRuntimeContext(rewriter, location);
+    SmallVector<Value> arguments{
+        context, llvmConstant(rewriter, location, rewriter.getI64Type(),
+                              operation.getId())};
+    StringRef runtimeFunction = "obelisk_rt_v1_deferred_enqueue";
+    if (auto assertionID = operation->getAttrOfType<IntegerAttr>(
+            "obelisk_sim.assertion_control_target_id")) {
+      runtimeFunction = "obelisk_rt_v1_deferred_enqueue_for_assertion";
+      arguments.push_back(llvmConstant(rewriter, location,
+                                       rewriter.getI64Type(),
+                                       assertionID.getValue().getZExtValue()));
+    }
     rewriter.replaceOpWithNewOp<LLVM::CallOp>(
         operation, TypeRange{rewriter.getI64Type()},
-        SymbolRefAttr::get(rewriter.getContext(),
-                           "obelisk_rt_v1_deferred_enqueue"),
-        ValueRange{context,
-                   llvmConstant(rewriter, location, rewriter.getI64Type(),
-                                operation.getId())});
+        SymbolRefAttr::get(rewriter.getContext(), runtimeFunction), arguments);
     return success();
   }
 };

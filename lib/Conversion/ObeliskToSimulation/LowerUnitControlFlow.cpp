@@ -1156,6 +1156,24 @@ LogicalResult UnitLowering::lowerBlock(semantic::SVBlockStatementOp op) {
       isa<semantic::SVConcurrentAssertionStatementOp>(contents.front()))
     return lowerContents();
 
+  // A label on an immediate assertion names that assertion, not an enclosing
+  // procedural block. Preserve the prepared target identity on the assertion
+  // so a later `disable label` can cancel its pending deferred report without
+  // entering a dynamic control activation around the assertion statement.
+  if (op.getBlockKind() == semantic::SVStatementBlockKind::Sequential &&
+      contents.size() == 1 &&
+      isa<semantic::SVImmediateAssertionStatementOp>(contents.front())) {
+    auto targetID =
+        op->getAttrOfType<IntegerAttr>("obelisk_sim.control_target_id");
+    if (!targetID || !targetID.getValue().isStrictlyPositive())
+      return emitError(getSemanticLocation(op))
+                 << "labeled assertion has no prepared control ID",
+             failure();
+    contents.front()->setAttr("obelisk_sim.assertion_control_target_id",
+                              targetID);
+    return lowerContents();
+  }
+
   Location location = getSemanticLocation(op);
   auto targetIDAttr =
       op->getAttrOfType<IntegerAttr>("obelisk_sim.control_target_id");
@@ -1195,6 +1213,14 @@ LogicalResult UnitLowering::lowerDisable(semantic::SVDisableStatementOp op) {
   }
   uint64_t targetID = targetIDAttr.getValue().getZExtValue();
   bool hierarchical = op.getIsHierarchical();
+  auto assertion = assertionControlIDs.find(path.getValue());
+  if (assertion != assertionControlIDs.end() &&
+      assertion->second == targetID) {
+    sim::SimControlDisableOp::create(
+        builder, location, builder.getI64IntegerAttr(targetID), Value{},
+        builder.getBoolAttr(hierarchical));
+    return success();
+  }
   for (const ControlScope &scope : llvm::reverse(controlScopes)) {
     if (scope.path == path.getValue()) {
       sim::SimControlDisableOp::create(
