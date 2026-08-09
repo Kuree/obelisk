@@ -41,10 +41,10 @@ void UnitLowering::emitDefaultAssertionFailure(Location location) {
       function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
   StringAttr scope =
       function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
-  sim::SimDisplayOp::create(
-      builder, location, context, descriptor, ValueRange{item}, true, 10,
-      builder.getDenseI32ArrayAttr({0}), scope, StringAttr{}, timeMultiplier,
-      IntegerAttr{});
+  sim::SimDisplayOp::create(builder, location, context, descriptor,
+                            ValueRange{item}, true, 10,
+                            builder.getDenseI32ArrayAttr({0}), scope,
+                            StringAttr{}, timeMultiplier, IntegerAttr{});
 }
 
 LogicalResult UnitLowering::lowerImmediateAssertion(
@@ -54,52 +54,6 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
     emitDefaultAssertionFailure(location);
     return success();
   }
-  if (op.getIsDeferred()) {
-    auto nodeAttr = op->getAttrOfType<IntegerAttr>("node_id");
-    uint64_t node = nodeAttr ? nodeAttr.getValue().getZExtValue() : 0;
-    std::string identity =
-        (function.getSymName() + ".$deferred_assert." + Twine(node) + "." +
-         Twine(node ? 0 : nextForkOrdinal))
-            .str();
-    uint64_t siteID = stableCodeUnitID(identity);
-    Value first = sim::SimDeferredOnceOp::create(
-        builder, location, builder.getI64IntegerAttr(siteID));
-    Block *schedule = addBlock();
-    Block *merge = addBlock();
-    cf::CondBranchOp::create(builder, location, first, schedule, ValueRange{},
-                             merge, ValueRange{});
-    setCurrent(schedule);
-    Attribute previousCodeUnit = op->getAttr("obelisk_sim.fork_code_unit_id");
-    BoolAttr previousDeferred = op.getIsDeferredAttr();
-    op->setAttr("obelisk_sim.deferred_evaluator", builder.getUnitAttr());
-    op->setAttr("obelisk_sim.fork_code_unit_id",
-                builder.getI64IntegerAttr(stableCodeUnitID(identity)));
-    op->setAttr("is_deferred", builder.getBoolAttr(false));
-    FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> callback =
-        outlineForkBranch(op, node, 0, /*captureReferences=*/true);
-    op->setAttr("is_deferred", previousDeferred);
-    op->removeAttr("obelisk_sim.deferred_evaluator");
-    if (previousCodeUnit)
-      op->setAttr("obelisk_sim.fork_code_unit_id", previousCodeUnit);
-    else
-      op->removeAttr("obelisk_sim.fork_code_unit_id");
-    if (failed(callback))
-      return failure();
-
-    sim::EventRegion region = op.getIsFinal() ? sim::EventRegion::Postponed
-                                              : sim::EventRegion::Observed;
-    callback->first->setAttr("home_region", sim::EventRegionAttr::get(
-                                                function.getContext(), region));
-    callback->first->setAttr(
-        "domain", sim::ExecutionDomainAttr::get(function.getContext(),
-                                                sim::ExecutionDomain::Design));
-    sim::SimSpawnOp::create(builder, location, callback->first.getSymNameAttr(),
-                            callback->second, ArrayAttr{}, ArrayAttr{});
-    emitBranch(merge);
-    setCurrent(merge);
-    return success();
-  }
-
   SmallVector<Operation *> children = getChildren(op);
   size_t expected = 1 + static_cast<size_t>(op.getHasPassAction()) +
                     static_cast<size_t>(op.getHasFailAction());
@@ -108,12 +62,200 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
     return failure();
   }
 
-  FailureOr<Value> value = lowerExpression(children.front());
-  if (failed(value))
-    return failure();
-  FailureOr<Value> condition = truthValue(*value, location);
-  if (failed(condition))
-    return failure();
+  if (op.getIsDeferred()) {
+    auto nodeAttr = op->getAttrOfType<IntegerAttr>("node_id");
+    uint64_t node = nodeAttr ? nodeAttr.getValue().getZExtValue() : 0;
+    std::string siteIdentity =
+        (function.getSymName() + ".$deferred_assert." + Twine(node) + "." +
+         Twine(node ? 0 : nextForkOrdinal))
+            .str();
+    uint64_t siteID = stableCodeUnitID(siteIdentity);
+
+    FailureOr<Value> value = lowerExpression(children.front());
+    if (failed(value))
+      return failure();
+    FailureOr<Value> condition = truthValue(*value, location);
+    if (failed(condition))
+      return failure();
+
+    Block *pass = addBlock();
+    Block *fail = addBlock();
+    Block *merge = addBlock();
+    cf::CondBranchOp::create(builder, location, *condition, pass, ValueRange{},
+                             fail, ValueRange{});
+
+    auto scheduleReport = [&](bool passed) -> LogicalResult {
+      Value ticket = sim::SimDeferredEnqueueOp::create(
+          builder, location, builder.getI64IntegerAttr(siteID));
+
+      llvm::StringMap<Value> previousValues;
+      llvm::StringSet<> newlyBoundValues;
+      llvm::StringMap<Operation *> referencedNodes;
+      Operation *selectedAction = nullptr;
+      if (passed && op.getHasPassAction())
+        selectedAction = children[1];
+      else if (!passed && op.getHasFailAction())
+        selectedAction = children[1 + op.getHasPassAction()];
+      if (selectedAction)
+        selectedAction->walk([&](semantic::SVNamedValueExpressionOp named) {
+          for (Operation *ancestor = named; ancestor != selectedAction;
+               ancestor = ancestor->getParentOp()) {
+            auto assignment =
+                dyn_cast_or_null<semantic::SVAssignmentExpressionOp>(
+                    ancestor->getParentOp());
+            if (!assignment)
+              continue;
+            SmallVector<Operation *> operands = getChildren(assignment);
+            Operation *operand = ancestor;
+            while (operand->getParentOp() != assignment)
+              operand = operand->getParentOp();
+            if (!operands.empty() && operands.front() == operand)
+              return;
+            break;
+          }
+          // Input actuals are values in a deferred report. Output/inout/ref
+          // actuals remain references so the matured action can update their
+          // live destinations. Prepared direct calls carry one formal record
+          // per argument; conservatively preserve references for an unresolved
+          // output-bearing call.
+          for (Operation *ancestor = named; ancestor != selectedAction;
+               ancestor = ancestor->getParentOp()) {
+            auto call = dyn_cast_or_null<semantic::SVCallExpressionOp>(
+                ancestor->getParentOp());
+            if (!call || !call.getHasOutputArguments())
+              continue;
+            auto formals =
+                call->getAttrOfType<ArrayAttr>(calleeFormalsAttrName);
+            if (!formals)
+              return;
+            SmallVector<Operation *> arguments = getChildren(call);
+            Operation *argument = ancestor;
+            while (argument->getParentOp() != call)
+              argument = argument->getParentOp();
+            auto found = llvm::find(arguments, argument);
+            if (found == arguments.end())
+              return;
+            size_t index = static_cast<size_t>(found - arguments.begin());
+            if (index >= formals.size())
+              return;
+            auto formal = cast<DictionaryAttr>(formals[index]);
+            auto direction = static_cast<semantic::SVArgumentDirection>(
+                formal.getAs<IntegerAttr>("direction").getInt());
+            if (direction != semantic::SVArgumentDirection::In)
+              return;
+            break;
+          }
+          StringRef path = named.getReferencedPath();
+          if (!path.empty() && !referencedNodes.contains(path))
+            referencedNodes[path] = named;
+        });
+      for (const auto &entry : referencedNodes) {
+        StringRef path = entry.getKey();
+        Value old = values.lookup(path);
+        if (old)
+          previousValues[path] = old;
+        else
+          newlyBoundValues.insert(path);
+        FailureOr<Value> snapshot =
+            lowerReferencedValue(entry.getValue(), path, /*lvalue=*/false);
+        if (failed(snapshot))
+          return failure();
+        values[path] = *snapshot;
+      }
+
+      std::string identity =
+          (Twine(siteIdentity) + (passed ? ".pass" : ".fail")).str();
+      Attribute previousCodeUnit = op->getAttr("obelisk_sim.fork_code_unit_id");
+      BoolAttr previousDeferred = op.getIsDeferredAttr();
+      op->setAttr("obelisk_sim.deferred_evaluator", builder.getUnitAttr());
+      op->setAttr("obelisk_sim.deferred_result", builder.getBoolAttr(passed));
+      op->setAttr("obelisk_sim.fork_code_unit_id",
+                  builder.getI64IntegerAttr(stableCodeUnitID(identity)));
+      op->setAttr("is_deferred", builder.getBoolAttr(false));
+      FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> callback =
+          outlineForkBranch(op, node, passed ? 0 : 1,
+                            /*captureReferences=*/false);
+      op->setAttr("is_deferred", previousDeferred);
+      op->removeAttr("obelisk_sim.deferred_evaluator");
+      op->removeAttr("obelisk_sim.deferred_result");
+      if (previousCodeUnit)
+        op->setAttr("obelisk_sim.fork_code_unit_id", previousCodeUnit);
+      else
+        op->removeAttr("obelisk_sim.fork_code_unit_id");
+      for (const auto &entry : newlyBoundValues)
+        values.erase(entry.getKey());
+      for (const auto &entry : previousValues)
+        values[entry.getKey()] = entry.getValue();
+      if (failed(callback))
+        return failure();
+
+      sim::SimFuncOp evaluator = callback->first;
+      SmallVector<Type> inputTypes(evaluator.getFunctionType().getInputs());
+      inputTypes.push_back(builder.getI64Type());
+      evaluator.setFunctionType(
+          FunctionType::get(function.getContext(), inputTypes, TypeRange{}));
+      Block &entry = evaluator.getBody().front();
+      BlockArgument reportTicket =
+          entry.addArgument(builder.getI64Type(), location);
+      SmallVector<Attribute> argumentAttrs;
+      if (ArrayAttr attrs = evaluator.getArgAttrsAttr())
+        llvm::append_range(argumentAttrs, attrs);
+      while (argumentAttrs.size() + 1 < inputTypes.size())
+        argumentAttrs.push_back(builder.getDictionaryAttr({}));
+      argumentAttrs.push_back(builder.getDictionaryAttr({builder.getNamedAttr(
+          "obelisk_sim.capture_kind",
+          sim::CaptureKindAttr::get(function.getContext(),
+                                    sim::CaptureKind::Formal))}));
+      evaluator.setArgAttrsAttr(builder.getArrayAttr(argumentAttrs));
+      callback->second.push_back(ticket);
+
+      Block *body = entry.splitBlock(entry.begin());
+      Block *stale = new Block;
+      evaluator.getBody().push_back(stale);
+      OpBuilder entryBuilder = OpBuilder::atBlockEnd(&entry);
+      Value current = sim::SimDeferredMatureOp::create(
+          entryBuilder, location, entryBuilder.getI1Type(), reportTicket);
+      cf::CondBranchOp::create(entryBuilder, location, current, body, stale);
+      OpBuilder staleBuilder = OpBuilder::atBlockEnd(stale);
+      sim::SimReturnOp::create(staleBuilder, location, ValueRange{});
+
+      sim::EventRegion region = op.getIsFinal() ? sim::EventRegion::Postponed
+                                                : sim::EventRegion::Observed;
+      evaluator->setAttr("home_region", sim::EventRegionAttr::get(
+                                            function.getContext(), region));
+      evaluator->setAttr(
+          "domain", sim::ExecutionDomainAttr::get(
+                        function.getContext(), sim::ExecutionDomain::Design));
+      sim::SimSpawnOp::create(builder, location, evaluator.getSymNameAttr(),
+                              callback->second, ArrayAttr{}, ArrayAttr{});
+      return success();
+    };
+
+    setCurrent(pass);
+    if (failed(scheduleReport(true)))
+      return failure();
+    emitBranch(merge);
+    setCurrent(fail);
+    if (failed(scheduleReport(false)))
+      return failure();
+    emitBranch(merge);
+    setCurrent(merge);
+    return success();
+  }
+
+  FailureOr<Value> condition;
+  if (auto result = op->getAttrOfType<BoolAttr>("obelisk_sim.deferred_result"))
+    condition = arith::ConstantOp::create(
+                    builder, location, builder.getBoolAttr(result.getValue()))
+                    .getResult();
+  else {
+    FailureOr<Value> value = lowerExpression(children.front());
+    if (failed(value))
+      return failure();
+    condition = truthValue(*value, location);
+    if (failed(condition))
+      return failure();
+  }
 
   bool reactiveActions =
       op->hasAttr("obelisk_sim.deferred_evaluator") && !op.getIsFinal();
@@ -200,7 +342,8 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
     if (op.getHasFailAction()) {
       if (failed(lowerAction(children[nextChild++], 1)))
         return failure();
-    } else if (op.getAssertionKind() == semantic::SVAssertionKind::Assert &&
+    } else if ((op.getAssertionKind() == semantic::SVAssertionKind::Assert ||
+                op.getAssertionKind() == semantic::SVAssertionKind::Assume) &&
                failed(lowerDefaultFailure()))
       return failure();
   }

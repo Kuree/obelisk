@@ -14,12 +14,20 @@
 module native_assertions;
   logic value = 0;
   logic unknown_value = 1'bx;
+  logic action_result = 1;
+
+  task automatic capture_action(ref logic destination,
+                                input logic sampled);
+    destination = sampled;
+    $display("mutating-action=%0d", sampled);
+  endtask
 
   initial begin
     assert (1'b1) $display("assert-pass");
     assert (1'b0) $display("wrong"); else $display("assert-fail");
     assume (1'b1) $display("assume-pass"); else $display("wrong");
     assume (1'b0) $display("wrong"); else $display("assume-fail");
+    assume (1'b0);
     cover (1'b1) $display("cover-match");
     cover (1'b0) $display("wrong");
     assert (1'bz) $display("wrong"); else $display("z-fail");
@@ -30,21 +38,38 @@ module native_assertions;
         $display("deferred-fail");
     repeat (2)
       assert #0 (1'b0);
+    repeat (2) begin
+      assert #0 (value) $display("replacement-pass=%0d", value); else
+        $display("wrong");
+      value = !value;
+    end
+    assert #0 (value) $display("wrong"); else
+      capture_action(action_result, value);
     value = 1;
     repeat (2)
       assert final (value) $display("final-pass"); else
         $display("wrong");
-    #1 $finish;
+    #1 $display("action-result=%0d", action_result);
+    $finish;
   end
 endmodule
 
-// CHECK-COUNT-2: ERROR: {{.*}}native-assertions.sv:{{[0-9]+}}: immediate assertion failed.
+// CHECK-COUNT-3: ERROR: {{.*}}native-assertions.sv:{{[0-9]+}}: immediate assertion failed.
 // CHECK-COUNT-1: assert-pass
 // CHECK-COUNT-1: assert-fail
 // CHECK-COUNT-1: assume-pass
 // CHECK-COUNT-1: assume-fail
 // CHECK-COUNT-1: cover-match
 // CHECK-COUNT-1: z-fail
-// CHECK-COUNT-1: deferred-pass
+// The expression is evaluated when encountered, so changing value later does
+// not turn the first site's selected failure into a pass.
+// CHECK-COUNT-1: deferred-fail
+// Repeated reports from one site/process are replaced by the last report, and
+// pass-by-value action inputs retain their encounter-time value.
+// CHECK-COUNT-1: replacement-pass=1
+// Output arguments remain live references while the input argument is the
+// value captured when the report was queued.
+// CHECK-COUNT-1: mutating-action=0
+// CHECK-COUNT-1: action-result=0
 // CHECK-COUNT-1: final-pass
 // CHECK-NOT: wrong

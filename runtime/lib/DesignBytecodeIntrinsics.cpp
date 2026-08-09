@@ -1951,6 +1951,22 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       return OBELISK_RT_INVALID_BYTECODE;
     return sentinel(0, obelisk_rt_v1_deferred_once(context, *siteID));
   }
+  case OBELISK_RT_INTRINSIC_V1_DEFERRED_ENQUEUE: {
+    if (!context)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    std::optional<uint64_t> siteID = scalar(0);
+    if (!siteID || *siteID == 0)
+      return OBELISK_RT_INVALID_BYTECODE;
+    return sentinel(0, obelisk_rt_v1_deferred_enqueue(context, *siteID));
+  }
+  case OBELISK_RT_INTRINSIC_V1_DEFERRED_MATURE: {
+    if (!context)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    std::optional<uint64_t> ticket = scalar(0);
+    if (!ticket || *ticket == 0)
+      return OBELISK_RT_INVALID_BYTECODE;
+    return sentinel(0, obelisk_rt_v1_deferred_mature(context, *ticket));
+  }
   case OBELISK_RT_INTRINSIC_V1_MONITOR_REGISTER: {
     if (!context)
       return OBELISK_RT_INVALID_ARGUMENT;

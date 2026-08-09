@@ -710,6 +710,8 @@ enum {
   OBELISK_RT_INTRINSIC_V1_MONITOR_CURRENT = UINT32_C(0x00010217),
   OBELISK_RT_INTRINSIC_V1_DEFERRED_ONCE = UINT32_C(0x00010218),
   OBELISK_RT_INTRINSIC_V1_STOP = UINT32_C(0x0001021a),
+  OBELISK_RT_INTRINSIC_V1_DEFERRED_ENQUEUE = UINT32_C(0x0001021b),
+  OBELISK_RT_INTRINSIC_V1_DEFERRED_MATURE = UINT32_C(0x0001021c),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC = UINT32_C(0x00010400),
@@ -2287,6 +2289,15 @@ uint32_t obelisk_rt_v1_static_once(obelisk_rt_context *context,
 // by the current logical process in a time slot, and zero for repeats.
 uint32_t obelisk_rt_v1_deferred_once(obelisk_rt_context *context,
                                      uint64_t site_id);
+// Enqueue one deferred-immediate assertion report for the current logical
+// process. Re-enqueuing the same site in the same slot supersedes the previous
+// ticket. The returned nonzero ticket is opaque and context-local.
+uint64_t obelisk_rt_v1_deferred_enqueue(obelisk_rt_context *context,
+                                        uint64_t site_id);
+// Consume a deferred report ticket and return one iff it is still the latest
+// report for its originating process and assertion site.
+uint32_t obelisk_rt_v1_deferred_mature(obelisk_rt_context *context,
+                                       uint64_t ticket);
 // Copy one nonblocking assignment into the current time slot. The scheduler
 // applies queued updates in call order after active work reaches quiescence.
 // A UINT64_MAX bit offset is an out-of-range dynamic selection and is ignored.

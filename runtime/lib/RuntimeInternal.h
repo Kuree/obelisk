@@ -818,6 +818,15 @@ struct obelisk_rt_context {
   uint64_t deferredImmediateTime = UINT64_MAX;
   std::unordered_map<uint64_t, std::unordered_set<uint64_t>>
       deferredImmediateSites;
+  struct DeferredImmediateReport {
+    uint64_t logicalProcess = 0;
+    uint64_t site = 0;
+  };
+  uint64_t nextDeferredImmediateTicket = 1;
+  std::unordered_map<uint64_t, DeferredImmediateReport>
+      deferredImmediateReports;
+  std::unordered_map<uint64_t, std::unordered_map<uint64_t, uint64_t>>
+      latestDeferredImmediateReports;
   std::unordered_map<uint32_t, NativeStaticState> nativeStaticStates;
   // Lazily sorted interval index for reflection/VPI range lookups.
   mutable std::vector<NativeStaticStateRange> nativeStaticStateRanges;

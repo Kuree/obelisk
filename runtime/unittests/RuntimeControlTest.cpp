@@ -76,4 +76,38 @@ TEST(RuntimeOnce, StaticAndDeferredClaimsUseTheirDocumentedScope) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(RuntimeDeferredAssertion, LatestPerProcessReportMatures) {
+  EXPECT_EQ(obelisk_rt_v1_deferred_enqueue(nullptr, 1), 0u);
+  EXPECT_EQ(obelisk_rt_v1_deferred_mature(nullptr, 1), 0u);
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  context->activeLogicalProcessToken = 11;
+  EXPECT_EQ(obelisk_rt_v1_deferred_enqueue(context, 0), 0u);
+  uint64_t first = obelisk_rt_v1_deferred_enqueue(context, 71);
+  uint64_t latest = obelisk_rt_v1_deferred_enqueue(context, 71);
+  uint64_t otherSite = obelisk_rt_v1_deferred_enqueue(context, 72);
+  ASSERT_NE(first, 0u);
+  ASSERT_NE(latest, 0u);
+  ASSERT_NE(otherSite, 0u);
+  EXPECT_NE(first, latest);
+
+  context->activeLogicalProcessToken = 12;
+  uint64_t otherProcess = obelisk_rt_v1_deferred_enqueue(context, 71);
+  ASSERT_NE(otherProcess, 0u);
+
+  EXPECT_EQ(obelisk_rt_v1_deferred_mature(context, first), 0u);
+  EXPECT_EQ(obelisk_rt_v1_deferred_mature(context, latest), 1u);
+  EXPECT_EQ(obelisk_rt_v1_deferred_mature(context, latest), 0u);
+  EXPECT_EQ(obelisk_rt_v1_deferred_mature(context, otherSite), 1u);
+  EXPECT_EQ(obelisk_rt_v1_deferred_mature(context, otherProcess), 1u);
+
+  context->activeLogicalProcessToken = 11;
+  uint64_t expired = obelisk_rt_v1_deferred_enqueue(context, 73);
+  ASSERT_NE(expired, 0u);
+  ++context->schedulerTime;
+  EXPECT_EQ(obelisk_rt_v1_deferred_mature(context, expired), 0u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 } // namespace

@@ -1573,6 +1573,42 @@ def SimDeferredOnceOp : SimOp<"assert.deferred_once", [
   let hasVerifier = 1;
 }
 
+
+
+def SimDeferredEnqueueOp : SimOp<"assert.deferred_enqueue", [
+    MemoryEffects<[MemRead<SimSchedulerResource>,
+                   MemWrite<SimSchedulerResource>,
+                   MemRead<SimProcessResource>]>
+  ]> {
+  let summary = "enqueue or replace a deferred-immediate assertion report";
+  let description = [{
+    Record an encounter of one deferred-immediate assertion site in the
+    current logical process and return an opaque report ticket. A later
+    encounter of the same site in that process and time slot supersedes this
+    ticket, matching the LRM's last-report semantics.
+  }];
+  let arguments = (ins I64Attr:$id);
+  let results = (outs I64:$ticket);
+  let assemblyFormat = "$id attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimDeferredMatureOp : SimOp<"assert.deferred_mature", [
+    MemoryEffects<[MemRead<SimSchedulerResource>,
+                   MemWrite<SimSchedulerResource>]>
+  ]> {
+  let summary = "mature a pending deferred-immediate assertion report";
+  let description = [{
+    Return true only when the opaque report ticket is still the latest report
+    for its assertion site and originating logical process. The ticket is
+    consumed regardless, so superseded callbacks become no-ops.
+  }];
+  let arguments = (ins I64:$ticket);
+  let results = (outs I1:$current);
+  let assemblyFormat = "$ticket attr-dict `:` type($ticket)";
+  let hasVerifier = 1;
+}
+
 def SimMonitorRegisterOp : SimOp<"monitor.register", [
     MemoryEffects<[MemWrite<SimSchedulerResource>,
                    MemWrite<SimProcessResource>]>

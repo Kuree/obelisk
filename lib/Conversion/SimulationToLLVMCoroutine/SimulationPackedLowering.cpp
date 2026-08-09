@@ -286,6 +286,7 @@ LogicalResult lowerPackedSimulationOperations(
       sim::SimEventTriggerOp, sim::SimEventTriggeredOp, sim::SimEventEqualOp,
       sim::SimDisableChildrenOp, sim::SimControlEnterOp, sim::SimControlLeaveOp,
       sim::SimControlDisableOp, sim::SimStaticOnceOp, sim::SimDeferredOnceOp,
+      sim::SimDeferredEnqueueOp, sim::SimDeferredMatureOp,
       sim::SimMonitorRegisterOp, sim::SimMonitorControlOp,
       sim::SimMonitorCurrentOp, sim::SimBitsDynExtractOp, sim::SimClassNullOp,
       sim::SimCovergroupNullOp, sim::SimCovergroupCreateOp,

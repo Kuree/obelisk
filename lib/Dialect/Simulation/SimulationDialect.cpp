@@ -4199,6 +4199,18 @@ LogicalResult SimDeferredOnceOp::verify() {
   return verifyPositive(*this, getIdAttr(), "deferred assertion site ID");
 }
 
+
+
+LogicalResult SimDeferredEnqueueOp::verify() {
+  return verifyPositive(*this, getIdAttr(), "deferred assertion site ID");
+}
+
+LogicalResult SimDeferredMatureOp::verify() {
+  if (!getTicket().getType().isInteger(64))
+    return emitOpError("ticket must be an i64");
+  return success();
+}
+
 LogicalResult SimContextStorageOp::verify() {
   return verifyNonnegative(*this, getIdAttr(), "storage ID");
 }

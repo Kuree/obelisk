@@ -405,6 +405,71 @@ extern "C" uint32_t obelisk_rt_v1_deferred_once(obelisk_rt_context *context,
   }
 }
 
+static void resetDeferredImmediateReportsForTime(obelisk_rt_context *context) {
+  if (context->deferredImmediateTime == context->schedulerTime)
+    return;
+  context->deferredImmediateSites.clear();
+  context->deferredImmediateReports.clear();
+  context->latestDeferredImmediateReports.clear();
+  context->deferredImmediateTime = context->schedulerTime;
+}
+
+extern "C" uint64_t obelisk_rt_v1_deferred_enqueue(obelisk_rt_context *context,
+                                                   uint64_t siteID) {
+  if (!context || siteID == 0)
+    return 0;
+  try {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    if (context->activeLogicalProcessToken == 0)
+      return 0;
+    resetDeferredImmediateReportsForTime(context);
+    uint64_t ticket = context->nextDeferredImmediateTicket++;
+    if (ticket == 0)
+      ticket = context->nextDeferredImmediateTicket++;
+    context->deferredImmediateReports.emplace(
+        ticket, obelisk_rt_context::DeferredImmediateReport{
+                    context->activeLogicalProcessToken, siteID});
+    context->latestDeferredImmediateReports[context->activeLogicalProcessToken]
+                                           [siteID] = ticket;
+    return ticket;
+  } catch (...) {
+    if (context)
+      context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
+    return 0;
+  }
+}
+
+extern "C" uint32_t obelisk_rt_v1_deferred_mature(obelisk_rt_context *context,
+                                                  uint64_t ticket) {
+  if (!context || ticket == 0)
+    return 0;
+  try {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    resetDeferredImmediateReportsForTime(context);
+    auto report = context->deferredImmediateReports.find(ticket);
+    if (report == context->deferredImmediateReports.end())
+      return 0;
+    auto process = context->latestDeferredImmediateReports.find(
+        report->second.logicalProcess);
+    bool current = false;
+    if (process != context->latestDeferredImmediateReports.end()) {
+      auto site = process->second.find(report->second.site);
+      current = site != process->second.end() && site->second == ticket;
+      if (current) {
+        process->second.erase(site);
+        if (process->second.empty())
+          context->latestDeferredImmediateReports.erase(process);
+      }
+    }
+    context->deferredImmediateReports.erase(report);
+    return current ? 1u : 0u;
+  } catch (...) {
+    if (context)
+      context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
+    return 0;
+  }
+}
+
 obelisk_rt_status makeBuffer(std::string_view source,
                              obelisk_rt_buffer_v1 *output) {
   if (!output)

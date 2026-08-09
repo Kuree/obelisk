@@ -76,6 +76,10 @@ constexpr uint32_t kIntrinsicControlDisable =
 constexpr uint32_t kIntrinsicStaticOnce = OBELISK_RT_INTRINSIC_V1_STATIC_ONCE;
 constexpr uint32_t kIntrinsicDeferredOnce =
     OBELISK_RT_INTRINSIC_V1_DEFERRED_ONCE;
+constexpr uint32_t kIntrinsicDeferredEnqueue =
+    OBELISK_RT_INTRINSIC_V1_DEFERRED_ENQUEUE;
+constexpr uint32_t kIntrinsicDeferredMature =
+    OBELISK_RT_INTRINSIC_V1_DEFERRED_MATURE;
 constexpr uint32_t kIntrinsicMonitorRegister =
     OBELISK_RT_INTRINSIC_V1_MONITOR_REGISTER;
 constexpr uint32_t kIntrinsicMonitorControl =

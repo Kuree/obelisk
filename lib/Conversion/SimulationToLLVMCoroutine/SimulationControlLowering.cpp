@@ -171,6 +171,49 @@ private:
   StringRef runtimeFunction;
 };
 
+class DeferredEnqueueConversion final
+    : public OpConversionPattern<sim::SimDeferredEnqueueOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimDeferredEnqueueOp operation, OneToNOpAdaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location location = operation.getLoc();
+    Value context = loadCurrentRuntimeContext(rewriter, location);
+    rewriter.replaceOpWithNewOp<LLVM::CallOp>(
+        operation, TypeRange{rewriter.getI64Type()},
+        SymbolRefAttr::get(rewriter.getContext(),
+                           "obelisk_rt_v1_deferred_enqueue"),
+        ValueRange{context,
+                   llvmConstant(rewriter, location, rewriter.getI64Type(),
+                                operation.getId())});
+    return success();
+  }
+};
+
+class DeferredMatureConversion final
+    : public OpConversionPattern<sim::SimDeferredMatureOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimDeferredMatureOp operation, OneToNOpAdaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location location = operation.getLoc();
+    Value context = loadCurrentRuntimeContext(rewriter, location);
+    Value current = LLVM::CallOp::create(
+                        rewriter, location, TypeRange{rewriter.getI32Type()},
+                        SymbolRefAttr::get(rewriter.getContext(),
+                                           "obelisk_rt_v1_deferred_mature"),
+                        ValueRange{context, operation.getTicket()})
+                        .getResult();
+    rewriter.replaceOpWithNewOp<arith::TruncIOp>(operation,
+                                                 rewriter.getI1Type(), current);
+    return success();
+  }
+};
+
 class MonitorRegisterConversion final
     : public OpConversionPattern<sim::SimMonitorRegisterOp> {
 public:
@@ -257,6 +300,8 @@ void populateControlToLLVMConversionPatterns(RewritePatternSet &patterns,
       converter, context, "obelisk_rt_v1_static_once");
   patterns.add<OnceConversion<sim::SimDeferredOnceOp>>(
       converter, context, "obelisk_rt_v1_deferred_once");
+  patterns.add<DeferredEnqueueConversion, DeferredMatureConversion>(converter,
+                                                                    context);
 }
 
 } // namespace obelisk::detail

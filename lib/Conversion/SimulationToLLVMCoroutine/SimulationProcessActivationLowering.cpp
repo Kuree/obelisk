@@ -338,6 +338,10 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
                            {pointer, i64});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_deferred_once", i32,
                            {pointer, i64});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_deferred_enqueue", i64,
+                           {pointer, i64});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_deferred_mature", i32,
+                           {pointer, i64});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_monitor_register", i32,
                            {pointer, i64, i32});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_monitor_control", i32,

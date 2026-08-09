@@ -528,6 +528,18 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
         {emitU64Constant(plan, static_cast<uint64_t>(op.getId()))},
         {reg(plan, op.getFirst())});
   }
+  if (auto op = dyn_cast<sim::SimDeferredEnqueueOp>(operation)) {
+    if (op.getId() == 0)
+      return op.emitOpError("deferred assertion ID must be positive");
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicDeferredEnqueue,
+        {emitU64Constant(plan, static_cast<uint64_t>(op.getId()))},
+        {reg(plan, op.getTicket())});
+  }
+  if (auto op = dyn_cast<sim::SimDeferredMatureOp>(operation))
+    return emitIntrinsicRegisters(plan, kIntrinsicDeferredMature,
+                                  {reg(plan, op.getTicket())},
+                                  {reg(plan, op.getCurrent())});
   if (auto op = dyn_cast<sim::SimMonitorRegisterOp>(operation))
     return emitIntrinsic(plan, kIntrinsicMonitorRegister, {op.getProcess()},
                          {});

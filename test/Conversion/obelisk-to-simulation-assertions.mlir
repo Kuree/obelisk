@@ -148,8 +148,11 @@ module {
 // CHECK-DAG: obelisk_sim.ref.store
 // CHECK-DAG: "ERROR: {{.*}}immediate assertion failed."
 
-// Deferred sites are coalesced before evaluator processes are spawned.
-// CHECK-DAG: obelisk_sim.assert.deferred_once
+// Deferred expressions branch at encounter time. Report tickets select only
+// the last result for each site/process before the evaluator matures.
+// CHECK-DAG: cf.cond_br
+// CHECK-DAG: obelisk_sim.assert.deferred_enqueue
+// CHECK-DAG: obelisk_sim.assert.deferred_mature
 // CHECK-DAG: home_region = 8 : i32
 // CHECK-DAG: home_region = 10 : i32
 // CHECK-DAG: home_region = 16 : i32
