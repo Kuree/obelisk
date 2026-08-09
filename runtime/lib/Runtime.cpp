@@ -113,6 +113,46 @@ bool validObserverInventory(
   return true;
 }
 
+const obelisk_rt_execution_extension_v1 *
+executionExtension(const obelisk_rt_execution_descriptor_v1 &execution) {
+  if (execution.reserved == 0 ||
+      execution.reserved > std::numeric_limits<uintptr_t>::max() ||
+      execution.reserved % alignof(obelisk_rt_execution_extension_v1) != 0)
+    return nullptr;
+  return reinterpret_cast<const obelisk_rt_execution_extension_v1 *>(
+      static_cast<uintptr_t>(execution.reserved));
+}
+
+bool validSampledRanges(const obelisk_rt_execution_descriptor_v1 &execution) {
+  bool enabled =
+      (execution.flags & OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT) != 0;
+  if (!enabled)
+    return execution.reserved == 0;
+  const obelisk_rt_execution_extension_v1 *extension =
+      executionExtension(execution);
+  if (!extension ||
+      extension->version != OBELISK_RT_EXECUTION_EXTENSION_VERSION ||
+      extension->size != sizeof(*extension) || !extension->sampled_ranges ||
+      extension->sampled_range_count == 0)
+    return false;
+  uint64_t previousEnd = 0;
+  uint64_t snapshotBytes = 0;
+  for (uint64_t index = 0; index != extension->sampled_range_count; ++index) {
+    const obelisk_rt_sampled_range_v1 &range = extension->sampled_ranges[index];
+    if (range.bit_width == 0 || range.source_bit_offset < previousEnd ||
+        range.source_bit_offset > execution.state_bit_count ||
+        range.bit_width > execution.state_bit_count - range.source_bit_offset ||
+        range.snapshot_byte_offset != snapshotBytes ||
+        range.bit_width > UINT64_MAX - 7 ||
+        snapshotBytes > UINT64_MAX - (range.bit_width + 7) / 8)
+      return false;
+    previousEnd = range.source_bit_offset + range.bit_width;
+    snapshotBytes += (range.bit_width + 7) / 8;
+  }
+  return snapshotBytes <= std::numeric_limits<size_t>::max() &&
+         snapshotBytes <= UINT64_MAX / 8;
+}
+
 } // namespace
 
 obelisk_rt_context::obelisk_rt_context() {
@@ -703,7 +743,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_context_create_for_design(
                                       OBELISK_RT_EXECUTION_REQUIRE_BYTECODE |
                                       OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT;
       if (execution->version != OBELISK_RT_VERSION ||
-          execution->reserved != 0 || execution->dpi_reserved != 0 ||
+          execution->dpi_reserved != 0 ||
           (execution->flags & ~validFlags) != 0 ||
           ((execution->flags & OBELISK_RT_EXECUTION_VPI_WRITE) != 0 &&
            (execution->flags & OBELISK_RT_EXECUTION_VPI_READ) == 0) ||
@@ -715,7 +755,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_context_create_for_design(
                : (execution->bytecode || execution->bytecode_size != 0 ||
                   execution->checksum != 0)) ||
           !validActivationInventory(*execution) ||
-          !validObserverInventory(*execution))
+          !validObserverInventory(*execution) ||
+          !validSampledRanges(*execution))
         return OBELISK_RT_INVALID_DESIGN;
       if ((execution->flags & OBELISK_RT_EXECUTION_HAS_BYTECODE) != 0) {
         obelisk_rt_status status = obelisk_rt_initialize_design_bytecode_image(

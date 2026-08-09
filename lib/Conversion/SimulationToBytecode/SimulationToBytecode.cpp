@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <limits>
 #include <optional>
 #include <string>
 
@@ -62,6 +63,65 @@ FailureOr<EncodedSimulationDesign> Encoder::encode() {
   if (failed(builtState))
     return failure();
   state = *builtState;
+  SmallVector<SimulationSampledRange> sampledRanges;
+  bool invalidSampledRange = false;
+  design.walk([&](sim::SimFuncOp function) {
+    analysis::DescriptorProvenanceMap provenance =
+        analysis::deriveDescriptorProvenance(function);
+    function.walk([&](sim::SimSampledReadOp sampled) {
+      auto found = provenance.find(sampled.getSource());
+      std::optional<unsigned> width =
+          sim::getPackedWidth(sampled.getResult().getType());
+      if (found == provenance.end() || !found->second.descriptor ||
+          found->second.dynamic || !width) {
+        sampled.emitOpError(
+            "requires one statically resolved canonical state range");
+        invalidSampledRange = true;
+        return;
+      }
+      const auto *offsets =
+          found->second.resource == sim::ComputeResourceKind::Storage
+              ? &state.storageOffsets
+          : found->second.resource == sim::ComputeResourceKind::Net
+              ? &state.netOffsets
+              : nullptr;
+      auto base = offsets ? offsets->find(*found->second.descriptor)
+                          : state.storageOffsets.end();
+      if (!offsets || base == offsets->end() ||
+          base->second >
+              std::numeric_limits<uint64_t>::max() - found->second.low) {
+        sampled.emitOpError("references an unknown canonical state object");
+        invalidSampledRange = true;
+        return;
+      }
+      uint64_t bitOffset = base->second + found->second.low;
+      if (bitOffset > state.bits || *width > state.bits - bitOffset) {
+        sampled.emitOpError("canonical sampled range exceeds design state");
+        invalidSampledRange = true;
+        return;
+      }
+      sampledRanges.push_back({bitOffset, *width});
+    });
+  });
+  if (invalidSampledRange)
+    return failure();
+  llvm::sort(sampledRanges, [](const SimulationSampledRange &lhs,
+                               const SimulationSampledRange &rhs) {
+    return std::tie(lhs.bitOffset, lhs.bitWidth) <
+           std::tie(rhs.bitOffset, rhs.bitWidth);
+  });
+  SmallVector<SimulationSampledRange> coalescedRanges;
+  for (const SimulationSampledRange &range : sampledRanges) {
+    if (coalescedRanges.empty() ||
+        range.bitOffset > coalescedRanges.back().bitOffset +
+                              coalescedRanges.back().bitWidth) {
+      coalescedRanges.push_back(range);
+      continue;
+    }
+    uint64_t end = range.bitOffset + range.bitWidth;
+    uint64_t &width = coalescedRanges.back().bitWidth;
+    width = std::max(width, end - coalescedRanges.back().bitOffset);
+  }
   if (failed(planTwoStateRegisters()) || failed(planFunctions()) ||
       failed(planScheduleRanks()) || failed(encodeFunctions()))
     return failure();
@@ -78,13 +138,9 @@ FailureOr<EncodedSimulationDesign> Encoder::encode() {
       return failure();
   }
   result.stateBitCount = state.bits;
+  result.sampledRanges = std::move(coalescedRanges);
   result.executionFlags = kExecutionHasBytecode;
-  bool needsPreponedSnapshot = false;
-  design.walk([&](Operation *operation) {
-    needsPreponedSnapshot |=
-        isa<sim::SimSampledReadOp, sim::SimSampledHistoryOp>(operation);
-  });
-  if (needsPreponedSnapshot)
+  if (!result.sampledRanges.empty())
     result.executionFlags |= kExecutionPreponedSnapshot;
   if (options.requireBytecode)
     result.executionFlags |= kExecutionRequireBytecode;
@@ -600,6 +656,14 @@ public:
                     builder.getI32IntegerAttr(encoded->executionFlags));
     module->setAttr("obelisk.execution.state_bits",
                     builder.getI64IntegerAttr(encoded->stateBitCount));
+    SmallVector<int64_t> sampledRanges;
+    sampledRanges.reserve(encoded->sampledRanges.size() * 2);
+    for (const SimulationSampledRange &range : encoded->sampledRanges) {
+      sampledRanges.push_back(static_cast<int64_t>(range.bitOffset));
+      sampledRanges.push_back(static_cast<int64_t>(range.bitWidth));
+    }
+    module->setAttr("obelisk.execution.sampled_ranges",
+                    builder.getDenseI64ArrayAttr(sampledRanges));
     if (!encoded->designDatabase.empty())
       module->setAttr(
           "obelisk.design.database",

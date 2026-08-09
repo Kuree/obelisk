@@ -113,6 +113,15 @@ _Static_assert(sizeof(obelisk_rt_observer_descriptor_v1) == 48,
 _Static_assert(offsetof(obelisk_rt_observer_descriptor_v1, native_evaluator) ==
                    32,
                "observer native evaluator offset changed");
+_Static_assert(sizeof(obelisk_rt_sampled_range_v1) == 24,
+               "sampled range size changed");
+_Static_assert(offsetof(obelisk_rt_sampled_range_v1, snapshot_byte_offset) == 8,
+               "sampled snapshot offset changed");
+_Static_assert(sizeof(obelisk_rt_execution_extension_v1) == 24,
+               "execution extension size changed");
+_Static_assert(offsetof(obelisk_rt_execution_extension_v1, sampled_ranges) ==
+                   8,
+               "execution extension sampled ranges offset changed");
 _Static_assert(sizeof(obelisk_rt_execution_descriptor_v1) == 120,
                "execution descriptor size changed");
 _Static_assert(offsetof(obelisk_rt_execution_descriptor_v1, version) == 0,

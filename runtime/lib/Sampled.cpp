@@ -31,8 +31,30 @@ bool checkedBytes(uint64_t bits, size_t &bytes) {
   return true;
 }
 
-bool resolveSnapshotRange(const obelisk_rt_context *context, uint64_t handle,
-                          uint64_t width, uint64_t &start) {
+const obelisk_rt_execution_extension_v1 *
+executionExtension(const obelisk_rt_execution_descriptor_v1 &execution) {
+  return reinterpret_cast<const obelisk_rt_execution_extension_v1 *>(
+      static_cast<uintptr_t>(execution.reserved));
+}
+
+void copyPackedRange(uint8_t *destination, const uint8_t *source,
+                     uint64_t sourceBytes, uint64_t sourceBit,
+                     uint64_t bitWidth) {
+  size_t bytes = static_cast<size_t>((bitWidth + 7) / 8);
+  unsigned shift = static_cast<unsigned>(sourceBit % 8);
+  uint64_t sourceByte = sourceBit / 8;
+  for (size_t index = 0; index != bytes; ++index) {
+    uint16_t value = source[sourceByte + index];
+    if (shift != 0 && sourceByte + index + 1 < sourceBytes)
+      value |= static_cast<uint16_t>(source[sourceByte + index + 1]) << 8;
+    destination[index] = static_cast<uint8_t>(value >> shift);
+  }
+  if (bitWidth % 8 != 0)
+    destination[bytes - 1] &= static_cast<uint8_t>((1u << (bitWidth % 8)) - 1);
+}
+
+bool resolveCanonicalRange(const obelisk_rt_context *context, uint64_t handle,
+                           uint64_t width, uint64_t &start) {
   obelisk_rt_stable_handle_v1 decoded{};
   if (!obelisk_rt_stable_handle_decode(handle, &decoded) || decoded.offset < 0)
     return false;
@@ -57,6 +79,30 @@ bool resolveSnapshotRange(const obelisk_rt_context *context, uint64_t handle,
   return start <= total && width <= total - start;
 }
 
+bool resolveSnapshotRange(const obelisk_rt_context *context,
+                          uint64_t canonicalStart, uint64_t width,
+                          uint64_t &snapshotStart) {
+  const obelisk_rt_execution_descriptor_v1 *execution = context->execution;
+  const obelisk_rt_execution_extension_v1 *extension =
+      execution ? executionExtension(*execution) : nullptr;
+  uint64_t low = 0, high = extension ? extension->sampled_range_count : 0;
+  while (low < high) {
+    uint64_t middle = low + (high - low) / 2;
+    if (extension->sampled_ranges[middle].source_bit_offset <= canonicalStart)
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  if (low == 0)
+    return false;
+  const obelisk_rt_sampled_range_v1 &range = extension->sampled_ranges[low - 1];
+  uint64_t relative = canonicalStart - range.source_bit_offset;
+  if (relative > range.bit_width || width > range.bit_width - relative)
+    return false;
+  snapshotStart = range.snapshot_byte_offset * 8 + relative;
+  return true;
+}
+
 } // namespace
 
 obelisk_rt_status
@@ -68,35 +114,46 @@ obelisk_rt_capture_preponed_unlocked(obelisk_rt_context *context) {
        OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT) == 0)
     return OBELISK_RT_OK;
   try {
-    uint64_t bits = context->execution ? context->execution->state_bit_count : 0;
-    size_t words = static_cast<size_t>((bits + 63) / 64);
+    const obelisk_rt_execution_descriptor_v1 &execution = *context->execution;
+    const obelisk_rt_execution_extension_v1 &extension =
+        *executionExtension(execution);
+    const obelisk_rt_sampled_range_v1 &last =
+        extension.sampled_ranges[extension.sampled_range_count - 1];
+    uint64_t snapshotBytes =
+        last.snapshot_byte_offset + (last.bit_width + 7) / 8;
+    size_t words = static_cast<size_t>((snapshotBytes + 7) / 8);
     context->preponedValue.resize(words);
     context->preponedUnknown.resize(words);
-    if (words == 0)
-      return OBELISK_RT_OK;
 
     const uint8_t *value = nullptr;
     const uint8_t *unknown = nullptr;
     if (context->nativeSchedulePlan &&
-        context->nativeSchedulePlan->state_bit_count == bits) {
+        context->nativeSchedulePlan->state_bit_count ==
+            execution.state_bit_count) {
       value = context->nativeSchedulePlan->state_value;
       unknown = context->nativeSchedulePlan->state_unknown;
     }
-    size_t bytes = static_cast<size_t>((bits + 7) / 8);
-    if (value && unknown) {
-      std::memset(context->preponedValue.data(), 0, words * sizeof(uint64_t));
-      std::memset(context->preponedUnknown.data(), 0,
-                  words * sizeof(uint64_t));
-      std::memcpy(context->preponedValue.data(), value, bytes);
-      std::memcpy(context->preponedUnknown.data(), unknown, bytes);
-    } else {
-      if (context->stateValue.size() != words ||
-          context->stateUnknown.size() != words)
+    if (!value || !unknown) {
+      size_t stateWords =
+          static_cast<size_t>((execution.state_bit_count + 63) / 64);
+      if (context->stateValue.size() != stateWords ||
+          context->stateUnknown.size() != stateWords)
         return OBELISK_RT_INVALID_DESIGN;
-      std::copy(context->stateValue.begin(), context->stateValue.end(),
-                context->preponedValue.begin());
-      std::copy(context->stateUnknown.begin(), context->stateUnknown.end(),
-                context->preponedUnknown.begin());
+      value = reinterpret_cast<const uint8_t *>(context->stateValue.data());
+      unknown = reinterpret_cast<const uint8_t *>(context->stateUnknown.data());
+    }
+    uint8_t *sampledValue =
+        reinterpret_cast<uint8_t *>(context->preponedValue.data());
+    uint8_t *sampledUnknown =
+        reinterpret_cast<uint8_t *>(context->preponedUnknown.data());
+    uint64_t stateBytes = (execution.state_bit_count + 7) / 8;
+    for (uint64_t index = 0; index != extension.sampled_range_count; ++index) {
+      const obelisk_rt_sampled_range_v1 &range =
+          extension.sampled_ranges[index];
+      copyPackedRange(sampledValue + range.snapshot_byte_offset, value,
+                      stateBytes, range.source_bit_offset, range.bit_width);
+      copyPackedRange(sampledUnknown + range.snapshot_byte_offset, unknown,
+                      stateBytes, range.source_bit_offset, range.bit_width);
     }
     return OBELISK_RT_OK;
   } catch (const std::bad_alloc &) {
@@ -115,8 +172,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_sampled_read(
   ContextTransaction transaction(context);
   try {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
-    uint64_t start = 0;
-    if (!resolveSnapshotRange(context, stableID, bitWidth, start) ||
+    uint64_t canonicalStart = 0, snapshotStart = 0;
+    if (!resolveCanonicalRange(context, stableID, bitWidth, canonicalStart) ||
+        !resolveSnapshotRange(context, canonicalStart, bitWidth,
+                              snapshotStart) ||
         context->preponedValue.empty() || context->preponedUnknown.empty())
       return OBELISK_RT_INVALID_HANDLE;
     std::memset(outValue, 0, bytes);
@@ -126,8 +185,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_sampled_read(
     const uint8_t *unknowns =
         reinterpret_cast<const uint8_t *>(context->preponedUnknown.data());
     for (uint64_t bit = 0; bit != bitWidth; ++bit) {
-      setBit(outValue, bit, getBit(values, start + bit));
-      setBit(outUnknown, bit, getBit(unknowns, start + bit));
+      setBit(outValue, bit, getBit(values, snapshotStart + bit));
+      setBit(outUnknown, bit, getBit(unknowns, snapshotStart + bit));
     }
     return OBELISK_RT_OK;
   } catch (...) {

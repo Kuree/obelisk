@@ -30,10 +30,16 @@ struct SimulationBytecodeFunction {
   uint32_t twoStateLogicRegisters = 0;
 };
 
+struct SimulationSampledRange {
+  uint64_t bitOffset = 0;
+  uint64_t bitWidth = 0;
+};
+
 struct EncodedSimulationDesign {
   llvm::SmallVector<uint8_t> bytecode;
   llvm::SmallVector<uint8_t> designDatabase;
   llvm::SmallVector<SimulationBytecodeFunction> functions;
+  llvm::SmallVector<SimulationSampledRange> sampledRanges;
   uint64_t stateBitCount = 0;
   uint32_t executionFlags = 0;
 };

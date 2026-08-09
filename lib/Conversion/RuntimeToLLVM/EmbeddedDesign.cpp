@@ -26,6 +26,7 @@ constexpr StringLiteral kBytecodeAttr = "obelisk.bytecode.image";
 constexpr StringLiteral kDatabaseAttr = "obelisk.design.database";
 constexpr StringLiteral kFlagsAttr = "obelisk.execution.flags";
 constexpr StringLiteral kStateBitsAttr = "obelisk.execution.state_bits";
+constexpr StringLiteral kSampledRangesAttr = "obelisk.execution.sampled_ranges";
 constexpr StringLiteral kFunctionAttr = "obelisk.bytecode.function";
 constexpr StringLiteral kExecutionName = "__obelisk_execution_descriptor_v1";
 constexpr StringLiteral kBytecodeName = "__obelisk_bytecode_image_v1";
@@ -33,6 +34,9 @@ constexpr StringLiteral kDatabaseName = "__obelisk_design_database_v1";
 constexpr StringLiteral kDPIScopesName = "__obelisk_dpi_scopes_v1";
 constexpr StringLiteral kActivationsName = "__obelisk_activations_v1";
 constexpr StringLiteral kObserversName = "__obelisk_observers_v1";
+constexpr StringLiteral kSampledRangesName = "__obelisk_sampled_ranges_v1";
+constexpr StringLiteral kExecutionExtensionName =
+    "__obelisk_execution_extension_v1";
 constexpr uint32_t kActivationHasNative = UINT32_C(1) << 0;
 constexpr uint32_t kActivationHasBytecode = UINT32_C(1) << 1;
 constexpr uint32_t kActivationNoBytecode = UINT32_MAX;
@@ -586,15 +590,107 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
           return records;
         });
   }
-  auto executionType = LLVM::LLVMStructType::getLiteral(
-      context, {i32, i32, i64, pointer, i64, pointer, i64, i64, i64, pointer,
-                i64, i32, i32, pointer, i64, pointer, i64});
   uint32_t flags = 0;
   uint64_t stateBits = 0;
   if (auto attr = module->getAttrOfType<IntegerAttr>(kFlagsAttr))
     flags = static_cast<uint32_t>(attr.getValue().getZExtValue());
   if (auto attr = module->getAttrOfType<IntegerAttr>(kStateBitsAttr))
     stateBits = attr.getValue().getZExtValue();
+  struct SampledRangeInfo {
+    uint64_t sourceBitOffset;
+    uint64_t snapshotByteOffset;
+    uint64_t bitWidth;
+  };
+  SmallVector<SampledRangeInfo> sampledRanges;
+  uint64_t snapshotBytes = 0;
+  if (auto attr =
+          module->getAttrOfType<DenseI64ArrayAttr>(kSampledRangesAttr)) {
+    ArrayRef<int64_t> values = attr.asArrayRef();
+    if (values.size() % 2 != 0)
+      return module.emitError("sampled range metadata must contain pairs");
+    for (size_t index = 0; index != values.size(); index += 2) {
+      uint64_t offset = static_cast<uint64_t>(values[index]);
+      uint64_t width = static_cast<uint64_t>(values[index + 1]);
+      if (width == 0 || offset > stateBits || width > stateBits - offset ||
+          (!sampledRanges.empty() &&
+           offset < sampledRanges.back().sourceBitOffset +
+                        sampledRanges.back().bitWidth) ||
+          width > UINT64_MAX - 7 ||
+          snapshotBytes > UINT64_MAX - (width + 7) / 8)
+        return module.emitError("sampled range metadata is invalid");
+      sampledRanges.push_back({offset, snapshotBytes, width});
+      snapshotBytes += (width + 7) / 8;
+    }
+  }
+  if (((flags & OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT) != 0) !=
+      !sampledRanges.empty())
+    return module.emitError(
+        "Preponed snapshot flag and sampled ranges must agree");
+  Type sampledRangeType =
+      LLVM::LLVMStructType::getLiteral(context, {i64, i64, i64});
+  if (!sampledRanges.empty()) {
+    Type sampledRangeArray =
+        LLVM::LLVMArrayType::get(sampledRangeType, sampledRanges.size());
+    makeAggregateGlobal(
+        module, sampledRangeArray, kSampledRangesName, LLVM::Linkage::Internal,
+        ".obelisk.execution", [&](OpBuilder &builder) {
+          Value records =
+              LLVM::ZeroOp::create(builder, module.getLoc(), sampledRangeArray);
+          for (auto [index, range] : llvm::enumerate(sampledRanges)) {
+            Value record = LLVM::ZeroOp::create(builder, module.getLoc(),
+                                                sampledRangeType);
+            record = insertValue(builder, module.getLoc(), record,
+                                 integerConstant(builder, module.getLoc(), i64,
+                                                 range.sourceBitOffset),
+                                 0);
+            record = insertValue(builder, module.getLoc(), record,
+                                 integerConstant(builder, module.getLoc(), i64,
+                                                 range.snapshotByteOffset),
+                                 1);
+            record = insertValue(
+                builder, module.getLoc(), record,
+                integerConstant(builder, module.getLoc(), i64, range.bitWidth),
+                2);
+            records = LLVM::InsertValueOp::create(
+                builder, module.getLoc(), records, record,
+                ArrayRef<int64_t>{static_cast<int64_t>(index)});
+          }
+          return records;
+        });
+  }
+  Type executionExtensionType =
+      LLVM::LLVMStructType::getLiteral(context, {i32, i32, pointer, i64});
+  if (!sampledRanges.empty()) {
+    makeAggregateGlobal(
+        module, executionExtensionType, kExecutionExtensionName,
+        LLVM::Linkage::Internal, ".obelisk.execution", [&](OpBuilder &builder) {
+          Value value = LLVM::ZeroOp::create(builder, module.getLoc(),
+                                             executionExtensionType);
+          value = insertValue(
+              builder, module.getLoc(), value,
+              integerConstant(builder, module.getLoc(), i32,
+                              OBELISK_RT_EXECUTION_EXTENSION_VERSION),
+              0);
+          value = insertValue(
+              builder, module.getLoc(), value,
+              integerConstant(builder, module.getLoc(), i32,
+                              sizeof(obelisk_rt_execution_extension_v1)),
+              1);
+          value = insertValue(
+              builder, module.getLoc(), value,
+              LLVM::AddressOfOp::create(builder, module.getLoc(), pointer,
+                                        kSampledRangesName),
+              2);
+          value = insertValue(builder, module.getLoc(), value,
+                              integerConstant(builder, module.getLoc(), i64,
+                                              sampledRanges.size()),
+                              3);
+          return value;
+        });
+  }
+  auto executionType = LLVM::LLVMStructType::getLiteral(
+      context, {i32, i32, i64, pointer, i64, pointer, i64, i64, i64, pointer,
+                i64, i32, i32, pointer, i64, pointer, i64});
   uint64_t checksum = bytecode ? read64(bytecode.asArrayRef(), 32) : 0;
 
   makeAggregateGlobal(
@@ -609,6 +705,15 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
         value = insertValue(
             builder, module.getLoc(), value,
             integerConstant(builder, module.getLoc(), i32, flags), 1);
+        if (!sampledRanges.empty()) {
+          Value extension = LLVM::AddressOfOp::create(
+              builder, module.getLoc(), pointer, kExecutionExtensionName);
+          value = insertValue(
+              builder, module.getLoc(), value,
+              LLVM::PtrToIntOp::create(builder, module.getLoc(), i64,
+                                       extension),
+              2);
+        }
         if (bytecode)
           value = insertValue(
               builder, module.getLoc(), value,

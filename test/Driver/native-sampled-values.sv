@@ -1,6 +1,6 @@
-// RUN: obelisk --std=1800-2023 -O0 %s -o %t.o0.native
+// RUN: obelisk --std=1800-2023 -O0 --vpi=read %s -o %t.o0.native
 // RUN: %t.o0.native | FileCheck %s
-// RUN: obelisk --std=1800-2023 -O0 --execution-tier=bytecode %s -o %t.o0.bytecode
+// RUN: obelisk --std=1800-2023 -O0 --vpi=read --execution-tier=bytecode %s -o %t.o0.bytecode
 // RUN: %t.o0.bytecode | FileCheck %s
 // RUN: obelisk --std=1800-2023 -O3 %s -o %t.o3.native
 // RUN: %t.o3.native | FileCheck %s
@@ -81,3 +81,6 @@ endmodule
 // SIM: obelisk_sim.assert.sampled_history
 // LLVM-FLAG: @__obelisk_execution_descriptor_v1 = constant
 // LLVM-FLAG-SAME: { i32 1, i32 33,
+// LLVM-FLAG-SAME: i64 ptrtoint (ptr @__obelisk_execution_extension_v1 to i64),
+// LLVM-FLAG: @__obelisk_execution_extension_v1 = internal constant { i32, i32, ptr, i64 } { i32 1, i32 24, ptr @__obelisk_sampled_ranges_v1, i64 1 }
+// LLVM-FLAG: @__obelisk_sampled_ranges_v1 = internal constant [1 x { i64, i64, i64 }] [{ i64, i64, i64 } { i64 1, i64 0, i64 2 }]

@@ -4702,16 +4702,23 @@ TEST(ProcessInstance, RejectsMalformedWaitSemantics) {
 }
 
 TEST(SampledValues, CapturesCanonicalPreponedPlane) {
+  obelisk_rt_sampled_range_v1 sampledRange{3, 0, 10};
+  obelisk_rt_execution_extension_v1 extension{
+      OBELISK_RT_EXECUTION_EXTENSION_VERSION,
+      sizeof(obelisk_rt_execution_extension_v1), &sampledRange, 1};
   obelisk_rt_execution_descriptor_v1 execution{};
   execution.version = OBELISK_RT_VERSION;
   execution.flags = OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT;
-  execution.state_bit_count = 16;
+  execution.state_bit_count = 4096;
+  execution.reserved = reinterpret_cast<uintptr_t>(&extension);
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
             OBELISK_RT_OK);
   context->stateValue[0] = UINT64_C(0x35a7);
   context->stateUnknown[0] = UINT64_C(0x0104);
   ASSERT_EQ(obelisk_rt_capture_preponed_unlocked(context), OBELISK_RT_OK);
+  EXPECT_EQ(context->preponedValue.size(), 1u);
+  EXPECT_EQ(context->preponedUnknown.size(), 1u);
 
   // A later Active-region update must not affect the sampled result.
   context->stateValue[0] = 0;
@@ -4727,6 +4734,34 @@ TEST(SampledValues, CapturesCanonicalPreponedPlane) {
   EXPECT_EQ(unknown[0], UINT8_C(0x20));
   EXPECT_EQ(unknown[1], UINT8_C(0x00));
   obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(SampledValues, ValidatesExecutionExtension) {
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.flags = OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT;
+  execution.state_bit_count = 8;
+  obelisk_rt_context *context = nullptr;
+  EXPECT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_INVALID_DESIGN);
+
+  obelisk_rt_sampled_range_v1 sampledRange{0, 0, 1};
+  obelisk_rt_execution_extension_v1 extension{
+      OBELISK_RT_EXECUTION_EXTENSION_VERSION,
+      sizeof(obelisk_rt_execution_extension_v1), &sampledRange, 1};
+  execution.reserved = reinterpret_cast<uintptr_t>(&extension);
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+  context = nullptr;
+
+  execution.flags = 0;
+  EXPECT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_INVALID_DESIGN);
+  execution.flags = OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT;
+  ++extension.version;
+  EXPECT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_INVALID_DESIGN);
 }
 
 TEST(SampledValues, SkipsSnapshotAllocationWithoutConsumers) {

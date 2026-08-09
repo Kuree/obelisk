@@ -117,7 +117,7 @@ bool decodeImageHeader(const obelisk_rt_design_bytecode_entry_v1 &entry,
                        Image &image) {
   const auto *execution = entry.execution;
   if (!execution || entry.reserved != 0 ||
-      execution->version != OBELISK_RT_VERSION || execution->reserved != 0 ||
+      execution->version != OBELISK_RT_VERSION ||
       (execution->flags & OBELISK_RT_EXECUTION_HAS_BYTECODE) == 0 ||
       !execution->bytecode ||
       execution->bytecode_size < OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE)

@@ -407,6 +407,26 @@ typedef struct obelisk_rt_observer_descriptor_v1 {
   uint64_t reserved;
 } obelisk_rt_observer_descriptor_v1;
 
+// One compiler-coalesced canonical state range retained in the dense
+// Preponed snapshot. Each range begins at a byte boundary in the snapshot;
+// source offsets and widths remain bit-granular.
+typedef struct obelisk_rt_sampled_range_v1 {
+  uint64_t source_bit_offset;
+  uint64_t snapshot_byte_offset;
+  uint64_t bit_width;
+} obelisk_rt_sampled_range_v1;
+
+// Optional data carried by execution_descriptor_v1::reserved when the
+// Preponed snapshot capability is set. The descriptor keeps its original ABI
+// size while allowing sampled-state metadata to evolve independently.
+#define OBELISK_RT_EXECUTION_EXTENSION_VERSION UINT32_C(1)
+typedef struct obelisk_rt_execution_extension_v1 {
+  uint32_t version;
+  uint32_t size;
+  const obelisk_rt_sampled_range_v1 *sampled_ranges;
+  uint64_t sampled_range_count;
+} obelisk_rt_execution_extension_v1;
+
 typedef struct obelisk_rt_execution_descriptor_v1 {
   uint32_t version;
   uint32_t flags;

@@ -81,7 +81,6 @@ using Database = DesignDatabaseCache;
 bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
                  Database &database) {
   if (!execution || execution->version != OBELISK_RT_VERSION ||
-      execution->reserved != 0 ||
       (execution->flags & OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE) == 0 ||
       !execution->design_database ||
       execution->design_database_size < kHeaderSize)
