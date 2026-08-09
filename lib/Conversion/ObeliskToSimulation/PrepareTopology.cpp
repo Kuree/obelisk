@@ -382,6 +382,39 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
   for (Operation *op : designObjects)
     if (!portAliases.aliases.count(getHierarchyName(op)))
       emitDescriptor(op);
+
+  // A static constraint block has one mode bit shared by every instance of
+  // its declaring class (IEEE 1800-2017 18.5.11). Keep that bit in flattened
+  // design storage rather than in any class object. Zero is the required
+  // initial enabled state; the stored value is the disabled bit used by the
+  // executable constraint mask.
+  semanticRoot.walk([&](semantic::SVConstraintBlockSymbolOp constraint) {
+    if (!constraint.getIsStatic().value_or(false))
+      return;
+    uint64_t id = nextStorageId++;
+    constraint->setAttr(staticConstraintStorageAttrName,
+                        builder.getI64IntegerAttr(id));
+    StringRef path = getHierarchyName(constraint);
+    if (path.empty()) {
+      emitError(getSemanticLocation(constraint))
+          << "static constraint block is missing a hierarchy name";
+      invalid = true;
+      return;
+    }
+    std::string hierarchy =
+        (llvm::Twine(path) + ".__obelisk_constraint_mode").str();
+    Type type = builder.getI64Type();
+    uint64_t scopeId = scopes.lookup(constraint);
+    descriptors[hierarchy] = {DescriptorInfo::Kind::Storage, id, scopeId, type,
+                              sim::NetResolutionKind::Wire};
+    descriptors[hierarchy].rootType = type;
+    sim::SimStorageDeclOp::create(
+        builder, getSemanticLocation(constraint), id, scopeId, type,
+        sim::Lifetime::Design, builder.getStringAttr(hierarchy),
+        builder.getStringAttr("__obelisk_constraint_mode"),
+        sim::ComputeObservabilityKindAttr{});
+  });
+
   for (Operation *op : designObjects) {
     StringRef path = getHierarchyName(op);
     auto alias = portAliases.aliases.find(path);

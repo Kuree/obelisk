@@ -227,6 +227,58 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       emitError(location) << "constraint_mode receiver is not a class object";
       return failure();
     }
+    Type i64 = builder.getI64Type();
+    auto staticModeReference = [&](uint64_t storage) -> Value {
+      Type referenceType = sim::RefType::get(function.getContext(), i64);
+      Value context = function.getBody().front().getArgument(0);
+      return sim::SimContextStorageOp::create(
+          builder, location, referenceType, context,
+          builder.getI64IntegerAttr(storage));
+    };
+    auto staticStorageAttr =
+        op->getAttrOfType<IntegerAttr>(constraintModeStaticStorageAttrName);
+    if (staticStorageAttr) {
+      APInt storage = staticStorageAttr.getValue();
+      APInt blockIndex =
+          blockIndexAttr ? blockIndexAttr.getValue() : APInt(1, 0);
+      if (!blockIndexAttr || blockIndex.isNegative() ||
+          blockIndex.getActiveBits() > 64 ||
+          blockIndex.getZExtValue() >= 64 || storage.isNegative() ||
+          storage.getActiveBits() > 63) {
+        emitError(location)
+            << "static constraint_mode storage metadata is malformed";
+        return failure();
+      }
+      Value reference = staticModeReference(storage.getZExtValue());
+      if (children.size() == 2) {
+        FailureOr<Value> argument = lowerExpression(children.back());
+        FailureOr<Value> enabled = succeeded(argument)
+                                       ? truthValue(*argument, location)
+                                       : FailureOr<Value>(failure());
+        if (failed(enabled))
+          return failure();
+        Value mode = arith::SelectOp::create(
+            builder, location, *enabled,
+            arith::ConstantOp::create(builder, location, i64,
+                                      builder.getI64IntegerAttr(0)),
+            arith::ConstantOp::create(builder, location, i64,
+                                      builder.getI64IntegerAttr(1)));
+        sim::SimRefStoreOp::create(builder, location, mode, reference);
+        return arith::ConstantOp::create(builder, location,
+                                         builder.getI1Type(),
+                                         builder.getBoolAttr(false))
+            .getResult();
+      }
+      Value mode = sim::SimRefLoadOp::create(builder, location, i64, reference);
+      Value enabled = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq, mode,
+          arith::ConstantOp::create(builder, location, i64,
+                                    builder.getI64IntegerAttr(0)));
+      FailureOr<Type> resultType = getNormalizedSemanticType(op);
+      if (failed(resultType))
+        return failure();
+      return convert(enabled, *resultType, false, location);
+    }
     sim::SimClassDeclOp declaration =
         SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
             function, objectType.getClassName());
@@ -245,7 +297,6 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       emitError(location) << "constraint_mode receiver has no mode state";
       return failure();
     }
-    Type i64 = builder.getI64Type();
     Type referenceType = sim::ManagedRefType::get(function.getContext(), i64,
                                                   objectType.getClassName());
     Value reference = sim::SimClassFieldRefOp::create(
@@ -294,6 +345,25 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                                        disabled);
       }
       sim::SimManagedStoreOp::create(builder, location, mode, reference);
+      if (auto staticStorages = op->getAttrOfType<DenseI64ArrayAttr>(
+              constraintModeStaticStoragesAttrName)) {
+        Value staticMode = arith::SelectOp::create(
+            builder, location, *enabled, zero,
+            arith::ConstantOp::create(builder, location, i64,
+                                      builder.getI64IntegerAttr(1)));
+        for (int64_t storage : staticStorages.asArrayRef()) {
+          if (storage == -1)
+            continue;
+          if (storage < -1) {
+            emitError(location)
+                << "static constraint_mode storage metadata is malformed";
+            return failure();
+          }
+          sim::SimRefStoreOp::create(
+              builder, location, staticMode,
+              staticModeReference(static_cast<uint64_t>(storage)));
+        }
+      }
       return arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                        builder.getBoolAttr(false))
           .getResult();
@@ -1295,6 +1365,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       op->getAttrOfType<IntegerAttr>(randomReceiverIndexAttrName);
   auto constraintCountAttr =
       op->getAttrOfType<IntegerAttr>(randomConstraintCountAttrName);
+  auto staticConstraintStorages = op->getAttrOfType<DenseI64ArrayAttr>(
+      constraintModeStaticStoragesAttrName);
   if (children.empty() || !properties || !totalWidthAttr ||
       !receiverIndexAttr || !constraintCountAttr) {
     emitError(location) << "randomize call has no frozen constraint plan";
@@ -1317,7 +1389,13 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   uint64_t totalWidth = totalWidthValue.getZExtValue();
   uint64_t constraintCount = constraintCountValue.getZExtValue();
   bool checkerOnly = op->hasAttr(randomizeCheckerOnlyAttrName);
-  if (totalWidth > UINT32_MAX || constraintCount > 64) {
+  if (totalWidth > UINT32_MAX || constraintCount > 64 ||
+      (staticConstraintStorages &&
+       static_cast<uint64_t>(staticConstraintStorages.size()) !=
+           constraintCount) ||
+      (staticConstraintStorages &&
+       llvm::any_of(staticConstraintStorages.asArrayRef(),
+                    [](int64_t storage) { return storage < -1; }))) {
     emitError(location)
         << "randomize plan exceeds its bit-offset or constraint-mode boundary";
     return failure();
@@ -1654,6 +1732,30 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         builder, location, type,
         builder.getIntegerAttr(type, APInt(type.getWidth(), value)));
   };
+  if (staticConstraintStorages) {
+    Value context = function.getBody().front().getArgument(0);
+    Type referenceType = sim::RefType::get(function.getContext(), i64);
+    for (auto [index, storage] :
+         llvm::enumerate(staticConstraintStorages.asArrayRef())) {
+      if (storage < 0)
+        continue;
+      uint64_t bit = uint64_t{1} << index;
+      constraintMode = arith::AndIOp::create(
+          builder, location, constraintMode, constant64(~bit));
+      Value reference = sim::SimContextStorageOp::create(
+          builder, location, referenceType, context,
+          builder.getI64IntegerAttr(storage));
+      Value staticMode =
+          sim::SimRefLoadOp::create(builder, location, i64, reference);
+      Value disabled = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne, staticMode,
+          constant64(0));
+      Value selected = arith::SelectOp::create(builder, location, disabled,
+                                                constant64(bit), constant64(0));
+      constraintMode =
+          arith::OrIOp::create(builder, location, constraintMode, selected);
+    }
+  }
   unsigned assignmentWidth = std::max<uint64_t>(64, totalWidth);
   auto assignmentType = IntegerType::get(function.getContext(), assignmentWidth);
   auto constantAssignment = [&](const APInt &value) -> Value {

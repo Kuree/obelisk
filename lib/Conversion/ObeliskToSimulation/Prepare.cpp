@@ -869,6 +869,31 @@ void ObeliskSimPreparePass::runOnOperation() {
           }
         }
       };
+  auto collectStaticConstraintStorages =
+      [&](ArrayRef<EffectiveConstraintGroup> groups,
+          Location location) -> FailureOr<SmallVector<int64_t>> {
+    SmallVector<int64_t> storages;
+    storages.reserve(groups.size());
+    for (const EffectiveConstraintGroup &group : groups) {
+      semantic::SVConstraintBlockSymbolOp constraint =
+          group.empty() ? semantic::SVConstraintBlockSymbolOp{} : group.back();
+      if (!constraint || !constraint.getIsStatic().value_or(false)) {
+        storages.push_back(-1);
+        continue;
+      }
+      auto storage = constraint->getAttrOfType<IntegerAttr>(
+          staticConstraintStorageAttrName);
+      if (!storage || storage.getValue().isNegative() ||
+          storage.getValue().getActiveBits() > 63) {
+        emitError(location)
+            << "static constraint block has no valid shared mode storage";
+        return failure();
+      }
+      storages.push_back(
+          static_cast<int64_t>(storage.getValue().getZExtValue()));
+    }
+    return storages;
+  };
 
   struct RandomDomainPattern {
     uint64_t mask;
@@ -1477,6 +1502,13 @@ void ObeliskSimPreparePass::runOnOperation() {
       emitError(getSemanticLocation(call))
           << "the executable constraint_mode boundary is 64 effective "
              "constraint blocks";
+      invalid = true;
+      return true;
+    }
+    FailureOr<SmallVector<int64_t>> staticConstraintStorages =
+        collectStaticConstraintStorages(constraintGroups,
+                                        getSemanticLocation(call));
+    if (failed(staticConstraintStorages)) {
       invalid = true;
       return true;
     }
@@ -2331,6 +2363,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                   builder.getI64IntegerAttr(totalWidth));
     call->setAttr(randomConstraintCountAttrName,
                   builder.getI32IntegerAttr(constraintGroups.size()));
+    call->setAttr(constraintModeStaticStoragesAttrName,
+                  builder.getDenseI64ArrayAttr(*staticConstraintStorages));
 
     auto annotateConstraint = [&](Operation *constraint) {
       constraint->walk([&](Operation *nested) {
@@ -2498,7 +2532,29 @@ void ObeliskSimPreparePass::runOnOperation() {
           target.getName().value_or("") != "constraint_mode" ||
           !getOwningClass(target))
         return false;
+      semantic::SVClassTypeOp owner = getOwningClass(target);
+      SmallVector<semantic::SVClassTypeOp> hierarchy;
+      if (failed(collectClassHierarchy(owner, hierarchy, "constraint_mode"))) {
+        invalid = true;
+        return true;
+      }
+      SmallVector<EffectiveConstraintGroup> groups;
+      collectEffectiveConstraints(hierarchy, groups);
+      if (groups.size() > 64) {
+        emitError(getSemanticLocation(call))
+            << "constraint_mode exceeds the 64-block executable boundary";
+        invalid = true;
+        return true;
+      }
+      FailureOr<SmallVector<int64_t>> staticStorages =
+          collectStaticConstraintStorages(groups, getSemanticLocation(call));
+      if (failed(staticStorages)) {
+        invalid = true;
+        return true;
+      }
       call->setAttr(constraintModeAttrName, builder.getUnitAttr());
+      call->setAttr(constraintModeStaticStoragesAttrName,
+                    builder.getDenseI64ArrayAttr(*staticStorages));
       return true;
     }
 
@@ -2554,6 +2610,16 @@ void ObeliskSimPreparePass::runOnOperation() {
     call->setAttr(constraintModeAttrName, builder.getUnitAttr());
     call->setAttr(constraintModeBlockAttrName,
                   builder.getI32IntegerAttr(*constraintIndex));
+    FailureOr<SmallVector<int64_t>> staticStorages =
+        collectStaticConstraintStorages(groups, getSemanticLocation(call));
+    if (failed(staticStorages)) {
+      invalid = true;
+      return true;
+    }
+    if ((*staticStorages)[*constraintIndex] >= 0)
+      call->setAttr(constraintModeStaticStorageAttrName,
+                    builder.getI64IntegerAttr(
+                        (*staticStorages)[*constraintIndex]));
     return true;
   };
 

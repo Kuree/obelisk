@@ -170,6 +170,12 @@ inline constexpr ::mlir::StringLiteral constraintModeAttrName =
     "obelisk_sim.constraint_mode";
 inline constexpr ::mlir::StringLiteral constraintModeBlockAttrName =
     "obelisk_sim.constraint_mode_block";
+inline constexpr ::mlir::StringLiteral constraintModeStaticStorageAttrName =
+    "obelisk_sim.constraint_mode_static_storage";
+inline constexpr ::mlir::StringLiteral constraintModeStaticStoragesAttrName =
+    "obelisk_sim.constraint_mode_static_storages";
+inline constexpr ::mlir::StringLiteral staticConstraintStorageAttrName =
+    "obelisk_sim.static_constraint_storage";
 inline constexpr ::mlir::StringLiteral randomConstraintBlockAttrName =
     "obelisk_sim.random_constraint_block";
 inline constexpr ::mlir::StringLiteral randomConstraintCountAttrName =
