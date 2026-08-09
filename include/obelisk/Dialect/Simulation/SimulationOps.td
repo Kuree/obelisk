@@ -1277,8 +1277,9 @@ def SimStopOp : SimOp<"stop", [
   let summary = "request batch-mode simulation suspension";
   let description = [{
     Obelisk has no interactive debugger session, so executable batch targets
-    treat this request as an orderly successful finish after preserving the
-    distinct operation in Simulation IR.
+    treat this request as orderly successful termination. The distinct
+    operation is preserved through the runtime ABI and bytecode intrinsic so
+    interactive hosts can give it different policy in the future.
   }];
   let arguments = (ins SimContextType:$context, I32:$verbosity);
   let assemblyFormat = "$context `,` $verbosity attr-dict";

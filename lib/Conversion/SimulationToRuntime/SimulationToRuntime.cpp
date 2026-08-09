@@ -564,7 +564,7 @@ void populateSimulationToRuntimePatterns(const TypeConverter &converter,
                EofConversion, SeekConversion, TellConversion>(converter,
                                                                context);
   patterns.add<TerminationConversion<sim::SimFinishOp, runtime::RTFinishOp>,
-               TerminationConversion<sim::SimStopOp, runtime::RTFinishOp>,
+               TerminationConversion<sim::SimStopOp, runtime::RTStopOp>,
                TerminationConversion<sim::SimFatalOp, runtime::RTFatalOp>>(
       converter, context);
   patterns.add<TerminationRequestedConversion, SchedulerTimeConversion>(

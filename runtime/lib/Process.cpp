@@ -4604,6 +4604,14 @@ obelisk_rt_v1_scheduler_finish(obelisk_rt_context *context,
 }
 
 extern "C" obelisk_rt_status
+obelisk_rt_v1_scheduler_stop(obelisk_rt_context *context, uint32_t verbosity) {
+  // Standalone executables have no interactive command loop in which a
+  // stopped design can remain suspended. Keep the request distinct at the ABI
+  // boundary, but use the documented batch-mode termination policy.
+  return obelisk_rt_v1_scheduler_finish(context, verbosity);
+}
+
+extern "C" obelisk_rt_status
 obelisk_rt_v1_scheduler_fatal(obelisk_rt_context *context, uint32_t verbosity) {
   if (!context)
     return OBELISK_RT_INVALID_ARGUMENT;

@@ -2172,15 +2172,19 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                                  &environment);
   }
   case OBELISK_RT_INTRINSIC_V1_FINISH:
+  case OBELISK_RT_INTRINSIC_V1_STOP:
   case OBELISK_RT_INTRINSIC_V1_FATAL: {
     auto verbosity = scalar(0);
     if (!verbosity || *verbosity > UINT32_MAX)
       return OBELISK_RT_INVALID_BYTECODE;
-    return signature.id == OBELISK_RT_INTRINSIC_V1_FINISH
-               ? obelisk_rt_v1_scheduler_finish(
-                     context, static_cast<uint32_t>(*verbosity))
-               : obelisk_rt_v1_scheduler_fatal(
-                     context, static_cast<uint32_t>(*verbosity));
+    if (signature.id == OBELISK_RT_INTRINSIC_V1_FINISH)
+      return obelisk_rt_v1_scheduler_finish(
+          context, static_cast<uint32_t>(*verbosity));
+    if (signature.id == OBELISK_RT_INTRINSIC_V1_STOP)
+      return obelisk_rt_v1_scheduler_stop(
+          context, static_cast<uint32_t>(*verbosity));
+    return obelisk_rt_v1_scheduler_fatal(
+        context, static_cast<uint32_t>(*verbosity));
   }
   case OBELISK_RT_INTRINSIC_V1_TERMINATION_REQUESTED:
     return sentinel(0, obelisk_rt_v1_scheduler_termination_requested(context));

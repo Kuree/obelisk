@@ -142,7 +142,7 @@ module {
 // CHECK: arith.select %[[REWIND_OK]], %[[REWIND_SUCCESS]], %[[REWIND_FAILURE]] : i32
 // CHECK: %[[FINISH_STATUS:.*]] = obelisk_rt.finish
 // CHECK-NEXT: obelisk_sim.status.check %[[FINISH_STATUS]]
-// CHECK: %[[STOP_STATUS:.*]] = obelisk_rt.finish
+// CHECK: %[[STOP_STATUS:.*]] = obelisk_rt.stop
 // CHECK-NEXT: obelisk_sim.status.check %[[STOP_STATUS]]
 // CHECK: %[[FATAL_STATUS:.*]] = obelisk_rt.fatal
 // CHECK-NEXT: obelisk_sim.status.check %[[FATAL_STATUS]]

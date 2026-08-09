@@ -700,6 +700,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_MONITOR_CONTROL = UINT32_C(0x00010216),
   OBELISK_RT_INTRINSIC_V1_MONITOR_CURRENT = UINT32_C(0x00010217),
   OBELISK_RT_INTRINSIC_V1_DEFERRED_ONCE = UINT32_C(0x00010218),
+  OBELISK_RT_INTRINSIC_V1_STOP = UINT32_C(0x0001021a),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC = UINT32_C(0x00010400),
@@ -2451,6 +2452,12 @@ void obelisk_rt_v1_scheduler_notify(obelisk_rt_context *context);
 // implementation-defined and this runtime currently emits none.
 obelisk_rt_status obelisk_rt_v1_scheduler_finish(obelisk_rt_context *context,
                                                  uint32_t verbosity);
+// Batch-mode implementation of SystemVerilog's interactive suspension task.
+// With no debugger to resume the design, this requests the same orderly,
+// successful final-process phase as finish while retaining the distinct ABI
+// entry point and bytecode intrinsic.
+obelisk_rt_status obelisk_rt_v1_scheduler_stop(obelisk_rt_context *context,
+                                               uint32_t verbosity);
 obelisk_rt_status obelisk_rt_v1_scheduler_fatal(obelisk_rt_context *context,
                                                 uint32_t verbosity);
 uint32_t

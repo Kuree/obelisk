@@ -11,6 +11,8 @@ OBELISK_RUNTIME_CALL(LastError, RTLastErrorOp, obelisk_rt_v1_last_error,
                      LastError)
 OBELISK_RUNTIME_CALL(Finish, RTFinishOp, obelisk_rt_v1_scheduler_finish,
                      Finish)
+OBELISK_RUNTIME_CALL(Stop, RTStopOp, obelisk_rt_v1_scheduler_stop,
+                     Finish)
 OBELISK_RUNTIME_CALL(Fatal, RTFatalOp, obelisk_rt_v1_scheduler_fatal,
                      Finish)
 OBELISK_RUNTIME_CALL(TerminationRequested, RTTerminationRequestedOp,

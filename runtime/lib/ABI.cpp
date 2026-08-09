@@ -759,6 +759,8 @@ ABI_FUNCTION(obelisk_rt_v1_monitor_control,
 ABI_FUNCTION(obelisk_rt_v1_monitor_current, uint32_t (*)(obelisk_rt_context *));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_finish,
              obelisk_rt_status (*)(obelisk_rt_context *, uint32_t));
+ABI_FUNCTION(obelisk_rt_v1_scheduler_stop,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint32_t));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_fatal,
              obelisk_rt_status (*)(obelisk_rt_context *, uint32_t));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_termination_requested,

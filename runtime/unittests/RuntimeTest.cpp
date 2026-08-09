@@ -893,8 +893,10 @@ TEST(RuntimeABI, ReportsEveryStatusAndReleasesBuffersIdempotently) {
   EXPECT_EQ(buffer.size, 0u);
 }
 
-TEST(RuntimeABI, FinishAndFatalHaveDistinctSchedulerResults) {
+TEST(RuntimeABI, FinishStopAndFatalHaveDistinctEntryPoints) {
   EXPECT_EQ(obelisk_rt_v1_scheduler_finish(nullptr, 0),
+            OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_stop(nullptr, 0),
             OBELISK_RT_INVALID_ARGUMENT);
   EXPECT_EQ(obelisk_rt_v1_scheduler_fatal(nullptr, 0),
             OBELISK_RT_INVALID_ARGUMENT);
@@ -907,6 +909,15 @@ TEST(RuntimeABI, FinishAndFatalHaveDistinctSchedulerResults) {
   EXPECT_EQ(obelisk_rt_v1_scheduler_termination_requested(context), 0u);
   EXPECT_EQ(obelisk_rt_v1_scheduler_time(context), 0u);
   EXPECT_EQ(obelisk_rt_v1_scheduler_finish(context, 2), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_termination_requested(context), 1u);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+
+  context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  ASSERT_NE(context, nullptr);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_termination_requested(context), 0u);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_stop(context, 1), OBELISK_RT_OK);
   EXPECT_EQ(obelisk_rt_v1_scheduler_termination_requested(context), 1u);
   EXPECT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
   obelisk_rt_v1_context_destroy(context);

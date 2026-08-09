@@ -17,6 +17,7 @@ constexpr uint32_t kInvalidRegister = UINT32_MAX;
 
 constexpr uint32_t kIntrinsicDisplay = OBELISK_RT_INTRINSIC_V1_DISPLAY;
 constexpr uint32_t kIntrinsicFinish = OBELISK_RT_INTRINSIC_V1_FINISH;
+constexpr uint32_t kIntrinsicStop = OBELISK_RT_INTRINSIC_V1_STOP;
 constexpr uint32_t kIntrinsicFatal = OBELISK_RT_INTRINSIC_V1_FATAL;
 constexpr uint32_t kIntrinsicTerminationRequested =
     OBELISK_RT_INTRINSIC_V1_TERMINATION_REQUESTED;

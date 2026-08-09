@@ -169,6 +169,13 @@ def RTFinishOp : RTOp<"finish", [
   let results = (outs RTStatusType:$status);
 }
 
+def RTStopOp : RTOp<"stop", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>]>
+]> {
+  let arguments = (ins RTContextType:$context, I32:$verbosity);
+  let results = (outs RTStatusType:$status);
+}
+
 def RTFatalOp : RTOp<"fatal", [
   MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>]>
 ]> {

@@ -737,6 +737,7 @@ public:
                                   abi.alignments.span);
     }
     case runtime::RuntimeCall::Finish:
+    case runtime::RuntimeCall::Stop:
     case runtime::RuntimeCall::Fatal:
       return replaceStatus(operands);
     case runtime::RuntimeCall::TerminationRequested: {
