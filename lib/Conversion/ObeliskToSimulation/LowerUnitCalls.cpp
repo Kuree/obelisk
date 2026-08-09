@@ -2050,20 +2050,32 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     });
   }
 
-  SmallVector<SmallVector<unsigned>> solveBeforeLayers;
   struct SolveBeforeEdge {
-    unsigned before;
-    unsigned after;
+    uint64_t beforeMask;
+    uint64_t afterMask;
     uint32_t constraintBlock;
 
     bool operator==(const SolveBeforeEdge &other) const {
-      return before == other.before && after == other.after &&
+      return beforeMask == other.beforeMask &&
+             afterMask == other.afterMask &&
              constraintBlock == other.constraintBlock;
     }
   };
+  SmallVector<uint64_t> propertyMasks;
+  uint64_t solvePropertyOffset = 0;
+  for (const Property &property : planned) {
+    uint64_t valueMask = property.width == 64
+                             ? UINT64_MAX
+                             : (uint64_t{1} << property.width) - 1;
+    propertyMasks.push_back(valueMask << solvePropertyOffset);
+    solvePropertyOffset += property.width;
+  }
   SmallVector<SolveBeforeEdge> solveBeforeEdges;
+  SmallVector<uint64_t> solveBeforeLayerMasks;
+  uint64_t randomAssignmentMask =
+      totalWidth == 64 ? UINT64_MAX : (uint64_t{1} << totalWidth) - 1;
   bool hasSolveBefore = false;
-  auto randomPropertyIndex = [&](Operation *expression) -> FailureOr<unsigned> {
+  auto randomPropertyMask = [&](Operation *expression) -> FailureOr<uint64_t> {
     auto indexAttr =
         expression->getAttrOfType<IntegerAttr>(randomVariableAttrName);
     if (!indexAttr || indexAttr.getValue().isNegative() ||
@@ -2073,7 +2085,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           << "solve before currently requires direct rand properties";
       return failure();
     }
-    return static_cast<unsigned>(indexAttr.getValue().getZExtValue());
+    return propertyMasks[indexAttr.getValue().getZExtValue()];
   };
   for (auto [index, root] : llvm::enumerate(children)) {
     if (index == receiverIndex)
@@ -2089,6 +2101,31 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         return failure();
       }
       solveConstraintBlock = static_cast<uint32_t>(value.getZExtValue());
+    }
+    if (auto order =
+            root->getAttrOfType<DenseI64ArrayAttr>(randomFunctionOrderAttrName)) {
+      ArrayRef<int64_t> pairs = order.asArrayRef();
+      if (pairs.size() % 2 != 0) {
+        emitError(getSemanticLocation(root))
+            << "constraint function ordering metadata is malformed";
+        return failure();
+      }
+      for (size_t pair = 0; pair != pairs.size(); pair += 2) {
+        uint64_t beforeMask = static_cast<uint64_t>(pairs[pair]);
+        uint64_t afterMask = static_cast<uint64_t>(pairs[pair + 1]);
+        if (beforeMask == 0 || afterMask == 0 ||
+            (beforeMask & ~randomAssignmentMask) != 0 ||
+            (afterMask & ~randomAssignmentMask) != 0 ||
+            (beforeMask & afterMask) != 0) {
+          emitError(getSemanticLocation(root))
+              << "constraint function ordering metadata is out of range";
+          return failure();
+        }
+        hasSolveBefore = true;
+        SolveBeforeEdge edge{beforeMask, afterMask, solveConstraintBlock};
+        if (!llvm::is_contained(solveBeforeEdges, edge))
+          solveBeforeEdges.push_back(edge);
+      }
     }
     WalkResult result =
         root->walk([&](semantic::SVSolveBeforeConstraintOp solve) {
@@ -2116,17 +2153,17 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                 << "solve before has inconsistent operand counts";
             return WalkResult::interrupt();
           }
-          SmallVector<unsigned> before;
-          SmallVector<unsigned> after;
+          SmallVector<uint64_t> before;
+          SmallVector<uint64_t> after;
           for (auto [operandIndex, operand] : llvm::enumerate(operands)) {
-            FailureOr<unsigned> property = randomPropertyIndex(operand);
+            FailureOr<uint64_t> property = randomPropertyMask(operand);
             if (failed(property))
               return WalkResult::interrupt();
             (operandIndex < solveCount ? before : after).push_back(*property);
           }
-          for (unsigned lhs : before)
-            for (unsigned rhs : after) {
-              if (lhs == rhs) {
+          for (uint64_t lhs : before)
+            for (uint64_t rhs : after) {
+              if ((lhs & rhs) != 0) {
                 emitError(getSemanticLocation(solve))
                     << "solve before cannot order a property before itself";
                 return WalkResult::interrupt();
@@ -2141,33 +2178,47 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       return failure();
   }
   if (hasSolveBefore) {
-    SmallVector<bool> involved(planned.size(), false);
-    SmallVector<bool> emitted(planned.size(), false);
-    for (const SolveBeforeEdge &edge : solveBeforeEdges) {
-      involved[edge.before] = true;
-      involved[edge.after] = true;
-    }
-    size_t remaining = llvm::count(involved, true);
-    while (remaining != 0) {
-      SmallVector<unsigned> layer;
-      for (unsigned property = 0; property != planned.size(); ++property) {
-        if (!involved[property] || emitted[property])
+    // Slang's ValuePath graph treats overlapping paths as the same node. Keep
+    // each transitive overlap class together so, for example, an edge to one
+    // field of a packed slice cannot cause the other bits of that slice to be
+    // sampled in an earlier layer.
+    SmallVector<uint64_t> nodes;
+    auto addNode = [&](uint64_t node) {
+      for (size_t index = 0; index != nodes.size();) {
+        if ((nodes[index] & node) == 0) {
+          ++index;
           continue;
+        }
+        node |= nodes[index];
+        nodes.erase(nodes.begin() + index);
+      }
+      nodes.push_back(node);
+    };
+    for (const SolveBeforeEdge &edge : solveBeforeEdges) {
+      addNode(edge.beforeMask);
+      addNode(edge.afterMask);
+    }
+    while (!nodes.empty()) {
+      uint64_t layer = 0;
+      uint64_t remaining = 0;
+      for (uint64_t node : nodes)
+        remaining |= node;
+      for (uint64_t node : nodes) {
         bool hasPredecessor =
             llvm::any_of(solveBeforeEdges, [&](const auto &edge) {
-              return edge.after == property && !emitted[edge.before];
+              return (edge.afterMask & node) != 0 &&
+                     (edge.beforeMask & remaining) != 0;
             });
         if (!hasPredecessor)
-          layer.push_back(property);
+          layer |= node;
       }
-      if (layer.empty()) {
+      if (layer == 0) {
         emitError(location) << "solve before ordering contains a cycle";
         return failure();
       }
-      for (unsigned property : layer)
-        emitted[property] = true;
-      remaining -= layer.size();
-      solveBeforeLayers.push_back(std::move(layer));
+      solveBeforeLayerMasks.push_back(layer);
+      llvm::erase_if(nodes,
+                     [&](uint64_t node) { return (node & layer) != 0; });
     }
   }
 
@@ -2726,6 +2777,21 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     FailureOr<unsigned> width = expressionWidth(expression);
     if (failed(width))
       return failure();
+    if (auto bitOffset = expression->getAttrOfType<IntegerAttr>(
+            randomVariableBitOffsetAttrName)) {
+      const APInt &offsetValue = bitOffset.getValue();
+      if (offsetValue.isNegative() || offsetValue.getActiveBits() > 64 ||
+          offsetValue.getZExtValue() >= totalWidth ||
+          *width > totalWidth - offsetValue.getZExtValue()) {
+        emitError(getSemanticLocation(expression))
+            << "random constraint value-path binding is invalid";
+        return failure();
+      }
+      instruction(OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, *width,
+                  isSignedNode(expression),
+                  static_cast<uint32_t>(offsetValue.getZExtValue()));
+      return success();
+    }
     if (auto variable =
             expression->getAttrOfType<IntegerAttr>(randomVariableAttrName)) {
       APInt indexValue = variable.getValue();
@@ -3234,18 +3300,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   }
   if (hasSolveBefore) {
     append32(static_cast<uint32_t>(solveBeforeEdges.size()));
-    SmallVector<uint64_t> propertyMasks;
-    uint64_t offset = 0;
-    for (const Property &property : planned) {
-      uint64_t valueMask = property.width == 64
-                               ? UINT64_MAX
-                               : (uint64_t{1} << property.width) - 1;
-      propertyMasks.push_back(valueMask << offset);
-      offset += property.width;
-    }
     for (const SolveBeforeEdge &edge : solveBeforeEdges) {
-      append64(propertyMasks[edge.before]);
-      append64(propertyMasks[edge.after]);
+      append64(edge.beforeMask);
+      append64(edge.afterMask);
       append32(edge.constraintBlock);
       append32(0);
     }
@@ -3352,22 +3409,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   };
   SmallVector<SolveBeforeTableNode> solveBeforeTableNodes;
   std::optional<unsigned> solveBeforeTableRoot;
-  SmallVector<uint64_t> solveBeforeLayerMasks;
   std::function<unsigned(ArrayRef<uint64_t>, unsigned)> buildSolveBeforeTable;
   if (hasSolveBefore) {
-    for (ArrayRef<unsigned> layer : solveBeforeLayers) {
-      uint64_t mask = 0;
-      uint64_t offset = 0;
-      for (auto [propertyIndex, property] : llvm::enumerate(planned)) {
-        uint64_t valueMask = property.width == 64
-                                 ? UINT64_MAX
-                                 : (uint64_t{1} << property.width) - 1;
-        if (llvm::is_contained(layer, propertyIndex))
-          mask |= valueMask << offset;
-        offset += property.width;
-      }
-      solveBeforeLayerMasks.push_back(mask);
-    }
     buildSolveBeforeTable = [&](ArrayRef<uint64_t> rows,
                                 unsigned layer) -> unsigned {
       unsigned node = solveBeforeTableNodes.size();
@@ -3635,17 +3678,14 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   }
   if (hasSolveBefore && !proposalAliases.empty()) {
     auto solveLayerForField = [&](uint32_t fieldOffset, unsigned fieldWidth) {
-      uint32_t offset = 0;
-      for (auto [propertyIndex, property] : llvm::enumerate(planned)) {
-        if (offset == fieldOffset && property.width == fieldWidth) {
-          for (auto [layerIndex, layer] : llvm::enumerate(solveBeforeLayers))
-            if (llvm::is_contained(layer, propertyIndex))
-              return static_cast<unsigned>(layerIndex);
-          break;
-        }
-        offset += property.width;
-      }
-      return static_cast<unsigned>(solveBeforeLayers.size());
+      uint64_t valueMask =
+          fieldWidth == 64 ? UINT64_MAX : (uint64_t{1} << fieldWidth) - 1;
+      uint64_t fieldMask = valueMask << fieldOffset;
+      for (auto [layerIndex, layerMask] :
+           llvm::enumerate(solveBeforeLayerMasks))
+        if ((fieldMask & layerMask) == fieldMask)
+          return static_cast<unsigned>(layerIndex);
+      return static_cast<unsigned>(solveBeforeLayerMasks.size());
     };
     SmallVector<ProposalAlias> orientedAliases;
     SmallVector<bool> consumed(proposalAliases.size(), false);
@@ -4488,9 +4528,26 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     }
 
     SmallVector<std::optional<unsigned>> propertyLayers(planned.size());
-    for (auto [layerIndex, layer] : llvm::enumerate(solveBeforeLayers))
-      for (unsigned property : layer)
-        propertyLayers[property] = layerIndex;
+    for (auto [property, propertyMask] : llvm::enumerate(propertyMasks)) {
+      std::optional<unsigned> selectedLayer;
+      uint64_t orderedBits = 0;
+      for (auto [layerIndex, layerMask] :
+           llvm::enumerate(solveBeforeLayerMasks)) {
+        uint64_t bits = propertyMask & layerMask;
+        if (bits == 0)
+          continue;
+        orderedBits |= bits;
+        if (selectedLayer && *selectedLayer != layerIndex)
+          return false;
+        selectedLayer = layerIndex;
+      }
+      // Generated structural definitions and aliases operate on whole
+      // properties. A path-level order that covers only part of a property
+      // must stay in the bit-mask-aware table or residual runtime paths.
+      if (orderedBits != 0 && orderedBits != propertyMask)
+        return false;
+      propertyLayers[property] = selectedLayer;
+    }
     for (unsigned target = 0; target != planned.size(); ++target) {
       if (!propertyLayers[target])
         continue;
@@ -4515,17 +4572,11 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     uint64_t uncoveredOrderedMask =
         orderedPropertyMask & ~proposalAssignmentTableMask;
     if (uncoveredOrderedMask != 0) {
-      bool unresolvedComponentCrossesLayers = llvm::any_of(
-          analysis.constraintComponentMasks, [&](uint64_t componentMask) {
-            if ((componentMask & ~proposalAssignmentTableMask) == 0)
-              return false;
-            return llvm::count_if(solveBeforeLayerMasks,
-                                  [&](uint64_t layerMask) {
-                                    return (componentMask & layerMask) != 0;
-                                  }) > 1;
-          });
-      bool validStructuralOrder = !unresolvedComponentCrossesLayers ||
-                                  structuralProposalFollowsSolveOrder();
+      // This also rejects a path-level order that covers only part of a
+      // property. Whole-property aliases and definitions cannot preserve that
+      // distribution even when component partitioning happens not to expose a
+      // cross-layer component.
+      bool validStructuralOrder = structuralProposalFollowsSolveOrder();
       if (!exactProposal || !analysis.hasConstraintComponentPartition ||
           !validStructuralOrder)
         solveBeforeRequiresRuntime = true;

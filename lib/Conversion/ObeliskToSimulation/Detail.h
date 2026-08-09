@@ -178,6 +178,12 @@ inline constexpr ::mlir::StringLiteral randomTotalWidthAttrName =
     "obelisk_sim.random_total_width";
 inline constexpr ::mlir::StringLiteral randomVariableAttrName =
     "obelisk_sim.random_variable";
+inline constexpr ::mlir::StringLiteral randomVariableBitOffsetAttrName =
+    "obelisk_sim.random_variable_bit_offset";
+inline constexpr ::mlir::StringLiteral randomFunctionStateAttrName =
+    "obelisk_sim.random_function_state";
+inline constexpr ::mlir::StringLiteral randomFunctionOrderAttrName =
+    "obelisk_sim.random_function_order";
 
 /// Result representation frozen by prepare for computed timing observers.
 /// Keep this strongly typed at both ends of the private pass boundary so a

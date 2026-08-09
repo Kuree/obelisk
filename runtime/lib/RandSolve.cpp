@@ -133,6 +133,17 @@ bool buildSolveBeforeLayers(const std::vector<SolveBeforeEdge> &edges,
                             uint64_t mutableMask, uint64_t constraintMask,
                             std::vector<uint64_t> &layers) {
   std::vector<uint64_t> nodes;
+  auto addNode = [&](uint64_t node) {
+    for (size_t index = 0; index != nodes.size();) {
+      if ((nodes[index] & node) == 0) {
+        ++index;
+        continue;
+      }
+      node |= nodes[index];
+      nodes.erase(nodes.begin() + static_cast<std::ptrdiff_t>(index));
+    }
+    nodes.push_back(node);
+  };
   for (const SolveBeforeEdge &edge : edges) {
     if (!constraintEnabled(edge.constraintBlock, constraintMask))
       continue;
@@ -140,24 +151,24 @@ bool buildSolveBeforeLayers(const std::vector<SolveBeforeEdge> &edges,
     uint64_t after = edge.afterMask & mutableMask;
     if (before == 0 || after == 0)
       continue;
-    if (std::find(nodes.begin(), nodes.end(), before) == nodes.end())
-      nodes.push_back(before);
-    if (std::find(nodes.begin(), nodes.end(), after) == nodes.end())
-      nodes.push_back(after);
+    addNode(before);
+    addNode(after);
   }
 
   layers.clear();
   while (!nodes.empty()) {
     uint64_t layer = 0;
+    uint64_t remaining = 0;
+    for (uint64_t node : nodes)
+      remaining |= node;
     for (uint64_t node : nodes) {
       bool hasPredecessor = false;
       for (const SolveBeforeEdge &edge : edges) {
         if (!constraintEnabled(edge.constraintBlock, constraintMask) ||
-            (edge.afterMask & mutableMask) != node)
+            (edge.afterMask & mutableMask & node) == 0)
           continue;
         uint64_t before = edge.beforeMask & mutableMask;
-        if (before != 0 &&
-            std::find(nodes.begin(), nodes.end(), before) != nodes.end()) {
+        if ((before & remaining) != 0) {
           hasPredecessor = true;
           break;
         }
@@ -641,7 +652,6 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
                    OBELISK_RT_RANDOM_INSTRUCTION_SIZE +
                OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE;
       uint64_t aggregateMask = widthMask(aggregateWidth);
-      std::vector<uint64_t> propertyMasks;
       for (uint32_t index = 0; index != solveEdgeCount; ++index) {
         SolveBeforeEdge edge{read64(cursor), read64(cursor + 8),
                              read32(cursor + 16)};
@@ -654,14 +664,6 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
             (edge.constraintBlock != OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
              edge.constraintBlock >= 64))
           return OBELISK_RT_INVALID_ARGUMENT;
-        for (uint64_t propertyMask : {edge.beforeMask, edge.afterMask}) {
-          for (uint64_t existing : propertyMasks)
-            if (existing != propertyMask && (existing & propertyMask) != 0)
-              return OBELISK_RT_INVALID_ARGUMENT;
-          if (std::find(propertyMasks.begin(), propertyMasks.end(),
-                        propertyMask) == propertyMasks.end())
-            propertyMasks.push_back(propertyMask);
-        }
         solveEdges.push_back(edge);
       }
       std::vector<uint64_t> validationLayers;

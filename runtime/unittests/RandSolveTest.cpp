@@ -928,6 +928,44 @@ TEST_F(RandSolveTest, PreservesSolveBeforeConditionalDistribution) {
   EXPECT_EQ(nextState, expectedState.state);
 }
 
+TEST_F(RandSolveTest,
+       ExecutesExpandedConstraintFunctionProgramWithStateCapture) {
+  // This is the residual form of x == map(y), where map returns y plus the
+  // pre-solve value of rand field bias. The function argument orders y before
+  // x, while the function-body read of bias is an immutable capture even
+  // though the bias property itself is randomized to a different value.
+  std::vector<uint8_t> bytes = program(
+      6, 1,
+      {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2, 0, 0},
+       {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2, 0, 2},
+       {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 2, 0, 0},
+       {OBELISK_RT_RANDOM_ADD_V1, 2},
+       {OBELISK_RT_RANDOM_EQ_V1, 1},
+       {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
+        OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
+       {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2, 0, 4},
+       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 3},
+       {OBELISK_RT_RANDOM_EQ_V1, 1},
+       {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
+        OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+      false, {{UINT64_C(0x0c), UINT64_C(0x03)}});
+  obelisk_rt_random_state_v1 state;
+  obelisk_rt_v1_random_state_seed(&state, 41, 17);
+  uint64_t oldBias = 1;
+  uint64_t assignment = 0;
+  uint64_t nextState = 0;
+  uint32_t success = 0;
+  EXPECT_EQ(obelisk_rt_v1_random_solve_modes_state(
+                context, bytes.data(), bytes.size(), 0, UINT64_C(0x3f), 0, 64,
+                state.state, state.increment, &oldBias, 1, &assignment,
+                &success, &nextState),
+            OBELISK_RT_OK);
+  ASSERT_EQ(success, 1u);
+  EXPECT_EQ((assignment >> 4) & 3, 3u);
+  EXPECT_EQ(assignment & 3, (((assignment >> 2) & 3) + oldBias) & 3);
+  EXPECT_NE(nextState, state.state);
+}
+
 TEST_F(RandSolveTest, StatelessEntryRejectsActiveSolveBefore) {
   std::vector<uint8_t> bytes = program(
       2, 0,
@@ -1112,6 +1150,26 @@ TEST_F(RandSolveTest, RejectsCyclicSolveBeforeMetadata) {
   uint32_t success = 0;
   EXPECT_EQ(obelisk_rt_v1_random_solve_modes(
                 context, bytes.data(), bytes.size(), 0, 3, 0, 4,
+                nullptr, 0, &assignment, &success),
+            OBELISK_RT_INVALID_ARGUMENT);
+}
+
+TEST_F(RandSolveTest, RejectsOverlappingPathSolveBeforeCycle) {
+  // Whole and selected packed paths can overlap across distinct ordering
+  // edges. Bit 1 -> bit 2 comes from the first edge, while bit 2 -> bit 1
+  // comes from the second, so this is a cycle even though the serialized mask
+  // nodes are not pairwise identical.
+  std::vector<uint8_t> bytes = program(
+      4, 0,
+      {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+       {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
+        OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+      false, {{UINT64_C(0x3), UINT64_C(0x4)},
+              {UINT64_C(0x4), UINT64_C(0x2)}});
+  uint64_t assignment = 0;
+  uint32_t success = 0;
+  EXPECT_EQ(obelisk_rt_v1_random_solve_modes(
+                context, bytes.data(), bytes.size(), 0, UINT64_C(0xf), 0, 16,
                 nullptr, 0, &assignment, &success),
             OBELISK_RT_INVALID_ARGUMENT);
 }

@@ -1209,9 +1209,11 @@ The implementation roadmap is:
   are implemented. The executable slice compiles total, side-effect-free hard
   integral constraints and inline `with` constraints to pointer-free SSA,
   emits generated proposal samplers where the compiler can prove them exact,
-  retains a bounded semantic-domain fallback, and commits class fields
-  transactionally in native and bytecode execution. The remaining gate is
-  constraint-function purity contracts and wider/decomposed plans. The exact
+  retains a bounded semantic-domain fallback, expands side-effect-free
+  expression constraint functions with bit-range-precise LRM argument
+  ordering and state semantics, and commits class fields transactionally in
+  both native and bytecode execution. The remaining gate is broader
+  procedural/system constraint functions and wider/decomposed plans. The exact
   current boundary is recorded in `docs/randomization-support.md`.
 - Extend executable lowering across the remaining broad UVM gate: complete
   the remaining dynamic-array and queue surface, mailboxes, semaphores,
