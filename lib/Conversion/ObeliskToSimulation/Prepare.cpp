@@ -253,11 +253,16 @@ void ObeliskSimPreparePass::runOnOperation() {
           path = block.getBlockPathAttr();
         else if (auto disable = dyn_cast<semantic::SVDisableStatementOp>(op))
           path = disable.getTargetPathAttr();
+        else if (auto subroutine =
+                     dyn_cast<semantic::SVSubroutineSymbolOp>(op);
+                 subroutine && subroutine.getSubroutineKind() ==
+                 semantic::SVSubroutineKind::Task)
+          path = subroutine.getHierarchicalNameAttr();
       } else if (auto declaration =
                      dyn_cast<semantic::SVVariableDeclStatementOp>(op)) {
         path = StringAttr::get(context, declaration.getReferencedPath());
       }
-      if (path)
+      if (path && ids.contains(path.getValue()))
         op->setAttr(attrName, IntegerAttr::get(IntegerType::get(context, 64),
                                                ids.lookup(path.getValue())));
     });
@@ -2300,6 +2305,11 @@ void ObeliskSimPreparePass::runOnOperation() {
     if (!hierarchy.empty())
       functionAttrs.push_back(builder.getNamedAttr(
           sim::metadata::hierarchicalName, builder.getStringAttr(hierarchy)));
+    if (unit.entryKind == sim::EntryKind::Task)
+      if (auto targetID = unit.source->getAttrOfType<IntegerAttr>(
+              "obelisk_sim.control_target_id"))
+        functionAttrs.push_back(builder.getNamedAttr(
+            "obelisk_sim.control_target_id", targetID));
     bool programDomain = isProgramCodeUnit(unit.source);
     functionAttrs.push_back(builder.getNamedAttr(
         "home_region", sim::EventRegionAttr::get(

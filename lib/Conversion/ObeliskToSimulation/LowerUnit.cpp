@@ -244,6 +244,11 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
     else
       invalidBindings = true;
   }
+  if (function.getEntryKind() == sim::EntryKind::Task)
+    if (auto targetID = function->getAttrOfType<IntegerAttr>(
+            "obelisk_sim.control_target_id"))
+      taskControlActivation = sim::SimControlEnterOp::create(
+          builder, function.getLoc(), targetID);
   auto bindings = function->getAttrOfType<ArrayAttr>(bindingsAttrName);
   if (auto inherited = function->getAttrOfType<ArrayAttr>("inherited_controls"))
     for (Attribute attribute : inherited) {
@@ -1145,6 +1150,9 @@ LogicalResult UnitLowering::emitFunctionReturn(
       if (failed(storeReference(destination, value, location)))
         return failure();
     }
+    if (taskControlActivation)
+      sim::SimControlLeaveOp::create(builder, location,
+                                     taskControlActivation);
     sim::SimReturnOp::create(builder, location, ValueRange{});
     return success();
   }

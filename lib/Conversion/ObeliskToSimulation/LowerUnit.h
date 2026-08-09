@@ -303,6 +303,7 @@ private:
   ::llvm::StringMap<::mlir::Value> iteratorIndices;
   ::llvm::StringMap<semantic::SVCovergroupTypeOp> semanticCovergroups;
   ::mlir::Value thisObject;
+  ::mlir::Value taskControlActivation;
   ::llvm::SetVector<::mlir::Value> sensitivity;
   ::llvm::SetVector<::mlir::Value> *observedDependencies = nullptr;
   ::mlir::Value expressionPlaceholder;
