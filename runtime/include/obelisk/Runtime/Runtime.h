@@ -2598,11 +2598,19 @@ typedef struct obelisk_rt_random_state_v1 {
 
 // Versioned stack program executed by the constrained-random fallback. The
 // byte representation is explicitly little-endian and does not use these C
-// types as an in-memory wire format. The 24-byte header is followed by
-// instruction_count fixed-width 16-byte instructions. END instructions use
+// types as an in-memory wire format. Version 1 has a 24-byte header followed by
+// instruction_count fixed-width 16-byte instructions. Version 2 has a 32-byte
+// header, also uses 16-byte instructions, and follows them with a little-endian
+// u64 literal-word pool. Its header adds literal_word_count and a zero reserved
+// u32. Its instructions contain opcode:u8, flags:u8, reserved:u16, width:u32,
+// operand:u32, and auxiliary:u32. PUSH_LITERAL auxiliary is a word-pool index;
+// END_SOFT auxiliary is its priority; every other auxiliary is zero. This
+// allows arbitrary-width bit-vector expressions without changing the compact
+// version-1 runtime fast path. END instructions use
 // operand as the disabled constraint-block bit (or the unmasked sentinel).
-// END_SOFT uses immediate as a contiguous, zero-based priority where larger
-// values have higher priority; END_HARD requires an immediate of zero. When
+// END_SOFT uses the v1 immediate or v2 auxiliary as a contiguous, zero-based
+// priority where larger values have higher priority; END_HARD requires that
+// field to be zero. When
 // HAS_SOLVE_BEFORE is set, the instructions are followed by a little-endian
 // u32 edge count and fixed-width 24-byte edge records. Each record contains a
 // u64 before-property mask, a u64 after-property mask, a u32 constraint-block
@@ -2618,9 +2626,13 @@ typedef struct obelisk_rt_random_state_v1 {
 // mask/value pair; values matching any pattern belong to the subfield's
 // semantic domain.
 #define OBELISK_RT_RANDOM_PROGRAM_MAGIC UINT32_C(0x3152444f)
-#define OBELISK_RT_RANDOM_PROGRAM_VERSION UINT16_C(1)
+#define OBELISK_RT_RANDOM_PROGRAM_VERSION_V1 UINT16_C(1)
+#define OBELISK_RT_RANDOM_PROGRAM_VERSION_V2 UINT16_C(2)
+#define OBELISK_RT_RANDOM_PROGRAM_VERSION OBELISK_RT_RANDOM_PROGRAM_VERSION_V1
 #define OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE UINT16_C(24)
 #define OBELISK_RT_RANDOM_INSTRUCTION_SIZE UINT16_C(16)
+#define OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE_V2 UINT16_C(32)
+#define OBELISK_RT_RANDOM_INSTRUCTION_SIZE_V2 UINT16_C(16)
 #define OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT UINT32_C(1)
 #define OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE UINT32_C(2)
 #define OBELISK_RT_RANDOM_PROGRAM_HAS_DIST UINT32_C(4)

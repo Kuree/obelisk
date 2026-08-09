@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <vector>
 
+#include "llvm/ADT/APInt.h"
+
 namespace obelisk::solver {
 
 enum class Satisfiability { Unknown, Satisfiable, Unsatisfiable };
@@ -17,8 +19,8 @@ enum class Satisfiability { Unknown, Satisfiable, Unsatisfiable };
 struct RandomVariableDomain {
   uint32_t offset = 0;
   uint32_t width = 0;
-  uint64_t lower = 0;
-  uint64_t upper = 0;
+  llvm::APInt lower = llvm::APInt(1, 0);
+  llvm::APInt upper = llvm::APInt(1, 0);
 };
 
 /// A Z3-verified bound whose value is read from a serialized runtime capture.
@@ -62,8 +64,8 @@ struct RandomVariableDefinition {
 /// formula. Assignments use aggregate bit positions and have no bits outside
 /// `mask`; variables outside the mask remain independently sampleable.
 struct RandomAssignmentTable {
-  uint64_t mask = 0;
-  std::vector<uint64_t> assignments;
+  llvm::APInt mask = llvm::APInt(1, 0);
+  std::vector<llvm::APInt> assignments;
 };
 
 struct RandomProgramAnalysis {
@@ -72,7 +74,7 @@ struct RandomProgramAnalysis {
   /// A complete, deterministically ordered table of aggregate assignments
   /// satisfying the hard formula. Generated code is responsible for choosing
   /// an unbiased index for arbitrary table cardinalities.
-  std::vector<uint64_t> assignmentTable;
+  std::vector<llvm::APInt> assignmentTable;
   /// Complete tables for independent hard-constraint components. Components
   /// are deterministically ordered and their masks never overlap.
   std::vector<RandomAssignmentTable> assignmentTables;
@@ -81,7 +83,7 @@ struct RandomProgramAnalysis {
   /// singleton components. The partition is conservative: a component may
   /// contain independent variables, but random variables mentioned together
   /// by a hard constraint never appear in separate masks.
-  std::vector<uint64_t> constraintComponentMasks;
+  std::vector<llvm::APInt> constraintComponentMasks;
   /// True when `constraintComponentMasks` is a complete dependency partition.
   /// A false value requires clients to conservatively assume that any random
   /// variables may be coupled.

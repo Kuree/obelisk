@@ -12,8 +12,10 @@
 #include "mlir/IR/Verifier.h"
 
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/Support/MathExtras.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -56,8 +58,13 @@ struct StackValue {
 };
 
 mlir::Value constant(mlir::OpBuilder &builder, mlir::Location location,
+                     const llvm::APInt &value) {
+  return mlir::smt::BVConstantOp::create(builder, location, value);
+}
+
+mlir::Value constant(mlir::OpBuilder &builder, mlir::Location location,
                      uint64_t value, unsigned width) {
-  return mlir::smt::BVConstantOp::create(builder, location, value, width);
+  return constant(builder, location, llvm::APInt(width, value));
 }
 
 mlir::Value resize(mlir::OpBuilder &builder, mlir::Location location,
@@ -166,27 +173,99 @@ bool isBinary(uint8_t opcode) {
 std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
                                                       size_t programSize) {
   if (!program || programSize < OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE ||
-      read32(program) != OBELISK_RT_RANDOM_PROGRAM_MAGIC ||
-      read16(program + 4) != OBELISK_RT_RANDOM_PROGRAM_VERSION ||
-      read16(program + 6) != OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE)
+      read32(program) != OBELISK_RT_RANDOM_PROGRAM_MAGIC)
+    return std::nullopt;
+  uint16_t version = read16(program + 4);
+  bool version1 = version == OBELISK_RT_RANDOM_PROGRAM_VERSION_V1;
+  bool version2 = version == OBELISK_RT_RANDOM_PROGRAM_VERSION_V2;
+  uint16_t headerSize = read16(program + 6);
+  if ((!version1 && !version2) ||
+      (version1 && headerSize != OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE) ||
+      (version2 &&
+       headerSize != OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE_V2) ||
+      programSize < headerSize)
     return std::nullopt;
   uint32_t aggregateWidth = read32(program + 8);
   uint32_t instructionCount = read32(program + 12);
   uint32_t captureCount = read32(program + 16);
   uint32_t programFlags = read32(program + 20);
-  if (aggregateWidth > 64 ||
+  uint32_t literalWordCount = version2 ? read32(program + 24) : 0;
+  if ((version1 && aggregateWidth > 64) ||
+      (version2 && read32(program + 28) != 0) ||
       (programFlags & ~(OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT |
                         OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
                         OBELISK_RT_RANDOM_PROGRAM_HAS_DIST |
                         OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS)) != 0 ||
       instructionCount > (std::numeric_limits<size_t>::max() -
-                          OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE) /
-                             OBELISK_RT_RANDOM_INSTRUCTION_SIZE)
+                          headerSize) /
+                             OBELISK_RT_RANDOM_INSTRUCTION_SIZE_V2)
     return std::nullopt;
   size_t instructionBytes = static_cast<size_t>(instructionCount) *
-                            OBELISK_RT_RANDOM_INSTRUCTION_SIZE;
-  size_t expectedSize =
-      OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE + instructionBytes;
+                            OBELISK_RT_RANDOM_INSTRUCTION_SIZE_V2;
+  size_t expectedSize = headerSize + instructionBytes;
+  if (literalWordCount >
+      (std::numeric_limits<size_t>::max() - expectedSize) / sizeof(uint64_t))
+    return std::nullopt;
+  size_t literalPoolOffset = expectedSize;
+  expectedSize += static_cast<size_t>(literalWordCount) * sizeof(uint64_t);
+
+  struct DecodedInstruction {
+    uint8_t opcode;
+    unsigned width;
+    uint8_t flags;
+    uint32_t operand;
+    uint64_t auxiliary;
+    std::optional<llvm::APInt> literal;
+  };
+  auto decodeInstruction = [&](uint32_t index)
+      -> std::optional<DecodedInstruction> {
+    const uint8_t *cursor = program + headerSize +
+                            static_cast<size_t>(index) *
+                                OBELISK_RT_RANDOM_INSTRUCTION_SIZE_V2;
+    DecodedInstruction decoded{};
+    decoded.opcode = cursor[0];
+    if (version1) {
+      decoded.width = cursor[1];
+      decoded.flags = cursor[2];
+      if (cursor[3] != 0)
+        return std::nullopt;
+      decoded.operand = read32(cursor + 4);
+      decoded.auxiliary = read64(cursor + 8);
+      if (decoded.opcode == OBELISK_RT_RANDOM_PUSH_LITERAL_V1 &&
+          decoded.width != 0)
+        decoded.literal = llvm::APInt(decoded.width, decoded.auxiliary);
+      return decoded;
+    }
+    decoded.flags = cursor[1];
+    if (read16(cursor + 2) != 0)
+      return std::nullopt;
+    decoded.width = read32(cursor + 4);
+    decoded.operand = read32(cursor + 8);
+    uint32_t auxiliary = read32(cursor + 12);
+    decoded.auxiliary = auxiliary;
+    if (decoded.opcode != OBELISK_RT_RANDOM_PUSH_LITERAL_V1)
+      return decoded;
+    if (decoded.width == 0)
+      return std::nullopt;
+    uint64_t wordCount = (static_cast<uint64_t>(decoded.width) + 63) / 64;
+    if (auxiliary > literalWordCount ||
+        wordCount > literalWordCount - auxiliary)
+      return std::nullopt;
+    llvm::SmallVector<uint64_t> words;
+    words.reserve(wordCount);
+    const uint8_t *word = program + literalPoolOffset +
+                          static_cast<size_t>(auxiliary) * sizeof(uint64_t);
+    for (uint64_t wordIndex = 0; wordIndex != wordCount; ++wordIndex) {
+      words.push_back(read64(word));
+      word += sizeof(uint64_t);
+    }
+    unsigned usedHighBits = decoded.width % 64;
+    if (usedHighBits != 0 &&
+        (words.back() >> usedHighBits) != 0)
+      return std::nullopt;
+    decoded.literal = llvm::APInt(decoded.width, words);
+    return decoded;
+  };
   bool hasSolveBefore =
       (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE) != 0;
   uint32_t solveEdgeCount = 0;
@@ -251,8 +330,29 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
   }
   if (programSize != expectedSize)
     return std::nullopt;
+  if (version2) {
+    uint64_t nextLiteralWord = 0;
+    for (uint32_t index = 0; index != instructionCount; ++index) {
+      std::optional<DecodedInstruction> decoded = decodeInstruction(index);
+      if (!decoded)
+        return std::nullopt;
+      if (decoded->opcode != OBELISK_RT_RANDOM_PUSH_LITERAL_V1)
+        continue;
+      if (decoded->auxiliary != nextLiteralWord)
+        return std::nullopt;
+      nextLiteralWord +=
+          (static_cast<uint64_t>(decoded->width) + 63) / 64;
+    }
+    if (nextLiteralWord != literalWordCount)
+      return std::nullopt;
+  }
 
   if (hasSolveBefore) {
+    // Version 1 solve-order records carry aggregate masks. Version 2 retains
+    // that section for compatibility, but a wide ordering needs the decomposed
+    // plan representation introduced separately from wide expressions.
+    if (aggregateWidth > 64)
+      return std::nullopt;
     uint64_t aggregateMask =
         aggregateWidth == 64 ? UINT64_MAX : (uint64_t{1} << aggregateWidth) - 1;
     std::vector<uint64_t> propertyMasks;
@@ -399,15 +499,12 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
                      [](const DomainGroup &group) { return !group.seen; }))
       return std::nullopt;
     for (auto [index, group] : llvm::enumerate(domainGroups)) {
-      uint64_t groupMask =
-          (group.width == 64 ? UINT64_MAX : (uint64_t{1} << group.width) - 1)
-          << group.targetOffset;
+      uint64_t groupEnd = static_cast<uint64_t>(group.targetOffset) + group.width;
       for (const DomainGroup &other :
            llvm::ArrayRef(domainGroups).drop_front(index + 1)) {
-        uint64_t otherMask =
-            (other.width == 64 ? UINT64_MAX : (uint64_t{1} << other.width) - 1)
-            << other.targetOffset;
-        if ((groupMask & otherMask) != 0)
+        uint64_t otherEnd =
+            static_cast<uint64_t>(other.targetOffset) + other.width;
+        if (group.targetOffset < otherEnd && other.targetOffset < groupEnd)
           return std::nullopt;
       }
     }
@@ -433,11 +530,24 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       builder, location,
       bitVectorType(aggregateWidth == 0 ? 1 : aggregateWidth),
       builder.getStringAttr("assignment"));
+  std::vector<unsigned> captureWidths(captureCount, version1 ? 64 : 1);
+  if (version2)
+    for (uint32_t index = 0; index != instructionCount; ++index) {
+      std::optional<DecodedInstruction> decoded = decodeInstruction(index);
+      if (!decoded)
+        return std::nullopt;
+      if (decoded->opcode != OBELISK_RT_RANDOM_PUSH_CAPTURE_V1)
+        continue;
+      if (decoded->operand >= captureCount || decoded->width == 0)
+        return std::nullopt;
+      captureWidths[decoded->operand] =
+          std::max(captureWidths[decoded->operand], decoded->width);
+    }
   std::vector<mlir::Value> captures;
   captures.reserve(captureCount);
   for (uint32_t index = 0; index != captureCount; ++index)
     captures.push_back(mlir::smt::DeclareFunOp::create(
-        builder, location, bitVectorType(64),
+        builder, location, bitVectorType(captureWidths[index]),
         builder.getStringAttr("capture_" + std::to_string(index))));
 
   std::vector<StackValue> stack;
@@ -445,17 +555,21 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
   mlir::Value hard = mlir::smt::BoolConstantOp::create(builder, location, true);
   bool sawHard = false;
   bool sawSoft = false;
-  const uint8_t *cursor = program + OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE;
+  uint64_t softPriorities = 0;
   for (uint32_t index = 0; index != instructionCount; ++index) {
-    uint8_t opcode = cursor[0];
-    unsigned width = cursor[1];
-    uint8_t flags = cursor[2];
-    uint8_t reserved = cursor[3];
-    uint32_t operand = read32(cursor + 4);
-    uint64_t immediate = read64(cursor + 8);
-    cursor += OBELISK_RT_RANDOM_INSTRUCTION_SIZE;
-    if (width == 0 || width > 64 || reserved != 0 ||
+    std::optional<DecodedInstruction> decoded = decodeInstruction(index);
+    if (!decoded)
+      return std::nullopt;
+    uint8_t opcode = decoded->opcode;
+    unsigned width = decoded->width;
+    uint8_t flags = decoded->flags;
+    uint32_t operand = decoded->operand;
+    uint64_t immediate = decoded->auxiliary;
+    if (width == 0 || (version1 && width > 64) ||
         (flags & ~OBELISK_RT_RANDOM_INSTRUCTION_SIGNED) != 0)
+      return std::nullopt;
+    if (version2 && opcode != OBELISK_RT_RANDOM_PUSH_LITERAL_V1 &&
+        opcode != OBELISK_RT_RANDOM_END_SOFT_V1 && immediate != 0)
       return std::nullopt;
     bool signedOperation = (flags & OBELISK_RT_RANDOM_INSTRUCTION_SIGNED) != 0;
     if (opcode == OBELISK_RT_RANDOM_PUSH_VARIABLE_V1) {
@@ -485,13 +599,19 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       continue;
     }
     if (opcode == OBELISK_RT_RANDOM_PUSH_LITERAL_V1) {
-      stack.push_back({constant(builder, location, immediate, width), width,
+      if (!decoded->literal)
+        return std::nullopt;
+      stack.push_back({constant(builder, location, *decoded->literal), width,
                        std::nullopt, std::nullopt, index});
       continue;
     }
     if (opcode == OBELISK_RT_RANDOM_END_HARD_V1 ||
         opcode == OBELISK_RT_RANDOM_END_SOFT_V1) {
-      if (width != 1 || stack.size() != 1)
+      if (width != 1 || stack.size() != 1 ||
+          (operand != OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
+           operand >= 64) ||
+          (opcode == OBELISK_RT_RANDOM_END_HARD_V1 && immediate != 0) ||
+          (opcode == OBELISK_RT_RANDOM_END_SOFT_V1 && immediate >= 64))
         return std::nullopt;
       if (opcode == OBELISK_RT_RANDOM_END_HARD_V1) {
         mlir::Value constraint = truth(builder, location, stack.back());
@@ -505,6 +625,8 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
           result.directCaptureBounds.push_back(
               *stack.back().directCaptureBound);
       }
+      if (opcode == OBELISK_RT_RANDOM_END_SOFT_V1)
+        softPriorities |= uint64_t{1} << immediate;
       sawHard |= opcode == OBELISK_RT_RANDOM_END_HARD_V1;
       sawSoft |= opcode == OBELISK_RT_RANDOM_END_SOFT_V1;
       stack.clear();
@@ -674,9 +796,9 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
             SMTVariableDefinition{*rhs.directVariable, lhs.bits,
                                   lhs.instructionBegin, rhs.instructionBegin};
 
-      // Direct comparisons against one capture describe a runtime interval
-      // for widths up to 64. Retain that shape so lowering can normalize
-      // strict endpoints and signed coordinates, then sample it directly.
+      // Direct comparisons against one capture describe a runtime interval.
+      // Retain that shape so lowering can normalize strict endpoints and
+      // signed coordinates, then sample it directly.
       auto directCaptureIndex = [&](const StackValue &value)
           -> std::optional<uint32_t> {
         auto extract = mlir::dyn_cast_or_null<mlir::smt::ExtractOp>(
@@ -688,7 +810,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
           return std::nullopt;
         return static_cast<uint32_t>(found - captures.begin());
       };
-      if (lhs.width == rhs.width && lhs.width <= 64 &&
+      if (lhs.width == rhs.width &&
           (opcode == OBELISK_RT_RANDOM_GE_V1 ||
            opcode == OBELISK_RT_RANDOM_GT_V1 ||
            opcode == OBELISK_RT_RANDOM_LE_V1 ||
@@ -864,7 +986,13 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
   }
 
   bool encodedSoft = (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT) != 0;
-  if (!stack.empty() || !sawHard || sawSoft != encodedSoft)
+  unsigned softCount = softPriorities == 0
+                           ? 0
+                           : 64 - llvm::countl_zero(softPriorities);
+  uint64_t expectedSoftPriorities =
+      softCount == 64 ? UINT64_MAX : (uint64_t{1} << softCount) - 1;
+  if (!stack.empty() || !sawHard || sawSoft != encodedSoft ||
+      softPriorities != expectedSoftPriorities)
     return std::nullopt;
   for (const DomainGroup &group : domainGroups) {
     mlir::Value field = mlir::smt::ExtractOp::create(

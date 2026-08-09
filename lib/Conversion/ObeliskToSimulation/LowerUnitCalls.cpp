@@ -1317,9 +1317,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   uint64_t totalWidth = totalWidthValue.getZExtValue();
   uint64_t constraintCount = constraintCountValue.getZExtValue();
   bool checkerOnly = op->hasAttr(randomizeCheckerOnlyAttrName);
-  if (totalWidth > 64 || constraintCount > 64) {
+  if (totalWidth > UINT32_MAX || constraintCount > 64) {
     emitError(location)
-        << "randomize plan exceeds its 64-bit property or constraint boundary";
+        << "randomize plan exceeds its bit-offset or constraint-mode boundary";
     return failure();
   }
 
@@ -1437,8 +1437,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       return failure();
     }
     uint64_t width = widthAttr.getValue().getZExtValue();
-    if (width > 64 - plannedWidth) {
-      emitError(location) << "randomize property plan exceeds 64 bits";
+    if (width > UINT32_MAX - plannedWidth) {
+      emitError(location)
+          << "randomize property plan exceeds its 32-bit bit-offset space";
       return failure();
     }
     Type type = typeAttr.getValue();
@@ -1470,6 +1471,12 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     }
     SmallVector<PropertyDomain> propertyDomains;
     if (auto domains = property.getAs<ArrayAttr>("domains")) {
+      if (width > 64) {
+        emitError(location)
+            << "finite semantic domains in random properties wider than 64 "
+               "bits are not executable yet";
+        return failure();
+      }
       uint64_t coveredMask = 0;
       for (Attribute domainAttr : domains) {
         auto domain = dyn_cast<DictionaryAttr>(domainAttr);
@@ -1641,10 +1648,27 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     return arith::ConstantOp::create(
         builder, location, i64, builder.getIntegerAttr(i64, APInt(64, value)));
   };
-  APInt domainMask = totalWidth == 64 ? APInt::getAllOnes(64)
-                                      : APInt::getLowBitsSet(64, totalWidth);
+  auto constantLike = [&](Value exemplar, uint64_t value) -> Value {
+    auto type = cast<IntegerType>(exemplar.getType());
+    return arith::ConstantOp::create(
+        builder, location, type,
+        builder.getIntegerAttr(type, APInt(type.getWidth(), value)));
+  };
+  unsigned assignmentWidth = std::max<uint64_t>(64, totalWidth);
+  auto assignmentType = IntegerType::get(function.getContext(), assignmentWidth);
+  auto constantAssignment = [&](const APInt &value) -> Value {
+    APInt resized = value.zextOrTrunc(assignmentWidth);
+    return arith::ConstantOp::create(
+        builder, location, assignmentType,
+        builder.getIntegerAttr(assignmentType, resized));
+  };
+  auto constantAssignment64 = [&](uint64_t value) -> Value {
+    return constantAssignment(APInt(64, value));
+  };
+  APInt domainMask = APInt::getLowBitsSet(assignmentWidth, totalWidth);
   Value mask = arith::ConstantOp::create(
-      builder, location, i64, builder.getIntegerAttr(i64, domainMask));
+      builder, location, assignmentType,
+      builder.getIntegerAttr(assignmentType, domainMask));
   uint64_t propertyModeMask =
       planned.size() == 64 ? UINT64_MAX : (uint64_t{1} << planned.size()) - 1;
   Value relevantMode =
@@ -1707,6 +1731,32 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             constant64(32)),
         arith::ExtUIOp::create(builder, location, i64, low));
   };
+  auto nextAssignment = [&](Value &streamState) -> Value {
+    if (totalWidth <= 64)
+      return next64(streamState);
+    Value result = constantAssignment64(0);
+    uint64_t propertyOffset = 0;
+    for (const Property &property : planned) {
+      for (uint64_t fieldOffset = 0; fieldOffset < property.width;) {
+        unsigned chunkWidth = static_cast<unsigned>(
+            std::min<uint64_t>(64, property.width - fieldOffset));
+        Value chunk = next64(streamState);
+        if (chunkWidth != 64)
+          chunk = arith::AndIOp::create(
+              builder, location, chunk,
+              constant64(APInt::getLowBitsSet(64, chunkWidth).getZExtValue()));
+        chunk = arith::ExtUIOp::create(builder, location, assignmentType, chunk);
+        uint64_t offset = propertyOffset + fieldOffset;
+        if (offset != 0)
+          chunk = arith::ShLIOp::create(builder, location, chunk,
+                                        constantAssignment64(offset));
+        result = arith::OrIOp::create(builder, location, result, chunk);
+        fieldOffset += chunkWidth;
+      }
+      propertyOffset += property.width;
+    }
+    return arith::AndIOp::create(builder, location, result, mask);
+  };
   auto countBits = [](uint64_t bits) {
     unsigned count = 0;
     for (; bits != 0; bits &= bits - 1)
@@ -1723,6 +1773,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     return result;
   };
   auto propertyDomainCardinality = [&](const Property &property) {
+    if (property.width > 64)
+      return uint64_t{0};
     uint64_t valueMask =
         property.width == 64 ? UINT64_MAX : (uint64_t{1} << property.width) - 1;
     unsigned ordinaryBits =
@@ -1896,8 +1948,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     return index;
   };
 
-  Value currentAssignment = constant64(0);
-  Value mutableMask = constant64(0);
+  Value currentAssignment = constantAssignment64(0);
+  Value mutableMask = constantAssignment64(0);
   SmallVector<Value> propertyEnabled;
   uint64_t currentOffset = 0;
   for (auto [index, property] : llvm::enumerate(planned)) {
@@ -1906,14 +1958,15 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     FailureOr<Value> scalar = toPackedScalar(current, location);
     FailureOr<Value> extended =
         succeeded(scalar)
-            ? convert(*scalar, i64, property.isSigned, location, false)
+            ? convert(*scalar, assignmentType, property.isSigned, location,
+                      false)
             : FailureOr<Value>(failure());
     if (failed(extended))
       return failure();
-    uint64_t valueMask =
-        property.width == 64 ? UINT64_MAX : (uint64_t{1} << property.width) - 1;
+    APInt valueMask =
+        APInt::getLowBitsSet(assignmentWidth, property.width);
     Value bits = arith::AndIOp::create(builder, location, *extended,
-                                       constant64(valueMask));
+                                       constantAssignment(valueMask));
 
     Value propertyMode = arith::AndIOp::create(
         builder, location, relevantMode, constant64(uint64_t{1} << index));
@@ -1932,7 +1985,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       Block *disabledBlock = addBlock();
       Block *mergeBlock = addBlock();
       Value mergedState = mergeBlock->addArgument(i64, location);
-      Value mergedBits = mergeBlock->addArgument(i64, location);
+      Value mergedBits = mergeBlock->addArgument(assignmentType, location);
       Value mergedKey = mergeBlock->addArgument(i64, location);
       Value mergedPosition = mergeBlock->addArgument(i64, location);
       cf::CondBranchOp::create(builder, location, enabled, enabledBlock,
@@ -1960,6 +2013,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             property.domains.empty()
                 ? constant64(0)
                 : materializePropertyDomainIndex(property, constant64(0));
+        if (assignmentType != i64)
+          value = arith::ExtUIOp::create(builder, location, assignmentType,
+                                         value);
         cf::BranchOp::create(builder, location, mergeBlock,
                              ValueRange{state, value, key, position});
       } else {
@@ -2004,6 +2060,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             property.domains.empty()
                 ? cycle.getValue()
                 : materializePropertyDomainIndex(property, cycle.getValue());
+        if (assignmentType != i64)
+          semanticValue = arith::ExtUIOp::create(
+              builder, location, assignmentType, semanticValue);
         cf::CondBranchOp::create(
             builder, location, valid, mergeBlock,
             ValueRange{activeState, semanticValue, activeKey,
@@ -2018,20 +2077,21 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       property.nextRandcKey = mergedKey;
       property.nextRandcPosition = mergedPosition;
     }
-    uint64_t aggregateMask = valueMask;
+    APInt aggregateMask = valueMask;
     if (currentOffset != 0) {
       bits = arith::ShLIOp::create(builder, location, bits,
-                                   constant64(currentOffset));
-      aggregateMask <<= currentOffset;
+                                   constantAssignment64(currentOffset));
+      aggregateMask = aggregateMask.shl(currentOffset);
     }
     currentAssignment =
         arith::OrIOp::create(builder, location, currentAssignment, bits);
 
     Value enabledMask =
         property.isRandC
-            ? constant64(0)
+            ? constantAssignment64(0)
             : arith::SelectOp::create(builder, location, enabled,
-                                      constant64(aggregateMask), constant64(0))
+                                      constantAssignment(aggregateMask),
+                                      constantAssignment64(0))
                   .getResult();
     mutableMask =
         arith::OrIOp::create(builder, location, mutableMask, enabledMask);
@@ -2064,18 +2124,29 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   SmallVector<uint64_t> propertyMasks;
   uint64_t solvePropertyOffset = 0;
   for (const Property &property : planned) {
-    uint64_t valueMask = property.width == 64
-                             ? UINT64_MAX
-                             : (uint64_t{1} << property.width) - 1;
-    propertyMasks.push_back(valueMask << solvePropertyOffset);
+    if (totalWidth <= 64) {
+      uint64_t valueMask = property.width == 64
+                               ? UINT64_MAX
+                               : (uint64_t{1} << property.width) - 1;
+      propertyMasks.push_back(valueMask << solvePropertyOffset);
+    } else {
+      propertyMasks.push_back(0);
+    }
     solvePropertyOffset += property.width;
   }
   SmallVector<SolveBeforeEdge> solveBeforeEdges;
   SmallVector<uint64_t> solveBeforeLayerMasks;
   uint64_t randomAssignmentMask =
-      totalWidth == 64 ? UINT64_MAX : (uint64_t{1} << totalWidth) - 1;
+      totalWidth == 64 ? UINT64_MAX
+                       : totalWidth < 64 ? (uint64_t{1} << totalWidth) - 1 : 0;
   bool hasSolveBefore = false;
   auto randomPropertyMask = [&](Operation *expression) -> FailureOr<uint64_t> {
+    if (totalWidth > 64) {
+      emitError(getSemanticLocation(expression))
+          << "solve before on a wide randomization plan requires plan "
+             "decomposition";
+      return failure();
+    }
     auto indexAttr =
         expression->getAttrOfType<IntegerAttr>(randomVariableAttrName);
     if (!indexAttr || indexAttr.getValue().isNegative() ||
@@ -2224,29 +2295,37 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
 
   struct EncodedInstruction {
     uint8_t opcode;
-    uint8_t width;
+    uint32_t width;
     uint8_t flags = 0;
     uint32_t operand = 0;
     uint64_t immediate = 0;
+    std::optional<APInt> literal;
   };
   SmallVector<EncodedInstruction> programInstructions;
   SmallVector<Value> programCaptures;
   auto instruction = [&](uint8_t opcode, unsigned width, bool isSigned = false,
                          uint32_t operand = 0, uint64_t immediate = 0) {
     programInstructions.push_back(
-        {opcode, static_cast<uint8_t>(width),
+        {opcode, static_cast<uint32_t>(width),
          static_cast<uint8_t>(isSigned ? OBELISK_RT_RANDOM_INSTRUCTION_SIGNED
                                        : 0),
-         operand, immediate});
+         operand, immediate, std::nullopt});
+  };
+  auto literalInstruction = [&](unsigned width, bool isSigned,
+                                const APInt &value) {
+    programInstructions.push_back(
+        {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, static_cast<uint32_t>(width),
+         static_cast<uint8_t>(isSigned ? OBELISK_RT_RANDOM_INSTRUCTION_SIGNED
+                                       : 0),
+         0, 0, value.zextOrTrunc(width)});
   };
   auto expressionWidth = [&](Operation *expression) -> FailureOr<unsigned> {
     FailureOr<Type> type = getNormalizedSemanticType(expression);
     std::optional<unsigned> width =
         succeeded(type) ? sim::getPackedWidth(*type) : std::nullopt;
-    if (!width || *width == 0 || *width > 64) {
+    if (!width || *width == 0) {
       emitError(getSemanticLocation(expression))
-          << "runtime random constraint values must be packed and no wider "
-             "than 64 bits";
+          << "runtime random constraint values must be packed";
       return failure();
     }
     return *width;
@@ -2341,6 +2420,12 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           static_cast<unsigned>(variable.getValue().getZExtValue());
       const Property &property = planned[propertyIndex];
       FailureOr<unsigned> comparisonWidth = expressionWidth(nested.front());
+      if (property.width > 64) {
+        emitError(getSemanticLocation(expression))
+            << "dist on a random property wider than 64 bits is not "
+               "executable yet";
+        return failure();
+      }
       if (property.isRandC) {
         emitError(getSemanticLocation(expression))
             << "dist cannot weight a randc property";
@@ -2818,8 +2903,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                "random solver";
         return failure();
       }
-      instruction(OBELISK_RT_RANDOM_PUSH_LITERAL_V1, *width,
-                  isSignedNode(expression), 0, parsed->value.getZExtValue());
+      literalInstruction(*width, isSignedNode(expression), parsed->value);
       return success();
     }
     SmallVector<Operation *> nested = getChildren(expression);
@@ -2842,9 +2926,16 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                "not executable yet";
         return failure();
       }
+      // Preserve the scalar runtime ABI for captures that fit in one word.
+      // Wider v2 captures retain their source width for compile-time-assisted
+      // materialization (and for the wide runtime ABI added separately).
+      Type captureType = *width <= 64
+                             ? Type(i64)
+                             : Type(IntegerType::get(function.getContext(),
+                                                     *width));
       FailureOr<Value> extended =
-          convert(*scalar, builder.getI64Type(), false,
-                  getSemanticLocation(expression), false);
+          convert(*scalar, captureType, false, getSemanticLocation(expression),
+                  false);
       if (failed(extended))
         return failure();
       uint32_t capture = static_cast<uint32_t>(programCaptures.size());
@@ -3273,12 +3364,6 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     for (unsigned index = 0; index != 8; ++index)
       program.push_back(static_cast<uint8_t>(value >> (index * 8)));
   };
-  append32(OBELISK_RT_RANDOM_PROGRAM_MAGIC);
-  append16(OBELISK_RT_RANDOM_PROGRAM_VERSION);
-  append16(OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE);
-  append32(static_cast<uint32_t>(totalWidth));
-  append32(static_cast<uint32_t>(programInstructions.size()));
-  append32(static_cast<uint32_t>(programCaptures.size()));
   uint32_t programFlags = emittedSoft ? OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT : 0;
   if (hasSolveBefore)
     programFlags |= OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE;
@@ -3289,15 +3374,72 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   });
   if (hasFiniteDomains)
     programFlags |= OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS;
+  bool wideProgram = totalWidth > 64 || llvm::any_of(
+                                                programInstructions,
+                                                [](const EncodedInstruction &op) {
+                                                  return op.width > 64;
+                                                });
+  append32(OBELISK_RT_RANDOM_PROGRAM_MAGIC);
+  append16(wideProgram ? OBELISK_RT_RANDOM_PROGRAM_VERSION_V2
+                       : OBELISK_RT_RANDOM_PROGRAM_VERSION_V1);
+  append16(wideProgram ? OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE_V2
+                       : OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE);
+  append32(static_cast<uint32_t>(totalWidth));
+  append32(static_cast<uint32_t>(programInstructions.size()));
+  append32(static_cast<uint32_t>(programCaptures.size()));
   append32(programFlags);
-  for (const EncodedInstruction &encoded : programInstructions) {
-    program.push_back(encoded.opcode);
-    program.push_back(encoded.width);
-    program.push_back(encoded.flags);
-    program.push_back(0);
-    append32(encoded.operand);
-    append64(encoded.immediate);
+  SmallVector<uint64_t> literalWords;
+  SmallVector<uint32_t> instructionAuxiliaries;
+  if (wideProgram) {
+    for (const EncodedInstruction &encoded : programInstructions) {
+      uint32_t auxiliary = 0;
+      if (encoded.opcode == OBELISK_RT_RANDOM_PUSH_LITERAL_V1) {
+        APInt literal = encoded.literal.value_or(
+            APInt(encoded.width, encoded.immediate));
+        uint64_t words = literal.getNumWords();
+        if (literalWords.size() > UINT32_MAX ||
+            words > UINT32_MAX - literalWords.size()) {
+          emitError(location) << "wide random literal pool exceeds 32 bits";
+          return failure();
+        }
+        auxiliary = static_cast<uint32_t>(literalWords.size());
+        literalWords.append(literal.getRawData(),
+                            literal.getRawData() + words);
+      } else if (encoded.opcode == OBELISK_RT_RANDOM_END_SOFT_V1) {
+        if (encoded.immediate > UINT32_MAX) {
+          emitError(location) << "random soft priority exceeds 32 bits";
+          return failure();
+        }
+        auxiliary = static_cast<uint32_t>(encoded.immediate);
+      } else if (encoded.immediate != 0) {
+        emitError(location)
+            << "wide random instruction has an unencodable auxiliary";
+        return failure();
+      }
+      instructionAuxiliaries.push_back(auxiliary);
+    }
+    append32(static_cast<uint32_t>(literalWords.size()));
+    append32(0);
   }
+  for (auto [index, encoded] : llvm::enumerate(programInstructions)) {
+    program.push_back(encoded.opcode);
+    if (wideProgram) {
+      program.push_back(encoded.flags);
+      append16(0);
+      append32(encoded.width);
+      append32(encoded.operand);
+      append32(instructionAuxiliaries[index]);
+    } else {
+      program.push_back(static_cast<uint8_t>(encoded.width));
+      program.push_back(encoded.flags);
+      program.push_back(0);
+      append32(encoded.operand);
+      append64(encoded.literal ? encoded.literal->getZExtValue()
+                               : encoded.immediate);
+    }
+  }
+  for (uint64_t word : literalWords)
+    append64(word);
   if (hasSolveBefore) {
     append32(static_cast<uint32_t>(solveBeforeEdges.size()));
     for (const SolveBeforeEdge &edge : solveBeforeEdges) {
@@ -3385,33 +3527,35 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       program.data(), program.size(), /*resourceLimit=*/100000,
       /*preferGlobalAssignmentTable=*/hasSolveBefore);
 
-  SmallVector<uint64_t> proposalAssignments;
+  SmallVector<APInt> proposalAssignments;
   constexpr size_t maxMaterializedAssignmentTableSize = 16;
-  uint64_t aggregateMask =
-      totalWidth == 64 ? UINT64_MAX : (uint64_t{1} << totalWidth) - 1;
+  APInt aggregateMask = domainMask;
   bool validAssignmentTable =
       distPlans.empty() && analysis.assignmentTables.empty() &&
       !analysis.assignmentTable.empty() &&
       analysis.assignmentTable.size() <= maxMaterializedAssignmentTableSize &&
-      llvm::all_of(analysis.assignmentTable, [&](uint64_t assignment) {
-        return (assignment & ~aggregateMask) == 0;
+      llvm::all_of(analysis.assignmentTable, [&](const APInt &assignment) {
+        return assignment.getBitWidth() <= assignmentWidth &&
+               (assignment.zextOrTrunc(assignmentWidth) & ~aggregateMask)
+                   .isZero();
       });
   bool powerOfTwoAssignmentTable =
       validAssignmentTable && (analysis.assignmentTable.size() &
                                (analysis.assignmentTable.size() - 1)) == 0;
   if (validAssignmentTable)
-    proposalAssignments.append(analysis.assignmentTable.begin(),
-                               analysis.assignmentTable.end());
+    for (const APInt &assignment : analysis.assignmentTable)
+      proposalAssignments.push_back(
+          assignment.zextOrTrunc(assignmentWidth));
 
   struct SolveBeforeTableNode {
     SmallVector<unsigned> children;
-    SmallVector<uint64_t> assignments;
+    SmallVector<APInt> assignments;
   };
   SmallVector<SolveBeforeTableNode> solveBeforeTableNodes;
   std::optional<unsigned> solveBeforeTableRoot;
-  std::function<unsigned(ArrayRef<uint64_t>, unsigned)> buildSolveBeforeTable;
+  std::function<unsigned(ArrayRef<APInt>, unsigned)> buildSolveBeforeTable;
   if (hasSolveBefore) {
-    buildSolveBeforeTable = [&](ArrayRef<uint64_t> rows,
+    buildSolveBeforeTable = [&](ArrayRef<APInt> rows,
                                 unsigned layer) -> unsigned {
       unsigned node = solveBeforeTableNodes.size();
       solveBeforeTableNodes.emplace_back();
@@ -3420,13 +3564,13 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                                        rows.end());
         return node;
       }
-      SmallVector<std::pair<uint64_t, SmallVector<uint64_t>>> groups;
-      for (uint64_t row : rows) {
-        uint64_t key = row & solveBeforeLayerMasks[layer];
+      SmallVector<std::pair<uint64_t, SmallVector<APInt>>> groups;
+      for (const APInt &row : rows) {
+        uint64_t key = row.getZExtValue() & solveBeforeLayerMasks[layer];
         auto group = llvm::find_if(
             groups, [&](const auto &entry) { return entry.first == key; });
         if (group == groups.end()) {
-          groups.emplace_back(key, SmallVector<uint64_t>{});
+          groups.emplace_back(key, SmallVector<APInt>{});
           group = std::prev(groups.end());
         }
         group->second.push_back(row);
@@ -3445,20 +3589,18 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   }
 
   struct ProposalAssignmentTable {
-    uint64_t mask;
-    SmallVector<uint64_t> assignments;
+    APInt mask;
+    SmallVector<APInt> assignments;
   };
   SmallVector<ProposalAssignmentTable> proposalAssignmentTables;
-  uint64_t proposalAssignmentTableMask = 0;
-  auto coversWholeProperties = [&](uint64_t tableMask) {
-    uint64_t offset = 0;
+  APInt proposalAssignmentTableMask = APInt::getZero(assignmentWidth);
+  auto coversWholeProperties = [&](const APInt &tableMask) {
+    unsigned offset = 0;
     for (const Property &property : planned) {
-      uint64_t valueMask = property.width == 64
-                               ? UINT64_MAX
-                               : (uint64_t{1} << property.width) - 1;
-      uint64_t propertyMask = valueMask << offset;
-      uint64_t overlap = tableMask & propertyMask;
-      if (overlap != 0 && overlap != propertyMask)
+      APInt propertyMask =
+          APInt::getLowBitsSet(assignmentWidth, property.width).shl(offset);
+      APInt overlap = tableMask & propertyMask;
+      if (!overlap.isZero() && overlap != propertyMask)
         return false;
       offset += property.width;
     }
@@ -3472,27 +3614,34 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                !hasSoftConstraint &&
                                !analysis.assignmentTables.empty();
   for (const solver::RandomAssignmentTable &table : analysis.assignmentTables) {
+    APInt normalizedMask = table.mask.zextOrTrunc(assignmentWidth);
     bool valid =
-        table.mask != 0 && (table.mask & ~aggregateMask) == 0 &&
-        coversWholeProperties(table.mask) &&
-        (table.mask & proposalAssignmentTableMask) == 0 &&
+        table.mask.getBitWidth() <= assignmentWidth && !table.mask.isZero() &&
+        (normalizedMask & ~aggregateMask).isZero() &&
+        coversWholeProperties(normalizedMask) &&
+        (normalizedMask & proposalAssignmentTableMask).isZero() &&
         !table.assignments.empty() &&
         table.assignments.size() <= maxMaterializedAssignmentTableSize &&
-        llvm::all_of(table.assignments, [&](uint64_t assignment) {
-          return (assignment & ~table.mask) == 0;
+        llvm::all_of(table.assignments, [&](const APInt &assignment) {
+          return assignment.getBitWidth() <= assignmentWidth &&
+                 (assignment.zextOrTrunc(assignmentWidth) & ~normalizedMask)
+                     .isZero();
         });
     if (!valid) {
       validAssignmentTables = false;
       break;
     }
-    proposalAssignmentTableMask |= table.mask;
+    proposalAssignmentTableMask |= normalizedMask;
+    SmallVector<APInt> normalizedAssignments;
+    for (const APInt &assignment : table.assignments)
+      normalizedAssignments.push_back(
+          assignment.zextOrTrunc(assignmentWidth));
     proposalAssignmentTables.push_back(
-        {table.mask, SmallVector<uint64_t>(table.assignments.begin(),
-                                           table.assignments.end())});
+        {normalizedMask, std::move(normalizedAssignments)});
   }
   if (!validAssignmentTables) {
     proposalAssignmentTables.clear();
-    proposalAssignmentTableMask = 0;
+    proposalAssignmentTableMask = APInt::getZero(assignmentWidth);
   }
   SmallVector<unsigned> solveBeforeComponentTableRoots;
 
@@ -3543,10 +3692,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   SmallVector<ProposalDefinition> proposalDefinitions;
   uint32_t propertyOffset = 0;
   for (const Property &property : planned) {
-    uint64_t propertyMask =
-        (property.width == 64 ? UINT64_MAX
-                              : (uint64_t{1} << property.width) - 1)
-        << propertyOffset;
+    APInt propertyMask =
+        APInt::getLowBitsSet(assignmentWidth, property.width)
+            .shl(propertyOffset);
     if (!property.domains.empty()) {
       if (!property.isRandC && !validAssignmentTable &&
           (proposalAssignmentTableMask & propertyMask) != propertyMask)
@@ -3562,16 +3710,21 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                  return domain.offset == propertyOffset &&
                                         domain.width == property.width;
                                });
-    if (found != analysis.domains.end() && found->lower <= found->upper) {
+    if (found != analysis.domains.end() && property.width <= 64 &&
+        found->lower.getBitWidth() == property.width &&
+        found->upper.getBitWidth() == property.width &&
+        found->lower.ule(found->upper)) {
       uint64_t fullMaximum = property.width == 64
                                  ? UINT64_MAX
                                  : (uint64_t{1} << property.width) - 1;
-      uint64_t distance = found->upper - found->lower;
+      uint64_t lower = found->lower.getZExtValue();
+      uint64_t upper = found->upper.getZExtValue();
+      uint64_t distance = upper - lower;
       uint64_t cardinality = distance + 1;
-      if (found->upper <= fullMaximum && cardinality != 0)
+      if (upper <= fullMaximum && cardinality != 0)
         proposalDomains.push_back({propertyOffset,
                                    property.width,
-                                   found->lower,
+                                   lower,
                                    cardinality,
                                    (cardinality & (cardinality - 1)) == 0,
                                    {}});
@@ -3823,38 +3976,40 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                      definition.expressionEnd});
   }
 
-  auto selectAssignmentTable = [&](ArrayRef<uint64_t> assignments,
-                                   Value index) -> Value {
-    Value assignment = constant64(assignments.front());
+  auto selectAssignmentTable = [&](ArrayRef<APInt> assignments,
+                                    Value index) -> Value {
+    Value assignment = constantAssignment(assignments.front());
     for (auto [tableIndex, tableAssignment] :
          llvm::enumerate(llvm::drop_begin(assignments))) {
       Value selected =
           arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
-                                index, constant64(tableIndex + 1));
+                                index, constantLike(index, tableIndex + 1));
       assignment = arith::SelectOp::create(
-          builder, location, selected, constant64(tableAssignment), assignment);
+          builder, location, selected, constantAssignment(tableAssignment),
+          assignment);
     }
     return assignment;
   };
   Value sampledSolveBeforeAssignment;
   Value sampledComponentAssignment;
   Value sampledDistAssignment;
-  uint64_t sampledDistMask = 0;
+  APInt sampledDistMask = APInt::getZero(assignmentWidth);
   auto materializeProposal = [&](Value rawAssignment,
                                  Value attempt) -> FailureOr<Value> {
     if (sampledSolveBeforeAssignment)
       return sampledSolveBeforeAssignment;
     if (!proposalAssignments.empty()) {
       if (proposalAssignments.size() == 1)
-        return constant64(proposalAssignments.front());
+        return constantAssignment(proposalAssignments.front());
       Value index =
           powerOfTwoAssignmentTable
               ? arith::AndIOp::create(
                     builder, location, rawAssignment,
-                    constant64(proposalAssignments.size() - 1))
+                    constantAssignment64(proposalAssignments.size() - 1))
                     .getResult()
               : arith::RemUIOp::create(builder, location, rawAssignment,
-                                       constant64(proposalAssignments.size()))
+                                       constantAssignment64(
+                                           proposalAssignments.size()))
                     .getResult();
       return selectAssignmentTable(proposalAssignments, index);
     }
@@ -3863,7 +4018,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       assignment = arith::OrIOp::create(
           builder, location,
           arith::AndIOp::create(builder, location, assignment,
-                                constant64(~proposalAssignmentTableMask)),
+                                constantAssignment(
+                                    ~proposalAssignmentTableMask)),
           sampledComponentAssignment);
     for (const ProposalDomain &domain : proposalDomains) {
       Value fieldBits;
@@ -3871,9 +4027,10 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         fieldBits = rawAssignment;
         if (domain.offset != 0)
           fieldBits = arith::ShRUIOp::create(builder, location, fieldBits,
-                                             constant64(domain.offset));
+                                             constantAssignment64(domain.offset));
         fieldBits = arith::AndIOp::create(builder, location, fieldBits,
-                                          constant64(domain.cardinality - 1));
+                                          constantAssignment64(
+                                              domain.cardinality - 1));
       } else {
         // Advance the independently unbiased starting index without unsigned
         // overflow. This visits every interval value cyclically when the
@@ -3894,18 +4051,19 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       }
       if (domain.lower != 0)
         fieldBits = arith::AddIOp::create(builder, location, fieldBits,
-                                          constant64(domain.lower));
+                                          constantLike(fieldBits, domain.lower));
+      if (fieldBits.getType() != assignmentType)
+        fieldBits = arith::ExtUIOp::create(builder, location, assignmentType,
+                                           fieldBits);
       if (domain.offset != 0)
         fieldBits = arith::ShLIOp::create(builder, location, fieldBits,
-                                          constant64(domain.offset));
-      uint64_t fieldMask = domain.width == 64
-                               ? UINT64_MAX
-                               : ((uint64_t{1} << domain.width) - 1)
-                                     << domain.offset;
+                                          constantAssignment64(domain.offset));
+      APInt fieldMask = APInt::getLowBitsSet(assignmentWidth, domain.width)
+                            .shl(domain.offset);
       assignment = arith::OrIOp::create(
           builder, location,
           arith::AndIOp::create(builder, location, assignment,
-                                constant64(~fieldMask)),
+                                constantAssignment(~fieldMask)),
           fieldBits);
     }
     for (const ProposalFiniteDomain &domain : proposalFiniteDomains) {
@@ -3932,17 +4090,19 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       }
       Value fieldBits =
           materializePropertyDomainIndex(*domain.property, fieldIndex);
+      if (fieldBits.getType() != assignmentType)
+        fieldBits = arith::ExtUIOp::create(builder, location, assignmentType,
+                                           fieldBits);
       if (domain.offset != 0)
         fieldBits = arith::ShLIOp::create(builder, location, fieldBits,
-                                          constant64(domain.offset));
-      uint64_t fieldMask = (domain.property->width == 64
-                                ? UINT64_MAX
-                                : (uint64_t{1} << domain.property->width) - 1)
-                           << domain.offset;
+                                          constantAssignment64(domain.offset));
+      APInt fieldMask =
+          APInt::getLowBitsSet(assignmentWidth, domain.property->width)
+              .shl(domain.offset);
       assignment = arith::OrIOp::create(
           builder, location,
           arith::AndIOp::create(builder, location, assignment,
-                                constant64(~fieldMask)),
+                                constantAssignment(~fieldMask)),
           fieldBits);
     }
     for (const ProposalCaptureDomain &bound : proposalCaptureDomains) {
@@ -3974,17 +4134,18 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         fieldBits =
             arith::XOrIOp::create(builder, location, fieldBits,
                                   constant64(uint64_t{1} << (bound.width - 1)));
+      if (fieldBits.getType() != assignmentType)
+        fieldBits = arith::ExtUIOp::create(builder, location, assignmentType,
+                                           fieldBits);
       if (bound.offset != 0)
         fieldBits = arith::ShLIOp::create(builder, location, fieldBits,
-                                          constant64(bound.offset));
-      uint64_t fieldMask = bound.width == 64
-                               ? UINT64_MAX
-                               : ((uint64_t{1} << bound.width) - 1)
-                                     << bound.offset;
+                                          constantAssignment64(bound.offset));
+      APInt fieldMask = APInt::getLowBitsSet(assignmentWidth, bound.width)
+                            .shl(bound.offset);
       assignment = arith::OrIOp::create(
           builder, location,
           arith::AndIOp::create(builder, location, assignment,
-                                constant64(~fieldMask)),
+                                constantAssignment(~fieldMask)),
           fieldBits);
     }
     struct DefinitionValue {
@@ -3992,32 +4153,69 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       unsigned width;
     };
     auto maskDefinitionValue = [&](Value bits, unsigned width) {
-      if (width == 64)
+      if (assignmentWidth <= 64) {
+        if (width == 64)
+          return bits;
+        return arith::AndIOp::create(
+                   builder, location, bits,
+                   constant64((uint64_t{1} << width) - 1))
+            .getResult();
+      }
+      auto inputType = cast<IntegerType>(bits.getType());
+      if (inputType.getWidth() == width)
         return bits;
-      return arith::AndIOp::create(builder, location, bits,
-                                   constant64((uint64_t{1} << width) - 1))
+      auto outputType = IntegerType::get(function.getContext(), width);
+      if (inputType.getWidth() > width)
+        return arith::TruncIOp::create(builder, location, outputType, bits)
+            .getResult();
+      return arith::ExtUIOp::create(builder, location, outputType, bits)
           .getResult();
     };
     auto resizeDefinitionValue = [&](DefinitionValue input, unsigned width,
                                      bool signExtend) {
-      Value bits = input.bits;
-      if (input.width < width && signExtend) {
-        unsigned shift = 64 - input.width;
-        bits =
-            arith::ShLIOp::create(builder, location, bits, constant64(shift));
-        bits =
-            arith::ShRSIOp::create(builder, location, bits, constant64(shift));
+      if (assignmentWidth <= 64) {
+        Value bits = input.bits;
+        if (input.width < width && signExtend) {
+          unsigned shift = 64 - input.width;
+          bits = arith::ShLIOp::create(builder, location, bits,
+                                       constant64(shift));
+          bits = arith::ShRSIOp::create(builder, location, bits,
+                                        constant64(shift));
+        }
+        return maskDefinitionValue(bits, width);
       }
-      return maskDefinitionValue(bits, width);
+      if (input.width == width)
+        return input.bits;
+      auto outputType = IntegerType::get(function.getContext(), width);
+      if (input.width > width)
+        return arith::TruncIOp::create(builder, location, outputType, input.bits)
+            .getResult();
+      if (signExtend)
+        return arith::ExtSIOp::create(builder, location, outputType, input.bits)
+            .getResult();
+      return arith::ExtUIOp::create(builder, location, outputType, input.bits)
+          .getResult();
     };
     auto definitionTruth = [&](Value bits) {
       return arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
-                                   bits, constant64(0))
+                                   bits, assignmentWidth <= 64
+                                             ? constant64(0)
+                                             : constantLike(bits, 0))
           .getResult();
     };
     auto definitionBooleanBits = [&](Value condition) {
-      return arith::ExtUIOp::create(builder, location, builder.getI64Type(),
-                                    condition)
+      if (assignmentWidth <= 64)
+        return arith::ExtUIOp::create(builder, location, i64, condition)
+            .getResult();
+      return condition;
+    };
+    auto definitionConstant = [&](unsigned width, const APInt &value) {
+      if (assignmentWidth <= 64)
+        return constant64(value.zextOrTrunc(64).getZExtValue());
+      auto type = IntegerType::get(function.getContext(), width);
+      return arith::ConstantOp::create(
+                 builder, location, type,
+                 builder.getIntegerAttr(type, value.zextOrTrunc(width)))
           .getResult();
     };
     for (const ProposalDefinition &definition : proposalDefinitions) {
@@ -4034,7 +4232,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           Value bits = assignment;
           if (sourceOffset != 0)
             bits = arith::ShRUIOp::create(builder, location, bits,
-                                          constant64(sourceOffset));
+                                          constantAssignment64(sourceOffset));
           stack.push_back(
               {maskDefinitionValue(bits, encoded.width), encoded.width});
           continue;
@@ -4046,8 +4244,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           continue;
         }
         if (encoded.opcode == OBELISK_RT_RANDOM_PUSH_LITERAL_V1) {
-          stack.push_back({maskDefinitionValue(constant64(encoded.immediate),
-                                               encoded.width),
+          APInt literal = encoded.literal.value_or(
+              APInt(encoded.width, encoded.immediate));
+          stack.push_back({definitionConstant(encoded.width, literal),
                            encoded.width});
           continue;
         }
@@ -4075,18 +4274,17 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             bits = resizeDefinitionValue(input, encoded.width, signedOperation);
           if (encoded.opcode == OBELISK_RT_RANDOM_NEG_V1)
             bits =
-                arith::SubIOp::create(builder, location, constant64(0), bits);
+                arith::SubIOp::create(builder, location, constantLike(bits, 0),
+                                      bits);
           else if (encoded.opcode == OBELISK_RT_RANDOM_BIT_NOT_V1)
             bits = arith::XOrIOp::create(
                 builder, location, bits,
-                constant64(encoded.width == 64
-                               ? UINT64_MAX
-                               : (uint64_t{1} << encoded.width) - 1));
+                definitionConstant(encoded.width,
+                                   APInt::getAllOnes(encoded.width)));
           else if (encoded.opcode == OBELISK_RT_RANDOM_REDUCE_AND_V1 ||
                    encoded.opcode == OBELISK_RT_RANDOM_REDUCE_NAND_V1) {
-            Value allOnes = constant64(input.width == 64
-                                           ? UINT64_MAX
-                                           : (uint64_t{1} << input.width) - 1);
+            Value allOnes = definitionConstant(
+                input.width, APInt::getAllOnes(input.width));
             arith::CmpIPredicate predicate =
                 encoded.opcode == OBELISK_RT_RANDOM_REDUCE_AND_V1
                     ? arith::CmpIPredicate::eq
@@ -4097,24 +4295,36 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             bits = definitionBooleanBits(definitionTruth(input.bits));
           } else if (encoded.opcode == OBELISK_RT_RANDOM_REDUCE_XOR_V1 ||
                      encoded.opcode == OBELISK_RT_RANDOM_REDUCE_XNOR_V1) {
-            bits = constant64(0);
+            bits = assignmentWidth <= 64
+                       ? constant64(0)
+                       : arith::ConstantOp::create(
+                             builder, location, builder.getI1Type(),
+                             builder.getBoolAttr(false))
+                             .getResult();
             for (unsigned bit = 0; bit != input.width; ++bit) {
               Value current = input.bits;
               if (bit != 0)
                 current = arith::ShRUIOp::create(builder, location, current,
-                                                 constant64(bit));
+                                                 constantLike(current, bit));
               current = arith::AndIOp::create(builder, location, current,
-                                              constant64(1));
-              bits = arith::XOrIOp::create(builder, location, bits, current);
+                                              constantLike(current, 1));
+              bits = arith::XOrIOp::create(
+                  builder, location, bits, definitionTruth(current));
             }
             if (encoded.opcode == OBELISK_RT_RANDOM_REDUCE_XNOR_V1)
-              bits =
-                  arith::XOrIOp::create(builder, location, bits, constant64(1));
+              bits = arith::XOrIOp::create(
+                  builder, location, bits,
+                  assignmentWidth <= 64
+                      ? constant64(1)
+                      : arith::ConstantOp::create(builder, location,
+                                                  builder.getI1Type(),
+                                                  builder.getBoolAttr(true))
+                            .getResult());
           } else if (encoded.opcode == OBELISK_RT_RANDOM_REDUCE_NOR_V1 ||
                      encoded.opcode == OBELISK_RT_RANDOM_LOGICAL_NOT_V1) {
             bits = definitionBooleanBits(arith::CmpIOp::create(
                 builder, location, arith::CmpIPredicate::eq, input.bits,
-                constant64(0)));
+                constantLike(input.bits, 0)));
           }
           stack.push_back(
               {maskDefinitionValue(bits, encoded.width), encoded.width});
@@ -4129,13 +4339,16 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             encoded.opcode == OBELISK_RT_RANDOM_SHIFT_RIGHT_ARITH_V1) {
           bool arithmeticRight =
               encoded.opcode == OBELISK_RT_RANDOM_SHIFT_RIGHT_ARITH_V1;
-          Value left = resizeDefinitionValue(
-              lhs, arithmeticRight ? 64 : encoded.width, arithmeticRight);
+          unsigned operationWidth = std::max(encoded.width, rhs.width);
+          Value left = resizeDefinitionValue(lhs, operationWidth,
+                                             arithmeticRight);
+          Value right =
+              resizeDefinitionValue(rhs, operationWidth, /*signExtend=*/false);
           Value oversized = arith::CmpIOp::create(
-              builder, location, arith::CmpIPredicate::uge, rhs.bits,
-              constant64(encoded.width));
+              builder, location, arith::CmpIPredicate::uge, right,
+              constantLike(right, encoded.width));
           Value safeAmount = arith::SelectOp::create(
-              builder, location, oversized, constant64(0), rhs.bits);
+              builder, location, oversized, constantLike(right, 0), right);
           Value shifted;
           if (encoded.opcode == OBELISK_RT_RANDOM_SHIFT_LEFT_V1)
             shifted =
@@ -4146,17 +4359,17 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           else
             shifted =
                 arith::ShRUIOp::create(builder, location, left, safeAmount);
-          Value oversizedResult = constant64(0);
+          Value oversizedResult = constantLike(left, 0);
           if (arithmeticRight) {
             Value negative = arith::CmpIOp::create(builder, location,
                                                    arith::CmpIPredicate::slt,
-                                                   left, constant64(0));
+                                                   left,
+                                                   constantLike(left, 0));
             oversizedResult = arith::SelectOp::create(
                 builder, location, negative,
-                constant64(encoded.width == 64
-                               ? UINT64_MAX
-                               : (uint64_t{1} << encoded.width) - 1),
-                constant64(0));
+                definitionConstant(operationWidth,
+                                   APInt::getAllOnes(operationWidth)),
+                constantLike(left, 0));
           }
           Value bits = arith::SelectOp::create(builder, location, oversized,
                                                oversizedResult, shifted);
@@ -4167,14 +4380,15 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         if (encoded.opcode == OBELISK_RT_RANDOM_POWER_V1) {
           Value base =
               resizeDefinitionValue(lhs, encoded.width, signedOperation);
-          Value bits = constant64(1);
+          Value bits = definitionConstant(encoded.width, APInt(encoded.width, 1));
           for (unsigned bit = 0; bit != rhs.width; ++bit) {
             Value exponentBit = rhs.bits;
             if (bit != 0)
               exponentBit = arith::ShRUIOp::create(
-                  builder, location, exponentBit, constant64(bit));
+                  builder, location, exponentBit,
+                  constantLike(exponentBit, bit));
             exponentBit = arith::AndIOp::create(builder, location, exponentBit,
-                                                constant64(1));
+                                                constantLike(exponentBit, 1));
             Value multiplied =
                 arith::MulIOp::create(builder, location, bits, base);
             multiplied = maskDefinitionValue(multiplied, encoded.width);
@@ -4217,30 +4431,31 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         case OBELISK_RT_RANDOM_DIV_V1:
         case OBELISK_RT_RANDOM_MOD_V1:
           if (signedOperation) {
-            Value signedLeft =
-                resizeDefinitionValue({left, operandWidth}, 64, true);
-            Value signedRight =
-                resizeDefinitionValue({right, operandWidth}, 64, true);
             Value overflow = arith::AndIOp::create(
                 builder, location,
                 arith::CmpIOp::create(builder, location,
-                                      arith::CmpIPredicate::eq, signedLeft,
-                                      constant64(uint64_t{1} << 63)),
+                                      arith::CmpIPredicate::eq, left,
+                                      definitionConstant(
+                                          operandWidth,
+                                          APInt::getSignedMinValue(
+                                              operandWidth))),
                 arith::CmpIOp::create(builder, location,
-                                      arith::CmpIPredicate::eq, signedRight,
-                                      constant64(UINT64_MAX)));
+                                      arith::CmpIPredicate::eq, right,
+                                      definitionConstant(
+                                          operandWidth,
+                                          APInt::getAllOnes(operandWidth))));
             Value safeRight = arith::SelectOp::create(
-                builder, location, overflow, constant64(1), signedRight);
+                builder, location, overflow, constantLike(right, 1), right);
             if (encoded.opcode == OBELISK_RT_RANDOM_DIV_V1) {
-              Value quotient = arith::DivSIOp::create(builder, location,
-                                                      signedLeft, safeRight);
+              Value quotient =
+                  arith::DivSIOp::create(builder, location, left, safeRight);
               bits = arith::SelectOp::create(builder, location, overflow,
-                                             signedLeft, quotient);
+                                             left, quotient);
             } else {
-              Value remainder = arith::RemSIOp::create(builder, location,
-                                                       signedLeft, safeRight);
+              Value remainder =
+                  arith::RemSIOp::create(builder, location, left, safeRight);
               bits = arith::SelectOp::create(builder, location, overflow,
-                                             constant64(0), remainder);
+                                             constantLike(left, 0), remainder);
             }
           } else if (encoded.opcode == OBELISK_RT_RANDOM_DIV_V1) {
             bits = arith::DivUIOp::create(builder, location, left, right);
@@ -4261,9 +4476,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           bits = arith::XOrIOp::create(builder, location, left, right);
           bits = arith::XOrIOp::create(
               builder, location, bits,
-              constant64(encoded.width == 64
-                             ? UINT64_MAX
-                             : (uint64_t{1} << encoded.width) - 1));
+              definitionConstant(encoded.width,
+                                 APInt::getAllOnes(encoded.width)));
           break;
         case OBELISK_RT_RANDOM_EQ_V1:
         case OBELISK_RT_RANDOM_NE_V1:
@@ -4271,14 +4485,6 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         case OBELISK_RT_RANDOM_GT_V1:
         case OBELISK_RT_RANDOM_LE_V1:
         case OBELISK_RT_RANDOM_LT_V1: {
-          Value comparedLeft = left;
-          Value comparedRight = right;
-          if (signedOperation && encoded.opcode >= OBELISK_RT_RANDOM_GE_V1) {
-            comparedLeft =
-                resizeDefinitionValue({left, operandWidth}, 64, true);
-            comparedRight =
-                resizeDefinitionValue({right, operandWidth}, 64, true);
-          }
           arith::CmpIPredicate predicate;
           switch (encoded.opcode) {
           case OBELISK_RT_RANDOM_EQ_V1:
@@ -4307,7 +4513,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             return failure();
           }
           bits = definitionBooleanBits(arith::CmpIOp::create(
-              builder, location, predicate, comparedLeft, comparedRight));
+              builder, location, predicate, left, right));
           break;
         }
         case OBELISK_RT_RANDOM_LOGICAL_AND_V1:
@@ -4326,7 +4532,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           else if (encoded.opcode == OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1) {
             Value leftFalse = arith::CmpIOp::create(builder, location,
                                                     arith::CmpIPredicate::eq,
-                                                    lhs.bits, constant64(0));
+                                                    lhs.bits,
+                                                    constantLike(lhs.bits, 0));
             predicate =
                 arith::OrIOp::create(builder, location, leftFalse, rightTruth);
           } else {
@@ -4345,24 +4552,25 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       }
       if (stack.size() != 1 || stack.back().width != definition.width)
         return failure();
-      uint64_t valueMask = definition.width == 64
-                               ? UINT64_MAX
-                               : (uint64_t{1} << definition.width) - 1;
       Value fieldBits = stack.back().bits;
+      if (fieldBits.getType() != assignmentType)
+        fieldBits = arith::ExtUIOp::create(builder, location, assignmentType,
+                                           fieldBits);
       if (definition.targetOffset != 0)
         fieldBits = arith::ShLIOp::create(builder, location, fieldBits,
-                                          constant64(definition.targetOffset));
-      uint64_t targetMask = valueMask << definition.targetOffset;
+                                          constantAssignment64(
+                                              definition.targetOffset));
+      APInt targetMask =
+          APInt::getLowBitsSet(assignmentWidth, definition.width)
+              .shl(definition.targetOffset);
       assignment = arith::OrIOp::create(
           builder, location,
           arith::AndIOp::create(builder, location, assignment,
-                                constant64(~targetMask)),
+                                constantAssignment(~targetMask)),
           fieldBits);
     }
     SmallVector<std::tuple<uint32_t, unsigned, Value>> aliasSources;
     for (const ProposalAlias &alias : proposalAliases) {
-      uint64_t valueMask =
-          alias.width == 64 ? UINT64_MAX : (uint64_t{1} << alias.width) - 1;
       auto cachedSource = llvm::find_if(aliasSources, [&](const auto &source) {
         return std::get<0>(source) == alias.sourceOffset &&
                std::get<1>(source) == alias.width;
@@ -4374,26 +4582,32 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         sourceBits = assignment;
         if (alias.sourceOffset != 0)
           sourceBits = arith::ShRUIOp::create(builder, location, sourceBits,
-                                              constant64(alias.sourceOffset));
-        sourceBits = arith::AndIOp::create(builder, location, sourceBits,
-                                           constant64(valueMask));
+                                              constantAssignment64(
+                                                  alias.sourceOffset));
+        sourceBits = maskDefinitionValue(sourceBits, alias.width);
         aliasSources.emplace_back(alias.sourceOffset, alias.width, sourceBits);
       }
+      if (sourceBits.getType() != assignmentType)
+        sourceBits = arith::ExtUIOp::create(builder, location, assignmentType,
+                                            sourceBits);
       if (alias.targetOffset != 0)
         sourceBits = arith::ShLIOp::create(builder, location, sourceBits,
-                                           constant64(alias.targetOffset));
-      uint64_t targetMask = valueMask << alias.targetOffset;
+                                           constantAssignment64(
+                                               alias.targetOffset));
+      APInt targetMask = APInt::getLowBitsSet(assignmentWidth, alias.width)
+                             .shl(alias.targetOffset);
       assignment = arith::OrIOp::create(
           builder, location,
           arith::AndIOp::create(builder, location, assignment,
-                                constant64(~targetMask)),
+                                constantAssignment(~targetMask)),
           sourceBits);
     }
     if (sampledDistAssignment)
       assignment = arith::OrIOp::create(
           builder, location,
           arith::AndIOp::create(builder, location, assignment,
-                                constant64(~sampledDistMask)),
+                                constantAssignment(
+                                    ~sampledDistMask)),
           sampledDistAssignment);
     return assignment;
   };
@@ -4472,6 +4686,37 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                        !hasRandC && distPlans.empty() &&
                        !overwritesProposalDomain &&
                        materializesCompleteProposal;
+
+  // A closed definition has no randomized or captured inputs, so applying it
+  // after a solver-derived target interval cannot invalidate that interval.
+  // This common constant-expression case is complete even though the generic
+  // overwrite check above must remain conservative for dependent definitions.
+  auto isClosedDefinition = [&](const ProposalDefinition &definition) {
+    return llvm::none_of(
+        llvm::ArrayRef(programInstructions)
+            .slice(definition.expressionBegin,
+                   definition.expressionEnd - definition.expressionBegin),
+        [](const EncodedInstruction &encoded) {
+          return encoded.opcode == OBELISK_RT_RANDOM_PUSH_VARIABLE_V1 ||
+                 encoded.opcode == OBELISK_RT_RANDOM_PUSH_CAPTURE_V1 ||
+                 encoded.opcode == OBELISK_RT_RANDOM_DIV_V1 ||
+                 encoded.opcode == OBELISK_RT_RANDOM_MOD_V1;
+        });
+  };
+  bool closedDefinitionProposal =
+      analysis.proposalExact && !hasSoftConstraint && !hasRandC &&
+      distPlans.empty() && materializesCompleteProposal &&
+      !proposalDefinitions.empty() && proposalAliases.empty() &&
+      proposalFiniteDomains.empty() && proposalCaptureDomains.empty() &&
+      llvm::all_of(proposalDefinitions, isClosedDefinition);
+  exactProposal |= closedDefinitionProposal;
+  if (totalWidth > 64 && !exactProposal &&
+      analysis.satisfiability != solver::Satisfiability::Unsatisfiable) {
+    emitError(location)
+        << "wide random constraints require a residual runtime fallback that "
+           "is not executable yet";
+    return failure();
+  }
 
   auto structuralProposalFollowsSolveOrder = [&]() {
     auto propertyIndexForField = [&](uint32_t fieldOffset,
@@ -4570,7 +4815,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       orderedPropertyMask |= layerMask;
 
     uint64_t uncoveredOrderedMask =
-        orderedPropertyMask & ~proposalAssignmentTableMask;
+        orderedPropertyMask & ~proposalAssignmentTableMask.getZExtValue();
     if (uncoveredOrderedMask != 0) {
       // This also rejects a path-level order that covers only part of a
       // property. Whole-property aliases and definitions cannot preserve that
@@ -4619,7 +4864,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                            disabledCheckBlock, ValueRange{},
                            enabledSamplingBlock, ValueRange{});
   setCurrent(enabledSamplingBlock);
-  Value randomDraw = next64(state);
+  Value randomDraw = nextAssignment(state);
   Value start = arith::OrIOp::create(
       builder, location,
       arith::AndIOp::create(builder, location, randomDraw, mutableMask),
@@ -4785,7 +5030,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   }
 
   if (!materializedDistPlans.empty()) {
-    sampledDistAssignment = constant64(0);
+    sampledDistAssignment = constantAssignment64(0);
     for (const MaterializedDistPlan &materialized : materializedDistPlans) {
       Value choice = sampleDynamicBoundedIndex(materialized.totalWeight,
                                                 next64(state));
@@ -4816,17 +5061,20 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         field = arith::XOrIOp::create(
             builder, location, field,
             constant64(uint64_t{1} << (property.width - 1)));
-      uint64_t fieldMask = property.width == 64
-                               ? UINT64_MAX
-                               : (uint64_t{1} << property.width) - 1;
+      uint64_t localFieldMask = property.width == 64
+                                    ? UINT64_MAX
+                                    : (uint64_t{1} << property.width) - 1;
       field = arith::AndIOp::create(builder, location, field,
-                                    constant64(fieldMask));
+                                    constant64(localFieldMask));
+      if (field.getType() != assignmentType)
+        field = arith::ExtUIOp::create(builder, location, assignmentType, field);
       if (materialized.plan->propertyOffset != 0) {
         field = arith::ShLIOp::create(
             builder, location, field,
-            constant64(materialized.plan->propertyOffset));
-        fieldMask <<= materialized.plan->propertyOffset;
+            constantAssignment64(materialized.plan->propertyOffset));
       }
+      APInt fieldMask = APInt::getLowBitsSet(assignmentWidth, property.width)
+                            .shl(materialized.plan->propertyOffset);
       sampledDistAssignment = arith::OrIOp::create(
           builder, location, sampledDistAssignment, field);
       sampledDistMask |= fieldMask;
@@ -4914,7 +5162,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       const SolveBeforeTableNode &node = solveBeforeTableNodes[nodeIndex];
       if (node.children.empty()) {
         if (node.assignments.size() == 1)
-          return constant64(node.assignments.front());
+          return constantAssignment(node.assignments.front());
         Value draw = availableDraw ? *availableDraw : next64(state);
         Value index = sampleBoundedIndex(node.assignments.size(), draw);
         return selectAssignmentTable(node.assignments, index);
@@ -4927,7 +5175,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       Value branchState = state;
       Block *merge = addBlock();
       Value mergedState = merge->addArgument(i64, location);
-      Value mergedAssignment = merge->addArgument(i64, location);
+      Value mergedAssignment = merge->addArgument(assignmentType, location);
       SmallVector<Block *> branches;
       for (size_t child = 0; child != node.children.size(); ++child)
         branches.push_back(addBlock());
@@ -4965,7 +5213,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     start = sampleBoundedIndex(proposalAssignments.size(), randomDraw);
 
   if (validAssignmentTables) {
-    sampledComponentAssignment = constant64(0);
+    sampledComponentAssignment = constantAssignment64(0);
     if (!solveBeforeComponentTableRoots.empty()) {
       for (unsigned root : solveBeforeComponentTableRoots) {
         Value selected = sampleSolveTable(root, std::nullopt);
@@ -5014,13 +5262,14 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   Block *postBlock = addBlock();
   Block *failedBlock = addBlock();
   Block *done = addBlock();
-  Value counter = loop->addArgument(i64, location);
+  Value counter = loop->addArgument(assignmentType, location);
   Value attempt = loop->addArgument(i64, location);
-  Value fallbackStart = fallbackBlock->addArgument(i64, location);
-  Value modeCounter = modeLoop->addArgument(i64, location);
+  Value fallbackStart = fallbackBlock->addArgument(assignmentType, location);
+  Value modeCounter = modeLoop->addArgument(assignmentType, location);
   Value modeAttempt = modeLoop->addArgument(i64, location);
-  Value modeFallbackStart = modeFallbackBlock->addArgument(i64, location);
-  Value commitCounter = commit->addArgument(i64, location);
+  Value modeFallbackStart =
+      modeFallbackBlock->addArgument(assignmentType, location);
+  Value commitCounter = commit->addArgument(assignmentType, location);
   Value doneResult = done->addArgument(builder.getI1Type(), location);
 
   if (invalidCaptureBoundsBlock) {
@@ -5039,15 +5288,16 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   auto materializeCandidates =
       [&](Value assignment) -> FailureOr<SmallVector<Value>> {
     SmallVector<Value> candidates;
-    uint64_t offset = 0;
+    unsigned offset = 0;
     for (const Property &property : planned) {
       Value bits = assignment;
       if (offset != 0)
         bits =
-            arith::ShRUIOp::create(builder, location, bits, constant64(offset));
+            arith::ShRUIOp::create(builder, location, bits,
+                                   constantAssignment64(offset));
       Type integerType =
           IntegerType::get(function.getContext(), property.width);
-      if (property.width != 64)
+      if (property.width != assignmentWidth)
         bits = arith::TruncIOp::create(builder, location, integerType, bits);
       FailureOr<Value> converted =
           convert(bits, property.type, false, location, property.isSigned);
@@ -5302,19 +5552,21 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         uint64_t offset = domainPropertyOffset + domain.offset;
         if (offset != 0)
           field = arith::ShRUIOp::create(builder, location, field,
-                                         constant64(offset));
+                                         constantAssignment64(offset));
         uint64_t fieldMask =
             domain.width == 64 ? UINT64_MAX : (uint64_t{1} << domain.width) - 1;
         field = arith::AndIOp::create(builder, location, field,
-                                      constant64(fieldMask));
+                                      constantAssignment64(fieldMask));
         Value member = arith::ConstantOp::create(
             builder, location, builder.getI1Type(), builder.getBoolAttr(false));
         for (const DomainPattern &pattern : domain.patterns) {
           Value masked = arith::AndIOp::create(builder, location, field,
-                                               constant64(pattern.mask));
+                                               constantAssignment64(
+                                                   pattern.mask));
           Value matches =
               arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
-                                    masked, constant64(pattern.value));
+                                    masked,
+                                    constantAssignment64(pattern.value));
           member = arith::OrIOp::create(builder, location, member, matches);
         }
         satisfied = arith::AndIOp::create(builder, location, satisfied, member);
@@ -5402,15 +5654,13 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     uint64_t offset = 0;
     for (auto [property, enabled] :
          llvm::zip_equal(planned, propertyEnabled)) {
-      uint64_t valueMask = property.width == 64
-                               ? UINT64_MAX
-                               : (uint64_t{1} << property.width) - 1;
-      uint64_t aggregateMask = valueMask << offset;
+      APInt aggregateMask =
+          APInt::getLowBitsSet(assignmentWidth, property.width).shl(offset);
       if (property.isRandC) {
         offset += property.width;
         continue;
       }
-      Value aggregateMaskValue = constant64(aggregateMask);
+      Value aggregateMaskValue = constantAssignment(aggregateMask);
       Value field =
           arith::AndIOp::create(builder, location, current, aggregateMaskValue);
       Value wrapped;
@@ -5422,13 +5672,16 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         incremented = arith::AndIOp::create(
             builder, location,
             arith::AddIOp::create(builder, location, field,
-                                  constant64(uint64_t{1} << offset)),
+                                  constantAssignment(APInt::getOneBitSet(
+                                      assignmentWidth, offset))),
             aggregateMaskValue);
       } else {
         Value local = field;
         if (offset != 0)
           local = arith::ShRUIOp::create(builder, location, local,
-                                         constant64(offset));
+                                         constantAssignment64(offset));
+        if (local.getType() != i64)
+          local = arith::TruncIOp::create(builder, location, i64, local);
         uint64_t cardinality = propertyDomainCardinality(property);
         Value domainIndex = propertyDomainIndex(property, local);
         wrapped =
@@ -5439,14 +5692,17 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             arith::AddIOp::create(builder, location, domainIndex,
                                   constant64(1)));
         incremented = materializePropertyDomainIndex(property, nextIndex);
+        if (incremented.getType() != assignmentType)
+          incremented = arith::ExtUIOp::create(builder, location,
+                                               assignmentType, incremented);
         if (offset != 0)
           incremented = arith::ShLIOp::create(builder, location, incremented,
-                                              constant64(offset));
+                                              constantAssignment64(offset));
       }
       Value updated = arith::OrIOp::create(
           builder, location,
           arith::AndIOp::create(builder, location, next,
-                                constant64(~aggregateMask)),
+                                constantAssignment(~aggregateMask)),
           incremented);
       Value update = arith::AndIOp::create(builder, location, carry, enabled);
       next = arith::SelectOp::create(builder, location, update, updated, next);
@@ -5520,6 +5776,10 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         << "randomize hard constraints are statically unsatisfiable ("
         << analysis.backend << ")";
     cf::BranchOp::create(builder, location, failedBlock, ValueRange{});
+  } else if (totalWidth > 64) {
+    // Non-exact wide plans are rejected above. Keep the scalar runtime ABI
+    // unreachable for wide assignments until its decomposed form is lowered.
+    cf::BranchOp::create(builder, location, failedBlock, ValueRange{});
   } else {
     auto fallback = sim::SimRandomSolveOp::create(
         builder, location, function.getBody().front().getArgument(0),
@@ -5567,17 +5827,22 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                            ValueRange{modeNext, modeNextAttempt});
 
   setCurrent(modeFallbackBlock);
-  auto modeFallback = sim::SimRandomSolveOp::create(
-      builder, location, function.getBody().front().getArgument(0),
-      modeFallbackStart, mutableMask, relevantConstraintMode,
-      constant64(fallbackAttempts), modeState, increment, programCaptures,
-      builder.getStringAttr(StringRef(
-          reinterpret_cast<const char *>(program.data()), program.size())));
-  sim::SimManagedStoreOp::create(
-      builder, location, modeFallback.getNextRngState(), stateReference);
-  cf::CondBranchOp::create(builder, location, modeFallback.getSuccess(), commit,
-                           ValueRange{modeFallback.getAssignment()},
-                           failedBlock, ValueRange{});
+  if (totalWidth > 64) {
+    cf::BranchOp::create(builder, location, failedBlock, ValueRange{});
+  } else {
+    auto modeFallback = sim::SimRandomSolveOp::create(
+        builder, location, function.getBody().front().getArgument(0),
+        modeFallbackStart, mutableMask, relevantConstraintMode,
+        constant64(fallbackAttempts), modeState, increment, programCaptures,
+        builder.getStringAttr(StringRef(
+            reinterpret_cast<const char *>(program.data()), program.size())));
+    sim::SimManagedStoreOp::create(
+        builder, location, modeFallback.getNextRngState(), stateReference);
+    cf::CondBranchOp::create(builder, location, modeFallback.getSuccess(),
+                             commit,
+                             ValueRange{modeFallback.getAssignment()},
+                             failedBlock, ValueRange{});
+  }
 
   // Static UNSAT is known for every possible runtime capture value when all
   // constraint blocks are enabled. Bypass planned sampling instead of spending

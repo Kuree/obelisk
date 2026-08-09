@@ -711,7 +711,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                                 SmallVectorImpl<RandomSubdomain> &result,
                                 Location location) -> LogicalResult {
     std::optional<uint64_t> width = getSemanticBitstreamWidth(type);
-    if (!width || *width == 0 || *width > 64 || baseOffset > 64 - *width)
+    if (!width || *width == 0 || *width > UINT32_MAX ||
+        baseOffset > UINT32_MAX - *width)
       return failure();
     if (isa<semantic::EnumType>(type)) {
       FailureOr<SmallVector<RandomDomainPattern>> patterns =
@@ -1041,10 +1042,9 @@ void ObeliskSimPreparePass::runOnOperation() {
             continue;
           }
           std::optional<unsigned> width = sim::getPackedWidth(*type);
-          if (!width || *width == 0 || *width > 64 || !field) {
+          if (!width || *width == 0 || !field) {
             emitError(getSemanticLocation(property))
-                << "random properties must be packed integral values no "
-                   "wider than 64 bits";
+                << "random properties must be packed integral values";
             invalid = true;
             continue;
           }
@@ -1069,7 +1069,7 @@ void ObeliskSimPreparePass::runOnOperation() {
                                              getSemanticLocation(property)))) {
             emitError(getSemanticLocation(property))
                 << "random property has a finite domain that cannot be "
-                   "represented within the 64-bit executable boundary";
+                   "represented by the executable randomization plan";
             invalid = true;
             continue;
           }
@@ -1080,6 +1080,13 @@ void ObeliskSimPreparePass::runOnOperation() {
           continue;
         }
       }
+    }
+    if (properties.size() > 64) {
+      emitError(getSemanticLocation(call))
+          << "the executable rand_mode boundary is 64 effective random "
+             "properties";
+      invalid = true;
+      return true;
     }
     llvm::DenseMap<Operation *, unsigned> randomIndices;
     for (auto [index, property] : llvm::enumerate(properties))
@@ -1458,7 +1465,10 @@ void ObeliskSimPreparePass::runOnOperation() {
                       valuePath.offset;
                   if (globalOffset >= 64 ||
                       valuePath.width > 64 - globalOffset) {
-                    invalid = true;
+                    (inFunctionArgument ? impreciseArguments
+                                        : impreciseNonArguments) = true;
+                    if (!imprecisePath)
+                      imprecisePath = nested;
                     return;
                   }
                   uint64_t mask = valueMask << globalOffset;
@@ -1833,10 +1843,10 @@ void ObeliskSimPreparePass::runOnOperation() {
 
     uint64_t totalWidth = 0;
     for (const RandomProperty &property : properties) {
-      if (property.width > 64 - totalWidth) {
+      if (property.width > UINT32_MAX - totalWidth) {
         emitError(getSemanticLocation(call))
-            << "the executable exhaustive randomization boundary is 64 "
-               "aggregate rand bits";
+            << "the executable randomization plan exceeds its 32-bit bit "
+               "offset space";
         invalid = true;
         return true;
       }
@@ -2008,7 +2018,8 @@ void ObeliskSimPreparePass::runOnOperation() {
           return;
         uint64_t globalOffset = randomPropertyOffsets[(**path).property] +
                                 (**path).offset;
-        if (globalOffset >= 64 || (**path).width > 64 - globalOffset) {
+        if (globalOffset > UINT32_MAX ||
+            (**path).width > UINT32_MAX - globalOffset) {
           invalid = true;
           return;
         }
