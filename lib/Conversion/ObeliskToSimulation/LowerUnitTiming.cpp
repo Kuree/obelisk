@@ -442,15 +442,22 @@ LogicalResult UnitLowering::lowerTiming(Operation *control,
     setCurrent(waitBlock);
     SmallVector<int32_t> edges(dependencies.size(),
                                static_cast<int32_t>(sim::EdgeKind::Change));
-    if (dependencies.size() == 1)
-      sim::SimSuspendChangeOp::create(builder, location, dependencies.front(),
-                                      ValueRange{}, sim::ContinuationSiteAttr{},
-                                      sim::EventRegionAttr{}, continuation);
-    else
-      sim::SimSuspendAnyOp::create(
+    if (dependencies.size() == 1) {
+      auto suspend = sim::SimSuspendChangeOp::create(
+          builder, location, dependencies.front(), ValueRange{},
+          sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, continuation);
+      if (control == topLevelWildcardControl)
+        suspend->setAttr(sim::metadata::topLevelWildcardWait,
+                         builder.getUnitAttr());
+    } else {
+      auto suspend = sim::SimSuspendAnyOp::create(
           builder, location, dependencies.getArrayRef(),
           builder.getDenseI32ArrayAttr(edges), sim::ContinuationSiteAttr{},
           sim::EventRegionAttr{}, continuation);
+      if (control == topLevelWildcardControl)
+        suspend->setAttr(sim::metadata::topLevelWildcardWait,
+                         builder.getUnitAttr());
+    }
     setCurrent(statementEnd);
     return success();
   }

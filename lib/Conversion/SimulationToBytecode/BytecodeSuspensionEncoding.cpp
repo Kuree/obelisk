@@ -6,6 +6,12 @@ using namespace mlir;
 
 namespace obelisk::bytecode {
 
+static uint32_t directSignalWaitFlags(Operation *operation) {
+  return operation->hasAttr(sim::metadata::topLevelWildcardWait)
+             ? OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF
+             : OBELISK_RT_WAIT_FLAGS_NONE;
+}
+
 std::optional<LogicalResult>
 Encoder::encodeSuspensionOperation(FunctionPlan &plan, Operation *operation) {
   if (isa<sim::SimObserverBindOp>(operation))
@@ -19,7 +25,8 @@ Encoder::encodeSuspensionOperation(FunctionPlan &plan, Operation *operation) {
     uint32_t edge = OBELISK_RT_WAIT_EDGE_CHANGE;
     return encodeWait(plan, suspend.getOperation(),
                       suspend.getContinuationOperands(),
-                      OBELISK_RT_SUSPEND_CHANGE, OBELISK_RT_WAIT_FLAGS_NONE,
+                      OBELISK_RT_SUSPEND_CHANGE,
+                      directSignalWaitFlags(suspend.getOperation()),
                       ArrayRef<uint32_t>(&edge, 1), {suspend.getWatched()});
   }
   if (auto suspend = dyn_cast<sim::SimSuspendLevelOp>(operation)) {
@@ -52,8 +59,9 @@ Encoder::encodeSuspensionOperation(FunctionPlan &plan, Operation *operation) {
     SmallVector<Value> watched(suspend.getWatched());
     return encodeWait(plan, suspend.getOperation(),
                       suspend.getContinuationOperands(),
-                      OBELISK_RT_SUSPEND_EDGE, OBELISK_RT_WAIT_FLAGS_NONE,
-                      edges, watched);
+                      OBELISK_RT_SUSPEND_EDGE,
+                      directSignalWaitFlags(suspend.getOperation()), edges,
+                      watched);
   }
   if (auto suspend = dyn_cast<sim::SimSuspendEventOp>(operation)) {
     uint32_t edge = OBELISK_RT_WAIT_EDGE_NONE;

@@ -19,7 +19,7 @@ namespace {
 bool appendSignalSubscriptionUnlocked(
     obelisk_rt_context *context, uint64_t stableID, uint64_t bitWidth,
     uint32_t edge, SignalSubscription::Target target, uint64_t waiterToken,
-    SignalWaitLatch *latch,
+    bool suppressActiveSelf, SignalWaitLatch *latch,
     std::vector<std::unique_ptr<SignalSubscription>> &subscriptions) {
   uint32_t kind = 0;
   uint32_t objectID = 0;
@@ -43,6 +43,7 @@ bool appendSignalSubscriptionUnlocked(
   subscription->edge = edge;
   subscription->target = target;
   subscription->waiterToken = waiterToken;
+  subscription->suppressActiveSelf = suppressActiveSelf;
   subscription->latch = latch;
   subscription->bucketSlots.reserve(wide ? 1 : static_cast<size_t>(pageCount));
   subscriptions.push_back(std::move(subscription));
@@ -170,9 +171,11 @@ bool obelisk_rt_register_signal_wait_unlocked(
   if (wait->kind != OBELISK_RT_SUSPEND_CHANGE &&
       wait->kind != OBELISK_RT_SUSPEND_EDGE)
     return true;
-  if (wait->flags != OBELISK_RT_WAIT_FLAGS_NONE) {
-    if ((wait->flags == OBELISK_RT_WAIT_LEVEL_TRUE ||
-         wait->flags == OBELISK_RT_WAIT_EDGE_IFF) &&
+  uint32_t behaviorFlags =
+      wait->flags & ~OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF;
+  if (behaviorFlags != OBELISK_RT_WAIT_FLAGS_NONE) {
+    if ((behaviorFlags == OBELISK_RT_WAIT_LEVEL_TRUE ||
+         behaviorFlags == OBELISK_RT_WAIT_EDGE_IFF) &&
         waiterToken != 0) {
       try {
         if (designWaiter)
@@ -186,6 +189,8 @@ bool obelisk_rt_register_signal_wait_unlocked(
     }
     return true;
   }
+  bool suppressActiveSelf =
+      (wait->flags & OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF) != 0;
   try {
     if (!latch)
       latch = std::make_unique<SignalWaitLatch>();
@@ -202,7 +207,7 @@ bool obelisk_rt_register_signal_wait_unlocked(
               entries[index].edge,
               designWaiter ? SignalSubscription::DesignDirectWait
                            : SignalSubscription::NativeDirectWait,
-              waiterToken, latch.get(), subscriptions)) {
+              waiterToken, suppressActiveSelf, latch.get(), subscriptions)) {
         obelisk_rt_unregister_signal_wait_unlocked(context, subscriptions,
                                                    waiterToken, designWaiter);
         return false;
@@ -247,7 +252,7 @@ bool obelisk_rt_register_computed_signal_wait_unlocked(
               OBELISK_RT_WAIT_EDGE_NONE,
               designWaiter ? SignalSubscription::DesignComputedWait
                            : SignalSubscription::NativeComputedWait,
-              waiterToken, latch.get(), subscriptions)) {
+              waiterToken, false, latch.get(), subscriptions)) {
         obelisk_rt_unregister_signal_wait_unlocked(context, subscriptions,
                                                    waiterToken, designWaiter);
         return false;

@@ -1218,7 +1218,11 @@ enum {
   OBELISK_RT_WAIT_LEVEL_TRUE = UINT32_C(1) << 0,
   // An iff wait has one primary edge entry followed by an EDGE_NONE condition
   // entry. The condition is sampled only when the primary event occurs.
-  OBELISK_RT_WAIT_EDGE_IFF = UINT32_C(1) << 1
+  OBELISK_RT_WAIT_EDGE_IFF = UINT32_C(1) << 1,
+  // A direct signal wait ignores publications from the currently executing
+  // logical process. This models an always @* wait that is inactive while its
+  // controlled statement evaluates.
+  OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF = UINT32_C(1) << 2
 };
 typedef uint32_t obelisk_rt_wait_edge_kind;
 enum {

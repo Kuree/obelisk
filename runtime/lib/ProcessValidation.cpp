@@ -312,25 +312,37 @@ obelisk_rt_status validateWait(obelisk_rt_process_instance_v1 &instance,
     return true;
   };
   bool valid = false;
+  uint32_t behaviorFlags =
+      wait->flags & ~OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF;
+  bool suppressActiveSelf =
+      (wait->flags & OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF) != 0;
   switch (wait->kind) {
   case OBELISK_RT_SUSPEND_DELAY:
     valid = wait->flags == 0 && wait->count == 0 && wait->auxiliary == 0;
     break;
   case OBELISK_RT_SUSPEND_CHANGE:
-    valid = (wait->flags == 0 || wait->flags == OBELISK_RT_WAIT_LEVEL_TRUE) &&
-            wait->count == 1 && wait->payload == 0 && wait->auxiliary == 0 &&
-            entriesMatch(true, OBELISK_RT_WAIT_EDGE_CHANGE, true);
+    valid = (behaviorFlags == 0 ||
+             behaviorFlags == OBELISK_RT_WAIT_LEVEL_TRUE) &&
+        (!suppressActiveSelf || behaviorFlags == 0) &&
+        (wait->flags & ~(OBELISK_RT_WAIT_LEVEL_TRUE |
+                         OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF)) == 0 &&
+        wait->count == 1 && wait->payload == 0 && wait->auxiliary == 0 &&
+        entriesMatch(true, OBELISK_RT_WAIT_EDGE_CHANGE, true);
     break;
   case OBELISK_RT_SUSPEND_EDGE:
-    if (wait->flags == OBELISK_RT_WAIT_EDGE_IFF)
+    if (behaviorFlags == OBELISK_RT_WAIT_EDGE_IFF)
       valid = wait->count == 2 && wait->payload == 0 && wait->auxiliary == 0 &&
+              !suppressActiveSelf &&
+              wait->flags == OBELISK_RT_WAIT_EDGE_IFF &&
               validEdge(entries[0].edge) && entries[0].reserved != 0 &&
               entries[1].edge == OBELISK_RT_WAIT_EDGE_NONE &&
               entries[1].reserved != 0 &&
               validSignalHandle(entries[0].stable_id) &&
               validSignalHandle(entries[1].stable_id);
     else
-      valid = wait->flags == 0 && wait->count == 1 && wait->payload == 0 &&
+      valid = behaviorFlags == 0 &&
+              (wait->flags & ~OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF) == 0 &&
+              wait->count == 1 && wait->payload == 0 &&
               wait->auxiliary == 0 &&
               entriesMatch(true, OBELISK_RT_WAIT_EDGE_NONE, true);
     break;
@@ -358,8 +370,9 @@ obelisk_rt_status validateWait(obelisk_rt_process_instance_v1 &instance,
   // `suspend.any` shares the EDGE action kind and is distinguished by more
   // than one per-watcher edge entry.
   if (wait->kind == OBELISK_RT_SUSPEND_EDGE && wait->count > 1 &&
-      wait->flags == 0)
+      behaviorFlags == 0)
     valid = wait->payload == 0 && wait->auxiliary == 0 &&
+            (wait->flags & ~OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF) == 0 &&
             entriesMatch(true, OBELISK_RT_WAIT_EDGE_NONE, true);
   return valid ? OBELISK_RT_OK : OBELISK_RT_INVALID_FRAME;
 }

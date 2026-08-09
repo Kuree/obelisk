@@ -51,6 +51,10 @@ inline constexpr llvm::StringLiteral staticSpecialization =
     "obelisk_sim.static_specialization";
 inline constexpr llvm::StringLiteral staticSuperstep =
     "obelisk_sim.static_superstep";
+/// Marks the outer implicit wait of an `always @*` process. Publications from
+/// the active process itself cannot satisfy the wait it will reach next.
+inline constexpr llvm::StringLiteral topLevelWildcardWait =
+    "obelisk_sim.top_level_wildcard_wait";
 /// Native-only annotation for a closed-world activation whose state and NBA
 /// accesses may use the actor-boundary clean-specialization proof.
 inline constexpr llvm::StringLiteral nativeGuardedSpecializationBody =
@@ -116,7 +120,8 @@ inline bool isKnownOperation(llvm::StringRef name) {
          name == delayQuantum || name == hierarchicalName || name == lowered ||
          name == staticBodyFusion || name == staticFusion ||
          name == computeKernels || name == threeTierSchedule ||
-         name == staticSpecialization || name == staticSuperstep;
+         name == staticSpecialization || name == staticSuperstep ||
+         name == topLevelWildcardWait;
 }
 
 } // namespace obelisk::sim::metadata

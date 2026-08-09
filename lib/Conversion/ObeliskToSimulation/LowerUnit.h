@@ -308,6 +308,7 @@ private:
   ::llvm::SetVector<::mlir::Value> sensitivity;
   ::llvm::SetVector<::mlir::Value> *observedDependencies = nullptr;
   ::llvm::SetVector<::mlir::Value> *observedWrites = nullptr;
+  ::mlir::Operation *topLevelWildcardControl = nullptr;
   bool observeNonblockingWrites = false;
   ::mlir::Value expressionPlaceholder;
   ::mlir::Value unboundedPlaceholder;

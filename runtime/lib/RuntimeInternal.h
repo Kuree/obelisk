@@ -523,6 +523,7 @@ struct SignalSubscription {
   uint64_t waiterToken = 0;
   uint32_t edge = 0;
   Target target = NativeDirectWait;
+  bool suppressActiveSelf = false;
   SignalWaitLatch *latch = nullptr;
   std::vector<SignalSubscriptionBucketSlot> bucketSlots;
 };

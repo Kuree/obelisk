@@ -844,6 +844,15 @@ bool publishSignalOccurrenceUnlocked(obelisk_rt_context *context,
         }
         if (!overlaps)
           continue;
+        if (subscription->suppressActiveSelf &&
+            subscription->waiterToken != 0) {
+          uint64_t logicalToken =
+              subscription->target == SignalSubscription::NativeDirectWait
+                  ? kNativeLogicalProcessTag | subscription->waiterToken
+                  : subscription->waiterToken;
+          if (context->activeLogicalProcessToken == logicalToken)
+            continue;
+        }
         if (!matches(*subscription))
           continue;
         if (subscription->target == SignalSubscription::NativeDirectWait ||
@@ -5884,6 +5893,8 @@ bool hasSameDirectSignalWait(const ScheduledProcess &scheduled,
       scheduled.signalSubscriptions.size() != wait->count)
     return false;
   const obelisk_rt_wait_entry_v1 *entries = waitEntries(wait);
+  bool suppressActiveSelf =
+      (wait->flags & OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF) != 0;
   for (uint32_t index = 0; index != wait->count; ++index) {
     const SignalSubscription *subscription =
         scheduled.signalSubscriptions[index].get();
@@ -5891,6 +5902,7 @@ bool hasSameDirectSignalWait(const ScheduledProcess &scheduled,
         subscription->stableID != entries[index].stable_id ||
         subscription->bitWidth != entries[index].reserved ||
         subscription->edge != entries[index].edge ||
+        subscription->suppressActiveSelf != suppressActiveSelf ||
         subscription->target != SignalSubscription::NativeDirectWait)
       return false;
   }

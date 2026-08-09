@@ -45,16 +45,19 @@ module {
   }
 }
 
-// The write to scratch is an implementation detail of this evaluation.  Its
-// subsequent read remains in the function's effect summary, but scratch must
-// not arm the wildcard wait and allow the process to reschedule itself.
+// IEEE 1800-2017 9.4.2.2 requires scratch in the implicit event expression
+// because the statement reads it.  The process waits before evaluating the
+// body, and its own body writes cannot activate the wait it reaches next.  The
+// graph must retain the watch without adding a process-local sensitivity edge;
+// a producer in another process can still activate it.
+// CHECK-NOT: kind = sensitivity
 // CHECK-LABEL: obelisk_sim.func private
 // CHECK-SAME: entry_kind = 3 : i32
 // CHECK-SAME: obelisk_sim.hierarchical_name = "wildcard_written_sensitivity"
-// CHECK: %[[VALUE:[0-9]+]] = obelisk_sim.ref.load %[[SOURCE:[a-zA-Z0-9_]+]]
-// CHECK: obelisk_sim.ref.store %[[VALUE]] to %[[SCRATCH:[a-zA-Z0-9_]+]]
+// CHECK: obelisk_sim.suspend.any %[[SOURCE:[a-zA-Z0-9_]+]], %[[SCRATCH:[a-zA-Z0-9_]+]] edges [0, 0]
+// CHECK-SAME: obelisk_sim.top_level_wildcard_wait
+// CHECK: %[[VALUE:[0-9]+]] = obelisk_sim.ref.load %[[SOURCE]]
+// CHECK: obelisk_sim.ref.store %[[VALUE]] to %[[SCRATCH]]
 // CHECK: %[[FORWARD:[0-9]+]] = obelisk_sim.ref.load %[[SCRATCH]]
 // CHECK: obelisk_sim.ref.store %[[FORWARD]] to %{{.*}}
-// CHECK: obelisk_sim.suspend.change %[[SOURCE]]
-// CHECK-NOT: obelisk_sim.suspend.change %[[SCRATCH]]
 // CHECK-NOT: obelisk.sv.

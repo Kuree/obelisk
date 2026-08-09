@@ -1155,6 +1155,38 @@ TEST(RuntimeInternals, SignalSubscriptionsAreRangeIndexedStableAndBounded) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(RuntimeInternals, DirectSignalWaitCanSuppressActiveSelfPublication) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+
+  struct {
+    obelisk_rt_wait_record_v1 wait;
+    obelisk_rt_wait_entry_v1 entry;
+  } record{{OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_CHANGE,
+            OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF, 1, 0, 0},
+           {16, OBELISK_RT_WAIT_EDGE_CHANGE, 1}};
+  std::vector<std::unique_ptr<SignalSubscription>> subscriptions;
+  std::unique_ptr<SignalWaitLatch> latch;
+  constexpr uint64_t token = 7;
+  ASSERT_TRUE(obelisk_rt_register_signal_wait_unlocked(
+      context, &record.wait, subscriptions, latch, token, false));
+
+  context->activeLogicalProcessToken =
+      OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG | token;
+  ASSERT_TRUE(obelisk_rt_publish_signal_occurrence_unlocked(
+      context, 16, 1, OBELISK_RT_SIGNAL_CHANGE));
+  EXPECT_FALSE(latch->triggered);
+  EXPECT_EQ(context->nativePollCandidates.count(token), 0u);
+
+  context->activeLogicalProcessToken = 0;
+  ASSERT_TRUE(obelisk_rt_publish_signal_occurrence_unlocked(
+      context, 16, 1, OBELISK_RT_SIGNAL_CHANGE));
+  EXPECT_TRUE(latch->triggered);
+  EXPECT_EQ(context->nativePollCandidates.count(token), 1u);
+
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(RuntimeInternals, ConditionalWakeUpdatesSchedulerSelectionGeneration) {
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);

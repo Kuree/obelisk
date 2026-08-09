@@ -35,6 +35,9 @@ LogicalResult serializeRuntimeWait(Operation *operation, Value wait,
     waitFlags = OBELISK_RT_WAIT_LEVEL_TRUE;
   else if (isa<sim::SimSuspendEdgeIffOp>(operation))
     waitFlags = OBELISK_RT_WAIT_EDGE_IFF;
+  if (operation->hasAttr(sim::metadata::topLevelWildcardWait) &&
+      isa<sim::SimSuspendChangeOp, sim::SimSuspendAnyOp>(operation))
+    waitFlags |= OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF;
   storeAt(builder, location, wait, 8,
           llvmConstant(builder, location, i32, waitFlags), 4);
   storeAt(builder, location, wait, 12,

@@ -2075,19 +2075,15 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
                       entryKind == sim::EntryKind::PortInput ||
                       entryKind == sim::EntryKind::PortOutput;
 
-  // A top-level `always @*` is a combinational process.  Evaluate its body
-  // once when the process starts, then wait for one of the values read by the
-  // body to change.  Waiting before the first evaluation can permanently miss
-  // the process when a two-state dependency's first assignment is equal to
-  // its default value.  An implicit event control nested in another procedure
-  // remains an ordinary wait-first timing control.
-  Operation *startupWildcardStatement = nullptr;
+  // Keep track of the outer event control so graph construction can
+  // distinguish its process-local writes from external activations. Nested
+  // implicit event controls remain ordinary procedural waits.
   if (entryKind == sim::EntryKind::Always && roots.size() == 1) {
     if (auto timed = dyn_cast<semantic::SVTimedStatementOp>(roots.front())) {
       SmallVector<Operation *> children = getChildren(timed);
       if (children.size() == 2 &&
           isa<semantic::SVImplicitEventControlOp>(children.front()))
-        startupWildcardStatement = children.back();
+        topLevelWildcardControl = children.front();
     }
   }
 
@@ -2099,8 +2095,6 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   }
   auto primitive =
       function->getAttrOfType<StringAttr>("obelisk_sim.primitive_name");
-  llvm::SetVector<Value> startupWildcardDependencies;
-  llvm::SetVector<Value> startupWildcardWrites;
   llvm::SetVector<Value> implicitProcessWrites;
   llvm::SetVector<Value> *savedWrites = observedWrites;
   bool excludesWrittenSensitivity =
@@ -2113,12 +2107,6 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   LogicalResult lowered = success();
   if (primitive) {
     lowered = lowerPrimitive(primitive.getValue(), roots);
-  } else if (startupWildcardStatement) {
-    llvm::SetVector<Value> *saved = observedDependencies;
-    observedDependencies = &startupWildcardDependencies;
-    observedWrites = &startupWildcardWrites;
-    lowered = lowerStatement(startupWildcardStatement);
-    observedDependencies = saved;
   } else {
     lowered = lowerSequence(roots);
   }
@@ -2159,33 +2147,6 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
         entryKind == sim::EntryKind::Task)
       return emitFunctionReturn(function.getLoc(), std::nullopt);
     sim::SimReturnOp::create(builder, function.getLoc(), ValueRange{});
-    return success();
-  }
-
-  if (startupWildcardStatement) {
-    // A blocking write happens before the process reaches its implicit wait.
-    // It cannot wake that wait, so do not publish a static self-sensitivity
-    // edge for a value that the same evaluation writes.
-    for (Value written : startupWildcardWrites)
-      startupWildcardDependencies.remove(written);
-    if (startupWildcardDependencies.empty()) {
-      unsupported(roots.front())
-          << " (@* controlled statement has no readable dependency)";
-      return failure();
-    }
-    if (startupWildcardDependencies.size() == 1) {
-      sim::SimSuspendChangeOp::create(builder, function.getLoc(),
-                                      startupWildcardDependencies.front(),
-                                      ValueRange{}, sim::ContinuationSiteAttr{},
-                                      sim::EventRegionAttr{}, loopHeader);
-      return success();
-    }
-    SmallVector<int32_t> edges(startupWildcardDependencies.size(),
-                               static_cast<int32_t>(sim::EdgeKind::Change));
-    sim::SimSuspendAnyOp::create(
-        builder, function.getLoc(), startupWildcardDependencies.getArrayRef(),
-        builder.getDenseI32ArrayAttr(edges), sim::ContinuationSiteAttr{},
-        sim::EventRegionAttr{}, loopHeader);
     return success();
   }
 

@@ -39,6 +39,8 @@ bool hasSameDirectSignalWait(const ScheduledDesignTask &task,
     return false;
   const auto *entries =
       reinterpret_cast<const obelisk_rt_wait_entry_v1 *>(wait + 1);
+  bool suppressActiveSelf =
+      (wait->flags & OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF) != 0;
   for (uint32_t index = 0; index != wait->count; ++index) {
     const SignalSubscription *subscription =
         task.signalSubscriptions[index].get();
@@ -46,6 +48,7 @@ bool hasSameDirectSignalWait(const ScheduledDesignTask &task,
         subscription->stableID != entries[index].stable_id ||
         subscription->bitWidth != entries[index].reserved ||
         subscription->edge != entries[index].edge ||
+        subscription->suppressActiveSelf != suppressActiveSelf ||
         subscription->target != SignalSubscription::DesignDirectWait)
       return false;
   }
@@ -3379,18 +3382,27 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
         }
         const auto *waitEntries =
             reinterpret_cast<const obelisk_rt_wait_entry_v1 *>(wait + 1);
-        bool validFlags = wait->flags == OBELISK_RT_WAIT_FLAGS_NONE ||
-                          (action.suspend_kind == OBELISK_RT_SUSPEND_JOIN &&
-                           wait->flags <= 1) ||
-                          (action.suspend_kind == OBELISK_RT_SUSPEND_CHANGE &&
-                           wait->flags == OBELISK_RT_WAIT_LEVEL_TRUE) ||
-                          (action.suspend_kind == OBELISK_RT_SUSPEND_EDGE &&
-                           wait->flags == OBELISK_RT_WAIT_EDGE_IFF);
+        uint32_t behaviorFlags =
+            wait->flags & ~OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF;
+        bool suppressActiveSelf =
+            (wait->flags & OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF) != 0;
+        bool validFlags =
+            (wait->flags & ~(OBELISK_RT_WAIT_LEVEL_TRUE |
+                             OBELISK_RT_WAIT_EDGE_IFF |
+                             OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF)) == 0 &&
+            (!suppressActiveSelf || (signalWait && behaviorFlags == 0)) &&
+            (behaviorFlags == OBELISK_RT_WAIT_FLAGS_NONE ||
+             (action.suspend_kind == OBELISK_RT_SUSPEND_JOIN &&
+              behaviorFlags <= 1) ||
+             (action.suspend_kind == OBELISK_RT_SUSPEND_CHANGE &&
+              behaviorFlags == OBELISK_RT_WAIT_LEVEL_TRUE) ||
+             (action.suspend_kind == OBELISK_RT_SUSPEND_EDGE &&
+              behaviorFlags == OBELISK_RT_WAIT_EDGE_IFF));
         if (!validFlags ||
             (action.suspend_kind == OBELISK_RT_SUSPEND_CHANGE &&
-             wait->flags == OBELISK_RT_WAIT_LEVEL_TRUE && wait->count != 1) ||
+             behaviorFlags == OBELISK_RT_WAIT_LEVEL_TRUE && wait->count != 1) ||
             (action.suspend_kind == OBELISK_RT_SUSPEND_EDGE &&
-             wait->flags == OBELISK_RT_WAIT_EDGE_IFF && wait->count != 2) ||
+             behaviorFlags == OBELISK_RT_WAIT_EDGE_IFF && wait->count != 2) ||
             (action.suspend_kind == OBELISK_RT_SUSPEND_FOREVER &&
              wait->count != 0)) {
           finalizeStatus = OBELISK_RT_INVALID_FRAME;
@@ -3401,7 +3413,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
               waitEntries[index].edge >= OBELISK_RT_WAIT_EDGE_CHANGE &&
               waitEntries[index].edge <= OBELISK_RT_WAIT_EDGE_BOTH;
           bool iffCondition =
-              wait->flags == OBELISK_RT_WAIT_EDGE_IFF && index == 1;
+              behaviorFlags == OBELISK_RT_WAIT_EDGE_IFF && index == 1;
           obelisk_rt_stable_handle_v1 decodedSignal;
           bool validSignalHandle =
               !signalWait || obelisk_rt_stable_handle_decode(

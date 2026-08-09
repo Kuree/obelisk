@@ -53,19 +53,25 @@ module {
   }
 }
 
-// A top-level always @* evaluates before its first sensitivity wait.  The
-// startup branch and the resume edge both target the body block.
+// IEEE 1800-2017 9.2.2.2.2 requires always @* to wait for a change before its
+// first evaluation, unlike always_comb.  The body then returns to that wait.
 // CHECK-LABEL: obelisk_sim.func private @{{.*}}({{.*}}) attributes {{.*}}entry_kind = 3 : i32{{.*}}obelisk_sim.hierarchical_name = "always_wildcard_startup"
-// CHECK: cf.br ^[[BODY:bb[0-9]+]]
+// CHECK: cf.br ^[[WAIT:bb[0-9]+]]
+// CHECK: ^[[WAIT]]:
+// CHECK: obelisk_sim.suspend.change {{.*}} to ^[[BODY:bb[0-9]+]]
+// CHECK-SAME: obelisk_sim.top_level_wildcard_wait
 // CHECK: ^[[BODY]]:
 // CHECK: obelisk_sim.ref.load
 // CHECK: obelisk_sim.ref.store
-// CHECK: obelisk_sim.suspend.change {{.*}} to ^[[BODY]]
+// CHECK: cf.br ^[[WAIT]]
 // CHECK-LABEL: obelisk_sim.func private @{{.*}}({{.*}}) attributes {{.*}}entry_kind = 3 : i32{{.*}}obelisk_sim.hierarchical_name = "always_wildcard_startup"
-// CHECK: cf.br ^[[MULTI_BODY:bb[0-9]+]]
+// CHECK: cf.br ^[[MULTI_WAIT:bb[0-9]+]]
+// CHECK: ^[[MULTI_WAIT]]:
+// CHECK: obelisk_sim.suspend.any {{.*}} to ^[[MULTI_BODY:bb[0-9]+]]
+// CHECK-SAME: obelisk_sim.top_level_wildcard_wait
 // CHECK: ^[[MULTI_BODY]]:
 // CHECK: obelisk_sim.ref.load
 // CHECK: obelisk_sim.ref.load
 // CHECK: obelisk_sim.ref.store
-// CHECK: obelisk_sim.suspend.any {{.*}} to ^[[MULTI_BODY]]
+// CHECK: cf.br ^[[MULTI_WAIT]]
 // CHECK-NOT: obelisk.sv.
