@@ -707,6 +707,9 @@ struct obelisk_rt_context {
   std::shared_ptr<const uint8_t> errorLifetime;
   std::vector<ScheduledProcess> scheduledProcesses;
   const obelisk_rt_native_schedule_plan *nativeSchedulePlan = nullptr;
+  const uint8_t *nativeStateValue = nullptr;
+  const uint8_t *nativeStateUnknown = nullptr;
+  uint64_t nativeStateBitCount = 0;
   const obelisk_rt_static_nba_root *nativeScheduleNBARoots = nullptr;
   uint32_t nativeScheduleNBARootCount = 0;
   const obelisk_rt_static_nba_site *nativeScheduleNBASites = nullptr;

@@ -4764,6 +4764,57 @@ TEST(SampledValues, ValidatesExecutionExtension) {
             OBELISK_RT_INVALID_DESIGN);
 }
 
+TEST(SampledValues, CapturesBoundNativePlanesWithoutWholeStateCopies) {
+  obelisk_rt_sampled_range_v1 sampledRange{8, 0, 4};
+  obelisk_rt_execution_extension_v1 extension{
+      OBELISK_RT_EXECUTION_EXTENSION_VERSION,
+      sizeof(obelisk_rt_execution_extension_v1), &sampledRange, 1};
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.flags = OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT;
+  execution.reserved = reinterpret_cast<uintptr_t>(&extension);
+  execution.state_bit_count = 32;
+
+  obelisk_rt_context *first = nullptr;
+  obelisk_rt_context *second = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &first),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &second),
+            OBELISK_RT_OK);
+  uint8_t firstValue[4] = {};
+  uint8_t firstUnknown[4] = {};
+  uint8_t secondValue[4] = {};
+  uint8_t secondUnknown[4] = {};
+  ASSERT_EQ(obelisk_rt_v1_native_state_sync(first, firstValue, firstUnknown, 32),
+            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_native_state_sync(second, secondValue, secondUnknown, 32),
+      OBELISK_RT_OK);
+
+  // Publication after binding is observed directly at the next Preponed
+  // capture; sync does not need to copy the complete planes again.
+  firstValue[1] = UINT8_C(0x0a);
+  firstUnknown[1] = UINT8_C(0x04);
+  secondValue[1] = UINT8_C(0x03);
+  ASSERT_EQ(obelisk_rt_capture_preponed_unlocked(first), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_capture_preponed_unlocked(second), OBELISK_RT_OK);
+
+  uint64_t handle = obelisk_rt_stable_handle_encode(
+      OBELISK_RT_STABLE_HANDLE_GLOBAL, 0, 8);
+  uint8_t value = 0, unknown = 0;
+  EXPECT_EQ(obelisk_rt_v1_sampled_read(first, handle, 4, &value, &unknown),
+            OBELISK_RT_OK);
+  EXPECT_EQ(value, UINT8_C(0x0a));
+  EXPECT_EQ(unknown, UINT8_C(0x04));
+  EXPECT_EQ(obelisk_rt_v1_sampled_read(second, handle, 4, &value, &unknown),
+            OBELISK_RT_OK);
+  EXPECT_EQ(value, UINT8_C(0x03));
+  EXPECT_EQ(unknown, UINT8_C(0x00));
+
+  obelisk_rt_v1_context_destroy(first);
+  obelisk_rt_v1_context_destroy(second);
+}
+
 TEST(SampledValues, SkipsSnapshotAllocationWithoutConsumers) {
   obelisk_rt_execution_descriptor_v1 execution{};
   execution.version = OBELISK_RT_VERSION;

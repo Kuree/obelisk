@@ -35,6 +35,12 @@ struct SimulationSampledRange {
   uint64_t bitWidth = 0;
 };
 
+struct SimulationSampledStatePlan {
+  llvm::SmallVector<SimulationSampledRange> ranges;
+  uint64_t stateBitCount = 0;
+  uint32_t executionFlags = 0;
+};
+
 struct EncodedSimulationDesign {
   llvm::SmallVector<uint8_t> bytecode;
   llvm::SmallVector<uint8_t> designDatabase;
@@ -54,6 +60,12 @@ struct EncodedSimulationDesign {
 mlir::FailureOr<EncodedSimulationDesign>
 encodeSimulationDesign(sim::SimDesignOp design,
                        const SimulationBytecodeOptions &options = {});
+
+/// Plan only the canonical state ranges consumed by sampled reads. This is
+/// used by native-only designs, which need Preponed metadata but should not
+/// retain a whole-design bytecode fallback image.
+mlir::FailureOr<SimulationSampledStatePlan>
+planSimulationSampledState(sim::SimDesignOp design);
 
 } // namespace obelisk
 

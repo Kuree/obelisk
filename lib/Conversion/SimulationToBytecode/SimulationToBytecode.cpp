@@ -25,6 +25,7 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <tuple>
 
 using namespace mlir;
 
@@ -50,19 +51,8 @@ constexpr uint32_t kDatabaseProfileWrite = OBELISK_RT_DESIGN_PROFILE_WRITE;
 
 } // namespace
 
-Encoder::Encoder(sim::SimDesignOp design,
-                 const SimulationBytecodeOptions &options,
-                 const llvm::DataLayout &dataLayout)
-    : design(design), options(options), dataLayout(dataLayout) {}
-
-FailureOr<EncodedSimulationDesign> Encoder::encode() {
-  if (failed(prepareClassLayouts()) ||
-      failed(prepareStaticSpecializationSites()))
-    return failure();
-  FailureOr<StateLayout> builtState = buildStateLayout(design);
-  if (failed(builtState))
-    return failure();
-  state = *builtState;
+static FailureOr<SmallVector<SimulationSampledRange>>
+planSampledRanges(sim::SimDesignOp design, const StateLayout &state) {
   SmallVector<SimulationSampledRange> sampledRanges;
   bool invalidSampledRange = false;
   design.walk([&](sim::SimFuncOp function) {
@@ -122,6 +112,26 @@ FailureOr<EncodedSimulationDesign> Encoder::encode() {
     uint64_t &width = coalescedRanges.back().bitWidth;
     width = std::max(width, end - coalescedRanges.back().bitOffset);
   }
+  return coalescedRanges;
+}
+
+Encoder::Encoder(sim::SimDesignOp design,
+                 const SimulationBytecodeOptions &options,
+                 const llvm::DataLayout &dataLayout)
+    : design(design), options(options), dataLayout(dataLayout) {}
+
+FailureOr<EncodedSimulationDesign> Encoder::encode() {
+  if (failed(prepareClassLayouts()) ||
+      failed(prepareStaticSpecializationSites()))
+    return failure();
+  FailureOr<StateLayout> builtState = buildStateLayout(design);
+  if (failed(builtState))
+    return failure();
+  state = *builtState;
+  FailureOr<SmallVector<SimulationSampledRange>> sampledRanges =
+      planSampledRanges(design, state);
+  if (failed(sampledRanges))
+    return failure();
   if (failed(planTwoStateRegisters()) || failed(planFunctions()) ||
       failed(planScheduleRanks()) || failed(encodeFunctions()))
     return failure();
@@ -138,7 +148,7 @@ FailureOr<EncodedSimulationDesign> Encoder::encode() {
       return failure();
   }
   result.stateBitCount = state.bits;
-  result.sampledRanges = std::move(coalescedRanges);
+  result.sampledRanges = std::move(*sampledRanges);
   result.executionFlags = kExecutionHasBytecode;
   if (!result.sampledRanges.empty())
     result.executionFlags |= kExecutionPreponedSnapshot;
@@ -690,6 +700,23 @@ public:
 };
 
 } // namespace
+
+FailureOr<SimulationSampledStatePlan>
+planSimulationSampledState(sim::SimDesignOp design) {
+  FailureOr<bytecode::StateLayout> state = bytecode::buildStateLayout(design);
+  if (failed(state))
+    return failure();
+  FailureOr<SmallVector<SimulationSampledRange>> ranges =
+      bytecode::planSampledRanges(design, *state);
+  if (failed(ranges))
+    return failure();
+  SimulationSampledStatePlan result;
+  result.ranges = std::move(*ranges);
+  result.stateBitCount = state->bits;
+  if (!result.ranges.empty())
+    result.executionFlags = OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT;
+  return result;
+}
 
 FailureOr<EncodedSimulationDesign>
 encodeSimulationDesign(sim::SimDesignOp design,

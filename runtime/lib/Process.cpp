@@ -4135,10 +4135,13 @@ obelisk_rt_v1_native_state_sync(obelisk_rt_context *context,
           state.bitWidth >
               context->execution->state_bit_count - state.bitOffset)
         return OBELISK_RT_LAYOUT_MISMATCH;
-    return importNativeStatePlanesUnlocked(context, value, unknown,
-                                           context->execution->state_bit_count)
-               ? OBELISK_RT_OK
-               : OBELISK_RT_LAYOUT_MISMATCH;
+    if (!importNativeStatePlanesUnlocked(context, value, unknown,
+                                         context->execution->state_bit_count))
+      return OBELISK_RT_LAYOUT_MISMATCH;
+    context->nativeStateValue = value;
+    context->nativeStateUnknown = unknown;
+    context->nativeStateBitCount = bitCount;
+    return OBELISK_RT_OK;
   } catch (...) {
     return OBELISK_RT_INVALID_DESIGN;
   }

@@ -132,6 +132,9 @@ obelisk_rt_capture_preponed_unlocked(obelisk_rt_context *context) {
             execution.state_bit_count) {
       value = context->nativeSchedulePlan->state_value;
       unknown = context->nativeSchedulePlan->state_unknown;
+    } else if (context->nativeStateBitCount == execution.state_bit_count) {
+      value = context->nativeStateValue;
+      unknown = context->nativeStateUnknown;
     }
     if (!value || !unknown) {
       size_t stateWords =

@@ -236,11 +236,43 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
       nativeScheduler == obelisk::sim::NativeSchedulerMode::Eval;
   bool needsHybridBytecode =
       nativeScheduler != obelisk::sim::NativeSchedulerMode::Generic;
-  if (bytecode || needsHybridBytecode || vpi != "off" || hasLanguageOverride) {
+  bool needsSampledStatePlan = false;
+  module.walk([&](obelisk::sim::SimSampledReadOp) {
+    needsSampledStatePlan = true;
+  });
+  bool needsDesignEncoding =
+      bytecode || needsHybridBytecode || vpi != "off" || hasLanguageOverride;
+  requiresStateSync |= needsSampledStatePlan && !needsDesignEncoding;
+  if (needsDesignEncoding) {
     EncodeObeliskSimToBytecodePassOptions options;
     options.vpi = vpi.str();
     options.requireBytecode = bytecode;
     manager.addPass(createEncodeObeliskSimToBytecodePass(options));
+  } else if (needsSampledStatePlan) {
+    SmallVector<obelisk::sim::SimDesignOp> designs;
+    module.walk([&](obelisk::sim::SimDesignOp design) {
+      designs.push_back(design);
+    });
+    if (designs.size() != 1)
+      return module.emitError(
+          "sampled-state planning requires exactly one simulation design");
+    FailureOr<SimulationSampledStatePlan> plan =
+        planSimulationSampledState(designs.front());
+    if (failed(plan))
+      return failure();
+    OpBuilder builder(module.getContext());
+    module->setAttr("obelisk.execution.flags",
+                    builder.getI32IntegerAttr(plan->executionFlags));
+    module->setAttr("obelisk.execution.state_bits",
+                    builder.getI64IntegerAttr(plan->stateBitCount));
+    SmallVector<int64_t> sampledRanges;
+    sampledRanges.reserve(plan->ranges.size() * 2);
+    for (const SimulationSampledRange &range : plan->ranges) {
+      sampledRanges.push_back(static_cast<int64_t>(range.bitOffset));
+      sampledRanges.push_back(static_cast<int64_t>(range.bitWidth));
+    }
+    module->setAttr("obelisk.execution.sampled_ranges",
+                    builder.getDenseI64ArrayAttr(sampledRanges));
   }
   // Native region bodies may diverge from their already-frozen bytecode
   // fallback after this point. Keep the generic scheduler as an untouched
