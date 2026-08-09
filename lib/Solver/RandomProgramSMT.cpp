@@ -176,7 +176,8 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
   uint32_t programFlags = read32(program + 20);
   if (aggregateWidth > 64 ||
       (programFlags & ~(OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT |
-                        OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE)) != 0 ||
+                        OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
+                        OBELISK_RT_RANDOM_PROGRAM_HAS_DIST)) != 0 ||
       instructionCount > (std::numeric_limits<size_t>::max() -
                           OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE) /
                              OBELISK_RT_RANDOM_INSTRUCTION_SIZE)
@@ -203,6 +204,29 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       return std::nullopt;
     expectedSize = solveEdgesOffset + static_cast<size_t>(solveEdgeCount) *
                                           OBELISK_RT_RANDOM_SOLVE_EDGE_SIZE;
+  }
+  bool hasDist = (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_DIST) != 0;
+  if (hasDist && hasSolveBefore)
+    return std::nullopt;
+  uint32_t distGroupCount = 0;
+  uint32_t distRecordCount = 0;
+  size_t distRecordsOffset = 0;
+  if (hasDist) {
+    if (expectedSize > std::numeric_limits<size_t>::max() -
+                           OBELISK_RT_RANDOM_DIST_HEADER_SIZE ||
+        programSize < expectedSize + OBELISK_RT_RANDOM_DIST_HEADER_SIZE)
+      return std::nullopt;
+    distGroupCount = read32(program + expectedSize);
+    distRecordCount = read32(program + expectedSize + 4);
+    distRecordsOffset = expectedSize + OBELISK_RT_RANDOM_DIST_HEADER_SIZE;
+    if (distGroupCount == 0 || distRecordCount == 0 ||
+        distRecordCount >
+            (std::numeric_limits<size_t>::max() - distRecordsOffset) /
+                OBELISK_RT_RANDOM_DIST_RECORD_SIZE)
+      return std::nullopt;
+    expectedSize = distRecordsOffset +
+                   static_cast<size_t>(distRecordCount) *
+                       OBELISK_RT_RANDOM_DIST_RECORD_SIZE;
   }
   if (programSize != expectedSize)
     return std::nullopt;
@@ -253,6 +277,58 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
         return llvm::is_contained(layer, propertyMask);
       });
     }
+  }
+
+  if (hasDist) {
+    struct DistGroupInfo {
+      bool seen = false;
+      uint32_t constraintBlock = 0;
+      uint32_t targetOffset = 0;
+      uint16_t width = 0;
+      uint32_t targetFlags = 0;
+    };
+    std::vector<DistGroupInfo> groups(distGroupCount);
+    const uint8_t *record = program + distRecordsOffset;
+    for (uint32_t index = 0; index != distRecordCount; ++index) {
+      uint32_t group = read32(record);
+      uint32_t constraintBlock = read32(record + 4);
+      uint32_t targetOffset = read32(record + 8);
+      uint16_t width = read16(record + 12);
+      uint16_t reserved = read16(record + 14);
+      uint64_t lower = read64(record + 16);
+      uint64_t cardinality = read64(record + 24);
+      uint64_t coefficient = read64(record + 32);
+      uint32_t capture = read32(record + 40);
+      uint32_t flags = read32(record + 44);
+      record += OBELISK_RT_RANDOM_DIST_RECORD_SIZE;
+      uint64_t mask = width == 64 ? UINT64_MAX
+                                  : width == 0 ? 0
+                                               : (uint64_t{1} << width) - 1;
+      bool fullDomain = cardinality == 0 && width == 64 && lower == 0;
+      if (group >= distGroupCount || width == 0 || width > 64 ||
+          targetOffset > aggregateWidth ||
+          width > aggregateWidth - targetOffset || reserved != 0 ||
+          lower > mask ||
+          (!fullDomain &&
+           (cardinality == 0 || cardinality - 1 > mask - lower)) ||
+          coefficient == 0 || capture >= captureCount ||
+          (flags & ~(OBELISK_RT_RANDOM_DIST_WEIGHT_SIGNED |
+                     OBELISK_RT_RANDOM_DIST_TARGET_SIGNED)) != 0 ||
+          (constraintBlock != OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
+           constraintBlock >= 64))
+        return std::nullopt;
+      DistGroupInfo &info = groups[group];
+      uint32_t targetFlags = flags & OBELISK_RT_RANDOM_DIST_TARGET_SIGNED;
+      if (info.seen &&
+          (info.constraintBlock != constraintBlock ||
+           info.targetOffset != targetOffset || info.width != width ||
+           info.targetFlags != targetFlags))
+        return std::nullopt;
+      info = {true, constraintBlock, targetOffset, width, targetFlags};
+    }
+    if (llvm::any_of(groups,
+                     [](const DistGroupInfo &info) { return !info.seen; }))
+      return std::nullopt;
   }
 
   RandomProgramSMT result;

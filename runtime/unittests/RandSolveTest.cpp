@@ -2,6 +2,7 @@
 
 #include "gtest/gtest.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <vector>
 
@@ -36,11 +37,24 @@ struct EncodedSolveBeforeEdge {
   uint32_t constraintBlock = OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1;
 };
 
+struct EncodedDistRange {
+  uint32_t group;
+  uint32_t constraintBlock;
+  uint32_t targetOffset;
+  uint16_t width;
+  uint64_t lower;
+  uint64_t cardinality;
+  uint64_t coefficient;
+  uint32_t weightCapture;
+  uint32_t flags = 0;
+};
+
 std::vector<uint8_t>
 program(uint32_t width, uint32_t captures,
         std::initializer_list<EncodedInstruction> instructions,
         bool hasSoft = false,
-        std::initializer_list<EncodedSolveBeforeEdge> solveEdges = {}) {
+        std::initializer_list<EncodedSolveBeforeEdge> solveEdges = {},
+        std::initializer_list<EncodedDistRange> distRanges = {}) {
   std::vector<uint8_t> bytes;
   append32(bytes, OBELISK_RT_RANDOM_PROGRAM_MAGIC);
   append16(bytes, OBELISK_RT_RANDOM_PROGRAM_VERSION);
@@ -51,6 +65,8 @@ program(uint32_t width, uint32_t captures,
   uint32_t flags = hasSoft ? OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT : 0;
   if (solveEdges.size() != 0)
     flags |= OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE;
+  if (distRanges.size() != 0)
+    flags |= OBELISK_RT_RANDOM_PROGRAM_HAS_DIST;
   append32(bytes, flags);
   for (const EncodedInstruction &instruction : instructions) {
     bytes.push_back(instruction.opcode);
@@ -67,6 +83,25 @@ program(uint32_t width, uint32_t captures,
       append64(bytes, edge.afterMask);
       append32(bytes, edge.constraintBlock);
       append32(bytes, 0);
+    }
+  }
+  if (distRanges.size() != 0) {
+    uint32_t groupCount = 0;
+    for (const EncodedDistRange &range : distRanges)
+      groupCount = std::max(groupCount, range.group + 1);
+    append32(bytes, groupCount);
+    append32(bytes, static_cast<uint32_t>(distRanges.size()));
+    for (const EncodedDistRange &range : distRanges) {
+      append32(bytes, range.group);
+      append32(bytes, range.constraintBlock);
+      append32(bytes, range.targetOffset);
+      append16(bytes, range.width);
+      append16(bytes, 0);
+      append64(bytes, range.lower);
+      append64(bytes, range.cardinality);
+      append64(bytes, range.coefficient);
+      append32(bytes, range.weightCapture);
+      append32(bytes, range.flags);
     }
   }
   return bytes;
@@ -373,6 +408,190 @@ TEST_F(RandSolveTest, ConstraintModesDisableOnlySelectedBlocks) {
             OBELISK_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment, 6u);
+}
+
+TEST_F(RandSolveTest, SamplesResidualCandidatesByDistWeight) {
+  std::vector<uint8_t> bytes = program(
+      1, 2,
+      {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+       {OBELISK_RT_RANDOM_END_HARD_V1, 1}},
+      false, {},
+      {{0, OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0, 1, 0, 1, 1, 0},
+       {0, OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0, 1, 1, 1, 1, 1}});
+  uint64_t captures[] = {1, 3};
+  obelisk_rt_random_state_v1 state;
+  obelisk_rt_v1_random_state_seed(&state, 123, 17);
+  unsigned ones = 0;
+  for (unsigned iteration = 0; iteration != 4096; ++iteration) {
+    uint64_t assignment = 0;
+    uint64_t nextState = 0;
+    uint32_t success = 0;
+    ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+                  context, bytes.data(), bytes.size(), 0, 1, 0, 2,
+                  state.state, state.increment, captures, 2, &assignment,
+                  &success, &nextState),
+              OBELISK_RT_OK);
+    ASSERT_EQ(success, 1u);
+    ones += assignment == 1;
+    state.state = nextState;
+  }
+  EXPECT_GT(ones, 2900u);
+  EXPECT_LT(ones, 3250u);
+}
+
+TEST_F(RandSolveTest, DistTargetWeightIgnoresCompanionSolutionMultiplicity) {
+  // x is bit 0 and y is bit 1. The hard constraint allows both y values when
+  // x is zero, but only y=0 when x is one. Equal x weights must still produce
+  // equal x probability rather than weighting each complete assignment.
+  std::vector<uint8_t> bytes = program(
+      2, 1,
+      {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0, 0},
+       {OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1},
+       {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1, 0},
+       {OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1},
+       {OBELISK_RT_RANDOM_LOGICAL_OR_V1, 1},
+       {OBELISK_RT_RANDOM_END_HARD_V1, 1}},
+      false, {},
+      {{0, OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0, 1, 0, 2, 1, 0}});
+  uint64_t capture = 1;
+  obelisk_rt_random_state_v1 state;
+  obelisk_rt_v1_random_state_seed(&state, 123, 17);
+  unsigned ones = 0;
+  for (unsigned iteration = 0; iteration != 4096; ++iteration) {
+    uint64_t assignment = 0;
+    uint64_t nextState = 0;
+    uint32_t success = 0;
+    ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+                  context, bytes.data(), bytes.size(), 0, 3, 0, 4, state.state,
+                  state.increment, &capture, 1, &assignment, &success,
+                  &nextState),
+              OBELISK_RT_OK);
+    ASSERT_EQ(success, 1u);
+    ones += assignment & 1;
+    state.state = nextState;
+  }
+  EXPECT_GT(ones, 1850u);
+  EXPECT_LT(ones, 2250u);
+}
+
+TEST_F(RandSolveTest, OverlappingDistRangesAccumulatePerValueWeight) {
+  std::vector<uint8_t> bytes = program(
+      2, 1,
+      {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+       {OBELISK_RT_RANDOM_END_HARD_V1, 1}},
+      false, {},
+      {{0, OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0, 2, 0, 3, 1, 0},
+       {0, OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0, 2, 1, 3, 1, 0}});
+  uint64_t capture = 1;
+  obelisk_rt_random_state_v1 state;
+  obelisk_rt_v1_random_state_seed(&state, 71, 29);
+  unsigned middle = 0;
+  for (unsigned iteration = 0; iteration != 4096; ++iteration) {
+    uint64_t assignment = 0;
+    uint64_t nextState = 0;
+    uint32_t success = 0;
+    ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+                  context, bytes.data(), bytes.size(), 0, 3, 0, 4, state.state,
+                  state.increment, &capture, 1, &assignment, &success,
+                  &nextState),
+              OBELISK_RT_OK);
+    ASSERT_EQ(success, 1u);
+    middle += assignment == 1 || assignment == 2;
+    state.state = nextState;
+  }
+  EXPECT_GT(middle, 2550u);
+  EXPECT_LT(middle, 2900u);
+}
+
+TEST_F(RandSolveTest, SignedDistRangesUseBiasedCoordinates) {
+  std::vector<uint8_t> bytes = program(
+      2, 2,
+      {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+       {OBELISK_RT_RANDOM_END_HARD_V1, 1}},
+      false, {},
+      {{0, OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0, 2, 0, 2, 1, 0,
+        OBELISK_RT_RANDOM_DIST_TARGET_SIGNED},
+       {0, OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0, 2, 2, 2, 1, 1,
+        OBELISK_RT_RANDOM_DIST_TARGET_SIGNED}});
+  uint64_t captures[] = {3, 1};
+  obelisk_rt_random_state_v1 state;
+  obelisk_rt_v1_random_state_seed(&state, 91, 7);
+  unsigned negative = 0;
+  for (unsigned iteration = 0; iteration != 4096; ++iteration) {
+    uint64_t assignment = 0;
+    uint64_t nextState = 0;
+    uint32_t success = 0;
+    ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+                  context, bytes.data(), bytes.size(), 0, 3, 0, 4, state.state,
+                  state.increment, captures, 2, &assignment, &success,
+                  &nextState),
+              OBELISK_RT_OK);
+    ASSERT_EQ(success, 1u);
+    negative += (assignment & 2) != 0;
+    state.state = nextState;
+  }
+  EXPECT_GT(negative, 2900u);
+  EXPECT_LT(negative, 3250u);
+}
+
+TEST_F(RandSolveTest, DisabledConstraintDisablesItsDistGroup) {
+  std::vector<uint8_t> bytes = program(
+      1, 1,
+      {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+       {OBELISK_RT_RANDOM_END_HARD_V1, 1}},
+      false, {}, {{0, 0, 0, 1, 1, 1, 1, 0}});
+  uint64_t capture = 1;
+  uint64_t assignment = 1;
+  uint32_t success = 0;
+  EXPECT_EQ(obelisk_rt_v1_random_solve_modes(
+                context, bytes.data(), bytes.size(), 0, 1, 1, 2, &capture, 1,
+                &assignment, &success),
+            OBELISK_RT_OK);
+  EXPECT_EQ(success, 1u);
+  EXPECT_EQ(assignment, 0u);
+}
+
+TEST_F(RandSolveTest, RejectsNegativeDynamicDistWeight) {
+  std::vector<uint8_t> bytes = program(
+      1, 1,
+      {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+       {OBELISK_RT_RANDOM_END_HARD_V1, 1}},
+      false, {},
+      {{0, OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0, 1, 0, 2, 1, 0,
+        OBELISK_RT_RANDOM_DIST_WEIGHT_SIGNED}});
+  uint64_t capture = UINT64_MAX;
+  obelisk_rt_random_state_v1 state;
+  obelisk_rt_v1_random_state_seed(&state, 9, 5);
+  uint64_t assignment = 0;
+  uint64_t nextState = 0;
+  uint32_t success = 1;
+  EXPECT_EQ(obelisk_rt_v1_random_solve_modes_state(
+                context, bytes.data(), bytes.size(), 0, 1, 0, 2, state.state,
+                state.increment, &capture, 1, &assignment, &success,
+                &nextState),
+            OBELISK_RT_OK);
+  EXPECT_EQ(success, 0u);
+  EXPECT_EQ(nextState, state.state);
+}
+
+TEST_F(RandSolveTest, RejectsMalformedDistGroupInventory) {
+  std::vector<uint8_t> bytes = program(
+      1, 1,
+      {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+       {OBELISK_RT_RANDOM_END_HARD_V1, 1}},
+      false, {},
+      {{1, OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0, 1, 0, 1, 1, 0}});
+  uint64_t capture = 1;
+  obelisk_rt_random_state_v1 state;
+  obelisk_rt_v1_random_state_seed(&state, 9, 5);
+  uint64_t assignment = 0;
+  uint64_t nextState = 0;
+  uint32_t success = 0;
+  EXPECT_EQ(obelisk_rt_v1_random_solve_modes_state(
+                context, bytes.data(), bytes.size(), 0, 1, 0, 2, state.state,
+                state.increment, &capture, 1, &assignment, &success,
+                &nextState),
+            OBELISK_RT_INVALID_ARGUMENT);
 }
 
 TEST_F(RandSolveTest, DisabledSoftConstraintAcceptsFirstHardSolution) {

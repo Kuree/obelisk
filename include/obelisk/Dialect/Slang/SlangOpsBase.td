@@ -557,6 +557,15 @@ class SlangValueRangeExpressionASTNodeOp<string mnemonic>
   let hasVerifier = 1;
 }
 
+class SlangDistExpressionASTNodeOp<string mnemonic>
+    : SlangExpressionASTNodeOp<mnemonic, (ins
+        I64Attr:$item_count,
+        DenseI64ArrayAttr:$item_has_weight,
+        DenseI64ArrayAttr:$item_weight_kinds,
+        BoolAttr:$has_default_weight,
+        I64Attr:$default_weight_kind
+      )>;
+
 class SlangImmediateAssertionStatementASTNodeOp<string mnemonic>
     : SlangASTNodeOp<mnemonic, [SlangSemanticDeclarativeNode], (ins
         SlangAssertionKind:$assertion_kind,

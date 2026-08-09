@@ -24,6 +24,17 @@ module {
 // -----
 
 module {
+  func.func @bad_random_cycle(%key: i64, %position: i64) {
+    // expected-error @+1 {{width must be between 1 and 32 bits}}
+    %next, %value = obelisk_sim.random.cycle_next %key, %position
+      {width = 33 : i32} : (i64, i64) -> (i64, i64)
+    return
+  }
+}
+
+// -----
+
+module {
   func.func @bad_container_create(
       %array: !obelisk_sim.dynamic_array<i32>,
       %queue: !obelisk_sim.queue<i32, 4>, %size: i64) {

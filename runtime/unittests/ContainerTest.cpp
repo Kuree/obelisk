@@ -407,6 +407,60 @@ TEST(RandomStateTest, Next64CombinesConsecutivePublishedOutputs) {
   EXPECT_EQ(obelisk_rt_v1_random_state_next64(nullptr), 0u);
 }
 
+TEST(RandomStateTest, RandCCyclesAreBijectiveThroughWidth16) {
+  for (uint32_t width = 1; width <= 16; ++width) {
+    uint64_t cardinality = uint64_t{1} << width;
+    std::vector<bool> seen(cardinality, false);
+    uint64_t position = 0;
+    for (uint64_t index = 0; index != cardinality; ++index) {
+      uint64_t nextPosition = 0;
+      uint64_t value = 0;
+      ASSERT_EQ(obelisk_rt_v1_random_cycle_next(
+                    UINT64_C(0x0123456789abcdef), position, width,
+                    &nextPosition, &value),
+                OBELISK_RT_OK)
+          << "width " << width << " position " << position;
+      ASSERT_LT(value, cardinality);
+      ASSERT_FALSE(seen[value]) << "width " << width << " value " << value;
+      seen[value] = true;
+      position = nextPosition;
+    }
+    EXPECT_EQ(position, 0u);
+  }
+}
+
+TEST(RandomStateTest, RandCKeySelectsTheCyclePermutation) {
+  bool differs = false;
+  for (uint64_t position = 0; position != 256; ++position) {
+    uint64_t nextA = 0, nextB = 0, valueA = 0, valueB = 0;
+    ASSERT_EQ(obelisk_rt_v1_random_cycle_next(1, position, 8, &nextA,
+                                               &valueA),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_random_cycle_next(2, position, 8, &nextB,
+                                               &valueB),
+              OBELISK_RT_OK);
+    EXPECT_EQ(nextA, nextB);
+    differs |= valueA != valueB;
+  }
+  EXPECT_TRUE(differs);
+}
+
+TEST(RandomStateTest, RandCRejectsMalformedState) {
+  uint64_t next = 0;
+  uint64_t value = 0;
+  EXPECT_EQ(obelisk_rt_v1_random_cycle_next(0, UINT32_MAX, 32, &next, &value),
+            OBELISK_RT_OK);
+  EXPECT_EQ(next, 0u);
+  EXPECT_EQ(obelisk_rt_v1_random_cycle_next(0, 0, 0, &next, &value),
+            OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(obelisk_rt_v1_random_cycle_next(0, 0, 33, &next, &value),
+            OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(obelisk_rt_v1_random_cycle_next(0, 16, 4, &next, &value),
+            OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(obelisk_rt_v1_random_cycle_next(0, 0, 4, nullptr, &value),
+            OBELISK_RT_INVALID_ARGUMENT);
+}
+
 TEST_F(ManagedValueTest, RandomSeedRestartsTheActiveStream) {
   EXPECT_EQ(obelisk_rt_v1_random_seed(nullptr, 123),
             OBELISK_RT_INVALID_ARGUMENT);

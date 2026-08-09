@@ -2,6 +2,7 @@
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 
+#include "obelisk/Dialect/Runtime/RuntimeOps.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/Runtime.h"
 
@@ -380,6 +381,42 @@ public:
   }
 };
 
+class RandomCycleNextConversion final
+    : public OpConversionPattern<sim::SimRandomCycleNextOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimRandomCycleNextOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getKey().size() != 1 || adaptor.getPosition().size() != 1 ||
+        op.getWidth() == 0 || op.getWidth() > 32)
+      return failure();
+    Type i64 = rewriter.getI64Type();
+    Value nextPosition = entryAlloca(rewriter, op.getLoc(), i64, 1, 8);
+    Value value = entryAlloca(rewriter, op.getLoc(), i64, 1, 8);
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_random_cycle_next"),
+            ValueRange{adaptor.getKey().front(), adaptor.getPosition().front(),
+                       llvmConstant(rewriter, op.getLoc(),
+                                    rewriter.getI32Type(), op.getWidth()),
+                       nextPosition, value})
+            .getResult();
+    Type statusType = runtime::StatusType::get(rewriter.getContext());
+    Value runtimeStatus = runtime::RTStatusFromBitsOp::create(
+        rewriter, op.getLoc(), statusType, status);
+    sim::SimStatusCheckOp::create(rewriter, op.getLoc(), runtimeStatus);
+    rewriter.replaceOp(
+        op, ValueRange{LLVM::LoadOp::create(rewriter, op.getLoc(), i64,
+                                            nextPosition, 8),
+                       LLVM::LoadOp::create(rewriter, op.getLoc(), i64, value,
+                                            8)});
+    return success();
+  }
+};
+
 class RandomSolveConversion final
     : public OpConversionPattern<sim::SimRandomSolveOp> {
 public:
@@ -552,7 +589,7 @@ void populateManagedContainerToLLVMConversionPatterns(
       QueueInsertConversion, ContainerReadConversion,
       ContainerWriteConversion, RandomNextConversion, RandomSeedConversion,
       RandomBoundedConversion, RandomDistributionConversion,
-      RandomSolveConversion>(converter, context);
+      RandomCycleNextConversion, RandomSolveConversion>(converter, context);
   populateManagedAssociativeToLLVMConversionPatterns(patterns, converter);
 }
 

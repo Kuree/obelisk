@@ -764,6 +764,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_RANDOM_DISTRIBUTION = UINT32_C(0x00010446),
   OBELISK_RT_INTRINSIC_V1_RANDOM_SOLVE = UINT32_C(0x00010447),
   OBELISK_RT_INTRINSIC_V1_RANDOM_SOLVE_STATE = UINT32_C(0x00010448),
+  OBELISK_RT_INTRINSIC_V1_RANDOM_CYCLE_NEXT = UINT32_C(0x00010449),
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_CREATE = UINT32_C(0x00010450),
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_ENABLED = UINT32_C(0x00010451),
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_SAMPLE_ENABLED = UINT32_C(0x00010452),
@@ -2590,15 +2591,24 @@ typedef struct obelisk_rt_random_state_v1 {
 // HAS_SOLVE_BEFORE is set, the instructions are followed by a little-endian
 // u32 edge count and fixed-width 24-byte edge records. Each record contains a
 // u64 before-property mask, a u64 after-property mask, a u32 constraint-block
-// bit (or the unmasked sentinel), and a zero u32 reserved field.
+// bit (or the unmasked sentinel), and a zero u32 reserved field. When HAS_DIST
+// is set, that optional edge section is followed by a u32 group count, a u32
+// record count, and fixed-width 48-byte weighted-range records. A record holds
+// group/block/target metadata, a biased lower bound and cardinality, an exact
+// integer normalization coefficient, and the capture containing its weight.
 #define OBELISK_RT_RANDOM_PROGRAM_MAGIC UINT32_C(0x3152444f)
 #define OBELISK_RT_RANDOM_PROGRAM_VERSION UINT16_C(1)
 #define OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE UINT16_C(24)
 #define OBELISK_RT_RANDOM_INSTRUCTION_SIZE UINT16_C(16)
 #define OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT UINT32_C(1)
 #define OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE UINT32_C(2)
+#define OBELISK_RT_RANDOM_PROGRAM_HAS_DIST UINT32_C(4)
 #define OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE UINT16_C(4)
 #define OBELISK_RT_RANDOM_SOLVE_EDGE_SIZE UINT16_C(24)
+#define OBELISK_RT_RANDOM_DIST_HEADER_SIZE UINT16_C(8)
+#define OBELISK_RT_RANDOM_DIST_RECORD_SIZE UINT16_C(48)
+#define OBELISK_RT_RANDOM_DIST_WEIGHT_SIGNED UINT32_C(1)
+#define OBELISK_RT_RANDOM_DIST_TARGET_SIGNED UINT32_C(2)
 #define OBELISK_RT_RANDOM_INSTRUCTION_SIGNED UINT8_C(1)
 #define OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 UINT32_MAX
 
@@ -2700,6 +2710,12 @@ obelisk_rt_v1_random_distribution(obelisk_rt_context *context,
                                   obelisk_rt_distribution distribution,
                                   int32_t first, int32_t second,
                                   int32_t *out_value);
+// Advance a keyed randc permutation over exactly 2^width values. Widths 1..32
+// are supported. The caller owns key/position storage and explicitly rekeys
+// whenever the returned position wraps to zero.
+obelisk_rt_status obelisk_rt_v1_random_cycle_next(
+    uint64_t key, uint64_t position, uint32_t width,
+    uint64_t *out_next_position, uint64_t *out_value);
 // Execute a compiler-produced residual constraint program. `start` selects
 // the first aggregate assignment and `max_attempts` is a deterministic work
 // bound. A successful solve writes both outputs. Exhaustion is reported by

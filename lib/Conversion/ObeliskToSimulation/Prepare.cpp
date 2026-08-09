@@ -181,7 +181,8 @@ static bool isSupportedRandomConstraintExpression(Operation *op) {
       semantic::SVReplicationExpressionOp,
       semantic::SVElementSelectExpressionOp,
       semantic::SVRangeSelectExpressionOp, semantic::SVMemberAccessExpressionOp,
-      semantic::SVInsideExpressionOp, semantic::SVValueRangeExpressionOp>(op);
+      semantic::SVInsideExpressionOp, semantic::SVValueRangeExpressionOp,
+      semantic::SVDistExpressionOp>(op);
 }
 
 static bool isProgramCodeUnit(Operation *op) {
@@ -418,6 +419,8 @@ void ObeliskSimPreparePass::runOnOperation() {
   auto &classSources = classes->sources;
   auto &classSymbols = classes->symbols;
   auto &classFieldSymbols = classes->fieldSymbols;
+  auto &randcKeyFieldSymbols = classes->randcKeyFieldSymbols;
+  auto &randcPositionFieldSymbols = classes->randcPositionFieldSymbols;
   auto &classMethodSymbols = classes->methodSymbols;
   auto &implicitConstructorSymbols = classes->implicitConstructorSymbols;
   auto &virtualMethodSlots = classes->virtualMethodSlots;
@@ -591,6 +594,9 @@ void ObeliskSimPreparePass::runOnOperation() {
       Type type;
       uint64_t width;
       bool isSigned;
+      bool isRandC;
+      FlatSymbolRefAttr randcKeyField;
+      FlatSymbolRefAttr randcPositionField;
     };
     SmallVector<RandomProperty> properties;
     SmallVector<Operation *> constraintRoots;
@@ -615,12 +621,6 @@ void ObeliskSimPreparePass::runOnOperation() {
           if (property.getLifetime() == semantic::SVVariableLifetime::Static ||
               property.getRandMode() == semantic::SVRandMode::None)
             continue;
-          if (property.getRandMode() == semantic::SVRandMode::RandC) {
-            emitError(getSemanticLocation(property))
-                << "randc properties are not executable yet";
-            invalid = true;
-            continue;
-          }
           FailureOr<Type> type = getNormalizedSemanticType(property);
           FlatSymbolRefAttr field = classFieldSymbols.lookup(property);
           if (failed(type)) {
@@ -635,6 +635,20 @@ void ObeliskSimPreparePass::runOnOperation() {
             invalid = true;
             continue;
           }
+          bool isRandC =
+              property.getRandMode() == semantic::SVRandMode::RandC;
+          FlatSymbolRefAttr randcKeyField =
+              randcKeyFieldSymbols.lookup(property);
+          FlatSymbolRefAttr randcPositionField =
+              randcPositionFieldSymbols.lookup(property);
+          if (isRandC &&
+              (*width > 32 || !randcKeyField || !randcPositionField)) {
+            emitError(getSemanticLocation(property))
+                << "randc properties must be packed integral values no wider "
+                   "than 32 bits";
+            invalid = true;
+            continue;
+          }
           std::optional<Type> semanticPropertyType = property.getSemanticType();
           if (!semanticPropertyType ||
               hasUnsupportedRandomDomain(*semanticPropertyType)) {
@@ -643,8 +657,10 @@ void ObeliskSimPreparePass::runOnOperation() {
             invalid = true;
             continue;
           }
-          properties.push_back({property, field, *type, *width,
-                                isSignedSemanticType(*semanticPropertyType)});
+          properties.push_back(
+              {property, field, *type, *width,
+               isSignedSemanticType(*semanticPropertyType), isRandC,
+               randcKeyField, randcPositionField});
           continue;
         }
       }
@@ -773,14 +789,23 @@ void ObeliskSimPreparePass::runOnOperation() {
     llvm::DenseMap<Operation *, unsigned> randomIndices;
     for (auto [index, property] : llvm::enumerate(properties)) {
       randomIndices[property.source] = index;
-      propertyAttrs.push_back(builder.getDictionaryAttr({
+      SmallVector<NamedAttribute> attributes{
           builder.getNamedAttr("field", property.field),
           builder.getNamedAttr("type", TypeAttr::get(property.type)),
           builder.getNamedAttr("width",
                                builder.getI64IntegerAttr(property.width)),
           builder.getNamedAttr("is_signed",
                                builder.getBoolAttr(property.isSigned)),
-      }));
+          builder.getNamedAttr("is_randc",
+                               builder.getBoolAttr(property.isRandC)),
+      };
+      if (property.isRandC) {
+        attributes.push_back(
+            builder.getNamedAttr("randc_key_field", property.randcKeyField));
+        attributes.push_back(builder.getNamedAttr(
+            "randc_position_field", property.randcPositionField));
+      }
+      propertyAttrs.push_back(builder.getDictionaryAttr(attributes));
     }
     call->setAttr(randomizeAttrName, builder.getUnitAttr());
     call->setAttr(randomReceiverIndexAttrName,

@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <limits>
+#include <utility>
 
 namespace {
 
@@ -16,6 +17,36 @@ uint64_t next64(obelisk_rt_random_state_v1 &state) {
   return (static_cast<uint64_t>(obelisk_rt_v1_random_state_next32(&state))
           << 32) |
          obelisk_rt_v1_random_state_next32(&state);
+}
+
+uint64_t lowMask(unsigned width) {
+  return width == 64 ? UINT64_MAX : (uint64_t{1} << width) - 1;
+}
+
+uint64_t randcRound(uint64_t key, uint64_t value, unsigned round) {
+  uint64_t mixed = key ^ (value + UINT64_C(0x9e3779b97f4a7c15) * (round + 1));
+  mixed = (mixed ^ (mixed >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
+  mixed = (mixed ^ (mixed >> 27)) * UINT64_C(0x94d049bb133111eb);
+  return mixed ^ (mixed >> 31);
+}
+
+uint64_t randcPermute(uint64_t key, uint64_t position, unsigned width) {
+  if (width == 1)
+    return (position ^ key) & 1;
+
+  unsigned leftWidth = width / 2;
+  unsigned rightWidth = width - leftWidth;
+  uint64_t left = position >> rightWidth;
+  uint64_t right = position & lowMask(rightWidth);
+  for (unsigned round = 0; round != 4; ++round) {
+    uint64_t nextLeft = right;
+    uint64_t nextRight =
+        (left ^ randcRound(key, right, round)) & lowMask(leftWidth);
+    left = nextLeft;
+    right = nextRight;
+    std::swap(leftWidth, rightWidth);
+  }
+  return ((left << rightWidth) | right) & lowMask(width);
 }
 
 } // namespace
@@ -46,6 +77,18 @@ obelisk_rt_v1_random_state_next32(obelisk_rt_random_state_v1 *state) {
 extern "C" uint64_t
 obelisk_rt_v1_random_state_next64(obelisk_rt_random_state_v1 *state) {
   return state ? next64(*state) : 0;
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_random_cycle_next(
+    uint64_t key, uint64_t position, uint32_t width,
+    uint64_t *outNextPosition, uint64_t *outValue) {
+  if (!outNextPosition || !outValue || width == 0 || width > 32 ||
+      (position & ~lowMask(width)) != 0)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  uint64_t mask = lowMask(width);
+  *outValue = randcPermute(key, position, width);
+  *outNextPosition = (position + 1) & mask;
+  return OBELISK_RT_OK;
 }
 
 extern "C" obelisk_rt_status

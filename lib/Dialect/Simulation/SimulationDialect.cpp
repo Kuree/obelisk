@@ -1613,6 +1613,12 @@ LogicalResult SimContainerSizeOp::verify() {
   return success();
 }
 
+LogicalResult SimRandomCycleNextOp::verify() {
+  if (getWidth() == 0 || getWidth() > 32)
+    return emitOpError("width must be between 1 and 32 bits");
+  return success();
+}
+
 LogicalResult SimContainerCreateLikeOp::verify() {
   Type type = getResult().getType();
   if (!getSequentialContainerElement(type))

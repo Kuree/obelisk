@@ -63,6 +63,13 @@ Encoder::encodeContainerOperation(FunctionPlan &plan, Operation *operation) {
         {distribution, reg(plan, op.getFirst()), reg(plan, op.getSecond())},
         {reg(plan, op.getResult())});
   }
+  if (auto op = dyn_cast<sim::SimRandomCycleNextOp>(operation)) {
+    uint32_t width = emitU64Constant(plan, op.getWidth());
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicRandomCycleNext,
+        {reg(plan, op.getKey()), reg(plan, op.getPosition()), width},
+        {reg(plan, op.getNextPosition()), reg(plan, op.getValue())});
+  }
   if (auto op = dyn_cast<sim::SimRandomSolveOp>(operation)) {
     StringRef program = op.getProgram();
     SmallVector<uint32_t> inputs{

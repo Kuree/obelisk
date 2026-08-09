@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <limits>
 #include <new>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -23,6 +24,17 @@ struct SolveBeforeEdge {
   uint64_t beforeMask;
   uint64_t afterMask;
   uint32_t constraintBlock;
+};
+
+struct DistRange {
+  uint32_t constraintBlock;
+  uint32_t targetOffset;
+  uint16_t width;
+  uint64_t lower;
+  uint64_t cardinality;
+  uint64_t coefficient;
+  uint32_t weightCapture;
+  uint32_t flags;
 };
 
 struct Value {
@@ -516,7 +528,8 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
   uint32_t programFlags = read32(program + 20);
   if (aggregateWidth > 64 || encodedCaptures != captureCount ||
       (programFlags & ~(OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT |
-                        OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE)) != 0)
+                        OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
+                        OBELISK_RT_RANDOM_PROGRAM_HAS_DIST)) != 0)
     return OBELISK_RT_INVALID_ARGUMENT;
   uint64_t instructionEnd = OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE +
                             static_cast<uint64_t>(instructionCount) *
@@ -531,6 +544,21 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
     instructionEnd += OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE +
                       static_cast<uint64_t>(solveEdgeCount) *
                           OBELISK_RT_RANDOM_SOLVE_EDGE_SIZE;
+  }
+  bool encodedDist =
+      (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_DIST) != 0;
+  uint32_t distGroupCount = 0;
+  uint32_t distRecordCount = 0;
+  uint64_t distRecordsOffset = 0;
+  if (encodedDist) {
+    if (programSize < instructionEnd + OBELISK_RT_RANDOM_DIST_HEADER_SIZE)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    distGroupCount = read32(program + instructionEnd);
+    distRecordCount = read32(program + instructionEnd + 4);
+    distRecordsOffset = instructionEnd + OBELISK_RT_RANDOM_DIST_HEADER_SIZE;
+    instructionEnd =
+        distRecordsOffset + static_cast<uint64_t>(distRecordCount) *
+                                OBELISK_RT_RANDOM_DIST_RECORD_SIZE;
   }
   if (programSize != instructionEnd)
     return OBELISK_RT_INVALID_ARGUMENT;
@@ -604,6 +632,60 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
         return OBELISK_RT_INVALID_ARGUMENT;
     }
 
+    std::vector<std::vector<DistRange>> distGroups;
+    if (encodedDist) {
+      if (distGroupCount == 0 || distRecordCount == 0)
+        return OBELISK_RT_INVALID_ARGUMENT;
+      distGroups.resize(distGroupCount);
+      cursor = program + distRecordsOffset;
+      for (uint32_t index = 0; index != distRecordCount; ++index) {
+        uint32_t group = read32(cursor);
+        DistRange range{read32(cursor + 4),  read32(cursor + 8),
+                        read16(cursor + 12), read64(cursor + 16),
+                        read64(cursor + 24), read64(cursor + 32),
+                        read32(cursor + 40), read32(cursor + 44)};
+        uint16_t reserved = read16(cursor + 14);
+        cursor += OBELISK_RT_RANDOM_DIST_RECORD_SIZE;
+        uint64_t rangeMask = range.width == 64
+                                 ? UINT64_MAX
+                                 : range.width == 0
+                                       ? 0
+                                       : (uint64_t{1} << range.width) - 1;
+        bool fullDomain = range.cardinality == 0 && range.width == 64 &&
+                          range.lower == 0;
+        if (group >= distGroupCount || range.width == 0 || range.width > 64 ||
+            range.targetOffset > aggregateWidth ||
+            range.width > aggregateWidth - range.targetOffset ||
+            reserved != 0 || range.lower > rangeMask ||
+            (!fullDomain &&
+             (range.cardinality == 0 ||
+              range.cardinality - 1 > rangeMask - range.lower)) ||
+            range.coefficient == 0 || range.weightCapture >= captureCount ||
+            (range.flags & ~(OBELISK_RT_RANDOM_DIST_WEIGHT_SIGNED |
+                             OBELISK_RT_RANDOM_DIST_TARGET_SIGNED)) != 0 ||
+            (range.constraintBlock !=
+                 OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
+             range.constraintBlock >= 64))
+          return OBELISK_RT_INVALID_ARGUMENT;
+        std::vector<DistRange> &groupRanges = distGroups[group];
+        if (!groupRanges.empty()) {
+          const DistRange &first = groupRanges.front();
+          uint32_t targetFlag = OBELISK_RT_RANDOM_DIST_TARGET_SIGNED;
+          if (range.constraintBlock != first.constraintBlock ||
+              range.targetOffset != first.targetOffset ||
+              range.width != first.width ||
+              (range.flags & targetFlag) != (first.flags & targetFlag))
+            return OBELISK_RT_INVALID_ARGUMENT;
+        }
+        groupRanges.push_back(range);
+      }
+      if (std::any_of(distGroups.begin(), distGroups.end(),
+                      [](const auto &group) { return group.empty(); }))
+        return OBELISK_RT_INVALID_ARGUMENT;
+      if (encodedSolveBefore)
+        return OBELISK_RT_INVALID_ARGUMENT;
+    }
+
     uint64_t mask = widthMask(aggregateWidth);
     mutableMask &= mask;
     std::vector<uint64_t> solveLayers;
@@ -619,6 +701,20 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
       if (activeSolveBefore && !randomState)
         return OBELISK_RT_INVALID_ARGUMENT;
     }
+    bool activeDist =
+        std::any_of(distGroups.begin(), distGroups.end(),
+                    [&](const std::vector<DistRange> &group) {
+                      return constraintEnabled(group.front().constraintBlock,
+                                               constraintMask);
+                    });
+    if (activeDist && !randomState)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    for (const std::vector<DistRange> &group : distGroups)
+      if (constraintEnabled(group.front().constraintBlock, constraintMask))
+        for (const DistRange &range : group)
+          if ((range.flags & OBELISK_RT_RANDOM_DIST_WEIGHT_SIGNED) != 0 &&
+              (captures[range.weightCapture] & (uint64_t{1} << 63)) != 0)
+            return OBELISK_RT_OK;
     unsigned mutableWidth = countBits(mutableMask);
     uint64_t domain = mutableWidth == 64 ? std::numeric_limits<uint64_t>::max()
                                          : uint64_t{1} << mutableWidth;
@@ -633,6 +729,19 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
     std::vector<uint8_t> bestSoft(softCount, 0);
     std::vector<uint8_t> soft(softCount, 1);
     std::vector<uint64_t> solveCandidates;
+    struct WeightedCandidateGroup {
+      uint64_t weight;
+      std::vector<uint64_t> assignments;
+    };
+    std::vector<WeightedCandidateGroup> weightedCandidateGroups;
+    std::unordered_map<uint64_t, size_t> weightedGroupIndices;
+    uint64_t activeDistTargetMask = 0;
+    for (const std::vector<DistRange> &group : distGroups) {
+      const DistRange &first = group.front();
+      if (!constraintEnabled(first.constraintBlock, constraintMask))
+        continue;
+      activeDistTargetMask |= widthMask(first.width) << first.targetOffset;
+    }
     std::vector<Value> stack;
     stack.reserve(maxDepth);
     auto compareSoft = [&](const std::vector<uint8_t> &lhs,
@@ -644,6 +753,43 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
       }
       return 0;
     };
+    auto candidateDistWeight = [&](uint64_t assignment,
+                                   uint64_t &result) {
+      result = 1;
+      for (const std::vector<DistRange> &group : distGroups) {
+        const DistRange &first = group.front();
+        if (!constraintEnabled(first.constraintBlock, constraintMask))
+          continue;
+        uint64_t field = (assignment >> first.targetOffset) &
+                         widthMask(first.width);
+        if ((first.flags & OBELISK_RT_RANDOM_DIST_TARGET_SIGNED) != 0)
+          field ^= uint64_t{1} << (first.width - 1);
+        uint64_t groupWeight = 0;
+        for (const DistRange &range : group) {
+          bool matches =
+              range.cardinality == 0 ||
+              (field >= range.lower &&
+               field - range.lower < range.cardinality);
+          if (!matches)
+            continue;
+          uint64_t weight = captures[range.weightCapture];
+          if (weight != 0 && range.coefficient > UINT64_MAX / weight)
+            return false;
+          uint64_t contribution = weight * range.coefficient;
+          if (groupWeight > UINT64_MAX - contribution)
+            return false;
+          groupWeight += contribution;
+        }
+        if (groupWeight == 0) {
+          result = 0;
+          return true;
+        }
+        if (result > UINT64_MAX / groupWeight)
+          return false;
+        result *= groupWeight;
+      }
+      return true;
+    };
     for (uint64_t attempt = 0; attempt != attempts; ++attempt) {
       bool hard = false;
       if (!evaluate(instructions, stack, candidate, constraintMask, captures,
@@ -651,12 +797,41 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
         return OBELISK_RT_INVALID_ARGUMENT;
       bool satisfiesAllSoft = std::all_of(
           soft.begin(), soft.end(), [](uint8_t value) { return value != 0; });
-      if (!activeSolveBefore && hard && (!encodedSoft || satisfiesAllSoft)) {
+      if (!activeSolveBefore && !activeDist && hard &&
+          (!encodedSoft || satisfiesAllSoft)) {
         *outAssignment = candidate;
         *outSuccess = 1;
         return OBELISK_RT_OK;
       }
-      if (hard && activeSolveBefore) {
+      if (hard && activeDist) {
+        uint64_t weight = 0;
+        if (!candidateDistWeight(candidate, weight))
+          return OBELISK_RT_OK;
+        int comparison =
+            weightedCandidateGroups.empty() ? 1 : compareSoft(soft, bestSoft);
+        if (weight != 0 && (!encodedSoft || comparison >= 0)) {
+          if (encodedSoft && comparison > 0) {
+            weightedCandidateGroups.clear();
+            weightedGroupIndices.clear();
+            bestSoft = soft;
+          }
+          uint64_t key = candidate & activeDistTargetMask;
+          auto [found, inserted] = weightedGroupIndices.try_emplace(
+              key, weightedCandidateGroups.size());
+          if (inserted) {
+            weightedCandidateGroups.push_back({weight, {candidate}});
+          } else {
+            WeightedCandidateGroup &group =
+                weightedCandidateGroups[found->second];
+            // A group's weight is a function only of its distributed target
+            // fields and the entry captures. A mismatch therefore indicates
+            // malformed metadata rather than a source-level distribution.
+            if (group.weight != weight)
+              return OBELISK_RT_INVALID_ARGUMENT;
+            group.assignments.push_back(candidate);
+          }
+        }
+      } else if (hard && activeSolveBefore) {
         int comparison =
             solveCandidates.empty() ? 1 : compareSoft(soft, bestSoft);
         if (!encodedSoft || comparison >= 0) {
@@ -676,6 +851,37 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
       }
       candidateIndex = (candidateIndex + 1) & widthMask(mutableWidth);
       candidate = fixed | expandBits(candidateIndex, mutableMask);
+    }
+    if (activeDist) {
+      if (!complete || weightedCandidateGroups.empty())
+        return OBELISK_RT_OK;
+      uint64_t totalWeight = 0;
+      for (const WeightedCandidateGroup &group : weightedCandidateGroups) {
+        if (totalWeight > UINT64_MAX - group.weight)
+          return OBELISK_RT_OK;
+        totalWeight += group.weight;
+      }
+      uint64_t selected = 0;
+      obelisk_rt_status status = obelisk_rt_v1_random_state_bounded(
+          randomState, totalWeight, &selected);
+      if (status != OBELISK_RT_OK)
+        return status;
+      for (const WeightedCandidateGroup &group : weightedCandidateGroups) {
+        if (selected < group.weight) {
+          uint64_t assignmentIndex = 0;
+          if (group.assignments.size() != 1) {
+            status = obelisk_rt_v1_random_state_bounded(
+                randomState, group.assignments.size(), &assignmentIndex);
+            if (status != OBELISK_RT_OK)
+              return status;
+          }
+          *outAssignment = group.assignments[assignmentIndex];
+          *outSuccess = 1;
+          return OBELISK_RT_OK;
+        }
+        selected -= group.weight;
+      }
+      return OBELISK_RT_INVALID_ARGUMENT;
     }
     if (activeSolveBefore) {
       // Conditional solve-order probabilities require the complete enabled

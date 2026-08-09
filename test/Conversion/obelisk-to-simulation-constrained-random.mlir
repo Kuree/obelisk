@@ -556,7 +556,6 @@ module {
 // CHECK: obelisk_sim.managed.store
 // CHECK-NOT: obelisk.sv.
 
-// UNSUPPORTED-DAG: error: randc properties are not executable yet
 // UNSUPPORTED-DAG: error: rand enum and tagged-union domains are not executable yet
 // UNSUPPORTED-DAG: error: solve before cannot order a property before itself
 // UNSUPPORTED-DAG: error: user pre_randomize and post_randomize hooks are not executable yet

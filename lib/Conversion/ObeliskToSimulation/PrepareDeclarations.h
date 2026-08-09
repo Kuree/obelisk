@@ -24,6 +24,10 @@ struct PreparedClassDeclarations {
   mlir::SmallVector<ir::SVClassTypeOp> sources;
   llvm::DenseMap<mlir::Operation *, mlir::StringAttr> symbols;
   llvm::DenseMap<mlir::Operation *, mlir::FlatSymbolRefAttr> fieldSymbols;
+  llvm::DenseMap<mlir::Operation *, mlir::FlatSymbolRefAttr>
+      randcKeyFieldSymbols;
+  llvm::DenseMap<mlir::Operation *, mlir::FlatSymbolRefAttr>
+      randcPositionFieldSymbols;
   llvm::DenseMap<mlir::Operation *, mlir::FlatSymbolRefAttr> methodSymbols;
   llvm::DenseMap<mlir::Operation *, mlir::FlatSymbolRefAttr>
       implicitConstructorSymbols;

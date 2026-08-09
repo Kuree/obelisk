@@ -626,6 +626,20 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                ? sentinel(0, static_cast<uint32_t>(result))
                : status;
   }
+  case OBELISK_RT_INTRINSIC_V1_RANDOM_CYCLE_NEXT: {
+    auto key = scalar(0), position = scalar(1), width = scalar(2);
+    if (!key || !position || !width || *width > UINT32_MAX)
+      return OBELISK_RT_INVALID_BYTECODE;
+    uint64_t nextPosition = 0;
+    uint64_t value = 0;
+    obelisk_rt_status status = obelisk_rt_v1_random_cycle_next(
+        *key, *position, static_cast<uint32_t>(*width), &nextPosition, &value);
+    if (status != OBELISK_RT_OK ||
+        !writeScalar(image, frame, outputRegister(0), nextPosition) ||
+        !writeScalar(image, frame, outputRegister(1), value))
+      return status == OBELISK_RT_OK ? OBELISK_RT_INVALID_BYTECODE : status;
+    return OBELISK_RT_OK;
+  }
   case OBELISK_RT_INTRINSIC_V1_RANDOM_NEXT: {
     uint64_t result = 0;
     obelisk_rt_status status = obelisk_rt_v1_random_next(context, &result);

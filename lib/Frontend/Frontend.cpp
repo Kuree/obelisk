@@ -1819,6 +1819,30 @@ private:
                                  builder.getContext(),
                                  static_cast<slangir::ValueRangeKind>(
                                      static_cast<int>(node.rangeKind))));
+    } else if constexpr (std::same_as<T, slang::ast::DistExpression>) {
+      SmallVector<int64_t> hasWeight;
+      SmallVector<int64_t> weightKinds;
+      hasWeight.reserve(node.items().size());
+      weightKinds.reserve(node.items().size());
+      for (const auto &item : node.items()) {
+        hasWeight.push_back(item.weight.has_value());
+        weightKinds.push_back(
+            item.weight && item.weight->kind ==
+                               slang::ast::DistExpression::DistWeight::PerRange);
+      }
+      SET_OP_ATTR(ItemCount, builder.getI64IntegerAttr(node.items().size()));
+      SET_OP_ATTR(ItemHasWeight,
+                  builder.getDenseI64ArrayAttr(hasWeight));
+      SET_OP_ATTR(ItemWeightKinds,
+                  builder.getDenseI64ArrayAttr(weightKinds));
+      const auto *defaultWeight = node.defaultWeight();
+      SET_OP_ATTR(HasDefaultWeight,
+                  builder.getBoolAttr(defaultWeight != nullptr));
+      SET_OP_ATTR(
+          DefaultWeightKind,
+          builder.getI64IntegerAttr(
+              defaultWeight && defaultWeight->kind ==
+                                   slang::ast::DistExpression::DistWeight::PerRange));
     } else if constexpr (std::same_as<T, slang::ast::StructurePattern>) {
       SmallVector<int64_t> ordinals;
       ordinals.reserve(node.patterns.size());

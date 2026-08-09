@@ -14,6 +14,7 @@
 
 #include <functional>
 #include <limits>
+#include <numeric>
 #include <optional>
 #include <tuple>
 
@@ -1268,9 +1269,13 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     unsigned width;
     bool isSigned;
     Value reference;
+    bool isRandC;
+    Value randcKeyReference;
+    Value randcPositionReference;
   };
   SmallVector<Property> planned;
   uint64_t plannedWidth = 0;
+  Type i64 = builder.getI64Type();
   for (Attribute propertyAttr : properties) {
     auto property = dyn_cast<DictionaryAttr>(propertyAttr);
     auto field = property ? property.getAs<FlatSymbolRefAttr>("field")
@@ -1280,7 +1285,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
         property ? property.getAs<IntegerAttr>("width") : IntegerAttr{};
     auto signedAttr =
         property ? property.getAs<BoolAttr>("is_signed") : BoolAttr{};
-    if (!field || !typeAttr || !widthAttr || !signedAttr ||
+    auto randcAttr =
+        property ? property.getAs<BoolAttr>("is_randc") : BoolAttr{};
+    if (!field || !typeAttr || !widthAttr || !signedAttr || !randcAttr ||
         widthAttr.getValue().isZero() || widthAttr.getValue().isNegative() ||
         widthAttr.getValue().getActiveBits() > 64) {
       emitError(location) << "randomize property plan is malformed";
@@ -1301,14 +1308,34 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
                                                   objectType.getClassName());
     Value reference = sim::SimClassFieldRefOp::create(
         builder, location, referenceType, receiver, field);
-    planned.push_back(
-        {type, static_cast<unsigned>(width), signedAttr.getValue(), reference});
+    Value randcKeyReference;
+    Value randcPositionReference;
+    if (randcAttr.getValue()) {
+      auto keyField = property.getAs<FlatSymbolRefAttr>("randc_key_field");
+      auto positionField =
+          property.getAs<FlatSymbolRefAttr>("randc_position_field");
+      if (width > 32 || !keyField || !positionField) {
+        emitError(location) << "randc property plan is malformed";
+        return failure();
+      }
+      Type stateReferenceType = sim::ManagedRefType::get(
+          function.getContext(), i64, objectType.getClassName());
+      randcKeyReference = sim::SimClassFieldRefOp::create(
+          builder, location, stateReferenceType, receiver, keyField);
+      randcPositionReference = sim::SimClassFieldRefOp::create(
+          builder, location, stateReferenceType, receiver, positionField);
+    }
+    planned.push_back({type, static_cast<unsigned>(width),
+                       signedAttr.getValue(), reference, randcAttr.getValue(),
+                       randcKeyReference, randcPositionReference});
     plannedWidth += width;
   }
   if (plannedWidth != totalWidth) {
     emitError(location) << "randomize property plan width is inconsistent";
     return failure();
   }
+  bool hasRandC = llvm::any_of(
+      planned, [](const Property &property) { return property.isRandC; });
 
   sim::SimClassDeclOp declaration =
       SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
@@ -1340,7 +1367,6 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
         << "randomize receiver has no object-local stream or mode state";
     return failure();
   }
-  Type i64 = builder.getI64Type();
   Type randomReferenceType = sim::ManagedRefType::get(
       function.getContext(), i64, objectType.getClassName());
   Value stateReference = sim::SimClassFieldRefOp::create(
@@ -1386,54 +1412,6 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
       builder, location, arith::CmpIPredicate::eq, relevantConstraintMode,
       constant64(0));
 
-  Value currentAssignment = constant64(0);
-  Value mutableMask = constant64(0);
-  SmallVector<Value> propertyEnabled;
-  uint64_t currentOffset = 0;
-  for (auto [index, property] : llvm::enumerate(planned)) {
-    Value current = sim::SimManagedLoadOp::create(
-        builder, location, property.type, property.reference);
-    FailureOr<Value> scalar = toPackedScalar(current, location);
-    FailureOr<Value> extended =
-        succeeded(scalar)
-            ? convert(*scalar, i64, property.isSigned, location, false)
-            : FailureOr<Value>(failure());
-    if (failed(extended))
-      return failure();
-    uint64_t valueMask =
-        property.width == 64 ? UINT64_MAX : (uint64_t{1} << property.width) - 1;
-    Value bits = arith::AndIOp::create(builder, location, *extended,
-                                       constant64(valueMask));
-    uint64_t aggregateMask = valueMask;
-    if (currentOffset != 0) {
-      bits = arith::ShLIOp::create(builder, location, bits,
-                                   constant64(currentOffset));
-      aggregateMask <<= currentOffset;
-    }
-    currentAssignment =
-        arith::OrIOp::create(builder, location, currentAssignment, bits);
-
-    Value propertyMode = arith::AndIOp::create(
-        builder, location, relevantMode, constant64(uint64_t{1} << index));
-    Value enabled =
-        arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
-                              propertyMode, constant64(0));
-    propertyEnabled.push_back(enabled);
-    Value enabledMask = arith::SelectOp::create(
-        builder, location, enabled, constant64(aggregateMask), constant64(0));
-    mutableMask =
-        arith::OrIOp::create(builder, location, mutableMask, enabledMask);
-    currentOffset += property.width;
-  }
-  Value fixedAssignment = arith::AndIOp::create(
-      builder, location, currentAssignment,
-      arith::XOrIOp::create(builder, location, mutableMask, mask));
-  Block *disabledCheckBlock = addBlock();
-  Block *enabledSamplingBlock = addBlock();
-  cf::CondBranchOp::create(builder, location, allPropertiesDisabled,
-                           disabledCheckBlock, ValueRange{},
-                           enabledSamplingBlock, ValueRange{});
-  setCurrent(enabledSamplingBlock);
   auto next32 = [&](Value &streamState) -> Value {
     Value old = streamState;
     streamState = arith::AddIOp::create(
@@ -1474,12 +1452,104 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
             constant64(32)),
         arith::ExtUIOp::create(builder, location, i64, low));
   };
-  Value randomDraw = next64(state);
 
-  Value start = arith::OrIOp::create(
-      builder, location,
-      arith::AndIOp::create(builder, location, randomDraw, mutableMask),
-      fixedAssignment);
+  Value currentAssignment = constant64(0);
+  Value mutableMask = constant64(0);
+  SmallVector<Value> propertyEnabled;
+  uint64_t currentOffset = 0;
+  for (auto [index, property] : llvm::enumerate(planned)) {
+    Value current = sim::SimManagedLoadOp::create(
+        builder, location, property.type, property.reference);
+    FailureOr<Value> scalar = toPackedScalar(current, location);
+    FailureOr<Value> extended =
+        succeeded(scalar)
+            ? convert(*scalar, i64, property.isSigned, location, false)
+            : FailureOr<Value>(failure());
+    if (failed(extended))
+      return failure();
+    uint64_t valueMask =
+        property.width == 64 ? UINT64_MAX : (uint64_t{1} << property.width) - 1;
+    Value bits = arith::AndIOp::create(builder, location, *extended,
+                                       constant64(valueMask));
+
+    Value propertyMode = arith::AndIOp::create(
+        builder, location, relevantMode, constant64(uint64_t{1} << index));
+    Value enabled =
+        arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                              propertyMode, constant64(0));
+    propertyEnabled.push_back(enabled);
+    if (property.isRandC) {
+      Block *enabledBlock = addBlock();
+      Block *disabledBlock = addBlock();
+      Block *mergeBlock = addBlock();
+      Value mergedState = mergeBlock->addArgument(i64, location);
+      Value mergedBits = mergeBlock->addArgument(i64, location);
+      cf::CondBranchOp::create(builder, location, enabled, enabledBlock,
+                               ValueRange{}, disabledBlock, ValueRange{});
+
+      setCurrent(disabledBlock);
+      cf::BranchOp::create(builder, location, mergeBlock,
+                           ValueRange{state, bits});
+
+      setCurrent(enabledBlock);
+      Value key = sim::SimManagedLoadOp::create(
+          builder, location, i64, property.randcKeyReference);
+      Value position = sim::SimManagedLoadOp::create(
+          builder, location, i64, property.randcPositionReference);
+      Value needsRekey = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq, position, constant64(0));
+      Block *rekeyBlock = addBlock();
+      Block *cycleBlock = addBlock();
+      Value cycleKey = cycleBlock->addArgument(i64, location);
+      Value cycleState = cycleBlock->addArgument(i64, location);
+      cf::CondBranchOp::create(builder, location, needsRekey, rekeyBlock,
+                               ValueRange{}, cycleBlock,
+                               ValueRange{key, state});
+
+      setCurrent(rekeyBlock);
+      Value rekeyState = state;
+      Value newKey = next64(rekeyState);
+      cf::BranchOp::create(builder, location, cycleBlock,
+                           ValueRange{newKey, rekeyState});
+
+      setCurrent(cycleBlock);
+      auto cycle = sim::SimRandomCycleNextOp::create(
+          builder, location, cycleKey, position,
+          builder.getI32IntegerAttr(property.width));
+      sim::SimManagedStoreOp::create(builder, location, cycleKey,
+                                     property.randcKeyReference);
+      sim::SimManagedStoreOp::create(builder, location,
+                                     cycle.getNextPosition(),
+                                     property.randcPositionReference);
+      cf::BranchOp::create(builder, location, mergeBlock,
+                           ValueRange{cycleState, cycle.getValue()});
+
+      setCurrent(mergeBlock);
+      state = mergedState;
+      bits = mergedBits;
+    }
+    uint64_t aggregateMask = valueMask;
+    if (currentOffset != 0) {
+      bits = arith::ShLIOp::create(builder, location, bits,
+                                   constant64(currentOffset));
+      aggregateMask <<= currentOffset;
+    }
+    currentAssignment =
+        arith::OrIOp::create(builder, location, currentAssignment, bits);
+
+    Value enabledMask =
+        property.isRandC
+            ? constant64(0)
+            : arith::SelectOp::create(builder, location, enabled,
+                                      constant64(aggregateMask), constant64(0))
+                  .getResult();
+    mutableMask =
+        arith::OrIOp::create(builder, location, mutableMask, enabledMask);
+    currentOffset += property.width;
+  }
+  Value fixedAssignment = arith::AndIOp::create(
+      builder, location, currentAssignment,
+      arith::XOrIOp::create(builder, location, mutableMask, mask));
 
   bool hasSoftConstraint = false;
   for (auto [index, child] : llvm::enumerate(children)) {
@@ -1647,11 +1717,481 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     });
     return dependent;
   };
+  struct DistRangePlan {
+    uint64_t lower;
+    uint64_t cardinality;
+    uint64_t coefficient;
+    uint64_t selectionCoefficient;
+    uint32_t weightCapture;
+    bool weightSigned;
+    Value weight;
+  };
+  struct DistPlan {
+    Operation *source;
+    unsigned propertyIndex;
+    uint32_t propertyOffset;
+    uint32_t constraintBlock;
+    SmallVector<DistRangePlan> ranges;
+  };
+  SmallVector<DistPlan> distPlans;
+  uint32_t activeProgramConstraintBlock =
+      OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1;
   auto emitLiteral = [&](bool value) {
     instruction(OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, false, 0, value);
   };
   std::function<LogicalResult(Operation *)> emitProgramExpression;
   emitProgramExpression = [&](Operation *expression) -> LogicalResult {
+    if (auto dist = dyn_cast<semantic::SVDistExpressionOp>(expression)) {
+      if (llvm::is_contained(llvm::map_range(
+                                 distPlans,
+                                 [](const DistPlan &plan) { return plan.source; }),
+                             expression)) {
+        emitError(getSemanticLocation(expression))
+            << "distribution expression was encoded more than once";
+        return failure();
+      }
+      SmallVector<Operation *> nested = getChildren(expression);
+      auto itemCountAttr =
+          expression->getAttrOfType<IntegerAttr>("item_count");
+      auto itemHasWeight =
+          expression->getAttrOfType<DenseI64ArrayAttr>("item_has_weight");
+      auto itemWeightKinds =
+          expression->getAttrOfType<DenseI64ArrayAttr>("item_weight_kinds");
+      auto hasDefaultWeight =
+          expression->getAttrOfType<BoolAttr>("has_default_weight");
+      auto defaultWeightKind =
+          expression->getAttrOfType<IntegerAttr>("default_weight_kind");
+      if (!itemCountAttr || itemCountAttr.getValue().isNegative() ||
+          itemCountAttr.getValue().getActiveBits() > 64 || !itemHasWeight ||
+          !itemWeightKinds || !hasDefaultWeight || !defaultWeightKind) {
+        emitError(getSemanticLocation(expression))
+            << "distribution expression has malformed metadata";
+        return failure();
+      }
+      uint64_t itemCount = itemCountAttr.getValue().getZExtValue();
+      if (itemCount == 0 || itemCount > static_cast<uint64_t>(INT64_MAX) ||
+          itemHasWeight.size() != static_cast<int64_t>(itemCount) ||
+          itemWeightKinds.size() != static_cast<int64_t>(itemCount) ||
+          nested.empty() ||
+          (defaultWeightKind.getInt() != 0 &&
+           defaultWeightKind.getInt() != 1)) {
+        emitError(getSemanticLocation(expression))
+            << "distribution expression has inconsistent metadata";
+        return failure();
+      }
+
+      Operation *target = nested.front();
+      while (isa<semantic::SVConversionExpressionOp>(target)) {
+        SmallVector<Operation *> converted = getChildren(target);
+        if (converted.size() != 1)
+          break;
+        target = converted.front();
+      }
+      auto variable = target->getAttrOfType<IntegerAttr>(randomVariableAttrName);
+      if (!variable || variable.getValue().isNegative() ||
+          variable.getValue().getActiveBits() > 64 ||
+          variable.getValue().getZExtValue() >= planned.size()) {
+        emitError(getSemanticLocation(expression))
+            << "dist currently requires a direct rand property on its left "
+               "hand side";
+        return failure();
+      }
+      unsigned propertyIndex =
+          static_cast<unsigned>(variable.getValue().getZExtValue());
+      const Property &property = planned[propertyIndex];
+      FailureOr<unsigned> comparisonWidth = expressionWidth(nested.front());
+      if (property.isRandC) {
+        emitError(getSemanticLocation(expression))
+            << "dist cannot weight a randc property";
+        return failure();
+      }
+      if (failed(comparisonWidth) || *comparisonWidth < property.width ||
+          isSignedNode(nested.front()) != property.isSigned) {
+        emitError(getSemanticLocation(expression))
+            << "dist requires a widening conversion that preserves the rand "
+               "property signedness";
+        return failure();
+      }
+
+      struct RawDistItem {
+        Operation *value;
+        Operation *weight;
+        bool perRange;
+      };
+      SmallVector<RawDistItem> rawItems;
+      size_t childIndex = 1;
+      for (uint64_t index = 0; index != itemCount; ++index) {
+        if (childIndex >= nested.size() ||
+            (itemHasWeight[index] != 0 && itemHasWeight[index] != 1) ||
+            (itemWeightKinds[index] != 0 && itemWeightKinds[index] != 1)) {
+          emitError(getSemanticLocation(expression))
+              << "distribution item metadata is malformed";
+          return failure();
+        }
+        Operation *value = nested[childIndex++];
+        Operation *weight = nullptr;
+        if (itemHasWeight[index] != 0) {
+          if (childIndex >= nested.size())
+            return failure();
+          weight = nested[childIndex++];
+        }
+        rawItems.push_back(
+            {value, weight, itemWeightKinds[index] != 0});
+      }
+      Operation *defaultWeight = nullptr;
+      if (hasDefaultWeight.getValue()) {
+        if (childIndex >= nested.size()) {
+          emitError(getSemanticLocation(expression))
+              << "distribution default weight is missing";
+          return failure();
+        }
+        defaultWeight = nested[childIndex++];
+      }
+      if (childIndex != nested.size()) {
+        emitError(getSemanticLocation(expression))
+            << "distribution expression has an unexpected child inventory";
+        return failure();
+      }
+
+      std::function<FailureOr<ParsedConstant>(Operation *)> constantValue;
+      constantValue = [&](Operation *constant) -> FailureOr<ParsedConstant> {
+        if (isa<semantic::SVConversionExpressionOp>(constant)) {
+          SmallVector<Operation *> converted = getChildren(constant);
+          if (converted.size() != 1)
+            return failure();
+          return constantValue(converted.front());
+        }
+        if (auto unary = dyn_cast<semantic::SVUnaryExpressionOp>(constant)) {
+          SmallVector<Operation *> operand = getChildren(unary);
+          if (operand.size() != 1)
+            return failure();
+          FailureOr<ParsedConstant> value = constantValue(operand.front());
+          if (failed(value))
+            return failure();
+          switch (unary.getOperatorKind()) {
+          case semantic::SVUnaryOperator::Plus:
+            return *value;
+          case semantic::SVUnaryOperator::Minus:
+            value->value = -value->value;
+            return *value;
+          case semantic::SVUnaryOperator::BitwiseNot:
+            value->value = ~value->value;
+            return *value;
+          default:
+            return failure();
+          }
+        }
+        std::optional<StringRef> spelling = getConstantSpelling(constant);
+        if (!spelling)
+          return failure();
+        return parseSVInteger(*spelling, *comparisonWidth,
+                              getSemanticLocation(constant));
+      };
+      auto constantBits = [&](Operation *value) -> FailureOr<uint64_t> {
+        FailureOr<ParsedConstant> parsed = constantValue(value);
+        if (failed(parsed)) {
+          emitError(getSemanticLocation(value))
+              << "dist range endpoints must be compile-time integral "
+                 "constants";
+          return failure();
+        }
+        if (!parsed->unknown.isZero()) {
+          emitError(getSemanticLocation(value))
+              << "dist range endpoints must be two-state constants";
+          return failure();
+        }
+        APInt bits = parsed->value;
+        if (property.isSigned) {
+          APInt minimum =
+              APInt::getSignedMinValue(property.width).sext(*comparisonWidth);
+          APInt maximum =
+              APInt::getSignedMaxValue(property.width).sext(*comparisonWidth);
+          if (bits.slt(minimum) || bits.sgt(maximum)) {
+            emitError(getSemanticLocation(value))
+                << "dist endpoint is outside the rand property domain";
+            return failure();
+          }
+        } else {
+          APInt maximum = APInt::getLowBitsSet(*comparisonWidth, property.width);
+          if (bits.ugt(maximum)) {
+            emitError(getSemanticLocation(value))
+                << "dist endpoint is outside the rand property domain";
+            return failure();
+          }
+        }
+        uint64_t propertyBits = bits.trunc(property.width).getZExtValue();
+        if (property.isSigned)
+          propertyBits ^= uint64_t{1} << (property.width - 1);
+        return propertyBits;
+      };
+
+      struct PendingRange {
+        uint64_t lower;
+        uint64_t cardinality;
+        Operation *weight;
+        bool perRange;
+        uint64_t denominator;
+      };
+      SmallVector<PendingRange> pending;
+      SmallVector<std::pair<uint64_t, uint64_t>> explicitIntervals;
+      auto appendItemRange = [&](const RawDistItem &item) -> LogicalResult {
+        uint64_t lower = 0;
+        uint64_t upper = 0;
+        if (auto range = dyn_cast<semantic::SVValueRangeExpressionOp>(item.value)) {
+          SmallVector<Operation *> endpoints = getChildren(range);
+          if (endpoints.size() != 2) {
+            emitError(getSemanticLocation(item.value))
+                << "dist range has malformed endpoints";
+            return failure();
+          }
+          FailureOr<uint64_t> first = constantBits(endpoints[0]);
+          FailureOr<uint64_t> second = constantBits(endpoints[1]);
+          if (failed(first) || failed(second))
+            return failure();
+          lower = std::min(*first, *second);
+          upper = std::max(*first, *second);
+        } else {
+          FailureOr<uint64_t> singleton = constantBits(item.value);
+          if (failed(singleton))
+            return failure();
+          lower = upper = *singleton;
+        }
+        uint64_t cardinality = upper - lower + 1;
+        if (cardinality == 0 && item.perRange) {
+          emitError(getSemanticLocation(item.value))
+              << "a per-range dist weight cannot span the complete 64-bit "
+                 "domain";
+          return failure();
+        }
+        pending.push_back(
+            {lower, cardinality, item.weight, item.perRange, cardinality});
+        explicitIntervals.emplace_back(lower, upper);
+        return success();
+      };
+      for (const RawDistItem &item : rawItems)
+        if (failed(appendItemRange(item)))
+          return failure();
+
+      if (defaultWeight) {
+        llvm::sort(explicitIntervals);
+        SmallVector<std::pair<uint64_t, uint64_t>> merged;
+        for (auto interval : explicitIntervals) {
+          if (merged.empty() ||
+              (merged.back().second != UINT64_MAX &&
+               interval.first > merged.back().second + 1)) {
+            merged.push_back(interval);
+          } else {
+            merged.back().second =
+                std::max(merged.back().second, interval.second);
+          }
+        }
+        uint64_t domainMaximum = property.width == 64
+                                     ? UINT64_MAX
+                                     : (uint64_t{1} << property.width) - 1;
+        SmallVector<std::pair<uint64_t, uint64_t>> complement;
+        uint64_t next = 0;
+        bool exhausted = false;
+        for (auto interval : merged) {
+          if (next < interval.first)
+            complement.emplace_back(next, interval.first - 1);
+          if (interval.second == UINT64_MAX) {
+            exhausted = true;
+            break;
+          }
+          next = interval.second + 1;
+        }
+        if (!exhausted && next <= domainMaximum)
+          complement.emplace_back(next, domainMaximum);
+        uint64_t defaultCardinality = 0;
+        for (auto interval : complement) {
+          uint64_t cardinality = interval.second - interval.first + 1;
+          uint64_t updated = defaultCardinality + cardinality;
+          if (updated < defaultCardinality)
+            defaultCardinality = 0;
+          else
+            defaultCardinality = updated;
+        }
+        bool defaultPerRange = defaultWeightKind.getInt() != 0;
+        if (defaultPerRange && !complement.empty() &&
+            defaultCardinality == 0) {
+          emitError(getSemanticLocation(defaultWeight))
+              << "a per-range default dist weight cannot cover the complete "
+                 "64-bit domain";
+          return failure();
+        }
+        for (auto interval : complement)
+          pending.push_back({interval.first,
+                             interval.second - interval.first + 1,
+                             defaultWeight, defaultPerRange,
+                             defaultCardinality});
+      }
+
+      uint64_t normalization = 1;
+      for (const PendingRange &range : pending) {
+        if (!range.perRange)
+          continue;
+        uint64_t divisor = std::gcd(normalization, range.denominator);
+        uint64_t factor = range.denominator / divisor;
+        if (normalization > UINT64_MAX / factor) {
+          emitError(getSemanticLocation(expression))
+              << "dist per-range normalization exceeds 64 bits";
+          return failure();
+        }
+        normalization *= factor;
+      }
+
+      llvm::DenseMap<Operation *, std::pair<uint32_t, Value>> weights;
+      std::optional<std::pair<uint32_t, Value>> implicitWeight;
+      auto materializeWeight = [&](Operation *weight,
+                                   bool &isSigned) -> FailureOr<std::pair<uint32_t, Value>> {
+        if (weight) {
+          if (dependsOnCandidate(weight)) {
+            emitError(getSemanticLocation(weight))
+                << "dist weights cannot depend on randomized properties";
+            return failure();
+          }
+          if (auto found = weights.find(weight); found != weights.end()) {
+            isSigned = isSignedNode(weight);
+            return found->second;
+          }
+          FailureOr<Value> lowered = lowerExpression(weight);
+          FailureOr<Value> scalar =
+              succeeded(lowered)
+                  ? toPackedScalar(*lowered, getSemanticLocation(weight))
+                  : FailureOr<Value>(failure());
+          if (failed(scalar) || !isa<IntegerType>((*scalar).getType())) {
+            emitError(getSemanticLocation(weight))
+                << "dist weights must be packed integral values";
+            return failure();
+          }
+          isSigned = isSignedNode(weight);
+          FailureOr<Value> extended = convert(
+              *scalar, i64, isSigned, getSemanticLocation(weight), false);
+          if (failed(extended))
+            return failure();
+          uint32_t capture = static_cast<uint32_t>(programCaptures.size());
+          programCaptures.push_back(*extended);
+          auto result = std::make_pair(capture, *extended);
+          weights[weight] = result;
+          return result;
+        }
+        isSigned = false;
+        if (!implicitWeight) {
+          uint32_t capture = static_cast<uint32_t>(programCaptures.size());
+          Value one = constant64(1);
+          programCaptures.push_back(one);
+          implicitWeight = std::make_pair(capture, one);
+        }
+        return *implicitWeight;
+      };
+
+      DistPlan plan{expression, propertyIndex, 0,
+                    activeProgramConstraintBlock, {}};
+      for (unsigned index = 0; index != propertyIndex; ++index)
+        plan.propertyOffset += planned[index].width;
+      for (const PendingRange &range : pending) {
+        bool weightSigned = false;
+        FailureOr<std::pair<uint32_t, Value>> weight =
+            materializeWeight(range.weight, weightSigned);
+        if (failed(weight))
+          return failure();
+        uint64_t coefficient =
+            range.perRange ? normalization / range.denominator : normalization;
+        if (range.cardinality == 0 ||
+            coefficient > UINT64_MAX / range.cardinality) {
+          emitError(getSemanticLocation(expression))
+              << "dist range selection mass exceeds 64 bits";
+          return failure();
+        }
+        uint64_t selectionCoefficient = coefficient * range.cardinality;
+        plan.ranges.push_back(
+            {range.lower, range.cardinality, coefficient,
+             selectionCoefficient, weight->first, weightSigned,
+             weight->second});
+      }
+      if (plan.ranges.empty()) {
+        emitError(getSemanticLocation(expression))
+            << "distribution has no supported values";
+        return failure();
+      }
+      distPlans.push_back(std::move(plan));
+
+      auto emitWeightPositive = [&](Operation *weight) -> LogicalResult {
+        bool weightSigned = false;
+        FailureOr<std::pair<uint32_t, Value>> materialized =
+            materializeWeight(weight, weightSigned);
+        if (failed(materialized))
+          return failure();
+        instruction(OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 64, weightSigned,
+                    materialized->first);
+        instruction(OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 64, false, 0, 0);
+        instruction(OBELISK_RT_RANDOM_GT_V1, 1, weightSigned);
+        return success();
+      };
+      auto emitMatch = [&](Operation *value) -> LogicalResult {
+        if (auto range = dyn_cast<semantic::SVValueRangeExpressionOp>(value)) {
+          SmallVector<Operation *> endpoints = getChildren(range);
+          if (endpoints.size() != 2)
+            return failure();
+          FailureOr<uint64_t> first = constantBits(endpoints[0]);
+          FailureOr<uint64_t> second = constantBits(endpoints[1]);
+          if (failed(first) || failed(second))
+            return failure();
+          if (*first > *second)
+            std::swap(endpoints[0], endpoints[1]);
+          if (
+              failed(emitProgramExpression(nested.front())) ||
+              failed(emitProgramExpression(endpoints[0])))
+            return failure();
+          instruction(OBELISK_RT_RANDOM_GE_V1, 1,
+                      isSignedNode(nested.front()));
+          if (failed(emitProgramExpression(nested.front())) ||
+              failed(emitProgramExpression(endpoints[1])))
+            return failure();
+          instruction(OBELISK_RT_RANDOM_LE_V1, 1,
+                      isSignedNode(nested.front()));
+          instruction(OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1);
+          return success();
+        }
+        if (failed(emitProgramExpression(nested.front())) ||
+            failed(emitProgramExpression(value)))
+          return failure();
+        instruction(OBELISK_RT_RANDOM_EQ_V1, 1,
+                    isSignedNode(nested.front()));
+        return success();
+      };
+
+      bool firstSupport = true;
+      for (const RawDistItem &item : rawItems) {
+        if (failed(emitMatch(item.value)) ||
+            failed(emitWeightPositive(item.weight)))
+          return failure();
+        instruction(OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1);
+        if (!firstSupport)
+          instruction(OBELISK_RT_RANDOM_LOGICAL_OR_V1, 1);
+        firstSupport = false;
+      }
+      if (defaultWeight) {
+        bool firstExplicit = true;
+        for (const RawDistItem &item : rawItems) {
+          if (failed(emitMatch(item.value)))
+            return failure();
+          if (!firstExplicit)
+            instruction(OBELISK_RT_RANDOM_LOGICAL_OR_V1, 1);
+          firstExplicit = false;
+        }
+        instruction(OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1);
+        if (failed(emitWeightPositive(defaultWeight)))
+          return failure();
+        instruction(OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1);
+        if (!firstSupport)
+          instruction(OBELISK_RT_RANDOM_LOGICAL_OR_V1, 1);
+        firstSupport = false;
+      }
+      if (firstSupport)
+        emitLiteral(false);
+      return success();
+    }
     FailureOr<unsigned> width = expressionWidth(expression);
     if (failed(width))
       return failure();
@@ -2077,6 +2617,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
         }
       });
       if (hasHard) {
+        activeProgramConstraintBlock = constraintBlock;
         if (failed(emitProgramConstraint(item, /*softTarget=*/nullptr)))
           return failure();
         instruction(OBELISK_RT_RANDOM_END_HARD_V1, 1, false,
@@ -2084,6 +2625,14 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
         emittedHard = true;
       }
       for (semantic::SVExpressionConstraintOp soft : softConstraints) {
+        bool containsDist = false;
+        soft->walk([&](semantic::SVDistExpressionOp) { containsDist = true; });
+        if (containsDist) {
+          emitError(getSemanticLocation(soft))
+              << "soft dist constraints are not executable yet";
+          return failure();
+        }
+        activeProgramConstraintBlock = constraintBlock;
         if (failed(emitProgramConstraint(item, soft)))
           return failure();
         instruction(OBELISK_RT_RANDOM_END_SOFT_V1, 1, false, constraintBlock,
@@ -2097,6 +2646,19 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     instruction(OBELISK_RT_RANDOM_END_HARD_V1, 1, false,
                 OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1);
   }
+  if (!distPlans.empty() && hasSolveBefore) {
+    emitError(location)
+        << "dist combined with solve before is not executable yet";
+    return failure();
+  }
+  for (auto [index, plan] : llvm::enumerate(distPlans))
+    for (const DistPlan &other : ArrayRef(distPlans).drop_front(index + 1))
+      if (plan.propertyIndex == other.propertyIndex) {
+        emitError(getSemanticLocation(other.source))
+            << "multiple active dist constraints for one property are not "
+               "executable yet";
+        return failure();
+      }
   thisObject = programSavedThis;
   randomizeCandidateValues = std::move(programSavedCandidates);
   restoreProgramBindings.release();
@@ -2123,6 +2685,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   uint32_t programFlags = emittedSoft ? OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT : 0;
   if (hasSolveBefore)
     programFlags |= OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE;
+  if (!distPlans.empty())
+    programFlags |= OBELISK_RT_RANDOM_PROGRAM_HAS_DIST;
   append32(programFlags);
   for (const EncodedInstruction &encoded : programInstructions) {
     program.push_back(encoded.opcode);
@@ -2150,6 +2714,32 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
       append32(0);
     }
   }
+  if (!distPlans.empty()) {
+    append32(static_cast<uint32_t>(distPlans.size()));
+    uint32_t recordCount = 0;
+    for (const DistPlan &plan : distPlans)
+      recordCount += static_cast<uint32_t>(plan.ranges.size());
+    append32(recordCount);
+    for (auto [group, plan] : llvm::enumerate(distPlans)) {
+      for (const DistRangePlan &range : plan.ranges) {
+        append32(static_cast<uint32_t>(group));
+        append32(plan.constraintBlock);
+        append32(plan.propertyOffset);
+        append16(static_cast<uint16_t>(planned[plan.propertyIndex].width));
+        append16(0);
+        append64(range.lower);
+        append64(range.cardinality);
+        append64(range.coefficient);
+        append32(range.weightCapture);
+        uint32_t flags = range.weightSigned
+                             ? OBELISK_RT_RANDOM_DIST_WEIGHT_SIGNED
+                             : 0;
+        if (planned[plan.propertyIndex].isSigned)
+          flags |= OBELISK_RT_RANDOM_DIST_TARGET_SIGNED;
+        append32(flags);
+      }
+    }
+  }
   uint64_t fallbackAttempts =
       totalWidth <= 20 ? (uint64_t{1} << totalWidth) : (uint64_t{1} << 20);
   solver::RandomProgramAnalysis analysis = solver::analyzeRandomProgram(
@@ -2161,7 +2751,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   uint64_t aggregateMask =
       totalWidth == 64 ? UINT64_MAX : (uint64_t{1} << totalWidth) - 1;
   bool validAssignmentTable =
-      analysis.assignmentTables.empty() && !analysis.assignmentTable.empty() &&
+      distPlans.empty() && analysis.assignmentTables.empty() &&
+      !analysis.assignmentTable.empty() &&
       analysis.assignmentTable.size() <= maxMaterializedAssignmentTableSize &&
       llvm::all_of(analysis.assignmentTable, [&](uint64_t assignment) {
         return (assignment & ~aggregateMask) == 0;
@@ -2252,6 +2843,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   // proposal advances. A soft preference must instead be able to visit every
   // hard-legal table row, so retain the existing checker/fallback path there.
   bool validAssignmentTables = analysis.assignmentTable.empty() &&
+                               distPlans.empty() &&
                                !hasSoftConstraint &&
                                !analysis.assignmentTables.empty();
   for (const solver::RandomAssignmentTable &table : analysis.assignmentTables) {
@@ -2340,6 +2932,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     }
     propertyOffset += property.width;
   }
+  llvm::erase_if(proposalDomains, [&](const ProposalDomain &domain) {
+    return llvm::any_of(distPlans, [&](const DistPlan &plan) {
+      return plan.propertyOffset == domain.offset &&
+             planned[plan.propertyIndex].width == domain.width;
+    });
+  });
   size_t materializedDomains = proposalDomains.size();
   auto isPropertyField = [&](uint32_t offset, uint32_t width) {
     uint32_t currentOffset = 0;
@@ -2352,6 +2950,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   };
   for (const solver::RandomVariableCaptureBound &bound :
        analysis.captureBounds) {
+    bool targetsDist = llvm::any_of(distPlans, [&](const DistPlan &plan) {
+      return plan.propertyOffset == bound.offset &&
+             planned[plan.propertyIndex].width == bound.width;
+    });
+    if (targetsDist)
+      continue;
     bool conflicts = bound.width == 0 || bound.width > 64 ||
                      bound.captureIndex >= programCaptures.size() ||
                      !isPropertyField(bound.offset, bound.width);
@@ -2409,6 +3013,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     ++materializedCaptureBounds;
   }
   for (const solver::RandomVariableAlias &alias : analysis.aliases) {
+    if (!distPlans.empty())
+      break;
     bool sourceIsTarget = llvm::any_of(
         analysis.aliases, [&](const solver::RandomVariableAlias &other) {
           return other.targetOffset == alias.sourceOffset;
@@ -2507,6 +3113,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   };
   for (const solver::RandomVariableDefinition &definition :
        analysis.definitions) {
+    if (!distPlans.empty())
+      break;
     if (!isPropertyField(definition.targetOffset, definition.width) ||
         definition.expressionBegin >= definition.expressionEnd ||
         definition.expressionEnd > programInstructions.size())
@@ -2587,6 +3195,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   };
   Value sampledSolveBeforeAssignment;
   Value sampledComponentAssignment;
+  Value sampledDistAssignment;
+  uint64_t sampledDistMask = 0;
   auto materializeProposal = [&](Value rawAssignment,
                                  Value attempt) -> FailureOr<Value> {
     if (sampledSolveBeforeAssignment)
@@ -3099,6 +3709,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
                                 constant64(~targetMask)),
           sourceBits);
     }
+    if (sampledDistAssignment)
+      assignment = arith::OrIOp::create(
+          builder, location,
+          arith::AndIOp::create(builder, location, assignment,
+                                constant64(~sampledDistMask)),
+          sampledDistAssignment);
     return assignment;
   };
   bool overwritesProposalDomain =
@@ -3159,6 +3775,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
                 proposalAliases.size() == analysis.aliases.size() &&
                 proposalDefinitions.size() == analysis.definitions.size();
   bool exactProposal = analysis.proposalExact && !hasSoftConstraint &&
+                       !hasRandC && distPlans.empty() &&
                        !overwritesProposalDomain &&
                        materializesCompleteProposal;
 
@@ -3292,12 +3909,23 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
   // extra draws; start a plain masked-domain search from the one object-stream
   // draw already consumed above. This avoids accidentally retaining the
   // distribution or failure conditions of a disabled constraint.
+  Block *disabledCheckBlock = addBlock();
+  Block *enabledSamplingBlock = addBlock();
+  cf::CondBranchOp::create(builder, location, allPropertiesDisabled,
+                           disabledCheckBlock, ValueRange{},
+                           enabledSamplingBlock, ValueRange{});
+  setCurrent(enabledSamplingBlock);
+  Value randomDraw = next64(state);
+  Value start = arith::OrIOp::create(
+      builder, location,
+      arith::AndIOp::create(builder, location, randomDraw, mutableMask),
+      fixedAssignment);
   Value modeStart = start;
   Value modeState = state;
   Block *modeSamplingDispatchBlock = addBlock();
   Block *plannedSamplingBlock = addBlock();
   Value usePlannedSampling = allConstraintsEnabled;
-  if (hasSolveBefore)
+  if (hasSolveBefore || !distPlans.empty())
     usePlannedSampling = arith::AndIOp::create(
         builder, location, usePlannedSampling, randomizationEnabled);
   cf::CondBranchOp::create(builder, location, usePlannedSampling,
@@ -3384,6 +4012,118 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
     state = finalState;
     return boundedIndex;
   };
+
+  struct MaterializedDistPlan {
+    const DistPlan *plan;
+    SmallVector<Value> weights;
+    Value totalWeight;
+  };
+  SmallVector<MaterializedDistPlan> materializedDistPlans;
+  Value distWeightsValid;
+  auto requireValidDistWeights = [&](Value valid) {
+    distWeightsValid = distWeightsValid
+                           ? arith::AndIOp::create(builder, location,
+                                                   distWeightsValid, valid)
+                                 .getResult()
+                           : valid;
+  };
+  for (const DistPlan &plan : distPlans) {
+    MaterializedDistPlan materialized{&plan, {}, constant64(0)};
+    for (const DistRangePlan &range : plan.ranges) {
+      if (range.weightSigned)
+        requireValidDistWeights(arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::sge, range.weight,
+            constant64(0)));
+      Value zero = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq, range.weight,
+          constant64(0));
+      Value safeWeight = arith::SelectOp::create(
+          builder, location, zero, constant64(1), range.weight);
+      Value scaled = arith::MulIOp::create(
+          builder, location, range.weight,
+          constant64(range.selectionCoefficient));
+      Value recovered = arith::DivUIOp::create(builder, location, scaled,
+                                                safeWeight);
+      Value productValid = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq, recovered,
+          constant64(range.selectionCoefficient));
+      productValid = arith::OrIOp::create(builder, location, zero, productValid);
+      requireValidDistWeights(productValid);
+      Value updated = arith::AddIOp::create(builder, location,
+                                             materialized.totalWeight, scaled);
+      Value sumValid = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::uge, updated,
+          materialized.totalWeight);
+      requireValidDistWeights(sumValid);
+      materialized.totalWeight = updated;
+      materialized.weights.push_back(scaled);
+    }
+    requireValidDistWeights(arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ne,
+        materialized.totalWeight, constant64(0)));
+    materializedDistPlans.push_back(std::move(materialized));
+  }
+
+  Block *invalidDistWeightsBlock = nullptr;
+  Value invalidDistWeightsState;
+  if (distWeightsValid) {
+    invalidDistWeightsState = state;
+    Block *validDistWeightsBlock = addBlock();
+    invalidDistWeightsBlock = addBlock();
+    cf::CondBranchOp::create(builder, location, distWeightsValid,
+                             validDistWeightsBlock, ValueRange{},
+                             invalidDistWeightsBlock, ValueRange{});
+    setCurrent(validDistWeightsBlock);
+  }
+
+  if (!materializedDistPlans.empty()) {
+    sampledDistAssignment = constant64(0);
+    for (const MaterializedDistPlan &materialized : materializedDistPlans) {
+      Value choice = sampleDynamicBoundedIndex(materialized.totalWeight,
+                                                next64(state));
+      const DistRangePlan *first = &materialized.plan->ranges.front();
+      Value selectedLower = constant64(first->lower);
+      Value selectedCardinality = constant64(first->cardinality);
+      Value cumulative = materialized.weights.front();
+      for (size_t index = 1; index != materialized.plan->ranges.size();
+           ++index) {
+        const DistRangePlan &range = materialized.plan->ranges[index];
+        Value selected = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::uge, choice, cumulative);
+        selectedLower = arith::SelectOp::create(
+            builder, location, selected, constant64(range.lower),
+            selectedLower);
+        selectedCardinality = arith::SelectOp::create(
+            builder, location, selected, constant64(range.cardinality),
+            selectedCardinality);
+        cumulative = arith::AddIOp::create(
+            builder, location, cumulative, materialized.weights[index]);
+      }
+      Value field = arith::AddIOp::create(
+          builder, location, selectedLower,
+          sampleDynamicBoundedIndex(selectedCardinality, next64(state)));
+      const Property &property =
+          planned[materialized.plan->propertyIndex];
+      if (property.isSigned)
+        field = arith::XOrIOp::create(
+            builder, location, field,
+            constant64(uint64_t{1} << (property.width - 1)));
+      uint64_t fieldMask = property.width == 64
+                               ? UINT64_MAX
+                               : (uint64_t{1} << property.width) - 1;
+      field = arith::AndIOp::create(builder, location, field,
+                                    constant64(fieldMask));
+      if (materialized.plan->propertyOffset != 0) {
+        field = arith::ShLIOp::create(
+            builder, location, field,
+            constant64(materialized.plan->propertyOffset));
+        fieldMask <<= materialized.plan->propertyOffset;
+      }
+      sampledDistAssignment = arith::OrIOp::create(
+          builder, location, sampledDistAssignment, field);
+      sampledDistMask |= fieldMask;
+    }
+  }
 
   Value captureBoundsValid;
   auto requireValidCaptureBounds = [&](Value valid) {
@@ -3574,6 +4314,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
                                    stateReference);
     cf::BranchOp::create(builder, location, failedBlock, ValueRange{});
   }
+  if (invalidDistWeightsBlock) {
+    setCurrent(invalidDistWeightsBlock);
+    sim::SimManagedStoreOp::create(builder, location, invalidDistWeightsState,
+                                   stateReference);
+    cf::BranchOp::create(builder, location, failedBlock, ValueRange{});
+  }
 
   auto materializeCandidates =
       [&](Value assignment) -> FailureOr<SmallVector<Value>> {
@@ -3657,6 +4403,70 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
           emitError(getSemanticLocation(constraint))
               << "expression constraint does not contain one predicate";
           return failure();
+        }
+        if (isa<semantic::SVDistExpressionOp>(nested.front())) {
+          auto plan = llvm::find_if(distPlans, [&](const DistPlan &candidate) {
+            return candidate.source == nested.front();
+          });
+          if (plan == distPlans.end() ||
+              plan->propertyIndex >= randomizeCandidateValues.size()) {
+            emitError(getSemanticLocation(nested.front()))
+                << "dist constraint has no frozen weighted plan";
+            return failure();
+          }
+          const Property &property = planned[plan->propertyIndex];
+          FailureOr<Value> scalar = toPackedScalar(
+              randomizeCandidateValues[plan->propertyIndex],
+              getSemanticLocation(nested.front()));
+          FailureOr<Value> extended =
+              succeeded(scalar)
+                  ? convert(*scalar, i64, false,
+                            getSemanticLocation(nested.front()), false)
+                  : FailureOr<Value>(failure());
+          if (failed(extended))
+            return failure();
+          Value field = *extended;
+          uint64_t valueMask = property.width == 64
+                                   ? UINT64_MAX
+                                   : (uint64_t{1} << property.width) - 1;
+          field = arith::AndIOp::create(builder, location, field,
+                                        constant64(valueMask));
+          if (property.isSigned)
+            field = arith::XOrIOp::create(
+                builder, location, field,
+                constant64(uint64_t{1} << (property.width - 1)));
+          Value supported = arith::ConstantOp::create(
+              builder, location, builder.getI1Type(), builder.getBoolAttr(false));
+          for (const DistRangePlan &range : plan->ranges) {
+            Value matches;
+            if (range.cardinality == 0) {
+              matches = arith::ConstantOp::create(
+                  builder, location, builder.getI1Type(),
+                  builder.getBoolAttr(true));
+            } else {
+              Value atOrAbove = arith::CmpIOp::create(
+                  builder, location, arith::CmpIPredicate::uge, field,
+                  constant64(range.lower));
+              Value distance = arith::SubIOp::create(
+                  builder, location, field, constant64(range.lower));
+              Value belowEnd = arith::CmpIOp::create(
+                  builder, location, arith::CmpIPredicate::ult, distance,
+                  constant64(range.cardinality));
+              matches = arith::AndIOp::create(builder, location, atOrAbove,
+                                               belowEnd);
+            }
+            arith::CmpIPredicate positivePredicate =
+                range.weightSigned ? arith::CmpIPredicate::sgt
+                                   : arith::CmpIPredicate::ugt;
+            Value positive = arith::CmpIOp::create(
+                builder, location, positivePredicate, range.weight,
+                constant64(0));
+            Value active =
+                arith::AndIOp::create(builder, location, matches, positive);
+            supported = arith::OrIOp::create(builder, location, supported,
+                                              active);
+          }
+          return supported;
         }
         FailureOr<Value> value = lowerExpression(nested.front());
         if (failed(value))
@@ -3855,6 +4665,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op) {
                                ? UINT64_MAX
                                : (uint64_t{1} << property.width) - 1;
       uint64_t aggregateMask = valueMask << offset;
+      if (property.isRandC) {
+        offset += property.width;
+        continue;
+      }
       Value aggregateMaskValue = constant64(aggregateMask);
       Value field = arith::AndIOp::create(builder, location, current,
                                           aggregateMaskValue);

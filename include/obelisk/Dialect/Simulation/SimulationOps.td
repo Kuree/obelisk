@@ -495,6 +495,19 @@ def SimRandomDistributionOp : SimOp<"random.distribution", [
   let results = (outs I32:$result);
 }
 
+def SimRandomCycleNextOp : SimOp<"random.cycle_next", [Pure]> {
+  let summary = "advance one keyed randc permutation";
+  let description = [{
+    Maps `position` through the keyed, width-specific permutation and returns
+    both the next wrapped position and the nonrepeating value. The operation is
+    pure; object-local key and position storage remains explicit in generated
+    simulation IR.
+  }];
+  let arguments = (ins I64:$key, I64:$position, I32Attr:$width);
+  let results = (outs I64:$next_position, I64:$value);
+  let hasVerifier = 1;
+}
+
 def SimRandomSolveOp : SimOp<"random.solve", [
     MemoryEffects<[MemRead<SimRNGResource>]>
   ]> {

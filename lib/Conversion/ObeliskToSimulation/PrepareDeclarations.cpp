@@ -228,6 +228,22 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
           builder, getSemanticLocation(property), fieldName, classSymbol, *type,
           ordinal++, IntegerAttr{}, isStatic,
           /*isWeak=*/false, builder.getStringAttr(getDebugName(property)));
+      if (!isStatic && property.getRandMode() == semantic::SVRandMode::RandC) {
+        auto addRandCField = [&](StringRef suffix, StringRef debugName) {
+          std::string name = (fieldName + suffix).str();
+          FlatSymbolRefAttr symbol = FlatSymbolRefAttr::get(context, name);
+          sim::SimClassFieldDeclOp::create(
+              builder, getSemanticLocation(property), name, classSymbol,
+              builder.getI64Type(), ordinal++, IntegerAttr{},
+              /*isStatic=*/false, /*isWeak=*/false,
+              builder.getStringAttr(debugName));
+          return symbol;
+        };
+        result.randcKeyFieldSymbols[property] =
+            addRandCField("_randc_key", "__obelisk_randc_key");
+        result.randcPositionFieldSymbols[property] =
+            addRandCField("_randc_position", "__obelisk_randc_position");
+      }
     }
     // Every inheritance tree owns exactly one inline PCG stream.
     if (!base && !classType.getIsInterface()) {

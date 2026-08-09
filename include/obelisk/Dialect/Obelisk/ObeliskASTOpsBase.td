@@ -549,6 +549,15 @@ class ObeliskValueRangeExpressionASTNodeOp<string mnemonic>
   let hasVerifier = 1;
 }
 
+class ObeliskDistExpressionASTNodeOp<string mnemonic>
+    : ObeliskExpressionASTNodeOp<mnemonic, (ins
+        I64Attr:$item_count,
+        DenseI64ArrayAttr:$item_has_weight,
+        DenseI64ArrayAttr:$item_weight_kinds,
+        BoolAttr:$has_default_weight,
+        I64Attr:$default_weight_kind
+      )>;
+
 class ObeliskImmediateAssertionStatementASTNodeOp<string mnemonic>
     : ObeliskASTNodeOp<mnemonic, [ObeliskSemanticDeclarativeNode], (ins
         ObeliskSVAssertionKind:$assertion_kind,
