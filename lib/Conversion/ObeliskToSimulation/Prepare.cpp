@@ -1449,6 +1449,27 @@ void ObeliskSimPreparePass::runOnOperation() {
     call->setAttr(calleeFormalsAttrName, builder.getArrayAttr(formals));
   };
 
+  auto constructorSourceFor = [](semantic::SVClassTypeOp classType) {
+    for (Operation *child : getChildren(classType)) {
+      semantic::SVSubroutineSymbolOp method = getClassMethod(child);
+      if (method && method.getIsConstructor().value_or(false))
+        return method;
+    }
+    return semantic::SVSubroutineSymbolOp{};
+  };
+  auto constructorSymbolFor =
+      [&](semantic::SVClassTypeOp classType) -> FlatSymbolRefAttr {
+    if (FlatSymbolRefAttr implicit =
+            implicitConstructorSymbols.lookup(classType))
+      return implicit;
+    semantic::SVSubroutineSymbolOp method = constructorSourceFor(classType);
+    auto found =
+        method ? directCalleeNames.find(method) : directCalleeNames.end();
+    return found == directCalleeNames.end()
+               ? FlatSymbolRefAttr{}
+               : FlatSymbolRefAttr::get(context, found->second);
+  };
+
   for (PreparedUnit &unit : units) {
     auto captures = unitCaptures.lookup(unit.source);
     auto locals = unitLocals.lookup(unit.source);
@@ -2096,7 +2117,7 @@ void ObeliskSimPreparePass::runOnOperation() {
                         builder.getStringAttr(getHierarchyName(unit.source)));
       }
     } else {
-      auto clonePropertyInitializers = [&] {
+      auto clonePropertyInitializers = [&](OpBuilder &initializerBuilder) {
         auto owner = dyn_cast_or_null<semantic::SVClassTypeOp>(
             unit.source->getParentOp());
         if (!owner)
@@ -2109,7 +2130,7 @@ void ObeliskSimPreparePass::runOnOperation() {
           SmallVector<Operation *> initializer = getChildren(property);
           if (initializer.empty())
             continue;
-          Operation *cloned = bodyBuilder.clone(*initializer.front());
+          Operation *cloned = initializerBuilder.clone(*initializer.front());
           if (FlatSymbolRefAttr field = classFieldSymbols.lookup(property))
             cloned->setAttr("obelisk_sim.initialize_field", field);
         }
@@ -2122,28 +2143,165 @@ void ObeliskSimPreparePass::runOnOperation() {
           subroutine && subroutine.getIsConstructor().value_or(false);
       bool initialized = false;
       if (constructor && owner && !owner.getBaseClass()) {
-        clonePropertyInitializers();
+        clonePropertyInitializers(bodyBuilder);
         initialized = true;
+      }
+      if (constructor && owner && owner.getBaseClass()) {
+        bool hasExplicitSuperCall = false;
+        for (Operation *child : getChildren(unit.source))
+          child->walk([&](semantic::SVNewClassExpressionOp construct) {
+            hasExplicitSuperCall |= construct.getIsSuperClass();
+          });
+        auto baseHandle =
+            dyn_cast<semantic::ClassHandleType>(*owner.getBaseClass());
+        auto base = baseHandle
+                        ? semanticClasses.find(
+                              baseHandle.getClassName().getLeafReference())
+                        : semanticClasses.end();
+        if (base == semanticClasses.end()) {
+          emitError(getSemanticLocation(owner))
+              << "constructor cannot resolve its base class";
+          invalid = true;
+        } else if (!hasExplicitSuperCall) {
+          semantic::SVCallExpressionOp extendsCall;
+          for (Operation *member : getChildren(owner)) {
+            auto call = dyn_cast<semantic::SVCallExpressionOp>(member);
+            auto target =
+                call ? dyn_cast_or_null<semantic::SVSubroutineSymbolOp>(
+                           resolveDirectCallee(call))
+                     : semantic::SVSubroutineSymbolOp{};
+            if (!target || !target.getIsConstructor().value_or(false) ||
+                getOwningClass(target) != base->second)
+              continue;
+            extendsCall = call;
+            break;
+          }
+          if (extendsCall) {
+            auto cloned = cast<semantic::SVCallExpressionOp>(
+                bodyBuilder.clone(*extendsCall));
+            // Slang represents a constructor call in an extends clause as a
+            // direct child of the class rather than of the explicit
+            // constructor. Execute it with the current object as the base
+            // receiver before initializing the derived fields.
+            cloned->setAttr("obelisk_sim.class_super", builder.getUnitAttr());
+          } else if (semantic::SVSubroutineSymbolOp baseConstructor =
+                         constructorSourceFor(base->second)) {
+            SmallVector<Operation *> defaults;
+            bool defaultsValid = true;
+            for (Operation *member : getChildren(baseConstructor)) {
+              auto formal =
+                  dyn_cast<semantic::SVFormalArgumentSymbolOp>(member);
+              if (!formal)
+                continue;
+              SmallVector<Operation *> initializer = getChildren(formal);
+              if (initializer.size() != 1) {
+                emitError(getSemanticLocation(subroutine))
+                    << "implicit base constructor call requires a default "
+                       "for every formal";
+                invalid = true;
+                defaultsValid = false;
+                break;
+              }
+              defaults.push_back(initializer.front());
+            }
+            if (defaultsValid) {
+              OperationState callState(
+                  getSemanticLocation(subroutine),
+                  semantic::SVCallExpressionOp::getOperationName());
+              callState.addAttribute(
+                  "node_id", builder.getI64IntegerAttr(subroutine.getNodeId()));
+              callState.addAttribute(
+                  "semantic_type",
+                  TypeAttr::get(semantic::VoidType::get(context)));
+              callState.addAttribute("callee_name",
+                                     builder.getStringAttr("new"));
+              callState.addAttribute("is_system_call",
+                                     builder.getBoolAttr(false));
+              callState.addAttribute(
+                  "subroutine_kind",
+                  semantic::SVSubroutineKindAttr::get(
+                      context, baseConstructor.getSubroutineKind()));
+              callState.addAttribute(
+                  "argument_count", builder.getI64IntegerAttr(defaults.size()));
+              callState.addAttribute("has_this_class",
+                                     builder.getBoolAttr(false));
+              callState.addAttribute("is_super_class",
+                                     builder.getBoolAttr(true));
+              callState.addAttribute("has_output_arguments",
+                                     builder.getBoolAttr(false));
+              callState.addAttribute(
+                  "referenced_path",
+                  builder.getStringAttr(getHierarchyName(baseConstructor)));
+              callState.addAttribute("has_iterator_expression",
+                                     builder.getBoolAttr(false));
+              callState.addAttribute("has_inline_constraints",
+                                     builder.getBoolAttr(false));
+              callState.addAttribute("constraint_restrictions",
+                                     builder.getArrayAttr({}));
+              SmallVector<int64_t> defaulted(defaults.size(), 1);
+              callState.addAttribute("defaulted_arguments",
+                                     builder.getDenseI64ArrayAttr(defaulted));
+              callState.addRegion();
+              auto call = cast<semantic::SVCallExpressionOp>(
+                  bodyBuilder.create(callState));
+              call.getBody().emplaceBlock();
+              OpBuilder argumentBuilder =
+                  OpBuilder::atBlockEnd(&call.getBody().front());
+              for (Operation *argument : defaults)
+                argumentBuilder.clone(*argument);
+            }
+          } else if (FlatSymbolRefAttr baseConstructor =
+                         constructorSymbolFor(base->second)) {
+            Type baseReceiverType = sim::ClassHandleType::get(
+                context,
+                FlatSymbolRefAttr::get(
+                    context, classSymbols.lookup(base->second).getValue()));
+            Value receiver = unit.function.getBody().front().getArgument(1);
+            Value baseReceiver = sim::SimClassCastOp::create(
+                bodyBuilder, getSemanticLocation(subroutine), baseReceiverType,
+                receiver);
+            sim::SimClassDirectCallOp::create(
+                bodyBuilder, getSemanticLocation(subroutine), TypeRange{},
+                baseConstructor, baseReceiver, ValueRange{});
+          } else {
+            emitError(getSemanticLocation(subroutine))
+                << "constructor cannot resolve its base constructor";
+            invalid = true;
+          }
+          clonePropertyInitializers(bodyBuilder);
+          initialized = true;
+        }
       }
       for (Operation *child : getChildren(unit.source)) {
         if (isa<semantic::SVFormalArgumentSymbolOp,
                 semantic::SVVariableSymbolOp,
                 semantic::SVStatementBlockSymbolOp>(child))
           continue;
-        bodyBuilder.clone(*child);
+        Operation *clonedChild = bodyBuilder.clone(*child);
         if (constructor && owner && owner.getBaseClass() && !initialized) {
-          bool containsSuper = false;
-          child->walk([&](semantic::SVNewClassExpressionOp construct) {
-            containsSuper |= construct.getIsSuperClass();
+          Operation *superStatement = nullptr;
+          clonedChild->walk([&](semantic::SVNewClassExpressionOp construct) {
+            if (!construct.getIsSuperClass() || superStatement)
+              return;
+            Operation *anchor = construct;
+            while (anchor != clonedChild &&
+                   !isa<semantic::SVStatementListOp>(anchor->getParentOp()))
+              anchor = anchor->getParentOp();
+            superStatement =
+                isa<semantic::SVStatementListOp>(anchor->getParentOp())
+                    ? anchor
+                    : clonedChild;
           });
-          if (containsSuper) {
-            clonePropertyInitializers();
+          if (superStatement) {
+            OpBuilder initializerBuilder(superStatement);
+            initializerBuilder.setInsertionPointAfter(superStatement);
+            clonePropertyInitializers(initializerBuilder);
             initialized = true;
           }
         }
       }
       if (constructor && !initialized)
-        clonePropertyInitializers();
+        clonePropertyInitializers(bodyBuilder);
     }
     // Materialize declaration initializers before annotating calls. A walk is
     // not required to revisit operations inserted beneath the current node,
@@ -2264,22 +2422,6 @@ void ObeliskSimPreparePass::runOnOperation() {
   for (PreparedUnit &unit : units)
     if (unit.function)
       unitFunctions[unit.source] = unit.function;
-
-  auto constructorSymbolFor =
-      [&](semantic::SVClassTypeOp classType) -> FlatSymbolRefAttr {
-    if (FlatSymbolRefAttr implicit =
-            implicitConstructorSymbols.lookup(classType))
-      return implicit;
-    for (Operation *child : getChildren(classType)) {
-      semantic::SVSubroutineSymbolOp method = getClassMethod(child);
-      if (!method || !method.getIsConstructor().value_or(false))
-        continue;
-      auto found = directCalleeNames.find(method);
-      if (found != directCalleeNames.end())
-        return FlatSymbolRefAttr::get(context, found->second);
-    }
-    return {};
-  };
 
   // Slang omits an executable subroutine node for an implicit constructor.
   // Materialize that lifecycle edge explicitly so `new` without a declared
