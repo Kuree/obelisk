@@ -1231,11 +1231,13 @@ void ComputeGraphBuilder::buildControlEdges() {
     }
 
     // Root spawn operations encode the deterministic time-zero startup order
-    // frozen by the prepare pass. Ensure repeating processes reach their first
-    // suspension before any initial process runs, without imposing a total
-    // order on otherwise independent sibling processes.
+    // frozen by the prepare pass. Ensure implicit/repeating infrastructure
+    // reaches its first suspension (or publishes a one-shot port value) before
+    // any user initial process runs, without imposing a total order on
+    // otherwise independent sibling processes.
     if (fragment.function.getEntryKind() == sim::EntryKind::RootInitializer) {
-      std::optional<uint32_t> repeatingEntry;
+      SmallVector<uint32_t> startupEntries;
+      SmallVector<uint32_t> initialEntries;
       for (sim::SimSpawnOp spawn : fragment.block->getOps<sim::SimSpawnOp>()) {
         auto callee = analysis.functionIndex.find(spawn.getCallee());
         if (callee == analysis.functionIndex.end())
@@ -1249,16 +1251,22 @@ void ComputeGraphBuilder::buildControlEdges() {
         case sim::EntryKind::AlwaysComb:
         case sim::EntryKind::AlwaysLatch:
         case sim::EntryKind::AlwaysFF:
-          repeatingEntry = entry;
+        case sim::EntryKind::Continuous:
+        case sim::EntryKind::PortInput:
+        case sim::EntryKind::PortOutput:
+        case sim::EntryKind::PortInitialize:
+          startupEntries.push_back(entry);
           break;
         case sim::EntryKind::Initial:
-          if (repeatingEntry)
-            addEdge(*repeatingEntry, entry, sim::ComputeEdgeKind::ProcessOrder);
+          initialEntries.push_back(entry);
           break;
         default:
           break;
         }
       }
+      for (uint32_t startup : startupEntries)
+        for (uint32_t initial : initialEntries)
+          addEdge(startup, initial, sim::ComputeEdgeKind::ProcessOrder);
     }
   }
 }
