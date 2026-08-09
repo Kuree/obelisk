@@ -1,4 +1,4 @@
-// RUN: not obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "unsupported_sampled", name = "unsupported_sampled", node_id = 0 : i64, sym_name = "s0.unsupported_sampled"} {
@@ -27,4 +27,6 @@ module {
   }
 }
 
-// CHECK: $sampled requires concurrent assertion Preponed sampling, which is not executable yet
+// CHECK-LABEL: obelisk_sim.func private @unit_0
+// CHECK: %[[SAMPLED:.+]] = obelisk_sim.assert.sampled_read %arg0 from %arg1 : (!obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<1>>) -> !obelisk_sim.logic<1>
+// CHECK: obelisk_sim.logic.is_true %[[SAMPLED]]

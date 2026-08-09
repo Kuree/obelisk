@@ -235,6 +235,7 @@ native_members = [
     "RandSolve.o",
     "RandSolveWide.o",
     "Runtime.o",
+    "Sampled.o",
     "VPI.o",
 ]
 lto_members = [
