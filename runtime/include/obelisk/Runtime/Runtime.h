@@ -781,6 +781,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_INSTANCE_QUERY = UINT32_C(0x00010454),
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_TYPE_QUERY = UINT32_C(0x00010455),
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_SAMPLE = UINT32_C(0x00010456),
+  OBELISK_RT_INTRINSIC_V1_RANDOM_SOLVE_WIDE_STATE = UINT32_C(0x00010457),
   OBELISK_RT_INTRINSIC_V1_VPI_ROOT = UINT32_C(0x00011000),
   OBELISK_RT_INTRINSIC_V1_VPI_CHILD = UINT32_C(0x00011001),
   OBELISK_RT_INTRINSIC_V1_VPI_SIBLING = UINT32_C(0x00011002),
@@ -2785,6 +2786,22 @@ obelisk_rt_status obelisk_rt_v1_random_solve_modes_state(
     uint64_t max_attempts, uint64_t rng_state, uint64_t rng_increment,
     const uint64_t *captures, uint64_t capture_count, uint64_t *out_assignment,
     uint32_t *out_success, uint64_t *out_rng_state);
+// Arbitrary-width stateful residual solve. Assignment and capture values use
+// canonical little-endian 64-bit words. `assignment_word_count` must equal
+// ceil(program.aggregate_width / 64). Capture words are concatenated in
+// capture-index order. `capture_widths` identifies their source-register
+// boundaries and must match the widths carried by the version-2 program.
+// This pointer/count-only ABI is directly representable in WebAssembly linear
+// memory and deliberately exposes no host big-integer representation.
+obelisk_rt_status obelisk_rt_v1_random_solve_wide_modes_state(
+    obelisk_rt_context *context, const uint8_t *program, uint64_t program_size,
+    const uint64_t *start_words, const uint64_t *mutable_mask_words,
+    uint64_t assignment_word_count, uint64_t constraint_mask,
+    uint64_t max_attempts, uint64_t rng_state, uint64_t rng_increment,
+    const uint64_t *capture_words, uint64_t capture_word_count,
+    const uint32_t *capture_widths, uint64_t capture_count,
+    uint64_t *out_assignment_words, uint32_t *out_success,
+    uint64_t *out_rng_state);
 obelisk_rt_status
 obelisk_rt_v1_random_get_state(obelisk_rt_context *context,
                                obelisk_rt_random_state_v1 *out_state);

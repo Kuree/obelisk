@@ -706,6 +706,60 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       return status == OBELISK_RT_OK ? OBELISK_RT_INVALID_BYTECODE : status;
     return OBELISK_RT_OK;
   }
+  case OBELISK_RT_INTRINSIC_V1_RANDOM_SOLVE_WIDE_STATE: {
+    std::optional<ByteSpan> program = bytes(0);
+    auto constraintMask = scalar(3), maxAttempts = scalar(4),
+         rngState = scalar(5), rngIncrement = scalar(6);
+    if (!program || !constraintMask || !maxAttempts || !rngState ||
+        !rngIncrement)
+      return OBELISK_RT_INVALID_BYTECODE;
+    Layout startLayout = layoutAt(image, frame.function, inputRegister(1));
+    Layout mutableLayout = layoutAt(image, frame.function, inputRegister(2));
+    Layout assignmentLayout =
+        layoutAt(image, frame.function, outputRegister(0));
+    if (startLayout.kind != OBELISK_RT_DBREG_BITS ||
+        mutableLayout.kind != OBELISK_RT_DBREG_BITS ||
+        mutableLayout.width != startLayout.width ||
+        assignmentLayout.kind != OBELISK_RT_DBREG_BITS ||
+        assignmentLayout.width != startLayout.width)
+      return OBELISK_RT_INVALID_BYTECODE;
+    Logic start = readLogic(frame.data, startLayout);
+    Logic mutableMask = readLogic(frame.data, mutableLayout);
+    std::vector<uint64_t> captures;
+    std::vector<uint32_t> captureWidths;
+    try {
+      for (uint32_t index = 7; index != site.inputCount; ++index) {
+        Layout layout = layoutAt(image, frame.function, inputRegister(index));
+        if (layout.kind != OBELISK_RT_DBREG_BITS)
+          return OBELISK_RT_INVALID_BYTECODE;
+        captureWidths.push_back(layout.width);
+        Logic capture = readLogic(frame.data, layout);
+        captures.insert(captures.end(), capture.value.begin(),
+                        capture.value.end());
+      }
+    } catch (const std::bad_alloc &) {
+      return OBELISK_RT_OUT_OF_MEMORY;
+    } catch (const std::length_error &) {
+      return OBELISK_RT_OUT_OF_RESOURCES;
+    }
+    Logic assignment{start.width, false, LimbVector(limbCount(start.width)),
+                     LimbVector(limbCount(start.width))};
+    uint64_t nextRngState = 0;
+    uint32_t success = 0;
+    obelisk_rt_status status = obelisk_rt_v1_random_solve_wide_modes_state(
+        context, program->data, program->size, start.value.data(),
+        mutableMask.value.data(), start.value.size(), *constraintMask,
+        *maxAttempts, *rngState, *rngIncrement, captures.data(),
+        captures.size(), captureWidths.data(), captureWidths.size(),
+        assignment.value.data(), &success, &nextRngState);
+    if (status != OBELISK_RT_OK)
+      return status;
+    writeLogic(frame.data, assignmentLayout, assignment);
+    if (!writeScalar(image, frame, outputRegister(1), success) ||
+        !writeScalar(image, frame, outputRegister(2), nextRngState))
+      return OBELISK_RT_INVALID_BYTECODE;
+    return OBELISK_RT_OK;
+  }
   case OBELISK_RT_INTRINSIC_V1_COVERGROUP_CREATE: {
     auto type = scalar(0);
     if (!type || site.inputCount < 2)

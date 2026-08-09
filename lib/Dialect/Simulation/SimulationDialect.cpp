@@ -1635,6 +1635,19 @@ LogicalResult SimRandomCycleNextOp::verify() {
   return success();
 }
 
+LogicalResult SimRandomSolveWideOp::verify() {
+  auto assignmentType = dyn_cast<IntegerType>(getStart().getType());
+  if (!assignmentType)
+    return emitOpError("assignment type must be a signless integer");
+  if (getMutableMask().getType() != assignmentType ||
+      getAssignment().getType() != assignmentType)
+    return emitOpError("start, mutable mask, and assignment types must match");
+  for (Value capture : getCaptures())
+    if (!isa<IntegerType>(capture.getType()))
+      return emitOpError("captures must be signless integers");
+  return success();
+}
+
 LogicalResult SimContainerCreateLikeOp::verify() {
   Type type = getResult().getType();
   if (!getSequentialContainerElement(type))

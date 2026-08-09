@@ -487,6 +487,157 @@ public:
   }
 };
 
+class RandomSolveWideConversion final
+    : public OpConversionPattern<sim::SimRandomSolveWideOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimRandomSolveWideOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getContext().size() != 1 || adaptor.getStart().size() != 1 ||
+        adaptor.getMutableMask().size() != 1 ||
+        adaptor.getConstraintMask().size() != 1 ||
+        adaptor.getMaxAttempts().size() != 1 ||
+        adaptor.getRngState().size() != 1 ||
+        adaptor.getRngIncrement().size() != 1)
+      return failure();
+    auto assignmentType =
+        dyn_cast<IntegerType>(adaptor.getStart().front().getType());
+    if (!assignmentType ||
+        adaptor.getMutableMask().front().getType() != assignmentType)
+      return failure();
+    SmallVector<Value> captures = flatten(adaptor.getCaptures());
+    if (captures.size() != op.getCaptures().size())
+      return failure();
+    for (Value capture : captures)
+      if (!isa<IntegerType>(capture.getType()))
+        return failure();
+
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Type i32 = rewriter.getI32Type();
+    Type i64 = rewriter.getI64Type();
+    StringRef program = op.getProgram();
+    ModuleOp module = op->getParentOfType<ModuleOp>();
+    std::string name = "__obelisk_random_program_" +
+                       llvm::utohexstr(llvm::hash_value(program));
+    LLVM::GlobalOp global = module.lookupSymbol<LLVM::GlobalOp>(name);
+    if (!global)
+      global = makeByteArrayGlobal(module, op.getLoc(), name, program);
+    Value programAddress =
+        LLVM::AddressOfOp::create(rewriter, op.getLoc(), global);
+    auto c64 = [&](uint64_t value) {
+      return llvmConstant(rewriter, op.getLoc(), i64, value);
+    };
+
+    uint64_t assignmentWords =
+        (static_cast<uint64_t>(assignmentType.getWidth()) + 63) / 64;
+    Value startAddress =
+        entryAlloca(rewriter, op.getLoc(), i64, assignmentWords, 8);
+    Value mutableAddress =
+        entryAlloca(rewriter, op.getLoc(), i64, assignmentWords, 8);
+    auto storeWords = [&](Value value, Value address, uint64_t firstWord) {
+      auto type = cast<IntegerType>(value.getType());
+      uint64_t words = (static_cast<uint64_t>(type.getWidth()) + 63) / 64;
+      for (uint64_t index = 0; index != words; ++index) {
+        Value word = value;
+        if (index != 0)
+          word = arith::ShRUIOp::create(
+              rewriter, op.getLoc(), word,
+              llvmConstant(rewriter, op.getLoc(), type, index * 64));
+        if (type.getWidth() > 64)
+          word = LLVM::TruncOp::create(rewriter, op.getLoc(), i64, word);
+        else if (type.getWidth() < 64)
+          word = LLVM::ZExtOp::create(rewriter, op.getLoc(), i64, word);
+        LLVM::StoreOp::create(rewriter, op.getLoc(), word,
+                              byteGEP(rewriter, op.getLoc(), address,
+                                      (firstWord + index) * sizeof(uint64_t)),
+                              8);
+      }
+      return words;
+    };
+    storeWords(adaptor.getStart().front(), startAddress, 0);
+    storeWords(adaptor.getMutableMask().front(), mutableAddress, 0);
+
+    uint64_t captureWordCount = 0;
+    Value captureWidthsAddress =
+        LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer);
+    if (!captures.empty())
+      captureWidthsAddress =
+          entryAlloca(rewriter, op.getLoc(), i32, captures.size(), 4);
+    for (Value capture : captures)
+      captureWordCount +=
+          (static_cast<uint64_t>(
+               cast<IntegerType>(capture.getType()).getWidth()) +
+           63) /
+          64;
+    Value captureAddress = LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer);
+    if (captureWordCount != 0) {
+      captureAddress =
+          entryAlloca(rewriter, op.getLoc(), i64, captureWordCount, 8);
+      uint64_t firstWord = 0;
+      for (auto [index, capture] : llvm::enumerate(captures)) {
+        auto captureType = cast<IntegerType>(capture.getType());
+        LLVM::StoreOp::create(
+            rewriter, op.getLoc(),
+            llvmConstant(rewriter, op.getLoc(), i32, captureType.getWidth()),
+            byteGEP(rewriter, op.getLoc(), captureWidthsAddress,
+                    index * sizeof(uint32_t)),
+            4);
+        firstWord += storeWords(capture, captureAddress, firstWord);
+      }
+    }
+
+    Value assignmentAddress =
+        entryAlloca(rewriter, op.getLoc(), i64, assignmentWords, 8);
+    Value successStorage = entryAlloca(rewriter, op.getLoc(), i32, 1, 4);
+    Value nextRngState = entryAlloca(rewriter, op.getLoc(), i64, 1, 8);
+    Value context = adaptor.getContext().front();
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_random_solve_wide_modes_state"),
+            ValueRange{context, programAddress, c64(program.size()),
+                       startAddress, mutableAddress, c64(assignmentWords),
+                       adaptor.getConstraintMask().front(),
+                       adaptor.getMaxAttempts().front(),
+                       adaptor.getRngState().front(),
+                       adaptor.getRngIncrement().front(), captureAddress,
+                       c64(captureWordCount), captureWidthsAddress,
+                       c64(captures.size()), assignmentAddress, successStorage,
+                       nextRngState})
+            .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+
+    Value result =
+        arith::ConstantOp::create(rewriter, op.getLoc(), assignmentType,
+                                  rewriter.getIntegerAttr(assignmentType, 0));
+    for (uint64_t index = 0; index != assignmentWords; ++index) {
+      Value word =
+          LLVM::LoadOp::create(rewriter, op.getLoc(), i64,
+                               byteGEP(rewriter, op.getLoc(), assignmentAddress,
+                                       index * sizeof(uint64_t)),
+                               8);
+      if (assignmentType.getWidth() > 64)
+        word = LLVM::ZExtOp::create(rewriter, op.getLoc(), assignmentType, word);
+      else if (assignmentType.getWidth() < 64)
+        word = LLVM::TruncOp::create(rewriter, op.getLoc(), assignmentType, word);
+      if (index != 0)
+        word = arith::ShLIOp::create(
+            rewriter, op.getLoc(), word,
+            llvmConstant(rewriter, op.getLoc(), assignmentType, index * 64));
+      result = arith::OrIOp::create(rewriter, op.getLoc(), result, word);
+    }
+    Value successValue = LLVM::TruncOp::create(
+        rewriter, op.getLoc(), rewriter.getI1Type(),
+        LLVM::LoadOp::create(rewriter, op.getLoc(), i32, successStorage, 4));
+    Value nextState =
+        LLVM::LoadOp::create(rewriter, op.getLoc(), i64, nextRngState, 8);
+    rewriter.replaceOp(op, ValueRange{result, successValue, nextState});
+    return success();
+  }
+};
+
 class ContainerReadConversion final
     : public OpConversionPattern<sim::SimContainerReadOp> {
 public:
@@ -590,6 +741,7 @@ void populateManagedContainerToLLVMConversionPatterns(
       ContainerWriteConversion, RandomNextConversion, RandomSeedConversion,
       RandomBoundedConversion, RandomDistributionConversion,
       RandomCycleNextConversion, RandomSolveConversion>(converter, context);
+  patterns.add<RandomSolveWideConversion>(converter, context);
   populateManagedAssociativeToLLVMConversionPatterns(patterns, converter);
 }
 

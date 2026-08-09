@@ -3272,6 +3272,11 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   // priority than the class constraints it augments.
   assignSoftPriorities(/*inlineConstraints=*/false);
   assignSoftPriorities(/*inlineConstraints=*/true);
+  if (nextSoftPriority > 64) {
+    emitError(location)
+        << "random fallback supports at most 64 soft constraint priorities";
+    return failure();
+  }
   for (auto [index, root] : llvm::enumerate(children)) {
     if (index == receiverIndex)
       continue;
@@ -4710,11 +4715,14 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       proposalFiniteDomains.empty() && proposalCaptureDomains.empty() &&
       llvm::all_of(proposalDefinitions, isClosedDefinition);
   exactProposal |= closedDefinitionProposal;
-  if (totalWidth > 64 && !exactProposal &&
-      analysis.satisfiability != solver::Satisfiability::Unsatisfiable) {
+  // Mode changes can reach the residual block even when the default-mode
+  // proposal is exact.  Reject programs whose semantic-domain metadata the
+  // wide runtime cannot yet interpret instead of generating a latent failure.
+  if (wideProgram &&
+      (hasSolveBefore || hasFiniteDomains || !distPlans.empty())) {
     emitError(location)
-        << "wide random constraints require a residual runtime fallback that "
-           "is not executable yet";
+        << "wide residual random fallback does not yet support solve before, "
+           "dist, or finite semantic domains";
     return failure();
   }
 
@@ -5776,10 +5784,18 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         << "randomize hard constraints are statically unsatisfiable ("
         << analysis.backend << ")";
     cf::BranchOp::create(builder, location, failedBlock, ValueRange{});
-  } else if (totalWidth > 64) {
-    // Non-exact wide plans are rejected above. Keep the scalar runtime ABI
-    // unreachable for wide assignments until its decomposed form is lowered.
-    cf::BranchOp::create(builder, location, failedBlock, ValueRange{});
+  } else if (wideProgram) {
+    auto fallback = sim::SimRandomSolveWideOp::create(
+        builder, location, function.getBody().front().getArgument(0),
+        fallbackStart, mutableMask, relevantConstraintMode,
+        constant64(fallbackAttempts), state, increment, programCaptures,
+        builder.getStringAttr(StringRef(
+            reinterpret_cast<const char *>(program.data()), program.size())));
+    sim::SimManagedStoreOp::create(builder, location,
+                                   fallback.getNextRngState(), stateReference);
+    cf::CondBranchOp::create(builder, location, fallback.getSuccess(), commit,
+                             ValueRange{fallback.getAssignment()}, failedBlock,
+                             ValueRange{});
   } else {
     auto fallback = sim::SimRandomSolveOp::create(
         builder, location, function.getBody().front().getArgument(0),
@@ -5827,8 +5843,19 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                            ValueRange{modeNext, modeNextAttempt});
 
   setCurrent(modeFallbackBlock);
-  if (totalWidth > 64) {
-    cf::BranchOp::create(builder, location, failedBlock, ValueRange{});
+  if (wideProgram) {
+    auto modeFallback = sim::SimRandomSolveWideOp::create(
+        builder, location, function.getBody().front().getArgument(0),
+        modeFallbackStart, mutableMask, relevantConstraintMode,
+        constant64(fallbackAttempts), modeState, increment, programCaptures,
+        builder.getStringAttr(StringRef(
+            reinterpret_cast<const char *>(program.data()), program.size())));
+    sim::SimManagedStoreOp::create(
+        builder, location, modeFallback.getNextRngState(), stateReference);
+    cf::CondBranchOp::create(builder, location, modeFallback.getSuccess(),
+                             commit,
+                             ValueRange{modeFallback.getAssignment()},
+                             failedBlock, ValueRange{});
   } else {
     auto modeFallback = sim::SimRandomSolveOp::create(
         builder, location, function.getBody().front().getArgument(0),

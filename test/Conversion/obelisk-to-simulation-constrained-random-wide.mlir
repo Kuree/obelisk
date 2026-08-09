@@ -5,9 +5,20 @@
 // RUN:     | FileCheck %s --check-prefix=EQUALITY \
 // RUN: %}
 // RUN: %if z3 %{ \
-// RUN:   not obelisk-opt %t/wide-residual.mlir \
-// RUN:     '--lower-obelisk-to-sim=opt-level=0' 2>&1 \
+// RUN:   obelisk-opt %t/wide-residual.mlir \
+// RUN:     '--lower-obelisk-to-sim=opt-level=0' \
 // RUN:     | FileCheck %s --check-prefix=RESIDUAL \
+// RUN: %}
+// RUN: %if z3 %{ \
+// RUN:   obelisk-opt %t/wide-residual.mlir \
+// RUN:     '--lower-obelisk-to-sim=opt-level=0' \
+// RUN:     --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN:     | FileCheck %s --check-prefix=RESIDUAL-NATIVE \
+// RUN: %}
+// RUN: %if z3 %{ \
+// RUN:   obelisk-opt %t/wide-residual.mlir \
+// RUN:     '--lower-obelisk-to-sim=opt-level=0' \
+// RUN:     '--encode-obelisk-sim-to-bytecode=vpi=off' -o /dev/null \
 // RUN: %}
 
 // WIDE-LABEL: obelisk_sim.func private @unit_1
@@ -21,13 +32,20 @@
 // EQUALITY-LABEL: obelisk_sim.func private @unit_1
 // EQUALITY: arith.constant 18446744073709551620 : i128
 // EQUALITY: arith.cmpi eq, {{.*}} : i128
-// EQUALITY-NOT: obelisk_sim.random.solve
+// EQUALITY-NOT: obelisk_sim.random.solve %
 
-// RESIDUAL: error: wide random constraints require a residual runtime fallback that is not executable yet
+// RESIDUAL-LABEL: obelisk_sim.func private @unit_1
+// RESIDUAL: obelisk_sim.random.solve_wide
+// RESIDUAL-SAME: : (!obelisk_sim.context, i128, i128, i64, i64, i64, i64, i128) -> (i128, i1, i64)
+
+// RESIDUAL-NATIVE: llvm.call @obelisk_rt_v1_random_solve_wide_modes_state
 
 //--- wide-residual.mlir
 
-module {
+module attributes {
+  llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
+  llvm.target_triple = "x86_64-unknown-linux-gnu"
+} {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {
   }
   obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {

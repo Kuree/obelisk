@@ -527,6 +527,29 @@ def SimRandomSolveOp : SimOp<"random.solve", [
   }];
 }
 
+def SimRandomSolveWideOp : SimOp<"random.solve_wide", [
+    MemoryEffects<[MemRead<SimRNGResource>]>,
+    AllTypesMatch<["start", "mutable_mask", "assignment"]>
+  ]> {
+  let summary = "execute an arbitrary-width residual random constraint plan";
+  let description = [{
+    This is the arbitrary-width counterpart of `random.solve`.  Packed values
+    stay as ordinary signless integers in Simulation IR; backend lowerings
+    expose them to the runtime through a canonical little-endian array of
+    64-bit words.  The flat-word ABI contains no host-only integer or pointer
+    representation and is suitable for WebAssembly linear memory.
+  }];
+  let arguments = (ins SimContextType:$context, AnySignlessInteger:$start,
+                       AnySignlessInteger:$mutable_mask,
+                       I64:$constraint_mask, I64:$max_attempts,
+                       I64:$rng_state, I64:$rng_increment,
+                       Variadic<AnySignlessInteger>:$captures,
+                       StrAttr:$program);
+  let results = (outs AnySignlessInteger:$assignment, I1:$success,
+                       I64:$next_rng_state);
+  let hasVerifier = 1;
+}
+
 def SimRandomSeedOp : SimOp<"random.seed", [
     MemoryEffects<[MemWrite<SimRNGResource>]>
   ]> {

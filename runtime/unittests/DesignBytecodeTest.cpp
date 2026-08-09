@@ -595,6 +595,149 @@ std::vector<uint8_t> makeRandomSolveBytecode(bool stateful, uint64_t rngState,
   return bytes;
 }
 
+std::vector<uint8_t> makeRandomSolveWideBytecode() {
+  constexpr uint32_t inputCount = 7;
+  constexpr uint32_t outputCount = 3;
+  constexpr uint32_t registerCount = inputCount + outputCount;
+  constexpr uint32_t instructionCount = inputCount + 1 + outputCount + 1;
+  constexpr uint32_t operandCount = inputCount + outputCount;
+
+  constexpr uint32_t programInstructionCount = 4;
+  std::vector<uint8_t> program(
+      OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE_V2 +
+          programInstructionCount * OBELISK_RT_RANDOM_INSTRUCTION_SIZE_V2 +
+          2 * sizeof(uint64_t),
+      0);
+  put32(program, 0, OBELISK_RT_RANDOM_PROGRAM_MAGIC);
+  put16(program, 4, OBELISK_RT_RANDOM_PROGRAM_VERSION_V2);
+  put16(program, 6, OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE_V2);
+  put32(program, 8, 65);
+  put32(program, 12, programInstructionCount);
+  put32(program, 24, 2);
+  size_t programInstruction = OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE_V2;
+  program[programInstruction] = OBELISK_RT_RANDOM_PUSH_VARIABLE_V1;
+  put32(program, programInstruction + 4, 65);
+  programInstruction += OBELISK_RT_RANDOM_INSTRUCTION_SIZE_V2;
+  program[programInstruction] = OBELISK_RT_RANDOM_PUSH_LITERAL_V1;
+  put32(program, programInstruction + 4, 65);
+  programInstruction += OBELISK_RT_RANDOM_INSTRUCTION_SIZE_V2;
+  program[programInstruction] = OBELISK_RT_RANDOM_EQ_V1;
+  put32(program, programInstruction + 4, 1);
+  programInstruction += OBELISK_RT_RANDOM_INSTRUCTION_SIZE_V2;
+  program[programInstruction] = OBELISK_RT_RANDOM_END_HARD_V1;
+  put32(program, programInstruction + 4, 1);
+  put32(program, programInstruction + 8,
+        OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1);
+  size_t literalOffset = OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE_V2 +
+                         programInstructionCount *
+                             OBELISK_RT_RANDOM_INSTRUCTION_SIZE_V2;
+  put64(program, literalOffset, 5);
+  put64(program, literalOffset + 8, 1);
+
+  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+  constexpr size_t layoutOffset = functionOffset + 96;
+  constexpr size_t codeOffset = layoutOffset + registerCount * 40;
+  constexpr size_t operandOffset = codeOffset + instructionCount * 32;
+  constexpr size_t constantOffset = operandOffset + operandCount * 8;
+  constexpr size_t programOffset = 80;
+  size_t constantSize = (programOffset + program.size() + 7) & ~size_t{7};
+  size_t continuationOffset = constantOffset + constantSize;
+  size_t intrinsicOffset = continuationOffset + 24;
+  size_t siteOffset = intrinsicOffset + 16;
+  std::vector<uint8_t> bytes(siteOffset + 16, 0);
+
+  std::memcpy(bytes.data(), "OBBCDS1\0", 8);
+  put32(bytes, 8, OBELISK_RT_VERSION);
+  put32(bytes, 16, OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE);
+  put64(bytes, 24, bytes.size());
+  put64(bytes, 40, functionOffset);
+  put64(bytes, 48, 1);
+  put64(bytes, 56, layoutOffset);
+  put64(bytes, 64, registerCount);
+  put64(bytes, 72, codeOffset);
+  put64(bytes, 80, instructionCount);
+  put64(bytes, 88, operandOffset);
+  put64(bytes, 96, operandCount);
+  put64(bytes, 104, constantOffset);
+  put64(bytes, 112, constantSize);
+  put64(bytes, 120, continuationOffset);
+  put64(bytes, 128, 1);
+  put64(bytes, 136, intrinsicOffset);
+  put64(bytes, 144, 1);
+  put64(bytes, 152, siteOffset);
+  put64(bytes, 160, 1);
+  put64(bytes, 168, bytes.size());
+  put64(bytes, 184, bytes.size());
+
+  put64(bytes, functionOffset, 1);
+  put64(bytes, functionOffset + 24, instructionCount);
+  put64(bytes, functionOffset + 40, registerCount);
+  put64(bytes, functionOffset + 56, 112);
+  put64(bytes, functionOffset + 64, 8);
+  put64(bytes, functionOffset + 80, 1);
+  put64(bytes, functionOffset + 88, 1);
+
+  constexpr std::array<uint32_t, registerCount> widths{
+      128, 65, 65, 64, 64, 64, 64, 65, 1, 64};
+  constexpr std::array<uint64_t, registerCount> offsets{
+      0, 16, 32, 48, 56, 64, 72, 80, 96, 104};
+  constexpr std::array<uint64_t, registerCount> extents{
+      16, 16, 16, 8, 8, 8, 8, 16, 8, 8};
+  for (uint32_t reg = 0; reg != registerCount; ++reg) {
+    size_t layout = layoutOffset + reg * 40;
+    bytes[layout] = reg == 0 ? OBELISK_RT_DBREG_BYTES : OBELISK_RT_DBREG_BITS;
+    put32(bytes, layout + 4, widths[reg]);
+    put64(bytes, layout + 8, offsets[reg]);
+    put64(bytes, layout + 16, extents[reg]);
+  }
+
+  constexpr std::array<uint64_t, inputCount> constants{0, 16, 32, 48,
+                                                       56, 64, 72};
+  for (uint32_t reg = 0; reg != inputCount; ++reg)
+    instruction(bytes, codeOffset, reg, OBELISK_RT_DB_CONSTANT, 0, reg, 0, 0,
+                0, 0, constants[reg]);
+  uint32_t pc = inputCount;
+  instruction(bytes, codeOffset, pc++, OBELISK_RT_DB_INTRINSIC);
+  constexpr std::array<uint64_t, outputCount> frameOffsets{0, 16, 24};
+  for (uint32_t output = 0; output != outputCount; ++output)
+    instruction(bytes, codeOffset, pc++, OBELISK_RT_DB_STORE_FRAME, 0, 0,
+                inputCount + output, 0, 0, 0, frameOffsets[output]);
+  instruction(bytes, codeOffset, pc, OBELISK_RT_DB_TERMINATE);
+
+  for (uint32_t input = 0; input != inputCount; ++input)
+    put32(bytes, operandOffset + input * 8 + 4, input);
+  for (uint32_t output = 0; output != outputCount; ++output)
+    put32(bytes, operandOffset + (inputCount + output) * 8,
+          inputCount + output);
+
+  put64(bytes, constantOffset, programOffset);
+  put64(bytes, constantOffset + 8, program.size());
+  put64(bytes, constantOffset + 16, 0);
+  put64(bytes, constantOffset + 24, 1);
+  put64(bytes, constantOffset + 32, 7);
+  put64(bytes, constantOffset + 40, 0);
+  put64(bytes, constantOffset + 48, 0);
+  put64(bytes, constantOffset + 56, 8);
+  put64(bytes, constantOffset + 64, 73);
+  put64(bytes, constantOffset + 72, 5);
+  std::copy(program.begin(), program.end(),
+            bytes.begin() + constantOffset + programOffset);
+
+  put32(bytes, continuationOffset, 0);
+  put32(bytes, continuationOffset + 4, 0);
+  put64(bytes, continuationOffset + 8, 0);
+  put32(bytes, intrinsicOffset,
+        OBELISK_RT_INTRINSIC_V1_RANDOM_SOLVE_WIDE_STATE);
+  put32(bytes, intrinsicOffset + 4, inputCount);
+  put32(bytes, intrinsicOffset + 8, outputCount);
+  put32(bytes, siteOffset, 0);
+  put32(bytes, siteOffset + 4, 0);
+  put32(bytes, siteOffset + 8, inputCount);
+  put32(bytes, siteOffset + 12, outputCount);
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
 std::vector<uint8_t> makeRandomCycleBytecode(uint64_t key, uint64_t position,
                                             uint64_t width) {
   constexpr uint32_t inputCount = 3;
@@ -2346,6 +2489,45 @@ TEST(DesignBytecode, ExecutesStatefulRandomSolveIntrinsic) {
   EXPECT_EQ(outputs[0], expectedX | (expectedY << 1));
   EXPECT_EQ(outputs[1], 1u);
   EXPECT_EQ(outputs[2], expected.state);
+  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(DesignBytecode, ExecutesWideRandomSolveIntrinsic) {
+  Fixture fixture;
+  fixture.bytecode = makeRandomSolveWideBytecode();
+  fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE;
+  fixture.execution.bytecode = fixture.bytecode.data();
+  fixture.execution.bytecode_size = fixture.bytecode.size();
+  fixture.execution.design_database = nullptr;
+  fixture.execution.design_database_size = 0;
+  fixture.execution.state_bit_count = 8;
+  fixture.execution.checksum = imageChecksum(fixture.bytecode);
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  obelisk_rt_process_instance_v1 *instance = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
+      OBELISK_RT_OK);
+  obelisk_rt_fragment_action_v1 action{};
+  ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
+                instance, context, OBELISK_RT_TIER_BYTECODE, &action),
+            OBELISK_RT_OK);
+  EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
+  void *frame = nullptr;
+  uint64_t size = 0;
+  ASSERT_EQ(obelisk_rt_v1_process_instance_frame(instance, &frame, &size),
+            OBELISK_RT_OK);
+  ASSERT_GE(size, 32u);
+  std::array<uint64_t, 4> outputs{};
+  std::memcpy(outputs.data(), frame, sizeof(outputs));
+  EXPECT_EQ(outputs[0], 5u);
+  EXPECT_EQ(outputs[1], 1u);
+  EXPECT_EQ(outputs[2], 1u);
+  EXPECT_EQ(outputs[3], 73u);
   EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
   obelisk_rt_v1_context_destroy(context);
 }

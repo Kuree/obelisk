@@ -233,6 +233,7 @@ native_members = [
     "ProcessValidation.o",
     "Random.o",
     "RandSolve.o",
+    "RandSolveWide.o",
     "Runtime.o",
     "VPI.o",
 ]
