@@ -54,9 +54,7 @@ bool isSuspensionOp(Operation *operation) {
 bool isStartupEntryKind(EntryKind kind) {
   switch (kind) {
   case EntryKind::Always:
-  case EntryKind::AlwaysComb:
   case EntryKind::AlwaysFF:
-  case EntryKind::AlwaysLatch:
   case EntryKind::Continuous:
   case EntryKind::PortInput:
   case EntryKind::PortOutput:

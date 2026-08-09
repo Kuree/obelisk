@@ -3735,28 +3735,38 @@ void ObeliskSimPreparePass::runOnOperation() {
            unit.entryKind != sim::EntryKind::Task &&
            unit.entryKind != sim::EntryKind::Observer;
   };
-  auto isRepeatingProcess = [](const PreparedUnit &unit) {
+  auto startsByWaiting = [](const PreparedUnit &unit) {
     return unit.entryKind == sim::EntryKind::Always ||
-           unit.entryKind == sim::EntryKind::AlwaysComb ||
-           unit.entryKind == sim::EntryKind::AlwaysLatch ||
            unit.entryKind == sim::EntryKind::AlwaysFF;
   };
+  auto hasDeferredTimeZeroActivation = [](const PreparedUnit &unit) {
+    return unit.entryKind == sim::EntryKind::AlwaysComb ||
+           unit.entryKind == sim::EntryKind::AlwaysLatch;
+  };
 
-  // Establish repeating-process sensitivities before initial processes can
-  // trigger events or mutate their watched values. The standard permits
-  // either Active-region order at time zero; choosing this deterministic
-  // order matches established simulator behavior and prevents a source-order
-  // race from losing an event before an `always @(event)` has suspended.
+  // Establish explicit always-process sensitivities before initial processes
+  // can trigger events or mutate their watched values. This deterministic
+  // Active-region order prevents a source-order race from losing an event
+  // before an `always @(event)` has suspended.
   for (PreparedUnit &unit : units)
-    if (isRootSpawned(unit) && isRepeatingProcess(unit))
+    if (isRootSpawned(unit) && startsByWaiting(unit))
       if (failed(spawnRootUnit(unit)))
         return abort();
+
+  // IEEE 1800-2017 9.2.2.2 requires the automatic time-zero activation of an
+  // always_comb procedure to occur after all initial and always procedures
+  // have started. Section 9.2.2.3 applies the same rule to always_latch.
   for (PreparedUnit &unit : units) {
-    if (!isRootSpawned(unit) || isRepeatingProcess(unit))
+    if (!isRootSpawned(unit) || startsByWaiting(unit) ||
+        hasDeferredTimeZeroActivation(unit))
       continue;
     if (failed(spawnRootUnit(unit)))
       return abort();
   }
+  for (PreparedUnit &unit : units)
+    if (isRootSpawned(unit) && hasDeferredTimeZeroActivation(unit))
+      if (failed(spawnRootUnit(unit)))
+        return abort();
   sim::SimReturnOp::create(rootBuilder, module.getLoc(), ValueRange{});
 }
 

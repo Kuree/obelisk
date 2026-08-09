@@ -242,14 +242,18 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
   uint32_t homeRegion = getRuntimeEventRegion(function.getHomeRegion());
   if (homeRegion == UINT32_MAX)
     return function.emitOpError("has no executable runtime home region");
+  sim::EntryKind entryKind = function.getEntryKind();
+  bool startup = sim::isStartupEntryKind(entryKind) ||
+                 (entryKind == sim::EntryKind::Initial &&
+                  function.getHomeRegion() == sim::EventRegion::Active);
   uint32_t scheduleFlags = OBELISK_RT_SCHEDULE_HOME(homeRegion) |
-                           (function.getEntryKind() == sim::EntryKind::Final
+                           (entryKind == sim::EntryKind::Final
                                 ? OBELISK_RT_SCHEDULE_FINAL
                                 : 0) |
-                           (function.getEntryKind() == sim::EntryKind::Initial
+                           (entryKind == sim::EntryKind::Initial
                                 ? OBELISK_RT_SCHEDULE_INITIAL
                                 : 0) |
-                           (sim::isStartupEntryKind(function.getEntryKind())
+                           (startup
                                 ? OBELISK_RT_SCHEDULE_STARTUP
                                 : 0);
   Value null = LLVM::ZeroOp::create(builder, location, pointer);

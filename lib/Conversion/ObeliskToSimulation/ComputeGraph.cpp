@@ -1231,10 +1231,12 @@ void ComputeGraphBuilder::buildControlEdges() {
     }
 
     // Root spawn operations encode the deterministic time-zero startup order
-    // frozen by the prepare pass. Ensure implicit/repeating infrastructure
-    // reaches its first suspension (or publishes a one-shot port value) before
-    // any user initial process runs, without imposing a total order on
-    // otherwise independent sibling processes.
+    // frozen by the prepare pass. Explicit/repeating infrastructure reaches
+    // its initial suspension (or publishes a one-shot port value) before user
+    // initial procedures. Runtime startup priority separately keeps both
+    // groups ahead of deferred always_comb/always_latch activation; expressing
+    // that global phase boundary as graph edges would introduce false cycles
+    // between otherwise independent top-level processes.
     if (fragment.function.getEntryKind() == sim::EntryKind::RootInitializer) {
       SmallVector<uint32_t> startupEntries;
       SmallVector<uint32_t> initialEntries;

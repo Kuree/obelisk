@@ -172,8 +172,13 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     SmallVector<Value> captures(op.getOperands());
     if (found->second > OBELISK_RT_INTRINSIC_SPAWN_FUNCTION_MASK)
       return op.emitOpError("spawn target index exceeds bytecode encoding");
+    sim::EntryKind entryKind = callee.function.getEntryKind();
+    bool startup = sim::isStartupEntryKind(entryKind) ||
+                   (entryKind == sim::EntryKind::Initial &&
+                    callee.function.getHomeRegion() ==
+                        sim::EventRegion::Active);
     uint32_t flags = found->second |
-                     (sim::isStartupEntryKind(callee.function.getEntryKind())
+                     (startup
                           ? OBELISK_RT_INTRINSIC_SPAWN_STARTUP
                           : 0);
     return emitIntrinsic(plan, kIntrinsicSpawn, captures, {op.getProcess()},
