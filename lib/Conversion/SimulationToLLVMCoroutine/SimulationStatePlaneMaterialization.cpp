@@ -30,13 +30,6 @@ makeStatePlane(ModuleOp module, StringRef name, uint64_t bytes, bool unknown,
   Location location = module.getLoc();
   Type i8 = builder.getI8Type();
   Type array = LLVM::LLVMArrayType::get(i8, bytes);
-  auto global =
-      LLVM::GlobalOp::create(builder, location, array, false,
-                             LLVM::Linkage::Internal, name, Attribute{}, 8);
-  Block *block = new Block;
-  global.getInitializerRegion().push_back(block);
-  builder.setInsertionPointToStart(block);
-  Value value = LLVM::ZeroOp::create(builder, location, array);
   SmallVector<uint8_t> initial(bytes, 0);
   if (unknown) {
     for (const NativeStateLayout::Bound &bound : layout.bounds) {
@@ -62,12 +55,26 @@ makeStatePlane(ModuleOp module, StringRef name, uint64_t bytes, bool unknown,
       }
     }
   }
-  for (auto [index, byte] : llvm::enumerate(initial))
-    if (byte != 0)
-      value = LLVM::InsertValueOp::create(
-          builder, location, value, llvmConstant(builder, location, i8, byte),
-          ArrayRef<int64_t>{static_cast<int64_t>(index)});
-  LLVM::ReturnOp::create(builder, location, value);
+  // A plane with any set bit is handed over as one blob. Building it with an
+  // insertvalue per set byte is quadratic: each insert constant-folds into a
+  // fresh `bytes`-element ConstantArray, so a design holding a large unpacked
+  // array spends minutes here on an initializer LLVM prints in one line.
+  bool anySet = llvm::any_of(initial, [](uint8_t byte) { return byte != 0; });
+  if (anySet) {
+    StringRef contents(reinterpret_cast<const char *>(initial.data()),
+                       initial.size());
+    return LLVM::GlobalOp::create(builder, location, array, false,
+                                  LLVM::Linkage::Internal, name,
+                                  builder.getStringAttr(contents), 8);
+  }
+  auto global =
+      LLVM::GlobalOp::create(builder, location, array, false,
+                             LLVM::Linkage::Internal, name, Attribute{}, 8);
+  Block *block = new Block;
+  global.getInitializerRegion().push_back(block);
+  builder.setInsertionPointToStart(block);
+  LLVM::ReturnOp::create(builder, location,
+                         LLVM::ZeroOp::create(builder, location, array));
   return global;
 }
 

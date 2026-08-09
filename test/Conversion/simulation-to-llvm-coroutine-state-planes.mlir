@@ -20,22 +20,14 @@ module attributes {
   }
 }
 
-// CHECK-LABEL: llvm.mlir.global internal @__obelisk_state_unknown()
+// Each plane is one byte blob rather than a chain of inserts: an insertvalue
+// per set byte constant-folds into a fresh whole-plane array, which is
+// quadratic once a design carries a large unpacked array.
+//
+// Byte 0 holds the two-state i8 root, so it starts known-zero in both planes.
+// Byte 1 holds the four-state logic<8> root: unknown, value zero. Byte 2 holds
+// the two logic<4> nets and byte 3 the driver, all at high impedance.
 // Generated scalar accesses may use an unaligned word at the final root, so
 // the canonical 32-bit plane carries one private 8-byte guard word.
-// CHECK: %[[UZERO:.*]] = llvm.mlir.zero : !llvm.array<12 x i8>
-// CHECK: %[[UFF1:.*]] = llvm.mlir.constant(-1 : i8) : i8
-// CHECK: %[[BYTE1:.*]] = llvm.insertvalue %[[UFF1]], %[[UZERO]][1]
-// CHECK: %[[UFF2:.*]] = llvm.mlir.constant(-1 : i8) : i8
-// CHECK: %[[BYTE2:.*]] = llvm.insertvalue %[[UFF2]], %[[BYTE1]][2]
-// CHECK: %[[U0F:.*]] = llvm.mlir.constant(15 : i8) : i8
-// CHECK: %[[BYTE3:.*]] = llvm.insertvalue %[[U0F]], %[[BYTE2]][3]
-// CHECK: llvm.return %[[BYTE3]]
-
-// CHECK-LABEL: llvm.mlir.global internal @__obelisk_state_value()
-// CHECK: %[[ZERO:.*]] = llvm.mlir.zero : !llvm.array<12 x i8>
-// CHECK: %[[VFF:.*]] = llvm.mlir.constant(-1 : i8) : i8
-// CHECK: %[[VBYTE2:.*]] = llvm.insertvalue %[[VFF]], %[[ZERO]][2]
-// CHECK: %[[V0F:.*]] = llvm.mlir.constant(15 : i8) : i8
-// CHECK: %[[VBYTE3:.*]] = llvm.insertvalue %[[V0F]], %[[VBYTE2]][3]
-// CHECK: llvm.return %[[VBYTE3]]
+// CHECK: llvm.mlir.global internal @__obelisk_state_unknown("\00\FF\FF\0F\00\00\00\00\00\00\00\00")
+// CHECK: llvm.mlir.global internal @__obelisk_state_value("\00\00\FF\0F\00\00\00\00\00\00\00\00")
