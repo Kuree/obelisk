@@ -1918,7 +1918,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
         nativeScheduler == sim::NativeSchedulerMode::AOT || evalScheduler;
     useAOT = aotEligibility.isEligible() &&
              (forcedAOT || aotEligibility.isAOTCostEffective());
-    if (forcedAOT && !aotEligibility.isFullyEligible()) {
+    if (forcedAOT && !aotEligibility.isFullyEligible() &&
+        !aotEligibility.isForcedHybridEligible()) {
       InFlightDiagnostic diagnostic =
           module.emitError("design is ineligible for native AOT scheduling: ");
       if (aotEligibility.getReasons().empty())

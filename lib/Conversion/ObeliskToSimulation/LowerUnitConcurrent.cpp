@@ -15,6 +15,10 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
 
+#include <optional>
+#include <string>
+#include <utility>
+
 using namespace mlir;
 
 namespace obelisk::simlowering {
@@ -114,17 +118,23 @@ static Operation *unwrapAssertionInstance(Operation *operation) {
 LogicalResult UnitLowering::lowerConcurrentAssertion(
     semantic::SVConcurrentAssertionStatementOp op) {
   Location location = getSemanticLocation(op);
+  if (op->hasAttr("obelisk_sim.default_assertion_failure")) {
+    emitDefaultAssertionFailure(location, "concurrent assertion");
+    return success();
+  }
   SmallVector<Operation *> children = getChildren(op);
 
-  // Observable directives require ordered Observed-result to Reactive-report
-  // dispatch.  Reject them before outlining any partial callbacks.  Restrict
-  // is simulation-silent, so its monitor can safely execute entirely in
-  // Observed until that report path exists.
-  if (op.getAssertionKind() != semantic::SVAssertionKind::Restrict) {
+  bool cover =
+      op.getAssertionKind() == semantic::SVAssertionKind::CoverProperty ||
+      op.getAssertionKind() == semantic::SVAssertionKind::CoverSequence;
+  bool assertion = op.getAssertionKind() == semantic::SVAssertionKind::Assert ||
+                   op.getAssertionKind() == semantic::SVAssertionKind::Assume;
+  bool observable = assertion || cover;
+  if (!observable &&
+      op.getAssertionKind() != semantic::SVAssertionKind::Restrict) {
     emitError(location)
-        << "observable concurrent assert/assume/cover/expect directives "
-           "require ordered Observed-result and Reactive-report dispatch; "
-           "only restrict property is executable by the bounded AOT monitor";
+        << "expect statements are not executable by the bounded concurrent "
+           "monitor";
     return failure();
   }
 
@@ -248,6 +258,82 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                     sim::EventRegionAttr::get(function.getContext(),
                                               sim::EventRegion::Observed));
 
+  struct ReportCallback {
+    sim::SimFuncOp function;
+    SmallVector<Value> captures;
+    Location location;
+  };
+  std::optional<ReportCallback> passReport;
+  std::optional<ReportCallback> failReport;
+  auto nodeAttr = op->getAttrOfType<IntegerAttr>("node_id");
+  uint64_t node = nodeAttr ? nodeAttr.getValue().getZExtValue() : 0;
+  auto outlineReport =
+      [&](bool passed, std::optional<ReportCallback> &report) -> LogicalResult {
+    if (!observable || (!passed && cover))
+      return success();
+    Operation *selected = nullptr;
+    bool defaultFailure = false;
+    if (passed && op.getHasPassAction())
+      selected = children[prefix + 1];
+    else if (!passed && op.getHasFailAction())
+      selected = children[prefix + 1 + op.getHasPassAction()];
+    else if (!passed && assertion)
+      defaultFailure = true;
+    if (!selected && !defaultFailure)
+      return success();
+    if (selected && isa<semantic::SVEmptyStatementOp>(selected))
+      return success();
+
+    Operation *outlined = defaultFailure ? op.getOperation() : selected;
+    unsigned ordinal = passed ? 0 : (defaultFailure ? 2 : 1);
+    std::string identity = (function.getSymName() + ".$concurrent_report." +
+                            Twine(node) + "." + Twine(ordinal))
+                               .str();
+    Attribute previousCodeUnit =
+        outlined->getAttr("obelisk_sim.fork_code_unit_id");
+    outlined->setAttr("obelisk_sim.fork_code_unit_id",
+                      builder.getI64IntegerAttr(stableCodeUnitID(identity)));
+    if (defaultFailure)
+      op->setAttr("obelisk_sim.default_assertion_failure",
+                  builder.getUnitAttr());
+    FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> callback =
+        outlineForkBranch(outlined, node, ordinal,
+                          /*captureReferences=*/true);
+    if (defaultFailure)
+      op->removeAttr("obelisk_sim.default_assertion_failure");
+    if (previousCodeUnit)
+      outlined->setAttr("obelisk_sim.fork_code_unit_id", previousCodeUnit);
+    else
+      outlined->removeAttr("obelisk_sim.fork_code_unit_id");
+    if (failed(callback))
+      return failure();
+
+    callback->first->setAttr(
+        "home_region", sim::EventRegionAttr::get(function.getContext(),
+                                                 sim::EventRegion::Reactive));
+    callback->first->setAttr(
+        "domain", sim::ExecutionDomainAttr::get(function.getContext(),
+                                                sim::ExecutionDomain::Design));
+    callback->first->setAttr("obelisk_sim.concurrent_report",
+                             builder.getUnitAttr());
+    callback->first->setAttr("obelisk_sim.detached_controls",
+                             builder.getUnitAttr());
+    report.emplace(ReportCallback{callback->first, std::move(callback->second),
+                                  getSemanticLocation(outlined)});
+    return success();
+  };
+  if (failed(outlineReport(true, passReport)) ||
+      failed(outlineReport(false, failReport)))
+    return failure();
+  auto scheduleResult = [&](bool passed) {
+    std::optional<ReportCallback> &report = passed ? passReport : failReport;
+    if (!report)
+      return;
+    sim::SimSpawnOp::create(builder, report->location,
+                            report->function.getSymNameAttr(), report->captures,
+                            ArrayAttr{}, ArrayAttr{});
+  };
+
   Type stateType = builder.getI64Type();
   Value zero = arith::ConstantOp::create(builder, location, stateType,
                                          builder.getI64IntegerAttr(0));
@@ -278,9 +364,17 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   llvm::scope_exit restoreSampling([&] { sampleAssertionValues = false; });
 
   llvm::DenseMap<Operation *, Value> predicateCache;
-  auto conditionalResult = [&](Value, bool) -> LogicalResult {
-    // Restrict has no simulation-visible pass/fail report.  Keep endpoint
-    // calculations in the AOT monitor, but do not create callback CFG.
+  auto conditionalResult = [&](Value condition, bool passed) -> LogicalResult {
+    if (!observable)
+      return success();
+    Block *report = addBlock();
+    Block *continuation = addBlock();
+    cf::CondBranchOp::create(builder, location, condition, report, ValueRange{},
+                             continuation, ValueRange{});
+    setCurrent(report);
+    scheduleResult(passed);
+    emitBranch(continuation);
+    setCurrent(continuation);
     return success();
   };
   auto evaluateAge = [&](ArrayRef<Operation *> predicates) -> FailureOr<Value> {
@@ -357,7 +451,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         builder, location, *starts,
         arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                   builder.getBoolAttr(true)));
-    if (failed(conditionalResult(vacuous, true)))
+    // A property assertion succeeds vacuously when its antecedent is false,
+    // but a cover directive records only a nonvacuous match.
+    if (!cover && failed(conditionalResult(vacuous, true)))
       return failure();
     if (nonoverlapped) {
       Value firstMask = arith::ConstantOp::create(builder, location, stateType,

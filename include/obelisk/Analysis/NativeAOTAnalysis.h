@@ -32,6 +32,10 @@ public:
 
   bool isEligible() const { return eligible; }
   bool isFullyEligible() const { return fullyEligible; }
+  /// True when every non-AOT boundary is a compiler-generated detached report
+  /// callback. Explicit AOT may use the hybrid coordinator for these cold
+  /// callbacks while retaining the statically bound monitor actors.
+  bool isForcedHybridEligible() const { return forcedHybridEligible; }
   bool isAOTCostEffective() const { return aotCostEffective; }
   bool hasPeriodicClockCandidate() const { return periodicClockCandidate; }
   uint64_t getTotalGraphCost() const { return totalGraphCost; }
@@ -49,6 +53,7 @@ public:
 private:
   bool eligible = false;
   bool fullyEligible = false;
+  bool forcedHybridEligible = false;
   bool aotCostEffective = false;
   bool periodicClockCandidate = false;
   uint64_t totalGraphCost = 0;

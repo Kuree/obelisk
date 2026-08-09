@@ -189,7 +189,9 @@ private:
   lowerImmediateAssertion(semantic::SVImmediateAssertionStatementOp op);
   ::mlir::LogicalResult
   lowerConcurrentAssertion(semantic::SVConcurrentAssertionStatementOp op);
-  void emitDefaultAssertionFailure(::mlir::Location location);
+  void emitDefaultAssertionFailure(
+      ::mlir::Location location,
+      ::llvm::StringRef description = "immediate assertion");
   ::mlir::LogicalResult emitRuntimeFatal(::mlir::Location location,
                                          ::mlir::StringRef message);
   ::mlir::LogicalResult lowerConditional(semantic::SVConditionalStatementOp op);

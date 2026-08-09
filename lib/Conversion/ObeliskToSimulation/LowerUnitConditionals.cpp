@@ -16,15 +16,16 @@ using namespace mlir;
 
 namespace obelisk::simlowering {
 
-void UnitLowering::emitDefaultAssertionFailure(Location location) {
+void UnitLowering::emitDefaultAssertionFailure(Location location,
+                                               StringRef description) {
   std::string file = "<unknown>";
   unsigned line = 0;
   if (auto source = location->findInstanceOf<FileLineColLoc>()) {
     file = source.getFilename().str();
     line = source.getLine();
   }
-  std::string message = (Twine("ERROR: ") + file + ":" + Twine(line) +
-                         ": immediate assertion failed.")
+  std::string message = (Twine("ERROR: ") + file + ":" + Twine(line) + ": " +
+                         description + " failed.")
                             .str();
   for (size_t position = 0;
        (position = message.find('%', position)) != std::string::npos;

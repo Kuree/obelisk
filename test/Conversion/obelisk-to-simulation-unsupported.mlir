@@ -39,4 +39,4 @@ module {
   }
 }
 
-// CHECK: observable concurrent assert/assume/cover/expect directives require ordered Observed-result and Reactive-report dispatch
+// CHECK: concurrent assertion has no resolved clock

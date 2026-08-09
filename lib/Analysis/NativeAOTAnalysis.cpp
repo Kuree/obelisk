@@ -45,13 +45,16 @@ bool isManagedType(Type type) {
 NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
   NativeAOTAnalysis result;
   bool invalidPlan = false;
+  bool onlyDetachedReportBoundaries = true;
   llvm::SmallDenseSet<Operation *> dynamicActors;
   llvm::SmallDenseSet<Operation *> bytecodeActors;
   auto rejectPlan = [&](StringRef reason) {
     invalidPlan = true;
+    onlyDetachedReportBoundaries = false;
     result.reasons.emplace_back(reason);
   };
   auto requireBytecodeFragment = [&](Operation *operation, StringRef reason) {
+    onlyDetachedReportBoundaries = false;
     result.reasons.emplace_back(reason);
     auto function = operation->getParentOfType<sim::SimFuncOp>();
     if (!function || !operation->getBlock())
@@ -160,6 +163,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
           continue;
         result.reasons.emplace_back(
             "compute graph contains a bytecode-only fragment");
+        onlyDetachedReportBoundaries = false;
         auto &fragments = result.bytecodeFragments[function.getOperation()];
         if (!llvm::is_contained(fragments, block))
           fragments.push_back(block);
@@ -172,6 +176,8 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       if (!commit.getFrontierSites().empty())
         result.reasons.emplace_back(
             "NBA site requires DynamicFrontier storage");
+      if (!commit.getFrontierSites().empty())
+        onlyDetachedReportBoundaries = false;
       continue;
     }
     if (auto commit = dyn_cast<sim::ComputeEventCommitAttr>(attribute)) {
@@ -179,6 +185,8 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
         rejectPlan("event commit IDs do not match the node inventory");
       if (!commit.getSites().empty())
         result.reasons.emplace_back("deferred events require dynamic storage");
+      if (!commit.getSites().empty())
+        onlyDetachedReportBoundaries = false;
       continue;
     }
     rejectPlan("compute graph contains an unknown node kind");
@@ -233,14 +241,23 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
   module.walk([&](sim::SimSpawnOp spawn) {
     sim::SimFuncOp owner = spawn->getParentOfType<sim::SimFuncOp>();
     if (!owner || owner != root) {
-      requireBytecodeFragment(spawn, "dynamic spawn multiplicity");
-      if (sim::SimFuncOp target =
-              design.lookupSymbol<sim::SimFuncOp>(spawn.getCallee()))
+      sim::SimFuncOp target =
+          design.lookupSymbol<sim::SimFuncOp>(spawn.getCallee());
+      bool detachedReport =
+          target && target->hasAttr("obelisk_sim.concurrent_report") &&
+          target->hasAttr("obelisk_sim.detached_controls") &&
+          target.getHomeRegion() == sim::EventRegion::Reactive;
+      if (detachedReport)
+        result.reasons.emplace_back("dynamic spawn multiplicity");
+      else
+        requireBytecodeFragment(spawn, "dynamic spawn multiplicity");
+      if (target)
         dynamicActors.insert(target.getOperation());
       return;
     }
     if (++rootSpawnCounts[spawn.getCallee()] != 1) {
       result.reasons.emplace_back("duplicate statically spawned process");
+      onlyDetachedReportBoundaries = false;
       if (sim::SimFuncOp target =
               design.lookupSymbol<sim::SimFuncOp>(spawn.getCallee()))
         dynamicActors.insert(target.getOperation());
@@ -251,6 +268,10 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     if (function.getEntryKind() == sim::EntryKind::Task ||
         function.getEntryKind() == sim::EntryKind::Fork) {
       result.reasons.emplace_back("task, await, or join control is present");
+      onlyDetachedReportBoundaries &=
+          function->hasAttr("obelisk_sim.concurrent_report") &&
+          function->hasAttr("obelisk_sim.detached_controls") &&
+          function.getHomeRegion() == sim::EventRegion::Reactive;
       dynamicActors.insert(function.getOperation());
     }
     // Statically bound actors retain their semantic home region in the
@@ -330,8 +351,10 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       excludeBytecodeActor(operation);
     } else if (auto delay = dyn_cast<sim::SimSuspendDelayOp>(operation)) {
       auto timing = delay.getTimingAttr();
-      if (!timing || timing.getKind() != sim::ComputeTimingKind::Calendar)
+      if (!timing || timing.getKind() != sim::ComputeTimingKind::Calendar) {
         result.reasons.emplace_back("dynamic deadline");
+        onlyDetachedReportBoundaries = false;
+      }
     } else if (auto nba = dyn_cast<sim::SimNBAEnqueueOp>(operation)) {
       auto site = nba->getAttrOfType<sim::NBASiteAttr>("site");
       if (!site)
@@ -389,6 +412,8 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
   });
   result.eligible = !result.actorSlots.empty();
   result.fullyEligible = result.eligible && result.reasons.empty();
+  result.forcedHybridEligible =
+      result.eligible && !result.fullyEligible && onlyDetachedReportBoundaries;
   for (Attribute attribute : nodes) {
     auto fragment = dyn_cast<sim::ComputeFragmentAttr>(attribute);
     if (!fragment)
