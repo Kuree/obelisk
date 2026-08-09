@@ -64,15 +64,24 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
   }
 
   Block *controlMerge = nullptr;
-  if (!op->hasAttr("obelisk_sim.deferred_evaluator") &&
-      op->hasAttr("obelisk_sim.assertion_controlled")) {
-    auto assertionID = op->getAttrOfType<IntegerAttr>(
+  Value actionState;
+  bool deferredEvaluator = op->hasAttr("obelisk_sim.deferred_evaluator");
+  bool attemptControlled =
+      !deferredEvaluator && op->hasAttr("obelisk_sim.assertion_controlled");
+  bool actionControlled =
+      !deferredEvaluator &&
+      op->hasAttr("obelisk_sim.assertion_action_controlled");
+  IntegerAttr assertionID;
+  if (attemptControlled || actionControlled) {
+    assertionID = op->getAttrOfType<IntegerAttr>(
         "obelisk_sim.assertion_control_target_id");
     if (!assertionID || !assertionID.getValue().isStrictlyPositive()) {
       emitError(location) << "immediate assertion has no prepared control ID";
       return failure();
     }
-    Value context = function.getBody().front().getArgument(0);
+  }
+  Value context = function.getBody().front().getArgument(0);
+  if (attemptControlled) {
     Value enabled = sim::SimAssertionEnabledOp::create(
         builder, location, builder.getI1Type(), context, assertionID);
     Block *evaluate = addBlock();
@@ -81,6 +90,24 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
                              controlMerge, ValueRange{});
     setCurrent(evaluate);
   }
+  if (actionControlled)
+    actionState = sim::SimAssertionActionStateOp::create(
+        builder, location, builder.getI32Type(), context, assertionID);
+
+  auto actionEnabled = [&](bool passed) -> Value {
+    if (!actionState)
+      return {};
+    int32_t mask = passed ? 1 : 4;
+    Value selected = arith::AndIOp::create(
+        builder, location, actionState,
+        arith::ConstantOp::create(builder, location, builder.getI32Type(),
+                                  builder.getI32IntegerAttr(mask)));
+    Value zero = arith::ConstantOp::create(builder, location,
+                                           builder.getI32Type(),
+                                           builder.getI32IntegerAttr(0));
+    return arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                                selected, zero);
+  };
 
   if (op.getIsDeferred()) {
     auto nodeAttr = op->getAttrOfType<IntegerAttr>("node_id");
@@ -214,23 +241,35 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
         return failure();
 
       sim::SimFuncOp evaluator = callback->first;
+      Value reportActionEnabled = actionEnabled(passed);
       SmallVector<Type> inputTypes(evaluator.getFunctionType().getInputs());
+      size_t originalInputCount = inputTypes.size();
+      if (reportActionEnabled)
+        inputTypes.push_back(builder.getI1Type());
       inputTypes.push_back(builder.getI64Type());
       evaluator.setFunctionType(
           FunctionType::get(function.getContext(), inputTypes, TypeRange{}));
       Block &entry = evaluator.getBody().front();
+      BlockArgument capturedActionEnabled;
+      if (reportActionEnabled)
+        capturedActionEnabled =
+            entry.addArgument(builder.getI1Type(), location);
       BlockArgument reportTicket =
           entry.addArgument(builder.getI64Type(), location);
       SmallVector<Attribute> argumentAttrs;
       if (ArrayAttr attrs = evaluator.getArgAttrsAttr())
         llvm::append_range(argumentAttrs, attrs);
-      while (argumentAttrs.size() + 1 < inputTypes.size())
+      while (argumentAttrs.size() < originalInputCount)
         argumentAttrs.push_back(builder.getDictionaryAttr({}));
-      argumentAttrs.push_back(builder.getDictionaryAttr({builder.getNamedAttr(
+      DictionaryAttr formal = builder.getDictionaryAttr({builder.getNamedAttr(
           "obelisk_sim.capture_kind",
           sim::CaptureKindAttr::get(function.getContext(),
-                                    sim::CaptureKind::Formal))}));
+                                    sim::CaptureKind::Formal))});
+      while (argumentAttrs.size() < inputTypes.size())
+        argumentAttrs.push_back(formal);
       evaluator.setArgAttrsAttr(builder.getArrayAttr(argumentAttrs));
+      if (reportActionEnabled)
+        callback->second.push_back(reportActionEnabled);
       callback->second.push_back(ticket);
 
       Block *body = entry.splitBlock(entry.begin());
@@ -239,6 +278,9 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
       OpBuilder entryBuilder = OpBuilder::atBlockEnd(&entry);
       Value current = sim::SimDeferredMatureOp::create(
           entryBuilder, location, entryBuilder.getI1Type(), reportTicket);
+      if (capturedActionEnabled)
+        current = arith::AndIOp::create(entryBuilder, location, current,
+                                       capturedActionEnabled);
       cf::CondBranchOp::create(entryBuilder, location, current, body, stale);
       OpBuilder staleBuilder = OpBuilder::atBlockEnd(stale);
       sim::SimReturnOp::create(staleBuilder, location, ValueRange{});
@@ -365,19 +407,42 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
   bool cover =
       op.getAssertionKind() == semantic::SVAssertionKind::CoverProperty ||
       op.getAssertionKind() == semantic::SVAssertionKind::CoverSequence;
-  if (op.getHasPassAction() && failed(lowerAction(children[nextChild++], 0)))
-    return failure();
+  if (op.getHasPassAction()) {
+    Operation *action = children[nextChild++];
+    if (Value enabled = actionEnabled(true)) {
+      Block *execute = addBlock();
+      cf::CondBranchOp::create(builder, location, enabled, execute,
+                               ValueRange{}, mergeBlock, ValueRange{});
+      setCurrent(execute);
+    }
+    if (failed(lowerAction(action, 0)))
+      return failure();
+  }
   emitBranch(mergeBlock);
 
   setCurrent(failBlock);
   if (!cover) {
     if (op.getHasFailAction()) {
-      if (failed(lowerAction(children[nextChild++], 1)))
+      Operation *action = children[nextChild++];
+      if (Value enabled = actionEnabled(false)) {
+        Block *execute = addBlock();
+        cf::CondBranchOp::create(builder, location, enabled, execute,
+                                 ValueRange{}, mergeBlock, ValueRange{});
+        setCurrent(execute);
+      }
+      if (failed(lowerAction(action, 1)))
         return failure();
-    } else if ((op.getAssertionKind() == semantic::SVAssertionKind::Assert ||
-                op.getAssertionKind() == semantic::SVAssertionKind::Assume) &&
-               failed(lowerDefaultFailure()))
-      return failure();
+    } else if (op.getAssertionKind() == semantic::SVAssertionKind::Assert ||
+               op.getAssertionKind() == semantic::SVAssertionKind::Assume) {
+      if (Value enabled = actionEnabled(false)) {
+        Block *execute = addBlock();
+        cf::CondBranchOp::create(builder, location, enabled, execute,
+                                 ValueRange{}, mergeBlock, ValueRange{});
+        setCurrent(execute);
+      }
+      if (failed(lowerDefaultFailure()))
+        return failure();
+    }
   }
   emitBranch(mergeBlock);
   setCurrent(mergeBlock);

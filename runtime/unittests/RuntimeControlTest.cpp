@@ -194,8 +194,63 @@ TEST(RuntimeDeferredAssertion, AssertionControlOffKillAndOn) {
   EXPECT_EQ(obelisk_rt_v1_assertion_enabled(context, 801), 0u);
   EXPECT_EQ(obelisk_rt_v1_deferred_mature(context, killed), 0u);
   EXPECT_EQ(obelisk_rt_v1_deferred_mature(context, unrelated), 1u);
-  EXPECT_EQ(obelisk_rt_v1_assertion_control(context, 2, 801),
+  EXPECT_EQ(obelisk_rt_v1_assertion_control(context, 12, 801),
             OBELISK_RT_INVALID_ARGUMENT);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(RuntimeDeferredAssertion, AssertionActionControlsAndLocking) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+
+  EXPECT_EQ(obelisk_rt_v1_assertion_action_state(context, 901), 7u);
+  EXPECT_EQ(obelisk_rt_v1_assertion_control(context, 7, 901), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_assertion_action_state(context, 901), 4u);
+  EXPECT_EQ(obelisk_rt_v1_assertion_control(context, 10, 901), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_assertion_action_state(context, 901), 5u);
+  EXPECT_EQ(obelisk_rt_v1_assertion_control(context, 11, 901), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_assertion_action_state(context, 901), 5u);
+  EXPECT_EQ(obelisk_rt_v1_assertion_control(context, 6, 901), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_assertion_action_state(context, 901), 7u);
+  EXPECT_EQ(obelisk_rt_v1_assertion_control(context, 9, 901), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_assertion_action_state(context, 901), 3u);
+  EXPECT_EQ(obelisk_rt_v1_assertion_control(context, 8, 901), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_assertion_action_state(context, 901), 7u);
+
+  EXPECT_EQ(obelisk_rt_v1_assertion_control(context, 1, 901), OBELISK_RT_OK);
+  context->activeLogicalProcessToken = 91;
+  uint64_t lockedTicket =
+      obelisk_rt_v1_deferred_enqueue_for_assertion(context, 111, 901);
+  ASSERT_NE(lockedTicket, 0u);
+  for (uint32_t action = 3; action <= 11; ++action) {
+    EXPECT_EQ(obelisk_rt_v1_assertion_control(context, action, 901),
+              OBELISK_RT_OK);
+    EXPECT_EQ(obelisk_rt_v1_assertion_enabled(context, 901), 1u);
+    EXPECT_EQ(obelisk_rt_v1_assertion_action_state(context, 901), 7u);
+  }
+  EXPECT_EQ(obelisk_rt_v1_deferred_mature(context, lockedTicket), 1u);
+  EXPECT_EQ(obelisk_rt_v1_deferred_mature(context, lockedTicket), 0u);
+  EXPECT_EQ(obelisk_rt_v1_assertion_control(context, 2, 901), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_assertion_control(context, 4, 901), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_assertion_enabled(context, 901), 0u);
+
+  EXPECT_EQ(obelisk_rt_v1_assertion_control(context, 4, 902), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_assertion_control(context, 7, 902), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_assertion_control(context, 9, 902), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_assertion_control(context, 1, 902), OBELISK_RT_OK);
+  for (uint32_t action = 3; action <= 11; ++action) {
+    EXPECT_EQ(obelisk_rt_v1_assertion_control(context, action, 902),
+              OBELISK_RT_OK);
+    EXPECT_EQ(obelisk_rt_v1_assertion_enabled(context, 902), 0u);
+    EXPECT_EQ(obelisk_rt_v1_assertion_action_state(context, 902), 0u);
+  }
+  EXPECT_EQ(obelisk_rt_v1_assertion_control(context, 2, 902), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_assertion_control(context, 3, 902), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_assertion_control(context, 6, 902), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_assertion_control(context, 8, 902), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_assertion_enabled(context, 902), 1u);
+  EXPECT_EQ(obelisk_rt_v1_assertion_action_state(context, 902), 7u);
+
   obelisk_rt_v1_context_destroy(context);
 }
 

@@ -518,11 +518,14 @@ bool validIntrinsic(const Image &image, const Function &function,
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && bits(input(0), 64) && bits(output(0), 1);
   case OBELISK_RT_INTRINSIC_V1_ASSERTION_CONTROL:
-    return signature.flags >= 3 && signature.flags <= 5 &&
+    return signature.flags >= 1 && signature.flags <= 11 &&
            site.inputCount == 1 && site.outputCount == 0 && bits(input(0), 64);
   case OBELISK_RT_INTRINSIC_V1_ASSERTION_ENABLED:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && bits(input(0), 64) && bits(output(0), 1);
+  case OBELISK_RT_INTRINSIC_V1_ASSERTION_ACTION_STATE:
+    return signature.flags == 0 && site.inputCount == 1 &&
+           site.outputCount == 1 && bits(input(0), 64) && bits(output(0), 32);
   case OBELISK_RT_INTRINSIC_V1_MONITOR_REGISTER:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 0 && handle(input(0));

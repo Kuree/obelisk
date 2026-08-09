@@ -756,6 +756,8 @@ ABI_FUNCTION(obelisk_rt_v1_assertion_control,
              obelisk_rt_status (*)(obelisk_rt_context *, uint32_t, uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_assertion_enabled,
              uint32_t (*)(obelisk_rt_context *, uint64_t));
+ABI_FUNCTION(obelisk_rt_v1_assertion_action_state,
+             uint32_t (*)(obelisk_rt_context *, uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_context_create_for_design,
              obelisk_rt_status (*)(const obelisk_rt_execution_descriptor_v1 *,
                                    obelisk_rt_context **));

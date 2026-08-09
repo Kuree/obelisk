@@ -529,18 +529,69 @@ bool obelisk_rt_cancel_deferred_immediate_assertion_unlocked(
   return canceled;
 }
 
+namespace {
+constexpr uint8_t kAssertionDisabled = UINT8_C(1) << 0;
+constexpr uint8_t kAssertionLocked = UINT8_C(1) << 1;
+constexpr uint8_t kAssertionNonvacuousPassDisabled = UINT8_C(1) << 2;
+constexpr uint8_t kAssertionVacuousPassDisabled = UINT8_C(1) << 3;
+constexpr uint8_t kAssertionFailDisabled = UINT8_C(1) << 4;
+} // namespace
+
 extern "C" obelisk_rt_status
 obelisk_rt_v1_assertion_control(obelisk_rt_context *context, uint32_t action,
                                 uint64_t assertionID) {
-  if (!context || assertionID == 0 || action < 3 || action > 5)
+  if (!context || assertionID == 0 || action < 1 || action > 11)
     return OBELISK_RT_INVALID_ARGUMENT;
   try {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
-    if (action == 3) {
-      context->disabledAssertions.erase(assertionID);
+    auto found = context->assertionControlStates.find(assertionID);
+    uint8_t state = found == context->assertionControlStates.end()
+                        ? 0
+                        : found->second;
+    if (action == 2) {
+      state &= ~kAssertionLocked;
+    } else if ((state & kAssertionLocked) != 0) {
       return OBELISK_RT_OK;
+    } else {
+      switch (action) {
+      case 1:
+        state |= kAssertionLocked;
+        break;
+      case 3:
+        state &= ~kAssertionDisabled;
+        break;
+      case 4:
+      case 5:
+        state |= kAssertionDisabled;
+        break;
+      case 6:
+        state &= ~(kAssertionNonvacuousPassDisabled |
+                   kAssertionVacuousPassDisabled);
+        break;
+      case 7:
+        state |= kAssertionNonvacuousPassDisabled |
+                 kAssertionVacuousPassDisabled;
+        break;
+      case 8:
+        state &= ~kAssertionFailDisabled;
+        break;
+      case 9:
+        state |= kAssertionFailDisabled;
+        break;
+      case 10:
+        state &= ~kAssertionNonvacuousPassDisabled;
+        break;
+      case 11:
+        state |= kAssertionVacuousPassDisabled;
+        break;
+      default:
+        break;
+      }
     }
-    context->disabledAssertions.insert(assertionID);
+    if (state == 0)
+      context->assertionControlStates.erase(assertionID);
+    else
+      context->assertionControlStates[assertionID] = state;
     if (action == 5)
       obelisk_rt_cancel_deferred_immediate_assertion_unlocked(context,
                                                               assertionID);
@@ -557,10 +608,36 @@ extern "C" uint32_t obelisk_rt_v1_assertion_enabled(obelisk_rt_context *context,
     return 0;
   try {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
-    return context->disabledAssertions.find(assertionID) ==
-                   context->disabledAssertions.end()
+    auto found = context->assertionControlStates.find(assertionID);
+    return found == context->assertionControlStates.end() ||
+                   (found->second & kAssertionDisabled) == 0
                ? 1u
                : 0u;
+  } catch (...) {
+    context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
+    return 0;
+  }
+}
+
+extern "C" uint32_t
+obelisk_rt_v1_assertion_action_state(obelisk_rt_context *context,
+                                     uint64_t assertionID) {
+  if (!context || assertionID == 0)
+    return 0;
+  try {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    auto found = context->assertionControlStates.find(assertionID);
+    uint8_t state = found == context->assertionControlStates.end()
+                        ? 0
+                        : found->second;
+    uint32_t enabled = 7;
+    if ((state & kAssertionNonvacuousPassDisabled) != 0)
+      enabled &= ~UINT32_C(1);
+    if ((state & kAssertionVacuousPassDisabled) != 0)
+      enabled &= ~UINT32_C(2);
+    if ((state & kAssertionFailDisabled) != 0)
+      enabled &= ~UINT32_C(4);
+    return enabled;
   } catch (...) {
     context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
     return 0;

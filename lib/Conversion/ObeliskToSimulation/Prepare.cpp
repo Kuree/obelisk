@@ -30,6 +30,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
+#include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/FormatVariadic.h"
 
@@ -392,16 +393,26 @@ void ObeliskSimPreparePass::runOnOperation() {
 
   semanticRoot->walk([&](semantic::SVCallExpressionOp call) {
     StringRef name = call.getCalleeName();
-    bool shorthand =
+    bool attemptShorthand =
         name == "$asserton" || name == "$assertoff" || name == "$assertkill";
+    uint32_t shorthandAction =
+        llvm::StringSwitch<uint32_t>(name)
+            .Case("$asserton", 3)
+            .Case("$assertoff", 4)
+            .Case("$assertkill", 5)
+            .Case("$assertpasson", 6)
+            .Case("$assertpassoff", 7)
+            .Case("$assertfailon", 8)
+            .Case("$assertfailoff", 9)
+            .Case("$assertnonvacuouson", 10)
+            .Case("$assertvacuousoff", 11)
+            .Default(0);
+    bool shorthand = shorthandAction != 0;
     if (!shorthand && name != "$assertcontrol")
       return;
     SmallVector<Operation *> arguments = getChildren(call);
-    uint32_t action = name == "$asserton"     ? 3
-                      : name == "$assertoff"  ? 4
-                      : name == "$assertkill" ? 5
-                                              : 0;
-    uint64_t assertionTypes = 15;
+    uint32_t action = shorthandAction;
+    uint64_t assertionTypes = attemptShorthand ? 15 : 31;
     uint64_t directiveTypes = 7;
     uint64_t levels = 0;
     size_t firstSelector = 0;
@@ -427,15 +438,16 @@ void ObeliskSimPreparePass::runOnOperation() {
           literalControlValue(arguments[0], "control type");
       if (!value)
         return;
-      if (*value < 3 || *value > 5) {
+      if (*value < 1 || *value > 11) {
         emitError(getSemanticLocation(arguments[0]))
-            << "$assertcontrol currently supports only On (3), Off (4), "
-               "and Kill (5)";
+            << "$assertcontrol control type must be in the range 1 through "
+               "11";
         invalid = true;
         return;
       }
       action = static_cast<uint32_t>(*value);
-      if (arguments.size() >= 2) {
+      if (arguments.size() >= 2 &&
+          !isa<semantic::SVEmptyArgumentExpressionOp>(arguments[1])) {
         value = literalControlValue(arguments[1], "assertion-type mask");
         if (!value)
           return;
@@ -443,19 +455,24 @@ void ObeliskSimPreparePass::runOnOperation() {
       } else {
         assertionTypes = 31;
       }
-      if (arguments.size() >= 3) {
+      if (arguments.size() >= 3 &&
+          !isa<semantic::SVEmptyArgumentExpressionOp>(arguments[2])) {
         value = literalControlValue(arguments[2], "directive-type mask");
         if (!value)
           return;
         directiveTypes = *value;
       }
       if (arguments.size() >= 4) {
-        value = literalControlValue(arguments[3], "levels");
-        if (!value)
-          return;
-        levels = *value;
+        bool explicitLevels =
+            !isa<semantic::SVEmptyArgumentExpressionOp>(arguments[3]);
+        if (explicitLevels) {
+          value = literalControlValue(arguments[3], "levels");
+          if (!value)
+            return;
+          levels = *value;
+        }
         firstSelector = 4;
-        selectCurrentScope = arguments.size() == 4;
+        selectCurrentScope = explicitLevels && arguments.size() == 4;
       } else {
         firstSelector = arguments.size();
       }
@@ -468,8 +485,11 @@ void ObeliskSimPreparePass::runOnOperation() {
       invalid = true;
       return;
     }
-    // On, Off, and Kill do not affect expect statements.
-    assertionTypes &= ~UINT64_C(16);
+    // On, Off, and Kill do not affect expect statements. The remaining
+    // controls do, so selecting an expect statement is rejected below until
+    // executable expect support lands.
+    if (action >= 3 && action <= 5)
+      assertionTypes &= ~UINT64_C(16);
 
     SmallVector<StringRef> selectors;
     for (Operation *argument : ArrayRef(arguments).drop_front(firstSelector)) {
@@ -558,8 +578,12 @@ void ObeliskSimPreparePass::runOnOperation() {
       target->setAttr(
           "obelisk_sim.assertion_control_target_id",
           IntegerAttr::get(IntegerType::get(context, 64), id));
-      target->setAttr("obelisk_sim.assertion_controlled",
-                      UnitAttr::get(context));
+      if (action >= 3 && action <= 5)
+        target->setAttr("obelisk_sim.assertion_controlled",
+                        UnitAttr::get(context));
+      if (action >= 6 && action <= 11)
+        target->setAttr("obelisk_sim.assertion_action_controlled",
+                        UnitAttr::get(context));
     }
   });
 

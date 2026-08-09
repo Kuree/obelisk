@@ -4238,13 +4238,18 @@ LogicalResult SimDeferredMatureOp::verify() {
 }
 
 LogicalResult SimAssertionControlOp::verify() {
-  if (getAction() < 3 || getAction() > 5)
-    return emitOpError("action must be On (3), Off (4), or Kill (5)");
+  if (getAction() < 1 || getAction() > 11)
+    return emitOpError("action must be in the range 1 through 11");
   return verifyPositive(*this, getAssertionIdAttr(),
                         "assertion control target ID");
 }
 
 LogicalResult SimAssertionEnabledOp::verify() {
+  return verifyPositive(*this, getAssertionIdAttr(),
+                        "assertion control target ID");
+}
+
+LogicalResult SimAssertionActionStateOp::verify() {
   return verifyPositive(*this, getAssertionIdAttr(),
                         "assertion control target ID");
 }

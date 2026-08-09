@@ -739,6 +739,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_SAMPLED_HISTORY = UINT32_C(0x0001021e),
   OBELISK_RT_INTRINSIC_V1_ASSERTION_CONTROL = UINT32_C(0x0001021f),
   OBELISK_RT_INTRINSIC_V1_ASSERTION_ENABLED = UINT32_C(0x00010220),
+  OBELISK_RT_INTRINSIC_V1_ASSERTION_ACTION_STATE = UINT32_C(0x00010221),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC = UINT32_C(0x00010400),
@@ -2330,15 +2331,20 @@ uint64_t obelisk_rt_v1_deferred_enqueue(obelisk_rt_context *context,
 // with the same assertion identity without flushing unrelated reports.
 uint64_t obelisk_rt_v1_deferred_enqueue_for_assertion(
     obelisk_rt_context *context, uint64_t site_id, uint64_t assertion_id);
-// Apply IEEE 1800 assertion-control On (3), Off (4), or Kill (5) to one
+// Apply one IEEE 1800 assertion-control action (1 through 11) to one
 // compiler-resolved assertion identity. Kill also cancels its queued deferred
-// reports; Off leaves already queued reports intact.
+// reports; Off leaves already queued reports intact. A locked identity ignores
+// every control action except Unlock (2).
 obelisk_rt_status obelisk_rt_v1_assertion_control(obelisk_rt_context *context,
                                                  uint32_t action,
                                                  uint64_t assertion_id);
 // Return one when a new attempt may start for the assertion identity.
 uint32_t obelisk_rt_v1_assertion_enabled(obelisk_rt_context *context,
                                         uint64_t assertion_id);
+// Snapshot pass/fail action enablement for a new attempt. Bit 0 is
+// nonvacuous pass, bit 1 is vacuous pass, and bit 2 is fail.
+uint32_t obelisk_rt_v1_assertion_action_state(obelisk_rt_context *context,
+                                             uint64_t assertion_id);
 // Consume a deferred report ticket and return one iff it is still the latest
 // report for its originating process and assertion site.
 uint32_t obelisk_rt_v1_deferred_mature(obelisk_rt_context *context,

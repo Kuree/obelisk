@@ -273,6 +273,30 @@ public:
   }
 };
 
+class AssertionActionStateConversion final
+    : public OpConversionPattern<sim::SimAssertionActionStateOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimAssertionActionStateOp operation, OneToNOpAdaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location location = operation.getLoc();
+    Value context = loadCurrentRuntimeContext(rewriter, location);
+    Value state =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_assertion_action_state"),
+            ValueRange{context,
+                       llvmConstant(rewriter, location, rewriter.getI64Type(),
+                                    operation.getAssertionId())})
+            .getResult();
+    rewriter.replaceOp(operation, state);
+    return success();
+  }
+};
+
 class MonitorRegisterConversion final
     : public OpConversionPattern<sim::SimMonitorRegisterOp> {
 public:
@@ -360,8 +384,8 @@ void populateControlToLLVMConversionPatterns(RewritePatternSet &patterns,
   patterns.add<OnceConversion<sim::SimDeferredOnceOp>>(
       converter, context, "obelisk_rt_v1_deferred_once");
   patterns.add<DeferredEnqueueConversion, DeferredMatureConversion,
-               AssertionControlConversion, AssertionEnabledConversion>(
-      converter, context);
+               AssertionControlConversion, AssertionEnabledConversion,
+               AssertionActionStateConversion>(converter, context);
 }
 
 } // namespace obelisk::detail

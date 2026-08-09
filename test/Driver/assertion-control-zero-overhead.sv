@@ -11,5 +11,7 @@ module assertion_control_zero_overhead;
 endmodule
 
 // CHECK-NOT: obelisk_sim.assert.enabled
+// CHECK-NOT: obelisk_sim.assert.action_state
 // CHECK: obelisk_sim.assert.deferred_enqueue
 // CHECK-NOT: obelisk_sim.assert.enabled
+// CHECK-NOT: obelisk_sim.assert.action_state

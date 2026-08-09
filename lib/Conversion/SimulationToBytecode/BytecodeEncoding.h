@@ -88,6 +88,8 @@ constexpr uint32_t kIntrinsicAssertionControl =
     OBELISK_RT_INTRINSIC_V1_ASSERTION_CONTROL;
 constexpr uint32_t kIntrinsicAssertionEnabled =
     OBELISK_RT_INTRINSIC_V1_ASSERTION_ENABLED;
+constexpr uint32_t kIntrinsicAssertionActionState =
+    OBELISK_RT_INTRINSIC_V1_ASSERTION_ACTION_STATE;
 constexpr uint32_t kIntrinsicMonitorRegister =
     OBELISK_RT_INTRINSIC_V1_MONITOR_REGISTER;
 constexpr uint32_t kIntrinsicMonitorControl =

@@ -844,7 +844,9 @@ struct obelisk_rt_context {
       latestDeferredImmediateReports;
   std::unordered_map<uint64_t, std::unordered_set<uint64_t>>
       deferredImmediateAssertionReports;
-  std::unordered_set<uint64_t> disabledAssertions;
+  // Per-identity nondefault IEEE assertion-control bits. See Runtime.cpp for
+  // the compact bit layout; absent entries have the all-enabled defaults.
+  std::unordered_map<uint64_t, uint8_t> assertionControlStates;
   std::unordered_map<uint32_t, NativeStaticState> nativeStaticStates;
   // Lazily sorted interval index for reflection/VPI range lookups.
   mutable std::vector<NativeStaticStateRange> nativeStaticStateRanges;

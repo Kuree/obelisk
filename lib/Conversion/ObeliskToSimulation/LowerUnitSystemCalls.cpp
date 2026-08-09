@@ -47,6 +47,9 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
   };
 
   if (name == "$asserton" || name == "$assertoff" || name == "$assertkill" ||
+      name == "$assertpasson" || name == "$assertpassoff" ||
+      name == "$assertfailon" || name == "$assertfailoff" ||
+      name == "$assertnonvacuouson" || name == "$assertvacuousoff" ||
       name == "$assertcontrol") {
     auto action =
         op->getAttrOfType<IntegerAttr>("obelisk_sim.assertion_control_action");

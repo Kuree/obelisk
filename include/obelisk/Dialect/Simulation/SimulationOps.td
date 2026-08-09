@@ -1636,11 +1636,12 @@ def SimAssertionControlOp : SimOp<"assert.control", [
     MemoryEffects<[MemWrite<SimSchedulerResource>,
                    MemWrite<SimProcessResource>]>
   ]> {
-  let summary = "change the enabled state of one assertion identity";
+  let summary = "change the control state of one assertion identity";
   let description = [{
-    Apply IEEE assertion control On (3), Off (4), or Kill (5) to one
-    compiler-resolved assertion identity. Off preserves existing attempts and
-    deferred reports. Kill additionally cancels pending deferred reports.
+    Apply one IEEE assertion control action to a compiler-resolved assertion
+    identity. Off preserves existing attempts and deferred reports. Kill
+    additionally cancels pending deferred reports. Action controls affect only
+    attempts that start after the control operation.
   }];
   let arguments = (ins SimContextType:$context, I32Attr:$action,
                        I64Attr:$assertion_id);
@@ -1654,6 +1655,22 @@ def SimAssertionEnabledOp : SimOp<"assert.enabled", [
   let summary = "test whether one assertion may start a new attempt";
   let arguments = (ins SimContextType:$context, I64Attr:$assertion_id);
   let results = (outs I1:$enabled);
+  let assemblyFormat = "$context `assertion` $assertion_id attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimAssertionActionStateOp : SimOp<"assert.action_state", [
+    MemoryEffects<[MemRead<SimSchedulerResource>]>
+  ]> {
+  let summary = "snapshot assertion pass/fail action enablement";
+  let description = [{
+    Return the action-enable mask at the start of one assertion attempt. Bit 0
+    enables nonvacuous pass actions, bit 1 enables vacuous pass actions, and
+    bit 2 enables fail actions. Deferred assertions capture this value so a
+    later assertion-control call cannot change an already executing attempt.
+  }];
+  let arguments = (ins SimContextType:$context, I64Attr:$assertion_id);
+  let results = (outs I32:$state);
   let assemblyFormat = "$context `assertion` $assertion_id attr-dict";
   let hasVerifier = 1;
 }
