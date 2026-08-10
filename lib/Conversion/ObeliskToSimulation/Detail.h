@@ -225,6 +225,11 @@ bool isSemanticOp(::mlir::Operation *op);
 /// True for the semantic symbols that become one `obelisk_sim.func`.
 bool isCodeUnit(::mlir::Operation *op);
 
+/// True for an elaborated design member nested in Slang's synthetic instance
+/// used only to describe a parameterized virtual-interface type. Declarations
+/// nested in an actual runtime type (for example a class) remain executable.
+bool isCompileTimeOnlyInstanceMember(::mlir::Operation *op);
+
 /// Source location of a semantic node, falling back to its MLIR location.
 ::mlir::Location getSemanticLocation(::mlir::Operation *op);
 

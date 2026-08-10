@@ -303,7 +303,8 @@ class SlangInstanceASTNodeOp<string mnemonic>
     : SlangSymbolTableASTNodeOp<mnemonic, (ins
         OptionalAttr<SymbolRefAttr>:$referenced_symbol,
         OptionalAttr<StrAttr>:$referenced_path,
-        OptionalAttr<BoolAttr>:$is_uninstantiated
+        OptionalAttr<BoolAttr>:$is_uninstantiated,
+        OptionalAttr<BoolAttr>:$is_virtual_interface_type_instance
       )>;
 
 def PortConnectionOp : Op<SlangDialect, "port.connection", [

@@ -52,6 +52,18 @@ bool isCodeUnit(Operation *op) {
       op);
 }
 
+bool isCompileTimeOnlyInstanceMember(Operation *op) {
+  for (Operation *cursor = op; cursor; cursor = cursor->getParentOp()) {
+    if (isa<semantic::SVClassTypeOp, semantic::SVCovergroupTypeOp>(cursor))
+      return false;
+    auto instance = dyn_cast<semantic::SVInstanceSymbolOp>(cursor);
+    if (instance &&
+        instance.getIsVirtualInterfaceTypeInstance().value_or(false))
+      return true;
+  }
+  return false;
+}
+
 Location getSemanticLocation(Operation *op) {
   if (auto typeAttr = op->getAttrOfType<TypeAttr>("source_range")) {
     if (auto range = dyn_cast<semantic::SourceRangeType>(typeAttr.getValue()))

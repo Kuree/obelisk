@@ -177,6 +177,8 @@ analyzePortAliases(semantic::SVRootSymbolOp semanticRoot) {
   PreparedPortAliases result;
   bool invalid = false;
   semanticRoot->walk([&](semantic::SVPortConnectionOp connection) {
+    if (isCompileTimeOnlyInstanceMember(connection))
+      return;
     result.connections.push_back(connection);
     if (connection.getDirection() != semantic::SVArgumentDirection::Ref)
       return;
@@ -203,6 +205,8 @@ analyzePortAliases(semantic::SVRootSymbolOp semanticRoot) {
     result.refViews[internal] = *view;
   });
   semanticRoot->walk([&](semantic::SVModportPortSymbolOp port) {
+    if (isCompileTimeOnlyInstanceMember(port))
+      return;
     Operation *modport = port->getParentOp();
     Operation *interfaceBody = modport ? modport->getParentOp() : nullptr;
     StringRef path = getHierarchyName(port);
@@ -264,6 +268,8 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
   bool invalid = false;
   SmallVector<Operation *> designObjects;
   semanticRoot->walk<WalkOrder::PreOrder>([&](Operation *op) {
+    if (isCompileTimeOnlyInstanceMember(op))
+      return;
     auto variable = dyn_cast<semantic::SVVariableSymbolOp>(op);
     auto classProperty = dyn_cast<semantic::SVClassPropertySymbolOp>(op);
     bool staticVariable = variable && variable.getLifetime() ==

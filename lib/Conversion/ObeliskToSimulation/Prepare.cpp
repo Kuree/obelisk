@@ -203,6 +203,8 @@ void ObeliskSimPreparePass::runOnOperation() {
 
   SmallVector<Operation *> sourceUnits;
   semanticRoot->walk<WalkOrder::PreOrder>([&](Operation *op) {
+    if (isCompileTimeOnlyInstanceMember(op))
+      return;
     if (auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(op);
         subroutine && subroutine.getIsBuiltin().value_or(false))
       return;
@@ -285,6 +287,8 @@ void ObeliskSimPreparePass::runOnOperation() {
   SmallVector<AssertionInventoryEntry> assertionInventory;
   llvm::StringMap<uint32_t> instanceScopeDepths;
   semanticRoot->walk([&](semantic::SVInstanceBodySymbolOp body) {
+    if (isCompileTimeOnlyInstanceMember(body))
+      return;
     auto path = body->getAttrOfType<StringAttr>("hierarchical_name");
     if (!path)
       return;
@@ -658,6 +662,8 @@ void ObeliskSimPreparePass::runOnOperation() {
   }
   semanticRoot->walk<WalkOrder::PreOrder>(
       [&](semantic::SVInstanceBodySymbolOp body) {
+        if (isCompileTimeOnlyInstanceMember(body))
+          return;
         accumulateTimeScale(body, "simulation scope");
       });
   if (designPrecisionFs == std::numeric_limits<uint64_t>::max())

@@ -382,6 +382,10 @@ FailureOr<PreparedScopeDeclarations> materializeScopeDeclarations(
         while (parent && !result.ids.count(parent))
           parent = parent->getParentOp();
         uint64_t parentId = parent ? result.ids.lookup(parent) : 0;
+        if (isCompileTimeOnlyInstanceMember(body)) {
+          result.ids[body] = parentId;
+          return;
+        }
         uint64_t id = nextScopeId++;
         result.ids[body] = id;
         sim::SimScopeDeclOp declaration = sim::SimScopeDeclOp::create(

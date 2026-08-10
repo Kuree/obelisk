@@ -1401,6 +1401,16 @@ private:
       SET_OP_ATTR(IsUninstantiated,
                   builder.getBoolAttr(node.body.flags.has(
                       slang::ast::InstanceFlags::Uninstantiated)));
+      // Slang materializes parameterized virtual-interface types as synthetic
+      // InstanceSymbols so their member types can be resolved. Unlike an
+      // elaborated design instance, such a symbol is parented for lookup but
+      // is deliberately not inserted into its parent's member list.
+      bool isScopeMember = false;
+      if (const slang::ast::Scope *parent = node.getParentScope())
+        for (const slang::ast::Symbol &member : parent->members())
+          isScopeMember |= &member == &node;
+      if (!isScopeMember)
+        SET_OP_ATTR(IsVirtualInterfaceTypeInstance, builder.getBoolAttr(true));
     } else if constexpr (std::same_as<T, slang::ast::ContinuousAssignSymbol>) {
       auto [strength0, strength1] = node.getDriveStrength();
       if (strength0 || strength1) {
