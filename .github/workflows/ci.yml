@@ -105,35 +105,22 @@ jobs:
         run: cmake --build build --target check-obelisk
 
   # ---------------------------------------------------------------------------
-  # Step 2: only after the suite is green, build the wasm toolchain and publish
-  # the page. Deploys through the Pages service, so nothing is ever committed
-  # to a branch and git history is untouched.
+  # Step 2: after the native suite is green, build and smoke-test the wasm
+  # toolchain on every ref. Main additionally uploads the tested page for the
+  # deploy job below, so pull requests cannot merge wasm-only regressions.
   #
-  # NOTE: this job depends on wasm support that is still landing --
-  # cmake/TargetNativeSupport.cmake needs a wasm branch that builds the target
-  # runtime with em++/emar instead of clang++ against the Debian sysroot. Until
-  # that exists the "Build obelisk for wasm64" step fails by design rather than
-  # publishing a broken page.
   # ---------------------------------------------------------------------------
-  wasm-pages:
-    name: Build wasm and deploy Pages
+  wasm-build-and-test:
+    name: Build and test wasm
     needs: build-and-test
-    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 300
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
     # Runs inside the prebuilt toolchain image, which carries emsdk and the
     # wasm64 LLVM SDK. Building that SDK here instead would add ~3.7 core-hours
     # to every run for an artifact that only changes when the LLVM pin does.
     # Rebuild and push with docker/Dockerfile.llvm-wasm64; see docker/README.md.
     container:
-      image: ghcr.io/kuree/obelisk-llvm-wasm64:22.1.6-1
+      image: ghcr.io/kuree/obelisk-llvm-wasm64:22.1.6-2@sha256:b46fd28bfdd9faa8b7262a1f047759f4bf9b68a00cf8aed8e6b42eabb27e0aba
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
     steps:
@@ -181,19 +168,53 @@ jobs:
 
       - name: Assemble site
         run: |
-          mkdir -p site
+          mkdir -p site/toolchain
           cp -r web/* site/
           cp build-wasm/tools/driver/obelisk.wasm site/
           cp build-wasm/tools/driver/obelisk.js   site/
-          # The runtime archive the in-browser compiler links designs against.
-          cp build-wasm/target-runtime/libobelisk_rt.a site/ 2>/dev/null || true
+          cp build-wasm/target-runtime/libobelisk_rt_lto.a site/toolchain/
+          # Materialize the exact wasm64 exception-runtime variants selected
+          # by Emscripten, then publish them under the stable names loaded by
+          # web/toolchain.js.
+          em++ /emsdk/upstream/emscripten/test/hello_world.cpp -O3 \
+            -sMEMORY64=1 -fwasm-exceptions -o /tmp/hello.js
+          SYSROOT_LIB=/emsdk/upstream/emscripten/cache/sysroot/lib/wasm64-emscripten
+          cp "$SYSROOT_LIB/libstubs.a" site/toolchain/libstubs.a
+          cp "$SYSROOT_LIB/libnoexit.a" site/toolchain/libnoexit.a
+          cp "$SYSROOT_LIB/libc.a" site/toolchain/libc.a
+          cp "$SYSROOT_LIB/libdlmalloc.a" site/toolchain/libdlmalloc.a
+          cp "$SYSROOT_LIB/libclang_rt.builtins-legacysjlj.a" \
+            site/toolchain/libcompiler_rt.a
+          cp "$SYSROOT_LIB/libc++-legacyexcept.a" site/toolchain/libc++.a
+          cp "$SYSROOT_LIB/libc++abi-legacyexcept.a" site/toolchain/libc++abi.a
+          cp "$SYSROOT_LIB/libunwind-legacyexcept.a" site/toolchain/libunwind.a
           du -sh site
           # Pages officially supports 1 GB; fail loudly rather than at deploy.
           test "$(du -sm site | cut -f1)" -lt 1000
 
+      - name: Run browser-toolchain smoke test
+        run: node site/smoke-test.mjs
+
       - uses: actions/upload-pages-artifact@v3
+        if: github.ref == 'refs/heads/main'
         with:
           path: site
 
+  # The build job above owns the artifact so the exact files that passed its
+  # browser-toolchain smoke test are the ones deployed. This job performs no
+  # rebuild and never writes to a branch.
+  deploy-pages:
+    name: Deploy Pages
+    needs: wasm-build-and-test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
       - id: deploy
         uses: actions/deploy-pages@v4

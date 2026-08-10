@@ -49,14 +49,14 @@ cmake -S . -B build-wasm -G Ninja \
 CI does not build this image. The SDK only changes when the pinned LLVM
 version does, and building it on a 4-vCPU hosted runner would add roughly
 3.7 core-hours to every run. Build and push it locally instead; the
-`wasm-pages` job runs inside it via `container:`.
+`wasm-build-and-test` job runs inside it via `container:`.
 
 ```sh
-docker build -f docker/Dockerfile.llvm-wasm64 \
-  -t ghcr.io/kuree/obelisk-llvm-wasm64:22.1.6-1 \
+docker build --target toolchain -f docker/Dockerfile.llvm-wasm64 \
+  -t ghcr.io/kuree/obelisk-llvm-wasm64:22.1.6-2 \
   -t ghcr.io/kuree/obelisk-llvm-wasm64:latest docker/
 
-docker push ghcr.io/kuree/obelisk-llvm-wasm64:22.1.6-1
+docker push ghcr.io/kuree/obelisk-llvm-wasm64:22.1.6-2
 docker push ghcr.io/kuree/obelisk-llvm-wasm64:latest
 ```
 
@@ -90,13 +90,13 @@ The image provides:
 | `LLVM_ENABLE_THREADS=OFF` | Simulations do not need pthreads, so the page avoids SharedArrayBuffer and therefore the COOP/COEP headers that static hosts cannot set. |
 | `MinSizeRel` / `-Oz` | Free: designs are compiled to a *separate* module at `-O3` at runtime, so shrinking this SDK costs no simulation throughput — only compile latency. |
 | Native TableGen stage | The official binary release lacks `llvm-min-tblgen`, so the generators are built from the same source rather than mixing distributions. |
-| Native tools copied into `bin/` | `CMakeLists.txt:142` hard-fails unless the distribution contains `bin/llvm-tblgen` and `bin/mlir-tblgen`. They are host executables, so shipping them in the SDK keeps it drop-in compatible. Copied by explicit name — globbing `/opt/llvm-native/bin/*` would pull in all 172 binaries (8.9 GB). |
+| Native tools copied into `bin/` | TableGen tools make the SDK drop-in compatible. Matching `clang++` produces runtime LTO bitcode that the embedded LLVM can read; Emscripten's clang may be from a newer, incompatible LLVM major. Everything is copied by explicit name — globbing `/opt/llvm-native/bin/*` would pull in all 172 binaries (8.9 GB). |
 
-The SDK deliberately does **not** carry `clang++`, `llvm-ar` or `llvm-ranlib`,
-even though `cmake/TargetNativeSupport.cmake:142` requires them. Those build
-the *target runtime*, which for wasm has to be built with `em++`/`emar` against
-wasi/emscripten rather than clang against the Debian sysroot, so that file needs
-a wasm branch regardless; carrying a 400 MB clang here would not help.
+The SDK carries the matching `clang++` used to compile the target runtime as
+LTO bitcode. It still uses Emscripten's sysroot and archive tool, but it cannot
+use Emscripten's potentially newer clang: LLVM bitcode is not backward
+compatible across major versions, and the embedded LLVM/LLD must read every
+member of `libobelisk_rt_lto.a`.
 
 ### Build cost
 
