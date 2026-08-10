@@ -123,6 +123,22 @@ module {
                   }
                 }
               }
+              // Named structure setters are stored in source order. The
+              // explicit ordinals preserve their declaration-order targets.
+              obelisk.sv.statement.expression_statement attributes {node_id = 300 : i64} {
+                obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 301 : i64, semantic_type = !obelisk.source_aggregate<"simulation_aggregates", true, false, false, false, true, false, 5, 5, 5, 0, [{name = "payload", ordinal = 0 : i32, packed_offset = 1 : i64, type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>}, {name = "valid", ordinal = 1 : i32, packed_offset = 0 : i64, type = !obelisk.integral<1, false, false, 0 : 0, bit>}]>} {
+                  obelisk.sv.expression.named_value attributes {node_id = 302 : i64, referenced_path = "simulation_aggregates.packed_record", referenced_symbol = @s1.$root::@s3.simulation_aggregates::@s4.simulation_aggregates::@s13.packed_record, semantic_type = !obelisk.source_aggregate<"simulation_aggregates", true, false, false, false, true, false, 5, 5, 5, 0, [{name = "payload", ordinal = 0 : i32, packed_offset = 1 : i64, type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>}, {name = "valid", ordinal = 1 : i32, packed_offset = 0 : i64, type = !obelisk.integral<1, false, false, 0 : 0, bit>}]>} {
+                  }
+                  obelisk.sv.expression.structured_assignment_pattern attributes {has_default_setter = false, index_setter_count = 0 : i64, member_setter_count = 2 : i64, member_setter_ordinals = array<i64: 1, 0>, node_id = 303 : i64, semantic_type = !obelisk.source_aggregate<"simulation_aggregates", true, false, false, false, true, false, 5, 5, 5, 0, [{name = "payload", ordinal = 0 : i32, packed_offset = 1 : i64, type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>}, {name = "valid", ordinal = 1 : i32, packed_offset = 0 : i64, type = !obelisk.integral<1, false, false, 0 : 0, bit>}]>, type_setter_count = 0 : i64} {
+                    obelisk.sv.expression.integer_literal attributes {constant_value = "1'b1", node_id = 304 : i64, semantic_type = !obelisk.ranged_packed_array<0 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                    }
+                    obelisk.sv.expression.conversion attributes {node_id = 305 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
+                      obelisk.sv.expression.integer_literal attributes {constant_value = "4'b0110", node_id = 306 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                      }
+                    }
+                  }
+                }
+              }
               obelisk.sv.statement.expression_statement attributes {node_id = 64 : i64} {
                 obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 65 : i64, semantic_type = !obelisk.ranged_unpacked_array<3 : 1 x !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>>} {
                   obelisk.sv.expression.named_value attributes {node_id = 66 : i64, referenced_path = "simulation_aggregates.words", referenced_symbol = @s1.$root::@s3.simulation_aggregates::@s4.simulation_aggregates::@s17.words, semantic_type = !obelisk.ranged_unpacked_array<3 : 1 x !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>>} {
@@ -475,6 +491,12 @@ module {
 // CHECK: !obelisk_sim.packed_union<fields = [
 // CHECK: !obelisk_sim.unpacked_union<fields = [
 // CHECK: !obelisk_sim.packed_union<fields = {{.*}}isTagged = true, tagBits = 2>
+// Named setters were written valid-first, but aggregate construction follows
+// declaration order: payload, then valid.
+// CHECK: %[[NAMED_PAYLOAD:.*]] = obelisk_sim.logic.constant 6 : i4, 0 : i4
+// CHECK: %[[NAMED_VALID:.*]] = arith.constant true
+// CHECK: %[[NAMED_PAYLOAD_ARRAY:.*]] = obelisk_sim.packed.unflatten %[[NAMED_PAYLOAD]]
+// CHECK: obelisk_sim.aggregate.construct %[[NAMED_PAYLOAD_ARRAY]], %[[NAMED_VALID]]
 // CHECK: obelisk_sim.aggregate.construct
 // Descending range [3:1] maps source indices 3 and 2 to ordinals 0 and 1.
 // CHECK: obelisk_sim.ref.subelement {{.*}}{{\[\[0\]\]}} : !obelisk_sim.ref<!obelisk_sim.unpacked_array<3 : 1

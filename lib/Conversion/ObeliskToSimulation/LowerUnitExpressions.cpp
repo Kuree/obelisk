@@ -679,9 +679,9 @@ FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
   FailureOr<Type> resultType = getNormalizedSemanticType(op);
   if (failed(resultType))
     return failure();
+  auto structured =
+      dyn_cast<semantic::SVStructuredAssignmentPatternExpressionOp>(op);
   if (auto array = dyn_cast<sim::AssocArrayType>(*resultType)) {
-    auto structured =
-        dyn_cast<semantic::SVStructuredAssignmentPatternExpressionOp>(op);
     if (!structured) {
       emitError(location)
           << "associative assignment patterns require keyed setters";
@@ -782,8 +782,27 @@ FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
       unsupported(op) << " (union assignment pattern arity)";
       return failure();
     }
+    uint64_t ordinal = 0;
+    if (structured && structured.getMemberSetterCount() == 1) {
+      auto ordinals = structured.getMemberSetterOrdinals();
+      if (!ordinals || ordinals->size() != 1 ||
+          structured.getTypeSetterCount() != 0 ||
+          structured.getIndexSetterCount() != 0 ||
+          structured.getHasDefaultSetter()) {
+        unsupported(op) << " (union assignment-pattern setters)";
+        return failure();
+      }
+      int64_t selected = ordinals->front();
+      if (selected < 0 || static_cast<uint64_t>(selected) >=
+                              sim::getAggregateNumElements(*resultType)) {
+        emitError(location) << "union assignment-pattern member ordinal is "
+                               "out of range";
+        return failure();
+      }
+      ordinal = static_cast<uint64_t>(selected);
+    }
     FailureOr<Value> value = lowerExpression(children.front());
-    Type fieldType = sim::getAggregateElementType(*resultType, 0);
+    Type fieldType = sim::getAggregateElementType(*resultType, ordinal);
     if (failed(value))
       return failure();
     FailureOr<Value> converted =
@@ -791,10 +810,47 @@ FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
     if (failed(converted))
       return failure();
     return sim::SimUnionConstructOp::create(builder, location, *resultType,
-                                            *converted, 0)
+                                            *converted, ordinal)
         .getResult();
   }
-  if (children.size() != sim::getAggregateNumElements(*resultType)) {
+  uint64_t elementCount = sim::getAggregateNumElements(*resultType);
+  if (structured && structured.getMemberSetterCount() != 0) {
+    auto ordinals = structured.getMemberSetterOrdinals();
+    if (!ordinals || structured.getMemberSetterCount() != elementCount ||
+        structured.getTypeSetterCount() != 0 ||
+        structured.getIndexSetterCount() != 0 ||
+        structured.getHasDefaultSetter() || children.size() != elementCount) {
+      unsupported(op) << " (mixed aggregate assignment-pattern setters)";
+      return failure();
+    }
+    SmallVector<Value> elements(elementCount);
+    for (auto [childIndex, child] : llvm::enumerate(children)) {
+      int64_t selected = (*ordinals)[childIndex];
+      if (selected < 0 || static_cast<uint64_t>(selected) >= elementCount ||
+          elements[selected]) {
+        emitError(location)
+            << "aggregate assignment-pattern member ordinal is invalid";
+        return failure();
+      }
+      Type fieldType = sim::getAggregateElementType(*resultType, selected);
+      FailureOr<Value> value = lowerExpression(child);
+      if (failed(value))
+        return failure();
+      FailureOr<Value> converted =
+          convert(*value, fieldType, isSignedNode(child), location);
+      if (failed(converted))
+        return failure();
+      elements[selected] = *converted;
+    }
+    return sim::SimAggregateConstructOp::create(builder, location, *resultType,
+                                                elements)
+        .getResult();
+  }
+  if (structured) {
+    unsupported(op) << " (aggregate assignment-pattern setters)";
+    return failure();
+  }
+  if (children.size() != elementCount) {
     unsupported(op) << " (assignment pattern element inventory)";
     return failure();
   }

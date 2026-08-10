@@ -1260,6 +1260,13 @@ private:
                       T, slang::ast::StructuredAssignmentPatternExpression>) {
       SET_OP_ATTR(MemberSetterCount,
                   builder.getI64IntegerAttr(node.memberSetters.size()));
+      SmallVector<int64_t> memberOrdinals;
+      memberOrdinals.reserve(node.memberSetters.size());
+      for (const auto &setter : node.memberSetters)
+        memberOrdinals.push_back(
+            setter.member->template as<slang::ast::FieldSymbol>().fieldIndex);
+      SET_OP_ATTR(MemberSetterOrdinals,
+                  builder.getDenseI64ArrayAttr(memberOrdinals));
       SET_OP_ATTR(TypeSetterCount,
                   builder.getI64IntegerAttr(node.typeSetters.size()));
       SET_OP_ATTR(IndexSetterCount,

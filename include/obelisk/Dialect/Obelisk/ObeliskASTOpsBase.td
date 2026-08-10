@@ -458,6 +458,7 @@ class ObeliskAssertionInstanceExpressionASTNodeOp<string mnemonic>
 class ObeliskStructuredAssignmentPatternASTNodeOp<string mnemonic>
     : ObeliskExpressionASTNodeOp<mnemonic, (ins
         I64Attr:$member_setter_count,
+        OptionalAttr<DenseI64ArrayAttr>:$member_setter_ordinals,
         I64Attr:$type_setter_count,
         I64Attr:$index_setter_count,
         BoolAttr:$has_default_setter

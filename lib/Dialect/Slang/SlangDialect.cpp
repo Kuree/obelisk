@@ -257,6 +257,20 @@ LogicalResult StructuredAssignmentPatternExpressionOp::verify() {
   uint64_t memberCount = getMemberSetterCount();
   uint64_t typeCount = getTypeSetterCount();
   uint64_t indexCount = getIndexSetterCount();
+  auto memberOrdinals = getMemberSetterOrdinals();
+  if (memberCount != 0 && !memberOrdinals)
+    return emitOpError("member setters require ordinal metadata");
+  if (memberOrdinals && memberOrdinals->size() != memberCount)
+    return emitOpError("member setter ordinal inventory does not match count");
+  if (memberOrdinals) {
+    for (auto [index, ordinal] : llvm::enumerate(*memberOrdinals)) {
+      if (ordinal < 0)
+        return emitOpError("member setter ordinal must be nonnegative");
+      for (int64_t previous : memberOrdinals->take_front(index))
+        if (previous == ordinal)
+          return emitOpError("member setter ordinals must be unique");
+    }
+  }
   uint64_t childCount = getBody().front().getOperations().size();
   uint64_t expected = memberCount + typeCount;
   if (indexCount > (std::numeric_limits<uint64_t>::max() - expected) / 2)
