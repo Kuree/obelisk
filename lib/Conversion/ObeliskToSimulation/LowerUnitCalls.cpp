@@ -3817,6 +3817,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     uint64_t lower;
     uint64_t cardinality;
     bool powerOfTwo;
+    bool isSigned;
   };
   SmallVector<ProposalDomain> proposalDomains;
   struct ProposalFiniteDomain {
@@ -3888,7 +3889,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                    property.width,
                                    lower,
                                    cardinality,
-                                   (cardinality & (cardinality - 1)) == 0});
+                                   (cardinality & (cardinality - 1)) == 0,
+                                   found->isSigned});
     }
     propertyOffset += property.width;
   }
@@ -3934,7 +3936,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           llvm::find_if(proposalDomains, [&](const ProposalDomain &domain) {
             return domain.offset == bound.offset && domain.width == bound.width;
           });
-      if (bound.isSigned && staticDomain != proposalDomains.end())
+      if (staticDomain != proposalDomains.end() &&
+          staticDomain->isSigned != bound.isSigned)
         continue;
       std::optional<uint64_t> staticLower;
       std::optional<uint64_t> staticUpper;
@@ -4048,7 +4051,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         });
     return sourceDomain != proposalDomains.end() &&
            sourceDomain->lower == domain.lower &&
-           sourceDomain->cardinality == domain.cardinality;
+           sourceDomain->cardinality == domain.cardinality &&
+           sourceDomain->isSigned == domain.isSigned;
   });
   auto canonicalProposalField = [&](uint32_t offset, unsigned width) {
     auto alias = llvm::find_if(proposalAliases, [&](const ProposalAlias &item) {
@@ -4199,6 +4203,11 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       if (domain.lower != 0)
         fieldBits = arith::AddIOp::create(builder, location, fieldBits,
                                           constantLike(fieldBits, domain.lower));
+      if (domain.isSigned)
+        fieldBits = arith::XOrIOp::create(
+            builder, location, fieldBits,
+            constantLike(fieldBits,
+                         uint64_t{1} << (domain.width - 1)));
       if (fieldBits.getType() != assignmentType)
         fieldBits = arith::ExtUIOp::create(builder, location, assignmentType,
                                            fieldBits);
@@ -4756,7 +4765,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                      bool sameAliasDomain =
                          sourceDomain != proposalDomains.end() &&
                          sourceDomain->lower == domain.lower &&
-                         sourceDomain->cardinality == domain.cardinality;
+                         sourceDomain->cardinality == domain.cardinality &&
+                         sourceDomain->isSigned == domain.isSigned;
                      return definitionTarget || !sameAliasDomain;
                    }) ||
       llvm::any_of(proposalFiniteDomains, overwritesFiniteDomain) ||

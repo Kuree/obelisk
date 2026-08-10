@@ -608,7 +608,21 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
       std::optional<z3::expr> bits = shim.translate(variable.bits);
       if (!bits)
         continue;
-      z3::expr evaluated = witness.eval(*bits, true);
+      bool isSigned = llvm::any_of(
+          smt->directCaptureBounds,
+          [&](const SMTVariableCaptureBound &bound) {
+            return bound.isSigned &&
+                   bound.target.offset == variable.offset &&
+                   bound.target.width == variable.width;
+          });
+      z3::expr projectedBits =
+          isSigned
+              ? *bits ^ bitVectorValue(
+                            context,
+                            llvm::APInt::getOneBitSet(variable.width,
+                                                     variable.width - 1))
+              : *bits;
+      z3::expr evaluated = witness.eval(projectedBits, true);
       std::optional<llvm::APInt> modelValue =
           bitVectorNumeral(evaluated, variable.width);
       if (!modelValue)
@@ -620,7 +634,8 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
       while (lower.ult(upper)) {
         llvm::APInt midpoint = lower + (upper - lower).lshr(1);
         z3::check_result query =
-            checkWith(z3::ule(*bits, bitVectorValue(context, midpoint)));
+            checkWith(z3::ule(projectedBits,
+                              bitVectorValue(context, midpoint)));
         if (query == z3::sat)
           upper = midpoint;
         else if (query == z3::unsat)
@@ -641,7 +656,8 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
         llvm::APInt midpoint = lower + distance.lshr(1) +
                                static_cast<uint64_t>(distance[0]);
         z3::check_result query =
-            checkWith(z3::uge(*bits, bitVectorValue(context, midpoint)));
+            checkWith(z3::uge(projectedBits,
+                              bitVectorValue(context, midpoint)));
         if (query == z3::sat)
           lower = midpoint;
         else if (query == z3::unsat)
@@ -657,7 +673,7 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
       llvm::APInt fullMaximum = llvm::APInt::getAllOnes(variable.width);
       if (!minimum.isZero() || maximum != fullMaximum)
         analysis.domains.push_back(
-            {variable.offset, variable.width, minimum, maximum});
+            {variable.offset, variable.width, minimum, maximum, isSigned});
     }
 
     // Preserve at most one direct capture bound in each direction per
@@ -686,12 +702,12 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
       RandomCaptureBoundKind kind = convertCaptureBoundKind(bound.kind);
       bool conflicts =
           overlapsFiniteDomain(bound.target) ||
-          (bound.isSigned &&
-           llvm::any_of(analysis.domains,
-                        [&](const RandomVariableDomain &domain) {
-                          return domain.offset == bound.target.offset &&
-                                 domain.width == bound.target.width;
-                        })) ||
+          llvm::any_of(analysis.domains,
+                       [&](const RandomVariableDomain &domain) {
+                         return domain.offset == bound.target.offset &&
+                                domain.width == bound.target.width &&
+                                domain.isSigned != bound.isSigned;
+                       }) ||
           llvm::any_of(analysis.captureBounds,
                        [&](const RandomVariableCaptureBound &selected) {
                          return selected.offset == bound.target.offset &&
@@ -750,9 +766,18 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
         translatedProposal = false;
         break;
       }
+      z3::expr projectedBits =
+          domain.isSigned
+              ? *bits ^ bitVectorValue(
+                            context,
+                            llvm::APInt::getOneBitSet(domain.width,
+                                                     domain.width - 1))
+              : *bits;
       proposal = proposal &&
-                 z3::uge(*bits, bitVectorValue(context, domain.lower)) &&
-                 z3::ule(*bits, bitVectorValue(context, domain.upper));
+                 z3::uge(projectedBits,
+                         bitVectorValue(context, domain.lower)) &&
+                 z3::ule(projectedBits,
+                         bitVectorValue(context, domain.upper));
     }
     for (const RandomVariableCaptureBound &bound : analysis.captureBounds) {
       auto found = std::find_if(smt->variables.begin(), smt->variables.end(),

@@ -696,9 +696,10 @@ module {
 // CAPTURE-DOMAIN-64-FALLBACK: arith.cmpi ule
 // CAPTURE-DOMAIN-64-FALLBACK: obelisk_sim.random.solve
 
-// Signed captures are biased with the sign bit before interval arithmetic and
-// sampled values are un-biased before insertion into the aggregate assignment.
-// Strict signed extrema take the same direct-failure edge as unsigned extrema.
+// Signed captures and Z3-proven static domains use the same sign-bit-biased
+// coordinates, so they can be intersected before sampling. Sampled values are
+// un-biased before insertion into the aggregate assignment. Strict signed
+// extrema take the same direct-failure edge as unsigned extrema.
 // CAPTURE-DOMAIN-SIGNED-LABEL: obelisk_sim.func private @unit_1
 // CAPTURE-DOMAIN-SIGNED-COUNT-2: arith.xori {{.*}}, %{{c8_i64.*}} : i64
 // CAPTURE-DOMAIN-SIGNED: %[[INCLUSIVE_VALID:.*]] = arith.cmpi ule
@@ -706,10 +707,12 @@ module {
 // CAPTURE-DOMAIN-SIGNED: arith.addi
 // CAPTURE-DOMAIN-SIGNED: %[[HIGH_EDGE:.*]] = arith.cmpi ne, {{.*}}, %{{c0_i64.*}} : i64
 // CAPTURE-DOMAIN-SIGNED: arith.subi
+// CAPTURE-DOMAIN-SIGNED: arith.minui {{.*}}, %{{c14_i64.*}} : i64
 // CAPTURE-DOMAIN-SIGNED: %[[STRICT_VALID:.*]] = arith.cmpi ule
 // CAPTURE-DOMAIN-SIGNED: arith.andi
 // CAPTURE-DOMAIN-SIGNED: cf.cond_br {{.*}}, ^[[SAMPLE:bb[0-9]+]], ^[[EMPTY:bb[0-9]+]]
 // CAPTURE-DOMAIN-SIGNED: ^[[SAMPLE]]:
+// CAPTURE-DOMAIN-SIGNED-COUNT-3: arith.xori {{.*}}, %{{c8_i64.*}} : i64
 // CAPTURE-DOMAIN-SIGNED: obelisk_sim.random.solve {{.*}} mutable
 
 // CAPTURE-DOMAIN-SIGNED-FALLBACK-LABEL: obelisk_sim.func private @unit_1
@@ -2039,13 +2042,15 @@ module {
       }
       obelisk.sv.symbol.variable attributes {hierarchical_name = "high", lifetime = 1 : i32, name = "high", node_id = 27 : i64, semantic_type = !obelisk.integral<4, true, false, 3 : 0, bit>, sym_name = "s16.high"} {
       }
-      obelisk.sv.type.class_type attributes {bitstream_width = 8 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "C", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "C", node_id = 3 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, sym_name = "s3.C", this_variable_path = "C::this", this_variable_symbol = @s1.$root::@s2::@s3.C::@s10.this} {
+      obelisk.sv.type.class_type attributes {bitstream_width = 12 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "C", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "C", node_id = 3 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, sym_name = "s3.C", this_variable_path = "C::this", this_variable_symbol = @s1.$root::@s2::@s3.C::@s10.this} {
         obelisk.sv.symbol.class_property attributes {hierarchical_name = "C::inclusive", name = "inclusive", node_id = 4 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.integral<4, true, false, 3 : 0, bit>, sym_name = "s4.inclusive"} {
         }
         obelisk.sv.symbol.class_property attributes {hierarchical_name = "C::strict", name = "strict", node_id = 28 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.integral<4, true, false, 3 : 0, bit>, sym_name = "s17.strict"} {
         }
+        obelisk.sv.symbol.class_property attributes {hierarchical_name = "C::combined", name = "combined", node_id = 42 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.integral<4, true, false, 3 : 0, bit>, sym_name = "s18.combined"} {
+        }
         obelisk.sv.symbol.constraint_block attributes {hierarchical_name = "C::bounded", name = "bounded", node_id = 5 : i64, sym_name = "s5.bounded", this_variable_path = "C::bounded.this", this_variable_symbol = @s1.$root::@s2::@s3.C::@s5.bounded::@s6.this} {
-          obelisk.sv.constraint.list attributes {item_count = 4 : i64, node_id = 6 : i64} {
+          obelisk.sv.constraint.list attributes {item_count = 6 : i64, node_id = 6 : i64} {
             obelisk.sv.constraint.expression attributes {is_soft = false, node_id = 7 : i64} {
               obelisk.sv.expression.binary_op attributes {node_id = 8 : i64, operator_kind = 13 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
                 obelisk.sv.expression.named_value attributes {node_id = 9 : i64, referenced_path = "C::inclusive", referenced_symbol = @s1.$root::@s2::@s3.C::@s4.inclusive, semantic_type = !obelisk.integral<4, true, false, 3 : 0, bit>} {
@@ -2075,6 +2080,22 @@ module {
                 obelisk.sv.expression.named_value attributes {node_id = 39 : i64, referenced_path = "C::strict", referenced_symbol = @s1.$root::@s2::@s3.C::@s17.strict, semantic_type = !obelisk.integral<4, true, false, 3 : 0, bit>} {
                 }
                 obelisk.sv.expression.named_value attributes {node_id = 40 : i64, referenced_path = "high", referenced_symbol = @s1.$root::@s2::@s16.high, semantic_type = !obelisk.integral<4, true, false, 3 : 0, bit>} {
+                }
+              }
+            }
+            obelisk.sv.constraint.expression attributes {is_soft = false, node_id = 43 : i64} {
+              obelisk.sv.expression.binary_op attributes {node_id = 44 : i64, operator_kind = 14 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
+                obelisk.sv.expression.named_value attributes {node_id = 45 : i64, referenced_path = "C::combined", referenced_symbol = @s1.$root::@s2::@s3.C::@s18.combined, semantic_type = !obelisk.integral<4, true, false, 3 : 0, bit>} {
+                }
+                obelisk.sv.expression.integer_literal attributes {constant_value = "0", node_id = 46 : i64, semantic_type = !obelisk.integral<4, true, false, 3 : 0, bit>} {
+                }
+              }
+            }
+            obelisk.sv.constraint.expression attributes {is_soft = false, node_id = 47 : i64} {
+              obelisk.sv.expression.binary_op attributes {node_id = 48 : i64, operator_kind = 16 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
+                obelisk.sv.expression.named_value attributes {node_id = 49 : i64, referenced_path = "C::combined", referenced_symbol = @s1.$root::@s2::@s3.C::@s18.combined, semantic_type = !obelisk.integral<4, true, false, 3 : 0, bit>} {
+                }
+                obelisk.sv.expression.named_value attributes {node_id = 50 : i64, referenced_path = "high", referenced_symbol = @s1.$root::@s2::@s16.high, semantic_type = !obelisk.integral<4, true, false, 3 : 0, bit>} {
                 }
               }
             }

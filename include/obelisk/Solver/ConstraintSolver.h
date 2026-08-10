@@ -13,14 +13,17 @@ namespace obelisk::solver {
 
 enum class Satisfiability { Unknown, Satisfiable, Unsatisfiable };
 
-/// An inclusive unsigned interval containing every value of one serialized
-/// random variable that can participate in a hard-constraint solution.
-/// Variables are identified by their bit range in the aggregate assignment.
+/// An inclusive interval containing every value of one serialized random
+/// variable that can participate in a hard-constraint solution. Signed
+/// intervals use sign-bit-biased coordinates so ordinary unsigned interval
+/// arithmetic preserves signed order. Variables are identified by their bit
+/// range in the aggregate assignment.
 struct RandomVariableDomain {
   uint32_t offset = 0;
   uint32_t width = 0;
   llvm::APInt lower = llvm::APInt(1, 0);
   llvm::APInt upper = llvm::APInt(1, 0);
+  bool isSigned = false;
 };
 
 /// A Z3-verified bound whose value is read from a serialized runtime capture.
