@@ -170,23 +170,37 @@ public:
       notificationValue = arith::SelectOp::create(rewriter, op.getLoc(), equal,
                                                   oldValue, storedValue);
     }
-    Value changed =
+    Value valueChanged =
         storeStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
                         storedValue, "__obelisk_state_value", stateBitCount,
                         directLayout, guardedPermission, assumeClean,
                         /*trackChange=*/true, continuous);
-    if (adaptor.getValue().size() == 2 && !twoState)
-      changed = arith::OrIOp::create(
-          rewriter, op.getLoc(), changed,
-          storeStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
-                          adaptor.getValue()[1], "__obelisk_state_unknown",
-                          stateBitCount, directLayout, guardedPermission,
-                          assumeClean, /*trackChange=*/true, continuous));
-    (void)changed;
-    // A masked continuous publication updates only its retained driver value.
-    // Observe the canonical planes after the store so force / assign cannot
-    // publish a transition to the hidden value before release.
-    if (continuous) {
+    // Runtime plane stores can suppress a write while force or procedural
+    // assign owns the variable. Publish the value that actually became
+    // visible, not the attempted procedural assignment (IEEE 1800-2017
+    // 10.6.1-10.6.2). A no-change store likewise retains the already loaded
+    // value, so the same selects cover both cases without another plane load.
+    notificationValue = arith::SelectOp::create(
+        rewriter, op.getLoc(), valueChanged, notificationValue, oldValue);
+    if (adaptor.getValue().size() == 2 && !twoState) {
+      Value unknownChanged = storeStatePlane(
+          rewriter, op.getLoc(), adaptor.getReference().front(),
+          adaptor.getValue()[1], "__obelisk_state_unknown", stateBitCount,
+          directLayout, guardedPermission, assumeClean,
+          /*trackChange=*/true, continuous);
+      notificationUnknown = arith::SelectOp::create(
+          rewriter, op.getLoc(), unknownChanged, adaptor.getValue()[1],
+          oldUnknown);
+    }
+    // A generic packed store can update only the currently unmasked bits.
+    // Reload its canonical result so partial external forces cannot leak the
+    // attempted value through transition publication. Direct clean stores
+    // have no override mask and keep the select-only fast path above.
+    bool needsVisibleReload =
+        sim::getPackedWidth(valueType).has_value() &&
+        (continuous || !directLayout || !directRange ||
+         (directRange->guarded && !assumeClean));
+    if (needsVisibleReload) {
       notificationValue = loadStatePlane(
           rewriter, op.getLoc(), adaptor.getReference().front(), plane,
           "__obelisk_state_value", false, stateBitCount, directLayout,

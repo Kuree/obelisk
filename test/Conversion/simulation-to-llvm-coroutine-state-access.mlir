@@ -37,9 +37,33 @@ module attributes {
 
 // CHECK-LABEL: llvm.func @access
 // CHECK-COUNT-2: llvm.call @obelisk_rt_v1_native_state_load_plane
-// CHECK-COUNT-2: llvm.call @obelisk_rt_v1_native_state_store_plane
+// CHECK: llvm.call @obelisk_rt_v1_native_state_load_plane
+// CHECK: %[[OLD_VALUE:.*]] = llvm.load
+// CHECK: llvm.call @obelisk_rt_v1_native_state_load_plane
+// CHECK: %[[OLD_UNKNOWN:.*]] = llvm.load
+// CHECK: llvm.call @obelisk_rt_v1_native_state_store_plane
+// CHECK: %[[VALUE_CHANGED_BYTE:.*]] = llvm.load
+// CHECK: %[[VALUE_CHANGED:.*]] = llvm.icmp "ne" %[[VALUE_CHANGED_BYTE]]
+// CHECK: %[[CANDIDATE_VALUE:.*]] = llvm.select %[[VALUE_CHANGED]], %arg3, %[[OLD_VALUE]]
+// CHECK: llvm.call @obelisk_rt_v1_native_state_store_plane
+// CHECK: %[[UNKNOWN_CHANGED_BYTE:.*]] = llvm.load
+// CHECK: %[[UNKNOWN_CHANGED:.*]] = llvm.icmp "ne" %[[UNKNOWN_CHANGED_BYTE]]
+// CHECK: llvm.select %[[UNKNOWN_CHANGED]], %arg4, %[[OLD_UNKNOWN]]
+// CHECK: llvm.call @obelisk_rt_v1_native_state_load_plane
+// CHECK: %[[VISIBLE_VALUE:.*]] = llvm.load
+// CHECK: llvm.call @obelisk_rt_v1_native_state_load_plane
+// CHECK: %[[VISIBLE_UNKNOWN:.*]] = llvm.load
+// CHECK: llvm.store %[[OLD_VALUE]]
+// CHECK: llvm.store %[[OLD_UNKNOWN]]
+// CHECK: llvm.store %[[VISIBLE_VALUE]]
+// CHECK: llvm.store %[[VISIBLE_UNKNOWN]]
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_signal_transition
 // CHECK-COUNT-2: llvm.call @obelisk_rt_v1_native_state_load_plane
-// CHECK-COUNT-2: llvm.call @obelisk_rt_v1_native_state_store_continuous_plane
+// CHECK: llvm.call @obelisk_rt_v1_native_state_store_continuous_plane
+// CHECK: llvm.select
+// CHECK: llvm.call @obelisk_rt_v1_native_state_store_continuous_plane
+// CHECK: llvm.select
+// CHECK-COUNT-2: llvm.call @obelisk_rt_v1_native_state_load_plane
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_signal_transition
 // CHECK-NOT: obelisk_sim.ref.
 // CHECK-NOT: obelisk_sim.net.read
