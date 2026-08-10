@@ -28,8 +28,9 @@ module native_dynamic_array_sensitivity;
     #1 $finish;
   end
 
-  // CHECK: wake -1
-  // CHECK-NEXT: wake 1
+  // IEEE 1800-2023 9.2.2.2 runs always_comb once at time zero after initial
+  // and always procedures have started, so the first activation observes 1.
+  // CHECK: wake 1
   // CHECK-NEXT: wake 7
   // CHECK-NEXT: wake 7
   // CHECK-NEXT: wake 9

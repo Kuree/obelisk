@@ -8,8 +8,15 @@
 
 #include "VPIInternal.h"
 
+// VPI startup loads a caller-provided shared object and reads the ELF symbol
+// size of its vlog_startup_routines table. WebAssembly has neither, and a
+// wasm build links its design statically, so that path is compiled out there
+// rather than emulated. Everything else in this file is portable.
+#if !defined(__EMSCRIPTEN__)
+#define OBELISK_RT_VPI_DYNAMIC_STARTUP 1
 #include <dlfcn.h>
 #include <elf.h>
+#endif
 
 #include <algorithm>
 #include <cstdarg>
@@ -318,6 +325,16 @@ obelisk_rt_v1_vpi_startup(obelisk_rt_context *context,
       activeState = nullptr;
       return OBELISK_RT_INVALID_ARGUMENT;
     }
+#if !defined(OBELISK_RT_VPI_DYNAMIC_STARTUP)
+    // Same status as a failed dlopen, because that is what happened from the
+    // caller's side; the message carries the reason it can never succeed here.
+    setError(state.get(),
+             "loading VPI startup modules requires a dynamic loader, which "
+             "this target does not provide",
+             vpiSystem);
+    activeState = nullptr;
+    return OBELISK_RT_IO_ERROR;
+#else
     void *module = dlopen(name, RTLD_LAZY | RTLD_NOLOAD);
     if (!module) {
       setError(state.get(), dlerror(), vpiSystem);
@@ -366,6 +383,7 @@ obelisk_rt_v1_vpi_startup(obelisk_rt_context *context,
       activeState = nullptr;
       return OBELISK_RT_INVALID_DESIGN;
     }
+#endif
   }
   // Ownership moves only after all startup modules have succeeded.
   context->vpiState = state.release();

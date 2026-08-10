@@ -113,7 +113,7 @@ static FailureOr<FixedSequence> compileFixedSequence(Operation *operation) {
       FailureOr<FixedSequence> nested = compileFixedSequence(child);
       if (failed(nested))
         return failure();
-      uint64_t offset = index == 0 ? 0 : minimum.getInt();
+      uint64_t offset = minimum.getInt();
       if (result.ages.empty())
         result.ages.resize(1);
       uint64_t start = result.ages.size() - 1 + offset;

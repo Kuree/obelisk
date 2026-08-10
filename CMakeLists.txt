@@ -161,12 +161,30 @@ include(AddLLVM)
 include(AddMLIR)
 include(HandleLLVMOptions)
 
-if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND
-   CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+if(EMSCRIPTEN)
+  # MEMORY64 is applied to every translation unit rather than left to the
+  # caller: runtime/lib/ABI.cpp asserts sizeof(void*) == 8, and a compiler
+  # built wasm32 against a wasm64 runtime archive would fail at link with no
+  # indication of the real cause. The exception scheme has to match across the
+  # whole link for the same reason.
+  foreach(flags CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
+    if(NOT ${flags} MATCHES "MEMORY64")
+      set(${flags} "${${flags}} -sMEMORY64=1 -fwasm-exceptions")
+    endif()
+  endforeach()
+  foreach(flags CMAKE_EXE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS)
+    if(NOT ${flags} MATCHES "MEMORY64")
+      set(${flags} "${${flags}} -sMEMORY64=1 -fwasm-exceptions")
+    endif()
+  endforeach()
+  include("${PROJECT_SOURCE_DIR}/cmake/TargetWasmSupport.cmake")
+elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND
+       CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
   include("${PROJECT_SOURCE_DIR}/cmake/TargetNativeSupport.cmake")
 else()
   message(FATAL_ERROR
-    "native executable generation currently requires an x86-64 Linux host")
+    "native executable generation requires an x86-64 Linux host, or "
+    "configure with emcmake to target wasm64")
 endif()
 
 #===------------------------------------------------------------------------===
@@ -222,6 +240,14 @@ if(OBELISK_ENABLE_Z3)
   if(CMAKE_CXX_COMPILER_TARGET)
     list(APPEND _obelisk_z3_cmake_args
       "-DCMAKE_CXX_COMPILER_TARGET=${CMAKE_CXX_COMPILER_TARGET}")
+  endif()
+  # Z3 is by far the largest nested build, so a compiler cache the outer build
+  # opted into has to reach it too; the isolated configure would otherwise miss
+  # it silently. Purely a pass-through: unset by default, so ordinary builds
+  # are unaffected. Z3 declares LANGUAGES CXX, so only the C++ launcher applies.
+  if(CMAKE_CXX_COMPILER_LAUNCHER)
+    list(APPEND _obelisk_z3_cmake_args
+      "-DCMAKE_CXX_COMPILER_LAUNCHER=${CMAKE_CXX_COMPILER_LAUNCHER}")
   endif()
   if(OBELISK_Z3_SOURCE_DIR)
     file(STRINGS "${OBELISK_Z3_SOURCE_DIR}/CMakeLists.txt"

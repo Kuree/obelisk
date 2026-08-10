@@ -109,7 +109,7 @@ endmodule
 // CHECK-NEXT: conditional=yes case=yes
 // CHECK-NEXT: ambiguous=x
 // CHECK-NEXT: ambiguous-equal=same
-// CHECK-NEXT: ambiguous-packed-len=5
+// CHECK-NEXT: ambiguous-packed-len=4
 // CHECK-NEXT: ambiguous-string-len=0
 // CHECK-NEXT: dynamic=Hello
 // CHECK-NEXT: atoi=-123 real=3.25

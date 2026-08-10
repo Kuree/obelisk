@@ -114,4 +114,4 @@ module top;
   end
 endmodule
 
-// CHECK: 6 11 1 9 8 12 13 6
+// CHECK: 10 11 1 9 8 12 13 10

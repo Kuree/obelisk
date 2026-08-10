@@ -560,8 +560,8 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
             "obelisk_sim.assertion_control_target_id"))
       inputs.push_back(emitU64Constant(
           plan, assertionID.getValue().getZExtValue()));
-    return emitIntrinsicRegisters(
-        plan, kIntrinsicDeferredEnqueue, inputs, {reg(plan, op.getTicket())});
+    return emitIntrinsicRegisters(plan, kIntrinsicDeferredEnqueue, inputs,
+                                  {reg(plan, op.getTicket())});
   }
   if (auto op = dyn_cast<sim::SimDeferredMatureOp>(operation))
     return emitIntrinsicRegisters(plan, kIntrinsicDeferredMature,

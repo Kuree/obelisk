@@ -47,6 +47,9 @@ def mlir_print_debuginfo : Flag<["--"], "mlir-print-debuginfo">,
 def sysroot_EQ : Joined<["--"], "sysroot=">, Group<Output_Group>,
   MetaVarName<"<dir>">,
   HelpText<"Use <dir> for glibc native-link inputs">;
+def target_EQ : Joined<["--"], "target=">, Group<Output_Group>,
+  MetaVarName<"<native|wasm64>">,
+  HelpText<"Select the code-generation target">;
 
 def threads_EQ : Joined<["--"], "threads=">, Group<Compilation_Group>,
   MetaVarName<"<count>">,

@@ -2691,7 +2691,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     if (!function)
       return failure();
     NativeSchedulePlan schedule;
-    schedule.initialRank = scheduleRanks->getEntryRank(entry.first).value_or(0);
+    schedule.initialRank =
+        scheduleRanks->getEntryRank(entry.first).value_or(0);
     if (useAOT)
       schedule.actorSlot = aotActorSlotFor(function);
     if (schedule.actorSlot) {
@@ -2701,8 +2702,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     }
     DenseMap<uint32_t, uint32_t> continuationRanks;
     for (const ProcessSuspension &suspension : entry.second->getSuspensions()) {
-      uint32_t rank =
-          scheduleRanks->getBlockRank(suspension.continuation).value_or(0);
+      uint32_t rank = scheduleRanks->getBlockRank(suspension.continuation)
+                          .value_or(0);
       auto [rankIt, inserted] =
           continuationRanks.try_emplace(suspension.continuationID, rank);
       if (!inserted && rankIt->second != rank)

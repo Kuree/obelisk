@@ -100,6 +100,8 @@ bool publishNetBits(obelisk_rt_context *context, const NetAliasCache &cache,
                publication.oldUnknown != publication.unknown;
     setBit(context->stateValue, publication.destination, publication.value);
     setBit(context->stateUnknown, publication.destination, publication.unknown);
+    obelisk_rt_sync_native_state_range_unlocked(
+        context, publication.destination, 1);
   }
   // Commit every logical alias first. Route occurrences by observer range so
   // each range is published and evaluated exactly once against the completed

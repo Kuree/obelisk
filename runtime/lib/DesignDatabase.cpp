@@ -1369,6 +1369,8 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
         storePackedBytes(unknownBytes.data(), newUnknown);
         storePackedState(context->stateValue, stateOffset, width, newValue);
         storePackedState(context->stateUnknown, stateOffset, width, newUnknown);
+        obelisk_rt_sync_native_state_range_unlocked(context, stateOffset,
+                                                    width);
         // Force/release changes the persistent override state and must retain
         // the transactional generic handoff. Only an exact deposit may enter
         // the generated clock coordinator directly.
@@ -1446,6 +1448,8 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
         }
       }
       if (write && stateChanged) {
+        obelisk_rt_sync_native_state_range_unlocked(context, stateOffset,
+                                                    width);
         bool synchronized =
             !overrideForce && obelisk_rt_aot_external_deposit_unlocked(
                                   context, signalBase, stateOffset, width);

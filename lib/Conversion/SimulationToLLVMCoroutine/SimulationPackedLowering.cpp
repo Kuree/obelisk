@@ -98,7 +98,7 @@ LogicalResult lowerPackedSimulationOperations(
         return root != provenance.end() && root->second.descriptor &&
                !root->second.dynamic && root->second.width != 0 &&
                guardedDomains.isInductivelyTwoState(root->second.resource,
-                                                     *root->second.descriptor);
+                                                    *root->second.descriptor);
       };
       for (Block &block : function.getBody()) {
         for (BlockArgument argument : block.getArguments())
@@ -145,7 +145,7 @@ LogicalResult lowerPackedSimulationOperations(
           if (root == provenance.end() || !root->second.descriptor ||
               root->second.dynamic ||
               !guardedDomains.isInductivelyTwoState(root->second.resource,
-                                                     *root->second.descriptor))
+                                                    *root->second.descriptor))
             continue;
           operation.setAttr(inductiveTwoStateAccessAttr,
                             UnitAttr::get(context));
@@ -252,24 +252,22 @@ LogicalResult lowerPackedSimulationOperations(
   populateSuspensionTypeConversionPatterns(packedPatterns, packedConverter);
   populateReferenceLifetimeToLLVMConversionPatterns(packedPatterns,
                                                     packedConverter);
-  populateNativeHandleConversionPatterns(
-      packedPatterns, packedConverter, stateLayout.storage, stateLayout.nets,
-      stateLayout.drivers);
+  populateNativeHandleConversionPatterns(packedPatterns, packedConverter,
+                                         stateLayout.storage, stateLayout.nets,
+                                         stateLayout.drivers);
   populateSchedulerToLLVMConversionPatterns(packedPatterns, packedConverter);
   populateStateReadWriteToLLVMConversionPatterns(
       packedPatterns, packedConverter, stateLayout.bitCount,
-      enableDirectStaticState ? &stateLayout : nullptr,
-      experimentalTwoState);
+      enableDirectStaticState ? &stateLayout : nullptr, experimentalTwoState);
   populateOverrideToLLVMConversionPatterns(packedPatterns, packedConverter,
                                            stateLayout.bitCount);
-  populateManagedToLLVMConversionPatterns(
-      packedPatterns, packedConverter, dataLayout, stateLayout.bitCount);
+  populateManagedToLLVMConversionPatterns(packedPatterns, packedConverter,
+                                          dataLayout, stateLayout.bitCount);
   populateDriverToLLVMConversionPatterns(packedPatterns, packedConverter,
                                          stateLayout);
   populateNBAToLLVMConversionPatterns(
-      packedPatterns, packedConverter, stateLayout.bitCount,
-      staticNBAPlan, staticNBAPlan != nullptr, vpiAllowsWrite,
-      experimentalTwoState);
+      packedPatterns, packedConverter, stateLayout.bitCount, staticNBAPlan,
+      staticNBAPlan != nullptr, vpiAllowsWrite, experimentalTwoState);
   ConversionTarget packedTarget(*context);
   packedTarget.addIllegalOp<
       sim::SimBytesConstantOp, sim::SimFinishOp, sim::SimStopOp,
@@ -283,11 +281,10 @@ LogicalResult lowerPackedSimulationOperations(
       sim::SimContextStorageOp, sim::SimContextNetOp, sim::SimContextDriverOp,
       sim::SimContextEventOp, sim::SimRefAllocOp, sim::SimRefReleaseOwnerOp,
       sim::SimRefLoadOp, sim::SimRefStoreOp, sim::SimOverrideOp,
-      sim::SimReleaseOverrideOp,
-      sim::SimNetExtractOp, sim::SimRefExtractOp, sim::SimRefDynExtractOp,
-      sim::SimRefSubelementOp, sim::SimRefArrayElementOp, sim::SimNetReadOp,
-      sim::SimDriverDriveOp, sim::SimDriverDriveChangedOp,
-      sim::SimDriverExtractOp,
+      sim::SimReleaseOverrideOp, sim::SimNetExtractOp, sim::SimRefExtractOp,
+      sim::SimRefDynExtractOp, sim::SimRefSubelementOp,
+      sim::SimRefArrayElementOp, sim::SimNetReadOp, sim::SimDriverDriveOp,
+      sim::SimDriverDriveChangedOp, sim::SimDriverExtractOp,
       sim::SimDriverDynExtractOp, sim::SimDriverSubelementOp,
       sim::SimDriverArrayElementOp, sim::SimNBAEnqueueOp,
       sim::SimEventTriggerOp, sim::SimEventTriggeredOp, sim::SimEventEqualOp,
@@ -313,28 +310,27 @@ LogicalResult lowerPackedSimulationOperations(
       sim::SimAssocDeleteOp, sim::SimAssocSetDefaultOp, sim::SimAssocTraverseOp,
       sim::SimRandomNextOp, sim::SimRandomSeedOp, sim::SimRandomBoundedOp,
       sim::SimRandomDistributionOp, sim::SimRandomCycleNextOp,
-      sim::SimRandomSolveOp, sim::SimRandomSolveWideOp,
-      sim::SimStringLiteralOp, sim::SimStringFromPackedOp,
-      sim::SimStringToPackedOp, sim::SimStringConcatOp, sim::SimStringRepeatOp,
-      sim::SimStringLengthOp, sim::SimStringGetcOp, sim::SimStringPutcOp,
-      sim::SimStringSubstrOp, sim::SimStringCompareOp,
-      sim::SimStringCaseConvertOp, sim::SimStringParseIntegerOp,
-      sim::SimStringParseRealOp, sim::SimStringScanFieldOp,
-      sim::SimStringFormatIntegerOp,
+      sim::SimRandomSolveOp, sim::SimRandomSolveWideOp, sim::SimStringLiteralOp,
+      sim::SimStringFromPackedOp, sim::SimStringToPackedOp,
+      sim::SimStringConcatOp, sim::SimStringRepeatOp, sim::SimStringLengthOp,
+      sim::SimStringGetcOp, sim::SimStringPutcOp, sim::SimStringSubstrOp,
+      sim::SimStringCompareOp, sim::SimStringCaseConvertOp,
+      sim::SimStringParseIntegerOp, sim::SimStringParseRealOp,
+      sim::SimStringScanFieldOp, sim::SimStringFormatIntegerOp,
       sim::SimStringFormatRealOp, sim::SimFileOpenStringMCDOp,
       sim::SimFileOpenStringOp, sim::SimFileGetlineStringOp,
       sim::SimFileErrorStringOp, sim::SimTimeFormatOp, sim::SimPlusargTestOp,
-      sim::SimPlusargValueOp,
-      sim::SimClassAllocOp, sim::SimClassCopyOp, sim::SimClassIsInstanceOp,
-      sim::SimClassIdOp, sim::SimClassCastOp, sim::SimClassFieldRefOp,
-      sim::SimClassRootBindOp, sim::SimManagedLoadOp, sim::SimManagedStoreOp,
-      sim::SimManagedNBAEnqueueOp, sim::SimReferencePathNBAEnqueueOp,
-      sim::SimArgumentRefFromRefOp, sim::SimArgumentRefFromManagedOp,
-      sim::SimReferencePathIndexOp, sim::SimReferencePathAssocOp,
-      sim::SimArgumentRefFromPathOp, sim::SimArgumentRefLoadOp,
-      sim::SimArgumentRefStoreOp, sim::SimClassDirectCallOp,
-      sim::SimClassVirtualCallOp, sim::SimWeakCreateOp, sim::SimWeakGetOp,
-      sim::SimWeakClearOp, sim::SimGCSafepointOp>();
+      sim::SimPlusargValueOp, sim::SimClassAllocOp, sim::SimClassCopyOp,
+      sim::SimClassIsInstanceOp, sim::SimClassIdOp, sim::SimClassCastOp,
+      sim::SimClassFieldRefOp, sim::SimClassRootBindOp, sim::SimManagedLoadOp,
+      sim::SimManagedStoreOp, sim::SimManagedNBAEnqueueOp,
+      sim::SimReferencePathNBAEnqueueOp, sim::SimArgumentRefFromRefOp,
+      sim::SimArgumentRefFromManagedOp, sim::SimReferencePathIndexOp,
+      sim::SimReferencePathAssocOp, sim::SimArgumentRefFromPathOp,
+      sim::SimArgumentRefLoadOp, sim::SimArgumentRefStoreOp,
+      sim::SimClassDirectCallOp, sim::SimClassVirtualCallOp,
+      sim::SimWeakCreateOp, sim::SimWeakGetOp, sim::SimWeakClearOp,
+      sim::SimGCSafepointOp>();
   packedTarget
       .addIllegalOp<sim::SimAggregateDefaultOp, sim::SimAggregateConstructOp,
                     sim::SimAggregateExtractOp, sim::SimAggregateInsertOp,
@@ -378,8 +374,8 @@ LogicalResult lowerPackedSimulationOperations(
   // operand adaptors owned by the conversion driver.
   WalkResult specializedBlockArguments =
       module.walk([&](sim::SimFuncOp function) {
-        auto mappings = function->getAttrOfType<ArrayAttr>(
-            nativeTwoStateBlockUnknownsAttr);
+        auto mappings =
+            function->getAttrOfType<ArrayAttr>(nativeTwoStateBlockUnknownsAttr);
         if (!mappings)
           return WalkResult::advance();
         if (mappings.size() != function.getBody().getBlocks().size()) {

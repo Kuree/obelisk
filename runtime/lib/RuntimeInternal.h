@@ -710,8 +710,8 @@ struct obelisk_rt_context {
   std::shared_ptr<const uint8_t> errorLifetime;
   std::vector<ScheduledProcess> scheduledProcesses;
   const obelisk_rt_native_schedule_plan *nativeSchedulePlan = nullptr;
-  const uint8_t *nativeStateValue = nullptr;
-  const uint8_t *nativeStateUnknown = nullptr;
+  uint8_t *nativeStateValue = nullptr;
+  uint8_t *nativeStateUnknown = nullptr;
   uint64_t nativeStateBitCount = 0;
   const obelisk_rt_static_nba_root *nativeScheduleNBARoots = nullptr;
   uint32_t nativeScheduleNBARootCount = 0;
@@ -929,6 +929,31 @@ struct obelisk_rt_context {
   ~obelisk_rt_context();
 };
 
+inline void obelisk_rt_sync_native_state_range_unlocked(
+    obelisk_rt_context *context, uint64_t begin, uint64_t width) {
+  if (!context || !context->nativeStateValue ||
+      !context->nativeStateUnknown || begin >= context->nativeStateBitCount)
+    return;
+  uint64_t end =
+      width > context->nativeStateBitCount - begin
+          ? context->nativeStateBitCount
+          : begin + width;
+  for (uint64_t bit = begin; bit != end; ++bit) {
+    uint8_t mask = static_cast<uint8_t>(UINT8_C(1) << (bit % 8));
+    uint64_t byte = bit / 8;
+    bool value = (context->stateValue[bit / 64] &
+                  (uint64_t{1} << (bit % 64))) != 0;
+    bool unknown = (context->stateUnknown[bit / 64] &
+                    (uint64_t{1} << (bit % 64))) != 0;
+    context->nativeStateValue[byte] =
+        value ? context->nativeStateValue[byte] | mask
+              : context->nativeStateValue[byte] & ~mask;
+    context->nativeStateUnknown[byte] =
+        unknown ? context->nativeStateUnknown[byte] | mask
+                : context->nativeStateUnknown[byte] & ~mask;
+  }
+}
+
 obelisk_rt_status
 obelisk_rt_capture_preponed_unlocked(obelisk_rt_context *context);
 
@@ -944,8 +969,9 @@ inline void obelisk_rt_register_unstarted_actor(obelisk_rt_context *context,
   obelisk_rt_unstarted_actors(context, phase).insert(logicalToken);
 }
 
-inline void obelisk_rt_unregister_unstarted_actor(
-    obelisk_rt_context *context, uint32_t phase, uint64_t logicalToken) {
+inline void obelisk_rt_unregister_unstarted_actor(obelisk_rt_context *context,
+                                                  uint32_t phase,
+                                                  uint64_t logicalToken) {
   obelisk_rt_unstarted_actors(context, phase).erase(logicalToken);
 }
 
@@ -957,8 +983,7 @@ inline bool obelisk_rt_unstarted_actor_pending(obelisk_rt_context *context,
     uint64_t logicalToken = *actor;
     bool pending = false;
     if ((logicalToken & OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG) != 0) {
-      uint64_t token =
-          logicalToken & ~OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG;
+      uint64_t token = logicalToken & ~OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG;
       auto indexed = context->scheduledProcessIndices.find(token);
       if (indexed != context->scheduledProcessIndices.end() &&
           indexed->second < context->scheduledProcesses.size()) {
@@ -1258,8 +1283,7 @@ obelisk_rt_initialize_design_state(obelisk_rt_context *context) noexcept;
 // Generated process spawns are already bound to a validated context. Reuse
 // its immutable design-bytecode image while retaining the public standalone
 // creation entry point for descriptors without a context.
-extern "C" obelisk_rt_status
-obelisk_rt_v1_process_instance_create_for_context(
+extern "C" obelisk_rt_status obelisk_rt_v1_process_instance_create_for_context(
     obelisk_rt_context *context,
     const obelisk_rt_process_descriptor_v1 *descriptor,
     obelisk_rt_process_instance_v1 **outInstance);

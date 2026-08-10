@@ -8,6 +8,7 @@
 #include "llvm/ADT/SmallSet.h"
 
 #include <functional>
+#include <optional>
 
 using namespace mlir;
 
@@ -120,6 +121,19 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
     llvm::StringSet<> seenPaths;
     llvm::StringSet<> seenLocals;
     llvm::StringSet<> seenConstants;
+    auto qualifiedAutomaticPath = [&](StringRef path, SymbolRefAttr reference,
+                                      Operation *referencedSymbol)
+        -> std::optional<std::string> {
+      if (!reference || !referencedSymbol ||
+          !isAutomaticLocalSymbol(referencedSymbol) ||
+          !descriptors.contains(path))
+        return std::nullopt;
+      StringRef symbolPath = getHierarchyName(referencedSymbol);
+      std::string localPath = (symbolPath.empty() ? path : symbolPath).str();
+      localPath += ".$local.";
+      localPath += reference.getLeafReference().getValue();
+      return localPath;
+    };
     std::function<void(Operation *)> collectBinding = [&](Operation *nested) {
       StringRef path;
       SymbolRefAttr reference;
@@ -162,11 +176,9 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       bool automaticLocal =
           referencedSymbol && isAutomaticLocalSymbol(referencedSymbol);
       std::string localPath;
-      if (automaticLocal && descriptors.contains(path)) {
-        StringRef symbolPath = getHierarchyName(referencedSymbol);
-        localPath = (symbolPath.empty() ? path : symbolPath).str();
-        localPath += ".$local.";
-        localPath += reference.getLeafReference().getValue();
+      if (auto qualified =
+              qualifiedAutomaticPath(path, reference, referencedSymbol)) {
+        localPath = std::move(*qualified);
         path = localPath;
         nested->setAttr("referenced_path",
                         StringAttr::get(nested->getContext(), path));
@@ -232,6 +244,49 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
           !isWriteOnlyReferenceUse(nested))
         result.observerReadLocals[unit.source].insert(path);
     };
+
+    // Runtime foreach lowering binds each iterator by the frozen path stored
+    // in loop_dimensions. Keep that metadata in lockstep with body uses when
+    // an iterator shadows storage carrying the same source hierarchy.
+    unit.source->walk([&](semantic::SVForeachLoopStatementOp foreach) {
+      SmallVector<Attribute> dimensions;
+      dimensions.reserve(foreach.getLoopDimensions().size());
+      bool changed = false;
+      for (Attribute attribute : foreach.getLoopDimensions()) {
+        auto dimension = dyn_cast<DictionaryAttr>(attribute);
+        auto path = dimension
+                        ? dimension.getAs<StringAttr>(
+                              foreach_metadata::iteratorPath)
+                        : StringAttr{};
+        auto reference = dimension
+                             ? dimension.getAs<SymbolRefAttr>(
+                                   foreach_metadata::iteratorSymbol)
+                             : SymbolRefAttr{};
+        Operation *referencedSymbol = nullptr;
+        if (reference) {
+          auto symbol = semanticSymbols.find(reference.getLeafReference());
+          if (symbol != semanticSymbols.end())
+            referencedSymbol = symbol->second;
+        }
+        auto qualified =
+            path ? qualifiedAutomaticPath(path.getValue(), reference,
+                                           referencedSymbol)
+                 : std::nullopt;
+        if (!qualified) {
+          dimensions.push_back(attribute);
+          continue;
+        }
+        NamedAttrList rewritten(dimension);
+        rewritten.set(foreach_metadata::iteratorPath,
+                      StringAttr::get(foreach.getContext(), *qualified));
+        dimensions.push_back(DictionaryAttr::get(foreach.getContext(),
+                                                 rewritten.getAttrs()));
+        changed = true;
+      }
+      if (changed)
+        foreach->setAttr("loop_dimensions",
+                         ArrayAttr::get(foreach.getContext(), dimensions));
+    });
 
     bool initializesDesignStorage =
         isa<semantic::SVVariableSymbolOp>(unit.source);

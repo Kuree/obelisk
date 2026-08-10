@@ -4246,8 +4246,7 @@ LogicalResult SimClockedSampleReadOp::verify() {
 }
 
 LogicalResult SimDeferredEnqueueOp::verify() {
-  if (failed(verifyPositive(*this, getIdAttr(),
-                            "deferred assertion site ID")))
+  if (failed(verifyPositive(*this, getIdAttr(), "deferred assertion site ID")))
     return failure();
   if (auto assertionID = getOperation()->getAttrOfType<IntegerAttr>(
           "obelisk_sim.assertion_control_target_id"))

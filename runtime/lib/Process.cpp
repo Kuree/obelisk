@@ -4181,7 +4181,7 @@ obelisk_rt_v1_native_state_register_static(obelisk_rt_context *context,
 
 extern "C" obelisk_rt_status
 obelisk_rt_v1_native_state_sync(obelisk_rt_context *context,
-                                const uint8_t *value, const uint8_t *unknown,
+                                uint8_t *value, uint8_t *unknown,
                                 uint64_t bitCount) {
   if (!context || !value || !unknown)
     return OBELISK_RT_INVALID_ARGUMENT;
@@ -4515,10 +4515,22 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
         static_cast<uint64_t>(globalOffset) <= rootWidth &&
         bitWidth <= rootWidth - static_cast<uint64_t>(globalOffset)) {
       uint64_t source = rootOffset + static_cast<uint64_t>(globalOffset);
-      uint64_t value = (!context->observerForcesCanonicalPlane &&
-                        isStaticControlAOT(context))
-                           ? loadPackedBytes(globalPlane, source, bitWidth)
-                           : loadPackedBits(*canonicalPlane, source, bitWidth);
+      bool readGlobal = !context->observerForcesCanonicalPlane &&
+                        isStaticControlAOT(context);
+      uint64_t globalValue = loadPackedBytes(globalPlane, source, bitWidth);
+      uint64_t canonicalValue =
+          loadPackedBits(*canonicalPlane, source, bitWidth);
+      uint64_t overrideMask = 0;
+      if (!context->forceMask.empty())
+        overrideMask |=
+            loadPackedBits(context->forceMask, source, bitWidth);
+      if (!context->assignMask.empty())
+        overrideMask |=
+            loadPackedBits(context->assignMask, source, bitWidth);
+      uint64_t value =
+          readGlobal ? globalValue
+                     : (canonicalValue & ~overrideMask) |
+                           (globalValue & overrideMask);
       for (uint64_t byte = 0; byte != byteCount; ++byte)
         outValue[byte] = static_cast<uint8_t>(value >> (byte * 8));
       maskPadding();
@@ -4533,9 +4545,15 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
       if (addHandleOffset(globalOffset, bit, coordinate) && coordinate >= 0 &&
           static_cast<uint64_t>(coordinate) < rootWidth) {
         uint64_t source = rootOffset + static_cast<uint64_t>(coordinate);
+        uint64_t sourceMask = uint64_t{1} << (source % 64);
+        bool overridden =
+            (source / 64 < context->forceMask.size() &&
+             (context->forceMask[source / 64] & sourceMask) != 0) ||
+            (source / 64 < context->assignMask.size() &&
+             (context->assignMask[source / 64] & sourceMask) != 0);
         setByteBit(
             outValue, bit,
-            readGlobalPlane
+            readGlobalPlane || overridden
                 ? byteBit(globalPlane, source)
                 : (((*canonicalPlane)[source / 64] >> (source % 64)) & 1) != 0);
       }
@@ -8257,32 +8275,67 @@ obelisk_rt_status runTrustedAOTNodesUnlocked(obelisk_rt_context *context) {
     }
     uint32_t selectedNode = UINT32_MAX;
     bool readyBeforeCursor = false;
-    uint32_t cursorWord = nodeCursor / 64;
-    uint32_t cursorBit = nodeCursor % 64;
-    for (uint32_t wordIndex = cursorWord;
-         wordIndex < context->nativeScheduleReadyNodes.size(); ++wordIndex) {
-      uint64_t word = context->nativeScheduleReadyNodes[wordIndex];
-      if (wordIndex == cursorWord && cursorBit != 0)
-        word &= UINT64_MAX << cursorBit;
-      if (word == 0)
-        continue;
-      selectedNode =
-          wordIndex * 64 + static_cast<uint32_t>(__builtin_ctzll(word));
-      break;
-    }
-    if (selectedNode == UINT32_MAX)
+    bool schedulerOrderedBootstrap = obelisk_rt_unstarted_actor_pending(
+        context, context->schedulerRunningFinals ? 1u : 0u);
+    if (schedulerOrderedBootstrap) {
+      using SchedulerKey = std::tuple<uint32_t, uint32_t, uint64_t>;
+      SchedulerKey selectedKey{UINT32_MAX, UINT32_MAX, UINT64_MAX};
       for (uint32_t wordIndex = 0;
-           wordIndex <= cursorWord &&
-           wordIndex < context->nativeScheduleReadyNodes.size();
-           ++wordIndex) {
+           wordIndex < context->nativeScheduleReadyNodes.size(); ++wordIndex) {
         uint64_t word = context->nativeScheduleReadyNodes[wordIndex];
-        if (wordIndex == cursorWord && cursorBit != 0)
-          word &= (uint64_t{1} << cursorBit) - 1;
-        if (word != 0) {
-          readyBeforeCursor = true;
-          break;
+        while (word != 0) {
+          uint32_t bit = static_cast<uint32_t>(__builtin_ctzll(word));
+          uint32_t candidate = wordIndex * 64 + bit;
+          word &= word - 1;
+          if (candidate >= context->nativeScheduleNodes.size())
+            return OBELISK_RT_INVALID_CONTINUATION;
+          const auto &node = context->nativeScheduleNodes[candidate];
+          if (node.actor_slot >= context->nativeScheduleActorIndices.size())
+            return OBELISK_RT_INVALID_CONTINUATION;
+          size_t processIndex =
+              context->nativeScheduleActorIndices[node.actor_slot];
+          if (processIndex >= context->scheduledProcesses.size())
+            return OBELISK_RT_INVALID_LIFECYCLE;
+          const ScheduledProcess &scheduled =
+              context->scheduledProcesses[processIndex];
+          SchedulerKey key{scheduled.urgent ? 0 : scheduled.queuedRegion,
+                           scheduled.urgent ? 0 : scheduled.scheduleRank,
+                           scheduled.insertionSequence};
+          if (key < selectedKey ||
+              (key == selectedKey && candidate < selectedNode)) {
+            selectedNode = candidate;
+            selectedKey = key;
+          }
         }
       }
+    } else {
+      uint32_t cursorWord = nodeCursor / 64;
+      uint32_t cursorBit = nodeCursor % 64;
+      for (uint32_t wordIndex = cursorWord;
+           wordIndex < context->nativeScheduleReadyNodes.size(); ++wordIndex) {
+        uint64_t word = context->nativeScheduleReadyNodes[wordIndex];
+        if (wordIndex == cursorWord && cursorBit != 0)
+          word &= UINT64_MAX << cursorBit;
+        if (word == 0)
+          continue;
+        selectedNode =
+            wordIndex * 64 + static_cast<uint32_t>(__builtin_ctzll(word));
+        break;
+      }
+      if (selectedNode == UINT32_MAX)
+        for (uint32_t wordIndex = 0;
+             wordIndex <= cursorWord &&
+             wordIndex < context->nativeScheduleReadyNodes.size();
+             ++wordIndex) {
+          uint64_t word = context->nativeScheduleReadyNodes[wordIndex];
+          if (wordIndex == cursorWord && cursorBit != 0)
+            word &= (uint64_t{1} << cursorBit) - 1;
+          if (word != 0) {
+            readyBeforeCursor = true;
+            break;
+          }
+        }
+    }
 
     if (selectedNode != UINT32_MAX) {
       const obelisk_rt_native_schedule_node &node =
@@ -8310,7 +8363,12 @@ obelisk_rt_status runTrustedAOTNodesUnlocked(obelisk_rt_context *context) {
         restartBeforeCursor =
             context->nativeScheduleMinimumActivatedNode < nextNode;
         bool fuseNext = false;
-        if (!restartBeforeCursor && selected.fusion_group != UINT32_MAX &&
+        // Startup ordering is defined by event regions, not graph adjacency.
+        // Re-enter selection after each bootstrap actor so a fused successor
+        // cannot pull Reactive work ahead of an unstarted Active actor or the
+        // deferred time-zero always_comb activation.
+        if (!schedulerOrderedBootstrap && !restartBeforeCursor &&
+            selected.fusion_group != UINT32_MAX &&
             nextNode < context->nativeScheduleNodes.size()) {
           const obelisk_rt_native_schedule_node &next =
               context->nativeScheduleNodes[nextNode];
@@ -8329,7 +8387,9 @@ obelisk_rt_status runTrustedAOTNodesUnlocked(obelisk_rt_context *context) {
           break;
         lastNode = nextNode;
       }
-      nodeCursor = restartBeforeCursor ? 0 : lastNode + 1;
+      nodeCursor = schedulerOrderedBootstrap || restartBeforeCursor
+                       ? 0
+                       : lastNode + 1;
       continue;
     }
 
@@ -8388,42 +8448,56 @@ obelisk_rt_status drainNativeAOTCurrentSlotUnlocked(
       continue;
     }
 
+    using SchedulerKey = std::tuple<uint32_t, uint32_t, uint64_t>;
     uint32_t selectedNode = UINT32_MAX;
-    for (uint32_t word = 0; word != context->nativeScheduleReadyNodes.size();
-         ++word) {
-      uint64_t ready = context->nativeScheduleReadyNodes[word];
-      if (ready == 0)
-        continue;
-      selectedNode = word * 64 + static_cast<uint32_t>(__builtin_ctzll(ready));
-      break;
-    }
     uint32_t nodeRegion = UINT32_MAX;
     uint32_t nodeRank = UINT32_MAX;
     uint64_t nodeInsertionSequence = UINT64_MAX;
+    SchedulerKey selectedNodeKey{UINT32_MAX, UINT32_MAX, UINT64_MAX};
+    // Ready-node IDs are layout artifacts, not scheduler priority. Bootstrap
+    // can have multiple entry actors ready across Active and Reactive regions,
+    // including urgent startup actors, so select by the same key as the
+    // generic scheduler before executing a generated node.
+    for (uint32_t word = 0; word != context->nativeScheduleReadyNodes.size();
+         ++word) {
+      uint64_t ready = context->nativeScheduleReadyNodes[word];
+      while (ready != 0) {
+        uint32_t bit = static_cast<uint32_t>(__builtin_ctzll(ready));
+        uint32_t candidateNode = word * 64 + bit;
+        ready &= ready - 1;
+        if (candidateNode >= context->nativeScheduleNodes.size())
+          return OBELISK_RT_INVALID_CONTINUATION;
+        const obelisk_rt_native_schedule_node &node =
+            context->nativeScheduleNodes[candidateNode];
+        if (node.actor_slot >= context->nativeScheduleActors.size() ||
+            !context->nativeScheduleActors[node.actor_slot] ||
+            context->nativeScheduleActors[node.actor_slot]->continuation !=
+                node.continuation)
+          return OBELISK_RT_INVALID_CONTINUATION;
+        size_t processIndex =
+            context->nativeScheduleActorIndices[node.actor_slot];
+        if (processIndex >= context->scheduledProcesses.size())
+          return OBELISK_RT_INVALID_LIFECYCLE;
+        const ScheduledProcess &scheduled =
+            context->scheduledProcesses[processIndex];
+        if (!scheduled.instance || scheduled.aotActorSlot != node.actor_slot)
+          return OBELISK_RT_INVALID_LIFECYCLE;
+        SchedulerKey key{scheduled.urgent ? 0 : scheduled.queuedRegion,
+                         scheduled.urgent ? 0 : scheduled.scheduleRank,
+                         scheduled.insertionSequence};
+        if (key < selectedNodeKey ||
+            (key == selectedNodeKey && candidateNode < selectedNode)) {
+          selectedNode = candidateNode;
+          selectedNodeKey = key;
+        }
+      }
+    }
     if (selectedNode != UINT32_MAX) {
-      if (selectedNode >= context->nativeScheduleNodes.size())
-        return OBELISK_RT_INVALID_CONTINUATION;
-      const obelisk_rt_native_schedule_node &node =
-          context->nativeScheduleNodes[selectedNode];
-      if (node.actor_slot >= context->nativeScheduleActors.size() ||
-          !context->nativeScheduleActors[node.actor_slot] ||
-          context->nativeScheduleActors[node.actor_slot]->continuation !=
-              node.continuation)
-        return OBELISK_RT_INVALID_CONTINUATION;
-      size_t processIndex = context->nativeScheduleActorIndices[node.actor_slot];
-      if (processIndex >= context->scheduledProcesses.size())
-        return OBELISK_RT_INVALID_LIFECYCLE;
-      const ScheduledProcess &scheduled =
-          context->scheduledProcesses[processIndex];
-      if (!scheduled.instance || scheduled.aotActorSlot != node.actor_slot)
-        return OBELISK_RT_INVALID_LIFECYCLE;
-      nodeRegion = scheduled.urgent ? 0 : scheduled.queuedRegion;
-      nodeRank = scheduled.urgent ? 0 : scheduled.scheduleRank;
-      nodeInsertionSequence =
-          scheduled.urgent ? 0 : scheduled.insertionSequence;
+      nodeRegion = std::get<0>(selectedNodeKey);
+      nodeRank = std::get<1>(selectedNodeKey);
+      nodeInsertionSequence = std::get<2>(selectedNodeKey);
     }
 
-    using SchedulerKey = std::tuple<uint32_t, uint32_t, uint64_t>;
     SchedulerKey nodeKey{nodeRegion, nodeRank, nodeInsertionSequence};
     SchedulerKey runtimeProcessKey{UINT32_MAX, UINT32_MAX, UINT64_MAX};
     uint64_t runtimeProcessToken = 0;
@@ -9300,9 +9374,45 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_run_aot_nodes(
   for (;;) {
     uint32_t selectedNode = UINT32_MAX;
     bool readyBeforeCursor = false;
+    bool schedulerOrderedBootstrap = false;
     {
       ContextMutexLock lock(context);
-      if (context->nativeScheduleReadyNodes.size() == 1) {
+      schedulerOrderedBootstrap = obelisk_rt_unstarted_actor_pending(
+          context, context->schedulerRunningFinals ? 1u : 0u);
+      if (schedulerOrderedBootstrap) {
+        using SchedulerKey = std::tuple<uint32_t, uint32_t, uint64_t>;
+        SchedulerKey selectedKey{UINT32_MAX, UINT32_MAX, UINT64_MAX};
+        for (uint32_t wordIndex = 0;
+             wordIndex < context->nativeScheduleReadyNodes.size();
+             ++wordIndex) {
+          uint64_t word = context->nativeScheduleReadyNodes[wordIndex];
+          while (word != 0) {
+            uint32_t bit = static_cast<uint32_t>(__builtin_ctzll(word));
+            uint32_t candidate = wordIndex * 64 + bit;
+            word &= word - 1;
+            if (candidate >= context->nativeScheduleNodes.size())
+              return OBELISK_RT_INVALID_CONTINUATION;
+            const auto &node = context->nativeScheduleNodes[candidate];
+            if (node.actor_slot >=
+                context->nativeScheduleActorIndices.size())
+              return OBELISK_RT_INVALID_CONTINUATION;
+            size_t processIndex =
+                context->nativeScheduleActorIndices[node.actor_slot];
+            if (processIndex >= context->scheduledProcesses.size())
+              return OBELISK_RT_INVALID_LIFECYCLE;
+            const ScheduledProcess &scheduled =
+                context->scheduledProcesses[processIndex];
+            SchedulerKey key{scheduled.urgent ? 0 : scheduled.queuedRegion,
+                             scheduled.urgent ? 0 : scheduled.scheduleRank,
+                             scheduled.insertionSequence};
+            if (key < selectedKey ||
+                (key == selectedKey && candidate < selectedNode)) {
+              selectedNode = candidate;
+              selectedKey = key;
+            }
+          }
+        }
+      } else if (context->nativeScheduleReadyNodes.size() == 1) {
         uint64_t ready = context->nativeScheduleReadyNodes.front();
         uint64_t afterMask =
             nodeCursor >= 64 ? uint64_t{0} : UINT64_MAX << nodeCursor;
@@ -9377,7 +9487,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_run_aot_nodes(
           ContextMutexLock lock(context);
           restartBeforeCursor =
               context->nativeScheduleMinimumActivatedNode < nextNode;
-          if (!restartBeforeCursor && selected.fusion_group != UINT32_MAX &&
+          if (!schedulerOrderedBootstrap && !restartBeforeCursor &&
+              selected.fusion_group != UINT32_MAX &&
               nextNode < context->nativeScheduleNodes.size() &&
               (!context->nativeSchedulePlan->specialization_fast ||
                *context->nativeSchedulePlan->specialization_fast != 0)) {
@@ -9400,7 +9511,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_run_aot_nodes(
           break;
         lastNode = nextNode;
       }
-      nodeCursor = restartBeforeCursor ? 0 : lastNode + 1;
+      nodeCursor = schedulerOrderedBootstrap || restartBeforeCursor
+                       ? 0
+                       : lastNode + 1;
       continue;
     }
     if (passProgress) {
@@ -10061,8 +10174,24 @@ retryNativeSchedule:;
     for (uint32_t index = 0; index != snapshot.actor_count; ++index) {
       const obelisk_rt_aot_deopt_actor &actor = snapshot.actors[index];
       size_t processIndex = context->nativeScheduleActorIndices[actor.slot];
-      context->scheduledProcesses[processIndex].scheduleRank =
-          actor.schedule_rank;
+      ScheduledProcess &scheduled = context->scheduledProcesses[processIndex];
+      scheduled.scheduleRank = actor.schedule_rank;
+      // Direct AOT change/edge waits use static fanout instead of runtime
+      // subscriptions. A different actor can force whole-plan fallback while
+      // such a wait remains blocked; rehydrate it before pending NBAs are
+      // committed by the generic scheduler so the publication cannot be
+      // lost across the handoff.
+      bool directSignalWait =
+          actor.action.kind == OBELISK_RT_FRAGMENT_SUSPEND &&
+          (actor.action.suspend_kind == OBELISK_RT_SUSPEND_CHANGE ||
+           actor.action.suspend_kind == OBELISK_RT_SUSPEND_EDGE);
+      if (!actor.ready && directSignalWait &&
+          scheduled.signalSubscriptions.empty()) {
+        status = adoptScheduledSuspendUnlocked(context, scheduled,
+                                               actor.action);
+        if (status != OBELISK_RT_OK)
+          return status;
+      }
     }
     context->nativeScheduleDeoptimized = true;
     rebuildNativeSchedulerIndexUnlocked(context);

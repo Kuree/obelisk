@@ -290,7 +290,11 @@ Value storeStatePlane(ConversionPatternRewriter &rewriter, Location location,
   IntegerType inputType = cast<IntegerType>(input.getType());
   std::optional<DirectStaticStateRange> range =
       resolveDirectStaticStateRange(handle, inputType.getWidth(), directLayout);
-  if (!continuous && range && (!range->guarded || assumeClean))
+  // Unguarded roots can never be forced or procedurally assigned, so they do
+  // not need a retained continuous value for release. Guarded continuous
+  // roots still need the runtime path even in an assume-clean specialization:
+  // the clean publication may precede a later force.
+  if (range && (!range->guarded || (!continuous && assumeClean)))
     return storeDirectPackedPlane(rewriter, location, input, globalName,
                                   range->offset, trackChange);
 

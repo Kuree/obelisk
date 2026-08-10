@@ -6,8 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "NativeBackend.h"
 #include "NativeInputs.h"
+#include "TargetBackend.h"
 #include "Options.h"
 
 #include "obelisk/Conversion/ObeliskToSimulation.h"
@@ -289,6 +289,15 @@ static int executeCompilation(const InputArgList &args) {
                     "'; expected off, read, or full");
     valid = false;
   }
+  // The default is whichever target this build can produce; a wasm build of
+  // the compiler has no x86-64 backend linked in.
+  StringRef targetName =
+      args.getLastArgValue(OPT_target_EQ, OBELISK_DEFAULT_TARGET);
+  if (targetName != "native" && targetName != "wasm64") {
+    emitDriverError(Twine("unsupported target '") + targetName +
+                    "'; expected native or wasm64");
+    valid = false;
+  }
   StringRef executionTier =
       args.getLastArgValue(OPT_execution_tier_EQ, "native");
   if (executionTier != "native" && executionTier != "bytecode") {
@@ -462,7 +471,10 @@ static int executeCompilation(const InputArgList &args) {
     nativeOptions.bytecode = executionTier == "bytecode";
     nativeOptions.optLevel = optLevel;
     nativeOptions.compileThreads = resolvedCompilerThreads;
-    return succeeded(obelisk::driver::emitNativeOutput(*module, nativeOptions))
+    nativeOptions.target = targetName == "wasm64"
+                               ? obelisk::driver::TargetKind::Wasm
+                               : obelisk::driver::TargetKind::Native;
+    return succeeded(obelisk::driver::emitTargetOutput(*module, nativeOptions))
                ? 0
                : 1;
   }

@@ -28,14 +28,44 @@ set(LLVM_LINK_COMPONENTS
   Support
   Target
   TransformUtils
-  X86CodeGen
-  X86Desc
-  X86Info
 )
+
+# A backend is compiled only when its LLVM target and LLD driver are present.
+# The wasm SDK is built with LLVM_TARGETS_TO_BUILD=WebAssembly, so naming X86
+# there is not a harmless extra: llvm_map_components_to_libnames hard-fails on
+# a component whose target was omitted.
+#
+# A native build gets both, because the official distribution carries every
+# target. That is what lets an x86-64 obelisk cross-compile a design to wasm.
+set(OBELISK_BACKEND_SOURCES)
+set(OBELISK_HAS_NATIVE_BACKEND 0)
+set(OBELISK_HAS_WASM_BACKEND 0)
+
+list(APPEND LLVM_LINK_COMPONENTS
+  WebAssemblyCodeGen
+  WebAssemblyDesc
+  WebAssemblyInfo)
+list(APPEND OBELISK_BACKEND_SOURCES WasmBackend.cpp)
+set(OBELISK_HAS_WASM_BACKEND 1)
+
+if(NOT EMSCRIPTEN)
+  list(APPEND LLVM_LINK_COMPONENTS
+    X86CodeGen
+    X86Desc
+    X86Info)
+  list(APPEND OBELISK_BACKEND_SOURCES NativeBackend.cpp)
+  set(OBELISK_HAS_NATIVE_BACKEND 1)
+  set(OBELISK_DEFAULT_TARGET "native")
+else()
+  # A wasm build of the compiler cannot produce x86-64, so its only target is
+  # the one it also runs on.
+  set(OBELISK_DEFAULT_TARGET "wasm64")
+endif()
 
 add_llvm_executable(obelisk
   driver.cpp
-  NativeBackend.cpp
+  TargetBackend.cpp
+  ${OBELISK_BACKEND_SOURCES}
   NativeInputs.cpp
   Options.cpp
 )
@@ -55,6 +85,9 @@ target_compile_definitions(obelisk
   PRIVATE
   OBELISK_VERSION_STRING="${PROJECT_VERSION}"
   OBELISK_RESOURCE_DIR="${OBELISK_RESOURCE_DIR}"
+  OBELISK_HAS_NATIVE_BACKEND=${OBELISK_HAS_NATIVE_BACKEND}
+  OBELISK_HAS_WASM_BACKEND=${OBELISK_HAS_WASM_BACKEND}
+  OBELISK_DEFAULT_TARGET="${OBELISK_DEFAULT_TARGET}"
 )
 
 llvm_update_compile_flags(obelisk)
@@ -77,7 +110,8 @@ target_link_libraries(obelisk
   MLIRSupport
   MLIRTargetLLVMIRExport
   lldCommon
-  lldELF
+  lldWasm
+  $<$<NOT:$<BOOL:${EMSCRIPTEN}>>:lldELF>
 )
 
 mlir_check_all_link_libraries(obelisk)

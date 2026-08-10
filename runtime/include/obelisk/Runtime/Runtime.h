@@ -2486,10 +2486,11 @@ obelisk_rt_v1_native_state_register_static(obelisk_rt_context *context,
                                            uint64_t bit_width);
 // Seed the canonical design image from compiler-emitted native planes after
 // static-state registration and before VPI startup/root-process creation. The
-// planes remain bound for sparse Preponed capture while the context is alive.
+// planes remain bound for sparse Preponed capture and runtime-originated
+// state publication while the context is alive.
 obelisk_rt_status obelisk_rt_v1_native_state_sync(obelisk_rt_context *context,
-                                                  const uint8_t *value,
-                                                  const uint8_t *unknown,
+                                                  uint8_t *value,
+                                                  uint8_t *unknown,
                                                   uint64_t bit_count);
 // Whole static packed language force/assign services. `assign` selects
 // procedural assign ownership; release with `assign` selects deassign.

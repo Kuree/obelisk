@@ -1,0 +1,199 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Step 1: build the repository and run the lit regression suite.
+  # ---------------------------------------------------------------------------
+  build-and-test:
+    name: Build and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+    steps:
+      - uses: actions/checkout@v4
+
+      # The prebuilt LLVM distribution extracts to ~12 GB, which does not fit
+      # in a stock runner's free space alongside the build tree.
+      - name: Reclaim disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+                      /usr/local/share/boost /usr/local/.ghcup \
+                      /usr/share/swift /usr/local/lib/node_modules
+          sudo apt-get clean
+          df -h /
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build cmake ccache
+          python3 -m pip install --user lit
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # Keyed on the pinned dependency versions declared in CMakeLists.txt, so
+      # the cache invalidates exactly when a pin moves. Unlike the compiler
+      # cache below, this key is content-addressed and must NOT roll per commit.
+      - name: Cache pinned downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/_downloads
+            .target-package-cache
+          key: obelisk-deps-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'cmake/TargetNativeSupport.cmake') }}
+
+      # Cache entries are immutable, so a compiler cache has to be written under
+      # a fresh key each run and recovered through the prefix fallback --
+      # a fixed key would freeze at the first green build and decay from there.
+      - name: Restore compiler cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-native-${{ runner.os }}-${{ github.sha }}
+          restore-keys: ccache-native-${{ runner.os }}-
+
+      - name: Prepare compiler cache
+        run: |
+          ccache --max-size=2G
+          ccache --zero-stats
+
+      # ccache is opted into here rather than in CMakeLists.txt, so local
+      # builds are untouched. The launcher reaches Z3's nested configure
+      # through the pass-through in CMakeLists.txt.
+      - name: Configure
+        env:
+          OBELISK_TARGET_PACKAGE_CACHE: ${{ github.workspace }}/.target-package-cache
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DOBELISK_INCLUDE_TESTS=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        run: cmake --build build -j "$(nproc)"
+
+      - name: Compiler cache stats
+        if: always()
+        run: ccache --show-stats --verbose
+
+      # Saved only from the default branch: cache entries are branch-scoped, so
+      # pull-request entries can never be read by main yet still consume the
+      # shared 10 GB budget and evict the entries everything else relies on.
+      # Pull requests still restore from main above.
+      - name: Save compiler cache
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-native-${{ runner.os }}-${{ github.sha }}
+
+      - name: Run lit regression suite
+        run: cmake --build build --target check-obelisk
+
+  # ---------------------------------------------------------------------------
+  # Step 2: only after the suite is green, build the wasm toolchain and publish
+  # the page. Deploys through the Pages service, so nothing is ever committed
+  # to a branch and git history is untouched.
+  #
+  # NOTE: this job depends on wasm support that is still landing --
+  # cmake/TargetNativeSupport.cmake needs a wasm branch that builds the target
+  # runtime with em++/emar instead of clang++ against the Debian sysroot. Until
+  # that exists the "Build obelisk for wasm64" step fails by design rather than
+  # publishing a broken page.
+  # ---------------------------------------------------------------------------
+  wasm-pages:
+    name: Build wasm and deploy Pages
+    needs: build-and-test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    # Runs inside the prebuilt toolchain image, which carries emsdk and the
+    # wasm64 LLVM SDK. Building that SDK here instead would add ~3.7 core-hours
+    # to every run for an artifact that only changes when the LLVM pin does.
+    # Rebuild and push with docker/Dockerfile.llvm-wasm64; see docker/README.md.
+    container:
+      image: ghcr.io/kuree/obelisk-llvm-wasm64:22.1.6-1
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+    steps:
+      - uses: actions/checkout@v4
+
+      # A separate key from the native job: different compiler, different
+      # target, so the two would only evict each other under one key.
+      - name: Restore compiler cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-wasm-${{ runner.os }}-${{ github.sha }}
+          restore-keys: ccache-wasm-${{ runner.os }}-
+
+      - name: Prepare compiler cache
+        run: |
+          ccache --max-size=2G
+          ccache --zero-stats
+
+      # The SDK ships inside the image. CMakeLists.txt always downloads and
+      # extracts OBELISK_LLVM_PREBUILT_URL, so it is consumed through a file://
+      # URL rather than needing a source change.
+      - name: Build obelisk for wasm64
+        run: |
+          SHA=$(cat "$OBELISK_LLVM_WASM64_SHA256_FILE")
+          emcmake cmake -S . -B build-wasm -G Ninja \
+            -DCMAKE_BUILD_TYPE=MinSizeRel \
+            -DOBELISK_INCLUDE_TESTS=OFF \
+            -DOBELISK_LLVM_PREBUILT_URL="file://$OBELISK_LLVM_WASM64_SDK" \
+            -DOBELISK_LLVM_PREBUILT_SHA256="$SHA" \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build build-wasm -j "$(nproc)" --target obelisk
+
+      - name: Compiler cache stats
+        if: always()
+        run: ccache --show-stats --verbose
+
+      - name: Save compiler cache
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-wasm-${{ runner.os }}-${{ github.sha }}
+
+      - name: Assemble site
+        run: |
+          mkdir -p site
+          cp -r web/* site/
+          cp build-wasm/tools/driver/obelisk.wasm site/
+          cp build-wasm/tools/driver/obelisk.js   site/
+          # The runtime archive the in-browser compiler links designs against.
+          cp build-wasm/target-runtime/libobelisk_rt.a site/ 2>/dev/null || true
+          du -sh site
+          # Pages officially supports 1 GB; fail loudly rather than at deploy.
+          test "$(du -sm site | cut -f1)" -lt 1000
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4

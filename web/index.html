@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Obelisk — SystemVerilog in the browser</title>
+<meta name="description" content="Write SystemVerilog, compile it ahead of time to WebAssembly, and run it in the browser. Inspect every stage of the pipeline.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%23282a36'/><path d='M1 11h3V5h4v6h4V5h3' stroke='%23bd93f9' stroke-width='1.6' fill='none'/></svg>">
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-sans@5.0.20/index.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-mono@5.0.13/index.css">
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="identity">
+    <!-- A clock edge: the smallest true picture of what this tool compiles. -->
+    <svg class="glyph" viewBox="0 0 34 16" aria-hidden="true">
+      <path d="M1 12h5V4h6v8h6V4h6v8h5" />
+    </svg>
+    <h1>obelisk</h1>
+    <p class="lede">SystemVerilog, compiled ahead of time to WebAssembly</p>
+  </div>
+
+  <div class="actions">
+    <button id="flagsToggle" class="ghost" aria-expanded="false" aria-controls="flagsPanel">
+      Options
+      <svg class="chev" viewBox="0 0 10 6" aria-hidden="true"><path d="M1 1l4 4 4-4"/></svg>
+    </button>
+    <button id="share" class="ghost" title="Copy a link that restores this source and these options">Copy link</button>
+    <button id="run" class="run" disabled>
+      <span id="runLabel">Loading</span>
+      <kbd>⌘⏎</kbd>
+    </button>
+  </div>
+</header>
+
+<section id="flagsPanel" class="options" hidden>
+  <div class="grid">
+    <label class="field">
+      <span>Language</span>
+      <select id="std">
+        <option value="1800-2023" selected>IEEE 1800-2023</option>
+        <option value="1800-2017">IEEE 1800-2017</option>
+      </select>
+    </label>
+
+    <label class="field">
+      <span>Optimization</span>
+      <select id="opt">
+        <option>-O0</option><option>-O1</option><option>-O2</option>
+        <option selected>-O3</option>
+      </select>
+    </label>
+
+    <label class="field">
+      <span>Execution tier</span>
+      <select id="tier">
+        <option value="native" selected>native</option>
+        <option value="bytecode">bytecode</option>
+      </select>
+    </label>
+
+    <label class="field">
+      <span>Scheduler</span>
+      <select id="scheduler">
+        <option value="auto" selected>auto</option>
+        <option value="generic">generic</option>
+        <option value="aot">aot</option>
+        <option value="eval">eval</option>
+      </select>
+    </label>
+
+    <label class="field">
+      <span>Static specialization</span>
+      <select id="specialization">
+        <option value="auto" selected>auto</option>
+        <option value="on">on</option>
+        <option value="off">off</option>
+      </select>
+    </label>
+
+    <label class="field">
+      <span>Top module</span>
+      <input id="top" type="text" placeholder="inferred" spellcheck="false">
+    </label>
+
+    <label class="field">
+      <span>Timescale</span>
+      <input id="timescale" type="text" placeholder="1ns/1ps" spellcheck="false">
+    </label>
+
+    <label class="field">
+      <span>Macros</span>
+      <input id="defines" type="text" placeholder="WIDTH=8 DEBUG" spellcheck="false">
+    </label>
+
+    <label class="field wide">
+      <span>Additional flags</span>
+      <input id="extra" type="text" spellcheck="false"
+             placeholder="--error-limit=10 --ignore-unknown-modules -Xslang …">
+    </label>
+  </div>
+
+  <!-- Show the command being run. The options above are a shortcut for it,
+       not a replacement, so the flags stay learnable. -->
+  <div class="commandline">
+    <span class="prompt">$</span>
+    <code id="command"></code>
+    <button id="copyCommand" class="ghost tiny">Copy</button>
+  </div>
+</section>
+
+<main class="workbench">
+  <section class="panel" id="sourcePanel">
+    <div class="panelHead">
+      <h2>design.sv</h2>
+      <select id="examples" class="inline" title="Load an example">
+        <option value="">Load an example…</option>
+      </select>
+    </div>
+    <div id="editor"></div>
+  </section>
+
+  <div class="handle" id="handle" role="separator" aria-orientation="vertical"
+       tabindex="0" aria-label="Resize panels"></div>
+
+  <!-- The inspector's tabs are the compiler's real pipeline. Run is the
+       terminus and the default; the IR stages are there when you want to look
+       inside, and each compiles on demand. -->
+  <section class="panel" id="inspector">
+    <nav class="pipeline" aria-label="Pipeline stage">
+      <ol id="stages" role="tablist"></ol>
+    </nav>
+    <div class="panelHead">
+      <h2 id="stageBlurb"></h2>
+      <div class="panelTools">
+        <span id="status" class="status"></span>
+        <button id="copyOutput" class="ghost tiny">Copy</button>
+      </div>
+    </div>
+    <pre id="output" class="console" aria-live="polite" tabindex="0"></pre>
+  </section>
+</main>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>

@@ -1,0 +1,237 @@
+# LLVM + MLIR + LLD 22.1.6 built for wasm64, for the in-browser Obelisk compiler.
+#
+# Produces the same CMake package layout Obelisk's top-level CMakeLists.txt
+# validates (lib/cmake/{llvm,mlir,lld}), so the result is consumable through
+# the existing OBELISK_LLVM_PREBUILT_URL file:// path with no code change.
+#
+# Build the artifact (tarball lands in ./dist):
+#   DOCKER_BUILDKIT=1 docker build -f docker/Dockerfile.llvm-wasm64 \
+#     --target artifact --output type=local,dest=./dist docker/
+#
+# Then configure Obelisk against it:
+#   cmake -S . -B build-wasm -G Ninja \
+#     -DOBELISK_LLVM_PREBUILT_URL=file:///abs/path/dist/llvm-mlir-lld-wasm64.tar.xz \
+#     -DOBELISK_LLVM_PREBUILT_SHA256=<sha printed at the end of the build>
+#
+# Scope notes:
+#   * clang is deliberately NOT built. Obelisk links LLVM, MLIR and LLD only.
+#   * LLVM_TARGETS_TO_BUILD=WebAssembly only. This SDK can emit wasm and nothing
+#     else; it is for the compiler that runs in the browser and generates wasm
+#     simulations. The native x86-64 host build keeps using the official archive.
+#   * Threads are off. Obelisk simulations do not need pthreads (verified), and
+#     avoiding SharedArrayBuffer is what keeps COOP/COEP-less hosting viable.
+#   * MinSizeRel/-Oz. Optimizing this SDK for size costs no simulation speed,
+#     because designs are compiled to a separate module at -O3 at runtime.
+
+ARG EMSDK_VERSION=6.0.6
+FROM emscripten/emsdk:${EMSDK_VERSION} AS builder
+
+ARG LLVM_VERSION=22.1.6
+ARG LLVM_SRC_SHA256=6e0b376a1f6d9873e7dfb09ae6e04b9c7024400f01733fa4c29be69d5c138bc2
+# Same official x86-64 archive CMakeLists.txt pins, reused verbatim.
+ARG LLVM_NATIVE_SHA256=c5ac8ef89ca39d30cb32e9b83772f995dd891c685ebc188d593c943a64d5f8b5
+ARG BUILD_TYPE=MinSizeRel
+ARG JOBS=16
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      cmake ninja-build python3 xz-utils curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+#-----------------------------------------------------------------------------
+# LLVM #1 of 2: the native x86-64 distribution, at /opt/llvm-native.
+#
+# A cross build needs host-executable tools, and those can never be the wasm
+# build's own binaries. This is the official release archive Obelisk already
+# pins, so it arrives prebuilt and carries clang++, llvm-ar and llvm-ranlib --
+# the tools cmake/TargetNativeSupport.cmake requires -- with no build cost.
+# It also makes the image able to produce a normal native Obelisk.
+#-----------------------------------------------------------------------------
+WORKDIR /src
+RUN curl -fsSL -o llvm-native.tar.xz \
+      "https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VERSION}/LLVM-${LLVM_VERSION}-Linux-X64.tar.xz" \
+ && echo "${LLVM_NATIVE_SHA256}  llvm-native.tar.xz" | sha256sum -c - \
+ && mkdir -p /opt/llvm-native \
+ && tar -xf llvm-native.tar.xz -C /opt/llvm-native --strip-components=1 \
+ && rm llvm-native.tar.xz \
+ && test -x /opt/llvm-native/bin/clang++ \
+ && test -x /opt/llvm-native/bin/llvm-ar \
+ && test -x /opt/llvm-native/bin/llvm-ranlib
+
+#-----------------------------------------------------------------------------
+# Matching source, checksum-pinned like every other Obelisk dependency.
+#-----------------------------------------------------------------------------
+RUN curl -fsSL -o llvm.tar.xz \
+      "https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VERSION}/llvm-project-${LLVM_VERSION}.src.tar.xz" \
+ && echo "${LLVM_SRC_SHA256}  llvm.tar.xz" | sha256sum -c - \
+ && mkdir -p llvm-project \
+ && tar -xf llvm.tar.xz -C llvm-project --strip-components=1 \
+ && rm llvm.tar.xz
+
+#-----------------------------------------------------------------------------
+# Fill the one gap in the official archive.
+#
+# Cross-compiling LLVM drives host-executable generators. The release ships
+# llvm-tblgen and mlir-tblgen but NOT llvm-min-tblgen, so build the generator
+# set from this exact source and fold it into the native distribution. Same
+# version throughout, so nothing is mixed across releases.
+#-----------------------------------------------------------------------------
+RUN cmake -G Ninja -S /src/llvm-project/llvm -B /build/native \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DLLVM_ENABLE_PROJECTS="mlir" \
+      -DLLVM_TARGETS_TO_BUILD="WebAssembly" \
+      -DLLVM_ENABLE_ASSERTIONS=OFF \
+      -DLLVM_INCLUDE_TESTS=OFF \
+      -DLLVM_INCLUDE_EXAMPLES=OFF \
+      -DLLVM_INCLUDE_BENCHMARKS=OFF \
+      -DLLVM_ENABLE_ZLIB=OFF \
+      -DLLVM_ENABLE_ZSTD=OFF \
+      -DLLVM_ENABLE_LIBXML2=OFF \
+      -DLLVM_ENABLE_TERMINFO=OFF \
+ && cmake --build /build/native -j"${JOBS}" --target \
+      llvm-min-tblgen llvm-tblgen mlir-tblgen mlir-pdll mlir-linalg-ods-yaml-gen \
+ && for t in llvm-min-tblgen llvm-tblgen mlir-tblgen mlir-pdll mlir-linalg-ods-yaml-gen; do \
+      cp "/build/native/bin/$t" /opt/llvm-native/bin/; \
+    done \
+ && rm -rf /build/native
+
+#-----------------------------------------------------------------------------
+# LLVM #2 of 2: the wasm64 cross build, at /opt/llvm-wasm64.
+#
+# MEMORY64 is mandatory, not a preference: Obelisk's runtime ABI hard-asserts
+# 64-bit pointers (runtime/lib/ABI.cpp), and every descriptor layout assertion
+# depends on it. wasm32 would require an ABI redesign.
+#-----------------------------------------------------------------------------
+ENV WASM_FLAGS="-sMEMORY64=1 -fwasm-exceptions"
+
+RUN source /emsdk/emsdk_env.sh \
+ && emcmake cmake -G Ninja -S /src/llvm-project/llvm -B /build/wasm64 \
+      -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
+      -DCMAKE_INSTALL_PREFIX=/opt/llvm-wasm64 \
+      -DCMAKE_C_FLAGS="${WASM_FLAGS}" \
+      -DCMAKE_CXX_FLAGS="${WASM_FLAGS}" \
+      -DCMAKE_C_FLAGS_MINSIZEREL="-Oz -DNDEBUG" \
+      -DCMAKE_CXX_FLAGS_MINSIZEREL="-Oz -DNDEBUG" \
+      -DCMAKE_EXE_LINKER_FLAGS="${WASM_FLAGS}" \
+      \
+      -DLLVM_NATIVE_TOOL_DIR=/opt/llvm-native/bin \
+      -DLLVM_HOST_TRIPLE=wasm64-unknown-emscripten \
+      -DLLVM_DEFAULT_TARGET_TRIPLE=wasm64-unknown-emscripten \
+      \
+      -DLLVM_ENABLE_PROJECTS="mlir;lld" \
+      -DLLVM_TARGETS_TO_BUILD="WebAssembly" \
+      \
+      -DLLVM_ENABLE_THREADS=OFF \
+      -DLLVM_ENABLE_ASSERTIONS=OFF \
+      -DLLVM_ENABLE_BACKTRACES=OFF \
+      -DLLVM_ENABLE_CRASH_OVERRIDES=OFF \
+      -DLLVM_ENABLE_UNWIND_TABLES=OFF \
+      -DLLVM_ENABLE_ZLIB=OFF \
+      -DLLVM_ENABLE_ZSTD=OFF \
+      -DLLVM_ENABLE_LIBXML2=OFF \
+      -DLLVM_ENABLE_LIBEDIT=OFF \
+      -DLLVM_ENABLE_TERMINFO=OFF \
+      -DLLVM_ENABLE_LIBPFM=OFF \
+      -DLLVM_ENABLE_PIC=OFF \
+      \
+      -DLLVM_BUILD_TOOLS=OFF \
+      -DLLVM_BUILD_UTILS=OFF \
+      -DLLVM_INSTALL_UTILS=OFF \
+      -DLLVM_INCLUDE_TESTS=OFF \
+      -DLLVM_INCLUDE_EXAMPLES=OFF \
+      -DLLVM_INCLUDE_BENCHMARKS=OFF \
+      -DLLVM_INCLUDE_DOCS=OFF \
+      -DLLVM_BUILD_LLVM_DYLIB=OFF \
+      -DLLVM_LINK_LLVM_DYLIB=OFF \
+      \
+      -DMLIR_ENABLE_EXECUTION_ENGINE=OFF \
+      -DMLIR_ENABLE_BINDINGS_PYTHON=OFF \
+      -DMLIR_INCLUDE_TESTS=OFF \
+      -DMLIR_INCLUDE_INTEGRATION_TESTS=OFF \
+      -DMLIR_BUILD_MLIR_C_DYLIB=OFF \
+      -Wno-dev
+
+RUN source /emsdk/emsdk_env.sh \
+ && cmake --build /build/wasm64 -j"${JOBS}" --target install
+
+#-----------------------------------------------------------------------------
+# Ship the native TableGen tools inside the SDK.
+#
+# Obelisk's CMakeLists.txt requires bin/llvm-tblgen and bin/mlir-tblgen in the
+# distribution and hard-fails without them. These are host x86-64 executables,
+# which is exactly what a cross build needs to run, so carrying them here keeps
+# the SDK drop-in compatible with the existing prebuilt-archive path.
+#-----------------------------------------------------------------------------
+# Copy an explicit list, never a wildcard: /opt/llvm-native is the full
+# official distribution (172 binaries, 8.9 GB -- mlir-opt alone is 412 MB), and
+# globbing it into the SDK inflates the archive and turns packaging into a
+# multi-hour compress.
+RUN for tool in llvm-tblgen mlir-tblgen llvm-min-tblgen mlir-pdll \
+                mlir-linalg-ods-yaml-gen; do \
+      cp "/opt/llvm-native/bin/$tool" /opt/llvm-wasm64/bin/; \
+    done \
+ && test -x /opt/llvm-wasm64/bin/llvm-tblgen \
+ && test -x /opt/llvm-wasm64/bin/mlir-tblgen \
+ && du -sh /opt/llvm-wasm64
+
+#-----------------------------------------------------------------------------
+# Package. Deterministic tar so the SHA-256 is stable across rebuilds, which
+# matters because Obelisk's CMake verifies OBELISK_LLVM_PREBUILT_SHA256.
+#-----------------------------------------------------------------------------
+#
+# xz settings are deliberate. At the default -6 on one core, compressing this
+# ~700 MB tree took longer than the entire LLVM build. Measured on 382 MB of
+# these archives: -T8 -6 = 34 s / 38 MB, -T8 -3 = 3.6 s / 43 MB. This archive
+# is a build input rather than a user download, so 14% more bytes is a good
+# trade for ~9x less time on every build.
+#
+# The thread count is pinned rather than -T0 because xz's block splitting
+# depends on it, and a count that varied with the host's core count would
+# change the archive bytes and break the reproducible checksum.
+RUN mkdir -p /out \
+ && XZ_OPT='-T8 -3' tar --sort=name --owner=0 --group=0 --numeric-owner --mtime='@0' \
+        -cJf /out/llvm-mlir-lld-wasm64.tar.xz -C /opt llvm-wasm64 \
+ && cd /out \
+ && sha256sum llvm-mlir-lld-wasm64.tar.xz | tee llvm-mlir-lld-wasm64.tar.xz.sha256 \
+ && sha256sum -c llvm-mlir-lld-wasm64.tar.xz.sha256 \
+ && ls -lh /out/
+
+#-----------------------------------------------------------------------------
+# Default target: the reusable build image.
+#
+# Deliberately NOT `FROM builder`. That stage carries the 8.9 GB native LLVM
+# archive and the LLVM source and build trees, none of which are needed to
+# build Obelisk for wasm -- only the SDK is. Starting again from emsdk keeps
+# the published image to roughly emsdk plus 74 MB.
+#
+# The SDK is carried as the tarball rather than an extracted tree because
+# CMakeLists.txt always downloads and extracts OBELISK_LLVM_PREBUILT_URL. A
+# file:// URL into this image therefore needs no source change:
+#
+#   emcmake cmake -S . -B build-wasm -G Ninja \
+#     -DOBELISK_LLVM_PREBUILT_URL="file://$OBELISK_LLVM_WASM64_SDK" \
+#     -DOBELISK_LLVM_PREBUILT_SHA256="$OBELISK_LLVM_WASM64_SHA256"
+#-----------------------------------------------------------------------------
+FROM emscripten/emsdk:${EMSDK_VERSION} AS toolchain
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      cmake ninja-build ccache python3 xz-utils ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /out/ /opt/obelisk-sdk/
+
+# The bare checksum lands in a file consumers can read; it cannot be an ENV
+# because its value is only known at build time. Verified here so a corrupted
+# layer fails at image build rather than at someone else's configure step.
+ENV OBELISK_LLVM_WASM64_SDK=/opt/obelisk-sdk/llvm-mlir-lld-wasm64.tar.xz \
+    OBELISK_LLVM_WASM64_SHA256_FILE=/opt/obelisk-sdk/SHA256
+RUN cut -d' ' -f1 /opt/obelisk-sdk/llvm-mlir-lld-wasm64.tar.xz.sha256 \
+      > /opt/obelisk-sdk/SHA256 \
+ && (cd /opt/obelisk-sdk && sha256sum -c llvm-mlir-lld-wasm64.tar.xz.sha256)
+
+WORKDIR /work
+
+# Just the tarball and its checksum, for publishing or local use.
+FROM scratch AS artifact
+COPY --from=builder /out/ /
