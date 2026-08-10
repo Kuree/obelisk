@@ -3,6 +3,9 @@
 /dist/
 /site/
 /.ccache/
+/web/obelisk.js
+/web/obelisk.wasm
+/web/toolchain/
 *.o
 *.bc
 

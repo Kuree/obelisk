@@ -1129,6 +1129,14 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
   if (fileCall)
     return lowerFileSystemCall(op);
 
+  bool dumpCall = llvm::StringSwitch<bool>(name)
+                      .Cases({"$dumpfile", "$dumpvars", "$dumpoff", "$dumpon",
+                              "$dumpall", "$dumpflush", "$dumplimit"},
+                             true)
+                      .Default(false);
+  if (dumpCall)
+    return lowerDumpSystemCall(op);
+
   if (name == "$test$plusargs" || name == "$value$plusargs")
     return lowerPlusargSystemCall(op);
 

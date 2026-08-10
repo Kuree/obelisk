@@ -74,6 +74,8 @@ endif()
 
 set(_obelisk_llvm_download_dir "${CMAKE_BINARY_DIR}/_downloads")
 set(_obelisk_llvm_extract_dir "${CMAKE_BINARY_DIR}/llvm-mlir")
+set(_obelisk_llvm_extract_stamp
+    "${_obelisk_llvm_extract_dir}/.obelisk-archive-sha256")
 set(_obelisk_llvm_archive
     "${_obelisk_llvm_download_dir}/${_obelisk_llvm_archive_name}")
 file(MAKE_DIRECTORY "${_obelisk_llvm_download_dir}")
@@ -93,11 +95,22 @@ endif()
 file(GLOB_RECURSE _obelisk_llvm_configs_before
   LIST_DIRECTORIES FALSE
   "${_obelisk_llvm_extract_dir}/LLVMConfig.cmake")
-if(NOT _obelisk_llvm_configs_before)
+set(_obelisk_llvm_extracted_sha256 "")
+if(EXISTS "${_obelisk_llvm_extract_stamp}")
+  file(READ "${_obelisk_llvm_extract_stamp}"
+       _obelisk_llvm_extracted_sha256)
+  string(STRIP "${_obelisk_llvm_extracted_sha256}"
+         _obelisk_llvm_extracted_sha256)
+endif()
+if(NOT _obelisk_llvm_configs_before OR
+   NOT _obelisk_llvm_extracted_sha256 STREQUAL
+       OBELISK_LLVM_PREBUILT_SHA256)
   file(REMOVE_RECURSE "${_obelisk_llvm_extract_dir}")
   file(MAKE_DIRECTORY "${_obelisk_llvm_extract_dir}")
   file(ARCHIVE_EXTRACT INPUT "${_obelisk_llvm_archive}"
     DESTINATION "${_obelisk_llvm_extract_dir}")
+  file(WRITE "${_obelisk_llvm_extract_stamp}"
+       "${OBELISK_LLVM_PREBUILT_SHA256}\n")
 endif()
 
 file(GLOB_RECURSE _obelisk_llvm_configs
@@ -237,6 +250,14 @@ if(OBELISK_ENABLE_Z3)
     list(APPEND _obelisk_z3_cmake_args
       "-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}")
   endif()
+  if(EMSCRIPTEN)
+    # The toolchain selects em++, but it does not carry the outer project's
+    # MEMORY64 and exception ABI flags into ExternalProject's isolated cache.
+    # Z3 is linked into the wasm64 compiler, so its objects must match both.
+    list(APPEND _obelisk_z3_cmake_args
+      "-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
+      "-DCMAKE_EXE_LINKER_FLAGS=${CMAKE_EXE_LINKER_FLAGS}")
+  endif()
   if(CMAKE_CXX_COMPILER_TARGET)
     list(APPEND _obelisk_z3_cmake_args
       "-DCMAKE_CXX_COMPILER_TARGET=${CMAKE_CXX_COMPILER_TARGET}")
@@ -280,10 +301,10 @@ if(OBELISK_ENABLE_Z3)
     IMPORTED_LOCATION "${_obelisk_z3_install}/lib/libz3.a"
     INTERFACE_INCLUDE_DIRECTORIES "${_obelisk_z3_install}/include")
   if(EMSCRIPTEN)
-    # Match Z3's own Emscripten consumer requirements. The solver uses C++
-    # exceptions internally and benefits from a growable compiler heap.
+    # The solver benefits from a growable compiler heap. Exception handling is
+    # already fixed globally to -fwasm-exceptions; Emscripten's legacy
+    # DISABLE_EXCEPTION_CATCHING=0 setting is incompatible with that ABI.
     target_link_options(ObeliskZ3 INTERFACE
-      "SHELL:-s DISABLE_EXCEPTION_CATCHING=0"
       "SHELL:-s ALLOW_MEMORY_GROWTH=1")
   endif()
   add_dependencies(ObeliskZ3 obelisk_z3_project)

@@ -108,14 +108,23 @@ LogicalResult linkWasmModule(StringRef modulePath, StringRef outputPath,
     return failure();
   }
 
-  bool fullLTO = options.optLevel != 0;
   SmallString<256> runtimeArchive(supportRoot);
-  sys::path::append(runtimeArchive, fullLTO ? "libobelisk_rt_lto.a"
-                                            : "libobelisk_rt.a");
+  sys::path::append(runtimeArchive, "libobelisk_rt_lto.a");
   if (!sys::fs::exists(runtimeArchive)) {
     errs() << "obelisk: error: wasm support is missing '" << runtimeArchive
            << "'\n";
     return failure();
+  }
+
+  for (StringRef filename : {"libstubs.a", "libnoexit.a", "libc.a",
+                             "libdlmalloc.a", "libcompiler_rt.a", "libc++.a",
+                             "libc++abi.a", "libunwind.a"}) {
+    SmallString<256> path(libraryDirectory);
+    sys::path::append(path, filename);
+    if (!sys::fs::exists(path)) {
+      errs() << "obelisk: error: wasm sysroot is missing '" << path << "'\n";
+      return failure();
+    }
   }
 
   FailureOr<SmallString<256>> temporary =
@@ -131,31 +140,29 @@ LogicalResult linkWasmModule(StringRef modulePath, StringRef outputPath,
   owned.push_back("wasm-ld");
   owned.push_back("-mwasm64");
   owned.push_back("--gc-sections");
+  owned.push_back("--no-entry");
+  owned.push_back("--export=main");
+  owned.push_back("--export-memory");
+  owned.push_back("--allow-undefined");
   owned.push_back("-o");
   owned.push_back(temporary->str().str());
-  if (fullLTO) {
-    owned.push_back((Twine("--lto-O") + Twine(options.optLevel)).str());
-    owned.push_back("--lto-whole-program-visibility");
-  }
-  // crt1.o provides _start, which calls main.
-  SmallString<256> startup(libraryDirectory);
-  sys::path::append(startup, "crt1.o");
-  if (!sys::fs::exists(startup)) {
-    errs() << "obelisk: error: wasm sysroot is missing '" << startup << "'\n";
-    return failure();
-  }
-  owned.push_back(startup.str().str());
+  // The runtime is always LTO bitcode, including for an -O0 design object.
+  // Pass the requested level explicitly: wasm-ld otherwise defaults the
+  // runtime's LTO compilation to optimization even when the user selected
+  // -O0, which is both surprising and needlessly slow in the browser.
+  owned.push_back((Twine("--lto-O") + Twine(options.optLevel)).str());
   owned.push_back(modulePath.str());
   for (const NativeLinkInput &linkInput : options.nativeLinkInputs)
     owned.push_back(linkInput.path);
   owned.push_back(runtimeArchive.str().str());
   owned.push_back((Twine("-L") + libraryDirectory).str());
-  // A static link resolves in one pass over a group; the runtime, libc++ and
-  // libc reference each other.
-  owned.push_back("--start-group");
-  for (StringRef library : {"-lc", "-lc++", "-lc++abi", "-lcompiler_rt"})
+  // wasm-ld rescans archives to resolve cyclic static-library references.
+  // These stable names are aliases for the ABI-suffixed archives selected by
+  // Emscripten for wasm exceptions.
+  for (StringRef library : {"-lstubs", "-lnoexit", "-lc", "-ldlmalloc",
+                            "-lcompiler_rt", "-lc++", "-lc++abi",
+                            "-lunwind"})
     owned.push_back(library.str());
-  owned.push_back("--end-group");
 
   SmallVector<const char *> arguments;
   for (std::string &argument : owned)

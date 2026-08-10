@@ -67,29 +67,17 @@ button, select, input { font: inherit; color: inherit; }
 .identity { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
 
 .glyph {
-  width: 34px;
+  width: 16px;
   height: 16px;
-  align-self: center;
-  fill: none;
-  stroke: var(--signal);
-  stroke-width: 1.7;
-  stroke-linejoin: miter;
+  fill: var(--signal);
 }
 
 .masthead h1 {
   margin: 0;
   font-size: 16px;
+  line-height: 16px;
   font-weight: 600;
   letter-spacing: -0.01em;
-}
-
-.lede {
-  margin: 0;
-  color: var(--fg-dim);
-  font-size: 12.5px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .actions { display: flex; align-items: center; gap: 8px; flex: none; }
@@ -373,7 +361,6 @@ button, select, input { font: inherit; color: inherit; }
 /* ============================================================== responsive */
 
 @media (max-width: 860px) {
-  .lede { display: none; }
   .workbench {
     grid-template-columns: 1fr;
     grid-template-rows: minmax(220px, 1fr) 5px minmax(200px, 1fr);

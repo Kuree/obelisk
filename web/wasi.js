@@ -76,6 +76,92 @@ export class Wasi {
   get imports() {
     const self = this;
     return {
+      env: {
+        __assert_fail() {
+          throw new WebAssembly.RuntimeError('assertion failed in simulation runtime');
+        },
+        __syscall_openat: () => -WASI_ENOSYS,
+        __syscall_fcntl64: () => -WASI_ENOSYS,
+        __syscall_ioctl: () => -WASI_ENOSYS,
+        emscripten_get_now: () => performance.now(),
+        emscripten_date_now: () => Date.now(),
+        _tzset_js(timezonePtr, daylightPtr, stdNamePtr, dstNamePtr) {
+          const currentYear = new Date().getFullYear();
+          const winterOffset = new Date(currentYear, 0, 1).getTimezoneOffset();
+          const summerOffset = new Date(currentYear, 6, 1).getTimezoneOffset();
+          const standardOffset = Math.max(winterOffset, summerOffset);
+          self.view.setBigInt64(Number(timezonePtr), BigInt(standardOffset * 60), true);
+          self.view.setInt32(
+            Number(daylightPtr), Number(winterOffset !== summerOffset), true,
+          );
+
+          const zoneName = (offset) => {
+            const sign = offset >= 0 ? '-' : '+';
+            const absolute = Math.abs(offset);
+            const hours = String(Math.floor(absolute / 60)).padStart(2, '0');
+            const minutes = String(absolute % 60).padStart(2, '0');
+            return `UTC${sign}${hours}${minutes}`;
+          };
+          const writeString = (pointer, value) => {
+            const bytes = new Uint8Array(self.memory.buffer);
+            let offset = Number(pointer);
+            for (const byte of new TextEncoder().encode(value)) bytes[offset++] = byte;
+            bytes[offset] = 0;
+          };
+          const winterName = zoneName(winterOffset);
+          const summerName = zoneName(summerOffset);
+          if (summerOffset < winterOffset) {
+            writeString(stdNamePtr, winterName);
+            writeString(dstNamePtr, summerName);
+          } else {
+            writeString(dstNamePtr, winterName);
+            writeString(stdNamePtr, summerName);
+          }
+        },
+        _localtime_js(time, tmPtr) {
+          const date = new Date(Number(time) * 1000);
+          if (Number.isNaN(date.getTime())) return 1;
+          const pointer = Number(tmPtr);
+          const view = self.view;
+          view.setInt32(pointer, date.getSeconds(), true);
+          view.setInt32(pointer + 4, date.getMinutes(), true);
+          view.setInt32(pointer + 8, date.getHours(), true);
+          view.setInt32(pointer + 12, date.getDate(), true);
+          view.setInt32(pointer + 16, date.getMonth(), true);
+          view.setInt32(pointer + 20, date.getFullYear() - 1900, true);
+          view.setInt32(pointer + 24, date.getDay(), true);
+          const leap = date.getFullYear() % 4 === 0
+            && (date.getFullYear() % 100 !== 0 || date.getFullYear() % 400 === 0);
+          const cumulativeDays = leap
+            ? [0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335]
+            : [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
+          const dayOfYear = cumulativeDays[date.getMonth()] + date.getDate() - 1;
+          view.setInt32(pointer + 28, dayOfYear, true);
+          const startOfYear = new Date(date.getFullYear(), 0, 1);
+          const winterOffset = startOfYear.getTimezoneOffset();
+          const summerOffset = new Date(date.getFullYear(), 6, 1).getTimezoneOffset();
+          const daylight = winterOffset !== summerOffset
+            && date.getTimezoneOffset() === Math.min(winterOffset, summerOffset);
+          view.setInt32(pointer + 32, Number(daylight), true);
+          view.setBigInt64(pointer + 40, BigInt(-date.getTimezoneOffset() * 60), true);
+          return 0;
+        },
+        _abort_js() {
+          throw new WebAssembly.RuntimeError('simulation runtime aborted');
+        },
+        emscripten_resize_heap(requestedSize) {
+          const requested = Number(requestedSize);
+          const current = self.memory.buffer.byteLength;
+          if (requested <= current) return 1;
+          const pages = Math.ceil((requested - current) / 65536);
+          try {
+            self.memory.grow(BigInt(pages));
+            return 1;
+          } catch {
+            return 0;
+          }
+        },
+      },
       wasi_snapshot_preview1: {
         fd_write(fd, iovsPtr, iovsLen, nwrittenPtr) {
           if (fd !== 1 && fd !== 2) return WASI_EBADF;
@@ -175,7 +261,7 @@ export async function runSimulation(wasmBinary, onOutput) {
     if (typeof instance.exports._start === 'function') {
       instance.exports._start();
     } else if (typeof instance.exports.main === 'function') {
-      instance.exports.main(0, 0);
+      instance.exports.main(0, 0n);
     } else {
       throw new Error('simulation module exports neither _start nor main');
     }

@@ -230,6 +230,58 @@ def RTTimeFormatOp : RTOp<"time.format", [
   let results = (outs RTStatusType:$status);
 }
 
+// Waveform services. Collection itself is a scheduler-driven difference over
+// the canonical state planes; these calls only configure and gate it.
+def RTDumpOpenOp : RTOp<"dump.open", [
+  MemoryEffects<[MemWrite<RTRuntimeResource>, MemWrite<RTIOResource>, MemRead]>
+]> {
+  let arguments = (ins RTContextType:$context, RTByteSpanType:$path);
+  let results = (outs RTStatusType:$status);
+}
+
+def RTDumpTimescaleOp : RTOp<"dump.timescale", [
+  MemoryEffects<[MemWrite<RTRuntimeResource>]>
+]> {
+  let arguments = (ins RTContextType:$context, I32:$exponent);
+  let results = (outs RTStatusType:$status);
+}
+
+def RTDumpVarsOp : RTOp<"dump.vars", [
+  MemoryEffects<[MemWrite<RTRuntimeResource>, MemWrite<RTIOResource>, MemRead]>
+]> {
+  let arguments = (ins RTContextType:$context, I64:$levels,
+                       RTByteSpanType:$scope);
+  let results = (outs RTStatusType:$status);
+}
+
+def RTDumpAllOp : RTOp<"dump.all", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTIOResource>]>
+]> {
+  let arguments = (ins RTContextType:$context);
+  let results = (outs RTStatusType:$status);
+}
+
+def RTDumpControlOp : RTOp<"dump.control", [
+  MemoryEffects<[MemWrite<RTRuntimeResource>, MemWrite<RTIOResource>]>
+]> {
+  let arguments = (ins RTContextType:$context, I32:$enabled);
+  let results = (outs RTStatusType:$status);
+}
+
+def RTDumpLimitOp : RTOp<"dump.limit", [
+  MemoryEffects<[MemWrite<RTRuntimeResource>]>
+]> {
+  let arguments = (ins RTContextType:$context, I64:$bytes);
+  let results = (outs RTStatusType:$status);
+}
+
+def RTDumpFlushOp : RTOp<"dump.flush", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTIOResource>]>
+]> {
+  let arguments = (ins RTContextType:$context);
+  let results = (outs RTStatusType:$status);
+}
+
 // File services.
 def RTFileOpenMCDOp : RTOp<"file.open_mcd", [
   MemoryEffects<[MemWrite<RTRuntimeResource>, MemWrite<RTIOResource>, MemRead]>

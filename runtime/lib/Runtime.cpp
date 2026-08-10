@@ -240,6 +240,8 @@ namespace {
 void destroyContextNow(obelisk_rt_context *context) noexcept {
   std::vector<ScheduledProcess> processes;
   try {
+    // Settle the final time slot before the state planes go away.
+    obelisk_rt_dump_destroy(context);
     if (context->vpiState)
       obelisk_rt_v1_vpi_shutdown(context);
     {

@@ -340,6 +340,41 @@ public:
   }
 };
 
+// The dump family is a set of void tasks whose operands map one to one onto
+// the runtime call, so one pattern covers all of them.
+template <typename Op, typename RuntimeOp>
+class DumpTaskConversion final : public SimIOConversion<Op> {
+public:
+  using SimIOConversion<Op>::SimIOConversion;
+
+  LogicalResult
+  matchAndRewrite(
+      Op op, typename SimIOConversion<Op>::OneToNOpAdaptor adaptor,
+      ConversionPatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    Value context = runtimeContext(rewriter, loc, adaptor.getContext().front());
+    SmallVector<Value> operands{context};
+    if constexpr (std::is_same_v<Op, sim::SimDumpOpenOp>)
+      operands.push_back(adaptor.getPath().front());
+    else if constexpr (std::is_same_v<Op, sim::SimDumpTimescaleOp>)
+      operands.push_back(adaptor.getExponent().front());
+    else if constexpr (std::is_same_v<Op, sim::SimDumpVarsOp>) {
+      operands.push_back(adaptor.getLevels().front());
+      operands.push_back(adaptor.getScope().front());
+    } else if constexpr (std::is_same_v<Op, sim::SimDumpLimitOp>)
+      operands.push_back(adaptor.getBytes().front());
+    else if constexpr (std::is_same_v<Op, sim::SimDumpControlOp>)
+      operands.push_back(iConstant(rewriter, loc, rewriter.getI32Type(),
+                                   op.getEnabled() ? 1 : 0));
+    Value status = RuntimeOp::create(
+        rewriter, loc, runtime::StatusType::get(rewriter.getContext()),
+        operands);
+    sim::SimStatusCheckOp::create(rewriter, loc, status);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 class GetcConversion final : public SimIOConversion<sim::SimFileGetcOp> {
 public:
   using SimIOConversion::SimIOConversion;
@@ -536,7 +571,9 @@ public:
         sim::SimFileCloseOp, sim::SimFileFlushOp, sim::SimFileGetcOp,
         sim::SimFileUngetcOp, sim::SimFileGetlineOp, sim::SimFileReadPackedOp,
         sim::SimFileEofOp, sim::SimFileSeekOp, sim::SimFileTellOp,
-        sim::SimFileRewindOp>();
+        sim::SimFileRewindOp, sim::SimDumpOpenOp, sim::SimDumpTimescaleOp,
+        sim::SimDumpVarsOp, sim::SimDumpAllOp, sim::SimDumpControlOp,
+        sim::SimDumpLimitOp, sim::SimDumpFlushOp>();
     target.addLegalDialect<runtime::ObeliskRuntimeDialect,
                            arith::ArithDialect>();
     target.addLegalOp<ModuleOp, sim::SimContextRuntimeOp,
@@ -579,6 +616,16 @@ void populateSimulationToRuntimePatterns(const TypeConverter &converter,
                DescriptorStatusConversion<sim::SimFileRewindOp,
                                           runtime::RTFileRewindOp>>(converter,
                                                                    context);
+  patterns
+      .add<DumpTaskConversion<sim::SimDumpOpenOp, runtime::RTDumpOpenOp>,
+           DumpTaskConversion<sim::SimDumpTimescaleOp,
+                              runtime::RTDumpTimescaleOp>,
+           DumpTaskConversion<sim::SimDumpVarsOp, runtime::RTDumpVarsOp>,
+           DumpTaskConversion<sim::SimDumpAllOp, runtime::RTDumpAllOp>,
+           DumpTaskConversion<sim::SimDumpControlOp, runtime::RTDumpControlOp>,
+           DumpTaskConversion<sim::SimDumpLimitOp, runtime::RTDumpLimitOp>,
+           DumpTaskConversion<sim::SimDumpFlushOp, runtime::RTDumpFlushOp>>(
+          converter, context);
 }
 
 } // namespace obelisk

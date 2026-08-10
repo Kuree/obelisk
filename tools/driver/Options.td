@@ -30,9 +30,9 @@ def emit_sim : Flag<["-"], "emit-sim">, Group<Action_Group>,
 def emit_schedule : Flag<["-"], "emit-schedule">, Group<Action_Group>,
   HelpText<"Emit deterministic compute-graph and event-region diagnostics">;
 def c : Flag<["-"], "c">, Group<Action_Group>,
-  HelpText<"Emit a native x86-64 ELF object">;
+  HelpText<"Emit a relocatable object for the selected target">;
 def emit_llvm : Flag<["-"], "emit-llvm">, Group<Action_Group>,
-  HelpText<"Emit textual LLVM IR for the native target">;
+  HelpText<"Emit textual LLVM IR for the selected target">;
 def emit_dpi_header : Flag<["--"], "emit-dpi-header">, Group<Action_Group>,
   HelpText<"Emit exact C prototypes for DPI imports">;
 def print_resource_dir : Flag<["--"], "print-resource-dir">, Group<Action_Group>,
@@ -46,7 +46,7 @@ def mlir_print_debuginfo : Flag<["--"], "mlir-print-debuginfo">,
   HelpText<"Include source locations in emitted MLIR">;
 def sysroot_EQ : Joined<["--"], "sysroot=">, Group<Output_Group>,
   MetaVarName<"<dir>">,
-  HelpText<"Use <dir> for glibc native-link inputs">;
+  HelpText<"Use <dir> for target C and C++ link inputs">;
 def target_EQ : Joined<["--"], "target=">, Group<Output_Group>,
   MetaVarName<"<native|wasm64>">,
   HelpText<"Select the code-generation target">;

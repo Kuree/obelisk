@@ -28,9 +28,11 @@ target_include_directories(ObeliskSolver PRIVATE
 )
 
 if(OBELISK_ENABLE_Z3)
-  # The imported target's dependency guarantees the archive exists at link
-  # time. This explicit edge also installs the pinned headers before any
-  # ObeliskSolver source is compiled, preventing accidental system-Z3 use.
+  # add_mlir_library compiles sources through obj.ObeliskSolver, so order both
+  # the object compilation and final archive after the external install. The
+  # former is what guarantees z3++.h exists before SolverZ3.cpp is compiled;
+  # the latter guarantees the imported archive exists at link time.
+  add_dependencies(obj.ObeliskSolver obelisk_z3_project)
   add_dependencies(ObeliskSolver obelisk_z3_project)
   target_link_libraries(ObeliskSolver PRIVATE ObeliskZ3)
 endif()

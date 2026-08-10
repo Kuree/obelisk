@@ -63,6 +63,7 @@ else()
 endif()
 
 add_llvm_executable(obelisk
+  PARTIAL_SOURCES_INTENDED
   driver.cpp
   TargetBackend.cpp
   ${OBELISK_BACKEND_SOURCES}
@@ -89,6 +90,19 @@ target_compile_definitions(obelisk
   OBELISK_HAS_WASM_BACKEND=${OBELISK_HAS_WASM_BACKEND}
   OBELISK_DEFAULT_TARGET="${OBELISK_DEFAULT_TARGET}"
 )
+
+if(EMSCRIPTEN)
+  # compiler-worker.js loads the compiler as a reusable factory and invokes it
+  # repeatedly. Keep Node available as well so web/smoke-test.mjs exercises
+  # exactly the same artifact outside a browser.
+  target_link_options(obelisk PRIVATE
+    "-sMODULARIZE=1"
+    "-sEXPORT_NAME=createObeliskModule"
+    "-sEXPORTED_RUNTIME_METHODS=FS,callMain"
+    "-sINVOKE_RUN=0"
+    "-sSTACK_SIZE=16777216"
+    "-sENVIRONMENT=web,worker,node")
+endif()
 
 llvm_update_compile_flags(obelisk)
 

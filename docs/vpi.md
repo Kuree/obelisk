@@ -53,9 +53,12 @@ dirty specialization state is active. Deposits without an exact mapping and
 force/release operations retain the guarded bytecode handoff.
 
 Callbacks, delayed writes, system task/function registration, strengths,
-trireg behavior, and waveform dumping are not implemented. Registration calls
-made from a startup table produce a clear unsupported-startup failure rather
-than an unresolved-symbol loader crash.
+trireg behavior, and VPI-registered waveform dumping are not implemented.
+Registration calls made from a startup table produce a clear
+unsupported-startup failure rather than an unresolved-symbol loader crash.
+Waveform dumping itself is available through the `$dump` system tasks and is
+described in [Waveform dumping](waveforms.md); it reads the same design
+database as the backdoor and needs no plugin.
 
 The complete canonical `vpi_user.h`, `sv_vpi_user.h`,
 `vpi_compatibility.h`, and Obelisk `svdpi.h` are staged under:

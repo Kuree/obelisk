@@ -637,6 +637,9 @@ struct NetAliasCache {
 // the complete image before publishing this cache; context-owned consumers can
 // therefore perform constant-time structural checks without re-checksumming or
 // re-walking the design on every query.
+// Waveform dump state. Defined in VCD.cpp; the context only owns the pointer.
+struct VCDTraceState;
+
 struct DesignDatabaseCache {
   const uint8_t *data = nullptr;
   uint64_t size = 0;
@@ -912,6 +915,9 @@ struct obelisk_rt_context {
   obelisk::designbytecode::Image designBytecodeImage;
   bool designBytecodeImageValidated = false;
   void *vpiState = nullptr;
+  // Waveform dump plan, shadow planes, and output buffer. Allocated on the
+  // first $dumpfile/$dumpvars and owned by the context.
+  VCDTraceState *vcdState = nullptr;
   std::unordered_map<uint64_t, const obelisk_rt_class_descriptor_v1 *>
       managedClasses;
   std::unordered_map<uint64_t, const obelisk_rt_element_type_v1 *>
@@ -956,6 +962,24 @@ inline void obelisk_rt_sync_native_state_range_unlocked(
 
 obelisk_rt_status
 obelisk_rt_capture_preponed_unlocked(obelisk_rt_context *context);
+
+// Emit every waveform value that changed during the time slot that is about to
+// end. Called immediately before each scheduler time advance and once more when
+// the run terminates, so a slot is recorded exactly once at its own time. This
+// is a no-op when no dump file is open.
+obelisk_rt_status obelisk_rt_dump_slot_unlocked(obelisk_rt_context *context);
+
+// Nonzero while a dump file is open. Execution tiers that advance time without
+// re-entering the runtime must not be selected while this holds.
+bool obelisk_rt_dump_active_unlocked(const obelisk_rt_context *context);
+
+// Number of distinct canonical ranges the dump differences per time slot.
+// Aliased declarations collapse onto one range, so this is at most the number
+// of traced `$var` declarations.
+uint64_t obelisk_rt_dump_traced_range_count(const obelisk_rt_context *context);
+
+// Flush and release the dump state during context teardown.
+void obelisk_rt_dump_destroy(obelisk_rt_context *context) noexcept;
 
 inline std::unordered_set<uint64_t> &
 obelisk_rt_unstarted_actors(obelisk_rt_context *context, uint32_t phase) {

@@ -1383,6 +1383,60 @@ def SimTimeFormatOp : SimOp<"time.format", [
                        I32:$width);
 }
 
+//===----------------------------------------------------------------------===//
+// Waveform dumping
+//
+// The runtime collects values by differencing the canonical state planes once
+// per time slot, so these ops only configure and gate that collection. None of
+// them observes an individual variable, and none is a per-transition site.
+//===----------------------------------------------------------------------===//
+
+class SimDumpOp<string mnemonic, dag dumpArgs>
+    : SimOp<mnemonic, [MemoryEffects<[MemRead<SimIOResource>,
+                                      MemWrite<SimIOResource>]>]> {
+  let arguments = dumpArgs;
+}
+
+def SimDumpOpenOp : SimDumpOp<"dump.open",
+    (ins SimContextType:$context, SimBytesType:$path)> {
+  let summary = "select the waveform file named by $dumpfile";
+}
+
+def SimDumpTimescaleOp : SimDumpOp<"dump.timescale",
+    (ins SimContextType:$context, I32:$exponent)> {
+  let summary = "declare the $timescale written into the waveform header";
+}
+
+def SimDumpVarsOp : SimDumpOp<"dump.vars",
+    (ins SimContextType:$context, I64:$levels, SimBytesType:$scope)> {
+  let summary = "add one $dumpvars selection to the traced set";
+  let description = [{
+    `levels` is the IEEE depth, where zero selects every level below `scope`.
+    An empty `scope` selects the design root. Selections accumulate until the
+    end of the time slot that made the first one.
+  }];
+}
+
+def SimDumpAllOp : SimDumpOp<"dump.all",
+    (ins SimContextType:$context)> {
+  let summary = "emit every selected variable at the current time";
+}
+
+def SimDumpControlOp : SimDumpOp<"dump.control",
+    (ins SimContextType:$context, BoolAttr:$enabled)> {
+  let summary = "$dumpon / $dumpoff";
+}
+
+def SimDumpLimitOp : SimDumpOp<"dump.limit",
+    (ins SimContextType:$context, I64:$bytes)> {
+  let summary = "bound the waveform file size in bytes";
+}
+
+def SimDumpFlushOp : SimDumpOp<"dump.flush",
+    (ins SimContextType:$context)> {
+  let summary = "flush buffered waveform output to the file";
+}
+
 class SimFileOp<string mnemonic, dag fileArgs, dag fileResults,
                 list<MemoryEffect> effects = [
                   MemRead<SimIOResource>, MemWrite<SimIOResource>

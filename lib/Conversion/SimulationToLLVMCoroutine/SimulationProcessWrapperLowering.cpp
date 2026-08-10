@@ -270,7 +270,10 @@ LogicalResult makeDirectFragmentWrapper(
               sim::SimFileUngetcOp, sim::SimFileGetlineOp,
               sim::SimFileReadPackedOp, sim::SimFileEofOp,
               sim::SimFileSeekOp, sim::SimFileTellOp,
-              sim::SimFileRewindOp>(operation);
+              sim::SimFileRewindOp, sim::SimDumpOpenOp,
+              sim::SimDumpTimescaleOp, sim::SimDumpVarsOp, sim::SimDumpAllOp,
+              sim::SimDumpControlOp, sim::SimDumpLimitOp,
+              sim::SimDumpFlushOp>(operation);
       if (auto call = dyn_cast<sim::SimCallOp>(operation))
         inspect(design.lookupSymbol<sim::SimFuncOp>(call.getCallee()));
     });

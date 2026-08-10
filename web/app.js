@@ -26,6 +26,8 @@ const OPTION_FIELDS = [
 let monaco = null;
 let editor = null;
 let worker = null;
+let workerReady = false;
+let pendingCompilation = null;
 let options = { ...DEFAULTS };
 let activeStage = DEFAULT_STAGE;
 let busy = false;
@@ -162,6 +164,9 @@ function record(text, className) {
 }
 
 function finishRecording(statusText, statusKind) {
+  // Replace the busy status immediately. Besides exposing the final timings,
+  // changing the class removes the flashing .status.busy indicator.
+  setStatus(statusText, statusKind);
   if (!recording) return;
   recording.status = { text: statusText, kind: statusKind };
   results.set(recording.stage, recording);
@@ -169,20 +174,22 @@ function finishRecording(statusText, statusKind) {
 }
 
 function compileStage(stageId) {
-  if (busy || !worker) return;
+  if (busy) return;
   const stage = findStage(stageId);
   busy = true;
   setBusyLabel(true);
   clearConsole();
   setStatus(stage.kind === 'binary' ? 'compiling' : 'generating', 'busy');
   recording = { stage: stageId, chunks: [], status: {} };
-  worker.postMessage({
+  pendingCompilation = {
     type: 'compile',
     source: editor.getValue(),
     args: buildArgs({ ...options, stage: stageId }),
     stage: stageId,
     kind: stage.kind,
-  });
+  };
+  if (!worker) initWorker();
+  else if (workerReady) dispatchCompilation();
 }
 
 function invalidate() {
@@ -204,16 +211,37 @@ function setBusyLabel(isBusy) {
 
 /* ----------------------------------------------------------------- worker */
 
+function disposeWorker() {
+  worker?.terminate();
+  worker = null;
+  workerReady = false;
+}
+
+function dispatchCompilation() {
+  if (!workerReady || !pendingCompilation) return;
+  const request = pendingCompilation;
+  pendingCompilation = null;
+  worker.postMessage(request);
+}
+
 function initWorker() {
-  worker = new Worker('./compiler-worker.js');
-  worker.onmessage = (event) => onMessage(event.data);
-  worker.onerror = (event) => {
+  disposeWorker();
+  const freshWorker = new Worker('./compiler-worker.js');
+  worker = freshWorker;
+  freshWorker.onmessage = (event) => {
+    if (worker === freshWorker) onMessage(event.data);
+  };
+  freshWorker.onerror = (event) => {
+    if (worker !== freshWorker) return;
+    disposeWorker();
+    pendingCompilation = null;
+    busy = false;
     ui.run.disabled = true;
     ui.runLabel.textContent = 'Unavailable';
     setStatus('compiler unavailable', 'err');
     write(`\nThe compiler could not start: ${event.message}\n`, 'stderr');
   };
-  worker.postMessage({ type: 'preload' });
+  freshWorker.postMessage({ type: 'preload' });
 }
 
 let diagnosticText = '';
@@ -221,8 +249,12 @@ let diagnosticText = '';
 async function onMessage(message) {
   switch (message.type) {
     case 'ready':
-      setBusyLabel(false);
-      setStatus('ready');
+      workerReady = true;
+      if (pendingCompilation) dispatchCompilation();
+      else {
+        setBusyLabel(false);
+        setStatus('ready');
+      }
       break;
 
     case 'log':
@@ -231,6 +263,10 @@ async function onMessage(message) {
       break;
 
     case 'compiled': {
+      // LLVM, MLIR, Slang, and wasm LLD all carry process-global state. A
+      // command-line invocation gets a fresh process; mirror that boundary in
+      // the browser instead of calling main twice in one WebAssembly instance.
+      disposeWorker();
       const counts = applyDiagnostics(diagnosticText);
       diagnosticText = '';
       const compileMs = Math.round(message.elapsedMs);
@@ -259,6 +295,7 @@ async function onMessage(message) {
     }
 
     case 'failed':
+      disposeWorker();
       record(`\n${message.message}\n`, 'stderr');
       finishRecording('failed', 'err');
       busy = false; setBusyLabel(false);

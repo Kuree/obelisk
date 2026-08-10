@@ -60,12 +60,13 @@ namespace {
 
 std::string formatReal(double value) {
   std::array<char, 64> buffer;
-  auto [end, error] = std::to_chars(buffer.begin(), buffer.end(), value,
-                                    std::chars_format::general,
-                                    std::numeric_limits<double>::max_digits10);
+  auto [end, error] =
+      std::to_chars(buffer.data(), buffer.data() + buffer.size(), value,
+                    std::chars_format::general,
+                    std::numeric_limits<double>::max_digits10);
   if (error != std::errc())
     llvm_unreachable("buffer is too small to format a double");
-  return std::string(buffer.begin(), end);
+  return std::string(buffer.data(), end);
 }
 
 template <typename Value> std::string formatConstant(const Value &value) {
@@ -2759,6 +2760,10 @@ buildSlangArguments(ArrayRef<std::string> inputs,
   if (options.timeScale) {
     result.emplace_back("--timescale");
     result.push_back(*options.timeScale);
+  }
+  if (options.numThreads) {
+    result.emplace_back("-j");
+    result.push_back(std::to_string(*options.numThreads));
   }
   result.insert(result.end(), options.slangArgs.begin(),
                 options.slangArgs.end());

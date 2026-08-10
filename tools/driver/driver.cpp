@@ -283,6 +283,17 @@ static int executeCompilation(const InputArgList &args) {
     emitDriverError("--compile-threads must be greater than zero");
     valid = false;
   }
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+  if (compilerThreads && *compilerThreads != 1) {
+    emitDriverError(
+        "--compile-threads must be 1 in a single-threaded wasm compiler");
+    valid = false;
+  }
+  // Construct MLIRContext with threading disabled. Its native default creates
+  // a worker pool before any pass runs, which Emscripten cannot provide in a
+  // module built without pthread support.
+  compilerThreads = 1;
+#endif
   StringRef vpiMode = args.getLastArgValue(OPT_vpi_EQ, "off");
   if (vpiMode != "off" && vpiMode != "read" && vpiMode != "full") {
     emitDriverError(Twine("unsupported VPI mode '") + vpiMode +
@@ -334,6 +345,7 @@ static int executeCompilation(const InputArgList &args) {
     return 1;
   uint32_t resolvedCompilerThreads = compilerThreads.value_or(
       std::max(1u, llvm::hardware_concurrency().compute_thread_count()));
+  frontendOptions.numThreads = resolvedCompilerThreads;
 
   const Arg *action = args.getLastArg(OPT_E, OPT_emit_slang, OPT_emit_obelisk,
                                       OPT_emit_sim, OPT_emit_schedule, OPT_c,
@@ -549,5 +561,11 @@ int main(int argc, char **argv) {
     return 0;
   }
 
-  return executeCompilation(args);
+  int status = executeCompilation(args);
+  // A reusable Emscripten module does not exit after callMain(), so its libc
+  // streams do not get the process-exit flush a native invocation receives.
+  // Flush explicitly to deliver linker diagnostics to print/printErr.
+  outs().flush();
+  errs().flush();
+  return status;
 }

@@ -582,6 +582,22 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
         plan, kIntrinsicAssertionActionState,
         {emitU64Constant(plan, static_cast<uint64_t>(op.getAssertionId()))},
         {reg(plan, op.getState())});
+  if (auto op = dyn_cast<sim::SimDumpOpenOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicDumpOpen, {op.getPath()}, {});
+  if (auto op = dyn_cast<sim::SimDumpTimescaleOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicDumpTimescale, {op.getExponent()}, {});
+  if (auto op = dyn_cast<sim::SimDumpVarsOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicDumpVars,
+                         {op.getLevels(), op.getScope()}, {});
+  if (isa<sim::SimDumpAllOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicDumpAll, {}, {});
+  if (auto op = dyn_cast<sim::SimDumpControlOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicDumpControl, {}, {},
+                         op.getEnabled() ? 1 : 0);
+  if (auto op = dyn_cast<sim::SimDumpLimitOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicDumpLimit, {op.getBytes()}, {});
+  if (isa<sim::SimDumpFlushOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicDumpFlush, {}, {});
   if (auto op = dyn_cast<sim::SimMonitorRegisterOp>(operation))
     return emitIntrinsic(plan, kIntrinsicMonitorRegister, {op.getProcess()},
                          {});

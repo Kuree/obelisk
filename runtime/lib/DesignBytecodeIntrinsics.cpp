@@ -2067,6 +2067,38 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     return obelisk_rt_v1_monitor_register(context, static_cast<uint64_t>(begin),
                                           1);
   }
+  case OBELISK_RT_INTRINSIC_V1_DUMP_OPEN: {
+    auto path = bytes(0);
+    if (!path)
+      return OBELISK_RT_INVALID_BYTECODE;
+    return obelisk_rt_v1_dump_open(context, path->data, path->size);
+  }
+  case OBELISK_RT_INTRINSIC_V1_DUMP_TIMESCALE: {
+    auto exponent = scalar(0);
+    if (!exponent)
+      return OBELISK_RT_INVALID_BYTECODE;
+    return obelisk_rt_v1_dump_timescale(
+        context, static_cast<int32_t>(static_cast<uint32_t>(*exponent)));
+  }
+  case OBELISK_RT_INTRINSIC_V1_DUMP_VARS: {
+    auto levels = scalar(0);
+    auto scope = bytes(1);
+    if (!levels || !scope)
+      return OBELISK_RT_INVALID_BYTECODE;
+    return obelisk_rt_v1_dump_vars(context, *levels, scope->data, scope->size);
+  }
+  case OBELISK_RT_INTRINSIC_V1_DUMP_ALL:
+    return obelisk_rt_v1_dump_all(context);
+  case OBELISK_RT_INTRINSIC_V1_DUMP_LIMIT: {
+    auto limit = scalar(0);
+    if (!limit)
+      return OBELISK_RT_INVALID_BYTECODE;
+    return obelisk_rt_v1_dump_limit(context, *limit);
+  }
+  case OBELISK_RT_INTRINSIC_V1_DUMP_FLUSH:
+    return obelisk_rt_v1_dump_flush(context);
+  case OBELISK_RT_INTRINSIC_V1_DUMP_CONTROL:
+    return obelisk_rt_v1_dump_control(context, signature.flags);
   case OBELISK_RT_INTRINSIC_V1_MONITOR_CONTROL:
     return obelisk_rt_v1_monitor_control(context, signature.flags);
   case OBELISK_RT_INTRINSIC_V1_MONITOR_CURRENT:

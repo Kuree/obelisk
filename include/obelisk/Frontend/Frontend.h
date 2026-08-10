@@ -51,6 +51,7 @@ struct FrontendOptions {
   std::optional<uint32_t> maxIncludeDepth;
   std::optional<uint32_t> errorLimit;
   std::optional<std::string> timeScale;
+  std::optional<uint32_t> numThreads;
 };
 
 /// Run preprocessing without parsing or elaborating the resulting token

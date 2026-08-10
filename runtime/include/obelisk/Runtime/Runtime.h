@@ -748,6 +748,13 @@ enum {
   OBELISK_RT_INTRINSIC_V1_ASSERTION_ACTION_STATE = UINT32_C(0x00010221),
   OBELISK_RT_INTRINSIC_V1_CLOCKED_SAMPLE_UPDATE = UINT32_C(0x00010222),
   OBELISK_RT_INTRINSIC_V1_CLOCKED_SAMPLE_READ = UINT32_C(0x00010223),
+  OBELISK_RT_INTRINSIC_V1_DUMP_OPEN = UINT32_C(0x00010224),
+  OBELISK_RT_INTRINSIC_V1_DUMP_TIMESCALE = UINT32_C(0x00010226),
+  OBELISK_RT_INTRINSIC_V1_DUMP_VARS = UINT32_C(0x00010227),
+  OBELISK_RT_INTRINSIC_V1_DUMP_ALL = UINT32_C(0x00010228),
+  OBELISK_RT_INTRINSIC_V1_DUMP_CONTROL = UINT32_C(0x00010229),
+  OBELISK_RT_INTRINSIC_V1_DUMP_LIMIT = UINT32_C(0x0001022a),
+  OBELISK_RT_INTRINSIC_V1_DUMP_FLUSH = UINT32_C(0x0001022b),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC = UINT32_C(0x00010400),
@@ -2588,6 +2595,44 @@ obelisk_rt_status obelisk_rt_v1_clocked_sample_read(
     uint8_t *out_unknown);
 obelisk_rt_status obelisk_rt_v1_scheduler_run(obelisk_rt_context *context);
 obelisk_rt_status obelisk_rt_v1_scheduler_run_aot(obelisk_rt_context *context);
+
+// Waveform dumping. Value collection is a once-per-time-slot difference over
+// the canonical state planes rather than a per-transition callback, so it is
+// invisible to native, bytecode, and generated writers alike. The traced set,
+// its hierarchical names, and its canonical bit ranges all come from the
+// design database, so a design database must be present in the execution
+// descriptor. `--vpi=off` designs without `--trace` report INVALID_DESIGN.
+//
+// Selecting a nonexistent path reports INVALID_HANDLE; `$dumpvars` with no
+// prior `$dumpfile` opens the IEEE default `dump.vcd`.
+obelisk_rt_status obelisk_rt_v1_dump_open(obelisk_rt_context *context,
+                                          const uint8_t *path,
+                                          uint64_t path_size);
+// Declare the `$timescale` written into the header, as a decimal exponent in
+// seconds (-15..0). The compiler knows the elaborated design precision and
+// emits this before the first dump call. Without it the dump falls back to the
+// DPI time precision, and then to the compiler's own default of 1ns.
+obelisk_rt_status obelisk_rt_v1_dump_timescale(obelisk_rt_context *context,
+                                               int32_t exponent);
+// `levels` is the IEEE `$dumpvars` depth: zero selects every level below the
+// named scope. A null or empty scope selects the design root. Repeated calls
+// accumulate; the plan is materialized once, at the end of the time slot in
+// which the first selection was made.
+obelisk_rt_status obelisk_rt_v1_dump_vars(obelisk_rt_context *context,
+                                          uint64_t levels, const uint8_t *scope,
+                                          uint64_t scope_size);
+// Emit every selected variable at the current time regardless of change.
+obelisk_rt_status obelisk_rt_v1_dump_all(obelisk_rt_context *context);
+// `$dumpoff` / `$dumpon`. Suspension emits one all-X checkpoint; resumption
+// re-emits every current value.
+obelisk_rt_status obelisk_rt_v1_dump_control(obelisk_rt_context *context,
+                                             uint32_t enabled);
+// `$dumplimit`. Zero removes the limit. Once the written size reaches the
+// limit the file is closed and no further records are produced.
+obelisk_rt_status obelisk_rt_v1_dump_limit(obelisk_rt_context *context,
+                                           uint64_t bytes);
+obelisk_rt_status obelisk_rt_v1_dump_flush(obelisk_rt_context *context);
+obelisk_rt_status obelisk_rt_v1_dump_close(obelisk_rt_context *context);
 
 typedef uint32_t obelisk_rt_fragment_code_kind;
 enum { OBELISK_RT_FRAGMENT_NATIVE = 0, OBELISK_RT_FRAGMENT_BYTECODE = 1 };

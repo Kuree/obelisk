@@ -11,16 +11,20 @@ function loadDriver() {
   if (modulePromise) return modulePromise;
   modulePromise = (async () => {
     // obelisk.js is the emscripten glue emitted next to obelisk.wasm.
+    self.importScripts('./toolchain.js');
     self.importScripts('./obelisk.js');
     if (typeof self.createObeliskModule !== 'function') {
       throw new Error('obelisk.js did not expose createObeliskModule');
     }
-    return self.createObeliskModule({
+    const mod = await self.createObeliskModule({
       noInitialRun: true,
+      thisProgram: '/bin/obelisk',
       print: (line) => post('log', { stream: 'stdout', text: line + '\n' }),
       printErr: (line) => post('log', { stream: 'stderr', text: line + '\n' }),
       locateFile: (path) => new URL(path, self.location.href).href,
     });
+    await self.installObeliskToolchain(mod);
+    return mod;
   })();
   return modulePromise;
 }
@@ -47,7 +51,9 @@ async function compile({ source, args, stage, kind }) {
     // no previous artifact
   }
 
-  const argv = [...args, '-o', output, input];
+  const argv = kind === 'binary'
+    ? ['--compile-threads=1', '--sysroot=/sysroot', ...args, '-o', output, input]
+    : ['--compile-threads=1', ...args, '-o', output, input];
   const started = performance.now();
   let status = 0;
   try {

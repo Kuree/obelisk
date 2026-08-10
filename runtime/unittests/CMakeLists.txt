@@ -27,6 +27,7 @@ add_executable(ObeliskRuntimeTests
   RandSolveWideTest.cpp
   RuntimeControlTest.cpp
   RuntimeTest.cpp
+  VCDTest.cpp
   $<TARGET_OBJECTS:ObeliskRuntimeCAPISmoke>
 )
 target_link_libraries(ObeliskRuntimeTests PRIVATE

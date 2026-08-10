@@ -5892,6 +5892,7 @@ obelisk_rt_status runStaticAOTControlStep(obelisk_rt_context *context,
       return OBELISK_RT_OK;
     if (!context->nativeScheduleDeadlineHeap.empty()) {
       uint32_t slot = context->nativeScheduleDeadlineHeap.front();
+      obelisk_rt_dump_slot_unlocked(context);
       context->schedulerTime = context->nativeScheduleDeadlines[slot];
       if (!markDueNativeAOTDeadlinesUnlocked(context))
         return OBELISK_RT_INVALID_CONTINUATION;
@@ -7206,6 +7207,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           if (event.dueTime > context->schedulerTime)
             considerTime(event.dueTime);
         if (nextTime) {
+          obelisk_rt_dump_slot_unlocked(context);
           context->schedulerTime = *nextTime;
           if (context->nativeScheduleSingleStep)
             return OBELISK_RT_OK;
@@ -8639,6 +8641,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
       activeNativeAOTContext != context ||
       lockedNativeAOTContext != context)
     return OBELISK_RT_INVALID_ARGUMENT;
+  // Generated run_until owns `schedulerTime` directly, so time slots complete
+  // without re-entering the runtime and the waveform difference would never
+  // run. Decline the tier while a dump is open rather than silently dropping
+  // slots.
+  if (obelisk_rt_dump_active_unlocked(context))
+    return OBELISK_RT_TIER_UNAVAILABLE;
   try {
     obelisk_rt_status status =
         initializeNativeAOTNodesUnlocked(context, nodes, nodeCount);
@@ -8868,6 +8876,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
       }
       if (nextTime == UINT64_MAX || nextTime <= context->schedulerTime)
         return OBELISK_RT_INVALID_CONTINUATION;
+      obelisk_rt_dump_slot_unlocked(context);
       context->schedulerTime = nextTime;
       status = runPreponedHooks(context);
       if (status != OBELISK_RT_OK)
@@ -9965,6 +9974,7 @@ retryNativeSchedule:;
         if (deadline == UINT64_MAX || deadline <= context->schedulerTime)
           status = OBELISK_RT_TIER_UNAVAILABLE;
         else {
+          obelisk_rt_dump_slot_unlocked(context);
           context->schedulerTime = deadline;
           status = runPreponedHooks(context);
           if (status == OBELISK_RT_OK) {

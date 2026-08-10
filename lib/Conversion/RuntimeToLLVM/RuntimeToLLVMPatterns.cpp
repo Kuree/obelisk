@@ -64,6 +64,21 @@ LLVM::LLVMFunctionType getFunctionType(runtime::RuntimeCall call,
   case runtime::RuntimeSignature::TimeFormat:
     arguments = {abi.pointer, abi.i32, abi.i32, abi.pointer, abi.i64, abi.i32};
     break;
+  case runtime::RuntimeSignature::DumpOpen:
+    arguments = {abi.pointer, abi.pointer, abi.i64};
+    break;
+  case runtime::RuntimeSignature::DumpVars:
+    arguments = {abi.pointer, abi.i64, abi.pointer, abi.i64};
+    break;
+  case runtime::RuntimeSignature::DumpContext:
+    arguments = {abi.pointer};
+    break;
+  case runtime::RuntimeSignature::DumpU32:
+    arguments = {abi.pointer, abi.i32};
+    break;
+  case runtime::RuntimeSignature::DumpU64:
+    arguments = {abi.pointer, abi.i64};
+    break;
   case runtime::RuntimeSignature::FileOpenMCD:
     arguments = {abi.pointer, abi.pointer, abi.i64, abi.pointer};
     break;
@@ -774,6 +789,20 @@ public:
       return replaceStatus({operands[0], operands[1], operands[2], suffixData,
                             suffixSize, operands[4]});
     }
+    case runtime::RuntimeCall::DumpOpen: {
+      auto [pathData, pathSize] = span(operands[1]);
+      return replaceStatus({operands[0], pathData, pathSize});
+    }
+    case runtime::RuntimeCall::DumpVars: {
+      auto [scopeData, scopeSize] = span(operands[2]);
+      return replaceStatus({operands[0], operands[1], scopeData, scopeSize});
+    }
+    case runtime::RuntimeCall::DumpTimescale:
+    case runtime::RuntimeCall::DumpAll:
+    case runtime::RuntimeCall::DumpControl:
+    case runtime::RuntimeCall::DumpLimit:
+    case runtime::RuntimeCall::DumpFlush:
+      return replaceStatus(operands);
     case runtime::RuntimeCall::FileOpenMCD: {
       auto [pathData, pathSize] = span(operands[1]);
       Value output = allocate(abi.i32, abi.alignments.i32);
