@@ -22,27 +22,45 @@ FailureOr<Value> UnitLowering::lowerAlternateClockSample(
     Location location) {
   auto sourceNode = dyn_cast<semantic::SVNamedValueExpressionOp>(expression);
   SmallVector<Operation *> clockChildren = getChildren(clock);
-  auto clockNode = clockChildren.size() == 1 && !clock.getHasIff()
-                       ? dyn_cast<semantic::SVNamedValueExpressionOp>(
-                             clockChildren.front())
-                       : semantic::SVNamedValueExpressionOp{};
-  auto gateNode = gateExpression
-                      ? dyn_cast<semantic::SVNamedValueExpressionOp>(
-                            gateExpression)
-                      : semantic::SVNamedValueExpressionOp{};
-  if (!sourceNode || !clockNode || (gateExpression && !gateNode)) {
+  size_t expectedClockChildren = clock.getHasIff() ? 2 : 1;
+  auto clockNode =
+      clockChildren.size() == expectedClockChildren
+          ? dyn_cast<semantic::SVNamedValueExpressionOp>(clockChildren.front())
+          : semantic::SVNamedValueExpressionOp{};
+  Operation *clockCondition = clock.getHasIff() && clockChildren.size() == 2
+                                  ? clockChildren[1]
+                                  : nullptr;
+  auto gateNode =
+      gateExpression
+          ? dyn_cast<semantic::SVNamedValueExpressionOp>(gateExpression)
+          : semantic::SVNamedValueExpressionOp{};
+  auto conditionNode =
+      clockCondition
+          ? dyn_cast<semantic::SVNamedValueExpressionOp>(clockCondition)
+          : gateNode;
+  if (!sourceNode || !clockNode ||
+      ((gateExpression || clockCondition) && !conditionNode)) {
     emitError(location)
         << "alternate-clock sampled values currently require direct named "
-           "packed source, gate, and clock signals";
+           "packed source, condition, and clock signals";
+    return failure();
+  }
+  if (gateExpression && clockCondition) {
+    emitError(location)
+        << "alternate-clock $past does not yet support both a gating "
+           "expression and an iff-qualified explicit clock";
     return failure();
   }
 
   FailureOr<Value> source = lowerExpression(expression, true);
   FailureOr<Value> watched = lowerExpression(clockChildren.front(), true);
-  FailureOr<Value> gate = failure();
-  if (gateExpression)
-    gate = lowerExpression(gateExpression, true);
-  if (failed(source) || failed(watched) || (gateExpression && failed(gate)))
+  Operation *conditionExpression =
+      clockCondition ? clockCondition : gateExpression;
+  FailureOr<Value> condition = failure();
+  if (conditionExpression)
+    condition = lowerExpression(conditionExpression, true);
+  if (failed(source) || failed(watched) ||
+      (conditionExpression && failed(condition)))
     return failure();
 
   auto elementType = [&](Value reference) -> Type {
@@ -51,13 +69,13 @@ FailureOr<Value> UnitLowering::lowerAlternateClockSample(
     return getReferenceElementType(reference);
   };
   Type sourceType = elementType(*source);
-  Type gateType = gateExpression ? elementType(*gate) : Type{};
+  Type conditionType = conditionExpression ? elementType(*condition) : Type{};
   if (!sourceType || !sim::getPackedWidth(sourceType) ||
-      (gateExpression &&
-       (!gateType || !isa<sim::LogicType, IntegerType>(gateType)))) {
+      (conditionExpression &&
+       (!conditionType || !isa<sim::LogicType, IntegerType>(conditionType)))) {
     emitError(location)
         << "alternate-clock sampled values require packed source storage and "
-           "a scalar packed gate";
+           "a packed event condition";
     return failure();
   }
 
@@ -79,14 +97,14 @@ FailureOr<Value> UnitLowering::lowerAlternateClockSample(
   };
   FailureOr<DictionaryAttr> sourceAttrs = captureAttrs(*source);
   FailureOr<DictionaryAttr> clockAttrs = captureAttrs(*watched);
-  FailureOr<DictionaryAttr> gateAttrs = failure();
-  if (gateExpression)
-    gateAttrs = captureAttrs(*gate);
+  FailureOr<DictionaryAttr> conditionAttrs = failure();
+  if (conditionExpression)
+    conditionAttrs = captureAttrs(*condition);
   if (failed(sourceAttrs) || failed(clockAttrs) ||
-      (gateExpression && failed(gateAttrs))) {
+      (conditionExpression && failed(conditionAttrs))) {
     emitError(location)
         << "alternate-clock sampled values require statically descriptor-"
-           "bound source, gate, and clock signals";
+           "bound source, condition, and clock signals";
     return failure();
   }
 
@@ -101,18 +119,17 @@ FailureOr<Value> UnitLowering::lowerAlternateClockSample(
   // insufficient here: two instances can both name a local signal `data`,
   // while separate assertion code units referring to the same object should
   // intentionally share one sampler.
-  std::string key =
-      (Twine(captureKey(*sourceAttrs)) + "|" +
-       Twine(static_cast<uint32_t>(clock.getEdgeKind())) + "|" +
-       captureKey(*clockAttrs) + "|" +
-       (gateExpression ? Twine(captureKey(*gateAttrs)) : Twine("true")) +
-       "|" + Twine(depth))
-          .str();
+  std::string key = (Twine(captureKey(*sourceAttrs)) + "|" +
+                     Twine(static_cast<uint32_t>(clock.getEdgeKind())) + "|" +
+                     captureKey(*clockAttrs) + "|" +
+                     (conditionExpression ? Twine(captureKey(*conditionAttrs))
+                                          : Twine("true")) +
+                     "|" + Twine(depth))
+                        .str();
   auto existing = alternateClockSamplePlans.find(key);
   uint64_t siteID = 0;
   if (existing != alternateClockSamplePlans.end()) {
-    if (existing->second.type != sourceType ||
-        existing->second.depth != depth)
+    if (existing->second.type != sourceType || existing->second.depth != depth)
       return emitError(location)
                  << "inconsistent alternate-clock sample plan for " << key,
              failure();
@@ -128,14 +145,14 @@ FailureOr<Value> UnitLowering::lowerAlternateClockSample(
     SmallVector<DictionaryAttr> argumentAttrs{
         captureMetadata(builder, sim::CaptureKind::Context), *sourceAttrs,
         *clockAttrs};
-    if (gateExpression) {
-      inputs.push_back((*gate).getType());
-      argumentAttrs.push_back(*gateAttrs);
+    if (conditionExpression) {
+      inputs.push_back((*condition).getType());
+      argumentAttrs.push_back(*conditionAttrs);
     }
     std::string symbol =
         (function.getSymName() + ".$clocked_sample." + Twine(siteID)).str();
-    auto parentHierarchy = function->getAttrOfType<StringAttr>(
-        sim::metadata::hierarchicalName);
+    auto parentHierarchy =
+        function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
     StringRef parentName =
         parentHierarchy ? parentHierarchy.getValue() : function.getSymName();
     std::string hierarchy =
@@ -147,14 +164,14 @@ FailureOr<Value> UnitLowering::lowerAlternateClockSample(
         outlineBuilder.getNamedAttr(
             "home_region",
             sim::EventRegionAttr::get(context, sim::EventRegion::Active)),
-        outlineBuilder.getNamedAttr(
-            "domain", sim::ExecutionDomainAttr::get(
-                          context, sim::ExecutionDomain::Design)),
+        outlineBuilder.getNamedAttr("domain",
+                                    sim::ExecutionDomainAttr::get(
+                                        context, sim::ExecutionDomain::Design)),
         outlineBuilder.getNamedAttr(
             "obelisk_sim.clocked_sample_plan",
             outlineBuilder.getDictionaryAttr({
                 outlineBuilder.getNamedAttr("key",
-                                             outlineBuilder.getStringAttr(key)),
+                                            outlineBuilder.getStringAttr(key)),
                 outlineBuilder.getNamedAttr(
                     "id", outlineBuilder.getI64IntegerAttr(siteID)),
                 outlineBuilder.getNamedAttr(
@@ -165,10 +182,9 @@ FailureOr<Value> UnitLowering::lowerAlternateClockSample(
     };
     sim::SimFuncOp sampler = sim::SimFuncOp::create(
         outlineBuilder, location, symbol,
-        FunctionType::get(context, inputs, TypeRange{}),
-        sim::EntryKind::Always, attributes, argumentAttrs);
-    SymbolTable::setSymbolVisibility(sampler,
-                                     SymbolTable::Visibility::Private);
+        FunctionType::get(context, inputs, TypeRange{}), sim::EntryKind::Always,
+        attributes, argumentAttrs);
+    SymbolTable::setSymbolVisibility(sampler, SymbolTable::Visibility::Private);
     Block &entry = sampler.getBody().front();
     Block *wait = new Block();
     Block *sample = new Block();
@@ -177,10 +193,28 @@ FailureOr<Value> UnitLowering::lowerAlternateClockSample(
     OpBuilder entryBuilder = OpBuilder::atBlockEnd(&entry);
     cf::BranchOp::create(entryBuilder, location, wait);
     OpBuilder waitBuilder = OpBuilder::atBlockEnd(wait);
-    sim::SimSuspendEdgeOp::create(
-        waitBuilder, location, static_cast<sim::EdgeKind>(clock.getEdgeKind()),
-        entry.getArgument(2), ValueRange{}, sim::ContinuationSiteAttr{},
-        sim::EventRegionAttr{}, sample);
+    Operation *suspend = nullptr;
+    if (conditionExpression)
+      suspend = sim::SimSuspendEdgeIffOp::create(
+                    waitBuilder, location,
+                    static_cast<sim::EdgeKind>(clock.getEdgeKind()),
+                    entry.getArgument(2), entry.getArgument(3), ValueRange{},
+                    sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, sample)
+                    .getOperation();
+    else
+      suspend = sim::SimSuspendEdgeOp::create(
+                    waitBuilder, location,
+                    static_cast<sim::EdgeKind>(clock.getEdgeKind()),
+                    entry.getArgument(2), ValueRange{},
+                    sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, sample)
+                    .getOperation();
+    // IEEE 1800-2017 16.9.3 selects samples from strictly prior time steps.
+    // Updating in Postponed leaves an occurrence in the caller's current slot
+    // invisible during concurrent assertion evaluation in Observed, while the
+    // sampled read below still observes this slot's Preponed snapshot.
+    suspend->setAttr(
+        "resume_region",
+        sim::EventRegionAttr::get(context, sim::EventRegion::Postponed));
     OpBuilder sampleBuilder = OpBuilder::atBlockEnd(sample);
     Value currentSample = sim::SimSampledReadOp::create(
         sampleBuilder, location, sourceType, entry.getArgument(0),
@@ -188,23 +222,6 @@ FailureOr<Value> UnitLowering::lowerAlternateClockSample(
     Value gateValue = arith::ConstantOp::create(
         sampleBuilder, location, sampleBuilder.getI1Type(),
         sampleBuilder.getBoolAttr(true));
-    if (gateExpression) {
-      Value sampledGate = sim::SimSampledReadOp::create(
-          sampleBuilder, location, gateType, entry.getArgument(0),
-          entry.getArgument(3));
-      if (isa<sim::LogicType>(gateType)) {
-        gateValue = sim::SimLogicIsTrueOp::create(
-            sampleBuilder, location, sampleBuilder.getI1Type(), sampledGate);
-      } else {
-        auto integer = cast<IntegerType>(gateType);
-        Value zero = arith::ConstantOp::create(
-            sampleBuilder, location, integer,
-            sampleBuilder.getIntegerAttr(integer, 0));
-        gateValue = arith::CmpIOp::create(
-            sampleBuilder, location, arith::CmpIPredicate::ne, sampledGate,
-            zero);
-      }
-    }
     sim::SimClockedSampleUpdateOp::create(
         sampleBuilder, location, entry.getArgument(0), currentSample, gateValue,
         sampleBuilder.getI64IntegerAttr(siteID),
@@ -512,50 +529,74 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
           dyn_cast<semantic::SVClockingEventExpressionOp>(clockArgument);
       SmallVector<Operation *> clockingChildren =
           clocking ? getChildren(clocking) : SmallVector<Operation *>{};
-      explicitEvent =
-          clockingChildren.size() == 1
-              ? dyn_cast<semantic::SVSignalEventControlOp>(
-                    clockingChildren.front())
-              : semantic::SVSignalEventControlOp{};
+      explicitEvent = clockingChildren.size() == 1
+                          ? dyn_cast<semantic::SVSignalEventControlOp>(
+                                clockingChildren.front())
+                          : semantic::SVSignalEventControlOp{};
       SmallVector<Operation *> explicitChildren =
           explicitEvent ? getChildren(explicitEvent)
                         : SmallVector<Operation *>{};
-      auto explicitSignal =
-          explicitChildren.size() == 1 && !explicitEvent.getHasIff()
+      size_t expectedExplicitChildren =
+          explicitEvent && explicitEvent.getHasIff() ? 2 : 1;
+      auto explicitSignal = explicitChildren.size() == expectedExplicitChildren
+                                ? dyn_cast<semantic::SVNamedValueExpressionOp>(
+                                      explicitChildren.front())
+                                : semantic::SVNamedValueExpressionOp{};
+      auto explicitCondition =
+          explicitEvent && explicitEvent.getHasIff() &&
+                  explicitChildren.size() == 2
               ? dyn_cast<semantic::SVNamedValueExpressionOp>(
-                    explicitChildren.front())
+                    explicitChildren[1])
               : semantic::SVNamedValueExpressionOp{};
-      if (!explicitSignal) {
+      if (!explicitSignal ||
+          (explicitEvent.getHasIff() && !explicitCondition)) {
         emitError(getSemanticLocation(clockArgument))
-            << name << " explicit clocks currently require one direct named-"
-                       "signal edge without iff";
+            << name
+            << " explicit clocks currently require one direct named-"
+               "signal edge and an optional direct named iff "
+               "condition";
         return failure();
       }
 
-      auto activeEvent =
-          dyn_cast_or_null<semantic::SVSignalEventControlOp>(activeSampledClock);
+      auto activeEvent = dyn_cast_or_null<semantic::SVSignalEventControlOp>(
+          activeSampledClock);
       SmallVector<Operation *> activeChildren =
           activeEvent ? getChildren(activeEvent) : SmallVector<Operation *>{};
-      auto activeSignal =
-          activeChildren.size() == 1 && !activeEvent.getHasIff()
-              ? dyn_cast<semantic::SVNamedValueExpressionOp>(
-                    activeChildren.front())
+      size_t expectedActiveChildren =
+          activeEvent && activeEvent.getHasIff() ? 2 : 1;
+      auto activeSignal = activeChildren.size() == expectedActiveChildren
+                              ? dyn_cast<semantic::SVNamedValueExpressionOp>(
+                                    activeChildren.front())
+                              : semantic::SVNamedValueExpressionOp{};
+      auto activeCondition =
+          activeEvent && activeEvent.getHasIff() && activeChildren.size() == 2
+              ? dyn_cast<semantic::SVNamedValueExpressionOp>(activeChildren[1])
               : semantic::SVNamedValueExpressionOp{};
-      if (!activeSignal) {
+      if (!activeSignal || (activeEvent.getHasIff() && !activeCondition)) {
         emitError(getSemanticLocation(clockArgument))
-            << name << " explicit clock requires a matching statically "
-                       "enclosing direct event control";
+            << name
+            << " explicit clock requires a matching statically "
+               "enclosing direct event control";
         return failure();
       }
       auto explicitPath = explicitSignal.getReferencedPathAttr();
       auto activePath = activeSignal.getReferencedPathAttr();
-      alternateClock = !explicitPath || !activePath ||
-                       explicitPath != activePath ||
-                       explicitEvent.getEdgeKind() != activeEvent.getEdgeKind();
+      bool sameCondition = explicitEvent.getHasIff() == activeEvent.getHasIff();
+      if (sameCondition && explicitEvent.getHasIff()) {
+        auto explicitConditionPath = explicitCondition.getReferencedPathAttr();
+        auto activeConditionPath = activeCondition.getReferencedPathAttr();
+        sameCondition = explicitConditionPath && activeConditionPath &&
+                        explicitConditionPath == activeConditionPath;
+      }
+      alternateClock =
+          !explicitPath || !activePath || explicitPath != activePath ||
+          explicitEvent.getEdgeKind() != activeEvent.getEdgeKind() ||
+          !sameCondition;
       if (alternateClock && !sampleAssertionValues) {
         emitError(getSemanticLocation(clockArgument))
-            << name << " genuinely alternate clocks are currently executable "
-                       "only in a statically clocked concurrent predicate";
+            << name
+            << " genuinely alternate clocks are currently executable "
+               "only in a statically clocked concurrent predicate";
         return failure();
       }
     }
@@ -590,15 +631,14 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
               : nullptr;
       if (name == "$past") {
         FailureOr<Value> past = lowerAlternateClockSample(
-            children.front(), gateExpression, explicitEvent, depth, depth,
+            children.front(), gateExpression, explicitEvent, depth, depth - 1,
             location);
         return failed(past) ? FailureOr<Value>(failure())
                             : convertResult(*past);
       }
-      current = lowerAlternateClockSample(children.front(), nullptr,
-                                          explicitEvent, 1, 0, location);
+      current = sampledValue(children.front());
       FailureOr<Value> prior = lowerAlternateClockSample(
-          children.front(), nullptr, explicitEvent, 1, 1, location);
+          children.front(), nullptr, explicitEvent, 1, 0, location);
       if (failed(current) || failed(prior))
         return failure();
       previous = *prior;
