@@ -944,6 +944,8 @@ ABI_FUNCTION(obelisk_rt_v1_scheduler_direct_fragment_leave,
              obelisk_rt_status (*)(obelisk_rt_context *, uint32_t));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_execute_aot_actor,
              obelisk_rt_status (*)(obelisk_rt_context *, uint32_t));
+ABI_FUNCTION(obelisk_rt_v1_scheduler_priority_signal_pending,
+             uint32_t (*)(obelisk_rt_context *));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_queue_aot_checkpoint,
              obelisk_rt_status (*)(obelisk_rt_context *, uint32_t,
                                    uint32_t,

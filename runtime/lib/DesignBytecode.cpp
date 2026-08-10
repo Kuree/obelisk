@@ -3193,10 +3193,14 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
                      iterator->suspendKind != OBELISK_RT_SUSPEND_OBSERVER &&
                      iterator->observedEpoch != context->schedulerEpoch)));
         if (runnable && unstartedActorPending && signalTriggered &&
-            !iterator->urgent)
+            !iterator->urgent && !iterator->prioritySignal)
           runnable = false;
-        auto key = std::tuple{iterator->queuedRegion, iterator->scheduleRank,
-                              iterator->insertionSequence};
+        auto key = iterator->prioritySignal && signalTriggered
+                       ? std::tuple{iterator->queuedRegion, uint32_t{0},
+                                    uint64_t{0}}
+                       : std::tuple{iterator->queuedRegion,
+                                    iterator->scheduleRank,
+                                    iterator->insertionSequence};
         auto selectedKey =
             std::tuple{selectedRegion, selectedRank, selectedInsertionSequence};
         if (runnable && iterator->urgent) {
@@ -3215,9 +3219,9 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
           continue;
         if (runnable && key < selectedKey) {
           found = iterator;
-          selectedRegion = iterator->queuedRegion;
-          selectedRank = iterator->scheduleRank;
-          selectedInsertionSequence = iterator->insertionSequence;
+          selectedRegion = std::get<0>(key);
+          selectedRank = std::get<1>(key);
+          selectedInsertionSequence = std::get<2>(key);
         }
       }
       auto maximumKey =

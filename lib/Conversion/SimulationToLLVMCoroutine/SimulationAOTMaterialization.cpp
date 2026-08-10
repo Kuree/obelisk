@@ -2116,6 +2116,27 @@ LogicalResult makeNativeEvalPlan(
     // coordinator entry, so retain its common initialization here.
     if (!canCompressSilentFall || directOwnerRecords.empty())
       resetStepFourStateTracking();
+    auto handoffPrioritySignal = [&] {
+      Block *executeOwner = new Block;
+      run.getBody().push_back(executeOwner);
+      Value prioritySignalPending =
+          LLVM::CallOp::create(
+              builder, location, TypeRange{i32},
+              SymbolRefAttr::get(
+                  context,
+                  "obelisk_rt_v1_scheduler_priority_signal_pending"),
+              ValueRange{runEntry->getArgument(1)})
+              .getResult();
+      Value mustHandoff = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne, prioritySignalPending,
+          llvmConstant(builder, location, i32, 0));
+      cf::CondBranchOp::create(
+          builder, location, mustHandoff, afterStep,
+          ValueRange{llvmConstant(builder, location, i32,
+                                  OBELISK_RT_AOT_CHECKPOINT)},
+          executeOwner, ValueRange{});
+      builder.setInsertionPointToStart(executeOwner);
+    };
     // Clock-edge owners are already quiescent with respect to the preceding
     // slot, so invoke them directly and reserve the cttz coordinator for the
     // publications they produce. A bitset keeps coincident-clock dispatch
@@ -2185,6 +2206,7 @@ LogicalResult makeNativeEvalPlan(
       };
       builder.setInsertionPointToStart(executeDirectTwoState);
       for (unsigned recordIndex : directOwnerRecords) {
+        handoffPrioritySignal();
         if (mergedTwoStateExecutors[recordIndex].empty()) {
           LLVM::StoreOp::create(
               builder, location,
@@ -2220,6 +2242,7 @@ LogicalResult makeNativeEvalPlan(
       Block *hybridCursor = executeDirectHybrid;
       for (unsigned recordIndex : directOwnerRecords) {
         builder.setInsertionPointToStart(hybridCursor);
+        handoffPrioritySignal();
         if (promotionKernelReadyNames[recordIndex].empty()) {
           LLVM::StoreOp::create(
               builder, location,
@@ -2314,6 +2337,7 @@ LogicalResult makeNativeEvalPlan(
     }
     if (!canCompressSilentFall)
       for (unsigned recordIndex : directOwnerRecords) {
+        handoffPrioritySignal();
         const auto &record = mergedFragments[recordIndex];
         Value selected = arith::CmpIOp::create(
             builder, location, arith::CmpIPredicate::ne,
@@ -4135,6 +4159,9 @@ LogicalResult makeNativeEvalPlan(
                            {pointer, i32});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_execute_aot_actor",
                            i32, {pointer, i32});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_scheduler_priority_signal_pending", i32,
+      {pointer});
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_scheduler_queue_aot_checkpoint", i32,
       {pointer, i32, i32, pointer});

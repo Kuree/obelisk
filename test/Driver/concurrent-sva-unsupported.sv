@@ -2,7 +2,8 @@
 // RUN: obelisk --std=1800-2023 -O0 -DASSUME_DIRECTIVE %s -o %t.assume
 // RUN: obelisk --std=1800-2023 -O0 -DCOVER_DIRECTIVE %s -o %t.cover
 // RUN: not obelisk --std=1800-2023 -O0 -DEXPECT_DIRECTIVE %s -o %t.expect 2>&1 | FileCheck %s --check-prefix=EXPECT
-// RUN: not obelisk --std=1800-2023 -O0 -DDISABLE_IFF %s -o %t.disable 2>&1 | FileCheck %s --check-prefix=DISABLE
+// RUN: obelisk --std=1800-2023 -O0 -DDISABLE_IFF %s -o %t.disable
+// RUN: not obelisk --std=1800-2023 -O0 -DAUTOMATIC_DISABLE %s -o %t.automatic-disable 2>&1 | FileCheck %s --check-prefix=AUTOMATIC-DISABLE
 // RUN: not obelisk --std=1800-2023 -O0 -DRANGED_DELAY %s -o %t.range 2>&1 | FileCheck %s --check-prefix=RANGE
 
 module concurrent_sva_unsupported;
@@ -19,11 +20,16 @@ module concurrent_sva_unsupported;
   initial expect (@(posedge clk) a);
 `elsif DISABLE_IFF
   restrict property (disable iff (reset) a);
+`elsif AUTOMATIC_DISABLE
+  initial begin
+    automatic logic automatic_reset = 0;
+    cover property (disable iff (automatic_reset) a);
+  end
 `elsif RANGED_DELAY
   restrict property (a ##[1:2] b);
 `endif
 endmodule
 
 // EXPECT: error: expect statements are not executable by the bounded concurrent monitor
-// DISABLE: error: disable iff requires asynchronous monitor cancellation
+// AUTOMATIC-DISABLE: error: disable iff cannot asynchronously observe an automatic variable
 // RANGE: error: AOT concurrent monitors currently support boolean terms, fixed ## delays

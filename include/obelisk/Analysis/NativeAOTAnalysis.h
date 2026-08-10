@@ -32,9 +32,10 @@ public:
 
   bool isEligible() const { return eligible; }
   bool isFullyEligible() const { return fullyEligible; }
-  /// True when every non-AOT boundary is a compiler-generated detached report
-  /// callback. Explicit AOT may use the hybrid coordinator for these cold
-  /// callbacks while retaining the statically bound monitor actors.
+  /// True when every non-AOT boundary is compiler-generated cold concurrent
+  /// assertion work: detached report callbacks or asynchronous disable
+  /// observers. Explicit AOT may use the hybrid coordinator for these actors
+  /// while retaining the statically bound monitor actors.
   bool isForcedHybridEligible() const { return forcedHybridEligible; }
   bool isAOTCostEffective() const { return aotCostEffective; }
   bool hasPeriodicClockCandidate() const { return periodicClockCandidate; }

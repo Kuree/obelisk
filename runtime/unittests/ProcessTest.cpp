@@ -230,6 +230,11 @@ struct AOTTestState {
   uint64_t generatedNBAValue = 0;
   uint64_t claimedNBAValue = 0;
   uint32_t runCalls = 0;
+  uint8_t *authorityPlane = nullptr;
+  uint64_t authorityHandle = UINT64_MAX;
+  uint8_t ordinaryAOTLoad = 0;
+  uint8_t nestedObserverLoad = 0;
+  uint8_t canonicalObserverLoad = 0;
 };
 
 obelisk_rt_status aotBind(void *opaque, obelisk_rt_context *, uint32_t slot,
@@ -335,6 +340,30 @@ obelisk_rt_status runCountOK(AOTTestState *state, obelisk_rt_context *) {
     return OBELISK_RT_INVALID_ARGUMENT;
   ++state->runCalls;
   return OBELISK_RT_OK;
+}
+
+obelisk_rt_status runObserverPlaneAuthority(AOTTestState *state,
+                                            obelisk_rt_context *context) {
+  if (!state || !context || !state->authorityPlane)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  auto load = [&](uint8_t &value) {
+    return obelisk_rt_v1_native_state_load_plane(
+        context, state->authorityPlane, 8, state->authorityHandle, 8, 0, 0,
+        &value);
+  };
+  if (obelisk_rt_status status = load(state->ordinaryAOTLoad);
+      status != OBELISK_RT_OK)
+    return status;
+  ++context->observerDepth;
+  obelisk_rt_status status = load(state->nestedObserverLoad);
+  --context->observerDepth;
+  if (status != OBELISK_RT_OK)
+    return status;
+  bool previous = context->observerForcesCanonicalPlane;
+  context->observerForcesCanonicalPlane = true;
+  status = load(state->canonicalObserverLoad);
+  context->observerForcesCanonicalPlane = previous;
+  return status;
 }
 
 obelisk_rt_status aotRunNodes(void *opaque, obelisk_rt_context *context) {
@@ -3993,6 +4022,37 @@ TEST(Scheduler, MaximumRepresentableDueTimeIsNotDropped) {
             OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
   EXPECT_EQ(plane, value);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, AOTObserverPlaneAuthorityIsExplicitNotDepthDerived) {
+  AOTTestState state;
+  state.runHook = runObserverPlaneAuthority;
+  obelisk_rt_native_schedule_plan plan = makeAOTPlan(state, 1);
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL;
+
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 8;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 8),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
+            OBELISK_RT_OK);
+
+  uint8_t generatedPlane = UINT8_C(0xa5);
+  context->stateValue[0] = UINT64_C(0x3c);
+  state.authorityPlane = &generatedPlane;
+  state.authorityHandle = obelisk_rt_v1_native_state_static_handle(1);
+  ASSERT_NE(state.authorityHandle, UINT64_MAX);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot(context), OBELISK_RT_OK);
+  EXPECT_EQ(state.ordinaryAOTLoad, generatedPlane);
+  EXPECT_EQ(state.nestedObserverLoad, generatedPlane);
+  EXPECT_EQ(state.canonicalObserverLoad, UINT8_C(0x3c));
+  EXPECT_EQ(context->observerDepth, 0u);
+  EXPECT_FALSE(context->observerForcesCanonicalPlane);
   obelisk_rt_v1_context_destroy(context);
 }
 

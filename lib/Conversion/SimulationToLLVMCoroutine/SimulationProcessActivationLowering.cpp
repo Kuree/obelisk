@@ -246,6 +246,17 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
   bool startup = sim::isStartupEntryKind(entryKind) ||
                  (entryKind == sim::EntryKind::Initial &&
                   function.getHomeRegion() == sim::EventRegion::Active);
+  bool prioritySignalResume =
+      function->hasAttr("obelisk_sim.priority_signal_resume");
+  if (prioritySignalResume &&
+      (!function->hasAttr("internal") ||
+       !function->hasAttr("obelisk_sim.concurrent_cancel") ||
+       !function->hasAttr("obelisk_sim.detached_controls") ||
+       entryKind != sim::EntryKind::Fork ||
+       function.getHomeRegion() != sim::EventRegion::Reactive))
+    return helper.emitError(
+        "priority signal resume is reserved for internal concurrent-disable "
+        "observers");
   uint32_t scheduleFlags = OBELISK_RT_SCHEDULE_HOME(homeRegion) |
                            (entryKind == sim::EntryKind::Final
                                 ? OBELISK_RT_SCHEDULE_FINAL
@@ -258,6 +269,9 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
                                 : 0) |
                            (function->hasAttr("obelisk_sim.detached_controls")
                                 ? OBELISK_RT_SCHEDULE_DETACHED_CONTROLS
+                                : 0) |
+                           (prioritySignalResume
+                                ? OBELISK_RT_SCHEDULE_PRIORITY_SIGNAL
                                 : 0);
   Value null = LLVM::ZeroOp::create(builder, location, pointer);
   Value continuationAddress = null;

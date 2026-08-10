@@ -323,12 +323,17 @@ enum {
 #define OBELISK_RT_SCHEDULE_INITIAL (UINT32_C(1) << 4)
 #define OBELISK_RT_SCHEDULE_STARTUP (UINT32_C(1) << 5)
 #define OBELISK_RT_SCHEDULE_DETACHED_CONTROLS (UINT32_C(1) << 6)
+// A signal-resumed process with this flag runs before ordinary work already
+// queued in the same event region. Unlike STARTUP, this does not change the
+// process's event region or make its initial activation urgent.
+#define OBELISK_RT_SCHEDULE_PRIORITY_SIGNAL (UINT32_C(1) << 7)
 
-// The bytecode SPAWN intrinsic uses its two high flag bits for scheduler
+// The bytecode SPAWN intrinsic uses its three high flag bits for scheduler
 // classifications and the remaining bits for the callee function index.
 #define OBELISK_RT_INTRINSIC_SPAWN_STARTUP (UINT32_C(1) << 31)
 #define OBELISK_RT_INTRINSIC_SPAWN_DETACHED_CONTROLS (UINT32_C(1) << 30)
-#define OBELISK_RT_INTRINSIC_SPAWN_FUNCTION_MASK UINT32_C(0x3fffffff)
+#define OBELISK_RT_INTRINSIC_SPAWN_PRIORITY_SIGNAL (UINT32_C(1) << 29)
+#define OBELISK_RT_INTRINSIC_SPAWN_FUNCTION_MASK UINT32_C(0x1fffffff)
 
 // Serialized design-bytecode function flags. Process functions encode their
 // canonical frame size shifted left by one. Bits 60-62 encode the executable
@@ -1281,6 +1286,7 @@ typedef struct obelisk_rt_wait_entry_v1 {
 #define OBELISK_RT_COMPUTED_WAIT_INTERLEAVED (UINT32_C(1) << 0)
 #define OBELISK_RT_OBSERVER_CONDITION_NONE UINT32_MAX
 #define OBELISK_RT_COMPUTED_CLAUSE_EVENT_PRIMARY (UINT32_C(1) << 0)
+#define OBELISK_RT_COMPUTED_CLAUSE_LEVEL_TRUE (UINT32_C(1) << 1)
 
 typedef struct obelisk_rt_computed_wait_record_v1 {
   uint32_t version;
@@ -2242,6 +2248,10 @@ obelisk_rt_status obelisk_rt_v1_scheduler_direct_fragment_leave(
 // inside the scheduler-owned clean transaction.
 obelisk_rt_status obelisk_rt_v1_scheduler_execute_aot_actor(
     obelisk_rt_context *context, uint32_t actor_slot);
+// Returns nonzero when a priority signal-resumed process must run before the
+// generated coordinator executes another owner in the current event region.
+uint32_t
+obelisk_rt_v1_scheduler_priority_signal_pending(obelisk_rt_context *context);
 // Publish one exact cold continuation after the generated coordinator
 // returns. The callback is invoked outside the hot Tier-1/Tier-2 call graph;
 // its generated thunk resumes the same slot's ready-mask/NBA transaction.

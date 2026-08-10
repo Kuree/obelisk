@@ -991,6 +991,7 @@ bool nativeStaticSpecializationEnvironmentClean(
   return context &&
          (!context->execution || context->execution->observer_count == 0) &&
          context->scheduledDesignTasks.empty() &&
+         context->nativeComputedSignalSubscriptions == 0 &&
          context->nativeConditionalSignalWaiters.empty() &&
          context->designConditionalSignalWaiters.empty();
 }
@@ -2051,6 +2052,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_planned(
     process.startupProcess =
         (flags & OBELISK_RT_SCHEDULE_STARTUP) != 0;
     process.urgent = process.startupProcess;
+    process.prioritySignal =
+        (flags & OBELISK_RT_SCHEDULE_PRIORITY_SIGNAL) != 0;
     context->scheduledFinalProcessPresent |= phase == 1;
     process.homeRegion = homeRegion;
     process.queuedRegion = homeRegion;
@@ -2093,6 +2096,23 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_planned(
   } catch (...) {
     return OBELISK_RT_INVALID_ARGUMENT;
   }
+}
+
+extern "C" uint32_t obelisk_rt_v1_scheduler_priority_signal_pending(
+    obelisk_rt_context *context) {
+  if (!context || !context->prioritySignalPending)
+    return 0;
+  ContextMutexLock lock(context);
+  for (const ScheduledProcess &process : context->scheduledProcesses)
+    if (process.instance && process.prioritySignal &&
+        (process.signalTriggered ||
+         (process.signalLatch && process.signalLatch->triggered)))
+      return 1;
+  for (const ScheduledDesignTask &task : context->scheduledDesignTasks)
+    if (!task.terminated && task.prioritySignal && task.signalTriggered)
+      return 1;
+  context->prioritySignalPending = false;
+  return 0;
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
@@ -3533,6 +3553,44 @@ bool publishNativeSignalTransitionUnlocked(
           context, bitOffset, bitWidth, changed, posedge, negedge, 0,
           &sequence))
     return false;
+  // Generated native code may have committed later source stores to its
+  // private plane before publishing this transition. Advance the canonical
+  // plane one publication at a time so observer evaluators see source-order
+  // state: prior publications plus this transition, never future stores.
+  uint32_t publishedStaticID = 0;
+  int64_t publishedOffset = 0;
+  bool publishedStatic =
+      decodeNativeStatic(bitOffset, publishedStaticID, publishedOffset);
+  bool publishedGlobal =
+      !publishedStatic && decodeNativeGlobal(bitOffset, publishedOffset);
+  const NativeStaticState *publishedState =
+      publishedStatic ? findNativeStaticState(context, publishedStaticID)
+                      : nullptr;
+  for (uint64_t bit = 0; bit != bitWidth; ++bit) {
+    if (!byteBit(changed, bit) || bit > static_cast<uint64_t>(INT64_MAX))
+      continue;
+    int64_t local = 0;
+    if (!addHandleOffset(publishedOffset, bit, local) || local < 0)
+      continue;
+    uint64_t absolute = static_cast<uint64_t>(local);
+    if (publishedStatic) {
+      if (!publishedState || absolute >= publishedState->bitWidth)
+        continue;
+      absolute += publishedState->bitOffset;
+    } else if (!publishedGlobal) {
+      continue;
+    }
+    if (absolute >= context->stateValue.size() * uint64_t{64} ||
+        absolute >= context->stateUnknown.size() * uint64_t{64})
+      continue;
+    uint64_t mask = uint64_t{1} << (absolute % 64);
+    uint64_t &valueLimb = context->stateValue[absolute / 64];
+    uint64_t &unknownLimb = context->stateUnknown[absolute / 64];
+    valueLimb = byteBit(newValue, bit) ? valueLimb | mask : valueLimb & ~mask;
+    unknownLimb = newUnknown && byteBit(newUnknown, bit)
+                      ? unknownLimb | mask
+                      : unknownLimb & ~mask;
+  }
   obelisk_rt_invalidate_signal_snapshots_unlocked(context, bitOffset, bitWidth);
   if (obelisk_rt_has_conditional_signal_waiters(context)) {
     for (uint64_t bit = 0; bit != bitWidth; ++bit) {
@@ -3563,7 +3621,12 @@ bool publishNativeSignalTransitionUnlocked(
         return false;
     }
   }
-  if (!obelisk_rt_notify_observer_signal_unlocked(context, bitOffset, bitWidth))
+  bool previousCanonicalPlane = context->observerForcesCanonicalPlane;
+  context->observerForcesCanonicalPlane = true;
+  bool observerStatus =
+      obelisk_rt_notify_observer_signal_unlocked(context, bitOffset, bitWidth);
+  context->observerForcesCanonicalPlane = previousCanonicalPlane;
+  if (!observerStatus)
     return false;
   if (++context->schedulerEpoch == 0)
     context->schedulerEpoch = 1;
@@ -4452,7 +4515,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
         static_cast<uint64_t>(globalOffset) <= rootWidth &&
         bitWidth <= rootWidth - static_cast<uint64_t>(globalOffset)) {
       uint64_t source = rootOffset + static_cast<uint64_t>(globalOffset);
-      uint64_t value = isStaticControlAOT(context)
+      uint64_t value = (!context->observerForcesCanonicalPlane &&
+                        isStaticControlAOT(context))
                            ? loadPackedBytes(globalPlane, source, bitWidth)
                            : loadPackedBits(*canonicalPlane, source, bitWidth);
       for (uint64_t byte = 0; byte != byteCount; ++byte)
@@ -4460,7 +4524,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
       maskPadding();
       return OBELISK_RT_OK;
     }
-    bool readGlobalPlane = !canonical || isStaticControlAOT(context);
+    bool readGlobalPlane =
+        !canonical ||
+        (!context->observerForcesCanonicalPlane &&
+         isStaticControlAOT(context));
     for (uint64_t bit = 0; bit != bitWidth; ++bit) {
       int64_t coordinate = 0;
       if (addHandleOffset(globalOffset, bit, coordinate) && coordinate >= 0 &&
@@ -6116,7 +6183,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
                             (candidate.signalLatch &&
                              candidate.signalLatch->triggered);
         if (runnable && unstartedActorPending && signalResume &&
-            !candidate.urgent)
+            !candidate.urgent && !candidate.prioritySignal)
           runnable = false;
         if (runnable && candidate.urgent) {
           size_t distance =
@@ -6137,13 +6204,17 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         }
         if (nativeUrgentDistance != SIZE_MAX)
           return;
-        auto key = std::tuple{candidate.queuedRegion, candidate.scheduleRank,
-                              candidate.insertionSequence};
+        auto key = candidate.prioritySignal && signalResume
+                       ? std::tuple{candidate.queuedRegion, uint32_t{0},
+                                    uint64_t{0}}
+                       : std::tuple{candidate.queuedRegion,
+                                    candidate.scheduleRank,
+                                    candidate.insertionSequence};
         if (runnable && key < std::tuple{nativeRegion, nativeRank,
                                          nativeInsertionSequence}) {
-          nativeRegion = candidate.queuedRegion;
-          nativeRank = candidate.scheduleRank;
-          nativeInsertionSequence = candidate.insertionSequence;
+          nativeRegion = std::get<0>(key);
+          nativeRank = std::get<1>(key);
+          nativeInsertionSequence = std::get<2>(key);
           nativeCandidateIndex = index;
           nativeCandidateToken = candidate.token;
         }
@@ -6216,8 +6287,15 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
             candidate.phase == (context->schedulerRunningFinals ? 1u : 0u) &&
             nativeProcessReady(*context, candidate,
                                context->nativeScheduleForcedSlot != UINT32_MAX);
-        auto key = std::tuple{candidate.queuedRegion, candidate.scheduleRank,
-                              candidate.insertionSequence};
+        bool signalResume = candidate.signalTriggered ||
+                            (candidate.signalLatch &&
+                             candidate.signalLatch->triggered);
+        auto key = candidate.prioritySignal && signalResume
+                       ? std::tuple{candidate.queuedRegion, uint32_t{0},
+                                    uint64_t{0}}
+                       : std::tuple{candidate.queuedRegion,
+                                    candidate.scheduleRank,
+                                    candidate.insertionSequence};
         if (runnable &&
             (candidate.urgent ||
              (key == std::tuple{nativeRegion, nativeRank,
@@ -6225,10 +6303,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
               key < std::tuple{barrierRegion, uint32_t{0}, uint64_t{0}}))) {
           selected = candidate.instance;
           selectedIndex = nativeCandidateIndex;
-          selectedRank = candidate.urgent ? 0 : candidate.scheduleRank;
-          selectedRegion = candidate.urgent ? 0 : candidate.queuedRegion;
-          selectedInsertionSequence =
-              candidate.urgent ? 0 : candidate.insertionSequence;
+          selectedRank = candidate.urgent ? 0 : std::get<1>(key);
+          selectedRegion = candidate.urgent ? 0 : std::get<0>(key);
+          selectedInsertionSequence = candidate.urgent ? 0 : std::get<2>(key);
         }
       }
       if (!selected && (!scanStateUnchanged || nativeCandidateExpected)) {
@@ -6253,8 +6330,15 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
             selectedInsertionSequence = 0;
             break;
           }
-          auto key = std::tuple{candidate.queuedRegion, candidate.scheduleRank,
-                                candidate.insertionSequence};
+          bool signalResume = candidate.signalTriggered ||
+                              (candidate.signalLatch &&
+                               candidate.signalLatch->triggered);
+          auto key = candidate.prioritySignal && signalResume
+                         ? std::tuple{candidate.queuedRegion, uint32_t{0},
+                                      uint64_t{0}}
+                         : std::tuple{candidate.queuedRegion,
+                                      candidate.scheduleRank,
+                                      candidate.insertionSequence};
           if (!(key < std::tuple{barrierRegion, uint32_t{0}, uint64_t{0}}))
             continue;
           if (selected && !(key < std::tuple{selectedRegion, selectedRank,
@@ -6262,9 +6346,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
             continue;
           selected = candidate.instance;
           selectedIndex = index;
-          selectedRank = candidate.scheduleRank;
-          selectedRegion = candidate.queuedRegion;
-          selectedInsertionSequence = candidate.insertionSequence;
+          selectedRank = std::get<1>(key);
+          selectedRegion = std::get<0>(key);
+          selectedInsertionSequence = std::get<2>(key);
         }
       }
       if (selected) {
@@ -8369,8 +8453,13 @@ obelisk_rt_status drainNativeAOTCurrentSlotUnlocked(
       }
       if (urgentDistance != SIZE_MAX)
         continue;
-      SchedulerKey key{candidate.queuedRegion, candidate.scheduleRank,
-                       candidate.insertionSequence};
+      bool prioritySignalResume =
+          candidate.prioritySignal &&
+          (candidate.signalTriggered ||
+           (candidate.signalLatch && candidate.signalLatch->triggered));
+      SchedulerKey key{candidate.queuedRegion,
+                       prioritySignalResume ? 0 : candidate.scheduleRank,
+                       prioritySignalResume ? 0 : candidate.insertionSequence};
       if (key < runtimeProcessKey) {
         runtimeProcessKey = key;
         runtimeProcessToken = candidate.token;
@@ -9531,7 +9620,8 @@ obelisk_rt_v1_scheduler_run_aot(obelisk_rt_context *context) {
     guardedFanout =
         (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_GUARDED_FANOUT) != 0 &&
         !context->nativeScheduleExternalWritePending &&
-        !context->nativeScheduleDirtyRootsPresent;
+        !context->nativeScheduleDirtyRootsPresent &&
+        nativeStaticSpecializationEnvironmentClean(context);
     specializationFast = plan->specialization_fast &&
                          !context->nativeScheduleExternalWritePending &&
                          !context->nativeScheduleDirtyRootsPresent &&
@@ -9603,7 +9693,8 @@ retryNativeSchedule:;
       ContextMutexLock lock(context);
       guardedFanout =
           (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_GUARDED_FANOUT) != 0 &&
-          !context->nativeScheduleDirtyRootsPresent;
+          !context->nativeScheduleDirtyRootsPresent &&
+          nativeStaticSpecializationEnvironmentClean(context);
       specializationFast =
           plan->specialization_fast &&
           nativeStaticSpecializationEnvironmentClean(context);
@@ -9838,7 +9929,8 @@ retryNativeSchedule:;
       guardedFanout =
           (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_GUARDED_FANOUT) != 0 &&
           !context->nativeScheduleExternalWritePending &&
-          !context->nativeScheduleDirtyRootsPresent;
+          !context->nativeScheduleDirtyRootsPresent &&
+          nativeStaticSpecializationEnvironmentClean(context);
       specializationFast =
           plan->specialization_fast &&
           !context->nativeScheduleExternalWritePending &&

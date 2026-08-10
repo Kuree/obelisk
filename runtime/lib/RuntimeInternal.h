@@ -257,7 +257,8 @@ inline bool obelisk_rt_decode_schedule_flags(uint32_t flags, uint32_t &phase,
   constexpr uint32_t known =
       OBELISK_RT_SCHEDULE_FINAL | OBELISK_RT_SCHEDULE_HOME_MASK |
       OBELISK_RT_SCHEDULE_INITIAL | OBELISK_RT_SCHEDULE_STARTUP |
-      OBELISK_RT_SCHEDULE_DETACHED_CONTROLS;
+      OBELISK_RT_SCHEDULE_DETACHED_CONTROLS |
+      OBELISK_RT_SCHEDULE_PRIORITY_SIGNAL;
   if ((flags & ~known) != 0)
     return false;
   phase = (flags & OBELISK_RT_SCHEDULE_FINAL) != 0 ? 1u : 0u;
@@ -329,6 +330,7 @@ struct ScheduledProcess {
   uint32_t queuedRegion = 0;
   bool started = false;
   bool urgent = false;
+  bool prioritySignal = false;
   bool signalTriggered = false;
   bool initialProcess = false;
   bool startupProcess = false;
@@ -479,6 +481,7 @@ struct ScheduledDesignTask {
   bool terminated = false;
   bool signalTriggered = false;
   bool startupProcess = false;
+  bool prioritySignal = false;
 };
 
 struct SignalSubscriptionBucketKey {
@@ -742,6 +745,7 @@ struct obelisk_rt_context {
   std::vector<obelisk_rt_aot_deopt_actor> nativeScheduleSnapshotActors;
   std::vector<obelisk_rt_aot_deopt_nba> nativeScheduleSnapshotNBAs;
   bool nativeScheduleRunning = false;
+  bool prioritySignalPending = false;
   bool nativeScheduleDeoptimized = false;
   bool nativeScheduleExternalWritePending = false;
   std::unordered_set<uint32_t> nativeScheduleTransientDirtyRoots;
@@ -778,6 +782,7 @@ struct obelisk_rt_context {
                      std::vector<SignalSubscriptionBucketEntry>,
                      SignalSubscriptionBucketKeyHash>
       signalSubscriptionBuckets;
+  uint64_t nativeComputedSignalSubscriptions = 0;
   std::vector<uint64_t> pendingNativeComputedWaiters;
   std::vector<uint64_t> pendingDesignComputedWaiters;
   std::unordered_set<uint64_t> nativeConditionalSignalWaiters;
@@ -872,6 +877,7 @@ struct obelisk_rt_context {
   obelisk_rt_status schedulerFinishStatus = OBELISK_RT_OK;
   obelisk_rt_status schedulerStatus = OBELISK_RT_OK;
   uint32_t observerDepth = 0;
+  bool observerForcesCanonicalPlane = false;
   const obelisk_rt_execution_descriptor_v1 *execution = nullptr;
   // Live simulation state is owned by the context.  The planes use the same
   // little-endian limb representation as bytecode values and are never stored

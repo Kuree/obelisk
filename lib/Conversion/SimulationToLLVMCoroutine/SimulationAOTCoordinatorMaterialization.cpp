@@ -203,6 +203,25 @@ LogicalResult materializeNativeEvalCoordinator(
   };
   cf::BranchOp::create(builder, location, dispatch);
   builder.setInsertionPointToStart(dispatch);
+  Block *scanReady = new Block;
+  fastCoordinator.getBody().push_back(scanReady);
+  Value prioritySignalPending =
+      LLVM::CallOp::create(
+          builder, location, TypeRange{i32},
+          SymbolRefAttr::get(
+              context, "obelisk_rt_v1_scheduler_priority_signal_pending"),
+          ValueRange{fastEntry->getArgument(1)})
+          .getResult();
+  Value mustHandoff = arith::CmpIOp::create(
+      builder, location, arith::CmpIPredicate::ne, prioritySignalPending,
+      llvmConstant(builder, location, i32, 0));
+  cf::CondBranchOp::create(
+      builder, location, mustHandoff, complete,
+      ValueRange{llvmConstant(builder, location, i32,
+                              OBELISK_RT_AOT_CHECKPOINT)},
+      scanReady, ValueRange{});
+
+  builder.setInsertionPointToStart(scanReady);
   Value ready = combinedIngress();
   Value empty =
       arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq, ready,

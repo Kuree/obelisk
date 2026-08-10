@@ -1503,6 +1503,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     task.function = function;
     task.startupProcess =
         (signature.flags & OBELISK_RT_INTRINSIC_SPAWN_STARTUP) != 0;
+    task.prioritySignal =
+        (signature.flags & OBELISK_RT_INTRINSIC_SPAWN_PRIORITY_SIGNAL) != 0;
     task.urgent = task.startupProcess;
     task.scheduleRank = static_cast<uint32_t>(callee.initialScheduleRank);
     task.scratchOffset = scratchOffset;

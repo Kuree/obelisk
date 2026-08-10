@@ -45,16 +45,36 @@ bool isManagedType(Type type) {
 NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
   NativeAOTAnalysis result;
   bool invalidPlan = false;
-  bool onlyDetachedReportBoundaries = true;
+  bool onlyConcurrentColdBoundaries = true;
   llvm::SmallDenseSet<Operation *> dynamicActors;
   llvm::SmallDenseSet<Operation *> bytecodeActors;
+  auto isConcurrentColdActor = [](Operation *operation) {
+    auto function = dyn_cast_or_null<sim::SimFuncOp>(operation);
+    if (!function && operation)
+      function = operation->getParentOfType<sim::SimFuncOp>();
+    if (!function || !function->hasAttr("internal"))
+      return false;
+    return (function->hasAttr("obelisk_sim.concurrent_report") &&
+            function->hasAttr("obelisk_sim.detached_controls") &&
+            function.getEntryKind() == sim::EntryKind::Fork &&
+            function.getHomeRegion() == sim::EventRegion::Reactive) ||
+           (function->hasAttr("obelisk_sim.concurrent_cancel") &&
+            function->hasAttr("obelisk_sim.detached_controls") &&
+            function->hasAttr("obelisk_sim.priority_signal_resume") &&
+            function.getEntryKind() == sim::EntryKind::Fork &&
+            function.getHomeRegion() == sim::EventRegion::Reactive) ||
+           (function->hasAttr("obelisk_sim.concurrent_cancel_observer") &&
+            function->hasAttr("obelisk_sim.detached_controls") &&
+            function.getEntryKind() == sim::EntryKind::Observer);
+  };
   auto rejectPlan = [&](StringRef reason) {
     invalidPlan = true;
-    onlyDetachedReportBoundaries = false;
+    onlyConcurrentColdBoundaries = false;
     result.reasons.emplace_back(reason);
   };
   auto requireBytecodeFragment = [&](Operation *operation, StringRef reason) {
-    onlyDetachedReportBoundaries = false;
+    if (!isConcurrentColdActor(operation))
+      onlyConcurrentColdBoundaries = false;
     result.reasons.emplace_back(reason);
     auto function = operation->getParentOfType<sim::SimFuncOp>();
     if (!function || !operation->getBlock())
@@ -163,7 +183,8 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
           continue;
         result.reasons.emplace_back(
             "compute graph contains a bytecode-only fragment");
-        onlyDetachedReportBoundaries = false;
+        if (!isConcurrentColdActor(function))
+          onlyConcurrentColdBoundaries = false;
         auto &fragments = result.bytecodeFragments[function.getOperation()];
         if (!llvm::is_contained(fragments, block))
           fragments.push_back(block);
@@ -177,7 +198,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
         result.reasons.emplace_back(
             "NBA site requires DynamicFrontier storage");
       if (!commit.getFrontierSites().empty())
-        onlyDetachedReportBoundaries = false;
+        onlyConcurrentColdBoundaries = false;
       continue;
     }
     if (auto commit = dyn_cast<sim::ComputeEventCommitAttr>(attribute)) {
@@ -186,7 +207,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       if (!commit.getSites().empty())
         result.reasons.emplace_back("deferred events require dynamic storage");
       if (!commit.getSites().empty())
-        onlyDetachedReportBoundaries = false;
+        onlyConcurrentColdBoundaries = false;
       continue;
     }
     rejectPlan("compute graph contains an unknown node kind");
@@ -243,11 +264,8 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     if (!owner || owner != root) {
       sim::SimFuncOp target =
           design.lookupSymbol<sim::SimFuncOp>(spawn.getCallee());
-      bool detachedReport =
-          target && target->hasAttr("obelisk_sim.concurrent_report") &&
-          target->hasAttr("obelisk_sim.detached_controls") &&
-          target.getHomeRegion() == sim::EventRegion::Reactive;
-      if (detachedReport)
+      bool concurrentCold = target && isConcurrentColdActor(target);
+      if (concurrentCold)
         result.reasons.emplace_back("dynamic spawn multiplicity");
       else
         requireBytecodeFragment(spawn, "dynamic spawn multiplicity");
@@ -257,7 +275,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     }
     if (++rootSpawnCounts[spawn.getCallee()] != 1) {
       result.reasons.emplace_back("duplicate statically spawned process");
-      onlyDetachedReportBoundaries = false;
+      onlyConcurrentColdBoundaries = false;
       if (sim::SimFuncOp target =
               design.lookupSymbol<sim::SimFuncOp>(spawn.getCallee()))
         dynamicActors.insert(target.getOperation());
@@ -268,10 +286,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     if (function.getEntryKind() == sim::EntryKind::Task ||
         function.getEntryKind() == sim::EntryKind::Fork) {
       result.reasons.emplace_back("task, await, or join control is present");
-      onlyDetachedReportBoundaries &=
-          function->hasAttr("obelisk_sim.concurrent_report") &&
-          function->hasAttr("obelisk_sim.detached_controls") &&
-          function.getHomeRegion() == sim::EventRegion::Reactive;
+      onlyConcurrentColdBoundaries &= isConcurrentColdActor(function);
       dynamicActors.insert(function.getOperation());
     }
     // Statically bound actors retain their semantic home region in the
@@ -353,7 +368,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       auto timing = delay.getTimingAttr();
       if (!timing || timing.getKind() != sim::ComputeTimingKind::Calendar) {
         result.reasons.emplace_back("dynamic deadline");
-        onlyDetachedReportBoundaries = false;
+        onlyConcurrentColdBoundaries = false;
       }
     } else if (auto nba = dyn_cast<sim::SimNBAEnqueueOp>(operation)) {
       auto site = nba->getAttrOfType<sim::NBASiteAttr>("site");
@@ -413,7 +428,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
   result.eligible = !result.actorSlots.empty();
   result.fullyEligible = result.eligible && result.reasons.empty();
   result.forcedHybridEligible =
-      result.eligible && !result.fullyEligible && onlyDetachedReportBoundaries;
+      result.eligible && !result.fullyEligible && onlyConcurrentColdBoundaries;
   for (Attribute attribute : nodes) {
     auto fragment = dyn_cast<sim::ComputeFragmentAttr>(attribute);
     if (!fragment)

@@ -232,6 +232,22 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
   for (size_t unitIndex = 0; unitIndex != ordinaryUnitCount; ++unitIndex) {
     PreparedUnit &unit = result.units[unitIndex];
     unit.source->walk<WalkOrder::PreOrder>([&](Operation *nested) {
+      if (auto assertion =
+              dyn_cast<semantic::SVConcurrentAssertionStatementOp>(nested)) {
+        SmallVector<Operation *> children = getChildren(assertion);
+        if (assertion.getHasDefaultDisable() && !children.empty())
+          observerCandidates.push_back({children.front(), ObserverResult::Truth,
+                                        "disable", unit.id, unit.hierarchy});
+        return;
+      }
+      if (auto disabled =
+              dyn_cast<semantic::SVDisableIffAssertionExprOp>(nested)) {
+        SmallVector<Operation *> children = getChildren(disabled);
+        if (!children.empty())
+          observerCandidates.push_back({children.front(), ObserverResult::Truth,
+                                        "disable", unit.id, unit.hierarchy});
+        return;
+      }
       if (auto wait = dyn_cast<semantic::SVWaitStatementOp>(nested)) {
         SmallVector<Operation *> children = getChildren(wait);
         if (children.size() == 2 &&

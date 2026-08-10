@@ -263,6 +263,9 @@ serializeComputedObserverWait(Operation *operation, Value wait,
   }
   llvm::append_range(observerBindings, uniqueBindings);
 
+  bool levelTrue =
+      operation->hasAttr("obelisk_sim.concurrent_cancel_level_true");
+
   for (uint32_t index = 0; index != primaryCount; ++index) {
     uint64_t clause =
         clausesOffset + uint64_t{index} * sizeof(obelisk_rt_computed_clause_v1);
@@ -273,9 +276,10 @@ serializeComputedObserverWait(Operation *operation, Value wait,
                  ? OBELISK_RT_OBSERVER_CONDITION_NONE
                  : primaryCount + static_cast<uint32_t>(conditionIndex));
     storeI32(clause + 8, observe.getEdges()[index]);
-    storeI32(clause + 12, bindings[index]->hasAttr("obelisk_sim.event_primary")
-                              ? OBELISK_RT_COMPUTED_CLAUSE_EVENT_PRIMARY
-                              : 0);
+    storeI32(clause + 12,
+             bindings[index]->hasAttr("obelisk_sim.event_primary")
+                 ? OBELISK_RT_COMPUTED_CLAUSE_EVENT_PRIMARY
+                 : (levelTrue ? OBELISK_RT_COMPUTED_CLAUSE_LEVEL_TRUE : 0));
   }
   for (uint32_t limb = 0; limb != previousLimbs * 2; ++limb)
     storeI64(previousValueOffset + uint64_t{limb} * 8, 0);

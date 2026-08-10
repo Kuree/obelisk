@@ -6855,6 +6855,30 @@ LogicalResult SimSuspendObserveOp::verify() {
   }
   if (llvm::is_contained(usedConditions, false))
     return emitOpError("contains an unreferenced condition observer");
+  if ((*this)->hasAttr("obelisk_sim.concurrent_cancel_level_true")) {
+    auto function = (*this)->getParentOfType<SimFuncOp>();
+    if (!function || !function->hasAttr("internal") ||
+        !function->hasAttr("obelisk_sim.concurrent_cancel") ||
+        !function->hasAttr("obelisk_sim.detached_controls") ||
+        !function->hasAttr("obelisk_sim.priority_signal_resume") ||
+        function.getEntryKind() != EntryKind::Fork ||
+        function.getHomeRegion() != EventRegion::Reactive)
+      return emitOpError(
+          "concurrent cancel level-true suspension requires an internal "
+          "detached priority concurrent-cancel fork in the reactive region");
+    if (getPrimaries().size() != 1 || !getConditions().empty() ||
+        getConditionIndices().front() != -1 ||
+        getEdges().front() != static_cast<int32_t>(EdgeKind::Posedge))
+      return emitOpError(
+          "concurrent cancel level-true suspension requires one i1 truth "
+          "primary with posedge and no condition");
+    auto result = dyn_cast<IntegerType>(
+        cast<ObserverType>(getPrimaries().front().getType()).getResultType());
+    if (!result || result.getWidth() != 1)
+      return emitOpError(
+          "concurrent cancel level-true suspension requires one i1 truth "
+          "primary with posedge and no condition");
+  }
   return verifyContinuation(*this, getContinuationOperands(),
                             getContinuation());
 }

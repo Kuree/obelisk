@@ -559,7 +559,10 @@ bool obelisk_rt_validate_computed_wait_record(
     const obelisk_rt_computed_clause_v1 &clause = clauses[index];
     if (clause.primary_observer != index ||
         clause.edge > OBELISK_RT_WAIT_EDGE_BOTH ||
-        (clause.flags & ~OBELISK_RT_COMPUTED_CLAUSE_EVENT_PRIMARY) != 0)
+        (clause.flags & ~(OBELISK_RT_COMPUTED_CLAUSE_EVENT_PRIMARY |
+                          OBELISK_RT_COMPUTED_CLAUSE_LEVEL_TRUE)) != 0 ||
+        ((clause.flags & OBELISK_RT_COMPUTED_CLAUSE_EVENT_PRIMARY) != 0 &&
+         (clause.flags & OBELISK_RT_COMPUTED_CLAUSE_LEVEL_TRUE) != 0))
       return false;
     if (clause.condition_observer != OBELISK_RT_OBSERVER_CONDITION_NONE) {
       if (clause.condition_observer < wait->clause_count ||

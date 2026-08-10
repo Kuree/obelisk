@@ -246,12 +246,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     disable = nested.front();
     property = unwrapAssertionInstance(nested.back());
   }
-  if (disable) {
-    emitError(getSemanticLocation(disable))
-        << "disable iff requires asynchronous monitor cancellation; it is "
-           "not lowered as a sampled property term";
-    return failure();
-  }
+  if (!property)
+    return op.emitError("disable iff wraps an unsupported assertion instance"),
+           failure();
 
   semantic::SVBinaryAssertionExprOp implication;
   FixedSequence sequence;
@@ -298,6 +295,220 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   function->setAttr("home_region",
                     sim::EventRegionAttr::get(function.getContext(),
                                               sim::EventRegion::Observed));
+
+  Type stateType = builder.getI64Type();
+  Value zero = arith::ConstantOp::create(builder, location, stateType,
+                                         builder.getI64IntegerAttr(0));
+  bool needsState =
+      disable || sequence.ages.size() > 1 || (implication && nonoverlapped);
+  Value stateStorage;
+  if (needsState)
+    stateStorage = sim::SimRefAllocOp::create(
+        builder, location, sim::RefType::get(function.getContext(), stateType),
+        zero);
+
+  Value disableEpoch;
+  Value initialDisable;
+  if (disable) {
+    // `disable iff` is unsampled and asynchronous. Bind its two-state truth
+    // value as a computed observer: every false-to-true transition wakes a
+    // cold Observed actor which clears live attempts and advances an epoch.
+    // Reactive reports capture that epoch and become no-ops when cancellation
+    // overtakes an already queued callback in the same time slot.
+    FailureOr<Value> current = lowerExpression(disable);
+    if (failed(current))
+      return failure();
+    FailureOr<Value> truth = truthValue(*current, getSemanticLocation(disable));
+    if (failed(truth))
+      return failure();
+    initialDisable = *truth;
+    FailureOr<Value> observer = bindObserver(disable);
+    if (failed(observer))
+      return emitError(getSemanticLocation(disable))
+                 << "disable iff expression has no asynchronous observer; "
+                    "its operands are not executable",
+             failure();
+    auto observerBinding = observer->getDefiningOp<sim::SimObserverBindOp>();
+    if (!observerBinding)
+      return emitError(getSemanticLocation(disable))
+                 << "disable iff expression has no observer binding",
+             failure();
+    for (Value capture : observerBinding.getValues())
+      if (isa<sim::RefType>(capture.getType()) &&
+          !isStaticallyAllocatedOverrideTarget(capture))
+        return emitError(getSemanticLocation(disable))
+                   << "disable iff cannot asynchronously observe an "
+                      "automatic variable",
+               failure();
+    auto design = function->getParentOfType<sim::SimDesignOp>();
+    sim::SimFuncOp observerEvaluator =
+        design ? design.lookupSymbol<sim::SimFuncOp>(
+                     observerBinding.getEvaluator())
+               : sim::SimFuncOp{};
+    if (!observerEvaluator)
+      return emitError(getSemanticLocation(disable))
+                 << "disable iff observer evaluator is missing",
+             failure();
+    observerEvaluator->setAttr("obelisk_sim.concurrent_cancel_observer",
+                               builder.getUnitAttr());
+    observerEvaluator->setAttr("obelisk_sim.detached_controls",
+                               builder.getUnitAttr());
+    disableEpoch = sim::SimRefAllocOp::create(
+        builder, location, sim::RefType::get(function.getContext(), stateType),
+        zero);
+
+    if (!design)
+      return function.emitError(
+                 "concurrent disable outlining requires a simulation design"),
+             failure();
+    auto nodeAttr = op->getAttrOfType<IntegerAttr>("node_id");
+    uint64_t node = nodeAttr ? nodeAttr.getValue().getZExtValue() : 0;
+    std::string symbol =
+        (function.getSymName() + ".$concurrent_cancel." + Twine(node)).str();
+    std::string identity =
+        (function.getSymName() + ".$concurrent_disable." + Twine(node)).str();
+    uint64_t codeUnitID = stableCodeUnitID(identity);
+    uint64_t scopeID = 0;
+    std::string parentHierarchy = function.getSymName().str();
+    uint64_t parentID = function.getCodeUnitId().value_or(0);
+    for (sim::SimCodeUnitDeclOp declaration :
+         design.getBody().front().getOps<sim::SimCodeUnitDeclOp>()) {
+      if (declaration.getId() != parentID)
+        continue;
+      scopeID = declaration.getScopeId();
+      parentHierarchy = declaration.getHierarchicalName().str();
+      break;
+    }
+    std::string hierarchy =
+        (Twine(parentHierarchy) + ".$concurrent_disable." + Twine(node)).str();
+
+    Value context = function.getBody().front().getArgument(0);
+    SmallVector<Value> captures{context};
+    llvm::append_range(captures, observerBinding.getValues());
+    unsigned initialDisableIndex = captures.size();
+    captures.push_back(initialDisable);
+    unsigned stateStorageIndex = captures.size();
+    captures.push_back(stateStorage);
+    unsigned disableEpochIndex = captures.size();
+    captures.push_back(disableEpoch);
+    SmallVector<Type> inputs;
+    for (Value capture : captures)
+      inputs.push_back(capture.getType());
+    SmallVector<DictionaryAttr> argumentAttrs;
+    for (auto [index, capture] : llvm::enumerate(captures)) {
+      SmallVector<NamedAttribute> metadata;
+      if (auto argument = dyn_cast<BlockArgument>(capture);
+          argument && argument.getOwner() == &function.getBody().front()) {
+        if (DictionaryAttr source = function.getArgAttrDict(
+                argument.getArgNumber()))
+          llvm::append_range(metadata, source);
+      }
+      if (metadata.empty())
+        metadata.push_back(builder.getNamedAttr(
+            "obelisk_sim.capture_kind",
+            sim::CaptureKindAttr::get(function.getContext(),
+                                      index == 0 ? sim::CaptureKind::Context
+                                                 : sim::CaptureKind::Formal)));
+      if (isa<sim::RefType>(capture.getType()) &&
+          !isStaticallyAllocatedOverrideTarget(capture))
+        metadata.push_back(builder.getNamedAttr(
+            "obelisk_sim.automatic_reference_capture", builder.getUnitAttr()));
+      argumentAttrs.push_back(builder.getDictionaryAttr(metadata));
+    }
+
+    OpBuilder outlineBuilder(function);
+    outlineBuilder.setInsertionPoint(function);
+    sim::SimCodeUnitDeclOp::create(
+        outlineBuilder, getSemanticLocation(disable), codeUnitID, scopeID,
+        sim::EntryKind::Fork, outlineBuilder.getStringAttr(hierarchy),
+        outlineBuilder.getStringAttr("concurrent assertion disable observer"),
+        outlineBuilder.getUnitAttr());
+    SmallVector<NamedAttribute> attributes{
+        outlineBuilder.getNamedAttr(bindingsAttrName,
+                                    outlineBuilder.getArrayAttr({})),
+        outlineBuilder.getNamedAttr(
+            "code_unit_id", outlineBuilder.getI64IntegerAttr(codeUnitID)),
+        outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
+        outlineBuilder.getNamedAttr(
+            "home_region",
+            sim::EventRegionAttr::get(function.getContext(),
+                                      sim::EventRegion::Reactive)),
+        outlineBuilder.getNamedAttr(
+            "domain", sim::ExecutionDomainAttr::get(
+                          function.getContext(), sim::ExecutionDomain::Design)),
+        outlineBuilder.getNamedAttr(sim::metadata::hierarchicalName,
+                                    outlineBuilder.getStringAttr(hierarchy)),
+    };
+    sim::SimFuncOp cancel = sim::SimFuncOp::create(
+        outlineBuilder, getSemanticLocation(disable), symbol,
+        FunctionType::get(function.getContext(), inputs, TypeRange{}),
+        sim::EntryKind::Fork, attributes, argumentAttrs);
+    SymbolTable::setSymbolVisibility(cancel, SymbolTable::Visibility::Private);
+    cancel->setAttr("obelisk_sim.concurrent_cancel", builder.getUnitAttr());
+    cancel->setAttr("obelisk_sim.detached_controls", builder.getUnitAttr());
+    cancel->setAttr("obelisk_sim.priority_signal_resume",
+                    builder.getUnitAttr());
+
+    Block &entry = cancel.getBody().front();
+    Block *waitDisable = new Block;
+    Block *cancelLiveAttempts = new Block;
+    waitDisable->addArgument(builder.getI1Type(), getSemanticLocation(disable));
+    cancel.getBody().push_back(waitDisable);
+    cancel.getBody().push_back(cancelLiveAttempts);
+    OpBuilder entryBuilder = OpBuilder::atBlockEnd(&entry);
+    cf::BranchOp::create(entryBuilder, getSemanticLocation(disable),
+                         waitDisable,
+                         ValueRange{entry.getArgument(initialDisableIndex)});
+    OpBuilder waitBuilder = OpBuilder::atBlockEnd(waitDisable);
+    SmallVector<Value> reboundValues;
+    for (unsigned index = 1; index != initialDisableIndex; ++index)
+      reboundValues.push_back(entry.getArgument(index));
+    auto reboundObserver = sim::SimObserverBindOp::create(
+        waitBuilder, getSemanticLocation(disable),
+        observerBinding.getResult().getType(),
+        observerBinding.getEvaluatorAttr(), reboundValues,
+        observerBinding.getCaptureCountAttr());
+    SmallVector<Value> observed{reboundObserver.getResult(),
+                                waitDisable->getArgument(0)};
+    auto cancelWait = sim::SimSuspendObserveOp::create(
+        waitBuilder, getSemanticLocation(disable), observed, 0,
+        ArrayRef<int32_t>{static_cast<int32_t>(sim::EdgeKind::Posedge)},
+        ArrayRef<int32_t>{-1}, sim::ContinuationSiteAttr{},
+        sim::EventRegionAttr::get(function.getContext(),
+                                  sim::EventRegion::Reactive),
+        cancelLiveAttempts);
+    cancelWait->setAttr("obelisk_sim.concurrent_cancel_level_true",
+                        builder.getUnitAttr());
+
+    OpBuilder cancelBuilder = OpBuilder::atBlockEnd(cancelLiveAttempts);
+    Value cancelZero = arith::ConstantOp::create(
+        cancelBuilder, getSemanticLocation(disable), stateType,
+        cancelBuilder.getI64IntegerAttr(0));
+    sim::SimRefStoreOp::create(cancelBuilder, getSemanticLocation(disable),
+                               cancelZero,
+                               entry.getArgument(stateStorageIndex));
+    Value epoch =
+        sim::SimRefLoadOp::create(cancelBuilder, getSemanticLocation(disable),
+                                  stateType,
+                                  entry.getArgument(disableEpochIndex));
+    Value one = arith::ConstantOp::create(
+        cancelBuilder, getSemanticLocation(disable), stateType,
+        cancelBuilder.getI64IntegerAttr(1));
+    Value nextEpoch = arith::AddIOp::create(
+        cancelBuilder, getSemanticLocation(disable), epoch, one);
+    sim::SimRefStoreOp::create(cancelBuilder, getSemanticLocation(disable),
+                               nextEpoch,
+                               entry.getArgument(disableEpochIndex));
+    Value currentTrue = arith::ConstantOp::create(
+        cancelBuilder, getSemanticLocation(disable), builder.getI1Type(),
+        builder.getBoolAttr(true));
+    cf::BranchOp::create(cancelBuilder, getSemanticLocation(disable),
+                         waitDisable, ValueRange{currentTrue});
+
+    sim::SimSpawnOp::create(builder, getSemanticLocation(disable),
+                            cancel.getSymNameAttr(), captures, ArrayAttr{},
+                            ArrayAttr{});
+  }
 
   struct ReportCallback {
     sim::SimFuncOp function;
@@ -359,6 +570,50 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                              builder.getUnitAttr());
     callback->first->setAttr("obelisk_sim.detached_controls",
                              builder.getUnitAttr());
+    if (disableEpoch) {
+      sim::SimFuncOp evaluator = callback->first;
+      SmallVector<Type> inputTypes(evaluator.getFunctionType().getInputs());
+      inputTypes.push_back(disableEpoch.getType());
+      inputTypes.push_back(stateType);
+      evaluator.setFunctionType(
+          FunctionType::get(function.getContext(), inputTypes, TypeRange{}));
+      Block &entry = evaluator.getBody().front();
+      BlockArgument epochReference =
+          entry.addArgument(disableEpoch.getType(), location);
+      BlockArgument expectedEpoch = entry.addArgument(stateType, location);
+      SmallVector<Attribute> argumentAttrs;
+      if (ArrayAttr attrs = evaluator.getArgAttrsAttr())
+        llvm::append_range(argumentAttrs, attrs);
+      while (argumentAttrs.size() + 2 < inputTypes.size())
+        argumentAttrs.push_back(builder.getDictionaryAttr({}));
+      argumentAttrs.push_back(builder.getDictionaryAttr({
+          builder.getNamedAttr(
+              "obelisk_sim.capture_kind",
+              sim::CaptureKindAttr::get(function.getContext(),
+                                        sim::CaptureKind::Formal)),
+          builder.getNamedAttr("obelisk_sim.automatic_reference_capture",
+                               builder.getUnitAttr()),
+      }));
+      argumentAttrs.push_back(builder.getDictionaryAttr({builder.getNamedAttr(
+          "obelisk_sim.capture_kind",
+          sim::CaptureKindAttr::get(function.getContext(),
+                                    sim::CaptureKind::Formal))}));
+      evaluator.setArgAttrsAttr(builder.getArrayAttr(argumentAttrs));
+
+      Block *body = entry.splitBlock(entry.begin());
+      Block *canceled = new Block;
+      evaluator.getBody().push_back(canceled);
+      OpBuilder entryBuilder = OpBuilder::atBlockEnd(&entry);
+      Value currentEpoch = sim::SimRefLoadOp::create(entryBuilder, location,
+                                                     stateType, epochReference);
+      Value current = arith::CmpIOp::create(entryBuilder, location,
+                                            arith::CmpIPredicate::eq,
+                                            currentEpoch, expectedEpoch);
+      cf::CondBranchOp::create(entryBuilder, location, current, body, canceled);
+      OpBuilder canceledBuilder = OpBuilder::atBlockEnd(canceled);
+      sim::SimReturnOp::create(canceledBuilder, location, ValueRange{});
+      callback->second.push_back(disableEpoch);
+    }
     report.emplace(ReportCallback{callback->first, std::move(callback->second),
                                   getSemanticLocation(outlined)});
     return success();
@@ -370,20 +625,15 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     std::optional<ReportCallback> &report = passed ? passReport : failReport;
     if (!report)
       return;
+    SmallVector<Value> captures(report->captures);
+    if (disableEpoch)
+      captures.push_back(sim::SimRefLoadOp::create(builder, report->location,
+                                                   stateType, disableEpoch));
     sim::SimSpawnOp::create(builder, report->location,
-                            report->function.getSymNameAttr(), report->captures,
+                            report->function.getSymNameAttr(), captures,
                             ArrayAttr{}, ArrayAttr{});
   };
 
-  Type stateType = builder.getI64Type();
-  Value zero = arith::ConstantOp::create(builder, location, stateType,
-                                         builder.getI64IntegerAttr(0));
-  bool needsState = sequence.ages.size() > 1 || (implication && nonoverlapped);
-  Value stateStorage;
-  if (needsState)
-    stateStorage = sim::SimRefAllocOp::create(
-        builder, location, sim::RefType::get(function.getContext(), stateType),
-        zero);
   Block *wait = addBlock();
   Block *sample = addBlock();
   emitBranch(wait);
@@ -401,11 +651,41 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     state =
         sim::SimRefLoadOp::create(builder, location, stateType, stateStorage);
 
+  if (disable) {
+    FailureOr<Value> currentDisable = lowerExpression(disable);
+    if (failed(currentDisable))
+      return failure();
+    FailureOr<Value> disabled =
+        truthValue(*currentDisable, getSemanticLocation(disable));
+    if (failed(disabled))
+      return failure();
+    Block *cancelSample = addBlock();
+    Block *evaluateSample = addBlock();
+    cf::CondBranchOp::create(builder, getSemanticLocation(disable), *disabled,
+                             cancelSample, ValueRange{}, evaluateSample,
+                             ValueRange{});
+    setCurrent(cancelSample);
+    sim::SimRefStoreOp::create(builder, getSemanticLocation(disable), zero,
+                               stateStorage);
+    Value epoch = sim::SimRefLoadOp::create(
+        builder, getSemanticLocation(disable), stateType, disableEpoch);
+    Value one =
+        arith::ConstantOp::create(builder, getSemanticLocation(disable),
+                                  stateType, builder.getI64IntegerAttr(1));
+    Value nextEpoch = arith::AddIOp::create(
+        builder, getSemanticLocation(disable), epoch, one);
+    sim::SimRefStoreOp::create(builder, getSemanticLocation(disable), nextEpoch,
+                               disableEpoch);
+    cf::BranchOp::create(builder, getSemanticLocation(disable), wait);
+    setCurrent(evaluateSample);
+  }
+
+  bool savedSampleAssertionValues = sampleAssertionValues;
   sampleAssertionValues = true;
   Operation *savedSampledClock = activeSampledClock;
   activeSampledClock = clock;
   llvm::scope_exit restoreSampling([&] {
-    sampleAssertionValues = false;
+    sampleAssertionValues = savedSampleAssertionValues;
     activeSampledClock = savedSampledClock;
   });
 

@@ -295,9 +295,14 @@ bool evaluateNativeComputedWaiters(obelisk_rt_context *context,
         previousValue[limb] = value[limb];
         previousUnknown[limb] = unknown[limb];
       }
+      bool levelTrue =
+          (clause.flags & OBELISK_RT_COMPUTED_CLAUSE_LEVEL_TRUE) != 0 &&
+          !value.empty() && (value[0] & 1) != 0 &&
+          (unknown.empty() || (unknown[0] & 1) == 0);
       bool occurrence =
           (dependencyKind == OBELISK_RT_OBSERVER_DEPENDENCY_EVENT &&
            (clause.flags & OBELISK_RT_COMPUTED_CLAUSE_EVENT_PRIMARY) != 0) ||
+          levelTrue ||
           (clause.edge == OBELISK_RT_WAIT_EDGE_CHANGE
                ? changed
                : signalEdgeMatches(clause.edge, observedEdges));
@@ -318,6 +323,7 @@ bool evaluateNativeComputedWaiters(obelisk_rt_context *context,
         if (ScheduledProcess *updated = findScheduledProcess(context, token);
             updated && updated->instance) {
           updated->signalTriggered = true;
+          context->prioritySignalPending |= updated->prioritySignal;
           try {
             context->nativePollCandidates.insert(token);
           } catch (const std::bad_alloc &) {

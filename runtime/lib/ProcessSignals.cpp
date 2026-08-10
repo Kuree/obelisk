@@ -48,6 +48,8 @@ bool appendSignalSubscriptionUnlocked(
   subscription->bucketSlots.reserve(wide ? 1 : static_cast<size_t>(pageCount));
   subscriptions.push_back(std::move(subscription));
   SignalSubscription &stored = *subscriptions.back();
+  if (target == SignalSubscription::NativeComputedWait)
+    ++context->nativeComputedSignalSubscriptions;
   if (context->signalDiagnosticsEnabled) {
     ++context->signalDiagnostics.subscriptionsCurrent;
     context->signalDiagnostics.subscriptionsHighWater =
@@ -129,6 +131,9 @@ void obelisk_rt_unregister_signal_wait_unlocked(
     if (!owned)
       continue;
     SignalSubscription &subscription = *owned;
+    if (subscription.target == SignalSubscription::NativeComputedWait &&
+        context->nativeComputedSignalSubscriptions != 0)
+      --context->nativeComputedSignalSubscriptions;
     for (const SignalSubscriptionBucketSlot &slot : subscription.bucketSlots) {
       auto bucket = context->signalSubscriptionBuckets.find(slot.key);
       if (bucket == context->signalSubscriptionBuckets.end())
@@ -231,6 +236,13 @@ bool obelisk_rt_register_computed_signal_wait_unlocked(
     std::unique_ptr<SignalWaitLatch> &latch) {
   if (!context || !wait || waiterToken == 0)
     return false;
+  // A computed waiter is outside the exact generated fanout inventory. It can
+  // be installed dynamically after AOT startup selected its guarded fast
+  // path, so invalidate that cached proof before registering dependencies.
+  if (context->nativeSchedulePlan &&
+      context->nativeSchedulePlan->specialization_fast)
+    *context->nativeSchedulePlan->specialization_fast = 0;
+  context->nativeScheduleGuardedFanoutActive = false;
   obelisk_rt_unregister_signal_wait_unlocked(context, subscriptions,
                                              waiterToken, designWaiter);
   try {
