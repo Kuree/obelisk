@@ -73,6 +73,20 @@ Encoder::encodeStringOperation(FunctionPlan &plan, Operation *operation) {
         {reg(plan, op.getField()), reg(plan, op.getNextCursor()),
          reg(plan, op.getOk())});
   }
+  if (auto op = dyn_cast<sim::SimFileScanFieldOp>(operation)) {
+    uint32_t prefix = emitBytesConstant(
+        plan, {reinterpret_cast<const uint8_t *>(op.getPrefix().data()),
+               op.getPrefix().size()});
+    uint32_t specifier = emitU64Constant(plan, op.getSpecifier());
+    if (prefix == kInvalidRegister || specifier == kInvalidRegister)
+      return op.emitOpError("cannot allocate file scan-field operands");
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicFileScanField,
+        {reg(plan, op.getDescriptor()), reg(plan, op.getEnabled()), prefix,
+         specifier},
+        {reg(plan, op.getField()), reg(plan, op.getOk()),
+         reg(plan, op.getEof())});
+  }
   if (auto op = dyn_cast<sim::SimStringParseIntegerOp>(operation)) {
     uint32_t radix = emitU64Constant(plan, op.getRadix());
     return emitIntrinsicRegisters(plan, kIntrinsicStringParseInteger,

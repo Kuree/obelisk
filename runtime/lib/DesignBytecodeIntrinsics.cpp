@@ -1063,6 +1063,30 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     status = sentinel(1, nextCursor);
     return status == OBELISK_RT_OK ? sentinel(2, ok) : status;
   }
+  case OBELISK_RT_INTRINSIC_V1_FILE_SCAN_FIELD: {
+    auto descriptor = scalar(0), enabled = scalar(1), specifier = scalar(3);
+    auto prefix = bytes(2);
+    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    if (!descriptor || !enabled || !specifier || !prefix ||
+        *descriptor > UINT32_MAX || *enabled > 1 || *specifier > UINT32_MAX)
+      return OBELISK_RT_INVALID_BYTECODE;
+    if (!lane)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    obelisk_rt_string_v1 field = 0;
+    uint32_t ok = 0;
+    uint32_t eof = 0;
+    obelisk_rt_status status = obelisk_rt_v1_file_scan_field(
+        context, lane, static_cast<uint32_t>(*descriptor),
+        static_cast<uint32_t>(*enabled),
+        reinterpret_cast<const char *>(prefix->data), prefix->size,
+        static_cast<uint32_t>(*specifier), &field, &ok, &eof);
+    if (status != OBELISK_RT_OK)
+      return status;
+    if (!writeString(outputRegister(0), field))
+      return OBELISK_RT_INVALID_BYTECODE;
+    status = sentinel(1, ok);
+    return status == OBELISK_RT_OK ? sentinel(2, eof) : status;
+  }
   case OBELISK_RT_INTRINSIC_V1_STRING_PARSE_INTEGER: {
     obelisk_rt_string_v1 input = 0;
     auto radix = scalar(1);

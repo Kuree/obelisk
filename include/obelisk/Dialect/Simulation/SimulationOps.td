@@ -1440,6 +1440,19 @@ def SimFileGetlineStringOp : SimFileOp<"file.getline_string",
   let summary = "read one complete line into a managed string";
 }
 
+def SimFileScanFieldOp : SimFileOp<"file.scan_field",
+    (ins SimContextType:$context, I32:$descriptor, I32:$enabled,
+         StrAttr:$prefix, I32Attr:$specifier),
+    (outs SimStringType:$field, I32:$ok, I32:$eof),
+    [MemRead<SimIOResource>, MemWrite<SimIOResource>,
+     MemRead<SimHeapResource>, MemWrite<SimHeapResource>]> {
+  let summary = "consume one $fscanf field from the current file position";
+  let description = [{
+    `enabled` suppresses all file access after an earlier conversion failed.
+    `eof` distinguishes an input failure from an ordinary matching failure.
+  }];
+}
+
 def SimPlusargTestOp : SimFileOp<"plusarg.test",
     (ins SimContextType:$context, SimStringType:$name),
     (outs I32:$found),

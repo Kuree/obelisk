@@ -122,11 +122,12 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
     return failure();
   }
 
-  // The source: $sscanf takes the text directly, $fscanf reads one line. A
-  // read that returned nothing is end of file, which $fscanf reports as -1
-  // rather than as zero conversions.
+  // $sscanf walks one managed string with an explicit cursor. $fscanf instead
+  // consumes fields directly from the descriptor's current stream position;
+  // reading a whole line here would incorrectly discard unconverted text
+  // between separate calls (IEEE 1800-2017 21.3.4.3).
   Value text;
-  Value endOfFile;
+  Value fileDescriptor;
   if (name == "$sscanf") {
     FailureOr<Value> source = lowerExpression(children[0]);
     if (failed(source))
@@ -144,12 +145,7 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
         convert(*descriptor, i32, isSignedNode(children[0]), location);
     if (failed(descriptor32))
       return failure();
-    auto line = sim::SimFileGetlineStringOp::create(
-        builder, location, TypeRange{stringType, i32}, context, *descriptor32);
-    text = line.getData();
-    endOfFile = arith::CmpIOp::create(builder, location,
-                                      arith::CmpIPredicate::eq,
-                                      line.getCount(), constant(0));
+    fileDescriptor = *descriptor32;
   }
 
   Operation *spelling = children[1];
@@ -185,6 +181,9 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
   // Set once a conversion fails; every later store keeps its destination.
   Value live = arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                          builder.getBoolAttr(true));
+  Value eofSeen = arith::ConstantOp::create(builder, location,
+                                            builder.getI1Type(),
+                                            builder.getBoolAttr(false));
   for (auto [index, conversion] : llvm::enumerate(*conversions)) {
     Operation *actual = children[index + 2];
     if (auto assignment =
@@ -202,28 +201,50 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
     }
     Type destinationType = getReferenceElementType(*destination);
 
-    auto scan = sim::SimStringScanFieldOp::create(
-        builder, location, TypeRange{stringType, i32, i32}, text, cursor,
-        conversion.prefix,
-        static_cast<uint32_t>(static_cast<unsigned char>(conversion.specifier)));
+    Value field;
+    Value scanOk;
+    Value nextCursor;
+    if (name == "$sscanf") {
+      auto scan = sim::SimStringScanFieldOp::create(
+          builder, location, TypeRange{stringType, i32, i32}, text, cursor,
+          conversion.prefix,
+          static_cast<uint32_t>(
+              static_cast<unsigned char>(conversion.specifier)));
+      field = scan.getField();
+      scanOk = scan.getOk();
+      nextCursor = scan.getNextCursor();
+    } else {
+      Value enabled = arith::ExtUIOp::create(builder, location, i32, live);
+      auto scan = sim::SimFileScanFieldOp::create(
+          builder, location, TypeRange{stringType, i32, i32}, context,
+          fileDescriptor, enabled, conversion.prefix,
+          static_cast<uint32_t>(
+              static_cast<unsigned char>(conversion.specifier)));
+      field = scan.getField();
+      scanOk = scan.getOk();
+      Value eof =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                                scan.getEof(), constant(0));
+      eofSeen = arith::OrIOp::create(builder, location, eofSeen, eof);
+    }
 
     unsigned radix = scanRadix(conversion.specifier);
     Value parsed;
     if (radix == kTextRadix)
-      parsed = scan.getField();
+      parsed = field;
     else if (radix == kRealRadix)
-      parsed = sim::SimStringParseRealOp::create(
-          builder, location, builder.getF64Type(), scan.getField());
+      parsed = sim::SimStringParseRealOp::create(builder, location,
+                                                 builder.getF64Type(), field);
     else
       parsed = sim::SimStringParseIntegerOp::create(
-          builder, location, builder.getI64Type(), scan.getField(), radix);
+          builder, location, builder.getI64Type(), field, radix);
     FailureOr<Value> value =
         convert(parsed, destinationType, radix != kTextRadix, location);
     if (failed(value))
       return failure();
 
     Value matched = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::ne, scan.getOk(), constant(0));
+        builder, location, arith::CmpIPredicate::ne, scanOk, constant(0));
     live = arith::AndIOp::create(builder, location, live, matched);
     FailureOr<Value> current = loadReference(*destination, location);
     if (failed(current))
@@ -233,15 +254,20 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
     if (failed(storeReference(*destination, updated, location)))
       return failure();
 
-    cursor =
-        arith::SelectOp::create(builder, location, live, scan.getNextCursor(),
-                                cursor);
+    if (name == "$sscanf")
+      cursor =
+          arith::SelectOp::create(builder, location, live, nextCursor, cursor);
     Value increment = arith::ExtUIOp::create(builder, location, i32, live);
     assigned = arith::AddIOp::create(builder, location, assigned, increment);
   }
-  if (endOfFile)
-    assigned = arith::SelectOp::create(builder, location, endOfFile,
+  if (name == "$fscanf") {
+    Value noneAssigned = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, assigned, constant(0));
+    Value inputFailure =
+        arith::AndIOp::create(builder, location, noneAssigned, eofSeen);
+    assigned = arith::SelectOp::create(builder, location, inputFailure,
                                        constant(-1), assigned);
+  }
   return convertResult(assigned);
 }
 

@@ -409,7 +409,8 @@ bool Encoder::mayCollect(Operation *operation) {
       sim::SimStringSubstrOp, sim::SimStringCaseConvertOp,
       sim::SimStringFormatIntegerOp, sim::SimStringFormatRealOp,
       sim::SimStringScanFieldOp,
-      sim::SimFileGetlineStringOp, sim::SimFileErrorStringOp,
+      sim::SimFileGetlineStringOp, sim::SimFileScanFieldOp,
+      sim::SimFileErrorStringOp,
       sim::SimPlusargValueOp, sim::SimCallOp,
       sim::SimClassDirectCallOp,
       sim::SimClassVirtualCallOp, sim::SimDPICallOp>(operation);

@@ -408,6 +408,67 @@ public:
   }
 };
 
+class FileScanFieldConversion final
+    : public OpConversionPattern<sim::SimFileScanFieldOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimFileScanFieldOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    ModuleOp module = op->getParentOfType<ModuleOp>();
+    if (!module || adaptor.getContext().size() != 1 ||
+        adaptor.getDescriptor().size() != 1 || adaptor.getEnabled().size() != 1)
+      return failure();
+    Type i64 = rewriter.getI64Type();
+    Type i32 = rewriter.getI32Type();
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    StringRef prefix = op.getPrefix();
+    Value prefixData = LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer);
+    if (!prefix.empty()) {
+      std::string name;
+      for (uint64_t suffix = 0;; ++suffix) {
+        name = ("__obelisk_file_scan_prefix." + Twine(suffix)).str();
+        if (!module.lookupSymbol(name))
+          break;
+      }
+      prefixData = LLVM::AddressOfOp::create(
+          rewriter, op.getLoc(),
+          makeByteArrayGlobal(module, op.getLoc(), name, prefix));
+    }
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    Value fieldOutput = entryAlloca(rewriter, op.getLoc(), i64, 1, 8);
+    Value okOutput = entryAlloca(rewriter, op.getLoc(), i32, 1, 4);
+    Value eofOutput = entryAlloca(rewriter, op.getLoc(), i32, 1, 4);
+    LLVM::StoreOp::create(rewriter, op.getLoc(),
+                          LLVM::ZeroOp::create(rewriter, op.getLoc(), i64),
+                          fieldOutput, 8);
+    for (Value output : {okOutput, eofOutput})
+      LLVM::StoreOp::create(rewriter, op.getLoc(),
+                            LLVM::ZeroOp::create(rewriter, op.getLoc(), i32),
+                            output, 4);
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_file_scan_field"),
+            ValueRange{
+                context, lane, adaptor.getDescriptor().front(),
+                adaptor.getEnabled().front(), prefixData,
+                llvmConstant(rewriter, op.getLoc(), i64, prefix.size()),
+                llvmConstant(rewriter, op.getLoc(), i32, op.getSpecifier()),
+                fieldOutput, okOutput, eofOutput})
+            .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    rewriter.replaceOp(
+        op,
+        ValueRange{
+            LLVM::LoadOp::create(rewriter, op.getLoc(), i64, fieldOutput, 8),
+            LLVM::LoadOp::create(rewriter, op.getLoc(), i32, okOutput, 4),
+            LLVM::LoadOp::create(rewriter, op.getLoc(), i32, eofOutput, 4)});
+    return success();
+  }
+};
+
 class PlusargTestConversion final
     : public OpConversionPattern<sim::SimPlusargTestOp> {
 public:
@@ -586,6 +647,7 @@ void populateManagedStringToLLVMConversionPatterns(
                StringToPackedConversion, StringConcatConversion,
                StringLengthConversion, StringGetcConversion,
                StringCompareConversion, StringScanFieldConversion,
+               FileScanFieldConversion,
                PlusargTestConversion,
                PlusargValueConversion>(converter, context);
   patterns.add<StringFileOpenConversion<sim::SimFileOpenStringMCDOp>,

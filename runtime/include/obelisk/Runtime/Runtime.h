@@ -702,6 +702,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_FILE_ERROR_STRING = UINT32_C(0x0001010f),
   OBELISK_RT_INTRINSIC_V1_PLUSARG_TEST = UINT32_C(0x00010110),
   OBELISK_RT_INTRINSIC_V1_PLUSARG_VALUE = UINT32_C(0x00010111),
+  OBELISK_RT_INTRINSIC_V1_FILE_SCAN_FIELD = UINT32_C(0x00010112),
   OBELISK_RT_INTRINSIC_V1_SPAWN = UINT32_C(0x00010200),
   OBELISK_RT_INTRINSIC_V1_NBA = UINT32_C(0x00010201),
   // Statically planned NBA. The final i64 input is the NBASiteAttr identity;
@@ -2999,6 +3000,13 @@ obelisk_rt_status obelisk_rt_v1_file_getline(obelisk_rt_context *context,
 obelisk_rt_status obelisk_rt_v1_file_getline_string(
     obelisk_rt_context *context, obelisk_rt_gc_lane_v1 *lane,
     uint32_t descriptor, obelisk_rt_string_v1 *out_string, uint32_t *out_count);
+// Consume one formatted field at the descriptor's current position. Disabled
+// calls leave the stream untouched so lowering can stop after a mismatch.
+obelisk_rt_status obelisk_rt_v1_file_scan_field(
+    obelisk_rt_context *context, obelisk_rt_gc_lane_v1 *lane,
+    uint32_t descriptor, uint32_t enabled, const char *prefix,
+    uint64_t prefix_size, uint32_t specifier,
+    obelisk_rt_string_v1 *out_field, uint32_t *out_ok, uint32_t *out_eof);
 obelisk_rt_status obelisk_rt_v1_file_eof(obelisk_rt_context *context,
                                          uint32_t descriptor,
                                          uint32_t *out_is_eof);

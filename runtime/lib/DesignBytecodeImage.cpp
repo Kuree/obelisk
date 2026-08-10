@@ -962,6 +962,11 @@ bool validIntrinsic(const Image &image, const Function &function,
            site.outputCount == 3 && string(input(0)) && bits(input(1), 32) &&
            bytes(input(2)) && bits(input(3), 64) && string(output(0)) &&
            bits(output(1), 32) && bits(output(2), 32);
+  case OBELISK_RT_INTRINSIC_V1_FILE_SCAN_FIELD:
+    return signature.flags == 0 && site.inputCount == 4 &&
+           site.outputCount == 3 && bits(input(0), 32) &&
+           bits(input(1), 32) && bytes(input(2)) && bits(input(3), 64) &&
+           string(output(0)) && bits(output(1), 32) && bits(output(2), 32);
   case OBELISK_RT_INTRINSIC_V1_PLUSARG_TEST:
     return site.inputCount == 1 && site.outputCount == 1 && string(input(0)) &&
            bits(output(0), 32);
