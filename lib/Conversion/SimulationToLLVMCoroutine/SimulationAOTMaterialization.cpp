@@ -72,6 +72,11 @@ LogicalResult makeNativeEvalPlan(
   SmallVector<SmallVector<uint64_t>> recordNBATaintMasks =
       std::move(resolved->recordNBATaintMasks);
   llvm::BitVector nbaTaintedRecords = std::move(resolved->nbaTaintedRecords);
+  bool prioritySignalHandoff = false;
+  module.walk([&](sim::SimFuncOp function) {
+    prioritySignalHandoff |=
+        function->hasAttr("obelisk_sim.priority_signal_resume");
+  });
   struct DynamicEvalNBA {
     uint32_t rootIndex;
     uint64_t site;
@@ -2117,6 +2122,8 @@ LogicalResult makeNativeEvalPlan(
     if (!canCompressSilentFall || directOwnerRecords.empty())
       resetStepFourStateTracking();
     auto handoffPrioritySignal = [&] {
+      if (!prioritySignalHandoff)
+        return;
       Block *executeOwner = new Block;
       run.getBody().push_back(executeOwner);
       Value prioritySignalPending =
@@ -2850,7 +2857,8 @@ LogicalResult makeNativeEvalPlan(
                                             promotionKernelReadyNames,
                                             recordNBATaintMasks,
                                             nbaTaintedRecords,
-                                            nbaTaintWordCount};
+                                            nbaTaintWordCount,
+                                            prioritySignalHandoff};
   auto makeFastCoordinator =
       [&](StringRef functionName, ArrayRef<std::string> executors,
           bool promotedCoordinator, bool hybridCoordinator = false,

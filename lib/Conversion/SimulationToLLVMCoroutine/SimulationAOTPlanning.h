@@ -120,6 +120,7 @@ struct NativeEvalCoordinatorPlan {
   mlir::ArrayRef<llvm::SmallVector<uint64_t>> nbaTaintMasks;
   const llvm::BitVector &nbaTaintedOwners;
   uint32_t nbaTaintWordCount = 0;
+  bool prioritySignalHandoff = false;
 };
 
 struct NativeEvalCoordinatorOptions {

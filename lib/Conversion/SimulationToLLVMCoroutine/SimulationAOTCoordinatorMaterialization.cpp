@@ -48,6 +48,7 @@ LogicalResult materializeNativeEvalCoordinator(
   ArrayRef<std::string> promotionKernelReadyNames =
       plan.promotionReadyFunctions;
   uint32_t nbaTaintWordCount = plan.nbaTaintWordCount;
+  bool prioritySignalHandoff = plan.prioritySignalHandoff;
   bool promotedCoordinator = options.promoted;
   bool hybridCoordinator = options.hybrid;
   uint64_t allowedOwnerMask = options.allowedOwnerMask;
@@ -205,21 +206,25 @@ LogicalResult materializeNativeEvalCoordinator(
   builder.setInsertionPointToStart(dispatch);
   Block *scanReady = new Block;
   fastCoordinator.getBody().push_back(scanReady);
-  Value prioritySignalPending =
-      LLVM::CallOp::create(
-          builder, location, TypeRange{i32},
-          SymbolRefAttr::get(
-              context, "obelisk_rt_v1_scheduler_priority_signal_pending"),
-          ValueRange{fastEntry->getArgument(1)})
-          .getResult();
-  Value mustHandoff = arith::CmpIOp::create(
-      builder, location, arith::CmpIPredicate::ne, prioritySignalPending,
-      llvmConstant(builder, location, i32, 0));
-  cf::CondBranchOp::create(
-      builder, location, mustHandoff, complete,
-      ValueRange{llvmConstant(builder, location, i32,
-                              OBELISK_RT_AOT_CHECKPOINT)},
-      scanReady, ValueRange{});
+  if (prioritySignalHandoff) {
+    Value prioritySignalPending =
+        LLVM::CallOp::create(
+            builder, location, TypeRange{i32},
+            SymbolRefAttr::get(
+                context, "obelisk_rt_v1_scheduler_priority_signal_pending"),
+            ValueRange{fastEntry->getArgument(1)})
+            .getResult();
+    Value mustHandoff = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ne, prioritySignalPending,
+        llvmConstant(builder, location, i32, 0));
+    cf::CondBranchOp::create(
+        builder, location, mustHandoff, complete,
+        ValueRange{llvmConstant(builder, location, i32,
+                                OBELISK_RT_AOT_CHECKPOINT)},
+        scanReady, ValueRange{});
+  } else {
+    cf::BranchOp::create(builder, location, scanReady);
+  }
 
   builder.setInsertionPointToStart(scanReady);
   Value ready = combinedIngress();
