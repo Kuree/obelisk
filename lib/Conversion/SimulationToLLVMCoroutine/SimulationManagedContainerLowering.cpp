@@ -564,26 +564,29 @@ public:
   LogicalResult
   matchAndRewrite(sim::SimRandomDistributionOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    if (adaptor.getContext().size() != 1 || adaptor.getFirst().size() != 1 ||
-        adaptor.getSecond().size() != 1)
+    if (adaptor.getContext().size() != 1 || adaptor.getSeed().size() != 1 ||
+        adaptor.getFirst().size() != 1 || adaptor.getSecond().size() != 1)
       return failure();
     Type i32 = rewriter.getI32Type();
     Value context = adaptor.getContext().front();
     Value output = entryAlloca(rewriter, op.getLoc(), i32, 1, 4);
+    Value nextSeed = entryAlloca(rewriter, op.getLoc(), i32, 1, 4);
     Value status =
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
                                "obelisk_rt_v1_random_distribution"),
-            ValueRange{context,
-                       llvmConstant(rewriter, op.getLoc(), i32,
-                                    op.getDistribution()),
-                       adaptor.getFirst().front(),
-                       adaptor.getSecond().front(), output})
+            ValueRange{
+                context,
+                llvmConstant(rewriter, op.getLoc(), i32, op.getDistribution()),
+                adaptor.getSeed().front(), adaptor.getFirst().front(),
+                adaptor.getSecond().front(), output, nextSeed})
             .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
     rewriter.replaceOp(
-        op, LLVM::LoadOp::create(rewriter, op.getLoc(), i32, output, 4));
+        op, ValueRange{
+                LLVM::LoadOp::create(rewriter, op.getLoc(), i32, output, 4),
+                LLVM::LoadOp::create(rewriter, op.getLoc(), i32, nextSeed, 4)});
     return success();
   }
 };

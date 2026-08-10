@@ -615,16 +615,24 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     return status == OBELISK_RT_OK ? sentinel(0, result) : status;
   }
   case OBELISK_RT_INTRINSIC_V1_RANDOM_DISTRIBUTION: {
-    auto distribution = scalar(0), first = scalar(1), second = scalar(2);
-    if (!distribution || !first || !second || *distribution > UINT32_MAX)
+    auto distribution = scalar(0), seed = scalar(1), first = scalar(2),
+         second = scalar(3);
+    if (!distribution || !seed || !first || !second ||
+        *distribution > UINT32_MAX)
       return OBELISK_RT_INVALID_BYTECODE;
     int32_t result = 0;
+    int32_t nextSeed = 0;
     obelisk_rt_status status = obelisk_rt_v1_random_distribution(
         context, static_cast<obelisk_rt_distribution>(*distribution),
-        static_cast<int32_t>(*first), static_cast<int32_t>(*second), &result);
-    return status == OBELISK_RT_OK
-               ? sentinel(0, static_cast<uint32_t>(result))
-               : status;
+        static_cast<int32_t>(*seed), static_cast<int32_t>(*first),
+        static_cast<int32_t>(*second), &result, &nextSeed);
+    if (status != OBELISK_RT_OK ||
+        !writeScalar(image, frame, outputRegister(0),
+                     static_cast<uint32_t>(result)) ||
+        !writeScalar(image, frame, outputRegister(1),
+                     static_cast<uint32_t>(nextSeed)))
+      return status == OBELISK_RT_OK ? OBELISK_RT_INVALID_BYTECODE : status;
+    return OBELISK_RT_OK;
   }
   case OBELISK_RT_INTRINSIC_V1_RANDOM_CYCLE_NEXT: {
     auto key = scalar(0), position = scalar(1), width = scalar(2);

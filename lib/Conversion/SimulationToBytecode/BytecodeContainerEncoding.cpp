@@ -84,8 +84,9 @@ Encoder::encodeContainerOperation(FunctionPlan &plan, Operation *operation) {
     uint32_t distribution = emitU64Constant(plan, op.getDistribution());
     return emitIntrinsicRegisters(
         plan, kIntrinsicRandomDistribution,
-        {distribution, reg(plan, op.getFirst()), reg(plan, op.getSecond())},
-        {reg(plan, op.getResult())});
+        {distribution, reg(plan, op.getSeed()), reg(plan, op.getFirst()),
+         reg(plan, op.getSecond())},
+        {reg(plan, op.getResult()), reg(plan, op.getNextSeed())});
   }
   if (auto op = dyn_cast<sim::SimRandomCycleNextOp>(operation)) {
     uint32_t width = emitU64Constant(plan, op.getWidth());

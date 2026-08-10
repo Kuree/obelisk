@@ -1,20 +1,24 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 
-// Every $dist_* function reseeds the active stream from its inout seed, draws
-// through one shared op selected by the distribution attribute, and writes the
-// draw back to the seed. Single-parameter distributions pad the second
-// parameter with zero.
+// IEEE 1800-2017 Annex N gives every $dist_* function a separate explicit
+// inout seed. Lowering passes that seed to one distribution op and stores the
+// op's next_seed result, without reseeding the active process stream.
+// Single-parameter distributions pad the second parameter with zero.
 
 // CHECK-LABEL: obelisk_sim.func private @unit_0(
 // CHECK-DAG: %[[FREEDOM:.*]] = arith.constant 3 : i32
 // CHECK-DAG: %[[UNUSED:.*]] = arith.constant 0 : i32
-// CHECK: obelisk_sim.random.seed
-// CHECK: obelisk_sim.random.distribution {{.*}} {distribution = 1 : i32}
+// CHECK-NOT: obelisk_sim.random.seed
+// CHECK: %[[NORMAL_RESULT:.*]], %[[NORMAL_SEED:.*]] = obelisk_sim.random.distribution {{.*}} {distribution = 1 : i32}
+// CHECK: %[[NORMAL_SEED_LOGIC:.*]] = obelisk_sim.logic.from_bits %[[NORMAL_SEED]]
 // CHECK: obelisk_sim.ref.store
-// CHECK: obelisk_sim.random.seed
-// CHECK: obelisk_sim.random.distribution {{.*}}, %[[FREEDOM]], %[[UNUSED]] {distribution = 4 : i32}
-// CHECK: obelisk_sim.random.seed
-// CHECK: obelisk_sim.random.distribution {{.*}} {distribution = 6 : i32}
+// CHECK-NOT: obelisk_sim.random.seed
+// CHECK: %[[CHI_RESULT:.*]], %[[CHI_SEED:.*]] = obelisk_sim.random.distribution {{.*}}, %[[FREEDOM]], %[[UNUSED]] {distribution = 4 : i32}
+// CHECK: %[[CHI_SEED_LOGIC:.*]] = obelisk_sim.logic.from_bits %[[CHI_SEED]]
+// CHECK: obelisk_sim.ref.store %[[CHI_SEED_LOGIC]]
+// CHECK-NOT: obelisk_sim.random.seed
+// CHECK: %[[ERLANG_RESULT:.*]], %[[ERLANG_SEED:.*]] = obelisk_sim.random.distribution {{.*}} {distribution = 6 : i32}
+// CHECK-NOT: obelisk_sim.random.seed
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, original_source_range = !obelisk.source_range<"dist.sv", 1, 1, "dist.sv", 10, 10, "">, source_end_column = 10 : i64, source_end_line = 10 : i64, source_file = "dist.sv", source_range = !obelisk.source_range<"dist.sv", 1, 1, "dist.sv", 10, 10, "">, sym_name = "s0.top"} {
@@ -106,4 +110,3 @@ module {
     }
   }
 }
-

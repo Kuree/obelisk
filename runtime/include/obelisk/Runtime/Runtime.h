@@ -2831,15 +2831,15 @@ obelisk_rt_status obelisk_rt_v1_random_seed(obelisk_rt_context *context,
 obelisk_rt_status obelisk_rt_v1_random_bounded(obelisk_rt_context *context,
                                                uint64_t bound,
                                                uint64_t *out_value);
-// $dist_* draws (IEEE 1800 20.15). `first` and `second` carry the
-// distribution's parameters in source order; distributions taking one
-// parameter ignore `second`. Every draw consumes the context's active random
-// stream, which the caller seeds from the source-level seed variable.
+// $dist_* draws (IEEE 1800 20.15 and normative Annex N). The explicit seed is
+// the source inout state and `out_next_seed` returns its value after the draw.
+// `first` and `second` carry shape parameters in source order; distributions
+// taking one parameter ignore `second`.
 obelisk_rt_status
 obelisk_rt_v1_random_distribution(obelisk_rt_context *context,
                                   obelisk_rt_distribution distribution,
-                                  int32_t first, int32_t second,
-                                  int32_t *out_value);
+                                  int32_t seed, int32_t first, int32_t second,
+                                  int32_t *out_value, int32_t *out_next_seed);
 // Advance a keyed randc permutation over exactly 2^width values. Widths 1..32
 // are supported. The caller owns key/position storage and explicitly rekeys
 // whenever the returned position wraps to zero.

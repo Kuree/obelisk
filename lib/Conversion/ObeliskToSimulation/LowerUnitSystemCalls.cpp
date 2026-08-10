@@ -373,10 +373,10 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     return convertResult(value);
   }
 
-  // IEEE 1800 20.15. Every $dist_* function leads with an inout seed and is
-  // followed by one or two shape parameters. The seed is used to reseed the
-  // active stream and then receives the draw, so repeated calls threading the
-  // same variable walk a sequence rather than repeating one value.
+  // IEEE 1800 20.15 and normative Annex N. Every $dist_* function leads with
+  // an inout seed and is followed by one or two shape parameters. Annex N
+  // defines a separate seed-threaded generator for these functions; it does
+  // not draw from or reseed the active process stream.
   std::optional<uint32_t> distribution =
       llvm::StringSwitch<std::optional<uint32_t>>(name)
           .Case("$dist_uniform", OBELISK_RT_DISTRIBUTION_UNIFORM)
@@ -388,14 +388,13 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
           .Case("$dist_erlang", OBELISK_RT_DISTRIBUTION_ERLANG)
           .Default(std::nullopt);
   if (distribution) {
-    bool twoParameters =
-        *distribution == OBELISK_RT_DISTRIBUTION_UNIFORM ||
-        *distribution == OBELISK_RT_DISTRIBUTION_NORMAL ||
-        *distribution == OBELISK_RT_DISTRIBUTION_ERLANG;
+    bool twoParameters = *distribution == OBELISK_RT_DISTRIBUTION_UNIFORM ||
+                         *distribution == OBELISK_RT_DISTRIBUTION_NORMAL ||
+                         *distribution == OBELISK_RT_DISTRIBUTION_ERLANG;
     size_t expected = twoParameters ? 3 : 2;
     if (children.size() != expected) {
-      emitError(location)
-          << name << " requires exactly " << expected << " arguments";
+      emitError(location) << name << " requires exactly " << expected
+                          << " arguments";
       return failure();
     }
     Operation *seed = children[0];
@@ -418,10 +417,6 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
         convert(*seedValue, i32, isSignedNode(seed), location);
     if (failed(seed32))
       return failure();
-    Value extendedSeed =
-        arith::ExtUIOp::create(builder, location, i64, *seed32);
-    sim::SimRandomSeedOp::create(builder, location, context, extendedSeed);
-
     FailureOr<Value> first = lowerInteger(children[1], i32);
     if (failed(first))
       return failure();
@@ -432,15 +427,17 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
         return failure();
       second = *lowered;
     }
-    Value value = sim::SimRandomDistributionOp::create(
-        builder, location, i32, context, *distribution, *first, second);
+    auto draw = sim::SimRandomDistributionOp::create(
+        builder, location, TypeRange{i32, i32}, context, *distribution, *seed32,
+        *first, second);
 
     Type destinationType = getReferenceElementType(*seedDestination);
-    FailureOr<Value> updated = convert(value, destinationType, true, location);
+    FailureOr<Value> updated =
+        convert(draw.getNextSeed(), destinationType, true, location);
     if (failed(updated) ||
         failed(storeReference(*seedDestination, *updated, location)))
       return failure();
-    return convertResult(value);
+    return convertResult(draw.getResult());
   }
 
   auto sampledValue = [&](Operation *expression) -> FailureOr<Value> {

@@ -482,17 +482,19 @@ def SimRandomBoundedOp : SimOp<"random.bounded", [
 }
 
 def SimRandomDistributionOp : SimOp<"random.distribution", [
-    MemoryEffects<[MemRead<SimRNGResource>, MemWrite<SimRNGResource>]>
+    Pure
   ]> {
-  let summary = "draw a $dist_* variate from the active process stream";
+  let summary = "draw a normative $dist_* variate from an explicit seed";
   let description = [{
     `distribution` selects the shape as an `obelisk_rt_distribution` value.
+    `seed` is the IEEE 1800 Annex N inout state. `next_seed` returns the state
+    after the draw.
     `first` and `second` carry the distribution's parameters in source order;
     distributions taking a single parameter ignore `second`.
   }];
   let arguments = (ins SimContextType:$context, I32Attr:$distribution,
-                       I32:$first, I32:$second);
-  let results = (outs I32:$result);
+                       I32:$seed, I32:$first, I32:$second);
+  let results = (outs I32:$result, I32:$next_seed);
 }
 
 def SimRandomCycleNextOp : SimOp<"random.cycle_next", [Pure]> {

@@ -3,6 +3,7 @@
 #include "RuntimeInternal.h"
 
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <utility>
 
@@ -184,132 +185,159 @@ obelisk_rt_v1_random_bounded(obelisk_rt_context *context, uint64_t bound,
 
 namespace {
 
-// A uniform draw on the open interval (0, 1). The transforms below take
-// logarithms and reciprocals, so neither endpoint may ever be produced.
-double openUnit(obelisk_rt_random_state_v1 &state) {
-  for (;;) {
-    uint64_t draw = next64(state) >> 11;
-    if (draw != 0)
-      return static_cast<double>(draw) * 0x1.0p-53;
+// IEEE 1800-2017 Annex N defines a separate 32-bit generator for the
+// probabilistic distribution functions. Keep its float-bit construction and
+// arithmetic order intact so both the returned variate and inout seed match
+// the normative algorithm.
+double annexUniform(int32_t &seed, int32_t start, int32_t end) {
+  double lower = start >= end ? 0.0 : static_cast<double>(start);
+  double upper = start >= end ? 2147483647.0 : static_cast<double>(end);
+  uint32_t bits = seed == 0 ? UINT32_C(259341593) : static_cast<uint32_t>(seed);
+  bits = UINT32_C(69069) * bits + 1;
+  static_assert(sizeof(seed) == sizeof(bits));
+  std::memcpy(&seed, &bits, sizeof(seed));
+  uint32_t sampleBits = (bits >> 9) | UINT32_C(0x3f800000);
+  float sampleFloat = 0.0f;
+  static_assert(sizeof(sampleFloat) == sizeof(sampleBits));
+  std::memcpy(&sampleFloat, &sampleBits, sizeof(sampleFloat));
+  double sample = static_cast<double>(sampleFloat);
+  sample += sample * 0.00000011920928955078125;
+  return ((upper - lower) * (sample - 1.0)) + lower;
+}
+
+double annexNormal(int32_t &seed, int32_t mean, int32_t deviation) {
+  double first;
+  double second;
+  double sum = 1.0;
+  while (sum >= 1.0 || sum == 0.0) {
+    first = annexUniform(seed, -1, 1);
+    second = annexUniform(seed, -1, 1);
+    sum = first * first + second * second;
   }
+  double normal = first * std::sqrt(-2.0 * std::log(sum) / sum);
+  return normal * static_cast<double>(deviation) + static_cast<double>(mean);
 }
 
-// Box-Muller. Only one of the generated pair is kept, which costs a second
-// draw per call but keeps the transform free of carried state.
-double standardNormal(obelisk_rt_random_state_v1 &state) {
-  double radius = std::sqrt(-2.0 * std::log(openUnit(state)));
-  return radius * std::cos(2.0 * 3.14159265358979323846 * openUnit(state));
+double annexExponential(int32_t &seed, int32_t mean) {
+  double draw = annexUniform(seed, 0, 1);
+  return draw != 0.0 ? -std::log(draw) * static_cast<double>(mean) : draw;
 }
 
-double chiSquareDraw(obelisk_rt_random_state_v1 &state, int32_t freedom) {
-  double total = 0.0;
-  for (int32_t index = 0; index < freedom; ++index) {
-    double normal = standardNormal(state);
-    total += normal * normal;
+int32_t annexPoisson(int32_t &seed, int32_t mean) {
+  int32_t count = 0;
+  double limit = std::exp(-static_cast<double>(mean));
+  double product = annexUniform(seed, 0, 1);
+  while (limit < product) {
+    ++count;
+    product = annexUniform(seed, 0, 1) * product;
   }
-  return total;
+  return count;
 }
 
-// Knuth's product method below the range where exp(-mean) underflows; a
-// normal approximation past it, where that method would loop indefinitely.
-double poissonDraw(obelisk_rt_random_state_v1 &state, double mean) {
-  if (mean <= 0.0)
-    return 0.0;
-  if (mean < 30.0) {
-    double limit = std::exp(-mean);
-    double product = 1.0;
-    double count = 0.0;
-    for (product *= openUnit(state); product > limit;
-         product *= openUnit(state))
-      count += 1.0;
-    return count;
+double annexChiSquare(int32_t &seed, int32_t freedom) {
+  double value = 0.0;
+  if (freedom % 2) {
+    value = annexNormal(seed, 0, 1);
+    value *= value;
   }
-  double approximation = mean + std::sqrt(mean) * standardNormal(state);
-  return approximation < 0.0 ? 0.0 : approximation;
+  for (int32_t index = 2; index <= freedom; index += 2)
+    value += 2.0 * annexExponential(seed, 1);
+  return value;
 }
 
-int32_t roundToInt32(double value) {
-  if (!std::isfinite(value))
-    return 0;
-  double rounded = std::round(value);
-  if (rounded <= static_cast<double>(std::numeric_limits<int32_t>::min()))
-    return std::numeric_limits<int32_t>::min();
-  if (rounded >= static_cast<double>(std::numeric_limits<int32_t>::max()))
-    return std::numeric_limits<int32_t>::max();
-  return static_cast<int32_t>(rounded);
+double annexT(int32_t &seed, int32_t freedom) {
+  double chi = annexChiSquare(seed, freedom);
+  return annexNormal(seed, 0, 1) /
+         std::sqrt(chi / static_cast<double>(freedom));
+}
+
+double annexErlang(int32_t &seed, int32_t stages, int32_t mean) {
+  double product = 1.0;
+  for (int32_t index = 1; index <= stages; ++index)
+    product *= annexUniform(seed, 0, 1);
+  return -static_cast<double>(mean) * std::log(product) /
+         static_cast<double>(stages);
+}
+
+int32_t annexRound(double value) {
+  if (value >= 0.0)
+    return static_cast<int32_t>(value + 0.5);
+  return -static_cast<int32_t>(-value + 0.5);
+}
+
+int32_t annexDistUniform(int32_t &seed, int32_t start, int32_t end) {
+  if (start >= end)
+    return start;
+  double draw;
+  int32_t result;
+  if (end != std::numeric_limits<int32_t>::max()) {
+    int32_t exclusiveEnd = end + 1;
+    draw = annexUniform(seed, start, exclusiveEnd);
+    result = draw >= 0.0 ? static_cast<int32_t>(draw)
+                         : static_cast<int32_t>(draw - 1.0);
+    if (result < start)
+      result = start;
+    if (result >= exclusiveEnd)
+      result = exclusiveEnd - 1;
+  } else if (start != std::numeric_limits<int32_t>::min()) {
+    int32_t exclusiveStart = start - 1;
+    draw = annexUniform(seed, exclusiveStart, end) + 1.0;
+    result = draw >= 0.0 ? static_cast<int32_t>(draw)
+                         : static_cast<int32_t>(draw - 1.0);
+    if (result <= exclusiveStart)
+      result = exclusiveStart + 1;
+    if (result > end)
+      result = end;
+  } else {
+    draw = (annexUniform(seed, start, end) + 2147483648.0) / 4294967295.0;
+    draw = draw * 4294967296.0 - 2147483648.0;
+    result = draw >= 0.0 ? static_cast<int32_t>(draw)
+                         : static_cast<int32_t>(draw - 1.0);
+  }
+  return result;
 }
 
 } // namespace
 
-extern "C" obelisk_rt_status obelisk_rt_v1_random_distribution(
-    obelisk_rt_context *context, obelisk_rt_distribution distribution,
-    int32_t first, int32_t second, int32_t *outValue) {
-  if (!context || !outValue)
+extern "C" obelisk_rt_status
+obelisk_rt_v1_random_distribution(obelisk_rt_context *context,
+                                  obelisk_rt_distribution distribution,
+                                  int32_t seed, int32_t first, int32_t second,
+                                  int32_t *outValue, int32_t *outNextSeed) {
+  if (!context || !outValue || !outNextSeed)
     return OBELISK_RT_INVALID_ARGUMENT;
   try {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
-    obelisk_rt_random_state_v1 *state =
-        obelisk_rt_random_active_state_unlocked(context);
     double value = 0.0;
     switch (distribution) {
-    case OBELISK_RT_DISTRIBUTION_UNIFORM: {
-      int32_t low = first < second ? first : second;
-      int32_t high = first < second ? second : first;
-      uint64_t extent = static_cast<uint64_t>(
-          static_cast<int64_t>(high) - static_cast<int64_t>(low) + 1);
-      uint64_t draw = 0;
-      obelisk_rt_status status =
-          obelisk_rt_v1_random_state_bounded(state, extent, &draw);
-      if (status != OBELISK_RT_OK)
-        return status;
-      *outValue = static_cast<int32_t>(static_cast<int64_t>(low) +
-                                       static_cast<int64_t>(draw));
+    case OBELISK_RT_DISTRIBUTION_UNIFORM:
+      *outValue = annexDistUniform(seed, first, second);
+      *outNextSeed = seed;
       return OBELISK_RT_OK;
-    }
     case OBELISK_RT_DISTRIBUTION_NORMAL:
-      value = static_cast<double>(first) +
-              static_cast<double>(second) * standardNormal(*state);
+      value = annexNormal(seed, first, second);
       break;
     case OBELISK_RT_DISTRIBUTION_EXPONENTIAL:
-      // The mean is specified as positive; a nonpositive one has no draw to
-      // make, so the distribution degenerates to its mean.
-      value = first > 0 ? -static_cast<double>(first) *
-                              std::log(openUnit(*state))
-                        : static_cast<double>(first);
+      value = first > 0 ? annexExponential(seed, first) : 0.0;
       break;
     case OBELISK_RT_DISTRIBUTION_POISSON:
-      value = poissonDraw(*state, static_cast<double>(first));
-      break;
+      *outValue = first > 0 ? annexPoisson(seed, first) : 0;
+      *outNextSeed = seed;
+      return OBELISK_RT_OK;
     case OBELISK_RT_DISTRIBUTION_CHI_SQUARE:
-      value = first > 0 ? chiSquareDraw(*state, first) : 0.0;
+      value = first > 0 ? annexChiSquare(seed, first) : 0.0;
       break;
-    case OBELISK_RT_DISTRIBUTION_T: {
-      if (first <= 0) {
-        value = 0.0;
-        break;
-      }
-      double normal = standardNormal(*state);
-      double chi = chiSquareDraw(*state, first);
-      value = chi > 0.0
-                  ? normal / std::sqrt(chi / static_cast<double>(first))
-                  : 0.0;
+    case OBELISK_RT_DISTRIBUTION_T:
+      value = first > 0 ? annexT(seed, first) : 0.0;
       break;
-    }
-    case OBELISK_RT_DISTRIBUTION_ERLANG: {
-      // k exponential stages whose means sum to the requested mean.
-      if (first <= 0) {
-        value = static_cast<double>(second);
-        break;
-      }
-      double stage = static_cast<double>(second) / static_cast<double>(first);
-      for (int32_t index = 0; index < first; ++index)
-        value += -stage * std::log(openUnit(*state));
+    case OBELISK_RT_DISTRIBUTION_ERLANG:
+      value = first > 0 ? annexErlang(seed, first, second) : 0.0;
       break;
-    }
     default:
       return OBELISK_RT_INVALID_ARGUMENT;
     }
-    *outValue = roundToInt32(value);
+    *outValue = annexRound(value);
+    *outNextSeed = seed;
     return OBELISK_RT_OK;
   } catch (...) {
     return OBELISK_RT_INVALID_ARGUMENT;
