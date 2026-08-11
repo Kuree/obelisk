@@ -1497,6 +1497,89 @@ TEST_F(RuntimeTest, ReadsBytesLinesAndReportsEOF) {
   EXPECT_EQ(obelisk_rt_v1_file_close(context, descriptor), OBELISK_RT_OK);
 }
 
+TEST_F(RuntimeTest, ReadsWithoutReadAccessReportEndOfFileInsteadOfIOError) {
+  TempDirectory temporary;
+  std::filesystem::path path = temporary.file("write-only.txt");
+  uint32_t descriptor = open(path, "w");
+
+  // The host refuses these reads with EBADF. Reporting that as an I/O error
+  // would fail the whole simulation instead of the individual system call.
+  uint8_t byte = 0;
+  EXPECT_EQ(obelisk_rt_v1_file_getc(context, descriptor, &byte),
+            OBELISK_RT_EOF);
+  char bytes[4] = {};
+  uint64_t read = 1;
+  ASSERT_EQ(obelisk_rt_v1_file_read(context, descriptor, bytes, sizeof(bytes),
+                                    &read),
+            OBELISK_RT_OK);
+  EXPECT_EQ(read, 0u);
+  RuntimeBuffer line;
+  EXPECT_EQ(obelisk_rt_v1_file_getline(context, descriptor, 64, line.out()),
+            OBELISK_RT_EOF);
+  uint32_t isEOF = 0;
+  ASSERT_EQ(obelisk_rt_v1_file_eof(context, descriptor, &isEOF),
+            OBELISK_RT_OK);
+  EXPECT_EQ(isEOF, 1u);
+
+  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
+  obelisk_rt_string_v1 field = 1;
+  uint32_t ok = 1;
+  uint32_t scanEOF = 0;
+  EXPECT_EQ(obelisk_rt_v1_file_scan_field(context, lane, descriptor, 1, nullptr,
+                                          0, 'd', &field, &ok, &scanEOF),
+            OBELISK_RT_OK);
+  EXPECT_EQ(field, 0u);
+  EXPECT_EQ(ok, 0u);
+  EXPECT_EQ(scanEOF, 1u);
+  EXPECT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
+
+  // The descriptor keeps the access it was opened with.
+  uint64_t written = 0;
+  ASSERT_EQ(obelisk_rt_v1_file_write(context, descriptor, "kept", 4, &written),
+            OBELISK_RT_OK);
+  EXPECT_EQ(written, 4u);
+  EXPECT_EQ(obelisk_rt_v1_file_close(context, descriptor), OBELISK_RT_OK);
+
+  EXPECT_EQ(readHostFile(path), "kept");
+}
+
+TEST_F(RuntimeTest, HoldsOnePushedBackByteWithoutReadAccess) {
+  TempDirectory temporary;
+  std::filesystem::path path = temporary.file("pushback.txt");
+  uint32_t descriptor = open(path, "w");
+
+  // The runtime holds the byte itself: glibc accepts ungetc() on a write-only
+  // stream and then crashes on the next write through it.
+  ASSERT_EQ(obelisk_rt_v1_file_ungetc(context, descriptor, 'z'),
+            OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_file_ungetc(context, descriptor, 'y'),
+            OBELISK_RT_EOF);
+  uint32_t isEOF = 1;
+  ASSERT_EQ(obelisk_rt_v1_file_eof(context, descriptor, &isEOF),
+            OBELISK_RT_OK);
+  EXPECT_EQ(isEOF, 0u);
+
+  uint8_t byte = 0;
+  ASSERT_EQ(obelisk_rt_v1_file_getc(context, descriptor, &byte),
+            OBELISK_RT_OK);
+  EXPECT_EQ(byte, 'z');
+  EXPECT_EQ(obelisk_rt_v1_file_getc(context, descriptor, &byte),
+            OBELISK_RT_EOF);
+  ASSERT_EQ(obelisk_rt_v1_file_eof(context, descriptor, &isEOF),
+            OBELISK_RT_OK);
+  EXPECT_EQ(isEOF, 1u);
+
+  uint64_t written = 0;
+  ASSERT_EQ(obelisk_rt_v1_file_write(context, descriptor, "after", 5, &written),
+            OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_file_close(context, descriptor), OBELISK_RT_OK);
+
+  EXPECT_EQ(readHostFile(path), "after");
+}
+
 TEST_F(RuntimeTest, BoundsPackedLineReadsWithoutDiscardingRemainingBytes) {
   TempDirectory temporary;
   uint32_t descriptor = open(temporary.file("bounded-line.txt"), "w+");

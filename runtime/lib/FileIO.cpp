@@ -76,6 +76,17 @@ void recordIOError(obelisk_rt_context *context, FileEntry &entry,
                                     hostErrorMessage(entry.lastError));
 }
 
+// A descriptor opened without read access can only ever hand back a byte that
+// $ungetc pushed onto it. Reads never reach the host stream there: they would
+// fail with EBADF, and turning that into a runtime I/O error would abort the
+// simulation instead of letting $fgetc/$fgets/$fscanf report failure the way
+// IEEE 1800-2017 21.3 expects.
+int takePushback(FileEntry &entry) {
+  int byte = entry.pushback;
+  entry.pushback = -1;
+  return byte;
+}
+
 bool scanSpace(int character) {
   return character == ' ' || character == '\t' || character == '\n' ||
          character == '\r' || character == '\f' || character == '\v';
@@ -307,21 +318,24 @@ obelisk_rt_v1_file_open(obelisk_rt_context *context, const char *path,
       setLastError(context, "fopen failed: " + hostErrorMessage(error));
       return OBELISK_RT_IO_ERROR;
     }
-    bool writable =
-        normalized.front() != 'r' || normalized.find('+') != std::string::npos;
+    // Access is tracked per descriptor so that reading a write-only file is
+    // end-of-file, not a host I/O error that would abort the simulation.
+    bool updating = normalized.find('+') != std::string::npos;
+    bool writable = normalized.front() != 'r' || updating;
+    bool readable = normalized.front() == 'r' || updating;
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     uint32_t index;
     if (!context->freeFiles.empty()) {
       index = context->freeFiles.back();
       context->freeFiles.pop_back();
-      context->files[index] = {stream.get(), 0, writable};
+      context->files[index] = {stream.get(), 0, writable, readable};
     } else {
       if (context->files.size() > kFDIndexMask) {
         setLastErrorUnlocked(context, "file descriptor table is full");
         return OBELISK_RT_OUT_OF_RESOURCES;
       }
       index = static_cast<uint32_t>(context->files.size());
-      context->files.push_back({stream.get(), 0, writable});
+      context->files.push_back({stream.get(), 0, writable, readable});
     }
     stream.release();
     *outDescriptor = kFDTag | index;
@@ -475,6 +489,14 @@ obelisk_rt_v1_file_read(obelisk_rt_context *context, uint32_t descriptor,
       return status;
     if (size == 0)
       return OBELISK_RT_OK;
+    if (!entry->readable) {
+      int byte = takePushback(*entry);
+      if (byte >= 0) {
+        *static_cast<unsigned char *>(data) = static_cast<unsigned char>(byte);
+        *outRead = 1;
+      }
+      return OBELISK_RT_OK;
+    }
     errno = 0;
     size_t count =
         std::fread(data, 1, static_cast<size_t>(size), entry->stream);
@@ -499,6 +521,13 @@ obelisk_rt_v1_file_getc(obelisk_rt_context *context, uint32_t descriptor,
         checkFileArguments(context, descriptor, entry, lock);
     if (status != OBELISK_RT_OK)
       return status;
+    if (!entry->readable) {
+      int byte = takePushback(*entry);
+      if (byte < 0)
+        return OBELISK_RT_EOF;
+      *outByte = static_cast<uint8_t>(byte);
+      return OBELISK_RT_OK;
+    }
     errno = 0;
     int character = std::fgetc(entry->stream);
     if (character != EOF) {
@@ -525,6 +554,12 @@ obelisk_rt_v1_file_ungetc(obelisk_rt_context *context, uint32_t descriptor,
         checkFileArguments(context, descriptor, entry, lock);
     if (status != OBELISK_RT_OK)
       return status;
+    if (!entry->readable) {
+      if (entry->pushback >= 0)
+        return OBELISK_RT_EOF;
+      entry->pushback = byte;
+      return OBELISK_RT_OK;
+    }
     errno = 0;
     if (std::ungetc(byte, entry->stream) == EOF) {
       recordIOError(context, *entry, "ungetc failed");
@@ -549,6 +584,14 @@ obelisk_rt_v1_file_getline(obelisk_rt_context *context, uint32_t descriptor,
         checkFileArguments(context, descriptor, entry, lock);
     if (status != OBELISK_RT_OK)
       return status;
+    if (!entry->readable) {
+      if (entry->pushback < 0)
+        return OBELISK_RT_EOF;
+      if (maxBytes == 0)
+        return makeBuffer(std::string(), outLine);
+      return makeBuffer(
+          std::string(1, static_cast<char>(takePushback(*entry))), outLine);
+    }
     std::string line;
     errno = 0;
     while (line.size() < maxBytes) {
@@ -616,6 +659,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_file_scan_field(
         checkFileArguments(context, descriptor, entry, lock);
     if (status != OBELISK_RT_OK)
       return status;
+    // A formatted read needs a stream to scan and put characters back on; a
+    // lone pushed-back byte is left for $fgetc/$fgets instead.
+    if (!entry->readable) {
+      *outEOF = 1;
+      return OBELISK_RT_OK;
+    }
     std::string field;
     errno = 0;
     ScanResult result =
@@ -650,7 +699,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_file_eof(obelisk_rt_context *context,
         checkFileArguments(context, descriptor, entry, lock);
     if (status != OBELISK_RT_OK)
       return status;
-    *outIsEOF = std::feof(entry->stream) ? 1u : 0u;
+    // A descriptor without read access is at end of file unless a $ungetc
+    // byte is still pending: it can never deliver anything else.
+    *outIsEOF = (entry->readable ? std::feof(entry->stream) != 0
+                                 : entry->pushback < 0)
+                    ? 1u
+                    : 0u;
     return OBELISK_RT_OK;
   });
 }
@@ -723,6 +777,7 @@ obelisk_rt_v1_file_seek(obelisk_rt_context *context, uint32_t descriptor,
       recordIOError(context, *entry, "fseek failed");
       return OBELISK_RT_IO_ERROR;
     }
+    entry->pushback = -1;
     return OBELISK_RT_OK;
   });
 }

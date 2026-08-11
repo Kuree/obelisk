@@ -37,6 +37,11 @@ struct FileEntry {
   FILE *stream = nullptr;
   int lastError = 0;
   bool writable = false;
+  bool readable = false;
+  // One pushed-back byte for a descriptor opened without read access. The host
+  // stream cannot hold it: glibc accepts ungetc() on a write-only stream and
+  // then corrupts it on the next write.
+  int pushback = -1;
 };
 
 struct OwnedElementTypeDescriptor {
