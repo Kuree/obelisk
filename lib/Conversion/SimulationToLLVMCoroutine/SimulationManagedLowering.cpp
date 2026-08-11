@@ -587,6 +587,42 @@ materializeManagedMethodThunks(ModuleOp module,
       continue;
     OpBuilder builder(context);
     if (method.getIsTask()) {
+      auto implementation = SymbolTable::lookupNearestSymbolFrom<sim::SimFuncOp>(
+          method, method.getImplementationAttr());
+      if (!implementation)
+        return method.emitError(
+            "managed task implementation was not preserved as a process");
+      std::string helperName =
+          (implementation.getSymName() + ".__obelisk_activate_checked").str();
+      auto helper = SymbolTable::lookupNearestSymbolFrom<LLVM::LLVMFuncOp>(
+          method, FlatSymbolRefAttr::get(context, helperName));
+      if (!helper)
+        return method.emitError(
+            "managed task implementation has no checked activation helper");
+      ArrayRef<Type> helperInputs = helper.getFunctionType().getParams();
+      if (helperInputs.size() < 3 || helperInputs.front() != pointer ||
+          helperInputs[1] != i64 || helperInputs.back() != pointer)
+        return method.emitError(
+            "managed task activation helper has an incompatible ABI");
+      unsigned physicalArgumentCount = helperInputs.size() - 3;
+      FunctionType semanticType = cast<FunctionType>(method.getFunctionType());
+      SmallVector<uint64_t> expectedSizes;
+      llvm::DataLayout local(dataLayout.getStringRepresentation());
+      llvm::LLVMContext llvmContext;
+      for (Type argument : semanticType.getInputs().drop_front(2)) {
+        FailureOr<analysis::SimulationStorageProperties> storage =
+            analysis::getSimulationStorageProperties(argument, local,
+                                                     llvmContext);
+        if (failed(storage))
+          return method.emitError("managed task argument has no native ABI");
+        unsigned planes =
+            analysis::getSimulationPhysicalStorageCount(*storage);
+        for (unsigned plane = 0; plane != planes; ++plane)
+          expectedSizes.push_back(storage->size);
+      }
+      if (expectedSizes.size() != physicalArgumentCount)
+        return method.emitError(
+            "managed task argument flattening is inconsistent");
       builder.setInsertionPointToStart(module.getBody());
       auto thunk = LLVM::LLVMFuncOp::create(
           builder, method.getLoc(), thunkName,
@@ -595,10 +631,79 @@ materializeManagedMethodThunks(ModuleOp module,
               false),
           LLVM::Linkage::Internal);
       Block *entry = thunk.addEntryBlock(builder);
+      Block *invoke = new Block;
+      Block *invalid = new Block;
+      SmallVector<Block *> validations(physicalArgumentCount);
+      for (Block *&block : validations) {
+        block = new Block;
+        thunk.getBody().push_back(block);
+      }
+      thunk.getBody().push_back(invoke);
+      thunk.getBody().push_back(invalid);
       builder.setInsertionPointToStart(entry);
+      Value countMatches = arith::CmpIOp::create(
+          builder, method.getLoc(), arith::CmpIPredicate::eq,
+          entry->getArgument(4),
+          llvmConstant(builder, method.getLoc(), i32, physicalArgumentCount));
+      Value resultSizeMatches = arith::CmpIOp::create(
+          builder, method.getLoc(), arith::CmpIPredicate::eq,
+          entry->getArgument(6),
+          llvmConstant(builder, method.getLoc(), i64, sizeof(uint64_t)));
+      Value validABI = arith::AndIOp::create(builder, method.getLoc(),
+                                             countMatches, resultSizeMatches);
+      LLVM::CondBrOp::create(
+          builder, method.getLoc(), validABI,
+          validations.empty() ? invoke : validations.front(), invalid);
+
+      builder.setInsertionPointToStart(invalid);
       LLVM::ReturnOp::create(builder, method.getLoc(),
                              llvmConstant(builder, method.getLoc(), i32,
-                                          OBELISK_RT_TIER_UNAVAILABLE));
+                                          OBELISK_RT_ARGUMENT_MISMATCH));
+
+      SmallVector<Value> argumentData;
+      argumentData.reserve(physicalArgumentCount);
+      for (unsigned index = 0; index != physicalArgumentCount; ++index) {
+        builder.setInsertionPointToStart(validations[index]);
+        Value record = byteGEP(builder, method.getLoc(), entry->getArgument(3),
+                               index * 16);
+        Value data =
+            LLVM::LoadOp::create(builder, method.getLoc(), pointer, record, 8);
+        Value size = LLVM::LoadOp::create(
+            builder, method.getLoc(), i64,
+            byteGEP(builder, method.getLoc(), record, 8), 8);
+        Value hasData = LLVM::ICmpOp::create(
+            builder, method.getLoc(), LLVM::ICmpPredicate::ne, data,
+            LLVM::ZeroOp::create(builder, method.getLoc(), pointer));
+        Value sizeMatches = arith::CmpIOp::create(
+            builder, method.getLoc(), arith::CmpIPredicate::eq, size,
+            llvmConstant(builder, method.getLoc(), i64, expectedSizes[index]));
+        Value validRecord = arith::AndIOp::create(builder, method.getLoc(),
+                                                  hasData, sizeMatches);
+        LLVM::CondBrOp::create(
+            builder, method.getLoc(), validRecord,
+            index + 1 == physicalArgumentCount ? invoke
+                                               : validations[index + 1],
+            invalid);
+        argumentData.push_back(data);
+      }
+
+      builder.setInsertionPointToStart(invoke);
+      SmallVector<Value> callArguments{
+          entry->getArgument(0),
+          managedObjectHandle(builder, method.getLoc(),
+                              entry->getArgument(2))};
+      for (unsigned index = 0; index != physicalArgumentCount; ++index) {
+        callArguments.push_back(LLVM::LoadOp::create(
+            builder, method.getLoc(), helperInputs[index + 2],
+            argumentData[index], 1));
+      }
+      callArguments.push_back(entry->getArgument(5));
+      Value status =
+          LLVM::CallOp::create(builder, method.getLoc(), TypeRange{i32},
+                               SymbolRefAttr::get(context, helperName),
+                               callArguments)
+              .getResult();
+      LLVM::ReturnOp::create(builder, method.getLoc(), status);
       continue;
     }
     auto implementation = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(

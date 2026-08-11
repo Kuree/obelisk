@@ -50,6 +50,12 @@ inline constexpr llvm::StringLiteral managedRootRangeRecordAttr =
     "obelisk.managed_root_range_record";
 inline constexpr llvm::StringLiteral managedRootRangePushCheckAttr =
     "obelisk.managed_root_range_push_check";
+inline constexpr llvm::StringLiteral nativeMethodArgumentSizesAttr =
+    "obelisk.native.method_argument_sizes";
+inline constexpr llvm::StringLiteral nativeMethodArgumentRootsAttr =
+    "obelisk.native.method_argument_roots";
+inline constexpr llvm::StringLiteral nativeTransferredReferencesAttr =
+    "obelisk.native.transferred_references";
 inline constexpr llvm::StringLiteral assumeCleanSpecializationAttr =
     "obelisk.native.assume_clean_specialization";
 inline constexpr llvm::StringLiteral evalCheckpointActorName =

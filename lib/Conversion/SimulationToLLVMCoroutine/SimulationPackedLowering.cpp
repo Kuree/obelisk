@@ -3,6 +3,7 @@
 #include "SimulationPackedLowering.h"
 
 #include "obelisk/Analysis/SimulationAnalysis.h"
+#include "obelisk/Analysis/SimulationStorageAnalysis.h"
 #include "obelisk/Analysis/StateDomainAnalysis.h"
 #include "obelisk/Conversion/RuntimeToLLVM.h"
 #include "obelisk/Conversion/SimulationToRuntime.h"
@@ -15,6 +16,9 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Transforms/DialectConversion.h"
+
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/LLVMContext.h"
 
 using namespace mlir;
 
@@ -205,6 +209,56 @@ LogicalResult lowerPackedSimulationOperations(
         results.push_back(IntegerType::get(context, 64));
         return success();
       });
+  llvm::DataLayout localDataLayout(dataLayout.getStringRepresentation());
+  llvm::LLVMContext llvmContext;
+  WalkResult virtualTaskABI =
+      module.walk([&](sim::SimClassVirtualTaskCallOp call) {
+        SmallVector<int64_t> sizes;
+        SmallVector<int64_t> roots;
+        SmallVector<int64_t> references;
+        unsigned physicalIndex = 0;
+        for (Value argument : call.getArguments()) {
+          FailureOr<analysis::SimulationStorageProperties> storage =
+              analysis::getSimulationStorageProperties(
+                  argument.getType(), localDataLayout, llvmContext);
+          if (failed(storage)) {
+            call.emitOpError("argument has no canonical native ABI");
+            return WalkResult::interrupt();
+          }
+          unsigned planes =
+              analysis::getSimulationPhysicalStorageCount(*storage);
+          for (uint64_t offset : storage->managedRootOffsets) {
+            roots.push_back(physicalIndex);
+            roots.push_back(offset);
+          }
+          for (unsigned plane = 0; plane != planes; ++plane)
+            sizes.push_back(storage->size);
+          physicalIndex += planes;
+        }
+        physicalIndex = 0;
+        for (Value value : call.getValues()) {
+          FailureOr<analysis::SimulationStorageProperties> storage =
+              analysis::getSimulationStorageProperties(
+                  value.getType(), localDataLayout, llvmContext);
+          if (failed(storage)) {
+            call.emitOpError("value has no canonical native ABI");
+            return WalkResult::interrupt();
+          }
+          if (isa<sim::RefType>(value.getType()))
+            references.push_back(physicalIndex);
+          physicalIndex +=
+              analysis::getSimulationPhysicalStorageCount(*storage);
+        }
+        call->setAttr(nativeMethodArgumentSizesAttr,
+                      DenseI64ArrayAttr::get(context, sizes));
+        call->setAttr(nativeMethodArgumentRootsAttr,
+                      DenseI64ArrayAttr::get(context, roots));
+        call->setAttr(nativeTransferredReferencesAttr,
+                      DenseI64ArrayAttr::get(context, references));
+        return WalkResult::advance();
+      });
+  if (virtualTaskABI.wasInterrupted())
+    return failure();
   ReferenceArgumentMap referenceArguments;
   WalkResult lifetimeInputs = module.walk([&](sim::SimFuncOp function) {
     if (function.getBody().empty())
@@ -229,6 +283,11 @@ LogicalResult lowerPackedSimulationOperations(
       }
       physical += converted.size();
     }
+    SmallVector<int64_t> referenceIndices;
+    for (unsigned index : referenceArguments[function.getOperation()])
+      referenceIndices.push_back(index);
+    function->setAttr(nativeTransferredReferencesAttr,
+                      DenseI64ArrayAttr::get(context, referenceIndices));
     return WalkResult::advance();
   });
   if (lifetimeInputs.wasInterrupted())
@@ -348,7 +407,8 @@ LogicalResult lowerPackedSimulationOperations(
       });
   packedTarget.addDynamicallyLegalOp<
       sim::SimCallOp, sim::SimDPICallOp, sim::SimSpawnOp, sim::SimReturnOp,
-      sim::SimTaskCallOp, sim::SimObserverBindOp, sim::SimPackedFlattenOp,
+      sim::SimTaskCallOp, sim::SimClassVirtualTaskCallOp,
+      sim::SimObserverBindOp, sim::SimPackedFlattenOp,
       sim::SimPackedUnflattenOp, sim::SimSuspendDelayOp,
       sim::SimSuspendChangeOp, sim::SimSuspendEdgeOp, sim::SimSuspendEdgeIffOp,
       sim::SimSuspendLevelOp, sim::SimSuspendAnyOp, sim::SimSuspendEventOp,

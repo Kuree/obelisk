@@ -37,7 +37,8 @@ bool managedOperationMayCollect(Operation *operation) {
       sim::SimFileGetlineStringOp, sim::SimFileErrorStringOp,
       sim::SimPlusargValueOp, sim::SimCallOp,
       sim::SimClassDirectCallOp,
-      sim::SimClassVirtualCallOp, sim::SimDPICallOp>(operation);
+      sim::SimClassVirtualCallOp, sim::SimClassVirtualTaskCallOp,
+      sim::SimDPICallOp>(operation);
 }
 
 } // namespace

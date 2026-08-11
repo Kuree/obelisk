@@ -22,7 +22,9 @@ module attributes {
 
     obelisk_sim.func @task(
         %ctx: !obelisk_sim.context
-            {obelisk_sim.capture_kind = 0 : i32})
+            {obelisk_sim.capture_kind = 0 : i32},
+        %ref: !obelisk_sim.ref<i32>
+            {obelisk_sim.capture_kind = 1 : i32})
         attributes {code_unit_id = 43 : i64, entry_kind = 12 : i32} {
       obelisk_sim.return
     }
@@ -46,6 +48,9 @@ module attributes {
 // CHECK-SAME: alignment = 4 : i64
 // CHECK: llvm.mlir.global internal constant @process.__obelisk_frame_fields
 // CHECK-SAME: alignment = 8 : i64
-// CHECK-LABEL: llvm.func @task.__obelisk_activate(
-// CHECK-SAME: %[[TASK_CTX:.*]]: !llvm.ptr)
+// CHECK-LABEL: llvm.func internal @task.__obelisk_activate_checked(
+// CHECK-SAME: %[[TASK_CTX:.*]]: !llvm.ptr,
 // CHECK: llvm.call @obelisk_rt_v1_process_instance_create_for_context(%[[TASK_CTX]], {{.*}}, {{.*}})
+// CHECK-LABEL: llvm.func @task.__obelisk_activate(
+// CHECK: llvm.call @task.__obelisk_activate_checked
+// CHECK: llvm.call @obelisk_rt_v1_native_state_release

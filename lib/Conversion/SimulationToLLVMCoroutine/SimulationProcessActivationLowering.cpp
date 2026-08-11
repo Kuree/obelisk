@@ -37,21 +37,35 @@ makeProcessActivationHelper(ModuleOp module, sim::SimFuncOp function,
   SmallVector<Type> arguments;
   for (BlockArgument argument : function.getBody().front().getArguments())
     arguments.push_back(convertProcessType(argument.getType(), context));
+  ArrayRef<int64_t> transferredReferences;
+  if (auto references =
+          function->getAttrOfType<DenseI64ArrayAttr>(
+              nativeTransferredReferencesAttr))
+    transferredReferences = references.asArrayRef();
+  std::string checkedHelperName =
+      (function.getSymName() + ".__obelisk_activate_checked").str();
   std::string helperName =
       (function.getSymName() + ".__obelisk_activate").str();
-  if (module.lookupSymbol(helperName))
+  if (module.lookupSymbol(checkedHelperName) || module.lookupSymbol(helperName))
     return success();
   builder.setInsertionPointAfter(function);
-  auto helper = LLVM::LLVMFuncOp::create(
-      builder, location, helperName,
-      LLVM::LLVMFunctionType::get(i64, arguments, false));
-  Block *entry = helper.addEntryBlock(builder);
+  SmallVector<Type> checkedArguments(arguments);
+  checkedArguments.push_back(pointer);
+  auto checkedHelper = LLVM::LLVMFuncOp::create(
+      builder, location, checkedHelperName,
+      LLVM::LLVMFunctionType::get(i32, checkedArguments, false),
+      LLVM::Linkage::Internal);
+  Block *entry = checkedHelper.addEntryBlock(builder);
   Block *created = new Block;
   Block *failed = new Block;
-  helper.getBody().push_back(created);
-  helper.getBody().push_back(failed);
+  checkedHelper.getBody().push_back(created);
+  checkedHelper.getBody().push_back(failed);
   builder.setInsertionPointToStart(entry);
   Value one = llvmConstant(builder, location, i64, 1);
+  Value outActivation = entry->getArguments().back();
+  LLVM::StoreOp::create(builder, location,
+                        llvmConstant(builder, location, i64, 0), outActivation,
+                        8);
   Value outInstance =
       LLVM::AllocaOp::create(builder, location, pointer, pointer, one, 8);
   LLVM::StoreOp::create(builder, location,
@@ -74,12 +88,7 @@ makeProcessActivationHelper(ModuleOp module, sim::SimFuncOp function,
   LLVM::CondBrOp::create(builder, location, succeeded, created, failed);
 
   builder.setInsertionPointToStart(failed);
-  LLVM::CallOp::create(
-      builder, location, TypeRange{},
-      SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
-      ValueRange{entry->getArgument(0), status});
-  LLVM::ReturnOp::create(builder, location,
-                         llvmConstant(builder, location, i64, 0));
+  LLVM::ReturnOp::create(builder, location, status);
 
   builder.setInsertionPointToStart(created);
   Value instance =
@@ -92,23 +101,78 @@ makeProcessActivationHelper(ModuleOp module, sim::SimFuncOp function,
       ++physicalArgument;
       continue;
     }
-    if (physicalArgument >= entry->getNumArguments())
-      return helper.emitError(
+    if (physicalArgument + 1 >= entry->getNumArguments())
+      return checkedHelper.emitError(
           "activation capture layout has too few arguments");
     storeAt(builder, location, frame, slot.valueOffset,
             entry->getArgument(physicalArgument++), slot.alignment);
     if (slot.hasSecondaryStorage()) {
-      if (physicalArgument >= entry->getNumArguments())
-        return helper.emitError(
+      if (physicalArgument + 1 >= entry->getNumArguments())
+        return checkedHelper.emitError(
             "activation capture is missing its secondary value");
       storeAt(builder, location, frame, slot.getSecondaryOffset(),
               entry->getArgument(physicalArgument++), slot.alignment);
     }
   }
-  if (physicalArgument != entry->getNumArguments())
-    return helper.emitError("activation capture layout has excess arguments");
+  if (physicalArgument + 1 != entry->getNumArguments())
+    return checkedHelper.emitError(
+        "activation capture layout has excess arguments");
   Value encoded = LLVM::PtrToIntOp::create(builder, location, i64, instance);
-  LLVM::ReturnOp::create(builder, location, encoded);
+  LLVM::StoreOp::create(builder, location, encoded, outActivation, 8);
+  LLVM::ReturnOp::create(builder, location,
+                         llvmConstant(builder, location, i32, 0));
+
+  builder.setInsertionPointAfter(checkedHelper);
+  auto helper = LLVM::LLVMFuncOp::create(
+      builder, location, helperName,
+      LLVM::LLVMFunctionType::get(i64, arguments, false));
+  Block *wrapperEntry = helper.addEntryBlock(builder);
+  Block *wrapperSucceeded = new Block;
+  Block *wrapperFailed = new Block;
+  helper.getBody().push_back(wrapperSucceeded);
+  helper.getBody().push_back(wrapperFailed);
+  builder.setInsertionPointToStart(wrapperEntry);
+  Value wrapperOne = llvmConstant(builder, location, i64, 1);
+  Value wrapperOut =
+      LLVM::AllocaOp::create(builder, location, pointer, i64, wrapperOne, 8);
+  LLVM::StoreOp::create(builder, location,
+                        llvmConstant(builder, location, i64, 0), wrapperOut, 8);
+  SmallVector<Value> callArguments(wrapperEntry->getArguments());
+  callArguments.push_back(wrapperOut);
+  Value wrapperStatus =
+      LLVM::CallOp::create(builder, location, TypeRange{i32},
+                           SymbolRefAttr::get(context, checkedHelperName),
+                           callArguments)
+          .getResult();
+  Value wrapperOK = arith::CmpIOp::create(
+      builder, location, arith::CmpIPredicate::eq, wrapperStatus,
+      llvmConstant(builder, location, i32, 0));
+  LLVM::CondBrOp::create(builder, location, wrapperOK, wrapperSucceeded,
+                         wrapperFailed);
+
+  builder.setInsertionPointToStart(wrapperFailed);
+  for (int64_t index : transferredReferences) {
+    if (index < 0 || static_cast<uint64_t>(index) >=
+                         wrapperEntry->getNumArguments())
+      return helper.emitError("has an invalid transferred-reference index");
+    LLVM::CallOp::create(
+        builder, location, TypeRange{i32},
+        SymbolRefAttr::get(context, "obelisk_rt_v1_native_state_release"),
+        ValueRange{wrapperEntry->getArgument(0),
+                   wrapperEntry->getArgument(static_cast<unsigned>(index)),
+                   llvmConstant(builder, location, i32, 0)});
+  }
+  LLVM::CallOp::create(
+      builder, location, TypeRange{},
+      SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
+      ValueRange{wrapperEntry->getArgument(0), wrapperStatus});
+  LLVM::ReturnOp::create(builder, location,
+                         llvmConstant(builder, location, i64, 0));
+
+  builder.setInsertionPointToStart(wrapperSucceeded);
+  LLVM::ReturnOp::create(
+      builder, location,
+      LLVM::LoadOp::create(builder, location, i64, wrapperOut, 8));
   return success();
 }
 

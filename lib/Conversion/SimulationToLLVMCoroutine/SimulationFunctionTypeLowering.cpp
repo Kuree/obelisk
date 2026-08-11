@@ -221,6 +221,38 @@ public:
   }
 };
 
+class ClassVirtualTaskCallTypeConversion final
+    : public OpConversionPattern<sim::SimClassVirtualTaskCallOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimClassVirtualTaskCallOp operation,
+                  OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    uint64_t logicalArguments = operation.getArgumentCount();
+    if (adaptor.getReceiver().size() != 1 ||
+        logicalArguments > adaptor.getValues().size())
+      return failure();
+    uint64_t physicalArguments = 0;
+    for (ValueRange values :
+         ArrayRef(adaptor.getValues()).take_front(logicalArguments))
+      physicalArguments += values.size();
+    for (auto [operand, converted] :
+         llvm::zip_equal(operation.getValues(), adaptor.getValues()))
+      if (isa<sim::RefType>(operand.getType()) && converted.size() == 1)
+        emitNativeStateRetain(rewriter, operation.getLoc(), converted.front());
+    OperationState state(operation.getLoc(), operation->getName());
+    state.addOperands(flatten(adaptor.getOperands()));
+    state.addSuccessors(operation->getSuccessors());
+    state.addAttributes(operation->getAttrs());
+    state.attributes.set(operation.getArgumentCountAttrName(),
+                         rewriter.getI64IntegerAttr(physicalArguments));
+    rewriter.replaceOp(operation, rewriter.create(state));
+    return success();
+  }
+};
+
 class DPICallTypeConversion final
     : public OpConversionPattern<sim::SimDPICallOp> {
 public:
@@ -266,8 +298,8 @@ void populateFunctionTypeConversionPatterns(
   patterns.add<FuncSignatureConversion, CallTypeConversion>(converter, context,
                                                             twoStateValues);
   patterns.add<ReturnTypeConversion, SelectTypeConversion,
-               TaskCallTypeConversion, DPICallTypeConversion>(converter,
-                                                              context);
+               TaskCallTypeConversion, ClassVirtualTaskCallTypeConversion,
+               DPICallTypeConversion>(converter, context);
 }
 
 void populateContextRuntimeToLLVMConversionPattern(

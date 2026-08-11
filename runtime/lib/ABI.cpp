@@ -1394,6 +1394,11 @@ ABI_FUNCTION(obelisk_rt_v1_method_invoke,
                                    obelisk_rt_object_v1 *, uint64_t, uint64_t,
                                    const obelisk_rt_method_argument_v1 *,
                                    uint32_t, void *, uint64_t));
+ABI_FUNCTION(obelisk_rt_v1_method_task_activate,
+             obelisk_rt_status (*)(obelisk_rt_gc_lane_v1 *,
+                                   obelisk_rt_object_v1 *, uint64_t, uint64_t,
+                                   const obelisk_rt_method_argument_v1 *,
+                                   uint32_t, uint64_t *));
 ABI_FUNCTION(obelisk_rt_v1_weak_create,
              obelisk_rt_status (*)(obelisk_rt_gc_lane_v1 *,
                                    const obelisk_rt_class_descriptor_v1 *,

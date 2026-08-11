@@ -155,6 +155,193 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
     return operation->emitError(
         "converted continuation arity disagrees with frame analysis");
 
+  if (auto task = dyn_cast<sim::SimClassVirtualTaskCallOp>(operation)) {
+    Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
+    Type i32 = builder.getI32Type();
+    Type i64 = builder.getI64Type();
+    auto sizesAttr = task->getAttrOfType<DenseI64ArrayAttr>(
+        nativeMethodArgumentSizesAttr);
+    auto rootsAttr = task->getAttrOfType<DenseI64ArrayAttr>(
+        nativeMethodArgumentRootsAttr);
+    auto referencesAttr = task->getAttrOfType<DenseI64ArrayAttr>(
+        nativeTransferredReferencesAttr);
+    if (!sizesAttr || static_cast<uint64_t>(sizesAttr.size()) !=
+                          task.getArguments().size() ||
+        !rootsAttr || (rootsAttr.size() & 1) != 0 || !referencesAttr)
+      return task.emitOpError("has malformed native argument metadata");
+    Type argumentType =
+        LLVM::LLVMStructType::getLiteral(builder.getContext(), {pointer, i64});
+    Value argumentArray = LLVM::ZeroOp::create(builder, location, pointer);
+    SmallVector<Value> argumentStorage;
+    if (!task.getArguments().empty()) {
+      argumentArray = entryAlloca(builder, location, argumentType,
+                                  task.getArguments().size(), 8);
+      for (auto [index, argument] : llvm::enumerate(task.getArguments())) {
+        if (sizesAttr[index] <= 0)
+          return task.emitOpError("has an invalid native argument size");
+        Value data =
+            entryAlloca(builder, location, argument.getType(), 1, 8);
+        argumentStorage.push_back(data);
+        LLVM::StoreOp::create(builder, location, argument, data, 1);
+        Value record = LLVM::ZeroOp::create(builder, location, argumentType);
+        record = insertValue(builder, location, record, data, 0);
+        record = insertValue(
+            builder, location, record,
+            llvmConstant(builder, location, i64, sizesAttr[index]), 1);
+        LLVM::StoreOp::create(
+            builder, location, record,
+            byteGEP(builder, location, argumentArray, index * 16), 8);
+      }
+    }
+    Value outActivation = entryAlloca(builder, location, i64, 1, 8);
+    LLVM::StoreOp::create(builder, location,
+                          llvmConstant(builder, location, i64, 0),
+                          outActivation, 8);
+    storeAt(builder, location, instance, kInstanceContinuationOffset,
+            llvmConstant(builder, location, i32, continuationID), 4);
+    auto [context, lane] = managedContextAndLane(builder, location);
+    Block *dispatch = new Block;
+    Block *activated = new Block;
+    Block *failed = new Block;
+    failed->addArgument(i32, location);
+    operation->getParentRegion()->push_back(dispatch);
+    operation->getParentRegion()->push_back(activated);
+    operation->getParentRegion()->push_back(failed);
+
+    Value rootRecord;
+    if (!rootsAttr.empty()) {
+      Type rootType = LLVM::LLVMStructType::getLiteral(
+          builder.getContext(), {pointer, i64, pointer, i64});
+      uint64_t rootCount = rootsAttr.size() / 2;
+      Value count = llvmConstant(builder, location, i64, rootCount);
+      Value rootSlots = entryAlloca(builder, location, i64, rootCount, 8);
+      rootRecord = entryAlloca(builder, location, rootType, 1, 8);
+      LLVM::StoreOp::create(builder, location,
+                            LLVM::ZeroOp::create(builder, location, rootType),
+                            rootRecord, 8);
+      for (uint64_t index = 0; index != rootCount; ++index) {
+        int64_t argumentIndex = rootsAttr[index * 2];
+        int64_t byteOffset = rootsAttr[index * 2 + 1];
+        if (argumentIndex < 0 ||
+            static_cast<uint64_t>(argumentIndex) >= argumentStorage.size() ||
+            byteOffset < 0 || sizesAttr[argumentIndex] < 0 ||
+            static_cast<uint64_t>(byteOffset) >
+                static_cast<uint64_t>(sizesAttr[argumentIndex]) ||
+            sizeof(void *) > static_cast<uint64_t>(sizesAttr[argumentIndex]) -
+                                  static_cast<uint64_t>(byteOffset))
+          return task.emitOpError("has an invalid native argument root");
+        Value root = LLVM::LoadOp::create(
+            builder, location, i64,
+            byteGEP(builder, location, argumentStorage[argumentIndex],
+                    byteOffset),
+            1);
+        LLVM::StoreOp::create(
+            builder, location, root,
+            byteGEP(builder, location, rootSlots, index * sizeof(void *)), 8);
+      }
+      Value pushStatus =
+          LLVM::CallOp::create(
+              builder, location, TypeRange{i32},
+              SymbolRefAttr::get(builder.getContext(),
+                                 "obelisk_rt_v1_gc_managed_root_range_push"),
+              ValueRange{lane, rootRecord, rootSlots, count})
+              .getResult();
+      Value pushed = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq, pushStatus,
+          llvmConstant(builder, location, i32, OBELISK_RT_OK));
+      LLVM::CondBrOp::create(builder, location, pushed, dispatch, failed,
+                             pushStatus);
+    } else {
+      LLVM::BrOp::create(builder, location, dispatch);
+    }
+
+    builder.setInsertionPointToStart(dispatch);
+    Value status =
+        LLVM::CallOp::create(
+            builder, location, TypeRange{i32},
+            SymbolRefAttr::get(builder.getContext(),
+                               "obelisk_rt_v1_method_task_activate"),
+            ValueRange{
+                lane,
+                managedObjectPointer(builder, location, task.getReceiver()),
+                llvmConstant(builder, location, i64, task.getSlot()),
+                llvmConstant(builder, location, i64, task.getSignatureId()),
+                argumentArray,
+                llvmConstant(builder, location, i32,
+                             task.getArguments().size()),
+                outActivation})
+            .getResult();
+    if (rootRecord) {
+      Value popStatus =
+          LLVM::CallOp::create(
+              builder, location, TypeRange{i32},
+              SymbolRefAttr::get(builder.getContext(),
+                                 "obelisk_rt_v1_gc_managed_root_range_pop"),
+              ValueRange{lane, rootRecord})
+              .getResult();
+      LLVM::CallOp::create(
+          builder, location, TypeRange{},
+          SymbolRefAttr::get(builder.getContext(),
+                             "obelisk_rt_v1_scheduler_fail"),
+          ValueRange{context, popStatus});
+    }
+    Value succeeded = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, status,
+        llvmConstant(builder, location, i32, OBELISK_RT_OK));
+    LLVM::CondBrOp::create(builder, location, succeeded, activated, failed,
+                           status);
+
+    builder.setInsertionPointToStart(failed);
+    for (int64_t index : referencesAttr.asArrayRef()) {
+      if (index < 0 ||
+          static_cast<uint64_t>(index) >= task.getValues().size())
+        return task.emitOpError("has an invalid transferred-reference index");
+      Value releaseStatus =
+          LLVM::CallOp::create(
+              builder, location, TypeRange{i32},
+              SymbolRefAttr::get(builder.getContext(),
+                                 "obelisk_rt_v1_native_state_release"),
+              ValueRange{context, task.getValues()[index],
+                         llvmConstant(builder, location, i32, 0)})
+              .getResult();
+      LLVM::CallOp::create(
+          builder, location, TypeRange{},
+          SymbolRefAttr::get(builder.getContext(),
+                             "obelisk_rt_v1_scheduler_fail"),
+          ValueRange{context, releaseStatus});
+    }
+    LLVM::CallOp::create(
+        builder, location, TypeRange{},
+        SymbolRefAttr::get(builder.getContext(),
+                           "obelisk_rt_v1_scheduler_fail"),
+        ValueRange{context, failed->getArgument(0)});
+    if (!blocks.terminate)
+      return task.emitOpError("has no coroutine termination block");
+    LLVM::BrOp::create(builder, location, blocks.terminate);
+
+    builder.setInsertionPointToStart(activated);
+    Value activation =
+        LLVM::LoadOp::create(builder, location, i64, outActivation, 8);
+    publishAction(builder, location, instance, OBELISK_RT_FRAGMENT_TASK_CALL,
+                  OBELISK_RT_SUSPEND_NONE, continuationID,
+                  OBELISK_RT_FRAGMENT_FLAGS_NONE, activation, 0);
+    Value final = llvmConstant(builder, location, builder.getI1Type(), 0);
+    Value save = LLVM::CoroSaveOp::create(
+        builder, location, LLVM::LLVMTokenType::get(builder.getContext()),
+        handle);
+    Value state = LLVM::CoroSuspendOp::create(
+        builder, location, builder.getI8Type(), save, final);
+    SmallVector<Block *> destinations{blocks.shims.lookup(continuation),
+                                      blocks.cleanup};
+    SmallVector<ValueRange> destinationOperands(2);
+    SmallVector<APInt> caseValues{APInt(8, 0), APInt(8, 1)};
+    LLVM::SwitchOp::create(builder, location, state, blocks.suspendReturn,
+                           ValueRange{}, caseValues, destinations,
+                           destinationOperands, ArrayRef<int32_t>{});
+    builder.eraseOp(operation);
+    return success();
+  }
+
   if (auto task = dyn_cast<sim::SimTaskCallOp>(operation)) {
     Type i32 = builder.getI32Type();
     Type i64 = builder.getI64Type();

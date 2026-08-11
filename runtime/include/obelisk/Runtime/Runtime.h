@@ -1866,6 +1866,10 @@ obelisk_rt_status obelisk_rt_v1_method_invoke(
     obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *receiver, uint64_t slot,
     uint64_t signature_id, const obelisk_rt_method_argument_v1 *arguments,
     uint32_t argument_count, void *result, uint64_t result_size);
+obelisk_rt_status obelisk_rt_v1_method_task_activate(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *receiver, uint64_t slot,
+    uint64_t signature_id, const obelisk_rt_method_argument_v1 *arguments,
+    uint32_t argument_count, uint64_t *out_activation);
 
 // IEEE 1800-2023 weak_reference support. The wrapper is itself a managed
 // object. Its referent is cleared during the collection that first determines

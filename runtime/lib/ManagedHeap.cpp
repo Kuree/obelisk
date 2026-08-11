@@ -2497,6 +2497,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_method_invoke(
       obelisk_rt_v1_method_resolve(receiver, slot, signatureID, &method);
   if (status != OBELISK_RT_OK)
     return status;
+  if ((method->flags & OBELISK_RT_METHOD_TASK) != 0)
+    return OBELISK_RT_INVALID_ARGUMENT;
   if (!method->native_entry)
     return OBELISK_RT_TIER_UNAVAILABLE;
   // A foreign caller is not required to have placed the receiver in its own
@@ -2516,6 +2518,55 @@ extern "C" obelisk_rt_status obelisk_rt_v1_method_invoke(
   }
   obelisk_rt_status popStatus = lane->heap->popRoot(lane, &receiverRoot);
   return callStatus == OBELISK_RT_OK ? popStatus : callStatus;
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_method_task_activate(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *receiver, uint64_t slot,
+    uint64_t signatureID, const obelisk_rt_method_argument_v1 *arguments,
+    uint32_t argumentCount, uint64_t *outActivation) {
+  if (outActivation)
+    *outActivation = 0;
+  if (!lane || !lane->heap || !lane->heap->activeOwner(lane) ||
+      (!arguments && argumentCount != 0) || !outActivation)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ObjectMetadata *metadata = metadataFor(receiver);
+  if (!metadata || metadata->heap != lane->heap)
+    return OBELISK_RT_INVALID_HANDLE;
+  const obelisk_rt_method_descriptor_v1 *method = nullptr;
+  obelisk_rt_status status =
+      obelisk_rt_v1_method_resolve(receiver, slot, signatureID, &method);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if ((method->flags & OBELISK_RT_METHOD_TASK) == 0)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  if ((method->flags & OBELISK_RT_METHOD_PURE) != 0 || !method->native_entry)
+    return OBELISK_RT_TIER_UNAVAILABLE;
+  obelisk_rt_gc_root_v1 receiverRoot{};
+  status = lane->heap->pushRoot(lane, &receiverRoot, &receiver);
+  if (status != OBELISK_RT_OK)
+    return status;
+  obelisk_rt_status callStatus = OBELISK_RT_OK;
+  try {
+    callStatus = method->native_entry(
+        lane->context, lane, receiver, arguments, argumentCount, outActivation,
+        sizeof(*outActivation));
+    if (callStatus == OBELISK_RT_OK && *outActivation == 0)
+      callStatus = OBELISK_RT_INVALID_HANDLE;
+  } catch (const std::bad_alloc &) {
+    callStatus = OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    callStatus = OBELISK_RT_INVALID_ARGUMENT;
+  }
+  obelisk_rt_status popStatus = lane->heap->popRoot(lane, &receiverRoot);
+  if (callStatus != OBELISK_RT_OK)
+    return callStatus;
+  // Once the thunk returns an activation, its frame owns the transferred
+  // arguments. Preserve that ownership handoff even if root-stack cleanup
+  // reports an internal error; returning failure would make the caller roll
+  // back references already installed in the activation.
+  if (popStatus != OBELISK_RT_OK)
+    obelisk_rt_v1_scheduler_fail(lane->context, popStatus);
+  return OBELISK_RT_OK;
 }
 
 extern "C" obelisk_rt_status
