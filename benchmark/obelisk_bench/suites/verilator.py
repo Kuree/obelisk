@@ -33,6 +33,7 @@ FINISHED_MARKER = "*-* All Finished *-*"
 STOP_MARKER = "$stop"
 SCENARIO = "simulator"
 SIM_TIME = 1100  # matches driver.py's default; the shell runs `while ($time < N)`
+TRACE_DUMPFILE = "simx.vcd"
 
 EXPECTED_ERROR = re.compile(r"_(bad|unsup|fail\d*)$")
 MODULE_T = re.compile(r"^\s*module\s+t\b", re.MULTILINE)
@@ -204,6 +205,11 @@ def make_top_shell(inputs: list[str]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def trace_dumpfile_define(directory: str | Path) -> str:
+    """Point Verilator trace macros at the per-test temporary directory."""
+    return f"-DTEST_DUMPFILE={Path(directory) / TRACE_DUMPFILE}"
+
+
 def judge_one(obelisk: str, top: Path, timeout: float,
               vpi_code: tuple[str, ...] = (),
               vpi_mode: str | None = None) -> model.Outcome:
@@ -225,7 +231,14 @@ def judge_one(obelisk: str, top: Path, timeout: float,
         shell.write_text(make_top_shell(detect_inputs(top_text)), encoding="utf-8")
         binary = Path(tmp) / "sim"
         # -y/+libext lets separate submodule files resolve; +incdir for includes.
-        extra = ["-y", str(top.parent), "-Y", ".v", "-Y", ".sv", "-I", str(top.parent)]
+        # Upstream's driver defines this for trace tests. Without it, nested
+        # macro stringification turns the unresolved token into a file named
+        # literally `` `TEST_DUMPFILE`` in the benchmark launch directory.
+        extra = [
+            trace_dumpfile_define(tmp),
+            "-y", str(top.parent), "-Y", ".v", "-Y", ".sv",
+            "-I", str(top.parent),
+        ]
         compiled = runner.compile_design(
             obelisk, [str(top), str(shell)], str(binary), extra,
             single_unit=SINGLE_UNIT,

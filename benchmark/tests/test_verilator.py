@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -97,6 +98,16 @@ class TopShellTest(unittest.TestCase):
         shell = verilator.make_top_shell(["clk"])
         self.assertIn("reg clk;", shell)
         self.assertIn(".clk (clk)", shell)
+
+
+class TraceDumpfileTest(unittest.TestCase):
+    def test_trace_macro_points_to_temporary_vcd(self):
+        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+            expected = Path(tmp) / "simx.vcd"
+            self.assertEqual(
+                verilator.trace_dumpfile_define(tmp),
+                f"-DTEST_DUMPFILE={expected}",
+            )
 
 
 if __name__ == "__main__":

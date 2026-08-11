@@ -6,6 +6,7 @@
 /web/obelisk.js
 /web/obelisk.wasm
 /web/toolchain/
+*.vcd
 *.o
 *.bc
 
