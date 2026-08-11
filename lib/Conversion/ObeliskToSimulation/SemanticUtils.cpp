@@ -475,7 +475,7 @@ static std::optional<uint64_t> getSemanticPackedWidth(Type type) {
 static bool isFourState(Type type) {
   if (auto integral = dyn_cast<semantic::IntegralType>(type))
     return integral.getIsFourState();
-  if (isa<semantic::LogicType>(type))
+  if (isa<semantic::LogicType, semantic::TimeType>(type))
     return true;
   if (auto array = dyn_cast<semantic::RangedPackedArrayType>(type))
     return isFourState(array.getElementType());
@@ -720,8 +720,11 @@ static FailureOr<Type> normalizeType(Type type, Location location,
       return sim::LogicType::get(context, static_cast<unsigned>(*width));
     return IntegerType::get(context, static_cast<unsigned>(*width));
   }
+  // `time` is a four-state 64-bit unsigned integer, not a two-state one
+  // (IEEE 1800-2017 Table 6-8), so an uninitialized one reads as x and its
+  // arithmetic propagates unknown bits like any other four-state value.
   if (isa<semantic::TimeType>(type))
-    return IntegerType::get(context, 64);
+    return sim::LogicType::get(context, 64);
   if (isa<semantic::RealType, semantic::RealtimeType>(type)) {
     if (!allowRealScalar) {
       emitError(location)

@@ -5,17 +5,17 @@
 // zero yields zero (IEEE 1800-2017 11.4.4) rather than raising SIGFPE.
 
 // CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-DAG: %[[ZERO:.*]] = arith.constant 0 : i64
-// CHECK-DAG: %[[ONE:.*]] = arith.constant 1 : i64
-// CHECK: %[[NOW:.*]] = obelisk_sim.time.now
-// CHECK: %[[BAD:.*]] = arith.cmpi eq, %[[NOW]], %[[ZERO]]
-// CHECK: %[[SAFE:.*]] = arith.select %[[BAD]], %[[ONE]], %[[NOW]]
-// CHECK: %[[QUOTIENT:.*]] = arith.divui %[[NOW]], %[[SAFE]]
+// CHECK-DAG: %[[ONE:.*]] = arith.constant 1 : i32
+// CHECK-DAG: %[[ZERO:.*]] = arith.constant 0 : i32
+// CHECK: %[[LHS:.*]] = obelisk_sim.ref.load
+// CHECK: %[[BAD:.*]] = arith.cmpi eq, %[[LHS]], %[[ZERO]]
+// CHECK: %[[SAFE:.*]] = arith.select %[[BAD]], %[[ONE]], %[[LHS]]
+// CHECK: %[[QUOTIENT:.*]] = arith.divui %[[LHS]], %[[SAFE]]
 // CHECK: arith.select %[[BAD]], %[[ZERO]], %[[QUOTIENT]]
-// CHECK: %[[NOW2:.*]] = obelisk_sim.time.now
-// CHECK: %[[BAD2:.*]] = arith.cmpi eq, %[[NOW2]], %[[ZERO]]
-// CHECK: %[[SAFE2:.*]] = arith.select %[[BAD2]], %[[ONE]], %[[NOW2]]
-// CHECK: %[[REMAINDER:.*]] = arith.remui %[[NOW2]], %[[SAFE2]]
+// CHECK: %[[LHS2:.*]] = obelisk_sim.ref.load
+// CHECK: %[[BAD2:.*]] = arith.cmpi eq, %[[LHS2]], %[[ZERO]]
+// CHECK: %[[SAFE2:.*]] = arith.select %[[BAD2]], %[[ONE]], %[[LHS2]]
+// CHECK: %[[REMAINDER:.*]] = arith.remui %[[LHS2]], %[[SAFE2]]
 // CHECK: arith.select %[[BAD2]], %[[ZERO]], %[[REMAINDER]]
 
 module {
@@ -38,10 +38,10 @@ module {
                   obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 12 : i64, referenced_path = "t.d", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s5.d, semantic_type = !obelisk.integral<32, false, false, 31 : 0, int>} {
                   }
                   obelisk.sv.expression.conversion attributes {is_signed = false, node_id = 13 : i64, semantic_type = !obelisk.integral<32, false, false, 31 : 0, int>} {
-                    obelisk.sv.expression.binary_op attributes {is_signed = false, node_id = 14 : i64, operator_kind = 3 : i32, semantic_type = !obelisk.time} {
-                      obelisk.sv.expression.call attributes {argument_count = 0 : i64, callee_name = "$time", constraint_restrictions = [], defaulted_arguments = array<i64>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = true, node_id = 15 : i64, semantic_type = !obelisk.time, subroutine_kind = 0 : i32, system_library_cell = "work.t", system_scope_path = "t", system_scope_symbol = @s1.$root::@s3.t::@s4.t} {
+                    obelisk.sv.expression.binary_op attributes {is_signed = false, node_id = 14 : i64, operator_kind = 3 : i32, semantic_type = !obelisk.integral<32, false, false, 31 : 0, int>} {
+                      obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 15 : i64, referenced_path = "t.d", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s5.d, semantic_type = !obelisk.integral<32, false, false, 31 : 0, int>} {
                       }
-                      obelisk.sv.expression.call attributes {argument_count = 0 : i64, callee_name = "$time", constraint_restrictions = [], defaulted_arguments = array<i64>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = true, node_id = 16 : i64, semantic_type = !obelisk.time, subroutine_kind = 0 : i32, system_library_cell = "work.t", system_scope_path = "t", system_scope_symbol = @s1.$root::@s3.t::@s4.t} {
+                      obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 16 : i64, referenced_path = "t.d", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s5.d, semantic_type = !obelisk.integral<32, false, false, 31 : 0, int>} {
                       }
                     }
                   }
@@ -52,10 +52,10 @@ module {
                   obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 19 : i64, referenced_path = "t.q", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s6.q, semantic_type = !obelisk.integral<32, false, false, 31 : 0, int>} {
                   }
                   obelisk.sv.expression.conversion attributes {is_signed = false, node_id = 20 : i64, semantic_type = !obelisk.integral<32, false, false, 31 : 0, int>} {
-                    obelisk.sv.expression.binary_op attributes {is_signed = false, node_id = 21 : i64, operator_kind = 4 : i32, semantic_type = !obelisk.time} {
-                      obelisk.sv.expression.call attributes {argument_count = 0 : i64, callee_name = "$time", constraint_restrictions = [], defaulted_arguments = array<i64>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = true, node_id = 22 : i64, semantic_type = !obelisk.time, subroutine_kind = 0 : i32, system_library_cell = "work.t", system_scope_path = "t", system_scope_symbol = @s1.$root::@s3.t::@s4.t} {
+                    obelisk.sv.expression.binary_op attributes {is_signed = false, node_id = 21 : i64, operator_kind = 4 : i32, semantic_type = !obelisk.integral<32, false, false, 31 : 0, int>} {
+                      obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 22 : i64, referenced_path = "t.q", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s6.q, semantic_type = !obelisk.integral<32, false, false, 31 : 0, int>} {
                       }
-                      obelisk.sv.expression.call attributes {argument_count = 0 : i64, callee_name = "$time", constraint_restrictions = [], defaulted_arguments = array<i64>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = true, node_id = 23 : i64, semantic_type = !obelisk.time, subroutine_kind = 0 : i32, system_library_cell = "work.t", system_scope_path = "t", system_scope_symbol = @s1.$root::@s3.t::@s4.t} {
+                      obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 23 : i64, referenced_path = "t.q", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s6.q, semantic_type = !obelisk.integral<32, false, false, 31 : 0, int>} {
                       }
                     }
                   }
