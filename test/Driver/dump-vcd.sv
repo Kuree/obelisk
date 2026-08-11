@@ -4,12 +4,21 @@
 // RUN: %split-file %s %t
 // RUN: cd %t && obelisk design.sv -o %t/native.sim
 // RUN: cd %t && %t/native.sim
-// RUN: FileCheck %s --check-prefix=VCD < %t/waves.vcd
+// RUN: FileCheck %s --check-prefix=VCD --implicit-check-not='$root' \
+// RUN:   < %t/waves.vcd
 //
 // RUN: cd %t && obelisk --execution-tier=bytecode design.sv \
 // RUN:   -o %t/bytecode.sim
 // RUN: cd %t && %t/bytecode.sim
-// RUN: FileCheck %s --check-prefix=VCD < %t/waves.vcd
+// RUN: FileCheck %s --check-prefix=VCD --implicit-check-not='$root' \
+// RUN:   < %t/waves.vcd
+//
+// A VCD may have multiple root scopes. Flattening the synthetic design root
+// must retain all independently elaborated top-level modules.
+// RUN: cd %t && obelisk multiple-tops.sv -o %t/multiple-tops.sim
+// RUN: cd %t && %t/multiple-tops.sim
+// RUN: FileCheck %s --check-prefix=MULTIPLE --implicit-check-not='$root' \
+// RUN:   < %t/multiple.vcd
 //
 // Explicit generic scheduling still needs the waveform database even with VPI
 // disabled, and an individual variable is a valid $dumpvars selection.
@@ -84,6 +93,30 @@ endmodule
 // VCD-NEXT: $dumpoff
 // VCD: #32
 // VCD-NEXT: $dumpon
+
+//--- multiple-tops.sv
+module first_top;
+  logic first = 0;
+  initial begin
+    $dumpfile("multiple.vcd");
+    $dumpvars;
+    #1 first = 1;
+    #1 $finish;
+  end
+endmodule
+
+module second_top;
+  logic second = 0;
+  initial #1 second = 1;
+endmodule
+
+// MULTIPLE: $scope module first_top $end
+// MULTIPLE: $var reg 1 {{.*}} first $end
+// MULTIPLE: $upscope $end
+// MULTIPLE: $scope module second_top $end
+// MULTIPLE: $var reg 1 {{.*}} second $end
+// MULTIPLE: $upscope $end
+// MULTIPLE: $enddefinitions $end
 
 //--- computed.sv
 module top;

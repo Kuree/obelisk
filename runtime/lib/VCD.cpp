@@ -718,6 +718,42 @@ struct PlanBuilder {
     }
     append(state, "$upscope $end\n");
   }
+
+  // The design database has a synthetic SystemVerilog `$root` record so VPI
+  // and hierarchical lookup have a concrete anchor. VCD has an implicit root;
+  // its conventional hierarchy starts with the top-level modules themselves.
+  // Preserve explicitly named roots supplied by runtime clients, but flatten
+  // the compiler-generated root and emit its live children as VCD roots.
+  void emitDesign() {
+    const uint8_t *rootRecord;
+    uint32_t rootKind;
+    std::string_view rootName;
+    if (!getRecord(database, database.root, rootRecord, rootKind) ||
+        rootKind != OBELISK_RT_DESIGN_RECORD_SCOPE ||
+        !getString(database, nameOffset(rootRecord), rootName))
+      return;
+    if (rootName != "$root" && rootName != "\\$root ") {
+      emitScope(database.root, {});
+      return;
+    }
+
+    uint64_t child = firstChildOffset(rootRecord);
+    while (child != 0) {
+      const uint8_t *childRecord;
+      uint32_t childKind;
+      if (!getRecord(database, child, childRecord, childKind))
+        break;
+      if (childKind == OBELISK_RT_DESIGN_RECORD_SCOPE) {
+        if (liveScopes.count(child) != 0)
+          emitScope(child, rootName);
+      } else if (selected.count(child) != 0) {
+        std::string_view childName;
+        if (getString(database, nameOffset(childRecord), childName))
+          emitVariable(childRecord, childName, rootName);
+      }
+      child = nextSiblingOffset(childRecord, childKind);
+    }
+  }
 };
 
 // Coalesce the traced variables into byte-aligned windows and size the shadow
@@ -945,7 +981,7 @@ obelisk_rt_status buildPlan(obelisk_rt_context *context, VCDTraceState &state) {
   writeHeader(context, state);
   PlanBuilder builder{context, state, database, selected, {}, {}};
   builder.markLiveScopes();
-  builder.emitScope(database.root, {});
+  builder.emitDesign();
   append(state, "$enddefinitions $end\n");
 
   buildRanges(state, context->execution->state_bit_count);
