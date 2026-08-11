@@ -321,7 +321,10 @@ FetchContent_Declare(fmt
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
 if(OBELISK_SLANG_SOURCE_DIR)
   FetchContent_Declare(obelisk_slang
-    SOURCE_DIR "${OBELISK_SLANG_SOURCE_DIR}")
+    SOURCE_DIR "${OBELISK_SLANG_SOURCE_DIR}"
+    PATCH_COMMAND
+      ${CMAKE_COMMAND} -DSOURCE_DIR=<SOURCE_DIR>
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchSlang.cmake")
 else()
   FetchContent_Declare(obelisk_slang
     URL "https://github.com/MikePopoloski/slang/archive/refs/tags/v${OBELISK_SLANG_VERSION}.tar.gz"

@@ -29,6 +29,9 @@
 // RUN: cd %t && obelisk default-name.sv -o %t/default-name.sim
 // RUN: cd %t && %t/default-name.sim
 // RUN: FileCheck %s --check-prefix=DEFAULT-NAME < %t/dump.vcd
+// RUN: cd %t && obelisk integral-name.sv -o %t/integral-name.sim
+// RUN: cd %t && %t/integral-name.sim
+// RUN: FileCheck %s --check-prefix=INTEGRAL-NAME < %t/integral.vcd
 
 //--- design.sv
 module sub(input logic clk, output logic [3:0] tick);
@@ -111,6 +114,20 @@ endmodule
 
 // DEFAULT-NAME: $var reg 1 {{.*}} value $end
 // DEFAULT-NAME: $enddefinitions $end
+
+//--- integral-name.sv
+module integral_name;
+  logic [8*12-1:0] name = "integral.vcd";
+  logic value = 0;
+  initial begin
+    $dumpfile(name);
+    $dumpvars(0, integral_name);
+    #1 $finish;
+  end
+endmodule
+
+// INTEGRAL-NAME: $var reg 1 {{.*}} value $end
+// INTEGRAL-NAME: $enddefinitions $end
 
 //--- selected.sv
 module selected;

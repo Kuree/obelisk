@@ -113,3 +113,60 @@ if(patched_at EQUAL -1)
   string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
   file(WRITE "${lookup_source}" "${contents}")
 endif()
+
+# IEEE 1800-2017 21.7.1.1 permits the optional $dumpfile argument to be a
+# string or an integral expression interpreted as a character sequence. Slang
+# v11 models it as a simple string-only task, which rejects the integral form
+# before Obelisk can lower it.
+set(system_tasks_source "${SOURCE_DIR}/source/ast/builtins/SystemTasks.cpp")
+file(READ "${system_tasks_source}" contents)
+
+set(old_code [[
+class DumpVarsTask : public SystemTaskBase {
+]])
+set(new_code [[
+class DumpFileTask : public SystemTaskBase {
+public:
+    DumpFileTask() : SystemTaskBase(KnownSystemName::DumpFile) {}
+
+    const Type& checkArguments(const ASTContext& context, const Args& args, SourceRange range,
+                               const Expression*) const final {
+        auto& comp = context.getCompilation();
+        if (!checkArgCount(context, false, args, range, 0, 1))
+            return comp.getErrorType();
+        if (!args.empty() && !args[0]->type->isString() && !args[0]->type->isIntegral())
+            return badArg(context, *args[0]);
+        return comp.getVoidType();
+    }
+};
+
+class DumpVarsTask : public SystemTaskBase {
+]])
+
+string(FIND "${contents}" "class DumpFileTask : public SystemTaskBase" patched_at)
+if(patched_at EQUAL -1)
+  string(FIND "${contents}" "${old_code}" unpatched_at)
+  if(unpatched_at EQUAL -1)
+    message(FATAL_ERROR
+      "Slang's dumpfile task no longer matches the expected source")
+  endif()
+  string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
+endif()
+
+set(old_code [[
+    TASK(KnownSystemName::DumpFile, 0, &stringType);
+]])
+set(new_code [[
+    addSystemSubroutine(std::make_shared<DumpFileTask>());
+]])
+string(FIND "${contents}" "${new_code}" patched_at)
+if(patched_at EQUAL -1)
+  string(FIND "${contents}" "${old_code}" unpatched_at)
+  if(unpatched_at EQUAL -1)
+    message(FATAL_ERROR
+      "Slang's dumpfile registration no longer matches the expected source")
+  endif()
+  string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
+endif()
+
+file(WRITE "${system_tasks_source}" "${contents}")
