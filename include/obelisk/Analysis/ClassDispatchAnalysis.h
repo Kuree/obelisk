@@ -37,6 +37,13 @@ public:
   mlir::SmallVector<sim::SimClassDeclOp>
   compatibleConcreteClasses(sim::SimClassDeclOp staticClass) const;
 
+  /// Resolve and deduplicate every concrete implementation reachable from a
+  /// receiver's static class. Entries are ordered by the first compatible
+  /// concrete class that selects them.
+  mlir::SmallVector<sim::SimClassMethodDeclOp>
+  compatibleImplementations(sim::SimClassDeclOp staticClass, uint64_t slot,
+                            uint64_t signatureId, bool isTask) const;
+
   mlir::ArrayRef<sim::SimClassDeclOp> getClasses() const { return classes; }
 
   static constexpr uint64_t getInterfaceDispatchSlot() {

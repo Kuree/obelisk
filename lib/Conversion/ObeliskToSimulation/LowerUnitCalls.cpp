@@ -16,7 +16,6 @@
 #include <limits>
 #include <numeric>
 #include <optional>
-#include <tuple>
 
 using namespace mlir;
 
@@ -814,125 +813,17 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         return finishTask();
       }
 
+      auto slot = op->getAttrOfType<IntegerAttr>("obelisk_sim.class_slot");
       auto signature =
           op->getAttrOfType<IntegerAttr>("obelisk_sim.class_signature");
-      auto receiverType = dyn_cast<sim::ClassHandleType>((*receiver).getType());
-      sim::SimDesignOp design = function->getParentOfType<sim::SimDesignOp>();
-      sim::SimClassDeclOp staticClass =
-          receiverType
-              ? SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
-                    function, receiverType.getClassName())
-              : sim::SimClassDeclOp{};
-      if (!method || !signature || !design || !staticClass)
+      if (!method || !slot || !signature || signature.getValue().isZero())
         return emitError(location)
-                   << "virtual class task has no complete dispatch inventory",
+                   << "virtual class task has no frozen slot and signature",
                failure();
-
-      SmallVector<sim::SimClassMethodDeclOp> methods(
-          design.getBody().front().getOps<sim::SimClassMethodDeclOp>());
-      auto lookupClass = [&](FlatSymbolRefAttr symbol) {
-        return SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
-            function, symbol);
-      };
-      auto derivesFrom = [&](sim::SimClassDeclOp candidate,
-                             sim::SimClassDeclOp target) {
-        for (sim::SimClassDeclOp current = candidate; current;) {
-          if (current == target)
-            return true;
-          if (target.getIsInterface() && current.getInterfacesAttr())
-            for (Attribute interface : current.getInterfacesAttr())
-              if (cast<FlatSymbolRefAttr>(interface).getValue() ==
-                  target.getSymName())
-                return true;
-          current = current.getBaseAttr() ? lookupClass(current.getBaseAttr())
-                                          : sim::SimClassDeclOp{};
-        }
-        return false;
-      };
-      auto inheritanceDepth = [&](sim::SimClassDeclOp candidate) {
-        uint64_t depth = 0;
-        for (sim::SimClassDeclOp current = candidate; current;
-             current = current.getBaseAttr()
-                           ? lookupClass(current.getBaseAttr())
-                           : sim::SimClassDeclOp{})
-          ++depth;
-        return depth;
-      };
-      struct TaskTarget {
-        FlatSymbolRefAttr dynamicClass;
-        FlatSymbolRefAttr implementation;
-        uint64_t depth;
-        uint64_t classId;
-      };
-      SmallVector<TaskTarget> targets;
-      for (sim::SimClassDeclOp candidate :
-           design.getBody().front().getOps<sim::SimClassDeclOp>()) {
-        if (candidate.getIsAbstract() || candidate.getIsInterface() ||
-            !derivesFrom(candidate, staticClass))
-          continue;
-        sim::SimClassMethodDeclOp implementation;
-        for (sim::SimClassDeclOp current = candidate;
-             current && !implementation;
-             current = current.getBaseAttr()
-                           ? lookupClass(current.getBaseAttr())
-                           : sim::SimClassDeclOp{})
-          for (sim::SimClassMethodDeclOp candidateMethod : methods)
-            if (candidateMethod.getOwner() == current.getSymName() &&
-                candidateMethod.getSignatureIdAttr() &&
-                candidateMethod.getSignatureId() ==
-                    signature.getValue().getZExtValue() &&
-                candidateMethod.getImplementationAttr()) {
-              implementation = candidateMethod;
-              break;
-            }
-        if (implementation)
-          targets.push_back({
-              FlatSymbolRefAttr::get(function.getContext(),
-                                     candidate.getSymName()),
-              implementation.getImplementationAttr(),
-              inheritanceDepth(candidate),
-              candidate.getId(),
-          });
-      }
-      llvm::sort(targets, [](const TaskTarget &lhs, const TaskTarget &rhs) {
-        return std::tuple(lhs.depth, lhs.classId) >
-               std::tuple(rhs.depth, rhs.classId);
-      });
-      if (targets.empty())
-        return emitError(location)
-                   << "virtual class task has no concrete implementation",
-               failure();
-      for (const TaskTarget &target : targets) {
-        Value matches = sim::SimClassIsInstanceOp::create(
-            builder, location, *receiver, target.dynamicClass);
-        Block *invoke = addBlock();
-        Block *next = addBlock();
-        cf::CondBranchOp::create(builder, location, matches, invoke,
-                                 ValueRange{}, next, ValueRange{});
-        setCurrent(invoke);
-        auto implementation =
-            SymbolTable::lookupNearestSymbolFrom<sim::SimFuncOp>(
-                function, target.implementation);
-        if (!implementation ||
-            implementation.getFunctionType().getNumInputs() < 2)
-          return emitError(location)
-                     << "virtual class task implementation is missing",
-                 failure();
-        Type expectedReceiver = implementation.getFunctionType().getInput(1);
-        Value adjusted = *receiver;
-        if (adjusted.getType() != expectedReceiver)
-          adjusted = sim::SimClassCastOp::create(builder, location,
-                                                 expectedReceiver, adjusted);
-        emitTaskCall(target.implementation, adjusted);
-        setCurrent(next);
-      }
-      Value verbosity =
-          arith::ConstantOp::create(builder, location, builder.getI32Type(),
-                                    builder.getI32IntegerAttr(1));
-      sim::SimFatalOp::create(builder, location,
-                              function.getBody().front().getArgument(0),
-                              verbosity);
-      emitBranch(continuation);
+      sim::SimClassVirtualTaskCallOp::create(
+          builder, location, *receiver, method, slot, signature, arguments,
+          builder.getI64IntegerAttr(arguments.size()),
+          sim::ContinuationSiteAttr{}, continuation);
       return finishTask();
     }
     ValueRange results;

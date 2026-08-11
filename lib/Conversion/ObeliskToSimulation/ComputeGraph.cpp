@@ -9,6 +9,7 @@
 
 #include "ComputeGraph.h"
 
+#include "obelisk/Analysis/ClassDispatchAnalysis.h"
 #include "obelisk/Analysis/NetConnectivityAnalysis.h"
 #include "obelisk/Analysis/SimulationVPIAnalysis.h"
 #include "obelisk/Analysis/StateDomainAnalysis.h"
@@ -504,8 +505,10 @@ ComputeEffect substituteObserverEffect(const ComputeEffect &effect,
 }
 
 struct ProgramAnalysis {
-  explicit ProgramAnalysis(sim::SimDesignOp design) : connectivity(design) {}
+  explicit ProgramAnalysis(sim::SimDesignOp design)
+      : classDispatch(design), connectivity(design) {}
 
+  ::obelisk::analysis::ClassDispatchAnalysis classDispatch;
   ::obelisk::analysis::NetConnectivityAnalysis connectivity;
   SmallVector<FunctionInfo, 0> functions;
   llvm::StringMap<unsigned> functionIndex;
@@ -1184,20 +1187,39 @@ void ComputeGraphBuilder::buildControlEdges() {
   };
   for (Fragment &fragment : fragments) {
     Operation *terminator = fragment.block->getTerminator();
+    auto addTaskEdges = [&](unsigned callee, Block *continuationBlock) {
+      sim::SimFuncOp target = analysis.functions[callee].function;
+      if (target.getBody().empty())
+        return;
+      addEdge(fragment.id, fragmentID(&target.getBody().front()),
+              sim::ComputeEdgeKind::ProcessOrder);
+      uint32_t continuation = fragmentID(continuationBlock);
+      for (Block &block : target.getBody())
+        if (isa<sim::SimReturnOp>(block.getTerminator()))
+          addEdge(fragmentID(&block), continuation,
+                  sim::ComputeEdgeKind::ProcessOrder);
+    };
     if (auto taskCall = dyn_cast<sim::SimTaskCallOp>(terminator)) {
       auto callee = analysis.functionIndex.find(taskCall.getCallee());
-      if (callee != analysis.functionIndex.end()) {
-        sim::SimFuncOp target = analysis.functions[callee->second].function;
-        if (!target.getBody().empty()) {
-          addEdge(fragment.id, fragmentID(&target.getBody().front()),
-                  sim::ComputeEdgeKind::ProcessOrder);
-          uint32_t continuation = fragmentID(taskCall.getContinuation());
-          for (Block &block : target.getBody())
-            if (isa<sim::SimReturnOp>(block.getTerminator()))
-              addEdge(fragmentID(&block), continuation,
-                      sim::ComputeEdgeKind::ProcessOrder);
-        }
+      if (callee != analysis.functionIndex.end())
+        addTaskEdges(callee->second, taskCall.getContinuation());
+    } else if (auto taskCall =
+                   dyn_cast<sim::SimClassVirtualTaskCallOp>(terminator)) {
+      auto staticType =
+          cast<sim::ClassHandleType>(taskCall.getReceiver().getType());
+      DenseSet<unsigned> callees;
+      for (sim::SimClassMethodDeclOp method :
+           analysis.classDispatch.compatibleImplementations(
+               analysis.classDispatch.lookup(staticType), taskCall.getSlot(),
+               taskCall.getSignatureId(), /*isTask=*/true)) {
+        auto callee = analysis.functionIndex.find(*method.getImplementation());
+        if (callee != analysis.functionIndex.end())
+          callees.insert(callee->second);
       }
+      SmallVector<unsigned> ordered(callees.begin(), callees.end());
+      llvm::sort(ordered);
+      for (unsigned callee : ordered)
+        addTaskEdges(callee, taskCall.getContinuation());
     } else {
       sim::ComputeEdgeKind controlKind =
           isSuspensionTerminator(terminator)

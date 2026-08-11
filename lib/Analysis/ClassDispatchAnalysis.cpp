@@ -5,6 +5,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringSet.h"
 
 #include <limits>
 #include <tuple>
@@ -114,6 +115,26 @@ ClassDispatchAnalysis::compatibleConcreteClasses(
     if (!candidate.getIsAbstract() && !candidate.getIsInterface() &&
         isInstanceOf(candidate, staticClass))
       result.push_back(candidate);
+  return result;
+}
+
+SmallVector<sim::SimClassMethodDeclOp>
+ClassDispatchAnalysis::compatibleImplementations(
+    sim::SimClassDeclOp staticClass, uint64_t slot, uint64_t signatureId,
+    bool isTask) const {
+  SmallVector<sim::SimClassMethodDeclOp> result;
+  llvm::StringSet<> seen;
+  for (sim::SimClassDeclOp candidate :
+       compatibleConcreteClasses(staticClass)) {
+    sim::SimClassMethodDeclOp method =
+        resolve(candidate, slot, signatureId);
+    if (!method || method.getIsPure() || method.getIsTask() != isTask ||
+        !method.getImplementationAttr() || !method.getSignatureIdAttr() ||
+        method.getSignatureId() != signatureId ||
+        !seen.insert(*method.getImplementation()).second)
+      continue;
+    result.push_back(method);
+  }
   return result;
 }
 

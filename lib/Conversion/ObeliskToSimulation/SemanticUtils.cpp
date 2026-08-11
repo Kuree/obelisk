@@ -1153,7 +1153,7 @@ sim::ComputeActionKind getFragmentActionKind(Operation *terminator) {
           [](auto) { return sim::ComputeActionKind::SuspendChildren; })
       .Case<sim::SimSuspendObserveOp>(
           [](auto) { return sim::ComputeActionKind::SuspendObserve; })
-      .Case<sim::SimTaskCallOp>(
+      .Case<sim::SimTaskCallOp, sim::SimClassVirtualTaskCallOp>(
           [](auto) { return sim::ComputeActionKind::TaskCall; })
       .Case<sim::SimReturnOp>(
           [](auto) { return sim::ComputeActionKind::Terminate; })
@@ -1169,7 +1169,8 @@ sim::ContinuationSiteAttr getContinuationSite(Operation *operation) {
             sim::SimSuspendEventOp, sim::SimSuspendObserveOp,
             sim::SimSuspendForeverOp, sim::SimSuspendAwaitOp,
             sim::SimSuspendJoinOp, sim::SimSuspendChildrenOp,
-            sim::SimTaskCallOp>([&](auto op) { site = op.getSiteAttr(); });
+            sim::SimTaskCallOp, sim::SimClassVirtualTaskCallOp>(
+          [&](auto op) { site = op.getSiteAttr(); });
   return site;
 }
 
@@ -1181,7 +1182,8 @@ void setContinuationSite(Operation *operation, sim::ContinuationSiteAttr site) {
             sim::SimSuspendEventOp, sim::SimSuspendObserveOp,
             sim::SimSuspendForeverOp, sim::SimSuspendAwaitOp,
             sim::SimSuspendJoinOp, sim::SimSuspendChildrenOp,
-            sim::SimTaskCallOp>([&](auto op) { op.setSiteAttr(site); });
+            sim::SimTaskCallOp, sim::SimClassVirtualTaskCallOp>(
+          [&](auto op) { op.setSiteAttr(site); });
 }
 
 ReexecutingBlockSet getReexecutingBlocks(sim::SimFuncOp function) {

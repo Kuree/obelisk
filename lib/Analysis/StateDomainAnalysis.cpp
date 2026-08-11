@@ -1,6 +1,7 @@
 //===- StateDomainAnalysis.cpp - Whole-value X/Z analysis ----------------===//
 
 #include "obelisk/Analysis/StateDomainAnalysis.h"
+#include "obelisk/Analysis/ClassDispatchAnalysis.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -128,12 +129,13 @@ bool updateBoundary(StateDomainFact &current, StateDomainFact contribution,
 }
 
 bool isSuspensionTerminator(Operation *op) {
-  return isa<
-      sim::SimSuspendDelayOp, sim::SimSuspendChangeOp, sim::SimSuspendEdgeOp,
-      sim::SimSuspendEdgeIffOp, sim::SimSuspendLevelOp, sim::SimSuspendAnyOp,
-      sim::SimSuspendEventOp, sim::SimSuspendForeverOp, sim::SimSuspendAwaitOp,
-      sim::SimSuspendJoinOp, sim::SimSuspendChildrenOp,
-      sim::SimSuspendObserveOp, sim::SimTaskCallOp>(op);
+  return isa<sim::SimSuspendDelayOp, sim::SimSuspendChangeOp,
+             sim::SimSuspendEdgeOp, sim::SimSuspendEdgeIffOp,
+             sim::SimSuspendLevelOp, sim::SimSuspendAnyOp,
+             sim::SimSuspendEventOp, sim::SimSuspendForeverOp,
+             sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp,
+             sim::SimSuspendChildrenOp, sim::SimSuspendObserveOp,
+             sim::SimTaskCallOp, sim::SimClassVirtualTaskCallOp>(op);
 }
 
 std::optional<APInt> getConstantInteger(Value value) {
@@ -297,13 +299,24 @@ transferOperation(Operation *op, const DenseMap<Value, StateDomainFact> &facts,
 struct InvocationSummary {
   Operation *operation = nullptr;
   bool spawn = false;
+  FlatSymbolRefAttr target;
   std::optional<unsigned> callee;
 };
 
-ValueRange getInvocationOperands(Operation *operation) {
+SmallVector<Value> getInvocationOperands(Operation *operation) {
+  if (auto task = dyn_cast<sim::SimClassVirtualTaskCallOp>(operation)) {
+    auto caller = task->getParentOfType<sim::SimFuncOp>();
+    SmallVector<Value> operands;
+    if (caller && !caller.getBody().empty() &&
+        !caller.getBody().front().getArguments().empty())
+      operands.push_back(caller.getBody().front().getArgument(0));
+    operands.push_back(task.getReceiver());
+    llvm::append_range(operands, task.getArguments());
+    return operands;
+  }
   if (auto task = dyn_cast<sim::SimTaskCallOp>(operation))
-    return task.getArguments();
-  return operation->getOperands();
+    return SmallVector<Value>(task.getArguments());
+  return SmallVector<Value>(operation->getOperands());
 }
 
 struct IncomingSummary {
@@ -329,7 +342,9 @@ struct FunctionSummary {
   SmallVector<sim::SimReturnOp> returns;
 };
 
-FunctionSummary buildSummary(sim::SimFuncOp function) {
+FunctionSummary
+buildSummary(sim::SimFuncOp function,
+             const analysis::ClassDispatchAnalysis &classDispatch) {
   FunctionSummary summary;
   summary.function = function;
   summary.provenance = analysis::deriveDescriptorProvenance(function);
@@ -350,10 +365,27 @@ FunctionSummary buildSummary(sim::SimFuncOp function) {
     }
     for (Operation &operation : *block) {
       summary.operations.push_back(&operation);
-      if (isa<sim::SimCallOp, sim::SimTaskCallOp>(operation))
-        summary.invocations.push_back({&operation, false, std::nullopt});
-      else if (isa<sim::SimSpawnOp>(operation))
-        summary.invocations.push_back({&operation, true, std::nullopt});
+      if (auto call = dyn_cast<sim::SimCallOp>(operation))
+        summary.invocations.push_back(
+            {&operation, false, call.getCalleeAttr(), std::nullopt});
+      else if (auto task = dyn_cast<sim::SimTaskCallOp>(operation))
+        summary.invocations.push_back(
+            {&operation, false, task.getCalleeAttr(), std::nullopt});
+      else if (auto task =
+                   dyn_cast<sim::SimClassVirtualTaskCallOp>(operation)) {
+        auto staticType =
+            cast<sim::ClassHandleType>(task.getReceiver().getType());
+        for (sim::SimClassMethodDeclOp method :
+             classDispatch.compatibleImplementations(
+                 classDispatch.lookup(staticType), task.getSlot(),
+                 task.getSignatureId(), /*isTask=*/true)) {
+          summary.invocations.push_back({&operation, false,
+                                         method.getImplementationAttr(),
+                                         std::nullopt});
+        }
+      } else if (auto spawn = dyn_cast<sim::SimSpawnOp>(operation))
+        summary.invocations.push_back(
+            {&operation, true, spawn.getCalleeAttr(), std::nullopt});
       else if (auto returnOp = dyn_cast<sim::SimReturnOp>(operation))
         summary.returns.push_back(returnOp);
     }
@@ -795,9 +827,10 @@ computeValueFacts(sim::SimDesignOp design, const RootSet &assumedKnownRoots) {
     return lhs.getSymName() < rhs.getSymName();
   });
 
+  analysis::ClassDispatchAnalysis classDispatch(design);
   SmallVector<FunctionSummary, 0> summaries(functions.size());
   parallelFor(design.getContext(), 0, functions.size(), [&](size_t index) {
-    summaries[index] = buildSummary(functions[index]);
+    summaries[index] = buildSummary(functions[index], classDispatch);
   });
 
   DenseMap<Operation *, unsigned> functionIndex;
@@ -811,23 +844,17 @@ computeValueFacts(sim::SimDesignOp design, const RootSet &assumedKnownRoots) {
   SmallVector<SmallVector<unsigned>> callers(functions.size());
   for (auto [caller, summary] : llvm::enumerate(summaries)) {
     for (InvocationSummary &invocation : summary.invocations) {
-      sim::SimFuncOp callee;
-      if (auto call = dyn_cast<sim::SimCallOp>(invocation.operation))
-        callee = symbolTables.lookupNearestSymbolFrom<sim::SimFuncOp>(
-            invocation.operation, call.getCalleeAttr());
-      else if (auto task = dyn_cast<sim::SimTaskCallOp>(invocation.operation))
-        callee = symbolTables.lookupNearestSymbolFrom<sim::SimFuncOp>(
-            invocation.operation, task.getCalleeAttr());
-      else if (auto spawn = dyn_cast<sim::SimSpawnOp>(invocation.operation))
-        callee = symbolTables.lookupNearestSymbolFrom<sim::SimFuncOp>(
-            invocation.operation, spawn.getCalleeAttr());
+      sim::SimFuncOp callee =
+          symbolTables.lookupNearestSymbolFrom<sim::SimFuncOp>(
+              invocation.operation, invocation.target);
       if (!callee)
         continue;
       auto found = functionIndex.find(callee.getOperation());
       if (found == functionIndex.end())
         continue;
       invocation.callee = found->second;
-      calleeIndex[invocation.operation] = found->second;
+      if (!isa<sim::SimClassVirtualTaskCallOp>(invocation.operation))
+        calleeIndex[invocation.operation] = found->second;
       if (!invocation.spawn &&
           std::find(callers[found->second].begin(),
                     callers[found->second].end(),

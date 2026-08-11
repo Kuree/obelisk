@@ -360,7 +360,8 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       requireBytecodeFragment(operation, "event wait requires dynamic state");
       excludeBytecodeActor(operation);
     } else if (isa<sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp,
-                   sim::SimSuspendChildrenOp, sim::SimTaskCallOp>(operation)) {
+                   sim::SimSuspendChildrenOp, sim::SimTaskCallOp,
+                   sim::SimClassVirtualTaskCallOp>(operation)) {
       requireBytecodeFragment(operation,
                               "task, await, or join control is present");
       excludeBytecodeActor(operation);

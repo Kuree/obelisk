@@ -1,7 +1,8 @@
 //===- SCCP.cpp - Threaded interprocedural simulation SCCP ---------------===//
 
-#include "obelisk/Conversion/ObeliskToSimulation.h"
+#include "obelisk/Analysis/ClassDispatchAnalysis.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
+#include "obelisk/Conversion/ObeliskToSimulation.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
@@ -136,10 +137,20 @@ static void addNetSeeds(sim::SimFuncOp function,
   });
 }
 
-ValueRange getBoundaryOperands(Operation *operation) {
+SmallVector<Value> getBoundaryOperands(Operation *operation) {
+  if (auto task = dyn_cast<sim::SimClassVirtualTaskCallOp>(operation)) {
+    auto caller = task->getParentOfType<sim::SimFuncOp>();
+    SmallVector<Value> operands;
+    if (caller && !caller.getBody().empty() &&
+        !caller.getBody().front().getArguments().empty())
+      operands.push_back(caller.getBody().front().getArgument(0));
+    operands.push_back(task.getReceiver());
+    llvm::append_range(operands, task.getArguments());
+    return operands;
+  }
   if (auto task = dyn_cast<sim::SimTaskCallOp>(operation))
-    return task.getArguments();
-  return operation->getOperands();
+    return SmallVector<Value>(task.getArguments());
+  return SmallVector<Value>(operation->getOperands());
 }
 
 static bool isExecutable(DataFlowSolver &solver, Operation *operation) {
@@ -183,7 +194,8 @@ static void addBoundarySeeds(ArrayRef<FunctionInfo> functions,
 
 static LogicalResult analyzeFunction(ArrayRef<FunctionInfo> functions,
                                      unsigned functionIndex,
-                                     const DenseMap<uint64_t, BoundaryFact> &netFacts,
+                                     const DenseMap<uint64_t, BoundaryFact>
+                                         &netFacts,
                                      FunctionObservation &observation) {
   const FunctionInfo &info = functions[functionIndex];
   sim::SimFuncOp function = info.function;
@@ -207,7 +219,8 @@ static LogicalResult analyzeFunction(ArrayRef<FunctionInfo> functions,
     if (!isExecutable(solver, site.operation))
       continue;
     result.executable = true;
-    if (isa<sim::SimCallOp, sim::SimTaskCallOp>(site.operation)) {
+    if (isa<sim::SimCallOp, sim::SimTaskCallOp, sim::SimClassVirtualTaskCallOp>(
+            site.operation)) {
       for (Value operand : getBoundaryOperands(site.operation))
         result.operands.push_back(getFact(solver, operand));
     } else if (auto spawn = dyn_cast<sim::SimSpawnOp>(site.operation)) {
@@ -313,9 +326,9 @@ static void rewriteFunction(DataFlowSolver &solver, sim::SimFuncOp function) {
   }
 }
 
-static LogicalResult solveAndRewriteFunction(ArrayRef<FunctionInfo> functions,
-                                             unsigned functionIndex,
-                                             const DenseMap<uint64_t, BoundaryFact> &netFacts) {
+static LogicalResult solveAndRewriteFunction(
+    ArrayRef<FunctionInfo> functions, unsigned functionIndex,
+    const DenseMap<uint64_t, BoundaryFact> &netFacts) {
   const FunctionInfo &info = functions[functionIndex];
   sim::SimFuncOp function = info.function;
   if (function.isExternal())
@@ -344,6 +357,7 @@ public:
 
 void ObeliskSimSCCPPass::runOnOperation() {
   sim::SimDesignOp design = getOperation();
+  analysis::ClassDispatchAnalysis classDispatch(design);
   SmallVector<FunctionInfo, 0> functions;
   llvm::StringMap<unsigned> symbolToFunction;
 
@@ -393,6 +407,23 @@ void ObeliskSimSCCPPass::runOnOperation() {
           functions[*callee].callers.push_back(functionIndex);
         return WalkResult::advance();
       }
+      if (auto task = dyn_cast<sim::SimClassVirtualTaskCallOp>(operation)) {
+        auto staticType =
+            cast<sim::ClassHandleType>(task.getReceiver().getType());
+        for (sim::SimClassMethodDeclOp method :
+             classDispatch.compatibleImplementations(
+                 classDispatch.lookup(staticType), task.getSlot(),
+                 task.getSignatureId(), /*isTask=*/true)) {
+          auto found = symbolToFunction.find(*method.getImplementation());
+          std::optional<unsigned> callee;
+          if (found != symbolToFunction.end())
+            callee = found->second;
+          info.sites.push_back({operation, BoundarySiteKind::Call, callee});
+          if (callee)
+            functions[*callee].callers.push_back(functionIndex);
+        }
+        return WalkResult::advance();
+      }
       if (auto spawn = dyn_cast<sim::SimSpawnOp>(operation)) {
         auto found = symbolToFunction.find(spawn.getCallee());
         std::optional<unsigned> callee;
@@ -432,6 +463,10 @@ void ObeliskSimSCCPPass::runOnOperation() {
         continue;
       if (auto spawn = dyn_cast<sim::SimSpawnOp>(user);
           spawn && spawn.getCalleeAttr() == reference)
+        continue;
+      if (auto method = dyn_cast<sim::SimClassMethodDeclOp>(user);
+          method && method.getIsTask() && method.getImplementationAttr() &&
+          method.getImplementationAttr() == reference)
         continue;
       hasNonCallUse[index] = true;
       break;
