@@ -199,12 +199,14 @@ See the [GNU LGPL 2.1](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.en.htm
 [Linux licensing rules](https://www.kernel.org/doc/html/v4.17/process/license-rules.html),
 and [LLVM license](https://llvm.org/LICENSE.txt).
 
-This mechanism is for local source builds. It intentionally provides no
-target that packages or redistributes the compiler together with Debian's
-glibc files. Any future binary compiler distribution needs a separate
-compliance change that supplies the exact matching Debian source, complete
-license texts, notices, modification information, and required build scripts.
-The matching glibc source artifacts are published beside the binaries in the
+The native-support tree is included in the self-contained Linux compiler
+distribution, so that distribution redistributes the pinned Debian glibc files
+even though generated programs do not embed them. CMake stages the package
+copyright notices and complete LGPL 2.1 and GPL 2.0 texts, but it does not
+currently bundle corresponding source artifacts. The binary release process
+must therefore provide a license-compliant corresponding-source path for the
+exact Debian packages, including Debian patches and build packaging. Matching
+source artifacts are published in the
 [Debian security archive](https://archive.debian.org/debian-archive/debian-security/pool/updates/main/g/glibc/).
 This document is implementation guidance, not a substitute for legal review.
 

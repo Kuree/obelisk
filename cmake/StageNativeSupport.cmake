@@ -64,6 +64,7 @@ foreach(path IN ITEMS
     "${RUNTIME_LTO_ARCHIVE}"
     ${required_llvm_files}
     "${SOURCE_DIR}/cmake/StageNativeSupport.cmake"
+    "${SOURCE_DIR}/LICENSE"
     "${SOURCE_DIR}/docs/third-party/licenses/LGPL-2.1.txt"
     "${SOURCE_DIR}/docs/third-party/licenses/GPL-2.0.txt"
     "${SOURCE_DIR}/docs/third-party/licenses/Apache-2.0.txt"
@@ -83,6 +84,7 @@ file(MAKE_DIRECTORY
   "${stage}/glibc/lib/x86_64-linux-gnu"
   "${stage}/glibc/lib64"
   "${stage}/licenses/glibc"
+  "${stage}/licenses/obelisk"
   "${stage}/licenses/llvm")
 
 foreach(path IN LISTS required_sysroot_files)
@@ -142,6 +144,8 @@ file(COPY
   DESTINATION "${stage}")
 file(COPY "${LLVM_DIST}/include/llvm/Support/LICENSE.TXT"
   DESTINATION "${stage}/licenses/llvm")
+configure_file("${SOURCE_DIR}/LICENSE"
+               "${stage}/licenses/obelisk/LICENSE" COPYONLY)
 configure_file("${SOURCE_DIR}/docs/third-party/licenses/LGPL-2.1.txt"
                "${stage}/licenses/glibc/LGPL-2.1.txt" COPYONLY)
 configure_file("${SOURCE_DIR}/docs/third-party/licenses/GPL-2.0.txt"
@@ -180,7 +184,8 @@ file(WRITE "${stage}/README.txt"
   "Local Obelisk native-link support for ${TARGET_TRIPLE}.\n"
   "libobelisk_rt.a contains native ELF objects for -O0 links.\n"
   "libobelisk_rt_lto.a contains LLVM bitcode for -O1 through -O3 Full-LTO links.\n"
-  "The glibc inputs are from Debian 10 and are not an Obelisk distribution.\n"
+  "This tree includes glibc inputs from Debian 10 under their own licenses.\n"
+  "See licenses/glibc; redistribution also requires corresponding source compliance.\n"
   "Generated executables dynamically depend on a target glibc compatible with 2.28.\n")
 set(complete_contents
   "${TARGET_TRIPLE}\n${STAGE_KEY}\n${stage_content_key}\n")

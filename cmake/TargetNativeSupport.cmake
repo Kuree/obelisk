@@ -292,6 +292,7 @@ set(_obelisk_native_support_byproducts
   "${OBELISK_NATIVE_SUPPORT_DIR}/licenses/glibc/linux-libc-dev-copyright"
   "${OBELISK_NATIVE_SUPPORT_DIR}/licenses/glibc/LGPL-2.1.txt"
   "${OBELISK_NATIVE_SUPPORT_DIR}/licenses/glibc/GPL-2.0.txt"
+  "${OBELISK_NATIVE_SUPPORT_DIR}/licenses/obelisk/LICENSE"
   "${OBELISK_NATIVE_SUPPORT_DIR}/licenses/llvm/LICENSE.TXT"
   "${OBELISK_NATIVE_SUPPORT_DIR}/licenses/llvm/Apache-2.0.txt"
   "${OBELISK_NATIVE_SUPPORT_DIR}/licenses/llvm/LLVM-exception.txt")
@@ -314,6 +315,7 @@ add_custom_command(
     "${OBELISK_TARGET_RUNTIME_ARCHIVE}"
     "${OBELISK_TARGET_RUNTIME_LTO_ARCHIVE}"
     "${_obelisk_source_dir}/cmake/StageNativeSupport.cmake"
+    "${_obelisk_source_dir}/LICENSE"
     "${_obelisk_source_dir}/docs/third-party/licenses/LGPL-2.1.txt"
     "${_obelisk_source_dir}/docs/third-party/licenses/GPL-2.0.txt"
     "${_obelisk_source_dir}/docs/third-party/licenses/Apache-2.0.txt"
