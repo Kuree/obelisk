@@ -181,11 +181,13 @@ def ObeliskSimEliminateDeadBoundariesPass
 
 def ObeliskSimInlinePass
     : Pass<"obelisk-sim-inline", "obelisk::sim::SimDesignOp"> {
-  let summary = "Inline profitable zero-time simulation calls";
+  let summary = "Propagate control and inline profitable zero-time calls";
   let description = [{
     Uses MLIR's SCC inliner for CFG/SSA transformation while Obelisk owns
     simulation legality, specialization profitability, hierarchy retention,
-    growth budgets, and deterministic optimization-level presets.
+    growth budgets, and deterministic optimization-level presets. Calls that
+    transitively carry process control are mandatory at every optimization
+    level; ordinary calls remain subject to the selected profitability preset.
   }];
   let dependentDialects = [
     "obelisk::sim::ObeliskSimulationDialect",
@@ -194,7 +196,7 @@ def ObeliskSimInlinePass
   ];
   let options = [
     Option<"optLevel", "opt-level", "unsigned", "3",
-           "Optimization preset from 0 (disabled) through 3">,
+           "Profitability preset from 0 (mandatory control only) through 3">,
     Option<"tinyCost", "tiny-cost", "int64_t", "-1",
            "Override the preset tiny-leaf weighted cost threshold">,
     Option<"specializationCost", "specialization-cost", "int64_t", "-1",

@@ -404,22 +404,10 @@ void ObeliskSimDevirtualizeClassCallsPass::runOnOperation() {
     ++guardedTaskCalls;
   }
 
-  SmallVector<sim::SimClassDirectCallOp> directCallsToNormalize;
-  design.walk([&](sim::SimClassDirectCallOp call) {
-    directCallsToNormalize.push_back(call);
-  });
-  for (sim::SimClassDirectCallOp call : directCallsToNormalize) {
-    rewriter.setInsertionPoint(call);
-    FailureOr<sim::SimCallOp> replacement = createDirectCall(
-        rewriter, call, call.getCalleeAttr(), call.getReceiver(),
-        call.getArguments(), call.getResultTypes());
-    if (failed(replacement)) {
-      call.emitError("direct class call has no valid function implementation");
-      return signalPassFailure();
-    }
-    rewriter.replaceOp(call, replacement->getResults());
-    ++directCalls;
-  }
+  uint64_t normalizedDirectCalls = 0;
+  if (failed(sim::normalizeClassDirectCalls(design, &normalizedDirectCalls)))
+    return signalPassFailure();
+  directCalls += normalizedDirectCalls;
 }
 
 } // namespace

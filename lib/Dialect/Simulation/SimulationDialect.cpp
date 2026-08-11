@@ -234,9 +234,10 @@ LogicalResult verifyPostponedReadOnly(SimFuncOp root) {
 InlineLegality getInlineLegality(SimCallOp call, SimFuncOp callee) {
   SimFuncOp caller = call ? call->getParentOfType<SimFuncOp>() : SimFuncOp{};
   auto design = caller ? caller->getParentOfType<SimDesignOp>() : SimDesignOp{};
-  // SimFuncOp verification guarantees that Function entries are zero-time and
-  // contain no suspension operations, so legality does not duplicate that
-  // invariant with a second operation-family allowlist.
+  // Function entries are zero-time, but process.control is an intentional
+  // control-flow terminator that may be inlined into the calling process CFG.
+  // Legality therefore focuses on recursion and frozen metadata rather than a
+  // second operation-family allowlist.
   if (!caller || !callee || !design || callee.isExternal() ||
       callee->getParentOfType<SimDesignOp>() != design ||
       callee.getEntryKind() != EntryKind::Function)
@@ -291,6 +292,43 @@ StringRef getInlineLegalityReason(InlineLegality legality) {
     return "call boundary contains unknown obelisk_sim metadata";
   }
   llvm_unreachable("unknown simulation inline legality");
+}
+
+LogicalResult normalizeClassDirectCall(SimClassDirectCallOp call) {
+  SimFuncOp caller = call->getParentOfType<SimFuncOp>();
+  SimFuncOp callee = SymbolTable::lookupNearestSymbolFrom<SimFuncOp>(
+      call, call.getCalleeAttr());
+  if (!caller || caller.getBody().empty() ||
+      caller.getBody().front().getNumArguments() == 0 ||
+      !isa<ContextType>(caller.getBody().front().getArgument(0).getType()))
+    return call.emitError(
+        "direct class call has no dominating simulation context");
+  if (!callee || callee.getEntryKind() != EntryKind::Function)
+    return call.emitError(
+        "direct class call does not reference a zero-time function");
+
+  SmallVector<Value> operands{caller.getBody().front().getArgument(0),
+                              call.getReceiver()};
+  llvm::append_range(operands, call.getArguments());
+  IRRewriter rewriter(call.getContext());
+  rewriter.setInsertionPoint(call);
+  auto replacement = SimCallOp::create(
+      rewriter, call.getLoc(), call.getResultTypes(), call.getCalleeAttr(),
+      operands, ArrayAttr{}, ArrayAttr{});
+  rewriter.replaceOp(call, replacement.getResults());
+  return success();
+}
+
+LogicalResult normalizeClassDirectCalls(Operation *root, uint64_t *count) {
+  SmallVector<SimClassDirectCallOp> calls;
+  root->walk([&](SimClassDirectCallOp call) { calls.push_back(call); });
+  for (SimClassDirectCallOp call : calls) {
+    if (failed(normalizeClassDirectCall(call)))
+      return failure();
+    if (count)
+      ++*count;
+  }
+  return success();
 }
 
 /// Enforce unconditional simulation legality for every MLIR inlining client

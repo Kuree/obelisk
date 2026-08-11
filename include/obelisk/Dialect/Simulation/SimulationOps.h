@@ -61,6 +61,13 @@ enum class InlineLegality {
 InlineLegality getInlineLegality(SimCallOp call, SimFuncOp callee);
 ::llvm::StringRef getInlineLegalityReason(InlineLegality legality);
 
+/// Normalize direct instance-method calls to the ordinary zero-time call ABI.
+/// This exposes their call edges to MLIR's call graph and inliner while class
+/// receiver dispatch is still explicit in the IR.
+::mlir::LogicalResult normalizeClassDirectCall(SimClassDirectCallOp call);
+::mlir::LogicalResult normalizeClassDirectCalls(::mlir::Operation *root,
+                                                uint64_t *count = nullptr);
+
 /// Stable hash of a validated logical DPI ABI signature. This is shared by
 /// native thunk registration and pointer-free bytecode call-site metadata.
 uint64_t getDPISignatureHash(::mlir::ArrayAttr signature,

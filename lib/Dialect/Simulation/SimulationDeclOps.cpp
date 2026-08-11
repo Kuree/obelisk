@@ -529,6 +529,9 @@ LogicalResult SimClassDirectCallOp::verify() {
       SymbolTable::lookupNearestSymbolFrom<SimFuncOp>(*this, getCalleeAttr());
   if (!callee)
     return emitOpError("references an unknown method implementation");
+  if (callee.getEntryKind() != EntryKind::Function)
+    return emitOpError(
+        "must reference a zero-time function implementation");
   FunctionType type = callee.getFunctionType();
   SmallVector<Type> inputs;
   inputs.push_back(getReceiver().getType());

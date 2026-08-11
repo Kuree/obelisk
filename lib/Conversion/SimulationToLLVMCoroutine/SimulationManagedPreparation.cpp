@@ -541,30 +541,6 @@ prepareManagedClassInventory(ModuleOp module,
   return success();
 }
 
-LogicalResult normalizeManagedDirectCalls(ModuleOp module) {
-  SmallVector<sim::SimClassDirectCallOp> calls;
-  module.walk([&](sim::SimClassDirectCallOp call) { calls.push_back(call); });
-  IRRewriter rewriter(module.getContext());
-  for (sim::SimClassDirectCallOp call : calls) {
-    sim::SimFuncOp function = call->getParentOfType<sim::SimFuncOp>();
-    if (!function || function.getBody().empty() ||
-        function.getBody().front().getNumArguments() == 0 ||
-        !isa<sim::ContextType>(
-            function.getBody().front().getArgument(0).getType()))
-      return call.emitError(
-          "managed direct call has no dominating simulation context");
-    SmallVector<Value> operands{function.getBody().front().getArgument(0),
-                                call.getReceiver()};
-    llvm::append_range(operands, call.getArguments());
-    rewriter.setInsertionPoint(call);
-    auto replacement = sim::SimCallOp::create(
-        rewriter, call.getLoc(), call.getResultTypes(), call.getCalleeAttr(),
-        operands, ArrayAttr{}, ArrayAttr{});
-    rewriter.replaceOp(call, replacement.getResults());
-  }
-  return success();
-}
-
 /// Arithmetic selects only support arithmetic and shaped result types. The
 /// simulation dialect nevertheless permits class handles to flow through SSA
 /// merges, and a conditional class assignment can therefore be represented as
@@ -603,7 +579,7 @@ LogicalResult prepareManagedLowering(ModuleOp module,
                                      const llvm::DataLayout &dataLayout) {
   llvm::StringMap<ManagedClassLayout> layouts;
   if (failed(prepareManagedClassInventory(module, dataLayout, layouts)) ||
-      failed(normalizeManagedDirectCalls(module)))
+      failed(sim::normalizeClassDirectCalls(module)))
     return failure();
   expandManagedSelectsToCFG(module);
   return success();

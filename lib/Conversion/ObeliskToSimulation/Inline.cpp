@@ -17,6 +17,7 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringSet.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -135,33 +136,32 @@ void ObeliskSimInlinePass::runOnOperation() {
     design.emitOpError("inliner optimization level must be between 0 and 3");
     return signalPassFailure();
   }
-  if (optLevel == 0)
-    return;
-
   // A task call is a scheduler boundary, so MLIR's ordinary call inliner does
   // not see it.  An empty task has no activation state or effects to preserve:
   // transfer directly to the caller continuation before compute-graph
   // construction.  This also keeps harmless assertion stubs from forcing an
   // otherwise native actor through bytecode scheduling.
-  SymbolTable symbols(design);
-  SmallVector<sim::SimTaskCallOp> emptyTaskCalls;
-  design.walk([&](sim::SimTaskCallOp call) {
-    sim::SimFuncOp callee = symbols.lookup<sim::SimFuncOp>(call.getCallee());
-    if (!callee || callee.isExternal() ||
-        callee.getEntryKind() != sim::EntryKind::Task ||
-        callee.getBody().getBlocks().size() != 1)
-      return;
-    Block &entry = callee.getBody().front();
-    if (entry.getOperations().size() == 1 &&
-        isa<sim::SimReturnOp>(entry.getTerminator()))
-      emptyTaskCalls.push_back(call);
-  });
-  for (sim::SimTaskCallOp call : emptyTaskCalls) {
-    OpBuilder builder(call);
-    cf::BranchOp::create(builder, call.getLoc(), call.getContinuation(),
-                         call.getContinuationOperands());
-    call.erase();
-    ++emptyTasksEliminated;
+  if (optLevel != 0) {
+    SymbolTable symbols(design);
+    SmallVector<sim::SimTaskCallOp> emptyTaskCalls;
+    design.walk([&](sim::SimTaskCallOp call) {
+      sim::SimFuncOp callee = symbols.lookup<sim::SimFuncOp>(call.getCallee());
+      if (!callee || callee.isExternal() ||
+          callee.getEntryKind() != sim::EntryKind::Task ||
+          callee.getBody().getBlocks().size() != 1)
+        return;
+      Block &entry = callee.getBody().front();
+      if (entry.getOperations().size() == 1 &&
+          isa<sim::SimReturnOp>(entry.getTerminator()))
+        emptyTaskCalls.push_back(call);
+    });
+    for (sim::SimTaskCallOp call : emptyTaskCalls) {
+      OpBuilder builder(call);
+      cf::BranchOp::create(builder, call.getLoc(), call.getContinuation(),
+                           call.getContinuationOperands());
+      call.erase();
+      ++emptyTasksEliminated;
+    }
   }
 
   InlinePreset preset = getPreset(optLevel);
@@ -185,14 +185,89 @@ void ObeliskSimInlinePass::runOnOperation() {
   }
 
   llvm::StringMap<sim::SimFuncOp> functions;
-  DenseMap<Operation *, uint64_t> callerBaselines;
   for (sim::SimFuncOp function :
-       design.getBody().front().getOps<sim::SimFuncOp>()) {
+       design.getBody().front().getOps<sim::SimFuncOp>())
     functions[function.getSymName()] = function;
+
+  // A process control can dynamically suspend or kill the caller. It must be
+  // moved into the process CFG before backend lowering, independent of the
+  // requested optimization level. Compute the transitive zero-time call
+  // closure so every boundary on a path to process.control is mandatory.
+  llvm::SmallPtrSet<Operation *, 32> controlFunctions;
+  llvm::StringSet<> controlFunctionNames;
+  for (auto &entry : functions) {
+    StringRef name = entry.getKey();
+    sim::SimFuncOp function = entry.getValue();
+    if (function.isExternal())
+      continue;
+    bool containsControl = false;
+    function.getBody().walk([&](sim::SimProcessControlOp) {
+      containsControl = true;
+      return WalkResult::interrupt();
+    });
+    if (containsControl) {
+      controlFunctions.insert(function.getOperation());
+      controlFunctionNames.insert(name);
+    }
+  }
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    for (auto &entry : functions) {
+      StringRef name = entry.getKey();
+      sim::SimFuncOp function = entry.getValue();
+      if (function.isExternal() || controlFunctions.contains(function))
+        continue;
+      bool callsControl = false;
+      function.getBody().walk([&](Operation *operation) {
+        if (isa<sim::SimFuncOp>(operation))
+          return WalkResult::skip();
+        FlatSymbolRefAttr calleeAttr;
+        if (auto call = dyn_cast<sim::SimCallOp>(operation))
+          calleeAttr = call.getCalleeAttr();
+        else if (auto call = dyn_cast<sim::SimClassDirectCallOp>(operation))
+          calleeAttr = call.getCalleeAttr();
+        if (calleeAttr) {
+          auto callee = functions.find(calleeAttr.getValue());
+          callsControl |= callee != functions.end() &&
+                          controlFunctions.contains(callee->second);
+        }
+        return callsControl ? WalkResult::interrupt() : WalkResult::advance();
+      });
+      if (callsControl) {
+        controlFunctions.insert(function.getOperation());
+        controlFunctionNames.insert(name);
+        changed = true;
+      }
+    }
+  }
+  if (optLevel == 0 && controlFunctions.empty())
+    return;
+
+  if (optLevel != 0) {
+    if (failed(sim::normalizeClassDirectCalls(design)))
+      return signalPassFailure();
+  } else {
+    SmallVector<sim::SimClassDirectCallOp> mandatoryDirectCalls;
+    design.walk([&](sim::SimClassDirectCallOp call) {
+      auto callee = functions.find(call.getCallee());
+      if (callee != functions.end() &&
+          controlFunctions.contains(callee->second.getOperation()))
+        mandatoryDirectCalls.push_back(call);
+    });
+    for (sim::SimClassDirectCallOp call : mandatoryDirectCalls)
+      if (failed(sim::normalizeClassDirectCall(call)))
+        return signalPassFailure();
+  }
+
+  DenseMap<Operation *, uint64_t> callerBaselines;
+  for (auto &entry : functions) {
+    sim::SimFuncOp function = entry.getValue();
     if (!function.isExternal())
       callerBaselines[function.getOperation()] =
           analysis::getSimulationRegionCost(function.getBody());
   }
+
   uint64_t designBaseline = 0;
   for (auto [function, cost] : callerBaselines)
     designBaseline = addSaturating(designBaseline, cost);
@@ -205,7 +280,13 @@ void ObeliskSimInlinePass::runOnOperation() {
 
   CallGraph &callGraph = getAnalysis<CallGraph>();
   InlinerConfig config;
-  config.setMaxInliningIterations(preset.iterations);
+  unsigned mandatoryIterations =
+      controlFunctions.empty()
+          ? 0
+          : static_cast<unsigned>(std::min<size_t>(
+                functions.size() + 1, std::numeric_limits<unsigned>::max()));
+  config.setMaxInliningIterations(
+      std::max(preset.iterations, mandatoryIterations));
 
   auto remark = [&](sim::SimCallOp call, const Twine &reason) {
     if (missedRemarks)
@@ -263,6 +344,27 @@ void ObeliskSimInlinePass::runOnOperation() {
     }
 
     uint64_t calleeCost = analysis::getSimulationRegionCost(callee.getBody());
+    if (controlFunctions.contains(callee.getOperation())) {
+      uint64_t callCost = analysis::getSimulationOperationCost(*call);
+      uint64_t callerCurrent = callerCurrentCosts.lookup(caller.getOperation());
+      uint64_t projectedCaller =
+          replaceCost(callerCurrent, callCost, calleeCost);
+      uint64_t projectedDesign =
+          replaceCost(currentDesignCost, callCost, calleeCost);
+      if (isOnlyDiscardableUse(callee, call, design) &&
+          calleeCost <= projectedDesign)
+        projectedDesign -= calleeCost;
+      uint64_t selectionID = selectedInlineIDs.size() + 1;
+      selectedInlineIDs.insert(selectionID);
+      call->setAttr(selectedInlineAttr,
+                    IntegerAttr::get(IntegerType::get(call.getContext(), 64),
+                                     selectionID));
+      callerCurrentCosts[caller.getOperation()] = projectedCaller;
+      currentDesignCost = projectedDesign;
+      provenanceCache.erase(caller.getOperation());
+      return true;
+    }
+
     bool leaf = true;
     forEachDirectCall(callee, [&](sim::SimCallOp) { leaf = false; });
     bool tiny = leaf && calleeCost <= preset.tinyCost;
@@ -357,7 +459,30 @@ void ObeliskSimInlinePass::runOnOperation() {
   for (uint64_t selection : selectedInlineIDs)
     if (!remainingSelections.contains(selection))
       ++inlined;
-  if (failed(result))
+  bool residualControl = false;
+  design.walk([&](sim::SimCallOp call) {
+    if (!controlFunctionNames.contains(call.getCallee()))
+      return;
+    residualControl = true;
+    sim::SimFuncOp callee =
+        SymbolTable::lookupNearestSymbolFrom<sim::SimFuncOp>(
+            call, call.getCalleeAttr());
+    sim::InlineLegality legality = sim::getInlineLegality(call, callee);
+    StringRef reason = sim::getInlineLegalityReason(legality);
+    call.emitOpError("cannot safely propagate process control through this "
+                     "zero-time call: ")
+        << (reason.empty() ? "mandatory inlining did not converge" : reason);
+  });
+  design.walk([&](sim::SimProcessControlOp control) {
+    sim::SimFuncOp function = control->getParentOfType<sim::SimFuncOp>();
+    if (!function || function.getEntryKind() != sim::EntryKind::Function)
+      return;
+    residualControl = true;
+    control.emitOpError("cannot remain in a zero-time function after mandatory "
+                        "process-control inlining; callable boundary requires "
+                        "process-control CPS lowering");
+  });
+  if (failed(result) || residualControl)
     signalPassFailure();
 }
 
