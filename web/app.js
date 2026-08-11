@@ -129,11 +129,15 @@ function buildStageTabs() {
 }
 
 function paintStageSelection() {
+  let selected = null;
   for (const button of ui.stages.querySelectorAll('.stage')) {
-    button.setAttribute('aria-selected', String(button.dataset.stage === activeStage));
+    const isSelected = button.dataset.stage === activeStage;
+    button.setAttribute('aria-selected', String(isSelected));
+    if (isSelected) selected = button;
   }
   ui.stageBlurb.textContent = findStage(activeStage).blurb;
   renderCommand();
+  selected?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 
 function selectStage(id) {
@@ -729,11 +733,74 @@ function initChrome() {
   });
 
   initHandle();
+  initPipelineScroll();
+}
+
+function initPipelineScroll() {
+  const pipeline = ui.stages.closest('.pipeline');
+  let pointerId = null;
+  let startX = 0;
+  let startScrollLeft = 0;
+  let dragged = false;
+
+  // Touch already gets native momentum scrolling. Mouse users need an
+  // equivalent when a narrow desktop window clips the tab strip.
+  const updateDraggable = () => pipeline.classList.toggle(
+    'canDrag', pipeline.scrollWidth > pipeline.clientWidth + 1,
+  );
+  const resizeObserver = new ResizeObserver(updateDraggable);
+  resizeObserver.observe(pipeline);
+  resizeObserver.observe(ui.stages);
+  requestAnimationFrame(updateDraggable);
+
+  pipeline.addEventListener('pointerdown', (event) => {
+    if (!pipeline.classList.contains('canDrag')
+        || event.pointerType !== 'mouse' || event.button !== 0) return;
+    pointerId = event.pointerId;
+    startX = event.clientX;
+    startScrollLeft = pipeline.scrollLeft;
+    dragged = false;
+    pipeline.setPointerCapture(pointerId);
+  });
+  pipeline.addEventListener('pointermove', (event) => {
+    if (event.pointerId !== pointerId) return;
+    const distance = event.clientX - startX;
+    if (Math.abs(distance) < 4 && !dragged) return;
+    dragged = true;
+    pipeline.classList.add('isDragging');
+    pipeline.scrollLeft = startScrollLeft - distance;
+    event.preventDefault();
+  });
+  const stopDragging = (event) => {
+    if (event.pointerId !== pointerId) return;
+    if (pipeline.hasPointerCapture(pointerId)) pipeline.releasePointerCapture(pointerId);
+    pointerId = null;
+    pipeline.classList.remove('isDragging');
+  };
+  pipeline.addEventListener('pointerup', stopDragging);
+  pipeline.addEventListener('pointercancel', stopDragging);
+  pipeline.addEventListener('click', (event) => {
+    if (!dragged) return;
+    event.preventDefault();
+    event.stopPropagation();
+    dragged = false;
+  }, true);
 }
 
 function initHandle() {
   let dragging = false;
-  const stacked = () => window.matchMedia('(max-width: 860px)').matches;
+  const stackedMedia = window.matchMedia('(max-width: 860px)');
+  const stacked = () => stackedMedia.matches;
+
+  // Inline grid tracks set by dragging outrank media-query styles. Clear the
+  // track for the old axis when crossing the breakpoint so rotating a phone or
+  // resizing a browser cannot leave the workbench in a three-column mobile
+  // layout (or a three-row desktop layout).
+  const syncOrientation = () => {
+    if (stacked()) ui.workbench.style.gridTemplateColumns = '';
+    else ui.workbench.style.gridTemplateRows = '';
+    ui.handle.setAttribute('aria-orientation', stacked() ? 'horizontal' : 'vertical');
+  };
 
   const move = (event) => {
     if (!dragging) return;
@@ -751,12 +818,17 @@ function initHandle() {
     ui.handle.setPointerCapture(event.pointerId);
     document.body.style.userSelect = 'none';
   });
-  ui.handle.addEventListener('pointerup', (event) => {
+  const stopDragging = (event) => {
     dragging = false;
-    ui.handle.releasePointerCapture(event.pointerId);
+    if (ui.handle.hasPointerCapture(event.pointerId))
+      ui.handle.releasePointerCapture(event.pointerId);
     document.body.style.userSelect = '';
-  });
+  };
+  ui.handle.addEventListener('pointerup', stopDragging);
+  ui.handle.addEventListener('pointercancel', stopDragging);
   ui.handle.addEventListener('pointermove', move);
+  stackedMedia.addEventListener('change', syncOrientation);
+  syncOrientation();
 }
 
 /* -------------------------------------------------------------------- misc */

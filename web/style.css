@@ -133,17 +133,33 @@ button, select, input { font: inherit; color: inherit; }
   background: var(--panel);
   overflow-x: auto;
   overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x;
+  -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
 }
 .pipeline::-webkit-scrollbar { display: none; }
+.pipeline.canDrag,
+.pipeline.canDrag .stage { cursor: grab; }
+.pipeline.isDragging,
+.pipeline.isDragging .stage { cursor: grabbing; user-select: none; }
 
 .pipeline ol {
   display: flex;
   align-items: stretch;
+  width: max-content;
+  min-width: 100%;
   height: 100%;
   margin: 0;
   padding: 0 12px;
   list-style: none;
+}
+.pipeline li {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  flex: none;
+  padding: 0 13px;
 }
 
 .stage {
@@ -151,7 +167,7 @@ button, select, input { font: inherit; color: inherit; }
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 0 13px;
+  padding: 0;
   border: 0;
   background: none;
   color: var(--fg-dim);
@@ -169,26 +185,12 @@ button, select, input { font: inherit; color: inherit; }
 }
 .stage:hover .ord { color: var(--fg-dim); }
 
-/* The connector is a rising clock edge, not an arrow: the stages advance the
-   way a simulation does. */
-.stage + .stage::before {
-  content: "";
-  position: absolute;
-  left: -7px;
-  top: 50%;
-  width: 8px;
-  height: 7px;
-  border-left: 1px solid var(--rule);
-  border-top: 1px solid var(--rule);
-  transform: translateY(-3.5px);
-}
-
 .stage[aria-selected="true"] { color: var(--signal); }
 .stage[aria-selected="true"] .ord { color: var(--signal); }
 .stage[aria-selected="true"]::after {
   content: "";
   position: absolute;
-  left: 10px; right: 10px; bottom: 0;
+  left: 0; right: 0; bottom: 0;
   height: 2px;
   background: var(--signal);
 }
@@ -261,6 +263,7 @@ button, select, input { font: inherit; color: inherit; }
   display: grid;
   grid-template-columns: 1fr 5px 1fr;
   height: calc(100vh - var(--masthead));
+  height: calc(100dvh - var(--masthead));
   min-height: 340px;
 }
 /* With the options panel open the page scrolls rather than crushing the
@@ -299,7 +302,7 @@ button, select, input { font: inherit; color: inherit; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.panelTools { display: flex; align-items: center; gap: 9px; }
+.panelTools { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .panelTools > [hidden] { display: none; }
 
 .inline {
@@ -311,7 +314,14 @@ button, select, input { font: inherit; color: inherit; }
 }
 .inline:hover { color: var(--fg); }
 
-.status { font: 400 12px/1 var(--mono); color: var(--fg-dim); }
+.status {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 400 12px/1 var(--mono);
+  color: var(--fg-dim);
+}
 .status.ok   { color: var(--settled); }
 .status.err  { color: var(--unknown); }
 .status.busy { color: var(--signal); }
@@ -509,10 +519,65 @@ button, select, input { font: inherit; color: inherit; }
 @media (max-width: 860px) {
   .workbench {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(220px, 1fr) 5px minmax(200px, 1fr);
-    height: auto;
+    grid-template-rows: minmax(220px, 1fr) 8px minmax(220px, 1fr);
+    height: calc(100vh - var(--masthead));
+    height: calc(100dvh - var(--masthead));
+    min-height: 448px;
   }
   .handle { cursor: row-resize; }
+
+  .options:not([hidden]) ~ .workbench {
+    height: max(62vh, 448px);
+    height: max(62dvh, 448px);
+  }
+}
+
+@media (max-width: 600px) {
+  :root { --masthead: 94px; }
+
+  .masthead {
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: center;
+    gap: 5px;
+    padding: 6px max(10px, env(safe-area-inset-right)) 7px
+      max(10px, env(safe-area-inset-left));
+  }
+
+  .identity { height: 27px; align-items: flex-end; gap: 9px; }
+  .actions {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+  }
+  .actions > button { justify-content: center; min-width: 0; }
+  .run kbd { display: none; }
+
+  .options {
+    padding: 12px max(10px, env(safe-area-inset-right)) 14px
+      max(10px, env(safe-area-inset-left));
+  }
+  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .field.wide { grid-column: 1 / -1; }
+  .commandline { margin-top: 12px; }
+
+  .panelHead { gap: 6px; padding-inline: 8px; }
+  .panelHead h2 { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .panelTools { gap: 5px; }
+  .panelTools .ghost.tiny { padding-inline: 6px; }
+  #sourcePanel .inline { max-width: 58vw; }
+
+  .pipeline ol { padding-inline: 5px; }
+  .pipeline li { padding-inline: 10px; }
+  .stage { gap: 5px; }
+  .console { padding: 10px; font-size: 12px; }
+  .scheduleSummary,
+  .scheduleLegend { padding-inline: 10px; }
+}
+
+@media (max-width: 340px) {
+  .ghost, .run { padding-inline: 7px; font-size: 12px; }
+  .grid { grid-template-columns: 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {
