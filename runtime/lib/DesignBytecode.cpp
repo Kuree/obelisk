@@ -3100,8 +3100,8 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
       uint32_t selectedRank = UINT32_MAX;
       uint64_t selectedInsertionSequence = UINT64_MAX;
       uint32_t activePhase = context->schedulerRunningFinals ? 1u : 0u;
-      bool unstartedActorPending =
-          obelisk_rt_unstarted_actor_pending(context, activePhase);
+      uint32_t unstartedActorRegion =
+          obelisk_rt_unstarted_actor_region(context, activePhase);
       for (uint64_t candidateID : context->designPollCandidates) {
         if (context->nativeScheduleDesignTaskFilterActive &&
             candidateID != context->nativeScheduleForcedDesignTask)
@@ -3192,8 +3192,8 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
                      iterator->suspendKind != OBELISK_RT_SUSPEND_CHILDREN &&
                      iterator->suspendKind != OBELISK_RT_SUSPEND_OBSERVER &&
                      iterator->observedEpoch != context->schedulerEpoch)));
-        if (runnable && unstartedActorPending && signalTriggered &&
-            !iterator->urgent && !iterator->prioritySignal)
+        if (runnable && iterator->queuedRegion >= unstartedActorRegion &&
+            signalTriggered && !iterator->urgent && !iterator->prioritySignal)
           runnable = false;
         auto key = iterator->prioritySignal && signalTriggered
                        ? std::tuple{iterator->queuedRegion, uint32_t{0},

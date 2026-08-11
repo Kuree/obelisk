@@ -1518,6 +1518,41 @@ TEST(Scheduler, ComputeGraphRanksOrderRunnableProcesses) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, UnstartedPostponedActorsDoNotPreemptActiveResumes) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  SchedulerFixture active(10);
+  SchedulerFixture monitor(200);
+  schedulerWaitKind = OBELISK_RT_SUSPEND_CHANGE;
+  schedulerWaitEdge = OBELISK_RT_WAIT_EDGE_CHANGE;
+  schedulerWaitHandle = 16;
+  schedulerWaitWidth = 1;
+  schedulerResumeCount = 0;
+  schedulerOrder.clear();
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add(context,
+                                        makeSchedulerInstance(active), 0),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  ASSERT_TRUE(schedulerOrder.empty());
+
+  // An actor that has never run does take its first activation ahead of
+  // signal resumptions, but only within its own region: a postponed actor
+  // that preempted this active resume would observe the values from before
+  // the active region ran, and would leave the Postponed region reachable a
+  // second time in the same time slot (IEEE 1800-2017 4.4.2.9).
+  obelisk_rt_v1_scheduler_signal(context, schedulerWaitHandle,
+                                 schedulerWaitWidth,
+                                 OBELISK_RT_SIGNAL_CHANGE);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add(
+                context, makeSchedulerInstance(monitor),
+                OBELISK_RT_SCHEDULE_HOME(OBELISK_RT_REGION_POSTPONED)),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(schedulerOrder, (std::vector<uint64_t>{10, 200}));
+  EXPECT_EQ(schedulerResumeCount, 1u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, PlannedContinuationRanksApplyAfterResume) {
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);

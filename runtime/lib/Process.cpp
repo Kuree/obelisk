@@ -2051,8 +2051,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
       nativeScanSelectionGeneration = context->schedulerSelectionGeneration;
       nativeScanInsertionSequence = context->nextProcessInsertionSequence;
       uint32_t activePhase = context->schedulerRunningFinals ? 1u : 0u;
-      bool unstartedActorPending =
-          obelisk_rt_unstarted_actor_pending(context, activePhase);
+      uint32_t unstartedActorRegion =
+          obelisk_rt_unstarted_actor_region(context, activePhase);
       size_t nativeUrgentDistance = SIZE_MAX;
       bool forcedNativeNode = context->nativeScheduleForcedSlot != UINT32_MAX;
       auto considerNativeToken = [&](uint64_t token) {
@@ -2072,8 +2072,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         bool signalResume = candidate.signalTriggered ||
                             (candidate.signalLatch &&
                              candidate.signalLatch->triggered);
-        if (runnable && unstartedActorPending && signalResume &&
-            !candidate.urgent && !candidate.prioritySignal)
+        if (runnable && candidate.queuedRegion >= unstartedActorRegion &&
+            signalResume && !candidate.urgent && !candidate.prioritySignal)
           runnable = false;
         if (runnable && candidate.urgent) {
           size_t distance =

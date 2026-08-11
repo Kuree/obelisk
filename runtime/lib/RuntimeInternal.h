@@ -1004,13 +1004,21 @@ inline void obelisk_rt_unregister_unstarted_actor(obelisk_rt_context *context,
   obelisk_rt_unstarted_actors(context, phase).erase(logicalToken);
 }
 
-inline bool obelisk_rt_unstarted_actor_pending(obelisk_rt_context *context,
-                                               uint32_t phase) {
+// The earliest home region holding an actor that has never run, or UINT32_MAX
+// when every actor of this phase has started. A never-started actor takes its
+// first activation ahead of signal resumptions in its own region, but it must
+// not hold back an earlier one: a postponed $monitor actor that preempted the
+// active region would observe the values from before that region ran, and the
+// Postponed region would then be reached twice in one time slot
+// (IEEE 1800-2017 4.4.2.9).
+inline uint32_t obelisk_rt_unstarted_actor_region(obelisk_rt_context *context,
+                                                  uint32_t phase) {
   auto &actors = obelisk_rt_unstarted_actors(context, phase);
-  while (!actors.empty()) {
-    auto actor = actors.begin();
+  uint32_t earliest = UINT32_MAX;
+  for (auto actor = actors.begin(); actor != actors.end();) {
     uint64_t logicalToken = *actor;
     bool pending = false;
+    uint32_t homeRegion = OBELISK_RT_REGION_ACTIVE;
     if ((logicalToken & OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG) != 0) {
       uint64_t token = logicalToken & ~OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG;
       auto indexed = context->scheduledProcessIndices.find(token);
@@ -1020,6 +1028,7 @@ inline bool obelisk_rt_unstarted_actor_pending(obelisk_rt_context *context,
             context->scheduledProcesses[indexed->second];
         pending = process.instance && process.token == token &&
                   process.phase == phase && !process.started;
+        homeRegion = process.homeRegion;
       }
     } else {
       auto indexed = context->scheduledDesignTaskIndices.find(logicalToken);
@@ -1029,13 +1038,25 @@ inline bool obelisk_rt_unstarted_actor_pending(obelisk_rt_context *context,
             context->scheduledDesignTasks[indexed->second];
         pending = !task.terminated && task.id == logicalToken &&
                   task.phase == phase && !task.started;
+        homeRegion = task.homeRegion;
       }
     }
-    if (pending)
-      return true;
-    actors.erase(actor);
+    if (!pending) {
+      actor = actors.erase(actor);
+      continue;
+    }
+    // Nothing can precede the active region, so stop compacting there.
+    if (homeRegion == OBELISK_RT_REGION_ACTIVE)
+      return OBELISK_RT_REGION_ACTIVE;
+    earliest = std::min(earliest, homeRegion);
+    ++actor;
   }
-  return false;
+  return earliest;
+}
+
+inline bool obelisk_rt_unstarted_actor_pending(obelisk_rt_context *context,
+                                               uint32_t phase) {
+  return obelisk_rt_unstarted_actor_region(context, phase) != UINT32_MAX;
 }
 
 inline bool
