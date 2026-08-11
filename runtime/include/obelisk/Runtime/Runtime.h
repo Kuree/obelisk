@@ -2792,6 +2792,10 @@ typedef struct obelisk_rt_random_state_v1 {
   uint64_t increment;
 } obelisk_rt_random_state_v1;
 
+// Shared PCG-XSH-RR parameters used by process and object-local streams.
+#define OBELISK_RT_RANDOM_MULTIPLIER UINT64_C(6364136223846793005)
+#define OBELISK_RT_RANDOM_DEFAULT_INCREMENT UINT64_C(1442695040888963407)
+
 // Versioned stack program executed by the constrained-random fallback. The
 // byte representation is explicitly little-endian and does not use these C
 // types as an in-memory wire format. Version 1 has a 24-byte header followed by

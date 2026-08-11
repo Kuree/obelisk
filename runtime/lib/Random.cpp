@@ -9,9 +9,9 @@
 
 namespace {
 
-constexpr uint64_t kMultiplier = UINT64_C(6364136223846793005);
+constexpr uint64_t kMultiplier = OBELISK_RT_RANDOM_MULTIPLIER;
 // The prior context-global generator used this odd increment directly.
-constexpr uint64_t kDefaultIncrement = UINT64_C(1442695040888963407);
+constexpr uint64_t kDefaultIncrement = OBELISK_RT_RANDOM_DEFAULT_INCREMENT;
 constexpr uint64_t kDefaultSequence = kDefaultIncrement >> 1;
 
 uint64_t next64(obelisk_rt_random_state_v1 &state) {

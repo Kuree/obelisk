@@ -1,6 +1,13 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
+// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines -o /dev/null
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
+// RUN:   '--encode-obelisk-sim-to-bytecode=vpi=off' -o /dev/null
 
-module {
+module attributes {
+  llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
+  llvm.target_triple = "x86_64-unknown-linux-gnu"
+} {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "supported_class_use", name = "supported_class_use", node_id = 0 : i64, sym_name = "s0.supported_class_use"} {
   }
   obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
@@ -103,6 +110,24 @@ module {
                   }
                 }
               }
+              obelisk.sv.statement.expression_statement attributes {node_id = 54 : i64} {
+                obelisk.sv.expression.call attributes {argument_count = 2 : i64, callee_name = "srandom", constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = true, is_signed = false, is_super_class = false, is_system_call = false, node_id = 55 : i64, referenced_path = "supported_object::srandom", referenced_symbol = @s1.$root::@s2::@s3.supported_object::@s11.srandom, semantic_type = !obelisk.void, subroutine_kind = 0 : i32} {
+                  obelisk.sv.expression.named_value attributes {node_id = 56 : i64, referenced_path = "supported_class_use.object", referenced_symbol = @s1.$root::@s17.supported_class_use::@s18.supported_class_use::@s19::@s20.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.supported_object>} {
+                  }
+                  obelisk.sv.expression.integer_literal attributes {constant_value = "123", is_declared_unsized = true, is_signed = true, node_id = 57 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                  }
+                }
+              }
+              obelisk.sv.statement.expression_statement attributes {node_id = 58 : i64} {
+                obelisk.sv.expression.call attributes {argument_count = 2 : i64, callee_name = "set_randstate", constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = true, is_signed = false, is_super_class = false, is_system_call = false, node_id = 59 : i64, referenced_path = "supported_object::set_randstate", referenced_symbol = @s1.$root::@s2::@s3.supported_object::@s9.set_randstate, semantic_type = !obelisk.void, subroutine_kind = 0 : i32} {
+                  obelisk.sv.expression.named_value attributes {node_id = 60 : i64, referenced_path = "supported_class_use.object", referenced_symbol = @s1.$root::@s17.supported_class_use::@s18.supported_class_use::@s19::@s20.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.supported_object>} {
+                  }
+                  obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "get_randstate", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = true, is_signed = false, is_super_class = false, is_system_call = false, node_id = 61 : i64, referenced_path = "supported_object::get_randstate", referenced_symbol = @s1.$root::@s2::@s3.supported_object::@s8.get_randstate, semantic_type = !obelisk.string, subroutine_kind = 0 : i32} {
+                    obelisk.sv.expression.named_value attributes {node_id = 62 : i64, referenced_path = "supported_class_use.object", referenced_symbol = @s1.$root::@s17.supported_class_use::@s18.supported_class_use::@s19::@s20.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.supported_object>} {
+                    }
+                  }
+                }
+              }
             }
           }
         }
@@ -122,4 +147,16 @@ module {
 // CHECK: obelisk_sim.class.field_ref
 // CHECK: obelisk_sim.ref.store
 // CHECK: obelisk_sim.call @{{unit_[0-9]+}}({{.*}}) : (!obelisk_sim.context, i32) -> ()
+// CHECK: arith.constant {{.*}} -8545228632546703407 : i64
+// CHECK: obelisk_sim.managed.store
+// CHECK: arith.constant {{.*}} 1442695040888963407 : i64
+// CHECK: obelisk_sim.managed.store
+// CHECK: obelisk_sim.string.format_integer
+// CHECK: obelisk_sim.string.literal ":"
+// CHECK: obelisk_sim.string.concat
+// CHECK: obelisk_sim.string.format_integer
+// CHECK: obelisk_sim.string.concat
+// CHECK-COUNT-2: obelisk_sim.string.scan_field
+// CHECK-COUNT-2: obelisk_sim.string.parse_integer
+// CHECK-COUNT-2: obelisk_sim.managed.store
 // CHECK-NOT: obelisk.sv.

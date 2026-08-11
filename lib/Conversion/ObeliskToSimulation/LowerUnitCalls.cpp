@@ -382,6 +382,153 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       return failure();
     return convert(enabled, *resultType, false, location);
   }
+  StringRef objectRandomMethod = op.getCalleeName();
+  if (objectRandomMethod == "get_randstate" ||
+      objectRandomMethod == "set_randstate" ||
+      objectRandomMethod == "srandom") {
+    size_t expectedChildren = objectRandomMethod == "get_randstate" ? 1 : 2;
+    if (children.size() != expectedChildren) {
+      emitError(location) << objectRandomMethod
+                          << " has malformed object-method arguments";
+      return failure();
+    }
+    FailureOr<Value> loweredReceiver = lowerExpression(children.front());
+    auto objectType =
+        succeeded(loweredReceiver)
+            ? dyn_cast<sim::ClassHandleType>((*loweredReceiver).getType())
+            : sim::ClassHandleType{};
+    if (failed(loweredReceiver) || !objectType) {
+      emitError(location) << objectRandomMethod
+                          << " receiver is not a class object";
+      return failure();
+    }
+    sim::SimClassDeclOp declaration =
+        SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+            function, objectType.getClassName());
+    while (declaration &&
+           !declaration->hasAttr("obelisk_sim.random_state_field")) {
+      if (!declaration.getBaseAttr())
+        break;
+      declaration = SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+          function, declaration.getBaseAttr());
+    }
+    auto stateField =
+        declaration
+            ? declaration->getAttrOfType<FlatSymbolRefAttr>(
+                  "obelisk_sim.random_state_field")
+            : FlatSymbolRefAttr{};
+    auto incrementField =
+        declaration
+            ? declaration->getAttrOfType<FlatSymbolRefAttr>(
+                  "obelisk_sim.random_increment_field")
+            : FlatSymbolRefAttr{};
+    if (!declaration || !stateField || !incrementField) {
+      emitError(location) << objectRandomMethod
+                          << " receiver has no object-local stream";
+      return failure();
+    }
+    Type i64 = builder.getI64Type();
+    Type referenceType = sim::ManagedRefType::get(
+        function.getContext(), i64, objectType.getClassName());
+    Value stateReference = sim::SimClassFieldRefOp::create(
+        builder, location, referenceType, *loweredReceiver, stateField);
+    Value incrementReference = sim::SimClassFieldRefOp::create(
+        builder, location, referenceType, *loweredReceiver, incrementField);
+    auto dummyResult = [&]() -> Value {
+      return arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                       builder.getBoolAttr(false));
+    };
+    if (objectRandomMethod == "get_randstate") {
+      Value state = sim::SimManagedLoadOp::create(builder, location, i64,
+                                                  stateReference);
+      Value increment = sim::SimManagedLoadOp::create(
+          builder, location, i64, incrementReference);
+      Type stringType = sim::StringType::get(function.getContext());
+      Value stateText = sim::SimStringFormatIntegerOp::create(
+          builder, location, stringType, state, builder.getI32IntegerAttr(16),
+          builder.getBoolAttr(false));
+      Value separator = sim::SimStringLiteralOp::create(
+          builder, location, stringType, builder.getStringAttr(":"));
+      Value prefix = sim::SimStringConcatOp::create(
+          builder, location, stringType, ValueRange{stateText, separator});
+      Value incrementText = sim::SimStringFormatIntegerOp::create(
+          builder, location, stringType, increment,
+          builder.getI32IntegerAttr(16), builder.getBoolAttr(false));
+      return sim::SimStringConcatOp::create(builder, location, stringType,
+                                            ValueRange{prefix, incrementText})
+          .getResult();
+    }
+    if (objectRandomMethod == "set_randstate") {
+      FailureOr<Value> snapshot = lowerExpression(children[1]);
+      if (failed(snapshot) || !isa<sim::StringType>((*snapshot).getType())) {
+        emitError(location) << "set_randstate argument is not a string";
+        return failure();
+      }
+      Type stringType = sim::StringType::get(function.getContext());
+      Type i32 = builder.getI32Type();
+      Value cursor = arith::ConstantOp::create(
+          builder, location, i32, builder.getI32IntegerAttr(0));
+      auto stateField = sim::SimStringScanFieldOp::create(
+          builder, location, TypeRange{stringType, i32, i32}, *snapshot,
+          cursor, builder.getStringAttr(""), static_cast<uint32_t>('x'));
+      auto incrementField = sim::SimStringScanFieldOp::create(
+          builder, location, TypeRange{stringType, i32, i32}, *snapshot,
+          stateField.getNextCursor(), builder.getStringAttr(":"),
+          static_cast<uint32_t>('x'));
+      Value parsedState = sim::SimStringParseIntegerOp::create(
+          builder, location, i64, stateField.getField(),
+          builder.getI32IntegerAttr(16));
+      Value parsedIncrement = sim::SimStringParseIntegerOp::create(
+          builder, location, i64, incrementField.getField(),
+          builder.getI32IntegerAttr(16));
+      Value zero = arith::ConstantOp::create(
+          builder, location, i32, builder.getI32IntegerAttr(0));
+      Value stateMatched = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne, stateField.getOk(),
+          zero);
+      Value incrementMatched = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne, incrementField.getOk(),
+          zero);
+      Value matched = arith::AndIOp::create(builder, location, stateMatched,
+                                            incrementMatched);
+      Value oldState = sim::SimManagedLoadOp::create(builder, location, i64,
+                                                     stateReference);
+      Value oldIncrement = sim::SimManagedLoadOp::create(
+          builder, location, i64, incrementReference);
+      Value state = arith::SelectOp::create(builder, location, matched,
+                                            parsedState, oldState);
+      Value increment = arith::SelectOp::create(
+          builder, location, matched, parsedIncrement, oldIncrement);
+      sim::SimManagedStoreOp::create(builder, location, state, stateReference);
+      sim::SimManagedStoreOp::create(builder, location, increment,
+                                     incrementReference);
+      return dummyResult();
+    }
+
+    FailureOr<Value> seed32 = lowerExpression(children[1]);
+    if (failed(seed32))
+      return failure();
+    seed32 = convert(*seed32, builder.getI32Type(), isSignedNode(children[1]),
+                     location);
+    if (failed(seed32))
+      return failure();
+    Value seed =
+        arith::ExtUIOp::create(builder, location, i64, *seed32);
+    Value increment = arith::ConstantOp::create(
+        builder, location, i64,
+        builder.getIntegerAttr(
+            i64, APInt(64, OBELISK_RT_RANDOM_DEFAULT_INCREMENT)));
+    Value multiplier = arith::ConstantOp::create(
+        builder, location, i64,
+        builder.getIntegerAttr(i64, APInt(64, OBELISK_RT_RANDOM_MULTIPLIER)));
+    Value state = arith::AddIOp::create(builder, location, increment, seed);
+    state = arith::MulIOp::create(builder, location, state, multiplier);
+    state = arith::AddIOp::create(builder, location, state, increment);
+    sim::SimManagedStoreOp::create(builder, location, state, stateReference);
+    sim::SimManagedStoreOp::create(builder, location, increment,
+                                   incrementReference);
+    return dummyResult();
+  }
   if (op.getIsSystemCall() && !stringBuiltin && !containerBuiltin &&
       !associativeBuiltin)
     return lowerSystemCall(op);
