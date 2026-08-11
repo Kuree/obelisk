@@ -2,6 +2,7 @@ add_mlir_library(ObeliskToSimulation
   BuildComputeGraph.cpp
   ComputeFusion.cpp
   ComputeGraph.cpp
+  DevirtualizeClassCalls.cpp
   EliminateDeadBoundaries.cpp
   EliminateDeadCaptures.cpp
   Finalize.cpp

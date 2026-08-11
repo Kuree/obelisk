@@ -209,6 +209,8 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
     functionManager.addPass(createCSEPass());
   }
   designManager.addPass(createObeliskSimMaterializeClockedSamplesPass());
+  if (optLevel > 0)
+    designManager.addPass(createObeliskSimDevirtualizeClassCallsPass());
   // Graph metadata does not participate in symbol liveness. Complete all
   // symbol pruning before graph construction so its nested references can
   // never become stale.
@@ -233,6 +235,8 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
     functionManager.addPass(createCanonicalizerPass());
     functionManager.addPass(createCSEPass());
   }
+  if (optLevel > 0)
+    designManager.addPass(createObeliskSimDevirtualizeClassCallsPass());
   ObeliskSimSCCPPassOptions secondSCCPOptions;
   secondSCCPOptions.vpi = vpiMode.str();
   designManager.addPass(

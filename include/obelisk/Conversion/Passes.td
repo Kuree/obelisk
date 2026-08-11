@@ -120,6 +120,22 @@ def ObeliskSimSCCPPass
   ];
 }
 
+def ObeliskSimDevirtualizeClassCallsPass
+    : Pass<"obelisk-sim-devirtualize-class-calls",
+           "obelisk::sim::SimDesignOp"> {
+  let summary = "Resolve provably exact managed-class dispatches";
+  let description = [{
+    Tracks exact non-null dynamic classes through allocation, checked casts,
+    and shallow copies. Virtual function calls with a uniquely resolved
+    effective method are rewritten to ordinary simulation calls so standard
+    call-graph optimization and inlining can see them. Existing direct class
+    calls are normalized to the same call representation.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect"
+  ];
+}
+
 def ObeliskSimEliminateDeadCapturesPass
     : Pass<"obelisk-sim-eliminate-dead-captures",
            "obelisk::sim::SimDesignOp"> {
