@@ -219,6 +219,15 @@ module {
       obelisk_sim.ref.store %multi to %storage : i32, !obelisk_sim.ref<i32>
       %math = obelisk_sim.call @pure_math(%ctx, %zero)
           : (!obelisk_sim.context, i32) -> i32
+      // Keep several independent inactive calls in one erase batch. The
+      // implementation must not retain invalidated vector iterators while
+      // removing them in reverse order.
+      %math1 = obelisk_sim.call @pure_math(%ctx, %zero)
+          : (!obelisk_sim.context, i32) -> i32
+      %math2 = obelisk_sim.call @pure_math(%ctx, %zero)
+          : (!obelisk_sim.context, i32) -> i32
+      %math3 = obelisk_sim.call @pure_math(%ctx, %zero)
+          : (!obelisk_sim.context, i32) -> i32
       %read = obelisk_sim.call @pure_reads(%ctx, %storage, %net)
           : (!obelisk_sim.context, !obelisk_sim.ref<i32>, !obelisk_sim.net<i32>) -> i32
       %written = obelisk_sim.call @writer(%ctx, %storage, %zero)

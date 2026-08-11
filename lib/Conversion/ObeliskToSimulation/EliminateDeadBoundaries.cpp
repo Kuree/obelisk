@@ -786,17 +786,19 @@ void BoundaryEliminator::mutate() {
       inactiveCalls.push_back(cast<sim::SimCallOp>(site.operation));
   while (!inactiveCalls.empty()) {
     bool erased = false;
-    for (auto iterator = inactiveCalls.rbegin();
-         iterator != inactiveCalls.rend();) {
-      sim::SimCallOp call = *iterator;
+    // Erasing from a SmallVector invalidates all iterators at and after the
+    // erased element. Walk by descending index so removing an element cannot
+    // invalidate the yet-to-be-visited prefix. In particular, do not retain a
+    // reverse iterator across erase: a batch of independent dead calls would
+    // otherwise reuse an invalidated underlying iterator.
+    for (size_t index = inactiveCalls.size(); index-- > 0;) {
+      sim::SimCallOp call = inactiveCalls[index];
       if (!llvm::all_of(call->getResults(),
                         [](Value value) { return value.use_empty(); })) {
-        ++iterator;
         continue;
       }
-      auto base = std::next(iterator).base();
       call.erase();
-      inactiveCalls.erase(base);
+      inactiveCalls.erase(inactiveCalls.begin() + index);
       addStatistic(statistics.pureCallsErased);
       erased = true;
     }
