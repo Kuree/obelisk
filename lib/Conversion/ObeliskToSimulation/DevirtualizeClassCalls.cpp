@@ -31,9 +31,36 @@ bool isDirectTarget(sim::SimClassMethodDeclOp method,
          method.getImplementationAttr();
 }
 
+bool isDirectTarget(sim::SimClassMethodDeclOp method,
+                    sim::SimClassVirtualTaskCallOp call) {
+  return method && method.getSignatureIdAttr() &&
+         method.getSignatureId() == call.getSignatureId() &&
+         !method.getIsPure() && method.getIsTask() &&
+         method.getImplementationAttr();
+}
+
 sim::SimClassMethodDeclOp resolveMonomorphic(
     const analysis::ClassDispatchAnalysis &dispatch,
     sim::SimClassDeclOp staticClass, sim::SimClassVirtualCallOp call) {
+  sim::SimClassMethodDeclOp selected;
+  for (sim::SimClassDeclOp candidate :
+       dispatch.compatibleConcreteClasses(staticClass)) {
+    sim::SimClassMethodDeclOp method = dispatch.resolve(
+        candidate, call.getSlot(), call.getSignatureId());
+    if (!isDirectTarget(method, call))
+      return {};
+    if (!selected)
+      selected = method;
+    else if (selected.getImplementationAttr() !=
+             method.getImplementationAttr())
+      return {};
+  }
+  return selected;
+}
+
+sim::SimClassMethodDeclOp resolveMonomorphic(
+    const analysis::ClassDispatchAnalysis &dispatch,
+    sim::SimClassDeclOp staticClass, sim::SimClassVirtualTaskCallOp call) {
   sim::SimClassMethodDeclOp selected;
   for (sim::SimClassDeclOp candidate :
        dispatch.compatibleConcreteClasses(staticClass)) {
@@ -167,6 +194,77 @@ LogicalResult createGuardedDirectCall(IRRewriter &rewriter,
   return success();
 }
 
+FailureOr<sim::SimTaskCallOp>
+createDirectTaskCall(IRRewriter &rewriter,
+                     sim::SimClassVirtualTaskCallOp call,
+                     sim::SimClassMethodDeclOp method) {
+  sim::SimFuncOp caller = call->getParentOfType<sim::SimFuncOp>();
+  auto implementation =
+      SymbolTable::lookupNearestSymbolFrom<sim::SimFuncOp>(
+          call, method.getImplementationAttr());
+  if (!caller || caller.getBody().empty() ||
+      caller.getBody().front().getNumArguments() == 0 || !implementation ||
+      implementation.getEntryKind() != sim::EntryKind::Task ||
+      implementation.getFunctionType().getNumInputs() < 2)
+    return failure();
+
+  Value receiver = call.getReceiver();
+  Type expectedReceiver = implementation.getFunctionType().getInput(1);
+  if (receiver.getType() != expectedReceiver)
+    receiver = sim::SimClassCastOp::create(rewriter, call.getLoc(),
+                                           expectedReceiver, receiver);
+
+  SmallVector<Value> operands{caller.getBody().front().getArgument(0),
+                              receiver};
+  llvm::append_range(operands, call.getArguments());
+  uint64_t argumentCount = operands.size();
+  llvm::append_range(operands, call.getContinuationOperands());
+  return sim::SimTaskCallOp::create(
+      rewriter, call.getLoc(), method.getImplementationAttr(), operands,
+      rewriter.getI64IntegerAttr(argumentCount), call.getSiteAttr(),
+      call.getContinuation());
+}
+
+LogicalResult createGuardedDirectTaskCall(
+    IRRewriter &rewriter, sim::SimClassVirtualTaskCallOp call,
+    sim::SimClassMethodDeclOp method) {
+  Location location = call.getLoc();
+  Value receiver = call.getReceiver();
+  SmallVector<Value> arguments(call.getArguments());
+  SmallVector<Value> continuationOperands(call.getContinuationOperands());
+  Block *continuation = call.getContinuation();
+  Block *head = call->getBlock();
+  Region *region = head->getParent();
+
+  rewriter.setInsertionPoint(call);
+  Value isNull = sim::SimManagedIsNullOp::create(
+      rewriter, location, rewriter.getI1Type(), receiver);
+  Block *nullBlock =
+      rewriter.createBlock(region, continuation->getIterator());
+  Block *directBlock =
+      rewriter.createBlock(region, continuation->getIterator());
+
+  SmallVector<Value> fallbackValues(arguments);
+  llvm::append_range(fallbackValues, continuationOperands);
+  rewriter.setInsertionPointToEnd(nullBlock);
+  Value nullReceiver = sim::SimClassNullOp::create(
+      rewriter, location, receiver.getType());
+  sim::SimClassVirtualTaskCallOp::create(
+      rewriter, location, nullReceiver, call.getMethodAttr(),
+      call.getSlotAttr(), call.getSignatureIdAttr(), fallbackValues,
+      call.getArgumentCountAttr(), call.getSiteAttr(), continuation);
+
+  rewriter.setInsertionPointToEnd(directBlock);
+  if (failed(createDirectTaskCall(rewriter, call, method)))
+    return failure();
+
+  rewriter.setInsertionPoint(call);
+  cf::CondBranchOp::create(rewriter, location, isNull, nullBlock, ValueRange{},
+                           directBlock, ValueRange{});
+  rewriter.eraseOp(call);
+  return success();
+}
+
 class ObeliskSimDevirtualizeClassCallsPass final
     : public impl::ObeliskSimDevirtualizeClassCallsPassBase<
           ObeliskSimDevirtualizeClassCallsPass> {
@@ -193,6 +291,18 @@ private:
                         "managed direct calls normalized to ordinary calls"};
   Statistic unresolvedCalls{this, "unresolved-calls",
                             "virtual calls retained conservatively"};
+  Statistic exactTaskCalls{
+      this, "exact-task-calls",
+      "virtual task calls resolved from exact non-null classes"};
+  Statistic monomorphicTaskCalls{
+      this, "monomorphic-task-calls",
+      "virtual task calls resolved from closed-world monomorphic hierarchies"};
+  Statistic guardedTaskCalls{
+      this, "guarded-task-calls",
+      "monomorphic task calls guarded to preserve null-dispatch failure"};
+  Statistic unresolvedTaskCalls{
+      this, "unresolved-task-calls",
+      "virtual task calls retained conservatively"};
 };
 
 void ObeliskSimDevirtualizeClassCallsPass::runOnOperation() {
@@ -247,6 +357,51 @@ void ObeliskSimDevirtualizeClassCallsPass::runOnOperation() {
     }
     ++monomorphicCalls;
     ++guardedCalls;
+  }
+
+  SmallVector<sim::SimClassVirtualTaskCallOp> virtualTaskCalls;
+  design.walk([&](sim::SimClassVirtualTaskCallOp call) {
+    virtualTaskCalls.push_back(call);
+  });
+  for (sim::SimClassVirtualTaskCallOp call : virtualTaskCalls) {
+    sim::SimClassDeclOp dynamicClass = resolver.resolve(call.getReceiver());
+    if (dynamicClass) {
+      sim::SimClassMethodDeclOp method = dispatch.resolve(
+          dynamicClass, call.getSlot(), call.getSignatureId());
+      if (!isDirectTarget(method, call)) {
+        ++unresolvedTaskCalls;
+        continue;
+      }
+      rewriter.setInsertionPoint(call);
+      if (failed(createDirectTaskCall(rewriter, call, method))) {
+        call.emitError(
+            "resolved virtual task has no valid task implementation");
+        return signalPassFailure();
+      }
+      rewriter.eraseOp(call);
+      ++exactTaskCalls;
+      continue;
+    }
+
+    if (call.getReceiver().getDefiningOp<sim::SimClassNullOp>()) {
+      ++unresolvedTaskCalls;
+      continue;
+    }
+
+    auto staticType = cast<sim::ClassHandleType>(call.getReceiver().getType());
+    sim::SimClassMethodDeclOp method =
+        resolveMonomorphic(dispatch, dispatch.lookup(staticType), call);
+    if (!method) {
+      ++unresolvedTaskCalls;
+      continue;
+    }
+    if (failed(createGuardedDirectTaskCall(rewriter, call, method))) {
+      call.emitError(
+          "monomorphic virtual task has no valid task implementation");
+      return signalPassFailure();
+    }
+    ++monomorphicTaskCalls;
+    ++guardedTaskCalls;
   }
 
   SmallVector<sim::SimClassDirectCallOp> directCallsToNormalize;
