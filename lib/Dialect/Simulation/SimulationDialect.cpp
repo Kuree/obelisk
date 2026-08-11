@@ -49,7 +49,7 @@ bool isSuspensionOp(Operation *operation) {
              SimSuspendEdgeIffOp, SimSuspendLevelOp, SimSuspendAnyOp,
              SimSuspendEventOp, SimSuspendForeverOp, SimSuspendAwaitOp,
              SimSuspendJoinOp, SimSuspendChildrenOp, SimSuspendObserveOp,
-             SimTaskCallOp>(operation);
+             SimTaskCallOp, SimClassVirtualTaskCallOp>(operation);
 }
 
 bool isStartupEntryKind(EntryKind kind) {
@@ -184,7 +184,7 @@ LogicalResult verifyPostponedReadOnly(SimFuncOp root) {
               SimReferencePathNBAEnqueueOp, SimArgumentRefStoreOp,
               SimRefStoreOp, SimDriverDriveOp, SimDriverDriveChangedOp,
               SimNBAEnqueueOp, SimSpawnOp, SimEventTriggerOp, SimSuspendDelayOp,
-              SimTaskCallOp>(operation)) {
+              SimTaskCallOp, SimClassVirtualTaskCallOp>(operation)) {
         operation->emitOpError(
             "is not permitted in a read-only postponed code unit");
         return WalkResult::interrupt();

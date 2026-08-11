@@ -166,6 +166,10 @@ SuccessorOperands SimSuspendChildrenOp::getSuccessorOperands(unsigned index) {
 SuccessorOperands SimTaskCallOp::getSuccessorOperands(unsigned index) {
   return makeContinuationSuccessorOperands(*this, index);
 }
+SuccessorOperands
+SimClassVirtualTaskCallOp::getSuccessorOperands(unsigned index) {
+  return makeContinuationSuccessorOperands(*this, index);
+}
 
 LogicalResult SimSuspendDelayOp::verify() {
   return verifyContinuation(*this, getContinuationOperands(),

@@ -5,6 +5,8 @@ module {
     obelisk_sim.scope.decl 0 hierarchy "top"
     obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "__obelisk_root"
     obelisk_sim.code_unit.decl 2 in 0 function hierarchy "Base.get"
+    obelisk_sim.code_unit.decl 3 in 0 task hierarchy "Base.run"
+    obelisk_sim.code_unit.decl 4 in 0 task hierarchy "Derived.run"
 
     obelisk_sim.class.decl @I id 1 {
       is_abstract = true, is_final = false, is_interface = true
@@ -27,6 +29,12 @@ module {
         is_final = false, is_pure = true, is_static = false,
         is_task = false, is_virtual = true
       }
+    obelisk_sim.class.method @I_run of @I slot 4294967295
+        signature_id 19 :
+      (!obelisk_sim.context, !obelisk_sim.class_handle<@I>, i64) -> () {
+        is_final = false, is_pure = true, is_static = false,
+        is_task = true, is_virtual = true
+      }
     obelisk_sim.class.field @Base_value of @Base at 0 offset 8 : i64 {
       is_static = false, is_weak = false
     }
@@ -34,6 +42,18 @@ module {
       (!obelisk_sim.context, !obelisk_sim.class_handle<@Base>) -> i64 {
         is_final = false, is_pure = false, is_static = false,
         is_task = false, is_virtual = true
+      }
+    obelisk_sim.class.method @Base_run of @Base slot 1 signature_id 18
+        implemented_by @base_run :
+      (!obelisk_sim.context, !obelisk_sim.class_handle<@Base>, i64) -> () {
+        is_final = false, is_pure = false, is_static = false,
+        is_task = true, is_virtual = true
+      }
+    obelisk_sim.class.method @Derived_run of @Derived slot 2 signature_id 19
+        implemented_by @derived_run :
+      (!obelisk_sim.context, !obelisk_sim.class_handle<@Derived>, i64) -> () {
+        is_final = true, is_pure = false, is_static = false,
+        is_task = true, is_virtual = true
       }
 
     obelisk_sim.func @base_get(
@@ -47,6 +67,24 @@ module {
       %value = obelisk_sim.managed.load %field :
         !obelisk_sim.managed_ref<i64, @Base> -> i64
       obelisk_sim.return %value : i64
+    }
+
+    obelisk_sim.func @base_run(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %this: !obelisk_sim.class_handle<@Base>
+          {obelisk_sim.capture_kind = 1 : i32},
+        %value: i64 {obelisk_sim.capture_kind = 1 : i32})
+        attributes {code_unit_id = 3 : i64, entry_kind = 12 : i32} {
+      obelisk_sim.return
+    }
+
+    obelisk_sim.func @derived_run(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %this: !obelisk_sim.class_handle<@Derived>
+          {obelisk_sim.capture_kind = 1 : i32},
+        %value: i64 {obelisk_sim.capture_kind = 1 : i32})
+        attributes {code_unit_id = 4 : i64, entry_kind = 12 : i32} {
+      obelisk_sim.return
     }
 
     obelisk_sim.func @root(
@@ -64,6 +102,9 @@ module {
       %base = obelisk_sim.class.cast %object :
         !obelisk_sim.class_handle<@Derived> to
         !obelisk_sim.class_handle<@Base>
+      %interface = obelisk_sim.class.cast %object :
+        !obelisk_sim.class_handle<@Derived> to
+        !obelisk_sim.class_handle<@I>
       %field = obelisk_sim.class.field_ref %base[@Base_value] :
         !obelisk_sim.class_handle<@Base> ->
         !obelisk_sim.managed_ref<i64, @Base>
@@ -79,6 +120,16 @@ module {
         %base[@Base_get] slot 0 signature_id 17() :
         (!obelisk_sim.class_handle<@Base>) -> i64
       obelisk_sim.gc.safepoint %ctx : !obelisk_sim.context
+      obelisk_sim.class.virtual_task_call
+        %base[@Base_run] slot 1 signature_id 18
+        (%one) arguments 1 to ^interface_call :
+        (!obelisk_sim.class_handle<@Base>, i64) -> ()
+    ^interface_call:
+      obelisk_sim.class.virtual_task_call
+        %interface[@I_run] slot 4294967295 signature_id 19
+        (%one) arguments 1 to ^done :
+        (!obelisk_sim.class_handle<@I>, i64) -> ()
+    ^done:
       obelisk_sim.return
     }
   }
@@ -92,3 +143,6 @@ module {
 // CHECK: obelisk_sim.managed.nba.enqueue
 // CHECK: obelisk_sim.class.virtual_call
 // CHECK: obelisk_sim.gc.safepoint
+// CHECK: obelisk_sim.class.virtual_task_call
+// CHECK: obelisk_sim.class.virtual_task_call
+// CHECK-SAME: slot 4294967295

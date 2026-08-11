@@ -272,6 +272,23 @@ module {
 // -----
 
 module {
+  obelisk_sim.design @oversized_class_method_slot {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.class.decl @C id 1 {
+      is_abstract = true, is_final = false, is_interface = false
+    }
+    // expected-error @below {{virtual-method slot exceeds the 32-bit dispatch ABI}}
+    obelisk_sim.class.method @C_f of @C slot 4294967296 signature_id 17 :
+      (!obelisk_sim.context, !obelisk_sim.class_handle<@C>) -> () {
+        is_final = false, is_pure = true, is_static = false,
+        is_task = true, is_virtual = true
+      }
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.design @duplicate_class_method_slot {
     obelisk_sim.scope.decl 0
     obelisk_sim.class.decl @C id 1 {
@@ -288,5 +305,148 @@ module {
         is_final = false, is_pure = true, is_static = false,
         is_task = false, is_virtual = true
       }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @task_method_non_task_implementation {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 function hierarchy "C.run"
+    obelisk_sim.class.decl @C id 1 {
+      is_abstract = false, is_final = false, is_interface = false
+    }
+    // expected-error @below {{implementation entry kind does not match the method kind}}
+    obelisk_sim.class.method @C_run of @C slot 0 signature_id 17
+        implemented_by @not_task :
+      (!obelisk_sim.context, !obelisk_sim.class_handle<@C>) -> () {
+        is_final = false, is_pure = false, is_static = false,
+        is_task = true, is_virtual = true
+      }
+    obelisk_sim.func @not_task(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %this: !obelisk_sim.class_handle<@C>
+          {obelisk_sim.capture_kind = 1 : i32})
+        attributes {code_unit_id = 1 : i64, entry_kind = 8 : i32} {
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @virtual_task_bad_arguments {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 task hierarchy "C.run"
+    obelisk_sim.code_unit.decl 2 in 0 initial hierarchy "root"
+    obelisk_sim.class.decl @C id 1 {
+      is_abstract = false, is_final = false, is_interface = false
+    }
+    obelisk_sim.class.method @C_run of @C slot 0 signature_id 17
+        implemented_by @run :
+      (!obelisk_sim.context, !obelisk_sim.class_handle<@C>, i64) -> () {
+        is_final = false, is_pure = false, is_static = false,
+        is_task = true, is_virtual = true
+      }
+    obelisk_sim.func @run(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %this: !obelisk_sim.class_handle<@C>
+          {obelisk_sim.capture_kind = 1 : i32},
+        %value: i64 {obelisk_sim.capture_kind = 1 : i32})
+        attributes {code_unit_id = 1 : i64, entry_kind = 12 : i32} {
+      obelisk_sim.return
+    }
+    obelisk_sim.func @root(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {code_unit_id = 2 : i64, entry_kind = 1 : i32} {
+      %object = obelisk_sim.class.alloc %ctx :
+        !obelisk_sim.context -> !obelisk_sim.class_handle<@C>
+      // expected-error @below {{receiver or arguments do not match the virtual task}}
+      obelisk_sim.class.virtual_task_call
+        %object[@C_run] slot 0 signature_id 17
+        () arguments 0 to ^done :
+        (!obelisk_sim.class_handle<@C>) -> ()
+    ^done:
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @virtual_task_method_kind {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 function hierarchy "C.run"
+    obelisk_sim.code_unit.decl 2 in 0 initial hierarchy "root"
+    obelisk_sim.class.decl @C id 1 {
+      is_abstract = false, is_final = false, is_interface = false
+    }
+    obelisk_sim.class.method @C_run of @C slot 0 signature_id 17
+        implemented_by @run :
+      (!obelisk_sim.context, !obelisk_sim.class_handle<@C>) -> () {
+        is_final = false, is_pure = false, is_static = false,
+        is_task = false, is_virtual = true
+      }
+    obelisk_sim.func @run(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %this: !obelisk_sim.class_handle<@C>
+          {obelisk_sim.capture_kind = 1 : i32})
+        attributes {code_unit_id = 1 : i64, entry_kind = 8 : i32} {
+      obelisk_sim.return
+    }
+    obelisk_sim.func @root(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {code_unit_id = 2 : i64, entry_kind = 1 : i32} {
+      %object = obelisk_sim.class.null : !obelisk_sim.class_handle<@C>
+      // expected-error @below {{method must name a compatible virtual task slot}}
+      obelisk_sim.class.virtual_task_call
+        %object[@C_run] slot 0 signature_id 17
+        () arguments 0 to ^done :
+        (!obelisk_sim.class_handle<@C>) -> ()
+    ^done:
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @virtual_task_observer {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 task hierarchy "C.run"
+    obelisk_sim.code_unit.decl 2 in 0 observer hierarchy "observe"
+    obelisk_sim.class.decl @C id 1 {
+      is_abstract = false, is_final = false, is_interface = false
+    }
+    obelisk_sim.class.method @C_run of @C slot 0 signature_id 17
+        implemented_by @run :
+      (!obelisk_sim.context, !obelisk_sim.class_handle<@C>) -> () {
+        is_final = false, is_pure = false, is_static = false,
+        is_task = true, is_virtual = true
+      }
+    obelisk_sim.func @run(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %this: !obelisk_sim.class_handle<@C>
+          {obelisk_sim.capture_kind = 1 : i32})
+        attributes {code_unit_id = 1 : i64, entry_kind = 12 : i32} {
+      obelisk_sim.return
+    }
+    obelisk_sim.func @observe(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> i1
+        attributes {code_unit_id = 2 : i64, entry_kind = 14 : i32} {
+      %object = obelisk_sim.class.null : !obelisk_sim.class_handle<@C>
+      // expected-error @below {{task calls are not permitted in an observer entry}}
+      obelisk_sim.class.virtual_task_call
+        %object[@C_run] slot 0 signature_id 17
+        () arguments 0 to ^done :
+        (!obelisk_sim.class_handle<@C>) -> ()
+    ^done:
+      %false = arith.constant false
+      obelisk_sim.return %false : i1
+    }
   }
 }

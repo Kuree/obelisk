@@ -336,7 +336,8 @@ LogicalResult SimFuncOp::verify() {
                             : "is not permitted in a zero-time observer entry");
         return WalkResult::interrupt();
       }
-      if (getEntryKind() == EntryKind::Observer && isa<SimTaskCallOp>(op)) {
+      if (getEntryKind() == EntryKind::Observer &&
+          isa<SimTaskCallOp, SimClassVirtualTaskCallOp>(op)) {
         op->emitOpError("task calls are not permitted in an observer entry");
         return WalkResult::interrupt();
       }
@@ -527,6 +528,66 @@ SimTaskCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     return emitOpError("argument types must match the task signature");
   if (!callee.getFunctionType().getResults().empty())
     return emitOpError("task entry must not return SSA results");
+  return success();
+}
+
+Operation::operand_range SimClassVirtualTaskCallOp::getArguments() {
+  size_t count = getArgumentCountAttr().getValue().isNegative()
+                     ? 0
+                     : std::min<uint64_t>(getArgumentCount(),
+                                          getValues().size());
+  return getValues().take_front(count);
+}
+
+Operation::operand_range
+SimClassVirtualTaskCallOp::getContinuationOperands() {
+  return getValues().drop_front(getArguments().size());
+}
+
+MutableOperandRange
+SimClassVirtualTaskCallOp::getContinuationOperandsMutable() {
+  unsigned count = getArgumentCountAttr().getValue().isNegative()
+                       ? 0
+                       : std::min<uint64_t>(getArgumentCount(),
+                                            getValues().size());
+  return MutableOperandRange(getOperation(), 1 + count,
+                             getValues().size() - count);
+}
+
+LogicalResult SimClassVirtualTaskCallOp::verify() {
+  auto function = getOperation()->getParentOfType<SimFuncOp>();
+  if (!function)
+    return emitOpError("must be nested in obelisk_sim.func");
+  if (function.getEntryKind() == EntryKind::Function ||
+      function.getEntryKind() == EntryKind::Observer)
+    return emitOpError(function.getEntryKind() == EntryKind::Function
+                           ? "is not permitted in a zero-time function entry"
+                           : "is not permitted in a zero-time observer entry");
+  if (getArgumentCountAttr().getValue().isNegative() ||
+      static_cast<uint64_t>(getArgumentCount()) > getValues().size())
+    return emitOpError("argument count exceeds the value inventory");
+  if (getSignatureId() == 0)
+    return emitOpError("requires a nonzero signature ID");
+  return verifyContinuation(*this, getContinuationOperands(),
+                            getContinuation());
+}
+
+LogicalResult SimClassVirtualTaskCallOp::verifySymbolUses(
+    SymbolTableCollection &symbolTable) {
+  auto method = symbolTable.lookupNearestSymbolFrom<SimClassMethodDeclOp>(
+      getOperation(), getMethodAttr());
+  if (!method || !method.getIsVirtual() || !method.getIsTask() ||
+      !method.getSlotAttr() || *method.getSlot() != getSlot() ||
+      !method.getSignatureIdAttr() ||
+      *method.getSignatureId() != getSignatureId())
+    return emitOpError("method must name a compatible virtual task slot");
+  auto type = cast<FunctionType>(method.getFunctionType());
+  SmallVector<Type> inputs{getReceiver().getType()};
+  llvm::append_range(inputs, getArguments().getTypes());
+  if (type.getNumInputs() != inputs.size() + 1 ||
+      !llvm::equal(type.getInputs().drop_front(), inputs) ||
+      !type.getResults().empty())
+    return emitOpError("receiver or arguments do not match the virtual task");
   return success();
 }
 

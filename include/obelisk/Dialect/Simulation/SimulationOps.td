@@ -1228,6 +1228,50 @@ def SimTaskCallOp : SimOp<"task.call", [
   let hasVerifier = 1;
 }
 
+def SimClassVirtualTaskCallOp : SimOp<"class.virtual_task_call", [
+    Terminator, DeclareOpInterfaceMethods<BranchOpInterface>,
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[
+      MemRead<SimStorageResource>, MemWrite<SimStorageResource>,
+      MemRead<SimNetResource>, MemWrite<SimNetResource>,
+      MemRead<SimSchedulerResource>, MemWrite<SimSchedulerResource>,
+      MemRead<SimProcessResource>, MemWrite<SimProcessResource>,
+      MemRead<SimHeapResource>, MemWrite<SimHeapResource>,
+      MemRead<SimIOResource>, MemWrite<SimIOResource>,
+      MemRead<SimRNGResource>, MemWrite<SimRNGResource>,
+      MemRead<SimExternalResource>, MemWrite<SimExternalResource>
+    ]>
+  ]> {
+  let summary = "descriptor-dispatched virtual class task activation";
+  let description = [{
+    Resolves a virtual task through the receiver's managed class descriptor,
+    then transfers the current logical process into the selected task
+    activation. The receiver and explicit argument prefix initialize the
+    method inputs after the implicit caller context; remaining values are
+    forwarded to the continuation.
+  }];
+  let arguments = (ins SimClassHandleType:$receiver,
+                       FlatSymbolRefAttr:$method,
+                       I64Attr:$slot,
+                       I64Attr:$signature_id,
+                       Variadic<AnyType>:$values,
+                       I64Attr:$argument_count,
+                       OptionalAttr<SimContinuationSiteAttr>:$site);
+  let successors = (successor AnySuccessor:$continuation);
+  let assemblyFormat = [{
+    $receiver `[` $method `]` `slot` $slot
+    `signature_id` $signature_id
+    `(` $values `)` `arguments` $argument_count `to` $continuation
+    attr-dict `:` functional-type(operands, results)
+  }];
+  let extraClassDeclaration = [{
+    ::mlir::Operation::operand_range getArguments();
+    ::mlir::Operation::operand_range getContinuationOperands();
+    ::mlir::MutableOperandRange getContinuationOperandsMutable();
+  }];
+  let hasVerifier = 1;
+}
+
 def SimDPICallOp : SimOp<"dpi.call", [
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {

@@ -305,6 +305,9 @@ LogicalResult SimClassMethodDeclOp::verify() {
     return emitOpError(
         "virtual methods require a slot and nonvirtual methods forbid one");
   if (getSlotAttr()) {
+    if (getSlotAttr().getValue().isNegative() ||
+        getSlot() > interfaceDispatchSlot)
+      return emitOpError("virtual-method slot exceeds the 32-bit dispatch ABI");
     if (owner.getIsInterface() && getSlot() != interfaceDispatchSlot)
       return emitOpError(
           "interface virtual methods require the interface dispatch slot");
@@ -743,6 +746,11 @@ LogicalResult SimDesignOp::verifyRegions() {
             found->second.getFunctionType() != method.getFunctionType())
           return method.emitOpError(
               "implementation is missing or has an incompatible signature");
+        EntryKind expected =
+            method.getIsTask() ? EntryKind::Task : EntryKind::Function;
+        if (found->second.getEntryKind() != expected)
+          return method.emitOpError(
+              "implementation entry kind does not match the method kind");
       }
     }
   }
