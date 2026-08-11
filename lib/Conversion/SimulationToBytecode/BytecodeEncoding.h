@@ -292,6 +292,7 @@ enum Opcode : uint16_t {
   FrameRoot = OBELISK_RT_DB_FRAME_ROOT,
   InterfaceCall = OBELISK_RT_DB_INTERFACE_CALL,
   InterfaceTaskCall = OBELISK_RT_DB_INTERFACE_TASK_CALL,
+  ProcessControl = OBELISK_RT_DB_PROCESS_CONTROL,
 };
 
 } // namespace obelisk::bytecode

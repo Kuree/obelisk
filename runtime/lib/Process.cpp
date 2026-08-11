@@ -176,6 +176,8 @@ bool nativeWaitReady(obelisk_rt_context &context,
 bool nativeProcessReady(obelisk_rt_context &context,
                         const ScheduledProcess &process,
                         bool directStaticSignalWait) {
+  if (process.explicitlySuspended)
+    return false;
   if (!process.started || process.suspendKind == OBELISK_RT_SUSPEND_NONE)
     return true;
   if (process.suspendKind == OBELISK_RT_SUSPEND_DELAY)
@@ -566,7 +568,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_process_instance_execute(
   instance->continuation = outAction->continuation;
   instance->lifecycle = outAction->kind == OBELISK_RT_FRAGMENT_TERMINATE
                             ? OBELISK_RT_PROCESS_TERMINATED
-                        : outAction->kind == OBELISK_RT_FRAGMENT_SUSPEND
+                        : outAction->kind == OBELISK_RT_FRAGMENT_SUSPEND ||
+                                  outAction->kind ==
+                                      OBELISK_RT_FRAGMENT_PROCESS_SUSPEND
                             ? OBELISK_RT_PROCESS_SUSPENDED
                             : OBELISK_RT_PROCESS_READY;
   if (instance->lifecycle == OBELISK_RT_PROCESS_TERMINATED &&
@@ -1268,6 +1272,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_direct_fragment_enter(
   context->activeExecRegion = scheduled.queuedRegion;
   context->activeLogicalProcessToken =
       kNativeLogicalProcessTag | scheduled.token;
+  context->activeLogicalProcessParent = scheduled.parent;
   obelisk_rt_flush_deferred_immediate_reports_unlocked(
       context, context->activeLogicalProcessToken);
   *outInstance = actor;
@@ -1296,6 +1301,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_direct_fragment_leave(
   context->activeHomeRegion = UINT32_MAX;
   context->activeExecRegion = UINT32_MAX;
   context->activeLogicalProcessToken = 0;
+  context->activeLogicalProcessParent = 0;
   if (context->schedulerSlotProgress == (UINT64_C(1) << 20)) {
     context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
     return context->schedulerStatus;
@@ -1475,7 +1481,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_process_status(
       ScheduledProcess *process = findScheduledProcess(context, token);
       if (!process || !process->instance)
         return OBELISK_RT_INVALID_HANDLE;
-      *outState = process->suspendKind != OBELISK_RT_SUSPEND_NONE
+      *outState = process->explicitlySuspended
+                      ? OBELISK_RT_PROCESS_EXPLICITLY_SUSPENDED
+                  : process->suspendKind != OBELISK_RT_SUSPEND_NONE
                       ? OBELISK_RT_PROCESS_WAITING
                       : OBELISK_RT_PROCESS_RUNNING;
       return OBELISK_RT_OK;
@@ -1500,7 +1508,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_process_status(
       return OBELISK_RT_INVALID_HANDLE;
     if (task.terminated)
       return OBELISK_RT_OK;
-    *outState = task.suspendKind != OBELISK_RT_SUSPEND_NONE
+    *outState = task.explicitlySuspended
+                    ? OBELISK_RT_PROCESS_EXPLICITLY_SUSPENDED
+                : task.suspendKind != OBELISK_RT_SUSPEND_NONE
                     ? OBELISK_RT_PROCESS_WAITING
                     : OBELISK_RT_PROCESS_RUNNING;
     return OBELISK_RT_OK;
@@ -3205,6 +3215,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
       context->activeLogicalProcessToken =
           kNativeLogicalProcessTag |
           context->scheduledProcesses[selectedIndex].token;
+      context->activeLogicalProcessParent =
+          context->scheduledProcesses[selectedIndex].parent;
       if (selectedResuming)
         obelisk_rt_flush_deferred_immediate_reports_unlocked(
             context, context->activeLogicalProcessToken);
@@ -3238,17 +3250,23 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
     obelisk_rt_status status = obelisk_rt_v1_process_instance_execute(
         selected, context, tier, &action);
     bool terminationRequested = false;
+    bool killRequested = false;
     {
       ContextMutexLock lock(context);
       if (selectedIndex < context->scheduledProcesses.size() &&
-          context->scheduledProcesses[selectedIndex].instance == selected)
+          context->scheduledProcesses[selectedIndex].instance == selected) {
         context->scheduledProcesses[selectedIndex].controls =
             std::move(context->activeControls);
+        killRequested = context->killedNativeProcesses.count(
+                            context->scheduledProcesses[selectedIndex].token) !=
+                        0;
+      }
       context->activeControls.clear();
       context->activeNativeProcess = nullptr;
       context->activeHomeRegion = UINT32_MAX;
       context->activeExecRegion = UINT32_MAX;
       context->activeLogicalProcessToken = 0;
+      context->activeLogicalProcessParent = 0;
       terminationRequested = context->schedulerFinishRequested;
     }
     if (!terminationRequested && status != OBELISK_RT_OK)
@@ -3289,7 +3307,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         if (!scheduled.signalSubscriptions.empty())
           obelisk_rt_unregister_signal_wait_unlocked(
               context, scheduled.signalSubscriptions, scheduled.token, false);
-        if (!scheduled.callers.empty() && !context->schedulerFinishRequested) {
+        if (!scheduled.callers.empty() && !context->schedulerFinishRequested &&
+            !killRequested) {
           scheduled.instance = scheduled.callers.back();
           scheduled.callers.pop_back();
           scheduled.suspendKind = OBELISK_RT_SUSPEND_NONE;
@@ -3308,7 +3327,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           scheduled.instance = nullptr;
           ++context->schedulerDeadProcessCount;
           context->schedulerCompactionPending = true;
-          if (terminationRequested)
+          if (terminationRequested || killRequested)
             terminatedCallers.swap(scheduled.callers);
           obelisk_rt_release_controls_unlocked(context, scheduled.controls);
           scheduled.controls.clear();
@@ -3322,6 +3341,18 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         status = adoptScheduledSuspendUnlocked(context, scheduled, action);
         if (status != OBELISK_RT_OK)
           return status;
+      } else if (action.kind == OBELISK_RT_FRAGMENT_PROCESS_SUSPEND) {
+        if (!scheduled.signalSubscriptions.empty())
+          obelisk_rt_unregister_signal_wait_unlocked(
+              context, scheduled.signalSubscriptions, scheduled.token, false);
+        scheduled.suspendKind = OBELISK_RT_SUSPEND_NONE;
+        scheduled.waitOffset = 0;
+        scheduled.waitSize = 0;
+        scheduled.waitGenerations.clear();
+        scheduled.signalTriggered = false;
+        scheduled.explicitlySuspended = true;
+        scheduled.urgent = false;
+        scheduled.queuedRegion = scheduled.homeRegion;
       } else if (action.kind == OBELISK_RT_FRAGMENT_TASK_CALL) {
         auto *callee = pendingCallee.get();
         if (!callee)

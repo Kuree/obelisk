@@ -311,6 +311,12 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       // termination observes the same ordered region state as the process
       // that requested it.
       rejectPlan("fatal or stop control requires generic ordering");
+    } else if (isa<sim::SimProcessControlOp>(operation)) {
+      // A process object can dynamically name any native or bytecode actor,
+      // including an ancestor of the current activation. Keep the complete
+      // scheduler under runtime ownership until generated AOT plans have a
+      // transactional actor suspend/resume/kill protocol.
+      rejectPlan("process control requires generic ordering");
     } else if (isa<sim::SimDPICallOp>(operation)) {
       requireBytecodeFragment(operation, "DPI reentrancy is present");
       excludeBytecodeActor(operation);

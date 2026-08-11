@@ -587,6 +587,7 @@ obelisk_rt_status executeTrustedAOTNode(obelisk_rt_context *context,
     context->activeHomeRegion = scheduled.homeRegion;
     context->activeExecRegion = scheduled.queuedRegion;
     context->activeLogicalProcessToken = kNativeLogicalProcessTag | token;
+    context->activeLogicalProcessParent = scheduled.parent;
     if (resuming)
       obelisk_rt_flush_deferred_immediate_reports_unlocked(
           context, context->activeLogicalProcessToken);
@@ -613,6 +614,7 @@ obelisk_rt_status executeTrustedAOTNode(obelisk_rt_context *context,
   context->activeHomeRegion = UINT32_MAX;
   context->activeExecRegion = UINT32_MAX;
   context->activeLogicalProcessToken = 0;
+  context->activeLogicalProcessParent = 0;
   if (!actorValid)
     return OBELISK_RT_INVALID_LIFECYCLE;
   ScheduledProcess &scheduled = context->scheduledProcesses[selectedIndex];
@@ -685,6 +687,18 @@ obelisk_rt_status executeTrustedAOTNode(obelisk_rt_context *context,
     scheduled.queuedRegion = scheduled.homeRegion;
     if (!markNativeAOTActorReadyUnlocked(context, actorSlot))
       return OBELISK_RT_INVALID_CONTINUATION;
+    break;
+  case OBELISK_RT_FRAGMENT_PROCESS_SUSPEND:
+    scheduled.suspendKind = OBELISK_RT_SUSPEND_NONE;
+    scheduled.waitOffset = 0;
+    scheduled.waitSize = 0;
+    scheduled.waitGenerations.clear();
+    scheduled.signalTriggered = false;
+    scheduled.explicitlySuspended = true;
+    scheduled.urgent = false;
+    scheduled.queuedRegion = scheduled.homeRegion;
+    removeNativeAOTDeadlineUnlocked(context, actorSlot);
+    requestFallback = true;
     break;
   case OBELISK_RT_FRAGMENT_TERMINATE:
     if (!scheduled.callers.empty())
@@ -825,6 +839,7 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
     context->activeExecRegion = scheduled.queuedRegion;
     context->activeLogicalProcessToken =
         kNativeLogicalProcessTag | scheduled.token;
+    context->activeLogicalProcessParent = scheduled.parent;
     if (resuming)
       obelisk_rt_flush_deferred_immediate_reports_unlocked(
           context, context->activeLogicalProcessToken);
@@ -903,18 +918,24 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
       status = OBELISK_RT_LAYOUT_MISMATCH;
   }
   bool terminationRequested = false;
+  bool killRequested = false;
   bool handledGeneratedSuspend = false;
   {
     ContextMutexLock lock(context);
     if (selectedIndex < context->scheduledProcesses.size() &&
-        context->scheduledProcesses[selectedIndex].instance == selected)
+        context->scheduledProcesses[selectedIndex].instance == selected) {
       context->scheduledProcesses[selectedIndex].controls =
           std::move(context->activeControls);
+      killRequested = context->killedNativeProcesses.count(
+                          context->scheduledProcesses[selectedIndex].token) !=
+                      0;
+    }
     context->activeControls.clear();
     context->activeNativeProcess = nullptr;
     context->activeHomeRegion = UINT32_MAX;
     context->activeExecRegion = UINT32_MAX;
     context->activeLogicalProcessToken = 0;
+    context->activeLogicalProcessParent = 0;
     terminationRequested = context->schedulerFinishRequested;
     if (terminationRequested)
       context->schedulerRunningFinals = true;
@@ -1006,7 +1027,8 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
     ScheduledProcess &scheduled = context->scheduledProcesses[selectedIndex];
     switch (action.kind) {
     case OBELISK_RT_FRAGMENT_TERMINATE:
-      if (!scheduled.callers.empty() && !terminationRequested) {
+      if (!scheduled.callers.empty() && !terminationRequested &&
+          !killRequested) {
         obelisk_rt_process_instance_v1 *caller = scheduled.callers.back();
         status = context->nativeSchedulePlan->bind(
             context->nativeSchedulePlan->mutable_state, context, actorSlot,
@@ -1043,7 +1065,7 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
       scheduled.instance = nullptr;
       ++context->schedulerDeadProcessCount;
       context->schedulerCompactionPending = true;
-      if (terminationRequested)
+      if (terminationRequested || killRequested)
         terminatedCallers.swap(scheduled.callers);
       obelisk_rt_release_controls_unlocked(context, scheduled.controls);
       scheduled.controls.clear();
@@ -1125,6 +1147,20 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
       scheduled.signalTriggered = false;
       scheduled.urgent = scheduled.startupProcess;
       scheduled.queuedRegion = scheduled.homeRegion;
+      break;
+    case OBELISK_RT_FRAGMENT_PROCESS_SUSPEND:
+      if (!scheduled.signalSubscriptions.empty())
+        obelisk_rt_unregister_signal_wait_unlocked(
+            context, scheduled.signalSubscriptions, scheduled.token, false);
+      scheduled.suspendKind = OBELISK_RT_SUSPEND_NONE;
+      scheduled.waitOffset = 0;
+      scheduled.waitSize = 0;
+      scheduled.waitGenerations.clear();
+      scheduled.signalTriggered = false;
+      scheduled.explicitlySuspended = true;
+      scheduled.urgent = false;
+      scheduled.queuedRegion = scheduled.homeRegion;
+      requestFallback = true;
       break;
     case OBELISK_RT_FRAGMENT_TASK_CALL: {
       obelisk_rt_process_instance_v1 *callee = pendingCallee.get();

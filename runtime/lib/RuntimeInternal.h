@@ -340,6 +340,7 @@ struct ScheduledProcess {
   bool signalTriggered = false;
   bool initialProcess = false;
   bool startupProcess = false;
+  bool explicitlySuspended = false;
 };
 
 struct SignalValueSnapshot {
@@ -488,6 +489,7 @@ struct ScheduledDesignTask {
   bool signalTriggered = false;
   bool startupProcess = false;
   bool prioritySignal = false;
+  bool explicitlySuspended = false;
 };
 
 struct SignalSubscriptionBucketKey {
@@ -827,6 +829,10 @@ struct obelisk_rt_context {
   uint32_t activeHomeRegion = UINT32_MAX;
   uint32_t activeExecRegion = UINT32_MAX;
   uint64_t activeLogicalProcessToken = 0;
+  // Bytecode tasks are removed from the scheduler vector while executing.
+  // Preserve their logical parent so ancestor-directed process control can
+  // still identify that the active activation belongs to the target tree.
+  uint64_t activeLogicalProcessParent = 0;
   // A bytecode design task is moved out of the scheduler vector while it
   // executes, so its lane-local stream cannot be rediscovered by token.
   obelisk_rt_random_state_v1 *activeRandom = nullptr;
@@ -1034,6 +1040,7 @@ inline uint32_t obelisk_rt_unstarted_actor_region(obelisk_rt_context *context,
   for (auto actor = actors.begin(); actor != actors.end();) {
     uint64_t logicalToken = *actor;
     bool pending = false;
+    bool explicitlySuspended = false;
     uint32_t homeRegion = OBELISK_RT_REGION_ACTIVE;
     if ((logicalToken & OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG) != 0) {
       uint64_t token = logicalToken & ~OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG;
@@ -1044,6 +1051,7 @@ inline uint32_t obelisk_rt_unstarted_actor_region(obelisk_rt_context *context,
             context->scheduledProcesses[indexed->second];
         pending = process.instance && process.token == token &&
                   process.phase == phase && !process.started;
+        explicitlySuspended = process.explicitlySuspended;
         homeRegion = process.homeRegion;
       }
     } else {
@@ -1054,11 +1062,19 @@ inline uint32_t obelisk_rt_unstarted_actor_region(obelisk_rt_context *context,
             context->scheduledDesignTasks[indexed->second];
         pending = !task.terminated && task.id == logicalToken &&
                   task.phase == phase && !task.started;
+        explicitlySuspended = task.explicitlySuspended;
         homeRegion = task.homeRegion;
       }
     }
     if (!pending) {
       actor = actors.erase(actor);
+      continue;
+    }
+    // An externally suspended actor remains live and unstarted, but it must
+    // not hold back runnable actors in its home region. Keep its token in the
+    // inventory so clearing explicit suspension restores bootstrap ordering.
+    if (explicitlySuspended) {
+      ++actor;
       continue;
     }
     // Nothing can precede the active region, so stop compacting there.

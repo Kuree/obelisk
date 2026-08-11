@@ -626,7 +626,10 @@ enum {
   // Interface dispatch uses destination as an operand-table index whose pair
   // stores the interface ID and stable method ordinal.
   OBELISK_RT_DB_INTERFACE_CALL = 56,
-  OBELISK_RT_DB_INTERFACE_TASK_CALL = 57
+  OBELISK_RT_DB_INTERFACE_TASK_CALL = 57,
+  // Terminator for IEEE process-object kill/suspend/resume. The target is a
+  // shared tagged process identity and immediate is the resume continuation.
+  OBELISK_RT_DB_PROCESS_CONTROL = 58
 };
 
 // StoreState writes its exact post-resolution transition predicate to the
@@ -1004,7 +1007,10 @@ enum {
   OBELISK_RT_FRAGMENT_CONTINUE = 0,
   OBELISK_RT_FRAGMENT_SUSPEND = 1,
   OBELISK_RT_FRAGMENT_TERMINATE = 2,
-  OBELISK_RT_FRAGMENT_TASK_CALL = 3
+  OBELISK_RT_FRAGMENT_TASK_CALL = 3,
+  // The current activation remains live at continuation but is explicitly
+  // suspended until process::resume clears its scheduler state.
+  OBELISK_RT_FRAGMENT_PROCESS_SUSPEND = 4
 };
 
 typedef uint32_t obelisk_rt_suspend_kind;
@@ -1412,6 +1418,20 @@ enum {
   OBELISK_RT_PROCESS_WAITING = 2,
   OBELISK_RT_PROCESS_EXPLICITLY_SUSPENDED = 3,
   OBELISK_RT_PROCESS_KILLED = 4
+};
+
+typedef uint32_t obelisk_rt_process_control_kind;
+enum {
+  OBELISK_RT_PROCESS_CONTROL_KILL = 0,
+  OBELISK_RT_PROCESS_CONTROL_SUSPEND = 1,
+  OBELISK_RT_PROCESS_CONTROL_RESUME = 2
+};
+
+typedef uint32_t obelisk_rt_process_control_disposition;
+enum {
+  OBELISK_RT_PROCESS_CONTROL_CONTINUE = 0,
+  OBELISK_RT_PROCESS_CONTROL_SUSPEND_CURRENT = 1,
+  OBELISK_RT_PROCESS_CONTROL_KILL_CURRENT = 2
 };
 
 typedef struct obelisk_rt_process_descriptor_v1 {
@@ -2377,6 +2397,14 @@ uint64_t obelisk_rt_v1_process_current(obelisk_rt_context *context);
 obelisk_rt_status obelisk_rt_v1_process_status(
     obelisk_rt_context *context, uint64_t logical_process,
     obelisk_rt_process_state *out_state);
+// Apply one IEEE process-object control transaction. External targets are
+// updated before return. A control of the executing logical process returns a
+// disposition which the caller must publish as its fragment action. Returns
+// OBELISK_RT_TIER_UNAVAILABLE while a native AOT plan owns scheduler actors.
+obelisk_rt_status obelisk_rt_v1_process_control(
+    obelisk_rt_context *context, uint64_t logical_process,
+    obelisk_rt_process_control_kind kind,
+    obelisk_rt_process_control_disposition *out_disposition);
 // Recursively terminate every live descendant of the currently executing
 // logical process. Task activations retain their caller's logical identity.
 obelisk_rt_status

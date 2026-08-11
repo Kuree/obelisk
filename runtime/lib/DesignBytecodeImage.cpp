@@ -1226,6 +1226,7 @@ bool validateInitialization(const Image &image, const Function &function,
     }
     case OBELISK_RT_DB_RETURN:
     case OBELISK_RT_DB_CONTINUE:
+    case OBELISK_RT_DB_PROCESS_CONTROL:
     case OBELISK_RT_DB_SUSPEND:
     case OBELISK_RT_DB_TERMINATE:
     case OBELISK_RT_DB_TASK_CALL:
@@ -1352,6 +1353,9 @@ bool validateInitialization(const Image &image, const Function &function,
     case OBELISK_RT_DB_SUSPEND:
       valid = instruction.source0 == kInvalidRegister ||
               requireInitialized(state, instruction.source0);
+      break;
+    case OBELISK_RT_DB_PROCESS_CONTROL:
+      valid = requireInitialized(state, instruction.source0);
       break;
     case OBELISK_RT_DB_INTRINSIC: {
       IntrinsicSite site =
@@ -2335,6 +2339,19 @@ bool validateImage(const Image &image) {
             instruction.auxiliary ||
             (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
             !hasContinuation(instruction.immediate))
+          return reject(__LINE__, "invalid instruction encoding or operands",
+                        functionIndex, pc, instruction.opcode);
+        break;
+      case OBELISK_RT_DB_PROCESS_CONTROL:
+        if (instruction.flags > OBELISK_RT_PROCESS_CONTROL_RESUME ||
+            instruction.destination || instruction.source1 ||
+            instruction.source2 || instruction.auxiliary ||
+            (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
+            !hasContinuation(instruction.immediate) ||
+            !reg(instruction.source0) ||
+            layoutAt(image, function, instruction.source0).kind !=
+                OBELISK_RT_DBREG_BITS ||
+            layoutAt(image, function, instruction.source0).width != 64)
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;

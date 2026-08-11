@@ -238,7 +238,8 @@ void populateSuspensionTypeConversionPatterns(RewritePatternSet &patterns,
                SimSuspendTypeConversion<sim::SimSuspendForeverOp>,
                SimSuspendTypeConversion<sim::SimSuspendAwaitOp>,
                SimSuspendTypeConversion<sim::SimSuspendJoinOp>,
-               SimSuspendTypeConversion<sim::SimSuspendChildrenOp>>(
+               SimSuspendTypeConversion<sim::SimSuspendChildrenOp>,
+               SimSuspendTypeConversion<sim::SimProcessControlOp>>(
       converter, patterns.getContext());
 }
 

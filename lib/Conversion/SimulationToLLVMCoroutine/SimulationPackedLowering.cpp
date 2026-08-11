@@ -413,7 +413,8 @@ LogicalResult lowerPackedSimulationOperations(
       sim::SimSuspendChangeOp, sim::SimSuspendEdgeOp, sim::SimSuspendEdgeIffOp,
       sim::SimSuspendLevelOp, sim::SimSuspendAnyOp, sim::SimSuspendEventOp,
       sim::SimSuspendForeverOp, sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp,
-      sim::SimSuspendChildrenOp, sim::SimSuspendObserveOp>(
+      sim::SimSuspendChildrenOp, sim::SimSuspendObserveOp,
+      sim::SimProcessControlOp>(
       [&](Operation *operation) { return packedConverter.isLegal(operation); });
   packedTarget.addDynamicallyLegalDialect<
       sim::ObeliskSimulationDialect, arith::ArithDialect,

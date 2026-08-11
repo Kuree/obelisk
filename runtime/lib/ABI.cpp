@@ -557,6 +557,7 @@ static_assert(OBELISK_RT_FRAGMENT_CONTINUE == 0);
 static_assert(OBELISK_RT_FRAGMENT_SUSPEND == 1);
 static_assert(OBELISK_RT_FRAGMENT_TERMINATE == 2);
 static_assert(OBELISK_RT_FRAGMENT_TASK_CALL == 3);
+static_assert(OBELISK_RT_FRAGMENT_PROCESS_SUSPEND == 4);
 static_assert(OBELISK_RT_SUSPEND_NONE == 0);
 static_assert(OBELISK_RT_SUSPEND_DELAY == 1);
 static_assert(OBELISK_RT_SUSPEND_CHANGE == 2);
@@ -595,6 +596,13 @@ static_assert(OBELISK_RT_PROCESS_RUNNING == 1);
 static_assert(OBELISK_RT_PROCESS_WAITING == 2);
 static_assert(OBELISK_RT_PROCESS_EXPLICITLY_SUSPENDED == 3);
 static_assert(OBELISK_RT_PROCESS_KILLED == 4);
+static_assert(OBELISK_RT_PROCESS_CONTROL_KILL == 0);
+static_assert(OBELISK_RT_PROCESS_CONTROL_SUSPEND == 1);
+static_assert(OBELISK_RT_PROCESS_CONTROL_RESUME == 2);
+static_assert(OBELISK_RT_PROCESS_CONTROL_CONTINUE == 0);
+static_assert(OBELISK_RT_PROCESS_CONTROL_SUSPEND_CURRENT == 1);
+static_assert(OBELISK_RT_PROCESS_CONTROL_KILL_CURRENT == 2);
+static_assert(OBELISK_RT_DB_PROCESS_CONTROL == 58);
 static_assert(OBELISK_RT_FRAGMENT_NATIVE == 0);
 static_assert(OBELISK_RT_FRAGMENT_BYTECODE == 1);
 static_assert(OBELISK_RT_BC_TYPE_NONE == 0);
@@ -997,6 +1005,10 @@ ABI_FUNCTION(obelisk_rt_v1_process_current,
 ABI_FUNCTION(obelisk_rt_v1_process_status,
              obelisk_rt_status (*)(obelisk_rt_context *, uint64_t,
                                    obelisk_rt_process_state *));
+ABI_FUNCTION(obelisk_rt_v1_process_control,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint64_t,
+                                   obelisk_rt_process_control_kind,
+                                   obelisk_rt_process_control_disposition *));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_nba,
              obelisk_rt_status (*)(obelisk_rt_context *, uint8_t *, uint8_t *,
                                    uint64_t, uint64_t, uint64_t, uint64_t,

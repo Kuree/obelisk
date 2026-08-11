@@ -408,6 +408,12 @@ obelisk_rt_status validateAction(obelisk_rt_process_instance_v1 &instance,
         action.auxiliary != 0)
       return OBELISK_RT_INVALID_ARGUMENT;
     break;
+  case OBELISK_RT_FRAGMENT_PROCESS_SUSPEND:
+    if (action.flags != 0 || action.suspend_kind != OBELISK_RT_SUSPEND_NONE ||
+        action.continuation == 0 || action.payload != 0 ||
+        action.auxiliary != 0)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    break;
   default:
     return OBELISK_RT_INVALID_ARGUMENT;
   }

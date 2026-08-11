@@ -16,6 +16,31 @@ std::optional<LogicalResult>
 Encoder::encodeSuspensionOperation(FunctionPlan &plan, Operation *operation) {
   if (isa<sim::SimObserverBindOp>(operation))
     return success();
+  if (auto control = dyn_cast<sim::SimProcessControlOp>(operation)) {
+    if (!plan.frame)
+      return control.emitOpError("process control has no canonical frame");
+    const ProcessSuspension *suspension = plan.frame->getSuspension(control);
+    if (!suspension)
+      return control.emitOpError("process control is missing frame analysis");
+    ArrayRef<ProcessFrameValue> slots =
+        plan.frame->getContinuationLayout(suspension->continuationID);
+    if (slots.size() != control.getContinuationOperands().size())
+      return control.emitOpError("continuation frame arity mismatch");
+    for (auto [value, slot] :
+         llvm::zip_equal(control.getContinuationOperands(), slots)) {
+      uint64_t transferSize =
+          slot.storageSize * (slot.hasSecondaryStorage() ? 2 : 1);
+      if (transferSize > UINT32_MAX)
+        return control.emitOpError(
+            "canonical frame transfer exceeds the bytecode ABI limit");
+      emitFrameTransfer(plan, StoreFrame, value, slot.valueOffset,
+                        static_cast<uint32_t>(transferSize));
+    }
+    emit({ProcessControl, static_cast<uint16_t>(control.getKind()), 0,
+          reg(plan, control.getProcess()), 0, 0, 0,
+          suspension->continuationID});
+    return success();
+  }
   if (auto suspend = dyn_cast<sim::SimSuspendDelayOp>(operation))
     return encodeWait(plan, suspend.getOperation(),
                       suspend.getContinuationOperands(),
