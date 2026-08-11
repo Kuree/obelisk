@@ -15,6 +15,18 @@ module {
     obelisk_sim.class.decl @Derived id 3 extends @Base implements [@I] {
       is_abstract = false, is_final = true, is_interface = false
     }
+    obelisk_sim.class.method @I_first of @I slot 4294967295
+        signature_id 15 :
+      (!obelisk_sim.context, !obelisk_sim.class_handle<@I>) -> i64 {
+        is_final = false, is_pure = true, is_static = false,
+        is_task = false, is_virtual = true
+      }
+    obelisk_sim.class.method @I_second of @I slot 4294967295
+        signature_id 16 :
+      (!obelisk_sim.context, !obelisk_sim.class_handle<@I>) -> i64 {
+        is_final = false, is_pure = true, is_static = false,
+        is_task = false, is_virtual = true
+      }
     obelisk_sim.class.field @Base_value of @Base at 0 offset 8 : i64 {
       is_static = false, is_weak = false
     }
@@ -73,6 +85,8 @@ module {
 }
 
 // CHECK: obelisk_sim.class.decl @Derived id 3 extends @Base implements [@I]
+// CHECK: obelisk_sim.class.method @I_first of @I slot 4294967295
+// CHECK: obelisk_sim.class.method @I_second of @I slot 4294967295
 // CHECK: obelisk_sim.class.method @Base_get of @Base slot 0
 // CHECK: !obelisk_sim.class_handle<@Derived>
 // CHECK: obelisk_sim.managed.nba.enqueue

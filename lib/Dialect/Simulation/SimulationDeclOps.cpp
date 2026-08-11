@@ -38,6 +38,8 @@ using namespace mlir;
 
 namespace obelisk::sim {
 
+static constexpr uint64_t interfaceDispatchSlot =
+    std::numeric_limits<uint32_t>::max();
 
 LogicalResult SimScopeDeclOp::verify() {
   if (failed(verifyNonnegative(*this, getIdAttr(), "scope ID")))
@@ -302,6 +304,15 @@ LogicalResult SimClassMethodDeclOp::verify() {
   if (getIsVirtual() != static_cast<bool>(getSlotAttr()))
     return emitOpError(
         "virtual methods require a slot and nonvirtual methods forbid one");
+  if (getSlotAttr()) {
+    if (owner.getIsInterface() && getSlot() != interfaceDispatchSlot)
+      return emitOpError(
+          "interface virtual methods require the interface dispatch slot");
+    if (!owner.getIsInterface() && getSlot() == interfaceDispatchSlot)
+      return emitOpError(
+          "non-interface virtual methods cannot use the interface dispatch "
+          "slot");
+  }
   if (getIsVirtual() != static_cast<bool>(getSignatureIdAttr()) ||
       (getSignatureIdAttr() && getSignatureId() == 0))
     return emitOpError(
@@ -722,6 +733,7 @@ LogicalResult SimDesignOp::verifyRegions() {
             "owner class contains a duplicate direct-property ordinal");
     } else if (auto method = dyn_cast<SimClassMethodDeclOp>(op)) {
       if (method.getSlot() &&
+          *method.getSlot() != interfaceDispatchSlot &&
           !methodSlots[method.getOwner()].insert(*method.getSlot()).second)
         return method.emitOpError(
             "owner class contains a duplicate virtual-method slot");

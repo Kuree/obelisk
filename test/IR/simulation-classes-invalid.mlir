@@ -224,3 +224,69 @@ module {
     }
   }
 }
+
+// -----
+
+module {
+  obelisk_sim.design @bad_interface_method_slot {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.class.decl @I id 1 {
+      is_abstract = true, is_final = false, is_interface = true
+    }
+    // expected-error @below {{interface virtual methods require the interface dispatch slot}}
+    obelisk_sim.class.method @I_f of @I slot 0 signature_id 17 :
+      (!obelisk_sim.context, !obelisk_sim.class_handle<@I>) -> i64 {
+        is_final = false, is_pure = true, is_static = false,
+        is_task = false, is_virtual = true
+      }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @bad_class_method_slot {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 function hierarchy "C.f"
+    obelisk_sim.class.decl @C id 1 {
+      is_abstract = false, is_final = false, is_interface = false
+    }
+    // expected-error @below {{non-interface virtual methods cannot use the interface dispatch slot}}
+    obelisk_sim.class.method @C_f of @C slot 4294967295 signature_id 17
+        implemented_by @f :
+      (!obelisk_sim.context, !obelisk_sim.class_handle<@C>) -> i64 {
+        is_final = false, is_pure = false, is_static = false,
+        is_task = false, is_virtual = true
+      }
+    obelisk_sim.func @f(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %this: !obelisk_sim.class_handle<@C>
+          {obelisk_sim.capture_kind = 1 : i32}) -> i64
+        attributes {code_unit_id = 1 : i64, entry_kind = 8 : i32} {
+      %zero = arith.constant 0 : i64
+      obelisk_sim.return %zero : i64
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @duplicate_class_method_slot {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.class.decl @C id 1 {
+      is_abstract = true, is_final = false, is_interface = false
+    }
+    obelisk_sim.class.method @C_first of @C slot 0 signature_id 17 :
+      (!obelisk_sim.context, !obelisk_sim.class_handle<@C>) -> i64 {
+        is_final = false, is_pure = true, is_static = false,
+        is_task = false, is_virtual = true
+      }
+    // expected-error @below {{owner class contains a duplicate virtual-method slot}}
+    obelisk_sim.class.method @C_second of @C slot 0 signature_id 18 :
+      (!obelisk_sim.context, !obelisk_sim.class_handle<@C>) -> i64 {
+        is_final = false, is_pure = true, is_static = false,
+        is_task = false, is_virtual = true
+      }
+  }
+}
