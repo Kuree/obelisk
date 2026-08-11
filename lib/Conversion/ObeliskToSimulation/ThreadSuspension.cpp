@@ -21,6 +21,8 @@
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 
+#include <optional>
+
 using namespace mlir;
 
 namespace obelisk {
@@ -186,16 +188,24 @@ public:
       }
     }
 
+    // Threading is what invalidates liveness and the candidate list: it adds
+    // continuation arguments and rewrites later uses onto them. Suspensions
+    // that thread nothing leave both intact, so recompute on mutation instead
+    // of per suspension — a process with many suspension points would
+    // otherwise pay a whole-function walk for each one.
+    std::optional<Liveness> liveness;
+    SmallVector<Value> orderedValues;
     for (Operation *suspension : suspensions) {
-      Liveness liveness(function);
-      const auto &liveOut = liveness.getLiveOut(suspension->getBlock());
-
-      SmallVector<Value> orderedValues;
-      for (Block &block : function.getBody()) {
-        llvm::append_range(orderedValues, block.getArguments());
-        for (Operation &op : block)
-          llvm::append_range(orderedValues, op.getResults());
+      if (!liveness) {
+        liveness.emplace(function);
+        orderedValues.clear();
+        for (Block &block : function.getBody()) {
+          llvm::append_range(orderedValues, block.getArguments());
+          for (Operation &op : block)
+            llvm::append_range(orderedValues, op.getResults());
+        }
       }
+      const auto &liveOut = liveness->getLiveOut(suspension->getBlock());
 
       auto branch = cast<BranchOpInterface>(suspension);
       Block *continuation = suspension->getSuccessor(0);
@@ -265,6 +275,8 @@ public:
           return dominance.dominates(continuation, use.getOwner()->getBlock());
         });
       }
+      if (!toThread.empty())
+        liveness.reset();
     }
 
     // A continuation argument can flow into a later merge block which is not
