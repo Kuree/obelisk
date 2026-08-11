@@ -56,19 +56,23 @@ bool ClassDispatchAnalysis::isInstanceOf(sim::SimClassDeclOp dynamicClass,
   if (!dynamicClass || !target)
     return false;
   DenseSet<Operation *> visited;
-  for (sim::SimClassDeclOp current = dynamicClass;
-       current && visited.insert(current).second;
-       current = current.getBase() ? lookup(*current.getBase())
-                                   : sim::SimClassDeclOp{}) {
+  SmallVector<sim::SimClassDeclOp> pending{dynamicClass};
+  while (!pending.empty()) {
+    sim::SimClassDeclOp current = pending.pop_back_val();
+    if (!current || !visited.insert(current).second)
+      continue;
     if (current == target)
       return true;
-    if (!target.getIsInterface())
-      continue;
-    if (ArrayAttr interfaces = current.getInterfacesAttr())
-      for (Attribute attribute : interfaces)
-        if (auto reference = dyn_cast<FlatSymbolRefAttr>(attribute);
-            reference && reference.getValue() == target.getSymName())
-          return true;
+    if (auto base = current.getBase())
+      pending.push_back(lookup(*base));
+    if (target.getIsInterface()) {
+      if (ArrayAttr interfaces = current.getInterfacesAttr()) {
+        for (Attribute attribute : interfaces)
+          if (auto reference = dyn_cast<FlatSymbolRefAttr>(attribute);
+              reference)
+            pending.push_back(lookup(reference.getValue()));
+      }
+    }
   }
   return false;
 }
