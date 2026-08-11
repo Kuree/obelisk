@@ -24,7 +24,13 @@ static bool containsNestedOperation(Operation *root, Operation *nested) {
 static bool isStorageBaseUse(Operation *lvalue, Operation *reference) {
   if (lvalue == reference)
     return isa<semantic::SVNamedValueExpressionOp,
-               semantic::SVHierarchicalValueExpressionOp>(lvalue);
+               semantic::SVHierarchicalValueExpressionOp>(lvalue) ||
+           lvalue->hasAttr(staticClassPropertyAttrName);
+  // A static class property selected through an object expression is its own
+  // storage root. The object qualifier is evaluated, but is neither read as
+  // the property's value nor written by an assignment to the property.
+  if (lvalue->hasAttr(staticClassPropertyAttrName))
+    return false;
   SmallVector<Operation *> children = getChildren(lvalue);
   if (isa<semantic::SVMemberAccessExpressionOp,
           semantic::SVElementSelectExpressionOp,
@@ -149,6 +155,12 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
                      dyn_cast<semantic::SVVariableDeclStatementOp>(nested)) {
         path = declaration.getReferencedPath();
         reference = declaration.getReferencedSymbol();
+      } else if (auto member =
+                     dyn_cast<semantic::SVMemberAccessExpressionOp>(nested)) {
+        if (!member->hasAttr(staticClassPropertyAttrName))
+          return;
+        reference = member.getReferencedSymbol();
+        path = member.getReferencedPath();
       } else {
         return;
       }

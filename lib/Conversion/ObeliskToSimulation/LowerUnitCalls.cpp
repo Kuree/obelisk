@@ -978,10 +978,20 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   bool directTask = op->hasAttr("obelisk_sim.is_task");
   SmallVector<Value> operands{function.getBody().front().getArgument(0)};
   auto formals = op->getAttrOfType<ArrayAttr>(calleeFormalsAttrName);
-  if (!formals || formals.size() != children.size()) {
+  bool staticClassReceiver = op->hasAttr(staticClassReceiverAttrName);
+  if (!formals || formals.size() + (staticClassReceiver ? 1 : 0) !=
+                      children.size()) {
     emitError(location)
         << "direct call has no complete frozen formal inventory";
     return failure();
+  }
+  ArrayRef<Operation *> actuals = children;
+  if (staticClassReceiver) {
+    // Static methods do not receive an object, but an object-qualified call
+    // still evaluates its prefix expression before the explicit arguments.
+    if (failed(lowerExpression(children.front())))
+      return failure();
+    actuals = actuals.drop_front();
   }
   struct CopyOut {
     Value destination;
@@ -993,7 +1003,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   };
   SmallVector<CopyOut> copyOuts;
   SmallVector<Attribute> dpiOperandABI;
-  for (auto [child, formalAttr] : llvm::zip_equal(children, formals)) {
+  for (auto [child, formalAttr] : llvm::zip_equal(actuals, formals)) {
     auto formal = cast<DictionaryAttr>(formalAttr);
     auto direction = static_cast<semantic::SVArgumentDirection>(
         formal.getAs<IntegerAttr>("direction").getInt());

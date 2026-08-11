@@ -2643,6 +2643,21 @@ void ObeliskSimPreparePass::runOnOperation() {
   if (invalid)
     return abort();
 
+  // Freeze static property selections before capture analysis. Such a member
+  // is an addressable class-wide storage root, while its object prefix is only
+  // an evaluated qualifier and must not be classified as the assigned base.
+  semanticRoot->walk([&](semantic::SVMemberAccessExpressionOp member) {
+    auto symbol = semanticSymbols.find(
+        member.getReferencedSymbol().getLeafReference());
+    auto property =
+        symbol != semanticSymbols.end()
+            ? dyn_cast<semantic::SVClassPropertySymbolOp>(symbol->second)
+            : semantic::SVClassPropertySymbolOp{};
+    if (property && property.getLifetime() ==
+                        semantic::SVVariableLifetime::Static)
+      member->setAttr(staticClassPropertyAttrName, builder.getUnitAttr());
+  });
+
   FailureOr<PreparedCaptures> preparedCaptures = analyzeCodeUnitCaptures(
       *preparedUnits, descriptors, semanticSymbols, classSources);
   if (failed(preparedCaptures))
@@ -2748,6 +2763,12 @@ void ObeliskSimPreparePass::runOnOperation() {
                             virtualMethodSignatures.lookup(targetSubroutine)));
         }
       }
+    } else if (auto targetSubroutine =
+                   dyn_cast<semantic::SVSubroutineSymbolOp>(targetSource);
+               targetSubroutine && getOwningClass(targetSubroutine) &&
+               targetSubroutine.getIsStatic().value_or(false) &&
+               call.getHasThisClass()) {
+      call->setAttr(staticClassReceiverAttrName, builder.getUnitAttr());
     }
     SmallVector<Attribute> capturePaths;
     bool dpiTarget = false;
@@ -3796,8 +3817,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         auto property =
             dyn_cast<semantic::SVClassPropertySymbolOp>(symbol->second);
         if (field != classFieldSymbols.end() &&
-            (!property ||
-             property.getLifetime() != semantic::SVVariableLifetime::Static))
+            (!property || property.getLifetime() !=
+                              semantic::SVVariableLifetime::Static))
           member->setAttr("obelisk_sim.class_field", field->second);
         return;
       }

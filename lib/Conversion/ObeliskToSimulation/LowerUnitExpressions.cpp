@@ -517,6 +517,14 @@ UnitLowering::lowerMember(semantic::SVMemberAccessExpressionOp op,
     unsupported(op) << " (member access arity)";
     return failure();
   }
+  if (op->hasAttr(staticClassPropertyAttrName)) {
+    // SystemVerilog permits static properties to be selected through an
+    // object expression. Evaluate that expression for its side effects, but
+    // address the class-wide design storage rather than the object layout.
+    if (failed(lowerExpression(children.front())))
+      return failure();
+    return lowerReferencedValue(op, op.getReferencedPath(), lvalue);
+  }
   if (auto field =
           op->getAttrOfType<FlatSymbolRefAttr>("obelisk_sim.class_field")) {
     FailureOr<Type> resultType = getNormalizedSemanticType(op);
