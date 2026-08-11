@@ -16,11 +16,15 @@ for (const match of app.matchAll(/from\s+'(\.\/[^']+)'/g)) {
   await access(new URL(match[1], web));
 }
 assert.match(html, /<script\s+type="module"\s+src="\.\/app\.js"><\/script>/);
+assert.match(html, /<title>Obelisk: SystemVerilog simulator in the browser<\/title>/);
+assert.doesNotMatch(html, /<title>[^<]*—[^<]*<\/title>/);
+assert.match(html, /<option\s+value="">Custom design<\/option>/);
 assert.match(html, /<iframe[^>]+id="surfer"[^>]+sandbox="allow-scripts"/s);
 assert.doesNotMatch(html, /sandbox="[^"]*allow-same-origin/);
 
 assert.match(style, /\.panelTools\s*>\s*\[hidden\]\s*{\s*display:\s*none;/);
 assert.match(style, /\.irEditor\s+\.cursor\s*{\s*display:\s*none\s*!important;/);
+assert.match(style, /#examples\s+option\s*{[^}]*background:\s*var\(--panel\);[^}]*color:\s*var\(--fg\);/s);
 assert.match(style, /\.scheduleCanvas\s*{\s*overflow-x:\s*hidden;/);
 assert.match(style, /\.scheduleCanvas\s+svg\s*{[^}]*max-width:\s*600px;/s);
 assert.match(style, /\.pipeline\s*{[^}]*overflow-x:\s*auto;[^}]*touch-action:\s*pan-x;/s);
@@ -31,6 +35,8 @@ assert.match(style, /\.pipeline\.canDrag,\s*\.pipeline\.canDrag\s+\.stage\s*{\s*
 assert.match(style, /@media\s*\(max-width:\s*860px\)[\s\S]*grid-template-columns:\s*1fr;[\s\S]*grid-template-rows:[^;]*8px/s);
 assert.match(style, /@media\s*\(max-width:\s*600px\)[\s\S]*--masthead:\s*94px;[\s\S]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/s);
 assert.match(style, /height:\s*calc\(100dvh\s*-\s*var\(--masthead\)\)/);
+assert.match(style, /\.waveform\s*{[^}]*overflow:\s*auto;/s);
+assert.match(style, /\.waveform iframe\s*{[^}]*min-width:\s*600px;/s);
 
 assert.doesNotMatch(surfer, /linear-gradient|body::before/);
 assert.match(surfer, /SetMenuVisible:\s*false/);
@@ -38,12 +44,28 @@ assert.match(surfer, /SetToolbarGroupEnabled:\s*\['menu',\s*false\]/);
 assert.match(surfer, /SetToolbarGroupEnabled:\s*\['files',\s*false\]/);
 assert.match(surfer, /event\.source\s*!==\s*parent\s*\|\|\s*event\.origin\s*!==\s*parentOrigin/);
 assert.match(surfer, /SelectTheme:\s*'dark\+'/);
+assert.match(surfer, /firstDesignScope\(bytes\)/);
+assert.match(surfer, /return \[rootScope,\s*name\]/);
+assert.match(surfer, /const generation\s*=\s*\+\+waveformGeneration/);
+assert.match(surfer, /generation\s*!==\s*waveformGeneration/);
+assert.match(surfer, /SetActiveScope:\s*\{\s*WaveScope:\s*scope\s*\}/);
+assert.match(surfer, /AddScope:\s*\[scope,\s*false\]/);
+assert.match(surfer, /ZoomToFit:\s*\{\s*viewport_idx:\s*0\s*\}/);
+assert.doesNotMatch(surfer, /LoadCommandFromData/);
+assert.doesNotMatch(surfer, /scope_add_recursive/);
 
 assert.match(app, /finishRecording\(`\$\{note\}compile \$\{compileMs\} ms · run \$\{runMs\} ms`/);
+assert.match(app, /const\s+initialSource\s*=\s*saved\?\.source\s*\?\?\s*EXAMPLES\[0\]\.source/);
+assert.match(app, /initialExampleIndex\s*=\s*EXAMPLES\.findIndex/);
+assert.match(app, /if\s*\(ui\.examples\.value\s*===\s*''\)\s*return;/);
+assert.doesNotMatch(app, /ui\.examples\.value\s*=\s*'';/);
 assert.match(app, /setStatus\('running',\s*'busy'\)/);
 assert.match(app, /finishRecording\([^;]+code === 0 \? 'ok' : 'err'\)/s);
 assert.match(app, /saveWaveform\(latestWaveform\)/);
 assert.match(app, /showSchedule\(text\)/);
+assert.match(app, /const\s+request\s*=\s*\+\+waveformRequest/);
+assert.match(app, /request\s*!==\s*waveformRequest\s*\|\|\s*activeStage\s*!==\s*'waveform'/);
+assert.match(app, /onDidChangeModelContent\(\(\)\s*=>\s*{[\s\S]*if\s*\(activeStage\s*===\s*'waveform'\)[\s\S]*activeStage\s*=\s*'run';[\s\S]*showConsole\(\);/s);
 assert.match(app, /setModelLanguage\(irModel,\s*language\)/);
 assert.match(html, /id="irEditor"[^>]+aria-label="Read-only compiler output"/);
 assert.match(app, /onSourceLocation:\s*revealScheduleSource/);
@@ -61,6 +83,8 @@ assert.match(app, /pipeline\.classList\.toggle\(\s*'canDrag',\s*pipeline\.scroll
 assert.match(app, /resizeObserver\.observe\(pipeline\);[\s\S]*resizeObserver\.observe\(ui\.stages\);/s);
 assert.match(app, /if\s*\(!pipeline\.classList\.contains\('canDrag'\)/);
 assert.match(app, /event\.pointerType\s*!==\s*'mouse'/);
+assert.match(app, /dragged\s*=\s*true;\s*pipeline\.setPointerCapture\(pointerId\)/);
+assert.doesNotMatch(app, /dragged\s*=\s*false;\s*pipeline\.setPointerCapture\(pointerId\)/);
 assert.match(app, /pipeline\.scrollLeft\s*=\s*startScrollLeft\s*-\s*distance/);
 assert.match(app, /if\s*\(!dragged\)\s*return;[\s\S]*event\.preventDefault\(\);[\s\S]*event\.stopPropagation\(\);/s);
 

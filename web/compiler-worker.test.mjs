@@ -9,6 +9,7 @@ const files = new Map();
 let behavior = 'success';
 let factoryCalls = 0;
 let installCalls = 0;
+let factoryOptions = null;
 
 const FS = {
   mkdir() {},
@@ -55,6 +56,7 @@ globalThis.self = {
     } else if (path === './obelisk.js') {
       self.createObeliskModule = async (options) => {
         factoryCalls++;
+        factoryOptions = options;
         assert.equal(options.noInitialRun, true);
         assert.equal(options.thisProgram, '/bin/obelisk');
         assert.equal(options.locateFile('obelisk.wasm'),
@@ -74,6 +76,12 @@ assert.deepEqual(messages.at(-1), { type: 'ready' });
 assert.deepEqual(importedScripts, ['./toolchain.js', './obelisk.js']);
 assert.equal(factoryCalls, 1);
 assert.equal(installCalls, 1);
+factoryOptions.printErr('\x1b[36mwork/design.sv\x1b[0m:\x1b[96m11:12\x1b[0m: warning');
+assert.deepEqual(messages.at(-1), {
+  type: 'log',
+  stream: 'stderr',
+  text: 'work/design.sv:11:12: warning\n',
+});
 
 await self.onmessage({
   data: { type: 'compile', source: 'module m; endmodule', args: ['-emit-sim'], stage: 'sim', kind: 'text' },

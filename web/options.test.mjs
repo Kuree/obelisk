@@ -81,10 +81,29 @@ window.location.hash = '#not-valid-base64';
 assert.equal(loadState().source, 'module saved; endmodule');
 
 assert.ok(EXAMPLES.length >= 4);
+assert.equal(new Set(EXAMPLES.map((example) => example.name)).size, EXAMPLES.length);
 for (const example of EXAMPLES) {
   assert.ok(example.name);
   assert.match(example.source, /\bmodule\b/);
   assert.match(example.source, /\bendmodule\b/);
+  assert.doesNotMatch(example.source, /Obelisk compiles|ahead of time to WebAssembly/i);
 }
+const rv32im = EXAMPLES.find((example) => example.name === 'RV32IM core');
+assert.ok(rv32im);
+for (const instruction of [
+  'LUI', 'AUIPC', 'JAL', 'JALR', 'BEQ', 'BNE', 'BLT', 'BGE', 'BLTU', 'BGEU',
+  'LB', 'LH', 'LW', 'LBU', 'LHU', 'SB', 'SH', 'SW',
+  'ADDI', 'SLTI', 'SLTIU', 'XORI', 'ORI', 'ANDI', 'SLLI', 'SRLI', 'SRAI',
+  'ADD', 'SUB', 'SLL', 'SLT', 'SLTU', 'XOR', 'SRL', 'SRA', 'OR', 'AND',
+  'MUL', 'MULH', 'MULHSU', 'MULHU', 'DIV', 'DIVU', 'REM', 'REMU',
+]) assert.match(rv32im.source, new RegExp(`\\b${instruction}\\b`));
+assert.match(rv32im.source, /result\s*==\s*1\s*&&\s*memory\[32\]\s*==\s*40/);
+assert.ok(EXAMPLES.some((example) => example.name === 'UART transmitter'));
+const tristate = EXAMPLES.find((example) => example.name === 'Tri-state buffer');
+assert.ok(tristate);
+assert.match(tristate.source, /module\s+tri_state_buffer/);
+assert.equal((tristate.source.match(/tri_state_buffer\s+buffer_/g) ?? []).length, 2);
+const randomization = EXAMPLES.find((example) => example.name === 'Randomization');
+assert.doesNotMatch(randomization.source, /Packet\s+p\s*=\s*new/);
 
 console.log('web options, stages, persistence, and examples OK');

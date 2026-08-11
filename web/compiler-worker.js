@@ -7,6 +7,13 @@
 
 let modulePromise = null;
 
+// Emscripten's terminal hooks can retain ANSI color even though their output
+// is rendered in a browser rather than a terminal. Remove CSI color/control
+// sequences before they reach both the console and diagnostic parser.
+function stripAnsi(text) {
+  return text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
+}
+
 function loadDriver() {
   if (modulePromise) return modulePromise;
   modulePromise = (async () => {
@@ -19,8 +26,8 @@ function loadDriver() {
     const mod = await self.createObeliskModule({
       noInitialRun: true,
       thisProgram: '/bin/obelisk',
-      print: (line) => post('log', { stream: 'stdout', text: line + '\n' }),
-      printErr: (line) => post('log', { stream: 'stderr', text: line + '\n' }),
+      print: (line) => post('log', { stream: 'stdout', text: stripAnsi(line) + '\n' }),
+      printErr: (line) => post('log', { stream: 'stderr', text: stripAnsi(line) + '\n' }),
       locateFile: (path) => new URL(path, self.location.href).href,
     });
     await self.installObeliskToolchain(mod);

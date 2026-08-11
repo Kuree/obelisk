@@ -313,6 +313,11 @@ button, select, input { font: inherit; color: inherit; }
   cursor: pointer;
 }
 .inline:hover { color: var(--fg); }
+#examples option {
+  background: var(--panel);
+  color: var(--fg);
+}
+#examples option[value=""] { color: var(--fg-dim); }
 
 .status {
   min-width: 0;
@@ -488,12 +493,14 @@ button, select, input { font: inherit; color: inherit; }
   position: relative;
   flex: 1;
   min-height: 0;
+  overflow: auto;
   background: var(--ink);
 }
 .waveform[hidden], .console[hidden] { display: none; }
 .waveform iframe {
   display: block;
   width: 100%;
+  min-width: 600px;
   height: 100%;
   border: 0;
   background: var(--ink);

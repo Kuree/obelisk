@@ -45,6 +45,7 @@ let activeStage = DEFAULT_STAGE;
 let busy = false;
 let latestWaveform = null;
 let surferReady = null;
+let waveformRequest = 0;
 let scheduleText = '';
 let scheduleRaw = false;
 const storedWaveform = loadWaveform()
@@ -142,6 +143,7 @@ function paintStageSelection() {
 
 function selectStage(id) {
   activeStage = id;
+  if (id !== 'waveform') waveformRequest++;
   paintStageSelection();
 
   const stage = findStage(id);
@@ -492,6 +494,7 @@ function ensureSurfer() {
 }
 
 async function showWaveform() {
+  const request = ++waveformRequest;
   scheduleSourceHighlight?.clear();
   ui.output.hidden = true;
   ui.irEditor.hidden = true;
@@ -506,7 +509,7 @@ async function showWaveform() {
   setStatus('loading', 'busy');
 
   await storedWaveform;
-  if (activeStage !== 'waveform') return;
+  if (request !== waveformRequest || activeStage !== 'waveform') return;
   if (!latestWaveform) {
     ui.waveformEmpty.textContent =
       'No waveform yet. Add $dumpvars to the design and run it; $dumpfile is optional.';
@@ -518,7 +521,7 @@ async function showWaveform() {
   ui.waveformEmpty.textContent = 'Loading Surfer…';
   try {
     await ensureSurfer();
-    if (activeStage !== 'waveform') return;
+    if (request !== waveformRequest || activeStage !== 'waveform') return;
     const buffer = latestWaveform.data.slice().buffer;
     ui.surfer.contentWindow.postMessage(
       { type: 'load-waveform', buffer },
@@ -530,7 +533,7 @@ async function showWaveform() {
     const name = displayFilename(latestWaveform.name);
     setStatus(`${name} · ${formatBytes(latestWaveform.data.byteLength)}`, 'ok');
   } catch (error) {
-    if (activeStage !== 'waveform') return;
+    if (request !== waveformRequest || activeStage !== 'waveform') return;
     ui.waveformEmpty.textContent = `Waveform viewer unavailable: ${error?.message ?? error}`;
     setStatus('viewer unavailable', 'err');
   }
@@ -633,7 +636,19 @@ async function initEditor(initialSource) {
 
   editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, run);
   editor.onDidChangeModelContent(() => {
+    const exampleIndex = EXAMPLES.findIndex(
+      (example) => example.source === editor.getValue(),
+    );
+    ui.examples.value = exampleIndex < 0 ? '' : String(exampleIndex);
     invalidate();
+    if (activeStage === 'waveform') {
+      waveformRequest++;
+      activeStage = 'run';
+      paintStageSelection();
+      showConsole();
+      clearConsole();
+      if (!busy) setStatus('ready');
+    }
     persist();
   });
 }
@@ -682,7 +697,7 @@ async function copy(text, button) {
   setTimeout(() => { button.textContent = original; }, 1400);
 }
 
-function initChrome() {
+function initChrome(initialSource) {
   ui.run.addEventListener('click', run);
   ui.copyCommand.addEventListener('click', () =>
     copy(formatCommand({ ...options, stage: activeStage }), ui.copyCommand));
@@ -716,11 +731,15 @@ function initChrome() {
     option.textContent = example.name;
     ui.examples.appendChild(option);
   }
+  const initialExampleIndex = EXAMPLES.findIndex(
+    (example) => example.source === initialSource,
+  );
+  ui.examples.value = initialExampleIndex < 0 ? '' : String(initialExampleIndex);
   ui.examples.addEventListener('change', () => {
+    if (ui.examples.value === '') return;
     const example = EXAMPLES[Number(ui.examples.value)];
     if (example) {
       editor.setValue(example.source);
-      ui.examples.value = '';
       editor.focus();
     }
   });
@@ -760,13 +779,13 @@ function initPipelineScroll() {
     startX = event.clientX;
     startScrollLeft = pipeline.scrollLeft;
     dragged = false;
-    pipeline.setPointerCapture(pointerId);
   });
   pipeline.addEventListener('pointermove', (event) => {
     if (event.pointerId !== pointerId) return;
     const distance = event.clientX - startX;
     if (Math.abs(distance) < 4 && !dragged) return;
     dragged = true;
+    pipeline.setPointerCapture(pointerId);
     pipeline.classList.add('isDragging');
     pipeline.scrollLeft = startScrollLeft - distance;
     event.preventDefault();
@@ -845,16 +864,17 @@ async function main() {
     options = { ...saved.options };
     activeStage = saved.options.stage ?? DEFAULT_STAGE;
   }
+  const initialSource = saved?.source ?? EXAMPLES[0].source;
 
   buildStageTabs();
   writeOptions();
   paintStageSelection();
   initOptions();
-  initChrome();
+  initChrome(initialSource);
 
   setStatus('loading editor', 'busy');
   try {
-    await initEditor(saved?.source ?? EXAMPLES[0].source);
+    await initEditor(initialSource);
   } catch (error) {
     setStatus('editor failed', 'err');
     write(`${error.message}\n`, 'stderr');

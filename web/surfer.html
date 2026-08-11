@@ -57,6 +57,25 @@
     parent.postMessage({ type: 'surfer-notification', message }, parentOrigin);
   };
 
+  function firstDesignScope(bytes) {
+    const header = new TextDecoder().decode(bytes.subarray(0, 64 * 1024));
+    let rootScope = null;
+    for (const match of header.matchAll(/^\$scope\s+\S+\s+(\S+)\s+\$end\s*$/gm)) {
+      const name = match[1];
+      if (rootScope === null) {
+        if (name.replace(/^\\/, '') !== '$root') return [name];
+        rootScope = name;
+        continue;
+      }
+      return [rootScope, name];
+    }
+    return null;
+  }
+
+  const delay = (milliseconds) => new Promise(
+    (resolve) => setTimeout(resolve, milliseconds),
+  );
+
   try {
     // Surfer's deployed app explicitly serves these build artifacts with CORS,
     // so they act as the viewer CDN. The wrapper and captured VCD stay on the
@@ -74,19 +93,37 @@
     api.inject_message(JSON.stringify({ SetToolbarGroupEnabled: ['menu', false] }));
     api.inject_message(JSON.stringify({ SetToolbarGroupEnabled: ['files', false] }));
 
+    let waveformGeneration = 0;
     window.addEventListener('message', (event) => {
       if (event.source !== parent || event.origin !== parentOrigin) return;
       if (event.data?.type !== 'load-waveform') return;
-      try {
+      const generation = ++waveformGeneration;
+      (async () => {
         if (!(event.data.buffer instanceof ArrayBuffer))
           throw new TypeError('waveform payload is not an ArrayBuffer');
         // Surfer's exported wasm API accepts a JSON message. Joining the typed
         // array avoids first expanding every byte into a boxed JS number.
         const bytes = new Uint8Array(event.data.buffer);
+        const designScope = firstDesignScope(bytes);
         api.inject_message(`{"LoadFromData":[[${bytes.join(',')}],"Clear"]}`);
-      } catch (error) {
+
+        // Surfer installs its hierarchy asynchronously after accepting the
+        // data. Add the first design scope directly once that hierarchy has
+        // had a frame to settle. This avoids the command-file parser and its
+        // escaped-identifier syntax, and does not recursively add sub-scopes.
+        await delay(500);
+        if (generation !== waveformGeneration) return;
+        if (designScope) {
+          const scope = { strs: designScope, id: 'None' };
+          api.inject_message(JSON.stringify({
+            SetActiveScope: { WaveScope: scope },
+          }));
+          api.inject_message(JSON.stringify({ AddScope: [scope, false] }));
+          api.inject_message(JSON.stringify({ ZoomToFit: { viewport_idx: 0 } }));
+        }
+      })().catch((error) => {
         window.on_surfer_error(error?.message ?? error);
-      }
+      });
     });
     parent.postMessage({ type: 'surfer-ready' }, parentOrigin);
   } catch (error) {
