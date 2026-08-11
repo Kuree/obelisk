@@ -4,8 +4,8 @@
 # runtime with clang against a pinned Debian sysroot and stages glibc, the crt
 # objects and libc++ so the driver can link a hermetic ELF. None of that
 # applies here: Emscripten supplies its own sysroot, startup files and C++
-# runtime at link time, so this file only has to produce the LTO runtime archive
-# where the driver expects to find it.
+# runtime at link time, so this file only has to produce the precompiled wasm
+# runtime archive where the driver expects to find it.
 #
 # MEMORY64 is mandatory, not a preference. runtime/lib/ABI.cpp asserts
 # sizeof(void*) == 8 and every descriptor layout assertion depends on it, so a
@@ -25,29 +25,21 @@ endif()
 set(OBELISK_TARGET_TRIPLE "wasm64-unknown-emscripten" CACHE STRING
     "wasm code-generation target triple")
 
-# LTO bitcode is not backward-compatible across LLVM majors. Use the native
-# clang shipped with the wasm LLVM SDK so the embedded LLD can read every
-# member of libobelisk_rt_lto.a; Emscripten's em++ may be newer than that SDK.
-set(OBELISK_WASM_LTO_CXX "${OBELISK_LLVM_TOOLS_DIR}/clang++" CACHE FILEPATH
-    "host clang matching the embedded LLVM, used for wasm runtime LTO")
-set(_obelisk_wasm_cxx "${OBELISK_WASM_LTO_CXX}")
+# Compile the runtime once while assembling the web toolchain. The browser
+# linker then consumes ordinary wasm objects instead of rerunning LLVM over
+# the entire runtime for every design.
+# Ordinary wasm objects do not need to match the embedded LLVM's bitcode
+# version, but they must match Emscripten's ABI. Use Emscripten's compiler so
+# exception lowering and the libc++/libunwind archives agree exactly.
+set(_obelisk_wasm_cxx "${CMAKE_CXX_COMPILER}")
 set(_obelisk_wasm_ar "${CMAKE_AR}")
 foreach(tool _obelisk_wasm_cxx _obelisk_wasm_ar)
   if(NOT ${tool} OR NOT EXISTS "${${tool}}")
     message(FATAL_ERROR
-      "The wasm toolchain did not provide ${tool}; configure with emcmake "
-      "and set OBELISK_WASM_LTO_CXX to clang++ from the embedded LLVM SDK")
+      "The wasm toolchain did not provide ${tool}; configure with emcmake so "
+      "em++ and emar are selected")
   endif()
 endforeach()
-
-get_filename_component(_obelisk_emscripten_root "${CMAKE_CXX_COMPILER}"
-  DIRECTORY)
-set(_obelisk_emscripten_sysroot
-    "${_obelisk_emscripten_root}/cache/sysroot")
-if(NOT IS_DIRECTORY "${_obelisk_emscripten_sysroot}")
-  message(FATAL_ERROR
-    "The Emscripten sysroot was not found at ${_obelisk_emscripten_sysroot}")
-endif()
 
 # There is no sysroot to provision, but the rest of the build refers to these,
 # and the build-graph regression test includes this file expecting the target
@@ -60,8 +52,8 @@ if(OBELISK_TARGET_SYSROOT_ONLY)
 endif()
 
 set(_obelisk_target_runtime_dir "${CMAKE_BINARY_DIR}/target-runtime")
-set(OBELISK_TARGET_RUNTIME_LTO_ARCHIVE
-    "${_obelisk_target_runtime_dir}/libobelisk_rt_lto.a")
+set(OBELISK_TARGET_RUNTIME_ARCHIVE
+    "${_obelisk_target_runtime_dir}/libobelisk_rt.a")
 
 file(GLOB_RECURSE _obelisk_target_runtime_headers CONFIGURE_DEPENDS
   "${_obelisk_runtime_source_dir}/include/*.h"
@@ -81,10 +73,8 @@ endif()
 # emscripten runtime built with shared memory; without them wasm-ld rejects
 # the objects outright. They are harmless in a single-threaded link.
 set(_obelisk_wasm_flags
-  "--target=${OBELISK_TARGET_TRIPLE}"
-  "--sysroot=${_obelisk_emscripten_sysroot}"
-  -isystem "${_obelisk_emscripten_sysroot}/include/compat"
   -std=c++17 -O3
+  -sMEMORY64=1
   -fwasm-exceptions
   -matomics -mbulk-memory
   -fvisibility=hidden
@@ -95,7 +85,7 @@ set(_obelisk_wasm_flags
   -I "${_obelisk_runtime_source_dir}/include"
   -I "${_obelisk_runtime_source_dir}/lib")
 
-set(_obelisk_target_runtime_lto_objects)
+set(_obelisk_target_runtime_objects)
 foreach(source ABI Bytecode Containers Coverage DesignBytecode
                DesignBytecodeImage DesignBytecodeIntrinsics
                DesignBytecodeLogic DesignBytecodeNets DesignBytecodeObservers
@@ -104,37 +94,37 @@ foreach(source ABI Bytecode Containers Coverage DesignBytecode
                ProcessAllocation ProcessObservers ProcessSignals
                ProcessState ProcessValidation Random RandSolve RandSolveWide
                Runtime Sampled VCD VPI)
-  set(lto_object "${_obelisk_target_runtime_dir}/${source}.bc")
-  list(APPEND _obelisk_target_runtime_lto_objects "${lto_object}")
+  set(object "${_obelisk_target_runtime_dir}/${source}.o")
+  list(APPEND _obelisk_target_runtime_objects "${object}")
   add_custom_command(
-    OUTPUT "${lto_object}"
+    OUTPUT "${object}"
     COMMAND "${CMAKE_COMMAND}" -E make_directory
             "${_obelisk_target_runtime_dir}"
     COMMAND "${_obelisk_wasm_cxx}" ${_obelisk_wasm_flags}
-      -flto -funified-lto
-      -c "${_obelisk_runtime_source_dir}/lib/${source}.cpp" -o "${lto_object}"
+      -c "${_obelisk_runtime_source_dir}/lib/${source}.cpp" -o "${object}"
     DEPENDS
       "${_obelisk_runtime_source_dir}/lib/${source}.cpp"
       ${_obelisk_target_runtime_headers}
-    COMMENT "Building wasm64 LTO target runtime ${source}.cpp"
+    COMMENT "Building wasm64 target runtime ${source}.cpp"
     VERBATIM)
 endforeach()
 
 add_custom_command(
-  OUTPUT "${OBELISK_TARGET_RUNTIME_LTO_ARCHIVE}"
-  COMMAND "${CMAKE_COMMAND}" -E rm -f "${OBELISK_TARGET_RUNTIME_LTO_ARCHIVE}"
-  COMMAND "${_obelisk_wasm_ar}" rcs "${OBELISK_TARGET_RUNTIME_LTO_ARCHIVE}"
-          ${_obelisk_target_runtime_lto_objects}
-  DEPENDS ${_obelisk_target_runtime_lto_objects}
-  COMMENT "Archiving wasm64 libobelisk_rt_lto.a with emar"
+  OUTPUT "${OBELISK_TARGET_RUNTIME_ARCHIVE}"
+  COMMAND "${CMAKE_COMMAND}" -E rm -f "${OBELISK_TARGET_RUNTIME_ARCHIVE}"
+  COMMAND "${_obelisk_wasm_ar}" rcs "${OBELISK_TARGET_RUNTIME_ARCHIVE}"
+          ${_obelisk_target_runtime_objects}
+  DEPENDS ${_obelisk_target_runtime_objects}
+  COMMENT "Archiving wasm64 libobelisk_rt.a"
   VERBATIM)
 add_custom_target(obelisk_target_runtime
-  DEPENDS "${OBELISK_TARGET_RUNTIME_LTO_ARCHIVE}")
+  DEPENDS "${OBELISK_TARGET_RUNTIME_ARCHIVE}")
 
 # Staged where the driver looks for target support, matching the native
 # layout so the lookup in tools/driver/NativeBackend.cpp needs no special case.
-# Only the LTO runtime archive is staged: emscripten owns everything else a wasm
-# link needs, and it is on PATH rather than staged into the build tree.
+# Only the precompiled runtime archive is staged: Emscripten owns everything
+# else a wasm link needs, and it is on PATH rather than staged into the build
+# tree.
 set(OBELISK_NATIVE_SUPPORT_DIR
     "${CMAKE_BINARY_DIR}/lib/obelisk/targets/${OBELISK_TARGET_TRIPLE}")
 set(OBELISK_NATIVE_SUPPORT_STAMP
@@ -142,13 +132,13 @@ set(OBELISK_NATIVE_SUPPORT_STAMP
 add_custom_command(
   OUTPUT "${OBELISK_NATIVE_SUPPORT_STAMP}"
   BYPRODUCTS
-    "${OBELISK_NATIVE_SUPPORT_DIR}/libobelisk_rt_lto.a"
+    "${OBELISK_NATIVE_SUPPORT_DIR}/libobelisk_rt.a"
   COMMAND "${CMAKE_COMMAND}" -E make_directory "${OBELISK_NATIVE_SUPPORT_DIR}"
   COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-          "${OBELISK_TARGET_RUNTIME_LTO_ARCHIVE}"
-          "${OBELISK_NATIVE_SUPPORT_DIR}/libobelisk_rt_lto.a"
+          "${OBELISK_TARGET_RUNTIME_ARCHIVE}"
+          "${OBELISK_NATIVE_SUPPORT_DIR}/libobelisk_rt.a"
   COMMAND "${CMAKE_COMMAND}" -E touch "${OBELISK_NATIVE_SUPPORT_STAMP}"
-  DEPENDS "${OBELISK_TARGET_RUNTIME_LTO_ARCHIVE}"
+  DEPENDS "${OBELISK_TARGET_RUNTIME_ARCHIVE}"
   COMMENT "Staging wasm64 target-link support"
   VERBATIM)
 add_custom_target(obelisk_native_support

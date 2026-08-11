@@ -172,7 +172,7 @@ jobs:
           cp -r web/* site/
           cp build-wasm/tools/driver/obelisk.wasm site/
           cp build-wasm/tools/driver/obelisk.js   site/
-          cp build-wasm/target-runtime/libobelisk_rt_lto.a site/toolchain/
+          cp build-wasm/target-runtime/libobelisk_rt.a site/toolchain/
           # Materialize the exact wasm64 exception-runtime variants selected
           # by Emscripten, then publish them under the stable names loaded by
           # web/toolchain.js.

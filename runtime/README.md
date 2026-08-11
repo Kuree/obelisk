@@ -6,12 +6,15 @@ See [Randomization support](../docs/randomization-support.md) for the
 process-stream ABI and the boundary between executable random draws and
 pending constraint solving.
 
-The target build produces two forms of the same support code:
+The native target build produces two forms of the same support code:
 `libobelisk_rt.a` contains native ELF objects used by `-O0` executable links,
 while `libobelisk_rt_lto.a` contains pinned-LLVM bitcode used by `-O1` through
-`-O3` Full-LTO links. The host CMake `obelisk_rt` target remains a native
-standalone C++17 archive for runtime unit tests. All forms expose the same
-lockstep C ABI; MLIR, slang, and GoogleTest are not runtime dependencies.
+`-O3` Full-LTO links. The wasm target instead produces one
+`libobelisk_rt.a` containing optimized wasm64 objects, used at every
+optimization level so the browser never recompiles runtime bitcode. The host
+CMake `obelisk_rt` target remains a native standalone C++17 archive for runtime
+unit tests. All forms expose the same lockstep C ABI; MLIR, slang, and
+GoogleTest are not runtime dependencies.
 
 The implementation is separated into context/buffer ownership, fragment and
 bytecode dispatch, scalar formatting/display, and libc-backed file I/O
@@ -24,9 +27,9 @@ The runtime ABI is an internal contract between components built from the same
 Obelisk source revision, not a backward-compatible SDK. Updating the compiler
 requires regenerating all native objects, bytecode, descriptors, and generated
 drivers, then relinking them with the runtime from that same build. Loading or
-linking artifacts produced by another Obelisk revision is unsupported. The LTO
-archive is also coupled to the pinned LLVM 22.1.6 bitcode format and unified
-Full-LTO pipeline and is not a stable SDK library.
+linking artifacts produced by another Obelisk revision is unsupported. The
+native LTO archive is also coupled to the pinned LLVM 22.1.6 bitcode format and
+unified Full-LTO pipeline and is not a stable SDK library.
 
 The `_v1` names and the single `OBELISK_RT_VERSION` identify the current
 prototype schema. Native descriptors, bytecode, the design database, import

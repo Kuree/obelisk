@@ -109,7 +109,7 @@ LogicalResult linkWasmModule(StringRef modulePath, StringRef outputPath,
   }
 
   SmallString<256> runtimeArchive(supportRoot);
-  sys::path::append(runtimeArchive, "libobelisk_rt_lto.a");
+  sys::path::append(runtimeArchive, "libobelisk_rt.a");
   if (!sys::fs::exists(runtimeArchive)) {
     errs() << "obelisk: error: wasm support is missing '" << runtimeArchive
            << "'\n";
@@ -146,11 +146,6 @@ LogicalResult linkWasmModule(StringRef modulePath, StringRef outputPath,
   owned.push_back("--allow-undefined");
   owned.push_back("-o");
   owned.push_back(temporary->str().str());
-  // The runtime is always LTO bitcode, including for an -O0 design object.
-  // Pass the requested level explicitly: wasm-ld otherwise defaults the
-  // runtime's LTO compilation to optimization even when the user selected
-  // -O0, which is both surprising and needlessly slow in the browser.
-  owned.push_back((Twine("--lto-O") + Twine(options.optLevel)).str());
   owned.push_back(modulePath.str());
   for (const NativeLinkInput &linkInput : options.nativeLinkInputs)
     owned.push_back(linkInput.path);
@@ -197,6 +192,12 @@ class WasmBackend final : public TargetBackend {
 public:
   StringRef getTriple() const override { return kTargetTriple; }
   StringRef getDescription() const override { return "wasm64"; }
+
+  // The web toolchain ships an optimized wasm-object runtime. Emitting the
+  // generated design as an object as well avoids rerunning Full LTO inside the
+  // single-threaded browser compiler; optimizeLLVMModule and target codegen
+  // have already honored the requested optimization level.
+  bool usesFullLTO(uint32_t) const override { return false; }
 
   std::unique_ptr<TargetMachine>
   createTargetMachine(std::string &error, uint32_t optLevel) override {

@@ -5,7 +5,7 @@
 (() => {
   const TARGET = '/lib/obelisk/targets/wasm64-unknown-emscripten';
   const ASSETS = [
-    ['libobelisk_rt_lto.a', `${TARGET}/libobelisk_rt_lto.a`],
+    ['libobelisk_rt.a', `${TARGET}/libobelisk_rt.a`],
     ['libstubs.a', '/sysroot/lib/wasm64-emscripten/libstubs.a'],
     ['libnoexit.a', '/sysroot/lib/wasm64-emscripten/libnoexit.a'],
     ['libc.a', '/sysroot/lib/wasm64-emscripten/libc.a'],

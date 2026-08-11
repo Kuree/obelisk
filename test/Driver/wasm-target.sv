@@ -58,7 +58,7 @@ endmodule
 // BAD-TARGET: obelisk: error: unsupported target 'wasm32'; expected native or wasm64
 // MISSING-SYSROOT: obelisk: error: wasm sysroot '{{.*}}/missing' is not a directory
 // WASM32-SYSROOT: has no wasm64-emscripten libraries; a wasm32 sysroot cannot satisfy the 64-bit runtime ABI
-// MISSING-RUNTIME: obelisk: error: wasm support is missing '{{.*}}/libobelisk_rt_lto.a'
+// MISSING-RUNTIME: obelisk: error: wasm support is missing '{{.*}}/libobelisk_rt.a'
 // MISSING-LIBS: obelisk: error: wasm sysroot is missing '{{.*}}/libstubs.a'
 
 //--- no-runtime/bin/placeholder
@@ -79,7 +79,7 @@ endmodule
 //--- no-libs/lib/obelisk/targets/wasm64-unknown-emscripten/.complete
 // Split-file fixture: complete target support stamp.
 
-//--- no-libs/lib/obelisk/targets/wasm64-unknown-emscripten/libobelisk_rt_lto.a
+//--- no-libs/lib/obelisk/targets/wasm64-unknown-emscripten/libobelisk_rt.a
 // Split-file fixture: runtime presence is enough to reach sysroot validation.
 
 //--- no-libs-sysroot/lib/wasm64-emscripten/placeholder

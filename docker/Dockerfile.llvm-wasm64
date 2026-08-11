@@ -156,7 +156,7 @@ RUN source /emsdk/emsdk_env.sh \
  && cmake --build /build/wasm64 -j"${JOBS}" --target install
 
 #-----------------------------------------------------------------------------
-# Ship the native TableGen tools and matching clang inside the SDK.
+# Ship the native TableGen tools and clang inside the SDK.
 #
 # Obelisk's CMakeLists.txt requires bin/llvm-tblgen and bin/mlir-tblgen in the
 # distribution and hard-fails without them. These are host x86-64 executables,
@@ -165,9 +165,9 @@ RUN source /emsdk/emsdk_env.sh \
 #-----------------------------------------------------------------------------
 # Copy an explicit list, never a wildcard: /opt/llvm-native is the full
 # official distribution (172 binaries, 8.9 GB -- mlir-opt alone is 412 MB).
-# clang is required because LTO bitcode from em++ can come from a newer LLVM
-# major and cannot be consumed by the embedded LLD. Its resource headers are
-# needed for compiler builtins while targeting wasm64.
+# Clang remains available as part of the general SDK, but Obelisk's target
+# runtime is compiled to ordinary wasm objects by Emscripten so its exception
+# ABI matches Emscripten's libc++ and libunwind archives.
 RUN for tool in llvm-tblgen mlir-tblgen llvm-min-tblgen mlir-pdll \
                 mlir-linalg-ods-yaml-gen; do \
       cp "/opt/llvm-native/bin/$tool" /opt/llvm-wasm64/bin/; \

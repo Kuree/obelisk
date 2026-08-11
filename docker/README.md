@@ -90,13 +90,13 @@ The image provides:
 | `LLVM_ENABLE_THREADS=OFF` | Simulations do not need pthreads, so the page avoids SharedArrayBuffer and therefore the COOP/COEP headers that static hosts cannot set. |
 | `MinSizeRel` / `-Oz` | Free: designs are compiled to a *separate* module at `-O3` at runtime, so shrinking this SDK costs no simulation throughput — only compile latency. |
 | Native TableGen stage | The official binary release lacks `llvm-min-tblgen`, so the generators are built from the same source rather than mixing distributions. |
-| Native tools copied into `bin/` | TableGen tools make the SDK drop-in compatible. Matching `clang++` produces runtime LTO bitcode that the embedded LLVM can read; Emscripten's clang may be from a newer, incompatible LLVM major. Everything is copied by explicit name — globbing `/opt/llvm-native/bin/*` would pull in all 172 binaries (8.9 GB). |
+| Native tools copied into `bin/` | TableGen tools make the SDK drop-in compatible. Everything is copied by explicit name — globbing `/opt/llvm-native/bin/*` would pull in all 172 binaries (8.9 GB). |
 
-The SDK carries the matching `clang++` used to compile the target runtime as
-LTO bitcode. It still uses Emscripten's sysroot and archive tool, but it cannot
-use Emscripten's potentially newer clang: LLVM bitcode is not backward
-compatible across major versions, and the embedded LLVM/LLD must read every
-member of `libobelisk_rt_lto.a`.
+The wasm target runtime is compiled ahead of time by Emscripten into ordinary
+wasm64 objects. Those objects use Emscripten's exception ABI and are archived
+as `libobelisk_rt.a`; the in-browser linker does not consume runtime LLVM
+bitcode. The matching native `clang++` currently carried in the SDK is not used
+for this runtime build.
 
 ### Build cost
 
