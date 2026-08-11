@@ -345,8 +345,17 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     return success();
   }
   if (auto op = dyn_cast<sim::SimLogicMuxOp>(operation)) {
-    emit({Select, OBELISK_RT_DB_SELECT_FOUR_STATE, reg(plan, op.getResult()),
-          reg(plan, op.getTrueValue()), reg(plan, op.getFalseValue()),
+    // An unknown condition merges the arms bitwise, which writes X into the
+    // destination. That is only encodable while the value registers keep a
+    // four-state plane; two-state ones were proven X-free, and because the
+    // result's proof folds in the condition, the merge is then unreachable.
+    uint32_t result = reg(plan, op.getResult());
+    bool fourState =
+        result == kInvalidRegister || plan.layouts[result].kind == Logic;
+    emit({Select,
+          static_cast<uint16_t>(fourState ? OBELISK_RT_DB_SELECT_FOUR_STATE
+                                          : OBELISK_RT_DB_SELECT_BINARY),
+          result, reg(plan, op.getTrueValue()), reg(plan, op.getFalseValue()),
           reg(plan, op.getCondition())});
     return success();
   }

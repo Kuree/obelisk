@@ -239,11 +239,46 @@ module attributes {
       %logic_overflow_ok = arith.andi %logic_overflow_div_ok,
           %logic_overflow_mod_ok : i1
 
+      // A mux whose condition and arms are all proven two-state gets one-plane
+      // registers, which cannot hold the unknown-condition merge. Encoding it
+      // as a four-state select produces an image the runtime rejects, so the
+      // select must follow the registers it was given.
+      %mux_taken = obelisk_sim.logic.constant 21 : i6, 0 : i6 :
+          !obelisk_sim.logic<6>
+      %mux_skipped = obelisk_sim.logic.constant 42 : i6, 0 : i6 :
+          !obelisk_sim.logic<6>
+      %mux_true_cond = obelisk_sim.logic.constant 1 : i1, 0 : i1 :
+          !obelisk_sim.logic<1>
+      %two_state_mux = obelisk_sim.logic.mux %mux_true_cond ? %mux_taken :
+          %mux_skipped : (!obelisk_sim.logic<1>, !obelisk_sim.logic<6>,
+          !obelisk_sim.logic<6>) -> !obelisk_sim.logic<6>
+      %two_state_mux_ok = obelisk_sim.logic.compare case_eq %two_state_mux,
+          %mux_taken : (!obelisk_sim.logic<6>,
+          !obelisk_sim.logic<6>) -> i1
+      // An unknown condition still merges the arms bitwise: every bit the arms
+      // disagree on, or that either arm leaves unknown, becomes X.
+      %mux_unknown_cond = obelisk_sim.logic.constant 0 : i1, 1 : i1 :
+          !obelisk_sim.logic<1>
+      %mux_left = obelisk_sim.logic.constant 10 : i6, 0 : i6 :
+          !obelisk_sim.logic<6>
+      %mux_right = obelisk_sim.logic.constant 1 : i6, 2 : i6 :
+          !obelisk_sim.logic<6>
+      %unknown_mux = obelisk_sim.logic.mux %mux_unknown_cond ? %mux_left :
+          %mux_right : (!obelisk_sim.logic<1>, !obelisk_sim.logic<6>,
+          !obelisk_sim.logic<6>) -> !obelisk_sim.logic<6>
+      %unknown_mux_expected = obelisk_sim.logic.constant 0 : i6, 11 : i6 :
+          !obelisk_sim.logic<6>
+      %unknown_mux_ok = obelisk_sim.logic.compare case_eq %unknown_mux,
+          %unknown_mux_expected : (!obelisk_sim.logic<6>,
+          !obelisk_sim.logic<6>) -> i1
+      %mux_ok = arith.andi %two_state_mux_ok, %unknown_mux_ok : i1
+
       %four_state0_ok = arith.andi %reductions_ok, %arithmetic_shift_ok : i1
       %four_state1_ok = arith.andi %zero_division_ok,
           %unknown_arithmetic_ok : i1
       %four_state2_ok = arith.andi %four_state0_ok, %four_state1_ok : i1
-      %four_state_ok = arith.andi %four_state2_ok, %logic_overflow_ok : i1
+      %four_state3_ok = arith.andi %four_state2_ok, %logic_overflow_ok : i1
+      %four_state_ok = arith.andi %four_state3_ok, %mux_ok : i1
       %base_logic_ok = arith.andi %logic_ok, %wide_logic_ok : i1
       %all_logic_ok = arith.andi %base_logic_ok, %four_state_ok : i1
       // A known initializer must not turn automatic logic storage into a
