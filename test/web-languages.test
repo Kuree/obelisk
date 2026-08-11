@@ -1,0 +1,2 @@
+# REQUIRES: node
+# RUN: %node --experimental-default-type=module %source_root/web/languages.test.mjs

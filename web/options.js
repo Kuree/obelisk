@@ -69,6 +69,9 @@ export function buildArgs(options) {
   const args = [];
 
   if (stage.flag) args.push(stage.flag);
+  // Schedule source links are emitted as debug provenance adjacent to the
+  // graph. They do not affect compilation or the versioned graph schema.
+  if (stage.id === 'schedule') args.push('--mlir-print-debuginfo');
   args.push(`--std=${options.std}`);
   args.push(options.opt);
 

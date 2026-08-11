@@ -1,13 +1,60 @@
 // Minimal WASI preview1 host for running a compiled Obelisk simulation.
 //
 // Scope is deliberately narrow: enough for a design to print ($display,
-// $write), read the clock, draw randomness, and exit ($finish). File I/O
-// ($fopen and friends) is not backed by a filesystem and returns ENOSYS, which
-// surfaces as a runtime error rather than silent wrong behaviour.
+// $write), read the clock, draw randomness, and exit ($finish). Writable files
+// are captured in memory for VCD collection. Reads and filesystem paths remain
+// unsupported and return an error rather than silently doing the wrong thing.
 
 const WASI_ESUCCESS = 0;
 const WASI_EBADF = 8;
+const WASI_EINVAL = 28;
 const WASI_ENOSYS = 52;
+const LINUX_EINVAL = 22;
+const LINUX_ENOTTY = 25;
+const LINUX_ENOSYS = 38;
+
+class MemoryFile {
+  constructor(name) {
+    this.name = name;
+    this.bytes = new Uint8Array(4096);
+    this.length = 0;
+    this.position = 0;
+  }
+
+  #reserve(required) {
+    if (!Number.isSafeInteger(required) || required < 0)
+      throw new RangeError('in-memory file is too large');
+    if (required <= this.bytes.length) return;
+    let capacity = this.bytes.length;
+    while (capacity < required) capacity = Math.max(capacity * 2, required);
+    const grown = new Uint8Array(capacity);
+    grown.set(this.bytes.subarray(0, this.length));
+    this.bytes = grown;
+  }
+
+  write(source) {
+    const end = this.position + source.byteLength;
+    this.#reserve(end);
+    this.bytes.set(source, this.position);
+    this.position = end;
+    this.length = Math.max(this.length, end);
+  }
+
+  seek(offset, whence) {
+    let position;
+    if (whence === 0) position = offset;
+    else if (whence === 1) position = this.position + offset;
+    else if (whence === 2) position = this.length + offset;
+    else return false;
+    if (!Number.isSafeInteger(position) || position < 0) return false;
+    this.position = position;
+    return true;
+  }
+
+  snapshot() {
+    return { name: this.name, data: this.bytes.slice(0, this.length) };
+  }
+}
 
 // Thrown to unwind out of the wasm module when it calls proc_exit.
 export class WasiExit extends Error {
@@ -22,16 +69,20 @@ export class Wasi {
    * @param {object} options
    * @param {string[]} options.args      argv for the simulation
    * @param {(text: string, stream: 'stdout'|'stderr') => void} options.onOutput
+   * @param {(file: {name: string, data: Uint8Array}) => void} options.onFile
    */
-  constructor({ args = ['sim'], onOutput = () => {} } = {}) {
+  constructor({ args = ['sim'], onOutput = () => {}, onFile = () => {} } = {}) {
     this.args = args;
     this.onOutput = onOutput;
+    this.onFile = onFile;
     this.memory = null;
     this.exitCode = null;
     this.decoder = new TextDecoder('utf-8', { fatal: false });
     // stdout/stderr are line-buffered so partial writes do not fragment the
     // rendered output.
     this.buffers = { 1: '', 2: '' };
+    this.files = new Map();
+    this.nextFileDescriptor = 3;
   }
 
   bindMemory(memory) {
@@ -49,6 +100,42 @@ export class Wasi {
 
   #writeSize(offset, value) {
     this.view.setBigUint64(offset, BigInt(value), true);
+  }
+
+  #readString(pointer) {
+    const bytes = new Uint8Array(this.memory.buffer);
+    const start = Number(pointer);
+    let end = start;
+    while (end < bytes.length && bytes[end] !== 0) ++end;
+    if (end === bytes.length) throw new RangeError('unterminated path');
+    return this.decoder.decode(bytes.subarray(start, end));
+  }
+
+  #openFile(pathPointer, flags) {
+    // O_RDONLY cannot produce a waveform and this host has no input-file
+    // namespace. O_WRONLY and O_RDWR are captured in memory.
+    if ((flags & 3) === 0) return -LINUX_ENOSYS;
+    let name;
+    try {
+      name = this.#readString(pathPointer);
+    } catch {
+      return -LINUX_EINVAL;
+    }
+    const descriptor = this.nextFileDescriptor++;
+    this.files.set(descriptor, new MemoryFile(name));
+    return descriptor;
+  }
+
+  #closeFile(descriptor) {
+    const file = this.files.get(descriptor);
+    if (!file) return false;
+    this.files.delete(descriptor);
+    this.onFile(file.snapshot());
+    return true;
+  }
+
+  closeAllFiles() {
+    for (const descriptor of [...this.files.keys()]) this.#closeFile(descriptor);
   }
 
   #flush(fd, { force = false } = {}) {
@@ -80,9 +167,11 @@ export class Wasi {
         __assert_fail() {
           throw new WebAssembly.RuntimeError('assertion failed in simulation runtime');
         },
-        __syscall_openat: () => -WASI_ENOSYS,
-        __syscall_fcntl64: () => -WASI_ENOSYS,
-        __syscall_ioctl: () => -WASI_ENOSYS,
+        __syscall_openat(_directory, path, flags) {
+          return self.#openFile(path, flags);
+        },
+        __syscall_fcntl64: () => -LINUX_ENOSYS,
+        __syscall_ioctl: () => -LINUX_ENOTTY,
         emscripten_get_now: () => performance.now(),
         emscripten_date_now: () => Date.now(),
         _tzset_js(timezonePtr, daylightPtr, stdNamePtr, dstNamePtr) {
@@ -164,10 +253,11 @@ export class Wasi {
       },
       wasi_snapshot_preview1: {
         fd_write(fd, iovsPtr, iovsLen, nwrittenPtr) {
-          if (fd !== 1 && fd !== 2) return WASI_EBADF;
           const view = self.view;
           const bytes = new Uint8Array(self.memory.buffer);
           let written = 0;
+          const file = self.files.get(fd);
+          if (fd !== 1 && fd !== 2 && !file) return WASI_EBADF;
           let text = '';
           // Each iovec is {ptr, len}, both 64-bit under MEMORY64.
           for (let i = 0; i < Number(iovsLen); i++) {
@@ -175,11 +265,14 @@ export class Wasi {
             const ptr = Number(view.getBigUint64(base, true));
             const len = Number(view.getBigUint64(base + 8, true));
             if (len === 0) continue;
-            text += self.decoder.decode(bytes.subarray(ptr, ptr + len));
+            if (file) file.write(bytes.subarray(ptr, ptr + len));
+            else text += self.decoder.decode(bytes.subarray(ptr, ptr + len));
             written += len;
           }
-          self.buffers[fd] = (self.buffers[fd] ?? '') + text;
-          self.#flush(fd);
+          if (!file) {
+            self.buffers[fd] = (self.buffers[fd] ?? '') + text;
+            self.#flush(fd);
+          }
           self.#writeSize(Number(nwrittenPtr), written);
           return WASI_ESUCCESS;
         },
@@ -229,11 +322,21 @@ export class Wasi {
           return WASI_ESUCCESS;
         },
 
-        // A simulation that reaches these is doing real file I/O, which this
-        // page does not provide. Report it rather than pretending it worked.
-        fd_close: () => WASI_ESUCCESS,
+        // Writable descriptors refer to captured in-memory files. Reading and
+        // resolving paths are unsupported because this host has no filesystem.
+        fd_close(fd) {
+          if (fd >= 0 && fd <= 2) return WASI_ESUCCESS;
+          return self.#closeFile(fd) ? WASI_ESUCCESS : WASI_EBADF;
+        },
         fd_fdstat_get: () => WASI_ESUCCESS,
-        fd_seek: () => WASI_ENOSYS,
+        fd_seek(fd, offset, whence, newOffsetPtr) {
+          const file = self.files.get(fd);
+          if (!file) return WASI_EBADF;
+          const numericOffset = Number(offset);
+          if (!file.seek(numericOffset, Number(whence))) return WASI_EINVAL;
+          self.#writeSize(Number(newOffsetPtr), file.position);
+          return WASI_ESUCCESS;
+        },
         fd_read: () => WASI_ENOSYS,
         fd_prestat_get: () => WASI_EBADF,
         fd_prestat_dir_name: () => WASI_EBADF,
@@ -250,10 +353,12 @@ export class Wasi {
  * Instantiate and run a compiled simulation module, collecting its output.
  * @param {BufferSource} wasmBinary
  * @param {(text: string, stream: string) => void} onOutput
+ * @param {object} options
+ * @param {(file: {name: string, data: Uint8Array}) => void} options.onFile
  * @returns {Promise<number>} the process exit code
  */
-export async function runSimulation(wasmBinary, onOutput) {
-  const wasi = new Wasi({ onOutput });
+export async function runSimulation(wasmBinary, onOutput, { onFile = () => {} } = {}) {
+  const wasi = new Wasi({ onOutput, onFile });
   const { instance } = await WebAssembly.instantiate(wasmBinary, wasi.imports);
   wasi.bindMemory(instance.exports.memory);
 
@@ -270,6 +375,7 @@ export async function runSimulation(wasmBinary, onOutput) {
     return error.code;
   } finally {
     wasi.flushAll();
+    wasi.closeAllFiles();
   }
   return wasi.exitCode ?? 0;
 }

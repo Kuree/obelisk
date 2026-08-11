@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Surfer waveform viewer</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --ink: #282a36;
+    --panel: #21222c;
+    --rule: #44475a;
+    --foreground: #f8f8f2;
+    --unknown: #ff5555;
+  }
+  html, body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+    background: var(--ink);
+  }
+  canvas {
+    position: absolute;
+    inset: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+  #error {
+    display: none;
+    margin: 16px;
+    padding: 12px 14px;
+    border: 1px solid var(--unknown);
+    border-radius: 5px;
+    background: var(--panel);
+    color: var(--foreground);
+    white-space: pre-wrap;
+    font: 13px/1.5 ui-monospace, monospace;
+  }
+</style>
+</head>
+<body>
+<canvas id="the_canvas_id"></canvas>
+<pre id="error"></pre>
+<script type="module">
+  const parentOrigin = new URLSearchParams(location.search).get('parentOrigin');
+  if (!parentOrigin) throw new Error('missing parent origin');
+
+  window.on_surfer_error = (message) => {
+    const error = document.getElementById('error');
+    error.textContent = message;
+    error.style.display = 'block';
+    parent.postMessage({ type: 'surfer-error', message: String(message) }, parentOrigin);
+  };
+  window.surfer_notify_host = (message) => {
+    parent.postMessage({ type: 'surfer-notification', message }, parentOrigin);
+  };
+
+  try {
+    // Surfer's deployed app explicitly serves these build artifacts with CORS,
+    // so they act as the viewer CDN. The wrapper and captured VCD stay on the
+    // playground's origin. Surfer is licensed under EUPL-1.2.
+    const SURFER = 'https://app.surfer-project.org/';
+    const api = await import(`${SURFER}surfer.js`);
+    await api.default({ module_or_path: `${SURFER}surfer_bg.wasm` });
+    // Surfer cannot accept custom theme TOML in its wasm build. Dark+ keeps
+    // the neutral Dracula structure while retaining distinct colors for
+    // driven values, X, Z, don't-care states, events, warnings, and errors.
+    api.inject_message(JSON.stringify({ SelectTheme: 'dark+' }));
+    // The host supplies and stores the waveform, so Surfer's own file menu,
+    // fallback menu button, and open/reload/save toolbar actions are redundant.
+    api.inject_message(JSON.stringify({ SetMenuVisible: false }));
+    api.inject_message(JSON.stringify({ SetToolbarGroupEnabled: ['menu', false] }));
+    api.inject_message(JSON.stringify({ SetToolbarGroupEnabled: ['files', false] }));
+
+    window.addEventListener('message', (event) => {
+      if (event.source !== parent || event.origin !== parentOrigin) return;
+      if (event.data?.type !== 'load-waveform') return;
+      try {
+        if (!(event.data.buffer instanceof ArrayBuffer))
+          throw new TypeError('waveform payload is not an ArrayBuffer');
+        // Surfer's exported wasm API accepts a JSON message. Joining the typed
+        // array avoids first expanding every byte into a boxed JS number.
+        const bytes = new Uint8Array(event.data.buffer);
+        api.inject_message(`{"LoadFromData":[[${bytes.join(',')}],"Clear"]}`);
+      } catch (error) {
+        window.on_surfer_error(error?.message ?? error);
+      }
+    });
+    parent.postMessage({ type: 'surfer-ready' }, parentOrigin);
+  } catch (error) {
+    window.on_surfer_error(error?.message ?? error);
+  }
+</script>
+</body>
+</html>

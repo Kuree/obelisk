@@ -136,10 +136,19 @@
       <h2 id="stageBlurb"></h2>
       <div class="panelTools">
         <span id="status" class="status"></span>
+        <button id="scheduleToggle" class="ghost tiny" hidden>View IR</button>
+        <button id="downloadWaveform" class="ghost tiny" hidden>Download VCD</button>
         <button id="copyOutput" class="ghost tiny">Copy</button>
       </div>
     </div>
     <pre id="output" class="console" aria-live="polite" tabindex="0"></pre>
+    <div id="irEditor" class="irEditor" aria-label="Read-only compiler output" hidden></div>
+    <div id="scheduleView" class="scheduleView" aria-label="Compute schedule graph" hidden></div>
+    <div id="waveformView" class="waveform" hidden>
+      <div id="waveformEmpty" class="waveformEmpty"></div>
+      <iframe id="surfer" title="Surfer waveform viewer"
+              sandbox="allow-scripts" referrerpolicy="no-referrer" hidden></iframe>
+    </div>
   </section>
 </main>
 

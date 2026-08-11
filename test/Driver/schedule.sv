@@ -3,6 +3,7 @@
 // RUN: obelisk -emit-schedule --compile-threads=1 %s > %t.one
 // RUN: obelisk -emit-schedule --compile-threads=4 %s > %t.many
 // RUN: diff %t.one %t.many
+// RUN: obelisk -emit-schedule --mlir-print-debuginfo %s | FileCheck %s --check-prefix=LOC
 // RUN: not obelisk -emit-schedule --threads=0 %s 2>&1 | FileCheck %s --check-prefix=BAD-THREADS
 // RUN: not obelisk -emit-schedule --compile-threads=0 %s 2>&1 | FileCheck %s --check-prefix=BAD-COMPILE-THREADS
 // RUN: not obelisk -emit-schedule --vpi=write %s 2>&1 | FileCheck %s --check-prefix=BAD-VPI
@@ -23,6 +24,10 @@ endmodule
 // CHECK-SAME: #obelisk_sim.region<kind = observed
 // CHECK-SAME: #obelisk_sim.region<kind = reactive
 // CHECK-SAME: #obelisk_sim.region<kind = postponed
+
+// LOC: schedule @design #obelisk_sim.graph<
+// LOC-SAME: source_locations = [
+// LOC-SAME: #1 = "{{.*schedule.sv}}":14:3
 
 // BAD-THREADS: error: --threads must be greater than zero
 // BAD-COMPILE-THREADS: error: --compile-threads must be greater than zero

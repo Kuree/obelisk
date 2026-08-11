@@ -1,0 +1,2 @@
+# REQUIRES: node
+# RUN: %node %source_root/web/schedule-view.test.mjs

@@ -7,9 +7,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "NativeInputs.h"
-#include "TargetBackend.h"
 #include "Options.h"
+#include "TargetBackend.h"
 
+#include "obelisk/Analysis/SimulationScheduleAnalysis.h"
 #include "obelisk/Conversion/ObeliskToSimulation.h"
 #include "obelisk/Conversion/SlangToObelisk.h"
 #include "obelisk/Dialect/Obelisk/ObeliskDialect.h"
@@ -24,6 +25,7 @@
 #include "mlir/IR/AsmState.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/Pass/PassManager.h"
 
 #include "llvm/ADT/SmallVector.h"
@@ -60,6 +62,43 @@ static std::string driverExecutablePath;
 
 static void emitDriverError(const Twine &message) {
   WithColor::error(errs(), "obelisk") << message << '\n';
+}
+
+// The compute graph is deliberately operation-independent, but the schedule
+// inspector can still relate a fragment to the source location retained by
+// its control-flow boundary or owning code unit. Keep this provenance next to
+// the diagnostic instead of adding it to the versioned runtime graph schema.
+static void printScheduleSourceLocations(obelisk::sim::SimDesignOp design,
+                                         obelisk::sim::ComputeGraphAttr graph,
+                                         raw_ostream &output) {
+  SymbolTable symbols(design);
+  bool first = true;
+  output << " source_locations = [";
+  for (Attribute node : graph.getNodes()) {
+    auto fragment = dyn_cast<obelisk::sim::ComputeFragmentAttr>(node);
+    if (!fragment)
+      continue;
+    auto function = symbols.lookup<obelisk::sim::SimFuncOp>(
+        fragment.getFunction().getValue());
+    if (!function)
+      continue;
+    Block *block = obelisk::analysis::lookupComputeGraphBlock(
+        function, fragment.getBlock());
+    Location source =
+        block ? block->getTerminator()->getLoc() : function.getLoc();
+    auto location = source->findInstanceOf<FileLineColLoc>();
+    if (!location)
+      location = function.getLoc()->findInstanceOf<FileLineColLoc>();
+    if (!location)
+      continue;
+    if (!first)
+      output << ", ";
+    first = false;
+    output << '#' << fragment.getId() << " = ";
+    location.getFilename().print(output);
+    output << ':' << location.getLine() << ':' << location.getColumn();
+  }
+  output << ']';
 }
 
 static bool parseUnsignedOption(const ArgList &args, OptSpecifier option,
@@ -507,12 +546,14 @@ static int executeCompilation(const InputArgList &args) {
     for (obelisk::sim::SimDesignOp design :
          module->getBody()->getOps<obelisk::sim::SimDesignOp>()) {
       output.os() << "schedule @" << design.getSymName() << ' ';
-      Attribute graph = design.getComputeGraphAttr();
+      obelisk::sim::ComputeGraphAttr graph = design.getComputeGraphAttr();
       if (!graph) {
         emitDriverError("simulation lowering produced no compute graph");
         return 1;
       }
-      graph.print(output.os());
+      Attribute(graph).print(output.os());
+      if (args.hasArg(OPT_mlir_print_debuginfo))
+        printScheduleSourceLocations(design, graph, output.os());
       output.os() << '\n';
     }
   } else {

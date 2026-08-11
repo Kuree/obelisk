@@ -193,13 +193,6 @@ button, select, input { font: inherit; color: inherit; }
   background: var(--signal);
 }
 
-/* Not yet built. Shown because it is on the roadmap, dimmed because it is
-   honest about not working. */
-.stage.planned { color: var(--rule-lit); }
-.stage.planned::after { background: var(--hiz); }
-.stage.planned[aria-selected="true"] { color: var(--hiz); }
-.stage.planned[aria-selected="true"] .ord { color: var(--hiz); }
-
 /* ================================================================= options */
 
 .options {
@@ -307,6 +300,7 @@ button, select, input { font: inherit; color: inherit; }
   text-overflow: ellipsis;
 }
 .panelTools { display: flex; align-items: center; gap: 9px; }
+.panelTools > [hidden] { display: none; }
 
 .inline {
   background: transparent;
@@ -333,6 +327,131 @@ button, select, input { font: inherit; color: inherit; }
 @keyframes tick { 0%, 49% { opacity: 1; } 50%, 100% { opacity: .2; } }
 
 #editor { flex: 1; min-height: 0; }
+.monaco-editor .scheduleSourceLine {
+  background: #bd93f959;
+  box-shadow: inset 3px 0 #bd93f9;
+}
+.monaco-editor .scheduleSourceLineMarker {
+  border-left: 3px solid #bd93f9;
+  margin-left: 4px;
+}
+.irEditor { flex: 1; min-height: 0; }
+.irEditor[hidden] { display: none; }
+/* Read-only IR should remain selectable without looking editable. */
+.irEditor .cursor { display: none !important; }
+
+.scheduleView {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: var(--ink);
+}
+.scheduleView[hidden] { display: none; }
+.scheduleGraph + .scheduleGraph { border-top: 1px solid var(--rule); }
+.scheduleSummary,
+.scheduleLegend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--rule);
+  color: var(--fg-dim);
+  font: 400 11.5px/1.3 var(--mono);
+}
+.scheduleSummary { background: var(--panel); }
+.scheduleSummary strong { color: var(--fg); font-weight: 500; }
+.scheduleSummary span::before {
+  content: '';
+  display: inline-block;
+  width: 3px;
+  height: 3px;
+  margin: 0 8px 2px 0;
+  border-radius: 50%;
+  background: var(--rule-lit);
+}
+.scheduleLegend { padding-block: 7px; }
+.scheduleKey { display: inline-flex; align-items: center; gap: 6px; }
+.scheduleKey::before {
+  content: '';
+  width: 18px;
+  border-top: 2px solid currentColor;
+}
+.scheduleKey.control { color: var(--signal); }
+.scheduleKey.spawn { color: var(--settled); }
+.scheduleKey.sensitivity { color: #f1fa8c; }
+.scheduleKey.nba { color: var(--accent-2); }
+.scheduleKey.deferred { color: var(--hiz); }
+.scheduleKey.conflict { color: var(--unknown); }
+.scheduleCanvas { overflow-x: hidden; }
+.scheduleCanvas svg {
+  display: block;
+  width: 100%;
+  max-width: 600px;
+  height: auto;
+  margin-inline: auto;
+  background: var(--ink);
+  font-family: var(--mono);
+}
+.scheduleRegion > rect {
+  fill: var(--panel);
+  stroke: var(--rule);
+  stroke-width: 1;
+}
+.scheduleRegion.region-nba > rect,
+.scheduleRegion.region-reactive > rect { fill: #252733; }
+.regionName {
+  fill: var(--fg-dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.emptyRegion { fill: var(--rule-lit); font-size: 11px; font-style: italic; }
+.scheduleGroup > rect {
+  fill: none;
+  stroke: var(--rule);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+.scheduleGroup.group-convergence > rect { stroke: var(--accent-2); }
+.scheduleGroup.group-control_loop > rect { stroke: var(--unknown); }
+.groupName,
+.feedbackCount { fill: var(--fg-dim); font-size: 8.5px; }
+.feedbackCount { fill: var(--accent-2); }
+.scheduleNode { outline: none; }
+.scheduleNode.hasSource { cursor: pointer; }
+.scheduleNode > rect {
+  fill: var(--raised);
+  stroke: var(--rule-lit);
+  stroke-width: 1;
+}
+.scheduleNode.tier-native > rect { stroke: var(--settled); }
+.scheduleNode.tier-bytecode > rect { stroke: var(--warm); }
+.scheduleNode.tier-generated > rect { stroke: var(--hiz); }
+.scheduleNode:focus > rect,
+.scheduleNode:hover > rect { fill: #3b3e4d; stroke-width: 2; }
+.nodeTitle { fill: var(--fg); font-size: 10.5px; font-weight: 500; }
+.nodeDetail { fill: var(--fg-dim); font-size: 8.5px; }
+.nodeLocation { fill: var(--accent-2); font-size: 8.5px; }
+.scheduleEdge {
+  fill: none;
+  stroke-width: 1.5;
+  opacity: .8;
+}
+.scheduleEdge:hover { stroke-width: 3; opacity: 1; }
+.scheduleEdge.edge-control { stroke: var(--signal); }
+.scheduleEdge.edge-spawn { stroke: var(--settled); }
+.scheduleEdge.edge-sensitivity { stroke: #f1fa8c; }
+.scheduleEdge.edge-nba { stroke: var(--accent-2); }
+.scheduleEdge.edge-deferred { stroke: var(--hiz); stroke-dasharray: 4 3; }
+.scheduleEdge.edge-conflict { stroke: var(--unknown); stroke-dasharray: 2 2; }
+.edgeArrow.control { fill: var(--signal); }
+.edgeArrow.spawn { fill: var(--settled); }
+.edgeArrow.sensitivity { fill: #f1fa8c; }
+.edgeArrow.nba { fill: var(--accent-2); }
+.edgeArrow.deferred { fill: var(--hiz); }
+.edgeArrow.conflict { fill: var(--unknown); }
 
 .console {
   flex: 1;
@@ -353,6 +472,33 @@ button, select, input { font: inherit; color: inherit; }
 .console:empty::after {
   content: "Press Run to compile and execute.";
   color: var(--fg-dim);
+}
+
+.waveform {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: var(--ink);
+}
+.waveform[hidden], .console[hidden] { display: none; }
+.waveform iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--ink);
+}
+.waveform iframe[hidden], .waveformEmpty[hidden] { display: none; }
+.waveformEmpty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 8px;
+  padding: 28px;
+  text-align: center;
+  color: var(--fg-dim);
+  font: 400 12.5px/1.6 var(--mono);
 }
 
 .handle { background: var(--rule); cursor: col-resize; }

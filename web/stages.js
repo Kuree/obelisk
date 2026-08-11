@@ -12,6 +12,7 @@ export const STAGES = [
     label: 'Preprocess',
     flag: '-E',
     kind: 'text',
+    language: 'systemverilog',
     blurb: 'Macro-expanded source, before parsing.',
   },
   {
@@ -19,6 +20,7 @@ export const STAGES = [
     label: 'Slang IR',
     flag: '-emit-slang',
     kind: 'text',
+    language: 'mlir',
     blurb: 'Elaborated semantic AST, one op per slang dispatch kind.',
   },
   {
@@ -26,6 +28,7 @@ export const STAGES = [
     label: 'Obelisk IR',
     flag: '-emit-obelisk',
     kind: 'text',
+    language: 'mlir',
     blurb: 'Typed obelisk.sv dialect after conversion from slang.',
   },
   {
@@ -33,6 +36,7 @@ export const STAGES = [
     label: 'Sim IR',
     flag: '-emit-sim',
     kind: 'text',
+    language: 'mlir',
     blurb: 'Isolated simulation SSA after the lowering pipeline.',
   },
   {
@@ -40,6 +44,7 @@ export const STAGES = [
     label: 'Schedule',
     flag: '-emit-schedule',
     kind: 'text',
+    language: 'mlir',
     blurb: 'The derived compute graph and generated schedule.',
   },
   {
@@ -47,6 +52,7 @@ export const STAGES = [
     label: 'LLVM IR',
     flag: '-emit-llvm',
     kind: 'text',
+    language: 'llvm',
     blurb: 'LLVM IR handed to the WebAssembly backend.',
   },
   {
@@ -60,11 +66,8 @@ export const STAGES = [
     id: 'waveform',
     label: 'Waveform',
     flag: null,
-    kind: 'planned',
-    // Planned: hand a dump from the run to Surfer (surfer-project.org), which
-    // is itself a wasm app and can run in this page. Blocked on value dumping
-    // in the runtime -- nothing emits VCD today.
-    blurb: 'Signal traces from the run, via Surfer. Needs value dumping first.',
+    kind: 'waveform',
+    blurb: 'Latest VCD captured locally from a run, displayed with Surfer.',
   },
 ];
 

@@ -1,5 +1,9 @@
 import { registerSystemVerilog, SV_LANGUAGE_ID } from './sv-language.js';
+import { registerMlir, MLIR_LANGUAGE_ID } from './mlir-language.js';
+import { registerLlvm } from './llvm-language.js';
+import { parseSchedules, renderSchedules } from './schedule-view.js';
 import { runSimulation } from './wasi.js';
+import { loadWaveform, saveWaveform } from './waveform-storage.js';
 import { EXAMPLES } from './examples.js';
 import { STAGES, DEFAULT_STAGE, findStage } from './stages.js';
 import {
@@ -16,6 +20,10 @@ const ui = {
   flagsToggle: el('flagsToggle'), flagsPanel: el('flagsPanel'),
   examples: el('examples'), handle: el('handle'), workbench: document.querySelector('.workbench'),
   share: el('share'), copyCommand: el('copyCommand'), copyOutput: el('copyOutput'),
+  irEditor: el('irEditor'), scheduleView: el('scheduleView'),
+  scheduleToggle: el('scheduleToggle'),
+  waveformView: el('waveformView'), waveformEmpty: el('waveformEmpty'),
+  surfer: el('surfer'), downloadWaveform: el('downloadWaveform'),
 };
 
 const OPTION_FIELDS = [
@@ -25,12 +33,23 @@ const OPTION_FIELDS = [
 
 let monaco = null;
 let editor = null;
+let irEditor = null;
+let irModel = null;
+let irLanguage = MLIR_LANGUAGE_ID;
+let scheduleSourceHighlight = null;
 let worker = null;
 let workerReady = false;
 let pendingCompilation = null;
 let options = { ...DEFAULTS };
 let activeStage = DEFAULT_STAGE;
 let busy = false;
+let latestWaveform = null;
+let surferReady = null;
+let scheduleText = '';
+let scheduleRaw = false;
+const storedWaveform = loadWaveform()
+  .then((waveform) => { latestWaveform ??= waveform; })
+  .catch(() => {});
 
 // Results are cached per stage and dropped whenever the source or options
 // change, so switching tabs is instant but never shows something stale.
@@ -103,7 +122,6 @@ function buildStageTabs() {
     button.title = stage.blurb;
     button.innerHTML = `<span class="ord">${String(index + 1).padStart(2, '0')}</span>`;
     button.appendChild(document.createTextNode(stage.label));
-    if (stage.kind === 'planned') button.classList.add('planned');
     button.addEventListener('click', () => selectStage(stage.id));
     item.appendChild(button);
     ui.stages.appendChild(item);
@@ -123,19 +141,12 @@ function selectStage(id) {
   paintStageSelection();
 
   const stage = findStage(id);
-  if (stage.kind === 'planned') {
-    clearConsole();
-    write('Waveform viewing is not built yet.\n\n', 'heading');
-    write(
-      'The plan is to dump values from the run and display them with Surfer\n' +
-      '(https://surfer-project.org), which is a wasm application and can run\n' +
-      'in this page. That needs value dumping in the runtime first — nothing\n' +
-      'emits VCD today.\n',
-      'note',
-    );
-    setStatus('planned');
+  if (stage.kind === 'waveform') {
+    showWaveform();
     return;
   }
+
+  showConsole();
 
   const cached = results.get(id);
   if (cached) {
@@ -149,6 +160,18 @@ function selectStage(id) {
 }
 
 function restore(cached) {
+  const text = cached.chunks.map((chunk) => chunk.text).join('');
+  if (cached.stage === 'schedule') {
+    showSchedule(text);
+    setStatus(cached.status.text, cached.status.kind);
+    return;
+  }
+  if (cached.language) {
+    showIr(text, cached.language);
+    setStatus(cached.status.text, cached.status.kind);
+    return;
+  }
+  showConsole();
   clearConsole();
   for (const chunk of cached.chunks) write(chunk.text, chunk.className);
   setStatus(cached.status.text, cached.status.kind);
@@ -176,6 +199,7 @@ function finishRecording(statusText, statusKind) {
 function compileStage(stageId) {
   if (busy) return;
   const stage = findStage(stageId);
+  showConsole();
   busy = true;
   setBusyLabel(true);
   clearConsole();
@@ -194,6 +218,7 @@ function compileStage(stageId) {
 
 function invalidate() {
   results.clear();
+  scheduleSourceHighlight?.clear();
   if (monaco && editor) monaco.editor.setModelMarkers(editor.getModel(), 'obelisk', []);
 }
 
@@ -251,6 +276,7 @@ async function onMessage(message) {
     case 'ready':
       workerReady = true;
       if (pendingCompilation) dispatchCompilation();
+      else if (findStage(activeStage).kind === 'waveform') showWaveform();
       else {
         setBusyLabel(false);
         setStatus('ready');
@@ -281,8 +307,15 @@ async function onMessage(message) {
 
       if (message.kind === 'text') {
         if (message.text) record(message.text.replace(/\s*$/, '\n'), '');
+        recording.language = findStage(message.stage).language;
         const note = counts.warnings ? `${counts.warnings} warning${counts.warnings === 1 ? '' : 's'} · ` : '';
         finishRecording(`${note}${compileMs} ms`, 'ok');
+        const cached = results.get(message.stage);
+        if (cached?.language && activeStage === message.stage) {
+          const text = cached.chunks.map((chunk) => chunk.text).join('');
+          if (message.stage === 'schedule') showSchedule(text);
+          else showIr(text, cached.language);
+        }
         busy = false; setBusyLabel(false);
         return;
       }
@@ -305,17 +338,197 @@ async function onMessage(message) {
 
 async function execute(binary, compileMs, counts) {
   const started = performance.now();
+  const files = [];
   try {
     const code = await runSimulation(binary, (text, stream) => {
       record(text, stream === 'stderr' ? 'stderr' : '');
+    }, {
+      onFile: (file) => files.push(file),
     });
     const runMs = Math.round(performance.now() - started);
+    const waveform = files.find((file) => isVcd(file));
+    if (waveform) {
+      await storedWaveform;
+      latestWaveform = { ...waveform, createdAt: Date.now() };
+      let saved = true;
+      try {
+        await saveWaveform(latestWaveform);
+      } catch {
+        saved = false;
+      }
+      record(
+        `${saved ? 'saved' : 'captured'} ${displayFilename(waveform.name)} ` +
+        `(${formatBytes(waveform.data.byteLength)})${saved ? ' locally' : ''}\n`,
+        'note',
+      );
+    }
     record(`\nexited with code ${code}\n`, code === 0 ? 'good' : 'stderr');
     const note = counts.warnings ? `${counts.warnings} warning${counts.warnings === 1 ? '' : 's'} · ` : '';
     finishRecording(`${note}compile ${compileMs} ms · run ${runMs} ms`, code === 0 ? 'ok' : 'err');
   } catch (error) {
     record(`\nsimulation aborted: ${error?.message ?? error}\n`, 'stderr');
     finishRecording('aborted', 'err');
+  }
+}
+
+function isVcd(file) {
+  const prefix = new TextDecoder().decode(file.data.subarray(0, 4096));
+  const header = prefix.includes('$date') && prefix.includes('$version');
+  return header && (/\.vcd$/i.test(file.name) || prefix.includes('$scope'));
+}
+
+function displayFilename(path) {
+  return path.split(/[\\/]/).filter(Boolean).at(-1) ?? 'dump.vcd';
+}
+
+function showConsole() {
+  scheduleSourceHighlight?.clear();
+  ui.output.hidden = false;
+  ui.irEditor.hidden = true;
+  ui.scheduleView.hidden = true;
+  ui.waveformView.hidden = true;
+  ui.scheduleToggle.hidden = true;
+  ui.copyOutput.hidden = false;
+  ui.downloadWaveform.hidden = true;
+}
+
+function showIr(text, language = MLIR_LANGUAGE_ID) {
+  scheduleSourceHighlight?.clear();
+  ui.output.hidden = true;
+  ui.irEditor.hidden = false;
+  ui.scheduleView.hidden = true;
+  ui.waveformView.hidden = true;
+  ui.scheduleToggle.hidden = true;
+  ui.copyOutput.hidden = false;
+  ui.downloadWaveform.hidden = true;
+  if (monaco && irModel && language !== irLanguage) {
+    monaco.editor.setModelLanguage(irModel, language);
+    irLanguage = language;
+  }
+  irModel?.setValue(text);
+  requestAnimationFrame(() => irEditor?.layout());
+}
+
+function showSchedule(text) {
+  scheduleText = text;
+  if (scheduleRaw) {
+    showIr(text);
+    ui.scheduleToggle.hidden = false;
+    ui.scheduleToggle.textContent = 'View graph';
+    return;
+  }
+  try {
+    const schedules = parseSchedules(text);
+    renderSchedules(ui.scheduleView, schedules, {
+      onSourceLocation: revealScheduleSource,
+      onSourceDeselected: () => scheduleSourceHighlight?.clear(),
+    });
+  } catch (error) {
+    console.error('could not visualize schedule', error);
+    showIr(text);
+    return;
+  }
+  ui.output.hidden = true;
+  ui.irEditor.hidden = true;
+  ui.scheduleView.hidden = false;
+  ui.waveformView.hidden = true;
+  ui.scheduleToggle.hidden = false;
+  ui.scheduleToggle.textContent = 'View IR';
+  ui.copyOutput.hidden = false;
+  ui.downloadWaveform.hidden = true;
+}
+
+function revealScheduleSource(location) {
+  if (!editor) return;
+  const model = editor.getModel();
+  const line = Math.max(1, Math.min(location.line, model.getLineCount()));
+  scheduleSourceHighlight?.set([{
+    range: new monaco.Range(line, 1, line, model.getLineMaxColumn(line)),
+    options: {
+      isWholeLine: true,
+      className: 'scheduleSourceLine',
+      linesDecorationsClassName: 'scheduleSourceLineMarker',
+    },
+  }]);
+  editor.setPosition({
+    lineNumber: line,
+    column: Math.max(1, Math.min(location.column, model.getLineMaxColumn(line))),
+  });
+  editor.revealLineInCenter(line);
+}
+
+function ensureSurfer() {
+  if (surferReady) return surferReady;
+  const loading = new Promise((resolve, reject) => {
+    let timeout;
+    const finish = (callback, value) => {
+      clearTimeout(timeout);
+      window.removeEventListener('message', onMessage);
+      callback(value);
+    };
+    const onMessage = (event) => {
+      if (event.source !== ui.surfer.contentWindow) return;
+      if (event.origin !== 'null') return;
+      if (event.data?.type === 'surfer-ready') finish(resolve);
+      else if (event.data?.type === 'surfer-error') {
+        finish(reject, new Error(event.data.message || 'Surfer failed to load'));
+      }
+    };
+    timeout = setTimeout(() => finish(
+      reject, new Error('Surfer did not load within 30 seconds'),
+    ), 30_000);
+    window.addEventListener('message', onMessage);
+    ui.surfer.src = `./surfer.html?parentOrigin=${encodeURIComponent(location.origin)}`;
+  });
+  surferReady = loading.catch((error) => {
+    surferReady = null;
+    throw error;
+  });
+  return surferReady;
+}
+
+async function showWaveform() {
+  scheduleSourceHighlight?.clear();
+  ui.output.hidden = true;
+  ui.irEditor.hidden = true;
+  ui.scheduleView.hidden = true;
+  ui.waveformView.hidden = false;
+  ui.scheduleToggle.hidden = true;
+  ui.copyOutput.hidden = true;
+  ui.downloadWaveform.hidden = !latestWaveform;
+  ui.surfer.hidden = true;
+  ui.waveformEmpty.hidden = false;
+  ui.waveformEmpty.textContent = 'Loading the latest waveform saved in this browser…';
+  setStatus('loading', 'busy');
+
+  await storedWaveform;
+  if (activeStage !== 'waveform') return;
+  if (!latestWaveform) {
+    ui.waveformEmpty.textContent =
+      'No waveform yet. Add $dumpvars to the design and run it; $dumpfile is optional.';
+    setStatus('no VCD');
+    return;
+  }
+
+  ui.downloadWaveform.hidden = false;
+  ui.waveformEmpty.textContent = 'Loading Surfer…';
+  try {
+    await ensureSurfer();
+    if (activeStage !== 'waveform') return;
+    const buffer = latestWaveform.data.slice().buffer;
+    ui.surfer.contentWindow.postMessage(
+      { type: 'load-waveform', buffer },
+      '*',
+      [buffer],
+    );
+    ui.waveformEmpty.hidden = true;
+    ui.surfer.hidden = false;
+    const name = displayFilename(latestWaveform.name);
+    setStatus(`${name} · ${formatBytes(latestWaveform.data.byteLength)}`, 'ok');
+  } catch (error) {
+    if (activeStage !== 'waveform') return;
+    ui.waveformEmpty.textContent = `Waveform viewer unavailable: ${error?.message ?? error}`;
+    setStatus('viewer unavailable', 'err');
   }
 }
 
@@ -337,6 +550,8 @@ function loadMonaco() {
 async function initEditor(initialSource) {
   monaco = await loadMonaco();
   registerSystemVerilog(monaco);
+  registerMlir(monaco);
+  registerLlvm(monaco);
 
   // Dracula, following the official palette's part of speech: pink keywords,
   // cyan italic types, green functions, purple numbers, yellow strings.
@@ -359,6 +574,10 @@ async function initEditor(initialSource) {
       { token: 'operator', foreground: 'ff79c6' },
       { token: 'delimiter', foreground: 'f8f8f2' },
       { token: 'identifier', foreground: 'f8f8f2' },
+      { token: 'variable', foreground: '8be9fd' },
+      { token: 'tag', foreground: 'bd93f9' },
+      { token: 'function', foreground: '50fa7b' },
+      { token: 'annotation', foreground: 'ffb86c' },
     ],
     colors: {
       'editor.background': '#282a36',
@@ -387,6 +606,25 @@ async function initEditor(initialSource) {
     tabSize: 2,
     padding: { top: 12 },
     smoothScrolling: true,
+  });
+  scheduleSourceHighlight = editor.createDecorationsCollection();
+
+  irModel = monaco.editor.createModel('', MLIR_LANGUAGE_ID);
+  irEditor = monaco.editor.create(ui.irEditor, {
+    model: irModel,
+    theme: 'obelisk-dracula',
+    readOnly: true,
+    domReadOnly: true,
+    fontSize: 12.5,
+    lineHeight: 20,
+    fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
+    minimap: { enabled: false },
+    automaticLayout: true,
+    scrollBeyondLastLine: false,
+    renderLineHighlight: 'none',
+    folding: true,
+    wordWrap: 'off',
+    padding: { top: 12, bottom: 12 },
   });
 
   editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, run);
@@ -444,8 +682,24 @@ function initChrome() {
   ui.run.addEventListener('click', run);
   ui.copyCommand.addEventListener('click', () =>
     copy(formatCommand({ ...options, stage: activeStage }), ui.copyCommand));
+  ui.scheduleToggle.addEventListener('click', () => {
+    scheduleRaw = !scheduleRaw;
+    showSchedule(scheduleText);
+  });
   ui.copyOutput.addEventListener('click', () =>
-    copy(ui.output.textContent, ui.copyOutput));
+    copy(!ui.scheduleView.hidden ? scheduleText
+      : ui.irEditor.hidden ? ui.output.textContent : irModel.getValue(), ui.copyOutput));
+  ui.downloadWaveform.addEventListener('click', () => {
+    if (!latestWaveform) return;
+    const url = URL.createObjectURL(new Blob(
+      [latestWaveform.data], { type: 'text/x-vcd' },
+    ));
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = displayFilename(latestWaveform.name);
+    anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url));
+  });
   ui.share.addEventListener('click', () => {
     const link = toPermalink(editor.getValue(), { ...options, stage: activeStage });
     history.replaceState(null, '', link);

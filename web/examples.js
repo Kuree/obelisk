@@ -6,6 +6,11 @@ module counter;
   logic clk = 0;
   int   count = 0;
 
+  initial begin
+    $dumpfile("counter.vcd");
+    $dumpvars(0, counter);
+  end
+
   always #5 clk = ~clk;
 
   always @(posedge clk) begin

@@ -9,6 +9,11 @@ bit offsets. This does not enable VPI or require a `--vpi` option.
 obelisk design.sv -o simulator
 ```
 
+In the browser playground, writable simulation files are captured in memory.
+The latest VCD is retained in IndexedDB on that browser's origin and can be
+opened from the Waveform stage or downloaded. It is replaced by the next run
+that emits a VCD; clearing the site's stored data removes it.
+
 ## Collection is a per-slot difference, not a callback
 
 Values are collected by differencing the canonical four-state planes once per
