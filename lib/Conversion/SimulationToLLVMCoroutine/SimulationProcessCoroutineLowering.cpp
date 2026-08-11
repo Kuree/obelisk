@@ -256,21 +256,41 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
     }
 
     builder.setInsertionPointToStart(dispatch);
-    Value status =
-        LLVM::CallOp::create(
-            builder, location, TypeRange{i32},
-            SymbolRefAttr::get(builder.getContext(),
-                               "obelisk_rt_v1_method_task_activate"),
-            ValueRange{
-                lane,
-                managedObjectPointer(builder, location, task.getReceiver()),
-                llvmConstant(builder, location, i64, task.getSlot()),
-                llvmConstant(builder, location, i64, task.getSignatureId()),
-                argumentArray,
-                llvmConstant(builder, location, i32,
-                             task.getArguments().size()),
-                outActivation})
-            .getResult();
+    SmallVector<Value> activationArguments{
+        lane, managedObjectPointer(builder, location, task.getReceiver())};
+    StringRef activationName = "obelisk_rt_v1_method_task_activate";
+    auto method =
+        SymbolTable::lookupNearestSymbolFrom<sim::SimClassMethodDeclOp>(
+            task, task.getMethodAttr());
+    auto owner =
+        method ? SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+                     method, method.getOwnerAttr())
+               : sim::SimClassDeclOp{};
+    if (!method || !owner)
+      return task.emitOpError("virtual task descriptor is missing");
+    if (owner.getIsInterface()) {
+      if (!method.getInterfaceOrdinalAttr())
+        return task.emitOpError("interface task has no dispatch ordinal");
+      activationName = "obelisk_rt_v1_interface_method_task_activate";
+      activationArguments.push_back(
+          llvmConstant(builder, location, i64, owner.getId()));
+      activationArguments.push_back(
+          llvmConstant(builder, location, i64, *method.getInterfaceOrdinal()));
+    } else {
+      activationArguments.push_back(
+          llvmConstant(builder, location, i64, task.getSlot()));
+    }
+    activationArguments.push_back(
+        llvmConstant(builder, location, i64, task.getSignatureId()));
+    activationArguments.push_back(argumentArray);
+    activationArguments.push_back(
+        llvmConstant(builder, location, i32, task.getArguments().size()));
+    activationArguments.push_back(outActivation);
+    Value status = LLVM::CallOp::create(
+                       builder, location, TypeRange{i32},
+                       SymbolRefAttr::get(builder.getContext(), activationName),
+                       activationArguments)
+                       .getResult();
     if (rootRecord) {
       Value popStatus =
           LLVM::CallOp::create(

@@ -525,23 +525,44 @@ public:
                                   resultSize, resultAlignment);
 
     auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
-    Value status =
-        LLVM::CallOp::create(
-            rewriter, op.getLoc(), TypeRange{i32},
-            SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_method_invoke"),
-            ValueRange{
-                lane,
-                managedObjectPointer(rewriter, op.getLoc(),
-                                     adaptor.getReceiver().front()),
-                llvmConstant(rewriter, op.getLoc(), i64, op.getSlot()),
-                llvmConstant(rewriter, op.getLoc(), i64, op.getSignatureId()),
-                argumentArray,
-                llvmConstant(rewriter, op.getLoc(), i32,
-                             physicalArguments.size()),
-                resultStorage,
-                llvmConstant(rewriter, op.getLoc(), i64, resultSize)})
-            .getResult();
+    SmallVector<Value> invokeArguments{
+        lane, managedObjectPointer(rewriter, op.getLoc(),
+                                   adaptor.getReceiver().front())};
+    StringRef invokeName = "obelisk_rt_v1_method_invoke";
+    auto method =
+        SymbolTable::lookupNearestSymbolFrom<sim::SimClassMethodDeclOp>(
+            op, op.getMethodAttr());
+    auto owner =
+        method ? SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+                     method, method.getOwnerAttr())
+               : sim::SimClassDeclOp{};
+    if (!method || !owner)
+      return op.emitError("virtual method descriptor is missing");
+    if (owner.getIsInterface()) {
+      if (!method.getInterfaceOrdinalAttr())
+        return op.emitError("interface method has no dispatch ordinal");
+      invokeName = "obelisk_rt_v1_interface_method_invoke";
+      invokeArguments.push_back(
+          llvmConstant(rewriter, op.getLoc(), i64, owner.getId()));
+      invokeArguments.push_back(llvmConstant(rewriter, op.getLoc(), i64,
+                                             *method.getInterfaceOrdinal()));
+    } else {
+      invokeArguments.push_back(
+          llvmConstant(rewriter, op.getLoc(), i64, op.getSlot()));
+    }
+    invokeArguments.push_back(
+        llvmConstant(rewriter, op.getLoc(), i64, op.getSignatureId()));
+    invokeArguments.push_back(argumentArray);
+    invokeArguments.push_back(
+        llvmConstant(rewriter, op.getLoc(), i32, physicalArguments.size()));
+    invokeArguments.push_back(resultStorage);
+    invokeArguments.push_back(
+        llvmConstant(rewriter, op.getLoc(), i64, resultSize));
+    Value status = LLVM::CallOp::create(
+                       rewriter, op.getLoc(), TypeRange{i32},
+                       SymbolRefAttr::get(rewriter.getContext(), invokeName),
+                       invokeArguments)
+                       .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
     SmallVector<Value> results;
     for (auto [type, offset] : llvm::zip_equal(convertedResults, resultOffsets))

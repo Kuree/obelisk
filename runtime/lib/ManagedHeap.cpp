@@ -1735,8 +1735,7 @@ obelisk_rt_v1_class_validate(const obelisk_rt_class_descriptor_v1 *descriptor) {
         !validPowerOfTwo(current->instance_alignment) ||
         current->instance_alignment > 16 ||
         (current->flags & ~validFlags) != 0 ||
-        (current->interface_count == 0) !=
-            (current->interface_ids == nullptr) ||
+        (current->interface_count == 0) != (current->interfaces == nullptr) ||
         (current->method_count == 0) != (current->methods == nullptr) ||
         (current->debug_name_size == 0) != (current->debug_name == nullptr) ||
         (derived &&
@@ -1746,12 +1745,29 @@ obelisk_rt_v1_class_validate(const obelisk_rt_class_descriptor_v1 *descriptor) {
           derived->method_count < current->method_count)))
       return OBELISK_RT_INVALID_DESIGN;
     for (uint64_t index = 0; index != current->interface_count; ++index) {
-      if (current->interface_ids[index] == 0) {
+      const obelisk_rt_interface_descriptor_v1 &interface =
+          current->interfaces[index];
+      if (interface.interface_id == 0 ||
+          (interface.method_count == 0) !=
+              (interface.method_slots == nullptr)) {
         return OBELISK_RT_INVALID_DESIGN;
       }
-      for (uint64_t previous = 0; previous != index; ++previous)
-        if (current->interface_ids[previous] == current->interface_ids[index])
+      if (index != 0 &&
+          current->interfaces[index - 1].interface_id >= interface.interface_id)
+        return OBELISK_RT_INVALID_DESIGN;
+      for (uint64_t ordinal = 0; ordinal != interface.method_count; ++ordinal) {
+        uint32_t slot = interface.method_slots[ordinal];
+        if (slot == UINT32_MAX) {
+          if ((current->flags & OBELISK_RT_CLASS_ABSTRACT) == 0)
+            return OBELISK_RT_INVALID_DESIGN;
+        } else if (slot >= current->method_count) {
           return OBELISK_RT_INVALID_DESIGN;
+        } else if ((current->flags & OBELISK_RT_CLASS_ABSTRACT) == 0 &&
+                   (current->methods[slot].flags & OBELISK_RT_METHOD_PURE) !=
+                       0) {
+          return OBELISK_RT_INVALID_DESIGN;
+        }
+      }
     }
     for (uint64_t index = 0; index != current->method_count; ++index) {
       const obelisk_rt_method_descriptor_v1 &method = current->methods[index];
@@ -2424,7 +2440,7 @@ obelisk_rt_v1_object_is_instance(const obelisk_rt_object_v1 *object,
     if (current == target || current->class_id == target->class_id)
       return 1;
     for (uint64_t index = 0; index != current->interface_count; ++index)
-      if (current->interface_ids[index] == target->class_id)
+      if (current->interfaces[index].interface_id == target->class_id)
         return 1;
   }
   return 0;
@@ -2482,21 +2498,59 @@ extern "C" obelisk_rt_status obelisk_rt_v1_method_resolve(
   return OBELISK_RT_OK;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_method_invoke(
-    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *receiver, uint64_t slot,
-    uint64_t signatureID, const obelisk_rt_method_argument_v1 *arguments,
-    uint32_t argumentCount, void *result, uint64_t resultSize) {
+extern "C" obelisk_rt_status obelisk_rt_v1_interface_method_resolve(
+    obelisk_rt_object_v1 *receiver, uint64_t interfaceID,
+    uint64_t interfaceOrdinal, uint64_t signatureID,
+    const obelisk_rt_method_descriptor_v1 **outMethod) {
+  const obelisk_rt_class_descriptor_v1 *descriptor = descriptorFor(receiver);
+  if (!descriptor || !outMethod || interfaceID == 0)
+    return OBELISK_RT_INVALID_HANDLE;
+  const obelisk_rt_interface_descriptor_v1 *interface = nullptr;
+  for (const obelisk_rt_class_descriptor_v1 *current = descriptor; current;
+       current = current->base) {
+    uint64_t begin = 0, end = current->interface_count;
+    while (begin != end) {
+      uint64_t middle = begin + (end - begin) / 2;
+      uint64_t candidate = current->interfaces[middle].interface_id;
+      if (candidate < interfaceID)
+        begin = middle + 1;
+      else
+        end = middle;
+    }
+    if (begin != current->interface_count &&
+        current->interfaces[begin].interface_id == interfaceID) {
+      interface = &current->interfaces[begin];
+      break;
+    }
+  }
+  if (!interface || interfaceOrdinal >= interface->method_count)
+    return OBELISK_RT_INVALID_HANDLE;
+  uint32_t slot = interface->method_slots[interfaceOrdinal];
+  if (slot == UINT32_MAX || slot >= descriptor->method_count)
+    return OBELISK_RT_INVALID_HANDLE;
+  const obelisk_rt_method_descriptor_v1 *method = &descriptor->methods[slot];
+  if (method->signature_id != signatureID)
+    return OBELISK_RT_LAYOUT_MISMATCH;
+  *outMethod = method;
+  return OBELISK_RT_OK;
+}
+
+static obelisk_rt_status validateMethodInvocation(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *receiver,
+    const obelisk_rt_method_argument_v1 *arguments, uint32_t argumentCount) {
   if (!lane || !lane->heap || !lane->heap->activeOwner(lane) ||
       (!arguments && argumentCount != 0))
     return OBELISK_RT_INVALID_ARGUMENT;
   ObjectMetadata *metadata = metadataFor(receiver);
-  if (!metadata || metadata->heap != lane->heap)
-    return OBELISK_RT_INVALID_HANDLE;
-  const obelisk_rt_method_descriptor_v1 *method = nullptr;
-  obelisk_rt_status status =
-      obelisk_rt_v1_method_resolve(receiver, slot, signatureID, &method);
-  if (status != OBELISK_RT_OK)
-    return status;
+  return metadata && metadata->heap == lane->heap ? OBELISK_RT_OK
+                                                  : OBELISK_RT_INVALID_HANDLE;
+}
+
+static obelisk_rt_status invokeResolvedMethod(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *receiver,
+    const obelisk_rt_method_descriptor_v1 *method,
+    const obelisk_rt_method_argument_v1 *arguments, uint32_t argumentCount,
+    void *result, uint64_t resultSize) {
   if ((method->flags & OBELISK_RT_METHOD_TASK) != 0)
     return OBELISK_RT_INVALID_ARGUMENT;
   if (!method->native_entry)
@@ -2504,7 +2558,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_method_invoke(
   // A foreign caller is not required to have placed the receiver in its own
   // root set. Keep it alive across allocations made by the method body.
   obelisk_rt_gc_root_v1 receiverRoot{};
-  status = lane->heap->pushRoot(lane, &receiverRoot, &receiver);
+  obelisk_rt_status status =
+      lane->heap->pushRoot(lane, &receiverRoot, &receiver);
   if (status != OBELISK_RT_OK)
     return status;
   obelisk_rt_status callStatus = OBELISK_RT_OK;
@@ -2520,36 +2575,60 @@ extern "C" obelisk_rt_status obelisk_rt_v1_method_invoke(
   return callStatus == OBELISK_RT_OK ? popStatus : callStatus;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_method_task_activate(
+extern "C" obelisk_rt_status obelisk_rt_v1_method_invoke(
     obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *receiver, uint64_t slot,
     uint64_t signatureID, const obelisk_rt_method_argument_v1 *arguments,
-    uint32_t argumentCount, uint64_t *outActivation) {
-  if (outActivation)
-    *outActivation = 0;
-  if (!lane || !lane->heap || !lane->heap->activeOwner(lane) ||
-      (!arguments && argumentCount != 0) || !outActivation)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  ObjectMetadata *metadata = metadataFor(receiver);
-  if (!metadata || metadata->heap != lane->heap)
-    return OBELISK_RT_INVALID_HANDLE;
-  const obelisk_rt_method_descriptor_v1 *method = nullptr;
+    uint32_t argumentCount, void *result, uint64_t resultSize) {
   obelisk_rt_status status =
-      obelisk_rt_v1_method_resolve(receiver, slot, signatureID, &method);
+      validateMethodInvocation(lane, receiver, arguments, argumentCount);
   if (status != OBELISK_RT_OK)
     return status;
+  const obelisk_rt_method_descriptor_v1 *method = nullptr;
+  status = obelisk_rt_v1_method_resolve(receiver, slot, signatureID, &method);
+  if (status != OBELISK_RT_OK)
+    return status;
+  return invokeResolvedMethod(lane, receiver, method, arguments, argumentCount,
+                              result, resultSize);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_interface_method_invoke(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *receiver,
+    uint64_t interfaceID, uint64_t interfaceOrdinal, uint64_t signatureID,
+    const obelisk_rt_method_argument_v1 *arguments, uint32_t argumentCount,
+    void *result, uint64_t resultSize) {
+  obelisk_rt_status status =
+      validateMethodInvocation(lane, receiver, arguments, argumentCount);
+  if (status != OBELISK_RT_OK)
+    return status;
+  const obelisk_rt_method_descriptor_v1 *method = nullptr;
+  status = obelisk_rt_v1_interface_method_resolve(
+      receiver, interfaceID, interfaceOrdinal, signatureID, &method);
+  if (status != OBELISK_RT_OK)
+    return status;
+  return invokeResolvedMethod(lane, receiver, method, arguments, argumentCount,
+                              result, resultSize);
+}
+
+static obelisk_rt_status
+activateResolvedMethod(obelisk_rt_gc_lane_v1 *lane,
+                       obelisk_rt_object_v1 *receiver,
+                       const obelisk_rt_method_descriptor_v1 *method,
+                       const obelisk_rt_method_argument_v1 *arguments,
+                       uint32_t argumentCount, uint64_t *outActivation) {
   if ((method->flags & OBELISK_RT_METHOD_TASK) == 0)
     return OBELISK_RT_INVALID_ARGUMENT;
   if ((method->flags & OBELISK_RT_METHOD_PURE) != 0 || !method->native_entry)
     return OBELISK_RT_TIER_UNAVAILABLE;
   obelisk_rt_gc_root_v1 receiverRoot{};
-  status = lane->heap->pushRoot(lane, &receiverRoot, &receiver);
+  obelisk_rt_status status =
+      lane->heap->pushRoot(lane, &receiverRoot, &receiver);
   if (status != OBELISK_RT_OK)
     return status;
   obelisk_rt_status callStatus = OBELISK_RT_OK;
   try {
-    callStatus = method->native_entry(
-        lane->context, lane, receiver, arguments, argumentCount, outActivation,
-        sizeof(*outActivation));
+    callStatus = method->native_entry(lane->context, lane, receiver, arguments,
+                                      argumentCount, outActivation,
+                                      sizeof(*outActivation));
     if (callStatus == OBELISK_RT_OK && *outActivation == 0)
       callStatus = OBELISK_RT_INVALID_HANDLE;
   } catch (const std::bad_alloc &) {
@@ -2567,6 +2646,48 @@ extern "C" obelisk_rt_status obelisk_rt_v1_method_task_activate(
   if (popStatus != OBELISK_RT_OK)
     obelisk_rt_v1_scheduler_fail(lane->context, popStatus);
   return OBELISK_RT_OK;
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_method_task_activate(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *receiver, uint64_t slot,
+    uint64_t signatureID, const obelisk_rt_method_argument_v1 *arguments,
+    uint32_t argumentCount, uint64_t *outActivation) {
+  if (outActivation)
+    *outActivation = 0;
+  if (!outActivation)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  obelisk_rt_status status =
+      validateMethodInvocation(lane, receiver, arguments, argumentCount);
+  if (status != OBELISK_RT_OK)
+    return status;
+  const obelisk_rt_method_descriptor_v1 *method = nullptr;
+  status = obelisk_rt_v1_method_resolve(receiver, slot, signatureID, &method);
+  if (status != OBELISK_RT_OK)
+    return status;
+  return activateResolvedMethod(lane, receiver, method, arguments,
+                                argumentCount, outActivation);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_interface_method_task_activate(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *receiver,
+    uint64_t interfaceID, uint64_t interfaceOrdinal, uint64_t signatureID,
+    const obelisk_rt_method_argument_v1 *arguments, uint32_t argumentCount,
+    uint64_t *outActivation) {
+  if (outActivation)
+    *outActivation = 0;
+  if (!outActivation)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  obelisk_rt_status status =
+      validateMethodInvocation(lane, receiver, arguments, argumentCount);
+  if (status != OBELISK_RT_OK)
+    return status;
+  const obelisk_rt_method_descriptor_v1 *method = nullptr;
+  status = obelisk_rt_v1_interface_method_resolve(
+      receiver, interfaceID, interfaceOrdinal, signatureID, &method);
+  if (status != OBELISK_RT_OK)
+    return status;
+  return activateResolvedMethod(lane, receiver, method, arguments,
+                                argumentCount, outActivation);
 }
 
 extern "C" obelisk_rt_status

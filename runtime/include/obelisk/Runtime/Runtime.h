@@ -149,6 +149,15 @@ typedef struct obelisk_rt_method_descriptor_v1 {
   const void *environment;
 } obelisk_rt_method_descriptor_v1;
 
+// One flattened interface dispatch table for a managed class. Method slots
+// are indexed by the declaring interface's stable method ordinal and select
+// entries in the containing class descriptor's effective method table.
+typedef struct obelisk_rt_interface_descriptor_v1 {
+  uint64_t interface_id;
+  const uint32_t *method_slots;
+  uint64_t method_count;
+} obelisk_rt_interface_descriptor_v1;
+
 #define OBELISK_RT_CLASS_ABSTRACT (UINT32_C(1) << 0)
 #define OBELISK_RT_CLASS_INTERFACE (UINT32_C(1) << 1)
 #define OBELISK_RT_CLASS_FINAL (UINT32_C(1) << 2)
@@ -161,7 +170,7 @@ typedef struct obelisk_rt_class_descriptor_v1 {
   uint64_t instance_size;
   uint64_t instance_alignment;
   const struct obelisk_rt_class_descriptor_v1 *base;
-  const uint64_t *interface_ids;
+  const obelisk_rt_interface_descriptor_v1 *interfaces;
   uint64_t interface_count;
   const obelisk_rt_trace_layout_v1 *layout;
   const obelisk_rt_method_descriptor_v1 *methods;
@@ -1866,14 +1875,28 @@ obelisk_rt_v1_reference_path_store(obelisk_rt_gc_lane_v1 *lane,
 obelisk_rt_status obelisk_rt_v1_method_resolve(
     obelisk_rt_object_v1 *receiver, uint64_t slot, uint64_t signature_id,
     const obelisk_rt_method_descriptor_v1 **out_method);
+obelisk_rt_status obelisk_rt_v1_interface_method_resolve(
+    obelisk_rt_object_v1 *receiver, uint64_t interface_id,
+    uint64_t interface_ordinal, uint64_t signature_id,
+    const obelisk_rt_method_descriptor_v1 **out_method);
 obelisk_rt_status obelisk_rt_v1_method_invoke(
     obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *receiver, uint64_t slot,
     uint64_t signature_id, const obelisk_rt_method_argument_v1 *arguments,
     uint32_t argument_count, void *result, uint64_t result_size);
+obelisk_rt_status obelisk_rt_v1_interface_method_invoke(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *receiver,
+    uint64_t interface_id, uint64_t interface_ordinal, uint64_t signature_id,
+    const obelisk_rt_method_argument_v1 *arguments, uint32_t argument_count,
+    void *result, uint64_t result_size);
 obelisk_rt_status obelisk_rt_v1_method_task_activate(
     obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *receiver, uint64_t slot,
     uint64_t signature_id, const obelisk_rt_method_argument_v1 *arguments,
     uint32_t argument_count, uint64_t *out_activation);
+obelisk_rt_status obelisk_rt_v1_interface_method_task_activate(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *receiver,
+    uint64_t interface_id, uint64_t interface_ordinal, uint64_t signature_id,
+    const obelisk_rt_method_argument_v1 *arguments, uint32_t argument_count,
+    uint64_t *out_activation);
 
 // IEEE 1800-2023 weak_reference support. The wrapper is itself a managed
 // object. Its referent is cleared during the collection that first determines

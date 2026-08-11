@@ -77,6 +77,39 @@ module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
+  obelisk_sim.design @missing_interface_override {
+    obelisk_sim.scope.decl 0 hierarchy "top"
+    obelisk_sim.class.decl @Runner id 1 {
+      is_abstract = true, is_final = false, is_interface = true
+    }
+    obelisk_sim.class.decl @AbstractBase id 2 implements [@Runner] {
+      is_abstract = true, is_final = false, is_interface = false
+    }
+    // expected-error @+1 {{concrete class does not implement interface Runner}}
+    obelisk_sim.class.decl @Concrete id 3 extends @AbstractBase {
+      is_abstract = false, is_final = true, is_interface = false
+    }
+    obelisk_sim.class.method @Runner_run of @Runner slot 4294967295
+        signature_id 17 interface_ordinal 0 :
+      (!obelisk_sim.context, !obelisk_sim.class_handle<@Runner>) -> i32 {
+        is_final = false, is_pure = true, is_static = false,
+        is_task = false, is_virtual = true
+      }
+    obelisk_sim.class.method @AbstractBase_run of @AbstractBase slot 0
+        signature_id 17 :
+      (!obelisk_sim.context, !obelisk_sim.class_handle<@AbstractBase>) -> i32 {
+        is_final = false, is_pure = true, is_static = false,
+        is_task = false, is_virtual = true
+      }
+  }
+}
+
+// -----
+
+module attributes {
+  llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
+  llvm.target_triple = "x86_64-unknown-linux-gnu"
+} {
   obelisk_sim.design @mixed_automatic_reference_origins {
     obelisk_sim.code_unit.decl 9000001 in 0 function hierarchy "test.mixed_automatic_reference_origins.merge.9000001"
     obelisk_sim.scope.decl 0
